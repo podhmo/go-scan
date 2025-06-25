@@ -144,34 +144,59 @@ func compareFieldTypes(type1 *scanner.FieldType, type2 *scanner.FieldType) bool 
 	name1 := type1.Name
 	name2 := type2.Name
 
-	// Simplistic handling for pointer types: assume FieldType.Name for *T is "*T"
-	// This depends on how parseTypeExpr populates FieldType.Name and IsPointer.
-	// If type1.Name is "Foo" and type1.IsPointer is true, it means *Foo.
-	// If type2.Name is "*Foo" and type2.IsPointer is true (or implicitly due to name), it's also *Foo.
-	// The current FieldType structure might lead to type1.Name = "Foo", type1.IsPointer = true
-	// vs type2.Name = "*Foo", type2.IsPointer = false (if name includes pointer directly).
-	// The current FieldType structure, after parseTypeExpr for *ast.StarExpr, should result in:
-	// For a type `*T`, FieldType.Name will be "T" and FieldType.IsPointer will be true.
-	// For a type `T`, FieldType.Name will be "T" and FieldType.IsPointer will be false.
 	// Thus, we can directly compare IsPointer and then Name.
 
 	if type1.IsPointer != type2.IsPointer {
-		// fmt.Printf("Pointer mismatch: %s (ptr:%v) vs %s (ptr:%v)\n", name1, type1.IsPointer, name2, type2.IsPointer)
 		return false
 	}
 
-	// Now, IsPointer is the same for both. Compare the base names.
+	// Handle slices
+	if type1.IsSlice != type2.IsSlice {
+		return false
+	}
+	if type1.IsSlice { // Both are slices
+		return compareFieldTypes(type1.Elem, type2.Elem) // Compare element types
+	}
+
+	// Handle maps
+	if type1.IsMap != type2.IsMap {
+		return false
+	}
+	if type1.IsMap { // Both are maps
+		// Compare key types AND value types
+		if !compareFieldTypes(type1.MapKey, type2.MapKey) {
+			return false
+		}
+		return compareFieldTypes(type1.Elem, type2.Elem)
+	}
+
+	// If not slices or maps, compare base names (IsPointer is already checked and equal)
+	// This is where PkgName/ImportPath should be checked for non-primitive, non-builtin types.
+	// For now, just comparing names.
 	if name1 != name2 {
-		// This is still too simple if types are from different packages, e.g. pkgA.Type vs pkgB.Type.
-		// We need to compare import paths if PkgName is different.
-		// For now, assume types are either primitive, in current package, or this comparison is insufficient.
-		// fmt.Printf("Base name mismatch: %s (ptr:%v) vs %s (ptr:%v)\n", name1, type1.IsPointer, name2, type2.IsPointer)
+		// Consider logging here for debugging type mismatches:
+		// fmt.Printf("Base name mismatch: T1: %s (pkg:%s) vs T2: %s (pkg:%s)\n", name1, type1.PkgName, name2, type2.PkgName)
 		return false
 	}
 
-	// TODO: Compare PkgName and fullImportPath if types are not primitive and Name matches.
-	// This is where true type identity across packages is checked.
-	// For now, if names and pointer status match, assume true for simplicity.
+	// TODO: Enhance PkgName and fullImportPath comparison for robust cross-package type identity.
+	// For example:
+	// if type1.PkgName != type2.PkgName {
+	//    // If PkgName is different, names must be fully qualified or resolved via import paths
+	//    // This requires type1.FullImportPath and type2.FullImportPath to be populated and compared.
+	//    // For now, if PkgName differs and names were identical (e.g. "MyType"), it's a mismatch unless they are built-in.
+	//    isBuiltinOrPredeclared := func(name string) bool {
+	//        // Add checks for "string", "int", "bool", "error", etc.
+	//        // Or rely on PkgName being empty or a special value for builtins.
+	//        // scanner.FieldType might need a field like IsBuiltin.
+	// 	   return name == "string" || name == "int" // ... and so on
+	//    }
+	//    if !(isBuiltinOrPredeclared(name1) && type1.PkgName == "" && type2.PkgName == "") && /* more conditions */ {
+	//        return false
+	//    }
+	// }
+
+
 	return true
 }
 

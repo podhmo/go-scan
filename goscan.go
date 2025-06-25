@@ -30,7 +30,8 @@ type Scanner struct {
 	// If empty, caching will be disabled. Otherwise, this path will be used.
 	CachePath string
 	// symbolCache *cache.SymbolCache // Added - Note: UseCache field was removed
-	symbolCache *cache.SymbolCache
+	symbolCache           *cache.SymbolCache
+	ExternalTypeOverrides scanner.ExternalTypeOverride
 }
 
 // New creates a new Scanner. It finds the module root starting from the given path.
@@ -41,12 +42,25 @@ func New(startPath string) (*Scanner, error) {
 	}
 
 	return &Scanner{
-		locator:      loc,
-		scanner:      scanner.New(),
-		packageCache: make(map[string]*scanner.PackageInfo),
+		locator:               loc,
+		scanner:               scanner.New(nil), // Initialize with nil, can be set later
+		packageCache:          make(map[string]*scanner.PackageInfo),
+		ExternalTypeOverrides: make(scanner.ExternalTypeOverride), // Initialize the map
 		// CachePath is initialized to its zero value "" (empty string), meaning cache disabled by default.
 		// symbolCache will be initialized by getOrCreateSymbolCache when/if needed.
 	}, nil
+}
+
+// SetExternalTypeOverrides sets the external type override map for the scanner.
+// This map allows specifying how types from external (or internal) packages
+// should be interpreted. For example, mapping "github.com/google/uuid.UUID" to "string".
+func (s *Scanner) SetExternalTypeOverrides(overrides scanner.ExternalTypeOverride) {
+	if overrides == nil {
+		overrides = make(scanner.ExternalTypeOverride)
+	}
+	s.ExternalTypeOverrides = overrides
+	// Re-initialize the internal scanner.Scanner with the new overrides
+	s.scanner = scanner.New(s.ExternalTypeOverrides)
 }
 
 // ScanPackage scans a single package at a given directory path.

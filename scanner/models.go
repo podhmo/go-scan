@@ -33,6 +33,17 @@ type PackageInfo struct {
 	Fset      *token.FileSet // Added: Fileset for position information
 }
 
+// ExternalTypeOverride defines a mapping from a fully qualified type name
+// (e.g., "github.com/google/uuid.UUID") to a target Go type string (e.g., "string").
+// This allows users to specify how types from external packages (or even internal ones)
+// should be interpreted by the scanner, overriding the default parsing behavior.
+// For instance, if you want all instances of `uuid.UUID` to be treated as `string`
+// in your scanned output, you would provide a mapping like:
+// {"github.com/google/uuid.UUID": "string"}
+// The key is the fully qualified type name (ImportPath + "." + TypeName).
+// The value is the desired Go type string.
+type ExternalTypeOverride map[string]string
+
 // TypeInfo represents a single type declaration (`type T ...`).
 type TypeInfo struct {
 	Name       string
@@ -69,6 +80,7 @@ type FieldType struct {
 	IsSlice    bool
 	IsMap      bool
 	Definition *TypeInfo // Caches the resolved type definition.
+	IsResolvedByConfig bool // True if this type was resolved using ExternalTypeOverrides
 
 	resolver       PackageResolver // For lazy-loading the type definition.
 	fullImportPath string          // Full import path of the type, e.g., "example.com/project/models".
@@ -79,6 +91,14 @@ type FieldType struct {
 // It uses the PackageResolver to parse other packages on-demand.
 // The result is cached for subsequent calls.
 func (ft *FieldType) Resolve() (*TypeInfo, error) {
+	if ft.IsResolvedByConfig {
+		// This type was resolved by an external configuration (e.g. to a primitive like "string").
+		// There's no further TypeInfo definition to resolve in the Go source.
+		// Returning nil, nil indicates that it's "resolved" as far as the config is concerned,
+		// and no error occurred, but there isn't a deeper TypeInfo struct.
+		// Callers should check IsResolvedByConfig if they need to distinguish this case.
+		return nil, nil
+	}
 	if ft.Definition != nil {
 		return ft.Definition, nil
 	}

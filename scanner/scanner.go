@@ -11,13 +11,19 @@ import (
 
 // Scanner parses Go source files within a package.
 type Scanner struct {
-	resolver     PackageResolver
-	importLookup map[string]string // Maps import alias/name to full import path for the current file.
+	resolver              PackageResolver
+	importLookup          map[string]string // Maps import alias/name to full import path for the current file.
+	ExternalTypeOverrides ExternalTypeOverride
 }
 
 // New creates a new Scanner.
-func New() *Scanner {
-	return &Scanner{}
+func New(overrides ExternalTypeOverride) *Scanner {
+	if overrides == nil {
+		overrides = make(ExternalTypeOverride)
+	}
+	return &Scanner{
+		ExternalTypeOverrides: overrides,
+	}
 }
 
 // ScanPackage parses all .go files in a given directory and returns PackageInfo.
@@ -267,10 +273,23 @@ func (s *Scanner) parseTypeExpr(expr ast.Expr) *FieldType {
 			ft.Name = "unsupported_selector"
 			return ft
 		}
+
+		pkgImportPath, _ := s.importLookup[pkgIdent.Name]
+		qualifiedName := fmt.Sprintf("%s.%s", pkgImportPath, t.Sel.Name)
+
+		if overrideType, ok := s.ExternalTypeOverrides[qualifiedName]; ok {
+			ft.Name = overrideType
+			ft.IsResolvedByConfig = true
+			// PkgName, typeName, fullImportPath might not be relevant if overridden to a primitive.
+			// However, if it's overridden to another known complex type, they might be.
+			// For now, we assume override means it's treated as a simple type.
+			return ft
+		}
+
 		ft.Name = fmt.Sprintf("%s.%s", pkgIdent.Name, t.Sel.Name)
 		ft.PkgName = pkgIdent.Name
 		ft.typeName = t.Sel.Name
-		ft.fullImportPath = s.importLookup[pkgIdent.Name]
+		ft.fullImportPath = pkgImportPath
 	case *ast.ArrayType:
 		ft.IsSlice = true
 		ft.Name = "slice"

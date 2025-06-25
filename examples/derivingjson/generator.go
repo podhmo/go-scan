@@ -40,48 +40,57 @@ type OneOfTypeMapping struct {
 
 const unmarshalJSONTemplate = `
 func (s *{{.StructName}}) UnmarshalJSON(data []byte) error {
-	var tempMap map[string]json.RawMessage
-	if err := json.Unmarshal(data, &tempMap); err != nil {
-		return fmt.Errorf("failed to unmarshal initial JSON object: %w", err)
+	// Define an alias type to prevent infinite recursion with UnmarshalJSON.
+	type Alias {{.StructName}}
+	aux := &struct {
+		// The {{.OneOfFieldName}} field will be parsed manually later, so initially capture it as json.RawMessage.
+		{{.OneOfFieldName}} json.RawMessage ` + "`json:\"{{.OneOfFieldJSONTag}}\"`" + `
+		// All other fields will be handled by the standard unmarshaler via the Alias.
+		*Alias
+	}{
+		Alias: (*Alias)(s),
 	}
 
-	{{range .OtherFields}}
-	if rawVal, ok := tempMap["{{.JSONTag}}"]; ok && rawVal != nil {
-		var val {{.Type}}
-		if err := json.Unmarshal(rawVal, &val); err != nil {
-			return fmt.Errorf("failed to unmarshal field '{{.JSONTag}}' into {{.Type}}: %w", err)
-		}
-		s.{{.Name}} = val
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return fmt.Errorf("failed to unmarshal into aux struct for {{.StructName}}: %w", err)
 	}
-	{{end}}
 
-	raw{{.OneOfFieldName}}, ok := tempMap["{{.OneOfFieldJSONTag}}"]
-	if !ok || len(raw{{.OneOfFieldName}}) == 0 || string(raw{{.OneOfFieldName}}) == "null" {
+	// If the {{.OneOfFieldName}} field is null or empty, do nothing further with it.
+	if aux.{{.OneOfFieldName}} == nil || string(aux.{{.OneOfFieldName}}) == "null" {
+		s.{{.OneOfFieldName}} = nil // Explicitly set to nil, or follow specific logic if a non-nil zero value is required.
 		return nil
 	}
 
+	// Read only the "type" field from the {{.OneOfFieldName}} content to determine the concrete type.
+	// NOTE: This assumes the discriminator field is named "type".
+	// If the generator can determine the actual discriminator field name, it should be used here.
 	var discriminatorDoc struct {
-		Type string ` + "`json:\"type\"`" + `
+		Type string ` + "`json:\"type\"`" + ` // TODO: Make this discriminator field name configurable if not always "type".
 	}
-	if err := json.Unmarshal(raw{{.OneOfFieldName}}, &discriminatorDoc); err != nil {
-		return fmt.Errorf("failed to unmarshal discriminator from '{{.OneOfFieldJSONTag}}' (content: %s): %w", string(raw{{.OneOfFieldName}}), err)
+	if err := json.Unmarshal(aux.{{.OneOfFieldName}}, &discriminatorDoc); err != nil {
+		// Including aux content in the error can be helpful for debugging, but may make logs verbose for large JSON.
+		return fmt.Errorf("could not detect type from field '{{.OneOfFieldJSONTag}}' (content: %s): %w", string(aux.{{.OneOfFieldName}}), err)
 	}
 
+	// Decode into the appropriate struct based on the value of the 'type' field.
 	switch discriminatorDoc.Type {
 	{{range .OneOfTypes}}
 	case "{{.JSONValue}}":
 		var content {{.GoType}}
-		if err := json.Unmarshal(raw{{$.OneOfFieldName}}, &content); err != nil {
-			return fmt.Errorf("failed to unmarshal '{{$.OneOfFieldJSONTag}}' as {{.GoType}} for type '{{.JSONValue}}': %w", err)
+		if err := json.Unmarshal(aux.{{$.OneOfFieldName}}, &content); err != nil {
+			return fmt.Errorf("failed to unmarshal '{{$.OneOfFieldJSONTag}}' as {{.GoType}} for type '{{.JSONValue}}' (content: %s): %w", string(aux.{{$.OneOfFieldName}}), err)
 		}
-		s.{{$.OneOfFieldName}} = &content
+		s.{{$.OneOfFieldName}} = &content // Assuming the field is a pointer to the concrete type. Adjust if it's an interface holding value types.
 	{{end}}
 	default:
+		// The error message for an empty discriminatorDoc.Type could be more specific.
+		// (e.g., "discriminator field 'type' is missing or not a string in '{{.OneOfFieldJSONTag}}'")
 		if discriminatorDoc.Type == "" {
-			return fmt.Errorf("discriminator field 'type' missing in '{{.OneOfFieldJSONTag}}' (content: %s)", string(raw{{.OneOfFieldName}}))
+			return fmt.Errorf("discriminator field 'type' missing or empty in '{{.OneOfFieldJSONTag}}' (content: %s)", string(aux.{{.OneOfFieldName}}))
 		}
-		return fmt.Errorf("unknown type '%s' for field '{{.OneOfFieldJSONTag}}' (content: %s)", discriminatorDoc.Type, string(raw{{.OneOfFieldName}}))
+		return fmt.Errorf("unknown data type '%s' for field '{{.OneOfFieldJSONTag}}' (content: %s)", discriminatorDoc.Type, string(aux.{{.OneOfFieldName}}))
 	}
+
 	return nil
 }
 `
@@ -388,3 +397,59 @@ func Generate(pkgPath string) error {
 	fmt.Printf("Generated code written to %s\n", outputFileName)
 	return nil
 }
+
+func main() {
+	// This main function is added for ease of execution.
+	// It targets the ./examples/derivingjson/models directory.
+	targetPkgPath := "./examples/derivingjson/models"
+	// Attempt to get absolute path for robustness, especially if generator is run from different directories.
+	absPath, err := filepath.Abs(targetPkgPath)
+	if err != nil {
+		fmt.Printf("Error getting absolute path for %s: %v\n", targetPkgPath, err)
+		// Fallback to relative path if abs path fails, though this might be less reliable.
+		absPath = targetPkgPath
+	}
+
+	// Check if the target directory exists
+	if _, err := os.Stat(absPath); os.IsNotExist(err) {
+		fmt.Printf("Error: Target package directory does not exist: %s\n", absPath)
+		fmt.Println("Please ensure the 'models' directory with 'models.go' is correctly placed under 'examples/derivingjson/'.")
+		os.Exit(1)
+	}
+
+
+	fmt.Printf("Running generator for package: %s (resolved to %s)\n", targetPkgPath, absPath)
+	if err := Generate(absPath); err != nil {
+		fmt.Fprintf(os.Stderr, "Error generating code for package %s: %v\n", absPath, err)
+		os.Exit(1)
+	}
+	fmt.Println("Generator finished successfully.")
+}
+
+// func main() {
+// 	// This main function is added for ease of execution.
+// 	// It targets the ./examples/derivingjson/models directory.
+// 	targetPkgPath := "./examples/derivingjson/models"
+// 	// Attempt to get absolute path for robustness, especially if generator is run from different directories.
+// 	absPath, err := filepath.Abs(targetPkgPath)
+// 	if err != nil {
+// 		fmt.Printf("Error getting absolute path for %s: %v\n", targetPkgPath, err)
+// 		// Fallback to relative path if abs path fails, though this might be less reliable.
+// 		absPath = targetPkgPath
+// 	}
+
+// 	// Check if the target directory exists
+// 	if _, err := os.Stat(absPath); os.IsNotExist(err) {
+// 		fmt.Printf("Error: Target package directory does not exist: %s\n", absPath)
+// 		fmt.Println("Please ensure the 'models' directory with 'models.go' is correctly placed under 'examples/derivingjson/'.")
+// 		os.Exit(1)
+// 	}
+
+
+// 	fmt.Printf("Running generator for package: %s (resolved to %s)\n", targetPkgPath, absPath)
+// 	if err := Generate(absPath); err != nil {
+// 		fmt.Fprintf(os.Stderr, "Error generating code for package %s: %v\n", absPath, err)
+// 		os.Exit(1)
+// 	}
+// 	fmt.Println("Generator finished successfully.")
+// }

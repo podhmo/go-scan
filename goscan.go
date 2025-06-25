@@ -6,10 +6,11 @@ import (
 	"strings"
 	"sync"
 
+	"go/token" // Added for fset
+
 	"github.com/podhmo/go-scan/cache"
 	"github.com/podhmo/go-scan/locator"
 	"github.com/podhmo/go-scan/scanner"
-	"go/token" // Added for fset
 )
 
 // Re-export scanner kinds for convenience.
@@ -117,14 +118,92 @@ func (s *Scanner) ScanPackageByImport(importPath string) (*scanner.PackageInfo, 
 		return nil, fmt.Errorf("could not find directory for import path %s: %w", importPath, err)
 	}
 
-	pkgInfo, err := s.ScanPackage(dirPath) // dirPath is absolute physical path
-	if err != nil {
-		return nil, err
+	var pkgInfo *scanner.PackageInfo
+	symCache, cacheErr := s.getOrCreateSymbolCache()
+	if cacheErr != nil {
+		// Log the error but proceed as if cache is disabled or missed.
+		fmt.Fprintf(os.Stderr, "warning: could not get symbol cache for import path %s: %v. Proceeding with full scan.\n", importPath, cacheErr)
 	}
 
-	// After successfully scanning the package, update the symbol cache.
+	if symCache != nil && symCache.IsEnabled() {
+		newFilesToScan, existingFilesFromCache, err := symCache.GetFilesToScan(dirPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: GetFilesToScan failed for %s: %v. Proceeding with full scan of all files.\n", dirPath, err)
+			// Fallback: scan all files in the directory if GetFilesToScan fails
+			pkgInfo, err = s.scanner.ScanPackage(dirPath, s) // ScanPackage uses s.scanner which has fset
+			if err != nil {
+				return nil, fmt.Errorf("fallback full scan for package %s failed: %w", importPath, err)
+			}
+		} else {
+			// Partial scan logic
+			filesToActuallyScan := newFilesToScan // Scan new files
+
+			// For existing files, we'd ideally check their modification times if that feature was kept.
+			// Since it's removed, for now, we assume existingFilesInCache don't need re-scanning unless GetFilesToScan implies otherwise.
+			// However, the current GetFilesToScan returns existing files that *are* in cache, implying they might still be valid.
+			// The critical part is that scanner.ScanFiles needs the *list of files to parse now*.
+			// If we want to rebuild PackageInfo from cached data + newly scanned data, it's more complex.
+			// For now, let's assume we re-scan existing files too, to ensure PackageInfo is complete,
+			// or adjust ScanFiles to build PackageInfo from a mix.
+			// A simpler approach for now: if there are new files, or if we decide to re-validate existing, scan them.
+			// If GetFilesToScan is robust, existingFilesInCache are files that *are* in cache and *do* exist on disk.
+			// We might need a strategy: always re-scan existing to be safe, or only scan new.
+			// Let's re-scan existing files as well to ensure data integrity, until a more sophisticated check (like content hashing) is in place.
+			filesToActuallyScan = append(filesToActuallyScan, existingFilesFromCache...)
+
+			if len(filesToActuallyScan) == 0 {
+				// All files are cached and assumed up-to-date. We need to construct PackageInfo from cache.
+				// This is a complex step not yet implemented.
+				// For now, if all files are "existing", re-scan them to build PackageInfo.
+				// This means GetFilesToScan helps identify deleted files, but not avoid re-parsing existing ones yet.
+				// A true optimization would involve loading FileMetadata and constructing PackageInfo without re-parsing.
+				//
+				// If there are no files to scan (e.g., package is empty after _test.go filtering),
+				// ScanFiles will handle it.
+				// If filesToActuallyScan is empty because all files were in existingFilesInCache and we decide not to rescan them,
+				// then we would need to load PackageInfo from cache.
+				// For now, let's just scan all files identified (new + existing)
+				fmt.Fprintf(os.Stderr, "info: no new files to scan for %s, re-scanning %d existing files.\n", importPath, len(existingFilesFromCache))
+				// If filesToActuallyScan is empty (no new, no existing), ScanFiles will return error.
+				// This can happen if a directory contains only _test.go files or no .go files.
+				// os.ReadDir in ScanPackage (used by s.scanner.ScanPackage) or in symCache.GetFilesToScan should handle this.
+			}
+
+			if len(filesToActuallyScan) > 0 {
+				// Use s.scanner.ScanFiles directly, which uses the shared fset
+				pkgInfo, err = s.scanner.ScanFiles(filesToActuallyScan, dirPath, s)
+				if err != nil {
+					return nil, fmt.Errorf("partial scan for package %s with files %v failed: %w", importPath, filesToActuallyScan, err)
+				}
+			} else {
+				// No files to scan at all (e.g. empty directory, or only _test.go files)
+				// Create a minimal PackageInfo or handle as error.
+				// scanner.ScanFiles would return error if filePaths is empty.
+				// We can pre-emptively create an empty PackageInfo or let it error.
+				// Let's create an empty one, as the package might genuinely be empty of scannable files.
+				pkgInfo = &scanner.PackageInfo{
+					Path:  dirPath,
+					Name:  "", // Will be determined by ScanFiles if it were called, or needs to be found another way.
+					Fset:  s.fset,
+					Files: []string{},
+				}
+				// Attempt to determine package name if possible, e.g. from dir name or a known go.mod.
+				// For now, leave it potentially blank if no files are scanned.
+				// This might need adjustment based on how consumers handle PackageInfo with no files/name.
+			}
+		}
+	} else { // Cache disabled or error getting it, perform a full scan of the package.
+		pkgInfo, err = s.scanner.ScanPackage(dirPath, s) // ScanPackage uses s.scanner which has fset
+		if err != nil {
+			return nil, fmt.Errorf("full scan for package %s (cache disabled/error) failed: %w", importPath, err)
+		}
+	}
+
+	// After successfully scanning the package (either fully or partially), update the symbol cache.
 	// The importPath used here is the canonical import path for the package.
-	s.updateSymbolCacheWithPackageInfo(importPath, pkgInfo)
+	if pkgInfo != nil { // pkgInfo might be nil if ScanPackage/ScanFiles failed and returned error earlier
+		s.updateSymbolCacheWithPackageInfo(importPath, pkgInfo)
+	}
 
 	// Store the parsed *scanner.PackageInfo in the packageCache.
 	s.mu.Lock()
@@ -201,38 +280,72 @@ func (s *Scanner) updateSymbolCacheWithPackageInfo(importPath string, pkgInfo *s
 		return
 	}
 
+	// Group symbols by their absolute file path
+	symbolsByFile := make(map[string][]string)
+
+	// Helper to add symbol to file map and set in cache
+	addSymbol := func(symbolName, absFilePath string) {
+		if symbolName != "" && absFilePath != "" {
+			key := importPath + "." + symbolName
+			if err := symCache.SetSymbol(key, absFilePath); err != nil {
+				fmt.Fprintf(os.Stderr, "error setting cache for symbol %s: %v\n", key, err)
+			}
+			symbolsByFile[absFilePath] = append(symbolsByFile[absFilePath], symbolName)
+		}
+	}
+
 	// Types
 	for _, typeInfo := range pkgInfo.Types {
-		if typeInfo.Name != "" && typeInfo.FilePath != "" {
-			key := importPath + "." + typeInfo.Name
-			if err := symCache.SetSymbol(key, typeInfo.FilePath); err != nil { // Changed Set to SetSymbol
-				fmt.Fprintf(os.Stderr, "error setting cache for type %s: %v\n", key, err)
-			}
-		}
+		addSymbol(typeInfo.Name, typeInfo.FilePath)
 	}
 
 	// Functions
 	for _, funcInfo := range pkgInfo.Functions {
-		if funcInfo.Name != "" && funcInfo.FilePath != "" {
-			// TODO: Handle methods. Key format might need to distinguish between funcs and methods.
-			// e.g., importPath + "." + receiverType + "." + funcName for methods.
-			// For now, assumes top-level functions.
-			key := importPath + "." + funcInfo.Name
-			if err := symCache.SetSymbol(key, funcInfo.FilePath); err != nil { // Changed Set to SetSymbol
-				fmt.Fprintf(os.Stderr, "error setting cache for func %s: %v\n", key, err)
-			}
-		}
+		// TODO: Handle methods. Key format might need to distinguish between funcs and methods.
+		// e.g., importPath + "." + receiverType + "." + funcName for methods.
+		// For now, assumes top-level functions.
+		addSymbol(funcInfo.Name, funcInfo.FilePath)
 	}
 
 	// Constants
 	for _, constInfo := range pkgInfo.Constants {
-		if constInfo.Name != "" && constInfo.FilePath != "" {
-			key := importPath + "." + constInfo.Name
-			if err := symCache.SetSymbol(key, constInfo.FilePath); err != nil { // Changed Set to SetSymbol
-				fmt.Fprintf(os.Stderr, "error setting cache for const %s: %v\n", key, err)
-			}
+		addSymbol(constInfo.Name, constInfo.FilePath)
+	}
+
+	// Now, update FileMetadata for each file processed in this package scan
+	// pkgInfo.Files contains the list of absolute file paths that were part of this scan.
+	for _, absFilePath := range pkgInfo.Files {
+		if _, err := os.Stat(absFilePath); os.IsNotExist(err) {
+			// If a file processed by the scanner somehow doesn't exist, skip it.
+			// This shouldn't happen if scanner.ScanFiles populates pkgInfo.Files correctly.
+			fmt.Fprintf(os.Stderr, "warning: file %s from pkgInfo.Files not found, skipping for FileMetadata update\n", absFilePath)
+			continue
+		}
+
+		fileSymbols := symbolsByFile[absFilePath]
+		if fileSymbols == nil {
+			fileSymbols = []string{} // Ensure it's an empty slice, not nil, for JSON marshalling
+		}
+
+		// Note: ModTime was removed from FileMetadata. If it were present, it would be set here:
+		// fileStat, err := os.Stat(absFilePath)
+		// var modTime time.Time
+		// if err == nil {
+		// 	modTime = fileStat.ModTime()
+		// } else {
+		// 	fmt.Fprintf(os.Stderr, "warning: could not stat file %s for modtime: %v\n", absFilePath, err)
+		// }
+		// metadata := cache.FileMetadata{ModTime: modTime, Symbols: fileSymbols}
+
+		metadata := cache.FileMetadata{Symbols: fileSymbols}
+		if err := symCache.SetFileMetadata(absFilePath, metadata); err != nil {
+			fmt.Fprintf(os.Stderr, "error setting file metadata for %s: %v\n", absFilePath, err)
 		}
 	}
+
+	// It's also important to consider files that might have been removed from the package.
+	// symCache.GetFilesToScan() handles removing entries for deleted files.
+	// So, updateSymbolCacheWithPackageInfo focuses on adding/updating currently scanned files.
 }
 
 // SaveSymbolCache saves the symbol cache to disk if CachePath is set.

@@ -12,7 +12,7 @@ import (
 
 // Scanner parses Go source files within a package.
 type Scanner struct {
-	fset                  *token.FileSet    // FileSet to use for parsing. Must be provided.
+	fset                  *token.FileSet // FileSet to use for parsing. Must be provided.
 	resolver              PackageResolver
 	importLookup          map[string]string // Maps import alias/name to full import path for the current file.
 	ExternalTypeOverrides ExternalTypeOverride

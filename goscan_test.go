@@ -6,6 +6,7 @@ import (
 	"path/filepath" // Added for filepath.Join, filepath.Abs
 	"strings"       // Added for strings.Contains
 	"testing"
+
 	// "time" // Removed: No longer used
 
 	"github.com/podhmo/go-scan/cache" // Now needed for direct cache content manipulation
@@ -198,7 +199,6 @@ func TestScanner_WithSymbolCache(t *testing.T) {
 				t.Errorf("Handler symbol not found in FileMetadata for %s. Symbols: %v", relPathForHandlerFileFromCache, fileMeta.Symbols)
 			}
 		}
-
 
 		_, err = s.ScanPackageByImport(modelsImportPath)
 		if err != nil {
@@ -416,8 +416,8 @@ func TestScannerWithExternalTypeOverrides(t *testing.T) {
 
 	// Define overrides
 	overrides := scanner.ExternalTypeOverride{
-		"github.com/google/uuid.UUID": "string",      // uuid.UUID should be treated as string
-		"example.com/somepkg.Time":    "mypkg.MyTime",  // a custom non-existent type to another custom string
+		"github.com/google/uuid.UUID": "string",       // uuid.UUID should be treated as string
+		"example.com/somepkg.Time":    "mypkg.MyTime", // a custom non-existent type to another custom string
 	}
 	s.SetExternalTypeOverrides(overrides)
 
@@ -506,7 +506,7 @@ func TestScannerWithExternalTypeOverrides(t *testing.T) {
 			// Assuming User has a field like "ID int" or similar primitive
 			if len(typeInfo.Struct.Fields) > 0 {
 				idField := typeInfo.Struct.Fields[0] // Assuming ID is the first field
-				if idField.Name == "ID" { // Check field "ID" specifically
+				if idField.Name == "ID" {            // Check field "ID" specifically
 					if idField.Type.IsResolvedByConfig {
 						t.Errorf("Field ID in User should not have IsResolvedByConfig=true when no overrides are active for it")
 					}

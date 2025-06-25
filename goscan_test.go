@@ -730,3 +730,193 @@ func findType(types []*scanner.TypeInfo, name string) *scanner.TypeInfo {
 	}
 	return nil
 }
+
+func TestImplements(t *testing.T) {
+	// Setup: Initialize scanner relative to the project root,
+	// as testdata/implements is not a separate Go module.
+	// We'll use ScanPackage with a direct path.
+	s, err := New(".") // Assuming tests are run from project root
+	if err != nil {
+		t.Fatalf("New(\".\") failed: %v", err)
+	}
+
+	// Scan the testdata/implements package
+	// Note: ScanPackage's import path resolution might be tricky for non-module testdata.
+	// We rely on the absolute path for scanning and then manually construct import path if needed by TypeInfo.
+	// However, Implements itself doesn't directly use import paths from TypeInfo for resolution,
+	// it uses PkgName and Name from FieldType, which are derived by the scanner.
+	// The crucial part is that all types and functions are loaded into one PackageInfo.
+	pkgPath := "./testdata/implements"
+	pkgInfo, err := s.ScanPackage(pkgPath)
+	if err != nil {
+		t.Fatalf("ScanPackage(%q) failed: %v", pkgPath, err)
+	}
+	if pkgInfo == nil {
+		t.Fatalf("ScanPackage(%q) returned nil PackageInfo", pkgPath)
+	}
+	// For types within the same package, PkgName in FieldType might be empty or the package name.
+	// This detail affects how compareFieldTypes works if it were to compare PkgName.
+	// Current compareFieldTypes is simple, so this is less of an issue.
+
+	getType := func(name string) *scanner.TypeInfo {
+		for _, ti := range pkgInfo.Types {
+			if ti.Name == name {
+				return ti
+			}
+		}
+		t.Fatalf("Type %q not found in package %q", name, pkgInfo.Name)
+		return nil
+	}
+
+	tests := []struct {
+		name                string
+		structName          string
+		interfaceName       string
+		expectedToImplement bool
+	}{
+		// Basic cases
+		{"SimpleStruct_SimpleInterface", "SimpleStruct", "SimpleInterface", true},
+		{"SimpleStruct_EmptyInterface", "SimpleStruct", "EmptyInterface", true},
+		{"PointerReceiverStruct_PointerReceiverInterface", "PointerReceiverStruct", "PointerReceiverInterface", true},
+		{"ValueReceiverStruct_ValueReceiverInterface", "ValueReceiverStruct", "ValueReceiverInterface", true},
+		{"ComplexTypeStruct_ComplexTypeInterface", "ComplexTypeStruct", "ComplexTypeInterface", true},
+
+		// Negative cases: Method mismatches
+		{"MissingMethodStruct_SimpleInterface", "MissingMethodStruct", "SimpleInterface", false},
+		{"WrongNameStruct_SimpleInterface", "WrongNameStruct", "SimpleInterface", false},
+		{"WrongParamCountStruct_SimpleInterface", "WrongParamCountStruct", "SimpleInterface", false},
+		{"WrongParamTypeStruct_SimpleInterface", "WrongParamTypeStruct", "SimpleInterface", false},
+		{"WrongReturnCountStruct_SimpleInterface", "WrongReturnCountStruct", "SimpleInterface", false},
+		{"WrongReturnTypeStruct_SimpleInterface", "WrongReturnTypeStruct", "SimpleInterface", false},
+
+		// Negative cases: Interface not implemented
+		{"SimpleStruct_UnimplementedInterface", "SimpleStruct", "UnimplementedInterface", false},
+
+		// Edge cases: Empty and no methods
+		{"NoMethodStruct_SimpleInterface", "NoMethodStruct", "SimpleInterface", false},
+		{"NoMethodStruct_EmptyInterface", "NoMethodStruct", "EmptyInterface", true}, // Any type implements empty interface
+
+		// Receiver type considerations (based on current Implements logic)
+		// Implements gathers methods for both T and *T if structCandidate is T.
+		{"StructValueReceiverMethodX_InterfaceRequiresMethodX", "StructValueReceiverMethodX", "InterfaceRequiresMethodX", true},
+		// StructPointerReceiverMethodX only has (*S) MethodX().
+		// Implements(S_TypeInfo, I_TypeInfo) should be true if I just needs MethodX()
+		// because *S has MethodX() and Implements considers methods of *S for S_TypeInfo.
+		{"StructPointerReceiverMethodX_InterfaceRequiresMethodX", "StructPointerReceiverMethodX", "InterfaceRequiresMethodX", true},
+
+		// Test if a struct with pointer receiver method can satisfy an interface method (no receiver specified on interface method)
+		// when the struct itself is passed as a value type candidate.
+		// InterfaceValueRecMethod has DoIt(). StructPointerRecMethodForInterfaceValue has (*S) DoIt().
+		// Implements(StructPointerRecMethodForInterfaceValue_TypeInfo, InterfaceValueRecMethod_TypeInfo) should be true.
+		{"StructPointerRecMethodForInterfaceValue_InterfaceValueRecMethod", "StructPointerRecMethodForInterfaceValue", "InterfaceValueRecMethod", true},
+
+		// Test if a struct with only value receiver can satisfy an interface that might "imply" pointer methods.
+		// MyStructForReceiverTest has (t MyStructForReceiverTest) ValRec() and (t *MyStructForReceiverTest) PtrRec()
+		// InterfaceForValRec has ValRec()
+		// InterfaceForPtrRec has PtrRec()
+		{"MyStructForReceiverTest_InterfaceForValRec", "MyStructForReceiverTest", "InterfaceForValRec", true},
+		// MyStructForReceiverTest (value type) does not have PtrRec() in its value method set.
+		// But Implements will find (*MyStructForReceiverTest) PtrRec() and associate it.
+		{"MyStructForReceiverTest_InterfaceForPtrRec", "MyStructForReceiverTest", "InterfaceForPtrRec", true},
+
+
+		// Nil and invalid inputs (tested directly, not via table for clarity on nil pkgInfo etc.)
+
+		// Type comparison details (assuming compareFieldTypes will be/is correct for slices, maps, pointers)
+		{"StructWithAnotherType_InterfaceWithAnotherType", "StructWithAnotherType", "InterfaceWithAnotherType", true},
+		{"StructWithDifferentNamedType_InterfaceWithAnotherType", "StructWithDifferentNamedType", "InterfaceWithAnotherType", false}, // Fails due to YetAnotherType vs AnotherType
+		{"StructWithMismatchedPointerForAnotherType_InterfaceWithAnotherType", "StructWithMismatchedPointerForAnotherType", "InterfaceWithAnotherType", false}, // Fails due to pointer mismatch on param/return
+
+		{"StructImplementingSliceMap_InterfaceWithSliceMap", "StructImplementingSliceMap", "InterfaceWithSliceMap", true},
+		{"StructMismatchSlice_InterfaceWithSliceMap", "StructMismatchSlice", "InterfaceWithSliceMap", false},         // Assumes compareFieldTypes handles slice element type
+		{"StructMismatchMapValue_InterfaceWithSliceMap", "StructMismatchMapValue", "InterfaceWithSliceMap", false}, // Assumes compareFieldTypes handles map value type
+		{"StructMismatchMapKey_InterfaceWithSliceMap", "StructMismatchMapKey", "InterfaceWithSliceMap", false},     // Assumes compareFieldTypes handles map key type
+
+		{"StructWithPointerInSlice_InterfaceWithPointerInSlice", "StructWithPointerInSlice", "InterfaceWithPointerInSlice", true}, // []*int vs []*int
+		{"StructWithPointerInSlice_InterfaceWithDifferentPointerInSlice", "StructWithPointerInSlice", "InterfaceWithDifferentPointerInSlice", false}, // []*int vs []*string
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			structCandidate := getType(tt.structName)
+			interfaceDef := getType(tt.interfaceName)
+
+			// Pre-checks for test validity
+			if structCandidate == nil {
+				t.Fatalf("Test setup error: Struct candidate %q not found", tt.structName)
+			}
+			if structCandidate.Kind != StructKind && tt.structName != "NotAStruct" { // Allow NotAStruct for specific test
+				t.Fatalf("Test setup error: Candidate %q is not a struct but Kind=%v", tt.structName, structCandidate.Kind)
+			}
+			if interfaceDef == nil {
+				t.Fatalf("Test setup error: Interface definition %q not found", tt.interfaceName)
+			}
+			if interfaceDef.Kind != InterfaceKind && tt.interfaceName != "NotAnInterface" { // Allow for specific test
+				t.Fatalf("Test setup error: Interface def %q is not an interface but Kind=%v", tt.interfaceName, interfaceDef.Kind)
+			}
+
+
+			// Perform the Implements check
+			// Ensure pkgInfo is correctly passed; it's derived from scanning "./testdata/implements"
+			// and contains all types and functions from types.go
+			actual := Implements(structCandidate, interfaceDef, pkgInfo)
+			if actual != tt.expectedToImplement {
+				t.Errorf("Implements(%s, %s): expected %v, got %v", tt.structName, tt.interfaceName, tt.expectedToImplement, actual)
+			}
+		})
+	}
+
+	// Direct tests for nil and invalid inputs
+	t.Run("NilInputs", func(t *testing.T) {
+		simpleStruct := getType("SimpleStruct")
+		simpleInterface := getType("SimpleInterface")
+
+		if Implements(nil, simpleInterface, pkgInfo) != false {
+			t.Error("Implements(nil, interface, pkgInfo) should be false")
+		}
+		if Implements(simpleStruct, nil, pkgInfo) != false {
+			t.Error("Implements(struct, nil, pkgInfo) should be false")
+		}
+		if Implements(simpleStruct, simpleInterface, nil) != false {
+			t.Error("Implements(struct, interface, nil) should be false")
+		}
+	})
+
+	t.Run("InvalidKindInputs", func(t *testing.T) {
+		notAStruct := getType("NotAStruct") // This is an alias to int
+		notAnInterface := getType("NotAnInterface") // This is an alias to int
+		simpleStruct := getType("SimpleStruct")
+		simpleInterface := getType("SimpleInterface")
+
+		if notAStruct.Kind == StructKind { // Defensive check on test data itself
+			t.Fatal("Test data error: NotAStruct should not have StructKind")
+		}
+		if notAnInterface.Kind == InterfaceKind { // Defensive check
+			t.Fatal("Test data error: NotAnInterface should not have InterfaceKind")
+		}
+
+
+		if Implements(notAStruct, simpleInterface, pkgInfo) != false {
+			t.Errorf("Implements(NotAStruct, SimpleInterface, pkgInfo) expected false, got true. NotAStruct.Kind: %v", notAStruct.Kind)
+		}
+		if Implements(simpleStruct, notAnInterface, pkgInfo) != false {
+			t.Errorf("Implements(SimpleStruct, NotAnInterface, pkgInfo) expected false, got true. NotAnInterface.Kind: %v, Interface field: %+v", notAnInterface.Kind, notAnInterface.Interface)
+		}
+		// Test case where interfaceDef.Interface is nil (e.g. type alias for interface)
+		// The getType function resolves to TypeInfo. If NotAnInterface is an alias type,
+		// its TypeInfo.Interface field should be nil.
+		// The Implements function checks `interfaceDef.Interface == nil`.
+		// `scanner.parseTypeSpec` for alias `type MyI = OtherInterface` would set Underlying.
+		// For `type MyI int` where MyI is used as interface, `interfaceDef.Kind` wouldn't be `InterfaceKind`.
+		// For `type MyI interface {}` then `interfaceDef.Kind` is `InterfaceKind`.
+		// If `type MyI OtherInterface` (not an alias, but embedding), scanner would need to resolve.
+		// The `NotAnInterface` type in `types.go` is `type NotAnInterface int`. Its kind is `AliasKind`.
+		// So `interfaceDef.Kind != InterfaceKind` check in `Implements` handles this.
+	})
+
+	// Test for interfaceDef.Interface being nil (e.g. an alias that isn't an interface kind)
+	// This is implicitly covered by InvalidKindInputs if NotAnInterface.Kind is not InterfaceKind.
+	// If we had `type AliasToInterface = SimpleInterface`, then its Kind might be InterfaceKind (or AliasKind, depending on scanner).
+	// If `AliasKind` and `Underlying` points to an interface, `Implements` would need to handle it.
+	// Current `Implements` expects `interfaceDef.Kind == InterfaceKind`.
+}

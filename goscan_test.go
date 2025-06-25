@@ -7,8 +7,10 @@ import (
 	"strings"       // Added for strings.Contains
 	"testing"
 
+	// "time" // Removed: No longer used
+
+	"github.com/podhmo/go-scan/cache" // Now needed for direct cache content manipulation
 	"github.com/podhmo/go-scan/scanner"
-	// No need to import cache directly unless we are type-asserting SymbolCache internals
 )
 
 // Helper to create a temporary directory for testing scanner cache
@@ -165,8 +167,37 @@ func TestScanner_WithSymbolCache(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Failed to read cache file: %v", err)
 		}
-		if !strings.Contains(string(data), handlerSymbolFullName) {
-			t.Errorf("Cache file content does not seem to contain %s. Content: %s", handlerSymbolFullName, string(data))
+
+		var loadedCacheContent cache.CacheContent
+		if err := json.Unmarshal(data, &loadedCacheContent); err != nil {
+			t.Fatalf("Failed to unmarshal cache content: %v", err)
+		}
+
+		// Check if Handler symbol is in the Symbols map
+		if _, ok := loadedCacheContent.Symbols[handlerSymbolFullName]; !ok {
+			t.Errorf("Cache Symbols map does not contain %s. Content: %+v", handlerSymbolFullName, loadedCacheContent.Symbols)
+		}
+
+		// Check if the file containing Handler is in the Files map and has Handler in its symbol list
+		// Get the relative path of the handler file as stored in the cache (from the Symbols map).
+		relPathForHandlerFileFromCache, foundSymbol := loadedCacheContent.Symbols[handlerSymbolFullName]
+		if !foundSymbol {
+			t.Fatalf("Handler symbol %s not found in loaded cache Symbols map, cannot verify Files map.", handlerSymbolFullName)
+		}
+
+		if fileMeta, ok := loadedCacheContent.Files[relPathForHandlerFileFromCache]; !ok {
+			t.Errorf("Cache Files map does not contain entry for handler file %s (path from Symbols map). Content: %+v", relPathForHandlerFileFromCache, loadedCacheContent.Files)
+		} else {
+			foundHandlerInFileMeta := false
+			for _, symName := range fileMeta.Symbols {
+				if symName == "Handler" { // Assuming symbol name is stored without package prefix in FileMetadata.Symbols
+					foundHandlerInFileMeta = true
+					break
+				}
+			}
+			if !foundHandlerInFileMeta {
+				t.Errorf("Handler symbol not found in FileMetadata for %s. Symbols: %v", relPathForHandlerFileFromCache, fileMeta.Symbols)
+			}
 		}
 
 		_, err = s.ScanPackageByImport(modelsImportPath)
@@ -231,13 +262,23 @@ func TestScanner_WithSymbolCache(t *testing.T) {
 		staleUserSymbol := modelsImportPath + ".User"
 		// Construct path relative to moduleRootDir for the prefilled cache.
 		// SymbolCache stores paths relative to its rootDir, which for Scanner is moduleRootDir.
-		staleFileRelativePath := "testdata/multipkg/models/non_existent_user.go"
+		staleFileRelativePath := "testdata/multipkg/models/non_existent_user.go" // This file doesn't actually exist
 
-		prefilledCacheData := map[string]string{
-			staleUserSymbol: staleFileRelativePath, // Stored as relative path with forward slashes
+		// Prefill cache with a stale entry pointing to a non-existent file
+		// for a specific symbol, and also include a FileMetadata entry for that file.
+		prefilledCacheContent := cache.CacheContent{
+			Symbols: map[string]string{
+				staleUserSymbol: staleFileRelativePath, // staleUserSymbol -> non_existent_user.go
+			},
+			Files: map[string]cache.FileMetadata{
+				staleFileRelativePath: { // Entry for non_existent_user.go
+					Symbols: []string{"User"}, // Assumes "User" was in this non-existent file
+					// ModTime would have been here if used
+				},
+			},
 		}
-		jsonData, _ := json.Marshal(prefilledCacheData)
-		os.MkdirAll(filepath.Dir(cacheFilePath), 0755)
+		jsonData, _ := json.MarshalIndent(prefilledCacheContent, "", "  ")
+		os.MkdirAll(filepath.Dir(cacheFilePath), 0755) // Ensure cache directory exists
 		os.WriteFile(cacheFilePath, jsonData, 0644)
 
 		loc, err := s.FindSymbolDefinitionLocation(staleUserSymbol)
@@ -375,8 +416,8 @@ func TestScannerWithExternalTypeOverrides(t *testing.T) {
 
 	// Define overrides
 	overrides := scanner.ExternalTypeOverride{
-		"github.com/google/uuid.UUID": "string",      // uuid.UUID should be treated as string
-		"example.com/somepkg.Time":    "mypkg.MyTime",  // a custom non-existent type to another custom string
+		"github.com/google/uuid.UUID": "string",       // uuid.UUID should be treated as string
+		"example.com/somepkg.Time":    "mypkg.MyTime", // a custom non-existent type to another custom string
 	}
 	s.SetExternalTypeOverrides(overrides)
 
@@ -465,7 +506,7 @@ func TestScannerWithExternalTypeOverrides(t *testing.T) {
 			// Assuming User has a field like "ID int" or similar primitive
 			if len(typeInfo.Struct.Fields) > 0 {
 				idField := typeInfo.Struct.Fields[0] // Assuming ID is the first field
-				if idField.Name == "ID" { // Check field "ID" specifically
+				if idField.Name == "ID" {            // Check field "ID" specifically
 					if idField.Type.IsResolvedByConfig {
 						t.Errorf("Field ID in User should not have IsResolvedByConfig=true when no overrides are active for it")
 					}

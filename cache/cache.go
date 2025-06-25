@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings" // Added
 	"sync"
+	// "time" // Removed: No longer needed after ModTime removal from FileMetadata
 )
 
 const (
@@ -14,14 +15,28 @@ const (
 	defaultCacheFileName = "cache.json"
 )
 
+// FileMetadata stores metadata about a cached file.
+type FileMetadata struct {
+	// ModTime time.Time `json:"mod_time"` // Removed as per user feedback
+	Symbols []string `json:"symbols"`
+}
+
+// CacheContent holds all data that is serialized to the cache file.
+type CacheContent struct {
+	Symbols map[string]string       `json:"symbols"` // Key: "<pkg_path>.<symbol_name>", Value: "relative_filepath"
+	Files   map[string]FileMetadata `json:"files"`   // Key: "relative_filepath", Value: FileMetadata
+}
+
 // SymbolCache manages the symbol definition cache.
-// It is responsible for loading, saving, and providing access to cached symbol locations.
+// It is responsible for loading, saving, and providing access to cached symbol locations and file metadata.
 type SymbolCache struct {
-	mu        sync.RWMutex
-	cacheData map[string]string // Key: "<pkg_path>.<symbol_name>", Value: "filepath"
-	filePath  string
-	useCache  bool
-	rootDir   string // Project root directory, used to make filepaths relative
+	mu sync.RWMutex
+	// cacheData map[string]string // Key: "<pkg_path>.<symbol_name>", Value: "filepath" // Replaced by content.Symbols
+	// fileCacheData map[string]FileMetadata // Key: "relative_filepath", Value: FileMetadata // Replaced by content.Files
+	content  CacheContent
+	filePath string
+	useCache bool
+	rootDir  string // Project root directory, used to make filepaths relative
 }
 
 // NewSymbolCache creates a new SymbolCache.
@@ -30,8 +45,11 @@ type SymbolCache struct {
 // configCachePath is the user-configured path for the cache file. If empty, caching is disabled.
 func NewSymbolCache(rootDir string, configCachePath string) (*SymbolCache, error) { // Removed configUseCache
 	sc := &SymbolCache{
-		cacheData: make(map[string]string),
-		rootDir:   rootDir,
+		content: CacheContent{
+			Symbols: make(map[string]string),
+			Files:   make(map[string]FileMetadata),
+		},
+		rootDir: rootDir,
 		// filePath and useCache will be set based on configCachePath
 	}
 
@@ -61,24 +79,41 @@ func (sc *SymbolCache) Load() error {
 	data, err := os.ReadFile(sc.filePath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			sc.cacheData = make(map[string]string) // Ensure fresh map if file not found
-			return nil                             // File not existing is not an error, just means no cache yet
+			sc.content = CacheContent{ // Initialize with empty maps
+				Symbols: make(map[string]string),
+				Files:   make(map[string]FileMetadata),
+			}
+			return nil // File not existing is not an error, just means no cache yet
 		}
 		return fmt.Errorf("failed to read cache file %s: %w", sc.filePath, err)
 	}
 
 	if len(data) == 0 { // Handle empty file case
-		sc.cacheData = make(map[string]string)
+		sc.content = CacheContent{ // Initialize with empty maps
+			Symbols: make(map[string]string),
+			Files:   make(map[string]FileMetadata),
+		}
 		return nil
 	}
 
-	err = json.Unmarshal(data, &sc.cacheData)
+	var newContent CacheContent
+	err = json.Unmarshal(data, &newContent)
 	if err != nil {
 		// If unmarshalling fails, treat it as a corrupted cache and start fresh
-		// Log this event ideally, but for now, just reset.
 		fmt.Fprintf(os.Stderr, "warning: failed to unmarshal cache file %s, starting with an empty cache: %v\n", sc.filePath, err)
-		sc.cacheData = make(map[string]string)
+		sc.content = CacheContent{ // Initialize with empty maps
+			Symbols: make(map[string]string),
+			Files:   make(map[string]FileMetadata),
+		}
 		return nil // Return nil to allow the program to continue with an empty cache
+	}
+	sc.content = newContent
+	// Ensure maps are not nil if JSON had them as null
+	if sc.content.Symbols == nil {
+		sc.content.Symbols = make(map[string]string)
+	}
+	if sc.content.Files == nil {
+		sc.content.Files = make(map[string]FileMetadata)
 	}
 	return nil
 }
@@ -90,27 +125,21 @@ func (sc *SymbolCache) Save() error {
 	}
 
 	sc.mu.RLock()
-	// If cacheData is empty, no need to save, but we might want to ensure the file is also empty or non-existent.
-	// For now, only write if there's something to write, to avoid unnecessary I/O or empty "{}" files.
-	if len(sc.cacheData) == 0 {
-		// Let's consider if we should remove the file if the cache is empty.
-		// For now, if the file exists and cache becomes empty, it will remain with old data unless explicitly cleared or overwritten.
-		// This behavior might be fine, or we might want to write an empty JSON object {} or delete the file.
-		// To ensure the file reflects the empty state, we should proceed to write.
-		// Let's remove this early exit.
-		// defer sc.mu.RUnlock() // Original position
-		// return nil
+	// Create a deep copy of content to marshal, to avoid holding lock during MarshalIndent
+	contentToSave := CacheContent{
+		Symbols: make(map[string]string, len(sc.content.Symbols)),
+		Files:   make(map[string]FileMetadata, len(sc.content.Files)),
 	}
-	// data, err := json.MarshalIndent(sc.cacheData, "", "  ") // Original position
-
-	// To handle saving an empty cache as "{}", we need to marshal even if len is 0.
-	currentCacheData := make(map[string]string)
-	for k, v := range sc.cacheData {
-		currentCacheData[k] = v
+	for k, v := range sc.content.Symbols {
+		contentToSave.Symbols[k] = v
 	}
-	sc.mu.RUnlock() // Unlock RLock before potential write operations (MkdirAll, WriteFile)
+	for k, v := range sc.content.Files {
+		contentToSave.Files[k] = v // FileMetadata is a struct, so direct assignment is a copy
+	}
+	sc.mu.RUnlock() // Unlock RLock before potential write operations (MarshalIndent, MkdirAll, WriteFile)
 
-	data, err := json.MarshalIndent(currentCacheData, "", "  ")
+	// Marshal even if maps are empty to produce "{}" or {"symbols":{}, "files":{}}
+	data, err := json.MarshalIndent(contentToSave, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal cache data: %w", err)
 	}
@@ -148,23 +177,21 @@ func (sc *SymbolCache) Get(key string) (string, bool) {
 	sc.mu.RLock()
 	defer sc.mu.RUnlock()
 
-	relativePath, found := sc.cacheData[key]
+	relativePath, found := sc.content.Symbols[key]
 	if !found {
 		return "", false
 	}
 	// Cache stores relative paths, convert to absolute before returning
 	if filepath.IsAbs(relativePath) { // Should not happen if saved correctly
-		// This might indicate an old cache format or an error in Set.
-		// For robustness, return it as is, but ideally paths are relative.
-		return relativePath, true
+		return relativePath, true // Should be logged as a warning or fixed upon load
 	}
 	return filepath.Join(sc.rootDir, relativePath), true
 }
 
-// Set stores a filepath for a given symbol key.
+// SetSymbol stores a filepath for a given symbol key.
 // The key is typically "<package_import_path>.<SymbolName>".
 // The filepath should be an absolute path; it will be converted to relative before storing.
-func (sc *SymbolCache) Set(key string, absoluteFilepath string) error {
+func (sc *SymbolCache) SetSymbol(key string, absoluteFilepath string) error {
 	if !sc.useCache {
 		return nil
 	}
@@ -173,42 +200,89 @@ func (sc *SymbolCache) Set(key string, absoluteFilepath string) error {
 	defer sc.mu.Unlock()
 
 	if sc.rootDir == "" {
-		return fmt.Errorf("rootDir is empty in SymbolCache, cannot set key %s. SymbolCache must be initialized with a valid rootDir", key)
+		return fmt.Errorf("rootDir is empty in SymbolCache, cannot set symbol key %s. SymbolCache must be initialized with a valid rootDir", key)
 	}
-
-	// Ensure absoluteFilepath is truly absolute before prefix check or Rel
 	if !filepath.IsAbs(absoluteFilepath) {
-		return fmt.Errorf("filepath to cache must be absolute, got %s for key %s", absoluteFilepath, key)
+		return fmt.Errorf("filepath to cache for symbol must be absolute, got %s for key %s", absoluteFilepath, key)
 	}
 
-	// Clean both paths to handle trailing slashes etc. for reliable prefix check
+	relativeFilepath, err := sc.makeRelative(absoluteFilepath)
+	if err != nil {
+		return fmt.Errorf("failed to make filepath relative for symbol key %s: %w", key, err)
+	}
+
+	sc.content.Symbols[key] = relativeFilepath
+	// Also update the file's symbol list in fileCacheData
+	// This assumes that when a symbol is set, its containing file's metadata should also be updated or created.
+	// It might be better to have a separate mechanism for updating FileMetadata if symbols can be added without a full file rescan.
+	// For now, let's ensure the file metadata knows about this symbol.
+	// This part is tricky: SetSymbol might be called without full FileMetadata (ModTime, all other symbols).
+	// It's safer to manage FileMetadata.Symbols when FileMetadata is explicitly set via SetFileMetadata.
+	// So, we will *not* modify sc.content.Files[relativeFilepath].Symbols here directly.
+	// Instead, the caller (e.g., goscan.Scanner) should ensure SetFileMetadata is called after scanning.
+	return nil
+}
+
+// SetFileMetadata stores/updates the metadata for a given file.
+// The absoluteFilepath will be converted to relative before storing.
+func (sc *SymbolCache) SetFileMetadata(absoluteFilepath string, metadata FileMetadata) error {
+	if !sc.useCache {
+		return nil
+	}
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+
+	if sc.rootDir == "" {
+		return fmt.Errorf("rootDir is empty in SymbolCache, cannot set file metadata for %s. SymbolCache must be initialized with a valid rootDir", absoluteFilepath)
+	}
+	if !filepath.IsAbs(absoluteFilepath) {
+		return fmt.Errorf("filepath for file metadata must be absolute, got %s", absoluteFilepath)
+	}
+
+	relativeFilepath, err := sc.makeRelative(absoluteFilepath)
+	if err != nil {
+		return fmt.Errorf("failed to make filepath relative for file metadata %s: %w", absoluteFilepath, err)
+	}
+	sc.content.Files[relativeFilepath] = metadata
+	return nil
+}
+
+// RemoveSymbolsForFile removes all symbol entries from content.Symbols that point to the given relativeFilepath.
+// This is a helper, typically called when a file is detected as deleted or its symbols are being refreshed.
+// Must be called with appropriate lock if used externally (though primarily for internal use within other locked methods).
+func (sc *SymbolCache) removeSymbolsForFile(relativeFilepath string) {
+	for key, path := range sc.content.Symbols {
+		if path == relativeFilepath {
+			delete(sc.content.Symbols, key)
+		}
+	}
+}
+
+// makeRelative converts an absolute path to a path relative to sc.rootDir.
+// Assumes sc.rootDir is set and absoluteFilepath is absolute.
+func (sc *SymbolCache) makeRelative(absoluteFilepath string) (string, error) {
 	cleanedRootDir := filepath.Clean(sc.rootDir)
 	cleanedAbsFilepath := filepath.Clean(absoluteFilepath)
 
-	// Check if the absoluteFilepath is under rootDir.
-	// strings.HasPrefix is a simple way. Add path separator to avoid matching /root/a to /root/abc.
-	// Ensure rootDir itself ends with a separator for prefix check, unless it's the root "/"
 	rootDirPrefix := cleanedRootDir
-	// Avoid adding double separator if rootDir is "/"
 	if cleanedRootDir != string(filepath.Separator) && !strings.HasSuffix(cleanedRootDir, string(filepath.Separator)) {
 		rootDirPrefix += string(filepath.Separator)
 	}
 
 	if !strings.HasPrefix(cleanedAbsFilepath, rootDirPrefix) && cleanedAbsFilepath != cleanedRootDir {
-		// If cleanedAbsFilepath is exactly cleanedRootDir (e.g. caching the root dir itself, unlikely for a file)
-		// it would also be valid.
-		return fmt.Errorf("filepath %s is not within the configured rootDir %s for key %s", absoluteFilepath, sc.rootDir, key)
+		return "", fmt.Errorf("filepath %s is not within the configured rootDir %s", absoluteFilepath, sc.rootDir)
 	}
 
-	relativeFilepath, err := filepath.Rel(cleanedRootDir, cleanedAbsFilepath) // Use cleaned paths for Rel
+	relativeFilepath, err := filepath.Rel(cleanedRootDir, cleanedAbsFilepath)
 	if err != nil {
-		// This error should ideally not happen if the prefix check above is correct and robust,
-		// but Rel can have edge cases.
-		return fmt.Errorf("internal error: filepath.Rel failed for %s relative to %s for key %s: %w", cleanedAbsFilepath, cleanedRootDir, key, err)
+		return "", fmt.Errorf("filepath.Rel failed for %s relative to %s: %w", cleanedAbsFilepath, cleanedRootDir, err)
 	}
-
-	sc.cacheData[key] = filepath.ToSlash(relativeFilepath)
-	return nil
+	// Ensure all backslashes are converted to forward slashes before final ToSlash.
+	// This handles cases where 'absoluteFilepath' might have contained '\' (e.g. from user input or cross-platform scenarios)
+	// which, on Unix, might be part of a segment name after filepath.Clean and filepath.Rel.
+	// We want to enforce '/' as the universal separator in the cache.
+	universalRelativePath := strings.ReplaceAll(relativeFilepath, "\\", "/")
+	return filepath.ToSlash(universalRelativePath), nil // filepath.ToSlash is good practice here, though universalRelativePath should already be fine.
 }
 
 // VerifyAndGet checks if the symbol likely still exists at the cached path.
@@ -220,30 +294,65 @@ func (sc *SymbolCache) VerifyAndGet(key string) (string, bool) {
 		return "", false
 	}
 
-	// Get already handles sc.rootDir and returns an absolute path
-	absolutePath, found := sc.Get(key)
-	if !found {
+	sc.mu.RLock() // Start with RLock for initial checks
+	relativePath, symbolFoundInSymbolsMap := sc.content.Symbols[key]
+	rootDir := sc.rootDir // Read while RLock is held
+	sc.mu.RUnlock()
+
+	if !symbolFoundInSymbolsMap {
 		return "", false
 	}
 
-	// Check if the file still exists
-	// Note: os.Stat returns an error if the path does not exist.
-	if _, err := os.Stat(absolutePath); err != nil {
-		// If os.Stat fails, the entry might be stale or the file inaccessible.
-		// We should remove it from the cache regardless of the exact error,
-		// as we can't rely on this cached path.
-		sc.mu.Lock()
-		delete(sc.cacheData, key)
-		sc.mu.Unlock()
+	absolutePath := filepath.Join(rootDir, relativePath)
+	if filepath.IsAbs(relativePath) { // Should not happen
+		absolutePath = relativePath
+	}
 
-		// Log the reason for removal if it's not a simple NotExist error
+	// Check if the file still exists
+	if _, err := os.Stat(absolutePath); err != nil {
+		sc.mu.Lock()
+		defer sc.mu.Unlock()
+
+		// File doesn't exist or error stating it, remove the symbol from sc.content.Symbols
+		delete(sc.content.Symbols, key)
+
+		// Also, remove this specific symbol from the sc.content.Files[relativePath].Symbols list
+		if fileMeta, ok := sc.content.Files[relativePath]; ok {
+			newSymbols := []string{}
+			symbolName := getSymbolNameFromKey(key) // Helper function needed
+			for _, s := range fileMeta.Symbols {
+				if s != symbolName {
+					newSymbols = append(newSymbols, s)
+				}
+			}
+			if len(newSymbols) < len(fileMeta.Symbols) { // If symbol was actually removed
+				fileMeta.Symbols = newSymbols
+				if len(fileMeta.Symbols) == 0 {
+					// Optional: If no symbols left for this file, consider removing the file entry itself.
+					// delete(sc.content.Files, relativePath)
+					// For now, keep the file entry for its ModTime, unless it's also proven stale.
+					// If we decide to delete, ensure this doesn't conflict with GetFilesToScan logic.
+				}
+				sc.content.Files[relativePath] = fileMeta // Update the map with modified slice
+			}
+		}
+
 		if !os.IsNotExist(err) {
-			fmt.Fprintf(os.Stderr, "warning: removing cache entry for key %s due to error accessing %s: %v\n", key, absolutePath, err)
+			fmt.Fprintf(os.Stderr, "warning: removing cache entry for symbol key %s (file %s) due to error accessing file: %v\n", key, absolutePath, err)
 		}
 		return "", false
 	}
 
 	return absolutePath, true
+}
+
+// getSymbolNameFromKey extracts the symbol name from a key like "pkg/path.SymbolName".
+func getSymbolNameFromKey(key string) string {
+	lastDot := strings.LastIndex(key, ".")
+	if lastDot == -1 || lastDot == len(key)-1 {
+		return key // Or handle error, though symbols usually have a package path
+	}
+	return key[lastDot+1:]
 }
 
 // RootDir returns the project root directory used by the cache.
@@ -259,4 +368,76 @@ func (sc *SymbolCache) FilePath() string {
 // IsEnabled returns true if the cache is configured to be used.
 func (sc *SymbolCache) IsEnabled() bool {
 	return sc.useCache
+}
+
+// GetFilesToScan analyzes the files in a given package directory against the cache.
+// It identifies new files, existing (cached) files, and deleted files.
+// It returns:
+// - newFilesToScan: Absolute paths of new files in the directory not yet in cache.
+// - existingFilesInCache: Absolute paths of files present in both directory and cache.
+// - err: An error if any.
+// It also cleans up cache entries for deleted files.
+func (sc *SymbolCache) GetFilesToScan(packageDirPath string) (newFilesToScan []string, existingFilesInCache []string, err error) {
+	if !sc.useCache {
+		// If cache is disabled, the caller should ideally list all files and scan them.
+		// This method's contract is to interact with the cache.
+		return nil, nil, fmt.Errorf("cache is disabled, GetFilesToScan should not be called in this state")
+	}
+
+	sc.mu.Lock() // Lock for the duration as we might modify cache
+	defer sc.mu.Unlock()
+
+	currentDirRelativeFiles := make(map[string]bool) // Relative paths (to rootDir) of files currently in the package directory
+
+	dirEntries, err := os.ReadDir(packageDirPath)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to read package directory %s: %w", packageDirPath, err)
+	}
+
+	for _, entry := range dirEntries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") || strings.HasSuffix(entry.Name(), "_test.go") {
+			continue
+		}
+		absPath := filepath.Join(packageDirPath, entry.Name())
+		relPath, err := sc.makeRelative(absPath) // Converts to path relative to sc.rootDir
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: could not make path %s relative to root %s: %v\n", absPath, sc.rootDir, err)
+			continue // Skip files not processable
+		}
+		currentDirRelativeFiles[relPath] = true
+
+		// Check if this file (now identified by its path relative to rootDir) is in cache
+		if _, isCached := sc.content.Files[relPath]; !isCached {
+			newFilesToScan = append(newFilesToScan, absPath) // File is new to the cache
+		} else {
+			existingFilesInCache = append(existingFilesInCache, absPath) // File exists in directory and is in cache
+		}
+	}
+
+	// Identify and clean up deleted files from cache
+	// Iterate over cached files that are supposed to be in this packageDirPath
+	cachedFilesInPackageScope := make([]string, 0)
+	for relPathInCacheStore := range sc.content.Files {
+		// To determine if relPathInCacheStore (relative to root) belongs to packageDirPath (absolute):
+		// Construct its absolute path and check if it's within packageDirPath.
+		absCachedFilePath := filepath.Join(sc.rootDir, relPathInCacheStore)
+
+		// Check if the parent directory of absCachedFilePath is packageDirPath
+		// A simple string prefix check on absolute paths is often sufficient if paths are clean.
+		// Ensure packageDirPath is cleaned to avoid issues with trailing slashes.
+		cleanedPackageDirPath := filepath.Clean(packageDirPath)
+		if filepath.Dir(absCachedFilePath) == cleanedPackageDirPath {
+			cachedFilesInPackageScope = append(cachedFilesInPackageScope, relPathInCacheStore)
+		}
+	}
+
+	for _, relPathInCache := range cachedFilesInPackageScope {
+		if _, stillExistsInDir := currentDirRelativeFiles[relPathInCache]; !stillExistsInDir {
+			// This file, previously cached and belonging to this package, is no longer in the directory.
+			delete(sc.content.Files, relPathInCache) // Remove from file metadata cache
+			sc.removeSymbolsForFile(relPathInCache)  // Remove associated symbols from symbol map
+		}
+	}
+
+	return newFilesToScan, existingFilesInCache, nil
 }

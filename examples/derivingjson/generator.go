@@ -246,7 +246,7 @@ func Generate(pkgPath string) error {
 					if errScan == nil && scannedInterfacePkg != nil {
 						fmt.Printf("        Successfully scanned interface's package: %s, Found %d types.\n", scannedInterfacePkg.ImportPath, len(scannedInterfacePkg.Types))
 						for _, t := range scannedInterfacePkg.Types {
-							fmt.Printf("          Type in interface pkg: %s (Kind: %s)\n", t.Name, t.Kind)
+						fmt.Printf("          Type in interface pkg: %s (Kind: %v)\n", t.Name, t.Kind)
 						}
 						alreadyAdded := false
 						for _, sp := range searchPkgs { if sp.ImportPath == scannedInterfacePkg.ImportPath { alreadyAdded = true; break } }
@@ -274,13 +274,13 @@ func Generate(pkgPath string) error {
 						if processedImplementerKeys[implementerKey] { continue }
 
 						// Debug: Print details of interfaceDef and candidateType before calling Implements
-						fmt.Printf("            Interface: %s (Package: %s, Kind: %s)\n", interfaceDef.Name, interfaceDef.FilePath, interfaceDef.Kind)
+						fmt.Printf("            Interface: %s (Package: %s, Kind: %v)\n", interfaceDef.Name, interfaceDef.FilePath, interfaceDef.Kind)
 						if interfaceDef.Interface != nil {
 							for _, m := range interfaceDef.Interface.Methods {
 								fmt.Printf("              InterfaceMethod: %s\n", m.Name)
 							}
 						}
-						fmt.Printf("            Candidate: %s (Package: %s, Kind: %s)\n", candidateType.Name, currentSearchPkg.ImportPath, candidateType.Kind)
+						fmt.Printf("            Candidate: %s (Package: %s, Kind: %v)\n", candidateType.Name, currentSearchPkg.ImportPath, candidateType.Kind)
 
 
 						if goscan.Implements(candidateType, interfaceDef, currentSearchPkg) {

@@ -1,4 +1,4 @@
-module github.com/hidori/go-tools/examples/derivingjson
+module github.com/podhmo/go-scan/examples/derivingjson
 
 go 1.21
 

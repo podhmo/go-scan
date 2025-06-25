@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"strings" // Added for strings.Contains
 	"testing"
 )
 
@@ -138,4 +139,183 @@ func TestUnmarshalAPIResponse(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestUnmarshalMultiOneOfStructs(t *testing.T) {
+	// Import testify/assert
+	// import "github.com/stretchr/testify/assert"
+	// No, Go style is to have all imports at the top. I'll assume it's added or add it manually if needed after this block.
+	// For now, let's write the test logic. If `assert` is not found by the linter, I'll add the import.
+	// It's better to modify the imports separately if needed.
+
+	t.Run("Scene: multiple different oneOf fields", func(t *testing.T) {
+		sceneJSON := `
+		{
+			"name": "Park Scene",
+			"main_animal": {"type": "dog", "breed": "Labrador", "noise": "Woof"},
+			"main_vehicle": {"type": "bicycle", "gears": 5, "has_bell": true},
+			"description": "A sunny day in the park."
+		}`
+		var scene Scene
+		err := json.Unmarshal([]byte(sceneJSON), &scene)
+		if err != nil { t.Fatalf("Scene unmarshal failed: %v", err) }
+
+		if scene.Name != "Park Scene" { t.Errorf("Expected scene name 'Park Scene', got '%s'", scene.Name) }
+		if scene.Description != "A sunny day in the park." { t.Errorf("Expected scene desc, got '%s'", scene.Description) }
+
+		if scene.MainAnimal == nil { t.Fatal("scene.MainAnimal is nil") }
+		dog, ok := scene.MainAnimal.(*Dog)
+		if !ok { t.Fatalf("MainAnimal is not *Dog, it's %T", scene.MainAnimal) }
+		if dog.Breed != "Labrador" { t.Errorf("Expected dog breed 'Labrador', got '%s'", dog.Breed) }
+		if dog.Noise != "Woof" { t.Errorf("Expected dog noise 'Woof', got '%s'", dog.Noise) }
+
+
+		if scene.MainVehicle == nil { t.Fatal("scene.MainVehicle is nil") }
+		bicycle, ok := scene.MainVehicle.(*Bicycle)
+		if !ok { t.Fatalf("MainVehicle is not *Bicycle, it's %T", scene.MainVehicle) }
+		if bicycle.Gears != 5 { t.Errorf("Expected bicycle gears 5, got %d", bicycle.Gears) }
+		if !bicycle.HasBell { t.Error("Expected bicycle to have a bell") }
+	})
+
+	t.Run("Scene: one field nil, other present", func(t *testing.T) {
+		sceneJSONPartial := `
+		{
+			"name": "Quiet Morning",
+			"main_animal": {"type": "cat", "color": "Black", "purr": true},
+			"main_vehicle": null
+		}`
+		var scenePartial Scene
+		err := json.Unmarshal([]byte(sceneJSONPartial), &scenePartial)
+		if err != nil { t.Fatalf("Scene partial unmarshal failed: %v", err) }
+		if scenePartial.Name != "Quiet Morning" { t.Errorf("Expected name 'Quiet Morning', got %s", scenePartial.Name)}
+		if scenePartial.MainAnimal == nil {t.Fatal("scenePartial.MainAnimal is nil")}
+		cat, ok := scenePartial.MainAnimal.(*Cat)
+		if !ok {t.Fatalf("MainAnimal is not *Cat, it's %T", scenePartial.MainAnimal)}
+		if cat.Color != "Black" {t.Errorf("Expected cat color 'Black', got %s", cat.Color)}
+		if !cat.Purr {t.Error("Expected cat to purr")}
+		if scenePartial.MainVehicle != nil {t.Errorf("Expected MainVehicle to be nil, got %T", scenePartial.MainVehicle)}
+	})
+
+	t.Run("Scene: both oneOf fields nil", func(t *testing.T) {
+		sceneJSONBothNil := `
+		{
+			"name": "Empty Stage",
+			"main_animal": null,
+			"main_vehicle": null,
+			"description": "Waiting for actors"
+		}`
+		var sceneBothNil Scene
+		err := json.Unmarshal([]byte(sceneJSONBothNil), &sceneBothNil)
+		if err != nil {t.Fatalf("Scene both nil unmarshal failed: %v", err)}
+		if sceneBothNil.Name != "Empty Stage" {t.Errorf("Expected name 'Empty Stage', got %s", sceneBothNil.Name)}
+		if sceneBothNil.MainAnimal != nil {t.Errorf("Expected MainAnimal to be nil, got %T", sceneBothNil.MainAnimal)}
+		if sceneBothNil.MainVehicle != nil {t.Errorf("Expected MainVehicle to be nil, got %T", sceneBothNil.MainVehicle)}
+	})
+
+	t.Run("Parade: multiple oneOf fields of the same interface type", func(t *testing.T) {
+		paradeJSON := `
+		{
+			"event_name": "Animal Parade",
+			"lead_animal": {"type": "cat", "color": "Tabby", "purr": false},
+			"trailing_animal": {"type": "dog", "breed": "Poodle", "noise": "Yip"},
+			"floats": 3
+		}`
+		var parade Parade
+		err := json.Unmarshal([]byte(paradeJSON), &parade)
+		if err != nil {t.Fatalf("Parade unmarshal failed: %v", err)}
+		if parade.EventName != "Animal Parade" {t.Errorf("Expected event name 'Animal Parade', got %s", parade.EventName)}
+		if parade.Floats != 3 {t.Errorf("Expected 3 floats, got %d", parade.Floats)}
+
+		if parade.LeadAnimal == nil {t.Fatal("parade.LeadAnimal is nil")}
+		leadCat, ok := parade.LeadAnimal.(*Cat)
+		if !ok {t.Fatalf("LeadAnimal not *Cat, is %T", parade.LeadAnimal)}
+		if leadCat.Color != "Tabby" {t.Errorf("Expected lead cat color 'Tabby', got %s", leadCat.Color)}
+
+		if parade.TrailingAnimal == nil {t.Fatal("parade.TrailingAnimal is nil")}
+		trailingDog, ok := parade.TrailingAnimal.(*Dog)
+		if !ok {t.Fatalf("TrailingAnimal not *Dog, is %T", parade.TrailingAnimal)}
+		if trailingDog.Breed != "Poodle" {t.Errorf("Expected trailing dog breed 'Poodle', got %s", trailingDog.Breed)}
+	})
+
+	t.Run("PetOwner: two different oneOf fields", func(t *testing.T) {
+		petOwnerJSON := `
+		{
+			"owner_name": "Alice",
+			"pet_data": {"type": "goldfish", "name": "Finny", "bowl_shape": "round"},
+			"accessory": {"type": "car", "make": "ToyCar", "wheels": 4}
+		}`
+		var owner PetOwner
+		err := json.Unmarshal([]byte(petOwnerJSON), &owner)
+		if err != nil {t.Fatalf("PetOwner unmarshal failed: %v", err)}
+		if owner.OwnerName != "Alice" {t.Errorf("Expected owner name 'Alice', got %s", owner.OwnerName)}
+
+		if owner.Pet == nil {t.Fatal("owner.Pet is nil")}
+		goldfish, ok := owner.Pet.(*Goldfish)
+		if !ok {t.Fatalf("Pet not *Goldfish, is %T", owner.Pet)}
+		if goldfish.Name != "Finny" {t.Errorf("Expected goldfish name 'Finny', got %s", goldfish.Name)}
+
+		if owner.Accessory == nil {t.Fatal("owner.Accessory is nil")}
+		carAccessory, ok := owner.Accessory.(*Car)
+		if !ok {t.Fatalf("Accessory not *Car, is %T", owner.Accessory)}
+		if carAccessory.Make != "ToyCar" {t.Errorf("Expected car make 'ToyCar', got %s", carAccessory.Make)}
+	})
+
+	t.Run("PetOwner: valid pet, nil accessory", func(t *testing.T) {
+		petOwnerValidPetNilAccessory := `
+		{
+			"owner_name": "Charlie",
+			"pet_data": {"type": "goldfish", "name": "Bubbles", "bowl_shape": "square"},
+			"accessory": null
+		}`
+		var ownerValidPet PetOwner
+		err := json.Unmarshal([]byte(petOwnerValidPetNilAccessory), &ownerValidPet)
+		if err != nil {t.Fatalf("PetOwner valid pet nil accessory unmarshal failed: %v", err)}
+		if ownerValidPet.OwnerName != "Charlie" {t.Errorf("Expected name 'Charlie', got %s", ownerValidPet.OwnerName)}
+		if ownerValidPet.Pet == nil {t.Fatal("ownerValidPet.Pet is nil")}
+		bubbles, ok := ownerValidPet.Pet.(*Goldfish)
+		if !ok {t.Fatalf("Pet not *Goldfish, is %T", ownerValidPet.Pet)}
+		if bubbles.Name != "Bubbles" {t.Errorf("Expected pet name 'Bubbles', got %s", bubbles.Name)}
+		if ownerValidPet.Accessory != nil {t.Errorf("Expected Accessory to be nil, got %T", ownerValidPet.Accessory)}
+	})
+
+	t.Run("Error Case: Scene with unknown animal type", func(t *testing.T) {
+		sceneInvalidAnimalJSON := `
+		{
+			"name": "Error Scene",
+			"main_animal": {"type": "dragon", "size": "large"},
+			"main_vehicle": {"type": "car", "make": "Sedan", "wheels": 4}
+		}`
+		var sceneErrorStruct Scene
+		err := json.Unmarshal([]byte(sceneInvalidAnimalJSON), &sceneErrorStruct)
+		if err == nil {
+			t.Errorf("Expected error for unknown animal type in Scene, but got nil")
+		} else {
+			fmt.Printf("Error for Scene with unknown animal (expected): %v\n", err)
+			// Check if error message contains relevant info
+			expectedErrorMsgPart := "unknown data type 'dragon' for field 'main_animal'"
+			if !strings.Contains(err.Error(), expectedErrorMsgPart) {
+				t.Errorf("Error message '%s' does not contain expected part '%s'", err.Error(), expectedErrorMsgPart)
+			}
+		}
+	})
+
+	t.Run("Error Case: Parade with one valid, one unknown animal type", func(t *testing.T) {
+		paradeInvalidAnimalJSON := `
+		{
+			"event_name": "Mixed Parade",
+			"lead_animal": {"type": "cat", "color": "Siamese"},
+			"trailing_animal": {"type": "unicorn", "horn_length": 12}
+		}`
+		var paradeErrorStruct Parade
+		err := json.Unmarshal([]byte(paradeInvalidAnimalJSON), &paradeErrorStruct)
+		if err == nil {
+			t.Errorf("Expected error for unknown trailing_animal type in Parade, but got nil")
+		} else {
+			fmt.Printf("Error for Parade with unknown animal (expected): %v\n", err)
+			expectedErrorMsgPart := "unknown data type 'unicorn' for field 'trailing_animal'"
+			if !strings.Contains(err.Error(), expectedErrorMsgPart) {
+				t.Errorf("Error message '%s' does not contain expected part '%s'", err.Error(), expectedErrorMsgPart)
+			}
+		}
+	})
 }

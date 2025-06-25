@@ -3,9 +3,9 @@ package cache
 import (
 	"encoding/json"
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
+	"strings" // Added
 	"sync"
 )
 
@@ -133,7 +133,6 @@ func (sc *SymbolCache) Save() error {
 		return fmt.Errorf("failed to stat cache directory %s: %w", dir, statErr)
 	}
 
-
 	err = os.WriteFile(sc.filePath, data, 0640) // Read/write for user, read for group
 	if err != nil {
 		return fmt.Errorf("failed to write cache file %s: %w", sc.filePath, err)
@@ -178,27 +177,40 @@ func (sc *SymbolCache) Set(key string, absoluteFilepath string) error {
 	defer sc.mu.Unlock()
 
 	if sc.rootDir == "" {
-		// This should ideally not happen if NewSymbolCache is used correctly.
-		// Storing absolute paths if rootDir is unknown.
-		sc.cacheData[key] = filepath.ToSlash(absoluteFilepath)
-		return fmt.Errorf("rootDir is empty in SymbolCache, storing absolute path for %s."+
-			" This might lead to issues if the project is moved", key)
+		return fmt.Errorf("rootDir is empty in SymbolCache, cannot set key %s. SymbolCache must be initialized with a valid rootDir", key)
 	}
 
+	// Ensure absoluteFilepath is truly absolute before prefix check or Rel
+	if !filepath.IsAbs(absoluteFilepath) {
+		return fmt.Errorf("filepath to cache must be absolute, got %s for key %s", absoluteFilepath, key)
+	}
 
-	relativeFilepath, err := filepath.Rel(sc.rootDir, absoluteFilepath)
+	// Clean both paths to handle trailing slashes etc. for reliable prefix check
+	cleanedRootDir := filepath.Clean(sc.rootDir)
+	cleanedAbsFilepath := filepath.Clean(absoluteFilepath)
+
+	// Check if the absoluteFilepath is under rootDir.
+	// strings.HasPrefix is a simple way. Add path separator to avoid matching /root/a to /root/abc.
+	// Ensure rootDir itself ends with a separator for prefix check, unless it's the root "/"
+	rootDirPrefix := cleanedRootDir
+	// Avoid adding double separator if rootDir is "/"
+	if cleanedRootDir != string(filepath.Separator) && !strings.HasSuffix(cleanedRootDir, string(filepath.Separator)) {
+		rootDirPrefix += string(filepath.Separator)
+	}
+
+	if !strings.HasPrefix(cleanedAbsFilepath, rootDirPrefix) && cleanedAbsFilepath != cleanedRootDir {
+		// If cleanedAbsFilepath is exactly cleanedRootDir (e.g. caching the root dir itself, unlikely for a file)
+		// it would also be valid.
+		return fmt.Errorf("filepath %s is not within the configured rootDir %s for key %s", absoluteFilepath, sc.rootDir, key)
+	}
+
+	relativeFilepath, err := filepath.Rel(cleanedRootDir, cleanedAbsFilepath) // Use cleaned paths for Rel
 	if err != nil {
-		// If the path cannot be made relative (e.g., it's on a different drive on Windows,
-		// or completely outside the project structure), store the absolute path but log a warning.
-		// This could happen with GOROOT or GOPATH symbols if they are being cached,
-		// though the primary use case is project-local symbols.
-		fmt.Fprintf(os.Stderr, "warning: failed to make filepath %s relative to %s for key %s: %v. Storing absolute path.\n",
-			absoluteFilepath, sc.rootDir, key, err)
-		sc.cacheData[key] = filepath.ToSlash(absoluteFilepath) // Store absolute if relativization fails
-		return nil // Return nil because we handled it by storing absolute path
+		// This error should ideally not happen if the prefix check above is correct and robust,
+		// but Rel can have edge cases.
+		return fmt.Errorf("internal error: filepath.Rel failed for %s relative to %s for key %s: %w", cleanedAbsFilepath, cleanedRootDir, key, err)
 	}
 
-	// Normalize to use forward slashes for cross-platform consistency in the cache file.
 	sc.cacheData[key] = filepath.ToSlash(relativeFilepath)
 	return nil
 }

@@ -112,12 +112,8 @@ func TestLazyResolution_Integration(t *testing.T) {
 }
 
 func TestScanner_WithSymbolCache(t *testing.T) {
-	// Base directory for creating temporary project structures for cache tests
-	baseTestDir, cleanupBaseTestDir := tempScannerDir(t)
-	defer cleanupBaseTestDir()
-
 	// Define import paths from testdata
-	apiImportPath := "example.com/multipkg-test/api"    // Contains Handler type
+	apiImportPath := "example.com/multipkg-test/api"       // Contains Handler type
 	modelsImportPath := "example.com/multipkg-test/models" // Contains User type
 
 	sRoot, err := New(".") // Assuming this test runs from module root.
@@ -128,7 +124,6 @@ func TestScanner_WithSymbolCache(t *testing.T) {
 
 	expectedHandlerFilePath, _ := filepath.Abs(filepath.Join(moduleRootDir, "testdata/multipkg/api/handler.go"))
 	expectedUserFilePath, _ := filepath.Abs(filepath.Join(moduleRootDir, "testdata/multipkg/models/user.go"))
-
 
 	t.Run("ScanAndUpdateCache_FindSymbol_CacheHit", func(t *testing.T) {
 		testCacheDir, cleanupTestCacheDir := tempScannerDir(t)
@@ -162,10 +157,14 @@ func TestScanner_WithSymbolCache(t *testing.T) {
 			t.Errorf("Expected Handler path %s, got %s", expectedHandlerFilePath, loc)
 		}
 
-		if err := s.SaveSymbolCache(); err != nil { t.Fatalf("Explicit save failed: %v", err) }
+		if err := s.SaveSymbolCache(); err != nil {
+			t.Fatalf("Explicit save failed: %v", err)
+		}
 
 		data, err := os.ReadFile(cacheFilePath)
-		if err != nil { t.Fatalf("Failed to read cache file: %v", err) }
+		if err != nil {
+			t.Fatalf("Failed to read cache file: %v", err)
+		}
 		if !strings.Contains(string(data), handlerSymbolFullName) {
 			t.Errorf("Cache file content does not seem to contain %s. Content: %s", handlerSymbolFullName, string(data))
 		}
@@ -191,7 +190,9 @@ func TestScanner_WithSymbolCache(t *testing.T) {
 		cacheFilePath := filepath.Join(testCacheDir, "symbols_fallback.json")
 
 		s, err := New(".")
-		if err != nil { t.Fatalf("New() failed: %v", err) }
+		if err != nil {
+			t.Fatalf("New() failed: %v", err)
+		}
 		s.UseCache = true
 		s.CachePath = cacheFilePath
 		defer func() { s.SaveSymbolCache() }()
@@ -220,7 +221,9 @@ func TestScanner_WithSymbolCache(t *testing.T) {
 		cacheFilePath := filepath.Join(testCacheDir, "symbols_stale.json")
 
 		s, err := New(".")
-		if err != nil { t.Fatalf("New() failed: %v", err) }
+		if err != nil {
+			t.Fatalf("New() failed: %v", err)
+		}
 		s.UseCache = true
 		s.CachePath = cacheFilePath
 		defer func() { s.SaveSymbolCache() }()
@@ -266,7 +269,9 @@ func TestScanner_WithSymbolCache(t *testing.T) {
 		cacheFilePath := filepath.Join(testCacheDir, "symbols_nonexist.json")
 
 		s, err := New(".")
-		if err != nil { t.Fatalf("New() failed: %v", err) }
+		if err != nil {
+			t.Fatalf("New() failed: %v", err)
+		}
 		s.UseCache = true
 		s.CachePath = cacheFilePath
 		defer func() { s.SaveSymbolCache() }()
@@ -288,7 +293,9 @@ func TestScanner_WithSymbolCache(t *testing.T) {
 		cacheFilePath := filepath.Join(testCacheDir, "symbols_disabled.json")
 
 		s, err := New(".")
-		if err != nil { t.Fatalf("New() failed: %v", err) }
+		if err != nil {
+			t.Fatalf("New() failed: %v", err)
+		}
 		s.UseCache = false
 		s.CachePath = cacheFilePath
 		defer func() { s.SaveSymbolCache() }()
@@ -321,7 +328,7 @@ func pathsEqual(p1, p2 string) bool {
 	// On other systems, they are case-sensitive.
 	// For robust testing, especially if developing on one OS and CI on another:
 	if strings.EqualFold(abs1, abs2) { // Use EqualFold for case-insensitivity
-        return true
-    }
+		return true
+	}
 	return abs1 == abs2 // Fallback for systems where case matters and paths differ only by case
 }

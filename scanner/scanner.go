@@ -23,7 +23,7 @@ func New() *Scanner {
 // ScanPackage parses all .go files in a given directory and returns PackageInfo.
 func (s *Scanner) ScanPackage(dirPath string, resolver PackageResolver) (*PackageInfo, error) {
 	s.resolver = resolver
-	fset := token.NewFileSet() // Initialized fset
+	fset := token.NewFileSet()                                              // Initialized fset
 	pkgs, err := parser.ParseDir(fset, dirPath, func(fi os.FileInfo) bool { // Used fset
 		return !strings.HasSuffix(fi.Name(), "_test.go")
 	}, parser.ParseComments)
@@ -97,7 +97,7 @@ func (s *Scanner) parseGenDecl(decl *ast.GenDecl, info *PackageInfo, absFilePath
 		switch sp := spec.(type) {
 		case *ast.TypeSpec:
 			typeInfo := s.parseTypeSpec(sp, absFilePath) // Pass absFilePath
-			if typeInfo.Doc == "" && decl.Doc != nil { // Check decl.Doc != nil
+			if typeInfo.Doc == "" && decl.Doc != nil {   // Check decl.Doc != nil
 				typeInfo.Doc = commentText(decl.Doc)
 			}
 			info.Types = append(info.Types, typeInfo)
@@ -210,7 +210,6 @@ func (s *Scanner) parseFuncDecl(f *ast.FuncDecl, absFilePath string) *FunctionIn
 	funcInfo.Doc = commentText(f.Doc)
 	// Note: FunctionInfo in models.go doesn't have a generic Node field yet for the *ast.FuncDecl itself.
 	// If needed for other purposes, it could be added. For FilePath, this is sufficient.
-
 
 	if f.Recv != nil && len(f.Recv.List) > 0 {
 		recvField := f.Recv.List[0]

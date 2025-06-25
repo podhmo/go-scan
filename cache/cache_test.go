@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"reflect"
 	"runtime" // Added for GOOS
 	"strings"
 	"testing"
@@ -31,7 +30,6 @@ func tempRootDir(t *testing.T, baseDir string) string {
 	return rootDir
 }
 
-
 func TestNewSymbolCache(t *testing.T) {
 	projectRoot, cleanupProjectRoot := tempDir(t)
 	defer cleanupProjectRoot()
@@ -50,12 +48,12 @@ func TestNewSymbolCache(t *testing.T) {
 	})
 
 	t.Run("UseCache_true_default_path", func(t *testing.T) {
-		// Mock UserHomeDir for predictable default path
-		originalUserHomeDir := os.UserHomeDir
-		mockHomeDir, cleanupMockHome := tempDir(t)
-		defer cleanupMockHome()
-		os.UserHomeDir = func() (string, error) { return mockHomeDir, nil }
-		defer func() { os.UserHomeDir = originalUserHomeDir }()
+		// Test default path construction using the actual os.UserHomeDir()
+		// This test is now less about mocking and more about correct composition.
+		actualHomeDir, err := os.UserHomeDir()
+		if err != nil {
+			t.Fatalf("Failed to get actual user home directory: %v", err)
+		}
 
 		sc, err := NewSymbolCache(projectRoot, "", true)
 		if err != nil {
@@ -64,7 +62,7 @@ func TestNewSymbolCache(t *testing.T) {
 		if !sc.IsEnabled() {
 			t.Errorf("Expected cache to be enabled")
 		}
-		expectedPath := filepath.Join(mockHomeDir, defaultCacheDirName, defaultCacheFileName)
+		expectedPath := filepath.Join(actualHomeDir, defaultCacheDirName, defaultCacheFileName)
 		if sc.FilePath() != expectedPath {
 			t.Errorf("Expected default path %s, got %s", expectedPath, sc.FilePath())
 		}
@@ -109,9 +107,13 @@ func TestSymbolCache_Load_Save(t *testing.T) {
 		absPath2 := filepath.Join(projectRoot, "pkg/file2.go")
 
 		err := scWrite.Set("key1", absPath1)
-		if err != nil { t.Fatalf("Set error: %v", err) }
+		if err != nil {
+			t.Fatalf("Set error: %v", err)
+		}
 		err = scWrite.Set("key2", absPath2)
-		if err != nil { t.Fatalf("Set error: %v", err) }
+		if err != nil {
+			t.Fatalf("Set error: %v", err)
+		}
 
 		err = scWrite.Save()
 		if err != nil {
@@ -125,7 +127,6 @@ func TestSymbolCache_Load_Save(t *testing.T) {
 		if raw["key1"] != "src/file1.go" && raw["key1"] != "src\\file1.go" { // Handle path sep
 			t.Errorf("Expected key1 path 'src/file1.go', got '%s'", raw["key1"])
 		}
-
 
 		scRead, _ := NewSymbolCache(projectRoot, cacheFilePath, true)
 		err = scRead.Load()
@@ -149,7 +150,9 @@ func TestSymbolCache_Load_Save(t *testing.T) {
 
 	t.Run("Load_corrupted_json", func(t *testing.T) {
 		err := os.WriteFile(cacheFilePath, []byte("this is not json"), 0644)
-		if err != nil { t.Fatalf("Failed to write corrupted file: %v", err) }
+		if err != nil {
+			t.Fatalf("Failed to write corrupted file: %v", err)
+		}
 
 		sc, _ := NewSymbolCache(projectRoot, cacheFilePath, true)
 		loadErr := sc.Load()
@@ -163,7 +166,9 @@ func TestSymbolCache_Load_Save(t *testing.T) {
 
 		sc.Set("key_after_corrupt", filepath.Join(projectRoot, "file_after.go"))
 		saveErr := sc.Save()
-		if saveErr != nil { t.Fatalf("Save after corrupted load failed: %v", saveErr)}
+		if saveErr != nil {
+			t.Fatalf("Save after corrupted load failed: %v", saveErr)
+		}
 
 		data, _ := os.ReadFile(cacheFilePath)
 		var raw map[string]string
@@ -206,10 +211,13 @@ func TestSymbolCache_Set_Get_VerifyAndGet(t *testing.T) {
 	relativeFilePath := filepath.Join("path", "to", "symbol.go")
 
 	err := os.MkdirAll(filepath.Dir(absFilePath), 0755)
-	if err != nil { t.Fatalf("MkdirAll failed: %v", err) }
+	if err != nil {
+		t.Fatalf("MkdirAll failed: %v", err)
+	}
 	err = os.WriteFile(absFilePath, []byte("package main"), 0644)
-	if err != nil { t.Fatalf("WriteFile failed: %v", err) }
-
+	if err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
 
 	t.Run("Set_and_Get_existing_file", func(t *testing.T) {
 		err := sc.Set(key, absFilePath)
@@ -263,14 +271,23 @@ func TestSymbolCache_Set_Get_VerifyAndGet(t *testing.T) {
 	})
 
 	t.Run("Set_path_not_in_project_root", func(t *testing.T) {
-		otherDir, cleanupOtherDir := tempDir(t)
-		defer cleanupOtherDir()
-		absExternalPath := filepath.Join(otherDir, "external.go")
+		// Use a path that is guaranteed to be outside the projectRoot for filepath.Rel to fail.
+		// projectRoot is something like /tmp/cache_test_XXXX/project_root
+		// absExternalPath needs to be something like /some_other_root/file.go
+		// On Windows, this would be like C:\temp_root vs D:\other_file
+		absExternalPath := "/abs/external/path/file.go"
+		if runtime.GOOS == "windows" {
+			// Assuming tests don't run on a system with only one drive or specific drive needs.
+			// This might need adjustment if C: is where projectRoot lives.
+			// A more robust way would be to find a different drive letter if possible.
+			// Forcing a path that's unlikely to be relative to a temp dir on C:
+			absExternalPath = "X:\\external_path\\file.go"
+		}
 
 		// Current Set returns error if path cannot be made relative to rootDir
 		err := sc.Set("external.key", absExternalPath)
 		if err == nil {
-			t.Errorf("Set() with external path '%s' (root: '%s') should have returned an error.", absExternalPath, projectRoot)
+			t.Errorf("Set() with external path '%s' (root: '%s') should have returned an error.", absExternalPath, sc.RootDir())
 		}
 		if err != nil {
 			if _, found := sc.cacheData["external.key"]; found {
@@ -290,10 +307,13 @@ func TestSymbolCache_UseCache_False(t *testing.T) {
 
 	absFilePath := filepath.Join(projectRoot, "file.go")
 	err := os.MkdirAll(filepath.Dir(absFilePath), 0755)
-	if err != nil {t.Fatalf("MkdirAll: %v", err)}
+	if err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
 	err = os.WriteFile(absFilePath, []byte("content"), 0644)
-	if err != nil {t.Fatalf("WriteFile: %v", err)}
-
+	if err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
 
 	if err := sc.Set("key1", absFilePath); err != nil {
 		t.Errorf("Set() on disabled cache should not error, got %v", err)
@@ -333,16 +353,21 @@ func TestSymbolCache_PathNormalization(t *testing.T) {
 
 	projectRoot := filepath.Join(cacheDir, "my/project\\root")
 	err := os.MkdirAll(projectRoot, 0755)
-	if err != nil {t.Fatalf("MkdirAll for projectRoot failed: %v", err)}
+	if err != nil {
+		t.Fatalf("MkdirAll for projectRoot failed: %v", err)
+	}
 
 	sc, _ := NewSymbolCache(projectRoot, "", true)
 
-	absFilePathMixed := filepath.Join(projectRoot, "src", "app\\models", "user.go")
+	absFilePathMixed := filepath.Join(projectRoot, "src", "app", "models", "user.go") // Corrected
 	err = os.MkdirAll(filepath.Dir(absFilePathMixed), 0755)
-	if err != nil { t.Fatalf("MkdirAll for absFilePathMixed failed: %v", err) }
+	if err != nil {
+		t.Fatalf("MkdirAll for absFilePathMixed failed: %v", err)
+	}
 	err = os.WriteFile(absFilePathMixed, []byte("package models"), 0644)
-	if err != nil { t.Fatalf("WriteFile for absFilePathMixed failed: %v", err) }
-
+	if err != nil {
+		t.Fatalf("WriteFile for absFilePathMixed failed: %v", err)
+	}
 
 	err = sc.Set("user.Model", absFilePathMixed)
 	if err != nil {
@@ -401,7 +426,6 @@ func TestSymbolCache_FilePath(t *testing.T) {
 	}
 }
 
-
 func TestSymbolCache_Set_EmptyRootDir(t *testing.T) {
 	tempFile, err := os.CreateTemp("", "empty_root_cache_*.json")
 	if err != nil {
@@ -410,7 +434,6 @@ func TestSymbolCache_Set_EmptyRootDir(t *testing.T) {
 	cachePath := tempFile.Name()
 	tempFile.Close() // Close it as SymbolCache will open/write it
 	defer os.Remove(cachePath)
-
 
 	sc, err := NewSymbolCache("", cachePath, true)
 	if err != nil {

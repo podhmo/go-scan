@@ -3,11 +3,12 @@ package typescanner
 import (
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 
+	"github.com/podhmo/go-scan/cache"
 	"github.com/podhmo/go-scan/locator"
 	"github.com/podhmo/go-scan/scanner"
-	"github.com/podhmo/go-scan/cache"
 )
 
 // Re-export scanner kinds for convenience.
@@ -29,7 +30,7 @@ type Scanner struct {
 	// If empty, a default path will be used (e.g., $HOME/.go_symbol_analyzer_cache.json).
 	CachePath string
 	// UseCache enables or disables the symbol cache.
-	UseCache bool
+	UseCache    bool
 	symbolCache *cache.SymbolCache // Added
 }
 

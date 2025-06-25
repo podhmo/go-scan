@@ -134,8 +134,8 @@ func TestScanner_WithSymbolCache(t *testing.T) {
 		if err != nil {
 			t.Fatalf("New() failed: %v", err)
 		}
-		s.UseCache = true
-		s.CachePath = cacheFilePath
+		// s.UseCache = true // Removed
+		s.CachePath = cacheFilePath // Cache enabled by setting a non-empty path
 
 		defer func() {
 			if err := s.SaveSymbolCache(); err != nil {
@@ -193,8 +193,8 @@ func TestScanner_WithSymbolCache(t *testing.T) {
 		if err != nil {
 			t.Fatalf("New() failed: %v", err)
 		}
-		s.UseCache = true
-		s.CachePath = cacheFilePath
+		// s.UseCache = true // Removed
+		s.CachePath = cacheFilePath // Cache enabled by setting a non-empty path
 		defer func() { s.SaveSymbolCache() }()
 
 		userSymbolFullName := modelsImportPath + ".User"
@@ -224,8 +224,8 @@ func TestScanner_WithSymbolCache(t *testing.T) {
 		if err != nil {
 			t.Fatalf("New() failed: %v", err)
 		}
-		s.UseCache = true
-		s.CachePath = cacheFilePath
+		// s.UseCache = true // Removed
+		s.CachePath = cacheFilePath // Cache enabled by setting a non-empty path
 		defer func() { s.SaveSymbolCache() }()
 
 		staleUserSymbol := modelsImportPath + ".User"
@@ -251,8 +251,8 @@ func TestScanner_WithSymbolCache(t *testing.T) {
 		s.SaveSymbolCache()
 
 		sVerify, _ := New(".")
-		sVerify.UseCache = true
-		sVerify.CachePath = cacheFilePath
+		// sVerify.UseCache = true // Removed
+		sVerify.CachePath = cacheFilePath // Cache enabled by setting path
 
 		locVerify, errVerify := sVerify.FindSymbolDefinitionLocation(staleUserSymbol)
 		if errVerify != nil {
@@ -272,8 +272,8 @@ func TestScanner_WithSymbolCache(t *testing.T) {
 		if err != nil {
 			t.Fatalf("New() failed: %v", err)
 		}
-		s.UseCache = true
-		s.CachePath = cacheFilePath
+		// s.UseCache = true // Removed
+		s.CachePath = cacheFilePath // Cache enabled by setting a non-empty path
 		defer func() { s.SaveSymbolCache() }()
 
 		nonExistentSymbol := modelsImportPath + ".NonExistentType"
@@ -296,9 +296,34 @@ func TestScanner_WithSymbolCache(t *testing.T) {
 		if err != nil {
 			t.Fatalf("New() failed: %v", err)
 		}
-		s.UseCache = false
-		s.CachePath = cacheFilePath
-		defer func() { s.SaveSymbolCache() }()
+		// s.UseCache = false // Removed
+		s.CachePath = "" // Cache explicitly disabled by empty path
+		// We can still set cacheFilePath for os.Stat check, to ensure no file is created AT THAT specific path
+		// even if some default path logic were to kick in (though it shouldn't with empty CachePath).
+		// For this test, the check is that s.CachePath (being empty) prevents creation.
+		// If we want to ensure no file is created at a *hypothetical* default location, that's a different test.
+		// The current CachePath on Scanner is the single source of truth.
+		// So, if s.CachePath is "", no file should be written by SaveSymbolCache.
+		// The test needs to check for a file at `cacheFilePath` (the variable).
+		// If CachePath is empty, SaveSymbolCache should do nothing.
+
+		// Let's clarify the test's intent:
+		// If CachePath is empty, SaveSymbolCache should not attempt to write *any* file.
+		// We don't need `cacheFilePath` variable for s.CachePath here if it's meant to be disabled.
+		// The check `os.Stat(cacheFilePath)` where `cacheFilePath` is `filepath.Join(testCacheDir, "symbols_disabled.json")`
+		// is fine to ensure that specific file isn't created.
+		// What `s.CachePath` is set to for the `os.Stat` check needs to be consistent.
+		// If `s.CachePath` is `""`, then `s.symbolCache.FilePath()` would be `""`.
+		// `SaveSymbolCache` checks `s.CachePath == ""`.
+
+		// Revised logic for this test:
+		// s.CachePath is kept as "" (or not set) to disable caching.
+		// The check for file creation needs to consider that no path means no creation.
+		// The test as written tries to Stat `cacheFilePath` which is a local var.
+		// This is fine: we are checking that a file at a specific location is NOT created
+		// when cache is disabled via empty s.CachePath.
+
+		defer func() { s.SaveSymbolCache() }() // This will be called, SaveSymbolCache should do nothing if s.CachePath is ""
 
 		_, err = s.ScanPackageByImport(apiImportPath)
 		if err != nil {

@@ -27,28 +27,24 @@ type SymbolCache struct {
 // NewSymbolCache creates a new SymbolCache.
 //
 // rootDir is the project's root directory. Filepaths in the cache will be relative to this directory.
-// configCachePath is the user-configured path for the cache file. If empty, a default path is used.
-// configUseCache determines if the cache should be loaded and saved.
-func NewSymbolCache(rootDir string, configCachePath string, configUseCache bool) (*SymbolCache, error) {
+// configCachePath is the user-configured path for the cache file. If empty, caching is disabled.
+func NewSymbolCache(rootDir string, configCachePath string) (*SymbolCache, error) { // Removed configUseCache
 	sc := &SymbolCache{
 		cacheData: make(map[string]string),
-		useCache:  configUseCache,
 		rootDir:   rootDir,
+		// filePath and useCache will be set based on configCachePath
 	}
 
-	if !configUseCache {
-		return sc, nil // Do not attempt to load or determine path if cache is not used
+	if configCachePath == "" {
+		sc.useCache = false
+		sc.filePath = "" // Ensure filePath is empty if no path is provided
+		return sc, nil   // Caching is disabled, no further setup needed for path
 	}
 
-	if configCachePath != "" {
-		sc.filePath = configCachePath
-	} else {
-		homeDir, err := os.UserHomeDir()
-		if err != nil {
-			return nil, fmt.Errorf("failed to get user home directory: %w", err)
-		}
-		sc.filePath = filepath.Join(homeDir, defaultCacheDirName, defaultCacheFileName)
-	}
+	// If configCachePath is provided, caching is considered enabled
+	sc.useCache = true
+	sc.filePath = configCachePath
+
 	return sc, nil
 }
 

@@ -8,7 +8,7 @@ const DefaultItemID = 1
 // Item represents a product with an ID and Name.
 type Item struct {
 	// The unique identifier for the item.
-	ID int `json:"id"`
+	ID   int    `json:"id"`
 	Name string `json:"name"` // Name of the item.
 }
 

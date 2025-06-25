@@ -61,9 +61,9 @@ func TestFindPackageDir(t *testing.T) {
 	}
 
 	tests := []struct {
-		importPath    string
-		expectedRel   string
-		expectErr     bool
+		importPath  string
+		expectedRel string
+		expectErr   bool
 	}{
 		{"example.com/myproject/internal/api", "internal/api", false},
 		{"example.com/myproject", "", false},

@@ -1,7 +1,6 @@
 package typescanner
 
 import (
-	"path/filepath"
 	"testing"
 
 	"github.com/podhmo/go-scan/scanner"

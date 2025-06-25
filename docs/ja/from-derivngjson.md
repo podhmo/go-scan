@@ -115,6 +115,7 @@
 
 *   **現状の `derivingjson`**:
     フィールドの型情報を扱う際、その型がプリミティブ型か、ローカルパッケージで定義された型か、外部パッケージの型かを判別するために、`field.Type.PkgName == ""` や `field.Type.Resolve()` の結果を組み合わせて複雑な条件分岐を行っています。また、ポインタ、スライス、マップといった複合型の完全な型名を文字列として再構築するロジックも自前で実装しています。
+    さらに、型が定義されているパッケージの正確なインポートパスを取得するために、`TypeInfo.FilePath` からディレクトリパスを算出し、再度 `ScanPackage` を呼び出すといった間接的な方法を取る必要がありました。
 
     ```go
     // examples/derivingjson/generator.go より抜粋
@@ -123,6 +124,15 @@
     currentFieldType := field.Type
     // ... ポインタ、スライス、マップの処理 ...
     actualFieldTypeString := typeNameBuilder.String()
+
+    // ImportPath取得の複雑さ (イメージ)
+    // if oneOfInterfaceDef.FilePath != "" {
+    //     interfaceDir := filepath.Dir(oneOfInterfaceDef.FilePath)
+    //     tempInterfacePkgInfo, _ := gscn.ScanPackage(interfaceDir)
+    //     if tempInterfacePkgInfo != nil {
+    //          importPath = tempInterfacePkgInfo.ImportPath
+    //     }
+    // }
     ```
 
 *   **`go-scan` への提案機能**:
@@ -130,36 +140,43 @@
     *   型の種類を判別するヘルパー: `IsPrimitive()`, `IsPointer()`, `IsSlice()`, `IsMap()`, `IsStruct()`, `IsInterface()` など。
     *   ポインタ、スライス、マップの場合の要素型（`Elem() *TypeRef`）への簡単なアクセス。
     *   型が定義されているパッケージ情報（ローカルか、標準ライブラリか、外部か）を明確に示すフラグやプロパティ。
+    *   **型が属するパッケージの完全なインポートパス (`FullImportPath() string`) を `scanner.FieldType` や `scanner.TypeInfo` から直接取得できるメソッド。** (特に重要)
     *   完全な型表現（例: `*[]mypkg.MyType`）を簡単に取得できる `String()` メソッドや `QualifiedName()` メソッドの提供。
-    *   `Resolve()` の結果として得られる `TypeInfo` との関係性をより明確にする。
+    *   `Resolve()` の結果として得られる `TypeInfo` との関係性をより明確にする。`TypeInfo` にも、それが定義されているパッケージの `ImportPath` を保持するフィールドがあると良い。
 
 ## 6. 生成コードのインポート管理の支援
 
 *   **現状の `derivingjson`**:
-    生成するコードが必要とするパッケージ（例: `encoding/json`, `fmt`）を判断するために、`needsImportEncodingJson` や `needsImportFmt` のようなブール値フラグを手動で管理し、最終的な出力ファイルにインポート文を自前で構築しています。
+    生成するコードが必要とするパッケージ（例: `encoding/json`, `fmt`、外部パッケージの型）を判断するために、`allFileImports map[string]string` のようなマップを手動で管理し、最終的な出力ファイルにインポート文を自前で構築しています。
 
     ```go
     // examples/derivingjson/generator.go より抜粋
-    if needsImportEncodingJson || needsImportFmt {
-        finalOutput.WriteString("import (\n")
-        if needsImportEncodingJson {
-            finalOutput.WriteString("\t\"encoding/json\"\n")
-        }
-        // ...
-    }
+    // allFileImports[determinedInterfaceImportPath] = interfaceDefiningPkg.Name
+    // ...
+    // if len(allFileImports) > 0 || needsImportEncodingJson || needsImportFmt {
+    //    finalOutput.WriteString("import (\n")
+    // ...
     ```
 
 *   **`go-scan` への提案機能**:
-    `go-scan` が型情報をスキャン・解決する過程で、登場した型が属するパッケージのインポートパスを収集し、`PackageInfo` や `TypeInfo` を通じてこの情報を提供します。コード生成ツールは、この情報セットを利用して、生成コードに必要なインポート文を自動的かつ正確に構築できます。
+    `go-scan` が型情報をスキャン・解決する過程で、登場した型が属するパッケージのインポートパスとその推奨エイリアス（パッケージ名）を収集し、`PackageInfo` や `TypeInfo` を通じてこの情報を提供します。コード生成ツールは、この情報セットを利用して、生成コードに必要なインポート文を自動的かつ正確に構築できます。
 
     ```go
     // 提案するAPIのイメージ
     // requiredImports := NewImportManager() // or similar utility
-    // requiredImports.AddType(field.Type)
+    // requiredImports.AddType(field.Type) // field.Type から自動でパッケージパスと名前(エイリアス)を解決
     // generatedImportBlock := requiredImports.Render()
     //
     // または、PackageInfo や TypeInfo が関連するインポートパスのセットを保持する
-    // allImports := pkgInfo.GetRequiredImportsForTypes(processedTypes)
+    // allImports := pkgInfo.GetRequiredImportsForTypes(processedTypes) // map[string]string{ "path": "alias" } のような形式
     ```
+
+## 7. 特定インターフェース実装型の横断的検索 (再掲・強調)
+
+*   **現状の `derivingjson`**:
+    `oneOf` の対象となるインターフェース型を特定した後、そのインターフェースを実装している具象型を、関連しそうなパッケージ (`currentSearchPkg`) を推測してスキャンし、その中で `goscan.Implements()` を使ってチェックしています。
+
+*   **`go-scan` への提案機能**: (提案3をより具体的に)
+    `goscan.Scanner` に、指定したインターフェースの `TypeInfo` を受け取り、**スキャナがこれまでに解決・スキャンした全てのパッケージの中から**そのインターフェースを実装する型（特に構造体）のリストを効率的に検索するメソッド `FindAllImplementers(interfaceDef *scanner.TypeInfo) []*scanner.TypeInfo` のようなAPIを提供します。これにより、ジェネレータ側は実装型を探すためにパッケージを個別にスキャンしたり、探索範囲を推測したりする必要がなくなります。
 
 これらの機能が `go-scan` に備わることで、`derivingjson` のようなコードジェネレータは、型の解析、フィルタリング、情報の抽出といった汎用的な処理にかかる手間を大幅に削減し、本来の目的であるコード生成ロジックの開発により集中できるようになるでしょう。

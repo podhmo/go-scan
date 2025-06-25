@@ -1,16 +1,16 @@
-package simple
+package shapes
 
 // Shape is an interface for geometric shapes.
 // @deriving:unmarshall
 type Shape interface {
 	isShape()
-	GetType() string // Added: Method to get discriminator value
+	GetType() string
 }
 
 // Circle represents a circle.
 // @deriving:unmarshall
 type Circle struct {
-	Type   string `json:"type"` // Added: Discriminator field
+	Type   string `json:"type"` // Discriminator field
 	Radius int    `json:"radius"`
 }
 
@@ -19,16 +19,13 @@ func (Circle) isShape() {}
 
 // GetType returns the type of the shape.
 func (c Circle) GetType() string {
-	if c.Type == "" {
-		return "circle" // Default or derived if not set
-	}
-	return c.Type
+	return "circle"
 }
 
 // Rectangle represents a rectangle.
 // @deriving:unmarshall
 type Rectangle struct {
-	Type   string `json:"type"` // Added: Discriminator field
+	Type   string `json:"type"` // Discriminator field
 	Width  int    `json:"width"`
 	Height int    `json:"height"`
 }
@@ -38,21 +35,5 @@ func (Rectangle) isShape() {}
 
 // GetType returns the type of the shape.
 func (r Rectangle) GetType() string {
-	if r.Type == "" {
-		return "rectangle" // Default or derived if not set
-	}
-	return r.Type
-}
-
-// @deriving:unmarshall
-// Other is a struct that is not part of the oneOf
-type Other struct {
-	Name string `json:"name"`
-}
-
-// @deriving:unmarshall
-type Container struct {
-	Content      Shape `json:"content"` // oneOf
-	// Type field removed from Container
-	OtherContent Other `json:"other_content"`
+	return "rectangle"
 }

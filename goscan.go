@@ -2,7 +2,6 @@ package goscan
 
 import (
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -30,7 +29,7 @@ type Scanner struct {
 	locator      *locator.Locator
 	scanner      *scanner.Scanner
 	packageCache map[string]*scanner.PackageInfo // Cache for PackageInfo from ScanPackage/ScanPackageByImport, key is import path
-	visitedFiles map[string]struct{}           // Set of visited (parsed) file absolute paths for this Scanner instance.
+	visitedFiles map[string]struct{}             // Set of visited (parsed) file absolute paths for this Scanner instance.
 	mu           sync.RWMutex
 	fset         *token.FileSet
 
@@ -174,7 +173,7 @@ func (s *Scanner) ScanPackage(pkgPath string) (*scanner.PackageInfo, error) {
 				s.visitedFiles[fp] = struct{}{}
 			}
 			currentCallPkgInfo.ImportPath = importPath // Set import path for this call's result
-			currentCallPkgInfo.Path = absPkgPath      // Ensure path is set
+			currentCallPkgInfo.Path = absPkgPath       // Ensure path is set
 			s.updateSymbolCacheWithPackageInfo(importPath, currentCallPkgInfo)
 		}
 	}
@@ -266,10 +265,10 @@ func (s *Scanner) resolveFilePath(rawPath string) (string, error) {
 // ScanFiles scans a specified set of Go files.
 //
 // File paths in the `filePaths` argument can be provided in three forms:
-// 1. Absolute path (e.g., "/path/to/your/project/pkg/file.go").
-// 2. Path relative to the current working directory (CWD) (e.g., "pkg/file.go").
-// 3. Module-qualified path (e.g., "github.com/your/module/pkg/file.go"), which is resolved
-//    using the Scanner's associated module information (from go.mod).
+//  1. Absolute path (e.g., "/path/to/your/project/pkg/file.go").
+//  2. Path relative to the current working directory (CWD) (e.g., "pkg/file.go").
+//  3. Module-qualified path (e.g., "github.com/your/module/pkg/file.go"), which is resolved
+//     using the Scanner's associated module information (from go.mod).
 //
 // All provided file paths, after resolution, must belong to the same directory,
 // effectively meaning they must be part of the same Go package.
@@ -302,7 +301,6 @@ func (s *Scanner) ScanFiles(filePaths []string) (*scanner.PackageInfo, error) {
 	} else if modulePath == "" || moduleRoot == "" { // Inconsistent module info
 		return nil, fmt.Errorf("module path or root is empty, ensure a go.mod file exists and is discoverable by the scanner's locator")
 	}
-
 
 	var resolvedAbsFilePaths []string
 	var firstFileDir string
@@ -344,7 +342,6 @@ func (s *Scanner) ScanFiles(filePaths []string) (*scanner.PackageInfo, error) {
 		fmt.Fprintf(os.Stderr, "warning: creating pseudo import path %q for package at %s\n", importPath, pkgDirAbs)
 	}
 
-
 	var filesToParse []string
 	for _, absFp := range resolvedAbsFilePaths {
 		if _, visited := s.visitedFiles[absFp]; !visited {
@@ -369,8 +366,8 @@ func (s *Scanner) ScanFiles(filePaths []string) (*scanner.PackageInfo, error) {
 	}
 
 	if pkgInfo != nil {
-		pkgInfo.ImportPath = importPath // Set the calculated import path
-		pkgInfo.Path = pkgDirAbs      // Ensure directory path is also set
+		pkgInfo.ImportPath = importPath    // Set the calculated import path
+		pkgInfo.Path = pkgDirAbs           // Ensure directory path is also set
 		for _, fp := range pkgInfo.Files { // Mark newly parsed files as visited
 			s.visitedFiles[fp] = struct{}{}
 		}
@@ -385,10 +382,10 @@ func (s *Scanner) ScanFiles(filePaths []string) (*scanner.PackageInfo, error) {
 // within the specified package that have not yet been visited (parsed) by this Scanner instance.
 //
 // The `packagePathOrImportPath` argument can be:
-// 1. An absolute directory path to the package.
-// 2. A directory path relative to the current working directory (CWD).
-// 3. A Go import path (e.g., "github.com/your/module/pkg"), which will be resolved
-//    to a directory using the Scanner's locator.
+//  1. An absolute directory path to the package.
+//  2. A directory path relative to the current working directory (CWD).
+//  3. A Go import path (e.g., "github.com/your/module/pkg"), which will be resolved
+//     to a directory using the Scanner's locator.
 //
 // This method lists all relevant .go files in the identified package directory
 // and filters out those already present in the Scanner's `visitedFiles` set.
@@ -444,7 +441,6 @@ func isDir(path string) bool {
 	}
 	return info.IsDir()
 }
-
 
 // ScanPackageByImport scans a single Go package identified by its import path.
 //
@@ -513,7 +509,10 @@ func (s *Scanner) ScanPackageByImport(importPath string) (*scanner.PackageInfo, 
 			}
 		} else {
 			// Add files symCache identified as new/changed
-			for _, f := range newDiskFiles { filesToParseThisCall = append(filesToParseThisCall, f); filesConsideredBySymCache[f] = struct{}{} }
+			for _, f := range newDiskFiles {
+				filesToParseThisCall = append(filesToParseThisCall, f)
+				filesConsideredBySymCache[f] = struct{}{}
+			}
 			// For files symCache says are existing (potentially unchanged),
 			// only parse if this Scanner instance hasn't visited them yet.
 			for _, f := range existingDiskFiles {
@@ -545,7 +544,6 @@ func (s *Scanner) ScanPackageByImport(importPath string) (*scanner.PackageInfo, 
 	}
 	filesToParseThisCall = dedupedFilesToParse
 
-
 	var currentCallPkgInfo *scanner.PackageInfo
 	if len(filesToParseThisCall) > 0 {
 		currentCallPkgInfo, err = s.scanner.ScanFiles(filesToParseThisCall, pkgDirAbs, s)
@@ -553,8 +551,8 @@ func (s *Scanner) ScanPackageByImport(importPath string) (*scanner.PackageInfo, 
 			return nil, fmt.Errorf("ScanPackageByImport: scanning files for %s failed: %w", importPath, err)
 		}
 		if currentCallPkgInfo != nil {
-			currentCallPkgInfo.ImportPath = importPath // Set import path
-			currentCallPkgInfo.Path = pkgDirAbs      // Ensure path
+			currentCallPkgInfo.ImportPath = importPath    // Set import path
+			currentCallPkgInfo.Path = pkgDirAbs           // Ensure path
 			for _, fp := range currentCallPkgInfo.Files { // Mark newly parsed files as visited by this instance
 				s.visitedFiles[fp] = struct{}{}
 			}
@@ -598,7 +596,6 @@ func (s *Scanner) ScanPackageByImport(importPath string) (*scanner.PackageInfo, 
 
 	return currentCallPkgInfo, nil
 }
-
 
 // getOrCreateSymbolCache ensures the symbolCache is initialized.
 func (s *Scanner) getOrCreateSymbolCache() (*cache.SymbolCache, error) {
@@ -739,13 +736,13 @@ func (s *Scanner) FindSymbolDefinitionLocation(symbolFullName string) (string, e
 			}
 		}
 	}
-    // If symbol not found in cache, try to scan the package.
+	// If symbol not found in cache, try to scan the package.
 	pkgInfo, err := s.ScanPackageByImport(importPath) // This will parse unvisited files and update caches
 	if err != nil {
 		return "", fmt.Errorf("scan for package %s (for symbol %s) failed: %w", importPath, symbolName, err)
 	}
 
-    // After scan, check cache again (if enabled)
+	// After scan, check cache again (if enabled)
 	if s.CachePath != "" {
 		if s.symbolCache != nil && s.symbolCache.IsEnabled() {
 			filePath, found := s.symbolCache.Get(cacheKey)
@@ -762,9 +759,28 @@ func (s *Scanner) FindSymbolDefinitionLocation(symbolFullName string) (string, e
 	// This pkgInfo contains symbols from files *parsed in that specific call*.
 	if pkgInfo != nil {
 		targetFilePath := ""
-		for _, t := range pkgInfo.Types { if t.Name == symbolName { targetFilePath = t.FilePath; break } }
-		if targetFilePath == "" { for _, f := range pkgInfo.Functions { if f.Name == symbolName { targetFilePath = f.FilePath; break } } }
-		if targetFilePath == "" { for _, c := range pkgInfo.Constants { if c.Name == symbolName { targetFilePath = c.FilePath; break } } }
+		for _, t := range pkgInfo.Types {
+			if t.Name == symbolName {
+				targetFilePath = t.FilePath
+				break
+			}
+		}
+		if targetFilePath == "" {
+			for _, f := range pkgInfo.Functions {
+				if f.Name == symbolName {
+					targetFilePath = f.FilePath
+					break
+				}
+			}
+		}
+		if targetFilePath == "" {
+			for _, c := range pkgInfo.Constants {
+				if c.Name == symbolName {
+					targetFilePath = c.FilePath
+					break
+				}
+			}
+		}
 
 		if targetFilePath != "" {
 			if _, statErr := os.Stat(targetFilePath); statErr == nil {

@@ -58,7 +58,6 @@ func TestLazyResolution_Integration(t *testing.T) {
 		t.Fatalf("Expected module path 'example.com/multipkg-test', got '%s'", s.locator.ModulePath())
 	}
 
-
 	// Scan the 'api' package, which depends on the 'models' package.
 	apiImportPath := "example.com/multipkg-test/api"
 	pkgInfo, err := s.ScanPackageByImport(apiImportPath)
@@ -124,7 +123,6 @@ func TestLazyResolution_Integration(t *testing.T) {
 	}
 }
 
-
 func TestScanner_WithSymbolCache(t *testing.T) {
 	// Define import paths from testdata/multipkg
 	apiImportPath := "example.com/multipkg-test/api"       // Contains Handler type
@@ -139,7 +137,6 @@ func TestScanner_WithSymbolCache(t *testing.T) {
 
 	expectedHandlerFilePath, _ := filepath.Abs(filepath.Join(moduleRootDir, "api/handler.go"))
 	expectedUserFilePath, _ := filepath.Abs(filepath.Join(moduleRootDir, "models/user.go"))
-
 
 	t.Run("ScanAndUpdateCache_FindSymbol_CacheHit", func(t *testing.T) {
 		testCacheDir, cleanupTestCacheDir := tempScannerDir(t)
@@ -190,13 +187,11 @@ func TestScanner_WithSymbolCache(t *testing.T) {
 		// So, expected path in cache is "api/handler.go", not the full absolute path.
 		expectedHandlerRelPath := "api/handler.go"
 
-
 		if actualPathInCache, ok := loadedCacheContent.Symbols[handlerSymbolFullName]; !ok {
 			t.Errorf("Cache Symbols map does not contain %s. Content: %+v", handlerSymbolFullName, loadedCacheContent.Symbols)
 		} else if actualPathInCache != expectedHandlerRelPath {
 			t.Errorf("Cache Symbols map for %s has path %s, expected %s", handlerSymbolFullName, actualPathInCache, expectedHandlerRelPath)
 		}
-
 
 		if fileMeta, ok := loadedCacheContent.Files[expectedHandlerRelPath]; !ok {
 			t.Errorf("Cache Files map does not contain entry for handler file %s. Content: %+v", expectedHandlerRelPath, loadedCacheContent.Files)
@@ -506,7 +501,6 @@ func equalStringSlices(a, b []string) bool {
 	return reflect.DeepEqual(aCopy, bCopy)
 }
 
-
 func TestScanFilesAndGetUnscanned(t *testing.T) {
 	// Setup: Initialize scanner relative to the 'testdata/scanfiles' module
 	s, err := New("./testdata/scanfiles")
@@ -583,16 +577,19 @@ func TestScanFilesAndGetUnscanned(t *testing.T) {
 		}
 	})
 
-
 	t.Run("ScanFiles_MultipleCalls_VisitedSkipped", func(t *testing.T) {
 		sTest, _ := New("./testdata/scanfiles")
 		// First call: scan user.go
 		_, err := sTest.ScanFiles([]string{coreUserPathAbs})
-		if err != nil { t.Fatalf("First ScanFiles call failed: %v", err) }
+		if err != nil {
+			t.Fatalf("First ScanFiles call failed: %v", err)
+		}
 
 		// Second call: scan user.go (already visited) and item.go (new)
 		pkgInfo, err := sTest.ScanFiles([]string{coreUserPathAbs, coreItemPathAbs})
-		if err != nil { t.Fatalf("Second ScanFiles call failed: %v", err) }
+		if err != nil {
+			t.Fatalf("Second ScanFiles call failed: %v", err)
+		}
 
 		if !containsString(pkgInfo.Files, coreItemPathAbs) || len(pkgInfo.Files) != 1 {
 			t.Errorf("Second ScanFiles: expected Files to contain only newly scanned %s, got %v", coreItemPathAbs, pkgInfo.Files)
@@ -603,17 +600,25 @@ func TestScanFilesAndGetUnscanned(t *testing.T) {
 		if typeUser := findType(pkgInfo.Types, "User"); typeUser != nil {
 			t.Error("Type 'User' (from user.go) should not be in second ScanFiles result as it was already visited")
 		}
-		if _, visited := sTest.visitedFiles[coreUserPathAbs]; !visited { t.Error("user.go not marked visited") }
-		if _, visited := sTest.visitedFiles[coreItemPathAbs]; !visited { t.Error("item.go not marked visited") }
+		if _, visited := sTest.visitedFiles[coreUserPathAbs]; !visited {
+			t.Error("user.go not marked visited")
+		}
+		if _, visited := sTest.visitedFiles[coreItemPathAbs]; !visited {
+			t.Error("item.go not marked visited")
+		}
 	})
 
 	t.Run("ScanFiles_AllFilesVisited_EmptyResult", func(t *testing.T) {
 		sTest, _ := New("./testdata/scanfiles")
 		_, err := sTest.ScanFiles([]string{coreUserPathAbs}) // Visit user.go
-		if err != nil { t.Fatalf("Failed to scan user.go: %v", err) }
+		if err != nil {
+			t.Fatalf("Failed to scan user.go: %v", err)
+		}
 
 		pkgInfo, err := sTest.ScanFiles([]string{coreUserPathAbs}) // Scan again
-		if err != nil { t.Fatalf("Second scan of user.go failed: %v", err) }
+		if err != nil {
+			t.Fatalf("Second scan of user.go failed: %v", err)
+		}
 		if len(pkgInfo.Files) != 0 {
 			t.Errorf("Expected Files to be empty when scanning already visited file, got %v", pkgInfo.Files)
 		}
@@ -627,7 +632,9 @@ func TestScanFilesAndGetUnscanned(t *testing.T) {
 
 		// Initially, all files in core should be unscanned
 		unscanned, err := sTest.UnscannedGoFiles(corePkgImportPath)
-		if err != nil { t.Fatalf("UnscannedGoFiles initial failed: %v", err) }
+		if err != nil {
+			t.Fatalf("UnscannedGoFiles initial failed: %v", err)
+		}
 		expectedUnscannedInitial := []string{coreEmptyPathAbs, coreItemPathAbs, coreUserPathAbs}
 		if !equalStringSlices(unscanned, expectedUnscannedInitial) {
 			t.Errorf("Initial unscanned files: expected %v, got %v", expectedUnscannedInitial, unscanned)
@@ -635,10 +642,14 @@ func TestScanFilesAndGetUnscanned(t *testing.T) {
 
 		// Scan user.go
 		_, err = sTest.ScanFiles([]string{coreUserPathAbs})
-		if err != nil { t.Fatalf("ScanFiles(user.go) failed: %v", err) }
+		if err != nil {
+			t.Fatalf("ScanFiles(user.go) failed: %v", err)
+		}
 
 		unscannedAfterUser, err := sTest.UnscannedGoFiles(corePkgImportPath)
-		if err != nil { t.Fatalf("UnscannedGoFiles after user.go scan failed: %v", err) }
+		if err != nil {
+			t.Fatalf("UnscannedGoFiles after user.go scan failed: %v", err)
+		}
 		expectedUnscannedAfterUser := []string{coreEmptyPathAbs, coreItemPathAbs}
 		if !equalStringSlices(unscannedAfterUser, expectedUnscannedAfterUser) {
 			t.Errorf("Unscanned after user.go: expected %v, got %v", expectedUnscannedAfterUser, unscannedAfterUser)
@@ -646,10 +657,14 @@ func TestScanFilesAndGetUnscanned(t *testing.T) {
 
 		// Scan item.go and empty.go
 		_, err = sTest.ScanFiles([]string{coreItemPathAbs, coreEmptyPathAbs})
-		if err != nil { t.Fatalf("ScanFiles(item.go, empty.go) failed: %v", err) }
+		if err != nil {
+			t.Fatalf("ScanFiles(item.go, empty.go) failed: %v", err)
+		}
 
 		unscannedAllScanned, err := sTest.UnscannedGoFiles(corePkgImportPath)
-		if err != nil { t.Fatalf("UnscannedGoFiles after all core files scanned failed: %v", err) }
+		if err != nil {
+			t.Fatalf("UnscannedGoFiles after all core files scanned failed: %v", err)
+		}
 		if len(unscannedAllScanned) != 0 {
 			t.Errorf("Expected no unscanned files after all core files scanned, got %v", unscannedAllScanned)
 		}
@@ -659,14 +674,20 @@ func TestScanFilesAndGetUnscanned(t *testing.T) {
 		sTest, _ := New("./testdata/scanfiles")
 		// Scan core/user.go via ScanFiles first
 		_, err := sTest.ScanFiles([]string{coreUserPathAbs})
-		if err != nil { t.Fatalf("ScanFiles(user.go) failed: %v", err) }
+		if err != nil {
+			t.Fatalf("ScanFiles(user.go) failed: %v", err)
+		}
 
 		// Now ScanPackage for the whole core package
 		// It should only parse item.go and empty.go as user.go is visited
 		pkgInfo, err := sTest.ScanPackage("./testdata/scanfiles/core")
-		if err != nil { t.Fatalf("ScanPackage(core) failed: %v", err) }
+		if err != nil {
+			t.Fatalf("ScanPackage(core) failed: %v", err)
+		}
 
-		if pkgInfo == nil { t.Fatal("ScanPackage returned nil pkgInfo") }
+		if pkgInfo == nil {
+			t.Fatal("ScanPackage returned nil pkgInfo")
+		}
 
 		// pkgInfo.Files from ScanPackage should only contain newly parsed files (item.go, empty.go)
 		expectedFiles := []string{coreItemPathAbs, coreEmptyPathAbs}
@@ -679,8 +700,12 @@ func TestScanFilesAndGetUnscanned(t *testing.T) {
 		if findType(pkgInfo.Types, "User") != nil { // User was already visited
 			t.Error("Type 'User' should NOT be in this ScanPackage result (already visited)")
 		}
-		if _, visited := sTest.visitedFiles[coreItemPathAbs]; !visited { t.Error("item.go not marked visited after ScanPackage") }
-		if _, visited := sTest.visitedFiles[coreEmptyPathAbs]; !visited { t.Error("empty.go not marked visited after ScanPackage") }
+		if _, visited := sTest.visitedFiles[coreItemPathAbs]; !visited {
+			t.Error("item.go not marked visited after ScanPackage")
+		}
+		if _, visited := sTest.visitedFiles[coreEmptyPathAbs]; !visited {
+			t.Error("empty.go not marked visited after ScanPackage")
+		}
 
 		// Check package cache for the import path
 		sTest.mu.RLock()

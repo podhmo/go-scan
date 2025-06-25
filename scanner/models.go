@@ -97,6 +97,7 @@ type FieldType struct {
 	IsMap              bool
 	Definition         *TypeInfo // Caches the resolved type definition.
 	IsResolvedByConfig bool      // True if this type was resolved using ExternalTypeOverrides
+	IsBuiltin          bool      // True if this type is a Go built-in type
 
 	resolver       PackageResolver // For lazy-loading the type definition.
 	fullImportPath string          // Full import path of the type, e.g., "example.com/project/models".
@@ -191,11 +192,15 @@ func (ft *FieldType) Resolve() (*TypeInfo, error) {
 		// Callers should check IsResolvedByConfig if they need to distinguish this case.
 		return nil, nil
 	}
+	if ft.IsBuiltin {
+		// Built-in types are considered resolved without a specific TypeInfo.
+		return nil, nil
+	}
 	if ft.Definition != nil {
 		return ft.Definition, nil
 	}
 
-	// Cannot resolve primitive types or types from the same package without a resolver.
+	// Cannot resolve types from the same package without a resolver or if not a built-in.
 	if ft.resolver == nil || ft.fullImportPath == "" {
 		return nil, fmt.Errorf("type %q cannot be resolved: no resolver or import path available", ft.Name)
 	}

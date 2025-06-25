@@ -9,6 +9,7 @@ import (
 	"github.com/podhmo/go-scan/cache"
 	"github.com/podhmo/go-scan/locator"
 	"github.com/podhmo/go-scan/scanner"
+	"go/token" // Added for fset
 )
 
 // Re-export scanner kinds for convenience.
@@ -22,14 +23,12 @@ const (
 // It combines a locator for finding packages and a scanner for parsing them.
 type Scanner struct {
 	locator      *locator.Locator
-	scanner      *scanner.Scanner
-	packageCache map[string]*scanner.PackageInfo // This is for package AST, not symbol definitions
+	scanner      *scanner.Scanner // The actual parser, configured with fset and overrides
+	packageCache map[string]*scanner.PackageInfo
 	mu           sync.RWMutex
+	fset         *token.FileSet // Shared FileSet for all parsing operations
 
-	// CachePath is the path to the symbol cache file.
-	// If empty, caching will be disabled. Otherwise, this path will be used.
-	CachePath string
-	// symbolCache *cache.SymbolCache // Added - Note: UseCache field was removed
+	CachePath             string
 	symbolCache           *cache.SymbolCache
 	ExternalTypeOverrides scanner.ExternalTypeOverride
 }
@@ -41,13 +40,22 @@ func New(startPath string) (*Scanner, error) {
 		return nil, fmt.Errorf("failed to initialize locator: %w", err)
 	}
 
+	fset := token.NewFileSet()
+	// Initialize scanner.Scanner with the shared fset and empty overrides initially.
+	// Overrides can be set later via SetExternalTypeOverrides.
+	initialScanner, err := scanner.New(fset, nil)
+	if err != nil {
+		// This error would only happen if fset is nil, which it isn't here.
+		// But good practice to check.
+		return nil, fmt.Errorf("failed to create internal scanner: %w", err)
+	}
+
 	return &Scanner{
 		locator:               loc,
-		scanner:               scanner.New(nil), // Initialize with nil, can be set later
+		scanner:               initialScanner, // Use the initialized scanner
 		packageCache:          make(map[string]*scanner.PackageInfo),
-		ExternalTypeOverrides: make(scanner.ExternalTypeOverride), // Initialize the map
-		// CachePath is initialized to its zero value "" (empty string), meaning cache disabled by default.
-		// symbolCache will be initialized by getOrCreateSymbolCache when/if needed.
+		fset:                  fset, // Store the shared fset
+		ExternalTypeOverrides: make(scanner.ExternalTypeOverride),
 	}, nil
 }
 
@@ -59,8 +67,21 @@ func (s *Scanner) SetExternalTypeOverrides(overrides scanner.ExternalTypeOverrid
 		overrides = make(scanner.ExternalTypeOverride)
 	}
 	s.ExternalTypeOverrides = overrides
-	// Re-initialize the internal scanner.Scanner with the new overrides
-	s.scanner = scanner.New(s.ExternalTypeOverrides)
+	// Re-initialize the internal scanner.Scanner with the new overrides, using the existing shared fset.
+	newInternalScanner, err := scanner.New(s.fset, s.ExternalTypeOverrides)
+	if err != nil {
+		// This error should ideally not happen if s.fset is always valid.
+		// Log this or handle more gracefully if s.fset could become invalid.
+		// For now, we might panic or return an error if this is a user-facing configuration method.
+		// However, this method doesn't return an error. We'll assume s.fset is good.
+		// If scanner.New can return error for other reasons than nil fset, that needs handling.
+		// For simplicity, let's assume scanner.New only errors on nil fset, which we guard in goscan.New.
+		// If it could error otherwise, this Set method should probably return an error.
+		fmt.Fprintf(os.Stderr, "warning: failed to re-initialize internal scanner with new overrides: %v. Continuing with previous scanner settings.\n", err)
+		// Do not replace s.scanner if re-initialization fails, to keep it in a working state.
+		return
+	}
+	s.scanner = newInternalScanner
 }
 
 // ScanPackage scans a single package at a given directory path.
@@ -184,7 +205,7 @@ func (s *Scanner) updateSymbolCacheWithPackageInfo(importPath string, pkgInfo *s
 	for _, typeInfo := range pkgInfo.Types {
 		if typeInfo.Name != "" && typeInfo.FilePath != "" {
 			key := importPath + "." + typeInfo.Name
-			if err := symCache.Set(key, typeInfo.FilePath); err != nil {
+			if err := symCache.SetSymbol(key, typeInfo.FilePath); err != nil { // Changed Set to SetSymbol
 				fmt.Fprintf(os.Stderr, "error setting cache for type %s: %v\n", key, err)
 			}
 		}
@@ -197,7 +218,7 @@ func (s *Scanner) updateSymbolCacheWithPackageInfo(importPath string, pkgInfo *s
 			// e.g., importPath + "." + receiverType + "." + funcName for methods.
 			// For now, assumes top-level functions.
 			key := importPath + "." + funcInfo.Name
-			if err := symCache.Set(key, funcInfo.FilePath); err != nil {
+			if err := symCache.SetSymbol(key, funcInfo.FilePath); err != nil { // Changed Set to SetSymbol
 				fmt.Fprintf(os.Stderr, "error setting cache for func %s: %v\n", key, err)
 			}
 		}
@@ -207,7 +228,7 @@ func (s *Scanner) updateSymbolCacheWithPackageInfo(importPath string, pkgInfo *s
 	for _, constInfo := range pkgInfo.Constants {
 		if constInfo.Name != "" && constInfo.FilePath != "" {
 			key := importPath + "." + constInfo.Name
-			if err := symCache.Set(key, constInfo.FilePath); err != nil {
+			if err := symCache.SetSymbol(key, constInfo.FilePath); err != nil { // Changed Set to SetSymbol
 				fmt.Fprintf(os.Stderr, "error setting cache for const %s: %v\n", key, err)
 			}
 		}

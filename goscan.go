@@ -644,26 +644,27 @@ func (s *Scanner) ScanPackageByImport(importPath string) (*scanner.PackageInfo, 
 	cachedPkg, found := s.packageCache[importPath]
 	s.mu.RUnlock()
 	if found {
-		// Simple cache hit: if a PackageInfo for this importPath exists in the instance's packageCache,
-		// assume it's sufficiently up-to-date for this Scanner's lifecycle.
-		// More sophisticated staleness checks could be added here if needed,
-		// e.g., by comparing against s.visitedFiles or file modification times,
-		// but ScanPackageByImport itself is designed to scan unvisited/changed files.
+		fmt.Printf("DEBUG: ScanPackageByImport CACHE HIT for %s. Returning cached PackageInfo with %d types.\n", importPath, len(cachedPkg.Types))
 		return cachedPkg, nil
 	}
+	fmt.Printf("DEBUG: ScanPackageByImport CACHE MISS for %s.\n", importPath)
 
 	pkgDirAbs, err := s.locator.FindPackageDir(importPath)
 	if err != nil {
 		return nil, fmt.Errorf("could not find directory for import path %s: %w", importPath, err)
 	}
+	fmt.Printf("DEBUG: ScanPackageByImport resolved import path %s to directory %s.\n", importPath, pkgDirAbs)
 
 	allGoFilesInPkg, err := listGoFiles(pkgDirAbs) // Gets absolute paths
 	if err != nil {
 		return nil, fmt.Errorf("ScanPackageByImport: failed to list go files in %s: %w", pkgDirAbs, err)
 	}
+	fmt.Printf("DEBUG: ScanPackageByImport found %d .go files in %s: %v\n", len(allGoFilesInPkg), pkgDirAbs, allGoFilesInPkg)
 
 	if len(allGoFilesInPkg) == 0 {
-		pkgInfo := &scanner.PackageInfo{Path: pkgDirAbs, ImportPath: importPath, Name: "", Fset: s.fset, Files: []string{}}
+		// If a directory for an import path exists but has no .go files, cache an empty PackageInfo.
+		fmt.Printf("DEBUG: ScanPackageByImport found no .go files in %s. Caching empty PackageInfo.\n", pkgDirAbs)
+		pkgInfo := &scanner.PackageInfo{Path: pkgDirAbs, ImportPath: importPath, Name: "", Fset: s.fset, Files: []string{}, Types: []*scanner.TypeInfo{}}
 		s.mu.Lock()
 		s.packageCache[importPath] = pkgInfo
 		s.mu.Unlock()
@@ -672,13 +673,14 @@ func (s *Scanner) ScanPackageByImport(importPath string) (*scanner.PackageInfo, 
 
 	var filesToParseThisCall []string
 	symCache, _ := s.getOrCreateSymbolCache() // Error getting cache is not fatal here
+	fmt.Printf("DEBUG: ScanPackageByImport for %s, symbol cache enabled: %t\n", importPath, symCache != nil && symCache.IsEnabled())
 
 	filesConsideredBySymCache := make(map[string]struct{})
 
 	if symCache != nil && symCache.IsEnabled() {
 		newDiskFiles, existingDiskFiles, errSym := symCache.GetFilesToScan(pkgDirAbs)
 		if errSym != nil {
-			fmt.Fprintf(os.Stderr, "warning: GetFilesToScan for %s failed: %v. Will scan all unvisited files in the package.\n", pkgDirAbs, errSym)
+			fmt.Fprintf(os.Stderr, "warning: GetFilesToScan for %s (%s) failed: %v. Will scan all unvisited files in the package.\n", importPath, pkgDirAbs, errSym)
 			// Fallback: scan all files in the package that this Scanner instance hasn't visited.
 			for _, f := range allGoFilesInPkg {
 				if _, visited := s.visitedFiles[f]; !visited {

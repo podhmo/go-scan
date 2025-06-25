@@ -1,18 +1,11 @@
-# TODO List
+# TODO
 
-This document tracks planned features and improvements for the Go Type Scanner project.
+## `locator.go` の改善
 
-## Must-have Features
-
-These are critical features for the library to be broadly useful in real-world projects.
-
-- **Generics Support**: Add parsing logic for Go 1.18+ generics (e.g., `type Page[T] struct { ... }`). Without this, the scanner cannot be used in modern projects that leverage generics for reusable structures like API responses or data containers.
-
-## Nice-to-have / Advanced Features
-
-These features would expand the library's capabilities for more advanced use cases.
-
-- **Interface Parsing**: Fully parse `interface` definitions, including their method sets. This would be valuable for tools like DI containers or mock generators that operate on interface contracts.
-- **`iota` Evaluation**: Implement logic to correctly evaluate the integer values of constants defined using `iota`. This is useful for documentation generation where displaying the actual value of an enum is desired (e.g., `StatusActive (value: 1)`).
-- **Annotation Parsing**: Support for structured comments (annotations) like `// @validate:"required,min=0"`. This would allow tools to extract rich metadata beyond what standard Go field tags provide, useful for validation, OpenAPI extensions, etc.
-- **External Dependency Resolution**: Add an option to scan packages from external dependencies listed in `go.mod`. This would help in resolving common types like `uuid.UUID` to their underlying kinds (e.g., `string`), enabling more accurate schema generation. This should likely be an opt-in feature to manage performance.
+- 現在 `locator.Locator.FindPackageDir` には、`go-scan` リポジトリ自身のテストデータやサンプルコードが、メインモジュールとは異なるモジュールコンテキスト（独自の `go.mod` を持つサブディレクトリなど）から参照される場合に対応するためのフォールバック処理が含まれています。
+- このフォールバックは、特定のモジュールパス（例: `github.com/podhmo/go-scan`）をハードコード気味に扱うため、汎用性が低いアプローチです。
+- **将来的な改善点:**
+    - このフォールバック処理を削除し、`go-scan` がスキャン対象のモジュール境界を厳密に守るようにする。
+    - または、複数のモジュールルートや依存関係をよりGoの標準的なビルド方法に近い形で解決できる、より汎用的で設定可能なメカニズムを導入する。例えば、ワークスペースの概念の導入や、`go.work` ファイルの（限定的な）解釈などが考えられます。
+    - `go-scan` の主なユースケースとスコープを再検討し、このようなクロスモジュール（ただしリポジトリ内）参照のサポートが本当に必要か、必要であればどのような形が望ましいかを明確にする。
+- このフォールバックが必要となった背景には、`go-scan` が `go/packages` のような重量級の依存関係解決を行わずに動作するという設計思想があります。軽量性を保ちつつ、どこまで柔軟なパッケージ解決をサポートするかのバランスが重要です。

@@ -49,22 +49,97 @@ func (l *Locator) ModulePath() string {
 }
 
 // FindPackageDir converts an import path to a physical directory path.
-// It only works for packages within the same module.
 func (l *Locator) FindPackageDir(importPath string) (string, error) {
-	if !strings.HasPrefix(importPath, l.modulePath) {
-		// Allow finding our own testdata module
-		if strings.HasPrefix(importPath, "example.com/multipkg-test") {
-			relPath := strings.TrimPrefix(importPath, "example.com/multipkg-test")
-			testdataRoot, _ := findModuleRoot(l.rootDir)
-			return filepath.Join(testdataRoot, "testdata/multipkg", relPath), nil
+	// Try with the current module context first
+	if strings.HasPrefix(importPath, l.modulePath) {
+		relPath := strings.TrimPrefix(importPath, l.modulePath)
+		candidatePath := filepath.Join(l.rootDir, relPath)
+		// Check if directory exists before returning
+		if stat, err := os.Stat(candidatePath); err == nil && stat.IsDir() {
+			return candidatePath, nil
 		}
-		return "", fmt.Errorf("import path %q is not part of module %q", importPath, l.modulePath)
 	}
-	relPath := strings.TrimPrefix(importPath, l.modulePath)
-	return filepath.Join(l.rootDir, relPath), nil
+
+	// Fallback for go-scan's own examples/testdata when they are not the primary module
+	const goScanModulePath = "github.com/podhmo/go-scan"
+	if strings.HasPrefix(importPath, goScanModulePath) {
+		// Check if the current locator's context (l.rootDir, l.modulePath) is already for goScanModulePath
+		if l.modulePath == goScanModulePath {
+			// If current context is already go-scan, try to resolve relative to its root (l.rootDir)
+			relPath := strings.TrimPrefix(importPath, goScanModulePath)
+			candidatePath := filepath.Join(l.rootDir, relPath)
+			if stat, err := os.Stat(candidatePath); err == nil && stat.IsDir() {
+				return candidatePath, nil
+			}
+		} else {
+			// Current context is not go-scan (e.g., it's an example's module like derivingjson).
+			// Try to find the actual go-scan project root by searching upwards from l.rootDir
+			// for a go.mod that defines "module github.com/podhmo/go-scan".
+			goScanActualRootDir, err := findModuleRootForPath(l.rootDir, goScanModulePath)
+			if err == nil {
+				// Now construct path relative to this actual root
+				relPath := strings.TrimPrefix(importPath, goScanModulePath)
+				candidatePath := filepath.Join(goScanActualRootDir, relPath)
+				if stat, err := os.Stat(candidatePath); err == nil && stat.IsDir() {
+					return candidatePath, nil
+				}
+			}
+		}
+	}
+
+	// Original hardcoded testdata path for "example.com/multipkg-test"
+	// This is highly specific and should ideally be refactored or covered by a more general mechanism.
+	const multiPkgTestModulePath = "example.com/multipkg-test"
+	if strings.HasPrefix(importPath, multiPkgTestModulePath) {
+		// This assumes that "example.com/multipkg-test" corresponds to "testdata/multipkg"
+		// relative to the true "github.com/podhmo/go-scan" root.
+		goScanRepoRoot, err := findModuleRootForPath(l.rootDir, goScanModulePath) // Find actual go-scan root
+		if err == nil {
+			// Construct path: goScanRepoRoot + "testdata/multipkg" + (importPath - multiPkgTestModulePath)
+			relPathFromTestModule := strings.TrimPrefix(importPath, multiPkgTestModulePath)
+			// Ensure relPathFromTestModule is treated as relative segments, not an absolute path if empty.
+			// For example, if importPath IS multiPkgTestModulePath, relPathFromTestModule will be empty.
+			// We want .../testdata/multipkg in that case.
+			// If importPath is "example.com/multipkg-test/api", relPathFromTestModule is "/api".
+			// filepath.Join handles this correctly by cleaning up.
+			candidatePath := filepath.Join(goScanRepoRoot, "testdata/multipkg", relPathFromTestModule)
+			if stat, err := os.Stat(candidatePath); err == nil && stat.IsDir() {
+				return candidatePath, nil
+			}
+		}
+	}
+
+	return "", fmt.Errorf("import path %q could not be resolved. Current module is %q (root: %s)", importPath, l.modulePath, l.rootDir)
 }
 
-// findModuleRoot searches for go.mod starting from a given directory and moving upwards.
+// findModuleRootForPath searches upwards from startDir for a go.mod file
+// that declares the given targetModulePath.
+func findModuleRootForPath(startDir string, targetModulePath string) (string, error) {
+	currentDir, err := filepath.Abs(startDir)
+	if err != nil {
+		return "", fmt.Errorf("findModuleRootForPath: failed to get absolute path for %s: %w", startDir, err)
+	}
+
+	for {
+		goModPath := filepath.Join(currentDir, "go.mod")
+		if _, statErr := os.Stat(goModPath); statErr == nil {
+			// go.mod exists, check its module path
+			modPath, readErr := getModulePath(goModPath)
+			if readErr == nil && modPath == targetModulePath {
+				return currentDir, nil // Found the target module root
+			}
+		}
+
+		parentDir := filepath.Dir(currentDir)
+		if parentDir == currentDir { // Reached root of filesystem or an error occurred
+			break
+		}
+		currentDir = parentDir
+	}
+	return "", fmt.Errorf("module %q not found in or above %s", targetModulePath, startDir)
+}
+
+// findModuleRoot searches for any go.mod starting from a given directory and moving upwards.
 func findModuleRoot(dir string) (string, error) {
 	currentDir := dir
 	for {

@@ -103,6 +103,12 @@ type FieldType struct {
 	typeName       string          // The name of the type within its package, e.g., "User".
 }
 
+// FullImportPath returns the fully qualified import path if this type is from an external package.
+// Returns an empty string if the type is local or not from a qualified package.
+func (ft *FieldType) FullImportPath() string {
+	return ft.fullImportPath
+}
+
 // Resolve finds and returns the full definition of the type.
 // It uses the PackageResolver to parse other packages on-demand.
 // The result is cached for subsequent calls.

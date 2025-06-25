@@ -1,4 +1,4 @@
-package typescanner
+package goscan
 
 import (
 	"encoding/json" // Added for manual cache file creation in tests

@@ -30,15 +30,15 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/podhmo/go-scan/typescanner"
+	"github.com/vvakame/goscan"
 	// If you are using the main package directly, import path might be different
 	// For library usage, it's typically:
-	// "github.com/podhmo/go-scan/typescanner"
+	// "github.com/vvakame/goscan"
 )
 
 func main() {
 	// Create a new scanner, starting search for go.mod from the current directory
-	scanner, err := typescanner.New(".")
+	scanner, err := goscan.New(".")
 	if err != nil {
 		log.Fatalf("Failed to create scanner: %v", err)
 	}
@@ -66,7 +66,7 @@ func main() {
 	// Scan a package by its import path
 	// Replace with an actual import path from your project or testdata.
 	// The example below uses testdata included in this repository.
-	pkgImportPath := "github.com/podhmo/go-scan/testdata/multipkg/api"
+	pkgImportPath := "github.com/vvakame/goscan/testdata/multipkg/api"
 	pkgInfo, err := scanner.ScanPackageByImport(pkgImportPath)
 	if err != nil {
 		log.Fatalf("Failed to scan package: %v", err)
@@ -83,7 +83,7 @@ func main() {
 				}
 				
 				fmt.Printf("Field '%s' resolved to type '%s'\n", f.Name, def.Name)
-				if def.Kind == typescanner.StructKind {
+				if def.Kind == goscan.StructKind {
 					fmt.Printf("  It is a struct with %d fields.\n", len(def.Struct.Fields))
 				}
 			}

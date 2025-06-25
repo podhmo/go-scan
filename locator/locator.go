@@ -60,6 +60,12 @@ func (l *Locator) FindPackageDir(importPath string) (string, error) {
 		}
 	}
 
+	// TODO: The following fallback mechanisms are temporary workarounds to support
+	// go-scan's internal examples and testdata, which might exist in a different
+	// module context within the same repository. This should be replaced by a more
+	// robust and configurable module resolution strategy in the future.
+	// See docs/todo.md for more details.
+
 	// Fallback for go-scan's own examples/testdata when they are not the primary module
 	const goScanModulePath = "github.com/podhmo/go-scan"
 	if strings.HasPrefix(importPath, goScanModulePath) {
@@ -87,8 +93,8 @@ func (l *Locator) FindPackageDir(importPath string) (string, error) {
 		}
 	}
 
-	// Original hardcoded testdata path for "example.com/multipkg-test"
-	// This is highly specific and should ideally be refactored or covered by a more general mechanism.
+	// TODO: This is another specific fallback for "example.com/multipkg-test".
+	// This should also be removed or generalized as part of the locator improvements.
 	const multiPkgTestModulePath = "example.com/multipkg-test"
 	if strings.HasPrefix(importPath, multiPkgTestModulePath) {
 		// This assumes that "example.com/multipkg-test" corresponds to "testdata/multipkg"
@@ -97,11 +103,6 @@ func (l *Locator) FindPackageDir(importPath string) (string, error) {
 		if err == nil {
 			// Construct path: goScanRepoRoot + "testdata/multipkg" + (importPath - multiPkgTestModulePath)
 			relPathFromTestModule := strings.TrimPrefix(importPath, multiPkgTestModulePath)
-			// Ensure relPathFromTestModule is treated as relative segments, not an absolute path if empty.
-			// For example, if importPath IS multiPkgTestModulePath, relPathFromTestModule will be empty.
-			// We want .../testdata/multipkg in that case.
-			// If importPath is "example.com/multipkg-test/api", relPathFromTestModule is "/api".
-			// filepath.Join handles this correctly by cleaning up.
 			candidatePath := filepath.Join(goScanRepoRoot, "testdata/multipkg", relPathFromTestModule)
 			if stat, err := os.Stat(candidatePath); err == nil && stat.IsDir() {
 				return candidatePath, nil

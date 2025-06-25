@@ -82,7 +82,11 @@ func (s *Scanner) parseGenDecl(decl *ast.GenDecl, info *PackageInfo) {
 	for _, spec := range decl.Specs {
 		switch sp := spec.(type) {
 		case *ast.TypeSpec:
-			info.Types = append(info.Types, s.parseTypeSpec(sp))
+			typeInfo := s.parseTypeSpec(sp)
+			if typeInfo.Doc == "" {
+				typeInfo.Doc = commentText(decl.Doc)
+			}
+			info.Types = append(info.Types, typeInfo)
 
 		case *ast.ValueSpec:
 			if decl.Tok == token.CONST {

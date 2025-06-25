@@ -18,7 +18,7 @@ func (m *MockResolver) ScanPackageByImport(importPath string) (*PackageInfo, err
 }
 
 func TestScanPackageFeatures(t *testing.T) {
-	s := New()
+	s := New(nil) // Pass nil for ExternalTypeOverride
 	pkgInfo, err := s.ScanPackage(filepath.Join("..", "testdata", "features"), &MockResolver{})
 	if err != nil {
 		t.Fatalf("ScanPackage failed: %v", err)

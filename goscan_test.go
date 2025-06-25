@@ -357,3 +357,127 @@ func pathsEqual(p1, p2 string) bool {
 	}
 	return abs1 == abs2 // Fallback for systems where case matters and paths differ only by case
 }
+
+func TestScannerWithExternalTypeOverrides(t *testing.T) {
+	// Setup: Create a scanner instance. Point to the new testdata module.
+	// The module for externaltypes is example.com/externaltypes
+	// The scanner needs to be initialized with a path *within* that module,
+	// or any path from which that module can be found (e.g. "." if testdata/externaltypes/go.mod makes it part of a workspace).
+	// For simplicity, let's assume we run tests from the project root, and locator can find testdata/externaltypes.
+	// We need to ensure the locator can correctly find "example.com/externaltypes".
+	// The New() function takes a startPath to find the main go.mod of the project being scanned.
+	// If testdata/externaltypes is a self-contained module, we might need a way to point the locator to it.
+	// Let's use "./testdata/externaltypes" as the start path for New(), assuming it has its own go.mod.
+	s, err := New("./testdata/externaltypes")
+	if err != nil {
+		t.Fatalf("Failed to create Scanner for testdata/externaltypes: %v", err)
+	}
+
+	// Define overrides
+	overrides := scanner.ExternalTypeOverride{
+		"github.com/google/uuid.UUID": "string",      // uuid.UUID should be treated as string
+		"example.com/somepkg.Time":    "mypkg.MyTime",  // a custom non-existent type to another custom string
+	}
+	s.SetExternalTypeOverrides(overrides)
+
+	// Scan the package containing the types.
+	// The import path for testdata/externaltypes module is example.com/externaltypes as defined in its go.mod
+	pkgInfo, err := s.ScanPackageByImport("example.com/externaltypes")
+	if err != nil {
+		t.Fatalf("Failed to scan package 'example.com/externaltypes': %v", err)
+	}
+
+	foundObjectWithUUID := false
+	foundObjectWithCustomTime := false
+
+	for _, typeInfo := range pkgInfo.Types {
+		if typeInfo.Name == "ObjectWithUUID" {
+			foundObjectWithUUID = true
+			if typeInfo.Struct == nil {
+				t.Errorf("ObjectWithUUID should be a struct, but it's not")
+				continue
+			}
+			for _, field := range typeInfo.Struct.Fields {
+				if field.Name == "ID" { // This field is of type uuid.UUID
+					if field.Type.Name != "string" {
+						t.Errorf("Expected field ID of ObjectWithUUID to be overridden to 'string', got '%s'", field.Type.Name)
+					}
+					if !field.Type.IsResolvedByConfig {
+						t.Errorf("Expected field ID of ObjectWithUUID to have IsResolvedByConfig=true")
+					}
+					// Try to resolve to see if it correctly does nothing for overridden types
+					resolvedType, errResolve := field.Type.Resolve()
+					if errResolve != nil {
+						t.Errorf("field.Type.Resolve() for overridden type should not error, got %v", errResolve)
+					}
+					if resolvedType != nil {
+						t.Errorf("field.Type.Resolve() for overridden type should return nil TypeInfo, got %v", resolvedType)
+					}
+				}
+			}
+		} else if typeInfo.Name == "ObjectWithCustomTime" {
+			foundObjectWithCustomTime = true
+			if typeInfo.Struct == nil {
+				t.Errorf("ObjectWithCustomTime should be a struct, but it's not")
+				continue
+			}
+			for _, field := range typeInfo.Struct.Fields {
+				if field.Name == "Timestamp" { // This field is of type somepkg.Time
+					if field.Type.Name != "mypkg.MyTime" {
+						t.Errorf("Expected field Timestamp of ObjectWithCustomTime to be overridden to 'mypkg.MyTime', got '%s'", field.Type.Name)
+					}
+					if !field.Type.IsResolvedByConfig {
+						t.Errorf("Expected field Timestamp of ObjectWithCustomTime to have IsResolvedByConfig=true")
+					}
+				}
+			}
+		}
+	}
+
+	if !foundObjectWithUUID {
+		t.Errorf("Type 'ObjectWithUUID' not found in scanned package")
+	}
+	if !foundObjectWithCustomTime {
+		t.Errorf("Type 'ObjectWithCustomTime' not found in scanned package")
+	}
+
+	// Test that non-overridden types are handled normally.
+	// Re-scan the basic package with no overrides on this scanner instance.
+	// To do this cleanly, create a new scanner or reset overrides.
+	sBasic, err := New("./testdata/basic") // Assuming basic is another module or found from root
+	if err != nil {
+		t.Fatalf("Failed to create scanner for basic testdata: %v", err)
+	}
+	sBasic.SetExternalTypeOverrides(nil) // Ensure no overrides
+
+	pkgBasic, err := sBasic.ScanPackageByImport("github.com/podhmo/go-scan/testdata/basic")
+	if err != nil {
+		t.Fatalf("Failed to scan basic package: %v", err)
+	}
+	foundUserStruct := false
+	for _, typeInfo := range pkgBasic.Types {
+		if typeInfo.Name == "User" { // Changed from MyStruct to User
+			foundUserStruct = true
+			if typeInfo.Struct == nil {
+				t.Errorf("User type should be a struct but it's not.")
+				continue
+			}
+			// Assuming User has a field like "ID int" or similar primitive
+			if len(typeInfo.Struct.Fields) > 0 {
+				idField := typeInfo.Struct.Fields[0] // Assuming ID is the first field
+				if idField.Name == "ID" { // Check field "ID" specifically
+					if idField.Type.IsResolvedByConfig {
+						t.Errorf("Field ID in User should not have IsResolvedByConfig=true when no overrides are active for it")
+					}
+					if idField.Type.Name != "int" {
+						t.Errorf("User.ID expected type 'int', got '%s'", idField.Type.Name)
+					}
+				}
+			}
+			break
+		}
+	}
+	if !foundUserStruct { // Changed from foundMyStruct
+		t.Errorf("User struct not found in basic package scan without overrides") // Changed message
+	}
+}

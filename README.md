@@ -18,6 +18,7 @@ This tool is designed for applications like OpenAPI document generation, ORM cod
 - **Documentation Parsing**: Captures GoDoc comments for types, fields, functions, and constants.
 - **Package Locator**: Finds the module root by locating `go.mod` and resolves internal package paths.
 - **Symbol Definition Caching**: (Experimental) Optionally caches the file location of scanned symbols (`types`, `functions`, `constants`) to speed up subsequent analyses by tools that need this information. The cache is stored as a JSON file.
+- **External Type Overrides**: Allows specifying how types from external (or even internal) packages should be interpreted by the scanner, e.g., treating `uuid.UUID` as a `string`.
 
 ## Quick Start
 
@@ -107,6 +108,75 @@ func main() {
 	}
 }
 ```
+
+## Overriding External Type Resolution
+
+In some scenarios, you might want to treat specific types from external (or even internal) packages as different Go types. For example, you might want all instances of `github.com/google/uuid.UUID` to be recognized as a simple `string` by the scanner, or a custom `pkg.MyTime` to be treated as `time.Time`.
+
+The `go-scan.Scanner` provides a method `SetExternalTypeOverrides()` to achieve this. You pass a map where the key is the fully qualified type name (e.g., `"github.com/google/uuid.UUID"`) and the value is the target Go type string (e.g., `"string"`).
+
+```go
+package main
+
+import (
+	"fmt"
+	"log"
+
+	"github.com/podhmo/go-scan"
+	"github.com/podhmo/go-scan/scanner" // For scanner.ExternalTypeOverride type
+)
+
+func main() {
+	s, err := goscan.New("./testdata/externaltypes") // Assuming testdata/externaltypes has its own go.mod
+	if err != nil {
+		log.Fatalf("Failed to create scanner: %v", err)
+	}
+
+	// Define overrides
+	overrides := scanner.ExternalTypeOverride{
+		"github.com/google/uuid.UUID": "string",    // Treat uuid.UUID as string
+		"example.com/somepkg.Time":    "time.Time", // Treat somepkg.Time as time.Time
+	}
+	s.SetExternalTypeOverrides(overrides)
+
+	// Scan a package that uses these types
+	pkgInfo, err := s.ScanPackageByImport("example.com/externaltypes") // Module from testdata
+	if err != nil {
+		log.Fatalf("Failed to scan package: %v", err)
+	}
+
+	for _, typeInfo := range pkgInfo.Types {
+		if typeInfo.Name == "ObjectWithUUID" && typeInfo.Struct != nil {
+			for _, field := range typeInfo.Struct.Fields {
+				if field.Name == "ID" {
+					// field.Type.Name will be "string"
+					// field.Type.IsResolvedByConfig will be true
+					fmt.Printf("Field %s (original %s.%s) overridden to: %s (IsResolvedByConfig: %t)\n",
+						field.Name, field.Type.PkgName, field.Type.Name, // Original PkgName might be empty if overridden early
+						field.Type.Name, field.Type.IsResolvedByConfig) // Name will be the overridden one
+				}
+			}
+		}
+		if typeInfo.Name == "ObjectWithCustomTime" && typeInfo.Struct != nil {
+			for _, field := range typeInfo.Struct.Fields {
+				if field.Name == "Timestamp" {
+					// field.Type.Name will be "time.Time"
+					// field.Type.IsResolvedByConfig will be true
+					fmt.Printf("Field %s overridden to: %s (IsResolvedByConfig: %t)\n",
+						field.Name, field.Type.Name, field.Type.IsResolvedByConfig)
+				}
+			}
+		}
+	}
+}
+```
+
+When a type is resolved using an override:
+- The `FieldType.Name` will reflect the target type string from the override map.
+- The `FieldType.IsResolvedByConfig` flag will be set to `true`.
+- Calling `FieldType.Resolve()` on such a type will return `nil, nil` (no error, no further `TypeInfo`), as it's considered "resolved" by the configuration.
+
+This feature is useful for simplifying complex external types down to their common representations (like `string` or `int`) or for mapping types from non-existent/stub packages during analysis.
 
 ## Caching Symbol Locations
 

@@ -92,7 +92,6 @@ func TestSymbolCache_Load_Save(t *testing.T) {
 		_ = os.MkdirAll(filepath.Dir(absPath1), 0755) // Ensure dir exists for makeRelative
 		_ = os.MkdirAll(filepath.Dir(absPath2), 0755) // Ensure dir exists for makeRelative
 
-
 		// Set symbols
 		err := scWrite.SetSymbol("key1", absPath1)
 		if err != nil {
@@ -127,8 +126,9 @@ func TestSymbolCache_Load_Save(t *testing.T) {
 		json.Unmarshal(data, &loadedContent)
 
 		expectedRelPath1 := "src/file1.go"
-		if runtime.GOOS == "windows" { expectedRelPath1 = "src\\file1.go" }
-
+		if runtime.GOOS == "windows" {
+			expectedRelPath1 = "src\\file1.go"
+		}
 
 		if loadedContent.Symbols["key1"] != filepath.ToSlash("src/file1.go") {
 			t.Errorf("Expected key1 path 'src/file1.go', got '%s'", loadedContent.Symbols["key1"])
@@ -136,7 +136,6 @@ func TestSymbolCache_Load_Save(t *testing.T) {
 		if loadedContent.Files[filepath.ToSlash(expectedRelPath1)].Symbols == nil || len(loadedContent.Files[filepath.ToSlash(expectedRelPath1)].Symbols) != 2 {
 			t.Errorf("Expected file1 metadata to have 2 symbols, got %v", loadedContent.Files[filepath.ToSlash(expectedRelPath1)].Symbols)
 		}
-
 
 		scRead, _ := NewSymbolCache(projectRoot, cacheFilePath)
 		err = scRead.Load()
@@ -162,7 +161,6 @@ func TestSymbolCache_Load_Save(t *testing.T) {
 		} else if len(fileMeta1.Symbols) != 2 || fileMeta1.Symbols[0] != "SymbolA" {
 			t.Errorf("Expected FileMetadata for %s to contain [SymbolA, SymbolB], got %v", relPath1, fileMeta1.Symbols)
 		}
-
 
 		val2, ok2 := scRead.Get("key2")
 		expectedPath2 := filepath.Join(projectRoot, filepath.FromSlash("pkg/file2.go"))
@@ -201,12 +199,15 @@ func TestSymbolCache_Load_Save(t *testing.T) {
 		_ = os.MkdirAll(filepath.Dir(absPathAfterCorrupt), 0755) // Ensure dir for makeRelative
 
 		err = sc.SetSymbol("key_after_corrupt", absPathAfterCorrupt)
-		if err != nil { t.Fatalf("SetSymbol after corrupt failed: %v", err) }
+		if err != nil {
+			t.Fatalf("SetSymbol after corrupt failed: %v", err)
+		}
 
 		metaAfterCorrupt := FileMetadata{Symbols: []string{"TestSymbol"}}
 		err = sc.SetFileMetadata(absPathAfterCorrupt, metaAfterCorrupt)
-		if err != nil { t.Fatalf("SetFileMetadata after corrupt failed: %v", err) }
-
+		if err != nil {
+			t.Fatalf("SetFileMetadata after corrupt failed: %v", err)
+		}
 
 		saveErr := sc.Save()
 		if saveErr != nil {
@@ -278,19 +279,26 @@ func TestSymbolCache_Set_Get_VerifyAndGet(t *testing.T) {
 
 	// Prepare the file system
 	err := os.MkdirAll(filepath.Dir(absFilePath), 0755)
-	if err != nil { t.Fatalf("MkdirAll failed: %v", err) }
+	if err != nil {
+		t.Fatalf("MkdirAll failed: %v", err)
+	}
 	err = os.WriteFile(absFilePath, []byte("package main"), 0644)
-	if err != nil { t.Fatalf("WriteFile failed: %v", err) }
+	if err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
 
 	// Set symbol and its file metadata
 	err = sc.SetSymbol(symbolFullName, absFilePath)
-	if err != nil { t.Fatalf("SetSymbol() error: %v", err) }
+	if err != nil {
+		t.Fatalf("SetSymbol() error: %v", err)
+	}
 
 	// SetFileMetadata would typically be called by a higher-level component after scanning the file.
 	// For this test, we set it manually.
 	err = sc.SetFileMetadata(absFilePath, FileMetadata{Symbols: []string{symbolShortName}})
-	if err != nil { t.Fatalf("SetFileMetadata() error: %v", err) }
-
+	if err != nil {
+		t.Fatalf("SetFileMetadata() error: %v", err)
+	}
 
 	t.Run("SetSymbol_and_Get_existing_file", func(t *testing.T) {
 		internalPath := sc.content.Symbols[symbolFullName]
@@ -394,9 +402,13 @@ func TestSymbolCache_Disabled_When_Path_Is_Empty(t *testing.T) {
 
 	absFilePath := filepath.Join(projectRoot, "file.go")
 	err := os.MkdirAll(filepath.Dir(absFilePath), 0755)
-	if err != nil { t.Fatalf("MkdirAll: %v", err) }
+	if err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
 	err = os.WriteFile(absFilePath, []byte("content"), 0644)
-	if err != nil { t.Fatalf("WriteFile: %v", err) }
+	if err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
 
 	// Test SetSymbol on disabled cache
 	if err := sc.SetSymbol("key1", absFilePath); err != nil {
@@ -414,7 +426,6 @@ func TestSymbolCache_Disabled_When_Path_Is_Empty(t *testing.T) {
 	if len(sc.content.Files) != 0 {
 		t.Error("SetFileMetadata() on disabled cache should not populate Files map")
 	}
-
 
 	if _, found := sc.Get("key1"); found {
 		t.Error("Get() on disabled cache should not find data")
@@ -445,16 +456,22 @@ func TestSymbolCache_PathNormalization(t *testing.T) {
 	// Define projectRoot using platform-agnostic joins for consistency
 	projectRoot := filepath.Join(cacheDir, "my", "project", "root")
 	err := os.MkdirAll(projectRoot, 0755)
-	if err != nil { t.Fatalf("MkdirAll for projectRoot failed: %v", err) }
+	if err != nil {
+		t.Fatalf("MkdirAll for projectRoot failed: %v", err)
+	}
 
 	sc, _ := NewSymbolCache(projectRoot, filepath.Join(cacheDir, "normalization_cache.json"))
 
 	// Path with mixed separators for a file within the project root
 	absFilePathMixed := filepath.Join(projectRoot, "src\\app/models", "user.go")
 	err = os.MkdirAll(filepath.Dir(absFilePathMixed), 0755)
-	if err != nil { t.Fatalf("MkdirAll for absFilePathMixed failed: %v", err) }
+	if err != nil {
+		t.Fatalf("MkdirAll for absFilePathMixed failed: %v", err)
+	}
 	err = os.WriteFile(absFilePathMixed, []byte("package models"), 0644)
-	if err != nil { t.Fatalf("WriteFile for absFilePathMixed failed: %v", err) }
+	if err != nil {
+		t.Fatalf("WriteFile for absFilePathMixed failed: %v", err)
+	}
 
 	err = sc.SetSymbol("user.Model", absFilePathMixed)
 	if err != nil {
@@ -462,21 +479,41 @@ func TestSymbolCache_PathNormalization(t *testing.T) {
 	}
 
 	// Stored paths should always use forward slashes, as makeRelative uses filepath.ToSlash.
-	expectedRelativeStoredPath := "src/app/models/user.go" // Explicitly use forward slashes for expectation.
+	expectedRelativeStoredPath := "src/app/models/user.go" // Universal forward slashes for storage.
 	internalPath := sc.content.Symbols["user.Model"]
 	if internalPath != expectedRelativeStoredPath {
-		t.Errorf("Expected internally stored path to be '%s', got '%s'", expectedRelativeStoredPath, internalPath)
+		t.Errorf("Expected internally stored path to be '%s' (using forward slashes), got '%s'", expectedRelativeStoredPath, internalPath)
 	}
 
 	retPath, found := sc.Get("user.Model")
 	if !found {
 		t.Fatal("Get() failed to find the key 'user.Model'")
 	}
-	// Get should return an absolute path, normalized for the OS.
-	normalizedAbsFilePath, _ := filepath.Abs(absFilePathMixed)
 
-	if retPath != normalizedAbsFilePath {
-		t.Errorf("Get() returned path '%s', expected '%s'", retPath, normalizedAbsFilePath)
+	// For comparison, construct the expected absolute path using the OS-specific separator.
+	// filepath.Join will use the correct separator for the current OS.
+	// projectRoot is already OS-specific. expectedRelativeStoredPath uses forward slashes.
+	// To correctly join, we can split the relative path and join its components.
+	// However, `filepath.Join(projectRoot, filepath.FromSlash(expectedRelativeStoredPath))` is simpler.
+	expectedAbsPath := filepath.Join(projectRoot, filepath.FromSlash(expectedRelativeStoredPath))
+
+	// Normalize both paths for a robust comparison, cleaning up any redundant separators or dots.
+	cleanedRetPath, _ := filepath.Abs(filepath.Clean(retPath))
+	cleanedExpectedAbsPath, _ := filepath.Abs(filepath.Clean(expectedAbsPath))
+
+	if cleanedRetPath != cleanedExpectedAbsPath {
+		t.Errorf("Get() returned path '%s' (cleaned: '%s'), expected '%s' (cleaned: '%s')",
+			retPath, cleanedRetPath, expectedAbsPath, cleanedExpectedAbsPath)
+	}
+
+	// Also test SetFileMetadata with mixed path
+	meta := FileMetadata{Symbols: []string{"User"}}
+	err = sc.SetFileMetadata(absFilePathMixed, meta)
+	if err != nil {
+		t.Fatalf("SetFileMetadata() with mixed path error: %v", err)
+	}
+	if _, ok := sc.content.Files[expectedRelativeStoredPath]; !ok {
+		t.Errorf("FileMetadata not stored under normalized path '%s' after SetFileMetadata with mixed path. Found: %v", expectedRelativeStoredPath, sc.content.Files)
 	}
 }
 
@@ -588,14 +625,23 @@ func TestSymbolCache_GetFilesToScan(t *testing.T) {
 
 	// Helper to check slice equality ignoring order
 	slicesEqualIgnoringOrder := func(a, b []string) bool {
-		if len(a) != len(b) { return false }
+		if len(a) != len(b) {
+			return false
+		}
 		m := make(map[string]int)
-		for _, x := range a { m[x]++ }
-		for _, x := range b { m[x]-- }
-		for _, count := range m { if count != 0 { return false } }
+		for _, x := range a {
+			m[x]++
+		}
+		for _, x := range b {
+			m[x]--
+		}
+		for _, count := range m {
+			if count != 0 {
+				return false
+			}
+		}
 		return true
 	}
-
 
 	// Scenario 1: New files only for pkg1
 	file1a := filepath.Join(pkg1Path, "file1a.go")
@@ -617,7 +663,6 @@ func TestSymbolCache_GetFilesToScan(t *testing.T) {
 	// Manually populate cache for next scenarios based on these files
 	createFileAndCache(pkg1Path, "file1a.go", []string{"SymbolA"}) // Re-create to control cache state
 	createFileAndCache(pkg1Path, "file1b.go", []string{"SymbolB"})
-
 
 	// Scenario 2: Cached files only for pkg1
 	newFiles, existingFiles, err = sc.GetFilesToScan(pkg1Path)
@@ -647,7 +692,6 @@ func TestSymbolCache_GetFilesToScan(t *testing.T) {
 	}
 	createFileAndCache(pkg1Path, "file1c.go", []string{"SymbolC"}) // Add file1c to cache for next test
 
-
 	// Scenario 4: File deleted from pkg1
 	os.Remove(file1b) // Delete file1b
 	relPathFile1b, _ := sc.makeRelative(file1b)
@@ -671,7 +715,6 @@ func TestSymbolCache_GetFilesToScan(t *testing.T) {
 	if _, ok := sc.content.Symbols["pkg1.SymbolB"]; ok { // Assuming symbol name was PkgName.SymbolName
 		t.Errorf("Symbol 'SymbolB' for deleted file %s not removed from symbol cache", relPathFile1b)
 	}
-
 
 	// Scenario 5: Ensure pkg2 is not affected by pkg1 scan
 	// Setup pkg2 with one cached file

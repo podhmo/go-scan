@@ -23,7 +23,7 @@ type FileMetadata struct {
 
 // CacheContent holds all data that is serialized to the cache file.
 type CacheContent struct {
-	Symbols map[string]string         `json:"symbols"` // Key: "<pkg_path>.<symbol_name>", Value: "relative_filepath"
+	Symbols map[string]string       `json:"symbols"` // Key: "<pkg_path>.<symbol_name>", Value: "relative_filepath"
 	Files   map[string]FileMetadata `json:"files"`   // Key: "relative_filepath", Value: FileMetadata
 }
 
@@ -277,7 +277,12 @@ func (sc *SymbolCache) makeRelative(absoluteFilepath string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("filepath.Rel failed for %s relative to %s: %w", cleanedAbsFilepath, cleanedRootDir, err)
 	}
-	return filepath.ToSlash(relativeFilepath), nil
+	// Ensure all backslashes are converted to forward slashes before final ToSlash.
+	// This handles cases where 'absoluteFilepath' might have contained '\' (e.g. from user input or cross-platform scenarios)
+	// which, on Unix, might be part of a segment name after filepath.Clean and filepath.Rel.
+	// We want to enforce '/' as the universal separator in the cache.
+	universalRelativePath := strings.ReplaceAll(relativeFilepath, "\\", "/")
+	return filepath.ToSlash(universalRelativePath), nil // filepath.ToSlash is good practice here, though universalRelativePath should already be fine.
 }
 
 // VerifyAndGet checks if the symbol likely still exists at the cached path.

@@ -72,15 +72,15 @@ type FieldInfo struct {
 
 // FieldType represents the type of a field.
 type FieldType struct {
-	Name       string
-	PkgName    string
-	MapKey     *FieldType
-	Elem       *FieldType
-	IsPointer  bool
-	IsSlice    bool
-	IsMap      bool
-	Definition *TypeInfo // Caches the resolved type definition.
-	IsResolvedByConfig bool // True if this type was resolved using ExternalTypeOverrides
+	Name               string
+	PkgName            string
+	MapKey             *FieldType
+	Elem               *FieldType
+	IsPointer          bool
+	IsSlice            bool
+	IsMap              bool
+	Definition         *TypeInfo // Caches the resolved type definition.
+	IsResolvedByConfig bool      // True if this type was resolved using ExternalTypeOverrides
 
 	resolver       PackageResolver // For lazy-loading the type definition.
 	fullImportPath string          // Full import path of the type, e.g., "example.com/project/models".

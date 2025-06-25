@@ -1,8 +1,8 @@
 package scanner
 
 import (
-	"path/filepath"
 	"go/token" // Added for token.NewFileSet
+	"path/filepath"
 	"testing"
 )
 
@@ -158,7 +158,7 @@ func TestScanFiles(t *testing.T) {
 
 	t.Run("scan_files_different_packages", func(t *testing.T) {
 		filePaths := []string{
-			filepath.Join(testdataDir, "features.go"), // package features
+			filepath.Join(testdataDir, "features.go"),     // package features
 			filepath.Join(testdataDir, "differentpkg.go"), // package otherfeatures
 		}
 		_, err := s.ScanFiles(filePaths, testdataDir, mockResolver)
@@ -182,7 +182,6 @@ func TestScanFiles(t *testing.T) {
 		}
 	})
 }
-
 
 func TestFieldType_Resolve(t *testing.T) {
 	// Setup a mock resolver that returns a predefined package info

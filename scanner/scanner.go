@@ -185,14 +185,67 @@ func (s *Scanner) parseTypeSpec(sp *ast.TypeSpec, absFilePath string) *TypeInfo 
 	case *ast.StructType:
 		typeInfo.Kind = StructKind
 		typeInfo.Struct = s.parseStructType(t)
+	case *ast.InterfaceType: // Added case for interface types
+		typeInfo.Kind = InterfaceKind
+		typeInfo.Interface = s.parseInterfaceType(t)
 	case *ast.FuncType:
 		typeInfo.Kind = FuncKind
 		typeInfo.Func = s.parseFuncType(t)
 	default:
 		typeInfo.Kind = AliasKind
-		typeInfo.Underlying = s.parseTypeExpr(sp.Type)
+		typeInfo.Underlying = s.parseTypeExpr(sp.Type) // sp.Type is correct here for alias
 	}
 	return typeInfo
+}
+
+// parseInterfaceType parses an interface type.
+func (s *Scanner) parseInterfaceType(it *ast.InterfaceType) *InterfaceInfo {
+	if it.Methods == nil || len(it.Methods.List) == 0 {
+		return &InterfaceInfo{Methods: []*MethodInfo{}} // Empty interface
+	}
+	interfaceInfo := &InterfaceInfo{
+		Methods: make([]*MethodInfo, 0, len(it.Methods.List)),
+	}
+	for _, field := range it.Methods.List {
+		// Interface methods can be:
+		// 1. Method signature: Name + Type (which is *ast.FuncType)
+		// 2. Embedded interface: Type (which is an *ast.Ident or *ast.SelectorExpr referring to another interface)
+		if len(field.Names) > 0 { // Method signature
+			methodName := field.Names[0].Name
+			funcType, ok := field.Type.(*ast.FuncType)
+			if !ok {
+				// This case should ideally not happen for a valid Go interface method.
+				// Skip or log an error if it does.
+				fmt.Fprintf(os.Stderr, "warning: expected FuncType for method %s, got %T, skipping\n", methodName, field.Type)
+				continue
+			}
+			methodInfo := &MethodInfo{
+				Name: methodName,
+			}
+			if funcType.Params != nil {
+				methodInfo.Parameters = s.parseFieldList(funcType.Params.List)
+			}
+			if funcType.Results != nil {
+				methodInfo.Results = s.parseFieldList(funcType.Results.List)
+			}
+			interfaceInfo.Methods = append(interfaceInfo.Methods, methodInfo)
+		} else {
+			// Embedded interface: field.Type is the name of the embedded interface
+			// We need to resolve this type to get its methods and add them to the current interface.
+			// This requires the resolver and potentially looking up the type.
+			// For now, we will store the name of the embedded interface.
+			// A more complete implementation would recursively resolve and inline methods.
+			embeddedTypeName := s.parseTypeExpr(field.Type)
+			// TODO: Handle embedded interfaces by resolving and merging their methods.
+			// For now, we can represent it as a special kind of "method" or skip.
+			// Let's skip direct handling of embedded interfaces for now to simplify,
+			// as `goscan.Implements` will need to handle this when comparing.
+			// Or, we can add a placeholder if needed for `Implements` to recognize it.
+			// For `derivingjson`, direct method signatures are the primary concern.
+			fmt.Fprintf(os.Stderr, "info: embedded interface %s found, its methods are not recursively parsed in this version.\n", embeddedTypeName.Name)
+		}
+	}
+	return interfaceInfo
 }
 
 // parseStructType parses a struct type.

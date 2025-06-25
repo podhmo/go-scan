@@ -8,13 +8,12 @@ This fallback logic has been **removed** from `locator.go` to promote stricter m
 
 For cases like `examples/derivingjson` that need to reference other local packages within the same repository but across module boundaries (as defined by their own `go.mod` files), the solution is to use `replace` directives in their respective `go.mod` files.
 
-For example, `examples/derivingjson/go.mod` now contains:
+For example, `examples/derivingjson/go.mod` now correctly defines its module path as `github.com/podhmo/go-scan/examples/derivingjson`. It also includes a `replace` directive to use the local parent `go-scan` module:
 ```go
 module github.com/podhmo/go-scan/examples/derivingjson
 
 // ... other directives ...
 
 replace github.com/podhmo/go-scan => ../../
-replace github.com/podhmo/go-scan/examples/derivingjson/testdata/separated/shapes => ./testdata/separated/shapes
 ```
-This approach makes package resolution explicit and relies on standard Go tooling, removing the need for custom, heuristic fallbacks in `locator.go`. The previous "Potential Future Solutions" regarding this specific fallback are now largely addressed by this change.
+With the module path correctly set, imports like `github.com/podhmo/go-scan/examples/derivingjson/testdata/separated/shapes` are resolved as internal packages to this module, without needing an additional `replace` directive for `.../shapes` itself. This approach makes package resolution explicit and relies on standard Go tooling. The previous "Potential Future Solutions" regarding the locator fallback are now addressed by this change.

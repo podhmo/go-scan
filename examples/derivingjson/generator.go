@@ -10,7 +10,7 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/podhmo/go-scan"       // goscanパッケージ (ルート)
+	goscan "github.com/podhmo/go-scan"  // goscanパッケージ (ルート)
 	"github.com/podhmo/go-scan/scanner" // scannerパッケージをインポート
 )
 
@@ -18,16 +18,16 @@ const unmarshalAnnotation = "@deriving:unmarshall"
 
 // TemplateData holds data for the UnmarshalJSON template
 type TemplateData struct {
-	PackageName              string
-	StructName               string
-	DiscriminatorFieldName     string
-	DiscriminatorFieldType     string
-	DiscriminatorFieldJSONTag  string
-	OneOfFieldName           string
-	OneOfFieldJSONTag        string
-	OneOfFieldType           string // Interface type name for oneOf field
-	OtherFields              []FieldInfo
-	OneOfTypes               []OneOfTypeMapping
+	PackageName               string
+	StructName                string
+	DiscriminatorFieldName    string
+	DiscriminatorFieldType    string
+	DiscriminatorFieldJSONTag string
+	OneOfFieldName            string
+	OneOfFieldJSONTag         string
+	OneOfFieldType            string // Interface type name for oneOf field
+	OtherFields               []FieldInfo
+	OneOfTypes                []OneOfTypeMapping
 }
 
 // FieldInfo holds information about a struct field
@@ -126,17 +126,17 @@ func Generate(pkgPath string) error {
 	fmt.Println("--- END DEBUG ---")
 
 	if pkgInfo.Name == "" {
-	    files, _ := os.ReadDir(pkgPath)
-	    isSinglePackage := false
-	    for _, f := range files {
-	        if !f.IsDir() && strings.HasSuffix(f.Name(), ".go") {
-	            isSinglePackage = true;
-	            break
-	        }
-	    }
-	    if !isSinglePackage {
-	         return fmt.Errorf("path %s does not appear to be a single Go package directory", pkgPath)
-	    }
+		files, _ := os.ReadDir(pkgPath)
+		isSinglePackage := false
+		for _, f := range files {
+			if !f.IsDir() && strings.HasSuffix(f.Name(), ".go") {
+				isSinglePackage = true
+				break
+			}
+		}
+		if !isSinglePackage {
+			return fmt.Errorf("path %s does not appear to be a single Go package directory", pkgPath)
+		}
 	}
 
 	var generatedCodeForAllStructs bytes.Buffer
@@ -160,8 +160,8 @@ func Generate(pkgPath string) error {
 		oneOfInterfaceName := ""
 
 		if typeInfo.Struct == nil {
-		    fmt.Printf("  Warning: Struct %s has nil StructInfo, skipping\n", typeInfo.Name)
-		    continue
+			fmt.Printf("  Warning: Struct %s has nil StructInfo, skipping\n", typeInfo.Name)
+			continue
 		}
 
 		for _, field := range typeInfo.Struct.Fields {
@@ -235,7 +235,9 @@ func Generate(pkgPath string) error {
 					typeNameBuilder.WriteString("[]")
 					if currentFieldType.Elem != nil {
 						elemTypeName := currentFieldType.Elem.Name
-						if currentFieldType.Elem.IsPointer { elemTypeName = "*" + elemTypeName }
+						if currentFieldType.Elem.IsPointer {
+							elemTypeName = "*" + elemTypeName
+						}
 						typeNameBuilder.WriteString(elemTypeName)
 					} else {
 						typeNameBuilder.WriteString("interface{}")
@@ -244,7 +246,9 @@ func Generate(pkgPath string) error {
 					typeNameBuilder.WriteString("map[")
 					if currentFieldType.MapKey != nil {
 						keyTypeName := currentFieldType.MapKey.Name
-						if currentFieldType.MapKey.IsPointer { keyTypeName = "*" + keyTypeName }
+						if currentFieldType.MapKey.IsPointer {
+							keyTypeName = "*" + keyTypeName
+						}
 						typeNameBuilder.WriteString(keyTypeName)
 					} else {
 						typeNameBuilder.WriteString("interface{}")
@@ -252,7 +256,9 @@ func Generate(pkgPath string) error {
 					typeNameBuilder.WriteString("]")
 					if currentFieldType.Elem != nil {
 						valueTypeName := currentFieldType.Elem.Name
-						if currentFieldType.Elem.IsPointer { valueTypeName = "*" + valueTypeName }
+						if currentFieldType.Elem.IsPointer {
+							valueTypeName = "*" + valueTypeName
+						}
 						typeNameBuilder.WriteString(valueTypeName)
 					} else {
 						typeNameBuilder.WriteString("interface{}")

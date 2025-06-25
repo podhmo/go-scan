@@ -4,7 +4,7 @@
 
 ## Overview
 
-In JSON Schema, `oneOf` signifies that a field can be one of several types. A common way to represent this концепт in Go involves using an interface type, a set of concrete structs that implement this interface, and a container struct that includes a discriminator field to identify the specific type.
+In JSON Schema, `oneOf` signifies that a field can be one of several types. A common way to represent this concept in Go involves using an interface type, a set of concrete structs that implement this interface, and a container struct that includes a discriminator field to identify the specific type.
 
 This tool aims to generate an `UnmarshalJSON` method for such container structs, enabling unmarshalling into the appropriate concrete type based on the discriminator's value.
 

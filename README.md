@@ -1,8 +1,10 @@
-# Go Type Scanner
+# go-scan
 
 A lightweight Go type scanner that parses Go source files to extract information about types, constants, and functions without relying on `go/packages` or `go/types`. It works by directly parsing the AST (`go/ast`), making it fast and dependency-free for build-time tool generation.
 
 This tool is designed for applications like OpenAPI document generation, ORM code generation, or any other task that requires static analysis of Go type definitions.
+
+🚧 This library is currently under development.
 
 ## Features
 

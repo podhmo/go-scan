@@ -185,38 +185,58 @@ func Generate(pkgPath string) error {
 
 				// Determine interface type string and manage imports
 				interfaceDef := resolvedFieldType // This is the TypeInfo for the interface
-				fieldTypeString := interfaceDef.Name // Default to local name
-				var interfaceDefiningPkgImportPath string
+				fieldTypeString := interfaceDef.Name // Default to local name for the interface's type string in `oneOfDetail.FieldType`
+				var interfaceDefiningPkgImportPath string // This will be the canonical import path of the package defining the interface
+				var interfaceDefiningPkgNameForImport string // This will be the package name (or alias) to use in import statements and qualified type names
 
-				if interfaceDef.FilePath != "" {
+				// Priority 1: Use FullImportPath from the FieldType, as it's derived directly from the import statement.
+				if field.Type.FullImportPath() != "" && field.Type.FullImportPath() != pkgInfo.ImportPath {
+					interfaceDefiningPkgImportPath = field.Type.FullImportPath()
+					interfaceDefiningPkgNameForImport = field.Type.PkgName // PkgName from FieldType is the alias/name used in the source file.
+
+					fieldTypeString = interfaceDefiningPkgNameForImport + "." + interfaceDef.Name
+					data.Imports[interfaceDefiningPkgNameForImport] = interfaceDefiningPkgImportPath
+					allFileImports[interfaceDefiningPkgImportPath] = interfaceDefiningPkgNameForImport
+					fmt.Printf("      Derived interface import path '%s' and package alias/name '%s' from FieldType.FullImportPath(). FieldType string: %s\n", interfaceDefiningPkgImportPath, interfaceDefiningPkgNameForImport, fieldTypeString)
+				} else if interfaceDef.FilePath != "" {
+					// Priority 2: Fallback if FullImportPath is not available or local. Derive from interface's FilePath.
+					// This is less direct as it re-scans the directory of the interface's definition.
+					fmt.Printf("      FieldType.FullImportPath() was empty or local for interface %s. Falling back to FilePath-based scan.\n", interfaceDef.Name)
 					interfaceDir := filepath.Dir(interfaceDef.FilePath)
-					interfaceDefiningPkg, errPkgScan := gscn.ScanPackage(interfaceDir)
-					if errPkgScan == nil && interfaceDefiningPkg != nil && interfaceDefiningPkg.ImportPath != "" {
-						if interfaceDefiningPkg.ImportPath != pkgInfo.ImportPath {
-							interfaceDefiningPkgImportPath = interfaceDefiningPkg.ImportPath
-							fieldTypeString = interfaceDefiningPkg.Name + "." + interfaceDef.Name
-							data.Imports[interfaceDefiningPkg.Name] = interfaceDefiningPkgImportPath
-							allFileImports[interfaceDefiningPkgImportPath] = interfaceDefiningPkg.Name
+					scannedPkgForInterfaceFile, errPkgScan := gscn.ScanPackage(interfaceDir) // ScanPackage derives import path based on its own module logic.
+
+					if errPkgScan == nil && scannedPkgForInterfaceFile != nil && scannedPkgForInterfaceFile.ImportPath != "" {
+						if scannedPkgForInterfaceFile.ImportPath != pkgInfo.ImportPath { // Is it external to the current struct's package?
+							interfaceDefiningPkgImportPath = scannedPkgForInterfaceFile.ImportPath
+							interfaceDefiningPkgNameForImport = scannedPkgForInterfaceFile.Name // Actual name of the package
+
+							fieldTypeString = interfaceDefiningPkgNameForImport + "." + interfaceDef.Name
+							data.Imports[interfaceDefiningPkgNameForImport] = interfaceDefiningPkgImportPath
+							allFileImports[interfaceDefiningPkgImportPath] = interfaceDefiningPkgNameForImport
+							fmt.Printf("      Derived interface import path '%s' and package name '%s' from FilePath scan. FieldType string: %s\n", interfaceDefiningPkgImportPath, interfaceDefiningPkgNameForImport, fieldTypeString)
+						} else {
+							// Interface is in the same package as the struct using it. No import needed for its types.
+							// fieldTypeString remains interfaceDef.Name (local). interfaceDefiningPkgImportPath remains empty or local.
+							interfaceDefiningPkgImportPath = pkgInfo.ImportPath // Set to current package's import path
+							interfaceDefiningPkgNameForImport = pkgInfo.Name    // Current package name
+							fmt.Printf("      Interface %s is in the same package %s. No special import path needed.\n", interfaceDef.Name, pkgInfo.ImportPath)
 						}
 					} else {
-						fmt.Printf("      Warning: Could not determine import path for interface %s in dir %s. PkgScanErr: %v. Using PkgName as fallback.\n", interfaceDef.Name, interfaceDir, errPkgScan)
-						if field.Type.PkgName != "" && field.Type.PkgName != pkgInfo.Name { // field.Type.PkgName might be an alias
-							// This part is tricky; we need the actual import path for the alias field.Type.PkgName refers to.
-							// For now, we assume if gscn.ScanPackage failed, we might rely on a pre-discovered import.
-							// This logic might need to be improved by looking up field.Type.PkgName in allFileImports or similar context if available.
-							fieldTypeString = field.Type.PkgName + "." + interfaceDef.Name
-						}
+						// If scanning by FilePath also fails to yield a clear import path.
+						fmt.Printf("      Warning: Could not determine import path for interface %s in dir %s via FilePath scan. PkgScanErr: %v. Type string may be incorrect.\n", interfaceDef.Name, interfaceDir, errPkgScan)
+						// fieldTypeString remains interfaceDef.Name (local). interfaceDefiningPkgImportPath will be empty.
+						// This might be okay if the interface is somehow globally known or a built-in, though unlikely for user types.
 					}
-				} else if field.Type.PkgName != "" && field.Type.PkgName != pkgInfo.Name {
-					// Fallback if FilePath is empty, use PkgName (less reliable for import path)
-					// This assumes PkgName is the actual package name, not an alias.
-					// If it's an alias, we'd need its import path.
-					fieldTypeString = field.Type.PkgName + "." + interfaceDef.Name
-					// We need to ensure this PkgName (which could be an alias) maps to an import path.
-					// This is complex if the import path isn't known. Assume for now it's resolvable or already imported.
-					fmt.Printf("      Warning: Interface %s FilePath was empty, relying on PkgName %s for type string.\n", interfaceDef.Name, field.Type.PkgName)
+				} else {
+					// Priority 3: If neither FullImportPath nor FilePath gives an external package path.
+					// This implies the interface might be local to the package being scanned (pkgInfo), or a built-in.
+					// In this case, fieldTypeString remains interfaceDef.Name.
+					// interfaceDefiningPkgImportPath should reflect the current package or be empty if truly local/unqualified.
+					interfaceDefiningPkgImportPath = pkgInfo.ImportPath // Assume it's part of the current package
+					interfaceDefiningPkgNameForImport = pkgInfo.Name
+					fmt.Printf("      Warning: Interface %s has no FullImportPath from FieldType and no FilePath. Assuming local to %s or built-in.\n", interfaceDef.Name, pkgInfo.ImportPath)
 				}
-				oneOfDetail.FieldType = fieldTypeString
+				oneOfDetail.FieldType = fieldTypeString // Set the string representation for the interface type
 
 
 				// Find implementers for this specific interface
@@ -224,25 +244,44 @@ func Generate(pkgPath string) error {
 				if interfaceDefiningPkgImportPath != "" && interfaceDefiningPkgImportPath != pkgInfo.ImportPath {
 					scannedInterfacePkg, errScan := gscn.ScanPackageByImport(interfaceDefiningPkgImportPath)
 					if errScan == nil && scannedInterfacePkg != nil {
+						fmt.Printf("        Successfully scanned interface's package: %s, Found %d types.\n", scannedInterfacePkg.ImportPath, len(scannedInterfacePkg.Types))
+						for _, t := range scannedInterfacePkg.Types {
+							fmt.Printf("          Type in interface pkg: %s (Kind: %s)\n", t.Name, t.Kind)
+						}
 						alreadyAdded := false
 						for _, sp := range searchPkgs { if sp.ImportPath == scannedInterfacePkg.ImportPath { alreadyAdded = true; break } }
-						if !alreadyAdded { searchPkgs = append(searchPkgs, scannedInterfacePkg) }
+						if !alreadyAdded {
+							searchPkgs = append(searchPkgs, scannedInterfacePkg)
+							fmt.Printf("        Added %s to searchPkgs. Total searchPkgs: %d\n", scannedInterfacePkg.ImportPath, len(searchPkgs))
+						}
 					} else {
 						fmt.Printf("        Warning: Failed to scan interface's (%s) own package %s by import: %v.\n", interfaceDef.Name, interfaceDefiningPkgImportPath, errScan)
 					}
 				}
 
-				fmt.Printf("        Searching for implementers of %s (from %s)\n", interfaceDef.Name, interfaceDefiningPkgImportPath)
+				fmt.Printf("        Searching for implementers of %s (from %s) in %d packages\n", interfaceDef.Name, interfaceDefiningPkgImportPath, len(searchPkgs))
 				foundImplementersForThisInterface := false
 				processedImplementerKeys := make(map[string]bool) //Scoped per interface
 
-				for _, currentSearchPkg := range searchPkgs {
+				for i, currentSearchPkg := range searchPkgs {
 					if currentSearchPkg == nil { continue }
+					fmt.Printf("        Searching in pkg %d: %s (%s), %d types\n", i+1, currentSearchPkg.Name, currentSearchPkg.ImportPath, len(currentSearchPkg.Types))
 					for _, candidateType := range currentSearchPkg.Types {
 						if candidateType.Kind != scanner.StructKind || candidateType.Struct == nil { continue }
+						fmt.Printf("          Checking candidate: %s.%s (isStruct: %v)\n", currentSearchPkg.Name, candidateType.Name, candidateType.Struct != nil)
 
 						implementerKey := candidateType.FilePath + "::" + candidateType.Name
 						if processedImplementerKeys[implementerKey] { continue }
+
+						// Debug: Print details of interfaceDef and candidateType before calling Implements
+						fmt.Printf("            Interface: %s (Package: %s, Kind: %s)\n", interfaceDef.Name, interfaceDef.FilePath, interfaceDef.Kind)
+						if interfaceDef.Interface != nil {
+							for _, m := range interfaceDef.Interface.Methods {
+								fmt.Printf("              InterfaceMethod: %s\n", m.Name)
+							}
+						}
+						fmt.Printf("            Candidate: %s (Package: %s, Kind: %s)\n", candidateType.Name, currentSearchPkg.ImportPath, candidateType.Kind)
+
 
 						if goscan.Implements(candidateType, interfaceDef, currentSearchPkg) {
 							fmt.Printf("          Found implementer for %s: %s in package %s (File: %s)\n", field.Name, candidateType.Name, currentSearchPkg.ImportPath, candidateType.FilePath)

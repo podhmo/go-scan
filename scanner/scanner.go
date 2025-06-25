@@ -94,12 +94,17 @@ func (s *Scanner) ScanFiles(filePaths []string, pkgDirPath string, resolver Pack
 		}
 
 		info.Files = append(info.Files, filePath) // Store absolute file path
+		fmt.Printf("DEBUG SCANNER: Processing file %s for package %s\n", filePath, info.Name)
 		s.buildImportLookup(fileAst)
-		for _, decl := range fileAst.Decls {
+		fmt.Printf("DEBUG SCANNER: Built import lookup for %s. Imports: %v\n", filePath, s.importLookup)
+		for declIndex, decl := range fileAst.Decls {
+			fmt.Printf("DEBUG SCANNER: File %s, Decl %d: Type %T\n", filePath, declIndex, decl)
 			switch d := decl.(type) {
 			case *ast.GenDecl:
+				fmt.Printf("DEBUG SCANNER: GenDecl (Tok: %s) in %s. Specs: %d\n", d.Tok.String(), filePath, len(d.Specs))
 				s.parseGenDecl(d, info, filePath)
 			case *ast.FuncDecl:
+				fmt.Printf("DEBUG SCANNER: FuncDecl %s in %s\n", d.Name.Name, filePath)
 				info.Functions = append(info.Functions, s.parseFuncDecl(d, filePath))
 			}
 		}
@@ -138,6 +143,7 @@ func (s *Scanner) parseGenDecl(decl *ast.GenDecl, info *PackageInfo, absFilePath
 			if typeInfo.Doc == "" && decl.Doc != nil {
 				typeInfo.Doc = commentText(decl.Doc)
 			}
+			fmt.Printf("DEBUG SCANNER: Parsed TypeSpec: Name=%s, Kind=%v, FilePath=%s. Adding to PackageInfo (current Types count: %d)\n", typeInfo.Name, typeInfo.Kind, typeInfo.FilePath, len(info.Types))
 			info.Types = append(info.Types, typeInfo)
 		case *ast.ValueSpec:
 			if decl.Tok == token.CONST {

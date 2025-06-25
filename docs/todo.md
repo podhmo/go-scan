@@ -1,18 +1,28 @@
 # TODO List
 
-This document tracks planned features and improvements for the Go Type Scanner project.
+## Improve Package Location Logic in `locator.go`
 
-## Must-have Features
+Currently, `locator.Locator.FindPackageDir` contains fallback mechanisms to resolve import paths that are outside the primary module context from which `go-scan` is initiated. This was specifically added to support `go-scan`'s own examples and testdata (e.g., `examples/derivingjson`), where an example might have its own `go.mod` file but needs to reference packages within the main `go-scan` repository structure (e.g., shared test utility packages or other examples).
 
-These are critical features for the library to be broadly useful in real-world projects.
+**Background / Problem:**
 
-- **Generics Support**: Add parsing logic for Go 1.18+ generics (e.g., `type Page[T] struct { ... }`). Without this, the scanner cannot be used in modern projects that leverage generics for reusable structures like API responses or data containers.
+- `go-scan` is designed to be lightweight and avoid dependencies like `go/packages`.
+- The default behavior of the `Locator` is to resolve packages relative to the module root (`go.mod`) it discovers from the initial starting path.
+- When scanning an example project within the `go-scan` repo that has its *own* `go.mod` (making it a separate module from `go-scan`'s main module), the locator, by default, cannot find packages belonging to the main `go-scan` module (e.g., `github.com/podhmo/go-scan/testdata/multipkg`) because they are not part of the example's module.
+- The fallback logic (marked with `// TODO:` comments in `locator.go`) attempts to heuristically find the main `go-scan` repository root and resolve paths against it if the primary module resolution fails and the import path looks like one of `go-scan`'s internal paths.
 
-## Nice-to-have / Advanced Features
+**Why this is a TODO:**
 
-These features would expand the library's capabilities for more advanced use cases.
+- The current fallback is somewhat hardcoded (e.g., assumes `github.com/podhmo/go-scan` as a known module path) and not a general solution for arbitrary multi-module setups.
+- It makes the package location logic less predictable and pure from an API perspective if `go-scan` were to be used as a library in complex projects.
 
-- **Interface Parsing**: Fully parse `interface` definitions, including their method sets. This would be valuable for tools like DI containers or mock generators that operate on interface contracts.
-- **`iota` Evaluation**: Implement logic to correctly evaluate the integer values of constants defined using `iota`. This is useful for documentation generation where displaying the actual value of an enum is desired (e.g., `StatusActive (value: 1)`).
-- **Annotation Parsing**: Support for structured comments (annotations) like `// @validate:"required,min=0"`. This would allow tools to extract rich metadata beyond what standard Go field tags provide, useful for validation, OpenAPI extensions, etc.
-- **External Dependency Resolution**: Add an option to scan packages from external dependencies listed in `go.mod`. This would help in resolving common types like `uuid.UUID` to their underlying kinds (e.g., `string`), enabling more accurate schema generation. This should likely be an opt-in feature to manage performance.
+**Potential Future Solutions:**
+
+1.  **Stricter Module Boundaries:** Remove the fallback entirely. `go-scan` would only resolve packages within the module it was initialized for. This would make its behavior simpler and more predictable but would require examples/tests to be structured as part of the main module or use standard Go module replacement/vendoring techniques if they need to cross-reference.
+2.  **Configurable Module Roots / Workspace Concept:**
+    *   Allow the user of `go-scan` (either via CLI flags or library API) to specify multiple module roots or a "workspace" root. The locator could then attempt to resolve packages against these known roots.
+    *   This could involve limited parsing of `go.work` files to understand a multi-module workspace structure, though full `go.work` support might be too complex given the "lightweight" goal.
+3.  **Improved Heuristics (if fallback is kept):** If some form of fallback for internal testing/examples is deemed necessary, make it more robust or clearly documented as a development-only feature.
+4.  **Re-evaluate Scope:** Clarify whether resolving packages outside the primary scanned module is a desired feature for `go-scan` as a general tool, or if it's purely for internal convenience. The design choices would follow from this clarification.
+
+The core challenge is balancing `go-scan`'s lightweight nature (no `go/packages` dependency) with the flexibility needed for convenient development/testing and potential use in more complex multi-module Go projects.

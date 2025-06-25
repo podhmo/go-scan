@@ -4,6 +4,8 @@ import (
 	"encoding/json" // Added for manual cache file creation in tests
 	"os"            // Added for os.MkdirTemp, os.ReadFile, os.Stat
 	"path/filepath" // Added for filepath.Join, filepath.Abs
+	"reflect"       // Added for reflect.DeepEqual in tests
+	"sort"          // Added for sorting slices in tests
 	"strings"       // Added for strings.Contains
 	"testing"
 
@@ -25,7 +27,7 @@ func tempScannerDir(t *testing.T) (string, func()) {
 
 // TestNew_Integration tests the creation of a new Scanner and its underlying locator.
 func TestNew_Integration(t *testing.T) {
-	s, err := New("./scanner")
+	s, err := New("./scanner") // Assuming this test runs from project root where ./scanner is a valid sub-package.
 	if err != nil {
 		t.Fatalf("New() failed: %v", err)
 	}
@@ -36,16 +38,24 @@ func TestNew_Integration(t *testing.T) {
 	if s.scanner == nil {
 		t.Fatal("Scanner scanner should not be nil")
 	}
+	// This assertion depends on the main go.mod of the project.
+	// If running tests from within a nested module or if go.mod changes, this might fail.
+	// For now, assume "github.com/podhmo/go-scan" is the main module.
 	if s.locator.ModulePath() != "github.com/podhmo/go-scan" {
 		t.Errorf("Expected module path 'github.com/podhmo/go-scan', got %q", s.locator.ModulePath())
 	}
 }
 
 // TestLazyResolution_Integration tests the full scanning and lazy resolution process.
+// This test uses testdata/multipkg which should have its own go.mod declaring "example.com/multipkg-test"
 func TestLazyResolution_Integration(t *testing.T) {
-	s, err := New(".")
+	// Scanner is initialized relative to the "testdata/multipkg" module.
+	s, err := New("./testdata/multipkg")
 	if err != nil {
-		t.Fatalf("New() failed: %v", err)
+		t.Fatalf("New() for multipkg failed: %v", err)
+	}
+	if s.locator.ModulePath() != "example.com/multipkg-test" {
+		t.Fatalf("Expected module path 'example.com/multipkg-test', got '%s'", s.locator.ModulePath())
 	}
 
 	// Scan the 'api' package, which depends on the 'models' package.
@@ -114,31 +124,30 @@ func TestLazyResolution_Integration(t *testing.T) {
 }
 
 func TestScanner_WithSymbolCache(t *testing.T) {
-	// Define import paths from testdata
+	// Define import paths from testdata/multipkg
 	apiImportPath := "example.com/multipkg-test/api"       // Contains Handler type
 	modelsImportPath := "example.com/multipkg-test/models" // Contains User type
 
-	sRoot, err := New(".") // Assuming this test runs from module root.
+	// Initialize scanner relative to the multipkg module
+	sRoot, err := New("./testdata/multipkg")
 	if err != nil {
-		t.Fatalf("Failed to create scanner for module root: %v", err)
+		t.Fatalf("Failed to create scanner for multipkg module: %v", err)
 	}
-	moduleRootDir := sRoot.locator.RootDir()
+	moduleRootDir := sRoot.locator.RootDir() // This will be testdata/multipkg
 
-	expectedHandlerFilePath, _ := filepath.Abs(filepath.Join(moduleRootDir, "testdata/multipkg/api/handler.go"))
-	expectedUserFilePath, _ := filepath.Abs(filepath.Join(moduleRootDir, "testdata/multipkg/models/user.go"))
+	expectedHandlerFilePath, _ := filepath.Abs(filepath.Join(moduleRootDir, "api/handler.go"))
+	expectedUserFilePath, _ := filepath.Abs(filepath.Join(moduleRootDir, "models/user.go"))
 
 	t.Run("ScanAndUpdateCache_FindSymbol_CacheHit", func(t *testing.T) {
 		testCacheDir, cleanupTestCacheDir := tempScannerDir(t)
 		defer cleanupTestCacheDir()
 		cacheFilePath := filepath.Join(testCacheDir, "symbols.json")
 
-		s, err := New(".")
+		s, err := New("./testdata/multipkg") // Scanner for the test module
 		if err != nil {
 			t.Fatalf("New() failed: %v", err)
 		}
-		// s.UseCache = true // Removed
-		s.CachePath = cacheFilePath // Cache enabled by setting a non-empty path
-
+		s.CachePath = cacheFilePath
 		defer func() {
 			if err := s.SaveSymbolCache(); err != nil {
 				t.Errorf("Failed to save symbol cache: %v", err)
@@ -173,30 +182,29 @@ func TestScanner_WithSymbolCache(t *testing.T) {
 			t.Fatalf("Failed to unmarshal cache content: %v", err)
 		}
 
-		// Check if Handler symbol is in the Symbols map
-		if _, ok := loadedCacheContent.Symbols[handlerSymbolFullName]; !ok {
+		// In the symbol cache, file paths are stored relative to the module root (s.locator.RootDir())
+		// which is testdata/multipkg in this test case.
+		// So, expected path in cache is "api/handler.go", not the full absolute path.
+		expectedHandlerRelPath := "api/handler.go"
+
+		if actualPathInCache, ok := loadedCacheContent.Symbols[handlerSymbolFullName]; !ok {
 			t.Errorf("Cache Symbols map does not contain %s. Content: %+v", handlerSymbolFullName, loadedCacheContent.Symbols)
+		} else if actualPathInCache != expectedHandlerRelPath {
+			t.Errorf("Cache Symbols map for %s has path %s, expected %s", handlerSymbolFullName, actualPathInCache, expectedHandlerRelPath)
 		}
 
-		// Check if the file containing Handler is in the Files map and has Handler in its symbol list
-		// Get the relative path of the handler file as stored in the cache (from the Symbols map).
-		relPathForHandlerFileFromCache, foundSymbol := loadedCacheContent.Symbols[handlerSymbolFullName]
-		if !foundSymbol {
-			t.Fatalf("Handler symbol %s not found in loaded cache Symbols map, cannot verify Files map.", handlerSymbolFullName)
-		}
-
-		if fileMeta, ok := loadedCacheContent.Files[relPathForHandlerFileFromCache]; !ok {
-			t.Errorf("Cache Files map does not contain entry for handler file %s (path from Symbols map). Content: %+v", relPathForHandlerFileFromCache, loadedCacheContent.Files)
+		if fileMeta, ok := loadedCacheContent.Files[expectedHandlerRelPath]; !ok {
+			t.Errorf("Cache Files map does not contain entry for handler file %s. Content: %+v", expectedHandlerRelPath, loadedCacheContent.Files)
 		} else {
 			foundHandlerInFileMeta := false
 			for _, symName := range fileMeta.Symbols {
-				if symName == "Handler" { // Assuming symbol name is stored without package prefix in FileMetadata.Symbols
+				if symName == "Handler" {
 					foundHandlerInFileMeta = true
 					break
 				}
 			}
 			if !foundHandlerInFileMeta {
-				t.Errorf("Handler symbol not found in FileMetadata for %s. Symbols: %v", relPathForHandlerFileFromCache, fileMeta.Symbols)
+				t.Errorf("Handler symbol not found in FileMetadata for %s. Symbols: %v", expectedHandlerRelPath, fileMeta.Symbols)
 			}
 		}
 
@@ -220,12 +228,11 @@ func TestScanner_WithSymbolCache(t *testing.T) {
 		defer cleanupTestCacheDir()
 		cacheFilePath := filepath.Join(testCacheDir, "symbols_fallback.json")
 
-		s, err := New(".")
+		s, err := New("./testdata/multipkg")
 		if err != nil {
 			t.Fatalf("New() failed: %v", err)
 		}
-		// s.UseCache = true // Removed
-		s.CachePath = cacheFilePath // Cache enabled by setting a non-empty path
+		s.CachePath = cacheFilePath
 		defer func() { s.SaveSymbolCache() }()
 
 		userSymbolFullName := modelsImportPath + ".User"
@@ -251,34 +258,28 @@ func TestScanner_WithSymbolCache(t *testing.T) {
 		defer cleanupTestCacheDir()
 		cacheFilePath := filepath.Join(testCacheDir, "symbols_stale.json")
 
-		s, err := New(".")
+		s, err := New("./testdata/multipkg")
 		if err != nil {
 			t.Fatalf("New() failed: %v", err)
 		}
-		// s.UseCache = true // Removed
-		s.CachePath = cacheFilePath // Cache enabled by setting a non-empty path
+		s.CachePath = cacheFilePath
 		defer func() { s.SaveSymbolCache() }()
 
 		staleUserSymbol := modelsImportPath + ".User"
-		// Construct path relative to moduleRootDir for the prefilled cache.
-		// SymbolCache stores paths relative to its rootDir, which for Scanner is moduleRootDir.
-		staleFileRelativePath := "testdata/multipkg/models/non_existent_user.go" // This file doesn't actually exist
+		staleFileRelativePath := "models/non_existent_user.go"
 
-		// Prefill cache with a stale entry pointing to a non-existent file
-		// for a specific symbol, and also include a FileMetadata entry for that file.
 		prefilledCacheContent := cache.CacheContent{
 			Symbols: map[string]string{
-				staleUserSymbol: staleFileRelativePath, // staleUserSymbol -> non_existent_user.go
+				staleUserSymbol: staleFileRelativePath,
 			},
 			Files: map[string]cache.FileMetadata{
-				staleFileRelativePath: { // Entry for non_existent_user.go
-					Symbols: []string{"User"}, // Assumes "User" was in this non-existent file
-					// ModTime would have been here if used
+				staleFileRelativePath: {
+					Symbols: []string{"User"},
 				},
 			},
 		}
 		jsonData, _ := json.MarshalIndent(prefilledCacheContent, "", "  ")
-		os.MkdirAll(filepath.Dir(cacheFilePath), 0755) // Ensure cache directory exists
+		os.MkdirAll(filepath.Dir(cacheFilePath), 0755)
 		os.WriteFile(cacheFilePath, jsonData, 0644)
 
 		loc, err := s.FindSymbolDefinitionLocation(staleUserSymbol)
@@ -291,9 +292,8 @@ func TestScanner_WithSymbolCache(t *testing.T) {
 
 		s.SaveSymbolCache()
 
-		sVerify, _ := New(".")
-		// sVerify.UseCache = true // Removed
-		sVerify.CachePath = cacheFilePath // Cache enabled by setting path
+		sVerify, _ := New("./testdata/multipkg")
+		sVerify.CachePath = cacheFilePath
 
 		locVerify, errVerify := sVerify.FindSymbolDefinitionLocation(staleUserSymbol)
 		if errVerify != nil {
@@ -309,12 +309,11 @@ func TestScanner_WithSymbolCache(t *testing.T) {
 		defer cleanupTestCacheDir()
 		cacheFilePath := filepath.Join(testCacheDir, "symbols_nonexist.json")
 
-		s, err := New(".")
+		s, err := New("./testdata/multipkg")
 		if err != nil {
 			t.Fatalf("New() failed: %v", err)
 		}
-		// s.UseCache = true // Removed
-		s.CachePath = cacheFilePath // Cache enabled by setting a non-empty path
+		s.CachePath = cacheFilePath
 		defer func() { s.SaveSymbolCache() }()
 
 		nonExistentSymbol := modelsImportPath + ".NonExistentType"
@@ -333,38 +332,13 @@ func TestScanner_WithSymbolCache(t *testing.T) {
 		defer cleanupTestCacheDir()
 		cacheFilePath := filepath.Join(testCacheDir, "symbols_disabled.json")
 
-		s, err := New(".")
+		s, err := New("./testdata/multipkg")
 		if err != nil {
 			t.Fatalf("New() failed: %v", err)
 		}
-		// s.UseCache = false // Removed
-		s.CachePath = "" // Cache explicitly disabled by empty path
-		// We can still set cacheFilePath for os.Stat check, to ensure no file is created AT THAT specific path
-		// even if some default path logic were to kick in (though it shouldn't with empty CachePath).
-		// For this test, the check is that s.CachePath (being empty) prevents creation.
-		// If we want to ensure no file is created at a *hypothetical* default location, that's a different test.
-		// The current CachePath on Scanner is the single source of truth.
-		// So, if s.CachePath is "", no file should be written by SaveSymbolCache.
-		// The test needs to check for a file at `cacheFilePath` (the variable).
-		// If CachePath is empty, SaveSymbolCache should do nothing.
+		s.CachePath = ""
 
-		// Let's clarify the test's intent:
-		// If CachePath is empty, SaveSymbolCache should not attempt to write *any* file.
-		// We don't need `cacheFilePath` variable for s.CachePath here if it's meant to be disabled.
-		// The check `os.Stat(cacheFilePath)` where `cacheFilePath` is `filepath.Join(testCacheDir, "symbols_disabled.json")`
-		// is fine to ensure that specific file isn't created.
-		// What `s.CachePath` is set to for the `os.Stat` check needs to be consistent.
-		// If `s.CachePath` is `""`, then `s.symbolCache.FilePath()` would be `""`.
-		// `SaveSymbolCache` checks `s.CachePath == ""`.
-
-		// Revised logic for this test:
-		// s.CachePath is kept as "" (or not set) to disable caching.
-		// The check for file creation needs to consider that no path means no creation.
-		// The test as written tries to Stat `cacheFilePath` which is a local var.
-		// This is fine: we are checking that a file at a specific location is NOT created
-		// when cache is disabled via empty s.CachePath.
-
-		defer func() { s.SaveSymbolCache() }() // This will be called, SaveSymbolCache should do nothing if s.CachePath is ""
+		defer func() { s.SaveSymbolCache() }()
 
 		_, err = s.ScanPackageByImport(apiImportPath)
 		if err != nil {
@@ -376,7 +350,7 @@ func TestScanner_WithSymbolCache(t *testing.T) {
 		}
 
 		if _, err := os.Stat(cacheFilePath); !os.IsNotExist(err) {
-			t.Errorf("Cache file %s was created even when UseCache is false", cacheFilePath)
+			t.Errorf("Cache file %s was created even when s.CachePath is empty", cacheFilePath)
 		}
 	})
 }
@@ -390,39 +364,24 @@ func pathsEqual(p1, p2 string) bool {
 	if err2 != nil {
 		return false
 	}
-	// On Windows, file paths are case-insensitive.
-	// On other systems, they are case-sensitive.
-	// For robust testing, especially if developing on one OS and CI on another:
-	if strings.EqualFold(abs1, abs2) { // Use EqualFold for case-insensitivity
+	if strings.EqualFold(abs1, abs2) {
 		return true
 	}
-	return abs1 == abs2 // Fallback for systems where case matters and paths differ only by case
+	return abs1 == abs2
 }
 
 func TestScannerWithExternalTypeOverrides(t *testing.T) {
-	// Setup: Create a scanner instance. Point to the new testdata module.
-	// The module for externaltypes is example.com/externaltypes
-	// The scanner needs to be initialized with a path *within* that module,
-	// or any path from which that module can be found (e.g. "." if testdata/externaltypes/go.mod makes it part of a workspace).
-	// For simplicity, let's assume we run tests from the project root, and locator can find testdata/externaltypes.
-	// We need to ensure the locator can correctly find "example.com/externaltypes".
-	// The New() function takes a startPath to find the main go.mod of the project being scanned.
-	// If testdata/externaltypes is a self-contained module, we might need a way to point the locator to it.
-	// Let's use "./testdata/externaltypes" as the start path for New(), assuming it has its own go.mod.
 	s, err := New("./testdata/externaltypes")
 	if err != nil {
 		t.Fatalf("Failed to create Scanner for testdata/externaltypes: %v", err)
 	}
 
-	// Define overrides
 	overrides := scanner.ExternalTypeOverride{
-		"github.com/google/uuid.UUID": "string",       // uuid.UUID should be treated as string
-		"example.com/somepkg.Time":    "mypkg.MyTime", // a custom non-existent type to another custom string
+		"github.com/google/uuid.UUID": "string",
+		"example.com/somepkg.Time":    "mypkg.MyTime",
 	}
 	s.SetExternalTypeOverrides(overrides)
 
-	// Scan the package containing the types.
-	// The import path for testdata/externaltypes module is example.com/externaltypes as defined in its go.mod
 	pkgInfo, err := s.ScanPackageByImport("example.com/externaltypes")
 	if err != nil {
 		t.Fatalf("Failed to scan package 'example.com/externaltypes': %v", err)
@@ -439,14 +398,13 @@ func TestScannerWithExternalTypeOverrides(t *testing.T) {
 				continue
 			}
 			for _, field := range typeInfo.Struct.Fields {
-				if field.Name == "ID" { // This field is of type uuid.UUID
+				if field.Name == "ID" {
 					if field.Type.Name != "string" {
 						t.Errorf("Expected field ID of ObjectWithUUID to be overridden to 'string', got '%s'", field.Type.Name)
 					}
 					if !field.Type.IsResolvedByConfig {
 						t.Errorf("Expected field ID of ObjectWithUUID to have IsResolvedByConfig=true")
 					}
-					// Try to resolve to see if it correctly does nothing for overridden types
 					resolvedType, errResolve := field.Type.Resolve()
 					if errResolve != nil {
 						t.Errorf("field.Type.Resolve() for overridden type should not error, got %v", errResolve)
@@ -463,7 +421,7 @@ func TestScannerWithExternalTypeOverrides(t *testing.T) {
 				continue
 			}
 			for _, field := range typeInfo.Struct.Fields {
-				if field.Name == "Timestamp" { // This field is of type somepkg.Time
+				if field.Name == "Timestamp" {
 					if field.Type.Name != "mypkg.MyTime" {
 						t.Errorf("Expected field Timestamp of ObjectWithCustomTime to be overridden to 'mypkg.MyTime', got '%s'", field.Type.Name)
 					}
@@ -482,14 +440,11 @@ func TestScannerWithExternalTypeOverrides(t *testing.T) {
 		t.Errorf("Type 'ObjectWithCustomTime' not found in scanned package")
 	}
 
-	// Test that non-overridden types are handled normally.
-	// Re-scan the basic package with no overrides on this scanner instance.
-	// To do this cleanly, create a new scanner or reset overrides.
-	sBasic, err := New("./testdata/basic") // Assuming basic is another module or found from root
+	sBasic, err := New("./testdata/basic")
 	if err != nil {
 		t.Fatalf("Failed to create scanner for basic testdata: %v", err)
 	}
-	sBasic.SetExternalTypeOverrides(nil) // Ensure no overrides
+	sBasic.SetExternalTypeOverrides(nil)
 
 	pkgBasic, err := sBasic.ScanPackageByImport("github.com/podhmo/go-scan/testdata/basic")
 	if err != nil {
@@ -497,20 +452,19 @@ func TestScannerWithExternalTypeOverrides(t *testing.T) {
 	}
 	foundUserStruct := false
 	for _, typeInfo := range pkgBasic.Types {
-		if typeInfo.Name == "User" { // Changed from MyStruct to User
+		if typeInfo.Name == "User" {
 			foundUserStruct = true
 			if typeInfo.Struct == nil {
 				t.Errorf("User type should be a struct but it's not.")
 				continue
 			}
-			// Assuming User has a field like "ID int" or similar primitive
 			if len(typeInfo.Struct.Fields) > 0 {
-				idField := typeInfo.Struct.Fields[0] // Assuming ID is the first field
-				if idField.Name == "ID" {            // Check field "ID" specifically
+				idField := typeInfo.Struct.Fields[0]
+				if idField.Name == "ID" {
 					if idField.Type.IsResolvedByConfig {
 						t.Errorf("Field ID in User should not have IsResolvedByConfig=true when no overrides are active for it")
 					}
-					if idField.Type.Name != "int" {
+					if idField.Type.Name != "int" { // Assuming basic.User.ID is int
 						t.Errorf("User.ID expected type 'int', got '%s'", idField.Type.Name)
 					}
 				}
@@ -518,7 +472,261 @@ func TestScannerWithExternalTypeOverrides(t *testing.T) {
 			break
 		}
 	}
-	if !foundUserStruct { // Changed from foundMyStruct
-		t.Errorf("User struct not found in basic package scan without overrides") // Changed message
+	if !foundUserStruct {
+		t.Errorf("User struct not found in basic package scan without overrides")
 	}
+}
+
+// Helper function to check if a slice of strings contains a specific string.
+func containsString(slice []string, str string) bool {
+	for _, item := range slice {
+		if item == str {
+			return true
+		}
+	}
+	return false
+}
+
+// Helper function to check if two slices of strings are equal regardless of order.
+func equalStringSlices(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	aCopy := make([]string, len(a))
+	bCopy := make([]string, len(b))
+	copy(aCopy, a)
+	copy(bCopy, b)
+	sort.Strings(aCopy)
+	sort.Strings(bCopy)
+	return reflect.DeepEqual(aCopy, bCopy)
+}
+
+func TestScanFilesAndGetUnscanned(t *testing.T) {
+	// Setup: Initialize scanner relative to the 'testdata/scanfiles' module
+	s, err := New("./testdata/scanfiles")
+	if err != nil {
+		t.Fatalf("New() for scanfiles module failed: %v", err)
+	}
+	if s.locator.ModulePath() != "example.com/scanfiles" {
+		t.Fatalf("Expected module path 'example.com/scanfiles', got '%s'", s.locator.ModulePath())
+	}
+
+	coreUserPathAbs, _ := filepath.Abs("testdata/scanfiles/core/user.go")
+	coreItemPathAbs, _ := filepath.Abs("testdata/scanfiles/core/item.go")
+	coreEmptyPathAbs, _ := filepath.Abs("testdata/scanfiles/core/empty.go")
+	// handlersUserHandlerPathAbs, _ := filepath.Abs("testdata/scanfiles/handlers/user_handler.go")
+
+	corePkgImportPath := "example.com/scanfiles/core"
+	// handlersPkgImportPath := "example.com/scanfiles/handlers"
+
+	t.Run("ScanFiles_RelativePath_CoreUser", func(t *testing.T) {
+		sTest, _ := New("./testdata/scanfiles") // Fresh scanner for this subtest
+
+		// Change CWD for this specific sub-test to test CWD-relative paths robustly
+		originalCwd, _ := os.Getwd()
+		os.Chdir("testdata/scanfiles/core") // Change to core directory
+		defer os.Chdir(originalCwd)         // Change back
+
+		pkgInfo, err := sTest.ScanFiles([]string{"user.go"}) // Relative to new CWD: testdata/scanfiles/core
+		if err != nil {
+			t.Fatalf("ScanFiles for core/user.go (relative) failed: %v", err)
+		}
+		if pkgInfo == nil {
+			t.Fatal("ScanFiles returned nil pkgInfo")
+		}
+		if !containsString(pkgInfo.Files, coreUserPathAbs) || len(pkgInfo.Files) != 1 {
+			t.Errorf("ScanFiles: expected Files to contain only %s, got %v", coreUserPathAbs, pkgInfo.Files)
+		}
+		if _, visited := sTest.visitedFiles[coreUserPathAbs]; !visited {
+			t.Errorf("ScanFiles: %s should be marked as visited", coreUserPathAbs)
+		}
+		if typeUser := findType(pkgInfo.Types, "User"); typeUser == nil {
+			t.Error("Type 'User' not found in pkgInfo from ScanFiles(user.go)")
+		}
+	})
+
+	t.Run("ScanFiles_AbsolutePath_CoreItem", func(t *testing.T) {
+		sTest, _ := New("./testdata/scanfiles")
+		pkgInfo, err := sTest.ScanFiles([]string{coreItemPathAbs})
+		if err != nil {
+			t.Fatalf("ScanFiles for %s (absolute) failed: %v", coreItemPathAbs, err)
+		}
+		if !containsString(pkgInfo.Files, coreItemPathAbs) || len(pkgInfo.Files) != 1 {
+			t.Errorf("ScanFiles: expected Files to contain only %s, got %v", coreItemPathAbs, pkgInfo.Files)
+		}
+		if _, visited := sTest.visitedFiles[coreItemPathAbs]; !visited {
+			t.Errorf("ScanFiles: %s should be marked as visited", coreItemPathAbs)
+		}
+		if typeItem := findType(pkgInfo.Types, "Item"); typeItem == nil {
+			t.Error("Type 'Item' not found in pkgInfo from ScanFiles(item.go)")
+		}
+	})
+
+	t.Run("ScanFiles_ModuleQualifiedPath_CoreUser", func(t *testing.T) {
+		sTest, _ := New("./testdata/scanfiles") // Scanner initialized at scanfiles module root
+		moduleQualifiedPath := "example.com/scanfiles/core/user.go"
+		pkgInfo, err := sTest.ScanFiles([]string{moduleQualifiedPath})
+		if err != nil {
+			t.Fatalf("ScanFiles for %s (module-qualified) failed: %v", moduleQualifiedPath, err)
+		}
+		if !containsString(pkgInfo.Files, coreUserPathAbs) || len(pkgInfo.Files) != 1 {
+			t.Errorf("ScanFiles: expected Files to contain only %s for module-qualified path, got %v", coreUserPathAbs, pkgInfo.Files)
+		}
+		if _, visited := sTest.visitedFiles[coreUserPathAbs]; !visited {
+			t.Errorf("ScanFiles: %s should be marked as visited via module-qualified path", coreUserPathAbs)
+		}
+	})
+
+	t.Run("ScanFiles_MultipleCalls_VisitedSkipped", func(t *testing.T) {
+		sTest, _ := New("./testdata/scanfiles")
+		// First call: scan user.go
+		_, err := sTest.ScanFiles([]string{coreUserPathAbs})
+		if err != nil {
+			t.Fatalf("First ScanFiles call failed: %v", err)
+		}
+
+		// Second call: scan user.go (already visited) and item.go (new)
+		pkgInfo, err := sTest.ScanFiles([]string{coreUserPathAbs, coreItemPathAbs})
+		if err != nil {
+			t.Fatalf("Second ScanFiles call failed: %v", err)
+		}
+
+		if !containsString(pkgInfo.Files, coreItemPathAbs) || len(pkgInfo.Files) != 1 {
+			t.Errorf("Second ScanFiles: expected Files to contain only newly scanned %s, got %v", coreItemPathAbs, pkgInfo.Files)
+		}
+		if typeItem := findType(pkgInfo.Types, "Item"); typeItem == nil {
+			t.Error("Type 'Item' not found in second ScanFiles call (should be from item.go)")
+		}
+		if typeUser := findType(pkgInfo.Types, "User"); typeUser != nil {
+			t.Error("Type 'User' (from user.go) should not be in second ScanFiles result as it was already visited")
+		}
+		if _, visited := sTest.visitedFiles[coreUserPathAbs]; !visited {
+			t.Error("user.go not marked visited")
+		}
+		if _, visited := sTest.visitedFiles[coreItemPathAbs]; !visited {
+			t.Error("item.go not marked visited")
+		}
+	})
+
+	t.Run("ScanFiles_AllFilesVisited_EmptyResult", func(t *testing.T) {
+		sTest, _ := New("./testdata/scanfiles")
+		_, err := sTest.ScanFiles([]string{coreUserPathAbs}) // Visit user.go
+		if err != nil {
+			t.Fatalf("Failed to scan user.go: %v", err)
+		}
+
+		pkgInfo, err := sTest.ScanFiles([]string{coreUserPathAbs}) // Scan again
+		if err != nil {
+			t.Fatalf("Second scan of user.go failed: %v", err)
+		}
+		if len(pkgInfo.Files) != 0 {
+			t.Errorf("Expected Files to be empty when scanning already visited file, got %v", pkgInfo.Files)
+		}
+		if len(pkgInfo.Types) != 0 || len(pkgInfo.Functions) != 0 || len(pkgInfo.Constants) != 0 {
+			t.Error("Expected no symbols when scanning already visited file")
+		}
+	})
+
+	t.Run("UnscannedGoFiles_CorePackage", func(t *testing.T) {
+		sTest, _ := New("./testdata/scanfiles")
+
+		// Initially, all files in core should be unscanned
+		unscanned, err := sTest.UnscannedGoFiles(corePkgImportPath)
+		if err != nil {
+			t.Fatalf("UnscannedGoFiles initial failed: %v", err)
+		}
+		expectedUnscannedInitial := []string{coreEmptyPathAbs, coreItemPathAbs, coreUserPathAbs}
+		if !equalStringSlices(unscanned, expectedUnscannedInitial) {
+			t.Errorf("Initial unscanned files: expected %v, got %v", expectedUnscannedInitial, unscanned)
+		}
+
+		// Scan user.go
+		_, err = sTest.ScanFiles([]string{coreUserPathAbs})
+		if err != nil {
+			t.Fatalf("ScanFiles(user.go) failed: %v", err)
+		}
+
+		unscannedAfterUser, err := sTest.UnscannedGoFiles(corePkgImportPath)
+		if err != nil {
+			t.Fatalf("UnscannedGoFiles after user.go scan failed: %v", err)
+		}
+		expectedUnscannedAfterUser := []string{coreEmptyPathAbs, coreItemPathAbs}
+		if !equalStringSlices(unscannedAfterUser, expectedUnscannedAfterUser) {
+			t.Errorf("Unscanned after user.go: expected %v, got %v", expectedUnscannedAfterUser, unscannedAfterUser)
+		}
+
+		// Scan item.go and empty.go
+		_, err = sTest.ScanFiles([]string{coreItemPathAbs, coreEmptyPathAbs})
+		if err != nil {
+			t.Fatalf("ScanFiles(item.go, empty.go) failed: %v", err)
+		}
+
+		unscannedAllScanned, err := sTest.UnscannedGoFiles(corePkgImportPath)
+		if err != nil {
+			t.Fatalf("UnscannedGoFiles after all core files scanned failed: %v", err)
+		}
+		if len(unscannedAllScanned) != 0 {
+			t.Errorf("Expected no unscanned files after all core files scanned, got %v", unscannedAllScanned)
+		}
+	})
+
+	t.Run("ScanPackage_RespectsVisitedFiles", func(t *testing.T) {
+		sTest, _ := New("./testdata/scanfiles")
+		// Scan core/user.go via ScanFiles first
+		_, err := sTest.ScanFiles([]string{coreUserPathAbs})
+		if err != nil {
+			t.Fatalf("ScanFiles(user.go) failed: %v", err)
+		}
+
+		// Now ScanPackage for the whole core package
+		// It should only parse item.go and empty.go as user.go is visited
+		pkgInfo, err := sTest.ScanPackage("./testdata/scanfiles/core")
+		if err != nil {
+			t.Fatalf("ScanPackage(core) failed: %v", err)
+		}
+
+		if pkgInfo == nil {
+			t.Fatal("ScanPackage returned nil pkgInfo")
+		}
+
+		// pkgInfo.Files from ScanPackage should only contain newly parsed files (item.go, empty.go)
+		expectedFiles := []string{coreItemPathAbs, coreEmptyPathAbs}
+		if !equalStringSlices(pkgInfo.Files, expectedFiles) {
+			t.Errorf("ScanPackage(core) after ScanFiles(user.go): expected Files %v, got %v", expectedFiles, pkgInfo.Files)
+		}
+		if findType(pkgInfo.Types, "Item") == nil {
+			t.Error("Type 'Item' should be in ScanPackage result")
+		}
+		if findType(pkgInfo.Types, "User") != nil { // User was already visited
+			t.Error("Type 'User' should NOT be in this ScanPackage result (already visited)")
+		}
+		if _, visited := sTest.visitedFiles[coreItemPathAbs]; !visited {
+			t.Error("item.go not marked visited after ScanPackage")
+		}
+		if _, visited := sTest.visitedFiles[coreEmptyPathAbs]; !visited {
+			t.Error("empty.go not marked visited after ScanPackage")
+		}
+
+		// Check package cache for the import path
+		sTest.mu.RLock()
+		cachedInfo, found := sTest.packageCache[corePkgImportPath]
+		sTest.mu.RUnlock()
+		if !found {
+			t.Errorf("PackageInfo for %s not found in packageCache after ScanPackage", corePkgImportPath)
+		} else {
+			// The cached info should be the result of this ScanPackage call
+			if !equalStringSlices(cachedInfo.Files, expectedFiles) {
+				t.Errorf("Cached PackageInfo.Files: expected %v, got %v", expectedFiles, cachedInfo.Files)
+			}
+		}
+	})
+}
+
+func findType(types []*scanner.TypeInfo, name string) *scanner.TypeInfo {
+	for _, ti := range types {
+		if ti.Name == name {
+			return ti
+		}
+	}
+	return nil
 }

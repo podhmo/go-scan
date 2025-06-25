@@ -17,9 +17,164 @@ import (
 // Re-export scanner kinds for convenience.
 const (
 	StructKind = scanner.StructKind
-	AliasKind  = scanner.AliasKind
-	FuncKind   = scanner.FuncKind
+	AliasKind     = scanner.AliasKind
+	FuncKind      = scanner.FuncKind
+	InterfaceKind = scanner.InterfaceKind // Ensure InterfaceKind is available
 )
+
+// Implements checks if a struct type implements an interface type within the context of a package.
+// It requires the PackageInfo to look up methods of the structCandidate.
+func Implements(structCandidate *scanner.TypeInfo, interfaceDef *scanner.TypeInfo, pkgInfo *scanner.PackageInfo) bool {
+	if structCandidate == nil || structCandidate.Kind != StructKind {
+		return false // Candidate must be a struct
+	}
+	if interfaceDef == nil || interfaceDef.Kind != InterfaceKind || interfaceDef.Interface == nil {
+		return false // Interface definition must be a valid interface
+	}
+	if pkgInfo == nil {
+		return false // Package context is needed to find struct methods
+	}
+
+	// Collect methods of the structCandidate from pkgInfo.Functions
+	// This is a simplified way; a more robust way might involve caching methods on TypeInfo.
+	structMethods := make(map[string]*scanner.FunctionInfo)
+	for _, fn := range pkgInfo.Functions {
+		if fn.Receiver != nil && fn.Receiver.Type != nil {
+			receiverTypeName := fn.Receiver.Type.Name
+			// Handle pointer receivers, e.g. "*MyStruct" vs "MyStruct"
+			if fn.Receiver.Type.IsPointer && len(receiverTypeName) > 0 && receiverTypeName[0] == '*' {
+				// This comparison is simplistic. True type resolution is complex.
+				// For now, assume Type.Name for pointer receiver is like "*StructName".
+				// This might need adjustment based on how FieldType.Name for pointer types is structured.
+				// Let's assume FieldType.Name for `*Foo` is `*Foo`, and for `Foo` is `Foo`.
+				// The receiver type name might need stripping of '*' for comparison if structCandidate.Name doesn't have it.
+				// Or, ensure structCandidate.Name is used consistently.
+				// For now, let's assume fn.Receiver.Type.Name is the base name for pointer receivers after parsing.
+				// This is a common point of failure if not handled carefully by the parser.
+				// Let's assume fn.Receiver.Type.Name is "MyStruct" even for *MyStruct for simplicity here, needs verification.
+				// Based on scanner.go, parseFuncDecl gets receiver type via parseTypeExpr.
+				// FieldType.Name for *ast.StarExpr prepends "*" if not handled.
+				// Let's assume for now fn.Receiver.Type.Name could be "*StructName" or "StructName"
+				// And structCandidate.Name is "StructName".
+
+				actualReceiverName := receiverTypeName
+				if fn.Receiver.Type.IsPointer && strings.HasPrefix(receiverTypeName, "*") {
+					actualReceiverName = strings.TrimPrefix(receiverTypeName, "*")
+				}
+
+				if actualReceiverName == structCandidate.Name {
+					structMethods[fn.Name] = fn
+				}
+			} else if receiverTypeName == structCandidate.Name { // Value receiver
+				structMethods[fn.Name] = fn
+			}
+		}
+	}
+
+	for _, interfaceMethod := range interfaceDef.Interface.Methods {
+		structMethod, found := structMethods[interfaceMethod.Name]
+		if !found {
+			// fmt.Printf("Method %s not found on struct %s\n", interfaceMethod.Name, structCandidate.Name)
+			return false // Method not found
+		}
+
+		// Compare signatures (parameters and results)
+		if !compareSignatures(interfaceMethod, structMethod) {
+			// fmt.Printf("Signature mismatch for method %s on struct %s\n", interfaceMethod.Name, structCandidate.Name)
+			return false
+		}
+	}
+
+	return true
+}
+
+// compareSignatures compares the parameters and results of two methods.
+// This is a simplified comparison focusing on type names and counts.
+// It does not handle complex type equivalences (e.g., type aliases across packages without full resolution).
+func compareSignatures(interfaceMethod *scanner.MethodInfo, structMethod *scanner.FunctionInfo) bool {
+	// Compare parameters
+	if len(interfaceMethod.Parameters) != len(structMethod.Parameters) {
+		// fmt.Printf("Param count mismatch: %d vs %d\n", len(interfaceMethod.Parameters), len(structMethod.Parameters))
+		return false
+	}
+	for i, intParam := range interfaceMethod.Parameters {
+		strParam := structMethod.Parameters[i]
+		if !compareFieldTypes(intParam.Type, strParam.Type) {
+			// fmt.Printf("Param type mismatch at index %d: %s vs %s\n", i, intParam.Type.Name, strParam.Type.Name)
+			return false
+		}
+	}
+
+	// Compare results
+	if len(interfaceMethod.Results) != len(structMethod.Results) {
+		// fmt.Printf("Result count mismatch: %d vs %d\n", len(interfaceMethod.Results), len(structMethod.Results))
+		return false
+	}
+	for i, intResult := range interfaceMethod.Results {
+		strResult := structMethod.Results[i]
+		if !compareFieldTypes(intResult.Type, strResult.Type) {
+			// fmt.Printf("Result type mismatch at index %d: %s vs %s\n", i, intResult.Type.Name, strResult.Type.Name)
+			return false
+		}
+	}
+
+	return true
+}
+
+// compareFieldTypes compares two FieldType instances.
+// This is a simplified comparison. A robust solution needs full type resolution.
+func compareFieldTypes(type1 *scanner.FieldType, type2 *scanner.FieldType) bool {
+	if type1 == nil && type2 == nil {
+		return true
+	}
+	if type1 == nil || type2 == nil {
+		return false
+	}
+
+	// TODO: This needs to be much more robust.
+	// It should handle qualified names, resolve types if necessary, etc.
+	// For now, simple name and pointer check.
+	// Also, consider IsSlice, IsMap, Elem, MapKey for more complex types.
+
+	// Normalize names: if PkgName is present and type1/2 are from different packages,
+	// we need to compare fully qualified names or ensure types are resolved to canonical forms.
+	// For types within the same package or primitives, direct name comparison might work.
+	// ft.Resolve() could be used here, but adds complexity of error handling and async operations.
+
+	name1 := type1.Name
+	name2 := type2.Name
+
+	// Simplistic handling for pointer types: assume FieldType.Name for *T is "*T"
+	// This depends on how parseTypeExpr populates FieldType.Name and IsPointer.
+	// If type1.Name is "Foo" and type1.IsPointer is true, it means *Foo.
+	// If type2.Name is "*Foo" and type2.IsPointer is true (or implicitly due to name), it's also *Foo.
+	// The current FieldType structure might lead to type1.Name = "Foo", type1.IsPointer = true
+	// vs type2.Name = "*Foo", type2.IsPointer = false (if name includes pointer directly).
+	// The current FieldType structure, after parseTypeExpr for *ast.StarExpr, should result in:
+	// For a type `*T`, FieldType.Name will be "T" and FieldType.IsPointer will be true.
+	// For a type `T`, FieldType.Name will be "T" and FieldType.IsPointer will be false.
+	// Thus, we can directly compare IsPointer and then Name.
+
+	if type1.IsPointer != type2.IsPointer {
+		// fmt.Printf("Pointer mismatch: %s (ptr:%v) vs %s (ptr:%v)\n", name1, type1.IsPointer, name2, type2.IsPointer)
+		return false
+	}
+
+	// Now, IsPointer is the same for both. Compare the base names.
+	if name1 != name2 {
+		// This is still too simple if types are from different packages, e.g. pkgA.Type vs pkgB.Type.
+		// We need to compare import paths if PkgName is different.
+		// For now, assume types are either primitive, in current package, or this comparison is insufficient.
+		// fmt.Printf("Base name mismatch: %s (ptr:%v) vs %s (ptr:%v)\n", name1, type1.IsPointer, name2, type2.IsPointer)
+		return false
+	}
+
+	// TODO: Compare PkgName and fullImportPath if types are not primitive and Name matches.
+	// This is where true type identity across packages is checked.
+	// For now, if names and pointer status match, assume true for simplicity.
+	return true
+}
+
 
 // Scanner is the main entry point for the type scanning library.
 // It combines a locator for finding packages, a scanner for parsing them,

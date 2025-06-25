@@ -1,37 +1,37 @@
 # Deriving JSON for oneOf
 
-`derivingjson` は、`github.com/podhmo/go-scan` ライブラリの機能を利用して、JSON の `oneOf` スキーマに類する構造を持つ Go の struct に対する `UnmarshalJSON` メソッドを自動生成する実験的なツールです。
+`derivingjson` is an experimental tool that leverages the `github.com/podhmo/go-scan` library to automatically generate `UnmarshalJSON` methods for Go structs that have a structure analogous to JSON Schema's `oneOf`.
 
-## 概要
+## Overview
 
-JSON スキーマにおける `oneOf` は、あるフィールドが複数の型を取りうることを表現します。Go でこれを素直に表現しようとすると、インターフェース型と、そのインターフェースを実装する具体的な struct 群、そして型を判別するための識別子フィールド（discriminator）を持つコンテナ struct のような形になることが一般的です。
+In JSON Schema, `oneOf` signifies that a field can be one of several types. A common way to represent this концепт in Go involves using an interface type, a set of concrete structs that implement this interface, and a container struct that includes a discriminator field to identify the specific type.
 
-このツールは、そのようなコンテナ struct に対して、識別子の値に基づいて適切な具象型にアンマーシャルするための `UnmarshalJSON` メソッドを生成することを目的としています。
+This tool aims to generate an `UnmarshalJSON` method for such container structs, enabling unmarshalling into the appropriate concrete type based on the discriminator's value.
 
-## 特徴
+## Features
 
--   `github.com/podhmo/go-scan` を利用した型情報の解析。
--   特定のコメントアノテーション (`@deriving:unmarshall`) が付与された struct を対象とします。
--   識別子フィールド (例: `Type string `json:"type"``) と `oneOf` 対象のインターフェースフィールドを特定し、適切なアンマーシャリングロジックを生成します。
--   インターフェースを実装する具象型は、ツールが同一パッケージ内から探索します。
+-   Type information analysis using `github.com/podhmo/go-scan`.
+-   Targets structs annotated with a specific comment: `@deriving:unmarshall`.
+-   Identifies the discriminator field (e.g., `Type string `json:"type"``) and the `oneOf` target interface field to generate the appropriate unmarshalling logic.
+-   The tool searches for concrete types implementing the interface within the same package.
 
-## 使用方法 (想定)
+## Usage (Conceptual)
 
-1.  `UnmarshalJSON` を生成したいコンテナ struct のコメントに `@deriving:unmarshall` を追加します。
-2.  コマンドラインから `derivingjson` を実行し、対象のパッケージパスを指定します。
+1.  Add the `@deriving:unmarshall` annotation in the comment of the container struct for which you want to generate `UnmarshalJSON`.
+2.  Run `derivingjson` from the command line, specifying the target package path.
 
-   ```bash
-   go run examples/derivingjson/*.go <対象パッケージのパス>
-   # またはビルド後
-   # ./derivingjson <対象パッケージのパス>
-   ```
+    ```bash
+    go run examples/derivingjson/*.go <path_to_target_package>
+    # Or after building
+    # ./derivingjson <path_to_target_package>
+    ```
 
-   例:
-   ```bash
-   go run examples/derivingjson/*.go ./examples/derivingjson/testdata/simple
-   ```
-3.  指定されたパッケージ内に `xxx_deriving.go` のような名前で `UnmarshalJSON` メソッドが実装されたファイルが生成されます。
+    Example:
+    ```bash
+    go run examples/derivingjson/*.go ./examples/derivingjson/testdata/simple
+    ```
+3.  A file named like `xxx_deriving.go`, containing the implemented `UnmarshalJSON` method, will be generated in the specified package.
 
-## 注意事項
+## Disclaimer
 
-このツールは `go-scan` ライブラリの試用とデモンストレーションを兼ねた実験的なものです。
+This tool is experimental, serving as a trial and demonstration for the `go-scan` library.

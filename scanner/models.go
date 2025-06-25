@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"go/ast"
 	"go/token" // Added
+	"strings"  // Added for strings.Builder
 )
 
 // Kind defines the category of a type definition.
@@ -54,7 +55,21 @@ type TypeInfo struct {
 	Node       ast.Node
 	Struct     *StructInfo
 	Func       *FunctionInfo
+	Interface  *InterfaceInfo // Added for interface types
 	Underlying *FieldType
+}
+
+// InterfaceInfo represents an interface type.
+type InterfaceInfo struct {
+	Methods []*MethodInfo
+}
+
+// MethodInfo represents a single method in an interface.
+type MethodInfo struct {
+	Name       string
+	Parameters []*FieldInfo
+	Results    []*FieldInfo
+	// We might need position or AST node info later if generating code that needs to refer back to the source.
 }
 
 // StructInfo represents a struct type.
@@ -91,6 +106,76 @@ type FieldType struct {
 // Resolve finds and returns the full definition of the type.
 // It uses the PackageResolver to parse other packages on-demand.
 // The result is cached for subsequent calls.
+
+// String returns the Go string representation of the field type.
+// e.g., "*pkgname.MyType", "[]string", "map[string]int"
+func (ft *FieldType) String() string {
+	if ft == nil {
+		return "<nil_FieldType>"
+	}
+	var sb strings.Builder
+
+	if ft.IsPointer {
+		sb.WriteString("*")
+		if ft.Elem != nil {
+			// If Elem exists, it represents the pointed-to type.
+			// Recursively call String on Elem.
+			// However, current FieldType for pointer stores base type in Name and IsPointer=true. Elem might be for base type's own Elem if it's slice/map.
+			// Let's assume ft.Name is the base name if IsPointer is true.
+			// The String() method should ideally be called on the Elem if it represents the next part of type.
+			// Current structure: For *T, Name="T", IsPointer=true. For []*T, Name="slice", IsPointer=false, IsSlice=true, Elem points to *T.
+			// This means for a simple pointer, we write "*" and then handle the ft.Name or ft.Elem based on what ft represents.
+
+			// If ft.Name is already qualified or is a primitive, use it.
+			// This part needs careful handling of how PkgName/fullImportPath interact with Name for pointers.
+			// For now, let's assume if IsPointer is true, ft.Name is the base type name.
+			// A more robust way: if ft.Elem is non-nil and represents the pointed-to type structure, call ft.Elem.String().
+			// But `parseTypeExpr` for StarExpr does: `underlyingType := s.parseTypeExpr(t.X); underlyingType.IsPointer = true; return underlyingType;`
+			// This implies Name is from t.X.
+			// So, if IsPointer, we add "*" and then proceed to format the rest of ft as if it were not a pointer.
+		}
+		// Fallthrough to handle the base type (slice, map, or named type)
+	}
+
+	if ft.IsSlice {
+		sb.WriteString("[]")
+		if ft.Elem != nil {
+			sb.WriteString(ft.Elem.String()) // Recursive call for element type
+		} else {
+			sb.WriteString("interface{}") // Fallback, should ideally not happen for valid code
+		}
+		return sb.String()
+	}
+
+	if ft.IsMap {
+		sb.WriteString("map[")
+		if ft.MapKey != nil {
+			sb.WriteString(ft.MapKey.String())
+		} else {
+			sb.WriteString("interface{}") // Fallback
+		}
+		sb.WriteString("]")
+		if ft.Elem != nil {
+			sb.WriteString(ft.Elem.String())
+		} else {
+			sb.WriteString("interface{}") // Fallback
+		}
+		return sb.String()
+	}
+
+	// If not a pointer (already handled for the prefix), slice, or map, it's a named type or primitive.
+	// Prepend PkgName if it exists (for qualified types).
+	name := ft.Name
+	if ft.PkgName != "" { // PkgName is the local identifier (e.g. "json" or "m" in "m.MyType")
+		// To get the canonical import path for prefixing, we'd ideally use fullImportPath's last segment
+		// if PkgName is just an alias or could be ambiguous.
+		// For now, assume PkgName is sufficient for qualification as used by the parser.
+		name = fmt.Sprintf("%s.%s", ft.PkgName, ft.typeName) // ft.typeName is the Name within the package
+	}
+	sb.WriteString(name)
+	return sb.String()
+}
+
 func (ft *FieldType) Resolve() (*TypeInfo, error) {
 	if ft.IsResolvedByConfig {
 		// This type was resolved by an external configuration (e.g. to a primitive like "string").
@@ -143,3 +228,5 @@ type FunctionInfo struct {
 	Parameters []*FieldInfo
 	Results    []*FieldInfo
 }
+
+// var _ = strings.Builder{} // This helper is no longer needed as "strings" is directly imported.

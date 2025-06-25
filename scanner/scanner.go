@@ -37,7 +37,7 @@ func New(fset *token.FileSet, overrides ExternalTypeOverride) (*Scanner, error) 
 
 // ScanPackage parses all .go files in a given directory and returns PackageInfo.
 // It now uses ScanFiles internally.
-func (s *Scanner) ScanPackage(dirPath string, resolver PackageResolver) (*PackageInfo, error) {
+func (s *Scanner) ScanPackage(ctx context.Context, dirPath string, resolver PackageResolver) (*PackageInfo, error) {
 	s.resolver = resolver // Store resolver for use by parseTypeExpr etc.
 
 	// List all .go files in the directory, excluding _test.go files.
@@ -61,12 +61,12 @@ func (s *Scanner) ScanPackage(dirPath string, resolver PackageResolver) (*Packag
 	// pkgImportPath for ScanFiles could be derived or passed in.
 	// For now, let ScanFiles derive it or handle it based on its needs.
 	// dirPath itself serves as the package's unique path identifier for PackageInfo.Path.
-	return s.ScanFiles(filePaths, dirPath, resolver)
+	return s.ScanFiles(ctx, filePaths, dirPath, resolver)
 }
 
 // ScanFiles parses a specific list of .go files and returns PackageInfo.
 // pkgDirPath is the absolute directory path for this package, used for PackageInfo.Path.
-func (s *Scanner) ScanFiles(filePaths []string, pkgDirPath string, resolver PackageResolver) (*PackageInfo, error) {
+func (s *Scanner) ScanFiles(ctx context.Context, filePaths []string, pkgDirPath string, resolver PackageResolver) (*PackageInfo, error) {
 	s.resolver = resolver // Ensure resolver is set for this scanning operation.
 
 	if len(filePaths) == 0 {
@@ -104,7 +104,7 @@ func (s *Scanner) ScanFiles(filePaths []string, pkgDirPath string, resolver Pack
 			switch d := decl.(type) {
 			case *ast.GenDecl:
 				fmt.Printf("DEBUG SCANNER: GenDecl (Tok: %s) in %s. Specs: %d\n", d.Tok.String(), filePath, len(d.Specs))
-				s.parseGenDecl(d, info, filePath)
+				s.parseGenDecl(ctx, d, info, filePath) // Pass context
 			case *ast.FuncDecl:
 				fmt.Printf("DEBUG SCANNER: FuncDecl %s in %s\n", d.Name.Name, filePath)
 				info.Functions = append(info.Functions, s.parseFuncDecl(d, filePath))
@@ -137,11 +137,11 @@ func (s *Scanner) buildImportLookup(file *ast.File) {
 }
 
 // parseGenDecl parses a general declaration (types, constants, variables).
-func (s *Scanner) parseGenDecl(decl *ast.GenDecl, info *PackageInfo, absFilePath string) {
+func (s *Scanner) parseGenDecl(ctx context.Context, decl *ast.GenDecl, info *PackageInfo, absFilePath string) {
 	for _, spec := range decl.Specs {
 		switch sp := spec.(type) {
 		case *ast.TypeSpec:
-			typeInfo := s.parseTypeSpec(sp, absFilePath)
+			typeInfo := s.parseTypeSpec(ctx, sp, absFilePath)
 			if typeInfo.Doc == "" && decl.Doc != nil {
 				typeInfo.Doc = commentText(decl.Doc)
 			}
@@ -182,7 +182,7 @@ func (s *Scanner) parseGenDecl(decl *ast.GenDecl, info *PackageInfo, absFilePath
 }
 
 // parseTypeSpec parses a type specification.
-func (s *Scanner) parseTypeSpec(sp *ast.TypeSpec, absFilePath string) *TypeInfo {
+func (s *Scanner) parseTypeSpec(ctx context.Context, sp *ast.TypeSpec, absFilePath string) *TypeInfo {
 	typeInfo := &TypeInfo{
 		Name:     sp.Name.Name,
 		FilePath: absFilePath,
@@ -192,13 +192,13 @@ func (s *Scanner) parseTypeSpec(sp *ast.TypeSpec, absFilePath string) *TypeInfo 
 	switch t := sp.Type.(type) {
 	case *ast.StructType:
 		typeInfo.Kind = StructKind
-		typeInfo.Struct = s.parseStructType(t)
+		typeInfo.Struct = s.parseStructType(t) // parseStructType does not log with context yet
 	case *ast.InterfaceType: // Added case for interface types
 		typeInfo.Kind = InterfaceKind
-		typeInfo.Interface = s.parseInterfaceType(t)
+		typeInfo.Interface = s.parseInterfaceType(ctx, t)
 	case *ast.FuncType:
 		typeInfo.Kind = FuncKind
-		typeInfo.Func = s.parseFuncType(t)
+		typeInfo.Func = s.parseFuncType(t) // parseFuncType does not log with context
 	default:
 		typeInfo.Kind = AliasKind
 		typeInfo.Underlying = s.parseTypeExpr(sp.Type) // sp.Type is correct here for alias
@@ -207,7 +207,7 @@ func (s *Scanner) parseTypeSpec(sp *ast.TypeSpec, absFilePath string) *TypeInfo 
 }
 
 // parseInterfaceType parses an interface type.
-func (s *Scanner) parseInterfaceType(it *ast.InterfaceType) *InterfaceInfo {
+func (s *Scanner) parseInterfaceType(ctx context.Context, it *ast.InterfaceType) *InterfaceInfo {
 	if it.Methods == nil || len(it.Methods.List) == 0 {
 		return &InterfaceInfo{Methods: []*MethodInfo{}} // Empty interface
 	}
@@ -224,7 +224,7 @@ func (s *Scanner) parseInterfaceType(it *ast.InterfaceType) *InterfaceInfo {
 			if !ok {
 				// This case should ideally not happen for a valid Go interface method.
 				// Skip or log an error if it does.
-				slog.WarnContext(context.Background(), "Expected FuncType for interface method, skipping", slog.String("method_name", methodName), slog.String("got_type", fmt.Sprintf("%T", field.Type)))
+				slog.WarnContext(ctx, "Expected FuncType for interface method, skipping", slog.String("method_name", methodName), slog.String("got_type", fmt.Sprintf("%T", field.Type)))
 				continue
 			}
 			methodInfo := &MethodInfo{
@@ -250,7 +250,7 @@ func (s *Scanner) parseInterfaceType(it *ast.InterfaceType) *InterfaceInfo {
 			// as `goscan.Implements` will need to handle this when comparing.
 			// Or, we can add a placeholder if needed for `Implements` to recognize it.
 			// For `derivingjson`, direct method signatures are the primary concern.
-			slog.InfoContext(context.Background(), "Embedded interface found, its methods are not recursively parsed in this version.", slog.String("interface_name", embeddedTypeName.Name))
+			slog.InfoContext(ctx, "Embedded interface found, its methods are not recursively parsed in this version.", slog.String("interface_name", embeddedTypeName.Name))
 		}
 	}
 	return interfaceInfo

@@ -70,7 +70,7 @@ func NewSymbolCache(rootDir string, configCachePath string) (*SymbolCache, error
 
 // Load loads the cache data from the file if UseCache is true.
 // If the file does not exist, it's not an error; an empty cache will be used.
-func (sc *SymbolCache) Load() error {
+func (sc *SymbolCache) Load(ctx context.Context) error {
 	if !sc.useCache || sc.filePath == "" {
 		return nil // Do nothing if cache is disabled or path is not set
 	}
@@ -102,7 +102,7 @@ func (sc *SymbolCache) Load() error {
 	err = json.Unmarshal(data, &newContent)
 	if err != nil {
 		// If unmarshalling fails, treat it as a corrupted cache and start fresh
-		slog.WarnContext(context.Background(), "Failed to unmarshal cache file, starting with an empty cache", slog.String("path", sc.filePath), slog.Any("error", err))
+		slog.WarnContext(ctx, "Failed to unmarshal cache file, starting with an empty cache", slog.String("path", sc.filePath), slog.Any("error", err))
 		sc.content = CacheContent{ // Initialize with empty maps
 			Symbols: make(map[string]string),
 			Files:   make(map[string]FileMetadata),
@@ -291,7 +291,7 @@ func (sc *SymbolCache) makeRelative(absoluteFilepath string) (string, error) {
 // It returns the absolute path if the file exists, otherwise it removes the
 // stale entry from the cache and returns false.
 // This is a basic check; it doesn't re-parse the file to confirm the symbol.
-func (sc *SymbolCache) VerifyAndGet(key string) (string, bool) {
+func (sc *SymbolCache) VerifyAndGet(ctx context.Context, key string) (string, bool) {
 	if !sc.useCache {
 		return "", false
 	}
@@ -340,7 +340,7 @@ func (sc *SymbolCache) VerifyAndGet(key string) (string, bool) {
 		}
 
 		if !os.IsNotExist(err) {
-			slog.WarnContext(context.Background(), "Removing cache entry due to error accessing file", slog.String("symbol_key", key), slog.String("file", absolutePath), slog.Any("error", err))
+			slog.WarnContext(ctx, "Removing cache entry due to error accessing file", slog.String("symbol_key", key), slog.String("file", absolutePath), slog.Any("error", err))
 		}
 		return "", false
 	}
@@ -379,7 +379,7 @@ func (sc *SymbolCache) IsEnabled() bool {
 // - existingFilesInCache: Absolute paths of files present in both directory and cache.
 // - err: An error if any.
 // It also cleans up cache entries for deleted files.
-func (sc *SymbolCache) GetFilesToScan(packageDirPath string) (newFilesToScan []string, existingFilesInCache []string, err error) {
+func (sc *SymbolCache) GetFilesToScan(ctx context.Context, packageDirPath string) (newFilesToScan []string, existingFilesInCache []string, err error) {
 	if !sc.useCache {
 		// If cache is disabled, the caller should ideally list all files and scan them.
 		// This method's contract is to interact with the cache.
@@ -403,7 +403,7 @@ func (sc *SymbolCache) GetFilesToScan(packageDirPath string) (newFilesToScan []s
 		absPath := filepath.Join(packageDirPath, entry.Name())
 		relPath, err := sc.makeRelative(absPath) // Converts to path relative to sc.rootDir
 		if err != nil {
-			slog.WarnContext(context.Background(), "Could not make path relative to root", slog.String("path", absPath), slog.String("root_dir", sc.rootDir), slog.Any("error", err))
+			slog.WarnContext(ctx, "Could not make path relative to root", slog.String("path", absPath), slog.String("root_dir", sc.rootDir), slog.Any("error", err))
 			continue // Skip files not processable
 		}
 		currentDirRelativeFiles[relPath] = true

@@ -1,6 +1,7 @@
 package goscan
 
 import (
+	"context"
 	"encoding/json" // Added for manual cache file creation in tests
 	"os"            // Added for os.MkdirTemp, os.ReadFile, os.Stat
 	"path/filepath" // Added for filepath.Join, filepath.Abs
@@ -60,7 +61,7 @@ func TestLazyResolution_Integration(t *testing.T) {
 
 	// Scan the 'api' package, which depends on the 'models' package.
 	apiImportPath := "example.com/multipkg-test/api"
-	pkgInfo, err := s.ScanPackageByImport(apiImportPath)
+	pkgInfo, err := s.ScanPackageByImport(context.Background(), apiImportPath)
 	if err != nil {
 		t.Fatalf("ScanPackageByImport() failed: %v", err)
 	}
@@ -95,7 +96,7 @@ func TestLazyResolution_Integration(t *testing.T) {
 	}
 
 	// Trigger lazy resolution
-	userDef, err := userField.Type.Resolve()
+	userDef, err := userField.Type.Resolve(context.Background())
 	if err != nil {
 		t.Fatalf("Failed to resolve User field type: %v", err)
 	}
@@ -149,18 +150,18 @@ func TestScanner_WithSymbolCache(t *testing.T) {
 		}
 		s.CachePath = cacheFilePath
 		defer func() {
-			if err := s.SaveSymbolCache(); err != nil {
+			if err := s.SaveSymbolCache(context.Background()); err != nil {
 				t.Errorf("Failed to save symbol cache: %v", err)
 			}
 		}()
 
-		_, err = s.ScanPackageByImport(apiImportPath)
+		_, err = s.ScanPackageByImport(context.Background(), apiImportPath)
 		if err != nil {
 			t.Fatalf("ScanPackageByImport(%s) failed: %v", apiImportPath, err)
 		}
 
 		handlerSymbolFullName := apiImportPath + ".Handler"
-		loc, err := s.FindSymbolDefinitionLocation(handlerSymbolFullName)
+		loc, err := s.FindSymbolDefinitionLocation(context.Background(), handlerSymbolFullName)
 		if err != nil {
 			t.Fatalf("FindSymbolDefinitionLocation(%s) after scan failed: %v", handlerSymbolFullName, err)
 		}
@@ -168,7 +169,7 @@ func TestScanner_WithSymbolCache(t *testing.T) {
 			t.Errorf("Expected Handler path %s, got %s", expectedHandlerFilePath, loc)
 		}
 
-		if err := s.SaveSymbolCache(); err != nil {
+		if err := s.SaveSymbolCache(context.Background()); err != nil {
 			t.Fatalf("Explicit save failed: %v", err)
 		}
 
@@ -208,13 +209,13 @@ func TestScanner_WithSymbolCache(t *testing.T) {
 			}
 		}
 
-		_, err = s.ScanPackageByImport(modelsImportPath)
+		_, err = s.ScanPackageByImport(context.Background(), modelsImportPath)
 		if err != nil {
 			t.Fatalf("ScanPackageByImport(%s) failed: %v", modelsImportPath, err)
 		}
 
 		userSymbolFullName := modelsImportPath + ".User"
-		locUser, errUser := s.FindSymbolDefinitionLocation(userSymbolFullName)
+		locUser, errUser := s.FindSymbolDefinitionLocation(context.Background(), userSymbolFullName)
 		if errUser != nil {
 			t.Fatalf("FindSymbolDefinitionLocation(%s) after scan failed: %v", userSymbolFullName, errUser)
 		}
@@ -233,10 +234,10 @@ func TestScanner_WithSymbolCache(t *testing.T) {
 			t.Fatalf("New() failed: %v", err)
 		}
 		s.CachePath = cacheFilePath
-		defer func() { s.SaveSymbolCache() }()
+		defer func() { s.SaveSymbolCache(context.Background()) }()
 
 		userSymbolFullName := modelsImportPath + ".User"
-		loc, err := s.FindSymbolDefinitionLocation(userSymbolFullName)
+		loc, err := s.FindSymbolDefinitionLocation(context.Background(), userSymbolFullName)
 		if err != nil {
 			t.Fatalf("FindSymbolDefinitionLocation(%s) with empty cache failed: %v", userSymbolFullName, err)
 		}
@@ -244,7 +245,7 @@ func TestScanner_WithSymbolCache(t *testing.T) {
 			t.Errorf("Expected User path %s, got %s after fallback scan", expectedUserFilePath, loc)
 		}
 
-		locHit, errHit := s.FindSymbolDefinitionLocation(userSymbolFullName)
+		locHit, errHit := s.FindSymbolDefinitionLocation(context.Background(), userSymbolFullName)
 		if errHit != nil {
 			t.Fatalf("FindSymbolDefinitionLocation(%s) second time (expect cache hit) failed: %v", userSymbolFullName, errHit)
 		}
@@ -263,7 +264,7 @@ func TestScanner_WithSymbolCache(t *testing.T) {
 			t.Fatalf("New() failed: %v", err)
 		}
 		s.CachePath = cacheFilePath
-		defer func() { s.SaveSymbolCache() }()
+		defer func() { s.SaveSymbolCache(context.Background()) }()
 
 		staleUserSymbol := modelsImportPath + ".User"
 		staleFileRelativePath := "models/non_existent_user.go"
@@ -282,7 +283,7 @@ func TestScanner_WithSymbolCache(t *testing.T) {
 		os.MkdirAll(filepath.Dir(cacheFilePath), 0755)
 		os.WriteFile(cacheFilePath, jsonData, 0644)
 
-		loc, err := s.FindSymbolDefinitionLocation(staleUserSymbol)
+		loc, err := s.FindSymbolDefinitionLocation(context.Background(), staleUserSymbol)
 		if err != nil {
 			t.Fatalf("FindSymbolDefinitionLocation for stale entry failed: %v", err)
 		}
@@ -290,12 +291,12 @@ func TestScanner_WithSymbolCache(t *testing.T) {
 			t.Errorf("Expected User path %s after stale cache fallback, got %s", expectedUserFilePath, loc)
 		}
 
-		s.SaveSymbolCache()
+		s.SaveSymbolCache(context.Background())
 
 		sVerify, _ := New("./testdata/multipkg")
 		sVerify.CachePath = cacheFilePath
 
-		locVerify, errVerify := sVerify.FindSymbolDefinitionLocation(staleUserSymbol)
+		locVerify, errVerify := sVerify.FindSymbolDefinitionLocation(context.Background(), staleUserSymbol)
 		if errVerify != nil {
 			t.Fatalf("FindSymbolDefinitionLocation after stale fix failed: %v", errVerify)
 		}
@@ -314,10 +315,10 @@ func TestScanner_WithSymbolCache(t *testing.T) {
 			t.Fatalf("New() failed: %v", err)
 		}
 		s.CachePath = cacheFilePath
-		defer func() { s.SaveSymbolCache() }()
+		defer func() { s.SaveSymbolCache(context.Background()) }()
 
 		nonExistentSymbol := modelsImportPath + ".NonExistentType"
-		_, err = s.FindSymbolDefinitionLocation(nonExistentSymbol)
+		_, err = s.FindSymbolDefinitionLocation(context.Background(), nonExistentSymbol)
 		if err == nil {
 			t.Fatalf("FindSymbolDefinitionLocation for non-existent symbol %s should have failed", nonExistentSymbol)
 		}
@@ -338,14 +339,14 @@ func TestScanner_WithSymbolCache(t *testing.T) {
 		}
 		s.CachePath = ""
 
-		defer func() { s.SaveSymbolCache() }()
+		defer func() { s.SaveSymbolCache(context.Background()) }()
 
-		_, err = s.ScanPackageByImport(apiImportPath)
+		_, err = s.ScanPackageByImport(context.Background(), apiImportPath)
 		if err != nil {
 			t.Fatalf("ScanPackageByImport failed: %v", err)
 		}
 
-		if errSave := s.SaveSymbolCache(); errSave != nil {
+		if errSave := s.SaveSymbolCache(context.Background()); errSave != nil {
 			t.Errorf("SaveSymbolCache() with disabled cache errored: %v", errSave)
 		}
 
@@ -380,9 +381,9 @@ func TestScannerWithExternalTypeOverrides(t *testing.T) {
 		"github.com/google/uuid.UUID": "string",
 		"example.com/somepkg.Time":    "mypkg.MyTime",
 	}
-	s.SetExternalTypeOverrides(overrides)
+	s.SetExternalTypeOverrides(context.Background(), overrides)
 
-	pkgInfo, err := s.ScanPackageByImport("example.com/externaltypes")
+	pkgInfo, err := s.ScanPackageByImport(context.Background(), "example.com/externaltypes")
 	if err != nil {
 		t.Fatalf("Failed to scan package 'example.com/externaltypes': %v", err)
 	}
@@ -405,7 +406,7 @@ func TestScannerWithExternalTypeOverrides(t *testing.T) {
 					if !field.Type.IsResolvedByConfig {
 						t.Errorf("Expected field ID of ObjectWithUUID to have IsResolvedByConfig=true")
 					}
-					resolvedType, errResolve := field.Type.Resolve()
+					resolvedType, errResolve := field.Type.Resolve(context.Background())
 					if errResolve != nil {
 						t.Errorf("field.Type.Resolve() for overridden type should not error, got %v", errResolve)
 					}
@@ -444,9 +445,9 @@ func TestScannerWithExternalTypeOverrides(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create scanner for basic testdata: %v", err)
 	}
-	sBasic.SetExternalTypeOverrides(nil)
+	sBasic.SetExternalTypeOverrides(context.Background(), nil)
 
-	pkgBasic, err := sBasic.ScanPackageByImport("github.com/podhmo/go-scan/testdata/basic")
+	pkgBasic, err := sBasic.ScanPackageByImport(context.Background(), "github.com/podhmo/go-scan/testdata/basic")
 	if err != nil {
 		t.Fatalf("Failed to scan basic package: %v", err)
 	}
@@ -527,7 +528,7 @@ func TestScanFilesAndGetUnscanned(t *testing.T) {
 		os.Chdir("testdata/scanfiles/core") // Change to core directory
 		defer os.Chdir(originalCwd)         // Change back
 
-		pkgInfo, err := sTest.ScanFiles([]string{"user.go"}) // Relative to new CWD: testdata/scanfiles/core
+		pkgInfo, err := sTest.ScanFiles(context.Background(), []string{"user.go"}) // Relative to new CWD: testdata/scanfiles/core
 		if err != nil {
 			t.Fatalf("ScanFiles for core/user.go (relative) failed: %v", err)
 		}
@@ -547,7 +548,7 @@ func TestScanFilesAndGetUnscanned(t *testing.T) {
 
 	t.Run("ScanFiles_AbsolutePath_CoreItem", func(t *testing.T) {
 		sTest, _ := New("./testdata/scanfiles")
-		pkgInfo, err := sTest.ScanFiles([]string{coreItemPathAbs})
+		pkgInfo, err := sTest.ScanFiles(context.Background(), []string{coreItemPathAbs})
 		if err != nil {
 			t.Fatalf("ScanFiles for %s (absolute) failed: %v", coreItemPathAbs, err)
 		}
@@ -565,7 +566,7 @@ func TestScanFilesAndGetUnscanned(t *testing.T) {
 	t.Run("ScanFiles_ModuleQualifiedPath_CoreUser", func(t *testing.T) {
 		sTest, _ := New("./testdata/scanfiles") // Scanner initialized at scanfiles module root
 		moduleQualifiedPath := "example.com/scanfiles/core/user.go"
-		pkgInfo, err := sTest.ScanFiles([]string{moduleQualifiedPath})
+		pkgInfo, err := sTest.ScanFiles(context.Background(), []string{moduleQualifiedPath})
 		if err != nil {
 			t.Fatalf("ScanFiles for %s (module-qualified) failed: %v", moduleQualifiedPath, err)
 		}
@@ -580,13 +581,13 @@ func TestScanFilesAndGetUnscanned(t *testing.T) {
 	t.Run("ScanFiles_MultipleCalls_VisitedSkipped", func(t *testing.T) {
 		sTest, _ := New("./testdata/scanfiles")
 		// First call: scan user.go
-		_, err := sTest.ScanFiles([]string{coreUserPathAbs})
+		_, err := sTest.ScanFiles(context.Background(), []string{coreUserPathAbs})
 		if err != nil {
 			t.Fatalf("First ScanFiles call failed: %v", err)
 		}
 
 		// Second call: scan user.go (already visited) and item.go (new)
-		pkgInfo, err := sTest.ScanFiles([]string{coreUserPathAbs, coreItemPathAbs})
+		pkgInfo, err := sTest.ScanFiles(context.Background(), []string{coreUserPathAbs, coreItemPathAbs})
 		if err != nil {
 			t.Fatalf("Second ScanFiles call failed: %v", err)
 		}
@@ -610,12 +611,12 @@ func TestScanFilesAndGetUnscanned(t *testing.T) {
 
 	t.Run("ScanFiles_AllFilesVisited_EmptyResult", func(t *testing.T) {
 		sTest, _ := New("./testdata/scanfiles")
-		_, err := sTest.ScanFiles([]string{coreUserPathAbs}) // Visit user.go
+		_, err := sTest.ScanFiles(context.Background(), []string{coreUserPathAbs}) // Visit user.go
 		if err != nil {
 			t.Fatalf("Failed to scan user.go: %v", err)
 		}
 
-		pkgInfo, err := sTest.ScanFiles([]string{coreUserPathAbs}) // Scan again
+		pkgInfo, err := sTest.ScanFiles(context.Background(), []string{coreUserPathAbs}) // Scan again
 		if err != nil {
 			t.Fatalf("Second scan of user.go failed: %v", err)
 		}
@@ -641,7 +642,7 @@ func TestScanFilesAndGetUnscanned(t *testing.T) {
 		}
 
 		// Scan user.go
-		_, err = sTest.ScanFiles([]string{coreUserPathAbs})
+		_, err = sTest.ScanFiles(context.Background(), []string{coreUserPathAbs})
 		if err != nil {
 			t.Fatalf("ScanFiles(user.go) failed: %v", err)
 		}
@@ -656,7 +657,7 @@ func TestScanFilesAndGetUnscanned(t *testing.T) {
 		}
 
 		// Scan item.go and empty.go
-		_, err = sTest.ScanFiles([]string{coreItemPathAbs, coreEmptyPathAbs})
+		_, err = sTest.ScanFiles(context.Background(), []string{coreItemPathAbs, coreEmptyPathAbs})
 		if err != nil {
 			t.Fatalf("ScanFiles(item.go, empty.go) failed: %v", err)
 		}
@@ -673,14 +674,14 @@ func TestScanFilesAndGetUnscanned(t *testing.T) {
 	t.Run("ScanPackage_RespectsVisitedFiles", func(t *testing.T) {
 		sTest, _ := New("./testdata/scanfiles")
 		// Scan core/user.go via ScanFiles first
-		_, err := sTest.ScanFiles([]string{coreUserPathAbs})
+		_, err := sTest.ScanFiles(context.Background(), []string{coreUserPathAbs})
 		if err != nil {
 			t.Fatalf("ScanFiles(user.go) failed: %v", err)
 		}
 
 		// Now ScanPackage for the whole core package
 		// It should only parse item.go and empty.go as user.go is visited
-		pkgInfo, err := sTest.ScanPackage("./testdata/scanfiles/core")
+		pkgInfo, err := sTest.ScanPackage(context.Background(), "./testdata/scanfiles/core")
 		if err != nil {
 			t.Fatalf("ScanPackage(core) failed: %v", err)
 		}
@@ -747,7 +748,7 @@ func TestImplements(t *testing.T) {
 	// it uses PkgName and Name from FieldType, which are derived by the scanner.
 	// The crucial part is that all types and functions are loaded into one PackageInfo.
 	pkgPath := "./testdata/implements"
-	pkgInfo, err := s.ScanPackage(pkgPath)
+	pkgInfo, err := s.ScanPackage(context.Background(), pkgPath)
 	if err != nil {
 		t.Fatalf("ScanPackage(%q) failed: %v", pkgPath, err)
 	}

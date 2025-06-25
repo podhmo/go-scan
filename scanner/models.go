@@ -42,6 +42,11 @@ type TypeInfo struct {
 	Underlying *FieldType
 }
 
+// StructInfo represents a struct type.
+type StructInfo struct {
+	Fields []*FieldInfo
+}
+
 // FieldInfo represents a single field in a struct or a parameter/result in a function.
 type FieldInfo struct {
 	Name     string

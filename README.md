@@ -30,10 +30,10 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/vvakame/goscan"
+	"github.com/podhmo/go-scan"
 	// If you are using the main package directly, import path might be different
 	// For library usage, it's typically:
-	// "github.com/vvakame/goscan"
+	// "github.com/podhmo/go-scan"
 )
 
 func main() {
@@ -66,7 +66,7 @@ func main() {
 	// Scan a package by its import path
 	// Replace with an actual import path from your project or testdata.
 	// The example below uses testdata included in this repository.
-	pkgImportPath := "github.com/vvakame/goscan/testdata/multipkg/api"
+	pkgImportPath := "github.com/podhmo/go-scan/testdata/multipkg/api"
 	pkgInfo, err := scanner.ScanPackageByImport(pkgImportPath)
 	if err != nil {
 		log.Fatalf("Failed to scan package: %v", err)
@@ -83,7 +83,7 @@ func main() {
 				}
 				
 				fmt.Printf("Field '%s' resolved to type '%s'\n", f.Name, def.Name)
-				if def.Kind == goscan.StructKind {
+				if def.Kind == goscan.StructKind { // goscan.StructKind is correct here as it's a re-exported constant
 					fmt.Printf("  It is a struct with %d fields.\n", len(def.Struct.Fields))
 				}
 			}

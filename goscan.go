@@ -381,7 +381,7 @@ func (s *Scanner) ScanFiles(filePaths []string) (*scanner.PackageInfo, error) {
 	return pkgInfo, nil
 }
 
-// GetUnscannedGoFiles returns a list of absolute paths to .go files (excluding _test.go files)
+// UnscannedGoFiles returns a list of absolute paths to .go files (excluding _test.go files)
 // within the specified package that have not yet been visited (parsed) by this Scanner instance.
 //
 // The `packagePathOrImportPath` argument can be:
@@ -394,7 +394,7 @@ func (s *Scanner) ScanFiles(filePaths []string) (*scanner.PackageInfo, error) {
 // and filters out those already present in the Scanner's `visitedFiles` set.
 // It is useful for discovering which files in a package still need to be processed
 // if performing iterative scanning.
-func (s *Scanner) GetUnscannedGoFiles(packagePathOrImportPath string) ([]string, error) {
+func (s *Scanner) UnscannedGoFiles(packagePathOrImportPath string) ([]string, error) {
 	if s.locator == nil && !(filepath.IsAbs(packagePathOrImportPath) && isDir(packagePathOrImportPath)) {
 		// If locator is nil, we can only proceed if packagePathOrImportPath is an absolute directory path.
 		return nil, fmt.Errorf("scanner locator is not initialized, and path is not an absolute directory to a package")
@@ -425,7 +425,7 @@ func (s *Scanner) GetUnscannedGoFiles(packagePathOrImportPath string) ([]string,
 
 	allGoFilesInDir, err := listGoFiles(pkgDirAbs) // listGoFiles returns absolute paths
 	if err != nil {
-		return nil, fmt.Errorf("GetUnscannedGoFiles: could not list go files in %s: %w", pkgDirAbs, err)
+		return nil, fmt.Errorf("UnscannedGoFiles: could not list go files in %s: %w", pkgDirAbs, err)
 	}
 
 	var unscannedFiles []string

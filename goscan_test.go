@@ -622,12 +622,12 @@ func TestScanFilesAndGetUnscanned(t *testing.T) {
 		}
 	})
 
-	t.Run("GetUnscannedGoFiles_CorePackage", func(t *testing.T) {
+	t.Run("UnscannedGoFiles_CorePackage", func(t *testing.T) {
 		sTest, _ := New("./testdata/scanfiles")
 
 		// Initially, all files in core should be unscanned
-		unscanned, err := sTest.GetUnscannedGoFiles(corePkgImportPath)
-		if err != nil { t.Fatalf("GetUnscannedGoFiles initial failed: %v", err) }
+		unscanned, err := sTest.UnscannedGoFiles(corePkgImportPath)
+		if err != nil { t.Fatalf("UnscannedGoFiles initial failed: %v", err) }
 		expectedUnscannedInitial := []string{coreEmptyPathAbs, coreItemPathAbs, coreUserPathAbs}
 		if !equalStringSlices(unscanned, expectedUnscannedInitial) {
 			t.Errorf("Initial unscanned files: expected %v, got %v", expectedUnscannedInitial, unscanned)
@@ -637,8 +637,8 @@ func TestScanFilesAndGetUnscanned(t *testing.T) {
 		_, err = sTest.ScanFiles([]string{coreUserPathAbs})
 		if err != nil { t.Fatalf("ScanFiles(user.go) failed: %v", err) }
 
-		unscannedAfterUser, err := sTest.GetUnscannedGoFiles(corePkgImportPath)
-		if err != nil { t.Fatalf("GetUnscannedGoFiles after user.go scan failed: %v", err) }
+		unscannedAfterUser, err := sTest.UnscannedGoFiles(corePkgImportPath)
+		if err != nil { t.Fatalf("UnscannedGoFiles after user.go scan failed: %v", err) }
 		expectedUnscannedAfterUser := []string{coreEmptyPathAbs, coreItemPathAbs}
 		if !equalStringSlices(unscannedAfterUser, expectedUnscannedAfterUser) {
 			t.Errorf("Unscanned after user.go: expected %v, got %v", expectedUnscannedAfterUser, unscannedAfterUser)
@@ -648,8 +648,8 @@ func TestScanFilesAndGetUnscanned(t *testing.T) {
 		_, err = sTest.ScanFiles([]string{coreItemPathAbs, coreEmptyPathAbs})
 		if err != nil { t.Fatalf("ScanFiles(item.go, empty.go) failed: %v", err) }
 
-		unscannedAllScanned, err := sTest.GetUnscannedGoFiles(corePkgImportPath)
-		if err != nil { t.Fatalf("GetUnscannedGoFiles after all core files scanned failed: %v", err) }
+		unscannedAllScanned, err := sTest.UnscannedGoFiles(corePkgImportPath)
+		if err != nil { t.Fatalf("UnscannedGoFiles after all core files scanned failed: %v", err) }
 		if len(unscannedAllScanned) != 0 {
 			t.Errorf("Expected no unscanned files after all core files scanned, got %v", unscannedAllScanned)
 		}

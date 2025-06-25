@@ -30,7 +30,7 @@ type UnimplementedInterface interface {
 // Implements SimpleInterface and EmptyInterface
 type SimpleStruct struct{}
 
-func (s SimpleStruct) Method1()          {}
+func (s SimpleStruct) Method1()             {}
 func (s SimpleStruct) Method2(a int) string { return "hello" }
 
 // Implements PointerReceiverInterface and EmptyInterface
@@ -59,27 +59,27 @@ func (s MissingMethodStruct) Method1() {}
 
 type WrongNameStruct struct{} // Method2 renamed to MethodWrongName for SimpleInterface
 
-func (s WrongNameStruct) Method1()               {}
+func (s WrongNameStruct) Method1()                     {}
 func (s WrongNameStruct) MethodWrongName(a int) string { return "wrong" }
 
 type WrongParamCountStruct struct{} // Method2 has too few params for SimpleInterface
 
-func (s WrongParamCountStruct) Method1()   {}
+func (s WrongParamCountStruct) Method1()        {}
 func (s WrongParamCountStruct) Method2() string { return "wrong" }
 
 type WrongParamTypeStruct struct{} // Method2 param 'a' is string instead of int for SimpleInterface
 
-func (s WrongParamTypeStruct) Method1()          {}
+func (s WrongParamTypeStruct) Method1()                {}
 func (s WrongParamTypeStruct) Method2(a string) string { return "wrong" }
 
 type WrongReturnCountStruct struct{} // Method2 returns (string, int) instead of string for SimpleInterface
 
-func (s WrongReturnCountStruct) Method1()            {}
+func (s WrongReturnCountStruct) Method1()                    {}
 func (s WrongReturnCountStruct) Method2(a int) (string, int) { return "wrong", 1 }
 
 type WrongReturnTypeStruct struct{} // Method2 returns int instead of string for SimpleInterface
 
-func (s WrongReturnTypeStruct) Method1()       {}
+func (s WrongReturnTypeStruct) Method1()          {}
 func (s WrongReturnTypeStruct) Method2(a int) int { return 0 }
 
 // Struct with only pointer receiver, for testing against ValueReceiverInterface
@@ -112,17 +112,25 @@ type InterfaceWithAnotherType interface {
 
 type StructWithAnotherType struct{}
 
-func (s StructWithAnotherType) UseAnotherType(val AnotherType) AnotherType       { return val }
+func (s StructWithAnotherType) UseAnotherType(val AnotherType) AnotherType           { return val }
 func (s *StructWithAnotherType) UsePointerAnotherType(val *AnotherType) *AnotherType { return val }
 
 type StructWithDifferentNamedType struct{}
 type YetAnotherType struct{}
+
 func (s StructWithDifferentNamedType) UseAnotherType(val YetAnotherType) YetAnotherType { return val } // Should not match InterfaceWithAnotherType
-func (s *StructWithDifferentNamedType) UsePointerAnotherType(val *YetAnotherType) *YetAnotherType { return val }
+func (s *StructWithDifferentNamedType) UsePointerAnotherType(val *YetAnotherType) *YetAnotherType {
+	return val
+}
 
 type StructWithMismatchedPointerForAnotherType struct{}
-func (s StructWithMismatchedPointerForAnotherType) UseAnotherType(val *AnotherType) *AnotherType { return val } // val mismatch
-func (s *StructWithMismatchedPointerForAnotherType) UsePointerAnotherType(val AnotherType) AnotherType { return val } // val mismatch
+
+func (s StructWithMismatchedPointerForAnotherType) UseAnotherType(val *AnotherType) *AnotherType {
+	return val
+} // val mismatch
+func (s *StructWithMismatchedPointerForAnotherType) UsePointerAnotherType(val AnotherType) AnotherType {
+	return val
+} // val mismatch
 
 type InterfaceWithSliceMap interface {
 	ProcessSlice(s []int) []string
@@ -131,19 +139,22 @@ type InterfaceWithSliceMap interface {
 
 type StructImplementingSliceMap struct{}
 
-func (s StructImplementingSliceMap) ProcessSlice(sl []int) []string { return nil }
+func (s StructImplementingSliceMap) ProcessSlice(sl []int) []string              { return nil }
 func (s StructImplementingSliceMap) ProcessMap(m map[string]bool) map[int]string { return nil }
 
 type StructMismatchSlice struct{}
-func (s StructMismatchSlice) ProcessSlice(sl []string) []string { return nil } // Different element type
+
+func (s StructMismatchSlice) ProcessSlice(sl []string) []string           { return nil } // Different element type
 func (s StructMismatchSlice) ProcessMap(m map[string]bool) map[int]string { return nil }
 
 type StructMismatchMapValue struct{}
-func (s StructMismatchMapValue) ProcessSlice(sl []int) []string { return nil }
+
+func (s StructMismatchMapValue) ProcessSlice(sl []int) []string           { return nil }
 func (s StructMismatchMapValue) ProcessMap(m map[string]bool) map[int]int { return nil } // Different value type in map
 
 type StructMismatchMapKey struct{}
-func (s StructMismatchMapKey) ProcessSlice(sl []int) []string { return nil }
+
+func (s StructMismatchMapKey) ProcessSlice(sl []int) []string           { return nil }
 func (s StructMismatchMapKey) ProcessMap(m map[int]bool) map[int]string { return nil } // Different key type in map
 
 // Struct for testing receiver type matching carefully
@@ -199,6 +210,7 @@ type InterfaceValueRecMethod interface {
 	DoIt()
 }
 type StructPointerRecMethodForInterfaceValue struct{}
+
 func (s *StructPointerRecMethodForInterfaceValue) DoIt() {} // Implements InterfaceValueRecMethod.DoIt
 
 // Test case: Struct implements interface method with pointer receiver, but struct method is value receiver.
@@ -252,9 +264,11 @@ type InterfaceRequiresMethodX interface {
 	MethodX()
 }
 type StructValueReceiverMethodX struct{}
+
 func (s StructValueReceiverMethodX) MethodX() {} // `StructValueReceiverMethodX` implements. `*StructValueReceiverMethodX` also implements.
 
 type StructPointerReceiverMethodX struct{}
+
 func (p *StructPointerReceiverMethodX) MethodX() {} // `StructPointerReceiverMethodX` does NOT implement directly. `*StructPointerReceiverMethodX` implements.
 
 // Test `Implements(TypeInfo_for_StructPointerReceiverMethodX, TypeInfo_for_InterfaceRequiresMethodX, ...)`
@@ -313,19 +327,24 @@ func (p *StructPointerReceiverMethodX) MethodX() {} // `StructPointerReceiverMet
 type InterfaceWithExactSliceMap interface {
 	Foo(s []int, m map[string]bool)
 }
-type StructWithExactSliceMap struct {}
+type StructWithExactSliceMap struct{}
+
 func (s StructWithExactSliceMap) Foo(s []int, m map[string]bool) {} // Matches
 
-type StructWithSliceElemMismatch struct {}
+type StructWithSliceElemMismatch struct{}
+
 func (s StructWithSliceElemMismatch) Foo(s []string, m map[string]bool) {} // Slice elem type mismatch
 
-type StructWithMapKeyMismatch struct {}
+type StructWithMapKeyMismatch struct{}
+
 func (s StructWithMapKeyMismatch) Foo(s []int, m map[int]bool) {} // Map key type mismatch
 
-type StructWithMapValueMismatch struct {}
+type StructWithMapValueMismatch struct{}
+
 func (s StructWithMapValueMismatch) Foo(s []int, m map[string]int) {} // Map value type mismatch
 
-type StructWithPointerInSlice struct {}
+type StructWithPointerInSlice struct{}
+
 func (s StructWithPointerInSlice) Foo(s []*int, m map[string]bool) {} // Slice of pointers
 
 type InterfaceWithPointerInSlice interface {

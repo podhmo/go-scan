@@ -28,7 +28,7 @@ type Other struct {
 
 // @deriving:unmarshall
 type Container struct {
-	Content Shape `json:"content"` // oneOf
-	Type    string `json:"type"` // discriminator
-	OtherContent Other `json:"other_content"`
+	Content      Shape  `json:"content"` // oneOf
+	Type         string `json:"type"`    // discriminator
+	OtherContent Other  `json:"other_content"`
 }

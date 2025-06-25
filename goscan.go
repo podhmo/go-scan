@@ -16,7 +16,7 @@ import (
 
 // Re-export scanner kinds for convenience.
 const (
-	StructKind = scanner.StructKind
+	StructKind    = scanner.StructKind
 	AliasKind     = scanner.AliasKind
 	FuncKind      = scanner.FuncKind
 	InterfaceKind = scanner.InterfaceKind // Ensure InterfaceKind is available
@@ -196,10 +196,8 @@ func compareFieldTypes(type1 *scanner.FieldType, type2 *scanner.FieldType) bool 
 	//    }
 	// }
 
-
 	return true
 }
-
 
 // Scanner is the main entry point for the type scanning library.
 // It combines a locator for finding packages, a scanner for parsing them,

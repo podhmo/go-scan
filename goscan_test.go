@@ -819,20 +819,19 @@ func TestImplements(t *testing.T) {
 		// But Implements will find (*MyStructForReceiverTest) PtrRec() and associate it.
 		{"MyStructForReceiverTest_InterfaceForPtrRec", "MyStructForReceiverTest", "InterfaceForPtrRec", true},
 
-
 		// Nil and invalid inputs (tested directly, not via table for clarity on nil pkgInfo etc.)
 
 		// Type comparison details (assuming compareFieldTypes will be/is correct for slices, maps, pointers)
 		{"StructWithAnotherType_InterfaceWithAnotherType", "StructWithAnotherType", "InterfaceWithAnotherType", true},
-		{"StructWithDifferentNamedType_InterfaceWithAnotherType", "StructWithDifferentNamedType", "InterfaceWithAnotherType", false}, // Fails due to YetAnotherType vs AnotherType
+		{"StructWithDifferentNamedType_InterfaceWithAnotherType", "StructWithDifferentNamedType", "InterfaceWithAnotherType", false},                           // Fails due to YetAnotherType vs AnotherType
 		{"StructWithMismatchedPointerForAnotherType_InterfaceWithAnotherType", "StructWithMismatchedPointerForAnotherType", "InterfaceWithAnotherType", false}, // Fails due to pointer mismatch on param/return
 
 		{"StructImplementingSliceMap_InterfaceWithSliceMap", "StructImplementingSliceMap", "InterfaceWithSliceMap", true},
-		{"StructMismatchSlice_InterfaceWithSliceMap", "StructMismatchSlice", "InterfaceWithSliceMap", false},         // Assumes compareFieldTypes handles slice element type
+		{"StructMismatchSlice_InterfaceWithSliceMap", "StructMismatchSlice", "InterfaceWithSliceMap", false},       // Assumes compareFieldTypes handles slice element type
 		{"StructMismatchMapValue_InterfaceWithSliceMap", "StructMismatchMapValue", "InterfaceWithSliceMap", false}, // Assumes compareFieldTypes handles map value type
 		{"StructMismatchMapKey_InterfaceWithSliceMap", "StructMismatchMapKey", "InterfaceWithSliceMap", false},     // Assumes compareFieldTypes handles map key type
 
-		{"StructWithPointerInSlice_InterfaceWithPointerInSlice", "StructWithPointerInSlice", "InterfaceWithPointerInSlice", true}, // []*int vs []*int
+		{"StructWithPointerInSlice_InterfaceWithPointerInSlice", "StructWithPointerInSlice", "InterfaceWithPointerInSlice", true},                    // []*int vs []*int
 		{"StructWithPointerInSlice_InterfaceWithDifferentPointerInSlice", "StructWithPointerInSlice", "InterfaceWithDifferentPointerInSlice", false}, // []*int vs []*string
 	}
 
@@ -854,7 +853,6 @@ func TestImplements(t *testing.T) {
 			if interfaceDef.Kind != InterfaceKind && tt.interfaceName != "NotAnInterface" { // Allow for specific test
 				t.Fatalf("Test setup error: Interface def %q is not an interface but Kind=%v", tt.interfaceName, interfaceDef.Kind)
 			}
-
 
 			// Perform the Implements check
 			// Ensure pkgInfo is correctly passed; it's derived from scanning "./testdata/implements"
@@ -883,7 +881,7 @@ func TestImplements(t *testing.T) {
 	})
 
 	t.Run("InvalidKindInputs", func(t *testing.T) {
-		notAStruct := getType("NotAStruct") // This is an alias to int
+		notAStruct := getType("NotAStruct")         // This is an alias to int
 		notAnInterface := getType("NotAnInterface") // This is an alias to int
 		simpleStruct := getType("SimpleStruct")
 		simpleInterface := getType("SimpleInterface")
@@ -894,7 +892,6 @@ func TestImplements(t *testing.T) {
 		if notAnInterface.Kind == InterfaceKind { // Defensive check
 			t.Fatal("Test data error: NotAnInterface should not have InterfaceKind")
 		}
-
 
 		if Implements(notAStruct, simpleInterface, pkgInfo) != false {
 			t.Errorf("Implements(NotAStruct, SimpleInterface, pkgInfo) expected false, got true. NotAStruct.Kind: %v", notAStruct.Kind)

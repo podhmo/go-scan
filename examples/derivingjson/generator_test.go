@@ -92,7 +92,6 @@ func TestGenerate_Simple(t *testing.T) {
 		expectedContent = normalize([]byte(expectedContent)) // re-normalize
 	}
 
-
 	if actualContent != expectedContent {
 		t.Errorf("Generated code does not match expected code.\n"+
 			"Expected:\n%s\n\nActual:\n%s\n\nDiff (-expected +actual):\n%s",

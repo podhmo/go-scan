@@ -24,13 +24,14 @@ type PackageResolver interface {
 
 // PackageInfo holds all the extracted information from a single package.
 type PackageInfo struct {
-	Name      string
-	Path      string
-	Files     []string
-	Types     []*TypeInfo
-	Constants []*ConstantInfo
-	Functions []*FunctionInfo
-	Fset      *token.FileSet // Added: Fileset for position information
+	Name       string
+	Path       string
+	ImportPath string // Added: Canonical import path of the package
+	Files      []string
+	Types      []*TypeInfo
+	Constants  []*ConstantInfo
+	Functions  []*FunctionInfo
+	Fset       *token.FileSet // Added: Fileset for position information
 }
 
 // ExternalTypeOverride defines a mapping from a fully qualified type name

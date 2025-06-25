@@ -3,6 +3,7 @@ package scanner
 import (
 	"fmt"
 	"go/ast"
+	"go/token" // Added
 )
 
 // Kind defines the category of a type definition.
@@ -29,11 +30,13 @@ type PackageInfo struct {
 	Types     []*TypeInfo
 	Constants []*ConstantInfo
 	Functions []*FunctionInfo
+	Fset      *token.FileSet // Added: Fileset for position information
 }
 
 // TypeInfo represents a single type declaration (`type T ...`).
 type TypeInfo struct {
 	Name       string
+	FilePath   string // Added: Absolute path to the file where this type is defined
 	Doc        string
 	Kind       Kind
 	Node       ast.Node
@@ -102,15 +105,18 @@ func (ft *FieldType) Resolve() (*TypeInfo, error) {
 
 // ConstantInfo represents a single top-level constant declaration.
 type ConstantInfo struct {
-	Name  string
-	Doc   string
-	Type  string
-	Value string
+	Name     string
+	FilePath string // Added: Absolute path to the file where this const is defined
+	Doc      string
+	Type     string
+	Value    string
+	Node     ast.Node // Added: AST node for position, if needed, though FilePath is primary
 }
 
 // FunctionInfo represents a single top-level function or method declaration.
 type FunctionInfo struct {
 	Name       string
+	FilePath   string // Added: Absolute path to the file where this func is defined
 	Doc        string
 	Receiver   *FieldInfo
 	Parameters []*FieldInfo

@@ -17,6 +17,7 @@ This tool is designed for applications like OpenAPI document generation, ORM cod
 - **Function Signature Extraction**: Extracts top-level function and method signatures.
 - **Documentation Parsing**: Captures GoDoc comments for types, fields, functions, and constants.
 - **Package Locator**: Finds the module root by locating `go.mod` and resolves internal package paths.
+- **Symbol Definition Caching**: (Experimental) Optionally caches the file location of scanned symbols (`types`, `functions`, `constants`) to speed up subsequent analyses by tools that need this information. The cache is stored as a JSON file.
 
 ## Quick Start
 
@@ -29,16 +30,38 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/podhmo/go-scan"
+	"github.com/podhmo/go-scan/typescanner"
+	// If you are using the main package directly, import path might be different
+	// For library usage, it's typically:
+	// "github.com/podhmo/go-scan/typescanner"
 )
 
 func main() {
+	// Create a new scanner, starting search for go.mod from the current directory
 	scanner, err := typescanner.New(".")
 	if err != nil {
 		log.Fatalf("Failed to create scanner: %v", err)
 	}
 
-	pkgInfo, err := scanner.ScanPackageByImport("github.com/podhmo/go-scan/testdata/multipkg/api")
+	// --- Optional: Enable Symbol Cache ---
+	// Enable the symbol definition cache.
+	scanner.UseCache = true
+	// Optionally, set a custom path for the cache file.
+	// scanner.CachePath = "/path/to/your/symbol-cache.json"
+	// Default is $HOME/.go-typescanner/cache.json
+	// Important: Ensure to save the cache when your program exits.
+	defer func() {
+		if err := scanner.SaveSymbolCache(); err != nil {
+			log.Printf("Warning: Failed to save symbol cache: %v", err)
+		}
+	}()
+	// --- End Optional: Enable Symbol Cache ---
+
+	// Scan a package by its import path
+	// Replace with an actual import path from your project or testdata.
+	// The example below uses testdata included in this repository.
+	pkgImportPath := "github.com/podhmo/go-scan/testdata/multipkg/api"
+	pkgInfo, err := scanner.ScanPackageByImport(pkgImportPath)
 	if err != nil {
 		log.Fatalf("Failed to scan package: %v", err)
 	}
@@ -60,7 +83,32 @@ func main() {
 			}
 		}
 	}
+
+	// --- Optional: Using FindSymbolDefinitionLocation (often with cache) ---
+	// This method attempts to find the file where a symbol is defined.
+	// It uses the cache if enabled and will fallback to scanning if the symbol isn't found in cache
+	// or if the cached entry is stale (e.g., file deleted).
+	if pkgInfo.Types != nil && len(pkgInfo.Types) > 0 {
+		firstType := pkgInfo.Types[0]
+		symbolFullName := pkgImportPath + "." + firstType.Name
+
+		filePath, err := scanner.FindSymbolDefinitionLocation(symbolFullName)
+		if err != nil {
+			log.Printf("Could not find definition location for %s: %v", symbolFullName, err)
+		} else {
+			fmt.Printf("\nDefinition of symbol %s found at: %s\n", symbolFullName, filePath)
+		}
+	}
 }
 ```
+
+## Caching Symbol Locations
+
+The scanner can cache the file paths where symbols (types, functions, constants) are defined. This is useful for tools that repeatedly need to look up symbol locations.
+
+- To enable caching, set `scanner.UseCache = true` on your `typescanner.Scanner` instance.
+- Optionally, set `scanner.CachePath` to specify a custom location for the cache file (default: `$HOME/.go-typescanner/cache.json`).
+- **Crucially**, call `defer scanner.SaveSymbolCache()` after creating your scanner instance to ensure the cache is written to disk when your program finishes.
+- The `scanner.FindSymbolDefinitionLocation("package/import/path.SymbolName")` method leverages this cache. If a symbol is not found in the cache, or if the cached file path is no longer valid, it will attempt to scan the relevant package and update the cache.
 
 This library is currently under development. See `docs/todo.md` for planned features.

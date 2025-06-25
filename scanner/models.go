@@ -1,6 +1,7 @@
 package scanner
 
 import (
+	"context"
 	"fmt"
 	"go/ast"
 	"go/token" // Added
@@ -20,7 +21,7 @@ const (
 // PackageResolver is an interface that can resolve an import path to a package definition.
 // It is implemented by the top-level typescanner.Scanner to enable lazy, cached lookups.
 type PackageResolver interface {
-	ScanPackageByImport(importPath string) (*PackageInfo, error)
+	ScanPackageByImport(ctx context.Context, importPath string) (*PackageInfo, error)
 }
 
 // PackageInfo holds all the extracted information from a single package.
@@ -183,7 +184,7 @@ func (ft *FieldType) String() string {
 	return sb.String()
 }
 
-func (ft *FieldType) Resolve() (*TypeInfo, error) {
+func (ft *FieldType) Resolve(ctx context.Context) (*TypeInfo, error) {
 	if ft.IsResolvedByConfig {
 		// This type was resolved by an external configuration (e.g. to a primitive like "string").
 		// There's no further TypeInfo definition to resolve in the Go source.
@@ -205,7 +206,7 @@ func (ft *FieldType) Resolve() (*TypeInfo, error) {
 		return nil, fmt.Errorf("type %q cannot be resolved: no resolver or import path available", ft.Name)
 	}
 
-	pkgInfo, err := ft.resolver.ScanPackageByImport(ft.fullImportPath)
+	pkgInfo, err := ft.resolver.ScanPackageByImport(ctx, ft.fullImportPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to scan package %q for type %q: %w", ft.fullImportPath, ft.typeName, err)
 	}

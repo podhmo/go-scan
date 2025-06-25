@@ -1,6 +1,7 @@
 package cache
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -73,7 +74,7 @@ func TestSymbolCache_Load_Save(t *testing.T) {
 
 	t.Run("Load_file_not_exist", func(t *testing.T) {
 		sc, _ := NewSymbolCache(projectRoot, cacheFilePath) // Path provided, cache enabled
-		err := sc.Load()
+		err := sc.Load(context.Background())
 		if err != nil {
 			t.Fatalf("Load() from non-existent file should not error, got %v", err)
 		}
@@ -138,7 +139,7 @@ func TestSymbolCache_Load_Save(t *testing.T) {
 		}
 
 		scRead, _ := NewSymbolCache(projectRoot, cacheFilePath)
-		err = scRead.Load()
+		err = scRead.Load(context.Background())
 		if err != nil {
 			t.Fatalf("Load() error: %v", err)
 		}
@@ -183,7 +184,7 @@ func TestSymbolCache_Load_Save(t *testing.T) {
 		}
 
 		sc, _ := NewSymbolCache(projectRoot, cacheFilePath)
-		loadErr := sc.Load()
+		loadErr := sc.Load(context.Background())
 		if loadErr != nil {
 			t.Fatalf("Load() from corrupted file returned error %v, expected nil (and reset cache)", loadErr)
 		}
@@ -316,7 +317,7 @@ func TestSymbolCache_Set_Get_VerifyAndGet(t *testing.T) {
 	})
 
 	t.Run("VerifyAndGet_existing_file", func(t *testing.T) {
-		retPath, found := sc.VerifyAndGet(symbolFullName)
+		retPath, found := sc.VerifyAndGet(context.Background(), symbolFullName)
 		if !found {
 			t.Fatalf("VerifyAndGet() should find key %s for existing file", symbolFullName)
 		}
@@ -334,7 +335,7 @@ func TestSymbolCache_Set_Get_VerifyAndGet(t *testing.T) {
 	t.Run("VerifyAndGet_non_existent_file", func(t *testing.T) {
 		os.Remove(absFilePath) // File is now deleted
 
-		retPath, found := sc.VerifyAndGet(symbolFullName)
+		retPath, found := sc.VerifyAndGet(context.Background(), symbolFullName)
 		if found {
 			t.Errorf("VerifyAndGet() should not find key %s for non-existent file, but got path %s", symbolFullName, retPath)
 		}
@@ -430,10 +431,10 @@ func TestSymbolCache_Disabled_When_Path_Is_Empty(t *testing.T) {
 	if _, found := sc.Get("key1"); found {
 		t.Error("Get() on disabled cache should not find data")
 	}
-	if _, found := sc.VerifyAndGet("key1"); found {
+	if _, found := sc.VerifyAndGet(context.Background(), "key1"); found {
 		t.Error("VerifyAndGet() on disabled cache should not find data")
 	}
-	if err := sc.Load(); err != nil {
+	if err := sc.Load(context.Background()); err != nil {
 		t.Errorf("Load() on disabled cache should not error, got %v", err)
 	}
 
@@ -649,7 +650,7 @@ func TestSymbolCache_GetFilesToScan(t *testing.T) {
 	file1b := filepath.Join(pkg1Path, "file1b.go")
 	os.WriteFile(file1b, []byte("package pkg1"), 0644)
 
-	newFiles, existingFiles, err := sc.GetFilesToScan(pkg1Path)
+	newFiles, existingFiles, err := sc.GetFilesToScan(context.Background(), pkg1Path)
 	if err != nil {
 		t.Fatalf("GetFilesToScan (new only) failed: %v", err)
 	}
@@ -665,7 +666,7 @@ func TestSymbolCache_GetFilesToScan(t *testing.T) {
 	createFileAndCache(pkg1Path, "file1b.go", []string{"SymbolB"})
 
 	// Scenario 2: Cached files only for pkg1
-	newFiles, existingFiles, err = sc.GetFilesToScan(pkg1Path)
+	newFiles, existingFiles, err = sc.GetFilesToScan(context.Background(), pkg1Path)
 	if err != nil {
 		t.Fatalf("GetFilesToScan (cached only) failed: %v", err)
 	}
@@ -680,7 +681,7 @@ func TestSymbolCache_GetFilesToScan(t *testing.T) {
 	file1c_abs := filepath.Join(pkg1Path, "file1c.go") // New file
 	os.WriteFile(file1c_abs, []byte("package pkg1"), 0644)
 
-	newFiles, existingFiles, err = sc.GetFilesToScan(pkg1Path)
+	newFiles, existingFiles, err = sc.GetFilesToScan(context.Background(), pkg1Path)
 	if err != nil {
 		t.Fatalf("GetFilesToScan (mixed) failed: %v", err)
 	}
@@ -696,7 +697,7 @@ func TestSymbolCache_GetFilesToScan(t *testing.T) {
 	os.Remove(file1b) // Delete file1b
 	relPathFile1b, _ := sc.makeRelative(file1b)
 
-	newFiles, existingFiles, err = sc.GetFilesToScan(pkg1Path)
+	newFiles, existingFiles, err = sc.GetFilesToScan(context.Background(), pkg1Path)
 	if err != nil {
 		t.Fatalf("GetFilesToScan (deleted) failed: %v", err)
 	}
@@ -722,7 +723,7 @@ func TestSymbolCache_GetFilesToScan(t *testing.T) {
 	relPathFile2a, _ := sc.makeRelative(file2a_abs)
 
 	// Call GetFilesToScan for pkg1 again (state of pkg1 dir is file1a, file1c)
-	sc.GetFilesToScan(pkg1Path)
+	sc.GetFilesToScan(context.Background(), pkg1Path)
 	// Check if pkg2's cache entry is still intact
 	if _, ok := sc.content.Files[relPathFile2a]; !ok {
 		t.Errorf("FileMetadata for pkg2 file %s was removed after scanning pkg1", relPathFile2a)

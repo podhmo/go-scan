@@ -47,7 +47,7 @@ func (c *Car) VehicleType() string { return "car" }
 
 // Bicycle implements Vehicle
 type Bicycle struct {
-	Gears  int  `json:"gears"`
+	Gears   int  `json:"gears"`
 	HasBell bool `json:"has_bell"`
 }
 
@@ -89,15 +89,16 @@ type Pet interface {
 }
 
 type Goldfish struct {
-	Name string `json:"name"`
+	Name      string `json:"name"`
 	BowlShape string `json:"bowl_shape"`
 }
+
 func (g *Goldfish) IsFriendly() bool { return true }
-func (g *Goldfish) PetKind() string { return "goldfish"}
+func (g *Goldfish) PetKind() string  { return "goldfish" }
 
 // @deriving:unmarshall
 type PetOwner struct {
-	OwnerName string `json:"owner_name"`
-	Pet       Pet    `json:"pet_data,omitempty"`      // oneOf
+	OwnerName string  `json:"owner_name"`
+	Pet       Pet     `json:"pet_data,omitempty"`  // oneOf
 	Accessory Vehicle `json:"accessory,omitempty"` // another oneOf, different type
 }

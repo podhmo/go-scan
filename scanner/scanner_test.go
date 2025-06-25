@@ -1,6 +1,7 @@
 package scanner
 
 import (
+	"context"
 	"go/token" // Added for token.NewFileSet
 	"path/filepath"
 	"testing"
@@ -8,12 +9,12 @@ import (
 
 // MockResolver is a mock implementation of PackageResolver for tests.
 type MockResolver struct {
-	ScanPackageByImportFunc func(importPath string) (*PackageInfo, error)
+	ScanPackageByImportFunc func(ctx context.Context, importPath string) (*PackageInfo, error)
 }
 
-func (m *MockResolver) ScanPackageByImport(importPath string) (*PackageInfo, error) {
+func (m *MockResolver) ScanPackageByImport(ctx context.Context, importPath string) (*PackageInfo, error) {
 	if m.ScanPackageByImportFunc != nil {
-		return m.ScanPackageByImportFunc(importPath)
+		return m.ScanPackageByImportFunc(ctx, importPath)
 	}
 	return nil, nil // Default mock behavior
 }
@@ -54,7 +55,7 @@ func TestScanPackageFeatures(t *testing.T) {
 		filepath.Join(testDir, "another.go"),
 	}
 
-	pkgInfo, err := s.ScanFiles(filesToScan, testDir, &MockResolver{})
+	pkgInfo, err := s.ScanFiles(context.Background(), filesToScan, testDir, &MockResolver{})
 	if err != nil {
 		t.Fatalf("ScanFiles failed for %v: %v", filesToScan, err)
 	}
@@ -116,7 +117,7 @@ func TestScanFiles(t *testing.T) {
 
 	t.Run("scan_single_file", func(t *testing.T) {
 		filePath := filepath.Join(testdataDir, "features.go")
-		pkgInfo, err := s.ScanFiles([]string{filePath}, testdataDir, mockResolver)
+		pkgInfo, err := s.ScanFiles(context.Background(), []string{filePath}, testdataDir, mockResolver)
 		if err != nil {
 			t.Fatalf("ScanFiles single file failed: %v", err)
 		}
@@ -136,7 +137,7 @@ func TestScanFiles(t *testing.T) {
 			filepath.Join(testdataDir, "features.go"),
 			filepath.Join(testdataDir, "another.go"),
 		}
-		pkgInfo, err := s.ScanFiles(filePaths, testdataDir, mockResolver)
+		pkgInfo, err := s.ScanFiles(context.Background(), filePaths, testdataDir, mockResolver)
 		if err != nil {
 			t.Fatalf("ScanFiles multiple files failed: %v", err)
 		}
@@ -161,14 +162,14 @@ func TestScanFiles(t *testing.T) {
 			filepath.Join(testdataDir, "features.go"),     // package features
 			filepath.Join(testdataDir, "differentpkg.go"), // package otherfeatures
 		}
-		_, err := s.ScanFiles(filePaths, testdataDir, mockResolver)
+		_, err := s.ScanFiles(context.Background(), filePaths, testdataDir, mockResolver)
 		if err == nil {
 			t.Error("Expected error when scanning files from different packages, got nil")
 		}
 	})
 
 	t.Run("scan_empty_file_list", func(t *testing.T) {
-		_, err := s.ScanFiles([]string{}, testdataDir, mockResolver)
+		_, err := s.ScanFiles(context.Background(), []string{}, testdataDir, mockResolver)
 		if err == nil {
 			t.Error("Expected error when scanning an empty file list, got nil")
 		}
@@ -176,7 +177,7 @@ func TestScanFiles(t *testing.T) {
 
 	t.Run("scan_non_existent_file", func(t *testing.T) {
 		filePaths := []string{filepath.Join(testdataDir, "nonexistent.go")}
-		_, err := s.ScanFiles(filePaths, testdataDir, mockResolver)
+		_, err := s.ScanFiles(context.Background(), filePaths, testdataDir, mockResolver)
 		if err == nil {
 			t.Error("Expected error when scanning non-existent file, got nil")
 		}
@@ -186,7 +187,7 @@ func TestScanFiles(t *testing.T) {
 func TestFieldType_Resolve(t *testing.T) {
 	// Setup a mock resolver that returns a predefined package info
 	resolver := &MockResolver{
-		ScanPackageByImportFunc: func(importPath string) (*PackageInfo, error) {
+		ScanPackageByImportFunc: func(ctx context.Context, importPath string) (*PackageInfo, error) {
 			if importPath == "example.com/models" {
 				// Ensure PackageInfo includes Fset for consistency, though not directly used by this specific test's assertions
 				return &PackageInfo{
@@ -209,7 +210,7 @@ func TestFieldType_Resolve(t *testing.T) {
 	}
 
 	// First call to Resolve should trigger the resolver
-	def, err := ft.Resolve()
+	def, err := ft.Resolve(context.Background())
 	if err != nil {
 		t.Fatalf("Resolve() failed: %v", err)
 	}
@@ -222,7 +223,7 @@ func TestFieldType_Resolve(t *testing.T) {
 
 	// Second call should use the cache (we can't easily test this, but we can nil out the func)
 	resolver.ScanPackageByImportFunc = nil // To ensure resolver is not called again
-	def2, err := ft.Resolve()
+	def2, err := ft.Resolve(context.Background())
 	if err != nil {
 		t.Fatalf("Second Resolve() call failed: %v", err)
 	}

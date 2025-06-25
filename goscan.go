@@ -1,7 +1,9 @@
 package goscan
 
 import (
+	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -241,14 +243,14 @@ func New(startPath string) (*Scanner, error) {
 }
 
 // SetExternalTypeOverrides sets the external type override map for the scanner.
-func (s *Scanner) SetExternalTypeOverrides(overrides scanner.ExternalTypeOverride) {
+func (s *Scanner) SetExternalTypeOverrides(ctx context.Context, overrides scanner.ExternalTypeOverride) {
 	if overrides == nil {
 		overrides = make(scanner.ExternalTypeOverride)
 	}
 	s.ExternalTypeOverrides = overrides
 	newInternalScanner, err := scanner.New(s.fset, s.ExternalTypeOverrides)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "warning: failed to re-initialize internal scanner with new overrides: %v. Continuing with previous scanner settings.\n", err)
+		slog.WarnContext(ctx, "Failed to re-initialize internal scanner with new overrides. Continuing with previous scanner settings.", slog.Any("error", err))
 		return
 	}
 	s.scanner = newInternalScanner
@@ -284,7 +286,7 @@ func listGoFiles(dirPath string) ([]string, error) {
 // is stored in an in-memory package cache (s.packageCache) for subsequent calls to ScanPackage or ScanPackageByImport
 // for the same import path.
 // The global symbol cache (s.symbolCache), if enabled, is updated with symbols from the newly parsed files.
-func (s *Scanner) ScanPackage(pkgPath string) (*scanner.PackageInfo, error) {
+func (s *Scanner) ScanPackage(ctx context.Context, pkgPath string) (*scanner.PackageInfo, error) {
 	absPkgPath, err := filepath.Abs(pkgPath)
 	if err != nil {
 		return nil, fmt.Errorf("could not get absolute path for package path %s: %w", pkgPath, err)
@@ -319,7 +321,7 @@ func (s *Scanner) ScanPackage(pkgPath string) (*scanner.PackageInfo, error) {
 		// than for ScanPackageByImport. Let's use the directory name as a fallback package name.
 		// If a robust import path is needed for out-of-module packages, this needs enhancement.
 		if modulePath == "" && moduleRoot == "" { // Likely not in a module context
-			fmt.Fprintf(os.Stderr, "warning: ScanPackage called for %s which is likely outside a Go module, import path may be inaccurate.\n", absPkgPath)
+			slog.WarnContext(ctx, "ScanPackage called for path likely outside a Go module, import path may be inaccurate.", slog.String("path", absPkgPath))
 			importPath = filepath.Base(absPkgPath) // Fallback
 		} else if modulePath == "" { // Locator initialized but no go.mod?
 			return nil, fmt.Errorf("module path is empty, but ScanPackage called for %s. Locator issue or not in module?", absPkgPath)
@@ -342,7 +344,7 @@ func (s *Scanner) ScanPackage(pkgPath string) (*scanner.PackageInfo, error) {
 
 	var currentCallPkgInfo *scanner.PackageInfo
 	if len(filesToParseNow) > 0 {
-		currentCallPkgInfo, err = s.scanner.ScanFiles(filesToParseNow, absPkgPath, s)
+		currentCallPkgInfo, err = s.scanner.ScanFiles(ctx, filesToParseNow, absPkgPath, s)
 		if err != nil {
 			return nil, fmt.Errorf("ScanPackage: internal scan of files for package %s failed: %w", absPkgPath, err)
 		}
@@ -352,7 +354,7 @@ func (s *Scanner) ScanPackage(pkgPath string) (*scanner.PackageInfo, error) {
 			}
 			currentCallPkgInfo.ImportPath = importPath // Set import path for this call's result
 			currentCallPkgInfo.Path = absPkgPath       // Ensure path is set
-			s.updateSymbolCacheWithPackageInfo(importPath, currentCallPkgInfo)
+			s.updateSymbolCacheWithPackageInfo(ctx, importPath, currentCallPkgInfo)
 		}
 	}
 
@@ -463,7 +465,7 @@ func (s *Scanner) resolveFilePath(rawPath string) (string, error) {
 // because they represent partial package information. However, the global symbol
 // cache (`s.symbolCache`), if enabled, *is* updated with symbols from the newly parsed files.
 // Files parsed by this function are marked as visited in `s.visitedFiles`.
-func (s *Scanner) ScanFiles(filePaths []string) (*scanner.PackageInfo, error) {
+func (s *Scanner) ScanFiles(ctx context.Context, filePaths []string) (*scanner.PackageInfo, error) {
 	if len(filePaths) == 0 {
 		return nil, fmt.Errorf("no file paths provided to ScanFiles")
 	}
@@ -475,7 +477,7 @@ func (s *Scanner) ScanFiles(filePaths []string) (*scanner.PackageInfo, error) {
 	if modulePath == "" && moduleRoot == "" { // Heuristic: not in a module context at all
 		// Allow scanning if files are absolute paths and locator isn't strictly needed for path resolution itself
 		// but import path calculation will be severely limited.
-		fmt.Fprintf(os.Stderr, "warning: ScanFiles called likely outside a Go module context. Import path resolution will be affected.\n")
+		slog.WarnContext(ctx, "ScanFiles called likely outside a Go module context. Import path resolution will be affected.")
 	} else if modulePath == "" || moduleRoot == "" { // Inconsistent module info
 		return nil, fmt.Errorf("module path or root is empty, ensure a go.mod file exists and is discoverable by the scanner's locator")
 	}
@@ -517,7 +519,7 @@ func (s *Scanner) ScanFiles(filePaths []string) (*scanner.PackageInfo, error) {
 		// This part needs careful consideration for how to represent non-module packages.
 		// For now, use the directory path as a pseudo-import path.
 		importPath = filepath.ToSlash(pkgDirAbs)
-		fmt.Fprintf(os.Stderr, "warning: creating pseudo import path %q for package at %s\n", importPath, pkgDirAbs)
+		slog.WarnContext(ctx, "Creating pseudo import path for package", slog.String("import_path", importPath), slog.String("package_dir", pkgDirAbs))
 	}
 
 	var filesToParse []string
@@ -538,7 +540,7 @@ func (s *Scanner) ScanFiles(filePaths []string) (*scanner.PackageInfo, error) {
 		}, nil
 	}
 
-	pkgInfo, err := s.scanner.ScanFiles(filesToParse, pkgDirAbs, s) // Scan only unvisited files
+	pkgInfo, err := s.scanner.ScanFiles(ctx, filesToParse, pkgDirAbs, s) // Scan only unvisited files
 	if err != nil {
 		return nil, fmt.Errorf("failed to scan files in %s (import path %s): %w", pkgDirAbs, importPath, err)
 	}
@@ -551,7 +553,7 @@ func (s *Scanner) ScanFiles(filePaths []string) (*scanner.PackageInfo, error) {
 		}
 		// Results from ScanFiles (which are partial by design based on unvisited files)
 		// are NOT cached in s.packageCache. Only symbol cache is updated.
-		s.updateSymbolCacheWithPackageInfo(importPath, pkgInfo)
+		s.updateSymbolCacheWithPackageInfo(ctx, importPath, pkgInfo)
 	}
 	return pkgInfo, nil
 }
@@ -639,7 +641,7 @@ func isDir(path string) bool {
 // The global symbol cache (`s.symbolCache`), if enabled, is updated with symbols
 // from any newly parsed files. Files parsed by this function are marked as visited
 // in `s.visitedFiles`.
-func (s *Scanner) ScanPackageByImport(importPath string) (*scanner.PackageInfo, error) {
+func (s *Scanner) ScanPackageByImport(ctx context.Context, importPath string) (*scanner.PackageInfo, error) {
 	s.mu.RLock()
 	cachedPkg, found := s.packageCache[importPath]
 	s.mu.RUnlock()
@@ -672,15 +674,15 @@ func (s *Scanner) ScanPackageByImport(importPath string) (*scanner.PackageInfo, 
 	}
 
 	var filesToParseThisCall []string
-	symCache, _ := s.getOrCreateSymbolCache() // Error getting cache is not fatal here
+	symCache, _ := s.getOrCreateSymbolCache(ctx) // Error getting cache is not fatal here
 	fmt.Printf("DEBUG: ScanPackageByImport for %s, symbol cache enabled: %t\n", importPath, symCache != nil && symCache.IsEnabled())
 
 	filesConsideredBySymCache := make(map[string]struct{})
 
 	if symCache != nil && symCache.IsEnabled() {
-		newDiskFiles, existingDiskFiles, errSym := symCache.GetFilesToScan(pkgDirAbs)
+		newDiskFiles, existingDiskFiles, errSym := symCache.GetFilesToScan(ctx, pkgDirAbs)
 		if errSym != nil {
-			fmt.Fprintf(os.Stderr, "warning: GetFilesToScan for %s (%s) failed: %v. Will scan all unvisited files in the package.\n", importPath, pkgDirAbs, errSym)
+			slog.WarnContext(ctx, "GetFilesToScan failed. Will scan all unvisited files in the package.", slog.String("import_path", importPath), slog.String("package_dir", pkgDirAbs), slog.Any("error", errSym))
 			// Fallback: scan all files in the package that this Scanner instance hasn't visited.
 			for _, f := range allGoFilesInPkg {
 				if _, visited := s.visitedFiles[f]; !visited {
@@ -726,7 +728,7 @@ func (s *Scanner) ScanPackageByImport(importPath string) (*scanner.PackageInfo, 
 
 	var currentCallPkgInfo *scanner.PackageInfo
 	if len(filesToParseThisCall) > 0 {
-		currentCallPkgInfo, err = s.scanner.ScanFiles(filesToParseThisCall, pkgDirAbs, s)
+		currentCallPkgInfo, err = s.scanner.ScanFiles(ctx, filesToParseThisCall, pkgDirAbs, s)
 		if err != nil {
 			return nil, fmt.Errorf("ScanPackageByImport: scanning files for %s failed: %w", importPath, err)
 		}
@@ -736,7 +738,7 @@ func (s *Scanner) ScanPackageByImport(importPath string) (*scanner.PackageInfo, 
 			for _, fp := range currentCallPkgInfo.Files { // Mark newly parsed files as visited by this instance
 				s.visitedFiles[fp] = struct{}{}
 			}
-			s.updateSymbolCacheWithPackageInfo(importPath, currentCallPkgInfo) // Update global symbol cache
+			s.updateSymbolCacheWithPackageInfo(ctx, importPath, currentCallPkgInfo) // Update global symbol cache
 		}
 	}
 
@@ -778,7 +780,7 @@ func (s *Scanner) ScanPackageByImport(importPath string) (*scanner.PackageInfo, 
 }
 
 // getOrCreateSymbolCache ensures the symbolCache is initialized.
-func (s *Scanner) getOrCreateSymbolCache() (*cache.SymbolCache, error) {
+func (s *Scanner) getOrCreateSymbolCache(ctx context.Context) (*cache.SymbolCache, error) {
 	if s.CachePath == "" {
 		if s.symbolCache == nil || s.symbolCache.IsEnabled() {
 			rootDir := ""
@@ -811,8 +813,8 @@ func (s *Scanner) getOrCreateSymbolCache() (*cache.SymbolCache, error) {
 	}
 	s.symbolCache = sc
 
-	if err := s.symbolCache.Load(); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: could not load symbol cache from %s: %v\n", s.symbolCache.FilePath(), err)
+	if err := s.symbolCache.Load(ctx); err != nil {
+		slog.WarnContext(ctx, "Could not load symbol cache", slog.String("path", s.symbolCache.FilePath()), slog.Any("error", err))
 	}
 	return s.symbolCache, nil
 }
@@ -820,13 +822,13 @@ func (s *Scanner) getOrCreateSymbolCache() (*cache.SymbolCache, error) {
 // updateSymbolCacheWithPackageInfo updates the symbol cache with information from a given PackageInfo.
 // The pkgInfo provided should typically represent the symbols parsed from a specific set of files
 // in the context of the given importPath.
-func (s *Scanner) updateSymbolCacheWithPackageInfo(importPath string, pkgInfo *scanner.PackageInfo) {
+func (s *Scanner) updateSymbolCacheWithPackageInfo(ctx context.Context, importPath string, pkgInfo *scanner.PackageInfo) {
 	if s.CachePath == "" || pkgInfo == nil || len(pkgInfo.Files) == 0 {
 		return
 	}
-	symCache, err := s.getOrCreateSymbolCache()
+	symCache, err := s.getOrCreateSymbolCache(ctx)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error getting symbol cache for update: %v\n", err)
+		slog.ErrorContext(ctx, "Error getting symbol cache for update", slog.Any("error", err))
 		return
 	}
 	if !symCache.IsEnabled() {
@@ -840,7 +842,7 @@ func (s *Scanner) updateSymbolCacheWithPackageInfo(importPath string, pkgInfo *s
 			absFilePath, _ = filepath.Abs(absFilePath) // error unlikely if path came from system
 			key := importPath + "." + symbolName
 			if err := symCache.SetSymbol(key, absFilePath); err != nil {
-				fmt.Fprintf(os.Stderr, "error setting cache for symbol %s: %v\n", key, err)
+				slog.ErrorContext(ctx, "Error setting cache for symbol", slog.String("symbol_key", key), slog.Any("error", err))
 			}
 			symbolsByFile[absFilePath] = append(symbolsByFile[absFilePath], symbolName)
 		}
@@ -859,7 +861,7 @@ func (s *Scanner) updateSymbolCacheWithPackageInfo(importPath string, pkgInfo *s
 	for _, absFilePath := range pkgInfo.Files { // These are files that were actually parsed for pkgInfo
 		absFilePath, _ = filepath.Abs(absFilePath) // Ensure absolute
 		if _, err := os.Stat(absFilePath); os.IsNotExist(err) {
-			fmt.Fprintf(os.Stderr, "warning: file %s from pkgInfo.Files not found, skipping for FileMetadata update\n", absFilePath)
+			slog.WarnContext(ctx, "File from pkgInfo.Files not found, skipping for FileMetadata update", slog.String("file", absFilePath))
 			continue
 		}
 		fileSymbols := symbolsByFile[absFilePath]
@@ -868,17 +870,17 @@ func (s *Scanner) updateSymbolCacheWithPackageInfo(importPath string, pkgInfo *s
 		}
 		metadata := cache.FileMetadata{Symbols: fileSymbols}
 		if err := symCache.SetFileMetadata(absFilePath, metadata); err != nil {
-			fmt.Fprintf(os.Stderr, "error setting file metadata for %s: %v\n", absFilePath, err)
+			slog.ErrorContext(ctx, "Error setting file metadata", slog.String("file", absFilePath), slog.Any("error", err))
 		}
 	}
 }
 
 // SaveSymbolCache saves the symbol cache to disk if CachePath is set.
-func (s *Scanner) SaveSymbolCache() error {
+func (s *Scanner) SaveSymbolCache(ctx context.Context) error {
 	if s.CachePath == "" {
 		return nil
 	}
-	if _, err := s.getOrCreateSymbolCache(); err != nil {
+	if _, err := s.getOrCreateSymbolCache(ctx); err != nil {
 		return fmt.Errorf("cannot save symbol cache, failed to ensure cache initialization for path %s: %w", s.CachePath, err)
 	}
 	if s.symbolCache != nil && s.symbolCache.IsEnabled() {
@@ -896,7 +898,7 @@ func (s *Scanner) SaveSymbolCache() error {
 // If not found in the cache, it triggers a scan of the relevant package
 // (using `ScanPackageByImport`) to populate caches and then re-checks.
 // Finally, it inspects the `PackageInfo` obtained from the scan.
-func (s *Scanner) FindSymbolDefinitionLocation(symbolFullName string) (string, error) {
+func (s *Scanner) FindSymbolDefinitionLocation(ctx context.Context, symbolFullName string) (string, error) {
 	lastDot := strings.LastIndex(symbolFullName, ".")
 	if lastDot == -1 || lastDot == 0 || lastDot == len(symbolFullName)-1 {
 		return "", fmt.Errorf("invalid symbol full name format: %q. Expected 'package/import/path.SymbolName'", symbolFullName)
@@ -906,18 +908,18 @@ func (s *Scanner) FindSymbolDefinitionLocation(symbolFullName string) (string, e
 	cacheKey := importPath + "." + symbolName
 
 	if s.CachePath != "" {
-		symCache, err := s.getOrCreateSymbolCache()
+		symCache, err := s.getOrCreateSymbolCache(ctx)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "warning: could not get symbol cache for %q: %v. Proceeding with full scan.\n", symbolFullName, err)
+			slog.WarnContext(ctx, "Could not get symbol cache. Proceeding with full scan.", slog.String("symbol", symbolFullName), slog.Any("error", err))
 		} else if symCache != nil && symCache.IsEnabled() {
-			filePath, found := symCache.VerifyAndGet(cacheKey)
+			filePath, found := symCache.VerifyAndGet(ctx, cacheKey)
 			if found {
 				return filePath, nil
 			}
 		}
 	}
 	// If symbol not found in cache, try to scan the package.
-	pkgInfo, err := s.ScanPackageByImport(importPath) // This will parse unvisited files and update caches
+	pkgInfo, err := s.ScanPackageByImport(ctx, importPath) // This will parse unvisited files and update caches
 	if err != nil {
 		return "", fmt.Errorf("scan for package %s (for symbol %s) failed: %w", importPath, symbolName, err)
 	}
@@ -925,12 +927,12 @@ func (s *Scanner) FindSymbolDefinitionLocation(symbolFullName string) (string, e
 	// After scan, check cache again (if enabled)
 	if s.CachePath != "" {
 		if s.symbolCache != nil && s.symbolCache.IsEnabled() {
-			filePath, found := s.symbolCache.Get(cacheKey)
+			filePath, found := s.symbolCache.Get(cacheKey) // Get does not need context
 			if found {
 				if _, statErr := os.Stat(filePath); statErr == nil {
 					return filePath, nil
 				}
-				fmt.Fprintf(os.Stderr, "warning: symbol %s found in cache at %s after scan, but file does not exist.\n", symbolFullName, filePath)
+				slog.WarnContext(ctx, "Symbol found in cache after scan, but file does not exist.", slog.String("symbol", symbolFullName), slog.String("path", filePath))
 			}
 		}
 	}

@@ -1,14 +1,17 @@
 package main
 
 import (
-	"fmt"
+	"context"
+	"log/slog"
 	"os"
 )
 
 func main() {
+	ctx := context.Background() // Or your application's context
+
 	if len(os.Args) <= 1 {
-		fmt.Fprintln(os.Stderr, "Usage: derivingjson <package_path>")
-		fmt.Fprintln(os.Stderr, "Example: derivingjson examples/derivingjson/testdata/simple") // Adjusted example path
+		slog.ErrorContext(ctx, "Usage: derivingjson <package_path>")
+		slog.ErrorContext(ctx, "Example: derivingjson examples/derivingjson/testdata/simple") // Adjusted example path
 		os.Exit(1)
 	}
 	pkgPath := os.Args[1] // Restore command line argument
@@ -17,21 +20,21 @@ func main() {
 	stat, err := os.Stat(pkgPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			fmt.Fprintf(os.Stderr, "Error: Package path '%s' does not exist.\n", pkgPath)
+			slog.ErrorContext(ctx, "Package path does not exist", slog.String("package_path", pkgPath))
 		} else {
-			fmt.Fprintf(os.Stderr, "Error accessing package path '%s': %v\n", pkgPath, err)
+			slog.ErrorContext(ctx, "Error accessing package path", slog.String("package_path", pkgPath), slog.Any("error", err))
 		}
 		os.Exit(1)
 	}
 	if !stat.IsDir() {
-		fmt.Fprintf(os.Stderr, "Error: Package path '%s' is not a directory.\n", pkgPath)
+		slog.ErrorContext(ctx, "Package path is not a directory", slog.String("package_path", pkgPath))
 		os.Exit(1)
 	}
 
-	fmt.Printf("Generating UnmarshalJSON for package: %s\n", pkgPath)
+	slog.InfoContext(ctx, "Generating UnmarshalJSON for package", slog.String("package_path", pkgPath))
 	if err := Generate(pkgPath); err != nil { // Generate is in the same package
-		fmt.Fprintf(os.Stderr, "Error generating code: %v\n", err)
+		slog.ErrorContext(ctx, "Error generating code", slog.Any("error", err))
 		os.Exit(1)
 	}
-	fmt.Printf("Successfully generated UnmarshalJSON methods for package %s\n", pkgPath)
+	slog.InfoContext(ctx, "Successfully generated UnmarshalJSON methods for package", slog.String("package_path", pkgPath))
 }

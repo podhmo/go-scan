@@ -393,14 +393,14 @@ AI:
 承知いたしました。
 テストコードと、それを実行するためのテストデータ（サンプルGoコード）も含めた、より実践的なファイル構成案を提案します。
 
-- `typescanner.go` - ライブラリの公開API。ロケーターとスキャナーを協調させて解析処理を実行するエントリーポイント。
+- `goscan.go` - ライブラリの公開API。ロケーターとスキャナーを協調させて解析処理を実行するエントリーポイント。
 - `scanner/scanner.go` - ASTを走査し、型、定数、関数の情報を抽出するコアロジック。
 - `scanner/models.go` - 解析結果（型情報、フィールド情報など）を格納するための構造体を定義します。
 - `locator/locator.go` - `go.mod`を探索し、importパスからパッケージの物理的なディレクトリパスを特定します。
 - `docs/todo.md` - 今後の開発タスクや、今回実装しない機能を記載するドキュメント。
 - `README.md` - ライブラリの目的、使い方、機能概要を説明するドキュメント。
 - `go.mod` - この型スキャナープロジェクト自体のモジュール定義ファイル。
-- `typescanner_test.go` - `typescanner.go`に対する結合テスト。実際のGoファイルを読み込ませて、全体の動作を検証します。
+- `goscan_test.go` - `goscan.go`に対する結合テスト。実際のGoファイルを読み込ませて、全体の動作を検証します。
 - `scanner/scanner_test.go` - `scanner.go`の単体テスト。特定のASTノードを渡して、正しく情報が抽出されるかを検証します。
 - `locator/locator_test.go` - `locator.go`の単体テスト。ダミーのディレクトリ構造と`go.mod`を使い、パス解決が正しく行えるかを検証します。
 - `testdata/basic/basic.go` - 基本的な構造体、定数、関数定義を含むテスト用ファイル。
@@ -509,12 +509,12 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/podhmo/go-scan"
+	"github.com/vvakame/goscan"
 )
 
 func main() {
 	// Create a new scanner, starting the search from the current directory.
-	scanner, err := typescanner.New(".")
+	scanner, err := goscan.New(".")
 	if err != nil {
 		log.Fatalf("Failed to create scanner: %v", err)
 	}
@@ -1202,7 +1202,7 @@ func (s *Scanner) ScanPackage(pkgPath string) (*scanner.PackageInfo, error) {
 		return nil, fmt.Errorf("path %s is not a directory", pkgPath)
 	}
 
-	return s.scanner.ScanPackage(pkgPath)
+	return s.scanner.ScanPackage(pkgPath, nil) // Pass nil resolver for old tests
 }
 
 // ScanPackageByImport scans a single package using its Go import path.
@@ -1216,12 +1216,14 @@ func (s *Scanner) ScanPackageByImport(importPath string) (*scanner.PackageInfo, 
 }
 ````
 
-````go:typescanner_test.go
-package typescanner
+````go:goscan_test.go
+package goscan
 
 import (
 	"path/filepath"
 	"testing"
+
+	"github.com/vvakame/goscan/scanner"
 )
 
 // TestNew_Integration tests the creation of a new Scanner and its underlying locator.
@@ -1238,8 +1240,8 @@ func TestNew_Integration(t *testing.T) {
 	if s.scanner == nil {
 		t.Fatal("Scanner scanner should not be nil")
 	}
-	if s.locator.ModulePath() != "github.com/podhmo/go-scan" {
-		t.Errorf("Expected module path 'github.com/podhmo/go-scan', got %q", s.locator.ModulePath())
+	if s.locator.ModulePath() != "github.com/vvakame/goscan" {
+		t.Errorf("Expected module path 'github.com/vvakame/goscan', got %q", s.locator.ModulePath())
 	}
 }
 
@@ -1270,7 +1272,7 @@ func TestScanPackageByImport_Integration(t *testing.T) {
 		t.Fatalf("New() failed: %v", err)
 	}
 
-	importPath := "github.com/podhmo/go-scan/testdata/multipkg/models"
+	importPath := "github.com/vvakame/goscan/testdata/multipkg/models"
 	pkgInfo, err := s.ScanPackageByImport(importPath)
 	if err != nil {
 		t.Fatalf("ScanPackageByImport() failed: %v", err)
@@ -1611,7 +1613,7 @@ import (
 
 func main() {
 	// Create a new scanner, starting the search from the current directory.
-	scanner, err := typescanner.New(".")
+	scanner, err := goscan.New(".")
 	if err != nil {
 		log.Fatalf("Failed to create scanner: %v", err)
 	}
@@ -1626,7 +1628,7 @@ func main() {
 
 	// Print all structs
 	for _, t := range pkgInfo.Types {
-		if t.Kind == typescanner.StructKind {
+		if t.Kind == goscan.StructKind {
 			fmt.Printf("- Struct: %s\n", t.Name)
 			for _, f := range t.Struct.Fields {
 				fmt.Printf("  - Field: %s, Type: %s, Tag: %q, Doc: %q\n", f.Name, f.Type.Name, f.Tag, f.Doc)
@@ -2375,8 +2377,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/podhmo/go-scan/locator"
-	"github.com/podhmo/go-scan/scanner"
+	"github.com/vvakame/goscan/locator"
+	"github.com/vvakame/goscan/scanner"
 )
 
 // Re-export scanner kinds for convenience.
@@ -2439,7 +2441,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/podhmo/go-scan/scanner"
+	"github.com/vvakame/goscan/scanner"
 )
 
 // TestNew_Integration tests the creation of a new Scanner and its underlying locator.
@@ -2456,8 +2458,8 @@ func TestNew_Integration(t *testing.T) {
 	if s.scanner == nil {
 		t.Fatal("Scanner scanner should not be nil")
 	}
-	if s.locator.ModulePath() != "github.com/podhmo/go-scan" {
-		t.Errorf("Expected module path 'github.com/podhmo/go-scan', got %q", s.locator.ModulePath())
+	if s.locator.ModulePath() != "github.com/vvakame/goscan" {
+		t.Errorf("Expected module path 'github.com/vvakame/goscan', got %q", s.locator.ModulePath())
 	}
 }
 
@@ -2985,16 +2987,16 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/podhmo/go-scan"
+	"github.com/vvakame/goscan"
 )
 
 func main() {
-	scanner, err := typescanner.New(".")
+	scanner, err := goscan.New(".")
 	if err != nil {
 		log.Fatalf("Failed to create scanner: %v", err)
 	}
 
-	pkgInfo, err := scanner.ScanPackageByImport("github.com/podhmo/go-scan/testdata/multipkg/api")
+	pkgInfo, err := scanner.ScanPackageByImport("github.com/vvakame/goscan/testdata/multipkg/api")
 	if err != nil {
 		log.Fatalf("Failed to scan package: %v", err)
 	}
@@ -3010,7 +3012,7 @@ func main() {
 				}
 				
 				fmt.Printf("Field '%s' resolved to type '%s'\n", f.Name, def.Name)
-				if def.Kind == typescanner.StructKind {
+				if def.Kind == goscan.StructKind {
 					fmt.Printf("  It is a struct with %d fields.\n", len(def.Struct.Fields))
 				}
 			}

@@ -1,4 +1,4 @@
-package typescanner
+package goscan
 
 import (
 	"fmt"

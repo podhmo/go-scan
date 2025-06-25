@@ -30,15 +30,15 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/podhmo/go-scan/typescanner"
+	"github.com/podhmo/go-scan"
 	// If you are using the main package directly, import path might be different
 	// For library usage, it's typically:
-	// "github.com/podhmo/go-scan/typescanner"
+	// "github.com/podhmo/go-scan"
 )
 
 func main() {
 	// Create a new scanner, starting search for go.mod from the current directory
-	scanner, err := typescanner.New(".")
+	scanner, err := goscan.New(".")
 	if err != nil {
 		log.Fatalf("Failed to create scanner: %v", err)
 	}
@@ -83,7 +83,7 @@ func main() {
 				}
 				
 				fmt.Printf("Field '%s' resolved to type '%s'\n", f.Name, def.Name)
-				if def.Kind == typescanner.StructKind {
+				if def.Kind == goscan.StructKind { // goscan.StructKind is correct here as it's a re-exported constant
 					fmt.Printf("  It is a struct with %d fields.\n", len(def.Struct.Fields))
 				}
 			}

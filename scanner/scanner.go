@@ -23,7 +23,8 @@ func New() *Scanner {
 // ScanPackage parses all .go files in a given directory and returns PackageInfo.
 func (s *Scanner) ScanPackage(dirPath string, resolver PackageResolver) (*PackageInfo, error) {
 	s.resolver = resolver
-	pkgs, err := parser.ParseDir(token.NewFileSet(), dirPath, func(fi os.FileInfo) bool {
+	fset := token.NewFileSet()                                              // Initialized fset
+	pkgs, err := parser.ParseDir(fset, dirPath, func(fi os.FileInfo) bool { // Used fset
 		return !strings.HasSuffix(fi.Name(), "_test.go")
 	}, parser.ParseComments)
 	if err != nil {
@@ -31,32 +32,45 @@ func (s *Scanner) ScanPackage(dirPath string, resolver PackageResolver) (*Packag
 	}
 
 	if len(pkgs) > 1 {
-		return nil, fmt.Errorf("multiple packages found in directory %s", dirPath)
+		// Note: ParseDir can return multiple packages if files in a directory
+		// have different package declarations. This typically indicates an error
+		// or a special setup. For simplicity, we handle only one package per dir.
+		// GOROOT/src often has this structure (e.g. multiple packages in net/http for tests or examples)
+		// but for typical user projects, it's one package per directory.
+		pkgNames := []string{}
+		for name := range pkgs {
+			pkgNames = append(pkgNames, name)
+		}
+		return nil, fmt.Errorf("multiple packages (%s) found in directory %s", strings.Join(pkgNames, ", "), dirPath)
 	}
 	if len(pkgs) == 0 {
 		return nil, fmt.Errorf("no buildable Go source files in %s", dirPath)
 	}
 
 	var pkg *ast.Package
-	for _, p := range pkgs {
+	var pkgNameFromAst string
+	for name, p := range pkgs {
 		pkg = p
+		pkgNameFromAst = name // Actual package name from AST
 		break
 	}
 
 	info := &PackageInfo{
-		Name: pkg.Name,
+		Name: pkgNameFromAst, // Use package name from AST
 		Path: dirPath,
+		Fset: fset, // Stored fset
 	}
 
-	for fileName, file := range pkg.Files {
-		info.Files = append(info.Files, fileName)
-		s.buildImportLookup(file)
-		for _, decl := range file.Decls {
+	// file.Name in pkg.Files is the absolute path to the file.
+	for absFilePath, fileAst := range pkg.Files {
+		info.Files = append(info.Files, absFilePath)
+		s.buildImportLookup(fileAst) // fileAst is *ast.File
+		for _, decl := range fileAst.Decls {
 			switch d := decl.(type) {
 			case *ast.GenDecl:
-				s.parseGenDecl(d, info)
+				s.parseGenDecl(d, info, absFilePath) // Pass absFilePath
 			case *ast.FuncDecl:
-				info.Functions = append(info.Functions, s.parseFuncDecl(d))
+				info.Functions = append(info.Functions, s.parseFuncDecl(d, absFilePath)) // Pass absFilePath
 			}
 		}
 	}
@@ -78,12 +92,12 @@ func (s *Scanner) buildImportLookup(file *ast.File) {
 	}
 }
 
-func (s *Scanner) parseGenDecl(decl *ast.GenDecl, info *PackageInfo) {
+func (s *Scanner) parseGenDecl(decl *ast.GenDecl, info *PackageInfo, absFilePath string) { // Added absFilePath
 	for _, spec := range decl.Specs {
 		switch sp := spec.(type) {
 		case *ast.TypeSpec:
-			typeInfo := s.parseTypeSpec(sp)
-			if typeInfo.Doc == "" {
+			typeInfo := s.parseTypeSpec(sp, absFilePath) // Pass absFilePath
+			if typeInfo.Doc == "" && decl.Doc != nil {   // Check decl.Doc != nil
 				typeInfo.Doc = commentText(decl.Doc)
 			}
 			info.Types = append(info.Types, typeInfo)
@@ -91,9 +105,18 @@ func (s *Scanner) parseGenDecl(decl *ast.GenDecl, info *PackageInfo) {
 		case *ast.ValueSpec:
 			if decl.Tok == token.CONST {
 				doc := commentText(sp.Doc)
-				if doc == "" {
+				if doc == "" && sp.Comment != nil { // Check sp.Comment != nil
 					doc = commentText(sp.Comment)
 				}
+				// If still no doc, and the GenDecl has a doc, it might apply to all consts in the block.
+				if doc == "" && decl.Doc != nil {
+					// This is less common for individual consts if they are grouped, but possible.
+					// Usually, a doc on GenDecl for consts applies if it's a single const.
+					// For a group, each ValueSpec or its names often get specific docs.
+					// Let's be conservative: only use decl.Doc if sp.Doc and sp.Comment are empty.
+					doc = commentText(decl.Doc)
+				}
+
 				for i, name := range sp.Names {
 					var val string
 					if i < len(sp.Values) {
@@ -107,10 +130,12 @@ func (s *Scanner) parseGenDecl(decl *ast.GenDecl, info *PackageInfo) {
 					}
 
 					info.Constants = append(info.Constants, &ConstantInfo{
-						Name:  name.Name,
-						Doc:   doc,
-						Value: val,
-						Type:  typeName,
+						Name:     name.Name,
+						FilePath: absFilePath, // Set FilePath
+						Doc:      doc,
+						Value:    val,
+						Type:     typeName,
+						Node:     name, // Use the ast.Ident node for the constant name
 					})
 				}
 			}
@@ -118,11 +143,12 @@ func (s *Scanner) parseGenDecl(decl *ast.GenDecl, info *PackageInfo) {
 	}
 }
 
-func (s *Scanner) parseTypeSpec(sp *ast.TypeSpec) *TypeInfo {
+func (s *Scanner) parseTypeSpec(sp *ast.TypeSpec, absFilePath string) *TypeInfo { // Added absFilePath
 	typeInfo := &TypeInfo{
-		Name: sp.Name.Name,
-		Doc:  commentText(sp.Doc),
-		Node: sp,
+		Name:     sp.Name.Name,
+		FilePath: absFilePath, // Set FilePath
+		Doc:      commentText(sp.Doc),
+		Node:     sp,
 	}
 
 	switch t := sp.Type.(type) {
@@ -177,10 +203,13 @@ func (s *Scanner) parseStructType(st *ast.StructType) *StructInfo {
 	return structInfo
 }
 
-func (s *Scanner) parseFuncDecl(f *ast.FuncDecl) *FunctionInfo {
-	funcInfo := s.parseFuncType(f.Type)
+func (s *Scanner) parseFuncDecl(f *ast.FuncDecl, absFilePath string) *FunctionInfo { // Added absFilePath
+	funcInfo := s.parseFuncType(f.Type) // This populates Parameters and Results
 	funcInfo.Name = f.Name.Name
+	funcInfo.FilePath = absFilePath // Set FilePath
 	funcInfo.Doc = commentText(f.Doc)
+	// Note: FunctionInfo in models.go doesn't have a generic Node field yet for the *ast.FuncDecl itself.
+	// If needed for other purposes, it could be added. For FilePath, this is sufficient.
 
 	if f.Recv != nil && len(f.Recv.List) > 0 {
 		recvField := f.Recv.List[0]

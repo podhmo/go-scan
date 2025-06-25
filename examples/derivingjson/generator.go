@@ -158,7 +158,7 @@ func Generate(pkgPath string) error {
 				if field.Type.PkgName == "" || field.Type.PkgName == pkgInfo.Name {
 					resolvedFieldType = findTypeInPackage(pkgInfo, field.Type.Name)
 				}
-				if resolvedFieldType == nil { // if still nil after local lookup or if external
+				if resolvedFieldType == nil && !field.Type.IsBuiltin { // if still nil after local lookup or if external, and not a builtin
 					fmt.Printf("      Warning: Error resolving field %s type %s (pkg %s): %v. Will proceed if it's an interface for oneOf.\n", field.Name, field.Type.Name, field.Type.PkgName, errResolve)
 				}
 			}

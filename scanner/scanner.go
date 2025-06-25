@@ -343,6 +343,14 @@ func (s *Scanner) parseTypeExpr(expr ast.Expr) *FieldType {
 	switch t := expr.(type) {
 	case *ast.Ident:
 		ft.Name = t.Name
+		// Check if it's a built-in type
+		// https://golang.org/ref/spec#Predeclared_identifiers
+		switch t.Name {
+		case "bool", "byte", "complex64", "complex128", "error", "float32", "float64",
+			"int", "int8", "int16", "int32", "int64", "rune", "string",
+			"uint", "uint8", "uint16", "uint32", "uint64", "uintptr":
+			ft.IsBuiltin = true
+		}
 	case *ast.StarExpr:
 		underlyingType := s.parseTypeExpr(t.X)
 		underlyingType.IsPointer = true

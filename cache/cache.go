@@ -1,8 +1,10 @@
 package cache
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings" // Added
@@ -100,7 +102,7 @@ func (sc *SymbolCache) Load() error {
 	err = json.Unmarshal(data, &newContent)
 	if err != nil {
 		// If unmarshalling fails, treat it as a corrupted cache and start fresh
-		fmt.Fprintf(os.Stderr, "warning: failed to unmarshal cache file %s, starting with an empty cache: %v\n", sc.filePath, err)
+		slog.WarnContext(context.Background(), "Failed to unmarshal cache file, starting with an empty cache", slog.String("path", sc.filePath), slog.Any("error", err))
 		sc.content = CacheContent{ // Initialize with empty maps
 			Symbols: make(map[string]string),
 			Files:   make(map[string]FileMetadata),
@@ -338,7 +340,7 @@ func (sc *SymbolCache) VerifyAndGet(key string) (string, bool) {
 		}
 
 		if !os.IsNotExist(err) {
-			fmt.Fprintf(os.Stderr, "warning: removing cache entry for symbol key %s (file %s) due to error accessing file: %v\n", key, absolutePath, err)
+			slog.WarnContext(context.Background(), "Removing cache entry due to error accessing file", slog.String("symbol_key", key), slog.String("file", absolutePath), slog.Any("error", err))
 		}
 		return "", false
 	}
@@ -401,7 +403,7 @@ func (sc *SymbolCache) GetFilesToScan(packageDirPath string) (newFilesToScan []s
 		absPath := filepath.Join(packageDirPath, entry.Name())
 		relPath, err := sc.makeRelative(absPath) // Converts to path relative to sc.rootDir
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "warning: could not make path %s relative to root %s: %v\n", absPath, sc.rootDir, err)
+			slog.WarnContext(context.Background(), "Could not make path relative to root", slog.String("path", absPath), slog.String("root_dir", sc.rootDir), slog.Any("error", err))
 			continue // Skip files not processable
 		}
 		currentDirRelativeFiles[relPath] = true

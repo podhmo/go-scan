@@ -52,7 +52,7 @@ type Other struct {
 
 // @deriving:unmarshall
 type Container struct {
-	Content      Shape `json:"content"` // oneOf
+	Content Shape `json:"content"` // oneOf
 	// Type field removed from Container
 	OtherContent Other `json:"other_content"`
 }

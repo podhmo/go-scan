@@ -1,10 +1,12 @@
 package scanner
 
 import (
+	"context"
 	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"log/slog"
 	"os"
 	"path/filepath" // Added for filepath.Join
 	"strings"
@@ -222,7 +224,7 @@ func (s *Scanner) parseInterfaceType(it *ast.InterfaceType) *InterfaceInfo {
 			if !ok {
 				// This case should ideally not happen for a valid Go interface method.
 				// Skip or log an error if it does.
-				fmt.Fprintf(os.Stderr, "warning: expected FuncType for method %s, got %T, skipping\n", methodName, field.Type)
+				slog.WarnContext(context.Background(), "Expected FuncType for interface method, skipping", slog.String("method_name", methodName), slog.String("got_type", fmt.Sprintf("%T", field.Type)))
 				continue
 			}
 			methodInfo := &MethodInfo{
@@ -248,7 +250,7 @@ func (s *Scanner) parseInterfaceType(it *ast.InterfaceType) *InterfaceInfo {
 			// as `goscan.Implements` will need to handle this when comparing.
 			// Or, we can add a placeholder if needed for `Implements` to recognize it.
 			// For `derivingjson`, direct method signatures are the primary concern.
-			fmt.Fprintf(os.Stderr, "info: embedded interface %s found, its methods are not recursively parsed in this version.\n", embeddedTypeName.Name)
+			slog.InfoContext(context.Background(), "Embedded interface found, its methods are not recursively parsed in this version.", slog.String("interface_name", embeddedTypeName.Name))
 		}
 	}
 	return interfaceInfo

@@ -30,8 +30,10 @@ This tool is designed for applications like OpenAPI document generation, ORM cod
 package main
 
 import (
+	"context"
 	"fmt"
-	"log"
+	"log/slog"
+	"os"
 
 	"github.com/podhmo/go-scan"
 	// If you are using the main package directly, import path might be different
@@ -40,10 +42,13 @@ import (
 )
 
 func main() {
+	ctx := context.Background() // Or your application's context
+
 	// Create a new scanner, starting search for go.mod from the current directory
 	scanner, err := goscan.New(".")
 	if err != nil {
-		log.Fatalf("Failed to create scanner: %v", err)
+		slog.ErrorContext(ctx, "Failed to create scanner", slog.Any("error", err))
+		os.Exit(1)
 	}
 
 	// --- Optional: Enable Symbol Cache ---
@@ -61,7 +66,7 @@ func main() {
 	// SaveSymbolCache will do nothing if scanner.CachePath is empty.
 	defer func() {
 		if err := scanner.SaveSymbolCache(); err != nil {
-			log.Printf("Warning: Failed to save symbol cache: %v", err)
+			slog.WarnContext(ctx, "Failed to save symbol cache", slog.Any("error", err))
 		}
 	}()
 	// --- End Optional: Enable Symbol Cache ---
@@ -72,7 +77,8 @@ func main() {
 	pkgImportPath := "github.com/podhmo/go-scan/testdata/multipkg/api"
 	pkgInfo, err := scanner.ScanPackageByImport(pkgImportPath)
 	if err != nil {
-		log.Fatalf("Failed to scan package: %v", err)
+		slog.ErrorContext(ctx, "Failed to scan package", slog.String("package", pkgImportPath), slog.Any("error", err))
+		os.Exit(1)
 	}
 
 	for _, t := range pkgInfo.Types {
@@ -81,13 +87,13 @@ func main() {
 				// Lazily resolve the type definition from another package
 				def, err := f.Type.Resolve()
 				if err != nil {
-					log.Printf("Could not resolve field %s: %v", f.Name, err)
+					slog.WarnContext(ctx, "Could not resolve field", slog.String("field", f.Name), slog.Any("error", err))
 					continue
 				}
-				
-				fmt.Printf("Field '%s' resolved to type '%s'\n", f.Name, def.Name)
+
+				slog.InfoContext(ctx, "Field resolved", slog.String("field", f.Name), slog.String("resolved_type", def.Name))
 				if def.Kind == goscan.StructKind { // goscan.StructKind is correct here as it's a re-exported constant
-					fmt.Printf("  It is a struct with %d fields.\n", len(def.Struct.Fields))
+					slog.InfoContext(ctx, "Struct details", slog.String("type", def.Name), slog.Int("field_count", len(def.Struct.Fields)))
 				}
 			}
 		}
@@ -103,9 +109,9 @@ func main() {
 
 		filePath, err := scanner.FindSymbolDefinitionLocation(symbolFullName)
 		if err != nil {
-			log.Printf("Could not find definition location for %s: %v", symbolFullName, err)
+			slog.WarnContext(ctx, "Could not find definition location for symbol", slog.String("symbol", symbolFullName), slog.Any("error", err))
 		} else {
-			fmt.Printf("\nDefinition of symbol %s found at: %s\n", symbolFullName, filePath)
+			slog.InfoContext(ctx, "Definition of symbol found", slog.String("symbol", symbolFullName), slog.String("path", filePath))
 		}
 	}
 }
@@ -121,17 +127,21 @@ The `go-scan.Scanner` provides a method `SetExternalTypeOverrides()` to achieve 
 package main
 
 import (
-	"fmt"
-	"log"
+	"context"
+	"log/slog"
+	"os"
 
 	"github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/scanner" // For scanner.ExternalTypeOverride type
 )
 
 func main() {
+	ctx := context.Background() // Or your application's context
+
 	s, err := goscan.New("./testdata/externaltypes") // Assuming testdata/externaltypes has its own go.mod
 	if err != nil {
-		log.Fatalf("Failed to create scanner: %v", err)
+		slog.ErrorContext(ctx, "Failed to create scanner", slog.Any("error", err))
+		os.Exit(1)
 	}
 
 	// Define overrides
@@ -144,7 +154,8 @@ func main() {
 	// Scan a package that uses these types
 	pkgInfo, err := s.ScanPackageByImport("example.com/externaltypes") // Module from testdata
 	if err != nil {
-		log.Fatalf("Failed to scan package: %v", err)
+		slog.ErrorContext(ctx, "Failed to scan package", slog.String("package", "example.com/externaltypes"), slog.Any("error", err))
+		os.Exit(1)
 	}
 
 	for _, typeInfo := range pkgInfo.Types {
@@ -153,9 +164,13 @@ func main() {
 				if field.Name == "ID" {
 					// field.Type.Name will be "string"
 					// field.Type.IsResolvedByConfig will be true
-					fmt.Printf("Field %s (original %s.%s) overridden to: %s (IsResolvedByConfig: %t)\n",
-						field.Name, field.Type.PkgName, field.Type.Name, // Original PkgName might be empty if overridden early
-						field.Type.Name, field.Type.IsResolvedByConfig) // Name will be the overridden one
+					slog.InfoContext(ctx, "Field overridden",
+						slog.String("field_name", field.Name),
+						slog.String("original_pkg", field.Type.PkgName),
+						slog.String("original_type", field.Type.Name), // This will show the overridden type name
+						slog.String("overridden_to_type", field.Type.Name), // Correctly shows the target type
+						slog.Bool("is_resolved_by_config", field.Type.IsResolvedByConfig),
+					)
 				}
 			}
 		}
@@ -164,8 +179,11 @@ func main() {
 				if field.Name == "Timestamp" {
 					// field.Type.Name will be "time.Time"
 					// field.Type.IsResolvedByConfig will be true
-					fmt.Printf("Field %s overridden to: %s (IsResolvedByConfig: %t)\n",
-						field.Name, field.Type.Name, field.Type.IsResolvedByConfig)
+					slog.InfoContext(ctx, "Field overridden",
+						slog.String("field_name", field.Name),
+						slog.String("overridden_to_type", field.Type.Name),
+						slog.Bool("is_resolved_by_config", field.Type.IsResolvedByConfig),
+					)
 				}
 			}
 		}

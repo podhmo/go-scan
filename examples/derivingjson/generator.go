@@ -18,13 +18,11 @@ const unmarshalAnnotation = "@deriving:unmarshall"
 
 type TemplateData struct {
 	PackageName       string
-	StructName        string
-	OneOfFieldName    string
-	OneOfFieldJSONTag string
-	OneOfFieldType    string
-	OtherFields       []FieldInfo
-	OneOfTypes        []OneOfTypeMapping
-	Imports           map[string]string
+	StructName    string
+	OtherFields   []FieldInfo
+	OneOfFields   []OneOfFieldDetail
+	Imports       map[string]string
+	DiscriminatorFieldJSONName string // Assuming this is global for the struct for now
 }
 
 type FieldInfo struct {
@@ -33,9 +31,17 @@ type FieldInfo struct {
 	JSONTag string
 }
 
+// OneOfFieldDetail holds information for a single oneOf field
+type OneOfFieldDetail struct {
+	FieldName    string             // Name of the field in the struct (e.g., "ShapeData", "EventPayload")
+	FieldType    string             // Go type of the interface (e.g., "shapes.Shape", "events.Event")
+	JSONTag      string             // JSON tag name (e.g., "shape_data", "payload")
+	Implementers []OneOfTypeMapping // Mappings of JSON discriminator value to concrete Go type
+}
+
 type OneOfTypeMapping struct {
-	JSONValue string
-	GoType    string
+	JSONValue string // The value in the discriminator field (e.g., "circle", "user_created")
+	GoType    string // The concrete Go type (e.g., "*shapes.Circle", "*events.UserCreatedEvent")
 }
 
 const unmarshalJSONTemplate = `
@@ -43,8 +49,9 @@ func (s *{{.StructName}}) UnmarshalJSON(data []byte) error {
 	// Define an alias type to prevent infinite recursion with UnmarshalJSON.
 	type Alias {{.StructName}}
 	aux := &struct {
-		// The {{.OneOfFieldName}} field will be parsed manually later, so initially capture it as json.RawMessage.
-		{{.OneOfFieldName}} json.RawMessage ` + "`json:\"{{.OneOfFieldJSONTag}}\"`" + `
+		{{range .OneOfFields}}
+		{{.FieldName}} json.RawMessage ` + "`json:\"{{.JSONTag}}\"`" + `
+		{{end}}
 		// All other fields will be handled by the standard unmarshaler via the Alias.
 		*Alias
 	}{
@@ -55,41 +62,35 @@ func (s *{{.StructName}}) UnmarshalJSON(data []byte) error {
 		return fmt.Errorf("failed to unmarshal into aux struct for {{.StructName}}: %w", err)
 	}
 
-	// If the {{.OneOfFieldName}} field is null or empty, do nothing further with it.
-	if aux.{{.OneOfFieldName}} == nil || string(aux.{{.OneOfFieldName}}) == "null" {
-		s.{{.OneOfFieldName}} = nil // Explicitly set to nil, or follow specific logic if a non-nil zero value is required.
-		return nil
-	}
-
-	// Read only the "type" field from the {{.OneOfFieldName}} content to determine the concrete type.
-	// NOTE: This assumes the discriminator field is named "type".
-	// If the generator can determine the actual discriminator field name, it should be used here.
-	var discriminatorDoc struct {
-		Type string ` + "`json:\"type\"`" + ` // TODO: Make this discriminator field name configurable if not always "type".
-	}
-	if err := json.Unmarshal(aux.{{.OneOfFieldName}}, &discriminatorDoc); err != nil {
-		// Including aux content in the error can be helpful for debugging, but may make logs verbose for large JSON.
-		return fmt.Errorf("could not detect type from field '{{.OneOfFieldJSONTag}}' (content: %s): %w", string(aux.{{.OneOfFieldName}}), err)
-	}
-
-	// Decode into the appropriate struct based on the value of the 'type' field.
-	switch discriminatorDoc.Type {
-	{{range .OneOfTypes}}
-	case "{{.JSONValue}}":
-		var content {{.GoType}}
-		if err := json.Unmarshal(aux.{{$.OneOfFieldName}}, &content); err != nil {
-			return fmt.Errorf("failed to unmarshal '{{$.OneOfFieldJSONTag}}' as {{.GoType}} for type '{{.JSONValue}}' (content: %s): %w", string(aux.{{$.OneOfFieldName}}), err)
+	{{range $oneOfField := .OneOfFields}}
+	// Process {{$oneOfField.FieldName}}
+	if aux.{{$oneOfField.FieldName}} != nil && string(aux.{{$oneOfField.FieldName}}) != "null" {
+		var discriminatorDoc struct {
+			Type string ` + "`json:\"{{$.DiscriminatorFieldJSONName}}\"`" + ` // Discriminator field
 		}
-		s.{{$.OneOfFieldName}} = &content // Assuming the field is a pointer to the concrete type. Adjust if it's an interface holding value types.
+		if err := json.Unmarshal(aux.{{$oneOfField.FieldName}}, &discriminatorDoc); err != nil {
+			return fmt.Errorf("could not detect type from field '{{$oneOfField.JSONTag}}' (content: %s): %w", string(aux.{{$oneOfField.FieldName}}), err)
+		}
+
+		switch discriminatorDoc.Type {
+		{{range .Implementers}}
+		case "{{.JSONValue}}":
+			var content {{.GoType}}
+			if err := json.Unmarshal(aux.{{$oneOfField.FieldName}}, &content); err != nil {
+				return fmt.Errorf("failed to unmarshal '{{$oneOfField.JSONTag}}' as {{.GoType}} for type '{{.JSONValue}}' (content: %s): %w", string(aux.{{$oneOfField.FieldName}}), err)
+			}
+			s.{{$oneOfField.FieldName}} = content
+		{{end}}
+		default:
+			if discriminatorDoc.Type == "" {
+				return fmt.Errorf("discriminator field '{{$.DiscriminatorFieldJSONName}}' missing or empty in '{{$oneOfField.JSONTag}}' (content: %s)", string(aux.{{$oneOfField.FieldName}}))
+			}
+			return fmt.Errorf("unknown data type '%s' for field '{{$oneOfField.JSONTag}}' (content: %s)", discriminatorDoc.Type, string(aux.{{$oneOfField.FieldName}}))
+		}
+	} else {
+		s.{{$oneOfField.FieldName}} = nil // Explicitly set to nil if null or empty
+	}
 	{{end}}
-	default:
-		// The error message for an empty discriminatorDoc.Type could be more specific.
-		// (e.g., "discriminator field 'type' is missing or not a string in '{{.OneOfFieldJSONTag}}'")
-		if discriminatorDoc.Type == "" {
-			return fmt.Errorf("discriminator field 'type' missing or empty in '{{.OneOfFieldJSONTag}}' (content: %s)", string(aux.{{.OneOfFieldName}}))
-		}
-		return fmt.Errorf("unknown data type '%s' for field '{{.OneOfFieldJSONTag}}' (content: %s)", discriminatorDoc.Type, string(aux.{{.OneOfFieldName}}))
-	}
 
 	return nil
 }
@@ -132,12 +133,13 @@ func Generate(pkgPath string) error {
 		fmt.Printf("  Processing struct: %s for %s\n", typeInfo.Name, unmarshalAnnotation)
 
 		data := TemplateData{
-			PackageName: pkgInfo.Name,
-			StructName:  typeInfo.Name,
-			Imports:     make(map[string]string),
+			PackageName:       pkgInfo.Name,
+			StructName:        typeInfo.Name,
+			Imports:           make(map[string]string),
+			OneOfFields:       []OneOfFieldDetail{},
+			OtherFields:       []FieldInfo{},
+			DiscriminatorFieldJSONName: "type", // Hardcoded for now
 		}
-		var oneOfInterfaceDef *scanner.TypeInfo
-		var oneOfInterfaceFieldType *scanner.FieldType
 
 		for _, field := range typeInfo.Struct.Fields {
 			jsonTag := ""
@@ -153,181 +155,171 @@ func Generate(pkgPath string) error {
 
 			resolvedFieldType, errResolve := field.Type.Resolve()
 			if errResolve != nil {
-				// If Resolve fails, and PkgName is empty (or same as current package), try to find type in current package.
 				if field.Type.PkgName == "" || field.Type.PkgName == pkgInfo.Name {
-					fmt.Printf("      Resolve failed for local type %s for field %s: %v. Attempting to find in current package.\n", field.Type.Name, field.Name, errResolve)
 					resolvedFieldType = findTypeInPackage(pkgInfo, field.Type.Name)
-					if resolvedFieldType != nil {
-						fmt.Printf("        Found local type %s in current package.\n", field.Type.Name)
-					} else {
-						fmt.Printf("        Local type %s not found in current package.\n", field.Type.Name)
-					}
-				} else {
-					fmt.Printf("      Error resolving field %s type %s (external pkg %s): %v\n", field.Name, field.Type.Name, field.Type.PkgName, errResolve)
+				}
+				if resolvedFieldType == nil { // if still nil after local lookup or if external
+					fmt.Printf("      Warning: Error resolving field %s type %s (pkg %s): %v. Will proceed if it's an interface for oneOf.\n", field.Name, field.Type.Name, field.Type.PkgName, errResolve)
 				}
 			}
 
-			var resolvedKind scanner.Kind = -1
-			isInterface := false
-			if resolvedFieldType != nil {
-				resolvedKind = resolvedFieldType.Kind
-				isInterface = (resolvedFieldType.Kind == scanner.InterfaceKind)
-			}
-			fmt.Printf("      Field: %s, TypeName: %s, TypePkgName: %s, ResolvedKind: %v, IsInterfaceResult: %t\n", field.Name, field.Type.Name, field.Type.PkgName, resolvedKind, isInterface)
-
-
+			isInterfaceField := false
 			if resolvedFieldType != nil && resolvedFieldType.Kind == scanner.InterfaceKind {
-				data.OneOfFieldName = field.Name
-				data.OneOfFieldJSONTag = jsonTag
-				oneOfInterfaceDef = resolvedFieldType
-				oneOfInterfaceFieldType = field.Type
+				isInterfaceField = true
+			} else if resolvedFieldType == nil && strings.Contains(field.Type.Name, "interface{") { // Heuristic for anonymous interfaces, though less robust
+				// This case is tricky as anonymous interfaces don't have a TypeInfo directly from Resolve() in the same way.
+				// For derivingjson, we typically expect named interfaces.
+				// Goscan's Implements check might also struggle with anonymous interfaces if they are not fully parsed.
+				// For now, we'll primarily focus on named interfaces.
+				fmt.Printf("      Field %s is an anonymous interface. Support for these as oneOf targets is limited.\n", field.Name)
+			}
 
-				fieldTypeString := oneOfInterfaceDef.Name
-				var determinedInterfaceImportPath string
 
-				if oneOfInterfaceDef.FilePath != "" { // Assuming FilePath is set for resolved types
-					interfaceDir := filepath.Dir(oneOfInterfaceDef.FilePath)
-					// Scan the package of the interface to get its canonical import path and name
+			if isInterfaceField {
+				fmt.Printf("      Processing potential OneOf Field: %s (Interface: %s)\n", field.Name, field.Type.String())
+				oneOfDetail := OneOfFieldDetail{
+					FieldName:    field.Name,
+					JSONTag:      jsonTag,
+					Implementers: []OneOfTypeMapping{},
+				}
+
+				// Determine interface type string and manage imports
+				interfaceDef := resolvedFieldType // This is the TypeInfo for the interface
+				fieldTypeString := interfaceDef.Name // Default to local name
+				var interfaceDefiningPkgImportPath string
+
+				if interfaceDef.FilePath != "" {
+					interfaceDir := filepath.Dir(interfaceDef.FilePath)
 					interfaceDefiningPkg, errPkgScan := gscn.ScanPackage(interfaceDir)
 					if errPkgScan == nil && interfaceDefiningPkg != nil && interfaceDefiningPkg.ImportPath != "" {
-						if interfaceDefiningPkg.ImportPath != pkgInfo.ImportPath { // If it's an external package
-							determinedInterfaceImportPath = interfaceDefiningPkg.ImportPath
-							fieldTypeString = interfaceDefiningPkg.Name + "." + oneOfInterfaceDef.Name
-							data.Imports[interfaceDefiningPkg.Name] = determinedInterfaceImportPath
-							allFileImports[determinedInterfaceImportPath] = interfaceDefiningPkg.Name
+						if interfaceDefiningPkg.ImportPath != pkgInfo.ImportPath {
+							interfaceDefiningPkgImportPath = interfaceDefiningPkg.ImportPath
+							fieldTypeString = interfaceDefiningPkg.Name + "." + interfaceDef.Name
+							data.Imports[interfaceDefiningPkg.Name] = interfaceDefiningPkgImportPath
+							allFileImports[interfaceDefiningPkgImportPath] = interfaceDefiningPkg.Name
 						}
-						// If in the same package, fieldTypeString remains oneOfInterfaceDef.Name, no import needed
 					} else {
-						fmt.Printf("      Warning: Could not determine import path for interface %s in dir %s. PkgScanErr: %v. Using PkgName as fallback.\n", oneOfInterfaceDef.Name, interfaceDir, errPkgScan)
-						if oneOfInterfaceFieldType.PkgName != "" && oneOfInterfaceFieldType.PkgName != pkgInfo.Name {
-							fieldTypeString = oneOfInterfaceFieldType.PkgName + "." + oneOfInterfaceDef.Name
+						fmt.Printf("      Warning: Could not determine import path for interface %s in dir %s. PkgScanErr: %v. Using PkgName as fallback.\n", interfaceDef.Name, interfaceDir, errPkgScan)
+						if field.Type.PkgName != "" && field.Type.PkgName != pkgInfo.Name { // field.Type.PkgName might be an alias
+							// This part is tricky; we need the actual import path for the alias field.Type.PkgName refers to.
+							// For now, we assume if gscn.ScanPackage failed, we might rely on a pre-discovered import.
+							// This logic might need to be improved by looking up field.Type.PkgName in allFileImports or similar context if available.
+							fieldTypeString = field.Type.PkgName + "." + interfaceDef.Name
 						}
 					}
-				} else if oneOfInterfaceFieldType.PkgName != "" && oneOfInterfaceFieldType.PkgName != pkgInfo.Name {
+				} else if field.Type.PkgName != "" && field.Type.PkgName != pkgInfo.Name {
 					// Fallback if FilePath is empty, use PkgName (less reliable for import path)
-					fieldTypeString = oneOfInterfaceFieldType.PkgName + "." + oneOfInterfaceDef.Name
-					fmt.Printf("      Warning: Interface %s FilePath was empty, relying on PkgName %s for type string.\n", oneOfInterfaceDef.Name, oneOfInterfaceFieldType.PkgName)
+					// This assumes PkgName is the actual package name, not an alias.
+					// If it's an alias, we'd need its import path.
+					fieldTypeString = field.Type.PkgName + "." + interfaceDef.Name
+					// We need to ensure this PkgName (which could be an alias) maps to an import path.
+					// This is complex if the import path isn't known. Assume for now it's resolvable or already imported.
+					fmt.Printf("      Warning: Interface %s FilePath was empty, relying on PkgName %s for type string.\n", interfaceDef.Name, field.Type.PkgName)
 				}
-				data.OneOfFieldType = fieldTypeString
-				fmt.Printf("      Found OneOf Field: Name=%s, JSONTag=%s, InterfaceType=%s (Determined ImportPath for interface: %s)\n", data.OneOfFieldName, data.OneOfFieldJSONTag, data.OneOfFieldType, determinedInterfaceImportPath)
+				oneOfDetail.FieldType = fieldTypeString
 
-			} else { // Other fields
-				typeName := field.Type.String()
-				var otherFieldActualImportPath string
-				var otherFieldPkgAliasForImport string
 
-				// Check if this field's type is from an external package
-				if field.Type.PkgName != "" && (pkgInfo.Name == "" || field.Type.PkgName != pkgInfo.Name) {
-					// Try to get its full import path if its definition was resolved
-					if resolvedFieldType != nil && resolvedFieldType.FilePath != "" { // Using resolvedFieldType from above
-						otherFieldDir := filepath.Dir(resolvedFieldType.FilePath)
-						otherFieldDefiningPkg, errPkgScan := gscn.ScanPackage(otherFieldDir)
-						if errPkgScan == nil && otherFieldDefiningPkg != nil && otherFieldDefiningPkg.ImportPath != "" {
-							if otherFieldDefiningPkg.ImportPath != pkgInfo.ImportPath { // Is it external?
-								otherFieldActualImportPath = otherFieldDefiningPkg.ImportPath
-								otherFieldPkgAliasForImport = otherFieldDefiningPkg.Name
+				// Find implementers for this specific interface
+				searchPkgs := []*scanner.PackageInfo{pkgInfo}
+				if interfaceDefiningPkgImportPath != "" && interfaceDefiningPkgImportPath != pkgInfo.ImportPath {
+					scannedInterfacePkg, errScan := gscn.ScanPackageByImport(interfaceDefiningPkgImportPath)
+					if errScan == nil && scannedInterfacePkg != nil {
+						alreadyAdded := false
+						for _, sp := range searchPkgs { if sp.ImportPath == scannedInterfacePkg.ImportPath { alreadyAdded = true; break } }
+						if !alreadyAdded { searchPkgs = append(searchPkgs, scannedInterfacePkg) }
+					} else {
+						fmt.Printf("        Warning: Failed to scan interface's (%s) own package %s by import: %v.\n", interfaceDef.Name, interfaceDefiningPkgImportPath, errScan)
+					}
+				}
+
+				fmt.Printf("        Searching for implementers of %s (from %s)\n", interfaceDef.Name, interfaceDefiningPkgImportPath)
+				foundImplementersForThisInterface := false
+				processedImplementerKeys := make(map[string]bool) //Scoped per interface
+
+				for _, currentSearchPkg := range searchPkgs {
+					if currentSearchPkg == nil { continue }
+					for _, candidateType := range currentSearchPkg.Types {
+						if candidateType.Kind != scanner.StructKind || candidateType.Struct == nil { continue }
+
+						implementerKey := candidateType.FilePath + "::" + candidateType.Name
+						if processedImplementerKeys[implementerKey] { continue }
+
+						if goscan.Implements(candidateType, interfaceDef, currentSearchPkg) {
+							fmt.Printf("          Found implementer for %s: %s in package %s (File: %s)\n", field.Name, candidateType.Name, currentSearchPkg.ImportPath, candidateType.FilePath)
+							processedImplementerKeys[implementerKey] = true
+							foundImplementersForThisInterface = true
+
+							discriminatorValue := strings.ToLower(candidateType.Name) // Simplified: use struct name
+							// TODO: Allow customization of discriminator value, e.g., via a method or struct tag on the implementer.
+							// For now, using simplified logic based on testdata.
+							if candidateType.Name == "Circle" { discriminatorValue = "circle" } else
+							if candidateType.Name == "Rectangle" { discriminatorValue = "rectangle" } else {
+								// Keep using ToLower as default
+								fmt.Printf("            Warning: No specific discriminator rule for %s from %s, using '%s'.\n", candidateType.Name, currentSearchPkg.ImportPath, discriminatorValue)
 							}
-						}
-					} else if field.Type.PkgName != "" {
-						// Fallback for "other" fields if their TypeInfo wasn't fully resolved with FilePath
-						fmt.Printf("      Note: Other field %s uses PkgName '%s'. Full import path might rely on FieldType.String() or prior discoveries.\n", field.Name, field.Type.PkgName)
-					}
 
-					if otherFieldActualImportPath != "" && otherFieldPkgAliasForImport != "" {
-						data.Imports[otherFieldPkgAliasForImport] = otherFieldActualImportPath
-						allFileImports[otherFieldActualImportPath] = otherFieldPkgAliasForImport
+
+							goTypeString := candidateType.Name
+							if currentSearchPkg.ImportPath != "" && currentSearchPkg.ImportPath != pkgInfo.ImportPath {
+								goTypeString = currentSearchPkg.Name + "." + candidateType.Name
+								data.Imports[currentSearchPkg.Name] = currentSearchPkg.ImportPath
+								allFileImports[currentSearchPkg.ImportPath] = currentSearchPkg.Name
+							}
+							// Ensure the GoType includes a pointer if the field is expected to hold a pointer to an interface implementer
+							// For now, assuming all implementers will be pointer types in the field.
+							if !strings.HasPrefix(goTypeString, "*") {
+								goTypeString = "*" + goTypeString
+							}
+
+							oneOfDetail.Implementers = append(oneOfDetail.Implementers, OneOfTypeMapping{
+								JSONValue: discriminatorValue,
+								GoType:    goTypeString,
+							})
+						}
 					}
+				}
+				if !foundImplementersForThisInterface {
+					warnPath := interfaceDefiningPkgImportPath
+					if warnPath == "" { warnPath = pkgInfo.ImportPath }
+					fmt.Printf("        Warning: For field %s (interface %s from %s), no implementing types found. UnmarshalJSON might be incomplete for this field.\n", field.Name, interfaceDef.Name, warnPath)
+				}
+				data.OneOfFields = append(data.OneOfFields, oneOfDetail)
+
+			} else { // Other fields (non-interface or non-oneOf)
+				typeName := field.Type.String() // This should give a reasonable representation, e.g. *pkg.Type, []int
+				// Handle imports for types of other fields if necessary
+				if resolvedFieldType != nil && resolvedFieldType.FilePath != "" {
+					fieldDir := filepath.Dir(resolvedFieldType.FilePath)
+					fieldDefiningPkg, errPkgScan := gscn.ScanPackage(fieldDir)
+					if errPkgScan == nil && fieldDefiningPkg != nil && fieldDefiningPkg.ImportPath != "" {
+						if fieldDefiningPkg.ImportPath != pkgInfo.ImportPath { // Is it external?
+							// Ensure this import is added to data.Imports and allFileImports
+							// The alias used would typically be fieldDefiningPkg.Name
+							data.Imports[fieldDefiningPkg.Name] = fieldDefiningPkg.ImportPath
+							allFileImports[fieldDefiningPkg.ImportPath] = fieldDefiningPkg.Name
+						}
+					}
+				} else if field.Type.PkgName != "" && field.Type.PkgName != pkgInfo.Name {
+					// If FilePath wasn't available but PkgName suggests an external package,
+					// we rely on the PkgName being either the actual package name or an alias
+					// whose import path has been (or will be) discovered.
+					// This part is tricky and relies on consistent import aliasing or go-scan resolving them.
+					// For now, assume FieldType.String() handles qualification if necessary,
+					// and required imports are caught by other mechanisms or direct PkgName usage.
+					fmt.Printf("      Note: Other field %s (%s) might be from external package '%s'. Ensure imports are handled.\n", field.Name, typeName, field.Type.PkgName)
 				}
 				data.OtherFields = append(data.OtherFields, FieldInfo{Name: field.Name, Type: typeName, JSONTag: jsonTag})
 			}
 		}
 
-		if data.OneOfFieldName == "" || oneOfInterfaceDef == nil {
-			fmt.Printf("  Skipping struct %s: missing oneOf interface field or its definition.\n", typeInfo.Name)
+		if len(data.OneOfFields) == 0 {
+			fmt.Printf("  Skipping struct %s: no oneOf interface fields found.\n", typeInfo.Name)
 			continue
 		}
 
-		var interfaceActualImportPath string
-		if oneOfInterfaceDef.FilePath != "" {
-			dir := filepath.Dir(oneOfInterfaceDef.FilePath)
-			tempPkgInfo, _ := gscn.ScanPackage(dir) // Scan dir to get PackageInfo
-			if tempPkgInfo != nil && tempPkgInfo.ImportPath != "" {
-				interfaceActualImportPath = tempPkgInfo.ImportPath
-				if interfaceActualImportPath == pkgInfo.ImportPath { // If it resolved to current package
-					interfaceActualImportPath = "" // Treat as local (no import path needed for qualification)
-				}
-			}
-		}
-		// Fallback or additional check if FilePath was empty but PkgName suggested external
-		if interfaceActualImportPath == "" && oneOfInterfaceFieldType != nil && oneOfInterfaceFieldType.PkgName != "" && oneOfInterfaceFieldType.PkgName != pkgInfo.Name {
-			fmt.Printf("    Note: Interface %s might be external via PkgName %s, but FilePath method didn't confirm an *external* import path.\n", oneOfInterfaceDef.Name, oneOfInterfaceFieldType.PkgName)
-			// This implies we might need to find the import path for PkgName if it's an alias for an external package.
-			// This is hard without full import map of the source file. For now, assume local if FilePath method results in ""
-		}
-
-
-		fmt.Printf("    Searching for implementers of %s (interface defined in effective import path: '%s')\n", oneOfInterfaceDef.Name, interfaceActualImportPath)
-
-		searchPkgs := []*scanner.PackageInfo{pkgInfo} // Start with current package
-		if interfaceActualImportPath != "" {
-			// If interfaceActualImportPath is non-empty, it means it's different from pkgInfo.ImportPath (or should be)
-			scannedInterfacePkg, errScan := gscn.ScanPackageByImport(interfaceActualImportPath)
-			if errScan != nil {
-				fmt.Printf("      Warning: Failed to scan interface's actual package %s by import: %v.\n", interfaceActualImportPath, errScan)
-			} else if scannedInterfacePkg != nil {
-				alreadyAdded := false
-				for _, sp := range searchPkgs { if sp.ImportPath == scannedInterfacePkg.ImportPath { alreadyAdded = true; break } }
-				if !alreadyAdded { searchPkgs = append(searchPkgs, scannedInterfacePkg) }
-				fmt.Printf("    Also searched interface's own package: %s (found %d types)\n", scannedInterfacePkg.ImportPath, len(scannedInterfacePkg.Types))
-			}
-		}
-
-		foundImplementers := false
-		processedImplementerKeys := make(map[string]bool)
-
-		for _, currentSearchPkg := range searchPkgs {
-			if currentSearchPkg == nil { continue }
-			fmt.Printf("      Checking package: %s (ImportPath: %s) for implementers of %s\n", currentSearchPkg.Name, currentSearchPkg.ImportPath, oneOfInterfaceDef.Name)
-			for _, candidateType := range currentSearchPkg.Types {
-				if candidateType.Kind != scanner.StructKind || candidateType.Struct == nil { continue }
-
-				implementerKey := candidateType.FilePath + "::" + candidateType.Name
-				if processedImplementerKeys[implementerKey] { continue }
-
-				if goscan.Implements(candidateType, oneOfInterfaceDef, currentSearchPkg) {
-					fmt.Printf("        Found implementer: %s in package %s (File: %s)\n", candidateType.Name, currentSearchPkg.ImportPath, candidateType.FilePath)
-					processedImplementerKeys[implementerKey] = true
-					foundImplementers = true
-
-					discriminatorValue := ""
-					// TODO: Get discriminator value from candidateType's "Type" field or GetType() method.
-					// For now, using simplified logic based on testdata.
-					if candidateType.Name == "Circle" { discriminatorValue = "circle" } else
-					if candidateType.Name == "Rectangle" { discriminatorValue = "rectangle" } else {
-						discriminatorValue = strings.ToLower(candidateType.Name)
-						fmt.Printf("          Warning: No specific discriminator rule for %s from %s, using '%s'.\n", candidateType.Name, currentSearchPkg.ImportPath, discriminatorValue)
-					}
-
-					goTypeString := candidateType.Name
-					// Qualify type if it's from a different package than the container struct's package
-					if currentSearchPkg.ImportPath != "" && currentSearchPkg.ImportPath != pkgInfo.ImportPath {
-						goTypeString = currentSearchPkg.Name + "." + candidateType.Name
-						data.Imports[currentSearchPkg.Name] = currentSearchPkg.ImportPath
-						allFileImports[currentSearchPkg.ImportPath] = currentSearchPkg.Name
-					}
-					data.OneOfTypes = append(data.OneOfTypes, OneOfTypeMapping{ JSONValue: discriminatorValue, GoType: goTypeString, })
-					fmt.Printf("          Mapping: JSON value \"%s\" -> Go type %s\n", discriminatorValue, goTypeString)
-				}
-			}
-		}
-
-		if !foundImplementers {
-			warnPath := interfaceActualImportPath
-			if warnPath == "" { // If interface is local or resolution failed to identify external path
-				warnPath = pkgInfo.ImportPath // Assume current package
-			}
-			fmt.Printf("  Warning: For struct %s, no types found implementing interface %s (from %s). Generated UnmarshalJSON might be incomplete.\n", typeInfo.Name, oneOfInterfaceDef.Name, warnPath)
-		}
+		// No longer need this old block for single oneOf field
+		// var interfaceActualImportPath string
+		// ... (old logic for single oneOfInterfaceDef) ...
 
 		tmpl, err := template.New("unmarshal").Parse(unmarshalJSONTemplate)
 		if err != nil { return fmt.Errorf("failed to parse template: %w", err) }

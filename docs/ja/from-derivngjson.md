@@ -179,4 +179,43 @@
 *   **`go-scan` への提案機能**: (提案3をより具体的に)
     `goscan.Scanner` に、指定したインターフェースの `TypeInfo` を受け取り、**スキャナがこれまでに解決・スキャンした全てのパッケージの中から**そのインターフェースを実装する型（特に構造体）のリストを効率的に検索するメソッド `FindAllImplementers(interfaceDef *scanner.TypeInfo) []*scanner.TypeInfo` のようなAPIを提供します。これにより、ジェネレータ側は実装型を探すためにパッケージを個別にスキャンしたり、探索範囲を推測したりする必要がなくなります。
 
+## 8. 複数 `oneOf` フィールド対応とジェネレータ設定の強化 (新規)
+
+今回の `derivingjson` の機能拡張（単一構造体内の複数 `oneOf` フィールドサポート）を通じて、さらに以下の点が `go-scan` の改善として考えられました。
+
+*   **現状の `derivingjson`**:
+    *   複数のインターフェース型フィールドを処理するために、ジェネレータ内で各フィールドをループし、それぞれに対してインターフェース解決と実装者検索のロジックを繰り返す必要がありました。
+    *   JSON内の識別子フィールド名（例: `"type"`）や、各実装型に対応する識別子の値（例: `"dog"`, `"cat"`）の決定ロジックがジェネレータ内にハードコードされているか、単純なルール（型名を小文字化）に依存しています。
+
+*   **`go-scan` への提案機能**:
+
+    *   **より高度なタグ/アノテーション解析の活用 (提案2の拡張)**:
+        ジェネレータの振る舞いをフィールドごとに細かく設定できるようなタグ解析機能が求められます。
+        例えば、`oneOf` フィールドの識別子フィールド名をタグで指定できるようにします。
+        ```go
+        // フィールドタグで識別子フィールド名を指定
+        // FieldX MyInterface `json:"field_x" oneOf:"discriminatorKey:event_type"`
+        // FieldY OtherInterface `json:"field_y" oneOf:"discriminatorKey:payload_kind"`
+
+        // ジェネレータは FieldInfo.TagValue("oneOf", "discriminatorKey") のような形で取得
+        ```
+        また、実装型側で、自身に対応する識別子の値をタグやメソッドで明示できるようにする支援も考えられます（提案4の拡張）。
+        ```go
+        // 実装型側での識別子値の明示
+        // type Dog struct { ... } `oneOfValue:"doggo"`
+        // func (c *Cat) OneOfDiscriminatorValue() string { return "kitty" }
+        ```
+        `go-scan` がこれらの情報を容易に抽出できるAPI（例: `TypeInfo.TagValue()`, `TypeInfo.MethodValue()`) を提供することで、ジェネレータはより柔軟な設定に対応できます。
+
+    *   **型解決とインポート管理の包括的サポート (提案5, 6の重要性の再確認)**:
+        複数の `oneOf` フィールドを持つ構造体を処理する場合、それぞれのインターフェース、その実装型、さらには通常のフィールドの型が、多様な外部パッケージに由来する可能性が高まります。
+        ジェネレータがこれらの型の完全修飾名（パッケージエイリアスを含む）を正確に取得し、必要な `import` 文を網羅的かつ重複なく生成するためには、`go-scan` による強力なサポートが不可欠です。
+        `TypeInfo.ImportPath()` や `FieldType.QualifiedName()` のようなAPIの充実は、この複雑性を管理する上で極めて重要になります。
+        `Scanner.RequiredImportsForTypes(types ...*TypeInfo) map[string]string` のようなユーティリティは、コード生成の最終段階での `import` 文構築を大幅に簡略化します。
+
+    *   **ポインタ型表現の明確化**:
+        `oneOf` フィールドに代入される具象型は、通常ポインタ型（例: `s.MyInterfaceField = &MyStructImpl{}`）です。
+        `go-scan` が `TypeInfo` や `FieldType` を通じて、型名の文字列表現（例: `*mypkg.MyType`）や、それがポインタであるかどうかの情報を明確に提供できると、ジェネレータは型キャストや変数宣言のコードをより安全かつ正確に生成できます。`FieldType.AsPointerString()` や `FieldType.Elem().QualifiedName()` のようなメソッドが考えられます。
+
 これらの機能が `go-scan` に備わることで、`derivingjson` のようなコードジェネレータは、型の解析、フィルタリング、情報の抽出といった汎用的な処理にかかる手間を大幅に削減し、本来の目的であるコード生成ロジックの開発により集中できるようになるでしょう。
+特に、複数の `oneOf` フィールドや、より複雑な設定オプションを持つジェネレータを開発する際に、これらの改善点は大きな助けとなります。

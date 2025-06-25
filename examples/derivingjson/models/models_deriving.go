@@ -11,8 +11,8 @@ func (s *APIResponse) UnmarshalJSON(data []byte) error {
 	// Define an alias type to prevent infinite recursion with UnmarshalJSON.
 	type Alias APIResponse
 	aux := &struct {
-		// The Data field will be parsed manually later, so initially capture it as json.RawMessage.
 		Data json.RawMessage `json:"data"`
+
 		// All other fields will be handled by the standard unmarshaler via the Alias.
 		*Alias
 	}{
@@ -23,47 +23,305 @@ func (s *APIResponse) UnmarshalJSON(data []byte) error {
 		return fmt.Errorf("failed to unmarshal into aux struct for APIResponse: %w", err)
 	}
 
-	// If the Data field is null or empty, do nothing further with it.
-	if aux.Data == nil || string(aux.Data) == "null" {
-		s.Data = nil // Explicitly set to nil, or follow specific logic if a non-nil zero value is required.
-		return nil
+	// Process Data
+	if aux.Data != nil && string(aux.Data) != "null" {
+		var discriminatorDoc struct {
+			Type string `json:"type"` // Discriminator field
+		}
+		if err := json.Unmarshal(aux.Data, &discriminatorDoc); err != nil {
+			return fmt.Errorf("could not detect type from field 'data' (content: %s): %w", string(aux.Data), err)
+		}
+
+		switch discriminatorDoc.Type {
+
+		case "userprofile":
+			var content *UserProfile
+			if err := json.Unmarshal(aux.Data, &content); err != nil {
+				return fmt.Errorf("failed to unmarshal 'data' as *UserProfile for type 'userprofile' (content: %s): %w", string(aux.Data), err)
+			}
+			s.Data = content
+
+		case "productinfo":
+			var content *ProductInfo
+			if err := json.Unmarshal(aux.Data, &content); err != nil {
+				return fmt.Errorf("failed to unmarshal 'data' as *ProductInfo for type 'productinfo' (content: %s): %w", string(aux.Data), err)
+			}
+			s.Data = content
+
+		default:
+			if discriminatorDoc.Type == "" {
+				return fmt.Errorf("discriminator field 'type' missing or empty in 'data' (content: %s)", string(aux.Data))
+			}
+			return fmt.Errorf("unknown data type '%s' for field 'data' (content: %s)", discriminatorDoc.Type, string(aux.Data))
+		}
+	} else {
+		s.Data = nil // Explicitly set to nil if null or empty
 	}
 
-	// Read only the "type" field from the Data content to determine the concrete type.
-	// NOTE: This assumes the discriminator field is named "type".
-	// If the generator can determine the actual discriminator field name, it should be used here.
-	var discriminatorDoc struct {
-		Type string `json:"type"` // TODO: Make this discriminator field name configurable if not always "type".
+	return nil
+}
+
+func (s *Scene) UnmarshalJSON(data []byte) error {
+	// Define an alias type to prevent infinite recursion with UnmarshalJSON.
+	type Alias Scene
+	aux := &struct {
+		MainAnimal json.RawMessage `json:"main_animal"`
+
+		MainVehicle json.RawMessage `json:"main_vehicle"`
+
+		// All other fields will be handled by the standard unmarshaler via the Alias.
+		*Alias
+	}{
+		Alias: (*Alias)(s),
 	}
-	if err := json.Unmarshal(aux.Data, &discriminatorDoc); err != nil {
-		// Including aux content in the error can be helpful for debugging, but may make logs verbose for large JSON.
-		return fmt.Errorf("could not detect type from field 'data' (content: %s): %w", string(aux.Data), err)
+
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return fmt.Errorf("failed to unmarshal into aux struct for Scene: %w", err)
 	}
 
-	// Decode into the appropriate struct based on the value of the 'type' field.
-	switch discriminatorDoc.Type {
-
-	case "userprofile":
-		var content UserProfile
-		if err := json.Unmarshal(aux.Data, &content); err != nil {
-			return fmt.Errorf("failed to unmarshal 'data' as UserProfile for type 'userprofile' (content: %s): %w", string(aux.Data), err)
+	// Process MainAnimal
+	if aux.MainAnimal != nil && string(aux.MainAnimal) != "null" {
+		var discriminatorDoc struct {
+			Type string `json:"type"` // Discriminator field
 		}
-		s.Data = &content // Assuming the field is a pointer to the concrete type. Adjust if it's an interface holding value types.
-
-	case "productinfo":
-		var content ProductInfo
-		if err := json.Unmarshal(aux.Data, &content); err != nil {
-			return fmt.Errorf("failed to unmarshal 'data' as ProductInfo for type 'productinfo' (content: %s): %w", string(aux.Data), err)
+		if err := json.Unmarshal(aux.MainAnimal, &discriminatorDoc); err != nil {
+			return fmt.Errorf("could not detect type from field 'main_animal' (content: %s): %w", string(aux.MainAnimal), err)
 		}
-		s.Data = &content // Assuming the field is a pointer to the concrete type. Adjust if it's an interface holding value types.
 
-	default:
-		// The error message for an empty discriminatorDoc.Type could be more specific.
-		// (e.g., "discriminator field 'type' is missing or not a string in 'data'")
-		if discriminatorDoc.Type == "" {
-			return fmt.Errorf("discriminator field 'type' missing or empty in 'data' (content: %s)", string(aux.Data))
+		switch discriminatorDoc.Type {
+
+		case "dog":
+			var content *Dog
+			if err := json.Unmarshal(aux.MainAnimal, &content); err != nil {
+				return fmt.Errorf("failed to unmarshal 'main_animal' as *Dog for type 'dog' (content: %s): %w", string(aux.MainAnimal), err)
+			}
+			s.MainAnimal = content
+
+		case "cat":
+			var content *Cat
+			if err := json.Unmarshal(aux.MainAnimal, &content); err != nil {
+				return fmt.Errorf("failed to unmarshal 'main_animal' as *Cat for type 'cat' (content: %s): %w", string(aux.MainAnimal), err)
+			}
+			s.MainAnimal = content
+
+		default:
+			if discriminatorDoc.Type == "" {
+				return fmt.Errorf("discriminator field 'type' missing or empty in 'main_animal' (content: %s)", string(aux.MainAnimal))
+			}
+			return fmt.Errorf("unknown data type '%s' for field 'main_animal' (content: %s)", discriminatorDoc.Type, string(aux.MainAnimal))
 		}
-		return fmt.Errorf("unknown data type '%s' for field 'data' (content: %s)", discriminatorDoc.Type, string(aux.Data))
+	} else {
+		s.MainAnimal = nil // Explicitly set to nil if null or empty
+	}
+
+	// Process MainVehicle
+	if aux.MainVehicle != nil && string(aux.MainVehicle) != "null" {
+		var discriminatorDoc struct {
+			Type string `json:"type"` // Discriminator field
+		}
+		if err := json.Unmarshal(aux.MainVehicle, &discriminatorDoc); err != nil {
+			return fmt.Errorf("could not detect type from field 'main_vehicle' (content: %s): %w", string(aux.MainVehicle), err)
+		}
+
+		switch discriminatorDoc.Type {
+
+		case "car":
+			var content *Car
+			if err := json.Unmarshal(aux.MainVehicle, &content); err != nil {
+				return fmt.Errorf("failed to unmarshal 'main_vehicle' as *Car for type 'car' (content: %s): %w", string(aux.MainVehicle), err)
+			}
+			s.MainVehicle = content
+
+		case "bicycle":
+			var content *Bicycle
+			if err := json.Unmarshal(aux.MainVehicle, &content); err != nil {
+				return fmt.Errorf("failed to unmarshal 'main_vehicle' as *Bicycle for type 'bicycle' (content: %s): %w", string(aux.MainVehicle), err)
+			}
+			s.MainVehicle = content
+
+		default:
+			if discriminatorDoc.Type == "" {
+				return fmt.Errorf("discriminator field 'type' missing or empty in 'main_vehicle' (content: %s)", string(aux.MainVehicle))
+			}
+			return fmt.Errorf("unknown data type '%s' for field 'main_vehicle' (content: %s)", discriminatorDoc.Type, string(aux.MainVehicle))
+		}
+	} else {
+		s.MainVehicle = nil // Explicitly set to nil if null or empty
+	}
+
+	return nil
+}
+
+func (s *Parade) UnmarshalJSON(data []byte) error {
+	// Define an alias type to prevent infinite recursion with UnmarshalJSON.
+	type Alias Parade
+	aux := &struct {
+		LeadAnimal json.RawMessage `json:"lead_animal"`
+
+		TrailingAnimal json.RawMessage `json:"trailing_animal"`
+
+		// All other fields will be handled by the standard unmarshaler via the Alias.
+		*Alias
+	}{
+		Alias: (*Alias)(s),
+	}
+
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return fmt.Errorf("failed to unmarshal into aux struct for Parade: %w", err)
+	}
+
+	// Process LeadAnimal
+	if aux.LeadAnimal != nil && string(aux.LeadAnimal) != "null" {
+		var discriminatorDoc struct {
+			Type string `json:"type"` // Discriminator field
+		}
+		if err := json.Unmarshal(aux.LeadAnimal, &discriminatorDoc); err != nil {
+			return fmt.Errorf("could not detect type from field 'lead_animal' (content: %s): %w", string(aux.LeadAnimal), err)
+		}
+
+		switch discriminatorDoc.Type {
+
+		case "dog":
+			var content *Dog
+			if err := json.Unmarshal(aux.LeadAnimal, &content); err != nil {
+				return fmt.Errorf("failed to unmarshal 'lead_animal' as *Dog for type 'dog' (content: %s): %w", string(aux.LeadAnimal), err)
+			}
+			s.LeadAnimal = content
+
+		case "cat":
+			var content *Cat
+			if err := json.Unmarshal(aux.LeadAnimal, &content); err != nil {
+				return fmt.Errorf("failed to unmarshal 'lead_animal' as *Cat for type 'cat' (content: %s): %w", string(aux.LeadAnimal), err)
+			}
+			s.LeadAnimal = content
+
+		default:
+			if discriminatorDoc.Type == "" {
+				return fmt.Errorf("discriminator field 'type' missing or empty in 'lead_animal' (content: %s)", string(aux.LeadAnimal))
+			}
+			return fmt.Errorf("unknown data type '%s' for field 'lead_animal' (content: %s)", discriminatorDoc.Type, string(aux.LeadAnimal))
+		}
+	} else {
+		s.LeadAnimal = nil // Explicitly set to nil if null or empty
+	}
+
+	// Process TrailingAnimal
+	if aux.TrailingAnimal != nil && string(aux.TrailingAnimal) != "null" {
+		var discriminatorDoc struct {
+			Type string `json:"type"` // Discriminator field
+		}
+		if err := json.Unmarshal(aux.TrailingAnimal, &discriminatorDoc); err != nil {
+			return fmt.Errorf("could not detect type from field 'trailing_animal' (content: %s): %w", string(aux.TrailingAnimal), err)
+		}
+
+		switch discriminatorDoc.Type {
+
+		case "dog":
+			var content *Dog
+			if err := json.Unmarshal(aux.TrailingAnimal, &content); err != nil {
+				return fmt.Errorf("failed to unmarshal 'trailing_animal' as *Dog for type 'dog' (content: %s): %w", string(aux.TrailingAnimal), err)
+			}
+			s.TrailingAnimal = content
+
+		case "cat":
+			var content *Cat
+			if err := json.Unmarshal(aux.TrailingAnimal, &content); err != nil {
+				return fmt.Errorf("failed to unmarshal 'trailing_animal' as *Cat for type 'cat' (content: %s): %w", string(aux.TrailingAnimal), err)
+			}
+			s.TrailingAnimal = content
+
+		default:
+			if discriminatorDoc.Type == "" {
+				return fmt.Errorf("discriminator field 'type' missing or empty in 'trailing_animal' (content: %s)", string(aux.TrailingAnimal))
+			}
+			return fmt.Errorf("unknown data type '%s' for field 'trailing_animal' (content: %s)", discriminatorDoc.Type, string(aux.TrailingAnimal))
+		}
+	} else {
+		s.TrailingAnimal = nil // Explicitly set to nil if null or empty
+	}
+
+	return nil
+}
+
+func (s *PetOwner) UnmarshalJSON(data []byte) error {
+	// Define an alias type to prevent infinite recursion with UnmarshalJSON.
+	type Alias PetOwner
+	aux := &struct {
+		Pet json.RawMessage `json:"pet_data"`
+
+		Accessory json.RawMessage `json:"accessory"`
+
+		// All other fields will be handled by the standard unmarshaler via the Alias.
+		*Alias
+	}{
+		Alias: (*Alias)(s),
+	}
+
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return fmt.Errorf("failed to unmarshal into aux struct for PetOwner: %w", err)
+	}
+
+	// Process Pet
+	if aux.Pet != nil && string(aux.Pet) != "null" {
+		var discriminatorDoc struct {
+			Type string `json:"type"` // Discriminator field
+		}
+		if err := json.Unmarshal(aux.Pet, &discriminatorDoc); err != nil {
+			return fmt.Errorf("could not detect type from field 'pet_data' (content: %s): %w", string(aux.Pet), err)
+		}
+
+		switch discriminatorDoc.Type {
+
+		case "goldfish":
+			var content *Goldfish
+			if err := json.Unmarshal(aux.Pet, &content); err != nil {
+				return fmt.Errorf("failed to unmarshal 'pet_data' as *Goldfish for type 'goldfish' (content: %s): %w", string(aux.Pet), err)
+			}
+			s.Pet = content
+
+		default:
+			if discriminatorDoc.Type == "" {
+				return fmt.Errorf("discriminator field 'type' missing or empty in 'pet_data' (content: %s)", string(aux.Pet))
+			}
+			return fmt.Errorf("unknown data type '%s' for field 'pet_data' (content: %s)", discriminatorDoc.Type, string(aux.Pet))
+		}
+	} else {
+		s.Pet = nil // Explicitly set to nil if null or empty
+	}
+
+	// Process Accessory
+	if aux.Accessory != nil && string(aux.Accessory) != "null" {
+		var discriminatorDoc struct {
+			Type string `json:"type"` // Discriminator field
+		}
+		if err := json.Unmarshal(aux.Accessory, &discriminatorDoc); err != nil {
+			return fmt.Errorf("could not detect type from field 'accessory' (content: %s): %w", string(aux.Accessory), err)
+		}
+
+		switch discriminatorDoc.Type {
+
+		case "car":
+			var content *Car
+			if err := json.Unmarshal(aux.Accessory, &content); err != nil {
+				return fmt.Errorf("failed to unmarshal 'accessory' as *Car for type 'car' (content: %s): %w", string(aux.Accessory), err)
+			}
+			s.Accessory = content
+
+		case "bicycle":
+			var content *Bicycle
+			if err := json.Unmarshal(aux.Accessory, &content); err != nil {
+				return fmt.Errorf("failed to unmarshal 'accessory' as *Bicycle for type 'bicycle' (content: %s): %w", string(aux.Accessory), err)
+			}
+			s.Accessory = content
+
+		default:
+			if discriminatorDoc.Type == "" {
+				return fmt.Errorf("discriminator field 'type' missing or empty in 'accessory' (content: %s)", string(aux.Accessory))
+			}
+			return fmt.Errorf("unknown data type '%s' for field 'accessory' (content: %s)", discriminatorDoc.Type, string(aux.Accessory))
+		}
+	} else {
+		s.Accessory = nil // Explicitly set to nil if null or empty
 	}
 
 	return nil

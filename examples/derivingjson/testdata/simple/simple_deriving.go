@@ -8,52 +8,55 @@ import (
 )
 
 func (s *Container) UnmarshalJSON(data []byte) error {
-	var tempMap map[string]json.RawMessage
-	if err := json.Unmarshal(data, &tempMap); err != nil {
-		return fmt.Errorf("failed to unmarshal initial JSON object: %w", err)
+	// Define an alias type to prevent infinite recursion with UnmarshalJSON.
+	type Alias Container
+	aux := &struct {
+		Content json.RawMessage `json:"content"`
+
+		// All other fields will be handled by the standard unmarshaler via the Alias.
+		*Alias
+	}{
+		Alias: (*Alias)(s),
 	}
 
-	if rawVal, ok := tempMap["other_content"]; ok && rawVal != nil {
-		var val Other
-		if err := json.Unmarshal(rawVal, &val); err != nil {
-			return fmt.Errorf("failed to unmarshal field 'other_content' into Other: %w", err)
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return fmt.Errorf("failed to unmarshal into aux struct for Container: %w", err)
+	}
+
+	// Process Content
+	if aux.Content != nil && string(aux.Content) != "null" {
+		var discriminatorDoc struct {
+			Type string `json:"type"` // Discriminator field
 		}
-		s.OtherContent = val
-	}
-
-	rawContent, ok := tempMap["content"]
-	if !ok || len(rawContent) == 0 || string(rawContent) == "null" {
-		return nil
-	}
-
-	var discriminatorDoc struct {
-		Type string `json:"type"`
-	}
-	if err := json.Unmarshal(rawContent, &discriminatorDoc); err != nil {
-		return fmt.Errorf("failed to unmarshal discriminator from 'content' (content: %s): %w", string(rawContent), err)
-	}
-
-	switch discriminatorDoc.Type {
-
-	case "circle":
-		var content Circle
-		if err := json.Unmarshal(rawContent, &content); err != nil {
-			return fmt.Errorf("failed to unmarshal 'content' as Circle for type 'circle': %w", err)
+		if err := json.Unmarshal(aux.Content, &discriminatorDoc); err != nil {
+			return fmt.Errorf("could not detect type from field 'content' (content: %s): %w", string(aux.Content), err)
 		}
-		s.Content = &content
 
-	case "rectangle":
-		var content Rectangle
-		if err := json.Unmarshal(rawContent, &content); err != nil {
-			return fmt.Errorf("failed to unmarshal 'content' as Rectangle for type 'rectangle': %w", err)
-		}
-		s.Content = &content
+		switch discriminatorDoc.Type {
 
-	default:
-		if discriminatorDoc.Type == "" {
-			return fmt.Errorf("discriminator field 'type' missing in 'content' (content: %s)", string(rawContent))
+		case "circle":
+			var content *Circle
+			if err := json.Unmarshal(aux.Content, &content); err != nil {
+				return fmt.Errorf("failed to unmarshal 'content' as *Circle for type 'circle' (content: %s): %w", string(aux.Content), err)
+			}
+			s.Content = content
+
+		case "rectangle":
+			var content *Rectangle
+			if err := json.Unmarshal(aux.Content, &content); err != nil {
+				return fmt.Errorf("failed to unmarshal 'content' as *Rectangle for type 'rectangle' (content: %s): %w", string(aux.Content), err)
+			}
+			s.Content = content
+
+		default:
+			if discriminatorDoc.Type == "" {
+				return fmt.Errorf("discriminator field 'type' missing or empty in 'content' (content: %s)", string(aux.Content))
+			}
+			return fmt.Errorf("unknown data type '%s' for field 'content' (content: %s)", discriminatorDoc.Type, string(aux.Content))
 		}
-		return fmt.Errorf("unknown type '%s' for field 'content' (content: %s)", discriminatorDoc.Type, string(rawContent))
+	} else {
+		s.Content = nil // Explicitly set to nil if null or empty
 	}
+
 	return nil
 }

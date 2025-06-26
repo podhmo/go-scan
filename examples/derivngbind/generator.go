@@ -5,13 +5,13 @@ import (
 	"context"
 	"fmt"
 	"go/format"
+	"net/http" // Added for http.ErrNoCookie
 	"os"
 	"path/filepath"
 	"reflect"
 	"sort" // Added for sorting imports
 	"strings"
 	"text/template"
-	"net/http" // Added for http.ErrNoCookie
 
 	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/scanner"
@@ -20,13 +20,13 @@ import (
 const bindingAnnotation = "@derivng:binding"
 
 type TemplateData struct {
-	PackageName string
-	StructName  string
-	Fields      []FieldBindingInfo
-	Imports     map[string]string // alias -> path
-	NeedsBody   bool
+	PackageName                string
+	StructName                 string
+	Fields                     []FieldBindingInfo
+	Imports                    map[string]string // alias -> path
+	NeedsBody                  bool
 	HasSpecificBodyFieldTarget bool
-	ErrNoCookie error // For template: http.ErrNoCookie
+	ErrNoCookie                error // For template: http.ErrNoCookie
 	// IsGo122     bool // No longer needed directly in template for path vars
 }
 
@@ -823,20 +823,19 @@ func Generate(ctx context.Context, pkgPath string) error {
 			}
 		}
 
-
 		if !hasBindingAnnotationOnStruct {
 			continue
 		}
 		fmt.Printf("  Processing struct: %s for %s\n", typeInfo.Name, bindingAnnotation)
 
 		data := TemplateData{
-			PackageName: pkgInfo.Name,
-			StructName:  typeInfo.Name,
-			Imports:     make(map[string]string),
-			Fields:      []FieldBindingInfo{},
-			NeedsBody:   (structLevelInTag == "body"),
+			PackageName:                pkgInfo.Name,
+			StructName:                 typeInfo.Name,
+			Imports:                    make(map[string]string),
+			Fields:                     []FieldBindingInfo{},
+			NeedsBody:                  (structLevelInTag == "body"),
 			HasSpecificBodyFieldTarget: false, // Initialize
-			ErrNoCookie: http.ErrNoCookie,
+			ErrNoCookie:                http.ErrNoCookie,
 			// IsGo122:     isGo122,
 		}
 		needsImportNetHTTP = true // For http.ErrNoCookie
@@ -937,11 +936,11 @@ func Generate(ctx context.Context, pkgPath string) error {
 			} else { // Not a slice, not a pointer (e.g. int, string, ExternalType)
 				baseTypeForConversion = currentScannerType.Name // "int", "string", "ExternalType"
 				if baseTypeForConversion == "" {
-						fmt.Printf("      Warning: Field %s (%s) - field.Type.Name is empty for non-slice/non-pointer. Original type: %s. Skipping.\n", field.Name, fInfo.OriginalFieldTypeString, field.Type.String())
-						if bindFrom != "body" {
-							continue
-						}
+					fmt.Printf("      Warning: Field %s (%s) - field.Type.Name is empty for non-slice/non-pointer. Original type: %s. Skipping.\n", field.Name, fInfo.OriginalFieldTypeString, field.Type.String())
+					if bindFrom != "body" {
+						continue
 					}
+				}
 			}
 
 			fInfo.FieldType = baseTypeForConversion // This is what template's {{.FieldType}} will be, e.g., "int", "string", "MyStruct"
@@ -1029,24 +1028,24 @@ func Generate(ctx context.Context, pkgPath string) error {
 		// if _, ok := allFileImports["strings"]; ok {
 		// }
 
-		if needsImportNetHTTP {
-				fieldBindingInfo.IsBody = true // This field itself is the target for the body
-				data.NeedsBody = true
-				data.HasSpecificBodyFieldTarget = true // Set this flag
-				needsImportEncodingJson = true
-				needsImportIO = true
-			}
+		// if needsImportNetHTTP {  // THIS BLOCK IS DUPLICATED AND CAUSES THE ERROR
+		// 		fieldBindingInfo.IsBody = true
+		// 		data.NeedsBody = true
+		// 		data.HasSpecificBodyFieldTarget = true
+		// 		needsImportEncodingJson = true
+		// 		needsImportIO = true
+		// 	}
 
-			if bindFrom != "body" {
-				needsImportNetHTTP = true
-				if needsConversion {
-					needsImportStrconv = true
-				}
-				needsImportFmt = true // For error messages
-			}
+		// 	if bindFrom != "body" { // THIS BLOCK IS DUPLICATED
+		// 		needsImportNetHTTP = true
+		// 		if needsConversion {
+		// 			needsImportStrconv = true
+		// 		}
+		// 		needsImportFmt = true
+		// 	}
 
-			data.Fields = append(data.Fields, fieldBindingInfo)
-		}
+		// 	data.Fields = append(data.Fields, fieldBindingInfo) // THIS LINE IS DUPLICATED
+		// } // THIS BRACE IS EXTRA
 
 		if len(data.Fields) == 0 && !data.NeedsBody { // If no fields to bind and struct is not body target
 			fmt.Printf("  Skipping struct %s: no bindable fields found and not a global body target.\n", typeInfo.Name)
@@ -1070,14 +1069,13 @@ func Generate(ctx context.Context, pkgPath string) error {
 			allFileImports["io"] = ""
 		}
 		if data.NeedsBody && !needsImportEncodingJson { // Ensure json/io are imported if struct is body target
-		    allFileImports["encoding/json"] = ""
+			allFileImports["encoding/json"] = ""
 			needsImportEncodingJson = true
 		}
 		if data.NeedsBody && !needsImportIO {
-		    allFileImports["io"] = ""
+			allFileImports["io"] = ""
 			needsImportIO = true
 		}
-
 
 		tmpl, err := template.New("bind").Parse(bindMethodTemplate)
 		if err != nil {

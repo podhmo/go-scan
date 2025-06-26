@@ -23,7 +23,8 @@ type TemplateData struct {
 	Fields      []FieldBindingInfo
 	Imports     map[string]string // alias -> path
 	NeedsBody   bool
-	IsGo122     bool // True if Go version is 1.22 or later (for req.PathValue)
+	HasSpecificBodyFieldTarget bool
+	// IsGo122     bool // No longer needed directly in template for path vars
 }
 
 type FieldBindingInfo struct {
@@ -37,18 +38,14 @@ type FieldBindingInfo struct {
 }
 
 const bindMethodTemplate = `
-func (s *{{.StructName}}) Bind(req *http.Request) error {
+func (s *{{.StructName}}) Bind(req *http.Request, pathVar func(string) string) error {
 	var err error
 	_ = err // prevent unused var error if no error handling is needed below
 
 	{{range .Fields}}
 	{{if eq .BindFrom "path"}}
-	// Path parameter binding using req.PathValue (available in Go 1.22+)
-	// If using Go < 1.22, this part will not compile.
-	// You might need to use a router that puts path parameters in req.Context()
-	// or handle path parsing manually for older Go versions.
-	{{if $.IsGo122}}
-	if pathValueStr := req.PathValue("{{.BindName}}"); pathValueStr != "" {
+	// Path parameter binding using the provided pathVar function
+	if pathValueStr := pathVar("{{.BindName}}"); pathValueStr != "" {
 		{{if eq .FieldType "string"}}
 		s.{{.FieldName}} = pathValueStr
 		{{else if eq .FieldType "int"}}
@@ -66,14 +63,6 @@ func (s *{{.StructName}}) Bind(req *http.Request) error {
 		// Handle missing path parameter "{{.BindName}}" if necessary (e.g. return error or set default)
 		// For now, if it's empty, we do nothing, field remains zero-value.
 	}
-	{{else}}
-	// TODO: Path parameter binding for Go < 1.22 requires custom logic or a router.
-	// Example: chi.URLParam(req, "{{.BindName}}")
-	// Or for manual parsing (less robust):
-	// pathParts := strings.Split(strings.Trim(req.URL.Path, "/"), "/")
-	// if len(pathParts) > index_of_{{.BindName}}_in_path { pathValueStr := pathParts[index_of_{{.BindName}}_in_path] ... }
-	_ = req // placeholder to use req if no other bindings use it and path is skipped.
-	{{end}}
 	{{else if eq .BindFrom "query"}}
 	if val := req.URL.Query().Get("{{.BindName}}"); val != "" {
 		{{if eq .FieldType "string"}}
@@ -154,7 +143,9 @@ func (s *{{.StructName}}) Bind(req *http.Request) error {
 				}
 			}
 		}
-		afterBodyProcessing: // Label for goto
+		{{if .HasSpecificBodyFieldTarget}}
+		afterBodyProcessing: // Label for goto only if there was a specific body field target that could jump here
+		{{end}}
 	}
 	{{end}}
 	return nil
@@ -162,51 +153,47 @@ func (s *{{.StructName}}) Bind(req *http.Request) error {
 `
 
 // isGo122orLater checks the go.mod file for the Go version.
-// This is a simplified check and might need refinement for more complex go.mod files.
-func isGo122orLater(gscn *goscan.Scanner) bool {
-	if gscn.Module == nil || gscn.Module.GoVersion == "" {
-		// Fallback or warning if go.mod isn't parsed or version isn't found
-		// For safety, assume older version if undetermined.
-		fmt.Println("Warning: Go version not found in go.mod, assuming pre-1.22 for path parameter binding.")
-		return false
-	}
-	versionStr := gscn.Module.GoVersion
-	// Expecting format like "1.22" or "1.22.0"
-	parts := strings.Split(versionStr, ".")
-	if len(parts) < 2 {
-		return false // Invalid format
-	}
-	major, errMajor := strconv.Atoi(parts[0])
-	minor, errMinor := strconv.Atoi(parts[1])
-	if errMajor != nil || errMinor != nil {
-		return false // Invalid format
-	}
+// This function is kept for now as it might be useful for other features,
+// but it's not strictly necessary for the current path parameter handling.
+// func isGo122orLater(gscn *goscan.Scanner) bool {
+// 	if gscn.Module == nil || gscn.Module.GoVersion == "" {
+// 		// Fallback or warning if go.mod isn't parsed or version isn't found
+// 		// For safety, assume older version if undetermined.
+// 		fmt.Println("Warning: Go version not found in go.mod, assuming pre-1.22 for path parameter binding.")
+// 		return false
+// 	}
+// 	versionStr := gscn.Module.GoVersion
+// 	// Expecting format like "1.22" or "1.22.0"
+// 	parts := strings.Split(versionStr, ".")
+// 	if len(parts) < 2 {
+// 		return false // Invalid format
+// 	}
+// 	major, errMajor := strconv.Atoi(parts[0])
+// 	minor, errMinor := strconv.Atoi(parts[1])
+// 	if errMajor != nil || errMinor != nil {
+// 		return false // Invalid format
+// 	}
 
-	return major > 1 || (major == 1 && minor >= 22)
-}
+// 	return major > 1 || (major == 1 && minor >= 22)
+// }
 
 func Generate(ctx context.Context, pkgPath string) error {
 	gscn, err := goscan.New(".")
 	if err != nil {
 		return fmt.Errorf("failed to create go-scan scanner: %w", err)
 	}
-	// Ensure module info is loaded to check Go version
-	if _, err := gscn.ScanPackage(ctx, pkgPath); err != nil {
-		// this initial scan is primarily to ensure module info is loaded by go-scan
-	}
-
-
-	pkgInfo, err := gscn.ScanPackage(ctx, pkgPath) // Rescan or use cached if available
+	// Scan the package to get its info.
+	pkgInfo, err := gscn.ScanPackage(ctx, pkgPath)
 	if err != nil {
 		return fmt.Errorf("go-scan failed to scan package at %s: %w", pkgPath, err)
 	}
 
-	isGo122 := isGo122orLater(gscn)
-	if isGo122 {
-		fmt.Println("Detected Go version 1.22 or later. Path parameters will use req.PathValue().")
-	} else {
-		fmt.Println("Detected Go version < 1.22. Path parameter binding will be placeholder. Consider upgrading Go or using a router for path params.")
-	}
+	// isGo122 := isGo122orLater(gscn) // No longer strictly needed for path vars
+	// if isGo122 {
+	// 	fmt.Println("Detected Go version 1.22 or later.") // Info message can be removed or adapted
+	// } else {
+	// 	fmt.Println("Detected Go version < 1.22.") // Info message can be removed or adapted
+	// }
 
 	var generatedCodeForAllStructs bytes.Buffer
 	allFileImports := make(map[string]string) // path -> alias
@@ -256,7 +243,8 @@ func Generate(ctx context.Context, pkgPath string) error {
 			Imports:     make(map[string]string),
 			Fields:      []FieldBindingInfo{},
 			NeedsBody:   (structLevelInTag == "body"),
-			IsGo122:     isGo122,
+			HasSpecificBodyFieldTarget: false, // Initialize
+			// IsGo122:     isGo122, // No longer needed here
 		}
 
 		for _, field := range typeInfo.Struct.Fields {
@@ -340,6 +328,7 @@ func Generate(ctx context.Context, pkgPath string) error {
 			if bindFrom == "body" {
 				fieldBindingInfo.IsBody = true // This field itself is the target for the body
 				data.NeedsBody = true
+				data.HasSpecificBodyFieldTarget = true // Set this flag
 				needsImportEncodingJson = true
 				needsImportIO = true
 			}

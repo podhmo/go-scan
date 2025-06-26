@@ -292,8 +292,7 @@ func TestQueryAndPathOnlyBind_Bind(t *testing.T) {
 	// t.Log("QueryAndPathOnlyBind: UserID is now asserted using mockPathVar.") // Updated log
 }
 
-/*
-// TODO: Temporarily commented out due to go-scan pointer type resolution issue
+// TODO: Temporarily commented out due to go-scan pointer type resolution issue - Re-enabling // Removing comment
 func TestPointerFields_Bind(t *testing.T) {
 	strPtr := func(s string) *string { return &s }
 	intPtr := func(i int) *int { return &i }
@@ -311,10 +310,10 @@ func TestPointerFields_Bind(t *testing.T) {
 	}{
 		{
 			name:       "all optional present",
-			requestURL: "/?qStrOpt=test&qIntOpt=123&qBoolOpt=true",
-			headers:    map[string]string{"hStrOpt": "headerTest"},
-			cookies:    []*http.Cookie{{Name: "cStrOpt", Value: "cookieTest"}},
-			pathParams: map[string]string{"pStrOpt": "pathTest"},
+			requestURL: "/?qStrOpt=test&qIntOpt=123&qBoolOpt=true&qStrReq=dummy&qIntReq=0&qBoolReq=false",
+			headers:    map[string]string{"hStrOpt": "headerTest", "hStrReq": "dummy"},
+			cookies:    []*http.Cookie{{Name: "cStrOpt", Value: "cookieTest"}, {Name: "cStrReq", Value: "dummy"}},
+			pathParams: map[string]string{"pStrOpt": "pathTest", "pStrReq": "dummy"},
 			expected: TestPointerFields{
 				QueryStrOptional:  strPtr("test"),
 				QueryIntOptional:  intPtr(123),
@@ -322,11 +321,20 @@ func TestPointerFields_Bind(t *testing.T) {
 				HeaderStrOptional: strPtr("headerTest"),
 				PathStrOptional:   strPtr("pathTest"),
 				CookieStrOptional: strPtr("cookieTest"),
+				QueryStrRequired:  strPtr("dummy"),
+				QueryIntRequired:  intPtr(0),
+				QueryBoolRequired: boolPtr(false),
+				HeaderStrRequired: strPtr("dummy"),
+				PathStrRequired:   strPtr("dummy"),
+				CookieStrRequired: strPtr("dummy"),
 			},
 		},
 		{
 			name:       "all optional missing",
-			requestURL: "/",
+			requestURL: "/?qStrReq=dummy&qIntReq=0&qBoolReq=false", // Optional query params missing
+			headers:    map[string]string{"hStrReq": "dummy"},      // Optional header missing
+			cookies:    []*http.Cookie{{Name: "cStrReq", Value: "dummy"}}, // Optional cookie missing
+			pathParams: map[string]string{"pStrReq": "dummy"},      // Optional path param missing
 			expected: TestPointerFields{
 				QueryStrOptional:  nil,
 				QueryIntOptional:  nil,
@@ -334,6 +342,12 @@ func TestPointerFields_Bind(t *testing.T) {
 				HeaderStrOptional: nil,
 				PathStrOptional:   nil,
 				CookieStrOptional: nil,
+				QueryStrRequired:  strPtr("dummy"),
+				QueryIntRequired:  intPtr(0),
+				QueryBoolRequired: boolPtr(false),
+				HeaderStrRequired: strPtr("dummy"),
+				PathStrRequired:   strPtr("dummy"),
+				CookieStrRequired: strPtr("dummy"),
 			},
 		},
 		{
@@ -397,37 +411,61 @@ func TestPointerFields_Bind(t *testing.T) {
 			errorContains: "required cookie \"cStrReq\" for field CookieStrRequired is missing",
 		},
 		{
-			name:       "all values empty strings (should be treated as present for string, error for others if required)",
+			name: "all values empty strings",
+			// Optional pointers to non-string types should become nil due to conversion error.
+			// Required pointers to non-string types should cause a conversion error.
+			// String pointers should point to an empty string.
 			requestURL: "/?qStrOpt=&qStrReq=&qIntOpt=&qIntReq=&qBoolOpt=&qBoolReq=",
-			headers:    map[string]string{"hStrOpt": "", "hStrReq": ""},
-			cookies:    []*http.Cookie{{Name: "cStrOpt", Value: ""}, {Name: "cStrReq", Value: ""}},
-			pathParams: map[string]string{"pStrOpt": "", "pStrReq": ""},
+			headers:    map[string]string{"hStrOpt": "", "hStrReq": "", "hIntOpt": "", "hIntReq": "", "hBoolOpt": "", "hBoolReq": ""}, // Assuming these could exist
+			cookies:    []*http.Cookie{
+				{Name: "cStrOpt", Value: ""}, {Name: "cStrReq", Value: ""},
+				{Name: "cIntOpt", Value: ""}, {Name: "cIntReq", Value: ""}, // Assuming these could exist
+				{Name: "cBoolOpt", Value: ""}, {Name: "cBoolReq", Value: ""}, // Assuming these could exist
+			},
+			pathParams: map[string]string{"pStrOpt": "", "pStrReq": "", "pIntOpt": "", "pIntReq": "", "pBoolOpt": "", "pBoolReq": ""}, // Assuming
+			// Expected struct values if no error occurred (which is not the case here for required int/bool)
+			// This test will expect an error from the first required non-string field that gets an empty string.
+			// Based on field order in TestPointerFields: QueryIntRequired is the first such.
 			expected: TestPointerFields{
 				QueryStrOptional:  strPtr(""),
 				QueryStrRequired:  strPtr(""),
-				// Int and Bool optional fields will be nil because empty string is not a valid value
-				QueryIntOptional:  nil,
-				QueryBoolOptional: nil,
+				QueryIntOptional:  nil, // Optional *int with "" input -> nil
+				QueryBoolOptional: nil, // Optional *bool with "" input -> nil
 				HeaderStrOptional: strPtr(""),
 				HeaderStrRequired: strPtr(""),
 				PathStrOptional:   strPtr(""),
 				PathStrRequired:   strPtr(""),
 				CookieStrOptional: strPtr(""),
 				CookieStrRequired: strPtr(""),
-				// Expecting errors for required int/bool if they are empty string
+				// QueryIntRequired will error first.
 			},
-			// This specific sub-case (empty string for required int/bool) will be handled by type conversion errors
-			// or by required check if the value is considered "missing" by Get (which it is not for empty string).
-			// The current template logic for required fields checks *before* conversion.
-			// So if `val` is "", it's not missing. Conversion will fail.
-			// Let's test one of these: required int with empty string.
-		},
-		{
-			name:          "required int query with empty string value",
-			requestURL:    "/?qStrReq=s&qIntReq=&qBoolReq=true", // qIntReq is ""
-			pathParams:    map[string]string{"pStrReq": "p"}, headers: map[string]string{"hStrReq": "h"}, cookies: []*http.Cookie{{Name: "cStrReq", Value: "c"}},
-			expectError:   true,
+			expectError:   true, // Expecting error due to QueryIntRequired=""
 			errorContains: "failed to convert query parameter \"qIntReq\" (value: \"\") to int for field QueryIntRequired",
+		},
+		// The test "required int query with empty string value" is now covered by the modified "all values empty strings"
+		// if QueryIntRequired is the first one to cause error. We can remove it or make it more specific
+		// if other required fields (e.g. bool) are tested for empty string errors.
+		// For now, let's assume the above test covers the qIntReq="" scenario.
+		// {
+		// 	name:          "required int query with empty string value",
+		// 	requestURL:    "/?qStrReq=s&qIntReq=&qBoolReq=true", // qIntReq is ""
+		// 	pathParams:    map[string]string{"pStrReq": "p", "pIntReq": "0", "pBoolReq": "false"}, // Satisfy other path required
+		// 	headers:       map[string]string{"hStrReq": "h", "hIntReq": "0", "hBoolReq": "false"}, // Satisfy other header required
+		// 	cookies:       []*http.Cookie{ // Satisfy other cookie required
+		// 		{Name: "cStrReq", Value: "c"}, {Name: "cIntReq", Value: "0"}, {Name: "cBoolReq", Value: "false"},
+		// 	},
+		// 	expectError:   true,
+		// 	errorContains: "failed to convert query parameter \"qIntReq\" (value: \"\") to int for field QueryIntRequired",
+		// },
+		{
+			name:          "required bool query with empty string value",
+			requestURL:    "/?qStrReq=s&qIntReq=1&qBoolReq=", // qBoolReq is ""
+			// Satisfy other required fields for different sources to isolate this error
+			headers:    map[string]string{"hStrReq": "h", "hBoolReq": "true"}, // dummy for other required header
+			cookies:    []*http.Cookie{{Name: "cStrReq", Value: "c"}, {Name: "cBoolReq", Value: "true"}}, // dummy for other required cookie
+			pathParams: map[string]string{"pStrReq": "p", "pBoolReq": "true"},   // dummy for other required path
+			expectError:   true,
+			errorContains: "failed to convert query parameter \"qBoolReq\" (value: \"\") to bool for field QueryBoolRequired",
 		},
 	}
 
@@ -538,7 +576,7 @@ func assertBoolPtrEqual(t *testing.T, fieldName string, got, want *bool) {
 		t.Errorf("%s: expected %v, got %v", fieldName, *want, *got)
 	}
 }
-*/
+// */ // Removing comment
 func TestRequiredNonPointerFields_Bind(t *testing.T) {
 	tests := []struct {
 		name          string

@@ -52,3 +52,30 @@ type QueryAndPathOnlyBind struct {
     ItemCode  string `in:"query" query:"itemCode"`
     Limit     int    `in:"query" query:"limit"`
 }
+
+// TestPointerFields is a struct for testing pointer fields.
+// @derivng:binding
+type TestPointerFields struct {
+	QueryStrOptional *string `in:"query" query:"qStrOpt"`
+	QueryStrRequired *string `in:"query" query:"qStrReq" required:"true"`
+	QueryIntOptional *int    `in:"query" query:"qIntOpt"`
+	QueryIntRequired *int    `in:"query" query:"qIntReq" required:"true"`
+	QueryBoolOptional *bool  `in:"query" query:"qBoolOpt"`
+	QueryBoolRequired *bool  `in:"query" query:"qBoolReq" required:"true"`
+	HeaderStrOptional *string `in:"header" header:"hStrOpt"`
+	HeaderStrRequired *string `in:"header" header:"hStrReq" required:"true"`
+	PathStrOptional   *string `in:"path" path:"pStrOpt"`
+	PathStrRequired   *string `in:"path" path:"pStrReq" required:"true"`
+	CookieStrOptional *string `in:"cookie" cookie:"cStrOpt"`
+	CookieStrRequired *string `in:"cookie" cookie:"cStrReq" required:"true"`
+}
+
+// TestRequiredNonPointerFields is a struct for testing required non-pointer fields.
+// @derivng:binding
+type TestRequiredNonPointerFields struct {
+	QueryStrRequired string `in:"query" query:"qStrReq" required:"true"`
+	QueryIntRequired int    `in:"query" query:"qIntReq" required:"true"`
+	HeaderStrRequired string `in:"header" header:"hStrReq" required:"true"`
+	PathStrRequired string `in:"path" path:"pStrReq" required:"true"`
+	CookieStrRequired string `in:"cookie" cookie:"cStrReq" required:"true"`
+}

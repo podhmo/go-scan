@@ -38,10 +38,14 @@
 
 ### 中優先度
 
-3.  **対応型の拡充**:
-    *   `int64`, `float32`, `float64` などの数値型。
-    *   `time.Time` (特定のフォーマット文字列からのパース)。
-    *   スライス型 (例: `[]string`, `[]int` from query parameters like `?ids=1,2,3` or `?ids=1&ids=2`)。
+3.  **対応型の拡充**: (完了)
+    *   `int8`-`int64`, `uint8`-`uint64`, `uint`, `uintptr`, `float32`, `float64`, `complex64`, `complex128`, `bool`, `string` をサポートしました。
+    *   上記型のポインタ型（例: `*int`, `*string`）をサポートしました。
+    *   上記型およびそのポインタ型のスライス型（例: `[]string`, `[]*int`, `[]complex128`）をサポートしました。
+        *   Query parameters: `?key=val1&key=val2` (form style, explode=true) 形式で対応。
+        *   Header parameters: `X-Key: val1,val2,val3` (simple style) 形式で対応。
+        *   Cookie parameters: `Cookie: key=val1,val2,val3` (form style, explode=false) 形式で対応。
+    *   残課題: `time.Time` (特定のフォーマット文字列からのパース)。これは別途検討。
 
 4.  **エラーハンドリングの改善**:
     *   複数のバインディングエラーが発生した場合に、それらをまとめて返す (multierror的な)。 (Go 1.20+ の `errors.Join` を使用して対応済み)

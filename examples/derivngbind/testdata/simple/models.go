@@ -79,3 +79,100 @@ type TestRequiredNonPointerFields struct {
 	PathStrRequired string `in:"path" path:"pStrReq" required:"true"`
 	CookieStrRequired string `in:"cookie" cookie:"cStrReq" required:"true"`
 }
+
+// @derivng:binding
+// TestExtendedTypesBind is a struct for testing newly supported types including slices and various numerics.
+type TestExtendedTypesBind struct {
+	// Slice types
+	QueryStringSlice    []string  `in:"query" query:"qStrSlice"`
+	HeaderIntSlice      []int     `in:"header" header:"X-Int-Slice"` // Comma-separated ints
+	CookieBoolSlice     []bool    `in:"cookie" cookie:"ckBoolSlice"` // Comma-separated bools
+	PathStringSlice     []string  `in:"path" path:"pStrSlice"` // Note: Path slices are generally not standard, testing how it's (not) handled.
+	QueryPtrIntSlice    []*int    `in:"query" query:"qPtrIntSlice"`
+	HeaderPtrStringSlice []*string `in:"header" header:"X-PtrStr-Slice"`
+
+
+	// Numeric types
+	QueryInt8    int8    `in:"query" query:"qInt8"`
+	QueryInt16   int16   `in:"query" query:"qInt16"`
+	QueryInt32   int32   `in:"query" query:"qInt32"`
+	QueryInt64   int64   `in:"query" query:"qInt64"`
+	HeaderUint   uint    `in:"header" header:"X-Uint"`
+	HeaderUint8  uint8   `in:"header" header:"X-Uint8"`
+	HeaderUint16 uint16  `in:"header" header:"X-Uint16"`
+	HeaderUint32 uint32  `in:"header" header:"X-Uint32"`
+	HeaderUint64 uint64  `in:"header" header:"X-Uint64"`
+	CookieFloat32 float32 `in:"cookie" cookie:"ckFloat32"`
+	CookieFloat64 float64 `in:"cookie" cookie:"ckFloat64"`
+
+	// Pointer to numeric types
+	PathPtrInt64   *int64   `in:"path" path:"pPtrInt64"`
+	QueryPtrUint   *uint    `in:"query" query:"qPtrUint"`
+	HeaderPtrFloat32 *float32 `in:"header" header:"X-PtrFloat32"`
+
+	// Required variations
+	RequiredQueryStringSlice []string `in:"query" query:"reqQStrSlice" required:"true"`
+	RequiredHeaderInt        int      `in:"header" header:"X-ReqInt" required:"true"`
+
+	// Boolean specific tests
+	QueryBoolTrue     bool   `in:"query" query:"qBoolTrue"`  // Test "true"
+	QueryBoolFalse    bool   `in:"query" query:"qBoolFalse"` // Test "false"
+	QueryBoolOne      bool   `in:"query" query:"qBoolOne"`   // Test "1"
+	QueryBoolZero     bool   `in:"query" query:"qBoolZero"`  // Test "0"
+	QueryBoolYes      bool   `in:"query" query:"qBoolYes"`   // Test "yes" (should be false by default strconv.ParseBool)
+	QueryBoolCapTrue  bool   `in:"query" query:"qBoolCapTrue"` // Test "TRUE"
+	QueryBoolInvalid  bool   `in:"query" query:"qBoolInvalid"` // Test invalid bool string
+
+	// Empty value handling
+	QueryStringEmptyOptional string `in:"query" query:"qStrEmptyOpt"` // ?qStrEmptyOpt=
+	QueryIntEmptyOptional    int    `in:"query" query:"qIntEmptyOpt"`    // ?qIntEmptyOpt=
+	QueryBoolEmptyOptional   bool   `in:"query" query:"qBoolEmptyOpt"`   // ?qBoolEmptyOpt=
+	QueryStringEmptyRequired string `in:"query" query:"qStrEmptyReq" required:"true"` // ?qStrEmptyReq=
+	QueryIntEmptyRequired    int    `in:"query" query:"qIntEmptyReq" required:"true"`    // ?qIntEmptyReq= (should error)
+
+	QueryPtrStringEmptyOptional *string `in:"query" query:"qPtrStrEmptyOpt"` // ?qPtrStrEmptyOpt=
+	QueryPtrIntEmptyOptional    *int    `in:"query" query:"qPtrIntEmptyOpt"`    // ?qPtrIntEmptyOpt= (should be nil)
+
+	// Slice with empty elements
+	QueryStringSliceWithEmpty    []string `in:"query" query:"qStrSliceEmpty"` // ?qStrSliceEmpty=&qStrSliceEmpty=foo&qStrSliceEmpty=
+	QueryIntSliceWithEmpty       []int    `in:"query" query:"qIntSliceEmpty"` // ?qIntSliceEmpty=&qIntSliceEmpty=123&qIntSliceEmpty= (should error on empty)
+	QueryPtrStringSliceWithEmpty []*string `in:"query" query:"qPtrStrSliceEmpty"` // ?qPtrStrSliceEmpty=&qPtrStrSliceEmpty=foo&qPtrStrSliceEmpty=
+}
+
+// @derivng:binding
+// TestNewTypesBind is a struct for testing uintptr, complex64, complex128 types.
+type TestNewTypesBind struct {
+	// uintptr
+	QueryUintptr    uintptr  `in:"query" query:"qUintptr"`
+	PathUintptr     uintptr  `in:"path" path:"pUintptr"`
+	HeaderUintptr   uintptr  `in:"header" header:"X-Uintptr"`
+	CookieUintptr   uintptr  `in:"cookie" cookie:"cUintptr"`
+	QueryPtrUintptr *uintptr `in:"query" query:"qPtrUintptr"`
+
+	// complex64
+	QueryComplex64    complex64  `in:"query" query:"qComplex64"`
+	PathComplex64     complex64  `in:"path" path:"pComplex64"`
+	HeaderComplex64   complex64  `in:"header" header:"X-Complex64"`
+	CookieComplex64   complex64  `in:"cookie" cookie:"cComplex64"`
+	QueryPtrComplex64 *complex64 `in:"query" query:"qPtrComplex64"`
+
+	// complex128
+	QueryComplex128    complex128  `in:"query" query:"qComplex128"`
+	PathComplex128     complex128  `in:"path" path:"pComplex128"`
+	HeaderComplex128   complex128  `in:"header" header:"X-Complex128"`
+	CookieComplex128   complex128  `in:"cookie" cookie:"cComplex128"`
+	QueryPtrComplex128 *complex128 `in:"query" query:"qPtrComplex128"`
+
+	// Slices of new types
+	QueryUintptrSlice      []uintptr    `in:"query" query:"qUintptrSlice"`
+	HeaderComplex64Slice   []complex64  `in:"header" header:"X-Complex64-Slice"` // Comma-separated
+	CookieComplex128Slice  []complex128 `in:"cookie" cookie:"cComplex128-Slice"` // Comma-separated
+
+	// Required fields for new types
+	RequiredQueryUintptr    uintptr    `in:"query" query:"reqQUintptr" required:"true"`
+	RequiredHeaderComplex64 complex64  `in:"header" header:"X-ReqComplex64" required:"true"`
+
+	// Pointer slices of new types
+	QueryPtrUintptrSlice      []*uintptr    `in:"query" query:"qPtrUintptrSlice"`
+	HeaderPtrComplex64Slice   []*complex64  `in:"header" header:"X-PtrComplex64-Slice"`
+}

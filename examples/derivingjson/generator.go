@@ -372,10 +372,6 @@ func Generate(ctx context.Context, pkgPath string, outputDir string) error {
 			continue
 		}
 
-		// No longer need this old block for single oneOf field
-		// var interfaceActualImportPath string
-		// ... (old logic for single oneOfInterfaceDef) ...
-
 		tmpl, err := template.New("unmarshal").Parse(unmarshalJSONTemplate)
 		if err != nil {
 			return fmt.Errorf("failed to parse template: %w", err)

@@ -743,31 +743,6 @@ func (s *{{.StructName}}) Bind(req *http.Request, pathVar func(string) string) e
 }
 `
 
-// isGo122orLater checks the go.mod file for the Go version.
-// This function is kept for now as it might be useful for other features,
-// but it's not strictly necessary for the current path parameter handling.
-// func isGo122orLater(gscn *goscan.Scanner) bool {
-// 	if gscn.Module == nil || gscn.Module.GoVersion == "" {
-// 		// Fallback or warning if go.mod isn't parsed or version isn't found
-// 		// For safety, assume older version if undetermined.
-// 		fmt.Println("Warning: Go version not found in go.mod, assuming pre-1.22 for path parameter binding.")
-// 		return false
-// 	}
-// 	versionStr := gscn.Module.GoVersion
-// 	// Expecting format like "1.22" or "1.22.0"
-// 	parts := strings.Split(versionStr, ".")
-// 	if len(parts) < 2 {
-// 		return false // Invalid format
-// 	}
-// 	major, errMajor := strconv.Atoi(parts[0])
-// 	minor, errMinor := strconv.Atoi(parts[1])
-// 	if errMajor != nil || errMinor != nil {
-// 		return false // Invalid format
-// 	}
-
-// 	return major > 1 || (major == 1 && minor >= 22)
-// }
-
 func Generate(ctx context.Context, pkgPath string) error {
 	gscn, err := goscan.New(".")
 	if err != nil {
@@ -778,13 +753,6 @@ func Generate(ctx context.Context, pkgPath string) error {
 	if err != nil {
 		return fmt.Errorf("go-scan failed to scan package at %s: %w", pkgPath, err)
 	}
-
-	// isGo122 := isGo122orLater(gscn) // No longer strictly needed for path vars
-	// if isGo122 {
-	// 	fmt.Println("Detected Go version 1.22 or later.") // Info message can be removed or adapted
-	// } else {
-	// 	fmt.Println("Detected Go version < 1.22.") // Info message can be removed or adapted
-	// }
 
 	var generatedCodeForAllStructs bytes.Buffer
 	allFileImports := make(map[string]string) // path -> alias
@@ -823,7 +791,6 @@ func Generate(ctx context.Context, pkgPath string) error {
 			}
 		}
 
-
 		if !hasBindingAnnotationOnStruct {
 			continue
 		}
@@ -837,7 +804,6 @@ func Generate(ctx context.Context, pkgPath string) error {
 			NeedsBody:   (structLevelInTag == "body"),
 			HasSpecificBodyFieldTarget: false, // Initialize
 			ErrNoCookie: http.ErrNoCookie,
-			// IsGo122:     isGo122,
 		}
 		needsImportNetHTTP = true // For http.ErrNoCookie
 
@@ -898,7 +864,6 @@ func Generate(ctx context.Context, pkgPath string) error {
 			// For simple types (int, *int), it's the base type ("int").
 			// For slice types ([]int, []*int), it's the slice's element's base type ("int").
 			baseTypeForConversion := ""
-			// isElementPointer := false // We can infer this from SliceElementType if it starts with "*"
 
 			if currentScannerType.IsSlice {
 				fInfo.IsSlice = true
@@ -909,13 +874,10 @@ func Generate(ctx context.Context, pkgPath string) error {
 					sliceElemScannerType := currentScannerType.Elem
 					if sliceElemScannerType.IsPointer && sliceElemScannerType.Elem != nil { // e.g. []*int, Elem is *int, Elem.Elem is int
 						baseTypeForConversion = sliceElemScannerType.Elem.Name // "int"
-						// isElementPointer = true
 					} else if sliceElemScannerType.IsPointer && sliceElemScannerType.Elem == nil { // e.g. []*ExternalType
 						baseTypeForConversion = sliceElemScannerType.Name // "ExternalType"
-						// isElementPointer = true
 					} else { // e.g. []int or []ExternalType
 						baseTypeForConversion = sliceElemScannerType.Name // "int" or "ExternalType"
-						// isElementPointer = false
 					}
 				} else {
 					fmt.Printf("      Skipping field %s: slice with nil Elem type\n", field.Name)
@@ -1008,7 +970,7 @@ func Generate(ctx context.Context, pkgPath string) error {
 					allFileImports["strings"] = ""
 				}
 				needsImportFmt = true
-			} else {
+			} else { // This 'else' corresponds to 'if bindFrom != "body"'
 				fInfo.IsBody = true
 				data.NeedsBody = true
 				data.HasSpecificBodyFieldTarget = true
@@ -1024,36 +986,7 @@ func Generate(ctx context.Context, pkgPath string) error {
 			continue
 		}
 
-		// Manage imports (ensure "strings" is included if added above)
-		// This check is implicitly handled as allFileImports is a map.
-		// if _, ok := allFileImports["strings"]; ok {
-		// }
-
-		if needsImportNetHTTP {
-				fieldBindingInfo.IsBody = true // This field itself is the target for the body
-				data.NeedsBody = true
-				data.HasSpecificBodyFieldTarget = true // Set this flag
-				needsImportEncodingJson = true
-				needsImportIO = true
-			}
-
-			if bindFrom != "body" {
-				needsImportNetHTTP = true
-				if needsConversion {
-					needsImportStrconv = true
-				}
-				needsImportFmt = true // For error messages
-			}
-
-			data.Fields = append(data.Fields, fieldBindingInfo)
-		}
-
-		if len(data.Fields) == 0 && !data.NeedsBody { // If no fields to bind and struct is not body target
-			fmt.Printf("  Skipping struct %s: no bindable fields found and not a global body target.\n", typeInfo.Name)
-			continue
-		}
-
-		// Manage imports
+		// Manage imports based on collected needs from all fields
 		if needsImportNetHTTP {
 			allFileImports["net/http"] = ""
 		}
@@ -1063,21 +996,18 @@ func Generate(ctx context.Context, pkgPath string) error {
 		if needsImportFmt {
 			allFileImports["fmt"] = ""
 		}
-		if needsImportEncodingJson { // This might also be true if data.NeedsBody is true from struct level
-			allFileImports["encoding/json"] = ""
-		}
-		if needsImportIO { // This might also be true if data.NeedsBody is true from struct level
-			allFileImports["io"] = ""
-		}
-		if data.NeedsBody && !needsImportEncodingJson { // Ensure json/io are imported if struct is body target
-		    allFileImports["encoding/json"] = ""
+		// If data.NeedsBody is true (either from struct level or any field being in:body),
+		// ensure json and io are imported.
+		if data.NeedsBody {
 			needsImportEncodingJson = true
-		}
-		if data.NeedsBody && !needsImportIO {
-		    allFileImports["io"] = ""
 			needsImportIO = true
 		}
-
+		if needsImportEncodingJson {
+			allFileImports["encoding/json"] = ""
+		}
+		if needsImportIO {
+			allFileImports["io"] = ""
+		}
 
 		tmpl, err := template.New("bind").Parse(bindMethodTemplate)
 		if err != nil {
@@ -1127,9 +1057,6 @@ func Generate(ctx context.Context, pkgPath string) error {
 	finalOutput.Write(generatedCodeForAllStructs.Bytes())
 	formattedCode, err := format.Source(finalOutput.Bytes())
 	if err != nil {
-		// fmt.Printf("Error formatting generated code for package %s: %v\n--- Unformatted Code ---\n%s\n--- End Unformatted Code ---\n", pkgInfo.Name, err, finalOutput.String())
-		// return fmt.Errorf("failed to format generated code for package %s: %w", pkgInfo.Name, err)
-		// If formatting fails, write the unformatted code for debugging
 		fmt.Printf("Warning: Error formatting generated code for package %s: %v. Writing unformatted code.\n", pkgInfo.Name, err)
 		formattedCode = finalOutput.Bytes()
 	}

@@ -5,7 +5,6 @@ package models
 import (
 	"encoding/json"
 	"fmt"
-
 	"github.com/podhmo/go-scan/examples/derivingjson/testdata/separated/shapes"
 )
 

@@ -201,7 +201,7 @@ func TestInvalidTypedValues_Bind(t *testing.T) {
 		t.Errorf("expected error for invalid age type, got nil")
 	} else {
 		t.Logf("Got expected error for invalid age: %v", err) // Log error to see it
-		if !strings.Contains(err.Error(), "failed to bind query parameter \"age\"") {
+		if !strings.Contains(err.Error(), "failed to convert query parameter \"age\"") {
 			t.Errorf("error message mismatch, got: %s", err.Error())
 		}
 	}
@@ -213,7 +213,7 @@ func TestInvalidTypedValues_Bind(t *testing.T) {
 		t.Errorf("expected error for invalid active type, got nil")
 	} else {
 		t.Logf("Got expected error for invalid active: %v", err)
-		if !strings.Contains(err.Error(), "failed to bind query parameter \"active\"") {
+		if !strings.Contains(err.Error(), "failed to convert query parameter \"active\"") {
 			t.Errorf("error message mismatch, got: %s", err.Error())
 		}
 	}
@@ -290,4 +290,423 @@ func TestQueryAndPathOnlyBind_Bind(t *testing.T) {
 		t.Errorf("expected Limit to be 10, got %d", data.Limit)
 	}
 	// t.Log("QueryAndPathOnlyBind: UserID is now asserted using mockPathVar.") // Updated log
+}
+
+// TODO: Temporarily commented out due to go-scan pointer type resolution issue - Re-enabling // Removing comment
+func TestPointerFields_Bind(t *testing.T) {
+	strPtr := func(s string) *string { return &s }
+	intPtr := func(i int) *int { return &i }
+	boolPtr := func(b bool) *bool { return &b }
+
+	tests := []struct {
+		name             string
+		requestURL       string
+		headers          map[string]string
+		cookies          []*http.Cookie
+		pathParams       map[string]string
+		expected         TestPointerFields
+		expectError      bool
+		errorContains    string
+	}{
+		{
+			name:       "all optional present",
+			requestURL: "/?qStrOpt=test&qIntOpt=123&qBoolOpt=true&qStrReq=dummy&qIntReq=0&qBoolReq=false",
+			headers:    map[string]string{"hStrOpt": "headerTest", "hStrReq": "dummy"},
+			cookies:    []*http.Cookie{{Name: "cStrOpt", Value: "cookieTest"}, {Name: "cStrReq", Value: "dummy"}},
+			pathParams: map[string]string{"pStrOpt": "pathTest", "pStrReq": "dummy"},
+			expected: TestPointerFields{
+				QueryStrOptional:  strPtr("test"),
+				QueryIntOptional:  intPtr(123),
+				QueryBoolOptional: boolPtr(true),
+				HeaderStrOptional: strPtr("headerTest"),
+				PathStrOptional:   strPtr("pathTest"),
+				CookieStrOptional: strPtr("cookieTest"),
+				QueryStrRequired:  strPtr("dummy"),
+				QueryIntRequired:  intPtr(0),
+				QueryBoolRequired: boolPtr(false),
+				HeaderStrRequired: strPtr("dummy"),
+				PathStrRequired:   strPtr("dummy"),
+				CookieStrRequired: strPtr("dummy"),
+			},
+		},
+		{
+			name:       "all optional missing",
+			requestURL: "/?qStrReq=dummy&qIntReq=0&qBoolReq=false", // Optional query params missing
+			headers:    map[string]string{"hStrReq": "dummy"},      // Optional header missing
+			cookies:    []*http.Cookie{{Name: "cStrReq", Value: "dummy"}}, // Optional cookie missing
+			pathParams: map[string]string{"pStrReq": "dummy"},      // Optional path param missing
+			expected: TestPointerFields{
+				QueryStrOptional:  nil,
+				QueryIntOptional:  nil,
+				QueryBoolOptional: nil,
+				HeaderStrOptional: nil,
+				PathStrOptional:   nil,
+				CookieStrOptional: nil,
+				QueryStrRequired:  strPtr("dummy"),
+				QueryIntRequired:  intPtr(0),
+				QueryBoolRequired: boolPtr(false),
+				HeaderStrRequired: strPtr("dummy"),
+				PathStrRequired:   strPtr("dummy"),
+				CookieStrRequired: strPtr("dummy"),
+			},
+		},
+		{
+			name:       "all required present",
+			requestURL: "/?qStrReq=reqTest&qIntReq=456&qBoolReq=false",
+			headers:    map[string]string{"hStrReq": "reqHeader"},
+			cookies:    []*http.Cookie{{Name: "cStrReq", Value: "reqCookie"}},
+			pathParams: map[string]string{"pStrReq": "reqPath"},
+			expected: TestPointerFields{
+				QueryStrRequired:  strPtr("reqTest"),
+				QueryIntRequired:  intPtr(456),
+				QueryBoolRequired: boolPtr(false),
+				HeaderStrRequired: strPtr("reqHeader"),
+				PathStrRequired:   strPtr("reqPath"),
+				CookieStrRequired: strPtr("reqCookie"),
+			},
+		},
+		{
+			name:          "required query string missing",
+			requestURL:    "/?qIntReq=1&qBoolReq=true", // qStrReq missing
+			pathParams:    map[string]string{"pStrReq": "path"},
+			headers:       map[string]string{"hStrReq": "header"},
+			cookies:       []*http.Cookie{{Name: "cStrReq", Value: "cookie"}},
+			expectError:   true,
+			errorContains: "required query parameter \"qStrReq\" for field QueryStrRequired is missing",
+		},
+		{
+			name:          "required query int missing",
+			requestURL:    "/?qStrReq=test&qBoolReq=true", // qIntReq missing
+			pathParams:    map[string]string{"pStrReq": "path"},
+			headers:       map[string]string{"hStrReq": "header"},
+			cookies:       []*http.Cookie{{Name: "cStrReq", Value: "cookie"}},
+			expectError:   true,
+			errorContains: "required query parameter \"qIntReq\" for field QueryIntRequired is missing",
+		},
+		{
+			name:          "required header missing",
+			requestURL:    "/?qStrReq=test&qIntReq=1&qBoolReq=true",
+			pathParams:    map[string]string{"pStrReq": "path"},
+			cookies:       []*http.Cookie{{Name: "cStrReq", Value: "cookie"}},
+			// hStrReq missing
+			expectError:   true,
+			errorContains: "required header \"hStrReq\" for field HeaderStrRequired is missing",
+		},
+		{
+			name:          "required path missing",
+			requestURL:    "/?qStrReq=test&qIntReq=1&qBoolReq=true",
+			headers:       map[string]string{"hStrReq": "header"},
+			cookies:       []*http.Cookie{{Name: "cStrReq", Value: "cookie"}},
+			// pStrReq missing from pathParams
+			expectError:   true,
+			errorContains: "required path parameter \"pStrReq\" for field PathStrRequired is missing",
+		},
+		{
+			name:          "required cookie missing",
+			requestURL:    "/?qStrReq=test&qIntReq=1&qBoolReq=true",
+			headers:       map[string]string{"hStrReq": "header"},
+			pathParams:    map[string]string{"pStrReq": "path"},
+			// cStrReq missing
+			expectError:   true,
+			errorContains: "required cookie \"cStrReq\" for field CookieStrRequired is missing",
+		},
+		{
+			name: "all values empty strings",
+			// Optional pointers to non-string types should become nil due to conversion error.
+			// Required pointers to non-string types should cause a conversion error.
+			// String pointers should point to an empty string.
+			requestURL: "/?qStrOpt=&qStrReq=&qIntOpt=&qIntReq=&qBoolOpt=&qBoolReq=",
+			headers:    map[string]string{"hStrOpt": "", "hStrReq": "", "hIntOpt": "", "hIntReq": "", "hBoolOpt": "", "hBoolReq": ""}, // Assuming these could exist
+			cookies:    []*http.Cookie{
+				{Name: "cStrOpt", Value: ""}, {Name: "cStrReq", Value: ""},
+				{Name: "cIntOpt", Value: ""}, {Name: "cIntReq", Value: ""}, // Assuming these could exist
+				{Name: "cBoolOpt", Value: ""}, {Name: "cBoolReq", Value: ""}, // Assuming these could exist
+			},
+			pathParams: map[string]string{"pStrOpt": "", "pStrReq": "", "pIntOpt": "", "pIntReq": "", "pBoolOpt": "", "pBoolReq": ""}, // Assuming
+			// Expected struct values if no error occurred (which is not the case here for required int/bool)
+			// This test will expect an error from the first required non-string field that gets an empty string.
+			// Based on field order in TestPointerFields: QueryIntRequired is the first such.
+			expected: TestPointerFields{
+				QueryStrOptional:  strPtr(""),
+				QueryStrRequired:  strPtr(""),
+				QueryIntOptional:  nil, // Optional *int with "" input -> nil
+				QueryBoolOptional: nil, // Optional *bool with "" input -> nil
+				HeaderStrOptional: strPtr(""),
+				HeaderStrRequired: strPtr(""),
+				PathStrOptional:   strPtr(""),
+				PathStrRequired:   strPtr(""),
+				CookieStrOptional: strPtr(""),
+				CookieStrRequired: strPtr(""),
+				// QueryIntRequired will error first.
+			},
+			expectError:   true, // Expecting error due to QueryIntRequired=""
+			errorContains: "failed to convert query parameter \"qIntReq\" (value: \"\") to int for field QueryIntRequired",
+		},
+		// The test "required int query with empty string value" is now covered by the modified "all values empty strings"
+		// if QueryIntRequired is the first one to cause error. We can remove it or make it more specific
+		// if other required fields (e.g. bool) are tested for empty string errors.
+		// For now, let's assume the above test covers the qIntReq="" scenario.
+		// {
+		// 	name:          "required int query with empty string value",
+		// 	requestURL:    "/?qStrReq=s&qIntReq=&qBoolReq=true", // qIntReq is ""
+		// 	pathParams:    map[string]string{"pStrReq": "p", "pIntReq": "0", "pBoolReq": "false"}, // Satisfy other path required
+		// 	headers:       map[string]string{"hStrReq": "h", "hIntReq": "0", "hBoolReq": "false"}, // Satisfy other header required
+		// 	cookies:       []*http.Cookie{ // Satisfy other cookie required
+		// 		{Name: "cStrReq", Value: "c"}, {Name: "cIntReq", Value: "0"}, {Name: "cBoolReq", Value: "false"},
+		// 	},
+		// 	expectError:   true,
+		// 	errorContains: "failed to convert query parameter \"qIntReq\" (value: \"\") to int for field QueryIntRequired",
+		// },
+		{
+			name:          "required bool query with empty string value",
+			requestURL:    "/?qStrReq=s&qIntReq=1&qBoolReq=", // qBoolReq is ""
+			// Satisfy other required fields for different sources to isolate this error
+			headers:    map[string]string{"hStrReq": "h", "hBoolReq": "true"}, // dummy for other required header
+			cookies:    []*http.Cookie{{Name: "cStrReq", Value: "c"}, {Name: "cBoolReq", Value: "true"}}, // dummy for other required cookie
+			pathParams: map[string]string{"pStrReq": "p", "pBoolReq": "true"},   // dummy for other required path
+			expectError:   true,
+			errorContains: "failed to convert query parameter \"qBoolReq\" (value: \"\") to bool for field QueryBoolRequired",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest("GET", tt.requestURL, nil)
+			for k, v := range tt.headers {
+				req.Header.Set(k, v)
+			}
+			for _, c := range tt.cookies {
+				req.AddCookie(c)
+			}
+
+			mockPathVar := func(name string) string {
+				if tt.pathParams != nil {
+					if val, ok := tt.pathParams[name]; ok {
+						return val
+					}
+				}
+				return ""
+			}
+
+			var data TestPointerFields
+			err := data.Bind(req, mockPathVar)
+
+			if tt.expectError {
+				if err == nil {
+					t.Fatalf("expected error, got nil")
+				}
+				if tt.errorContains != "" && !strings.Contains(err.Error(), tt.errorContains) {
+					t.Fatalf("expected error message to contain %q, got %q", tt.errorContains, err.Error())
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("did not expect error, got %v", err)
+				}
+				// Compare Query
+				assertStringPtrEqual(t, "QueryStrOptional", data.QueryStrOptional, tt.expected.QueryStrOptional)
+				assertIntPtrEqual(t, "QueryIntOptional", data.QueryIntOptional, tt.expected.QueryIntOptional)
+				assertBoolPtrEqual(t, "QueryBoolOptional", data.QueryBoolOptional, tt.expected.QueryBoolOptional)
+				assertStringPtrEqual(t, "QueryStrRequired", data.QueryStrRequired, tt.expected.QueryStrRequired)
+				assertIntPtrEqual(t, "QueryIntRequired", data.QueryIntRequired, tt.expected.QueryIntRequired)
+				assertBoolPtrEqual(t, "QueryBoolRequired", data.QueryBoolRequired, tt.expected.QueryBoolRequired)
+				// Compare Header
+				assertStringPtrEqual(t, "HeaderStrOptional", data.HeaderStrOptional, tt.expected.HeaderStrOptional)
+				assertStringPtrEqual(t, "HeaderStrRequired", data.HeaderStrRequired, tt.expected.HeaderStrRequired)
+				// Compare Path
+				assertStringPtrEqual(t, "PathStrOptional", data.PathStrOptional, tt.expected.PathStrOptional)
+				assertStringPtrEqual(t, "PathStrRequired", data.PathStrRequired, tt.expected.PathStrRequired)
+				// Compare Cookie
+				assertStringPtrEqual(t, "CookieStrOptional", data.CookieStrOptional, tt.expected.CookieStrOptional)
+				assertStringPtrEqual(t, "CookieStrRequired", data.CookieStrRequired, tt.expected.CookieStrRequired)
+			}
+		})
+	}
+}
+
+func assertStringPtrEqual(t *testing.T, fieldName string, got, want *string) {
+	t.Helper()
+	if got == nil && want == nil {
+		return
+	}
+	if got == nil && want != nil {
+		t.Errorf("%s: expected %v, got nil", fieldName, *want)
+		return
+	}
+	if got != nil && want == nil {
+		t.Errorf("%s: expected nil, got %v", fieldName, *got)
+		return
+	}
+	if *got != *want {
+		t.Errorf("%s: expected %v, got %v", fieldName, *want, *got)
+	}
+}
+
+func assertIntPtrEqual(t *testing.T, fieldName string, got, want *int) {
+	t.Helper()
+	if got == nil && want == nil {
+		return
+	}
+	if got == nil && want != nil {
+		t.Errorf("%s: expected %v, got nil", fieldName, *want)
+		return
+	}
+	if got != nil && want == nil {
+		t.Errorf("%s: expected nil, got %v", fieldName, *got)
+		return
+	}
+	if *got != *want {
+		t.Errorf("%s: expected %v, got %v", fieldName, *want, *got)
+	}
+}
+
+func assertBoolPtrEqual(t *testing.T, fieldName string, got, want *bool) {
+	t.Helper()
+	if got == nil && want == nil {
+		return
+	}
+	if got == nil && want != nil {
+		t.Errorf("%s: expected %v, got nil", fieldName, *want)
+		return
+	}
+	if got != nil && want == nil {
+		t.Errorf("%s: expected nil, got %v", fieldName, *got)
+		return
+	}
+	if *got != *want {
+		t.Errorf("%s: expected %v, got %v", fieldName, *want, *got)
+	}
+}
+// */ // Removing comment
+func TestRequiredNonPointerFields_Bind(t *testing.T) {
+	tests := []struct {
+		name          string
+		requestURL    string
+		headers       map[string]string
+		cookies       []*http.Cookie
+		pathParams    map[string]string
+		expected      TestRequiredNonPointerFields
+		expectError   bool
+		errorContains string
+	}{
+		{
+			name:       "all required present",
+			requestURL: "/?qStrReq=test&qIntReq=123",
+			headers:    map[string]string{"hStrReq": "headerTest"},
+			cookies:    []*http.Cookie{{Name: "cStrReq", Value: "cookieTest"}},
+			pathParams: map[string]string{"pStrReq": "pathTest"},
+			expected: TestRequiredNonPointerFields{
+				QueryStrRequired:  "test",
+				QueryIntRequired:  123,
+				HeaderStrRequired: "headerTest",
+				PathStrRequired:   "pathTest",
+				CookieStrRequired: "cookieTest",
+			},
+		},
+		{
+			name:          "required query string missing",
+			requestURL:    "/?qIntReq=123", // qStrReq missing
+			headers:       map[string]string{"hStrReq": "headerTest"},
+			cookies:       []*http.Cookie{{Name: "cStrReq", Value: "cookieTest"}},
+			pathParams:    map[string]string{"pStrReq": "pathTest"},
+			expectError:   true,
+			errorContains: "required query parameter \"qStrReq\" for field QueryStrRequired is missing",
+		},
+		{
+			name:          "required query int missing",
+			requestURL:    "/?qStrReq=test", // qIntReq missing
+			headers:       map[string]string{"hStrReq": "headerTest"},
+			cookies:       []*http.Cookie{{Name: "cStrReq", Value: "cookieTest"}},
+			pathParams:    map[string]string{"pStrReq": "pathTest"},
+			expectError:   true,
+			errorContains: "required query parameter \"qIntReq\" for field QueryIntRequired is missing",
+		},
+		{
+			name:          "required header missing",
+			requestURL:    "/?qStrReq=test&qIntReq=123",
+			// hStrReq missing
+			cookies:       []*http.Cookie{{Name: "cStrReq", Value: "cookieTest"}},
+			pathParams:    map[string]string{"pStrReq": "pathTest"},
+			expectError:   true,
+			errorContains: "required header \"hStrReq\" for field HeaderStrRequired is missing",
+		},
+		{
+			name:          "required path missing",
+			requestURL:    "/?qStrReq=test&qIntReq=123",
+			headers:       map[string]string{"hStrReq": "headerTest"},
+			cookies:       []*http.Cookie{{Name: "cStrReq", Value: "cookieTest"}},
+			// pStrReq missing
+			expectError:   true,
+			errorContains: "required path parameter \"pStrReq\" for field PathStrRequired is missing",
+		},
+		{
+			name:          "required cookie missing",
+			requestURL:    "/?qStrReq=test&qIntReq=123",
+			headers:       map[string]string{"hStrReq": "headerTest"},
+			pathParams:    map[string]string{"pStrReq": "pathTest"},
+			// cStrReq missing
+			expectError:   true,
+			errorContains: "required cookie \"cStrReq\" for field CookieStrRequired is missing",
+		},
+		{
+			name:          "required query int with empty string value (conversion error)",
+			requestURL:    "/?qStrReq=test&qIntReq=", // qIntReq is empty string
+			headers:       map[string]string{"hStrReq": "headerTest"},
+			cookies:       []*http.Cookie{{Name: "cStrReq", Value: "cookieTest"}},
+			pathParams:    map[string]string{"pStrReq": "pathTest"},
+			expectError:   true,
+			errorContains: "failed to convert query parameter \"qIntReq\" (value: \"\") to int for field QueryIntRequired",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest("GET", tt.requestURL, nil)
+			for k, v := range tt.headers {
+				req.Header.Set(k, v)
+			}
+			for _, c := range tt.cookies {
+				req.AddCookie(c)
+			}
+
+			mockPathVar := func(name string) string {
+				if tt.pathParams != nil {
+					if val, ok := tt.pathParams[name]; ok {
+						return val
+					}
+				}
+				return ""
+			}
+
+			var data TestRequiredNonPointerFields
+			err := data.Bind(req, mockPathVar)
+
+			if tt.expectError {
+				if err == nil {
+					t.Fatalf("expected error, got nil")
+				}
+				if tt.errorContains != "" && !strings.Contains(err.Error(), tt.errorContains) {
+					t.Fatalf("expected error message to contain %q, got %q", tt.errorContains, err.Error())
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("did not expect error, got %v", err)
+				}
+				if data.QueryStrRequired != tt.expected.QueryStrRequired {
+					t.Errorf("QueryStrRequired: expected %v, got %v", tt.expected.QueryStrRequired, data.QueryStrRequired)
+				}
+				if data.QueryIntRequired != tt.expected.QueryIntRequired {
+					t.Errorf("QueryIntRequired: expected %v, got %v", tt.expected.QueryIntRequired, data.QueryIntRequired)
+				}
+				if data.HeaderStrRequired != tt.expected.HeaderStrRequired {
+					t.Errorf("HeaderStrRequired: expected %v, got %v", tt.expected.HeaderStrRequired, data.HeaderStrRequired)
+				}
+				if data.PathStrRequired != tt.expected.PathStrRequired {
+					t.Errorf("PathStrRequired: expected %v, got %v", tt.expected.PathStrRequired, data.PathStrRequired)
+				}
+				if data.CookieStrRequired != tt.expected.CookieStrRequired {
+					t.Errorf("CookieStrRequired: expected %v, got %v", tt.expected.CookieStrRequired, data.CookieStrRequired)
+				}
+			}
+		})
+	}
 }

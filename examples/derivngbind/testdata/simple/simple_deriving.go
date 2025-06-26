@@ -14,50 +14,89 @@ func (s *ComprehensiveBind) Bind(req *http.Request, pathVar func(string) string)
 	var err error
 	_ = err // prevent unused var error if no error handling is needed below
 
-	// Path parameter binding using the provided pathVar function
+	// Path parameter binding for field PathString (string) from "id"
 	if pathValueStr := pathVar("id"); pathValueStr != "" {
 
 		s.PathString = pathValueStr
 
 	} else {
-		// Handle missing path parameter "id" if necessary (e.g. return error or set default)
-		// For now, if it's empty, we do nothing, field remains zero-value.
+
+		// For non-pointer, non-required, missing path param means field remains zero-value.
 	}
 
-	if val := req.URL.Query().Get("name"); val != "" {
+	// Query parameter binding for field QueryName (string) from "name"
+
+	if req.URL.Query().Has("name") {
+		val := req.URL.Query().Get("name")
 
 		s.QueryName = val
 
+	} else { // Key does not exist
+
+		// For non-pointer, non-required, missing param means field remains zero-value.
 	}
 
-	if val := req.URL.Query().Get("age"); val != "" {
+	// Query parameter binding for field QueryAge (int) from "age"
 
-		s.QueryAge, err = strconv.Atoi(val)
+	if req.URL.Query().Has("age") {
+		val := req.URL.Query().Get("age")
+
+		v, err := strconv.Atoi(val)
 		if err != nil {
-			return fmt.Errorf("failed to bind query parameter \"age\" to field QueryAge: %w", err)
+
+			return fmt.Errorf("failed to convert query parameter \"age\" (value: %q) to int for field QueryAge: %w", val, err)
+
+		} else {
+
+			s.QueryAge = v
+
 		}
 
+	} else { // Key does not exist
+
+		// For non-pointer, non-required, missing param means field remains zero-value.
 	}
 
-	if val := req.URL.Query().Get("active"); val != "" {
+	// Query parameter binding for field QueryActive (bool) from "active"
 
-		s.QueryActive, err = strconv.ParseBool(val)
+	if req.URL.Query().Has("active") {
+		val := req.URL.Query().Get("active")
+
+		v, err := strconv.ParseBool(val)
 		if err != nil {
-			return fmt.Errorf("failed to bind query parameter \"active\" to field QueryActive: %w", err)
+
+			return fmt.Errorf("failed to convert query parameter \"active\" (value: %q) to bool for field QueryActive: %w", val, err)
+
+		} else {
+
+			s.QueryActive = v
+
 		}
 
+	} else { // Key does not exist
+
+		// For non-pointer, non-required, missing param means field remains zero-value.
 	}
 
+	// Header binding for field HeaderToken (string) from "X-Auth-Token"
 	if val := req.Header.Get("X-Auth-Token"); val != "" {
 
 		s.HeaderToken = val
 
+	} else {
+
 	}
 
+	// Cookie binding for field CookieSession (string) from "session_id"
 	if cookie, cerr := req.Cookie("session_id"); cerr == nil && cookie.Value != "" {
+		val := cookie.Value
 
-		s.CookieSession = cookie.Value
+		s.CookieSession = val
 
+	} else { // Cookie not found or value is empty
+
+		// If cerr is .ErrNoCookie and not required, it's fine. Field remains nil/zero.
+		// If other cerr, it might be an issue even if not required, but current logic is to ignore.
 	}
 
 	if req.Body != nil && req.Body != http.NoBody {
@@ -83,16 +122,25 @@ func (s *SpecificBodyFieldBind) Bind(req *http.Request, pathVar func(string) str
 	var err error
 	_ = err // prevent unused var error if no error handling is needed below
 
+	// Header binding for field RequestID (string) from "X-Request-ID"
 	if val := req.Header.Get("X-Request-ID"); val != "" {
 
 		s.RequestID = val
 
+	} else {
+
 	}
 
-	if val := req.URL.Query().Get("other"); val != "" {
+	// Query parameter binding for field OtherQueryParam (string) from "other"
+
+	if req.URL.Query().Has("other") {
+		val := req.URL.Query().Get("other")
 
 		s.OtherQueryParam = val
 
+	} else { // Key does not exist
+
+		// For non-pointer, non-required, missing param means field remains zero-value.
 	}
 
 	if req.Body != nil && req.Body != http.NoBody {
@@ -130,9 +178,12 @@ func (s *FullBodyBind) Bind(req *http.Request, pathVar func(string) string) erro
 	var err error
 	_ = err // prevent unused var error if no error handling is needed below
 
+	// Header binding for field SourceHeader (string) from "X-Source"
 	if val := req.Header.Get("X-Source"); val != "" {
 
 		s.SourceHeader = val
+
+	} else {
 
 	}
 
@@ -159,29 +210,329 @@ func (s *QueryAndPathOnlyBind) Bind(req *http.Request, pathVar func(string) stri
 	var err error
 	_ = err // prevent unused var error if no error handling is needed below
 
-	// Path parameter binding using the provided pathVar function
+	// Path parameter binding for field UserID (string) from "userID"
 	if pathValueStr := pathVar("userID"); pathValueStr != "" {
 
 		s.UserID = pathValueStr
 
 	} else {
-		// Handle missing path parameter "userID" if necessary (e.g. return error or set default)
-		// For now, if it's empty, we do nothing, field remains zero-value.
+
+		// For non-pointer, non-required, missing path param means field remains zero-value.
 	}
 
-	if val := req.URL.Query().Get("itemCode"); val != "" {
+	// Query parameter binding for field ItemCode (string) from "itemCode"
+
+	if req.URL.Query().Has("itemCode") {
+		val := req.URL.Query().Get("itemCode")
 
 		s.ItemCode = val
 
+	} else { // Key does not exist
+
+		// For non-pointer, non-required, missing param means field remains zero-value.
 	}
 
-	if val := req.URL.Query().Get("limit"); val != "" {
+	// Query parameter binding for field Limit (int) from "limit"
 
-		s.Limit, err = strconv.Atoi(val)
+	if req.URL.Query().Has("limit") {
+		val := req.URL.Query().Get("limit")
+
+		v, err := strconv.Atoi(val)
 		if err != nil {
-			return fmt.Errorf("failed to bind query parameter \"limit\" to field Limit: %w", err)
+
+			return fmt.Errorf("failed to convert query parameter \"limit\" (value: %q) to int for field Limit: %w", val, err)
+
+		} else {
+
+			s.Limit = v
+
 		}
 
+	} else { // Key does not exist
+
+		// For non-pointer, non-required, missing param means field remains zero-value.
+	}
+
+	return nil
+}
+
+func (s *TestPointerFields) Bind(req *http.Request, pathVar func(string) string) error {
+	var err error
+	_ = err // prevent unused var error if no error handling is needed below
+
+	// Query parameter binding for field QueryStrOptional (string) from "qStrOpt"
+
+	if req.URL.Query().Has("qStrOpt") {
+		val := req.URL.Query().Get("qStrOpt")
+
+		s.QueryStrOptional = &val
+
+	} else { // Key does not exist
+
+		s.QueryStrOptional = nil
+
+		// For non-pointer, non-required, missing param means field remains zero-value.
+	}
+
+	// Query parameter binding for field QueryStrRequired (string) from "qStrReq"
+
+	if req.URL.Query().Has("qStrReq") {
+		val := req.URL.Query().Get("qStrReq")
+
+		s.QueryStrRequired = &val
+
+	} else { // Key does not exist
+
+		return fmt.Errorf("required query parameter \"qStrReq\" for field QueryStrRequired is missing")
+
+		// For non-pointer, non-required, missing param means field remains zero-value.
+	}
+
+	// Query parameter binding for field QueryIntOptional (int) from "qIntOpt"
+
+	if req.URL.Query().Has("qIntOpt") {
+		val := req.URL.Query().Get("qIntOpt")
+
+		v, err := strconv.Atoi(val)
+		if err != nil {
+
+			s.QueryIntOptional = nil
+
+		} else {
+
+			s.QueryIntOptional = &v
+
+		}
+
+	} else { // Key does not exist
+
+		s.QueryIntOptional = nil
+
+		// For non-pointer, non-required, missing param means field remains zero-value.
+	}
+
+	// Query parameter binding for field QueryIntRequired (int) from "qIntReq"
+
+	if req.URL.Query().Has("qIntReq") {
+		val := req.URL.Query().Get("qIntReq")
+
+		v, err := strconv.Atoi(val)
+		if err != nil {
+
+			return fmt.Errorf("failed to convert query parameter \"qIntReq\" (value: %q) to int for field QueryIntRequired: %w", val, err)
+
+		} else {
+
+			s.QueryIntRequired = &v
+
+		}
+
+	} else { // Key does not exist
+
+		return fmt.Errorf("required query parameter \"qIntReq\" for field QueryIntRequired is missing")
+
+		// For non-pointer, non-required, missing param means field remains zero-value.
+	}
+
+	// Query parameter binding for field QueryBoolOptional (bool) from "qBoolOpt"
+
+	if req.URL.Query().Has("qBoolOpt") {
+		val := req.URL.Query().Get("qBoolOpt")
+
+		v, err := strconv.ParseBool(val)
+		if err != nil {
+
+			s.QueryBoolOptional = nil
+
+		} else {
+
+			s.QueryBoolOptional = &v
+
+		}
+
+	} else { // Key does not exist
+
+		s.QueryBoolOptional = nil
+
+		// For non-pointer, non-required, missing param means field remains zero-value.
+	}
+
+	// Query parameter binding for field QueryBoolRequired (bool) from "qBoolReq"
+
+	if req.URL.Query().Has("qBoolReq") {
+		val := req.URL.Query().Get("qBoolReq")
+
+		v, err := strconv.ParseBool(val)
+		if err != nil {
+
+			return fmt.Errorf("failed to convert query parameter \"qBoolReq\" (value: %q) to bool for field QueryBoolRequired: %w", val, err)
+
+		} else {
+
+			s.QueryBoolRequired = &v
+
+		}
+
+	} else { // Key does not exist
+
+		return fmt.Errorf("required query parameter \"qBoolReq\" for field QueryBoolRequired is missing")
+
+		// For non-pointer, non-required, missing param means field remains zero-value.
+	}
+
+	// Header binding for field HeaderStrOptional (string) from "hStrOpt"
+	if val := req.Header.Get("hStrOpt"); val != "" {
+
+		s.HeaderStrOptional = &val
+
+	} else {
+
+		s.HeaderStrOptional = nil
+
+	}
+
+	// Header binding for field HeaderStrRequired (string) from "hStrReq"
+	if val := req.Header.Get("hStrReq"); val != "" {
+
+		s.HeaderStrRequired = &val
+
+	} else {
+
+		return fmt.Errorf("required header \"hStrReq\" for field HeaderStrRequired is missing")
+
+	}
+
+	// Path parameter binding for field PathStrOptional (string) from "pStrOpt"
+	if pathValueStr := pathVar("pStrOpt"); pathValueStr != "" {
+
+		s.PathStrOptional = &pathValueStr
+
+	} else {
+
+		s.PathStrOptional = nil // Explicitly set to nil for clarity, though it's default
+
+		// For non-pointer, non-required, missing path param means field remains zero-value.
+	}
+
+	// Path parameter binding for field PathStrRequired (string) from "pStrReq"
+	if pathValueStr := pathVar("pStrReq"); pathValueStr != "" {
+
+		s.PathStrRequired = &pathValueStr
+
+	} else {
+
+		return fmt.Errorf("required path parameter \"pStrReq\" for field PathStrRequired is missing")
+
+		// For non-pointer, non-required, missing path param means field remains zero-value.
+	}
+
+	// Cookie binding for field CookieStrOptional (string) from "cStrOpt"
+	if cookie, cerr := req.Cookie("cStrOpt"); cerr == nil && cookie.Value != "" {
+		val := cookie.Value
+
+		s.CookieStrOptional = &val
+
+	} else { // Cookie not found or value is empty
+
+		s.CookieStrOptional = nil
+
+		// If cerr is .ErrNoCookie and not required, it's fine. Field remains nil/zero.
+		// If other cerr, it might be an issue even if not required, but current logic is to ignore.
+	}
+
+	// Cookie binding for field CookieStrRequired (string) from "cStrReq"
+	if cookie, cerr := req.Cookie("cStrReq"); cerr == nil && cookie.Value != "" {
+		val := cookie.Value
+
+		s.CookieStrRequired = &val
+
+	} else { // Cookie not found or value is empty
+
+		return fmt.Errorf("required cookie \"cStrReq\" for field CookieStrRequired is missing, empty, or could not be retrieved")
+
+		// If cerr is .ErrNoCookie and not required, it's fine. Field remains nil/zero.
+		// If other cerr, it might be an issue even if not required, but current logic is to ignore.
+	}
+
+	return nil
+}
+
+func (s *TestRequiredNonPointerFields) Bind(req *http.Request, pathVar func(string) string) error {
+	var err error
+	_ = err // prevent unused var error if no error handling is needed below
+
+	// Query parameter binding for field QueryStrRequired (string) from "qStrReq"
+
+	if req.URL.Query().Has("qStrReq") {
+		val := req.URL.Query().Get("qStrReq")
+
+		s.QueryStrRequired = val
+
+	} else { // Key does not exist
+
+		return fmt.Errorf("required query parameter \"qStrReq\" for field QueryStrRequired is missing")
+
+		// For non-pointer, non-required, missing param means field remains zero-value.
+	}
+
+	// Query parameter binding for field QueryIntRequired (int) from "qIntReq"
+
+	if req.URL.Query().Has("qIntReq") {
+		val := req.URL.Query().Get("qIntReq")
+
+		v, err := strconv.Atoi(val)
+		if err != nil {
+
+			return fmt.Errorf("failed to convert query parameter \"qIntReq\" (value: %q) to int for field QueryIntRequired: %w", val, err)
+
+		} else {
+
+			s.QueryIntRequired = v
+
+		}
+
+	} else { // Key does not exist
+
+		return fmt.Errorf("required query parameter \"qIntReq\" for field QueryIntRequired is missing")
+
+		// For non-pointer, non-required, missing param means field remains zero-value.
+	}
+
+	// Header binding for field HeaderStrRequired (string) from "hStrReq"
+	if val := req.Header.Get("hStrReq"); val != "" {
+
+		s.HeaderStrRequired = val
+
+	} else {
+
+		return fmt.Errorf("required header \"hStrReq\" for field HeaderStrRequired is missing")
+
+	}
+
+	// Path parameter binding for field PathStrRequired (string) from "pStrReq"
+	if pathValueStr := pathVar("pStrReq"); pathValueStr != "" {
+
+		s.PathStrRequired = pathValueStr
+
+	} else {
+
+		return fmt.Errorf("required path parameter \"pStrReq\" for field PathStrRequired is missing")
+
+		// For non-pointer, non-required, missing path param means field remains zero-value.
+	}
+
+	// Cookie binding for field CookieStrRequired (string) from "cStrReq"
+	if cookie, cerr := req.Cookie("cStrReq"); cerr == nil && cookie.Value != "" {
+		val := cookie.Value
+
+		s.CookieStrRequired = val
+
+	} else { // Cookie not found or value is empty
+
+		return fmt.Errorf("required cookie \"cStrReq\" for field CookieStrRequired is missing, empty, or could not be retrieved")
+
+		// If cerr is .ErrNoCookie and not required, it's fine. Field remains nil/zero.
+		// If other cerr, it might be an issue even if not required, but current logic is to ignore.
 	}
 
 	return nil

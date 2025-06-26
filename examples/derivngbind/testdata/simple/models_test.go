@@ -3,10 +3,12 @@ package simple
 import (
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"reflect"
 	"regexp" // Added for regexp.MatchString
+	"strconv"
 	"strings"
 	"testing"
-
 	// For a more realistic path parameter test, you might use a router like chi.
 	// "github.com/go-chi/chi/v5"
 )
@@ -20,7 +22,6 @@ import (
 // 	}
 // 	return req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 // }
-
 
 func TestComprehensiveBind_Bind(t *testing.T) {
 	// Path parameters are tricky without a router. The generator currently has a TODO for this.
@@ -36,7 +37,6 @@ func TestComprehensiveBind_Bind(t *testing.T) {
 
 	// If using chi or similar for path params:
 	// req = newTestRequestWithChiCtx("POST", "/items/test-path-id?name=Alice&age=30&active=true", strings.NewReader(rawBody), map[string]string{"id": "test-path-id"})
-
 
 	var data ComprehensiveBind
 	// Manually set PathString for now, as the generator's path binding is a TODO
@@ -114,7 +114,6 @@ func complex64Ptr(c complex64) *complex64 { return &c }
 // Helper to create a pointer to a complex128
 func complex128Ptr(c complex128) *complex128 { return &c }
 
-
 // Add comparison helpers for new types if DeepEqual is not sufficient (especially for complex numbers due to float precision)
 func equalComplex64(a, b complex64) bool {
 	// Basic equality for complex numbers. For float comparisons, epsilon checks are better.
@@ -125,24 +124,49 @@ func equalComplex128(a, b complex128) bool {
 }
 
 func equalComplex64Slice(a, b []complex64) bool {
-	if len(a) != len(b) { return false }
-	if (a == nil && b != nil && len(b) == 0) || (b == nil && a != nil && len(a) == 0) { return true }
-	for i := range a { if !equalComplex64(a[i],b[i]) { return false } }
+	if len(a) != len(b) {
+		return false
+	}
+	if (a == nil && b != nil && len(b) == 0) || (b == nil && a != nil && len(a) == 0) {
+		return true
+	}
+	for i := range a {
+		if !equalComplex64(a[i], b[i]) {
+			return false
+		}
+	}
 	return true
 }
 func equalComplex128Slice(a, b []complex128) bool {
-	if len(a) != len(b) { return false }
-	if (a == nil && b != nil && len(b) == 0) || (b == nil && a != nil && len(a) == 0) { return true }
-	for i := range a { if !equalComplex128(a[i],b[i]) { return false } }
+	if len(a) != len(b) {
+		return false
+	}
+	if (a == nil && b != nil && len(b) == 0) || (b == nil && a != nil && len(a) == 0) {
+		return true
+	}
+	for i := range a {
+		if !equalComplex128(a[i], b[i]) {
+			return false
+		}
+	}
 	return true
 }
 
 func equalUintptrSlice(a, b []uintptr) bool {
-	if len(a) != len(b) { return false }
-	if (a == nil && b != nil && len(b) == 0) || (b == nil && a != nil && len(a) == 0) { return true }
-	for i := range a { if a[i] != b[i] { return false } }
+	if len(a) != len(b) {
+		return false
+	}
+	if (a == nil && b != nil && len(b) == 0) || (b == nil && a != nil && len(a) == 0) {
+		return true
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
 	return true
 }
+
 // Add pointer slice helpers for new types if needed
 
 func TestSpecificBodyFieldBind_Bind(t *testing.T) {
@@ -182,7 +206,6 @@ func TestFullBodyBind_Bind(t *testing.T) {
 	req := httptest.NewRequest("PUT", "/documents/1", strings.NewReader(rawBody))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Source", "external-system")
-
 
 	var data FullBodyBind
 	// This struct does not have path parameters, so we can pass a nil or dummy pathVar func
@@ -369,7 +392,6 @@ func TestInvalidTypedValues_Bind(t *testing.T) {
 	// 	}
 	// }
 
-
 	// Test invalid JSON body
 	reqInvalidBody := httptest.NewRequest("POST", "/items/body", strings.NewReader(`{"value": "not-an-int-for-value"}`))
 	reqInvalidBody.Header.Set("Content-Type", "application/json")
@@ -392,7 +414,6 @@ func TestInvalidTypedValues_Bind(t *testing.T) {
 
 // TestPathParameterSimulation_Bind is removed as the primary mechanism is now pathVar func.
 // func TestPathParameterSimulation_Bind(t *testing.T) { ... }
-
 
 func TestQueryAndPathOnlyBind_Bind(t *testing.T) {
 	req := httptest.NewRequest("GET", "/users/test-user-id?itemCode=XYZ123&limit=10", nil)
@@ -429,15 +450,15 @@ func TestPointerFields_Bind(t *testing.T) {
 	boolPtr := func(b bool) *bool { return &b }
 
 	tests := []struct {
-		name             string
-		requestURL       string
-		headers          map[string]string
-		cookies          []*http.Cookie
-		pathParams       map[string]string
-		expected         TestPointerFields
-		expectError      bool
-		errorContains    string   // For simple substring match
-		errorRegex       string   // For regex match
+		name               string
+		requestURL         string
+		headers            map[string]string
+		cookies            []*http.Cookie
+		pathParams         map[string]string
+		expected           TestPointerFields
+		expectError        bool
+		errorContains      string   // For simple substring match
+		errorRegex         string   // For regex match
 		errorContainsArray []string // For multiple independent substrings
 	}{
 		{
@@ -463,10 +484,10 @@ func TestPointerFields_Bind(t *testing.T) {
 		},
 		{
 			name:       "all optional missing",
-			requestURL: "/?qStrReq=dummy&qIntReq=0&qBoolReq=false", // Optional query params missing
-			headers:    map[string]string{"hStrReq": "dummy"},      // Optional header missing
+			requestURL: "/?qStrReq=dummy&qIntReq=0&qBoolReq=false",        // Optional query params missing
+			headers:    map[string]string{"hStrReq": "dummy"},             // Optional header missing
 			cookies:    []*http.Cookie{{Name: "cStrReq", Value: "dummy"}}, // Optional cookie missing
-			pathParams: map[string]string{"pStrReq": "dummy"},      // Optional path param missing
+			pathParams: map[string]string{"pStrReq": "dummy"},             // Optional path param missing
 			expected: TestPointerFields{
 				QueryStrOptional:  nil,
 				QueryIntOptional:  nil,
@@ -516,28 +537,28 @@ func TestPointerFields_Bind(t *testing.T) {
 			errorContains: "required query parameter \"qIntReq\" for field QueryIntRequired is missing",
 		},
 		{
-			name:          "required header missing",
-			requestURL:    "/?qStrReq=test&qIntReq=1&qBoolReq=true",
-			pathParams:    map[string]string{"pStrReq": "path"},
-			cookies:       []*http.Cookie{{Name: "cStrReq", Value: "cookie"}},
+			name:       "required header missing",
+			requestURL: "/?qStrReq=test&qIntReq=1&qBoolReq=true",
+			pathParams: map[string]string{"pStrReq": "path"},
+			cookies:    []*http.Cookie{{Name: "cStrReq", Value: "cookie"}},
 			// hStrReq missing
 			expectError:   true,
 			errorContains: "required header \"hStrReq\" for field HeaderStrRequired is missing",
 		},
 		{
-			name:          "required path missing",
-			requestURL:    "/?qStrReq=test&qIntReq=1&qBoolReq=true",
-			headers:       map[string]string{"hStrReq": "header"},
-			cookies:       []*http.Cookie{{Name: "cStrReq", Value: "cookie"}},
+			name:       "required path missing",
+			requestURL: "/?qStrReq=test&qIntReq=1&qBoolReq=true",
+			headers:    map[string]string{"hStrReq": "header"},
+			cookies:    []*http.Cookie{{Name: "cStrReq", Value: "cookie"}},
 			// pStrReq missing from pathParams
 			expectError:   true,
 			errorContains: "required path parameter \"pStrReq\" for field PathStrRequired is missing",
 		},
 		{
-			name:          "required cookie missing",
-			requestURL:    "/?qStrReq=test&qIntReq=1&qBoolReq=true",
-			headers:       map[string]string{"hStrReq": "header"},
-			pathParams:    map[string]string{"pStrReq": "path"},
+			name:       "required cookie missing",
+			requestURL: "/?qStrReq=test&qIntReq=1&qBoolReq=true",
+			headers:    map[string]string{"hStrReq": "header"},
+			pathParams: map[string]string{"pStrReq": "path"},
 			// cStrReq missing
 			expectError:   true,
 			errorContains: "required cookie \"cStrReq\" for field CookieStrRequired is missing",
@@ -549,7 +570,7 @@ func TestPointerFields_Bind(t *testing.T) {
 			// String pointers should point to an empty string.
 			requestURL: "/?qStrOpt=&qStrReq=&qIntOpt=&qIntReq=&qBoolOpt=&qBoolReq=",
 			headers:    map[string]string{"hStrOpt": "", "hStrReq": "", "hIntOpt": "", "hIntReq": "", "hBoolOpt": "", "hBoolReq": ""}, // Assuming these could exist
-			cookies:    []*http.Cookie{
+			cookies: []*http.Cookie{
 				{Name: "cStrOpt", Value: ""}, {Name: "cStrReq", Value: ""},
 				{Name: "cIntOpt", Value: ""}, {Name: "cIntReq", Value: ""}, // Assuming these could exist
 				{Name: "cBoolOpt", Value: ""}, {Name: "cBoolReq", Value: ""}, // Assuming these could exist
@@ -570,7 +591,7 @@ func TestPointerFields_Bind(t *testing.T) {
 				CookieStrOptional: strPtr(""),
 				CookieStrRequired: strPtr(""),
 			},
-			expectError:   true,
+			expectError: true,
 			// Expecting three errors: qIntReq conversion, qBoolReq conversion, and pStrReq missing (because path value is empty string for a required field)
 			// Order is not guaranteed by errors.Join. We look for all substrings.
 			// To simplify, we'll check for all three substrings. The regexp was getting too complex.
@@ -601,12 +622,12 @@ func TestPointerFields_Bind(t *testing.T) {
 		// 	errorContains: "failed to convert query parameter \"qIntReq\" (value: \"\") to int for field QueryIntRequired",
 		// },
 		{
-			name:          "required bool query with empty string value",
-			requestURL:    "/?qStrReq=s&qIntReq=1&qBoolReq=", // qBoolReq is ""
+			name:       "required bool query with empty string value",
+			requestURL: "/?qStrReq=s&qIntReq=1&qBoolReq=", // qBoolReq is ""
 			// Satisfy other required fields for different sources to isolate this error
-			headers:    map[string]string{"hStrReq": "h", "hBoolReq": "true"}, // dummy for other required header
-			cookies:    []*http.Cookie{{Name: "cStrReq", Value: "c"}, {Name: "cBoolReq", Value: "true"}}, // dummy for other required cookie
-			pathParams: map[string]string{"pStrReq": "p", "pBoolReq": "true"},   // dummy for other required path
+			headers:       map[string]string{"hStrReq": "h", "hBoolReq": "true"},                            // dummy for other required header
+			cookies:       []*http.Cookie{{Name: "cStrReq", Value: "c"}, {Name: "cBoolReq", Value: "true"}}, // dummy for other required cookie
+			pathParams:    map[string]string{"pStrReq": "p", "pBoolReq": "true"},                            // dummy for other required path
 			expectError:   true,
 			errorContains: "failed to convert query parameter \"qBoolReq\" (value: \"\") to bool for field QueryBoolRequired: strconv.ParseBool: parsing \"\": invalid syntax", // This is a literal string
 		},
@@ -703,20 +724,20 @@ func TestBindTestExtendedTypesBind(t *testing.T) {
 			request: &http.Request{
 				URL: parseURL(t, "/?qStrSlice=hello&qStrSlice=world&qPtrIntSlice=10&qPtrIntSlice=20&qInt8=127&qInt16=32767&qInt32=2147483647&qInt64=9223372036854775807&qPtrUint=42&reqQStrSlice=required1&reqQStrSlice=required2"),
 				Header: http.Header{
-					"X-Int-Slice":       []string{"1,2,3"},
-					"X-Ptrstr-Slice":    []string{"val1,,val3"}, // Empty string element test
-					"X-Uint":            []string{"12345"},
-					"X-Uint8":           []string{"255"},
-					"X-Uint16":          []string{"65535"},
-					"X-Uint32":          []string{"4294967295"},
-					"X-Uint64":          []string{"18446744073709551615"},
-					"X-Ptrfloat32":      []string{"3.14"},
-					"X-Reqint":          []string{"99"},
+					"X-Int-Slice":    []string{"1,2,3"},
+					"X-Ptrstr-Slice": []string{"val1,,val3"}, // Empty string element test
+					"X-Uint":         []string{"12345"},
+					"X-Uint8":        []string{"255"},
+					"X-Uint16":       []string{"65535"},
+					"X-Uint32":       []string{"4294967295"},
+					"X-Uint64":       []string{"18446744073709551615"},
+					"X-Ptrfloat32":   []string{"3.14"},
+					"X-Reqint":       []string{"99"},
 				},
 				Cookies: []*http.Cookie{
 					{Name: "ckBoolSlice", Value: "true,false,true"},
 					{Name: "ckFloat32", Value: "2.718"},
-					{Name "ckFloat64", Value: "0.618"},
+					{Name: "ckFloat64", Value: "0.618"}, // Missing comma here
 				},
 			},
 			pathVars: map[string]string{
@@ -724,28 +745,28 @@ func TestBindTestExtendedTypesBind(t *testing.T) {
 				"pPtrInt64": "123456789012345",
 			},
 			expected: TestExtendedTypesBind{
-				QueryStringSlice:    []string{"hello", "world"},
-				HeaderIntSlice:      []int{1, 2, 3},
-				CookieBoolSlice:     []bool{true, false, true},
-				PathStringSlice:     []string{"path1,path2"}, // Current path slice behavior might be this
-				QueryPtrIntSlice:    []*int{ptrToInt(10), ptrToInt(20)},
-				HeaderPtrStringSlice:[]*string{ptrToString("val1"), ptrToString(""), ptrToString("val3")},
-				QueryInt8:           127,
-				QueryInt16:          32767,
-				QueryInt32:          2147483647,
-				QueryInt64:          9223372036854775807,
-				HeaderUint:          12345,
-				HeaderUint8:         255,
-				HeaderUint16:        65535,
-				HeaderUint32:        4294967295,
-				HeaderUint64:        18446744073709551615,
-				CookieFloat32:       2.718,
-				CookieFloat64:       0.618,
-				PathPtrInt64:        func() *int64 { v := int64(123456789012345); return &v }(),
-				QueryPtrUint:        func() *uint { v := uint(42); return &v }(),
-				HeaderPtrFloat32:    func() *float32 { v := float32(3.14); return &v }(),
+				QueryStringSlice:         []string{"hello", "world"},
+				HeaderIntSlice:           []int{1, 2, 3},
+				CookieBoolSlice:          []bool{true, false, true},
+				PathStringSlice:          []string{"path1,path2"}, // Current path slice behavior might be this
+				QueryPtrIntSlice:         []*int{ptrToInt(10), ptrToInt(20)},
+				HeaderPtrStringSlice:     []*string{ptrToString("val1"), ptrToString(""), ptrToString("val3")},
+				QueryInt8:                127,
+				QueryInt16:               32767,
+				QueryInt32:               2147483647,
+				QueryInt64:               9223372036854775807,
+				HeaderUint:               12345,
+				HeaderUint8:              255,
+				HeaderUint16:             65535,
+				HeaderUint32:             4294967295,
+				HeaderUint64:             18446744073709551615,
+				CookieFloat32:            2.718,
+				CookieFloat64:            0.618,
+				PathPtrInt64:             func() *int64 { v := int64(123456789012345); return &v }(),
+				QueryPtrUint:             func() *uint { v := uint(42); return &v }(),
+				HeaderPtrFloat32:         func() *float32 { v := float32(3.14); return &v }(),
 				RequiredQueryStringSlice: []string{"required1", "required2"},
-				RequiredHeaderInt:        99,
+				RequiredHeaderInt:        99, // Missing comma here
 			},
 			wantErr: false,
 		},
@@ -858,38 +879,78 @@ func TestBindTestExtendedTypesBind(t *testing.T) {
 
 // Helper functions for comparing slices of basic types (needed because DeepEqual handles nil vs empty slice differently sometimes)
 func equalStringSlice(a, b []string) bool {
-	if len(a) != len(b) { return false }
-	if (a == nil && b != nil && len(b) == 0) || (b == nil && a != nil && len(a) == 0) { return true } // nil vs empty
-	for i := range a { if a[i] != b[i] { return false } }
+	if len(a) != len(b) {
+		return false
+	}
+	if (a == nil && b != nil && len(b) == 0) || (b == nil && a != nil && len(a) == 0) {
+		return true
+	} // nil vs empty
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
 	return true
 }
 func equalIntSlice(a, b []int) bool {
-	if len(a) != len(b) { return false }
-	if (a == nil && b != nil && len(b) == 0) || (b == nil && a != nil && len(a) == 0) { return true }
-	for i := range a { if a[i] != b[i] { return false } }
+	if len(a) != len(b) {
+		return false
+	}
+	if (a == nil && b != nil && len(b) == 0) || (b == nil && a != nil && len(a) == 0) {
+		return true
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
 	return true
 }
 func equalBoolSlice(a, b []bool) bool {
-	if len(a) != len(b) { return false }
-	if (a == nil && b != nil && len(b) == 0) || (b == nil && a != nil && len(a) == 0) { return true }
-	for i := range a { if a[i] != b[i] { return false } }
+	if len(a) != len(b) {
+		return false
+	}
+	if (a == nil && b != nil && len(b) == 0) || (b == nil && a != nil && len(a) == 0) {
+		return true
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
 	return true
 }
 func equalPtrIntSlice(a, b []*int) bool {
-	if len(a) != len(b) { return false }
-	if (a == nil && b != nil && len(b) == 0) || (b == nil && a != nil && len(a) == 0) { return true }
+	if len(a) != len(b) {
+		return false
+	}
+	if (a == nil && b != nil && len(b) == 0) || (b == nil && a != nil && len(a) == 0) {
+		return true
+	}
 	for i := range a {
-		if (a[i] == nil) != (b[i] == nil) { return false }
-		if a[i] != nil && b[i] != nil && *a[i] != *b[i] { return false }
+		if (a[i] == nil) != (b[i] == nil) {
+			return false
+		}
+		if a[i] != nil && b[i] != nil && *a[i] != *b[i] {
+			return false
+		}
 	}
 	return true
 }
 func equalPtrStringSlice(a, b []*string) bool {
-	if len(a) != len(b) { return false }
-	if (a == nil && b != nil && len(b) == 0) || (b == nil && a != nil && len(a) == 0) { return true }
+	if len(a) != len(b) {
+		return false
+	}
+	if (a == nil && b != nil && len(b) == 0) || (b == nil && a != nil && len(a) == 0) {
+		return true
+	}
 	for i := range a {
-		if (a[i] == nil) != (b[i] == nil) { return false }
-		if a[i] != nil && b[i] != nil && *a[i] != *b[i] { return false }
+		if (a[i] == nil) != (b[i] == nil) {
+			return false
+		}
+		if a[i] != nil && b[i] != nil && *a[i] != *b[i] {
+			return false
+		}
 	}
 	return true
 }
@@ -947,6 +1008,7 @@ func assertBoolPtrEqual(t *testing.T, fieldName string, got, want *bool) {
 		t.Errorf("%s: expected %v, got %v", fieldName, *want, *got)
 	}
 }
+
 // */ // Removing comment
 // func TestRequiredNonPointerFields_Bind(t *testing.T) { ... } // This function is assumed to exist and is kept
 
@@ -973,15 +1035,15 @@ func TestBindExtendedTypes(t *testing.T) { // Function name changed to avoid con
 			request: &http.Request{
 				URL: parseURL(t, "/?qStrSlice=hello&qStrSlice=world&qPtrIntSlice=10&qPtrIntSlice=20&qInt8=127&qInt16=32767&qInt32=2147483647&qInt64=9223372036854775807&qPtrUint=42&reqQStrSlice=required1&reqQStrSlice=required2&qBoolTrue=true&qBoolFalse=false&qBoolOne=1&qBoolZero=0&qBoolCapTrue=TRUE&qStrEmptyOpt=&qPtrStrEmptyOpt="),
 				Header: http.Header{
-					"X-Int-Slice":       []string{"1,2,3"},
-					"X-Ptrstr-Slice":    []string{"val1,,val3"}, // Empty string element test
-					"X-Uint":            []string{"12345"},
-					"X-Uint8":           []string{"255"},
-					"X-Uint16":          []string{"65535"},
-					"X-Uint32":          []string{"4294967295"},
-					"X-Uint64":          []string{"18446744073709551615"},
-					"X-Ptrfloat32":      []string{"3.14"},
-					"X-Reqint":          []string{"99"},
+					"X-Int-Slice":    []string{"1,2,3"},
+					"X-Ptrstr-Slice": []string{"val1,,val3"}, // Empty string element test
+					"X-Uint":         []string{"12345"},
+					"X-Uint8":        []string{"255"},
+					"X-Uint16":       []string{"65535"},
+					"X-Uint32":       []string{"4294967295"},
+					"X-Uint64":       []string{"18446744073709551615"},
+					"X-Ptrfloat32":   []string{"3.14"},
+					"X-Reqint":       []string{"99"},
 				},
 				// Cookies field needs to be initialized if used
 			},
@@ -990,99 +1052,99 @@ func TestBindExtendedTypes(t *testing.T) { // Function name changed to avoid con
 				"pPtrInt64": "123456789012345",
 			},
 			expected: TestExtendedTypesBind{
-				QueryStringSlice:    []string{"hello", "world"},
-				HeaderIntSlice:      []int{1, 2, 3},
-				CookieBoolSlice:     nil, // Updated: No cookie set in this specific request setup
-				PathStringSlice:     []string{"path1,path2"},
-				QueryPtrIntSlice:    []*int{intPtr(10), intPtr(20)},
-				HeaderPtrStringSlice:[]*string{strPtr("val1"), strPtr(""), strPtr("val3")},
-				QueryInt8:           127,
-				QueryInt16:          32767,
-				QueryInt32:          2147483647,
-				QueryInt64:          9223372036854775807,
-				HeaderUint:          12345,
-				HeaderUint8:         255,
-				HeaderUint16:        65535,
-				HeaderUint32:        4294967295,
-				HeaderUint64:        18446744073709551615,
-				CookieFloat32:       0, // Updated
-				CookieFloat64:       0, // Updated
-				PathPtrInt64:        func() *int64 { v := int64(123456789012345); return &v }(),
-				QueryPtrUint:        func() *uint { v := uint(42); return &v }(),
-				HeaderPtrFloat32:    func() *float32 { v := float32(3.14); return &v }(),
-				RequiredQueryStringSlice: []string{"required1", "required2"},
-				RequiredHeaderInt:        99,
-				QueryBoolTrue:       true,
-				QueryBoolFalse:      false,
-				QueryBoolOne:        true,
-				QueryBoolZero:       false,
-				QueryBoolCapTrue:    true,
-				QueryStringEmptyOptional: "",
-				QueryPtrStringEmptyOptional: strPtr(""),
+				QueryStringSlice:            []string{"hello", "world"},
+				HeaderIntSlice:              []int{1, 2, 3},
+				CookieBoolSlice:             nil, // Updated: No cookie set in this specific request setup
+				PathStringSlice:             []string{"path1,path2"},
+				QueryPtrIntSlice:            []*int{intPtr(10), intPtr(20)},
+				HeaderPtrStringSlice:        []*string{strPtr("val1"), strPtr(""), strPtr("val3")},
+				QueryInt8:                   127,
+				QueryInt16:                  32767,
+				QueryInt32:                  2147483647,
+				QueryInt64:                  9223372036854775807,
+				HeaderUint:                  12345,
+				HeaderUint8:                 255,
+				HeaderUint16:                65535,
+				HeaderUint32:                4294967295,
+				HeaderUint64:                18446744073709551615,
+				CookieFloat32:               0, // Updated
+				CookieFloat64:               0, // Updated
+				PathPtrInt64:                func() *int64 { v := int64(123456789012345); return &v }(),
+				QueryPtrUint:                func() *uint { v := uint(42); return &v }(),
+				HeaderPtrFloat32:            func() *float32 { v := float32(3.14); return &v }(),
+				RequiredQueryStringSlice:    []string{"required1", "required2"},
+				RequiredHeaderInt:           99,
+				QueryBoolTrue:               true,
+				QueryBoolFalse:              false,
+				QueryBoolOne:                true,
+				QueryBoolZero:               false,
+				QueryBoolCapTrue:            true,
+				QueryStringEmptyOptional:    "",
+				QueryPtrStringEmptyOptional: strPtr(""), // Missing comma here
 			},
 			wantErr: false,
 		},
 		{
 			name: "boolean variations and empty values",
 			request: &http.Request{
-				URL: parseURL(t, "/?qBoolTrue=true&qBoolFalse=false&qBoolOne=1&qBoolZero=0&qBoolYes=yes&qBoolCapTrue=TRUE&qBoolInvalid=text&qStrEmptyOpt=&qIntEmptyOpt=&qBoolEmptyOpt=&qStrReqEmptyOk=ok&qStrEmptyReq=&reqQStrSlice=ok&qPtrStrEmptyOpt="),
+				URL:    parseURL(t, "/?qBoolTrue=true&qBoolFalse=false&qBoolOne=1&qBoolZero=0&qBoolYes=yes&qBoolCapTrue=TRUE&qBoolInvalid=text&qStrEmptyOpt=&qIntEmptyOpt=&qBoolEmptyOpt=&qStrReqEmptyOk=ok&qStrEmptyReq=&reqQStrSlice=ok&qPtrStrEmptyOpt="),
 				Header: http.Header{"X-Reqint": []string{"1"}},
 			},
 			expected: TestExtendedTypesBind{
-				QueryBoolTrue:     true,
-				QueryBoolFalse:    false,
-				QueryBoolOne:      true,
-				QueryBoolZero:     false,
-				QueryBoolYes:      false, // "yes" is not true for strconv.ParseBool
-				QueryBoolCapTrue:  true,
-				QueryBoolInvalid:  false, // Will cause error, but field remains false if not pointer
-				QueryStringEmptyOptional: "",
-				QueryIntEmptyOptional: 0,     // Will cause error for non-pointer if required, otherwise 0
-				QueryBoolEmptyOptional:false, // Will cause error for non-pointer if required, otherwise false
-				QueryStringEmptyRequired: "", // Empty string is valid for required string
-				RequiredQueryStringSlice: []string{"ok"},
-				RequiredHeaderInt: 1,
+				QueryBoolTrue:               true,
+				QueryBoolFalse:              false,
+				QueryBoolOne:                true,
+				QueryBoolZero:               false,
+				QueryBoolYes:                false, // "yes" is not true for strconv.ParseBool
+				QueryBoolCapTrue:            true,
+				QueryBoolInvalid:            false, // Will cause error, but field remains false if not pointer
+				QueryStringEmptyOptional:    "",
+				QueryIntEmptyOptional:       0,     // Will cause error for non-pointer if required, otherwise 0
+				QueryBoolEmptyOptional:      false, // Will cause error for non-pointer if required, otherwise false
+				QueryStringEmptyRequired:    "",    // Empty string is valid for required string
+				RequiredQueryStringSlice:    []string{"ok"},
+				RequiredHeaderInt:           1,
 				QueryPtrStringEmptyOptional: strPtr(""),
 			},
-			wantErr:     true, // Due to qBoolInvalid and qIntEmptyOpt (if it were required or if empty is error for non-ptr int)
+			wantErr:     true,                                                          // Due to qBoolInvalid and qIntEmptyOpt (if it were required or if empty is error for non-ptr int)
 			errContains: []string{`strconv.ParseBool: parsing "text"`, `qBoolInvalid`}, // Simplified, check one error
 		},
 		{
 			name: "empty value for required int field",
 			request: &http.Request{
-				URL: parseURL(t, "/?qIntEmptyReq=&reqQStrSlice=ok"),
+				URL:    parseURL(t, "/?qIntEmptyReq=&reqQStrSlice=ok"),
 				Header: http.Header{"X-Reqint": []string{"1"}}, // Satisfy other required
 			},
-			wantErr: true,
+			wantErr:     true,
 			errContains: []string{`qIntEmptyReq`, `received an empty value`},
 		},
 		{
 			name: "empty value for optional pointer int field",
 			request: &http.Request{
-				URL: parseURL(t, "/?qPtrIntEmptyOpt=&reqQStrSlice=ok"),
+				URL:    parseURL(t, "/?qPtrIntEmptyOpt=&reqQStrSlice=ok"),
 				Header: http.Header{"X-Reqint": []string{"1"}},
 			},
 			expected: TestExtendedTypesBind{
 				QueryPtrIntEmptyOptional: nil, // Should be nil
 				RequiredQueryStringSlice: []string{"ok"},
-				RequiredHeaderInt: 1,
+				RequiredHeaderInt:        1,
 			},
 			wantErr: false,
 		},
 		{
 			name: "slice with empty elements",
 			request: &http.Request{
-				URL: parseURL(t, "/?qStrSliceEmpty=&qStrSliceEmpty=foo&qStrSliceEmpty=&qIntSliceEmpty=&qIntSliceEmpty=123&qIntSliceEmpty=&qPtrStrSliceEmpty=&qPtrStrSliceEmpty=bar&qPtrStrSliceEmpty=&reqQStrSlice=ok"),
+				URL:    parseURL(t, "/?qStrSliceEmpty=&qStrSliceEmpty=foo&qStrSliceEmpty=&qIntSliceEmpty=&qIntSliceEmpty=123&qIntSliceEmpty=&qPtrStrSliceEmpty=&qPtrStrSliceEmpty=bar&qPtrStrSliceEmpty=&reqQStrSlice=ok"),
 				Header: http.Header{"X-Reqint": []string{"1"}},
 			},
 			expected: TestExtendedTypesBind{
 				QueryStringSliceWithEmpty: []string{"", "foo", ""},
 				// QueryIntSliceWithEmpty: []int{0, 123, 0}, // This will error because empty cannot be int
 				QueryPtrStringSliceWithEmpty: []*string{strPtr(""), strPtr("bar"), strPtr("")},
-				RequiredQueryStringSlice: []string{"ok"},
-				RequiredHeaderInt: 1,
+				RequiredQueryStringSlice:     []string{"ok"},
+				RequiredHeaderInt:            1,
 			},
-			wantErr: true, // Error from qIntSliceEmpty trying to parse "" to int
+			wantErr:     true, // Error from qIntSliceEmpty trying to parse "" to int
 			errContains: []string{"qIntSliceEmpty", "empty value for slice element", "cannot be converted to int"},
 		},
 		{
@@ -1123,7 +1185,6 @@ func TestBindExtendedTypes(t *testing.T) { // Function name changed to avoid con
 				dummyResp := http.Response{Header: header}
 				tt.request.Cookies = dummyResp.Cookies()
 			}
-
 
 			err := s.Bind(tt.request, func(key string) string {
 				if tt.pathVars != nil {
@@ -1169,11 +1230,11 @@ func TestBindNewTypes(t *testing.T) {
 			request: &http.Request{
 				URL: parseURL(t, "/?qUintptr=12345&qComplex64=1%2B2i&qComplex128=3-4i&qPtrUintptr=67890&qPtrComplex64=5%2B6i&qPtrComplex128=7-8i&qUintptrSlice=11&qUintptrSlice=22&reqQUintptr=99"),
 				Header: http.Header{
-					"X-Uintptr":         []string{"123"},
-					"X-Complex64":       []string{"1.1+2.2i"},
-					"X-Complex128":      []string{"3.3-4.4i"},
-					"X-Complex64-Slice": []string{"1+1i,2-2i"},
-					"X-Reqcomplex64":    []string{"10+10i"},
+					"X-Uintptr":            []string{"123"},
+					"X-Complex64":          []string{"1.1+2.2i"},
+					"X-Complex128":         []string{"3.3-4.4i"},
+					"X-Complex64-Slice":    []string{"1+1i,2-2i"},
+					"X-Reqcomplex64":       []string{"10+10i"},
 					"X-Ptrcomplex64-Slice": []string{"1.5+1.5i,,2.5-2.5i"},
 				},
 				// Cookies field needs to be initialized if used
@@ -1207,10 +1268,10 @@ func TestBindNewTypes(t *testing.T) {
 				CookieComplex128Slice: nil, // No cookie
 
 				RequiredQueryUintptr:    99,
-				RequiredHeaderComplex64: complex(10,10),
+				RequiredHeaderComplex64: complex(10, 10),
 
-				QueryPtrUintptrSlice:      nil, // Not provided in this test case
-				HeaderPtrComplex64Slice:   []*complex64{complex64Ptr(complex(1.5,1.5)), complex64Ptr(0), complex64Ptr(complex(2.5,-2.5))},
+				QueryPtrUintptrSlice:    nil, // Not provided in this test case
+				HeaderPtrComplex64Slice: []*complex64{complex64Ptr(complex(1.5, 1.5)), complex64Ptr(0), complex64Ptr(complex(2.5, -2.5))},
 			},
 			wantErr: false,
 		},
@@ -1253,7 +1314,7 @@ func TestBindNewTypes(t *testing.T) {
 		{
 			name: "invalid complex128 in slice",
 			request: &http.Request{
-				URL: parseURL(t, "/?reqQUintptr=1"),
+				URL:    parseURL(t, "/?reqQUintptr=1"),
 				Header: http.Header{"X-Reqcomplex64": []string{"1+1i"}},
 				// Cookies field needs to be initialized if used
 			},
@@ -1278,12 +1339,13 @@ func TestBindNewTypes(t *testing.T) {
 				// tt.errContains should be set for this specific case too for the check below to be effective
 				tt.errContains = []string{"cComplex128-Slice", "convert", "bad-complex", "complex128"}
 			} else if len(tt.request.Cookies) > 0 { // General cookie setup for other tests
-				if tt.request.Header == nil { tt.request.Header = make(http.Header) }
+				if tt.request.Header == nil {
+					tt.request.Header = make(http.Header)
+				}
 				for _, c := range tt.request.Cookies {
 					tt.request.AddCookie(c)
 				}
 			}
-
 
 			err := s.Bind(tt.request, func(key string) string {
 				if tt.pathVars != nil {
@@ -1304,7 +1366,7 @@ func TestBindNewTypes(t *testing.T) {
 						}
 					}
 				} else {
-						t.Logf("Bind() error = %v", err)
+					t.Logf("Bind() error = %v", err)
 				}
 			}
 			if !tt.wantErr && !reflect.DeepEqual(s, tt.expected) {

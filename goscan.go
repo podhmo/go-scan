@@ -646,26 +646,26 @@ func (s *Scanner) ScanPackageByImport(ctx context.Context, importPath string) (*
 	cachedPkg, found := s.packageCache[importPath]
 	s.mu.RUnlock()
 	if found {
-		fmt.Printf("DEBUG: ScanPackageByImport CACHE HIT for %s. Returning cached PackageInfo with %d types.\n", importPath, len(cachedPkg.Types))
+		slog.DebugContext(ctx, "ScanPackageByImport CACHE HIT", slog.String("importPath", importPath), slog.Int("types", len(cachedPkg.Types)))
 		return cachedPkg, nil
 	}
-	fmt.Printf("DEBUG: ScanPackageByImport CACHE MISS for %s.\n", importPath)
+	slog.DebugContext(ctx, "ScanPackageByImport CACHE MISS", slog.String("importPath", importPath))
 
 	pkgDirAbs, err := s.locator.FindPackageDir(importPath)
 	if err != nil {
 		return nil, fmt.Errorf("could not find directory for import path %s: %w", importPath, err)
 	}
-	fmt.Printf("DEBUG: ScanPackageByImport resolved import path %s to directory %s.\n", importPath, pkgDirAbs)
+	slog.DebugContext(ctx, "ScanPackageByImport resolved import path", slog.String("importPath", importPath), slog.String("pkgDirAbs", pkgDirAbs))
 
 	allGoFilesInPkg, err := listGoFiles(pkgDirAbs) // Gets absolute paths
 	if err != nil {
 		return nil, fmt.Errorf("ScanPackageByImport: failed to list go files in %s: %w", pkgDirAbs, err)
 	}
-	fmt.Printf("DEBUG: ScanPackageByImport found %d .go files in %s: %v\n", len(allGoFilesInPkg), pkgDirAbs, allGoFilesInPkg)
+	slog.DebugContext(ctx, "ScanPackageByImport found .go files", slog.Int("count", len(allGoFilesInPkg)), slog.String("pkgDirAbs", pkgDirAbs), slog.Any("files", allGoFilesInPkg))
 
 	if len(allGoFilesInPkg) == 0 {
 		// If a directory for an import path exists but has no .go files, cache an empty PackageInfo.
-		fmt.Printf("DEBUG: ScanPackageByImport found no .go files in %s. Caching empty PackageInfo.\n", pkgDirAbs)
+		slog.DebugContext(ctx, "ScanPackageByImport found no .go files. Caching empty PackageInfo.", slog.String("pkgDirAbs", pkgDirAbs))
 		pkgInfo := &scanner.PackageInfo{Path: pkgDirAbs, ImportPath: importPath, Name: "", Fset: s.fset, Files: []string{}, Types: []*scanner.TypeInfo{}}
 		s.mu.Lock()
 		s.packageCache[importPath] = pkgInfo
@@ -675,7 +675,7 @@ func (s *Scanner) ScanPackageByImport(ctx context.Context, importPath string) (*
 
 	var filesToParseThisCall []string
 	symCache, _ := s.getOrCreateSymbolCache(ctx) // Error getting cache is not fatal here
-	fmt.Printf("DEBUG: ScanPackageByImport for %s, symbol cache enabled: %t\n", importPath, symCache != nil && symCache.IsEnabled())
+	slog.DebugContext(ctx, "ScanPackageByImport symbol cache status", slog.String("importPath", importPath), slog.Bool("enabled", symCache != nil && symCache.IsEnabled()))
 
 	filesConsideredBySymCache := make(map[string]struct{})
 

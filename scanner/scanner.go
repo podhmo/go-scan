@@ -96,17 +96,17 @@ func (s *Scanner) ScanFiles(ctx context.Context, filePaths []string, pkgDirPath 
 		}
 
 		info.Files = append(info.Files, filePath) // Store absolute file path
-		fmt.Printf("DEBUG SCANNER: Processing file %s for package %s\n", filePath, info.Name)
+		slog.DebugContext(ctx, "Processing file for package", slog.String("filePath", filePath), slog.String("packageName", info.Name))
 		s.buildImportLookup(fileAst)
-		fmt.Printf("DEBUG SCANNER: Built import lookup for %s. Imports: %v\n", filePath, s.importLookup)
+		slog.DebugContext(ctx, "Built import lookup", slog.String("filePath", filePath), slog.Any("imports", s.importLookup))
 		for declIndex, decl := range fileAst.Decls {
-			fmt.Printf("DEBUG SCANNER: File %s, Decl %d: Type %T\n", filePath, declIndex, decl)
+			slog.DebugContext(ctx, "Processing declaration", slog.String("filePath", filePath), slog.Int("declIndex", declIndex), slog.String("type", fmt.Sprintf("%T", decl)))
 			switch d := decl.(type) {
 			case *ast.GenDecl:
-				fmt.Printf("DEBUG SCANNER: GenDecl (Tok: %s) in %s. Specs: %d\n", d.Tok.String(), filePath, len(d.Specs))
+				slog.DebugContext(ctx, "Processing GenDecl", slog.String("token", d.Tok.String()), slog.String("filePath", filePath), slog.Int("specs", len(d.Specs)))
 				s.parseGenDecl(ctx, d, info, filePath) // Pass context
 			case *ast.FuncDecl:
-				fmt.Printf("DEBUG SCANNER: FuncDecl %s in %s\n", d.Name.Name, filePath)
+				slog.DebugContext(ctx, "Processing FuncDecl", slog.String("name", d.Name.Name), slog.String("filePath", filePath))
 				info.Functions = append(info.Functions, s.parseFuncDecl(d, filePath))
 			}
 		}
@@ -145,7 +145,7 @@ func (s *Scanner) parseGenDecl(ctx context.Context, decl *ast.GenDecl, info *Pac
 			if typeInfo.Doc == "" && decl.Doc != nil {
 				typeInfo.Doc = commentText(decl.Doc)
 			}
-			fmt.Printf("DEBUG SCANNER: Parsed TypeSpec: Name=%s, Kind=%v, FilePath=%s. Adding to PackageInfo (current Types count: %d)\n", typeInfo.Name, typeInfo.Kind, typeInfo.FilePath, len(info.Types))
+			slog.DebugContext(ctx, "Parsed TypeSpec, adding to PackageInfo", slog.String("name", typeInfo.Name), slog.Any("kind", typeInfo.Kind), slog.String("filePath", typeInfo.FilePath), slog.Int("currentTypesCount", len(info.Types)))
 			info.Types = append(info.Types, typeInfo)
 		case *ast.ValueSpec:
 			if decl.Tok == token.CONST {

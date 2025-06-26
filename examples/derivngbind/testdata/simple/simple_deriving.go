@@ -4,6 +4,7 @@ package simple
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,8 +12,7 @@ import (
 )
 
 func (s *ComprehensiveBind) Bind(req *http.Request, pathVar func(string) string) error {
-	var err error
-	_ = err // prevent unused var error if no error handling is needed below
+	var errs []error
 
 	// Path parameter binding for field PathString (string) from "id"
 	if pathValueStr := pathVar("id"); pathValueStr != "" {
@@ -41,10 +41,10 @@ func (s *ComprehensiveBind) Bind(req *http.Request, pathVar func(string) string)
 	if req.URL.Query().Has("age") {
 		val := req.URL.Query().Get("age")
 
-		v, err := strconv.Atoi(val)
-		if err != nil {
+		v, convErr := strconv.Atoi(val)
+		if convErr != nil {
 
-			return fmt.Errorf("failed to convert query parameter \"age\" (value: %q) to int for field QueryAge: %w", val, err)
+			errs = append(errs, fmt.Errorf("failed to convert query parameter \"age\" (value: %q) to int for field QueryAge: %w", val, convErr))
 
 		} else {
 
@@ -62,10 +62,10 @@ func (s *ComprehensiveBind) Bind(req *http.Request, pathVar func(string) string)
 	if req.URL.Query().Has("active") {
 		val := req.URL.Query().Get("active")
 
-		v, err := strconv.ParseBool(val)
-		if err != nil {
+		v, convErr := strconv.ParseBool(val)
+		if convErr != nil {
 
-			return fmt.Errorf("failed to convert query parameter \"active\" (value: %q) to bool for field QueryActive: %w", val, err)
+			errs = append(errs, fmt.Errorf("failed to convert query parameter \"active\" (value: %q) to bool for field QueryActive: %w", val, convErr))
 
 		} else {
 
@@ -106,21 +106,23 @@ func (s *ComprehensiveBind) Bind(req *http.Request, pathVar func(string) string)
 
 		} else {
 			// The struct ComprehensiveBind itself is the target for the request body
-			if err := json.NewDecoder(req.Body).Decode(s); err != nil {
-				if err != io.EOF { // EOF might be acceptable
-					return fmt.Errorf("failed to decode request body into ComprehensiveBind: %w", err)
+			if decErr := json.NewDecoder(req.Body).Decode(s); decErr != nil {
+				if decErr != io.EOF { // EOF might be acceptable
+					errs = append(errs, fmt.Errorf("failed to decode request body into ComprehensiveBind: %w", decErr))
 				}
 			}
 		}
 
 	}
 
+	if len(errs) > 0 {
+		return errors.Join(errs...)
+	}
 	return nil
 }
 
 func (s *SpecificBodyFieldBind) Bind(req *http.Request, pathVar func(string) string) error {
-	var err error
-	_ = err // prevent unused var error if no error handling is needed below
+	var errs []error
 
 	// Header binding for field RequestID (string) from "X-Request-ID"
 	if val := req.Header.Get("X-Request-ID"); val != "" {
@@ -151,18 +153,18 @@ func (s *SpecificBodyFieldBind) Bind(req *http.Request, pathVar func(string) str
 		if isSpecificFieldBodyTarget {
 
 			// Field Payload is the target for the entire request body
-			if err := json.NewDecoder(req.Body).Decode(&s.Payload); err != nil {
-				if err != io.EOF { // EOF might be acceptable if body is optional
-					return fmt.Errorf("failed to decode request body into field Payload: %w", err)
+			if decErr := json.NewDecoder(req.Body).Decode(&s.Payload); decErr != nil {
+				if decErr != io.EOF { // EOF might be acceptable if body is optional
+					errs = append(errs, fmt.Errorf("failed to decode request body into field Payload: %w", decErr))
 				}
 			}
 			goto afterBodyProcessing // Process only one 'in:"body"' field
 
 		} else {
 			// The struct SpecificBodyFieldBind itself is the target for the request body
-			if err := json.NewDecoder(req.Body).Decode(s); err != nil {
-				if err != io.EOF { // EOF might be acceptable
-					return fmt.Errorf("failed to decode request body into SpecificBodyFieldBind: %w", err)
+			if decErr := json.NewDecoder(req.Body).Decode(s); decErr != nil {
+				if decErr != io.EOF { // EOF might be acceptable
+					errs = append(errs, fmt.Errorf("failed to decode request body into SpecificBodyFieldBind: %w", decErr))
 				}
 			}
 		}
@@ -171,12 +173,14 @@ func (s *SpecificBodyFieldBind) Bind(req *http.Request, pathVar func(string) str
 
 	}
 
+	if len(errs) > 0 {
+		return errors.Join(errs...)
+	}
 	return nil
 }
 
 func (s *FullBodyBind) Bind(req *http.Request, pathVar func(string) string) error {
-	var err error
-	_ = err // prevent unused var error if no error handling is needed below
+	var errs []error
 
 	// Header binding for field SourceHeader (string) from "X-Source"
 	if val := req.Header.Get("X-Source"); val != "" {
@@ -194,21 +198,23 @@ func (s *FullBodyBind) Bind(req *http.Request, pathVar func(string) string) erro
 
 		} else {
 			// The struct FullBodyBind itself is the target for the request body
-			if err := json.NewDecoder(req.Body).Decode(s); err != nil {
-				if err != io.EOF { // EOF might be acceptable
-					return fmt.Errorf("failed to decode request body into FullBodyBind: %w", err)
+			if decErr := json.NewDecoder(req.Body).Decode(s); decErr != nil {
+				if decErr != io.EOF { // EOF might be acceptable
+					errs = append(errs, fmt.Errorf("failed to decode request body into FullBodyBind: %w", decErr))
 				}
 			}
 		}
 
 	}
 
+	if len(errs) > 0 {
+		return errors.Join(errs...)
+	}
 	return nil
 }
 
 func (s *QueryAndPathOnlyBind) Bind(req *http.Request, pathVar func(string) string) error {
-	var err error
-	_ = err // prevent unused var error if no error handling is needed below
+	var errs []error
 
 	// Path parameter binding for field UserID (string) from "userID"
 	if pathValueStr := pathVar("userID"); pathValueStr != "" {
@@ -237,10 +243,10 @@ func (s *QueryAndPathOnlyBind) Bind(req *http.Request, pathVar func(string) stri
 	if req.URL.Query().Has("limit") {
 		val := req.URL.Query().Get("limit")
 
-		v, err := strconv.Atoi(val)
-		if err != nil {
+		v, convErr := strconv.Atoi(val)
+		if convErr != nil {
 
-			return fmt.Errorf("failed to convert query parameter \"limit\" (value: %q) to int for field Limit: %w", val, err)
+			errs = append(errs, fmt.Errorf("failed to convert query parameter \"limit\" (value: %q) to int for field Limit: %w", val, convErr))
 
 		} else {
 
@@ -253,12 +259,14 @@ func (s *QueryAndPathOnlyBind) Bind(req *http.Request, pathVar func(string) stri
 		// For non-pointer, non-required, missing param means field remains zero-value.
 	}
 
+	if len(errs) > 0 {
+		return errors.Join(errs...)
+	}
 	return nil
 }
 
 func (s *TestPointerFields) Bind(req *http.Request, pathVar func(string) string) error {
-	var err error
-	_ = err // prevent unused var error if no error handling is needed below
+	var errs []error
 
 	// Query parameter binding for field QueryStrOptional (string) from "qStrOpt"
 
@@ -283,7 +291,7 @@ func (s *TestPointerFields) Bind(req *http.Request, pathVar func(string) string)
 
 	} else { // Key does not exist
 
-		return fmt.Errorf("required query parameter \"qStrReq\" for field QueryStrRequired is missing")
+		errs = append(errs, fmt.Errorf("required query parameter \"qStrReq\" for field QueryStrRequired is missing"))
 
 		// For non-pointer, non-required, missing param means field remains zero-value.
 	}
@@ -293,8 +301,8 @@ func (s *TestPointerFields) Bind(req *http.Request, pathVar func(string) string)
 	if req.URL.Query().Has("qIntOpt") {
 		val := req.URL.Query().Get("qIntOpt")
 
-		v, err := strconv.Atoi(val)
-		if err != nil {
+		v, convErr := strconv.Atoi(val)
+		if convErr != nil {
 
 			s.QueryIntOptional = nil
 
@@ -316,10 +324,10 @@ func (s *TestPointerFields) Bind(req *http.Request, pathVar func(string) string)
 	if req.URL.Query().Has("qIntReq") {
 		val := req.URL.Query().Get("qIntReq")
 
-		v, err := strconv.Atoi(val)
-		if err != nil {
+		v, convErr := strconv.Atoi(val)
+		if convErr != nil {
 
-			return fmt.Errorf("failed to convert query parameter \"qIntReq\" (value: %q) to int for field QueryIntRequired: %w", val, err)
+			errs = append(errs, fmt.Errorf("failed to convert query parameter \"qIntReq\" (value: %q) to int for field QueryIntRequired: %w", val, convErr))
 
 		} else {
 
@@ -329,7 +337,7 @@ func (s *TestPointerFields) Bind(req *http.Request, pathVar func(string) string)
 
 	} else { // Key does not exist
 
-		return fmt.Errorf("required query parameter \"qIntReq\" for field QueryIntRequired is missing")
+		errs = append(errs, fmt.Errorf("required query parameter \"qIntReq\" for field QueryIntRequired is missing"))
 
 		// For non-pointer, non-required, missing param means field remains zero-value.
 	}
@@ -339,8 +347,8 @@ func (s *TestPointerFields) Bind(req *http.Request, pathVar func(string) string)
 	if req.URL.Query().Has("qBoolOpt") {
 		val := req.URL.Query().Get("qBoolOpt")
 
-		v, err := strconv.ParseBool(val)
-		if err != nil {
+		v, convErr := strconv.ParseBool(val)
+		if convErr != nil {
 
 			s.QueryBoolOptional = nil
 
@@ -362,10 +370,10 @@ func (s *TestPointerFields) Bind(req *http.Request, pathVar func(string) string)
 	if req.URL.Query().Has("qBoolReq") {
 		val := req.URL.Query().Get("qBoolReq")
 
-		v, err := strconv.ParseBool(val)
-		if err != nil {
+		v, convErr := strconv.ParseBool(val)
+		if convErr != nil {
 
-			return fmt.Errorf("failed to convert query parameter \"qBoolReq\" (value: %q) to bool for field QueryBoolRequired: %w", val, err)
+			errs = append(errs, fmt.Errorf("failed to convert query parameter \"qBoolReq\" (value: %q) to bool for field QueryBoolRequired: %w", val, convErr))
 
 		} else {
 
@@ -375,7 +383,7 @@ func (s *TestPointerFields) Bind(req *http.Request, pathVar func(string) string)
 
 	} else { // Key does not exist
 
-		return fmt.Errorf("required query parameter \"qBoolReq\" for field QueryBoolRequired is missing")
+		errs = append(errs, fmt.Errorf("required query parameter \"qBoolReq\" for field QueryBoolRequired is missing"))
 
 		// For non-pointer, non-required, missing param means field remains zero-value.
 	}
@@ -398,7 +406,7 @@ func (s *TestPointerFields) Bind(req *http.Request, pathVar func(string) string)
 
 	} else {
 
-		return fmt.Errorf("required header \"hStrReq\" for field HeaderStrRequired is missing")
+		errs = append(errs, fmt.Errorf("required header \"hStrReq\" for field HeaderStrRequired is missing"))
 
 	}
 
@@ -421,7 +429,7 @@ func (s *TestPointerFields) Bind(req *http.Request, pathVar func(string) string)
 
 	} else {
 
-		return fmt.Errorf("required path parameter \"pStrReq\" for field PathStrRequired is missing")
+		errs = append(errs, fmt.Errorf("required path parameter \"pStrReq\" for field PathStrRequired is missing"))
 
 		// For non-pointer, non-required, missing path param means field remains zero-value.
 	}
@@ -448,18 +456,20 @@ func (s *TestPointerFields) Bind(req *http.Request, pathVar func(string) string)
 
 	} else { // Cookie not found or value is empty
 
-		return fmt.Errorf("required cookie \"cStrReq\" for field CookieStrRequired is missing, empty, or could not be retrieved")
+		errs = append(errs, fmt.Errorf("required cookie \"cStrReq\" for field CookieStrRequired is missing, empty, or could not be retrieved (underlying error: %v)", cerr)) // Include original error if any
 
 		// If cerr is .ErrNoCookie and not required, it's fine. Field remains nil/zero.
 		// If other cerr, it might be an issue even if not required, but current logic is to ignore.
 	}
 
+	if len(errs) > 0 {
+		return errors.Join(errs...)
+	}
 	return nil
 }
 
 func (s *TestRequiredNonPointerFields) Bind(req *http.Request, pathVar func(string) string) error {
-	var err error
-	_ = err // prevent unused var error if no error handling is needed below
+	var errs []error
 
 	// Query parameter binding for field QueryStrRequired (string) from "qStrReq"
 
@@ -470,7 +480,7 @@ func (s *TestRequiredNonPointerFields) Bind(req *http.Request, pathVar func(stri
 
 	} else { // Key does not exist
 
-		return fmt.Errorf("required query parameter \"qStrReq\" for field QueryStrRequired is missing")
+		errs = append(errs, fmt.Errorf("required query parameter \"qStrReq\" for field QueryStrRequired is missing"))
 
 		// For non-pointer, non-required, missing param means field remains zero-value.
 	}
@@ -480,10 +490,10 @@ func (s *TestRequiredNonPointerFields) Bind(req *http.Request, pathVar func(stri
 	if req.URL.Query().Has("qIntReq") {
 		val := req.URL.Query().Get("qIntReq")
 
-		v, err := strconv.Atoi(val)
-		if err != nil {
+		v, convErr := strconv.Atoi(val)
+		if convErr != nil {
 
-			return fmt.Errorf("failed to convert query parameter \"qIntReq\" (value: %q) to int for field QueryIntRequired: %w", val, err)
+			errs = append(errs, fmt.Errorf("failed to convert query parameter \"qIntReq\" (value: %q) to int for field QueryIntRequired: %w", val, convErr))
 
 		} else {
 
@@ -493,7 +503,7 @@ func (s *TestRequiredNonPointerFields) Bind(req *http.Request, pathVar func(stri
 
 	} else { // Key does not exist
 
-		return fmt.Errorf("required query parameter \"qIntReq\" for field QueryIntRequired is missing")
+		errs = append(errs, fmt.Errorf("required query parameter \"qIntReq\" for field QueryIntRequired is missing"))
 
 		// For non-pointer, non-required, missing param means field remains zero-value.
 	}
@@ -505,7 +515,7 @@ func (s *TestRequiredNonPointerFields) Bind(req *http.Request, pathVar func(stri
 
 	} else {
 
-		return fmt.Errorf("required header \"hStrReq\" for field HeaderStrRequired is missing")
+		errs = append(errs, fmt.Errorf("required header \"hStrReq\" for field HeaderStrRequired is missing"))
 
 	}
 
@@ -516,7 +526,7 @@ func (s *TestRequiredNonPointerFields) Bind(req *http.Request, pathVar func(stri
 
 	} else {
 
-		return fmt.Errorf("required path parameter \"pStrReq\" for field PathStrRequired is missing")
+		errs = append(errs, fmt.Errorf("required path parameter \"pStrReq\" for field PathStrRequired is missing"))
 
 		// For non-pointer, non-required, missing path param means field remains zero-value.
 	}
@@ -529,11 +539,14 @@ func (s *TestRequiredNonPointerFields) Bind(req *http.Request, pathVar func(stri
 
 	} else { // Cookie not found or value is empty
 
-		return fmt.Errorf("required cookie \"cStrReq\" for field CookieStrRequired is missing, empty, or could not be retrieved")
+		errs = append(errs, fmt.Errorf("required cookie \"cStrReq\" for field CookieStrRequired is missing, empty, or could not be retrieved (underlying error: %v)", cerr)) // Include original error if any
 
 		// If cerr is .ErrNoCookie and not required, it's fine. Field remains nil/zero.
 		// If other cerr, it might be an issue even if not required, but current logic is to ignore.
 	}
 
+	if len(errs) > 0 {
+		return errors.Join(errs...)
+	}
 	return nil
 }

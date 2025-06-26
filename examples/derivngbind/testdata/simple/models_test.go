@@ -1,8 +1,6 @@
 package simple
 
 import (
-	"bytes"
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -49,15 +47,22 @@ func TestComprehensiveBind_Bind(t *testing.T) {
 	// For this test, we will skip asserting PathString until path param handling is finalized.
 	// data.PathString = "test-path-id" // Simulate manual setting or router's work if path logic was active
 
-	err := data.Bind(req)
+	mockPathVar := func(name string) string {
+		if name == "id" { // This matches the `path:"id"` tag in ComprehensiveBind struct
+			return "test-path-id-from-func"
+		}
+		return ""
+	}
+
+	err := data.Bind(req, mockPathVar)
 	if err != nil {
 		t.Fatalf("Bind returned error: %v", err)
 	}
 
 	// Assertions
-	// if data.PathString != "test-path-id" { // Skipping due to generator TODO on path params
-	// 	t.Errorf("expected PathString to be 'test-path-id', got '%s'", data.PathString)
-	// }
+	if data.PathString != "test-path-id-from-func" {
+		t.Errorf("expected PathString to be 'test-path-id-from-func', got '%s'", data.PathString)
+	}
 	if data.QueryName != "Alice" {
 		t.Errorf("expected QueryName to be 'Alice', got '%s'", data.QueryName)
 	}
@@ -88,7 +93,9 @@ func TestSpecificBodyFieldBind_Bind(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 
 	var data SpecificBodyFieldBind
-	err := data.Bind(req)
+	// This struct does not have path parameters, so we can pass a nil or dummy pathVar func
+	dummyPathVar := func(name string) string { return "" }
+	err := data.Bind(req, dummyPathVar)
 	if err != nil {
 		t.Fatalf("Bind returned error: %v", err)
 	}
@@ -119,7 +126,9 @@ func TestFullBodyBind_Bind(t *testing.T) {
 
 
 	var data FullBodyBind
-	err := data.Bind(req)
+	// This struct does not have path parameters, so we can pass a nil or dummy pathVar func
+	dummyPathVar := func(name string) string { return "" }
+	err := data.Bind(req, dummyPathVar)
 	if err != nil {
 		t.Fatalf("Bind returned error: %v", err)
 	}
@@ -143,11 +152,21 @@ func TestEmptyValues_Bind(t *testing.T) {
 	req := httptest.NewRequest("GET", "/items/empty-id", nil) // No query, no body, no relevant headers/cookies
 
 	var data ComprehensiveBind
-	err := data.Bind(req)
+	// PathString is "id"
+	mockPathVar := func(name string) string {
+		if name == "id" {
+			return "empty-path-id" // or "" if we want to test empty path param
+		}
+		return ""
+	}
+	err := data.Bind(req, mockPathVar)
 	if err != nil {
 		t.Fatalf("Bind returned error: %v", err)
 	}
 
+	if data.PathString != "empty-path-id" {
+		t.Errorf("expected PathString to be 'empty-path-id', got '%s'", data.PathString)
+	}
 	// Expect zero values for non-provided fields
 	if data.QueryName != "" {
 		t.Errorf("expected QueryName to be empty, got '%s'", data.QueryName)
@@ -176,34 +195,56 @@ func TestInvalidTypedValues_Bind(t *testing.T) {
 	// Test query parameter with incorrect type
 	reqInvalidAge := httptest.NewRequest("GET", "/items/typed?age=not-an-int", nil)
 	var dataInvalidAge ComprehensiveBind
-	err := dataInvalidAge.Bind(reqInvalidAge)
+	dummyPathVar := func(name string) string { return "" }
+	err := dataInvalidAge.Bind(reqInvalidAge, dummyPathVar)
 	if err == nil {
 		t.Errorf("expected error for invalid age type, got nil")
 	} else {
 		t.Logf("Got expected error for invalid age: %v", err) // Log error to see it
-		if !strings.Contains(err.Error(),"failed to bind query parameter age") {
+		if !strings.Contains(err.Error(), "failed to bind query parameter \"age\"") {
 			t.Errorf("error message mismatch, got: %s", err.Error())
 		}
 	}
 
-
 	reqInvalidActive := httptest.NewRequest("GET", "/items/typed?active=not-a-bool", nil)
 	var dataInvalidActive ComprehensiveBind
-	err = dataInvalidActive.Bind(reqInvalidActive)
+	err = dataInvalidActive.Bind(reqInvalidActive, dummyPathVar)
 	if err == nil {
 		t.Errorf("expected error for invalid active type, got nil")
 	} else {
 		t.Logf("Got expected error for invalid active: %v", err)
-		if !strings.Contains(err.Error(),"failed to bind query parameter active") {
+		if !strings.Contains(err.Error(), "failed to bind query parameter \"active\"") {
 			t.Errorf("error message mismatch, got: %s", err.Error())
 		}
 	}
+
+	// Test invalid path parameter type (e.g. if pathVar returned "not-an-int" for an int field)
+	// This requires a field with path binding and non-string type in ComprehensiveBind.
+	// Let's assume PathIntField `path:"intField"` int exists.
+	// For now, ComprehensiveBind only has PathString `path:"id"` string.
+	// If we add PathIntField `path:"count" path_type:"int"` (hypothetical tag)
+	// mockPathVarInvalidInt := func(name string) string {
+	// 	if name == "count" { return "not-an-int-for-path" }
+	// 	return ""
+	// }
+	// reqInvalidPathInt := httptest.NewRequest("GET", "/items/path-int-test", nil)
+	// var dataInvalidPathInt ComprehensiveBind // Assume it has PathIntField
+	// err = dataInvalidPathInt.Bind(reqInvalidPathInt, mockPathVarInvalidInt)
+	// if err == nil {
+	// 	t.Errorf("expected error for invalid path int type, got nil")
+	// } else {
+	// 	t.Logf("Got expected error for invalid path int: %v", err)
+	// 	if !strings.Contains(err.Error(), "failed to bind path parameter \"count\"") {
+	// 		t.Errorf("error message mismatch for invalid path int, got: %s", err.Error())
+	// 	}
+	// }
+
 
 	// Test invalid JSON body
 	reqInvalidBody := httptest.NewRequest("POST", "/items/body", strings.NewReader(`{"value": "not-an-int-for-value"}`))
 	reqInvalidBody.Header.Set("Content-Type", "application/json")
 	var dataInvalidBody ComprehensiveBind
-	err = dataInvalidBody.Bind(reqInvalidBody)
+	err = dataInvalidBody.Bind(reqInvalidBody, dummyPathVar)
 	if err == nil {
 		t.Errorf("expected error for invalid JSON body type, got nil")
 	} else {
@@ -211,76 +252,36 @@ func TestInvalidTypedValues_Bind(t *testing.T) {
 		// The exact error message from json.Unmarshal can vary, so check for a general failure.
 		// Example: "json: cannot unmarshal string into Go struct field ComprehensiveBind.value of type int"
 		if !strings.Contains(strings.ToLower(err.Error()), "json") || !strings.Contains(strings.ToLower(err.Error()), "value") {
-			 t.Errorf("error message mismatch for invalid JSON, got: %s", err.Error())
+			t.Errorf("error message mismatch for invalid JSON, got: %s", err.Error())
 		}
 	}
 }
 
 // ContextKey is a custom type for context keys to avoid collisions.
-type ContextKey string
+// type ContextKey string // Keep if other context tests exist, remove if not used.
 
-func TestPathParameterSimulation_Bind(t *testing.T) {
-	// This test simulates how path parameters might be handled if the generator
-	// were to expect them in the request context.
-	// The current generator template comments out path param logic, so this test
-	// would fail or be irrelevant unless that logic is enabled and adapted.
+// TestPathParameterSimulation_Bind is removed as the primary mechanism is now pathVar func.
+// func TestPathParameterSimulation_Bind(t *testing.T) { ... }
 
-	// For this simulation, let's assume the generator would look for a context value
-	// with the key exactly matching the `BindName` (e.g., "id" for `in:"path:id"`).
-	// THIS IS A HYPOTHETICAL TEST for a potential future state of the generator.
-
-	// req := httptest.NewRequest("GET", "/users/actual-user-id/data", nil)
-	// ctx := context.WithValue(req.Context(), ContextKey("id"), "context-user-id")
-	// req = req.WithContext(ctx)
-
-	// var data ComprehensiveBind
-	// err := data.Bind(req)
-
-	// if err != nil {
-	// 	t.Fatalf("Bind (with context path param) returned error: %v", err)
-	// }
-
-	// // If the generator's path logic were active and used context.Value(bindName):
-	// // if data.PathString != "context-user-id" {
-	// // 	t.Errorf("expected PathString from context to be 'context-user-id', got '%s'", data.PathString)
-	// // }
-	t.Log("Path parameter test is skipped as generator logic for path assumes Go 1.22+ (req.PathValue) or specific router context setup not available in basic httptest.")
-}
 
 func TestQueryAndPathOnlyBind_Bind(t *testing.T) {
-	// Path value is not directly settable on httptest.Request for req.PathValue() in Go 1.22
-	// without a real server or more complex mocking. We will test query params only.
 	req := httptest.NewRequest("GET", "/users/test-user-id?itemCode=XYZ123&limit=10", nil)
-	// To test path with Go 1.22's ServeMux, one would typically do:
-	// server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-	//	var data QueryAndPathOnlyBind
-	//	// Simulate how the router would make PathValue available if the pattern was "/users/{userID}"
-	//	// This is hard to do directly here without running a server with the new mux.
-	//	// r.SetPathValue("userID", "test-user-id") // This method doesn't exist on client *http.Request
-	//	err := data.Bind(r) // Call Bind inside the handler
-	//	if err != nil {
-	//		t.Errorf("Bind returned error: %v", err)
-	//	}
-	//	if data.UserID != "test-user-id" { // This would be asserted here
-	//		t.Errorf("expected UserID to be 'test-user-id', got '%s'", data.UserID)
-	//	}
-	// }))
-	// defer server.Close()
-	// req, _ = http.NewRequest("GET", server.URL+"/users/test-user-id?itemCode=XYZ123&limit=10", nil)
-	// _, err := http.DefaultClient.Do(req)
-	// if err != nil {
-	//    t.Fatalf("Request failed: %v", err)
-	// }
-	// For standalone test of Bind:
+
+	mockPathVar := func(name string) string {
+		if name == "userID" { // Matches `path:"userID"` in QueryAndPathOnlyBind
+			return "test-user-id-from-func"
+		}
+		return ""
+	}
+
 	var data QueryAndPathOnlyBind
-	err := data.Bind(req)
+	err := data.Bind(req, mockPathVar)
 	if err != nil {
 		t.Fatalf("Bind returned error: %v", err)
 	}
 
-	// data.UserID will be empty as req.PathValue("userID") won't find anything in this test setup.
-	if data.UserID != "" {
-		t.Errorf("expected UserID to be empty in this test setup, got '%s'", data.UserID)
+	if data.UserID != "test-user-id-from-func" {
+		t.Errorf("expected UserID to be 'test-user-id-from-func', got '%s'", data.UserID)
 	}
 	if data.ItemCode != "XYZ123" {
 		t.Errorf("expected ItemCode to be 'XYZ123', got '%s'", data.ItemCode)
@@ -288,5 +289,5 @@ func TestQueryAndPathOnlyBind_Bind(t *testing.T) {
 	if data.Limit != 10 {
 		t.Errorf("expected Limit to be 10, got %d", data.Limit)
 	}
-	t.Log("QueryAndPathOnlyBind: UserID is not asserted due to PathValue limitations in httptest.")
+	// t.Log("QueryAndPathOnlyBind: UserID is now asserted using mockPathVar.") // Updated log
 }

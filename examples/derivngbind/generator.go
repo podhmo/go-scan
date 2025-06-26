@@ -25,7 +25,7 @@ type TemplateData struct {
 	Imports     map[string]string // alias -> path
 	NeedsBody   bool
 	HasSpecificBodyFieldTarget bool
-	ErrNoCookie error // To allow comparison with http.ErrNoCookie in template
+	ErrNoCookie error // For template: http.ErrNoCookie
 	// IsGo122     bool // No longer needed directly in template for path vars
 }
 
@@ -34,8 +34,8 @@ type FieldBindingInfo struct {
 	FieldType    string // Go type of the field (e.g., "string", "int", "bool")
 	BindFrom     string // "path", "query", "header", "cookie", "body"
 	BindName     string // Name used for binding (e.g., path param name, query key, header key, cookie name)
-	IsPointer    bool
-	IsRequired   bool
+	IsPointer    bool   // No longer TODO
+	IsRequired   bool   // Added
 	IsBody       bool   // True if this field represents the entire request body
 	BodyJSONName string // json tag name if this field is part of a larger body struct
 }
@@ -106,23 +106,41 @@ func (s *{{.StructName}}) Bind(req *http.Request, pathVar func(string) string) e
 		{{else if eq $fieldType "int"}}
 			v, err := strconv.Atoi(val)
 			if err != nil {
+				{{if $isPointer}}
+					{{if $isRequired}}
 				return fmt.Errorf("failed to convert query parameter \"{{$bindName}}\" (value: %q) to int for field {{$fieldName}}: %w", val, err)
+					{{else}}
+				s.{{$fieldName}} = nil
+					{{end}}
+				{{else}} {{/* Not pointer, always error if conversion fails */}}
+				return fmt.Errorf("failed to convert query parameter \"{{$bindName}}\" (value: %q) to int for field {{$fieldName}}: %w", val, err)
+				{{end}}
+			} else {
+				{{if $isPointer}}
+				s.{{$fieldName}} = &v
+				{{else}}
+				s.{{$fieldName}} = v
+				{{end}}
 			}
-			{{if $isPointer}}
-		s.{{$fieldName}} = &v
-			{{else}}
-		s.{{$fieldName}} = v
-			{{end}}
 		{{else if eq $fieldType "bool"}}
 			v, err := strconv.ParseBool(val)
 			if err != nil {
+				{{if $isPointer}}
+					{{if $isRequired}}
 				return fmt.Errorf("failed to convert query parameter \"{{$bindName}}\" (value: %q) to bool for field {{$fieldName}}: %w", val, err)
+					{{else}}
+				s.{{$fieldName}} = nil
+					{{end}}
+				{{else}} {{/* Not pointer, always error if conversion fails */}}
+				return fmt.Errorf("failed to convert query parameter \"{{$bindName}}\" (value: %q) to bool for field {{$fieldName}}: %w", val, err)
+				{{end}}
+			} else {
+				{{if $isPointer}}
+				s.{{$fieldName}} = &v
+				{{else}}
+				s.{{$fieldName}} = v
+				{{end}}
 			}
-			{{if $isPointer}}
-		s.{{$fieldName}} = &v
-			{{else}}
-		s.{{$fieldName}} = v
-			{{end}}
 		{{end}}
 	} else { // Key does not exist
 		{{if $isRequired}}
@@ -141,15 +159,25 @@ func (s *{{.StructName}}) Bind(req *http.Request, pathVar func(string) string) e
 			{{else if eq .FieldType "int"}}
 			v, err := strconv.Atoi(val)
 			if err != nil {
+				{{if .IsRequired}}
 				return fmt.Errorf("failed to convert header \"{{.BindName}}\" (value: %q) to int for field {{.FieldName}}: %w", val, err)
+				{{else}}
+				s.{{.FieldName}} = nil
+				{{end}}
+			} else {
+				s.{{.FieldName}} = &v
 			}
-			s.{{.FieldName}} = &v
 			{{else if eq .FieldType "bool"}}
 			v, err := strconv.ParseBool(val)
 			if err != nil {
+				{{if .IsRequired}}
 				return fmt.Errorf("failed to convert header \"{{.BindName}}\" (value: %q) to bool for field {{.FieldName}}: %w", val, err)
+				{{else}}
+				s.{{.FieldName}} = nil
+				{{end}}
+			} else {
+				s.{{.FieldName}} = &v
 			}
-			s.{{.FieldName}} = &v
 			{{end}}
 		{{else}} {{/* Not a pointer */}}
 			{{if eq .FieldType "string"}}
@@ -183,15 +211,25 @@ func (s *{{.StructName}}) Bind(req *http.Request, pathVar func(string) string) e
 			{{else if eq .FieldType "int"}}
 			v, err := strconv.Atoi(val)
 			if err != nil {
+				{{if .IsRequired}}
 				return fmt.Errorf("failed to convert cookie \"{{.BindName}}\" (value: %q) to int for field {{.FieldName}}: %w", val, err)
+				{{else}}
+				s.{{.FieldName}} = nil
+				{{end}}
+			} else {
+				s.{{.FieldName}} = &v
 			}
-			s.{{.FieldName}} = &v
 			{{else if eq .FieldType "bool"}}
 			v, err := strconv.ParseBool(val)
 			if err != nil {
+				{{if .IsRequired}}
 				return fmt.Errorf("failed to convert cookie \"{{.BindName}}\" (value: %q) to bool for field {{.FieldName}}: %w", val, err)
+				{{else}}
+				s.{{.FieldName}} = nil
+				{{end}}
+			} else {
+				s.{{.FieldName}} = &v
 			}
-			s.{{.FieldName}} = &v
 			{{end}}
 		{{else}} {{/* Not a pointer */}}
 			{{if eq .FieldType "string"}}
@@ -350,8 +388,8 @@ func Generate(ctx context.Context, pkgPath string) error {
 			Fields:      []FieldBindingInfo{},
 			NeedsBody:   (structLevelInTag == "body"),
 			HasSpecificBodyFieldTarget: false, // Initialize
-			ErrNoCookie: http.ErrNoCookie, // Set http.ErrNoCookie for template
-			// IsGo122:     isGo122, // No longer needed here
+			ErrNoCookie: http.ErrNoCookie,
+			// IsGo122:     isGo122,
 		}
 		needsImportNetHTTP = true // For http.ErrNoCookie
 
@@ -401,80 +439,46 @@ func Generate(ctx context.Context, pkgPath string) error {
                                        // Let's use field.Type.String() for better accuracy.
 			fieldTypeStr = field.Type.String()
 			isPointer := strings.HasPrefix(fieldTypeStr, "*")
-			// baseFieldType := field.Type.Name // This is the name of the type, e.g. "String" for "*string" if it's a defined type, or "string" for "*string" (primitive)
-                                          // For primitive types like *string, *int, Type.Name will be the underlying type name ("string", "int")
-                                          // For named types like *models.MyString, Type.Name will be "MyString"
-                                          // We need the underlying primitive type for conversion logic.
 
 			actualFieldTypeForTemplate := ""
 			if isPointer {
-				// For a pointer type like "*string", field.Type.Elem.Name might give "string"
-				// or field.Type.Elem.String() might give "string" or "pkg.Type"
-				// We need the simple name for the template's switch cases.
-				// Let's try to get the name of the element type.
-				if field.Type.Elem != nil {
-					elemName := field.Type.Elem.Name
-					elemString := field.Type.Elem.String()
-					fmt.Printf("DEBUG: Field %s, Pointer Elem Name: '%s', Elem String: '%s'\n", field.Name, elemName, elemString)
-					actualFieldTypeForTemplate = elemName
-					if actualFieldTypeForTemplate == "" && elemString != "" {
-						actualFieldTypeForTemplate = elemString
+				actualFieldTypeForTemplate = field.Type.Name // Use field.Type.Name as the element type name
+				// fmt.Printf("DEBUG: Pointer field %s. Type.String(): %s, Type.Name: '%s', IsPointerFromScanner: %t. Using '%s' as element type.\n",
+				// 	field.Name, field.Type.String(), field.Type.Name, field.Type.IsPointer, actualFieldTypeForTemplate)
+
+				if actualFieldTypeForTemplate == "" {
+					fmt.Printf("      Warning/Skip: Pointer field %s (%s) - field.Type.Name is empty. FieldType: %#v\n", field.Name, fieldTypeStr, field.Type)
+					if bindFrom != "body" {
+						continue
 					}
-					// If still empty, or if it contains ".", it might be a qualified type like "pkg.Type"
-					// For basic types, we want "string", "int", "bool".
-					// The String() method on scanner.FieldType usually gives the correct representation.
-					if actualFieldTypeForTemplate == "" || strings.Contains(actualFieldTypeForTemplate, ".") {
-					    // Let's prefer Elem.String() if Name is complex or empty, assuming String() gives a good representation
-					    // For primitive types, Elem.Name should be like "string", Elem.String() also "string"
-					    // For named types like *myType (where myType is string), Name="myType", String="pkg.myType"
-					    // For template switch, we need the base primitive name if it's an alias of one.
-					    // This part is tricky without knowing scanner.FieldType's exact behavior for aliased primitives.
-					    // For now, rely on Elem.Name and fallback to Elem.String(), then check against known types.
-					    // The current logic is: Name, then String(). If it results in "string", "int", "bool", it's fine.
-					    // If it's "mypkg.MyInt", the switch below will skip it unless "mypkg.MyInt" is added.
-					    // We are trying to get "string", "int", "bool" for actualFieldTypeForTemplate.
-					    // Let's assume Elem.Name is the primary source for the simple name if available.
-						if field.Type.Elem.Name != "" { // Prefer simple name if available
-							actualFieldTypeForTemplate = field.Type.Elem.Name
-						} else {
-							actualFieldTypeForTemplate = field.Type.Elem.String() // Fallback to String()
-						}
-					}
-				} else {
-					fmt.Printf("      Skipping field %s: pointer type %s has nil Elem (field.Type.Elem is nil)\n", field.Name, fieldTypeStr)
-					continue
 				}
-			} else {
+			} else { // Not a pointer
 				actualFieldTypeForTemplate = field.Type.Name
-				if actualFieldTypeForTemplate == "" && field.Type.String() != "" { // For non-pointer built-in types
+				if actualFieldTypeForTemplate == "" {
 					actualFieldTypeForTemplate = field.Type.String()
 				}
 			}
-
-
-			// For external packages, Name() might be "MyType" and String() "mypkg.MyType"
-			// The template expects simple types like "string", "int", "bool".
-			// This logic needs to be robust. For now, we assume Name() is sufficient if not pointer,
-			// and Elem().Name() or Elem().String() if pointer, for basic supported types.
-			// This might need refinement for complex or aliased types from other packages.
 
 			isRequiredTag := tag.Get("required")
 			isRequired := (isRequiredTag == "true")
 
 			needsConversion := false
-			switch actualFieldTypeForTemplate {
-			case "string", "int", "bool":
-				needsConversion = (actualFieldTypeForTemplate == "int" || actualFieldTypeForTemplate == "bool")
-			default:
-				if bindFrom != "body" { // Body binding uses json.Unmarshal, which handles various types.
-					fmt.Printf("      Skipping field %s of unhandled type %s (template type %s) for %s binding\n", field.Name, fieldTypeStr, actualFieldTypeForTemplate, bindFrom)
+			if bindFrom != "body" {
+				switch actualFieldTypeForTemplate {
+				case "string", "int", "bool":
+					needsConversion = (actualFieldTypeForTemplate == "int" || actualFieldTypeForTemplate == "bool")
+				default:
+					fmt.Printf("      Skipping field %s of unhandled type %s (resolved to '%s') for %s binding\n", field.Name, fieldTypeStr, actualFieldTypeForTemplate, bindFrom)
 					continue
 				}
+			} else {
+				 needsImportEncodingJson = true
+				 needsImportIO = true
 			}
 
 			fieldBindingInfo := FieldBindingInfo{
 				FieldName:  field.Name,
-				FieldType:  actualFieldTypeForTemplate, // Use the determined simple type name
+				FieldType:  actualFieldTypeForTemplate,
 				BindFrom:   bindFrom,
 				BindName:   bindName,
 				IsPointer:  isPointer,

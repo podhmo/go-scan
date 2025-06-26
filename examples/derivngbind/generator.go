@@ -42,8 +42,7 @@ type FieldBindingInfo struct {
 
 const bindMethodTemplate = `
 func (s *{{.StructName}}) Bind(req *http.Request, pathVar func(string) string) error {
-	var err error
-	_ = err // prevent unused var error if no error handling is needed below
+	var errs []error
 
 	{{range .Fields}}
 	{{if eq .BindFrom "path"}}
@@ -53,36 +52,42 @@ func (s *{{.StructName}}) Bind(req *http.Request, pathVar func(string) string) e
 			{{if eq .FieldType "string"}}
 			s.{{.FieldName}} = &pathValueStr
 			{{else if eq .FieldType "int"}}
-			v, err := strconv.Atoi(pathValueStr)
-			if err != nil {
-				return fmt.Errorf("failed to convert path parameter \"{{.BindName}}\" (value: %q) to int for field {{.FieldName}}: %w", pathValueStr, err)
+			v, convErr := strconv.Atoi(pathValueStr)
+			if convErr != nil {
+				errs = append(errs, fmt.Errorf("failed to convert path parameter \"{{.BindName}}\" (value: %q) to int for field {{.FieldName}}: %w", pathValueStr, convErr))
+			} else {
+				s.{{.FieldName}} = &v
 			}
-			s.{{.FieldName}} = &v
 			{{else if eq .FieldType "bool"}}
-			v, err := strconv.ParseBool(pathValueStr)
-			if err != nil {
-				return fmt.Errorf("failed to convert path parameter \"{{.BindName}}\" (value: %q) to bool for field {{.FieldName}}: %w", pathValueStr, err)
+			v, convErr := strconv.ParseBool(pathValueStr)
+			if convErr != nil {
+				errs = append(errs, fmt.Errorf("failed to convert path parameter \"{{.BindName}}\" (value: %q) to bool for field {{.FieldName}}: %w", pathValueStr, convErr))
+			} else {
+				s.{{.FieldName}} = &v
 			}
-			s.{{.FieldName}} = &v
 			{{end}}
 		{{else}} {{/* Not a pointer */}}
 			{{if eq .FieldType "string"}}
 			s.{{.FieldName}} = pathValueStr
 			{{else if eq .FieldType "int"}}
-			s.{{.FieldName}}, err = strconv.Atoi(pathValueStr)
-			if err != nil {
-				return fmt.Errorf("failed to convert path parameter \"{{.BindName}}\" (value: %q) to int for field {{.FieldName}}: %w", pathValueStr, err)
+			v, convErr := strconv.Atoi(pathValueStr)
+			if convErr != nil {
+				errs = append(errs, fmt.Errorf("failed to convert path parameter \"{{.BindName}}\" (value: %q) to int for field {{.FieldName}}: %w", pathValueStr, convErr))
+			} else {
+				s.{{.FieldName}} = v
 			}
 			{{else if eq .FieldType "bool"}}
-			s.{{.FieldName}}, err = strconv.ParseBool(pathValueStr)
-			if err != nil {
-				return fmt.Errorf("failed to convert path parameter \"{{.BindName}}\" (value: %q) to bool for field {{.FieldName}}: %w", pathValueStr, err)
+			v, convErr := strconv.ParseBool(pathValueStr)
+			if convErr != nil {
+				errs = append(errs, fmt.Errorf("failed to convert path parameter \"{{.BindName}}\" (value: %q) to bool for field {{.FieldName}}: %w", pathValueStr, convErr))
+			} else {
+				s.{{.FieldName}} = v
 			}
 			{{end}}
 		{{end}}
 	} else {
 		{{if .IsRequired}}
-		return fmt.Errorf("required path parameter \"{{.BindName}}\" for field {{.FieldName}} is missing")
+		errs = append(errs, fmt.Errorf("required path parameter \"{{.BindName}}\" for field {{.FieldName}} is missing"))
 		{{else if .IsPointer}}
 		s.{{.FieldName}} = nil // Explicitly set to nil for clarity, though it's default
 		{{end}}
@@ -104,16 +109,16 @@ func (s *{{.StructName}}) Bind(req *http.Request, pathVar func(string) string) e
 		s.{{$fieldName}} = val
 			{{end}}
 		{{else if eq $fieldType "int"}}
-			v, err := strconv.Atoi(val)
-			if err != nil {
+			v, convErr := strconv.Atoi(val)
+			if convErr != nil {
 				{{if $isPointer}}
 					{{if $isRequired}}
-				return fmt.Errorf("failed to convert query parameter \"{{$bindName}}\" (value: %q) to int for field {{$fieldName}}: %w", val, err)
+				errs = append(errs, fmt.Errorf("failed to convert query parameter \"{{$bindName}}\" (value: %q) to int for field {{$fieldName}}: %w", val, convErr))
 					{{else}}
 				s.{{$fieldName}} = nil
 					{{end}}
 				{{else}} {{/* Not pointer, always error if conversion fails */}}
-				return fmt.Errorf("failed to convert query parameter \"{{$bindName}}\" (value: %q) to int for field {{$fieldName}}: %w", val, err)
+				errs = append(errs, fmt.Errorf("failed to convert query parameter \"{{$bindName}}\" (value: %q) to int for field {{$fieldName}}: %w", val, convErr))
 				{{end}}
 			} else {
 				{{if $isPointer}}
@@ -123,16 +128,16 @@ func (s *{{.StructName}}) Bind(req *http.Request, pathVar func(string) string) e
 				{{end}}
 			}
 		{{else if eq $fieldType "bool"}}
-			v, err := strconv.ParseBool(val)
-			if err != nil {
+			v, convErr := strconv.ParseBool(val)
+			if convErr != nil {
 				{{if $isPointer}}
 					{{if $isRequired}}
-				return fmt.Errorf("failed to convert query parameter \"{{$bindName}}\" (value: %q) to bool for field {{$fieldName}}: %w", val, err)
+				errs = append(errs, fmt.Errorf("failed to convert query parameter \"{{$bindName}}\" (value: %q) to bool for field {{$fieldName}}: %w", val, convErr))
 					{{else}}
 				s.{{$fieldName}} = nil
 					{{end}}
 				{{else}} {{/* Not pointer, always error if conversion fails */}}
-				return fmt.Errorf("failed to convert query parameter \"{{$bindName}}\" (value: %q) to bool for field {{$fieldName}}: %w", val, err)
+				errs = append(errs, fmt.Errorf("failed to convert query parameter \"{{$bindName}}\" (value: %q) to bool for field {{$fieldName}}: %w", val, convErr))
 				{{end}}
 			} else {
 				{{if $isPointer}}
@@ -144,7 +149,7 @@ func (s *{{.StructName}}) Bind(req *http.Request, pathVar func(string) string) e
 		{{end}}
 	} else { // Key does not exist
 		{{if $isRequired}}
-		return fmt.Errorf("required query parameter \"{{$bindName}}\" for field {{$fieldName}} is missing")
+		errs = append(errs, fmt.Errorf("required query parameter \"{{$bindName}}\" for field {{$fieldName}} is missing"))
 		{{else if $isPointer}}
 		s.{{$fieldName}} = nil
 		{{end}}
@@ -157,10 +162,10 @@ func (s *{{.StructName}}) Bind(req *http.Request, pathVar func(string) string) e
 			{{if eq .FieldType "string"}}
 			s.{{.FieldName}} = &val
 			{{else if eq .FieldType "int"}}
-			v, err := strconv.Atoi(val)
-			if err != nil {
+			v, convErr := strconv.Atoi(val)
+			if convErr != nil {
 				{{if .IsRequired}}
-				return fmt.Errorf("failed to convert header \"{{.BindName}}\" (value: %q) to int for field {{.FieldName}}: %w", val, err)
+				errs = append(errs, fmt.Errorf("failed to convert header \"{{.BindName}}\" (value: %q) to int for field {{.FieldName}}: %w", val, convErr))
 				{{else}}
 				s.{{.FieldName}} = nil
 				{{end}}
@@ -168,10 +173,10 @@ func (s *{{.StructName}}) Bind(req *http.Request, pathVar func(string) string) e
 				s.{{.FieldName}} = &v
 			}
 			{{else if eq .FieldType "bool"}}
-			v, err := strconv.ParseBool(val)
-			if err != nil {
+			v, convErr := strconv.ParseBool(val)
+			if convErr != nil {
 				{{if .IsRequired}}
-				return fmt.Errorf("failed to convert header \"{{.BindName}}\" (value: %q) to bool for field {{.FieldName}}: %w", val, err)
+				errs = append(errs, fmt.Errorf("failed to convert header \"{{.BindName}}\" (value: %q) to bool for field {{.FieldName}}: %w", val, convErr))
 				{{else}}
 				s.{{.FieldName}} = nil
 				{{end}}
@@ -183,20 +188,24 @@ func (s *{{.StructName}}) Bind(req *http.Request, pathVar func(string) string) e
 			{{if eq .FieldType "string"}}
 			s.{{.FieldName}} = val
 			{{else if eq .FieldType "int"}}
-			s.{{.FieldName}}, err = strconv.Atoi(val)
-			if err != nil {
-				return fmt.Errorf("failed to convert header \"{{.BindName}}\" (value: %q) to int for field {{.FieldName}}: %w", val, err)
+			v, convErr := strconv.Atoi(val)
+			if convErr != nil {
+				errs = append(errs, fmt.Errorf("failed to convert header \"{{.BindName}}\" (value: %q) to int for field {{.FieldName}}: %w", val, convErr))
+			} else {
+				s.{{.FieldName}} = v
 			}
 			{{else if eq .FieldType "bool"}}
-			s.{{.FieldName}}, err = strconv.ParseBool(val)
-			if err != nil {
-				return fmt.Errorf("failed to convert header \"{{.BindName}}\" (value: %q) to bool for field {{.FieldName}}: %w", val, err)
+			v, convErr := strconv.ParseBool(val)
+			if convErr != nil {
+				errs = append(errs, fmt.Errorf("failed to convert header \"{{.BindName}}\" (value: %q) to bool for field {{.FieldName}}: %w", val, convErr))
+			} else {
+				s.{{.FieldName}} = v
 			}
 			{{end}}
 		{{end}}
 	} else {
 		{{if .IsRequired}}
-		return fmt.Errorf("required header \"{{.BindName}}\" for field {{.FieldName}} is missing")
+		errs = append(errs, fmt.Errorf("required header \"{{.BindName}}\" for field {{.FieldName}} is missing"))
 		{{else if .IsPointer}}
 		s.{{.FieldName}} = nil
 		{{end}}
@@ -209,10 +218,10 @@ func (s *{{.StructName}}) Bind(req *http.Request, pathVar func(string) string) e
 			{{if eq .FieldType "string"}}
 			s.{{.FieldName}} = &val
 			{{else if eq .FieldType "int"}}
-			v, err := strconv.Atoi(val)
-			if err != nil {
+			v, convErr := strconv.Atoi(val)
+			if convErr != nil {
 				{{if .IsRequired}}
-				return fmt.Errorf("failed to convert cookie \"{{.BindName}}\" (value: %q) to int for field {{.FieldName}}: %w", val, err)
+				errs = append(errs, fmt.Errorf("failed to convert cookie \"{{.BindName}}\" (value: %q) to int for field {{.FieldName}}: %w", val, convErr))
 				{{else}}
 				s.{{.FieldName}} = nil
 				{{end}}
@@ -220,10 +229,10 @@ func (s *{{.StructName}}) Bind(req *http.Request, pathVar func(string) string) e
 				s.{{.FieldName}} = &v
 			}
 			{{else if eq .FieldType "bool"}}
-			v, err := strconv.ParseBool(val)
-			if err != nil {
+			v, convErr := strconv.ParseBool(val)
+			if convErr != nil {
 				{{if .IsRequired}}
-				return fmt.Errorf("failed to convert cookie \"{{.BindName}}\" (value: %q) to bool for field {{.FieldName}}: %w", val, err)
+				errs = append(errs, fmt.Errorf("failed to convert cookie \"{{.BindName}}\" (value: %q) to bool for field {{.FieldName}}: %w", val, convErr))
 				{{else}}
 				s.{{.FieldName}} = nil
 				{{end}}
@@ -235,20 +244,24 @@ func (s *{{.StructName}}) Bind(req *http.Request, pathVar func(string) string) e
 			{{if eq .FieldType "string"}}
 			s.{{.FieldName}} = val
 			{{else if eq .FieldType "int"}}
-			s.{{.FieldName}}, err = strconv.Atoi(val)
-			if err != nil {
-				return fmt.Errorf("failed to convert cookie \"{{.BindName}}\" (value: %q) to int for field {{.FieldName}}: %w", val, err)
+			v, convErr := strconv.Atoi(val)
+			if convErr != nil {
+				errs = append(errs, fmt.Errorf("failed to convert cookie \"{{.BindName}}\" (value: %q) to int for field {{.FieldName}}: %w", val, convErr))
+			} else {
+				s.{{.FieldName}} = v
 			}
 			{{else if eq .FieldType "bool"}}
-			s.{{.FieldName}}, err = strconv.ParseBool(val)
-			if err != nil {
-				return fmt.Errorf("failed to convert cookie \"{{.BindName}}\" (value: %q) to bool for field {{.FieldName}}: %w", val, err)
+			v, convErr := strconv.ParseBool(val)
+			if convErr != nil {
+				errs = append(errs, fmt.Errorf("failed to convert cookie \"{{.BindName}}\" (value: %q) to bool for field {{.FieldName}}: %w", val, convErr))
+			} else {
+				s.{{.FieldName}} = v
 			}
 			{{end}}
 		{{end}}
 	} else { // Cookie not found or value is empty
 		{{if .IsRequired}}
-return fmt.Errorf("required cookie \"{{.BindName}}\" for field {{.FieldName}} is missing, empty, or could not be retrieved")
+		errs = append(errs, fmt.Errorf("required cookie \"{{.BindName}}\" for field {{.FieldName}} is missing, empty, or could not be retrieved (underlying error: %v)", cerr)) // Include original error if any
 		{{else if .IsPointer}}
 		s.{{.FieldName}} = nil
 		{{end}}
@@ -271,9 +284,9 @@ return fmt.Errorf("required cookie \"{{.BindName}}\" for field {{.FieldName}} is
 			{{range .Fields}}
 			{{if .IsBody}}
 			// Field {{.FieldName}} is the target for the entire request body
-			if err := json.NewDecoder(req.Body).Decode(&s.{{.FieldName}}); err != nil {
-				if err != io.EOF { // EOF might be acceptable if body is optional
-					return fmt.Errorf("failed to decode request body into field {{.FieldName}}: %w", err)
+			if decErr := json.NewDecoder(req.Body).Decode(&s.{{.FieldName}}); decErr != nil {
+				if decErr != io.EOF { // EOF might be acceptable if body is optional
+					errs = append(errs, fmt.Errorf("failed to decode request body into field {{.FieldName}}: %w", decErr))
 				}
 			}
 			goto afterBodyProcessing // Process only one 'in:"body"' field
@@ -281,9 +294,9 @@ return fmt.Errorf("required cookie \"{{.BindName}}\" for field {{.FieldName}} is
 			{{end}}
 		} else {
 			// The struct {{.StructName}} itself is the target for the request body
-			if err := json.NewDecoder(req.Body).Decode(s); err != nil {
-				if err != io.EOF { // EOF might be acceptable
-					return fmt.Errorf("failed to decode request body into {{.StructName}}: %w", err)
+			if decErr := json.NewDecoder(req.Body).Decode(s); decErr != nil {
+				if decErr != io.EOF { // EOF might be acceptable
+					errs = append(errs, fmt.Errorf("failed to decode request body into {{.StructName}}: %w", decErr))
 				}
 			}
 		}
@@ -292,6 +305,9 @@ return fmt.Errorf("required cookie \"{{.BindName}}\" for field {{.FieldName}} is
 		{{end}}
 	}
 	{{end}}
+	if len(errs) > 0 {
+		return errors.Join(errs...)
+	}
 	return nil
 }
 `
@@ -346,6 +362,7 @@ func Generate(ctx context.Context, pkgPath string) error {
 	needsImportFmt := false
 	needsImportEncodingJson := false
 	needsImportIO := false
+	needsImportErrors := false // Added for errors.Join
 
 
 	for _, typeInfo := range pkgInfo.Types {
@@ -545,6 +562,7 @@ func Generate(ctx context.Context, pkgPath string) error {
 		}
 		generatedCodeForAllStructs.Write(currentGeneratedCode.Bytes())
 		generatedCodeForAllStructs.WriteString("\n\n")
+		needsImportErrors = true // If a Bind method is generated, errors package might be needed
 	}
 
 	if generatedCodeForAllStructs.Len() == 0 {
@@ -555,6 +573,10 @@ func Generate(ctx context.Context, pkgPath string) error {
 	finalOutput := bytes.Buffer{}
 	finalOutput.WriteString(fmt.Sprintf("// Code generated by derivngbind for package %s. DO NOT EDIT.\n\n", pkgInfo.Name))
 	finalOutput.WriteString(fmt.Sprintf("package %s\n\n", pkgInfo.Name))
+
+	if needsImportErrors { // Ensure errors is in allFileImports if needed
+		allFileImports["errors"] = ""
+	}
 
 	if len(allFileImports) > 0 {
 		finalOutput.WriteString("import (\n")

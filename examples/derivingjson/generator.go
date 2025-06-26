@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"go/format"
 	"os"
@@ -105,14 +106,14 @@ func findTypeInPackage(pkgInfo *scanner.PackageInfo, typeName string) *scanner.T
 	return nil
 }
 
-func Generate(pkgPath string) error {
+func Generate(ctx context.Context, pkgPath string) error {
 	fmt.Printf("Attempting to generate for package path: %s\n", pkgPath)
 	gscn, err := goscan.New(".")
 	if err != nil {
 		return fmt.Errorf("failed to create go-scan scanner: %w", err)
 	}
 
-	pkgInfo, err := gscn.ScanPackage(pkgPath)
+	pkgInfo, err := gscn.ScanPackage(ctx, pkgPath)
 	if err != nil {
 		return fmt.Errorf("go-scan failed to scan package at %s: %w", pkgPath, err)
 	}
@@ -153,7 +154,7 @@ func Generate(pkgPath string) error {
 				}
 			}
 
-			resolvedFieldType, errResolve := field.Type.Resolve()
+			resolvedFieldType, errResolve := field.Type.Resolve(ctx)
 			if errResolve != nil {
 				if field.Type.PkgName == "" || field.Type.PkgName == pkgInfo.Name {
 					resolvedFieldType = findTypeInPackage(pkgInfo, field.Type.Name)
@@ -202,7 +203,7 @@ func Generate(pkgPath string) error {
 					// This is less direct as it re-scans the directory of the interface's definition.
 					fmt.Printf("      FieldType.FullImportPath() was empty or local for interface %s. Falling back to FilePath-based scan.\n", interfaceDef.Name)
 					interfaceDir := filepath.Dir(interfaceDef.FilePath)
-					scannedPkgForInterfaceFile, errPkgScan := gscn.ScanPackage(interfaceDir) // ScanPackage derives import path based on its own module logic.
+					scannedPkgForInterfaceFile, errPkgScan := gscn.ScanPackage(ctx, interfaceDir) // ScanPackage derives import path based on its own module logic.
 
 					if errPkgScan == nil && scannedPkgForInterfaceFile != nil && scannedPkgForInterfaceFile.ImportPath != "" {
 						if scannedPkgForInterfaceFile.ImportPath != pkgInfo.ImportPath { // Is it external to the current struct's package?
@@ -240,7 +241,7 @@ func Generate(pkgPath string) error {
 				// Find implementers for this specific interface
 				searchPkgs := []*scanner.PackageInfo{pkgInfo}
 				if interfaceDefiningPkgImportPath != "" && interfaceDefiningPkgImportPath != pkgInfo.ImportPath {
-					scannedInterfacePkg, errScan := gscn.ScanPackageByImport(interfaceDefiningPkgImportPath)
+					scannedInterfacePkg, errScan := gscn.ScanPackageByImport(ctx, interfaceDefiningPkgImportPath)
 					if errScan == nil && scannedInterfacePkg != nil {
 						fmt.Printf("        Successfully scanned interface's package: %s, Found %d types.\n", scannedInterfacePkg.ImportPath, len(scannedInterfacePkg.Types))
 						for _, t := range scannedInterfacePkg.Types {
@@ -341,7 +342,7 @@ func Generate(pkgPath string) error {
 				// Handle imports for types of other fields if necessary
 				if resolvedFieldType != nil && resolvedFieldType.FilePath != "" {
 					fieldDir := filepath.Dir(resolvedFieldType.FilePath)
-					fieldDefiningPkg, errPkgScan := gscn.ScanPackage(fieldDir)
+					fieldDefiningPkg, errPkgScan := gscn.ScanPackage(ctx, fieldDir)
 					if errPkgScan == nil && fieldDefiningPkg != nil && fieldDefiningPkg.ImportPath != "" {
 						if fieldDefiningPkg.ImportPath != pkgInfo.ImportPath { // Is it external?
 							// Ensure this import is added to data.Imports and allFileImports

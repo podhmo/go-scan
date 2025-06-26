@@ -32,7 +32,7 @@ func main() {
 	}
 
 	slog.InfoContext(ctx, "Generating UnmarshalJSON for package", slog.String("package_path", pkgPath))
-	if err := Generate(pkgPath); err != nil { // Generate is in the same package
+	if err := Generate(ctx, pkgPath); err != nil { // Generate is in the same package
 		slog.ErrorContext(ctx, "Error generating code", slog.Any("error", err))
 		os.Exit(1)
 	}

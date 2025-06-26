@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"fmt" // Added import for fmt
 	"os"
 	"path/filepath"
@@ -19,7 +20,8 @@ func TestGenerate_Simple(t *testing.T) {
 	os.Remove(actualGeneratedFile)
 
 	// Run the generator
-	if err := Generate(testPkgPath); err != nil {
+	ctx := context.Background()
+	if err := Generate(ctx, testPkgPath); err != nil {
 		t.Fatalf("Generate(%q) failed: %v", testPkgPath, err)
 	}
 

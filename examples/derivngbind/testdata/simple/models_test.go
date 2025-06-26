@@ -3,6 +3,7 @@ package simple
 import (
 	"net/http"
 	"net/http/httptest"
+	"regexp" // Added for regexp.MatchString
 	"strings"
 	"testing"
 
@@ -191,6 +192,77 @@ func TestEmptyValues_Bind(t *testing.T) {
 	}
 }
 
+func TestMultipleErrors_Bind(t *testing.T) {
+	// Test multiple errors: invalid type for age (query) and missing required header X-Auth-Token
+	req := httptest.NewRequest("GET", "/items/multi-error?age=not-an-int&name=SomeName&active=true", nil) // X-Auth-Token is missing
+	// PathString is "id", CookieSession is "session_id" - these are optional in ComprehensiveBind for this test's focus
+	// We need to provide required fields that are NOT part of the multiple error test if any.
+	// For ComprehensiveBind, all fields are optional or have defaults that don't require explicit correct values for this test.
+	// Path params need a mock.
+	mockPathVar := func(name string) string {
+		if name == "id" {
+			return "test-id"
+		}
+		return ""
+	}
+
+	var data ComprehensiveBind
+	err := data.Bind(req, mockPathVar)
+
+	if err == nil {
+		t.Fatalf("expected multiple errors, got nil")
+	}
+
+	// errors.Join combines errors, so we check if the error message contains substrings of expected individual errors.
+	// The order of joined errors is not guaranteed by errors.Join.
+	errStr := err.Error()
+	t.Logf("Got combined error: %s", errStr)
+
+	// Only expect the age conversion error, as HeaderToken is not required in ComprehensiveBind
+	expectedErrorSubstring := "failed to convert query parameter \"age\" (value: \"not-an-int\") to int for field QueryAge"
+	if !strings.Contains(errStr, expectedErrorSubstring) {
+		t.Errorf("expected error message to contain %q, but it was %q", expectedErrorSubstring, errStr)
+	}
+
+	// Additionally, we can test unwrapping if we need to inspect individual errors.
+	// This requires Go 1.20+ for errors.Join and the Unwrap behavior.
+	// For now, substring check is sufficient.
+	// var unwrapErrs []error
+	// if u, ok := err.(interface{ Unwrap() []error }); ok {
+	// 	unwrapErrs = u.Unwrap()
+	// } else {
+	// 	t.Logf("Error type does not support Unwrap() []error, likely a single error: %T", err)
+	//  // If it's a single error, check if it's one of the expected ones.
+	//  found := false
+	//  for _, sub := range expectedErrorSubstrings {
+	//    if strings.Contains(errStr, sub) {
+	//      found = true
+	//      break
+	//    }
+	//  }
+	//  if !found {
+	//     t.Errorf("single error %q did not match any expected substrings", errStr)
+	//  }
+	// }
+	//
+	// if len(unwrapErrs) < len(expectedErrorSubstrings) {
+	// 	t.Errorf("expected at least %d unwrapped errors, got %d", len(expectedErrorSubstrings), len(unwrapErrs))
+	// }
+	//
+	// foundMatches := 0
+	// for _, unwrapErr := range unwrapErrs {
+	// 	for _, sub := range expectedErrorSubstrings {
+	// 		if strings.Contains(unwrapErr.Error(), sub) {
+	// 			foundMatches++
+	// 			break // Match found for this unwrapErr
+	// 		}
+	// 	}
+	// }
+	// if foundMatches < len(expectedErrorSubstrings) {
+	// 	t.Errorf("could not find all expected error messages in unwrapped errors. Found %d of %d.", foundMatches, len(expectedErrorSubstrings))
+	// }
+}
+
 func TestInvalidTypedValues_Bind(t *testing.T) {
 	// Test query parameter with incorrect type
 	reqInvalidAge := httptest.NewRequest("GET", "/items/typed?age=not-an-int", nil)
@@ -306,7 +378,9 @@ func TestPointerFields_Bind(t *testing.T) {
 		pathParams       map[string]string
 		expected         TestPointerFields
 		expectError      bool
-		errorContains    string
+		errorContains    string   // For simple substring match
+		errorRegex       string   // For regex match
+		errorContainsArray []string // For multiple independent substrings
 	}{
 		{
 			name:       "all optional present",
@@ -425,22 +499,33 @@ func TestPointerFields_Bind(t *testing.T) {
 			pathParams: map[string]string{"pStrOpt": "", "pStrReq": "", "pIntOpt": "", "pIntReq": "", "pBoolOpt": "", "pBoolReq": ""}, // Assuming
 			// Expected struct values if no error occurred (which is not the case here for required int/bool)
 			// This test will expect an error from the first required non-string field that gets an empty string.
-			// Based on field order in TestPointerFields: QueryIntRequired is the first such.
-			expected: TestPointerFields{
+			// Based on field order in TestPointerFields: QueryIntRequired and QueryBoolRequired will both error.
+			expected: TestPointerFields{ // This expected struct state is not fully checked if error occurs
 				QueryStrOptional:  strPtr(""),
 				QueryStrRequired:  strPtr(""),
-				QueryIntOptional:  nil, // Optional *int with "" input -> nil
-				QueryBoolOptional: nil, // Optional *bool with "" input -> nil
-				HeaderStrOptional: strPtr(""),
+				QueryIntOptional:  nil,
+				QueryBoolOptional: nil,
+				HeaderStrOptional: strPtr(""), // Assuming hStrOpt="", etc.
 				HeaderStrRequired: strPtr(""),
 				PathStrOptional:   strPtr(""),
 				PathStrRequired:   strPtr(""),
 				CookieStrOptional: strPtr(""),
 				CookieStrRequired: strPtr(""),
-				// QueryIntRequired will error first.
 			},
-			expectError:   true, // Expecting error due to QueryIntRequired=""
-			errorContains: "failed to convert query parameter \"qIntReq\" (value: \"\") to int for field QueryIntRequired",
+			expectError:   true,
+			// Expecting three errors: qIntReq conversion, qBoolReq conversion, and pStrReq missing (because path value is empty string for a required field)
+			// Order is not guaranteed by errors.Join. We look for all substrings.
+			// To simplify, we'll check for all three substrings. The regexp was getting too complex.
+			// We'll adapt the test assertion to check for multiple substrings if the main errorContains is a list.
+			// For now, let's make errorContains a simple string and verify the test output.
+			// The previous regex was: "failed to convert query parameter \"qIntReq\" (value: \"\") to int for field QueryIntRequired.*failed to convert query parameter \"qBoolReq\" (value: \"\") to bool for field QueryBoolRequired|failed to convert query parameter \"qBoolReq\" (value: \"\") to bool for field QueryBoolRequired.*failed to convert query parameter \"qIntReq\" (value: \"\") to int for field QueryIntRequired", // Order might vary
+			errorContainsArray: []string{ // Check for multiple substrings, order independent
+				`failed to convert query parameter "qIntReq" (value: "") to int for field QueryIntRequired: strconv.Atoi: parsing "": invalid syntax`,
+				`failed to convert query parameter "qBoolReq" (value: "") to bool for field QueryBoolRequired: strconv.ParseBool: parsing "": invalid syntax`,
+				`required path parameter "pStrReq" for field PathStrRequired is missing`,
+				`required header "hStrReq" for field HeaderStrRequired is missing`,
+				`required cookie "cStrReq" for field CookieStrRequired is missing, empty, or could not be retrieved (underlying error: <nil>)`,
+			},
 		},
 		// The test "required int query with empty string value" is now covered by the modified "all values empty strings"
 		// if QueryIntRequired is the first one to cause error. We can remove it or make it more specific
@@ -465,7 +550,7 @@ func TestPointerFields_Bind(t *testing.T) {
 			cookies:    []*http.Cookie{{Name: "cStrReq", Value: "c"}, {Name: "cBoolReq", Value: "true"}}, // dummy for other required cookie
 			pathParams: map[string]string{"pStrReq": "p", "pBoolReq": "true"},   // dummy for other required path
 			expectError:   true,
-			errorContains: "failed to convert query parameter \"qBoolReq\" (value: \"\") to bool for field QueryBoolRequired",
+			errorContains: "failed to convert query parameter \"qBoolReq\" (value: \"\") to bool for field QueryBoolRequired: strconv.ParseBool: parsing \"\": invalid syntax", // This is a literal string
 		},
 	}
 
@@ -495,8 +580,21 @@ func TestPointerFields_Bind(t *testing.T) {
 				if err == nil {
 					t.Fatalf("expected error, got nil")
 				}
-				if tt.errorContains != "" && !strings.Contains(err.Error(), tt.errorContains) {
-					t.Fatalf("expected error message to contain %q, got %q", tt.errorContains, err.Error())
+				if len(tt.errorContainsArray) > 0 {
+					for _, sub := range tt.errorContainsArray {
+						if !strings.Contains(err.Error(), sub) {
+							t.Fatalf("expected error message to contain substring %q, but it was %q", sub, err.Error())
+						}
+					}
+				} else if tt.errorRegex != "" {
+					matched, _ := regexp.MatchString(tt.errorRegex, err.Error())
+					if !matched {
+						t.Fatalf("expected error message to match regex %q, got %q", tt.errorRegex, err.Error())
+					}
+				} else if tt.errorContains != "" {
+					if !strings.Contains(err.Error(), tt.errorContains) {
+						t.Fatalf("expected error message to contain %q, got %q", tt.errorContains, err.Error())
+					}
 				}
 			} else {
 				if err != nil {

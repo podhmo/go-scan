@@ -29,32 +29,74 @@ func main() {
 	ctx := context.Background() // Or your application's context
 
 	if len(os.Args) <= 1 {
-		slog.ErrorContext(ctx, "Usage: derivingbind <package_path>")
-		slog.ErrorContext(ctx, "Example: derivingbind examples/derivingbind/testdata/simple")
+		slog.ErrorContext(ctx, "Usage: derivingbind <file1.go> [file2.go ...]")
+		slog.ErrorContext(ctx, "Example: derivingbind examples/derivingbind/testdata/simple/models.go")
 		os.Exit(1)
 	}
-	pkgPath := os.Args[1]
+	targetFiles := os.Args[1:]
 
-	stat, err := os.Stat(pkgPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			slog.ErrorContext(ctx, "Package path does not exist", slog.String("package_path", pkgPath))
-		} else {
-			slog.ErrorContext(ctx, "Error accessing package path", slog.String("package_path", pkgPath), slog.Any("error", err))
+	// Group files by package directory
+	filesByPackageDir := make(map[string][]string)
+	for _, filePath := range targetFiles {
+		stat, err := os.Stat(filePath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				slog.ErrorContext(ctx, "File does not exist", slog.String("file_path", filePath))
+			} else {
+				slog.ErrorContext(ctx, "Error accessing file", slog.String("file_path", filePath), slog.Any("error", err))
+			}
+			// Decide if to exit or just skip this file
+			// For now, let's skip and log, but an early exit might be better.
+			continue
 		}
-		os.Exit(1)
+		if stat.IsDir() {
+			slog.ErrorContext(ctx, "Argument is a directory, expected a file", slog.String("path", filePath))
+			continue
+		}
+
+		absPath, err := filepath.Abs(filePath)
+		if err != nil {
+			slog.ErrorContext(ctx, "Failed to get absolute path", slog.String("file_path", filePath), slog.Any("error", err))
+			continue
+		}
+		dir := filepath.Dir(absPath)
+		filesByPackageDir[dir] = append(filesByPackageDir[dir], absPath)
 	}
-	if !stat.IsDir() {
-		slog.ErrorContext(ctx, "Package path is not a directory", slog.String("package_path", pkgPath))
+
+	if len(filesByPackageDir) == 0 {
+		slog.ErrorContext(ctx, "No valid files to process.")
 		os.Exit(1)
 	}
 
-	slog.InfoContext(ctx, "Generating Bind method for package", slog.String("package_path", pkgPath))
-	if err := Generate(ctx, pkgPath); err != nil { // Generate will be in generator.go
-		slog.ErrorContext(ctx, "Error generating code", slog.Any("error", err))
+	gscn, err := goscan.New(".") // Initialize scanner once
+	if err != nil {
+		slog.ErrorContext(ctx, "Failed to create go-scan scanner", slog.Any("error", err))
 		os.Exit(1)
 	}
-	slog.InfoContext(ctx, "Successfully generated Bind methods for package", slog.String("package_path", pkgPath))
+
+	overallSuccess := true
+	for pkgDir, filePathsInDir := range filesByPackageDir {
+		slog.InfoContext(ctx, "Generating Bind method for package", slog.String("package_dir", pkgDir), slog.Any("files", filePathsInDir))
+		// Convert full file paths to basenames for ScanPackageFiles, or adjust GenerateFiles to handle full paths
+		baseNames := make([]string, len(filePathsInDir))
+		for i, fp := range filePathsInDir {
+			baseNames[i] = filepath.Base(fp)
+		}
+
+		// GenerateFiles will be the refactored version of Generate
+		if err := GenerateFiles(ctx, pkgDir, baseNames, gscn); err != nil {
+			slog.ErrorContext(ctx, "Error generating code for package", slog.String("package_dir", pkgDir), slog.Any("error", err))
+			overallSuccess = false
+			continue // Continue to next package even if one fails
+		}
+		slog.InfoContext(ctx, "Successfully generated Bind methods for package", slog.String("package_dir", pkgDir))
+	}
+
+	if !overallSuccess {
+		slog.ErrorContext(ctx, "One or more packages failed to generate.")
+		os.Exit(1)
+	}
+	slog.InfoContext(ctx, "All specified files processed.")
 }
 
 const bindingAnnotation = "@derivng:binding"
@@ -118,15 +160,16 @@ type FieldBindingInfo struct {
 // 	return major > 1 || (major == 1 && minor >= 22)
 // }
 
-func Generate(ctx context.Context, pkgPath string) error {
-	gscn, err := goscan.New(".")
+// GenerateFiles processes a list of files within a specific package directory.
+func GenerateFiles(ctx context.Context, packageDir string, fileBaseNames []string, gscn *goscan.Scanner) error {
+	// Scan the specified files within the package directory to get package info.
+	// Note: Ensure fileBaseNames are just basenames, not full paths, as ScanPackageFiles expects.
+	pkgInfo, err := gscn.ScanPackageFiles(ctx, packageDir, fileBaseNames...)
 	if err != nil {
-		return fmt.Errorf("failed to create go-scan scanner: %w", err)
+		return fmt.Errorf("go-scan failed to scan files in package %s: %w", packageDir, err)
 	}
-	// Scan the package to get its info.
-	pkgInfo, err := gscn.ScanPackage(ctx, pkgPath)
-	if err != nil {
-		return fmt.Errorf("go-scan failed to scan package at %s: %w", pkgPath, err)
+	if pkgInfo == nil {
+		return fmt.Errorf("go-scan returned nil package info for %s", packageDir)
 	}
 
 	// isGo122 := isGo122orLater(gscn) // No longer strictly needed for path vars
@@ -448,7 +491,7 @@ func Generate(ctx context.Context, pkgPath string) error {
 		fmt.Printf("Warning: Error formatting generated code for package %s: %v. Writing unformatted code.\n", pkgInfo.Name, err)
 		formattedCode = finalOutput.Bytes()
 	}
-	outputFileName := filepath.Join(pkgPath, fmt.Sprintf("%s_deriving.go", strings.ToLower(pkgInfo.Name)))
+	outputFileName := filepath.Join(packageDir, fmt.Sprintf("%s_deriving.go", strings.ToLower(pkgInfo.Name)))
 	if _, statErr := os.Stat(outputFileName); statErr == nil {
 		if removeErr := os.Remove(outputFileName); removeErr != nil {
 			fmt.Printf("Warning: Failed to remove existing generated file %s: %v\n", outputFileName, removeErr)

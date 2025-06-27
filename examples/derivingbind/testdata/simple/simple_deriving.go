@@ -6,142 +6,99 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/podhmo/go-scan/examples/derivingbind/binding"
+	"github.com/podhmo/go-scan/examples/derivingbind/parser"
 	"io"
 	"net/http"
-	"strconv"
-	"strings"
 )
 
 func (s *ComprehensiveBind) Bind(req *http.Request, pathVar func(string) string) error {
+	b := binding.New(req, pathVar)
 	var errs []error
+	var tempErr error // Renamed to avoid conflict with 'err' in generated code if user uses it
 
-	// Path parameter binding for field PathString (string) from "id"
+	// Binding for field PathString (string) from path:"id"
 
-	if pathValueStr := pathVar("id"); pathValueStr != "" {
+	// Value, e.g., int, string
+	tempErr = binding.One(b, &s.PathString, binding.Path, "id", parser.String, binding.Optional)
 
-		s.PathString = pathValueStr
-
-	} else { // Path value string is empty
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Path
 
-	// Query parameter binding for field QueryName (string) from "name"
-	// Not a slice for Query
-	if req.URL.Query().Has("name") {
-		valStr := req.URL.Query().Get("name")
-		if valStr == "" {
+	// Binding for field QueryName (string) from query:"name"
 
-			s.QueryName = valStr // Empty value for string is itself
+	// Value, e.g., int, string
+	tempErr = binding.One(b, &s.QueryName, binding.Query, "name", parser.String, binding.Optional)
 
-		}
-		// If valStr is not empty, or if it's an empty string for a string type, proceed with conversion
-		if valStr != "" || true {
-
-			s.QueryName = valStr
-
-		} // End valStr not empty or is string
-	} else { // Key does not exist for query
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Query
 
-	// Query parameter binding for field QueryAge (int) from "age"
-	// Not a slice for Query
-	if req.URL.Query().Has("age") {
-		valStr := req.URL.Query().Get("age")
-		if valStr == "" {
+	// Binding for field QueryAge (int) from query:"age"
 
-			// Empty value for non-pointer, non-string, non-required. Stays zero/default. Or error?
-			// Let's be strict: if it's not string and empty, it's a conversion problem unless specifically allowed.
-			// However, current logic for non-slice non-required non-pointer is to leave as zero value if key exists but val is empty and conv fails.
-			// This behavior should be consistent. For now, if not string, treat empty as potential conversion error handled by strconv.
+	// Value, e.g., int, string
+	tempErr = binding.One(b, &s.QueryAge, binding.Query, "age", parser.Int, binding.Optional)
 
-		}
-		// If valStr is not empty, or if it's an empty string for a string type, proceed with conversion
-		if valStr != "" || false {
-
-			v, convErr := strconv.ParseInt(valStr, 10, 0)
-			if convErr != nil {
-				errs = append(errs, fmt.Errorf("failed to convert query parameter \"age\" (value: %q) to int for field QueryAge: %w", valStr, convErr))
-			} else {
-				s.QueryAge = int(v)
-			}
-
-		} // End valStr not empty or is string
-	} else { // Key does not exist for query
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Query
 
-	// Query parameter binding for field QueryActive (bool) from "active"
-	// Not a slice for Query
-	if req.URL.Query().Has("active") {
-		valStr := req.URL.Query().Get("active")
-		if valStr == "" {
+	// Binding for field QueryActive (bool) from query:"active"
 
-			// Empty value for non-pointer, non-string, non-required. Stays zero/default. Or error?
-			// Let's be strict: if it's not string and empty, it's a conversion problem unless specifically allowed.
-			// However, current logic for non-slice non-required non-pointer is to leave as zero value if key exists but val is empty and conv fails.
-			// This behavior should be consistent. For now, if not string, treat empty as potential conversion error handled by strconv.
+	// Value, e.g., int, string
+	tempErr = binding.One(b, &s.QueryActive, binding.Query, "active", parser.Bool, binding.Optional)
 
-		}
-		// If valStr is not empty, or if it's an empty string for a string type, proceed with conversion
-		if valStr != "" || false {
-
-			v, convErr := strconv.ParseBool(valStr)
-			if convErr != nil {
-				errs = append(errs, fmt.Errorf("failed to convert query parameter \"active\" (value: %q) to bool for field QueryActive: %w", valStr, convErr))
-			} else {
-				s.QueryActive = v
-			}
-
-		} // End valStr not empty or is string
-	} else { // Key does not exist for query
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Query
 
-	// Header binding for field HeaderToken (string) from "X-Auth-Token"
-	// Not a slice for Header
-	if valStr := req.Header.Get("X-Auth-Token"); valStr != "" {
+	// Binding for field HeaderToken (string) from header:"X-Auth-Token"
 
-		s.HeaderToken = valStr
+	// Value, e.g., int, string
+	tempErr = binding.One(b, &s.HeaderToken, binding.Header, "X-Auth-Token", parser.String, binding.Optional)
 
-	} else { // Header value is empty or header not found
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Header
 
-	// Cookie binding for field CookieSession (string) from "session_id"
-	// Not a slice for Cookie
-	if cookie, cerr := req.Cookie("session_id"); cerr == nil && cookie.Value != "" {
-		valStr := cookie.Value
+	// Binding for field CookieSession (string) from cookie:"session_id"
 
-		s.CookieSession = valStr
+	// Value, e.g., int, string
+	tempErr = binding.One(b, &s.CookieSession, binding.Cookie, "session_id", parser.String, binding.Optional)
 
-	} else { // Cookie not found or value is empty
-		if cerr != http.ErrNoCookie && cerr != nil {
-			errs = append(errs, fmt.Errorf("error retrieving cookie \"session_id\" for field CookieSession: %w", cerr))
-		}
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Cookie
 
 	if req.Body != nil && req.Body != http.NoBody {
-		isSpecificFieldBodyTarget := false
+		var bodyHandledBySpecificField = false
 
-		if isSpecificFieldBodyTarget {
-
-		} else {
-			// The struct ComprehensiveBind itself is the target for the request body
+		// If no specific field was designated 'in:"body"', decode into the struct 's' itself.
+		if !bodyHandledBySpecificField {
 			if decErr := json.NewDecoder(req.Body).Decode(s); decErr != nil {
-				if decErr != io.EOF { // EOF might be acceptable
-					errs = append(errs, fmt.Errorf("failed to decode request body into ComprehensiveBind: %w", decErr))
+				if decErr != io.EOF { // EOF might be acceptable if body is optional and empty
+					errs = append(errs, fmt.Errorf("binding: failed to decode request body into struct ComprehensiveBind: %w", decErr))
 				}
 			}
 		}
+	afterBodyProcessing: // Label for goto
+	} else {
+		// Check if body was required.
+		// This logic assumes that if 'NeedsBody' is true, and there's a field marked as 'IsBody' and 'IsRequired',
+		// or if the struct itself is implicitly the body and some overall "body required" rule applies (not yet implemented in detail).
+		isStructOrFieldBodyRequired := false
 
+		// If struct is implicitly the body target, determine if it's required.
+		// This might need a struct-level "required" annotation for the body.
+		// For now, if NeedsBody is true and no specific field, we might assume optional unless specified.
+		// Let's assume for now if NeedsBody is true and no specific field, it's only an error if a sub-field IS required,
+		// but that would be a JSON validation concern, not a "missing body" concern.
+		// So, let's make it an error only if a *specific* body field was required.
+
+		if isStructOrFieldBodyRequired {
+			errs = append(errs, errors.New("binding: request body is required but was not provided or was empty"))
+		}
 	}
 
 	if len(errs) > 0 {
@@ -151,65 +108,60 @@ func (s *ComprehensiveBind) Bind(req *http.Request, pathVar func(string) string)
 }
 
 func (s *SpecificBodyFieldBind) Bind(req *http.Request, pathVar func(string) string) error {
+	b := binding.New(req, pathVar)
 	var errs []error
+	var tempErr error // Renamed to avoid conflict with 'err' in generated code if user uses it
 
-	// Header binding for field RequestID (string) from "X-Request-ID"
-	// Not a slice for Header
-	if valStr := req.Header.Get("X-Request-ID"); valStr != "" {
+	// Binding for field RequestID (string) from header:"X-Request-ID"
 
-		s.RequestID = valStr
+	// Value, e.g., int, string
+	tempErr = binding.One(b, &s.RequestID, binding.Header, "X-Request-ID", parser.String, binding.Optional)
 
-	} else { // Header value is empty or header not found
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Header
 
-	// Query parameter binding for field OtherQueryParam (string) from "other"
-	// Not a slice for Query
-	if req.URL.Query().Has("other") {
-		valStr := req.URL.Query().Get("other")
-		if valStr == "" {
+	// Body binding for field Payload (RequestBody) will be handled after other fields.
 
-			s.OtherQueryParam = valStr // Empty value for string is itself
+	// Binding for field OtherQueryParam (string) from query:"other"
 
-		}
-		// If valStr is not empty, or if it's an empty string for a string type, proceed with conversion
-		if valStr != "" || true {
+	// Value, e.g., int, string
+	tempErr = binding.One(b, &s.OtherQueryParam, binding.Query, "other", parser.String, binding.Optional)
 
-			s.OtherQueryParam = valStr
-
-		} // End valStr not empty or is string
-	} else { // Key does not exist for query
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Query
 
 	if req.Body != nil && req.Body != http.NoBody {
-		isSpecificFieldBodyTarget := false
+		var bodyHandledBySpecificField = false
 
-		isSpecificFieldBodyTarget = true
-
-		if isSpecificFieldBodyTarget {
-
-			// Field Payload is the target for the entire request body
-			if decErr := json.NewDecoder(req.Body).Decode(&s.Payload); decErr != nil {
-				if decErr != io.EOF { // EOF might be acceptable if body is optional
-					errs = append(errs, fmt.Errorf("failed to decode request body into field Payload: %w", decErr))
-				}
+		// Field Payload (type RequestBody) is the target for the entire request body
+		if decErr := json.NewDecoder(req.Body).Decode(&s.Payload); decErr != nil {
+			if decErr != io.EOF { // EOF might be acceptable if body is optional and empty
+				errs = append(errs, fmt.Errorf("binding: failed to decode request body into field Payload: %w", decErr))
 			}
-			goto afterBodyProcessing // Process only one 'in:"body"' field
+		}
+		bodyHandledBySpecificField = true
+		goto afterBodyProcessing // Assume only one field can be 'in:"body"'
 
-		} else {
-			// The struct SpecificBodyFieldBind itself is the target for the request body
+		// If no specific field was designated 'in:"body"', decode into the struct 's' itself.
+		if !bodyHandledBySpecificField {
 			if decErr := json.NewDecoder(req.Body).Decode(s); decErr != nil {
-				if decErr != io.EOF { // EOF might be acceptable
-					errs = append(errs, fmt.Errorf("failed to decode request body into SpecificBodyFieldBind: %w", decErr))
+				if decErr != io.EOF { // EOF might be acceptable if body is optional and empty
+					errs = append(errs, fmt.Errorf("binding: failed to decode request body into struct SpecificBodyFieldBind: %w", decErr))
 				}
 			}
 		}
+	afterBodyProcessing: // Label for goto
+	} else {
+		// Check if body was required.
+		// This logic assumes that if 'NeedsBody' is true, and there's a field marked as 'IsBody' and 'IsRequired',
+		// or if the struct itself is implicitly the body and some overall "body required" rule applies (not yet implemented in detail).
+		isStructOrFieldBodyRequired := false
 
-	afterBodyProcessing: // Label for goto only if there was a specific body field target that could jump here
-
+		if isStructOrFieldBodyRequired {
+			errs = append(errs, errors.New("binding: request body is required but was not provided or was empty"))
+		}
 	}
 
 	if len(errs) > 0 {
@@ -219,33 +171,47 @@ func (s *SpecificBodyFieldBind) Bind(req *http.Request, pathVar func(string) str
 }
 
 func (s *FullBodyBind) Bind(req *http.Request, pathVar func(string) string) error {
+	b := binding.New(req, pathVar)
 	var errs []error
+	var tempErr error // Renamed to avoid conflict with 'err' in generated code if user uses it
 
-	// Header binding for field SourceHeader (string) from "X-Source"
-	// Not a slice for Header
-	if valStr := req.Header.Get("X-Source"); valStr != "" {
+	// Binding for field SourceHeader (string) from header:"X-Source"
 
-		s.SourceHeader = valStr
+	// Value, e.g., int, string
+	tempErr = binding.One(b, &s.SourceHeader, binding.Header, "X-Source", parser.String, binding.Optional)
 
-	} else { // Header value is empty or header not found
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Header
 
 	if req.Body != nil && req.Body != http.NoBody {
-		isSpecificFieldBodyTarget := false
+		var bodyHandledBySpecificField = false
 
-		if isSpecificFieldBodyTarget {
-
-		} else {
-			// The struct FullBodyBind itself is the target for the request body
+		// If no specific field was designated 'in:"body"', decode into the struct 's' itself.
+		if !bodyHandledBySpecificField {
 			if decErr := json.NewDecoder(req.Body).Decode(s); decErr != nil {
-				if decErr != io.EOF { // EOF might be acceptable
-					errs = append(errs, fmt.Errorf("failed to decode request body into FullBodyBind: %w", decErr))
+				if decErr != io.EOF { // EOF might be acceptable if body is optional and empty
+					errs = append(errs, fmt.Errorf("binding: failed to decode request body into struct FullBodyBind: %w", decErr))
 				}
 			}
 		}
+	afterBodyProcessing: // Label for goto
+	} else {
+		// Check if body was required.
+		// This logic assumes that if 'NeedsBody' is true, and there's a field marked as 'IsBody' and 'IsRequired',
+		// or if the struct itself is implicitly the body and some overall "body required" rule applies (not yet implemented in detail).
+		isStructOrFieldBodyRequired := false
 
+		// If struct is implicitly the body target, determine if it's required.
+		// This might need a struct-level "required" annotation for the body.
+		// For now, if NeedsBody is true and no specific field, we might assume optional unless specified.
+		// Let's assume for now if NeedsBody is true and no specific field, it's only an error if a sub-field IS required,
+		// but that would be a JSON validation concern, not a "missing body" concern.
+		// So, let's make it an error only if a *specific* body field was required.
+
+		if isStructOrFieldBodyRequired {
+			errs = append(errs, errors.New("binding: request body is required but was not provided or was empty"))
+		}
 	}
 
 	if len(errs) > 0 {
@@ -255,66 +221,36 @@ func (s *FullBodyBind) Bind(req *http.Request, pathVar func(string) string) erro
 }
 
 func (s *QueryAndPathOnlyBind) Bind(req *http.Request, pathVar func(string) string) error {
+	b := binding.New(req, pathVar)
 	var errs []error
+	var tempErr error // Renamed to avoid conflict with 'err' in generated code if user uses it
 
-	// Path parameter binding for field UserID (string) from "userID"
+	// Binding for field UserID (string) from path:"userID"
 
-	if pathValueStr := pathVar("userID"); pathValueStr != "" {
+	// Value, e.g., int, string
+	tempErr = binding.One(b, &s.UserID, binding.Path, "userID", parser.String, binding.Optional)
 
-		s.UserID = pathValueStr
-
-	} else { // Path value string is empty
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Path
 
-	// Query parameter binding for field ItemCode (string) from "itemCode"
-	// Not a slice for Query
-	if req.URL.Query().Has("itemCode") {
-		valStr := req.URL.Query().Get("itemCode")
-		if valStr == "" {
+	// Binding for field ItemCode (string) from query:"itemCode"
 
-			s.ItemCode = valStr // Empty value for string is itself
+	// Value, e.g., int, string
+	tempErr = binding.One(b, &s.ItemCode, binding.Query, "itemCode", parser.String, binding.Optional)
 
-		}
-		// If valStr is not empty, or if it's an empty string for a string type, proceed with conversion
-		if valStr != "" || true {
-
-			s.ItemCode = valStr
-
-		} // End valStr not empty or is string
-	} else { // Key does not exist for query
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Query
 
-	// Query parameter binding for field Limit (int) from "limit"
-	// Not a slice for Query
-	if req.URL.Query().Has("limit") {
-		valStr := req.URL.Query().Get("limit")
-		if valStr == "" {
+	// Binding for field Limit (int) from query:"limit"
 
-			// Empty value for non-pointer, non-string, non-required. Stays zero/default. Or error?
-			// Let's be strict: if it's not string and empty, it's a conversion problem unless specifically allowed.
-			// However, current logic for non-slice non-required non-pointer is to leave as zero value if key exists but val is empty and conv fails.
-			// This behavior should be consistent. For now, if not string, treat empty as potential conversion error handled by strconv.
+	// Value, e.g., int, string
+	tempErr = binding.One(b, &s.Limit, binding.Query, "limit", parser.Int, binding.Optional)
 
-		}
-		// If valStr is not empty, or if it's an empty string for a string type, proceed with conversion
-		if valStr != "" || false {
-
-			v, convErr := strconv.ParseInt(valStr, 10, 0)
-			if convErr != nil {
-				errs = append(errs, fmt.Errorf("failed to convert query parameter \"limit\" (value: %q) to int for field Limit: %w", valStr, convErr))
-			} else {
-				s.Limit = int(v)
-			}
-
-		} // End valStr not empty or is string
-	} else { // Key does not exist for query
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Query
 
 	if len(errs) > 0 {
 		return errors.Join(errs...)
@@ -323,248 +259,117 @@ func (s *QueryAndPathOnlyBind) Bind(req *http.Request, pathVar func(string) stri
 }
 
 func (s *TestPointerFields) Bind(req *http.Request, pathVar func(string) string) error {
+	b := binding.New(req, pathVar)
 	var errs []error
+	var tempErr error // Renamed to avoid conflict with 'err' in generated code if user uses it
 
-	// Query parameter binding for field QueryStrOptional (*string) from "qStrOpt"
-	// Not a slice for Query
-	if req.URL.Query().Has("qStrOpt") {
-		valStr := req.URL.Query().Get("qStrOpt")
-		if valStr == "" {
+	// Binding for field QueryStrOptional (*string) from query:"qStrOpt"
 
-			s.QueryStrOptional = &valStr // Empty value for non-string pointer is nil
+	// Pointer to a value, e.g., *int, *string (but not a slice)
+	tempErr = binding.OnePtr(b, &s.QueryStrOptional, binding.Query, "qStrOpt", parser.String, binding.Optional)
 
-		}
-		// If valStr is not empty, or if it's an empty string for a string type, proceed with conversion
-		if valStr != "" || true {
-
-			s.QueryStrOptional = &valStr
-
-		} // End valStr not empty or is string
-	} else { // Key does not exist for query
-
-		s.QueryStrOptional = nil
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Query
 
-	// Query parameter binding for field QueryStrRequired (*string) from "qStrReq"
-	// Not a slice for Query
-	if req.URL.Query().Has("qStrReq") {
-		valStr := req.URL.Query().Get("qStrReq")
-		if valStr == "" {
+	// Binding for field QueryStrRequired (*string) from query:"qStrReq"
 
-			// Required string can be empty unless specific validation says otherwise
-			s.QueryStrRequired = &valStr
+	// Pointer to a value, e.g., *int, *string (but not a slice)
+	tempErr = binding.OnePtr(b, &s.QueryStrRequired, binding.Query, "qStrReq", parser.String, binding.Required)
 
-		}
-		// If valStr is not empty, or if it's an empty string for a string type, proceed with conversion
-		if valStr != "" || true {
-
-			s.QueryStrRequired = &valStr
-
-		} // End valStr not empty or is string
-	} else { // Key does not exist for query
-
-		errs = append(errs, fmt.Errorf("required query parameter \"qStrReq\" for field QueryStrRequired is missing"))
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Query
 
-	// Query parameter binding for field QueryIntOptional (*int) from "qIntOpt"
-	// Not a slice for Query
-	if req.URL.Query().Has("qIntOpt") {
-		valStr := req.URL.Query().Get("qIntOpt")
-		if valStr == "" {
+	// Binding for field QueryIntOptional (*int) from query:"qIntOpt"
 
-			s.QueryIntOptional = nil // Empty value for non-string pointer is nil
+	// Pointer to a value, e.g., *int, *string (but not a slice)
+	tempErr = binding.OnePtr(b, &s.QueryIntOptional, binding.Query, "qIntOpt", parser.Int, binding.Optional)
 
-		}
-		// If valStr is not empty, or if it's an empty string for a string type, proceed with conversion
-		if valStr != "" || false {
-
-			v, convErr := strconv.ParseInt(valStr, 10, 0)
-			if convErr != nil {
-				s.QueryIntOptional = nil
-			} else {
-				convertedValue := int(v)
-				s.QueryIntOptional = &convertedValue
-			}
-
-		} // End valStr not empty or is string
-	} else { // Key does not exist for query
-
-		s.QueryIntOptional = nil
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Query
 
-	// Query parameter binding for field QueryIntRequired (*int) from "qIntReq"
-	// Not a slice for Query
-	if req.URL.Query().Has("qIntReq") {
-		valStr := req.URL.Query().Get("qIntReq")
-		if valStr == "" {
+	// Binding for field QueryIntRequired (*int) from query:"qIntReq"
 
-			errs = append(errs, fmt.Errorf("required query parameter \"qIntReq\" for field QueryIntRequired received an empty value which cannot be converted to int"))
+	// Pointer to a value, e.g., *int, *string (but not a slice)
+	tempErr = binding.OnePtr(b, &s.QueryIntRequired, binding.Query, "qIntReq", parser.Int, binding.Required)
 
-		}
-		// If valStr is not empty, or if it's an empty string for a string type, proceed with conversion
-		if valStr != "" || false {
-
-			v, convErr := strconv.ParseInt(valStr, 10, 0)
-			if convErr != nil {
-				errs = append(errs, fmt.Errorf("failed to convert query parameter \"qIntReq\" (value: %q) to int for field QueryIntRequired: %w", valStr, convErr))
-			} else {
-				convertedValue := int(v)
-				s.QueryIntRequired = &convertedValue
-			}
-
-		} // End valStr not empty or is string
-	} else { // Key does not exist for query
-
-		errs = append(errs, fmt.Errorf("required query parameter \"qIntReq\" for field QueryIntRequired is missing"))
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Query
 
-	// Query parameter binding for field QueryBoolOptional (*bool) from "qBoolOpt"
-	// Not a slice for Query
-	if req.URL.Query().Has("qBoolOpt") {
-		valStr := req.URL.Query().Get("qBoolOpt")
-		if valStr == "" {
+	// Binding for field QueryBoolOptional (*bool) from query:"qBoolOpt"
 
-			s.QueryBoolOptional = nil // Empty value for non-string pointer is nil
+	// Pointer to a value, e.g., *int, *string (but not a slice)
+	tempErr = binding.OnePtr(b, &s.QueryBoolOptional, binding.Query, "qBoolOpt", parser.Bool, binding.Optional)
 
-		}
-		// If valStr is not empty, or if it's an empty string for a string type, proceed with conversion
-		if valStr != "" || false {
-
-			v, convErr := strconv.ParseBool(valStr)
-			if convErr != nil {
-				s.QueryBoolOptional = nil
-			} else {
-				s.QueryBoolOptional = &v
-			}
-
-		} // End valStr not empty or is string
-	} else { // Key does not exist for query
-
-		s.QueryBoolOptional = nil
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Query
 
-	// Query parameter binding for field QueryBoolRequired (*bool) from "qBoolReq"
-	// Not a slice for Query
-	if req.URL.Query().Has("qBoolReq") {
-		valStr := req.URL.Query().Get("qBoolReq")
-		if valStr == "" {
+	// Binding for field QueryBoolRequired (*bool) from query:"qBoolReq"
 
-			errs = append(errs, fmt.Errorf("required query parameter \"qBoolReq\" for field QueryBoolRequired received an empty value which cannot be converted to bool"))
+	// Pointer to a value, e.g., *int, *string (but not a slice)
+	tempErr = binding.OnePtr(b, &s.QueryBoolRequired, binding.Query, "qBoolReq", parser.Bool, binding.Required)
 
-		}
-		// If valStr is not empty, or if it's an empty string for a string type, proceed with conversion
-		if valStr != "" || false {
-
-			v, convErr := strconv.ParseBool(valStr)
-			if convErr != nil {
-				errs = append(errs, fmt.Errorf("failed to convert query parameter \"qBoolReq\" (value: %q) to bool for field QueryBoolRequired: %w", valStr, convErr))
-			} else {
-				s.QueryBoolRequired = &v
-			}
-
-		} // End valStr not empty or is string
-	} else { // Key does not exist for query
-
-		errs = append(errs, fmt.Errorf("required query parameter \"qBoolReq\" for field QueryBoolRequired is missing"))
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Query
 
-	// Header binding for field HeaderStrOptional (*string) from "hStrOpt"
-	// Not a slice for Header
-	if valStr := req.Header.Get("hStrOpt"); valStr != "" {
+	// Binding for field HeaderStrOptional (*string) from header:"hStrOpt"
 
-		s.HeaderStrOptional = &valStr
+	// Pointer to a value, e.g., *int, *string (but not a slice)
+	tempErr = binding.OnePtr(b, &s.HeaderStrOptional, binding.Header, "hStrOpt", parser.String, binding.Optional)
 
-	} else { // Header value is empty or header not found
-
-		s.HeaderStrOptional = nil
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Header
 
-	// Header binding for field HeaderStrRequired (*string) from "hStrReq"
-	// Not a slice for Header
-	if valStr := req.Header.Get("hStrReq"); valStr != "" {
+	// Binding for field HeaderStrRequired (*string) from header:"hStrReq"
 
-		s.HeaderStrRequired = &valStr
+	// Pointer to a value, e.g., *int, *string (but not a slice)
+	tempErr = binding.OnePtr(b, &s.HeaderStrRequired, binding.Header, "hStrReq", parser.String, binding.Required)
 
-	} else { // Header value is empty or header not found
-
-		errs = append(errs, fmt.Errorf("required header \"hStrReq\" for field HeaderStrRequired is missing"))
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Header
 
-	// Path parameter binding for field PathStrOptional (*string) from "pStrOpt"
+	// Binding for field PathStrOptional (*string) from path:"pStrOpt"
 
-	if pathValueStr := pathVar("pStrOpt"); pathValueStr != "" {
+	// Pointer to a value, e.g., *int, *string (but not a slice)
+	tempErr = binding.OnePtr(b, &s.PathStrOptional, binding.Path, "pStrOpt", parser.String, binding.Optional)
 
-		s.PathStrOptional = &pathValueStr
-
-	} else { // Path value string is empty
-
-		s.PathStrOptional = nil
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Path
 
-	// Path parameter binding for field PathStrRequired (*string) from "pStrReq"
+	// Binding for field PathStrRequired (*string) from path:"pStrReq"
 
-	if pathValueStr := pathVar("pStrReq"); pathValueStr != "" {
+	// Pointer to a value, e.g., *int, *string (but not a slice)
+	tempErr = binding.OnePtr(b, &s.PathStrRequired, binding.Path, "pStrReq", parser.String, binding.Required)
 
-		s.PathStrRequired = &pathValueStr
-
-	} else { // Path value string is empty
-
-		errs = append(errs, fmt.Errorf("required path parameter \"pStrReq\" for field PathStrRequired is missing"))
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Path
 
-	// Cookie binding for field CookieStrOptional (*string) from "cStrOpt"
-	// Not a slice for Cookie
-	if cookie, cerr := req.Cookie("cStrOpt"); cerr == nil && cookie.Value != "" {
-		valStr := cookie.Value
+	// Binding for field CookieStrOptional (*string) from cookie:"cStrOpt"
 
-		s.CookieStrOptional = &valStr
+	// Pointer to a value, e.g., *int, *string (but not a slice)
+	tempErr = binding.OnePtr(b, &s.CookieStrOptional, binding.Cookie, "cStrOpt", parser.String, binding.Optional)
 
-	} else { // Cookie not found or value is empty
-		if cerr != http.ErrNoCookie && cerr != nil {
-			errs = append(errs, fmt.Errorf("error retrieving cookie \"cStrOpt\" for field CookieStrOptional: %w", cerr))
-		}
-
-		s.CookieStrOptional = nil
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Cookie
 
-	// Cookie binding for field CookieStrRequired (*string) from "cStrReq"
-	// Not a slice for Cookie
-	if cookie, cerr := req.Cookie("cStrReq"); cerr == nil && cookie.Value != "" {
-		valStr := cookie.Value
+	// Binding for field CookieStrRequired (*string) from cookie:"cStrReq"
 
-		s.CookieStrRequired = &valStr
+	// Pointer to a value, e.g., *int, *string (but not a slice)
+	tempErr = binding.OnePtr(b, &s.CookieStrRequired, binding.Cookie, "cStrReq", parser.String, binding.Required)
 
-	} else { // Cookie not found or value is empty
-		if cerr != http.ErrNoCookie && cerr != nil {
-			errs = append(errs, fmt.Errorf("error retrieving cookie \"cStrReq\" for field CookieStrRequired: %w", cerr))
-		}
-
-		errs = append(errs, fmt.Errorf("required cookie \"cStrReq\" for field CookieStrRequired is missing, empty, or could not be retrieved (underlying error: %v)", cerr))
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Cookie
 
 	if len(errs) > 0 {
 		return errors.Join(errs...)
@@ -573,100 +378,54 @@ func (s *TestPointerFields) Bind(req *http.Request, pathVar func(string) string)
 }
 
 func (s *TestRequiredNonPointerFields) Bind(req *http.Request, pathVar func(string) string) error {
+	b := binding.New(req, pathVar)
 	var errs []error
+	var tempErr error // Renamed to avoid conflict with 'err' in generated code if user uses it
 
-	// Query parameter binding for field QueryStrRequired (string) from "qStrReq"
-	// Not a slice for Query
-	if req.URL.Query().Has("qStrReq") {
-		valStr := req.URL.Query().Get("qStrReq")
-		if valStr == "" {
+	// Binding for field QueryStrRequired (string) from query:"qStrReq"
 
-			// Required string can be empty unless specific validation says otherwise
-			s.QueryStrRequired = valStr
+	// Value, e.g., int, string
+	tempErr = binding.One(b, &s.QueryStrRequired, binding.Query, "qStrReq", parser.String, binding.Required)
 
-		}
-		// If valStr is not empty, or if it's an empty string for a string type, proceed with conversion
-		if valStr != "" || true {
-
-			s.QueryStrRequired = valStr
-
-		} // End valStr not empty or is string
-	} else { // Key does not exist for query
-
-		errs = append(errs, fmt.Errorf("required query parameter \"qStrReq\" for field QueryStrRequired is missing"))
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Query
 
-	// Query parameter binding for field QueryIntRequired (int) from "qIntReq"
-	// Not a slice for Query
-	if req.URL.Query().Has("qIntReq") {
-		valStr := req.URL.Query().Get("qIntReq")
-		if valStr == "" {
+	// Binding for field QueryIntRequired (int) from query:"qIntReq"
 
-			errs = append(errs, fmt.Errorf("required query parameter \"qIntReq\" for field QueryIntRequired received an empty value which cannot be converted to int"))
+	// Value, e.g., int, string
+	tempErr = binding.One(b, &s.QueryIntRequired, binding.Query, "qIntReq", parser.Int, binding.Required)
 
-		}
-		// If valStr is not empty, or if it's an empty string for a string type, proceed with conversion
-		if valStr != "" || false {
-
-			v, convErr := strconv.ParseInt(valStr, 10, 0)
-			if convErr != nil {
-				errs = append(errs, fmt.Errorf("failed to convert query parameter \"qIntReq\" (value: %q) to int for field QueryIntRequired: %w", valStr, convErr))
-			} else {
-				s.QueryIntRequired = int(v)
-			}
-
-		} // End valStr not empty or is string
-	} else { // Key does not exist for query
-
-		errs = append(errs, fmt.Errorf("required query parameter \"qIntReq\" for field QueryIntRequired is missing"))
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Query
 
-	// Header binding for field HeaderStrRequired (string) from "hStrReq"
-	// Not a slice for Header
-	if valStr := req.Header.Get("hStrReq"); valStr != "" {
+	// Binding for field HeaderStrRequired (string) from header:"hStrReq"
 
-		s.HeaderStrRequired = valStr
+	// Value, e.g., int, string
+	tempErr = binding.One(b, &s.HeaderStrRequired, binding.Header, "hStrReq", parser.String, binding.Required)
 
-	} else { // Header value is empty or header not found
-
-		errs = append(errs, fmt.Errorf("required header \"hStrReq\" for field HeaderStrRequired is missing"))
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Header
 
-	// Path parameter binding for field PathStrRequired (string) from "pStrReq"
+	// Binding for field PathStrRequired (string) from path:"pStrReq"
 
-	if pathValueStr := pathVar("pStrReq"); pathValueStr != "" {
+	// Value, e.g., int, string
+	tempErr = binding.One(b, &s.PathStrRequired, binding.Path, "pStrReq", parser.String, binding.Required)
 
-		s.PathStrRequired = pathValueStr
-
-	} else { // Path value string is empty
-
-		errs = append(errs, fmt.Errorf("required path parameter \"pStrReq\" for field PathStrRequired is missing"))
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Path
 
-	// Cookie binding for field CookieStrRequired (string) from "cStrReq"
-	// Not a slice for Cookie
-	if cookie, cerr := req.Cookie("cStrReq"); cerr == nil && cookie.Value != "" {
-		valStr := cookie.Value
+	// Binding for field CookieStrRequired (string) from cookie:"cStrReq"
 
-		s.CookieStrRequired = valStr
+	// Value, e.g., int, string
+	tempErr = binding.One(b, &s.CookieStrRequired, binding.Cookie, "cStrReq", parser.String, binding.Required)
 
-	} else { // Cookie not found or value is empty
-		if cerr != http.ErrNoCookie && cerr != nil {
-			errs = append(errs, fmt.Errorf("error retrieving cookie \"cStrReq\" for field CookieStrRequired: %w", cerr))
-		}
-
-		errs = append(errs, fmt.Errorf("required cookie \"cStrReq\" for field CookieStrRequired is missing, empty, or could not be retrieved (underlying error: %v)", cerr))
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Cookie
 
 	if len(errs) > 0 {
 		return errors.Join(errs...)
@@ -675,1006 +434,360 @@ func (s *TestRequiredNonPointerFields) Bind(req *http.Request, pathVar func(stri
 }
 
 func (s *TestExtendedTypesBind) Bind(req *http.Request, pathVar func(string) string) error {
+	b := binding.New(req, pathVar)
 	var errs []error
+	var tempErr error // Renamed to avoid conflict with 'err' in generated code if user uses it
 
-	// Query parameter binding for field QueryStringSlice ([]string) from "qStrSlice"
+	// Binding for field QueryStringSlice ([]string) from query:"qStrSlice"
 
-	if values, ok := req.URL.Query()["qStrSlice"]; ok && len(values) > 0 {
-		sliceCap := len(values)
-		slice := make([]string, 0, sliceCap) // Use SliceElementType, e.g., "int", "*string"
-		for _, valStrLoop := range values {  // Renamed valStr to valStrLoop to avoid conflict if defined outside
-			// Define variables inside the loop
-			// Use the loop variable name
+	// e.g. []int, []string - uses binding.Slice
+	tempErr = binding.Slice(b, &s.QueryStringSlice, binding.Query, "qStrSlice", parser.String, binding.Optional)
 
-			// Template variable for slice name
-
-			if valStrLoop == "" { // Handle empty string in multi-value query param
-				// string
-				slice = append(slice, valStrLoop)
-
-			} else { // Value is not empty, proceed with conversion
-
-				slice = append(slice, valStrLoop)
-
-			}
-		}
-		s.QueryStringSlice = slice
-	} else { // Parameter not found or no values
-		// This entire block (previously lines 255-307) was problematic as valStr is not defined here.
-		// The logic for when a slice parameter is missing or empty is handled below.
-
-		s.QueryStringSlice = nil // Or empty slice: make([]string, 0)
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Query
 
-	// Header binding for field HeaderIntSlice ([]int) from "X-Int-Slice"
+	// Binding for field HeaderIntSlice ([]int) from header:"X-Int-Slice"
 
-	headerValStr := req.Header.Get("X-Int-Slice")
-	if headerValStr != "" {
-		valuesStr := strings.Split(headerValStr, ",") // Assuming comma-separated for simple style
-		slice := make([]int, 0, len(valuesStr))
-		for _, valStrLoop := range valuesStr {
-			trimmedValStrLoop := strings.TrimSpace(valStrLoop)
+	// e.g. []int, []string - uses binding.Slice
+	tempErr = binding.Slice(b, &s.HeaderIntSlice, binding.Header, "X-Int-Slice", parser.Int, binding.Optional)
 
-			if trimmedValStrLoop == "" {
-
-				errs = append(errs, fmt.Errorf("empty value for trimmed slice element of HeaderIntSlice (header \"X-Int-Slice\") cannot be converted to int from %q", trimmedValStrLoop))
-
-			} else {
-
-				v, convErr := strconv.Atoi(trimmedValStrLoop)
-				if convErr != nil {
-					errs = append(errs, fmt.Errorf("failed to convert %s \"X-Int-Slice\" element (value: %q) to int for field HeaderIntSlice: %w", "header", trimmedValStrLoop, convErr))
-				} else {
-					slice = append(slice, v)
-				}
-
-			}
-		}
-		s.HeaderIntSlice = slice
-	} else { // Header not found
-
-		s.HeaderIntSlice = nil // Or empty slice
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Header
 
-	// Cookie binding for field CookieBoolSlice ([]bool) from "ckBoolSlice"
+	// Binding for field CookieBoolSlice ([]bool) from cookie:"ckBoolSlice"
 
-	if cookie, cerr := req.Cookie("ckBoolSlice"); cerr == nil && cookie.Value != "" {
-		valuesStr := strings.Split(cookie.Value, ",") // Assuming comma-separated for form style
-		slice := make([]bool, 0, len(valuesStr))
-		for _, valStrLoop := range valuesStr {
-			trimmedValStrLoop := strings.TrimSpace(valStrLoop)
+	// e.g. []int, []string - uses binding.Slice
+	tempErr = binding.Slice(b, &s.CookieBoolSlice, binding.Cookie, "ckBoolSlice", parser.Bool, binding.Optional)
 
-			if trimmedValStrLoop == "" {
-
-				errs = append(errs, fmt.Errorf("empty value for trimmed slice element of CookieBoolSlice (cookie \"ckBoolSlice\") cannot be converted to bool from %q", trimmedValStrLoop))
-
-			} else {
-
-				v, convErr := strconv.ParseBool(trimmedValStrLoop)
-				if convErr != nil {
-					errs = append(errs, fmt.Errorf("failed to convert %s \"ckBoolSlice\" element (value: %q) to bool for field CookieBoolSlice: %w", "cookie", trimmedValStrLoop, convErr))
-				} else {
-					slice = append(slice, v)
-				}
-
-			}
-		}
-		s.CookieBoolSlice = slice
-	} else { // Cookie not found or value is empty
-		if cerr != http.ErrNoCookie && cerr != nil { // Report actual errors other than not found
-			errs = append(errs, fmt.Errorf("error retrieving cookie \"ckBoolSlice\" for field CookieBoolSlice: %w", cerr))
-		}
-
-		s.CookieBoolSlice = nil // Or empty slice
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Cookie
 
-	// Path parameter binding for field PathStringSlice ([]string) from "pStrSlice"
+	// Binding for field PathStringSlice ([]string) from path:"pStrSlice"
 
-	// TODO: Path parameter slice binding is not typically supported directly.
-	// Consider if this is a valid use case or should be an error/skipped.
-	// For now, skipping slice binding from path.
-	// End of not .IsSlice for Path
+	// e.g. []int, []string - uses binding.Slice
+	tempErr = binding.Slice(b, &s.PathStringSlice, binding.Path, "pStrSlice", parser.String, binding.Optional)
 
-	// Query parameter binding for field QueryPtrIntSlice ([]*int) from "qPtrIntSlice"
-
-	if values, ok := req.URL.Query()["qPtrIntSlice"]; ok && len(values) > 0 {
-		sliceCap := len(values)
-		slice := make([]*int, 0, sliceCap)  // Use SliceElementType, e.g., "int", "*string"
-		for _, valStrLoop := range values { // Renamed valStr to valStrLoop to avoid conflict if defined outside
-			// Define variables inside the loop
-			// Use the loop variable name
-
-			// Template variable for slice name
-
-			if valStrLoop == "" { // Handle empty string in multi-value query param
-				// Pointer element type
-				// *int, *bool etc.
-				// For optional non-string pointers, empty value means nil for the element
-				// If the field itself is required, this might still be an issue overall, but element can be nil.
-				var typedNil *int // e.g. var typedNil *int
-				slice = append(slice, typedNil)
-
-			} else { // Value is not empty, proceed with conversion
-
-				v, convErr := strconv.Atoi(valStrLoop)
-				if convErr != nil {
-					errs = append(errs, fmt.Errorf("failed to convert %s \"qPtrIntSlice\" element (value: %q) to int for field QueryPtrIntSlice: %w", "query parameter", valStrLoop, convErr))
-				} else {
-					slice = append(slice, &v)
-				}
-
-			}
-		}
-		s.QueryPtrIntSlice = slice
-	} else { // Parameter not found or no values
-		// This entire block (previously lines 255-307) was problematic as valStr is not defined here.
-		// The logic for when a slice parameter is missing or empty is handled below.
-
-		s.QueryPtrIntSlice = nil // Or empty slice: make([]*int, 0)
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Query
 
-	// Header binding for field HeaderPtrStringSlice ([]*string) from "X-PtrStr-Slice"
+	// Binding for field QueryPtrIntSlice ([]*int) from query:"qPtrIntSlice"
 
-	headerValStr := req.Header.Get("X-PtrStr-Slice")
-	if headerValStr != "" {
-		valuesStr := strings.Split(headerValStr, ",") // Assuming comma-separated for simple style
-		slice := make([]*string, 0, len(valuesStr))
-		for _, valStrLoop := range valuesStr {
-			trimmedValStrLoop := strings.TrimSpace(valStrLoop)
+	// e.g. []*int, []*string - uses binding.SlicePtr
+	tempErr = binding.SlicePtr(b, &s.QueryPtrIntSlice, binding.Query, "qPtrIntSlice", parser.Int, binding.Optional)
 
-			if trimmedValStrLoop == "" {
-
-				emptyStr := ""
-				slice = append(slice, &emptyStr)
-
-			} else {
-
-				sPtr := trimmedValStrLoop
-				slice = append(slice, &sPtr)
-
-			}
-		}
-		s.HeaderPtrStringSlice = slice
-	} else { // Header not found
-
-		s.HeaderPtrStringSlice = nil // Or empty slice
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Header
 
-	// Query parameter binding for field QueryInt8 (int8) from "qInt8"
-	// Not a slice for Query
-	if req.URL.Query().Has("qInt8") {
-		valStr := req.URL.Query().Get("qInt8")
-		if valStr == "" {
+	// Binding for field HeaderPtrStringSlice ([]*string) from header:"X-PtrStr-Slice"
 
-			// Empty value for non-pointer, non-string, non-required. Stays zero/default. Or error?
-			// Let's be strict: if it's not string and empty, it's a conversion problem unless specifically allowed.
-			// However, current logic for non-slice non-required non-pointer is to leave as zero value if key exists but val is empty and conv fails.
-			// This behavior should be consistent. For now, if not string, treat empty as potential conversion error handled by strconv.
+	// e.g. []*int, []*string - uses binding.SlicePtr
+	tempErr = binding.SlicePtr(b, &s.HeaderPtrStringSlice, binding.Header, "X-PtrStr-Slice", parser.String, binding.Optional)
 
-		}
-		// If valStr is not empty, or if it's an empty string for a string type, proceed with conversion
-		if valStr != "" || false {
-
-			v, convErr := strconv.ParseInt(valStr, 10, 8)
-			if convErr != nil {
-				errs = append(errs, fmt.Errorf("failed to convert query parameter \"qInt8\" (value: %q) to int8 for field QueryInt8: %w", valStr, convErr))
-			} else {
-				s.QueryInt8 = int8(v)
-			}
-
-		} // End valStr not empty or is string
-	} else { // Key does not exist for query
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Query
 
-	// Query parameter binding for field QueryInt16 (int16) from "qInt16"
-	// Not a slice for Query
-	if req.URL.Query().Has("qInt16") {
-		valStr := req.URL.Query().Get("qInt16")
-		if valStr == "" {
+	// Binding for field QueryInt8 (int8) from query:"qInt8"
 
-			// Empty value for non-pointer, non-string, non-required. Stays zero/default. Or error?
-			// Let's be strict: if it's not string and empty, it's a conversion problem unless specifically allowed.
-			// However, current logic for non-slice non-required non-pointer is to leave as zero value if key exists but val is empty and conv fails.
-			// This behavior should be consistent. For now, if not string, treat empty as potential conversion error handled by strconv.
+	// Value, e.g., int, string
+	tempErr = binding.One(b, &s.QueryInt8, binding.Query, "qInt8", parser.Int8, binding.Optional)
 
-		}
-		// If valStr is not empty, or if it's an empty string for a string type, proceed with conversion
-		if valStr != "" || false {
-
-			v, convErr := strconv.ParseInt(valStr, 10, 16)
-			if convErr != nil {
-				errs = append(errs, fmt.Errorf("failed to convert query parameter \"qInt16\" (value: %q) to int16 for field QueryInt16: %w", valStr, convErr))
-			} else {
-				s.QueryInt16 = int16(v)
-			}
-
-		} // End valStr not empty or is string
-	} else { // Key does not exist for query
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Query
 
-	// Query parameter binding for field QueryInt32 (int32) from "qInt32"
-	// Not a slice for Query
-	if req.URL.Query().Has("qInt32") {
-		valStr := req.URL.Query().Get("qInt32")
-		if valStr == "" {
+	// Binding for field QueryInt16 (int16) from query:"qInt16"
 
-			// Empty value for non-pointer, non-string, non-required. Stays zero/default. Or error?
-			// Let's be strict: if it's not string and empty, it's a conversion problem unless specifically allowed.
-			// However, current logic for non-slice non-required non-pointer is to leave as zero value if key exists but val is empty and conv fails.
-			// This behavior should be consistent. For now, if not string, treat empty as potential conversion error handled by strconv.
+	// Value, e.g., int, string
+	tempErr = binding.One(b, &s.QueryInt16, binding.Query, "qInt16", parser.Int16, binding.Optional)
 
-		}
-		// If valStr is not empty, or if it's an empty string for a string type, proceed with conversion
-		if valStr != "" || false {
-
-			v, convErr := strconv.ParseInt(valStr, 10, 32)
-			if convErr != nil {
-				errs = append(errs, fmt.Errorf("failed to convert query parameter \"qInt32\" (value: %q) to int32 for field QueryInt32: %w", valStr, convErr))
-			} else {
-				s.QueryInt32 = int32(v)
-			}
-
-		} // End valStr not empty or is string
-	} else { // Key does not exist for query
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Query
 
-	// Query parameter binding for field QueryInt64 (int64) from "qInt64"
-	// Not a slice for Query
-	if req.URL.Query().Has("qInt64") {
-		valStr := req.URL.Query().Get("qInt64")
-		if valStr == "" {
+	// Binding for field QueryInt32 (int32) from query:"qInt32"
 
-			// Empty value for non-pointer, non-string, non-required. Stays zero/default. Or error?
-			// Let's be strict: if it's not string and empty, it's a conversion problem unless specifically allowed.
-			// However, current logic for non-slice non-required non-pointer is to leave as zero value if key exists but val is empty and conv fails.
-			// This behavior should be consistent. For now, if not string, treat empty as potential conversion error handled by strconv.
+	// Value, e.g., int, string
+	tempErr = binding.One(b, &s.QueryInt32, binding.Query, "qInt32", parser.Int32, binding.Optional)
 
-		}
-		// If valStr is not empty, or if it's an empty string for a string type, proceed with conversion
-		if valStr != "" || false {
-
-			v, convErr := strconv.ParseInt(valStr, 10, 64)
-			if convErr != nil {
-				errs = append(errs, fmt.Errorf("failed to convert query parameter \"qInt64\" (value: %q) to int64 for field QueryInt64: %w", valStr, convErr))
-			} else {
-				s.QueryInt64 = int64(v)
-			}
-
-		} // End valStr not empty or is string
-	} else { // Key does not exist for query
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Query
 
-	// Header binding for field HeaderUint (uint) from "X-Uint"
-	// Not a slice for Header
-	if valStr := req.Header.Get("X-Uint"); valStr != "" {
+	// Binding for field QueryInt64 (int64) from query:"qInt64"
 
-		// Unsigned
-		v, convErr := strconv.ParseUint(valStr, 10, 0)
-		if convErr != nil {
-			errs = append(errs, fmt.Errorf("failed to convert header \"X-Uint\" (value: %q) to uint for field HeaderUint: %w", valStr, convErr))
-		} else {
-			s.HeaderUint = uint(v)
-		}
+	// Value, e.g., int, string
+	tempErr = binding.One(b, &s.QueryInt64, binding.Query, "qInt64", parser.Int64, binding.Optional)
 
-	} else { // Header value is empty or header not found
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Header
 
-	// Header binding for field HeaderUint8 (uint8) from "X-Uint8"
-	// Not a slice for Header
-	if valStr := req.Header.Get("X-Uint8"); valStr != "" {
+	// Binding for field HeaderUint (uint) from header:"X-Uint"
 
-		// Unsigned
-		v, convErr := strconv.ParseUint(valStr, 10, 8)
-		if convErr != nil {
-			errs = append(errs, fmt.Errorf("failed to convert header \"X-Uint8\" (value: %q) to uint8 for field HeaderUint8: %w", valStr, convErr))
-		} else {
-			s.HeaderUint8 = uint8(v)
-		}
+	// Value, e.g., int, string
+	tempErr = binding.One(b, &s.HeaderUint, binding.Header, "X-Uint", parser.Uint, binding.Optional)
 
-	} else { // Header value is empty or header not found
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Header
 
-	// Header binding for field HeaderUint16 (uint16) from "X-Uint16"
-	// Not a slice for Header
-	if valStr := req.Header.Get("X-Uint16"); valStr != "" {
+	// Binding for field HeaderUint8 (uint8) from header:"X-Uint8"
 
-		// Unsigned
-		v, convErr := strconv.ParseUint(valStr, 10, 16)
-		if convErr != nil {
-			errs = append(errs, fmt.Errorf("failed to convert header \"X-Uint16\" (value: %q) to uint16 for field HeaderUint16: %w", valStr, convErr))
-		} else {
-			s.HeaderUint16 = uint16(v)
-		}
+	// Value, e.g., int, string
+	tempErr = binding.One(b, &s.HeaderUint8, binding.Header, "X-Uint8", parser.Uint8, binding.Optional)
 
-	} else { // Header value is empty or header not found
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Header
 
-	// Header binding for field HeaderUint32 (uint32) from "X-Uint32"
-	// Not a slice for Header
-	if valStr := req.Header.Get("X-Uint32"); valStr != "" {
+	// Binding for field HeaderUint16 (uint16) from header:"X-Uint16"
 
-		// Unsigned
-		v, convErr := strconv.ParseUint(valStr, 10, 32)
-		if convErr != nil {
-			errs = append(errs, fmt.Errorf("failed to convert header \"X-Uint32\" (value: %q) to uint32 for field HeaderUint32: %w", valStr, convErr))
-		} else {
-			s.HeaderUint32 = uint32(v)
-		}
+	// Value, e.g., int, string
+	tempErr = binding.One(b, &s.HeaderUint16, binding.Header, "X-Uint16", parser.Uint16, binding.Optional)
 
-	} else { // Header value is empty or header not found
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Header
 
-	// Header binding for field HeaderUint64 (uint64) from "X-Uint64"
-	// Not a slice for Header
-	if valStr := req.Header.Get("X-Uint64"); valStr != "" {
+	// Binding for field HeaderUint32 (uint32) from header:"X-Uint32"
 
-		// Unsigned
-		v, convErr := strconv.ParseUint(valStr, 10, 64)
-		if convErr != nil {
-			errs = append(errs, fmt.Errorf("failed to convert header \"X-Uint64\" (value: %q) to uint64 for field HeaderUint64: %w", valStr, convErr))
-		} else {
-			s.HeaderUint64 = uint64(v)
-		}
+	// Value, e.g., int, string
+	tempErr = binding.One(b, &s.HeaderUint32, binding.Header, "X-Uint32", parser.Uint32, binding.Optional)
 
-	} else { // Header value is empty or header not found
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Header
 
-	// Cookie binding for field CookieFloat32 (float32) from "ckFloat32"
-	// Not a slice for Cookie
-	if cookie, cerr := req.Cookie("ckFloat32"); cerr == nil && cookie.Value != "" {
-		valStr := cookie.Value
+	// Binding for field HeaderUint64 (uint64) from header:"X-Uint64"
 
-		v, convErr := strconv.ParseFloat(valStr, 32)
-		if convErr != nil {
-			errs = append(errs, fmt.Errorf("failed to convert cookie \"ckFloat32\" (value: %q) to float32 for field CookieFloat32: %w", valStr, convErr))
-		} else {
-			s.CookieFloat32 = float32(v)
-		}
+	// Value, e.g., int, string
+	tempErr = binding.One(b, &s.HeaderUint64, binding.Header, "X-Uint64", parser.Uint64, binding.Optional)
 
-	} else { // Cookie not found or value is empty
-		if cerr != http.ErrNoCookie && cerr != nil {
-			errs = append(errs, fmt.Errorf("error retrieving cookie \"ckFloat32\" for field CookieFloat32: %w", cerr))
-		}
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Cookie
 
-	// Cookie binding for field CookieFloat64 (float64) from "ckFloat64"
-	// Not a slice for Cookie
-	if cookie, cerr := req.Cookie("ckFloat64"); cerr == nil && cookie.Value != "" {
-		valStr := cookie.Value
+	// Binding for field CookieFloat32 (float32) from cookie:"ckFloat32"
 
-		v, convErr := strconv.ParseFloat(valStr, 64)
-		if convErr != nil {
-			errs = append(errs, fmt.Errorf("failed to convert cookie \"ckFloat64\" (value: %q) to float64 for field CookieFloat64: %w", valStr, convErr))
-		} else {
-			s.CookieFloat64 = float64(v)
-		}
+	// Value, e.g., int, string
+	tempErr = binding.One(b, &s.CookieFloat32, binding.Cookie, "ckFloat32", parser.Float32, binding.Optional)
 
-	} else { // Cookie not found or value is empty
-		if cerr != http.ErrNoCookie && cerr != nil {
-			errs = append(errs, fmt.Errorf("error retrieving cookie \"ckFloat64\" for field CookieFloat64: %w", cerr))
-		}
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Cookie
 
-	// Path parameter binding for field PathPtrInt64 (*int64) from "pPtrInt64"
+	// Binding for field CookieFloat64 (float64) from cookie:"ckFloat64"
 
-	if pathValueStr := pathVar("pPtrInt64"); pathValueStr != "" {
+	// Value, e.g., int, string
+	tempErr = binding.One(b, &s.CookieFloat64, binding.Cookie, "ckFloat64", parser.Float64, binding.Optional)
 
-		v, convErr := strconv.ParseInt(pathValueStr, 10, 64)
-		if convErr != nil {
-			errs = append(errs, fmt.Errorf("failed to convert path parameter \"pPtrInt64\" (value: %q) to int64 for field PathPtrInt64: %w", pathValueStr, convErr))
-		} else {
-			convertedValue := int64(v)
-			s.PathPtrInt64 = &convertedValue
-		}
-
-	} else { // Path value string is empty
-
-		s.PathPtrInt64 = nil
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Path
 
-	// Query parameter binding for field QueryPtrUint (*uint) from "qPtrUint"
-	// Not a slice for Query
-	if req.URL.Query().Has("qPtrUint") {
-		valStr := req.URL.Query().Get("qPtrUint")
-		if valStr == "" {
+	// Binding for field PathPtrInt64 (*int64) from path:"pPtrInt64"
 
-			s.QueryPtrUint = nil // Empty value for non-string pointer is nil
+	// Pointer to a value, e.g., *int, *string (but not a slice)
+	tempErr = binding.OnePtr(b, &s.PathPtrInt64, binding.Path, "pPtrInt64", parser.Int64, binding.Optional)
 
-		}
-		// If valStr is not empty, or if it's an empty string for a string type, proceed with conversion
-		if valStr != "" || false {
-
-			// Unsigned
-			v, convErr := strconv.ParseUint(valStr, 10, 0)
-			if convErr != nil {
-				s.QueryPtrUint = nil
-			} else {
-				convertedValue := uint(v)
-				s.QueryPtrUint = &convertedValue
-			}
-
-		} // End valStr not empty or is string
-	} else { // Key does not exist for query
-
-		s.QueryPtrUint = nil
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Query
 
-	// Header binding for field HeaderPtrFloat32 (*float32) from "X-PtrFloat32"
-	// Not a slice for Header
-	if valStr := req.Header.Get("X-PtrFloat32"); valStr != "" {
+	// Binding for field QueryPtrUint (*uint) from query:"qPtrUint"
 
-		v, convErr := strconv.ParseFloat(valStr, 32)
-		if convErr != nil {
-			s.HeaderPtrFloat32 = nil
-		} else {
-			convertedValue := float32(v)
-			s.HeaderPtrFloat32 = &convertedValue
-		}
+	// Pointer to a value, e.g., *int, *string (but not a slice)
+	tempErr = binding.OnePtr(b, &s.QueryPtrUint, binding.Query, "qPtrUint", parser.Uint, binding.Optional)
 
-	} else { // Header value is empty or header not found
-
-		s.HeaderPtrFloat32 = nil
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Header
 
-	// Query parameter binding for field RequiredQueryStringSlice ([]string) from "reqQStrSlice"
+	// Binding for field HeaderPtrFloat32 (*float32) from header:"X-PtrFloat32"
 
-	if values, ok := req.URL.Query()["reqQStrSlice"]; ok && len(values) > 0 {
-		sliceCap := len(values)
-		slice := make([]string, 0, sliceCap) // Use SliceElementType, e.g., "int", "*string"
-		for _, valStrLoop := range values {  // Renamed valStr to valStrLoop to avoid conflict if defined outside
-			// Define variables inside the loop
-			// Use the loop variable name
+	// Pointer to a value, e.g., *int, *string (but not a slice)
+	tempErr = binding.OnePtr(b, &s.HeaderPtrFloat32, binding.Header, "X-PtrFloat32", parser.Float32, binding.Optional)
 
-			// Template variable for slice name
-
-			if valStrLoop == "" { // Handle empty string in multi-value query param
-				// string
-				slice = append(slice, valStrLoop)
-
-			} else { // Value is not empty, proceed with conversion
-
-				slice = append(slice, valStrLoop)
-
-			}
-		}
-		s.RequiredQueryStringSlice = slice
-	} else { // Parameter not found or no values
-		// This entire block (previously lines 255-307) was problematic as valStr is not defined here.
-		// The logic for when a slice parameter is missing or empty is handled below.
-
-		errs = append(errs, fmt.Errorf("required query parameter slice \"reqQStrSlice\" for field RequiredQueryStringSlice is missing"))
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Query
 
-	// Header binding for field RequiredHeaderInt (int) from "X-ReqInt"
-	// Not a slice for Header
-	if valStr := req.Header.Get("X-ReqInt"); valStr != "" {
+	// Binding for field RequiredQueryStringSlice ([]string) from query:"reqQStrSlice"
 
-		v, convErr := strconv.ParseInt(valStr, 10, 0)
-		if convErr != nil {
-			errs = append(errs, fmt.Errorf("failed to convert header \"X-ReqInt\" (value: %q) to int for field RequiredHeaderInt: %w", valStr, convErr))
-		} else {
-			s.RequiredHeaderInt = int(v)
-		}
+	// e.g. []int, []string - uses binding.Slice
+	tempErr = binding.Slice(b, &s.RequiredQueryStringSlice, binding.Query, "reqQStrSlice", parser.String, binding.Required)
 
-	} else { // Header value is empty or header not found
-
-		errs = append(errs, fmt.Errorf("required header \"X-ReqInt\" for field RequiredHeaderInt is missing"))
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Header
 
-	// Query parameter binding for field QueryBoolTrue (bool) from "qBoolTrue"
-	// Not a slice for Query
-	if req.URL.Query().Has("qBoolTrue") {
-		valStr := req.URL.Query().Get("qBoolTrue")
-		if valStr == "" {
+	// Binding for field RequiredHeaderInt (int) from header:"X-ReqInt"
 
-			// Empty value for non-pointer, non-string, non-required. Stays zero/default. Or error?
-			// Let's be strict: if it's not string and empty, it's a conversion problem unless specifically allowed.
-			// However, current logic for non-slice non-required non-pointer is to leave as zero value if key exists but val is empty and conv fails.
-			// This behavior should be consistent. For now, if not string, treat empty as potential conversion error handled by strconv.
+	// Value, e.g., int, string
+	tempErr = binding.One(b, &s.RequiredHeaderInt, binding.Header, "X-ReqInt", parser.Int, binding.Required)
 
-		}
-		// If valStr is not empty, or if it's an empty string for a string type, proceed with conversion
-		if valStr != "" || false {
-
-			v, convErr := strconv.ParseBool(valStr)
-			if convErr != nil {
-				errs = append(errs, fmt.Errorf("failed to convert query parameter \"qBoolTrue\" (value: %q) to bool for field QueryBoolTrue: %w", valStr, convErr))
-			} else {
-				s.QueryBoolTrue = v
-			}
-
-		} // End valStr not empty or is string
-	} else { // Key does not exist for query
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Query
 
-	// Query parameter binding for field QueryBoolFalse (bool) from "qBoolFalse"
-	// Not a slice for Query
-	if req.URL.Query().Has("qBoolFalse") {
-		valStr := req.URL.Query().Get("qBoolFalse")
-		if valStr == "" {
+	// Binding for field QueryBoolTrue (bool) from query:"qBoolTrue"
 
-			// Empty value for non-pointer, non-string, non-required. Stays zero/default. Or error?
-			// Let's be strict: if it's not string and empty, it's a conversion problem unless specifically allowed.
-			// However, current logic for non-slice non-required non-pointer is to leave as zero value if key exists but val is empty and conv fails.
-			// This behavior should be consistent. For now, if not string, treat empty as potential conversion error handled by strconv.
+	// Value, e.g., int, string
+	tempErr = binding.One(b, &s.QueryBoolTrue, binding.Query, "qBoolTrue", parser.Bool, binding.Optional)
 
-		}
-		// If valStr is not empty, or if it's an empty string for a string type, proceed with conversion
-		if valStr != "" || false {
-
-			v, convErr := strconv.ParseBool(valStr)
-			if convErr != nil {
-				errs = append(errs, fmt.Errorf("failed to convert query parameter \"qBoolFalse\" (value: %q) to bool for field QueryBoolFalse: %w", valStr, convErr))
-			} else {
-				s.QueryBoolFalse = v
-			}
-
-		} // End valStr not empty or is string
-	} else { // Key does not exist for query
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Query
 
-	// Query parameter binding for field QueryBoolOne (bool) from "qBoolOne"
-	// Not a slice for Query
-	if req.URL.Query().Has("qBoolOne") {
-		valStr := req.URL.Query().Get("qBoolOne")
-		if valStr == "" {
+	// Binding for field QueryBoolFalse (bool) from query:"qBoolFalse"
 
-			// Empty value for non-pointer, non-string, non-required. Stays zero/default. Or error?
-			// Let's be strict: if it's not string and empty, it's a conversion problem unless specifically allowed.
-			// However, current logic for non-slice non-required non-pointer is to leave as zero value if key exists but val is empty and conv fails.
-			// This behavior should be consistent. For now, if not string, treat empty as potential conversion error handled by strconv.
+	// Value, e.g., int, string
+	tempErr = binding.One(b, &s.QueryBoolFalse, binding.Query, "qBoolFalse", parser.Bool, binding.Optional)
 
-		}
-		// If valStr is not empty, or if it's an empty string for a string type, proceed with conversion
-		if valStr != "" || false {
-
-			v, convErr := strconv.ParseBool(valStr)
-			if convErr != nil {
-				errs = append(errs, fmt.Errorf("failed to convert query parameter \"qBoolOne\" (value: %q) to bool for field QueryBoolOne: %w", valStr, convErr))
-			} else {
-				s.QueryBoolOne = v
-			}
-
-		} // End valStr not empty or is string
-	} else { // Key does not exist for query
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Query
 
-	// Query parameter binding for field QueryBoolZero (bool) from "qBoolZero"
-	// Not a slice for Query
-	if req.URL.Query().Has("qBoolZero") {
-		valStr := req.URL.Query().Get("qBoolZero")
-		if valStr == "" {
+	// Binding for field QueryBoolOne (bool) from query:"qBoolOne"
 
-			// Empty value for non-pointer, non-string, non-required. Stays zero/default. Or error?
-			// Let's be strict: if it's not string and empty, it's a conversion problem unless specifically allowed.
-			// However, current logic for non-slice non-required non-pointer is to leave as zero value if key exists but val is empty and conv fails.
-			// This behavior should be consistent. For now, if not string, treat empty as potential conversion error handled by strconv.
+	// Value, e.g., int, string
+	tempErr = binding.One(b, &s.QueryBoolOne, binding.Query, "qBoolOne", parser.Bool, binding.Optional)
 
-		}
-		// If valStr is not empty, or if it's an empty string for a string type, proceed with conversion
-		if valStr != "" || false {
-
-			v, convErr := strconv.ParseBool(valStr)
-			if convErr != nil {
-				errs = append(errs, fmt.Errorf("failed to convert query parameter \"qBoolZero\" (value: %q) to bool for field QueryBoolZero: %w", valStr, convErr))
-			} else {
-				s.QueryBoolZero = v
-			}
-
-		} // End valStr not empty or is string
-	} else { // Key does not exist for query
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Query
 
-	// Query parameter binding for field QueryBoolYes (bool) from "qBoolYes"
-	// Not a slice for Query
-	if req.URL.Query().Has("qBoolYes") {
-		valStr := req.URL.Query().Get("qBoolYes")
-		if valStr == "" {
+	// Binding for field QueryBoolZero (bool) from query:"qBoolZero"
 
-			// Empty value for non-pointer, non-string, non-required. Stays zero/default. Or error?
-			// Let's be strict: if it's not string and empty, it's a conversion problem unless specifically allowed.
-			// However, current logic for non-slice non-required non-pointer is to leave as zero value if key exists but val is empty and conv fails.
-			// This behavior should be consistent. For now, if not string, treat empty as potential conversion error handled by strconv.
+	// Value, e.g., int, string
+	tempErr = binding.One(b, &s.QueryBoolZero, binding.Query, "qBoolZero", parser.Bool, binding.Optional)
 
-		}
-		// If valStr is not empty, or if it's an empty string for a string type, proceed with conversion
-		if valStr != "" || false {
-
-			v, convErr := strconv.ParseBool(valStr)
-			if convErr != nil {
-				errs = append(errs, fmt.Errorf("failed to convert query parameter \"qBoolYes\" (value: %q) to bool for field QueryBoolYes: %w", valStr, convErr))
-			} else {
-				s.QueryBoolYes = v
-			}
-
-		} // End valStr not empty or is string
-	} else { // Key does not exist for query
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Query
 
-	// Query parameter binding for field QueryBoolCapTrue (bool) from "qBoolCapTrue"
-	// Not a slice for Query
-	if req.URL.Query().Has("qBoolCapTrue") {
-		valStr := req.URL.Query().Get("qBoolCapTrue")
-		if valStr == "" {
+	// Binding for field QueryBoolYes (bool) from query:"qBoolYes"
 
-			// Empty value for non-pointer, non-string, non-required. Stays zero/default. Or error?
-			// Let's be strict: if it's not string and empty, it's a conversion problem unless specifically allowed.
-			// However, current logic for non-slice non-required non-pointer is to leave as zero value if key exists but val is empty and conv fails.
-			// This behavior should be consistent. For now, if not string, treat empty as potential conversion error handled by strconv.
+	// Value, e.g., int, string
+	tempErr = binding.One(b, &s.QueryBoolYes, binding.Query, "qBoolYes", parser.Bool, binding.Optional)
 
-		}
-		// If valStr is not empty, or if it's an empty string for a string type, proceed with conversion
-		if valStr != "" || false {
-
-			v, convErr := strconv.ParseBool(valStr)
-			if convErr != nil {
-				errs = append(errs, fmt.Errorf("failed to convert query parameter \"qBoolCapTrue\" (value: %q) to bool for field QueryBoolCapTrue: %w", valStr, convErr))
-			} else {
-				s.QueryBoolCapTrue = v
-			}
-
-		} // End valStr not empty or is string
-	} else { // Key does not exist for query
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Query
 
-	// Query parameter binding for field QueryBoolInvalid (bool) from "qBoolInvalid"
-	// Not a slice for Query
-	if req.URL.Query().Has("qBoolInvalid") {
-		valStr := req.URL.Query().Get("qBoolInvalid")
-		if valStr == "" {
+	// Binding for field QueryBoolCapTrue (bool) from query:"qBoolCapTrue"
 
-			// Empty value for non-pointer, non-string, non-required. Stays zero/default. Or error?
-			// Let's be strict: if it's not string and empty, it's a conversion problem unless specifically allowed.
-			// However, current logic for non-slice non-required non-pointer is to leave as zero value if key exists but val is empty and conv fails.
-			// This behavior should be consistent. For now, if not string, treat empty as potential conversion error handled by strconv.
+	// Value, e.g., int, string
+	tempErr = binding.One(b, &s.QueryBoolCapTrue, binding.Query, "qBoolCapTrue", parser.Bool, binding.Optional)
 
-		}
-		// If valStr is not empty, or if it's an empty string for a string type, proceed with conversion
-		if valStr != "" || false {
-
-			v, convErr := strconv.ParseBool(valStr)
-			if convErr != nil {
-				errs = append(errs, fmt.Errorf("failed to convert query parameter \"qBoolInvalid\" (value: %q) to bool for field QueryBoolInvalid: %w", valStr, convErr))
-			} else {
-				s.QueryBoolInvalid = v
-			}
-
-		} // End valStr not empty or is string
-	} else { // Key does not exist for query
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Query
 
-	// Query parameter binding for field QueryStringEmptyOptional (string) from "qStrEmptyOpt"
-	// Not a slice for Query
-	if req.URL.Query().Has("qStrEmptyOpt") {
-		valStr := req.URL.Query().Get("qStrEmptyOpt")
-		if valStr == "" {
+	// Binding for field QueryBoolInvalid (bool) from query:"qBoolInvalid"
 
-			s.QueryStringEmptyOptional = valStr // Empty value for string is itself
+	// Value, e.g., int, string
+	tempErr = binding.One(b, &s.QueryBoolInvalid, binding.Query, "qBoolInvalid", parser.Bool, binding.Optional)
 
-		}
-		// If valStr is not empty, or if it's an empty string for a string type, proceed with conversion
-		if valStr != "" || true {
-
-			s.QueryStringEmptyOptional = valStr
-
-		} // End valStr not empty or is string
-	} else { // Key does not exist for query
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Query
 
-	// Query parameter binding for field QueryIntEmptyOptional (int) from "qIntEmptyOpt"
-	// Not a slice for Query
-	if req.URL.Query().Has("qIntEmptyOpt") {
-		valStr := req.URL.Query().Get("qIntEmptyOpt")
-		if valStr == "" {
+	// Binding for field QueryStringEmptyOptional (string) from query:"qStrEmptyOpt"
 
-			// Empty value for non-pointer, non-string, non-required. Stays zero/default. Or error?
-			// Let's be strict: if it's not string and empty, it's a conversion problem unless specifically allowed.
-			// However, current logic for non-slice non-required non-pointer is to leave as zero value if key exists but val is empty and conv fails.
-			// This behavior should be consistent. For now, if not string, treat empty as potential conversion error handled by strconv.
+	// Value, e.g., int, string
+	tempErr = binding.One(b, &s.QueryStringEmptyOptional, binding.Query, "qStrEmptyOpt", parser.String, binding.Optional)
 
-		}
-		// If valStr is not empty, or if it's an empty string for a string type, proceed with conversion
-		if valStr != "" || false {
-
-			v, convErr := strconv.ParseInt(valStr, 10, 0)
-			if convErr != nil {
-				errs = append(errs, fmt.Errorf("failed to convert query parameter \"qIntEmptyOpt\" (value: %q) to int for field QueryIntEmptyOptional: %w", valStr, convErr))
-			} else {
-				s.QueryIntEmptyOptional = int(v)
-			}
-
-		} // End valStr not empty or is string
-	} else { // Key does not exist for query
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Query
 
-	// Query parameter binding for field QueryBoolEmptyOptional (bool) from "qBoolEmptyOpt"
-	// Not a slice for Query
-	if req.URL.Query().Has("qBoolEmptyOpt") {
-		valStr := req.URL.Query().Get("qBoolEmptyOpt")
-		if valStr == "" {
+	// Binding for field QueryIntEmptyOptional (int) from query:"qIntEmptyOpt"
 
-			// Empty value for non-pointer, non-string, non-required. Stays zero/default. Or error?
-			// Let's be strict: if it's not string and empty, it's a conversion problem unless specifically allowed.
-			// However, current logic for non-slice non-required non-pointer is to leave as zero value if key exists but val is empty and conv fails.
-			// This behavior should be consistent. For now, if not string, treat empty as potential conversion error handled by strconv.
+	// Value, e.g., int, string
+	tempErr = binding.One(b, &s.QueryIntEmptyOptional, binding.Query, "qIntEmptyOpt", parser.Int, binding.Optional)
 
-		}
-		// If valStr is not empty, or if it's an empty string for a string type, proceed with conversion
-		if valStr != "" || false {
-
-			v, convErr := strconv.ParseBool(valStr)
-			if convErr != nil {
-				errs = append(errs, fmt.Errorf("failed to convert query parameter \"qBoolEmptyOpt\" (value: %q) to bool for field QueryBoolEmptyOptional: %w", valStr, convErr))
-			} else {
-				s.QueryBoolEmptyOptional = v
-			}
-
-		} // End valStr not empty or is string
-	} else { // Key does not exist for query
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Query
 
-	// Query parameter binding for field QueryStringEmptyRequired (string) from "qStrEmptyReq"
-	// Not a slice for Query
-	if req.URL.Query().Has("qStrEmptyReq") {
-		valStr := req.URL.Query().Get("qStrEmptyReq")
-		if valStr == "" {
+	// Binding for field QueryBoolEmptyOptional (bool) from query:"qBoolEmptyOpt"
 
-			// Required string can be empty unless specific validation says otherwise
-			s.QueryStringEmptyRequired = valStr
+	// Value, e.g., int, string
+	tempErr = binding.One(b, &s.QueryBoolEmptyOptional, binding.Query, "qBoolEmptyOpt", parser.Bool, binding.Optional)
 
-		}
-		// If valStr is not empty, or if it's an empty string for a string type, proceed with conversion
-		if valStr != "" || true {
-
-			s.QueryStringEmptyRequired = valStr
-
-		} // End valStr not empty or is string
-	} else { // Key does not exist for query
-
-		errs = append(errs, fmt.Errorf("required query parameter \"qStrEmptyReq\" for field QueryStringEmptyRequired is missing"))
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Query
 
-	// Query parameter binding for field QueryIntEmptyRequired (int) from "qIntEmptyReq"
-	// Not a slice for Query
-	if req.URL.Query().Has("qIntEmptyReq") {
-		valStr := req.URL.Query().Get("qIntEmptyReq")
-		if valStr == "" {
+	// Binding for field QueryStringEmptyRequired (string) from query:"qStrEmptyReq"
 
-			errs = append(errs, fmt.Errorf("required query parameter \"qIntEmptyReq\" for field QueryIntEmptyRequired received an empty value which cannot be converted to int"))
+	// Value, e.g., int, string
+	tempErr = binding.One(b, &s.QueryStringEmptyRequired, binding.Query, "qStrEmptyReq", parser.String, binding.Required)
 
-		}
-		// If valStr is not empty, or if it's an empty string for a string type, proceed with conversion
-		if valStr != "" || false {
-
-			v, convErr := strconv.ParseInt(valStr, 10, 0)
-			if convErr != nil {
-				errs = append(errs, fmt.Errorf("failed to convert query parameter \"qIntEmptyReq\" (value: %q) to int for field QueryIntEmptyRequired: %w", valStr, convErr))
-			} else {
-				s.QueryIntEmptyRequired = int(v)
-			}
-
-		} // End valStr not empty or is string
-	} else { // Key does not exist for query
-
-		errs = append(errs, fmt.Errorf("required query parameter \"qIntEmptyReq\" for field QueryIntEmptyRequired is missing"))
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Query
 
-	// Query parameter binding for field QueryPtrStringEmptyOptional (*string) from "qPtrStrEmptyOpt"
-	// Not a slice for Query
-	if req.URL.Query().Has("qPtrStrEmptyOpt") {
-		valStr := req.URL.Query().Get("qPtrStrEmptyOpt")
-		if valStr == "" {
+	// Binding for field QueryIntEmptyRequired (int) from query:"qIntEmptyReq"
 
-			s.QueryPtrStringEmptyOptional = &valStr // Empty value for non-string pointer is nil
+	// Value, e.g., int, string
+	tempErr = binding.One(b, &s.QueryIntEmptyRequired, binding.Query, "qIntEmptyReq", parser.Int, binding.Required)
 
-		}
-		// If valStr is not empty, or if it's an empty string for a string type, proceed with conversion
-		if valStr != "" || true {
-
-			s.QueryPtrStringEmptyOptional = &valStr
-
-		} // End valStr not empty or is string
-	} else { // Key does not exist for query
-
-		s.QueryPtrStringEmptyOptional = nil
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Query
 
-	// Query parameter binding for field QueryPtrIntEmptyOptional (*int) from "qPtrIntEmptyOpt"
-	// Not a slice for Query
-	if req.URL.Query().Has("qPtrIntEmptyOpt") {
-		valStr := req.URL.Query().Get("qPtrIntEmptyOpt")
-		if valStr == "" {
+	// Binding for field QueryPtrStringEmptyOptional (*string) from query:"qPtrStrEmptyOpt"
 
-			s.QueryPtrIntEmptyOptional = nil // Empty value for non-string pointer is nil
+	// Pointer to a value, e.g., *int, *string (but not a slice)
+	tempErr = binding.OnePtr(b, &s.QueryPtrStringEmptyOptional, binding.Query, "qPtrStrEmptyOpt", parser.String, binding.Optional)
 
-		}
-		// If valStr is not empty, or if it's an empty string for a string type, proceed with conversion
-		if valStr != "" || false {
-
-			v, convErr := strconv.ParseInt(valStr, 10, 0)
-			if convErr != nil {
-				s.QueryPtrIntEmptyOptional = nil
-			} else {
-				convertedValue := int(v)
-				s.QueryPtrIntEmptyOptional = &convertedValue
-			}
-
-		} // End valStr not empty or is string
-	} else { // Key does not exist for query
-
-		s.QueryPtrIntEmptyOptional = nil
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Query
 
-	// Query parameter binding for field QueryStringSliceWithEmpty ([]string) from "qStrSliceEmpty"
+	// Binding for field QueryPtrIntEmptyOptional (*int) from query:"qPtrIntEmptyOpt"
 
-	if values, ok := req.URL.Query()["qStrSliceEmpty"]; ok && len(values) > 0 {
-		sliceCap := len(values)
-		slice := make([]string, 0, sliceCap) // Use SliceElementType, e.g., "int", "*string"
-		for _, valStrLoop := range values {  // Renamed valStr to valStrLoop to avoid conflict if defined outside
-			// Define variables inside the loop
-			// Use the loop variable name
+	// Pointer to a value, e.g., *int, *string (but not a slice)
+	tempErr = binding.OnePtr(b, &s.QueryPtrIntEmptyOptional, binding.Query, "qPtrIntEmptyOpt", parser.Int, binding.Optional)
 
-			// Template variable for slice name
-
-			if valStrLoop == "" { // Handle empty string in multi-value query param
-				// string
-				slice = append(slice, valStrLoop)
-
-			} else { // Value is not empty, proceed with conversion
-
-				slice = append(slice, valStrLoop)
-
-			}
-		}
-		s.QueryStringSliceWithEmpty = slice
-	} else { // Parameter not found or no values
-		// This entire block (previously lines 255-307) was problematic as valStr is not defined here.
-		// The logic for when a slice parameter is missing or empty is handled below.
-
-		s.QueryStringSliceWithEmpty = nil // Or empty slice: make([]string, 0)
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Query
 
-	// Query parameter binding for field QueryIntSliceWithEmpty ([]int) from "qIntSliceEmpty"
+	// Binding for field QueryStringSliceWithEmpty ([]string) from query:"qStrSliceEmpty"
 
-	if values, ok := req.URL.Query()["qIntSliceEmpty"]; ok && len(values) > 0 {
-		sliceCap := len(values)
-		slice := make([]int, 0, sliceCap)   // Use SliceElementType, e.g., "int", "*string"
-		for _, valStrLoop := range values { // Renamed valStr to valStrLoop to avoid conflict if defined outside
-			// Define variables inside the loop
-			// Use the loop variable name
+	// e.g. []int, []string - uses binding.Slice
+	tempErr = binding.Slice(b, &s.QueryStringSliceWithEmpty, binding.Query, "qStrSliceEmpty", parser.String, binding.Optional)
 
-			// Template variable for slice name
-
-			if valStrLoop == "" { // Handle empty string in multi-value query param
-				// int, bool etc. (non-pointer, non-string)
-				errs = append(errs, fmt.Errorf("empty value for slice element of QueryIntSliceWithEmpty (param \"qIntSliceEmpty\") cannot be converted to int from %q", valStrLoop))
-
-			} else { // Value is not empty, proceed with conversion
-
-				v, convErr := strconv.Atoi(valStrLoop)
-				if convErr != nil {
-					errs = append(errs, fmt.Errorf("failed to convert %s \"qIntSliceEmpty\" element (value: %q) to int for field QueryIntSliceWithEmpty: %w", "query parameter", valStrLoop, convErr))
-				} else {
-					slice = append(slice, v)
-				}
-
-			}
-		}
-		s.QueryIntSliceWithEmpty = slice
-	} else { // Parameter not found or no values
-		// This entire block (previously lines 255-307) was problematic as valStr is not defined here.
-		// The logic for when a slice parameter is missing or empty is handled below.
-
-		s.QueryIntSliceWithEmpty = nil // Or empty slice: make([]int, 0)
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Query
 
-	// Query parameter binding for field QueryPtrStringSliceWithEmpty ([]*string) from "qPtrStrSliceEmpty"
+	// Binding for field QueryIntSliceWithEmpty ([]int) from query:"qIntSliceEmpty"
 
-	if values, ok := req.URL.Query()["qPtrStrSliceEmpty"]; ok && len(values) > 0 {
-		sliceCap := len(values)
-		slice := make([]*string, 0, sliceCap) // Use SliceElementType, e.g., "int", "*string"
-		for _, valStrLoop := range values {   // Renamed valStr to valStrLoop to avoid conflict if defined outside
-			// Define variables inside the loop
-			// Use the loop variable name
+	// e.g. []int, []string - uses binding.Slice
+	tempErr = binding.Slice(b, &s.QueryIntSliceWithEmpty, binding.Query, "qIntSliceEmpty", parser.Int, binding.Optional)
 
-			// Template variable for slice name
-
-			if valStrLoop == "" { // Handle empty string in multi-value query param
-				// Pointer element type
-				// *string
-				emptyStr := ""
-				slice = append(slice, &emptyStr)
-
-			} else { // Value is not empty, proceed with conversion
-
-				sPtr := valStrLoop
-				slice = append(slice, &sPtr)
-
-			}
-		}
-		s.QueryPtrStringSliceWithEmpty = slice
-	} else { // Parameter not found or no values
-		// This entire block (previously lines 255-307) was problematic as valStr is not defined here.
-		// The logic for when a slice parameter is missing or empty is handled below.
-
-		s.QueryPtrStringSliceWithEmpty = nil // Or empty slice: make([]*string, 0)
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Query
+
+	// Binding for field QueryPtrStringSliceWithEmpty ([]*string) from query:"qPtrStrSliceEmpty"
+
+	// e.g. []*int, []*string - uses binding.SlicePtr
+	tempErr = binding.SlicePtr(b, &s.QueryPtrStringSliceWithEmpty, binding.Query, "qPtrStrSliceEmpty", parser.String, binding.Optional)
+
+	if tempErr != nil {
+		errs = append(errs, tempErr)
+	}
 
 	if len(errs) > 0 {
 		return errors.Join(errs...)
@@ -1683,542 +796,207 @@ func (s *TestExtendedTypesBind) Bind(req *http.Request, pathVar func(string) str
 }
 
 func (s *TestNewTypesBind) Bind(req *http.Request, pathVar func(string) string) error {
+	b := binding.New(req, pathVar)
 	var errs []error
+	var tempErr error // Renamed to avoid conflict with 'err' in generated code if user uses it
 
-	// Query parameter binding for field QueryUintptr (uintptr) from "qUintptr"
-	// Not a slice for Query
-	if req.URL.Query().Has("qUintptr") {
-		valStr := req.URL.Query().Get("qUintptr")
-		if valStr == "" {
+	// Binding for field QueryUintptr (uintptr) from query:"qUintptr"
 
-			// Empty value for non-pointer, non-string, non-required. Stays zero/default. Or error?
-			// Let's be strict: if it's not string and empty, it's a conversion problem unless specifically allowed.
-			// However, current logic for non-slice non-required non-pointer is to leave as zero value if key exists but val is empty and conv fails.
-			// This behavior should be consistent. For now, if not string, treat empty as potential conversion error handled by strconv.
+	// Value, e.g., int, string
+	tempErr = binding.One(b, &s.QueryUintptr, binding.Query, "qUintptr", parser.Uintptr, binding.Optional)
 
-		}
-		// If valStr is not empty, or if it's an empty string for a string type, proceed with conversion
-		if valStr != "" || false {
-
-			// Unsigned
-			v, convErr := strconv.ParseUint(valStr, 10, 0)
-			if convErr != nil {
-				errs = append(errs, fmt.Errorf("failed to convert query parameter \"qUintptr\" (value: %q) to uintptr for field QueryUintptr: %w", valStr, convErr))
-			} else {
-				s.QueryUintptr = uintptr(v)
-			}
-
-		} // End valStr not empty or is string
-	} else { // Key does not exist for query
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Query
 
-	// Path parameter binding for field PathUintptr (uintptr) from "pUintptr"
+	// Binding for field PathUintptr (uintptr) from path:"pUintptr"
 
-	if pathValueStr := pathVar("pUintptr"); pathValueStr != "" {
+	// Value, e.g., int, string
+	tempErr = binding.One(b, &s.PathUintptr, binding.Path, "pUintptr", parser.Uintptr, binding.Optional)
 
-		// Unsigned Integer
-		v, convErr := strconv.ParseUint(pathValueStr, 10, 0)
-		if convErr != nil {
-			errs = append(errs, fmt.Errorf("failed to convert path parameter \"pUintptr\" (value: %q) to uintptr for field PathUintptr: %w", pathValueStr, convErr))
-		} else {
-			s.PathUintptr = uintptr(v)
-		}
-
-	} else { // Path value string is empty
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Path
 
-	// Header binding for field HeaderUintptr (uintptr) from "X-Uintptr"
-	// Not a slice for Header
-	if valStr := req.Header.Get("X-Uintptr"); valStr != "" {
+	// Binding for field HeaderUintptr (uintptr) from header:"X-Uintptr"
 
-		// Unsigned
-		v, convErr := strconv.ParseUint(valStr, 10, 0)
-		if convErr != nil {
-			errs = append(errs, fmt.Errorf("failed to convert header \"X-Uintptr\" (value: %q) to uintptr for field HeaderUintptr: %w", valStr, convErr))
-		} else {
-			s.HeaderUintptr = uintptr(v)
-		}
+	// Value, e.g., int, string
+	tempErr = binding.One(b, &s.HeaderUintptr, binding.Header, "X-Uintptr", parser.Uintptr, binding.Optional)
 
-	} else { // Header value is empty or header not found
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Header
 
-	// Cookie binding for field CookieUintptr (uintptr) from "cUintptr"
-	// Not a slice for Cookie
-	if cookie, cerr := req.Cookie("cUintptr"); cerr == nil && cookie.Value != "" {
-		valStr := cookie.Value
+	// Binding for field CookieUintptr (uintptr) from cookie:"cUintptr"
 
-		// Unsigned
-		v, convErr := strconv.ParseUint(valStr, 10, 0)
-		if convErr != nil {
-			errs = append(errs, fmt.Errorf("failed to convert cookie \"cUintptr\" (value: %q) to uintptr for field CookieUintptr: %w", valStr, convErr))
-		} else {
-			s.CookieUintptr = uintptr(v)
-		}
+	// Value, e.g., int, string
+	tempErr = binding.One(b, &s.CookieUintptr, binding.Cookie, "cUintptr", parser.Uintptr, binding.Optional)
 
-	} else { // Cookie not found or value is empty
-		if cerr != http.ErrNoCookie && cerr != nil {
-			errs = append(errs, fmt.Errorf("error retrieving cookie \"cUintptr\" for field CookieUintptr: %w", cerr))
-		}
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Cookie
 
-	// Query parameter binding for field QueryPtrUintptr (*uintptr) from "qPtrUintptr"
-	// Not a slice for Query
-	if req.URL.Query().Has("qPtrUintptr") {
-		valStr := req.URL.Query().Get("qPtrUintptr")
-		if valStr == "" {
+	// Binding for field QueryPtrUintptr (*uintptr) from query:"qPtrUintptr"
 
-			s.QueryPtrUintptr = nil // Empty value for non-string pointer is nil
+	// Pointer to a value, e.g., *int, *string (but not a slice)
+	tempErr = binding.OnePtr(b, &s.QueryPtrUintptr, binding.Query, "qPtrUintptr", parser.Uintptr, binding.Optional)
 
-		}
-		// If valStr is not empty, or if it's an empty string for a string type, proceed with conversion
-		if valStr != "" || false {
-
-			// Unsigned
-			v, convErr := strconv.ParseUint(valStr, 10, 0)
-			if convErr != nil {
-				s.QueryPtrUintptr = nil
-			} else {
-				convertedValue := uintptr(v)
-				s.QueryPtrUintptr = &convertedValue
-			}
-
-		} // End valStr not empty or is string
-	} else { // Key does not exist for query
-
-		s.QueryPtrUintptr = nil
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Query
 
-	// Query parameter binding for field QueryComplex64 (complex64) from "qComplex64"
-	// Not a slice for Query
-	if req.URL.Query().Has("qComplex64") {
-		valStr := req.URL.Query().Get("qComplex64")
-		if valStr == "" {
+	// Binding for field QueryComplex64 (complex64) from query:"qComplex64"
 
-			// Empty value for non-pointer, non-string, non-required. Stays zero/default. Or error?
-			// Let's be strict: if it's not string and empty, it's a conversion problem unless specifically allowed.
-			// However, current logic for non-slice non-required non-pointer is to leave as zero value if key exists but val is empty and conv fails.
-			// This behavior should be consistent. For now, if not string, treat empty as potential conversion error handled by strconv.
+	// Value, e.g., int, string
+	tempErr = binding.One(b, &s.QueryComplex64, binding.Query, "qComplex64", parser.Complex64, binding.Optional)
 
-		}
-		// If valStr is not empty, or if it's an empty string for a string type, proceed with conversion
-		if valStr != "" || false {
-
-			v, convErr := strconv.ParseComplex(valStr, 64)
-			if convErr != nil {
-				errs = append(errs, fmt.Errorf("failed to convert query parameter \"qComplex64\" (value: %q) to complex64 for field QueryComplex64: %w", valStr, convErr))
-			} else {
-				s.QueryComplex64 = complex64(v)
-			}
-
-		} // End valStr not empty or is string
-	} else { // Key does not exist for query
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Query
 
-	// Path parameter binding for field PathComplex64 (complex64) from "pComplex64"
+	// Binding for field PathComplex64 (complex64) from path:"pComplex64"
 
-	if pathValueStr := pathVar("pComplex64"); pathValueStr != "" {
+	// Value, e.g., int, string
+	tempErr = binding.One(b, &s.PathComplex64, binding.Path, "pComplex64", parser.Complex64, binding.Optional)
 
-		v, convErr := strconv.ParseComplex(pathValueStr, 64)
-		if convErr != nil {
-			errs = append(errs, fmt.Errorf("failed to convert path parameter \"pComplex64\" (value: %q) to complex64 for field PathComplex64: %w", pathValueStr, convErr))
-		} else {
-			s.PathComplex64 = complex64(v)
-		}
-
-	} else { // Path value string is empty
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Path
 
-	// Header binding for field HeaderComplex64 (complex64) from "X-Complex64"
-	// Not a slice for Header
-	if valStr := req.Header.Get("X-Complex64"); valStr != "" {
+	// Binding for field HeaderComplex64 (complex64) from header:"X-Complex64"
 
-		v, convErr := strconv.ParseComplex(valStr, 64)
-		if convErr != nil {
-			s.HeaderComplex64 = nil
-		} else {
-			convertedValue := complex64(v)
-			s.HeaderComplex64 = &convertedValue
-		}
+	// Value, e.g., int, string
+	tempErr = binding.One(b, &s.HeaderComplex64, binding.Header, "X-Complex64", parser.Complex64, binding.Optional)
 
-	} else { // Header value is empty or header not found
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Header
 
-	// Cookie binding for field CookieComplex64 (complex64) from "cComplex64"
-	// Not a slice for Cookie
-	if cookie, cerr := req.Cookie("cComplex64"); cerr == nil && cookie.Value != "" {
-		valStr := cookie.Value
+	// Binding for field CookieComplex64 (complex64) from cookie:"cComplex64"
 
-		v, convErr := strconv.ParseComplex(valStr, 64)
-		if convErr != nil {
-			s.CookieComplex64 = nil
-		} else {
-			convertedValue := complex64(v)
-			s.CookieComplex64 = &convertedValue
-		}
+	// Value, e.g., int, string
+	tempErr = binding.One(b, &s.CookieComplex64, binding.Cookie, "cComplex64", parser.Complex64, binding.Optional)
 
-	} else { // Cookie not found or value is empty
-		if cerr != http.ErrNoCookie && cerr != nil {
-			errs = append(errs, fmt.Errorf("error retrieving cookie \"cComplex64\" for field CookieComplex64: %w", cerr))
-		}
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Cookie
 
-	// Query parameter binding for field QueryPtrComplex64 (*complex64) from "qPtrComplex64"
-	// Not a slice for Query
-	if req.URL.Query().Has("qPtrComplex64") {
-		valStr := req.URL.Query().Get("qPtrComplex64")
-		if valStr == "" {
+	// Binding for field QueryPtrComplex64 (*complex64) from query:"qPtrComplex64"
 
-			s.QueryPtrComplex64 = nil // Empty value for non-string pointer is nil
+	// Pointer to a value, e.g., *int, *string (but not a slice)
+	tempErr = binding.OnePtr(b, &s.QueryPtrComplex64, binding.Query, "qPtrComplex64", parser.Complex64, binding.Optional)
 
-		}
-		// If valStr is not empty, or if it's an empty string for a string type, proceed with conversion
-		if valStr != "" || false {
-
-			v, convErr := strconv.ParseComplex(valStr, 64)
-			if convErr != nil {
-				s.QueryPtrComplex64 = nil
-			} else {
-				convertedValue := complex64(v)
-				s.QueryPtrComplex64 = &convertedValue
-			}
-
-		} // End valStr not empty or is string
-	} else { // Key does not exist for query
-
-		s.QueryPtrComplex64 = nil
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Query
 
-	// Query parameter binding for field QueryComplex128 (complex128) from "qComplex128"
-	// Not a slice for Query
-	if req.URL.Query().Has("qComplex128") {
-		valStr := req.URL.Query().Get("qComplex128")
-		if valStr == "" {
+	// Binding for field QueryComplex128 (complex128) from query:"qComplex128"
 
-			// Empty value for non-pointer, non-string, non-required. Stays zero/default. Or error?
-			// Let's be strict: if it's not string and empty, it's a conversion problem unless specifically allowed.
-			// However, current logic for non-slice non-required non-pointer is to leave as zero value if key exists but val is empty and conv fails.
-			// This behavior should be consistent. For now, if not string, treat empty as potential conversion error handled by strconv.
+	// Value, e.g., int, string
+	tempErr = binding.One(b, &s.QueryComplex128, binding.Query, "qComplex128", parser.Complex128, binding.Optional)
 
-		}
-		// If valStr is not empty, or if it's an empty string for a string type, proceed with conversion
-		if valStr != "" || false {
-
-			v, convErr := strconv.ParseComplex(valStr, 128)
-			if convErr != nil {
-				errs = append(errs, fmt.Errorf("failed to convert query parameter \"qComplex128\" (value: %q) to complex128 for field QueryComplex128: %w", valStr, convErr))
-			} else {
-				s.QueryComplex128 = complex128(v)
-			}
-
-		} // End valStr not empty or is string
-	} else { // Key does not exist for query
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Query
 
-	// Path parameter binding for field PathComplex128 (complex128) from "pComplex128"
+	// Binding for field PathComplex128 (complex128) from path:"pComplex128"
 
-	if pathValueStr := pathVar("pComplex128"); pathValueStr != "" {
+	// Value, e.g., int, string
+	tempErr = binding.One(b, &s.PathComplex128, binding.Path, "pComplex128", parser.Complex128, binding.Optional)
 
-		v, convErr := strconv.ParseComplex(pathValueStr, 128)
-		if convErr != nil {
-			errs = append(errs, fmt.Errorf("failed to convert path parameter \"pComplex128\" (value: %q) to complex128 for field PathComplex128: %w", pathValueStr, convErr))
-		} else {
-			s.PathComplex128 = complex128(v)
-		}
-
-	} else { // Path value string is empty
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Path
 
-	// Header binding for field HeaderComplex128 (complex128) from "X-Complex128"
-	// Not a slice for Header
-	if valStr := req.Header.Get("X-Complex128"); valStr != "" {
+	// Binding for field HeaderComplex128 (complex128) from header:"X-Complex128"
 
-		v, convErr := strconv.ParseComplex(valStr, 128)
-		if convErr != nil {
-			s.HeaderComplex128 = nil
-		} else {
-			convertedValue := complex128(v)
-			s.HeaderComplex128 = &convertedValue
-		}
+	// Value, e.g., int, string
+	tempErr = binding.One(b, &s.HeaderComplex128, binding.Header, "X-Complex128", parser.Complex128, binding.Optional)
 
-	} else { // Header value is empty or header not found
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Header
 
-	// Cookie binding for field CookieComplex128 (complex128) from "cComplex128"
-	// Not a slice for Cookie
-	if cookie, cerr := req.Cookie("cComplex128"); cerr == nil && cookie.Value != "" {
-		valStr := cookie.Value
+	// Binding for field CookieComplex128 (complex128) from cookie:"cComplex128"
 
-		v, convErr := strconv.ParseComplex(valStr, 128)
-		if convErr != nil {
-			s.CookieComplex128 = nil
-		} else {
-			convertedValue := complex128(v)
-			s.CookieComplex128 = &convertedValue
-		}
+	// Value, e.g., int, string
+	tempErr = binding.One(b, &s.CookieComplex128, binding.Cookie, "cComplex128", parser.Complex128, binding.Optional)
 
-	} else { // Cookie not found or value is empty
-		if cerr != http.ErrNoCookie && cerr != nil {
-			errs = append(errs, fmt.Errorf("error retrieving cookie \"cComplex128\" for field CookieComplex128: %w", cerr))
-		}
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Cookie
 
-	// Query parameter binding for field QueryPtrComplex128 (*complex128) from "qPtrComplex128"
-	// Not a slice for Query
-	if req.URL.Query().Has("qPtrComplex128") {
-		valStr := req.URL.Query().Get("qPtrComplex128")
-		if valStr == "" {
+	// Binding for field QueryPtrComplex128 (*complex128) from query:"qPtrComplex128"
 
-			s.QueryPtrComplex128 = nil // Empty value for non-string pointer is nil
+	// Pointer to a value, e.g., *int, *string (but not a slice)
+	tempErr = binding.OnePtr(b, &s.QueryPtrComplex128, binding.Query, "qPtrComplex128", parser.Complex128, binding.Optional)
 
-		}
-		// If valStr is not empty, or if it's an empty string for a string type, proceed with conversion
-		if valStr != "" || false {
-
-			v, convErr := strconv.ParseComplex(valStr, 128)
-			if convErr != nil {
-				s.QueryPtrComplex128 = nil
-			} else {
-				convertedValue := complex128(v)
-				s.QueryPtrComplex128 = &convertedValue
-			}
-
-		} // End valStr not empty or is string
-	} else { // Key does not exist for query
-
-		s.QueryPtrComplex128 = nil
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Query
 
-	// Query parameter binding for field QueryUintptrSlice ([]uintptr) from "qUintptrSlice"
+	// Binding for field QueryUintptrSlice ([]uintptr) from query:"qUintptrSlice"
 
-	if values, ok := req.URL.Query()["qUintptrSlice"]; ok && len(values) > 0 {
-		sliceCap := len(values)
-		slice := make([]uintptr, 0, sliceCap) // Use SliceElementType, e.g., "int", "*string"
-		for _, valStrLoop := range values {   // Renamed valStr to valStrLoop to avoid conflict if defined outside
-			// Define variables inside the loop
-			// Use the loop variable name
+	// e.g. []int, []string - uses binding.Slice
+	tempErr = binding.Slice(b, &s.QueryUintptrSlice, binding.Query, "qUintptrSlice", parser.Uintptr, binding.Optional)
 
-			// Template variable for slice name
-
-			if valStrLoop == "" { // Handle empty string in multi-value query param
-				// int, bool etc. (non-pointer, non-string)
-				errs = append(errs, fmt.Errorf("empty value for slice element of QueryUintptrSlice (param \"qUintptrSlice\") cannot be converted to uintptr from %q", valStrLoop))
-
-			} else { // Value is not empty, proceed with conversion
-
-				errs = append(errs, fmt.Errorf("unsupported slice element type %q for field QueryUintptrSlice (param \"qUintptrSlice\")", "uintptr"))
-
-			}
-		}
-		s.QueryUintptrSlice = slice
-	} else { // Parameter not found or no values
-		// This entire block (previously lines 255-307) was problematic as valStr is not defined here.
-		// The logic for when a slice parameter is missing or empty is handled below.
-
-		s.QueryUintptrSlice = nil // Or empty slice: make([]uintptr, 0)
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Query
 
-	// Header binding for field HeaderComplex64Slice ([]complex64) from "X-Complex64-Slice"
+	// Binding for field HeaderComplex64Slice ([]complex64) from header:"X-Complex64-Slice"
 
-	headerValStr := req.Header.Get("X-Complex64-Slice")
-	if headerValStr != "" {
-		valuesStr := strings.Split(headerValStr, ",") // Assuming comma-separated for simple style
-		slice := make([]complex64, 0, len(valuesStr))
-		for _, valStrLoop := range valuesStr {
-			trimmedValStrLoop := strings.TrimSpace(valStrLoop)
+	// e.g. []int, []string - uses binding.Slice
+	tempErr = binding.Slice(b, &s.HeaderComplex64Slice, binding.Header, "X-Complex64-Slice", parser.Complex64, binding.Optional)
 
-			if trimmedValStrLoop == "" {
-
-				errs = append(errs, fmt.Errorf("empty value for trimmed slice element of HeaderComplex64Slice (header \"X-Complex64-Slice\") cannot be converted to complex64 from %q", trimmedValStrLoop))
-
-			} else {
-
-				errs = append(errs, fmt.Errorf("unsupported slice element type %q for field HeaderComplex64Slice (param \"X-Complex64-Slice\")", "complex64"))
-
-			}
-		}
-		s.HeaderComplex64Slice = slice
-	} else { // Header not found
-
-		s.HeaderComplex64Slice = nil // Or empty slice
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Header
 
-	// Cookie binding for field CookieComplex128Slice ([]complex128) from "cComplex128-Slice"
+	// Binding for field CookieComplex128Slice ([]complex128) from cookie:"cComplex128-Slice"
 
-	if cookie, cerr := req.Cookie("cComplex128-Slice"); cerr == nil && cookie.Value != "" {
-		valuesStr := strings.Split(cookie.Value, ",") // Assuming comma-separated for form style
-		slice := make([]complex128, 0, len(valuesStr))
-		for _, valStrLoop := range valuesStr {
-			trimmedValStrLoop := strings.TrimSpace(valStrLoop)
+	// e.g. []int, []string - uses binding.Slice
+	tempErr = binding.Slice(b, &s.CookieComplex128Slice, binding.Cookie, "cComplex128-Slice", parser.Complex128, binding.Optional)
 
-			if trimmedValStrLoop == "" {
-
-				errs = append(errs, fmt.Errorf("empty value for trimmed slice element of CookieComplex128Slice (cookie \"cComplex128-Slice\") cannot be converted to complex128 from %q", trimmedValStrLoop))
-
-			} else {
-
-				vComplex, convErr := strconv.ParseComplex(trimmedValStrLoop, 128)
-				if convErr != nil {
-					errs = append(errs, fmt.Errorf("failed to convert %s \"cComplex128-Slice\" element (value: %q) to complex128 for field CookieComplex128Slice: %w", "cookie", trimmedValStrLoop, convErr))
-				} else {
-					slice = append(slice, vComplex)
-				}
-
-			}
-		}
-		s.CookieComplex128Slice = slice
-	} else { // Cookie not found or value is empty
-		if cerr != http.ErrNoCookie && cerr != nil { // Report actual errors other than not found
-			errs = append(errs, fmt.Errorf("error retrieving cookie \"cComplex128-Slice\" for field CookieComplex128Slice: %w", cerr))
-		}
-
-		s.CookieComplex128Slice = nil // Or empty slice
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Cookie
 
-	// Query parameter binding for field RequiredQueryUintptr (uintptr) from "reqQUintptr"
-	// Not a slice for Query
-	if req.URL.Query().Has("reqQUintptr") {
-		valStr := req.URL.Query().Get("reqQUintptr")
-		if valStr == "" {
+	// Binding for field RequiredQueryUintptr (uintptr) from query:"reqQUintptr"
 
-			errs = append(errs, fmt.Errorf("required query parameter \"reqQUintptr\" for field RequiredQueryUintptr received an empty value which cannot be converted to uintptr"))
+	// Value, e.g., int, string
+	tempErr = binding.One(b, &s.RequiredQueryUintptr, binding.Query, "reqQUintptr", parser.Uintptr, binding.Required)
 
-		}
-		// If valStr is not empty, or if it's an empty string for a string type, proceed with conversion
-		if valStr != "" || false {
-
-			// Unsigned
-			v, convErr := strconv.ParseUint(valStr, 10, 0)
-			if convErr != nil {
-				errs = append(errs, fmt.Errorf("failed to convert query parameter \"reqQUintptr\" (value: %q) to uintptr for field RequiredQueryUintptr: %w", valStr, convErr))
-			} else {
-				s.RequiredQueryUintptr = uintptr(v)
-			}
-
-		} // End valStr not empty or is string
-	} else { // Key does not exist for query
-
-		errs = append(errs, fmt.Errorf("required query parameter \"reqQUintptr\" for field RequiredQueryUintptr is missing"))
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Query
 
-	// Header binding for field RequiredHeaderComplex64 (complex64) from "X-ReqComplex64"
-	// Not a slice for Header
-	if valStr := req.Header.Get("X-ReqComplex64"); valStr != "" {
+	// Binding for field RequiredHeaderComplex64 (complex64) from header:"X-ReqComplex64"
 
-		v, convErr := strconv.ParseComplex(valStr, 64)
-		if convErr != nil {
-			errs = append(errs, fmt.Errorf("failed to convert cookie \"X-ReqComplex64\" (value: %q) to complex64 for field RequiredHeaderComplex64: %w", valStr, convErr))
-		} else {
-			convertedValue := complex64(v)
-			s.RequiredHeaderComplex64 = &convertedValue
-		}
+	// Value, e.g., int, string
+	tempErr = binding.One(b, &s.RequiredHeaderComplex64, binding.Header, "X-ReqComplex64", parser.Complex64, binding.Required)
 
-	} else { // Header value is empty or header not found
-
-		errs = append(errs, fmt.Errorf("required header \"X-ReqComplex64\" for field RequiredHeaderComplex64 is missing"))
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Header
 
-	// Query parameter binding for field QueryPtrUintptrSlice ([]*uintptr) from "qPtrUintptrSlice"
+	// Binding for field QueryPtrUintptrSlice ([]*uintptr) from query:"qPtrUintptrSlice"
 
-	if values, ok := req.URL.Query()["qPtrUintptrSlice"]; ok && len(values) > 0 {
-		sliceCap := len(values)
-		slice := make([]*uintptr, 0, sliceCap) // Use SliceElementType, e.g., "int", "*string"
-		for _, valStrLoop := range values {    // Renamed valStr to valStrLoop to avoid conflict if defined outside
-			// Define variables inside the loop
-			// Use the loop variable name
+	// e.g. []*int, []*string - uses binding.SlicePtr
+	tempErr = binding.SlicePtr(b, &s.QueryPtrUintptrSlice, binding.Query, "qPtrUintptrSlice", parser.Uintptr, binding.Optional)
 
-			// Template variable for slice name
-
-			if valStrLoop == "" { // Handle empty string in multi-value query param
-				// Pointer element type
-				// *int, *bool etc.
-				// For optional non-string pointers, empty value means nil for the element
-				// If the field itself is required, this might still be an issue overall, but element can be nil.
-				var typedNil *uintptr // e.g. var typedNil *int
-				slice = append(slice, typedNil)
-
-			} else { // Value is not empty, proceed with conversion
-
-				errs = append(errs, fmt.Errorf("unsupported slice element type %q for field QueryPtrUintptrSlice (param \"qPtrUintptrSlice\")", "uintptr"))
-
-			}
-		}
-		s.QueryPtrUintptrSlice = slice
-	} else { // Parameter not found or no values
-		// This entire block (previously lines 255-307) was problematic as valStr is not defined here.
-		// The logic for when a slice parameter is missing or empty is handled below.
-
-		s.QueryPtrUintptrSlice = nil // Or empty slice: make([]*uintptr, 0)
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Query
 
-	// Header binding for field HeaderPtrComplex64Slice ([]*complex64) from "X-PtrComplex64-Slice"
+	// Binding for field HeaderPtrComplex64Slice ([]*complex64) from header:"X-PtrComplex64-Slice"
 
-	headerValStr := req.Header.Get("X-PtrComplex64-Slice")
-	if headerValStr != "" {
-		valuesStr := strings.Split(headerValStr, ",") // Assuming comma-separated for simple style
-		slice := make([]*complex64, 0, len(valuesStr))
-		for _, valStrLoop := range valuesStr {
-			trimmedValStrLoop := strings.TrimSpace(valStrLoop)
+	// e.g. []*int, []*string - uses binding.SlicePtr
+	tempErr = binding.SlicePtr(b, &s.HeaderPtrComplex64Slice, binding.Header, "X-PtrComplex64-Slice", parser.Complex64, binding.Optional)
 
-			if trimmedValStrLoop == "" {
-
-				var typedNil *complex64
-				slice = append(slice, typedNil)
-
-			} else {
-
-				errs = append(errs, fmt.Errorf("unsupported slice element type %q for field HeaderPtrComplex64Slice (param \"X-PtrComplex64-Slice\")", "complex64"))
-
-			}
-		}
-		s.HeaderPtrComplex64Slice = slice
-	} else { // Header not found
-
-		s.HeaderPtrComplex64Slice = nil // Or empty slice
-
+	if tempErr != nil {
+		errs = append(errs, tempErr)
 	}
-	// End of not .IsSlice for Header
 
 	if len(errs) > 0 {
 		return errors.Join(errs...)

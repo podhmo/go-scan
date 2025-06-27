@@ -30,3 +30,108 @@ func Bool(s string) (bool, error) {
 func Float64(s string) (float64, error) {
 	return strconv.ParseFloat(s, 64)
 }
+
+// Int8 is a parser for the int8 type.
+func Int8(s string) (int8, error) {
+	n, err := strconv.ParseInt(s, 10, 8)
+	if err != nil {
+		return 0, err
+	}
+	return int8(n), nil
+}
+
+// Int16 is a parser for the int16 type.
+func Int16(s string) (int16, error) {
+	n, err := strconv.ParseInt(s, 10, 16)
+	if err != nil {
+		return 0, err
+	}
+	return int16(n), nil
+}
+
+// Int32 is a parser for the int32 type.
+func Int32(s string) (int32, error) {
+	n, err := strconv.ParseInt(s, 10, 32)
+	if err != nil {
+		return 0, err
+	}
+	return int32(n), nil
+}
+
+// Int64 is a parser for the int64 type.
+func Int64(s string) (int64, error) {
+	return strconv.ParseInt(s, 10, 64)
+}
+
+// Uint is a parser for the uint type.
+func Uint(s string) (uint, error) {
+	n, err := strconv.ParseUint(s, 10, 0) // 0 means infer bit size from type
+	if err != nil {
+		return 0, err
+	}
+	return uint(n), nil
+}
+
+// Uint8 is a parser for the uint8 type.
+func Uint8(s string) (uint8, error) {
+	n, err := strconv.ParseUint(s, 10, 8)
+	if err != nil {
+		return 0, err
+	}
+	return uint8(n), nil
+}
+
+// Uint16 is a parser for the uint16 type.
+func Uint16(s string) (uint16, error) {
+	n, err := strconv.ParseUint(s, 10, 16)
+	if err != nil {
+		return 0, err
+	}
+	return uint16(n), nil
+}
+
+// Uint32 is a parser for the uint32 type.
+func Uint32(s string) (uint32, error) {
+	n, err := strconv.ParseUint(s, 10, 32)
+	if err != nil {
+		return 0, err
+	}
+	return uint32(n), nil
+}
+
+// Uint64 is a parser for the uint64 type.
+func Uint64(s string) (uint64, error) {
+	return strconv.ParseUint(s, 10, 64)
+}
+
+// Float32 is a parser for the float32 type.
+func Float32(s string) (float32, error) {
+	n, err := strconv.ParseFloat(s, 32)
+	if err != nil {
+		return 0, err
+	}
+	return float32(n), nil
+}
+
+// Uintptr is a parser for the uintptr type.
+func Uintptr(s string) (uintptr, error) {
+	n, err := strconv.ParseUint(s, 10, 64) // uintptr size is architecture-dependent, parse as uint64 then cast
+	if err != nil {
+		return 0, err
+	}
+	return uintptr(n), nil
+}
+
+// Complex64 is a parser for the complex64 type.
+func Complex64(s string) (complex64, error) {
+	c, err := strconv.ParseComplex(s, 64)
+	if err != nil {
+		return 0, err
+	}
+	return complex64(c), nil
+}
+
+// Complex128 is a parser for the complex128 type.
+func Complex128(s string) (complex128, error) {
+	return strconv.ParseComplex(s, 128)
+}

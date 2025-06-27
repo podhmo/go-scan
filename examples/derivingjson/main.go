@@ -5,7 +5,7 @@ import (
 	"context"
 	"embed"
 	"fmt"
-	"go/format"
+	// "go/format" // No longer needed here, handled by SaveGoFile
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -21,6 +21,16 @@ import (
 var templateFile embed.FS
 
 func main() {
+	// Add this block to enable debug logging
+	logLevel := new(slog.LevelVar)
+	logLevel.Set(slog.LevelDebug)
+	opts := slog.HandlerOptions{
+		Level: logLevel,
+	}
+	handler := slog.NewTextHandler(os.Stderr, &opts)
+	slog.SetDefault(slog.New(handler))
+	// End of debug logging setup
+
 	ctx := context.Background() // Or your application's context
 	if len(os.Args) <= 1 {
 		slog.ErrorContext(ctx, "Usage: derivingjson <file_path_1> [file_path_2 ...]")
@@ -96,12 +106,12 @@ func main() {
 const unmarshalAnnotation = "@deriving:unmarshall"
 
 type TemplateData struct {
-	PackageName                string
+	// PackageName string // Will be set in GoFile
 	StructName                 string
 	OtherFields                []FieldInfo
 	OneOfFields                []OneOfFieldDetail
-	Imports                    map[string]string
-	DiscriminatorFieldJSONName string // Assuming this is global for the struct for now
+	Imports                    map[string]string // This will be collected and passed to GoFile
+	DiscriminatorFieldJSONName string            // Assuming this is global for the struct for now
 }
 
 type FieldInfo struct {
@@ -146,9 +156,7 @@ func Generate(ctx context.Context, pkgPath string) error {
 	fmt.Printf("Scanned package: %s (ImportPath: %s, Files: %d)\n", pkgInfo.Name, pkgInfo.ImportPath, len(pkgInfo.Files))
 
 	var generatedCodeForAllStructs bytes.Buffer
-	needsImportEncodingJson := false
-	needsImportFmt := false
-	allFileImports := make(map[string]string) // path -> alias
+	collectedImports := make(map[string]string) // path -> alias. Used to populate GoFile.Imports
 
 	for _, typeInfo := range pkgInfo.Types {
 		if typeInfo.Kind != scanner.StructKind || typeInfo.Struct == nil {
@@ -159,10 +167,13 @@ func Generate(ctx context.Context, pkgPath string) error {
 		}
 		fmt.Printf("  Processing struct: %s for %s\n", typeInfo.Name, unmarshalAnnotation)
 
+		// Imports for this specific struct's generation, will be merged into collectedImports
+		structSpecificImports := make(map[string]string)
+
 		data := TemplateData{
-			PackageName:                pkgInfo.Name,
+			// PackageName: pkgInfo.Name, // No longer set here
 			StructName:                 typeInfo.Name,
-			Imports:                    make(map[string]string),
+			Imports:                    structSpecificImports, // Pass this map to collect imports for this struct
 			OneOfFields:                []OneOfFieldDetail{},
 			OtherFields:                []FieldInfo{},
 			DiscriminatorFieldJSONName: "type", // Hardcoded for now
@@ -194,10 +205,6 @@ func Generate(ctx context.Context, pkgPath string) error {
 			if resolvedFieldType != nil && resolvedFieldType.Kind == scanner.InterfaceKind {
 				isInterfaceField = true
 			} else if resolvedFieldType == nil && strings.Contains(field.Type.Name, "interface{") { // Heuristic for anonymous interfaces, though less robust
-				// This case is tricky as anonymous interfaces don't have a TypeInfo directly from Resolve() in the same way.
-				// For derivingjson, we typically expect named interfaces.
-				// Goscan's Implements check might also struggle with anonymous interfaces if they are not fully parsed.
-				// For now, we'll primarily focus on named interfaces.
 				fmt.Printf("      Field %s is an anonymous interface. Support for these as oneOf targets is limited.\n", field.Name)
 			}
 
@@ -209,70 +216,51 @@ func Generate(ctx context.Context, pkgPath string) error {
 					Implementers: []OneOfTypeMapping{},
 				}
 
-				// Determine interface type string and manage imports
-				interfaceDef := resolvedFieldType            // This is the TypeInfo for the interface
-				fieldTypeString := interfaceDef.Name         // Default to local name for the interface's type string in `oneOfDetail.FieldType`
-				var interfaceDefiningPkgImportPath string    // This will be the canonical import path of the package defining the interface
-				var interfaceDefiningPkgNameForImport string // This will be the package name (or alias) to use in import statements and qualified type names
+				interfaceDef := resolvedFieldType
+				fieldTypeString := interfaceDef.Name
+				var interfaceDefiningPkgImportPath string
+				var interfaceDefiningPkgNameForImport string
 
-				// Priority 1: Use FullImportPath from the FieldType, as it's derived directly from the import statement.
 				if field.Type.FullImportPath() != "" && field.Type.FullImportPath() != pkgInfo.ImportPath {
 					interfaceDefiningPkgImportPath = field.Type.FullImportPath()
-					interfaceDefiningPkgNameForImport = field.Type.PkgName // PkgName from FieldType is the alias/name used in the source file.
-
+					interfaceDefiningPkgNameForImport = field.Type.PkgName
 					fieldTypeString = interfaceDefiningPkgNameForImport + "." + interfaceDef.Name
-					data.Imports[interfaceDefiningPkgNameForImport] = interfaceDefiningPkgImportPath
-					allFileImports[interfaceDefiningPkgImportPath] = interfaceDefiningPkgNameForImport
+					structSpecificImports[interfaceDefiningPkgImportPath] = interfaceDefiningPkgNameForImport // Use PkgName as alias
 					fmt.Printf("      Derived interface import path '%s' and package alias/name '%s' from FieldType.FullImportPath(). FieldType string: %s\n", interfaceDefiningPkgImportPath, interfaceDefiningPkgNameForImport, fieldTypeString)
+
 				} else if interfaceDef.FilePath != "" {
-					// Priority 2: Fallback if FullImportPath is not available or local. Derive from interface's FilePath.
-					// This is less direct as it re-scans the directory of the interface's definition.
 					fmt.Printf("      FieldType.FullImportPath() was empty or local for interface %s. Falling back to FilePath-based scan.\n", interfaceDef.Name)
 					interfaceDir := filepath.Dir(interfaceDef.FilePath)
-					scannedPkgForInterfaceFile, errPkgScan := gscn.ScanPackage(ctx, interfaceDir) // ScanPackage derives import path based on its own module logic.
+					scannedPkgForInterfaceFile, errPkgScan := gscn.ScanPackage(ctx, interfaceDir)
 
 					if errPkgScan == nil && scannedPkgForInterfaceFile != nil && scannedPkgForInterfaceFile.ImportPath != "" {
-						if scannedPkgForInterfaceFile.ImportPath != pkgInfo.ImportPath { // Is it external to the current struct's package?
+						if scannedPkgForInterfaceFile.ImportPath != pkgInfo.ImportPath {
 							interfaceDefiningPkgImportPath = scannedPkgForInterfaceFile.ImportPath
-							interfaceDefiningPkgNameForImport = scannedPkgForInterfaceFile.Name // Actual name of the package
-
+							interfaceDefiningPkgNameForImport = scannedPkgForInterfaceFile.Name
 							fieldTypeString = interfaceDefiningPkgNameForImport + "." + interfaceDef.Name
-							data.Imports[interfaceDefiningPkgNameForImport] = interfaceDefiningPkgImportPath
-							allFileImports[interfaceDefiningPkgImportPath] = interfaceDefiningPkgNameForImport
+							structSpecificImports[interfaceDefiningPkgImportPath] = interfaceDefiningPkgNameForImport // Use actual package name as alias
 							fmt.Printf("      Derived interface import path '%s' and package name '%s' from FilePath scan. FieldType string: %s\n", interfaceDefiningPkgImportPath, interfaceDefiningPkgNameForImport, fieldTypeString)
 						} else {
-							// Interface is in the same package as the struct using it. No import needed for its types.
-							// fieldTypeString remains interfaceDef.Name (local). interfaceDefiningPkgImportPath remains empty or local.
-							interfaceDefiningPkgImportPath = pkgInfo.ImportPath // Set to current package's import path
-							interfaceDefiningPkgNameForImport = pkgInfo.Name    // Current package name
+							interfaceDefiningPkgImportPath = pkgInfo.ImportPath
+							interfaceDefiningPkgNameForImport = pkgInfo.Name
 							fmt.Printf("      Interface %s is in the same package %s. No special import path needed.\n", interfaceDef.Name, pkgInfo.ImportPath)
 						}
 					} else {
-						// If scanning by FilePath also fails to yield a clear import path.
 						fmt.Printf("      Warning: Could not determine import path for interface %s in dir %s via FilePath scan. PkgScanErr: %v. Type string may be incorrect.\n", interfaceDef.Name, interfaceDir, errPkgScan)
-						// fieldTypeString remains interfaceDef.Name (local). interfaceDefiningPkgImportPath will be empty.
-						// This might be okay if the interface is somehow globally known or a built-in, though unlikely for user types.
 					}
 				} else {
-					// Priority 3: If neither FullImportPath nor FilePath gives an external package path.
-					// This implies the interface might be local to the package being scanned (pkgInfo), or a built-in.
-					// In this case, fieldTypeString remains interfaceDef.Name.
-					// interfaceDefiningPkgImportPath should reflect the current package or be empty if truly local/unqualified.
-					interfaceDefiningPkgImportPath = pkgInfo.ImportPath // Assume it's part of the current package
+					interfaceDefiningPkgImportPath = pkgInfo.ImportPath
 					interfaceDefiningPkgNameForImport = pkgInfo.Name
 					fmt.Printf("      Warning: Interface %s has no FullImportPath from FieldType and no FilePath. Assuming local to %s or built-in.\n", interfaceDef.Name, pkgInfo.ImportPath)
 				}
-				oneOfDetail.FieldType = fieldTypeString // Set the string representation for the interface type
+				fmt.Printf("DEBUG: Setting oneOfDetail.FieldType (interface type) to: %s\n", fieldTypeString)
+				oneOfDetail.FieldType = fieldTypeString
 
-				// Find implementers for this specific interface
 				searchPkgs := []*scanner.PackageInfo{pkgInfo}
 				if interfaceDefiningPkgImportPath != "" && interfaceDefiningPkgImportPath != pkgInfo.ImportPath {
 					scannedInterfacePkg, errScan := gscn.ScanPackageByImport(ctx, interfaceDefiningPkgImportPath)
 					if errScan == nil && scannedInterfacePkg != nil {
 						fmt.Printf("        Successfully scanned interface's package: %s, Found %d types.\n", scannedInterfacePkg.ImportPath, len(scannedInterfacePkg.Types))
-						for _, t := range scannedInterfacePkg.Types {
-							fmt.Printf("          Type in interface pkg: %s (Kind: %v)\n", t.Name, t.Kind)
-						}
 						alreadyAdded := false
 						for _, sp := range searchPkgs {
 							if sp.ImportPath == scannedInterfacePkg.ImportPath {
@@ -291,62 +279,51 @@ func Generate(ctx context.Context, pkgPath string) error {
 
 				fmt.Printf("        Searching for implementers of %s (from %s) in %d packages\n", interfaceDef.Name, interfaceDefiningPkgImportPath, len(searchPkgs))
 				foundImplementersForThisInterface := false
-				processedImplementerKeys := make(map[string]bool) //Scoped per interface
+				processedImplementerKeys := make(map[string]bool)
 
-				for i, currentSearchPkg := range searchPkgs {
+				for _, currentSearchPkg := range searchPkgs {
 					if currentSearchPkg == nil {
 						continue
 					}
-					fmt.Printf("        Searching in pkg %d: %s (%s), %d types\n", i+1, currentSearchPkg.Name, currentSearchPkg.ImportPath, len(currentSearchPkg.Types))
+					fmt.Printf("        Searching in pkg: %s (%s), %d types\n", currentSearchPkg.Name, currentSearchPkg.ImportPath, len(currentSearchPkg.Types))
 					for _, candidateType := range currentSearchPkg.Types {
 						if candidateType.Kind != scanner.StructKind || candidateType.Struct == nil {
 							continue
 						}
-						fmt.Printf("          Checking candidate: %s.%s (isStruct: %v)\n", currentSearchPkg.Name, candidateType.Name, candidateType.Struct != nil)
+						fmt.Printf("          Checking candidate: %s.%s\n", currentSearchPkg.Name, candidateType.Name)
 
 						implementerKey := candidateType.FilePath + "::" + candidateType.Name
 						if processedImplementerKeys[implementerKey] {
 							continue
 						}
+						fmt.Printf("            Calling Implements: interface=%s, candidate=%s, candidate_pkg=%s\n", interfaceDef.Name, candidateType.Name, currentSearchPkg.ImportPath)
+						implementsResult := goscan.Implements(candidateType, interfaceDef, currentSearchPkg)
+						fmt.Printf("            Implements result: %t\n", implementsResult)
 
-						// Debug: Print details of interfaceDef and candidateType before calling Implements
-						fmt.Printf("            Interface: %s (Package: %s, Kind: %v)\n", interfaceDef.Name, interfaceDef.FilePath, interfaceDef.Kind)
-						if interfaceDef.Interface != nil {
-							for _, m := range interfaceDef.Interface.Methods {
-								fmt.Printf("              InterfaceMethod: %s\n", m.Name)
-							}
-						}
-						fmt.Printf("            Candidate: %s (Package: %s, Kind: %v)\n", candidateType.Name, currentSearchPkg.ImportPath, candidateType.Kind)
-
-						if goscan.Implements(candidateType, interfaceDef, currentSearchPkg) {
-							fmt.Printf("          Found implementer for %s: %s in package %s (File: %s)\n", field.Name, candidateType.Name, currentSearchPkg.ImportPath, candidateType.FilePath)
+						if implementsResult {
+							fmt.Printf("          Found implementer for %s: %s in package %s\n", field.Name, candidateType.Name, currentSearchPkg.ImportPath)
 							processedImplementerKeys[implementerKey] = true
 							foundImplementersForThisInterface = true
 
-							discriminatorValue := strings.ToLower(candidateType.Name) // Simplified: use struct name
-							// TODO: Allow customization of discriminator value, e.g., via a method or struct tag on the implementer.
-							// For now, using simplified logic based on testdata.
+							discriminatorValue := strings.ToLower(candidateType.Name)
 							if candidateType.Name == "Circle" {
 								discriminatorValue = "circle"
 							} else if candidateType.Name == "Rectangle" {
 								discriminatorValue = "rectangle"
 							} else {
-								// Keep using ToLower as default
 								fmt.Printf("            Warning: No specific discriminator rule for %s from %s, using '%s'.\n", candidateType.Name, currentSearchPkg.ImportPath, discriminatorValue)
 							}
 
 							goTypeString := candidateType.Name
 							if currentSearchPkg.ImportPath != "" && currentSearchPkg.ImportPath != pkgInfo.ImportPath {
 								goTypeString = currentSearchPkg.Name + "." + candidateType.Name
-								data.Imports[currentSearchPkg.Name] = currentSearchPkg.ImportPath
-								allFileImports[currentSearchPkg.ImportPath] = currentSearchPkg.Name
+								// Add import for the implementer's package
+								structSpecificImports[currentSearchPkg.ImportPath] = currentSearchPkg.Name
 							}
-							// Ensure the GoType includes a pointer if the field is expected to hold a pointer to an interface implementer
-							// For now, assuming all implementers will be pointer types in the field.
 							if !strings.HasPrefix(goTypeString, "*") {
 								goTypeString = "*" + goTypeString
 							}
-
+							fmt.Printf("DEBUG: Setting OneOfTypeMapping.GoType (concrete type) to: %s for JSON value %s\n", goTypeString, discriminatorValue)
 							oneOfDetail.Implementers = append(oneOfDetail.Implementers, OneOfTypeMapping{
 								JSONValue: discriminatorValue,
 								GoType:    goTypeString,
@@ -359,32 +336,26 @@ func Generate(ctx context.Context, pkgPath string) error {
 					if warnPath == "" {
 						warnPath = pkgInfo.ImportPath
 					}
-					fmt.Printf("        Warning: For field %s (interface %s from %s), no implementing types found. UnmarshalJSON might be incomplete for this field.\n", field.Name, interfaceDef.Name, warnPath)
+					fmt.Printf("        Warning: For field %s (interface %s from %s), no implementing types found. UnmarshalJSON might be incomplete.\n", field.Name, interfaceDef.Name, warnPath)
 				}
 				data.OneOfFields = append(data.OneOfFields, oneOfDetail)
 
-			} else { // Other fields (non-interface or non-oneOf)
-				typeName := field.Type.String() // This should give a reasonable representation, e.g. *pkg.Type, []int
-				// Handle imports for types of other fields if necessary
+			} else { // Other fields
+				typeName := field.Type.String()
 				if resolvedFieldType != nil && resolvedFieldType.FilePath != "" {
 					fieldDir := filepath.Dir(resolvedFieldType.FilePath)
+					// Avoid re-scanning current package or already known ones if possible.
+					// For simplicity here, just scan. This might be optimized.
 					fieldDefiningPkg, errPkgScan := gscn.ScanPackage(ctx, fieldDir)
 					if errPkgScan == nil && fieldDefiningPkg != nil && fieldDefiningPkg.ImportPath != "" {
-						if fieldDefiningPkg.ImportPath != pkgInfo.ImportPath { // Is it external?
-							// Ensure this import is added to data.Imports and allFileImports
-							// The alias used would typically be fieldDefiningPkg.Name
-							data.Imports[fieldDefiningPkg.Name] = fieldDefiningPkg.ImportPath
-							allFileImports[fieldDefiningPkg.ImportPath] = fieldDefiningPkg.Name
+						if fieldDefiningPkg.ImportPath != pkgInfo.ImportPath {
+							structSpecificImports[fieldDefiningPkg.ImportPath] = fieldDefiningPkg.Name
 						}
 					}
-				} else if field.Type.PkgName != "" && field.Type.PkgName != pkgInfo.Name {
-					// If FilePath wasn't available but PkgName suggests an external package,
-					// we rely on the PkgName being either the actual package name or an alias
-					// whose import path has been (or will be) discovered.
-					// This part is tricky and relies on consistent import aliasing or go-scan resolving them.
-					// For now, assume FieldType.String() handles qualification if necessary,
-					// and required imports are caught by other mechanisms or direct PkgName usage.
-					fmt.Printf("      Note: Other field %s (%s) might be from external package '%s'. Ensure imports are handled.\n", field.Name, typeName, field.Type.PkgName)
+				} else if field.Type.PkgName != "" && field.Type.PkgName != pkgInfo.Name && field.Type.FullImportPath() != "" {
+					// Fallback using FieldType's PkgName and FullImportPath if available
+					structSpecificImports[field.Type.FullImportPath()] = field.Type.PkgName
+					fmt.Printf("      Note: Other field %s (%s) from external package '%s' ('%s'). Added to imports.\n", field.Name, typeName, field.Type.PkgName, field.Type.FullImportPath())
 				}
 				data.OtherFields = append(data.OtherFields, FieldInfo{Name: field.Name, Type: typeName, JSONTag: jsonTag})
 			}
@@ -394,10 +365,6 @@ func Generate(ctx context.Context, pkgPath string) error {
 			fmt.Printf("  Skipping struct %s: no oneOf interface fields found.\n", typeInfo.Name)
 			continue
 		}
-
-		// No longer need this old block for single oneOf field
-		// var interfaceActualImportPath string
-		// ... (old logic for single oneOfInterfaceDef) ...
 
 		tmpl, err := template.ParseFS(templateFile, "unmarshal.tmpl")
 		if err != nil {
@@ -409,8 +376,27 @@ func Generate(ctx context.Context, pkgPath string) error {
 		}
 		generatedCodeForAllStructs.Write(currentGeneratedCode.Bytes())
 		generatedCodeForAllStructs.WriteString("\n\n")
-		needsImportEncodingJson = true
-		needsImportFmt = true
+
+		// Merge struct-specific imports into collectedImports
+		for path, alias := range structSpecificImports {
+			existingAlias, ok := collectedImports[path]
+			if ok && existingAlias != alias && alias != "" {
+				// Handle potential alias conflicts, e.g. log a warning or prefer one.
+				// For now, let's overwrite if the new alias is not empty.
+				slog.WarnContext(ctx, "Import alias conflict", slog.String("path", path), slog.String("existing_alias", existingAlias), slog.String("new_alias", alias))
+			}
+			// Add if new alias is non-empty, or if path not present, or if existing alias is different and new one is not empty
+			if alias != "" || !ok {
+				collectedImports[path] = alias
+			} else if ok && existingAlias == "" && alias == "" { // both empty, ensure path is present
+				collectedImports[path] = ""
+			}
+		}
+		// Ensure "encoding/json" and "fmt" are added if any code was generated
+		if generatedCodeForAllStructs.Len() > 0 {
+			collectedImports["encoding/json"] = ""
+			collectedImports["fmt"] = ""
+		}
 	}
 
 	if generatedCodeForAllStructs.Len() == 0 {
@@ -418,67 +404,39 @@ func Generate(ctx context.Context, pkgPath string) error {
 		return nil
 	}
 
-	finalOutput := bytes.Buffer{}
-	finalOutput.WriteString(fmt.Sprintf("// Code generated by derivingjson for package %s. DO NOT EDIT.\n\n", pkgInfo.Name))
-	finalOutput.WriteString(fmt.Sprintf("package %s\n\n", pkgInfo.Name))
-	if len(allFileImports) > 0 || needsImportEncodingJson || needsImportFmt {
-		finalOutput.WriteString("import (\n")
-		if needsImportEncodingJson {
-			finalOutput.WriteString("\t\"encoding/json\"\n")
-		}
-		if needsImportFmt {
-			finalOutput.WriteString("\t\"fmt\"\n")
-		}
-		uniqueImports := make(map[string]string)
-		for path, alias := range allFileImports {
-			if path == pkgInfo.ImportPath {
-				continue
-			} // Don't import self
-			if currentAlias, exists := uniqueImports[path]; exists {
-				// If an alias already exists, prefer the non-empty one.
-				// If both are non-empty and different, it's a conflict (though less likely if PkgName is used).
-				if currentAlias != alias && alias != "" {
-					// This logic might need refinement for alias conflicts.
-					// For now, if new alias is non-empty, prefer it.
-					uniqueImports[path] = alias
-				} else if currentAlias == "" && alias != "" {
-					uniqueImports[path] = alias
-				}
-			} else {
-				uniqueImports[path] = alias
-			}
-		}
-		for path, alias := range uniqueImports {
-			pathParts := strings.Split(path, "/")
-			baseName := pathParts[len(pathParts)-1] // Get actual package name from path
-			if alias == baseName || alias == "" {   // If stored alias is natural package name or empty
-				finalOutput.WriteString(fmt.Sprintf("\t\"%s\"\n", path))
-			} else {
-				finalOutput.WriteString(fmt.Sprintf("\t%s \"%s\"\n", alias, path))
-			}
-		}
-		finalOutput.WriteString(")\n\n")
-	}
-	finalOutput.Write(generatedCodeForAllStructs.Bytes())
-	formattedCode, err := format.Source(finalOutput.Bytes())
-	if err != nil {
-		fmt.Printf("Error formatting generated code for package %s: %v\n--- Unformatted Code ---\n%s\n--- End Unformatted Code ---\n", pkgInfo.Name, err, finalOutput.String())
-		return fmt.Errorf("failed to format generated code for package %s: %w", pkgInfo.Name, err)
+	// Use PackageDirectory to save the file
+	outputDir := goscan.NewPackageDirectory(pkgPath, pkgInfo.Name) // pkgInfo.Name is the default package name
+	goFile := goscan.GoFile{
+		PackageName: pkgInfo.Name,
+		Imports:     collectedImports,
+		CodeSet:     generatedCodeForAllStructs.String(),
 	}
 
-	actualOutputDir := pkgPath
-	outputFileName := filepath.Join(actualOutputDir, fmt.Sprintf("%s_deriving.go", pkgInfo.Name))
-	// It's generally safer to remove the old file before writing, especially if package name changes or structure.
-	// However, with MkdirAll, the directory is ensured.
-	// Let's keep the remove logic.
-	if _, statErr := os.Stat(outputFileName); statErr == nil {
-		if removeErr := os.Remove(outputFileName); removeErr != nil {
-			fmt.Printf("Warning: Failed to remove existing generated file %s: %v\n", outputFileName, removeErr)
+	outputFilename := fmt.Sprintf("%s_deriving.go", strings.ToLower(pkgInfo.Name))
+	// Temporary: Print generated code for debugging
+	// Ensure you have this block:
+	// formattedCode, err := format.Source(finalOutput.Bytes())
+	// if err != nil { ... }
+	// Then print formattedCode before writing.
+	// This requires moving format.Source back into this function or printing unformatted code from goFile.CodeSet.
+	// For simplicity, let's print the unformatted codeset from goFile, assuming SaveGoFile handles formatting.
+	fmt.Printf("--- BEGIN GENERATED CODE for %s ---\n", outputFilename)
+	fmt.Printf("Package: %s\n", goFile.PackageName)
+	fmt.Println("Imports:")
+	for path, alias := range goFile.Imports {
+		if alias != "" {
+			fmt.Printf("\t%s \"%s\"\n", alias, path)
+		} else {
+			fmt.Printf("\t\"%s\"\n", path)
 		}
 	}
-	if err = os.WriteFile(outputFileName, formattedCode, 0644); err != nil {
-		return fmt.Errorf("failed to write generated code to %s: %w", outputFileName, err)
+	fmt.Println("CodeSet:")
+	fmt.Println(goFile.CodeSet)
+	fmt.Printf("--- END GENERATED CODE for %s ---\n", outputFilename)
+
+	if err := outputDir.SaveGoFile(ctx, goFile, outputFilename); err != nil {
+		// SaveGoFile now handles formatting and logging, so we just return the error.
+		return fmt.Errorf("failed to save generated file for package %s: %w", pkgInfo.Name, err)
 	}
-	fmt.Printf("Generated code written to %s\n", outputFileName)
 	return nil
 }

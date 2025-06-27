@@ -3,8 +3,8 @@
 all: emit
 
 emit:
-	# go run ./ $(shell find testdata/simple -maxdepth 1 -name '*.go' ! -name '*_test.go' ! -name '*_deriving.go')
-	# go run ./ $(shell find testdata/separated/models -maxdepth 1 -name '*.go' ! -name '*_test.go' ! -name '*_deriving.go')
+	go run ./ $(shell find testdata/simple -maxdepth 1 -name '*.go' ! -name '*_test.go' ! -name '*_deriving.go')
+	go run ./ $(shell find testdata/separated/models -maxdepth 1 -name '*.go' ! -name '*_test.go' ! -name '*_deriving.go')
 	go run ./ $(shell find ./integrationtest -maxdepth 1 -name '*.go' ! -name '*_test.go' ! -name '*_deriving.go' | paste -sd " ")
 
 test:

@@ -1,12 +1,13 @@
-.PHONY: all emit-simple clean test
+.PHONY: all generate-simple clean test
 
-all: emit-simple
+all: generate-simple
 
-emit-simple:
+# Renamed emit-simple to generate-simple for clarity
+generate-simple:
 	@echo "Generating for testdata/simple"
-	@go run ./ ./testdata/simple
+	@go run main.go testdata/simple
 
-test:
+test: generate-simple
 	go test ./...
 
 clean:

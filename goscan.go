@@ -153,10 +153,6 @@ const (
 // Implements checks if a struct type implements an interface type within the context of a package.
 // It requires the PackageInfo to look up methods of the structCandidate.
 func Implements(structCandidate *scanner.TypeInfo, interfaceDef *scanner.TypeInfo, pkgInfo *scanner.PackageInfo) bool {
-	fmt.Printf("DEBUG: Implements check: struct_name=%s, struct_kind=%v, struct_pkg=%s, interface_name=%s, interface_kind=%v, interface_file=%s\n",
-		structCandidate.Name, structCandidate.Kind, pkgInfo.ImportPath,
-		interfaceDef.Name, interfaceDef.Kind, interfaceDef.FilePath,
-	)
 	if structCandidate == nil || structCandidate.Kind != StructKind {
 		fmt.Println("DEBUG: Implements: structCandidate is nil or not a struct")
 		return false // Candidate must be a struct
@@ -169,6 +165,11 @@ func Implements(structCandidate *scanner.TypeInfo, interfaceDef *scanner.TypeInf
 		fmt.Println("DEBUG: Implements: pkgInfo is nil")
 		return false // Package context is needed to find struct methods
 	}
+
+	fmt.Printf("DEBUG: Implements check: struct_name=%s, struct_kind=%v, struct_pkg=%s, interface_name=%s, interface_kind=%v, interface_file=%s\n",
+		structCandidate.Name, structCandidate.Kind, pkgInfo.ImportPath,
+		interfaceDef.Name, interfaceDef.Kind, interfaceDef.FilePath,
+	)
 
 	// Collect methods of the structCandidate from pkgInfo.Functions
 	// This is a simplified way; a more robust way might involve caching methods on TypeInfo.

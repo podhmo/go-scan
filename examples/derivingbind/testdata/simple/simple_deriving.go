@@ -14,596 +14,314 @@ import (
 
 func (s *ComprehensiveBind) Bind(req *http.Request, pathVar func(string) string) error {
 	b := binding.New(req, pathVar)
-	var errs []error
+	return errors.Join(
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.PathString, binding.Path, "id", parser.String, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.PathString, binding.Path, "id", parser.String, binding.Optional), // Field: PathString (string)
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.QueryName, binding.Query, "name", parser.String, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.QueryName, binding.Query, "name", parser.String, binding.Optional), // Field: QueryName (string)
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.QueryAge, binding.Query, "age", parser.Int, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.QueryAge, binding.Query, "age", parser.Int, binding.Optional), // Field: QueryAge (int)
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.QueryActive, binding.Query, "active", parser.Bool, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.QueryActive, binding.Query, "active", parser.Bool, binding.Optional), // Field: QueryActive (bool)
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.HeaderToken, binding.Header, "X-Auth-Token", parser.String, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.HeaderToken, binding.Header, "X-Auth-Token", parser.String, binding.Optional), // Field: HeaderToken (string)
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.CookieSession, binding.Cookie, "session_id", parser.String, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.CookieSession, binding.Cookie, "session_id", parser.String, binding.Optional), // Field: CookieSession (string)
 
-	if req.Body != nil && req.Body != http.NoBody {
-		var bodyHandledBySpecificField = false
+		func() error { // Anonymous function to handle body binding logic
+			if req.Body != nil && req.Body != http.NoBody {
+				var bodyHandledBySpecificField = false
 
-		// If no specific field was designated 'in:"body"', decode into the struct 's' itself.
-		if !bodyHandledBySpecificField {
-			if decErr := json.NewDecoder(req.Body).Decode(s); decErr != nil {
-				if decErr != io.EOF { // EOF might be acceptable if body is optional and empty
-					errs = append(errs, fmt.Errorf("binding: failed to decode request body into struct ComprehensiveBind: %w", decErr))
+				// If no specific field was designated 'in:"body"', decode into the struct 's' itself.
+				if !bodyHandledBySpecificField {
+					if decErr := json.NewDecoder(req.Body).Decode(s); decErr != nil {
+						if decErr != io.EOF { // EOF might be acceptable if body is optional and empty
+							return fmt.Errorf("binding: failed to decode request body into struct ComprehensiveBind: %w", decErr)
+						}
+					}
+				}
+				return nil // Body processed (or EOF ignored)
+			} else {
+				// Check if body was required.
+				isStructOrFieldBodyRequired := false
+
+				if isStructOrFieldBodyRequired {
+					return errors.New("binding: request body is required but was not provided or was empty")
 				}
 			}
-		}
-		// Label for goto, only if a specific body field might use it
-	} else {
-		// Check if body was required.
-		// This logic assumes that if 'NeedsBody' is true, and there's a field marked as 'IsBody' and 'IsRequired',
-		// or if the struct itself is implicitly the body and some overall "body required" rule applies (not yet implemented in detail).
-		isStructOrFieldBodyRequired := false
-
-		// If struct is implicitly the body target, determine if it's required.
-		// This might need a struct-level "required" annotation for the body.
-		// For now, if NeedsBody is true and no specific field, we might assume optional unless specified.
-		// Let's make it an error only if a *specific* body field was required.
-
-		if isStructOrFieldBodyRequired {
-			errs = append(errs, errors.New("binding: request body is required but was not provided or was empty"))
-		}
-	}
-
-	return errors.Join(errs...)
+			return nil // No body or body not required
+		}(),
+	)
 }
 
 func (s *SpecificBodyFieldBind) Bind(req *http.Request, pathVar func(string) string) error {
 	b := binding.New(req, pathVar)
-	var errs []error
+	return errors.Join(
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.RequestID, binding.Header, "X-Request-ID", parser.String, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.RequestID, binding.Header, "X-Request-ID", parser.String, binding.Optional), // Field: RequestID (string)
 
-	// Body binding for field Payload (RequestBody) will be handled after other fields.
+		binding.One(b, &s.OtherQueryParam, binding.Query, "other", parser.String, binding.Optional), // Field: OtherQueryParam (string)
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.OtherQueryParam, binding.Query, "other", parser.String, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		func() error { // Anonymous function to handle body binding logic
+			if req.Body != nil && req.Body != http.NoBody {
+				var bodyHandledBySpecificField = false
 
-	if req.Body != nil && req.Body != http.NoBody {
-		var bodyHandledBySpecificField = false
+				// Field Payload (type RequestBody) is the target for the entire request body
+				if decErr := json.NewDecoder(req.Body).Decode(&s.Payload); decErr != nil {
+					if decErr != io.EOF { // EOF might be acceptable if body is optional and empty
+						return fmt.Errorf("binding: failed to decode request body into field Payload: %w", decErr)
+					}
+				}
+				bodyHandledBySpecificField = true
+				return nil // Successfully handled specific body field
 
-		// Field Payload (type RequestBody) is the target for the entire request body
-		if decErr := json.NewDecoder(req.Body).Decode(&s.Payload); decErr != nil {
-			if decErr != io.EOF { // EOF might be acceptable if body is optional and empty
-				errs = append(errs, fmt.Errorf("binding: failed to decode request body into field Payload: %w", decErr))
-			}
-		}
-		bodyHandledBySpecificField = true
-		goto afterBodyProcessing // Assume only one field can be 'in:"body"'
+				// If no specific field was designated 'in:"body"', decode into the struct 's' itself.
+				if !bodyHandledBySpecificField {
+					if decErr := json.NewDecoder(req.Body).Decode(s); decErr != nil {
+						if decErr != io.EOF { // EOF might be acceptable if body is optional and empty
+							return fmt.Errorf("binding: failed to decode request body into struct SpecificBodyFieldBind: %w", decErr)
+						}
+					}
+				}
+				return nil // Body processed (or EOF ignored)
+			} else {
+				// Check if body was required.
+				isStructOrFieldBodyRequired := false
 
-		// If no specific field was designated 'in:"body"', decode into the struct 's' itself.
-		if !bodyHandledBySpecificField {
-			if decErr := json.NewDecoder(req.Body).Decode(s); decErr != nil {
-				if decErr != io.EOF { // EOF might be acceptable if body is optional and empty
-					errs = append(errs, fmt.Errorf("binding: failed to decode request body into struct SpecificBodyFieldBind: %w", decErr))
+				if isStructOrFieldBodyRequired {
+					return errors.New("binding: request body is required but was not provided or was empty")
 				}
 			}
-		}
-	afterBodyProcessing: // Label for goto, only if a specific body field might use it
-	} else {
-		// Check if body was required.
-		// This logic assumes that if 'NeedsBody' is true, and there's a field marked as 'IsBody' and 'IsRequired',
-		// or if the struct itself is implicitly the body and some overall "body required" rule applies (not yet implemented in detail).
-		isStructOrFieldBodyRequired := false
-
-		if isStructOrFieldBodyRequired {
-			errs = append(errs, errors.New("binding: request body is required but was not provided or was empty"))
-		}
-	}
-
-	return errors.Join(errs...)
+			return nil // No body or body not required
+		}(),
+	)
 }
 
 func (s *FullBodyBind) Bind(req *http.Request, pathVar func(string) string) error {
 	b := binding.New(req, pathVar)
-	var errs []error
+	return errors.Join(
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.SourceHeader, binding.Header, "X-Source", parser.String, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.SourceHeader, binding.Header, "X-Source", parser.String, binding.Optional), // Field: SourceHeader (string)
 
-	if req.Body != nil && req.Body != http.NoBody {
-		var bodyHandledBySpecificField = false
+		func() error { // Anonymous function to handle body binding logic
+			if req.Body != nil && req.Body != http.NoBody {
+				var bodyHandledBySpecificField = false
 
-		// If no specific field was designated 'in:"body"', decode into the struct 's' itself.
-		if !bodyHandledBySpecificField {
-			if decErr := json.NewDecoder(req.Body).Decode(s); decErr != nil {
-				if decErr != io.EOF { // EOF might be acceptable if body is optional and empty
-					errs = append(errs, fmt.Errorf("binding: failed to decode request body into struct FullBodyBind: %w", decErr))
+				// If no specific field was designated 'in:"body"', decode into the struct 's' itself.
+				if !bodyHandledBySpecificField {
+					if decErr := json.NewDecoder(req.Body).Decode(s); decErr != nil {
+						if decErr != io.EOF { // EOF might be acceptable if body is optional and empty
+							return fmt.Errorf("binding: failed to decode request body into struct FullBodyBind: %w", decErr)
+						}
+					}
+				}
+				return nil // Body processed (or EOF ignored)
+			} else {
+				// Check if body was required.
+				isStructOrFieldBodyRequired := false
+
+				if isStructOrFieldBodyRequired {
+					return errors.New("binding: request body is required but was not provided or was empty")
 				}
 			}
-		}
-		// Label for goto, only if a specific body field might use it
-	} else {
-		// Check if body was required.
-		// This logic assumes that if 'NeedsBody' is true, and there's a field marked as 'IsBody' and 'IsRequired',
-		// or if the struct itself is implicitly the body and some overall "body required" rule applies (not yet implemented in detail).
-		isStructOrFieldBodyRequired := false
-
-		// If struct is implicitly the body target, determine if it's required.
-		// This might need a struct-level "required" annotation for the body.
-		// For now, if NeedsBody is true and no specific field, we might assume optional unless specified.
-		// Let's make it an error only if a *specific* body field was required.
-
-		if isStructOrFieldBodyRequired {
-			errs = append(errs, errors.New("binding: request body is required but was not provided or was empty"))
-		}
-	}
-
-	return errors.Join(errs...)
+			return nil // No body or body not required
+		}(),
+	)
 }
 
 func (s *QueryAndPathOnlyBind) Bind(req *http.Request, pathVar func(string) string) error {
 	b := binding.New(req, pathVar)
-	var errs []error
+	return errors.Join(
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.UserID, binding.Path, "userID", parser.String, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.UserID, binding.Path, "userID", parser.String, binding.Optional), // Field: UserID (string)
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.ItemCode, binding.Query, "itemCode", parser.String, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.ItemCode, binding.Query, "itemCode", parser.String, binding.Optional), // Field: ItemCode (string)
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.Limit, binding.Query, "limit", parser.Int, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.Limit, binding.Query, "limit", parser.Int, binding.Optional), // Field: Limit (int)
 
-	return errors.Join(errs...)
+	)
 }
 
 func (s *TestPointerFields) Bind(req *http.Request, pathVar func(string) string) error {
 	b := binding.New(req, pathVar)
-	var errs []error
+	return errors.Join(
 
-	// Pointer to a value, e.g., *int, *string (but not a slice)
-	if err := binding.OnePtr(b, &s.QueryStrOptional, binding.Query, "qStrOpt", parser.String, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.OnePtr(b, &s.QueryStrOptional, binding.Query, "qStrOpt", parser.String, binding.Optional), // Field: QueryStrOptional (*string)
 
-	// Pointer to a value, e.g., *int, *string (but not a slice)
-	if err := binding.OnePtr(b, &s.QueryStrRequired, binding.Query, "qStrReq", parser.String, binding.Required); err != nil {
-		errs = append(errs, err)
-	}
+		binding.OnePtr(b, &s.QueryStrRequired, binding.Query, "qStrReq", parser.String, binding.Required), // Field: QueryStrRequired (*string)
 
-	// Pointer to a value, e.g., *int, *string (but not a slice)
-	if err := binding.OnePtr(b, &s.QueryIntOptional, binding.Query, "qIntOpt", parser.Int, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.OnePtr(b, &s.QueryIntOptional, binding.Query, "qIntOpt", parser.Int, binding.Optional), // Field: QueryIntOptional (*int)
 
-	// Pointer to a value, e.g., *int, *string (but not a slice)
-	if err := binding.OnePtr(b, &s.QueryIntRequired, binding.Query, "qIntReq", parser.Int, binding.Required); err != nil {
-		errs = append(errs, err)
-	}
+		binding.OnePtr(b, &s.QueryIntRequired, binding.Query, "qIntReq", parser.Int, binding.Required), // Field: QueryIntRequired (*int)
 
-	// Pointer to a value, e.g., *int, *string (but not a slice)
-	if err := binding.OnePtr(b, &s.QueryBoolOptional, binding.Query, "qBoolOpt", parser.Bool, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.OnePtr(b, &s.QueryBoolOptional, binding.Query, "qBoolOpt", parser.Bool, binding.Optional), // Field: QueryBoolOptional (*bool)
 
-	// Pointer to a value, e.g., *int, *string (but not a slice)
-	if err := binding.OnePtr(b, &s.QueryBoolRequired, binding.Query, "qBoolReq", parser.Bool, binding.Required); err != nil {
-		errs = append(errs, err)
-	}
+		binding.OnePtr(b, &s.QueryBoolRequired, binding.Query, "qBoolReq", parser.Bool, binding.Required), // Field: QueryBoolRequired (*bool)
 
-	// Pointer to a value, e.g., *int, *string (but not a slice)
-	if err := binding.OnePtr(b, &s.HeaderStrOptional, binding.Header, "hStrOpt", parser.String, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.OnePtr(b, &s.HeaderStrOptional, binding.Header, "hStrOpt", parser.String, binding.Optional), // Field: HeaderStrOptional (*string)
 
-	// Pointer to a value, e.g., *int, *string (but not a slice)
-	if err := binding.OnePtr(b, &s.HeaderStrRequired, binding.Header, "hStrReq", parser.String, binding.Required); err != nil {
-		errs = append(errs, err)
-	}
+		binding.OnePtr(b, &s.HeaderStrRequired, binding.Header, "hStrReq", parser.String, binding.Required), // Field: HeaderStrRequired (*string)
 
-	// Pointer to a value, e.g., *int, *string (but not a slice)
-	if err := binding.OnePtr(b, &s.PathStrOptional, binding.Path, "pStrOpt", parser.String, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.OnePtr(b, &s.PathStrOptional, binding.Path, "pStrOpt", parser.String, binding.Optional), // Field: PathStrOptional (*string)
 
-	// Pointer to a value, e.g., *int, *string (but not a slice)
-	if err := binding.OnePtr(b, &s.PathStrRequired, binding.Path, "pStrReq", parser.String, binding.Required); err != nil {
-		errs = append(errs, err)
-	}
+		binding.OnePtr(b, &s.PathStrRequired, binding.Path, "pStrReq", parser.String, binding.Required), // Field: PathStrRequired (*string)
 
-	// Pointer to a value, e.g., *int, *string (but not a slice)
-	if err := binding.OnePtr(b, &s.CookieStrOptional, binding.Cookie, "cStrOpt", parser.String, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.OnePtr(b, &s.CookieStrOptional, binding.Cookie, "cStrOpt", parser.String, binding.Optional), // Field: CookieStrOptional (*string)
 
-	// Pointer to a value, e.g., *int, *string (but not a slice)
-	if err := binding.OnePtr(b, &s.CookieStrRequired, binding.Cookie, "cStrReq", parser.String, binding.Required); err != nil {
-		errs = append(errs, err)
-	}
+		binding.OnePtr(b, &s.CookieStrRequired, binding.Cookie, "cStrReq", parser.String, binding.Required), // Field: CookieStrRequired (*string)
 
-	return errors.Join(errs...)
+	)
 }
 
 func (s *TestRequiredNonPointerFields) Bind(req *http.Request, pathVar func(string) string) error {
 	b := binding.New(req, pathVar)
-	var errs []error
+	return errors.Join(
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.QueryStrRequired, binding.Query, "qStrReq", parser.String, binding.Required); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.QueryStrRequired, binding.Query, "qStrReq", parser.String, binding.Required), // Field: QueryStrRequired (string)
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.QueryIntRequired, binding.Query, "qIntReq", parser.Int, binding.Required); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.QueryIntRequired, binding.Query, "qIntReq", parser.Int, binding.Required), // Field: QueryIntRequired (int)
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.HeaderStrRequired, binding.Header, "hStrReq", parser.String, binding.Required); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.HeaderStrRequired, binding.Header, "hStrReq", parser.String, binding.Required), // Field: HeaderStrRequired (string)
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.PathStrRequired, binding.Path, "pStrReq", parser.String, binding.Required); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.PathStrRequired, binding.Path, "pStrReq", parser.String, binding.Required), // Field: PathStrRequired (string)
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.CookieStrRequired, binding.Cookie, "cStrReq", parser.String, binding.Required); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.CookieStrRequired, binding.Cookie, "cStrReq", parser.String, binding.Required), // Field: CookieStrRequired (string)
 
-	return errors.Join(errs...)
+	)
 }
 
 func (s *TestExtendedTypesBind) Bind(req *http.Request, pathVar func(string) string) error {
 	b := binding.New(req, pathVar)
-	var errs []error
+	return errors.Join(
 
-	// e.g. []int, []string - uses binding.Slice
-	if err := binding.Slice(b, &s.QueryStringSlice, binding.Query, "qStrSlice", parser.String, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.Slice(b, &s.QueryStringSlice, binding.Query, "qStrSlice", parser.String, binding.Optional), // Field: QueryStringSlice ([]string)
 
-	// e.g. []int, []string - uses binding.Slice
-	if err := binding.Slice(b, &s.HeaderIntSlice, binding.Header, "X-Int-Slice", parser.Int, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.Slice(b, &s.HeaderIntSlice, binding.Header, "X-Int-Slice", parser.Int, binding.Optional), // Field: HeaderIntSlice ([]int)
 
-	// e.g. []int, []string - uses binding.Slice
-	if err := binding.Slice(b, &s.CookieBoolSlice, binding.Cookie, "ckBoolSlice", parser.Bool, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.Slice(b, &s.CookieBoolSlice, binding.Cookie, "ckBoolSlice", parser.Bool, binding.Optional), // Field: CookieBoolSlice ([]bool)
 
-	// e.g. []int, []string - uses binding.Slice
-	if err := binding.Slice(b, &s.PathStringSlice, binding.Path, "pStrSlice", parser.String, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.Slice(b, &s.PathStringSlice, binding.Path, "pStrSlice", parser.String, binding.Optional), // Field: PathStringSlice ([]string)
 
-	// e.g. []*int, []*string - uses binding.SlicePtr
-	if err := binding.SlicePtr(b, &s.QueryPtrIntSlice, binding.Query, "qPtrIntSlice", parser.Int, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.SlicePtr(b, &s.QueryPtrIntSlice, binding.Query, "qPtrIntSlice", parser.Int, binding.Optional), // Field: QueryPtrIntSlice ([]*int)
 
-	// e.g. []*int, []*string - uses binding.SlicePtr
-	if err := binding.SlicePtr(b, &s.HeaderPtrStringSlice, binding.Header, "X-PtrStr-Slice", parser.String, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.SlicePtr(b, &s.HeaderPtrStringSlice, binding.Header, "X-PtrStr-Slice", parser.String, binding.Optional), // Field: HeaderPtrStringSlice ([]*string)
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.QueryInt8, binding.Query, "qInt8", parser.Int8, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.QueryInt8, binding.Query, "qInt8", parser.Int8, binding.Optional), // Field: QueryInt8 (int8)
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.QueryInt16, binding.Query, "qInt16", parser.Int16, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.QueryInt16, binding.Query, "qInt16", parser.Int16, binding.Optional), // Field: QueryInt16 (int16)
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.QueryInt32, binding.Query, "qInt32", parser.Int32, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.QueryInt32, binding.Query, "qInt32", parser.Int32, binding.Optional), // Field: QueryInt32 (int32)
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.QueryInt64, binding.Query, "qInt64", parser.Int64, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.QueryInt64, binding.Query, "qInt64", parser.Int64, binding.Optional), // Field: QueryInt64 (int64)
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.HeaderUint, binding.Header, "X-Uint", parser.Uint, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.HeaderUint, binding.Header, "X-Uint", parser.Uint, binding.Optional), // Field: HeaderUint (uint)
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.HeaderUint8, binding.Header, "X-Uint8", parser.Uint8, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.HeaderUint8, binding.Header, "X-Uint8", parser.Uint8, binding.Optional), // Field: HeaderUint8 (uint8)
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.HeaderUint16, binding.Header, "X-Uint16", parser.Uint16, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.HeaderUint16, binding.Header, "X-Uint16", parser.Uint16, binding.Optional), // Field: HeaderUint16 (uint16)
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.HeaderUint32, binding.Header, "X-Uint32", parser.Uint32, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.HeaderUint32, binding.Header, "X-Uint32", parser.Uint32, binding.Optional), // Field: HeaderUint32 (uint32)
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.HeaderUint64, binding.Header, "X-Uint64", parser.Uint64, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.HeaderUint64, binding.Header, "X-Uint64", parser.Uint64, binding.Optional), // Field: HeaderUint64 (uint64)
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.CookieFloat32, binding.Cookie, "ckFloat32", parser.Float32, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.CookieFloat32, binding.Cookie, "ckFloat32", parser.Float32, binding.Optional), // Field: CookieFloat32 (float32)
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.CookieFloat64, binding.Cookie, "ckFloat64", parser.Float64, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.CookieFloat64, binding.Cookie, "ckFloat64", parser.Float64, binding.Optional), // Field: CookieFloat64 (float64)
 
-	// Pointer to a value, e.g., *int, *string (but not a slice)
-	if err := binding.OnePtr(b, &s.PathPtrInt64, binding.Path, "pPtrInt64", parser.Int64, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.OnePtr(b, &s.PathPtrInt64, binding.Path, "pPtrInt64", parser.Int64, binding.Optional), // Field: PathPtrInt64 (*int64)
 
-	// Pointer to a value, e.g., *int, *string (but not a slice)
-	if err := binding.OnePtr(b, &s.QueryPtrUint, binding.Query, "qPtrUint", parser.Uint, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.OnePtr(b, &s.QueryPtrUint, binding.Query, "qPtrUint", parser.Uint, binding.Optional), // Field: QueryPtrUint (*uint)
 
-	// Pointer to a value, e.g., *int, *string (but not a slice)
-	if err := binding.OnePtr(b, &s.HeaderPtrFloat32, binding.Header, "X-PtrFloat32", parser.Float32, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.OnePtr(b, &s.HeaderPtrFloat32, binding.Header, "X-PtrFloat32", parser.Float32, binding.Optional), // Field: HeaderPtrFloat32 (*float32)
 
-	// e.g. []int, []string - uses binding.Slice
-	if err := binding.Slice(b, &s.RequiredQueryStringSlice, binding.Query, "reqQStrSlice", parser.String, binding.Required); err != nil {
-		errs = append(errs, err)
-	}
+		binding.Slice(b, &s.RequiredQueryStringSlice, binding.Query, "reqQStrSlice", parser.String, binding.Required), // Field: RequiredQueryStringSlice ([]string)
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.RequiredHeaderInt, binding.Header, "X-ReqInt", parser.Int, binding.Required); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.RequiredHeaderInt, binding.Header, "X-ReqInt", parser.Int, binding.Required), // Field: RequiredHeaderInt (int)
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.QueryBoolTrue, binding.Query, "qBoolTrue", parser.Bool, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.QueryBoolTrue, binding.Query, "qBoolTrue", parser.Bool, binding.Optional), // Field: QueryBoolTrue (bool)
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.QueryBoolFalse, binding.Query, "qBoolFalse", parser.Bool, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.QueryBoolFalse, binding.Query, "qBoolFalse", parser.Bool, binding.Optional), // Field: QueryBoolFalse (bool)
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.QueryBoolOne, binding.Query, "qBoolOne", parser.Bool, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.QueryBoolOne, binding.Query, "qBoolOne", parser.Bool, binding.Optional), // Field: QueryBoolOne (bool)
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.QueryBoolZero, binding.Query, "qBoolZero", parser.Bool, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.QueryBoolZero, binding.Query, "qBoolZero", parser.Bool, binding.Optional), // Field: QueryBoolZero (bool)
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.QueryBoolYes, binding.Query, "qBoolYes", parser.Bool, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.QueryBoolYes, binding.Query, "qBoolYes", parser.Bool, binding.Optional), // Field: QueryBoolYes (bool)
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.QueryBoolCapTrue, binding.Query, "qBoolCapTrue", parser.Bool, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.QueryBoolCapTrue, binding.Query, "qBoolCapTrue", parser.Bool, binding.Optional), // Field: QueryBoolCapTrue (bool)
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.QueryBoolInvalid, binding.Query, "qBoolInvalid", parser.Bool, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.QueryBoolInvalid, binding.Query, "qBoolInvalid", parser.Bool, binding.Optional), // Field: QueryBoolInvalid (bool)
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.QueryStringEmptyOptional, binding.Query, "qStrEmptyOpt", parser.String, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.QueryStringEmptyOptional, binding.Query, "qStrEmptyOpt", parser.String, binding.Optional), // Field: QueryStringEmptyOptional (string)
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.QueryIntEmptyOptional, binding.Query, "qIntEmptyOpt", parser.Int, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.QueryIntEmptyOptional, binding.Query, "qIntEmptyOpt", parser.Int, binding.Optional), // Field: QueryIntEmptyOptional (int)
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.QueryBoolEmptyOptional, binding.Query, "qBoolEmptyOpt", parser.Bool, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.QueryBoolEmptyOptional, binding.Query, "qBoolEmptyOpt", parser.Bool, binding.Optional), // Field: QueryBoolEmptyOptional (bool)
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.QueryStringEmptyRequired, binding.Query, "qStrEmptyReq", parser.String, binding.Required); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.QueryStringEmptyRequired, binding.Query, "qStrEmptyReq", parser.String, binding.Required), // Field: QueryStringEmptyRequired (string)
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.QueryIntEmptyRequired, binding.Query, "qIntEmptyReq", parser.Int, binding.Required); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.QueryIntEmptyRequired, binding.Query, "qIntEmptyReq", parser.Int, binding.Required), // Field: QueryIntEmptyRequired (int)
 
-	// Pointer to a value, e.g., *int, *string (but not a slice)
-	if err := binding.OnePtr(b, &s.QueryPtrStringEmptyOptional, binding.Query, "qPtrStrEmptyOpt", parser.String, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.OnePtr(b, &s.QueryPtrStringEmptyOptional, binding.Query, "qPtrStrEmptyOpt", parser.String, binding.Optional), // Field: QueryPtrStringEmptyOptional (*string)
 
-	// Pointer to a value, e.g., *int, *string (but not a slice)
-	if err := binding.OnePtr(b, &s.QueryPtrIntEmptyOptional, binding.Query, "qPtrIntEmptyOpt", parser.Int, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.OnePtr(b, &s.QueryPtrIntEmptyOptional, binding.Query, "qPtrIntEmptyOpt", parser.Int, binding.Optional), // Field: QueryPtrIntEmptyOptional (*int)
 
-	// e.g. []int, []string - uses binding.Slice
-	if err := binding.Slice(b, &s.QueryStringSliceWithEmpty, binding.Query, "qStrSliceEmpty", parser.String, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.Slice(b, &s.QueryStringSliceWithEmpty, binding.Query, "qStrSliceEmpty", parser.String, binding.Optional), // Field: QueryStringSliceWithEmpty ([]string)
 
-	// e.g. []int, []string - uses binding.Slice
-	if err := binding.Slice(b, &s.QueryIntSliceWithEmpty, binding.Query, "qIntSliceEmpty", parser.Int, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.Slice(b, &s.QueryIntSliceWithEmpty, binding.Query, "qIntSliceEmpty", parser.Int, binding.Optional), // Field: QueryIntSliceWithEmpty ([]int)
 
-	// e.g. []*int, []*string - uses binding.SlicePtr
-	if err := binding.SlicePtr(b, &s.QueryPtrStringSliceWithEmpty, binding.Query, "qPtrStrSliceEmpty", parser.String, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.SlicePtr(b, &s.QueryPtrStringSliceWithEmpty, binding.Query, "qPtrStrSliceEmpty", parser.String, binding.Optional), // Field: QueryPtrStringSliceWithEmpty ([]*string)
 
-	return errors.Join(errs...)
+	)
 }
 
 func (s *TestNewTypesBind) Bind(req *http.Request, pathVar func(string) string) error {
 	b := binding.New(req, pathVar)
-	var errs []error
+	return errors.Join(
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.QueryUintptr, binding.Query, "qUintptr", parser.Uintptr, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.QueryUintptr, binding.Query, "qUintptr", parser.Uintptr, binding.Optional), // Field: QueryUintptr (uintptr)
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.PathUintptr, binding.Path, "pUintptr", parser.Uintptr, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.PathUintptr, binding.Path, "pUintptr", parser.Uintptr, binding.Optional), // Field: PathUintptr (uintptr)
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.HeaderUintptr, binding.Header, "X-Uintptr", parser.Uintptr, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.HeaderUintptr, binding.Header, "X-Uintptr", parser.Uintptr, binding.Optional), // Field: HeaderUintptr (uintptr)
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.CookieUintptr, binding.Cookie, "cUintptr", parser.Uintptr, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.CookieUintptr, binding.Cookie, "cUintptr", parser.Uintptr, binding.Optional), // Field: CookieUintptr (uintptr)
 
-	// Pointer to a value, e.g., *int, *string (but not a slice)
-	if err := binding.OnePtr(b, &s.QueryPtrUintptr, binding.Query, "qPtrUintptr", parser.Uintptr, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.OnePtr(b, &s.QueryPtrUintptr, binding.Query, "qPtrUintptr", parser.Uintptr, binding.Optional), // Field: QueryPtrUintptr (*uintptr)
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.QueryComplex64, binding.Query, "qComplex64", parser.Complex64, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.QueryComplex64, binding.Query, "qComplex64", parser.Complex64, binding.Optional), // Field: QueryComplex64 (complex64)
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.PathComplex64, binding.Path, "pComplex64", parser.Complex64, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.PathComplex64, binding.Path, "pComplex64", parser.Complex64, binding.Optional), // Field: PathComplex64 (complex64)
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.HeaderComplex64, binding.Header, "X-Complex64", parser.Complex64, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.HeaderComplex64, binding.Header, "X-Complex64", parser.Complex64, binding.Optional), // Field: HeaderComplex64 (complex64)
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.CookieComplex64, binding.Cookie, "cComplex64", parser.Complex64, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.CookieComplex64, binding.Cookie, "cComplex64", parser.Complex64, binding.Optional), // Field: CookieComplex64 (complex64)
 
-	// Pointer to a value, e.g., *int, *string (but not a slice)
-	if err := binding.OnePtr(b, &s.QueryPtrComplex64, binding.Query, "qPtrComplex64", parser.Complex64, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.OnePtr(b, &s.QueryPtrComplex64, binding.Query, "qPtrComplex64", parser.Complex64, binding.Optional), // Field: QueryPtrComplex64 (*complex64)
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.QueryComplex128, binding.Query, "qComplex128", parser.Complex128, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.QueryComplex128, binding.Query, "qComplex128", parser.Complex128, binding.Optional), // Field: QueryComplex128 (complex128)
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.PathComplex128, binding.Path, "pComplex128", parser.Complex128, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.PathComplex128, binding.Path, "pComplex128", parser.Complex128, binding.Optional), // Field: PathComplex128 (complex128)
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.HeaderComplex128, binding.Header, "X-Complex128", parser.Complex128, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.HeaderComplex128, binding.Header, "X-Complex128", parser.Complex128, binding.Optional), // Field: HeaderComplex128 (complex128)
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.CookieComplex128, binding.Cookie, "cComplex128", parser.Complex128, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.CookieComplex128, binding.Cookie, "cComplex128", parser.Complex128, binding.Optional), // Field: CookieComplex128 (complex128)
 
-	// Pointer to a value, e.g., *int, *string (but not a slice)
-	if err := binding.OnePtr(b, &s.QueryPtrComplex128, binding.Query, "qPtrComplex128", parser.Complex128, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.OnePtr(b, &s.QueryPtrComplex128, binding.Query, "qPtrComplex128", parser.Complex128, binding.Optional), // Field: QueryPtrComplex128 (*complex128)
 
-	// e.g. []int, []string - uses binding.Slice
-	if err := binding.Slice(b, &s.QueryUintptrSlice, binding.Query, "qUintptrSlice", parser.Uintptr, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.Slice(b, &s.QueryUintptrSlice, binding.Query, "qUintptrSlice", parser.Uintptr, binding.Optional), // Field: QueryUintptrSlice ([]uintptr)
 
-	// e.g. []int, []string - uses binding.Slice
-	if err := binding.Slice(b, &s.HeaderComplex64Slice, binding.Header, "X-Complex64-Slice", parser.Complex64, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.Slice(b, &s.HeaderComplex64Slice, binding.Header, "X-Complex64-Slice", parser.Complex64, binding.Optional), // Field: HeaderComplex64Slice ([]complex64)
 
-	// e.g. []int, []string - uses binding.Slice
-	if err := binding.Slice(b, &s.CookieComplex128Slice, binding.Cookie, "cComplex128-Slice", parser.Complex128, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.Slice(b, &s.CookieComplex128Slice, binding.Cookie, "cComplex128-Slice", parser.Complex128, binding.Optional), // Field: CookieComplex128Slice ([]complex128)
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.RequiredQueryUintptr, binding.Query, "reqQUintptr", parser.Uintptr, binding.Required); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.RequiredQueryUintptr, binding.Query, "reqQUintptr", parser.Uintptr, binding.Required), // Field: RequiredQueryUintptr (uintptr)
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.RequiredHeaderComplex64, binding.Header, "X-ReqComplex64", parser.Complex64, binding.Required); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.RequiredHeaderComplex64, binding.Header, "X-ReqComplex64", parser.Complex64, binding.Required), // Field: RequiredHeaderComplex64 (complex64)
 
-	// e.g. []*int, []*string - uses binding.SlicePtr
-	if err := binding.SlicePtr(b, &s.QueryPtrUintptrSlice, binding.Query, "qPtrUintptrSlice", parser.Uintptr, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.SlicePtr(b, &s.QueryPtrUintptrSlice, binding.Query, "qPtrUintptrSlice", parser.Uintptr, binding.Optional), // Field: QueryPtrUintptrSlice ([]*uintptr)
 
-	// e.g. []*int, []*string - uses binding.SlicePtr
-	if err := binding.SlicePtr(b, &s.HeaderPtrComplex64Slice, binding.Header, "X-PtrComplex64-Slice", parser.Complex64, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.SlicePtr(b, &s.HeaderPtrComplex64Slice, binding.Header, "X-PtrComplex64-Slice", parser.Complex64, binding.Optional), // Field: HeaderPtrComplex64Slice ([]*complex64)
 
-	return errors.Join(errs...)
+	)
 }

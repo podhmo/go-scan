@@ -11,738 +11,543 @@ import (
 
 func (s *TestBindStringQueryOptional) Bind(req *http.Request, pathVar func(string) string) error {
 	b := binding.New(req, pathVar)
-	var errs []error
+	return errors.Join(
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.Value, binding.Query, "value", parser.String, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.Value, binding.Query, "value", parser.String, binding.Optional), // Field: Value (string)
 
-	return errors.Join(errs...)
+	)
 }
 
 func (s *TestBindStringQueryRequired) Bind(req *http.Request, pathVar func(string) string) error {
 	b := binding.New(req, pathVar)
-	var errs []error
+	return errors.Join(
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.Value, binding.Query, "value", parser.String, binding.Required); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.Value, binding.Query, "value", parser.String, binding.Required), // Field: Value (string)
 
-	return errors.Join(errs...)
+	)
 }
 
 func (s *TestBindPtrStringQueryOptional) Bind(req *http.Request, pathVar func(string) string) error {
 	b := binding.New(req, pathVar)
-	var errs []error
+	return errors.Join(
 
-	// Pointer to a value, e.g., *int, *string (but not a slice)
-	if err := binding.OnePtr(b, &s.Value, binding.Query, "value", parser.String, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.OnePtr(b, &s.Value, binding.Query, "value", parser.String, binding.Optional), // Field: Value (*string)
 
-	return errors.Join(errs...)
+	)
 }
 
 func (s *TestBindPtrStringQueryRequired) Bind(req *http.Request, pathVar func(string) string) error {
 	b := binding.New(req, pathVar)
-	var errs []error
+	return errors.Join(
 
-	// Pointer to a value, e.g., *int, *string (but not a slice)
-	if err := binding.OnePtr(b, &s.Value, binding.Query, "value", parser.String, binding.Required); err != nil {
-		errs = append(errs, err)
-	}
+		binding.OnePtr(b, &s.Value, binding.Query, "value", parser.String, binding.Required), // Field: Value (*string)
 
-	return errors.Join(errs...)
+	)
 }
 
 func (s *TestBindStringHeaderOptional) Bind(req *http.Request, pathVar func(string) string) error {
 	b := binding.New(req, pathVar)
-	var errs []error
+	return errors.Join(
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.Value, binding.Header, "X-Value", parser.String, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.Value, binding.Header, "X-Value", parser.String, binding.Optional), // Field: Value (string)
 
-	return errors.Join(errs...)
+	)
 }
 
 func (s *TestBindStringHeaderRequired) Bind(req *http.Request, pathVar func(string) string) error {
 	b := binding.New(req, pathVar)
-	var errs []error
+	return errors.Join(
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.Value, binding.Header, "X-Value", parser.String, binding.Required); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.Value, binding.Header, "X-Value", parser.String, binding.Required), // Field: Value (string)
 
-	return errors.Join(errs...)
+	)
 }
 
 func (s *TestBindPtrStringHeaderOptional) Bind(req *http.Request, pathVar func(string) string) error {
 	b := binding.New(req, pathVar)
-	var errs []error
+	return errors.Join(
 
-	// Pointer to a value, e.g., *int, *string (but not a slice)
-	if err := binding.OnePtr(b, &s.Value, binding.Header, "X-Value", parser.String, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.OnePtr(b, &s.Value, binding.Header, "X-Value", parser.String, binding.Optional), // Field: Value (*string)
 
-	return errors.Join(errs...)
+	)
 }
 
 func (s *TestBindPtrStringHeaderRequired) Bind(req *http.Request, pathVar func(string) string) error {
 	b := binding.New(req, pathVar)
-	var errs []error
+	return errors.Join(
 
-	// Pointer to a value, e.g., *int, *string (but not a slice)
-	if err := binding.OnePtr(b, &s.Value, binding.Header, "X-Value", parser.String, binding.Required); err != nil {
-		errs = append(errs, err)
-	}
+		binding.OnePtr(b, &s.Value, binding.Header, "X-Value", parser.String, binding.Required), // Field: Value (*string)
 
-	return errors.Join(errs...)
+	)
 }
 
 func (s *TestBindStringCookieOptional) Bind(req *http.Request, pathVar func(string) string) error {
 	b := binding.New(req, pathVar)
-	var errs []error
+	return errors.Join(
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.Value, binding.Cookie, "value", parser.String, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.Value, binding.Cookie, "value", parser.String, binding.Optional), // Field: Value (string)
 
-	return errors.Join(errs...)
+	)
 }
 
 func (s *TestBindStringCookieRequired) Bind(req *http.Request, pathVar func(string) string) error {
 	b := binding.New(req, pathVar)
-	var errs []error
+	return errors.Join(
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.Value, binding.Cookie, "value", parser.String, binding.Required); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.Value, binding.Cookie, "value", parser.String, binding.Required), // Field: Value (string)
 
-	return errors.Join(errs...)
+	)
 }
 
 func (s *TestBindPtrStringCookieOptional) Bind(req *http.Request, pathVar func(string) string) error {
 	b := binding.New(req, pathVar)
-	var errs []error
+	return errors.Join(
 
-	// Pointer to a value, e.g., *int, *string (but not a slice)
-	if err := binding.OnePtr(b, &s.Value, binding.Cookie, "value", parser.String, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.OnePtr(b, &s.Value, binding.Cookie, "value", parser.String, binding.Optional), // Field: Value (*string)
 
-	return errors.Join(errs...)
+	)
 }
 
 func (s *TestBindPtrStringCookieRequired) Bind(req *http.Request, pathVar func(string) string) error {
 	b := binding.New(req, pathVar)
-	var errs []error
+	return errors.Join(
 
-	// Pointer to a value, e.g., *int, *string (but not a slice)
-	if err := binding.OnePtr(b, &s.Value, binding.Cookie, "value", parser.String, binding.Required); err != nil {
-		errs = append(errs, err)
-	}
+		binding.OnePtr(b, &s.Value, binding.Cookie, "value", parser.String, binding.Required), // Field: Value (*string)
 
-	return errors.Join(errs...)
+	)
 }
 
 func (s *TestBindStringPathOptional) Bind(req *http.Request, pathVar func(string) string) error {
 	b := binding.New(req, pathVar)
-	var errs []error
+	return errors.Join(
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.Value, binding.Path, "value", parser.String, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.Value, binding.Path, "value", parser.String, binding.Optional), // Field: Value (string)
 
-	return errors.Join(errs...)
+	)
 }
 
 func (s *TestBindStringPathRequired) Bind(req *http.Request, pathVar func(string) string) error {
 	b := binding.New(req, pathVar)
-	var errs []error
+	return errors.Join(
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.Value, binding.Path, "value", parser.String, binding.Required); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.Value, binding.Path, "value", parser.String, binding.Required), // Field: Value (string)
 
-	return errors.Join(errs...)
+	)
 }
 
 func (s *TestBindPtrStringPathOptional) Bind(req *http.Request, pathVar func(string) string) error {
 	b := binding.New(req, pathVar)
-	var errs []error
+	return errors.Join(
 
-	// Pointer to a value, e.g., *int, *string (but not a slice)
-	if err := binding.OnePtr(b, &s.Value, binding.Path, "value", parser.String, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.OnePtr(b, &s.Value, binding.Path, "value", parser.String, binding.Optional), // Field: Value (*string)
 
-	return errors.Join(errs...)
+	)
 }
 
 func (s *TestBindPtrStringPathRequired) Bind(req *http.Request, pathVar func(string) string) error {
 	b := binding.New(req, pathVar)
-	var errs []error
+	return errors.Join(
 
-	// Pointer to a value, e.g., *int, *string (but not a slice)
-	if err := binding.OnePtr(b, &s.Value, binding.Path, "value", parser.String, binding.Required); err != nil {
-		errs = append(errs, err)
-	}
+		binding.OnePtr(b, &s.Value, binding.Path, "value", parser.String, binding.Required), // Field: Value (*string)
 
-	return errors.Join(errs...)
+	)
 }
 
 func (s *TestBindIntQueryOptional) Bind(req *http.Request, pathVar func(string) string) error {
 	b := binding.New(req, pathVar)
-	var errs []error
+	return errors.Join(
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.Value, binding.Query, "value", parser.Int, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.Value, binding.Query, "value", parser.Int, binding.Optional), // Field: Value (int)
 
-	return errors.Join(errs...)
+	)
 }
 
 func (s *TestBindIntQueryRequired) Bind(req *http.Request, pathVar func(string) string) error {
 	b := binding.New(req, pathVar)
-	var errs []error
+	return errors.Join(
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.Value, binding.Query, "value", parser.Int, binding.Required); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.Value, binding.Query, "value", parser.Int, binding.Required), // Field: Value (int)
 
-	return errors.Join(errs...)
+	)
 }
 
 func (s *TestBindPtrIntQueryOptional) Bind(req *http.Request, pathVar func(string) string) error {
 	b := binding.New(req, pathVar)
-	var errs []error
+	return errors.Join(
 
-	// Pointer to a value, e.g., *int, *string (but not a slice)
-	if err := binding.OnePtr(b, &s.Value, binding.Query, "value", parser.Int, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.OnePtr(b, &s.Value, binding.Query, "value", parser.Int, binding.Optional), // Field: Value (*int)
 
-	return errors.Join(errs...)
+	)
 }
 
 func (s *TestBindPtrIntQueryRequired) Bind(req *http.Request, pathVar func(string) string) error {
 	b := binding.New(req, pathVar)
-	var errs []error
+	return errors.Join(
 
-	// Pointer to a value, e.g., *int, *string (but not a slice)
-	if err := binding.OnePtr(b, &s.Value, binding.Query, "value", parser.Int, binding.Required); err != nil {
-		errs = append(errs, err)
-	}
+		binding.OnePtr(b, &s.Value, binding.Query, "value", parser.Int, binding.Required), // Field: Value (*int)
 
-	return errors.Join(errs...)
+	)
 }
 
 func (s *TestBindIntHeaderOptional) Bind(req *http.Request, pathVar func(string) string) error {
 	b := binding.New(req, pathVar)
-	var errs []error
+	return errors.Join(
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.Value, binding.Header, "X-Value", parser.Int, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.Value, binding.Header, "X-Value", parser.Int, binding.Optional), // Field: Value (int)
 
-	return errors.Join(errs...)
+	)
 }
 
 func (s *TestBindIntHeaderRequired) Bind(req *http.Request, pathVar func(string) string) error {
 	b := binding.New(req, pathVar)
-	var errs []error
+	return errors.Join(
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.Value, binding.Header, "X-Value", parser.Int, binding.Required); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.Value, binding.Header, "X-Value", parser.Int, binding.Required), // Field: Value (int)
 
-	return errors.Join(errs...)
+	)
 }
 
 func (s *TestBindPtrIntHeaderOptional) Bind(req *http.Request, pathVar func(string) string) error {
 	b := binding.New(req, pathVar)
-	var errs []error
+	return errors.Join(
 
-	// Pointer to a value, e.g., *int, *string (but not a slice)
-	if err := binding.OnePtr(b, &s.Value, binding.Header, "X-Value", parser.Int, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.OnePtr(b, &s.Value, binding.Header, "X-Value", parser.Int, binding.Optional), // Field: Value (*int)
 
-	return errors.Join(errs...)
+	)
 }
 
 func (s *TestBindPtrIntHeaderRequired) Bind(req *http.Request, pathVar func(string) string) error {
 	b := binding.New(req, pathVar)
-	var errs []error
+	return errors.Join(
 
-	// Pointer to a value, e.g., *int, *string (but not a slice)
-	if err := binding.OnePtr(b, &s.Value, binding.Header, "X-Value", parser.Int, binding.Required); err != nil {
-		errs = append(errs, err)
-	}
+		binding.OnePtr(b, &s.Value, binding.Header, "X-Value", parser.Int, binding.Required), // Field: Value (*int)
 
-	return errors.Join(errs...)
+	)
 }
 
 func (s *TestBindIntCookieOptional) Bind(req *http.Request, pathVar func(string) string) error {
 	b := binding.New(req, pathVar)
-	var errs []error
+	return errors.Join(
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.Value, binding.Cookie, "value", parser.Int, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.Value, binding.Cookie, "value", parser.Int, binding.Optional), // Field: Value (int)
 
-	return errors.Join(errs...)
+	)
 }
 
 func (s *TestBindIntCookieRequired) Bind(req *http.Request, pathVar func(string) string) error {
 	b := binding.New(req, pathVar)
-	var errs []error
+	return errors.Join(
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.Value, binding.Cookie, "value", parser.Int, binding.Required); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.Value, binding.Cookie, "value", parser.Int, binding.Required), // Field: Value (int)
 
-	return errors.Join(errs...)
+	)
 }
 
 func (s *TestBindPtrIntCookieOptional) Bind(req *http.Request, pathVar func(string) string) error {
 	b := binding.New(req, pathVar)
-	var errs []error
+	return errors.Join(
 
-	// Pointer to a value, e.g., *int, *string (but not a slice)
-	if err := binding.OnePtr(b, &s.Value, binding.Cookie, "value", parser.Int, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.OnePtr(b, &s.Value, binding.Cookie, "value", parser.Int, binding.Optional), // Field: Value (*int)
 
-	return errors.Join(errs...)
+	)
 }
 
 func (s *TestBindPtrIntCookieRequired) Bind(req *http.Request, pathVar func(string) string) error {
 	b := binding.New(req, pathVar)
-	var errs []error
+	return errors.Join(
 
-	// Pointer to a value, e.g., *int, *string (but not a slice)
-	if err := binding.OnePtr(b, &s.Value, binding.Cookie, "value", parser.Int, binding.Required); err != nil {
-		errs = append(errs, err)
-	}
+		binding.OnePtr(b, &s.Value, binding.Cookie, "value", parser.Int, binding.Required), // Field: Value (*int)
 
-	return errors.Join(errs...)
+	)
 }
 
 func (s *TestBindIntPathOptional) Bind(req *http.Request, pathVar func(string) string) error {
 	b := binding.New(req, pathVar)
-	var errs []error
+	return errors.Join(
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.Value, binding.Path, "value", parser.Int, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.Value, binding.Path, "value", parser.Int, binding.Optional), // Field: Value (int)
 
-	return errors.Join(errs...)
+	)
 }
 
 func (s *TestBindIntPathRequired) Bind(req *http.Request, pathVar func(string) string) error {
 	b := binding.New(req, pathVar)
-	var errs []error
+	return errors.Join(
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.Value, binding.Path, "value", parser.Int, binding.Required); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.Value, binding.Path, "value", parser.Int, binding.Required), // Field: Value (int)
 
-	return errors.Join(errs...)
+	)
 }
 
 func (s *TestBindPtrIntPathOptional) Bind(req *http.Request, pathVar func(string) string) error {
 	b := binding.New(req, pathVar)
-	var errs []error
+	return errors.Join(
 
-	// Pointer to a value, e.g., *int, *string (but not a slice)
-	if err := binding.OnePtr(b, &s.Value, binding.Path, "value", parser.Int, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.OnePtr(b, &s.Value, binding.Path, "value", parser.Int, binding.Optional), // Field: Value (*int)
 
-	return errors.Join(errs...)
+	)
 }
 
 func (s *TestBindPtrIntPathRequired) Bind(req *http.Request, pathVar func(string) string) error {
 	b := binding.New(req, pathVar)
-	var errs []error
+	return errors.Join(
 
-	// Pointer to a value, e.g., *int, *string (but not a slice)
-	if err := binding.OnePtr(b, &s.Value, binding.Path, "value", parser.Int, binding.Required); err != nil {
-		errs = append(errs, err)
-	}
+		binding.OnePtr(b, &s.Value, binding.Path, "value", parser.Int, binding.Required), // Field: Value (*int)
 
-	return errors.Join(errs...)
+	)
 }
 
 func (s *TestBindBoolQueryOptional) Bind(req *http.Request, pathVar func(string) string) error {
 	b := binding.New(req, pathVar)
-	var errs []error
+	return errors.Join(
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.Value, binding.Query, "value", parser.Bool, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.Value, binding.Query, "value", parser.Bool, binding.Optional), // Field: Value (bool)
 
-	return errors.Join(errs...)
+	)
 }
 
 func (s *TestBindBoolQueryRequired) Bind(req *http.Request, pathVar func(string) string) error {
 	b := binding.New(req, pathVar)
-	var errs []error
+	return errors.Join(
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.Value, binding.Query, "value", parser.Bool, binding.Required); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.Value, binding.Query, "value", parser.Bool, binding.Required), // Field: Value (bool)
 
-	return errors.Join(errs...)
+	)
 }
 
 func (s *TestBindPtrBoolQueryOptional) Bind(req *http.Request, pathVar func(string) string) error {
 	b := binding.New(req, pathVar)
-	var errs []error
+	return errors.Join(
 
-	// Pointer to a value, e.g., *int, *string (but not a slice)
-	if err := binding.OnePtr(b, &s.Value, binding.Query, "value", parser.Bool, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.OnePtr(b, &s.Value, binding.Query, "value", parser.Bool, binding.Optional), // Field: Value (*bool)
 
-	return errors.Join(errs...)
+	)
 }
 
 func (s *TestBindPtrBoolQueryRequired) Bind(req *http.Request, pathVar func(string) string) error {
 	b := binding.New(req, pathVar)
-	var errs []error
+	return errors.Join(
 
-	// Pointer to a value, e.g., *int, *string (but not a slice)
-	if err := binding.OnePtr(b, &s.Value, binding.Query, "value", parser.Bool, binding.Required); err != nil {
-		errs = append(errs, err)
-	}
+		binding.OnePtr(b, &s.Value, binding.Query, "value", parser.Bool, binding.Required), // Field: Value (*bool)
 
-	return errors.Join(errs...)
+	)
 }
 
 func (s *TestBindBoolHeaderOptional) Bind(req *http.Request, pathVar func(string) string) error {
 	b := binding.New(req, pathVar)
-	var errs []error
+	return errors.Join(
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.Value, binding.Header, "X-Value", parser.Bool, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.Value, binding.Header, "X-Value", parser.Bool, binding.Optional), // Field: Value (bool)
 
-	return errors.Join(errs...)
+	)
 }
 
 func (s *TestBindBoolHeaderRequired) Bind(req *http.Request, pathVar func(string) string) error {
 	b := binding.New(req, pathVar)
-	var errs []error
+	return errors.Join(
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.Value, binding.Header, "X-Value", parser.Bool, binding.Required); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.Value, binding.Header, "X-Value", parser.Bool, binding.Required), // Field: Value (bool)
 
-	return errors.Join(errs...)
+	)
 }
 
 func (s *TestBindPtrBoolHeaderOptional) Bind(req *http.Request, pathVar func(string) string) error {
 	b := binding.New(req, pathVar)
-	var errs []error
+	return errors.Join(
 
-	// Pointer to a value, e.g., *int, *string (but not a slice)
-	if err := binding.OnePtr(b, &s.Value, binding.Header, "X-Value", parser.Bool, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.OnePtr(b, &s.Value, binding.Header, "X-Value", parser.Bool, binding.Optional), // Field: Value (*bool)
 
-	return errors.Join(errs...)
+	)
 }
 
 func (s *TestBindPtrBoolHeaderRequired) Bind(req *http.Request, pathVar func(string) string) error {
 	b := binding.New(req, pathVar)
-	var errs []error
+	return errors.Join(
 
-	// Pointer to a value, e.g., *int, *string (but not a slice)
-	if err := binding.OnePtr(b, &s.Value, binding.Header, "X-Value", parser.Bool, binding.Required); err != nil {
-		errs = append(errs, err)
-	}
+		binding.OnePtr(b, &s.Value, binding.Header, "X-Value", parser.Bool, binding.Required), // Field: Value (*bool)
 
-	return errors.Join(errs...)
+	)
 }
 
 func (s *TestBindBoolCookieOptional) Bind(req *http.Request, pathVar func(string) string) error {
 	b := binding.New(req, pathVar)
-	var errs []error
+	return errors.Join(
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.Value, binding.Cookie, "value", parser.Bool, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.Value, binding.Cookie, "value", parser.Bool, binding.Optional), // Field: Value (bool)
 
-	return errors.Join(errs...)
+	)
 }
 
 func (s *TestBindBoolCookieRequired) Bind(req *http.Request, pathVar func(string) string) error {
 	b := binding.New(req, pathVar)
-	var errs []error
+	return errors.Join(
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.Value, binding.Cookie, "value", parser.Bool, binding.Required); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.Value, binding.Cookie, "value", parser.Bool, binding.Required), // Field: Value (bool)
 
-	return errors.Join(errs...)
+	)
 }
 
 func (s *TestBindPtrBoolCookieOptional) Bind(req *http.Request, pathVar func(string) string) error {
 	b := binding.New(req, pathVar)
-	var errs []error
+	return errors.Join(
 
-	// Pointer to a value, e.g., *int, *string (but not a slice)
-	if err := binding.OnePtr(b, &s.Value, binding.Cookie, "value", parser.Bool, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.OnePtr(b, &s.Value, binding.Cookie, "value", parser.Bool, binding.Optional), // Field: Value (*bool)
 
-	return errors.Join(errs...)
+	)
 }
 
 func (s *TestBindPtrBoolCookieRequired) Bind(req *http.Request, pathVar func(string) string) error {
 	b := binding.New(req, pathVar)
-	var errs []error
+	return errors.Join(
 
-	// Pointer to a value, e.g., *int, *string (but not a slice)
-	if err := binding.OnePtr(b, &s.Value, binding.Cookie, "value", parser.Bool, binding.Required); err != nil {
-		errs = append(errs, err)
-	}
+		binding.OnePtr(b, &s.Value, binding.Cookie, "value", parser.Bool, binding.Required), // Field: Value (*bool)
 
-	return errors.Join(errs...)
+	)
 }
 
 func (s *TestBindBoolPathOptional) Bind(req *http.Request, pathVar func(string) string) error {
 	b := binding.New(req, pathVar)
-	var errs []error
+	return errors.Join(
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.Value, binding.Path, "value", parser.Bool, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.Value, binding.Path, "value", parser.Bool, binding.Optional), // Field: Value (bool)
 
-	return errors.Join(errs...)
+	)
 }
 
 func (s *TestBindBoolPathRequired) Bind(req *http.Request, pathVar func(string) string) error {
 	b := binding.New(req, pathVar)
-	var errs []error
+	return errors.Join(
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.Value, binding.Path, "value", parser.Bool, binding.Required); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.Value, binding.Path, "value", parser.Bool, binding.Required), // Field: Value (bool)
 
-	return errors.Join(errs...)
+	)
 }
 
 func (s *TestBindPtrBoolPathOptional) Bind(req *http.Request, pathVar func(string) string) error {
 	b := binding.New(req, pathVar)
-	var errs []error
+	return errors.Join(
 
-	// Pointer to a value, e.g., *int, *string (but not a slice)
-	if err := binding.OnePtr(b, &s.Value, binding.Path, "value", parser.Bool, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.OnePtr(b, &s.Value, binding.Path, "value", parser.Bool, binding.Optional), // Field: Value (*bool)
 
-	return errors.Join(errs...)
+	)
 }
 
 func (s *TestBindPtrBoolPathRequired) Bind(req *http.Request, pathVar func(string) string) error {
 	b := binding.New(req, pathVar)
-	var errs []error
+	return errors.Join(
 
-	// Pointer to a value, e.g., *int, *string (but not a slice)
-	if err := binding.OnePtr(b, &s.Value, binding.Path, "value", parser.Bool, binding.Required); err != nil {
-		errs = append(errs, err)
-	}
+		binding.OnePtr(b, &s.Value, binding.Path, "value", parser.Bool, binding.Required), // Field: Value (*bool)
 
-	return errors.Join(errs...)
+	)
 }
 
 func (s *TestBindInt64QueryOptional) Bind(req *http.Request, pathVar func(string) string) error {
 	b := binding.New(req, pathVar)
-	var errs []error
+	return errors.Join(
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.Value, binding.Query, "value", parser.Int64, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.Value, binding.Query, "value", parser.Int64, binding.Optional), // Field: Value (int64)
 
-	return errors.Join(errs...)
+	)
 }
 
 func (s *TestBindPtrInt64PathRequired) Bind(req *http.Request, pathVar func(string) string) error {
 	b := binding.New(req, pathVar)
-	var errs []error
+	return errors.Join(
 
-	// Pointer to a value, e.g., *int, *string (but not a slice)
-	if err := binding.OnePtr(b, &s.Value, binding.Path, "value", parser.Int64, binding.Required); err != nil {
-		errs = append(errs, err)
-	}
+		binding.OnePtr(b, &s.Value, binding.Path, "value", parser.Int64, binding.Required), // Field: Value (*int64)
 
-	return errors.Join(errs...)
+	)
 }
 
 func (s *TestBindUint32HeaderOptional) Bind(req *http.Request, pathVar func(string) string) error {
 	b := binding.New(req, pathVar)
-	var errs []error
+	return errors.Join(
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.Value, binding.Header, "X-Value", parser.Uint32, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.Value, binding.Header, "X-Value", parser.Uint32, binding.Optional), // Field: Value (uint32)
 
-	return errors.Join(errs...)
+	)
 }
 
 func (s *TestBindPtrUint32CookieRequired) Bind(req *http.Request, pathVar func(string) string) error {
 	b := binding.New(req, pathVar)
-	var errs []error
+	return errors.Join(
 
-	// Pointer to a value, e.g., *int, *string (but not a slice)
-	if err := binding.OnePtr(b, &s.Value, binding.Cookie, "value", parser.Uint32, binding.Required); err != nil {
-		errs = append(errs, err)
-	}
+		binding.OnePtr(b, &s.Value, binding.Cookie, "value", parser.Uint32, binding.Required), // Field: Value (*uint32)
 
-	return errors.Join(errs...)
+	)
 }
 
 func (s *TestBindFloat64QueryOptional) Bind(req *http.Request, pathVar func(string) string) error {
 	b := binding.New(req, pathVar)
-	var errs []error
+	return errors.Join(
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.Value, binding.Query, "value", parser.Float64, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.Value, binding.Query, "value", parser.Float64, binding.Optional), // Field: Value (float64)
 
-	return errors.Join(errs...)
+	)
 }
 
 func (s *TestBindPtrFloat64HeaderRequired) Bind(req *http.Request, pathVar func(string) string) error {
 	b := binding.New(req, pathVar)
-	var errs []error
+	return errors.Join(
 
-	// Pointer to a value, e.g., *int, *string (but not a slice)
-	if err := binding.OnePtr(b, &s.Value, binding.Header, "X-Value", parser.Float64, binding.Required); err != nil {
-		errs = append(errs, err)
-	}
+		binding.OnePtr(b, &s.Value, binding.Header, "X-Value", parser.Float64, binding.Required), // Field: Value (*float64)
 
-	return errors.Join(errs...)
+	)
 }
 
 func (s *TestBindComplex128CookieOptional) Bind(req *http.Request, pathVar func(string) string) error {
 	b := binding.New(req, pathVar)
-	var errs []error
+	return errors.Join(
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.Value, binding.Cookie, "value", parser.Complex128, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.Value, binding.Cookie, "value", parser.Complex128, binding.Optional), // Field: Value (complex128)
 
-	return errors.Join(errs...)
+	)
 }
 
 func (s *TestBindPtrComplex128PathRequired) Bind(req *http.Request, pathVar func(string) string) error {
 	b := binding.New(req, pathVar)
-	var errs []error
+	return errors.Join(
 
-	// Pointer to a value, e.g., *int, *string (but not a slice)
-	if err := binding.OnePtr(b, &s.Value, binding.Path, "value", parser.Complex128, binding.Required); err != nil {
-		errs = append(errs, err)
-	}
+		binding.OnePtr(b, &s.Value, binding.Path, "value", parser.Complex128, binding.Required), // Field: Value (*complex128)
 
-	return errors.Join(errs...)
+	)
 }
 
 func (s *TestBindUintptrQueryOptional) Bind(req *http.Request, pathVar func(string) string) error {
 	b := binding.New(req, pathVar)
-	var errs []error
+	return errors.Join(
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.Value, binding.Query, "value", parser.Uintptr, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.Value, binding.Query, "value", parser.Uintptr, binding.Optional), // Field: Value (uintptr)
 
-	return errors.Join(errs...)
+	)
 }
 
 func (s *TestBindPtrUintptrHeaderRequired) Bind(req *http.Request, pathVar func(string) string) error {
 	b := binding.New(req, pathVar)
-	var errs []error
+	return errors.Join(
 
-	// Pointer to a value, e.g., *int, *string (but not a slice)
-	if err := binding.OnePtr(b, &s.Value, binding.Header, "X-Value", parser.Uintptr, binding.Required); err != nil {
-		errs = append(errs, err)
-	}
+		binding.OnePtr(b, &s.Value, binding.Header, "X-Value", parser.Uintptr, binding.Required), // Field: Value (*uintptr)
 
-	return errors.Join(errs...)
+	)
 }
 
 func (s *TestBindMixedFields) Bind(req *http.Request, pathVar func(string) string) error {
 	b := binding.New(req, pathVar)
-	var errs []error
+	return errors.Join(
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.Name, binding.Query, "name", parser.String, binding.Required); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.Name, binding.Query, "name", parser.String, binding.Required), // Field: Name (string)
 
-	// Pointer to a value, e.g., *int, *string (but not a slice)
-	if err := binding.OnePtr(b, &s.Age, binding.Query, "age", parser.Int, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.OnePtr(b, &s.Age, binding.Query, "age", parser.Int, binding.Optional), // Field: Age (*int)
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.SessionID, binding.Cookie, "session_id", parser.String, binding.Required); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.SessionID, binding.Cookie, "session_id", parser.String, binding.Required), // Field: SessionID (string)
 
-	// Pointer to a value, e.g., *int, *string (but not a slice)
-	if err := binding.OnePtr(b, &s.AuthToken, binding.Header, "X-Auth-Token", parser.String, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.OnePtr(b, &s.AuthToken, binding.Header, "X-Auth-Token", parser.String, binding.Optional), // Field: AuthToken (*string)
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.UserID, binding.Path, "userID", parser.String, binding.Required); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.UserID, binding.Path, "userID", parser.String, binding.Required), // Field: UserID (string)
 
-	// Pointer to a value, e.g., *int, *string (but not a slice)
-	if err := binding.OnePtr(b, &s.IsEnabled, binding.Query, "enabled", parser.Bool, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.OnePtr(b, &s.IsEnabled, binding.Query, "enabled", parser.Bool, binding.Optional), // Field: IsEnabled (*bool)
 
-	// Value, e.g., int, string
-	if err := binding.One(b, &s.Factor, binding.Header, "X-Factor", parser.Float64, binding.Optional); err != nil {
-		errs = append(errs, err)
-	}
+		binding.One(b, &s.Factor, binding.Header, "X-Factor", parser.Float64, binding.Optional), // Field: Factor (float64)
 
-	return errors.Join(errs...)
+	)
 }

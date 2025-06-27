@@ -5,7 +5,7 @@ package models
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/podhmo/go-scan/examples/derivingjson/testdata/separated/shapes"
+	shapes "github.com/podhmo/go-scan/examples/derivingjson/testdata/separated/shapes"
 )
 
 func (s *Container) UnmarshalJSON(data []byte) error {

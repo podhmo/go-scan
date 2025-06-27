@@ -22,7 +22,15 @@ import (
 // GoFile represents a Go source file to be generated.
 type GoFile struct {
 	PackageName string            // PackageName is the name of the package (e.g., "main", "models").
-	Imports     map[string]string // Imports is a map of import alias to import path.
+	// Imports is a map of import path to alias.
+	// If an alias is not needed, the alias should be an empty string.
+	// Example:
+	//   Imports = map[string]string{
+	//     "fmt": "", // for `import "fmt"`
+	//     "custom_errors": "errors", // for `import errors "custom_errors"`
+	//     "github.com/pkg/errors": "", // for `import "github.com/pkg/errors"`
+	//   }
+	Imports     map[string]string
 	CodeSet     string            // CodeSet is the body of the Go code to be generated.
 }
 
@@ -81,7 +89,7 @@ func (pd *PackageDirectory) SaveGoFile(ctx context.Context, gf GoFile, filename 
 
 	if len(gf.Imports) > 0 {
 		finalOutput.WriteString("import (\n")
-		// Sort imports for consistent output
+		// Sort imports by path for consistent output
 		importPaths := make([]string, 0, len(gf.Imports))
 		for path := range gf.Imports {
 			importPaths = append(importPaths, path)
@@ -90,14 +98,7 @@ func (pd *PackageDirectory) SaveGoFile(ctx context.Context, gf GoFile, filename 
 
 		for _, importPath := range importPaths {
 			alias := gf.Imports[importPath]
-			// Heuristic: if alias is the last part of the path, it's likely the package's natural name.
-			// Example: path="github.com/user/repo/mypkg", alias="mypkg"
-			// Example: path="net/http", alias="http"
-			// If alias is empty, it means no alias is used.
-			pathParts := strings.Split(importPath, "/")
-			naturalPkgName := pathParts[len(pathParts)-1]
-
-			if alias != "" && alias != naturalPkgName {
+			if alias != "" {
 				finalOutput.WriteString(fmt.Sprintf("\t%s \"%s\"\n", alias, importPath))
 			} else {
 				finalOutput.WriteString(fmt.Sprintf("\t\"%s\"\n", importPath))

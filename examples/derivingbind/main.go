@@ -10,8 +10,8 @@ func main() {
 	ctx := context.Background() // Or your application's context
 
 	if len(os.Args) <= 1 {
-		slog.ErrorContext(ctx, "Usage: derivngbind <package_path>")
-		slog.ErrorContext(ctx, "Example: derivngbind examples/derivngbind/testdata/simple")
+		slog.ErrorContext(ctx, "Usage: derivingbind <package_path>")
+		slog.ErrorContext(ctx, "Example: derivingbind examples/derivingbind/testdata/simple")
 		os.Exit(1)
 	}
 	pkgPath := os.Args[1]

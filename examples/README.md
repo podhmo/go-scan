@@ -5,7 +5,7 @@ This directory contains example projects that demonstrate the capabilities and u
 ## Available Examples
 
 - [derivingjson](#derivingjson)
-- [derivngbind](#derivngbind)
+- [derivingbind](#derivingbind)
 
 ---
 
@@ -25,9 +25,9 @@ This example demonstrates how `go-scan` can be used to build tools for advanced 
 
 ---
 
-## derivngbind
+## derivingbind
 
-The `derivngbind` example demonstrates a code generator built with `go-scan`.
+The `derivingbind` example demonstrates a code generator built with `go-scan`.
 
 **Purpose**: To generate a `Bind` method for Go structs. This method is designed to populate the struct's fields from various parts of an HTTP request, including:
 - Path parameters

@@ -1,8 +1,8 @@
-# derivngbind Example
+# derivingbind Example
 
-This directory contains an example of a code generator, `derivngbind`, built using the `go-scan` library.
+This directory contains an example of a code generator, `derivingbind`, built using the `go-scan` library.
 
-`derivngbind` generates a `Bind` method for Go structs. This method populates the struct's fields from HTTP request data, including:
+`derivingbind` generates a `Bind` method for Go structs. This method populates the struct's fields from HTTP request data, including:
 - Path parameters
 - Query parameters
 - Headers

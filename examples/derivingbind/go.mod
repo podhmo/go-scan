@@ -1,4 +1,4 @@
-module github.com/podhmo/go-scan/examples/derivngbind
+module github.com/podhmo/go-scan/examples/derivingbind
 
 go 1.21
 

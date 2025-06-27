@@ -4,7 +4,7 @@ all: emit
 
 emit:
 	@echo "Generating UnmarshalJSON methods for models and testdata..."
-	@go run main.go generator.go
+	@go run ./
 
 test:
 	@echo "Running tests for derivingjson example (models package)..."

@@ -4,7 +4,7 @@ all: emit-simple
 
 emit-simple:
 	@echo "Generating for testdata/simple"
-	@go run $(filter-out generator_test.go, $(wildcard *.go)) ./testdata/simple
+	@go run ./ ./testdata/simple
 
 clean:
 	@echo "Cleaning generated files..."

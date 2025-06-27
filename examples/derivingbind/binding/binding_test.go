@@ -191,11 +191,14 @@ func TestSlice(t *testing.T) {
 		var tags []string
 		err := binding.Slice(b, &tags, binding.Query, "tags", parser.String, binding.Required)
 		if err != nil {
+			// parser.String("") returns "", nil, so no error is expected here.
+			// If a parser were to error on empty string, then `wantErr: true` would be appropriate.
 			t.Fatalf("unexpected error: %v", err)
 		}
-		expected := []string{"go", "generics", "fun"}
+		// Behavior change: empty strings are now passed to the parser. parser.String returns them as is.
+		expected := []string{"go", "generics", "", "fun"}
 		if len(tags) != len(expected) {
-			t.Fatalf("expected slice length %d, got %d", len(expected), len(tags))
+			t.Fatalf("expected slice length %d, got %d (tags: %v)", len(expected), len(tags), tags)
 		}
 		for i := range tags {
 			if tags[i] != expected[i] {

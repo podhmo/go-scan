@@ -123,7 +123,11 @@ func Uintptr(s string) (uintptr, error) {
 }
 
 // Complex64 is a parser for the complex64 type.
+// If s is an empty string, it returns complex(0,0) and no error.
 func Complex64(s string) (complex64, error) {
+	if s == "" {
+		return complex(0, 0), nil
+	}
 	c, err := strconv.ParseComplex(s, 64)
 	if err != nil {
 		return 0, err
@@ -132,6 +136,10 @@ func Complex64(s string) (complex64, error) {
 }
 
 // Complex128 is a parser for the complex128 type.
+// If s is an empty string, it returns complex(0,0) and no error.
 func Complex128(s string) (complex128, error) {
+	if s == "" {
+		return complex(0, 0), nil
+	}
 	return strconv.ParseComplex(s, 128)
 }

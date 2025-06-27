@@ -790,7 +790,7 @@ func TestBindTestExtendedTypesBind(t *testing.T) {
 				URL: parseURL(t, "/?reqQStrSlice=val"), Header: http.Header{"X-Int-Slice": []string{"1,abc,3"}, "X-Reqint": []string{"99"}},
 			},
 			wantErr:     true,
-			errContains: []string{"binding: failed to parse item #1 for header key 'X-Int-Slice' with value \"abc\""},
+			errContains: []string{"binding: failed to parse item #1 from value \"abc\" for header key 'X-Int-Slice': strconv.Atoi: parsing \"abc\": invalid syntax"},
 		},
 		{
 			name: "type conversion error for float64",
@@ -1173,7 +1173,7 @@ func TestBindExtendedTypes(t *testing.T) {
 				URL: parseURL(t, "/?reqQStrSlice=val"), Header: http.Header{"X-Int-Slice": []string{"1,abc,3"}, "X-Reqint": []string{"99"}},
 			},
 			wantErr:     true,
-			errContains: []string{"binding: failed to parse item #1 for header key 'X-Int-Slice' with value \"abc\""},
+			errContains: []string{"binding: failed to parse item #1 from value \"abc\" for header key 'X-Int-Slice': strconv.Atoi: parsing \"abc\": invalid syntax"},
 		},
 	}
 
@@ -1327,7 +1327,7 @@ func TestBindNewTypes(t *testing.T) {
 			// Add a cookie with an invalid complex128 slice
 			requestCookies: []*http.Cookie{{Name: "cComplex128-Slice", Value: "1+1i,bad-complex,2+2i"}},
 			wantErr: true,
-			errContains: []string{"binding: failed to parse item #1 for cookie key 'cComplex128-Slice' with value \"bad-complex\""},
+			errContains: []string{"binding: failed to parse item #1 from value \"bad-complex\" for cookie key 'cComplex128-Slice': strconv.ParseComplex: parsing \"bad-complex\": invalid syntax"},
 		},
 		// TODO: Add tests for pointer slices of new types with missing/empty values
 		// TODO: Add tests for empty strings for complex types (should error)

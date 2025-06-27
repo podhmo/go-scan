@@ -34,7 +34,6 @@ func (s *{{.StructName}}) Bind(req *http.Request, pathVar func(string) string) e
 	{{if .IsBody}}
 	// Body binding for field {{.FieldName}} ({{.OriginalFieldTypeString}}) will be handled after other fields.
 	{{else}}
-	// Binding for field {{.FieldName}} ({{.OriginalFieldTypeString}}) from {{.BindFrom}}:"{{.BindName}}"
 	{{$bindSource := ""}}
 	{{if eq .BindFrom "query"}}
 		{{$bindSource = "binding.Query"}}

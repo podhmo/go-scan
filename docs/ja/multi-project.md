@@ -1,49 +1,224 @@
-# 複数のジェネレータによるコード生成と状態共有
+# 複数のジェネレータによるコード生成と状態共有: `go-scan` の進化
 
-`go-scan` を利用して、単一の型定義やパッケージに対して複数の異なるコード生成処理（例えば、JSONマーシャラ、HTTPリクエストバインダ、バリデータなど）を一度に実行したい場合があります。これは Haskell の `deriving` キーワードが複数の型クラスインスタンスを一度に導出するのに似ています。このようなシナリオでは、各ジェネレータが効率的に型情報を共有し、重複したスキャン処理を避けることが重要になります。
+## 1. はじめに: 課題意識と目指す姿
 
-このドキュメントでは、複数のジェネレータ機能を統合して実行するための `main` 関数の設計例と、その中で `go-scan` のスキャン結果（状態）を共有する方法、そしてこのアプローチを実現するために `go-scan` に求められる機能について説明します。
+Go言語におけるコードジェネレーションは、ボイラープレートコードの削減や型安全性の向上に貢献する強力なテクニックです。`go-scan` ライブラリは、Goのソースコードを静的解析し、型情報を抽出することで、これらのジェネレータ開発の基盤を提供します。
 
-## 設計思想
+本ドキュメントは、ユーザーからの以下の問いかけを出発点としています。
 
-主な設計思想は以下の通りです。
+> 「複数のマーカーを1つのstructに指定し辿るような処理があると考えてください。このときのgo-scan内部の状態の扱いや機能について考えてください。2つの大きなグラフが存在するイメージです。それぞれで個別に探索し直すということは避けたいです。」
 
-1.  **スキャン処理の共通化**: パッケージのソースコード解析（ファイル読み込み、AST構築など）はコストの高い処理です。この処理は、対象パッケージ（またはモジュール）ごとに一度だけ実行されるべきです。
-2.  **状態の共有**: 一度スキャンされたパッケージの情報 (`scanner.PackageInfo`) は、複数のジェネレータ間で共有されるべきです。
-3.  **ジェネレータの独立性**: 各ジェネレータは、他のジェネレータの存在や処理内容を意識することなく、共有された型情報から自身が必要とする情報を抽出・処理できるように設計されるべきです。
-4.  **拡張性**: 新しいジェネレータをシステムに容易に追加できるようにします。
+これは、単一の型定義に対して、複数の異なる目的のコード（例えば、JSONマーシャリング用、HTTPリクエストバインディング用、バリデーション用など）を一度に生成したい、という高度な要求を示唆しています。このイメージは、Haskellの `deriving` キーワードが、一つの型定義から `Eq`, `Show`, `Generic` といった複数の型クラスインスタンスを自動的に導出する機能に類似しています。
 
-## 状態共有メカニズム: `ScanBroker`
+現在の `go-scan` のサンプル (`examples/derivingjson`, `examples/derivingbind`) は、それぞれ単一の目的に特化したジェネレータです。これらを統合し、効率的に連携させるためには、`go-scan` 自身、およびその利用パターンを進化させる必要があります。
 
-この設計を実現するための中核的なコンポーネントとして `ScanBroker`（または `ScanContext`, `SharedScanner`）という概念を導入します。`ScanBroker` は以下の責務を持ちます。
+本ドキュメントでは、この「複数マーカー（アノテーション）に基づく複数ジェネレータ」のシナリオを実現するための設計思想、状態共有メカニズム、具体的な `main` 関数の構成、そして `go-scan` に求められる機能改善について、これまでの対話を通じて深掘りした考察をまとめます。
 
-*   `scanner.PackageInfo` のキャッシュ管理: 一度スキャンしたパッケージの結果を保持し、再スキャンを防ぎます。
-*   `token.FileSet` の共有: 全てのスキャン処理で単一の `FileSet` を利用し、位置情報の一貫性とメモリ効率を確保します。
-*   `scanner.PackageResolver` の提供: `scanner.Scanner` が依存パッケージを解決する際に、ブローカーのキャッシュを経由するようにします。
+## 2. 背景: 既存の知見と `go-scan` の現状
+
+### 2.1. 既存ドキュメント (`docs/ja/from-*.md`) からの洞察
+
+リポジトリ内の `docs/ja/from-derivingbind.md` および `docs/ja/from-derivngjson.md` には、それぞれのサンプルジェネレータ開発を通じて得られた `go-scan` への具体的な改善提案が記載されています。これらの提案は、複数ジェネレータ実行の文脈において、さらにその重要性を増します。
+
+*   **アノテーション/コメントベースのフィルタリング・抽出**: ジェネレータが処理対象の型を特定する主要な手段。現状は各ジェネレータが独自に文字列処理を行っており、`go-scan` 側での統一的なサポートが望まれる。
+*   **フィールドタグの高度な解析**: 構造体フィールドに付与されたタグ（例: `json:"name,omitempty"`）は、ジェネレータの挙動を細かく制御するための重要なメタデータ。解析ロジックの共通化が必要。
+*   **インターフェース実装者の効率的な検索**: 特に `oneOf` のようなポリモーフィックな型を扱う際に不可欠。
+*   **型解決の強化と詳細情報**: 型の完全修飾名、インポートパス、ポインタやスライスなどの複合型の詳細情報を正確かつ容易に取得できることが求められる。
+*   **生成コードのインポート管理支援**: 生成コードが必要とするパッケージのインポート文を自動的に管理する機能は、ジェネレータ開発の負担を大幅に軽減する。
+
+これらの機能が `go-scan` に備わることで、各ジェネレータは型情報の解析という共通処理から解放され、本来のコード生成ロジックに集中できるようになります。これは、複数のジェネレータが協調する上で不可欠な前提条件です。
+
+### 2.2. `go-scan` のコア機能と現状のアーキテクチャ
+
+`scanner/scanner.go` と `scanner/models.go` の調査から、`go-scan` の現在のコア機能は以下のように理解できます。
+
+*   **`Scanner`**: Goソースコードをパースし、型情報を抽出する中心的なコンポーネント。`FileSet` を共有し、`ScanPackage` や `ScanFiles` メソッドを通じて `PackageInfo` を生成します。
+*   **`PackageInfo`**: 単一パッケージのスキャン結果（型、関数、定数、インポート情報など）を保持する構造体。複数ジェネレータ間で共有されるべき主要な情報集約単位です。
+*   **`TypeInfo`, `FieldInfo`, `FieldType`**: 型、フィールド、フィールドの型に関する詳細な情報を格納するモデル。特に `FieldType.Resolve()` は、`PackageResolver` を介して外部パッケージの型を遅延解決する重要な機能を持ちます。
+*   **`PackageResolver`**: インポートパスから `PackageInfo` を解決するためのインターフェース。これにより、`Scanner` は必要に応じて他のパッケージをスキャン（またはキャッシュから取得）できます。
+
+現状の `go-scan` は、指定されたパッケージを一度スキャンし、その結果を `PackageInfo` として提供します。この `PackageInfo` を複数のジェネレータで共有すること自体は可能です。しかし、各ジェネレータがその中から自身に必要な情報を効率的に抽出し、かつ依存関係にある他のパッケージの情報を透過的に解決するためには、さらなるサポート機能が求められます。
+
+## 3. 設計目標
+
+複数ジェネレータによる効率的なコード生成と状態共有を実現するために、以下の設計目標を設定します。
+
+1.  **効率性**: パッケージのスキャン（ファイルI/O、AST解析）は、対象パッケージごと（理想的にはモジュールごと）に一度だけにします。
+2.  **独立性**: 各ジェネレータは、他のジェネレータの処理内容や関心事に影響されず、自身が必要とする情報のみを取得・処理できるようにします。
+3.  **柔軟性**: 新しいジェネレータを容易に追加・統合できるようにします。
+4.  **シンプルさ**: `go-scan` および関連ツールの利用者が理解しやすく、使いやすいAPIを提供します。
+
+## 4. 提案: 状態共有メカニズム `ScanBroker`
+
+これらの設計目標を達成するため、中心的な役割を果たす `ScanBroker`（または `ScanContext`, `SharedScanner`）というコンポーネントの導入を提案します。
+
+### 4.1. `ScanBroker` の責務
+
+*   **`scanner.PackageInfo` のキャッシュ管理**: `importPath` をキーとして `PackageInfo` をキャッシュし、再スキャンを防止します。
+*   **`token.FileSet` の共有**: 全てのスキャン処理で単一の `FileSet` を利用し、位置情報の一貫性とメモリ効率を向上させます。
+*   **`scanner.ExternalTypeOverride` の一元管理**: 全スキャンで共通の型オーバーライド設定を適用します。
+*   **Broker-Aware `scanner.PackageResolver` の提供**: `scanner.Scanner` が依存パッケージを解決する際に、ブローカーのキャッシュメカニズムを経由させます。
+
+### 4.2. `ScanBroker` の構造（概念コード）
 
 ```go
-// (ScanBroker の詳細なコード例は前ステップの「状態共有メカニズムの設計」を参照)
-// package goscan // or a new subpackage like goscan/broker
-//
-// type ScanBroker struct {
-// 	 fset         *token.FileSet
-// 	 resolver     *BrokerPackageResolver
-// 	 scanCache    map[string]*scanner.PackageInfo
-// 	 scanOverrides scanner.ExternalTypeOverride
-// 	 mu           sync.RWMutex
-// }
-//
-// func NewScanBroker(overrides scanner.ExternalTypeOverride) *ScanBroker { /* ... */ }
-// func (b *ScanBroker) GetPackageByDir(ctx context.Context, dirPath string) (*scanner.PackageInfo, error) { /* ... */ }
-// // ...その他のメソッド...
-//
-// type BrokerPackageResolver struct { /* ... */ }
-// func (r *BrokerPackageResolver) ScanPackageByImport(ctx context.Context, importPath string) (*scanner.PackageInfo, error) { /* ... */ }
+package goscan // or a new subpackage like goscan/broker
+
+import (
+	"context"
+	"fmt"
+	"go/token"
+	"log/slog"
+	"path/filepath" // For robust path resolution in a real scenario
+	"sync"
+
+	"github.com/podhmo/go-scan/scanner" // Assuming scanner models are here
+)
+
+// ScanBroker manages and provides access to scanned package information.
+type ScanBroker struct {
+	fset          *token.FileSet
+	resolver      *BrokerPackageResolver
+	scanCache     map[string]*scanner.PackageInfo // Key: canonical import path
+	scanOverrides scanner.ExternalTypeOverride
+	mu            sync.RWMutex
+	// Potentially, a reference to go/packages.Config or similar for robust path resolution
+}
+
+// NewScanBroker creates a new ScanBroker.
+func NewScanBroker(overrides scanner.ExternalTypeOverride) *ScanBroker {
+	fset := token.NewFileSet()
+	broker := &ScanBroker{
+		fset:          fset,
+		scanCache:     make(map[string]*scanner.PackageInfo),
+		scanOverrides: overrides,
+	}
+	broker.resolver = &BrokerPackageResolver{broker: broker}
+	return broker
+}
+
+// GetPackageByDir is the primary method for generators to request package information.
+// It resolves dirPath to a canonical import path and then fetches/scans the package.
+func (b *ScanBroker) GetPackageByDir(ctx context.Context, dirPath string) (*scanner.PackageInfo, error) {
+	// CRITICAL: Robustly resolve dirPath to a canonical import path.
+	// This might involve finding go.mod, using `go list -json`, etc.
+	// Placeholder for this complex logic:
+	importPath, err := b.resolveDirToImportPath(ctx, dirPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve dir %s to import path: %w", dirPath, err)
+	}
+	return b.getPackageByImportPath(ctx, importPath, dirPath)
+}
+
+// getPackageByImportPath is the core caching/scanning logic.
+// initialDirPath is an optional hint if scanning is needed for the first time.
+func (b *ScanBroker) getPackageByImportPath(ctx context.Context, importPath string, initialDirPath ...string) (*scanner.PackageInfo, error) {
+	b.mu.RLock()
+	pkgInfo, found := b.scanCache[importPath]
+	b.mu.RUnlock()
+	if found {
+		slog.DebugContext(ctx, "ScanBroker: Cache hit", slog.String("importPath", importPath))
+		return pkgInfo, nil
+	}
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if pkgInfo, found = b.scanCache[importPath]; found { // Double-check
+		slog.DebugContext(ctx, "ScanBroker: Cache hit (after lock)", slog.String("importPath", importPath))
+		return pkgInfo, nil
+	}
+
+	slog.InfoContext(ctx, "ScanBroker: Cache miss, attempting to scan", slog.String("importPath", importPath))
+	var actualDirPath string
+	if len(initialDirPath) > 0 {
+		actualDirPath = initialDirPath[0]
+	} else {
+		// If no dirPath hint, we need to resolve importPath to a directory.
+		// This is another point where go/packages or `go list` would be used.
+		// For simplicity, this example might fail if no hint and not a GetPackageByDir call.
+		resolvedDir, err := b.resolveImportPathToDir(ctx, importPath) // Placeholder
+		if err != nil {
+			return nil, fmt.Errorf("cannot find directory for import path %s: %w", importPath, err)
+		}
+		actualDirPath = resolvedDir
+	}
+
+	scn, err := scanner.New(b.fset, b.scanOverrides)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create scanner for %s: %w", importPath, err)
+	}
+
+	scannedPkgInfo, err := scn.ScanPackage(ctx, actualDirPath, b.resolver)
+	if err != nil {
+		return nil, fmt.Errorf("failed to scan package %s (dir %s): %w", importPath, actualDirPath, err)
+	}
+
+	// Ensure the PackageInfo stores its canonical import path.
+	// This should ideally be set by ScanPackage itself after determining it.
+	if scannedPkgInfo.ImportPath == "" {
+		scannedPkgInfo.ImportPath = importPath
+	} else if scannedPkgInfo.ImportPath != importPath {
+		// Log a warning if determined import path differs from the requested one,
+		// might indicate issues in path resolution.
+		slog.WarnContext(ctx, "ScanBroker: Scanned package import path mismatch",
+			slog.String("requestedImportPath", importPath),
+			slog.String("determinedImportPath", scannedPkgInfo.ImportPath))
+		// Decide on a strategy: use requested, use determined, or error.
+		// For caching, consistency is key; using the requested (and hopefully canonical) importPath.
+	}
+
+	b.scanCache[importPath] = scannedPkgInfo
+	slog.InfoContext(ctx, "ScanBroker: Package scanned and cached", slog.String("importPath", importPath))
+	return scannedPkgInfo, nil
+}
+
+// resolveDirToImportPath converts a directory path to a canonical Go import path. (Placeholder)
+func (b *ScanBroker) resolveDirToImportPath(ctx context.Context, dirPath string) (string, error) {
+	// In a real implementation, this would use `go list -json -C <dirPath> .` or similar
+	// or parse go.mod files and directory structure.
+	// For this example, we'll use a simplified (and not robust) approach.
+	absPath, err := filepath.Abs(dirPath)
+	if err != nil {
+		return "", fmt.Errorf("abs path for %s: %w", dirPath, err)
+	}
+	// This is NOT a general solution. A proper solution needs to understand Go modules.
+	// Returning the absolute path is a placeholder for a unique key if true import path resolution is complex.
+	slog.WarnContext(ctx, "ScanBroker: resolveDirToImportPath is using a placeholder (absolute path). Robust import path resolution needed.", slog.String("dirPath", dirPath), slog.String("resolvedKey", absPath))
+	return absPath, nil // This should be the CANONICAL import path.
+}
+
+// resolveImportPathToDir converts a canonical import path to a directory path. (Placeholder)
+func (b *ScanBroker) resolveImportPathToDir(ctx context.Context, importPath string) (string, error) {
+	// In a real implementation, this would use `go list -json -f {{.Dir}} <importPath>`
+	return "", fmt.Errorf("resolveImportPathToDir: not implemented robustly. Import path '%s' cannot be resolved to a directory without external tools/logic", importPath)
+}
+
+// BrokerPackageResolver implements scanner.PackageResolver for the ScanBroker.
+type BrokerPackageResolver struct {
+	broker *ScanBroker
+}
+
+// ScanPackageByImport is called by scanner.Scanner for resolving imported packages.
+func (r *BrokerPackageResolver) ScanPackageByImport(ctx context.Context, importPath string) (*scanner.PackageInfo, error) {
+	slog.DebugContext(ctx, "BrokerPackageResolver: Request to resolve import", slog.String("importPath", importPath))
+	// This will hit the broker's cache or trigger a scan (if dir can be found for importPath).
+	return r.broker.getPackageByImportPath(ctx, importPath)
+}
 ```
 
-## `main` 関数の設計例
+### 4.3. `ScanBroker` の利点
 
-以下に、`ScanBroker` を利用して、`derivingjson` (JSON処理系) と `derivingbind` (リクエストバインディング処理系) の両方の機能を一度の実行で処理する `main` 関数の例を示します。
+*   **効率性**: `scanCache` により、各パッケージのスキャンは一度だけ実行されます。
+*   **状態の一元管理**: `FileSet`, `ExternalTypeOverride`, キャッシュされた `PackageInfo` が一箇所で管理されます。
+*   **透過的な依存関係解決**: ジェネレータが `FieldType.Resolve()` を呼び出すと、内部的に `ScanBroker` のキャッシュ/スキャン機構が利用され、依存パッケージも効率的に処理されます。
+
+### 4.4. 課題: パス解決
+
+`ScanBroker` の設計における最大の課題は、ディレクトリパスとGoの正規インポートパス間の相互変換 (`resolveDirToImportPath`, `resolveImportPathToDir`) です。Goモジュールの複雑さ（`replace`ディレクティブ、ワークスペースなど）を考慮すると、この解決ロジックは非常に高度になります。`go/packages` ライブラリや `go list` コマンドの機能を利用するのが現実的なアプローチです。`go-scan` がこれらの外部ツールに依存するか、あるいはこの解決を利用者に委ねるかは、設計上の重要な判断点となります。
+
+## 5. `main` 関数の設計例とジェネレータの連携
+
+`ScanBroker` を利用した複数ジェネレータ実行の `main` 関数の構成例です。
 
 ```go
 package main
@@ -51,77 +226,63 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
+	"log" // Standard log for fatal errors
 	"os"
-	"strings" // 例としてJSONGenerator内で使用
+	"strings" // For simplified annotation checking in examples
 
-	"go/token" // ScanBroker内で必要
-	"log/slog" // ScanBroker内で必要 (または標準log)
+	"log/slog" // For structured logging
 
-
-	// goscan "github.com/your_org/your_repo/goscan" // ScanBrokerを定義したパッケージ
-	// scanner "github.com/podhmo/go-scan/scanner" // go-scan本体
-	// ※上記はScanBrokerがgo-scanライブラリに統合されるか、別パッケージかで変わる
-	// この例では、ScanBrokerと必要な型が適切にインポートされていると仮定します。
-	// ここでは仮のScanBroker実装をインラインで示す代わりに、
-	// ScanBrokerが提供するインターフェースと利用方法に焦点を当てます。
+	// Assume ScanBroker and scanner types are properly imported or defined
+	// For brevity, their full definitions from section 4.2 are omitted here.
+	// goscan "path/to/your/goscan/brokerpackage"
+	// scanner "github.com/podhmo/go-scan/scanner"
 )
 
-// --- ScanBroker とその関連型の仮定義 (実際は別パッケージからインポート) ---
-// (前ステップで設計した ScanBroker, BrokerPackageResolver のコードがここにあると仮定)
-// scanner.PackageInfo, scanner.ExternalTypeOverride, scanner.New などの型・関数も
-// 適切に利用できる状態とします。
-// --- ここまで仮定義 ---
 
-
-// BaseGenerator defines a common interface for all generators
+// BaseGenerator defines a common interface for all code generators.
 type BaseGenerator interface {
-	Name() string
-	Generate(ctx context.Context, pkgInfo *scanner.PackageInfo) error
+	Name() string                                         // Returns the name of the generator.
+	Generate(ctx context.Context, pkgInfo *scanner.PackageInfo) error // Processes the PackageInfo.
 }
 
-// JSONGenerator example
-type JSONGenerator struct {
-	// No broker needed here if Generate receives PackageInfo directly
-}
-
-func NewJSONGenerator() *JSONGenerator {
-	return &JSONGenerator{}
-}
-
+// --- Example: JSONGenerator ---
+type JSONGenerator struct{}
+func NewJSONGenerator() *JSONGenerator { return &JSONGenerator{} }
 func (g *JSONGenerator) Name() string { return "JSONGenerator" }
-
 func (g *JSONGenerator) Generate(ctx context.Context, pkgInfo *scanner.PackageInfo) error {
-	fmt.Printf("[%s] Processing package %s (Path: %s)\n", g.Name(), pkgInfo.Name, pkgInfo.Path)
+	slog.InfoContext(ctx, "Running generator", slog.String("name", g.Name()), slog.String("package", pkgInfo.Name))
 	for _, typeInfo := range pkgInfo.Types {
-		if strings.Contains(typeInfo.Doc, "@deriving:json") { // Simplified check
-			fmt.Printf("  [%s] Found target type %s for JSON generation\n", g.Name(), typeInfo.Name)
-			// ... actual JSON generation logic ...
-			// If types from other packages are involved, their PackageInfo
-			// would have been resolved by the broker when pkgInfo was built.
-			// typeInfo.Fields[...].Type.Resolve(ctx) would work if needed.
+		// In a real generator, use TypeInfo.GetAnnotations() as proposed later.
+		if strings.Contains(typeInfo.Doc, "@deriving:json") {
+			slog.InfoContext(ctx, fmt.Sprintf("  [%s] Found target type: %s", g.Name(), typeInfo.Name))
+			// ... (Actual JSON generation logic) ...
+			// Example: If a field type needs to be resolved:
+			// for _, field := range typeInfo.Struct.Fields {
+			//   if !field.Type.IsBuiltin && field.Type.FullImportPath() != pkgInfo.ImportPath {
+			//     slog.DebugContext(ctx, "Resolving external field type", slog.String("field", field.Name), slog.String("type", field.Type.String()))
+			//     def, err := field.Type.Resolve(ctx) // Uses broker's resolver
+			//     if err != nil {
+			//       slog.ErrorContext(ctx, "Failed to resolve field type", slog.Any("error", err))
+			//       continue
+			//     }
+			//     if def != nil { /* Use resolved type 'def' */ }
+			//   }
+			// }
 		}
 	}
 	return nil
 }
 
-// BindGenerator example
-type BindGenerator struct {
-	// No broker needed here
-}
-
-func NewBindGenerator() *BindGenerator {
-	return &BindGenerator{}
-}
-
+// --- Example: BindGenerator ---
+type BindGenerator struct{}
+func NewBindGenerator() *BindGenerator { return &BindGenerator{} }
 func (g *BindGenerator) Name() string { return "BindGenerator" }
-
 func (g *BindGenerator) Generate(ctx context.Context, pkgInfo *scanner.PackageInfo) error {
-	fmt.Printf("[%s] Processing package %s (Path: %s)\n", g.Name(), pkgInfo.Name, pkgInfo.Path)
+	slog.InfoContext(ctx, "Running generator", slog.String("name", g.Name()), slog.String("package", pkgInfo.Name))
 	for _, typeInfo := range pkgInfo.Types {
-		if strings.Contains(typeInfo.Doc, "@deriving:binding") { // Simplified check
-			fmt.Printf("  [%s] Found target type %s for binding generation\n", g.Name(), typeInfo.Name)
-			// ... actual binding generation logic ...
+		if strings.Contains(typeInfo.Doc, "@deriving:binding") {
+			slog.InfoContext(ctx, fmt.Sprintf("  [%s] Found target type: %s", g.Name(), typeInfo.Name))
+			// ... (Actual binding generation logic) ...
 		}
 	}
 	return nil
@@ -129,83 +290,103 @@ func (g *BindGenerator) Generate(ctx context.Context, pkgInfo *scanner.PackageIn
 
 
 func main() {
+	// Setup structured logging
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	slog.SetDefault(logger)
+
 	if len(os.Args) < 2 {
-		log.Fatal("Usage: multi-generator <package_directory_path>")
+		slog.Error("Usage: multi-generator <package_directory_path>")
+		os.Exit(1)
 	}
 	targetPackageDir := os.Args[1]
 	ctx := context.Background()
 
-	// 1. Initialize the ScanBroker
-	//    ScanBrokerの実際のインポートパスはプロジェクト構成による
-	//    ここでは仮に goscan.NewScanBroker のように呼び出す
-	broker := NewScanBroker(nil) // (ScanBrokerのコンストラクta)
+	slog.InfoContext(ctx, "Initializing ScanBroker...")
+	// Assuming NewScanBroker is available from our goscan (broker) package.
+	// Real implementation of NewScanBroker needs to be imported.
+	// For this doc, we assume it's defined as in section 4.2.
+	broker := NewScanBroker(nil) // Pass scanner.ExternalTypeOverride if any.
 
-	// 2. Register all generators
+	// Register all generators
 	generators := []BaseGenerator{
 		NewJSONGenerator(),
 		NewBindGenerator(),
-		// Add other generators here: NewValidateGenerator(), etc.
+		// Add other generators: NewValidateGenerator(), etc.
 	}
 
-	// 3. Get the initial PackageInfo for the target directory via the broker
-	//    This will perform the actual scan if not already cached for this path.
-	slog.InfoContext(ctx, "Starting code generation process", slog.String("targetDir", targetPackageDir))
+	slog.InfoContext(ctx, "Fetching package information via ScanBroker", slog.String("targetDir", targetPackageDir))
+	// Get the PackageInfo for the target directory.
+	// This performs the scan via the broker, utilizing its cache.
 	pkgInfo, err := broker.GetPackageByDir(ctx, targetPackageDir)
 	if err != nil {
-		log.Fatalf("Failed to get package info for %s: %v", targetPackageDir, err)
+		slog.ErrorContext(ctx, "Failed to get package info", slog.String("dir", targetPackageDir), slog.Any("error", err))
+		os.Exit(1)
 	}
+	slog.InfoContext(ctx, "Package information retrieved", slog.String("packageName", pkgInfo.Name), slog.String("importPath", pkgInfo.ImportPath))
 
-	// 4. Execute each generator with the obtained PackageInfo
-	//    All generators receive the *same* PackageInfo instance.
-	//    If a generator needs to resolve types from imported packages,
-	//    the FieldType.Resolve() method will use the broker's cached resolver,
-	//    ensuring those packages are also scanned only once.
+	// Execute each generator with the *same* PackageInfo.
 	for _, gen := range generators {
-		slog.InfoContext(ctx, "Running generator", slog.String("generator", gen.Name()), slog.String("package", pkgInfo.Name))
 		if err := gen.Generate(ctx, pkgInfo); err != nil {
-			log.Fatalf("Generator %s failed: %v", gen.Name(), err)
+			slog.ErrorContext(ctx, "Generator failed", slog.String("generator", gen.Name()), slog.Any("error", err))
+			// Decide if one generator failure should stop others. For now, continue.
+		} else {
+			slog.InfoContext(ctx, "Generator completed successfully", slog.String("generator", gen.Name()))
 		}
-		slog.InfoContext(ctx, "Generator finished successfully", slog.String("generator", gen.Name()))
 	}
 
-	slog.InfoContext(ctx, "All code generation tasks completed successfully.")
+	slog.InfoContext(ctx, "All code generation tasks processed.")
 }
-
-// NOTE: The ScanBroker, BrokerPackageResolver, scanner.PackageInfo, etc., would be imported
-// from their respective packages. The above `main` assumes they are available.
-// The key is that `broker.GetPackageByDir` does the heavy lifting of scanning ONCE,
-// and all generators use the resulting `pkgInfo`.
-// If `pkgInfo` contains fields whose types are from other packages, `field.Type.Resolve(ctx)`
-// will trigger the `BrokerPackageResolver`, which then calls `broker.getPackageByImportPath(ctx, importPath)`,
-// thus using the broker's caching mechanism for dependent packages as well.
 ```
 
-**`main` 関数の処理フロー:**
+**処理フローのポイント:**
 
-1.  **`ScanBroker` の初期化**: アプリケーション開始時に `ScanBroker` のインスタンスを一つ作成します。このブローカーが、以降のスキャン処理全体の状態（キャッシュなど）を管理します。
-2.  **ジェネレータの登録**: 実行したい全てのジェネレータ（`JSONGenerator`, `BindGenerator`など）のインスタンスを作成し、リストに登録します。各ジェネレータは `BaseGenerator` のような共通インターフェースを実装していると管理しやすいです。
-3.  **起点パッケージ情報の取得**: `broker.GetPackageByDir(ctx, targetPackageDir)` を呼び出し、コマンドライン引数などで指定された起点となるパッケージの `scanner.PackageInfo` を取得します。ブローカーは、このパッケージがキャッシュにあればそれを返し、なければ実際にスキャン処理（`scanner.New().ScanPackage()`）を実行して結果をキャッシュし、返します。
-4.  **各ジェネレータの実行**: 登録された各ジェネレータの `Generate` メソッドを呼び出し、ステップ3で取得した `PackageInfo` を渡します。
-    *   各ジェネレータは、渡された `PackageInfo` を元に、自身が関心のあるアノテーション（例: `@deriving:json`）やタグを持つ型をフィルタリングし、コード生成ロジックを実行します。
-    *   もしジェネレータが処理対象の型のフィールドを解析し、そのフィールドの型が別の（インポートされた）パッケージで定義されている場合、その型情報 (`FieldType`) の `Resolve(ctx)` メソッドを呼び出すことで詳細な定義 (`TypeInfo`) を取得できます。この `Resolve` メソッドは `ScanBroker` に提供された `PackageResolver` を利用するため、依存パッケージのスキャンもブローカーのキャッシュを経由して効率的に行われます。
+1.  **`ScanBroker` 初期化**: アプリケーション起動時に一度だけ `ScanBroker` を作成。
+2.  **ジェネレータ登録**: 実行したいジェネレータをリスト化。共通インターフェース (`BaseGenerator`) を持つと管理が容易。
+3.  **起点パッケージ情報取得**: `broker.GetPackageByDir()` で起点パッケージの `PackageInfo` を取得。スキャンは必要時のみ実行され、結果はキャッシュされる。
+4.  **各ジェネレータ実行**: 全ジェネレータが同じ `PackageInfo` インスタンスを利用。依存型解決もブローカー経由で効率的に行われる。
 
-## `go-scan` に求められる機能 (再掲と強調)
+## 6. `go-scan` への具体的なAPI改善提案
 
-この複数ジェネレータ・状態共有アプローチをスムーズに実現するためには、前ステップ「不足機能の洗い出し」で挙げた `go-scan` の機能強化が非常に重要になります。特に以下の機能は、ジェネレータの実装を大幅に簡略化し、堅牢性を高めます。
+この複数ジェネレータ・状態共有アプローチを効果的に実現するため、`go-scan` に以下の具体的なAPI改善を提案します。これらはジェネレータ開発の負担を軽減し、宣言的で堅牢なコード記述を可能にします。
 
-*   **アノテーション/コメントベースの高度なフィルタリング・抽出**: ジェネレータが `@deriving:xxx` のようなマーカーを簡単に識別・解析できるようにする。
-    *   例: `TypeInfo.GetAnnotations("deriving") map[string]string`
-*   **フィールドタグの高度な解析とクエリ**: `json:"name,omitempty"` のようなタグ情報を容易に扱えるようにする。
-    *   例: `FieldInfo.TagValue("json") string`
-*   **インターフェース実装者の効率的な検索**: `oneOf` のようなポリモーフィックな型を扱うジェネレータで必須。
-    *   例: `ScanBroker.FindImplementers(ctx, interfaceTypeInfo, scope)`
-*   **型解決の強化と詳細情報**: 型の完全修飾名、インポートパス、型の種類（ポインタ、スライス等）の正確な取得。
-    *   例: `FieldType.QualifiedName() string`, `TypeInfo.ImportPath() string`
-*   **生成コードのインポート管理の支援**: ジェネレータが生成するコードに必要なインポート文を自動的に収集・構築できるようにする。
-    *   例: `PackageInfo.GetRequiredImports(types []*TypeInfo) map[string]string`
+### 6.1. アノテーション処理の強化
 
-これらの機能が `go-scan` 本体、あるいは `ScanBroker` のような上位レイヤーで提供されることで、各ジェネレータはボイラープレートコードの記述から解放され、本質的なコード生成ロジックに集中できます。
+*   **`TypeInfo.GetAnnotations(prefix string) (map[string]string, error)`**: Docコメントから指定プレフィックスのアノテーションをキー・バリュー形式で抽出。
+    *   例: `ann, _ := typeInfo.GetAnnotations("@deriving:")` で `{"json": "", "bindable": "path:/foo"}` を取得。
+*   **`FieldInfo.GetAnnotations(prefix string) (map[string]string, error)`**: フィールドDocコメント用。
+*   **`PackageInfo.FilterTypesByAnnotation(predicate func(typeName string, annotations map[string]string) bool, annotationPrefix string) []*TypeInfo`**: アノテーションに基づく型フィルタリング。
 
-## まとめ
+### 6.2. フィールドタグ解析の強化 (`FieldInfo` メソッド)
 
-`ScanBroker` のような状態共有メカニズムを導入し、各ジェネレータがそれを介して型情報を取得するように設計することで、複数のコード生成処理を効率的かつ独立して実行できます。これにより、`go-scan` を基盤とした高度なコード生成フレームワークの構築が促進され、Haskell の `deriving` のような開発体験に近づけることができるでしょう。`go-scan` 自身の機能強化は、このエコシステムをさらに発展させる上で鍵となります。
+*   **`TagValue(key string) (string, bool)`**: タグキーの主要値を取得 (例: `json:"name,omitempty"` -> `"name"`).
+*   **`TagOptions(key string) ([]string, bool)`**: タグキーのオプション部分を取得 (例: `json:"name,omitempty"` -> `["omitempty"]`).
+*   **`TagSubFields(key string) (map[string]string, bool)`**: 複合タグ値 (例: `validate:"required;len:5-50"`) をパース。
+
+### 6.3. 型解決と型情報アクセスの強化
+
+*   **`FieldType.QualifiedName() string`**: パッケージエイリアスを考慮した完全修飾型名 (例: `pkgalias.MyType`).
+*   **`FieldType.SimpleKind() TypeKind`**: 型の基本種別 (enum: `Primitive`, `NamedStruct`, `Pointer`, etc.).
+*   **`TypeInfo.CanonicalImportPath() string`**: 型定義パッケージの正規インポートパス。
+*   **`FieldType.IsStruct() bool`, `IsInterface() bool`, etc.**: 型カテゴリ判定ヘルパー。
+
+### 6.4. インポート管理の支援
+
+*   **`ImportTracker` (ユーティリティ型)**
+    *   `NewImportTracker(currentPackageImportPath string) *ImportTracker`
+    *   `AddType(ft *scanner.FieldType)`: `FieldType` から必要なインポートを自動記録。
+    *   `AddImport(importPath string, alias string)`: 手動追加。
+    *   `RequiredImports() map[string]string`: 収集結果 (`path -> alias`)。
+    *   `RenderBlock() string`: `import (...)` ブロック文字列を生成。
+
+### 6.5. `ScanBroker` / `Scanner` による高度な検索
+
+*   **`ScanBroker.FindImplementers(ctx, interfaceTypeInfo, searchScope) ([]*TypeInfo, error)`**: インターフェース実装型を広範囲に検索。
+*   **`ScanBroker.FindTypesWithAnnotation(ctx, annotationPrefix, predicate, searchScope) ([]*TypeInfo, error)`**: アノテーション条件で型を広範囲に検索。
+
+これらの改善により、ジェネレータは型情報の詳細な解析や管理といった共通タスクから解放され、本質的なコード生成ロジックに注力できます。
+
+## 7. まとめと今後の展望
+
+`ScanBroker` のような状態共有メカニズムと、提案されたAPI群による `go-scan` の機能強化は、Go言語におけるコードジェネレーションの新たな可能性を拓きます。複数のジェネレータが効率的かつ協調的に動作する環境は、Haskellの `deriving` のような強力で宣言的なコード生成体験に近づくための一歩となるでしょう。
+
+今後の展望としては、`ScanBroker` のパス解決ロジックの堅牢化（`go/packages` との連携など）、非同期ジェネレータ実行のサポート、より高度な型システムクエリ言語の導入などが考えられます。これらの進化を通じて、`go-scan` がGoエコシステムにおける型駆動開発のさらに強力な基盤となることを期待します。

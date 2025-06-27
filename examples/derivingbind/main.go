@@ -89,8 +89,8 @@ type FieldBindingInfo struct {
 	// IsFloat                 bool   // True if the field is a float type - Will be removed // Removed
 	// IsSigned                bool   // True if the field is a signed integer type - Will be removed // Removed
 	// IsComplex               bool   // True if the field is a complex type - Will be removed // Removed
-	ParserFunc              string // e.g. "parser.Int", "parser.String"
-	IsSliceElementPointer   bool   // True if the slice element is a pointer, e.g. []*int
+	ParserFunc            string // e.g. "parser.Int", "parser.String"
+	IsSliceElementPointer bool   // True if the slice element is a pointer, e.g. []*int
 }
 
 // isGo122orLater checks the go.mod file for the Go version.
@@ -255,7 +255,7 @@ func Generate(ctx context.Context, pkgPath string) error {
 			if currentScannerType.IsSlice {
 				fInfo.IsSlice = true
 				if currentScannerType.Elem != nil {
-					fInfo.SliceElementType = currentScannerType.Elem.String() // e.g., "int", "*string", "pkg.MyType", "*pkg.MyType"
+					fInfo.SliceElementType = currentScannerType.Elem.String()       // e.g., "int", "*string", "pkg.MyType", "*pkg.MyType"
 					fInfo.IsSliceElementPointer = currentScannerType.Elem.IsPointer // Check if the element itself is a pointer
 
 					// Determine the baseTypeForConversion from the slice element
@@ -339,8 +339,8 @@ func Generate(ctx context.Context, pkgPath string) error {
 			if bindFrom != "body" {
 				allFileImports["github.com/podhmo/go-scan/examples/derivingbind/binding"] = ""
 				allFileImports["github.com/podhmo/go-scan/examples/derivingbind/parser"] = ""
-				needsImportNetHTTP = true // For req *http.Request in Bind method signature
-				needsImportErrors = true  // For errors.Join
+				needsImportNetHTTP = true   // For req *http.Request in Bind method signature
+				needsImportErrors = true    // For errors.Join
 				if fInfo.ParserFunc == "" { // Should not happen if logic above is correct for non-body
 					fmt.Printf("      Skipping field %s: No parser function assigned for non-body binding.\n", field.Name)
 					continue

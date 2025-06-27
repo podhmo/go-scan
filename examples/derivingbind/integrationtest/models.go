@@ -242,6 +242,7 @@ type TestBindPtrBoolPathOptional struct {
 type TestBindPtrBoolPathRequired struct {
 	Value *bool `in:"path" path:"value" required:"true"`
 }
+
 // TODO: Add other numeric types (int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, uintptr, float32, float64, complex64, complex128)
 // For brevity, I will add a few representative examples for other types.
 // The full list would be very long.

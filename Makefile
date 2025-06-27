@@ -5,4 +5,5 @@ format:
 test:
 	go test ./...
 	( cd examples/derivingjson && go test ./... )
+	( cd examples/derivingbind && go test ./... )
 .PHONY: test

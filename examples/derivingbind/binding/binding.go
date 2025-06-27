@@ -225,7 +225,6 @@ func Slice[T any](b *Binding, dest *[]T, source Source, key string, parse Parser
 		return fmt.Errorf("binding: %s key '%s' is required, but no values found or all values were empty after split", source, key)
 	}
 
-
 	*dest = slice
 	return nil
 }

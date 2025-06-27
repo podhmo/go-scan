@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"embed"
 	"fmt"
 	"go/format"
 	"log/slog"
@@ -15,6 +16,9 @@ import (
 	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/scanner"
 )
+
+//go:embed unmarshal.tmpl
+var templateFile embed.FS
 
 func main() {
 	ctx := context.Background() // Or your application's context
@@ -79,58 +83,6 @@ type OneOfTypeMapping struct {
 	JSONValue string // The value in the discriminator field (e.g., "circle", "user_created")
 	GoType    string // The concrete Go type (e.g., "*shapes.Circle", "*events.UserCreatedEvent")
 }
-
-const unmarshalJSONTemplate = `
-func (s *{{.StructName}}) UnmarshalJSON(data []byte) error {
-	// Define an alias type to prevent infinite recursion with UnmarshalJSON.
-	type Alias {{.StructName}}
-	aux := &struct {
-		{{range .OneOfFields}}
-		{{.FieldName}} json.RawMessage ` + "`json:\"{{.JSONTag}}\"`" + `
-		{{end}}
-		// All other fields will be handled by the standard unmarshaler via the Alias.
-		*Alias
-	}{
-		Alias: (*Alias)(s),
-	}
-
-	if err := json.Unmarshal(data, &aux); err != nil {
-		return fmt.Errorf("failed to unmarshal into aux struct for {{.StructName}}: %w", err)
-	}
-
-	{{range $oneOfField := .OneOfFields}}
-	// Process {{$oneOfField.FieldName}}
-	if aux.{{$oneOfField.FieldName}} != nil && string(aux.{{$oneOfField.FieldName}}) != "null" {
-		var discriminatorDoc struct {
-			Type string ` + "`json:\"{{$.DiscriminatorFieldJSONName}}\"`" + ` // Discriminator field
-		}
-		if err := json.Unmarshal(aux.{{$oneOfField.FieldName}}, &discriminatorDoc); err != nil {
-			return fmt.Errorf("could not detect type from field '{{$oneOfField.JSONTag}}' (content: %s): %w", string(aux.{{$oneOfField.FieldName}}), err)
-		}
-
-		switch discriminatorDoc.Type {
-		{{range .Implementers}}
-		case "{{.JSONValue}}":
-			var content {{.GoType}}
-			if err := json.Unmarshal(aux.{{$oneOfField.FieldName}}, &content); err != nil {
-				return fmt.Errorf("failed to unmarshal '{{$oneOfField.JSONTag}}' as {{.GoType}} for type '{{.JSONValue}}' (content: %s): %w", string(aux.{{$oneOfField.FieldName}}), err)
-			}
-			s.{{$oneOfField.FieldName}} = content
-		{{end}}
-		default:
-			if discriminatorDoc.Type == "" {
-				return fmt.Errorf("discriminator field '{{$.DiscriminatorFieldJSONName}}' missing or empty in '{{$oneOfField.JSONTag}}' (content: %s)", string(aux.{{$oneOfField.FieldName}}))
-			}
-			return fmt.Errorf("unknown data type '%s' for field '{{$oneOfField.JSONTag}}' (content: %s)", discriminatorDoc.Type, string(aux.{{$oneOfField.FieldName}}))
-		}
-	} else {
-		s.{{$oneOfField.FieldName}} = nil // Explicitly set to nil if null or empty
-	}
-	{{end}}
-
-	return nil
-}
-`
 
 func findTypeInPackage(pkgInfo *scanner.PackageInfo, typeName string) *scanner.TypeInfo {
 	for _, t := range pkgInfo.Types {
@@ -408,7 +360,7 @@ func Generate(ctx context.Context, pkgPath string) error {
 		// var interfaceActualImportPath string
 		// ... (old logic for single oneOfInterfaceDef) ...
 
-		tmpl, err := template.New("unmarshal").Parse(unmarshalJSONTemplate)
+		tmpl, err := template.ParseFS(templateFile, "unmarshal.tmpl")
 		if err != nil {
 			return fmt.Errorf("failed to parse template: %w", err)
 		}

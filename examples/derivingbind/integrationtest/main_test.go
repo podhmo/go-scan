@@ -155,7 +155,7 @@ func TestFuncBindBoolCookieOptional(t *testing.T) {
 		{"false value", ptr("false"), false, false, ""},
 		{"1 value", ptr("1"), true, false, ""},
 		{"0 value", ptr("0"), false, false, ""},
-		{"t value", ptr("t"), true, false, ""}, // strconv.ParseBool standard
+		{"t value", ptr("t"), true, false, ""},  // strconv.ParseBool standard
 		{"f value", ptr("f"), false, false, ""}, // strconv.ParseBool standard
 		{"TRUE value", ptr("TRUE"), true, false, ""},
 		{"FALSE value", ptr("FALSE"), false, false, ""},
@@ -227,7 +227,6 @@ func TestFuncBindPtrBoolCookieRequired(t *testing.T) {
 		})
 	}
 }
-
 
 func TestFuncBindMixedFields(t *testing.T) {
 	type testCase struct {

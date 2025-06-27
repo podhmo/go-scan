@@ -708,13 +708,13 @@ func TestBindTestExtendedTypesBind(t *testing.T) {
 	ptrToString := func(s string) *string { return &s }
 
 	tests := []struct {
-		name        string
-		request     *http.Request
-		pathVars    map[string]string
+		name           string
+		request        *http.Request
+		pathVars       map[string]string
 		requestCookies []*http.Cookie // Added field for cookies
-		expected    TestExtendedTypesBind
-		wantErr     bool
-		errContains []string // Substrings to check for in the error message
+		expected       TestExtendedTypesBind
+		wantErr        bool
+		errContains    []string // Substrings to check for in the error message
 	}{
 		{
 			name: "all values present and correct",
@@ -797,9 +797,9 @@ func TestBindTestExtendedTypesBind(t *testing.T) {
 			request: &http.Request{
 				URL: parseURL(t, "/?reqQStrSlice=val"), Header: http.Header{"X-Reqint": []string{"99"}},
 			},
-		requestCookies: []*http.Cookie{{Name: "ckFloat64", Value: "not-a-float"}},
-			wantErr:     true,
-			errContains: []string{"binding: failed to parse cookie key 'ckFloat64' with value \"not-a-float\""},
+			requestCookies: []*http.Cookie{{Name: "ckFloat64", Value: "not-a-float"}},
+			wantErr:        true,
+			errContains:    []string{"binding: failed to parse cookie key 'ckFloat64' with value \"not-a-float\""},
 		},
 		{
 			name: "path parameter slice (current behavior test - likely takes as single string or not at all)",
@@ -811,7 +811,7 @@ func TestBindTestExtendedTypesBind(t *testing.T) {
 				QueryInt8: 1, RequiredHeaderInt: 1, RequiredQueryStringSlice: []string{"ok"},
 				PathStringSlice: []string{"elem1,elem2"},
 			},
-			wantErr: true, // Due to missing qStrEmptyReq and qIntEmptyReq
+			wantErr:     true, // Due to missing qStrEmptyReq and qIntEmptyReq
 			errContains: []string{"binding: query key 'qStrEmptyReq' is required", "binding: query key 'qIntEmptyReq' is required"},
 		},
 		// Add more tests for:
@@ -1024,13 +1024,13 @@ func TestBindExtendedTypes(t *testing.T) {
 	}
 
 	tests := []struct {
-		name        string
-		request     *http.Request
-		pathVars    map[string]string
+		name           string
+		request        *http.Request
+		pathVars       map[string]string
 		requestCookies []*http.Cookie // Added
-		expected    TestExtendedTypesBind
-		wantErr     bool
-		errContains []string // Substrings to check for in the error message
+		expected       TestExtendedTypesBind
+		wantErr        bool
+		errContains    []string // Substrings to check for in the error message
 	}{
 		{
 			name: "all values present and correct",
@@ -1223,13 +1223,13 @@ func TestBindExtendedTypes(t *testing.T) {
 
 func TestBindNewTypes(t *testing.T) {
 	tests := []struct {
-		name        string
-		request     *http.Request
-		pathVars    map[string]string
+		name           string
+		request        *http.Request
+		pathVars       map[string]string
 		requestCookies []*http.Cookie // Added field for cookies
-		expected    TestNewTypesBind
-		wantErr     bool
-		errContains []string
+		expected       TestNewTypesBind
+		wantErr        bool
+		errContains    []string
 	}{
 		{
 			name: "all new types present and correct",
@@ -1326,8 +1326,8 @@ func TestBindNewTypes(t *testing.T) {
 			},
 			// Add a cookie with an invalid complex128 slice
 			requestCookies: []*http.Cookie{{Name: "cComplex128-Slice", Value: "1+1i,bad-complex,2+2i"}},
-			wantErr: true,
-			errContains: []string{"binding: failed to parse item #1 from value \"bad-complex\" for cookie key 'cComplex128-Slice': strconv.ParseComplex: parsing \"bad-complex\": invalid syntax"},
+			wantErr:        true,
+			errContains:    []string{"binding: failed to parse item #1 from value \"bad-complex\" for cookie key 'cComplex128-Slice': strconv.ParseComplex: parsing \"bad-complex\": invalid syntax"},
 		},
 		// TODO: Add tests for pointer slices of new types with missing/empty values
 		// TODO: Add tests for empty strings for complex types (should error)

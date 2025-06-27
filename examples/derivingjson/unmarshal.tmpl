@@ -1,32 +1,9 @@
-// TemplateData:
-//   PackageName                string
-//   StructName                 string
-//   OtherFields                []FieldInfo
-//   OneOfFields                []OneOfFieldDetail
-//   Imports                    map[string]string
-//   DiscriminatorFieldJSONName string
-//
-// FieldInfo:
-//   Name    string
-//   Type    string
-//   JSONTag string
-//
-// OneOfFieldDetail:
-//   FieldName    string
-//   FieldType    string
-//   JSONTag      string
-//   Implementers []OneOfTypeMapping
-//
-// OneOfTypeMapping:
-//   JSONValue string
-//   GoType    string
-
 func (s *{{.StructName}}) UnmarshalJSON(data []byte) error {
 	// Define an alias type to prevent infinite recursion with UnmarshalJSON.
 	type Alias {{.StructName}}
 	aux := &struct {
 		{{range .OneOfFields}}
-		{{.FieldName}} json.RawMessage ` + "`json:\"{{.JSONTag}}\"`" + `
+		{{.FieldName}} json.RawMessage {{printf "%sjson:\"%s\"%s" "`" .JSONTag "`"}}
 		{{end}}
 		// All other fields will be handled by the standard unmarshaler via the Alias.
 		*Alias
@@ -42,7 +19,7 @@ func (s *{{.StructName}}) UnmarshalJSON(data []byte) error {
 	// Process {{$oneOfField.FieldName}}
 	if aux.{{$oneOfField.FieldName}} != nil && string(aux.{{$oneOfField.FieldName}}) != "null" {
 		var discriminatorDoc struct {
-			Type string ` + "`json:\"{{$.DiscriminatorFieldJSONName}}\"`" + ` // Discriminator field
+			Type string {{printf "%sjson:\"%s\"%s" "`" $.DiscriminatorFieldJSONName "`"}} // Discriminator field
 		}
 		if err := json.Unmarshal(aux.{{$oneOfField.FieldName}}, &discriminatorDoc); err != nil {
 			return fmt.Errorf("could not detect type from field '{{$oneOfField.JSONTag}}' (content: %s): %w", string(aux.{{$oneOfField.FieldName}}), err)

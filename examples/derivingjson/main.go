@@ -23,35 +23,74 @@ var templateFile embed.FS
 func main() {
 	ctx := context.Background() // Or your application's context
 	if len(os.Args) <= 1 {
-		slog.ErrorContext(ctx, "Usage: derivingjson <package_path>")
-		slog.ErrorContext(ctx, "Example: derivingjson examples/derivingjson/testdata/simple") // Adjusted example path
+		slog.ErrorContext(ctx, "Usage: derivingjson <file_path_1> [file_path_2 ...]")
+		slog.ErrorContext(ctx, "Example: derivingjson examples/derivingjson/testdata/simple/models.go examples/derivingjson/testdata/separated/models/models.go")
 		os.Exit(1)
 	}
 
-	pkgPath := os.Args[1] // Restore command line argument
-	// Ensure the package path exists and is a directory
-	stat, err := os.Stat(pkgPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			slog.ErrorContext(ctx, "Package path does not exist", slog.String("package_path", pkgPath))
-		} else {
-			slog.ErrorContext(ctx, "Error accessing package path", slog.String("package_path", pkgPath), slog.Any("error", err))
+	targetFiles := os.Args[1:]
+	processedDirs := make(map[string]bool)
+	var successCount int
+	var errorCount int
+
+	for _, filePath := range targetFiles {
+		// Ensure the file path exists and is a file
+		stat, err := os.Stat(filePath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				slog.ErrorContext(ctx, "File path does not exist", slog.String("file_path", filePath))
+			} else {
+				slog.ErrorContext(ctx, "Error accessing file path", slog.String("file_path", filePath), slog.Any("error", err))
+			}
+			errorCount++
+			continue
 		}
-		os.Exit(1)
+		if stat.IsDir() {
+			slog.ErrorContext(ctx, "File path is a directory, please provide individual .go files", slog.String("file_path", filePath))
+			errorCount++
+			continue
+		}
+		if !strings.HasSuffix(filePath, ".go") {
+			slog.ErrorContext(ctx, "File path is not a .go file", slog.String("file_path", filePath))
+			errorCount++
+			continue
+		}
+
+		pkgPath := filepath.Dir(filePath)
+		if _, processed := processedDirs[pkgPath]; processed {
+			slog.InfoContext(ctx, "Package already processed, skipping generation for this file's package", slog.String("package_path", pkgPath), slog.String("file_path", filePath))
+			continue
+		}
+
+		// Ensure the derived package path (directory) exists
+		dirStat, err := os.Stat(pkgPath)
+		if err != nil {
+			slog.ErrorContext(ctx, "Error accessing package directory", slog.String("package_path", pkgPath), slog.String("derived_from_file", filePath), slog.Any("error", err))
+			errorCount++
+			continue
+		}
+		if !dirStat.IsDir() {
+			// This case should ideally not be reached if filePath was a valid file.
+			slog.ErrorContext(ctx, "Derived package path is not a directory", slog.String("package_path", pkgPath), slog.String("derived_from_file", filePath))
+			errorCount++
+			continue
+		}
+
+		slog.InfoContext(ctx, "Generating UnmarshalJSON for package", slog.String("package_path", pkgPath), slog.String("triggered_by_file", filePath))
+		if err := Generate(ctx, pkgPath); err != nil {
+			slog.ErrorContext(ctx, "Error generating code for package", slog.String("package_path", pkgPath), slog.Any("error", err))
+			errorCount++
+		} else {
+			slog.InfoContext(ctx, "Successfully generated UnmarshalJSON methods for package", slog.String("package_path", pkgPath))
+			successCount++
+		}
+		processedDirs[pkgPath] = true
 	}
 
-	if !stat.IsDir() {
-		slog.ErrorContext(ctx, "Package path is not a directory", slog.String("package_path", pkgPath))
+	slog.InfoContext(ctx, "Generation summary", slog.Int("successful_packages", successCount), slog.Int("failed_packages/files", errorCount))
+	if errorCount > 0 {
 		os.Exit(1)
 	}
-
-	slog.InfoContext(ctx, "Generating UnmarshalJSON for package", slog.String("package_path", pkgPath))
-	if err := Generate(ctx, pkgPath); err != nil { // Generate is in the same package
-		slog.ErrorContext(ctx, "Error generating code", slog.Any("error", err))
-		os.Exit(1)
-	}
-
-	slog.InfoContext(ctx, "Successfully generated UnmarshalJSON methods for package", slog.String("package_path", pkgPath))
 }
 
 const unmarshalAnnotation = "@deriving:unmarshall"

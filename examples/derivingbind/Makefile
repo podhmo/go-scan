@@ -9,6 +9,8 @@ generate-simple:
 
 test: generate-simple
 	go test ./...
+	@echo "Testing testdata/simple..."
+	@(cd testdata/simple && go test .)
 
 clean:
 	@echo "Cleaning generated files..."

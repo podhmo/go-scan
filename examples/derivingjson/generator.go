@@ -106,11 +106,8 @@ func findTypeInPackage(pkgInfo *scanner.PackageInfo, typeName string) *scanner.T
 	return nil
 }
 
-// Generate generates deriving code for the given package path.
-// outputDir specifies a directory where the generated file should be placed.
-// If outputDir is empty, the file is placed within pkgPath.
-func Generate(ctx context.Context, pkgPath string, outputDir string) error {
-	fmt.Printf("Attempting to generate for package path: %s, output target dir: %s\n", pkgPath, outputDir)
+func Generate(ctx context.Context, pkgPath string) error {
+	fmt.Printf("Attempting to generate for package path: %s\n", pkgPath)
 	gscn, err := goscan.New(".")
 	if err != nil {
 		return fmt.Errorf("failed to create go-scan scanner: %w", err)
@@ -444,14 +441,6 @@ func Generate(ctx context.Context, pkgPath string, outputDir string) error {
 	}
 
 	actualOutputDir := pkgPath
-	if outputDir != "" {
-		actualOutputDir = outputDir
-		// Ensure the output directory exists
-		if err := os.MkdirAll(actualOutputDir, 0755); err != nil {
-			return fmt.Errorf("failed to create output directory %s: %w", actualOutputDir, err)
-		}
-	}
-
 	outputFileName := filepath.Join(actualOutputDir, fmt.Sprintf("%s_deriving.go", pkgInfo.Name))
 	// It's generally safer to remove the old file before writing, especially if package name changes or structure.
 	// However, with MkdirAll, the directory is ensured.

@@ -1,4 +1,4 @@
-package models
+package integrationtest
 
 import (
 	"encoding/json"

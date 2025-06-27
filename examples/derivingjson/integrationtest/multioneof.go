@@ -1,4 +1,4 @@
-package models
+package integrationtest
 
 // --- Interfaces for multi oneOf test ---
 

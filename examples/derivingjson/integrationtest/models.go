@@ -1,5 +1,5 @@
 // Package models defines the data structures for API responses.
-package models
+package integrationtest
 
 // DataInterface is implemented by types that can be in APIResponse.Data.
 // This helps the generator identify the "oneOf" field and its possible concrete types.

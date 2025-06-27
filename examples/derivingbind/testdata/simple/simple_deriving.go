@@ -79,19 +79,14 @@ func (s *ComprehensiveBind) Bind(req *http.Request, pathVar func(string) string)
 		// If struct is implicitly the body target, determine if it's required.
 		// This might need a struct-level "required" annotation for the body.
 		// For now, if NeedsBody is true and no specific field, we might assume optional unless specified.
-		// Let's assume for now if NeedsBody is true and no specific field, it's only an error if a sub-field IS required,
-		// but that would be a JSON validation concern, not a "missing body" concern.
-		// So, let's make it an error only if a *specific* body field was required.
+		// Let's make it an error only if a *specific* body field was required.
 
 		if isStructOrFieldBodyRequired {
 			errs = append(errs, errors.New("binding: request body is required but was not provided or was empty"))
 		}
 	}
 
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (s *SpecificBodyFieldBind) Bind(req *http.Request, pathVar func(string) string) error {
@@ -146,10 +141,7 @@ func (s *SpecificBodyFieldBind) Bind(req *http.Request, pathVar func(string) str
 		}
 	}
 
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (s *FullBodyBind) Bind(req *http.Request, pathVar func(string) string) error {
@@ -184,19 +176,14 @@ func (s *FullBodyBind) Bind(req *http.Request, pathVar func(string) string) erro
 		// If struct is implicitly the body target, determine if it's required.
 		// This might need a struct-level "required" annotation for the body.
 		// For now, if NeedsBody is true and no specific field, we might assume optional unless specified.
-		// Let's assume for now if NeedsBody is true and no specific field, it's only an error if a sub-field IS required,
-		// but that would be a JSON validation concern, not a "missing body" concern.
-		// So, let's make it an error only if a *specific* body field was required.
+		// Let's make it an error only if a *specific* body field was required.
 
 		if isStructOrFieldBodyRequired {
 			errs = append(errs, errors.New("binding: request body is required but was not provided or was empty"))
 		}
 	}
 
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (s *QueryAndPathOnlyBind) Bind(req *http.Request, pathVar func(string) string) error {
@@ -224,10 +211,7 @@ func (s *QueryAndPathOnlyBind) Bind(req *http.Request, pathVar func(string) stri
 		errs = append(errs, err)
 	}
 
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (s *TestPointerFields) Bind(req *http.Request, pathVar func(string) string) error {
@@ -318,10 +302,7 @@ func (s *TestPointerFields) Bind(req *http.Request, pathVar func(string) string)
 		errs = append(errs, err)
 	}
 
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (s *TestRequiredNonPointerFields) Bind(req *http.Request, pathVar func(string) string) error {
@@ -363,10 +344,7 @@ func (s *TestRequiredNonPointerFields) Bind(req *http.Request, pathVar func(stri
 		errs = append(errs, err)
 	}
 
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (s *TestExtendedTypesBind) Bind(req *http.Request, pathVar func(string) string) error {
@@ -646,10 +624,7 @@ func (s *TestExtendedTypesBind) Bind(req *http.Request, pathVar func(string) str
 		errs = append(errs, err)
 	}
 
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (s *TestNewTypesBind) Bind(req *http.Request, pathVar func(string) string) error {
@@ -810,8 +785,5 @@ func (s *TestNewTypesBind) Bind(req *http.Request, pathVar func(string) string) 
 		errs = append(errs, err)
 	}
 
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
+	return errors.Join(errs...)
 }

@@ -20,10 +20,7 @@ func (s *TestBindStringQueryOptional) Bind(req *http.Request, pathVar func(strin
 		errs = append(errs, err)
 	}
 
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (s *TestBindStringQueryRequired) Bind(req *http.Request, pathVar func(string) string) error {
@@ -37,10 +34,7 @@ func (s *TestBindStringQueryRequired) Bind(req *http.Request, pathVar func(strin
 		errs = append(errs, err)
 	}
 
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (s *TestBindPtrStringQueryOptional) Bind(req *http.Request, pathVar func(string) string) error {
@@ -54,10 +48,7 @@ func (s *TestBindPtrStringQueryOptional) Bind(req *http.Request, pathVar func(st
 		errs = append(errs, err)
 	}
 
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (s *TestBindPtrStringQueryRequired) Bind(req *http.Request, pathVar func(string) string) error {
@@ -71,10 +62,7 @@ func (s *TestBindPtrStringQueryRequired) Bind(req *http.Request, pathVar func(st
 		errs = append(errs, err)
 	}
 
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (s *TestBindStringHeaderOptional) Bind(req *http.Request, pathVar func(string) string) error {
@@ -88,10 +76,7 @@ func (s *TestBindStringHeaderOptional) Bind(req *http.Request, pathVar func(stri
 		errs = append(errs, err)
 	}
 
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (s *TestBindStringHeaderRequired) Bind(req *http.Request, pathVar func(string) string) error {
@@ -105,10 +90,7 @@ func (s *TestBindStringHeaderRequired) Bind(req *http.Request, pathVar func(stri
 		errs = append(errs, err)
 	}
 
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (s *TestBindPtrStringHeaderOptional) Bind(req *http.Request, pathVar func(string) string) error {
@@ -122,10 +104,7 @@ func (s *TestBindPtrStringHeaderOptional) Bind(req *http.Request, pathVar func(s
 		errs = append(errs, err)
 	}
 
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (s *TestBindPtrStringHeaderRequired) Bind(req *http.Request, pathVar func(string) string) error {
@@ -139,10 +118,7 @@ func (s *TestBindPtrStringHeaderRequired) Bind(req *http.Request, pathVar func(s
 		errs = append(errs, err)
 	}
 
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (s *TestBindStringCookieOptional) Bind(req *http.Request, pathVar func(string) string) error {
@@ -156,10 +132,7 @@ func (s *TestBindStringCookieOptional) Bind(req *http.Request, pathVar func(stri
 		errs = append(errs, err)
 	}
 
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (s *TestBindStringCookieRequired) Bind(req *http.Request, pathVar func(string) string) error {
@@ -173,10 +146,7 @@ func (s *TestBindStringCookieRequired) Bind(req *http.Request, pathVar func(stri
 		errs = append(errs, err)
 	}
 
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (s *TestBindPtrStringCookieOptional) Bind(req *http.Request, pathVar func(string) string) error {
@@ -190,10 +160,7 @@ func (s *TestBindPtrStringCookieOptional) Bind(req *http.Request, pathVar func(s
 		errs = append(errs, err)
 	}
 
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (s *TestBindPtrStringCookieRequired) Bind(req *http.Request, pathVar func(string) string) error {
@@ -207,10 +174,7 @@ func (s *TestBindPtrStringCookieRequired) Bind(req *http.Request, pathVar func(s
 		errs = append(errs, err)
 	}
 
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (s *TestBindStringPathOptional) Bind(req *http.Request, pathVar func(string) string) error {
@@ -224,10 +188,7 @@ func (s *TestBindStringPathOptional) Bind(req *http.Request, pathVar func(string
 		errs = append(errs, err)
 	}
 
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (s *TestBindStringPathRequired) Bind(req *http.Request, pathVar func(string) string) error {
@@ -241,10 +202,7 @@ func (s *TestBindStringPathRequired) Bind(req *http.Request, pathVar func(string
 		errs = append(errs, err)
 	}
 
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (s *TestBindPtrStringPathOptional) Bind(req *http.Request, pathVar func(string) string) error {
@@ -258,10 +216,7 @@ func (s *TestBindPtrStringPathOptional) Bind(req *http.Request, pathVar func(str
 		errs = append(errs, err)
 	}
 
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (s *TestBindPtrStringPathRequired) Bind(req *http.Request, pathVar func(string) string) error {
@@ -275,10 +230,7 @@ func (s *TestBindPtrStringPathRequired) Bind(req *http.Request, pathVar func(str
 		errs = append(errs, err)
 	}
 
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (s *TestBindIntQueryOptional) Bind(req *http.Request, pathVar func(string) string) error {
@@ -292,10 +244,7 @@ func (s *TestBindIntQueryOptional) Bind(req *http.Request, pathVar func(string) 
 		errs = append(errs, err)
 	}
 
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (s *TestBindIntQueryRequired) Bind(req *http.Request, pathVar func(string) string) error {
@@ -309,10 +258,7 @@ func (s *TestBindIntQueryRequired) Bind(req *http.Request, pathVar func(string) 
 		errs = append(errs, err)
 	}
 
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (s *TestBindPtrIntQueryOptional) Bind(req *http.Request, pathVar func(string) string) error {
@@ -326,10 +272,7 @@ func (s *TestBindPtrIntQueryOptional) Bind(req *http.Request, pathVar func(strin
 		errs = append(errs, err)
 	}
 
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (s *TestBindPtrIntQueryRequired) Bind(req *http.Request, pathVar func(string) string) error {
@@ -343,10 +286,7 @@ func (s *TestBindPtrIntQueryRequired) Bind(req *http.Request, pathVar func(strin
 		errs = append(errs, err)
 	}
 
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (s *TestBindIntHeaderOptional) Bind(req *http.Request, pathVar func(string) string) error {
@@ -360,10 +300,7 @@ func (s *TestBindIntHeaderOptional) Bind(req *http.Request, pathVar func(string)
 		errs = append(errs, err)
 	}
 
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (s *TestBindIntHeaderRequired) Bind(req *http.Request, pathVar func(string) string) error {
@@ -377,10 +314,7 @@ func (s *TestBindIntHeaderRequired) Bind(req *http.Request, pathVar func(string)
 		errs = append(errs, err)
 	}
 
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (s *TestBindPtrIntHeaderOptional) Bind(req *http.Request, pathVar func(string) string) error {
@@ -394,10 +328,7 @@ func (s *TestBindPtrIntHeaderOptional) Bind(req *http.Request, pathVar func(stri
 		errs = append(errs, err)
 	}
 
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (s *TestBindPtrIntHeaderRequired) Bind(req *http.Request, pathVar func(string) string) error {
@@ -411,10 +342,7 @@ func (s *TestBindPtrIntHeaderRequired) Bind(req *http.Request, pathVar func(stri
 		errs = append(errs, err)
 	}
 
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (s *TestBindIntCookieOptional) Bind(req *http.Request, pathVar func(string) string) error {
@@ -428,10 +356,7 @@ func (s *TestBindIntCookieOptional) Bind(req *http.Request, pathVar func(string)
 		errs = append(errs, err)
 	}
 
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (s *TestBindIntCookieRequired) Bind(req *http.Request, pathVar func(string) string) error {
@@ -445,10 +370,7 @@ func (s *TestBindIntCookieRequired) Bind(req *http.Request, pathVar func(string)
 		errs = append(errs, err)
 	}
 
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (s *TestBindPtrIntCookieOptional) Bind(req *http.Request, pathVar func(string) string) error {
@@ -462,10 +384,7 @@ func (s *TestBindPtrIntCookieOptional) Bind(req *http.Request, pathVar func(stri
 		errs = append(errs, err)
 	}
 
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (s *TestBindPtrIntCookieRequired) Bind(req *http.Request, pathVar func(string) string) error {
@@ -479,10 +398,7 @@ func (s *TestBindPtrIntCookieRequired) Bind(req *http.Request, pathVar func(stri
 		errs = append(errs, err)
 	}
 
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (s *TestBindIntPathOptional) Bind(req *http.Request, pathVar func(string) string) error {
@@ -496,10 +412,7 @@ func (s *TestBindIntPathOptional) Bind(req *http.Request, pathVar func(string) s
 		errs = append(errs, err)
 	}
 
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (s *TestBindIntPathRequired) Bind(req *http.Request, pathVar func(string) string) error {
@@ -513,10 +426,7 @@ func (s *TestBindIntPathRequired) Bind(req *http.Request, pathVar func(string) s
 		errs = append(errs, err)
 	}
 
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (s *TestBindPtrIntPathOptional) Bind(req *http.Request, pathVar func(string) string) error {
@@ -530,10 +440,7 @@ func (s *TestBindPtrIntPathOptional) Bind(req *http.Request, pathVar func(string
 		errs = append(errs, err)
 	}
 
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (s *TestBindPtrIntPathRequired) Bind(req *http.Request, pathVar func(string) string) error {
@@ -547,10 +454,7 @@ func (s *TestBindPtrIntPathRequired) Bind(req *http.Request, pathVar func(string
 		errs = append(errs, err)
 	}
 
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (s *TestBindBoolQueryOptional) Bind(req *http.Request, pathVar func(string) string) error {
@@ -564,10 +468,7 @@ func (s *TestBindBoolQueryOptional) Bind(req *http.Request, pathVar func(string)
 		errs = append(errs, err)
 	}
 
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (s *TestBindBoolQueryRequired) Bind(req *http.Request, pathVar func(string) string) error {
@@ -581,10 +482,7 @@ func (s *TestBindBoolQueryRequired) Bind(req *http.Request, pathVar func(string)
 		errs = append(errs, err)
 	}
 
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (s *TestBindPtrBoolQueryOptional) Bind(req *http.Request, pathVar func(string) string) error {
@@ -598,10 +496,7 @@ func (s *TestBindPtrBoolQueryOptional) Bind(req *http.Request, pathVar func(stri
 		errs = append(errs, err)
 	}
 
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (s *TestBindPtrBoolQueryRequired) Bind(req *http.Request, pathVar func(string) string) error {
@@ -615,10 +510,7 @@ func (s *TestBindPtrBoolQueryRequired) Bind(req *http.Request, pathVar func(stri
 		errs = append(errs, err)
 	}
 
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (s *TestBindBoolHeaderOptional) Bind(req *http.Request, pathVar func(string) string) error {
@@ -632,10 +524,7 @@ func (s *TestBindBoolHeaderOptional) Bind(req *http.Request, pathVar func(string
 		errs = append(errs, err)
 	}
 
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (s *TestBindBoolHeaderRequired) Bind(req *http.Request, pathVar func(string) string) error {
@@ -649,10 +538,7 @@ func (s *TestBindBoolHeaderRequired) Bind(req *http.Request, pathVar func(string
 		errs = append(errs, err)
 	}
 
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (s *TestBindPtrBoolHeaderOptional) Bind(req *http.Request, pathVar func(string) string) error {
@@ -666,10 +552,7 @@ func (s *TestBindPtrBoolHeaderOptional) Bind(req *http.Request, pathVar func(str
 		errs = append(errs, err)
 	}
 
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (s *TestBindPtrBoolHeaderRequired) Bind(req *http.Request, pathVar func(string) string) error {
@@ -683,10 +566,7 @@ func (s *TestBindPtrBoolHeaderRequired) Bind(req *http.Request, pathVar func(str
 		errs = append(errs, err)
 	}
 
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (s *TestBindBoolCookieOptional) Bind(req *http.Request, pathVar func(string) string) error {
@@ -700,10 +580,7 @@ func (s *TestBindBoolCookieOptional) Bind(req *http.Request, pathVar func(string
 		errs = append(errs, err)
 	}
 
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (s *TestBindBoolCookieRequired) Bind(req *http.Request, pathVar func(string) string) error {
@@ -717,10 +594,7 @@ func (s *TestBindBoolCookieRequired) Bind(req *http.Request, pathVar func(string
 		errs = append(errs, err)
 	}
 
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (s *TestBindPtrBoolCookieOptional) Bind(req *http.Request, pathVar func(string) string) error {
@@ -734,10 +608,7 @@ func (s *TestBindPtrBoolCookieOptional) Bind(req *http.Request, pathVar func(str
 		errs = append(errs, err)
 	}
 
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (s *TestBindPtrBoolCookieRequired) Bind(req *http.Request, pathVar func(string) string) error {
@@ -751,10 +622,7 @@ func (s *TestBindPtrBoolCookieRequired) Bind(req *http.Request, pathVar func(str
 		errs = append(errs, err)
 	}
 
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (s *TestBindBoolPathOptional) Bind(req *http.Request, pathVar func(string) string) error {
@@ -768,10 +636,7 @@ func (s *TestBindBoolPathOptional) Bind(req *http.Request, pathVar func(string) 
 		errs = append(errs, err)
 	}
 
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (s *TestBindBoolPathRequired) Bind(req *http.Request, pathVar func(string) string) error {
@@ -785,10 +650,7 @@ func (s *TestBindBoolPathRequired) Bind(req *http.Request, pathVar func(string) 
 		errs = append(errs, err)
 	}
 
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (s *TestBindPtrBoolPathOptional) Bind(req *http.Request, pathVar func(string) string) error {
@@ -802,10 +664,7 @@ func (s *TestBindPtrBoolPathOptional) Bind(req *http.Request, pathVar func(strin
 		errs = append(errs, err)
 	}
 
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (s *TestBindPtrBoolPathRequired) Bind(req *http.Request, pathVar func(string) string) error {
@@ -819,10 +678,7 @@ func (s *TestBindPtrBoolPathRequired) Bind(req *http.Request, pathVar func(strin
 		errs = append(errs, err)
 	}
 
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (s *TestBindInt64QueryOptional) Bind(req *http.Request, pathVar func(string) string) error {
@@ -836,10 +692,7 @@ func (s *TestBindInt64QueryOptional) Bind(req *http.Request, pathVar func(string
 		errs = append(errs, err)
 	}
 
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (s *TestBindPtrInt64PathRequired) Bind(req *http.Request, pathVar func(string) string) error {
@@ -853,10 +706,7 @@ func (s *TestBindPtrInt64PathRequired) Bind(req *http.Request, pathVar func(stri
 		errs = append(errs, err)
 	}
 
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (s *TestBindUint32HeaderOptional) Bind(req *http.Request, pathVar func(string) string) error {
@@ -870,10 +720,7 @@ func (s *TestBindUint32HeaderOptional) Bind(req *http.Request, pathVar func(stri
 		errs = append(errs, err)
 	}
 
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (s *TestBindPtrUint32CookieRequired) Bind(req *http.Request, pathVar func(string) string) error {
@@ -887,10 +734,7 @@ func (s *TestBindPtrUint32CookieRequired) Bind(req *http.Request, pathVar func(s
 		errs = append(errs, err)
 	}
 
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (s *TestBindFloat64QueryOptional) Bind(req *http.Request, pathVar func(string) string) error {
@@ -904,10 +748,7 @@ func (s *TestBindFloat64QueryOptional) Bind(req *http.Request, pathVar func(stri
 		errs = append(errs, err)
 	}
 
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (s *TestBindPtrFloat64HeaderRequired) Bind(req *http.Request, pathVar func(string) string) error {
@@ -921,10 +762,7 @@ func (s *TestBindPtrFloat64HeaderRequired) Bind(req *http.Request, pathVar func(
 		errs = append(errs, err)
 	}
 
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (s *TestBindComplex128CookieOptional) Bind(req *http.Request, pathVar func(string) string) error {
@@ -938,10 +776,7 @@ func (s *TestBindComplex128CookieOptional) Bind(req *http.Request, pathVar func(
 		errs = append(errs, err)
 	}
 
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (s *TestBindPtrComplex128PathRequired) Bind(req *http.Request, pathVar func(string) string) error {
@@ -955,10 +790,7 @@ func (s *TestBindPtrComplex128PathRequired) Bind(req *http.Request, pathVar func
 		errs = append(errs, err)
 	}
 
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (s *TestBindUintptrQueryOptional) Bind(req *http.Request, pathVar func(string) string) error {
@@ -972,10 +804,7 @@ func (s *TestBindUintptrQueryOptional) Bind(req *http.Request, pathVar func(stri
 		errs = append(errs, err)
 	}
 
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (s *TestBindPtrUintptrHeaderRequired) Bind(req *http.Request, pathVar func(string) string) error {
@@ -989,10 +818,7 @@ func (s *TestBindPtrUintptrHeaderRequired) Bind(req *http.Request, pathVar func(
 		errs = append(errs, err)
 	}
 
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (s *TestBindMixedFields) Bind(req *http.Request, pathVar func(string) string) error {
@@ -1048,8 +874,5 @@ func (s *TestBindMixedFields) Bind(req *http.Request, pathVar func(string) strin
 		errs = append(errs, err)
 	}
 
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
+	return errors.Join(errs...)
 }

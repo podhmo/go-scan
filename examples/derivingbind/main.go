@@ -90,7 +90,6 @@ const bindMethodTemplate = `
 func (s *{{.StructName}}) Bind(req *http.Request, pathVar func(string) string) error {
 	b := binding.New(req, pathVar)
 	var errs []error
-	var tempErr error // Renamed to avoid conflict with 'err' in generated code if user uses it
 
 	{{range .Fields}}
 	{{if .IsBody}}
@@ -115,20 +114,25 @@ func (s *{{.StructName}}) Bind(req *http.Request, pathVar func(string) string) e
 
 	{{if .IsSlice}}
 		{{if .IsSliceElementPointer}} // e.g. []*int, []*string - uses binding.SlicePtr
-			tempErr = binding.SlicePtr(b, &s.{{.FieldName}}, {{$bindSource}}, "{{.BindName}}", {{.ParserFunc}}, {{$requiredVar}})
+			if err := binding.SlicePtr(b, &s.{{.FieldName}}, {{$bindSource}}, "{{.BindName}}", {{.ParserFunc}}, {{$requiredVar}}); err != nil {
+				errs = append(errs, err)
+			}
 		{{else}} // e.g. []int, []string - uses binding.Slice
-			tempErr = binding.Slice(b, &s.{{.FieldName}}, {{$bindSource}}, "{{.BindName}}", {{.ParserFunc}}, {{$requiredVar}})
+			if err := binding.Slice(b, &s.{{.FieldName}}, {{$bindSource}}, "{{.BindName}}", {{.ParserFunc}}, {{$requiredVar}}); err != nil {
+				errs = append(errs, err)
+			}
 		{{end}}
 	{{else}}
 		{{if .IsPointer}} // Pointer to a value, e.g., *int, *string (but not a slice)
-			tempErr = binding.OnePtr(b, &s.{{.FieldName}}, {{$bindSource}}, "{{.BindName}}", {{.ParserFunc}}, {{$requiredVar}})
+			if err := binding.OnePtr(b, &s.{{.FieldName}}, {{$bindSource}}, "{{.BindName}}", {{.ParserFunc}}, {{$requiredVar}}); err != nil {
+				errs = append(errs, err)
+			}
 		{{else}} // Value, e.g., int, string
-			tempErr = binding.One(b, &s.{{.FieldName}}, {{$bindSource}}, "{{.BindName}}", {{.ParserFunc}}, {{$requiredVar}})
+			if err := binding.One(b, &s.{{.FieldName}}, {{$bindSource}}, "{{.BindName}}", {{.ParserFunc}}, {{$requiredVar}}); err != nil {
+				errs = append(errs, err)
+			}
 		{{end}}
 	{{end}}
-	if tempErr != nil {
-		errs = append(errs, tempErr)
-	}
 	{{end}}
 	{{end}}
 
@@ -156,7 +160,7 @@ func (s *{{.StructName}}) Bind(req *http.Request, pathVar func(string) string) e
 				}
 			}
 		}
-		afterBodyProcessing: // Label for goto
+		{{if .HasSpecificBodyFieldTarget}}afterBodyProcessing:{{end}} // Label for goto, only if a specific body field might use it
 	} else {
 		// Check if body was required.
 		// This logic assumes that if 'NeedsBody' is true, and there's a field marked as 'IsBody' and 'IsRequired',

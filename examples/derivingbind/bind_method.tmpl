@@ -1,0 +1,126 @@
+{{/*
+TemplateData struct {
+	PackageName                string
+	StructName                 string
+	Fields                     []FieldBindingInfo
+	Imports                    map[string]string // alias -> path
+	NeedsBody                  bool
+	HasSpecificBodyFieldTarget bool
+	ErrNoCookie                error // For template: http.ErrNoCookie
+}
+
+FieldBindingInfo struct {
+	FieldName    string
+	FieldType    string
+	BindFrom     string // "path", "query", "header", "cookie", "body"
+	BindName     string
+	IsPointer    bool
+	IsRequired   bool
+	IsBody       bool
+	BodyJSONName string
+
+	IsSlice                 bool
+	SliceElementType        string
+	OriginalFieldTypeString string
+	ParserFunc              string // e.g. "parser.Int", "parser.String"
+	IsSliceElementPointer   bool
+}
+*/}}
+func (s *{{.StructName}}) Bind(req *http.Request, pathVar func(string) string) error {
+	b := binding.New(req, pathVar)
+	var errs []error
+
+	{{range .Fields}}
+	{{if .IsBody}}
+	// Body binding for field {{.FieldName}} ({{.OriginalFieldTypeString}}) will be handled after other fields.
+	{{else}}
+	// Binding for field {{.FieldName}} ({{.OriginalFieldTypeString}}) from {{.BindFrom}}:"{{.BindName}}"
+	{{$bindSource := ""}}
+	{{if eq .BindFrom "query"}}
+		{{$bindSource = "binding.Query"}}
+	{{else if eq .BindFrom "header"}}
+		{{$bindSource = "binding.Header"}}
+	{{else if eq .BindFrom "cookie"}}
+		{{$bindSource = "binding.Cookie"}}
+	{{else if eq .BindFrom "path"}}
+		{{$bindSource = "binding.Path"}}
+	{{end}}
+
+	{{$requiredVar := "binding.Optional"}}
+	{{if .IsRequired}}
+		{{$requiredVar = "binding.Required"}}
+	{{end}}
+
+	{{if .IsSlice}}
+		{{if .IsSliceElementPointer}} // e.g. []*int, []*string - uses binding.SlicePtr
+			if err := binding.SlicePtr(b, &s.{{.FieldName}}, {{$bindSource}}, "{{.BindName}}", {{.ParserFunc}}, {{$requiredVar}}); err != nil {
+				errs = append(errs, err)
+			}
+		{{else}} // e.g. []int, []string - uses binding.Slice
+			if err := binding.Slice(b, &s.{{.FieldName}}, {{$bindSource}}, "{{.BindName}}", {{.ParserFunc}}, {{$requiredVar}}); err != nil {
+				errs = append(errs, err)
+			}
+		{{end}}
+	{{else}}
+		{{if .IsPointer}} // Pointer to a value, e.g., *int, *string (but not a slice)
+			if err := binding.OnePtr(b, &s.{{.FieldName}}, {{$bindSource}}, "{{.BindName}}", {{.ParserFunc}}, {{$requiredVar}}); err != nil {
+				errs = append(errs, err)
+			}
+		{{else}} // Value, e.g., int, string
+			if err := binding.One(b, &s.{{.FieldName}}, {{$bindSource}}, "{{.BindName}}", {{.ParserFunc}}, {{$requiredVar}}); err != nil {
+				errs = append(errs, err)
+			}
+		{{end}}
+	{{end}}
+	{{end}}
+	{{end}}
+
+	{{if .NeedsBody}}
+	if req.Body != nil && req.Body != http.NoBody {
+		var bodyHandledBySpecificField = false
+		{{range .Fields}}
+		{{if .IsBody}}
+		// Field {{.FieldName}} (type {{.OriginalFieldTypeString}}) is the target for the entire request body
+		if decErr := json.NewDecoder(req.Body).Decode(&s.{{.FieldName}}); decErr != nil {
+			if decErr != io.EOF { // EOF might be acceptable if body is optional and empty
+				errs = append(errs, fmt.Errorf("binding: failed to decode request body into field {{.FieldName}}: %w", decErr))
+			}
+		}
+		bodyHandledBySpecificField = true
+		goto afterBodyProcessing // Assume only one field can be 'in:"body"'
+		{{end}}
+		{{end}}
+
+		// If no specific field was designated 'in:"body"', decode into the struct 's' itself.
+		if !bodyHandledBySpecificField {
+			if decErr := json.NewDecoder(req.Body).Decode(s); decErr != nil {
+				if decErr != io.EOF { // EOF might be acceptable if body is optional and empty
+					errs = append(errs, fmt.Errorf("binding: failed to decode request body into struct {{.StructName}}: %w", decErr))
+				}
+			}
+		}
+		{{if .HasSpecificBodyFieldTarget}}afterBodyProcessing:{{end}} // Label for goto, only if a specific body field might use it
+	} else {
+		// Check if body was required.
+		// This logic assumes that if 'NeedsBody' is true, and there's a field marked as 'IsBody' and 'IsRequired',
+		// or if the struct itself is implicitly the body and some overall "body required" rule applies (not yet implemented in detail).
+		isStructOrFieldBodyRequired := false
+		{{if not .HasSpecificBodyFieldTarget}}
+			// If struct is implicitly the body target, determine if it's required.
+			// This might need a struct-level "required" annotation for the body.
+			// For now, if NeedsBody is true and no specific field, we might assume optional unless specified.
+			// Let's make it an error only if a *specific* body field was required.
+		{{end}}
+		{{range .Fields}}
+			{{if and .IsBody .IsRequired}}
+			isStructOrFieldBodyRequired = true
+			{{end}}
+		{{end}}
+		if isStructOrFieldBodyRequired {
+			errs = append(errs, errors.New("binding: request body is required but was not provided or was empty"))
+		}
+	}
+	{{end}}
+
+	return errors.Join(errs...)
+}

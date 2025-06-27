@@ -918,3 +918,93 @@ func TestImplements(t *testing.T) {
 	// If `AliasKind` and `Underlying` points to an interface, `Implements` would need to handle it.
 	// Current `Implements` expects `interfaceDef.Kind == InterfaceKind`.
 }
+
+func TestSaveGoFile_Imports(t *testing.T) {
+	ctx := context.Background()
+	tempDir, cleanup := tempScannerDir(t)
+	defer cleanup()
+
+	pkgDir := NewPackageDirectory(tempDir, "testpkg")
+
+	goFile := GoFile{
+		Imports: map[string]string{
+			"fmt":                               "",    // No alias
+			"custom/errors":                     "errors", // With alias
+			"github.com/example/mypkg":          "mypkg",  // Alias same as package name
+			"another.com/library/version":       "",       // No alias
+			"github.com/another/util":           "anotherutil",
+			"github.com/example/anotherpkg/v2": "apkgv2", // Alias different from last part
+		},
+		CodeSet: "func Hello() {}",
+	}
+
+	filename := "test_output.go"
+	err := pkgDir.SaveGoFile(ctx, goFile, filename)
+	if err != nil {
+		t.Fatalf("SaveGoFile failed: %v", err)
+	}
+
+	generatedFilePath := filepath.Join(tempDir, filename)
+	content, err := os.ReadFile(generatedFilePath)
+	if err != nil {
+		t.Fatalf("Failed to read generated file: %v", err)
+	}
+
+	expectedImports := []string{
+		`import (`,
+		`	"another.com/library/version"`, // Sorted by path
+		`	errors "custom/errors"`,
+		`	"fmt"`,
+		`	anotherutil "github.com/another/util"`,
+		`	apkgv2 "github.com/example/anotherpkg/v2"`,
+		`	mypkg "github.com/example/mypkg"`,
+		`)`,
+	}
+	generatedContent := string(content)
+
+	// Check package declaration
+	expectedPackage := "package testpkg"
+	if !strings.Contains(generatedContent, expectedPackage) {
+		t.Errorf("Generated file does not contain expected package declaration.\nExpected: %s\nGot:\n%s", expectedPackage, generatedContent)
+	}
+
+	// Check imports block
+	importBlockStartIndex := strings.Index(generatedContent, "import (")
+	importBlockEndIndex := strings.Index(generatedContent, ")")
+	if importBlockStartIndex == -1 || importBlockEndIndex == -1 || importBlockEndIndex < importBlockStartIndex {
+		t.Fatalf("Generated file does not contain a valid import block.\nGot:\n%s", generatedContent)
+	}
+	actualImportBlock := generatedContent[importBlockStartIndex : importBlockEndIndex+1]
+
+	expectedImportBlock := strings.Join(expectedImports, "\n")
+
+	if actualImportBlock != expectedImportBlock {
+		t.Errorf("Generated import block does not match expected.\nExpected:\n%s\nGot:\n%s", expectedImportBlock, actualImportBlock)
+	}
+
+	// Check code part
+	if !strings.Contains(generatedContent, goFile.CodeSet) {
+		t.Errorf("Generated file does not contain expected CodeSet.\nExpected to contain: %s\nGot:\n%s", goFile.CodeSet, generatedContent)
+	}
+
+	// Test with empty imports
+	goFileNoImports := GoFile{
+		Imports: map[string]string{},
+		CodeSet: "func NoImports() {}",
+	}
+	filenameNoImports := "no_imports.go"
+	err = pkgDir.SaveGoFile(ctx, goFileNoImports, filenameNoImports)
+	if err != nil {
+		t.Fatalf("SaveGoFile for no imports failed: %v", err)
+	}
+	contentNoImports, err := os.ReadFile(filepath.Join(tempDir, filenameNoImports))
+	if err != nil {
+		t.Fatalf("Failed to read generated file for no imports: %v", err)
+	}
+	if strings.Contains(string(contentNoImports), "import (") {
+		t.Errorf("Generated file for no imports should not contain import block, but got:\n%s", string(contentNoImports))
+	}
+	if !strings.Contains(string(contentNoImports), goFileNoImports.CodeSet) {
+		t.Errorf("Generated file for no imports does not contain CodeSet.\nExpected: %s\nGot:\n%s", goFileNoImports.CodeSet, string(contentNoImports))
+	}
+}

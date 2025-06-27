@@ -12,7 +12,7 @@ import (
 
 func TestGenerate_Simple(t *testing.T) {
 	testPkgPath := "./testdata/simple"
-	expectedOutputFile := filepath.Join(testPkgPath, "models_deriving.go")
+	expectedOutputFile := filepath.Join(testPkgPath, "expected_simple_deriving.go")
 	// The generator will create <packagename>_deriving.go, which is simple_deriving.go
 	actualGeneratedFile := filepath.Join(testPkgPath, "simple_deriving.go")
 
@@ -21,7 +21,7 @@ func TestGenerate_Simple(t *testing.T) {
 
 	// Run the generator
 	ctx := context.Background()
-	if err := Generate(ctx, testPkgPath); err != nil {
+	if err := Generate(ctx, testPkgPath, testPkgPath); err != nil {
 		t.Fatalf("Generate(%q) failed: %v", testPkgPath, err)
 	}
 

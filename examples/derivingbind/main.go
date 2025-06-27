@@ -50,7 +50,7 @@ func main() {
 	slog.InfoContext(ctx, "Successfully generated Bind methods for package", slog.String("package_path", pkgPath))
 }
 
-const bindingAnnotation = "@derivng:binding"
+const bindingAnnotation = "@deriving:binding" // Corrected here
 
 type TemplateData struct {
 	PackageName                string
@@ -107,6 +107,10 @@ func (s *{{.StructName}}) Bind(req *http.Request, pathVar func(string) string) e
 						errs = append(errs, fmt.Errorf("failed to convert path parameter \"{{.BindName}}\" (value: %q) to {{.FieldType}} for field {{.FieldName}}: %w", pathValueStr, convErr))
 					} else {
 						convertedValue := {{.FieldType}}(v)
+						// Corrected: s.FieldName is already a pointer type if .IsPointer is true.
+						// For complex types, direct assignment of convertedValue (which is complex64/128)
+						// to s.FieldName (which is *complex64/*complex128) is wrong.
+						// We need to assign the address of convertedValue.
 						s.{{.FieldName}} = &convertedValue
 					}
 				{{else if .IsComplex}}
@@ -151,7 +155,7 @@ func (s *{{.StructName}}) Bind(req *http.Request, pathVar func(string) string) e
 					if convErr != nil {
 						errs = append(errs, fmt.Errorf("failed to convert path parameter \"{{.BindName}}\" (value: %q) to {{.FieldType}} for field {{.FieldName}}: %w", pathValueStr, convErr))
 					} else {
-						s.{{.FieldName}} = {{.FieldType}}(v)
+						s.{{.FieldName}} = {{.FieldType}}(v) // This was already correct
 					}
 				{{else if .IsComplex}}
 					v, convErr := strconv.ParseComplex(pathValueStr, {{.BitSize}})
@@ -199,86 +203,128 @@ func (s *{{.StructName}}) Bind(req *http.Request, pathVar func(string) string) e
 			sliceCap := len(values)
 			slice := make([]{{.SliceElementType}}, 0, sliceCap) // Use SliceElementType, e.g., "int", "*string"
 			for _, valStrLoop := range values { // Renamed valStr to valStrLoop to avoid conflict if defined outside
-				// Define variables inside the loop
-				{{ $Value := "valStrLoop" }} // Use the loop variable name
-				{{ $IsElemPointer := stringsHasPrefix .SliceElementType "*" }}
-				{{ $ElemType := stringsTrimPrefix .SliceElementType "*" }}
-				{{ $OutputSliceVar := "slice" }} // Template variable for slice name
-				{{ $ParamName := .BindName }}
-				{{ $FieldName := .FieldName }}
-				{{ $Source := "query parameter" }}
+				// Directly use valStrLoop and field properties like .SliceElementType, .BindName, .FieldName
+				// {{ $IsElemPointer := stringsHasPrefix .SliceElementType "*" }} // This logic will be inlined or handled by nested if
+				// {{ $ElemType := stringsTrimPrefix .SliceElementType "*" }} // This logic will be inlined
 
-				if {{ $Value }} == "" { // Handle empty string in multi-value query param
-					{{if $IsElemPointer }} // Pointer element type
-						{{if eq $ElemType "string"}} // *string
+				if valStrLoop == "" { // Handle empty string in multi-value query param
+					{{if stringsHasPrefix .SliceElementType "*"}} // IsElemPointer
+						{{if eq (stringsTrimPrefix .SliceElementType "*") "string"}} // ElemType is string
 							emptyStr := ""
-							{{$OutputSliceVar}} = append({{$OutputSliceVar}}, &emptyStr)
+							slice = append(slice, &emptyStr)
 						{{else}} // *int, *bool etc.
-							// For optional non-string pointers, empty value means nil for the element
-							// If the field itself is required, this might still be an issue overall, but element can be nil.
-							var typedNil {{.SliceElementType}} // e.g. var typedNil *int
-							{{$OutputSliceVar}} = append({{$OutputSliceVar}}, typedNil)
+							var typedNil {{.SliceElementType}}
+							slice = append(slice, typedNil)
 						{{end}}
-					{{else if eq $ElemType "string"}} // string
-						{{$OutputSliceVar}} = append({{$OutputSliceVar}}, {{ $Value }})
+					{{else if eq (stringsTrimPrefix .SliceElementType "*") "string"}} // ElemType is string
+						slice = append(slice, valStrLoop)
 					{{else}} // int, bool etc. (non-pointer, non-string)
-						errs = append(errs, fmt.Errorf("empty value for slice element of {{$FieldName}} (param \"{{$ParamName}}\") cannot be converted to {{$ElemType}} from %q", {{ $Value }}))
+						errs = append(errs, fmt.Errorf("empty value for slice element of {{.FieldName}} (param \"{{.BindName}}\") cannot be converted to {{(stringsTrimPrefix .SliceElementType "*")}} from %q", valStrLoop))
 					{{end}}
 				} else { // Value is not empty, proceed with conversion
-					{{ if eq $ElemType "string" }}
-						{{ if $IsElemPointer }}
-							sPtr := {{$Value}}
-							{{$OutputSliceVar}} = append({{$OutputSliceVar}}, &sPtr)
+					{{ $OriginalElemType := .SliceElementType }}
+					{{ $IsElemPointerForBlock := stringsHasPrefix $OriginalElemType "*" }}
+					{{ $ElemTypeForBlock := stringsTrimPrefix $OriginalElemType "*" }}
+
+					{{ if eq $ElemTypeForBlock "string" }}
+						{{ if $IsElemPointerForBlock }}
+							sPtr := valStrLoop
+							slice = append(slice, &sPtr)
 						{{ else }}
-							{{$OutputSliceVar}} = append({{$OutputSliceVar}}, {{$Value}})
+							slice = append(slice, valStrLoop)
 						{{ end }}
-					{{ else if eq $ElemType "int" }}
-						v, convErr := strconv.Atoi({{$Value}})
-						if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert %s \"{{$ParamName}}\" element (value: %q) to int for field {{$FieldName}}: %w", "{{$Source}}", {{$Value}}, convErr)) } else { {{if $IsElemPointer}} {{$OutputSliceVar}} = append({{$OutputSliceVar}}, &v) {{else}} {{$OutputSliceVar}} = append({{$OutputSliceVar}}, v) {{end}} }
-					{{ else if eq $ElemType "int8" }}
-						v64, convErr := strconv.ParseInt({{$Value}}, 10, 8)
-						if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert %s \"{{$ParamName}}\" element (value: %q) to int8 for field {{$FieldName}}: %w", "{{$Source}}", {{$Value}}, convErr)) } else { v := int8(v64); {{if $IsElemPointer}} {{$OutputSliceVar}} = append({{$OutputSliceVar}}, &v) {{else}} {{$OutputSliceVar}} = append({{$OutputSliceVar}}, v) {{end}} }
-					{{ else if eq $ElemType "int16" }}
-						v64, convErr := strconv.ParseInt({{$Value}}, 10, 16)
-						if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert %s \"{{$ParamName}}\" element (value: %q) to int16 for field {{$FieldName}}: %w", "{{$Source}}", {{$Value}}, convErr)) } else { v := int16(v64); {{if $IsElemPointer}} {{$OutputSliceVar}} = append({{$OutputSliceVar}}, &v) {{else}} {{$OutputSliceVar}} = append({{$OutputSliceVar}}, v) {{end}} }
-					{{ else if eq $ElemType "int32" }}
-						v64, convErr := strconv.ParseInt({{$Value}}, 10, 32)
-						if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert %s \"{{$ParamName}}\" element (value: %q) to int32 for field {{$FieldName}}: %w", "{{$Source}}", {{$Value}}, convErr)) } else { v := int32(v64); {{if $IsElemPointer}} {{$OutputSliceVar}} = append({{$OutputSliceVar}}, &v) {{else}} {{$OutputSliceVar}} = append({{$OutputSliceVar}}, v) {{end}} }
-					{{ else if eq $ElemType "int64" }}
-						v, convErr := strconv.ParseInt({{$Value}}, 10, 64)
-						if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert %s \"{{$ParamName}}\" element (value: %q) to int64 for field {{$FieldName}}: %w", "{{$Source}}", {{$Value}}, convErr)) } else { {{if $IsElemPointer}} {{$OutputSliceVar}} = append({{$OutputSliceVar}}, &v) {{else}} {{$OutputSliceVar}} = append({{$OutputSliceVar}}, v) {{end}} }
-					{{ else if eq $ElemType "uint" }}
-						v64, convErr := strconv.ParseUint({{$Value}}, 10, 0)
-						if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert %s \"{{$ParamName}}\" element (value: %q) to uint for field {{$FieldName}}: %w", "{{$Source}}", {{$Value}}, convErr)) } else { v := uint(v64); {{if $IsElemPointer}} {{$OutputSliceVar}} = append({{$OutputSliceVar}}, &v) {{else}} {{$OutputSliceVar}} = append({{$OutputSliceVar}}, v) {{end}} }
-					{{ else if eq $ElemType "uint8" }}
-						v64, convErr := strconv.ParseUint({{$Value}}, 10, 8)
-						if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert %s \"{{$ParamName}}\" element (value: %q) to uint8 for field {{$FieldName}}: %w", "{{$Source}}", {{$Value}}, convErr)) } else { v := uint8(v64); {{if $IsElemPointer}} {{$OutputSliceVar}} = append({{$OutputSliceVar}}, &v) {{else}} {{$OutputSliceVar}} = append({{$OutputSliceVar}}, v) {{end}} }
-					{{ else if eq $ElemType "uint16" }}
-						v64, convErr := strconv.ParseUint({{$Value}}, 10, 16)
-						if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert %s \"{{$ParamName}}\" element (value: %q) to uint16 for field {{$FieldName}}: %w", "{{$Source}}", {{$Value}}, convErr)) } else { v := uint16(v64); {{if $IsElemPointer}} {{$OutputSliceVar}} = append({{$OutputSliceVar}}, &v) {{else}} {{$OutputSliceVar}} = append({{$OutputSliceVar}}, v) {{end}} }
-					{{ else if eq $ElemType "uint32" }}
-						v64, convErr := strconv.ParseUint({{$Value}}, 10, 32)
-						if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert %s \"{{$ParamName}}\" element (value: %q) to uint32 for field {{$FieldName}}: %w", "{{$Source}}", {{$Value}}, convErr)) } else { v := uint32(v64); {{if $IsElemPointer}} {{$OutputSliceVar}} = append({{$OutputSliceVar}}, &v) {{else}} {{$OutputSliceVar}} = append({{$OutputSliceVar}}, v) {{end}} }
-					{{ else if eq $ElemType "uint64" }}
-						v, convErr := strconv.ParseUint({{$Value}}, 10, 64)
-						if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert %s \"{{$ParamName}}\" element (value: %q) to uint64 for field {{$FieldName}}: %w", "{{$Source}}", {{$Value}}, convErr)) } else { {{if $IsElemPointer}} {{$OutputSliceVar}} = append({{$OutputSliceVar}}, &v) {{else}} {{$OutputSliceVar}} = append({{$OutputSliceVar}}, v) {{end}} }
-					{{ else if eq $ElemType "float32" }}
-						v64, convErr := strconv.ParseFloat({{$Value}}, 32)
-						if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert %s \"{{$ParamName}}\" element (value: %q) to float32 for field {{$FieldName}}: %w", "{{$Source}}", {{$Value}}, convErr)) } else { v := float32(v64); {{if $IsElemPointer}} {{$OutputSliceVar}} = append({{$OutputSliceVar}}, &v) {{else}} {{$OutputSliceVar}} = append({{$OutputSliceVar}}, v) {{end}} }
-					{{ else if eq $ElemType "float64" }}
-						v, convErr := strconv.ParseFloat({{$Value}}, 64)
-						if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert %s \"{{$ParamName}}\" element (value: %q) to float64 for field {{$FieldName}}: %w", "{{$Source}}", {{$Value}}, convErr)) } else { {{if $IsElemPointer}} {{$OutputSliceVar}} = append({{$OutputSliceVar}}, &v) {{else}} {{$OutputSliceVar}} = append({{$OutputSliceVar}}, v) {{end}} }
-					{{ else if eq $ElemType "complex64" }}
-						v, convErr := strconv.ParseComplex({{$Value}}, 64)
-						if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert %s \"{{$ParamName}}\" element (value: %q) to complex64 for field {{$FieldName}}: %w", "{{$Source}}", {{$Value}}, convErr)) } else { c := complex64(v); {{if $IsElemPointer}} {{$OutputSliceVar}} = append({{$OutputSliceVar}}, &c) {{else}} {{$OutputSliceVar}} = append({{$OutputSliceVar}}, c) {{end}} }
-					{{ else if eq $ElemType "complex128" }}
-						v, convErr := strconv.ParseComplex({{$Value}}, 128)
-						if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert %s \"{{$ParamName}}\" element (value: %q) to complex128 for field {{$FieldName}}: %w", "{{$Source}}", {{$Value}}, convErr)) } else { {{if $IsElemPointer}} {{$OutputSliceVar}} = append({{$OutputSliceVar}}, &v) {{else}} {{$OutputSliceVar}} = append({{$OutputSliceVar}}, v) {{end}} }
-					{{ else if eq $ElemType "bool" }}
-						v, convErr := strconv.ParseBool({{$Value}})
-						if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert %s \"{{$ParamName}}\" element (value: %q) to bool for field {{$FieldName}}: %w", "{{$Source}}", {{$Value}}, convErr)) } else { {{if $IsElemPointer}} {{$OutputSliceVar}} = append({{$OutputSliceVar}}, &v) {{else}} {{$OutputSliceVar}} = append({{$OutputSliceVar}}, v) {{end}} }
+					{{ else if eq $ElemTypeForBlock "int" }}
+						v, convErr := strconv.Atoi(valStrLoop)
+						if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert query parameter \"{{.BindName}}\" element (value: %q) to int for field {{.FieldName}}: %w", valStrLoop, convErr)) } else { {{if $IsElemPointerForBlock}} slice = append(slice, &v) {{else}} slice = append(slice, v) {{end}} }
+					{{ else if eq $ElemTypeForBlock "int8" }}
+						var v64 int64
+						var convErr error
+						v64, convErr = strconv.ParseInt(valStrLoop, 10, 8)
+						if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert query parameter \"{{.BindName}}\" element (value: %q) to int8 for field {{.FieldName}}: %w", valStrLoop, convErr)) } else { v := int8(v64); {{if $IsElemPointerForBlock}} slice = append(slice, &v) {{else}} slice = append(slice, v) {{end}} }
+					{{ else if eq $ElemTypeForBlock "int16" }}
+						var v64 int64
+						var convErr error
+						v64, convErr = strconv.ParseInt(valStrLoop, 10, 16)
+						if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert query parameter \"{{.BindName}}\" element (value: %q) to int16 for field {{.FieldName}}: %w", valStrLoop, convErr)) } else { v := int16(v64); {{if $IsElemPointerForBlock}} slice = append(slice, &v) {{else}} slice = append(slice, v) {{end}} }
+					{{ else if eq $ElemTypeForBlock "int32" }}
+						var v64 int64
+						var convErr error
+						v64, convErr = strconv.ParseInt(valStrLoop, 10, 32)
+						if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert query parameter \"{{.BindName}}\" element (value: %q) to int32 for field {{.FieldName}}: %w", valStrLoop, convErr)) } else { v := int32(v64); {{if $IsElemPointerForBlock}} slice = append(slice, &v) {{else}} slice = append(slice, v) {{end}} }
+					{{ else if eq $ElemTypeForBlock "int64" }}
+						var v int64
+						var convErr error
+						v, convErr = strconv.ParseInt(valStrLoop, 10, 64)
+						if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert query parameter \"{{.BindName}}\" element (value: %q) to int64 for field {{.FieldName}}: %w", valStrLoop, convErr)) } else { {{if $IsElemPointerForBlock}} slice = append(slice, &v) {{else}} slice = append(slice, v) {{end}} }
+					{{ else if eq $ElemTypeForBlock "uint" }}
+						var v64 uint64
+						var convErr error
+						v64, convErr = strconv.ParseUint(valStrLoop, 10, 0)
+						if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert query parameter \"{{.BindName}}\" element (value: %q) to uint for field {{.FieldName}}: %w", valStrLoop, convErr)) } else { v := uint(v64); {{if $IsElemPointerForBlock}} slice = append(slice, &v) {{else}} slice = append(slice, v) {{end}} }
+					{{ else if eq $ElemTypeForBlock "uint8" }}
+						var v64 uint64
+						var convErr error
+						v64, convErr = strconv.ParseUint(valStrLoop, 10, 8)
+						if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert query parameter \"{{.BindName}}\" element (value: %q) to uint8 for field {{.FieldName}}: %w", valStrLoop, convErr)) } else { v := uint8(v64); {{if $IsElemPointerForBlock}} slice = append(slice, &v) {{else}} slice = append(slice, v) {{end}} }
+					{{ else if eq $ElemTypeForBlock "uint16" }}
+						var v64 uint64
+						var convErr error
+						v64, convErr = strconv.ParseUint(valStrLoop, 10, 16)
+						if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert query parameter \"{{.BindName}}\" element (value: %q) to uint16 for field {{.FieldName}}: %w", valStrLoop, convErr)) } else { v := uint16(v64); {{if $IsElemPointerForBlock}} slice = append(slice, &v) {{else}} slice = append(slice, v) {{end}} }
+					{{ else if eq $ElemTypeForBlock "uint32" }}
+						var v64 uint64
+						var convErr error
+						v64, convErr = strconv.ParseUint(valStrLoop, 10, 32)
+						if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert query parameter \"{{.BindName}}\" element (value: %q) to uint32 for field {{.FieldName}}: %w", valStrLoop, convErr)) } else { v := uint32(v64); {{if $IsElemPointerForBlock}} slice = append(slice, &v) {{else}} slice = append(slice, v) {{end}} }
+					{{ else if eq $ElemTypeForBlock "uint64" }}
+						var v uint64
+						var convErr error
+						v, convErr = strconv.ParseUint(valStrLoop, 10, 64)
+						if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert query parameter \"{{.BindName}}\" element (value: %q) to uint64 for field {{.FieldName}}: %w", valStrLoop, convErr)) } else { {{if $IsElemPointerForBlock}} slice = append(slice, &v) {{else}} slice = append(slice, v) {{end}} }
+					{{ else if eq $ElemTypeForBlock "float32" }}
+						var v64 float64
+						var convErr error
+						v64, convErr = strconv.ParseFloat(valStrLoop, 32)
+						if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert query parameter \"{{.BindName}}\" element (value: %q) to float32 for field {{.FieldName}}: %w", valStrLoop, convErr)) } else { v := float32(v64); {{if $IsElemPointerForBlock}} slice = append(slice, &v) {{else}} slice = append(slice, v) {{end}} }
+					{{ else if eq $ElemTypeForBlock "float64" }}
+						var v float64
+						var convErr error
+						v, convErr = strconv.ParseFloat(valStrLoop, 64)
+						if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert query parameter \"{{.BindName}}\" element (value: %q) to float64 for field {{.FieldName}}: %w", valStrLoop, convErr)) } else { {{if $IsElemPointerForBlock}} slice = append(slice, &v) {{else}} slice = append(slice, v) {{end}} }
+					{{ else if eq $ElemTypeForBlock "complex64" }}
+						var vComplex complex128
+						var convErr error
+						vComplex, convErr = strconv.ParseComplex(valStrLoop, 64)
+						if convErr != nil {
+							errs = append(errs, fmt.Errorf("failed to convert query parameter \"{{.BindName}}\" element (value: %q) to complex64 for field {{.FieldName}}: %w", valStrLoop, convErr))
+						} else {
+							c := complex64(vComplex);
+							{{if $IsElemPointerForBlock}}
+								slice = append(slice, &c)
+							{{else}}
+								slice = append(slice, c)
+							{{end}}
+						}
+					{{ else if eq $ElemTypeForBlock "complex128" }}
+						var vComplex complex128
+						var convErr error
+						vComplex, convErr = strconv.ParseComplex(valStrLoop, 128)
+						if convErr != nil {
+							errs = append(errs, fmt.Errorf("failed to convert query parameter \"{{.BindName}}\" element (value: %q) to complex128 for field {{.FieldName}}: %w", valStrLoop, convErr))
+						} else {
+							{{if $IsElemPointerForBlock}}
+								slice = append(slice, &vComplex)
+							{{else}}
+								slice = append(slice, vComplex)
+							{{end}}
+						}
+					{{ else if eq $ElemTypeForBlock "bool" }}
+						var v bool
+						var convErr error
+						v, convErr = strconv.ParseBool(valStrLoop)
+						if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert query parameter \"{{.BindName}}\" element (value: %q) to bool for field {{.FieldName}}: %w", valStrLoop, convErr)) } else { {{if $IsElemPointerForBlock}} slice = append(slice, &v) {{else}} slice = append(slice, v) {{end}} }
 					{{ else }}
-						errs = append(errs, fmt.Errorf("unsupported slice element type %q for field {{$FieldName}} (param \"{{$ParamName}}\")", "{{$ElemType}}"))
+						errs = append(errs, fmt.Errorf("unsupported slice element type %q for field {{.FieldName}} (param \"{{.BindName}}\")", "{{$ElemTypeForBlock}}"))
 					{{ end }}
 				}
 			}
@@ -328,7 +374,20 @@ func (s *{{.StructName}}) Bind(req *http.Request, pathVar func(string) string) e
 							if convErr != nil { {{if .IsRequired}} errs = append(errs, fmt.Errorf("failed to convert query parameter \"{{.BindName}}\" (value: %q) to {{.FieldType}} for field {{.FieldName}}: %w", valStr, convErr)) {{else}} s.{{.FieldName}} = nil {{end}} } else { convertedValue := {{.FieldType}}(v); s.{{.FieldName}} = &convertedValue }
 						{{else if .IsComplex}}
 							v, convErr := strconv.ParseComplex(valStr, {{.BitSize}})
-							if convErr != nil { {{if .IsRequired}} errs = append(errs, fmt.Errorf("failed to convert query parameter \"{{.BindName}}\" (value: %q) to {{.FieldType}} for field {{.FieldName}}: %w", valStr, convErr)) {{else}} s.{{.FieldName}} = nil {{end}} } else { convertedValue := {{.FieldType}}(v); s.{{.FieldName}} = &convertedValue }
+							if convErr != nil {
+								{{if .IsRequired}}
+									errs = append(errs, fmt.Errorf("failed to convert query parameter \"{{.BindName}}\" (value: %q) to {{.FieldType}} for field {{.FieldName}}: %w", valStr, convErr))
+								{{else if .IsPointer}}
+									s.{{.FieldName}} = nil
+								{{end}}
+							} else {
+								convertedValue := {{.FieldType}}(v);
+								{{if .IsPointer}}
+									s.{{.FieldName}} = &convertedValue
+								{{else}}
+									s.{{.FieldName}} = convertedValue
+								{{end}}
+							}
 						{{else}} // Unsigned
 							v, convErr := strconv.ParseUint(valStr, 10, {{.BitSize}})
 							if convErr != nil { {{if .IsRequired}} errs = append(errs, fmt.Errorf("failed to convert query parameter \"{{.BindName}}\" (value: %q) to {{.FieldType}} for field {{.FieldName}}: %w", valStr, convErr)) {{else}} s.{{.FieldName}} = nil {{end}} } else { convertedValue := {{.FieldType}}(v); s.{{.FieldName}} = &convertedValue }
@@ -349,7 +408,11 @@ func (s *{{.StructName}}) Bind(req *http.Request, pathVar func(string) string) e
 							if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert query parameter \"{{.BindName}}\" (value: %q) to {{.FieldType}} for field {{.FieldName}}: %w", valStr, convErr)) } else { s.{{.FieldName}} = {{.FieldType}}(v) }
 						{{else if .IsComplex}}
 							v, convErr := strconv.ParseComplex(valStr, {{.BitSize}})
-							if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert query parameter \"{{.BindName}}\" (value: %q) to {{.FieldType}} for field {{.FieldName}}: %w", valStr, convErr)) } else { s.{{.FieldName}} = {{.FieldType}}(v) }
+							if convErr != nil {
+								errs = append(errs, fmt.Errorf("failed to convert query parameter \"{{.BindName}}\" (value: %q) to {{.FieldType}} for field {{.FieldName}}: %w", valStr, convErr))
+							} else {
+								s.{{.FieldName}} = {{.FieldType}}(v)
+							}
 						{{else}} // Unsigned
 							v, convErr := strconv.ParseUint(valStr, 10, {{.BitSize}})
 							if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert query parameter \"{{.BindName}}\" (value: %q) to {{.FieldType}} for field {{.FieldName}}: %w", valStr, convErr)) } else { s.{{.FieldName}} = {{.FieldType}}(v) }
@@ -377,78 +440,101 @@ func (s *{{.StructName}}) Bind(req *http.Request, pathVar func(string) string) e
 			slice := make([]{{.SliceElementType}}, 0, len(valuesStr))
 			for _, valStrLoop := range valuesStr {
 				trimmedValStrLoop := strings.TrimSpace(valStrLoop)
-				{{ $Value := "trimmedValStrLoop" }}
-				{{ $IsElemPointer := stringsHasPrefix .SliceElementType "*" }}
-				{{ $ElemType := stringsTrimPrefix .SliceElementType "*" }}
-				{{ $OutputSliceVar := "slice" }}
-				{{ $ParamName := .BindName }}
-				{{ $FieldName := .FieldName }}
-				{{ $Source := "header" }}
-
-				if {{ $Value }} == "" {
-					{{if $IsElemPointer }}
-						{{if eq $ElemType "string"}}
+				// Directly use trimmedValStrLoop and field properties
+				if trimmedValStrLoop == "" {
+					{{if stringsHasPrefix .SliceElementType "*"}} // IsElemPointer
+						{{if eq (stringsTrimPrefix .SliceElementType "*") "string"}} // ElemType is string
 							emptyStr := ""
-							{{$OutputSliceVar}} = append({{$OutputSliceVar}}, &emptyStr)
-						{{else}}
+							slice = append(slice, &emptyStr)
+						{{else}} // *int, *bool etc.
 							var typedNil {{.SliceElementType}}
-							{{$OutputSliceVar}} = append({{$OutputSliceVar}}, typedNil)
+							slice = append(slice, typedNil)
 						{{end}}
-					{{else if eq $ElemType "string"}}
-						{{$OutputSliceVar}} = append({{$OutputSliceVar}}, {{$Value}})
-					{{else}}
-						errs = append(errs, fmt.Errorf("empty value for trimmed slice element of {{$FieldName}} (header \"{{$ParamName}}\") cannot be converted to {{$ElemType}} from %q", {{ $Value }}))
+					{{else if eq (stringsTrimPrefix .SliceElementType "*") "string"}} // ElemType is string
+						slice = append(slice, trimmedValStrLoop)
+					{{else}} // int, bool etc. (non-pointer, non-string)
+						errs = append(errs, fmt.Errorf("empty value for trimmed slice element of {{.FieldName}} (header \"{{.BindName}}\") cannot be converted to {{(stringsTrimPrefix .SliceElementType "*")}} from %q", trimmedValStrLoop))
 					{{end}}
 				} else {
-					{{ if eq $ElemType "string" }}
-					{{ if $IsElemPointer }}
-						sPtr := {{$Value}}
-						slice = append(slice, &sPtr)
+					{{ $OriginalElemType := .SliceElementType }}
+					{{ $IsElemPointerForBlock := stringsHasPrefix $OriginalElemType "*" }}
+					{{ $ElemTypeForBlock := stringsTrimPrefix $OriginalElemType "*" }}
+
+					{{ if eq $ElemTypeForBlock "string" }}
+						{{ if $IsElemPointerForBlock }}
+							sPtr := trimmedValStrLoop
+							slice = append(slice, &sPtr)
+						{{ else }}
+							slice = append(slice, trimmedValStrLoop)
+						{{ end }}
+					{{ else if eq $ElemTypeForBlock "int" }}
+						var v int
+						var convErr error
+						v, convErr = strconv.Atoi(trimmedValStrLoop)
+						if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert header \"{{.BindName}}\" element (value: %q) to int for field {{.FieldName}}: %w", trimmedValStrLoop, convErr)) } else { {{if $IsElemPointerForBlock}} slice = append(slice, &v) {{else}} slice = append(slice, v) {{end}} }
+					{{ else if eq $ElemTypeForBlock "int8" }}
+						var v64 int64
+						var convErr error
+						v64, convErr = strconv.ParseInt(trimmedValStrLoop, 10, 8)
+						if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert header \"{{.BindName}}\" element (value: %q) to int8 for field {{.FieldName}}: %w", trimmedValStrLoop, convErr)) } else { v := int8(v64); {{if $IsElemPointerForBlock}} slice = append(slice, &v) {{else}} slice = append(slice, v) {{end}} }
+					{{ else if eq $ElemTypeForBlock "int16" }}
+						var v64 int64
+						var convErr error
+						v64, convErr = strconv.ParseInt(trimmedValStrLoop, 10, 16)
+						if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert header \"{{.BindName}}\" element (value: %q) to int16 for field {{.FieldName}}: %w", trimmedValStrLoop, convErr)) } else { v := int16(v64); {{if $IsElemPointerForBlock}} slice = append(slice, &v) {{else}} slice = append(slice, v) {{end}} }
+					{{ else if eq $ElemTypeForBlock "int32" }}
+						var v64 int64
+						var convErr error
+						v64, convErr = strconv.ParseInt(trimmedValStrLoop, 10, 32)
+						if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert header \"{{.BindName}}\" element (value: %q) to int32 for field {{.FieldName}}: %w", trimmedValStrLoop, convErr)) } else { v := int32(v64); {{if $IsElemPointerForBlock}} slice = append(slice, &v) {{else}} slice = append(slice, v) {{end}} }
+					{{ else if eq $ElemTypeForBlock "int64" }}
+						var v int64
+						var convErr error
+						v, convErr = strconv.ParseInt(trimmedValStrLoop, 10, 64)
+						if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert header \"{{.BindName}}\" element (value: %q) to int64 for field {{.FieldName}}: %w", trimmedValStrLoop, convErr)) } else { {{if $IsElemPointerForBlock}} slice = append(slice, &v) {{else}} slice = append(slice, v) {{end}} }
+					{{ else if eq $ElemTypeForBlock "uint" }}
+						var v64 uint64
+						var convErr error
+						v64, convErr = strconv.ParseUint(trimmedValStrLoop, 10, 0)
+						if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert header \"{{.BindName}}\" element (value: %q) to uint for field {{.FieldName}}: %w", trimmedValStrLoop, convErr)) } else { v := uint(v64); {{if $IsElemPointerForBlock}} slice = append(slice, &v) {{else}} slice = append(slice, v) {{end}} }
+					{{ else if eq $ElemTypeForBlock "uint8" }}
+						var v64 uint64
+						var convErr error
+						v64, convErr = strconv.ParseUint(trimmedValStrLoop, 10, 8)
+						if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert header \"{{.BindName}}\" element (value: %q) to uint8 for field {{.FieldName}}: %w", trimmedValStrLoop, convErr)) } else { v := uint8(v64); {{if $IsElemPointerForBlock}} slice = append(slice, &v) {{else}} slice = append(slice, v) {{end}} }
+					{{ else if eq $ElemTypeForBlock "uint16" }}
+						var v64 uint64
+						var convErr error
+						v64, convErr = strconv.ParseUint(trimmedValStrLoop, 10, 16)
+						if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert header \"{{.BindName}}\" element (value: %q) to uint16 for field {{.FieldName}}: %w", trimmedValStrLoop, convErr)) } else { v := uint16(v64); {{if $IsElemPointerForBlock}} slice = append(slice, &v) {{else}} slice = append(slice, v) {{end}} }
+					{{ else if eq $ElemTypeForBlock "uint32" }}
+						var v64 uint64
+						var convErr error
+						v64, convErr = strconv.ParseUint(trimmedValStrLoop, 10, 32)
+						if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert header \"{{.BindName}}\" element (value: %q) to uint32 for field {{.FieldName}}: %w", trimmedValStrLoop, convErr)) } else { v := uint32(v64); {{if $IsElemPointerForBlock}} slice = append(slice, &v) {{else}} slice = append(slice, v) {{end}} }
+					{{ else if eq $ElemTypeForBlock "uint64" }}
+						var v uint64
+						var convErr error
+						v, convErr = strconv.ParseUint(trimmedValStrLoop, 10, 64)
+						if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert header \"{{.BindName}}\" element (value: %q) to uint64 for field {{.FieldName}}: %w", trimmedValStrLoop, convErr)) } else { {{if $IsElemPointerForBlock}} slice = append(slice, &v) {{else}} slice = append(slice, v) {{end}} }
+					{{ else if eq $ElemTypeForBlock "float32" }}
+						var v64 float64
+						var convErr error
+						v64, convErr = strconv.ParseFloat(trimmedValStrLoop, 32)
+						if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert header \"{{.BindName}}\" element (value: %q) to float32 for field {{.FieldName}}: %w", trimmedValStrLoop, convErr)) } else { v := float32(v64); {{if $IsElemPointerForBlock}} slice = append(slice, &v) {{else}} slice = append(slice, v) {{end}} }
+					{{ else if eq $ElemTypeForBlock "float64" }}
+						var v float64
+						var convErr error
+						v, convErr = strconv.ParseFloat(trimmedValStrLoop, 64)
+						if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert header \"{{.BindName}}\" element (value: %q) to float64 for field {{.FieldName}}: %w", trimmedValStrLoop, convErr)) } else { {{if $IsElemPointerForBlock}} slice = append(slice, &v) {{else}} slice = append(slice, v) {{end}} }
+					{{ else if eq $ElemTypeForBlock "bool" }}
+						var v bool
+						var convErr error
+						v, convErr = strconv.ParseBool(trimmedValStrLoop)
+						if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert header \"{{.BindName}}\" element (value: %q) to bool for field {{.FieldName}}: %w", trimmedValStrLoop, convErr)) } else { {{if $IsElemPointerForBlock}} slice = append(slice, &v) {{else}} slice = append(slice, v) {{end}} }
 					{{ else }}
-						slice = append(slice, {{$Value}})
+						errs = append(errs, fmt.Errorf("unsupported slice element type %q for field {{.FieldName}} (param \"{{.BindName}}\")", "{{$ElemTypeForBlock}}"))
 					{{ end }}
-				{{ else if eq $ElemType "int" }}
-					v, convErr := strconv.Atoi({{$Value}})
-					if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert %s \"{{$ParamName}}\" element (value: %q) to int for field {{$FieldName}}: %w", "{{$Source}}", {{$Value}}, convErr)) } else { {{if $IsElemPointer}} slice = append(slice, &v) {{else}} slice = append(slice, v) {{end}} }
-				{{ else if eq $ElemType "int8" }}
-					v64, convErr := strconv.ParseInt({{$Value}}, 10, 8)
-					if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert %s \"{{$ParamName}}\" element (value: %q) to int8 for field {{$FieldName}}: %w", "{{$Source}}", {{$Value}}, convErr)) } else { v := int8(v64); {{if $IsElemPointer}} slice = append(slice, &v) {{else}} slice = append(slice, v) {{end}} }
-				{{ else if eq $ElemType "int16" }}
-					v64, convErr := strconv.ParseInt({{$Value}}, 10, 16)
-					if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert %s \"{{$ParamName}}\" element (value: %q) to int16 for field {{$FieldName}}: %w", "{{$Source}}", {{$Value}}, convErr)) } else { v := int16(v64); {{if $IsElemPointer}} slice = append(slice, &v) {{else}} slice = append(slice, v) {{end}} }
-				{{ else if eq $ElemType "int32" }}
-					v64, convErr := strconv.ParseInt({{$Value}}, 10, 32)
-					if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert %s \"{{$ParamName}}\" element (value: %q) to int32 for field {{$FieldName}}: %w", "{{$Source}}", {{$Value}}, convErr)) } else { v := int32(v64); {{if $IsElemPointer}} slice = append(slice, &v) {{else}} slice = append(slice, v) {{end}} }
-				{{ else if eq $ElemType "int64" }}
-					v, convErr := strconv.ParseInt({{$Value}}, 10, 64)
-					if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert %s \"{{$ParamName}}\" element (value: %q) to int64 for field {{$FieldName}}: %w", "{{$Source}}", {{$Value}}, convErr)) } else { {{if $IsElemPointer}} slice = append(slice, &v) {{else}} slice = append(slice, v) {{end}} }
-				{{ else if eq $ElemType "uint" }}
-					v64, convErr := strconv.ParseUint({{$Value}}, 10, 0)
-					if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert %s \"{{$ParamName}}\" element (value: %q) to uint for field {{$FieldName}}: %w", "{{$Source}}", {{$Value}}, convErr)) } else { v := uint(v64); {{if $IsElemPointer}} slice = append(slice, &v) {{else}} slice = append(slice, v) {{end}} }
-				{{ else if eq $ElemType "uint8" }}
-					v64, convErr := strconv.ParseUint({{$Value}}, 10, 8)
-					if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert %s \"{{$ParamName}}\" element (value: %q) to uint8 for field {{$FieldName}}: %w", "{{$Source}}", {{$Value}}, convErr)) } else { v := uint8(v64); {{if $IsElemPointer}} slice = append(slice, &v) {{else}} slice = append(slice, v) {{end}} }
-				{{ else if eq $ElemType "uint16" }}
-					v64, convErr := strconv.ParseUint({{$Value}}, 10, 16)
-					if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert %s \"{{$ParamName}}\" element (value: %q) to uint16 for field {{$FieldName}}: %w", "{{$Source}}", {{$Value}}, convErr)) } else { v := uint16(v64); {{if $IsElemPointer}} slice = append(slice, &v) {{else}} slice = append(slice, v) {{end}} }
-				{{ else if eq $ElemType "uint32" }}
-					v64, convErr := strconv.ParseUint({{$Value}}, 10, 32)
-					if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert %s \"{{$ParamName}}\" element (value: %q) to uint32 for field {{$FieldName}}: %w", "{{$Source}}", {{$Value}}, convErr)) } else { v := uint32(v64); {{if $IsElemPointer}} slice = append(slice, &v) {{else}} slice = append(slice, v) {{end}} }
-				{{ else if eq $ElemType "uint64" }}
-					v, convErr := strconv.ParseUint({{$Value}}, 10, 64)
-					if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert %s \"{{$ParamName}}\" element (value: %q) to uint64 for field {{$FieldName}}: %w", "{{$Source}}", {{$Value}}, convErr)) } else { {{if $IsElemPointer}} slice = append(slice, &v) {{else}} slice = append(slice, v) {{end}} }
-				{{ else if eq $ElemType "float32" }}
-					v64, convErr := strconv.ParseFloat({{$Value}}, 32)
-					if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert %s \"{{$ParamName}}\" element (value: %q) to float32 for field {{$FieldName}}: %w", "{{$Source}}", {{$Value}}, convErr)) } else { v := float32(v64); {{if $IsElemPointer}} slice = append(slice, &v) {{else}} slice = append(slice, v) {{end}} }
-				{{ else if eq $ElemType "float64" }}
-					v, convErr := strconv.ParseFloat({{$Value}}, 64)
-					if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert %s \"{{$ParamName}}\" element (value: %q) to float64 for field {{$FieldName}}: %w", "{{$Source}}", {{$Value}}, convErr)) } else { {{if $IsElemPointer}} slice = append(slice, &v) {{else}} slice = append(slice, v) {{end}} }
-				{{ else if eq $ElemType "bool" }}
-					v, convErr := strconv.ParseBool({{$Value}})
-					if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert %s \"{{$ParamName}}\" element (value: %q) to bool for field {{$FieldName}}: %w", "{{$Source}}", {{$Value}}, convErr)) } else { {{if $IsElemPointer}} slice = append(slice, &v) {{else}} slice = append(slice, v) {{end}} }
-				{{ else }}
-					errs = append(errs, fmt.Errorf("unsupported slice element type %q for field {{$FieldName}} (param \"{{$ParamName}}\")", "{{$ElemType}}"))
-				{{ end }}
 				}
 			}
 			s.{{.FieldName}} = slice
@@ -473,7 +559,20 @@ func (s *{{.StructName}}) Bind(req *http.Request, pathVar func(string) string) e
 						if convErr != nil { {{if .IsRequired}} errs = append(errs, fmt.Errorf("failed to convert header \"{{.BindName}}\" (value: %q) to {{.FieldType}} for field {{.FieldName}}: %w", valStr, convErr)) {{else}} s.{{.FieldName}} = nil {{end}} } else { convertedValue := {{.FieldType}}(v); s.{{.FieldName}} = &convertedValue }
 						{{else if .IsComplex}}
 							v, convErr := strconv.ParseComplex(valStr, {{.BitSize}})
-							if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert cookie \"{{.BindName}}\" (value: %q) to {{.FieldType}} for field {{.FieldName}}: %w", valStr, convErr)) } else { s.{{.FieldName}} = {{.FieldType}}(v) }
+							if convErr != nil {
+								{{if .IsRequired}}
+									errs = append(errs, fmt.Errorf("failed to convert header \"{{.BindName}}\" (value: %q) to {{.FieldType}} for field {{.FieldName}}: %w", valStr, convErr))
+								{{else if .IsPointer}}
+									s.{{.FieldName}} = nil
+								{{end}}
+							} else {
+								convertedValue := {{.FieldType}}(v);
+								{{if .IsPointer}}
+									s.{{.FieldName}} = &convertedValue
+								{{else}}
+									s.{{.FieldName}} = convertedValue
+								{{end}}
+							}
 					{{else}} // Unsigned
 						v, convErr := strconv.ParseUint(valStr, 10, {{.BitSize}})
 						if convErr != nil { {{if .IsRequired}} errs = append(errs, fmt.Errorf("failed to convert header \"{{.BindName}}\" (value: %q) to {{.FieldType}} for field {{.FieldName}}: %w", valStr, convErr)) {{else}} s.{{.FieldName}} = nil {{end}} } else { convertedValue := {{.FieldType}}(v); s.{{.FieldName}} = &convertedValue }
@@ -494,7 +593,11 @@ func (s *{{.StructName}}) Bind(req *http.Request, pathVar func(string) string) e
 						if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert header \"{{.BindName}}\" (value: %q) to {{.FieldType}} for field {{.FieldName}}: %w", valStr, convErr)) } else { s.{{.FieldName}} = {{.FieldType}}(v) }
 						{{else if .IsComplex}}
 							v, convErr := strconv.ParseComplex(valStr, {{.BitSize}})
-							if convErr != nil { {{if .IsRequired}} errs = append(errs, fmt.Errorf("failed to convert cookie \"{{.BindName}}\" (value: %q) to {{.FieldType}} for field {{.FieldName}}: %w", valStr, convErr)) {{else}} s.{{.FieldName}} = nil {{end}} } else { convertedValue := {{.FieldType}}(v); s.{{.FieldName}} = &convertedValue }
+							if convErr != nil {
+								errs = append(errs, fmt.Errorf("failed to convert header \"{{.BindName}}\" (value: %q) to {{.FieldType}} for field {{.FieldName}}: %w", valStr, convErr))
+							} else {
+								s.{{.FieldName}} = {{.FieldType}}(v)
+							}
 					{{else}} // Unsigned
 						v, convErr := strconv.ParseUint(valStr, 10, {{.BitSize}})
 						if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert header \"{{.BindName}}\" (value: %q) to {{.FieldType}} for field {{.FieldName}}: %w", valStr, convErr)) } else { s.{{.FieldName}} = {{.FieldType}}(v) }
@@ -520,90 +623,175 @@ func (s *{{.StructName}}) Bind(req *http.Request, pathVar func(string) string) e
 			slice := make([]{{.SliceElementType}}, 0, len(valuesStr))
 			for _, valStrLoop := range valuesStr {
 				trimmedValStrLoop := strings.TrimSpace(valStrLoop)
-				{{ $Value := "trimmedValStrLoop" }}
-				{{ $IsElemPointer := stringsHasPrefix .SliceElementType "*" }}
-				{{ $ElemType := stringsTrimPrefix .SliceElementType "*" }}
-				{{ $OutputSliceVar := "slice" }}
-				{{ $ParamName := .BindName }}
-				{{ $FieldName := .FieldName }}
-				{{ $Source := "cookie" }}
-
-				if {{ $Value }} == "" {
-					{{if $IsElemPointer }}
-						{{if eq $ElemType "string"}}
+				// Directly use trimmedValStrLoop and field properties
+				if trimmedValStrLoop == "" {
+					{{if stringsHasPrefix .SliceElementType "*"}} // IsElemPointer
+						{{if eq (stringsTrimPrefix .SliceElementType "*") "string"}} // ElemType is string
 							emptyStr := ""
-							{{$OutputSliceVar}} = append({{$OutputSliceVar}}, &emptyStr)
-						{{else}}
+							slice = append(slice, &emptyStr)
+						{{else}} // *int, *bool etc.
 							var typedNil {{.SliceElementType}}
-							{{$OutputSliceVar}} = append({{$OutputSliceVar}}, typedNil)
+							slice = append(slice, typedNil)
 						{{end}}
-					{{else if eq $ElemType "string"}}
-						{{$OutputSliceVar}} = append({{$OutputSliceVar}}, {{$Value}})
-					{{else}}
-						errs = append(errs, fmt.Errorf("empty value for trimmed slice element of {{$FieldName}} (cookie \"{{$ParamName}}\") cannot be converted to {{$ElemType}} from %q", {{ $Value }}))
+					{{else if eq (stringsTrimPrefix .SliceElementType "*") "string"}} // ElemType is string
+						slice = append(slice, trimmedValStrLoop)
+					{{else}} // int, bool etc. (non-pointer, non-string)
+						errs = append(errs, fmt.Errorf("empty value for trimmed slice element of {{.FieldName}} (cookie \"{{.BindName}}\") cannot be converted to {{(stringsTrimPrefix .SliceElementType "*")}} from %q", trimmedValStrLoop))
 					{{end}}
 				} else {
-					{{ if eq $ElemType "string" }}
-					{{ if $IsElemPointer }}
-						sPtr := {{$Value}}
-						slice = append(slice, &sPtr)
+					{{ $OriginalElemType := .SliceElementType }}
+					{{ $IsElemPointerForBlock := stringsHasPrefix $OriginalElemType "*" }}
+					{{ $ElemTypeForBlock := stringsTrimPrefix $OriginalElemType "*" }}
+
+					{{ if eq $ElemTypeForBlock "string" }}
+						{{ if $IsElemPointerForBlock }}
+							sPtr := trimmedValStrLoop
+							slice = append(slice, &sPtr)
+						{{ else }}
+							slice = append(slice, trimmedValStrLoop)
+						{{ end }}
+					{{ else if eq $ElemTypeForBlock "int" }}
+						v, convErr := strconv.Atoi(trimmedValStrLoop)
+						if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert cookie \"{{.BindName}}\" element (value: %q) to int for field {{.FieldName}}: %w", trimmedValStrLoop, convErr)) } else { {{if $IsElemPointerForBlock}} slice = append(slice, &v) {{else}} slice = append(slice, v) {{end}} }
+					{{ else if eq $ElemTypeForBlock "int8" }}
+						var v64_int8 int64; var convErr_int8 error
+						v64_int8, convErr_int8 = strconv.ParseInt(trimmedValStrLoop, 10, 8)
+						if convErr_int8 != nil {
+							errs = append(errs, fmt.Errorf("failed to convert cookie \"{{.BindName}}\" element (value: %q) to int8 for field {{.FieldName}}: %w", trimmedValStrLoop, convErr_int8))
+						} else {
+							var v int8
+							v = int8(v64_int8)
+							{{if $IsElemPointerForBlock}}
+								slice = append(slice, &v)
+							{{else}}
+								slice = append(slice, v)
+							{{end}}
+						}
+					{{ else if eq $ElemTypeForBlock "int16" }}
+						var v64_int16 int64; var convErr_int16 error // Declaration
+						v64_int16, convErr_int16 = strconv.ParseInt(trimmedValStrLoop, 10, 16) // Assignment
+						if convErr_int16 != nil {
+							errs = append(errs, fmt.Errorf("failed to convert cookie \"{{.BindName}}\" element (value: %q) to int16 for field {{.FieldName}}: %w", trimmedValStrLoop, convErr_int16))
+						} else {
+							v_final_int16 := int16(v64_int16) // Use a distinct variable name for the converted value
+							{{if $IsElemPointerForBlock}}
+								slice = append(slice, &v_final_int16)
+							{{else}}
+								slice = append(slice, v_final_int16)
+							{{end}}
+						}
+					{{ else if eq $ElemTypeForBlock "int32" }}
+						var v64_int32 int64; var convErr_int32 error
+						v64_int32, convErr_int32 = strconv.ParseInt(trimmedValStrLoop, 10, 32)
+						if convErr_int32 != nil { errs = append(errs, fmt.Errorf("failed to convert cookie \"{{.BindName}}\" element (value: %q) to int32 for field {{.FieldName}}: %w", trimmedValStrLoop, convErr_int32))
+						} else {
+							var v int32
+							v = int32(v64_int32)
+							{{if $IsElemPointerForBlock}} slice = append(slice, &v) {{else}} slice = append(slice, v) {{end}}
+						}
+					{{ else if eq $ElemTypeForBlock "int64" }}
+						var v_int64 int64; var convErr_int64 error
+						v_int64, convErr_int64 = strconv.ParseInt(trimmedValStrLoop, 10, 64)
+						if convErr_int64 != nil { errs = append(errs, fmt.Errorf("failed to convert cookie \"{{.BindName}}\" element (value: %q) to int64 for field {{.FieldName}}: %w", trimmedValStrLoop, convErr_int64))
+						} else {
+							{{if $IsElemPointerForBlock}}
+								v_ptr := v_int64; slice = append(slice, &v_ptr)
+							{{else}}
+								slice = append(slice, v_int64)
+							{{end}}
+						}
+					{{ else if eq $ElemTypeForBlock "uint" }}
+						var v64_uint uint64; var convErr_uint error
+						v64_uint, convErr_uint = strconv.ParseUint(trimmedValStrLoop, 10, 0)
+						if convErr_uint != nil { errs = append(errs, fmt.Errorf("failed to convert cookie \"{{.BindName}}\" element (value: %q) to uint for field {{.FieldName}}: %w", trimmedValStrLoop, convErr_uint))
+						} else {
+							var v uint
+							v = uint(v64_uint)
+							{{if $IsElemPointerForBlock}} slice = append(slice, &v) {{else}} slice = append(slice, v) {{end}}
+						}
+					{{ else if eq $ElemTypeForBlock "uint8" }}
+						var v64_uint8 uint64; var convErr_uint8 error
+						v64_uint8, convErr_uint8 = strconv.ParseUint(trimmedValStrLoop, 10, 8)
+						if convErr_uint8 != nil { errs = append(errs, fmt.Errorf("failed to convert cookie \"{{.BindName}}\" element (value: %q) to uint8 for field {{.FieldName}}: %w", trimmedValStrLoop, convErr_uint8))
+						} else {
+							var v uint8
+							v = uint8(v64_uint8)
+							{{if $IsElemPointerForBlock}} slice = append(slice, &v) {{else}} slice = append(slice, v) {{end}}
+						}
+					{{ else if eq $ElemTypeForBlock "uint16" }}
+						var v64_uint16 uint64; var convErr_uint16 error
+						v64_uint16, convErr_uint16 = strconv.ParseUint(trimmedValStrLoop, 10, 16)
+						if convErr_uint16 != nil { errs = append(errs, fmt.Errorf("failed to convert cookie \"{{.BindName}}\" element (value: %q) to uint16 for field {{.FieldName}}: %w", trimmedValStrLoop, convErr_uint16))
+						} else {
+							var v uint16
+							v = uint16(v64_uint16)
+							{{if $IsElemPointerForBlock}} slice = append(slice, &v) {{else}} slice = append(slice, v) {{end}}
+						}
+					{{ else if eq $ElemTypeForBlock "uint32" }}
+						var v64_uint32 uint64; var convErr_uint32 error
+						v64_uint32, convErr_uint32 = strconv.ParseUint(trimmedValStrLoop, 10, 32)
+						if convErr_uint32 != nil { errs = append(errs, fmt.Errorf("failed to convert cookie \"{{.BindName}}\" element (value: %q) to uint32 for field {{.FieldName}}: %w", trimmedValStrLoop, convErr_uint32))
+						} else {
+							var v uint32
+							v = uint32(v64_uint32)
+							{{if $IsElemPointerForBlock}} slice = append(slice, &v) {{else}} slice = append(slice, v) {{end}}
+						}
+					{{ else if eq $ElemTypeForBlock "uint64" }}
+						var v_uint64 uint64; var convErr_uint64 error
+						v_uint64, convErr_uint64 = strconv.ParseUint(trimmedValStrLoop, 10, 64)
+						if convErr_uint64 != nil { errs = append(errs, fmt.Errorf("failed to convert cookie \"{{.BindName}}\" element (value: %q) to uint64 for field {{.FieldName}}: %w", trimmedValStrLoop, convErr_uint64))
+						} else {
+							{{if $IsElemPointerForBlock}}
+								v_ptr := v_uint64; slice = append(slice, &v_ptr)
+							{{else}}
+								slice = append(slice, v_uint64)
+							{{end}}
+						}
+					{{ else if eq $ElemTypeForBlock "float32" }}
+						var v64_float32 float64; var convErr_float32 error
+						v64_float32, convErr_float32 = strconv.ParseFloat(trimmedValStrLoop, 32)
+						if convErr_float32 != nil { errs = append(errs, fmt.Errorf("failed to convert cookie \"{{.BindName}}\" element (value: %q) to float32 for field {{.FieldName}}: %w", trimmedValStrLoop, convErr_float32))
+						} else {
+							var v float32
+							v = float32(v64_float32)
+							{{if $IsElemPointerForBlock}} slice = append(slice, &v) {{else}} slice = append(slice, v) {{end}}
+						}
+					{{ else if eq $ElemTypeForBlock "float64" }}
+						var v_float64 float64; var convErr_float64 error
+						v_float64, convErr_float64 = strconv.ParseFloat(trimmedValStrLoop, 64)
+						if convErr_float64 != nil { errs = append(errs, fmt.Errorf("failed to convert cookie \"{{.BindName}}\" element (value: %q) to float64 for field {{.FieldName}}: %w", trimmedValStrLoop, convErr_float64))
+						} else {
+							{{if $IsElemPointerForBlock}}
+								v_ptr := v_float64; slice = append(slice, &v_ptr)
+							{{else}}
+								slice = append(slice, v_float64)
+							{{end}}
+						}
+					{{ else if eq $ElemTypeForBlock "complex64" }}
+						var vComplex_complex64 complex128; var convErr_complex64 error
+						vComplex_complex64, convErr_complex64 = strconv.ParseComplex(trimmedValStrLoop, 64)
+						if convErr_complex64 != nil { errs = append(errs, fmt.Errorf("failed to convert cookie \"{{.BindName}}\" element (value: %q) to complex64 for field {{.FieldName}}: %w", trimmedValStrLoop, convErr_complex64))
+						} else {
+							c := complex64(vComplex_complex64);
+							{{if $IsElemPointerForBlock}} slice = append(slice, &c) {{else}} slice = append(slice, c) {{end}}
+						}
+					{{ else if eq $ElemTypeForBlock "complex128" }}
+						var vComplex_complex128 complex128; var convErr_complex128 error
+						vComplex_complex128, convErr_complex128 = strconv.ParseComplex(trimmedValStrLoop, 128)
+						if convErr_complex128 != nil { errs = append(errs, fmt.Errorf("failed to convert cookie \"{{.BindName}}\" element (value: %q) to complex128 for field {{.FieldName}}: %w", trimmedValStrLoop, convErr_complex128))
+						} else {
+							{{if $IsElemPointerForBlock}}
+								v_ptr := vComplex_complex128; slice = append(slice, &v_ptr)
+							{{else}}
+								slice = append(slice, vComplex_complex128)
+							{{end}}
+						}
+					{{ else if eq $ElemTypeForBlock "bool" }}
+						var v bool; var convErr error
+						v, convErr = strconv.ParseBool(trimmedValStrLoop)
 					{{ else }}
-						slice = append(slice, {{$Value}})
+						errs = append(errs, fmt.Errorf("unsupported slice element type %q for field {{.FieldName}} (param \"{{.BindName}}\")", "{{$ElemTypeForBlock}}"))
 					{{ end }}
-				{{ else if eq $ElemType "int" }}
-					v, convErr := strconv.Atoi({{$Value}})
-					if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert %s \"{{$ParamName}}\" element (value: %q) to int for field {{$FieldName}}: %w", "{{$Source}}", {{$Value}}, convErr)) } else { {{if $IsElemPointer}} slice = append(slice, &v) {{else}} slice = append(slice, v) {{end}} }
-				{{ else if eq $ElemType "int8" }}
-					v64, convErr := strconv.ParseInt({{$Value}}, 10, 8)
-					if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert %s \"{{$ParamName}}\" element (value: %q) to int8 for field {{$FieldName}}: %w", "{{$Source}}", {{$Value}}, convErr)) } else { v := int8(v64); {{if $IsElemPointer}} slice = append(slice, &v) {{else}} slice = append(slice, v) {{end}} }
-				{{ else if eq $ElemType "int16" }}
-					v64, convErr := strconv.ParseInt({{$Value}}, 10, 16)
-					if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert %s \"{{$ParamName}}\" element (value: %q) to int16 for field {{$FieldName}}: %w", "{{$Source}}", {{$Value}}, convErr)) } else { v := int16(v64); {{if $IsElemPointer}} slice = append(slice, &v) {{else}} slice = append(slice, v) {{end}} }
-				{{ else if eq $ElemType "int32" }}
-					v64, convErr := strconv.ParseInt({{$Value}}, 10, 32)
-					if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert %s \"{{$ParamName}}\" element (value: %q) to int32 for field {{$FieldName}}: %w", "{{$Source}}", {{$Value}}, convErr)) } else { v := int32(v64); {{if $IsElemPointer}} slice = append(slice, &v) {{else}} slice = append(slice, v) {{end}} }
-				{{ else if eq $ElemType "int64" }}
-					v, convErr := strconv.ParseInt({{$Value}}, 10, 64)
-					if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert %s \"{{$ParamName}}\" element (value: %q) to int64 for field {{$FieldName}}: %w", "{{$Source}}", {{$Value}}, convErr)) } else { {{if $IsElemPointer}} slice = append(slice, &v) {{else}} slice = append(slice, v) {{end}} }
-				{{ else if eq $ElemType "uint" }}
-					v64, convErr := strconv.ParseUint({{$Value}}, 10, 0)
-					if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert %s \"{{$ParamName}}\" element (value: %q) to uint for field {{$FieldName}}: %w", "{{$Source}}", {{$Value}}, convErr)) } else { v := uint(v64); {{if $IsElemPointer}} slice = append(slice, &v) {{else}} slice = append(slice, v) {{end}} }
-				{{ else if eq $ElemType "uint8" }}
-					v64, convErr := strconv.ParseUint({{$Value}}, 10, 8)
-					if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert %s \"{{$ParamName}}\" element (value: %q) to uint8 for field {{$FieldName}}: %w", "{{$Source}}", {{$Value}}, convErr)) } else { v := uint8(v64); {{if $IsElemPointer}} slice = append(slice, &v) {{else}} slice = append(slice, v) {{end}} }
-				{{ else if eq $ElemType "uint16" }}
-					v64, convErr := strconv.ParseUint({{$Value}}, 10, 16)
-					if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert %s \"{{$ParamName}}\" element (value: %q) to uint16 for field {{$FieldName}}: %w", "{{$Source}}", {{$Value}}, convErr)) } else { v := uint16(v64); {{if $IsElemPointer}} slice = append(slice, &v) {{else}} slice = append(slice, v) {{end}} }
-				{{ else if eq $ElemType "uint32" }}
-					v64, convErr := strconv.ParseUint({{$Value}}, 10, 32)
-					if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert %s \"{{$ParamName}}\" element (value: %q) to uint32 for field {{$FieldName}}: %w", "{{$Source}}", {{$Value}}, convErr)) } else { v := uint32(v64); {{if $IsElemPointer}} slice = append(slice, &v) {{else}} slice = append(slice, v) {{end}} }
-				{{ else if eq $ElemType "uint64" }}
-					v, convErr := strconv.ParseUint({{$Value}}, 10, 64)
-					if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert %s \"{{$ParamName}}\" element (value: %q) to uint64 for field {{$FieldName}}: %w", "{{$Source}}", {{$Value}}, convErr)) } else { {{if $IsElemPointer}} slice = append(slice, &v) {{else}} slice = append(slice, v) {{end}} }
-				{{ else if eq $ElemType "float32" }}
-					v64, convErr := strconv.ParseFloat({{$Value}}, 32)
-					if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert %s \"{{$ParamName}}\" element (value: %q) to float32 for field {{$FieldName}}: %w", "{{$Source}}", {{$Value}}, convErr)) } else { v := float32(v64); {{if $IsElemPointer}} slice = append(slice, &v) {{else}} slice = append(slice, v) {{end}} }
-				{{ else if eq $ElemType "float64" }}
-					v, convErr := strconv.ParseFloat({{$Value}}, 64)
-					if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert %s \"{{$ParamName}}\" element (value: %q) to float64 for field {{$FieldName}}: %w", "{{$Source}}", {{$Value}}, convErr)) } else { {{if $IsElemPointer}} slice = append(slice, &v) {{else}} slice = append(slice, v) {{end}} }
-					{{ else if eq $ElemType "complex64" }}
-						vComplex, convErr := strconv.ParseComplex({{$Value}}, 64)
-						if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert %s \"{{$ParamName}}\" element (value: %q) to complex64 for field {{$FieldName}}: %w", "{{$Source}}", {{$Value}}, convErr)) } else { c := complex64(vComplex); {{if $IsElemPointer}} slice = append(slice, &c) {{else}} slice = append(slice, c) {{end}} }
-					{{ else if eq $ElemType "complex128" }}
-						vComplex, convErr := strconv.ParseComplex({{$Value}}, 128)
-						if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert %s \"{{$ParamName}}\" element (value: %q) to complex128 for field {{$FieldName}}: %w", "{{$Source}}", {{$Value}}, convErr)) } else { {{if $IsElemPointer}} slice = append(slice, &vComplex) {{else}} slice = append(slice, vComplex) {{end}} }
-					{{ else if eq $ElemType "complex64" }}
-						vComplex, convErr := strconv.ParseComplex({{$Value}}, 64)
-						if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert %s \"{{$ParamName}}\" element (value: %q) to complex64 for field {{$FieldName}}: %w", "{{$Source}}", {{$Value}}, convErr)) } else { c := complex64(vComplex); {{if $IsElemPointer}} slice = append(slice, &c) {{else}} slice = append(slice, c) {{end}} }
-					{{ else if eq $ElemType "complex128" }}
-						vComplex, convErr := strconv.ParseComplex({{$Value}}, 128)
-						if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert %s \"{{$ParamName}}\" element (value: %q) to complex128 for field {{$FieldName}}: %w", "{{$Source}}", {{$Value}}, convErr)) } else { {{if $IsElemPointer}} slice = append(slice, &vComplex) {{else}} slice = append(slice, vComplex) {{end}} }
-				{{ else if eq $ElemType "bool" }}
-					v, convErr := strconv.ParseBool({{$Value}})
-					if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert %s \"{{$ParamName}}\" element (value: %q) to bool for field {{$FieldName}}: %w", "{{$Source}}", {{$Value}}, convErr)) } else { {{if $IsElemPointer}} slice = append(slice, &v) {{else}} slice = append(slice, v) {{end}} }
-				{{ else }}
-					errs = append(errs, fmt.Errorf("unsupported slice element type %q for field {{$FieldName}} (param \"{{$ParamName}}\")", "{{$ElemType}}"))
-				{{ end }}
 				}
 			}
 			s.{{.FieldName}} = slice
@@ -632,7 +820,20 @@ func (s *{{.StructName}}) Bind(req *http.Request, pathVar func(string) string) e
 						if convErr != nil { {{if .IsRequired}} errs = append(errs, fmt.Errorf("failed to convert cookie \"{{.BindName}}\" (value: %q) to {{.FieldType}} for field {{.FieldName}}: %w", valStr, convErr)) {{else}} s.{{.FieldName}} = nil {{end}} } else { convertedValue := {{.FieldType}}(v); s.{{.FieldName}} = &convertedValue }
 						{{else if .IsComplex}}
 							v, convErr := strconv.ParseComplex(valStr, {{.BitSize}})
-							if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert header \"{{.BindName}}\" (value: %q) to {{.FieldType}} for field {{.FieldName}}: %w", valStr, convErr)) } else { s.{{.FieldName}} = {{.FieldType}}(v) }
+							if convErr != nil {
+								{{if .IsRequired}}
+									errs = append(errs, fmt.Errorf("failed to convert cookie \"{{.BindName}}\" (value: %q) to {{.FieldType}} for field {{.FieldName}}: %w", valStr, convErr))
+								{{else if .IsPointer}}
+									s.{{.FieldName}} = nil
+								{{end}}
+							} else {
+								convertedValue := {{.FieldType}}(v);
+								{{if .IsPointer}}
+									s.{{.FieldName}} = &convertedValue
+								{{else}}
+									s.{{.FieldName}} = convertedValue
+								{{end}}
+							}
 					{{else}} // Unsigned
 						v, convErr := strconv.ParseUint(valStr, 10, {{.BitSize}})
 						if convErr != nil { {{if .IsRequired}} errs = append(errs, fmt.Errorf("failed to convert cookie \"{{.BindName}}\" (value: %q) to {{.FieldType}} for field {{.FieldName}}: %w", valStr, convErr)) {{else}} s.{{.FieldName}} = nil {{end}} } else { convertedValue := {{.FieldType}}(v); s.{{.FieldName}} = &convertedValue }
@@ -653,7 +854,11 @@ func (s *{{.StructName}}) Bind(req *http.Request, pathVar func(string) string) e
 						if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert cookie \"{{.BindName}}\" (value: %q) to {{.FieldType}} for field {{.FieldName}}: %w", valStr, convErr)) } else { s.{{.FieldName}} = {{.FieldType}}(v) }
 						{{else if .IsComplex}}
 							v, convErr := strconv.ParseComplex(valStr, {{.BitSize}})
-							if convErr != nil { {{if .IsRequired}} errs = append(errs, fmt.Errorf("failed to convert header \"{{.BindName}}\" (value: %q) to {{.FieldType}} for field {{.FieldName}}: %w", valStr, convErr)) {{else}} s.{{.FieldName}} = nil {{end}} } else { convertedValue := {{.FieldType}}(v); s.{{.FieldName}} = &convertedValue }
+							if convErr != nil {
+								errs = append(errs, fmt.Errorf("failed to convert cookie \"{{.BindName}}\" (value: %q) to {{.FieldType}} for field {{.FieldName}}: %w", valStr, convErr))
+							} else {
+								s.{{.FieldName}} = {{.FieldType}}(v)
+							}
 					{{else}} // Unsigned
 						v, convErr := strconv.ParseUint(valStr, 10, {{.BitSize}})
 						if convErr != nil { errs = append(errs, fmt.Errorf("failed to convert cookie \"{{.BindName}}\" (value: %q) to {{.FieldType}} for field {{.FieldName}}: %w", valStr, convErr)) } else { s.{{.FieldName}} = {{.FieldType}}(v) }
@@ -717,415 +922,6 @@ func (s *{{.StructName}}) Bind(req *http.Request, pathVar func(string) string) e
 	return nil
 }
 `
-
-// isGo122orLater checks the go.mod file for the Go version.
-// This function is kept for now as it might be useful for other features,
-// but it's not strictly necessary for the current path parameter handling.
-// func isGo122orLater(gscn *goscan.Scanner) bool {
-// 	if gscn.Module == nil || gscn.Module.GoVersion == "" {
-// 		// Fallback or warning if go.mod isn't parsed or version isn't found
-// 		// For safety, assume older version if undetermined.
-// 		fmt.Println("Warning: Go version not found in go.mod, assuming pre-1.22 for path parameter binding.")
-// 		return false
-// 	}
-// 	versionStr := gscn.Module.GoVersion
-// 	// Expecting format like "1.22" or "1.22.0"
-// 	parts := strings.Split(versionStr, ".")
-// 	if len(parts) < 2 {
-// 		return false // Invalid format
-// 	}
-// 	major, errMajor := strconv.Atoi(parts[0])
-// 	minor, errMinor := strconv.Atoi(parts[1])
-// 	if errMajor != nil || errMinor != nil {
-// 		return false // Invalid format
-// 	}
-
-// 	return major > 1 || (major == 1 && minor >= 22)
-// }
-
-func Generate(ctx context.Context, pkgPath string) error {
-	gscn, err := goscan.New(".")
-	if err != nil {
-		return fmt.Errorf("failed to create go-scan scanner: %w", err)
-	}
-	// Scan the package to get its info.
-	pkgInfo, err := gscn.ScanPackage(ctx, pkgPath)
-	if err != nil {
-		return fmt.Errorf("go-scan failed to scan package at %s: %w", pkgPath, err)
-	}
-
-	// isGo122 := isGo122orLater(gscn) // No longer strictly needed for path vars
-	// if isGo122 {
-	// 	fmt.Println("Detected Go version 1.22 or later.") // Info message can be removed or adapted
-	// } else {
-	// 	fmt.Println("Detected Go version < 1.22.") // Info message can be removed or adapted
-	// }
-
-	var generatedCodeForAllStructs bytes.Buffer
-	allFileImports := make(map[string]string) // path -> alias
-	needsImportStrconv := false
-	needsImportNetHTTP := false
-	needsImportFmt := false
-	needsImportEncodingJson := false
-	needsImportIO := false
-	needsImportErrors := false // Added for errors.Join
-	// needsImportStrings will be implicitly handled by adding to allFileImports
-
-	for _, typeInfo := range pkgInfo.Types {
-		if typeInfo.Kind != scanner.StructKind || typeInfo.Struct == nil {
-			continue
-		}
-		hasBindingAnnotationOnStruct := strings.Contains(typeInfo.Doc, bindingAnnotation)
-		structLevelInTag := ""
-		if hasBindingAnnotationOnStruct {
-			// Extract in:"xxx" from struct doc comment if present
-			// Example: @derivng:binding in:"body"
-			docLines := strings.Split(typeInfo.Doc, "\n")
-			for _, line := range docLines {
-				if strings.Contains(line, bindingAnnotation) {
-					parts := strings.Fields(line) // Split by space
-					for _, part := range parts {
-						if strings.HasPrefix(part, "in:") {
-							structLevelInTag = strings.TrimSuffix(strings.SplitN(part, ":", 2)[1], `"`)
-							structLevelInTag = strings.TrimPrefix(structLevelInTag, `"`)
-							break
-						}
-					}
-				}
-				if structLevelInTag != "" {
-					break
-				}
-			}
-		}
-
-		if !hasBindingAnnotationOnStruct {
-			continue
-		}
-		fmt.Printf("  Processing struct: %s for %s\n", typeInfo.Name, bindingAnnotation)
-
-		data := TemplateData{
-			PackageName:                pkgInfo.Name,
-			StructName:                 typeInfo.Name,
-			Imports:                    make(map[string]string),
-			Fields:                     []FieldBindingInfo{},
-			NeedsBody:                  (structLevelInTag == "body"),
-			HasSpecificBodyFieldTarget: false, // Initialize
-			ErrNoCookie:                http.ErrNoCookie,
-			// IsGo122:     isGo122,
-		}
-		needsImportNetHTTP = true // For http.ErrNoCookie
-
-		for _, field := range typeInfo.Struct.Fields {
-			tag := reflect.StructTag(field.Tag)
-			inTagVal := tag.Get("in")
-			bindFrom := ""
-			bindName := "" // This will be sourced from specific tags like path:"<name>", query:"<name>"
-
-			if inTagVal != "" {
-				bindFrom = strings.ToLower(strings.TrimSpace(inTagVal))
-				switch bindFrom {
-				case "path":
-					bindName = tag.Get("path")
-				case "query":
-					bindName = tag.Get("query")
-				case "header":
-					bindName = tag.Get("header")
-				case "cookie":
-					bindName = tag.Get("cookie")
-				case "body":
-					// For `in:"body"`, bindName is not used from another tag for the field itself.
-					// The field *is* the body.
-					data.NeedsBody = true // Ensure NeedsBody is true if any field is in:body
-				default:
-					fmt.Printf("      Skipping field %s: unknown 'in' tag value '%s'\n", field.Name, inTagVal)
-					continue
-				}
-				if bindFrom != "body" && bindName == "" {
-					fmt.Printf("      Skipping field %s: 'in:\"%s\"' tag requires corresponding '%s:\"name\"' tag\n", field.Name, bindFrom, bindFrom)
-					continue
-				}
-			} else if data.NeedsBody { // structLevelInTag was "body", and this field has no specific "in" tag
-				// This field is part of the JSON body. Its JSON name comes from the "json" tag.
-				// The template handles this by decoding into the whole struct 's'.
-				// We don't need to add it to Fields for individual binding logic here,
-				// unless the template becomes more granular for struct-level body.
-				// For now, skip adding to data.Fields if it's just part of a struct-level body.
-				continue
-			} else {
-				// No "in" tag and struct is not "in:body" globally.
-				continue
-			}
-
-			fInfo := FieldBindingInfo{
-				FieldName:               field.Name,
-				BindFrom:                bindFrom,
-				BindName:                bindName,
-				IsRequired:              (tag.Get("required") == "true"),
-				OriginalFieldTypeString: field.Type.String(),
-				IsPointer:               field.Type.IsPointer, // Base IsPointer for the field itself
-			}
-
-			// Determine detailed type information
-			currentScannerType := field.Type // This is a *scanner.FieldType
-
-			// This is the type that will be used in the template's switch/if conditions for conversion logic.
-			// For simple types (int, *int), it's the base type ("int").
-			// For slice types ([]int, []*int), it's the slice's element's base type ("int").
-			baseTypeForConversion := ""
-			// isElementPointer := false // We can infer this from SliceElementType if it starts with "*"
-
-			if currentScannerType.IsSlice {
-				fInfo.IsSlice = true
-				if currentScannerType.Elem != nil {
-					fInfo.SliceElementType = currentScannerType.Elem.String() // e.g., "int", "*string", "pkg.MyType", "*pkg.MyType"
-
-					// Determine the baseTypeForConversion from the slice element
-					sliceElemScannerType := currentScannerType.Elem
-					if sliceElemScannerType.IsPointer && sliceElemScannerType.Elem != nil { // e.g. []*int, Elem is *int, Elem.Elem is int
-						baseTypeForConversion = sliceElemScannerType.Elem.Name // "int"
-						// isElementPointer = true
-					} else if sliceElemScannerType.IsPointer && sliceElemScannerType.Elem == nil { // e.g. []*ExternalType
-						baseTypeForConversion = sliceElemScannerType.Name // "ExternalType"
-						// isElementPointer = true
-					} else { // e.g. []int or []ExternalType
-						baseTypeForConversion = sliceElemScannerType.Name // "int" or "ExternalType"
-						// isElementPointer = false
-					}
-				} else {
-					fmt.Printf("      Skipping field %s: slice with nil Elem type\n", field.Name)
-					continue
-				}
-			} else if currentScannerType.IsPointer {
-				// fInfo.IsPointer is already true
-				if currentScannerType.Elem != nil { // e.g. *int, Elem is int
-					baseTypeForConversion = currentScannerType.Elem.Name // "int"
-				} else { // e.g. *ExternalType where ExternalType is not further broken down by go-scan's Elem
-					baseTypeForConversion = currentScannerType.Name // "ExternalType"
-					if baseTypeForConversion == "" {
-						fmt.Printf("      Warning: Pointer field %s (%s) - field.Type.Elem is nil and field.Type.Name is empty. Original type: %s. Skipping.\n", field.Name, fInfo.OriginalFieldTypeString, field.Type.String())
-						if bindFrom != "body" { // body might handle it via JSON unmarshal
-							continue
-						}
-					}
-				}
-			} else { // Not a slice, not a pointer (e.g. int, string, ExternalType)
-				baseTypeForConversion = currentScannerType.Name // "int", "string", "ExternalType"
-				if baseTypeForConversion == "" {
-					fmt.Printf("      Warning: Field %s (%s) - field.Type.Name is empty for non-slice/non-pointer. Original type: %s. Skipping.\n", field.Name, fInfo.OriginalFieldTypeString, field.Type.String())
-					if bindFrom != "body" {
-						continue
-					}
-				}
-			}
-
-			fInfo.FieldType = baseTypeForConversion // This is what template's {{.FieldType}} will be, e.g., "int", "string", "MyStruct"
-
-			// Populate numeric type details based on 'baseTypeForConversion'
-			switch baseTypeForConversion {
-			case "int", "int8", "int16", "int32", "int64":
-				fInfo.IsNumeric = true
-				fInfo.IsSigned = true
-				if size, ok := map[string]int{"int": 0, "int8": 8, "int16": 16, "int32": 32, "int64": 64}[baseTypeForConversion]; ok {
-					fInfo.BitSize = size
-				}
-			case "uint", "uint8", "uint16", "uint32", "uint64", "uintptr":
-				fInfo.IsNumeric = true
-				fInfo.IsSigned = false
-				if size, ok := map[string]int{"uint": 0, "uint8": 8, "uint16": 16, "uint32": 32, "uint64": 64, "uintptr": 0}[baseTypeForConversion]; ok {
-					fInfo.BitSize = size
-				}
-			case "float32", "float64":
-				fInfo.IsNumeric = true
-				fInfo.IsFloat = true
-				if size, ok := map[string]int{"float32": 32, "float64": 64}[baseTypeForConversion]; ok {
-					fInfo.BitSize = size
-				}
-			case "complex64", "complex128":
-				fInfo.IsNumeric = true // Technically, but for template logic, IsComplex is more specific
-				fInfo.IsComplex = true
-				if size, ok := map[string]int{"complex64": 64, "complex128": 128}[baseTypeForConversion]; ok {
-					fInfo.BitSize = size
-				}
-			case "string", "bool":
-				// These are handled. IsNumeric/IsFloat/IsSigned remain false.
-				break // Explicitly break, though it's the end of switch cases for these.
-			default:
-				// This is for non-basic types when not binding from body.
-				// Includes custom struct types, etc.
-				if bindFrom != "body" && !fInfo.IsSlice {
-					fmt.Printf("      Skipping field %s: unhandled base type '%s' (original: %s, slice: %t) for %s binding\n", field.Name, baseTypeForConversion, fInfo.OriginalFieldTypeString, fInfo.IsSlice, bindFrom)
-					continue
-				} else if bindFrom != "body" && fInfo.IsSlice && !isWellKnownSliceElementType(fInfo.SliceElementType) {
-					// isWellKnownSliceElementType checks if SliceElementType is like "string", "int", "*bool" etc.
-					fmt.Printf("      Skipping field %s: slice of unhandled element type '%s' (original: %s) for %s binding\n", field.Name, fInfo.SliceElementType, fInfo.OriginalFieldTypeString, bindFrom)
-					continue
-				}
-			}
-
-			// Determine if conversion is needed and manage imports
-			if bindFrom != "body" {
-				needsImportNetHTTP = true
-
-				needsConv := fInfo.IsNumeric || fInfo.IsComplex || baseTypeForConversion == "bool"
-				if fInfo.IsSlice {
-					// Determine element base type for conversion check
-					elemBaseTypeForConv := baseTypeForConversion // This was already set based on Elem
-					if isNumericOrBool(elemBaseTypeForConv) {
-						needsConv = true
-					}
-				}
-				if needsConv {
-					needsImportStrconv = true
-				}
-
-				if fInfo.IsSlice && (bindFrom == "header" || bindFrom == "cookie") {
-					allFileImports["strings"] = ""
-				}
-				needsImportFmt = true
-			} else {
-				fInfo.IsBody = true
-				data.NeedsBody = true
-				data.HasSpecificBodyFieldTarget = true
-				needsImportEncodingJson = true
-				needsImportIO = true
-			}
-
-			data.Fields = append(data.Fields, fInfo)
-		}
-
-		if len(data.Fields) == 0 && !data.NeedsBody { // If no fields to bind and struct is not body target
-			fmt.Printf("  Skipping struct %s: no bindable fields found and not a global body target.\n", typeInfo.Name)
-			continue
-		}
-
-		// Manage imports (ensure "strings" is included if added above)
-		// This check is implicitly handled as allFileImports is a map.
-		// if _, ok := allFileImports["strings"]; ok {
-		// }
-
-		// if needsImportNetHTTP {  // THIS BLOCK IS DUPLICATED AND CAUSES THE ERROR
-		// 		fieldBindingInfo.IsBody = true
-		// 		data.NeedsBody = true
-		// 		data.HasSpecificBodyFieldTarget = true
-		// 		needsImportEncodingJson = true
-		// 		needsImportIO = true
-		// 	}
-
-		// 	if bindFrom != "body" { // THIS BLOCK IS DUPLICATED
-		// 		needsImportNetHTTP = true
-		// 		if needsConversion {
-		// 			needsImportStrconv = true
-		// 		}
-		// 		needsImportFmt = true
-		// 	}
-
-		// 	data.Fields = append(data.Fields, fieldBindingInfo) // THIS LINE IS DUPLICATED
-		// } // THIS BRACE IS EXTRA
-
-		if len(data.Fields) == 0 && !data.NeedsBody { // If no fields to bind and struct is not body target
-			fmt.Printf("  Skipping struct %s: no bindable fields found and not a global body target.\n", typeInfo.Name)
-			continue
-		}
-
-		// Manage imports
-		if needsImportNetHTTP {
-			allFileImports["net/http"] = ""
-		}
-		if needsImportStrconv {
-			allFileImports["strconv"] = ""
-		}
-		if needsImportFmt {
-			allFileImports["fmt"] = ""
-		}
-		if needsImportEncodingJson { // This might also be true if data.NeedsBody is true from struct level
-			allFileImports["encoding/json"] = ""
-		}
-		if needsImportIO { // This might also be true if data.NeedsBody is true from struct level
-			allFileImports["io"] = ""
-		}
-		if data.NeedsBody && !needsImportEncodingJson { // Ensure json/io are imported if struct is body target
-			allFileImports["encoding/json"] = ""
-			needsImportEncodingJson = true
-		}
-		if data.NeedsBody && !needsImportIO {
-			allFileImports["io"] = ""
-			needsImportIO = true
-		}
-
-		funcMap := template.FuncMap{
-			"stringsHasPrefix":  strings.HasPrefix,
-			"stringsTrimPrefix": strings.TrimPrefix,
-			// "stringsSplit":      strings.Split, // No longer needed
-			// "stringsTrimSpace":  strings.TrimSpace, // No longer needed
-		}
-
-		tmpl, err := template.New("bind").Funcs(funcMap).Parse(bindMethodTemplate)
-		if err != nil {
-			return fmt.Errorf("failed to parse template: %w", err)
-		}
-		var currentGeneratedCode bytes.Buffer
-		if err := tmpl.Execute(&currentGeneratedCode, data); err != nil {
-			return fmt.Errorf("failed to execute template for struct %s: %w", typeInfo.Name, err)
-		}
-		generatedCodeForAllStructs.Write(currentGeneratedCode.Bytes())
-		generatedCodeForAllStructs.WriteString("\n\n")
-		needsImportErrors = true // If a Bind method is generated, errors package might be needed
-	}
-
-	if generatedCodeForAllStructs.Len() == 0 {
-		fmt.Println("No structs found requiring Bind method generation.")
-		return nil
-	}
-
-	finalOutput := bytes.Buffer{}
-	finalOutput.WriteString(fmt.Sprintf("// Code generated by derivingbind for package %s. DO NOT EDIT.\n\n", pkgInfo.Name))
-	finalOutput.WriteString(fmt.Sprintf("package %s\n\n", pkgInfo.Name))
-
-	if needsImportErrors { // Ensure errors is in allFileImports if needed
-		allFileImports["errors"] = ""
-	}
-
-	if len(allFileImports) > 0 {
-		finalOutput.WriteString("import (\n")
-		// Correctly sort imports for stability, including "strings" if present
-		paths := make([]string, 0, len(allFileImports))
-		for path := range allFileImports {
-			paths = append(paths, path)
-		}
-		sort.Strings(paths) // Sort the import paths
-		for _, path := range paths {
-			alias := allFileImports[path] // This is always "" in current code
-			if alias == "" {
-				finalOutput.WriteString(fmt.Sprintf("\t\"%s\"\n", path))
-			} else {
-				finalOutput.WriteString(fmt.Sprintf("\t%s \"%s\"\n", alias, path))
-			}
-		}
-		finalOutput.WriteString(")\n\n")
-	}
-
-	finalOutput.Write(generatedCodeForAllStructs.Bytes())
-	formattedCode, err := format.Source(finalOutput.Bytes())
-	if err != nil {
-		// fmt.Printf("Error formatting generated code for package %s: %v\n--- Unformatted Code ---\n%s\n--- End Unformatted Code ---\n", pkgInfo.Name, err, finalOutput.String())
-		// return fmt.Errorf("failed to format generated code for package %s: %w", pkgInfo.Name, err)
-		// If formatting fails, write the unformatted code for debugging
-		fmt.Printf("Warning: Error formatting generated code for package %s: %v. Writing unformatted code.\n", pkgInfo.Name, err)
-		formattedCode = finalOutput.Bytes()
-	}
-	outputFileName := filepath.Join(pkgPath, fmt.Sprintf("%s_deriving.go", strings.ToLower(pkgInfo.Name)))
-	if _, statErr := os.Stat(outputFileName); statErr == nil {
-		if removeErr := os.Remove(outputFileName); removeErr != nil {
-			fmt.Printf("Warning: Failed to remove existing generated file %s: %v\n", outputFileName, removeErr)
-		}
-	}
-	if err = os.WriteFile(outputFileName, formattedCode, 0644); err != nil {
-		return fmt.Errorf("failed to write generated code to %s: %w", outputFileName, err)
-	}
-	fmt.Printf("Generated code written to %s\n", outputFileName)
-	return nil
-}
-
 // Helper function to check if a base type string is numeric or boolean
 func isNumericOrBool(baseType string) bool {
 	switch baseType {
@@ -1155,4 +951,312 @@ func isWellKnownSliceElementType(sliceElementType string) bool {
 		// Could also check against a list of registered external types if that becomes a feature
 		return false
 	}
+}
+
+func Generate(ctx context.Context, pkgPath string) error {
+	gscn, err := goscan.New(".")
+	if err != nil {
+		return fmt.Errorf("failed to create go-scan scanner: %w", err)
+	}
+	// Scan the package to get its info.
+	pkgInfo, err := gscn.ScanPackage(ctx, pkgPath)
+	if err != nil {
+		return fmt.Errorf("go-scan failed to scan package at %s: %w", pkgPath, err)
+	}
+
+	var generatedCodeForAllStructs bytes.Buffer
+	allFileImports := make(map[string]string) // path -> alias
+	needsImportStrconv := false
+	needsImportNetHTTP := false
+	needsImportFmt := false
+	needsImportEncodingJson := false
+	needsImportIO := false
+	needsImportErrors := false
+
+
+	for _, typeInfo := range pkgInfo.Types {
+		if typeInfo.Kind != scanner.StructKind || typeInfo.Struct == nil {
+			continue
+		}
+		hasBindingAnnotationOnStruct := strings.Contains(typeInfo.Doc, bindingAnnotation) // Uses corrected const
+		structLevelInTag := ""
+		if hasBindingAnnotationOnStruct {
+			docLines := strings.Split(typeInfo.Doc, "\n")
+			for _, line := range docLines {
+				if strings.Contains(line, bindingAnnotation) { // Uses corrected const
+					parts := strings.Fields(line)
+					for _, part := range parts {
+						if strings.HasPrefix(part, "in:") {
+							structLevelInTag = strings.TrimSuffix(strings.SplitN(part, ":", 2)[1], `"`)
+							structLevelInTag = strings.TrimPrefix(structLevelInTag, `"`)
+							break
+						}
+					}
+				}
+				if structLevelInTag != "" {
+					break
+				}
+			}
+		}
+
+		if !hasBindingAnnotationOnStruct {
+			continue
+		}
+		fmt.Printf("  Processing struct: %s for %s\n", typeInfo.Name, bindingAnnotation) // Uses corrected const
+
+		data := TemplateData{
+			PackageName:                pkgInfo.Name,
+			StructName:                 typeInfo.Name,
+			Imports:                    make(map[string]string),
+			Fields:                     []FieldBindingInfo{},
+			NeedsBody:                  (structLevelInTag == "body"),
+			HasSpecificBodyFieldTarget: false,
+			ErrNoCookie:                http.ErrNoCookie,
+		}
+		needsImportNetHTTP = true
+
+		for _, field := range typeInfo.Struct.Fields {
+			tag := reflect.StructTag(field.Tag)
+			inTagVal := tag.Get("in")
+			bindFrom := ""
+			bindName := ""
+
+			if inTagVal != "" {
+				bindFrom = strings.ToLower(strings.TrimSpace(inTagVal))
+				switch bindFrom {
+				case "path":
+					bindName = tag.Get("path")
+				case "query":
+					bindName = tag.Get("query")
+				case "header":
+					bindName = tag.Get("header")
+				case "cookie":
+					bindName = tag.Get("cookie")
+				case "body":
+					data.NeedsBody = true
+				default:
+					fmt.Printf("      Skipping field %s: unknown 'in' tag value '%s'\n", field.Name, inTagVal)
+					continue
+				}
+				if bindFrom != "body" && bindName == "" {
+					fmt.Printf("      Skipping field %s: 'in:\"%s\"' tag requires corresponding '%s:\"name\"' tag\n", field.Name, bindFrom, bindFrom)
+					continue
+				}
+			} else if data.NeedsBody {
+				continue
+			} else {
+				continue
+			}
+
+			fInfo := FieldBindingInfo{
+				FieldName:               field.Name,
+				BindFrom:                bindFrom,
+				BindName:                bindName,
+				IsRequired:              (tag.Get("required") == "true"),
+				OriginalFieldTypeString: field.Type.String(),
+				IsPointer:               field.Type.IsPointer,
+			}
+
+			currentScannerType := field.Type
+			baseTypeForConversion := ""
+
+			if currentScannerType.IsSlice {
+				fInfo.IsSlice = true
+				if currentScannerType.Elem != nil {
+					fInfo.SliceElementType = currentScannerType.Elem.String()
+					sliceElemScannerType := currentScannerType.Elem
+					if sliceElemScannerType.IsPointer && sliceElemScannerType.Elem != nil {
+						baseTypeForConversion = sliceElemScannerType.Elem.Name
+					} else if sliceElemScannerType.IsPointer && sliceElemScannerType.Elem == nil {
+						baseTypeForConversion = sliceElemScannerType.Name
+					} else {
+						baseTypeForConversion = sliceElemScannerType.Name
+					}
+				} else {
+					fmt.Printf("      Skipping field %s: slice with nil Elem type\n", field.Name)
+					continue
+				}
+			} else if currentScannerType.IsPointer {
+				if currentScannerType.Elem != nil {
+					baseTypeForConversion = currentScannerType.Elem.Name
+				} else {
+					baseTypeForConversion = currentScannerType.Name
+					if baseTypeForConversion == "" {
+						fmt.Printf("      Warning: Pointer field %s (%s) - field.Type.Elem is nil and field.Type.Name is empty. Original type: %s. Skipping.\n", field.Name, fInfo.OriginalFieldTypeString, field.Type.String())
+						if bindFrom != "body" {
+							continue
+						}
+					}
+				}
+			} else {
+				baseTypeForConversion = currentScannerType.Name
+				if baseTypeForConversion == "" {
+					fmt.Printf("      Warning: Field %s (%s) - field.Type.Name is empty for non-slice/non-pointer. Original type: %s. Skipping.\n", field.Name, fInfo.OriginalFieldTypeString, field.Type.String())
+					if bindFrom != "body" {
+						continue
+					}
+				}
+			}
+
+			fInfo.FieldType = baseTypeForConversion
+
+			switch baseTypeForConversion {
+			case "int", "int8", "int16", "int32", "int64":
+				fInfo.IsNumeric = true
+				fInfo.IsSigned = true
+				if size, ok := map[string]int{"int": 0, "int8": 8, "int16": 16, "int32": 32, "int64": 64}[baseTypeForConversion]; ok {
+					fInfo.BitSize = size
+				}
+			case "uint", "uint8", "uint16", "uint32", "uint64", "uintptr":
+				fInfo.IsNumeric = true
+				fInfo.IsSigned = false
+				if size, ok := map[string]int{"uint": 0, "uint8": 8, "uint16": 16, "uint32": 32, "uint64": 64, "uintptr": 0}[baseTypeForConversion]; ok {
+					fInfo.BitSize = size
+				}
+			case "float32", "float64":
+				fInfo.IsNumeric = true
+				fInfo.IsFloat = true
+				if size, ok := map[string]int{"float32": 32, "float64": 64}[baseTypeForConversion]; ok {
+					fInfo.BitSize = size
+				}
+			case "complex64", "complex128":
+				fInfo.IsNumeric = true
+				fInfo.IsComplex = true
+				if size, ok := map[string]int{"complex64": 64, "complex128": 128}[baseTypeForConversion]; ok {
+					fInfo.BitSize = size
+				}
+			case "string", "bool":
+				break
+			default:
+				if bindFrom != "body" && !fInfo.IsSlice {
+					fmt.Printf("      Skipping field %s: unhandled base type '%s' (original: %s, slice: %t) for %s binding\n", field.Name, baseTypeForConversion, fInfo.OriginalFieldTypeString, fInfo.IsSlice, bindFrom)
+					continue
+				} else if bindFrom != "body" && fInfo.IsSlice && !isWellKnownSliceElementType(fInfo.SliceElementType) {
+					fmt.Printf("      Skipping field %s: slice of unhandled element type '%s' (original: %s) for %s binding\n", field.Name, fInfo.SliceElementType, fInfo.OriginalFieldTypeString, bindFrom)
+					continue
+				}
+			}
+
+			if bindFrom != "body" {
+				needsImportNetHTTP = true
+				needsConv := fInfo.IsNumeric || fInfo.IsComplex || baseTypeForConversion == "bool"
+				if fInfo.IsSlice {
+					elemBaseTypeForConv := baseTypeForConversion
+					if isNumericOrBool(elemBaseTypeForConv) {
+						needsConv = true
+					}
+				}
+				if needsConv {
+					needsImportStrconv = true
+				}
+
+				if fInfo.IsSlice && (bindFrom == "header" || bindFrom == "cookie") {
+					allFileImports["strings"] = ""
+				}
+				needsImportFmt = true
+			} else {
+				fInfo.IsBody = true
+				data.NeedsBody = true
+				data.HasSpecificBodyFieldTarget = true
+				needsImportEncodingJson = true
+				needsImportIO = true
+			}
+			data.Fields = append(data.Fields, fInfo)
+		}
+
+		if len(data.Fields) == 0 && !data.NeedsBody {
+			fmt.Printf("  Skipping struct %s: no bindable fields found and not a global body target.\n", typeInfo.Name)
+			continue
+		}
+
+		if needsImportNetHTTP {
+			allFileImports["net/http"] = ""
+		}
+		if needsImportStrconv {
+			allFileImports["strconv"] = ""
+		}
+		if needsImportFmt {
+			allFileImports["fmt"] = ""
+		}
+		if needsImportEncodingJson {
+			allFileImports["encoding/json"] = ""
+		}
+		if needsImportIO {
+			allFileImports["io"] = ""
+		}
+		if data.NeedsBody && !needsImportEncodingJson {
+			allFileImports["encoding/json"] = ""
+			needsImportEncodingJson = true
+		}
+		if data.NeedsBody && !needsImportIO {
+			allFileImports["io"] = ""
+			needsImportIO = true
+		}
+
+		funcMap := template.FuncMap{
+			"stringsHasPrefix":  strings.HasPrefix,
+			"stringsTrimPrefix": strings.TrimPrefix,
+		}
+
+		tmpl, err := template.New("bind").Funcs(funcMap).Parse(bindMethodTemplate)
+		if err != nil {
+			return fmt.Errorf("failed to parse template: %w", err)
+		}
+		var currentGeneratedCode bytes.Buffer
+		if err := tmpl.Execute(&currentGeneratedCode, data); err != nil {
+			return fmt.Errorf("failed to execute template for struct %s: %w", typeInfo.Name, err)
+		}
+		generatedCodeForAllStructs.Write(currentGeneratedCode.Bytes())
+		generatedCodeForAllStructs.WriteString("\n\n")
+		needsImportErrors = true
+	}
+
+	if generatedCodeForAllStructs.Len() == 0 {
+		fmt.Println("No structs found requiring Bind method generation.")
+		return nil
+	}
+
+	finalOutput := bytes.Buffer{}
+	finalOutput.WriteString(fmt.Sprintf("// Code generated by derivingbind for package %s. DO NOT EDIT.\n\n", pkgInfo.Name))
+	finalOutput.WriteString(fmt.Sprintf("package %s\n\n", pkgInfo.Name))
+
+	if needsImportErrors {
+		allFileImports["errors"] = ""
+	}
+
+	if len(allFileImports) > 0 {
+		finalOutput.WriteString("import (\n")
+		paths := make([]string, 0, len(allFileImports))
+		for path := range allFileImports {
+			paths = append(paths, path)
+		}
+		sort.Strings(paths)
+		for _, path := range paths {
+			alias := allFileImports[path]
+			if alias == "" {
+				finalOutput.WriteString(fmt.Sprintf("\t\"%s\"\n", path))
+			} else {
+				finalOutput.WriteString(fmt.Sprintf("\t%s \"%s\"\n", alias, path))
+			}
+		}
+		finalOutput.WriteString(")\n\n")
+	}
+
+	finalOutput.Write(generatedCodeForAllStructs.Bytes())
+	formattedCode, err := format.Source(finalOutput.Bytes())
+	if err != nil {
+		fmt.Printf("Warning: Error formatting generated code for package %s: %v. Writing unformatted code.\n", pkgInfo.Name, err)
+		formattedCode = finalOutput.Bytes()
+	}
+	outputFileName := filepath.Join(pkgPath, fmt.Sprintf("%s_deriving.go", strings.ToLower(pkgInfo.Name)))
+	if _, statErr := os.Stat(outputFileName); statErr == nil {
+		if removeErr := os.Remove(outputFileName); removeErr != nil {
+			fmt.Printf("Warning: Failed to remove existing generated file %s: %v\n", outputFileName, removeErr)
+		}
+	}
+	if err = os.WriteFile(outputFileName, formattedCode, 0644); err != nil {
+		return fmt.Errorf("failed to write generated code to %s: %w", outputFileName, err)
+	}
+	fmt.Printf("Generated code written to %s\n", outputFileName)
+	return nil
 }

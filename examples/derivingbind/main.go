@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"embed" // Added
 	"fmt"
 	"go/format"
 	"log/slog"
@@ -17,6 +18,12 @@ import (
 	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/scanner"
 )
+
+//go:embed bind_method.tmpl
+var bindMethodTemplateFS embed.FS
+
+//go:embed bind_method.tmpl
+var bindMethodTemplateString string
 
 func main() {
 	ctx := context.Background() // Or your application's context
@@ -86,112 +93,6 @@ type FieldBindingInfo struct {
 	IsSliceElementPointer   bool   // True if the slice element is a pointer, e.g. []*int
 }
 
-const bindMethodTemplate = `
-func (s *{{.StructName}}) Bind(req *http.Request, pathVar func(string) string) error {
-	b := binding.New(req, pathVar)
-	var errs []error
-
-	{{range .Fields}}
-	{{if .IsBody}}
-	// Body binding for field {{.FieldName}} ({{.OriginalFieldTypeString}}) will be handled after other fields.
-	{{else}}
-	// Binding for field {{.FieldName}} ({{.OriginalFieldTypeString}}) from {{.BindFrom}}:"{{.BindName}}"
-	{{$bindSource := ""}}
-	{{if eq .BindFrom "query"}}
-		{{$bindSource = "binding.Query"}}
-	{{else if eq .BindFrom "header"}}
-		{{$bindSource = "binding.Header"}}
-	{{else if eq .BindFrom "cookie"}}
-		{{$bindSource = "binding.Cookie"}}
-	{{else if eq .BindFrom "path"}}
-		{{$bindSource = "binding.Path"}}
-	{{end}}
-
-	{{$requiredVar := "binding.Optional"}}
-	{{if .IsRequired}}
-		{{$requiredVar = "binding.Required"}}
-	{{end}}
-
-	{{if .IsSlice}}
-		{{if .IsSliceElementPointer}} // e.g. []*int, []*string - uses binding.SlicePtr
-			if err := binding.SlicePtr(b, &s.{{.FieldName}}, {{$bindSource}}, "{{.BindName}}", {{.ParserFunc}}, {{$requiredVar}}); err != nil {
-				errs = append(errs, err)
-			}
-		{{else}} // e.g. []int, []string - uses binding.Slice
-			if err := binding.Slice(b, &s.{{.FieldName}}, {{$bindSource}}, "{{.BindName}}", {{.ParserFunc}}, {{$requiredVar}}); err != nil {
-				errs = append(errs, err)
-			}
-		{{end}}
-	{{else}}
-		{{if .IsPointer}} // Pointer to a value, e.g., *int, *string (but not a slice)
-			if err := binding.OnePtr(b, &s.{{.FieldName}}, {{$bindSource}}, "{{.BindName}}", {{.ParserFunc}}, {{$requiredVar}}); err != nil {
-				errs = append(errs, err)
-			}
-		{{else}} // Value, e.g., int, string
-			if err := binding.One(b, &s.{{.FieldName}}, {{$bindSource}}, "{{.BindName}}", {{.ParserFunc}}, {{$requiredVar}}); err != nil {
-				errs = append(errs, err)
-			}
-		{{end}}
-	{{end}}
-	{{end}}
-	{{end}}
-
-	{{if .NeedsBody}}
-	if req.Body != nil && req.Body != http.NoBody {
-		var bodyHandledBySpecificField = false
-		{{range .Fields}}
-		{{if .IsBody}}
-		// Field {{.FieldName}} (type {{.OriginalFieldTypeString}}) is the target for the entire request body
-		if decErr := json.NewDecoder(req.Body).Decode(&s.{{.FieldName}}); decErr != nil {
-			if decErr != io.EOF { // EOF might be acceptable if body is optional and empty
-				errs = append(errs, fmt.Errorf("binding: failed to decode request body into field {{.FieldName}}: %w", decErr))
-			}
-		}
-		bodyHandledBySpecificField = true
-		goto afterBodyProcessing // Assume only one field can be 'in:"body"'
-		{{end}}
-		{{end}}
-
-		// If no specific field was designated 'in:"body"', decode into the struct 's' itself.
-		if !bodyHandledBySpecificField {
-			if decErr := json.NewDecoder(req.Body).Decode(s); decErr != nil {
-				if decErr != io.EOF { // EOF might be acceptable if body is optional and empty
-					errs = append(errs, fmt.Errorf("binding: failed to decode request body into struct {{.StructName}}: %w", decErr))
-				}
-			}
-		}
-		{{if .HasSpecificBodyFieldTarget}}afterBodyProcessing:{{end}} // Label for goto, only if a specific body field might use it
-	} else {
-		// Check if body was required.
-		// This logic assumes that if 'NeedsBody' is true, and there's a field marked as 'IsBody' and 'IsRequired',
-		// or if the struct itself is implicitly the body and some overall "body required" rule applies (not yet implemented in detail).
-		isStructOrFieldBodyRequired := false
-		{{if not .HasSpecificBodyFieldTarget}}
-			// If struct is implicitly the body target, determine if it's required.
-			// This might need a struct-level "required" annotation for the body.
-			// For now, if NeedsBody is true and no specific field, we might assume optional unless specified.
-			// Let's assume for now if NeedsBody is true and no specific field, it's only an error if a sub-field IS required,
-			// but that would be a JSON validation concern, not a "missing body" concern.
-			// So, let's make it an error only if a *specific* body field was required.
-		{{end}}
-		{{range .Fields}}
-			{{if and .IsBody .IsRequired}}
-			isStructOrFieldBodyRequired = true
-			{{end}}
-		{{end}}
-		if isStructOrFieldBodyRequired {
-			errs = append(errs, errors.New("binding: request body is required but was not provided or was empty"))
-		}
-	}
-	{{end}}
-
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
-}
-`
-
 // isGo122orLater checks the go.mod file for the Go version.
 // This function is kept for now as it might be useful for other features,
 // but it's not strictly necessary for the current path parameter handling.
@@ -237,6 +138,9 @@ func Generate(ctx context.Context, pkgPath string) error {
 
 	var generatedCodeForAllStructs bytes.Buffer
 	allFileImports := make(map[string]string) // path -> alias
+	// Always import binding and parser for now to fix the test issue
+	allFileImports["github.com/podhmo/go-scan/examples/derivingbind/binding"] = ""
+	allFileImports["github.com/podhmo/go-scan/examples/derivingbind/parser"] = ""
 	// needsImportStrconv := false // No longer needed at this scope
 	needsImportNetHTTP := false
 	needsImportFmt := false
@@ -491,7 +395,7 @@ func Generate(ctx context.Context, pkgPath string) error {
 			"TitleCase": strings.Title, // Used for binding.Query, binding.Path etc.
 		}
 
-		tmpl, err := template.New("bind").Funcs(funcMap).Parse(bindMethodTemplate)
+		tmpl, err := template.New("bind").Funcs(funcMap).Parse(bindMethodTemplateString)
 		if err != nil {
 			return fmt.Errorf("failed to parse template: %w", err)
 		}

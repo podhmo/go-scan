@@ -21,16 +21,21 @@ This tool aims to generate an `UnmarshalJSON` method for such container structs,
 2.  Run `derivingjson` from the command line, specifying the target package path.
 
     ```bash
-    go run examples/derivingjson/*.go <path_to_target_package>
+    go run examples/derivingjson/main.go <file_path_1.go> [file_path_2.go ...]
     # Or after building
-    # ./derivingjson <path_to_target_package>
+    # ./derivingjson <file_path_1.go> [file_path_2.go ...]
     ```
 
-    Example:
+    Example (single file, implies processing its package):
     ```bash
-    go run examples/derivingjson/*.go ./examples/derivingjson/testdata/simple
+    go run examples/derivingjson/main.go ./examples/derivingjson/testdata/simple/models.go
     ```
-3.  A file named like `xxx_deriving.go`, containing the implemented `UnmarshalJSON` method, will be generated in the specified package.
+
+    Example (multiple files from different packages):
+    ```bash
+    go run examples/derivingjson/main.go ./examples/derivingjson/testdata/separated/models/models.go ./examples/derivingjson/testdata/separated/shapes/shapes.go
+    ```
+3.  A file named like `packagename_deriving.go`, containing the implemented `UnmarshalJSON` method, will be generated in the package directory of each processed Go file.
 
 ## Disclaimer
 

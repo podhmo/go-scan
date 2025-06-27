@@ -1,0 +1,71 @@
+# トラブルシューティングガイド
+
+このドキュメントは、開発中に発生した問題とその解決策、特にツールの挙動に関する知見を記録するためのものです。
+
+## `run_in_bash_session` ツールの挙動について
+
+`run_in_bash_session` ツールを使用してコマンドを実行する際、カレントディレクトリの扱いに注意が必要です。
+
+### 問題点
+
+過去のタスク（`examples/derivingbind` で `make test` を成功させる）において、以下の現象が発生しました。
+
+1.  `pwd` コマンドを実行すると、期待する作業ディレクトリ（例: `/app/examples/derivingbind`）が表示される。
+2.  しかし、その直後に同じ `run_in_bash_session` の呼び出し内で、そのディレクトリへの相対パスを用いた `cd` コマンド（例: `cd examples/derivingbind`、もしカレントが `/app` なら成功するはず）や、あるいは既にそのディレクトリにいるはずなのにサブディレクトリへの `cd` が失敗する（例: カレントが `/app/examples/derivingbind` のときに `cd examples/derivingbind` が `No such file or directory` となる）。
+3.  Makefile内のコマンドが、期待したカレントディレクトリで実行されず、パス解決エラーが発生する。
+
+これらの現象は、`run_in_bash_session` が実際にコマンドを実行する際のカレントディレクトリが、`pwd` の表示や直前の `cd` コマンドの結果と必ずしも一致しない可能性を示唆していました。
+
+### 最終的な解決策と推奨プラクティス
+
+最終的に、以下の方法で `examples/derivingbind` の `make test` を成功させることができました。
+
+1.  **Makefileの記述**:
+    *   Makefile (`examples/derivingbind/Makefile`) は、その Makefile が置かれているディレクトリをカレントディレクトリとして `make` コマンドが実行されることを前提に記述する。
+    *   例えば、`go run main.go -- ./testdata/simple/models.go` のように、`main.go` はカレントディレクトリのものを直接参照し、引数として渡すパスもカレントディレクトリからの相対パス (`./...`) とする。
+
+2.  **`run_in_bash_session` でのコマンド実行**:
+    *   コマンドを実行する際は、まず対象のディレクトリに `cd` し、その直後に `&&` でつないで目的のコマンド（例: `make test`）を実行する。
+        ```bash
+        # 例: run_in_bash_session で以下を実行
+        # cd examples/derivingbind && make test
+        ```
+    *   ただし、今回のケースでは、`run_in_bash_session` の初期カレントディレクトリが既に `/app/examples/derivingbind` であったため、実際には `cd` せずに直接 `make test` を実行することで成功しました。
+    *   **重要な観察**: `pwd && ls -la && make clean && make test` のように、状態確認コマンドと実際のコマンドを同一の `run_in_bash_session` 呼び出し内で実行することで、その瞬間のカレントディレクトリとファイルの状態を正確に把握し、問題を特定しやすくなりました。この実行では、`pwd` が `/app/examples/derivingbind` を示し、`make test` もそのディレクトリで正しく実行されました。
+
+3.  **`go run` の引数指定**:
+    *   当初、`go run <main実行ファイル.go> -- <プログラムへの引数1> <プログラムへの引数2> ...` の形式を使用することで、プログラムへの引数渡しを明確化しようとしました。`--` を挟むことで、それ以降の文字列がコンパイル対象ではなく、ビルドされたプログラムへのコマンドライン引数として渡されることを期待しました。これは多くの場合有効な手段です。
+    *   しかし、`go run` の挙動を詳しく見ると、必ずしも `--` が必須ではないケースや、より推奨される形式が存在することがわかりました。
+
+#### `go run ./ <args...>` 形式の採用
+
+*   **経緯**: `examples/derivingbind/Makefile` において、当初 `go run main.go -- ./path/to/file` という形式を採用していました。しかし、`go run` コマンドは、引数に `.go` で終わらないものが来た時点で、それ以降をプログラムへの引数として解釈する挙動が基本です。
+*   **推奨形式**: `go run ./ <プログラムへの引数1> <プログラムへの引数2> ...`
+    *   この形式では、`./` によってカレントディレクトリのパッケージを明示的にコンパイル・実行対象として指定します。
+    *   これにより、`main.go` のような特定のファイル名に依存せず、カレントディレクトリの main パッケージを実行するという意図が明確になります。
+    *   `go run` は `.` や `./` をパッケージ指定として解釈し、その後に続く引数（`.go` で終わらないもの）をビルドされたプログラムへの引数として渡します。このため、`--` は必須ではありませんでした。
+*   **メリット**:
+    *   コマンドの意図がより明確になる（カレントディレクトリのパッケージを実行する）。
+    *   特定のファイル名 (`main.go`) への依存が減る。
+    *   `--` が不要な場合、コマンドが若干シンプルになる。
+*   **適用例**:
+    ```makefile
+    # examples/derivingbind/Makefile での適用例
+    generate-simple:
+        @echo "Generating for testdata/simple"
+        # Use 'go run ./' to explicitly run the main package in the current directory.
+        # This avoids ambiguity in how 'go run' interprets arguments, especially when
+        # the program itself takes .go files or directory paths as arguments.
+        # See docs/trouble.md for more context on 'go run' argument parsing.
+        @go run ./ ./testdata/simple/models.go
+    ```
+
+### 教訓
+
+*   `run_in_bash_session` のカレントディレクトリの挙動は、一見直感的でない場合がある。コマンド実行前に `pwd` や `ls` で状態を確認し、期待通りであるかを確認することが重要。
+*   可能な限り、1回の `run_in_bash_session` 呼び出しの中で、`cd` とそれに続くコマンドを `&&` で連結して実行することで、意図したカレントディレクトリでコマンドが実行される確実性を高める（ただし、今回のケースでは最終的に `cd` は不要でした）。
+*   `go run` でプログラムに引数を渡す際は、対象のパッケージ指定（例: `./`）と引数の区切りを意識する。`--` は引数の区切りを明示する一つの方法だが、`go run ./ <args...>` のようにパッケージ指定が明確であれば不要な場合が多い。`go help run` や実際の挙動を確認することが推奨される。
+
+---
+
+今後も同様の問題が発生した場合は、このドキュメントを参照し、必要に応じて追記してください。

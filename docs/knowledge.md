@@ -41,41 +41,27 @@ Please do not delete the `go.mod` file located in example directories (like `exa
 
 This approach ensures that the tests accurately reflect how an external consumer would use the library and helps catch integration issues that might not be apparent when testing everything within a single module context.
 
-## Adopting Go 1.23 Experimental Iterator Functions (Range-Over-Function)
+## Using Go 1.24+ Iterator Functions (Range-Over-Function)
 
 ### Context
 
-For the `astwalk` package, specifically the `ToplevelStructs` function, a decision was made to return an iterator function compatible with Go 1.23's experimental "range-over-function" feature. The function signature is `func(fset *token.FileSet, file *ast.File) func(yield func(*ast.TypeSpec) bool)`.
+For the `astwalk` package, specifically the `ToplevelStructs` function, a decision was made to return an iterator function compatible with Go's "range-over-function" feature (stabilized in Go 1.24). The function signature is `func(fset *token.FileSet, file *ast.File) func(yield func(*ast.TypeSpec) bool)`.
 
 ### Rationale
 
-The primary motivation for adopting this experimental feature was to explore modern Go idioms and provide a potentially more ergonomic and efficient way to iterate over AST nodes, especially when the number of nodes could be large.
+This approach was chosen to leverage modern Go idioms for iterating over AST nodes, offering potential benefits in ergonomics and efficiency, especially for large datasets.
 
-- **Ergonomics**: The `for ... range` syntax over a function call can be more readable and idiomatic Go compared to manually managing a callback or channel-based iteration.
-- **Efficiency**: Iterators can be more memory-efficient as they process items one by one, avoiding the need to allocate a slice for all items upfront. This is particularly beneficial when dealing with large source files or when the consumer might only need a subset of the items.
-- **Lazy Evaluation**: The work to find the next item is only done when the consumer requests it.
+- **Ergonomics**: The `for ... range` syntax over a function call is idiomatic and readable.
+- **Efficiency**: Iterators process items one by one, which can be more memory-efficient than allocating a slice for all items upfront.
+- **Lazy Evaluation**: Work to find the next item is done only when requested.
 
-### Decision Process & Alternatives Considered
+### Implementation Notes
 
-1.  **Returning a Slice (`[]*ast.TypeSpec`)**: This was the initial, more conventional approach.
-    - *Pros*: Simple to implement and understand. Widely compatible with all Go versions.
-    - *Cons*: Less memory-efficient for large datasets as it requires allocating memory for all struct type specifications at once. The caller receives all data even if only a few items are needed.
+The `ToplevelStructs` function in the `astwalk` package provides an iterator for top-level struct type specifications within a Go source file.
 
-2.  **Callback-based Iterator (`func(fset *token.FileSet, file *ast.File, yield func(*ast.TypeSpec) bool)`)**: A function that takes a callback `yield` which is called for each item.
-    - *Pros*: More memory-efficient than returning a slice. Allows early exit if the `yield` function returns `false`. Compatible with older Go versions.
-    - *Cons*: Can be slightly less ergonomic to use compared to `for...range`.
-
-3.  **Channel-based Iterator (`func(fset *token.FileSet, file *ast.File) <-chan *ast.TypeSpec`)**: A function that returns a channel from which items can be received.
-    - *Pros*: Enables concurrent processing if desired. Familiar pattern in Go.
-    - *Cons*: Can be slower due to channel overhead. More complex to implement correctly (e.g., ensuring the goroutine producing items on the channel always exits).
-
-4.  **Go 1.23 Range-Over-Function (Chosen)**:
-    - *Pros*: Combines the ergonomic `for...range` syntax with the efficiency of lazy evaluation and potential for early exit. Represents a forward-looking approach.
-    - *Cons*:
-        - **Experimental**: As of Go 1.22/1.23, this feature is experimental. This means its API or behavior could change in future Go versions, or it might even be removed (though less likely for popular features).
-        - **Go Version Dependency**: Requires Go 1.23+ (or a Go version that supports the specific `GOEXPERIMENT` flag, e.g., `GOEXPERIMENT=rangefunc`). This limits the usability of the `astwalk` package for projects using older Go versions.
-        - **Build/Test Complexity**: May require setting `GOEXPERIMENT=rangefunc` during builds or tests, adding a slight complexity to the development workflow if not using Go 1.23 toolchain by default.
+- **Usage**: It can be used with a `for...range` loop in Go 1.24 and later.
+- **Go Version Dependency**: This feature requires Go 1.24 or newer. The main module's `go.mod` file is set to `go 1.24`.
 
 ### Conclusion
 
-The decision to use the Go 1.23 iterator pattern for `ToplevelStructs` was made with the understanding of its experimental nature and the Go version constraint. It serves as an exploration of new language features within this project. If broader compatibility with older Go versions becomes a critical requirement, this function might need to be refactored or an alternative provided. For now, it aligns with a forward-looking development approach. The `go.mod` file for the module has been updated to `go 1.23`.
+The use of the range-over-function pattern for `ToplevelStructs` aligns with modern Go practices, offering a clean and efficient way to process AST nodes. Users of the `astwalk` package should ensure their environment uses Go 1.24 or a later version.

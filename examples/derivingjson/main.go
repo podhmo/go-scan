@@ -9,7 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"reflect"
+	// "reflect" // No longer needed
 	"strings"
 	"text/template"
 
@@ -160,7 +160,8 @@ func Generate(ctx context.Context, pkgPath string) error {
 		if typeInfo.Kind != scanner.StructKind || typeInfo.Struct == nil {
 			continue
 		}
-		if typeInfo.Doc == "" || !strings.Contains(typeInfo.Doc, unmarshalAnnotation) {
+		// Use the new Annotation method to check for the unmarshal annotation
+		if _, ok := typeInfo.Annotation("deriving:unmarshall"); !ok {
 			continue
 		}
 
@@ -177,16 +178,8 @@ func Generate(ctx context.Context, pkgPath string) error {
 		}
 
 		for _, field := range typeInfo.Struct.Fields {
-			jsonTag := ""
-			if field.Tag != "" {
-				tag := reflect.StructTag(field.Tag)
-				jsonTagVal := tag.Get("json")
-				if commaIdx := strings.Index(jsonTagVal, ","); commaIdx != -1 {
-					jsonTag = jsonTagVal[:commaIdx]
-				} else {
-					jsonTag = jsonTagVal
-				}
-			}
+			// Use the new TagValue method
+			jsonTag := field.TagValue("json")
 
 			resolvedFieldType, errResolve := field.Type.Resolve(ctx)
 			if errResolve != nil {

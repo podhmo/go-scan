@@ -26,8 +26,8 @@
     `@derivng:binding` を持つ構造体を `go-scan` レベルでフィルタリングできれば、ジェネレータ側のコードはよりシンプルになります。
 
 *   **フィールドタグの高度な解析とクエリ (提案2)**:
-    `in:"query:user_id"` のようなタグから `"query"` (種別) と `"user_id"` (名前) を簡単に抽出できるAPI (`FieldInfo.TagValue("in", "key")` や `FieldInfo.TagSubValue("in")`) があれば、タグ解析ロジックが大幅に簡略化されます。現状は `strings.SplitN` などで自前処理しています。
-    構造体Docコメントの `in:"body"` のようなアノテーションも同様に、タグ解析の仕組みでサポートされると便利です。
+    `in:"query" query:"user_id"` のようなタグから `"query"` (種別) と `"user_id"` (名前) を簡単に抽出するために、`scanner.FieldInfo` に `TagValue(tagName string) string` メソッドが追加されました。これを利用して、ジェネレータ側で `bindFrom := field.TagValue("in")` および `bindName := field.TagValue(bindFrom)` のようにして必要な情報を取得できます。これにより、以前の自前のタグ解析ロジックが大幅に簡略化されます。
+    構造体Docコメントの `in:"body"` のようなアノテーションは、`TypeInfo.Annotation(name string) (value string, ok bool)` メソッドで取得した値を解析することで対応可能です。
 
 *   **型名の正規化/変換支援 (提案4)**:
     今回は直接的なニーズは少なかったものの、例えばOpenAPIスキーマ名との連携などを考えると、Goのフィールド名を `camelCase` や `snake_case` のパラメータ名に変換するユーティリティは役立ちます。

@@ -5,7 +5,8 @@ import (
 	"fmt"
 	"go/ast"
 	"go/token" // Added
-	"strings"  // Added for strings.Builder
+	"reflect"  // Added for reflect.StructTag
+	"strings"  // Added for strings.Builder and strings.Fields
 )
 
 // Kind defines the category of a type definition.
@@ -60,6 +61,43 @@ type TypeInfo struct {
 	Underlying *FieldType
 }
 
+// Annotation extracts the value of a specific annotation from the TypeInfo's Doc string.
+// Annotations are expected to be in the format "@<name>[:<value>]".
+// For example, if Doc contains "@deriving:unmarshall", Annotation("deriving") returns "unmarshall", true.
+// If Doc contains "@myannotation", Annotation("myannotation") returns "", true (value is optional).
+// If the annotation is not found, it returns "", false.
+func (ti *TypeInfo) Annotation(name string) (value string, ok bool) {
+	if ti.Doc == "" {
+		return "", false
+	}
+	lines := strings.Split(ti.Doc, "\n")
+	prefix := "@" + name
+	for _, line := range lines {
+		trimmedLine := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmedLine, prefix) {
+			// Found the annotation
+			ok = true
+			// Check if there's a value after the annotation name
+			rest := strings.TrimSpace(strings.TrimPrefix(trimmedLine, prefix))
+			if strings.HasPrefix(rest, ":") {
+				value = strings.TrimSpace(strings.TrimPrefix(rest, ":"))
+			} else if rest == "" {
+				// Annotation exists without a value part, e.g. @myannotation
+				value = ""
+			} else {
+				// This case handles annotations like "@derivng:binding in:"body""
+				// where the "value" is everything after "@name "
+				value = rest
+			}
+			// Further parsing for specific formats like `in:"body"` can be done by the caller
+			// if the raw value after the colon is needed.
+			// For `@derivng:binding in:"body"`, this will return `in:"body"` as value for `binding` annotation.
+			return value, ok
+		}
+	}
+	return "", false
+}
+
 // InterfaceInfo represents an interface type.
 type InterfaceInfo struct {
 	Methods []*MethodInfo
@@ -85,6 +123,21 @@ type FieldInfo struct {
 	Type     *FieldType
 	Tag      string
 	Embedded bool
+}
+
+// TagValue extracts the value associated with the given tagName from the struct tag.
+// If the tag value contains a comma (e.g., "name,omitempty"), only the part before the comma is returned.
+// Returns an empty string if the tag is not present or malformed.
+func (fi *FieldInfo) TagValue(tagName string) string {
+	if fi.Tag == "" {
+		return ""
+	}
+	tag := reflect.StructTag(fi.Tag)
+	tagVal := tag.Get(tagName)
+	if commaIdx := strings.Index(tagVal, ","); commaIdx != -1 {
+		return tagVal[:commaIdx]
+	}
+	return tagVal
 }
 
 // FieldType represents the type of a field.

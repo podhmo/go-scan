@@ -10,7 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"reflect"
+	// "reflect" // No longer needed
 	// "sort" // No longer needed here for imports
 	"strings"
 	"text/template"
@@ -151,22 +151,15 @@ func GenerateFiles(ctx context.Context, packageDir string, absFilePaths []string
 		if typeInfo.Kind != scanner.StructKind || typeInfo.Struct == nil {
 			continue
 		}
-		hasBindingAnnotationOnStruct := strings.Contains(typeInfo.Doc, bindingAnnotation)
+
+		annotationValue, hasBindingAnnotationOnStruct := typeInfo.Annotation("derivng:binding")
 		structLevelInTag := ""
 		if hasBindingAnnotationOnStruct {
-			docLines := strings.Split(typeInfo.Doc, "\n")
-			for _, line := range docLines {
-				if strings.Contains(line, bindingAnnotation) {
-					parts := strings.Fields(line)
-					for _, part := range parts {
-						if strings.HasPrefix(part, "in:") {
-							structLevelInTag = strings.TrimSuffix(strings.SplitN(part, ":", 2)[1], `"`)
-							structLevelInTag = strings.TrimPrefix(structLevelInTag, `"`)
-							break
-						}
-					}
-				}
-				if structLevelInTag != "" {
+			parts := strings.Fields(annotationValue)
+			for _, part := range parts {
+				if strings.HasPrefix(part, "in:") {
+					structLevelInTag = strings.TrimSuffix(strings.SplitN(part, ":", 2)[1], `"`)
+					structLevelInTag = strings.TrimPrefix(structLevelInTag, `"`)
 					break
 				}
 			}
@@ -178,7 +171,7 @@ func GenerateFiles(ctx context.Context, packageDir string, absFilePaths []string
 		fmt.Printf("  Processing struct: %s for %s\n", typeInfo.Name, bindingAnnotation)
 
 		data := TemplateData{
-			StructName: typeInfo.Name,
+			StructName:                 typeInfo.Name,
 			Fields:                     []FieldBindingInfo{},
 			NeedsBody:                  (structLevelInTag == "body"),
 			HasSpecificBodyFieldTarget: false,
@@ -187,37 +180,38 @@ func GenerateFiles(ctx context.Context, packageDir string, absFilePaths []string
 		collectedImports["net/http"] = "" // For http.ErrNoCookie and request object
 
 		for _, field := range typeInfo.Struct.Fields {
-			tag := reflect.StructTag(field.Tag)
-			inTagVal := tag.Get("in")
-			bindFrom := ""
-			bindName := ""
-
-			if inTagVal != "" {
-				bindFrom = strings.ToLower(strings.TrimSpace(inTagVal))
-				switch bindFrom {
-				case "path", "query", "header", "cookie":
-					bindName = tag.Get(bindFrom) // e.g., tag.Get("path")
-				case "body":
-					data.NeedsBody = true
-				default:
-					fmt.Printf("      Skipping field %s: unknown 'in' tag value '%s'\n", field.Name, inTagVal)
-					continue
+			bindFrom := field.TagValue("in")
+			if bindFrom == "" { // If "in" tag is not present or empty
+				if data.NeedsBody && structLevelInTag == "body" {
+					// Field is part of struct-level body, handled by overall JSON decode.
 				}
-				if bindFrom != "body" && bindName == "" {
+				continue // No 'in' tag for this field.
+			}
+			bindFrom = strings.ToLower(strings.TrimSpace(bindFrom))
+			bindName := field.TagValue(bindFrom) // Get the corresponding name tag, e.g., query:"name"
+
+			// `ok` equivalent: bindFrom is not empty. Specific checks for bindName follow.
+
+			switch bindFrom {
+			case "path", "query", "header", "cookie":
+				if bindName == "" {
 					fmt.Printf("      Skipping field %s: 'in:\"%s\"' tag requires corresponding '%s:\"name\"' tag\n", field.Name, bindFrom, bindFrom)
 					continue
 				}
-			} else if data.NeedsBody {
-				continue // Part of struct-level body, handled by overall JSON decode
-			} else {
-				continue // No binding directive
+			case "body":
+				data.NeedsBody = true
+				// Individual `in:"body"` implies this field itself is a body or part of it.
+				// `bindName` from `field.BindTag()` would be the json tag if `in:"body" json:"field_name"`
+			default:
+				fmt.Printf("      Skipping field %s: unknown 'in' tag value '%s'\n", field.Name, bindFrom)
+				continue
 			}
 
 			fInfo := FieldBindingInfo{
 				FieldName:               field.Name,
 				BindFrom:                bindFrom,
 				BindName:                bindName,
-				IsRequired:              (tag.Get("required") == "true"),
+				IsRequired:              (field.TagValue("required") == "true"),
 				OriginalFieldTypeString: field.Type.String(),
 				IsPointer:               field.Type.IsPointer,
 			}

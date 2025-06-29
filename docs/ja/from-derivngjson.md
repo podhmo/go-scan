@@ -55,14 +55,16 @@
     }
     ```
 
-*   **`go-scan` への提案機能**:
-    `scanner.FieldInfo` に、パース済みのタグ情報を保持する構造（例: `map[string]string`）や、特定のタグキーに対する値（オプション部分を除いたもの）を簡単に取得できるヘルパーメソッドを提供します。さらに、特定のタグキーと値を持つフィールドを `TypeInfo` から直接検索できる機能も有用です。
+*   **`go-scan` への提案機能 (一部実装済み)**:
+    `scanner.FieldInfo` に、特定のタグキーに対する値（オプション部分を除いたもの）を簡単に取得できるヘルパーメソッド `TagValue(tagName string) string` が追加されました。これにより、例えば `jsonTagValue := field.TagValue("json")` のようにして `"name"` (omitempty等は除外) を取得できます。
+    パース済みのタグ情報を保持する汎用的な構造（例: `map[string]string`）や、特定のタグキーと値を持つフィールドを `TypeInfo` から直接検索する機能は、引き続き有用な提案となります。
 
     ```go
-    // 提案するAPIのイメージ
+    // 実装されたAPIの例
     // jsonTagValue := field.TagValue("json") // "name" (omitempty等は除外)
+
+    // 引き続き提案するAPIのイメージ
     // allJsonOptions := field.TagOptions("json") // []string{"omitempty"}
-    //
     // discriminatorField := typeInfo.FindFieldWithTagValue("json", "type")
     ```
 

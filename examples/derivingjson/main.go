@@ -5,11 +5,9 @@ import (
 	"context"
 	"embed"
 	"fmt"
-	// "go/format" // No longer needed here, handled by SaveGoFile
 	"log/slog"
 	"os"
 	"path/filepath"
-	// "reflect" // No longer needed
 	"strings"
 	"text/template"
 
@@ -21,17 +19,13 @@ import (
 var templateFile embed.FS
 
 func main() {
-	// Add this block to enable debug logging
 	logLevel := new(slog.LevelVar)
 	logLevel.Set(slog.LevelDebug)
-	opts := slog.HandlerOptions{
-		Level: logLevel,
-	}
+	opts := slog.HandlerOptions{Level: logLevel}
 	handler := slog.NewTextHandler(os.Stderr, &opts)
 	slog.SetDefault(slog.New(handler))
-	// End of debug logging setup
 
-	ctx := context.Background() // Or your application's context
+	ctx := context.Background()
 	if len(os.Args) <= 1 {
 		slog.ErrorContext(ctx, "Usage: derivingjson <file_path_1> [file_path_2 ...]")
 		slog.ErrorContext(ctx, "Example: derivingjson examples/derivingjson/testdata/simple/models.go examples/derivingjson/testdata/separated/models/models.go")
@@ -40,49 +34,24 @@ func main() {
 
 	targetFiles := os.Args[1:]
 	processedDirs := make(map[string]bool)
-	var successCount int
-	var errorCount int
+	var successCount, errorCount int
 
 	for _, filePath := range targetFiles {
-		// Ensure the file path exists and is a file
 		stat, err := os.Stat(filePath)
 		if err != nil {
-			if os.IsNotExist(err) {
-				slog.ErrorContext(ctx, "File path does not exist", slog.String("file_path", filePath))
-			} else {
-				slog.ErrorContext(ctx, "Error accessing file path", slog.String("file_path", filePath), slog.Any("error", err))
-			}
+			slog.ErrorContext(ctx, "Error accessing file path", slog.String("file_path", filePath), slog.Any("error", err))
 			errorCount++
 			continue
 		}
-		if stat.IsDir() {
-			slog.ErrorContext(ctx, "File path is a directory, please provide individual .go files", slog.String("file_path", filePath))
-			errorCount++
-			continue
-		}
-		if !strings.HasSuffix(filePath, ".go") {
-			slog.ErrorContext(ctx, "File path is not a .go file", slog.String("file_path", filePath))
+		if stat.IsDir() || !strings.HasSuffix(filePath, ".go") {
+			slog.ErrorContext(ctx, "Argument is not a .go file", slog.String("file_path", filePath))
 			errorCount++
 			continue
 		}
 
 		pkgPath := filepath.Dir(filePath)
-		if _, processed := processedDirs[pkgPath]; processed {
-			slog.InfoContext(ctx, "Package already processed, skipping generation for this file's package", slog.String("package_path", pkgPath), slog.String("file_path", filePath))
-			continue
-		}
-
-		// Ensure the derived package path (directory) exists
-		dirStat, err := os.Stat(pkgPath)
-		if err != nil {
-			slog.ErrorContext(ctx, "Error accessing package directory", slog.String("package_path", pkgPath), slog.String("derived_from_file", filePath), slog.Any("error", err))
-			errorCount++
-			continue
-		}
-		if !dirStat.IsDir() {
-			// This case should ideally not be reached if filePath was a valid file.
-			slog.ErrorContext(ctx, "Derived package path is not a directory", slog.String("package_path", pkgPath), slog.String("derived_from_file", filePath))
-			errorCount++
+		if processedDirs[pkgPath] {
+			slog.InfoContext(ctx, "Package already processed", slog.String("package_path", pkgPath))
 			continue
 		}
 
@@ -91,7 +60,7 @@ func main() {
 			slog.ErrorContext(ctx, "Error generating code for package", slog.String("package_path", pkgPath), slog.Any("error", err))
 			errorCount++
 		} else {
-			slog.InfoContext(ctx, "Successfully generated UnmarshalJSON methods for package", slog.String("package_path", pkgPath))
+			slog.InfoContext(ctx, "Successfully generated UnmarshalJSON for package", slog.String("package_path", pkgPath))
 			successCount++
 		}
 		processedDirs[pkgPath] = true
@@ -106,12 +75,10 @@ func main() {
 const unmarshalAnnotation = "@deriving:unmarshall"
 
 type TemplateData struct {
-	// PackageName string // Will be set in GoFile
 	StructName                 string
 	OtherFields                []FieldInfo
 	OneOfFields                []OneOfFieldDetail
-	Imports                    map[string]string // This will be collected and passed to GoFile
-	DiscriminatorFieldJSONName string            // Assuming this is global for the struct for now
+	DiscriminatorFieldJSONName string
 }
 
 type FieldInfo struct {
@@ -120,17 +87,16 @@ type FieldInfo struct {
 	JSONTag string
 }
 
-// OneOfFieldDetail holds information for a single oneOf field
 type OneOfFieldDetail struct {
-	FieldName    string             // Name of the field in the struct (e.g., "ShapeData", "EventPayload")
-	FieldType    string             // Go type of the interface (e.g., "shapes.Shape", "events.Event")
-	JSONTag      string             // JSON tag name (e.g., "shape_data", "payload")
-	Implementers []OneOfTypeMapping // Mappings of JSON discriminator value to concrete Go type
+	FieldName    string
+	FieldType    string
+	JSONTag      string
+	Implementers []OneOfTypeMapping
 }
 
 type OneOfTypeMapping struct {
-	JSONValue string // The value in the discriminator field (e.g., "circle", "user_created")
-	GoType    string // The concrete Go type (e.g., "*shapes.Circle", "*events.UserCreatedEvent")
+	JSONValue string
+	GoType    string
 }
 
 func findTypeInPackage(pkgInfo *scanner.PackageInfo, typeName string) *scanner.TypeInfo {
@@ -152,48 +118,41 @@ func Generate(ctx context.Context, pkgPath string) error {
 	if err != nil {
 		return fmt.Errorf("go-scan failed to scan package at %s: %w", pkgPath, err)
 	}
+	if pkgInfo == nil {
+		return fmt.Errorf("ScanPackage returned nil for %s", pkgPath)
+	}
 
+	importManager := goscan.NewImportManager(pkgInfo)
 	var generatedCodeForAllStructs bytes.Buffer
-	collectedImports := make(map[string]string) // path -> alias. Used to populate GoFile.Imports
+	anyCodeGenerated := false
 
 	for _, typeInfo := range pkgInfo.Types {
 		if typeInfo.Kind != scanner.StructKind || typeInfo.Struct == nil {
 			continue
 		}
-		// Use the new Annotation method to check for the unmarshal annotation
-		if _, ok := typeInfo.Annotation("deriving:unmarshall"); !ok {
+		if _, ok := typeInfo.Annotation(unmarshalAnnotation); !ok {
 			continue
 		}
 
-		// Imports for this specific struct's generation, will be merged into collectedImports
-		structSpecificImports := make(map[string]string)
-
 		data := TemplateData{
-			// PackageName: pkgInfo.Name, // No longer set here
 			StructName:                 typeInfo.Name,
-			Imports:                    structSpecificImports, // Pass this map to collect imports for this struct
 			OneOfFields:                []OneOfFieldDetail{},
 			OtherFields:                []FieldInfo{},
-			DiscriminatorFieldJSONName: "type", // Hardcoded for now
+			DiscriminatorFieldJSONName: "type", // Default discriminator
 		}
 
 		for _, field := range typeInfo.Struct.Fields {
-			// Use the new TagValue method
 			jsonTag := field.TagValue("json")
-
-			resolvedFieldType, errResolve := field.Type.Resolve(ctx)
-			if errResolve != nil {
-				if field.Type.PkgName == "" || field.Type.PkgName == pkgInfo.Name {
-					resolvedFieldType = findTypeInPackage(pkgInfo, field.Type.Name)
-				}
-				if resolvedFieldType == nil && !field.Type.IsBuiltin { // if still nil after local lookup or if external, and not a builtin
-				}
-			}
+			resolvedFieldType, _ := field.Type.Resolve(ctx) // Error during resolve is handled by checking resolvedFieldType later
 
 			isInterfaceField := false
 			if resolvedFieldType != nil && resolvedFieldType.Kind == scanner.InterfaceKind {
 				isInterfaceField = true
-			} else if resolvedFieldType == nil && strings.Contains(field.Type.Name, "interface{") { // Heuristic for anonymous interfaces, though less robust
+			} else if resolvedFieldType == nil && strings.Contains(field.Type.Name, "interface{") { // Heuristic for anonymous interfaces
+				isInterfaceField = true
+				// For anonymous interfaces, we might not have a resolvedFieldType.
+				// We'll use field.Type.Name directly, assuming it's defined in the current package or is a standard type.
+				// This part might need more robust handling for anonymous interfaces from other packages.
 			}
 
 			if isInterfaceField {
@@ -203,60 +162,62 @@ func Generate(ctx context.Context, pkgPath string) error {
 					Implementers: []OneOfTypeMapping{},
 				}
 
-				interfaceDef := resolvedFieldType
-				fieldTypeString := interfaceDef.Name
+				var interfaceDef *scanner.TypeInfo = resolvedFieldType
 				var interfaceDefiningPkgImportPath string
-				var interfaceDefiningPkgNameForImport string
 
-				if field.Type.FullImportPath() != "" && field.Type.FullImportPath() != pkgInfo.ImportPath {
-					interfaceDefiningPkgImportPath = field.Type.FullImportPath()
-					interfaceDefiningPkgNameForImport = field.Type.PkgName
-					fieldTypeString = interfaceDefiningPkgNameForImport + "." + interfaceDef.Name
-					structSpecificImports[interfaceDefiningPkgImportPath] = interfaceDefiningPkgNameForImport // Use PkgName as alias
-
-				} else if interfaceDef.FilePath != "" {
-					interfaceDir := filepath.Dir(interfaceDef.FilePath)
-					scannedPkgForInterfaceFile, errPkgScan := gscn.ScanPackage(ctx, interfaceDir)
-
-					if errPkgScan == nil && scannedPkgForInterfaceFile != nil && scannedPkgForInterfaceFile.ImportPath != "" {
-						if scannedPkgForInterfaceFile.ImportPath != pkgInfo.ImportPath {
+				if interfaceDef != nil { // Resolved interface
+					if field.Type.FullImportPath() != "" && field.Type.FullImportPath() != pkgInfo.ImportPath {
+						interfaceDefiningPkgImportPath = field.Type.FullImportPath()
+					} else if interfaceDef.FilePath != "" {
+						interfaceDir := filepath.Dir(interfaceDef.FilePath)
+						scannedPkgForInterfaceFile, errPkgScan := gscn.ScanPackage(ctx, interfaceDir)
+						if errPkgScan == nil && scannedPkgForInterfaceFile != nil && scannedPkgForInterfaceFile.ImportPath != "" {
 							interfaceDefiningPkgImportPath = scannedPkgForInterfaceFile.ImportPath
-							interfaceDefiningPkgNameForImport = scannedPkgForInterfaceFile.Name
-							fieldTypeString = interfaceDefiningPkgNameForImport + "." + interfaceDef.Name
-							structSpecificImports[interfaceDefiningPkgImportPath] = interfaceDefiningPkgNameForImport // Use actual package name as alias
 						} else {
-							interfaceDefiningPkgImportPath = pkgInfo.ImportPath
-							interfaceDefiningPkgNameForImport = pkgInfo.Name
+							interfaceDefiningPkgImportPath = pkgInfo.ImportPath // Fallback
+							if errPkgScan != nil {
+								slog.WarnContext(ctx, "Could not determine import path for interface's defining package, falling back.", "interfaceName", interfaceDef.Name, "filePath", interfaceDef.FilePath, "error", errPkgScan)
+							}
 						}
 					} else {
+						interfaceDefiningPkgImportPath = pkgInfo.ImportPath
 					}
-				} else {
-					interfaceDefiningPkgImportPath = pkgInfo.ImportPath
-					interfaceDefiningPkgNameForImport = pkgInfo.Name
+					oneOfDetail.FieldType = importManager.Qualify(interfaceDefiningPkgImportPath, interfaceDef.Name)
+				} else { // Likely an anonymous interface string like "interface{...}"
+					oneOfDetail.FieldType = field.Type.Name             // Use as is, assuming current package or built-in.
+					interfaceDefiningPkgImportPath = pkgInfo.ImportPath // Assume current package for searching implementers initially
+					// Attempt to parse the anonymous interface definition to find its methods (complex, not done here)
+					// For now, searching for implementers of anonymous interfaces might be limited.
+					// A proper solution would involve parsing the anonymous interface string.
+					// Let's assume for now if resolvedFieldType is nil for an interface, it's an anonymous one from current pkg.
+					// This is a simplification.
+					slog.DebugContext(ctx, "Handling field as anonymous interface", "fieldName", field.Name, "fieldType", field.Type.Name)
+					// Create a temporary TypeInfo for the anonymous interface for Implements check if possible
+					// This is non-trivial. For now, implementer search might not work well for these.
+					// Let's try to proceed but acknowledge limitations.
+					// We need a valid interfaceDef for goscan.Implements.
+					// If we can't get one, we can't find implementers.
+					// For this example, we'll assume if interfaceDef is nil here, we cannot find implementers.
+					if interfaceDef == nil {
+						slog.WarnContext(ctx, "Cannot find implementers for anonymous interface field without a resolved TypeInfo", "fieldName", field.Name, "fieldType", field.Type.Name)
+						data.OneOfFields = append(data.OneOfFields, oneOfDetail) // Add with potentially empty implementers
+						continue                                                 // Skip implementer search for this field
+					}
 				}
-				oneOfDetail.FieldType = fieldTypeString
 
 				searchPkgs := []*scanner.PackageInfo{pkgInfo}
 				if interfaceDefiningPkgImportPath != "" && interfaceDefiningPkgImportPath != pkgInfo.ImportPath {
 					scannedInterfacePkg, errScan := gscn.ScanPackageByImport(ctx, interfaceDefiningPkgImportPath)
 					if errScan == nil && scannedInterfacePkg != nil {
-						alreadyAdded := false
-						for _, sp := range searchPkgs {
-							if sp.ImportPath == scannedInterfacePkg.ImportPath {
-								alreadyAdded = true
-								break
-							}
-						}
-						if !alreadyAdded {
+						if !isPackageInSlice(searchPkgs, scannedInterfacePkg.ImportPath) {
 							searchPkgs = append(searchPkgs, scannedInterfacePkg)
 						}
-					} else {
+					} else if errScan != nil {
+						slog.WarnContext(ctx, "Failed to scan interface's defining package", "importPath", interfaceDefiningPkgImportPath, "error", errScan)
 					}
 				}
 
-				foundImplementersForThisInterface := false
 				processedImplementerKeys := make(map[string]bool)
-
 				for _, currentSearchPkg := range searchPkgs {
 					if currentSearchPkg == nil {
 						continue
@@ -265,34 +226,25 @@ func Generate(ctx context.Context, pkgPath string) error {
 						if candidateType.Kind != scanner.StructKind || candidateType.Struct == nil {
 							continue
 						}
-
-						implementerKey := candidateType.FilePath + "::" + candidateType.Name
+						// Use currentSearchPkg.ImportPath for the package part of the key
+						implementerKey := currentSearchPkg.ImportPath + "." + candidateType.Name
 						if processedImplementerKeys[implementerKey] {
 							continue
 						}
-						implementsResult := goscan.Implements(candidateType, interfaceDef, currentSearchPkg)
-
-						if implementsResult {
+						if goscan.Implements(candidateType, interfaceDef, currentSearchPkg) {
 							processedImplementerKeys[implementerKey] = true
-							foundImplementersForThisInterface = true
-
-							discriminatorValue := strings.ToLower(candidateType.Name)
-							if candidateType.Name == "Circle" {
-								discriminatorValue = "circle"
-							} else if candidateType.Name == "Rectangle" {
-								discriminatorValue = "rectangle"
-							} else {
-							}
-
-							goTypeString := candidateType.Name
+							var goTypeString string
 							if currentSearchPkg.ImportPath != "" && currentSearchPkg.ImportPath != pkgInfo.ImportPath {
-								goTypeString = currentSearchPkg.Name + "." + candidateType.Name
-								// Add import for the implementer's package
-								structSpecificImports[currentSearchPkg.ImportPath] = currentSearchPkg.Name
+								goTypeString = importManager.Qualify(currentSearchPkg.ImportPath, candidateType.Name)
+							} else {
+								goTypeString = candidateType.Name
 							}
 							if !strings.HasPrefix(goTypeString, "*") {
 								goTypeString = "*" + goTypeString
 							}
+							// Simplified discriminator value
+							discriminatorValue := strings.ToLower(strings.TrimSuffix(strings.TrimPrefix(candidateType.Name, "*"), "Event"))
+
 							oneOfDetail.Implementers = append(oneOfDetail.Implementers, OneOfTypeMapping{
 								JSONValue: discriminatorValue,
 								GoType:    goTypeString,
@@ -300,29 +252,26 @@ func Generate(ctx context.Context, pkgPath string) error {
 						}
 					}
 				}
-				if !foundImplementersForThisInterface {
-					warnPath := interfaceDefiningPkgImportPath
-					if warnPath == "" {
-						warnPath = pkgInfo.ImportPath
-					}
-				}
 				data.OneOfFields = append(data.OneOfFields, oneOfDetail)
 
 			} else { // Other fields
-				typeName := field.Type.String()
-				if resolvedFieldType != nil && resolvedFieldType.FilePath != "" {
-					fieldDir := filepath.Dir(resolvedFieldType.FilePath)
-					// Avoid re-scanning current package or already known ones if possible.
-					// For simplicity here, just scan. This might be optimized.
-					fieldDefiningPkg, errPkgScan := gscn.ScanPackage(ctx, fieldDir)
-					if errPkgScan == nil && fieldDefiningPkg != nil && fieldDefiningPkg.ImportPath != "" {
-						if fieldDefiningPkg.ImportPath != pkgInfo.ImportPath {
-							structSpecificImports[fieldDefiningPkg.ImportPath] = fieldDefiningPkg.Name
+				var typeName string
+				if resolvedFieldType != nil && resolvedFieldType.Name != "" { // resolvedFieldType.Name can be empty for unnamed types like `struct{}`
+					definingPkgPath := pkgInfo.ImportPath // Default to current package
+					if resolvedFieldType.FilePath != "" { // If file path is known, try to get its package
+						dir := filepath.Dir(resolvedFieldType.FilePath)
+						definingActualPkg, errScan := gscn.ScanPackage(ctx, dir) // Might hit cache
+						if errScan == nil && definingActualPkg != nil && definingActualPkg.ImportPath != "" {
+							definingPkgPath = definingActualPkg.ImportPath
+						} else if errScan != nil {
+							slog.DebugContext(ctx, "Could not scan package for resolved field type, using current package for qualification.", "field", field.Name, "resolvedTypeName", resolvedFieldType.Name, "error", errScan)
 						}
+					} else if field.Type.FullImportPath() != "" { // Fallback to FieldType's import path if FilePath on resolved is empty
+						definingPkgPath = field.Type.FullImportPath()
 					}
-				} else if field.Type.PkgName != "" && field.Type.PkgName != pkgInfo.Name && field.Type.FullImportPath() != "" {
-					// Fallback using FieldType's PkgName and FullImportPath if available
-					structSpecificImports[field.Type.FullImportPath()] = field.Type.PkgName
+					typeName = importManager.Qualify(definingPkgPath, resolvedFieldType.Name)
+				} else { // Fallback to original FieldType info if resolution failed or name is empty
+					typeName = importManager.Qualify(field.Type.FullImportPath(), field.Type.Name)
 				}
 				data.OtherFields = append(data.OtherFields, FieldInfo{Name: field.Name, Type: typeName, JSONTag: jsonTag})
 			}
@@ -331,6 +280,7 @@ func Generate(ctx context.Context, pkgPath string) error {
 		if len(data.OneOfFields) == 0 {
 			continue
 		}
+		anyCodeGenerated = true // Mark that at least one struct will generate code
 
 		tmpl, err := template.ParseFS(templateFile, "unmarshal.tmpl")
 		if err != nil {
@@ -342,53 +292,36 @@ func Generate(ctx context.Context, pkgPath string) error {
 		}
 		generatedCodeForAllStructs.Write(currentGeneratedCode.Bytes())
 		generatedCodeForAllStructs.WriteString("\n\n")
-
-		// Merge struct-specific imports into collectedImports
-		for path, alias := range structSpecificImports {
-			existingAlias, ok := collectedImports[path]
-			if ok && existingAlias != alias && alias != "" {
-				// Handle potential alias conflicts, e.g. log a warning or prefer one.
-				// For now, let's overwrite if the new alias is not empty.
-				slog.WarnContext(ctx, "Import alias conflict", slog.String("path", path), slog.String("existing_alias", existingAlias), slog.String("new_alias", alias))
-			}
-			// Add if new alias is non-empty, or if path not present, or if existing alias is different and new one is not empty
-			if alias != "" || !ok {
-				collectedImports[path] = alias
-			} else if ok && existingAlias == "" && alias == "" { // both empty, ensure path is present
-				collectedImports[path] = ""
-			}
-		}
-		// Ensure "encoding/json" and "fmt" are added if any code was generated
-		if generatedCodeForAllStructs.Len() > 0 {
-			collectedImports["encoding/json"] = ""
-			collectedImports["fmt"] = ""
-		}
 	}
 
-	if generatedCodeForAllStructs.Len() == 0 {
+	if !anyCodeGenerated { // If no structs produced any code (e.g. no OneOfFields)
+		slog.InfoContext(ctx, "No structs found requiring UnmarshalJSON generation in package", slog.String("package_path", pkgPath))
 		return nil
 	}
 
-	// Use PackageDirectory to save the file
-	outputDir := goscan.NewPackageDirectory(pkgPath, pkgInfo.Name) // pkgInfo.Name is the default package name
+	// Add common imports only if code was generated
+	importManager.Add("encoding/json", "")
+	importManager.Add("fmt", "")
+
+	outputDir := goscan.NewPackageDirectory(pkgPath, pkgInfo.Name)
 	goFile := goscan.GoFile{
 		PackageName: pkgInfo.Name,
-		Imports:     collectedImports,
+		Imports:     importManager.Imports(),
 		CodeSet:     generatedCodeForAllStructs.String(),
 	}
 
 	outputFilename := fmt.Sprintf("%s_deriving.go", strings.ToLower(pkgInfo.Name))
-	// Temporary: Print generated code for debugging
-	// Ensure you have this block:
-	// formattedCode, err := format.Source(finalOutput.Bytes())
-	// if err != nil { ... }
-	// Then print formattedCode before writing.
-	// This requires moving format.Source back into this function or printing unformatted code from goFile.CodeSet.
-	// For simplicity, let's print the unformatted codeset from goFile, assuming SaveGoFile handles formatting.
-
 	if err := outputDir.SaveGoFile(ctx, goFile, outputFilename); err != nil {
-		// SaveGoFile now handles formatting and logging, so we just return the error.
 		return fmt.Errorf("failed to save generated file for package %s: %w", pkgInfo.Name, err)
 	}
 	return nil
+}
+
+func isPackageInSlice(slice []*scanner.PackageInfo, importPath string) bool {
+	for _, p := range slice {
+		if p.ImportPath == importPath {
+			return true
+		}
+	}
+	return false
 }

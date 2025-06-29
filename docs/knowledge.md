@@ -65,3 +65,51 @@ The `ToplevelStructs` function in the `astwalk` package provides an iterator for
 ### Conclusion
 
 The use of the range-over-function pattern for `ToplevelStructs` aligns with modern Go practices, offering a clean and efficient way to process AST nodes. Users of the `astwalk` package should ensure their environment uses Go 1.24 or a later version.
+
+---
+
+## Centralized Import Management in Code Generators: `ImportManager`
+
+**Context:**
+
+When developing multiple code generators (e.g., `examples/derivingjson`, `examples/derivingbind`), a common challenge arises in managing `import` statements for the generated Go code. Each generator needs to:
+1.  Identify all necessary packages to import based on the types and functions used in the generated code.
+2.  Assign appropriate package aliases, especially to avoid conflicts if multiple imported packages have the same base name (e.g., `pkg1/errors` and `pkg2/errors`).
+3.  Ensure that generated aliases do not clash with Go keywords (e.g., `type`, `range`).
+4.  Handle sanitization of package names that might not be valid Go identifiers if used directly as aliases (e.g., paths containing dots or hyphens like `example.com/ext.pkg`).
+5.  Produce a final list of import paths and their aliases for inclusion in the generated file.
+
+Implementing this logic independently in each generator leads to code duplication, potential inconsistencies, and an increased likelihood of bugs.
+
+**Solution: `goscan.ImportManager`**
+
+To address this, a utility struct `goscan.ImportManager` was introduced within the `go-scan` library itself. This provides a centralized and reusable solution for import management.
+
+**Key Features and Design Decisions:**
+
+*   **Centralized Logic**: `ImportManager` encapsulates all the common logic for adding imports, resolving alias conflicts, and formatting the final import list.
+*   **`Add(path string, requestedAlias string) string`**:
+    *   Registers an import path.
+    *   If `requestedAlias` is empty, it derives a base alias from the last element of the import path.
+    *   **Sanitization**: It sanitizes the base alias by replacing common non-identifier characters like `.` and `-` with `_` (e.g., `ext.pkg` becomes `ext_pkg`).
+    *   **Keyword Handling**: If the sanitized alias is a Go keyword (e.g., `range`), it appends `_pkg` (e.g., `range_pkg`). This check is performed *before* the identifier validity check to ensure keywords are handled correctly even if they are valid identifiers.
+    *   **Identifier Validity**: If the (potentially keyword-adjusted) alias is still not a valid Go identifier (e.g., starts with a number, or was empty after sanitization), it prepends `pkg_`. A fallback to a hash-based name is included for extreme edge cases where the alias becomes problematic (e.g. just "pkg_").
+    *   **Conflict Resolution**: If the final candidate alias is already in use by a different import path, it appends a numeric suffix (e.g., `myalias1`, `myalias2`) until a unique alias is found.
+    *   Returns the actual alias to be used in qualified type names.
+    *   If the `path` is the same as the `currentPackagePath` (the package for which code is being generated), it returns an empty string, as types from the current package do not need qualification.
+*   **`Qualify(packagePath string, typeName string) string`**:
+    *   A convenience method that calls `Add(packagePath, "")` internally to ensure the package is registered and to get its managed alias.
+    *   Returns the correctly qualified type name (e.g., `alias.TypeName` or just `TypeName` if it's a local type or built-in).
+*   **`Imports() map[string]string`**:
+    *   Returns a map of all registered import paths to their final, resolved aliases, suitable for passing to `goscan.GoFile`.
+
+**Benefits:**
+
+*   **Reduced Boilerplate**: Generators no longer need to implement their own complex import tracking and alias resolution logic.
+*   **Consistency**: Ensures a consistent approach to alias generation and conflict handling across different generators using `go-scan`.
+*   **Improved Robustness**: Centralized logic is easier to test thoroughly, leading to more reliable import management. The `ImportManager` includes specific handling for keywords, invalid identifiers, and common path-based naming issues.
+*   **Simpler Generator Code**: The client code in generators (like `examples/derivingjson/main.go`) becomes cleaner as they can delegate import path and type qualification Nasıls to the `ImportManager`.
+
+**Application:**
+
+The `ImportManager` was successfully integrated into `examples/derivingjson/main.go` and `examples/derivingbind/main.go`, significantly simplifying their import management sections. The development process involved iterative refinement of the alias generation rules within `ImportManager.Add` based on test cases covering various scenarios (keyword clashes, dot/hyphen in package names, alias conflicts).

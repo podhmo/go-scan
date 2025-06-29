@@ -4,6 +4,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+
 	// "slices" // For comparing slices if needed, though we primarily collect and compare.
 	"testing"
 
@@ -24,8 +25,8 @@ func TestToplevelStructs_Iterator(t *testing.T) {
 			expectedSpecNames: []string{},
 		},
 		{
-			name:   "empty source",
-			source: `package test`,
+			name:              "empty source",
+			source:            `package test`,
 			expectedSpecNames: []string{},
 		},
 		{
@@ -53,8 +54,8 @@ type (
 			expectedSpecNames: []string{"Struct1", "Struct2", "Struct3"},
 		},
 		{
-			name:   "no structs",
-			source: `package test; type Alias1 int; func Func1() {}; type Interface1 interface{}`,
+			name:              "no structs",
+			source:            `package test; type Alias1 int; func Func1() {}; type Interface1 interface{}`,
 			expectedSpecNames: []string{},
 		},
 		{

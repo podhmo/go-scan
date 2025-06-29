@@ -6,10 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/podhmo/go-scan/examples/derivingbind/binding"
-	"github.com/podhmo/go-scan/examples/derivingbind/parser"
 	"io"
 	"net/http"
+
+	"github.com/podhmo/go-scan/examples/derivingbind/binding"
+	"github.com/podhmo/go-scan/examples/derivingbind/parser"
 )
 
 func (s *ComprehensiveBind) Bind(req *http.Request, pathVar func(string) string) error {

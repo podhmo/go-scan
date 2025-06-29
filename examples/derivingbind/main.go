@@ -3,15 +3,12 @@ package main
 import (
 	"bytes"
 	"context"
-	"embed" // Added
+	"embed"
 	"fmt"
-	// "go/format" // No longer needed here
 	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
-	// "reflect" // No longer needed
-	// "sort" // No longer needed here for imports
 	"strings"
 	"text/template"
 
@@ -26,7 +23,7 @@ var bindMethodTemplateFS embed.FS
 var bindMethodTemplateString string
 
 func main() {
-	ctx := context.Background() // Or your application's context
+	ctx := context.Background()
 
 	if len(os.Args) <= 1 {
 		slog.ErrorContext(ctx, "Usage: derivingbind <file1.go> [file2.go ...]")
@@ -57,7 +54,7 @@ func main() {
 			continue
 		}
 		dir := filepath.Dir(absPath)
-		filesByPackageDir[dir] = append(filesByPackageDir[dir], absPath) // Store absPath for ScanFiles
+		filesByPackageDir[dir] = append(filesByPackageDir[dir], absPath)
 	}
 
 	if len(filesByPackageDir) == 0 {
@@ -72,10 +69,8 @@ func main() {
 	}
 
 	overallSuccess := true
-	for pkgDir, filePathsInDir := range filesByPackageDir { // filePathsInDir are now absolute paths
+	for pkgDir, filePathsInDir := range filesByPackageDir {
 		slog.InfoContext(ctx, "Generating Bind method for package", slog.String("package_dir", pkgDir), slog.Any("files", filePathsInDir))
-
-		// GenerateFiles now takes absolute file paths directly for ScanFiles
 		if err := GenerateFiles(ctx, pkgDir, filePathsInDir, gscn); err != nil {
 			slog.ErrorContext(ctx, "Error generating code for package", slog.String("package_dir", pkgDir), slog.Any("error", err))
 			overallSuccess = false
@@ -94,18 +89,16 @@ func main() {
 const bindingAnnotation = "@derivng:binding"
 
 type TemplateData struct {
-	// PackageName string // Will be set in GoFile
 	StructName                 string
 	Fields                     []FieldBindingInfo
-	// Imports                    map[string]string // alias -> path. This will be collected and passed to GoFile
 	NeedsBody                  bool
 	HasSpecificBodyFieldTarget bool
-	ErrNoCookie                error // For template: http.ErrNoCookie
+	ErrNoCookie                error
 }
 
 type FieldBindingInfo struct {
 	FieldName    string
-	FieldType    string
+	FieldType    string // This will store the base type name for parser lookup
 	BindFrom     string
 	BindName     string
 	IsPointer    bool
@@ -114,15 +107,14 @@ type FieldBindingInfo struct {
 	BodyJSONName string
 
 	IsSlice                 bool
-	SliceElementType        string
-	OriginalFieldTypeString string
+	SliceElementType        string // This will store the element's base type name
+	OriginalFieldTypeString string // The original full type string (e.g., "[]*models.Item", "string")
 	ParserFunc              string
 	IsSliceElementPointer   bool
 }
 
-// GenerateFiles processes a list of absolute file paths within a specific package directory.
 func GenerateFiles(ctx context.Context, packageDir string, absFilePaths []string, gscn *goscan.Scanner) error {
-	pkgInfo, err := gscn.ScanFiles(ctx, absFilePaths) // Use absolute paths directly
+	pkgInfo, err := gscn.ScanFiles(ctx, absFilePaths)
 	if err != nil {
 		return fmt.Errorf("go-scan failed to scan files in package %s: %w", packageDir, err)
 	}
@@ -130,22 +122,16 @@ func GenerateFiles(ctx context.Context, packageDir string, absFilePaths []string
 		return fmt.Errorf("go-scan returned nil package info for %s (using files: %v)", packageDir, absFilePaths)
 	}
 	if pkgInfo.Name == "" {
-		// If ScanFiles doesn't robustly determine package name from a subset of files,
-		// use the directory name as a fallback.
-		// This might happen if the parsed files don't contain a package declaration
-		// (e.g. if they are all empty or only comments).
-		// goscan.PackageDirectory's DefaultPackageName will handle this if pkgInfo.Name is empty.
 		slog.WarnContext(ctx, "ScanFiles resulted in an empty package name.", slog.String("packageDir", packageDir), slog.Any("absFilePaths", absFilePaths))
 	}
 
-
+	importManager := goscan.NewImportManager(pkgInfo)
 	var generatedCodeForAllStructs bytes.Buffer
-	collectedImports := make(map[string]string) // path -> alias. For GoFile.Imports
+	anyCodeGenerated := false
 
-	// Initialize with common imports that are almost always needed by the template
-	collectedImports["github.com/podhmo/go-scan/examples/derivingbind/binding"] = ""
-	collectedImports["github.com/podhmo/go-scan/examples/derivingbind/parser"] = ""
-	// Other imports like net/http, fmt, errors, encoding/json, io will be added conditionally
+	// Always add parser and binding, as they are fundamental to the template
+	importManager.Add("github.com/podhmo/go-scan/examples/derivingbind/binding", "")
+	importManager.Add("github.com/podhmo/go-scan/examples/derivingbind/parser", "")
 
 	for _, typeInfo := range pkgInfo.Types {
 		if typeInfo.Kind != scanner.StructKind || typeInfo.Struct == nil {
@@ -168,7 +154,7 @@ func GenerateFiles(ctx context.Context, packageDir string, absFilePaths []string
 		if !hasBindingAnnotationOnStruct {
 			continue
 		}
-		fmt.Printf("  Processing struct: %s for %s\n", typeInfo.Name, bindingAnnotation)
+		slog.DebugContext(ctx, "Processing struct for binding", slog.String("struct", typeInfo.Name))
 
 		data := TemplateData{
 			StructName:                 typeInfo.Name,
@@ -177,34 +163,50 @@ func GenerateFiles(ctx context.Context, packageDir string, absFilePaths []string
 			HasSpecificBodyFieldTarget: false,
 			ErrNoCookie:                http.ErrNoCookie,
 		}
-		collectedImports["net/http"] = "" // For http.ErrNoCookie and request object
+		importManager.Add("net/http", "") // For http.ErrNoCookie and request object (r *http.Request)
 
+		structHasBindableFields := false
 		for _, field := range typeInfo.Struct.Fields {
 			bindFrom := field.TagValue("in")
-			if bindFrom == "" { // If "in" tag is not present or empty
+			if bindFrom == "" {
 				if data.NeedsBody && structLevelInTag == "body" {
 					// Field is part of struct-level body, handled by overall JSON decode.
 				}
-				continue // No 'in' tag for this field.
+				continue
 			}
 			bindFrom = strings.ToLower(strings.TrimSpace(bindFrom))
-			bindName := field.TagValue(bindFrom) // Get the corresponding name tag, e.g., query:"name"
-
-			// `ok` equivalent: bindFrom is not empty. Specific checks for bindName follow.
+			bindName := field.TagValue(bindFrom)
 
 			switch bindFrom {
 			case "path", "query", "header", "cookie":
 				if bindName == "" {
-					fmt.Printf("      Skipping field %s: 'in:\"%s\"' tag requires corresponding '%s:\"name\"' tag\n", field.Name, bindFrom, bindFrom)
+					slog.DebugContext(ctx, "Skipping field: tag requires corresponding name tag", "struct", typeInfo.Name, "field", field.Name, "in_tag", bindFrom)
 					continue
 				}
 			case "body":
 				data.NeedsBody = true
-				// Individual `in:"body"` implies this field itself is a body or part of it.
-				// `bindName` from `field.BindTag()` would be the json tag if `in:"body" json:"field_name"`
 			default:
-				fmt.Printf("      Skipping field %s: unknown 'in' tag value '%s'\n", field.Name, bindFrom)
+				slog.DebugContext(ctx, "Skipping field: unknown 'in' tag value", "struct", typeInfo.Name, "field", field.Name, "in_tag", bindFrom)
 				continue
+			}
+
+			// Use field.Type.String() for OriginalFieldTypeString as it gives the full type representation
+			// including package alias if it's from an external package resolved by the core scanner.
+			// ImportManager's role here is mainly to ensure the *package* is imported,
+			// not to rewrite these type strings unless they are being constructed from parts.
+			originalFieldTypeStr := field.Type.String()
+			if field.Type.FullImportPath() != "" && field.Type.FullImportPath() != pkgInfo.ImportPath {
+				// Ensure the package of this field type is registered for import
+				originalFieldTypeStr = importManager.Qualify(field.Type.FullImportPath(), field.Type.Name)
+				if field.Type.IsSlice && field.Type.Elem != nil {
+					sliceElemStr := importManager.Qualify(field.Type.Elem.FullImportPath(), field.Type.Elem.Name)
+					if field.Type.Elem.IsPointer {
+						sliceElemStr = "*" + sliceElemStr
+					}
+					originalFieldTypeStr = "[]" + sliceElemStr
+				} else if field.Type.IsPointer && field.Type.Elem != nil {
+					originalFieldTypeStr = "*" + importManager.Qualify(field.Type.Elem.FullImportPath(), field.Type.Elem.Name)
+				}
 			}
 
 			fInfo := FieldBindingInfo{
@@ -212,49 +214,46 @@ func GenerateFiles(ctx context.Context, packageDir string, absFilePaths []string
 				BindFrom:                bindFrom,
 				BindName:                bindName,
 				IsRequired:              (field.TagValue("required") == "true"),
-				OriginalFieldTypeString: field.Type.String(),
+				OriginalFieldTypeString: originalFieldTypeStr,
 				IsPointer:               field.Type.IsPointer,
 			}
 
 			currentScannerType := field.Type
-			baseTypeForConversion := ""
+			baseTypeForConversion := "" // This will be the simple, unqualified type name for parser lookup
 
 			if currentScannerType.IsSlice {
 				fInfo.IsSlice = true
 				if currentScannerType.Elem != nil {
-					fInfo.SliceElementType = currentScannerType.Elem.String()
+					// For SliceElementType, we also want the potentially qualified name for the template
+					fInfo.SliceElementType = importManager.Qualify(currentScannerType.Elem.FullImportPath(), currentScannerType.Elem.Name)
+					if currentScannerType.Elem.IsPointer {
+						fInfo.SliceElementType = "*" + fInfo.SliceElementType
+					}
 					fInfo.IsSliceElementPointer = currentScannerType.Elem.IsPointer
-					sliceElemScannerType := currentScannerType.Elem
-					if sliceElemScannerType.IsPointer && sliceElemScannerType.Elem != nil {
-						baseTypeForConversion = sliceElemScannerType.Elem.Name
-					} else if sliceElemScannerType.IsPointer && sliceElemScannerType.Elem == nil {
-						baseTypeForConversion = sliceElemScannerType.Name
-					} else {
-						baseTypeForConversion = sliceElemScannerType.Name
+
+					// For baseTypeForConversion (parser lookup), use the unqualified name
+					sliceElemForParser := currentScannerType.Elem
+					if sliceElemForParser.IsPointer && sliceElemForParser.Elem != nil {
+						baseTypeForConversion = sliceElemForParser.Elem.Name
+					} else { // Non-pointer element or pointer to built-in
+						baseTypeForConversion = sliceElemForParser.Name
 					}
 				} else {
-					fmt.Printf("      Skipping field %s: slice with nil Elem type\n", field.Name)
+					slog.DebugContext(ctx, "Skipping field: slice with nil Elem type", "struct", typeInfo.Name, "field", field.Name)
 					continue
 				}
 			} else if currentScannerType.IsPointer {
 				if currentScannerType.Elem != nil {
 					baseTypeForConversion = currentScannerType.Elem.Name
-				} else {
-					baseTypeForConversion = currentScannerType.Name
-					if baseTypeForConversion == "" && bindFrom != "body" {
-						fmt.Printf("      Warning: Pointer field %s (%s) - Name empty. Skipping non-body.\n", field.Name, fInfo.OriginalFieldTypeString)
-						continue
-					}
+				} else { // Pointer to a built-in or unresolved type
+					baseTypeForConversion = currentScannerType.Name // e.g. *string, Name would be "string"
 				}
-			} else {
+			} else { // Not a slice, not a pointer
 				baseTypeForConversion = currentScannerType.Name
-				if baseTypeForConversion == "" && bindFrom != "body" {
-					fmt.Printf("      Warning: Field %s (%s) - Name empty. Skipping non-body.\n", field.Name, fInfo.OriginalFieldTypeString)
-					continue
-				}
 			}
-			fInfo.FieldType = baseTypeForConversion
+			fInfo.FieldType = baseTypeForConversion // Store the base (unqualified) type for parser lookup
 
+			// Determine parser function based on the unqualified base type
 			switch baseTypeForConversion {
 			case "string":
 				fInfo.ParserFunc = "parser.String"
@@ -269,40 +268,43 @@ func GenerateFiles(ctx context.Context, packageDir string, absFilePaths []string
 			case "complex64", "complex128":
 				fInfo.ParserFunc = "parser." + strings.Title(baseTypeForConversion)
 			default:
-				if bindFrom != "body" {
-					fmt.Printf("      Skipping field %s: unhandled base type '%s' for %s binding.\n", field.Name, baseTypeForConversion, bindFrom)
+				if bindFrom != "body" { // Custom types not supported for non-body binding directly by these parsers
+					slog.DebugContext(ctx, "Skipping field: unhandled base type for non-body binding", "struct", typeInfo.Name, "field", field.Name, "baseType", baseTypeForConversion, "bindFrom", bindFrom)
 					continue
 				}
+				// For 'body' binding, fInfo.ParserFunc is not used; it's direct unmarshaling.
 			}
 
 			if bindFrom != "body" {
-				collectedImports["errors"] = "" // For errors.Join
+				importManager.Add("errors", "") // For errors.Join
 				if fInfo.ParserFunc == "" {
-					fmt.Printf("      Skipping field %s: No parser func for non-body binding.\n", field.Name)
+					slog.DebugContext(ctx, "Skipping field: No parser func for non-body binding", "struct", typeInfo.Name, "field", field.Name)
 					continue
 				}
-			} else {
+			} else { // bindFrom == "body"
 				fInfo.IsBody = true
-				data.NeedsBody = true
+				data.NeedsBody = true // Ensure this is true if any field is body-bound
 				data.HasSpecificBodyFieldTarget = true
-				collectedImports["encoding/json"] = ""
-				collectedImports["io"] = ""
-				collectedImports["fmt"] = ""    // For fmt.Errorf
-				collectedImports["errors"] = "" // For errors.Join
+				importManager.Add("encoding/json", "")
+				importManager.Add("io", "")
+				importManager.Add("fmt", "")    // For fmt.Errorf
+				importManager.Add("errors", "") // For errors.Join
 			}
 			data.Fields = append(data.Fields, fInfo)
+			structHasBindableFields = true
 		}
 
-		if len(data.Fields) == 0 && !data.NeedsBody {
-			fmt.Printf("  Skipping struct %s: no bindable fields or global body target.\n", typeInfo.Name)
+		if !structHasBindableFields && !data.NeedsBody { // If no fields were processed for binding and it's not a global body target
+			slog.DebugContext(ctx, "Skipping struct: no bindable fields or global body target", "struct", typeInfo.Name)
 			continue
 		}
+		anyCodeGenerated = true
 
 		if data.NeedsBody && !data.HasSpecificBodyFieldTarget { // Struct itself is body target
-			collectedImports["encoding/json"] = ""
-			collectedImports["io"] = ""
-			collectedImports["fmt"] = ""
-			collectedImports["errors"] = ""
+			importManager.Add("encoding/json", "")
+			importManager.Add("io", "")
+			importManager.Add("fmt", "")
+			importManager.Add("errors", "")
 		}
 
 		funcMap := template.FuncMap{"TitleCase": strings.Title}
@@ -318,21 +320,21 @@ func GenerateFiles(ctx context.Context, packageDir string, absFilePaths []string
 		generatedCodeForAllStructs.WriteString("\n\n")
 	}
 
-	if generatedCodeForAllStructs.Len() == 0 {
-		fmt.Println("No structs found requiring Bind method generation.")
+	if !anyCodeGenerated {
+		slog.InfoContext(ctx, "No structs found requiring Bind method generation in package", slog.String("packageDir", packageDir))
 		return nil
 	}
 
 	actualPackageName := pkgInfo.Name
 	if actualPackageName == "" {
-		actualPackageName = filepath.Base(packageDir)
+		actualPackageName = filepath.Base(packageDir) // Fallback to directory name
 		slog.InfoContext(ctx, "Using directory name as package name for generated file", "package_name", actualPackageName, "package_dir", packageDir)
 	}
 
 	outputPkgDir := goscan.NewPackageDirectory(packageDir, actualPackageName)
 	goFile := goscan.GoFile{
 		PackageName: actualPackageName,
-		Imports:     collectedImports,
+		Imports:     importManager.Imports(),
 		CodeSet:     generatedCodeForAllStructs.String(),
 	}
 
@@ -341,32 +343,4 @@ func GenerateFiles(ctx context.Context, packageDir string, absFilePaths []string
 		return fmt.Errorf("failed to save generated bind file for package %s: %w", actualPackageName, err)
 	}
 	return nil
-}
-
-// Helper function to check if a base type string is numeric or boolean
-func isNumericOrBool(baseType string) bool {
-	switch baseType {
-	case "int", "int8", "int16", "int32", "int64",
-		"uint", "uint8", "uint16", "uint32", "uint64", "uintptr",
-		"float32", "float64", "complex64", "complex128", "bool":
-		return true
-	default:
-		return false
-	}
-}
-
-// Helper function to check if a slice element type is one of the directly convertible primitives
-func isWellKnownSliceElementType(sliceElementType string) bool {
-	base := sliceElementType
-	if strings.HasPrefix(base, "*") && len(base) > 1 {
-		base = base[1:]
-	}
-	switch base {
-	case "string", "int", "int8", "int16", "int32", "int64",
-		"uint", "uint8", "uint16", "uint32", "uint64",
-		"float32", "float64", "complex64", "complex128", "bool", "uintptr":
-		return true
-	default:
-		return false
-	}
 }

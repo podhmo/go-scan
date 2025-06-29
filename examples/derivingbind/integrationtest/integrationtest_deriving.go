@@ -4,9 +4,10 @@ package integrationtest
 
 import (
 	"errors"
+	"net/http"
+
 	"github.com/podhmo/go-scan/examples/derivingbind/binding"
 	"github.com/podhmo/go-scan/examples/derivingbind/parser"
-	"net/http"
 )
 
 func (s *TestBindStringQueryOptional) Bind(req *http.Request, pathVar func(string) string) error {

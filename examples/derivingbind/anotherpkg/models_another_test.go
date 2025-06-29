@@ -44,7 +44,7 @@ func TestAnotherModel_Bind(t *testing.T) {
 			// No X-Special header
 			want: AnotherModel{
 				ItemName:  "widget",
-				Quantity:  nil, // Default for *int
+				Quantity:  nil,   // Default for *int
 				IsSpecial: false, // Default for bool
 			},
 			expectError: false,

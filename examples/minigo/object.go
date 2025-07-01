@@ -33,15 +33,13 @@ type String struct {
 func (s *String) Type() ObjectType { return STRING_OBJ }
 func (s *String) Inspect() string  { return s.Value } // For simple strings, Inspect is just the value.
 
-// --- Integer Object (Example for future) ---
-/*
+// --- Integer Object ---
 type Integer struct {
-    Value int64
+	Value int64
 }
 
 func (i *Integer) Type() ObjectType { return INTEGER_OBJ }
 func (i *Integer) Inspect() string  { return fmt.Sprintf("%d", i.Value) }
-*/
 
 // --- Boolean Object ---
 type Boolean struct {

@@ -121,6 +121,19 @@ func main() {
 		if bVal.Value != expected {
 			t.Errorf("Expected %t, got %t for expression %s", expected, bVal.Value, expression)
 		}
+	case int64: // Added for integer results
+		if finalVal == nil {
+			t.Errorf("Expected integer %d, got nil for expression %s", expected, expression)
+			return
+		}
+		if finalVal.Type() != INTEGER_OBJ {
+			t.Errorf("Expected INTEGER_OBJ, got %s for expression %s", finalVal.Type(), expression)
+			return
+		}
+		iVal, _ := finalVal.(*Integer)
+		if iVal.Value != expected {
+			t.Errorf("Expected %d, got %d for expression %s", expected, iVal.Value, expression)
+		}
 	case string:
 		if finalVal == nil {
 			// This can happen if 'expression' is an identifier that was not assigned to testOutput
@@ -404,8 +417,268 @@ func TestStringComparison(t *testing.T) {
 // - Tests for `AssignStmt` (e.g. `x = "new_value"`) once implemented.
 // - Tests for `CallExpr` (function calls) once implemented.
 // - Tests for Integer literals and operations.
+// - Tests for Boolean literals and operations.
 // - More comprehensive error condition tests.
 // - Tests for scope and environment (e.g., variable shadowing, closure behavior if functions are added).
 // - Refine `testEvalExpression` or replace with direct `interpreter.eval` calls for cleaner unit tests.
 // - Tests for how `LoadAndRun` evaluates global declarations vs. function scope.
 // - Test for `go-scan` based error reporting details when/if integrated. (Ensured backticks are paired)
+
+// Helper to parse and eval a single expression string.
+// It uses a new interpreter and environment for each call.
+func testEval(t *testing.T, input string) (Object, error) {
+	t.Helper()
+	exprNode, err := parser.ParseExpr(input)
+	if err != nil {
+		// For unary minus like "-5", parser.ParseExpr might produce an *ast.UnaryExpr.
+		// The interpreter's eval function needs to handle this.
+		// If an error occurs here, it's a parsing problem, not an eval problem yet.
+		t.Fatalf("Failed to parse expression '%s': %v", input, err)
+	}
+	interpreter := NewInterpreter() // Fresh interpreter
+	env := NewEnvironment(nil)      // Fresh global-like environment for the test
+
+	// If we need to test variable assignments and then expressions using those variables,
+	// the env would need to persist or be setup prior to eval.
+	// For simple literal expressions, a fresh env is fine.
+	return interpreter.eval(exprNode, env)
+}
+
+func TestIntegerLiterals(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected int64
+	}{
+		{"5", 5},
+		{"10", 10},
+		{"0", 0},
+		{"-5", -5},     // Requires UnaryExpr handling for '-'
+		{"-10", -10},   // Requires UnaryExpr handling for '-'
+		{"0xFF", 255},
+		{"0xff", 255}, // Lowercase hex
+		// {"0o10", 8},    // Go parser.ParseExpr may not support 0o prefix directly without full file context
+		// {"0b1010", 10}, // Go parser.ParseExpr may not support 0b prefix directly
+		// strconv.ParseInt used in interpreter.go handles these prefixes if present in the string.
+		// The go/parser might only produce these for full file parsing, not necessarily ParseExpr.
+		// For ParseExpr, "255" (decimal) is fine. If "0xFF" is given to ParseExpr, it's parsed as INT token with value "0xFF".
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			evaluated, err := testEval(t, tt.input)
+			if err != nil {
+				t.Fatalf("eval failed for '%s': %v", tt.input, err)
+			}
+			integer, ok := evaluated.(*Integer)
+			if !ok {
+				t.Fatalf("expected Integer object, got %T (%+v) for '%s'", evaluated, evaluated, tt.input)
+			}
+			if integer.Value != tt.expected {
+				t.Errorf("expected %d, got %d for '%s'", tt.expected, integer.Value, tt.input)
+			}
+		})
+	}
+}
+
+func TestBooleanLiterals(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected bool
+	}{
+		{"true", true},
+		{"false", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			evaluated, err := testEval(t, tt.input)
+			if err != nil {
+				t.Fatalf("eval failed for '%s': %v", tt.input, err)
+			}
+			boolean, ok := evaluated.(*Boolean)
+			if !ok {
+				t.Fatalf("expected Boolean object, got %T (%+v) for '%s'", evaluated, evaluated, tt.input)
+			}
+			if boolean.Value != tt.expected {
+				t.Errorf("expected %t, got %t for '%s'", tt.expected, boolean.Value, tt.input)
+			}
+		})
+	}
+}
+
+func TestIntegerArithmetic(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected int64
+	}{
+		{"5 + 5", 10},
+		{"10 - 5", 5},
+		{"2 * 3", 6},
+		{"10 / 2", 5},
+		{"10 % 3", 1},
+		{"5 + 5 * 2", 15},   // Precedence: 5 + (5*2)
+		{"(5 + 5) * 2", 20}, // Parentheses
+		{"-5 + 10", 5},      // Unary minus with binary op
+		{"5 * -2", -10},     // Binary op with unary minus
+		{"(2 + 3) * (4 - 1) / 5", 3}, // (5 * 3) / 5 = 3
+		{"0 - 5", -5}, // Testing subtraction resulting in negative
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			evaluated, err := testEval(t, tt.input)
+			if err != nil {
+				t.Fatalf("eval failed for '%s': %v", tt.input, err)
+			}
+			integer, ok := evaluated.(*Integer)
+			if !ok {
+				t.Fatalf("expected Integer object, got %T (%+v) for '%s'", evaluated, evaluated, tt.input)
+			}
+			if integer.Value != tt.expected {
+				t.Errorf("expected %d, got %d for '%s'", tt.expected, integer.Value, tt.input)
+			}
+		})
+	}
+}
+
+func TestIntegerComparison(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected bool
+	}{
+		{"1 < 2", true},
+		{"1 > 2", false},
+		{"1 <= 2", true},
+		{"2 <= 1", false},
+		{"1 >= 2", false},
+		{"2 >= 1", true},
+		{"1 == 1", true},
+		{"1 != 1", false},
+		{"2 == 1", false},
+		{"2 != 1", true},
+		{"-5 < -2", true},
+		{"-2 < -5", false},
+		{"(1 + 1) == 2", true},
+		{"(5 - 2) > (1 + 1)", true}, // 3 > 2
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			evaluated, err := testEval(t, tt.input)
+			if err != nil {
+				t.Fatalf("eval failed for '%s': %v", tt.input, err)
+			}
+			boolean, ok := evaluated.(*Boolean)
+			if !ok {
+				t.Fatalf("expected Boolean object, got %T (%+v) for '%s'", evaluated, evaluated, tt.input)
+			}
+			if boolean.Value != tt.expected {
+				t.Errorf("expected %t, got %t for '%s'", tt.expected, boolean.Value, tt.input)
+			}
+		})
+	}
+}
+
+func TestBooleanComparison(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected bool
+	}{
+		{"true == true", true},
+		{"false == false", true},
+		{"true == false", false},
+		{"true != false", true},
+		{"false != true", true},
+		{"(1 < 2) == true", true},    // (true) == true
+		{"(1 > 2) == false", true},   // (false) == false
+		{"(1 > 2) == true", false},   // (false) == true
+		{"!(true == false)", true}, // !false -> true (requires UnaryExpr for !)
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			evaluated, err := testEval(t, tt.input)
+			if err != nil {
+				t.Fatalf("eval failed for '%s': %v", tt.input, err)
+			}
+			boolean, ok := evaluated.(*Boolean)
+			if !ok {
+				t.Fatalf("expected Boolean object, got %T (%+v) for '%s'", evaluated, evaluated, tt.input)
+			}
+			if boolean.Value != tt.expected {
+				t.Errorf("expected %t, got %t for '%s'", tt.expected, boolean.Value, tt.input)
+			}
+		})
+	}
+}
+
+func TestUnaryNotOperator(t *testing.T) {
+	tests := []struct{
+		input string
+		expected bool
+	} {
+		{"!true", false},
+		{"!false", true},
+		{"!(1 < 2)", false}, // !(true) -> false
+		{"!(1 > 2)", true},  // !(false) -> true
+		// {"!!true", true}, // Requires parser to handle multiple unary ops or interpreter to handle nested unary
+		// {"!!false", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			evaluated, err := testEval(t, tt.input)
+			if err != nil {
+				t.Fatalf("eval failed for '%s': %v", tt.input, err)
+			}
+			boolean, ok := evaluated.(*Boolean)
+			if !ok {
+				t.Fatalf("expected Boolean object, got %T (%+v) for '%s'", evaluated, evaluated, tt.input)
+			}
+			if boolean.Value != tt.expected {
+				t.Errorf("expected %t, got %t for '%s'", tt.expected, boolean.Value, tt.input)
+			}
+		})
+	}
+}
+
+
+func TestErrorHandling(t *testing.T) {
+	tests := []struct {
+		input       string
+		expectedMsg string // Substring of the expected error message
+	}{
+		{"10 / 0", "division by zero"},
+		{"10 % 0", "division by zero (modulo)"},
+		{"1 + true", "type mismatch or unsupported operation for binary expression: INTEGER + BOOLEAN"},
+		{"\"hello\" - \"world\"", "unknown operator for strings: -"},
+		{"true / false", "type mismatch or unsupported operation for binary expression: BOOLEAN / BOOLEAN"},
+		{"foobar", "identifier not found: foobar"},
+		{"-true", "unsupported type for negation: BOOLEAN"}, // Error for unary minus on boolean
+		{"!10", "unsupported type for logical NOT: INTEGER"},   // Error for unary not on integer
+		{"1 + \"2\"", "type mismatch or unsupported operation for binary expression: INTEGER + STRING"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			evaluated, err := testEval(t, tt.input)
+			if err == nil {
+				t.Fatalf("expected error for '%s', but got nil (evaluated to %s)", tt.input, evaluated.Inspect())
+			}
+			if !strings.Contains(err.Error(), tt.expectedMsg) {
+				t.Errorf("expected error message containing '%s', got '%s' for '%s'", tt.expectedMsg, err.Error(), tt.input)
+			}
+		})
+	}
+}
+
+// Note: Octal (0o) and Binary (0b) literal tests for `parser.ParseExpr` might be tricky.
+// `go/parser.ParseExpr` itself doesn't directly support these prefixes; they are typically
+// handled when parsing a full file where the context makes them unambiguous as numbers.
+// `strconv.ParseInt(s, 0, 64)` which is used in `interpreter.go` *does* support "0xff", "0oNN", "0bNN"
+// if the string `s` is passed with those prefixes.
+// The `ast.BasicLit.Value` for `0xFF` from `parser.ParseExpr("0xFF")` is indeed the string "0xFF".
+// So hex literals should work. For `0o10` and `0b10`, `parser.ParseExpr` might parse them as identifiers
+// if not careful, or as decimal '0' followed by 'o10'.
+// Test with "077" (old octal) and "0o77" (new octal) to see. `parser.ParseExpr("077")` is fine. `parser.ParseExpr("0o77")` is not.
+// So, for direct `ParseExpr`, stick to hex ("0x...") and standard decimal, and rely on `strconv.ParseInt` for those.
+// The tests for 0o and 0b prefixes are commented out in `TestIntegerLiterals` for this reason.

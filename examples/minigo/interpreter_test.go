@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"go/parser" // Added for parser.ParseExpr
 	"os"
+
 	// "path/filepath" // Removed as it's unused
 	"strings"
 	"testing"
@@ -452,8 +453,8 @@ func TestIntegerLiterals(t *testing.T) {
 		{"5", 5},
 		{"10", 10},
 		{"0", 0},
-		{"-5", -5},     // Requires UnaryExpr handling for '-'
-		{"-10", -10},   // Requires UnaryExpr handling for '-'
+		{"-5", -5},   // Requires UnaryExpr handling for '-'
+		{"-10", -10}, // Requires UnaryExpr handling for '-'
 		{"0xFF", 255},
 		{"0xff", 255}, // Lowercase hex
 		// {"0o10", 8},    // Go parser.ParseExpr may not support 0o prefix directly without full file context
@@ -516,12 +517,12 @@ func TestIntegerArithmetic(t *testing.T) {
 		{"2 * 3", 6},
 		{"10 / 2", 5},
 		{"10 % 3", 1},
-		{"5 + 5 * 2", 15},   // Precedence: 5 + (5*2)
-		{"(5 + 5) * 2", 20}, // Parentheses
-		{"-5 + 10", 5},      // Unary minus with binary op
-		{"5 * -2", -10},     // Binary op with unary minus
+		{"5 + 5 * 2", 15},            // Precedence: 5 + (5*2)
+		{"(5 + 5) * 2", 20},          // Parentheses
+		{"-5 + 10", 5},               // Unary minus with binary op
+		{"5 * -2", -10},              // Binary op with unary minus
 		{"(2 + 3) * (4 - 1) / 5", 3}, // (5 * 3) / 5 = 3
-		{"0 - 5", -5}, // Testing subtraction resulting in negative
+		{"0 - 5", -5},                // Testing subtraction resulting in negative
 	}
 
 	for _, tt := range tests {
@@ -589,9 +590,9 @@ func TestBooleanComparison(t *testing.T) {
 		{"true == false", false},
 		{"true != false", true},
 		{"false != true", true},
-		{"(1 < 2) == true", true},    // (true) == true
-		{"(1 > 2) == false", true},   // (false) == false
-		{"(1 > 2) == true", false},   // (false) == true
+		{"(1 < 2) == true", true},  // (true) == true
+		{"(1 > 2) == false", true}, // (false) == false
+		{"(1 > 2) == true", false}, // (false) == true
 		{"!(true == false)", true}, // !false -> true (requires UnaryExpr for !)
 	}
 
@@ -613,10 +614,10 @@ func TestBooleanComparison(t *testing.T) {
 }
 
 func TestUnaryNotOperator(t *testing.T) {
-	tests := []struct{
-		input string
+	tests := []struct {
+		input    string
 		expected bool
-	} {
+	}{
 		{"!true", false},
 		{"!false", true},
 		{"!(1 < 2)", false}, // !(true) -> false
@@ -641,7 +642,6 @@ func TestUnaryNotOperator(t *testing.T) {
 	}
 }
 
-
 func TestErrorHandling(t *testing.T) {
 	tests := []struct {
 		input       string
@@ -653,8 +653,8 @@ func TestErrorHandling(t *testing.T) {
 		{"\"hello\" - \"world\"", "unknown operator for strings: -"},
 		{"true / false", "type mismatch or unsupported operation for binary expression: BOOLEAN / BOOLEAN"},
 		{"foobar", "identifier not found: foobar"},
-		{"-true", "unsupported type for negation: BOOLEAN"}, // Error for unary minus on boolean
-		{"!10", "unsupported type for logical NOT: INTEGER"},   // Error for unary not on integer
+		{"-true", "unsupported type for negation: BOOLEAN"},  // Error for unary minus on boolean
+		{"!10", "unsupported type for logical NOT: INTEGER"}, // Error for unary not on integer
 		{"1 + \"2\"", "type mismatch or unsupported operation for binary expression: INTEGER + STRING"},
 	}
 
@@ -916,7 +916,6 @@ func main() {
 			// 		// ... comments ...
 			// 	}
 			// }
-
 
 			err := interpreter.LoadAndRun(filename, tt.entryPoint)
 

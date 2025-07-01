@@ -3,6 +3,7 @@ package goscan
 import (
 	"context"
 	"encoding/json" // Added for manual cache file creation in tests
+	"fmt"           // Added for debug printing in tests
 	"os"            // Added for os.MkdirTemp, os.ReadFile, os.Stat
 	"path/filepath" // Added for filepath.Join, filepath.Abs
 	"reflect"       // Added for reflect.DeepEqual in tests
@@ -917,6 +918,86 @@ func TestImplements(t *testing.T) {
 	// If we had `type AliasToInterface = SimpleInterface`, then its Kind might be InterfaceKind (or AliasKind, depending on scanner).
 	// If `AliasKind` and `Underlying` points to an interface, `Implements` would need to handle it.
 	// Current `Implements` expects `interfaceDef.Kind == InterfaceKind`.
+
+	// New test cases for slice types
+	newSliceTests := []struct {
+		name                string
+		structName          string
+		interfaceName       string
+		expectedToImplement bool
+	}{
+		// Slice of primitive types
+		{"MySliceProcessorImpl_SliceProcessor_IntSlice", "MySliceProcessorImpl", "SliceProcessor", true},    // Checks ProcessIntSlice
+		{"MySliceProcessorImpl_SliceProcessor_StringSlice", "MySliceProcessorImpl", "SliceProcessor", true}, // Checks ProcessStringSlice
+
+		// Slice of structs
+		{"MySliceStructProcessorImpl_SliceStructProcessor_StructSlice", "MySliceStructProcessorImpl", "SliceStructProcessor", true},        // Checks ProcessStructSlice
+		{"MySliceStructProcessorImpl_SliceStructProcessor_PointerStructSlice", "MySliceStructProcessorImpl", "SliceStructProcessor", true}, // Checks ProcessPointerStructSlice
+
+		// Slice of pointers to structs
+		{"MySliceOfPointerProcessorImpl_SliceOfPointerProcessor_Pointers", "MySliceOfPointerProcessorImpl", "SliceOfPointerProcessor", true},     // Checks ProcessSliceOfPointers
+		{"MySliceOfPointerProcessorImpl_SliceOfPointerProcessor_PointerAlias", "MySliceOfPointerProcessorImpl", "SliceOfPointerProcessor", true}, // Checks ProcessSliceOfPointerAlias
+
+		// Negative Test Cases for Slices
+		// Mismatched element type in slice parameter
+		{"MismatchedSliceProcessorImpl_SliceProcessor_IntParamMismatch", "MismatchedSliceProcessorImpl", "SliceProcessor", false},
+		// Mismatched element type in slice return
+		{"MismatchedReturnSliceProcessorImpl_SliceProcessor_IntReturnMismatch", "MismatchedReturnSliceProcessorImpl", "SliceProcessor", false},
+		// Mismatched struct type in slice parameter
+		{"MismatchedSliceStructProcessorImpl_SliceStructProcessor_StructParamMismatch", "MismatchedSliceStructProcessorImpl", "SliceStructProcessor", false},
+		// Mismatched pointer-ness in slice parameter (e.g. []MyStruct vs []*MyStruct)
+		// Interface `SliceStructProcessor.ProcessPointerStructSlice` expects `[]*MyStruct`.
+		// Struct `MismatchedPointerNessSliceStructProcessorImpl.ProcessPointerStructSlice` provides `[]MyStruct`.
+		{"MismatchedPointerNess_PointerStructSlice", "MismatchedPointerNessSliceStructProcessorImpl", "SliceStructProcessor", false},
+		// Parameter is not a slice when interface expects a slice
+		{"NotASliceProcessorImpl_SliceProcessor_ParamNotSlice", "NotASliceProcessorImpl", "SliceProcessor", false},
+	}
+
+	for _, tt := range newSliceTests {
+		t.Run(tt.name, func(t *testing.T) {
+			structCandidate := getType(tt.structName)
+			interfaceDef := getType(tt.interfaceName)
+
+			if structCandidate == nil {
+				t.Fatalf("Test setup error: Struct candidate %q not found", tt.structName)
+			}
+			if interfaceDef == nil {
+				t.Fatalf("Test setup error: Interface definition %q not found", tt.interfaceName)
+			}
+			// Assuming structCandidate.Kind and interfaceDef.Kind are correct as per previous tests.
+
+			actual := Implements(structCandidate, interfaceDef, pkgInfo)
+			if actual != tt.expectedToImplement {
+				// Provide more debug info if it fails
+				// For example, print the methods of the interface and the methods found on the struct
+				var interfaceMethods []string
+				if interfaceDef.Interface != nil {
+					for _, m := range interfaceDef.Interface.Methods {
+						interfaceMethods = append(interfaceMethods, m.Name)
+					}
+				}
+
+				var structMethodsDetails []string
+				// Simplified method collection for debugging output, not as robust as Implements itself
+				for _, fn := range pkgInfo.Functions {
+					if fn.Receiver != nil && fn.Receiver.Type != nil {
+						receiverTypeName := fn.Receiver.Type.Name
+						actualReceiverName := receiverTypeName
+						if fn.Receiver.Type.IsPointer && strings.HasPrefix(receiverTypeName, "*") {
+							actualReceiverName = strings.TrimPrefix(receiverTypeName, "*")
+						}
+						if actualReceiverName == structCandidate.Name {
+							structMethodsDetails = append(structMethodsDetails, fmt.Sprintf("%s (Receiver: %s, IsPointer: %t)", fn.Name, fn.Receiver.Type.Name, fn.Receiver.Type.IsPointer))
+						}
+					}
+				}
+
+				t.Errorf("Implements(%s, %s): expected %v, got %v\nInterface Methods: %v\nStruct Methods Found: %v",
+					tt.structName, tt.interfaceName, tt.expectedToImplement, actual,
+					interfaceMethods, structMethodsDetails)
+			}
+		})
+	}
 }
 
 func TestSaveGoFile_Imports(t *testing.T) {

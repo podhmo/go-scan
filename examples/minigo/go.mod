@@ -1,6 +1,6 @@
-module github.com/your-username/your-repo/examples/minigo
+module github.com/podhmo/go-scan/examples/minigo
 
-go 1.20
+go 1.24
 
 //他のexamplesディレクトリを参考にreplaceディレクティブを追加
 //ローカルのgo-scanパッケージを参照するようにします。

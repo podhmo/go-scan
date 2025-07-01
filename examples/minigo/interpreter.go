@@ -53,7 +53,7 @@ func formatErrorWithContext(fset *token.FileSet, pos token.Pos, originalErr erro
 	} else {
 		errMsg = fmt.Sprintf("%s\n  Details: %v", errMsg, originalErr)
 	}
-	return fmt.Errorf(errMsg)
+	return fmt.Errorf("%s", errMsg) // Use %s to treat errMsg as a string literal
 }
 
 // parseInt64 is a helper function to parse a string to an int64.

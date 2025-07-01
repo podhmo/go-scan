@@ -69,3 +69,36 @@
 ---
 
 今後も同様の問題が発生した場合は、このドキュメントを参照し、必要に応じて追記してください。
+
+## `run_in_bash_session` と Go コマンド (go mod tidy, go test 等) の CWD 問題
+
+`examples/minigo` インタプリタ開発初期において、Go関連のコマンド (`go mod tidy`, `go test`) がカレントワーキングディレクトリ (CWD) を正しく認識できず `getwd: no such file or directory` エラーを頻繁に発生させる問題に遭遇しました。
+
+### 問題の詳細
+
+1.  `create_file_with_block` で `examples/minigo/go.mod` を作成後、`run_in_bash_session` で `cd examples/minigo && go mod tidy` を実行しようとすると、`cd` は成功しているように見える（`pwd` が `/app/examples/minigo` を示す）にも関わらず、`go mod tidy` が `getwd` エラーで失敗する。
+2.  `ls -la /app/examples/minigo` では `go.mod` が確認できるため、ファイル自体は存在している。
+3.  GoコマンドがシェルセッションのCWDを適切に引き継げていないか、あるいはGoプロセスが自身のCWDを解決できない状態になっていると推測された。
+
+### 解決策とプラクティス
+
+*   **起点ディレクトリの変更と `-C` オプションの利用**:
+    *   問題が発生する場合、`run_in_bash_session` 内でまずリポジトリのルートディレクトリ (`/app` と仮定される) に `cd /app` で移動する。
+    *   その後、Goコマンドに `-C <ターゲットディレクトリ>` オプション (Go 1.17以降) を付けて実行することで、GoコマンドがCWDを正しく認識し、動作することが確認された。
+        ```bash
+        # 例: run_in_bash_session で以下を実行
+        # cd /app && go mod tidy -C examples/minigo
+        # cd /app && go test -v ./examples/minigo/...
+        ```
+    *   Goのバージョンが古い場合でも、`/app` を起点としてコマンドを実行し、ターゲットパスをGoコマンドの引数として適切に指定する（例: `go test ./examples/minigo/...`）ことで問題が解決する場合があった。
+*   **対象ディレクトリでの直接実行**:
+    *   あるいは、`cd /app/examples/minigo && go test -v` のように、対象のGoモジュールが含まれるディレクトリに `cd` してから直接 `go test` や `go mod tidy` などを実行することで、GoコマンドがCWDを解決できる場合もある。これは、Goが `-C` オプションなしでもカレントディレクトリのモジュールを優先的に認識するためと考えられる。
+    *   今回の `minigo` のケースでは、最終的に `cd /app/examples/minigo && go test -v` でテストが動作した。
+
+### 教訓 (再確認)
+
+*   Goコマンド（特にモジュールシステムに依存するもの）を `run_in_bash_session` で実行する際は、CWDの扱いに細心の注意を払う。
+*   `getwd: no such file or directory` エラーは、GoツールがCWDを解決できていない明確な兆候である。
+*   コマンド実行前に `pwd` や `ls` で状態を確認することは有効だが、それがGoツールの認識と一致するとは限らない。
+*   リポジトリルートを起点とし、`-C`オプションを利用するか、対象ディレクトリに `cd` してからコマンドを実行するなど、GoツールがCWDを特定しやすい形でコマンドを構成することが推奨される。
+*   `reset_all()` の後など、セッションの状態が変化した可能性のある場合は特にCWDの確認が重要。

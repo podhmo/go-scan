@@ -6,6 +6,7 @@ This directory contains example projects that demonstrate the capabilities and u
 
 - [derivingjson](#derivingjson)
 - [derivingbind](#derivingbind)
+- [minigo](#minigo)
 
 ---
 
@@ -44,3 +45,18 @@ The `derivingbind` example demonstrates a code generator built with `go-scan`.
 - Can bind the entire request body to a specific field or map JSON body fields to struct fields if the struct itself is marked with `in:"body"`.
 
 This example illustrates how `go-scan` can facilitate the creation of tools for request binding and similar web framework-related code generation.
+
+---
+
+## minigo
+
+The `minigo` example is a miniature Go interpreter that uses `go-scan` for semantic analysis.
+
+**Purpose**: To demonstrate how `go-scan` can be used to build complex tools like interpreters.
+
+**Key Features**:
+- Parses Go source code into an AST.
+- Uses `go-scan` to perform type checking and other semantic analysis tasks.
+- Directly executes the AST or an intermediate representation.
+
+This example showcases the power of `go-scan` for building sophisticated Go language tools.

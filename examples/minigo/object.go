@@ -1,6 +1,9 @@
 package main
 
-import "fmt"
+import (
+	"fmt"
+	"strings" // Added for Array.Inspect
+)
 
 // ObjectType is a string representation of an object's type.
 type ObjectType string
@@ -13,8 +16,9 @@ const (
 	NULL_OBJ         ObjectType = "NULL"         // Example for future use
 	RETURN_VALUE_OBJ ObjectType = "RETURN_VALUE" // Special type to wrap return values
 	ERROR_OBJ        ObjectType = "ERROR"        // To wrap errors as objects
-	// FUNCTION_OBJ     // For user-defined functions
-	// BUILTIN_OBJ      // For built-in functions
+	FUNCTION_OBJ     ObjectType = "FUNCTION"     // For user-defined functions
+	BUILTIN_OBJ      ObjectType = "BUILTIN"      // For built-in functions
+	ARRAY_OBJ        ObjectType = "ARRAY"        // For array/slice objects
 )
 
 // Object is the interface that all value types in our interpreter will implement.
@@ -109,3 +113,37 @@ func (s *String) Compare(other Object) (int, error) {
 // - Implement `ReturnValue` and `Error` wrapper objects for flow control and error handling.
 // - Implement `Hashable` interface for objects that can be keys in a hash map.
 // - Implement `Callable` interface for function objects.
+
+// --- Builtin Function Object ---
+
+// BuiltinFunction is a function signature for built-in functions.
+// It takes a variable number of Object arguments and returns an Object or an error.
+type BuiltinFunction func(args ...Object) (Object, error)
+
+// Builtin represents a built-in function.
+type Builtin struct {
+	Fn   BuiltinFunction
+	Name string // Keep the name for inspection/debugging
+}
+
+func (b *Builtin) Type() ObjectType { return BUILTIN_OBJ }
+func (b *Builtin) Inspect() string  { return fmt.Sprintf("<builtin %s>", b.Name) }
+
+// --- Array Object ---
+
+// Array represents an array/slice object.
+type Array struct {
+	Elements []Object
+}
+
+func (a *Array) Type() ObjectType { return ARRAY_OBJ }
+func (a *Array) Inspect() string {
+	var elements []string
+	for _, e := range a.Elements {
+		elements = append(elements, e.Inspect())
+	}
+	// Mimic Go's slice representation somewhat for inspection
+	// e.g. []string{"a", "b"} might look like `["a", "b"]` or `[a, b]`
+	// For now, simple comma separation.
+	return fmt.Sprintf("[%s]", strings.Join(elements, ", "))
+}

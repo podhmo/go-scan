@@ -355,6 +355,92 @@ type InterfaceWithDifferentPointerInSlice interface {
 	Foo(s []*string, m map[string]bool)
 }
 
+// --- New types for Slice testing ---
+
+type MyStruct struct {
+	ID int
+}
+type AnotherStruct struct {
+	Name string
+}
+
+// Interfaces with slice types
+type SliceProcessor interface {
+	ProcessIntSlice(data []int) []int
+	ProcessStringSlice(data []string) []string
+}
+
+type SliceStructProcessor interface {
+	ProcessStructSlice(data []MyStruct) []MyStruct
+	ProcessPointerStructSlice(data []*MyStruct) []*MyStruct
+}
+
+type SliceOfPointerProcessor interface {
+	ProcessSliceOfPointers(data []*MyStruct) []*MyStruct
+	ProcessSliceOfPointerAlias(data []*AnotherType) []*AnotherType
+}
+
+// Structs implementing these interfaces
+type MySliceProcessorImpl struct{}
+
+func (s MySliceProcessorImpl) ProcessIntSlice(data []int) []int          { return data }
+func (s MySliceProcessorImpl) ProcessStringSlice(data []string) []string { return data }
+
+type MySliceStructProcessorImpl struct{}
+
+func (s MySliceStructProcessorImpl) ProcessStructSlice(data []MyStruct) []MyStruct { return data }
+func (s MySliceStructProcessorImpl) ProcessPointerStructSlice(data []*MyStruct) []*MyStruct {
+	return data
+}
+
+type MySliceOfPointerProcessorImpl struct{}
+
+func (s MySliceOfPointerProcessorImpl) ProcessSliceOfPointers(data []*MyStruct) []*MyStruct {
+	return data
+}
+func (s MySliceOfPointerProcessorImpl) ProcessSliceOfPointerAlias(data []*AnotherType) []*AnotherType {
+	return data
+}
+
+// Structs with mismatches for negative testing
+type MismatchedSliceProcessorImpl struct{}
+
+func (s MismatchedSliceProcessorImpl) ProcessIntSlice(data []string) []int    { return nil } // Param type mismatch: []string vs []int
+func (s MismatchedSliceProcessorImpl) ProcessStringSlice(data []int) []string { return nil } // Param type mismatch: []int vs []string
+
+type MismatchedReturnSliceProcessorImpl struct{}
+
+func (s MismatchedReturnSliceProcessorImpl) ProcessIntSlice(data []int) []string    { return nil } // Return type mismatch: []string vs []int
+func (s MismatchedReturnSliceProcessorImpl) ProcessStringSlice(data []string) []int { return nil } // Return type mismatch: []int vs []string
+
+type MismatchedSliceStructProcessorImpl struct{}
+
+// Param type mismatch: []AnotherStruct vs []MyStruct
+func (s MismatchedSliceStructProcessorImpl) ProcessStructSlice(data []AnotherStruct) []MyStruct {
+	return nil
+}
+
+// Param type mismatch: []*AnotherStruct vs []*MyStruct
+func (s MismatchedSliceStructProcessorImpl) ProcessPointerStructSlice(data []*AnotherStruct) []*MyStruct {
+	return nil
+}
+
+type MismatchedPointerNessSliceStructProcessorImpl struct{}
+
+// Param type mismatch: []MyStruct (value) vs []*MyStruct (pointer)
+func (s MismatchedPointerNessSliceStructProcessorImpl) ProcessStructSlice(data []MyStruct) []MyStruct {
+	return nil
+} // This is for ProcessStructSlice
+// Param type mismatch: []*MyStruct (pointer) vs []MyStruct (value) - for a different interface method if needed
+func (s MismatchedPointerNessSliceStructProcessorImpl) ProcessPointerStructSlice(data []MyStruct) []*MyStruct {
+	return nil
+}
+
+type NotASliceProcessorImpl struct{}
+
+func (s NotASliceProcessorImpl) ProcessIntSlice(data int) []int          { return nil } // Param not a slice
+func (s NotASliceProcessorImpl) ProcessStringSlice(data string) []string { return nil } // Param not a slice
+
 // Final check on Implements logic for receiver type name:
 // `fn.Receiver.Type.Name` comes from `s.parseTypeExpr(recvField.Type)`.
 // If `recvField.Type` is `*ast.StarExpr{X: &ast.Ident{Name: "MyStruct"}}`, then `parseTypeExpr` returns

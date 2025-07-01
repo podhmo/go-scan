@@ -174,6 +174,164 @@ func main() {
 	}
 }
 
+func TestStringConcatenation(t *testing.T) {
+	tests := []struct {
+		name     string
+		setup    func(env *Environment)
+		input    string
+		expected string
+	}{
+		{name: "literal concatenation", input: `"hello" + " " + "world"`, expected: "hello world"},
+		{name: "foo bar", input: `"foo" + "bar"`, expected: "foobar"},
+		{name: "empty strings", input: `"" + ""`, expected: ""},
+		{name: "single plus empty", input: `"single" + ""`, expected: "single"},
+		{name: "empty plus single", input: `"" + "single"`, expected: "single"},
+		{
+			name: "variables concatenation",
+			setup: func(env *Environment) {
+				env.Define("s1", &String{Value: "a"})
+				env.Define("s2", &String{Value: "b"})
+			},
+			input: `s1 + s2`, expected: "ab",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			interpreter := NewInterpreter()
+			env := NewEnvironment(interpreter.globalEnv) // Use a child env for test-specific vars
+			if tt.setup != nil {
+				tt.setup(env)
+			}
+			actualExpr := tt.input
+			exprNode, err := parser.ParseExpr(actualExpr)
+			if err != nil {
+				t.Fatalf("Failed to parse expression '%s': %v", actualExpr, err)
+			}
+
+			evaluated, err := interpreter.eval(exprNode, env)
+			if err != nil {
+				t.Fatalf("eval failed for '%s': %v", actualExpr, err)
+			}
+
+			str, ok := evaluated.(*String)
+			if !ok {
+				t.Fatalf("expected String object, got %T (%+v) for '%s'", evaluated, evaluated, actualExpr)
+			}
+			if str.Value != tt.expected {
+				t.Errorf("expected '%s', got '%s' for '%s'", tt.expected, str.Value, actualExpr)
+			}
+		})
+	}
+}
+
+func TestFmtSprintf(t *testing.T) {
+	tests := []struct {
+		name     string
+		setup    func(env *Environment) // Optional setup function for the environment
+		input    string                 // The MiniGo expression, e.g., fmt.Sprintf(...)
+		expected string
+	}{
+		{name: "simple string", input: `fmt.Sprintf("hello")`, expected: "hello"},
+		{name: "number formatting", input: `fmt.Sprintf("number %d", 123)`, expected: "number 123"},
+		{name: "multiple arguments", input: `fmt.Sprintf("string: %s, number: %d, bool: %t", "test", 42, true)`, expected: "string: test, number: 42, bool: true"},
+		{
+			name:  "with variable",
+			setup: func(env *Environment) { env.Define("s", &String{Value: "world"}) },
+			input: `fmt.Sprintf("hello %s", s)`, expected: "hello world",
+		},
+		{name: "two strings", input: `fmt.Sprintf("%s %s", "part1", "part2")`, expected: "part1 part2"},
+		{
+			name:  "with variable defined in 'script'", // This case was problematic, simplifying
+			setup: func(env *Environment) { env.Define("val", &String{Value: "dynamic"}) },
+			input: `fmt.Sprintf("value is %s", val)`, expected: "value is dynamic",
+		},
+		{
+			name:  "format mismatch (int for %s, bool for %d) - Go's behavior",
+			input: `fmt.Sprintf("str: %s, int: %d", 123, true)`, expected: "str: %!s(int64=123), int: %!d(bool=true)",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			interpreter := NewInterpreter()
+			env := NewEnvironment(interpreter.globalEnv)
+
+			if tt.setup != nil {
+				tt.setup(env)
+			}
+
+			actualExpr := tt.input
+			exprNode, err := parser.ParseExpr(actualExpr) // This parses a single expression
+			if err != nil {
+				t.Fatalf("Failed to parse expression '%s': %v", actualExpr, err)
+			}
+
+			evaluated, err := interpreter.eval(exprNode, env)
+			if err != nil {
+				t.Fatalf("eval failed for '%s': %v", actualExpr, err)
+			}
+
+			str, ok := evaluated.(*String)
+			if !ok {
+				t.Fatalf("expected String object from fmt.Sprintf, got %T (%+v) for '%s'", evaluated, evaluated, actualExpr)
+			}
+			if str.Value != tt.expected {
+				t.Errorf("expected '%s', got '%s' for '%s'", tt.expected, str.Value, actualExpr)
+			}
+		})
+	}
+}
+
+func TestStringsJoin(t *testing.T) {
+	// strings.Join(s1, s2, ..., sN, separator)
+	tests := []struct {
+		name     string
+		setup    func(env *Environment)
+		input    string
+		expected string
+	}{
+		{name: "multiple elements", input: `strings.Join("a", "b", "c", ",")`, expected: "a,b,c"},
+		{name: "two elements with space sep", input: `strings.Join("hello", "world", " ")`, expected: "hello world"},
+		{name: "single element", input: `strings.Join("single_element", ":")`, expected: "single_element"},
+		{name: "separator as first element like", input: `strings.Join(",", "a", "b")`, expected: ",ba"}, // Separator is "b", elements are "," and "a"
+		{
+			name:  "with variable separator",
+			setup: func(env *Environment) { env.Define("s", &String{Value: "-"}) },
+			input: `strings.Join("x", "y", s)`, expected: "x-y",
+		},
+		{name: "empty separator", input: `strings.Join("foo", "bar", "")`, expected: "foobar"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			interpreter := NewInterpreter()
+			env := NewEnvironment(interpreter.globalEnv)
+			if tt.setup != nil {
+				tt.setup(env)
+			}
+			actualExpr := tt.input
+			exprNode, err := parser.ParseExpr(actualExpr)
+			if err != nil {
+				t.Fatalf("Failed to parse expression '%s': %v", actualExpr, err)
+			}
+
+			evaluated, err := interpreter.eval(exprNode, env)
+			if err != nil {
+				t.Fatalf("eval failed for '%s': %v", actualExpr, err)
+			}
+
+			str, ok := evaluated.(*String)
+			if !ok {
+				t.Fatalf("expected String object from strings.Join, got %T (%+v) for '%s'", evaluated, evaluated, actualExpr)
+			}
+			if str.Value != tt.expected {
+				t.Errorf("expected '%s', got '%s' for '%s'", tt.expected, str.Value, actualExpr)
+			}
+		})
+	}
+}
+
 func TestInterpreterEntryPoint(t *testing.T) {
 	source := `
 package main
@@ -416,9 +574,9 @@ func TestStringComparison(t *testing.T) {
 
 // TODO:
 // - Tests for `AssignStmt` (e.g. `x = "new_value"`) once implemented.
-// - Tests for `CallExpr` (function calls) once implemented.
-// - Tests for Integer literals and operations.
-// - Tests for Boolean literals and operations.
+// - Tests for `CallExpr` (function calls) once implemented. (Partially done with builtins)
+// - Tests for Integer literals and operations. (Done)
+// - Tests for Boolean literals and operations. (Done)
 // - More comprehensive error condition tests.
 // - Tests for scope and environment (e.g., variable shadowing, closure behavior if functions are added).
 // - Refine `testEvalExpression` or replace with direct `interpreter.eval` calls for cleaner unit tests.
@@ -436,13 +594,24 @@ func testEval(t *testing.T, input string) (Object, error) {
 		// If an error occurs here, it's a parsing problem, not an eval problem yet.
 		t.Fatalf("Failed to parse expression '%s': %v", input, err)
 	}
-	interpreter := NewInterpreter() // Fresh interpreter
-	env := NewEnvironment(nil)      // Fresh global-like environment for the test
+	interpreter := NewInterpreter() // Fresh interpreter, its globalEnv has builtins
+	// For testEval, we typically want a clean environment for the specific expression,
+	// but it should still be able to resolve built-ins if they are part of the expression.
+	// So, the env for eval should be a child of the globalEnv where builtins are.
+	// However, evalIdentifier and evalSelectorExpr directly use the passed 'env'.
+	// If we pass interpreter.globalEnv directly, test-specific variables might pollute it.
+	//
+	// Let's adjust: testEval should use the interpreter's eval method,
+	// and the environment passed to eval should be one that can access globals if needed,
+	// or a fresh one if the test is self-contained.
+	// For built-in calls like fmt.Sprintf("foo"), the function name needs to be resolved
+	// from an environment that contains it. NewInterpreter().globalEnv contains builtins.
 
-	// If we need to test variable assignments and then expressions using those variables,
-	// the env would need to persist or be setup prior to eval.
-	// For simple literal expressions, a fresh env is fine.
-	return interpreter.eval(exprNode, env)
+	// If the expression itself defines variables (not typical for ParseExpr),
+	// or relies on pre-defined ones, the env needs to be managed.
+	// Most testEval calls are for self-contained expressions.
+	// For built-ins, they must be in the env.
+	return interpreter.eval(exprNode, interpreter.globalEnv) // Use globalEnv which has built-ins
 }
 
 func TestIntegerLiterals(t *testing.T) {
@@ -656,11 +825,38 @@ func TestErrorHandling(t *testing.T) {
 		{"-true", "unsupported type for negation: BOOLEAN"},  // Error for unary minus on boolean
 		{"!10", "unsupported type for logical NOT: INTEGER"}, // Error for unary not on integer
 		{"1 + \"2\"", "type mismatch or unsupported operation for binary expression: INTEGER + STRING"},
+		// Builtin function call errors
+		{"fmt.Sprintf()", "fmt.Sprintf expects at least one argument"},                                   // Not enough args for Sprintf
+		{"fmt.Sprintf(1)", "first argument to fmt.Sprintf must be a STRING, got INTEGER"},               // Wrong type for Sprintf format string
+		// {"fmt.Sprintf(\"%s %d\", \"hello\", true)", "unsupported type BOOLEAN for fmt.Sprintf argument"}, // This now returns a formatted error string, not an interpreter error. Moved to TestFmtSprintf.
+		{"strings.Join()", "strings.Join expects at least two arguments"},                               // Not enough for Join (our convention)
+		{"strings.Join(\"a\")", "strings.Join expects at least two arguments"},                          // Still not enough for Join
+		{"strings.Join(1, \",\")", "argument 0 to strings.Join (element to join) must be a STRING"},     // Wrong type for Join element
+		{"strings.Join(\"a\", 1)", "last argument to strings.Join (separator) must be a STRING"},       // Wrong type for Join separator
+		{"NonExistentFunc()", "identifier not found: NonExistentFunc"},                                  // Calling non-existent function
+		// {"x = 1; x()", "cannot call non-function type INTEGER"}, // This test case is complex for testEval
+		{"calling_integer_variable", "cannot call non-function type INTEGER"}, // Replaced "x = 1; x()"
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
-			evaluated, err := testEval(t, tt.input)
+			var evaluated Object
+			var err error
+
+			if tt.input == "calling_integer_variable" {
+				interpreter := NewInterpreter()
+				// Define dummyVar in the global environment where built-ins also reside.
+				interpreter.globalEnv.Define("dummyVar", &Integer{Value: 1})
+				exprNode, pErr := parser.ParseExpr("dummyVar()")
+				if pErr != nil {
+					t.Fatalf("Failed to parse expression 'dummyVar()': %v", pErr)
+				}
+				// Evaluate in the same global environment.
+				evaluated, err = interpreter.eval(exprNode, interpreter.globalEnv)
+			} else {
+				evaluated, err = testEval(t, tt.input)
+			}
+
 			if err == nil {
 				t.Fatalf("expected error for '%s', but got nil (evaluated to %s)", tt.input, evaluated.Inspect())
 			}

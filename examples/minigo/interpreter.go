@@ -23,11 +23,26 @@ type Interpreter struct {
 	globalEnv *Environment // Global environment
 }
 
-// NewInterpreter creates a new Interpreter with a global environment.
+// NewInterpreter creates a new Interpreter with a global environment
+// and registers built-in functions.
 func NewInterpreter() *Interpreter {
-	return &Interpreter{
-		globalEnv: NewEnvironment(nil),
+	env := NewEnvironment(nil)
+	i := &Interpreter{
+		globalEnv: env,
 	}
+
+	// Register built-in functions
+	builtins := GetBuiltinFmtFunctions()
+	for name, builtin := range builtins {
+		env.Define(name, builtin)
+	}
+	builtinsStrings := GetBuiltinStringsFunctions()
+	for name, builtin := range builtinsStrings {
+		env.Define(name, builtin)
+	}
+	// Add other built-in registrations here
+
+	return i
 }
 
 // LoadAndRun loads a Go source file, parses it, and runs the specified entry point function.
@@ -148,13 +163,41 @@ func (i *Interpreter) eval(node ast.Node, env *Environment) (Object, error) {
 	case *ast.AssignStmt:
 		return i.evalAssignStmt(n, env)
 
+	case *ast.CallExpr:
+		return i.evalCallExpr(n, env)
+
+	case *ast.SelectorExpr: // Handle expressions like fmt.Sprintf
+		return i.evalSelectorExpr(n, env)
+
 	// TODO: Add more cases for other AST node types:
-	// *ast.CallExpr (for function calls)
 	// *ast.ForStmt, *ast.ReturnStmt etc.
 
 	default:
-		return nil, fmt.Errorf("unsupported AST node type: %T at %d", n, n.Pos())
+		return nil, fmt.Errorf("unsupported AST node type: %T at %d (value: %+v)", n, n.Pos(), n)
 	}
+}
+
+func (i *Interpreter) evalSelectorExpr(node *ast.SelectorExpr, env *Environment) (Object, error) {
+	// For now, assume X is an Identifier (e.g., "fmt" in "fmt.Sprintf")
+	// A more complex implementation might evaluate X first if it could be any expression.
+	xIdent, ok := node.X.(*ast.Ident)
+	if !ok {
+		// TODO: Handle cases where X is not a simple identifier, e.g., (getPkg()).Sprintf
+		return nil, fmt.Errorf("unsupported selector expression: X is not an identifier, got %T at %d", node.X, node.X.Pos())
+	}
+
+	// Construct the full name, e.g., "fmt.Sprintf"
+	fullName := xIdent.Name + "." + node.Sel.Name
+
+	// Lookup this full name in the environment.
+	// This relies on built-ins like "fmt.Sprintf" being registered with this full name.
+	if val, ok := env.Get(fullName); ok {
+		return val, nil
+	}
+
+	// If not found, it could be a method call on an object, or a field access,
+	// which are not yet supported in this way for MiniGo.
+	return nil, fmt.Errorf("undefined selector: %s at %d", fullName, node.Pos())
 }
 
 // evalBlockStatement evaluates a block of statements.
@@ -332,11 +375,10 @@ func evalStringBinaryExpr(op token.Token, left, right *String) (Object, error) {
 		return nativeBoolToBooleanObject(left.Value == right.Value), nil
 	case token.NEQ: // !=
 		return nativeBoolToBooleanObject(left.Value != right.Value), nil
-	// TODO: Support string concatenation with '+' ?
-	// case token.ADD:
-	//    return &String{Value: left.Value + right.Value}, nil
+	case token.ADD: // + for string concatenation
+		return &String{Value: left.Value + right.Value}, nil
 	default:
-		return nil, fmt.Errorf("unknown operator for strings: %s", op)
+		return nil, fmt.Errorf("unknown operator for strings: %s (left: %q, right: %q)", op, left.Value, right.Value)
 	}
 }
 
@@ -359,8 +401,54 @@ func evalBooleanBinaryExpr(op token.Token, left, right *Boolean, pos token.Pos) 
 	}
 }
 
-// TODO: Implement evalCallExpr, etc.
-// func (i *Interpreter) evalCallExpr(node *ast.CallExpr, env *Environment) (Object, error) { ... }
+// evalCallExpr handles function calls.
+func (i *Interpreter) evalCallExpr(node *ast.CallExpr, env *Environment) (Object, error) {
+	// First, evaluate the function expression itself.
+	// This could be an identifier (e.g., myFunc) or a more complex expression
+	// that results in a function object (e.g., for first-class functions, not yet supported).
+	// For built-ins like "fmt.Sprintf", this will resolve to an identifier.
+	funcObj, err := i.eval(node.Fun, env)
+	if err != nil {
+		return nil, fmt.Errorf("error evaluating function expression for call at %d: %w", node.Fun.Pos(), err)
+	}
+
+	// Evaluate arguments from left to right.
+	args := make([]Object, len(node.Args))
+	for idx, argExpr := range node.Args {
+		argVal, err := i.eval(argExpr, env)
+		if err != nil {
+			return nil, fmt.Errorf("error evaluating argument %d for call at %d: %w", idx, argExpr.Pos(), err)
+		}
+		args[idx] = argVal
+	}
+
+	// Check what kind of function object we have and call it.
+	switch fn := funcObj.(type) {
+	case *BuiltinFunction:
+		// The environment passed to built-in functions allows them to interact
+		// with the interpreter's state if necessary, though many (like fmt.Sprintf)
+		// are pure functions of their arguments.
+		return fn.Fn(env, args...)
+	// case *UserDefinedFunction: // TODO: When user-defined functions are implemented
+	//    return i.applyUserDefinedFunction(fn, args, env)
+	default:
+		// If `node.Fun` evaluated to something that isn't a callable function type.
+		// We also need to handle the case where `node.Fun` is an `ast.SelectorExpr`
+		// like `myPkg.MyFunc`. For now, we assume simple `ast.Ident` for builtins.
+		funcName := "unknown"
+		if ident, ok := node.Fun.(*ast.Ident); ok {
+			funcName = ident.Name
+		} else if selExpr, ok := node.Fun.(*ast.SelectorExpr); ok {
+			// This is a basic way to represent selector expressions like pkg.Func
+			// It assumes X is an Ident. A more general solution would eval selExpr.X
+			if xIdent, okX := selExpr.X.(*ast.Ident); okX {
+				funcName = xIdent.Name + "." + selExpr.Sel.Name
+			}
+		}
+		return nil, fmt.Errorf("cannot call non-function type %s (for function '%s') at %d", funcObj.Type(), funcName, node.Fun.Pos())
+	}
+}
+
 // ... and other evaluation helpers
 
 // evalAssignStmt handles assignment statements like x = 10 or x += 5.

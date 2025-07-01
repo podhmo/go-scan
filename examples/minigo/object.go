@@ -14,7 +14,7 @@ const (
 	RETURN_VALUE_OBJ ObjectType = "RETURN_VALUE" // Special type to wrap return values
 	ERROR_OBJ        ObjectType = "ERROR"        // To wrap errors as objects
 	// FUNCTION_OBJ     // For user-defined functions
-	// BUILTIN_OBJ      // For built-in functions
+	BUILTIN_FUNCTION_OBJ ObjectType = "BUILTIN_FUNCTION" // For built-in functions
 )
 
 // Object is the interface that all value types in our interpreter will implement.
@@ -109,3 +109,28 @@ func (s *String) Compare(other Object) (int, error) {
 // - Implement `ReturnValue` and `Error` wrapper objects for flow control and error handling.
 // - Implement `Hashable` interface for objects that can be keys in a hash map.
 // - Implement `Callable` interface for function objects.
+
+// --- BuiltinFunction Object ---
+
+// BuiltinFunctionType defines the signature for Go functions that can be used as built-ins.
+// It takes the current evaluation environment (in case the built-in needs to interact with it,
+// e.g., to resolve other variables or call other MiniGo functions, though most won't need it)
+// and a variable number of Object arguments, returning an Object or an error.
+type BuiltinFunctionType func(env *Environment, args ...Object) (Object, error)
+
+// BuiltinFunction represents a function that is implemented in Go and exposed to MiniGo.
+type BuiltinFunction struct {
+	Fn   BuiltinFunctionType
+	Name string // Name of the built-in function, primarily for inspection/debugging.
+}
+
+func (bf *BuiltinFunction) Type() ObjectType { return BUILTIN_FUNCTION_OBJ }
+func (bf *BuiltinFunction) Inspect() string {
+	if bf.Name != "" {
+		return fmt.Sprintf("<builtin function %s>", bf.Name)
+	}
+	return "<builtin function>"
+}
+
+// Ensure BuiltinFunction implements the Object interface.
+var _ Object = (*BuiltinFunction)(nil)

@@ -1124,7 +1124,7 @@ func main() { result = earlyReturn(10); }`,
 			source: `
 package main
 var result int
-func earlyReturnInElse(val) {
+func earlyReturnInElse(val int) {
 	if val == 5 {
 		x := 10; // just some statement
 	} else {

@@ -983,7 +983,7 @@ func TestFunctionCallsAndDefinitions(t *testing.T) {
 package main
 var result int
 func add(a int, b int) { return a + b; }
-func main() { result = add(3, 4); }`,
+func main() { result = add(3, 4); }`, // result is global, so direct assignment is fine
 			entryPoint:             "main",
 			expectedGlobalVarValue: map[string]interface{}{"result": int64(7)},
 		},
@@ -991,13 +991,13 @@ func main() { result = add(3, 4); }`,
 			name: "function with no explicit return, implicit null",
 			source: `
 package main
-var result interface{} // Need a way to check for NULL object
-func noReturn() { // No params, no change needed here for types
-	var a = 10
+var result interface{}
+func noReturn() {
+	// Function body is intentionally empty to test implicit null return
 }
-func main() { result = noReturn(); }`, // result should become NULL
+func main() { result = noReturn(); }`,
 			entryPoint:             "main",
-			expectedGlobalVarValue: map[string]interface{}{"result": NULL}, // Check against the NULL object
+			expectedGlobalVarValue: map[string]interface{}{"result": NULL},
 		},
 		{
 			name: "recursive factorial function",
@@ -1010,7 +1010,7 @@ func factorial(n int) {
 	}
 	return n * factorial(n - 1);
 }
-func main() { result = factorial(5); }`, // 5! = 120
+func main() { result = factorial(5); }`,
 			entryPoint:             "main",
 			expectedGlobalVarValue: map[string]interface{}{"result": int64(120)},
 		},
@@ -1020,12 +1020,12 @@ func main() { result = factorial(5); }`, // 5! = 120
 package main
 var result int
 func outer(x int) {
-	var inner = func() { // Inner func params don't need types for this test if it works
+	inner := func() { // Use := for local function variable
 		return x + 5;
 	};
 	return inner();
 }
-func main() { result = outer(10); }`, // Expect 10 + 5 = 15
+func main() { result = outer(10); }`,
 			entryPoint:             "main",
 			expectedGlobalVarValue: map[string]interface{}{"result": int64(15)},
 		},
@@ -1034,19 +1034,19 @@ func main() { result = outer(10); }`, // Expect 10 + 5 = 15
 			source: `
 package main
 var r1, r2, r3 int
-func newCounter() { // No params
-	var count = 0;
-	var increment = func() { // No params
+func newCounter() {
+	count := 0; // Use :=
+	increment := func() { // Use :=
 		count = count + 1;
 		return count;
 	};
 	return increment;
 }
 func main() {
-	var c = newCounter();
-	r1 = c(); // 1
-	r2 = c(); // 2
-	r3 = c(); // 3
+	c := newCounter(); // Use :=
+	r1 = c();
+	r2 = c();
+	r3 = c();
 }`,
 			entryPoint: "main",
 			expectedGlobalVarValue: map[string]interface{}{
@@ -1094,11 +1094,11 @@ func main() { twoArgs(1); }`,
 			source: `
 package main
 func main() {
-	var x = 10;
+	x := 10; // Use :=
 	caller(x);
 }
-func caller(f int) { // Changed f's type for clarity, though it's called
-	return f(); // f is an integer here
+func caller(f int) {
+	return f();
 }`,
 			entryPoint:             "main",
 			expectError:            true,
@@ -1126,11 +1126,12 @@ package main
 var result int
 func earlyReturnInElse(val int) {
 	if val == 5 {
-		x := 10; // just some statement
+		someVar := 10; // Use :=
+		_ = someVar // avoid unused error
 	} else {
 		return 200;
 	}
-	return 0; // Should not be reached if val != 5
+	return 0;
 }
 func main() { result = earlyReturnInElse(10); }`,
 			entryPoint:             "main",
@@ -1142,15 +1143,15 @@ func main() { result = earlyReturnInElse(10); }`,
 package main
 var x int = 10
 func scopeTest() {
-	var x = 20 // local x
+	x := 20 // Use := for local x, shadows global x
 	return x;
 }
 func main() {
-	scopeTest(); // call it, but its return is not assigned to global x
+	scopeTest();
 	// global x should remain 10
 }`,
 			entryPoint:             "main",
-			expectedGlobalVarValue: map[string]interface{}{"x": int64(10)}, // global x should be unchanged
+			expectedGlobalVarValue: map[string]interface{}{"x": int64(10)},
 		},
 		{
 			name: "function scope, assignment to global var from function",
@@ -1172,17 +1173,17 @@ func main() {
 package main
 var r1, r2 int
 func outerWithVar() {
-	var capturedVar = 100;
-	var inner = func() {
+	capturedVar := 100; // Use :=
+	inner := func() { // Use :=
 		capturedVar = capturedVar + 1;
 		return capturedVar;
 	};
 	return inner;
 }
 func main() {
-	var fn = outerWithVar();
-	r1 = fn() // 101
-	r2 = fn() // 102
+	fn := outerWithVar(); // Use :=
+	r1 = fn()
+	r2 = fn()
 }`,
 			entryPoint: "main",
 			expectedGlobalVarValue: map[string]interface{}{
@@ -1249,6 +1250,277 @@ func main() {
 	}
 }
 
+func TestAssignmentStatements(t *testing.T) {
+	tests := []struct {
+		name                   string
+		source                 string
+		entryPoint             string
+		expectedGlobalVarValue map[string]interface{} // For checking values after execution
+		expectError            bool
+		expectedErrorMsgSubstr string
+	}{
+		{
+			name: "simple define and assign",
+			source: `
+package main
+var result int
+func main() {
+	x := 10
+	result = x
+}`,
+			entryPoint:             "main",
+			expectedGlobalVarValue: map[string]interface{}{"result": int64(10)},
+			expectError:            false,
+		},
+		{
+			name: "define and assign string",
+			source: `
+package main
+var result string
+func main() {
+	s := "hello"
+	result = s
+}`,
+			entryPoint:             "main",
+			expectedGlobalVarValue: map[string]interface{}{"result": "hello"},
+			expectError:            false,
+		},
+		{
+			name: "redeclaration with define in same scope",
+			source: `
+package main
+func main() {
+	x := 10
+	x := 20 // Error: no new variables
+	_ = x
+}`,
+			entryPoint:             "main",
+			expectError:            true,
+			expectedErrorMsgSubstr: "no new variables on left side of := (variable 'x' already declared in this scope)",
+		},
+		{
+			name: "assign to undeclared variable",
+			source: `
+package main
+func main() {
+	x = 10 // Error: x not declared
+}`,
+			entryPoint:             "main",
+			expectError:            true,
+			expectedErrorMsgSubstr: "cannot assign to undeclared variable 'x'",
+		},
+		{
+			name: "augmented assign (+=) integer",
+			source: `
+package main
+var result int
+func main() {
+	x := 5
+	x += 3
+	result = x
+}`,
+			entryPoint:             "main",
+			expectedGlobalVarValue: map[string]interface{}{"result": int64(8)},
+			expectError:            false,
+		},
+		{
+			name: "augmented assign (+=) string",
+			source: `
+package main
+var result string
+func main() {
+	s := "hello"
+	s += " world"
+	result = s
+}`,
+			entryPoint:             "main",
+			expectedGlobalVarValue: map[string]interface{}{"result": "hello world"},
+			expectError:            false,
+		},
+		{
+			name: "augmented assign (-=) integer",
+			source: `
+package main
+var result int
+func main() {
+	x := 5
+	x -= 3
+	result = x
+}`,
+			entryPoint:             "main",
+			expectedGlobalVarValue: map[string]interface{}{"result": int64(2)},
+			expectError:            false,
+		},
+		{
+			name: "augmented assign (*=) integer",
+			source: `
+package main
+var result int
+func main() {
+	x := 5
+	x *= 3
+	result = x
+}`,
+			entryPoint:             "main",
+			expectedGlobalVarValue: map[string]interface{}{"result": int64(15)},
+			expectError:            false,
+		},
+		{
+			name: "augmented assign (/=) integer",
+			source: `
+package main
+var result int
+func main() {
+	x := 10
+	x /= 2
+	result = x
+}`,
+			entryPoint:             "main",
+			expectedGlobalVarValue: map[string]interface{}{"result": int64(5)},
+			expectError:            false,
+		},
+		{
+			name: "augmented assign (%=) integer",
+			source: `
+package main
+var result int
+func main() {
+	x := 10
+	x %= 3
+	result = x
+}`,
+			entryPoint:             "main",
+			expectedGlobalVarValue: map[string]interface{}{"result": int64(1)},
+			expectError:            false,
+		},
+		{
+			name: "augmented assign on undeclared variable",
+			source: `
+package main
+func main() {
+	x += 5 // Error: x not declared
+}`,
+			entryPoint:             "main",
+			expectError:            true,
+			expectedErrorMsgSubstr: "cannot use += on undeclared variable 'x'",
+		},
+		{
+			name: "augmented assign string with non-add operator",
+			source: `
+package main
+var result string
+func main() {
+	s := "hello"
+	s -= "o" // Error
+	result = s
+}`,
+			entryPoint:             "main",
+			expectError:            true,
+			expectedErrorMsgSubstr: "unsupported operator -= for augmented string assignment (only += is allowed)",
+		},
+		{
+			name: "define in outer scope, assign in inner scope",
+			source: `
+package main
+var result int = 0
+func main() {
+	x := 10
+	if true {
+		x = 20 // Assign to x from outer scope
+	}
+	result = x
+}`,
+			entryPoint:             "main",
+			expectedGlobalVarValue: map[string]interface{}{"result": int64(20)},
+			expectError:            false,
+		},
+		{
+			name: "define in outer scope, define new in inner scope (shadowing)",
+			source: `
+package main
+var resultOuter int = 0
+var resultInner int = 0
+func main() {
+	x := 10 // outer x
+	if true {
+		x := 20 // inner x, shadows outer x
+		resultInner = x
+	}
+	resultOuter = x // should be outer x's value
+}`,
+			entryPoint:             "main",
+			expectedGlobalVarValue: map[string]interface{}{"resultOuter": int64(10), "resultInner": int64(20)},
+			expectError:            false,
+		},
+		{
+            name: "assign with var before define",
+            source: `
+package main
+var result int
+func main() {
+    var y int
+    y = 5
+    x := y + 2 // x should be 7
+    result = x
+}`,
+            entryPoint:             "main",
+            expectedGlobalVarValue: map[string]interface{}{"result": int64(7)},
+            expectError:            false,
+        },
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			filename := createTempFile(t, tt.source)
+			defer os.Remove(filename)
+
+			interpreter := NewInterpreter()
+			err := interpreter.LoadAndRun(filename, tt.entryPoint)
+
+			if tt.expectError {
+				if err == nil {
+					t.Errorf("[%s] Expected an error, but got none", tt.name)
+				} else if !strings.Contains(err.Error(), tt.expectedErrorMsgSubstr) {
+					t.Errorf("[%s] Expected error message to contain '%s', but got '%s'", tt.name, tt.expectedErrorMsgSubstr, err.Error())
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("[%s] LoadAndRun failed: %v\nSource:\n%s", tt.name, err, tt.source)
+				}
+				for varName, expectedVal := range tt.expectedGlobalVarValue {
+					val, ok := interpreter.globalEnv.Get(varName)
+					if !ok {
+						t.Errorf("[%s] Global variable '%s' not found. Expected value was '%v'.", tt.name, varName, expectedVal)
+						continue
+					}
+
+					switch expected := expectedVal.(type) {
+					case int64:
+						intVal, ok := val.(*Integer)
+						if !ok {
+							t.Errorf("[%s] Expected global variable '%s' to be Integer, but got %s (%s). Value was expected to be '%d'.", tt.name, varName, val.Type(), val.Inspect(), expected)
+							continue
+						}
+						if intVal.Value != expected {
+							t.Errorf("[%s] Global variable '%s': expected '%d', got '%d'", tt.name, varName, expected, intVal.Value)
+						}
+					case string:
+						strVal, ok := val.(*String)
+						if !ok {
+							t.Errorf("[%s] Expected global variable '%s' to be String, but got %s (%s). Value was expected to be '%s'.", tt.name, varName, val.Type(), val.Inspect(), expected)
+							continue
+						}
+						if strVal.Value != expected {
+							t.Errorf("[%s] Global variable '%s': expected '%s', got '%s'", tt.name, varName, expected, strVal.Value)
+						}
+					default:
+						t.Errorf("[%s] Unsupported type in expectedGlobalVarValue for variable '%s': %T", tt.name, varName, expectedVal)
+					}
+				}
+			}
+		})
+	}
+}
 
 // Note: Octal (0o) and Binary (0b) literal tests for `parser.ParseExpr` might be tricky.
 // `go/parser.ParseExpr` itself doesn't directly support these prefixes; they are typically
@@ -1275,7 +1547,7 @@ func TestIfElseStatements(t *testing.T) {
 			name: "simple if true, modifies global var",
 			source: `
 package main
-var x string = "before"
+var x string = "before" // Global var, assignment is fine
 func main() {
 	if true {
 		x = "after"
@@ -1288,10 +1560,10 @@ func main() {
 			name: "simple if false, global var unchanged",
 			source: `
 package main
-var x string = "before"
+var x string = "before" // Global var
 func main() {
 	if false {
-		x = "after" // this should not run
+		x = "after"
 	}
 }`,
 			entryPoint:             "main",
@@ -1301,7 +1573,7 @@ func main() {
 			name: "if-else, if branch taken",
 			source: `
 package main
-var x string
+var x string // Global var
 func main() {
 	if true {
 		x = "if_branch"
@@ -1316,7 +1588,7 @@ func main() {
 			name: "if-else, else branch taken",
 			source: `
 package main
-var x string
+var x string // Global var
 func main() {
 	if false {
 		x = "if_branch"
@@ -1331,7 +1603,7 @@ func main() {
 			name: "if-else if-else, first if branch",
 			source: `
 package main
-var x string
+var x string // Global var
 func main() {
 	if true {
 		x = "if_branch"
@@ -1348,7 +1620,7 @@ func main() {
 			name: "if-else if-else, else if branch",
 			source: `
 package main
-var x string
+var x string // Global var
 func main() {
 	if false {
 		x = "if_branch"
@@ -1365,7 +1637,7 @@ func main() {
 			name: "if-else if-else, final else branch",
 			source: `
 package main
-var x string
+var x string // Global var
 func main() {
 	if false {
 		x = "if_branch"
@@ -1382,9 +1654,9 @@ func main() {
 			name: "if with expression in condition",
 			source: `
 package main
-var a int = 10
-var b int = 5
-var result string
+var a int = 10 // Global
+var b int = 5   // Global
+var result string // Global
 func main() {
 	if a > b {
 		result = "a_greater"
@@ -1425,7 +1697,7 @@ func main() {
 			name: "if without else, condition false, no value produced (check side effect)",
 			source: `
 package main
-var x string = "initial"
+var x string = "initial" // Global
 func main() {
 	if false {
 		x = "changed"
@@ -1438,8 +1710,8 @@ func main() {
 			name: "nested if statements",
 			source: `
 package main
-var x string
-var y string
+var x string // Global
+var y string // Global
 func main() {
 	x = "outer_default"
 	y = "inner_default"

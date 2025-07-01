@@ -5,8 +5,18 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"strconv"
 	// "github.com/go-scan/go-scan/scanner" // For more detailed error reporting later
 )
+
+// parseInt64 is a helper function to parse a string to an int64.
+// It's defined here to keep the main eval function cleaner.
+func parseInt64(s string) (int64, error) {
+	// strconv.ParseInt can handle various bases, but Go literals are typically base 10,
+	// hex (0x), octal (0o or 0), or binary (0b).
+	// For simplicity, we'll assume base 0, which lets ParseInt auto-detect based on prefix.
+	return strconv.ParseInt(s, 0, 64)
+}
 
 // Interpreter holds the state of the interpreter
 type Interpreter struct {
@@ -91,8 +101,12 @@ func (i *Interpreter) eval(node ast.Node, env *Environment) (Object, error) {
 			// The Value field includes the quotes, so we strip them.
 			return &String{Value: n.Value[1 : len(n.Value)-1]}, nil
 		case token.INT:
-			// TODO: Implement Integer object and parsing
-			return nil, fmt.Errorf("integer literals not yet supported: %s", n.Value)
+			// Integer literal processing
+			val, err := parseInt64(n.Value)
+			if err != nil {
+				return nil, fmt.Errorf("could not parse integer literal %s: %w", n.Value, err)
+			}
+			return &Integer{Value: val}, nil
 		default:
 			return nil, fmt.Errorf("unsupported literal type: %s (value: %s)", n.Kind, n.Value)
 		}
@@ -102,6 +116,12 @@ func (i *Interpreter) eval(node ast.Node, env *Environment) (Object, error) {
 
 	case *ast.BinaryExpr:
 		return i.evalBinaryExpr(n, env)
+
+	case *ast.UnaryExpr:
+		return i.evalUnaryExpr(n, env)
+
+	case *ast.ParenExpr: // Handle parenthesized expressions
+		return i.eval(n.X, env)
 
 	// TODO: Add more cases for other AST node types:
 	// *ast.AssignStmt (for x = y)
@@ -188,6 +208,12 @@ func (i *Interpreter) evalDeclStmt(declStmt *ast.DeclStmt, env *Environment) (Ob
 
 // evalIdentifier evaluates an identifier (variable lookup).
 func evalIdentifier(ident *ast.Ident, env *Environment) (Object, error) {
+	switch ident.Name {
+	case "true":
+		return TRUE, nil
+	case "false":
+		return FALSE, nil
+	}
 	if val, ok := env.Get(ident.Name); ok {
 		return val, nil
 	}
@@ -210,12 +236,59 @@ func (i *Interpreter) evalBinaryExpr(node *ast.BinaryExpr, env *Environment) (Ob
 	switch {
 	case left.Type() == STRING_OBJ && right.Type() == STRING_OBJ:
 		return evalStringBinaryExpr(node.Op, left.(*String), right.(*String))
-	// TODO: Add cases for INTEGER_OBJ, BOOLEAN_OBJ comparisons/operations
-	// e.g., case left.Type() == INTEGER_OBJ && right.Type() == INTEGER_OBJ:
-	//          return evalIntegerBinaryExpr(node.Op, left.(*Integer), right.(*Integer))
-	default:
+	case left.Type() == INTEGER_OBJ && right.Type() == INTEGER_OBJ:
+		return evalIntegerBinaryExpr(node.Op, left.(*Integer), right.(*Integer), node.Pos())
+	case left.Type() == BOOLEAN_OBJ && right.Type() == BOOLEAN_OBJ:
+		// Only specific operators are defined for booleans. Others lead to type mismatch.
+		if node.Op == token.EQL || node.Op == token.NEQ {
+			return evalBooleanBinaryExpr(node.Op, left.(*Boolean), right.(*Boolean), node.Pos())
+		}
+		// If operator is not == or != for booleans, it's a type mismatch.
 		return nil, fmt.Errorf("type mismatch or unsupported operation for binary expression: %s %s %s at %d",
 			left.Type(), node.Op, right.Type(), node.Pos())
+	default:
+		// This default handles cases where left/right types were not String, Integer, or Boolean pairs.
+		return nil, fmt.Errorf("type mismatch or unsupported operation for binary expression: %s %s %s at %d",
+			left.Type(), node.Op, right.Type(), node.Pos())
+	}
+}
+
+// evalIntegerBinaryExpr handles binary expressions specifically for integers.
+func evalIntegerBinaryExpr(op token.Token, left, right *Integer, pos token.Pos) (Object, error) {
+	leftVal := left.Value
+	rightVal := right.Value
+
+	switch op {
+	case token.ADD: // +
+		return &Integer{Value: leftVal + rightVal}, nil
+	case token.SUB: // -
+		return &Integer{Value: leftVal - rightVal}, nil
+	case token.MUL: // *
+		return &Integer{Value: leftVal * rightVal}, nil
+	case token.QUO: // /
+		if rightVal == 0 {
+			return nil, fmt.Errorf("division by zero at %d", pos)
+		}
+		return &Integer{Value: leftVal / rightVal}, nil
+	case token.REM: // %
+		if rightVal == 0 {
+			return nil, fmt.Errorf("division by zero (modulo) at %d", pos)
+		}
+		return &Integer{Value: leftVal % rightVal}, nil
+	case token.EQL: // ==
+		return nativeBoolToBooleanObject(leftVal == rightVal), nil
+	case token.NEQ: // !=
+		return nativeBoolToBooleanObject(leftVal != rightVal), nil
+	case token.LSS: // <
+		return nativeBoolToBooleanObject(leftVal < rightVal), nil
+	case token.LEQ: // <=
+		return nativeBoolToBooleanObject(leftVal <= rightVal), nil
+	case token.GTR: // >
+		return nativeBoolToBooleanObject(leftVal > rightVal), nil
+	case token.GEQ: // >=
+		return nativeBoolToBooleanObject(leftVal >= rightVal), nil
+	default:
+		return nil, fmt.Errorf("unknown operator for integers: %s at %d", op, pos)
 	}
 }
 
@@ -234,6 +307,57 @@ func evalStringBinaryExpr(op token.Token, left, right *String) (Object, error) {
 	}
 }
 
+// evalBooleanBinaryExpr handles binary expressions specifically for booleans.
+func evalBooleanBinaryExpr(op token.Token, left, right *Boolean, pos token.Pos) (Object, error) {
+	leftVal := left.Value
+	rightVal := right.Value
+
+	switch op {
+	case token.EQL: // ==
+		return nativeBoolToBooleanObject(leftVal == rightVal), nil
+	case token.NEQ: // !=
+		return nativeBoolToBooleanObject(leftVal != rightVal), nil
+	// Go does not support <, >, <=, >= directly for booleans in the same way as numbers.
+	// Logical AND (&&) and OR (||) are handled by ast.BinaryExpr with token.LAND and token.LOR.
+	// These often require short-circuiting, which evalBinaryExpr doesn't do yet.
+	// For now, only == and != are supported for direct boolean comparison.
+	default:
+		return nil, fmt.Errorf("unknown operator for booleans: %s at %d", op, pos)
+	}
+}
+
 // TODO: Implement evalCallExpr, etc.
 // func (i *Interpreter) evalCallExpr(node *ast.CallExpr, env *Environment) (Object, error) { ... }
 // ... and other evaluation helpers
+
+func (i *Interpreter) evalUnaryExpr(node *ast.UnaryExpr, env *Environment) (Object, error) {
+	operand, err := i.eval(node.X, env)
+	if err != nil {
+		return nil, err
+	}
+
+	switch node.Op {
+	case token.SUB: // Negation -
+		if operand.Type() == INTEGER_OBJ {
+			value := operand.(*Integer).Value
+			return &Integer{Value: -value}, nil
+		}
+		return nil, fmt.Errorf("unsupported type for negation: %s at %d", operand.Type(), node.Pos())
+	case token.NOT: // Logical not !
+		// In Go, '!' is used for boolean negation.
+		// Our Boolean object has TRUE and FALSE singletons.
+		switch operand {
+		case TRUE:
+			return FALSE, nil
+		case FALSE:
+			return TRUE, nil
+		default:
+			// Following typical dynamic language behavior, often only 'false' and 'null' are falsy.
+			// Everything else is truthy. Or we can be strict.
+			// For now, strict: only operate on actual Boolean objects.
+			return nil, fmt.Errorf("unsupported type for logical NOT: %s at %d", operand.Type(), node.Pos())
+		}
+	default:
+		return nil, fmt.Errorf("unsupported unary operator: %s at %d", node.Op, node.Pos())
+	}
+}

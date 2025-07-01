@@ -6,12 +6,15 @@ This document outlines future enhancements and features for the MiniGo interpret
 
 -   **Assignment Statements (`ast.AssignStmt`)**: Implement evaluation for assignment statements (e.g., `x = "new_value"` or `x = y + 1`). This is crucial for variable manipulation after declaration. (Failed tests in `TestInterpreterEntryPoint` highlight this).
 -   **Global Variable Evaluation**: Implement a mechanism to evaluate and register global variable declarations (top-level `var` statements) before or alongside executing the entry point function. (Failed tests in `TestVariableDeclarationAndStringLiteral` highlight this).
--   **Integer Literals and Arithmetic**:
-    -   Add `INTEGER_OBJ` to `object.go`.
-    -   Support parsing and evaluation of integer literals in `interpreter.go`.
-    -   Implement arithmetic operations (`+`, `-`, `*`, `/`, `%`) for integers in `evalBinaryExpr`.
-    -   Add comparison operators (`<`, `>`, `<=`, `>=`) for integers.
--   **Boolean Literals**: Support `true` and `false` as keywords or literals if not already covered by `Boolean` object (currently, `Boolean` objects are only produced by comparisons).
+-   **Integer Literals and Arithmetic**: [COMPLETED]
+    -   Add `INTEGER_OBJ` to `object.go`. [COMPLETED]
+    -   Support parsing and evaluation of integer literals in `interpreter.go`. [COMPLETED]
+    -   Implement arithmetic operations (`+`, `-`, `*`, `/`, `%`) for integers in `evalBinaryExpr`. [COMPLETED]
+    -   Add comparison operators (`<`, `>`, `<=`, `>=`, `==`, `!=`) for integers. [COMPLETED]
+-   **Boolean Literals**: [COMPLETED] Support `true` and `false` as identifiers evaluating to Boolean objects. [COMPLETED]
+    -   Add `BOOLEAN_OBJ` to `object.go`. [COMPLETED]
+    -   Implement comparison operators (`==`, `!=`) for booleans. [COMPLETED]
+    -   Implement unary `!` (NOT) operator for booleans. [COMPLETED]
 -   **If Expressions/Statements**: Implement `if`/`else if`/`else` control flow. This will require evaluation of a condition to a `Boolean` object.
 -   **Function Calls (`ast.CallExpr`)**:
     -   Support calling user-defined functions. This involves:
@@ -23,14 +26,14 @@ This document outlines future enhancements and features for the MiniGo interpret
     -   Support calling built-in functions (e.g., `len()`, `println()`). Requires `BUILTIN_OBJ`.
 -   **Return Statements (`ast.ReturnStmt`)**: Implement handling of `return` statements to exit functions and return values. This will likely involve a `ReturnValue` wrapper object.
 -   **Error Handling**:
-    -   Improve error reporting with more precise location information (using `token.FileSet` to convert `token.Pos` to line/column).
+    -   Improve error reporting with more precise location information (using `token.FileSet` to convert `token.Pos` to line/column). [PARTIALLY DONE - `pos` is passed to some error messages]
     -   Introduce an `ERROR_OBJ` to propagate runtime errors as objects within the interpreter, allowing for potential recovery or inspection.
 -   **More Data Types**:
     -   `NULL_OBJ` and `null` literal.
     -   Arrays/Slices.
     -   Maps (Hashes).
 -   **String Concatenation**: Support `+` operator for string concatenation in `evalStringBinaryExpr`.
--   **Comments**: Ensure comments are correctly ignored (currently handled by `go/parser`).
+-   **Comments**: Ensure comments are correctly ignored (currently handled by `go/parser`). [VERIFIED]
 
 ## Interpreter & Tooling Enhancements
 

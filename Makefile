@@ -10,6 +10,7 @@ test:
 	go test ./...
 	( cd examples/derivingjson && go test ./... )
 	( cd examples/derivingbind && go test ./... )
+	( cd examples/minigo && go test ./... )
 
 clean:
 	go clean -cache -testcache # General Go clean

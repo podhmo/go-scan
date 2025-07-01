@@ -187,41 +187,41 @@ func TestFormattedErrorHandling(t *testing.T) {
 			source: `
 package main
 func main() {
-	a := 10
-	b := 0
-	c := a / b // Error on this line
+	var a = 10
+	var b = 0
+	var c = a / b // Error on this line
 }`,
 			entryPoint:  "main",
-			expectedMsg: []string{"division by zero", "c := a / b", "line 6"}, // Filename will vary
+			expectedMsg: []string{"division by zero", "var c = a / b", "line 6"}, // Filename will vary
 		},
 		{
 			name: "undefined variable with context",
 			source: `
 package main
 func main() {
-	x := y + 1 // Error: y is not defined
+	var x = y + 1 // Error: y is not defined
 }`,
 			entryPoint:  "main",
-			expectedMsg: []string{"identifier not found: y", "x := y + 1", "line 4"},
+			expectedMsg: []string{"identifier not found: y", "var x = y + 1", "line 4"},
 		},
 		{
 			name: "type mismatch in binary operation with context",
 			source: `
 package main
 func main() {
-	a := 10
-	s := "hello"
-	r := a + s // Error: type mismatch
+	var a = 10
+	var s = "hello"
+	var r = a + s // Error: type mismatch
 }`,
 			entryPoint:  "main",
-			expectedMsg: []string{"type mismatch or unsupported operation", "INTEGER + STRING", "r := a + s", "line 6"},
+			expectedMsg: []string{"type mismatch or unsupported operation", "INTEGER + STRING", "var r = a + s", "line 6"},
 		},
 		{
 			name: "calling non-function with context",
 			source: `
 package main
 func main() {
-	x := 123
+	var x = 123
 	x() // Error: x is not a function
 }`,
 			entryPoint:  "main",

@@ -6,7 +6,6 @@ import (
 	"go/parser"
 	"go/token"
 	"strconv"
-	// "strings" // No longer directly needed here after moving builtins
 	// "github.com/go-scan/go-scan/scanner" // For more detailed error reporting later
 )
 
@@ -22,21 +21,26 @@ func parseInt64(s string) (int64, error) {
 // Interpreter holds the state of the interpreter
 type Interpreter struct {
 	globalEnv *Environment // Global environment
-	builtins  map[string]*Builtin
 }
 
-// NewInterpreter creates a new Interpreter with a global environment.
+// NewInterpreter creates a new Interpreter with a global environment
+// and registers built-in functions.
 func NewInterpreter() *Interpreter {
+	env := NewEnvironment(nil)
 	i := &Interpreter{
-		globalEnv: NewEnvironment(nil),
-		builtins:  make(map[string]*Builtin),
+		globalEnv: env,
 	}
-	// Initialize built-in functions
-	i.builtins["fmt.Sprintf"] = &Builtin{Fn: builtinFmtSprintf}
-	i.builtins["strings.Join"] = &Builtin{Fn: builtinStringsJoin}
-	i.builtins["strings.ToUpper"] = &Builtin{Fn: builtinStringsToUpper}
-	i.builtins["strings.TrimSpace"] = &Builtin{Fn: builtinStringsTrimSpace}
-	// TODO: Add more built-ins as needed
+
+	// Register built-in functions
+	builtins := GetBuiltinFmtFunctions()
+	for name, builtin := range builtins {
+		env.Define(name, builtin)
+	}
+	builtinsStrings := GetBuiltinStringsFunctions()
+	for name, builtin := range builtinsStrings {
+		env.Define(name, builtin)
+	}
+	// Add other built-in registrations here
 
 	return i
 }
@@ -49,30 +53,27 @@ func (i *Interpreter) LoadAndRun(filename string, entryPoint string) error {
 		return fmt.Errorf("error parsing file %s: %w", filename, err)
 	}
 
-	// Evaluate top-level declarations first (e.g., global variables)
-	for _, decl := range node.Decls {
-		// We are interested in GenDecl for var, const, type, import.
-		// For now, let's focus on var declarations at the top level.
-		// FuncDecls will be handled by finding the entry point or for future function calls.
-		if genDecl, ok := decl.(*ast.GenDecl); ok {
-			if genDecl.Tok == token.VAR { // Ensure it's a var declaration
-				// Wrap GenDecl in a DeclStmt to use existing eval logic
-				declStmt := &ast.DeclStmt{Decl: genDecl}
-				// Evaluate declaration in the global environment
-				_, err := i.eval(declStmt, i.globalEnv) // Use globalEnv for top-level var declarations
-				if err != nil {
-					return fmt.Errorf("error evaluating top-level var declaration: %w", err)
-				}
+	// Process top-level declarations, particularly global variables.
+	// We iterate through all declarations in the file. If a top-level declaration
+	// is a general declaration (*ast.GenDecl) of variables (token.VAR),
+	// we evaluate it in the global environment.
+	for _, declNode := range node.Decls {
+		if genDecl, ok := declNode.(*ast.GenDecl); ok && genDecl.Tok == token.VAR {
+			// To use our existing eval logic, which expects *ast.DeclStmt for declarations,
+			// we wrap the *ast.GenDecl in a temporary *ast.DeclStmt.
+			// This is a bit of a workaround but avoids needing a separate eval path for global GenDecls
+			// versus GenDecls found within function bodies (which are already inside DeclStmts).
+			tempDeclStmt := &ast.DeclStmt{Decl: genDecl}
+			_, err := i.eval(tempDeclStmt, i.globalEnv) // Evaluate VAR declaration in global scope
+			if err != nil {
+				// An error here means a global variable declaration failed.
+				return fmt.Errorf("error evaluating global variable declaration at %d: %w", genDecl.Pos(), err)
 			}
-			// TODO: Handle top-level const declarations (genDecl.Tok == token.CONST)
 		}
-		// TODO: Handle other top-level declarations if needed.
 	}
 
 	entryFunc := findFunction(node, entryPoint)
 	if entryFunc == nil {
-		// If no entry point is specified (e.g. empty string), and we only wanted to eval globals,
-		// this might not be an error. For now, assume entryPoint is always required if LoadAndRun is called.
 		return fmt.Errorf("entry point function '%s' not found in %s", entryPoint, filename)
 	}
 
@@ -101,7 +102,6 @@ func findFunction(file *ast.File, name string) *ast.FuncDecl {
 
 // eval evaluates an AST node within a given environment.
 func (i *Interpreter) eval(node ast.Node, env *Environment) (Object, error) {
-	// fmt.Printf("eval: Received node type %T at %d\n", node, node.Pos()) // DEBUG: Entry log
 	switch n := node.(type) {
 	case *ast.File: // It's possible to receive a File node if we decide to eval the whole file.
 		var result Object
@@ -131,12 +131,9 @@ func (i *Interpreter) eval(node ast.Node, env *Environment) (Object, error) {
 	case *ast.BasicLit:
 		switch n.Kind {
 		case token.STRING:
-			// The Value field includes the quotes. We need to unquote it to handle escape sequences.
-			s, err := strconv.Unquote(n.Value)
-			if err != nil {
-				return nil, fmt.Errorf("could not unquote string literal %s: %w", n.Value, err)
-			}
-			return &String{Value: s}, nil
+			// Go's string literals are already unescaped by the parser.
+			// The Value field includes the quotes, so we strip them.
+			return &String{Value: n.Value[1 : len(n.Value)-1]}, nil
 		case token.INT:
 			// Integer literal processing
 			val, err := parseInt64(n.Value)
@@ -160,103 +157,47 @@ func (i *Interpreter) eval(node ast.Node, env *Environment) (Object, error) {
 	case *ast.ParenExpr: // Handle parenthesized expressions
 		return i.eval(n.X, env)
 
+	case *ast.IfStmt:
+		return i.evalIfStmt(n, env)
+
+	case *ast.AssignStmt:
+		return i.evalAssignStmt(n, env)
+
 	case *ast.CallExpr:
 		return i.evalCallExpr(n, env)
 
-	case *ast.CompositeLit:
-		// fmt.Printf("eval: Entering *ast.CompositeLit case for node type %T at %d\n", n, n.Pos()) // DEBUG
-		// Currently, only handling array literals like []string{"a", "b"}
-		// Type checking (e.g., ensuring it's an array of strings if specified) is rudimentary.
-		// For `[]string{"a", "b"}`, n.Type would be an *ast.ArrayType.
-		// For `[]MyType{...}`, n.Type would be an *ast.Ident if MyType is defined.
-		// We are simplifying here and not deeply inspecting n.Type for now.
-		// We assume it's intended to be a generic array of objects.
-
-		elements := make([]Object, len(n.Elts))
-		for j, eltExpr := range n.Elts {
-			evaluatedElt, err := i.eval(eltExpr, env) // ここでネストした要素を評価
-			if err != nil {
-				return nil, fmt.Errorf("error evaluating element %d in composite literal: %w", j, err)
-			}
-			elements[j] = evaluatedElt
-		}
-		return &Array{Elements: elements}, nil
-
-	case *ast.AssignStmt:
-		// Simplified assignment: assumes Lhs is a single Ident.
-		// e.g., x = 10. Does not handle a, b = 1, 2 or obj.field = val yet.
-		// Also, this currently always sets in the current 'env'.
-		// For global/local distinction, env structure and lookup rules are key.
-		// fmt.Printf("eval: Entering *ast.AssignStmt case for node type %T at %d\n", n, n.Pos()) // DEBUG
-		if len(n.Lhs) != 1 || len(n.Rhs) != 1 {
-			return nil, fmt.Errorf("unsupported assignment: expected 1 Lhs and 1 Rhs, got %d and %d at %d", len(n.Lhs), len(n.Rhs), n.Pos())
-		}
-		ident, ok := n.Lhs[0].(*ast.Ident)
-		if !ok {
-			return nil, fmt.Errorf("unsupported assignment: Lhs is not an identifier (%T) at %d", n.Lhs[0], n.Lhs[0].Pos())
-		}
-		varName := ident.Name
-
-		val, err := i.eval(n.Rhs[0], env)
-		if err != nil {
-			return nil, fmt.Errorf("error evaluating Rhs of assignment to %s: %w", varName, err)
-		}
-		// For now, Set also updates outer environment if var exists there and not locally.
-		// Or, if we want strict shadowing, env.Set should only set in the current env.
-		// The current env.Set logic (from environment.go, not shown) will determine this behavior.
-		// For typical lexical scoping, assignment should update the narrowest scope where var is defined,
-		// or create in local if not defined anywhere.
-		// If `env.Set` implements "set if exists in current or outer, else create in current", this might work for globals too.
-		env.Set(varName, val)
-		return nil, nil // Assignment statement itself doesn't yield a value in Go expressions.
+	case *ast.SelectorExpr: // Handle expressions like fmt.Sprintf
+		return i.evalSelectorExpr(n, env)
 
 	// TODO: Add more cases for other AST node types:
-	// *ast.IfStmt, *ast.ForStmt, *ast.ReturnStmt etc.
+	// *ast.ForStmt, *ast.ReturnStmt etc.
 
 	default:
-		// fmt.Printf("eval: Entering default case for node type %T at %d\n", n, n.Pos()) // DEBUG
-		return nil, fmt.Errorf("unsupported AST node type: %T at %d", n, n.Pos())
+		return nil, fmt.Errorf("unsupported AST node type: %T at %d (value: %+v)", n, n.Pos(), n)
 	}
 }
 
-// evalCallExpr evaluates a function call expression.
-func (i *Interpreter) evalCallExpr(node *ast.CallExpr, env *Environment) (Object, error) {
-	// The Fun part of a CallExpr can be an Identifier (e.g., myFunc())
-	// or a SelectorExpr (e.g., fmt.Sprintf()).
-	var funcName string
-	switch fun := node.Fun.(type) {
-	case *ast.Ident:
-		funcName = fun.Name
-	case *ast.SelectorExpr:
-		// For simplicity, assuming selector is of form "package.Function"
-		// e.g. fmt.Sprintf. X would be "fmt", Sel would be "Sprintf".
-		xIdent, okX := fun.X.(*ast.Ident)
-		if !okX {
-			return nil, fmt.Errorf("unsupported selector expression type for function call: %T at %d", fun.X, fun.Pos())
-		}
-		funcName = xIdent.Name + "." + fun.Sel.Name
-	default:
-		return nil, fmt.Errorf("unsupported function call type: %T at %d", node.Fun, node.Fun.Pos())
+func (i *Interpreter) evalSelectorExpr(node *ast.SelectorExpr, env *Environment) (Object, error) {
+	// For now, assume X is an Identifier (e.g., "fmt" in "fmt.Sprintf")
+	// A more complex implementation might evaluate X first if it could be any expression.
+	xIdent, ok := node.X.(*ast.Ident)
+	if !ok {
+		// TODO: Handle cases where X is not a simple identifier, e.g., (getPkg()).Sprintf
+		return nil, fmt.Errorf("unsupported selector expression: X is not an identifier, got %T at %d", node.X, node.X.Pos())
 	}
 
-	// Evaluate arguments
-	args := []Object{}
-	for _, argExpr := range node.Args {
-		argVal, err := i.eval(argExpr, env)
-		if err != nil {
-			return nil, fmt.Errorf("error evaluating argument for %s: %w", funcName, err)
-		}
-		args = append(args, argVal)
+	// Construct the full name, e.g., "fmt.Sprintf"
+	fullName := xIdent.Name + "." + node.Sel.Name
+
+	// Lookup this full name in the environment.
+	// This relies on built-ins like "fmt.Sprintf" being registered with this full name.
+	if val, ok := env.Get(fullName); ok {
+		return val, nil
 	}
 
-	// Check if it's a built-in function
-	if builtin, ok := i.builtins[funcName]; ok {
-		return builtin.Fn(args...)
-	}
-
-	// TODO: Handle user-defined functions.
-	// For now, if it's not a built-in, it's an error.
-	return nil, fmt.Errorf("undefined function: %s at %d", funcName, node.Fun.Pos())
+	// If not found, it could be a method call on an object, or a field access,
+	// which are not yet supported in this way for MiniGo.
+	return nil, fmt.Errorf("undefined selector: %s at %d", fullName, node.Pos())
 }
 
 // evalBlockStatement evaluates a block of statements.
@@ -307,25 +248,34 @@ func (i *Interpreter) evalDeclStmt(declStmt *ast.DeclStmt, env *Environment) (Ob
 				if err != nil {
 					return nil, fmt.Errorf("error evaluating value for var %s: %w", varName, err)
 				}
-				env.Define(varName, val) // Use Define for var declarations
+				env.Define(varName, val) // Use Define for declarations
 			} else {
-				// No initializer, e.g., var x int. Set to zero value for its type.
-				// For now, we only have strings, so what's the zero value? An empty string? Null?
-				// This part needs type information (valueSpec.Type).
-				// For now, let's assume uninitialized vars are an error or a special "undefined" object.
-				// Or, for simplicity in this early stage, require initialization.
-				if valueSpec.Type != nil {
-					// TODO: Handle type-specific zero values when type system is more developed.
-					// For now, if type is specified but no value, it's an unhandled case.
-					// Let's default to a NullObject or similar if we had one.
-					// For strings, perhaps an empty string.
-					// This is a simplification. In a typed language, this would be type-dependent.
-					// For now, treat as an error or make it a Null object if available.
-					// For initial simplicity, we will require explicit initialization.
-					return nil, fmt.Errorf("variable '%s' declared without explicit initializer is not yet supported (type: %s)", varName, valueSpec.Type)
+				// Handle uninitialized variable declaration, e.g., var x string, var n int
+				if valueSpec.Type == nil {
+					// This case (e.g. `var x`) is generally not allowed in Go unless it's a short var declaration
+					// or part of a multi-var block where type can be inferred.
+					// For MiniGo, let's require a type if there's no initializer.
+					return nil, fmt.Errorf("variable '%s' declared without initializer must have a type at %d", varName, valueSpec.Pos())
 				}
-				// If no type and no value, also an issue.
-				return nil, fmt.Errorf("variable '%s' declared without explicit initializer or type", varName)
+
+				var zeroVal Object
+				typeIdent, ok := valueSpec.Type.(*ast.Ident)
+				if !ok {
+					// TODO: Handle more complex types like arrays, structs if they are added.
+					return nil, fmt.Errorf("unsupported type expression for zero value for variable '%s': %T at %d", varName, valueSpec.Type, valueSpec.Type.Pos())
+				}
+
+				switch typeIdent.Name {
+				case "string":
+					zeroVal = &String{Value: ""}
+				case "int": // Assuming "int" is the type name for our IntegerObject
+					zeroVal = &Integer{Value: 0}
+				case "bool": // Assuming "bool" is the type name for our BooleanObject
+					zeroVal = FALSE // Use the global FALSE instance
+				default:
+					return nil, fmt.Errorf("unsupported type '%s' for uninitialized variable '%s' at %d", typeIdent.Name, varName, typeIdent.Pos())
+				}
+				env.Define(varName, zeroVal)
 			}
 		}
 	}
@@ -425,10 +375,10 @@ func evalStringBinaryExpr(op token.Token, left, right *String) (Object, error) {
 		return nativeBoolToBooleanObject(left.Value == right.Value), nil
 	case token.NEQ: // !=
 		return nativeBoolToBooleanObject(left.Value != right.Value), nil
-	case token.ADD: // +
-		return left.Add(right)
+	case token.ADD: // + for string concatenation
+		return &String{Value: left.Value + right.Value}, nil
 	default:
-		return nil, fmt.Errorf("unknown operator for strings: %s", op)
+		return nil, fmt.Errorf("unknown operator for strings: %s (left: %q, right: %q)", op, left.Value, right.Value)
 	}
 }
 
@@ -451,9 +401,202 @@ func evalBooleanBinaryExpr(op token.Token, left, right *Boolean, pos token.Pos) 
 	}
 }
 
-// TODO: Implement evalCallExpr, etc.
-// func (i *Interpreter) evalCallExpr(node *ast.CallExpr, env *Environment) (Object, error) { ... }
+// evalCallExpr handles function calls.
+func (i *Interpreter) evalCallExpr(node *ast.CallExpr, env *Environment) (Object, error) {
+	// First, evaluate the function expression itself.
+	// This could be an identifier (e.g., myFunc) or a more complex expression
+	// that results in a function object (e.g., for first-class functions, not yet supported).
+	// For built-ins like "fmt.Sprintf", this will resolve to an identifier.
+	funcObj, err := i.eval(node.Fun, env)
+	if err != nil {
+		return nil, fmt.Errorf("error evaluating function expression for call at %d: %w", node.Fun.Pos(), err)
+	}
+
+	// Evaluate arguments from left to right.
+	args := make([]Object, len(node.Args))
+	for idx, argExpr := range node.Args {
+		argVal, err := i.eval(argExpr, env)
+		if err != nil {
+			return nil, fmt.Errorf("error evaluating argument %d for call at %d: %w", idx, argExpr.Pos(), err)
+		}
+		args[idx] = argVal
+	}
+
+	// Check what kind of function object we have and call it.
+	switch fn := funcObj.(type) {
+	case *BuiltinFunction:
+		// The environment passed to built-in functions allows them to interact
+		// with the interpreter's state if necessary, though many (like fmt.Sprintf)
+		// are pure functions of their arguments.
+		return fn.Fn(env, args...)
+	// case *UserDefinedFunction: // TODO: When user-defined functions are implemented
+	//    return i.applyUserDefinedFunction(fn, args, env)
+	default:
+		// If `node.Fun` evaluated to something that isn't a callable function type.
+		// We also need to handle the case where `node.Fun` is an `ast.SelectorExpr`
+		// like `myPkg.MyFunc`. For now, we assume simple `ast.Ident` for builtins.
+		funcName := "unknown"
+		if ident, ok := node.Fun.(*ast.Ident); ok {
+			funcName = ident.Name
+		} else if selExpr, ok := node.Fun.(*ast.SelectorExpr); ok {
+			// This is a basic way to represent selector expressions like pkg.Func
+			// It assumes X is an Ident. A more general solution would eval selExpr.X
+			if xIdent, okX := selExpr.X.(*ast.Ident); okX {
+				funcName = xIdent.Name + "." + selExpr.Sel.Name
+			}
+		}
+		return nil, fmt.Errorf("cannot call non-function type %s (for function '%s') at %d", funcObj.Type(), funcName, node.Fun.Pos())
+	}
+}
+
 // ... and other evaluation helpers
+
+// evalAssignStmt handles assignment statements like x = 10 or x += 5.
+func (i *Interpreter) evalAssignStmt(assignStmt *ast.AssignStmt, env *Environment) (Object, error) {
+	// MiniGo assignment basics:
+	// Lhs: list of expressions (identifiers for now)
+	// Rhs: list of expressions
+	// Tok: token.ASSIGN (=), token.ADD_ASSIGN (+=), etc.
+
+	if len(assignStmt.Lhs) != 1 || len(assignStmt.Rhs) != 1 {
+		// For now, only support simple single assignment: ident = value
+		// Multiple assignments like a, b = 1, 2 or tuple-like returns are not supported yet.
+		return nil, fmt.Errorf("unsupported assignment: expected 1 expression on LHS and 1 on RHS, got %d and %d at %d",
+			len(assignStmt.Lhs), len(assignStmt.Rhs), assignStmt.Pos())
+	}
+
+	lhs := assignStmt.Lhs[0]
+	ident, ok := lhs.(*ast.Ident)
+	if !ok {
+		// TODO: Support assignments to array elements (e.g., arr[0] = 1) or struct fields (e.g., obj.field = 1) later.
+		return nil, fmt.Errorf("unsupported assignment LHS: expected identifier, got %T at %d", lhs, lhs.Pos())
+	}
+	varName := ident.Name
+
+	// Evaluate the right-hand side to get the value
+	val, err := i.eval(assignStmt.Rhs[0], env)
+	if err != nil {
+		return nil, err
+	}
+
+	// If it's an augmented assignment (e.g., +=, -=), we need to get the current value first.
+	if assignStmt.Tok != token.ASSIGN {
+		existingVal, ok := env.Get(varName)
+		if !ok {
+			// This behavior matches Go: using += on an undeclared variable is an error.
+			// "identifier not found" would be caught by Get if we tried to use it.
+			// If it's a new variable, += is not allowed; must be initialized with = first.
+			return nil, fmt.Errorf("cannot use %s on undeclared variable '%s' at %d", assignStmt.Tok, varName, ident.Pos())
+		}
+
+		// Perform the binary operation for augmented assignment
+		// We need to construct a temporary BinaryExpr to reuse evalBinaryExpr logic,
+		// or replicate the logic here. Replicating parts of it for clarity.
+		// This is a simplified version. evalBinaryExpr handles type checking more robustly.
+		// For example, this doesn't handle "string" + "string" for += yet.
+		// It primarily assumes numeric operations for augmented assignments for now.
+
+		// Convert token.ADD_ASSIGN to token.ADD, etc.
+		var op token.Token
+		switch assignStmt.Tok {
+		case token.ADD_ASSIGN: // +=
+			op = token.ADD
+		case token.SUB_ASSIGN: // -=
+			op = token.SUB
+		case token.MUL_ASSIGN: // *=
+			op = token.MUL
+		case token.QUO_ASSIGN: // /=
+			op = token.QUO
+		case token.REM_ASSIGN: // %=
+			op = token.REM
+		// TODO: Add bitwise operators like &=, |=, ^=, <<=, >>= if the language supports them.
+		default:
+			return nil, fmt.Errorf("unsupported assignment operator %s at %d", assignStmt.Tok, assignStmt.Pos())
+		}
+
+		// Simulate a binary expression: existingVal op val
+		// This is a bit of a hack. Ideally, evalBinaryExpr is more directly usable.
+		// The following is a simplified re-implementation for Integer types primarily.
+		if existingInt, okE := existingVal.(*Integer); okE {
+			if valInt, okV := val.(*Integer); okV {
+				switch op {
+				case token.ADD:
+					val = &Integer{Value: existingInt.Value + valInt.Value}
+				case token.SUB:
+					val = &Integer{Value: existingInt.Value - valInt.Value}
+				case token.MUL:
+					val = &Integer{Value: existingInt.Value * valInt.Value}
+				case token.QUO:
+					if valInt.Value == 0 {
+						return nil, fmt.Errorf("division by zero in %s at %d", assignStmt.Tok, assignStmt.Pos())
+					}
+					val = &Integer{Value: existingInt.Value / valInt.Value}
+				case token.REM:
+					if valInt.Value == 0 {
+						return nil, fmt.Errorf("division by zero (modulo) in %s at %d", assignStmt.Tok, assignStmt.Pos())
+					}
+					val = &Integer{Value: existingInt.Value % valInt.Value}
+				default:
+					return nil, fmt.Errorf("unsupported operator %s for augmented integer assignment at %d", op, assignStmt.Pos())
+				}
+			} else {
+				return nil, fmt.Errorf("type mismatch for %s: existing value is INTEGER, new value is %s at %d", assignStmt.Tok, val.Type(), assignStmt.Pos())
+			}
+		} else if existingString, okE := existingVal.(*String); okE && op == token.ADD { // String concatenation +=
+			if valString, okV := val.(*String); okV {
+				val = &String{Value: existingString.Value + valString.Value}
+			} else {
+				return nil, fmt.Errorf("type mismatch for string concatenation (+=): existing value is STRING, new value is %s at %d", val.Type(), assignStmt.Pos())
+			}
+		} else {
+			// TODO: Handle other types for augmented assignment if necessary
+			return nil, fmt.Errorf("unsupported type %s for augmented assignment operator %s at %d", existingVal.Type(), assignStmt.Tok, assignStmt.Pos())
+		}
+	}
+
+	// Set the variable in the environment.
+	// The Environment's Set method should handle whether it's a new declaration (in current scope)
+	// or re-assigning an existing variable (possibly in an outer scope).
+	// MiniGo's scoping for assignment (like Go): if var exists in current or outer, it's reassigned.
+	// If it doesn't exist, `env.Set` would ideally declare it in the current scope.
+	// The current `Environment.Set` updates if found, otherwise sets in current env. This is fine.
+	// env.Set(varName, val) // Old call
+	if _, ok := env.Assign(varName, val); !ok {
+		return nil, fmt.Errorf("cannot assign to undeclared variable '%s' at %d", varName, ident.Pos())
+	}
+
+	// Assignment statement itself does not produce a value in many languages (e.g., Go).
+	// Or it might produce the assigned value. For MiniGo, let's say it doesn't produce a value.
+	return nil, nil
+}
+
+// evalIfStmt evaluates an if statement.
+func (i *Interpreter) evalIfStmt(ifStmt *ast.IfStmt, env *Environment) (Object, error) {
+	condition, err := i.eval(ifStmt.Cond, env)
+	if err != nil {
+		return nil, err
+	}
+
+	// Check if the condition is a Boolean object
+	boolCond, ok := condition.(*Boolean)
+	if !ok {
+		return nil, fmt.Errorf("condition for if statement must be a boolean, got %s (type: %s) at %d",
+			condition.Inspect(), condition.Type(), ifStmt.Cond.Pos())
+	}
+
+	if boolCond.Value { // If condition is true
+		return i.evalBlockStatement(ifStmt.Body, env)
+	} else if ifStmt.Else != nil { // If condition is false and there's an else block
+		// The else part can be another IfStmt (for "else if") or a BlockStmt.
+		// The eval function will handle these types accordingly.
+		return i.eval(ifStmt.Else, env)
+	}
+
+	// If condition is false and no else block, the if statement evaluates to nothing.
+	// In a language where everything is an expression, this might return a Null object.
+	// For now, returning nil is consistent with how DeclStmt is handled.
+	return nil, nil
+}
 
 func (i *Interpreter) evalUnaryExpr(node *ast.UnaryExpr, env *Environment) (Object, error) {
 	operand, err := i.eval(node.X, env)
@@ -486,7 +629,3 @@ func (i *Interpreter) evalUnaryExpr(node *ast.UnaryExpr, env *Environment) (Obje
 		return nil, fmt.Errorf("unsupported unary operator: %s at %d", node.Op, node.Pos())
 	}
 }
-
-// --- Built-in Function Implementations ---
-
-// --- Built-in Function Implementations ---

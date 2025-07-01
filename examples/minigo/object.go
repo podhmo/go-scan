@@ -1,6 +1,10 @@
 package main
 
-import "fmt"
+import (
+	"fmt"
+	"go/ast"
+	"strings"
+)
 
 // ObjectType is a string representation of an object's type.
 type ObjectType string
@@ -13,7 +17,7 @@ const (
 	NULL_OBJ         ObjectType = "NULL"         // Example for future use
 	RETURN_VALUE_OBJ ObjectType = "RETURN_VALUE" // Special type to wrap return values
 	ERROR_OBJ        ObjectType = "ERROR"        // To wrap errors as objects
-	// FUNCTION_OBJ     // For user-defined functions
+	FUNCTION_OBJ     ObjectType = "FUNCTION"     // For user-defined functions
 	BUILTIN_FUNCTION_OBJ ObjectType = "BUILTIN_FUNCTION" // For built-in functions
 )
 
@@ -53,6 +57,7 @@ func (b *Boolean) Inspect() string  { return fmt.Sprintf("%t", b.Value) }
 var (
 	TRUE  = &Boolean{Value: true}
 	FALSE = &Boolean{Value: false}
+	NULL  = &Null{} // Global instance for Null
 )
 
 // Helper function to convert native bool to interpreter's Boolean object
@@ -72,6 +77,24 @@ func (n *Null) Inspect() string  { return "null" }
 
 var NULL = &Null{} // Global instance for Null
 */
+
+// --- Null Object ---
+type Null struct{}
+
+func (n *Null) Type() ObjectType { return NULL_OBJ }
+func (n *Null) Inspect() string  { return "null" }
+
+// --- Error Object ---
+// Error wraps an error message.
+type Error struct {
+	Message string
+	// TODO: Add position/stack trace if needed
+}
+
+func (e *Error) Type() ObjectType { return ERROR_OBJ }
+func (e *Error) Inspect() string  { return "ERROR: " + e.Message }
+func (e *Error) Error() string    { return e.Message } // Implement error interface
+
 
 // --- Comparability ---
 // Some objects can be compared. This interface can be implemented by types
@@ -109,6 +132,43 @@ func (s *String) Compare(other Object) (int, error) {
 // - Implement `ReturnValue` and `Error` wrapper objects for flow control and error handling.
 // - Implement `Hashable` interface for objects that can be keys in a hash map.
 // - Implement `Callable` interface for function objects.
+
+// --- UserDefinedFunction Object ---
+type UserDefinedFunction struct {
+	Name       string // Optional: for debugging and representation
+	Parameters []*ast.Ident
+	Body       *ast.BlockStmt
+	Env        *Environment // Closure: the environment where the function was defined
+}
+
+func (udf *UserDefinedFunction) Type() ObjectType { return FUNCTION_OBJ }
+func (udf *UserDefinedFunction) Inspect() string {
+	params := []string{}
+	for _, p := range udf.Parameters {
+		params = append(params, p.Name)
+	}
+	name := udf.Name
+	if name == "" {
+		name = "[anonymous]"
+	}
+	return fmt.Sprintf("func %s(%s) { ... }", name, strings.Join(params, ", "))
+}
+
+// --- ReturnValue Object ---
+// ReturnValue is used to wrap return values to allow the interpreter to distinguish
+// between a normal evaluation result and a value being explicitly returned.
+type ReturnValue struct {
+	Value Object
+}
+
+func (rv *ReturnValue) Type() ObjectType { return RETURN_VALUE_OBJ }
+func (rv *ReturnValue) Inspect() string {
+	if rv.Value == nil {
+		return "return <nil>" // Should not happen if NULL_OBJ is used properly
+	}
+	return rv.Value.Inspect() // Or fmt.Sprintf("return %s", rv.Value.Inspect())
+}
+
 
 // --- BuiltinFunction Object ---
 

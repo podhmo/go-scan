@@ -1,54 +1,62 @@
 # MiniGo Interpreter TODO List
 
-This document outlines future enhancements and features for the MiniGo interpreter.
-
 ## Core Language Features
+- [x] Basic integer literals and arithmetic (+, -, *, /)
+- [x] String literals and concatenation (+)
+- [x] Variable declarations (`var x = ...`, `var x string`) and assignments (`x = ...`)
+- [x] Global and local scopes (basic implementation exists, closure support added)
+- [x] Boolean literals (`true`, `false`) and operators (==, !=, <, >, <=, >= for integers/strings; ==, != for booleans)
+- [x] `if`/`else` control flow statements
+- [x] Unary operators (`-` for negation, `!` for logical NOT)
+- [x] Parenthesized expressions
+- [x] Function calls (built-in and user-defined)
+- [x] Comments (handled by go/parser)
+- [x] Basic error handling with file/line context
 
--   **Assignment Statements (`ast.AssignStmt`)**: Implement evaluation for assignment statements (e.g., `x = "new_value"` or `x = y + 1`). This is crucial for variable manipulation after declaration. (Failed tests in `TestInterpreterEntryPoint` highlight this).
--   **Global Variable Evaluation**: Implement a mechanism to evaluate and register global variable declarations (top-level `var` statements) before or alongside executing the entry point function. (Failed tests in `TestVariableDeclarationAndStringLiteral` highlight this).
--   **Integer Literals and Arithmetic**: [COMPLETED]
-    -   Add `INTEGER_OBJ` to `object.go`. [COMPLETED]
-    -   Support parsing and evaluation of integer literals in `interpreter.go`. [COMPLETED]
-    -   Implement arithmetic operations (`+`, `-`, `*`, `/`, `%`) for integers in `evalBinaryExpr`. [COMPLETED]
-    -   Add comparison operators (`<`, `>`, `<=`, `>=`, `==`, `!=`) for integers. [COMPLETED]
--   **Boolean Literals**: [COMPLETED] Support `true` and `false` as identifiers evaluating to Boolean objects. [COMPLETED]
-    -   Add `BOOLEAN_OBJ` to `object.go`. [COMPLETED]
-    -   Implement comparison operators (`==`, `!=`) for booleans. [COMPLETED]
-    -   Implement unary `!` (NOT) operator for booleans. [COMPLETED]
--   **If Expressions/Statements**: Implement `if`/`else if`/`else` control flow. This will require evaluation of a condition to a `Boolean` object.
--   **Function Calls (`ast.CallExpr`)**:
-    -   Support calling user-defined functions. This involves:
-        -   `FUNCTION_OBJ` in `object.go`.
-        -   Parsing function literals/declarations (if different from top-level `FuncDecl`).
-        -   Setting up new environments for function calls (closures).
-        -   Argument passing.
-        -   Handling `return` statements (requires `RETURN_VALUE_OBJ`).
-    -   Support calling built-in functions (e.g., `len()`, `println()`). Requires `BUILTIN_OBJ`.
--   **Return Statements (`ast.ReturnStmt`)**: Implement handling of `return` statements to exit functions and return values. This will likely involve a `ReturnValue` wrapper object.
--   **Error Handling**:
-    -   Improve error reporting with more precise location information (using `token.FileSet` to convert `token.Pos` to line/column). [PARTIALLY DONE - `pos` is passed to some error messages]
-    -   Introduce an `ERROR_OBJ` to propagate runtime errors as objects within the interpreter, allowing for potential recovery or inspection.
--   **More Data Types**:
-    -   `NULL_OBJ` and `null` literal.
-    -   Arrays/Slices.
-    -   Maps (Hashes).
--   **String Concatenation**: Support `+` operator for string concatenation in `evalStringBinaryExpr`.
--   **Comments**: Ensure comments are correctly ignored (currently handled by `go/parser`). [VERIFIED]
+## Advanced Language Features
+- [x] User-defined functions (`func foo() { ... }`)
+  - [x] Parameters and arguments
+  - [x] Return statements (`return x`)
+  - [x] Closures (lexical scoping for functions)
+  - [x] Recursive function calls
+- [ ] Data Structures
+  - [ ] Arrays (e.g., `var a [3]int`, `a[0] = 1`)
+  - [ ] Slices (dynamic arrays)
+  - [ ] Maps (hash maps)
+- [ ] Control Flow
+  - [ ] `for` loops (various forms: `for {}`, `for i < N {}`, `for k, v := range arr {}`)
+  - [ ] `break` and `continue` statements
+- [ ] Types
+  - [ ] More specific integer types (int8, int32, int64, uint etc.)
+  - [ ] Floating point numbers
+  - [ ] Structs
+  - [ ] Type declarations (`type MyInt int`)
+  - [ ] Type checking (currently very loose, more like a dynamic language)
+- [ ] Pointers
+- [ ] Multiple return values from functions
+- [ ] Variadic functions (for user-defined functions, built-ins have a simple form)
 
-## Interpreter & Tooling Enhancements
+## Standard Library / Built-ins
+- [x] `fmt.Sprintf` (basic implementation)
+- [x] `strings.Join` (custom varargs implementation for now)
+- [x] `Null` object and implicit returns for `null`
+- [ ] More `fmt` functions (e.g., `Println`)
+- [ ] More `strings` functions
+- [ ] Basic I/O (e.g., reading files, printing to console beyond Sprintf)
+- [ ] `len()` function for strings, arrays, slices, maps
+- [ ] `panic` and `recover`
 
--   **REPL (Read-Eval-Print Loop)**: Create an interactive mode for the interpreter.
--   **Standard Library**: Begin implementation of a small standard library (e.g., basic I/O, string manipulation).
--   **Testing Framework Improvements**:
-    -   Refine test helpers to make it easier to check interpreter state or evaluation results without relying on global variable side effects.
-    -   Add more comprehensive tests for all implemented features and error conditions.
--   **`go-scan` Integration**: Leverage `go-scan` for more detailed token-level analysis or advanced error reporting if `go/parser`'s information is insufficient for some use cases.
--   **Kebab-case/Snake_case Conversion**: Implement built-in functions or a mechanism for string case conversions as originally requested (e.g., `to_kebab_case("MyString")`, `to_snake_case("MyString")`).
+## Interpreter Internals & Tooling
+- [ ] REPL (Read-Eval-Print Loop) mode
+- [x] More robust error object type (`Error` object implemented)
+- [ ] Performance optimizations
+- [ ] Test suite expansion (more comprehensive tests for all features)
+- [ ] Support for multiple files / packages
+- [ ] Debugger support (very long term)
+- [ ] Better type system for `Object` interface (e.g. using generics if Go 2, or more specific interfaces)
 
 ## Code Quality & Refactoring
-
--   **`FileSet` Propagation**: Pass `token.FileSet` to evaluation functions to allow for better error message formatting (line/column numbers instead of just `token.Pos` integers).
--   **Type System**: Consider if and how to implement a more formal type system or type checking, especially if the language evolves.
--   **Performance**: Analyze and optimize performance bottlenecks as the interpreter grows.
-
-This list is not exhaustive and will evolve as the project progresses.
+- [x] Review error handling consistency (e.g. when to return `Error` object vs. `error`) - Improved with `Error` object.
+- [x] Refactor `eval` function if it becomes too large (e.g. by node type) - *ongoing, new eval functions added for new node types*.
+- [ ] Improve comments and documentation within the code
+- [ ] `findFunction` in `interpreter.go` might be dead code now.

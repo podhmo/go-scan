@@ -187,45 +187,45 @@ func TestFormattedErrorHandling(t *testing.T) {
 			source: `
 package main
 func main() {
-	a := 10
-	b := 0
-	c := a / b // Error on this line
+	var a = 10
+	var b = 0
+	var c = a / b // Error on this line
 }`,
 			entryPoint:  "main",
-			expectedMsg: []string{"division by zero", "c := a / b", "line 6"}, // Filename will vary
+			expectedMsg: []string{"division by zero", "var c = a / b", "line 6"}, // Filename will vary
 		},
 		{
 			name: "undefined variable with context",
 			source: `
 package main
 func main() {
-	x := y + 1 // Error: y is not defined
+	var x = y + 1 // Error: y is not defined
 }`,
 			entryPoint:  "main",
-			expectedMsg: []string{"identifier not found: y", "x := y + 1", "line 4"},
+			expectedMsg: []string{"identifier not found: y", "var x = y + 1", "line 4"},
 		},
 		{
 			name: "type mismatch in binary operation with context",
 			source: `
 package main
 func main() {
-	a := 10
-	s := "hello"
-	r := a + s // Error: type mismatch
+	var a = 10
+	var s = "hello"
+	var r = a + s // Error: type mismatch
 }`,
 			entryPoint:  "main",
-			expectedMsg: []string{"type mismatch or unsupported operation", "INTEGER + STRING", "r := a + s", "line 6"},
+			expectedMsg: []string{"type mismatch or unsupported operation", "INTEGER + STRING", "var r = a + s", "line 6"},
 		},
 		{
 			name: "calling non-function with context",
 			source: `
 package main
 func main() {
-	x := 123
+	var x = 123
 	x() // Error: x is not a function
 }`,
 			entryPoint:  "main",
-			expectedMsg: []string{"cannot call non-function type INTEGER", "x()", "line 5"},
+			expectedMsg: []string{"cannot call non-function type INTEGER", "x()", "line 5"}, // x() is the source, not var x = 123 for this specific error
 		},
 		{
 			name: "if condition not boolean",
@@ -967,6 +967,288 @@ func TestErrorHandling(t *testing.T) {
 		})
 	}
 }
+
+func TestFunctionCallsAndDefinitions(t *testing.T) {
+	tests := []struct {
+		name                   string
+		source                 string
+		entryPoint             string
+		expectedGlobalVarValue map[string]interface{} // Can be int64 or string for now
+		expectError            bool
+		expectedErrorMsgSubstr string
+	}{
+		{
+			name: "simple function call returning int",
+			source: `
+package main
+var result int
+func add(a int, b int) { return a + b; }
+func main() { result = add(3, 4); }`,
+			entryPoint:             "main",
+			expectedGlobalVarValue: map[string]interface{}{"result": int64(7)},
+		},
+		{
+			name: "function with no explicit return, implicit null",
+			source: `
+package main
+var result interface{} // Need a way to check for NULL object
+func noReturn() { // No params, no change needed here for types
+	var a = 10
+}
+func main() { result = noReturn(); }`, // result should become NULL
+			entryPoint:             "main",
+			expectedGlobalVarValue: map[string]interface{}{"result": NULL}, // Check against the NULL object
+		},
+		{
+			name: "recursive factorial function",
+			source: `
+package main
+var result int
+func factorial(n int) {
+	if n == 0 {
+		return 1;
+	}
+	return n * factorial(n - 1);
+}
+func main() { result = factorial(5); }`, // 5! = 120
+			entryPoint:             "main",
+			expectedGlobalVarValue: map[string]interface{}{"result": int64(120)},
+		},
+		{
+			name: "closure basic",
+			source: `
+package main
+var result int
+func outer(x int) {
+	var inner = func() { // Inner func params don't need types for this test if it works
+		return x + 5;
+	};
+	return inner();
+}
+func main() { result = outer(10); }`, // Expect 10 + 5 = 15
+			entryPoint:             "main",
+			expectedGlobalVarValue: map[string]interface{}{"result": int64(15)},
+		},
+		{
+			name: "closure counter",
+			source: `
+package main
+var r1, r2, r3 int
+func newCounter() { // No params
+	var count = 0;
+	var increment = func() { // No params
+		count = count + 1;
+		return count;
+	};
+	return increment;
+}
+func main() {
+	var c = newCounter();
+	r1 = c(); // 1
+	r2 = c(); // 2
+	r3 = c(); // 3
+}`,
+			entryPoint: "main",
+			expectedGlobalVarValue: map[string]interface{}{
+				"r1": int64(1),
+				"r2": int64(2),
+				"r3": int64(3),
+			},
+		},
+		{
+			name: "function using strings.Join",
+			source: `
+package main
+var result string
+func joinSome(a string, b string, sep string) {
+	return strings.Join(a, b, sep);
+}
+func main() { result = joinSome("hello", "world", " "); }`,
+			entryPoint:             "main",
+			expectedGlobalVarValue: map[string]interface{}{"result": "hello world"},
+		},
+		{
+			name: "function using fmt.Sprintf",
+			source: `
+package main
+var result string
+func formatIt(name string, val int) {
+	return fmt.Sprintf("Name: %s, Value: %d", name, val);
+}
+func main() { result = formatIt("counter", 100); }`,
+			entryPoint:             "main",
+			expectedGlobalVarValue: map[string]interface{}{"result": "Name: counter, Value: 100"},
+		},
+		{
+			name: "function call with wrong number of arguments",
+			source: `
+package main
+func twoArgs(a int, b int) { return a + b; }
+func main() { twoArgs(1); }`,
+			entryPoint:                "main",
+			expectError:               true,
+			expectedErrorMsgSubstr:    "wrong number of arguments for function twoArgs: expected 2, got 1",
+		},
+		{
+			name: "calling non-function that was a parameter",
+			source: `
+package main
+func main() {
+	var x = 10;
+	caller(x);
+}
+func caller(f int) { // Changed f's type for clarity, though it's called
+	return f(); // f is an integer here
+}`,
+			entryPoint:             "main",
+			expectError:            true,
+			expectedErrorMsgSubstr: "cannot call non-function type INTEGER",
+		},
+		{
+			name: "return statement in middle of function",
+			source: `
+package main
+var result int
+func earlyReturn(val int) {
+	if val > 5 {
+		return 100;
+	}
+	return 0;
+}
+func main() { result = earlyReturn(10); }`,
+			entryPoint:             "main",
+			expectedGlobalVarValue: map[string]interface{}{"result": int64(100)},
+		},
+		{
+			name: "return statement in else block",
+			source: `
+package main
+var result int
+func earlyReturnInElse(val) {
+	if val == 5 {
+		x := 10; // just some statement
+	} else {
+		return 200;
+	}
+	return 0; // Should not be reached if val != 5
+}
+func main() { result = earlyReturnInElse(10); }`,
+			entryPoint:             "main",
+			expectedGlobalVarValue: map[string]interface{}{"result": int64(200)},
+		},
+		{
+			name: "function scope, local var does not affect global",
+			source: `
+package main
+var x int = 10
+func scopeTest() {
+	var x = 20 // local x
+	return x;
+}
+func main() {
+	scopeTest(); // call it, but its return is not assigned to global x
+	// global x should remain 10
+}`,
+			entryPoint:             "main",
+			expectedGlobalVarValue: map[string]interface{}{"x": int64(10)}, // global x should be unchanged
+		},
+		{
+			name: "function scope, assignment to global var from function",
+			source: `
+package main
+var x int = 10
+func assignGlobal() {
+	x = 30; // assigns to global x because no local x is defined
+}
+func main() {
+	assignGlobal();
+}`,
+			entryPoint:             "main",
+			expectedGlobalVarValue: map[string]interface{}{"x": int64(30)},
+		},
+		{
+			name: "closure modifying captured variable",
+			source: `
+package main
+var r1, r2 int
+func outerWithVar() {
+	var capturedVar = 100;
+	var inner = func() {
+		capturedVar = capturedVar + 1;
+		return capturedVar;
+	};
+	return inner;
+}
+func main() {
+	var fn = outerWithVar();
+	r1 = fn() // 101
+	r2 = fn() // 102
+}`,
+			entryPoint: "main",
+			expectedGlobalVarValue: map[string]interface{}{
+				"r1": int64(101),
+				"r2": int64(102),
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			filename := createTempFile(t, tt.source)
+			defer os.Remove(filename)
+
+			interpreter := NewInterpreter()
+			err := interpreter.LoadAndRun(filename, tt.entryPoint)
+
+			if tt.expectError {
+				if err == nil {
+					t.Errorf("[%s] Expected an error, but got none", tt.name)
+				} else if !strings.Contains(err.Error(), tt.expectedErrorMsgSubstr) {
+					t.Errorf("[%s] Expected error message to contain '%s', but got '%s'", tt.name, tt.expectedErrorMsgSubstr, err.Error())
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("[%s] LoadAndRun failed: %v\nSource:\n%s", tt.name, err, tt.source)
+				}
+				for varName, expectedVal := range tt.expectedGlobalVarValue {
+					val, ok := interpreter.globalEnv.Get(varName)
+					if !ok {
+						t.Errorf("[%s] Global variable '%s' not found. Expected value was '%v'.", tt.name, varName, expectedVal)
+						continue
+					}
+
+					switch expected := expectedVal.(type) {
+					case int64:
+						intVal, ok := val.(*Integer)
+						if !ok {
+							t.Errorf("[%s] Expected global variable '%s' to be Integer, but got %s (%s). Value was expected to be '%d'.", tt.name, varName, val.Type(), val.Inspect(), expected)
+							continue
+						}
+						if intVal.Value != expected {
+							t.Errorf("[%s] Global variable '%s': expected '%d', got '%d'", tt.name, varName, expected, intVal.Value)
+						}
+					case string:
+						strVal, ok := val.(*String)
+						if !ok {
+							t.Errorf("[%s] Expected global variable '%s' to be String, but got %s (%s). Value was expected to be '%s'.", tt.name, varName, val.Type(), val.Inspect(), expected)
+							continue
+						}
+						if strVal.Value != expected {
+							t.Errorf("[%s] Global variable '%s': expected '%s', got '%s'", tt.name, varName, expected, strVal.Value)
+						}
+					case *Null: // Check for NULL object
+						if val != NULL {
+							t.Errorf("[%s] Global variable '%s': expected NULL, got %s (%s)", tt.name, varName, val.Type(), val.Inspect())
+						}
+					default:
+						t.Errorf("[%s] Unsupported type in expectedGlobalVarValue for variable '%s': %T", tt.name, varName, expectedVal)
+					}
+				}
+			}
+		})
+	}
+}
+
 
 // Note: Octal (0o) and Binary (0b) literal tests for `parser.ParseExpr` might be tricky.
 // `go/parser.ParseExpr` itself doesn't directly support these prefixes; they are typically

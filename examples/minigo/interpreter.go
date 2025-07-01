@@ -6,6 +6,7 @@ import (
 	"go/parser"
 	"go/token"
 	"strconv"
+	"strings" // Added for strings.Join
 	// "github.com/go-scan/go-scan/scanner" // For more detailed error reporting later
 )
 
@@ -21,13 +22,23 @@ func parseInt64(s string) (int64, error) {
 // Interpreter holds the state of the interpreter
 type Interpreter struct {
 	globalEnv *Environment // Global environment
+	builtins  map[string]*Builtin
 }
 
 // NewInterpreter creates a new Interpreter with a global environment.
 func NewInterpreter() *Interpreter {
-	return &Interpreter{
+	i := &Interpreter{
 		globalEnv: NewEnvironment(nil),
+		builtins:  make(map[string]*Builtin),
 	}
+	// Initialize built-in functions
+	i.builtins["fmt.Sprintf"] = &Builtin{Fn: builtinFmtSprintf}
+	i.builtins["strings.Join"] = &Builtin{Fn: builtinStringsJoin}
+	i.builtins["strings.ToUpper"] = &Builtin{Fn: builtinStringsToUpper}
+	i.builtins["strings.TrimSpace"] = &Builtin{Fn: builtinStringsTrimSpace}
+	// TODO: Add more built-ins as needed
+
+	return i
 }
 
 // LoadAndRun loads a Go source file, parses it, and runs the specified entry point function.
@@ -38,8 +49,30 @@ func (i *Interpreter) LoadAndRun(filename string, entryPoint string) error {
 		return fmt.Errorf("error parsing file %s: %w", filename, err)
 	}
 
+	// Evaluate top-level declarations first (e.g., global variables)
+	for _, decl := range node.Decls {
+		// We are interested in GenDecl for var, const, type, import.
+		// For now, let's focus on var declarations at the top level.
+		// FuncDecls will be handled by finding the entry point or for future function calls.
+		if genDecl, ok := decl.(*ast.GenDecl); ok {
+			if genDecl.Tok == token.VAR { // Ensure it's a var declaration
+				// Wrap GenDecl in a DeclStmt to use existing eval logic
+				declStmt := &ast.DeclStmt{Decl: genDecl}
+				// Evaluate declaration in the global environment
+				_, err := i.eval(declStmt, i.globalEnv) // Use globalEnv for top-level var declarations
+				if err != nil {
+					return fmt.Errorf("error evaluating top-level var declaration: %w", err)
+				}
+			}
+			// TODO: Handle top-level const declarations (genDecl.Tok == token.CONST)
+		}
+		// TODO: Handle other top-level declarations if needed.
+	}
+
 	entryFunc := findFunction(node, entryPoint)
 	if entryFunc == nil {
+		// If no entry point is specified (e.g. empty string), and we only wanted to eval globals,
+		// this might not be an error. For now, assume entryPoint is always required if LoadAndRun is called.
 		return fmt.Errorf("entry point function '%s' not found in %s", entryPoint, filename)
 	}
 
@@ -68,6 +101,7 @@ func findFunction(file *ast.File, name string) *ast.FuncDecl {
 
 // eval evaluates an AST node within a given environment.
 func (i *Interpreter) eval(node ast.Node, env *Environment) (Object, error) {
+	// fmt.Printf("eval: Received node type %T at %d\n", node, node.Pos()) // DEBUG: Entry log
 	switch n := node.(type) {
 	case *ast.File: // It's possible to receive a File node if we decide to eval the whole file.
 		var result Object
@@ -97,9 +131,12 @@ func (i *Interpreter) eval(node ast.Node, env *Environment) (Object, error) {
 	case *ast.BasicLit:
 		switch n.Kind {
 		case token.STRING:
-			// Go's string literals are already unescaped by the parser.
-			// The Value field includes the quotes, so we strip them.
-			return &String{Value: n.Value[1 : len(n.Value)-1]}, nil
+			// The Value field includes the quotes. We need to unquote it to handle escape sequences.
+			s, err := strconv.Unquote(n.Value)
+			if err != nil {
+				return nil, fmt.Errorf("could not unquote string literal %s: %w", n.Value, err)
+			}
+			return &String{Value: s}, nil
 		case token.INT:
 			// Integer literal processing
 			val, err := parseInt64(n.Value)
@@ -123,14 +160,103 @@ func (i *Interpreter) eval(node ast.Node, env *Environment) (Object, error) {
 	case *ast.ParenExpr: // Handle parenthesized expressions
 		return i.eval(n.X, env)
 
+	case *ast.CallExpr:
+		return i.evalCallExpr(n, env)
+
+	case *ast.CompositeLit:
+		// fmt.Printf("eval: Entering *ast.CompositeLit case for node type %T at %d\n", n, n.Pos()) // DEBUG
+		// Currently, only handling array literals like []string{"a", "b"}
+		// Type checking (e.g., ensuring it's an array of strings if specified) is rudimentary.
+		// For `[]string{"a", "b"}`, n.Type would be an *ast.ArrayType.
+		// For `[]MyType{...}`, n.Type would be an *ast.Ident if MyType is defined.
+		// We are simplifying here and not deeply inspecting n.Type for now.
+		// We assume it's intended to be a generic array of objects.
+
+		elements := make([]Object, len(n.Elts))
+		for j, eltExpr := range n.Elts {
+			evaluatedElt, err := i.eval(eltExpr, env) // ここでネストした要素を評価
+			if err != nil {
+				return nil, fmt.Errorf("error evaluating element %d in composite literal: %w", j, err)
+			}
+			elements[j] = evaluatedElt
+		}
+		return &Array{Elements: elements}, nil
+
+	case *ast.AssignStmt:
+		// Simplified assignment: assumes Lhs is a single Ident.
+		// e.g., x = 10. Does not handle a, b = 1, 2 or obj.field = val yet.
+		// Also, this currently always sets in the current 'env'.
+		// For global/local distinction, env structure and lookup rules are key.
+		// fmt.Printf("eval: Entering *ast.AssignStmt case for node type %T at %d\n", n, n.Pos()) // DEBUG
+		if len(n.Lhs) != 1 || len(n.Rhs) != 1 {
+			return nil, fmt.Errorf("unsupported assignment: expected 1 Lhs and 1 Rhs, got %d and %d at %d", len(n.Lhs), len(n.Rhs), n.Pos())
+		}
+		ident, ok := n.Lhs[0].(*ast.Ident)
+		if !ok {
+			return nil, fmt.Errorf("unsupported assignment: Lhs is not an identifier (%T) at %d", n.Lhs[0], n.Lhs[0].Pos())
+		}
+		varName := ident.Name
+
+		val, err := i.eval(n.Rhs[0], env)
+		if err != nil {
+			return nil, fmt.Errorf("error evaluating Rhs of assignment to %s: %w", varName, err)
+		}
+		// For now, Set also updates outer environment if var exists there and not locally.
+		// Or, if we want strict shadowing, env.Set should only set in the current env.
+		// The current env.Set logic (from environment.go, not shown) will determine this behavior.
+		// For typical lexical scoping, assignment should update the narrowest scope where var is defined,
+		// or create in local if not defined anywhere.
+		// If `env.Set` implements "set if exists in current or outer, else create in current", this might work for globals too.
+		env.Set(varName, val)
+		return nil, nil // Assignment statement itself doesn't yield a value in Go expressions.
+
 	// TODO: Add more cases for other AST node types:
-	// *ast.AssignStmt (for x = y)
-	// *ast.CallExpr (for function calls)
 	// *ast.IfStmt, *ast.ForStmt, *ast.ReturnStmt etc.
 
 	default:
+		// fmt.Printf("eval: Entering default case for node type %T at %d\n", n, n.Pos()) // DEBUG
 		return nil, fmt.Errorf("unsupported AST node type: %T at %d", n, n.Pos())
 	}
+}
+
+// evalCallExpr evaluates a function call expression.
+func (i *Interpreter) evalCallExpr(node *ast.CallExpr, env *Environment) (Object, error) {
+	// The Fun part of a CallExpr can be an Identifier (e.g., myFunc())
+	// or a SelectorExpr (e.g., fmt.Sprintf()).
+	var funcName string
+	switch fun := node.Fun.(type) {
+	case *ast.Ident:
+		funcName = fun.Name
+	case *ast.SelectorExpr:
+		// For simplicity, assuming selector is of form "package.Function"
+		// e.g. fmt.Sprintf. X would be "fmt", Sel would be "Sprintf".
+		xIdent, okX := fun.X.(*ast.Ident)
+		if !okX {
+			return nil, fmt.Errorf("unsupported selector expression type for function call: %T at %d", fun.X, fun.Pos())
+		}
+		funcName = xIdent.Name + "." + fun.Sel.Name
+	default:
+		return nil, fmt.Errorf("unsupported function call type: %T at %d", node.Fun, node.Fun.Pos())
+	}
+
+	// Evaluate arguments
+	args := []Object{}
+	for _, argExpr := range node.Args {
+		argVal, err := i.eval(argExpr, env)
+		if err != nil {
+			return nil, fmt.Errorf("error evaluating argument for %s: %w", funcName, err)
+		}
+		args = append(args, argVal)
+	}
+
+	// Check if it's a built-in function
+	if builtin, ok := i.builtins[funcName]; ok {
+		return builtin.Fn(args...)
+	}
+
+	// TODO: Handle user-defined functions.
+	// For now, if it's not a built-in, it's an error.
+	return nil, fmt.Errorf("undefined function: %s at %d", funcName, node.Fun.Pos())
 }
 
 // evalBlockStatement evaluates a block of statements.
@@ -181,7 +307,7 @@ func (i *Interpreter) evalDeclStmt(declStmt *ast.DeclStmt, env *Environment) (Ob
 				if err != nil {
 					return nil, fmt.Errorf("error evaluating value for var %s: %w", varName, err)
 				}
-				env.Set(varName, val)
+				env.Define(varName, val) // Use Define for var declarations
 			} else {
 				// No initializer, e.g., var x int. Set to zero value for its type.
 				// For now, we only have strings, so what's the zero value? An empty string? Null?
@@ -299,9 +425,8 @@ func evalStringBinaryExpr(op token.Token, left, right *String) (Object, error) {
 		return nativeBoolToBooleanObject(left.Value == right.Value), nil
 	case token.NEQ: // !=
 		return nativeBoolToBooleanObject(left.Value != right.Value), nil
-	// TODO: Support string concatenation with '+' ?
-	// case token.ADD:
-	//    return &String{Value: left.Value + right.Value}, nil
+	case token.ADD: // +
+		return left.Add(right)
 	default:
 		return nil, fmt.Errorf("unknown operator for strings: %s", op)
 	}
@@ -360,4 +485,189 @@ func (i *Interpreter) evalUnaryExpr(node *ast.UnaryExpr, env *Environment) (Obje
 	default:
 		return nil, fmt.Errorf("unsupported unary operator: %s at %d", node.Op, node.Pos())
 	}
+}
+
+// --- Built-in Function Implementations ---
+
+func builtinFmtSprintf(args ...Object) (Object, error) {
+	if len(args) < 1 {
+		return nil, fmt.Errorf("fmt.Sprintf: expected at least 1 argument, got %d", len(args))
+	}
+	formatStr, ok := args[0].(*String)
+	if !ok {
+		return nil, fmt.Errorf("fmt.Sprintf: first argument must be a string, got %s", args[0].Type())
+	}
+
+	// Convert minigo String arguments to Go interface{} for fmt.Sprintf
+	sArgs := make([]interface{}, len(args)-1)
+	for i, arg := range args[1:] {
+		switch a := arg.(type) {
+		case *String:
+			sArgs[i] = a.Value
+		case *Integer:
+			sArgs[i] = a.Value
+		// case *Boolean: // Boolean is not directly supported by %s or %d in user-provided format string usually
+		//	sArgs[i] = a.Value
+		// Add other types as needed
+		default:
+			// Check against format string verb? For now, be strict.
+			// %s expects string-like, %d expects integer-like.
+			// If formatStr.Value contains %s at the corresponding position, arg must be String.
+			// If formatStr.Value contains %d, arg must be Integer.
+			// This is a simplification; real Sprintf is more complex.
+			// For now, if it's not a known type that Sprintf can handle universally (like string, int), error out.
+			return nil, fmt.Errorf("fmt.Sprintf: unsupported argument type %s for format string", arg.Type())
+		}
+	}
+
+	result := fmt.Sprintf(formatStr.Value, sArgs...)
+	return &String{Value: result}, nil
+}
+
+func builtinStringsJoin(args ...Object) (Object, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("strings.Join: expected 2 arguments, got %d", len(args))
+	}
+
+	// First argument: expecting a slice of strings.
+	// This is tricky as minigo doesn't have explicit array/slice objects yet.
+	// For now, we'll assume the AST for this argument was parsed and evaluated
+	// into some representation we can work with.
+	// Let's assume, for this limited implementation, that the first argument *must* be
+	// an *Array object (which we haven't fully defined yet).
+	// For the test case `strings.Join([]string{"a", "b"}, ",")`, the first arg
+	// would need to be evaluated to an internal representation of `[]string{"a", "b"}`.
+	//
+	// TEMPORARY SIMPLIFICATION: We will expect the first argument to be an *object.String
+	// that itself contains a comma-separated list of strings, representing the elements
+	// that would have been in a slice. This is a workaround until proper array/slice
+	// types are implemented in minigo.
+	// e.g. strings.Join("a,b,c", ",")
+	// This is not how strings.Join works in Go, but a temporary measure.
+	//
+	// A better simplification for now might be to expect individual string arguments
+	// and join them, or require a specific format that's easier to parse without full array support.
+	//
+	// Let's try to handle a list of String objects directly if passed.
+	// No, the AST `[]string{"a", "b"}` is a CompositeLit. We need to evaluate that first.
+	// For now, this function will be very limited.
+	//
+	// Plan B: The arguments to `strings.Join` will be evaluated by `evalCallExpr`.
+	// If `strings.Join` is called like `strings.Join(myStringArray, ",")`, then `myStringArray`
+	// must evaluate to an `Array` object in our interpreter. Since we don't have `Array` yet,
+	// this is hard.
+	//
+	// Simplest path for the requested test `strings.Join([]string{"a", "b", "c"}, ",")`:
+	// The `[]string{"a", "b", "c"}` is an `ast.CompositeLit`. We need to make `eval` handle `ast.CompositeLit`
+	// and produce an `Array` object. Then `builtinStringsJoin` can consume this `Array` object.
+	// This is a prerequisite.
+	//
+	// Given the current plan, we'll make a strong assumption:
+	// The test will pass a *String object as the first argument, and this string will be
+	// a placeholder for what should be an array. This is not ideal but fits the constraint
+	// of not implementing full array support *yet* in this step.
+	//
+	// Let's refine: The plan mentions "strings.Join([]string{\"a\", \"b\", \"c\"}, \",\")".
+	// This implies `eval` needs to handle `ast.CompositeLit` to create some form of list/array object.
+	// We'll need a basic `Array` object in `object.go`.
+	//
+	// For now, let's assume the arguments passed to `builtinStringsJoin` are already evaluated.
+	// The first argument *should* be an Array object.
+	// Since Array object is not implemented, this will fail or require a placeholder.
+	//
+	// Let's adjust the expectation for `strings.Join` for this step to be simpler,
+	// avoiding the immediate need for full Array implementation.
+	// Assume `strings.Join` will take a varidic number of string arguments followed by a separator.
+	// e.g. `strings.Join("a", "b", "c", ",")` -> "a,b,c"
+	// This is not standard Go `strings.Join` but is achievable now.
+	// Or, stick to the plan and defer proper handling to the test phase, which will force Array implementation.
+	//
+	// The plan says: "strings.Join([]string{\"a\", \"b\", \"c\"}, \",\") -> \"a,b,c\" (ただし、minigo で配列をどう表現するかを先に検討する必要があります...)"
+	// This means we should anticipate needing a basic Array.
+	//
+	// Let's proceed with a temporary, limited `builtinStringsJoin` that expects specific argument types
+	// and structure, acknowledging it will need to be improved when Array types are added.
+	// For now, to make *any* progress, we'll assume the first argument is a *String
+	// where the Value is a comma-separated list of elements, and the second arg is the separator.
+	// This is a significant simplification.
+	//
+	// Acknowledging the above, let's try to implement based on what the test will likely provide.
+	// The test will likely try to evaluate `[]string{"a", "b"}`. This needs `ast.CompositeLit` handling in `eval`.
+	//
+	// Simplification for this step: `strings.Join` will take exactly two *String arguments.
+	// The first string's `Value` is assumed to be a pre-joined string of elements using a default separator (e.g., space),
+	// and the second string is the *new* separator. This is not `strings.Join`'s behavior.
+	//
+	// Let's try to make it slightly more robust for the test structure:
+	// We need to handle `ast.CompositeLit` in `eval` to produce an `Array` object.
+	// So, first, add a basic `Array` object to `object.go`.
+
+	// This implementation of builtinStringsJoin assumes the first argument has been evaluated to an ArrayObject.
+	// This part of the plan ("CallExpr の実装と fmt, strings パッケージ関数の限定的サポート")
+	// might need to be deferred or simplified if ArrayObject implementation is too complex for this single step.
+
+	// Given the prompt's focus on `fmt` and `strings` *limitedly*,
+	// we'll make `strings.Join` expect its arguments already be minigo String objects.
+	// The test for `strings.Join([]string{"a", "b"}, ",")` will require `eval` to handle CompositeLit.
+	// This is a dependency.
+
+	// For now, let's assume args[0] is an Array object (to be implemented).
+	// If not, this function will error. This makes the need for Array explicit.
+	arr, ok := args[0].(*Array) // Assuming Array type exists
+	if !ok {
+		// Temporary fallback for testing if Array is not ready:
+		// If it's a string, assume it's a placeholder for elements "e1 e2 e3"
+		if strElements, okStr := args[0].(*String); okStr {
+			sepObj, okSep := args[1].(*String)
+			if !okSep {
+				return nil, fmt.Errorf("strings.Join: second argument must be a string separator, got %s", args[1].Type())
+			}
+			// This is a placeholder behavior: split the string by space and join with new separator
+			elements := strings.Split(strElements.Value, " ")
+			return &String{Value: strings.Join(elements, sepObj.Value)}, nil
+		}
+		return nil, fmt.Errorf("strings.Join: first argument must be an array (or a placeholder string for now), got %s", args[0].Type())
+	}
+
+	sep, ok := args[1].(*String)
+	if !ok {
+		return nil, fmt.Errorf("strings.Join: second argument must be a string separator, got %s", args[1].Type())
+	}
+
+	if len(arr.Elements) == 0 {
+		return &String{Value: ""}, nil
+	}
+
+	strElements := make([]string, len(arr.Elements))
+	for i, el := range arr.Elements {
+		sEl, ok := el.(*String)
+		if !ok {
+			return nil, fmt.Errorf("strings.Join: all elements in the array must be strings, got %s", el.Type())
+		}
+		strElements[i] = sEl.Value
+	}
+
+	return &String{Value: strings.Join(strElements, sep.Value)}, nil
+}
+
+func builtinStringsToUpper(args ...Object) (Object, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("strings.ToUpper: expected 1 argument, got %d", len(args))
+	}
+	s, ok := args[0].(*String)
+	if !ok {
+		return nil, fmt.Errorf("strings.ToUpper: argument must be a string, got %s", args[0].Type())
+	}
+	return &String{Value: strings.ToUpper(s.Value)}, nil
+}
+
+func builtinStringsTrimSpace(args ...Object) (Object, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("strings.TrimSpace: expected 1 argument, got %d", len(args))
+	}
+	s, ok := args[0].(*String)
+	if !ok {
+		return nil, fmt.Errorf("strings.TrimSpace: argument must be a string, got %s", args[0].Type())
+	}
+	return &String{Value: strings.TrimSpace(s.Value)}, nil
 }

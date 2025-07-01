@@ -1,6 +1,10 @@
 package main
 
-import "fmt"
+import (
+	"bytes"
+	"fmt"
+	"strings"
+)
 
 // ObjectType is a string representation of an object's type.
 type ObjectType string
@@ -13,8 +17,9 @@ const (
 	NULL_OBJ         ObjectType = "NULL"         // Example for future use
 	RETURN_VALUE_OBJ ObjectType = "RETURN_VALUE" // Special type to wrap return values
 	ERROR_OBJ        ObjectType = "ERROR"        // To wrap errors as objects
-	// FUNCTION_OBJ     // For user-defined functions
-	// BUILTIN_OBJ      // For built-in functions
+	FUNCTION_OBJ     ObjectType = "FUNCTION"     // For user-defined functions
+	BUILTIN_OBJ      ObjectType = "BUILTIN"      // For built-in functions
+	ARRAY_OBJ        ObjectType = "ARRAY"        // For array/slice objects
 )
 
 // Object is the interface that all value types in our interpreter will implement.
@@ -102,6 +107,15 @@ func (s *String) Compare(other Object) (int, error) {
 	return 0, nil
 }
 
+// Add performs string concatenation.
+func (s *String) Add(other Object) (Object, error) {
+	otherStr, ok := other.(*String)
+	if !ok {
+		return nil, fmt.Errorf("type mismatch: cannot concatenate %s with %s", s.Type(), other.Type())
+	}
+	return &String{Value: s.Value + otherStr.Value}, nil
+}
+
 // TODO:
 // - Implement other object types: Integer, Boolean, Null, Array, Hash, Function, etc.
 // - Implement operations for these types (e.g., arithmetic for Integers, logical for Booleans).
@@ -109,3 +123,35 @@ func (s *String) Compare(other Object) (int, error) {
 // - Implement `ReturnValue` and `Error` wrapper objects for flow control and error handling.
 // - Implement `Hashable` interface for objects that can be keys in a hash map.
 // - Implement `Callable` interface for function objects.
+
+// --- Builtin Function Object ---
+
+// BuiltinFunction defines the signature of a built-in function.
+// It takes a variable number of Object arguments and returns an Object or an error.
+type BuiltinFunction func(args ...Object) (Object, error)
+
+// Builtin wraps a BuiltinFunction and implements the Object interface.
+type Builtin struct {
+	Fn BuiltinFunction
+}
+
+func (b *Builtin) Type() ObjectType { return BUILTIN_OBJ }
+func (b *Builtin) Inspect() string  { return "builtin function" } // How it's represented if printed
+
+// --- Array Object ---
+type Array struct {
+	Elements []Object
+}
+
+func (ao *Array) Type() ObjectType { return ARRAY_OBJ }
+func (ao *Array) Inspect() string {
+	var out bytes.Buffer
+	elements := []string{}
+	for _, e := range ao.Elements {
+		elements = append(elements, e.Inspect())
+	}
+	out.WriteString("[")
+	out.WriteString(strings.Join(elements, ", "))
+	out.WriteString("]")
+	return out.String()
+}

@@ -656,6 +656,11 @@ func TestErrorHandling(t *testing.T) {
 		{"-true", "unsupported type for negation: BOOLEAN"}, // Error for unary minus on boolean
 		{"!10", "unsupported type for logical NOT: INTEGER"},   // Error for unary not on integer
 		{"1 + \"2\"", "type mismatch or unsupported operation for binary expression: INTEGER + STRING"},
+		{`fmt.Sprintf("%d %s", 1, true)`, "fmt.Sprintf: unsupported argument type BOOLEAN"}, // Test Sprintf with wrong arg type
+		{`strings.Join(123, ",")`, "strings.Join: first argument must be an array (or a placeholder string for now), got INTEGER"}, // Test Join with wrong arg type
+		{`strings.ToUpper(1)`, "strings.ToUpper: argument must be a string, got INTEGER"},
+		{`strings.TrimSpace(true)`, "strings.TrimSpace: argument must be a string, got BOOLEAN"},
+
 	}
 
 	for _, tt := range tests {
@@ -666,6 +671,56 @@ func TestErrorHandling(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), tt.expectedMsg) {
 				t.Errorf("expected error message containing '%s', got '%s' for '%s'", tt.expectedMsg, err.Error(), tt.input)
+			}
+		})
+	}
+}
+
+func TestStringOperations(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		// String concatenation
+		{`"hello" + " " + "world"`, "hello world"},
+		{`"a" + "b" + "c"`, "abc"},
+		{`"" + ""`, ""},
+		// fmt.Sprintf
+		{`fmt.Sprintf("Hello, %s!", "World")`, "Hello, World!"},
+		{`fmt.Sprintf("Value: %d", 123)`, "Value: 123"},
+		{`fmt.Sprintf("%s %d %s", "test", 42, "end")`, "test 42 end"},
+		{`fmt.Sprintf("No args")`, "No args"},
+		// strings.Join
+		// Note: The AST for `[]string{"a", "b", "c"}` is an ast.CompositeLit.
+		// testEval needs to correctly parse this. parser.ParseExpr can parse composite literals.
+		{`strings.Join([]string{"a", "b", "c"}, ",")`, "a,b,c"},
+		{`strings.Join([]string{"first"}, ", ")`, "first"},
+		{`strings.Join([]string{}, ",")`, ""}, // Empty array
+		{`strings.Join([]string{"x", "y"}, "")`, "xy"}, // Empty separator
+		// strings.ToUpper
+		{`strings.ToUpper("hello")`, "HELLO"},
+		{`strings.ToUpper("")`, ""},
+		{`strings.ToUpper("MixedCase123")`, "MIXEDCASE123"},
+		// strings.TrimSpace
+		{`strings.TrimSpace("  hello world  ")`, "hello world"},
+		{`strings.TrimSpace("hello")`, "hello"},
+		{`strings.TrimSpace("")`, ""},
+		{`strings.TrimSpace("   ")`, ""},
+		{`strings.TrimSpace("\t\n hello \v\f\r ")`, "hello"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			evaluated, err := testEval(t, tt.input)
+			if err != nil {
+				t.Fatalf("eval failed for '%s': %v", tt.input, err)
+			}
+			str, ok := evaluated.(*String)
+			if !ok {
+				t.Fatalf("expected String object, got %T (%+v) for '%s'", evaluated, evaluated, tt.input)
+			}
+			if str.Value != tt.expected {
+				t.Errorf("expected '%s', got '%s' for '%s'", tt.expected, str.Value, tt.input)
 			}
 		})
 	}

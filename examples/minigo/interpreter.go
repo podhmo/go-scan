@@ -1,13 +1,60 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"os"
 	"strconv"
+	"strings"
 	// "github.com/go-scan/go-scan/scanner" // For more detailed error reporting later
 )
+
+// formatErrorWithContext creates a detailed error message including file, line, column, and source code.
+func formatErrorWithContext(fset *token.FileSet, pos token.Pos, originalErr error, customMsg string) error {
+	if pos == token.NoPos {
+		if customMsg != "" {
+			return fmt.Errorf("%s: %w", customMsg, originalErr)
+		}
+		return originalErr
+	}
+
+	position := fset.Position(pos)
+	filename := position.Filename
+	line := position.Line
+	column := position.Column
+
+	var sourceLine string
+	file, err := os.Open(filename)
+	if err == nil {
+		defer file.Close()
+		scanner := bufio.NewScanner(file)
+		for i := 1; scanner.Scan(); i++ {
+			if i == line {
+				sourceLine = strings.TrimSpace(scanner.Text())
+				break
+			}
+		}
+		if err := scanner.Err(); err != nil {
+			sourceLine = fmt.Sprintf("Error reading source line: %v", err)
+		}
+	} else {
+		sourceLine = fmt.Sprintf("Error opening source file: %v", err)
+	}
+
+	errMsg := fmt.Sprintf("Error in %s at line %d, column %d", filename, line, column)
+	if customMsg != "" {
+		errMsg = fmt.Sprintf("%s: %s", customMsg, errMsg)
+	}
+	if sourceLine != "" {
+		errMsg = fmt.Sprintf("%s\n  Source: %s\n  Details: %v", errMsg, sourceLine, originalErr)
+	} else {
+		errMsg = fmt.Sprintf("%s\n  Details: %v", errMsg, originalErr)
+	}
+	return fmt.Errorf(errMsg)
+}
 
 // parseInt64 is a helper function to parse a string to an int64.
 // It's defined here to keep the main eval function cleaner.
@@ -21,6 +68,7 @@ func parseInt64(s string) (int64, error) {
 // Interpreter holds the state of the interpreter
 type Interpreter struct {
 	globalEnv *Environment // Global environment
+	FileSet   *token.FileSet // FileSet to resolve positions
 }
 
 // NewInterpreter creates a new Interpreter with a global environment
@@ -29,6 +77,7 @@ func NewInterpreter() *Interpreter {
 	env := NewEnvironment(nil)
 	i := &Interpreter{
 		globalEnv: env,
+		FileSet:   token.NewFileSet(),
 	}
 
 	// Register built-in functions
@@ -47,10 +96,13 @@ func NewInterpreter() *Interpreter {
 
 // LoadAndRun loads a Go source file, parses it, and runs the specified entry point function.
 func (i *Interpreter) LoadAndRun(filename string, entryPoint string) error {
-	fset := token.NewFileSet()
-	node, err := parser.ParseFile(fset, filename, nil, parser.ParseComments)
+	node, err := parser.ParseFile(i.FileSet, filename, nil, parser.ParseComments)
 	if err != nil {
-		return fmt.Errorf("error parsing file %s: %w", filename, err)
+		// For parsing errors, pos might not be available or relevant in the same way.
+		// We'll use token.NoPos to indicate that formatErrorWithContext should use default formatting.
+		// Or, if parser.ParseFile returns an error that includes position, we could try to extract it.
+		// For now, let's keep it simple.
+		return formatErrorWithContext(i.FileSet, token.NoPos, err, fmt.Sprintf("Error parsing file %s", filename))
 	}
 
 	// Process top-level declarations, particularly global variables.
@@ -67,14 +119,16 @@ func (i *Interpreter) LoadAndRun(filename string, entryPoint string) error {
 			_, err := i.eval(tempDeclStmt, i.globalEnv) // Evaluate VAR declaration in global scope
 			if err != nil {
 				// An error here means a global variable declaration failed.
-				return fmt.Errorf("error evaluating global variable declaration at %d: %w", genDecl.Pos(), err)
+				return formatErrorWithContext(i.FileSet, genDecl.Pos(), err, "Error evaluating global variable declaration")
 			}
 		}
 	}
 
 	entryFunc := findFunction(node, entryPoint)
 	if entryFunc == nil {
-		return fmt.Errorf("entry point function '%s' not found in %s", entryPoint, filename)
+		// For "entry point not found", there isn't a specific AST node position.
+		// We use token.NoPos. The filename context is still useful.
+		return formatErrorWithContext(i.FileSet, token.NoPos, fmt.Errorf("entry point function '%s' not found", entryPoint), "Setup error")
 	}
 
 	// Each run of a function gets its own environment, enclosed by the global one.
@@ -113,7 +167,10 @@ func (i *Interpreter) eval(node ast.Node, env *Environment) (Object, error) {
 			if fnDecl, ok := decl.(*ast.FuncDecl); ok && fnDecl.Name.Name == "main" { // simplistic
 				result, err = i.evalBlockStatement(fnDecl.Body, env)
 				if err != nil {
-					return nil, fmt.Errorf("error evaluating main function in file: %w", err)
+					// Assuming the error from evalBlockStatement is already formatted,
+					// or we could wrap it here if it's a generic error.
+					// For now, let's assume it's formatted. If not, this needs i.FileSet and a relevant pos.
+					return nil, err
 				}
 			}
 		}
@@ -126,7 +183,7 @@ func (i *Interpreter) eval(node ast.Node, env *Environment) (Object, error) {
 		return i.eval(n.X, env)
 
 	case *ast.Ident:
-		return evalIdentifier(n, env)
+		return evalIdentifier(n, env, i.FileSet)
 
 	case *ast.BasicLit:
 		switch n.Kind {
@@ -138,11 +195,11 @@ func (i *Interpreter) eval(node ast.Node, env *Environment) (Object, error) {
 			// Integer literal processing
 			val, err := parseInt64(n.Value)
 			if err != nil {
-				return nil, fmt.Errorf("could not parse integer literal %s: %w", n.Value, err)
+				return nil, formatErrorWithContext(i.FileSet, n.Pos(), err, fmt.Sprintf("Could not parse integer literal '%s'", n.Value))
 			}
 			return &Integer{Value: val}, nil
 		default:
-			return nil, fmt.Errorf("unsupported literal type: %s (value: %s)", n.Kind, n.Value)
+			return nil, formatErrorWithContext(i.FileSet, n.Pos(), fmt.Errorf("unsupported literal type: %s", n.Kind), fmt.Sprintf("Unsupported literal value: %s", n.Value))
 		}
 
 	case *ast.DeclStmt:
@@ -173,7 +230,7 @@ func (i *Interpreter) eval(node ast.Node, env *Environment) (Object, error) {
 	// *ast.ForStmt, *ast.ReturnStmt etc.
 
 	default:
-		return nil, fmt.Errorf("unsupported AST node type: %T at %d (value: %+v)", n, n.Pos(), n)
+		return nil, formatErrorWithContext(i.FileSet, n.Pos(), fmt.Errorf("unsupported AST node type: %T", n), fmt.Sprintf("Unsupported AST node value: %+v", n))
 	}
 }
 
@@ -183,7 +240,7 @@ func (i *Interpreter) evalSelectorExpr(node *ast.SelectorExpr, env *Environment)
 	xIdent, ok := node.X.(*ast.Ident)
 	if !ok {
 		// TODO: Handle cases where X is not a simple identifier, e.g., (getPkg()).Sprintf
-		return nil, fmt.Errorf("unsupported selector expression: X is not an identifier, got %T at %d", node.X, node.X.Pos())
+		return nil, formatErrorWithContext(i.FileSet, node.X.Pos(), fmt.Errorf("X is not an identifier, got %T", node.X), "Unsupported selector expression")
 	}
 
 	// Construct the full name, e.g., "fmt.Sprintf"
@@ -197,7 +254,7 @@ func (i *Interpreter) evalSelectorExpr(node *ast.SelectorExpr, env *Environment)
 
 	// If not found, it could be a method call on an object, or a field access,
 	// which are not yet supported in this way for MiniGo.
-	return nil, fmt.Errorf("undefined selector: %s at %d", fullName, node.Pos())
+	return nil, formatErrorWithContext(i.FileSet, node.Pos(), fmt.Errorf("undefined selector: %s", fullName), "")
 }
 
 // evalBlockStatement evaluates a block of statements.
@@ -228,17 +285,17 @@ func (i *Interpreter) evalBlockStatement(block *ast.BlockStmt, env *Environment)
 func (i *Interpreter) evalDeclStmt(declStmt *ast.DeclStmt, env *Environment) (Object, error) {
 	genDecl, ok := declStmt.Decl.(*ast.GenDecl)
 	if !ok {
-		return nil, fmt.Errorf("unsupported declaration type: %T at %d", declStmt.Decl, declStmt.Pos())
+		return nil, formatErrorWithContext(i.FileSet, declStmt.Pos(), fmt.Errorf("unsupported declaration type: %T", declStmt.Decl), "")
 	}
 
 	if genDecl.Tok != token.VAR {
-		return nil, fmt.Errorf("unsupported declaration token: %s (expected VAR) at %d", genDecl.Tok, genDecl.Pos())
+		return nil, formatErrorWithContext(i.FileSet, genDecl.Pos(), fmt.Errorf("unsupported declaration token: %s (expected VAR)", genDecl.Tok), "")
 	}
 
 	for _, spec := range genDecl.Specs {
 		valueSpec, ok := spec.(*ast.ValueSpec)
 		if !ok {
-			return nil, fmt.Errorf("unsupported spec type in var declaration: %T at %d", spec, spec.Pos())
+			return nil, formatErrorWithContext(i.FileSet, spec.Pos(), fmt.Errorf("unsupported spec type in var declaration: %T", spec), "")
 		}
 
 		for idx, nameIdent := range valueSpec.Names {
@@ -246,7 +303,8 @@ func (i *Interpreter) evalDeclStmt(declStmt *ast.DeclStmt, env *Environment) (Ob
 			if len(valueSpec.Values) > idx { // Check if there's an initializer for this var
 				val, err := i.eval(valueSpec.Values[idx], env)
 				if err != nil {
-					return nil, fmt.Errorf("error evaluating value for var %s: %w", varName, err)
+					// Error from i.eval should already be formatted
+					return nil, err
 				}
 				env.Define(varName, val) // Use Define for declarations
 			} else {
@@ -255,14 +313,14 @@ func (i *Interpreter) evalDeclStmt(declStmt *ast.DeclStmt, env *Environment) (Ob
 					// This case (e.g. `var x`) is generally not allowed in Go unless it's a short var declaration
 					// or part of a multi-var block where type can be inferred.
 					// For MiniGo, let's require a type if there's no initializer.
-					return nil, fmt.Errorf("variable '%s' declared without initializer must have a type at %d", varName, valueSpec.Pos())
+					return nil, formatErrorWithContext(i.FileSet, valueSpec.Pos(), fmt.Errorf("variable '%s' declared without initializer must have a type", varName), "")
 				}
 
 				var zeroVal Object
 				typeIdent, ok := valueSpec.Type.(*ast.Ident)
 				if !ok {
 					// TODO: Handle more complex types like arrays, structs if they are added.
-					return nil, fmt.Errorf("unsupported type expression for zero value for variable '%s': %T at %d", varName, valueSpec.Type, valueSpec.Type.Pos())
+					return nil, formatErrorWithContext(i.FileSet, valueSpec.Type.Pos(), fmt.Errorf("unsupported type expression for zero value for variable '%s': %T", varName, valueSpec.Type), "")
 				}
 
 				switch typeIdent.Name {
@@ -273,7 +331,7 @@ func (i *Interpreter) evalDeclStmt(declStmt *ast.DeclStmt, env *Environment) (Ob
 				case "bool": // Assuming "bool" is the type name for our BooleanObject
 					zeroVal = FALSE // Use the global FALSE instance
 				default:
-					return nil, fmt.Errorf("unsupported type '%s' for uninitialized variable '%s' at %d", typeIdent.Name, varName, typeIdent.Pos())
+					return nil, formatErrorWithContext(i.FileSet, typeIdent.Pos(), fmt.Errorf("unsupported type '%s' for uninitialized variable '%s'", typeIdent.Name, varName), "")
 				}
 				env.Define(varName, zeroVal)
 			}
@@ -283,7 +341,7 @@ func (i *Interpreter) evalDeclStmt(declStmt *ast.DeclStmt, env *Environment) (Ob
 }
 
 // evalIdentifier evaluates an identifier (variable lookup).
-func evalIdentifier(ident *ast.Ident, env *Environment) (Object, error) {
+func evalIdentifier(ident *ast.Ident, env *Environment, fset *token.FileSet) (Object, error) {
 	switch ident.Name {
 	case "true":
 		return TRUE, nil
@@ -294,7 +352,7 @@ func evalIdentifier(ident *ast.Ident, env *Environment) (Object, error) {
 		return val, nil
 	}
 	// TODO: Check for built-in functions here if ident.Name matches one.
-	return nil, fmt.Errorf("identifier not found: %s at %d", ident.Name, ident.Pos())
+	return nil, formatErrorWithContext(fset, ident.Pos(), fmt.Errorf("identifier not found: %s", ident.Name), "")
 }
 
 // evalBinaryExpr handles binary expressions like +, -, *, /, ==, !=, <, >.
@@ -311,26 +369,26 @@ func (i *Interpreter) evalBinaryExpr(node *ast.BinaryExpr, env *Environment) (Ob
 	// Handle operations based on the types of left and right operands
 	switch {
 	case left.Type() == STRING_OBJ && right.Type() == STRING_OBJ:
-		return evalStringBinaryExpr(node.Op, left.(*String), right.(*String))
+		return evalStringBinaryExpr(node.Op, left.(*String), right.(*String), i.FileSet, node.Pos())
 	case left.Type() == INTEGER_OBJ && right.Type() == INTEGER_OBJ:
-		return evalIntegerBinaryExpr(node.Op, left.(*Integer), right.(*Integer), node.Pos())
+		return evalIntegerBinaryExpr(node.Op, left.(*Integer), right.(*Integer), i.FileSet, node.Pos())
 	case left.Type() == BOOLEAN_OBJ && right.Type() == BOOLEAN_OBJ:
 		// Only specific operators are defined for booleans. Others lead to type mismatch.
 		if node.Op == token.EQL || node.Op == token.NEQ {
-			return evalBooleanBinaryExpr(node.Op, left.(*Boolean), right.(*Boolean), node.Pos())
+			return evalBooleanBinaryExpr(node.Op, left.(*Boolean), right.(*Boolean), i.FileSet, node.Pos())
 		}
 		// If operator is not == or != for booleans, it's a type mismatch.
-		return nil, fmt.Errorf("type mismatch or unsupported operation for binary expression: %s %s %s at %d",
-			left.Type(), node.Op, right.Type(), node.Pos())
+		return nil, formatErrorWithContext(i.FileSet, node.Pos(),
+			fmt.Errorf("type mismatch or unsupported operation for binary expression: %s %s %s", left.Type(), node.Op, right.Type()), "")
 	default:
 		// This default handles cases where left/right types were not String, Integer, or Boolean pairs.
-		return nil, fmt.Errorf("type mismatch or unsupported operation for binary expression: %s %s %s at %d",
-			left.Type(), node.Op, right.Type(), node.Pos())
+		return nil, formatErrorWithContext(i.FileSet, node.Pos(),
+			fmt.Errorf("type mismatch or unsupported operation for binary expression: %s %s %s", left.Type(), node.Op, right.Type()), "")
 	}
 }
 
 // evalIntegerBinaryExpr handles binary expressions specifically for integers.
-func evalIntegerBinaryExpr(op token.Token, left, right *Integer, pos token.Pos) (Object, error) {
+func evalIntegerBinaryExpr(op token.Token, left, right *Integer, fset *token.FileSet, pos token.Pos) (Object, error) {
 	leftVal := left.Value
 	rightVal := right.Value
 
@@ -343,12 +401,12 @@ func evalIntegerBinaryExpr(op token.Token, left, right *Integer, pos token.Pos) 
 		return &Integer{Value: leftVal * rightVal}, nil
 	case token.QUO: // /
 		if rightVal == 0 {
-			return nil, fmt.Errorf("division by zero at %d", pos)
+			return nil, formatErrorWithContext(fset, pos, fmt.Errorf("division by zero"), "")
 		}
 		return &Integer{Value: leftVal / rightVal}, nil
 	case token.REM: // %
 		if rightVal == 0 {
-			return nil, fmt.Errorf("division by zero (modulo) at %d", pos)
+			return nil, formatErrorWithContext(fset, pos, fmt.Errorf("division by zero (modulo)"), "")
 		}
 		return &Integer{Value: leftVal % rightVal}, nil
 	case token.EQL: // ==
@@ -364,12 +422,12 @@ func evalIntegerBinaryExpr(op token.Token, left, right *Integer, pos token.Pos) 
 	case token.GEQ: // >=
 		return nativeBoolToBooleanObject(leftVal >= rightVal), nil
 	default:
-		return nil, fmt.Errorf("unknown operator for integers: %s at %d", op, pos)
+		return nil, formatErrorWithContext(fset, pos, fmt.Errorf("unknown operator for integers: %s", op), "")
 	}
 }
 
 // evalStringBinaryExpr handles binary expressions specifically for strings.
-func evalStringBinaryExpr(op token.Token, left, right *String) (Object, error) {
+func evalStringBinaryExpr(op token.Token, left, right *String, fset *token.FileSet, pos token.Pos) (Object, error) {
 	switch op {
 	case token.EQL: // ==
 		return nativeBoolToBooleanObject(left.Value == right.Value), nil
@@ -378,12 +436,12 @@ func evalStringBinaryExpr(op token.Token, left, right *String) (Object, error) {
 	case token.ADD: // + for string concatenation
 		return &String{Value: left.Value + right.Value}, nil
 	default:
-		return nil, fmt.Errorf("unknown operator for strings: %s (left: %q, right: %q)", op, left.Value, right.Value)
+		return nil, formatErrorWithContext(fset, pos, fmt.Errorf("unknown operator for strings: %s (left: %q, right: %q)", op, left.Value, right.Value), "")
 	}
 }
 
 // evalBooleanBinaryExpr handles binary expressions specifically for booleans.
-func evalBooleanBinaryExpr(op token.Token, left, right *Boolean, pos token.Pos) (Object, error) {
+func evalBooleanBinaryExpr(op token.Token, left, right *Boolean, fset *token.FileSet, pos token.Pos) (Object, error) {
 	leftVal := left.Value
 	rightVal := right.Value
 
@@ -397,7 +455,7 @@ func evalBooleanBinaryExpr(op token.Token, left, right *Boolean, pos token.Pos) 
 	// These often require short-circuiting, which evalBinaryExpr doesn't do yet.
 	// For now, only == and != are supported for direct boolean comparison.
 	default:
-		return nil, fmt.Errorf("unknown operator for booleans: %s at %d", op, pos)
+		return nil, formatErrorWithContext(fset, pos, fmt.Errorf("unknown operator for booleans: %s", op), "")
 	}
 }
 
@@ -409,7 +467,8 @@ func (i *Interpreter) evalCallExpr(node *ast.CallExpr, env *Environment) (Object
 	// For built-ins like "fmt.Sprintf", this will resolve to an identifier.
 	funcObj, err := i.eval(node.Fun, env)
 	if err != nil {
-		return nil, fmt.Errorf("error evaluating function expression for call at %d: %w", node.Fun.Pos(), err)
+		// Error from i.eval should already be formatted
+		return nil, err
 	}
 
 	// Evaluate arguments from left to right.
@@ -417,7 +476,8 @@ func (i *Interpreter) evalCallExpr(node *ast.CallExpr, env *Environment) (Object
 	for idx, argExpr := range node.Args {
 		argVal, err := i.eval(argExpr, env)
 		if err != nil {
-			return nil, fmt.Errorf("error evaluating argument %d for call at %d: %w", idx, argExpr.Pos(), err)
+			// Error from i.eval should already be formatted
+			return nil, err
 		}
 		args[idx] = argVal
 	}
@@ -445,7 +505,7 @@ func (i *Interpreter) evalCallExpr(node *ast.CallExpr, env *Environment) (Object
 				funcName = xIdent.Name + "." + selExpr.Sel.Name
 			}
 		}
-		return nil, fmt.Errorf("cannot call non-function type %s (for function '%s') at %d", funcObj.Type(), funcName, node.Fun.Pos())
+		return nil, formatErrorWithContext(i.FileSet, node.Fun.Pos(), fmt.Errorf("cannot call non-function type %s (for function '%s')", funcObj.Type(), funcName), "")
 	}
 }
 
@@ -461,21 +521,22 @@ func (i *Interpreter) evalAssignStmt(assignStmt *ast.AssignStmt, env *Environmen
 	if len(assignStmt.Lhs) != 1 || len(assignStmt.Rhs) != 1 {
 		// For now, only support simple single assignment: ident = value
 		// Multiple assignments like a, b = 1, 2 or tuple-like returns are not supported yet.
-		return nil, fmt.Errorf("unsupported assignment: expected 1 expression on LHS and 1 on RHS, got %d and %d at %d",
-			len(assignStmt.Lhs), len(assignStmt.Rhs), assignStmt.Pos())
+		return nil, formatErrorWithContext(i.FileSet, assignStmt.Pos(),
+			fmt.Errorf("unsupported assignment: expected 1 expression on LHS and 1 on RHS, got %d and %d", len(assignStmt.Lhs), len(assignStmt.Rhs)), "")
 	}
 
 	lhs := assignStmt.Lhs[0]
 	ident, ok := lhs.(*ast.Ident)
 	if !ok {
 		// TODO: Support assignments to array elements (e.g., arr[0] = 1) or struct fields (e.g., obj.field = 1) later.
-		return nil, fmt.Errorf("unsupported assignment LHS: expected identifier, got %T at %d", lhs, lhs.Pos())
+		return nil, formatErrorWithContext(i.FileSet, lhs.Pos(), fmt.Errorf("unsupported assignment LHS: expected identifier, got %T", lhs), "")
 	}
 	varName := ident.Name
 
 	// Evaluate the right-hand side to get the value
 	val, err := i.eval(assignStmt.Rhs[0], env)
 	if err != nil {
+		// Error from i.eval should already be formatted
 		return nil, err
 	}
 
@@ -486,7 +547,7 @@ func (i *Interpreter) evalAssignStmt(assignStmt *ast.AssignStmt, env *Environmen
 			// This behavior matches Go: using += on an undeclared variable is an error.
 			// "identifier not found" would be caught by Get if we tried to use it.
 			// If it's a new variable, += is not allowed; must be initialized with = first.
-			return nil, fmt.Errorf("cannot use %s on undeclared variable '%s' at %d", assignStmt.Tok, varName, ident.Pos())
+			return nil, formatErrorWithContext(i.FileSet, ident.Pos(), fmt.Errorf("cannot use %s on undeclared variable '%s'", assignStmt.Tok, varName), "")
 		}
 
 		// Perform the binary operation for augmented assignment
@@ -511,7 +572,7 @@ func (i *Interpreter) evalAssignStmt(assignStmt *ast.AssignStmt, env *Environmen
 			op = token.REM
 		// TODO: Add bitwise operators like &=, |=, ^=, <<=, >>= if the language supports them.
 		default:
-			return nil, fmt.Errorf("unsupported assignment operator %s at %d", assignStmt.Tok, assignStmt.Pos())
+			return nil, formatErrorWithContext(i.FileSet, assignStmt.Pos(), fmt.Errorf("unsupported assignment operator %s", assignStmt.Tok), "")
 		}
 
 		// Simulate a binary expression: existingVal op val
@@ -528,29 +589,29 @@ func (i *Interpreter) evalAssignStmt(assignStmt *ast.AssignStmt, env *Environmen
 					val = &Integer{Value: existingInt.Value * valInt.Value}
 				case token.QUO:
 					if valInt.Value == 0 {
-						return nil, fmt.Errorf("division by zero in %s at %d", assignStmt.Tok, assignStmt.Pos())
+						return nil, formatErrorWithContext(i.FileSet, assignStmt.Pos(), fmt.Errorf("division by zero in %s", assignStmt.Tok), "")
 					}
 					val = &Integer{Value: existingInt.Value / valInt.Value}
 				case token.REM:
 					if valInt.Value == 0 {
-						return nil, fmt.Errorf("division by zero (modulo) in %s at %d", assignStmt.Tok, assignStmt.Pos())
+						return nil, formatErrorWithContext(i.FileSet, assignStmt.Pos(), fmt.Errorf("division by zero (modulo) in %s", assignStmt.Tok), "")
 					}
 					val = &Integer{Value: existingInt.Value % valInt.Value}
 				default:
-					return nil, fmt.Errorf("unsupported operator %s for augmented integer assignment at %d", op, assignStmt.Pos())
+					return nil, formatErrorWithContext(i.FileSet, assignStmt.Pos(), fmt.Errorf("unsupported operator %s for augmented integer assignment", op), "")
 				}
 			} else {
-				return nil, fmt.Errorf("type mismatch for %s: existing value is INTEGER, new value is %s at %d", assignStmt.Tok, val.Type(), assignStmt.Pos())
+				return nil, formatErrorWithContext(i.FileSet, assignStmt.Pos(), fmt.Errorf("type mismatch for %s: existing value is INTEGER, new value is %s", assignStmt.Tok, val.Type()), "")
 			}
 		} else if existingString, okE := existingVal.(*String); okE && op == token.ADD { // String concatenation +=
 			if valString, okV := val.(*String); okV {
 				val = &String{Value: existingString.Value + valString.Value}
 			} else {
-				return nil, fmt.Errorf("type mismatch for string concatenation (+=): existing value is STRING, new value is %s at %d", val.Type(), assignStmt.Pos())
+				return nil, formatErrorWithContext(i.FileSet, assignStmt.Pos(), fmt.Errorf("type mismatch for string concatenation (+=): existing value is STRING, new value is %s", val.Type()), "")
 			}
 		} else {
 			// TODO: Handle other types for augmented assignment if necessary
-			return nil, fmt.Errorf("unsupported type %s for augmented assignment operator %s at %d", existingVal.Type(), assignStmt.Tok, assignStmt.Pos())
+			return nil, formatErrorWithContext(i.FileSet, assignStmt.Pos(), fmt.Errorf("unsupported type %s for augmented assignment operator %s", existingVal.Type(), assignStmt.Tok), "")
 		}
 	}
 
@@ -562,7 +623,7 @@ func (i *Interpreter) evalAssignStmt(assignStmt *ast.AssignStmt, env *Environmen
 	// The current `Environment.Set` updates if found, otherwise sets in current env. This is fine.
 	// env.Set(varName, val) // Old call
 	if _, ok := env.Assign(varName, val); !ok {
-		return nil, fmt.Errorf("cannot assign to undeclared variable '%s' at %d", varName, ident.Pos())
+		return nil, formatErrorWithContext(i.FileSet, ident.Pos(), fmt.Errorf("cannot assign to undeclared variable '%s'", varName), "")
 	}
 
 	// Assignment statement itself does not produce a value in many languages (e.g., Go).
@@ -580,8 +641,8 @@ func (i *Interpreter) evalIfStmt(ifStmt *ast.IfStmt, env *Environment) (Object, 
 	// Check if the condition is a Boolean object
 	boolCond, ok := condition.(*Boolean)
 	if !ok {
-		return nil, fmt.Errorf("condition for if statement must be a boolean, got %s (type: %s) at %d",
-			condition.Inspect(), condition.Type(), ifStmt.Cond.Pos())
+		return nil, formatErrorWithContext(i.FileSet, ifStmt.Cond.Pos(),
+			fmt.Errorf("condition for if statement must be a boolean, got %s (type: %s)", condition.Inspect(), condition.Type()), "")
 	}
 
 	if boolCond.Value { // If condition is true
@@ -610,7 +671,7 @@ func (i *Interpreter) evalUnaryExpr(node *ast.UnaryExpr, env *Environment) (Obje
 			value := operand.(*Integer).Value
 			return &Integer{Value: -value}, nil
 		}
-		return nil, fmt.Errorf("unsupported type for negation: %s at %d", operand.Type(), node.Pos())
+		return nil, formatErrorWithContext(i.FileSet, node.Pos(), fmt.Errorf("unsupported type for negation: %s", operand.Type()), "")
 	case token.NOT: // Logical not !
 		// In Go, '!' is used for boolean negation.
 		// Our Boolean object has TRUE and FALSE singletons.
@@ -623,9 +684,9 @@ func (i *Interpreter) evalUnaryExpr(node *ast.UnaryExpr, env *Environment) (Obje
 			// Following typical dynamic language behavior, often only 'false' and 'null' are falsy.
 			// Everything else is truthy. Or we can be strict.
 			// For now, strict: only operate on actual Boolean objects.
-			return nil, fmt.Errorf("unsupported type for logical NOT: %s at %d", operand.Type(), node.Pos())
+			return nil, formatErrorWithContext(i.FileSet, node.Pos(), fmt.Errorf("unsupported type for logical NOT: %s", operand.Type()), "")
 		}
 	default:
-		return nil, fmt.Errorf("unsupported unary operator: %s at %d", node.Op, node.Pos())
+		return nil, formatErrorWithContext(i.FileSet, node.Pos(), fmt.Errorf("unsupported unary operator: %s", node.Op), "")
 	}
 }

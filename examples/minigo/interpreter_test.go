@@ -174,6 +174,107 @@ func main() {
 	}
 }
 
+func TestFormattedErrorHandling(t *testing.T) {
+	tests := []struct {
+		name           string
+		source         string
+		expectedMsg    []string // Substrings of the expected error message, including file, line, source
+		entryPoint     string   // Entry point function for LoadAndRun
+		skipSourceLineCheck bool // Skip checking the source line if it's too volatile or hard to pin down
+	}{
+		{
+			name: "division by zero with context",
+			source: `
+package main
+func main() {
+	a := 10
+	b := 0
+	c := a / b // Error on this line
+}`,
+			entryPoint:  "main",
+			expectedMsg: []string{"division by zero", "c := a / b", "line 6"}, // Filename will vary
+		},
+		{
+			name: "undefined variable with context",
+			source: `
+package main
+func main() {
+	x := y + 1 // Error: y is not defined
+}`,
+			entryPoint:  "main",
+			expectedMsg: []string{"identifier not found: y", "x := y + 1", "line 4"},
+		},
+		{
+			name: "type mismatch in binary operation with context",
+			source: `
+package main
+func main() {
+	a := 10
+	s := "hello"
+	r := a + s // Error: type mismatch
+}`,
+			entryPoint:  "main",
+			expectedMsg: []string{"type mismatch or unsupported operation", "INTEGER + STRING", "r := a + s", "line 6"},
+		},
+		{
+			name: "calling non-function with context",
+			source: `
+package main
+func main() {
+	x := 123
+	x() // Error: x is not a function
+}`,
+			entryPoint:  "main",
+			expectedMsg: []string{"cannot call non-function type INTEGER", "x()", "line 5"},
+		},
+		{
+			name: "if condition not boolean",
+			source: `
+package main
+func main() {
+	if 123 { // Error: condition not boolean
+		_ = "hello"
+	}
+}`,
+			entryPoint:  "main",
+			expectedMsg: []string{"condition for if statement must be a boolean", "if 123", "line 4"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			filename := createTempFile(t, tt.source)
+			defer os.Remove(filename)
+
+			interpreter := NewInterpreter()
+			err := interpreter.LoadAndRun(filename, tt.entryPoint)
+
+			if err == nil {
+				t.Fatalf("expected error for test '%s', but got nil", tt.name)
+			}
+
+			errMsg := err.Error()
+			// Check for filename (which is dynamic)
+			if !strings.Contains(errMsg, filename) {
+				t.Errorf("Expected error message to contain filename '%s', but got: %s", filename, errMsg)
+			}
+
+			for _, expectedSubstr := range tt.expectedMsg {
+				if strings.HasPrefix(expectedSubstr, "line ") && tt.skipSourceLineCheck {
+					// If we skip source line check, we might also need to be careful about line numbers if they can shift.
+					// However, the "line X" part is usually stable if the source doesn't change.
+				} else if strings.Contains(expectedSubstr, "Source: ") && tt.skipSourceLineCheck {
+					continue // Skip checking the source line itself
+				}
+
+				if !strings.Contains(errMsg, expectedSubstr) {
+					t.Errorf("Expected error message for '%s' to contain '%s', but got: %s", tt.name, expectedSubstr, errMsg)
+				}
+			}
+		})
+	}
+}
+
 func TestStringConcatenation(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -829,9 +930,9 @@ func TestErrorHandling(t *testing.T) {
 		{"fmt.Sprintf()", "fmt.Sprintf expects at least one argument"},                                   // Not enough args for Sprintf
 		{"fmt.Sprintf(1)", "first argument to fmt.Sprintf must be a STRING, got INTEGER"},               // Wrong type for Sprintf format string
 		// {"fmt.Sprintf(\"%s %d\", \"hello\", true)", "unsupported type BOOLEAN for fmt.Sprintf argument"}, // This now returns a formatted error string, not an interpreter error. Moved to TestFmtSprintf.
-		{"strings.Join()", "strings.Join expects at least two arguments"},                               // Not enough for Join (our convention)
-		{"strings.Join(\"a\")", "strings.Join expects at least two arguments"},                          // Still not enough for Join
-		{"strings.Join(1, \",\")", "argument 0 to strings.Join (element to join) must be a STRING"},     // Wrong type for Join element
+		{"strings.Join()", "strings.Join expects at least two arguments"},                               // Not enough for Join (our convention) // TODO: Update for new error format
+		{"strings.Join(\"a\")", "strings.Join expects at least two arguments"},                          // Still not enough for Join // TODO: Update for new error format
+		{"strings.Join(1, \",\")", "argument 0 to strings.Join (element to join) must be a STRING"},     // Wrong type for Join element // TODO: Update for new error format
 		{"strings.Join(\"a\", 1)", "last argument to strings.Join (separator) must be a STRING"},       // Wrong type for Join separator
 		{"NonExistentFunc()", "identifier not found: NonExistentFunc"},                                  // Calling non-existent function
 		// {"x = 1; x()", "cannot call non-function type INTEGER"}, // This test case is complex for testEval

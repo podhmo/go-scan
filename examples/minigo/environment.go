@@ -44,6 +44,13 @@ func (e *Environment) Assign(name string, val Object) (Object, bool) {
 	return nil, false // Variable not found in any scope
 }
 
+// ExistsInCurrentScope checks if a name is defined in the current environment's store.
+// It does not check outer scopes.
+func (e *Environment) ExistsInCurrentScope(name string) bool {
+	_, ok := e.store[name]
+	return ok
+}
+
 // TODO:
 // - Constant handling.
 // - Constant handling.

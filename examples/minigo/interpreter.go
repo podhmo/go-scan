@@ -584,12 +584,47 @@ func (i *Interpreter) evalAssignStmt(assignStmt *ast.AssignStmt, env *Environmen
 		return nil, err
 	}
 
-	if assignStmt.Tok != token.ASSIGN {
+	switch assignStmt.Tok {
+	case token.DEFINE: // :=
+		// Check if variable already exists in the current scope (not outer)
+		// For simplicity, MiniGo's env.Get checks all scopes.
+		// A strict `:=` would error if `env.GetInCurrentScope(varName)` is true.
+		// Our current Environment doesn't distinguish Get from current vs outer for this check easily.
+		// So, we'll rely on Define to implicitly handle this "new variable" nature.
+		// If Define were to allow re-definition in the same scope, this would be wrong.
+		// Let's assume Define in the same scope is like an assignment,
+		// or we need a way to check "exists in current scope only".
+		// For MiniGo's purpose, `:=` should always create a new variable.
+		// If `env.Get(varName)` returns true, it means it exists somewhere.
+		// Go's `:=` allows shadowing. If `varName` exists in an outer scope, `:=` creates a new one in the current scope.
+		// If `varName` exists in the current scope, `:=` is an error ("no new variables on left side of :=").
+
+		// Simplified check: if it exists at all and we try to `:=`, it's an error if we don't allow shadowing.
+		// Our `env.Define` effectively shadows if called in a nested environment.
+		// If in the *same* environment, `env.Define` overwrites.
+		// This part needs care.
+		// For `:=`, it must define a *new* variable.
+		// Go rule: "no new variables on left side of :=" means at least one variable on LHS must be new in the current block.
+		// Since we only support single var LHS for now:
+		if env.ExistsInCurrentScope(varName) {
+			return nil, formatErrorWithContext(i.FileSet, ident.Pos(), fmt.Errorf("no new variables on left side of := (variable '%s' already declared in this scope)", varName), "")
+		}
+		env.Define(varName, val) // Define in current environment
+		return nil, nil
+
+	case token.ASSIGN: // =
+		if _, ok := env.Assign(varName, val); !ok {
+			return nil, formatErrorWithContext(i.FileSet, ident.Pos(), fmt.Errorf("cannot assign to undeclared variable '%s'", varName), "")
+		}
+		return nil, nil
+
+	default: // Augmented assignments: +=, -=, etc.
 		existingVal, ok := env.Get(varName)
 		if !ok {
 			return nil, formatErrorWithContext(i.FileSet, ident.Pos(), fmt.Errorf("cannot use %s on undeclared variable '%s'", assignStmt.Tok, varName), "")
 		}
 
+		// Determine the binary operation token corresponding to the assignment token
 		var op token.Token
 		switch assignStmt.Tok {
 		case token.ADD_ASSIGN:
@@ -606,46 +641,47 @@ func (i *Interpreter) evalAssignStmt(assignStmt *ast.AssignStmt, env *Environmen
 			return nil, formatErrorWithContext(i.FileSet, assignStmt.Pos(), fmt.Errorf("unsupported assignment operator %s", assignStmt.Tok), "")
 		}
 
-		if existingInt, okE := existingVal.(*Integer); okE {
-			if valInt, okV := val.(*Integer); okV {
-				switch op {
-				case token.ADD:
-					val = &Integer{Value: existingInt.Value + valInt.Value}
-				case token.SUB:
-					val = &Integer{Value: existingInt.Value - valInt.Value}
-				case token.MUL:
-					val = &Integer{Value: existingInt.Value * valInt.Value}
-				case token.QUO:
-					if valInt.Value == 0 {
-						return nil, formatErrorWithContext(i.FileSet, assignStmt.Pos(), fmt.Errorf("division by zero in %s", assignStmt.Tok), "")
-					}
-					val = &Integer{Value: existingInt.Value / valInt.Value}
-				case token.REM:
-					if valInt.Value == 0 {
-						return nil, formatErrorWithContext(i.FileSet, assignStmt.Pos(), fmt.Errorf("division by zero (modulo) in %s", assignStmt.Tok), "")
-					}
-					val = &Integer{Value: existingInt.Value % valInt.Value}
-				default:
-					return nil, formatErrorWithContext(i.FileSet, assignStmt.Pos(), fmt.Errorf("unsupported operator %s for augmented integer assignment", op), "")
+		// Perform the operation based on type
+		var resultVal Object
+		var evalErr error
+
+		switch eVal := existingVal.(type) {
+		case *Integer:
+			if vInt, okV := val.(*Integer); okV {
+				// Use evalIntegerBinaryExpr for the core logic to avoid duplication
+				tempBinExprResult, binErr := evalIntegerBinaryExpr(op, eVal, vInt, i.FileSet, assignStmt.Pos())
+				if binErr != nil {
+					return nil, formatErrorWithContext(i.FileSet, assignStmt.Pos(), binErr, fmt.Sprintf("error in augmented assignment %s for variable '%s'", assignStmt.Tok, varName))
+				}
+				resultVal = tempBinExprResult
+			} else {
+				evalErr = formatErrorWithContext(i.FileSet, assignStmt.Pos(), fmt.Errorf("type mismatch for %s: existing value is INTEGER, new value is %s", assignStmt.Tok, val.Type()), "")
+			}
+		case *String:
+			if op == token.ADD { // Only += is supported for strings
+				if vStr, okV := val.(*String); okV {
+					resultVal = &String{Value: eVal.Value + vStr.Value}
+				} else {
+					evalErr = formatErrorWithContext(i.FileSet, assignStmt.Pos(), fmt.Errorf("type mismatch for string concatenation (+=): existing value is STRING, new value is %s", val.Type()), "")
 				}
 			} else {
-				return nil, formatErrorWithContext(i.FileSet, assignStmt.Pos(), fmt.Errorf("type mismatch for %s: existing value is INTEGER, new value is %s", assignStmt.Tok, val.Type()), "")
+				evalErr = formatErrorWithContext(i.FileSet, assignStmt.Pos(), fmt.Errorf("unsupported operator %s for augmented string assignment (only += is allowed)", assignStmt.Tok), "")
 			}
-		} else if existingString, okE := existingVal.(*String); okE && op == token.ADD {
-			if valString, okV := val.(*String); okV {
-				val = &String{Value: existingString.Value + valString.Value}
-			} else {
-				return nil, formatErrorWithContext(i.FileSet, assignStmt.Pos(), fmt.Errorf("type mismatch for string concatenation (+=): existing value is STRING, new value is %s", val.Type()), "")
-			}
-		} else {
-			return nil, formatErrorWithContext(i.FileSet, assignStmt.Pos(), fmt.Errorf("unsupported type %s for augmented assignment operator %s", existingVal.Type(), assignStmt.Tok), "")
+		default:
+			evalErr = formatErrorWithContext(i.FileSet, assignStmt.Pos(), fmt.Errorf("unsupported type %s for augmented assignment operator %s on variable '%s'", existingVal.Type(), assignStmt.Tok, varName), "")
 		}
-	}
 
-	if _, ok := env.Assign(varName, val); !ok {
-		return nil, formatErrorWithContext(i.FileSet, ident.Pos(), fmt.Errorf("cannot assign to undeclared variable '%s'", varName), "")
+		if evalErr != nil {
+			return nil, evalErr
+		}
+
+		// Assign the new value back to the variable
+		if _, ok := env.Assign(varName, resultVal); !ok {
+			// This should not happen if the variable was successfully fetched earlier
+			return nil, formatErrorWithContext(i.FileSet, ident.Pos(), fmt.Errorf("internal error: failed to assign back to variable '%s' after augmented assignment", varName), "")
+		}
+		return nil, nil
 	}
-	return nil, nil
 }
 
 func (i *Interpreter) evalIfStmt(ifStmt *ast.IfStmt, env *Environment) (Object, error) {
@@ -661,9 +697,21 @@ func (i *Interpreter) evalIfStmt(ifStmt *ast.IfStmt, env *Environment) (Object, 
 	}
 
 	if boolCond.Value {
-		return i.evalBlockStatement(ifStmt.Body, env)
+		// If block creates a new scope
+		ifBodyEnv := NewEnvironment(env)
+		return i.evalBlockStatement(ifStmt.Body, ifBodyEnv)
 	} else if ifStmt.Else != nil {
-		return i.eval(ifStmt.Else, env)
+		// Else block also creates a new scope if it's a block statement
+		// If it's another IfStmt (else if), that IfStmt will handle its own scope.
+		switch elseNode := ifStmt.Else.(type) {
+		case *ast.BlockStmt:
+			elseBodyEnv := NewEnvironment(env)
+			return i.evalBlockStatement(elseNode, elseBodyEnv)
+		case *ast.IfStmt: // else if
+			return i.eval(elseNode, env) // The nested if will handle its own new scope creation
+		default: // Should not happen with a valid Go AST for if-else
+			return i.eval(ifStmt.Else, env)
+		}
 	}
 	return nil, nil
 }

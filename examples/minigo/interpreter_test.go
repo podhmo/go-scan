@@ -201,7 +201,7 @@ func secondary() {
 		t.Run(tt.entryPoint, func(t *testing.T) {
 			interpreter := NewInterpreter()
 			// Initialize global var in the interpreter's env for the test to modify
-			interpreter.globalEnv.Set("testGlobalVar", &String{Value: "initial_for_test"})
+			interpreter.globalEnv.Define("testGlobalVar", &String{Value: "initial_for_test"}) // Changed Set to Define
 
 			err := interpreter.LoadAndRun(filename, tt.entryPoint)
 			if tt.expectError {
@@ -369,12 +369,12 @@ func TestStringComparison(t *testing.T) {
 			// This allows test cases like `s1 = "x", s2 = "x", s1 == s2`
 			// where s1 and s2 need to be defined in the environment.
 			if strings.Contains(tt.name, "s1 = \"x\"") { // Simplified check
-				env.Set("s1", &String{Value: "x"})
+				env.Define("s1", &String{Value: "x"}) // Changed Set to Define
 			}
 			if strings.Contains(tt.name, "s2 = \"x\"") { // Simplified check
-				env.Set("s2", &String{Value: "x"})
+				env.Define("s2", &String{Value: "x"}) // Changed Set to Define
 			} else if strings.Contains(tt.name, "s2 = \"y\"") { // Simplified check for s2="y"
-				env.Set("s2", &String{Value: "y"})
+				env.Define("s2", &String{Value: "y"}) // Changed Set to Define
 			}
 			// Note: This pre-population logic is basic. For more complex scenarios,
 			// test cases might need to carry their own setup code or env definitions.
@@ -682,3 +682,290 @@ func TestErrorHandling(t *testing.T) {
 // Test with "077" (old octal) and "0o77" (new octal) to see. `parser.ParseExpr("077")` is fine. `parser.ParseExpr("0o77")` is not.
 // So, for direct `ParseExpr`, stick to hex ("0x...") and standard decimal, and rely on `strconv.ParseInt` for those.
 // The tests for 0o and 0b prefixes are commented out in `TestIntegerLiterals` for this reason.
+
+func TestIfElseStatements(t *testing.T) {
+	tests := []struct {
+		name                      string
+		source                    string
+		entryPoint                string
+		expectedGlobalVarValue    map[string]string // Expected values of specific global variables
+		expectError               bool
+		expectedErrorMsgSubstring string
+	}{
+		{
+			name: "simple if true, modifies global var",
+			source: `
+package main
+var x string = "before"
+func main() {
+	if true {
+		x = "after"
+	}
+}`,
+			entryPoint:             "main",
+			expectedGlobalVarValue: map[string]string{"x": "after"},
+		},
+		{
+			name: "simple if false, global var unchanged",
+			source: `
+package main
+var x string = "before"
+func main() {
+	if false {
+		x = "after" // this should not run
+	}
+}`,
+			entryPoint:             "main",
+			expectedGlobalVarValue: map[string]string{"x": "before"},
+		},
+		{
+			name: "if-else, if branch taken",
+			source: `
+package main
+var x string
+func main() {
+	if true {
+		x = "if_branch"
+	} else {
+		x = "else_branch"
+	}
+}`,
+			entryPoint:             "main",
+			expectedGlobalVarValue: map[string]string{"x": "if_branch"},
+		},
+		{
+			name: "if-else, else branch taken",
+			source: `
+package main
+var x string
+func main() {
+	if false {
+		x = "if_branch"
+	} else {
+		x = "else_branch"
+	}
+}`,
+			entryPoint:             "main",
+			expectedGlobalVarValue: map[string]string{"x": "else_branch"},
+		},
+		{
+			name: "if-else if-else, first if branch",
+			source: `
+package main
+var x string
+func main() {
+	if true {
+		x = "if_branch"
+	} else if true {
+		x = "else_if_branch"
+	} else {
+		x = "else_branch"
+	}
+}`,
+			entryPoint:             "main",
+			expectedGlobalVarValue: map[string]string{"x": "if_branch"},
+		},
+		{
+			name: "if-else if-else, else if branch",
+			source: `
+package main
+var x string
+func main() {
+	if false {
+		x = "if_branch"
+	} else if true {
+		x = "else_if_branch"
+	} else {
+		x = "else_branch"
+	}
+}`,
+			entryPoint:             "main",
+			expectedGlobalVarValue: map[string]string{"x": "else_if_branch"},
+		},
+		{
+			name: "if-else if-else, final else branch",
+			source: `
+package main
+var x string
+func main() {
+	if false {
+		x = "if_branch"
+	} else if false {
+		x = "else_if_branch"
+	} else {
+		x = "else_branch"
+	}
+}`,
+			entryPoint:             "main",
+			expectedGlobalVarValue: map[string]string{"x": "else_branch"},
+		},
+		{
+			name: "if with expression in condition",
+			source: `
+package main
+var a int = 10
+var b int = 5
+var result string
+func main() {
+	if a > b {
+		result = "a_greater"
+	} else {
+		result = "b_greater_or_equal"
+	}
+}`,
+			entryPoint:             "main",
+			expectedGlobalVarValue: map[string]string{"result": "a_greater"},
+		},
+		{
+			name: "if with non-boolean condition (integer), expect error",
+			source: `
+package main
+func main() {
+	if 1 {
+		_ = "unreachable"
+	}
+}`,
+			entryPoint:                "main",
+			expectError:               true,
+			expectedErrorMsgSubstring: "condition for if statement must be a boolean, got 1 (type: INTEGER)",
+		},
+		{
+			name: "if with non-boolean condition (string), expect error",
+			source: `
+package main
+func main() {
+	if "true" {
+		_ = "unreachable"
+	}
+}`,
+			entryPoint:                "main",
+			expectError:               true,
+			expectedErrorMsgSubstring: "condition for if statement must be a boolean, got true (type: STRING)",
+		},
+		{
+			name: "if without else, condition false, no value produced (check side effect)",
+			source: `
+package main
+var x string = "initial"
+func main() {
+	if false {
+		x = "changed"
+	}
+}`,
+			entryPoint:             "main",
+			expectedGlobalVarValue: map[string]string{"x": "initial"},
+		},
+		{
+			name: "nested if statements",
+			source: `
+package main
+var x string
+var y string
+func main() {
+	x = "outer_default"
+	y = "inner_default"
+	if true {
+		x = "outer_taken"
+		if false {
+			y = "inner_never_taken"
+		} else {
+			y = "inner_else_taken"
+		}
+	} else {
+		x = "outer_else_never_taken"
+	}
+}`,
+			entryPoint: "main",
+			expectedGlobalVarValue: map[string]string{
+				"x": "outer_taken",
+				"y": "inner_else_taken",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			filename := createTempFile(t, tt.source)
+			defer os.Remove(filename)
+
+			interpreter := NewInterpreter()
+
+			// Before running, we need to ensure global variables defined in the source
+			// are declared in the interpreter's global environment if the source
+			// expects them to exist (e.g. `var x string` followed by `x = "value"` in main).
+			// The current `LoadAndRun` doesn't explicitly evaluate top-level var declarations
+			// before running `main`. `evalDeclStmt` handles `var x = "value"`.
+			// For `var x string;`, it's more complex (needs type info for zero val).
+			// For tests, it's safer if `main` assigns to globals that are already declared
+			// via `interpreter.globalEnv.Set` here, or if global `var x = val` is handled.
+
+			// Let's assume the interpreter will need to handle global var declarations.
+			// For now, `LoadAndRun` will parse the file. We need a step that populates
+			// `globalEnv` from top-level `ast.GenDecl` (var declarations).
+			// This is marked as a TODO in `todo.md` ("Global Variable Evaluation").
+			// To make these tests pass *now*, `main` should assign to vars that `globalEnv` knows about.
+			// A simple way is to pre-declare them in `globalEnv` before `LoadAndRun`.
+
+			// Pre-populate globalEnv with expected vars so `main` can assign to them.
+			// This simulates them being declared globally in the source and recognized.
+			// This is a simplification for testing `if` logic, not global var handling itself.
+			// The following block was removed because 'varName' was declared but not used,
+			// as the loop body consisted only of comments.
+			// if tt.expectedGlobalVarValue != nil {
+			// 	for varName := range tt.expectedGlobalVarValue {
+			// 		// ... comments ...
+			// 	}
+			// }
+
+
+			err := interpreter.LoadAndRun(filename, tt.entryPoint)
+
+			if tt.expectError {
+				if err == nil {
+					t.Errorf("[%s] Expected an error, but got none", tt.name)
+				} else if !strings.Contains(err.Error(), tt.expectedErrorMsgSubstring) {
+					t.Errorf("[%s] Expected error message to contain '%s', but got '%s'", tt.name, tt.expectedErrorMsgSubstring, err.Error())
+				}
+			} else {
+				if err != nil {
+					// If it's a "global variable not found" type error that we didn't expect,
+					// it might point to the global var handling issue mentioned above.
+					t.Fatalf("[%s] LoadAndRun failed: %v", tt.name, err)
+				}
+				// Check expected global variable values
+				for varName, expectedValStr := range tt.expectedGlobalVarValue {
+					val, ok := interpreter.globalEnv.Get(varName)
+					if !ok {
+						// This means the global variable was not set or found.
+						// Could be due to interpreter not processing top-level global declarations yet,
+						// or the variable was local to `main` and not promoted to global.
+						// The test sources are written to use global variables.
+						t.Errorf("[%s] Global variable '%s' not found in global environment. Expected value was '%s'. This might indicate an issue with global variable declaration processing or scope.", tt.name, varName, expectedValStr)
+						continue
+					}
+
+					// Assuming string type for simplicity in test expectations.
+					// If tests involve other types, this check needs to become type-aware.
+					strVal, ok := val.(*String)
+					if !ok {
+						// If it's not a string, check if it's an integer for "a > b" case
+						if _, isInt := val.(*Integer); isInt { // Changed intVal to _
+							// Convert expectedValStr to int64 for comparison if needed,
+							// or adjust expectedGlobalVarValue to store Objects or interface{}.
+							// For now, this test is simple and expects string outputs.
+							// The "a > b" test result is a string "a_greater".
+							t.Errorf("[%s] Expected global variable '%s' to be a String, but got %s (%s). Value was expected to be '%s'.", tt.name, varName, val.Type(), val.Inspect(), expectedValStr)
+						} else {
+							t.Errorf("[%s] Expected global variable '%s' to be a String, but got %s. Value was expected to be '%s'.", tt.name, varName, val.Type(), expectedValStr)
+						}
+						continue
+					}
+
+					if strVal.Value != expectedValStr {
+						t.Errorf("[%s] Global variable '%s': expected '%s', got '%s'", tt.name, varName, expectedValStr, strVal.Value)
+					}
+				}
+			}
+		})
+	}
+}

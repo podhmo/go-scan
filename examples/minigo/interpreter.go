@@ -71,7 +71,7 @@ func formatErrorWithContext(fset *token.FileSet, pos token.Pos, originalErr erro
 	if baseErrMsg != "" {
 		return fmt.Errorf("%s\n  Details: %s", detailMsg, baseErrMsg)
 	}
-	return fmt.Errorf("%s", errMsg) // Use %s to treat errMsg as a string literal
+	return fmt.Errorf("%s", detailMsg) // Use %s to treat detailMsg as a string literal
 }
 
 // parseInt64 is a helper function to parse a string to an int64.

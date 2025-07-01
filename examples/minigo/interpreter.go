@@ -38,6 +38,25 @@ func (i *Interpreter) LoadAndRun(filename string, entryPoint string) error {
 		return fmt.Errorf("error parsing file %s: %w", filename, err)
 	}
 
+	// Process top-level declarations, particularly global variables.
+	// We iterate through all declarations in the file. If a top-level declaration
+	// is a general declaration (*ast.GenDecl) of variables (token.VAR),
+	// we evaluate it in the global environment.
+	for _, declNode := range node.Decls {
+		if genDecl, ok := declNode.(*ast.GenDecl); ok && genDecl.Tok == token.VAR {
+			// To use our existing eval logic, which expects *ast.DeclStmt for declarations,
+			// we wrap the *ast.GenDecl in a temporary *ast.DeclStmt.
+			// This is a bit of a workaround but avoids needing a separate eval path for global GenDecls
+			// versus GenDecls found within function bodies (which are already inside DeclStmts).
+			tempDeclStmt := &ast.DeclStmt{Decl: genDecl}
+			_, err := i.eval(tempDeclStmt, i.globalEnv) // Evaluate VAR declaration in global scope
+			if err != nil {
+				// An error here means a global variable declaration failed.
+				return fmt.Errorf("error evaluating global variable declaration at %d: %w", genDecl.Pos(), err)
+			}
+		}
+	}
+
 	entryFunc := findFunction(node, entryPoint)
 	if entryFunc == nil {
 		return fmt.Errorf("entry point function '%s' not found in %s", entryPoint, filename)
@@ -123,10 +142,15 @@ func (i *Interpreter) eval(node ast.Node, env *Environment) (Object, error) {
 	case *ast.ParenExpr: // Handle parenthesized expressions
 		return i.eval(n.X, env)
 
+	case *ast.IfStmt:
+		return i.evalIfStmt(n, env)
+
+	case *ast.AssignStmt:
+		return i.evalAssignStmt(n, env)
+
 	// TODO: Add more cases for other AST node types:
-	// *ast.AssignStmt (for x = y)
 	// *ast.CallExpr (for function calls)
-	// *ast.IfStmt, *ast.ForStmt, *ast.ReturnStmt etc.
+	// *ast.ForStmt, *ast.ReturnStmt etc.
 
 	default:
 		return nil, fmt.Errorf("unsupported AST node type: %T at %d", n, n.Pos())
@@ -181,25 +205,34 @@ func (i *Interpreter) evalDeclStmt(declStmt *ast.DeclStmt, env *Environment) (Ob
 				if err != nil {
 					return nil, fmt.Errorf("error evaluating value for var %s: %w", varName, err)
 				}
-				env.Set(varName, val)
+				env.Define(varName, val) // Use Define for declarations
 			} else {
-				// No initializer, e.g., var x int. Set to zero value for its type.
-				// For now, we only have strings, so what's the zero value? An empty string? Null?
-				// This part needs type information (valueSpec.Type).
-				// For now, let's assume uninitialized vars are an error or a special "undefined" object.
-				// Or, for simplicity in this early stage, require initialization.
-				if valueSpec.Type != nil {
-					// TODO: Handle type-specific zero values when type system is more developed.
-					// For now, if type is specified but no value, it's an unhandled case.
-					// Let's default to a NullObject or similar if we had one.
-					// For strings, perhaps an empty string.
-					// This is a simplification. In a typed language, this would be type-dependent.
-					// For now, treat as an error or make it a Null object if available.
-					// For initial simplicity, we will require explicit initialization.
-					return nil, fmt.Errorf("variable '%s' declared without explicit initializer is not yet supported (type: %s)", varName, valueSpec.Type)
+				// Handle uninitialized variable declaration, e.g., var x string, var n int
+				if valueSpec.Type == nil {
+					// This case (e.g. `var x`) is generally not allowed in Go unless it's a short var declaration
+					// or part of a multi-var block where type can be inferred.
+					// For MiniGo, let's require a type if there's no initializer.
+					return nil, fmt.Errorf("variable '%s' declared without initializer must have a type at %d", varName, valueSpec.Pos())
 				}
-				// If no type and no value, also an issue.
-				return nil, fmt.Errorf("variable '%s' declared without explicit initializer or type", varName)
+
+				var zeroVal Object
+				typeIdent, ok := valueSpec.Type.(*ast.Ident)
+				if !ok {
+					// TODO: Handle more complex types like arrays, structs if they are added.
+					return nil, fmt.Errorf("unsupported type expression for zero value for variable '%s': %T at %d", varName, valueSpec.Type, valueSpec.Type.Pos())
+				}
+
+				switch typeIdent.Name {
+				case "string":
+					zeroVal = &String{Value: ""}
+				case "int": // Assuming "int" is the type name for our IntegerObject
+					zeroVal = &Integer{Value: 0}
+				case "bool": // Assuming "bool" is the type name for our BooleanObject
+					zeroVal = FALSE // Use the global FALSE instance
+				default:
+					return nil, fmt.Errorf("unsupported type '%s' for uninitialized variable '%s' at %d", typeIdent.Name, varName, typeIdent.Pos())
+				}
+				env.Define(varName, zeroVal)
 			}
 		}
 	}
@@ -329,6 +362,153 @@ func evalBooleanBinaryExpr(op token.Token, left, right *Boolean, pos token.Pos) 
 // TODO: Implement evalCallExpr, etc.
 // func (i *Interpreter) evalCallExpr(node *ast.CallExpr, env *Environment) (Object, error) { ... }
 // ... and other evaluation helpers
+
+// evalAssignStmt handles assignment statements like x = 10 or x += 5.
+func (i *Interpreter) evalAssignStmt(assignStmt *ast.AssignStmt, env *Environment) (Object, error) {
+	// MiniGo assignment basics:
+	// Lhs: list of expressions (identifiers for now)
+	// Rhs: list of expressions
+	// Tok: token.ASSIGN (=), token.ADD_ASSIGN (+=), etc.
+
+	if len(assignStmt.Lhs) != 1 || len(assignStmt.Rhs) != 1 {
+		// For now, only support simple single assignment: ident = value
+		// Multiple assignments like a, b = 1, 2 or tuple-like returns are not supported yet.
+		return nil, fmt.Errorf("unsupported assignment: expected 1 expression on LHS and 1 on RHS, got %d and %d at %d",
+			len(assignStmt.Lhs), len(assignStmt.Rhs), assignStmt.Pos())
+	}
+
+	lhs := assignStmt.Lhs[0]
+	ident, ok := lhs.(*ast.Ident)
+	if !ok {
+		// TODO: Support assignments to array elements (e.g., arr[0] = 1) or struct fields (e.g., obj.field = 1) later.
+		return nil, fmt.Errorf("unsupported assignment LHS: expected identifier, got %T at %d", lhs, lhs.Pos())
+	}
+	varName := ident.Name
+
+	// Evaluate the right-hand side to get the value
+	val, err := i.eval(assignStmt.Rhs[0], env)
+	if err != nil {
+		return nil, err
+	}
+
+	// If it's an augmented assignment (e.g., +=, -=), we need to get the current value first.
+	if assignStmt.Tok != token.ASSIGN {
+		existingVal, ok := env.Get(varName)
+		if !ok {
+			// This behavior matches Go: using += on an undeclared variable is an error.
+			// "identifier not found" would be caught by Get if we tried to use it.
+			// If it's a new variable, += is not allowed; must be initialized with = first.
+			return nil, fmt.Errorf("cannot use %s on undeclared variable '%s' at %d", assignStmt.Tok, varName, ident.Pos())
+		}
+
+		// Perform the binary operation for augmented assignment
+		// We need to construct a temporary BinaryExpr to reuse evalBinaryExpr logic,
+		// or replicate the logic here. Replicating parts of it for clarity.
+		// This is a simplified version. evalBinaryExpr handles type checking more robustly.
+		// For example, this doesn't handle "string" + "string" for += yet.
+		// It primarily assumes numeric operations for augmented assignments for now.
+
+		// Convert token.ADD_ASSIGN to token.ADD, etc.
+		var op token.Token
+		switch assignStmt.Tok {
+		case token.ADD_ASSIGN: // +=
+			op = token.ADD
+		case token.SUB_ASSIGN: // -=
+			op = token.SUB
+		case token.MUL_ASSIGN: // *=
+			op = token.MUL
+		case token.QUO_ASSIGN: // /=
+			op = token.QUO
+		case token.REM_ASSIGN: // %=
+			op = token.REM
+		// TODO: Add bitwise operators like &=, |=, ^=, <<=, >>= if the language supports them.
+		default:
+			return nil, fmt.Errorf("unsupported assignment operator %s at %d", assignStmt.Tok, assignStmt.Pos())
+		}
+
+		// Simulate a binary expression: existingVal op val
+		// This is a bit of a hack. Ideally, evalBinaryExpr is more directly usable.
+		// The following is a simplified re-implementation for Integer types primarily.
+		if existingInt, okE := existingVal.(*Integer); okE {
+			if valInt, okV := val.(*Integer); okV {
+				switch op {
+				case token.ADD:
+					val = &Integer{Value: existingInt.Value + valInt.Value}
+				case token.SUB:
+					val = &Integer{Value: existingInt.Value - valInt.Value}
+				case token.MUL:
+					val = &Integer{Value: existingInt.Value * valInt.Value}
+				case token.QUO:
+					if valInt.Value == 0 {
+						return nil, fmt.Errorf("division by zero in %s at %d", assignStmt.Tok, assignStmt.Pos())
+					}
+					val = &Integer{Value: existingInt.Value / valInt.Value}
+				case token.REM:
+					if valInt.Value == 0 {
+						return nil, fmt.Errorf("division by zero (modulo) in %s at %d", assignStmt.Tok, assignStmt.Pos())
+					}
+					val = &Integer{Value: existingInt.Value % valInt.Value}
+				default:
+					return nil, fmt.Errorf("unsupported operator %s for augmented integer assignment at %d", op, assignStmt.Pos())
+				}
+			} else {
+				return nil, fmt.Errorf("type mismatch for %s: existing value is INTEGER, new value is %s at %d", assignStmt.Tok, val.Type(), assignStmt.Pos())
+			}
+		} else if existingString, okE := existingVal.(*String); okE && op == token.ADD { // String concatenation +=
+			if valString, okV := val.(*String); okV {
+				val = &String{Value: existingString.Value + valString.Value}
+			} else {
+				return nil, fmt.Errorf("type mismatch for string concatenation (+=): existing value is STRING, new value is %s at %d", val.Type(), assignStmt.Pos())
+			}
+		} else {
+			// TODO: Handle other types for augmented assignment if necessary
+			return nil, fmt.Errorf("unsupported type %s for augmented assignment operator %s at %d", existingVal.Type(), assignStmt.Tok, assignStmt.Pos())
+		}
+	}
+
+	// Set the variable in the environment.
+	// The Environment's Set method should handle whether it's a new declaration (in current scope)
+	// or re-assigning an existing variable (possibly in an outer scope).
+	// MiniGo's scoping for assignment (like Go): if var exists in current or outer, it's reassigned.
+	// If it doesn't exist, `env.Set` would ideally declare it in the current scope.
+	// The current `Environment.Set` updates if found, otherwise sets in current env. This is fine.
+	// env.Set(varName, val) // Old call
+	if _, ok := env.Assign(varName, val); !ok {
+		return nil, fmt.Errorf("cannot assign to undeclared variable '%s' at %d", varName, ident.Pos())
+	}
+
+	// Assignment statement itself does not produce a value in many languages (e.g., Go).
+	// Or it might produce the assigned value. For MiniGo, let's say it doesn't produce a value.
+	return nil, nil
+}
+
+// evalIfStmt evaluates an if statement.
+func (i *Interpreter) evalIfStmt(ifStmt *ast.IfStmt, env *Environment) (Object, error) {
+	condition, err := i.eval(ifStmt.Cond, env)
+	if err != nil {
+		return nil, err
+	}
+
+	// Check if the condition is a Boolean object
+	boolCond, ok := condition.(*Boolean)
+	if !ok {
+		return nil, fmt.Errorf("condition for if statement must be a boolean, got %s (type: %s) at %d",
+			condition.Inspect(), condition.Type(), ifStmt.Cond.Pos())
+	}
+
+	if boolCond.Value { // If condition is true
+		return i.evalBlockStatement(ifStmt.Body, env)
+	} else if ifStmt.Else != nil { // If condition is false and there's an else block
+		// The else part can be another IfStmt (for "else if") or a BlockStmt.
+		// The eval function will handle these types accordingly.
+		return i.eval(ifStmt.Else, env)
+	}
+
+	// If condition is false and no else block, the if statement evaluates to nothing.
+	// In a language where everything is an expression, this might return a Null object.
+	// For now, returning nil is consistent with how DeclStmt is handled.
+	return nil, nil
+}
 
 func (i *Interpreter) evalUnaryExpr(node *ast.UnaryExpr, env *Environment) (Object, error) {
 	operand, err := i.eval(node.X, env)

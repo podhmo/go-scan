@@ -21,18 +21,31 @@ func (e *Environment) Get(name string) (Object, bool) {
 	return obj, ok
 }
 
-// Set stores a value by name in the current environment.
-// It does not check outer scopes; it always sets in the current scope.
-// This is typically used for 'var x = ...' or parameter binding.
-// For assignment 'x = ...', one might want different semantics (e.g., update in existing scope).
-func (e *Environment) Set(name string, val Object) Object {
+// Define binds a name to a value in the current environment only.
+// This is used for variable declarations (`var x = ...`) and function parameters.
+// It does not check outer scopes.
+func (e *Environment) Define(name string, val Object) Object {
 	e.store[name] = val
 	return val
 }
 
+// Assign updates the value of an existing variable.
+// It searches for the variable in the current environment and then in outer scopes.
+// If the variable is found, it's updated, and (val, true) is returned.
+// If the variable is not found in any scope, (nil, false) is returned, indicating an error.
+func (e *Environment) Assign(name string, val Object) (Object, bool) {
+	if _, ok := e.store[name]; ok {
+		e.store[name] = val
+		return val, true
+	}
+	if e.outer != nil {
+		return e.outer.Assign(name, val)
+	}
+	return nil, false // Variable not found in any scope
+}
+
 // TODO:
-// - Consider methods for 'Define' (for 'var', which cannot re-declare in same scope)
-//   vs 'Assign' (for 'x = y', which should find 'x' in current or outer scopes).
+// - Constant handling.
 // - Constant handling.
 // - Built-in variables/functions.
 // - Scope resolution for function calls (closures).

@@ -223,17 +223,26 @@ func main() {
 
 			interpreter := NewInterpreter()
 			var scannerRoot string
-			if strings.Contains(tt.source, "\"mytestmodule/testpkg\"") || strings.Contains(tt.source, "\"mytestmodule/anotherdummy\"") {
-				scannerRoot = resolvedTestdataDir // For tests involving "mytestmodule"
-				interpreter.ModuleRoot = resolvedTestdataDir
+			// Always use resolvedTestdataDir as the ModuleRoot for tests involving "mytestmodule"
+			// and minigoPackageDir for "github.com/podhmo/go-scan/examples/minigo/stringutils"
+			if strings.Contains(tt.source, "\"mytestmodule/") {
+				scannerRoot = resolvedTestdataDir
+				interpreter.ModuleRoot = resolvedTestdataDir // This should point to where `mytestmodule/go.mod` is
+			} else if strings.Contains(tt.source, "\"github.com/podhmo/go-scan/examples/minigo/stringutils\"") {
+				scannerRoot = minigoPackageDir // This should point to where `github.com/podhmo/go-scan/examples/minigo/go.mod` is
+				interpreter.ModuleRoot = minigoPackageDir
 			} else {
-				scannerRoot = minigoPackageDir // For tests involving "github.com/podhmo/go-scan/examples/minigo/stringutils"
+				// Default or error, depending on test case expectations.
+				// For current tests, one of the above conditions should be met.
+				// If a test doesn't import anything, this might need adjustment,
+				// but current tests all involve imports.
+				scannerRoot = minigoPackageDir // Fallback, though likely indicates a test setup issue if reached unexpectedly.
 				interpreter.ModuleRoot = minigoPackageDir
 			}
 			t.Logf("[%s] Using scannerRoot: %s, ModuleRoot: %s", tt.name, scannerRoot, interpreter.ModuleRoot)
 
 			// Setup sharedScanner specifically for this test execution.
-			testSpecificScanner, errScanner := goscan.New(scannerRoot)
+			testSpecificScanner, errScanner := goscan.New(interpreter.ModuleRoot) // Pass ModuleRoot to goscan.New
 			if errScanner != nil {
 				t.Fatalf("[%s] Failed to create test-specific shared scanner with startPath %s: %v", tt.name, scannerRoot, errScanner)
 			}

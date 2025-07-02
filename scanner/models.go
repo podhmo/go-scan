@@ -293,6 +293,7 @@ type FunctionInfo struct {
 	Receiver   *FieldInfo
 	Parameters []*FieldInfo
 	Results    []*FieldInfo
+	Node       *ast.FuncDecl // Added: AST node for the function declaration
 }
 
 // var _ = strings.Builder{} // This helper is no longer needed as "strings" is directly imported.

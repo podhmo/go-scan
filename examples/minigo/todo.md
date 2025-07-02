@@ -67,8 +67,8 @@
   - [x] Adapt `minigo` to extract function definitions (`*ast.FuncDecl` or body) from `PackageInfo` (or `*ast.File` if provided by `go-scan`).
   - [x] Adapt `minigo` to extract global variable declarations from `PackageInfo` (or `*ast.File` if provided by `go-scan`).
   - [x] Ensure error reporting (`formatErrorWithContext`) correctly uses `FileSet` and positional info from `go-scan`.
-- [ ] **Contribute to or discuss `go-scan` enhancements**
+- [x] **Contribute to or discuss `go-scan` enhancements**
   - [x] Propose/discuss `PackageInfo` retaining `*ast.File` for scanned files. (Implemented)
-  - [ ] Propose/discuss `FunctionInfo` directly referencing `*ast.FuncDecl`.
+  - [x] Propose/discuss `FunctionInfo` directly referencing `*ast.FuncDecl`. (Implemented)
   - [ ] Propose/discuss `PackageInfo` aggregating global variable declarations.
 - [ ] **Investigate `go-scan`'s Lazy Import (`PackageResolver`) for multi-file/package support in `minigo` (Future)**

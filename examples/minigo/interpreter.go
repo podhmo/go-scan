@@ -2,7 +2,7 @@ package main
 
 import (
 	"bufio"
-	"context" // Added for go-scan context
+	"context"
 	"errors"
 	"fmt"
 	"go/ast"
@@ -123,7 +123,7 @@ func NewInterpreter() *Interpreter {
 }
 
 // LoadAndRun loads a Go source file, parses it, and runs the specified entry point function.
-func (i *Interpreter) LoadAndRun(filename string, entryPoint string) error {
+func (i *Interpreter) LoadAndRun(ctx context.Context, filename string, entryPoint string) error {
 	absFilePath, err := filepath.Abs(filename)
 	if err != nil {
 		return fmt.Errorf("failed to get absolute path for %s: %w", filename, err)
@@ -149,7 +149,7 @@ func (i *Interpreter) LoadAndRun(filename string, entryPoint string) error {
 	i.FileSet = localScriptScanner.Fset()
 
 	// Use the localScriptScanner to parse the main script file.
-	pkgInfo, scanErr := localScriptScanner.ScanFiles(context.Background(), []string{absFilePath})
+	pkgInfo, scanErr := localScriptScanner.ScanFiles(ctx, []string{absFilePath})
 	if scanErr != nil {
 		// Use i.FileSet which is now localScriptScanner.Fset()
 		return formatErrorWithContext(i.FileSet, token.NoPos, scanErr, fmt.Sprintf("Error scanning main script file %s using go-scan: %v", filename, scanErr))
@@ -232,7 +232,7 @@ func (i *Interpreter) LoadAndRun(filename string, entryPoint string) error {
 		// funcInfo.FilePath should match absFilePath if it's from the main file.
 		// We are interested in functions from the main file.
 		if funcInfo.FilePath == absFilePath {
-			_, evalErr := i.evalFuncDecl(funcInfo.AstDecl, i.globalEnv)
+			_, evalErr := i.evalFuncDecl(ctx, funcInfo.AstDecl, i.globalEnv)
 			if evalErr != nil {
 				// evalFuncDecl itself should use i.FileSet for formatting,
 				// but its error might not have original context if it's a general one.
@@ -247,7 +247,7 @@ func (i *Interpreter) LoadAndRun(filename string, entryPoint string) error {
 	for _, declNode := range mainFileAst.Decls {
 		if genDecl, ok := declNode.(*ast.GenDecl); ok && genDecl.Tok == token.VAR {
 			tempDeclStmt := &ast.DeclStmt{Decl: genDecl}
-			_, evalErr := i.eval(tempDeclStmt, i.globalEnv)
+			_, evalErr := i.eval(ctx, tempDeclStmt, i.globalEnv)
 			if evalErr != nil {
 				return formatErrorWithContext(i.FileSet, genDecl.Pos(), evalErr, "Error evaluating global variable declaration")
 			}
@@ -267,7 +267,7 @@ func (i *Interpreter) LoadAndRun(filename string, entryPoint string) error {
 
 	fmt.Printf("Executing entry point function: %s\n", entryPoint)
 	// For main/entry point, we assume no arguments are passed.
-	result, errApply := i.applyUserDefinedFunction(userEntryFunc, []Object{}, token.NoPos)
+	result, errApply := i.applyUserDefinedFunction(ctx, userEntryFunc, []Object{}, token.NoPos)
 	if errApply != nil {
 		if errObj, isErrObj := errApply.(*Error); isErrObj {
 			return fmt.Errorf("Runtime error in %s: %s", entryPoint, errObj.Message)
@@ -284,7 +284,7 @@ func (i *Interpreter) LoadAndRun(filename string, entryPoint string) error {
 }
 
 
-func (i *Interpreter) applyUserDefinedFunction(fn *UserDefinedFunction, args []Object, callPos token.Pos) (Object, error) {
+func (i *Interpreter) applyUserDefinedFunction(ctx context.Context, fn *UserDefinedFunction, args []Object, callPos token.Pos) (Object, error) {
 	// Use the FileSet associated with the function for error reporting within its context.
 	// If the function's FileSet is nil (e.g., for older UserDefinedFunction objects not yet updated),
 	// fall back to the interpreter's main FileSet.
@@ -304,7 +304,7 @@ func (i *Interpreter) applyUserDefinedFunction(fn *UserDefinedFunction, args []O
 		funcEnv.Define(paramIdent.Name, args[idx])
 	}
 
-	evaluated, errEval := i.evalBlockStatement(fn.Body, funcEnv)
+	evaluated, errEval := i.evalBlockStatement(ctx, fn.Body, funcEnv)
 	if errEval != nil {
 		return nil, errEval
 	}
@@ -330,14 +330,14 @@ func findFunction(file *ast.File, name string) *ast.FuncDecl {
 	return nil
 }
 
-func (i *Interpreter) eval(node ast.Node, env *Environment) (Object, error) {
+func (i *Interpreter) eval(ctx context.Context, node ast.Node, env *Environment) (Object, error) {
 	switch n := node.(type) {
 	case *ast.File:
 		var result Object
 		var err error
 		for _, decl := range n.Decls {
 			if fnDecl, ok := decl.(*ast.FuncDecl); ok && fnDecl.Name.Name == "main" {
-				result, err = i.evalBlockStatement(fnDecl.Body, env)
+				result, err = i.evalBlockStatement(ctx, fnDecl.Body, env)
 				if err != nil {
 					return nil, err
 				}
@@ -346,13 +346,13 @@ func (i *Interpreter) eval(node ast.Node, env *Environment) (Object, error) {
 		return result, nil
 
 	case *ast.BlockStmt:
-		return i.evalBlockStatement(n, env)
+		return i.evalBlockStatement(ctx, n, env)
 
 	case *ast.ExprStmt:
-		return i.eval(n.X, env)
+		return i.eval(ctx, n.X, env)
 
 	case *ast.Ident:
-		return evalIdentifier(n, env, i.FileSet)
+		return evalIdentifier(n, env, i.FileSet) // evalIdentifier does not need ctx
 
 	case *ast.BasicLit:
 		switch n.Kind {
@@ -369,57 +369,57 @@ func (i *Interpreter) eval(node ast.Node, env *Environment) (Object, error) {
 		}
 
 	case *ast.DeclStmt:
-		return i.evalDeclStmt(n, env)
+		return i.evalDeclStmt(ctx, n, env)
 
 	case *ast.BinaryExpr:
-		return i.evalBinaryExpr(n, env)
+		return i.evalBinaryExpr(ctx, n, env)
 
 	case *ast.UnaryExpr:
-		return i.evalUnaryExpr(n, env)
+		return i.evalUnaryExpr(ctx, n, env)
 
 	case *ast.ParenExpr:
-		return i.eval(n.X, env)
+		return i.eval(ctx, n.X, env)
 
 	case *ast.IfStmt:
-		return i.evalIfStmt(n, env)
+		return i.evalIfStmt(ctx, n, env)
 
 	case *ast.AssignStmt:
-		return i.evalAssignStmt(n, env)
+		return i.evalAssignStmt(ctx, n, env)
 
 	case *ast.CallExpr:
-		return i.evalCallExpr(n, env)
+		return i.evalCallExpr(ctx, n, env)
 
 	case *ast.SelectorExpr:
-		return i.evalSelectorExpr(n, env)
+		return i.evalSelectorExpr(ctx, n, env)
 
 	case *ast.ReturnStmt:
-		return i.evalReturnStmt(n, env)
+		return i.evalReturnStmt(ctx, n, env)
 
 	case *ast.FuncDecl:
-		return i.evalFuncDecl(n, env)
+		return i.evalFuncDecl(ctx, n, env)
 
 	case *ast.FuncLit:
-		return i.evalFuncLit(n, env)
+		return i.evalFuncLit(ctx, n, env)
 
 	case *ast.ForStmt:
-		return i.evalForStmt(n, env)
+		return i.evalForStmt(ctx, n, env)
 
 	case *ast.BranchStmt:
-		return i.evalBranchStmt(n, env)
+		return i.evalBranchStmt(ctx, n, env)
 
 	case *ast.LabeledStmt:
 		// Labels are handled by specific statements that use them (like break/continue).
 		// For other statements, the label itself doesn't change evaluation.
 		// We just evaluate the statement the label is attached to.
 		// If a break/continue needs this label, its ast.BranchStmt.Label will be non-nil.
-		return i.eval(n.Stmt, env)
+		return i.eval(ctx, n.Stmt, env)
 
 	default:
 		return nil, formatErrorWithContext(i.FileSet, n.Pos(), fmt.Errorf("unsupported AST node type: %T", n), fmt.Sprintf("Unsupported AST node value: %+v", n))
 	}
 }
 
-func (i *Interpreter) evalBranchStmt(stmt *ast.BranchStmt, env *Environment) (Object, error) {
+func (i *Interpreter) evalBranchStmt(ctx context.Context, stmt *ast.BranchStmt, env *Environment) (Object, error) {
 	if stmt.Label != nil {
 		return nil, formatErrorWithContext(i.FileSet, stmt.Pos(), fmt.Errorf("labeled break/continue not supported"), "")
 	}
@@ -434,13 +434,13 @@ func (i *Interpreter) evalBranchStmt(stmt *ast.BranchStmt, env *Environment) (Ob
 	}
 }
 
-func (i *Interpreter) evalForStmt(stmt *ast.ForStmt, env *Environment) (Object, error) {
+func (i *Interpreter) evalForStmt(ctx context.Context, stmt *ast.ForStmt, env *Environment) (Object, error) {
 	// For loops create a new scope for their initialization, condition, post, and body.
 	loopEnv := NewEnvironment(env)
 
 	// 1. Initialization
 	if stmt.Init != nil {
-		if _, err := i.eval(stmt.Init, loopEnv); err != nil {
+		if _, err := i.eval(ctx, stmt.Init, loopEnv); err != nil {
 			return nil, err
 		}
 	}
@@ -448,7 +448,7 @@ func (i *Interpreter) evalForStmt(stmt *ast.ForStmt, env *Environment) (Object, 
 	for {
 		// 2. Condition
 		if stmt.Cond != nil {
-			condition, err := i.eval(stmt.Cond, loopEnv)
+			condition, err := i.eval(ctx, stmt.Cond, loopEnv)
 			if err != nil {
 				return nil, err
 			}
@@ -473,7 +473,7 @@ func (i *Interpreter) evalForStmt(stmt *ast.ForStmt, env *Environment) (Object, 
 		// So, we'll use loopEnv directly for the body. If we were to support `break` or `continue` with labels,
 		// or more complex scoping within loops (e.g. Python's for-else), this might need adjustment.
 		// For now, a single loopEnv for init, cond, post, and body is consistent with Go's for loop.
-		bodyResult, err := i.evalBlockStatement(stmt.Body, loopEnv)
+		bodyResult, err := i.evalBlockStatement(ctx, stmt.Body, loopEnv)
 		if err != nil {
 			return nil, err
 		}
@@ -490,7 +490,7 @@ func (i *Interpreter) evalForStmt(stmt *ast.ForStmt, env *Environment) (Object, 
 		case *ContinueStatement:
 			// Skip to the post statement, then next iteration
 			if stmt.Post != nil {
-				if _, postErr := i.eval(stmt.Post, loopEnv); postErr != nil {
+				if _, postErr := i.eval(ctx, stmt.Post, loopEnv); postErr != nil {
 					return nil, postErr
 				}
 			}
@@ -504,7 +504,7 @@ func (i *Interpreter) evalForStmt(stmt *ast.ForStmt, env *Environment) (Object, 
 		// 4. Post-iteration statement
 		// Only execute if we didn't break out of the loop
 		if !broke && stmt.Post != nil {
-			if _, err := i.eval(stmt.Post, loopEnv); err != nil {
+			if _, err := i.eval(ctx, stmt.Post, loopEnv); err != nil {
 				return nil, err
 			}
 		}
@@ -513,7 +513,7 @@ func (i *Interpreter) evalForStmt(stmt *ast.ForStmt, env *Environment) (Object, 
 	return NULL, nil // For statement itself doesn't produce a value
 }
 
-func (i *Interpreter) evalSelectorExpr(node *ast.SelectorExpr, env *Environment) (Object, error) {
+func (i *Interpreter) evalSelectorExpr(ctx context.Context, node *ast.SelectorExpr, env *Environment) (Object, error) {
 	// node.X might be an identifier (package name) or another expression.
 	// For now, we only support simple package.Selector
 	xIdent, ok := node.X.(*ast.Ident)
@@ -550,7 +550,6 @@ func (i *Interpreter) evalSelectorExpr(node *ast.SelectorExpr, env *Environment)
 			return nil, formatErrorWithContext(i.FileSet, node.X.Pos(), errors.New("shared go-scan scanner (for imports) not initialized in interpreter"), "Internal error")
 		}
 
-		ctx := context.Background()
 		// Use the sharedScanner's FileSet for errors specifically from ScanPackageByImport,
 		// or ensure formatErrorWithContext can handle different FileSets if necessary.
 		// For now, let's assume errors from ScanPackageByImport will be general or use its own context.
@@ -649,12 +648,12 @@ func (i *Interpreter) evalSelectorExpr(node *ast.SelectorExpr, env *Environment)
 	return nil, formatErrorWithContext(i.FileSet, node.Pos(), fmt.Errorf("undefined selector: %s (package %s, path %s)", qualifiedNameInEnv, localPkgName, importPath), "")
 }
 
-func (i *Interpreter) evalBlockStatement(block *ast.BlockStmt, env *Environment) (Object, error) {
+func (i *Interpreter) evalBlockStatement(ctx context.Context, block *ast.BlockStmt, env *Environment) (Object, error) {
 	var result Object
 	var err error
 
 	for _, stmt := range block.List {
-		result, err = i.eval(stmt, env)
+		result, err = i.eval(ctx, stmt, env)
 		if err != nil {
 			return nil, err
 		}
@@ -668,7 +667,7 @@ func (i *Interpreter) evalBlockStatement(block *ast.BlockStmt, env *Environment)
 	return result, nil // Return the result of the last statement if no control flow object was encountered.
 }
 
-func (i *Interpreter) evalFuncDecl(fd *ast.FuncDecl, env *Environment) (Object, error) {
+func (i *Interpreter) evalFuncDecl(ctx context.Context, fd *ast.FuncDecl, env *Environment) (Object, error) {
 	params := []*ast.Ident{}
 	if fd.Type.Params != nil && fd.Type.Params.List != nil {
 		for _, field := range fd.Type.Params.List {
@@ -695,7 +694,7 @@ func (i *Interpreter) evalFuncDecl(fd *ast.FuncDecl, env *Environment) (Object, 
 	return nil, formatErrorWithContext(i.FileSet, fd.Pos(), fmt.Errorf("function declaration must have a name"), "")
 }
 
-func (i *Interpreter) evalFuncLit(fl *ast.FuncLit, env *Environment) (Object, error) {
+func (i *Interpreter) evalFuncLit(ctx context.Context, fl *ast.FuncLit, env *Environment) (Object, error) {
 	params := []*ast.Ident{}
 	if fl.Type.Params != nil && fl.Type.Params.List != nil {
 		for _, field := range fl.Type.Params.List {
@@ -716,7 +715,7 @@ func (i *Interpreter) evalFuncLit(fl *ast.FuncLit, env *Environment) (Object, er
 	}, nil
 }
 
-func (i *Interpreter) evalReturnStmt(rs *ast.ReturnStmt, env *Environment) (Object, error) {
+func (i *Interpreter) evalReturnStmt(ctx context.Context, rs *ast.ReturnStmt, env *Environment) (Object, error) {
 	if len(rs.Results) == 0 {
 		return &ReturnValue{Value: NULL}, nil
 	}
@@ -725,14 +724,14 @@ func (i *Interpreter) evalReturnStmt(rs *ast.ReturnStmt, env *Environment) (Obje
 		return nil, formatErrorWithContext(i.FileSet, rs.Pos(), fmt.Errorf("multiple return values not supported"), "")
 	}
 
-	val, err := i.eval(rs.Results[0], env)
+	val, err := i.eval(ctx, rs.Results[0], env)
 	if err != nil {
 		return nil, err
 	}
 	return &ReturnValue{Value: val}, nil
 }
 
-func (i *Interpreter) evalDeclStmt(declStmt *ast.DeclStmt, env *Environment) (Object, error) {
+func (i *Interpreter) evalDeclStmt(ctx context.Context, declStmt *ast.DeclStmt, env *Environment) (Object, error) {
 	genDecl, ok := declStmt.Decl.(*ast.GenDecl)
 	if !ok {
 		return nil, formatErrorWithContext(i.FileSet, declStmt.Pos(), fmt.Errorf("unsupported declaration type: %T", declStmt.Decl), "")
@@ -751,7 +750,7 @@ func (i *Interpreter) evalDeclStmt(declStmt *ast.DeclStmt, env *Environment) (Ob
 		for idx, nameIdent := range valueSpec.Names {
 			varName := nameIdent.Name
 			if len(valueSpec.Values) > idx {
-				val, err := i.eval(valueSpec.Values[idx], env)
+				val, err := i.eval(ctx, valueSpec.Values[idx], env)
 				if err != nil {
 					return nil, err
 				}
@@ -803,12 +802,12 @@ func evalIdentifier(ident *ast.Ident, env *Environment, fset *token.FileSet) (Ob
 	return nil, formatErrorWithContext(fset, ident.Pos(), fmt.Errorf("identifier not found: %s", ident.Name), "")
 }
 
-func (i *Interpreter) evalBinaryExpr(node *ast.BinaryExpr, env *Environment) (Object, error) {
-	left, err := i.eval(node.X, env)
+func (i *Interpreter) evalBinaryExpr(ctx context.Context, node *ast.BinaryExpr, env *Environment) (Object, error) {
+	left, err := i.eval(ctx, node.X, env)
 	if err != nil {
 		return nil, err
 	}
-	right, err := i.eval(node.Y, env)
+	right, err := i.eval(ctx, node.Y, env)
 	if err != nil {
 		return nil, err
 	}
@@ -901,15 +900,15 @@ func evalBooleanBinaryExpr(op token.Token, left, right *Boolean, fset *token.Fil
 	}
 }
 
-func (i *Interpreter) evalCallExpr(node *ast.CallExpr, env *Environment) (Object, error) {
-	funcObj, err := i.eval(node.Fun, env)
+func (i *Interpreter) evalCallExpr(ctx context.Context, node *ast.CallExpr, env *Environment) (Object, error) {
+	funcObj, err := i.eval(ctx, node.Fun, env)
 	if err != nil {
 		return nil, err
 	}
 
 	args := make([]Object, len(node.Args))
 	for idx, argExpr := range node.Args {
-		argVal, err := i.eval(argExpr, env)
+		argVal, err := i.eval(ctx, argExpr, env)
 		if err != nil {
 			return nil, err
 		}
@@ -918,9 +917,9 @@ func (i *Interpreter) evalCallExpr(node *ast.CallExpr, env *Environment) (Object
 
 	switch fn := funcObj.(type) {
 	case *BuiltinFunction:
-		return fn.Fn(env, args...)
+		return fn.Fn(env, args...) // BuiltinFunction does not need ctx
 	case *UserDefinedFunction:
-		return i.applyUserDefinedFunction(fn, args, node.Fun.Pos())
+		return i.applyUserDefinedFunction(ctx, fn, args, node.Fun.Pos())
 	default:
 		funcName := "unknown"
 		if ident, ok := node.Fun.(*ast.Ident); ok {
@@ -934,7 +933,7 @@ func (i *Interpreter) evalCallExpr(node *ast.CallExpr, env *Environment) (Object
 	}
 }
 
-func (i *Interpreter) evalAssignStmt(assignStmt *ast.AssignStmt, env *Environment) (Object, error) {
+func (i *Interpreter) evalAssignStmt(ctx context.Context, assignStmt *ast.AssignStmt, env *Environment) (Object, error) {
 	if len(assignStmt.Lhs) != 1 || len(assignStmt.Rhs) != 1 {
 		return nil, formatErrorWithContext(i.FileSet, assignStmt.Pos(),
 			fmt.Errorf("unsupported assignment: expected 1 expression on LHS and 1 on RHS, got %d and %d", len(assignStmt.Lhs), len(assignStmt.Rhs)), "")
@@ -947,7 +946,7 @@ func (i *Interpreter) evalAssignStmt(assignStmt *ast.AssignStmt, env *Environmen
 	}
 	varName := ident.Name
 
-	val, err := i.eval(assignStmt.Rhs[0], env)
+	val, err := i.eval(ctx, assignStmt.Rhs[0], env)
 	if err != nil {
 		return nil, err
 	}
@@ -1052,8 +1051,8 @@ func (i *Interpreter) evalAssignStmt(assignStmt *ast.AssignStmt, env *Environmen
 	}
 }
 
-func (i *Interpreter) evalIfStmt(ifStmt *ast.IfStmt, env *Environment) (Object, error) {
-	condition, err := i.eval(ifStmt.Cond, env)
+func (i *Interpreter) evalIfStmt(ctx context.Context, ifStmt *ast.IfStmt, env *Environment) (Object, error) {
+	condition, err := i.eval(ctx, ifStmt.Cond, env)
 	if err != nil {
 		return nil, err
 	}
@@ -1067,25 +1066,25 @@ func (i *Interpreter) evalIfStmt(ifStmt *ast.IfStmt, env *Environment) (Object, 
 	if boolCond.Value {
 		// If block creates a new scope
 		ifBodyEnv := NewEnvironment(env)
-		return i.evalBlockStatement(ifStmt.Body, ifBodyEnv)
+		return i.evalBlockStatement(ctx, ifStmt.Body, ifBodyEnv)
 	} else if ifStmt.Else != nil {
 		// Else block also creates a new scope if it's a block statement
 		// If it's another IfStmt (else if), that IfStmt will handle its own scope.
 		switch elseNode := ifStmt.Else.(type) {
 		case *ast.BlockStmt:
 			elseBodyEnv := NewEnvironment(env)
-			return i.evalBlockStatement(elseNode, elseBodyEnv)
+			return i.evalBlockStatement(ctx, elseNode, elseBodyEnv)
 		case *ast.IfStmt: // else if
-			return i.eval(elseNode, env) // The nested if will handle its own new scope creation
+			return i.eval(ctx, elseNode, env) // The nested if will handle its own new scope creation
 		default: // Should not happen with a valid Go AST for if-else
-			return i.eval(ifStmt.Else, env)
+			return i.eval(ctx, ifStmt.Else, env)
 		}
 	}
 	return nil, nil
 }
 
-func (i *Interpreter) evalUnaryExpr(node *ast.UnaryExpr, env *Environment) (Object, error) {
-	operand, err := i.eval(node.X, env)
+func (i *Interpreter) evalUnaryExpr(ctx context.Context, node *ast.UnaryExpr, env *Environment) (Object, error) {
+	operand, err := i.eval(ctx, node.X, env)
 	if err != nil {
 		return nil, err
 	}

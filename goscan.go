@@ -362,6 +362,11 @@ type Scanner struct {
 	ExternalTypeOverrides scanner.ExternalTypeOverride
 }
 
+// Fset returns the FileSet associated with the scanner.
+func (s *Scanner) Fset() *token.FileSet {
+	return s.fset
+}
+
 // New creates a new Scanner. It finds the module root starting from the given path.
 // It also initializes an empty set of visited files for this scanner instance.
 func New(startPath string) (*Scanner, error) {

@@ -46,6 +46,59 @@ For `minigo`, this means if it were to interpret code that uses types from vario
 
 `go-scan` includes a `locator` component that can find the module root (by locating `go.mod`) and resolve internal Go import paths to physical directory paths. This is essential for the cross-package type resolution feature.
 
+## Package Imports in `minigo`
+
+`minigo` supports importing symbols (currently constants only) from other packages within the same Go module. This functionality leverages `go-scan` for package resolution and parsing.
+
+### Lazy Import Specification
+
+Import handling in `minigo` is designed to be "lazy":
+
+-   When an `import` statement (e.g., `import "my/pkg"` or `import p "my/pkg"`) is encountered, `minigo` only records a mapping between the local package name (either the base name of the import path, like `pkg`, or the specified alias, like `p`) and the actual import path (`"my/pkg"`).
+-   **No files from the imported package are read or parsed at this stage.**
+-   The actual scanning of the imported package and loading of its symbols occurs only when a symbol from that package is first referenced via a selector expression (e.g., `pkg.MyConst` or `p.AnotherConst`).
+
+This lazy approach ensures that `minigo` only expends resources on parsing packages that are actually used by the script.
+
+### Referencing Imported Symbols
+
+You can reference symbols from imported packages using either the package's base name or an alias:
+
+-   **Without Alias:**
+    ```go
+    // your_script.mgo
+    package main
+
+    import "mytestmodule/testpkg" // Assumes testpkg is in your Go module
+
+    var MyMessage = testpkg.ExportedConst // Accesses ExportedConst from testpkg
+    ```
+
+-   **With Alias:**
+    ```go
+    // your_script.mgo
+    package main
+
+    import pkga "mytestmodule/testpkg"
+
+    var MyNumber = pkga.AnotherExportedConst // Accesses AnotherExportedConst via alias
+    ```
+
+### Supported Symbols
+
+Currently, `minigo` only supports importing and referencing **exported constants** from other packages. Support for functions and variables may be added in the future.
+
+### Unsupported Import Forms
+
+The following import forms are **not currently supported** by `minigo` and will result in an error during the initial parsing of import statements:
+
+-   **Dot Imports:** `import . "my/pkg"`
+    -   This form, which would bring all exported symbols from `my/pkg` into the current file's namespace, is not supported.
+-   **Blank Imports for Execution:** `import _ "my/pkg"`
+    -   While Go uses blank imports for their side effects (e.g., `init` functions), `minigo` does not currently support package initialization via `init` functions. Therefore, blank imports are treated as an error as they would have no effect in the current `minigo` execution model and cannot be used to access symbols.
+
+These limitations are in place to simplify the initial implementation of package imports.
+
 ## Running `minigo` (Conceptual)
 
 While `minigo` is primarily an example for `go-scan`, a conceptual way to run it (once fully implemented) might look like this:

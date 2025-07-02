@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context" // Added for go-scan context
 	"errors"
 	"fmt"
 	"go/ast"
@@ -12,7 +13,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/podhmo/go-scan/scanner" // Using go-scan
+	"github.com/podhmo/go-scan" // Using top-level go-scan
+	// "github.com/podhmo/go-scan/scanner" // No longer directly needed for minigo's use of ConstantInfo
 )
 
 // formatErrorWithContext creates a detailed error message including file, line, column, and source code.
@@ -84,15 +86,27 @@ func parseInt64(s string) (int64, error) {
 
 // Interpreter holds the state of the interpreter
 type Interpreter struct {
-	globalEnv *Environment
-	FileSet   *token.FileSet
+	globalEnv        *Environment
+	FileSet          *token.FileSet
+	scn              *goscan.Scanner     // Use the top-level go-scan Scanner
+	importedPackages map[string]struct{} // Key: importPath, keeps track of resolved packages
+	importAliasMap   map[string]string   // Key: localPkgName (alias or base), Value: importPath
+	// currentFileDir is the directory of the main file being interpreted.
+	// This helps in resolving relative imports if go.mod is not present or
+	// for files not part of a clear module structure.
+	currentFileDir string
 }
 
 func NewInterpreter() *Interpreter {
 	env := NewEnvironment(nil)
+	fset := token.NewFileSet()
+
 	i := &Interpreter{
-		globalEnv: env,
-		FileSet:   token.NewFileSet(),
+		globalEnv:        env,
+		FileSet:          fset,
+		scn:              nil, // Will be initialized in LoadAndRun
+		importedPackages: make(map[string]struct{}),
+		importAliasMap:   make(map[string]string),
 	}
 
 	builtins := GetBuiltinFmtFunctions()
@@ -108,52 +122,129 @@ func NewInterpreter() *Interpreter {
 
 // LoadAndRun loads a Go source file, parses it, and runs the specified entry point function.
 func (i *Interpreter) LoadAndRun(filename string, entryPoint string) error {
-	// Initialize go-scan Scanner
-	scn, err := scanner.New(i.FileSet, nil) // Assuming no external type overrides for minigo
-	if err != nil {
-		return fmt.Errorf("failed to create scanner: %w", err)
-	}
-
-	// Get absolute path for the file and its directory
 	absFilePath, err := filepath.Abs(filename)
 	if err != nil {
 		return fmt.Errorf("failed to get absolute path for %s: %w", filename, err)
 	}
-	pkgDir := filepath.Dir(absFilePath)
+	i.currentFileDir = filepath.Dir(absFilePath)
 
-	// Scan the file(s). For minigo, it's typically a single file.
-	// We use ScanFiles, passing the single file.
-	// The package path for ScanFiles can be the directory containing the file.
-	pkgInfo, err := scn.ScanFiles(nil, []string{absFilePath}, pkgDir, nil) // Context and resolver can be nil for this basic usage
-	if err != nil {
-		// Use NoPos for general scanning errors, or try to extract more specific pos if available from err
-		return formatErrorWithContext(i.FileSet, token.NoPos, err, fmt.Sprintf("Error scanning file %s with go-scan", filename))
-	}
-	i.FileSet = pkgInfo.Fset // Use the FileSet from go-scan
-
-	// Process top-level declarations (functions and global vars) from the ASTs
-	for _, fileAst := range pkgInfo.AstFiles { // Iterate through all scanned files' ASTs
-		// Store all function declarations first
-		for _, declNode := range fileAst.Decls {
-			if fnDecl, ok := declNode.(*ast.FuncDecl); ok {
-				_, evalErr := i.evalFuncDecl(fnDecl, i.globalEnv)
-				if evalErr != nil {
-					return evalErr // evalFuncDecl should use i.FileSet for errors
-				}
+	if i.scn == nil { // Only initialize scanner if it hasn't been set (e.g., by a test)
+		gs, errGs := goscan.New(i.currentFileDir)
+		if errGs != nil {
+			return fmt.Errorf("failed to create go-scan scanner for dir %s: %w", i.currentFileDir, errGs)
+		}
+		i.scn = gs
+		if i.FileSet == nil { // If FileSet wasn't also preset by test, use the one from new scanner
+			// Ensure gs.Fset() is not nil before assigning
+			if gs.Fset() == nil {
+				// This case should ideally not happen if goscan.New succeeds and returns a valid scanner
+				return fmt.Errorf("internal error: new scanner created by goscan.New for dir %s has a nil FileSet", i.currentFileDir)
+			}
+			i.FileSet = gs.Fset()
+		}
+	} else {
+		// If i.scn was preset (by test), ensure i.FileSet is also valid.
+		// Tests should ideally set both i.scn and i.FileSet.
+		if i.FileSet == nil {
+			if i.scn.Fset() != nil {
+				i.FileSet = i.scn.Fset()
+			} else {
+				// Fallback if preset scn has no Fset (should not happen with valid goscan.Scanner)
+				i.FileSet = token.NewFileSet()
+				// It might be better to error out if a pre-set scanner has no FileSet
+				// return fmt.Errorf("internal error: pre-set interpreter.scn has a nil FileSet")
+				fmt.Fprintf(os.Stderr, "Warning: interpreter.scn was set, but its FileSet was nil. Created new FileSet for interpreter.\n")
 			}
 		}
-		// Then evaluate global variable declarations
-		for _, declNode := range fileAst.Decls {
-			if genDecl, ok := declNode.(*ast.GenDecl); ok && genDecl.Tok == token.VAR {
-				tempDeclStmt := &ast.DeclStmt{Decl: genDecl}
-				_, evalErr := i.eval(tempDeclStmt, i.globalEnv)
+	}
+
+	if i.FileSet == nil {
+		// This is a safeguard. If after all logic i.FileSet is still nil, it's an issue.
+		return fmt.Errorf("internal error: Interpreter.FileSet is nil before scanning files")
+	}
+
+
+	// Parse the main script file directly using go/parser.
+	mainFileAst, parseErr := parser.ParseFile(i.FileSet, absFilePath, nil, parser.ParseComments)
+	if parseErr != nil {
+		return formatErrorWithContext(i.FileSet, token.NoPos, parseErr, fmt.Sprintf("Error parsing main script file %s: %v", filename, parseErr))
+	}
+
+	// Process import declarations from the parsed AST to populate importAliasMap
+	for _, declNode := range mainFileAst.Decls {
+		genDecl, ok := declNode.(*ast.GenDecl)
+		if !ok || genDecl.Tok != token.IMPORT {
+				continue
+			}
+			for _, spec := range genDecl.Specs {
+				impSpec, ok := spec.(*ast.ImportSpec)
+				if !ok {
+					continue
+				}
+				importPath, err := strconv.Unquote(impSpec.Path.Value)
+				if err != nil {
+					return formatErrorWithContext(i.FileSet, impSpec.Path.Pos(), err, fmt.Sprintf("Invalid import path: %s", impSpec.Path.Value))
+				}
+
+				localName := ""
+				if impSpec.Name != nil {
+					localName = impSpec.Name.Name
+					if localName == "_" {
+						// Blank import, record for completeness but it won't be usable for selection.
+						// Or, decide to error here if blank imports are not to be "recorded".
+						// For now, let's just skip adding it to alias map as it cannot be selected.
+						// Alternatively, map it to a special value or handle in evalSelectorExpr.
+						// Plan says: ブランクインポートは...`evalSelectorExpr` で使おうとしても解決できない...ことを確認
+						// So, we can add it, and evalSelectorExpr won't find symbols via it.
+						// Let's add it with the path for now, so we know it was "seen".
+						// i.importAliasMap["_"] = importPath // This is problematic if multiple blank imports
+						// Let's decide to disallow blank and dot imports for now as per plan.
+						return formatErrorWithContext(i.FileSet, impSpec.Name.Pos(), errors.New("blank imports are not supported"), "")
+					}
+					if localName == "." {
+						return formatErrorWithContext(i.FileSet, impSpec.Name.Pos(), errors.New("dot imports are not supported"), "")
+					}
+				} else {
+					// No explicit alias, use the base of the import path
+					// e.g. "path/to/pkg" -> localName is "pkg"
+					// This can be tricky if path is complex e.g. "my.repo/pkg/v2" -> "v2"
+					// Go's default is the package name declared in the imported package's files,
+					// which we don't know until we scan it.
+					// For simplicity, go-scan itself uses filepath.Base for default alias if needed.
+					// Let's use filepath.Base on the import path.
+					localName = filepath.Base(importPath)
+				}
+
+				if existingPath, ok := i.importAliasMap[localName]; ok && existingPath != importPath {
+					return formatErrorWithContext(i.FileSet, impSpec.Pos(), fmt.Errorf("import alias/name %q already used for %q, cannot reuse for %q", localName, existingPath, importPath), "")
+				}
+				i.importAliasMap[localName] = importPath
+			}
+		}
+	}
+
+	// Process other top-level declarations (functions and global vars) from the AST
+	// Store all function declarations first
+	for _, declNode := range mainFileAst.Decls {
+		if fnDecl, ok := declNode.(*ast.FuncDecl); ok {
+			_, evalErr := i.evalFuncDecl(fnDecl, i.globalEnv)
+			if evalErr != nil {
+				return evalErr // evalFuncDecl should use i.FileSet for errors
+			}
+		}
+	}
+	// Then evaluate global variable declarations
+	for _, declNode := range mainFileAst.Decls {
+		if genDecl, ok := declNode.(*ast.GenDecl); ok && genDecl.Tok == token.VAR {
+			tempDeclStmt := &ast.DeclStmt{Decl: genDecl}
+			_, evalErr := i.eval(tempDeclStmt, i.globalEnv)
 				if evalErr != nil {
 					// formatErrorWithContext will use i.FileSet
 					return formatErrorWithContext(i.FileSet, genDecl.Pos(), evalErr, "Error evaluating global variable declaration")
 				}
 			}
 		}
-	}
+	// Removed extra closing brace here
 
 	// Get the entry function *object* from the global environment
 	entryFuncObj, ok := i.globalEnv.Get(entryPoint)
@@ -407,15 +498,98 @@ func (i *Interpreter) evalForStmt(stmt *ast.ForStmt, env *Environment) (Object, 
 }
 
 func (i *Interpreter) evalSelectorExpr(node *ast.SelectorExpr, env *Environment) (Object, error) {
+	// node.X might be an identifier (package name) or another expression.
+	// For now, we only support simple package.Selector
 	xIdent, ok := node.X.(*ast.Ident)
 	if !ok {
-		return nil, formatErrorWithContext(i.FileSet, node.X.Pos(), fmt.Errorf("X is not an identifier, got %T", node.X), "Unsupported selector expression")
+		// TODO: Handle more complex selectors like structField.AnotherField or funcCall().Field
+		return nil, formatErrorWithContext(i.FileSet, node.X.Pos(), fmt.Errorf("selector base X must be an identifier (package name), got %T", node.X), "Unsupported selector expression")
 	}
-	fullName := xIdent.Name + "." + node.Sel.Name
-	if val, ok := env.Get(fullName); ok {
+
+	localPkgName := xIdent.Name // This is the alias or local name used in minigo script
+	symbolName := node.Sel.Name
+	qualifiedNameInEnv := localPkgName + "." + symbolName // How it's stored in minigo's env
+
+	// Check if the symbol is already in the environment (e.g. from a previous import of this pkg)
+	if val, ok := env.Get(qualifiedNameInEnv); ok {
 		return val, nil
 	}
-	return nil, formatErrorWithContext(i.FileSet, node.Pos(), fmt.Errorf("undefined selector: %s", fullName), "")
+
+	// If not in env, check if we have an import path for this localPkgName
+	importPath, knownAlias := i.importAliasMap[localPkgName]
+	if !knownAlias {
+		// If localPkgName is not in importAliasMap, it might be a built-in "package" like "fmt"
+		// or an error (undeclared package or variable).
+		// For now, assume builtins are directly in globalEnv, not via selector.
+		// So, if not in importAliasMap, it's an undefined package alias.
+		return nil, formatErrorWithContext(i.FileSet, xIdent.Pos(), fmt.Errorf("undefined package alias/name: %s", localPkgName), "Import error")
+	}
+
+	// We have an importPath. Now check if this importPath has already been processed (scanned and constants loaded).
+	if _, alreadyImported := i.importedPackages[importPath]; !alreadyImported {
+		if i.scn == nil {
+			return nil, formatErrorWithContext(i.FileSet, node.X.Pos(), errors.New("go-scan scanner not initialized in interpreter"), "Internal error")
+		}
+
+		ctx := context.Background()
+		pkgInfo, err := i.scn.ScanPackageByImport(ctx, importPath)
+		if err != nil {
+			return nil, formatErrorWithContext(i.FileSet, xIdent.Pos(), fmt.Errorf("package %q (aliased as %q) not found or failed to scan: %w", importPath, localPkgName, err), "Import error")
+		}
+
+		// Successfully scanned. Populate environment with its exported constants.
+		// Constants will be stored in env as "localPkgName.ConstantName".
+		for _, c := range pkgInfo.Constants { // c is of type *scanner.ConstantInfo
+			if !c.IsExported { // Corrected: IsExported is a field, not a method
+				continue
+			}
+			var constObj Object
+			if c.Type != nil { // Ensure type information is present
+				switch c.Type.Name {
+				case "int", "int64", "int32", "uint", "uint64", "uint32", "rune", "byte":
+					val, err := parseInt64(c.Value)
+					if err == nil {
+						constObj = &Integer{Value: val}
+					} else {
+						fmt.Fprintf(os.Stderr, "Warning: Could not parse external const integer %s.%s from package %s (value: %s): %v\n", c.Name, localPkgName, importPath, c.Value, err)
+					}
+				case "string":
+					unquotedVal, err := strconv.Unquote(c.Value)
+					if err == nil {
+						constObj = &String{Value: unquotedVal}
+					} else {
+						fmt.Fprintf(os.Stderr, "Warning: Could not unquote external const string %s.%s from package %s (value: %s): %v\n", c.Name, localPkgName, importPath, c.Value, err)
+					}
+				case "bool":
+					switch c.Value {
+					case "true":
+						constObj = TRUE
+					case "false":
+						constObj = FALSE
+					default:
+						fmt.Fprintf(os.Stderr, "Warning: Could not parse external const bool %s.%s from package %s (value: %s)\n", c.Name, localPkgName, importPath, c.Value)
+					}
+				default:
+					fmt.Fprintf(os.Stderr, "Warning: Unsupported external const type %s for %s.%s from package %s\n", c.Type.Name, c.Name, localPkgName, importPath)
+				}
+			} else {
+				fmt.Fprintf(os.Stderr, "Warning: External const %s.%s from package %s has no type info from go-scan, cannot determine type for value: %s\n", c.Name, localPkgName, importPath, c.Value)
+			}
+
+			if constObj != nil {
+				env.Define(localPkgName+"."+c.Name, constObj) // Use localPkgName for env key
+			}
+		}
+		i.importedPackages[importPath] = struct{}{} // Mark the importPath as processed
+	}
+
+	// After attempting import and processing, try getting the symbol again
+	if val, ok := env.Get(qualifiedNameInEnv); ok {
+		return val, nil
+	}
+
+	// If still not found.
+	return nil, formatErrorWithContext(i.FileSet, node.Pos(), fmt.Errorf("undefined selector: %s (package %s, path %s)", qualifiedNameInEnv, localPkgName, importPath), "")
 }
 
 func (i *Interpreter) evalBlockStatement(block *ast.BlockStmt, env *Environment) (Object, error) {

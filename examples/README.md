@@ -50,13 +50,65 @@ This example illustrates how `go-scan` can facilitate the creation of tools for 
 
 ## minigo
 
-The `minigo` example is a miniature Go interpreter that uses `go-scan` for semantic analysis.
+The `minigo` example is a miniature Go interpreter designed to showcase and test the capabilities of the `github.com/podhmo/go-scan` library.
 
-**Purpose**: To demonstrate how `go-scan` can be used to build complex tools like interpreters.
+**Overview**
 
-**Key Features**:
-- Parses Go source code into an AST.
-- Uses `go-scan` to perform type checking and other semantic analysis tasks.
-- Directly executes the AST or an intermediate representation.
+`minigo` is a simplified interpreter that can parse and execute a small subset of Go-like syntax. Its primary purpose is to serve as a practical example and a test bed for the `go-scan` library, particularly demonstrating how `go-scan` can be used to analyze Go source code for more complex applications like interpreters or static analysis tools.
 
-This example showcases the power of `go-scan` for building sophisticated Go language tools.
+**Core `go-scan` Features Highlighted**
+
+The `go-scan` library (`github.com/podhmo/go-scan`) provides robust tools for parsing Go source code and extracting type information without relying on `go/packages` or `go/types`. This example leverages several key features:
+
+-   **AST-based Parsing**: `go-scan` directly parses the Abstract Syntax Tree (AST) of Go source files.
+-   **Type Information Extraction**: It can extract detailed information about structs, type aliases, function types, constants, and function signatures.
+-   **Documentation Parsing**: GoDoc comments are captured.
+-   **Cross-Package Type Resolution (Lazy Loading)**: `go-scan` can resolve type definitions across package boundaries within the same module using a lazy loading mechanism. When a type from another package is encountered (e.g., `models.User`), its full definition is only parsed and loaded when `Resolve()` is explicitly called. This is efficient and resilient.
+-   **Package Locator**: Finds the module root (`go.mod`) and resolves internal Go import paths.
+
+**Package Imports in `minigo`**
+
+`minigo` supports importing symbols (currently constants only) from other packages within the same Go module.
+
+**Lazy Import Specification**
+
+Import handling in `minigo` is designed to be "lazy":
+
+-   When an `import` statement (e.g., `import "my/pkg"` or `import p "my/pkg"`) is encountered, `minigo` only records a mapping between the local package name and the import path.
+-   **No files from the imported package are read or parsed at this stage.**
+-   The actual scanning of the imported package and loading of its symbols occurs only when a symbol from that package is first referenced (e.g., `pkg.MyConst`).
+
+This lazy approach ensures that `minigo` only expends resources on parsing packages that are actually used.
+
+**Referencing Imported Symbols**
+
+Symbols can be referenced using the package's base name or an alias:
+
+```go
+// Without Alias
+import "mytestmodule/testpkg"
+var MyMessage = testpkg.ExportedConst
+
+// With Alias
+import pkga "mytestmodule/testpkg"
+var MyNumber = pkga.AnotherExportedConst
+```
+
+**Supported Symbols**
+
+Currently, only **exported constants** are supported for import.
+
+**Unsupported Import Forms**
+
+-   Dot Imports: `import . "my/pkg"`
+-   Blank Imports for Execution: `import _ "my/pkg"` (as `minigo` doesn't support `init` functions for side effects).
+
+**Running `minigo` (Conceptual)**
+
+```bash
+cd examples/minigo
+go run main.go your_script.mgo
+```
+*(Note: `main.go` and the exact execution mechanism are illustrative.)*
+
+This example showcases how `go-scan` can be used to build complex tools like interpreters, with a particular emphasis on its efficient lazy loading capabilities for handling dependencies.

@@ -35,6 +35,7 @@ type PackageInfo struct {
 	Constants  []*ConstantInfo
 	Functions  []*FunctionInfo
 	Fset       *token.FileSet // Added: Fileset for position information
+	AstFiles   map[string]*ast.File // Added: Parsed AST for each file
 }
 
 // ExternalTypeOverride defines a mapping from a fully qualified type name

@@ -5,12 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"go/ast"
-	"go/parser"
+	// "go/parser" // Will be replaced by go-scan
 	"go/token"
 	"os"
+	"path/filepath" // Added for go-scan
 	"strconv"
 	"strings"
-	// "github.com/go-scan/go-scan/scanner" // For more detailed error reporting later
+
+	"github.com/go-scan/go-scan/scanner" // Using go-scan
 )
 
 // formatErrorWithContext creates a detailed error message including file, line, column, and source code.
@@ -105,30 +107,50 @@ func NewInterpreter() *Interpreter {
 }
 
 // LoadAndRun loads a Go source file, parses it, and runs the specified entry point function.
-// Temporarily reverting parts of LoadAndRun to simplify debugging parameter issues.
 func (i *Interpreter) LoadAndRun(filename string, entryPoint string) error {
-	node, err := parser.ParseFile(i.FileSet, filename, nil, parser.ParseComments)
+	// Initialize go-scan Scanner
+	scn, err := scanner.New(i.FileSet, nil) // Assuming no external type overrides for minigo
 	if err != nil {
-		return formatErrorWithContext(i.FileSet, token.NoPos, err, fmt.Sprintf("Error parsing file %s", filename))
+		return fmt.Errorf("failed to create scanner: %w", err)
 	}
 
-	// Process top-level declarations (functions and global vars)
-	// Store all function declarations first
-	for _, declNode := range node.Decls {
-		if fnDecl, ok := declNode.(*ast.FuncDecl); ok {
-			_, evalErr := i.evalFuncDecl(fnDecl, i.globalEnv)
-			if evalErr != nil {
-				return evalErr
+	// Get absolute path for the file and its directory
+	absFilePath, err := filepath.Abs(filename)
+	if err != nil {
+		return fmt.Errorf("failed to get absolute path for %s: %w", filename, err)
+	}
+	pkgDir := filepath.Dir(absFilePath)
+
+	// Scan the file(s). For minigo, it's typically a single file.
+	// We use ScanFiles, passing the single file.
+	// The package path for ScanFiles can be the directory containing the file.
+	pkgInfo, err := scn.ScanFiles(nil, []string{absFilePath}, pkgDir, nil) // Context and resolver can be nil for this basic usage
+	if err != nil {
+		// Use NoPos for general scanning errors, or try to extract more specific pos if available from err
+		return formatErrorWithContext(i.FileSet, token.NoPos, err, fmt.Sprintf("Error scanning file %s with go-scan", filename))
+	}
+	i.FileSet = pkgInfo.Fset // Use the FileSet from go-scan
+
+	// Process top-level declarations (functions and global vars) from the ASTs
+	for _, fileAst := range pkgInfo.AstFiles { // Iterate through all scanned files' ASTs
+		// Store all function declarations first
+		for _, declNode := range fileAst.Decls {
+			if fnDecl, ok := declNode.(*ast.FuncDecl); ok {
+				_, evalErr := i.evalFuncDecl(fnDecl, i.globalEnv)
+				if evalErr != nil {
+					return evalErr // evalFuncDecl should use i.FileSet for errors
+				}
 			}
 		}
-	}
-	// Then evaluate global variable declarations
-	for _, declNode := range node.Decls {
-		if genDecl, ok := declNode.(*ast.GenDecl); ok && genDecl.Tok == token.VAR {
-			tempDeclStmt := &ast.DeclStmt{Decl: genDecl}
-			_, evalErr := i.eval(tempDeclStmt, i.globalEnv)
-			if evalErr != nil {
-				return formatErrorWithContext(i.FileSet, genDecl.Pos(), evalErr, "Error evaluating global variable declaration")
+		// Then evaluate global variable declarations
+		for _, declNode := range fileAst.Decls {
+			if genDecl, ok := declNode.(*ast.GenDecl); ok && genDecl.Tok == token.VAR {
+				tempDeclStmt := &ast.DeclStmt{Decl: genDecl}
+				_, evalErr := i.eval(tempDeclStmt, i.globalEnv)
+				if evalErr != nil {
+					// formatErrorWithContext will use i.FileSet
+					return formatErrorWithContext(i.FileSet, genDecl.Pos(), evalErr, "Error evaluating global variable declaration")
+				}
 			}
 		}
 	}

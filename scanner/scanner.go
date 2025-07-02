@@ -160,23 +160,44 @@ func (s *Scanner) parseGenDecl(ctx context.Context, decl *ast.GenDecl, info *Pac
 				}
 				for i, name := range sp.Names {
 					var val string
+					var inferredFieldType *FieldType // For type inference
+
 					if i < len(sp.Values) {
-						if lit, ok := sp.Values[i].(*ast.BasicLit); ok {
+						valueExpr := sp.Values[i]
+						if lit, ok := valueExpr.(*ast.BasicLit); ok {
 							val = lit.Value
+							// Infer type from value if sp.Type is nil
+							switch lit.Kind {
+							case token.STRING:
+								inferredFieldType = &FieldType{Name: "string", IsBuiltin: true}
+							case token.INT:
+								inferredFieldType = &FieldType{Name: "int", IsBuiltin: true}
+							case token.FLOAT:
+								inferredFieldType = &FieldType{Name: "float64", IsBuiltin: true}
+							case token.CHAR:
+								inferredFieldType = &FieldType{Name: "rune", IsBuiltin: true}
+							default:
+								slog.WarnContext(ctx, "Unhandled BasicLit kind for constant type inference", slog.String("kind", lit.Kind.String()), slog.String("const_name", name.Name), slog.String("filePath", absFilePath))
+							}
+						} else {
+							slog.InfoContext(ctx, "Constant value is not a BasicLit, type inference might be limited", slog.String("const_name", name.Name), slog.String("value_type", fmt.Sprintf("%T", valueExpr)), slog.String("filePath", absFilePath))
 						}
 					}
-					// var typeName string // Unused
-					var fieldType *FieldType
-					if sp.Type != nil {
-						fieldType = s.parseTypeExpr(sp.Type)
+
+					var finalFieldType *FieldType
+					if sp.Type != nil { // Explicit type is present
+						finalFieldType = s.parseTypeExpr(sp.Type)
+					} else { // No explicit type, use inferred type
+						finalFieldType = inferredFieldType
 					}
+
 					info.Constants = append(info.Constants, &ConstantInfo{
 						Name:       name.Name,
 						FilePath:   absFilePath,
 						Doc:        doc,
 						Value:      val,
-						Type:       fieldType, // Assign the parsed *FieldType
-						IsExported: name.IsExported(), // Set IsExported
+						Type:       finalFieldType, // Use the determined field type
+						IsExported: name.IsExported(),
 						Node:       name,
 					})
 				}

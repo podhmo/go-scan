@@ -142,11 +142,17 @@ func (s *String) Compare(other Object) (int, error) {
 
 // --- UserDefinedFunction Object ---
 type UserDefinedFunction struct {
-	Name       string // Optional: for debugging and representation
+	Name       string // Simple name of the function
 	Parameters []*ast.Ident
 	Body       *ast.BlockStmt
 	Env        *Environment   // Closure: the environment where the function was defined
 	FileSet    *token.FileSet // FileSet for error reporting context
+
+	// Fields for external functions
+	IsExternal   bool   // True if this definition came from an imported package
+	PackagePath  string // Import path of the package if IsExternal is true
+	PackageAlias string // The alias used for this function's package at the import site (e.g. "tp" in `import tp "some/path"`)
+	// QualifiedName string // Optional: e.g., "pkg.FuncName" for inspection
 }
 
 func (udf *UserDefinedFunction) Type() ObjectType { return FUNCTION_OBJ }
@@ -158,6 +164,10 @@ func (udf *UserDefinedFunction) Inspect() string {
 	name := udf.Name
 	if name == "" {
 		name = "[anonymous]"
+	}
+	// For now, keep inspect simple. A more sophisticated inspect might need access to alias map for PackagePath.
+	if udf.IsExternal {
+		return fmt.Sprintf("func %s [external](%s) { ... }", name, strings.Join(params, ", "))
 	}
 	return fmt.Sprintf("func %s(%s) { ... }", name, strings.Join(params, ", "))
 }
@@ -217,12 +227,13 @@ func (cs *ContinueStatement) Inspect() string  { return "continue" }
 // --- StructDefinition Object ---
 // StructDefinition stores the definition of a struct.
 type StructDefinition struct {
-	Name   string
-	Fields map[string]string // Field name to type name (e.g., "int", "string")
-	// We can enhance Fields to store more complex type information if needed,
-	// possibly linking to other StructDefinition objects for nested structs or using go-scan's TypeInfo.
-	EmbeddedDefs []*StructDefinition // Stores definitions of embedded structs
-	FieldOrder   []string            // Stores the original order of fields including embedded type names
+	Name         string
+	Fields       map[string]string // Field name to type name (e.g., "int", "string", "pkg.OtherType")
+	EmbeddedDefs []*StructDefinition
+	FieldOrder   []string
+	FileSet      *token.FileSet // FileSet for context, especially for external structs
+	IsExternal   bool           // True if this definition came from an imported package
+	PackagePath  string         // Import path of the package if IsExternal is true
 }
 
 func (sd *StructDefinition) Type() ObjectType { return STRUCT_DEF_OBJ }

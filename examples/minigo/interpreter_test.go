@@ -2,7 +2,10 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"os"
+	"path/filepath"
 
 	// "path/filepath" // For joining paths - No longer needed due to hardcoded paths
 	// "runtime"       // For runtime.Caller - No longer needed
@@ -295,3 +298,275 @@ func main() {
 // so all tests using LoadAndRun will need a discoverable go.mod,
 // implying the test-specific scanner setup (or Chdir) is needed more broadly.
 // For now, focusing on making TestImportStatements pass.
+
+// Helper function to create a temporary Go file for testing imports (can be .go or .mgo)
+func createTempGoFile(t *testing.T, dir string, filename string, content string) string {
+	t.Helper()
+	path := filepath.Join(dir, filename)
+	err := os.WriteFile(path, []byte(content), 0644)
+	if err != nil {
+		t.Fatalf("Failed to create temp go file %s: %v", path, err)
+	}
+	return path
+}
+
+func TestEvalExternalStructsAndFunctions(t *testing.T) {
+	// Setup: Create a temporary module structure for go-scan to find the package
+	baseDir, err := os.MkdirTemp("", "minigo_test_extstruct")
+	if err != nil {
+		t.Fatalf("Failed to create temp base dir: %v", err)
+	}
+	defer os.RemoveAll(baseDir)
+
+	testModDir := filepath.Join(baseDir, "testmod")
+	err = os.Mkdir(testModDir, 0755)
+	if err != nil {
+		t.Fatalf("Failed to create testmod dir: %v", err)
+	}
+
+	goModContent := "module testmod\n\ngo 1.18\n"
+	createTempGoFile(t, testModDir, "go.mod", goModContent)
+
+	testPkgDir := filepath.Join(testModDir, "testpkg")
+	err = os.Mkdir(testPkgDir, 0755)
+	if err != nil {
+		t.Fatalf("Failed to create testpkg dir: %v", err)
+	}
+
+	testPkgGoContent := `package testpkg
+const ExportedConst = "Hello from testpkg"
+const AnotherExportedConst = 12345
+
+type Point struct { X int; Y int }
+func NewPoint(x int, y int) *Point { return &Point{X: x, Y: y} }
+func NewPointValue(x int, y int) Point { return Point{X: x, Y: y} }
+
+type Figure struct { Name string; P Point }
+func NewFigure(name string, x int, y int) Figure { return Figure{Name: name, P: Point{X: x, Y: y}} }
+
+func GetPointX(p Point) int { return p.X }
+func GetFigureName(f Figure) string { return f.Name }
+
+type SecretPoint struct { X int; secretY int }
+func NewSecretPoint(x, y int) SecretPoint { return SecretPoint{X: x, secretY: y} }
+`
+	createTempGoFile(t, testPkgDir, "testpkg.go", testPkgGoContent)
+
+	tests := []struct {
+		name          string
+		input         string
+		expected      interface{}
+		expectError   bool
+		errorContains string
+	}{
+		{
+			name: "Instantiate external struct Point",
+			input: `
+package main
+import "testmod/testpkg"
+func main() {
+    p1 := testpkg.Point{X: 10, Y: 20}
+    return p1.X
+}`,
+			expected: int64(10),
+		},
+		{
+			name: "Call function returning external struct pointer NewPoint",
+			input: `
+package main
+import tp "testmod/testpkg"
+func main() {
+    pt := tp.NewPoint(3, 4)
+    return pt.Y
+}`,
+			expected: int64(4),
+		},
+		{
+			name: "Call function returning external struct value NewPointValue",
+			input: `
+package main
+import "testmod/testpkg"
+func main() {
+    pval := testpkg.NewPointValue(5, 6)
+    return pval.X
+}`,
+			expected: int64(5),
+		},
+		{
+			name: "Instantiate external struct Figure with nested Point",
+			input: `
+package main
+import "testmod/testpkg"
+func main() {
+    fig := testpkg.Figure{Name: "Circle", P: testpkg.Point{X: 1, Y: 2}}
+    return fig.Name
+}`,
+			expected: "Circle",
+		},
+		{
+			name: "Access nested struct field from Figure",
+			input: `
+package main
+import "testmod/testpkg"
+func main() {
+    fig := testpkg.Figure{Name: "Square", P: testpkg.Point{X: 7, Y: 8}}
+    return fig.P.Y
+}`,
+			expected: int64(8),
+		},
+		{
+			name: "Call function returning Figure and access fields",
+			input: `
+package main
+import p "testmod/testpkg"
+func main() {
+    f := p.NewFigure("Triangle", 10, 20)
+	return f.Name
+}`,
+			expected: "Triangle",
+		},
+		{
+			name: "Call function returning Figure and access nested field P.X",
+			input: `
+package main
+import p "testmod/testpkg"
+func main() {
+    f := p.NewFigure("Rectangle", 30, 40)
+    return f.P.X
+}`,
+			expected: int64(30),
+		},
+		{
+			name: "Call function with external struct Point as argument",
+			input: `
+package main
+import "testmod/testpkg"
+func main() {
+    mypoint := testpkg.Point{X: 99, Y: 88}
+    return testpkg.GetPointX(mypoint)
+}`,
+			expected: int64(99),
+		},
+		{
+			name: "Call function with external struct Figure as argument",
+			input: `
+package main
+import Alias "testmod/testpkg"
+func main() {
+    myfig := Alias.Figure{Name: "MyLovelyFigure", P: Alias.Point{X:1,Y:2}}
+    return Alias.GetFigureName(myfig)
+}`,
+			expected: "MyLovelyFigure",
+		},
+		{
+			name: "Access exported field from struct with unexported field",
+			input: `
+package main
+import t "testmod/testpkg"
+func main() {
+    sp := t.NewSecretPoint(10, 20)
+    return sp.X
+}`,
+			expected: int64(10),
+		},
+		{
+			name: "Access non-existent field in external struct Point",
+			input: `
+package main
+import "testmod/testpkg"
+func main() {
+    p := testpkg.Point{X: 1}
+    return p.Z
+}`,
+			expectError:   true,
+			errorContains: "type Point has no field Z",
+		},
+		{
+			name: "Call GetPointX with wrong type (int instead of Point)",
+			input: `
+package main
+import "testmod/testpkg"
+func main() {
+    return testpkg.GetPointX(123)
+}`,
+			expectError:   true,
+			errorContains: "type mismatch for argument",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			interpreter := NewInterpreter()
+			interpreter.ModuleRoot = testModDir
+
+			mainFileDir := filepath.Join(baseDir, "main_scripts", strings.ReplaceAll(tt.name, " ", "_"))
+			os.MkdirAll(mainFileDir, 0755)
+			mainMgoFile := createTempGoFile(t, mainFileDir, "main.mgo", tt.input)
+
+			oldStdout := os.Stdout
+			oldStderr := os.Stderr
+			rOut, wOut, _ := os.Pipe()
+			rErr, wErr, _ := os.Pipe()
+			os.Stdout = wOut
+			os.Stderr = wErr
+
+			runErr := interpreter.LoadAndRun(ctx, mainMgoFile, "main")
+
+			wOut.Close()
+			wErr.Close()
+			capturedStdout, _ := io.ReadAll(rOut)
+			capturedStderr, _ := io.ReadAll(rErr)
+			os.Stdout = oldStdout
+			os.Stderr = oldStderr
+
+			logOutput := func () {
+				t.Logf("Input script for %s:\n%s", tt.name, tt.input)
+				t.Logf("STDOUT for %s:\n%s", tt.name, string(capturedStdout))
+				t.Logf("STDERR for %s:\n%s", tt.name, string(capturedStderr))
+			}
+
+			if tt.expectError {
+				if runErr == nil {
+					logOutput()
+					t.Errorf("expected error, got nil")
+					return
+				}
+				if tt.errorContains != "" && !strings.Contains(runErr.Error(), tt.errorContains) {
+					logOutput()
+					t.Errorf("expected error message to contain %q, got %q", tt.errorContains, runErr.Error())
+				}
+			} else {
+				if runErr != nil {
+					logOutput()
+					t.Errorf("unexpected error: %v", runErr)
+					return
+				}
+				outputStr := string(capturedStdout)
+				var expectedOutputSuffix string
+				switch v := tt.expected.(type) {
+				case int64:
+					expectedOutputSuffix = fmt.Sprintf("result: %d\n", v)
+				case string:
+					expectedOutputSuffix = fmt.Sprintf("result: %s\n", v)
+				case bool:
+					expectedOutputSuffix = fmt.Sprintf("result: %t\n", v)
+				default:
+					logOutput()
+					t.Fatalf("unhandled expected type: %T for test %s", tt.expected, tt.name)
+				}
+
+				// Check various ways the output might appear due to logging or exact formatting.
+				trimmedOutput := strings.TrimSpace(outputStr)
+				trimmedExpected := strings.TrimSpace(expectedOutputSuffix)
+
+				if !strings.HasSuffix(trimmedOutput, trimmedExpected) &&
+				   !strings.Contains(outputStr, expectedOutputSuffix) && /* check if it's anywhere */
+				   !strings.Contains(trimmedOutput, trimmedExpected) { /* check if trimmed version contains it */
+					logOutput()
+					t.Errorf("expected output to effectively be %q or contain %q. Full stdout:\n%s", trimmedExpected, expectedOutputSuffix, outputStr)
+				}
+			}
+		})
+	}
+}

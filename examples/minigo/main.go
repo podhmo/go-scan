@@ -4,7 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	// "github.com/go-scan/go-scan/scanner" // Will be used later
+	// "github.com/podhmo/go-scan/scanner" // Will be used later
 )
 
 func main() {

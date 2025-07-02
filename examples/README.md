@@ -50,13 +50,14 @@ This example illustrates how `go-scan` can facilitate the creation of tools for 
 
 ## minigo
 
-The `minigo` example is a miniature Go interpreter that uses `go-scan` for semantic analysis.
+The `minigo` example features a miniature Go interpreter, illustrating how `go-scan` can be utilized for parsing and semantic analysis in language tooling.
 
-**Purpose**: To demonstrate how `go-scan` can be used to build complex tools like interpreters.
+**Purpose**: To serve as a practical demonstration for `go-scan`, particularly its ability to analyze Go source for applications like interpreters or static analysis tools.
 
 **Key Features**:
-- Parses Go source code into an AST.
-- Uses `go-scan` to perform type checking and other semantic analysis tasks.
-- Directly executes the AST or an intermediate representation.
+-   Parses a subset of Go-like syntax into an AST.
+-   Leverages `go-scan` for tasks such as type information extraction and cross-package type resolution.
+-   Highlights `go-scan`'s **lazy loading** mechanism for efficient handling of type definitions from different packages.
+-   Demonstrates a "lazy import specification": imported packages are only fully parsed when their symbols are referenced, optimizing resource usage.
 
-This example showcases the power of `go-scan` for building sophisticated Go language tools.
+This example showcases `go-scan`'s capabilities in building complex Go language tools, with a focus on efficient dependency handling through lazy loading and selective parsing.

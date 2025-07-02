@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
@@ -36,7 +37,7 @@ func main() {
 	interpreter := NewInterpreter()
 	// Store the initial environment, which might be useful for inspection or a REPL later.
 	// For now, LoadAndRun creates its own scope for the main function.
-	err = interpreter.LoadAndRun(filename, *entryPoint)
+	err = interpreter.LoadAndRun(context.Background(), filename, *entryPoint)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error running interpreter: %v\n", err)
 		os.Exit(1)

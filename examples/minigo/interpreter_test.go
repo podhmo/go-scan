@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"os"
 	// "path/filepath" // For joining paths - No longer needed due to hardcoded paths
 	// "runtime"       // For runtime.Caller - No longer needed
@@ -235,7 +236,7 @@ func main() {
 			}
 			interpreter.sharedScanner = testSpecificScanner
 
-			err := interpreter.LoadAndRun(filename, tt.entryPoint)
+			err := interpreter.LoadAndRun(context.Background(), filename, tt.entryPoint)
 
 			if tt.expectError {
 				if err == nil {

@@ -85,6 +85,30 @@ func parseInt64(s string) (int64, error) {
 	return strconv.ParseInt(s, 0, 64)
 }
 
+// astNodeToString converts an AST node to its string representation.
+// This is a helper for error messages. It's not exhaustive.
+func astNodeToString(node ast.Node, fset *token.FileSet) string {
+	// This is a simplified version. For more complex nodes, you might need
+	// to use format.Node from go/format, but that requires an io.Writer.
+	// For simple identifiers or selectors, this should suffice.
+	switch n := node.(type) {
+	case *ast.Ident:
+		return n.Name
+	case *ast.SelectorExpr:
+		return astNodeToString(n.X, fset) + "." + n.Sel.Name
+	// Add other cases as needed
+	default:
+		if fset != nil && node != nil && node.Pos() != token.NoPos && node.End() != token.NoPos {
+			// Fallback to raw text if possible, limited range
+			// This is very basic and might not be ideal for all nodes.
+			// Consider a more robust way if complex types are common in errors.
+			// For now, often the type is %T.
+			return fmt.Sprintf("%T at %s", node, fset.Position(node.Pos()).String())
+		}
+		return fmt.Sprintf("%T", node)
+	}
+}
+
 // Interpreter holds the state of the interpreter
 type Interpreter struct {
 	globalEnv        *Environment
@@ -443,8 +467,9 @@ func (i *Interpreter) evalCompositeLit(ctx context.Context, lit *ast.CompositeLi
 
 	// 3. Create a new StructInstance.
 	instance := &StructInstance{
-		Definition:  structDef,
-		FieldValues: make(map[string]Object),
+		Definition:     structDef,
+		FieldValues:    make(map[string]Object),
+		EmbeddedValues: make(map[string]*StructInstance), // Initialize map for embedded instances
 	}
 
 	// 4. Evaluate and assign field values.
@@ -478,27 +503,92 @@ func (i *Interpreter) evalCompositeLit(ctx context.Context, lit *ast.CompositeLi
 				return nil, formatErrorWithContext(i.FileSet, kvExpr.Key.Pos(), fmt.Errorf("struct field key must be an identifier, got %T for struct '%s'", kvExpr.Key, structDef.Name), "Struct instantiation error")
 			}
 			fieldName := keyIdent.Name
+			valueExpr := kvExpr.Value
 
-			if _, fieldExists := structDef.Fields[fieldName]; !fieldExists {
-				return nil, formatErrorWithContext(i.FileSet, keyIdent.Pos(), fmt.Errorf("unknown field '%s' in struct literal of type '%s'", fieldName, structDef.Name), "Struct instantiation error")
+			// TODO: Check for duplicate field names in literal.
+
+			// Case 1: Direct field of the current struct
+			if _, isDirectField := structDef.Fields[fieldName]; isDirectField {
+				valObj, err := i.eval(ctx, valueExpr, env)
+				if err != nil {
+					return nil, err
+				}
+				// TODO: Type check valObj against structDef.Fields[fieldName]
+				instance.FieldValues[fieldName] = valObj
+				expectedFieldCount++
+				continue
 			}
 
-			// TODO: Check for duplicate field names in literal: "fieldName already set"
-
-			valueObj, err := i.eval(ctx, kvExpr.Value, env)
-			if err != nil {
-				return nil, err // Error already formatted by i.eval
+			// Case 2: Field name is the type name of an embedded struct (explicit embedded struct initialization)
+			var isEmbeddedTypeNameInitialization bool
+			var targetEmbeddedDefForExplicitInit *StructDefinition
+			for _, embDef := range structDef.EmbeddedDefs {
+				if embDef.Name == fieldName {
+					isEmbeddedTypeNameInitialization = true
+					targetEmbeddedDefForExplicitInit = embDef
+					break
+				}
 			}
 
-			// TODO: Type checking: Compare valueObj.Type() with structDef.Fields[fieldName] (expected type string)
-			// This is a simplification. Actual type objects would be better.
-			// For now, we store the type name as string in StructDefinition.
-			// Example: if structDef.Fields[fieldName] == "int" and valueObj.Type() != INTEGER_OBJ, error.
+			if isEmbeddedTypeNameInitialization {
+				valObj, err := i.eval(ctx, valueExpr, env)
+				if err != nil {
+					return nil, err
+				}
+				embInstanceVal, ok := valObj.(*StructInstance)
+				if !ok || embInstanceVal.Definition.Name != targetEmbeddedDefForExplicitInit.Name {
+					return nil, formatErrorWithContext(i.FileSet, kvExpr.Value.Pos(),
+						fmt.Errorf("value for embedded struct '%s' is not a compatible struct instance (expected '%s', got '%s')",
+							fieldName, targetEmbeddedDefForExplicitInit.Name, valObj.Type()), "Struct instantiation error")
+				}
+				instance.EmbeddedValues[fieldName] = embInstanceVal
+				expectedFieldCount++
+				continue
+			}
 
-			instance.FieldValues[fieldName] = valueObj
-			expectedFieldCount++
+			// Case 3: Promoted field from an embedded struct
+			var owningEmbDef *StructDefinition
+			var foundPromotedCount int
+			for _, embDef := range structDef.EmbeddedDefs {
+				// Check direct fields of this embedded struct
+				if _, isPromoted := embDef.Fields[fieldName]; isPromoted {
+					if foundPromotedCount > 0 {
+						return nil, formatErrorWithContext(i.FileSet, keyIdent.Pos(), fmt.Errorf("ambiguous promoted field '%s' in literal for type '%s'", fieldName, structDef.Name), "Struct instantiation error")
+					}
+					owningEmbDef = embDef
+					foundPromotedCount++
+				}
+				// TODO: Recursively check fields of `embDef`'s own embedded structs.
+				// This requires a helper like `findFieldDefinitionInEmbedded` to correctly identify the owning embedded struct.
+				// For now, only checking one level of promotion.
+			}
+
+			if owningEmbDef != nil {
+				// Get or create the instance for this embedded type
+				embInstance, ok := instance.EmbeddedValues[owningEmbDef.Name]
+				if !ok {
+					embInstance = &StructInstance{
+						Definition:     owningEmbDef,
+						FieldValues:    make(map[string]Object),
+						EmbeddedValues: make(map[string]*StructInstance), // For deeper embeddings
+					}
+					instance.EmbeddedValues[owningEmbDef.Name] = embInstance
+				}
+
+				valObj, err := i.eval(ctx, valueExpr, env)
+				if err != nil {
+					return nil, err
+				}
+				// TODO: Type check valObj against owningEmbDef.Fields[fieldName]
+				embInstance.FieldValues[fieldName] = valObj
+				expectedFieldCount++
+				continue
+			}
+
+			// Case 4: Unknown field
+			return nil, formatErrorWithContext(i.FileSet, keyIdent.Pos(), fmt.Errorf("unknown field '%s' in struct literal of type '%s'", fieldName, structDef.Name), "Struct instantiation error")
 		}
-	} else { // Form: T{Value1, Value2, ...} - Order matters, must match struct definition field order
+	} else { // Form: T{Value1, Value2, ...} - Order matters
 		// This form is harder because ast.StructType.Fields.List gives us fields, but their order
 		// might not be easily accessible or guaranteed in the same way map iteration isn't.
 		// For simplicity, MiniGo will initially NOT support this unkeyed form if fields are present.
@@ -625,25 +715,31 @@ func (i *Interpreter) evalSelectorExpr(ctx context.Context, node *ast.SelectorEx
 
 	// Check if xObj is a struct instance
 	if structInstance, ok := xObj.(*StructInstance); ok {
-		// Access field from struct instance
-		value, valueFound := structInstance.FieldValues[fieldName]
-		if !valueFound {
-			// Field not found in the instance. Go would allow this if it's an uninitialized field (it gets a zero value).
-			// For our interpreter, if it's not in FieldValues, it means it wasn't set during composite literal evaluation.
-			// We need to decide the behavior: error, or return NULL, or return language-defined zero value.
-			// Let's return NULL for now, consistent with accessing a non-existent map key (if we had maps).
-			// A stricter approach might be to check structInstance.Definition.Fields to see if the field *should* exist.
-			if _, defExists := structInstance.Definition.Fields[fieldName]; defExists {
-				// The field is defined on the struct type but not explicitly set on this instance.
-				// For simplicity, return NULL. A more Go-like behavior would be to return the zero value of the field's type.
-				// This is complex as it requires mapping type names ("int", "string") to their zero Object values.
-				// For now, NULL indicates "not explicitly set".
-				return NULL, nil // Or an error: fmt.Errorf("field '%s' not initialized in struct instance of '%s'", fieldName, structInstance.Definition.Name)
-			}
-			// If defExists is false, then it's truly an undefined field for the struct type.
-			return nil, formatErrorWithContext(i.FileSet, node.Sel.Pos(), fmt.Errorf("type %s has no field %s", structInstance.Definition.Name, fieldName), "Field access error")
+		// 1. Check direct fields that were explicitly set
+		if val, found := structInstance.FieldValues[fieldName]; found {
+			return val, nil
 		}
-		return value, nil
+
+		// 2. Check if it's a defined direct field but not explicitly set (uninitialized)
+		if _, isDirectField := structInstance.Definition.Fields[fieldName]; isDirectField {
+			// Field is defined on the struct but wasn't in FieldValues (not explicitly initialized).
+			// Return NULL for now. Later, this could be a zero value.
+			return NULL, nil
+		}
+
+		// 3. Search in embedded structs
+		// This requires a recursive search function to handle multiple levels of embedding
+		// and ambiguity detection.
+		foundValue, err := findFieldInEmbedded(structInstance, fieldName, i.FileSet, node.Sel.Pos())
+		if err != nil {
+			return nil, err // Error already formatted by findFieldInEmbedded
+		}
+		if foundValue != nil {
+			return foundValue, nil
+		}
+
+		// 4. If not found in direct or embedded fields, it's an undefined field for this struct type.
+		return nil, formatErrorWithContext(i.FileSet, node.Sel.Pos(), fmt.Errorf("type %s has no field %s", structInstance.Definition.Name, fieldName), "Field access error")
 	}
 
 	// Check if xObj is an identifier representing a package (for package.Symbol access)
@@ -753,6 +849,105 @@ func (i *Interpreter) evalSelectorExpr(ctx context.Context, node *ast.SelectorEx
 
 	// If xObj is not a struct instance and not a package identifier, it's an unsupported selector base.
 	return nil, formatErrorWithContext(i.FileSet, node.X.Pos(), fmt.Errorf("selector base must be a struct instance or package identifier, got %s", xObj.Type()), "Unsupported selector expression")
+}
+
+// findFieldInEmbedded recursively searches for a field within the embedded structs of a given StructInstance.
+// It returns:
+//   - foundValue: The Object found (can be NULL if the field is defined but uninitialized).
+//   - found:      A boolean indicating if the field was found (even if its value is NULL).
+//   - foundIn:    The name of the struct definition where the field was ultimately found.
+//   - err:        An error, typically for ambiguity.
+func findFieldInEmbedded(instance *StructInstance, fieldName string, fset *token.FileSet, selPos token.Pos) (foundValue Object, found bool, foundIn string, err error) {
+	var overallFoundValue Object
+	var overallFoundInDefinitionName string
+	var numFoundPaths int = 0
+
+	for _, embDef := range instance.Definition.EmbeddedDefs {
+		embInstance, embInstanceExists := instance.EmbeddedValues[embDef.Name]
+		if !embInstanceExists {
+			// If an embedded struct was not initialized in the literal, its instance won't exist here.
+			// Go would treat its fields as accessible and having zero values.
+			// For MiniGo, if the embInstance isn't there, we can't get fields from it.
+			// This path implies the field is sought through an uninitialized embedded struct.
+			// We must check if `fieldName` *would* be in `embDef`.
+			if _, isFieldInEmbDef := embDef.Fields[fieldName]; isFieldInEmbDef {
+				// The field *is* defined in this uninitialized embedded struct.
+				// According to Go's rules, this should resolve and yield a zero value.
+				// For MiniGo, we return NULL.
+				if numFoundPaths > 0 && overallFoundInDefinitionName != embDef.Name { // Check if already found in a *different* embedded path
+					return nil, false, "", formatErrorWithContext(fset, selPos,
+						fmt.Errorf("ambiguous selector %s (found in %s and as uninitialized field in %s)", fieldName, overallFoundInDefinitionName, embDef.Name), "")
+				}
+				overallFoundValue = NULL
+				overallFoundInDefinitionName = embDef.Name
+				numFoundPaths++
+				// Continue to check for ambiguity with other embedded structs
+			} else {
+				// Recursively check deeper embeddings within this embDef, even if embInstance doesn't exist directly,
+				// the definition (embDef) might have further embeddings.
+				// This requires passing the definition `embDef` to a recursive call.
+				// Let's simplify for now: if embInstance is nil, we only consider direct fields of embDef (as done above).
+				// Deeper recursion without an instance is complex.
+			}
+			continue // Move to the next embedded definition.
+		}
+
+		// Path 1: Field is a direct, explicitly set field of the current embedded instance.
+		if val, isSet := embInstance.FieldValues[fieldName]; isSet {
+			if numFoundPaths > 0 && overallFoundInDefinitionName != embDef.Name {
+				return nil, false, "", formatErrorWithContext(fset, selPos,
+					fmt.Errorf("ambiguous selector %s (found in %s and as set field in %s)", fieldName, overallFoundInDefinitionName, embDef.Name), "")
+			}
+			overallFoundValue = val
+			overallFoundInDefinitionName = embDef.Name
+			numFoundPaths++
+			continue // Found directly, check next sibling for ambiguity.
+		}
+
+		// Path 2: Field is a defined direct field of the embedded struct, but not explicitly set (uninitialized).
+		if _, isDirectField := embDef.Fields[fieldName]; isDirectField {
+			if numFoundPaths > 0 && overallFoundInDefinitionName != embDef.Name {
+				return nil, false, "", formatErrorWithContext(fset, selPos,
+					fmt.Errorf("ambiguous selector %s (found in %s and as uninitialized field in %s)", fieldName, overallFoundInDefinitionName, embDef.Name), "")
+			}
+			overallFoundValue = NULL
+			overallFoundInDefinitionName = embDef.Name
+			numFoundPaths++
+			continue // Found as uninitialized, check next sibling for ambiguity.
+		}
+
+		// Path 3: Recursively search in deeper embedded structs of this current embedded instance.
+		// Only proceed if we haven't found a more direct version of the field in *this* embDef.
+		// (Direct fields of embDef shadow its own embedded fields).
+		recVal, recFound, recIn, recErr := findFieldInEmbedded(embInstance, fieldName, fset, selPos)
+		if recErr != nil {
+			return nil, false, "", recErr // Propagate ambiguity error from deeper level
+		}
+		if recFound {
+			if numFoundPaths > 0 && overallFoundInDefinitionName != embDef.Name { // `embDef.Name` here means "found via this path"
+				// If already found via a different top-level embedded struct, it's ambiguous.
+				return nil, false, "", formatErrorWithContext(fset, selPos,
+					fmt.Errorf("ambiguous selector %s (found in %s and via deeper embedding in %s through %s)", fieldName, overallFoundInDefinitionName, recIn, embDef.Name), "")
+			}
+			overallFoundValue = recVal
+			overallFoundInDefinitionName = recIn // Or embDef.Name + "." + recIn for a path
+			numFoundPaths++
+			// Continue, an ambiguity might arise with the next sibling embDef.
+		}
+	}
+
+	if numFoundPaths > 1 {
+		// This specific check might be redundant if ambiguity is caught when `numFoundPaths` increments to 2.
+		// However, it's a final safeguard. The error message here might be generic.
+		return nil, false, "", formatErrorWithContext(fset, selPos,
+			fmt.Errorf("ambiguous selector %s (found in multiple embedded structs)", fieldName), "")
+	}
+
+	if numFoundPaths == 1 {
+		return overallFoundValue, true, overallFoundInDefinitionName, nil
+	}
+
+	return nil, false, "", nil // Not found
 }
 
 
@@ -909,21 +1104,83 @@ func (i *Interpreter) evalDeclStmt(ctx context.Context, declStmt *ast.DeclStmt, 
 
 			switch sType := typeSpec.Type.(type) {
 			case *ast.StructType:
-				fields := make(map[string]string)
+				directFields := make(map[string]string)
+				var embeddedDefs []*StructDefinition
+				var fieldOrder []string
+
 				if sType.Fields != nil {
 					for _, field := range sType.Fields.List {
-						fieldTypeIdent, ok := field.Type.(*ast.Ident)
-						if !ok {
-							return nil, formatErrorWithContext(i.FileSet, field.Type.Pos(), fmt.Errorf("struct field in '%s' has unsupported type specifier %T (only basic identifiers like 'int', 'string' supported for now)", typeName, field.Type), "")
+						var fieldTypeName string
+						var isEmbedded bool
+
+						// Determine the type name of the field or embedded struct
+						// and whether it's an embedded field.
+						switch typeExpr := field.Type.(type) {
+						case *ast.Ident:
+							fieldTypeName = typeExpr.Name
+						case *ast.SelectorExpr: // For pkg.Type
+							// For simplicity, assume SelectorExpr is for qualified type names (pkg.Type)
+							// and we don't resolve external packages for struct defs yet in MiniGo.
+							// If field.Names is empty, this would be an embedded pkg.Type.
+							// If field.Names is not empty, it's a normal field of type pkg.Type.
+							// Current MiniGo struct fields only support simple idents like "int".
+							// This part needs careful extension if we support pkg.Type for fields or embedding.
+							// For now, let's assume embedded types are *ast.Ident.
+							// And direct fields are also *ast.Ident for their types.
+							return nil, formatErrorWithContext(i.FileSet, field.Type.Pos(), fmt.Errorf("field type '%s' in struct '%s' uses SelectorExpr, which is not fully supported for struct field types or embedding yet", astNodeToString(typeExpr, i.FileSet), typeName), "Struct definition error")
+						default:
+							return nil, formatErrorWithContext(i.FileSet, field.Type.Pos(), fmt.Errorf("struct field in '%s' has unsupported type specifier %T", typeName, field.Type), "Struct definition error")
 						}
-						for _, nameIdent := range field.Names { // A single field declaration can have multiple names (e.g. `X, Y int`)
-							fields[nameIdent.Name] = fieldTypeIdent.Name
+
+						// Check if it's an embedded field
+						// An embedded field typically has no name, or its name is the same as its type.
+						if len(field.Names) == 0 { // Anonymous field, e.g., `string` or `MyStruct`
+							isEmbedded = true
+						} else if len(field.Names) == 1 && field.Names[0].Name == fieldTypeName {
+							// Named field where name matches type, e.g. `Point Point`. Go treats this as embedding.
+							// However, `go/ast` seems to parse `Point` alone as Type=Ident{Point}, Names=nil.
+							// And `P Point` as Type=Ident{Point}, Names=[Ident{P}].
+							// So, `len(field.Names) == 0` is the primary check for typical embedding.
+							// Let's stick to `len(field.Names) == 0` for simple anonymous embedding.
+							// The case `P P` where P is a type would be a regular field P of type P.
+						}
+
+
+						if isEmbedded {
+							fieldOrder = append(fieldOrder, fieldTypeName) // Record embedded type name in order
+
+							// Look up the definition of the embedded struct.
+							obj, found := env.Get(fieldTypeName)
+							if !found {
+								return nil, formatErrorWithContext(i.FileSet, field.Type.Pos(), fmt.Errorf("undefined type '%s' embedded in struct '%s'", fieldTypeName, typeName), "Struct definition error")
+							}
+							embeddedDef, ok := obj.(*StructDefinition)
+							if !ok {
+								return nil, formatErrorWithContext(i.FileSet, field.Type.Pos(), fmt.Errorf("type '%s' embedded in struct '%s' is not a struct definition (got %s)", fieldTypeName, typeName, obj.Type()), "Struct definition error")
+							}
+							embeddedDefs = append(embeddedDefs, embeddedDef)
+						} else {
+							// Regular named field
+							// Ensure fieldTypeIdent is *ast.Ident for type name
+							fieldTypeIdent, ok := field.Type.(*ast.Ident)
+							if !ok {
+								// This case might be redundant if the switch above handles all typeExpr variants,
+								// but good for safety if only *ast.Ident is supported for field types.
+								return nil, formatErrorWithContext(i.FileSet, field.Type.Pos(), fmt.Errorf("struct field '%s' in '%s' has complex type specifier %T; only simple type names supported for fields", field.Names[0].Name, typeName, field.Type), "")
+							}
+
+							for _, nameIdent := range field.Names {
+								directFields[nameIdent.Name] = fieldTypeIdent.Name // Store type name as string
+								fieldOrder = append(fieldOrder, nameIdent.Name)   // Record field name in order
+							}
 						}
 					}
 				}
 				structDef := &StructDefinition{
-					Name:   typeName,
-					Fields: fields,
+					Name:          typeName,
+					Fields:        directFields,
+					EmbeddedDefs:  embeddedDefs,
+					FieldOrder:    fieldOrder,
 				}
 				env.Define(typeName, structDef)
 			default:

@@ -423,7 +423,206 @@ func main() {
 	// The "defined but not set" case returning NULL is implicitly part of evalSelectorExpr's logic.
 	t.Log("Note: Direct test for NULL return on uninitialized (but defined) field access is tricky with current harness but logic exists in evalSelectorExpr.")
 
-	// Test case for field re-assignment (if struct fields were mutable)
+}
+
+func TestStructEmbedding(t *testing.T) {
+	tests := []struct {
+		name          string
+		input         string
+		expectedError string
+		checkEnv      func(t *testing.T, env *Environment, i *Interpreter)
+	}{
+		{
+			name: "Define and instantiate with embedded struct, access promoted field",
+			input: `
+package main
+
+type Point struct {
+	X int
+	Y int
+}
+
+type Circle struct {
+	Point // Embed Point
+	Radius int
+}
+
+var c Circle
+var xVal int
+
+func main() {
+	c = Circle{X: 10, Y: 20, Radius: 5}
+	xVal = c.X
+}
+`,
+			checkEnv: func(t *testing.T, env *Environment, i *Interpreter) {
+				xValObj, _ := env.Get("xVal")
+				xValInt, _ := xValObj.(*Integer)
+				if xValInt.Value != 10 {
+					t.Errorf("Expected xVal (c.X) to be 10, got %d", xValInt.Value)
+				}
+
+				cObj, _ := env.Get("c")
+				cInst, _ := cObj.(*StructInstance)
+				if cInst.FieldValues["Radius"].(*Integer).Value != 5 {
+					t.Errorf("Expected c.Radius to be 5")
+				}
+
+				// Check internal structure of c
+				pointInstance, pointExists := cInst.EmbeddedValues["Point"]
+				if !pointExists {
+					t.Fatalf("Embedded Point instance not found in Circle c")
+				}
+				if pointInstance.FieldValues["X"].(*Integer).Value != 10 {
+					t.Errorf("Expected c.Point.X (internal) to be 10")
+				}
+				if pointInstance.FieldValues["Y"].(*Integer).Value != 20 {
+					t.Errorf("Expected c.Point.Y (internal) to be 20")
+				}
+			},
+		},
+		{
+			name: "Access field via embedded type name",
+			input: `
+package main
+type Point struct { X int }
+type Figure struct { Point; Name string }
+var f Figure
+var xFromPoint int
+func main() {
+	f = Figure{X: 100, Name: "MyFig"}
+	// xFromPoint = f.Point.X // This requires selector on selector, not yet supported by parser/evaluator for f.Point itself as intermediate
+                              // Instead, we test by initializing Point explicitly.
+}
+`,
+			// This specific test f.Point.X is more advanced.
+			// Let's test initialization via embedded type name: Figure{Point: Point{X:100}, Name: "MyFig"}
+		},
+		{
+			name: "Initialize embedded struct by type name in literal",
+			input: `
+package main
+type Inner struct { V int }
+type Outer struct { Inner; Name string }
+var o Outer
+var valV int
+func main() {
+	o = Outer{Inner: Inner{V: 77}, Name: "Wrap"}
+	valV = o.V // Access promoted field
+}
+`,
+			checkEnv: func(t *testing.T, env *Environment, i *Interpreter) {
+				valVObj, _ := env.Get("valV")
+				if valVObj.(*Integer).Value != 77 {
+					t.Errorf("Expected valV (o.V) to be 77, got %d", valVObj.(*Integer).Value)
+				}
+				oObj, _ := env.Get("o")
+				oInst, _ := oObj.(*StructInstance)
+				if oInst.FieldValues["Name"].(*String).Value != "Wrap" {
+					t.Errorf("Expected o.Name to be 'Wrap'")
+				}
+				innerInst, _ := oInst.EmbeddedValues["Inner"]
+				if innerInst.FieldValues["V"].(*Integer).Value != 77 {
+					t.Errorf("Expected o.Inner.V (internal) to be 77")
+				}
+			},
+		},
+		{
+			name: "Ambiguous promoted field access",
+			input: `
+package main
+type A struct { Field int }
+type B struct { Field int }
+type C struct { A; B }
+var c C
+func main() {
+	c = C{} // Ambiguity arises on access, not necessarily instantiation
+	_ = c.Field
+}
+`,
+			expectedError: "ambiguous selector Field",
+		},
+		{
+			name: "Shadowing: Outer field shadows embedded field",
+			input: `
+package main
+type EPoint struct { X int; Y int }
+type EColoredPoint struct {
+	EPoint
+	X string // Shadows EPoint.X
+}
+var ecp EColoredPoint
+var xStr string
+// var xInt int // Cannot easily test ECP.EPoint.X yet
+
+func main() {
+	ecp = EColoredPoint{X: "override", Y: 30} // X here refers to EColoredPoint.X (string)
+                                             // EPoint.X would be uninitialized or zero.
+                                             // Y is promoted from EPoint.
+	xStr = ecp.X
+	// xInt = ecp.EPoint.X // Would require f.Point.X style access
+}
+`,
+			checkEnv: func(t *testing.T, env *Environment, i *Interpreter) {
+				xStrObj, _ := env.Get("xStr")
+				if xStrObj.(*String).Value != "override" {
+					t.Errorf("Expected xStr (ecp.X) to be 'override', got %s", xStrObj.(*String).Value)
+				}
+				ecpObj, _ := env.Get("ecp")
+				ecpInst, _ := ecpObj.(*StructInstance)
+
+				// Check direct field X on EColoredPoint
+				if ecpInst.FieldValues["X"].(*String).Value != "override" {
+					t.Error("EColoredPoint.X (direct) was not 'override'")
+				}
+
+				// Check promoted field Y from EPoint
+				epointInst, _ := ecpInst.EmbeddedValues["EPoint"]
+				if epointInst.FieldValues["Y"].(*Integer).Value != 30 {
+					t.Error("EColoredPoint.Y (promoted) was not 30")
+				}
+				// EPoint.X should be uninitialized (NULL in its FieldValues map)
+				// if _, xExistsInPointFields := epointInst.FieldValues["X"]; xExistsInPointFields {
+				// 	t.Error("EPoint.X should not be in FieldValues if not set through EPoint init")
+				// }
+			},
+		},
+		// TODO: Test accessing f.Point.X (selector on selector result) once supported.
+		// TODO: Test multiple levels of embedding.
+	}
+
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			i := NewInterpreter()
+			dummyFilePath := "dummy_embed_test_" + strings.ReplaceAll(tt.name, " ", "_") + ".mgo"
+			err := os.WriteFile(dummyFilePath, []byte(tt.input), 0644)
+			if err != nil {
+				t.Fatalf("Failed to write dummy input file: %v", err)
+			}
+			defer os.Remove(dummyFilePath)
+
+			err = i.LoadAndRun(context.Background(), dummyFilePath, "main")
+
+			if tt.expectedError != "" {
+				if err == nil {
+					t.Errorf("Expected error containing '%s', but got nil", tt.expectedError)
+				} else if !strings.Contains(err.Error(), tt.expectedError) {
+					t.Errorf("Expected error containing '%s', got: %v", tt.expectedError, err)
+				}
+			} else if err != nil {
+				t.Errorf("Did not expect error, but got: %v", err)
+			}
+
+			if tt.checkEnv != nil {
+				tt.checkEnv(t, i.globalEnv, i)
+			}
+		})
+	}
+}
+
+
+// Test case for field re-assignment (if struct fields were mutable)
 	// MiniGo struct instances are currently immutable once created via literal.
 	// Assignment like `p.X = 20` is not `ast.AssignStmt` on `p.X` but `ast.SelectorExpr` as LHS.
 	// This is not supported by `evalAssignStmt` yet.

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"go/ast"
 	"go/token" // Import the token package
+	"sort"
 	"strings"
 )
 
@@ -220,22 +221,57 @@ type StructDefinition struct {
 	Fields map[string]string // Field name to type name (e.g., "int", "string")
 	// We can enhance Fields to store more complex type information if needed,
 	// possibly linking to other StructDefinition objects for nested structs or using go-scan's TypeInfo.
+	EmbeddedDefs []*StructDefinition // Stores definitions of embedded structs
+	FieldOrder   []string            // Stores the original order of fields including embedded type names
 }
 
 func (sd *StructDefinition) Type() ObjectType { return STRUCT_DEF_OBJ }
 func (sd *StructDefinition) Inspect() string {
 	var parts []string
-	for name, typeName := range sd.Fields {
-		parts = append(parts, fmt.Sprintf("%s %s", name, typeName))
+	// Using FieldOrder to maintain a semblance of original declaration order for inspection.
+	// This is a simplified inspection; actual Go struct inspection is more complex.
+	processedFields := make(map[string]bool)
+
+	for _, fieldName := range sd.FieldOrder {
+		if typeName, ok := sd.Fields[fieldName]; ok {
+			parts = append(parts, fmt.Sprintf("%s %s", fieldName, typeName))
+			processedFields[fieldName] = true
+		} else {
+			// This could be an embedded struct type name.
+			// We need to find which embedded struct it corresponds to.
+			// For inspection, just listing the type name of the embedded struct is enough.
+			isEmbedded := false
+			for _, embDef := range sd.EmbeddedDefs {
+				if embDef.Name == fieldName { // fieldName here is actually the embedded type name from FieldOrder
+					parts = append(parts, embDef.Name) // Just list the embedded type name
+					isEmbedded = true
+					break
+				}
+			}
+			if !isEmbedded {
+				// Fallback if not found in EmbeddedDefs by name (should not happen if FieldOrder is built correctly)
+				// Or handle if FieldOrder stores something else for embedded fields.
+				// For now, assume FieldOrder contains names of direct fields or names of embedded struct types.
+			}
+		}
 	}
+
+	// Add any fields that were in sd.Fields but somehow not in FieldOrder (should not happen with correct logic)
+	for name, typeName := range sd.Fields {
+		if !processedFields[name] {
+			parts = append(parts, fmt.Sprintf("%s %s", name, typeName))
+		}
+	}
+
 	return fmt.Sprintf("struct %s { %s }", sd.Name, strings.Join(parts, "; "))
 }
 
 // --- StructInstance Object ---
 // StructInstance represents an instance of a struct.
 type StructInstance struct {
-	Definition *StructDefinition
-	FieldValues map[string]Object // Field name to its Object value
+	Definition    *StructDefinition
+	FieldValues   map[string]Object   // Field name to its Object value (for direct fields)
+	EmbeddedValues map[string]*StructInstance // Key: Embedded struct type name. Value: Instance of the embedded struct.
 }
 
 func (si *StructInstance) Type() ObjectType { return STRUCT_INSTANCE_OBJ }
@@ -244,8 +280,34 @@ func (si *StructInstance) Inspect() string {
 	for name, value := range si.FieldValues {
 		parts = append(parts, fmt.Sprintf("%s: %s", name, value.Inspect()))
 	}
-	// Sort parts by field name for consistent output, if Definition.Fields order isn't readily available
-	// or if FieldValues can have arbitrary order during construction.
-	// For now, direct iteration is fine.
-	return fmt.Sprintf("%s { %s }", si.Definition.Name, strings.Join(parts, ", "))
+	// Sort parts by field name for consistent output for direct fields.
+	// Embedded values are more complex to inspect inline; could list their types or a summary.
+	// For now, let's list direct fields and then embedded struct instances by type name.
+
+	// Direct fields
+	var directFieldParts []string
+	for name, value := range si.FieldValues {
+		directFieldParts = append(directFieldParts, fmt.Sprintf("%s: %s", name, value.Inspect()))
+	}
+	sort.Strings(directFieldParts) // Sort for consistent output
+
+	// Embedded struct instances
+	var embeddedParts []string
+	if len(si.EmbeddedValues) > 0 {
+		var embTypeNames []string
+		for typeName := range si.EmbeddedValues {
+			embTypeNames = append(embTypeNames, typeName)
+		}
+		sort.Strings(embTypeNames) // Sort embedded type names for consistent output
+
+		for _, typeName := range embTypeNames {
+			embInstance := si.EmbeddedValues[typeName]
+			// Simple representation for embedded instance, could be more detailed
+			embeddedParts = append(embeddedParts, fmt.Sprintf("%s: %s", typeName, embInstance.Inspect()))
+		}
+	}
+
+	finalParts := append(directFieldParts, embeddedParts...)
+
+	return fmt.Sprintf("%s { %s }", si.Definition.Name, strings.Join(finalParts, ", "))
 }

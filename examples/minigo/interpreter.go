@@ -12,7 +12,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/go-scan/go-scan/scanner" // Using go-scan
+	"github.com/podhmo/go-scan/scanner" // Using go-scan
 )
 
 // formatErrorWithContext creates a detailed error message including file, line, column, and source code.

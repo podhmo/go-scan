@@ -2,8 +2,8 @@ package main
 
 import (
 	"os"
-	"path/filepath" // For joining paths
-	"runtime"       // For runtime.Caller
+	// "path/filepath" // For joining paths - No longer needed due to hardcoded paths
+	// "runtime"       // For runtime.Caller - No longer needed
 	"strings"
 	"testing"
 
@@ -44,29 +44,34 @@ func createTempFile(t *testing.T, content string, baseDir string) string {
 
 func TestImportStatements(t *testing.T) {
 	// Determine resolvedTestdataDir once for all subtests
-	var resolvedTestdataDir string
+	var resolvedTestdataDir string // Keep this declaration
 	cwd, wdErr := os.Getwd()
 	if wdErr != nil {
 		t.Fatalf("Failed to get current working directory: %v", wdErr)
 	}
-	_, currentTestFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatalf("Could not get current test file path for scanner setup")
-	}
-	minigoPackageDir := filepath.Dir(currentTestFile)
-	pathAttempt1 := filepath.Join(minigoPackageDir, "testdata")
+	// _, currentTestFile, _, ok := runtime.Caller(0) // No longer needed
+	// if !ok {
+	// 	t.Fatalf("Could not get current test file path for scanner setup")
+	// }
 
-	if _, statErr := os.Stat(pathAttempt1); statErr == nil {
-		resolvedTestdataDir = pathAttempt1
-	} else if os.IsNotExist(statErr) {
-		pathAttempt2 := filepath.Join(cwd, "examples", "minigo", "testdata")
-		if _, statErr2 := os.Stat(pathAttempt2); statErr2 == nil {
-			resolvedTestdataDir = pathAttempt2
-		} else {
-			t.Fatalf("Could not locate examples/minigo/testdata. CWD: %s, currentTestFile: %s, Attempted paths: %s, %s", cwd, currentTestFile, pathAttempt1, pathAttempt2)
-		}
-	} else {
-		t.Fatalf("Error checking path %s: %v", pathAttempt1, statErr)
+	// Assuming tests are run from examples/minigo directory as per Makefile
+	minigoPackageDir := "."
+	resolvedTestdataDir = "testdata" // Assign to existing var
+
+	// Log current working directory and resolved paths for verification
+	t.Logf("### CWD: %s", cwd)
+	t.Logf("### minigoPackageDir (relative): %s", minigoPackageDir)
+	t.Logf("### resolvedTestdataDir (relative): %s", resolvedTestdataDir)
+
+	// Verify that these relative paths correctly point to existing directories
+	// by trying to stat them. Stat will use the current working directory.
+	if _, err := os.Stat(minigoPackageDir); os.IsNotExist(err) {
+		// This would mean CWD is not examples/minigo, or examples/minigo doesn't exist from CWD.
+		t.Fatalf("FATAL: minigoPackageDir (expected '.') does not correspond to an existing directory from CWD '%s'. Error: %v", cwd, err)
+	}
+	if _, err := os.Stat(resolvedTestdataDir); os.IsNotExist(err) {
+		// This would mean testdata directory is not found within CWD.
+		t.Fatalf("FATAL: resolvedTestdataDir (expected './testdata') does not correspond to an existing directory from CWD '%s'. Error: %v", cwd, err)
 	}
 
 	// Create a temporary directory within resolvedTestdataDir for this test run's files
@@ -194,6 +199,18 @@ func main() {
 			expectError:            true,
 			expectedErrorMsgSubstr: `import alias/name "testpkg" already used for "mytestmodule/testpkg"`,
 		},
+		{
+			name: "import and call function from another package",
+			source: `
+package main
+import "github.com/podhmo/go-scan/examples/minigo/stringutils"
+var result string
+func main() {
+	result = stringutils.Concat("hello", " world")
+}`,
+			entryPoint:             "main",
+			expectedGlobalVarValue: map[string]interface{}{"result": "hello world"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -203,13 +220,20 @@ func main() {
 			// defer os.Remove(filename) // Cleanup is handled by defer os.RemoveAll(runSpecificTempDir)
 
 			interpreter := NewInterpreter()
-			interpreter.ModuleRoot = resolvedTestdataDir // ModuleRoot should be the parent 'testdata'
+			var scannerRoot string
+			if strings.Contains(tt.source, "\"mytestmodule/testpkg\"") || strings.Contains(tt.source, "\"mytestmodule/anotherdummy\"") {
+				scannerRoot = resolvedTestdataDir // For tests involving "mytestmodule"
+				interpreter.ModuleRoot = resolvedTestdataDir
+			} else {
+				scannerRoot = minigoPackageDir // For tests involving "github.com/podhmo/go-scan/examples/minigo/stringutils"
+				interpreter.ModuleRoot = minigoPackageDir
+			}
+			t.Logf("[%s] Using scannerRoot: %s, ModuleRoot: %s", tt.name, scannerRoot, interpreter.ModuleRoot)
 
-			// Setup sharedScanner specifically for this test execution, using the main 'testdata' as its root
-			// This ensures that imports like "mytestmodule/testpkg" are resolved relative to 'testdata'.
-			testSpecificScanner, errScanner := goscan.New(resolvedTestdataDir)
+			// Setup sharedScanner specifically for this test execution.
+			testSpecificScanner, errScanner := goscan.New(scannerRoot)
 			if errScanner != nil {
-				t.Fatalf("[%s] Failed to create test-specific shared scanner with startPath %s: %v", tt.name, resolvedTestdataDir, errScanner)
+				t.Fatalf("[%s] Failed to create test-specific shared scanner with startPath %s: %v", tt.name, scannerRoot, errScanner)
 			}
 			interpreter.sharedScanner = testSpecificScanner
 

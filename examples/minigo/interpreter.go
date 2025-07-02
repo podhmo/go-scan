@@ -284,9 +284,17 @@ func (i *Interpreter) LoadAndRun(filename string, entryPoint string) error {
 
 
 func (i *Interpreter) applyUserDefinedFunction(fn *UserDefinedFunction, args []Object, callPos token.Pos) (Object, error) {
+	// Use the FileSet associated with the function for error reporting within its context.
+	// If the function's FileSet is nil (e.g., for older UserDefinedFunction objects not yet updated),
+	// fall back to the interpreter's main FileSet.
+	errorFileSet := fn.FileSet
+	if errorFileSet == nil {
+		errorFileSet = i.FileSet // Fallback
+	}
+
 	if len(args) != len(fn.Parameters) {
 		errMsg := fmt.Sprintf("wrong number of arguments for function %s: expected %d, got %d", fn.Name, len(fn.Parameters), len(args))
-		return nil, formatErrorWithContext(i.FileSet, callPos, errors.New(errMsg), "Function call error")
+		return nil, formatErrorWithContext(errorFileSet, callPos, errors.New(errMsg), "Function call error")
 	}
 
 	funcEnv := NewEnvironment(fn.Env) // Closure: fn.Env is the lexical scope
@@ -601,6 +609,32 @@ func (i *Interpreter) evalSelectorExpr(node *ast.SelectorExpr, env *Environment)
 					env.Define(localPkgName+"."+c.Name, constObj) // Use localPkgName for env key
 				}
 			}
+
+			// Process functions from the imported package
+			for _, fInfo := range importPkgInfo.Functions {
+				if !ast.IsExported(fInfo.Name) || fInfo.AstDecl == nil { // Use ast.IsExported
+					continue
+				}
+				// Create a UserDefinedFunction for the imported function
+				// Note: The environment (closure) for this function will be the *current* environment
+				// at the point of import. This might differ from how Go handles closures for
+				// imported functions, but it's a starting point for minigo.
+				// A more accurate model might need a dedicated "imported function" object.
+				params := []*ast.Ident{}
+				if fInfo.AstDecl.Type.Params != nil {
+					for _, field := range fInfo.AstDecl.Type.Params.List {
+						params = append(params, field.Names...)
+					}
+				}
+				importedFunc := &UserDefinedFunction{
+					Name:       fInfo.Name, // Use the original function name
+					Parameters: params,
+					Body:       fInfo.AstDecl.Body,
+					Env:        env, // Or perhaps a new env derived from global? For simplicity, use current env.
+					FileSet:    i.sharedScanner.Fset(), // Use the scanner's fset for this imported function
+				}
+				env.Define(localPkgName+"."+fInfo.Name, importedFunc)
+			}
 		}
 		i.importedPackages[importPath] = struct{}{} // Mark the importPath as processed
 	} // Correct placement of the closing brace for `if !alreadyImported`
@@ -650,6 +684,7 @@ func (i *Interpreter) evalFuncDecl(fd *ast.FuncDecl, env *Environment) (Object, 
 		Parameters: params,
 		Body:       fd.Body,
 		Env:        env,
+		FileSet:    i.FileSet, // Set the FileSet
 	}
 
 	if fd.Name != nil && fd.Name.Name != "" {
@@ -676,6 +711,7 @@ func (i *Interpreter) evalFuncLit(fl *ast.FuncLit, env *Environment) (Object, er
 		Parameters: params,
 		Body:       fl.Body,
 		Env:        env,
+		FileSet:    i.FileSet, // Set the FileSet
 	}, nil
 }
 

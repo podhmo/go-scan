@@ -414,10 +414,110 @@ func (i *Interpreter) eval(ctx context.Context, node ast.Node, env *Environment)
 		// If a break/continue needs this label, its ast.BranchStmt.Label will be non-nil.
 		return i.eval(ctx, n.Stmt, env)
 
+	case *ast.CompositeLit:
+		return i.evalCompositeLit(ctx, n, env)
+
 	default:
 		return nil, formatErrorWithContext(i.FileSet, n.Pos(), fmt.Errorf("unsupported AST node type: %T", n), fmt.Sprintf("Unsupported AST node value: %+v", n))
 	}
 }
+
+func (i *Interpreter) evalCompositeLit(ctx context.Context, lit *ast.CompositeLit, env *Environment) (Object, error) {
+	// 1. Evaluate the type of the composite literal.
+	// For struct literals, this should be an *ast.Ident (the struct name).
+	typeNameIdent, ok := lit.Type.(*ast.Ident)
+	if !ok {
+		// TODO: Handle other types of composite literals if minigo supports them later (e.g., arrays, slices, maps)
+		return nil, formatErrorWithContext(i.FileSet, lit.Type.Pos(), fmt.Errorf("expected identifier for composite literal type, got %T", lit.Type), "Struct instantiation error")
+	}
+
+	// 2. Look up the StructDefinition in the environment.
+	obj, found := env.Get(typeNameIdent.Name)
+	if !found {
+		return nil, formatErrorWithContext(i.FileSet, typeNameIdent.Pos(), fmt.Errorf("undefined type '%s' used in composite literal", typeNameIdent.Name), "Struct instantiation error")
+	}
+	structDef, ok := obj.(*StructDefinition)
+	if !ok {
+		return nil, formatErrorWithContext(i.FileSet, typeNameIdent.Pos(), fmt.Errorf("type '%s' is not a struct type, but %s", typeNameIdent.Name, obj.Type()), "Struct instantiation error")
+	}
+
+	// 3. Create a new StructInstance.
+	instance := &StructInstance{
+		Definition:  structDef,
+		FieldValues: make(map[string]Object),
+	}
+
+	// 4. Evaluate and assign field values.
+	if len(lit.Elts) == 0 && len(structDef.Fields) > 0 {
+		// Handle T{} - zero value initialization for all fields
+		// This is more advanced as it requires knowing the zero value for each field type.
+		// For now, an empty literal for a non-empty struct could mean an instance with no fields explicitly set,
+		// or it could be an error, or it could mean all fields get their zero values.
+		// Let's start by requiring explicit fields if the struct has fields.
+		// Or, more simply for now: if Elts is empty, the FieldValues map remains empty. Accessing fields later would yield an error or nil.
+		// A stricter approach: if structDef.Fields is not empty and lit.Elts is empty, this could be an error or imply zero-values.
+		// For now, we'll allow it, and FieldValues will be empty. Accessing a field not in FieldValues can be handled by evalSelectorExpr.
+	}
+
+
+	expectedFieldCount := 0
+	isKeyValueForm := false // True if first element is KeyValueExpr
+	if len(lit.Elts) > 0 {
+		_, isKeyValueForm = lit.Elts[0].(*ast.KeyValueExpr)
+	}
+
+	if isKeyValueForm { // Form: T{Key: Value, ...}
+		for _, elt := range lit.Elts {
+			kvExpr, ok := elt.(*ast.KeyValueExpr)
+			if !ok {
+				return nil, formatErrorWithContext(i.FileSet, elt.Pos(), fmt.Errorf("mixture of keyed and non-keyed fields in struct literal for '%s' (or non-keyed field in keyed literal)", structDef.Name), "Struct instantiation error")
+			}
+
+			keyIdent, ok := kvExpr.Key.(*ast.Ident)
+			if !ok {
+				return nil, formatErrorWithContext(i.FileSet, kvExpr.Key.Pos(), fmt.Errorf("struct field key must be an identifier, got %T for struct '%s'", kvExpr.Key, structDef.Name), "Struct instantiation error")
+			}
+			fieldName := keyIdent.Name
+
+			if _, fieldExists := structDef.Fields[fieldName]; !fieldExists {
+				return nil, formatErrorWithContext(i.FileSet, keyIdent.Pos(), fmt.Errorf("unknown field '%s' in struct literal of type '%s'", fieldName, structDef.Name), "Struct instantiation error")
+			}
+
+			// TODO: Check for duplicate field names in literal: "fieldName already set"
+
+			valueObj, err := i.eval(ctx, kvExpr.Value, env)
+			if err != nil {
+				return nil, err // Error already formatted by i.eval
+			}
+
+			// TODO: Type checking: Compare valueObj.Type() with structDef.Fields[fieldName] (expected type string)
+			// This is a simplification. Actual type objects would be better.
+			// For now, we store the type name as string in StructDefinition.
+			// Example: if structDef.Fields[fieldName] == "int" and valueObj.Type() != INTEGER_OBJ, error.
+
+			instance.FieldValues[fieldName] = valueObj
+			expectedFieldCount++
+		}
+	} else { // Form: T{Value1, Value2, ...} - Order matters, must match struct definition field order
+		// This form is harder because ast.StructType.Fields.List gives us fields, but their order
+		// might not be easily accessible or guaranteed in the same way map iteration isn't.
+		// For simplicity, MiniGo will initially NOT support this unkeyed form if fields are present.
+		// Or, require the number of values to match the number of fields.
+		// Go requires this form to either provide all fields or be empty T{}.
+		// Let's disallow this form for now if struct has fields and Elts is not empty.
+		if len(lit.Elts) > 0 && len(structDef.Fields) > 0 {
+			return nil, formatErrorWithContext(i.FileSet, lit.Pos(), fmt.Errorf("ordered (non-keyed) struct literal values are not supported yet for struct '%s'; use key:value form or ensure the struct has no fields if using T{}", structDef.Name), "Struct instantiation error")
+		}
+		// If structDef.Fields is empty and lit.Elts is also empty (e.g. type EmptyStruct struct{}; e := EmptyStruct{}), this is fine.
+	}
+
+	// Optional: Check if all fields defined in StructDefinition are present if using keyed form,
+	// or if a policy of requiring all fields is desired. Go allows unkeyed fields to take zero values.
+	// For now, we allow partial initialization. Fields not in the literal will not be in instance.FieldValues.
+
+	return instance, nil
+}
+
 
 func (i *Interpreter) evalBranchStmt(ctx context.Context, stmt *ast.BranchStmt, env *Environment) (Object, error) {
 	if stmt.Label != nil {
@@ -514,139 +614,147 @@ func (i *Interpreter) evalForStmt(ctx context.Context, stmt *ast.ForStmt, env *E
 }
 
 func (i *Interpreter) evalSelectorExpr(ctx context.Context, node *ast.SelectorExpr, env *Environment) (Object, error) {
-	// node.X might be an identifier (package name) or another expression.
-	// For now, we only support simple package.Selector
-	xIdent, ok := node.X.(*ast.Ident)
-	if !ok {
-		// TODO: Handle more complex selectors like structField.AnotherField or funcCall().Field
-		return nil, formatErrorWithContext(i.FileSet, node.X.Pos(), fmt.Errorf("selector base X must be an identifier (package name), got %T", node.X), "Unsupported selector expression")
+	// Evaluate the expression on the left of the selector (node.X)
+	// This could be an identifier (variable holding a struct instance) or another expression.
+	xObj, err := i.eval(ctx, node.X, env)
+	if err != nil {
+		return nil, err // Error already formatted by i.eval
 	}
 
-	localPkgName := xIdent.Name // This is the alias or local name used in minigo script
-	symbolName := node.Sel.Name
-	qualifiedNameInEnv := localPkgName + "." + symbolName // How it's stored in minigo's env
+	fieldName := node.Sel.Name
 
-	// Check if the symbol is already in the environment (e.g. from a previous import of this pkg)
-	if val, ok := env.Get(qualifiedNameInEnv); ok {
-		return val, nil
+	// Check if xObj is a struct instance
+	if structInstance, ok := xObj.(*StructInstance); ok {
+		// Access field from struct instance
+		value, valueFound := structInstance.FieldValues[fieldName]
+		if !valueFound {
+			// Field not found in the instance. Go would allow this if it's an uninitialized field (it gets a zero value).
+			// For our interpreter, if it's not in FieldValues, it means it wasn't set during composite literal evaluation.
+			// We need to decide the behavior: error, or return NULL, or return language-defined zero value.
+			// Let's return NULL for now, consistent with accessing a non-existent map key (if we had maps).
+			// A stricter approach might be to check structInstance.Definition.Fields to see if the field *should* exist.
+			if _, defExists := structInstance.Definition.Fields[fieldName]; defExists {
+				// The field is defined on the struct type but not explicitly set on this instance.
+				// For simplicity, return NULL. A more Go-like behavior would be to return the zero value of the field's type.
+				// This is complex as it requires mapping type names ("int", "string") to their zero Object values.
+				// For now, NULL indicates "not explicitly set".
+				return NULL, nil // Or an error: fmt.Errorf("field '%s' not initialized in struct instance of '%s'", fieldName, structInstance.Definition.Name)
+			}
+			// If defExists is false, then it's truly an undefined field for the struct type.
+			return nil, formatErrorWithContext(i.FileSet, node.Sel.Pos(), fmt.Errorf("type %s has no field %s", structInstance.Definition.Name, fieldName), "Field access error")
+		}
+		return value, nil
 	}
 
-	// If not in env, check if we have an import path for this localPkgName
-	importPath, knownAlias := i.importAliasMap[localPkgName]
-	if !knownAlias {
-		// If localPkgName is not in importAliasMap, it might be a built-in "package" like "fmt"
-		// or an error (undeclared package or variable).
-		// For now, assume builtins are directly in globalEnv, not via selector.
-		// So, if not in importAliasMap, it's an undefined package alias.
-		return nil, formatErrorWithContext(i.FileSet, xIdent.Pos(), fmt.Errorf("undefined package alias/name: %s", localPkgName), "Import error")
-	}
+	// Check if xObj is an identifier representing a package (for package.Symbol access)
+	if xIdent, ok := node.X.(*ast.Ident); ok {
+		localPkgName := xIdent.Name
+		qualifiedNameInEnv := localPkgName + "." + fieldName // Symbol name is fieldName here
 
-	// We have an importPath. Now check if this importPath has already been processed (scanned and constants loaded).
-	if _, alreadyImported := i.importedPackages[importPath]; !alreadyImported {
-		if i.sharedScanner == nil {
-			// This should ideally be initialized by LoadAndRun if not preset.
-			// If LoadAndRun completed, sharedScanner should exist.
-			// This error indicates an issue if sharedScanner is still nil here.
-			return nil, formatErrorWithContext(i.FileSet, node.X.Pos(), errors.New("shared go-scan scanner (for imports) not initialized in interpreter"), "Internal error")
+		// Check if the symbol is already in the environment (e.g., from a previous import of this pkg)
+		if val, found := env.Get(qualifiedNameInEnv); found {
+			return val, nil
 		}
 
-		// Use the sharedScanner's FileSet for errors specifically from ScanPackageByImport,
-		// or ensure formatErrorWithContext can handle different FileSets if necessary.
-		// For now, let's assume errors from ScanPackageByImport will be general or use its own context.
-		// The main i.FileSet is for the script being run.
-		var importPkgInfo *scanner.PackageInfo // Corrected type
-		var errImport error
-		importPkgInfo, errImport = i.sharedScanner.ScanPackageByImport(ctx, importPath)
-
-		if errImport != nil {
-			// It's tricky to get a precise token.Pos for the import path itself if ScanPackageByImport fails early.
-			// xIdent.Pos() is the position of the package alias in the selector expression.
-			// We use i.FileSet (from localScriptScanner) for formatting this error occurring in the main script.
-			return nil, formatErrorWithContext(i.FileSet, xIdent.Pos(), fmt.Errorf("package %q (aliased as %q) not found or failed to scan: %w", importPath, localPkgName, errImport), "Import error")
+		// If not in env, check if we have an import path for this localPkgName
+		importPath, knownAlias := i.importAliasMap[localPkgName]
+		if !knownAlias {
+			return nil, formatErrorWithContext(i.FileSet, xIdent.Pos(), fmt.Errorf("undefined: %s (neither struct instance nor package)", localPkgName), "Selector error")
 		}
 
-		// Successfully scanned. Populate environment with its exported constants.
-		// Constants will be stored in env as "localPkgName.ConstantName".
-		if importPkgInfo != nil { // Check if importPkgInfo is not nil
-			for _, c := range importPkgInfo.Constants { // Use importPkgInfo here
-				if !c.IsExported {
-					continue
-				}
-				var constObj Object
-				if c.Type != nil { // Ensure type information is present
-					switch c.Type.Name {
-					case "int", "int64", "int32", "uint", "uint64", "uint32", "rune", "byte":
-						val, err := parseInt64(c.Value)
-						if err == nil {
-							constObj = &Integer{Value: val}
-						} else {
-							fmt.Fprintf(os.Stderr, "Warning: Could not parse external const integer %s.%s from package %s (value: %s): %v\n", c.Name, localPkgName, importPath, c.Value, err)
-						}
-					case "string":
-						unquotedVal, err := strconv.Unquote(c.Value)
-						if err == nil {
-							constObj = &String{Value: unquotedVal}
-						} else {
-							fmt.Fprintf(os.Stderr, "Warning: Could not unquote external const string %s.%s from package %s (value: %s): %v\n", c.Name, localPkgName, importPath, c.Value, err)
-						}
-					case "bool":
-						switch c.Value {
-						case "true":
-							constObj = TRUE
-						case "false":
-							constObj = FALSE
+		// We have an importPath. Now check if this importPath has already been processed.
+		if _, alreadyImported := i.importedPackages[importPath]; !alreadyImported {
+			if i.sharedScanner == nil {
+				return nil, formatErrorWithContext(i.FileSet, node.X.Pos(), errors.New("shared go-scan scanner (for imports) not initialized in interpreter"), "Internal error")
+			}
+
+			var importPkgInfo *scanner.PackageInfo
+			var errImport error
+			importPkgInfo, errImport = i.sharedScanner.ScanPackageByImport(ctx, importPath)
+
+			if errImport != nil {
+				return nil, formatErrorWithContext(i.FileSet, xIdent.Pos(), fmt.Errorf("package %q (aliased as %q) not found or failed to scan: %w", importPath, localPkgName, errImport), "Import error")
+			}
+
+			if importPkgInfo != nil {
+				// Process constants from the imported package
+				for _, c := range importPkgInfo.Constants {
+					if !c.IsExported {
+						continue
+					}
+					var constObj Object
+					if c.Type != nil {
+						switch c.Type.Name {
+						case "int", "int64", "int32", "uint", "uint64", "uint32", "rune", "byte":
+							valInt, errParse := parseInt64(c.Value)
+							if errParse == nil {
+								constObj = &Integer{Value: valInt}
+							} else {
+								fmt.Fprintf(os.Stderr, "Warning: Could not parse external const integer %s.%s (value: %s): %v\n", localPkgName, c.Name, c.Value, errParse)
+							}
+						case "string":
+							unquotedVal, errParse := strconv.Unquote(c.Value)
+							if errParse == nil {
+								constObj = &String{Value: unquotedVal}
+							} else {
+								fmt.Fprintf(os.Stderr, "Warning: Could not unquote external const string %s.%s (value: %s): %v\n", localPkgName, c.Name, c.Value, errParse)
+							}
+						case "bool":
+							switch c.Value {
+							case "true":
+								constObj = TRUE
+							case "false":
+								constObj = FALSE
+							default:
+								fmt.Fprintf(os.Stderr, "Warning: Could not parse external const bool %s.%s (value: %s)\n", localPkgName, c.Name, c.Value)
+							}
 						default:
-							fmt.Fprintf(os.Stderr, "Warning: Could not parse external const bool %s.%s from package %s (value: %s)\n", c.Name, localPkgName, importPath, c.Value)
+							fmt.Fprintf(os.Stderr, "Warning: Unsupported external const type %s for %s.%s\n", c.Type.Name, localPkgName, c.Name)
 						}
-					default:
-						fmt.Fprintf(os.Stderr, "Warning: Unsupported external const type %s for %s.%s from package %s\n", c.Type.Name, c.Name, localPkgName, importPath)
+					} else {
+						fmt.Fprintf(os.Stderr, "Warning: External const %s.%s has no type info, cannot determine type for value: %s\n", localPkgName, c.Name, c.Value)
 					}
-				} else {
-					fmt.Fprintf(os.Stderr, "Warning: External const %s.%s from package %s has no type info from go-scan, cannot determine type for value: %s\n", c.Name, localPkgName, importPath, c.Value)
-				}
-
-				if constObj != nil {
-					env.Define(localPkgName+"."+c.Name, constObj) // Use localPkgName for env key
-				}
-			}
-
-			// Process functions from the imported package
-			for _, fInfo := range importPkgInfo.Functions {
-				if !ast.IsExported(fInfo.Name) || fInfo.AstDecl == nil { // Use ast.IsExported
-					continue
-				}
-				// Create a UserDefinedFunction for the imported function
-				// Note: The environment (closure) for this function will be the *current* environment
-				// at the point of import. This might differ from how Go handles closures for
-				// imported functions, but it's a starting point for minigo.
-				// A more accurate model might need a dedicated "imported function" object.
-				params := []*ast.Ident{}
-				if fInfo.AstDecl.Type.Params != nil {
-					for _, field := range fInfo.AstDecl.Type.Params.List {
-						params = append(params, field.Names...)
+					if constObj != nil {
+						env.Define(localPkgName+"."+c.Name, constObj)
 					}
 				}
-				importedFunc := &UserDefinedFunction{
-					Name:       fInfo.Name, // Use the original function name
-					Parameters: params,
-					Body:       fInfo.AstDecl.Body,
-					Env:        env,                    // Or perhaps a new env derived from global? For simplicity, use current env.
-					FileSet:    i.sharedScanner.Fset(), // Use the scanner's fset for this imported function
+
+				// Process functions from the imported package
+				for _, fInfo := range importPkgInfo.Functions {
+					if !ast.IsExported(fInfo.Name) || fInfo.AstDecl == nil {
+						continue
+					}
+					params := []*ast.Ident{}
+					if fInfo.AstDecl.Type.Params != nil {
+						for _, field := range fInfo.AstDecl.Type.Params.List {
+							params = append(params, field.Names...)
+						}
+					}
+					importedFunc := &UserDefinedFunction{
+						Name:       fInfo.Name,
+						Parameters: params,
+						Body:       fInfo.AstDecl.Body,
+						Env:        env,
+						FileSet:    i.sharedScanner.Fset(),
+					}
+					env.Define(localPkgName+"."+fInfo.Name, importedFunc)
 				}
-				env.Define(localPkgName+"."+fInfo.Name, importedFunc)
 			}
+			i.importedPackages[importPath] = struct{}{}
 		}
-		i.importedPackages[importPath] = struct{}{} // Mark the importPath as processed
-	} // Correct placement of the closing brace for `if !alreadyImported`
 
-	// After attempting import and processing, try getting the symbol again
-	if val, ok := env.Get(qualifiedNameInEnv); ok {
-		return val, nil
+		// After attempting import and processing, try getting the symbol again
+		if val, found := env.Get(qualifiedNameInEnv); found {
+			return val, nil
+		}
+		// If still not found after import processing for package.Symbol.
+		return nil, formatErrorWithContext(i.FileSet, node.Sel.Pos(), fmt.Errorf("undefined: %s.%s (package %s, path %s)", localPkgName, fieldName, localPkgName, importPath), "Selector error")
 	}
 
-	// If still not found.
-	return nil, formatErrorWithContext(i.FileSet, node.Pos(), fmt.Errorf("undefined selector: %s (package %s, path %s)", qualifiedNameInEnv, localPkgName, importPath), "")
+	// If xObj is not a struct instance and not a package identifier, it's an unsupported selector base.
+	return nil, formatErrorWithContext(i.FileSet, node.X.Pos(), fmt.Errorf("selector base must be a struct instance or package identifier, got %s", xObj.Type()), "Unsupported selector expression")
 }
+
 
 func (i *Interpreter) evalBlockStatement(ctx context.Context, block *ast.BlockStmt, env *Environment) (Object, error) {
 	var result Object
@@ -737,55 +845,95 @@ func (i *Interpreter) evalDeclStmt(ctx context.Context, declStmt *ast.DeclStmt, 
 		return nil, formatErrorWithContext(i.FileSet, declStmt.Pos(), fmt.Errorf("unsupported declaration type: %T", declStmt.Decl), "")
 	}
 
-	if genDecl.Tok != token.VAR {
-		return nil, formatErrorWithContext(i.FileSet, genDecl.Pos(), fmt.Errorf("unsupported declaration token: %s (expected VAR)", genDecl.Tok), "")
-	}
+	switch genDecl.Tok {
+	case token.VAR:
+		for _, spec := range genDecl.Specs {
+			valueSpec, ok := spec.(*ast.ValueSpec)
+			if !ok {
+				return nil, formatErrorWithContext(i.FileSet, spec.Pos(), fmt.Errorf("unsupported spec type in var declaration: %T", spec), "")
+			}
 
-	for _, spec := range genDecl.Specs {
-		valueSpec, ok := spec.(*ast.ValueSpec)
-		if !ok {
-			return nil, formatErrorWithContext(i.FileSet, spec.Pos(), fmt.Errorf("unsupported spec type in var declaration: %T", spec), "")
-		}
+			for idx, nameIdent := range valueSpec.Names {
+				varName := nameIdent.Name
+				if len(valueSpec.Values) > idx {
+					val, err := i.eval(ctx, valueSpec.Values[idx], env)
+					if err != nil {
+						return nil, err
+					}
+					env.Define(varName, val)
+				} else {
+					if valueSpec.Type == nil {
+						return nil, formatErrorWithContext(i.FileSet, valueSpec.Pos(), fmt.Errorf("variable '%s' declared without initializer must have a type", varName), "")
+					}
 
-		for idx, nameIdent := range valueSpec.Names {
-			varName := nameIdent.Name
-			if len(valueSpec.Values) > idx {
-				val, err := i.eval(ctx, valueSpec.Values[idx], env)
-				if err != nil {
-					return nil, err
-				}
-				env.Define(varName, val)
-			} else {
-				if valueSpec.Type == nil {
-					return nil, formatErrorWithContext(i.FileSet, valueSpec.Pos(), fmt.Errorf("variable '%s' declared without initializer must have a type", varName), "")
-				}
-
-				var zeroVal Object
-				switch T := valueSpec.Type.(type) {
-				case *ast.Ident:
-					switch T.Name {
-					case "string":
-						zeroVal = &String{Value: ""}
-					case "int":
-						zeroVal = &Integer{Value: 0}
-					case "bool":
-						zeroVal = FALSE
+					var zeroVal Object
+					switch T := valueSpec.Type.(type) {
+					case *ast.Ident:
+						switch T.Name {
+						case "string":
+							zeroVal = &String{Value: ""}
+						case "int":
+							zeroVal = &Integer{Value: 0}
+						case "bool":
+							zeroVal = FALSE
+						default:
+							// Could be a struct type name, attempt to find its definition for zero value
+							typeObj, typeFound := env.Get(T.Name)
+							if typeFound && typeObj.Type() == STRUCT_DEF_OBJ {
+								// This part is complex: creating a zero-value struct instance.
+								// For now, error out, as full zero-value struct instantiation is not implemented.
+								return nil, formatErrorWithContext(i.FileSet, T.Pos(), fmt.Errorf("unsupported type '%s' for uninitialized variable '%s' (struct zero values not fully implemented yet)", T.Name, varName), "")
+							}
+							return nil, formatErrorWithContext(i.FileSet, T.Pos(), fmt.Errorf("unsupported type '%s' for uninitialized variable '%s'", T.Name, varName), "")
+						}
+					case *ast.InterfaceType:
+						if T.Methods == nil || len(T.Methods.List) == 0 {
+							zeroVal = NULL
+						} else {
+							return nil, formatErrorWithContext(i.FileSet, T.Pos(), fmt.Errorf("unsupported specific interface type for uninitialized variable '%s'", varName), "")
+						}
 					default:
-						return nil, formatErrorWithContext(i.FileSet, T.Pos(), fmt.Errorf("unsupported type '%s' for uninitialized variable '%s'", T.Name, varName), "")
+						return nil, formatErrorWithContext(i.FileSet, valueSpec.Type.Pos(), fmt.Errorf("unsupported type expression for zero value for variable '%s': %T", varName, valueSpec.Type), "")
 					}
-				case *ast.InterfaceType:
-					if T.Methods == nil || len(T.Methods.List) == 0 {
-						zeroVal = NULL
-					} else {
-						return nil, formatErrorWithContext(i.FileSet, T.Pos(), fmt.Errorf("unsupported specific interface type for uninitialized variable '%s'", varName), "")
-					}
-				default:
-					return nil, formatErrorWithContext(i.FileSet, valueSpec.Type.Pos(), fmt.Errorf("unsupported type expression for zero value for variable '%s': %T", varName, valueSpec.Type), "")
+					env.Define(varName, zeroVal)
 				}
-				env.Define(varName, zeroVal)
 			}
 		}
+	case token.TYPE:
+		for _, spec := range genDecl.Specs {
+			typeSpec, ok := spec.(*ast.TypeSpec)
+			if !ok {
+				return nil, formatErrorWithContext(i.FileSet, spec.Pos(), fmt.Errorf("unsupported spec type in type declaration: %T", spec), "")
+			}
+			typeName := typeSpec.Name.Name
+
+			switch sType := typeSpec.Type.(type) {
+			case *ast.StructType:
+				fields := make(map[string]string)
+				if sType.Fields != nil {
+					for _, field := range sType.Fields.List {
+						fieldTypeIdent, ok := field.Type.(*ast.Ident)
+						if !ok {
+							return nil, formatErrorWithContext(i.FileSet, field.Type.Pos(), fmt.Errorf("struct field in '%s' has unsupported type specifier %T (only basic identifiers like 'int', 'string' supported for now)", typeName, field.Type), "")
+						}
+						for _, nameIdent := range field.Names { // A single field declaration can have multiple names (e.g. `X, Y int`)
+							fields[nameIdent.Name] = fieldTypeIdent.Name
+						}
+					}
+				}
+				structDef := &StructDefinition{
+					Name:   typeName,
+					Fields: fields,
+				}
+				env.Define(typeName, structDef)
+			default:
+				return nil, formatErrorWithContext(i.FileSet, typeSpec.Type.Pos(), fmt.Errorf("unsupported type specifier in type declaration '%s': %T", typeName, typeSpec.Type), "")
+			}
+		}
+	default:
+		return nil, formatErrorWithContext(i.FileSet, genDecl.Pos(), fmt.Errorf("unsupported declaration token: %s (expected VAR or TYPE)", genDecl.Tok), "")
 	}
+	// Processing is done within the switch cases.
 	return nil, nil
 }
 

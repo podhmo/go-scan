@@ -22,6 +22,8 @@ const (
 	BUILTIN_FUNCTION_OBJ ObjectType = "BUILTIN_FUNCTION" // For built-in functions
 	BREAK_OBJ            ObjectType = "BREAK"            // For break statements
 	CONTINUE_OBJ         ObjectType = "CONTINUE"         // For continue statements
+	STRUCT_DEF_OBJ       ObjectType = "STRUCT_DEF"       // For struct definitions
+	STRUCT_INSTANCE_OBJ  ObjectType = "STRUCT_INSTANCE"  // For struct instances
 )
 
 // Object is the interface that all value types in our interpreter will implement.
@@ -210,3 +212,40 @@ type ContinueStatement struct{}
 
 func (cs *ContinueStatement) Type() ObjectType { return CONTINUE_OBJ }
 func (cs *ContinueStatement) Inspect() string  { return "continue" }
+
+// --- StructDefinition Object ---
+// StructDefinition stores the definition of a struct.
+type StructDefinition struct {
+	Name   string
+	Fields map[string]string // Field name to type name (e.g., "int", "string")
+	// We can enhance Fields to store more complex type information if needed,
+	// possibly linking to other StructDefinition objects for nested structs or using go-scan's TypeInfo.
+}
+
+func (sd *StructDefinition) Type() ObjectType { return STRUCT_DEF_OBJ }
+func (sd *StructDefinition) Inspect() string {
+	var parts []string
+	for name, typeName := range sd.Fields {
+		parts = append(parts, fmt.Sprintf("%s %s", name, typeName))
+	}
+	return fmt.Sprintf("struct %s { %s }", sd.Name, strings.Join(parts, "; "))
+}
+
+// --- StructInstance Object ---
+// StructInstance represents an instance of a struct.
+type StructInstance struct {
+	Definition *StructDefinition
+	FieldValues map[string]Object // Field name to its Object value
+}
+
+func (si *StructInstance) Type() ObjectType { return STRUCT_INSTANCE_OBJ }
+func (si *StructInstance) Inspect() string {
+	var parts []string
+	for name, value := range si.FieldValues {
+		parts = append(parts, fmt.Sprintf("%s: %s", name, value.Inspect()))
+	}
+	// Sort parts by field name for consistent output, if Definition.Fields order isn't readily available
+	// or if FieldValues can have arbitrary order during construction.
+	// For now, direct iteration is fine.
+	return fmt.Sprintf("%s { %s }", si.Definition.Name, strings.Join(parts, ", "))
+}

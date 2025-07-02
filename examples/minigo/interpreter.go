@@ -537,7 +537,7 @@ func (i *Interpreter) evalSelectorExpr(node *ast.SelectorExpr, env *Environment)
 		// or ensure formatErrorWithContext can handle different FileSets if necessary.
 		// For now, let's assume errors from ScanPackageByImport will be general or use its own context.
 		// The main i.FileSet is for the script being run.
-		var importPkgInfo *goscan.PackageInfo // This is scanner.PackageInfo
+		var importPkgInfo *scanner.PackageInfo // Corrected type
 		var errImport error
 		importPkgInfo, errImport = i.sharedScanner.ScanPackageByImport(ctx, importPath)
 
@@ -550,10 +550,51 @@ func (i *Interpreter) evalSelectorExpr(node *ast.SelectorExpr, env *Environment)
 
 		// Successfully scanned. Populate environment with its exported constants.
 		// Constants will be stored in env as "localPkgName.ConstantName".
-		for _, c := range pkgInfo.Constants { // c is of type *scanner.ConstantInfo
-			if !c.IsExported { // Corrected: IsExported is a field, not a method
-				continue
+		if importPkgInfo != nil { // Check if importPkgInfo is not nil
+			for _, c := range importPkgInfo.Constants { // Use importPkgInfo here
+				if !c.IsExported {
+					continue
+				}
+				var constObj Object
+				if c.Type != nil { // Ensure type information is present
+					switch c.Type.Name {
+					case "int", "int64", "int32", "uint", "uint64", "uint32", "rune", "byte":
+						val, err := parseInt64(c.Value)
+						if err == nil {
+							constObj = &Integer{Value: val}
+						} else {
+							fmt.Fprintf(os.Stderr, "Warning: Could not parse external const integer %s.%s from package %s (value: %s): %v\n", c.Name, localPkgName, importPath, c.Value, err)
+						}
+					case "string":
+						unquotedVal, err := strconv.Unquote(c.Value)
+						if err == nil {
+							constObj = &String{Value: unquotedVal}
+						} else {
+							fmt.Fprintf(os.Stderr, "Warning: Could not unquote external const string %s.%s from package %s (value: %s): %v\n", c.Name, localPkgName, importPath, c.Value, err)
+						}
+					case "bool":
+						switch c.Value {
+						case "true":
+							constObj = TRUE
+						case "false":
+							constObj = FALSE
+						default:
+							fmt.Fprintf(os.Stderr, "Warning: Could not parse external const bool %s.%s from package %s (value: %s)\n", c.Name, localPkgName, importPath, c.Value)
+						}
+					default:
+						fmt.Fprintf(os.Stderr, "Warning: Unsupported external const type %s for %s.%s from package %s\n", c.Type.Name, c.Name, localPkgName, importPath)
+					}
+				} else {
+					fmt.Fprintf(os.Stderr, "Warning: External const %s.%s from package %s has no type info from go-scan, cannot determine type for value: %s\n", c.Name, localPkgName, importPath, c.Value)
+				}
+
+				if constObj != nil {
+					env.Define(localPkgName+"."+c.Name, constObj) // Use localPkgName for env key
+				}
 			}
+		}
+		i.importedPackages[importPath] = struct{}{} // Mark the importPath as processed
+	}
 			var constObj Object
 			if c.Type != nil { // Ensure type information is present
 				switch c.Type.Name {

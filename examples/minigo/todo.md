@@ -31,10 +31,27 @@
   - [ ] Floating point numbers
   - [ ] Structs
   - [ ] Type declarations (`type MyInt int`)
-  - [ ] Type checking (currently very loose, more like a dynamic language)
+  - [ ] Enhance type checking using information from go-scan
+    - [ ] Basic static type checking for variable assignments based on go-scan TypeInfo.
+    - [ ] Type checking for function call arguments against parameter types from go-scan FunctionInfo.
+    - [ ] Type checking for binary operator operands.
 - [ ] Pointers
 - [ ] Multiple return values from functions
 - [ ] Variadic functions (for user-defined functions, built-ins have a simple form)
+- [ ] Imports & Package Handling
+  - [x] Basic import statement parsing (`import "path"` and `import alias "path"`) (Unsupported forms like . and _ are rejected)
+  - [x] Loading imported package constants (`pkg.MyConst`) via `go-scan`. (As described in README)
+  - [/] Loading imported package functions (`pkg.MyFunc`) (README mentions only constants, but basic registration exists)
+    - [x] Registration of imported functions as `UserDefinedFunction` objects in `evalSelectorExpr`.
+    - [ ] Ensure correct mapping of parameters and body from go-scan's `FunctionInfo` for imported functions.
+    - [ ] Verify calling convention and environment setup for imported functions.
+    - [ ] Add comprehensive tests for calling functions from imported packages.
+  - [ ] Support for imported global variables (e.g., `pkg.MyVar`) (Mentioned as future in README)
+    - [ ] Extract imported global variable information using `go-scan`.
+    - [ ] Make imported global variables accessible in the interpreter.
+  - [ ] Investigate `go-scan`'s Lazy Import (`PackageResolver`) for multi-file/package support in `minigo` (Future - see go-scan Integration section)
+  - [ ] (Low Priority) Consider support for dot imports (e.g., `import . "mypkg"`)
+  - [ ] (Low Priority) Consider support for blank imports (e.g., `import _ "mypkg"` for side-effects if init functions were supported)
 
 ## Standard Library / Built-ins
 - [x] `fmt.Sprintf` (basic implementation)
@@ -51,7 +68,7 @@
 - [x] More robust error object type (`Error` object implemented)
 - [ ] Performance optimizations
 - [ ] Test suite expansion (more comprehensive tests for all features)
-- [ ] Support for multiple files / packages
+- [ ] Support for multiple files / packages (related to Lazy Import above)
 - [ ] Debugger support (very long term)
 - [ ] Better type system for `Object` interface (e.g. using generics if Go 2, or more specific interfaces)
 
@@ -59,16 +76,24 @@
 - [x] Review error handling consistency (e.g. when to return `Error` object vs. `error`) - Improved with `Error` object.
 - [x] Refactor `eval` function if it becomes too large (e.g. by node type) - *ongoing, new eval functions added for new node types*.
 - [ ] Improve comments and documentation within the code
-- [ ] `findFunction` in `interpreter.go` might be dead code now.
+- [ ] Confirm and remove `findFunction` in `interpreter.go` as it appears to be dead code after go-scan integration.
 
 ## go-scan Integration
 - [x] **Integrate `go-scan` for initial parsing phase**
   - [x] Modify `LoadAndRun` to use `go-scan`'s `Scanner` to get `PackageInfo`.
   - [x] Adapt `minigo` to extract function definitions (`*ast.FuncDecl` or body) from `PackageInfo` (or `*ast.File` if provided by `go-scan`).
-  - [x] Adapt `minigo` to extract global variable declarations from `PackageInfo` (or `*ast.File` if provided by `go-scan`).
+  - [x] Adapt `minigo` to extract global variable declarations from `PackageInfo` (using `*ast.File` from `pkgInfo.AstFiles` currently).
   - [x] Ensure error reporting (`formatErrorWithContext`) correctly uses `FileSet` and positional info from `go-scan`.
 - [ ] **Contribute to or discuss `go-scan` enhancements**
   - [x] Propose/discuss `PackageInfo` retaining `*ast.File` for scanned files. (Implemented)
   - [x] Propose/discuss `FunctionInfo` directly referencing `*ast.FuncDecl`. (Implemented)
   - [ ] Propose/discuss `PackageInfo` aggregating global variable declarations.
+    - [ ] (If go-scan supports it) Adapt `minigo` to use aggregated global variable information from `PackageInfo` directly.
+  - [ ] Propose/discuss `PackageInfo` aggregating global variable type and value information for easier import.
 - [ ] **Investigate `go-scan`'s Lazy Import (`PackageResolver`) for multi-file/package support in `minigo` (Future)**
+  - This relates to "Imports & Package Handling" in "Advanced Language Features" and "Support for multiple files / packages" in "Interpreter Internals & Tooling".
+
+*Legend for progress markers:*
+- `[x]` Completed
+- `[/]` Partially Completed
+- `[ ]` Not Started / Incomplete

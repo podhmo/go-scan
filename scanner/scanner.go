@@ -74,9 +74,10 @@ func (s *Scanner) ScanFiles(ctx context.Context, filePaths []string, pkgDirPath 
 	}
 
 	info := &PackageInfo{
-		Path:  pkgDirPath, // Physical directory path
-		Fset:  s.fset,     // Use the shared FileSet
-		Files: make([]string, 0, len(filePaths)),
+		Path:     pkgDirPath, // Physical directory path
+		Fset:     s.fset,     // Use the shared FileSet
+		Files:    make([]string, 0, len(filePaths)),
+		AstFiles: make(map[string]*ast.File), // Initialize AstFiles
 	}
 	var firstPackageName string
 
@@ -96,6 +97,7 @@ func (s *Scanner) ScanFiles(ctx context.Context, filePaths []string, pkgDirPath 
 		}
 
 		info.Files = append(info.Files, filePath) // Store absolute file path
+		info.AstFiles[filePath] = fileAst         // Store AST
 		slog.DebugContext(ctx, "Processing file for package", slog.String("filePath", filePath), slog.String("packageName", info.Name))
 		s.buildImportLookup(fileAst)
 		slog.DebugContext(ctx, "Built import lookup", slog.String("filePath", filePath), slog.Any("imports", s.importLookup))

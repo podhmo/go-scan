@@ -60,3 +60,15 @@
 - [x] Refactor `eval` function if it becomes too large (e.g. by node type) - *ongoing, new eval functions added for new node types*.
 - [ ] Improve comments and documentation within the code
 - [ ] `findFunction` in `interpreter.go` might be dead code now.
+
+## go-scan Integration
+- [ ] **Integrate `go-scan` for initial parsing phase**
+  - [ ] Modify `LoadAndRun` to use `go-scan`'s `Scanner` to get `PackageInfo`.
+  - [ ] Adapt `minigo` to extract function definitions (`*ast.FuncDecl` or body) from `PackageInfo` (or `*ast.File` if provided by `go-scan`).
+  - [ ] Adapt `minigo` to extract global variable declarations from `PackageInfo` (or `*ast.File` if provided by `go-scan`).
+  - [ ] Ensure error reporting (`formatErrorWithContext`) correctly uses `FileSet` and positional info from `go-scan`.
+- [ ] **Contribute to or discuss `go-scan` enhancements**
+  - [ ] Propose/discuss `PackageInfo` retaining `*ast.File` for scanned files.
+  - [ ] Propose/discuss `FunctionInfo` directly referencing `*ast.FuncDecl`.
+  - [ ] Propose/discuss `PackageInfo` aggregating global variable declarations.
+- [ ] **Investigate `go-scan`'s Lazy Import (`PackageResolver`) for multi-file/package support in `minigo` (Future)**

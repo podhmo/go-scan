@@ -165,17 +165,19 @@ func (s *Scanner) parseGenDecl(ctx context.Context, decl *ast.GenDecl, info *Pac
 							val = lit.Value
 						}
 					}
-					var typeName string
+					// var typeName string // Unused
+					var fieldType *FieldType
 					if sp.Type != nil {
-						typeName = s.parseTypeExpr(sp.Type).Name
+						fieldType = s.parseTypeExpr(sp.Type)
 					}
 					info.Constants = append(info.Constants, &ConstantInfo{
-						Name:     name.Name,
-						FilePath: absFilePath,
-						Doc:      doc,
-						Value:    val,
-						Type:     typeName,
-						Node:     name,
+						Name:       name.Name,
+						FilePath:   absFilePath,
+						Doc:        doc,
+						Value:      val,
+						Type:       fieldType, // Assign the parsed *FieldType
+						IsExported: name.IsExported(), // Set IsExported
+						Node:       name,
 					})
 				}
 			}

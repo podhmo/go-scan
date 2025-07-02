@@ -277,12 +277,13 @@ func (ft *FieldType) Resolve(ctx context.Context) (*TypeInfo, error) {
 
 // ConstantInfo represents a single top-level constant declaration.
 type ConstantInfo struct {
-	Name     string
-	FilePath string // Added: Absolute path to the file where this const is defined
-	Doc      string
-	Type     string
-	Value    string
-	Node     ast.Node // Added: AST node for position, if needed, though FilePath is primary
+	Name       string
+	FilePath   string // Added: Absolute path to the file where this const is defined
+	Doc        string
+	Type       *FieldType // Changed from string to *FieldType
+	Value      string
+	IsExported bool     // Added to indicate if the constant is exported
+	Node       ast.Node // Added: AST node for position, if needed, though FilePath is primary
 }
 
 // FunctionInfo represents a single top-level function or method declaration.

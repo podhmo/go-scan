@@ -299,6 +299,7 @@ func (s *Scanner) parseFuncDecl(f *ast.FuncDecl, absFilePath string) *FunctionIn
 	funcInfo.Name = f.Name.Name
 	funcInfo.FilePath = absFilePath
 	funcInfo.Doc = commentText(f.Doc)
+	funcInfo.Node = f // Populate the Node field
 	if f.Recv != nil && len(f.Recv.List) > 0 {
 		recvField := f.Recv.List[0]
 		var recvName string

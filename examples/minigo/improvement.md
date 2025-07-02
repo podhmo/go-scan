@@ -21,206 +21,239 @@ Go言語の構文との整合性、LSP等外部ツールとの親和性、そし
 ### 3.1. `minigo/inspect.GetFunctionInfo` 関数のシグネチャ（案）
 
 ```go
-// minigo/inspectパッケージの関数としてのイメージ
-// package inspect
-// func GetFunctionInfo(fn_symbol interface{}) (map[string]interface{}, error)
+// minigo/inspectパッケージの関数としてのイメージ (Go言語側)
+package inspect
 
-// minigoスクリプトからの呼び出しイメージ:
-// import "minigo/inspect"
-// info, err = inspect.GetFunctionInfo(mypkg.MyFunction)
-```
+// FunctionDetails は関数の詳細情報を保持します。
+type FunctionDetails struct {
+	Name       string      // 関数名
+	PkgPath    string      // パッケージのフルパス
+	PkgName    string      // パッケージ名
+	Doc        string      // godocコメント
+	Params     []ParamInfo // 引数情報
+	Returns    []ReturnInfo// 戻り値情報
+	IsVariadic bool        // 可変長引数か
+}
 
-*   `fn_symbol`: 情報を取得したいインポート済み関数のシンボル（例: `mypkg.MyFunction` を評価した結果のオブジェクト）。
-*   戻り値: 関数の情報を格納したminigoのマップオブジェクトと、エラーオブジェクト。
-*   エラー: 対象シンボルが関数でない場合、情報取得に失敗した場合などに返されます。
+// ParamInfo は引数の情報を保持します。
+type ParamInfo struct {
+	Name string // 引数名
+	Type string // 型名 (例: "string", "mypkg.MyStruct")
+	// TypeDetails TypeDetails // (将来的に) 型の詳細情報への遅延アクセス用
+}
 
-### 3.2. なぜパッケージ関数か
+// ReturnInfo は戻り値の情報を保持します。
+type ReturnInfo struct {
+	Name string // 戻り値名
+	Type string // 型名
+	// TypeDetails TypeDetails // (将来的に) 型の詳細情報への遅延アクセス用
+}
 
-*   **LSP・外部ツールとの親和性**: `minigo/inspect` パッケージとその中の `GetFunctionInfo` 関数は、GoのLanguage Server Protocol (LSP) やその他の静的解析ツールから認識されやすくなります。これにより、エディタでのコード補完、シグネチャヘルプ、型チェックなどの恩恵を受けやすくなります。
-*   **名前空間の明確化**: 機能が `minigo/inspect` という明確な名前空間に属することで、グローバルな組み込み関数が乱立することを防ぎます。
-*   **Goの慣習との一致**: Goの標準ライブラリも、機能の多くをパッケージ内のエクスポートされた関数として提供しており、これに倣う形となります。
-*   **モジュールとしての管理**: 将来的に関連機能が増えた場合でも、`minigo/inspect` パッケージ内でまとめて管理できます。
-
-## 4. 代替アプローチとその検討
-
-### 4.1. グローバルな組み込み関数 (不採用)
-
-*   **検討**: 当初案として検討されました。
-*   **不採用理由**: LSP等外部ツールとの親和性が低く、名前空間も汚染する可能性があるため。Goの慣習にもパッケージ関数の方がより適合します。
-
-### 4.2. 特殊な構文の導入 (不採用)
-
-*   例: `info(pkg.Function)` のような専用キーワード。
-*   **不採用理由**: Goの標準的な構文から逸脱し、minigoパーサーの複雑化、学習コストの増加を招くため。
-
-### 4.3. オブジェクトのプロパティ/メソッドアクセス (現時点では不採用)
-
-*   例: `pkg.Function.info` や `pkg.Function.getInfo()`。
-*   **検討**: Goの構造体フィールドアクセス (`foo.Bar`) に似せることは可能ですが、minigoの現在のオブジェクトシステムでは、これを汎用的に実現するには `evalSelectorExpr` の大幅な拡張が必要です。`FunctionInfo` のような動的に取得される情報を「フィールドのように」見せることは、Goの静的なフィールドアクセスとは意味合いが異なり、minigoに実質的なメソッド呼び出しやプロパティアクセスの概念を導入することになり、複雑性が増します。
-*   **現時点不採用理由**: minigoの言語仕様と実装への影響が大きく、現時点では過剰な複雑化を招く可能性があるため。
-
-### 4.4. インターフェースと型アサーションの導入 (不採用)
-
-*   **検討**: Goにはこれらの概念がありますが、minigoにこれらを本格的に導入するのは非常に大規模な変更となり、現在のminigoのシンプルさとはかけ離れてしまいます。
-*   **不採用理由**: 実装コストと複雑性が非常に高いため。
-
-## 5. 実装が必要となる主な要素 (`minigo/inspect` アプローチの場合)
-
-このアプローチを採用する場合、minigoのコア機能および新規パッケージに以下の追加・修正が必要となります。
-
-### 5.1. `ImportedFunction` オブジェクト型 (新規)
-
-*   **場所**: `examples/minigo/object.go`
-*   **役割**: インポートされたGo関数の情報を保持するための専用オブジェクト型。
-*   **内部データ**: `go-scan/scanner.FunctionInfo` から得られる情報（関数名、パッケージパス、型情報、ドキュメントコメントなど）を格納します。
-*   **インターフェース**: `Object` インターフェースを実装 (`Type()`, `Inspect()`)。
-    *   `Type()`: `IMPORTED_FUNCTION_OBJ` のような新しいオブジェクトタイプを返します。
-    *   `Inspect()`: `<imported function mypkg.MyFunc>` のような文字列を返します。
-*   **特性**: このオブジェクトはminigoスクリプト内で直接呼び出すことはできません。呼び出そうとした場合はエラーとなります。
-
-### 5.2. `evalSelectorExpr` 関数の修正
-
-*   **場所**: `examples/minigo/interpreter.go`
-*   **修正内容**: `go-scan` を用いて外部パッケージの関数シンボルを解決する際、`UserDefinedFunction` の代わりに上記の `ImportedFunction` オブジェクトを生成し、minigoの実行環境に登録するように変更します。
-
-### 5.3. `evalCallExpr` 関数の修正
-
-*   **場所**: `examples/minigo/interpreter.go`
-*   **修正内容**: 呼び出そうとしている関数オブジェクトが `ImportedFunction` 型であった場合、呼び出しはエラーとして処理します（例: 「imported function mypkg.MyFunc cannot be called directly」）。
-
-### 5.4. `minigo/inspect` パッケージ及び `GetFunctionInfo` 関数の実装 (新規)
-
-*   **新規パッケージ**: `minigo/inspect`
-    *   このパッケージはGoで実装され、minigoインタープリタから利用可能になる必要があります。
-    *   **利用可能にする方法の検討**:
-        *   案1: 他のGoパッケージと同様に、minigoの `import` 文で解決できるようにする（`GOPATH`やモジュール依存関係で解決）。この場合、`minigo/inspect` は独立したGoモジュールとして提供されるか、minigo本体と同じモジュール内に配置される。
-        *   案2: インタプリタに「組み込みパッケージ」として特別に登録する。この場合、`import "minigo/inspect"` はインタープリタによって内部的に処理される。LSP等との連携を考えると、案1の方が望ましい可能性があります。
-*   **`GetFunctionInfo` 関数**:
-    *   **Go実装**: `minigo/inspect/inspect.go` (仮) にGoの関数として実装します。この関数がminigoの`Object`型を直接扱うか、あるいはminigoの評価器(evaluator)と連携するためのアダプタ層を介して呼ばれる形になります。
-    *   **機能**:
-        1.  minigoから渡された引数（`ImportedFunction` オブジェクトを期待）を受け取ります。
-        2.  引数が期待する型であるか検証します。
-        3.  `ImportedFunction` オブジェクトから内部的に保持している `scanner.FunctionInfo` (またはそこから抽出した情報) を取得します。
-        4.  取得した情報を、minigoのマップオブジェクトに相当するGoのデータ構造（例: `map[string]interface{}` で、値はminigoのオブジェクト型に変換可能なもの）に変換して返します。
-        5.  情報取得に失敗した場合はエラーを返します。
-
-## 6. minigo上で取得可能にすべき情報とその表現
-
-`inspect.GetFunctionInfo` が返すマップオブジェクトには、以下の情報が含まれることを想定します。
-
-*   **`"name"`**: 関数名 (minigo文字列型)。例: `"MyFunction"`
-*   **`"pkgPath"`**: 関数が属するGoパッケージのフルパス (minigo文字列型)。例: `"github.com/user/mypkg"`
-*   **`"pkgName"`**: 関数が属するGoパッケージ名 (minigo文字列型)。例: `"mypkg"`
-*   **`"doc"`**: 関数のgodocコメント (minigo文字列型)。複数行の場合は改行を含む単一の文字列。コメントがない場合は空文字列。
-*   **`"params"`**: 関数の引数に関する情報のリスト (minigoリスト型)。リストの各要素は引数一つ分を表すマップオブジェクトで、以下のキーを持つことを想定します。
-    *   `"name"`: 引数名 (minigo文字列型)。名前がない場合（`_`など）は空文字列。
-    *   `"type"`: 引数の型名 (minigo文字列型)。例: `"string"`, `"int"`, `"mypkg.MyStruct"`, `"[]*mypkg.OtherType"`, `"map[string]interface{}"`。型名は `go-scan` が提供する形式に基づきます。
-*   **`"returns"`**: 関数の戻り値に関する情報のリスト (minigoリスト型)。リストの各要素は戻り値一つ分を表すマップオブジェクトで、`"params"` と同様に以下のキーを持つことを想定します。
-    *   `"name"`: 戻り値の名前 (minigo文字列型)。名前がない場合は空文字列。
-    *   `"type"`: 戻り値の型名 (minigo文字列型)。
-*   **`"isVariadic"`**: 関数が可変長引数を取るかどうか (minigoブール型)。最後の引数が `...T` の形式の場合 `true`。
-
-**マップオブジェクトの例:**
-
-```json
-// inspect.GetFunctionInfo(mypkg.SampleFunc) の戻り値のイメージ
-{
-    "name": "SampleFunc",
-    "pkgPath": "github.com/user/mypkg",
-    "pkgName": "mypkg",
-    "doc": "This is a sample function.\nIt demonstrates variadic arguments and multiple return values.",
-    "params": [
-        {"name": "count", "type": "int"},
-        {"name": "prefix", "type": "string"},
-        {"name": "values", "type": "...string"} // or "[]string" and isVariadic: true
-    ],
-    "returns": [
-        {"name": "result", "type": "string"},
-        {"name": "", "type": "error"}
-    ],
-    "isVariadic": true
+// GetFunctionInfo は指定された関数の詳細情報を返します。
+// fn_symbol はminigoの ImportedFunction オブジェクトから変換されたものを想定。
+func GetFunctionInfo(fn_symbol interface{}) (FunctionDetails, error) {
+	// ... 実装 ...
 }
 ```
 
-## 7. 考慮事項・懸念事項
+```minigo
+// minigoスクリプトからの呼び出しイメージ:
+import "minigo/inspect"
 
-*   **`go-scan` の `FunctionInfo` への依存**:
-    *   本機能の実現は、`go-scan` が `scanner.FunctionInfo` としてどれだけ詳細な情報（型名、引数名、ドキュメントコメント、可変長引数フラグなど）を提供できるかに強く依存します。
-    *   特に、struct名、ポインタ、スライス、マップ、関数型、インターフェース型といった複雑な型情報を、`go-scan` がどのような文字列形式で提供するかの確認が不可欠です。
-    *   `go-scan` がドキュメントコメントを正確に抽出できるかどうかも重要です。
-*   **型情報の詳細度とパース**:
-    *   `go-scan` が提供する型名を基本的にそのままminigo文字列として提供することを想定します。minigo側でこれらの型文字列をさらにパースして構造的な型オブジェクトにするのは、現時点ではスコープ外とします（将来的な拡張可能性はあり）。
-    *   `mypkg.MyStruct` のようにパッケージプレフィックスが付く型名の場合、そのプレフィックスの扱いも `go-scan` の出力に準じます。
-*   **型の循環参照や深いネスト**:
-    *   主に `go-scan` 側で対応すべき問題ですが、minigo側でこれらの情報を扱う際にも、無限ループや極端なパフォーマンス低下を招かないよう注意が必要です（今回は文字列ベースなので大きな問題にはなりにくいと予想）。
-*   **エラーハンドリング**:
-    *   シンボルが見つからない場合。
-    *   シンボルが `ImportedFunction` オブジェクトではない場合。
-    *   `go-scan` から期待した情報が得られなかった場合。
-    *   これらの場合に、`inspect.GetFunctionInfo` は適切なエラーオブジェクトを返す必要があります。
-*   **ドキュメントコメントの取得**:
-    *   `go-scan` が関数宣言に直接関連付けられたgodocコメントを抽出できることが前提です。
-*   **`minigo/inspect` パッケージの提供方法**:
-    *   minigoユーザーが特別な設定なしに `import "minigo/inspect"` を利用できるように、パッケージの配置場所やビルド方法を考慮する必要があります。
+info, err = inspect.GetFunctionInfo(mypkg.MyFunction)
+if err == nil {
+    fmt.Println(info.Name)
+    for _, p = range info.Params {
+        fmt.Println(p.Name, p.Type)
+        // もし p.Type が "mypkg.MyStruct" のような場合、
+        // さらなる詳細情報を取得できる (後述の GetTypeInfo)
+    }
+}
+```
 
-## 8. 利用例 (minigoコード)
+*   `fn_symbol`: 情報を取得したいインポート済み関数のシンボル。
+*   戻り値: 関数の情報を格納した `inspect.FunctionDetails` 構造体のminigoオブジェクトと、エラーオブジェクト。
+
+### 3.2. なぜパッケージ関数か (再掲)
+
+*   **LSP・外部ツールとの親和性**
+*   **名前空間の明確化**
+*   **Goの慣習との一致**
+*   **モジュールとしての管理**
+
+## 4. 代替アプローチとその検討 (内容は変更なし)
+
+(前回のドキュメントのセクション4をそのまま流用)
+
+### 4.1. グローバルな組み込み関数 (不採用)
+### 4.2. 特殊な構文の導入 (不採用)
+### 4.3. オブジェクトのプロパティ/メソッドアクセス (現時点では不採用)
+### 4.4. インターフェースと型アサーションの導入 (不採用)
+
+## 5. 実装が必要となる主な要素 (`minigo/inspect` アプローチの場合)
+
+(前回のドキュメントのセクション5をベースに、戻り値の型変更を反映)
+
+### 5.1. `ImportedFunction` オブジェクト型 (新規) (変更なし)
+### 5.2. `evalSelectorExpr` 関数の修正 (変更なし)
+### 5.3. `evalCallExpr` 関数の修正 (変更なし)
+
+### 5.4. `minigo/inspect` パッケージ及び関数の実装 (新規・修正)
+
+*   **新規パッケージ**: `minigo/inspect`
+    *   利用可能にする方法の検討 (変更なし)
+*   **`GetFunctionInfo` 関数**:
+    *   **Go実装**: `minigo/inspect/inspect.go` (仮) にGoの関数として実装。
+    *   **戻り値**: `inspect.FunctionDetails` 構造体 (Goで定義) と `error`。minigoインタープリタは `FunctionDetails` をminigoのオブジェクト (おそらく専用のstruct様オブジェクトまたはマップ) に変換してスクリプトに返します。
+    *   機能 (変更なし、ただし戻り値の型構造が変わる点に注意)
+*   **`FunctionDetails`, `ParamInfo`, `ReturnInfo` struct (Go側)**:
+    *   上記シグネチャ案で示した構造をGoで定義します。これらのstructはminigoに公開される情報コンテナとなります。
+
+## 6. minigo上で取得可能にすべき情報とその表現
+
+`inspect.GetFunctionInfo` は、`inspect.FunctionDetails` 構造体のインスタンス (minigoオブジェクトに変換されたもの) を返します。
+
+### 6.1. `inspect.FunctionDetails` 構造体
+
+*   `Name string`: 関数名。
+*   `PkgPath string`: 関数が属するGoパッケージのフルパス。
+*   `PkgName string`: 関数が属するGoパッケージ名。
+*   `Doc string`: 関数のgodocコメント。
+*   `Params []ParamInfo`: 関数の引数情報のスライス。
+    *   `ParamInfo` struct:
+        *   `Name string`: 引数名。
+        *   `Type string`: 引数の型名。この型名がユーザー定義型(例: `mypkg.MyStruct`)の場合、後述の `inspect.GetTypeInfo` を用いてさらに詳細な型情報を取得できる可能性があります。
+*   `Returns []ReturnInfo`: 関数の戻り値情報のスライス。
+    *   `ReturnInfo` struct:
+        *   `Name string`: 戻り値名。
+        *   `Type string`: 戻り値の型名。同様に `inspect.GetTypeInfo` で詳細を取得できる可能性があります。
+*   `IsVariadic bool`: 関数が可変長引数を取るかどうか。
+
+### 6.2. 型詳細情報の再帰的・遅延取得: `inspect.GetTypeInfo`
+
+関数の引数や戻り値の型がstructやインターフェースなどの複合型である場合、その型の詳細情報（フィールド、メソッドなど）をさらに取得できると便利です。これを実現するために、`inspect.GetTypeInfo` 関数を提案します。
+
+```go
+// minigo/inspectパッケージの追加関数としてのイメージ (Go言語側)
+package inspect
+
+// TypeKind は型の種類を示します (例: Struct, Interface, Slice, Map, Basic)。
+type TypeKind string
+
+// TypeDetails は型の詳細情報を保持します。
+type TypeDetails struct {
+	Kind     TypeKind    // 型の種類
+	Name     string      // 型名 (完全修飾名)
+	PkgPath  string      // 型が定義されているパッケージパス
+	Doc      string      // 型定義のgodocコメント
+	Fields   []FieldInfo // KindがStructの場合のフィールド情報
+	Methods  []MethodInfo// KindがInterfaceやStructの場合のメソッド情報 (公開メソッド)
+	// ElemType TypeDetails // KindがSlice, Ptr, Array, Mapの場合の要素の型情報 (遅延評価)
+	// ... その他、型に応じた情報
+}
+
+// FieldInfo はstructのフィールド情報を保持します。
+type FieldInfo struct {
+	Name string // フィールド名
+	Type string // 型名
+	Doc  string // フィールドのgodocコメント
+	Tag  string // structタグ
+	// TypeDetails TypeDetails // (将来的に) 型の詳細情報への遅延アクセス用
+}
+
+// MethodInfo はメソッドの情報を保持します (FunctionDetailsと類似の構造)。
+type MethodInfo FunctionDetails // 簡単のため FunctionDetails を再利用する案
+
+// GetTypeInfo は指定された型名の詳細情報を返します。
+// typeName は "mypkg.MyStruct", "string", "[]int" のような文字列。
+func GetTypeInfo(typeName string) (TypeDetails, error) {
+	// 実装:
+	// 1. typeNameを解析 (go-scanを利用)
+	// 2. 型情報をスキャンし、TypeDetails構造体に詰める
+	// 3. ElemTypeのような再帰的な部分は、実際にアクセスされるまで評価しない (Lazy Loading)
+	//    または、型名だけを保持しておき、再度GetTypeInfoを呼んでもらう形でも良い。
+}
+```
+
+**Lazy Loadingのコンセプト**: `GetTypeInfo` が呼び出された時点で初めて、`go-scan` を利用して該当の型の詳細情報をスキャン・解析します。これにより、不要な型情報まで先んじて大量にロードすることを防ぎます。一度取得した型情報はキャッシュすることも考えられます。
+
+## 7. 考慮事項・懸念事項 (項目追加・修正)
+
+*   **`go-scan` の機能への依存**: (変更なし)
+*   **型情報の詳細度とパース**: (変更なし、ただし `GetTypeInfo` の導入でより詳細な情報取得が可能になる)
+*   **再帰的情報取得と循環参照**:
+    *   `GetTypeInfo` で型情報を再帰的に辿る際、型定義が互いに参照し合っている場合（例: `type A struct { B *B }; type B struct { A *A }`）に無限ループに陥らないよう、`go-scan` および `minigo/inspect` の実装で検出・対処が必要です（例: 既に処理中の型であればプレースホルダを返す、深さ制限を設けるなど）。
+*   **Lazy Loadingの実装**:
+    *   `TypeDetails` 内の `ElemType` のような再帰的になる可能性のあるフィールドをどのように遅延評価させるか。関数型フィールドとして持つ、あるいは型名文字列だけを保持し都度 `GetTypeInfo` を呼び出すなどの方法が考えられます。
+    *   キャッシュ戦略: 一度取得した型情報をどの程度の期間・範囲でキャッシュするか。
+*   **エラーハンドリング**: (変更なし)
+*   **ドキュメントコメントの取得**: (変更なし)
+*   **`minigo/inspect` パッケージの提供方法**: (変更なし)
+*   **minigoオブジェクトへの変換**: Goの `FunctionDetails` や `TypeDetails` structを、minigoスクリプト側で扱いやすいオブジェクト（専用のstruct様オブジェクトまたはマップ）にどのように変換するか。特に `TypeDetails` のようにフィールドが可変になる構造の場合、minigo側での表現方法が課題となります。
+
+## 8. 利用例 (minigoコード) (修正・追加)
 
 ```minigo
-import "os" // 例として標準パッケージ "os" をインポート
+import "os"
 import "strings"
-import "minigo/inspect" // 新しく提案するパッケージ
+import "minigo/inspect"
 
 // os.Getenv 関数の情報を取得
 info, err = inspect.GetFunctionInfo(os.Getenv)
 if err != nil {
     fmt.Println("Error getting info for os.Getenv:", err)
 } else {
-    fmt.Println("Function Name:", info["name"])
-    fmt.Println("Package Path:", info["pkgPath"])
-    fmt.Println("Documentation:", info["doc"])
-    fmt.Println("Is Variadic:", info["isVariadic"])
+    fmt.Println("Function Name:", info.Name)
+    fmt.Println("Package Path:", info.PkgPath)
+    fmt.Println("Documentation:", info.Doc)
+    fmt.Println("Is Variadic:", info.IsVariadic)
 
     fmt.Println("Parameters:")
-    for _, p = range info["params"] {
-        fmt.Println("  Name:", p["name"], ", Type:", p["type"])
+    for _, p = range info.Params {
+        fmt.Println("  Name:", p.Name, ", Type:", p.Type)
+        // p.Type が "mypkg.MyStruct" のような場合、さらに詳細を取得できる
+        if p.Type == "os.FileInfo" { // 例: os.FileInfo (実際はインターフェース)
+            fileInfoType, errType = inspect.GetTypeInfo(p.Type)
+            if errType == nil {
+                fmt.Println("    TypeDetails for", p.Type, ": Kind=", fileInfoType.Kind)
+                // fileInfoType.Methods などを参照可能
+            }
+        }
     }
 
     fmt.Println("Return Values:")
-    for _, r = range info["returns"] {
-        fmt.Println("  Name:", r["name"], ", Type:", r["type"])
+    for _, r = range info.Returns {
+        fmt.Println("  Name:", r.Name, ", Type:", r.Type)
     }
 }
 
-// strings.Join 関数の情報を取得
+// strings.Join 関数の情報を取得 (同様に info.FieldName でアクセス)
 info2, err2 = inspect.GetFunctionInfo(strings.Join)
-if err2 != nil {
-    fmt.Println("Error getting info for strings.Join:", err2)
-} else {
-    fmt.Println("\nFunction Name:", info2["name"])
-    fmt.Println("Documentation:", info2["doc"])
-    fmt.Println("Parameters:")
-    for _, p = range info2["params"] {
-        fmt.Println("  Name:", p["name"], ", Type:", p["type"])
+if err2 == nil {
+    fmt.Println("\nFunction Name:", info2.Name)
+    // ...
+}
+
+
+// 型情報の直接取得の例
+// (仮に MyStruct が以下のように定義されているとする)
+// package mypkg
+// type MyStruct struct {
+//     FieldA string
+//     FieldB int `json:"field_b"`
+// }
+myStructInfo, errStruct = inspect.GetTypeInfo("mypkg.MyStruct") // mypkgがスキャン対象にある前提
+if errStruct == nil {
+    fmt.Println("\nDetails for type:", myStructInfo.Name)
+    fmt.Println("Kind:", myStructInfo.Kind) // "Struct"
+    fmt.Println("Fields:")
+    for _, f = range myStructInfo.Fields {
+        fmt.Println("  Name:", f.Name, ", Type:", f.Type, ", Tag:", f.Tag)
     }
-    fmt.Println("Is Variadic:", info2["isVariadic"])
 }
-
-// 存在しない関数や、関数でないものを渡した場合 (エラーになる想定)
-_, err3 = inspect.GetFunctionInfo(os.PathSeparator) // 定数なのでエラー
-if err3 != nil {
-    fmt.Println("\nError (as expected) for os.PathSeparator:", err3)
-}
-
-// ユーザー定義関数 (現状の提案ではインポートされたGo関数のみ対象)
-func myMiniGoFunc(a, b) { return a + b }
-// _, err4 = inspect.GetFunctionInfo(myMiniGoFunc) // これはエラーになるか、別途検討
-// 現状の提案では ImportedFunction オブジェクトを期待するためエラーになる
 ```
 
-## 9. 将来的な拡張可能性
-
-*   minigoで定義されたユーザー関数 (`UserDefinedFunction`) の情報も同様の仕組みで取得できるようにする。
-*   型名だけでなく、型の詳細情報（structのフィールドなど）を取得するための機能。これにはminigoの型システムの大きな拡張が必要になります。
+## 9. 将来的な拡張可能性 (変更なし)
 
 以上が、minigoでインポートされたGo関数の情報を取得するための機能提案です。
 ご意見や懸念事項があれば、ぜひお寄せください。

@@ -57,3 +57,23 @@ func (e *Environment) ExistsInCurrentScope(name string) bool {
 // - Built-in variables/functions.
 // - Scope resolution for function calls (closures).
 // - Type information storage if the language becomes statically typed or for type checking.
+
+// GetAllEntries returns all entries from the current environment and its outer scopes.
+// Entries in inner scopes shadow those in outer scopes.
+func (e *Environment) GetAllEntries() map[string]Object {
+	allEntries := make(map[string]Object)
+
+	// Collect entries from outer scopes first
+	if e.outer != nil {
+		outerEntries := e.outer.GetAllEntries()
+		for name, obj := range outerEntries {
+			allEntries[name] = obj
+		}
+	}
+
+	// Add/overwrite with entries from the current scope
+	for name, obj := range e.store {
+		allEntries[name] = obj
+	}
+	return allEntries
+}

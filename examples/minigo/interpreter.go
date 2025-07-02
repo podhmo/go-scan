@@ -163,86 +163,96 @@ func (i *Interpreter) LoadAndRun(filename string, entryPoint string) error {
 		return fmt.Errorf("internal error: Interpreter.FileSet is nil before scanning files")
 	}
 
-
-	// Parse the main script file directly using go/parser.
-	mainFileAst, parseErr := parser.ParseFile(i.FileSet, absFilePath, nil, parser.ParseComments)
-	if parseErr != nil {
-		return formatErrorWithContext(i.FileSet, token.NoPos, parseErr, fmt.Sprintf("Error parsing main script file %s: %v", filename, parseErr))
+	// Use go-scan to parse the main script file
+	// ScanFiles expects a list of files. For LoadAndRun, it's just the one file.
+	// pkgDirPath for ScanFiles should be the directory of the file.
+	pkgInfo, scanErr := i.scn.ScanFiles(context.Background(), []string{absFilePath}, i.currentFileDir, i.scn)
+	if scanErr != nil {
+		// Attempt to provide position info if possible, though ScanFiles errors might be general.
+		return formatErrorWithContext(i.FileSet, token.NoPos, scanErr, fmt.Sprintf("Error scanning main script file %s using go-scan: %v", filename, scanErr))
 	}
 
-	// Process import declarations from the parsed AST to populate importAliasMap
+	// Retrieve the AST for the main file from pkgInfo (needed for imports and globals)
+	mainFileAst, ok := pkgInfo.AstFiles[absFilePath]
+	if !ok || mainFileAst == nil {
+		return formatErrorWithContext(i.FileSet, token.NoPos, errors.New("AST for main file not found in go-scan PackageInfo"), fmt.Sprintf("File: %s", absFilePath))
+	}
+	// Ensure the FileSet used by the interpreter is the one from PackageInfo,
+	// as all AST nodes within pkgInfo will reference this FileSet.
+	if pkgInfo.Fset == nil {
+		return formatErrorWithContext(i.FileSet, token.NoPos, errors.New("PackageInfo from go-scan has a nil FileSet"), "")
+	}
+	i.FileSet = pkgInfo.Fset
+
+
+	// Process import declarations from the AST to populate importAliasMap
+	// This part still uses mainFileAst directly, which is fine.
 	for _, declNode := range mainFileAst.Decls {
 		genDecl, ok := declNode.(*ast.GenDecl)
 		if !ok || genDecl.Tok != token.IMPORT {
+			continue
+		}
+		for _, spec := range genDecl.Specs {
+			impSpec, ok := spec.(*ast.ImportSpec)
+			if !ok {
 				continue
 			}
-			for _, spec := range genDecl.Specs {
-				impSpec, ok := spec.(*ast.ImportSpec)
-				if !ok {
-					continue
-				}
-				importPath, err := strconv.Unquote(impSpec.Path.Value)
-				if err != nil {
-					return formatErrorWithContext(i.FileSet, impSpec.Path.Pos(), err, fmt.Sprintf("Invalid import path: %s", impSpec.Path.Value))
-				}
-
-				localName := ""
-				if impSpec.Name != nil {
-					localName = impSpec.Name.Name
-					if localName == "_" {
-						// Blank import, record for completeness but it won't be usable for selection.
-						// Or, decide to error here if blank imports are not to be "recorded".
-						// For now, let's just skip adding it to alias map as it cannot be selected.
-						// Alternatively, map it to a special value or handle in evalSelectorExpr.
-						// Plan says: ブランクインポートは...`evalSelectorExpr` で使おうとしても解決できない...ことを確認
-						// So, we can add it, and evalSelectorExpr won't find symbols via it.
-						// Let's add it with the path for now, so we know it was "seen".
-						// i.importAliasMap["_"] = importPath // This is problematic if multiple blank imports
-						// Let's decide to disallow blank and dot imports for now as per plan.
-						return formatErrorWithContext(i.FileSet, impSpec.Name.Pos(), errors.New("blank imports are not supported"), "")
-					}
-					if localName == "." {
-						return formatErrorWithContext(i.FileSet, impSpec.Name.Pos(), errors.New("dot imports are not supported"), "")
-					}
-				} else {
-					// No explicit alias, use the base of the import path
-					// e.g. "path/to/pkg" -> localName is "pkg"
-					// This can be tricky if path is complex e.g. "my.repo/pkg/v2" -> "v2"
-					// Go's default is the package name declared in the imported package's files,
-					// which we don't know until we scan it.
-					// For simplicity, go-scan itself uses filepath.Base for default alias if needed.
-					// Let's use filepath.Base on the import path.
-					localName = filepath.Base(importPath)
-				}
-
-				if existingPath, ok := i.importAliasMap[localName]; ok && existingPath != importPath {
-					return formatErrorWithContext(i.FileSet, impSpec.Pos(), fmt.Errorf("import alias/name %q already used for %q, cannot reuse for %q", localName, existingPath, importPath), "")
-				}
-				i.importAliasMap[localName] = importPath
+			importPath, err := strconv.Unquote(impSpec.Path.Value)
+			if err != nil {
+				return formatErrorWithContext(i.FileSet, impSpec.Path.Pos(), err, fmt.Sprintf("Invalid import path: %s", impSpec.Path.Value))
 			}
+
+			localName := ""
+			if impSpec.Name != nil {
+				localName = impSpec.Name.Name
+				if localName == "_" {
+					return formatErrorWithContext(i.FileSet, impSpec.Name.Pos(), errors.New("blank imports are not supported"), "")
+				}
+				if localName == "." {
+					return formatErrorWithContext(i.FileSet, impSpec.Name.Pos(), errors.New("dot imports are not supported"), "")
+				}
+			} else {
+				localName = filepath.Base(importPath)
+			}
+
+			if existingPath, ok := i.importAliasMap[localName]; ok && existingPath != importPath {
+				return formatErrorWithContext(i.FileSet, impSpec.Pos(), fmt.Errorf("import alias/name %q already used for %q, cannot reuse for %q", localName, existingPath, importPath), "")
+			}
+			i.importAliasMap[localName] = importPath
+		}
 	}
 
-	// Process other top-level declarations (functions and global vars) from the AST
-	// Store all function declarations first
-	for _, declNode := range mainFileAst.Decls {
-		if fnDecl, ok := declNode.(*ast.FuncDecl); ok {
-			_, evalErr := i.evalFuncDecl(fnDecl, i.globalEnv)
+	// Process function declarations using FunctionInfo from go-scan's PackageInfo
+	for _, funcInfo := range pkgInfo.Functions {
+		if funcInfo.AstDecl == nil {
+			// This should not happen if go-scan is working correctly
+			errMsg := fmt.Sprintf("FunctionInfo for '%s' from go-scan is missing AstDecl", funcInfo.Name)
+			return formatErrorWithContext(i.FileSet, token.NoPos, errors.New(errMsg), "Internal error with go-scan data")
+		}
+		// funcInfo.FilePath should match absFilePath if it's from the main file.
+		// We are interested in functions from the main file.
+		if funcInfo.FilePath == absFilePath {
+			_, evalErr := i.evalFuncDecl(funcInfo.AstDecl, i.globalEnv)
 			if evalErr != nil {
-				return evalErr // evalFuncDecl should use i.FileSet for errors
+				// evalFuncDecl itself should use i.FileSet for formatting,
+				// but its error might not have original context if it's a general one.
+				// The AstDecl.Pos() would be the best position.
+				return formatErrorWithContext(i.FileSet, funcInfo.AstDecl.Pos(), evalErr, fmt.Sprintf("Error evaluating function declaration %s", funcInfo.Name))
 			}
 		}
 	}
-	// Then evaluate global variable declarations
+
+	// Process global variable declarations from the AST (mainFileAst)
+	// This part remains similar, iterating mainFileAst.Decls
 	for _, declNode := range mainFileAst.Decls {
 		if genDecl, ok := declNode.(*ast.GenDecl); ok && genDecl.Tok == token.VAR {
 			tempDeclStmt := &ast.DeclStmt{Decl: genDecl}
 			_, evalErr := i.eval(tempDeclStmt, i.globalEnv)
-				if evalErr != nil {
-					// formatErrorWithContext will use i.FileSet
-					return formatErrorWithContext(i.FileSet, genDecl.Pos(), evalErr, "Error evaluating global variable declaration")
-				}
+			if evalErr != nil {
+				return formatErrorWithContext(i.FileSet, genDecl.Pos(), evalErr, "Error evaluating global variable declaration")
 			}
 		}
+	}
 
 	// Get the entry function *object* from the global environment
 	entryFuncObj, ok := i.globalEnv.Get(entryPoint)

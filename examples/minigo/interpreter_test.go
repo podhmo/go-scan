@@ -127,7 +127,7 @@ func main() {
 }`,
 			entryPoint:             "main",
 			expectError:            true,
-			expectedErrorMsgSubstr: "undefined selector: testpkg.NonExportedConst",
+			expectedErrorMsgSubstr: "undefined: testpkg.NonExportedConst", // Adjusted to check for core message
 		},
 		{
 			name: "reference non-existent const",
@@ -140,7 +140,7 @@ func main() {
 }`,
 			entryPoint:             "main",
 			expectError:            true,
-			expectedErrorMsgSubstr: "undefined selector: testpkg.DoesNotExist",
+			expectedErrorMsgSubstr: "undefined: testpkg.DoesNotExist", // Adjusted to check for core message
 		},
 		{
 			name: "reference symbol from non-existent package alias",
@@ -152,7 +152,7 @@ func main() {
 }`,
 			entryPoint:             "main",
 			expectError:            true,
-			expectedErrorMsgSubstr: "undefined package alias/name: nonExistentAlias",
+			expectedErrorMsgSubstr: "identifier not found: nonExistentAlias", // Adjusted to check for core message
 		},
 		{
 			name: "reference symbol from non-existent package path after import",

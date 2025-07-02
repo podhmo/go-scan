@@ -12,16 +12,16 @@ type ObjectType string
 
 // Define all possible object types our interpreter will handle.
 const (
-	STRING_OBJ       ObjectType = "STRING"
-	INTEGER_OBJ      ObjectType = "INTEGER"      // Example for future use
-	BOOLEAN_OBJ      ObjectType = "BOOLEAN"      // Example for future use
-	NULL_OBJ         ObjectType = "NULL"         // Example for future use
-	RETURN_VALUE_OBJ ObjectType = "RETURN_VALUE" // Special type to wrap return values
-	ERROR_OBJ        ObjectType = "ERROR"        // To wrap errors as objects
-	FUNCTION_OBJ     ObjectType = "FUNCTION"     // For user-defined functions
+	STRING_OBJ           ObjectType = "STRING"
+	INTEGER_OBJ          ObjectType = "INTEGER"          // Example for future use
+	BOOLEAN_OBJ          ObjectType = "BOOLEAN"          // Example for future use
+	NULL_OBJ             ObjectType = "NULL"             // Example for future use
+	RETURN_VALUE_OBJ     ObjectType = "RETURN_VALUE"     // Special type to wrap return values
+	ERROR_OBJ            ObjectType = "ERROR"            // To wrap errors as objects
+	FUNCTION_OBJ         ObjectType = "FUNCTION"         // For user-defined functions
 	BUILTIN_FUNCTION_OBJ ObjectType = "BUILTIN_FUNCTION" // For built-in functions
-	BREAK_OBJ        ObjectType = "BREAK"        // For break statements
-	CONTINUE_OBJ     ObjectType = "CONTINUE"      // For continue statements
+	BREAK_OBJ            ObjectType = "BREAK"            // For break statements
+	CONTINUE_OBJ         ObjectType = "CONTINUE"         // For continue statements
 )
 
 // Object is the interface that all value types in our interpreter will implement.
@@ -60,7 +60,7 @@ func (b *Boolean) Inspect() string  { return fmt.Sprintf("%t", b.Value) }
 var (
 	TRUE     = &Boolean{Value: true}
 	FALSE    = &Boolean{Value: false}
-	NULL     = &Null{}               // Global instance for Null
+	NULL     = &Null{}              // Global instance for Null
 	BREAK    = &BreakStatement{}    // Singleton instance for Break
 	CONTINUE = &ContinueStatement{} // Singleton instance for Continue
 )
@@ -99,7 +99,6 @@ type Error struct {
 func (e *Error) Type() ObjectType { return ERROR_OBJ }
 func (e *Error) Inspect() string  { return "ERROR: " + e.Message }
 func (e *Error) Error() string    { return e.Message } // Implement error interface
-
 
 // --- Comparability ---
 // Some objects can be compared. This interface can be implemented by types
@@ -143,7 +142,7 @@ type UserDefinedFunction struct {
 	Name       string // Optional: for debugging and representation
 	Parameters []*ast.Ident
 	Body       *ast.BlockStmt
-	Env        *Environment // Closure: the environment where the function was defined
+	Env        *Environment   // Closure: the environment where the function was defined
 	FileSet    *token.FileSet // FileSet for error reporting context
 }
 
@@ -174,7 +173,6 @@ func (rv *ReturnValue) Inspect() string {
 	}
 	return rv.Value.Inspect() // Or fmt.Sprintf("return %s", rv.Value.Inspect())
 }
-
 
 // --- BuiltinFunction Object ---
 

@@ -13,6 +13,8 @@ import (
 
 	// "time" // Removed: No longer used
 
+	// For deep comparison
+	// For options like IgnoreUnexported
 	"github.com/podhmo/go-scan/cache" // Now needed for direct cache content manipulation
 	"github.com/podhmo/go-scan/scanner"
 )
@@ -1314,3 +1316,403 @@ func TestImportManager_Imports(t *testing.T) {
 		t.Error("Modifying returned map from Imports() affected internal state.")
 	}
 }
+
+// findFunction is a helper to find a function by name in PackageInfo.
+func findFunction(pkgInfo *scanner.PackageInfo, name string) *scanner.FunctionInfo {
+	if pkgInfo == nil {
+		return nil
+	}
+	for _, f := range pkgInfo.Functions {
+		if f.Name == name {
+			return f
+		}
+	}
+	return nil
+}
+
+// findType is a helper to find a type by name in PackageInfo.
+// This was already defined in the file, ensure it's used or make a new one if needed.
+// func findType(types []*scanner.TypeInfo, name string) *scanner.TypeInfo { ... }
+
+func TestScanner_ScanPackage_Generics(t *testing.T) {
+	s, err := New("./testdata/generics") // Scanner relative to the "generics" module/directory
+	if err != nil {
+		t.Fatalf("New() for generics testdata failed: %v", err)
+	}
+	// Assuming testdata/generics is not a full Go module for simplicity in this test setup,
+	// so ModulePath might be the main project's module path or empty depending on locator behavior.
+	// We'll scan the package directly by its path.
+	// The import path for types within testdata/generics will be determined by the scanner.
+	// Let's assume it forms an import path like "github.com/podhmo/go-scan/testdata/generics"
+	// if go.mod is not present in testdata/generics.
+	// For this test, we are more interested in the structure parsing than cross-package resolution.
+
+	pkgInfo, err := s.ScanPackage(context.Background(), "./testdata/generics")
+	if err != nil {
+		t.Fatalf("ScanPackage() for './testdata/generics' failed: %v", err)
+	}
+	if pkgInfo == nil {
+		t.Fatal("ScanPackage() for './testdata/generics' returned nil PackageInfo")
+	}
+
+	// --- Assertions for Generic Functions ---
+	t.Run("GenericFunctions", func(t *testing.T) {
+		// 1. func Print[T any](val T)
+		fnPrint := findFunction(pkgInfo, "Print")
+		if fnPrint == nil {
+			t.Fatal("Function 'Print' not found")
+		}
+		if len(fnPrint.TypeParams) != 1 {
+			t.Errorf("Expected 1 type parameter for 'Print', got %d", len(fnPrint.TypeParams))
+		} else {
+			tp := fnPrint.TypeParams[0]
+			if tp.Name != "T" {
+				t.Errorf("Expected type parameter name 'T', got '%s'", tp.Name)
+			}
+			if tp.Constraint == nil || tp.Constraint.Name != "any" || !tp.Constraint.IsBuiltin || !tp.Constraint.IsConstraint {
+				t.Errorf("Expected constraint 'any' for 'T', got %v", tp.Constraint)
+			}
+		}
+		if len(fnPrint.Parameters) != 1 || fnPrint.Parameters[0].Type == nil || fnPrint.Parameters[0].Type.Name != "T" || !fnPrint.Parameters[0].Type.IsTypeParam {
+			t.Errorf("Expected parameter 'val T' (as type param) for 'Print', got %v", fnPrint.Parameters)
+		}
+
+		// 2. func PrintStringer[T Stringer](val T)
+		fnPrintStringer := findFunction(pkgInfo, "PrintStringer")
+		if fnPrintStringer == nil {
+			t.Fatal("Function 'PrintStringer' not found")
+		}
+		if len(fnPrintStringer.TypeParams) != 1 {
+			t.Errorf("Expected 1 type parameter for 'PrintStringer', got %d", len(fnPrintStringer.TypeParams))
+		} else {
+			tp := fnPrintStringer.TypeParams[0]
+			if tp.Name != "T" {
+				t.Errorf("Expected type parameter name 'T', got '%s'", tp.Name)
+			}
+			if tp.Constraint == nil || tp.Constraint.Name != "Stringer" || tp.Constraint.IsBuiltin { // Stringer is not a builtin
+				t.Errorf("Expected constraint 'Stringer' for 'T', got %v", tp.Constraint)
+			}
+		}
+
+		// 3. func AreEqual[T comparable](a, b T) bool
+		fnAreEqual := findFunction(pkgInfo, "AreEqual")
+		if fnAreEqual == nil {
+			t.Fatal("Function 'AreEqual' not found")
+		}
+		if len(fnAreEqual.TypeParams) != 1 {
+			t.Errorf("Expected 1 type parameter for 'AreEqual', got %d", len(fnAreEqual.TypeParams))
+		} else {
+			tp := fnAreEqual.TypeParams[0]
+			if tp.Name != "T" {
+				t.Errorf("Expected type parameter name 'T', got '%s'", tp.Name)
+			}
+			if tp.Constraint == nil || tp.Constraint.Name != "comparable" || !tp.Constraint.IsBuiltin || !tp.Constraint.IsConstraint {
+				t.Errorf("Expected constraint 'comparable' for 'T', got %v", tp.Constraint)
+			}
+		}
+		if len(fnAreEqual.Results) != 1 || fnAreEqual.Results[0].Type.Name != "bool" {
+			t.Errorf("Expected return type 'bool' for 'AreEqual', got %v", fnAreEqual.Results)
+		}
+	})
+
+	// --- Assertions for Generic Structs ---
+	t.Run("GenericStructs", func(t *testing.T) {
+		// 1. type List[T any] struct { items []T; Value T }
+		stList := findType(pkgInfo.Types, "List")
+		if stList == nil {
+			t.Fatal("Struct 'List' not found")
+		}
+		if stList.Kind != scanner.StructKind {
+			t.Errorf("Expected 'List' to be StructKind, got %v", stList.Kind)
+		}
+		if len(stList.TypeParams) != 1 {
+			t.Fatalf("Expected 1 type parameter for 'List', got %d", len(stList.TypeParams))
+		}
+		if stList.TypeParams[0].Name != "T" || stList.TypeParams[0].Constraint.Name != "any" {
+			t.Errorf("Incorrect type parameter for 'List': %+v", stList.TypeParams[0])
+		}
+		fieldValue := findField(stList.Struct, "Value")
+		if fieldValue == nil || fieldValue.Type.Name != "T" || !fieldValue.Type.IsTypeParam {
+			t.Errorf("'List.Value' field: expected type 'T' (as type param), got %+v", fieldValue)
+		}
+		fieldItems := findField(stList.Struct, "items")
+		if fieldItems == nil || !fieldItems.Type.IsSlice || fieldItems.Type.Elem == nil || fieldItems.Type.Elem.Name != "T" || !fieldItems.Type.Elem.IsTypeParam {
+			t.Errorf("'List.items' field: expected type '[]T' (T as type param), got %+v", fieldItems)
+		}
+
+		// 2. type KeyValue[K comparable, V any] struct { Key K; Value V }
+		stKeyValue := findType(pkgInfo.Types, "KeyValue")
+		if stKeyValue == nil {
+			t.Fatal("Struct 'KeyValue' not found")
+		}
+		if len(stKeyValue.TypeParams) != 2 {
+			t.Fatalf("Expected 2 type parameters for 'KeyValue', got %d", len(stKeyValue.TypeParams))
+		}
+		tpK_kv := stKeyValue.TypeParams[0]
+		tpV_kv := stKeyValue.TypeParams[1]
+		if tpK_kv.Name != "K" || tpK_kv.Constraint.Name != "comparable" {
+			t.Errorf("Incorrect type parameter K for 'KeyValue': %+v", tpK_kv)
+		}
+		if tpV_kv.Name != "V" || tpV_kv.Constraint.Name != "any" {
+			t.Errorf("Incorrect type parameter V for 'KeyValue': %+v", tpV_kv)
+		}
+		fieldKey_kv := findField(stKeyValue.Struct, "Key")
+		if fieldKey_kv == nil || fieldKey_kv.Type.Name != "K" || !fieldKey_kv.Type.IsTypeParam {
+			t.Errorf("'KeyValue.Key' field: expected type 'K' (as type param), got %+v", fieldKey_kv)
+		}
+		fieldValue_kv := findField(stKeyValue.Struct, "Value")
+		if fieldValue_kv == nil || fieldValue_kv.Type.Name != "V" || !fieldValue_kv.Type.IsTypeParam {
+			t.Errorf("'KeyValue.Value' field: expected type 'V' (as type param), got %+v", fieldValue_kv)
+		}
+	})
+
+	// --- Assertions for Instantiated Generic Types & Aliases ---
+	t.Run("InstantiatedAndAliases", func(t *testing.T) {
+		// 1. Type alias StringList = List[string]
+		aliasStringList := findType(pkgInfo.Types, "StringList")
+		if aliasStringList == nil {
+			t.Fatal("Type alias 'StringList' not found")
+		}
+		if aliasStringList.Kind != scanner.AliasKind {
+			t.Errorf("Expected 'StringList' to be AliasKind, got %v", aliasStringList.Kind)
+		}
+		if aliasStringList.Underlying == nil {
+			t.Fatalf("'StringList' underlying type is nil")
+		}
+		if aliasStringList.Underlying.Name != "List" { // Base generic type name
+			t.Errorf("Expected underlying base type 'List' for 'StringList', got '%s'", aliasStringList.Underlying.Name)
+		}
+		if len(aliasStringList.Underlying.TypeArgs) != 1 {
+			t.Fatalf("Expected 1 type argument for 'StringList' (List[string]), got %d", len(aliasStringList.Underlying.TypeArgs))
+		} else {
+			typeArg := aliasStringList.Underlying.TypeArgs[0]
+			if typeArg.Name != "string" || !typeArg.IsBuiltin {
+				t.Errorf("Expected type argument 'string' for 'StringList', got %+v", typeArg)
+			}
+		}
+		if strRep := aliasStringList.Underlying.String(); strRep != "List[string]" {
+			t.Errorf("Expected String() for StringList underlying to be 'List[string]', got '%s'", strRep)
+		}
+
+		// 2. Non-generic struct Container with generic fields
+		stContainer := findType(pkgInfo.Types, "Container")
+		if stContainer == nil {
+			t.Fatal("Struct 'Container' not found")
+		}
+		fieldIntList := findField(stContainer.Struct, "IntList")
+		if fieldIntList == nil {
+			t.Fatal("'Container.IntList' not found")
+		}
+		if fieldIntList.Type.Name != "List" || len(fieldIntList.Type.TypeArgs) != 1 || fieldIntList.Type.TypeArgs[0].Name != "int" {
+			t.Errorf("'Container.IntList' expected List[int], got %s with args %+v", fieldIntList.Type.Name, fieldIntList.Type.TypeArgs)
+		}
+		if strRep := fieldIntList.Type.String(); strRep != "List[int]" {
+			t.Errorf("Expected String() for IntList to be 'List[int]', got '%s'", strRep)
+		}
+
+		fieldKV := findField(stContainer.Struct, "KV")
+		if fieldKV == nil {
+			t.Fatal("'Container.KV' not found")
+		}
+		if fieldKV.Type.Name != "KeyValue" || len(fieldKV.Type.TypeArgs) != 2 {
+			t.Fatalf("'Container.KV' expected KeyValue[?,?], got %s with %d args", fieldKV.Type.Name, len(fieldKV.Type.TypeArgs))
+		}
+		typeArgK_kv := fieldKV.Type.TypeArgs[0]
+		typeArgV_kv := fieldKV.Type.TypeArgs[1]
+		if typeArgK_kv.Name != "string" {
+			t.Errorf("'Container.KV' first type arg: expected 'string', got '%s'", typeArgK_kv.Name)
+		}
+		if typeArgV_kv.Name != "float64" {
+			t.Errorf("'Container.KV' second type arg: expected 'float64', got '%s'", typeArgV_kv.Name)
+		}
+		if strRep := fieldKV.Type.String(); strRep != "KeyValue[string, float64]" {
+			t.Errorf("Expected String() for KV to be 'KeyValue[string, float64]', got '%s'", strRep)
+		}
+	})
+
+	// --- Assertions for Generic Function Types ---
+	t.Run("GenericFuncTypes", func(t *testing.T) {
+		// type GenericFuncType[T any] func(T) T
+		typeGenericFunc := findType(pkgInfo.Types, "GenericFuncType")
+		if typeGenericFunc == nil {
+			t.Fatal("Type 'GenericFuncType' not found")
+		}
+		if typeGenericFunc.Kind != scanner.FuncKind { // It's a type alias to a func type
+			t.Errorf("Expected 'GenericFuncType' to be FuncKind, got %v", typeGenericFunc.Kind)
+		}
+		if len(typeGenericFunc.TypeParams) != 1 || typeGenericFunc.TypeParams[0].Name != "T" {
+			t.Fatalf("Expected 1 type param 'T' for 'GenericFuncType', got %+v", typeGenericFunc.TypeParams)
+		}
+		if typeGenericFunc.Func == nil {
+			t.Fatalf("'GenericFuncType.Func' is nil")
+		}
+		// Check the signature of the func type itself
+		if len(typeGenericFunc.Func.Parameters) != 1 || typeGenericFunc.Func.Parameters[0].Type.Name != "T" || !typeGenericFunc.Func.Parameters[0].Type.IsTypeParam {
+			t.Errorf("Parameter of 'GenericFuncType': expected 'T' (as type param), got %+v", typeGenericFunc.Func.Parameters)
+		}
+		if len(typeGenericFunc.Func.Results) != 1 || typeGenericFunc.Func.Results[0].Type.Name != "T" || !typeGenericFunc.Func.Results[0].Type.IsTypeParam {
+			t.Errorf("Result of 'GenericFuncType': expected 'T' (as type param), got %+v", typeGenericFunc.Func.Results)
+		}
+	})
+
+	// --- Assertions for Interfaces with generic methods (conceptual) or using generic types ---
+	t.Run("GenericInterfaces", func(t *testing.T) {
+		// type Processor[T any, U Stringer] interface { Process(data T) List[T]; ProcessKeyValue(kv KeyValue[string, T]) U }
+		ifaceProcessor := findType(pkgInfo.Types, "Processor")
+		if ifaceProcessor == nil {
+			t.Fatal("Interface 'Processor' not found")
+		}
+		if ifaceProcessor.Kind != scanner.InterfaceKind {
+			t.Errorf("Expected 'Processor' to be InterfaceKind, got %v", ifaceProcessor.Kind)
+		}
+		if len(ifaceProcessor.TypeParams) != 2 {
+			t.Fatalf("Expected 2 type parameters for 'Processor', got %d", len(ifaceProcessor.TypeParams))
+		} else {
+			if ifaceProcessor.TypeParams[0].Name != "T" || ifaceProcessor.TypeParams[0].Constraint.Name != "any" {
+				t.Errorf("Processor T param: %+v", ifaceProcessor.TypeParams[0])
+			}
+			if ifaceProcessor.TypeParams[1].Name != "U" || ifaceProcessor.TypeParams[1].Constraint.Name != "Stringer" {
+				t.Errorf("Processor U param: %+v", ifaceProcessor.TypeParams[1])
+			}
+		}
+
+		methodProcess := findMethod(ifaceProcessor.Interface, "Process")
+		if methodProcess == nil {
+			t.Fatal("Method 'Processor.Process' not found")
+		}
+		// Param: data T
+		if len(methodProcess.Parameters) != 1 || methodProcess.Parameters[0].Type.Name != "T" || !methodProcess.Parameters[0].Type.IsTypeParam {
+			t.Errorf("Processor.Process param: expected T, got %+v", methodProcess.Parameters)
+		}
+		// Result: List[T]
+		if len(methodProcess.Results) != 1 {
+			t.Fatal("Processor.Process expected 1 result")
+		}
+		resType := methodProcess.Results[0].Type
+		if resType.Name != "List" || len(resType.TypeArgs) != 1 || resType.TypeArgs[0].Name != "T" || !resType.TypeArgs[0].IsTypeParam {
+			t.Errorf("Processor.Process result: expected List[T], got %s args: %+v", resType.Name, resType.TypeArgs)
+		}
+
+		methodProcessKV := findMethod(ifaceProcessor.Interface, "ProcessKeyValue")
+		if methodProcessKV == nil {
+			t.Fatal("Method 'Processor.ProcessKeyValue' not found")
+		}
+		// Param: kv KeyValue[string, T]
+		if len(methodProcessKV.Parameters) != 1 {
+			t.Fatal("Processor.ProcessKeyValue expected 1 param")
+		}
+		paramKVType := methodProcessKV.Parameters[0].Type
+		if paramKVType.Name != "KeyValue" || len(paramKVType.TypeArgs) != 2 {
+			t.Fatalf("Processor.ProcessKeyValue param: expected KeyValue[?,?], got %s with %d args", paramKVType.Name, len(paramKVType.TypeArgs))
+		}
+		if paramKVType.TypeArgs[0].Name != "string" {
+			t.Errorf("...arg0 not string: %+v", paramKVType.TypeArgs[0])
+		}
+		if paramKVType.TypeArgs[1].Name != "T" || !paramKVType.TypeArgs[1].IsTypeParam {
+			t.Errorf("...arg1 not T: %+v", paramKVType.TypeArgs[1])
+		}
+		// Result: U
+		if len(methodProcessKV.Results) != 1 || methodProcessKV.Results[0].Type.Name != "U" || !methodProcessKV.Results[0].Type.IsTypeParam {
+			t.Errorf("Processor.ProcessKeyValue result: expected U, got %+v", methodProcessKV.Results)
+		}
+	})
+
+	// --- Assertions for Recursive Generic Types ---
+	t.Run("RecursiveGenericTypes", func(t *testing.T) {
+		// type Node[T any] struct { Value T; Children []Node[T] }
+		stNode := findType(pkgInfo.Types, "Node")
+		if stNode == nil {
+			t.Fatal("Struct 'Node' not found")
+		}
+		if len(stNode.TypeParams) != 1 || stNode.TypeParams[0].Name != "T" {
+			t.Fatalf("Node type params: expected [T any], got %+v", stNode.TypeParams)
+		}
+		fieldChildren := findField(stNode.Struct, "Children")
+		if fieldChildren == nil {
+			t.Fatal("Node.Children field not found")
+		}
+		// Expected: []Node[T]
+		if !fieldChildren.Type.IsSlice {
+			t.Fatal("Node.Children not a slice")
+		}
+		elemType := fieldChildren.Type.Elem
+		if elemType == nil {
+			t.Fatal("Node.Children slice elem type is nil")
+		}
+		if elemType.Name != "Node" {
+			t.Errorf("Node.Children elem type name: expected Node, got %s", elemType.Name)
+		}
+		if len(elemType.TypeArgs) != 1 {
+			t.Fatalf("Node.Children elem type (Node) expected 1 type arg, got %d", len(elemType.TypeArgs))
+		}
+		typeArgNode := elemType.TypeArgs[0]
+		if typeArgNode.Name != "T" || !typeArgNode.IsTypeParam {
+			t.Errorf("Node.Children elem type (Node[T]) type arg: expected T, got %+v", typeArgNode)
+		}
+		// Check String() representation
+		if strRep := fieldChildren.Type.String(); strRep != "[]Node[T]" {
+			t.Errorf("Expected String() for Node.Children to be '[]Node[T]', got '%s'", strRep)
+		}
+	})
+
+	// Add more assertions for other generic constructs as needed...
+	// For example, methods on generic types like List[T].Add(T)
+	fnListAdd := findFunction(pkgInfo, "Add") // Method names are usually unique in the function list
+	if fnListAdd == nil {
+		t.Fatal("Method List.Add not found")
+	}
+	if fnListAdd.Receiver == nil {
+		t.Fatal("List.Add receiver is nil")
+	}
+	// Receiver: *List[T]
+	recvType := fnListAdd.Receiver.Type
+	if recvType.Name != "List" || !recvType.IsPointer {
+		t.Errorf("List.Add receiver: expected *List, got name %s, pointer %t", recvType.Name, recvType.IsPointer)
+	}
+	if len(recvType.TypeArgs) != 1 {
+		t.Fatalf("List.Add receiver *List[T] expected 1 type arg, got %d, args: %+v", len(recvType.TypeArgs), recvType.TypeArgs)
+	} else {
+		recvTypeArg := recvType.TypeArgs[0]
+		if recvTypeArg.Name != "T" || !recvTypeArg.IsTypeParam {
+			t.Errorf("List.Add receiver *List[T] type arg: expected T (as type param), got name '%s', isTypeParam %t. Full: %+v", recvTypeArg.Name, recvTypeArg.IsTypeParam, recvTypeArg)
+		}
+	}
+
+	// Parameters: item T
+	if len(fnListAdd.Parameters) != 1 {
+		t.Fatalf("List.Add expected 1 parameter, got %d", len(fnListAdd.Parameters))
+	}
+	paramType := fnListAdd.Parameters[0].Type
+	if paramType.Name != "T" || !paramType.IsTypeParam {
+		t.Errorf("List.Add parameter: expected T (as type param), got name '%s', isTypeParam %t. Full: %+v", paramType.Name, paramType.IsTypeParam, paramType)
+	}
+}
+
+// Helper to find a field in a struct.
+func findField(sinfo *scanner.StructInfo, name string) *scanner.FieldInfo {
+	if sinfo == nil {
+		return nil
+	}
+	for _, f := range sinfo.Fields {
+		if f.Name == name {
+			return f
+		}
+	}
+	return nil
+}
+
+// Helper to find a method in an interface.
+func findMethod(iinfo *scanner.InterfaceInfo, name string) *scanner.MethodInfo {
+	if iinfo == nil {
+		return nil
+	}
+	for _, m := range iinfo.Methods {
+		if m.Name == name {
+			return m
+		}
+	}
+	return nil
+}
+
+// Ensure existing TestImplements and other tests still pass by keeping their structure.
+// The `findType` helper was already present.

@@ -3,12 +3,13 @@ package main
 import (
 	"context"
 	"os"
+
 	// "path/filepath" // For joining paths - No longer needed due to hardcoded paths
 	// "runtime"       // For runtime.Caller - No longer needed
 	"strings"
 	"testing"
 
-	"github.com/podhmo/go-scan" // For goscan.New
+	goscan "github.com/podhmo/go-scan" // For goscan.New
 )
 
 // Helper function to create a temporary Go source file for testing within a specific base directory.
@@ -282,6 +283,7 @@ func main() {
 		})
 	}
 }
+
 // Note: Other test functions (TestFormattedErrorHandling, etc.) were here.
 // For brevity in this step, they are omitted but would need similar scanner
 // setup if they rely on go.mod discovery through goscan.New().

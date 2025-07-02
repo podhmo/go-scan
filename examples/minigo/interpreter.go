@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"go/ast"
-	// "go/parser" // Will be replaced by go-scan
+	"go/parser" // Will be replaced by go-scan
 	"go/token"
 	"os"
 	"path/filepath" // Added for go-scan
@@ -220,7 +220,6 @@ func (i *Interpreter) LoadAndRun(filename string, entryPoint string) error {
 				}
 				i.importAliasMap[localName] = importPath
 			}
-		}
 	}
 
 	// Process other top-level declarations (functions and global vars) from the AST
@@ -244,7 +243,6 @@ func (i *Interpreter) LoadAndRun(filename string, entryPoint string) error {
 				}
 			}
 		}
-	// Removed extra closing brace here
 
 	// Get the entry function *object* from the global environment
 	entryFuncObj, ok := i.globalEnv.Get(entryPoint)

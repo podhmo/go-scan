@@ -29,7 +29,12 @@
 - [ ] Types
   - [ ] More specific integer types (int8, int32, int64, uint etc.)
   - [ ] Floating point numbers
-  - [ ] Structs
+  - [x] Structs
+    - [x] Basic definition and instantiation (within the same file)
+    - [x] Field access (e.g., `s.Field`)
+    - [x] Embedding (promoted fields, initialization, ambiguity, shadowing - within the same file)
+    - [x] Instantiation (via constructor functions) and field access for structs from imported packages
+    - [ ] Direct literal instantiation of structs from imported packages (e.g. `pkg.MyStruct{...}`)
   - [ ] Type declarations (`type MyInt int`)
   - [ ] Enhance type checking using information from go-scan
     - [ ] Basic static type checking for variable assignments based on go-scan TypeInfo.
@@ -41,11 +46,12 @@
 - [ ] Imports & Package Handling
   - [x] Basic import statement parsing (`import "path"` and `import alias "path"`) (Unsupported forms like . and _ are rejected)
   - [x] Loading imported package constants (`pkg.MyConst`) via `go-scan`. (As described in README)
-  - [/] Loading imported package functions (`pkg.MyFunc`) (README mentions only constants, but basic registration exists)
+  - [x] Loading imported package functions (`pkg.MyFunc`) via `go-scan`.
     - [x] Registration of imported functions as `UserDefinedFunction` objects in `evalSelectorExpr`.
-    - [ ] Ensure correct mapping of parameters and body from go-scan's `FunctionInfo` for imported functions.
-    - [ ] Verify calling convention and environment setup for imported functions.
-    - [ ] Add comprehensive tests for calling functions from imported packages.
+    - [x] Ensure correct mapping of parameters and body from go-scan's `FunctionInfo` for imported functions.
+    - [x] Verify calling convention and environment setup for imported functions.
+    - [x] Add comprehensive tests for calling functions from imported packages.
+  - [x] Loading exported struct definitions from imported packages via `go-scan`.
   - [ ] Support for imported global variables (e.g., `pkg.MyVar`) (Mentioned as future in README)
     - [ ] Extract imported global variable information using `go-scan`.
     - [ ] Make imported global variables accessible in the interpreter.

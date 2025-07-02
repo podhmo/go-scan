@@ -836,6 +836,24 @@ handlePackageAccess:
 					params := []*ast.Ident{}; if fInfo.AstDecl.Type.Params != nil { for _, field := range fInfo.AstDecl.Type.Params.List { params = append(params, field.Names...) } }
 					env.Define(localPkgName+"."+fInfo.Name, &UserDefinedFunction{Name: fInfo.Name, Parameters: params, Body: fInfo.AstDecl.Body, Env: env, FileSet: i.sharedScanner.Fset()})
 				}
+
+				// NEW: Load type definitions (structs) from the imported package
+				// We need to iterate over all files in the package
+				for _, astFile := range importPkgInfo.AstFiles {
+					for _, declNode := range astFile.Decls {
+						if genDecl, ok := declNode.(*ast.GenDecl); ok && genDecl.Tok == token.TYPE {
+							for _, spec := range genDecl.Specs {
+								typeSpec, okSpec := spec.(*ast.TypeSpec)
+								if !okSpec { continue }
+								if !ast.IsExported(typeSpec.Name.Name) { continue } // Only load exported types
+
+								// Use the new helper method to load this type spec
+								errLoadType := i.loadTypeSpec(localPkgName, typeSpec, env, importPkgInfo.Fset())
+								if errLoadType != nil { return nil, errLoadType }
+							}
+						}
+					}
+				}
 			}
 			i.importedPackages[importPath] = struct{}{}
 		}
@@ -1527,4 +1545,107 @@ func (i *Interpreter) evalUnaryExpr(ctx context.Context, node *ast.UnaryExpr, en
 	default:
 		return nil, formatErrorWithContext(i.FileSet, node.Pos(), fmt.Errorf("unsupported unary operator: %s", node.Op), "")
 	}
+}
+
+// loadTypeSpec is a new helper method in Interpreter to load a type definition (specifically structs)
+// from an external package into the environment.
+// pkgPrefix is the alias or name used for the package (e.g., "extpkg").
+// typeSpec is the *ast.TypeSpec for the type definition.
+// env is the environment to define the new StructDefinition in.
+// fset is the FileSet relevant to the external package for error reporting.
+func (i *Interpreter) loadTypeSpec(pkgPrefix string, typeSpec *ast.TypeSpec, env *Environment, fset *token.FileSet) error {
+	typeName := typeSpec.Name.Name // This is the simple name, e.g., "Foo"
+	fullTypeNameKey := pkgPrefix + "." + typeName // This is how it will be stored/looked up, e.g., "extpkg.Foo"
+
+	// Avoid re-definition if already loaded
+	if _, exists := env.Get(fullTypeNameKey); exists {
+		return nil // Already loaded
+	}
+
+	errorReportingFileSet := i.FileSet // Default to interpreter's main fset for errors
+	if fset != nil {                 // Use specific fset from the package scan if available
+		errorReportingFileSet = fset
+	}
+
+	switch sType := typeSpec.Type.(type) {
+	case *ast.StructType:
+		directFields := make(map[string]string) // Field name to its type name (string representation)
+		var embeddedDefs []*StructDefinition    // Resolved StructDefinitions of embedded types
+		var fieldOrder []string                 // Original order of fields and embedded type names
+
+		if sType.Fields != nil {
+			for _, field := range sType.Fields.List {
+				var fieldTypeNameStr string // String representation of the field's type
+				var isEmbedded bool
+
+				// Determine the type name string
+				switch typeExpr := field.Type.(type) {
+				case *ast.Ident:
+					fieldTypeNameStr = typeExpr.Name // e.g., "string", "int", or "MyOtherStruct" (from same pkg)
+				case *ast.SelectorExpr: // e.g., "anotherpkg.AnotherType"
+					selX, okX := typeExpr.X.(*ast.Ident)
+					if !okX {
+						return formatErrorWithContext(errorReportingFileSet, field.Type.Pos(), fmt.Errorf("unsupported selector expression part for field type in external struct '%s'", fullTypeNameKey), "")
+					}
+					fieldTypeNameStr = selX.Name + "." + typeExpr.Sel.Name // e.g., "time.Time"
+				default:
+					return formatErrorWithContext(errorReportingFileSet, field.Type.Pos(), fmt.Errorf("struct field in external struct '%s' has unsupported type specifier %T", fullTypeNameKey, field.Type), "Struct definition error")
+				}
+
+				if len(field.Names) == 0 { // Anonymous field means embedding
+					isEmbedded = true
+					if !ast.IsExported(fieldTypeNameStr) && !strings.Contains(fieldTypeNameStr, ".") { // e.g. "myPrivateType" embedded
+						// Non-exported type from the same package cannot be embedded in an exported struct in a way that promotes its fields externally.
+						// However, if fieldTypeNameStr is "foo", it means "pkgPrefix.foo". If "foo" is not exported, this is an issue.
+						// Let's assume go/ast already ensures that if typeNameStr is simple, it's valid in its context.
+						// If it's an unexported type, this embedding might be problematic for external access, but definition might still be valid.
+						// We mainly care that `ast.IsExported(typeSpec.Name.Name)` was true for the struct itself.
+					}
+				}
+
+				if isEmbedded {
+					fieldOrder = append(fieldOrder, fieldTypeNameStr) // Record embedded type name
+
+					// Resolve the StructDefinition for the embedded type.
+					// It could be qualified (e.g. "otherpkg.Type") or needs qualification (e.g. "MyType" -> "pkgPrefix.MyType")
+					var embeddedDefLookupKey string
+					if strings.Contains(fieldTypeNameStr, ".") {
+						embeddedDefLookupKey = fieldTypeNameStr // Already qualified
+					} else {
+						embeddedDefLookupKey = pkgPrefix + "." + fieldTypeNameStr // Qualify with current package prefix
+					}
+
+					obj, found := env.Get(embeddedDefLookupKey)
+					if !found {
+						// This is a critical point: The definition for the embedded type must have been loaded *before* this point.
+						// This implies a dependency order or a multi-pass loading strategy for types within a package.
+						return formatErrorWithContext(errorReportingFileSet, field.Type.Pos(), fmt.Errorf("undefined embedded type '%s' (looked up as '%s') in external struct '%s'. Ensure types are defined/imported before use in embedding.", fieldTypeNameStr, embeddedDefLookupKey, fullTypeNameKey), "Struct definition error")
+					}
+					embeddedDef, ok := obj.(*StructDefinition)
+					if !ok {
+						return formatErrorWithContext(errorReportingFileSet, field.Type.Pos(), fmt.Errorf("type '%s' (resolved to '%s') embedded in external struct '%s' is not a StructDefinition (got %s)", fieldTypeNameStr, embeddedDefLookupKey, fullTypeNameKey, obj.Type()), "Struct definition error")
+					}
+					embeddedDefs = append(embeddedDefs, embeddedDef)
+				} else { // Regular named field
+					for _, nameIdent := range field.Names {
+						if !ast.IsExported(nameIdent.Name) { continue } // Skip non-exported fields of the struct
+						directFields[nameIdent.Name] = fieldTypeNameStr // Store its type as a string
+						fieldOrder = append(fieldOrder, nameIdent.Name)
+					}
+				}
+			}
+		}
+		structDef := &StructDefinition{
+			Name:         typeName, // Store the simple name, e.g., "Foo"
+			Fields:       directFields,
+			EmbeddedDefs: embeddedDefs,
+			FieldOrder:   fieldOrder,
+		}
+		env.Define(fullTypeNameKey, structDef) // Define with the fully qualified key, e.g., "extpkg.Foo"
+		// fmt.Printf("Interpreter: Loaded external struct definition: %s as %s\n", typeName, fullTypeNameKey) // Debug
+	default:
+		// This function is primarily for structs. Other types (aliases, interfaces) could be handled here if needed.
+		// fmt.Printf("Interpreter: Skipping non-struct type spec in external package: %s (%T)\n", fullTypeNameKey, typeSpec.Type)
+	}
+	return nil
 }

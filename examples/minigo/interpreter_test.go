@@ -215,6 +215,58 @@ func main() {
 			entryPoint:             "main",
 			expectedGlobalVarValue: map[string]interface{}{"result": "hello world"},
 		},
+		{
+			name: "import struct from external package and access fields",
+			source: `
+package main
+import extpkg "github.com/podhmo/go-scan/examples/minigo/testdata/testpkg2"
+
+var fooInstance interface{} // Use interface{} to hold the struct instance initially
+var fooName string
+var fooID int
+var retrievedName string
+var retrievedID int
+
+var bazInstance interface{}
+var bazFooName string
+var bazBarValue string
+
+
+func main() {
+	f := extpkg.NewFoo("MyFoo", 101)
+	fooInstance = f // Store the raw instance
+
+	// TODO: The following lines will likely fail until struct definitions from external packages are loaded
+	// and field access on them is supported.
+	// For now, we might only be able to test if 'f' is non-nil or if NewFoo itself runs.
+	// Let's assume for now that if NewFoo runs and returns *something*, and if minigo
+	// can represent it (even if not fully typed yet), we can proceed.
+	// The real test is accessing fields.
+
+	fooName = f.Name
+	fooID = f.ID
+	retrievedName = extpkg.GetFooName(f)
+	retrievedID = extpkg.GetFooID(f)
+
+	b := extpkg.NewBaz("BazFooName", 789, "BazBarVal")
+	bazInstance = b
+	bazFooName = b.F.Name
+	bazBarValue = b.B.Value
+}`,
+			entryPoint: "main",
+			expectedGlobalVarValue: map[string]interface{}{
+				"fooName":       "MyFoo",
+				"fooID":         int64(101),
+				"retrievedName": "MyFoo",
+				"retrievedID":   int64(101),
+				"bazFooName":    "BazFooName",
+				"bazBarValue":   "BazBarVal",
+				// We can also check fooInstance and bazInstance are not nil if we had a way to represent them
+				// as non-nil generic objects in the expectedGlobalVarValue, but specific field checks are better.
+			},
+			// expectError: true, // Initially, this might be true
+			// expectedErrorMsgSubstr: "undefined type", // Or similar, depending on failure point
+		},
 	}
 
 	for _, tt := range tests {

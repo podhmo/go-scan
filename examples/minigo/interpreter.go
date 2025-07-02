@@ -95,16 +95,17 @@ type Interpreter struct {
 	// This helps in resolving relative imports if go.mod is not present or
 	// for files not part of a clear module structure.
 	currentFileDir string
+	sharedScanner    *goscan.Scanner // Renamed from scn, used for resolving imports. Can be pre-configured for tests.
 }
 
 func NewInterpreter() *Interpreter {
 	env := NewEnvironment(nil)
-	fset := token.NewFileSet()
-
+	// FileSet will be initialized by the scanner used for the main script.
+	// sharedScanner can be nil initially and created on-demand by LoadAndRun if not set by tests.
 	i := &Interpreter{
 		globalEnv:        env,
-		FileSet:          fset,
-		scn:              nil, // Will be initialized in LoadAndRun
+		FileSet:          nil, // To be set by the localScriptScanner in LoadAndRun
+		sharedScanner:    nil, // Can be preset by tests, or created by LoadAndRun if needed for imports
 		importedPackages: make(map[string]struct{}),
 		importAliasMap:   make(map[string]string),
 	}
@@ -128,61 +129,51 @@ func (i *Interpreter) LoadAndRun(filename string, entryPoint string) error {
 	}
 	i.currentFileDir = filepath.Dir(absFilePath)
 
-	if i.scn == nil { // Only initialize scanner if it hasn't been set (e.g., by a test)
-		gs, errGs := goscan.New(i.currentFileDir)
-		if errGs != nil {
-			return fmt.Errorf("failed to create go-scan scanner for dir %s: %w", i.currentFileDir, errGs)
-		}
-		i.scn = gs
-		if i.FileSet == nil { // If FileSet wasn't also preset by test, use the one from new scanner
-			// Ensure gs.Fset() is not nil before assigning
-			if gs.Fset() == nil {
-				// This case should ideally not happen if goscan.New succeeds and returns a valid scanner
-				return fmt.Errorf("internal error: new scanner created by goscan.New for dir %s has a nil FileSet", i.currentFileDir)
-			}
-			i.FileSet = gs.Fset()
-		}
-	} else {
-		// If i.scn was preset (by test), ensure i.FileSet is also valid.
-		// Tests should ideally set both i.scn and i.FileSet.
-		if i.FileSet == nil {
-			if i.scn.Fset() != nil {
-				i.FileSet = i.scn.Fset()
-			} else {
-				// Fallback if preset scn has no Fset (should not happen with valid goscan.Scanner)
-				i.FileSet = token.NewFileSet()
-				// It might be better to error out if a pre-set scanner has no FileSet
-				// return fmt.Errorf("internal error: pre-set interpreter.scn has a nil FileSet")
-				fmt.Fprintf(os.Stderr, "Warning: interpreter.scn was set, but its FileSet was nil. Created new FileSet for interpreter.\n")
-			}
-		}
+	// Create a local scanner specifically for parsing the main script file.
+	// This scanner's locator will be based on the script's directory.
+	localScriptScanner, errGs := goscan.New(i.currentFileDir)
+	if errGs != nil {
+		// If this fails, we can't get a FileSet for error reporting, so use token.NoPos
+		return formatErrorWithContext(nil, token.NoPos, errGs, fmt.Sprintf("Failed to create go-scan scanner for script directory %s", i.currentFileDir))
 	}
-
-	if i.FileSet == nil {
-		// This is a safeguard. If after all logic i.FileSet is still nil, it's an issue.
-		return fmt.Errorf("internal error: Interpreter.FileSet is nil before scanning files")
+	if localScriptScanner.Fset() == nil {
+		return formatErrorWithContext(nil, token.NoPos, errors.New("internal error: localScriptScanner created by goscan.New has a nil FileSet"), "")
 	}
+	// The primary FileSet for the interpreter run is taken from this local scanner,
+	// as it pertains to the main script being processed.
+	i.FileSet = localScriptScanner.Fset()
 
-	// Use go-scan to parse the main script file
-	// ScanFiles expects a list of files. For LoadAndRun, it's just the one file.
-	pkgInfo, scanErr := i.scn.ScanFiles(context.Background(), []string{absFilePath})
+	// Use the localScriptScanner to parse the main script file.
+	pkgInfo, scanErr := localScriptScanner.ScanFiles(context.Background(), []string{absFilePath})
 	if scanErr != nil {
-		// Attempt to provide position info if possible, though ScanFiles errors might be general.
+		// Use i.FileSet which is now localScriptScanner.Fset()
 		return formatErrorWithContext(i.FileSet, token.NoPos, scanErr, fmt.Sprintf("Error scanning main script file %s using go-scan: %v", filename, scanErr))
 	}
 
-	// Retrieve the AST for the main file from pkgInfo (needed for imports and globals)
+	// Retrieve the AST for the main file from pkgInfo
 	mainFileAst, ok := pkgInfo.AstFiles[absFilePath]
 	if !ok || mainFileAst == nil {
 		return formatErrorWithContext(i.FileSet, token.NoPos, errors.New("AST for main file not found in go-scan PackageInfo"), fmt.Sprintf("File: %s", absFilePath))
 	}
-	// Ensure the FileSet used by the interpreter is the one from PackageInfo,
-	// as all AST nodes within pkgInfo will reference this FileSet.
-	if pkgInfo.Fset == nil {
-		return formatErrorWithContext(i.FileSet, token.NoPos, errors.New("PackageInfo from go-scan has a nil FileSet"), "")
-	}
-	i.FileSet = pkgInfo.Fset
+	// pkgInfo.Fset should be the same as i.FileSet if localScriptScanner worked correctly.
 
+	// Ensure the sharedScanner (for imports) is available if needed.
+	// If not preset by tests, initialize it based on the current file's directory.
+	// This might be overridden by tests for specific module contexts.
+	if i.sharedScanner == nil {
+		// Default sharedScanner if not set by tests.
+		// Its module context will be based on the main script's directory.
+		// This is suitable if imports are relative or within the same implicit module as the script.
+		// Tests for specific module structures (like mytestmodule) will pre-set i.sharedScanner.
+		defaultSharedScanner, errSharedGs := goscan.New(i.currentFileDir)
+		if errSharedGs != nil {
+			return formatErrorWithContext(i.FileSet, token.NoPos, errSharedGs, fmt.Sprintf("Failed to create default shared go-scan scanner for dir %s", i.currentFileDir))
+		}
+		i.sharedScanner = defaultSharedScanner
+	}
+	// If i.sharedScanner was preset by a test, that test is also responsible for ensuring
+	// its FileSet is appropriate or that i.FileSet (from localScriptScanner) is used carefully.
+	// For now, errors from imports via sharedScanner will use sharedScanner.Fset() internally if they format.
 
 	// Process import declarations from the AST to populate importAliasMap
 	// This part still uses mainFileAst directly, which is fine.
@@ -534,14 +525,27 @@ func (i *Interpreter) evalSelectorExpr(node *ast.SelectorExpr, env *Environment)
 
 	// We have an importPath. Now check if this importPath has already been processed (scanned and constants loaded).
 	if _, alreadyImported := i.importedPackages[importPath]; !alreadyImported {
-		if i.scn == nil {
-			return nil, formatErrorWithContext(i.FileSet, node.X.Pos(), errors.New("go-scan scanner not initialized in interpreter"), "Internal error")
+		if i.sharedScanner == nil {
+			// This should ideally be initialized by LoadAndRun if not preset.
+			// If LoadAndRun completed, sharedScanner should exist.
+			// This error indicates an issue if sharedScanner is still nil here.
+			return nil, formatErrorWithContext(i.FileSet, node.X.Pos(), errors.New("shared go-scan scanner (for imports) not initialized in interpreter"), "Internal error")
 		}
 
 		ctx := context.Background()
-		pkgInfo, err := i.scn.ScanPackageByImport(ctx, importPath)
-		if err != nil {
-			return nil, formatErrorWithContext(i.FileSet, xIdent.Pos(), fmt.Errorf("package %q (aliased as %q) not found or failed to scan: %w", importPath, localPkgName, err), "Import error")
+		// Use the sharedScanner's FileSet for errors specifically from ScanPackageByImport,
+		// or ensure formatErrorWithContext can handle different FileSets if necessary.
+		// For now, let's assume errors from ScanPackageByImport will be general or use its own context.
+		// The main i.FileSet is for the script being run.
+		var importPkgInfo *goscan.PackageInfo // This is scanner.PackageInfo
+		var errImport error
+		importPkgInfo, errImport = i.sharedScanner.ScanPackageByImport(ctx, importPath)
+
+		if errImport != nil {
+			// It's tricky to get a precise token.Pos for the import path itself if ScanPackageByImport fails early.
+			// xIdent.Pos() is the position of the package alias in the selector expression.
+			// We use i.FileSet (from localScriptScanner) for formatting this error occurring in the main script.
+			return nil, formatErrorWithContext(i.FileSet, xIdent.Pos(), fmt.Errorf("package %q (aliased as %q) not found or failed to scan: %w", importPath, localPkgName, errImport), "Import error")
 		}
 
 		// Successfully scanned. Populate environment with its exported constants.

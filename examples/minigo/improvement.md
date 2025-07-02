@@ -24,8 +24,8 @@ Go言語の構文との整合性、LSP等外部ツールとの親和性、そし
 // minigo/inspectパッケージの関数としてのイメージ (Go言語側)
 package inspect
 
-// FunctionDetails は関数の詳細情報を保持します。
-type FunctionDetails struct {
+// FunctionInfo は関数の詳細情報を保持します。
+type FunctionInfo struct {
 	Name       string      // 関数名
 	PkgPath    string      // パッケージのフルパス
 	PkgName    string      // パッケージ名
@@ -39,19 +39,17 @@ type FunctionDetails struct {
 type ParamInfo struct {
 	Name string // 引数名
 	Type string // 型名 (例: "string", "mypkg.MyStruct")
-	// TypeDetails TypeDetails // (将来的に) 型の詳細情報への遅延アクセス用
 }
 
 // ReturnInfo は戻り値の情報を保持します。
 type ReturnInfo struct {
 	Name string // 戻り値名
 	Type string // 型名
-	// TypeDetails TypeDetails // (将来的に) 型の詳細情報への遅延アクセス用
 }
 
 // GetFunctionInfo は指定された関数の詳細情報を返します。
 // fn_symbol はminigoの ImportedFunction オブジェクトから変換されたものを想定。
-func GetFunctionInfo(fn_symbol interface{}) (FunctionDetails, error) {
+func GetFunctionInfo(fn_symbol interface{}) (FunctionInfo, error) {
 	// ... 実装 ...
 }
 ```
@@ -72,7 +70,7 @@ if err == nil {
 ```
 
 *   `fn_symbol`: 情報を取得したいインポート済み関数のシンボル。
-*   戻り値: 関数の情報を格納した `inspect.FunctionDetails` 構造体のminigoオブジェクトと、エラーオブジェクト。
+*   戻り値: 関数の情報を格納した `inspect.FunctionInfo` 構造体のminigoオブジェクトと、エラーオブジェクト。
 
 ### 3.2. なぜパッケージ関数か (再掲)
 
@@ -104,16 +102,16 @@ if err == nil {
     *   利用可能にする方法の検討 (変更なし)
 *   **`GetFunctionInfo` 関数**:
     *   **Go実装**: `minigo/inspect/inspect.go` (仮) にGoの関数として実装。
-    *   **戻り値**: `inspect.FunctionDetails` 構造体 (Goで定義) と `error`。minigoインタープリタは `FunctionDetails` をminigoのオブジェクト (おそらく専用のstruct様オブジェクトまたはマップ) に変換してスクリプトに返します。
+    *   **戻り値**: `inspect.FunctionInfo` 構造体 (Goで定義) と `error`。minigoインタープリタは `FunctionInfo` をminigoのオブジェクト (おそらく専用のstruct様オブジェクトまたはマップ) に変換してスクリプトに返します。
     *   機能 (変更なし、ただし戻り値の型構造が変わる点に注意)
-*   **`FunctionDetails`, `ParamInfo`, `ReturnInfo` struct (Go側)**:
+*   **`FunctionInfo`, `ParamInfo`, `ReturnInfo` struct (Go側)**:
     *   上記シグネチャ案で示した構造をGoで定義します。これらのstructはminigoに公開される情報コンテナとなります。
 
 ## 6. minigo上で取得可能にすべき情報とその表現
 
-`inspect.GetFunctionInfo` は、`inspect.FunctionDetails` 構造体のインスタンス (minigoオブジェクトに変換されたもの) を返します。
+`inspect.GetFunctionInfo` は、`inspect.FunctionInfo` 構造体のインスタンス (minigoオブジェクトに変換されたもの) を返します。
 
-### 6.1. `inspect.FunctionDetails` 構造体
+### 6.1. `inspect.FunctionInfo` 構造体
 
 *   `Name string`: 関数名。
 *   `PkgPath string`: 関数が属するGoパッケージのフルパス。
@@ -140,15 +138,15 @@ package inspect
 // TypeKind は型の種類を示します (例: Struct, Interface, Slice, Map, Basic)。
 type TypeKind string
 
-// TypeDetails は型の詳細情報を保持します。
-type TypeDetails struct {
-	Kind     TypeKind    // 型の種類
-	Name     string      // 型名 (完全修飾名)
-	PkgPath  string      // 型が定義されているパッケージパス
-	Doc      string      // 型定義のgodocコメント
-	Fields   []FieldInfo // KindがStructの場合のフィールド情報
-	Methods  []MethodInfo// KindがInterfaceやStructの場合のメソッド情報 (公開メソッド)
-	// ElemType TypeDetails // KindがSlice, Ptr, Array, Mapの場合の要素の型情報 (遅延評価)
+// TypeInfo は型の詳細情報を保持します。
+type TypeInfo struct {
+	Kind     TypeKind     // 型の種類
+	Name     string       // 型名 (完全修飾名)
+	PkgPath  string       // 型が定義されているパッケージパス
+	Doc      string       // 型定義のgodocコメント
+	Fields   []FieldInfo  // KindがStructの場合のフィールド情報
+	Methods  []MethodInfo // KindがInterfaceやStructの場合のメソッド情報 (公開メソッド)
+	// ElemType *TypeInfo // KindがSlice, Ptr, Array, Mapの場合の要素の型情報 (遅延評価または型名文字列)
 	// ... その他、型に応じた情報
 }
 
@@ -158,18 +156,17 @@ type FieldInfo struct {
 	Type string // 型名
 	Doc  string // フィールドのgodocコメント
 	Tag  string // structタグ
-	// TypeDetails TypeDetails // (将来的に) 型の詳細情報への遅延アクセス用
 }
 
-// MethodInfo はメソッドの情報を保持します (FunctionDetailsと類似の構造)。
-type MethodInfo FunctionDetails // 簡単のため FunctionDetails を再利用する案
+// MethodInfo はメソッドの情報を保持します (FunctionInfoと類似の構造)。
+type MethodInfo FunctionInfo // 簡単のため FunctionInfo を再利用する案
 
 // GetTypeInfo は指定された型名の詳細情報を返します。
 // typeName は "mypkg.MyStruct", "string", "[]int" のような文字列。
-func GetTypeInfo(typeName string) (TypeDetails, error) {
+func GetTypeInfo(typeName string) (TypeInfo, error) {
 	// 実装:
 	// 1. typeNameを解析 (go-scanを利用)
-	// 2. 型情報をスキャンし、TypeDetails構造体に詰める
+	// 2. 型情報をスキャンし、TypeInfo構造体に詰める
 	// 3. ElemTypeのような再帰的な部分は、実際にアクセスされるまで評価しない (Lazy Loading)
 	//    または、型名だけを保持しておき、再度GetTypeInfoを呼んでもらう形でも良い。
 }
@@ -184,12 +181,12 @@ func GetTypeInfo(typeName string) (TypeDetails, error) {
 *   **再帰的情報取得と循環参照**:
     *   `GetTypeInfo` で型情報を再帰的に辿る際、型定義が互いに参照し合っている場合（例: `type A struct { B *B }; type B struct { A *A }`）に無限ループに陥らないよう、`go-scan` および `minigo/inspect` の実装で検出・対処が必要です（例: 既に処理中の型であればプレースホルダを返す、深さ制限を設けるなど）。
 *   **Lazy Loadingの実装**:
-    *   `TypeDetails` 内の `ElemType` のような再帰的になる可能性のあるフィールドをどのように遅延評価させるか。関数型フィールドとして持つ、あるいは型名文字列だけを保持し都度 `GetTypeInfo` を呼び出すなどの方法が考えられます。
+    *   `TypeInfo` 内の `ElemType` のような再帰的になる可能性のあるフィールドをどのように遅延評価させるか。関数型フィールドとして持つ、あるいは型名文字列だけを保持し都度 `GetTypeInfo` を呼び出すなどの方法が考えられます。
     *   キャッシュ戦略: 一度取得した型情報をどの程度の期間・範囲でキャッシュするか。
 *   **エラーハンドリング**: (変更なし)
 *   **ドキュメントコメントの取得**: (変更なし)
 *   **`minigo/inspect` パッケージの提供方法**: (変更なし)
-*   **minigoオブジェクトへの変換**: Goの `FunctionDetails` や `TypeDetails` structを、minigoスクリプト側で扱いやすいオブジェクト（専用のstruct様オブジェクトまたはマップ）にどのように変換するか。特に `TypeDetails` のようにフィールドが可変になる構造の場合、minigo側での表現方法が課題となります。
+*   **minigoオブジェクトへの変換**: Goの `FunctionInfo` や `TypeInfo` structを、minigoスクリプト側で扱いやすいオブジェクト（専用のstruct様オブジェクトまたはマップ）にどのように変換するか。特に `TypeInfo` のようにフィールドが可変になる構造の場合、minigo側での表現方法が課題となります。
 
 ## 8. 利用例 (minigoコード) (修正・追加)
 
@@ -215,7 +212,7 @@ if err != nil {
         if p.Type == "os.FileInfo" { // 例: os.FileInfo (実際はインターフェース)
             fileInfoType, errType = inspect.GetTypeInfo(p.Type)
             if errType == nil {
-                fmt.Println("    TypeDetails for", p.Type, ": Kind=", fileInfoType.Kind)
+                fmt.Println("    TypeInfo for", p.Type, ": Kind=", fileInfoType.Kind)
                 // fileInfoType.Methods などを参照可能
             }
         }
@@ -244,7 +241,7 @@ if err2 == nil {
 // }
 myStructInfo, errStruct = inspect.GetTypeInfo("mypkg.MyStruct") // mypkgがスキャン対象にある前提
 if errStruct == nil {
-    fmt.Println("\nDetails for type:", myStructInfo.Name)
+    fmt.Println("\nInfo for type:", myStructInfo.Name)
     fmt.Println("Kind:", myStructInfo.Kind) // "Struct"
     fmt.Println("Fields:")
     for _, f = range myStructInfo.Fields {

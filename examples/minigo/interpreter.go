@@ -272,9 +272,76 @@ func (i *Interpreter) eval(node ast.Node, env *Environment) (Object, error) {
 	case *ast.FuncLit:
 		return i.evalFuncLit(n, env)
 
+	case *ast.ForStmt:
+		return i.evalForStmt(n, env)
+
 	default:
 		return nil, formatErrorWithContext(i.FileSet, n.Pos(), fmt.Errorf("unsupported AST node type: %T", n), fmt.Sprintf("Unsupported AST node value: %+v", n))
 	}
+}
+
+func (i *Interpreter) evalForStmt(stmt *ast.ForStmt, env *Environment) (Object, error) {
+	// For loops create a new scope for their initialization, condition, post, and body.
+	loopEnv := NewEnvironment(env)
+
+	// 1. Initialization
+	if stmt.Init != nil {
+		if _, err := i.eval(stmt.Init, loopEnv); err != nil {
+			return nil, err
+		}
+	}
+
+	for {
+		// 2. Condition
+		if stmt.Cond != nil {
+			condition, err := i.eval(stmt.Cond, loopEnv)
+			if err != nil {
+				return nil, err
+			}
+			boolCond, ok := condition.(*Boolean)
+			if !ok {
+				return nil, formatErrorWithContext(i.FileSet, stmt.Cond.Pos(),
+					fmt.Errorf("condition for for statement must be a boolean, got %s (type: %s)", condition.Inspect(), condition.Type()), "")
+			}
+			if !boolCond.Value {
+				break // Exit loop if condition is false
+			}
+		} else {
+			// No condition means an infinite loop, effectively `for true {}`
+			// unless broken by other means (not yet supported: break/return)
+		}
+
+		// 3. Body
+		// The body of the loop also executes in its own sub-scope, but inherits from loopEnv.
+		// This is important if the body itself contains declarations that should not
+		// persist across iterations or conflict with the loop's own variables (like the iterator in some languages).
+		// However, for simple for loops as in Go, the init/cond/post variables are in the same scope as the body.
+		// So, we'll use loopEnv directly for the body. If we were to support `break` or `continue` with labels,
+		// or more complex scoping within loops (e.g. Python's for-else), this might need adjustment.
+		// For now, a single loopEnv for init, cond, post, and body is consistent with Go's for loop.
+		bodyResult, err := i.evalBlockStatement(stmt.Body, loopEnv)
+		if err != nil {
+			return nil, err
+		}
+		// Check for ReturnValue or Error from the body
+		// (Later, add BreakStatement and ContinueStatement)
+		if _, ok := bodyResult.(*ReturnValue); ok {
+			return bodyResult, nil // Propagate return
+		}
+		if errObj, ok := bodyResult.(*Error); ok {
+			return errObj, nil // Propagate error
+		}
+
+
+		// 4. Post-iteration statement
+		if stmt.Post != nil {
+			if _, err := i.eval(stmt.Post, loopEnv); err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	return NULL, nil // For statement itself doesn't produce a value
 }
 
 func (i *Interpreter) evalSelectorExpr(node *ast.SelectorExpr, env *Environment) (Object, error) {

@@ -1534,6 +1534,224 @@ func main() {
 // So, for direct `ParseExpr`, stick to hex ("0x...") and standard decimal, and rely on `strconv.ParseInt` for those.
 // The tests for 0o and 0b prefixes are commented out in `TestIntegerLiterals` for this reason.
 
+func TestForStatements(t *testing.T) {
+	tests := []struct {
+		name                   string
+		source                 string
+		entryPoint             string
+		expectedGlobalVarValue map[string]interface{} // Using interface{} for flexibility (int64, string, etc.)
+		expectError            bool
+		expectedErrorMsgSubstr string
+	}{
+		{
+			name: "basic for loop",
+			source: `
+package main
+var sum int = 0
+func main() {
+	for i := 0; i < 5; i = i + 1 {
+		sum = sum + i
+	}
+}`, // sum should be 0+1+2+3+4 = 10
+			entryPoint:             "main",
+			expectedGlobalVarValue: map[string]interface{}{"sum": int64(10)},
+		},
+		{
+			name: "for loop with shadowing variable",
+			source: `
+package main
+var x int = 100 // Global x
+var innerXVal int = 0
+var finalXVal int = 0
+func main() {
+	for x := 0; x < 2; x = x + 1 { // Loop variable x shadows global x
+		innerXVal = x // Should be 0, then 1
+	}
+	finalXVal = x // Should be global x = 100
+}`,
+			entryPoint: "main",
+			expectedGlobalVarValue: map[string]interface{}{
+				"innerXVal": int64(1), // Last value of inner x
+				"finalXVal": int64(100),
+			},
+		},
+		{
+			name: "for loop, condition initially false",
+			source: `
+package main
+var sum int = 123 // Initial value
+func main() {
+	for i := 0; i < 0; i = i + 1 { // Condition false from start
+		sum = sum + i
+	}
+}`,
+			entryPoint:             "main",
+			expectedGlobalVarValue: map[string]interface{}{"sum": int64(123)}, // sum should not change
+		},
+		{
+			name: "for loop like while (no init, no post)",
+			source: `
+package main
+var counter int = 0
+var result int = 0
+func main() {
+	for counter < 3 {
+		result = result + 10
+		counter = counter + 1
+	}
+}`, // result should be 10+10+10 = 30
+			entryPoint: "main",
+			expectedGlobalVarValue: map[string]interface{}{
+				"result":  int64(30),
+				"counter": int64(3),
+			},
+		},
+		{
+			name: "for loop with only condition (infinite loop with return)",
+			source: `
+package main
+var counter int = 0
+func main() {
+	for { // Infinite loop, but should be broken by return
+		counter = counter + 1
+		if counter == 3 {
+			return
+		}
+		if counter > 10 { // Failsafe, should not be reached
+			return
+		}
+	}
+}`,
+			entryPoint:             "main",
+			expectedGlobalVarValue: map[string]interface{}{"counter": int64(3)},
+		},
+		{
+			name: "for loop, no post statement",
+			source: `
+package main
+var sum int = 0
+func main() {
+	for i := 0; i < 3; {
+		sum = sum + i
+		i = i + 1 // Manual increment
+	}
+}`, // sum = 0+1+2 = 3
+			entryPoint:             "main",
+			expectedGlobalVarValue: map[string]interface{}{"sum": int64(3)},
+		},
+		{
+			name: "for loop with non-boolean condition",
+			source: `
+package main
+func main() {
+	for i := 0; 1; i = i + 1 { // Condition is integer 1
+		return
+	}
+}`,
+			entryPoint:             "main",
+			expectError:            true,
+			expectedErrorMsgSubstr: "condition for for statement must be a boolean, got 1 (type: INTEGER)",
+		},
+		{
+			name: "for loop init statement error",
+			source: `
+package main
+func main() {
+	for i := "not_an_int" + 1; i < 5; i = i + 1 {
+	}
+}`,
+			entryPoint:             "main",
+			expectError:            true,
+			expectedErrorMsgSubstr: "type mismatch or unsupported operation for binary expression: STRING + INTEGER",
+		},
+		{
+			name: "for loop post statement error",
+			source: `
+package main
+var i int = 0
+func main() {
+	for ; i < 2; i = "not_an_int" + 1 {
+	}
+}`, // Error in post statement, loop runs for i=0, i=1, then error on post for i=1
+			entryPoint:             "main",
+			expectError:            true,
+			expectedErrorMsgSubstr: "type mismatch or unsupported operation for binary expression: STRING + INTEGER",
+		},
+		{
+            name: "for loop using globally defined variable in condition and post",
+            source: `
+package main
+var limit int = 3
+var sum int = 0
+var i int = 0 // Global i
+func main() {
+    for ; i < limit; i = i + 1 {
+        sum = sum + i
+    }
+}`, // sum = 0+1+2 = 3, i becomes 3
+            entryPoint: "main",
+            expectedGlobalVarValue: map[string]interface{}{
+				"sum": int64(3),
+				"i": int64(3),
+			},
+        },
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			filename := createTempFile(t, tt.source)
+			defer os.Remove(filename)
+
+			interpreter := NewInterpreter()
+			err := interpreter.LoadAndRun(filename, tt.entryPoint)
+
+			if tt.expectError {
+				if err == nil {
+					t.Errorf("[%s] Expected an error, but got none", tt.name)
+				} else if !strings.Contains(err.Error(), tt.expectedErrorMsgSubstr) {
+					t.Errorf("[%s] Expected error message to contain '%s', but got '%s'", tt.name, tt.expectedErrorMsgSubstr, err.Error())
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("[%s] LoadAndRun failed: %v\nSource:\n%s", tt.name, err, tt.source)
+				}
+				for varName, expectedVal := range tt.expectedGlobalVarValue {
+					val, ok := interpreter.globalEnv.Get(varName)
+					if !ok {
+						t.Errorf("[%s] Global variable '%s' not found. Expected value was '%v'.", tt.name, varName, expectedVal)
+						continue
+					}
+
+					switch expected := expectedVal.(type) {
+					case int64:
+						intVal, ok := val.(*Integer)
+						if !ok {
+							t.Errorf("[%s] Expected global variable '%s' to be Integer, but got %s (%s). Value was expected to be '%d'.", tt.name, varName, val.Type(), val.Inspect(), expected)
+							continue
+						}
+						if intVal.Value != expected {
+							t.Errorf("[%s] Global variable '%s': expected '%d', got '%d'", tt.name, varName, expected, intVal.Value)
+						}
+					case string:
+						strVal, ok := val.(*String)
+						if !ok {
+							t.Errorf("[%s] Expected global variable '%s' to be String, but got %s (%s). Value was expected to be '%s'.", tt.name, varName, val.Type(), val.Inspect(), expected)
+							continue
+						}
+						if strVal.Value != expected {
+							t.Errorf("[%s] Global variable '%s': expected '%s', got '%s'", tt.name, varName, expected, strVal.Value)
+						}
+					// Add other types as needed, e.g., bool
+					default:
+						t.Errorf("[%s] Unsupported type in expectedGlobalVarValue for variable '%s': %T", tt.name, varName, expectedVal)
+					}
+				}
+			}
+		})
+	}
+}
+
+
 func TestIfElseStatements(t *testing.T) {
 	tests := []struct {
 		name                      string

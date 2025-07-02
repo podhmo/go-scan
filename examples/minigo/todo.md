@@ -24,7 +24,7 @@
   - [ ] Slices (dynamic arrays)
   - [ ] Maps (hash maps)
 - [ ] Control Flow
-  - [ ] `for` loops (various forms: `for {}`, `for i < N {}`, `for k, v := range arr {}`)
+  - [x] `for` loops (various forms: `for {}`, `for i < N {}`, `for i := 0; i < N; i++ {}`. Range-based loop not yet supported)
   - [ ] `break` and `continue` statements
 - [ ] Types
   - [ ] More specific integer types (int8, int32, int64, uint etc.)

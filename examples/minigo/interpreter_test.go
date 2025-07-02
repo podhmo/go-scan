@@ -177,15 +177,17 @@ func main() {
 			expectedErrorMsgSubstr: "dot imports are not supported",
 		},
 		{
-			name: "disallowed blank import",
+			name: "blank import is ignored",
 			source: `
 package main
 import _ "mytestmodule/testpkg"
+var resultInt int // Add a dummy variable to check execution
 func main() {
+	resultInt = 1 // Ensure main runs
 }`,
 			entryPoint:             "main",
-			expectError:            true,
-			expectedErrorMsgSubstr: "blank imports are not supported",
+			expectError:            false, // Should not error
+			expectedGlobalVarValue: map[string]interface{}{"resultInt": int64(1)},
 		},
 		{
 			name: "alias conflict",

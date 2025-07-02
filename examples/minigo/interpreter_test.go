@@ -155,41 +155,39 @@ func main() {
 
 			interpreter := NewInterpreter()
 
-			if strings.Contains(tt.source, "mytestmodule") {
-				var resolvedTestdataDir string
-				cwd, wdErr := os.Getwd()
-				if wdErr != nil {
-					t.Fatalf("Failed to get current working directory for test %s: %v", tt.name, wdErr)
-				}
-
-				_, currentTestFile, _, ok := runtime.Caller(0)
-				if !ok {
-					t.Fatalf("Could not get current test file path for scanner setup in test: %s", tt.name)
-				}
-				minigoPackageDir := filepath.Dir(currentTestFile)
-				pathAttempt1 := filepath.Join(minigoPackageDir, "testdata")
-
-				if _, statErr := os.Stat(pathAttempt1); statErr == nil {
-					resolvedTestdataDir = pathAttempt1
-				} else if os.IsNotExist(statErr) {
-					pathAttempt2 := filepath.Join(cwd, "examples", "minigo", "testdata") // Use cwd obtained earlier
-					if _, statErr2 := os.Stat(pathAttempt2); statErr2 == nil {
-						resolvedTestdataDir = pathAttempt2
-					} else {
-						t.Fatalf("Could not locate examples/minigo/testdata for scanner setup for test %s. CWD: %s, currentTestFile: %s, Attempted paths: %s, %s", tt.name, cwd, currentTestFile, pathAttempt1, pathAttempt2)
-					}
-				} else {
-					t.Fatalf("Error checking path %s for test %s: %v", pathAttempt1, tt.name, statErr)
-				}
-
-				testSpecificScanner, errScanner := goscan.New(resolvedTestdataDir)
-				if errScanner != nil {
-					t.Fatalf("[%s] Failed to create test-specific scanner with startPath %s: %v", tt.name, resolvedTestdataDir, errScanner)
-				}
-				interpreter.scn = testSpecificScanner
-				interpreter.FileSet = testSpecificScanner.Fset()
+			// Always set up the test-specific scanner for TestImportStatements
+			var resolvedTestdataDir string
+			cwd, wdErr := os.Getwd()
+			if wdErr != nil {
+				t.Fatalf("Failed to get current working directory for test %s: %v", tt.name, wdErr)
 			}
 
+			_, currentTestFile, _, ok := runtime.Caller(0)
+			if !ok {
+				t.Fatalf("Could not get current test file path for scanner setup in test: %s", tt.name)
+			}
+			minigoPackageDir := filepath.Dir(currentTestFile)
+			pathAttempt1 := filepath.Join(minigoPackageDir, "testdata")
+
+			if _, statErr := os.Stat(pathAttempt1); statErr == nil {
+				resolvedTestdataDir = pathAttempt1
+			} else if os.IsNotExist(statErr) {
+				pathAttempt2 := filepath.Join(cwd, "examples", "minigo", "testdata") // Use cwd obtained earlier
+				if _, statErr2 := os.Stat(pathAttempt2); statErr2 == nil {
+					resolvedTestdataDir = pathAttempt2
+				} else {
+					t.Fatalf("Could not locate examples/minigo/testdata for scanner setup for test %s. CWD: %s, currentTestFile: %s, Attempted paths: %s, %s", tt.name, cwd, currentTestFile, pathAttempt1, pathAttempt2)
+				}
+			} else {
+				t.Fatalf("Error checking path %s for test %s: %v", pathAttempt1, tt.name, statErr)
+			}
+
+			testSpecificScanner, errScanner := goscan.New(resolvedTestdataDir)
+			if errScanner != nil {
+				t.Fatalf("[%s] Failed to create test-specific scanner with startPath %s: %v", tt.name, resolvedTestdataDir, errScanner)
+			}
+			interpreter.scn = testSpecificScanner
+			interpreter.FileSet = testSpecificScanner.Fset()
 
 			err := interpreter.LoadAndRun(filename, tt.entryPoint)
 

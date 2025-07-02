@@ -19,6 +19,8 @@ const (
 	ERROR_OBJ        ObjectType = "ERROR"        // To wrap errors as objects
 	FUNCTION_OBJ     ObjectType = "FUNCTION"     // For user-defined functions
 	BUILTIN_FUNCTION_OBJ ObjectType = "BUILTIN_FUNCTION" // For built-in functions
+	BREAK_OBJ        ObjectType = "BREAK"        // For break statements
+	CONTINUE_OBJ     ObjectType = "CONTINUE"      // For continue statements
 )
 
 // Object is the interface that all value types in our interpreter will implement.
@@ -55,9 +57,11 @@ func (b *Boolean) Inspect() string  { return fmt.Sprintf("%t", b.Value) }
 
 // Global instances for TRUE and FALSE to avoid re-creation and allow direct comparison.
 var (
-	TRUE  = &Boolean{Value: true}
-	FALSE = &Boolean{Value: false}
-	NULL  = &Null{} // Global instance for Null
+	TRUE     = &Boolean{Value: true}
+	FALSE    = &Boolean{Value: false}
+	NULL     = &Null{}               // Global instance for Null
+	BREAK    = &BreakStatement{}    // Singleton instance for Break
+	CONTINUE = &ContinueStatement{} // Singleton instance for Continue
 )
 
 // Helper function to convert native bool to interpreter's Boolean object
@@ -194,3 +198,15 @@ func (bf *BuiltinFunction) Inspect() string {
 
 // Ensure BuiltinFunction implements the Object interface.
 var _ Object = (*BuiltinFunction)(nil)
+
+// --- Break Statement Object ---
+type BreakStatement struct{}
+
+func (bs *BreakStatement) Type() ObjectType { return BREAK_OBJ }
+func (bs *BreakStatement) Inspect() string  { return "break" }
+
+// --- Continue Statement Object ---
+type ContinueStatement struct{}
+
+func (cs *ContinueStatement) Type() ObjectType { return CONTINUE_OBJ }
+func (cs *ContinueStatement) Inspect() string  { return "continue" }

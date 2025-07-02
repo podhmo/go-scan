@@ -38,6 +38,15 @@ func (e *Environment) Assign(name string, val Object) (Object, bool) {
 		e.store[name] = val
 		return val, true
 	}
+
+// AllKeys returns a slice of all keys defined in this specific environment scope.
+func (e *Environment) AllKeys() []string {
+	keys := make([]string, 0, len(e.store))
+	for k := range e.store {
+		keys = append(keys, k)
+	}
+	return keys
+}
 	if e.outer != nil {
 		return e.outer.Assign(name, val)
 	}

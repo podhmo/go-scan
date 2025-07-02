@@ -746,36 +746,24 @@ func (i *Interpreter) evalForStmt(ctx context.Context, stmt *ast.ForStmt, env *E
 }
 
 func (i *Interpreter) evalSelectorExpr(ctx context.Context, node *ast.SelectorExpr, env *Environment) (Object, error) {
-	// Evaluate the expression on the left of the selector (node.X)
-	// This could be an identifier (variable holding a struct instance) or another expression.
 	xObj, err := i.eval(ctx, node.X, env)
 	fieldName := node.Sel.Name
 
 	if err != nil {
-		// If node.X is an identifier (e.g., 'pkg.Symbol', 'pkg' is node.X)
-		// and eval returned "identifier not found" for 'pkg',
-		// then this might be a package selector. We should try to import it.
 		_, isIdent := node.X.(*ast.Ident)
 		if isIdent && err != nil && strings.Contains(err.Error(), "identifier not found") {
-			// Potential package access, proceed to package handling logic
 			goto handlePackageAccess
 		}
-		return nil, err // Other errors from i.eval should be returned
+		return nil, err
 	}
 
-	// Check if xObj is a struct instance (already evaluated successfully)
 	if structInstance, ok := xObj.(*StructInstance); ok {
-		// 1. Check direct fields that were explicitly set
 		if val, found := structInstance.FieldValues[fieldName]; found {
 			return val, nil
 		}
-
-		// 2. Check if it's a defined direct field but not explicitly set (uninitialized)
 		if _, isDirectField := structInstance.Definition.Fields[fieldName]; isDirectField {
 			return NULL, nil
 		}
-
-		// 3. Search in embedded structs
 		foundValue, _, _, embErr := findFieldInEmbedded(structInstance, fieldName, i.FileSet, node.Sel.Pos())
 		if embErr != nil {
 			return nil, embErr
@@ -787,20 +775,20 @@ func (i *Interpreter) evalSelectorExpr(ctx context.Context, node *ast.SelectorEx
 	}
 
 handlePackageAccess:
-	// This label is reached if xObj evaluation succeeded but wasn't a StructInstance,
-	// OR if xObj evaluation failed for an Identifier (potential package name).
-	if identX, ok := node.X.(*ast.Ident); ok { // Changed xIdent to identX to avoid conflict if xIdent was a parameter or outer var
+	if identX, ok := node.X.(*ast.Ident); ok {
 		localPkgName := identX.Name
 		qualifiedNameInEnv := localPkgName + "." + fieldName
 
-		if val, found := env.Get(qualifiedNameInEnv); found {
+		// Package-level symbols (types, funcs, consts) are always resolved against the global environment.
+		// First, check if it's already loaded in globalEnv.
+		if val, found := i.globalEnv.Get(qualifiedNameInEnv); found {
 			return val, nil
 		}
 
 		importPath, knownAlias := i.importAliasMap[localPkgName]
 		if !knownAlias {
 			originalErrorMsg := "undefined"
-			if err != nil { // err from the first i.eval(node.X, env)
+			if err != nil { // err from the first i.eval(node.X, env) if node.X was identX
 				originalErrorMsg = err.Error()
 			}
 			return nil, formatErrorWithContext(i.FileSet, identX.Pos(), fmt.Errorf("%s: %s (not a struct instance and not a known package alias/name)", originalErrorMsg, localPkgName), "Selector error")
@@ -814,64 +802,83 @@ handlePackageAccess:
 			if errImport != nil {
 				return nil, formatErrorWithContext(i.FileSet, identX.Pos(), fmt.Errorf("package %q (aliased as %q) not found or failed to scan: %w", importPath, localPkgName, errImport), "Import error")
 			}
-			if importPkgInfo != nil {
-				for _, c := range importPkgInfo.Constants {
-					if !c.IsExported {continue}
-					var constObj Object
-					if c.Type != nil {
-						switch c.Type.Name {
-						case "int", "int64", "int32", "uint", "uint64", "uint32", "rune", "byte":
-							valInt, errParse := parseInt64(c.Value); if errParse == nil { constObj = &Integer{Value: valInt} } else { fmt.Fprintf(os.Stderr, "Warning: Could not parse external const integer %s.%s (value: %s): %v\n", localPkgName, c.Name, c.Value, errParse) }
-						case "string":
-							unquotedVal, errParse := strconv.Unquote(c.Value); if errParse == nil { constObj = &String{Value: unquotedVal} } else { fmt.Fprintf(os.Stderr, "Warning: Could not unquote external const string %s.%s (value: %s): %v\n", localPkgName, c.Name, c.Value, errParse) }
-						case "bool":
-							switch c.Value { case "true": constObj = TRUE; case "false": constObj = FALSE; default: fmt.Fprintf(os.Stderr, "Warning: Could not parse external const bool %s.%s (value: %s)\n", localPkgName, c.Name, c.Value) }
-						default: fmt.Fprintf(os.Stderr, "Warning: Unsupported external const type %s for %s.%s\n", c.Type.Name, localPkgName, c.Name)
-						}
-					} else { fmt.Fprintf(os.Stderr, "Warning: External const %s.%s has no type info, cannot determine type for value: %s\n", localPkgName, c.Name, c.Value) }
-					if constObj != nil { env.Define(localPkgName+"."+c.Name, constObj) }
-				}
-				for _, fInfo := range importPkgInfo.Functions {
-					if !ast.IsExported(fInfo.Name) || fInfo.AstDecl == nil { continue }
-					params := []*ast.Ident{}; if fInfo.AstDecl.Type.Params != nil { for _, field := range fInfo.AstDecl.Type.Params.List { params = append(params, field.Names...) } }
-					env.Define(localPkgName+"."+fInfo.Name, &UserDefinedFunction{Name: fInfo.Name, Parameters: params, Body: fInfo.AstDecl.Body, Env: env, FileSet: i.sharedScanner.Fset()})
-				}
 
-				// NEW: Load type definitions (structs) from the imported package
-				// We need to iterate over all files in the package
+			if importPkgInfo != nil {
+				// PASS 1: Load all type definitions from the package into the global environment.
 				for _, astFile := range importPkgInfo.AstFiles {
 					for _, declNode := range astFile.Decls {
-						if genDecl, ok := declNode.(*ast.GenDecl); ok && genDecl.Tok == token.TYPE {
+						if genDecl, okDecl := declNode.(*ast.GenDecl); okDecl && genDecl.Tok == token.TYPE {
 							for _, spec := range genDecl.Specs {
 								typeSpec, okSpec := spec.(*ast.TypeSpec)
 								if !okSpec { continue }
-								if !ast.IsExported(typeSpec.Name.Name) { continue } // Only load exported types
-
-								// Use the new helper method to load this type spec
-								errLoadType := i.loadTypeSpec(localPkgName, typeSpec, env, importPkgInfo.Fset())
+								if !ast.IsExported(typeSpec.Name.Name) { continue }
+								errLoadType := i.loadTypeSpec(localPkgName, typeSpec, i.globalEnv, importPkgInfo.Fset)
 								if errLoadType != nil { return nil, errLoadType }
 							}
 						}
 					}
 				}
+
+				// PASS 2: Load constants into the global environment.
+				for _, c := range importPkgInfo.Constants {
+					if !c.IsExported { continue }
+					var constObj Object
+					if c.Type != nil {
+						switch c.Type.Name {
+						case "int", "int64", "int32", "uint", "uint64", "uint32", "rune", "byte":
+							valInt, errParseConst := parseInt64(c.Value); if errParseConst == nil { constObj = &Integer{Value: valInt} } else { fmt.Fprintf(os.Stderr, "Warning: Could not parse external const integer %s.%s (value: %s): %v\n", localPkgName, c.Name, c.Value, errParseConst) }
+						case "string":
+							unquotedVal, errParseConst := strconv.Unquote(c.Value); if errParseConst == nil { constObj = &String{Value: unquotedVal} } else { fmt.Fprintf(os.Stderr, "Warning: Could not unquote external const string %s.%s (value: %s): %v\n", localPkgName, c.Name, c.Value, errParseConst) }
+						case "bool":
+							switch c.Value { case "true": constObj = TRUE; case "false": constObj = FALSE; default: fmt.Fprintf(os.Stderr, "Warning: Could not parse external const bool %s.%s (value: %s)\n", localPkgName, c.Name, c.Value) }
+						default: fmt.Fprintf(os.Stderr, "Warning: Unsupported external const type %s for %s.%s\n", c.Type.Name, localPkgName, c.Name)
+						}
+					} else { fmt.Fprintf(os.Stderr, "Warning: External const %s.%s has no type info, cannot determine type for value: %s\n", localPkgName, c.Name, c.Value) }
+					if constObj != nil { i.globalEnv.Define(localPkgName+"."+c.Name, constObj) }
+				}
+
+				// PASS 3: Load functions, creating their closure environments.
+				for _, fInfo := range importPkgInfo.Functions {
+					if !ast.IsExported(fInfo.Name) || fInfo.AstDecl == nil { continue }
+					params := []*ast.Ident{}
+					if fInfo.AstDecl.Type.Params != nil {
+						for _, field := range fInfo.AstDecl.Type.Params.List {
+							params = append(params, field.Names...)
+						}
+					}
+					funcClosureEnv := NewEnvironment(i.globalEnv) // Functions capture the global environment
+					for _, typeInfo := range importPkgInfo.Types { // Add short type names from this package to func's env
+						if ast.IsExported(typeInfo.Name) {
+							qualifiedTypeName := localPkgName + "." + typeInfo.Name
+							if typeDefObj, okGet := i.globalEnv.Get(qualifiedTypeName); okGet { // Types are already in globalEnv from PASS 1
+								funcClosureEnv.Define(typeInfo.Name, typeDefObj)
+							}
+						}
+					}
+					i.globalEnv.Define(localPkgName+"."+fInfo.Name, &UserDefinedFunction{Name: fInfo.Name, Parameters: params, Body: fInfo.AstDecl.Body, Env: funcClosureEnv, FileSet: i.sharedScanner.Fset()})
+					fmt.Printf("DEBUG: Defined function %s in globalEnv\n", localPkgName+"."+fInfo.Name) // DEBUG
+				}
 			}
 			i.importedPackages[importPath] = struct{}{}
 		}
+		fmt.Printf("DEBUG: Attempting to get '%s' from globalEnv after load attempt. Current global keys: %v\n", qualifiedNameInEnv, i.globalEnv.AllKeys()) // DEBUG
 
-		if val, found := env.Get(qualifiedNameInEnv); found {
+		// After attempting to load the package (or if it was already loaded and found initially),
+		// try to get the symbol from globalEnv again.
+		if val, found := i.globalEnv.Get(qualifiedNameInEnv); found {
 			return val, nil
 		}
 		return nil, formatErrorWithContext(i.FileSet, node.Sel.Pos(), fmt.Errorf("undefined: %s.%s (after attempting import of package %s, path %s)", localPkgName, fieldName, localPkgName, importPath), "Selector error")
+
 	}
 
-	// If xObj was successfully evaluated but not a struct, and node.X was not an identifier (e.g., a function call returning non-struct)
-	if xObj != nil { // xObj is not nil here means err from i.eval was nil
+	if xObj != nil {
 		return nil, formatErrorWithContext(i.FileSet, node.X.Pos(), fmt.Errorf("selector base must be a struct instance or package identifier, got %s", xObj.Type()), "Unsupported selector expression")
 	}
 
-	// Fallback for unexpected cases, though theoretically covered.
 	return nil, formatErrorWithContext(i.FileSet, node.Pos(), errors.New("internal error in selector evaluation"), "")
 }
+
 
 // findFieldInEmbedded recursively searches for a field within the embedded structs of a given StructInstance.
 // It returns:
@@ -1232,6 +1239,8 @@ func evalIdentifier(ident *ast.Ident, env *Environment, fset *token.FileSet) (Ob
 		return TRUE, nil
 	case "false":
 		return FALSE, nil
+	case "nil":
+		return NULL, nil
 	}
 	if val, ok := env.Get(ident.Name); ok {
 		return val, nil
@@ -1247,6 +1256,28 @@ func (i *Interpreter) evalBinaryExpr(ctx context.Context, node *ast.BinaryExpr, 
 	right, err := i.eval(ctx, node.Y, env)
 	if err != nil {
 		return nil, err
+	}
+
+	// Handle general NULL comparisons first for EQL and NEQ
+	if node.Op == token.EQL {
+		if left.Type() == NULL_OBJ && right.Type() == NULL_OBJ {
+			return TRUE, nil
+		}
+		// If one is NULL and the other is not (already checked for both NULL), they are not equal.
+		// This also covers comparing a non-nil StructInstance to NULL.
+		if left.Type() == NULL_OBJ || right.Type() == NULL_OBJ {
+			return FALSE, nil
+		}
+		// If neither is NULL, proceed to type-specific comparisons.
+	} else if node.Op == token.NEQ {
+		if left.Type() == NULL_OBJ && right.Type() == NULL_OBJ {
+			return FALSE, nil
+		}
+		// If one is NULL and the other is not, they are not equal, so NEQ is true.
+		if left.Type() == NULL_OBJ || right.Type() == NULL_OBJ {
+			return TRUE, nil
+		}
+		// If neither is NULL, proceed to type-specific comparisons.
 	}
 
 	switch {
@@ -1542,6 +1573,13 @@ func (i *Interpreter) evalUnaryExpr(ctx context.Context, node *ast.UnaryExpr, en
 		default:
 			return nil, formatErrorWithContext(i.FileSet, node.Pos(), fmt.Errorf("unsupported type for logical NOT: %s", operand.Type()), "")
 		}
+	case token.AND: // Address operator & (e.g. &Point{X:1, Y:2})
+		// In MiniGo, we don't have a separate concept of pointers vs. values for structs in this way.
+		// &T{} will be treated the same as T{} for now, returning the instance itself.
+		// The operand should be the struct instance (or whatever is being pointed to).
+		// If operand is already an object (like StructInstance from eval(node.X)), just return it.
+		// This assumes node.X (e.g. CompositeLit) evaluates to the actual struct instance.
+		return operand, nil
 	default:
 		return nil, formatErrorWithContext(i.FileSet, node.Pos(), fmt.Errorf("unsupported unary operator: %s", node.Op), "")
 	}
@@ -1589,7 +1627,21 @@ func (i *Interpreter) loadTypeSpec(pkgPrefix string, typeSpec *ast.TypeSpec, env
 					}
 					fieldTypeNameStr = selX.Name + "." + typeExpr.Sel.Name // e.g., "time.Time"
 				default:
+					// Handle pointer types like *Foo or *pkg.Bar
+					if starExpr, ok := typeExpr.(*ast.StarExpr); ok {
+						switch underlyingType := starExpr.X.(type) {
+						case *ast.Ident:
+							fieldTypeNameStr = "*" + underlyingType.Name // e.g., "*Foo"
+						case *ast.SelectorExpr:
+							selX, okXSel := underlyingType.X.(*ast.Ident)
+							if !okXSel { return formatErrorWithContext(errorReportingFileSet, underlyingType.X.Pos(), fmt.Errorf("unsupported selector base in pointer type for field in '%s'", fullTypeNameKey), "")}
+							fieldTypeNameStr = "*" + selX.Name + "." + underlyingType.Sel.Name // e.g., "*pkg.Bar"
+						default:
+							return formatErrorWithContext(errorReportingFileSet, starExpr.X.Pos(), fmt.Errorf("unsupported underlying type in pointer for field in '%s': %T", fullTypeNameKey, starExpr.X), "Struct definition error")
+						}
+					} else {
 					return formatErrorWithContext(errorReportingFileSet, field.Type.Pos(), fmt.Errorf("struct field in external struct '%s' has unsupported type specifier %T", fullTypeNameKey, field.Type), "Struct definition error")
+					}
 				}
 
 				if len(field.Names) == 0 { // Anonymous field means embedding
@@ -1612,8 +1664,11 @@ func (i *Interpreter) loadTypeSpec(pkgPrefix string, typeSpec *ast.TypeSpec, env
 					if strings.Contains(fieldTypeNameStr, ".") {
 						embeddedDefLookupKey = fieldTypeNameStr // Already qualified
 					} else {
-						embeddedDefLookupKey = pkgPrefix + "." + fieldTypeNameStr // Qualify with current package prefix
+						// Handle pointer types for embedded lookup key
+						cleanFieldTypeName := strings.TrimPrefix(fieldTypeNameStr, "*")
+						embeddedDefLookupKey = pkgPrefix + "." + cleanFieldTypeName // Qualify with current package prefix
 					}
+
 
 					obj, found := env.Get(embeddedDefLookupKey)
 					if !found {

@@ -9,6 +9,12 @@ import (
 	"strings"  // Added for strings.Builder and strings.Fields
 )
 
+// TypeParamInfo stores information about a single type parameter.
+type TypeParamInfo struct {
+	Name       string     `json:"name"`
+	Constraint *FieldType `json:"constraint,omitempty"`
+}
+
 // Kind defines the category of a type definition.
 type Kind int
 
@@ -34,7 +40,7 @@ type PackageInfo struct {
 	Types      []*TypeInfo
 	Constants  []*ConstantInfo
 	Functions  []*FunctionInfo
-	Fset       *token.FileSet // Added: Fileset for position information
+	Fset       *token.FileSet       // Added: Fileset for position information
 	AstFiles   map[string]*ast.File // Added: Parsed AST for each file
 }
 
@@ -51,15 +57,16 @@ type ExternalTypeOverride map[string]string
 
 // TypeInfo represents a single type declaration (`type T ...`).
 type TypeInfo struct {
-	Name       string
-	FilePath   string // Added: Absolute path to the file where this type is defined
-	Doc        string
-	Kind       Kind
-	Node       ast.Node
-	Struct     *StructInfo
-	Func       *FunctionInfo
-	Interface  *InterfaceInfo // Added for interface types
-	Underlying *FieldType
+	Name       string           `json:"name"`
+	FilePath   string           `json:"filePath"`
+	Doc        string           `json:"doc,omitempty"`
+	Kind       Kind             `json:"kind"`
+	TypeParams []*TypeParamInfo `json:"typeParams,omitempty"` // For generic types
+	Node       ast.Node         `json:"-"`                    // Avoid cyclic JSON with Node itself.
+	Struct     *StructInfo      `json:"struct,omitempty"`
+	Func       *FunctionInfo    `json:"func,omitempty"` // For type alias to func type
+	Interface  *InterfaceInfo   `json:"interface,omitempty"`
+	Underlying *FieldType       `json:"underlying,omitempty"` // For alias types
 }
 
 // Annotation extracts the value of a specific annotation from the TypeInfo's Doc string.
@@ -143,20 +150,24 @@ func (fi *FieldInfo) TagValue(tagName string) string {
 
 // FieldType represents the type of a field.
 type FieldType struct {
-	Name               string
-	PkgName            string
-	MapKey             *FieldType
-	Elem               *FieldType
-	IsPointer          bool
-	IsSlice            bool
-	IsMap              bool
-	Definition         *TypeInfo // Caches the resolved type definition.
-	IsResolvedByConfig bool      // True if this type was resolved using ExternalTypeOverrides
-	IsBuiltin          bool      // True if this type is a Go built-in type
+	Name         string       `json:"name"`
+	PkgName      string       `json:"pkgName,omitempty"` // e.g., "json", "models"
+	MapKey       *FieldType   `json:"mapKey,omitempty"`  // For map types
+	Elem         *FieldType   `json:"elem,omitempty"`    // For slice, map, pointer, array types
+	IsPointer    bool         `json:"isPointer,omitempty"`
+	IsSlice      bool         `json:"isSlice,omitempty"`
+	IsMap        bool         `json:"isMap,omitempty"`
+	IsTypeParam  bool         `json:"isTypeParam,omitempty"`  // True if this FieldType refers to a type parameter
+	IsConstraint bool         `json:"isConstraint,omitempty"` // True if this FieldType represents a type constraint
+	TypeArgs     []*FieldType `json:"typeArgs,omitempty"`     // For instantiated generic types, e.g., T in List[T]
 
-	resolver       PackageResolver // For lazy-loading the type definition.
-	fullImportPath string          // Full import path of the type, e.g., "example.com/project/models".
-	typeName       string          // The name of the type within its package, e.g., "User".
+	Definition         *TypeInfo `json:"-"` // Caches the resolved type definition. Avoid cyclic JSON.
+	IsResolvedByConfig bool      `json:"isResolvedByConfig,omitempty"`
+	IsBuiltin          bool      `json:"isBuiltin,omitempty"`
+
+	resolver       PackageResolver `json:"-"` // For lazy-loading the type definition.
+	fullImportPath string          `json:"-"` // Full import path of the type, e.g., "example.com/project/models".
+	typeName       string          `json:"-"` // The name of the type within its package, e.g., "User".
 }
 
 // FullImportPath returns the fully qualified import path if this type is from an external package.
@@ -170,7 +181,7 @@ func (ft *FieldType) FullImportPath() string {
 // The result is cached for subsequent calls.
 
 // String returns the Go string representation of the field type.
-// e.g., "*pkgname.MyType", "[]string", "map[string]int"
+// e.g., "*pkgname.MyType", "[]string", "map[string]int", "MyType[string]"
 func (ft *FieldType) String() string {
 	if ft == nil {
 		return "<nil_FieldType>"
@@ -179,24 +190,13 @@ func (ft *FieldType) String() string {
 
 	if ft.IsPointer {
 		sb.WriteString("*")
-		if ft.Elem != nil {
-			// If Elem exists, it represents the pointed-to type.
-			// Recursively call String on Elem.
-			// However, current FieldType for pointer stores base type in Name and IsPointer=true. Elem might be for base type's own Elem if it's slice/map.
-			// Let's assume ft.Name is the base name if IsPointer is true.
-			// The String() method should ideally be called on the Elem if it represents the next part of type.
-			// Current structure: For *T, Name="T", IsPointer=true. For []*T, Name="slice", IsPointer=false, IsSlice=true, Elem points to *T.
-			// This means for a simple pointer, we write "*" and then handle the ft.Name or ft.Elem based on what ft represents.
-
-			// If ft.Name is already qualified or is a primitive, use it.
-			// This part needs careful handling of how PkgName/fullImportPath interact with Name for pointers.
-			// For now, let's assume if IsPointer is true, ft.Name is the base type name.
-			// A more robust way: if ft.Elem is non-nil and represents the pointed-to type structure, call ft.Elem.String().
-			// But `parseTypeExpr` for StarExpr does: `underlyingType := s.parseTypeExpr(t.X); underlyingType.IsPointer = true; return underlyingType;`
-			// This implies Name is from t.X.
-			// So, if IsPointer, we add "*" and then proceed to format the rest of ft as if it were not a pointer.
-		}
-		// Fallthrough to handle the base type (slice, map, or named type)
+		// For pointers, the current parsing for StarExpr in parseTypeExpr does:
+		//   underlyingType := s.parseTypeExpr(t.X, currentTypeParams)
+		//   underlyingType.IsPointer = true
+		//   return underlyingType
+		// This means `underlyingType` (which is `ft` here) *is* the element type, but marked as a pointer.
+		// So, we write "*" and then format `ft` as if it's not a pointer for the rest of its structure.
+		// ft.Elem is primarily for slice/map element types.
 	}
 
 	if ft.IsSlice {
@@ -204,9 +204,10 @@ func (ft *FieldType) String() string {
 		if ft.Elem != nil {
 			sb.WriteString(ft.Elem.String()) // Recursive call for element type
 		} else {
-			sb.WriteString("interface{}") // Fallback, should ideally not happen for valid code
+			// This case should ideally not happen for valid Go code.
+			sb.WriteString("interface{}") // Fallback
 		}
-		return sb.String()
+		return sb.String() // Slice representation is complete
 	}
 
 	if ft.IsMap {
@@ -222,19 +223,36 @@ func (ft *FieldType) String() string {
 		} else {
 			sb.WriteString("interface{}") // Fallback
 		}
-		return sb.String()
+		return sb.String() // Map representation is complete
 	}
 
-	// If not a pointer (already handled for the prefix), slice, or map, it's a named type or primitive.
-	// Prepend PkgName if it exists (for qualified types).
+	// Named types, primitives, or type parameters
 	name := ft.Name
-	if ft.PkgName != "" { // PkgName is the local identifier (e.g. "json" or "m" in "m.MyType")
-		// To get the canonical import path for prefixing, we'd ideally use fullImportPath's last segment
-		// if PkgName is just an alias or could be ambiguous.
-		// For now, assume PkgName is sufficient for qualification as used by the parser.
-		name = fmt.Sprintf("%s.%s", ft.PkgName, ft.typeName) // ft.typeName is the Name within the package
+	if ft.PkgName != "" && !ft.IsTypeParam { // Type parameters don't have package names like "pkg.T"
+		// For qualified types like "pkg.MyType"
+		// ft.Name might already be "pkg.MyType" if parsed from SelectorExpr.
+		// Or ft.Name is "MyType" and ft.PkgName is "pkg".
+		// Prefer ft.typeName if available (set by SelectorExpr parsing for the base name).
+		actualName := ft.Name
+		if ft.typeName != "" {
+			actualName = ft.typeName
+		}
+		name = fmt.Sprintf("%s.%s", ft.PkgName, actualName)
 	}
 	sb.WriteString(name)
+
+	// Append type arguments if any, e.g., MyType[T, U]
+	if len(ft.TypeArgs) > 0 {
+		sb.WriteString("[")
+		for i, typeArg := range ft.TypeArgs {
+			if i > 0 {
+				sb.WriteString(", ")
+			}
+			sb.WriteString(typeArg.String())
+		}
+		sb.WriteString("]")
+	}
+
 	return sb.String()
 }
 
@@ -288,13 +306,14 @@ type ConstantInfo struct {
 
 // FunctionInfo represents a single top-level function or method declaration.
 type FunctionInfo struct {
-	Name       string
-	FilePath   string // Added: Absolute path to the file where this func is defined
-	Doc        string
-	Receiver   *FieldInfo
-	Parameters []*FieldInfo
-	Results    []*FieldInfo
-	AstDecl    *ast.FuncDecl // Added: The AST declaration of the function
+	Name       string           `json:"name"`
+	FilePath   string           `json:"filePath"`
+	Doc        string           `json:"doc,omitempty"`
+	Receiver   *FieldInfo       `json:"receiver,omitempty"`
+	TypeParams []*TypeParamInfo `json:"typeParams,omitempty"` // For generic functions
+	Parameters []*FieldInfo     `json:"parameters,omitempty"`
+	Results    []*FieldInfo     `json:"results,omitempty"`
+	AstDecl    *ast.FuncDecl    `json:"-"` // Avoid cyclic JSON.
 }
 
 // var _ = strings.Builder{} // This helper is no longer needed as "strings" is directly imported.

@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+
 	// "github.com/podhmo/go-scan/scanner" // Will be used later
 
 	"github.com/podhmo/go-scan/examples/minigo/stringutils"

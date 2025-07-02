@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"go/ast"
+
 	// "go/parser" // Will be replaced by go-scan
 	"go/token"
 	"os"
@@ -13,7 +14,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/podhmo/go-scan" // Using top-level go-scan
+	goscan "github.com/podhmo/go-scan"  // Using top-level go-scan
 	"github.com/podhmo/go-scan/scanner" // No longer directly needed for minigo's use of ConstantInfo
 )
 
@@ -95,7 +96,7 @@ type Interpreter struct {
 	// This helps in resolving relative imports if go.mod is not present or
 	// for files not part of a clear module structure.
 	currentFileDir string
-	sharedScanner    *goscan.Scanner // Renamed from scn, used for resolving imports. Can be pre-configured for tests.
+	sharedScanner  *goscan.Scanner // Renamed from scn, used for resolving imports. Can be pre-configured for tests.
 	ModuleRoot     string          // Optional: Explicitly set module root directory for scanner initialization.
 }
 
@@ -257,12 +258,12 @@ func (i *Interpreter) LoadAndRun(ctx context.Context, filename string, entryPoin
 	// Get the entry function *object* from the global environment
 	entryFuncObj, ok := i.globalEnv.Get(entryPoint)
 	if !ok {
-	    return formatErrorWithContext(i.FileSet, token.NoPos, fmt.Errorf("entry point function '%s' not found in global environment", entryPoint), "Setup error")
+		return formatErrorWithContext(i.FileSet, token.NoPos, fmt.Errorf("entry point function '%s' not found in global environment", entryPoint), "Setup error")
 	}
 
 	userEntryFunc, ok := entryFuncObj.(*UserDefinedFunction)
 	if !ok {
-	    return formatErrorWithContext(i.FileSet, token.NoPos, fmt.Errorf("entry point '%s' is not a user-defined function (type: %s)", entryPoint, entryFuncObj.Type()), "Setup error")
+		return formatErrorWithContext(i.FileSet, token.NoPos, fmt.Errorf("entry point '%s' is not a user-defined function (type: %s)", entryPoint, entryFuncObj.Type()), "Setup error")
 	}
 
 	fmt.Printf("Executing entry point function: %s\n", entryPoint)
@@ -282,7 +283,6 @@ func (i *Interpreter) LoadAndRun(ctx context.Context, filename string, entryPoin
 	}
 	return nil
 }
-
 
 func (i *Interpreter) applyUserDefinedFunction(ctx context.Context, fn *UserDefinedFunction, args []Object, callPos token.Pos) (Object, error) {
 	// Use the FileSet associated with the function for error reporting within its context.
@@ -630,7 +630,7 @@ func (i *Interpreter) evalSelectorExpr(ctx context.Context, node *ast.SelectorEx
 					Name:       fInfo.Name, // Use the original function name
 					Parameters: params,
 					Body:       fInfo.AstDecl.Body,
-					Env:        env, // Or perhaps a new env derived from global? For simplicity, use current env.
+					Env:        env,                    // Or perhaps a new env derived from global? For simplicity, use current env.
 					FileSet:    i.sharedScanner.Fset(), // Use the scanner's fset for this imported function
 				}
 				env.Define(localPkgName+"."+fInfo.Name, importedFunc)

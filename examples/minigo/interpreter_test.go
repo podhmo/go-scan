@@ -186,8 +186,14 @@ func main() {
 			if errScanner != nil {
 				t.Fatalf("[%s] Failed to create test-specific scanner with startPath %s: %v", tt.name, resolvedTestdataDir, errScanner)
 			}
-			interpreter.scn = testSpecificScanner
-			interpreter.FileSet = testSpecificScanner.Fset()
+			interpreter.sharedScanner = testSpecificScanner
+			// interpreter.FileSet will be set by LoadAndRun from the localScriptScanner.
+			// Setting it here from testSpecificScanner might be okay if testSpecificScanner's Fset
+			// is compatible or if subsequent operations primarily use the one from LoadAndRun.
+			// For safety, let LoadAndRun manage i.FileSet based on the main script's scanner.
+			// The FileSet for sharedScanner is internal to it and used when it reports errors.
+			// If LoadAndRun correctly sets i.FileSet from its localScriptScanner, that's the one
+			// formatErrorWithContext will use for errors originating from the main script's parsing/evaluation.
 
 			err := interpreter.LoadAndRun(filename, tt.entryPoint)
 

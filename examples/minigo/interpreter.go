@@ -131,26 +131,24 @@ func (i *Interpreter) LoadAndRun(filename string, entryPoint string) error {
 	}
 	i.FileSet = pkgInfo.Fset // Use the FileSet from go-scan
 
-	// Process functions from PackageInfo.Functions
-	for _, funcInfo := range pkgInfo.Functions {
-		if funcInfo.Node == nil {
-			// This should not happen if go-scan is working correctly
-			return formatErrorWithContext(i.FileSet, token.NoPos, fmt.Errorf("function info for '%s' is missing AST node", funcInfo.Name), "Interpreter setup error")
+	// Process top-level declarations (functions and global vars) from the ASTs
+	for _, fileAst := range pkgInfo.AstFiles { // Iterate through all scanned files' ASTs
+		// Store all function declarations first
+		for _, declNode := range fileAst.Decls {
+			if fnDecl, ok := declNode.(*ast.FuncDecl); ok {
+				_, evalErr := i.evalFuncDecl(fnDecl, i.globalEnv)
+				if evalErr != nil {
+					return evalErr // evalFuncDecl should use i.FileSet for errors
+				}
+			}
 		}
-		_, evalErr := i.evalFuncDecl(funcInfo.Node, i.globalEnv)
-		if evalErr != nil {
-			return evalErr
-		}
-	}
-
-	// Process global variable declarations from the ASTs
-	// This part still needs to iterate over AstFiles and Decls, as go-scan doesn't explicitly list global vars yet.
-	for _, fileAst := range pkgInfo.AstFiles {
+		// Then evaluate global variable declarations
 		for _, declNode := range fileAst.Decls {
 			if genDecl, ok := declNode.(*ast.GenDecl); ok && genDecl.Tok == token.VAR {
 				tempDeclStmt := &ast.DeclStmt{Decl: genDecl}
 				_, evalErr := i.eval(tempDeclStmt, i.globalEnv)
 				if evalErr != nil {
+					// formatErrorWithContext will use i.FileSet
 					return formatErrorWithContext(i.FileSet, genDecl.Pos(), evalErr, "Error evaluating global variable declaration")
 				}
 			}

@@ -5,9 +5,17 @@ import (
 	"fmt"
 	"os"
 	// "github.com/podhmo/go-scan/scanner" // Will be used later
+
+	"github.com/podhmo/go-scan/examples/minigo/stringutils"
 )
 
 func main() {
+	// Call stringutils.Concat and print the result
+	s1 := "Hello, "
+	s2 := "World!"
+	concatenatedString := stringutils.Concat(s1, s2)
+	fmt.Println("Concatenated string:", concatenatedString)
+
 	entryPoint := flag.String("entry", "main", "entry point function name")
 	flag.Parse()
 

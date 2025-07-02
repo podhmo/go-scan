@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"go/ast"
+	"go/token" // Import the token package
 	"strings"
 )
 
@@ -143,6 +144,7 @@ type UserDefinedFunction struct {
 	Parameters []*ast.Ident
 	Body       *ast.BlockStmt
 	Env        *Environment // Closure: the environment where the function was defined
+	FileSet    *token.FileSet // FileSet for error reporting context
 }
 
 func (udf *UserDefinedFunction) Type() ObjectType { return FUNCTION_OBJ }

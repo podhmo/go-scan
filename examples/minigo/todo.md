@@ -69,6 +69,6 @@
   - [x] Ensure error reporting (`formatErrorWithContext`) correctly uses `FileSet` and positional info from `go-scan`.
 - [ ] **Contribute to or discuss `go-scan` enhancements**
   - [x] Propose/discuss `PackageInfo` retaining `*ast.File` for scanned files. (Implemented)
-  - [ ] Propose/discuss `FunctionInfo` directly referencing `*ast.FuncDecl`.
+  - [x] Propose/discuss `FunctionInfo` directly referencing `*ast.FuncDecl`. (Implemented)
   - [ ] Propose/discuss `PackageInfo` aggregating global variable declarations.
 - [ ] **Investigate `go-scan`'s Lazy Import (`PackageResolver`) for multi-file/package support in `minigo` (Future)**

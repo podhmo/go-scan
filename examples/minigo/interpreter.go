@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"go/ast"
-	"go/parser" // Will be replaced by go-scan
+	// "go/parser" // Will be replaced by go-scan
 	"go/token"
 	"os"
 	"path/filepath" // Added for go-scan
@@ -165,8 +165,7 @@ func (i *Interpreter) LoadAndRun(filename string, entryPoint string) error {
 
 	// Use go-scan to parse the main script file
 	// ScanFiles expects a list of files. For LoadAndRun, it's just the one file.
-	// pkgDirPath for ScanFiles should be the directory of the file.
-	pkgInfo, scanErr := i.scn.ScanFiles(context.Background(), []string{absFilePath}, i.currentFileDir, i.scn)
+	pkgInfo, scanErr := i.scn.ScanFiles(context.Background(), []string{absFilePath})
 	if scanErr != nil {
 		// Attempt to provide position info if possible, though ScanFiles errors might be general.
 		return formatErrorWithContext(i.FileSet, token.NoPos, scanErr, fmt.Sprintf("Error scanning main script file %s using go-scan: %v", filename, scanErr))

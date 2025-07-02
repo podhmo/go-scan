@@ -14,7 +14,7 @@ import (
 	"strings"
 
 	"github.com/podhmo/go-scan" // Using top-level go-scan
-	// "github.com/podhmo/go-scan/scanner" // No longer directly needed for minigo's use of ConstantInfo
+	"github.com/podhmo/go-scan/scanner" // No longer directly needed for minigo's use of ConstantInfo
 )
 
 // formatErrorWithContext creates a detailed error message including file, line, column, and source code.
@@ -96,6 +96,7 @@ type Interpreter struct {
 	// for files not part of a clear module structure.
 	currentFileDir string
 	sharedScanner    *goscan.Scanner // Renamed from scn, used for resolving imports. Can be pre-configured for tests.
+	ModuleRoot     string          // Optional: Explicitly set module root directory for scanner initialization.
 }
 
 func NewInterpreter() *Interpreter {
@@ -130,11 +131,15 @@ func (i *Interpreter) LoadAndRun(filename string, entryPoint string) error {
 	i.currentFileDir = filepath.Dir(absFilePath)
 
 	// Create a local scanner specifically for parsing the main script file.
-	// This scanner's locator will be based on the script's directory.
-	localScriptScanner, errGs := goscan.New(i.currentFileDir)
+	// Use ModuleRoot if available, otherwise use the script's directory.
+	scanPathForLocal := i.currentFileDir
+	if i.ModuleRoot != "" {
+		scanPathForLocal = i.ModuleRoot
+	}
+	localScriptScanner, errGs := goscan.New(scanPathForLocal)
 	if errGs != nil {
 		// If this fails, we can't get a FileSet for error reporting, so use token.NoPos
-		return formatErrorWithContext(nil, token.NoPos, errGs, fmt.Sprintf("Failed to create go-scan scanner for script directory %s", i.currentFileDir))
+		return formatErrorWithContext(nil, token.NoPos, errGs, fmt.Sprintf("Failed to create go-scan scanner for local script (path: %s): %v", scanPathForLocal, errGs))
 	}
 	if localScriptScanner.Fset() == nil {
 		return formatErrorWithContext(nil, token.NoPos, errors.New("internal error: localScriptScanner created by goscan.New has a nil FileSet"), "")
@@ -165,9 +170,13 @@ func (i *Interpreter) LoadAndRun(filename string, entryPoint string) error {
 		// Its module context will be based on the main script's directory.
 		// This is suitable if imports are relative or within the same implicit module as the script.
 		// Tests for specific module structures (like mytestmodule) will pre-set i.sharedScanner.
-		defaultSharedScanner, errSharedGs := goscan.New(i.currentFileDir)
+		scanPathForShared := i.currentFileDir
+		if i.ModuleRoot != "" {
+			scanPathForShared = i.ModuleRoot
+		}
+		defaultSharedScanner, errSharedGs := goscan.New(scanPathForShared)
 		if errSharedGs != nil {
-			return formatErrorWithContext(i.FileSet, token.NoPos, errSharedGs, fmt.Sprintf("Failed to create default shared go-scan scanner for dir %s", i.currentFileDir))
+			return formatErrorWithContext(i.FileSet, token.NoPos, errSharedGs, fmt.Sprintf("Failed to create default shared go-scan scanner (path: %s): %v", scanPathForShared, errSharedGs))
 		}
 		i.sharedScanner = defaultSharedScanner
 	}
@@ -594,46 +603,7 @@ func (i *Interpreter) evalSelectorExpr(node *ast.SelectorExpr, env *Environment)
 			}
 		}
 		i.importedPackages[importPath] = struct{}{} // Mark the importPath as processed
-	}
-			var constObj Object
-			if c.Type != nil { // Ensure type information is present
-				switch c.Type.Name {
-				case "int", "int64", "int32", "uint", "uint64", "uint32", "rune", "byte":
-					val, err := parseInt64(c.Value)
-					if err == nil {
-						constObj = &Integer{Value: val}
-					} else {
-						fmt.Fprintf(os.Stderr, "Warning: Could not parse external const integer %s.%s from package %s (value: %s): %v\n", c.Name, localPkgName, importPath, c.Value, err)
-					}
-				case "string":
-					unquotedVal, err := strconv.Unquote(c.Value)
-					if err == nil {
-						constObj = &String{Value: unquotedVal}
-					} else {
-						fmt.Fprintf(os.Stderr, "Warning: Could not unquote external const string %s.%s from package %s (value: %s): %v\n", c.Name, localPkgName, importPath, c.Value, err)
-					}
-				case "bool":
-					switch c.Value {
-					case "true":
-						constObj = TRUE
-					case "false":
-						constObj = FALSE
-					default:
-						fmt.Fprintf(os.Stderr, "Warning: Could not parse external const bool %s.%s from package %s (value: %s)\n", c.Name, localPkgName, importPath, c.Value)
-					}
-				default:
-					fmt.Fprintf(os.Stderr, "Warning: Unsupported external const type %s for %s.%s from package %s\n", c.Type.Name, c.Name, localPkgName, importPath)
-				}
-			} else {
-				fmt.Fprintf(os.Stderr, "Warning: External const %s.%s from package %s has no type info from go-scan, cannot determine type for value: %s\n", c.Name, localPkgName, importPath, c.Value)
-			}
-
-			if constObj != nil {
-				env.Define(localPkgName+"."+c.Name, constObj) // Use localPkgName for env key
-			}
-		}
-		i.importedPackages[importPath] = struct{}{} // Mark the importPath as processed
-	}
+	} // Correct placement of the closing brace for `if !alreadyImported`
 
 	// After attempting import and processing, try getting the symbol again
 	if val, ok := env.Get(qualifiedNameInEnv); ok {

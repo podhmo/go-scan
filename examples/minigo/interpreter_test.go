@@ -10,25 +10,73 @@ import (
 	"github.com/podhmo/go-scan" // For goscan.New
 )
 
-// Helper function to create a temporary Go source file for testing.
-func createTempFile(t *testing.T, content string) string {
+// Helper function to create a temporary Go source file for testing within a specific base directory.
+func createTempFile(t *testing.T, content string, baseDir string) string {
 	t.Helper()
-	tmpDir := t.TempDir()
-	tmpFile, err := os.CreateTemp(tmpDir, "test_*.go")
+	// Ensure the baseDir exists, create if not (though for testdata, it should exist)
+	// For simplicity, assume baseDir exists or handle error appropriately if needed.
+	// os.MkdirAll(baseDir, 0755) // Could be added if baseDir might not exist
+
+	// Create a subdirectory within baseDir to further isolate temp files if desired,
+	// or create directly in baseDir. Let's create directly in baseDir for now.
+	// If using subdirectories:
+	// tempSubDir, err := os.MkdirTemp(baseDir, "minigo_test_files_")
+	// if err != nil {
+	//  t.Fatalf("Failed to create temp subdirectory in %s: %v", baseDir, err)
+	// }
+	// tmpFile, err := os.CreateTemp(tempSubDir, "test_*.go")
+
+	tmpFile, err := os.CreateTemp(baseDir, "test_*.go") // Create directly in baseDir
 	if err != nil {
-		t.Fatalf("Failed to create temp file: %v", err)
+		t.Fatalf("Failed to create temp file in %s: %v", baseDir, err)
 	}
 	if _, err := tmpFile.WriteString(content); err != nil {
 		tmpFile.Close()
-		t.Fatalf("Failed to write to temp file: %v", err)
+		os.Remove(tmpFile.Name()) // Clean up partially created file
+		t.Fatalf("Failed to write to temp file %s: %v", tmpFile.Name(), err)
 	}
 	if err := tmpFile.Close(); err != nil {
-		t.Fatalf("Failed to close temp file: %v", err)
+		os.Remove(tmpFile.Name()) // Clean up
+		t.Fatalf("Failed to close temp file %s: %v", tmpFile.Name(), err)
 	}
 	return tmpFile.Name()
 }
 
 func TestImportStatements(t *testing.T) {
+	// Determine resolvedTestdataDir once for all subtests
+	var resolvedTestdataDir string
+	cwd, wdErr := os.Getwd()
+	if wdErr != nil {
+		t.Fatalf("Failed to get current working directory: %v", wdErr)
+	}
+	_, currentTestFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatalf("Could not get current test file path for scanner setup")
+	}
+	minigoPackageDir := filepath.Dir(currentTestFile)
+	pathAttempt1 := filepath.Join(minigoPackageDir, "testdata")
+
+	if _, statErr := os.Stat(pathAttempt1); statErr == nil {
+		resolvedTestdataDir = pathAttempt1
+	} else if os.IsNotExist(statErr) {
+		pathAttempt2 := filepath.Join(cwd, "examples", "minigo", "testdata")
+		if _, statErr2 := os.Stat(pathAttempt2); statErr2 == nil {
+			resolvedTestdataDir = pathAttempt2
+		} else {
+			t.Fatalf("Could not locate examples/minigo/testdata. CWD: %s, currentTestFile: %s, Attempted paths: %s, %s", cwd, currentTestFile, pathAttempt1, pathAttempt2)
+		}
+	} else {
+		t.Fatalf("Error checking path %s: %v", pathAttempt1, statErr)
+	}
+
+	// Create a temporary directory within resolvedTestdataDir for this test run's files
+	// to avoid polluting the main testdata directory and to ensure cleanup.
+	runSpecificTempDir, err := os.MkdirTemp(resolvedTestdataDir, "run_")
+	if err != nil {
+		t.Fatalf("Failed to create run-specific temp directory in %s: %v", resolvedTestdataDir, err)
+	}
+	defer os.RemoveAll(runSpecificTempDir) // Cleanup all files created in this directory
+
 	tests := []struct {
 		name                   string
 		source                 string
@@ -150,50 +198,20 @@ func main() {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			filename := createTempFile(t, tt.source)
-			defer os.Remove(filename)
+			// Use runSpecificTempDir for creating temp files for this test case
+			filename := createTempFile(t, tt.source, runSpecificTempDir)
+			// defer os.Remove(filename) // Cleanup is handled by defer os.RemoveAll(runSpecificTempDir)
 
 			interpreter := NewInterpreter()
+			interpreter.ModuleRoot = resolvedTestdataDir // ModuleRoot should be the parent 'testdata'
 
-			// Always set up the test-specific scanner for TestImportStatements
-			var resolvedTestdataDir string
-			cwd, wdErr := os.Getwd()
-			if wdErr != nil {
-				t.Fatalf("Failed to get current working directory for test %s: %v", tt.name, wdErr)
-			}
-
-			_, currentTestFile, _, ok := runtime.Caller(0)
-			if !ok {
-				t.Fatalf("Could not get current test file path for scanner setup in test: %s", tt.name)
-			}
-			minigoPackageDir := filepath.Dir(currentTestFile)
-			pathAttempt1 := filepath.Join(minigoPackageDir, "testdata")
-
-			if _, statErr := os.Stat(pathAttempt1); statErr == nil {
-				resolvedTestdataDir = pathAttempt1
-			} else if os.IsNotExist(statErr) {
-				pathAttempt2 := filepath.Join(cwd, "examples", "minigo", "testdata") // Use cwd obtained earlier
-				if _, statErr2 := os.Stat(pathAttempt2); statErr2 == nil {
-					resolvedTestdataDir = pathAttempt2
-				} else {
-					t.Fatalf("Could not locate examples/minigo/testdata for scanner setup for test %s. CWD: %s, currentTestFile: %s, Attempted paths: %s, %s", tt.name, cwd, currentTestFile, pathAttempt1, pathAttempt2)
-				}
-			} else {
-				t.Fatalf("Error checking path %s for test %s: %v", pathAttempt1, tt.name, statErr)
-			}
-
+			// Setup sharedScanner specifically for this test execution, using the main 'testdata' as its root
+			// This ensures that imports like "mytestmodule/testpkg" are resolved relative to 'testdata'.
 			testSpecificScanner, errScanner := goscan.New(resolvedTestdataDir)
 			if errScanner != nil {
-				t.Fatalf("[%s] Failed to create test-specific scanner with startPath %s: %v", tt.name, resolvedTestdataDir, errScanner)
+				t.Fatalf("[%s] Failed to create test-specific shared scanner with startPath %s: %v", tt.name, resolvedTestdataDir, errScanner)
 			}
 			interpreter.sharedScanner = testSpecificScanner
-			// interpreter.FileSet will be set by LoadAndRun from the localScriptScanner.
-			// Setting it here from testSpecificScanner might be okay if testSpecificScanner's Fset
-			// is compatible or if subsequent operations primarily use the one from LoadAndRun.
-			// For safety, let LoadAndRun manage i.FileSet based on the main script's scanner.
-			// The FileSet for sharedScanner is internal to it and used when it reports errors.
-			// If LoadAndRun correctly sets i.FileSet from its localScriptScanner, that's the one
-			// formatErrorWithContext will use for errors originating from the main script's parsing/evaluation.
 
 			err := interpreter.LoadAndRun(filename, tt.entryPoint)
 

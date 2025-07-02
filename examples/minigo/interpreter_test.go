@@ -1695,6 +1695,115 @@ func main() {
 				"i": int64(3),
 			},
         },
+		{
+			name: "for loop with break",
+			source: `
+package main
+var sum int = 0
+var iVal int = 0
+func main() {
+	for i := 0; i < 10; i = i + 1 {
+		if i == 3 {
+			break
+		}
+		sum = sum + i
+		iVal = i
+	}
+}`, // sum should be 0+1+2 = 3. iVal should be 2 (last value before break)
+			entryPoint: "main",
+			expectedGlobalVarValue: map[string]interface{}{
+				"sum": int64(3),
+				"iVal": int64(2),
+			},
+		},
+		{
+			name: "for loop with continue",
+			source: `
+package main
+var sum int = 0
+var iterations int = 0
+func main() {
+	for i := 0; i < 5; i = i + 1 { // 0, 1, 2, 3, 4
+		iterations = iterations + 1
+		if i == 1 || i == 3 {
+			continue
+		}
+		sum = sum + i // Skips for i=1 and i=3. Sums 0, 2, 4
+	}
+}`, // sum = 0+2+4 = 6. iterations = 5
+			entryPoint: "main",
+			expectedGlobalVarValue: map[string]interface{}{
+				"sum":        int64(6),
+				"iterations": int64(5),
+			},
+		},
+		{
+			name: "for loop with continue and post statement interaction",
+			source: `
+package main
+var counter int = 0
+var postExecCount int = 0
+func main() {
+	for i := 0; i < 3; i = i + 1 { // i = 0, 1, 2
+		if i == 1 {
+			continue // Skips counter increment for i=1, but post (i=i+1) should still run
+		}
+		counter = counter + 1 // Executed for i=0, i=2. counter = 2
+		// postExecCount is just to track post statement execution conceptually
+	}
+}`,
+			entryPoint: "main",
+			// i will be 3 at the end due to post statement.
+			// counter will be 2 (for i=0 and i=2)
+			expectedGlobalVarValue: map[string]interface{}{
+				"counter": int64(2),
+				// "postExecCount": int64(3), // Cannot directly test postExecCount this way
+			},
+		},
+		{
+			name: "break in an infinite loop",
+			source: `
+package main
+var counter int = 0
+func main() {
+	for {
+		counter = counter + 1
+		if counter == 5 {
+			break
+		}
+	}
+}`,
+			entryPoint:             "main",
+			expectedGlobalVarValue: map[string]interface{}{"counter": int64(5)},
+		},
+		{
+			name: "unsupported labeled break",
+			source: `
+package main
+func main() {
+OuterLoop:
+	for i := 0; i < 2; i = i + 1 {
+		break OuterLoop
+	}
+}`,
+			entryPoint:             "main",
+			expectError:            true,
+			expectedErrorMsgSubstr: "labeled break/continue not supported",
+		},
+		{
+			name: "unsupported labeled continue",
+			source: `
+package main
+func main() {
+OuterLoop:
+	for i := 0; i < 2; i = i + 1 {
+		continue OuterLoop
+	}
+}`,
+			entryPoint:             "main",
+			expectError:            true,
+			expectedErrorMsgSubstr: "labeled break/continue not supported",
+		},
 	}
 
 	for _, tt := range tests {

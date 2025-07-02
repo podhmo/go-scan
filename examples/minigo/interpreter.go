@@ -275,8 +275,33 @@ func (i *Interpreter) eval(node ast.Node, env *Environment) (Object, error) {
 	case *ast.ForStmt:
 		return i.evalForStmt(n, env)
 
+	case *ast.BranchStmt:
+		return i.evalBranchStmt(n, env)
+
+	case *ast.LabeledStmt:
+		// Labels are handled by specific statements that use them (like break/continue).
+		// For other statements, the label itself doesn't change evaluation.
+		// We just evaluate the statement the label is attached to.
+		// If a break/continue needs this label, its ast.BranchStmt.Label will be non-nil.
+		return i.eval(n.Stmt, env)
+
 	default:
 		return nil, formatErrorWithContext(i.FileSet, n.Pos(), fmt.Errorf("unsupported AST node type: %T", n), fmt.Sprintf("Unsupported AST node value: %+v", n))
+	}
+}
+
+func (i *Interpreter) evalBranchStmt(stmt *ast.BranchStmt, env *Environment) (Object, error) {
+	if stmt.Label != nil {
+		return nil, formatErrorWithContext(i.FileSet, stmt.Pos(), fmt.Errorf("labeled break/continue not supported"), "")
+	}
+
+	switch stmt.Tok {
+	case token.BREAK:
+		return BREAK, nil
+	case token.CONTINUE:
+		return CONTINUE, nil
+	default:
+		return nil, formatErrorWithContext(i.FileSet, stmt.Pos(), fmt.Errorf("unsupported branch statement: %s", stmt.Tok), "")
 	}
 }
 
@@ -323,18 +348,33 @@ func (i *Interpreter) evalForStmt(stmt *ast.ForStmt, env *Environment) (Object, 
 		if err != nil {
 			return nil, err
 		}
-		// Check for ReturnValue or Error from the body
-		// (Later, add BreakStatement and ContinueStatement)
-		if _, ok := bodyResult.(*ReturnValue); ok {
-			return bodyResult, nil // Propagate return
-		}
-		if errObj, ok := bodyResult.(*Error); ok {
-			return errObj, nil // Propagate error
+
+		// Check for ReturnValue, Error, Break, or Continue from the body
+		var broke bool // Flag to indicate if a break occurred
+		switch res := bodyResult.(type) {
+		case *ReturnValue:
+			return res, nil // Propagate return
+		case *Error:
+			return res, nil // Propagate error
+		case *BreakStatement:
+			broke = true // Signal to break the outer Go for loop
+		case *ContinueStatement:
+			// Skip to the post statement, then next iteration
+			if stmt.Post != nil {
+				if _, postErr := i.eval(stmt.Post, loopEnv); postErr != nil {
+					return nil, postErr
+				}
+			}
+			continue // Go to the next iteration of the Go `for` loop
 		}
 
+		if broke {
+			break // Break the Go `for` loop
+		}
 
 		// 4. Post-iteration statement
-		if stmt.Post != nil {
+		// Only execute if we didn't break out of the loop
+		if !broke && stmt.Post != nil {
 			if _, err := i.eval(stmt.Post, loopEnv); err != nil {
 				return nil, err
 			}
@@ -366,13 +406,13 @@ func (i *Interpreter) evalBlockStatement(block *ast.BlockStmt, env *Environment)
 			return nil, err
 		}
 		switch res := result.(type) {
-		case *ReturnValue:
-			return res, nil
-		case *Error:
+		case *ReturnValue, *Error, *BreakStatement, *ContinueStatement:
+			// If any of these control flow objects are encountered,
+			// stop executing statements in this block and propagate the object.
 			return res, nil
 		}
 	}
-	return result, nil
+	return result, nil // Return the result of the last statement if no control flow object was encountered.
 }
 
 func (i *Interpreter) evalFuncDecl(fd *ast.FuncDecl, env *Environment) (Object, error) {
@@ -524,14 +564,14 @@ func (i *Interpreter) evalBinaryExpr(node *ast.BinaryExpr, env *Environment) (Ob
 	case left.Type() == INTEGER_OBJ && right.Type() == INTEGER_OBJ:
 		return evalIntegerBinaryExpr(node.Op, left.(*Integer), right.(*Integer), i.FileSet, node.Pos())
 	case left.Type() == BOOLEAN_OBJ && right.Type() == BOOLEAN_OBJ:
-		if node.Op == token.EQL || node.Op == token.NEQ {
-			return evalBooleanBinaryExpr(node.Op, left.(*Boolean), right.(*Boolean), i.FileSet, node.Pos())
-		}
-		return nil, formatErrorWithContext(i.FileSet, node.Pos(),
-			fmt.Errorf("type mismatch or unsupported operation for binary expression: %s %s %s", left.Type(), node.Op, right.Type()), "")
+		// TODO: Implement short-circuiting for token.LAND and token.LOR
+		// Currently, both left and right operands are evaluated before this point.
+		// For true short-circuiting, the evaluation of the right operand
+		// would need to be conditional within these cases.
+		return evalBooleanBinaryExpr(node.Op, left.(*Boolean), right.(*Boolean), i.FileSet, node.Pos())
 	default:
 		return nil, formatErrorWithContext(i.FileSet, node.Pos(),
-			fmt.Errorf("type mismatch or unsupported operation for binary expression: %s %s %s", left.Type(), node.Op, right.Type()), "")
+			fmt.Errorf("type mismatch or unsupported operation for binary expression: %s %s %s (left: %s, right: %s)", left.Type(), node.Op, right.Type(), left.Inspect(), right.Inspect()), "")
 	}
 }
 
@@ -595,8 +635,14 @@ func evalBooleanBinaryExpr(op token.Token, left, right *Boolean, fset *token.Fil
 		return nativeBoolToBooleanObject(leftVal == rightVal), nil
 	case token.NEQ:
 		return nativeBoolToBooleanObject(leftVal != rightVal), nil
+	case token.LAND: // &&
+		return nativeBoolToBooleanObject(leftVal && rightVal), nil
+	case token.LOR: // ||
+		return nativeBoolToBooleanObject(leftVal || rightVal), nil
 	default:
-		return nil, formatErrorWithContext(fset, pos, fmt.Errorf("unknown operator for booleans: %s", op), "")
+		// Return a generic unsupported operation error for consistency with other types
+		return nil, formatErrorWithContext(fset, pos,
+			fmt.Errorf("type mismatch or unsupported operation for binary expression: %s %s %s", left.Type(), op, right.Type()), "")
 	}
 }
 

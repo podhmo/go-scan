@@ -54,22 +54,25 @@ func TestImportStatements(t *testing.T) {
 	// 	t.Fatalf("Could not get current test file path for scanner setup")
 	// }
 
-	// Explicitly set paths assuming the repository root is /app
-	// This is to counteract potential inconsistencies with run_in_bash_session's CWD
-	minigoPackageDir := "/app/examples/minigo"
-	resolvedTestdataDir = "/app/examples/minigo/testdata" // Assign to existing var
+	// Assuming tests are run from examples/minigo directory as per Makefile
+	minigoPackageDir := "."
+	resolvedTestdataDir = "testdata" // Assign to existing var
 
-	// Verify that these paths actually exist to catch issues early
+	// Log current working directory and resolved paths for verification
+	t.Logf("### CWD: %s", cwd)
+	t.Logf("### minigoPackageDir (relative): %s", minigoPackageDir)
+	t.Logf("### resolvedTestdataDir (relative): %s", resolvedTestdataDir)
+
+	// Verify that these relative paths correctly point to existing directories
+	// by trying to stat them. Stat will use the current working directory.
 	if _, err := os.Stat(minigoPackageDir); os.IsNotExist(err) {
-		t.Fatalf("FATAL: minigoPackageDir does not exist: %s. CWD was: %s", minigoPackageDir, cwd)
+		// This would mean CWD is not examples/minigo, or examples/minigo doesn't exist from CWD.
+		t.Fatalf("FATAL: minigoPackageDir (expected '.') does not correspond to an existing directory from CWD '%s'. Error: %v", cwd, err)
 	}
 	if _, err := os.Stat(resolvedTestdataDir); os.IsNotExist(err) {
-		t.Fatalf("FATAL: resolvedTestdataDir does not exist: %s. CWD was: %s", resolvedTestdataDir, cwd)
+		// This would mean testdata directory is not found within CWD.
+		t.Fatalf("FATAL: resolvedTestdataDir (expected './testdata') does not correspond to an existing directory from CWD '%s'. Error: %v", cwd, err)
 	}
-
-	t.Logf("### CWD: %s", cwd)
-	t.Logf("### minigoPackageDir (hardcoded): %s", minigoPackageDir)
-	t.Logf("### resolvedTestdataDir (assigned): %s", resolvedTestdataDir)
 
 	// Create a temporary directory within resolvedTestdataDir for this test run's files
 	// to avoid polluting the main testdata directory and to ensure cleanup.

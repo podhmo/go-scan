@@ -205,7 +205,8 @@ func (i *Interpreter) LoadAndRun(filename string, entryPoint string) error {
 			if impSpec.Name != nil {
 				localName = impSpec.Name.Name
 				if localName == "_" {
-					return formatErrorWithContext(i.FileSet, impSpec.Name.Pos(), errors.New("blank imports are not supported"), "")
+					// Blank imports are ignored, do not add to importAliasMap
+					continue
 				}
 				if localName == "." {
 					return formatErrorWithContext(i.FileSet, impSpec.Name.Pos(), errors.New("dot imports are not supported"), "")

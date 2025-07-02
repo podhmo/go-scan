@@ -95,7 +95,7 @@ The following import forms are **not currently supported** by `minigo` and will 
 -   **Dot Imports:** `import . "my/pkg"`
     -   This form, which would bring all exported symbols from `my/pkg` into the current file's namespace, is not supported.
 -   **Blank Imports for Execution:** `import _ "my/pkg"`
-    -   While Go uses blank imports for their side effects (e.g., `init` functions), `minigo` does not currently support package initialization via `init` functions. Therefore, blank imports are treated as an error as they would have no effect in the current `minigo` execution model and cannot be used to access symbols.
+    -   While Go uses blank imports for their side effects (e.g., `init` functions), `minigo` does not currently support package initialization via `init` functions. Therefore, blank imports are **ignored** by `minigo` as they would have no effect in the current execution model and cannot be used to access symbols.
 
 These limitations are in place to simplify the initial implementation of package imports.
 

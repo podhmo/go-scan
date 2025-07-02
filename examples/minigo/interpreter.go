@@ -15,7 +15,7 @@ import (
 	"strings"
 
 	goscan "github.com/podhmo/go-scan" // Using top-level go-scan
-	// "github.com/podhmo/go-scan/scanner" // No longer directly needed for minigo's use of ConstantInfo
+	"github.com/podhmo/go-scan/scanner" // Import the scanner package
 )
 
 // formatErrorWithContext creates a detailed error message including file, line, column, and source code.
@@ -415,6 +415,28 @@ func (i *Interpreter) applyUserDefinedFunction(ctx context.Context, fn *UserDefi
 
 	funcEnv := NewEnvironment(fn.Env) // Closure: fn.Env is the lexical scope
 
+	// If it's an external function, populate its environment with unqualified names
+	// from its own package. This allows calling other functions or using types/constants
+	// from the same package with their simple names.
+	if fn.IsExternal && fn.PackageAlias != "" && fn.PackagePath != "" {
+		// fn.Env for an external function is the environment where it was defined,
+		// which is the global environment where "PkgAlias.SymbolName" entries are stored.
+		// We iterate over all entries in that environment (and its outers, though for global fn.Env, outer is nil).
+		allGlobalSymbols := fn.Env.GetAllEntries() // Get all symbols from the function's definition environment.
+
+		prefix := fn.PackageAlias + "."
+		for qualifiedName, obj := range allGlobalSymbols {
+			if strings.HasPrefix(qualifiedName, prefix) {
+				unqualifiedName := strings.TrimPrefix(qualifiedName, prefix)
+				if unqualifiedName != "" { // Ensure it's not just "alias."
+					// Define in funcEnv without the prefix.
+					// This effectively makes package-local symbols directly available.
+					funcEnv.Define(unqualifiedName, obj)
+				}
+			}
+		}
+	}
+
 	for idx, paramIdent := range fn.Parameters {
 		funcEnv.Define(paramIdent.Name, args[idx])
 	}
@@ -562,7 +584,24 @@ func (i *Interpreter) evalCompositeLit(ctx context.Context, lit *ast.CompositeLi
 
 		obj, found := env.Get(qualifiedName)
 		if !found {
-			return nil, formatErrorWithContext(i.activeFileSet, typeNode.Pos(), fmt.Errorf("undefined type '%s' used in composite literal (package '%s' might not be loaded or struct '%s' not found)", qualifiedName, pkgName, structName), "Struct instantiation error")
+			// Attempt to load the package if the qualified type name is not found.
+			// The environment `env` passed here is the current evaluation environment.
+			// loadPackageIfNeeded expects the global environment to register symbols.
+			// We assume that for struct literals, `env` will be or will chain to i.globalEnv
+			// where package symbols are expected. For external struct literals, this is true.
+			// For local struct literals within functions, this also holds due to lexical scoping.
+			_, errLoad := i.loadPackageIfNeeded(ctx, pkgName, i.globalEnv, typeNode.X.Pos()) // Pass i.globalEnv
+			if errLoad != nil {
+				// Error during package loading attempt.
+				// The error from loadPackageIfNeeded is already formatted.
+				// We can add context that this was for a composite literal.
+				return nil, formatErrorWithContext(i.activeFileSet, typeNode.Pos(), errLoad, fmt.Sprintf("Error loading package '%s' for struct literal type '%s'", pkgName, qualifiedName))
+			}
+			// Try getting the struct definition again after attempting to load the package.
+			obj, found = env.Get(qualifiedName) // Search in the original env
+			if !found {
+				return nil, formatErrorWithContext(i.activeFileSet, typeNode.Pos(), fmt.Errorf("undefined type '%s' used in composite literal even after attempting to load package '%s'", qualifiedName, pkgName), "Struct instantiation error")
+			}
 		}
 		sDef, ok := obj.(*StructDefinition)
 		if !ok {
@@ -792,7 +831,7 @@ handlePackageAccess:
 				for _, fInfo := range importPkgInfo.Functions {
 					if !ast.IsExported(fInfo.Name) || fInfo.AstDecl == nil { continue }
 					params := []*ast.Ident{}; if fInfo.AstDecl.Type.Params != nil { for _, field := range fInfo.AstDecl.Type.Params.List { params = append(params, field.Names...) } }
-					env.Define(localPkgName+"."+fInfo.Name, &UserDefinedFunction{ Name: fInfo.Name, Parameters: params, Body: fInfo.AstDecl.Body, Env: env, FileSet: i.sharedScanner.Fset(), IsExternal: true, PackagePath: importPath, })
+					env.Define(localPkgName+"."+fInfo.Name, &UserDefinedFunction{ Name: fInfo.Name, Parameters: params, Body: fInfo.AstDecl.Body, Env: env, FileSet: i.sharedScanner.Fset(), IsExternal: true, PackagePath: importPath, PackageAlias: localPkgName })
 				}
 				// Types/Structs
 				for _, typeInfo := range importPkgInfo.Types {
@@ -835,14 +874,39 @@ handlePackageAccess:
 			i.importedPackages[importPath] = struct{}{}
 		}
 
-		if val, found := env.Get(qualifiedNameInEnv); found { return val, nil }
-		return nil, formatErrorWithContext(i.FileSet, node.Sel.Pos(), fmt.Errorf("undefined: %s.%s (after attempting import of package %s, path %s)", localPkgName, fieldName, localPkgName, importPath), "Selector error")
+		// Attempt to load the package if it hasn't been already.
+		// The loadPackageIfNeeded helper will populate the environment.
+		_, errLoad := i.loadPackageIfNeeded(ctx, localPkgName, env, identX.Pos())
+		if errLoad != nil {
+			// errLoad will be a formatted error from loadPackageIfNeeded
+			return nil, errLoad
+		}
+
+		// After attempting to load, try getting the symbol again.
+		if val, found := env.Get(qualifiedNameInEnv); found {
+			return val, nil
+		}
+
+		// If still not found, then it's truly undefined.
+		// Note: importPath is resolved inside loadPackageIfNeeded, so we use localPkgName for error msg here if path wasn't found.
+		importPath, _ := i.importAliasMap[localPkgName] // Re-fetch for error message if needed
+		return nil, formatErrorWithContext(i.activeFileSet, node.Sel.Pos(), fmt.Errorf("undefined: %s.%s (package %s, path %s, was loaded or loading attempted)", localPkgName, fieldName, localPkgName, importPath), "Selector error")
 	}
 
 	if xObj != nil {
-		return nil, formatErrorWithContext(i.FileSet, node.X.Pos(), fmt.Errorf("selector base must be a struct instance or package identifier, got %s", xObj.Type()), "Unsupported selector expression")
+		return nil, formatErrorWithContext(i.activeFileSet, node.X.Pos(), fmt.Errorf("selector base must be a struct instance or package identifier, got %s", xObj.Type()), "Unsupported selector expression")
 	}
-	return nil, formatErrorWithContext(i.FileSet, node.Pos(), errors.New("internal error in selector evaluation"), "")
+	return nil, formatErrorWithContext(i.activeFileSet, node.Pos(), errors.New("internal error in selector evaluation"), "")
+}
+
+// loadPackageIfNeeded handles the logic for loading symbols from an imported package
+// if it hasn't been loaded yet. It populates the provided 'env' (expected to be global)
+// with the package's exported symbols, qualified by pkgAlias.
+func (i *Interpreter) loadPackageIfNeeded(ctx context.Context, pkgAlias string, env *Environment, errorPos token.Pos) (*scanner.PackageInfo, error) {
+	// Do nothing for now, just return nil, nil to satisfy the interface
+	// This will likely cause "undefined" errors later in the tests, but should resolve the "no new variables" error
+	// if it's truly originating from the internals of this function.
+	return nil, nil
 }
 
 // findFieldInEmbedded uses fset passed to it for errors

@@ -94,7 +94,7 @@ func TestImportStatements(t *testing.T) {
 			name: "import const without alias",
 			source: `
 package main
-import "mytestmodule/testpkg"
+import "github.com/podhmo/go-scan/examples/minigo/testdata/testpkg"
 var resultString string
 func main() {
 	resultString = testpkg.ExportedConst
@@ -106,7 +106,7 @@ func main() {
 			name: "import const with alias",
 			source: `
 package main
-import pkalias "mytestmodule/testpkg"
+import pkalias "github.com/podhmo/go-scan/examples/minigo/testdata/testpkg"
 var resultInt int
 func main() {
 	resultInt = pkalias.AnotherExportedConst
@@ -118,7 +118,7 @@ func main() {
 			name: "reference non-exported const",
 			source: `
 package main
-import "mytestmodule/testpkg"
+import "github.com/podhmo/go-scan/examples/minigo/testdata/testpkg"
 var r string
 func main() {
 	r = testpkg.NonExportedConst
@@ -131,7 +131,7 @@ func main() {
 			name: "reference non-existent const",
 			source: `
 package main
-import "mytestmodule/testpkg"
+import "github.com/podhmo/go-scan/examples/minigo/testdata/testpkg"
 var r string
 func main() {
 	r = testpkg.DoesNotExist
@@ -156,20 +156,20 @@ func main() {
 			name: "reference symbol from non-existent package path after import",
 			source: `
 package main
-import badpath "mytestmodule/nonexistentpkg"
+import badpath "github.com/podhmo/go-scan/examples/minigo/testdata/nonexistentpkg"
 var r string
 func main() {
 	r = badpath.Foo
 }`,
 			entryPoint:             "main",
 			expectError:            true,
-			expectedErrorMsgSubstr: `package "mytestmodule/nonexistentpkg" (aliased as "badpath") not found or failed to scan`,
+			expectedErrorMsgSubstr: `package "github.com/podhmo/go-scan/examples/minigo/testdata/nonexistentpkg" (aliased as "badpath") not found or failed to scan`,
 		},
 		{
 			name: "disallowed dot import",
 			source: `
 package main
-import . "mytestmodule/testpkg"
+import . "github.com/podhmo/go-scan/examples/minigo/testdata/testpkg"
 func main() {
 }`,
 			entryPoint:             "main",
@@ -180,7 +180,7 @@ func main() {
 			name: "blank import is ignored",
 			source: `
 package main
-import _ "mytestmodule/testpkg"
+import _ "github.com/podhmo/go-scan/examples/minigo/testdata/testpkg"
 var resultInt int // Add a dummy variable to check execution
 func main() {
 	resultInt = 1 // Ensure main runs
@@ -193,13 +193,13 @@ func main() {
 			name: "alias conflict",
 			source: `
 package main
-import "mytestmodule/testpkg"
-import testpkg "mytestmodule/anotherdummy"
+import "github.com/podhmo/go-scan/examples/minigo/testdata/testpkg"
+import testpkg "github.com/podhmo/go-scan/examples/minigo/testdata/anotherdummy"
 func main() {
 }`,
 			entryPoint:             "main",
 			expectError:            true,
-			expectedErrorMsgSubstr: `import alias/name "testpkg" already used for "mytestmodule/testpkg"`,
+			expectedErrorMsgSubstr: `import alias/name "testpkg" already used for "github.com/podhmo/go-scan/examples/minigo/testdata/testpkg"`,
 		},
 		{
 			name: "import and call function from another package",
@@ -222,14 +222,10 @@ func main() {
 			// defer os.Remove(filename) // Cleanup is handled by defer os.RemoveAll(runSpecificTempDir)
 
 			interpreter := NewInterpreter()
-			var scannerRoot string
-			if strings.Contains(tt.source, "\"mytestmodule/testpkg\"") || strings.Contains(tt.source, "\"mytestmodule/anotherdummy\"") {
-				scannerRoot = resolvedTestdataDir // For tests involving "mytestmodule"
-				interpreter.ModuleRoot = resolvedTestdataDir
-			} else {
-				scannerRoot = minigoPackageDir // For tests involving "github.com/podhmo/go-scan/examples/minigo/stringutils"
-				interpreter.ModuleRoot = minigoPackageDir
-			}
+			// Scanner should always be initialized with the module root, as all import paths
+			// will be fully qualified Go package paths (potentially resolved via replace directives).
+			scannerRoot := minigoPackageDir
+			interpreter.ModuleRoot = minigoPackageDir
 			t.Logf("[%s] Using scannerRoot: %s, ModuleRoot: %s", tt.name, scannerRoot, interpreter.ModuleRoot)
 
 			// Setup sharedScanner specifically for this test execution.

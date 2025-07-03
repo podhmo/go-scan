@@ -1,18 +1,15 @@
-# TODO List
+# Dream List / Initial TODOs (Archived)
 
-This document tracks planned features and improvements for the Go Type Scanner project.
+This document previously tracked some of the initial planned features and aspirations for the Go Type Scanner project.
 
-## Must-have Features
+**This list is now archived. The primary and up-to-date list of planned features, ongoing tasks, and known issues can be found in [./todo.md](./todo.md).**
 
-These are critical features for the library to be broadly useful in real-world projects.
+The items originally listed here were:
 
-- **Generics Support**: Add parsing logic for Go 1.18+ generics (e.g., `type Page[T] struct { ... }`). Without this, the scanner cannot be used in modern projects that leverage generics for reusable structures like API responses or data containers.
+-   **Generics Support**: (Implemented)
+-   **Interface Parsing**: (Implemented)
+-   **`iota` Evaluation**: (Moved to `docs/todo.md`)
+-   **Annotation Parsing**: (Expanded and moved to `docs/todo.md` as "Advanced GoDoc Parsing and Structured Annotation Support")
+-   **External Dependency Resolution**: (Partially addressed by "External Type Overrides", further "Scanning of External Dependencies" moved to `docs/todo.md`)
 
-## Nice-to-have / Advanced Features
-
-These features would expand the library's capabilities for more advanced use cases.
-
-- **Interface Parsing**: Fully parse `interface` definitions, including their method sets. This would be valuable for tools like DI containers or mock generators that operate on interface contracts.
-- **`iota` Evaluation**: Implement logic to correctly evaluate the integer values of constants defined using `iota`. This is useful for documentation generation where displaying the actual value of an enum is desired (e.g., `StatusActive (value: 1)`).
-- **Annotation Parsing**: Support for structured comments (annotations) like `// @validate:"required,min=0"`. This would allow tools to extract rich metadata beyond what standard Go field tags provide, useful for validation, OpenAPI extensions, etc.
-- **External Dependency Resolution**: Add an option to scan packages from external dependencies listed in `go.mod`. This would help in resolving common types like `uuid.UUID` to their underlying kinds (e.g., `string`), enabling more accurate schema generation. This should likely be an opt-in feature to manage performance.
+Please refer to `docs/todo.md` for the current development status and future plans.

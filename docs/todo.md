@@ -72,8 +72,9 @@ This document outlines the current status, planned features, and areas for impro
     -   Implement an API like `scanner.GetSourceContext(pos token.Pos, window int) SourceContext` (or similar) to retrieve source code snippets around a given position for enhanced error reporting and diagnostics.
 -   **Symbol Table and Scope Analysis Support:**
     -   Develop features to assist in identifying symbol definitions, references, and their scope relationships (e.g., lexical scope, visibility, shadowing).
--   **Advanced GoDoc Parsing:**
-    -   Enhance GoDoc parsing beyond the current basic `TypeInfo.Annotation()` to structurally parse common GoDoc tags (e.g., `@param <name> <description>`, `@return <description>`, `@see <symbol>`) and user-defined structured annotations.
+-   **Advanced GoDoc Parsing and Structured Annotation Support:**
+    -   Enhance GoDoc parsing beyond the current basic `TypeInfo.Annotation()` to structurally parse common GoDoc tags (e.g., `@param <name> <description>`, `@return <description>`, `@see <symbol>`).
+    -   Support parsing of structured annotations in comments (e.g., `// @validate:"required,min=0"`, `// @json:"name,omitempty"`) providing richer metadata than standard Go field tags.
 -   **Advanced Type System Utilities:**
     -   (Covered above) More robust interface implementation checks.
     -   Resolution of method signatures for fully instantiated generic types (e.g., determining the concrete signature of `Add(int)` for `List[int].Add(T)`).
@@ -84,6 +85,8 @@ This document outlines the current status, planned features, and areas for impro
     -   **Control Flow Graph (CFG) / Data Flow Analysis (DFA) Foundations:** Provide basic information or utilities that could serve as a foundation for building CFGs or performing DFA (e.g., for unused variable detection, reachability analysis).
     -   **Incremental/Partial Scanning Enhancements:** Improve capabilities for incremental scanning beyond the current file-level symbol caching, potentially for faster feedback in REPLs or large projects.
     -   **Build Tag and `go:generate` Directive Awareness:** Implement recognition of build tags and `go:generate` directives to allow the scanner to consider conditional compilation and code generation aspects.
+    -   **`iota` Evaluation for Constants:** Implement logic to correctly evaluate the integer values of constants defined using `iota` (e.g., for enums).
+    -   **Scanning and Resolution of External Dependencies:** Option to scan packages from external dependencies (resolved via `go.mod`) to get their full type information, beyond the current `ExternalTypeOverride` mechanism which only changes interpretation.
 
 ## Considerations/Known Issues
 

@@ -209,3 +209,10 @@ The scanner can cache the file paths where symbols (types, functions, constants)
 - The `scanner.FindSymbolDefinitionLocation("package/import/path.SymbolName")` method leverages this cache. If caching is enabled and a symbol is not found in the cache (or if the cached file path is no longer valid), it will attempt to scan the relevant package and update the cache. If caching is disabled, it will always perform a fresh scan.
 
 This library is currently under development. See `docs/todo.md` for planned features.
+
+## More Examples
+
+*   **`examples/derivingjson`**: Demonstrates generating JSON marshaling/unmarshaling methods, including support for `oneOf` (sum types).
+*   **`examples/derivingbind`**: Shows how to generate methods for binding data from HTTP requests (query, path, header, body) to struct fields.
+*   **`examples/minigo`**: A mini Go interpreter that uses `go-scan` for parsing and understanding Go code structure.
+*   **`examples/convert`**: A prototype for generating type conversion functions between different Go structs. See `examples/convert/README.md` for details.

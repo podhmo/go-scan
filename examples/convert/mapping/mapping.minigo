@@ -1,131 +1,123 @@
 // This is a conceptual file demonstrating a minigo-like syntax for go-scan.
-// The actual syntax and capabilities would depend on the go-scan library.
+// The actual syntax and capabilities would depend on the go-scan library
+// and the generator that consumes this DSL.
 
-package converter
+package converter // Target package for generated converters (if any)
 
-import (
-	"example.com/convert/models"
-	"context"
-	"fmt"
-	"strings"
-	"time"
-)
-
-// Configuration for the converter generator
-// topLevel defines which types get exported converters.
-// Other types will have unexported converters by default.
-option "topLevel" = [
-	models.DstUser{},
-	models.DstOrder{},
+// Option to declare which destination types should have top-level (exported)
+// converter functions generated. Other conversions might result in unexported helper functions.
+option "topLevelTypes" = [
+	"example.com/convert/models.DstUser",
+	"example.com/convert/models.DstOrder",
 ]
 
-// --- User Conversion ---
+// Option to define global import aliases for this mapping file.
+// These can be overridden or augmented by specific converter definitions.
+option "imports" = {
+	"models": "example.com/convert/models",
+	"stdtime": "time", // Alias for standard time package
+	"customfmt": "example.com/convert/util/formatter", // Example custom package
+}
 
-// Convert SrcUser to DstUser
-// The 'convert' keyword indicates a mapping.
-// The function signature shows that context is passed.
-convert ConvertUser(ctx context.Context, src models.SrcUser) models.DstUser {
-	dst models.DstUser
+// --- Conversion Rule Definitions ---
 
-	// Direct mapping with potential type conversion
-	dst.UserID = fmt.Sprintf("user-%d", src.ID) // int64 to string with formatting
+// Rule for converting SrcUser to DstUser
+// 'convert' keyword indicates a mapping between two types.
+// The generator would use go-scan to get details for models.SrcUser and models.DstUser.
+convert models.SrcUser to models.DstUser {
+	// Field mappings:
+	// LHS: DstUser field, RHS: Expression using 'src' (instance of SrcUser)
 
-	// Combining fields
-	dst.FullName = src.FirstName + " " + src.LastName
-
-	// Embedded struct mapping (explicitly call sub-converter)
-	// The generator would understand to call srcAddressToDstAddress
-	dst.Address = convertSrcAddressToDstAddress(ctx, src.SrcAddress)
-
-	// Nested struct mapping (explicitly call sub-converter)
-	// The generator would understand to call srcContactToDstContact
-	dst.Contact = convertSrcContactToDstContact(ctx, src.ContactInfo)
-
-	// Slice mapping with element conversion
-	// The generator would understand to call srcInternalDetailToDstInternalDetail for each element
-	dst.Details = make([]models.DstInternalDetail, len(src.Details))
-	for i, sDetail := range src.Details {
-		dst.Details[i] = convertSrcInternalDetailToDstInternalDetail(ctx, sDetail)
+	UserID: fmt.Sprintf("user-%d", src.ID)                               // Type change (int64 to string) and formatting
+	FullName: src.FirstName + " " + src.LastName                         // Combining fields
+	Address: convertTo(models.DstAddress, src.SrcAddress)                 // Delegate to another converter for embedded/nested struct
+	Contact: convertTo(models.DstContact, src.ContactInfo)                // Delegate for nested struct
+	Details: mapSlice(src.Details, models.DstInternalDetail)              // Delegate for slice elements
+	CreatedAt: src.CreatedAt.Format(stdtime.RFC3339)                      // Type change (time.Time to string)
+	UpdatedAt: {                                                          // Block for more complex logic (e.g. pointer handling)
+		if src.UpdatedAt != nil {
+			return src.UpdatedAt.Format(stdtime.RFC3339)
+		}
+		return ""
 	}
 
-	// Time to string conversion (custom logic or built-in)
-	dst.CreatedAt = src.CreatedAt.Format(time.RFC3339)
-	if src.UpdatedAt != nil {
-		dst.UpdatedAt = src.UpdatedAt.Format(time.RFC3339)
-	} else {
-		dst.UpdatedAt = "" // Handle nil pointer
+	// Implicit mappings:
+	// If a field in DstUser has the same name (after normalization) and compatible type
+	// as a field in SrcUser, the generator could map it automatically.
+	// This DSL could have an option to enable/disable or configure auto-mapping.
+	// option "autoMap" = true (default)
+}
+
+// Rule for converting SrcAddress to DstAddress (likely unexported helper)
+convert models.SrcAddress to models.DstAddress {
+	FullStreet: src.Street          // Renaming: Street -> FullStreet
+	CityName: src.City              // Renaming: City -> CityName
+}
+
+// Rule for converting SrcContact to DstContact (likely unexported helper)
+convert models.SrcContact to models.DstContact {
+	EmailAddress: src.Email         // Renaming
+	PhoneNumber: {
+		if src.Phone != nil {
+			return *src.Phone
+		}
+		return "N/A"
 	}
-	return dst
 }
 
-// Convert SrcAddress to DstAddress (unexported by default as it's not topLevel)
-convert srcAddressToDstAddress(ctx context.Context, src models.SrcAddress) models.DstAddress {
-	dst models.DstAddress
-	dst.FullStreet = src.Street // Example of renaming
-	dst.CityName = src.City     // Example of renaming
-	return dst
+// Rule for converting SrcInternalDetail to DstInternalDetail
+// This demonstrates calling an "external" Go function for part of the logic.
+convert models.SrcInternalDetail to models.DstInternalDetail {
+	ItemCode: src.Code              // Renaming
+	LocalizedDesc: call("github.com/podhmo/go-scan/examples/convert/converter.translateDescription", ctx, src.Description, "jp")
+	// The 'call' keyword would instruct the generator to produce a Go function call.
+	// The generator would need to ensure 'translateDescription' is accessible and manage imports.
+	// 'ctx' is assumed to be available in the generated converter's scope.
 }
 
-// Convert SrcContact to DstContact (unexported)
-convert srcContactToDstContact(ctx context.Context, src models.SrcContact) models.DstContact {
-	dst models.DstContact
-	dst.EmailAddress = src.Email
-	if src.Phone != nil {
-		dst.PhoneNumber = *src.Phone // Pointer to value
-	} else {
-		dst.PhoneNumber = "N/A" // Handle nil pointer
-	}
-	return dst
+// Rule for SrcOrder to DstOrder
+convert models.SrcOrder to models.DstOrder {
+	ID: src.OrderID
+	TotalAmount: src.Amount
+	LineItems: mapSlice(src.Items, models.DstItem) // mapSlice implies converting each element
 }
 
-// Convert SrcInternalDetail to DstInternalDetail (unexported)
-// This demonstrates a placeholder for more complex internal processing.
-convert srcInternalDetailToDstInternalDetail(ctx context.Context, src models.SrcInternalDetail) models.DstInternalDetail {
-	dst models.DstInternalDetail
-	dst.ItemCode = src.Code
-
-	// Placeholder for internal processing, e.g., translation
-	// In a real scenario, this might call a service or another function.
-	// For this example, we'll simulate it.
-	// Assume translateDescription is a helper function available in the generation scope.
-	dst.LocalizedDesc = translateDescription(ctx, src.Description, "jp")
-
-	return dst
-}
-
-// --- Order Conversion ---
-
-// Convert SrcOrder to DstOrder
-convert ConvertOrder(ctx context.Context, src models.SrcOrder) models.DstOrder {
-	dst models.DstOrder
-	dst.ID = src.OrderID
-	dst.TotalAmount = src.Amount
-
-	dst.LineItems = make([]models.DstItem, len(src.Items))
-	for i, sItem := range src.Items {
-		dst.LineItems[i] = convertSrcItemToDstItem(ctx, sItem)
-	}
-	return dst
-}
-
-// Convert SrcItem to DstItem (unexported)
-convert srcSrcItemToDstItem(ctx context.Context, src models.SrcItem) models.DstItem {
-	dst models.DstItem
-	dst.ProductCode = src.SKU
-	dst.Count = src.Quantity
-	return dst
+// Rule for SrcItem to DstItem
+convert models.SrcItem to models.DstItem {
+	ProductCode: src.SKU
+	Count: src.Quantity
 }
 
 
-// --- Helper functions (conceptual) ---
-// These would be functions that the generated code could call.
-// Their actual implementation would be provided by the user or another library.
+// --- Potentially, define reusable conversion functions within the DSL itself ---
+// These could be translated into actual Go helper functions by the generator.
 
-func translateDescription(ctx context.Context, text string, targetLang string) string {
-	// In a real application, this would call a translation service.
-	// This is a mock implementation.
-	if targetLang == "jp" {
-		return "翻訳済み: " + text
-	}
-	return text
+func StringToInt(s string) (int, error) {
+	// This is minigo-like Go code that the generator would parse
+	// and either embed or create as a Go function.
+	// import "strconv" // Generator would need to track imports for this block
+	// return strconv.Atoi(s)
+	// For now, this is highly conceptual for this DSL.
+	// The 'call' mechanism for existing Go functions is more practical initially.
 }
+
+// --- Advanced Concepts (Future Ideas for DSL) ---
+
+// Conditional mapping:
+// convert A to B {
+//   FieldX: if src.Type == "TypeA" { return src.ValueA } else { return src.ValueB }
+// }
+
+// Ignoring fields:
+// convert A to B {
+//   ignore FieldZ // DstUser.FieldZ will not be mapped
+//   ignore src.OldField // SrcUser.OldField will not be used for auto-mapping
+// }
+
+// Custom mapping functions defined inline (very complex for a simple DSL):
+// convert A to B {
+//   ComplexField: func(s A) string {
+//     // minigo code for transformation
+//     return "complex_value_from_" + s.SomeProperty
+//   }(src)
+// }

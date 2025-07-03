@@ -1,0 +1,131 @@
+// This is a conceptual file demonstrating a minigo-like syntax for go-scan.
+// The actual syntax and capabilities would depend on the go-scan library.
+
+package converter
+
+import (
+	"example.com/convert/models"
+	"context"
+	"fmt"
+	"strings"
+	"time"
+)
+
+// Configuration for the converter generator
+// topLevel defines which types get exported converters.
+// Other types will have unexported converters by default.
+option "topLevel" = [
+	models.DstUser{},
+	models.DstOrder{},
+]
+
+// --- User Conversion ---
+
+// Convert SrcUser to DstUser
+// The 'convert' keyword indicates a mapping.
+// The function signature shows that context is passed.
+convert ConvertUser(ctx context.Context, src models.SrcUser) models.DstUser {
+	dst models.DstUser
+
+	// Direct mapping with potential type conversion
+	dst.UserID = fmt.Sprintf("user-%d", src.ID) // int64 to string with formatting
+
+	// Combining fields
+	dst.FullName = src.FirstName + " " + src.LastName
+
+	// Embedded struct mapping (explicitly call sub-converter)
+	// The generator would understand to call srcAddressToDstAddress
+	dst.Address = convertSrcAddressToDstAddress(ctx, src.SrcAddress)
+
+	// Nested struct mapping (explicitly call sub-converter)
+	// The generator would understand to call srcContactToDstContact
+	dst.Contact = convertSrcContactToDstContact(ctx, src.ContactInfo)
+
+	// Slice mapping with element conversion
+	// The generator would understand to call srcInternalDetailToDstInternalDetail for each element
+	dst.Details = make([]models.DstInternalDetail, len(src.Details))
+	for i, sDetail := range src.Details {
+		dst.Details[i] = convertSrcInternalDetailToDstInternalDetail(ctx, sDetail)
+	}
+
+	// Time to string conversion (custom logic or built-in)
+	dst.CreatedAt = src.CreatedAt.Format(time.RFC3339)
+	if src.UpdatedAt != nil {
+		dst.UpdatedAt = src.UpdatedAt.Format(time.RFC3339)
+	} else {
+		dst.UpdatedAt = "" // Handle nil pointer
+	}
+	return dst
+}
+
+// Convert SrcAddress to DstAddress (unexported by default as it's not topLevel)
+convert srcAddressToDstAddress(ctx context.Context, src models.SrcAddress) models.DstAddress {
+	dst models.DstAddress
+	dst.FullStreet = src.Street // Example of renaming
+	dst.CityName = src.City     // Example of renaming
+	return dst
+}
+
+// Convert SrcContact to DstContact (unexported)
+convert srcContactToDstContact(ctx context.Context, src models.SrcContact) models.DstContact {
+	dst models.DstContact
+	dst.EmailAddress = src.Email
+	if src.Phone != nil {
+		dst.PhoneNumber = *src.Phone // Pointer to value
+	} else {
+		dst.PhoneNumber = "N/A" // Handle nil pointer
+	}
+	return dst
+}
+
+// Convert SrcInternalDetail to DstInternalDetail (unexported)
+// This demonstrates a placeholder for more complex internal processing.
+convert srcInternalDetailToDstInternalDetail(ctx context.Context, src models.SrcInternalDetail) models.DstInternalDetail {
+	dst models.DstInternalDetail
+	dst.ItemCode = src.Code
+
+	// Placeholder for internal processing, e.g., translation
+	// In a real scenario, this might call a service or another function.
+	// For this example, we'll simulate it.
+	// Assume translateDescription is a helper function available in the generation scope.
+	dst.LocalizedDesc = translateDescription(ctx, src.Description, "jp")
+
+	return dst
+}
+
+// --- Order Conversion ---
+
+// Convert SrcOrder to DstOrder
+convert ConvertOrder(ctx context.Context, src models.SrcOrder) models.DstOrder {
+	dst models.DstOrder
+	dst.ID = src.OrderID
+	dst.TotalAmount = src.Amount
+
+	dst.LineItems = make([]models.DstItem, len(src.Items))
+	for i, sItem := range src.Items {
+		dst.LineItems[i] = convertSrcItemToDstItem(ctx, sItem)
+	}
+	return dst
+}
+
+// Convert SrcItem to DstItem (unexported)
+convert srcSrcItemToDstItem(ctx context.Context, src models.SrcItem) models.DstItem {
+	dst models.DstItem
+	dst.ProductCode = src.SKU
+	dst.Count = src.Quantity
+	return dst
+}
+
+
+// --- Helper functions (conceptual) ---
+// These would be functions that the generated code could call.
+// Their actual implementation would be provided by the user or another library.
+
+func translateDescription(ctx context.Context, text string, targetLang string) string {
+	// In a real application, this would call a translation service.
+	// This is a mock implementation.
+	if targetLang == "jp" {
+		return "翻訳済み: " + text
+	}
+	return text
+}

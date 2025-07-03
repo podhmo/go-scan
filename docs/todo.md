@@ -1,4 +1,3 @@
-```markdown
 # TODO List for go-scan
 
 This document outlines the current status, planned features, and areas for improvement for the `go-scan` library. It is based on analysis of the existing codebase, README, and specific use-case documents.
@@ -107,4 +106,3 @@ This `todo.md` will focus on the more immediate and concrete enhancements listed
 -   **Scanning and Resolution of External Dependencies:**
     -   The current `ExternalTypeOverride` mechanism allows treating external types as other Go types. A more advanced (and potentially optional) feature would be to fully scan and resolve types from external dependencies (via `go.mod`).
     -   *This is a significant feature, with performance and complexity implications, further explored in [./dream2.md](./dream2.md).*
-```

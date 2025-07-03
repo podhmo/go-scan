@@ -145,8 +145,9 @@ type UserDefinedFunction struct {
 	Name       string // Simple name of the function
 	Parameters []*ast.Ident
 	Body       *ast.BlockStmt
-	Env        *Environment   // Closure: the environment where the function was defined
-	FileSet    *token.FileSet // FileSet for error reporting context
+	Env            *Environment   // Closure: the environment where the function was defined
+	FileSet        *token.FileSet // FileSet for error reporting context
+	ParamTypeExprs []ast.Expr     // AST expressions for parameter types
 
 	// Fields for external functions
 	IsExternal   bool   // True if this definition came from an imported package

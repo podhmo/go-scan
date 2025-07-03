@@ -39,9 +39,11 @@ func ConvertUser(ctx context.Context, src models.SrcUser) models.DstUser {
 	dst.FullName = src.FirstName + " " + src.LastName
 
 	// Address: Embedded struct conversion (calls unexported converter)
+	// SrcUser embeds SrcAddress, DstUser has Address DstAddress
 	dst.Address = srcAddressToDstAddress(ctx, src.SrcAddress)
 
 	// Contact: Nested struct conversion (calls unexported converter)
+	// SrcUser has ContactInfo SrcContact, DstUser has Contact DstContact
 	dst.Contact = srcContactToDstContact(ctx, src.ContactInfo)
 
 	// Details: Slice of structs conversion (calls unexported converter for elements)
@@ -70,8 +72,8 @@ func ConvertUser(ctx context.Context, src models.SrcUser) models.DstUser {
 // but rather a component of DstUser.
 func srcAddressToDstAddress(ctx context.Context, src models.SrcAddress) models.DstAddress {
 	return models.DstAddress{
-		FullStreet: src.Street, // Renamed
-		CityName:   src.City,   // Renamed
+		FullStreet: src.Street, // Renamed: Street -> FullStreet
+		CityName:   src.City,   // Renamed: City -> CityName
 	}
 }
 
@@ -79,7 +81,7 @@ func srcAddressToDstAddress(ctx context.Context, src models.SrcAddress) models.D
 // This function is UNEXPORTED.
 func srcContactToDstContact(ctx context.Context, src models.SrcContact) models.DstContact {
 	dst := models.DstContact{
-		EmailAddress: src.Email, // Renamed
+		EmailAddress: src.Email, // Renamed: Email -> EmailAddress
 	}
 	if src.Phone != nil {
 		dst.PhoneNumber = *src.Phone // Pointer to value
@@ -96,8 +98,8 @@ func srcInternalDetailToDstInternalDetail(ctx context.Context, src models.SrcInt
 	localizedDescription := translateDescription(ctx, src.Description, "jp")
 
 	return models.DstInternalDetail{
-		ItemCode:        src.Code,               // Renamed
-		LocalizedDesc: localizedDescription, // Processed and renamed
+		ItemCode:        src.Code,               // Renamed: Code -> ItemCode
+		LocalizedDesc: localizedDescription, // Processed and Renamed: Description -> LocalizedDesc
 	}
 }
 
@@ -111,8 +113,8 @@ func ConvertOrder(ctx context.Context, src models.SrcOrder) models.DstOrder {
 	}
 
 	dst := models.DstOrder{
-		ID:          src.OrderID,
-		TotalAmount: src.Amount,
+		ID:          src.OrderID, // Renamed: OrderID -> ID
+		TotalAmount: src.Amount,  // Renamed: Amount -> TotalAmount
 	}
 
 	if src.Items != nil {
@@ -128,15 +130,7 @@ func ConvertOrder(ctx context.Context, src models.SrcOrder) models.DstOrder {
 // This function is UNEXPORTED.
 func srcItemToDstItem(ctx context.Context, src models.SrcItem) models.DstItem {
 	return models.DstItem{
-		ProductCode: src.SKU,    // Renamed
-		Count:       src.Quantity, // Renamed
+		ProductCode: src.SKU,      // Renamed: SKU -> ProductCode
+		Count:       src.Quantity, // Renamed: Quantity -> Count
 	}
 }
-
-// Example of a function that might be generated or defined if SrcUser itself
-// needed to be converted from another type, perhaps with different rules.
-// For now, this is just to show how one might organize multiple converters.
-// func ConvertLegacyUserToSrcUser(ctx context.Context, legacy LegacyUser) models.SrcUser {
-//    // ... conversion logic ...
-//    return models.SrcUser{}
-//}

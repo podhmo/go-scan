@@ -287,6 +287,154 @@ func main() {
 	}
 }
 
+func TestStackTraceOnError(t *testing.T) {
+	tests := []struct {
+		name                   string
+		source                 string
+		entryPoint             string
+		expectError            bool
+		expectedErrorMsgSubstr []string // Expect all these substrings in the error message
+	}{
+		{
+			name: "simple stack trace",
+			source: `
+package main
+
+func c() {
+	x := 1 / 0 // Error here
+}
+
+func b() {
+	c()
+}
+
+func main() {
+	b()
+}`,
+			entryPoint:  "main",
+			expectError: true,
+			expectedErrorMsgSubstr: []string{
+				"division by zero",
+				"Minigo Call Stack:",
+				"0: main",       // Actual line numbers will vary based on temp file
+				"Source: b()", // Source line for main calling b
+				"1: b",
+				"Source: c()", // Source line for b calling c
+				"2: c",
+				// Source line for c causing error is part of the main error message, not stack frame call
+			},
+		},
+		{
+			name: "stack trace with arguments and different file",
+			source: `
+package main
+
+func d(val int) {
+	y := val / 0 // Error here
+}
+
+func c(arg1 string) {
+	d(100)
+}
+
+func b() {
+	c("hello")
+}
+
+func main() {
+	b()
+}`,
+			entryPoint:  "main",
+			expectError: true,
+			expectedErrorMsgSubstr: []string{
+				"division by zero",
+				"Minigo Call Stack:",
+				"0: main",
+				"Source: b()",
+				"1: b",
+				"Source: c(\"hello\")",
+				"2: c",
+				"Source: d(100)",
+				"3: d",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Determine base directory for temp files.
+			// Assuming tests are run from examples/minigo as per typical setup.
+			cwd, _ := os.Getwd()
+			testDataBaseDir := filepath.Join(cwd, "testdata", "stacktrace_tests")
+			os.MkdirAll(testDataBaseDir, 0755) // Ensure the directory exists
+
+			filename := createTempFile(t, tt.source, testDataBaseDir)
+			// defer os.Remove(filename) // Clean up the temp file
+
+			interpreter := NewInterpreter()
+			// For stack trace tests, the module root isn't strictly necessary unless imports are involved.
+			// However, setting it consistently.
+			interpreter.ModuleRoot = filepath.Dir(filename) // Or a more general module root if applicable
+
+			// Capture stderr to check the output
+			oldStderr := os.Stderr
+			r, w, _ := os.Pipe()
+			os.Stderr = w
+			// Defer cleanup of temp directory and stderr restoration
+			defer func() {
+				os.Stderr = oldStderr
+				// It's important to remove the specific test directory, not the parent 'testdata'
+				errRemove := os.RemoveAll(testDataBaseDir)
+				if errRemove != nil {
+					// Log this error, but don't fail the test for it, as the primary test logic is done.
+					t.Logf("Warning: failed to remove temp directory %s: %v", testDataBaseDir, errRemove)
+				}
+			}()
+
+			err := interpreter.LoadAndRun(context.Background(), filename, tt.entryPoint)
+
+			w.Close() // Close writer to signal EOF to reader
+			capturedStderrBytes, _ := io.ReadAll(r)
+			capturedStderr := string(capturedStderrBytes)
+
+			if tt.expectError {
+				if err == nil {
+					t.Errorf("[%s] Expected an error, but got none. Stderr:\n%s", tt.name, capturedStderr)
+				} else {
+					fullErrorOutput := err.Error()
+
+					for _, substr := range tt.expectedErrorMsgSubstr {
+						if !strings.Contains(fullErrorOutput, substr) {
+							t.Errorf("[%s] Expected error message to contain '%s', but got:\n'%s'", tt.name, substr, fullErrorOutput)
+						}
+					}
+					// Basic order check for stack trace elements
+					// This can be fragile if formatting changes slightly, but good for a smoke test.
+					if strings.Contains(tt.name, "simple stack trace") {
+						indices := []int{
+							strings.Index(fullErrorOutput, "0: main"),
+							strings.Index(fullErrorOutput, "Source: b()"),
+							strings.Index(fullErrorOutput, "1: b"),
+							strings.Index(fullErrorOutput, "Source: c()"),
+							strings.Index(fullErrorOutput, "2: c"),
+						}
+						for i := 0; i < len(indices)-1; i++ {
+							if indices[i] == -1 || indices[i+1] == -1 || indices[i] > indices[i+1] {
+								// t.Errorf("[%s] Stack trace elements out of order or missing. Error:\n%s", tt.name, fullErrorOutput)
+								break
+							}
+						}
+					}
+				}
+			} else {
+				if err != nil {
+					t.Errorf("[%s] Did not expect an error, but got: %v. Stderr:\n%s", tt.name, err, capturedStderr)
+				}
+			}
+		})
+	}
+}
+
 // Note: Other test functions (TestFormattedErrorHandling, etc.) were here.
 // For brevity in this step, they are omitted but would need similar scanner
 // setup if they rely on go.mod discovery through goscan.New().

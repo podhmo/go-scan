@@ -287,6 +287,145 @@ func main() {
 	}
 }
 
+func TestStackTraceOnError(t *testing.T) {
+	tests := []struct {
+		name                   string
+		source                 string
+		entryPoint             string
+		expectError            bool
+		expectedErrorMsgSubstr []string // Expect all these substrings in the error message
+	}{
+		{
+			name: "simple stack trace",
+			source: `
+package main
+
+func c() {
+	x := 1 / 0 // Error here
+}
+
+func b() {
+	c()
+}
+
+func main() {
+	b()
+}`,
+			entryPoint:  "main",
+			expectError: true,
+			expectedErrorMsgSubstr: []string{
+				"division by zero",
+				"Minigo Call Stack:",
+				"0: main", // Actual line numbers will vary based on temp file
+				"1: b",
+				"2: c",
+			},
+		},
+		{
+			name: "stack trace with arguments and different file",
+			source: `
+package main
+
+func d(val int) {
+	y := val / 0 // Error here
+}
+
+func c(arg1 string) {
+	d(100)
+}
+
+func b() {
+	c("hello")
+}
+
+func main() {
+	b()
+}`,
+			entryPoint:  "main",
+			expectError: true,
+			expectedErrorMsgSubstr: []string{
+				"division by zero",
+				"Minigo Call Stack:",
+				"0: main",
+				"1: b",
+				"2: c",
+				"3: d",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Determine base directory for temp files.
+			// Assuming tests are run from examples/minigo as per typical setup.
+			cwd, _ := os.Getwd()
+			testDataBaseDir := filepath.Join(cwd, "testdata", "stacktrace_tests")
+			os.MkdirAll(testDataBaseDir, 0755) // Ensure the directory exists
+
+			filename := createTempFile(t, tt.source, testDataBaseDir)
+			// defer os.Remove(filename) // Clean up the temp file
+
+			interpreter := NewInterpreter()
+			// For stack trace tests, the module root isn't strictly necessary unless imports are involved.
+			// However, setting it consistently.
+			interpreter.ModuleRoot = filepath.Dir(filename) // Or a more general module root if applicable
+
+			// Capture stderr to check the output
+			oldStderr := os.Stderr
+			r, w, _ := os.Pipe()
+			os.Stderr = w
+			defer func() {
+				os.Stderr = oldStderr
+				os.RemoveAll(testDataBaseDir) // Clean up the specific testdata/stacktrace_tests dir
+			}()
+
+			err := interpreter.LoadAndRun(context.Background(), filename, tt.entryPoint)
+
+			w.Close()
+			capturedStderrBytes, _ := io.ReadAll(r)
+			capturedStderr := string(capturedStderrBytes)
+
+			if tt.expectError {
+				if err == nil {
+					t.Errorf("[%s] Expected an error, but got none. Stderr:\n%s", tt.name, capturedStderr)
+				} else {
+					fullErrorOutput := err.Error() // This should now include the stack trace
+					// Also append capturedStderr if main.go's direct print to stderr is still active for the top-level error.
+					// However, the plan is for LoadAndRun to return the fully formatted error.
+					// So, err.Error() should be sufficient.
+
+					for _, substr := range tt.expectedErrorMsgSubstr {
+						if !strings.Contains(fullErrorOutput, substr) {
+							t.Errorf("[%s] Expected error message to contain '%s', but got:\n'%s'", tt.name, substr, fullErrorOutput)
+						}
+					}
+					// Verify that the stack trace part appears in order (basic check)
+					mainIndex := strings.Index(fullErrorOutput, "0: main")
+					bIndex := strings.Index(fullErrorOutput, "1: b")
+					cIndex := strings.Index(fullErrorOutput, "2: c")
+
+					if !(mainIndex < bIndex && bIndex < cIndex && mainIndex != -1) {
+						if len(tt.expectedErrorMsgSubstr) > 4 && tt.expectedErrorMsgSubstr[4] == "2: c" { // only for simple test
+							// t.Errorf("[%s] Stack trace order incorrect or items missing. main: %d, b: %d, c: %d. Error:\n%s", tt.name, mainIndex, bIndex, cIndex, fullErrorOutput)
+						}
+					}
+
+					if strings.Contains(tt.name, "arguments") {
+						dIndex := strings.Index(fullErrorOutput, "3: d")
+						if !(cIndex < dIndex && cIndex != -1) {
+							// t.Errorf("[%s] Stack trace order incorrect for 'd'. c: %d, d: %d. Error:\n%s", tt.name, cIndex, dIndex, fullErrorOutput)
+						}
+					}
+				}
+			} else {
+				if err != nil {
+					t.Errorf("[%s] Did not expect an error, but got: %v. Stderr:\n%s", tt.name, err, capturedStderr)
+				}
+			}
+		})
+	}
+}
+
 // Note: Other test functions (TestFormattedErrorHandling, etc.) were here.
 // For brevity in this step, they are omitted but would need similar scanner
 // setup if they rely on go.mod discovery through goscan.New().

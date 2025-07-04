@@ -18,8 +18,10 @@ import (
 	"github.com/podhmo/go-scan/scanner" // Import the scanner package
 )
 
-// formatErrorWithContext creates a detailed error message including file, line, column, and source code.
-func formatErrorWithContext(fset *token.FileSet, pos token.Pos, originalErr error, customMsg string) error {
+// formatErrorWithContext creates a detailed error message including file, line, column, source code, and call stack.
+func (i *Interpreter) formatErrorWithContext(fset *token.FileSet, pos token.Pos, originalErr error, customMsg string) error {
+	var errorBuilder strings.Builder
+
 	baseErrMsg := ""
 	if originalErr != nil {
 		baseErrMsg = originalErr.Error()
@@ -28,56 +30,82 @@ func formatErrorWithContext(fset *token.FileSet, pos token.Pos, originalErr erro
 	if pos == token.NoPos {
 		if customMsg != "" {
 			if originalErr != nil {
-				return fmt.Errorf("%s: %w", customMsg, originalErr)
+				errorBuilder.WriteString(fmt.Sprintf("%s: %s", customMsg, baseErrMsg))
+			} else {
+				errorBuilder.WriteString(customMsg)
 			}
-			return errors.New(customMsg)
-		}
-		if originalErr != nil { // Return original error if no custom message and no pos
-			return originalErr
-		}
-		return errors.New("unknown error") // Should not happen if originalErr is always provided
-	}
-
-	position := fset.Position(pos)
-	filename := position.Filename
-	line := position.Line
-	column := position.Column
-
-	var sourceLine string
-	file, err := os.Open(filename)
-	if err == nil {
-		defer file.Close()
-		scanner := bufio.NewScanner(file)
-		for i := 1; scanner.Scan(); i++ {
-			if i == line {
-				sourceLine = strings.TrimSpace(scanner.Text())
-				break
-			}
-		}
-		if err := scanner.Err(); err != nil {
-			sourceLine = fmt.Sprintf("[Error reading source line: %v]", err)
+		} else if originalErr != nil {
+			errorBuilder.WriteString(baseErrMsg)
+		} else {
+			errorBuilder.WriteString("unknown error")
 		}
 	} else {
-		sourceLine = fmt.Sprintf("[Error opening source file: %v]", err)
-	}
+		position := fset.Position(pos)
+		filename := position.Filename
+		line := position.Line
+		column := position.Column
 
-	detailMsg := fmt.Sprintf("Error in %s at line %d, column %d", filename, line, column)
-	if customMsg != "" {
-		detailMsg = fmt.Sprintf("%s: %s", customMsg, detailMsg)
-	}
-
-	if sourceLine != "" {
-		if baseErrMsg != "" {
-			return fmt.Errorf("%s\n  Source: %s\n  Details: %s", detailMsg, sourceLine, baseErrMsg)
+		var sourceLine string
+		file, err := os.Open(filename)
+		if err == nil {
+			defer file.Close()
+			scanner := bufio.NewScanner(file)
+			for scancount := 1; scanner.Scan(); scancount++ {
+				if scancount == line {
+					sourceLine = strings.TrimSpace(scanner.Text())
+					break
+				}
+			}
+			if err := scanner.Err(); err != nil {
+				sourceLine = fmt.Sprintf("[Error reading source line: %v]", err)
+			}
+		} else {
+			sourceLine = fmt.Sprintf("[Error opening source file: %v]", err)
 		}
-		return fmt.Errorf("%s\n  Source: %s", detailMsg, sourceLine)
+
+		detailMsg := fmt.Sprintf("Error in %s at line %d, column %d", filename, line, column)
+		if customMsg != "" {
+			detailMsg = fmt.Sprintf("%s: %s", customMsg, detailMsg)
+		}
+		errorBuilder.WriteString(detailMsg)
+
+		if sourceLine != "" {
+			errorBuilder.WriteString(fmt.Sprintf("\n  Source: %s", sourceLine))
+		}
+		if baseErrMsg != "" {
+			errorBuilder.WriteString(fmt.Sprintf("\n  Details: %s", baseErrMsg))
+		}
 	}
 
-	if baseErrMsg != "" {
-		return fmt.Errorf("%s\n  Details: %s", detailMsg, baseErrMsg)
+	// Add minigo call stack
+	if len(i.callStack) > 0 {
+		errorBuilder.WriteString("\nMinigo Call Stack:")
+		for idx, frame := range i.callStack {
+			framePositionStr := ""
+			if frame.callPosition.IsValid() {
+				framePositionStr = fmt.Sprintf(" (called at %s:%d:%d)", filepath.Base(frame.callPosition.Filename), frame.callPosition.Line, frame.callPosition.Column)
+			}
+			errorBuilder.WriteString(fmt.Sprintf("\n  %d: %s%s", idx, frame.functionName, framePositionStr))
+		}
 	}
-	return fmt.Errorf("%s", detailMsg) // Use %s to treat detailMsg as a string literal
+
+	// Check if originalErr already contains the formatted error message.
+	// This can happen if formatErrorWithContext is called multiple times.
+	// If so, just return originalErr.
+	// This is a simple check; more robust detection might be needed.
+	if originalErr != nil && strings.Contains(originalErr.Error(), "Minigo Call Stack:") {
+		return originalErr
+	}
+
+	if originalErr != nil {
+		// Wrap the original error to preserve its type if needed, while adding the context.
+		// However, since we are building a new string, we create a new error.
+		// If originalErr is of a special type that needs to be preserved, this approach might need adjustment.
+		return errors.New(errorBuilder.String())
+	}
+	return errors.New(errorBuilder.String())
 }
+
 
 // parseInt64 is a helper function to parse a string to an int64.
 // It's defined here to keep the main eval function cleaner.
@@ -87,7 +115,7 @@ func parseInt64(s string) (int64, error) {
 
 // astNodeToString converts an AST node to its string representation.
 // This is a helper for error messages. It's not exhaustive.
-func astNodeToString(node ast.Node, fset *token.FileSet) string {
+func (i *Interpreter) astNodeToString(node ast.Node, fset *token.FileSet) string {
 	// This is a simplified version. For more complex nodes, you might need
 	// to use format.Node from go/format, but that requires an io.Writer.
 	// For simple identifiers or selectors, this should suffice.
@@ -95,7 +123,7 @@ func astNodeToString(node ast.Node, fset *token.FileSet) string {
 	case *ast.Ident:
 		return n.Name
 	case *ast.SelectorExpr:
-		return astNodeToString(n.X, fset) + "." + n.Sel.Name
+		return i.astNodeToString(n.X, fset) + "." + n.Sel.Name
 	// Add other cases as needed
 	default:
 		if fset != nil && node != nil && node.Pos() != token.NoPos && node.End() != token.NoPos {
@@ -124,6 +152,13 @@ type Interpreter struct {
 	ModuleRoot     string          // Optional: Explicitly set module root directory for scanner initialization.
 
 	activeFileSet *token.FileSet // FileSet currently active for evaluation context
+	callStack     []*callStackFrame // For minigo call stack trace
+}
+
+// callStackFrame stores information about a single function call.
+type callStackFrame struct {
+	functionName string
+	callPosition token.Position // Position where the function was called
 }
 
 func NewInterpreter() *Interpreter {
@@ -163,7 +198,7 @@ func (i *Interpreter) LoadAndRun(ctx context.Context, filename string, entryPoin
 	i.FileSet = token.NewFileSet() // Initialize a new FileSet for the main script
 	mainFileAst, err := parser.ParseFile(i.FileSet, absFilePath, nil, parser.ParseComments)
 	if err != nil {
-		// We don't have a specific token.Pos here for formatErrorWithContext if ParseFile itself fails.
+		// We don't have a specific token.Pos here for i.formatErrorWithContext if ParseFile itself fails.
 		// However, parser.ParseFile usually returns an error that includes position info.
 		// For simplicity, wrap the error.
 		return fmt.Errorf("error parsing main script file %s: %w", filename, err)
@@ -182,7 +217,7 @@ func (i *Interpreter) LoadAndRun(ctx context.Context, filename string, entryPoin
 		}
 		defaultSharedScanner, errSharedGs := goscan.New(scanPathForShared)
 		if errSharedGs != nil {
-			return formatErrorWithContext(i.FileSet, token.NoPos, errSharedGs, fmt.Sprintf("Failed to create default shared go-scan scanner (path: %s): %v", scanPathForShared, errSharedGs))
+			return i.formatErrorWithContext(i.FileSet, token.NoPos, errSharedGs, fmt.Sprintf("Failed to create default shared go-scan scanner (path: %s): %v", scanPathForShared, errSharedGs))
 		}
 		i.sharedScanner = defaultSharedScanner
 	}
@@ -204,7 +239,7 @@ func (i *Interpreter) LoadAndRun(ctx context.Context, filename string, entryPoin
 			}
 			importPath, err := strconv.Unquote(impSpec.Path.Value)
 			if err != nil {
-				return formatErrorWithContext(i.FileSet, impSpec.Path.Pos(), err, fmt.Sprintf("Invalid import path: %s", impSpec.Path.Value))
+				return i.formatErrorWithContext(i.FileSet, impSpec.Path.Pos(), err, fmt.Sprintf("Invalid import path: %s", impSpec.Path.Value))
 			}
 
 			localName := ""
@@ -215,14 +250,14 @@ func (i *Interpreter) LoadAndRun(ctx context.Context, filename string, entryPoin
 					continue
 				}
 				if localName == "." {
-					return formatErrorWithContext(i.FileSet, impSpec.Name.Pos(), errors.New("dot imports are not supported"), "")
+					return i.formatErrorWithContext(i.FileSet, impSpec.Name.Pos(), errors.New("dot imports are not supported"), "")
 				}
 			} else {
 				localName = filepath.Base(importPath)
 			}
 
 			if existingPath, ok := i.importAliasMap[localName]; ok && existingPath != importPath {
-				return formatErrorWithContext(i.FileSet, impSpec.Pos(), fmt.Errorf("import alias/name %q already used for %q, cannot reuse for %q", localName, existingPath, importPath), "")
+				return i.formatErrorWithContext(i.FileSet, impSpec.Pos(), fmt.Errorf("import alias/name %q already used for %q, cannot reuse for %q", localName, existingPath, importPath), "")
 			}
 			i.importAliasMap[localName] = importPath
 		}
@@ -238,7 +273,7 @@ func (i *Interpreter) LoadAndRun(ctx context.Context, filename string, entryPoin
 			_, evalErr := i.eval(ctx, tempDeclStmt, i.globalEnv)
 			if evalErr != nil {
 				// Pass genDecl.Pos() for better error location
-				return formatErrorWithContext(i.FileSet, genDecl.Pos(), evalErr, "Error evaluating type declaration in main script")
+				return i.formatErrorWithContext(i.FileSet, genDecl.Pos(), evalErr, "Error evaluating type declaration in main script")
 			}
 		}
 	}
@@ -248,7 +283,7 @@ func (i *Interpreter) LoadAndRun(ctx context.Context, filename string, entryPoin
 		if fnDecl, ok := declNode.(*ast.FuncDecl); ok {
 			_, evalErr := i.evalFuncDecl(ctx, fnDecl, i.globalEnv) // evalFuncDecl takes *ast.FuncDecl
 			if evalErr != nil {
-				return formatErrorWithContext(i.FileSet, fnDecl.Pos(), evalErr, fmt.Sprintf("Error evaluating function declaration %s in main script", fnDecl.Name.Name))
+				return i.formatErrorWithContext(i.FileSet, fnDecl.Pos(), evalErr, fmt.Sprintf("Error evaluating function declaration %s in main script", fnDecl.Name.Name))
 			}
 		}
 	}
@@ -259,7 +294,7 @@ func (i *Interpreter) LoadAndRun(ctx context.Context, filename string, entryPoin
 			tempDeclStmt := &ast.DeclStmt{Decl: genDecl}
 			_, evalErr := i.eval(ctx, tempDeclStmt, i.globalEnv)
 			if evalErr != nil {
-				return formatErrorWithContext(i.FileSet, genDecl.Pos(), evalErr, "Error evaluating global variable declaration in main script")
+				return i.formatErrorWithContext(i.FileSet, genDecl.Pos(), evalErr, "Error evaluating global variable declaration in main script")
 			}
 		}
 	}
@@ -279,7 +314,7 @@ func (i *Interpreter) LoadAndRun(ctx context.Context, filename string, entryPoin
 		}
 		defaultSharedScanner, errSharedGs := goscan.New(scanPathForShared)
 		if errSharedGs != nil {
-			return formatErrorWithContext(i.activeFileSet, token.NoPos, errSharedGs, fmt.Sprintf("Failed to create default shared go-scan scanner (path: %s): %v", scanPathForShared, errSharedGs))
+			return i.formatErrorWithContext(i.activeFileSet, token.NoPos, errSharedGs, fmt.Sprintf("Failed to create default shared go-scan scanner (path: %s): %v", scanPathForShared, errSharedGs))
 		}
 		i.sharedScanner = defaultSharedScanner
 	}
@@ -301,7 +336,7 @@ func (i *Interpreter) LoadAndRun(ctx context.Context, filename string, entryPoin
 			}
 			importPathVal, errPath := strconv.Unquote(impSpec.Path.Value)
 			if errPath != nil {
-				return formatErrorWithContext(i.activeFileSet, impSpec.Path.Pos(), errPath, fmt.Sprintf("Invalid import path: %s", impSpec.Path.Value))
+				return i.formatErrorWithContext(i.activeFileSet, impSpec.Path.Pos(), errPath, fmt.Sprintf("Invalid import path: %s", impSpec.Path.Value))
 			}
 
 			localName := ""
@@ -312,14 +347,14 @@ func (i *Interpreter) LoadAndRun(ctx context.Context, filename string, entryPoin
 					continue
 				}
 				if localName == "." {
-					return formatErrorWithContext(i.activeFileSet, impSpec.Name.Pos(), errors.New("dot imports are not supported"), "")
+					return i.formatErrorWithContext(i.activeFileSet, impSpec.Name.Pos(), errors.New("dot imports are not supported"), "")
 				}
 			} else {
 				localName = filepath.Base(importPathVal)
 			}
 
 			if existingPath, ok := i.importAliasMap[localName]; ok && existingPath != importPathVal {
-				return formatErrorWithContext(i.activeFileSet, impSpec.Pos(), fmt.Errorf("import alias/name %q already used for %q, cannot reuse for %q", localName, existingPath, importPathVal), "")
+				return i.formatErrorWithContext(i.activeFileSet, impSpec.Pos(), fmt.Errorf("import alias/name %q already used for %q, cannot reuse for %q", localName, existingPath, importPathVal), "")
 			}
 			i.importAliasMap[localName] = importPathVal
 		}
@@ -335,7 +370,7 @@ func (i *Interpreter) LoadAndRun(ctx context.Context, filename string, entryPoin
 			_, evalErr := i.eval(ctx, tempDeclStmt, i.globalEnv)
 			if evalErr != nil {
 				// Pass genDecl.Pos() for better error location
-				return formatErrorWithContext(i.activeFileSet, genDecl.Pos(), evalErr, "Error evaluating type declaration in main script")
+				return i.formatErrorWithContext(i.activeFileSet, genDecl.Pos(), evalErr, "Error evaluating type declaration in main script")
 			}
 		}
 	}
@@ -345,7 +380,7 @@ func (i *Interpreter) LoadAndRun(ctx context.Context, filename string, entryPoin
 		if fnDecl, ok := declNode.(*ast.FuncDecl); ok {
 			_, evalErr := i.evalFuncDecl(ctx, fnDecl, i.globalEnv) // evalFuncDecl takes *ast.FuncDecl
 			if evalErr != nil {
-				return formatErrorWithContext(i.activeFileSet, fnDecl.Pos(), evalErr, fmt.Sprintf("Error evaluating function declaration %s in main script", fnDecl.Name.Name))
+				return i.formatErrorWithContext(i.activeFileSet, fnDecl.Pos(), evalErr, fmt.Sprintf("Error evaluating function declaration %s in main script", fnDecl.Name.Name))
 			}
 		}
 	}
@@ -356,7 +391,7 @@ func (i *Interpreter) LoadAndRun(ctx context.Context, filename string, entryPoin
 			tempDeclStmt := &ast.DeclStmt{Decl: genDecl}
 			_, evalErr := i.eval(ctx, tempDeclStmt, i.globalEnv)
 			if evalErr != nil {
-				return formatErrorWithContext(i.activeFileSet, genDecl.Pos(), evalErr, "Error evaluating global variable declaration in main script")
+				return i.formatErrorWithContext(i.activeFileSet, genDecl.Pos(), evalErr, "Error evaluating global variable declaration in main script")
 			}
 		}
 	}
@@ -364,12 +399,12 @@ func (i *Interpreter) LoadAndRun(ctx context.Context, filename string, entryPoin
 	// Get the entry function *object* from the global environment
 	entryFuncObj, ok := i.globalEnv.Get(entryPoint)
 	if !ok {
-		return formatErrorWithContext(i.activeFileSet, token.NoPos, fmt.Errorf("entry point function '%s' not found in global environment", entryPoint), "Setup error")
+		return i.formatErrorWithContext(i.activeFileSet, token.NoPos, fmt.Errorf("entry point function '%s' not found in global environment", entryPoint), "Setup error")
 	}
 
 	userEntryFunc, ok := entryFuncObj.(*UserDefinedFunction)
 	if !ok {
-		return formatErrorWithContext(i.activeFileSet, token.NoPos, fmt.Errorf("entry point '%s' is not a user-defined function (type: %s)", entryPoint, entryFuncObj.Type()), "Setup error")
+		return i.formatErrorWithContext(i.activeFileSet, token.NoPos, fmt.Errorf("entry point '%s' is not a user-defined function (type: %s)", entryPoint, entryFuncObj.Type()), "Setup error")
 	}
 
 	fmt.Printf("Executing entry point function: %s\n", entryPoint)
@@ -407,9 +442,23 @@ func (i *Interpreter) applyUserDefinedFunction(ctx context.Context, fn *UserDefi
 	}
 	defer func() { i.activeFileSet = originalActiveFileSet }() // Restore active FileSet
 
+	// Push to call stack
+	frame := &callStackFrame{
+		functionName: fn.Name,
+	}
+	if callPos != token.NoPos && callerFileSet != nil { // Ensure callerFileSet is not nil
+		frame.callPosition = callerFileSet.Position(callPos)
+	}
+	i.callStack = append(i.callStack, frame)
+	defer func() {
+		if len(i.callStack) > 0 {
+			i.callStack = i.callStack[:len(i.callStack)-1] // Pop from call stack
+		}
+	}()
+
 	if len(args) != len(fn.Parameters) {
 		errMsg := fmt.Sprintf("wrong number of arguments for function %s: expected %d, got %d", fn.Name, len(fn.Parameters), len(args))
-		return nil, formatErrorWithContext(i.activeFileSet, callPos, errors.New(errMsg), "Function call error")
+		return nil, i.formatErrorWithContext(i.activeFileSet, callPos, errors.New(errMsg), "Function call error")
 	}
 
 	// Argument Type Checking
@@ -424,7 +473,7 @@ func (i *Interpreter) applyUserDefinedFunction(ctx context.Context, fn *UserDefi
 			expectedObjType, expectedStructDef, errType := i.resolveTypeAstToObjectType(paramTypeExpr, fn.Env, fn, i.activeFileSet)
 			if errType != nil {
 				// Error resolving the expected type of the parameter
-				return nil, formatErrorWithContext(i.activeFileSet, paramTypeExpr.Pos(),
+				return nil, i.formatErrorWithContext(i.activeFileSet, paramTypeExpr.Pos(),
 					fmt.Errorf("error resolving type for parameter %s: %w", paramIdent.Name, errType), "Function call error")
 			}
 
@@ -433,14 +482,14 @@ func (i *Interpreter) applyUserDefinedFunction(ctx context.Context, fn *UserDefi
 			if actualObjType != expectedObjType {
 				errMsg := fmt.Sprintf("type mismatch for argument %d (%s) of function %s: expected %s, got %s",
 					idx+1, paramIdent.Name, fn.Name, expectedObjType, actualObjType)
-				return nil, formatErrorWithContext(i.activeFileSet, callPos, errors.New(errMsg), "Function call error") // Use callPos for argument error
+				return nil, i.formatErrorWithContext(i.activeFileSet, callPos, errors.New(errMsg), "Function call error") // Use callPos for argument error
 			}
 
 			if expectedObjType == STRUCT_INSTANCE_OBJ {
 				actualStructInstance, ok := arg.(*StructInstance)
 				if !ok { // Should not happen if actualObjType matched STRUCT_INSTANCE_OBJ
 					errMsg := fmt.Sprintf("internal error: argument %d (%s) type is STRUCT_INSTANCE_OBJ but not a StructInstance", idx+1, paramIdent.Name)
-					return nil, formatErrorWithContext(i.activeFileSet, callPos, errors.New(errMsg), "Internal error")
+					return nil, i.formatErrorWithContext(i.activeFileSet, callPos, errors.New(errMsg), "Internal error")
 				}
 				if actualStructInstance.Definition != expectedStructDef {
 					expectedName := "unknown"
@@ -450,7 +499,7 @@ func (i *Interpreter) applyUserDefinedFunction(ctx context.Context, fn *UserDefi
 
 					errMsg := fmt.Sprintf("type mismatch for struct argument %d (%s) of function %s: expected struct type %s, got %s",
 						idx+1, paramIdent.Name, fn.Name, expectedName, actualName)
-					return nil, formatErrorWithContext(i.activeFileSet, callPos, errors.New(errMsg), "Function call error")
+					return nil, i.formatErrorWithContext(i.activeFileSet, callPos, errors.New(errMsg), "Function call error")
 				}
 			}
 			// Add more checks if needed (e.g., for pointer types, array types, etc., once supported)
@@ -538,7 +587,7 @@ func (i *Interpreter) eval(ctx context.Context, node ast.Node, env *Environment)
 		return i.eval(ctx, n.X, env)
 
 	case *ast.Ident:
-		return evalIdentifier(n, env, i.activeFileSet) // Pass activeFileSet
+		return i.evalIdentifier(n, env, i.activeFileSet) // Pass activeFileSet and Interpreter
 
 	case *ast.BasicLit:
 		switch n.Kind {
@@ -547,11 +596,11 @@ func (i *Interpreter) eval(ctx context.Context, node ast.Node, env *Environment)
 		case token.INT:
 			val, err := parseInt64(n.Value)
 			if err != nil {
-				return nil, formatErrorWithContext(i.activeFileSet, n.Pos(), err, fmt.Sprintf("Could not parse integer literal '%s'", n.Value))
+				return nil, i.formatErrorWithContext(i.activeFileSet, n.Pos(), err, fmt.Sprintf("Could not parse integer literal '%s'", n.Value))
 			}
 			return &Integer{Value: val}, nil
 		default:
-			return nil, formatErrorWithContext(i.activeFileSet, n.Pos(), fmt.Errorf("unsupported literal type: %s", n.Kind), fmt.Sprintf("Unsupported literal value: %s", n.Value))
+			return nil, i.formatErrorWithContext(i.activeFileSet, n.Pos(), fmt.Errorf("unsupported literal type: %s", n.Kind), fmt.Sprintf("Unsupported literal value: %s", n.Value))
 		}
 
 	case *ast.DeclStmt:
@@ -600,7 +649,7 @@ func (i *Interpreter) eval(ctx context.Context, node ast.Node, env *Environment)
 		return i.evalCompositeLit(ctx, n, env) // Uses i.activeFileSet
 
 	default:
-		return nil, formatErrorWithContext(i.activeFileSet, n.Pos(), fmt.Errorf("unsupported AST node type: %T", n), fmt.Sprintf("Unsupported AST node value: %+v", n))
+		return nil, i.formatErrorWithContext(i.activeFileSet, n.Pos(), fmt.Errorf("unsupported AST node type: %T", n), fmt.Sprintf("Unsupported AST node value: %+v", n))
 	}
 }
 
@@ -614,18 +663,18 @@ func (i *Interpreter) evalCompositeLit(ctx context.Context, lit *ast.CompositeLi
 		if !found {
 			// TODO: Consider context for unqualified type names within external functions.
 			// For now, if not found directly, it's an error.
-			return nil, formatErrorWithContext(i.activeFileSet, typeNode.Pos(), fmt.Errorf("undefined type '%s' used in composite literal", typeNameStr), "Struct instantiation error")
+			return nil, i.formatErrorWithContext(i.activeFileSet, typeNode.Pos(), fmt.Errorf("undefined type '%s' used in composite literal", typeNameStr), "Struct instantiation error")
 		}
 		sDef, ok := obj.(*StructDefinition)
 		if !ok {
-			return nil, formatErrorWithContext(i.activeFileSet, typeNode.Pos(), fmt.Errorf("type '%s' is not a struct type, but %s", typeNameStr, obj.Type()), "Struct instantiation error")
+			return nil, i.formatErrorWithContext(i.activeFileSet, typeNode.Pos(), fmt.Errorf("type '%s' is not a struct type, but %s", typeNameStr, obj.Type()), "Struct instantiation error")
 		}
 		structDef = sDef
 
 	case *ast.SelectorExpr: // Handle pkg.Type
 		pkgIdent, ok := typeNode.X.(*ast.Ident)
 		if !ok {
-			return nil, formatErrorWithContext(i.activeFileSet, typeNode.X.Pos(), fmt.Errorf("package selector X in composite literal type must be an identifier, got %T", typeNode.X), "Struct instantiation error")
+			return nil, i.formatErrorWithContext(i.activeFileSet, typeNode.X.Pos(), fmt.Errorf("package selector X in composite literal type must be an identifier, got %T", typeNode.X), "Struct instantiation error")
 		}
 		pkgName := pkgIdent.Name
 		structName := typeNode.Sel.Name
@@ -644,22 +693,22 @@ func (i *Interpreter) evalCompositeLit(ctx context.Context, lit *ast.CompositeLi
 				// Error during package loading attempt.
 				// The error from loadPackageIfNeeded is already formatted.
 				// We can add context that this was for a composite literal.
-				return nil, formatErrorWithContext(i.activeFileSet, typeNode.Pos(), errLoad, fmt.Sprintf("Error loading package '%s' for struct literal type '%s'", pkgName, qualifiedName))
+				return nil, i.formatErrorWithContext(i.activeFileSet, typeNode.Pos(), errLoad, fmt.Sprintf("Error loading package '%s' for struct literal type '%s'", pkgName, qualifiedName))
 			}
 			// Try getting the struct definition again after attempting to load the package.
 			obj, found = env.Get(qualifiedName) // Search in the original env
 			if !found {
-				return nil, formatErrorWithContext(i.activeFileSet, typeNode.Pos(), fmt.Errorf("undefined type '%s' used in composite literal even after attempting to load package '%s'", qualifiedName, pkgName), "Struct instantiation error")
+				return nil, i.formatErrorWithContext(i.activeFileSet, typeNode.Pos(), fmt.Errorf("undefined type '%s' used in composite literal even after attempting to load package '%s'", qualifiedName, pkgName), "Struct instantiation error")
 			}
 		}
 		sDef, ok := obj.(*StructDefinition)
 		if !ok {
-			return nil, formatErrorWithContext(i.activeFileSet, typeNode.Pos(), fmt.Errorf("type '%s' is not a struct type, but %s", qualifiedName, obj.Type()), "Struct instantiation error")
+			return nil, i.formatErrorWithContext(i.activeFileSet, typeNode.Pos(), fmt.Errorf("type '%s' is not a struct type, but %s", qualifiedName, obj.Type()), "Struct instantiation error")
 		}
 		structDef = sDef
 
 	default:
-		return nil, formatErrorWithContext(i.activeFileSet, lit.Type.Pos(), fmt.Errorf("expected identifier or selector for composite literal type, got %T", lit.Type), "Struct instantiation error")
+		return nil, i.formatErrorWithContext(i.activeFileSet, lit.Type.Pos(), fmt.Errorf("expected identifier or selector for composite literal type, got %T", lit.Type), "Struct instantiation error")
 	}
 
 	instance := &StructInstance{
@@ -681,11 +730,11 @@ func (i *Interpreter) evalCompositeLit(ctx context.Context, lit *ast.CompositeLi
 		for _, elt := range lit.Elts {
 			kvExpr, ok := elt.(*ast.KeyValueExpr)
 			if !ok {
-				return nil, formatErrorWithContext(i.activeFileSet, elt.Pos(), fmt.Errorf("mixture of keyed and non-keyed fields in struct literal for '%s'", structDef.Name), "Struct instantiation error")
+				return nil, i.formatErrorWithContext(i.activeFileSet, elt.Pos(), fmt.Errorf("mixture of keyed and non-keyed fields in struct literal for '%s'", structDef.Name), "Struct instantiation error")
 			}
 			keyIdent, ok := kvExpr.Key.(*ast.Ident)
 			if !ok {
-				return nil, formatErrorWithContext(i.activeFileSet, kvExpr.Key.Pos(), fmt.Errorf("struct field key must be an identifier, got %T for struct '%s'", kvExpr.Key, structDef.Name), "Struct instantiation error")
+				return nil, i.formatErrorWithContext(i.activeFileSet, kvExpr.Key.Pos(), fmt.Errorf("struct field key must be an identifier, got %T for struct '%s'", kvExpr.Key, structDef.Name), "Struct instantiation error")
 			}
 			fieldName := keyIdent.Name
 			valueExpr := kvExpr.Value
@@ -711,7 +760,7 @@ func (i *Interpreter) evalCompositeLit(ctx context.Context, lit *ast.CompositeLi
 				if err != nil { return nil, err }
 				embInstanceVal, ok := valObj.(*StructInstance)
 				if !ok || embInstanceVal.Definition.Name != targetEmbeddedDefForExplicitInit.Name {
-					return nil, formatErrorWithContext(i.activeFileSet, kvExpr.Value.Pos(),
+					return nil, i.formatErrorWithContext(i.activeFileSet, kvExpr.Value.Pos(),
 						fmt.Errorf("value for embedded struct '%s' is not a compatible struct instance (expected '%s', got '%s')",
 							fieldName, targetEmbeddedDefForExplicitInit.Name, valObj.Type()), "Struct instantiation error")
 				}
@@ -737,11 +786,11 @@ func (i *Interpreter) evalCompositeLit(ctx context.Context, lit *ast.CompositeLi
 				 embInstance.FieldValues[fieldName] = valObj
 				 continue
 			}
-			return nil, formatErrorWithContext(i.activeFileSet, keyIdent.Pos(), fmt.Errorf("unknown field '%s' in struct literal of type '%s'", fieldName, structDef.Name), "Struct instantiation error")
+			return nil, i.formatErrorWithContext(i.activeFileSet, keyIdent.Pos(), fmt.Errorf("unknown field '%s' in struct literal of type '%s'", fieldName, structDef.Name), "Struct instantiation error")
 		}
 	} else {
 		if len(lit.Elts) > 0 && len(structDef.Fields) > 0 {
-			return nil, formatErrorWithContext(i.activeFileSet, lit.Pos(), fmt.Errorf("ordered (non-keyed) struct literal values are not supported yet for struct '%s'", structDef.Name), "Struct instantiation error")
+			return nil, i.formatErrorWithContext(i.activeFileSet, lit.Pos(), fmt.Errorf("ordered (non-keyed) struct literal values are not supported yet for struct '%s'", structDef.Name), "Struct instantiation error")
 		}
 	}
 	return instance, nil
@@ -750,7 +799,7 @@ func (i *Interpreter) evalCompositeLit(ctx context.Context, lit *ast.CompositeLi
 
 func (i *Interpreter) evalBranchStmt(ctx context.Context, stmt *ast.BranchStmt, env *Environment) (Object, error) {
 	if stmt.Label != nil {
-		return nil, formatErrorWithContext(i.activeFileSet, stmt.Pos(), fmt.Errorf("labeled break/continue not supported"), "")
+		return nil, i.formatErrorWithContext(i.activeFileSet, stmt.Pos(), fmt.Errorf("labeled break/continue not supported"), "")
 	}
 
 	switch stmt.Tok {
@@ -759,7 +808,7 @@ func (i *Interpreter) evalBranchStmt(ctx context.Context, stmt *ast.BranchStmt, 
 	case token.CONTINUE:
 		return CONTINUE, nil
 	default:
-		return nil, formatErrorWithContext(i.activeFileSet, stmt.Pos(), fmt.Errorf("unsupported branch statement: %s", stmt.Tok), "")
+		return nil, i.formatErrorWithContext(i.activeFileSet, stmt.Pos(), fmt.Errorf("unsupported branch statement: %s", stmt.Tok), "")
 	}
 }
 
@@ -774,7 +823,7 @@ func (i *Interpreter) evalForStmt(ctx context.Context, stmt *ast.ForStmt, env *E
 			if err != nil { return nil, err }
 			boolCond, ok := condition.(*Boolean)
 			if !ok {
-				return nil, formatErrorWithContext(i.activeFileSet, stmt.Cond.Pos(),
+				return nil, i.formatErrorWithContext(i.activeFileSet, stmt.Cond.Pos(),
 					fmt.Errorf("condition for for statement must be a boolean, got %s (type: %s)", condition.Inspect(), condition.Type()), "")
 			}
 			if !boolCond.Value { break }
@@ -820,10 +869,10 @@ func (i *Interpreter) evalSelectorExpr(ctx context.Context, node *ast.SelectorEx
 		// Use activeFileSet for findFieldInEmbedded if it's from current context,
 		// or structInstance.Definition.FileSet if that's more appropriate for the definition.
 		// For now, findFieldInEmbedded takes the FileSet from the selector expression's context.
-		foundValue, _, _, embErr := findFieldInEmbedded(structInstance, fieldName, i.activeFileSet, node.Sel.Pos())
+		foundValue, _, _, embErr := i.findFieldInEmbedded(structInstance, fieldName, i.activeFileSet, node.Sel.Pos())
 		if embErr != nil { return nil, embErr }
 		if foundValue != nil { return foundValue, nil }
-		return nil, formatErrorWithContext(i.activeFileSet, node.Sel.Pos(), fmt.Errorf("type %s has no field %s", structInstance.Definition.Name, fieldName), "Field access error")
+		return nil, i.formatErrorWithContext(i.activeFileSet, node.Sel.Pos(), fmt.Errorf("type %s has no field %s", structInstance.Definition.Name, fieldName), "Field access error")
 	}
 
 handlePackageAccess:
@@ -837,7 +886,7 @@ handlePackageAccess:
 		if !knownAlias {
 			originalErrorMsg := "undefined"
 			if err != nil { originalErrorMsg = err.Error() } // err here is from the outer scope, potentially from xObj, err := i.eval
-			return nil, formatErrorWithContext(i.FileSet, identX.Pos(), fmt.Errorf("%s: %s (not a struct instance and not a known package alias/name)", originalErrorMsg, localPkgName), "Selector error")
+			return nil, i.formatErrorWithContext(i.FileSet, identX.Pos(), fmt.Errorf("%s: %s (not a struct instance and not a known package alias/name)", originalErrorMsg, localPkgName), "Selector error")
 		}
 
 		// Declare variables here so they are in scope for later use.
@@ -868,13 +917,13 @@ handlePackageAccess:
 		// Note: importPath is resolved inside loadPackageIfNeeded, so we use localPkgName for error msg here if path wasn't found.
 		// Re-fetch importPath for error message as it might not have been set if knownAlias was false.
 		resolvedImportPath, _ := i.importAliasMap[localPkgName]
-		return nil, formatErrorWithContext(i.activeFileSet, node.Sel.Pos(), fmt.Errorf("undefined: %s.%s (package %s, path %s, was loaded or loading attempted)", localPkgName, fieldName, localPkgName, resolvedImportPath), "Selector error")
+		return nil, i.formatErrorWithContext(i.activeFileSet, node.Sel.Pos(), fmt.Errorf("undefined: %s.%s (package %s, path %s, was loaded or loading attempted)", localPkgName, fieldName, localPkgName, resolvedImportPath), "Selector error")
 	}
 
 	if xObj != nil { // This check should be xObj from the initial eval, not a new one.
-		return nil, formatErrorWithContext(i.activeFileSet, node.X.Pos(), fmt.Errorf("selector base must be a struct instance or package identifier, got %s", xObj.Type()), "Unsupported selector expression")
+		return nil, i.formatErrorWithContext(i.activeFileSet, node.X.Pos(), fmt.Errorf("selector base must be a struct instance or package identifier, got %s", xObj.Type()), "Unsupported selector expression")
 	}
-	return nil, formatErrorWithContext(i.activeFileSet, node.Pos(), errors.New("internal error in selector evaluation"), "")
+	return nil, i.formatErrorWithContext(i.activeFileSet, node.Pos(), errors.New("internal error in selector evaluation"), "")
 }
 
 // resolveTypeAstToObjectType resolves an AST type expression to an interpreter ObjectType and optionally a StructDefinition.
@@ -907,7 +956,7 @@ func (i *Interpreter) resolveTypeAstToObjectType(typeExpr ast.Expr, resolutionEn
 					return STRUCT_INSTANCE_OBJ, structDef, nil
 				}
 				// Found something but not a struct def (e.g. a function with the same name as a type)
-				return "", nil, formatErrorWithContext(activeFset, te.Pos(), fmt.Errorf("type '%s' (resolved as '%s') is not a struct definition, but %s", typeName, qualifiedTypeName, obj.Type()), "")
+				return "", nil, i.formatErrorWithContext(activeFset, te.Pos(), fmt.Errorf("type '%s' (resolved as '%s') is not a struct definition, but %s", typeName, qualifiedTypeName, obj.Type()), "")
 			}
 			// If not found qualified, it might be an error, or it could be a global built-in type not yet handled above.
 			// For now, let's fall through to the general lookup, which might be an error.
@@ -916,17 +965,17 @@ func (i *Interpreter) resolveTypeAstToObjectType(typeExpr ast.Expr, resolutionEn
 		// General lookup for identifier type names (e.g., local struct, or if not external context)
 		obj, found := resolutionEnv.Get(typeName)
 		if !found {
-			return "", nil, formatErrorWithContext(activeFset, te.Pos(), fmt.Errorf("undefined type: %s", typeName), "")
+			return "", nil, i.formatErrorWithContext(activeFset, te.Pos(), fmt.Errorf("undefined type: %s", typeName), "")
 		}
 		if structDef, ok := obj.(*StructDefinition); ok {
 			return STRUCT_INSTANCE_OBJ, structDef, nil
 		}
-		return "", nil, formatErrorWithContext(activeFset, te.Pos(), fmt.Errorf("type '%s' is not a struct definition, but %s", typeName, obj.Type()), "")
+		return "", nil, i.formatErrorWithContext(activeFset, te.Pos(), fmt.Errorf("type '%s' is not a struct definition, but %s", typeName, obj.Type()), "")
 
 	case *ast.SelectorExpr: // e.g., pkg.TypeName
 		pkgIdent, ok := te.X.(*ast.Ident)
 		if !ok {
-			return "", nil, formatErrorWithContext(activeFset, te.X.Pos(), fmt.Errorf("package selector in type must be an identifier, got %T", te.X), "Type resolution error")
+			return "", nil, i.formatErrorWithContext(activeFset, te.X.Pos(), fmt.Errorf("package selector in type must be an identifier, got %T", te.X), "Type resolution error")
 		}
 		pkgName := pkgIdent.Name
 		typeName := te.Sel.Name
@@ -956,12 +1005,12 @@ func (i *Interpreter) resolveTypeAstToObjectType(typeExpr ast.Expr, resolutionEn
 			_, loadErr := i.loadPackageIfNeeded(context.TODO(), pkgName, i.globalEnv, pkgIdent.Pos())
 			if loadErr != nil {
 				// If loading fails, the type cannot be resolved.
-				return "", nil, formatErrorWithContext(activeFset, te.Pos(), fmt.Errorf("failed to load package '%s' for type resolution of '%s': %w", pkgName, qualifiedName, loadErr), "")
+				return "", nil, i.formatErrorWithContext(activeFset, te.Pos(), fmt.Errorf("failed to load package '%s' for type resolution of '%s': %w", pkgName, qualifiedName, loadErr), "")
 			}
 			// Try fetching again after loading attempt
 			obj, found = i.globalEnv.Get(qualifiedName)
 			if !found {
-				return "", nil, formatErrorWithContext(activeFset, te.Pos(), fmt.Errorf("undefined type: %s (after attempting package load)", qualifiedName), "")
+				return "", nil, i.formatErrorWithContext(activeFset, te.Pos(), fmt.Errorf("undefined type: %s (after attempting package load)", qualifiedName), "")
 			}
 		}
 
@@ -969,10 +1018,10 @@ func (i *Interpreter) resolveTypeAstToObjectType(typeExpr ast.Expr, resolutionEn
 		if structDef, ok := obj.(*StructDefinition); ok {
 			return STRUCT_INSTANCE_OBJ, structDef, nil
 		}
-		return "", nil, formatErrorWithContext(activeFset, te.Pos(), fmt.Errorf("qualified type '%s' is not a struct definition, but %s", qualifiedName, obj.Type()), "")
+		return "", nil, i.formatErrorWithContext(activeFset, te.Pos(), fmt.Errorf("qualified type '%s' is not a struct definition, but %s", qualifiedName, obj.Type()), "")
 	// TODO: Handle *ast.StarExpr for pointers, *ast.ArrayType, *ast.MapType, *ast.InterfaceType etc.
 	default:
-		return "", nil, formatErrorWithContext(activeFset, typeExpr.Pos(), fmt.Errorf("unsupported AST node type for type resolution: %T", typeExpr), "")
+		return "", nil, i.formatErrorWithContext(activeFset, typeExpr.Pos(), fmt.Errorf("unsupported AST node type for type resolution: %T", typeExpr), "")
 	}
 }
 
@@ -982,7 +1031,7 @@ func (i *Interpreter) resolveTypeAstToObjectType(typeExpr ast.Expr, resolutionEn
 func (i *Interpreter) loadPackageIfNeeded(ctx context.Context, pkgAlias string, env *Environment, errorPos token.Pos) (*scanner.PackageInfo, error) {
 	// Ensure sharedScanner is available
 	if i.sharedScanner == nil {
-		return nil, formatErrorWithContext(i.activeFileSet, errorPos, errors.New("shared go-scan scanner (for imports) not initialized in interpreter"), "Internal error")
+		return nil, i.formatErrorWithContext(i.activeFileSet, errorPos, errors.New("shared go-scan scanner (for imports) not initialized in interpreter"), "Internal error")
 	}
 
 	importPath, knownAlias := i.importAliasMap[pkgAlias]
@@ -990,7 +1039,7 @@ func (i *Interpreter) loadPackageIfNeeded(ctx context.Context, pkgAlias string, 
 		// This case should ideally be caught before calling loadPackageIfNeeded,
 		// e.g., in evalSelectorExpr, if pkgAlias is not in importAliasMap.
 		// However, if called directly, this provides a safeguard.
-		return nil, formatErrorWithContext(i.activeFileSet, errorPos, fmt.Errorf("package alias %s not found in import map", pkgAlias), "Import error")
+		return nil, i.formatErrorWithContext(i.activeFileSet, errorPos, fmt.Errorf("package alias %s not found in import map", pkgAlias), "Import error")
 	}
 
 	// Check if already processed (e.g. symbols defined)
@@ -1010,12 +1059,12 @@ func (i *Interpreter) loadPackageIfNeeded(ctx context.Context, pkgAlias string, 
 
 	importPkgInfo, errImport := i.sharedScanner.ScanPackageByImport(ctx, importPath)
 	if errImport != nil {
-		return nil, formatErrorWithContext(i.sharedScanner.Fset(), errorPos, fmt.Errorf("package %q (aliased as %q) not found or failed to scan: %w", importPath, pkgAlias, errImport), "Import error")
+		return nil, i.formatErrorWithContext(i.sharedScanner.Fset(), errorPos, fmt.Errorf("package %q (aliased as %q) not found or failed to scan: %w", importPath, pkgAlias, errImport), "Import error")
 	}
 
 	if importPkgInfo == nil {
 		// Should be covered by errImport != nil, but as a safeguard.
-		return nil, formatErrorWithContext(i.sharedScanner.Fset(), errorPos, fmt.Errorf("ScanPackageByImport returned nil for %q (%s) without error", importPath, pkgAlias), "Internal error")
+		return nil, i.formatErrorWithContext(i.sharedScanner.Fset(), errorPos, fmt.Errorf("ScanPackageByImport returned nil for %q (%s) without error", importPath, pkgAlias), "Internal error")
 	}
 
 	// Populate the global environment with symbols from the imported package.
@@ -1193,7 +1242,7 @@ func (i *Interpreter) loadPackageIfNeeded(ctx context.Context, pkgAlias string, 
 }
 
 // findFieldInEmbedded uses fset passed to it for errors
-func findFieldInEmbedded(instance *StructInstance, fieldName string, fset *token.FileSet, selPos token.Pos) (foundValue Object, found bool, foundIn string, err error) {
+func (i *Interpreter) findFieldInEmbedded(instance *StructInstance, fieldName string, fset *token.FileSet, selPos token.Pos) (foundValue Object, found bool, foundIn string, err error) {
 	// ... (no change to i.activeFileSet usage here as fset is explicit)
 	var overallFoundValue Object
 	var overallFoundInDefinitionName string
@@ -1204,7 +1253,7 @@ func findFieldInEmbedded(instance *StructInstance, fieldName string, fset *token
 		if !embInstanceExists {
 			if _, isFieldInEmbDef := embDef.Fields[fieldName]; isFieldInEmbDef {
 				if numFoundPaths > 0 && overallFoundInDefinitionName != embDef.Name {
-					return nil, false, "", formatErrorWithContext(fset, selPos,
+					return nil, false, "", i.formatErrorWithContext(fset, selPos,
 						fmt.Errorf("ambiguous selector %s (found in %s and as uninitialized field in %s)", fieldName, overallFoundInDefinitionName, embDef.Name), "")
 				}
 				overallFoundValue = NULL
@@ -1215,7 +1264,7 @@ func findFieldInEmbedded(instance *StructInstance, fieldName string, fset *token
 		}
 		if val, isSet := embInstance.FieldValues[fieldName]; isSet {
 			if numFoundPaths > 0 && overallFoundInDefinitionName != embDef.Name {
-				return nil, false, "", formatErrorWithContext(fset, selPos,
+				return nil, false, "", i.formatErrorWithContext(fset, selPos,
 					fmt.Errorf("ambiguous selector %s (found in %s and as set field in %s)", fieldName, overallFoundInDefinitionName, embDef.Name), "")
 			}
 			overallFoundValue = val
@@ -1225,7 +1274,7 @@ func findFieldInEmbedded(instance *StructInstance, fieldName string, fset *token
 		}
 		if _, isDirectField := embDef.Fields[fieldName]; isDirectField {
 			if numFoundPaths > 0 && overallFoundInDefinitionName != embDef.Name {
-				return nil, false, "", formatErrorWithContext(fset, selPos,
+				return nil, false, "", i.formatErrorWithContext(fset, selPos,
 					fmt.Errorf("ambiguous selector %s (found in %s and as uninitialized field in %s)", fieldName, overallFoundInDefinitionName, embDef.Name), "")
 			}
 			overallFoundValue = NULL
@@ -1237,14 +1286,14 @@ func findFieldInEmbedded(instance *StructInstance, fieldName string, fset *token
 		// Path 3: Recursively search in deeper embedded structs of this current embedded instance.
 		// Only proceed if we haven't found a more direct version of the field in *this* embDef.
 		// (Direct fields of embDef shadow its own embedded fields).
-		recVal, recFound, recIn, recErr := findFieldInEmbedded(embInstance, fieldName, fset, selPos)
+		recVal, recFound, recIn, recErr := i.findFieldInEmbedded(embInstance, fieldName, fset, selPos)
 		if recErr != nil {
 			return nil, false, "", recErr // Propagate ambiguity error from deeper level
 		}
 		if recFound {
 			if numFoundPaths > 0 && overallFoundInDefinitionName != embDef.Name { // `embDef.Name` here means "found via this path"
 				// If already found via a different top-level embedded struct, it's ambiguous.
-				return nil, false, "", formatErrorWithContext(fset, selPos,
+				return nil, false, "", i.formatErrorWithContext(fset, selPos,
 					fmt.Errorf("ambiguous selector %s (found in %s and via deeper embedding in %s through %s)", fieldName, overallFoundInDefinitionName, recIn, embDef.Name), "")
 			}
 			overallFoundValue = recVal
@@ -1257,7 +1306,7 @@ func findFieldInEmbedded(instance *StructInstance, fieldName string, fset *token
 	if numFoundPaths > 1 {
 		// This specific check might be redundant if ambiguity is caught when `numFoundPaths` increments to 2.
 		// However, it's a final safeguard. The error message here might be generic.
-		return nil, false, "", formatErrorWithContext(fset, selPos,
+		return nil, false, "", i.formatErrorWithContext(fset, selPos,
 			fmt.Errorf("ambiguous selector %s (found in multiple embedded structs)", fieldName), "")
 	}
 
@@ -1324,7 +1373,7 @@ func (i *Interpreter) evalFuncDecl(ctx context.Context, fd *ast.FuncDecl, env *E
 		env.Define(fd.Name.Name, function)
 		return nil, nil
 	}
-	return nil, formatErrorWithContext(i.FileSet, fd.Pos(), fmt.Errorf("function declaration must have a name"), "")
+	return nil, i.formatErrorWithContext(i.FileSet, fd.Pos(), fmt.Errorf("function declaration must have a name"), "")
 }
 
 func (i *Interpreter) evalFuncLit(ctx context.Context, fl *ast.FuncLit, env *Environment) (Object, error) {
@@ -1364,7 +1413,7 @@ func (i *Interpreter) evalReturnStmt(ctx context.Context, rs *ast.ReturnStmt, en
 	}
 
 	if len(rs.Results) > 1 {
-		return nil, formatErrorWithContext(i.FileSet, rs.Pos(), fmt.Errorf("multiple return values not supported"), "")
+		return nil, i.formatErrorWithContext(i.FileSet, rs.Pos(), fmt.Errorf("multiple return values not supported"), "")
 	}
 
 	val, err := i.eval(ctx, rs.Results[0], env)
@@ -1377,7 +1426,7 @@ func (i *Interpreter) evalReturnStmt(ctx context.Context, rs *ast.ReturnStmt, en
 func (i *Interpreter) evalDeclStmt(ctx context.Context, declStmt *ast.DeclStmt, env *Environment) (Object, error) {
 	genDecl, ok := declStmt.Decl.(*ast.GenDecl)
 	if !ok {
-		return nil, formatErrorWithContext(i.FileSet, declStmt.Pos(), fmt.Errorf("unsupported declaration type: %T", declStmt.Decl), "")
+		return nil, i.formatErrorWithContext(i.FileSet, declStmt.Pos(), fmt.Errorf("unsupported declaration type: %T", declStmt.Decl), "")
 	}
 
 	switch genDecl.Tok {
@@ -1385,7 +1434,7 @@ func (i *Interpreter) evalDeclStmt(ctx context.Context, declStmt *ast.DeclStmt, 
 		for _, spec := range genDecl.Specs {
 			valueSpec, ok := spec.(*ast.ValueSpec)
 			if !ok {
-				return nil, formatErrorWithContext(i.FileSet, spec.Pos(), fmt.Errorf("unsupported spec type in var declaration: %T", spec), "")
+				return nil, i.formatErrorWithContext(i.FileSet, spec.Pos(), fmt.Errorf("unsupported spec type in var declaration: %T", spec), "")
 			}
 
 			for idx, nameIdent := range valueSpec.Names {
@@ -1398,7 +1447,7 @@ func (i *Interpreter) evalDeclStmt(ctx context.Context, declStmt *ast.DeclStmt, 
 					env.Define(varName, val)
 				} else {
 					if valueSpec.Type == nil {
-						return nil, formatErrorWithContext(i.FileSet, valueSpec.Pos(), fmt.Errorf("variable '%s' declared without initializer must have a type", varName), "")
+						return nil, i.formatErrorWithContext(i.FileSet, valueSpec.Pos(), fmt.Errorf("variable '%s' declared without initializer must have a type", varName), "")
 					}
 
 					var zeroVal Object
@@ -1424,21 +1473,21 @@ func (i *Interpreter) evalDeclStmt(ctx context.Context, declStmt *ast.DeclStmt, 
 									}
 								} else {
 									// Not a struct definition, unsupported type for zero value
-									return nil, formatErrorWithContext(i.FileSet, T.Pos(), fmt.Errorf("unsupported type '%s' for uninitialized variable '%s' (not a known struct)", T.Name, varName), "")
+									return nil, i.formatErrorWithContext(i.FileSet, T.Pos(), fmt.Errorf("unsupported type '%s' for uninitialized variable '%s' (not a known struct)", T.Name, varName), "")
 								}
 							} else {
 								// Type not found in environment
-								return nil, formatErrorWithContext(i.FileSet, T.Pos(), fmt.Errorf("undefined type '%s' for uninitialized variable '%s'", T.Name, varName), "")
+								return nil, i.formatErrorWithContext(i.FileSet, T.Pos(), fmt.Errorf("undefined type '%s' for uninitialized variable '%s'", T.Name, varName), "")
 							}
 						}
 					case *ast.InterfaceType:
 						if T.Methods == nil || len(T.Methods.List) == 0 {
 							zeroVal = NULL
 						} else {
-							return nil, formatErrorWithContext(i.FileSet, T.Pos(), fmt.Errorf("unsupported specific interface type for uninitialized variable '%s'", varName), "")
+							return nil, i.formatErrorWithContext(i.FileSet, T.Pos(), fmt.Errorf("unsupported specific interface type for uninitialized variable '%s'", varName), "")
 						}
 					default:
-						return nil, formatErrorWithContext(i.FileSet, valueSpec.Type.Pos(), fmt.Errorf("unsupported type expression for zero value for variable '%s': %T", varName, valueSpec.Type), "")
+						return nil, i.formatErrorWithContext(i.FileSet, valueSpec.Type.Pos(), fmt.Errorf("unsupported type expression for zero value for variable '%s': %T", varName, valueSpec.Type), "")
 					}
 					env.Define(varName, zeroVal)
 				}
@@ -1448,7 +1497,7 @@ func (i *Interpreter) evalDeclStmt(ctx context.Context, declStmt *ast.DeclStmt, 
 		for _, spec := range genDecl.Specs {
 			typeSpec, ok := spec.(*ast.TypeSpec)
 			if !ok {
-				return nil, formatErrorWithContext(i.FileSet, spec.Pos(), fmt.Errorf("unsupported spec type in type declaration: %T", spec), "")
+				return nil, i.formatErrorWithContext(i.FileSet, spec.Pos(), fmt.Errorf("unsupported spec type in type declaration: %T", spec), "")
 			}
 			typeName := typeSpec.Name.Name
 
@@ -1477,9 +1526,9 @@ func (i *Interpreter) evalDeclStmt(ctx context.Context, declStmt *ast.DeclStmt, 
 							// This part needs careful extension if we support pkg.Type for fields or embedding.
 							// For now, let's assume embedded types are *ast.Ident.
 							// And direct fields are also *ast.Ident for their types.
-							return nil, formatErrorWithContext(i.FileSet, field.Type.Pos(), fmt.Errorf("field type '%s' in struct '%s' uses SelectorExpr, which is not fully supported for struct field types or embedding yet", astNodeToString(typeExpr, i.FileSet), typeName), "Struct definition error")
+							return nil, i.formatErrorWithContext(i.FileSet, field.Type.Pos(), fmt.Errorf("field type '%s' in struct '%s' uses SelectorExpr, which is not fully supported for struct field types or embedding yet", i.astNodeToString(typeExpr, i.FileSet), typeName), "Struct definition error")
 						default:
-							return nil, formatErrorWithContext(i.FileSet, field.Type.Pos(), fmt.Errorf("struct field in '%s' has unsupported type specifier %T", typeName, field.Type), "Struct definition error")
+							return nil, i.formatErrorWithContext(i.FileSet, field.Type.Pos(), fmt.Errorf("struct field in '%s' has unsupported type specifier %T", typeName, field.Type), "Struct definition error")
 						}
 
 						// Check if it's an embedded field
@@ -1502,11 +1551,11 @@ func (i *Interpreter) evalDeclStmt(ctx context.Context, declStmt *ast.DeclStmt, 
 							// Look up the definition of the embedded struct.
 							obj, found := env.Get(fieldTypeName)
 							if !found {
-								return nil, formatErrorWithContext(i.FileSet, field.Type.Pos(), fmt.Errorf("undefined type '%s' embedded in struct '%s'", fieldTypeName, typeName), "Struct definition error")
+								return nil, i.formatErrorWithContext(i.FileSet, field.Type.Pos(), fmt.Errorf("undefined type '%s' embedded in struct '%s'", fieldTypeName, typeName), "Struct definition error")
 							}
 							embeddedDef, ok := obj.(*StructDefinition)
 							if !ok {
-								return nil, formatErrorWithContext(i.FileSet, field.Type.Pos(), fmt.Errorf("type '%s' embedded in struct '%s' is not a struct definition (got %s)", fieldTypeName, typeName, obj.Type()), "Struct definition error")
+								return nil, i.formatErrorWithContext(i.FileSet, field.Type.Pos(), fmt.Errorf("type '%s' embedded in struct '%s' is not a struct definition (got %s)", fieldTypeName, typeName, obj.Type()), "Struct definition error")
 							}
 							embeddedDefs = append(embeddedDefs, embeddedDef)
 						} else {
@@ -1516,7 +1565,7 @@ func (i *Interpreter) evalDeclStmt(ctx context.Context, declStmt *ast.DeclStmt, 
 							if !ok {
 								// This case might be redundant if the switch above handles all typeExpr variants,
 								// but good for safety if only *ast.Ident is supported for field types.
-								return nil, formatErrorWithContext(i.FileSet, field.Type.Pos(), fmt.Errorf("struct field '%s' in '%s' has complex type specifier %T; only simple type names supported for fields", field.Names[0].Name, typeName, field.Type), "")
+								return nil, i.formatErrorWithContext(i.FileSet, field.Type.Pos(), fmt.Errorf("struct field '%s' in '%s' has complex type specifier %T; only simple type names supported for fields", field.Names[0].Name, typeName, field.Type), "")
 							}
 
 							for _, nameIdent := range field.Names {
@@ -1534,17 +1583,17 @@ func (i *Interpreter) evalDeclStmt(ctx context.Context, declStmt *ast.DeclStmt, 
 				}
 				env.Define(typeName, structDef)
 			default:
-				return nil, formatErrorWithContext(i.FileSet, typeSpec.Type.Pos(), fmt.Errorf("unsupported type specifier in type declaration '%s': %T", typeName, typeSpec.Type), "")
+				return nil, i.formatErrorWithContext(i.FileSet, typeSpec.Type.Pos(), fmt.Errorf("unsupported type specifier in type declaration '%s': %T", typeName, typeSpec.Type), "")
 			}
 		}
 	default:
-		return nil, formatErrorWithContext(i.FileSet, genDecl.Pos(), fmt.Errorf("unsupported declaration token: %s (expected VAR or TYPE)", genDecl.Tok), "")
+		return nil, i.formatErrorWithContext(i.FileSet, genDecl.Pos(), fmt.Errorf("unsupported declaration token: %s (expected VAR or TYPE)", genDecl.Tok), "")
 	}
 	// Processing is done within the switch cases.
 	return nil, nil
 }
 
-func evalIdentifier(ident *ast.Ident, env *Environment, fset *token.FileSet) (Object, error) {
+func (i *Interpreter) evalIdentifier(ident *ast.Ident, env *Environment, fset *token.FileSet) (Object, error) {
 	switch ident.Name {
 	case "true":
 		return TRUE, nil
@@ -1554,7 +1603,7 @@ func evalIdentifier(ident *ast.Ident, env *Environment, fset *token.FileSet) (Ob
 	if val, ok := env.Get(ident.Name); ok {
 		return val, nil
 	}
-	return nil, formatErrorWithContext(fset, ident.Pos(), fmt.Errorf("identifier not found: %s", ident.Name), "")
+	return nil, i.formatErrorWithContext(fset, ident.Pos(), fmt.Errorf("identifier not found: %s", ident.Name), "")
 }
 
 func (i *Interpreter) evalBinaryExpr(ctx context.Context, node *ast.BinaryExpr, env *Environment) (Object, error) {
@@ -1569,22 +1618,22 @@ func (i *Interpreter) evalBinaryExpr(ctx context.Context, node *ast.BinaryExpr, 
 
 	switch {
 	case left.Type() == STRING_OBJ && right.Type() == STRING_OBJ:
-		return evalStringBinaryExpr(node.Op, left.(*String), right.(*String), i.FileSet, node.Pos())
+		return i.evalStringBinaryExpr(node.Op, left.(*String), right.(*String), node.Pos())
 	case left.Type() == INTEGER_OBJ && right.Type() == INTEGER_OBJ:
-		return evalIntegerBinaryExpr(node.Op, left.(*Integer), right.(*Integer), i.FileSet, node.Pos())
+		return i.evalIntegerBinaryExpr(node.Op, left.(*Integer), right.(*Integer), node.Pos())
 	case left.Type() == BOOLEAN_OBJ && right.Type() == BOOLEAN_OBJ:
 		// TODO: Implement short-circuiting for token.LAND and token.LOR
 		// Currently, both left and right operands are evaluated before this point.
 		// For true short-circuiting, the evaluation of the right operand
 		// would need to be conditional within these cases.
-		return evalBooleanBinaryExpr(node.Op, left.(*Boolean), right.(*Boolean), i.FileSet, node.Pos())
+		return i.evalBooleanBinaryExpr(node.Op, left.(*Boolean), right.(*Boolean), node.Pos())
 	default:
-		return nil, formatErrorWithContext(i.FileSet, node.Pos(),
+		return nil, i.formatErrorWithContext(i.FileSet, node.Pos(),
 			fmt.Errorf("type mismatch or unsupported operation for binary expression: %s %s %s (left: %s, right: %s)", left.Type(), node.Op, right.Type(), left.Inspect(), right.Inspect()), "")
 	}
 }
 
-func evalIntegerBinaryExpr(op token.Token, left, right *Integer, fset *token.FileSet, pos token.Pos) (Object, error) {
+func (i *Interpreter) evalIntegerBinaryExpr(op token.Token, left, right *Integer, pos token.Pos) (Object, error) {
 	leftVal := left.Value
 	rightVal := right.Value
 
@@ -1597,12 +1646,12 @@ func evalIntegerBinaryExpr(op token.Token, left, right *Integer, fset *token.Fil
 		return &Integer{Value: leftVal * rightVal}, nil
 	case token.QUO:
 		if rightVal == 0 {
-			return nil, formatErrorWithContext(fset, pos, fmt.Errorf("division by zero"), "")
+			return nil, i.formatErrorWithContext(i.activeFileSet, pos, fmt.Errorf("division by zero"), "")
 		}
 		return &Integer{Value: leftVal / rightVal}, nil
 	case token.REM:
 		if rightVal == 0 {
-			return nil, formatErrorWithContext(fset, pos, fmt.Errorf("division by zero (modulo)"), "")
+			return nil, i.formatErrorWithContext(i.activeFileSet, pos, fmt.Errorf("division by zero (modulo)"), "")
 		}
 		return &Integer{Value: leftVal % rightVal}, nil
 	case token.EQL:
@@ -1618,11 +1667,11 @@ func evalIntegerBinaryExpr(op token.Token, left, right *Integer, fset *token.Fil
 	case token.GEQ:
 		return nativeBoolToBooleanObject(leftVal >= rightVal), nil
 	default:
-		return nil, formatErrorWithContext(fset, pos, fmt.Errorf("unknown operator for integers: %s", op), "")
+		return nil, i.formatErrorWithContext(i.activeFileSet, pos, fmt.Errorf("unknown operator for integers: %s", op), "")
 	}
 }
 
-func evalStringBinaryExpr(op token.Token, left, right *String, fset *token.FileSet, pos token.Pos) (Object, error) {
+func (i *Interpreter) evalStringBinaryExpr(op token.Token, left, right *String, pos token.Pos) (Object, error) {
 	switch op {
 	case token.EQL:
 		return nativeBoolToBooleanObject(left.Value == right.Value), nil
@@ -1631,11 +1680,11 @@ func evalStringBinaryExpr(op token.Token, left, right *String, fset *token.FileS
 	case token.ADD:
 		return &String{Value: left.Value + right.Value}, nil
 	default:
-		return nil, formatErrorWithContext(fset, pos, fmt.Errorf("unknown operator for strings: %s (left: %q, right: %q)", op, left.Value, right.Value), "")
+		return nil, i.formatErrorWithContext(i.activeFileSet, pos, fmt.Errorf("unknown operator for strings: %s (left: %q, right: %q)", op, left.Value, right.Value), "")
 	}
 }
 
-func evalBooleanBinaryExpr(op token.Token, left, right *Boolean, fset *token.FileSet, pos token.Pos) (Object, error) {
+func (i *Interpreter) evalBooleanBinaryExpr(op token.Token, left, right *Boolean, pos token.Pos) (Object, error) {
 	leftVal := left.Value
 	rightVal := right.Value
 
@@ -1650,7 +1699,7 @@ func evalBooleanBinaryExpr(op token.Token, left, right *Boolean, fset *token.Fil
 		return nativeBoolToBooleanObject(leftVal || rightVal), nil
 	default:
 		// Return a generic unsupported operation error for consistency with other types
-		return nil, formatErrorWithContext(fset, pos,
+		return nil, i.formatErrorWithContext(i.activeFileSet, pos,
 			fmt.Errorf("type mismatch or unsupported operation for binary expression: %s %s %s", left.Type(), op, right.Type()), "")
 	}
 }
@@ -1684,20 +1733,20 @@ func (i *Interpreter) evalCallExpr(ctx context.Context, node *ast.CallExpr, env 
 				funcName = xIdent.Name + "." + selExpr.Sel.Name
 			}
 		}
-		return nil, formatErrorWithContext(i.FileSet, node.Fun.Pos(), fmt.Errorf("cannot call non-function type %s (for function '%s')", funcObj.Type(), funcName), "")
+		return nil, i.formatErrorWithContext(i.FileSet, node.Fun.Pos(), fmt.Errorf("cannot call non-function type %s (for function '%s')", funcObj.Type(), funcName), "")
 	}
 }
 
 func (i *Interpreter) evalAssignStmt(ctx context.Context, assignStmt *ast.AssignStmt, env *Environment) (Object, error) {
 	if len(assignStmt.Lhs) != 1 || len(assignStmt.Rhs) != 1 {
-		return nil, formatErrorWithContext(i.FileSet, assignStmt.Pos(),
+		return nil, i.formatErrorWithContext(i.FileSet, assignStmt.Pos(),
 			fmt.Errorf("unsupported assignment: expected 1 expression on LHS and 1 on RHS, got %d and %d", len(assignStmt.Lhs), len(assignStmt.Rhs)), "")
 	}
 
 	lhs := assignStmt.Lhs[0]
 	ident, ok := lhs.(*ast.Ident)
 	if !ok {
-		return nil, formatErrorWithContext(i.FileSet, lhs.Pos(), fmt.Errorf("unsupported assignment LHS: expected identifier, got %T", lhs), "")
+		return nil, i.formatErrorWithContext(i.FileSet, lhs.Pos(), fmt.Errorf("unsupported assignment LHS: expected identifier, got %T", lhs), "")
 	}
 	varName := ident.Name
 
@@ -1729,21 +1778,21 @@ func (i *Interpreter) evalAssignStmt(ctx context.Context, assignStmt *ast.Assign
 		// Go rule: "no new variables on left side of :=" means at least one variable on LHS must be new in the current block.
 		// Since we only support single var LHS for now:
 		if env.ExistsInCurrentScope(varName) {
-			return nil, formatErrorWithContext(i.FileSet, ident.Pos(), fmt.Errorf("no new variables on left side of := (variable '%s' already declared in this scope)", varName), "")
+			return nil, i.formatErrorWithContext(i.FileSet, ident.Pos(), fmt.Errorf("no new variables on left side of := (variable '%s' already declared in this scope)", varName), "")
 		}
 		env.Define(varName, val) // Define in current environment
 		return nil, nil
 
 	case token.ASSIGN: // =
 		if _, ok := env.Assign(varName, val); !ok {
-			return nil, formatErrorWithContext(i.FileSet, ident.Pos(), fmt.Errorf("cannot assign to undeclared variable '%s'", varName), "")
+			return nil, i.formatErrorWithContext(i.FileSet, ident.Pos(), fmt.Errorf("cannot assign to undeclared variable '%s'", varName), "")
 		}
 		return nil, nil
 
 	default: // Augmented assignments: +=, -=, etc.
 		existingVal, ok := env.Get(varName)
 		if !ok {
-			return nil, formatErrorWithContext(i.FileSet, ident.Pos(), fmt.Errorf("cannot use %s on undeclared variable '%s'", assignStmt.Tok, varName), "")
+			return nil, i.formatErrorWithContext(i.FileSet, ident.Pos(), fmt.Errorf("cannot use %s on undeclared variable '%s'", assignStmt.Tok, varName), "")
 		}
 
 		// Determine the binary operation token corresponding to the assignment token
@@ -1760,7 +1809,7 @@ func (i *Interpreter) evalAssignStmt(ctx context.Context, assignStmt *ast.Assign
 		case token.REM_ASSIGN:
 			op = token.REM
 		default:
-			return nil, formatErrorWithContext(i.FileSet, assignStmt.Pos(), fmt.Errorf("unsupported assignment operator %s", assignStmt.Tok), "")
+			return nil, i.formatErrorWithContext(i.FileSet, assignStmt.Pos(), fmt.Errorf("unsupported assignment operator %s", assignStmt.Tok), "")
 		}
 
 		// Perform the operation based on type
@@ -1771,26 +1820,26 @@ func (i *Interpreter) evalAssignStmt(ctx context.Context, assignStmt *ast.Assign
 		case *Integer:
 			if vInt, okV := val.(*Integer); okV {
 				// Use evalIntegerBinaryExpr for the core logic to avoid duplication
-				tempBinExprResult, binErr := evalIntegerBinaryExpr(op, eVal, vInt, i.FileSet, assignStmt.Pos())
+				tempBinExprResult, binErr := i.evalIntegerBinaryExpr(op, eVal, vInt, assignStmt.Pos())
 				if binErr != nil {
-					return nil, formatErrorWithContext(i.FileSet, assignStmt.Pos(), binErr, fmt.Sprintf("error in augmented assignment %s for variable '%s'", assignStmt.Tok, varName))
+					return nil, i.formatErrorWithContext(i.FileSet, assignStmt.Pos(), binErr, fmt.Sprintf("error in augmented assignment %s for variable '%s'", assignStmt.Tok, varName))
 				}
 				resultVal = tempBinExprResult
 			} else {
-				evalErr = formatErrorWithContext(i.FileSet, assignStmt.Pos(), fmt.Errorf("type mismatch for %s: existing value is INTEGER, new value is %s", assignStmt.Tok, val.Type()), "")
+				evalErr = i.formatErrorWithContext(i.FileSet, assignStmt.Pos(), fmt.Errorf("type mismatch for %s: existing value is INTEGER, new value is %s", assignStmt.Tok, val.Type()), "")
 			}
 		case *String:
 			if op == token.ADD { // Only += is supported for strings
 				if vStr, okV := val.(*String); okV {
 					resultVal = &String{Value: eVal.Value + vStr.Value}
 				} else {
-					evalErr = formatErrorWithContext(i.FileSet, assignStmt.Pos(), fmt.Errorf("type mismatch for string concatenation (+=): existing value is STRING, new value is %s", val.Type()), "")
+					evalErr = i.formatErrorWithContext(i.FileSet, assignStmt.Pos(), fmt.Errorf("type mismatch for string concatenation (+=): existing value is STRING, new value is %s", val.Type()), "")
 				}
 			} else {
-				evalErr = formatErrorWithContext(i.FileSet, assignStmt.Pos(), fmt.Errorf("unsupported operator %s for augmented string assignment (only += is allowed)", assignStmt.Tok), "")
+				evalErr = i.formatErrorWithContext(i.FileSet, assignStmt.Pos(), fmt.Errorf("unsupported operator %s for augmented string assignment (only += is allowed)", assignStmt.Tok), "")
 			}
 		default:
-			evalErr = formatErrorWithContext(i.FileSet, assignStmt.Pos(), fmt.Errorf("unsupported type %s for augmented assignment operator %s on variable '%s'", existingVal.Type(), assignStmt.Tok, varName), "")
+			evalErr = i.formatErrorWithContext(i.FileSet, assignStmt.Pos(), fmt.Errorf("unsupported type %s for augmented assignment operator %s on variable '%s'", existingVal.Type(), assignStmt.Tok, varName), "")
 		}
 
 		if evalErr != nil {
@@ -1800,7 +1849,7 @@ func (i *Interpreter) evalAssignStmt(ctx context.Context, assignStmt *ast.Assign
 		// Assign the new value back to the variable
 		if _, ok := env.Assign(varName, resultVal); !ok {
 			// This should not happen if the variable was successfully fetched earlier
-			return nil, formatErrorWithContext(i.FileSet, ident.Pos(), fmt.Errorf("internal error: failed to assign back to variable '%s' after augmented assignment", varName), "")
+			return nil, i.formatErrorWithContext(i.FileSet, ident.Pos(), fmt.Errorf("internal error: failed to assign back to variable '%s' after augmented assignment", varName), "")
 		}
 		return nil, nil
 	}
@@ -1814,7 +1863,7 @@ func (i *Interpreter) evalIfStmt(ctx context.Context, ifStmt *ast.IfStmt, env *E
 
 	boolCond, ok := condition.(*Boolean)
 	if !ok {
-		return nil, formatErrorWithContext(i.FileSet, ifStmt.Cond.Pos(),
+		return nil, i.formatErrorWithContext(i.FileSet, ifStmt.Cond.Pos(),
 			fmt.Errorf("condition for if statement must be a boolean, got %s (type: %s)", condition.Inspect(), condition.Type()), "")
 	}
 
@@ -1850,7 +1899,7 @@ func (i *Interpreter) evalUnaryExpr(ctx context.Context, node *ast.UnaryExpr, en
 			value := operand.(*Integer).Value
 			return &Integer{Value: -value}, nil
 		}
-		return nil, formatErrorWithContext(i.FileSet, node.Pos(), fmt.Errorf("unsupported type for negation: %s", operand.Type()), "")
+		return nil, i.formatErrorWithContext(i.FileSet, node.Pos(), fmt.Errorf("unsupported type for negation: %s", operand.Type()), "")
 	case token.NOT:
 		switch operand {
 		case TRUE:
@@ -1858,7 +1907,7 @@ func (i *Interpreter) evalUnaryExpr(ctx context.Context, node *ast.UnaryExpr, en
 		case FALSE:
 			return TRUE, nil
 		default:
-			return nil, formatErrorWithContext(i.activeFileSet, node.Pos(), fmt.Errorf("unsupported type for logical NOT: %s", operand.Type()), "")
+			return nil, i.formatErrorWithContext(i.activeFileSet, node.Pos(), fmt.Errorf("unsupported type for logical NOT: %s", operand.Type()), "")
 		}
 	case token.AND: // Address-of operator &
 		// In this interpreter, taking the address of something might not mean a real memory address.
@@ -1871,7 +1920,7 @@ func (i *Interpreter) evalUnaryExpr(ctx context.Context, node *ast.UnaryExpr, en
 			if _, isStruct := operand.(*StructInstance); isStruct {
 				return operand, nil // Return the struct instance itself.
 			}
-			return nil, formatErrorWithContext(i.activeFileSet, xNode.Pos(), fmt.Errorf("cannot take address of identifier '%s' (type %s), not a struct instance", xNode.Name, operand.Type()), "")
+			return nil, i.formatErrorWithContext(i.activeFileSet, xNode.Pos(), fmt.Errorf("cannot take address of identifier '%s' (type %s), not a struct instance", xNode.Name, operand.Type()), "")
 		case *ast.CompositeLit:
 			// If & is applied to a composite literal, e.g., &Point{X:1}.
 			// The `operand` variable here is the result of i.eval(ctx, node.X, env),
@@ -1881,13 +1930,13 @@ func (i *Interpreter) evalUnaryExpr(ctx context.Context, node *ast.UnaryExpr, en
 				return operand, nil // Return the struct instance from the composite literal.
 			}
 			// This case should ideally not be reached if composite lit eval fails or returns non-struct.
-			return nil, formatErrorWithContext(i.activeFileSet, xNode.Pos(), fmt.Errorf("operator & on composite literal did not yield a struct instance, got %s", operand.Type()), "")
+			return nil, i.formatErrorWithContext(i.activeFileSet, xNode.Pos(), fmt.Errorf("operator & on composite literal did not yield a struct instance, got %s", operand.Type()), "")
 		default:
 			// Other cases like &MyFunctionCall() or &someSelector.field might need more complex handling
 			// if they are to be supported. For now, restrict to identifiers and composite literals.
-			return nil, formatErrorWithContext(i.activeFileSet, node.Pos(), fmt.Errorf("operator & only supported on identifiers or composite literals for now, got %T", node.X), "")
+			return nil, i.formatErrorWithContext(i.activeFileSet, node.Pos(), fmt.Errorf("operator & only supported on identifiers or composite literals for now, got %T", node.X), "")
 		}
 	default:
-		return nil, formatErrorWithContext(i.activeFileSet, node.Pos(), fmt.Errorf("unsupported unary operator: %s", node.Op), "")
+		return nil, i.formatErrorWithContext(i.activeFileSet, node.Pos(), fmt.Errorf("unsupported unary operator: %s", node.Op), "")
 	}
 }

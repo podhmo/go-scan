@@ -41,36 +41,16 @@ func (i *Interpreter) formatErrorWithContext(fset *token.FileSet, pos token.Pos,
 		}
 	} else {
 		position := fset.Position(pos)
-		filename := position.Filename
-		line := position.Line
-		column := position.Column
+		sourceLineStr := getSourceLine(position.Filename, position.Line)
 
-		var sourceLine string
-		file, err := os.Open(filename)
-		if err == nil {
-			defer file.Close()
-			scanner := bufio.NewScanner(file)
-			for scancount := 1; scanner.Scan(); scancount++ {
-				if scancount == line {
-					sourceLine = strings.TrimSpace(scanner.Text())
-					break
-				}
-			}
-			if err := scanner.Err(); err != nil {
-				sourceLine = fmt.Sprintf("[Error reading source line: %v]", err)
-			}
-		} else {
-			sourceLine = fmt.Sprintf("[Error opening source file: %v]", err)
-		}
-
-		detailMsg := fmt.Sprintf("Error in %s at line %d, column %d", filename, line, column)
+		detailMsg := fmt.Sprintf("Error in %s at line %d, column %d", position.Filename, position.Line, position.Column)
 		if customMsg != "" {
 			detailMsg = fmt.Sprintf("%s: %s", customMsg, detailMsg)
 		}
 		errorBuilder.WriteString(detailMsg)
 
-		if sourceLine != "" {
-			errorBuilder.WriteString(fmt.Sprintf("\n  Source: %s", sourceLine))
+		if sourceLineStr != "" {
+			errorBuilder.WriteString(fmt.Sprintf("\n  Source: %s", sourceLineStr))
 		}
 		if baseErrMsg != "" {
 			errorBuilder.WriteString(fmt.Sprintf("\n  Details: %s", baseErrMsg))
@@ -82,10 +62,15 @@ func (i *Interpreter) formatErrorWithContext(fset *token.FileSet, pos token.Pos,
 		errorBuilder.WriteString("\nMinigo Call Stack:")
 		for idx, frame := range i.callStack {
 			framePositionStr := ""
+			sourceLineStr := ""
 			if frame.callPosition.IsValid() {
 				framePositionStr = fmt.Sprintf(" (called at %s:%d:%d)", filepath.Base(frame.callPosition.Filename), frame.callPosition.Line, frame.callPosition.Column)
+				sourceLineStr = getSourceLine(frame.callPosition.Filename, frame.callPosition.Line)
+				if sourceLineStr != "" {
+					sourceLineStr = fmt.Sprintf("\n    Source: %s", sourceLineStr)
+				}
 			}
-			errorBuilder.WriteString(fmt.Sprintf("\n  %d: %s%s", idx, frame.functionName, framePositionStr))
+			errorBuilder.WriteString(fmt.Sprintf("\n  %d: %s%s%s", idx, frame.functionName, framePositionStr, sourceLineStr))
 		}
 	}
 
@@ -106,6 +91,30 @@ func (i *Interpreter) formatErrorWithContext(fset *token.FileSet, pos token.Pos,
 	return errors.New(errorBuilder.String())
 }
 
+// getSourceLine reads a specific line from a file.
+func getSourceLine(filename string, lineNum int) string {
+	if filename == "" || lineNum <= 0 {
+		return "[No source line available: invalid input]"
+	}
+	file, err := os.Open(filename)
+	if err != nil {
+		return fmt.Sprintf("[Error opening source file '%s': %v]", filename, err)
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	currentLine := 1
+	for scanner.Scan() {
+		if currentLine == lineNum {
+			return strings.TrimSpace(scanner.Text())
+		}
+		currentLine++
+	}
+	if err := scanner.Err(); err != nil {
+		return fmt.Sprintf("[Error reading source line from '%s': %v]", filename, err)
+	}
+	return fmt.Sprintf("[Source line %d not found in '%s']", lineNum, filename)
+}
 
 // parseInt64 is a helper function to parse a string to an int64.
 // It's defined here to keep the main eval function cleaner.

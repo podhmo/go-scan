@@ -1,22 +1,27 @@
-package main
+package eval
+
+import "github.com/podhmo/go-scan/examples/minigo/object"
 
 // Environment stores variables and their values, and handles scope.
+// It implements the object.Environment interface.
 type Environment struct {
-	store map[string]Object
-	outer *Environment // For lexical scoping (enclosing environment)
+	store map[string]object.Object
+	outer object.Environment // For lexical scoping (enclosing environment)
 }
 
+var _ object.Environment = (*Environment)(nil) // Verify interface implementation
+
 // NewEnvironment creates a new Environment. If 'outer' is nil, it's a global environment.
-func NewEnvironment(outer *Environment) *Environment {
-	s := make(map[string]Object)
+func NewEnvironment(outer object.Environment) *Environment {
+	s := make(map[string]object.Object)
 	return &Environment{store: s, outer: outer}
 }
 
 // Get retrieves a value by name from the current environment or its outer scopes.
-func (e *Environment) Get(name string) (Object, bool) {
+func (e *Environment) Get(name string) (object.Object, bool) {
 	obj, ok := e.store[name]
 	if !ok && e.outer != nil { // If not found here, try the outer scope
-		obj, ok = e.outer.Get(name)
+		obj, ok = e.outer.Get(name) // e.outer is object.Environment, call its Get method
 	}
 	return obj, ok
 }
@@ -24,7 +29,7 @@ func (e *Environment) Get(name string) (Object, bool) {
 // Define binds a name to a value in the current environment only.
 // This is used for variable declarations (`var x = ...`) and function parameters.
 // It does not check outer scopes.
-func (e *Environment) Define(name string, val Object) Object {
+func (e *Environment) Define(name string, val object.Object) object.Object {
 	e.store[name] = val
 	return val
 }
@@ -33,13 +38,13 @@ func (e *Environment) Define(name string, val Object) Object {
 // It searches for the variable in the current environment and then in outer scopes.
 // If the variable is found, it's updated, and (val, true) is returned.
 // If the variable is not found in any scope, (nil, false) is returned, indicating an error.
-func (e *Environment) Assign(name string, val Object) (Object, bool) {
+func (e *Environment) Assign(name string, val object.Object) (object.Object, bool) {
 	if _, ok := e.store[name]; ok {
 		e.store[name] = val
 		return val, true
 	}
 	if e.outer != nil {
-		return e.outer.Assign(name, val)
+		return e.outer.Assign(name, val) // e.outer is object.Environment, call its Assign method
 	}
 	return nil, false // Variable not found in any scope
 }
@@ -60,12 +65,12 @@ func (e *Environment) ExistsInCurrentScope(name string) bool {
 
 // GetAllEntries returns all entries from the current environment and its outer scopes.
 // Entries in inner scopes shadow those in outer scopes.
-func (e *Environment) GetAllEntries() map[string]Object {
-	allEntries := make(map[string]Object)
+func (e *Environment) GetAllEntries() map[string]object.Object {
+	allEntries := make(map[string]object.Object)
 
 	// Collect entries from outer scopes first
 	if e.outer != nil {
-		outerEntries := e.outer.GetAllEntries()
+		outerEntries := e.outer.GetAllEntries() // e.outer is object.Environment, call its GetAllEntries method
 		for name, obj := range outerEntries {
 			allEntries[name] = obj
 		}

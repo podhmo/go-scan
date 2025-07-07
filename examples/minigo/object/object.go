@@ -1,4 +1,4 @@
-package main
+package object
 
 import (
 	"fmt"
@@ -7,6 +7,22 @@ import (
 	"sort"
 	"strings"
 )
+
+// Environment defines the interface for symbol table and scope management.
+// This interface will be implemented by eval.Environment.
+type Environment interface {
+	Get(name string) (Object, bool)
+	Define(name string, val Object) Object
+	// GetAllEntries is added here because UserDefinedFunction.applyUserDefinedFunction uses it
+	// to populate the function's scope with package-local symbols.
+	// This might indicate a need to rethink how external function scopes are handled,
+	// but for now, adding it to the interface allows the existing logic to compile.
+	GetAllEntries() map[string]Object
+	// ExistsInCurrentScope is used by evalAssignStmt for ':=', needed by the interface
+	ExistsInCurrentScope(name string) bool
+	// Assign is used by evalAssignStmt for '=', needed by the interface
+	Assign(name string, val Object) (Object, bool)
+}
 
 // ObjectType is a string representation of an object's type.
 type ObjectType string
@@ -145,7 +161,7 @@ type UserDefinedFunction struct {
 	Name       string // Simple name of the function
 	Parameters []*ast.Ident
 	Body       *ast.BlockStmt
-	Env            *Environment   // Closure: the environment where the function was defined
+	Env            Environment    // Closure: the environment where the function was defined
 	FileSet        *token.FileSet // FileSet for error reporting context
 	ParamTypeExprs []ast.Expr     // AST expressions for parameter types
 
@@ -194,7 +210,7 @@ func (rv *ReturnValue) Inspect() string {
 // It takes the current evaluation environment (in case the built-in needs to interact with it,
 // e.g., to resolve other variables or call other MiniGo functions, though most won't need it)
 // and a variable number of Object arguments, returning an Object or an error.
-type BuiltinFunctionType func(env *Environment, args ...Object) (Object, error)
+type BuiltinFunctionType func(env Environment, args ...Object) (Object, error)
 
 // BuiltinFunction represents a function that is implemented in Go and exposed to MiniGo.
 type BuiltinFunction struct {

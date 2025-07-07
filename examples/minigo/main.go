@@ -8,6 +8,7 @@ import (
 
 	// "github.com/podhmo/go-scan/scanner" // Will be used later
 
+	"github.com/podhmo/go-scan/examples/minigo/eval" // Added import for eval package
 	"github.com/podhmo/go-scan/examples/minigo/stringutils"
 )
 
@@ -35,10 +36,10 @@ func main() {
 
 	fmt.Printf("Interpreting %s, entry point: %s\n", filename, *entryPoint)
 
-	interpreter := NewInterpreter()
+	interpreter := eval.NewInterpreter() // Changed to eval.NewInterpreter
 	// Store the initial environment, which might be useful for inspection or a REPL later.
 	// For now, LoadAndRun creates its own scope for the main function.
-	err = interpreter.LoadAndRun(context.Background(), filename, *entryPoint)
+	err = interpreter.LoadAndRun(context.Background(), filename, *entryPoint) // interpreter is now *eval.Interpreter
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error running interpreter: %v\n", err)
 		os.Exit(1)

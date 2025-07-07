@@ -1,19 +1,20 @@
-package main
+package eval
 
 import (
 	"fmt"
 	// "strings" // Not used directly here, but often related
+	"github.com/podhmo/go-scan/examples/minigo/object"
 )
 
 // evalFmtSprintf handles the execution of a fmt.Sprintf call.
 // It expects the first argument to be a format string (String object)
 // and subsequent arguments to be the values to format.
-func evalFmtSprintf(args ...Object) (Object, error) {
+func evalFmtSprintf(args ...object.Object) (object.Object, error) {
 	if len(args) == 0 {
 		return nil, fmt.Errorf("fmt.Sprintf expects at least one argument (format string)")
 	}
 
-	formatStringObj, ok := args[0].(*String)
+	formatStringObj, ok := args[0].(*object.String)
 	if !ok {
 		return nil, fmt.Errorf("first argument to fmt.Sprintf must be a STRING, got %s", args[0].Type())
 	}
@@ -24,11 +25,11 @@ func evalFmtSprintf(args ...Object) (Object, error) {
 	nativeArgs := make([]interface{}, len(args)-1)
 	for i, arg := range args[1:] {
 		switch obj := arg.(type) {
-		case *String:
+		case *object.String:
 			nativeArgs[i] = obj.Value
-		case *Integer:
+		case *object.Integer:
 			nativeArgs[i] = obj.Value
-		case *Boolean:
+		case *object.Boolean:
 			nativeArgs[i] = obj.Value
 		// Add other types as needed
 		default:
@@ -42,13 +43,13 @@ func evalFmtSprintf(args ...Object) (Object, error) {
 	// are relevant if MiniGo were used in a sensitive context.
 	// For this example, we assume valid and safe usage.
 	result := fmt.Sprintf(formatString, nativeArgs...)
-	return &String{Value: result}, nil
+	return &object.String{Value: result}, nil
 }
 
 // Helper to create a BuiltinFunction object for fmt.Sprintf
-func newFmtSprintfBuiltin() *BuiltinFunction {
-	return &BuiltinFunction{
-		Fn: func(env *Environment, args ...Object) (Object, error) { // Modified signature
+func newFmtSprintfBuiltin() *object.BuiltinFunction {
+	return &object.BuiltinFunction{
+		Fn: func(env object.Environment, args ...object.Object) (object.Object, error) { // Use object.Environment
 			return evalFmtSprintf(args...)
 		},
 		Name: "fmt.Sprintf",
@@ -71,7 +72,7 @@ func newFmtSprintfBuiltin() *BuiltinFunction {
 // Then calls would be like `fmt.Sprintf(...)` parsed as `Ident{Name:"fmt"}` Dot `Ident{Name:"Sprintf"}`.
 // Current plan is to treat "fmt.Sprintf" as a single identifier for simplicity.
 
-func (i *Interpreter) registerBuiltinFmt(env *Environment) {
+func (i *Interpreter) registerBuiltinFmt(env object.Environment) { // env type changed to object.Environment
 	// We need a way to make `fmt.Sprintf` callable.
 	// This could be by defining a global variable `fmt.Sprintf` that holds a BuiltinFunction object.
 	// Or, more elaborately, by handling `ast.SelectorExpr` (e.g., `fmt.Sprintf`)
@@ -92,10 +93,10 @@ func (i *Interpreter) registerBuiltinFmt(env *Environment) {
 
 // GetBuiltinFmtFunctions returns a map of fmt built-in functions.
 // This allows the interpreter to easily register them.
-func GetBuiltinFmtFunctions() map[string]*BuiltinFunction {
-	return map[string]*BuiltinFunction{
+func GetBuiltinFmtFunctions() map[string]*object.BuiltinFunction {
+	return map[string]*object.BuiltinFunction{
 		"fmt.Sprintf": {
-			Fn: func(env *Environment, args ...Object) (Object, error) { // Matching new signature
+			Fn: func(env object.Environment, args ...object.Object) (object.Object, error) { // Use object.Environment
 				return evalFmtSprintf(args...)
 			},
 			Name: "fmt.Sprintf",

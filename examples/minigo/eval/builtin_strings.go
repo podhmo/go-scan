@@ -1,15 +1,17 @@
-package main
+package eval
 
 import (
 	"fmt"
 	"strings"
+
+	"github.com/podhmo/go-scan/examples/minigo/object"
 )
 
 // evalStringsJoin handles the execution of a strings.Join call.
 // For MiniGo, due to the lack of explicit array types yet, we'll adopt a convention:
 // strings.Join(str1, str2, ..., strN, separator) will join str1 through strN using separator.
 // This differs from Go's strings.Join(array, separator).
-func evalStringsJoin(args ...Object) (Object, error) {
+func evalStringsJoin(args ...object.Object) (object.Object, error) {
 	if len(args) < 2 {
 		// Needs at least one string to "join" (which would be itself) and a separator,
 		// or effectively, at least two args for our convention: element1, separator.
@@ -18,7 +20,7 @@ func evalStringsJoin(args ...Object) (Object, error) {
 		return nil, fmt.Errorf("strings.Join expects at least two arguments (elements to join and a separator), got %d", len(args))
 	}
 
-	separatorObj, ok := args[len(args)-1].(*String)
+	separatorObj, ok := args[len(args)-1].(*object.String)
 	if !ok {
 		return nil, fmt.Errorf("last argument to strings.Join (separator) must be a STRING, got %s", args[len(args)-1].Type())
 	}
@@ -33,7 +35,7 @@ func evalStringsJoin(args ...Object) (Object, error) {
 
 	stringElements := make([]string, len(elementsToJoin))
 	for i, arg := range elementsToJoin {
-		strObj, ok := arg.(*String)
+		strObj, ok := arg.(*object.String)
 		if !ok {
 			return nil, fmt.Errorf("argument %d to strings.Join (element to join) must be a STRING, got %s", i, arg.Type())
 		}
@@ -41,14 +43,14 @@ func evalStringsJoin(args ...Object) (Object, error) {
 	}
 
 	result := strings.Join(stringElements, separator)
-	return &String{Value: result}, nil
+	return &object.String{Value: result}, nil
 }
 
 // GetBuiltinStringsFunctions returns a map of built-in functions related to strings.
-func GetBuiltinStringsFunctions() map[string]*BuiltinFunction {
-	return map[string]*BuiltinFunction{
+func GetBuiltinStringsFunctions() map[string]*object.BuiltinFunction {
+	return map[string]*object.BuiltinFunction{
 		"strings.Join": {
-			Fn: func(env *Environment, args ...Object) (Object, error) {
+			Fn: func(env object.Environment, args ...object.Object) (object.Object, error) { // Use object.Environment
 				// env is not used by strings.Join, but the signature requires it.
 				return evalStringsJoin(args...)
 			},
@@ -56,15 +58,15 @@ func GetBuiltinStringsFunctions() map[string]*BuiltinFunction {
 		},
 		// Add other strings functions here if needed, e.g., strings.HasPrefix, strings.Contains
 		// "strings.ToUpper": {
-		// 	Fn: func(env *Environment, args ...Object) (Object, error) {
+		// 	Fn: func(env object.Environment, args ...object.Object) (object.Object, error) {
 		// 		if len(args) != 1 {
 		// 			return nil, fmt.Errorf("strings.ToUpper expects exactly one argument")
 		// 		}
-		// 		strObj, ok := args[0].(*String)
+		// 		strObj, ok := args[0].(*object.String)
 		// 		if !ok {
 		// 			return nil, fmt.Errorf("argument to strings.ToUpper must be a STRING, got %s", args[0].Type())
 		// 		}
-		// 		return &String{Value: strings.ToUpper(strObj.Value)}, nil
+		// 		return &object.String{Value: strings.ToUpper(strObj.Value)}, nil
 		// 	},
 		// 	Name: "strings.ToUpper",
 		// },

@@ -1,4 +1,4 @@
-package main
+package eval
 
 import (
 	"bufio"
@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	goscan "github.com/podhmo/go-scan" // Using top-level go-scan
+	"github.com/podhmo/go-scan/examples/minigo/object"
 	"github.com/podhmo/go-scan/scanner" // Import the scanner package
 )
 
@@ -148,7 +149,7 @@ func (i *Interpreter) astNodeToString(node ast.Node, fset *token.FileSet) string
 
 // Interpreter holds the state of the interpreter
 type Interpreter struct {
-	globalEnv        *Environment
+	globalEnv        object.Environment // Changed to use object.Environment interface
 	FileSet          *token.FileSet
 	scn              *goscan.Scanner     // Use the top-level go-scan Scanner
 	importedPackages map[string]struct{} // Key: importPath, keeps track of resolved packages
@@ -171,11 +172,11 @@ type callStackFrame struct {
 }
 
 func NewInterpreter() *Interpreter {
-	env := NewEnvironment(nil)
+	env := NewEnvironment(nil) // This creates an eval.Environment instance
 	// FileSet will be initialized by the scanner used for the main script.
 	// sharedScanner can be nil initially and created on-demand by LoadAndRun if not set by tests.
 	i := &Interpreter{
-		globalEnv:        env,
+		globalEnv:        env, // Assign *eval.Environment to object.Environment interface
 		FileSet:          nil, // To be set by the main script parser in LoadAndRun
 		sharedScanner:    nil, // Can be preset by tests, or created by LoadAndRun if needed for imports
 		importedPackages: make(map[string]struct{}),
@@ -185,11 +186,11 @@ func NewInterpreter() *Interpreter {
 
 	builtins := GetBuiltinFmtFunctions()
 	for name, builtin := range builtins {
-		env.Define(name, builtin)
+		env.Define(name, builtin) // env is *eval.Environment, its Define method is called
 	}
 	builtinsStrings := GetBuiltinStringsFunctions()
 	for name, builtin := range builtinsStrings {
-		env.Define(name, builtin)
+		env.Define(name, builtin) // env is *eval.Environment, its Define method is called
 	}
 	return i
 }
@@ -411,7 +412,7 @@ func (i *Interpreter) LoadAndRun(ctx context.Context, filename string, entryPoin
 		return i.formatErrorWithContext(i.activeFileSet, token.NoPos, fmt.Errorf("entry point function '%s' not found in global environment", entryPoint), "Setup error")
 	}
 
-	userEntryFunc, ok := entryFuncObj.(*UserDefinedFunction)
+	userEntryFunc, ok := entryFuncObj.(*object.UserDefinedFunction)
 	if !ok {
 		return i.formatErrorWithContext(i.activeFileSet, token.NoPos, fmt.Errorf("entry point '%s' is not a user-defined function (type: %s)", entryPoint, entryFuncObj.Type()), "Setup error")
 	}
@@ -419,15 +420,15 @@ func (i *Interpreter) LoadAndRun(ctx context.Context, filename string, entryPoin
 	fmt.Printf("Executing entry point function: %s\n", entryPoint)
 	// For main/entry point, we assume no arguments are passed.
 	// Pass the current activeFileSet (which is the main script's FileSet) as the callerFileSet
-	result, errApply := i.applyUserDefinedFunction(ctx, userEntryFunc, []Object{}, token.NoPos, i.activeFileSet)
+	result, errApply := i.applyUserDefinedFunction(ctx, userEntryFunc, []object.Object{}, token.NoPos, i.activeFileSet)
 	if errApply != nil {
-		if errObj, isErrObj := errApply.(*Error); isErrObj {
+		if errObj, isErrObj := errApply.(*object.Error); isErrObj {
 			return fmt.Errorf("Runtime error in %s: %s", entryPoint, errObj.Message)
 		}
 		return errApply
 	}
 
-	if result != nil && result.Type() != NULL_OBJ {
+	if result != nil && result.Type() != object.NULL_OBJ {
 		fmt.Printf("Entry point '%s' finished, result: %s\n", entryPoint, result.Inspect())
 	} else {
 		fmt.Printf("Entry point '%s' finished.\n", entryPoint)
@@ -435,7 +436,7 @@ func (i *Interpreter) LoadAndRun(ctx context.Context, filename string, entryPoin
 	return nil
 }
 
-func (i *Interpreter) applyUserDefinedFunction(ctx context.Context, fn *UserDefinedFunction, args []Object, callPos token.Pos, callerFileSet *token.FileSet) (Object, error) {
+func (i *Interpreter) applyUserDefinedFunction(ctx context.Context, fn *object.UserDefinedFunction, args []object.Object, callPos token.Pos, callerFileSet *token.FileSet) (object.Object, error) {
 	originalActiveFileSet := i.activeFileSet // Save current active FileSet
 	if fn.FileSet != nil {
 		i.activeFileSet = fn.FileSet // Set active FileSet to the function's own FileSet
@@ -494,8 +495,8 @@ func (i *Interpreter) applyUserDefinedFunction(ctx context.Context, fn *UserDefi
 				return nil, i.formatErrorWithContext(i.activeFileSet, callPos, errors.New(errMsg), "Function call error") // Use callPos for argument error
 			}
 
-			if expectedObjType == STRUCT_INSTANCE_OBJ {
-				actualStructInstance, ok := arg.(*StructInstance)
+			if expectedObjType == object.STRUCT_INSTANCE_OBJ {
+				actualStructInstance, ok := arg.(*object.StructInstance)
 				if !ok { // Should not happen if actualObjType matched STRUCT_INSTANCE_OBJ
 					errMsg := fmt.Sprintf("internal error: argument %d (%s) type is STRUCT_INSTANCE_OBJ but not a StructInstance", idx+1, paramIdent.Name)
 					return nil, i.formatErrorWithContext(i.activeFileSet, callPos, errors.New(errMsg), "Internal error")
@@ -519,7 +520,7 @@ func (i *Interpreter) applyUserDefinedFunction(ctx context.Context, fn *UserDefi
 		fmt.Fprintf(os.Stderr, "Warning: ParamTypeExprs length mismatch for function %s. Skipping argument type checks.\n", fn.Name)
 	}
 
-
+	// fn.Env is object.Environment interface. NewEnvironment expects object.Environment or nil.
 	funcEnv := NewEnvironment(fn.Env) // Closure: fn.Env is the lexical scope
 
 	// If it's an external function, populate its environment with unqualified names
@@ -553,13 +554,13 @@ func (i *Interpreter) applyUserDefinedFunction(ctx context.Context, fn *UserDefi
 		return nil, errEval
 	}
 
-	if retVal, ok := evaluated.(*ReturnValue); ok {
+	if retVal, ok := evaluated.(*object.ReturnValue); ok {
 		if retVal.Value == nil {
-			return NULL, nil
+			return object.NULL, nil
 		}
 		return retVal.Value, nil
 	}
-	return NULL, nil
+	return object.NULL, nil
 }
 
 // findFunction is likely unused but kept for now.
@@ -574,10 +575,10 @@ func findFunction(file *ast.File, name string) *ast.FuncDecl {
 	return nil
 }
 
-func (i *Interpreter) eval(ctx context.Context, node ast.Node, env *Environment) (Object, error) {
+func (i *Interpreter) eval(ctx context.Context, node ast.Node, env object.Environment) (object.Object, error) {
 	switch n := node.(type) {
 	case *ast.File:
-		var result Object
+		var result object.Object
 		var err error
 		for _, decl := range n.Decls {
 			if fnDecl, ok := decl.(*ast.FuncDecl); ok && fnDecl.Name.Name == "main" {
@@ -596,24 +597,24 @@ func (i *Interpreter) eval(ctx context.Context, node ast.Node, env *Environment)
 		return i.eval(ctx, n.X, env)
 
 	case *ast.Ident:
-		return i.evalIdentifier(n, env, i.activeFileSet) // Pass activeFileSet and Interpreter
+		return i.evalIdentifier(n, env, i.activeFileSet) // env is object.Environment
 
 	case *ast.BasicLit:
 		switch n.Kind {
 		case token.STRING:
-			return &String{Value: n.Value[1 : len(n.Value)-1]}, nil
+			return &object.String{Value: n.Value[1 : len(n.Value)-1]}, nil
 		case token.INT:
 			val, err := parseInt64(n.Value)
 			if err != nil {
 				return nil, i.formatErrorWithContext(i.activeFileSet, n.Pos(), err, fmt.Sprintf("Could not parse integer literal '%s'", n.Value))
 			}
-			return &Integer{Value: val}, nil
+			return &object.Integer{Value: val}, nil
 		default:
 			return nil, i.formatErrorWithContext(i.activeFileSet, n.Pos(), fmt.Errorf("unsupported literal type: %s", n.Kind), fmt.Sprintf("Unsupported literal value: %s", n.Value))
 		}
 
 	case *ast.DeclStmt:
-		return i.evalDeclStmt(ctx, n, env) // This will use i.activeFileSet for errors inside
+		return i.evalDeclStmt(ctx, n, env) // env is object.Environment
 
 	case *ast.BinaryExpr:
 		return i.evalBinaryExpr(ctx, n, env) // Uses i.activeFileSet via helper functions
@@ -662,8 +663,8 @@ func (i *Interpreter) eval(ctx context.Context, node ast.Node, env *Environment)
 	}
 }
 
-func (i *Interpreter) evalCompositeLit(ctx context.Context, lit *ast.CompositeLit, env *Environment) (Object, error) {
-	var structDef *StructDefinition
+func (i *Interpreter) evalCompositeLit(ctx context.Context, lit *ast.CompositeLit, env object.Environment) (object.Object, error) {
+	var structDef *object.StructDefinition
 
 	switch typeNode := lit.Type.(type) {
 	case *ast.Ident:
@@ -674,7 +675,7 @@ func (i *Interpreter) evalCompositeLit(ctx context.Context, lit *ast.CompositeLi
 			// For now, if not found directly, it's an error.
 			return nil, i.formatErrorWithContext(i.activeFileSet, typeNode.Pos(), fmt.Errorf("undefined type '%s' used in composite literal", typeNameStr), "Struct instantiation error")
 		}
-		sDef, ok := obj.(*StructDefinition)
+		sDef, ok := obj.(*object.StructDefinition)
 		if !ok {
 			return nil, i.formatErrorWithContext(i.activeFileSet, typeNode.Pos(), fmt.Errorf("type '%s' is not a struct type, but %s", typeNameStr, obj.Type()), "Struct instantiation error")
 		}
@@ -689,7 +690,7 @@ func (i *Interpreter) evalCompositeLit(ctx context.Context, lit *ast.CompositeLi
 		structName := typeNode.Sel.Name
 		qualifiedName := pkgName + "." + structName
 
-		obj, found := env.Get(qualifiedName)
+		obj, found := env.Get(qualifiedName) // env is object.Environment
 		if !found {
 			// Attempt to load the package if the qualified type name is not found.
 			// The environment `env` passed here is the current evaluation environment.
@@ -697,7 +698,15 @@ func (i *Interpreter) evalCompositeLit(ctx context.Context, lit *ast.CompositeLi
 			// We assume that for struct literals, `env` will be or will chain to i.globalEnv
 			// where package symbols are expected. For external struct literals, this is true.
 			// For local struct literals within functions, this also holds due to lexical scoping.
-			_, errLoad := i.loadPackageIfNeeded(ctx, pkgName, i.globalEnv, typeNode.X.Pos()) // Pass i.globalEnv
+			// i.globalEnv is object.Environment, loadPackageIfNeeded expects *Environment (*eval.Environment)
+			// This requires i.globalEnv to be cast or loadPackageIfNeeded to accept object.Environment
+			// For now, let's assume loadPackageIfNeeded will be adapted or i.globalEnv is the concrete *eval.Environment.
+			// Given NewInterpreter sets i.globalEnv = NewEnvironment(nil), it is *eval.Environment.
+			globalEvalEnv, okGlobal := i.globalEnv.(*Environment)
+			if !okGlobal {
+				return nil, i.formatErrorWithContext(i.activeFileSet, typeNode.X.Pos(), fmt.Errorf("internal error: globalEnv is not of type *eval.Environment"), "Struct instantiation error")
+			}
+			_, errLoad := i.loadPackageIfNeeded(ctx, pkgName, globalEvalEnv, typeNode.X.Pos())
 			if errLoad != nil {
 				// Error during package loading attempt.
 				// The error from loadPackageIfNeeded is already formatted.
@@ -705,12 +714,12 @@ func (i *Interpreter) evalCompositeLit(ctx context.Context, lit *ast.CompositeLi
 				return nil, i.formatErrorWithContext(i.activeFileSet, typeNode.Pos(), errLoad, fmt.Sprintf("Error loading package '%s' for struct literal type '%s'", pkgName, qualifiedName))
 			}
 			// Try getting the struct definition again after attempting to load the package.
-			obj, found = env.Get(qualifiedName) // Search in the original env
+			obj, found = env.Get(qualifiedName) // Search in the original env (object.Environment)
 			if !found {
 				return nil, i.formatErrorWithContext(i.activeFileSet, typeNode.Pos(), fmt.Errorf("undefined type '%s' used in composite literal even after attempting to load package '%s'", qualifiedName, pkgName), "Struct instantiation error")
 			}
 		}
-		sDef, ok := obj.(*StructDefinition)
+		sDef, ok := obj.(*object.StructDefinition)
 		if !ok {
 			return nil, i.formatErrorWithContext(i.activeFileSet, typeNode.Pos(), fmt.Errorf("type '%s' is not a struct type, but %s", qualifiedName, obj.Type()), "Struct instantiation error")
 		}
@@ -720,10 +729,10 @@ func (i *Interpreter) evalCompositeLit(ctx context.Context, lit *ast.CompositeLi
 		return nil, i.formatErrorWithContext(i.activeFileSet, lit.Type.Pos(), fmt.Errorf("expected identifier or selector for composite literal type, got %T", lit.Type), "Struct instantiation error")
 	}
 
-	instance := &StructInstance{
+	instance := &object.StructInstance{
 		Definition:     structDef,
-		FieldValues:    make(map[string]Object),
-		EmbeddedValues: make(map[string]*StructInstance),
+		FieldValues:    make(map[string]object.Object),
+		EmbeddedValues: make(map[string]*object.StructInstance),
 	}
 
 	if len(lit.Elts) == 0 && len(structDef.Fields) > 0 {
@@ -749,14 +758,14 @@ func (i *Interpreter) evalCompositeLit(ctx context.Context, lit *ast.CompositeLi
 			valueExpr := kvExpr.Value
 
 			if _, isDirectField := structDef.Fields[fieldName]; isDirectField {
-				valObj, err := i.eval(ctx, valueExpr, env)
+				valObj, err := i.eval(ctx, valueExpr, env) // env is object.Environment
 				if err != nil { return nil, err }
 				instance.FieldValues[fieldName] = valObj
 				continue
 			}
 			// ... (simplified embedded/promoted field handling for brevity, assumes direct fields primarily) ...
 			var isEmbeddedTypeNameInitialization bool
-			var targetEmbeddedDefForExplicitInit *StructDefinition
+			var targetEmbeddedDefForExplicitInit *object.StructDefinition
 			for _, embDef := range structDef.EmbeddedDefs {
 				if embDef.Name == fieldName {
 					isEmbeddedTypeNameInitialization = true
@@ -765,9 +774,9 @@ func (i *Interpreter) evalCompositeLit(ctx context.Context, lit *ast.CompositeLi
 				}
 			}
 			if isEmbeddedTypeNameInitialization {
-				valObj, err := i.eval(ctx, valueExpr, env)
+				valObj, err := i.eval(ctx, valueExpr, env) // env is object.Environment
 				if err != nil { return nil, err }
-				embInstanceVal, ok := valObj.(*StructInstance)
+				embInstanceVal, ok := valObj.(*object.StructInstance)
 				if !ok || embInstanceVal.Definition.Name != targetEmbeddedDefForExplicitInit.Name {
 					return nil, i.formatErrorWithContext(i.activeFileSet, kvExpr.Value.Pos(),
 						fmt.Errorf("value for embedded struct '%s' is not a compatible struct instance (expected '%s', got '%s')",
@@ -777,7 +786,7 @@ func (i *Interpreter) evalCompositeLit(ctx context.Context, lit *ast.CompositeLi
 				continue
 			}
 			// Promoted field logic (simplified)
-			var owningEmbDef *StructDefinition
+			var owningEmbDef *object.StructDefinition
 			for _, embDef := range structDef.EmbeddedDefs {
 				if _, isPromoted := embDef.Fields[fieldName]; isPromoted {
 					owningEmbDef = embDef; break
@@ -785,11 +794,11 @@ func (i *Interpreter) evalCompositeLit(ctx context.Context, lit *ast.CompositeLi
 			}
 			if owningEmbDef != nil {
                  // ... (logic to set field in embedded instance) ...
-				 valObj, err := i.eval(ctx, valueExpr, env)
+				 valObj, err := i.eval(ctx, valueExpr, env) // env is object.Environment
 				 if err != nil { return nil, err }
 				 embInstance, ok := instance.EmbeddedValues[owningEmbDef.Name]
 				 if !ok {
-					 embInstance = &StructInstance{Definition: owningEmbDef, FieldValues: make(map[string]Object), EmbeddedValues: make(map[string]*StructInstance)}
+					 embInstance = &object.StructInstance{Definition: owningEmbDef, FieldValues: make(map[string]object.Object), EmbeddedValues: make(map[string]*object.StructInstance)}
 					 instance.EmbeddedValues[owningEmbDef.Name] = embInstance
 				 }
 				 embInstance.FieldValues[fieldName] = valObj
@@ -806,23 +815,23 @@ func (i *Interpreter) evalCompositeLit(ctx context.Context, lit *ast.CompositeLi
 }
 
 
-func (i *Interpreter) evalBranchStmt(ctx context.Context, stmt *ast.BranchStmt, env *Environment) (Object, error) {
+func (i *Interpreter) evalBranchStmt(ctx context.Context, stmt *ast.BranchStmt, env object.Environment) (object.Object, error) {
 	if stmt.Label != nil {
 		return nil, i.formatErrorWithContext(i.activeFileSet, stmt.Pos(), fmt.Errorf("labeled break/continue not supported"), "")
 	}
 
 	switch stmt.Tok {
 	case token.BREAK:
-		return BREAK, nil
+		return object.BREAK, nil
 	case token.CONTINUE:
-		return CONTINUE, nil
+		return object.CONTINUE, nil
 	default:
 		return nil, i.formatErrorWithContext(i.activeFileSet, stmt.Pos(), fmt.Errorf("unsupported branch statement: %s", stmt.Tok), "")
 	}
 }
 
-func (i *Interpreter) evalForStmt(ctx context.Context, stmt *ast.ForStmt, env *Environment) (Object, error) {
-	loopEnv := NewEnvironment(env)
+func (i *Interpreter) evalForStmt(ctx context.Context, stmt *ast.ForStmt, env object.Environment) (object.Object, error) {
+	loopEnv := NewEnvironment(env) // env is object.Environment, NewEnvironment creates *eval.Environment
 	if stmt.Init != nil {
 		if _, err := i.eval(ctx, stmt.Init, loopEnv); err != nil { return nil, err }
 	}
@@ -830,7 +839,7 @@ func (i *Interpreter) evalForStmt(ctx context.Context, stmt *ast.ForStmt, env *E
 		if stmt.Cond != nil {
 			condition, err := i.eval(ctx, stmt.Cond, loopEnv)
 			if err != nil { return nil, err }
-			boolCond, ok := condition.(*Boolean)
+			boolCond, ok := condition.(*object.Boolean)
 			if !ok {
 				return nil, i.formatErrorWithContext(i.activeFileSet, stmt.Cond.Pos(),
 					fmt.Errorf("condition for for statement must be a boolean, got %s (type: %s)", condition.Inspect(), condition.Type()), "")
@@ -842,10 +851,10 @@ func (i *Interpreter) evalForStmt(ctx context.Context, stmt *ast.ForStmt, env *E
 
 		var broke bool
 		switch res := bodyResult.(type) {
-		case *ReturnValue: return res, nil
-		case *Error: return res, nil
-		case *BreakStatement: broke = true
-		case *ContinueStatement:
+		case *object.ReturnValue: return res, nil
+		case *object.Error: return res, nil
+		case *object.BreakStatement: broke = true
+		case *object.ContinueStatement:
 			if stmt.Post != nil {
 				if _, postErr := i.eval(ctx, stmt.Post, loopEnv); postErr != nil { return nil, postErr }
 			}
@@ -856,11 +865,11 @@ func (i *Interpreter) evalForStmt(ctx context.Context, stmt *ast.ForStmt, env *E
 			if _, err := i.eval(ctx, stmt.Post, loopEnv); err != nil { return nil, err }
 		}
 	}
-	return NULL, nil
+	return object.NULL, nil
 }
 
-func (i *Interpreter) evalSelectorExpr(ctx context.Context, node *ast.SelectorExpr, env *Environment) (Object, error) {
-	xObj, err := i.eval(ctx, node.X, env)
+func (i *Interpreter) evalSelectorExpr(ctx context.Context, node *ast.SelectorExpr, env object.Environment) (object.Object, error) {
+	xObj, err := i.eval(ctx, node.X, env) // env is object.Environment
 	fieldName := node.Sel.Name
 
 	if err != nil {
@@ -871,9 +880,9 @@ func (i *Interpreter) evalSelectorExpr(ctx context.Context, node *ast.SelectorEx
 		return nil, err
 	}
 
-	if structInstance, ok := xObj.(*StructInstance); ok {
+	if structInstance, ok := xObj.(*object.StructInstance); ok {
 		if val, found := structInstance.FieldValues[fieldName]; found { return val, nil }
-		if _, isDirectField := structInstance.Definition.Fields[fieldName]; isDirectField { return NULL, nil }
+		if _, isDirectField := structInstance.Definition.Fields[fieldName]; isDirectField { return object.NULL, nil }
 
 		// Use activeFileSet for findFieldInEmbedded if it's from current context,
 		// or structInstance.Definition.FileSet if that's more appropriate for the definition.
@@ -889,7 +898,7 @@ handlePackageAccess:
 		localPkgName := identX.Name
 		qualifiedNameInEnv := localPkgName + "." + fieldName
 
-		if val, found := env.Get(qualifiedNameInEnv); found { return val, nil }
+		if val, found := env.Get(qualifiedNameInEnv); found { return val, nil } // env is object.Environment
 
 		importPath, knownAlias := i.importAliasMap[localPkgName]
 		if !knownAlias {
@@ -901,12 +910,26 @@ handlePackageAccess:
 		// Declare variables here so they are in scope for later use.
 		var loadedPkgInfo *scanner.PackageInfo
 		var loadErr error
-		var val Object
+		var val object.Object
 		var found bool
 
 		if _, alreadyImported := i.importedPackages[importPath]; !alreadyImported {
 			// Package not yet imported, call loadPackageIfNeeded to scan and define symbols.
-			loadedPkgInfo, loadErr = i.loadPackageIfNeeded(ctx, localPkgName, env, identX.Pos()) // Assign using =
+			// env is object.Environment, but loadPackageIfNeeded expects *Environment (*eval.Environment)
+			evalEnv, okEvalEnv := env.(*Environment)
+			if !okEvalEnv {
+				// This could happen if env is i.globalEnv, which is also object.Environment.
+				// We need to ensure that the env passed to loadPackageIfNeeded is the concrete *eval.Environment.
+				// If env is a funcEnv (outer is i.globalEnv), we might need to pass i.globalEnv casted.
+				// For simplicity, if it's not *eval.Environment, try casting i.globalEnv.
+				// This logic assumes that symbol loading always happens into the global scope.
+				globalEvalEnv, okGlobalEvalEnv := i.globalEnv.(*Environment)
+				if !okGlobalEvalEnv {
+					return nil, i.formatErrorWithContext(i.activeFileSet, identX.Pos(), fmt.Errorf("internal error: environment for package loading is not *eval.Environment"), "Selector error")
+				}
+				evalEnv = globalEvalEnv
+			}
+			loadedPkgInfo, loadErr = i.loadPackageIfNeeded(ctx, localPkgName, evalEnv, identX.Pos())
 			if loadErr != nil {
 				// loadErr should be already formatted by loadPackageIfNeeded
 				return nil, loadErr
@@ -917,7 +940,7 @@ handlePackageAccess:
 
 		// After ensuring the package is loaded (either now or previously, or if there was an error),
 		// try getting the symbol again from the environment.
-		val, found = env.Get(qualifiedNameInEnv) // Assign using =
+		val, found = env.Get(qualifiedNameInEnv) // env is object.Environment
 		if found {
 			return val, nil
 		}
@@ -940,18 +963,18 @@ handlePackageAccess:
 // resolutionEnv: The environment to use for looking up type names (typically fn.Env for function parameters).
 // contextFn: Optional. If resolving a type for a parameter of this function, it's used to qualify unqualified type names (e.g. `Point` becomes `pkg.Point`).
 // activeFset: FileSet for error reporting.
-func (i *Interpreter) resolveTypeAstToObjectType(typeExpr ast.Expr, resolutionEnv *Environment, contextFn *UserDefinedFunction, activeFset *token.FileSet) (ObjectType, *StructDefinition, error) {
+func (i *Interpreter) resolveTypeAstToObjectType(typeExpr ast.Expr, resolutionEnv object.Environment, contextFn *object.UserDefinedFunction, activeFset *token.FileSet) (object.ObjectType, *object.StructDefinition, error) {
 	switch te := typeExpr.(type) {
 	case *ast.Ident:
 		typeName := te.Name
 		// Check for built-in types first
 		switch typeName {
 		case "int":
-			return INTEGER_OBJ, nil, nil
+			return object.INTEGER_OBJ, nil, nil
 		case "string":
-			return STRING_OBJ, nil, nil
+			return object.STRING_OBJ, nil, nil
 		case "bool":
-			return BOOLEAN_OBJ, nil, nil
+			return object.BOOLEAN_OBJ, nil, nil
 		}
 
 		// If it's a parameter of an external function, the type name might be unqualified (e.g., "Point" instead of "pkg.Point")
@@ -959,10 +982,10 @@ func (i *Interpreter) resolveTypeAstToObjectType(typeExpr ast.Expr, resolutionEn
 		if contextFn != nil && contextFn.IsExternal && contextFn.PackageAlias != "" {
 			qualifiedTypeName := contextFn.PackageAlias + "." + typeName
 			// External function types are defined in the global environment (contextFn.Env, which is resolutionEnv here)
-			obj, found := resolutionEnv.Get(qualifiedTypeName)
+			obj, found := resolutionEnv.Get(qualifiedTypeName) // resolutionEnv is object.Environment
 			if found {
-				if structDef, ok := obj.(*StructDefinition); ok {
-					return STRUCT_INSTANCE_OBJ, structDef, nil
+				if structDef, ok := obj.(*object.StructDefinition); ok {
+					return object.STRUCT_INSTANCE_OBJ, structDef, nil
 				}
 				// Found something but not a struct def (e.g. a function with the same name as a type)
 				return "", nil, i.formatErrorWithContext(activeFset, te.Pos(), fmt.Errorf("type '%s' (resolved as '%s') is not a struct definition, but %s", typeName, qualifiedTypeName, obj.Type()), "")
@@ -972,12 +995,12 @@ func (i *Interpreter) resolveTypeAstToObjectType(typeExpr ast.Expr, resolutionEn
 		}
 
 		// General lookup for identifier type names (e.g., local struct, or if not external context)
-		obj, found := resolutionEnv.Get(typeName)
+		obj, found := resolutionEnv.Get(typeName) // resolutionEnv is object.Environment
 		if !found {
 			return "", nil, i.formatErrorWithContext(activeFset, te.Pos(), fmt.Errorf("undefined type: %s", typeName), "")
 		}
-		if structDef, ok := obj.(*StructDefinition); ok {
-			return STRUCT_INSTANCE_OBJ, structDef, nil
+		if structDef, ok := obj.(*object.StructDefinition); ok {
+			return object.STRUCT_INSTANCE_OBJ, structDef, nil
 		}
 		return "", nil, i.formatErrorWithContext(activeFset, te.Pos(), fmt.Errorf("type '%s' is not a struct definition, but %s", typeName, obj.Type()), "")
 
@@ -990,42 +1013,47 @@ func (i *Interpreter) resolveTypeAstToObjectType(typeExpr ast.Expr, resolutionEn
 		typeName := te.Sel.Name
 		qualifiedName := pkgName + "." + typeName
 
-		// Ensure package is loaded (this might be redundant if already handled, but good for safety)
-		// This call to loadPackageIfNeeded uses i.globalEnv because type definitions from imports are stored globally.
-		// The `env` passed to resolveTypeAstToObjectType might be a more local function environment.
-		if _, err := i.loadPackageIfNeeded(context.TODO(), pkgName, i.globalEnv, pkgIdent.Pos()); err != nil {
-			// Don't return error if already loaded (err might be nil, and pkgInfo nil)
-			// The error from loadPackageIfNeeded is already formatted.
-			// We only care about fatal errors here preventing type lookup.
-			// If loadPackageIfNeeded returns (nil, nil), it means it was already processed or found.
-			// Check if error is non-nil and then if it's a "real" error.
-			// This logic might need refinement based on loadPackageIfNeeded's exact return for "already loaded".
-			// For now, assume any error from loadPackageIfNeeded is problematic for type resolution here.
-			// However, loadPackageIfNeeded itself checks `importedPackages`.
-			// A simpler approach: try Get, if not found, then try load.
+		// Ensure package is loaded. i.globalEnv is object.Environment.
+		// loadPackageIfNeeded expects *eval.Environment.
+		globalEvalEnv, okGlobalEvalEnv := i.globalEnv.(*Environment)
+		if !okGlobalEvalEnv {
+			return "", nil, i.formatErrorWithContext(activeFset, te.Pos(), fmt.Errorf("internal error: globalEnv for package loading is not *eval.Environment"), "Type resolution error")
+		}
+		if _, err := i.loadPackageIfNeeded(context.TODO(), pkgName, globalEvalEnv, pkgIdent.Pos()); err != nil {
+			// This check might be too strict if err just means "already loaded".
+			// However, loadPackageIfNeeded returns (nil, nil) for "already processed".
+			// So, a non-nil error here is likely a real problem.
+			// For now, let's assume any non-nil error from loadPackageIfNeeded is problematic for type resolution.
+			// The error from loadPackageIfNeeded should be formatted.
+			// We might want to wrap it with more context about type resolution.
+			return "", nil, i.formatErrorWithContext(activeFset, te.Pos(), fmt.Errorf("error loading package '%s' for type resolution of '%s': %w", pkgName, qualifiedName, err), "")
 		}
 
 		// For qualified names (pkg.Type), the definition should be in the global environment.
 		// resolutionEnv might be a local function scope, so directly use i.globalEnv.
-		obj, found := i.globalEnv.Get(qualifiedName)
+		obj, found := i.globalEnv.Get(qualifiedName) // i.globalEnv is object.Environment
 		if !found {
 			// Attempt to load the package if not found after checking env and globalEnv.
 			// This is important if the type is from a package not explicitly loaded via a selector expression value yet.
-			_, loadErr := i.loadPackageIfNeeded(context.TODO(), pkgName, i.globalEnv, pkgIdent.Pos())
+			// Re-assert globalEvalEnv as it's needed again.
+			if !okGlobalEvalEnv { // Should still be valid from above, but good practice if code structure changes.
+				return "", nil, i.formatErrorWithContext(activeFset, te.Pos(), fmt.Errorf("internal error: globalEnv for package loading (retry) is not *eval.Environment"), "Type resolution error")
+			}
+			_, loadErr := i.loadPackageIfNeeded(context.TODO(), pkgName, globalEvalEnv, pkgIdent.Pos())
 			if loadErr != nil {
 				// If loading fails, the type cannot be resolved.
 				return "", nil, i.formatErrorWithContext(activeFset, te.Pos(), fmt.Errorf("failed to load package '%s' for type resolution of '%s': %w", pkgName, qualifiedName, loadErr), "")
 			}
 			// Try fetching again after loading attempt
-			obj, found = i.globalEnv.Get(qualifiedName)
+			obj, found = i.globalEnv.Get(qualifiedName) // i.globalEnv is object.Environment
 			if !found {
 				return "", nil, i.formatErrorWithContext(activeFset, te.Pos(), fmt.Errorf("undefined type: %s (after attempting package load)", qualifiedName), "")
 			}
 		}
 
 
-		if structDef, ok := obj.(*StructDefinition); ok {
-			return STRUCT_INSTANCE_OBJ, structDef, nil
+		if structDef, ok := obj.(*object.StructDefinition); ok {
+			return object.STRUCT_INSTANCE_OBJ, structDef, nil
 		}
 		return "", nil, i.formatErrorWithContext(activeFset, te.Pos(), fmt.Errorf("qualified type '%s' is not a struct definition, but %s", qualifiedName, obj.Type()), "")
 	// TODO: Handle *ast.StarExpr for pointers, *ast.ArrayType, *ast.MapType, *ast.InterfaceType etc.
@@ -1035,7 +1063,7 @@ func (i *Interpreter) resolveTypeAstToObjectType(typeExpr ast.Expr, resolutionEn
 }
 
 // loadPackageIfNeeded handles the logic for loading symbols from an imported package
-// if it hasn't been loaded yet. It populates the provided 'env' (expected to be global)
+// if it hasn't been loaded yet. It populates the provided 'env' (expected to be global, and of type *eval.Environment)
 // with the package's exported symbols, qualified by pkgAlias.
 func (i *Interpreter) loadPackageIfNeeded(ctx context.Context, pkgAlias string, env *Environment, errorPos token.Pos) (*scanner.PackageInfo, error) {
 	// Ensure sharedScanner is available
@@ -1082,29 +1110,29 @@ func (i *Interpreter) loadPackageIfNeeded(ctx context.Context, pkgAlias string, 
 		if !c.IsExported {
 			continue
 		}
-		var constObj Object
+		var constObj object.Object
 		if c.Type != nil {
 			switch c.Type.Name {
 			case "int", "int64", "int32", "uint", "uint64", "uint32", "rune", "byte":
 				valInt, errParse := parseInt64(c.Value)
 				if errParse == nil {
-					constObj = &Integer{Value: valInt}
+					constObj = &object.Integer{Value: valInt}
 				} else {
 					fmt.Fprintf(os.Stderr, "Warning: Could not parse external const integer %s.%s (value: %s): %v\n", pkgAlias, c.Name, c.Value, errParse)
 				}
 			case "string":
 				unquotedVal, errParse := strconv.Unquote(c.Value)
 				if errParse == nil {
-					constObj = &String{Value: unquotedVal}
+					constObj = &object.String{Value: unquotedVal}
 				} else {
 					fmt.Fprintf(os.Stderr, "Warning: Could not unquote external const string %s.%s (value: %s): %v\n", pkgAlias, c.Name, c.Value, errParse)
 				}
 			case "bool":
 				switch c.Value {
 				case "true":
-					constObj = TRUE
+					constObj = object.TRUE
 				case "false":
-					constObj = FALSE
+					constObj = object.FALSE
 				default:
 					fmt.Fprintf(os.Stderr, "Warning: Could not parse external const bool %s.%s (value: %s)\n", pkgAlias, c.Name, c.Value)
 				}
@@ -1115,7 +1143,7 @@ func (i *Interpreter) loadPackageIfNeeded(ctx context.Context, pkgAlias string, 
 			fmt.Fprintf(os.Stderr, "Warning: External const %s.%s has no type info\n", pkgAlias, c.Name)
 		}
 		if constObj != nil {
-			env.Define(pkgAlias+"."+c.Name, constObj)
+			env.Define(pkgAlias+"."+c.Name, constObj) // env is *eval.Environment
 		}
 	}
 
@@ -1135,12 +1163,13 @@ func (i *Interpreter) loadPackageIfNeeded(ctx context.Context, pkgAlias string, 
 			}
 		}
 		// Use sharedScanner's FileSet for external functions
-		env.Define(pkgAlias+"."+fInfo.Name, &UserDefinedFunction{
+		// env is *eval.Environment, which implements object.Environment
+		env.Define(pkgAlias+"."+fInfo.Name, &object.UserDefinedFunction{
 			Name:           fInfo.Name,
 			Parameters:     params,
 			ParamTypeExprs: paramTypeExprs,
 			Body:           fInfo.AstDecl.Body,
-			Env:            env, // Lexical scope is the global env where "Pkg.Func" is defined
+			Env:            env, // Assign *eval.Environment to object.Environment interface field
 			FileSet:        i.sharedScanner.Fset(),
 			IsExternal:     true,
 			PackagePath:    importPath,
@@ -1166,7 +1195,7 @@ func (i *Interpreter) loadPackageIfNeeded(ctx context.Context, pkgAlias string, 
 		}
 
 		directFields := make(map[string]string) // FieldName -> FieldTypeName (simple string for now)
-		var embeddedDefs []*StructDefinition     // List of *StructDefinition for embedded types
+		var embeddedDefs []*object.StructDefinition // List of *object.StructDefinition for embedded types
 		var fieldOrder []string                  // To maintain original field order
 
 		if structType.Fields != nil && structType.Fields.List != nil {
@@ -1208,9 +1237,9 @@ func (i *Interpreter) loadPackageIfNeeded(ctx context.Context, pkgAlias string, 
 						qualifiedEmbTypeName = pkgAlias + "." + fieldTypeNameStr
 					}
 
-					embObj, found := env.Get(qualifiedEmbTypeName)
+					embObj, found := env.Get(qualifiedEmbTypeName) // env is *eval.Environment
 					if found {
-						if ed, okEd := embObj.(*StructDefinition); okEd {
+						if ed, okEd := embObj.(*object.StructDefinition); okEd {
 							embeddedDefs = append(embeddedDefs, ed)
 						} else {
 							fmt.Fprintf(os.Stderr, "Warning: Embedded type %s in %s.%s is not a struct definition (%s)\n", fieldTypeNameStr, pkgAlias, typeSpec.Name.Name, embObj.Type())
@@ -1230,7 +1259,7 @@ func (i *Interpreter) loadPackageIfNeeded(ctx context.Context, pkgAlias string, 
 			}
 		}
 
-		structDef := &StructDefinition{
+		structDef := &object.StructDefinition{
 			Name:         typeSpec.Name.Name,
 			Fields:       directFields,
 			EmbeddedDefs: embeddedDefs,
@@ -1241,7 +1270,7 @@ func (i *Interpreter) loadPackageIfNeeded(ctx context.Context, pkgAlias string, 
 			// PackageAlias is not stored directly in StructDefinition, as it's known by the qualified name.
 		}
 		qualifiedStructName := pkgAlias + "." + structDef.Name
-		env.Define(qualifiedStructName, structDef)
+		env.Define(qualifiedStructName, structDef) // env is *eval.Environment
 	}
 
 	// Mark this package path as imported to avoid reprocessing.
@@ -1251,9 +1280,9 @@ func (i *Interpreter) loadPackageIfNeeded(ctx context.Context, pkgAlias string, 
 }
 
 // findFieldInEmbedded uses fset passed to it for errors
-func (i *Interpreter) findFieldInEmbedded(instance *StructInstance, fieldName string, fset *token.FileSet, selPos token.Pos) (foundValue Object, found bool, foundIn string, err error) {
+func (i *Interpreter) findFieldInEmbedded(instance *object.StructInstance, fieldName string, fset *token.FileSet, selPos token.Pos) (foundValue object.Object, found bool, foundIn string, err error) {
 	// ... (no change to i.activeFileSet usage here as fset is explicit)
-	var overallFoundValue Object
+	var overallFoundValue object.Object
 	var overallFoundInDefinitionName string
 	var numFoundPaths int = 0
 
@@ -1265,7 +1294,7 @@ func (i *Interpreter) findFieldInEmbedded(instance *StructInstance, fieldName st
 					return nil, false, "", i.formatErrorWithContext(fset, selPos,
 						fmt.Errorf("ambiguous selector %s (found in %s and as uninitialized field in %s)", fieldName, overallFoundInDefinitionName, embDef.Name), "")
 				}
-				overallFoundValue = NULL
+				overallFoundValue = object.NULL
 				overallFoundInDefinitionName = embDef.Name
 				numFoundPaths++
 			}
@@ -1286,7 +1315,7 @@ func (i *Interpreter) findFieldInEmbedded(instance *StructInstance, fieldName st
 				return nil, false, "", i.formatErrorWithContext(fset, selPos,
 					fmt.Errorf("ambiguous selector %s (found in %s and as uninitialized field in %s)", fieldName, overallFoundInDefinitionName, embDef.Name), "")
 			}
-			overallFoundValue = NULL
+			overallFoundValue = object.NULL
 			overallFoundInDefinitionName = embDef.Name
 			numFoundPaths++
 			continue // Found as uninitialized, check next sibling for ambiguity.
@@ -1327,17 +1356,17 @@ func (i *Interpreter) findFieldInEmbedded(instance *StructInstance, fieldName st
 }
 
 
-func (i *Interpreter) evalBlockStatement(ctx context.Context, block *ast.BlockStmt, env *Environment) (Object, error) {
-	var result Object
+func (i *Interpreter) evalBlockStatement(ctx context.Context, block *ast.BlockStmt, env object.Environment) (object.Object, error) {
+	var result object.Object
 	var err error
 
 	for _, stmt := range block.List {
-		result, err = i.eval(ctx, stmt, env)
+		result, err = i.eval(ctx, stmt, env) // env is object.Environment
 		if err != nil {
 			return nil, err
 		}
 		switch res := result.(type) {
-		case *ReturnValue, *Error, *BreakStatement, *ContinueStatement:
+		case *object.ReturnValue, *object.Error, *object.BreakStatement, *object.ContinueStatement:
 			// If any of these control flow objects are encountered,
 			// stop executing statements in this block and propagate the object.
 			return res, nil
@@ -1346,7 +1375,7 @@ func (i *Interpreter) evalBlockStatement(ctx context.Context, block *ast.BlockSt
 	return result, nil // Return the result of the last statement if no control flow object was encountered.
 }
 
-func (i *Interpreter) evalFuncDecl(ctx context.Context, fd *ast.FuncDecl, env *Environment) (Object, error) {
+func (i *Interpreter) evalFuncDecl(ctx context.Context, fd *ast.FuncDecl, env object.Environment) (object.Object, error) {
 	params := []*ast.Ident{}
 	if fd.Type.Params != nil && fd.Type.Params.List != nil {
 		for _, field := range fd.Type.Params.List {
@@ -1369,23 +1398,23 @@ func (i *Interpreter) evalFuncDecl(ctx context.Context, fd *ast.FuncDecl, env *E
 		}
 	}
 
-	function := &UserDefinedFunction{
+	function := &object.UserDefinedFunction{
 		Name:           fd.Name.Name,
 		Parameters:     params,
 		ParamTypeExprs: paramTypeExprs,
 		Body:           fd.Body,
-		Env:            env,
+		Env:            env, // env is object.Environment
 		FileSet:        i.FileSet, // Set the FileSet
 	}
 
 	if fd.Name != nil && fd.Name.Name != "" {
-		env.Define(fd.Name.Name, function)
+		env.Define(fd.Name.Name, function) // env is object.Environment
 		return nil, nil
 	}
 	return nil, i.formatErrorWithContext(i.FileSet, fd.Pos(), fmt.Errorf("function declaration must have a name"), "")
 }
 
-func (i *Interpreter) evalFuncLit(ctx context.Context, fl *ast.FuncLit, env *Environment) (Object, error) {
+func (i *Interpreter) evalFuncLit(ctx context.Context, fl *ast.FuncLit, env object.Environment) (object.Object, error) {
 	params := []*ast.Ident{}
 	if fl.Type.Params != nil && fl.Type.Params.List != nil {
 		for _, field := range fl.Type.Params.List {
@@ -1406,33 +1435,33 @@ func (i *Interpreter) evalFuncLit(ctx context.Context, fl *ast.FuncLit, env *Env
 		}
 	}
 
-	return &UserDefinedFunction{
+	return &object.UserDefinedFunction{
 		Name:           "",
 		Parameters:     params,
 		ParamTypeExprs: paramTypeExprs,
 		Body:           fl.Body,
-		Env:            env,
+		Env:            env, // env is object.Environment
 		FileSet:        i.FileSet, // Set the FileSet
 	}, nil
 }
 
-func (i *Interpreter) evalReturnStmt(ctx context.Context, rs *ast.ReturnStmt, env *Environment) (Object, error) {
+func (i *Interpreter) evalReturnStmt(ctx context.Context, rs *ast.ReturnStmt, env object.Environment) (object.Object, error) {
 	if len(rs.Results) == 0 {
-		return &ReturnValue{Value: NULL}, nil
+		return &object.ReturnValue{Value: object.NULL}, nil
 	}
 
 	if len(rs.Results) > 1 {
 		return nil, i.formatErrorWithContext(i.FileSet, rs.Pos(), fmt.Errorf("multiple return values not supported"), "")
 	}
 
-	val, err := i.eval(ctx, rs.Results[0], env)
+	val, err := i.eval(ctx, rs.Results[0], env) // env is object.Environment
 	if err != nil {
 		return nil, err
 	}
-	return &ReturnValue{Value: val}, nil
+	return &object.ReturnValue{Value: val}, nil
 }
 
-func (i *Interpreter) evalDeclStmt(ctx context.Context, declStmt *ast.DeclStmt, env *Environment) (Object, error) {
+func (i *Interpreter) evalDeclStmt(ctx context.Context, declStmt *ast.DeclStmt, env object.Environment) (object.Object, error) {
 	genDecl, ok := declStmt.Decl.(*ast.GenDecl)
 	if !ok {
 		return nil, i.formatErrorWithContext(i.FileSet, declStmt.Pos(), fmt.Errorf("unsupported declaration type: %T", declStmt.Decl), "")
@@ -1449,36 +1478,36 @@ func (i *Interpreter) evalDeclStmt(ctx context.Context, declStmt *ast.DeclStmt, 
 			for idx, nameIdent := range valueSpec.Names {
 				varName := nameIdent.Name
 				if len(valueSpec.Values) > idx {
-					val, err := i.eval(ctx, valueSpec.Values[idx], env)
+					val, err := i.eval(ctx, valueSpec.Values[idx], env) // env is object.Environment
 					if err != nil {
 						return nil, err
 					}
-					env.Define(varName, val)
+					env.Define(varName, val) // env is object.Environment
 				} else {
 					if valueSpec.Type == nil {
 						return nil, i.formatErrorWithContext(i.FileSet, valueSpec.Pos(), fmt.Errorf("variable '%s' declared without initializer must have a type", varName), "")
 					}
 
-					var zeroVal Object
+					var zeroVal object.Object
 					switch T := valueSpec.Type.(type) {
 					case *ast.Ident:
 						switch T.Name {
 						case "string":
-							zeroVal = &String{Value: ""}
+							zeroVal = &object.String{Value: ""}
 						case "int":
-							zeroVal = &Integer{Value: 0}
+							zeroVal = &object.Integer{Value: 0}
 						case "bool":
-							zeroVal = FALSE
+							zeroVal = object.FALSE
 						default:
 							// Could be a struct type name, attempt to find its definition for zero value
-							typeObj, typeFound := env.Get(T.Name)
+							typeObj, typeFound := env.Get(T.Name) // env is object.Environment
 							if typeFound {
-								if structDef, ok := typeObj.(*StructDefinition); ok {
+								if structDef, ok := typeObj.(*object.StructDefinition); ok {
 									// Create an empty instance for the struct type (zero-value representation)
-									zeroVal = &StructInstance{
+									zeroVal = &object.StructInstance{
 										Definition:     structDef,
-										FieldValues:    make(map[string]Object),
-										EmbeddedValues: make(map[string]*StructInstance),
+										FieldValues:    make(map[string]object.Object),
+										EmbeddedValues: make(map[string]*object.StructInstance),
 									}
 								} else {
 									// Not a struct definition, unsupported type for zero value
@@ -1491,14 +1520,14 @@ func (i *Interpreter) evalDeclStmt(ctx context.Context, declStmt *ast.DeclStmt, 
 						}
 					case *ast.InterfaceType:
 						if T.Methods == nil || len(T.Methods.List) == 0 {
-							zeroVal = NULL
+							zeroVal = object.NULL
 						} else {
 							return nil, i.formatErrorWithContext(i.FileSet, T.Pos(), fmt.Errorf("unsupported specific interface type for uninitialized variable '%s'", varName), "")
 						}
 					default:
 						return nil, i.formatErrorWithContext(i.FileSet, valueSpec.Type.Pos(), fmt.Errorf("unsupported type expression for zero value for variable '%s': %T", varName, valueSpec.Type), "")
 					}
-					env.Define(varName, zeroVal)
+					env.Define(varName, zeroVal) // env is object.Environment
 				}
 			}
 		}
@@ -1513,7 +1542,7 @@ func (i *Interpreter) evalDeclStmt(ctx context.Context, declStmt *ast.DeclStmt, 
 			switch sType := typeSpec.Type.(type) {
 			case *ast.StructType:
 				directFields := make(map[string]string)
-				var embeddedDefs []*StructDefinition
+				var embeddedDefs []*object.StructDefinition
 				var fieldOrder []string
 
 				if sType.Fields != nil {
@@ -1558,11 +1587,11 @@ func (i *Interpreter) evalDeclStmt(ctx context.Context, declStmt *ast.DeclStmt, 
 							fieldOrder = append(fieldOrder, fieldTypeName) // Record embedded type name in order
 
 							// Look up the definition of the embedded struct.
-							obj, found := env.Get(fieldTypeName)
+							obj, found := env.Get(fieldTypeName) // env is object.Environment
 							if !found {
 								return nil, i.formatErrorWithContext(i.FileSet, field.Type.Pos(), fmt.Errorf("undefined type '%s' embedded in struct '%s'", fieldTypeName, typeName), "Struct definition error")
 							}
-							embeddedDef, ok := obj.(*StructDefinition)
+							embeddedDef, ok := obj.(*object.StructDefinition)
 							if !ok {
 								return nil, i.formatErrorWithContext(i.FileSet, field.Type.Pos(), fmt.Errorf("type '%s' embedded in struct '%s' is not a struct definition (got %s)", fieldTypeName, typeName, obj.Type()), "Struct definition error")
 							}
@@ -1584,13 +1613,13 @@ func (i *Interpreter) evalDeclStmt(ctx context.Context, declStmt *ast.DeclStmt, 
 						}
 					}
 				}
-				structDef := &StructDefinition{
+				structDef := &object.StructDefinition{
 					Name:          typeName,
 					Fields:        directFields,
 					EmbeddedDefs:  embeddedDefs,
 					FieldOrder:    fieldOrder,
 				}
-				env.Define(typeName, structDef)
+				env.Define(typeName, structDef) // env is object.Environment
 			default:
 				return nil, i.formatErrorWithContext(i.FileSet, typeSpec.Type.Pos(), fmt.Errorf("unsupported type specifier in type declaration '%s': %T", typeName, typeSpec.Type), "")
 			}
@@ -1602,126 +1631,142 @@ func (i *Interpreter) evalDeclStmt(ctx context.Context, declStmt *ast.DeclStmt, 
 	return nil, nil
 }
 
-func (i *Interpreter) evalIdentifier(ident *ast.Ident, env *Environment, fset *token.FileSet) (Object, error) {
+func (i *Interpreter) evalIdentifier(ident *ast.Ident, env object.Environment, fset *token.FileSet) (object.Object, error) {
 	switch ident.Name {
 	case "true":
-		return TRUE, nil
+		return object.TRUE, nil
 	case "false":
-		return FALSE, nil
+		return object.FALSE, nil
 	}
-	if val, ok := env.Get(ident.Name); ok {
+	if val, ok := env.Get(ident.Name); ok { // env is object.Environment
 		return val, nil
 	}
 	return nil, i.formatErrorWithContext(fset, ident.Pos(), fmt.Errorf("identifier not found: %s", ident.Name), "")
 }
 
-func (i *Interpreter) evalBinaryExpr(ctx context.Context, node *ast.BinaryExpr, env *Environment) (Object, error) {
-	left, err := i.eval(ctx, node.X, env)
+func (i *Interpreter) evalBinaryExpr(ctx context.Context, node *ast.BinaryExpr, env object.Environment) (object.Object, error) {
+	left, err := i.eval(ctx, node.X, env) // env is object.Environment
 	if err != nil {
 		return nil, err
 	}
-	right, err := i.eval(ctx, node.Y, env)
+	right, err := i.eval(ctx, node.Y, env) // env is object.Environment
 	if err != nil {
 		return nil, err
 	}
 
 	switch {
-	case left.Type() == STRING_OBJ && right.Type() == STRING_OBJ:
-		return i.evalStringBinaryExpr(node.Op, left.(*String), right.(*String), node.Pos())
-	case left.Type() == INTEGER_OBJ && right.Type() == INTEGER_OBJ:
-		return i.evalIntegerBinaryExpr(node.Op, left.(*Integer), right.(*Integer), node.Pos())
-	case left.Type() == BOOLEAN_OBJ && right.Type() == BOOLEAN_OBJ:
+	case left.Type() == object.STRING_OBJ && right.Type() == object.STRING_OBJ:
+		res, err := evalStringBinaryExpr(node.Op, left.(*object.String), right.(*object.String), node.Pos())
+		if err != nil {
+			return nil, i.formatErrorWithContext(i.FileSet, node.Pos(), err, "String binary operation error")
+		}
+		return res, nil
+	case left.Type() == object.INTEGER_OBJ && right.Type() == object.INTEGER_OBJ:
+		res, err := evalIntegerBinaryExpr(node.Op, left.(*object.Integer), right.(*object.Integer), node.Pos())
+		if err != nil {
+			return nil, i.formatErrorWithContext(i.FileSet, node.Pos(), err, "Integer binary operation error")
+		}
+		return res, nil
+	case left.Type() == object.BOOLEAN_OBJ && right.Type() == object.BOOLEAN_OBJ:
 		// TODO: Implement short-circuiting for token.LAND and token.LOR
 		// Currently, both left and right operands are evaluated before this point.
 		// For true short-circuiting, the evaluation of the right operand
 		// would need to be conditional within these cases.
-		return i.evalBooleanBinaryExpr(node.Op, left.(*Boolean), right.(*Boolean), node.Pos())
+		res, err := evalBooleanBinaryExpr(node.Op, left.(*object.Boolean), right.(*object.Boolean), node.Pos())
+		if err != nil {
+			return nil, i.formatErrorWithContext(i.FileSet, node.Pos(), err, "Boolean binary operation error")
+		}
+		return res, nil
 	default:
 		return nil, i.formatErrorWithContext(i.FileSet, node.Pos(),
 			fmt.Errorf("type mismatch or unsupported operation for binary expression: %s %s %s (left: %s, right: %s)", left.Type(), node.Op, right.Type(), left.Inspect(), right.Inspect()), "")
 	}
 }
 
-func (i *Interpreter) evalIntegerBinaryExpr(op token.Token, left, right *Integer, pos token.Pos) (Object, error) {
+// evalIntegerBinaryExpr is now a standalone function, not a method of Interpreter.
+// It cannot use i.formatErrorWithContext or i.activeFileSet directly.
+// For simplicity, errors are plain fmt.Errorf.
+func evalIntegerBinaryExpr(op token.Token, left, right *object.Integer, pos token.Pos) (object.Object, error) {
 	leftVal := left.Value
 	rightVal := right.Value
 
 	switch op {
 	case token.ADD:
-		return &Integer{Value: leftVal + rightVal}, nil
+		return &object.Integer{Value: leftVal + rightVal}, nil
 	case token.SUB:
-		return &Integer{Value: leftVal - rightVal}, nil
+		return &object.Integer{Value: leftVal - rightVal}, nil
 	case token.MUL:
-		return &Integer{Value: leftVal * rightVal}, nil
+		return &object.Integer{Value: leftVal * rightVal}, nil
 	case token.QUO:
 		if rightVal == 0 {
-			return nil, i.formatErrorWithContext(i.activeFileSet, pos, fmt.Errorf("division by zero"), "")
+			return nil, fmt.Errorf("division by zero at position %s", pos)
 		}
-		return &Integer{Value: leftVal / rightVal}, nil
+		return &object.Integer{Value: leftVal / rightVal}, nil
 	case token.REM:
 		if rightVal == 0 {
-			return nil, i.formatErrorWithContext(i.activeFileSet, pos, fmt.Errorf("division by zero (modulo)"), "")
+			return nil, fmt.Errorf("division by zero (modulo) at position %s", pos)
 		}
-		return &Integer{Value: leftVal % rightVal}, nil
+		return &object.Integer{Value: leftVal % rightVal}, nil
 	case token.EQL:
-		return nativeBoolToBooleanObject(leftVal == rightVal), nil
+		return object.NativeBoolToBooleanObject(leftVal == rightVal), nil
 	case token.NEQ:
-		return nativeBoolToBooleanObject(leftVal != rightVal), nil
+		return object.NativeBoolToBooleanObject(leftVal != rightVal), nil
 	case token.LSS:
-		return nativeBoolToBooleanObject(leftVal < rightVal), nil
+		return object.NativeBoolToBooleanObject(leftVal < rightVal), nil
 	case token.LEQ:
-		return nativeBoolToBooleanObject(leftVal <= rightVal), nil
+		return object.NativeBoolToBooleanObject(leftVal <= rightVal), nil
 	case token.GTR:
-		return nativeBoolToBooleanObject(leftVal > rightVal), nil
+		return object.NativeBoolToBooleanObject(leftVal > rightVal), nil
 	case token.GEQ:
-		return nativeBoolToBooleanObject(leftVal >= rightVal), nil
+		return object.NativeBoolToBooleanObject(leftVal >= rightVal), nil
 	default:
-		return nil, i.formatErrorWithContext(i.activeFileSet, pos, fmt.Errorf("unknown operator for integers: %s", op), "")
+		return nil, fmt.Errorf("unknown operator for integers: %s at position %s", op, pos)
 	}
 }
 
-func (i *Interpreter) evalStringBinaryExpr(op token.Token, left, right *String, pos token.Pos) (Object, error) {
+// evalStringBinaryExpr is now a standalone function.
+func evalStringBinaryExpr(op token.Token, left, right *object.String, pos token.Pos) (object.Object, error) {
 	switch op {
 	case token.EQL:
-		return nativeBoolToBooleanObject(left.Value == right.Value), nil
+		return object.NativeBoolToBooleanObject(left.Value == right.Value), nil
 	case token.NEQ:
-		return nativeBoolToBooleanObject(left.Value != right.Value), nil
+		return object.NativeBoolToBooleanObject(left.Value != right.Value), nil
 	case token.ADD:
-		return &String{Value: left.Value + right.Value}, nil
+		return &object.String{Value: left.Value + right.Value}, nil
 	default:
-		return nil, i.formatErrorWithContext(i.activeFileSet, pos, fmt.Errorf("unknown operator for strings: %s (left: %q, right: %q)", op, left.Value, right.Value), "")
+		return nil, fmt.Errorf("unknown operator for strings: %s (left: %q, right: %q) at position %s", op, left.Value, right.Value, pos)
 	}
 }
 
-func (i *Interpreter) evalBooleanBinaryExpr(op token.Token, left, right *Boolean, pos token.Pos) (Object, error) {
+// evalBooleanBinaryExpr is now a standalone function.
+func evalBooleanBinaryExpr(op token.Token, left, right *object.Boolean, pos token.Pos) (object.Object, error) {
 	leftVal := left.Value
 	rightVal := right.Value
 
 	switch op {
 	case token.EQL:
-		return nativeBoolToBooleanObject(leftVal == rightVal), nil
+		return object.NativeBoolToBooleanObject(leftVal == rightVal), nil
 	case token.NEQ:
-		return nativeBoolToBooleanObject(leftVal != rightVal), nil
+		return object.NativeBoolToBooleanObject(leftVal != rightVal), nil
 	case token.LAND: // &&
-		return nativeBoolToBooleanObject(leftVal && rightVal), nil
+		return object.NativeBoolToBooleanObject(leftVal && rightVal), nil
 	case token.LOR: // ||
-		return nativeBoolToBooleanObject(leftVal || rightVal), nil
+		return object.NativeBoolToBooleanObject(leftVal || rightVal), nil
 	default:
 		// Return a generic unsupported operation error for consistency with other types
-		return nil, i.formatErrorWithContext(i.activeFileSet, pos,
-			fmt.Errorf("type mismatch or unsupported operation for binary expression: %s %s %s", left.Type(), op, right.Type()), "")
+		return nil, fmt.Errorf("type mismatch or unsupported operation for boolean binary expression: %s %s %s at position %s", left.Type(), op, right.Type(), pos)
 	}
 }
 
-func (i *Interpreter) evalCallExpr(ctx context.Context, node *ast.CallExpr, env *Environment) (Object, error) {
-	funcObj, err := i.eval(ctx, node.Fun, env)
+func (i *Interpreter) evalCallExpr(ctx context.Context, node *ast.CallExpr, env object.Environment) (object.Object, error) {
+	funcObj, err := i.eval(ctx, node.Fun, env) // env is object.Environment
 	if err != nil {
 		return nil, err
 	}
 
-	args := make([]Object, len(node.Args))
+	args := make([]object.Object, len(node.Args))
 	for idx, argExpr := range node.Args {
-		argVal, err := i.eval(ctx, argExpr, env)
+		argVal, err := i.eval(ctx, argExpr, env) // env is object.Environment
 		if err != nil {
 			return nil, err
 		}
@@ -1729,9 +1774,9 @@ func (i *Interpreter) evalCallExpr(ctx context.Context, node *ast.CallExpr, env 
 	}
 
 	switch fn := funcObj.(type) {
-	case *BuiltinFunction:
-		return fn.Fn(env, args...) // BuiltinFunction does not need ctx
-	case *UserDefinedFunction:
+	case *object.BuiltinFunction:
+		return fn.Fn(env, args...) // env is object.Environment, BuiltinFunctionType expects object.Environment
+	case *object.UserDefinedFunction:
 		return i.applyUserDefinedFunction(ctx, fn, args, node.Fun.Pos(), i.activeFileSet)
 	default:
 		funcName := "unknown"
@@ -1746,7 +1791,7 @@ func (i *Interpreter) evalCallExpr(ctx context.Context, node *ast.CallExpr, env 
 	}
 }
 
-func (i *Interpreter) evalAssignStmt(ctx context.Context, assignStmt *ast.AssignStmt, env *Environment) (Object, error) {
+func (i *Interpreter) evalAssignStmt(ctx context.Context, assignStmt *ast.AssignStmt, env object.Environment) (object.Object, error) {
 	if len(assignStmt.Lhs) != 1 || len(assignStmt.Rhs) != 1 {
 		return nil, i.formatErrorWithContext(i.FileSet, assignStmt.Pos(),
 			fmt.Errorf("unsupported assignment: expected 1 expression on LHS and 1 on RHS, got %d and %d", len(assignStmt.Lhs), len(assignStmt.Rhs)), "")
@@ -1759,7 +1804,7 @@ func (i *Interpreter) evalAssignStmt(ctx context.Context, assignStmt *ast.Assign
 	}
 	varName := ident.Name
 
-	val, err := i.eval(ctx, assignStmt.Rhs[0], env)
+	val, err := i.eval(ctx, assignStmt.Rhs[0], env) // env is object.Environment
 	if err != nil {
 		return nil, err
 	}
@@ -1786,20 +1831,20 @@ func (i *Interpreter) evalAssignStmt(ctx context.Context, assignStmt *ast.Assign
 		// For `:=`, it must define a *new* variable.
 		// Go rule: "no new variables on left side of :=" means at least one variable on LHS must be new in the current block.
 		// Since we only support single var LHS for now:
-		if env.ExistsInCurrentScope(varName) {
+		if env.ExistsInCurrentScope(varName) { // env is object.Environment
 			return nil, i.formatErrorWithContext(i.FileSet, ident.Pos(), fmt.Errorf("no new variables on left side of := (variable '%s' already declared in this scope)", varName), "")
 		}
-		env.Define(varName, val) // Define in current environment
+		env.Define(varName, val) // Define in current environment (env is object.Environment)
 		return nil, nil
 
 	case token.ASSIGN: // =
-		if _, ok := env.Assign(varName, val); !ok {
+		if _, ok := env.Assign(varName, val); !ok { // env is object.Environment
 			return nil, i.formatErrorWithContext(i.FileSet, ident.Pos(), fmt.Errorf("cannot assign to undeclared variable '%s'", varName), "")
 		}
 		return nil, nil
 
 	default: // Augmented assignments: +=, -=, etc.
-		existingVal, ok := env.Get(varName)
+		existingVal, ok := env.Get(varName) // env is object.Environment
 		if !ok {
 			return nil, i.formatErrorWithContext(i.FileSet, ident.Pos(), fmt.Errorf("cannot use %s on undeclared variable '%s'", assignStmt.Tok, varName), "")
 		}
@@ -1822,12 +1867,12 @@ func (i *Interpreter) evalAssignStmt(ctx context.Context, assignStmt *ast.Assign
 		}
 
 		// Perform the operation based on type
-		var resultVal Object
+		var resultVal object.Object
 		var evalErr error
 
 		switch eVal := existingVal.(type) {
-		case *Integer:
-			if vInt, okV := val.(*Integer); okV {
+		case *object.Integer:
+			if vInt, okV := val.(*object.Integer); okV {
 				// Use evalIntegerBinaryExpr for the core logic to avoid duplication
 				tempBinExprResult, binErr := i.evalIntegerBinaryExpr(op, eVal, vInt, assignStmt.Pos())
 				if binErr != nil {
@@ -1837,10 +1882,10 @@ func (i *Interpreter) evalAssignStmt(ctx context.Context, assignStmt *ast.Assign
 			} else {
 				evalErr = i.formatErrorWithContext(i.FileSet, assignStmt.Pos(), fmt.Errorf("type mismatch for %s: existing value is INTEGER, new value is %s", assignStmt.Tok, val.Type()), "")
 			}
-		case *String:
+		case *object.String:
 			if op == token.ADD { // Only += is supported for strings
-				if vStr, okV := val.(*String); okV {
-					resultVal = &String{Value: eVal.Value + vStr.Value}
+				if vStr, okV := val.(*object.String); okV {
+					resultVal = &object.String{Value: eVal.Value + vStr.Value}
 				} else {
 					evalErr = i.formatErrorWithContext(i.FileSet, assignStmt.Pos(), fmt.Errorf("type mismatch for string concatenation (+=): existing value is STRING, new value is %s", val.Type()), "")
 				}
@@ -1856,7 +1901,7 @@ func (i *Interpreter) evalAssignStmt(ctx context.Context, assignStmt *ast.Assign
 		}
 
 		// Assign the new value back to the variable
-		if _, ok := env.Assign(varName, resultVal); !ok {
+		if _, ok := env.Assign(varName, resultVal); !ok { // env is object.Environment
 			// This should not happen if the variable was successfully fetched earlier
 			return nil, i.formatErrorWithContext(i.FileSet, ident.Pos(), fmt.Errorf("internal error: failed to assign back to variable '%s' after augmented assignment", varName), "")
 		}
@@ -1864,13 +1909,13 @@ func (i *Interpreter) evalAssignStmt(ctx context.Context, assignStmt *ast.Assign
 	}
 }
 
-func (i *Interpreter) evalIfStmt(ctx context.Context, ifStmt *ast.IfStmt, env *Environment) (Object, error) {
-	condition, err := i.eval(ctx, ifStmt.Cond, env)
+func (i *Interpreter) evalIfStmt(ctx context.Context, ifStmt *ast.IfStmt, env object.Environment) (object.Object, error) {
+	condition, err := i.eval(ctx, ifStmt.Cond, env) // env is object.Environment
 	if err != nil {
 		return nil, err
 	}
 
-	boolCond, ok := condition.(*Boolean)
+	boolCond, ok := condition.(*object.Boolean)
 	if !ok {
 		return nil, i.formatErrorWithContext(i.FileSet, ifStmt.Cond.Pos(),
 			fmt.Errorf("condition for if statement must be a boolean, got %s (type: %s)", condition.Inspect(), condition.Type()), "")
@@ -1878,43 +1923,43 @@ func (i *Interpreter) evalIfStmt(ctx context.Context, ifStmt *ast.IfStmt, env *E
 
 	if boolCond.Value {
 		// If block creates a new scope
-		ifBodyEnv := NewEnvironment(env)
+		ifBodyEnv := NewEnvironment(env) // env is object.Environment
 		return i.evalBlockStatement(ctx, ifStmt.Body, ifBodyEnv)
 	} else if ifStmt.Else != nil {
 		// Else block also creates a new scope if it's a block statement
 		// If it's another IfStmt (else if), that IfStmt will handle its own scope.
 		switch elseNode := ifStmt.Else.(type) {
 		case *ast.BlockStmt:
-			elseBodyEnv := NewEnvironment(env)
+			elseBodyEnv := NewEnvironment(env) // env is object.Environment
 			return i.evalBlockStatement(ctx, elseNode, elseBodyEnv)
 		case *ast.IfStmt: // else if
-			return i.eval(ctx, elseNode, env) // The nested if will handle its own new scope creation
+			return i.eval(ctx, elseNode, env) // The nested if will handle its own new scope creation (env is object.Environment)
 		default: // Should not happen with a valid Go AST for if-else
-			return i.eval(ctx, ifStmt.Else, env)
+			return i.eval(ctx, ifStmt.Else, env) // env is object.Environment
 		}
 	}
 	return nil, nil
 }
 
-func (i *Interpreter) evalUnaryExpr(ctx context.Context, node *ast.UnaryExpr, env *Environment) (Object, error) {
-	operand, err := i.eval(ctx, node.X, env)
+func (i *Interpreter) evalUnaryExpr(ctx context.Context, node *ast.UnaryExpr, env object.Environment) (object.Object, error) {
+	operand, err := i.eval(ctx, node.X, env) // env is object.Environment
 	if err != nil {
 		return nil, err
 	}
 
 	switch node.Op {
 	case token.SUB:
-		if operand.Type() == INTEGER_OBJ {
-			value := operand.(*Integer).Value
-			return &Integer{Value: -value}, nil
+		if operand.Type() == object.INTEGER_OBJ {
+			value := operand.(*object.Integer).Value
+			return &object.Integer{Value: -value}, nil
 		}
 		return nil, i.formatErrorWithContext(i.FileSet, node.Pos(), fmt.Errorf("unsupported type for negation: %s", operand.Type()), "")
 	case token.NOT:
-		switch operand {
-		case TRUE:
-			return FALSE, nil
-		case FALSE:
-			return TRUE, nil
+		switch operand { // operand is object.Object
+		case object.TRUE:
+			return object.FALSE, nil
+		case object.FALSE:
+			return object.TRUE, nil
 		default:
 			return nil, i.formatErrorWithContext(i.activeFileSet, node.Pos(), fmt.Errorf("unsupported type for logical NOT: %s", operand.Type()), "")
 		}
@@ -1926,7 +1971,7 @@ func (i *Interpreter) evalUnaryExpr(ctx context.Context, node *ast.UnaryExpr, en
 		case *ast.Ident:
 			// Operand is already evaluated when evalUnaryExpr is called.
 			// So, `operand` is the result of evaluating xNode (the identifier).
-			if _, isStruct := operand.(*StructInstance); isStruct {
+			if _, isStruct := operand.(*object.StructInstance); isStruct {
 				return operand, nil // Return the struct instance itself.
 			}
 			return nil, i.formatErrorWithContext(i.activeFileSet, xNode.Pos(), fmt.Errorf("cannot take address of identifier '%s' (type %s), not a struct instance", xNode.Name, operand.Type()), "")
@@ -1935,7 +1980,7 @@ func (i *Interpreter) evalUnaryExpr(ctx context.Context, node *ast.UnaryExpr, en
 			// The `operand` variable here is the result of i.eval(ctx, node.X, env),
 			// which means the composite literal (node.X) has already been evaluated.
 			// So, `operand` should be the StructInstance.
-			if _, isStruct := operand.(*StructInstance); isStruct {
+			if _, isStruct := operand.(*object.StructInstance); isStruct {
 				return operand, nil // Return the struct instance from the composite literal.
 			}
 			// This case should ideally not be reached if composite lit eval fails or returns non-struct.

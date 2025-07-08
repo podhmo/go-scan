@@ -3,7 +3,6 @@ package converter
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	"example.com/convert/models" // Assuming your module path is example.com/convert
@@ -98,7 +97,7 @@ func srcInternalDetailToDstInternalDetail(ctx context.Context, src models.SrcInt
 	localizedDescription := translateDescription(ctx, src.Description, "jp")
 
 	return models.DstInternalDetail{
-		ItemCode:        src.Code,               // Renamed: Code -> ItemCode
+		ItemCode:      src.Code,             // Renamed: Code -> ItemCode
 		LocalizedDesc: localizedDescription, // Processed and Renamed: Description -> LocalizedDesc
 	}
 }

@@ -34,7 +34,7 @@ func IntToStr(ec *errorCollector, val int) string {
 
 // myTimeToTime is a placeholder for a custom conversion function.
 func myTimeToTime(ec *errorCollector, mt MyTime) time.Time {
-    return time.Time(mt)
+	return time.Time(mt)
 }
 
 // timeToStringNotImplemented placeholder

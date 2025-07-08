@@ -27,7 +27,7 @@ type SrcUser struct {
 	ContactInfo SrcContact
 	Details     []SrcInternalDetail
 	CreatedAt   time.Time
-	UpdatedAt *time.Time
+	UpdatedAt   *time.Time
 }
 
 // --- Destination Structs ---
@@ -45,7 +45,7 @@ type DstContact struct {
 // DstInternalDetail is an example of a type that might have an unexported converter
 // if it's only used within the DstUser conversion.
 type DstInternalDetail struct {
-	ItemCode        int    // Different name
+	ItemCode      int    // Different name
 	LocalizedDesc string // Different name, implies processing
 }
 

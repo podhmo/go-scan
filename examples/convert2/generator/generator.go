@@ -3,12 +3,12 @@ package generator
 import (
 	"bytes"
 	"fmt"
+	"go/ast" // Added for ast.ArrayType in typeNameInSource
 	"go/format"
 	"os"
 	"path/filepath"
 	"strings"
 	"text/template"
-	"go/ast" // Added for ast.ArrayType in typeNameInSource
 
 	"example.com/convert2/internal/model"
 )
@@ -70,7 +70,6 @@ func GenerateConversionCode(parsedInfo *model.ParsedInfo, outputDir string) erro
 	// This part needs to be more sophisticated for deeply nested structures.
 	// For now, we only generate helpers directly from ConversionPairs.
 
-
 	// Then, generate top-level functions
 	for _, pair := range parsedInfo.ConversionPairs {
 		topLevelFuncName := fmt.Sprintf("Convert%s", pair.SrcTypeInfo.Name)
@@ -84,7 +83,6 @@ func GenerateConversionCode(parsedInfo *model.ParsedInfo, outputDir string) erro
 		// Add imports for source and destination types of the top-level function
 		addRequiredImport(pair.SrcTypeInfo, parsedInfo.PackagePath, requiredImports)
 		addRequiredImport(pair.DstTypeInfo, parsedInfo.PackagePath, requiredImports)
-
 
 		fmt.Fprintf(&funcBuf, "func %s(ctx context.Context, src %s) (%s, error) {\n",
 			topLevelFuncName,
@@ -100,7 +98,6 @@ func GenerateConversionCode(parsedInfo *model.ParsedInfo, outputDir string) erro
 
 		generatedFunctionBodies[topLevelFuncName] = funcBuf.String()
 	}
-
 
 	// --- Assemble Final Code ---
 	var finalCode bytes.Buffer
@@ -188,7 +185,7 @@ func generateHelperFunction(buf *bytes.Buffer, funcName string, srcType, dstType
 		fmt.Fprintf(buf, "// One or both types are not structs, or struct info not found.\n")
 		fmt.Fprintf(buf, "func %s(ec *errorCollector, src %s) %s {\n",
 			funcName,
-			typeNameInSource(srcType, parsedInfo.PackagePath, imports),
+			typeNameInSource(srcType, parsedInfo.PackagePath, imports), // typeNameInSource は一時的に単純化されたまま
 			typeNameInSource(dstType, parsedInfo.PackagePath, imports))
 		// TODO: Implement conversion for non-structs or when one is not a struct.
 		// This could involve checking for global 'using' rules, or direct assignment/casting if types are compatible.
@@ -237,7 +234,7 @@ func generateHelperFunction(buf *bytes.Buffer, funcName string, srcType, dstType
 		}
 
 		var dstField *model.FieldInfo
-		for i := range dstStruct.Fields {
+		for i := range dstStruct.Fields { // dstStruct がここで使われる
 			if dstStruct.Fields[i].Name == dstFieldName {
 				dstField = &dstStruct.Fields[i]
 				break
@@ -250,7 +247,7 @@ func generateHelperFunction(buf *bytes.Buffer, funcName string, srcType, dstType
 			// For now, if explicit name or same name doesn't match, we report (or silently skip).
 			// Let's add a comment for now if a DstFieldName was specified in tag but not found.
 			if srcField.Tag.DstFieldName != "" {
-				 fmt.Fprintf(buf, "\t// Warning: Destination field '%s' specified for source field '%s.%s' not found in struct '%s'.\n", srcField.Tag.DstFieldName, srcStruct.Name, srcField.Name, dstStruct.Name)
+				fmt.Fprintf(buf, "\t// Warning: Destination field '%s' specified for source field '%s.%s' not found in struct '%s'.\n", srcField.Tag.DstFieldName, srcStruct.Name, srcField.Name, dstStruct.Name)
 			}
 			continue
 		}
@@ -263,7 +260,6 @@ func generateHelperFunction(buf *bytes.Buffer, funcName string, srcType, dstType
 		// Add imports for field types
 		addRequiredImport(srcField.TypeInfo, parsedInfo.PackagePath, imports)
 		addRequiredImport(dstField.TypeInfo, parsedInfo.PackagePath, imports)
-
 
 		var appliedUsingFunc string
 		var usingFuncIsGlobal bool
@@ -315,7 +311,6 @@ func generateHelperFunction(buf *bytes.Buffer, funcName string, srcType, dstType
 					// We'll rely on the user ensuring the function is callable.
 					// If the function is in another package, its import must be present in the generated file.
 					// We can try to infer the import from the function name if it's qualified.
-					pkgAlias := funcParts[0]
 					// This is still problematic as we don't have the import *path* for pkgAlias.
 					// For now, we generate the call as is. The user must ensure imports.
 					// A future improvement would be for the parser to resolve function locations.
@@ -333,57 +328,58 @@ func generateHelperFunction(buf *bytes.Buffer, funcName string, srcType, dstType
 			// Priority 3: Automatic Conversion (including pointer logic)
 			srcIsPtr := srcField.TypeInfo.IsPointer
 			dstIsPtr := dstField.TypeInfo.IsPointer
-		srcElemTypeFullName := ""
-		if srcField.TypeInfo.Elem != nil {
-			srcElemTypeFullName = srcField.TypeInfo.Elem.FullName
-		} else if !srcIsPtr {
-			srcElemTypeFullName = srcField.TypeInfo.FullName
-		}
-		dstElemTypeFullName := ""
-		if dstField.TypeInfo.Elem != nil {
-			dstElemTypeFullName = dstField.TypeInfo.Elem.FullName
-		} else if !dstIsPtr {
-			dstElemTypeFullName = dstField.TypeInfo.FullName
-		}
-
-		typesMatchDirectly := srcField.TypeInfo.FullName == dstField.TypeInfo.FullName
-		elementsMatch := srcElemTypeFullName != "" && dstElemTypeFullName != "" && srcElemTypeFullName == dstElemTypeFullName
-
-		if typesMatchDirectly { // Case: T -> T or *T -> *T (elements must also match for *T -> *T, implied by FullName match)
-			fmt.Fprintf(buf, "\tdst.%s = src.%s\n", dstField.Name, srcField.Name)
-		} else if !srcIsPtr && dstIsPtr && elementsMatch { // Case: T -> *T
-			// Ensure that dstField.TypeInfo.Elem.FullName matches srcField.TypeInfo.FullName
-			fmt.Fprintf(buf, "\t{\n")
-			fmt.Fprintf(buf, "\t\tsrcVal := src.%s\n", srcField.Name)
-			fmt.Fprintf(buf, "\t\tdst.%s = &srcVal\n", dstField.Name)
-			fmt.Fprintf(buf, "\t}\n")
-		} else if srcIsPtr && !dstIsPtr && elementsMatch { // Case: *T -> T
-			// Ensure that srcField.TypeInfo.Elem.FullName matches dstField.TypeInfo.FullName
-			if srcField.Tag.Required {
-				fmt.Fprintf(buf, "\tif src.%s == nil {\n", srcField.Name)
-				fmt.Fprintf(buf, "\t\tec.Addf(\"field '%s' is required but source field %s is nil\")\n", dstField.Name, srcField.Name)
-				fmt.Fprintf(buf, "\t} else {\n")
-				fmt.Fprintf(buf, "\t\tdst.%s = *src.%s\n", dstField.Name, srcField.Name)
-				fmt.Fprintf(buf, "\t}\n")
-			} else {
-				fmt.Fprintf(buf, "\tif src.%s != nil {\n", srcField.Name)
-				fmt.Fprintf(buf, "\t\tdst.%s = *src.%s\n", dstField.Name, srcField.Name)
-				fmt.Fprintf(buf, "\t}\n") // If nil, dst field remains zero value, no error
+			srcElemTypeFullName := ""
+			if srcField.TypeInfo.Elem != nil {
+				srcElemTypeFullName = srcField.TypeInfo.Elem.FullName
+			} else if !srcIsPtr {
+				srcElemTypeFullName = srcField.TypeInfo.FullName
 			}
-		} else {
-			// Types do not match directly and pointer logic doesn't apply or elements mismatch.
-			// This is where underlying type checks, slice/map conversions,
-			// and recursive struct conversions will go.
-			fmt.Fprintf(buf, "\t// TODO: Implement conversion for %s (%s) to %s (%s).\n",
-				srcField.Name, srcField.TypeInfo.FullName,
-				dstField.Name, dstField.TypeInfo.FullName)
-			fmt.Fprintf(buf, "\tec.Addf(\"type mismatch or complex conversion not yet implemented for field '%s' (%s -> %s)\")\n",
-				dstField.Name, srcField.TypeInfo.FullName, dstField.TypeInfo.FullName)
-		}
+			dstElemTypeFullName := ""
+			if dstField.TypeInfo.Elem != nil {
+				dstElemTypeFullName = dstField.TypeInfo.Elem.FullName
+			} else if !dstIsPtr {
+				dstElemTypeFullName = dstField.TypeInfo.FullName
+			}
+
+			typesMatchDirectly := srcField.TypeInfo.FullName == dstField.TypeInfo.FullName
+			elementsMatch := srcElemTypeFullName != "" && dstElemTypeFullName != "" && srcElemTypeFullName == dstElemTypeFullName
+
+			if typesMatchDirectly { // Case: T -> T or *T -> *T (elements must also match for *T -> *T, implied by FullName match)
+				fmt.Fprintf(buf, "\tdst.%s = src.%s\n", dstField.Name, srcField.Name)
+			} else if !srcIsPtr && dstIsPtr && elementsMatch { // Case: T -> *T
+				// Ensure that dstField.TypeInfo.Elem.FullName matches srcField.TypeInfo.FullName
+				fmt.Fprintf(buf, "\t{\n")
+				fmt.Fprintf(buf, "\t\tsrcVal := src.%s\n", srcField.Name)
+				fmt.Fprintf(buf, "\t\tdst.%s = &srcVal\n", dstField.Name)
+				fmt.Fprintf(buf, "\t}\n")
+			} else if srcIsPtr && !dstIsPtr && elementsMatch { // Case: *T -> T
+				// Ensure that srcField.TypeInfo.Elem.FullName matches dstField.TypeInfo.FullName
+				if srcField.Tag.Required {
+					fmt.Fprintf(buf, "\tif src.%s == nil {\n", srcField.Name)
+					fmt.Fprintf(buf, "\t\tec.Addf(\"field '%s' is required but source field %s is nil\")\n", dstField.Name, srcField.Name)
+					fmt.Fprintf(buf, "\t} else {\n")
+					fmt.Fprintf(buf, "\t\tdst.%s = *src.%s\n", dstField.Name, srcField.Name)
+					fmt.Fprintf(buf, "\t}\n")
+				} else {
+					fmt.Fprintf(buf, "\tif src.%s != nil {\n", srcField.Name)
+					fmt.Fprintf(buf, "\t\tdst.%s = *src.%s\n", dstField.Name, srcField.Name)
+					fmt.Fprintf(buf, "\t}\n") // If nil, dst field remains zero value, no error
+				}
+			} else {
+				// Types do not match directly and pointer logic doesn't apply or elements mismatch.
+				// This is where underlying type checks, slice/map conversions,
+				// and recursive struct conversions will go.
+				fmt.Fprintf(buf, "\t// TODO: Implement conversion for %s (%s) to %s (%s).\n",
+					srcField.Name, srcField.TypeInfo.FullName,
+					dstField.Name, dstField.TypeInfo.FullName)
+				fmt.Fprintf(buf, "\tec.Addf(\"type mismatch or complex conversion not yet implemented for field '%s' (%s -> %s)\")\n",
+					dstField.Name, srcField.TypeInfo.FullName, dstField.TypeInfo.FullName)
+			}
+		} // if appliedUsingFunc != "" の else ブロックの閉じ括弧
 
 		fmt.Fprintf(buf, "\tec.Leave()\n")
 		fmt.Fprintf(buf, "\tif ec.MaxErrorsReached() { return dst } \n\n")
-	}
+	} // for ループの閉じ括弧
 
 	fmt.Fprintf(buf, "\treturn dst\n")
 	fmt.Fprintf(buf, "}\n\n")
@@ -556,18 +552,7 @@ func (ec *errorCollector) Addf(format string, args ...interface{}) bool {
 	return ec.Add(fmt.Sprintf(format, args...))
 }
 func (ec *errorCollector) Enter(segment string) {
-	separator := "."
-	if len(ec.pathStack) == 0 {
-		separator = ""
-	} else {
-		// Check if previous segment is an indexer, if so, no dot.
-		// This logic needs to be robust: A.B[0].C
-		// Current pathStack is like ["A", ".B", "[0]"]
-		// If adding "C", it should be ".C".
-		// If pathStack is empty, or ends with non-alphanumeric (like "[0]"), no leading dot for next field.
-		// This is simpler: always dot for fields unless it's the first element.
-		// Indices are handled by not having a dot.
-	}
+	// separator variable was unused, logic is directly handled below.
 	if strings.HasPrefix(segment, "[") && strings.HasSuffix(segment, "]") { // Array/slice index
 		ec.pathStack = append(ec.pathStack, segment)
 	} else { // Field name

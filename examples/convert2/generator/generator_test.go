@@ -34,28 +34,27 @@ func normalizeCode(code string) string {
 	return strings.TrimSpace(b.String()) // Trim trailing newline
 }
 
-
 func TestGenerateHelperFunction_Pointer_T_to_StarT(t *testing.T) {
 	srcTypeInfo := &model.TypeInfo{
-		Name:        "string",
-		FullName:    "string",
-		IsPointer:   false,
-		Kind:        model.KindBasic,
-		IsBasic:     true,
+		Name:      "string",
+		FullName:  "string",
+		IsPointer: false,
+		Kind:      model.KindBasic,
+		IsBasic:   true,
 	}
 	dstElemTypeInfo := &model.TypeInfo{
-		Name:        "string",
-		FullName:    "string",
-		IsPointer:   false,
-		Kind:        model.KindBasic,
-		IsBasic:     true,
+		Name:      "string",
+		FullName:  "string",
+		IsPointer: false,
+		Kind:      model.KindBasic,
+		IsBasic:   true,
 	}
 	dstTypeInfo := &model.TypeInfo{
-		Name:        "*string",
-		FullName:    "*string",
-		IsPointer:   true,
-		Elem:        dstElemTypeInfo,
-		Kind:        model.KindPointer,
+		Name:      "*string",
+		FullName:  "*string",
+		IsPointer: true,
+		Elem:      dstElemTypeInfo,
+		Kind:      model.KindPointer,
 	}
 
 	srcField := model.FieldInfo{
@@ -285,10 +284,10 @@ func TestGenerateHelperFunction_Pointer_StarT_to_T_Required_Nil(t *testing.T) {
 }
 
 `, typeNameInSource(srcStructType, parsedInfo.PackagePath),
-typeNameInSource(dstStructType, parsedInfo.PackagePath),
-typeNameInSource(dstStructType, parsedInfo.PackagePath),
-srcStructType.Name, dstStructType.Name,
-dstField.Name, srcField.Name) // For the ec.Addf parameters
+		typeNameInSource(dstStructType, parsedInfo.PackagePath),
+		typeNameInSource(dstStructType, parsedInfo.PackagePath),
+		srcStructType.Name, dstStructType.Name,
+		dstField.Name, srcField.Name) // For the ec.Addf parameters
 
 	formattedGenerated, errGen := formatCode(generatedCode)
 	if errGen != nil {
@@ -379,10 +378,10 @@ func TestGenerateHelperFunction_Pointer_StarT_to_T_Required_NonNil(t *testing.T)
 }
 
 `, getTypeNameInSourceForCodeGen(srcStructType, parsedInfo.PackagePath),
-getTypeNameInSourceForCodeGen(dstStructType, parsedInfo.PackagePath),
-getTypeNameInSourceForCodeGen(dstStructType, parsedInfo.PackagePath),
-srcStructType.Name, dstStructType.Name,
-dstField.Name, srcField.Name) // For the ec.Addf parameters
+		getTypeNameInSourceForCodeGen(dstStructType, parsedInfo.PackagePath),
+		getTypeNameInSourceForCodeGen(dstStructType, parsedInfo.PackagePath),
+		srcStructType.Name, dstStructType.Name,
+		dstField.Name, srcField.Name) // For the ec.Addf parameters
 
 	formattedGenerated, errGen := formatCode(generatedCode)
 	if errGen != nil {
@@ -468,9 +467,9 @@ func TestGenerateHelperFunction_Pointer_StarT_to_StarT(t *testing.T) {
 }
 
 `, getTypeNameInSourceForCodeGen(srcStructType, parsedInfo.PackagePath),
-getTypeNameInSourceForCodeGen(dstStructType, parsedInfo.PackagePath),
-getTypeNameInSourceForCodeGen(dstStructType, parsedInfo.PackagePath),
-srcStructType.Name, dstStructType.Name)
+		getTypeNameInSourceForCodeGen(dstStructType, parsedInfo.PackagePath),
+		getTypeNameInSourceForCodeGen(dstStructType, parsedInfo.PackagePath),
+		srcStructType.Name, dstStructType.Name)
 
 	formattedGenerated, errGen := formatCode(generatedCode)
 	if errGen != nil {
@@ -607,5 +606,6 @@ func TestGenerateHelperFunction_Using_GlobalRule(t *testing.T) {
 		t.Errorf("generateHelperFunction Using_GlobalRule mismatch:\n---EXPECTED---\n%s\n---GENERATED---\n%s", formattedExpected, formattedGenerated)
 	}
 }
+
 // Placeholder for other tests to be added in next steps of the plan.
 // This file will be expanded upon.

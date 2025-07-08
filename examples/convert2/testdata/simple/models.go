@@ -1,33 +1,36 @@
 package simple
 
-import "time"
+import (
+	"fmt" // Add fmt import
+	"time"
+)
 
 type SrcSimple struct {
-	ID          int
-	Name        string
-	Description string `convert:"-"` // Skip this field
-	Value       float64
-	Timestamp   time.Time `convert:"CreationTime"` // Rename
-	NoMatchDst  string    // This field has no corresponding field in DstSimple by default
-	PtrString        *string
-	StringPtr        string    // For T -> *T
-	PtrToValue       *float32  // For *T -> T (default)
-	RequiredPtrToValue *int    `convert:",required"` // For *T -> T (required)
-	CustomIntToString int      `convert:"CustomStr,using=IntToStr"` // Test field "using"
+	ID                 int
+	Name               string
+	Description        string `convert:"-"` // Skip this field
+	Value              float64
+	Timestamp          time.Time `convert:"CreationTime"` // Rename
+	NoMatchDst         string    // This field has no corresponding field in DstSimple by default
+	PtrString          *string
+	StringPtr          string   // For T -> *T
+	PtrToValue         *float32 // For *T -> T (default)
+	RequiredPtrToValue *int     `convert:",required"`                // For *T -> T (required)
+	CustomIntToString  int      `convert:"CustomStr,using=IntToStr"` // Test field "using"
 }
 
 type DstSimple struct {
-	ID           int
-	Name         string
+	ID   int
+	Name string
 	// Description string // Skipped from source
-	Value        float64
-	CreationTime time.Time // Renamed from Timestamp
-	NoMatchSrc   string    // This field has no corresponding field in SrcSimple by default
-	PtrString    *string
-	StringPtr    *string   // For T -> *T
-	PtrToValue   float32   // For *T -> T (default)
-	RequiredPtrToValue int // For *T -> T (required)
-	CustomStr    string    // For field "using"
+	Value              float64
+	CreationTime       time.Time // Renamed from Timestamp
+	NoMatchSrc         string    // This field has no corresponding field in SrcSimple by default
+	PtrString          *string
+	StringPtr          *string // For T -> *T
+	PtrToValue         float32 // For *T -> T (default)
+	RequiredPtrToValue int     // For *T -> T (required)
+	CustomStr          string  // For field "using"
 }
 
 // For type alias test
@@ -39,4 +42,14 @@ type SrcWithAlias struct {
 
 type DstWithAlias struct {
 	EventTimestamp time.Time
+}
+
+// IntToStr is a helper function that might be used by 'using' directive.
+// It's placed here to be available during testing of generated code.
+// The 'ec *errorCollector' parameter is based on how the generator currently
+// calls 'using' functions. The actual errorCollector type is defined in the
+// generated _gen.go file.
+func IntToStr(ec *errorCollector, val int) string {
+	// To distinguish from conversions.go version if both were somehow present
+	return fmt.Sprintf("converted_%d_from_models", val)
 }

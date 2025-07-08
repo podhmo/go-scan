@@ -63,7 +63,6 @@ func main() {
 	log.Printf("Parsing complete. Found %d conversion pairs and %d global rules for package %s.\n",
 		len(parsedInfo.ConversionPairs), len(parsedInfo.GlobalRules), parsedInfo.PackageName)
 
-
 	// 2. Generate conversion code
 	log.Printf("Generating conversion code...\n")
 	err = generator.GenerateConversionCode(parsedInfo, outputDir)

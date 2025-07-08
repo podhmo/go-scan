@@ -128,48 +128,46 @@ func ParseDirectory(dirPath string) (*model.ParsedInfo, error) {
 	return parsedInfo, nil
 }
 
-
 // derivePackagePath tries to derive an import path from a directory path.
 // This is a simplified heuristic and might not work for all project layouts.
 // A robust solution would involve parsing go.mod.
 func derivePackagePath(dirPath string) string {
-    // Try to find go.mod upwards to get module path
-    currentPath, err := filepath.Abs(dirPath)
-    if err != nil {
-        return ""
-    }
+	// Try to find go.mod upwards to get module path
+	currentPath, err := filepath.Abs(dirPath)
+	if err != nil {
+		return ""
+	}
 
-    for {
-        goModPath := filepath.Join(currentPath, "go.mod")
-        if _, err := os.Stat(goModPath); err == nil {
-            // Found go.mod, read module line
-            content, err := os.ReadFile(goModPath)
-            if err != nil {
-                return "" // Failed to read go.mod
-            }
-            lines := strings.Split(string(content), "\n")
-            for _, line := range lines {
-                if strings.HasPrefix(line, "module ") {
-                    modulePath := strings.TrimSpace(strings.TrimPrefix(line, "module "))
-                    // Relative path from module root to dirPath
-                    relativePath, err := filepath.Rel(currentPath, dirPath)
-                    if err != nil {
-                        return modulePath // Cannot get relative, return module path itself
-                    }
-                    return filepath.ToSlash(filepath.Join(modulePath, relativePath))
-                }
-            }
-            return "" // go.mod found but no module line?
-        }
-        parent := filepath.Dir(currentPath)
-        if parent == currentPath {
-            break // Reached root
-        }
-        currentPath = parent
-    }
-    return "" // Could not find go.mod
+	for {
+		goModPath := filepath.Join(currentPath, "go.mod")
+		if _, err := os.Stat(goModPath); err == nil {
+			// Found go.mod, read module line
+			content, err := os.ReadFile(goModPath)
+			if err != nil {
+				return "" // Failed to read go.mod
+			}
+			lines := strings.Split(string(content), "\n")
+			for _, line := range lines {
+				if strings.HasPrefix(line, "module ") {
+					modulePath := strings.TrimSpace(strings.TrimPrefix(line, "module "))
+					// Relative path from module root to dirPath
+					relativePath, err := filepath.Rel(currentPath, dirPath)
+					if err != nil {
+						return modulePath // Cannot get relative, return module path itself
+					}
+					return filepath.ToSlash(filepath.Join(modulePath, relativePath))
+				}
+			}
+			return "" // go.mod found but no module line?
+		}
+		parent := filepath.Dir(currentPath)
+		if parent == currentPath {
+			break // Reached root
+		}
+		currentPath = parent
+	}
+	return "" // Could not find go.mod
 }
-
 
 // collectFileImports gathers all import declarations from a file.
 // Returns a map of import alias/name to full import path.
@@ -268,7 +266,7 @@ func resolveTypeExpr(expr ast.Expr, currentPkgName, currentPkgPath string, fileI
 				// For now, we assume types from other packages are not further resolved into `StructInfo` etc.
 				// unless they were part of the same parsing batch (not typical for dependencies).
 			} else {
-				ti.PackagePath = "" // Unknown package path
+				ti.PackagePath = ""                            // Unknown package path
 				ti.FullName = pkgIdent.Name + "." + e.Sel.Name // Fallback
 				fmt.Printf("Warning: Package alias '%s' for type '%s' not found in file imports. FullName may be incorrect.\n", pkgIdent.Name, ti.FullName)
 			}
@@ -452,7 +450,6 @@ func parseGlobalCommentDirective(commentText string, info *model.ParsedInfo, fil
 				return
 			}
 
-
 			rule := model.TypeRule{
 				SrcTypeName: srcTypeNameStr,
 				DstTypeName: dstTypeNameStr,
@@ -476,7 +473,6 @@ func parseGlobalCommentDirective(commentText string, info *model.ParsedInfo, fil
 				fmt.Printf("Warning: convert:rule (validator) %s has empty validator function. Skipping.\n", dstTypeNameStr)
 				return
 			}
-
 
 			rule := model.TypeRule{
 				DstTypeName:   dstTypeNameStr,
@@ -632,12 +628,12 @@ func parseTypeSpec(typeSpec *ast.TypeSpec, parsedInfo *model.ParsedInfo, fileImp
 
 			if baseStructInfo != nil {
 				aliasStructInfo := &model.StructInfo{
-					Name:            typeName, // The name of the alias, e.g., MyStructAlias
+					Name:            typeName,     // The name of the alias, e.g., MyStructAlias
 					Type:            selfTypeInfo, // The TypeInfo of MyStructAlias itself
 					IsAlias:         true,
-					UnderlyingAlias: baseStructInfo.Type, // Points to TypeInfo of AnotherStruct
-					Node:            baseStructInfo.Node,  // "Inherit" AST node of the actual struct
-					Fields:          baseStructInfo.Fields,// "Inherit" fields
+					UnderlyingAlias: baseStructInfo.Type,   // Points to TypeInfo of AnotherStruct
+					Node:            baseStructInfo.Node,   // "Inherit" AST node of the actual struct
+					Fields:          baseStructInfo.Fields, // "Inherit" fields
 				}
 				// Add this alias to the list of known structs so it can be used in `convert:pair`
 				if _, exists := parsedInfo.Structs[typeName]; !exists {
@@ -652,7 +648,7 @@ func parseTypeSpec(typeSpec *ast.TypeSpec, parsedInfo *model.ParsedInfo, fileImp
 		fmt.Printf("Warning: Unhandled TypeSpec kind for type '%s': %T. Storing as KindUnknown.\n", typeName, typeSpec.Type)
 		selfTypeInfo.Kind = model.KindUnknown
 		selfTypeInfo.Underlying = resolveTypeExpr(underlyingAstType, currentPkgName, currentPkgPath, fileImports, parsedInfo) // Attempt to resolve underlying anyway
-		parsedInfo.NamedTypes[typeName] = selfTypeInfo // Store it so it's not completely lost
+		parsedInfo.NamedTypes[typeName] = selfTypeInfo                                                                        // Store it so it's not completely lost
 	}
 }
 

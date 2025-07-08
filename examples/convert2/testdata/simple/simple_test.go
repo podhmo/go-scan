@@ -5,7 +5,6 @@ package simple
 
 import (
 	"context"
-	"errors"
 	"fmt" // Added for pointerValue
 	"reflect"
 	"strings"
@@ -20,10 +19,10 @@ func TestConvertSrcSimple(t *testing.T) {
 	intPtr := func(i int) *int { return &i }
 
 	tests := []struct {
-		name        string
-		src         SrcSimple
-		expectedDst DstSimple
-		expectError bool
+		name          string
+		src           SrcSimple
+		expectedDst   DstSimple
+		expectError   bool
 		errorContains []string // Substrings to check for in the error message
 	}{
 		{
@@ -67,7 +66,7 @@ func TestConvertSrcSimple(t *testing.T) {
 				ID:                 2,
 				Name:               "Nil PtrToValue",
 				CreationTime:       time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
-				PtrToValue:         0,  // Expect zero value for float32
+				PtrToValue:         0, // Expect zero value for float32
 				RequiredPtrToValue: 200,
 				StringPtr:          strPtr("MakeItPointer"),
 			},
@@ -141,10 +140,18 @@ func TestConvertSrcSimple(t *testing.T) {
 			if !reflect.DeepEqual(dst, tc.expectedDst) {
 				t.Errorf("ConvertSrcSimple() got = %#v, want %#v", dst, tc.expectedDst)
 				// Provide more detailed diff
-				if dst.ID != tc.expectedDst.ID { t.Errorf("ID: got %v, want %v", dst.ID, tc.expectedDst.ID) }
-				if dst.Name != tc.expectedDst.Name { t.Errorf("Name: got %v, want %v", dst.Name, tc.expectedDst.Name) }
-				if dst.Value != tc.expectedDst.Value { t.Errorf("Value: got %v, want %v", dst.Value, tc.expectedDst.Value) }
-				if !dst.CreationTime.Equal(tc.expectedDst.CreationTime) { t.Errorf("CreationTime: got %v, want %v", dst.CreationTime, tc.expectedDst.CreationTime) }
+				if dst.ID != tc.expectedDst.ID {
+					t.Errorf("ID: got %v, want %v", dst.ID, tc.expectedDst.ID)
+				}
+				if dst.Name != tc.expectedDst.Name {
+					t.Errorf("Name: got %v, want %v", dst.Name, tc.expectedDst.Name)
+				}
+				if dst.Value != tc.expectedDst.Value {
+					t.Errorf("Value: got %v, want %v", dst.Value, tc.expectedDst.Value)
+				}
+				if !dst.CreationTime.Equal(tc.expectedDst.CreationTime) {
+					t.Errorf("CreationTime: got %v, want %v", dst.CreationTime, tc.expectedDst.CreationTime)
+				}
 
 				if (dst.PtrString == nil && tc.expectedDst.PtrString != nil) || (dst.PtrString != nil && tc.expectedDst.PtrString == nil) || (dst.PtrString != nil && tc.expectedDst.PtrString != nil && *dst.PtrString != *tc.expectedDst.PtrString) {
 					t.Errorf("PtrString: got %v, want %v", pointerValue(dst.PtrString), pointerValue(tc.expectedDst.PtrString))
@@ -152,8 +159,12 @@ func TestConvertSrcSimple(t *testing.T) {
 				if (dst.StringPtr == nil && tc.expectedDst.StringPtr != nil) || (dst.StringPtr != nil && tc.expectedDst.StringPtr == nil) || (dst.StringPtr != nil && tc.expectedDst.StringPtr != nil && *dst.StringPtr != *tc.expectedDst.StringPtr) {
 					t.Errorf("StringPtr: got %v, want %v", pointerValue(dst.StringPtr), pointerValue(tc.expectedDst.StringPtr))
 				}
-				if dst.PtrToValue != tc.expectedDst.PtrToValue { t.Errorf("PtrToValue: got %v, want %v", dst.PtrToValue, tc.expectedDst.PtrToValue) }
-				if dst.RequiredPtrToValue != tc.expectedDst.RequiredPtrToValue { t.Errorf("RequiredPtrToValue: got %v, want %v", dst.RequiredPtrToValue, tc.expectedDst.RequiredPtrToValue) }
+				if dst.PtrToValue != tc.expectedDst.PtrToValue {
+					t.Errorf("PtrToValue: got %v, want %v", dst.PtrToValue, tc.expectedDst.PtrToValue)
+				}
+				if dst.RequiredPtrToValue != tc.expectedDst.RequiredPtrToValue {
+					t.Errorf("RequiredPtrToValue: got %v, want %v", dst.RequiredPtrToValue, tc.expectedDst.RequiredPtrToValue)
+				}
 			}
 		})
 	}
@@ -170,7 +181,6 @@ func pointerValue(ptr interface{}) string {
 	}
 	return fmt.Sprintf("%v", ptr) // Should not happen if used for pointers
 }
-
 
 // Test for SrcWithAlias is still commented out as `using` is not implemented.
 /*

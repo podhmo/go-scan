@@ -99,7 +99,7 @@ func evalFmtPrintln(args ...Object) (Object, error) {
 		outputParts[i] = arg.Inspect()
 	}
 	fmt.Println(strings.Join(outputParts, " ")) // strings.Join is from Go's standard library
-	return NULL, nil                             // Println returns no meaningful value
+	return NULL, nil                            // Println returns no meaningful value
 }
 
 // GetBuiltinFmtFunctions returns a map of fmt built-in functions.

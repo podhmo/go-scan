@@ -17,16 +17,6 @@ import (
 	scannermodel "github.com/podhmo/go-scan/scanner" // Added for go-scan scanner models
 )
 
-// typePreParseInfo stores basic info about types collected in the first pass.
-// TODO: This struct will likely be removed or heavily modified after go-scan integration.
-type typePreParseInfo struct {
-	name     string
-	typeSpec *ast.TypeSpec
-	file     *ast.File // File where the type is defined
-	pkgName  string    // Package name from the file
-	pkgPath  string    // Package path for this type
-}
-
 // ParseDirectory scans the given directory for Go files, parses them using go-scan,
 // and extracts conversion rules and type information.
 func ParseDirectory(dirPath string) (*model.ParsedInfo, error) {
@@ -276,18 +266,208 @@ func ParseDirectory(dirPath string) (*model.ParsedInfo, error) {
 
 		if fileAst.Doc != nil {
 			for _, comment := range fileAst.Doc.List {
-				parseGlobalCommentDirective(comment.Text, parsedInfo, currentFileImports, currentPkgName, currentPkgImportPath)
+				parseGlobalCommentDirective(comment.Text, parsedInfo, currentFileImports, currentPkgName, currentPkgImportPath, ctx)
 			}
 		}
 		for _, commentGroup := range fileAst.Comments {
 			for _, comment := range commentGroup.List {
-				parseGlobalCommentDirective(comment.Text, parsedInfo, currentFileImports, currentPkgName, currentPkgImportPath)
+				parseGlobalCommentDirective(comment.Text, parsedInfo, currentFileImports, currentPkgName, currentPkgImportPath, ctx)
 			}
 		}
 	}
 
 	// The old parser logic (parser.ParseDir, typeSpecsToProcess, PASS1, PASS2 loops) is now fully removed.
 	return parsedInfo, nil
+}
+
+// resolveDirectiveType resolves a type string from a directive (e.g., in a comment)
+// against the types already parsed and stored in parsedInfo.
+// It uses fileImports to resolve package aliases for qualified type names.
+func resolveDirectiveType(originalTypeStr string, currentPkgName string, currentPkgPath string, fileImports map[string]string, parsedInfo *model.ParsedInfo, ctx context.Context) *model.TypeInfo {
+	if originalTypeStr == "" {
+		slog.WarnContext(ctx, "Empty type string passed to resolveDirectiveType.")
+		return nil
+	}
+
+	typeStr := strings.TrimSpace(originalTypeStr)
+
+	// 1. Handle prefixes: *, [], map[]
+	if strings.HasPrefix(typeStr, "*") {
+		elemTypeStr := strings.TrimPrefix(typeStr, "*")
+		elemTypeInfo := resolveDirectiveType(elemTypeStr, currentPkgName, currentPkgPath, fileImports, parsedInfo, ctx)
+		if elemTypeInfo == nil {
+			slog.WarnContext(ctx, "Could not resolve element type for pointer in directive", slog.String("typeStr", originalTypeStr))
+			return &model.TypeInfo{Name: originalTypeStr, FullName: originalTypeStr, Kind: model.KindPointer, IsPointer: true, Elem: &model.TypeInfo{Name: elemTypeStr, FullName: elemTypeStr, Kind: model.KindUnknown}}
+		}
+		return &model.TypeInfo{
+			Name:        elemTypeInfo.Name,
+			FullName:    "*" + elemTypeInfo.FullName,
+			Kind:        model.KindPointer,
+			IsPointer:   true,
+			Elem:        elemTypeInfo,
+			PackageName: elemTypeInfo.PackageName,
+			PackagePath: elemTypeInfo.PackagePath,
+		}
+	}
+
+	if strings.HasPrefix(typeStr, "[]") {
+		elemTypeStr := strings.TrimPrefix(typeStr, "[]")
+		elemTypeInfo := resolveDirectiveType(elemTypeStr, currentPkgName, currentPkgPath, fileImports, parsedInfo, ctx)
+		if elemTypeInfo == nil {
+			slog.WarnContext(ctx, "Could not resolve element type for slice in directive", slog.String("typeStr", originalTypeStr))
+			return &model.TypeInfo{Name: originalTypeStr, FullName: originalTypeStr, Kind: model.KindSlice, IsSlice: true, Elem: &model.TypeInfo{Name: elemTypeStr, FullName: elemTypeStr, Kind: model.KindUnknown}}
+		}
+		return &model.TypeInfo{
+			Name:        elemTypeInfo.Name,
+			FullName:    "[]" + elemTypeInfo.FullName,
+			Kind:        model.KindSlice,
+			IsSlice:     true,
+			Elem:        elemTypeInfo,
+			PackageName: elemTypeInfo.PackageName,
+			PackagePath: elemTypeInfo.PackagePath,
+		}
+	}
+
+	if strings.HasPrefix(typeStr, "map[") && strings.HasSuffix(typeStr, "]") {
+		inner := strings.TrimPrefix(typeStr, "map[")
+		inner = strings.TrimSuffix(inner, "]")
+		parts := strings.SplitN(inner, "]", 2)
+		if len(parts) != 2 {
+			slog.WarnContext(ctx, "Could not parse map type string in directive", slog.String("typeStr", originalTypeStr))
+			return &model.TypeInfo{Name: originalTypeStr, FullName: originalTypeStr, Kind: model.KindUnknown}
+		}
+		keyTypeStr := parts[0]
+		valTypeStr := parts[1]
+
+		keyTypeInfo := resolveDirectiveType(keyTypeStr, currentPkgName, currentPkgPath, fileImports, parsedInfo, ctx)
+		valTypeInfo := resolveDirectiveType(valTypeStr, currentPkgName, currentPkgPath, fileImports, parsedInfo, ctx)
+
+		if keyTypeInfo == nil || valTypeInfo == nil {
+			slog.WarnContext(ctx, "Could not resolve key or value type for map in directive", slog.String("typeStr", originalTypeStr))
+			unknownKey := keyTypeInfo
+			if unknownKey == nil {	unknownKey = &model.TypeInfo{Name: keyTypeStr, FullName: keyTypeStr, Kind: model.KindUnknown} }
+			unknownVal := valTypeInfo
+			if unknownVal == nil { unknownVal = &model.TypeInfo{Name: valTypeStr, FullName: valTypeStr, Kind: model.KindUnknown} }
+			return &model.TypeInfo{Name: originalTypeStr, FullName: originalTypeStr, Kind: model.KindMap, IsMap: true, Key: unknownKey, Value: unknownVal}
+		}
+		return &model.TypeInfo{
+			Name:     fmt.Sprintf("map[%s]%s", keyTypeInfo.Name, valTypeInfo.Name),
+			FullName: fmt.Sprintf("map[%s]%s", keyTypeInfo.FullName, valTypeInfo.FullName),
+			Kind:     model.KindMap, IsMap: true, Key: keyTypeInfo, Value: valTypeInfo,
+		}
+	}
+
+	// If not a prefix type, then it's an identifier (possibly quoted) or basic type.
+	// Trim quotes now for the base name.
+	baseTypeName := strings.Trim(typeStr, "\"")
+
+	// 2. Handle basic Go types
+	basicTypes := map[string]bool{
+		"bool": true, "byte": true, "complex128": true, "complex64": true, "error": true,
+		"float32": true, "float64": true, "int": true, "int16": true, "int32": true, "int64": true,
+		"int8": true, "rune": true, "string": true, "uint": true, "uint16": true, "uint32": true,
+		"uint64": true, "uint8": true, "uintptr": true,
+	}
+	if basicTypes[baseTypeName] {
+		kind := model.KindBasic
+		isInterface := false
+		if baseTypeName == "error" {
+			kind = model.KindInterface
+			isInterface = true
+		}
+		return &model.TypeInfo{
+			Name: baseTypeName, FullName: baseTypeName, Kind: kind, IsBasic: true, IsInterface: isInterface,
+		}
+	}
+
+	// 3. Handle identifiers (local or qualified) by looking them up in parsedInfo
+	parts := strings.SplitN(baseTypeName, ".", 2) // Use baseTypeName (quotes trimmed)
+	var lookupName, pkgAliasLookup string
+	var lookupPkgPath string
+
+	if len(parts) == 1 { // Unqualified identifier (e.g., "MyType")
+		lookupName = parts[0]
+		lookupPkgPath = currentPkgPath // Assumed to be in the current package
+		pkgAliasLookup = ""            // No alias for current package types
+	} else { // Qualified identifier (e.g., "pkg.Type")
+		pkgAliasLookup = parts[0]
+		lookupName = parts[1]
+		var ok bool
+		lookupPkgPath, ok = fileImports[pkgAliasLookup]
+		if !ok {
+			// If alias not in fileImports, it could be a dot import scenario where pkgAliasLookup is actually the type name,
+			// or it's an unknown package.
+			// Check if `pkgAliasLookup` itself is a type in the current package (e.g. `MyType.Field` - not a type).
+			// Or, it could be that the "alias" is actually the full import path if user wrote ` "example.com/mod/pkg".MyType `
+			// This simple split is insufficient for full import paths with dots.
+			// For now, assume if not in fileImports, the alias *is* the package path, or it's an error.
+			// A more robust approach for ` "path".Type ` would require smarter parsing of typeStr.
+			// Let's assume for directives, users use defined aliases or unqualified names for current pkg.
+			slog.WarnContext(ctx, "Package alias not found in file imports for directive type resolution.",
+				slog.String("alias", pkgAliasLookup), slog.String("typeStr", typeStr), slog.String("currentPkgPath", currentPkgPath))
+
+			// Attempt to see if the pkgAliasLookup is actually a known package path from parsedInfo
+			// (e.g. user wrote full path instead of alias)
+			foundByPath := false
+			for _, s := range parsedInfo.Structs {
+				if s.Type.PackagePath == pkgAliasLookup {
+					lookupPkgPath = pkgAliasLookup
+					foundByPath = true
+					break
+				}
+			}
+			if !foundByPath {
+				for _, nt := range parsedInfo.NamedTypes {
+					if nt.PackagePath == pkgAliasLookup {
+						lookupPkgPath = pkgAliasLookup
+						foundByPath = true
+						break
+					}
+				}
+			}
+			if !foundByPath {
+				slog.WarnContext(ctx, "Assuming alias is the full package path due to no match in fileImports.", slog.String("alias", pkgAliasLookup), slog.String("typeStr", typeStr))
+				lookupPkgPath = pkgAliasLookup // Fallback: assume alias is the full path
+			}
+		}
+	}
+
+	// Search in Structs
+	for _, sinfo := range parsedInfo.Structs {
+		if sinfo.Name == lookupName && sinfo.Type.PackagePath == lookupPkgPath {
+			// If we looked up via an alias, ensure the TypeInfo's PackageName reflects that for consistency.
+			// However, sinfo.Type.PackageName should already be correctly set by convertScannerTypeToModelType.
+			// For local types, PackageName in TypeInfo is often empty.
+			return sinfo.Type
+		}
+	}
+	// Search in NamedTypes
+	for _, ntInfo := range parsedInfo.NamedTypes {
+		if ntInfo.Name == lookupName && ntInfo.PackagePath == lookupPkgPath {
+			return ntInfo
+		}
+	}
+
+	slog.WarnContext(ctx, "Type not found in parsedInfo for directive.",
+		slog.String("typeStr", typeStr),
+		slog.String("lookupName", lookupName),
+		slog.String("lookupPkgPath", lookupPkgPath),
+		slog.String("currentPkgPath", currentPkgPath))
+
+	// Fallback: return a TypeInfo that represents an unresolved identifier
+	// Its FullName will be constructed based on assumptions.
+	fullName := lookupName
+	if lookupPkgPath != "" {
+		fullName = lookupPkgPath + "." + lookupName
+	}
+
+	return &model.TypeInfo{
+		Name:        lookupName,
+		FullName:    fullName,
+		PackageName: pkgAliasLookup, // This is the alias used in the directive string
+		PackagePath: lookupPkgPath,  // This is the resolved or assumed package path
+		Kind:        model.KindUnknown,
+	}
 }
 
 // convertScannerTypeToModelType converts scannermodel.FieldType to model.TypeInfo
@@ -506,8 +686,12 @@ func extractConvertTag(fullTag string) string {
 // derivePackagePath tries to derive an import path from a directory path.
 // This is a simplified heuristic and might not work for all project layouts.
 // A robust solution would involve parsing go.mod.
-// TODO: Evaluate if this is still needed after go-scan integration, as scanInfo.ImportPath should be more reliable.
+// derivePackagePath tries to derive an import path from a directory path.
+// This is a simplified heuristic and might not work for all project layouts.
+// A robust solution would involve parsing go.mod.
+// scanInfo.ImportPath is now preferred. This function is a fallback.
 func derivePackagePath(dirPath string) string {
+	slog.Debug("Attempting to derive package path as fallback", slog.String("dirPath", dirPath))
 	// Try to find go.mod upwards to get module path
 	currentPath, err := filepath.Abs(dirPath)
 	if err != nil {
@@ -545,20 +729,8 @@ func derivePackagePath(dirPath string) string {
 	return "" // Could not find go.mod
 }
 
-// isGoBasicType checks if a type name is a basic Go type.
-// TODO: This will likely be removed as scannermodel.FieldType.IsBuiltin should be used.
-func isGoBasicType(name string) bool {
-	switch name {
-	case "bool", "byte", "complex128", "complex64", "error", "float32", "float64", // "error" is not strictly basic, but often treated so
-		"int", "int16", "int32", "int64", "int8", "rune", "string", "uint", "uint16",
-		"uint32", "uint64", "uint8", "uintptr":
-		return true
-	}
-	return false
-}
-
 // parseGlobalCommentDirective parses a single package-level or file-level comment line.
-func parseGlobalCommentDirective(commentText string, info *model.ParsedInfo, fileImports map[string]string, currentPkgName, currentPkgPath string) {
+func parseGlobalCommentDirective(commentText string, info *model.ParsedInfo, fileImports map[string]string, currentPkgName, currentPkgPath string, ctx context.Context) {
 	trimmedComment := strings.TrimSpace(strings.TrimPrefix(commentText, "//"))
 	trimmedComment = strings.TrimSpace(strings.TrimPrefix(trimmedComment, "convert:"))
 	parts := strings.Fields(trimmedComment)
@@ -571,7 +743,7 @@ func parseGlobalCommentDirective(commentText string, info *model.ParsedInfo, fil
 
 	if directive == "pair" {
 		if len(args) < 3 || args[1] != "->" {
-			fmt.Printf("Skipping malformed convert:pair: %s (original: %s)\n", trimmedComment, commentText)
+			slog.WarnContext(ctx, "Skipping malformed convert:pair directive", slog.String("text", trimmedComment), slog.String("original", commentText))
 			return
 		}
 		srcTypeNameStr := args[0]
@@ -580,297 +752,127 @@ func parseGlobalCommentDirective(commentText string, info *model.ParsedInfo, fil
 
 		optionsStr := ""
 		if len(args) > 3 {
-			// Join the rest, then split by comma for key=value
 			optionsStr = strings.Join(args[3:], " ")
 		}
 		parsedOptions := parseOptions(optionsStr)
 		if val, ok := parsedOptions["max_errors"]; ok {
 			if _, err := fmt.Sscanf(val, "%d", &maxErrors); err != nil {
-				fmt.Printf("Warning: Could not parse max_errors value '%s' for pair %s -> %s. Error: %v\n", val, srcTypeNameStr, dstTypeNameStr, err)
+				slog.WarnContext(ctx, "Could not parse max_errors value for pair",
+					slog.String("value", val),
+					slog.String("src", srcTypeNameStr),
+					slog.String("dst", dstTypeNameStr),
+					slog.Any("error", err))
 			}
 		}
 
-		srcTypeInfo := resolveTypeFromString(srcTypeNameStr, currentPkgName, currentPkgPath, fileImports, info)
-		dstTypeInfo := resolveTypeFromString(dstTypeNameStr, currentPkgName, currentPkgPath, fileImports, info)
+		srcTypeInfo := resolveDirectiveType(srcTypeNameStr, currentPkgName, currentPkgPath, fileImports, info, ctx)
+		dstTypeInfo := resolveDirectiveType(dstTypeNameStr, currentPkgName, currentPkgPath, fileImports, info, ctx)
 
-		if srcTypeInfo == nil || dstTypeInfo == nil {
-			fmt.Printf("Warning: Could not resolve types for convert:pair %s -> %s. Skipping.\n", srcTypeNameStr, dstTypeNameStr)
+		if srcTypeInfo == nil || dstTypeInfo == nil || srcTypeInfo.Kind == model.KindUnknown || dstTypeInfo.Kind == model.KindUnknown {
+			slog.WarnContext(ctx, "Could not resolve types for convert:pair, or types are unknown. Skipping.",
+				slog.String("src", srcTypeNameStr),
+				slog.String("dst", dstTypeNameStr),
+				slog.Any("srcInfo", srcTypeInfo),
+				slog.Any("dstInfo", dstTypeInfo))
 			return
 		}
 
 		pair := model.ConversionPair{
-			SrcTypeName: srcTypeNameStr,
-			DstTypeName: dstTypeNameStr,
+			SrcTypeName: srcTypeNameStr, // Keep original string for reference/debugging
+			DstTypeName: dstTypeNameStr, // Keep original string for reference/debugging
 			SrcTypeInfo: srcTypeInfo,
 			DstTypeInfo: dstTypeInfo,
 			MaxErrors:   maxErrors,
 		}
 		info.ConversionPairs = append(info.ConversionPairs, pair)
+		slog.DebugContext(ctx, "Successfully parsed convert:pair directive", slog.String("src", srcTypeInfo.FullName), slog.String("dst", dstTypeInfo.FullName))
 
 	} else if directive == "rule" {
-		ruleText := strings.Join(args, " ") // Reconstruct rule string after "convert:rule "
-		usingParts := strings.Split(ruleText, "using=")
-		validatorParts := strings.Split(ruleText, "validator=")
+		ruleArgsText := strings.TrimSpace(strings.Join(args, " ")) // Full text after "convert:rule "
 
-		if len(usingParts) == 2 { // Conversion rule: "<SrcT>" -> "<DstT>", using=<func>
-			typePartsStr := strings.TrimSpace(strings.TrimSuffix(usingParts[0], ","))
-			// Need to parse this carefully, e.g. "\"time.Time\" -> \"string\""
-			arrowIndex := strings.Index(typePartsStr, "->")
-			if arrowIndex == -1 || len(strings.Fields(typePartsStr)) < 3 { // Basic check
-				fmt.Printf("Skipping malformed convert:rule (using): %s (original: %s)\n", ruleText, commentText)
+		idxVal := strings.Index(ruleArgsText, "validator=")
+		idxUsing := strings.Index(ruleArgsText, "using=")
+
+		if idxVal != -1 && (idxUsing == -1 || idxVal < idxUsing) { // Found validator= and it appears before any using= or no using=
+			// Validator rule: "<DstT>", validator=<func>
+			parts := strings.SplitN(ruleArgsText, "validator=", 2)
+			dstTypeAndComma := strings.TrimSpace(parts[0])
+			dstTypeStr := strings.TrimSpace(strings.TrimSuffix(dstTypeAndComma, ","))
+			dstTypeNameStr := strings.Trim(dstTypeStr, "\"")
+			validatorFunc := strings.TrimSpace(parts[1])
+			slog.DebugContext(ctx, "Parsing convert:rule (validator)", "dstTypeStr", dstTypeStr, "dstTypeNameStr", dstTypeNameStr, "validatorFunc", validatorFunc)
+
+			dstTypeInfo := resolveDirectiveType(dstTypeNameStr, currentPkgName, currentPkgPath, fileImports, info, ctx)
+			if dstTypeInfo == nil || dstTypeInfo.Kind == model.KindUnknown {
+				slog.WarnContext(ctx, "Could not resolve type for convert:rule (validator), or type is unknown. Skipping.",
+					slog.String("dstRule", dstTypeNameStr), // Log the name used for lookup
+					slog.Any("dstInfo", dstTypeInfo))
+				return
+			}
+			if validatorFunc == "" {
+				slog.WarnContext(ctx, "convert:rule (validator) has empty validator function. Skipping.", slog.String("dst", dstTypeNameStr))
+				return
+			}
+			rule := model.TypeRule{
+				DstTypeName:   dstTypeNameStr, // Store the cleaned name
+				DstTypeInfo:   dstTypeInfo,
+				ValidatorFunc: validatorFunc,
+			}
+			info.GlobalRules = append(info.GlobalRules, rule)
+			slog.DebugContext(ctx, "Successfully parsed convert:rule (validator) directive",
+				slog.String("dst", dstTypeInfo.FullName),
+				slog.String("validator", validatorFunc))
+
+		} else if idxUsing != -1 { // Found using=
+			// Conversion rule: "<SrcT>" -> "<DstT>", using=<func>
+			parts := strings.SplitN(ruleArgsText, "using=", 2)
+			typesAndArrowPart := strings.TrimSpace(strings.TrimSuffix(parts[0], ","))
+			usingFunc := strings.TrimSpace(parts[1])
+
+			arrowIdx := strings.Index(typesAndArrowPart, "->")
+			if arrowIdx == -1 {
+				slog.WarnContext(ctx, "Malformed convert:rule (using), missing '->'", "text", ruleArgsText, "original", commentText)
 				return
 			}
 
-			srcTypeRaw := strings.TrimSpace(typePartsStr[:arrowIndex])
-			dstTypeRaw := strings.TrimSpace(typePartsStr[arrowIndex+2:])
+			srcTypeRaw := strings.TrimSpace(typesAndArrowPart[:arrowIdx])
+			dstTypeRaw := strings.TrimSpace(typesAndArrowPart[arrowIdx+2:]) // Comma was already trimmed from typesAndArrowPart
 
-			srcTypeNameStr := strings.Trim(srcTypeRaw, "\"")
-			dstTypeNameStr := strings.Trim(dstTypeRaw, "\"")
-			usingFunc := strings.TrimSpace(usingParts[1])
+			srcTypeStr := strings.Trim(srcTypeRaw, "\"")
+			dstTypeStr := strings.Trim(dstTypeRaw, "\"")
 
-			srcTypeInfo := resolveTypeFromString(srcTypeNameStr, currentPkgName, currentPkgPath, fileImports, info)
-			dstTypeInfo := resolveTypeFromString(dstTypeNameStr, currentPkgName, currentPkgPath, fileImports, info)
+			slog.DebugContext(ctx, "Parsing convert:rule (using)", "srcTypeRaw", srcTypeRaw, "dstTypeRaw", dstTypeRaw, "srcTypeStr", srcTypeStr, "dstTypeStr", dstTypeStr, "usingFunc", usingFunc)
 
-			if srcTypeInfo == nil || dstTypeInfo == nil {
-				fmt.Printf("Warning: Could not resolve types for convert:rule (using) %s -> %s. Skipping.\n", srcTypeNameStr, dstTypeNameStr)
+			srcTypeInfo := resolveDirectiveType(srcTypeStr, currentPkgName, currentPkgPath, fileImports, info, ctx)
+			dstTypeInfo := resolveDirectiveType(dstTypeStr, currentPkgName, currentPkgPath, fileImports, info, ctx)
+
+			if srcTypeInfo == nil || dstTypeInfo == nil || srcTypeInfo.Kind == model.KindUnknown || dstTypeInfo.Kind == model.KindUnknown {
+				slog.WarnContext(ctx, "Could not resolve types for convert:rule (using), or types are unknown. Skipping.",
+					slog.String("srcRule", srcTypeStr), "dstRule", dstTypeStr,
+					slog.Any("srcInfo", srcTypeInfo), slog.Any("dstInfo", dstTypeInfo))
 				return
 			}
 			if usingFunc == "" {
-				fmt.Printf("Warning: convert:rule (using) %s -> %s has empty using function. Skipping.\n", srcTypeNameStr, dstTypeNameStr)
+				slog.WarnContext(ctx, "convert:rule (using) has empty using function. Skipping.", slog.String("src", srcTypeStr), slog.String("dst", dstTypeStr))
 				return
 			}
-
 			rule := model.TypeRule{
-				SrcTypeName: srcTypeNameStr,
-				DstTypeName: dstTypeNameStr,
+				SrcTypeName: srcTypeStr, // Store cleaned names
+				DstTypeName: dstTypeStr,
 				SrcTypeInfo: srcTypeInfo,
 				DstTypeInfo: dstTypeInfo,
 				UsingFunc:   usingFunc,
 			}
 			info.GlobalRules = append(info.GlobalRules, rule)
-
-		} else if len(validatorParts) == 2 { // Validator rule: "<DstT>", validator=<func>
-			dstTypeStr := strings.TrimSpace(strings.TrimSuffix(validatorParts[0], ","))
-			dstTypeNameStr := strings.Trim(dstTypeStr, "\"")
-			validatorFunc := strings.TrimSpace(validatorParts[1])
-
-			dstTypeInfo := resolveTypeFromString(dstTypeNameStr, currentPkgName, currentPkgPath, fileImports, info)
-			if dstTypeInfo == nil {
-				fmt.Printf("Warning: Could not resolve type for convert:rule (validator) %s. Skipping.\n", dstTypeNameStr)
-				return
-			}
-			if validatorFunc == "" {
-				fmt.Printf("Warning: convert:rule (validator) %s has empty validator function. Skipping.\n", dstTypeNameStr)
-				return
-			}
-
-			rule := model.TypeRule{
-				DstTypeName:   dstTypeNameStr,
-				DstTypeInfo:   dstTypeInfo,
-				ValidatorFunc: validatorFunc,
-			}
-			info.GlobalRules = append(info.GlobalRules, rule)
+			slog.DebugContext(ctx, "Successfully parsed convert:rule (using) directive",
+				slog.String("src", srcTypeInfo.FullName),
+				slog.String("dst", dstTypeInfo.FullName),
+				slog.String("using", usingFunc))
 		} else {
-			fmt.Printf("Skipping malformed or unsupported convert:rule: %s (original: %s)\n", ruleText, commentText)
+			slog.WarnContext(ctx, "Skipping malformed or unsupported convert:rule directive", "text", ruleArgsText, "original", commentText)
 		}
 	} else {
 		// Not a "pair" or "rule" directive that we understand at this level.
-		// Could be field-specific if not starting with "convert:" prefix after trimming comment chars.
-		// Or just an unrelated comment.
-	}
-}
-
-// resolveTypeFromString parses a type string (e.g., "MyType", "pkg.Type", "*pkg.Type")
-// from an annotation and resolves it to TypeInfo.
-func resolveTypeFromString(typeStr, currentPkgName, currentPkgPath string, fileImports map[string]string, parsedInfo *model.ParsedInfo) *model.TypeInfo {
-	if typeStr == "" {
-		slog.Warn("Empty type string passed to resolveTypeFromString.")
-		return nil
-	}
-
-	// 1. Handle prefixes: *, [], map[]
-	if strings.HasPrefix(typeStr, "*") {
-		elemTypeStr := strings.TrimPrefix(typeStr, "*")
-		elemTypeInfo := resolveTypeFromString(elemTypeStr, currentPkgName, currentPkgPath, fileImports, parsedInfo)
-		if elemTypeInfo == nil {
-			slog.Warn("Could not resolve element type for pointer", slog.String("typeStr", typeStr))
-			return &model.TypeInfo{Name: typeStr, FullName: typeStr, Kind: model.KindUnknown}
-		}
-		return &model.TypeInfo{
-			Name:        elemTypeInfo.Name, // Simplified name
-			FullName:    "*" + elemTypeInfo.FullName,
-			Kind:        model.KindPointer,
-			IsPointer:   true,
-			Elem:        elemTypeInfo,
-			PackageName: elemTypeInfo.PackageName, // Inherit from element
-			PackagePath: elemTypeInfo.PackagePath,
-		}
-	}
-
-	if strings.HasPrefix(typeStr, "[]") {
-		elemTypeStr := strings.TrimPrefix(typeStr, "[]")
-		elemTypeInfo := resolveTypeFromString(elemTypeStr, currentPkgName, currentPkgPath, fileImports, parsedInfo)
-		if elemTypeInfo == nil {
-			slog.Warn("Could not resolve element type for slice", slog.String("typeStr", typeStr))
-			return &model.TypeInfo{Name: typeStr, FullName: typeStr, Kind: model.KindUnknown}
-		}
-		return &model.TypeInfo{
-			Name:        elemTypeInfo.Name, // Simplified name
-			FullName:    "[]" + elemTypeInfo.FullName,
-			Kind:        model.KindSlice,
-			IsSlice:     true,
-			Elem:        elemTypeInfo,
-			PackageName: elemTypeInfo.PackageName, // Inherit from element
-			PackagePath: elemTypeInfo.PackagePath,
-		}
-	}
-
-	if strings.HasPrefix(typeStr, "map[") && strings.HasSuffix(typeStr, "]") {
-		// map[KeyType]ValueType
-		// This parsing is simplistic and assumes no nested maps or complex types in key/value strings directly.
-		inner := strings.TrimPrefix(typeStr, "map[")
-		inner = strings.TrimSuffix(inner, "]")
-
-		// Find the first ']' that correctly closes the key type, considering nested types.
-		// This is hard with simple string splitting if keys can be complex (e.g. map[*pkg.Key]Value).
-		// For now, assume simple key types that don't contain ']'.
-		// A more robust solution would require a proper parser for type strings.
-		var keyTypeStr, valTypeStr string
-		bracketDepth := 0
-		splitIndex := -1
-		for i, char := range inner {
-			if char == '[' {
-				bracketDepth++
-			} else if char == ']' {
-				bracketDepth--
-				if bracketDepth == -1 { // Found the closing bracket for the key type
-					keyTypeStr = inner[:i]
-					valTypeStr = inner[i+1:]
-					splitIndex = i
-					break
-				}
-			}
-		}
-		if splitIndex == -1 && bracketDepth == 0 { // No brackets in key, simple split e.g. "string]int"
-			parts := strings.SplitN(inner, "]", 2)
-			if len(parts) == 2 {
-				keyTypeStr = parts[0]
-				valTypeStr = parts[1]
-			} else {
-				slog.Warn("Could not parse map type string", slog.String("typeStr", typeStr))
-				return &model.TypeInfo{Name: typeStr, FullName: typeStr, Kind: model.KindUnknown}
-			}
-		} else if splitIndex == -1 { // Malformed or complex key type not handled
-			slog.Warn("Could not accurately parse complex key or malformed map type string", slog.String("typeStr", typeStr))
-			return &model.TypeInfo{Name: typeStr, FullName: typeStr, Kind: model.KindUnknown}
-		}
-
-		keyTypeInfo := resolveTypeFromString(keyTypeStr, currentPkgName, currentPkgPath, fileImports, parsedInfo)
-		valTypeInfo := resolveTypeFromString(valTypeStr, currentPkgName, currentPkgPath, fileImports, parsedInfo)
-
-		if keyTypeInfo == nil || valTypeInfo == nil {
-			slog.Warn("Could not resolve key or value type for map", slog.String("typeStr", typeStr))
-			return &model.TypeInfo{Name: typeStr, FullName: typeStr, Kind: model.KindUnknown}
-		}
-		return &model.TypeInfo{
-			Name:     fmt.Sprintf("map[%s]%s", keyTypeInfo.Name, valTypeInfo.Name),
-			FullName: fmt.Sprintf("map[%s]%s", keyTypeInfo.FullName, valTypeInfo.FullName),
-			Kind:     model.KindMap,
-			IsMap:    true,
-			Key:      keyTypeInfo,
-			Value:    valTypeInfo,
-			// PackageName/Path for map itself isn't standard.
-		}
-	}
-
-	// 2. Handle basic Go types
-	// isGoBasicType is removed, so check directly
-	basicTypes := map[string]bool{
-		"bool": true, "byte": true, "complex128": true, "complex64": true, "error": true,
-		"float32": true, "float64": true, "int": true, "int16": true, "int32": true, "int64": true,
-		"int8": true, "rune": true, "string": true, "uint": true, "uint16": true, "uint32": true,
-		"uint64": true, "uint8": true, "uintptr": true,
-	}
-	if basicTypes[typeStr] {
-		kind := model.KindBasic
-		isInterface := false
-		if typeStr == "error" {
-			kind = model.KindInterface
-			isInterface = true
-		}
-		return &model.TypeInfo{
-			Name:        typeStr,
-			FullName:    typeStr,
-			Kind:        kind,
-			IsBasic:     true, // Even 'error' can be considered basic for this tool's purposes
-			IsInterface: isInterface,
-		}
-	}
-
-	// 3. Handle identifiers (local or qualified)
-	parts := strings.SplitN(typeStr, ".", 2)
-	if len(parts) == 1 { // Unqualified identifier (e.g., "MyType")
-		name := parts[0]
-		// Check if it's a known struct in the current package
-		if sinfo, ok := parsedInfo.Structs[name]; ok && sinfo.Type.PackagePath == currentPkgPath {
-			return sinfo.Type // Return the existing TypeInfo for the struct
-		}
-		// Check if it's a known named type in the current package
-		if ntInfo, ok := parsedInfo.NamedTypes[name]; ok && ntInfo.PackagePath == currentPkgPath {
-			return ntInfo // Return the existing TypeInfo for the named type
-		}
-		// If not found, assume it's a type in the current package that might be defined elsewhere or is a forward declaration.
-		// This is a common case for types used in annotations before their full definition is processed by the main loop.
-		slog.Debug("Unqualified type not found in parsedInfo, assuming local/unresolved", slog.String("name", name), slog.String("currentPkg", currentPkgPath))
-		return &model.TypeInfo{
-			Name:        name,
-			FullName:    currentPkgPath + "." + name,
-			PackageName: currentPkgName, // This might be empty if currentPkgName is the package name, not an alias.
-			PackagePath: currentPkgPath,
-			Kind:        model.KindIdent, // Could be a struct, interface, or alias not yet fully processed
-		}
-	} else { // Qualified identifier (e.g., "pkg.Type")
-		pkgAlias := parts[0]
-		typeName := parts[1]
-
-		if pkgAlias == currentPkgName { // Check if it's referring to the current package
-			// Treat as local type: look up typeName in parsedInfo
-			if sinfo, ok := parsedInfo.Structs[typeName]; ok && sinfo.Type.PackagePath == currentPkgPath {
-				return sinfo.Type
-			}
-			if ntInfo, ok := parsedInfo.NamedTypes[typeName]; ok && ntInfo.PackagePath == currentPkgPath {
-				return ntInfo
-			}
-			slog.Debug("Qualified type referring to current package not found in parsedInfo, assuming local/unresolved", slog.String("typeName", typeName), slog.String("currentPkg", currentPkgPath))
-			return &model.TypeInfo{ // Fallback for local type not yet fully processed in parsedInfo
-				Name:        typeName,
-				FullName:    currentPkgPath + "." + typeName,
-				PackageName: "", // No package alias for current package types
-				PackagePath: currentPkgPath,
-				Kind:        model.KindIdent,
-			}
-		}
-
-		// External package
-		importedPkgPath, ok := fileImports[pkgAlias]
-		if !ok {
-			slog.Warn("External package alias not found in file imports", slog.String("alias", pkgAlias), slog.String("typeStr", typeStr))
-			// Fallback: assume pkgAlias is the full package path if not in imports
-			return &model.TypeInfo{
-				Name:        typeName,
-				FullName:    typeStr,
-				PackageName: pkgAlias,
-				PackagePath: pkgAlias, // Assuming alias is path if not found
-				Kind:        model.KindIdent,
-			}
-		}
-		return &model.TypeInfo{
-			Name:        typeName,
-			FullName:    importedPkgPath + "." + typeName,
-			PackageName: pkgAlias,
-			PackagePath: importedPkgPath,
-			Kind:        model.KindIdent,
-		}
 	}
 }
 

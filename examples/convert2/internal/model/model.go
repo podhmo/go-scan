@@ -118,3 +118,16 @@ func NewParsedInfo(packageName, packagePath string) *ParsedInfo {
 		FileImports:     make(map[string]map[string]string),
 	}
 }
+
+// ErrorCollectorInterface defines the methods an error collector should have.
+// Custom 'using' and 'validator' functions will accept this interface.
+// The concrete implementation is provided by the generator.
+type ErrorCollectorInterface interface {
+	Add(reason string) bool
+	Addf(format string, args ...interface{}) bool
+	Enter(segment string)
+	Leave()
+	// Errors() []error // Not typically needed by custom funcs, but good for completeness
+	// HasErrors() bool // Not typically needed by custom funcs
+	MaxErrorsReached() bool // Useful for early exit in complex 'using' funcs
+}

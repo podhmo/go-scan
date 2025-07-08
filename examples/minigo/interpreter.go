@@ -1918,14 +1918,15 @@ func (i *Interpreter) evalDeclStmt(ctx context.Context, declStmt *ast.DeclStmt, 
 									csDef = potentialCsDef.(*ConstrainedStringTypeDefinition)
 								} else {
 									// Promote AliasDefinition to ConstrainedStringTypeDefinition
+									// typeNameStr is from astNodeToString(valueSpec.Type, i.FileSet) of the current const
 									csDef = &ConstrainedStringTypeDefinition{
-										Name:          actualTypeDef.Name, // "Status"
+										Name:          typeNameStr, // Use typeNameStr as the definition name
 										AllowedValues: make(map[string]struct{}),
-										FileSet:       actualTypeDef.FileSet,
+										FileSet:       actualTypeDef.FileSet, // Fileset from original alias
 										IsExternal:    actualTypeDef.IsExternal,
 										PackagePath:   actualTypeDef.PackagePath,
 									}
-									env.Define(actualTypeDef.Name, csDef) // Replace original AliasDefinition with this CSD
+									env.Define(typeNameStr, csDef) // Define CSD using typeNameStr as key
 								}
 
 								strVal, okStr := constValObj.(*String)

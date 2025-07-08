@@ -12,12 +12,14 @@ import (
 	"time"
 )
 
-func TestConvertSrcSimple(t *testing.T) {
-	// Helper functions to create pointers
-	strPtr := func(s string) *string { return &s }
-	float32Ptr := func(f float32) *float32 { return &f }
-	intPtr := func(i int) *int { return &i }
+// Helper functions to create pointers, moved to package level for sharing
+var (
+	strPtr     = func(s string) *string { return &s }
+	float32Ptr = func(f float32) *float32 { return &f }
+	intPtr     = func(i int) *int { return &i }
+)
 
+func TestConvertSrcSimple(t *testing.T) {
 	tests := []struct {
 		name          string
 		src           SrcSimple
@@ -123,7 +125,7 @@ func TestConvertSrcSimple(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			dst, err := ConvertSrcSimple(context.Background(), tc.src)
+			dst, err := ConvertSrcSimpleToDstSimple(context.Background(), tc.src)
 
 			if tc.expectError {
 				if err == nil {
@@ -184,6 +186,152 @@ func pointerValue(ptr interface{}) string {
 		return fmt.Sprintf("%v", val.Elem().Interface())
 	}
 	return fmt.Sprintf("%v", ptr) // Should not happen if used for pointers
+}
+
+
+func TestConvertNestedStructs(t *testing.T) {
+	tests := []struct {
+		name        string
+		src         OuterSrc
+		expectedDst OuterDst
+		expectError bool
+	}{
+		{
+			name: "simple nested conversion",
+			src: OuterSrc{
+				OuterID: 100,
+				Nested: InnerSrc{
+					InnerID:   101,
+					InnerName: "Inner Simple",
+				},
+				NestedPtr: &InnerSrc{
+					InnerID:   102,
+					InnerName: "Inner Ptr",
+				},
+				Name: "Outer Name",
+			},
+			expectedDst: OuterDst{
+				OuterID: 100,
+				Nested: InnerDst{
+					InnerID:   101,
+					InnerName: "Inner Simple",
+				},
+				NestedPtr: &InnerDst{
+					InnerID:   102,
+					InnerName: "Inner Ptr",
+				},
+				OuterName: "Outer Name",
+			},
+			expectError: false,
+		},
+		{
+			name: "nested conversion with nil pointer",
+			src: OuterSrc{
+				OuterID: 200,
+				Nested: InnerSrc{
+					InnerID:   201,
+					InnerName: "Inner NonPtr",
+				},
+				NestedPtr: nil, // Nil pointer for nested struct
+				Name:      "Outer With Nil Nested Ptr",
+			},
+			expectedDst: OuterDst{
+				OuterID: 200,
+				Nested: InnerDst{
+					InnerID:   201,
+					InnerName: "Inner NonPtr",
+				},
+				NestedPtr: nil,
+				OuterName: "Outer With Nil Nested Ptr",
+			},
+			expectError: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			// Assuming the top-level converter is named ConvertOuterSrcToOuterDst
+			// The generator change made this ConvertOuterSrcToOuterDst
+			dst, err := ConvertOuterSrcToOuterDst(context.Background(), tc.src)
+
+			if tc.expectError {
+				if err == nil {
+					t.Errorf("expected an error, but got nil")
+				}
+			} else {
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+			}
+
+			if !reflect.DeepEqual(dst, tc.expectedDst) {
+				t.Errorf("ConvertOuterSrcToOuterDst() got = \n%#v, want \n%#v", dst, tc.expectedDst)
+				// Add more detailed field comparison if needed for debugging
+				if dst.OuterID != tc.expectedDst.OuterID {
+					t.Logf("OuterID mismatch: got %d, want %d", dst.OuterID, tc.expectedDst.OuterID)
+				}
+				if dst.OuterName != tc.expectedDst.OuterName {
+					t.Logf("OuterName mismatch: got %s, want %s", dst.OuterName, tc.expectedDst.OuterName)
+				}
+				if !reflect.DeepEqual(dst.Nested, tc.expectedDst.Nested) {
+					t.Logf("Nested mismatch: got %+v, want %+v", dst.Nested, tc.expectedDst.Nested)
+				}
+				if (dst.NestedPtr == nil && tc.expectedDst.NestedPtr != nil) || (dst.NestedPtr != nil && tc.expectedDst.NestedPtr == nil) {
+					t.Logf("NestedPtr nil mismatch: got %v, want %v", dst.NestedPtr, tc.expectedDst.NestedPtr)
+				} else if dst.NestedPtr != nil && tc.expectedDst.NestedPtr != nil && !reflect.DeepEqual(*dst.NestedPtr, *tc.expectedDst.NestedPtr) {
+					t.Logf("NestedPtr value mismatch: got %+v, want %+v", *dst.NestedPtr, *tc.expectedDst.NestedPtr)
+				}
+			}
+		})
+	}
+}
+
+func TestConvertNestedStructsDiffNames(t *testing.T) {
+	tests := []struct {
+		name        string
+		src         OuterSrcDiff
+		expectedDst OuterDstDiff
+		expectError bool
+	}{
+		{
+			name: "nested conversion with different field names via tag",
+			src: OuterSrcDiff{
+				ID: 10,
+				DiffNested: InnerSrcDiff{
+					SrcInnerVal: 20,
+				},
+			},
+			expectedDst: OuterDstDiff{
+				ID: 10,
+				DestNested: InnerDstDiff{
+					DstInnerVal: 20, // Assuming direct field-to-field mapping within InnerSrcDiff -> InnerDstDiff
+				},
+			},
+			expectError: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			dst, err := ConvertOuterSrcDiffToOuterDstDiff(context.Background(), tc.src)
+
+			if tc.expectError {
+				if err == nil {
+					t.Errorf("expected an error, but got nil")
+				}
+			} else {
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+			}
+
+			// Check if InnerSrcDiff.SrcInnerVal maps to InnerDstDiff.DstInnerVal
+			// This deep check is important.
+			if dst.ID != tc.expectedDst.ID || dst.DestNested.DstInnerVal != tc.expectedDst.DestNested.DstInnerVal {
+				t.Errorf("ConvertOuterSrcDiffToOuterDstDiff() got = %#v, want %#v", dst, tc.expectedDst)
+			}
+		})
+	}
 }
 
 // Test for SrcWithAlias is still commented out as `using` is not implemented.

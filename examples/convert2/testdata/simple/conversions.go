@@ -9,6 +9,10 @@ import (
 
 // convert:pair SrcSimple -> DstSimple
 // convert:pair SrcWithAlias -> DstWithAlias
+// convert:pair InnerSrc -> InnerDst
+// convert:pair OuterSrc -> OuterDst
+// convert:pair InnerSrcDiff -> InnerDstDiff
+// convert:pair OuterSrcDiff -> OuterDstDiff
 // convert:rule "time.Time" -> "string", using=timeToStringNotImplemented
 // convert:rule "simple.MyTime" -> "time.Time", using=myTimeToTime // Placeholder, myTimeToTime needs definition
 // convert:rule "string" -> "time.Time", using=stringToTimeNotImplemented

@@ -19,10 +19,10 @@
   - [x] Return statements (`return x`)
   - [x] Closures (lexical scoping for functions)
   - [x] Recursive function calls
-- [ ] Data Structures
-  - [ ] Arrays (e.g., `var a [3]int`, `a[0] = 1`)
-  - [ ] Slices (dynamic arrays)
-  - [ ] Maps (hash maps)
+- [x] Data Structures
+  - [x] Arrays (e.g., `var a [3]int`, `a[0] = 1`)
+  - [x] Slices (dynamic arrays, includes `append()`)
+  - [x] Maps (hash maps)
 - [ ] Control Flow
   - [x] `for` loops (various forms: `for {}`, `for i < N {}`, `for i := 0; i < N; i++ {}`. Range-based loop not yet supported)
   - [x] `break` and `continue` statements (unlabeled)
@@ -57,10 +57,11 @@
 - [x] `fmt.Sprintf` (basic implementation)
 - [x] `strings.Join` (custom varargs implementation for now)
 - [x] `Null` object and implicit returns for `null`
+- [x] `len()` function for strings, arrays, slices, maps
+- [x] `append()` function for slices
 - [ ] More `fmt` functions (e.g., `Println`)
 - [ ] More `strings` functions
 - [ ] Basic I/O (e.g., reading files, printing to console beyond Sprintf)
-- [/] `len()` function for strings (arrays, slices, maps to be added later)
 - [ ] `panic` and `recover`
 
 ## Interpreter Internals & Tooling

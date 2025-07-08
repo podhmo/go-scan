@@ -145,9 +145,9 @@ func (s *String) Compare(other Object) (int, error) {
 
 // --- UserDefinedFunction Object ---
 type UserDefinedFunction struct {
-	Name       string // Simple name of the function
-	Parameters []*ast.Ident
-	Body       *ast.BlockStmt
+	Name           string // Simple name of the function
+	Parameters     []*ast.Ident
+	Body           *ast.BlockStmt
 	Env            *Environment   // Closure: the environment where the function was defined
 	FileSet        *token.FileSet // FileSet for error reporting context
 	ParamTypeExprs []ast.Expr     // AST expressions for parameter types
@@ -317,7 +317,6 @@ func (s *Slice) Inspect() string {
 	return out.String() // Note: Go's typical slice inspect shows pointer and len/cap, this is simplified
 }
 
-
 // --- Hashable Interface & HashKey ---
 
 // Hashable is an interface for objects that can be used as map keys.
@@ -330,8 +329,8 @@ type Hashable interface {
 // HashKey uniquely identifies an object that can be a map key.
 // It includes the type and a hash value (or a canonical representation for simple types).
 type HashKey struct {
-	Type  ObjectType
-	Value uint64 // For numeric types or actual hash values
+	Type     ObjectType
+	Value    uint64 // For numeric types or actual hash values
 	StrValue string // For string types, to avoid converting back and forth if not hashing
 }
 
@@ -393,12 +392,11 @@ func (m *Map) Inspect() string {
 	return out.String()
 }
 
-
 // --- StructInstance Object ---
 // StructInstance represents an instance of a struct.
 type StructInstance struct {
-	Definition    *StructDefinition
-	FieldValues   map[string]Object   // Field name to its Object value (for direct fields)
+	Definition     *StructDefinition
+	FieldValues    map[string]Object          // Field name to its Object value (for direct fields)
 	EmbeddedValues map[string]*StructInstance // Key: Embedded struct type name. Value: Instance of the embedded struct.
 }
 

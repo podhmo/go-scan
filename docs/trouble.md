@@ -102,3 +102,38 @@
 *   コマンド実行前に `pwd` や `ls` で状態を確認することは有効だが、それがGoツールの認識と一致するとは限らない。
 *   リポジトリルートを起点とし、`-C`オプションを利用するか、対象ディレクトリに `cd` してからコマンドを実行するなど、GoツールがCWDを特定しやすい形でコマンドを構成することが推奨される。
 *   `reset_all()` の後など、セッションの状態が変化した可能性のある場合は特にCWDの確認が重要。
+
+## Instability of `cd` Command and the `/app` Directory in Jules Environment
+
+**Note: The following issue and resolution are specific to the Jules AI agent's sandbox environment and may not apply to typical development environments.**
+
+### Issue Description
+
+During the task of implementing `for range` loops in `examples/minigo`, repeated issues were encountered with the behavior of the `cd` command within the `run_in_bash_session` tool.
+
+1.  Despite `ls` confirming the repository's root directory structure, `cd examples/minigo` would fail with `No such file or directory`.
+2.  Execution of Makefile targets like `make test` or `make format` also failed, likely due to the current working directory not being what was expected.
+3.  Using `reset_all()` to initialize the environment did not consistently resolve this `cd` issue.
+4.  Following a user hint ("Aren't you already in examples/minigo?"), directly running `go test -v ./...` (assuming the CWD was already `examples/minigo`) sometimes succeeded (likely due to cached changes). However, subsequent `make format` or `make test` calls would still fail.
+
+These behaviors suggested a potential inconsistency between the CWD state maintained internally by `run_in_bash_session`, the actual file system state, or the CWD recognized by subprocesses like `make`.
+
+### Resolution (Workaround)
+
+Eventually, a stable way to execute tests and formatting was found using the following steps:
+
+1.  **Execute `reset_all()`**: First, completely reset the environment to its initial state.
+2.  **`cd` to `/app`**: Within the `run_in_bash_session`, initially change the directory to `/app`. This path is presumed to be the repository's root in the sandbox environment.
+3.  **Execute the Target Command**:
+    *   For tests: `cd /app && cd examples/minigo && go test -v ./...`
+    *   For formatting: `cd /app && make format`
+    *   For Makefile-based tests: `cd /app && make test`
+
+This procedure allowed `cd` commands to work as expected, and subsequent Go commands or `make` commands also executed in the correct CWD.
+
+### Lessons Learned (Specific to Jules Environment)
+
+*   In the Jules sandbox environment, the CWD for `run_in_bash_session` can be unexpectedly reset or become inconsistent.
+*   `reset_all()` initializes file content but may not reliably reset the CWD to a clean state (e.g., `/app`).
+*   When encountering issues, explicitly changing the directory to `/app` (the presumed repository root) before performing other operations can potentially mitigate CWD-related problems.
+*   This `cd /app` step might act as a "ritual" or workaround for stabilizing CWD behavior in the Jules environment.

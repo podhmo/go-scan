@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"go/ast"
+
 	// "go/ast" // Removed duplicate import
 	"go/parser" // Ensure go/parser is imported
 	"go/token"
@@ -14,7 +15,7 @@ import (
 	"strconv"
 	"strings"
 
-	goscan "github.com/podhmo/go-scan" // Using top-level go-scan
+	goscan "github.com/podhmo/go-scan"  // Using top-level go-scan
 	"github.com/podhmo/go-scan/scanner" // Import the scanner package
 )
 
@@ -160,7 +161,7 @@ type Interpreter struct {
 	sharedScanner  *goscan.Scanner // Renamed from scn, used for resolving imports. Can be pre-configured for tests.
 	ModuleRoot     string          // Optional: Explicitly set module root directory for scanner initialization.
 
-	activeFileSet *token.FileSet // FileSet currently active for evaluation context
+	activeFileSet *token.FileSet    // FileSet currently active for evaluation context
 	callStack     []*callStackFrame // For minigo call stack trace
 }
 
@@ -549,9 +550,13 @@ func (i *Interpreter) applyUserDefinedFunction(ctx context.Context, fn *UserDefi
 				}
 				if actualStructInstance.Definition != expectedStructDef {
 					expectedName := "unknown"
-					if expectedStructDef != nil { expectedName = expectedStructDef.Name }
+					if expectedStructDef != nil {
+						expectedName = expectedStructDef.Name
+					}
 					actualName := "unknown"
-					if actualStructInstance.Definition != nil { actualName = actualStructInstance.Definition.Name }
+					if actualStructInstance.Definition != nil {
+						actualName = actualStructInstance.Definition.Name
+					}
 
 					errMsg := fmt.Sprintf("type mismatch for struct argument %d (%s) of function %s: expected struct type %s, got %s",
 						idx+1, paramIdent.Name, fn.Name, expectedName, actualName)
@@ -565,7 +570,6 @@ func (i *Interpreter) applyUserDefinedFunction(ctx context.Context, fn *UserDefi
 		// For now, skip type checking if this happens, but ideally, it should be an error or ensure it never happens.
 		fmt.Fprintf(os.Stderr, "Warning: ParamTypeExprs length mismatch for function %s. Skipping argument type checks.\n", fn.Name)
 	}
-
 
 	funcEnv := NewEnvironment(fn.Env) // Closure: fn.Env is the lexical scope
 
@@ -921,7 +925,9 @@ func (i *Interpreter) evalStructLiteral(ctx context.Context, structName string, 
 			// (Using existing logic from original evalCompositeLit for this part)
 			if _, isDirectField := structDef.Fields[fieldName]; isDirectField {
 				valObj, err := i.eval(ctx, valueExpr, env)
-				if err != nil { return nil, err }
+				if err != nil {
+					return nil, err
+				}
 				instance.FieldValues[fieldName] = valObj
 				continue
 			}
@@ -937,7 +943,9 @@ func (i *Interpreter) evalStructLiteral(ctx context.Context, structName string, 
 			}
 			if isEmbeddedTypeNameInitialization {
 				valObj, err := i.eval(ctx, valueExpr, env)
-				if err != nil { return nil, err }
+				if err != nil {
+					return nil, err
+				}
 				embInstanceVal, ok := valObj.(*StructInstance)
 				if !ok || embInstanceVal.Definition.Name != targetEmbeddedDefForExplicitInit.Name {
 					return nil, i.formatErrorWithContext(i.activeFileSet, kvExpr.Value.Pos(),
@@ -951,12 +959,15 @@ func (i *Interpreter) evalStructLiteral(ctx context.Context, structName string, 
 			var owningEmbDef *StructDefinition
 			for _, embDef := range structDef.EmbeddedDefs {
 				if _, isPromoted := embDef.Fields[fieldName]; isPromoted {
-					owningEmbDef = embDef; break
+					owningEmbDef = embDef
+					break
 				}
 			}
 			if owningEmbDef != nil {
 				valObj, err := i.eval(ctx, valueExpr, env)
-				if err != nil { return nil, err }
+				if err != nil {
+					return nil, err
+				}
 				embInstance, ok := instance.EmbeddedValues[owningEmbDef.Name]
 				if !ok {
 					embInstance = &StructInstance{Definition: owningEmbDef, FieldValues: make(map[string]Object), EmbeddedValues: make(map[string]*StructInstance)}
@@ -1091,7 +1102,6 @@ func (i *Interpreter) evalSliceExpression(ctx context.Context, node *ast.SliceEx
 		}
 	}
 
-
 	switch subject := left.(type) {
 	case *Array:
 		arrLen := int64(len(subject.Elements))
@@ -1104,7 +1114,7 @@ func (i *Interpreter) evalSliceExpression(ctx context.Context, node *ast.SliceEx
 		}
 		if node.Slice3 {
 			if max < high || max > arrLen {
-				return nil, i.formatErrorWithContext(i.activeFileSet, node.Max.Pos(), fmt.Errorf("slice3 capacity out of range (max:%d, high:%d, len:%d)",max, high, arrLen), "Runtime error")
+				return nil, i.formatErrorWithContext(i.activeFileSet, node.Max.Pos(), fmt.Errorf("slice3 capacity out of range (max:%d, high:%d, len:%d)", max, high, arrLen), "Runtime error")
 			}
 		}
 
@@ -1129,10 +1139,9 @@ func (i *Interpreter) evalSliceExpression(ctx context.Context, node *ast.SliceEx
 			// Go spec: "For arrays or strings, the indices are in range if 0 <= low <= high <= max <= cap(a)"
 			// Our slices don't have explicit capacity yet, so treat sliceLen as capacity for this check.
 			if max < high || max > sliceLen { // Using sliceLen as effective capacity
-				return nil, i.formatErrorWithContext(i.activeFileSet, node.Max.Pos(), fmt.Errorf("slice3 capacity out of range for slice (max:%d, high:%d, len:%d)",max, high, sliceLen), "Runtime error")
+				return nil, i.formatErrorWithContext(i.activeFileSet, node.Max.Pos(), fmt.Errorf("slice3 capacity out of range for slice (max:%d, high:%d, len:%d)", max, high, sliceLen), "Runtime error")
 			}
 		}
-
 
 		// Slicing a slice: also copy for simplicity in this interpreter model.
 		newElements := make([]Object, high-low)
@@ -1143,7 +1152,6 @@ func (i *Interpreter) evalSliceExpression(ctx context.Context, node *ast.SliceEx
 		return nil, i.formatErrorWithContext(i.activeFileSet, node.X.Pos(), fmt.Errorf("type %s does not support slicing", left.Type()), "Type error")
 	}
 }
-
 
 func (i *Interpreter) evalBranchStmt(ctx context.Context, stmt *ast.BranchStmt, env *Environment) (Object, error) {
 	if stmt.Label != nil {
@@ -1163,36 +1171,53 @@ func (i *Interpreter) evalBranchStmt(ctx context.Context, stmt *ast.BranchStmt, 
 func (i *Interpreter) evalForStmt(ctx context.Context, stmt *ast.ForStmt, env *Environment) (Object, error) {
 	loopEnv := NewEnvironment(env)
 	if stmt.Init != nil {
-		if _, err := i.eval(ctx, stmt.Init, loopEnv); err != nil { return nil, err }
+		if _, err := i.eval(ctx, stmt.Init, loopEnv); err != nil {
+			return nil, err
+		}
 	}
 	for {
 		if stmt.Cond != nil {
 			condition, err := i.eval(ctx, stmt.Cond, loopEnv)
-			if err != nil { return nil, err }
+			if err != nil {
+				return nil, err
+			}
 			boolCond, ok := condition.(*Boolean)
 			if !ok {
 				return nil, i.formatErrorWithContext(i.activeFileSet, stmt.Cond.Pos(),
 					fmt.Errorf("condition for for statement must be a boolean, got %s (type: %s)", condition.Inspect(), condition.Type()), "")
 			}
-			if !boolCond.Value { break }
+			if !boolCond.Value {
+				break
+			}
 		}
 		bodyResult, err := i.evalBlockStatement(ctx, stmt.Body, loopEnv)
-		if err != nil { return nil, err }
+		if err != nil {
+			return nil, err
+		}
 
 		var broke bool
 		switch res := bodyResult.(type) {
-		case *ReturnValue: return res, nil
-		case *Error: return res, nil
-		case *BreakStatement: broke = true
+		case *ReturnValue:
+			return res, nil
+		case *Error:
+			return res, nil
+		case *BreakStatement:
+			broke = true
 		case *ContinueStatement:
 			if stmt.Post != nil {
-				if _, postErr := i.eval(ctx, stmt.Post, loopEnv); postErr != nil { return nil, postErr }
+				if _, postErr := i.eval(ctx, stmt.Post, loopEnv); postErr != nil {
+					return nil, postErr
+				}
 			}
 			continue
 		}
-		if broke { break }
+		if broke {
+			break
+		}
 		if stmt.Post != nil {
-			if _, err := i.eval(ctx, stmt.Post, loopEnv); err != nil { return nil, err }
+			if _, err := i.eval(ctx, stmt.Post, loopEnv); err != nil {
+				return nil, err
+			}
 		}
 	}
 	return NULL, nil
@@ -1211,15 +1236,23 @@ func (i *Interpreter) evalSelectorExpr(ctx context.Context, node *ast.SelectorEx
 	}
 
 	if structInstance, ok := xObj.(*StructInstance); ok {
-		if val, found := structInstance.FieldValues[fieldName]; found { return val, nil }
-		if _, isDirectField := structInstance.Definition.Fields[fieldName]; isDirectField { return NULL, nil }
+		if val, found := structInstance.FieldValues[fieldName]; found {
+			return val, nil
+		}
+		if _, isDirectField := structInstance.Definition.Fields[fieldName]; isDirectField {
+			return NULL, nil
+		}
 
 		// Use activeFileSet for findFieldInEmbedded if it's from current context,
 		// or structInstance.Definition.FileSet if that's more appropriate for the definition.
 		// For now, findFieldInEmbedded takes the FileSet from the selector expression's context.
 		foundValue, _, _, embErr := i.findFieldInEmbedded(structInstance, fieldName, i.activeFileSet, node.Sel.Pos())
-		if embErr != nil { return nil, embErr }
-		if foundValue != nil { return foundValue, nil }
+		if embErr != nil {
+			return nil, embErr
+		}
+		if foundValue != nil {
+			return foundValue, nil
+		}
 		return nil, i.formatErrorWithContext(i.activeFileSet, node.Sel.Pos(), fmt.Errorf("type %s has no field %s", structInstance.Definition.Name, fieldName), "Field access error")
 	}
 
@@ -1228,12 +1261,16 @@ handlePackageAccess:
 		localPkgName := identX.Name
 		qualifiedNameInEnv := localPkgName + "." + fieldName
 
-		if val, found := env.Get(qualifiedNameInEnv); found { return val, nil }
+		if val, found := env.Get(qualifiedNameInEnv); found {
+			return val, nil
+		}
 
 		importPath, knownAlias := i.importAliasMap[localPkgName]
 		if !knownAlias {
 			originalErrorMsg := "undefined"
-			if err != nil { originalErrorMsg = err.Error() } // err here is from the outer scope, potentially from xObj, err := i.eval
+			if err != nil {
+				originalErrorMsg = err.Error()
+			} // err here is from the outer scope, potentially from xObj, err := i.eval
 			return nil, i.formatErrorWithContext(i.FileSet, identX.Pos(), fmt.Errorf("%s: %s (not a struct instance and not a known package alias/name)", originalErrorMsg, localPkgName), "Selector error")
 		}
 
@@ -1361,7 +1398,6 @@ func (i *Interpreter) resolveTypeAstToObjectType(typeExpr ast.Expr, resolutionEn
 				return "", nil, i.formatErrorWithContext(activeFset, te.Pos(), fmt.Errorf("undefined type: %s (after attempting package load)", qualifiedName), "")
 			}
 		}
-
 
 		if structDef, ok := obj.(*StructDefinition); ok {
 			return STRUCT_INSTANCE_OBJ, structDef, nil
@@ -1505,8 +1541,8 @@ func (i *Interpreter) loadPackageIfNeeded(ctx context.Context, pkgAlias string, 
 		}
 
 		directFields := make(map[string]string) // FieldName -> FieldTypeName (simple string for now)
-		var embeddedDefs []*StructDefinition     // List of *StructDefinition for embedded types
-		var fieldOrder []string                  // To maintain original field order
+		var embeddedDefs []*StructDefinition    // List of *StructDefinition for embedded types
+		var fieldOrder []string                 // To maintain original field order
 
 		if structType.Fields != nil && structType.Fields.List != nil {
 			for _, field := range structType.Fields.List {
@@ -1664,7 +1700,6 @@ func (i *Interpreter) findFieldInEmbedded(instance *StructInstance, fieldName st
 
 	return nil, false, "", nil // Not found
 }
-
 
 func (i *Interpreter) evalBlockStatement(ctx context.Context, block *ast.BlockStmt, env *Environment) (Object, error) {
 	var result Object
@@ -1925,7 +1960,6 @@ func (i *Interpreter) evalDeclStmt(ctx context.Context, declStmt *ast.DeclStmt, 
 							// The case `P P` where P is a type would be a regular field P of type P.
 						}
 
-
 						if isEmbedded {
 							fieldOrder = append(fieldOrder, fieldTypeName) // Record embedded type name in order
 
@@ -1951,16 +1985,16 @@ func (i *Interpreter) evalDeclStmt(ctx context.Context, declStmt *ast.DeclStmt, 
 
 							for _, nameIdent := range field.Names {
 								directFields[nameIdent.Name] = fieldTypeIdent.Name // Store type name as string
-								fieldOrder = append(fieldOrder, nameIdent.Name)   // Record field name in order
+								fieldOrder = append(fieldOrder, nameIdent.Name)    // Record field name in order
 							}
 						}
 					}
 				}
 				structDef := &StructDefinition{
-					Name:          typeName,
-					Fields:        directFields,
-					EmbeddedDefs:  embeddedDefs,
-					FieldOrder:    fieldOrder,
+					Name:         typeName,
+					Fields:       directFields,
+					EmbeddedDefs: embeddedDefs,
+					FieldOrder:   fieldOrder,
 				}
 				env.Define(typeName, structDef)
 			default:

@@ -113,3 +113,52 @@ To address this, a utility struct `goscan.ImportManager` was introduced within t
 **Application:**
 
 The `ImportManager` was successfully integrated into `examples/derivingjson/main.go` and `examples/derivingbind/main.go`, significantly simplifying their import management sections. The development process involved iterative refinement of the alias generation rules within `ImportManager.Add` based on test cases covering various scenarios (keyword clashes, dot/hyphen in package names, alias conflicts).
+
+---
+
+## Stabilizing CWD and Command Execution in the Jules Sandbox Environment
+
+**Note: The following insights are specific to the Jules AI agent's sandbox environment and do not represent general development environment issues or solutions.**
+
+### Problem Overview
+
+During certain development tasks (e.g., implementing `for range` in `examples/minigo`), the behavior of the sandbox environment when using the `run_in_bash_session` tool became unstable. Key symptoms included:
+
+*   The `cd` command failing with a `No such file or directory` error, even when `ls` confirmed the target directory's existence.
+*   Makefile targets such as `make format` or `make test` failing due to not being executed in the expected Current Working Directory (CWD).
+*   The `reset_all()` tool not always resolving these CWD-related issues.
+
+These problems made it difficult for the agent to accurately ascertain the file system's state and execute commands as intended.
+
+### Solution/Stabilization Practice (Jules Environment Specific)
+
+Based on extensive trial-and-error and user guidance, the following procedure was found to improve the stability of command execution:
+
+1.  **Attempt Environment Reset**: First, execute `reset_all()` to try and return the sandbox environment to its initial state. This is done with the expectation of resetting not just file contents but also some internal states.
+
+2.  **Explicit `cd` to Root Directory**: When executing commands in `run_in_bash_session`, especially after `reset_all()` or when the CWD is uncertain, first change the directory to `/app`, which is assumed to be the repository root within the sandbox.
+    ```bash
+    cd /app
+    ```
+
+3.  **Execute Target Command**: Following the `cd /app` command, execute the desired command using `&&`.
+    *   To run a `make` target in a specific directory:
+        ```bash
+        cd /app && make -C path/to/makefile/dir target
+        ```
+        Or, if the `make` target handles `cd` internally:
+        ```bash
+        cd /app && make target
+        ```
+    *   To run Go commands in a specific directory:
+        ```bash
+        cd /app && cd path/to/go_module_dir && go test -v ./...
+        ```
+
+Prepending `cd /app` significantly increased the likelihood that subsequent commands would execute in the expected CWD, allowing previously failing `cd`, `make`, and Go test commands to succeed.
+
+### Why This Approach Might Be Effective (Hypothesis)
+
+In the Jules sandbox environment, it's possible that the CWD state is not consistently maintained across `run_in_bash_session` calls, or that `reset_all()` does not reliably set the CWD back to `/app`. By explicitly changing to `/app` first, subsequent relative path interpretations and the CWD for subprocesses (like `make`) may become more stable.
+
+This insight is recorded as a potentially effective troubleshooting step for CWD-related anomalies encountered within the Jules environment.

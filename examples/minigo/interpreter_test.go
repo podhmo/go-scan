@@ -316,7 +316,7 @@ func main() {
 			expectedErrorMsgSubstr: []string{
 				"division by zero",
 				"Minigo Call Stack:",
-				"0: main",       // Actual line numbers will vary based on temp file
+				"0: main",     // Actual line numbers will vary based on temp file
 				"Source: b()", // Source line for main calling b
 				"1: b",
 				"Source: c()", // Source line for b calling c
@@ -749,7 +749,7 @@ func main() {
 	a := [2]int{1,2}
 	return a[2]
 }`,
-			expectError: true,
+			expectError:   true,
 			errorContains: "index out of bounds: 2 for array of length 2",
 		},
 		{
@@ -760,7 +760,7 @@ func main() {
 	a := [2]int{1,2,3}
 	return len(a)
 }`,
-			expectError: true,
+			expectError:   true,
 			errorContains: "too many elements in array literal (expected 2, got 3)",
 		},
 		// --- Slice Tests ---
@@ -804,7 +804,7 @@ func main() {
 	s := []int{1}
 	return s[1]
 }`,
-			expectError: true,
+			expectError:   true,
 			errorContains: "index out of bounds: 1 for slice of length 1",
 		},
 		{
@@ -971,80 +971,80 @@ func main() {
 		},
 	} // This closes the tests slice literal
 
-		// This loop should be inside TestEvalExternalStructsAndFunctions
-		for _, tt := range tests {
-			t.Run(tt.name, func(t *testing.T) {
-				ctx := context.Background()
-				interpreter := NewInterpreter()
-				interpreter.ModuleRoot = testModDir
+	// This loop should be inside TestEvalExternalStructsAndFunctions
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			interpreter := NewInterpreter()
+			interpreter.ModuleRoot = testModDir
 
-				mainFileDir := filepath.Join(baseDir, "main_scripts", strings.ReplaceAll(tt.name, " ", "_"))
-				os.MkdirAll(mainFileDir, 0755)
-				mainMgoFile := createTempGoFile(t, mainFileDir, "main.mgo", tt.input)
+			mainFileDir := filepath.Join(baseDir, "main_scripts", strings.ReplaceAll(tt.name, " ", "_"))
+			os.MkdirAll(mainFileDir, 0755)
+			mainMgoFile := createTempGoFile(t, mainFileDir, "main.mgo", tt.input)
 
-				oldStdout := os.Stdout
-				oldStderr := os.Stderr
-				rOut, wOut, _ := os.Pipe()
-				rErr, wErr, _ := os.Pipe()
-				os.Stdout = wOut
-				os.Stderr = wErr
+			oldStdout := os.Stdout
+			oldStderr := os.Stderr
+			rOut, wOut, _ := os.Pipe()
+			rErr, wErr, _ := os.Pipe()
+			os.Stdout = wOut
+			os.Stderr = wErr
 
-				runErr := interpreter.LoadAndRun(ctx, mainMgoFile, "main")
+			runErr := interpreter.LoadAndRun(ctx, mainMgoFile, "main")
 
-				wOut.Close()
-				wErr.Close()
-				capturedStdout, _ := io.ReadAll(rOut)
-				capturedStderr, _ := io.ReadAll(rErr)
-				os.Stdout = oldStdout
-				os.Stderr = oldStderr
+			wOut.Close()
+			wErr.Close()
+			capturedStdout, _ := io.ReadAll(rOut)
+			capturedStderr, _ := io.ReadAll(rErr)
+			os.Stdout = oldStdout
+			os.Stderr = oldStderr
 
-				logOutput := func () {
-					t.Logf("Input script for %s:\n%s", tt.name, tt.input)
-					t.Logf("STDOUT for %s:\n%s", tt.name, string(capturedStdout))
-					t.Logf("STDERR for %s:\n%s", tt.name, string(capturedStderr))
+			logOutput := func() {
+				t.Logf("Input script for %s:\n%s", tt.name, tt.input)
+				t.Logf("STDOUT for %s:\n%s", tt.name, string(capturedStdout))
+				t.Logf("STDERR for %s:\n%s", tt.name, string(capturedStderr))
+			}
+
+			if tt.expectError {
+				if runErr == nil {
+					logOutput()
+					t.Errorf("expected error, got nil")
+					return
+				}
+				if tt.errorContains != "" && !strings.Contains(runErr.Error(), tt.errorContains) {
+					logOutput()
+					t.Errorf("expected error message to contain %q, got %q", tt.errorContains, runErr.Error())
+				}
+			} else {
+				if runErr != nil {
+					logOutput()
+					t.Errorf("unexpected error: %v", runErr)
+					return
+				}
+				outputStr := string(capturedStdout)
+				var expectedOutputSuffix string
+				switch v := tt.expected.(type) {
+				case int64:
+					expectedOutputSuffix = fmt.Sprintf("result: %d\n", v)
+				case string:
+					expectedOutputSuffix = fmt.Sprintf("result: %s\n", v)
+				case bool:
+					expectedOutputSuffix = fmt.Sprintf("result: %t\n", v)
+				default:
+					logOutput()
+					t.Fatalf("unhandled expected type: %T for test %s", tt.expected, tt.name)
 				}
 
-				if tt.expectError {
-					if runErr == nil {
-						logOutput()
-						t.Errorf("expected error, got nil")
-						return
-					}
-					if tt.errorContains != "" && !strings.Contains(runErr.Error(), tt.errorContains) {
-						logOutput()
-						t.Errorf("expected error message to contain %q, got %q", tt.errorContains, runErr.Error())
-					}
-				} else {
-					if runErr != nil {
-						logOutput()
-						t.Errorf("unexpected error: %v", runErr)
-						return
-					}
-					outputStr := string(capturedStdout)
-					var expectedOutputSuffix string
-					switch v := tt.expected.(type) {
-					case int64:
-						expectedOutputSuffix = fmt.Sprintf("result: %d\n", v)
-					case string:
-						expectedOutputSuffix = fmt.Sprintf("result: %s\n", v)
-					case bool:
-						expectedOutputSuffix = fmt.Sprintf("result: %t\n", v)
-					default:
-						logOutput()
-						t.Fatalf("unhandled expected type: %T for test %s", tt.expected, tt.name)
-					}
+				// Check various ways the output might appear due to logging or exact formatting.
+				trimmedOutput := strings.TrimSpace(outputStr)
+				trimmedExpected := strings.TrimSpace(expectedOutputSuffix)
 
-					// Check various ways the output might appear due to logging or exact formatting.
-					trimmedOutput := strings.TrimSpace(outputStr)
-					trimmedExpected := strings.TrimSpace(expectedOutputSuffix)
-
-					if !strings.HasSuffix(trimmedOutput, trimmedExpected) &&
-					   !strings.Contains(outputStr, expectedOutputSuffix) && /* check if it's anywhere */
-					   !strings.Contains(trimmedOutput, trimmedExpected) { /* check if trimmed version contains it */
-						logOutput()
-						t.Errorf("expected output to effectively be %q or contain %q. Full stdout:\n%s", trimmedExpected, expectedOutputSuffix, outputStr)
-					}
+				if !strings.HasSuffix(trimmedOutput, trimmedExpected) &&
+					!strings.Contains(outputStr, expectedOutputSuffix) && /* check if it's anywhere */
+					!strings.Contains(trimmedOutput, trimmedExpected) { /* check if trimmed version contains it */
+					logOutput()
+					t.Errorf("expected output to effectively be %q or contain %q. Full stdout:\n%s", trimmedExpected, expectedOutputSuffix, outputStr)
 				}
-			})
-		}
-	} // This is the closing brace for TestEvalExternalStructsAndFunctions
+			}
+		})
+	}
+} // This is the closing brace for TestEvalExternalStructsAndFunctions

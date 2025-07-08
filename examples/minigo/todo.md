@@ -23,8 +23,8 @@
   - [x] Arrays (e.g., `var a [3]int`, `a[0] = 1`)
   - [x] Slices (dynamic arrays, includes `append()`)
   - [x] Maps (hash maps)
-- [ ] Control Flow
-  - [x] `for` loops (various forms: `for {}`, `for i < N {}`, `for i := 0; i < N; i++ {}`. Range-based loop not yet supported)
+- [x] Control Flow
+  - [x] `for` loops (various forms: `for {}`, `for i < N {}`, `for i := 0; i < N; i++ {}`, `for k, v := range collection {}`)
   - [x] `break` and `continue` statements (unlabeled)
 - [ ] Types
   - [ ] More specific integer types (int8, int32, int64, uint etc.)

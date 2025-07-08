@@ -378,9 +378,9 @@ func TestGenerateHelperFunction_Pointer_StarT_to_T_Required_NonNil(t *testing.T)
 	return dst
 }
 
-`, typeNameInSource(srcStructType, parsedInfo.PackagePath),
-typeNameInSource(dstStructType, parsedInfo.PackagePath),
-typeNameInSource(dstStructType, parsedInfo.PackagePath),
+`, getTypeNameInSourceForCodeGen(srcStructType, parsedInfo.PackagePath),
+getTypeNameInSourceForCodeGen(dstStructType, parsedInfo.PackagePath),
+getTypeNameInSourceForCodeGen(dstStructType, parsedInfo.PackagePath),
 srcStructType.Name, dstStructType.Name,
 dstField.Name, srcField.Name) // For the ec.Addf parameters
 
@@ -467,9 +467,9 @@ func TestGenerateHelperFunction_Pointer_StarT_to_StarT(t *testing.T) {
 	return dst
 }
 
-`, typeNameInSource(srcStructType, parsedInfo.PackagePath),
-typeNameInSource(dstStructType, parsedInfo.PackagePath),
-typeNameInSource(dstStructType, parsedInfo.PackagePath),
+`, getTypeNameInSourceForCodeGen(srcStructType, parsedInfo.PackagePath),
+getTypeNameInSourceForCodeGen(dstStructType, parsedInfo.PackagePath),
+getTypeNameInSourceForCodeGen(dstStructType, parsedInfo.PackagePath),
 srcStructType.Name, dstStructType.Name)
 
 	formattedGenerated, errGen := formatCode(generatedCode)
@@ -532,7 +532,7 @@ func TestGenerateHelperFunction_Using_FieldTag(t *testing.T) {
 
 	return dst
 }
-`, typeNameInSource(srcStructType, parsedInfo.PackagePath), typeNameInSource(dstStructType, parsedInfo.PackagePath), typeNameInSource(dstStructType, parsedInfo.PackagePath), srcStructType.Name, dstStructType.Name)
+`, getTypeNameInSourceForCodeGen(srcStructType, parsedInfo.PackagePath), getTypeNameInSourceForCodeGen(dstStructType, parsedInfo.PackagePath), getTypeNameInSourceForCodeGen(dstStructType, parsedInfo.PackagePath), srcStructType.Name, dstStructType.Name)
 
 	formattedGenerated, _ := formatCode(generatedCode)
 	formattedExpected, _ := formatCode(expectedFullFunc)
@@ -599,7 +599,7 @@ func TestGenerateHelperFunction_Using_GlobalRule(t *testing.T) {
 
 	return dst
 }
-`, typeNameInSource(srcStructType, parsedInfo.PackagePath), typeNameInSource(dstStructType, parsedInfo.PackagePath), typeNameInSource(dstStructType, parsedInfo.PackagePath), srcStructType.Name, dstStructType.Name)
+`, getTypeNameInSourceForCodeGen(srcStructType, parsedInfo.PackagePath), getTypeNameInSourceForCodeGen(dstStructType, parsedInfo.PackagePath), getTypeNameInSourceForCodeGen(dstStructType, parsedInfo.PackagePath), srcStructType.Name, dstStructType.Name)
 
 	formattedGenerated, _ := formatCode(generatedCode)
 	formattedExpected, _ := formatCode(expectedFullFunc)

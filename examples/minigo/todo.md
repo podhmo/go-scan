@@ -60,7 +60,7 @@
 - [ ] More `fmt` functions (e.g., `Println`)
 - [ ] More `strings` functions
 - [ ] Basic I/O (e.g., reading files, printing to console beyond Sprintf)
-- [ ] `len()` function for strings, arrays, slices, maps
+- [/] `len()` function for strings (arrays, slices, maps to be added later)
 - [ ] `panic` and `recover`
 
 ## Interpreter Internals & Tooling

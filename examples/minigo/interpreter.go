@@ -191,6 +191,25 @@ func NewInterpreter() *Interpreter {
 	for name, builtin := range builtinsStrings {
 		env.Define(name, builtin)
 	}
+
+	// Register len() function
+	env.Define("len", &BuiltinFunction{
+		Name: "len",
+		Fn: func(env *Environment, args ...Object) (Object, error) {
+			if len(args) != 1 {
+				// TODO: Later, use i.formatErrorWithContext if possible from builtins, or ensure evalCallExpr wraps it.
+				return nil, fmt.Errorf("len() takes exactly one argument (%d given)", len(args))
+			}
+			switch arg := args[0].(type) {
+			case *String:
+				return &Integer{Value: int64(len(arg.Value))}, nil
+			// TODO: Add support for arrays, slices, maps when they are implemented
+			default:
+				return nil, fmt.Errorf("len() not supported for type %s", args[0].Type())
+			}
+		},
+	})
+
 	return i
 }
 

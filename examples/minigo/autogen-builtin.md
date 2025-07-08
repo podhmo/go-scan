@@ -1,51 +1,51 @@
-# MiniGo 組み込み関数 自動生成の提案
+# Proposal for Auto-generating MiniGo Builtin Functions
 
-## 概要
+## Overview
 
-MiniGoインタプリタに新しい組み込み関数を追加する作業を効率化し、一貫性を保つために、組み込み関数のコード（`BuiltinFunction` オブジェクトの定義、引数処理、型チェックなど）を自動生成するツールの導入を提案します。
+To streamline the process of adding new builtin functions to the MiniGo interpreter and ensure consistency, this document proposes the introduction of a tool to auto-generate the necessary code for builtin functions (such as `BuiltinFunction` object definitions, argument processing, and type checking).
 
-## 背景
+## Background
 
-現在、新しい組み込み関数（例: `fmt.Sprintf`, `strings.Join`）を追加するには、以下の手作業が必要です。
+Currently, adding new builtin functions (e.g., `fmt.Sprintf`, `strings.Join`) involves the following manual steps:
 
-1.  関数の実処理を行う `evalXxx` 関数を実装する。
-2.  `evalXxx` 関数をラップし、`BuiltinFunction` オブジェクトを生成するコードを記述する。
-3.  引数の数や型をチェックするボイラープレートコードを記述する。
-4.  インタプリタの登録用マップ（例: `GetBuiltinFmtFunctions`）にエントリを追加する。
+1.  Implement an `evalXxx` function that contains the actual logic of the function.
+2.  Write code to wrap the `evalXxx` function and create a `BuiltinFunction` object.
+3.  Write boilerplate code to check the number and types of arguments.
+4.  Add an entry to the interpreter's registration map (e.g., `GetBuiltinFmtFunctions`).
 
-これらの作業は定型的であり、関数が増えるにつれて煩雑になり、ミスも発生しやすくなります。
+These tasks are repetitive and can become cumbersome and error-prone as the number of functions increases.
 
-## 設計方針
+## Design Policy
 
-### 1. インプット: アノテーション付きGoソースファイル
+### 1. Input: Annotated Go Source Files
 
-Goのソースファイルに特別なコメント形式のアノテーションを記述することで、組み込み関数の仕様を定義します。
+The specifications for builtin functions will be defined by writing special comment-based annotations in Go source files.
 
-*   **アノテーション対象:** 専用のディレクトリ（例: `builtins_src/`）に配置されたGoのソースファイル (`*.go`)。
-*   **アノテーション形式:**
+*   **Annotation Target:** Go source files (`*.go`) located in a dedicated directory (e.g., `builtins_src/`).
+*   **Annotation Format:**
     *   `//minigo:builtin name=<minigo_func_name> [target_go_func=<go_func_name> | wrapper_func=<custom_wrapper_name>]`
-        *   `name`: MiniGoインタプリタ内での関数名 (例: `"strings.Contains"`, `"fmt.Sprintf"`).
-        *   `target_go_func` (オプション): 直接呼び出すGoの標準ライブラリ関数や自作関数 (例: `"strings.Contains"`)。指定した場合、引数・戻り値の型変換は自動生成ロジックが担当。
-        *   `wrapper_func` (オプション): 引数処理からGo関数呼び出し、戻り値変換までをカスタム実装したGo関数名 (例: `"main.evalFmtSprintfOriginal"`)。より複雑なロジックを持つ関数向け。`target_go_func` とは排他的。
+        *   `name`: The function name within the MiniGo interpreter (e.g., `"strings.Contains"`, `"fmt.Sprintf"`).
+        *   `target_go_func` (optional): A Go standard library function or a custom Go function to be called directly (e.g., `"strings.Contains"`). If specified, the auto-generation logic will handle argument and return value type conversions.
+        *   `wrapper_func` (optional): The name of a custom Go function that implements the entire logic from argument processing to calling the Go function and converting return values (e.g., `"main.evalFmtSprintfOriginal"`). Intended for functions with more complex logic. Mutually exclusive with `target_go_func`.
     *   `//minigo:args [variadic=true] [format_arg_index=<idx>]`
-        *   `variadic`: 可変長引数を取る場合に指定。
-        *   `format_arg_index`: `fmt.Sprintf` のようにフォーマット文字列を取る場合にその引数インデックスを指定。
+        *   `variadic`: Specifies if the function takes a variable number of arguments.
+        *   `format_arg_index`: Specifies the index of the format string argument for functions like `fmt.Sprintf`.
     *   `//minigo:arg index=<idx> name=<arg_name> type=<MINIGO_TYPE> [go_type=<GO_TYPE>]`
-        *   `index`: 引数のインデックス (0始まり)。
-        *   `name`: 引数名（ドキュメントやエラーメッセージ用）。
-        *   `type`: MiniGoでの期待される型 (`STRING`, `INTEGER`, `BOOLEAN`, `ARRAY`, `MAP`, `ANY` など)。
-        *   `go_type` (オプション): `target_go_func` を呼び出す際のGoの型。省略時は `MINIGO_TYPE` から推測。
+        *   `index`: The argument index (0-based).
+        *   `name`: The argument name (for documentation and error messages).
+        *   `type`: The expected type in MiniGo (`STRING`, `INTEGER`, `BOOLEAN`, `ARRAY`, `MAP`, `ANY`, etc.).
+        *   `go_type` (optional): The Go type when calling `target_go_func`. If omitted, it's inferred from `MINIGO_TYPE`.
     *   `//minigo:return type=<MINIGO_TYPE> [go_type=<GO_TYPE>]`
-        *   `type`: MiniGoでの戻り値の型。
-        *   `go_type` (オプション): `target_go_func` の戻り値のGoの型。省略時は `MINIGO_TYPE` から推測。
+        *   `type`: The return type in MiniGo.
+        *   `go_type` (optional): The Go type of the return value from `target_go_func`. If omitted, it's inferred from `MINIGO_TYPE`.
 
-*   **スタブ関数:** アノテーションは、Goの関数宣言の直前に記述します。このGo関数はスタブとして機能し、`target_go_func` が指定されていれば本体は空でよく、型チェックやドキュメント生成のヒントとして利用できます。`wrapper_func` を使う場合も、引数構成の参考にスタブを定義できます。
+*   **Stub Functions:** Annotations are written immediately before a Go function declaration. This Go function acts as a stub. If `target_go_func` is specified, its body can be empty and is used for type checking and documentation hints. When using `wrapper_func`, a stub can also be defined for reference regarding argument structure.
 
-**例 (`builtins_src/strings_builtins.go`):**
+**Example (`builtins_src/strings_builtins.go`):**
 ```go
 package builtins_src
 
-import "strings" // target_go_func で使うため
+import "strings" // For use with target_go_func
 
 //minigo:builtin name="strings.Contains" target_go_func="strings.Contains"
 //minigo:arg index=0 name=s type=STRING go_type=string
@@ -59,27 +59,27 @@ func containsStub(s string, substr string) bool { return false }
 func customStringLengthStub(str string) int { return 0 }
 ```
 
-### 2. 生成するコード
+### 2. Generated Code
 
-自動生成ツールは、上記アノテーションをパースし、以下のGoコードを生成します (例: `builtin_generated.go`)。
+The auto-generation tool will parse the above annotations and generate the following Go code (e.g., in `builtin_generated.go`):
 
-*   **`BuiltinFunction` オブジェクトの定義:** アノテーションに基づいて `object.BuiltinFunction` のスライスまたはマップを生成。
-*   **ラッパー関数:**
-    *   `target_go_func` が指定されている場合:
-        *   引数の数と型のチェック。
-        *   MiniGoの `Object` 型から指定された `go_type` への変換。
-        *   `target_go_func` の呼び出し。
-        *   結果のGoの型からMiniGoの `Object` 型への変換。
-        *   エラーハンドリング。
-    *   `wrapper_func` が指定されている場合:
-        *   指定された `wrapper_func` を呼び出すだけのシンプルなラッパー。引数の数チェック程度は共通化可能。
-*   **登録用ヘルパー関数:** 生成された全ての組み込み関数をまとめて取得できる関数 (例: `GetGeneratedBuiltinFunctions() map[string]*object.BuiltinFunction`)。
+*   **`BuiltinFunction` Object Definitions:** Generate a slice or map of `object.BuiltinFunction` based on annotations.
+*   **Wrapper Functions:**
+    *   If `target_go_func` is specified:
+        *   Check the number and types of arguments.
+        *   Convert MiniGo `Object` types to the specified `go_type`.
+        *   Call `target_go_func`.
+        *   Convert the resulting Go type back to a MiniGo `Object` type.
+        *   Handle errors.
+    *   If `wrapper_func` is specified:
+        *   A simple wrapper that calls the specified `wrapper_func`. Basic argument count checks can be standardized.
+*   **Registration Helper Function:** A function that provides access to all generated builtin functions (e.g., `GetGeneratedBuiltinFunctions() map[string]*object.BuiltinFunction`).
 
-### 3. 既存の組み込み関数への適用
+### 3. Application to Existing Builtin Functions
 
-*   **`fmt.Sprintf` や `strings.Join` (現在の特殊実装) など:**
-    *   これらは `wrapper_func` を使用して、既存の `evalFmtSprintf` や `evalStringsJoin` (必要ならリネームして `main.evalFmtSprintfOriginal` などとする) を指定します。
-    *   アノテーション付きのスタブ関数は、`builtins_src/` 以下に配置します。
+*   **For `fmt.Sprintf`, `strings.Join` (current special implementations), etc.:**
+    *   These will use `wrapper_func` to specify the existing functions like `evalFmtSprintf` or `evalStringsJoin` (renamed if necessary, e.g., to `main.evalFmtSprintfOriginal`).
+    *   Annotated stub functions will be placed under `builtins_src/`.
     ```go
     // builtins_src/fmt_builtins.go
     package builtins_src
@@ -89,71 +89,71 @@ func customStringLengthStub(str string) int { return 0 }
     //minigo:return type=STRING
     func SprintfStub(format string, a ...interface{}) string { return "" }
     ```
-*   これにより、既存の複雑なロジックを活かしつつ、定義の管理を一元化できます。
+*   This approach allows leveraging existing complex logic while centralizing definition management.
 
-## 自動生成ツールのインターフェース
+## Auto-generation Tool Interface
 
-### コマンド名: `minigo-builtin-gen`
+### Command Name: `minigo-builtin-gen`
 
-### コマンドラインオプション:
+### Command-Line Options:
 
 *   `minigo-builtin-gen -source <source_dir> -output <output_file>`
-    *   `-source <source_dir>`: アノテーションが記述されたGoソースファイル群が含まれるディレクトリ (例: `./builtins_src`)。
-    *   `-output <output_file>`: 生成されるGoコードの出力ファイルパス (例: `builtin_generated.go`)。
-    *   (オプション) `-package <pkg_name>`: 生成コードのパッケージ名 (デフォルト: `main`)。
-    *   (オプション) `-v`: 詳細ログ出力。
+    *   `-source <source_dir>`: Directory containing Go source files with annotations (e.g., `./builtins_src`).
+    *   `-output <output_file>`: Output file path for the generated Go code (e.g., `builtin_generated.go`).
+    *   (Optional) `-package <pkg_name>`: Package name for the generated code (default: `main`).
+    *   (Optional) `-v`: Verbose logging output.
 
-### `go:generate` との連携:
+### Integration with `go:generate`:
 
-インタプリタの主要なGoファイル (例: `main.go`) に以下を記述:
+Add the following to a key Go file in the interpreter (e.g., `main.go`):
 ```go
 //go:generate minigo-builtin-gen -source ./builtins_src -output builtin_generated.go
 package main
 ```
-`go generate ./...` でコード生成を実行できます。
+Run `go generate ./...` to execute code generation.
 
-## 利点
+## Advantages
 
-*   **開発効率の向上:** 新しい組み込み関数の追加が迅速かつ容易になる。
-*   **一貫性の確保:** 引数処理やエラーハンドリングのスタイルが統一される。
-*   **バグの低減:** 定型的なコードの記述ミスが減る。
-*   **可読性の向上:** 組み込み関数の仕様がアノテーションとして一箇所にまとまるため、見通しが良くなる。
-*   **メンテナンス性の向上:** 仕様変更時の影響範囲がアノテーションと生成ツールに限定される。
+*   **Improved Development Efficiency:** Adding new builtin functions becomes faster and easier.
+*   **Ensured Consistency:** Argument handling and error handling styles are unified.
+*   **Reduced Bugs:** Fewer errors from writing boilerplate code.
+*   **Improved Readability:** Builtin function specifications are consolidated in annotations, improving clarity.
+*   **Enhanced Maintainability:** The impact of specification changes is localized to annotations and the generation tool.
 
-## 今後の検討事項
+## Future Considerations
 
-*   アノテーションで表現できる型や引数のパターンの拡充 (例: `ANY` 型、特定インターフェースを満たす型)。
-*   生成されるエラーメッセージのカスタマイズ性。
-*   より高度な型推論 (例: `go_type` の自動判別)。
-*   テストコードの自動生成の可能性。
+*   Expanding the types and argument patterns expressible via annotations (e.g., `ANY` type, types satisfying specific interfaces).
+*   Customizability of generated error messages.
+*   More advanced type inference (e.g., automatic determination of `go_type`).
+*   Possibility of auto-generating test code.
 
-## 実装上の課題と考慮点 (stringsパッケージ生成シミュレーションに基づく)
+## Implementation Challenges and Considerations (Based on strings package generation simulation)
 
-提案されたアノテーション方式を用いて `strings` パッケージの組み込み関数生成をシミュレートした結果、いくつかの課題が明らかになりました。
+Simulating the generation of builtin functions for the `strings` package using the proposed annotation method revealed several challenges:
 
-### 1. 複雑な引数構造を持つ関数の表現 (例: `strings.Join`)
+### 1. Representing Functions with Complex Argument Structures (e.g., `strings.Join`)
 
-現在の `strings.Join` は、MiniGoに配列型がないため、「最後の引数がセパレータで、それ以前の引数が結合対象の文字列」という特殊なシグネチャを持っています。これをアノテーションで表現する際に以下の問題があります。
+The current `strings.Join` has a special signature because MiniGo lacks array types: "the last argument is the separator, and preceding arguments are strings to be joined." Representing this with annotations poses the following problems:
 
-*   **P1: 特殊な引数解釈のアノテーション構文:**
-    *   `//minigo:arg index=-1 type=STRING` や `//minigo:arg index_range=0..-2 type=STRING` のようなカスタム構文は、アノテーションパーサーを複雑化させます。
-    *   より宣言的な方法、例えば `//minigo:arg_pattern rule=last_is_separator pattern_var=separator_arg` や、引数グループの定義 (`//minigo:arg_group name=elements type=STRING variadic=true up_to=-2`) など、より高度なアノテーション機能の検討が必要です。
-    *   あるいは、このような非常に特殊なケースでは、`wrapper_func` を使用することを前提とし、アノテーション側では引数の型と数を大まかに定義するに留める（例: `//minigo:args variadic=true` のみ）という割り切りも考えられます。この場合、詳細な引数チェックは `wrapper_func` 側の責任となります。
+*   **P1: Annotation Syntax for Special Argument Parsing:**
+    *   Custom syntax like `//minigo:arg index=-1 type=STRING` or `//minigo:arg index_range=0..-2 type=STRING` would complicate the annotation parser.
+    *   More declarative methods, such as `//minigo:arg_pattern rule=last_is_separator pattern_var=separator_arg`, or defining argument groups (`//minigo:arg_group name=elements type=STRING variadic=true up_to=-2`), might require more advanced annotation features.
+    *   Alternatively, for such highly specific cases, one might assume the use of `wrapper_func` and only broadly define argument types and counts in annotations (e.g., just `//minigo:args variadic=true`). Detailed argument checking would then be the responsibility of the `wrapper_func`.
 
-*   **P2: スタブ関数のシグネチャと実際のロジックの乖離:**
-    *   `wrapper_func` を使用する場合、Goのスタブ関数のシグネチャ (例: `func joinStub(elements ...string) string`) が、MiniGoの実際の引数構造 (例: `obj1, obj2, ..., separatorObj`) と大きく異なる可能性があります。
-    *   スタブ関数は主に存在確認や基本的な型ヒントに用いられると割り切れば許容範囲かもしれませんが、アノテーションとスタブ関数だけを見ても実際の挙動が把握しにくいという問題は残ります。ドキュメントの重要性が増します。
+*   **P2: Discrepancy Between Stub Function Signature and Actual Logic:**
+    *   When using `wrapper_func`, the Go stub function's signature (e.g., `func joinStub(elements ...string) string`) can significantly differ from MiniGo's actual argument structure (e.g., `obj1, obj2, ..., separatorObj`).
+    *   While acceptable if stub functions are primarily for existence checks and basic type hints, it remains problematic that the actual behavior might not be clear from annotations and stub functions alone. The importance of documentation increases.
 
-### 2. `wrapper_func` の依存関係とスコープ
+### 2. `wrapper_func` Dependencies and Scope
 
-*   **P3: `wrapper_func` の可視性とパッケージ依存:**
-    *   アノテーションで `wrapper_func="main.evalStringsJoinOriginal"` のように、インタプリタのメインパッケージ内の関数を指定する場合、アノテーション処理ツールや生成されるコードがその関数に正しくアクセスできる必要があります。
-    *   `builtins_src` ディレクトリが `main` パッケージとは別パッケージとして管理される場合（通常はそうなる）、生成コードが `main` パッケージの関数を呼び出すためには適切なインポートが必要です。生成ツールがこれを自動で解決するか、あるいは `wrapper_func` は特定のインターフェースを満たすように公開された関数であるべき、といった規約が必要になります。
-    *   循環参照の問題も考慮に入れる必要があります。
+*   **P3: Visibility and Package Dependency of `wrapper_func`:**
+    *   If an annotation specifies a `wrapper_func` from the interpreter's main package (e.g., `wrapper_func="main.evalStringsJoinOriginal"`), the annotation processing tool and the generated code must be able to access that function correctly.
+    *   If the `builtins_src` directory is managed as a separate package from `main` (as is typical), the generated code will need proper imports to call functions in the `main` package. The generation tool might need to resolve this automatically, or there should be a convention that `wrapper_func` must be a publicly accessible function satisfying a certain interface.
+    *   Circular dependency issues also need to be considered.
 
-### 3. 単純な関数の場合の利便性 (例: `strings.Contains`, `strings.ToUpper`)
+### 3. Convenience for Simple Functions (e.g., `strings.Contains`, `strings.ToUpper`)
 
-*   `strings.Contains(s string, substr string) bool` や `strings.ToUpper(s string) string` のような、Go標準ライブラリ関数に直接マッピングできるものは、提案された `target_go_func` アノテーションで比較的スムーズに自動生成できると期待されます。
+*   Functions that can be directly mapped to Go standard library functions, like `strings.Contains(s string, substr string) bool` or `strings.ToUpper(s string) string`, are expected to be auto-generated relatively smoothly using the proposed `target_go_func` annotation.
     ```go
     // builtins_src/strings_builtins.go
     package builtins_src
@@ -165,9 +165,8 @@ package main
     //minigo:return type=BOOLEAN go_type=bool
     func stringsContainsStub(s string, substr string) bool { return false }
     ```
-    この場合の主な作業は、MiniGoの型 (`STRING`, `BOOLEAN`) とGoの型 (`string`, `bool`) の間の定型的な変換コードの生成になります。
+    The main task here would be generating the standard conversion code between MiniGo types (`STRING`, `BOOLEAN`) and Go types (`string`, `bool`).
 
-これらの課題を解決するためには、アノテーションの語彙を増やす、`wrapper_func` の使い方に関する規約を明確にする、生成ツールのロジックを洗練させるなどの対応が考えられます。
+Addressing these challenges might involve expanding the annotation vocabulary, clarifying conventions for using `wrapper_func`, or refining the logic of the generation tool.
 
-この提案により、MiniGoの組み込み関数開発がより堅牢かつ効率的になることを期待します。
-```
+This proposal is expected to make the development of MiniGo builtin functions more robust and efficient.

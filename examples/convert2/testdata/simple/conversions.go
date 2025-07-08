@@ -2,6 +2,11 @@
 
 package simple
 
+import (
+	"fmt"
+	"time"
+)
+
 // convert:pair SrcSimple -> DstSimple
 // convert:pair SrcWithAlias -> DstWithAlias
 // convert:rule "time.Time" -> "string", using=timeToStringNotImplemented
@@ -9,15 +14,9 @@ package simple
 // convert:rule "string" -> "time.Time", using=stringToTimeNotImplemented
 // convert:rule "simple.DstSimple", validator=validateDstSimpleNotImplemented // Placeholder
 
-// Dummy errorCollector for placeholder functions if simple_gen.go is not present
-// This is only for allowing conversions.go to compile independently for very basic checks.
-// The actual errorCollector will be in the generated file.
-type errorCollector struct{}
-func (ec *errorCollector) Addf(format string, args ...interface{}) {}
-// Add other methods if needed by placeholder funcs
-
 // IntToStr is a dummy function for testing 'using' tag.
 // It expects an errorCollector type to be available, which will be in the generated code.
+// The actual errorCollector will be in the generated file (e.g., simple_gen.go).
 func IntToStr(ec *errorCollector, val int) string {
 	// In a real scenario, ec might be used.
 	// For this dummy, we just convert int to string.

@@ -6,6 +6,7 @@ package simple
 import (
 	"context"
 	"errors"
+	"fmt" // Added for pointerValue
 	"reflect"
 	"strings"
 	"testing"

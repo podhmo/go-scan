@@ -203,10 +203,38 @@ func NewInterpreter() *Interpreter {
 			switch arg := args[0].(type) {
 			case *String:
 				return &Integer{Value: int64(len(arg.Value))}, nil
-			// TODO: Add support for arrays, slices, maps when they are implemented
+			case *Array:
+				return &Integer{Value: int64(len(arg.Elements))}, nil
+			case *Slice:
+				return &Integer{Value: int64(len(arg.Elements))}, nil
+			case *Map:
+				return &Integer{Value: int64(len(arg.Pairs))}, nil
 			default:
 				return nil, fmt.Errorf("len() not supported for type %s", args[0].Type())
 			}
+		},
+	})
+
+	// Register append() function
+	env.Define("append", &BuiltinFunction{
+		Name: "append",
+		Fn: func(env *Environment, args ...Object) (Object, error) {
+			if len(args) < 1 {
+				return nil, fmt.Errorf("append() takes at least one argument (slice)")
+			}
+
+			sliceObj, ok := args[0].(*Slice)
+			if !ok {
+				return nil, fmt.Errorf("first argument to append() must be a slice, got %s", args[0].Type())
+			}
+
+			newElements := make([]Object, len(sliceObj.Elements))
+			copy(newElements, sliceObj.Elements)
+
+			for _, arg := range args[1:] {
+				newElements = append(newElements, arg)
+			}
+			return &Slice{Elements: newElements}, nil
 		},
 	})
 
@@ -676,68 +704,184 @@ func (i *Interpreter) eval(ctx context.Context, node ast.Node, env *Environment)
 	case *ast.CompositeLit:
 		return i.evalCompositeLit(ctx, n, env) // Uses i.activeFileSet
 
+	case *ast.IndexExpr:
+		return i.evalIndexExpression(ctx, n, env) // Placeholder for now
+
+	case *ast.SliceExpr:
+		return i.evalSliceExpression(ctx, n, env) // Placeholder for now
+
 	default:
 		return nil, i.formatErrorWithContext(i.activeFileSet, n.Pos(), fmt.Errorf("unsupported AST node type: %T", n), fmt.Sprintf("Unsupported AST node value: %+v", n))
 	}
 }
 
 func (i *Interpreter) evalCompositeLit(ctx context.Context, lit *ast.CompositeLit, env *Environment) (Object, error) {
-	var structDef *StructDefinition
-
 	switch typeNode := lit.Type.(type) {
-	case *ast.Ident:
-		typeNameStr := typeNode.Name
-		obj, found := env.Get(typeNameStr)
-		if !found {
-			// TODO: Consider context for unqualified type names within external functions.
-			// For now, if not found directly, it's an error.
-			return nil, i.formatErrorWithContext(i.activeFileSet, typeNode.Pos(), fmt.Errorf("undefined type '%s' used in composite literal", typeNameStr), "Struct instantiation error")
-		}
-		sDef, ok := obj.(*StructDefinition)
-		if !ok {
-			return nil, i.formatErrorWithContext(i.activeFileSet, typeNode.Pos(), fmt.Errorf("type '%s' is not a struct type, but %s", typeNameStr, obj.Type()), "Struct instantiation error")
-		}
-		structDef = sDef
-
-	case *ast.SelectorExpr: // Handle pkg.Type
+	case *ast.Ident: // e.g. MyStruct{...}
+		return i.evalStructLiteral(ctx, typeNode.Name, nil, lit, env)
+	case *ast.SelectorExpr: // e.g. pkg.MyStruct{...}
 		pkgIdent, ok := typeNode.X.(*ast.Ident)
 		if !ok {
 			return nil, i.formatErrorWithContext(i.activeFileSet, typeNode.X.Pos(), fmt.Errorf("package selector X in composite literal type must be an identifier, got %T", typeNode.X), "Struct instantiation error")
 		}
-		pkgName := pkgIdent.Name
-		structName := typeNode.Sel.Name
-		qualifiedName := pkgName + "." + structName
+		return i.evalStructLiteral(ctx, typeNode.Sel.Name, pkgIdent, lit, env)
 
-		obj, found := env.Get(qualifiedName)
-		if !found {
-			// Attempt to load the package if the qualified type name is not found.
-			// The environment `env` passed here is the current evaluation environment.
-			// loadPackageIfNeeded expects the global environment to register symbols.
-			// We assume that for struct literals, `env` will be or will chain to i.globalEnv
-			// where package symbols are expected. For external struct literals, this is true.
-			// For local struct literals within functions, this also holds due to lexical scoping.
-			_, errLoad := i.loadPackageIfNeeded(ctx, pkgName, i.globalEnv, typeNode.X.Pos()) // Pass i.globalEnv
-			if errLoad != nil {
-				// Error during package loading attempt.
-				// The error from loadPackageIfNeeded is already formatted.
-				// We can add context that this was for a composite literal.
-				return nil, i.formatErrorWithContext(i.activeFileSet, typeNode.Pos(), errLoad, fmt.Sprintf("Error loading package '%s' for struct literal type '%s'", pkgName, qualifiedName))
+	case *ast.ArrayType: // e.g. [3]int{1,2,3} or []int{1,2,3}
+		// Distinguish between Array and Slice based on lit.Type.Len
+		// For slice: typeNode.Len == nil
+		// For array: typeNode.Len != nil (e.g. *ast.BasicLit for fixed size)
+
+		elements := make([]Object, len(lit.Elts))
+		for k, elt := range lit.Elts {
+			// Array/Slice elements are not KeyValueExpr unless it's like `[]int{0:1, 1:2}` which is less common for basic literals.
+			// For now, assume direct value expressions.
+			if _, ok := elt.(*ast.KeyValueExpr); ok {
+				return nil, i.formatErrorWithContext(i.activeFileSet, elt.Pos(), fmt.Errorf("keyed elements not supported in array/slice literals yet"), "Literal error")
 			}
-			// Try getting the struct definition again after attempting to load the package.
-			obj, found = env.Get(qualifiedName) // Search in the original env
-			if !found {
-				return nil, i.formatErrorWithContext(i.activeFileSet, typeNode.Pos(), fmt.Errorf("undefined type '%s' used in composite literal even after attempting to load package '%s'", qualifiedName, pkgName), "Struct instantiation error")
+			evaluatedElt, err := i.eval(ctx, elt, env)
+			if err != nil {
+				return nil, err
 			}
+			elements[k] = evaluatedElt
 		}
-		sDef, ok := obj.(*StructDefinition)
-		if !ok {
-			return nil, i.formatErrorWithContext(i.activeFileSet, typeNode.Pos(), fmt.Errorf("type '%s' is not a struct type, but %s", qualifiedName, obj.Type()), "Struct instantiation error")
+
+		if typeNode.Len == nil { // Slice literal: []T{...}
+			return &Slice{Elements: elements}, nil
+		} else { // Array literal: [N]T{...}
+			// Evaluate the length expression for the array type.
+			// This is part of the type definition, not the literal values usually.
+			// E.g. `[N]int{}` where N is a const. `[3]int{}` has BasicLit for Len.
+			// For now, we assume fixed size defined by number of elements if Len is complex,
+			// or direct from BasicLit if simple.
+			// Proper array type checking (element types against typeNode.Elt) is also needed.
+			// For simplicity, we're not deeply checking typeNode.Elt against evaluatedElt types here yet.
+
+			var arrayLength int64 = -1 // Sentinel for "not yet determined" or "error"
+			switch lenExpr := typeNode.Len.(type) {
+			case *ast.BasicLit:
+				if lenExpr.Kind == token.INT {
+					l, err := strconv.ParseInt(lenExpr.Value, 10, 64)
+					if err != nil {
+						return nil, i.formatErrorWithContext(i.activeFileSet, lenExpr.Pos(), fmt.Errorf("invalid array length: %s", lenExpr.Value), "Type error")
+					}
+					arrayLength = l
+				} else {
+					return nil, i.formatErrorWithContext(i.activeFileSet, lenExpr.Pos(), fmt.Errorf("array length must be an integer, got %s", lenExpr.Kind), "Type error")
+				}
+			case nil: // This case should be caught by `typeNode.Len == nil` above for slices.
+				return nil, i.formatErrorWithContext(i.activeFileSet, typeNode.Pos(), errors.New("internal error: array type has nil length expression"), "Type error")
+			default:
+				// TODO: Support constant expressions for array length.
+				// For now, if Len is not a BasicLit, we could infer length from elements if that's desired,
+				// or error out. Go requires array lengths to be constant.
+				return nil, i.formatErrorWithContext(i.activeFileSet, typeNode.Len.Pos(), fmt.Errorf("array length must be a constant integer literal, got %T", typeNode.Len), "Type error")
+			}
+
+			if arrayLength < 0 { // Should have been set or errored by now.
+				return nil, i.formatErrorWithContext(i.activeFileSet, typeNode.Pos(), errors.New("could not determine array length"), "Type error")
+			}
+
+			if int64(len(elements)) > arrayLength {
+				return nil, i.formatErrorWithContext(i.activeFileSet, lit.Rbrace, fmt.Errorf("too many elements in array literal (expected %d, got %d)", arrayLength, len(elements)), "Literal error")
+			}
+
+			// If fewer elements are provided than the array length, Go zero-fills the rest.
+			// We need to know the zero value for typeNode.Elt. This is complex.
+			// For now, let's require the number of elements to match the length for simplicity, or pad with NULL.
+			// This is a simplification. True Go behavior requires typed zero values.
+			finalElements := make([]Object, arrayLength)
+			copy(finalElements, elements)
+			for i := len(elements); i < int(arrayLength); i++ {
+				// TODO: This should be the typed zero value of typeNode.Elt
+				finalElements[i] = NULL
+			}
+			return &Array{Elements: finalElements}, nil
 		}
-		structDef = sDef
+
+	case *ast.MapType: // e.g. map[string]int{"a":1, "b":2}
+		// ast.MapType has Key and Value fields (ast.Expr)
+		// lit.Elts will be a slice of *ast.KeyValueExpr
+		mapObj := &Map{Pairs: make(map[HashKey]MapPair)}
+
+		for _, elt := range lit.Elts {
+			kvExpr, ok := elt.(*ast.KeyValueExpr)
+			if !ok {
+				return nil, i.formatErrorWithContext(i.activeFileSet, elt.Pos(), fmt.Errorf("map literal elements must be key-value pairs"), "Literal error")
+			}
+
+			keyObj, err := i.eval(ctx, kvExpr.Key, env)
+			if err != nil {
+				return nil, err
+			}
+			valObj, err := i.eval(ctx, kvExpr.Value, env)
+			if err != nil {
+				return nil, err
+			}
+
+			hashableKey, ok := keyObj.(Hashable)
+			if !ok {
+				return nil, i.formatErrorWithContext(i.activeFileSet, kvExpr.Key.Pos(), fmt.Errorf("map key type %s is not hashable", keyObj.Type()), "Type error")
+			}
+			hk, err := hashableKey.HashKey()
+			if err != nil {
+				return nil, i.formatErrorWithContext(i.activeFileSet, kvExpr.Key.Pos(), fmt.Errorf("error getting hash key for type %s: %v", keyObj.Type(), err), "Type error")
+			}
+
+			mapObj.Pairs[hk] = MapPair{Key: keyObj, Value: valObj}
+		}
+		return mapObj, nil
 
 	default:
-		return nil, i.formatErrorWithContext(i.activeFileSet, lit.Type.Pos(), fmt.Errorf("expected identifier or selector for composite literal type, got %T", lit.Type), "Struct instantiation error")
+		// This case might be reached if lit.Type is nil (e.g. for untyped composite literals like `[]int{1,2}` if parser allows that at top level)
+		// or some other ast.Expr that isn't an Ident, SelectorExpr, ArrayType, or MapType.
+		// Go typically requires types for composite literals.
+		return nil, i.formatErrorWithContext(i.activeFileSet, lit.Type.Pos(), fmt.Errorf("unsupported type for composite literal: %T", lit.Type), "Literal error")
 	}
+}
+
+func (i *Interpreter) evalStructLiteral(ctx context.Context, structName string, pkgIdent *ast.Ident, lit *ast.CompositeLit, env *Environment) (Object, error) {
+	var structDef *StructDefinition
+	var qualifiedName string
+	var typePos token.Pos
+
+	if pkgIdent == nil { // Simple identifier for struct type
+		qualifiedName = structName
+		// Assuming lit.Type was *ast.Ident, its Pos can be used.
+		// This is a bit indirect. If lit.Type is available, use its Pos.
+		if identType, ok := lit.Type.(*ast.Ident); ok {
+			typePos = identType.Pos()
+		} else {
+			typePos = lit.Lbrace // Fallback
+		}
+	} else { // Selector expression for struct type (pkg.StructName)
+		qualifiedName = pkgIdent.Name + "." + structName
+		// Assuming lit.Type was *ast.SelectorExpr
+		if selType, ok := lit.Type.(*ast.SelectorExpr); ok {
+			typePos = selType.Sel.Pos() // Position of the struct name itself
+		} else {
+			typePos = lit.Lbrace // Fallback
+		}
+	}
+
+	obj, found := env.Get(qualifiedName)
+	if !found {
+		if pkgIdent != nil { // If it was a qualified name, try loading the package
+			_, errLoad := i.loadPackageIfNeeded(ctx, pkgIdent.Name, i.globalEnv, pkgIdent.Pos())
+			if errLoad != nil {
+				return nil, i.formatErrorWithContext(i.activeFileSet, pkgIdent.Pos(), errLoad, fmt.Sprintf("Error loading package '%s' for struct literal type '%s'", pkgIdent.Name, qualifiedName))
+			}
+			obj, found = env.Get(qualifiedName) // Retry after load attempt
+		}
+		if !found {
+			return nil, i.formatErrorWithContext(i.activeFileSet, typePos, fmt.Errorf("undefined type '%s' used in composite literal", qualifiedName), "Struct instantiation error")
+		}
+	}
+
+	sDef, ok := obj.(*StructDefinition)
+	if !ok {
+		return nil, i.formatErrorWithContext(i.activeFileSet, typePos, fmt.Errorf("type '%s' is not a struct type, but %s", qualifiedName, obj.Type()), "Struct instantiation error")
+	}
+	structDef = sDef
 
 	instance := &StructInstance{
 		Definition:     structDef,
@@ -745,19 +889,24 @@ func (i *Interpreter) evalCompositeLit(ctx context.Context, lit *ast.CompositeLi
 		EmbeddedValues: make(map[string]*StructInstance),
 	}
 
-	if len(lit.Elts) == 0 && len(structDef.Fields) > 0 {
-		// Handling of T{} is simplified for now.
+	if len(lit.Elts) == 0 { // Handles T{}
+		// No elements, just return the zero-value struct instance.
+		// Fields are already empty/nil. EmbeddedValues also empty.
+		return instance, nil
 	}
 
-	isKeyValueForm := false
-	if len(lit.Elts) > 0 {
-		_, isKeyValueForm = lit.Elts[0].(*ast.KeyValueExpr)
-	}
+	// Check if elements are of the form {key: value} or just {value, value}
+	// Go struct literals can be keyed or unkeyed. Unkeyed requires all fields in order.
+	// Keyed can be partial and in any order.
+	// For simplicity, our previous version only supported keyed or fully empty.
+	// Let's maintain keyed-only for now, or error on unkeyed if fields exist.
+
+	_, isKeyValueForm := lit.Elts[0].(*ast.KeyValueExpr)
 
 	if isKeyValueForm {
 		for _, elt := range lit.Elts {
 			kvExpr, ok := elt.(*ast.KeyValueExpr)
-			if !ok {
+			if !ok { // Should not happen if isKeyValueForm was true and all elements are consistent
 				return nil, i.formatErrorWithContext(i.activeFileSet, elt.Pos(), fmt.Errorf("mixture of keyed and non-keyed fields in struct literal for '%s'", structDef.Name), "Struct instantiation error")
 			}
 			keyIdent, ok := kvExpr.Key.(*ast.Ident)
@@ -767,13 +916,16 @@ func (i *Interpreter) evalCompositeLit(ctx context.Context, lit *ast.CompositeLi
 			fieldName := keyIdent.Name
 			valueExpr := kvExpr.Value
 
+			// Logic for direct fields, embedded type initialization, and promoted fields
+			// This part is complex and needs to correctly resolve fieldName.
+			// (Using existing logic from original evalCompositeLit for this part)
 			if _, isDirectField := structDef.Fields[fieldName]; isDirectField {
 				valObj, err := i.eval(ctx, valueExpr, env)
 				if err != nil { return nil, err }
 				instance.FieldValues[fieldName] = valObj
 				continue
 			}
-			// ... (simplified embedded/promoted field handling for brevity, assumes direct fields primarily) ...
+
 			var isEmbeddedTypeNameInitialization bool
 			var targetEmbeddedDefForExplicitInit *StructDefinition
 			for _, embDef := range structDef.EmbeddedDefs {
@@ -795,7 +947,7 @@ func (i *Interpreter) evalCompositeLit(ctx context.Context, lit *ast.CompositeLi
 				instance.EmbeddedValues[fieldName] = embInstanceVal
 				continue
 			}
-			// Promoted field logic (simplified)
+
 			var owningEmbDef *StructDefinition
 			for _, embDef := range structDef.EmbeddedDefs {
 				if _, isPromoted := embDef.Fields[fieldName]; isPromoted {
@@ -803,25 +955,193 @@ func (i *Interpreter) evalCompositeLit(ctx context.Context, lit *ast.CompositeLi
 				}
 			}
 			if owningEmbDef != nil {
-                 // ... (logic to set field in embedded instance) ...
-				 valObj, err := i.eval(ctx, valueExpr, env)
-				 if err != nil { return nil, err }
-				 embInstance, ok := instance.EmbeddedValues[owningEmbDef.Name]
-				 if !ok {
-					 embInstance = &StructInstance{Definition: owningEmbDef, FieldValues: make(map[string]Object), EmbeddedValues: make(map[string]*StructInstance)}
-					 instance.EmbeddedValues[owningEmbDef.Name] = embInstance
-				 }
-				 embInstance.FieldValues[fieldName] = valObj
-				 continue
+				valObj, err := i.eval(ctx, valueExpr, env)
+				if err != nil { return nil, err }
+				embInstance, ok := instance.EmbeddedValues[owningEmbDef.Name]
+				if !ok {
+					embInstance = &StructInstance{Definition: owningEmbDef, FieldValues: make(map[string]Object), EmbeddedValues: make(map[string]*StructInstance)}
+					instance.EmbeddedValues[owningEmbDef.Name] = embInstance
+				}
+				embInstance.FieldValues[fieldName] = valObj
+				continue
 			}
 			return nil, i.formatErrorWithContext(i.activeFileSet, keyIdent.Pos(), fmt.Errorf("unknown field '%s' in struct literal of type '%s'", fieldName, structDef.Name), "Struct instantiation error")
 		}
-	} else {
-		if len(lit.Elts) > 0 && len(structDef.Fields) > 0 {
-			return nil, i.formatErrorWithContext(i.activeFileSet, lit.Pos(), fmt.Errorf("ordered (non-keyed) struct literal values are not supported yet for struct '%s'", structDef.Name), "Struct instantiation error")
+	} else { // Not KeyValue form (e.g. MyStruct{val1, val2})
+		// Go allows this if all fields are provided in order.
+		// This is more complex to implement correctly with type checking and field order.
+		// For now, if it's not keyed and there are elements, and the struct has fields, we error.
+		// If structDef.Fields is empty and lit.Elts is not empty (and not keyed), it's also an error.
+		if len(lit.Elts) > 0 { // If there are elements but not in key-value form
+			if len(structDef.Fields) > 0 || len(structDef.EmbeddedDefs) > 0 { // And struct expects fields/embedded
+				return nil, i.formatErrorWithContext(i.activeFileSet, lit.Pos(), fmt.Errorf("ordered (non-keyed) struct literal values are not supported yet for struct '%s' that has fields/embedded types. Use keyed values e.g. Field:Val.", structDef.Name), "Struct instantiation error")
+			} else { // Struct has no fields/embedded, but values provided without keys
+				return nil, i.formatErrorWithContext(i.activeFileSet, lit.Pos(), fmt.Errorf("non-keyed values provided for struct '%s' which has no fields or embedded types", structDef.Name), "Struct instantiation error")
+			}
 		}
+		// If len(lit.Elts) == 0, it was handled above.
 	}
 	return instance, nil
+}
+
+func (i *Interpreter) evalIndexExpression(ctx context.Context, node *ast.IndexExpr, env *Environment) (Object, error) {
+	// Placeholder - TODO: Implement logic for array, slice, map indexing
+	left, err := i.eval(ctx, node.X, env)
+	if err != nil {
+		return nil, err
+	}
+
+	index, err := i.eval(ctx, node.Index, env)
+	if err != nil {
+		return nil, err
+	}
+
+	switch leftObj := left.(type) {
+	case *Array:
+		idx, ok := index.(*Integer)
+		if !ok {
+			return nil, i.formatErrorWithContext(i.activeFileSet, node.Index.Pos(), fmt.Errorf("array index must be an integer, got %s", index.Type()), "Type error")
+		}
+		if idx.Value < 0 || idx.Value >= int64(len(leftObj.Elements)) {
+			return nil, i.formatErrorWithContext(i.activeFileSet, node.Index.Pos(), fmt.Errorf("index out of bounds: %d for array of length %d", idx.Value, len(leftObj.Elements)), "Runtime error")
+		}
+		return leftObj.Elements[idx.Value], nil
+	case *Slice:
+		idx, ok := index.(*Integer)
+		if !ok {
+			return nil, i.formatErrorWithContext(i.activeFileSet, node.Index.Pos(), fmt.Errorf("slice index must be an integer, got %s", index.Type()), "Type error")
+		}
+		if idx.Value < 0 || idx.Value >= int64(len(leftObj.Elements)) {
+			return nil, i.formatErrorWithContext(i.activeFileSet, node.Index.Pos(), fmt.Errorf("index out of bounds: %d for slice of length %d", idx.Value, len(leftObj.Elements)), "Runtime error")
+		}
+		return leftObj.Elements[idx.Value], nil
+	case *Map:
+		hashableKey, ok := index.(Hashable)
+		if !ok {
+			return nil, i.formatErrorWithContext(i.activeFileSet, node.Index.Pos(), fmt.Errorf("map key type %s is not hashable", index.Type()), "Type error")
+		}
+		hk, err := hashableKey.HashKey()
+		if err != nil {
+			return nil, i.formatErrorWithContext(i.activeFileSet, node.Index.Pos(), fmt.Errorf("error getting hash key for map access: %v", err), "Runtime error")
+		}
+		if pair, found := leftObj.Pairs[hk]; found {
+			return pair.Value, nil
+		}
+		// Accessing a non-existent map key in Go returns the zero value of the value type.
+		// For our interpreter, returning NULL is a simplification.
+		// TODO: Consider returning typed zero values if the map's value type is known.
+		return NULL, nil
+	default:
+		return nil, i.formatErrorWithContext(i.activeFileSet, node.X.Pos(), fmt.Errorf("type %s does not support indexing", left.Type()), "Type error")
+	}
+}
+
+func (i *Interpreter) evalSliceExpression(ctx context.Context, node *ast.SliceExpr, env *Environment) (Object, error) {
+	// Placeholder - TODO: Implement logic for slice expressions a[low:high]
+	left, err := i.eval(ctx, node.X, env)
+	if err != nil {
+		return nil, err
+	}
+
+	var low, high, max int64 = 0, -1, -1 // Initialize high and max to -1 to indicate they are not set by default
+
+	if node.Low != nil {
+		lowObj, err := i.eval(ctx, node.Low, env)
+		if err != nil {
+			return nil, err
+		}
+		lowInt, ok := lowObj.(*Integer)
+		if !ok {
+			return nil, i.formatErrorWithContext(i.activeFileSet, node.Low.Pos(), fmt.Errorf("slice index must be integer, got %s", lowObj.Type()), "Type error")
+		}
+		low = lowInt.Value
+	}
+
+	if node.High != nil {
+		highObj, err := i.eval(ctx, node.High, env)
+		if err != nil {
+			return nil, err
+		}
+		highInt, ok := highObj.(*Integer)
+		if !ok {
+			return nil, i.formatErrorWithContext(i.activeFileSet, node.High.Pos(), fmt.Errorf("slice index must be integer, got %s", highObj.Type()), "Type error")
+		}
+		high = highInt.Value
+	}
+
+	if node.Max != nil {
+		maxObj, err := i.eval(ctx, node.Max, env)
+		if err != nil {
+			return nil, err
+		}
+		maxInt, ok := maxObj.(*Integer)
+		if !ok {
+			return nil, i.formatErrorWithContext(i.activeFileSet, node.Max.Pos(), fmt.Errorf("slice capacity index must be integer, got %s", maxObj.Type()), "Type error")
+		}
+		max = maxInt.Value
+		if node.Slice3 { // Max is only used in 3-index slices
+			// high must be set if max is set in a 3-index slice
+			if node.High == nil {
+				return nil, i.formatErrorWithContext(i.activeFileSet, node.Max.Pos(), fmt.Errorf("middle index required in 3-index slice"), "Syntax error")
+			}
+		} else {
+			// If not a 3-index slice, max should not have been parsed or evaluated.
+			// This indicates an AST structure we don't expect or handle for 2-index slices.
+			return nil, i.formatErrorWithContext(i.activeFileSet, node.Max.Pos(), fmt.Errorf("max capacity is only allowed in 3-index slices"), "Syntax error")
+		}
+	}
+
+
+	switch subject := left.(type) {
+	case *Array:
+		arrLen := int64(len(subject.Elements))
+		if node.High == nil { // a[low:]
+			high = arrLen
+		}
+		// Bounds checks (simplified from Go spec for now)
+		if low < 0 || low > arrLen || (node.High != nil && (high < low || high > arrLen)) {
+			return nil, i.formatErrorWithContext(i.activeFileSet, node.Lbrack, fmt.Errorf("slice bounds out of range for array (low:%d, high:%d, len:%d)", low, high, arrLen), "Runtime error")
+		}
+		if node.Slice3 {
+			if max < high || max > arrLen {
+				return nil, i.formatErrorWithContext(i.activeFileSet, node.Max.Pos(), fmt.Errorf("slice3 capacity out of range (max:%d, high:%d, len:%d)",max, high, arrLen), "Runtime error")
+			}
+		}
+
+		// Create a new slice. For arrays, slicing always creates a new slice object that copies elements.
+		// Go's slices share underlying array, but our simple model might copy.
+		// For now, let's copy to keep it simple.
+		newElements := make([]Object, high-low)
+		copy(newElements, subject.Elements[low:high])
+		return &Slice{Elements: newElements}, nil
+
+	case *Slice:
+		sliceLen := int64(len(subject.Elements))
+		if node.High == nil { // a[low:]
+			high = sliceLen
+		}
+
+		// Bounds checks (simplified)
+		if low < 0 || low > sliceLen || (node.High != nil && (high < low || high > sliceLen)) {
+			return nil, i.formatErrorWithContext(i.activeFileSet, node.Lbrack, fmt.Errorf("slice bounds out of range for slice (low:%d, high:%d, len:%d)", low, high, sliceLen), "Runtime error")
+		}
+		if node.Slice3 {
+			// Go spec: "For arrays or strings, the indices are in range if 0 <= low <= high <= max <= cap(a)"
+			// Our slices don't have explicit capacity yet, so treat sliceLen as capacity for this check.
+			if max < high || max > sliceLen { // Using sliceLen as effective capacity
+				return nil, i.formatErrorWithContext(i.activeFileSet, node.Max.Pos(), fmt.Errorf("slice3 capacity out of range for slice (max:%d, high:%d, len:%d)",max, high, sliceLen), "Runtime error")
+			}
+		}
+
+
+		// Slicing a slice: also copy for simplicity in this interpreter model.
+		newElements := make([]Object, high-low)
+		copy(newElements, subject.Elements[low:high])
+		return &Slice{Elements: newElements}, nil
+
+	default:
+		return nil, i.formatErrorWithContext(i.activeFileSet, node.X.Pos(), fmt.Errorf("type %s does not support slicing", left.Type()), "Type error")
+	}
 }
 
 
@@ -1514,6 +1834,39 @@ func (i *Interpreter) evalDeclStmt(ctx context.Context, declStmt *ast.DeclStmt, 
 						} else {
 							return nil, i.formatErrorWithContext(i.FileSet, T.Pos(), fmt.Errorf("unsupported specific interface type for uninitialized variable '%s'", varName), "")
 						}
+					case *ast.ArrayType:
+						if T.Len == nil {
+							// This is a slice type declaration, e.g., var s []int
+							// The zero value for a slice is nil. We'll represent this as an empty Slice object.
+							zeroVal = &Slice{Elements: nil} // Or []Object{} - nil is closer to Go's nil slice
+						} else {
+							// This is an array type declaration, e.g., var a [3]int
+							var arrayLength int64
+							lenLit, ok := T.Len.(*ast.BasicLit)
+							if !ok || lenLit.Kind != token.INT {
+								// TODO: Support constant expressions for array length in var declarations
+								return nil, i.formatErrorWithContext(i.FileSet, T.Len.Pos(), fmt.Errorf("array length in var declaration must be an integer literal, got %T", T.Len), "")
+							}
+							l, err := strconv.ParseInt(lenLit.Value, 10, 64)
+							if err != nil {
+								return nil, i.formatErrorWithContext(i.FileSet, lenLit.Pos(), fmt.Errorf("invalid array length '%s' in var declaration", lenLit.Value), "")
+							}
+							arrayLength = l
+							if arrayLength < 0 {
+								return nil, i.formatErrorWithContext(i.FileSet, lenLit.Pos(), fmt.Errorf("array length cannot be negative: %d", arrayLength), "")
+							}
+
+							elements := make([]Object, arrayLength)
+							// TODO: Fill with typed zero values of T.Elt instead of NULL if type info is available and used.
+							// For now, all uninitialized array elements are NULL.
+							for k := range elements {
+								elements[k] = NULL
+							}
+							zeroVal = &Array{Elements: elements}
+						}
+					case *ast.MapType:
+						// The zero value for a map is nil. We'll represent this as a Map object with a nil Pairs map.
+						zeroVal = &Map{Pairs: nil} // Or make(map[HashKey]MapPair) for an empty map
 					default:
 						return nil, i.formatErrorWithContext(i.FileSet, valueSpec.Type.Pos(), fmt.Errorf("unsupported type expression for zero value for variable '%s': %T", varName, valueSpec.Type), "")
 					}
@@ -1771,115 +2124,160 @@ func (i *Interpreter) evalAssignStmt(ctx context.Context, assignStmt *ast.Assign
 			fmt.Errorf("unsupported assignment: expected 1 expression on LHS and 1 on RHS, got %d and %d", len(assignStmt.Lhs), len(assignStmt.Rhs)), "")
 	}
 
-	lhs := assignStmt.Lhs[0]
-	ident, ok := lhs.(*ast.Ident)
-	if !ok {
-		return nil, i.formatErrorWithContext(i.FileSet, lhs.Pos(), fmt.Errorf("unsupported assignment LHS: expected identifier, got %T", lhs), "")
-	}
-	varName := ident.Name
-
-	val, err := i.eval(ctx, assignStmt.Rhs[0], env)
+	lhsExpr := assignStmt.Lhs[0]
+	rhsValue, err := i.eval(ctx, assignStmt.Rhs[0], env)
 	if err != nil {
 		return nil, err
 	}
 
-	switch assignStmt.Tok {
-	case token.DEFINE: // :=
-		// Check if variable already exists in the current scope (not outer)
-		// For simplicity, MiniGo's env.Get checks all scopes.
-		// A strict `:=` would error if `env.GetInCurrentScope(varName)` is true.
-		// Our current Environment doesn't distinguish Get from current vs outer for this check easily.
-		// So, we'll rely on Define to implicitly handle this "new variable" nature.
-		// If Define were to allow re-definition in the same scope, this would be wrong.
-		// Let's assume Define in the same scope is like an assignment,
-		// or we need a way to check "exists in current scope only".
-		// For MiniGo's purpose, `:=` should always create a new variable.
-		// If `env.Get(varName)` returns true, it means it exists somewhere.
-		// Go's `:=` allows shadowing. If `varName` exists in an outer scope, `:=` creates a new one in the current scope.
-		// If `varName` exists in the current scope, `:=` is an error ("no new variables on left side of :=").
-
-		// Simplified check: if it exists at all and we try to `:=`, it's an error if we don't allow shadowing.
-		// Our `env.Define` effectively shadows if called in a nested environment.
-		// If in the *same* environment, `env.Define` overwrites.
-		// This part needs care.
-		// For `:=`, it must define a *new* variable.
-		// Go rule: "no new variables on left side of :=" means at least one variable on LHS must be new in the current block.
-		// Since we only support single var LHS for now:
-		if env.ExistsInCurrentScope(varName) {
-			return nil, i.formatErrorWithContext(i.FileSet, ident.Pos(), fmt.Errorf("no new variables on left side of := (variable '%s' already declared in this scope)", varName), "")
-		}
-		env.Define(varName, val) // Define in current environment
-		return nil, nil
-
-	case token.ASSIGN: // =
-		if _, ok := env.Assign(varName, val); !ok {
-			return nil, i.formatErrorWithContext(i.FileSet, ident.Pos(), fmt.Errorf("cannot assign to undeclared variable '%s'", varName), "")
-		}
-		return nil, nil
-
-	default: // Augmented assignments: +=, -=, etc.
-		existingVal, ok := env.Get(varName)
-		if !ok {
-			return nil, i.formatErrorWithContext(i.FileSet, ident.Pos(), fmt.Errorf("cannot use %s on undeclared variable '%s'", assignStmt.Tok, varName), "")
-		}
-
-		// Determine the binary operation token corresponding to the assignment token
-		var op token.Token
+	switch lhsNode := lhsExpr.(type) {
+	case *ast.Ident: // Standard variable assignment: x = val or x := val
+		varName := lhsNode.Name
 		switch assignStmt.Tok {
-		case token.ADD_ASSIGN:
-			op = token.ADD
-		case token.SUB_ASSIGN:
-			op = token.SUB
-		case token.MUL_ASSIGN:
-			op = token.MUL
-		case token.QUO_ASSIGN:
-			op = token.QUO
-		case token.REM_ASSIGN:
-			op = token.REM
-		default:
-			return nil, i.formatErrorWithContext(i.FileSet, assignStmt.Pos(), fmt.Errorf("unsupported assignment operator %s", assignStmt.Tok), "")
-		}
-
-		// Perform the operation based on type
-		var resultVal Object
-		var evalErr error
-
-		switch eVal := existingVal.(type) {
-		case *Integer:
-			if vInt, okV := val.(*Integer); okV {
-				// Use evalIntegerBinaryExpr for the core logic to avoid duplication
-				tempBinExprResult, binErr := i.evalIntegerBinaryExpr(op, eVal, vInt, assignStmt.Pos())
-				if binErr != nil {
-					return nil, i.formatErrorWithContext(i.FileSet, assignStmt.Pos(), binErr, fmt.Sprintf("error in augmented assignment %s for variable '%s'", assignStmt.Tok, varName))
-				}
-				resultVal = tempBinExprResult
-			} else {
-				evalErr = i.formatErrorWithContext(i.FileSet, assignStmt.Pos(), fmt.Errorf("type mismatch for %s: existing value is INTEGER, new value is %s", assignStmt.Tok, val.Type()), "")
+		case token.DEFINE: // :=
+			if env.ExistsInCurrentScope(varName) {
+				return nil, i.formatErrorWithContext(i.FileSet, lhsNode.Pos(), fmt.Errorf("no new variables on left side of := (variable '%s' already declared in this scope)", varName), "")
 			}
-		case *String:
-			if op == token.ADD { // Only += is supported for strings
-				if vStr, okV := val.(*String); okV {
-					resultVal = &String{Value: eVal.Value + vStr.Value}
-				} else {
-					evalErr = i.formatErrorWithContext(i.FileSet, assignStmt.Pos(), fmt.Errorf("type mismatch for string concatenation (+=): existing value is STRING, new value is %s", val.Type()), "")
-				}
-			} else {
-				evalErr = i.formatErrorWithContext(i.FileSet, assignStmt.Pos(), fmt.Errorf("unsupported operator %s for augmented string assignment (only += is allowed)", assignStmt.Tok), "")
+			env.Define(varName, rhsValue)
+			return nil, nil
+		case token.ASSIGN: // =
+			if _, ok := env.Assign(varName, rhsValue); !ok {
+				return nil, i.formatErrorWithContext(i.FileSet, lhsNode.Pos(), fmt.Errorf("cannot assign to undeclared variable '%s'", varName), "")
 			}
+			return nil, nil
+		default: // Augmented assignments for identifiers: x += val, etc.
+			existingVal, ok := env.Get(varName)
+			if !ok {
+				return nil, i.formatErrorWithContext(i.FileSet, lhsNode.Pos(), fmt.Errorf("cannot use %s on undeclared variable '%s'", assignStmt.Tok, varName), "")
+			}
+			newVal, err := i.performAugmentedAssignOperation(assignStmt.Tok, existingVal, rhsValue, assignStmt.Pos())
+			if err != nil {
+				// Error from performAugmentedAssignOperation is already formatted.
+				// Add context specific to the variable and operation type.
+				return nil, i.formatErrorWithContext(i.FileSet, lhsNode.Pos(), err, fmt.Sprintf("Error in augmented assignment '%s' for variable '%s'", assignStmt.Tok, varName))
+			}
+			if _, ok := env.Assign(varName, newVal); !ok {
+				// This should ideally not happen if 'existingVal' was successfully fetched.
+				return nil, i.formatErrorWithContext(i.FileSet, lhsNode.Pos(), fmt.Errorf("internal error: failed to assign back to variable '%s' after augmented assignment", varName), "")
+			}
+			return nil, nil
+		}
+
+	case *ast.IndexExpr: // Index assignment: arr[idx] = val, map[key] = val
+		// TODO: Support augmented assignments for index expressions e.g. arr[0] += 1
+		if assignStmt.Tok != token.ASSIGN {
+			return nil, i.formatErrorWithContext(i.FileSet, assignStmt.Pos(), fmt.Errorf("augmented assignment (e.g., +=) not yet supported for index expressions"), "Unsupported operation")
+		}
+
+		// Evaluate the object being indexed (e.g., array, slice, map)
+		collectionObj, err := i.eval(ctx, lhsNode.X, env)
+		if err != nil {
+			return nil, err
+		}
+
+		// Evaluate the index/key
+		indexObj, err := i.eval(ctx, lhsNode.Index, env)
+		if err != nil {
+			return nil, err
+		}
+
+		switch col := collectionObj.(type) {
+		case *Array:
+			idx, ok := indexObj.(*Integer)
+			if !ok {
+				return nil, i.formatErrorWithContext(i.FileSet, lhsNode.Index.Pos(), fmt.Errorf("array index must be an integer, got %s", indexObj.Type()), "Type error")
+			}
+			if idx.Value < 0 || idx.Value >= int64(len(col.Elements)) {
+				return nil, i.formatErrorWithContext(i.FileSet, lhsNode.Index.Pos(), fmt.Errorf("index out of bounds: %d for array of length %d", idx.Value, len(col.Elements)), "Runtime error")
+			}
+			col.Elements[idx.Value] = rhsValue // Assign new value
+			return nil, nil
+		case *Slice:
+			idx, ok := indexObj.(*Integer)
+			if !ok {
+				return nil, i.formatErrorWithContext(i.FileSet, lhsNode.Index.Pos(), fmt.Errorf("slice index must be an integer, got %s", indexObj.Type()), "Type error")
+			}
+			if idx.Value < 0 || idx.Value >= int64(len(col.Elements)) {
+				// Note: Go allows assignment to one past the end if slice has capacity (append semantic).
+				// Our simple slices don't have separate capacity yet, so this is strict bounds check.
+				return nil, i.formatErrorWithContext(i.FileSet, lhsNode.Index.Pos(), fmt.Errorf("index out of bounds: %d for slice of length %d", idx.Value, len(col.Elements)), "Runtime error")
+			}
+			col.Elements[idx.Value] = rhsValue // Assign new value
+			return nil, nil
+		case *Map:
+			hashableKey, ok := indexObj.(Hashable)
+			if !ok {
+				return nil, i.formatErrorWithContext(i.FileSet, lhsNode.Index.Pos(), fmt.Errorf("map key type %s is not hashable for assignment", indexObj.Type()), "Type error")
+			}
+			hk, err := hashableKey.HashKey()
+			if err != nil {
+				return nil, i.formatErrorWithContext(i.FileSet, lhsNode.Index.Pos(), fmt.Errorf("error getting hash key for map assignment: %v", err), "Runtime error")
+			}
+			if col.Pairs == nil { // Should be initialized by literal eval or make
+				col.Pairs = make(map[HashKey]MapPair)
+			}
+			col.Pairs[hk] = MapPair{Key: indexObj, Value: rhsValue}
+			return nil, nil
 		default:
-			evalErr = i.formatErrorWithContext(i.FileSet, assignStmt.Pos(), fmt.Errorf("unsupported type %s for augmented assignment operator %s on variable '%s'", existingVal.Type(), assignStmt.Tok, varName), "")
+			return nil, i.formatErrorWithContext(i.FileSet, lhsNode.X.Pos(), fmt.Errorf("cannot assign to index of type %s, not an array, slice, or map", collectionObj.Type()), "Type error")
 		}
 
-		if evalErr != nil {
-			return nil, evalErr
-		}
+	default:
+		return nil, i.formatErrorWithContext(i.FileSet, lhsExpr.Pos(), fmt.Errorf("unsupported assignment LHS: expected identifier or index expression, got %T", lhsExpr), "")
+	}
+}
 
-		// Assign the new value back to the variable
-		if _, ok := env.Assign(varName, resultVal); !ok {
-			// This should not happen if the variable was successfully fetched earlier
-			return nil, i.formatErrorWithContext(i.FileSet, ident.Pos(), fmt.Errorf("internal error: failed to assign back to variable '%s' after augmented assignment", varName), "")
+// performAugmentedAssignOperation is a helper for handling operations like x += y.
+// It takes the assignment token (e.g., token.ADD_ASSIGN), the existing value of x,
+// the value of y (rhsVal), and the position for error reporting.
+// It returns the new value for x or an error.
+func (i *Interpreter) performAugmentedAssignOperation(assignOpToken token.Token, existingVal, rhsVal Object, pos token.Pos) (Object, error) {
+	var binaryOpToken token.Token // The corresponding binary operator (e.g., token.ADD for token.ADD_ASSIGN)
+
+	switch assignOpToken {
+	case token.ADD_ASSIGN:
+		binaryOpToken = token.ADD
+	case token.SUB_ASSIGN:
+		binaryOpToken = token.SUB
+	case token.MUL_ASSIGN:
+		binaryOpToken = token.MUL
+	case token.QUO_ASSIGN:
+		binaryOpToken = token.QUO
+	case token.REM_ASSIGN:
+		binaryOpToken = token.REM
+	// TODO: Add bitwise augmented assignments if bitwise operators are supported:
+	// case token.AND_ASSIGN: binaryOpToken = token.AND
+	// case token.OR_ASSIGN: binaryOpToken = token.OR
+	// case token.XOR_ASSIGN: binaryOpToken = token.XOR
+	// case token.SHL_ASSIGN: binaryOpToken = token.SHL
+	// case token.SHR_ASSIGN: binaryOpToken = token.SHR
+	// case token.AND_NOT_ASSIGN: binaryOpToken = token.AND_NOT
+	default:
+		return nil, i.formatErrorWithContext(i.FileSet, pos, fmt.Errorf("unsupported augmented assignment operator %s", assignOpToken), "")
+	}
+
+	// Now, use the binaryOpToken to perform the operation, similar to evalBinaryExpr.
+	// This assumes that the types are compatible for the operation.
+	switch leftTyped := existingVal.(type) {
+	case *Integer:
+		if rightTyped, ok := rhsVal.(*Integer); ok {
+			// Re-use evalIntegerBinaryExpr logic. pos here is the position of the assignment statement.
+			return i.evalIntegerBinaryExpr(binaryOpToken, leftTyped, rightTyped, pos)
 		}
-		return nil, nil
+		return nil, i.formatErrorWithContext(i.FileSet, pos, fmt.Errorf("type mismatch for augmented assignment: existing is INTEGER, right-hand side is %s for op %s", rhsVal.Type(), assignOpToken), "")
+	case *String:
+		// Only string concatenation (+=) is typically supported for augmented assignment.
+		if binaryOpToken == token.ADD {
+			if rightTyped, ok := rhsVal.(*String); ok {
+				// Re-use evalStringBinaryExpr logic for '+'.
+				return i.evalStringBinaryExpr(binaryOpToken, leftTyped, rightTyped, pos)
+			}
+			return nil, i.formatErrorWithContext(i.FileSet, pos, fmt.Errorf("type mismatch for string concatenation (+=): right-hand side is %s", rhsVal.Type()), "")
+		}
+		return nil, i.formatErrorWithContext(i.FileSet, pos, fmt.Errorf("unsupported operator %s for augmented string assignment (only += is allowed)", assignOpToken), "")
+	// Add cases for other types if they support augmented assignments (e.g., floats, custom types later).
+	default:
+		return nil, i.formatErrorWithContext(i.FileSet, pos, fmt.Errorf("unsupported type %s for augmented assignment operator %s", existingVal.Type(), assignOpToken), "")
 	}
 }
 

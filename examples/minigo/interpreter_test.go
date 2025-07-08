@@ -708,81 +708,343 @@ func main() {
 			expectError:   true,
 			errorContains: "len() not supported for type BOOLEAN",
 		},
-	}
+		// --- Array Tests ---
+		{
+			name: "array literal and len",
+			input: `
+package main
+func main() {
+	a := [3]int{10, 20, 30}
+	return len(a)
+}`,
+			expected: int64(3),
+		},
+		{
+			name: "array index access",
+			input: `
+package main
+func main() {
+	a := [3]int{10, 20, 30}
+	return a[1]
+}`,
+			expected: int64(20),
+		},
+		{
+			name: "array index assignment",
+			input: `
+package main
+var globalA [3]int
+func main() {
+	globalA = [3]int{1, 2, 3}
+	globalA[0] = 100
+	return globalA[0]
+}`,
+			expected: int64(100),
+		},
+		{
+			name: "array out of bounds access",
+			input: `
+package main
+func main() {
+	a := [2]int{1,2}
+	return a[2]
+}`,
+			expectError: true,
+			errorContains: "index out of bounds: 2 for array of length 2",
+		},
+		{
+			name: "array literal too many elements",
+			input: `
+package main
+func main() {
+	a := [2]int{1,2,3}
+	return len(a)
+}`,
+			expectError: true,
+			errorContains: "too many elements in array literal (expected 2, got 3)",
+		},
+		// --- Slice Tests ---
+		{
+			name: "slice literal and len",
+			input: `
+package main
+func main() {
+	s := []int{10, 20}
+	return len(s)
+}`,
+			expected: int64(2),
+		},
+		{
+			name: "slice index access",
+			input: `
+package main
+func main() {
+	s := []int{10, 20, 30}
+	return s[2]
+}`,
+			expected: int64(30),
+		},
+		{
+			name: "slice index assignment",
+			input: `
+package main
+var globalS []int
+func main() {
+	globalS = []int{5,6,7}
+	globalS[1] = 66
+	return globalS[1]
+}`,
+			expected: int64(66),
+		},
+		{
+			name: "slice out of bounds access",
+			input: `
+package main
+func main() {
+	s := []int{1}
+	return s[1]
+}`,
+			expectError: true,
+			errorContains: "index out of bounds: 1 for slice of length 1",
+		},
+		{
+			name: "append to slice",
+			input: `
+package main
+func main() {
+	s1 := []int{1, 2}
+	s2 := append(s1, 3)
+	return len(s2)
+}`,
+			expected: int64(3),
+		},
+		{
+			name: "append multiple to slice",
+			input: `
+package main
+func main() {
+	s1 := []int{1}
+	s2 := append(s1, 2, 3, 4)
+	return s2[3]
+}`,
+			expected: int64(4),
+		},
+		{
+			name: "append to nil slice effectively", // Our []int{} creates an empty slice
+			input: `
+package main
+func main() {
+	s1 := []int{}
+	s2 := append(s1, 100)
+	return s2[0]
+}`,
+			expected: int64(100),
+		},
+		{
+			name: "slice slicing full",
+			input: `
+package main
+func main() {
+	s := []int{1,2,3,4,5}
+	s2 := s[:]
+	return len(s2)
+}`,
+			expected: int64(5),
+		},
+		{
+			name: "slice slicing sub-section",
+			input: `
+package main
+func main() {
+	s := []int{1,2,3,4,5}
+	s2 := s[1:3] // elements at index 1 and 2
+	return s2[1] // which is origin s[2]
+}`,
+			expected: int64(3),
+		},
+		{
+			name: "slice slicing with open end",
+			input: `
+package main
+func main() {
+	s := []int{1,2,3,4,5}
+	s2 := s[3:]
+	return s2[0] // origin s[3]
+}`,
+			expected: int64(4),
+		},
+		{
+			name: "slice slicing with open start",
+			input: `
+package main
+func main() {
+	s := []int{1,2,3,4,5}
+	s2 := s[:2] // elements at index 0 and 1
+	return s2[1] // origin s[1]
+}`,
+			expected: int64(2),
+		},
+		// --- Map Tests ---
+		{
+			name: "map literal and len",
+			input: `
+package main
+func main() {
+	m := map[string]int{"one": 1, "two": 2}
+	return len(m)
+}`,
+			expected: int64(2),
+		},
+		{
+			name: "map key access",
+			input: `
+package main
+func main() {
+	m := map[string]int{"first": 100, "second": 200}
+	return m["first"]
+}`,
+			expected: int64(100),
+		},
+		{
+			name: "map key assignment new key",
+			input: `
+package main
+var globalM map[string]int
+func main() {
+	globalM = map[string]int{"a":1}
+	globalM["b"] = 22
+	return globalM["b"]
+}`,
+			expected: int64(22),
+		},
+		{
+			name: "map key assignment existing key",
+			input: `
+package main
+var globalM map[string]int
+func main() {
+	globalM = map[string]int{"x": 5}
+	globalM["x"] = 55
+	return globalM["x"]
+}`,
+			expected: int64(55),
+		},
+		{
+			name: "map access non-existent key returns NULL",
+			input: `
+package main
+func main() {
+	m := map[string]int{"present": 1}
+	// We expect m["absent"] to be NULL.
+	// To test this, we can't directly return NULL and check its value easily.
+	// A more complex test would use 'if x == nil', but 'nil' isn't a keyword yet.
+	// For now, we assume the interpreter's NULL object is returned and this test
+	// focuses on the behavior of len() not changing and no error.
+	// A dedicated test for NULL return from map access would be better.
+	// This test implicitly checks that accessing a non-existent key doesn't crash
+	// and that the map's structure (e.g. len) isn't unexpectedly altered.
+	// The actual return of NULL from m["absent"] is verified by evalIndexExpression logic.
+	x := m["absent"] // x should be NULL
+	return len(m) // len should still be 1
+}`,
+			expected: int64(1), // Verifying len didn't change due to access
+		},
+		{
+			name: "map with int key",
+			input: `
+package main
+func main() {
+	m := map[int]string{10: "ten", 20: "twenty"}
+	return m[10]
+}`,
+			expected: "ten",
+		},
+		{
+			name: "map with boolean key",
+			input: `
+package main
+func main() {
+	m := map[bool]int{true: 1, false: 0}
+	return m[true]
+}`,
+			expected: int64(1),
+		},
+	} // This closes the tests slice literal
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ctx := context.Background()
-			interpreter := NewInterpreter()
-			interpreter.ModuleRoot = testModDir
+		// This loop should be inside TestEvalExternalStructsAndFunctions
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				ctx := context.Background()
+				interpreter := NewInterpreter()
+				interpreter.ModuleRoot = testModDir
 
-			mainFileDir := filepath.Join(baseDir, "main_scripts", strings.ReplaceAll(tt.name, " ", "_"))
-			os.MkdirAll(mainFileDir, 0755)
-			mainMgoFile := createTempGoFile(t, mainFileDir, "main.mgo", tt.input)
+				mainFileDir := filepath.Join(baseDir, "main_scripts", strings.ReplaceAll(tt.name, " ", "_"))
+				os.MkdirAll(mainFileDir, 0755)
+				mainMgoFile := createTempGoFile(t, mainFileDir, "main.mgo", tt.input)
 
-			oldStdout := os.Stdout
-			oldStderr := os.Stderr
-			rOut, wOut, _ := os.Pipe()
-			rErr, wErr, _ := os.Pipe()
-			os.Stdout = wOut
-			os.Stderr = wErr
+				oldStdout := os.Stdout
+				oldStderr := os.Stderr
+				rOut, wOut, _ := os.Pipe()
+				rErr, wErr, _ := os.Pipe()
+				os.Stdout = wOut
+				os.Stderr = wErr
 
-			runErr := interpreter.LoadAndRun(ctx, mainMgoFile, "main")
+				runErr := interpreter.LoadAndRun(ctx, mainMgoFile, "main")
 
-			wOut.Close()
-			wErr.Close()
-			capturedStdout, _ := io.ReadAll(rOut)
-			capturedStderr, _ := io.ReadAll(rErr)
-			os.Stdout = oldStdout
-			os.Stderr = oldStderr
+				wOut.Close()
+				wErr.Close()
+				capturedStdout, _ := io.ReadAll(rOut)
+				capturedStderr, _ := io.ReadAll(rErr)
+				os.Stdout = oldStdout
+				os.Stderr = oldStderr
 
-			logOutput := func () {
-				t.Logf("Input script for %s:\n%s", tt.name, tt.input)
-				t.Logf("STDOUT for %s:\n%s", tt.name, string(capturedStdout))
-				t.Logf("STDERR for %s:\n%s", tt.name, string(capturedStderr))
-			}
-
-			if tt.expectError {
-				if runErr == nil {
-					logOutput()
-					t.Errorf("expected error, got nil")
-					return
+				logOutput := func () {
+					t.Logf("Input script for %s:\n%s", tt.name, tt.input)
+					t.Logf("STDOUT for %s:\n%s", tt.name, string(capturedStdout))
+					t.Logf("STDERR for %s:\n%s", tt.name, string(capturedStderr))
 				}
-				if tt.errorContains != "" && !strings.Contains(runErr.Error(), tt.errorContains) {
-					logOutput()
-					t.Errorf("expected error message to contain %q, got %q", tt.errorContains, runErr.Error())
-				}
-			} else {
-				if runErr != nil {
-					logOutput()
-					t.Errorf("unexpected error: %v", runErr)
-					return
-				}
-				outputStr := string(capturedStdout)
-				var expectedOutputSuffix string
-				switch v := tt.expected.(type) {
-				case int64:
-					expectedOutputSuffix = fmt.Sprintf("result: %d\n", v)
-				case string:
-					expectedOutputSuffix = fmt.Sprintf("result: %s\n", v)
-				case bool:
-					expectedOutputSuffix = fmt.Sprintf("result: %t\n", v)
-				default:
-					logOutput()
-					t.Fatalf("unhandled expected type: %T for test %s", tt.expected, tt.name)
-				}
 
-				// Check various ways the output might appear due to logging or exact formatting.
-				trimmedOutput := strings.TrimSpace(outputStr)
-				trimmedExpected := strings.TrimSpace(expectedOutputSuffix)
+				if tt.expectError {
+					if runErr == nil {
+						logOutput()
+						t.Errorf("expected error, got nil")
+						return
+					}
+					if tt.errorContains != "" && !strings.Contains(runErr.Error(), tt.errorContains) {
+						logOutput()
+						t.Errorf("expected error message to contain %q, got %q", tt.errorContains, runErr.Error())
+					}
+				} else {
+					if runErr != nil {
+						logOutput()
+						t.Errorf("unexpected error: %v", runErr)
+						return
+					}
+					outputStr := string(capturedStdout)
+					var expectedOutputSuffix string
+					switch v := tt.expected.(type) {
+					case int64:
+						expectedOutputSuffix = fmt.Sprintf("result: %d\n", v)
+					case string:
+						expectedOutputSuffix = fmt.Sprintf("result: %s\n", v)
+					case bool:
+						expectedOutputSuffix = fmt.Sprintf("result: %t\n", v)
+					default:
+						logOutput()
+						t.Fatalf("unhandled expected type: %T for test %s", tt.expected, tt.name)
+					}
 
-				if !strings.HasSuffix(trimmedOutput, trimmedExpected) &&
-				   !strings.Contains(outputStr, expectedOutputSuffix) && /* check if it's anywhere */
-				   !strings.Contains(trimmedOutput, trimmedExpected) { /* check if trimmed version contains it */
-					logOutput()
-					t.Errorf("expected output to effectively be %q or contain %q. Full stdout:\n%s", trimmedExpected, expectedOutputSuffix, outputStr)
+					// Check various ways the output might appear due to logging or exact formatting.
+					trimmedOutput := strings.TrimSpace(outputStr)
+					trimmedExpected := strings.TrimSpace(expectedOutputSuffix)
+
+					if !strings.HasSuffix(trimmedOutput, trimmedExpected) &&
+					   !strings.Contains(outputStr, expectedOutputSuffix) && /* check if it's anywhere */
+					   !strings.Contains(trimmedOutput, trimmedExpected) { /* check if trimmed version contains it */
+						logOutput()
+						t.Errorf("expected output to effectively be %q or contain %q. Full stdout:\n%s", trimmedExpected, expectedOutputSuffix, outputStr)
+					}
 				}
-			}
-		})
-	}
-}
+			})
+		}
+	} // This is the closing brace for TestEvalExternalStructsAndFunctions

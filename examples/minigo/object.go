@@ -25,6 +25,9 @@ const (
 	CONTINUE_OBJ         ObjectType = "CONTINUE"         // For continue statements
 	STRUCT_DEF_OBJ       ObjectType = "STRUCT_DEF"       // For struct definitions
 	STRUCT_INSTANCE_OBJ  ObjectType = "STRUCT_INSTANCE"  // For struct instances
+	ARRAY_OBJ            ObjectType = "ARRAY"
+	SLICE_OBJ            ObjectType = "SLICE"
+	MAP_OBJ              ObjectType = "MAP"
 )
 
 // Object is the interface that all value types in our interpreter will implement.
@@ -277,6 +280,119 @@ func (sd *StructDefinition) Inspect() string {
 
 	return fmt.Sprintf("struct %s { %s }", sd.Name, strings.Join(parts, "; "))
 }
+
+// --- Array Object ---
+type Array struct {
+	Elements []Object
+}
+
+func (a *Array) Type() ObjectType { return ARRAY_OBJ }
+func (a *Array) Inspect() string {
+	var out strings.Builder
+	elements := []string{}
+	for _, e := range a.Elements {
+		elements = append(elements, e.Inspect())
+	}
+	out.WriteString("[")
+	out.WriteString(strings.Join(elements, ", "))
+	out.WriteString("]")
+	return out.String()
+}
+
+// --- Slice Object ---
+type Slice struct {
+	Elements []Object
+	// TODO: Potentially add capacity and a pointer to an underlying array for more Go-like slice semantics
+}
+
+func (s *Slice) Type() ObjectType { return SLICE_OBJ }
+func (s *Slice) Inspect() string {
+	var out strings.Builder
+	elements := []string{}
+	for _, e := range s.Elements {
+		elements = append(elements, e.Inspect())
+	}
+	out.WriteString("[]") // Slices often visually distinct from arrays in inspect
+	out.WriteString(strings.Join(elements, ", "))
+	return out.String() // Note: Go's typical slice inspect shows pointer and len/cap, this is simplified
+}
+
+
+// --- Hashable Interface & HashKey ---
+
+// Hashable is an interface for objects that can be used as map keys.
+type Hashable interface {
+	// HashKey returns a HashKey representation of the object.
+	// This key is used for equality checks and as a map key.
+	HashKey() (HashKey, error)
+}
+
+// HashKey uniquely identifies an object that can be a map key.
+// It includes the type and a hash value (or a canonical representation for simple types).
+type HashKey struct {
+	Type  ObjectType
+	Value uint64 // For numeric types or actual hash values
+	StrValue string // For string types, to avoid converting back and forth if not hashing
+}
+
+// Implement Hashable for existing suitable types (Integer, String, Boolean)
+
+func (i *Integer) HashKey() (HashKey, error) {
+	return HashKey{Type: i.Type(), Value: uint64(i.Value)}, nil
+}
+
+func (s *String) HashKey() (HashKey, error) {
+	// For strings, we could use a proper hash function if performance becomes an issue
+	// or if map keys could be very long. For simplicity, we can use the string itself
+	// if map keys are directly `map[string]MapPair`. If `map[HashKey]MapPair`,
+	// then we need a way to ensure HashKey struct itself is comparable for map keys.
+	// Using StrValue directly in HashKey for strings.
+	return HashKey{Type: s.Type(), StrValue: s.Value}, nil
+}
+
+func (b *Boolean) HashKey() (HashKey, error) {
+	var value uint64
+	if b.Value {
+		value = 1
+	} else {
+		value = 0
+	}
+	return HashKey{Type: b.Type(), Value: value}, nil
+}
+
+// --- Map Object ---
+
+// MapPair represents a key-value pair within a Map.
+type MapPair struct {
+	Key   Object
+	Value Object
+}
+
+// Map represents a hash map object.
+// The keys in Go's map must be comparable. For our interpreter, they must be Hashable.
+// The `Pairs` map uses the `HashKey` struct as its key type. This means `HashKey` itself
+// must be usable as a map key in Go (i.e., it's comparable). Structs are comparable if all their fields are.
+// ObjectType (string) and uint64 are comparable.
+type Map struct {
+	Pairs map[HashKey]MapPair
+}
+
+func (m *Map) Type() ObjectType { return MAP_OBJ }
+func (m *Map) Inspect() string {
+	var out strings.Builder
+	pairs := []string{}
+	// Iterate over map pairs. Order is not guaranteed.
+	// For consistent inspection, sort keys if possible, though HashKey sorting is non-trivial.
+	// For now, accept unordered inspection.
+	for _, pair := range m.Pairs {
+		pairs = append(pairs, fmt.Sprintf("%s: %s", pair.Key.Inspect(), pair.Value.Inspect()))
+	}
+	out.WriteString("{")
+	out.WriteString(strings.Join(pairs, ", "))
+	out.WriteString("}")
+	return out.String()
+}
+
 
 // --- StructInstance Object ---
 // StructInstance represents an instance of a struct.

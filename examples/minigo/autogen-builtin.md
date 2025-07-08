@@ -129,20 +129,30 @@ Run `go generate ./...` to execute code generation.
 
 ## Implementation Challenges and Considerations (Based on strings package generation simulation)
 
-Simulating the generation of builtin functions for the `strings` package using the proposed annotation method revealed several challenges:
+Simulating the generation of builtin functions for the `strings` package using the proposed annotation method revealed areas for consideration:
 
-### 1. Representing Functions with Complex Argument Structures (e.g., `strings.Join`)
+### 1. Handling of `strings.Join` (Post-Refactor)
 
-The current `strings.Join` in MiniGo has a special variadic signature (elements followed by a separator) which historically arose when MiniGo's support for array/slice types in builtin function signatures was less direct. While MiniGo now has `object.Array` and `object.Slice` types (see `object.go`), this existing signature for `strings.Join` means that representing it with annotations for direct `target_go_func` mapping is complex. This poses the following problems:
+Previously, `strings.Join` in MiniGo had a special variadic signature (elements followed by a separator). This signature historically arose when MiniGo's support for array/slice types in builtin function signatures was less direct. This posed challenges for annotation (P1) and led to discrepancies between stub and actual logic (P2) if using `wrapper_func`.
 
-*   **P1: Annotation Syntax for Special Argument Parsing:**
-    *   Custom syntax like `//minigo:arg index=-1 type=STRING` or `//minigo:arg index_range=0..-2 type=STRING` would complicate the annotation parser.
-    *   More declarative methods, such as `//minigo:arg_pattern rule=last_is_separator pattern_var=separator_arg`, or defining argument groups (`//minigo:arg_group name=elements type=STRING variadic=true up_to=-2`), might require more advanced annotation features.
-    *   Alternatively, for such highly specific cases, one might assume the use of `wrapper_func` and only broadly define argument types and counts in annotations (e.g., just `//minigo:args variadic=true`). Detailed argument checking would then be the responsibility of the `wrapper_func`.
+**However, `strings.Join` has since been refactored to accept an `object.Slice` of `object.String`s as its first argument and an `object.String` as its second argument (the separator).** This aligns its signature much more closely with the standard Go `strings.Join(slice []string, sep string)`.
 
-*   **P2: Discrepancy Between Stub Function Signature and Actual Logic:**
-    *   When using `wrapper_func`, the Go stub function's signature (e.g., `func joinStub(elements ...string) string`) can significantly differ from MiniGo's actual argument structure (e.g., `obj1, obj2, ..., separatorObj`).
-    *   While acceptable if stub functions are primarily for existence checks and basic type hints, it remains problematic that the actual behavior might not be clear from annotations and stub functions alone. The importance of documentation increases.
+This refactoring significantly simplifies its definition for auto-generation:
+
+*   **Simplified Annotations:** The P1 challenge (Annotation Syntax for Special Argument Parsing) is no longer a major concern for `strings.Join`. It now has a standard two-argument structure. An annotation could look like:
+    ```go
+    //minigo:builtin name="strings.Join" wrapper_func="main.evalStringsJoin" // evalStringsJoin is the refactored version
+    //minigo:arg index=0 name=elements type=SLICE // Ideally SLICE<STRING> if supported by auto-gen
+    //minigo:arg index=1 name=sep type=STRING
+    //minigo:return type=STRING
+    func stringsJoinStub(elements []string, sep string) string { return "" }
+    ```
+*   **Improved Stub Accuracy:** The P2 challenge (Discrepancy Between Stub Function Signature and Actual Logic) is greatly reduced. The stub function `func stringsJoinStub(elements []string, sep string) string` is now a good representation of the function's parameters.
+*   **Potential for `target_go_func`:** While the example above uses `wrapper_func` (pointing to the Go function `main.evalStringsJoin` that handles `object.Slice` to `[]string` conversion), the refactored signature makes `strings.Join` a better candidate for `target_go_func` if:
+    *   The auto-generation tool becomes capable of handling the conversion from `object.Slice` (with `type=SLICE<STRING>`) to a Go `[]string` automatically.
+    *   Or, a simple Go helper function `func goStringsJoin(elems []string, sep string) string` is created, and `target_go_func` points to this, with the auto-generator handling `object.Slice` -> `[]string` and `object.String` -> `string` conversions.
+
+This evolution of `strings.Join` demonstrates a positive path for aligning builtins with auto-generation ideals. The main remaining challenge for collection types like slices in `target_go_func` is the auto-generation tool's capability to infer or be explicitly told about the element types within the collection (e.g., `SLICE<STRING>`) and generate the necessary conversion and type-checking logic for these elements.
 
 ### 2. `wrapper_func` Dependencies and Scope
 

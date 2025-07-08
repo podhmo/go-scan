@@ -4,6 +4,7 @@ import (
 	"context" // Added for go-scan
 	"fmt"
 	"go/ast"
+
 	// "go/parser" // No longer needed
 	// "go/token" // No longer needed as direct usage is removed
 	"os"
@@ -228,9 +229,9 @@ func ParseDirectory(dirPath string) (*model.ParsedInfo, error) {
 						Name:            stypeInfo.Name, // Name of the alias
 						Type:            modelType,      // TypeInfo of the alias itself
 						IsAlias:         true,
-						UnderlyingAlias: baseStructInfo.Type,   // Points to TypeInfo of ActualStruct
+						UnderlyingAlias: baseStructInfo.Type, // Points to TypeInfo of ActualStruct
 						// Node:            baseStructInfo.Node, // model.StructInfo no longer has Node
-						Fields:          baseStructInfo.Fields, // Inherit fields
+						Fields: baseStructInfo.Fields, // Inherit fields
 					}
 					if _, exists := parsedInfo.Structs[stypeInfo.Name]; !exists {
 						parsedInfo.Structs[stypeInfo.Name] = aliasStructInfo
@@ -325,14 +326,14 @@ func convertScannerTypeToModelType(
 		// Effectively, we are describing the type that stype (*T) points to (T).
 		elemModelType := &model.TypeInfo{
 			// Name, FullName, PkgName, PkgPath for T will be derived from stype (which represents *T but holds T's name)
-			IsBasic:     stype.IsBuiltin, // If *int, Elem is int (basic)
+			IsBasic:     stype.IsBuiltin,         // If *int, Elem is int (basic)
 			IsInterface: (stype.Name == "error"), // If *error, Elem is error (interface)
 			// Other IsX flags (IsPointer, IsSlice, IsMap) are false for the base element T
 		}
 
 		if elemModelType.IsBasic {
 			elemModelType.Kind = model.KindBasic
-			elemModelType.Name = stype.Name // e.g., "string" for *string
+			elemModelType.Name = stype.Name                                                      // e.g., "string" for *string
 			if stype.PkgName != "" && strings.HasPrefix(elemModelType.Name, stype.PkgName+".") { // e.g. *pkg.MyBasicAlias
 				elemModelType.Name = strings.TrimPrefix(elemModelType.Name, stype.PkgName+".")
 			}
@@ -401,14 +402,18 @@ func convertScannerTypeToModelType(
 			if stype.MapKey != nil {
 				name := stype.MapKey.Name
 				simpleName := name
-				if stype.MapKey.PkgName != "" && strings.HasPrefix(name, stype.MapKey.PkgName+".") { simpleName = strings.TrimPrefix(name, stype.MapKey.PkgName+".") }
+				if stype.MapKey.PkgName != "" && strings.HasPrefix(name, stype.MapKey.PkgName+".") {
+					simpleName = strings.TrimPrefix(name, stype.MapKey.PkgName+".")
+				}
 				keyName = simpleName
 			}
 			valName := "any"
 			if stype.Elem != nil {
 				name := stype.Elem.Name
 				simpleName := name
-				if stype.Elem.PkgName != "" && strings.HasPrefix(name, stype.Elem.PkgName+".") { simpleName = strings.TrimPrefix(name, stype.Elem.PkgName+".") }
+				if stype.Elem.PkgName != "" && strings.HasPrefix(name, stype.Elem.PkgName+".") {
+					simpleName = strings.TrimPrefix(name, stype.Elem.PkgName+".")
+				}
 				valName = simpleName
 			}
 			mtype.Name = fmt.Sprintf("map[%s]%s", keyName, valName)

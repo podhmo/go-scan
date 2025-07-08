@@ -188,7 +188,6 @@ func pointerValue(ptr interface{}) string {
 	return fmt.Sprintf("%v", ptr) // Should not happen if used for pointers
 }
 
-
 func TestConvertNestedStructs(t *testing.T) {
 	tests := []struct {
 		name        string

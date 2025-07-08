@@ -84,17 +84,31 @@ func TestGenerateHelperFunction_Pointer_T_to_StarT(t *testing.T) {
 	srcStructInfo.Fields = []model.FieldInfo{srcField}
 	dstStructInfo.Fields = []model.FieldInfo{dstField}
 
-	err := generateHelperFunction(&buf, "srcToDst", srcStructType, dstStructType, parsedInfo, imports)
+	// Initialize worklist and processedPairs for the call
+	worklist := new([]model.ConversionPair)
+	processedPairs := make(map[string]bool)
+
+	err := generateHelperFunction(&buf, "srcToDst", srcStructType, dstStructType, parsedInfo, imports, worklist, processedPairs)
 	if err != nil {
 		t.Fatalf("generateHelperFunction failed: %v", err)
 	}
 
 	generatedCode := buf.String()
+	// In this specific test, MyString maps to MyStringPtr, so no unmapped fields in Dst.
+	// The docstring for unmapped fields should NOT be present.
+	// However, the generic docstring "srcToDst converts Src to Dst" might be added if we decide to always add a base docstring.
+	// Based on current implementation, if unmappedDstFields is empty, no specific docstring is added.
+	// Let's assume the general descriptive docstring is now part of the function if there are unmapped fields.
+	// If no unmapped fields, the specific "Fields in Dst not populated..." won't appear.
+	// The test should verify its absence or presence accordingly.
+	// For this test, MyString -> MyStringPtr, Dst has only MyStringPtr, so no unmapped fields.
+	// The function signature itself acts as the primary "doc".
 	expectedFullFunc := fmt.Sprintf(`func srcToDst(ec *errorCollector, src %s) %s {
 	dst := %s{}
 	if ec.MaxErrorsReached() { return dst }
 
-	// Mapping field %s.MyString to %s.MyStringPtr
+	// Mapping field %s.MyString (%s) to %s.MyStringPtr (%s)
+	// Src: Ptr=false, ElemFull=string | Dst: Ptr=true, ElemFull=string
 	ec.Enter("MyStringPtr")
 	{
 		srcVal := src.MyString
@@ -106,7 +120,7 @@ func TestGenerateHelperFunction_Pointer_T_to_StarT(t *testing.T) {
 	return dst
 }
 
-`, typeNameInSource(srcStructType, parsedInfo.PackagePath), typeNameInSource(dstStructType, parsedInfo.PackagePath), typeNameInSource(dstStructType, parsedInfo.PackagePath), srcStructType.Name, dstStructType.Name)
+`, typeNameInSource(srcStructType, parsedInfo.PackagePath, imports), typeNameInSource(dstStructType, parsedInfo.PackagePath, imports), typeNameInSource(dstStructType, parsedInfo.PackagePath, imports), srcStructType.Name, srcTypeInfo.FullName, dstStructType.Name, dstTypeInfo.FullName)
 
 	formattedGenerated, errGen := formatCode(generatedCode)
 	if errGen != nil {
@@ -172,7 +186,9 @@ func TestGenerateHelperFunction_Pointer_StarT_to_T_Default(t *testing.T) {
 	srcStructInfo.Fields = []model.FieldInfo{srcField}
 	dstStructInfo.Fields = []model.FieldInfo{dstField}
 
-	err := generateHelperFunction(&buf, "srcToDst", srcStructType, dstStructType, parsedInfo, imports)
+	worklist := new([]model.ConversionPair)
+	processedPairs := make(map[string]bool)
+	err := generateHelperFunction(&buf, "srcToDst", srcStructType, dstStructType, parsedInfo, imports, worklist, processedPairs)
 	if err != nil {
 		t.Fatalf("generateHelperFunction failed: %v", err)
 	}
@@ -182,7 +198,8 @@ func TestGenerateHelperFunction_Pointer_StarT_to_T_Default(t *testing.T) {
 	dst := %s{}
 	if ec.MaxErrorsReached() { return dst }
 
-	// Mapping field %s.MyStringPtr to %s.MyString
+	// Mapping field %s.MyStringPtr (%s) to %s.MyString (%s)
+	// Src: Ptr=true, ElemFull=string | Dst: Ptr=false, ElemFull=string
 	ec.Enter("MyString")
 	if src.MyStringPtr != nil {
 		dst.MyString = *src.MyStringPtr
@@ -193,7 +210,7 @@ func TestGenerateHelperFunction_Pointer_StarT_to_T_Default(t *testing.T) {
 	return dst
 }
 
-`, typeNameInSource(srcStructType, parsedInfo.PackagePath), typeNameInSource(dstStructType, parsedInfo.PackagePath), typeNameInSource(dstStructType, parsedInfo.PackagePath), srcStructType.Name, dstStructType.Name)
+`, typeNameInSource(srcStructType, parsedInfo.PackagePath, imports), typeNameInSource(dstStructType, parsedInfo.PackagePath, imports), typeNameInSource(dstStructType, parsedInfo.PackagePath, imports), srcStructType.Name, srcTypeInfo.FullName, dstStructType.Name, dstTypeInfo.FullName)
 
 	formattedGenerated, errGen := formatCode(generatedCode)
 	if errGen != nil {
@@ -259,7 +276,9 @@ func TestGenerateHelperFunction_Pointer_StarT_to_T_Required_Nil(t *testing.T) {
 	srcStructInfo.Fields = []model.FieldInfo{srcField}
 	dstStructInfo.Fields = []model.FieldInfo{dstField}
 
-	err := generateHelperFunction(&buf, "srcToDst", srcStructType, dstStructType, parsedInfo, imports)
+	worklist := new([]model.ConversionPair)
+	processedPairs := make(map[string]bool)
+	err := generateHelperFunction(&buf, "srcToDst", srcStructType, dstStructType, parsedInfo, imports, worklist, processedPairs)
 	if err != nil {
 		t.Fatalf("generateHelperFunction failed: %v", err)
 	}
@@ -270,7 +289,8 @@ func TestGenerateHelperFunction_Pointer_StarT_to_T_Required_Nil(t *testing.T) {
 	dst := %s{}
 	if ec.MaxErrorsReached() { return dst }
 
-	// Mapping field %s.MyRequiredStringPtr to %s.MyRequiredString
+	// Mapping field %s.MyRequiredStringPtr (%s) to %s.MyRequiredString (%s)
+	// Src: Ptr=true, ElemFull=string | Dst: Ptr=false, ElemFull=string
 	ec.Enter("MyRequiredString")
 	if src.MyRequiredStringPtr == nil {
 		ec.Addf("field '%s' is required but source field %s is nil")
@@ -283,10 +303,10 @@ func TestGenerateHelperFunction_Pointer_StarT_to_T_Required_Nil(t *testing.T) {
 	return dst
 }
 
-`, typeNameInSource(srcStructType, parsedInfo.PackagePath),
-		typeNameInSource(dstStructType, parsedInfo.PackagePath),
-		typeNameInSource(dstStructType, parsedInfo.PackagePath),
-		srcStructType.Name, dstStructType.Name,
+`, typeNameInSource(srcStructType, parsedInfo.PackagePath, imports),
+		typeNameInSource(dstStructType, parsedInfo.PackagePath, imports),
+		typeNameInSource(dstStructType, parsedInfo.PackagePath, imports),
+		srcStructType.Name, srcTypeInfo.FullName, dstStructType.Name, dstTypeInfo.FullName,
 		dstField.Name, srcField.Name) // For the ec.Addf parameters
 
 	formattedGenerated, errGen := formatCode(generatedCode)
@@ -353,7 +373,9 @@ func TestGenerateHelperFunction_Pointer_StarT_to_T_Required_NonNil(t *testing.T)
 	srcStructInfo.Fields = []model.FieldInfo{srcField}
 	dstStructInfo.Fields = []model.FieldInfo{dstField}
 
-	err := generateHelperFunction(&buf, "srcToDst", srcStructType, dstStructType, parsedInfo, imports)
+	worklist := new([]model.ConversionPair)
+	processedPairs := make(map[string]bool)
+	err := generateHelperFunction(&buf, "srcToDst", srcStructType, dstStructType, parsedInfo, imports, worklist, processedPairs)
 	if err != nil {
 		t.Fatalf("generateHelperFunction failed: %v", err)
 	}
@@ -364,7 +386,8 @@ func TestGenerateHelperFunction_Pointer_StarT_to_T_Required_NonNil(t *testing.T)
 	dst := %s{}
 	if ec.MaxErrorsReached() { return dst }
 
-	// Mapping field %s.MyRequiredStringPtrNN to %s.MyRequiredStringNN
+	// Mapping field %s.MyRequiredStringPtrNN (%s) to %s.MyRequiredStringNN (%s)
+	// Src: Ptr=true, ElemFull=string | Dst: Ptr=false, ElemFull=string
 	ec.Enter("MyRequiredStringNN")
 	if src.MyRequiredStringPtrNN == nil {
 		ec.Addf("field '%s' is required but source field %s is nil")
@@ -377,10 +400,10 @@ func TestGenerateHelperFunction_Pointer_StarT_to_T_Required_NonNil(t *testing.T)
 	return dst
 }
 
-`, getTypeNameInSourceForCodeGen(srcStructType, parsedInfo.PackagePath),
-		getTypeNameInSourceForCodeGen(dstStructType, parsedInfo.PackagePath),
-		getTypeNameInSourceForCodeGen(dstStructType, parsedInfo.PackagePath),
-		srcStructType.Name, dstStructType.Name,
+`, typeNameInSource(srcStructType, parsedInfo.PackagePath, imports),
+		typeNameInSource(dstStructType, parsedInfo.PackagePath, imports),
+		typeNameInSource(dstStructType, parsedInfo.PackagePath, imports),
+		srcStructType.Name, srcTypeInfo.FullName, dstStructType.Name, dstTypeInfo.FullName,
 		dstField.Name, srcField.Name) // For the ec.Addf parameters
 
 	formattedGenerated, errGen := formatCode(generatedCode)
@@ -447,7 +470,9 @@ func TestGenerateHelperFunction_Pointer_StarT_to_StarT(t *testing.T) {
 	srcStructInfo.Fields = []model.FieldInfo{srcField}
 	dstStructInfo.Fields = []model.FieldInfo{dstField}
 
-	err := generateHelperFunction(&buf, "srcToDst", srcStructType, dstStructType, parsedInfo, imports)
+	worklist := new([]model.ConversionPair)
+	processedPairs := make(map[string]bool)
+	err := generateHelperFunction(&buf, "srcToDst", srcStructType, dstStructType, parsedInfo, imports, worklist, processedPairs)
 	if err != nil {
 		t.Fatalf("generateHelperFunction failed: %v", err)
 	}
@@ -457,7 +482,8 @@ func TestGenerateHelperFunction_Pointer_StarT_to_StarT(t *testing.T) {
 	dst := %s{}
 	if ec.MaxErrorsReached() { return dst }
 
-	// Mapping field %s.MyPtrSrc to %s.MyPtrDst
+	// Mapping field %s.MyPtrSrc (%s) to %s.MyPtrDst (%s)
+	// Src: Ptr=true, ElemFull=string | Dst: Ptr=true, ElemFull=string
 	ec.Enter("MyPtrDst")
 	dst.MyPtrDst = src.MyPtrSrc
 	ec.Leave()
@@ -466,10 +492,10 @@ func TestGenerateHelperFunction_Pointer_StarT_to_StarT(t *testing.T) {
 	return dst
 }
 
-`, getTypeNameInSourceForCodeGen(srcStructType, parsedInfo.PackagePath),
-		getTypeNameInSourceForCodeGen(dstStructType, parsedInfo.PackagePath),
-		getTypeNameInSourceForCodeGen(dstStructType, parsedInfo.PackagePath),
-		srcStructType.Name, dstStructType.Name)
+`, typeNameInSource(srcStructType, parsedInfo.PackagePath, imports),
+		typeNameInSource(dstStructType, parsedInfo.PackagePath, imports),
+		typeNameInSource(dstStructType, parsedInfo.PackagePath, imports),
+		srcStructType.Name, srcTypeInfo.FullName, dstStructType.Name, dstTypeInfo.FullName)
 
 	formattedGenerated, errGen := formatCode(generatedCode)
 	if errGen != nil {
@@ -512,7 +538,9 @@ func TestGenerateHelperFunction_Using_FieldTag(t *testing.T) {
 
 	var buf bytes.Buffer
 	imports := make(map[string]string)
-	err := generateHelperFunction(&buf, "srcToDst", srcStructType, dstStructType, parsedInfo, imports)
+	worklist := new([]model.ConversionPair)
+	processedPairs := make(map[string]bool)
+	err := generateHelperFunction(&buf, "srcToDst", srcStructType, dstStructType, parsedInfo, imports, worklist, processedPairs)
 	if err != nil {
 		t.Fatalf("generateHelperFunction failed for field tag using: %v", err)
 	}
@@ -522,7 +550,8 @@ func TestGenerateHelperFunction_Using_FieldTag(t *testing.T) {
 	dst := %s{}
 	if ec.MaxErrorsReached() { return dst }
 
-	// Mapping field %s.SrcInt to %s.DstString
+	// Mapping field %s.SrcInt (%s) to %s.DstString (%s)
+	// Src: Ptr=false, ElemFull=nil | Dst: Ptr=false, ElemFull=nil
 	ec.Enter("DstString")
 	// Applying field tag: using IntToStringConverter
 	dst.DstString = IntToStringConverter(ec, src.SrcInt)
@@ -531,7 +560,7 @@ func TestGenerateHelperFunction_Using_FieldTag(t *testing.T) {
 
 	return dst
 }
-`, getTypeNameInSourceForCodeGen(srcStructType, parsedInfo.PackagePath), getTypeNameInSourceForCodeGen(dstStructType, parsedInfo.PackagePath), getTypeNameInSourceForCodeGen(dstStructType, parsedInfo.PackagePath), srcStructType.Name, dstStructType.Name)
+`, typeNameInSource(srcStructType, parsedInfo.PackagePath, imports), typeNameInSource(dstStructType, parsedInfo.PackagePath, imports), typeNameInSource(dstStructType, parsedInfo.PackagePath, imports), srcStructType.Name, srcTypeInfo.FullName, dstStructType.Name, dstTypeInfo.FullName)
 
 	formattedGenerated, _ := formatCode(generatedCode)
 	formattedExpected, _ := formatCode(expectedFullFunc)
@@ -575,7 +604,9 @@ func TestGenerateHelperFunction_Using_GlobalRule(t *testing.T) {
 
 	var buf bytes.Buffer
 	imports := make(map[string]string)
-	err := generateHelperFunction(&buf, "srcToDst", srcStructType, dstStructType, parsedInfo, imports)
+	worklist := new([]model.ConversionPair)
+	processedPairs := make(map[string]bool)
+	err := generateHelperFunction(&buf, "srcToDst", srcStructType, dstStructType, parsedInfo, imports, worklist, processedPairs)
 	if err != nil {
 		t.Fatalf("generateHelperFunction failed for global rule using: %v", err)
 	}
@@ -589,7 +620,8 @@ func TestGenerateHelperFunction_Using_GlobalRule(t *testing.T) {
 	dst := %s{}
 	if ec.MaxErrorsReached() { return dst }
 
-	// Mapping field %s.SrcFloat to %s.DstDecimal
+	// Mapping field %s.SrcFloat (%s) to %s.DstDecimal (%s)
+	// Src: Ptr=false, ElemFull=nil | Dst: Ptr=false, ElemFull=nil
 	ec.Enter("DstDecimal")
 	// Applying global rule: float64 -> custompkg.Decimal using custompkg.FloatToDecimalConverter
 	dst.DstDecimal = custompkg.FloatToDecimalConverter(ec, src.SrcFloat)
@@ -598,7 +630,7 @@ func TestGenerateHelperFunction_Using_GlobalRule(t *testing.T) {
 
 	return dst
 }
-`, getTypeNameInSourceForCodeGen(srcStructType, parsedInfo.PackagePath), getTypeNameInSourceForCodeGen(dstStructType, parsedInfo.PackagePath), getTypeNameInSourceForCodeGen(dstStructType, parsedInfo.PackagePath), srcStructType.Name, dstStructType.Name)
+`, typeNameInSource(srcStructType, parsedInfo.PackagePath, imports), typeNameInSource(dstStructType, parsedInfo.PackagePath, imports), typeNameInSource(dstStructType, parsedInfo.PackagePath, imports), srcStructType.Name, srcTypeInfo.FullName, dstStructType.Name, dstTypeInfo.FullName)
 
 	formattedGenerated, _ := formatCode(generatedCode)
 	formattedExpected, _ := formatCode(expectedFullFunc)
@@ -609,3 +641,52 @@ func TestGenerateHelperFunction_Using_GlobalRule(t *testing.T) {
 
 // Placeholder for other tests to be added in next steps of the plan.
 // This file will be expanded upon.
+
+func TestGenerateHelperFunction_UnmappedFieldsDocstring(t *testing.T) {
+	srcTypeInfo := &model.TypeInfo{Name: "string", FullName: "string", Kind: model.KindBasic, IsBasic: true}
+	dstTypeInfo := &model.TypeInfo{Name: "string", FullName: "string", Kind: model.KindBasic, IsBasic: true}
+	dstUnmappedTypeInfo := &model.TypeInfo{Name: "int", FullName: "int", Kind: model.KindBasic, IsBasic: true}
+
+	srcField := model.FieldInfo{Name: "MappedField", TypeInfo: srcTypeInfo, Tag: model.ConvertTag{}}
+	dstMappedField := model.FieldInfo{Name: "MappedField", TypeInfo: dstTypeInfo}
+	dstUnmappedField := model.FieldInfo{Name: "UnmappedExtraField", TypeInfo: dstUnmappedTypeInfo} // This field in Dst has no source
+
+	srcStructInfo := &model.StructInfo{Name: "Src", Fields: []model.FieldInfo{srcField}}
+	dstStructInfo := &model.StructInfo{Name: "Dst", Fields: []model.FieldInfo{dstMappedField, dstUnmappedField}}
+	srcField.ParentStruct = srcStructInfo
+	dstMappedField.ParentStruct = dstStructInfo
+	dstUnmappedField.ParentStruct = dstStructInfo
+
+	parsedInfo := model.NewParsedInfo("mypkg", "example.com/mypkg")
+	parsedInfo.Structs["Src"] = srcStructInfo
+	parsedInfo.Structs["Dst"] = dstStructInfo
+	srcStructType := &model.TypeInfo{Name: "Src", FullName: "example.com/mypkg.Src", Kind: model.KindStruct, StructInfo: srcStructInfo}
+	dstStructType := &model.TypeInfo{Name: "Dst", FullName: "example.com/mypkg.Dst", Kind: model.KindStruct, StructInfo: dstStructInfo}
+
+	var buf bytes.Buffer
+	imports := make(map[string]string)
+	err := generateHelperFunction(&buf, "srcToDstWithUnmapped", srcStructType, dstStructType, parsedInfo, imports, new([]model.ConversionPair), make(map[string]bool))
+	if err != nil {
+		t.Fatalf("generateHelperFunction failed for unmapped fields docstring: %v", err)
+	}
+
+	generatedCode := buf.String()
+	expectedDocstring := `// srcToDstWithUnmapped converts Src to Dst.
+// Fields in Dst not populated by this conversion:
+// - UnmappedExtraField
+`
+	expectedFuncSignature := fmt.Sprintf(`func srcToDstWithUnmapped(ec *errorCollector, src %s) %s {`, typeNameInSource(srcStructType, parsedInfo.PackagePath, imports), typeNameInSource(dstStructType, parsedInfo.PackagePath, imports))
+
+	if !strings.HasPrefix(generatedCode, expectedDocstring) {
+		t.Errorf("Generated code for unmapped fields is missing expected docstring.\n---EXPECTED DOCSTRING---\n%s\n---GENERATED CODE---\n%s", expectedDocstring, generatedCode)
+	}
+	if !strings.Contains(generatedCode, expectedFuncSignature) {
+		t.Errorf("Generated code for unmapped fields is missing expected function signature.\n---EXPECTED SIGNATURE---\n%s\n---GENERATED CODE---\n%s", expectedFuncSignature, generatedCode)
+	}
+
+	// Also check the body content to ensure mapping happened for the mapped field
+	expectedMappedFieldLogic := fmt.Sprintf(`// Mapping field Src.MappedField (string) to Dst.MappedField (string)`)
+	if !strings.Contains(generatedCode, expectedMappedFieldLogic) {
+		t.Errorf("Generated code for unmapped fields is missing expected mapping logic for MappedField.\n---GENERATED CODE---\n%s", generatedCode)
+	}
+}

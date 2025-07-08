@@ -23,24 +23,24 @@ const (
 
 // TypeInfo holds resolved information about a type.
 type TypeInfo struct {
-	Name            string // Simple name (e.g., "MyType", "int", "string")
-	FullName        string // Fully qualified name (e.g., "example.com/pkg.MyType", "int")
-	PackageName     string // Package name where the type is defined or alias used (e.g., "pkg", "time")
-	PackagePath     string // Full package import path (e.g., "example.com/pkg", "time")
-	Kind            TypeKind
-	IsBasic         bool
-	IsPointer       bool
-	IsSlice         bool
-	IsArray         bool
-	IsMap           bool
-	IsInterface     bool
-	IsFunc          bool
-	Elem            *TypeInfo   // Element type for pointers, slices, arrays
-	Key             *TypeInfo   // Key type for maps
-	Value           *TypeInfo   // Value type for maps
-	Underlying      *TypeInfo   // Underlying type for named types (e.g., int for type MyInt int)
-	StructInfo      *StructInfo // If Kind is KindStruct or KindIdent resolving to a struct
-	AstExpr         ast.Expr    // Original AST expression for the type (e.g., the identifier for a named type)
+	Name        string // Simple name (e.g., "MyType", "int", "string")
+	FullName    string // Fully qualified name (e.g., "example.com/pkg.MyType", "int")
+	PackageName string // Package name where the type is defined or alias used (e.g., "pkg", "time")
+	PackagePath string // Full package import path (e.g., "example.com/pkg", "time")
+	Kind        TypeKind
+	IsBasic     bool
+	IsPointer   bool
+	IsSlice     bool
+	IsArray     bool
+	IsMap       bool
+	IsInterface bool
+	IsFunc      bool
+	Elem        *TypeInfo   // Element type for pointers, slices, arrays
+	Key         *TypeInfo   // Key type for maps
+	Value       *TypeInfo   // Value type for maps
+	Underlying  *TypeInfo   // Underlying type for named types (e.g., int for type MyInt int)
+	StructInfo  *StructInfo // If Kind is KindStruct or KindIdent resolving to a struct
+	AstExpr     ast.Expr    // Original AST expression for the type (e.g., the identifier for a named type)
 	// ArrayLengthExpr ast.Expr // AST expression for array length, if IsArray is true - Removed as go-scan's FieldType doesn't directly provide this in a structured way for model.TypeInfo to easily consume for generator.
 }
 

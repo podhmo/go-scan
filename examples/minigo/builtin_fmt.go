@@ -2,7 +2,7 @@ package main
 
 import (
 	"fmt"
-	// "strings" // Not used directly here, but often related
+	"strings" // Needed for strings.Join in evalFmtPrintln
 )
 
 // evalFmtSprintf handles the execution of a fmt.Sprintf call.
@@ -90,6 +90,18 @@ func (i *Interpreter) registerBuiltinFmt(env *Environment) {
 	// This file provides the `evalFmtSprintf` function that will be wrapped.
 }
 
+// evalFmtPrintln handles the execution of a fmt.Println call.
+// It converts arguments to strings using their Inspect() method,
+// joins them with spaces, prints to standard output, and adds a newline.
+func evalFmtPrintln(args ...Object) (Object, error) {
+	outputParts := make([]string, len(args))
+	for i, arg := range args {
+		outputParts[i] = arg.Inspect()
+	}
+	fmt.Println(strings.Join(outputParts, " ")) // strings.Join is from Go's standard library
+	return NULL, nil                             // Println returns no meaningful value
+}
+
 // GetBuiltinFmtFunctions returns a map of fmt built-in functions.
 // This allows the interpreter to easily register them.
 func GetBuiltinFmtFunctions() map[string]*BuiltinFunction {
@@ -100,8 +112,12 @@ func GetBuiltinFmtFunctions() map[string]*BuiltinFunction {
 			},
 			Name: "fmt.Sprintf",
 		},
-		// Add other fmt functions here if needed, e.g., fmt.Println
-		// "fmt.Println": { /* ... */ },
+		"fmt.Println": {
+			Fn: func(env *Environment, args ...Object) (Object, error) {
+				return evalFmtPrintln(args...)
+			},
+			Name: "fmt.Println",
+		},
 	}
 }
 

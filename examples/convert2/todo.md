@@ -2,9 +2,9 @@
 
 ## High-Level Goals
 
-*   [ ] Implement full field mapping logic in the generator.
-*   [X] Implement robust type resolution and import management (基本的な仕組みは実装、さらなる改善が必要).
-*   [ ] Add comprehensive tests for parser and generator.
+*   [P] Implement full field mapping logic in the generator. (Basic `using` tag support added)
+*   [X] Implement robust type resolution and import management ( 기본적인仕組みは実装、さらなる改善が必要).
+*   [P] Add comprehensive tests for parser and generator. (Generator unit tests for pointers and basic `using` added)
 *   [ ] Refine `README.md` with detailed usage, examples, and installation instructions.
 
 ## Appendix: 懸念事項と将来の検討事項 (from specification document)
@@ -45,7 +45,7 @@
 *   [ ] **AST Node Storage**: Review if more `ast.Node` instances need to be stored in `model.ParsedInfo` for richer context during generation (e.g., for `using` function signature checks).
 
 ### Generator (`generator/generator.go`)
-*   [ ] **Field Mapping Logic (Core)** in `generateHelperFunction`:
+*   [P] **Field Mapping Logic (Core)** in `generateHelperFunction`: (Basic `using` support added)
     *   [X] **Skipping fields**: If `convert` tag is `"-"`, skip the source field. (Implemented)
     *   [X] **Identical Types & Name Mapping**: Direct assignment (`d.Field = s.Field`) if types and names (or tag-specified name) match. (Basic implementation for `TypeInfo.FullName` match).
     *   [X] **Pointer Conversions**: (Implemented for `T` <-> `*T` where element types match)
@@ -54,11 +54,11 @@
             *   [X] Default: `if s.PtrField != nil { d.Field = *s.PtrField }`.
             *   [X] `required` tag: If `s.PtrField == nil`, add error to `ec`.
         *   [X] `*T` to `*T`: `d.PtrField = s.PtrField` (Covered by identical type direct assignment).
-    *   [ ] **Priority 1: Field Tag `using=<funcName>`**: Generate call to the custom function.
+    *   [X] **Priority 1: Field Tag `using=<funcName>`**: Generate call to the custom function. (Basic implementation, assumes `func(ec, val)` signature)
         *   [ ] Validate function signature (best effort with `go/ast`).
-        *   [ ] Handle context parameter if `using` function expects it.
-    *   [ ] **Priority 2: Global Rule `convert:rule "<SrcT>" -> "<DstT>", using=<funcName>`**: Generate call to the custom function.
-        *   [ ] Match source and destination field types against global rules using resolved `TypeInfo`.
+        *   [ ] Handle context parameter if `using` function expects it (e.g. via naming convention or tag option).
+    *   [X] **Priority 2: Global Rule `convert:rule "<SrcT>" -> "<DstT>", using=<funcName>`**: Generate call to the custom function. (Basic implementation, assumes `func(ec, val)` signature)
+        *   [X] Match source and destination field types against global rules using resolved `TypeInfo`.
     *   [ ] **Priority 3: Automatic Conversion (Advanced)**:
         *   [ ] **Underlying Type Match**: If `type T1 T2` and `type D1 T2` (and T2 is compatible), convert via cast (`D1(s.T1)`). Needs careful check of compatibility based on `TypeInfo.Underlying`.
     *   [ ] **Priority 4: Automatic Field Name Mapping (Normalized)**:
@@ -74,7 +74,7 @@
     *   After a destination struct (or field of that type) is populated, generate a call to the validator function: `ValidateMyType(ec, d.MyField)` or `ValidateMyType(ec, dst)`.
 *   [X] **Import Management (Basic Implementation)**:
     *   [X] Accurately track types used from external packages based on `TypeInfo.PackagePath`.
-    *   [X] Generate import statements. (Alias collision handling is basic, needs improvement for robustness).
+    *   [X] Generate import statements. (Alias collision handling is basic, needs improvement for robustness. `using` function import handling is also basic).
 *   [ ] **Import Management (Advanced)**:
     *   [ ] Robust import alias generation to avoid conflicts.
     *   [ ] Consider using `golang.org/x/tools/imports` for final import list cleanup and organization.
@@ -89,16 +89,17 @@
 *   [ ] Improve output logging, perhaps with different verbosity levels.
 
 ### General / Project
-*   [X] **Testing (Preparation & Basic Pointer Tests)**:
+*   [X] **Testing (Preparation & Basic Pointer/Using Tests)**:
     *   [X] Define sample source structs and annotations in `testdata/simple`.
-    *   [X] Manually run generator and visually/logically inspect output.
+    *   [X] Manually/logically run generator and visually/logically inspect output.
     *   [X] Updated `simple_test.go` for implemented pointer conversions.
-*   [ ] **Testing (Implementation - Broader Coverage)**:
+    *   [X] Added unit tests to `generator_test.go` for pointer and basic `using` logic.
+*   [P] **Testing (Implementation - Broader Coverage)**: (Unit tests for generator's pointer and basic `using` logic added)
     *   [ ] **Parser Tests**: Unit tests for `parser.ParseDirectory` with various valid and invalid annotation examples.
-    *   [ ] **Generator Tests (Automated)**:
-        *   Compile the generated code from `testdata/simple`.
-        *   Run Go test functions (`_test.go`) in `testdata/simple` that use the generated converters to verify correctness for all implemented features.
-        *   Test edge cases (nil pointers, empty slices).
+    *   [P] **Generator Tests (Automated)**: (Unit tests for pointer and basic `using` logic added)
+        *   [ ] Compile the generated code from `testdata/simple`.
+        *   [ ] Run Go test functions (`_test.go`) in `testdata/simple` that use the generated converters to verify correctness for all implemented features.
+        *   [ ] Test edge cases (nil pointers, empty slices).
     *   [ ] **Integration Tests**: Test the CLI tool as a whole with different input directories.
 *   [ ] **Documentation (`README.md`)**:
     *   [ ] Add detailed installation instructions.
@@ -113,3 +114,8 @@
 *   [ ] **Advanced Custom Function Signature Validation**: More sophisticated checks for `using`/`validator` functions.
 *   [ ] **Circular Dependency Detection**: Implement detection during generation planning.
 *   [ ] **Annotation Simplification**: Continuously review annotation design for clarity and ease of use.
+
+**Legend:**
+* `[X]` - Done
+* `[P]` - Partially Done / In Progress
+* `[ ]` - To Do

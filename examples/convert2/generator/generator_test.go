@@ -486,6 +486,126 @@ srcStructType.Name, dstStructType.Name)
 	}
 }
 
+func TestGenerateHelperFunction_Using_FieldTag(t *testing.T) {
+	srcTypeInfo := &model.TypeInfo{Name: "int", FullName: "int", Kind: model.KindBasic, IsBasic: true}
+	dstTypeInfo := &model.TypeInfo{Name: "string", FullName: "string", Kind: model.KindBasic, IsBasic: true}
 
+	srcField := model.FieldInfo{
+		Name:     "SrcInt",
+		TypeInfo: srcTypeInfo,
+		Tag:      model.ConvertTag{UsingFunc: "IntToStringConverter"},
+	}
+	dstField := model.FieldInfo{
+		Name:     "DstString",
+		TypeInfo: dstTypeInfo,
+	}
+
+	srcStructInfo := &model.StructInfo{Name: "Src", Fields: []model.FieldInfo{srcField}}
+	dstStructInfo := &model.StructInfo{Name: "Dst", Fields: []model.FieldInfo{dstField}}
+	srcField.ParentStruct = srcStructInfo
+	dstField.ParentStruct = dstStructInfo
+
+	parsedInfo := model.NewParsedInfo("mypkg", "example.com/mypkg")
+	parsedInfo.Structs["Src"] = srcStructInfo
+	parsedInfo.Structs["Dst"] = dstStructInfo
+	srcStructType := &model.TypeInfo{Name: "Src", FullName: "example.com/mypkg.Src", Kind: model.KindStruct, StructInfo: srcStructInfo}
+	dstStructType := &model.TypeInfo{Name: "Dst", FullName: "example.com/mypkg.Dst", Kind: model.KindStruct, StructInfo: dstStructInfo}
+
+	var buf bytes.Buffer
+	imports := make(map[string]string)
+	err := generateHelperFunction(&buf, "srcToDst", srcStructType, dstStructType, parsedInfo, imports)
+	if err != nil {
+		t.Fatalf("generateHelperFunction failed for field tag using: %v", err)
+	}
+
+	generatedCode := buf.String()
+	expectedFullFunc := fmt.Sprintf(`func srcToDst(ec *errorCollector, src %s) %s {
+	dst := %s{}
+	if ec.MaxErrorsReached() { return dst }
+
+	// Mapping field %s.SrcInt to %s.DstString
+	ec.Enter("DstString")
+	// Applying field tag: using IntToStringConverter
+	dst.DstString = IntToStringConverter(ec, src.SrcInt)
+	ec.Leave()
+	if ec.MaxErrorsReached() { return dst }
+
+	return dst
+}
+`, typeNameInSource(srcStructType, parsedInfo.PackagePath), typeNameInSource(dstStructType, parsedInfo.PackagePath), typeNameInSource(dstStructType, parsedInfo.PackagePath), srcStructType.Name, dstStructType.Name)
+
+	formattedGenerated, _ := formatCode(generatedCode)
+	formattedExpected, _ := formatCode(expectedFullFunc)
+	if normalizeCode(formattedGenerated) != normalizeCode(formattedExpected) {
+		t.Errorf("generateHelperFunction Using_FieldTag mismatch:\n---EXPECTED---\n%s\n---GENERATED---\n%s", formattedExpected, formattedGenerated)
+	}
+}
+
+func TestGenerateHelperFunction_Using_GlobalRule(t *testing.T) {
+	srcTypeInfo := &model.TypeInfo{Name: "float64", FullName: "float64", Kind: model.KindBasic, IsBasic: true}
+	dstTypeInfo := &model.TypeInfo{Name: "Decimal", FullName: "custompkg.Decimal", PackagePath: "example.com/custompkg", PackageName: "custompkg", Kind: model.KindIdent}
+
+	srcField := model.FieldInfo{
+		Name:     "SrcFloat",
+		TypeInfo: srcTypeInfo,
+		Tag:      model.ConvertTag{}, // No field tag using
+	}
+	dstField := model.FieldInfo{
+		Name:     "DstDecimal",
+		TypeInfo: dstTypeInfo,
+	}
+
+	globalRule := model.TypeRule{
+		SrcTypeInfo: srcTypeInfo,
+		DstTypeInfo: dstTypeInfo,
+		UsingFunc:   "custompkg.FloatToDecimalConverter",
+	}
+
+	srcStructInfo := &model.StructInfo{Name: "Src", Fields: []model.FieldInfo{srcField}}
+	dstStructInfo := &model.StructInfo{Name: "Dst", Fields: []model.FieldInfo{dstField}}
+	srcField.ParentStruct = srcStructInfo
+	dstField.ParentStruct = dstStructInfo
+
+	parsedInfo := model.NewParsedInfo("mypkg", "example.com/mypkg")
+	parsedInfo.Structs["Src"] = srcStructInfo
+	parsedInfo.Structs["Dst"] = dstStructInfo
+	parsedInfo.GlobalRules = []model.TypeRule{globalRule} // Add global rule
+
+	srcStructType := &model.TypeInfo{Name: "Src", FullName: "example.com/mypkg.Src", Kind: model.KindStruct, StructInfo: srcStructInfo}
+	dstStructType := &model.TypeInfo{Name: "Dst", FullName: "example.com/mypkg.Dst", Kind: model.KindStruct, StructInfo: dstStructInfo}
+
+	var buf bytes.Buffer
+	imports := make(map[string]string)
+	err := generateHelperFunction(&buf, "srcToDst", srcStructType, dstStructType, parsedInfo, imports)
+	if err != nil {
+		t.Fatalf("generateHelperFunction failed for global rule using: %v", err)
+	}
+
+	generatedCode := buf.String()
+	// Expecting custompkg.FloatToDecimalConverter to be called.
+	// The import for "custompkg" should also be added by addRequiredImport if DstTypeInfo is processed by it.
+	// For functions, direct import handling is still a TODO in the generator.
+	// We will assume the function name is rendered as is.
+	expectedFullFunc := fmt.Sprintf(`func srcToDst(ec *errorCollector, src %s) %s {
+	dst := %s{}
+	if ec.MaxErrorsReached() { return dst }
+
+	// Mapping field %s.SrcFloat to %s.DstDecimal
+	ec.Enter("DstDecimal")
+	// Applying global rule: float64 -> custompkg.Decimal using custompkg.FloatToDecimalConverter
+	dst.DstDecimal = custompkg.FloatToDecimalConverter(ec, src.SrcFloat)
+	ec.Leave()
+	if ec.MaxErrorsReached() { return dst }
+
+	return dst
+}
+`, typeNameInSource(srcStructType, parsedInfo.PackagePath), typeNameInSource(dstStructType, parsedInfo.PackagePath), typeNameInSource(dstStructType, parsedInfo.PackagePath), srcStructType.Name, dstStructType.Name)
+
+	formattedGenerated, _ := formatCode(generatedCode)
+	formattedExpected, _ := formatCode(expectedFullFunc)
+	if normalizeCode(formattedGenerated) != normalizeCode(formattedExpected) {
+		t.Errorf("generateHelperFunction Using_GlobalRule mismatch:\n---EXPECTED---\n%s\n---GENERATED---\n%s", formattedExpected, formattedGenerated)
+	}
+}
 // Placeholder for other tests to be added in next steps of the plan.
 // This file will be expanded upon.

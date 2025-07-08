@@ -235,12 +235,74 @@ func generateHelperFunction(buf *bytes.Buffer, funcName string, srcType, dstType
 		addRequiredImport(dstField.TypeInfo, parsedInfo.PackagePath, imports)
 
 
-		// TODO: Priority 1: Field Tag `using=<funcName>`
-		// TODO: Priority 2: Global Rule `convert:rule "<SrcT>" -> "<DstT>", using=<funcName>`
+		var appliedUsingFunc string
+		var usingFuncIsGlobal bool
 
-		// Priority 3: Automatic Conversion (including pointer logic)
-		srcIsPtr := srcField.TypeInfo.IsPointer
-		dstIsPtr := dstField.TypeInfo.IsPointer
+		// Priority 1: Field Tag `using=<funcName>`
+		if srcField.Tag.UsingFunc != "" {
+			appliedUsingFunc = srcField.Tag.UsingFunc
+			usingFuncIsGlobal = false
+		} else {
+			// Priority 2: Global Rule `convert:rule "<SrcT>" -> "<DstT>", using=<funcName>`
+			for _, rule := range parsedInfo.GlobalRules {
+				if rule.UsingFunc != "" && rule.SrcTypeInfo != nil && rule.DstTypeInfo != nil &&
+					rule.SrcTypeInfo.FullName == srcField.TypeInfo.FullName &&
+					rule.DstTypeInfo.FullName == dstField.TypeInfo.FullName {
+					appliedUsingFunc = rule.UsingFunc
+					usingFuncIsGlobal = true
+					break
+				}
+			}
+		}
+
+		if appliedUsingFunc != "" {
+			// Handle potential package prefix in appliedUsingFunc for imports
+			funcCallName := appliedUsingFunc
+			if parts := strings.Split(appliedUsingFunc, "."); len(parts) == 2 {
+				// Assuming a simple pkg.Func format for now
+				// This needs robust package alias resolution based on actual imports in the source
+				// For now, if it contains ".", assume the first part is a package selector.
+				// The actual import path for this selector needs to be available.
+				// Let's assume the parser stores TypeInfo for func types or we resolve it here.
+				// For simplicity, if func name is "pkg.MyFunc", ensure "pkg" (its path) is imported.
+				// This is a placeholder for proper import resolution for the custom function's package.
+				// The function type itself does not have a TypeInfo here easily.
+				// We'd typically need to look up "pkg" in file imports to get its path.
+				// For now, just use the prefix as is and rely on goimports or user to have correct imports.
+				// A slightly better heuristic: if `appliedUsingFunc` contains a dot,
+				// assume the part before the dot is a package that needs to be imported.
+				// The `addRequiredImport` function might need to be smarter or take the function name.
+				// For now, let's assume the function is in the same package or its package is handled by typeNameInSource logic if it were a type.
+				// This is complex. Simplification: assume func is accessible.
+				// If appliedUsingFunc is "mypackage.MyFunction", then typeNameInSource for a type from "mypackage"
+				// would ensure "mypackage" is imported. We can try to leverage that.
+
+				// Let's try to add import for the package part of the using function.
+				if funcParts := strings.Split(appliedUsingFunc, "."); len(funcParts) == 2 {
+					// This is a naive way to guess a package name and assume it needs import.
+					// A proper solution would look up funcParts[0] in the file's imports list.
+					// For now, we don't have that context directly here for the custom function.
+					// We'll rely on the user ensuring the function is callable.
+					// If the function is in another package, its import must be present in the generated file.
+					// We can try to infer the import from the function name if it's qualified.
+					pkgAlias := funcParts[0]
+					// This is still problematic as we don't have the import *path* for pkgAlias.
+					// For now, we generate the call as is. The user must ensure imports.
+					// A future improvement would be for the parser to resolve function locations.
+				}
+			}
+
+			if usingFuncIsGlobal {
+				fmt.Fprintf(buf, "\t// Applying global rule: %s -> %s using %s\n", srcField.TypeInfo.FullName, dstField.TypeInfo.FullName, appliedUsingFunc)
+			} else {
+				fmt.Fprintf(buf, "\t// Applying field tag: using %s\n", appliedUsingFunc)
+			}
+			fmt.Fprintf(buf, "\tdst.%s = %s(ec, src.%s)\n", dstField.Name, funcCallName, srcField.Name)
+
+		} else {
+			// Priority 3: Automatic Conversion (including pointer logic)
+			srcIsPtr := srcField.TypeInfo.IsPointer
+			dstIsPtr := dstField.TypeInfo.IsPointer
 		srcElemTypeFullName := ""
 		if srcField.TypeInfo.Elem != nil {
 			srcElemTypeFullName = srcField.TypeInfo.Elem.FullName

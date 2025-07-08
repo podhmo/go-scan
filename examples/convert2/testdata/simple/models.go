@@ -9,8 +9,11 @@ type SrcSimple struct {
 	Value       float64
 	Timestamp   time.Time `convert:"CreationTime"` // Rename
 	NoMatchDst  string    // This field has no corresponding field in DstSimple by default
-	PtrString   *string
-	StringPtr   string
+	PtrString        *string
+	StringPtr        string    // For T -> *T
+	PtrToValue       *float32  // For *T -> T (default)
+	RequiredPtrToValue *int    `convert:",required"` // For *T -> T (required)
+	CustomIntToString int      `convert:"CustomStr,using=IntToStr"` // Test field "using"
 }
 
 type DstSimple struct {
@@ -21,7 +24,10 @@ type DstSimple struct {
 	CreationTime time.Time // Renamed from Timestamp
 	NoMatchSrc   string    // This field has no corresponding field in SrcSimple by default
 	PtrString    *string
-	StringPtr    *string // For T -> *T or *T -> *T
+	StringPtr    *string   // For T -> *T
+	PtrToValue   float32   // For *T -> T (default)
+	RequiredPtrToValue int // For *T -> T (required)
+	CustomStr    string    // For field "using"
 }
 
 // For type alias test

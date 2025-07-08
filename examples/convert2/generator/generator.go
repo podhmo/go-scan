@@ -421,44 +421,101 @@ func generateHelperFunction(
 				// Ensure both srcField.TypeInfo and dstField.TypeInfo are actual struct types (not just named types that happen to be structs)
 				// or that their underlying types are structs, if they are named types.
 				// The StructInfo field being non-nil is a good indicator from the parser.
-				srcFieldIsStruct := srcField.TypeInfo.StructInfo != nil || (srcField.TypeInfo.Underlying != nil && srcField.TypeInfo.Underlying.StructInfo != nil)
-				dstFieldIsStruct := dstField.TypeInfo.StructInfo != nil || (dstField.TypeInfo.Underlying != nil && dstField.TypeInfo.Underlying.StructInfo != nil)
-
-				// Dereference pointers to get to the struct type for recursive calls
-				actualSrcFieldType := srcField.TypeInfo
-				if actualSrcFieldType.IsPointer && actualSrcFieldType.Elem != nil {
-					actualSrcFieldType = actualSrcFieldType.Elem
-					srcFieldIsStruct = actualSrcFieldType.StructInfo != nil // Re-check after deref
-				}
-				actualDstFieldType := dstField.TypeInfo
-				if actualDstFieldType.IsPointer && actualDstFieldType.Elem != nil {
-					actualDstFieldType = actualDstFieldType.Elem
-					dstFieldIsStruct = actualDstFieldType.StructInfo != nil // Re-check after deref
+				// --- Revised logic to look up struct definitions ---
+				tempSrcTypeInfo := srcField.TypeInfo
+				isSrcFieldPointer := tempSrcTypeInfo.IsPointer
+				if isSrcFieldPointer && tempSrcTypeInfo.Elem != nil {
+					tempSrcTypeInfo = tempSrcTypeInfo.Elem
 				}
 
+				tempDstTypeInfo := dstField.TypeInfo
+				isDstFieldPointer := tempDstTypeInfo.IsPointer
+				if isDstFieldPointer && tempDstTypeInfo.Elem != nil {
+					tempDstTypeInfo = tempDstTypeInfo.Elem
+				}
 
-				if srcFieldIsStruct && dstFieldIsStruct {
+				// Look up in parsedInfo.Structs.
+				// Note: This assumes struct names are unique within the scope of what's parsed.
+				// For types from different packages, TypeInfo.FullName (which includes package path)
+				// would be needed for a truly robust lookup, or by checking TypeInfo.PackagePath.
+				// currentParsedInfo.Structs is keyed by simple name for current package.
+				var srcStructDef *model.StructInfo
+				var srcIsStruct bool
+				// Only look up if the type is from the current package or package path matches.
+				// This simplistic check might need enhancement for imported struct types if their simple names clash.
+				if tempSrcTypeInfo.PackagePath == parsedInfo.PackagePath || tempSrcTypeInfo.PackagePath == "" {
+					srcStructDef, srcIsStruct = parsedInfo.Structs[tempSrcTypeInfo.Name]
+				} else {
+					// TODO: Handle lookup for structs from external packages if parsedInfo.Structs
+					// were to include them keyed differently (e.g. by full name).
+					// For now, this logic primarily supports nested structs from the same package.
+					// A more robust lookup would iterate parsedInfo.Structs and check Type.FullName.
+					// However, TypeInfo.Name for external types should be unique with its PackageName prefix from typeNameInSource.
+					// This part is tricky: tempSrcTypeInfo.Name is the simple name.
+					// We'd need to find a StructInfo whose `Type.FullName` matches `tempSrcTypeInfo.FullName`.
+					// This is inefficient. The parser should ideally ensure TypeInfo.StructInfo is populated.
+					// For now, let's assume TypeInfo.StructInfo IS populated by the parser for relevant types.
+					srcIsStruct = tempSrcTypeInfo.StructInfo != nil
+					if srcIsStruct {
+						srcStructDef = tempSrcTypeInfo.StructInfo
+					}
+				}
+
+
+				var dstStructDef *model.StructInfo
+				var dstIsStruct bool
+				if tempDstTypeInfo.PackagePath == parsedInfo.PackagePath || tempDstTypeInfo.PackagePath == "" {
+					dstStructDef, dstIsStruct = parsedInfo.Structs[tempDstTypeInfo.Name]
+				} else {
+					dstIsStruct = tempDstTypeInfo.StructInfo != nil
+					if dstIsStruct {
+						dstStructDef = tempDstTypeInfo.StructInfo
+					}
+				}
+				// Fallback to original check if lookup fails but direct StructInfo is present
+				// This handles cases where TypeInfo might be an alias that itself has StructInfo populated.
+				if !srcIsStruct && tempSrcTypeInfo.StructInfo != nil {
+					srcIsStruct = true
+					srcStructDef = tempSrcTypeInfo.StructInfo
+				}
+				if !dstIsStruct && tempDstTypeInfo.StructInfo != nil {
+					dstIsStruct = true
+					dstStructDef = tempDstTypeInfo.StructInfo
+				}
+
+
+				if srcIsStruct && dstIsStruct {
+					// Use the TypeInfo from the canonical struct definition for the pair
+					actualSrcFieldType := srcStructDef.Type
+					actualDstFieldType := dstStructDef.Type
+
 					fmt.Fprintf(buf, "\t// Recursive call for nested struct %s -> %s\n", actualSrcFieldType.Name, actualDstFieldType.Name)
 					nestedHelperFuncName := fmt.Sprintf("%sTo%s", lowercaseFirstLetter(actualSrcFieldType.Name), actualDstFieldType.Name)
 
-					// Prepare to add to worklist if this nested pair hasn't been processed.
-					// MaxErrors for nested calls typically would be inherited or a default. For now, 0 (unlimited).
-					// If the original pair was from a directive with MaxErrors, that's for the top-level.
-					// For implicitly discovered pairs, 0 is a safe default.
 					nestedPair := model.ConversionPair{
-						SrcTypeInfo: actualSrcFieldType,
-						DstTypeInfo: actualDstFieldType,
-						MaxErrors:   0, // Default for implicitly discovered pairs
+						SrcTypeInfo: actualSrcFieldType, // Use canonical TypeInfo from StructDef
+						DstTypeInfo: actualDstFieldType, // Use canonical TypeInfo from StructDef
+						MaxErrors:   0,
 					}
 					nestedPairKey := fmt.Sprintf("%s->%s", actualSrcFieldType.FullName, actualDstFieldType.FullName)
 
 					if !processedPairs[nestedPairKey] {
-						*worklist = append(*worklist, nestedPair)
-						// No need to mark processedPairs[nestedPairKey] = true here,
-						// the main loop in GenerateConversionCode will do it before calling generateHelperFunction.
+						// Check if already in worklist to prevent duplicate appends from multiple fields using the same nested type
+						alreadyInWorklist := false
+						for _, item := range *worklist {
+							if item.SrcTypeInfo.FullName == actualSrcFieldType.FullName && item.DstTypeInfo.FullName == actualDstFieldType.FullName {
+								alreadyInWorklist = true
+								break
+							}
+						}
+						if !alreadyInWorklist {
+							*worklist = append(*worklist, nestedPair)
+						}
+						// processedPairs is marked by the main loop before calling generateHelperFunction for this pair.
 					}
 
-					// Handle pointer nature of fields for the call
+					// Handle pointer nature of the *fields* themselves (srcField.TypeInfo, dstField.TypeInfo)
+					// not actualSrcFieldType/actualDstFieldType which are definitions.
 					// src: T, dst: T  => dst.F = helper(ec, src.F)
 					// src: *T, dst: *T => if src.F != nil { val := helper(ec, *src.F); dst.F = &val } else { dst.F = nil }
 					// src: T, dst: *T => val := helper(ec, src.F); dst.F = &val

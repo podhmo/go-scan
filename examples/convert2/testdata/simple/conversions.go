@@ -13,6 +13,7 @@ import (
 // convert:pair OuterSrc -> OuterDst
 // convert:pair InnerSrcDiff -> InnerDstDiff
 // convert:pair OuterSrcDiff -> OuterDstDiff
+// convert:pair SrcUnderlying -> DstUnderlying
 // convert:rule "time.Time" -> "string", using=timeToStringNotImplemented
 // convert:rule "simple.MyTime" -> "time.Time", using=myTimeToTime // Placeholder, myTimeToTime needs definition
 // convert:rule "string" -> "time.Time", using=stringToTimeNotImplemented

@@ -339,3 +339,97 @@ func TestConvertSrcWithAlias(t *testing.T) {
     // ...
 }
 */
+
+func TestConvertUnderlyingTypes(t *testing.T) {
+	mf := MyFloat(123.45)
+	tests := []struct {
+		name        string
+		src         SrcUnderlying
+		expectedDst DstUnderlying
+		expectError bool
+	}{
+		{
+			name: "basic underlying type conversion",
+			src: SrcUnderlying{
+				ID:     1,
+				MyAge:  MyInt(30),
+				MyName: MyString("Test"),
+			},
+			expectedDst: DstUnderlying{
+				ID:      1,
+				YourAge: YourInt(30),
+				YourName: YourString("Test"),
+			},
+			expectError: false,
+		},
+		{
+			name: "underlying type conversion with pointer to named type",
+			src: SrcUnderlying{
+				ID:         2,
+				MyAge:      MyInt(40),
+				MyName:     MyString("Pointer Test"),
+				MaybeValue: &mf, // MyFloatPtr which is *MyFloat, MyFloat is float64
+			},
+			expectedDst: DstUnderlying{
+				ID:         2,
+				YourAge:    YourInt(40),
+				YourName:   YourString("Pointer Test"),
+				MaybeValue: (*float64)(&mf), // Expecting *float64
+			},
+			expectError: false,
+		},
+		{
+			name: "underlying type conversion with nil pointer to named type",
+			src: SrcUnderlying{
+				ID:         3,
+				MyAge:      MyInt(50),
+				MyName:     MyString("Nil Pointer Test"),
+				MaybeValue: nil,
+			},
+			expectedDst: DstUnderlying{
+				ID:         3,
+				YourAge:    YourInt(50),
+				YourName:   YourString("Nil Pointer Test"),
+				MaybeValue: nil,
+			},
+			expectError: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			// Assumes top-level converter ConvertSrcUnderlyingToDstUnderlying will be generated
+			dst, err := ConvertSrcUnderlyingToDstUnderlying(context.Background(), tc.src)
+
+			if tc.expectError {
+				if err == nil {
+					t.Errorf("expected an error, but got nil")
+				}
+			} else {
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+			}
+
+			if !reflect.DeepEqual(dst, tc.expectedDst) {
+				t.Errorf("ConvertSrcUnderlyingToDstUnderlying() got = \n%#v, want \n%#v", dst, tc.expectedDst)
+				// More detailed checks
+				if dst.ID != tc.expectedDst.ID {
+					t.Logf("ID mismatch: got %d, want %d", dst.ID, tc.expectedDst.ID)
+				}
+				if dst.YourAge != tc.expectedDst.YourAge {
+					t.Logf("YourAge mismatch: got %d, want %d", dst.YourAge, tc.expectedDst.YourAge)
+				}
+				if dst.YourName != tc.expectedDst.YourName {
+					t.Logf("YourName mismatch: got %s, want %s", dst.YourName, tc.expectedDst.YourName)
+				}
+				// Pointer comparison for MaybeValue
+				if (dst.MaybeValue == nil && tc.expectedDst.MaybeValue != nil) || (dst.MaybeValue != nil && tc.expectedDst.MaybeValue == nil) {
+					t.Logf("MaybeValue nil mismatch: got %v, want %v", dst.MaybeValue, tc.expectedDst.MaybeValue)
+				} else if dst.MaybeValue != nil && tc.expectedDst.MaybeValue != nil && *dst.MaybeValue != *tc.expectedDst.MaybeValue {
+					t.Logf("MaybeValue value mismatch: got %v, want %v", *dst.MaybeValue, *tc.expectedDst.MaybeValue)
+				}
+			}
+		})
+	}
+}

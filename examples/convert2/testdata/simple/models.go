@@ -95,3 +95,28 @@ type OuterDstDiff struct {
 	ID         int
 	DestNested InnerDstDiff
 }
+
+// --- Underlying Type Match Test ---
+
+type SrcUnderlying struct {
+	ID         int
+	MyAge      MyInt // MyInt is 'type MyInt int'
+	MyName     MyString
+	MaybeValue MyFloatPtr // type MyFloatPtr *float64
+}
+
+type DstUnderlying struct {
+	ID         int
+	YourAge    YourInt // YourInt is 'type YourInt int'
+	YourName   YourString
+	MaybeValue *float64 // Direct *float64
+}
+
+type MyInt int
+type YourInt int
+
+type MyString string
+type YourString string
+
+type MyFloat float64
+type MyFloatPtr *MyFloat // Pointer to a named type whose underlying is float64

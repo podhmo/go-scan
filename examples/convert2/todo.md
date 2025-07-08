@@ -64,7 +64,7 @@
     *   [ ] **Priority 4: Automatic Field Name Mapping (Normalized)**:
         *   [ ] If `convert` tag's `DstFieldName` is empty, normalize source field name and match with normalized destination field names.
 *   [ ] **Recursive Conversions**:
-    *   [ ] **Nested Structs**: If a field is a struct, generate a call to the corresponding helper function (e.g., `d.Nested = srcNestedToDstNested(ec, s.Nested)`). Ensure helper functions for nested structs are generated.
+    *   [X] **Nested Structs**: If a field is a struct, generate a call to the corresponding helper function (e.g., `d.Nested = srcNestedToDstNested(ec, s.Nested)`). Ensure helper functions for nested structs are generated.
     *   [ ] **Slices**:
         *   Iterate over the source slice.
         *   For each element, call the appropriate helper function for the element type.

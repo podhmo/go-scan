@@ -34,7 +34,7 @@
     - [x] Struct literal instantiation (`Point{X: 10, Y: 20}`)
     - [x] Field access (`p.X`)
     - [x] Basic embedded structs (promoted fields, initialization of embedded struct by type name)
-    - [ ] Field assignment (`p.X = 100`) - *Requires LHS of assignment to be SelectorExpr*
+    - [x] Field assignment (`p.X = 100`) - *Requires LHS of assignment to be SelectorExpr*
     - [ ] Unkeyed struct literals (e.g. `Point{10,20}`)
     - [ ] Type checking for struct field assignments and initializers.
     - [ ] Zero value for struct types (uninitialized fields are NULL, explicit zero struct via `T{}`)
@@ -84,7 +84,7 @@
 - [ ] Test suite expansion (more comprehensive tests for all features)
   - [ ] Test type checking during struct instantiation (e.g., `Point{X: "not-an-int"}`). (from interpreter_struct_test.go TODO)
   - [ ] Test non-keyed struct literals (e.g., `Point{10, 20}`). (from interpreter_struct_test.go TODO)
-  - [ ] Test modifying struct fields (e.g., `p.X = 30`) once LHS of assignment can be SelectorExpr. (from interpreter_struct_test.go TODO)
+  - [x] Test modifying struct fields (e.g., `p.X = 30`) once LHS of assignment can be SelectorExpr. (from interpreter_struct_test.go TODO)
   - [ ] Test returning struct from main and checking its value directly from LoadAndRun's result. (from interpreter_struct_test.go TODO)
   - [ ] Test struct definition within a function (local type declarations). (from interpreter_struct_test.go TODO)
   - [ ] Test for duplicate field names in struct literal (e.g. `Point{X:1, X:2}`). (from interpreter_struct_test.go TODO)

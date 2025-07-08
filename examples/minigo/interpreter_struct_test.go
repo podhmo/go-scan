@@ -603,6 +603,208 @@ func main() {
 // Assignment like `p.X = 20` is not `ast.AssignStmt` on `p.X` but `ast.SelectorExpr` as LHS.
 // This is not supported by `evalAssignStmt` yet.
 
+func TestStructFieldAssignment(t *testing.T) {
+	tests := []struct {
+		name          string
+		input         string
+		expectedError string
+		checkEnv      func(t *testing.T, env *Environment, i *Interpreter)
+	}{
+		{
+			name: "Assign to direct field",
+			input: `
+package main
+type Data struct { Value int }
+var d Data
+func main() {
+	d = Data{Value: 10}
+	d.Value = 20
+}
+`,
+			checkEnv: func(t *testing.T, env *Environment, i *Interpreter) {
+				dObj, _ := env.Get("d")
+				dInst, _ := dObj.(*StructInstance)
+				if val, ok := dInst.FieldValues["Value"].(*Integer); !ok || val.Value != 20 {
+					t.Errorf("Expected d.Value to be 20, got %v", dInst.FieldValues["Value"])
+				}
+			},
+		},
+		{
+			name: "Assign to promoted field (direct embedded)",
+			input: `
+package main
+type Inner struct { Item string }
+type Outer struct { Inner; ID int }
+var o Outer
+func main() {
+	o = Outer{Inner: Inner{Item: "initial"}, ID: 1}
+	o.Item = "updated" // Assign to promoted field
+}
+`,
+			checkEnv: func(t *testing.T, env *Environment, i *Interpreter) {
+				oObj, _ := env.Get("o")
+				oInst, _ := oObj.(*StructInstance)
+				innerInst, _ := oInst.EmbeddedValues["Inner"]
+				if val, ok := innerInst.FieldValues["Item"].(*String); !ok || val.Value != "updated" {
+					t.Errorf("Expected o.Item (promoted) to be 'updated', got %v", innerInst.FieldValues["Item"])
+				}
+				if oInst.FieldValues["ID"].(*Integer).Value != 1 {
+					t.Errorf("Expected o.ID to remain 1")
+				}
+			},
+		},
+		{
+			name: "Assign to promoted field (deeply embedded)",
+			input: `
+package main
+type Leaf struct { Data int }
+type Middle struct { Leaf }
+type Root struct { Middle; Name string }
+var r Root
+func main() {
+	r = Root{Middle: Middle{Leaf: Leaf{Data: 100}}, Name: "MyRoot"}
+	r.Data = 200 // Assign to deeply promoted field
+}
+`,
+			checkEnv: func(t *testing.T, env *Environment, i *Interpreter) {
+				rObj, _ := env.Get("r")
+				rInst, _ := rObj.(*StructInstance)
+				middleInst, _ := rInst.EmbeddedValues["Middle"]
+				leafInst, _ := middleInst.EmbeddedValues["Leaf"]
+				if val, ok := leafInst.FieldValues["Data"].(*Integer); !ok || val.Value != 200 {
+					t.Errorf("Expected r.Data (deeply promoted) to be 200, got %v", leafInst.FieldValues["Data"])
+				}
+				if rInst.FieldValues["Name"].(*String).Value != "MyRoot" {
+					t.Errorf("Expected r.Name to remain 'MyRoot'")
+				}
+			},
+		},
+		{
+			name: "Error: Assign to non-existent field",
+			input: `
+package main
+type S struct { X int }
+var s S
+func main() {
+	s = S{X:1}
+	s.Y = 10
+}
+`,
+			expectedError: "type S has no field Y for assignment",
+		},
+		{
+			name: "Error: Assign to field of non-struct variable",
+			input: `
+package main
+var x int
+func main() {
+	x = 10
+	x.Field = 20
+}
+`,
+			expectedError: "cannot assign to field of non-struct type INTEGER",
+		},
+		{
+			name: "Error: Ambiguous assignment to promoted field",
+			input: `
+package main
+type A struct { F int }
+type B struct { F int }
+type C struct { A; B }
+var c C
+func main() {
+	c = C{A:A{F:1}, B:B{F:2}}
+	c.F = 30 // Ambiguous
+}
+`,
+			expectedError: "ambiguous assignment to field 'F'",
+		},
+		{
+			name: "Assign to field of struct returned by function",
+			input: `
+package main
+type Point struct { X int; Y int }
+func makePoint(x int, y int) Point { return Point{X:x, Y:y} }
+var p Point
+func main() {
+	p = makePoint(1,2)
+	p.X = 100 // Modify the local copy 'p'
+}
+`,
+			checkEnv: func(t *testing.T, env *Environment, i *Interpreter) {
+				pObj, _ := env.Get("p")
+				pInst, _ := pObj.(*StructInstance)
+				if pInst.FieldValues["X"].(*Integer).Value != 100 {
+					t.Errorf("Expected p.X to be 100")
+				}
+				if pInst.FieldValues["Y"].(*Integer).Value != 2 {
+					t.Errorf("Expected p.Y to be 2")
+				}
+			},
+		},
+		{
+			name: "Assign to field when embedded struct is not initialized in literal",
+			input: `
+package main
+type Inner struct { V int }
+type Outer struct { Inner; Name string }
+var out Outer
+func main() {
+	out = Outer{Name: "Test"} // Inner is not explicitly initialized
+	out.V = 99 // Assign to promoted field V, should initialize Inner instance
+}
+`,
+			checkEnv: func(t *testing.T, env *Environment, i *Interpreter) {
+				outObj, _ := env.Get("out")
+				outInst, _ := outObj.(*StructInstance)
+				if outInst.FieldValues["Name"].(*String).Value != "Test" {
+					t.Errorf("Expected out.Name to be 'Test'")
+				}
+				innerInst, ok := outInst.EmbeddedValues["Inner"]
+				if !ok {
+					t.Fatalf("Embedded struct Inner was not created on assignment to out.V")
+				}
+				if val, okVal := innerInst.FieldValues["V"].(*Integer); !okVal || val.Value != 99 {
+					expectedValStr := "99"
+					actualValStr := "nil or wrong type"
+					if okVal {
+						actualValStr = val.Inspect()
+					}
+					t.Errorf("Expected out.V (promoted, auto-created Inner) to be %s, got %s (raw: %v)", expectedValStr, actualValStr, innerInst.FieldValues["V"])
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			i := NewInterpreter()
+			dummyFilePath := "dummy_field_assign_test_" + strings.ReplaceAll(tt.name, " ", "_") + ".go"
+			err := os.WriteFile(dummyFilePath, []byte(tt.input), 0644)
+			if err != nil {
+				t.Fatalf("Failed to write dummy input file: %v", err)
+			}
+			defer os.Remove(dummyFilePath)
+
+			err = i.LoadAndRun(context.Background(), dummyFilePath, "main")
+
+			if tt.expectedError != "" {
+				if err == nil {
+					t.Errorf("Expected error containing '%s', but got nil", tt.expectedError)
+				} else if !strings.Contains(err.Error(), tt.expectedError) {
+					t.Errorf("Expected error containing '%s', got: %v", tt.expectedError, err)
+				}
+			} else if err != nil {
+				t.Errorf("Did not expect error, but got: %v", err)
+			}
+
+			if tt.checkEnv != nil {
+				tt.checkEnv(t, i.globalEnv, i)
+			}
+		})
+	}
+}
+
 // TODO:
 // - Test for type checking during instantiation (e.g., Point{X: "not-an-int"}). Needs field type info in StructDefinition to be more than string.
 // - Test for non-keyed struct literals (e.g., Point{10, 20}) once supported.

@@ -116,49 +116,49 @@ The `ImportManager` was successfully integrated into `examples/derivingjson/main
 
 ---
 
-## Jules 環境におけるサンドボックスのCWDとコマンド実行の安定化
+## Stabilizing CWD and Command Execution in the Jules Sandbox Environment
 
-**注意: 以下の知見は、Jules という特定のAIエージェントのサンドボックス環境におけるものであり、一般的な開発環境の問題や解決策ではありません。**
+**Note: The following insights are specific to the Jules AI agent's sandbox environment and do not represent general development environment issues or solutions.**
 
-### 問題の概要
+### Problem Overview
 
-特定の開発タスク（例: `examples/minigo` での `for range` 実装）において、`run_in_bash_session` ツールを使用した際のサンドボックス環境の挙動が不安定になることがありました。主な症状は以下の通りです。
+During certain development tasks (e.g., implementing `for range` in `examples/minigo`), the behavior of the sandbox environment when using the `run_in_bash_session` tool became unstable. Key symptoms included:
 
-*   `cd` コマンドが `No such file or directory` エラーで失敗する。これは、`ls` コマンドで対象ディレクトリの存在が確認できる状況でも発生しました。
-*   `make format` や `make test` などの `Makefile` ターゲットが、期待されるカレントワーキングディレクトリ (CWD) で実行されずに失敗する。
-*   `reset_all()` ツールで環境をリセットしても、これらの問題が必ずしも解消されない。
+*   The `cd` command failing with a `No such file or directory` error, even when `ls` confirmed the target directory's existence.
+*   Makefile targets such as `make format` or `make test` failing due to not being executed in the expected Current Working Directory (CWD).
+*   The `reset_all()` tool not always resolving these CWD-related issues.
 
-これらの問題は、エージェントがファイルシステムの正確な状態を把握し、コマンドを意図通りに実行することを困難にしていました。
+These problems made it difficult for the agent to accurately ascertain the file system's state and execute commands as intended.
 
-### 解決策・安定化のためのプラクティス (Jules環境特有)
+### Solution/Stabilization Practice (Jules Environment Specific)
 
-長時間の試行錯誤とユーザーからのヒントに基づき、以下の手順でコマンド実行の安定性が向上することが確認されました。
+Based on extensive trial-and-error and user guidance, the following procedure was found to improve the stability of command execution:
 
-1.  **環境リセットの試行**: まず `reset_all()` を実行し、サンドボックス環境を初期状態に戻すことを試みます。これは、ファイル内容の変更だけでなく、内部的な状態の一部もリセットすることを期待して行います。
+1.  **Attempt Environment Reset**: First, execute `reset_all()` to try and return the sandbox environment to its initial state. This is done with the expectation of resetting not just file contents but also some internal states.
 
-2.  **ルートディレクトリへの明示的な `cd`**: `run_in_bash_session` でコマンドを実行する際、特に `reset_all()` の後や、CWDが不明確な場合は、まずサンドボックス内のリポジトリルートと想定される `/app` ディレクトリに `cd` します。
+2.  **Explicit `cd` to Root Directory**: When executing commands in `run_in_bash_session`, especially after `reset_all()` or when the CWD is uncertain, first change the directory to `/app`, which is assumed to be the repository root within the sandbox.
     ```bash
     cd /app
     ```
 
-3.  **目的のコマンドの実行**: 上記の `cd /app` に続けて、`&&` を使って目的のコマンドを実行します。
-    *   特定のディレクトリで `make` ターゲットを実行する場合:
+3.  **Execute Target Command**: Following the `cd /app` command, execute the desired command using `&&`.
+    *   To run a `make` target in a specific directory:
         ```bash
         cd /app && make -C path/to/makefile/dir target
         ```
-        または、`make` ターゲットが内部で `cd` する場合はシンプルに:
+        Or, if the `make` target handles `cd` internally:
         ```bash
         cd /app && make target
         ```
-    *   特定のディレクトリで Go コマンドを実行する場合:
+    *   To run Go commands in a specific directory:
         ```bash
         cd /app && cd path/to/go_module_dir && go test -v ./...
         ```
 
-この `/app` への `cd` を挟むことで、その後のコマンドが期待されるCWDで実行される確率が大幅に向上し、以前は失敗していた `cd` や `make`、Go のテストコマンドが成功するようになりました。
+Prepending `cd /app` significantly increased the likelihood that subsequent commands would execute in the expected CWD, allowing previously failing `cd`, `make`, and Go test commands to succeed.
 
-### なぜこの方法が有効だったか（推測）
+### Why This Approach Might Be Effective (Hypothesis)
 
-Jules のサンドボックス環境では、`run_in_bash_session` のセッション間でCWDの状態が完全に引き継がれなかったり、`reset_all()` がCWDを必ずしも `/app` に戻さなかったりする可能性があります。最初に `/app` へ明示的に `cd` することで、その後の相対パスの解釈やサブプロセス（`make`など）のCWDが安定するのではないかと推測されます。
+In the Jules sandbox environment, it's possible that the CWD state is not consistently maintained across `run_in_bash_session` calls, or that `reset_all()` does not reliably set the CWD back to `/app`. By explicitly changing to `/app` first, subsequent relative path interpretations and the CWD for subprocesses (like `make`) may become more stable.
 
-この知見は、Jules 環境でCWD関連の不可解なエラーに遭遇した場合の、有効なトラブルシューティング手順の一つとして記録します。
+This insight is recorded as a potentially effective troubleshooting step for CWD-related anomalies encountered within the Jules environment.

@@ -82,7 +82,7 @@ type OuterDst struct {
 
 // For testing nested with different field names
 type InnerSrcDiff struct {
-	SrcInnerVal int
+	SrcInnerVal int `convert:"DstInnerVal"`
 }
 type InnerDstDiff struct {
 	DstInnerVal int

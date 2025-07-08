@@ -1,7 +1,6 @@
 package model
 
 import (
-	"fmt"
 	"go/ast"
 )
 
@@ -24,24 +23,25 @@ const (
 
 // TypeInfo holds resolved information about a type.
 type TypeInfo struct {
-	Name        string // Simple name (e.g., "MyType", "int", "string")
-	FullName    string // Fully qualified name (e.g., "example.com/pkg.MyType", "int")
-	PackageName string // Package name where the type is defined or alias used (e.g., "pkg", "time")
-	PackagePath string // Full package import path (e.g., "example.com/pkg", "time")
-	Kind        TypeKind
-	IsBasic     bool
-	IsPointer   bool
-	IsSlice     bool
-	IsArray     bool
-	IsMap       bool
-	IsInterface bool
-	IsFunc      bool
-	Elem        *TypeInfo   // Element type for pointers, slices, arrays
-	Key         *TypeInfo   // Key type for maps
-	Value       *TypeInfo   // Value type for maps
-	Underlying  *TypeInfo   // Underlying type for named types (e.g., int for type MyInt int)
-	StructInfo  *StructInfo // If Kind is KindStruct or KindIdent resolving to a struct
-	AstExpr     ast.Expr    // Original AST expression for the type
+	Name            string // Simple name (e.g., "MyType", "int", "string")
+	FullName        string // Fully qualified name (e.g., "example.com/pkg.MyType", "int")
+	PackageName     string // Package name where the type is defined or alias used (e.g., "pkg", "time")
+	PackagePath     string // Full package import path (e.g., "example.com/pkg", "time")
+	Kind            TypeKind
+	IsBasic         bool
+	IsPointer       bool
+	IsSlice         bool
+	IsArray         bool
+	IsMap           bool
+	IsInterface     bool
+	IsFunc          bool
+	Elem            *TypeInfo   // Element type for pointers, slices, arrays
+	Key             *TypeInfo   // Key type for maps
+	Value           *TypeInfo   // Value type for maps
+	Underlying      *TypeInfo   // Underlying type for named types (e.g., int for type MyInt int)
+	StructInfo      *StructInfo // If Kind is KindStruct or KindIdent resolving to a struct
+	AstExpr         ast.Expr    // Original AST expression for the type (e.g., the identifier for a named type)
+	// ArrayLengthExpr ast.Expr // AST expression for array length, if IsArray is true - Removed as go-scan's FieldType doesn't directly provide this in a structured way for model.TypeInfo to easily consume for generator.
 }
 
 // ParsedInfo holds all parsed conversion rules and type information.
@@ -80,12 +80,12 @@ type TypeRule struct {
 
 // StructInfo holds information about a parsed struct.
 type StructInfo struct {
-	Name            string
-	Fields          []FieldInfo
-	Node            *ast.StructType // AST node for the struct
-	Type            *TypeInfo       // TypeInfo for this struct
-	IsAlias         bool            // True if this struct is a type alias to another struct (e.g. type MyStruct OtherStruct)
-	UnderlyingAlias *TypeInfo       // If IsAlias, this points to the TypeInfo of the actual struct
+	Name   string
+	Fields []FieldInfo
+	// Node            *ast.StructType // AST node for the struct - No longer needed as go-scan provides necessary info
+	Type            *TypeInfo // TypeInfo for this struct
+	IsAlias         bool      // True if this struct is a type alias to another struct (e.g. type MyStruct OtherStruct)
+	UnderlyingAlias *TypeInfo // If IsAlias, this points to the TypeInfo of the actual struct
 }
 
 // FieldInfo holds information about a field within a struct.
@@ -96,7 +96,7 @@ type FieldInfo struct {
 	TypeInfo     *TypeInfo   // Resolved type information for the field
 	Tag          ConvertTag  // Parsed `convert` tag
 	ParentStruct *StructInfo // Reference to the parent struct
-	AstField     *ast.Field  // Original AST field node
+	// AstField     *ast.Field  // Original AST field node - No longer needed as go-scan provides tag string
 }
 
 // ConvertTag holds parsed values from a `convert` struct tag.
@@ -116,42 +116,5 @@ func NewParsedInfo(packageName, packagePath string) *ParsedInfo {
 		Structs:         make(map[string]*StructInfo),
 		NamedTypes:      make(map[string]*TypeInfo),
 		FileImports:     make(map[string]map[string]string),
-	}
-}
-
-// Helper to convert ast.Expr to a string representation (for debugging or simple cases)
-// This is a simplified version. For full accuracy, go/printer might be needed.
-func AstExprToString(expr ast.Expr, currentPkgName string) string {
-	if expr == nil {
-		return ""
-	}
-	switch e := expr.(type) {
-	case *ast.Ident:
-		return e.Name
-	case *ast.SelectorExpr:
-		return AstExprToString(e.X, currentPkgName) + "." + e.Sel.Name
-	case *ast.StarExpr:
-		return "*" + AstExprToString(e.X, currentPkgName)
-	case *ast.ArrayType:
-		lenStr := ""
-		if e.Len != nil {
-			lenStr = AstExprToString(e.Len, currentPkgName)
-		}
-		return "[" + lenStr + "]" + AstExprToString(e.Elt, currentPkgName)
-	case *ast.MapType:
-		return "map[" + AstExprToString(e.Key, currentPkgName) + "]" + AstExprToString(e.Value, currentPkgName)
-	case *ast.InterfaceType:
-		if e.Methods == nil || len(e.Methods.List) == 0 {
-			return "interface{}"
-		}
-		return "interface{...}" // Simplified
-	case *ast.FuncType:
-		return "func(...)" // Simplified
-	case *ast.BasicLit:
-		return e.Value
-	default:
-		// Fallback for other types, might not be perfect.
-		// Using a fixed string or more detailed logging might be better.
-		return fmt.Sprintf("%T", e) // Returns the type of the AST node itself
 	}
 }

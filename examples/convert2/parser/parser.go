@@ -1,18 +1,24 @@
 package parser
 
 import (
+	"context" // Added for go-scan
 	"fmt"
 	"go/ast"
-	"go/parser"
-	"go/token"
+	// "go/parser" // No longer needed
+	// "go/token" // No longer needed as direct usage is removed
 	"os"
 	"path/filepath"
 	"strings"
 
+	"log/slog" // Added for logging as per AGENTS.md
+
 	"example.com/convert2/internal/model"
+	goscan "github.com/podhmo/go-scan"               // Added for go-scan
+	scannermodel "github.com/podhmo/go-scan/scanner" // Added for go-scan scanner models
 )
 
 // typePreParseInfo stores basic info about types collected in the first pass.
+// TODO: This struct will likely be removed or heavily modified after go-scan integration.
 type typePreParseInfo struct {
 	name     string
 	typeSpec *ast.TypeSpec
@@ -21,116 +27,486 @@ type typePreParseInfo struct {
 	pkgPath  string    // Package path for this type
 }
 
-// ParseDirectory scans the given directory for Go files, parses them,
-// and extracts conversion rules and type information using a 2-pass approach.
+// ParseDirectory scans the given directory for Go files, parses them using go-scan,
+// and extracts conversion rules and type information.
 func ParseDirectory(dirPath string) (*model.ParsedInfo, error) {
-	fset := token.NewFileSet()
-	pkgs, err := parser.ParseDir(fset, dirPath, func(fi os.FileInfo) bool {
-		return !fi.IsDir() && strings.HasSuffix(fi.Name(), ".go") &&
-			!strings.HasSuffix(fi.Name(), "_test.go") &&
-			!strings.HasSuffix(fi.Name(), "_gen.go")
-	}, parser.ParseComments)
+	ctx := context.Background() // Create a new context for go-scan operations
 
+	// Initialize go-scan Scanner
+	// dirPath is assumed to be the target package directory.
+	// For go-scan's New, we ideally need a path within the module to help it find the module root.
+	// If dirPath is like "./examples/convert2/testdata/simple", it should work.
+	gs, err := goscan.New(dirPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse directory %s: %w", dirPath, err)
+		slog.ErrorContext(ctx, "Failed to initialize go-scan scanner", slog.Any("error", err), slog.String("dirPath", dirPath))
+		return nil, fmt.Errorf("failed to initialize go-scan scanner for path %s: %w", dirPath, err)
 	}
 
-	if len(pkgs) == 0 {
-		return nil, fmt.Errorf("no Go packages found in directory %s", dirPath)
+	// TODO: Configure ExternalTypeOverrides if necessary.
+	// For example, to ensure "time.Time" is recognized correctly if go-scan's default resolution isn't sufficient.
+	// overrides := scannermodel.ExternalTypeOverride{
+	//  "time.Time": "time.Time", // This tells go-scan to treat "time.Time" as a known type string.
+	// }
+	// gs.SetExternalTypeOverrides(ctx, overrides)
+
+	// Scan the package using go-scan
+	// ScanPackage is suitable when you have the direct file path to the package.
+	scanInfo, err := gs.ScanPackage(ctx, dirPath)
+	if err != nil {
+		slog.ErrorContext(ctx, "Failed to scan package with go-scan", slog.Any("error", err), slog.String("dirPath", dirPath))
+		return nil, fmt.Errorf("failed to scan package at %s using go-scan: %w", dirPath, err)
 	}
-	if len(pkgs) > 1 {
-		// For simplicity, this parser currently handles one package per directory.
-		// Multiple packages in the same directory (e.g., using build tags for different package names)
-		// is an advanced scenario not covered.
-		var pkgNames []string
-		for name := range pkgs {
-			pkgNames = append(pkgNames, name)
+
+	if scanInfo == nil {
+		slog.ErrorContext(ctx, "go-scan returned nil PackageInfo", slog.String("dirPath", dirPath))
+		return nil, fmt.Errorf("go-scan returned nil PackageInfo for %s", dirPath)
+	}
+	if len(scanInfo.Files) == 0 && len(scanInfo.Types) == 0 && len(scanInfo.Functions) == 0 {
+		// This might happen if the directory is empty or contains no Go files go-scan considers.
+		// Or if all files were filtered out by go-scan's internal logic (e.g. _test.go, _gen.go by default in some contexts)
+		// The original parser.ParseDir also filters _test.go and _gen.go, so this behavior might be consistent.
+		slog.InfoContext(ctx, "go-scan found no relevant Go files or symbols in directory", slog.String("dirPath", dirPath), slog.String("packageName", scanInfo.Name))
+		// The original code returns an error if no packages are found.
+		// Let's consider if scanInfo indicates "no Go packages found" vs "package found but empty of relevant items".
+		// goscan.Scanner.ScanPackage itself doesn't seem to error out for an empty dir, but returns minimal PackageInfo.
+		// The original check was `if len(pkgs) == 0`.
+		// A more direct check would be if `scanInfo.Name` is empty or if `scanInfo.Files` is empty after a successful scan.
+		// If `scanInfo.Name` is populated, it means a package was identified.
+		if scanInfo.Name == "" { // No package name could be determined
+			return nil, fmt.Errorf("no Go packages found in directory %s (go-scan could not determine package name)", dirPath)
 		}
-		return nil, fmt.Errorf("multiple packages (%s) found in directory %s; this parser handles one package per directory", strings.Join(pkgNames, ", "), dirPath)
+		// If package name exists, but no types/files, it's an empty package, proceed to return empty ParsedInfo.
 	}
 
-	var parsedInfo *model.ParsedInfo
-	var currentPkgName string
-	var currentPkgPath string
-	typeSpecsToProcess := make(map[string]typePreParseInfo) // map[typeName]typePreParseInfo
+	// TODO: The rest of this function needs to be refactored to use scanInfo
+	// instead of the old fset and pkgs from go/parser.ParseDir.
+	// The 2-pass system will be replaced by iterating over scanInfo.Types,
+	// scanInfo.Functions, etc.
 
-	// PASS 1: Collect all type declarations and file-level info (imports, package name/path)
-	for pkgName, pkgAst := range pkgs {
-		currentPkgName = pkgName
-		currentPkgPath = derivePackagePath(dirPath)
-		if currentPkgPath == "" {
-			fmt.Printf("Warning: Could not reliably determine import path for package %s in dir %s. Using package name as placeholder, which might lead to incorrect type resolution for external references.\n", pkgName, dirPath)
-			currentPkgPath = pkgName // Fallback, less reliable
+	// Placeholder for currentPkgName and currentPkgPath from scanInfo
+	currentPkgName := scanInfo.Name
+	currentPkgImportPath := scanInfo.ImportPath // Standardized variable name
+	if currentPkgImportPath == "" {
+		// Fallback similar to original, though scanInfo.ImportPath should be more reliable.
+		slog.WarnContext(ctx, "go-scan PackageInfo has empty ImportPath. Attempting fallback.", slog.String("dirPath", dirPath), slog.String("packageName", currentPkgName))
+		pathFromDerive := derivePackagePath(dirPath)
+		if pathFromDerive != "" {
+			currentPkgImportPath = pathFromDerive
+		} else {
+			slog.WarnContext(ctx, "Fallback derivePackagePath also failed. Using package name as import path placeholder.", slog.String("dirPath", dirPath), slog.String("packageName", currentPkgName))
+			currentPkgImportPath = currentPkgName // Last resort
 		}
-		parsedInfo = model.NewParsedInfo(currentPkgName, currentPkgPath)
+	}
 
-		for filePath, fileAst := range pkgAst.Files {
-			fileImports := collectFileImports(fileAst)
-			parsedInfo.FileImports[filePath] = fileImports
+	parsedInfo := model.NewParsedInfo(currentPkgName, currentPkgImportPath)
+	// The FileImports map might need to be populated differently, or its usage re-evaluated.
+	// go-scan's scanner.FieldType has PkgName and fullImportPath, which should reduce reliance on per-file import maps.
+	// For now, let's clear the old way of populating FileImports.
+	// parsedInfo.FileImports = make(map[string]map[string]string) // Initialize if needed later
 
-			ast.Inspect(fileAst, func(n ast.Node) bool {
-				switch decl := n.(type) {
-				case *ast.GenDecl:
-					if decl.Tok == token.TYPE {
-						for _, spec := range decl.Specs {
-							if typeSpec, ok := spec.(*ast.TypeSpec); ok {
-								typeName := typeSpec.Name.Name
-								if _, exists := typeSpecsToProcess[typeName]; exists {
-									fmt.Printf("Warning: Type '%s' redefined or encountered multiple times. Using the first definition.\n", typeName)
-								} else {
-									typeSpecsToProcess[typeName] = typePreParseInfo{
-										name:     typeName,
-										typeSpec: typeSpec,
-										file:     fileAst,
-										pkgName:  currentPkgName, // Should be same as currentPkgName for this pass
-										pkgPath:  currentPkgPath, // Should be same as currentPkgPath
-									}
-								}
-							}
-						}
+	// --- The following is the OLD logic and needs to be replaced ---
+	// fset variable removed as it's unused. go-scan uses its own FileSet.
+	// We should use gs.Fset() if AST nodes from scanInfo.AstFiles are used.
+	// Or, if we re-parse for comments, ensure consistency.
+	// For now, this part of the code is effectively dead or will be replaced.
+	// pkgs variable and associated ParseDir call removed as it's unused.
+
+	// This old logic for pkgs, typeSpecsToProcess, PASS 1, PASS 2 needs to be entirely replaced
+	// by processing data from `scanInfo (*scannermodel.PackageInfo)`.
+
+	// Example of how one might start processing types from scanInfo:
+	// for _, typeDef := range scanInfo.Types {
+	//    // Convert typeDef (*scannermodel.TypeInfo) to model.StructInfo or model.TypeInfo
+	//    // This will involve calling the new `convertFieldTypeToModelTypeInfo` for fields/underlying types.
+	// }
+
+	// For now, returning a partially filled ParsedInfo based on what go-scan provided for package level details.
+	// The detailed type parsing and directive parsing is the next step.
+	// This means the function will not yet work correctly.
+
+	// --- END OF OLD LOGIC TO BE REPLACED ---
+
+	// TODO: Implement PASS 2 equivalent using scanInfo.
+	// This involves iterating scanInfo.Types and scanInfo.AstFiles (if needed for comments).
+	// For each type in scanInfo.Types, populate parsedInfo.Structs or parsedInfo.NamedTypes.
+	// Then, parse directives from comments using scanInfo.AstFiles[filePath].Doc and .Comments.
+
+	// Placeholder for the old PASS 1 and PASS 2 logic.
+	// This will be replaced in the next step of the plan.
+	// For now, to make it compile, let's keep the old parsing logic but acknowledge it's wrong.
+	// Populate Structs and NamedTypes from scanInfo.Types
+	for _, stypeInfo := range scanInfo.Types { // stypeInfo is *scannermodel.TypeInfo
+		modelType := &model.TypeInfo{
+			Name:        stypeInfo.Name,
+			FullName:    fmt.Sprintf("%s.%s", currentPkgImportPath, stypeInfo.Name),
+			PackageName: currentPkgName, // Assuming types defined are in the current package
+			PackagePath: currentPkgImportPath,
+			// AstExpr: is tricky. For a TypeSpec "type Foo Bar", Foo is Name, Bar is Type.
+			// stypeInfo.Node is ast.Spec (*ast.TypeSpec). We need an ast.Expr.
+			// For model.TypeInfo representing "Foo", AstExpr should be the *ast.Ident "Foo".
+		}
+		if ts, ok := stypeInfo.Node.(*ast.TypeSpec); ok {
+			modelType.AstExpr = ts.Name // ts.Name is *ast.Ident, which is an ast.Expr
+		} else {
+			slog.WarnContext(ctx, "go-scan TypeInfo.Node was not *ast.TypeSpec as expected for type definition", slog.String("typeName", stypeInfo.Name), slog.Any("nodeType", fmt.Sprintf("%T", stypeInfo.Node)))
+		}
+
+		switch stypeInfo.Kind {
+		case scannermodel.StructKind:
+			modelType.Kind = model.KindStruct
+			if stypeInfo.Struct == nil {
+				slog.ErrorContext(ctx, "StructKind TypeInfo has nil Struct detail", slog.String("typeName", stypeInfo.Name))
+				continue
+			}
+			// var astStructType *ast.StructType // Not needed as model.StructInfo has no Node field
+			// if typeSpec, ok := stypeInfo.Node.(*ast.TypeSpec); ok {
+			// 	if st, ok2 := typeSpec.Type.(*ast.StructType); ok2 {
+			// 		astStructType = st
+			// 	}
+			// }
+			// if astStructType == nil {
+			// 	slog.ErrorContext(ctx, "Could not obtain *ast.StructType from scannermodel.TypeInfo", slog.String("typeName", stypeInfo.Name))
+			// 	continue
+			// }
+
+			sinfo := &model.StructInfo{
+				Name: stypeInfo.Name,
+				// Node: astStructType, // model.StructInfo no longer has Node
+				Type: modelType,
+			}
+			for _, sfield := range stypeInfo.Struct.Fields { // sfield is *scannermodel.FieldInfo
+				mfield := model.FieldInfo{
+					Name:         sfield.Name,
+					OriginalName: sfield.Name, // Assuming Name is original name
+					TypeInfo:     convertScannerTypeToModelType(ctx, sfield.Type, currentPkgImportPath),
+					// AstField: // TODO: scannermodel.FieldInfo doesn't expose original *ast.Field.
+					// This might be an issue if more than just tag string is needed.
+					// For now, we hope sfield.Tag (string) is enough.
+					ParentStruct: sinfo,
+				}
+
+				if sfield.Tag != "" {
+					// parseFieldTag expects the content of a `convert:"..."` tag.
+					// sfield.Tag is the full tag string, e.g., `json:"foo" convert:"bar"`.
+					// We need to extract the `convert` part first.
+					convertTagContent := extractConvertTag(sfield.Tag)
+					if convertTagContent != "" {
+						mfield.Tag = parseFieldTag(convertTagContent)
 					}
 				}
-				return true
-			})
+				sinfo.Fields = append(sinfo.Fields, mfield)
+			}
+			modelType.StructInfo = sinfo
+			parsedInfo.Structs[sinfo.Name] = sinfo
+
+		case scannermodel.AliasKind:
+			modelType.Kind = model.KindNamed
+			if stypeInfo.Underlying == nil {
+				slog.ErrorContext(ctx, "AliasKind TypeInfo has nil Underlying detail", slog.String("typeName", stypeInfo.Name))
+				continue
+			}
+			modelType.Underlying = convertScannerTypeToModelType(ctx, stypeInfo.Underlying, currentPkgImportPath)
+			parsedInfo.NamedTypes[modelType.Name] = modelType
+
+			// Handle aliases to structs (e.g., type MyStructAlias AnotherStruct)
+			// This makes MyStructAlias discoverable as a struct-like type.
+			effectiveUnderlying := modelType.Underlying
+			if effectiveUnderlying != nil && effectiveUnderlying.IsPointer && effectiveUnderlying.Elem != nil {
+				effectiveUnderlying = effectiveUnderlying.Elem
+			}
+			if effectiveUnderlying != nil && (effectiveUnderlying.Kind == model.KindStruct || effectiveUnderlying.Kind == model.KindIdent) {
+				// Try to find the base StructInfo.
+				// If effectiveUnderlying.FullName is "pkg.ActualStruct", look for "ActualStruct" in parsedInfo.Structs
+				// coming from the correct package.
+				var baseStructInfo *model.StructInfo
+				if si, ok := parsedInfo.Structs[effectiveUnderlying.Name]; ok && si.Type.PackagePath == effectiveUnderlying.PackagePath {
+					baseStructInfo = si
+				}
+
+				if baseStructInfo != nil {
+					aliasStructInfo := &model.StructInfo{
+						Name:            stypeInfo.Name, // Name of the alias
+						Type:            modelType,      // TypeInfo of the alias itself
+						IsAlias:         true,
+						UnderlyingAlias: baseStructInfo.Type,   // Points to TypeInfo of ActualStruct
+						// Node:            baseStructInfo.Node, // model.StructInfo no longer has Node
+						Fields:          baseStructInfo.Fields, // Inherit fields
+					}
+					if _, exists := parsedInfo.Structs[stypeInfo.Name]; !exists {
+						parsedInfo.Structs[stypeInfo.Name] = aliasStructInfo
+					}
+					modelType.StructInfo = aliasStructInfo // Link the alias's TypeInfo to this wrapper
+				}
+			}
+
+		case scannermodel.InterfaceKind:
+			modelType.Kind = model.KindInterface
+			parsedInfo.NamedTypes[modelType.Name] = modelType
+
+		case scannermodel.FuncKind: // Example: type MyFunc func(int) string
+			modelType.Kind = model.KindFunc
+			// Details of func signature (params/results) are in stypeInfo.Func if needed.
+			// model.TypeInfo currently just marks it as KindFunc.
+			// If stypeInfo.Func exists, we could try to populate Elem/Key/Value or a new field.
+			// For now, this is consistent with how old parser treated func type aliases.
+			parsedInfo.NamedTypes[modelType.Name] = modelType
+
+		default:
+			slog.WarnContext(ctx, "Unhandled scannermodel.TypeKind in parser type loop",
+				slog.Any("kind", stypeInfo.Kind),
+				slog.String("typeName", stypeInfo.Name))
 		}
 	}
 
-	if parsedInfo == nil {
-		return nil, fmt.Errorf("failed to initialize parsed info, likely no packages processed in pass 1")
-	}
-
-	// PASS 2: Resolve types and parse directives
-	// First, parse all type specs to populate Structs and NamedTypes in parsedInfo
-	for _, preInfo := range typeSpecsToProcess { // Changed typeName to _
-		fileImports := parsedInfo.FileImports[fset.File(preInfo.file.Pos()).Name()]
-		parseTypeSpec(preInfo.typeSpec, parsedInfo, fileImports, preInfo.pkgName, preInfo.pkgPath)
-	}
-
-	// Then, parse directives from comments (package and file level)
-	for pkgName, pkgAst := range pkgs { // Should be only one pkg due to earlier check
-		_ = pkgName // Use currentPkgName, currentPkgPath
-		for filePath, fileAst := range pkgAst.Files {
-			fileImports := parsedInfo.FileImports[filePath]
-			// Parse package-level comments (// convert: ... at the top of the file, associated with package decl)
-			if fileAst.Doc != nil {
-				for _, comment := range fileAst.Doc.List {
-					parseGlobalCommentDirective(comment.Text, parsedInfo, fileImports, currentPkgName, currentPkgPath)
-				}
+	// Parse directives from comments using ASTs from go-scan
+	for filePath, fileAst := range scanInfo.AstFiles {
+		currentFileImports := make(map[string]string)
+		for _, importSpec := range fileAst.Imports {
+			path := strings.Trim(importSpec.Path.Value, `"`)
+			name := ""
+			if importSpec.Name != nil {
+				name = importSpec.Name.Name
+			} else {
+				parts := strings.Split(path, "/")
+				name = parts[len(parts)-1]
 			}
-			// Parse other top-level comments in the file (not associated with a specific AST node)
-			for _, commentGroup := range fileAst.Comments {
-				for _, comment := range commentGroup.List {
-					parseGlobalCommentDirective(comment.Text, parsedInfo, fileImports, currentPkgName, currentPkgPath)
-				}
+			currentFileImports[name] = path // Handles dot imports if name is "."
+		}
+		parsedInfo.FileImports[filePath] = currentFileImports // Store for reference, though might not be widely used
+
+		if fileAst.Doc != nil {
+			for _, comment := range fileAst.Doc.List {
+				parseGlobalCommentDirective(comment.Text, parsedInfo, currentFileImports, currentPkgName, currentPkgImportPath)
+			}
+		}
+		for _, commentGroup := range fileAst.Comments {
+			for _, comment := range commentGroup.List {
+				parseGlobalCommentDirective(comment.Text, parsedInfo, currentFileImports, currentPkgName, currentPkgImportPath)
 			}
 		}
 	}
+
+	// The old parser logic (parser.ParseDir, typeSpecsToProcess, PASS1, PASS2 loops) is now fully removed.
 	return parsedInfo, nil
+}
+
+// convertScannerTypeToModelType converts scannermodel.FieldType to model.TypeInfo
+func convertScannerTypeToModelType(
+	ctx context.Context,
+	stype *scannermodel.FieldType,
+	currentPkgImportPath string,
+) *model.TypeInfo {
+	if stype == nil {
+		return nil
+	}
+
+	mtype := &model.TypeInfo{
+		// AstExpr: // scannermodel.FieldType doesn't directly hold the ast.Expr it came from.
+		// model.TypeInfo.AstExpr might be less critical now.
+	}
+
+	mtype.IsBasic = stype.IsBuiltin
+	mtype.IsPointer = stype.IsPointer
+	mtype.IsMap = stype.IsMap
+	mtype.IsInterface = strings.HasPrefix(stype.Name, "interface{") || stype.Name == "error"
+	mtype.IsFunc = strings.HasPrefix(stype.Name, "func(")
+
+	// Simplified: go-scan's FieldType doesn't easily expose array vs slice distinction
+	// in a way that maps directly to model.TypeInfo's IsArray and ArrayLengthExpr.
+	// For now, treat array-like things primarily as slices if stype.IsSlice is true.
+	// Fixed-size array distinction is lost for now.
+	mtype.IsArray = false // Assume not an array unless specifically determined otherwise.
+	mtype.IsSlice = stype.IsSlice
+
+	if mtype.IsPointer {
+		mtype.Kind = model.KindPointer
+
+		// Create Elem TypeInfo based on current stype's non-pointer attributes
+		// Effectively, we are describing the type that stype (*T) points to (T).
+		elemModelType := &model.TypeInfo{
+			// Name, FullName, PkgName, PkgPath for T will be derived from stype (which represents *T but holds T's name)
+			IsBasic:     stype.IsBuiltin, // If *int, Elem is int (basic)
+			IsInterface: (stype.Name == "error"), // If *error, Elem is error (interface)
+			// Other IsX flags (IsPointer, IsSlice, IsMap) are false for the base element T
+		}
+
+		if elemModelType.IsBasic {
+			elemModelType.Kind = model.KindBasic
+			elemModelType.Name = stype.Name // e.g., "string" for *string
+			if stype.PkgName != "" && strings.HasPrefix(elemModelType.Name, stype.PkgName+".") { // e.g. *pkg.MyBasicAlias
+				elemModelType.Name = strings.TrimPrefix(elemModelType.Name, stype.PkgName+".")
+			}
+			elemModelType.FullName = elemModelType.Name
+			elemModelType.PackagePath = "" // Basic types have no package path
+			elemModelType.PackageName = ""
+			if stype.Name == "error" { // Special handling for error interface
+				elemModelType.Kind = model.KindInterface
+			}
+		} else { // Identifier for the element type T
+			elemModelType.Kind = model.KindIdent
+			if stype.PkgName != "" && strings.HasPrefix(stype.Name, stype.PkgName+".") {
+				elemModelType.Name = strings.TrimPrefix(stype.Name, stype.PkgName+".")
+			} else {
+				elemModelType.Name = stype.Name
+			}
+			elemModelType.PackageName = stype.PkgName
+			elemModelType.PackagePath = stype.FullImportPath()
+
+			if elemModelType.PackagePath != "" && elemModelType.PackagePath != currentPkgImportPath { // External
+				elemModelType.FullName = elemModelType.PackagePath + "." + elemModelType.Name
+			} else { // Current package or type param
+				elemModelType.PackagePath = currentPkgImportPath
+				elemModelType.FullName = elemModelType.PackagePath + "." + elemModelType.Name
+				if stype.IsTypeParam && stype.PkgName == "" && stype.FullImportPath() == "" {
+					elemModelType.FullName = elemModelType.Name
+					elemModelType.PackagePath = ""
+				}
+			}
+		}
+		mtype.Elem = elemModelType
+
+		mtype.Name = elemModelType.Name
+		mtype.FullName = "*" + elemModelType.FullName
+		mtype.PackageName = elemModelType.PackageName
+		mtype.PackagePath = elemModelType.PackagePath
+
+	} else if mtype.IsSlice {
+		mtype.Kind = model.KindSlice
+		mtype.Elem = convertScannerTypeToModelType(ctx, stype.Elem, currentPkgImportPath)
+		if mtype.Elem != nil {
+			mtype.Name = mtype.Elem.Name
+			mtype.FullName = "[]" + mtype.Elem.FullName
+			mtype.PackageName = mtype.Elem.PackageName
+			mtype.PackagePath = mtype.Elem.PackagePath
+		} else {
+			slog.WarnContext(ctx, "Slice FieldType has nil Elem", slog.String("stypeName", stype.Name))
+			name := stype.Name // stype.Name could be "pkg.Type" or "Type"
+			simpleName := name
+			if stype.PkgName != "" && strings.HasPrefix(name, stype.PkgName+".") {
+				simpleName = strings.TrimPrefix(name, stype.PkgName+".")
+			}
+			mtype.Name = simpleName
+			mtype.FullName = "[]" + stype.FullImportPath() + "." + simpleName
+		}
+	} else if mtype.IsMap {
+		mtype.Kind = model.KindMap
+		mtype.Key = convertScannerTypeToModelType(ctx, stype.MapKey, currentPkgImportPath)
+		mtype.Value = convertScannerTypeToModelType(ctx, stype.Elem, currentPkgImportPath) // Elem is Value for maps
+		if mtype.Key != nil && mtype.Value != nil {
+			mtype.Name = fmt.Sprintf("map[%s]%s", mtype.Key.Name, mtype.Value.Name)
+			mtype.FullName = fmt.Sprintf("map[%s]%s", mtype.Key.FullName, mtype.Value.FullName)
+		} else {
+			slog.WarnContext(ctx, "Map FieldType has nil Key or Value", slog.String("stypeName", stype.Name))
+			keyName := "any"
+			if stype.MapKey != nil {
+				name := stype.MapKey.Name
+				simpleName := name
+				if stype.MapKey.PkgName != "" && strings.HasPrefix(name, stype.MapKey.PkgName+".") { simpleName = strings.TrimPrefix(name, stype.MapKey.PkgName+".") }
+				keyName = simpleName
+			}
+			valName := "any"
+			if stype.Elem != nil {
+				name := stype.Elem.Name
+				simpleName := name
+				if stype.Elem.PkgName != "" && strings.HasPrefix(name, stype.Elem.PkgName+".") { simpleName = strings.TrimPrefix(name, stype.Elem.PkgName+".") }
+				valName = simpleName
+			}
+			mtype.Name = fmt.Sprintf("map[%s]%s", keyName, valName)
+			mtype.FullName = mtype.Name
+		}
+	} else if mtype.IsBasic {
+		mtype.Kind = model.KindBasic
+		mtype.Name = stype.Name
+		mtype.FullName = stype.Name
+		mtype.PackageName = ""
+		mtype.PackagePath = ""
+		if stype.Name == "error" {
+			mtype.IsInterface = true
+			mtype.Kind = model.KindInterface
+		}
+	} else {
+		mtype.Kind = model.KindIdent
+		// Determine simple name for mtype.Name
+		if stype.PkgName != "" && strings.HasPrefix(stype.Name, stype.PkgName+".") {
+			mtype.Name = strings.TrimPrefix(stype.Name, stype.PkgName+".")
+		} else {
+			mtype.Name = stype.Name // Assumed to be simple name already (local type, type param, or PkgName is empty)
+		}
+
+		if stype.PkgName != "" && stype.FullImportPath() != "" && stype.FullImportPath() != currentPkgImportPath {
+			// External package
+			mtype.PackageName = stype.PkgName // This is the alias used in source, or derived by go-scan
+			mtype.PackagePath = stype.FullImportPath()
+			mtype.FullName = mtype.PackagePath + "." + mtype.Name
+		} else {
+			// Current package, or a type without explicit package path (e.g. could be unresolved type parameter if not caught)
+			mtype.PackageName = "" // Local types don't need package name in model.TypeInfo.PackageName
+			mtype.PackagePath = currentPkgImportPath
+			mtype.FullName = mtype.PackagePath + "." + mtype.Name
+		}
+		if stype.IsTypeParam {
+			slog.DebugContext(ctx, "Encountered type parameter in convertScannerTypeToModelType", slog.String("name", stype.Name))
+			// model.TypeInfo doesn't have IsTypeParam. Treat as KindIdent. Its FullName might be just its name.
+			// This could be an issue if it needs special handling later.
+			// For now, its FullName might be "currentPkg.T" if T is defined in currentPkg.
+			// If it's a generic parameter like `T` from `func foo[T any]()`, its PkgName/Path might be empty from go-scan.
+			if stype.PkgName == "" && stype.FullImportPath() == "" {
+				mtype.FullName = mtype.Name // e.g. "T"
+				mtype.PackagePath = ""      // Type params don't belong to a package in the same way
+			}
+		}
+		// If it's 'error' and wasn't caught by IsBasic
+		if mtype.Name == "error" && mtype.PackagePath == "" {
+			mtype.IsInterface = true
+			mtype.Kind = model.KindInterface
+			mtype.IsBasic = true // Treat 'error' as a basic type for some classification purposes
+		}
+
+	}
+	return mtype
+}
+
+// extractConvertTag extracts the content of the `convert:"..."` part from a full struct tag string.
+func extractConvertTag(fullTag string) string {
+	// Example tag: `json:"name,omitempty" convert:"target_name,required" validate:"nonempty"`
+	// We need to find `convert:"..."`
+	const convertKey = `convert:"`
+	idx := strings.Index(fullTag, convertKey)
+	if idx == -1 {
+		return ""
+	}
+	// Found the start of convert key
+	valStart := idx + len(convertKey)
+	// Find the closing quote for this value
+	// Need to handle escaped quotes inside, though rare for this specific tag.
+	// For simplicity, find the next quote.
+	endIdx := -1
+	searchStart := valStart
+	for {
+		nextQuote := strings.Index(fullTag[searchStart:], `"`)
+		if nextQuote == -1 {
+			return "" // Malformed, no closing quote
+		}
+		// Check if this quote is escaped
+		if searchStart+nextQuote > 0 && fullTag[searchStart+nextQuote-1] == '\\' {
+			// It's an escaped quote, continue search after it
+			searchStart += nextQuote + 1
+			continue
+		}
+		endIdx = searchStart + nextQuote
+		break
+	}
+
+	if endIdx == -1 {
+		return "" // Malformed
+	}
+	return fullTag[valStart:endIdx]
 }
 
 // derivePackagePath tries to derive an import path from a directory path.
 // This is a simplified heuristic and might not work for all project layouts.
 // A robust solution would involve parsing go.mod.
+// TODO: Evaluate if this is still needed after go-scan integration, as scanInfo.ImportPath should be more reliable.
 func derivePackagePath(dirPath string) string {
 	// Try to find go.mod upwards to get module path
 	currentPath, err := filepath.Abs(dirPath)
@@ -169,197 +545,11 @@ func derivePackagePath(dirPath string) string {
 	return "" // Could not find go.mod
 }
 
-// collectFileImports gathers all import declarations from a file.
-// Returns a map of import alias/name to full import path.
-// e.g., {"fmt": "fmt", "custom_alias": "example.com/custom/pkg", "pkg": "example.com/other/pkg"}
-func collectFileImports(file *ast.File) map[string]string {
-	imports := make(map[string]string)
-	for _, importSpec := range file.Imports {
-		path := strings.Trim(importSpec.Path.Value, `"`)
-		name := ""
-		if importSpec.Name != nil {
-			name = importSpec.Name.Name
-		} else {
-			// If no explicit alias, name is the last part of the import path
-			parts := strings.Split(path, "/")
-			name = parts[len(parts)-1]
-		}
-		if name == "." { // Dot import
-			// Handling dot imports is complex for type resolution without go/types.
-			// For now, we can record it, but resolving types from dot imports is tricky.
-			// We might need to treat types from dot imports as if they are in the current package.
-			// Or, more accurately, the generator would need to know not to prefix them.
-			// For now, let's use a special marker or just the path.
-			imports["."] = path // Or perhaps a more unique key if multiple dot imports were allowed/meaningful here
-		} else {
-			imports[name] = path
-		}
-	}
-	return imports
-}
-
-// resolveTypeExpr converts an ast.Expr representing a type into a model.TypeInfo.
-// This is a key function that needs to handle all relevant type expressions.
-// - currentPkgName: The name of the package where this type expression is encountered.
-// - currentPkgPath: The import path of the package.
-// - fileImports: A map of import alias/name to full import path for the current file.
-// - parsedInfo: The global parsed information, used to look up already defined structs/named types.
-func resolveTypeExpr(expr ast.Expr, currentPkgName, currentPkgPath string, fileImports map[string]string, parsedInfo *model.ParsedInfo) *model.TypeInfo {
-	ti := &model.TypeInfo{AstExpr: expr}
-
-	switch e := expr.(type) {
-	case *ast.Ident:
-		ti.Name = e.Name
-		if isGoBasicType(e.Name) {
-			ti.Kind = model.KindBasic
-			ti.IsBasic = true
-			ti.FullName = e.Name
-			ti.PackageName = "" // Basic types don't have a package
-			ti.PackagePath = ""
-		} else {
-			// Could be a type defined in the current package or from a dot import.
-			// Check if it's a known named type or struct in the current package.
-			// This lookup relies on parseTypeSpec having run for these types.
-			if namedType, ok := parsedInfo.NamedTypes[e.Name]; ok && namedType.PackagePath == currentPkgPath {
-				// It's a named type defined in the current package (e.g. type MyInt int)
-				// We return a copy or a pointer to the existing TypeInfo to avoid cycles if it's complex.
-				// For simplicity, let's return the direct namedType. The generator must handle recursion.
-				return namedType
-			} else if structInfo, ok := parsedInfo.Structs[e.Name]; ok && structInfo.Type.PackagePath == currentPkgPath {
-				// It's a struct defined in the current package
-				return structInfo.Type
-			} else {
-				// Not a basic type, not a known named type or struct in current package.
-				// It could be:
-				// 1. A type from a dot import (e.g. import . "other/pkg", then use "OtherType")
-				// 2. A forward declaration within the current package (less common for this to be hit before its spec is parsed in pass 1)
-				// 3. An unresolved type (error case)
-				ti.Kind = model.KindIdent // Assume it's an identifier for now
-				ti.PackageName = currentPkgName
-				ti.PackagePath = currentPkgPath
-				ti.FullName = currentPkgPath + "." + e.Name
-
-				if dotImportPath, ok := fileImports["."]; ok {
-					// If there's a dot import, the type *might* be from there.
-					// This is hard to confirm without full type checking.
-					// We could assume it's from the dot-imported package for FullName resolution.
-					// However, multiple dot imports or conflicts with local types make this ambiguous.
-					// For now, we'll primarily assume it's a local package type if not explicitly qualified.
-					// The generator will need to handle this (e.g. by not prefixing if from dot import).
-					// Let's keep its PackagePath as current, but acknowledge.
-					fmt.Printf("Info: Type '%s' in package '%s' might be from a dot import ('%s') or a forward/local declaration.\n", e.Name, currentPkgPath, dotImportPath)
-					// A more aggressive approach would be to check if `e.Name` exists in the dot-imported package.
-					// But that requires parsing that package too, which is beyond current scope.
-				}
-			}
-		}
-	case *ast.SelectorExpr: // pkg.Type
-		ti.Kind = model.KindIdent // Could resolve to struct, named, etc.
-		if pkgIdent, ok := e.X.(*ast.Ident); ok {
-			ti.PackageName = pkgIdent.Name // This is the alias/package name used in THIS file
-			ti.Name = e.Sel.Name
-			if importPath, ok := fileImports[pkgIdent.Name]; ok {
-				ti.PackagePath = importPath
-				ti.FullName = importPath + "." + e.Sel.Name
-				// Now, check if this refers to a known struct/named type from an *imported* package
-				// This requires `parsedInfo` to potentially hold info from other packages if we were parsing dependencies.
-				// For now, we assume types from other packages are not further resolved into `StructInfo` etc.
-				// unless they were part of the same parsing batch (not typical for dependencies).
-			} else {
-				ti.PackagePath = ""                            // Unknown package path
-				ti.FullName = pkgIdent.Name + "." + e.Sel.Name // Fallback
-				fmt.Printf("Warning: Package alias '%s' for type '%s' not found in file imports. FullName may be incorrect.\n", pkgIdent.Name, ti.FullName)
-			}
-		} else {
-			// Complex selector, e.g. (pkg.SubStruct).FieldType - not typical for top-level type names
-			// but could appear in field types.
-			rawName := model.AstExprToString(e, currentPkgName)
-			ti.Name = rawName
-			ti.FullName = rawName // Best guess
-			ti.PackageName = ""   // Hard to determine package context
-			ti.PackagePath = ""
-			fmt.Printf("Warning: Unexpected selector expression X type for type: %s (X is %T)\n", rawName, e.X)
-		}
-	case *ast.StarExpr: // *Type
-		ti.IsPointer = true
-		ti.Kind = model.KindPointer
-		ti.Elem = resolveTypeExpr(e.X, currentPkgName, currentPkgPath, fileImports, parsedInfo)
-		if ti.Elem != nil {
-			ti.FullName = "*" + ti.Elem.FullName
-			ti.Name = "*" + ti.Elem.Name // Simple name is also prefixed for clarity
-			// PackageName and PackagePath are implicitly those of the Elem
-			ti.PackageName = ti.Elem.PackageName
-			ti.PackagePath = ti.Elem.PackagePath
-		} else {
-			ti.FullName = "*" + model.AstExprToString(e.X, currentPkgName)
-			ti.Name = "*" + model.AstExprToString(e.X, currentPkgName)
-		}
-	case *ast.ArrayType: // []Type or [N]Type
-		if e.Len == nil {
-			ti.IsSlice = true
-			ti.Kind = model.KindSlice
-		} else {
-			ti.IsArray = true
-			ti.Kind = model.KindArray
-			// Length is e.Len (ast.Expr)
-		}
-		ti.Elem = resolveTypeExpr(e.Elt, currentPkgName, currentPkgPath, fileImports, parsedInfo)
-		if ti.Elem != nil {
-			prefix := "[]"
-			if ti.IsArray {
-				lenStr := model.AstExprToString(e.Len, currentPkgName)
-				prefix = "[" + lenStr + "]"
-			}
-			ti.FullName = prefix + ti.Elem.FullName
-			ti.Name = prefix + ti.Elem.Name
-			ti.PackageName = ti.Elem.PackageName // Inherit from element
-			ti.PackagePath = ti.Elem.PackagePath
-		} else {
-			ti.FullName = model.AstExprToString(e, currentPkgName) // Fallback
-			ti.Name = model.AstExprToString(e, currentPkgName)
-		}
-	case *ast.MapType: // map[KeyType]ValueType
-		ti.IsMap = true
-		ti.Kind = model.KindMap
-		ti.Key = resolveTypeExpr(e.Key, currentPkgName, currentPkgPath, fileImports, parsedInfo)
-		ti.Value = resolveTypeExpr(e.Value, currentPkgName, currentPkgPath, fileImports, parsedInfo)
-		if ti.Key != nil && ti.Value != nil {
-			ti.FullName = fmt.Sprintf("map[%s]%s", ti.Key.FullName, ti.Value.FullName)
-			ti.Name = fmt.Sprintf("map[%s]%s", ti.Key.Name, ti.Value.Name) // Simple name for map is its full structure
-			// Maps don't have a single PackageName/Path; it's implicit from Key/Value types.
-		} else {
-			ti.FullName = model.AstExprToString(e, currentPkgName) // Fallback
-			ti.Name = model.AstExprToString(e, currentPkgName)
-		}
-	case *ast.InterfaceType:
-		ti.IsInterface = true
-		ti.Kind = model.KindInterface
-		if e.Methods == nil || len(e.Methods.List) == 0 {
-			ti.Name = "interface{}"
-		} else {
-			ti.Name = "interface{...}" // Simplified
-		}
-		ti.FullName = ti.Name // Interfaces are often anonymous or built-in like `error`
-		// Package context is typically not applicable or refers to "builtin"
-	case *ast.FuncType:
-		ti.IsFunc = true
-		ti.Kind = model.KindFunc
-		ti.Name = model.AstExprToString(e, currentPkgName) // Use AstExprToString for a representation
-		ti.FullName = ti.Name
-		// Package context not directly applicable for func type structure itself
-	default:
-		ti.Kind = model.KindUnknown
-		rawTypeName := model.AstExprToString(expr, currentPkgName)
-		ti.Name = rawTypeName
-		ti.FullName = rawTypeName // Fallback
-		fmt.Printf("Warning: Unknown AST expression type (%T) for TypeInfo processing: %s. Raw: %s\n", expr, rawTypeName, model.AstExprToString(expr, ""))
-	}
-	return ti
-}
-
+// isGoBasicType checks if a type name is a basic Go type.
+// TODO: This will likely be removed as scannermodel.FieldType.IsBuiltin should be used.
 func isGoBasicType(name string) bool {
 	switch name {
-	case "bool", "byte", "complex128", "complex64", "error", "float32", "float64",
+	case "bool", "byte", "complex128", "complex64", "error", "float32", "float64", // "error" is not strictly basic, but often treated so
 		"int", "int16", "int32", "int64", "int8", "rune", "string", "uint", "uint16",
 		"uint32", "uint64", "uint8", "uintptr":
 		return true
@@ -494,161 +684,193 @@ func parseGlobalCommentDirective(commentText string, info *model.ParsedInfo, fil
 // from an annotation and resolves it to TypeInfo.
 func resolveTypeFromString(typeStr, currentPkgName, currentPkgPath string, fileImports map[string]string, parsedInfo *model.ParsedInfo) *model.TypeInfo {
 	if typeStr == "" {
-		fmt.Println("Warning: Empty type string passed to resolveTypeFromString.")
+		slog.Warn("Empty type string passed to resolveTypeFromString.")
 		return nil
 	}
-	// Use go/parser.ParseExpr to convert the type string into an AST expression.
-	expr, err := parser.ParseExpr(typeStr)
-	if err != nil {
-		fmt.Printf("Warning: Could not parse type string '%s' from annotation into AST expression: %v. Treating as potentially unresolved.\n", typeStr, err)
-		// Fallback: create a simple TypeInfo that is marked as unresolved or basic KindIdent.
-		// This allows processing to continue but generation will likely fail or produce placeholder for this type.
-		ti := &model.TypeInfo{
-			Name:        typeStr, // Use the raw string as name
-			FullName:    typeStr, // FullName might be pkg.Type or just Type
-			PackageName: "",      // Unknown at this stage without successful parsing
-			PackagePath: "",
-			Kind:        model.KindUnknown, // Mark as unknown due to parse failure
-			AstExpr:     nil,               // No valid AST expression
-		}
-		// Attempt to qualify if it looks like a local type.
-		if !strings.Contains(typeStr, ".") { // Does not contain "." so might be local to current package
-			ti.FullName = currentPkgPath + "." + typeStr
-			ti.PackagePath = currentPkgPath
-			ti.PackageName = currentPkgName
-		}
-		return ti
-	}
-	// If parsing to AST expression is successful, resolve it using resolveTypeExpr.
-	return resolveTypeExpr(expr, currentPkgName, currentPkgPath, fileImports, parsedInfo)
-}
 
-// parseTypeSpec is called during Pass 2. It fully parses an ast.TypeSpec
-// to create model.StructInfo or model.TypeInfo for named types.
-func parseTypeSpec(typeSpec *ast.TypeSpec, parsedInfo *model.ParsedInfo, fileImports map[string]string, currentPkgName, currentPkgPath string) {
-	typeName := typeSpec.Name.Name
-
-	// Create the primary TypeInfo for this type definition.
-	// This selfTypeInfo will be stored in parsedInfo.NamedTypes or associated with a StructInfo.
-	selfTypeInfo := &model.TypeInfo{
-		Name:        typeName,
-		FullName:    currentPkgPath + "." + typeName,
-		PackageName: currentPkgName,
-		PackagePath: currentPkgPath,
-		AstExpr:     typeSpec.Name, // Reference to its own declaration identifier
+	// 1. Handle prefixes: *, [], map[]
+	if strings.HasPrefix(typeStr, "*") {
+		elemTypeStr := strings.TrimPrefix(typeStr, "*")
+		elemTypeInfo := resolveTypeFromString(elemTypeStr, currentPkgName, currentPkgPath, fileImports, parsedInfo)
+		if elemTypeInfo == nil {
+			slog.Warn("Could not resolve element type for pointer", slog.String("typeStr", typeStr))
+			return &model.TypeInfo{Name: typeStr, FullName: typeStr, Kind: model.KindUnknown}
+		}
+		return &model.TypeInfo{
+			Name:        elemTypeInfo.Name, // Simplified name
+			FullName:    "*" + elemTypeInfo.FullName,
+			Kind:        model.KindPointer,
+			IsPointer:   true,
+			Elem:        elemTypeInfo,
+			PackageName: elemTypeInfo.PackageName, // Inherit from element
+			PackagePath: elemTypeInfo.PackagePath,
+		}
 	}
 
-	switch underlyingAstType := typeSpec.Type.(type) {
-	case *ast.StructType:
-		selfTypeInfo.Kind = model.KindStruct
-		sInfo := &model.StructInfo{
-			Name: typeName,
-			Type: selfTypeInfo, // Link to its own TypeInfo
-			Node: underlyingAstType,
+	if strings.HasPrefix(typeStr, "[]") {
+		elemTypeStr := strings.TrimPrefix(typeStr, "[]")
+		elemTypeInfo := resolveTypeFromString(elemTypeStr, currentPkgName, currentPkgPath, fileImports, parsedInfo)
+		if elemTypeInfo == nil {
+			slog.Warn("Could not resolve element type for slice", slog.String("typeStr", typeStr))
+			return &model.TypeInfo{Name: typeStr, FullName: typeStr, Kind: model.KindUnknown}
 		}
-		parsedInfo.Structs[typeName] = sInfo
-		selfTypeInfo.StructInfo = sInfo // Make the TypeInfo point to its StructInfo
+		return &model.TypeInfo{
+			Name:        elemTypeInfo.Name, // Simplified name
+			FullName:    "[]" + elemTypeInfo.FullName,
+			Kind:        model.KindSlice,
+			IsSlice:     true,
+			Elem:        elemTypeInfo,
+			PackageName: elemTypeInfo.PackageName, // Inherit from element
+			PackagePath: elemTypeInfo.PackagePath,
+		}
+	}
 
-		for _, field := range underlyingAstType.Fields.List {
-			fieldTypeInfo := resolveTypeExpr(field.Type, currentPkgName, currentPkgPath, fileImports, parsedInfo)
-			var fieldTag model.ConvertTag
-			if field.Tag != nil {
-				tagValue := strings.Trim(field.Tag.Value, "`")
-				// Assuming format `convert:"name,opt1,opt2" other:"..."`
-				if tagIdx := strings.Index(tagValue, "convert:\""); tagIdx != -1 {
-					rawTag := tagValue[tagIdx+len("convert:\""):]
-					if endIdx := strings.Index(rawTag, "\""); endIdx != -1 {
-						rawTag = rawTag[:endIdx]
-						fieldTag = parseFieldTag(rawTag)
-					}
+	if strings.HasPrefix(typeStr, "map[") && strings.HasSuffix(typeStr, "]") {
+		// map[KeyType]ValueType
+		// This parsing is simplistic and assumes no nested maps or complex types in key/value strings directly.
+		inner := strings.TrimPrefix(typeStr, "map[")
+		inner = strings.TrimSuffix(inner, "]")
+
+		// Find the first ']' that correctly closes the key type, considering nested types.
+		// This is hard with simple string splitting if keys can be complex (e.g. map[*pkg.Key]Value).
+		// For now, assume simple key types that don't contain ']'.
+		// A more robust solution would require a proper parser for type strings.
+		var keyTypeStr, valTypeStr string
+		bracketDepth := 0
+		splitIndex := -1
+		for i, char := range inner {
+			if char == '[' {
+				bracketDepth++
+			} else if char == ']' {
+				bracketDepth--
+				if bracketDepth == -1 { // Found the closing bracket for the key type
+					keyTypeStr = inner[:i]
+					valTypeStr = inner[i+1:]
+					splitIndex = i
+					break
 				}
 			}
-
-			if len(field.Names) > 0 { // Regular field
-				for _, fieldNameIdent := range field.Names {
-					fInfo := model.FieldInfo{
-						Name:         fieldNameIdent.Name,
-						OriginalName: fieldNameIdent.Name,
-						TypeInfo:     fieldTypeInfo,
-						Tag:          fieldTag,
-						ParentStruct: sInfo,
-						AstField:     field,
-					}
-					sInfo.Fields = append(sInfo.Fields, fInfo)
-				}
-			} else { // Embedded field
-				// Name of embedded field is usually the type name itself.
-				// If fieldTypeInfo.Name is "pkg.Type", embedded name is "Type".
-				// If fieldTypeInfo.Name is "MyType" (local), embedded name is "MyType".
-				embeddedName := fieldTypeInfo.Name
-				if fieldTypeInfo.PackagePath != "" && fieldTypeInfo.PackagePath != currentPkgPath {
-					// It's an external type, e.g. time.Time. Name should be "Time".
-					// The TypeInfo.Name for pkg.Type is already "Type" if resolveTypeExpr handles selectors correctly.
-				}
-
-				fInfo := model.FieldInfo{
-					Name:         embeddedName, // For embedded, Name is usually the type name.
-					OriginalName: embeddedName, // This might need to be model.AstExprToString(field.Type,...) for full name
-					TypeInfo:     fieldTypeInfo,
-					Tag:          fieldTag, // Tags on embedded fields are parsed if present
-					ParentStruct: sInfo,
-					AstField:     field,
-				}
-				sInfo.Fields = append(sInfo.Fields, fInfo)
-			}
 		}
-		// After processing all fields, this struct definition is complete.
-		// selfTypeInfo (and sInfo.Type) is already set up.
-
-	case *ast.Ident, *ast.SelectorExpr, *ast.StarExpr, *ast.ArrayType, *ast.MapType, *ast.InterfaceType, *ast.FuncType:
-		// This is a named type definition, e.g., `type MyInt int`, `type MySlice []string`, `type Point *image.Point`
-		selfTypeInfo.Kind = model.KindNamed
-		underlyingType := resolveTypeExpr(underlyingAstType, currentPkgName, currentPkgPath, fileImports, parsedInfo)
-		selfTypeInfo.Underlying = underlyingType
-		parsedInfo.NamedTypes[typeName] = selfTypeInfo
-
-		// Special handling: if this named type is an alias to a struct
-		// e.g., `type MyStructAlias AnotherStruct` or `type MyStructPtrAlias *AnotherStruct`
-		// We want MyStructAlias to also be "discoverable" as a struct-like type for pairings.
-		effectiveUnderlyingType := underlyingType
-		if underlyingType.IsPointer && underlyingType.Elem != nil {
-			effectiveUnderlyingType = underlyingType.Elem // Look at what the pointer points to
+		if splitIndex == -1 && bracketDepth == 0 { // No brackets in key, simple split e.g. "string]int"
+			parts := strings.SplitN(inner, "]", 2)
+			if len(parts) == 2 {
+				keyTypeStr = parts[0]
+				valTypeStr = parts[1]
+			} else {
+				slog.Warn("Could not parse map type string", slog.String("typeStr", typeStr))
+				return &model.TypeInfo{Name: typeStr, FullName: typeStr, Kind: model.KindUnknown}
+			}
+		} else if splitIndex == -1 { // Malformed or complex key type not handled
+			slog.Warn("Could not accurately parse complex key or malformed map type string", slog.String("typeStr", typeStr))
+			return &model.TypeInfo{Name: typeStr, FullName: typeStr, Kind: model.KindUnknown}
 		}
 
-		if effectiveUnderlyingType.Kind == model.KindStruct || (effectiveUnderlyingType.Kind == model.KindIdent && effectiveUnderlyingType.StructInfo != nil) {
-			// The named type (or what it points to) is effectively a struct.
-			// Create a StructInfo for this alias to make it behave like a struct.
-			baseStructInfo := effectiveUnderlyingType.StructInfo
-			if baseStructInfo == nil && effectiveUnderlyingType.Kind == model.KindIdent {
-				// It might be an identifier that resolved to a type that *is* a struct, look it up
-				if si, ok := parsedInfo.Structs[effectiveUnderlyingType.Name]; ok && si.Type.PackagePath == effectiveUnderlyingType.PackagePath {
-					baseStructInfo = si
-				}
-			}
+		keyTypeInfo := resolveTypeFromString(keyTypeStr, currentPkgName, currentPkgPath, fileImports, parsedInfo)
+		valTypeInfo := resolveTypeFromString(valTypeStr, currentPkgName, currentPkgPath, fileImports, parsedInfo)
 
-			if baseStructInfo != nil {
-				aliasStructInfo := &model.StructInfo{
-					Name:            typeName,     // The name of the alias, e.g., MyStructAlias
-					Type:            selfTypeInfo, // The TypeInfo of MyStructAlias itself
-					IsAlias:         true,
-					UnderlyingAlias: baseStructInfo.Type,   // Points to TypeInfo of AnotherStruct
-					Node:            baseStructInfo.Node,   // "Inherit" AST node of the actual struct
-					Fields:          baseStructInfo.Fields, // "Inherit" fields
-				}
-				// Add this alias to the list of known structs so it can be used in `convert:pair`
-				if _, exists := parsedInfo.Structs[typeName]; !exists {
-					parsedInfo.Structs[typeName] = aliasStructInfo
-				}
-				// Also link the selfTypeInfo of the alias to this new StructInfo wrapper
-				selfTypeInfo.StructInfo = aliasStructInfo
+		if keyTypeInfo == nil || valTypeInfo == nil {
+			slog.Warn("Could not resolve key or value type for map", slog.String("typeStr", typeStr))
+			return &model.TypeInfo{Name: typeStr, FullName: typeStr, Kind: model.KindUnknown}
+		}
+		return &model.TypeInfo{
+			Name:     fmt.Sprintf("map[%s]%s", keyTypeInfo.Name, valTypeInfo.Name),
+			FullName: fmt.Sprintf("map[%s]%s", keyTypeInfo.FullName, valTypeInfo.FullName),
+			Kind:     model.KindMap,
+			IsMap:    true,
+			Key:      keyTypeInfo,
+			Value:    valTypeInfo,
+			// PackageName/Path for map itself isn't standard.
+		}
+	}
+
+	// 2. Handle basic Go types
+	// isGoBasicType is removed, so check directly
+	basicTypes := map[string]bool{
+		"bool": true, "byte": true, "complex128": true, "complex64": true, "error": true,
+		"float32": true, "float64": true, "int": true, "int16": true, "int32": true, "int64": true,
+		"int8": true, "rune": true, "string": true, "uint": true, "uint16": true, "uint32": true,
+		"uint64": true, "uint8": true, "uintptr": true,
+	}
+	if basicTypes[typeStr] {
+		kind := model.KindBasic
+		isInterface := false
+		if typeStr == "error" {
+			kind = model.KindInterface
+			isInterface = true
+		}
+		return &model.TypeInfo{
+			Name:        typeStr,
+			FullName:    typeStr,
+			Kind:        kind,
+			IsBasic:     true, // Even 'error' can be considered basic for this tool's purposes
+			IsInterface: isInterface,
+		}
+	}
+
+	// 3. Handle identifiers (local or qualified)
+	parts := strings.SplitN(typeStr, ".", 2)
+	if len(parts) == 1 { // Unqualified identifier (e.g., "MyType")
+		name := parts[0]
+		// Check if it's a known struct in the current package
+		if sinfo, ok := parsedInfo.Structs[name]; ok && sinfo.Type.PackagePath == currentPkgPath {
+			return sinfo.Type // Return the existing TypeInfo for the struct
+		}
+		// Check if it's a known named type in the current package
+		if ntInfo, ok := parsedInfo.NamedTypes[name]; ok && ntInfo.PackagePath == currentPkgPath {
+			return ntInfo // Return the existing TypeInfo for the named type
+		}
+		// If not found, assume it's a type in the current package that might be defined elsewhere or is a forward declaration.
+		// This is a common case for types used in annotations before their full definition is processed by the main loop.
+		slog.Debug("Unqualified type not found in parsedInfo, assuming local/unresolved", slog.String("name", name), slog.String("currentPkg", currentPkgPath))
+		return &model.TypeInfo{
+			Name:        name,
+			FullName:    currentPkgPath + "." + name,
+			PackageName: currentPkgName, // This might be empty if currentPkgName is the package name, not an alias.
+			PackagePath: currentPkgPath,
+			Kind:        model.KindIdent, // Could be a struct, interface, or alias not yet fully processed
+		}
+	} else { // Qualified identifier (e.g., "pkg.Type")
+		pkgAlias := parts[0]
+		typeName := parts[1]
+
+		if pkgAlias == currentPkgName { // Check if it's referring to the current package
+			// Treat as local type: look up typeName in parsedInfo
+			if sinfo, ok := parsedInfo.Structs[typeName]; ok && sinfo.Type.PackagePath == currentPkgPath {
+				return sinfo.Type
+			}
+			if ntInfo, ok := parsedInfo.NamedTypes[typeName]; ok && ntInfo.PackagePath == currentPkgPath {
+				return ntInfo
+			}
+			slog.Debug("Qualified type referring to current package not found in parsedInfo, assuming local/unresolved", slog.String("typeName", typeName), slog.String("currentPkg", currentPkgPath))
+			return &model.TypeInfo{ // Fallback for local type not yet fully processed in parsedInfo
+				Name:        typeName,
+				FullName:    currentPkgPath + "." + typeName,
+				PackageName: "", // No package alias for current package types
+				PackagePath: currentPkgPath,
+				Kind:        model.KindIdent,
 			}
 		}
 
-	default:
-		fmt.Printf("Warning: Unhandled TypeSpec kind for type '%s': %T. Storing as KindUnknown.\n", typeName, typeSpec.Type)
-		selfTypeInfo.Kind = model.KindUnknown
-		selfTypeInfo.Underlying = resolveTypeExpr(underlyingAstType, currentPkgName, currentPkgPath, fileImports, parsedInfo) // Attempt to resolve underlying anyway
-		parsedInfo.NamedTypes[typeName] = selfTypeInfo                                                                        // Store it so it's not completely lost
+		// External package
+		importedPkgPath, ok := fileImports[pkgAlias]
+		if !ok {
+			slog.Warn("External package alias not found in file imports", slog.String("alias", pkgAlias), slog.String("typeStr", typeStr))
+			// Fallback: assume pkgAlias is the full package path if not in imports
+			return &model.TypeInfo{
+				Name:        typeName,
+				FullName:    typeStr,
+				PackageName: pkgAlias,
+				PackagePath: pkgAlias, // Assuming alias is path if not found
+				Kind:        model.KindIdent,
+			}
+		}
+		return &model.TypeInfo{
+			Name:        typeName,
+			FullName:    importedPkgPath + "." + typeName,
+			PackageName: pkgAlias,
+			PackagePath: importedPkgPath,
+			Kind:        model.KindIdent,
+		}
 	}
 }
 

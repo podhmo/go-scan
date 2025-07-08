@@ -86,7 +86,11 @@ You can reference symbols from imported packages using either the package's base
 
 ### Supported Symbols
 
-Currently, `minigo` only supports importing and referencing **exported constants** from other packages. Support for functions and variables may be added in the future.
+Currently, `minigo` supports importing and referencing the following from other packages:
+- **Exported constants**: e.g., `pkg.MyConst`. Values are parsed and converted to `minigo`'s internal object types (Integer, String, Boolean).
+- **Exported functions**: e.g., `pkg.MyFunction`. These can be called from `minigo` scripts. The interpreter handles mapping arguments and return values between `minigo` objects and Go types, based on function signatures obtained via `go-scan`.
+
+Support for importing and referencing exported global variables from other packages may be added in the future.
 
 ### Unsupported Import Forms
 

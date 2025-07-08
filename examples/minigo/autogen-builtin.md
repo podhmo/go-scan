@@ -127,5 +127,47 @@ package main
 *   より高度な型推論 (例: `go_type` の自動判別)。
 *   テストコードの自動生成の可能性。
 
+## 実装上の課題と考慮点 (stringsパッケージ生成シミュレーションに基づく)
+
+提案されたアノテーション方式を用いて `strings` パッケージの組み込み関数生成をシミュレートした結果、いくつかの課題が明らかになりました。
+
+### 1. 複雑な引数構造を持つ関数の表現 (例: `strings.Join`)
+
+現在の `strings.Join` は、MiniGoに配列型がないため、「最後の引数がセパレータで、それ以前の引数が結合対象の文字列」という特殊なシグネチャを持っています。これをアノテーションで表現する際に以下の問題があります。
+
+*   **P1: 特殊な引数解釈のアノテーション構文:**
+    *   `//minigo:arg index=-1 type=STRING` や `//minigo:arg index_range=0..-2 type=STRING` のようなカスタム構文は、アノテーションパーサーを複雑化させます。
+    *   より宣言的な方法、例えば `//minigo:arg_pattern rule=last_is_separator pattern_var=separator_arg` や、引数グループの定義 (`//minigo:arg_group name=elements type=STRING variadic=true up_to=-2`) など、より高度なアノテーション機能の検討が必要です。
+    *   あるいは、このような非常に特殊なケースでは、`wrapper_func` を使用することを前提とし、アノテーション側では引数の型と数を大まかに定義するに留める（例: `//minigo:args variadic=true` のみ）という割り切りも考えられます。この場合、詳細な引数チェックは `wrapper_func` 側の責任となります。
+
+*   **P2: スタブ関数のシグネチャと実際のロジックの乖離:**
+    *   `wrapper_func` を使用する場合、Goのスタブ関数のシグネチャ (例: `func joinStub(elements ...string) string`) が、MiniGoの実際の引数構造 (例: `obj1, obj2, ..., separatorObj`) と大きく異なる可能性があります。
+    *   スタブ関数は主に存在確認や基本的な型ヒントに用いられると割り切れば許容範囲かもしれませんが、アノテーションとスタブ関数だけを見ても実際の挙動が把握しにくいという問題は残ります。ドキュメントの重要性が増します。
+
+### 2. `wrapper_func` の依存関係とスコープ
+
+*   **P3: `wrapper_func` の可視性とパッケージ依存:**
+    *   アノテーションで `wrapper_func="main.evalStringsJoinOriginal"` のように、インタプリタのメインパッケージ内の関数を指定する場合、アノテーション処理ツールや生成されるコードがその関数に正しくアクセスできる必要があります。
+    *   `builtins_src` ディレクトリが `main` パッケージとは別パッケージとして管理される場合（通常はそうなる）、生成コードが `main` パッケージの関数を呼び出すためには適切なインポートが必要です。生成ツールがこれを自動で解決するか、あるいは `wrapper_func` は特定のインターフェースを満たすように公開された関数であるべき、といった規約が必要になります。
+    *   循環参照の問題も考慮に入れる必要があります。
+
+### 3. 単純な関数の場合の利便性 (例: `strings.Contains`, `strings.ToUpper`)
+
+*   `strings.Contains(s string, substr string) bool` や `strings.ToUpper(s string) string` のような、Go標準ライブラリ関数に直接マッピングできるものは、提案された `target_go_func` アノテーションで比較的スムーズに自動生成できると期待されます。
+    ```go
+    // builtins_src/strings_builtins.go
+    package builtins_src
+    import "strings"
+
+    //minigo:builtin name="strings.Contains" target_go_func="strings.Contains"
+    //minigo:arg index=0 name=s type=STRING go_type=string
+    //minigo:arg index=1 name=substr type=STRING go_type=string
+    //minigo:return type=BOOLEAN go_type=bool
+    func stringsContainsStub(s string, substr string) bool { return false }
+    ```
+    この場合の主な作業は、MiniGoの型 (`STRING`, `BOOLEAN`) とGoの型 (`string`, `bool`) の間の定型的な変換コードの生成になります。
+
+これらの課題を解決するためには、アノテーションの語彙を増やす、`wrapper_func` の使い方に関する規約を明確にする、生成ツールのロジックを洗練させるなどの対応が考えられます。
+
 この提案により、MiniGoの組み込み関数開発がより堅牢かつ効率的になることを期待します。
 ```

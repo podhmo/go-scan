@@ -340,7 +340,3 @@ func TestConvertSrcWithAlias(t *testing.T) {
     // ...
 }
 */
-
-func TestZZZCanary(t *testing.T) {
-	t.Log("ZZZCanary test running")
-}

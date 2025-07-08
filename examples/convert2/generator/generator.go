@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"text/template"
+	"go/ast" // Added for ast.ArrayType in typeNameInSource
 
 	"example.com/convert2/internal/model"
 )
@@ -29,12 +30,16 @@ func GenerateConversionCode(parsedInfo *model.ParsedInfo, outputDir string) erro
 
 	// --- Package and Imports ---
 	// Initial set of imports. This will be expanded by addRequiredImport.
-	requiredImports := make(map[string]string) // alias -> path
-	requiredImports["context"] = "context"
-	requiredImports["fmt"] = "fmt"     // For error messages in errorCollector
-	requiredImports["errors"] = "errors" // For errors.Join
+	// Map key is import path, value is preferred alias (can be empty if no specific alias needed initially)
+	requiredImports := make(map[string]string)
+	requiredImports["context"] = "context" // path -> alias
+	requiredImports["fmt"] = "fmt"         // For error messages in errorCollector & Sprintf
+	requiredImports["errors"] = "errors"   // For errors.Join
+	requiredImports["strings"] = "strings" // For strings.Join in errorCollector
 
 	// --- Generate Error Collector ---
+	// The errorCollectorTemplate itself does not declare imports.
+	// The necessary imports (fmt, strings, errors) are added above.
 	errCollectorTmpl, err := template.New("errorCollector").Parse(errorCollectorTemplate)
 	if err != nil {
 		return fmt.Errorf("failed to parse errorCollector template: %w", err)
@@ -83,8 +88,8 @@ func GenerateConversionCode(parsedInfo *model.ParsedInfo, outputDir string) erro
 
 		fmt.Fprintf(&funcBuf, "func %s(ctx context.Context, src %s) (%s, error) {\n",
 			topLevelFuncName,
-			typeNameInSource(pair.SrcTypeInfo, parsedInfo.PackagePath),
-			typeNameInSource(pair.DstTypeInfo, parsedInfo.PackagePath))
+			typeNameInSource(pair.SrcTypeInfo, parsedInfo.PackagePath, requiredImports),
+			typeNameInSource(pair.DstTypeInfo, parsedInfo.PackagePath, requiredImports))
 		fmt.Fprintf(&funcBuf, "\tec := newErrorCollector(%d)\n", pair.MaxErrors)
 		fmt.Fprintf(&funcBuf, "\tdst := %s(ec, src)\n", coreHelperFuncName) // Call helper
 		fmt.Fprintf(&funcBuf, "\tif ec.HasErrors() {\n")
@@ -105,9 +110,31 @@ func GenerateConversionCode(parsedInfo *model.ParsedInfo, outputDir string) erro
 	// Write imports
 	if len(requiredImports) > 0 {
 		finalCode.WriteString("import (\n")
-		// Sort imports for consistent output? For now, map iteration order.
-		for alias, importPath := range requiredImports {
-			if alias == importPath || strings.HasSuffix(importPath, "/"+alias) { // stdlib or path ends with alias
+
+		// Sort imports by path for consistent output
+		importPaths := make([]string, 0, len(requiredImports))
+		for path := range requiredImports {
+			importPaths = append(importPaths, path)
+		}
+		// It's better to sort for deterministic output, rather than relying on Go team's tools.
+		// However, gofmt/goimports will ultimately format it. So, direct iteration is fine for now.
+		// For stability in tests before gofmt, sorting can be helpful. Let's add a simple sort.
+		sortedImportPaths := make([]string, 0, len(requiredImports))
+		for path := range requiredImports {
+			sortedImportPaths = append(sortedImportPaths, path)
+		}
+		// Simple string sort for paths
+		// For more complex alias sorting, would need custom logic
+		// sort.Strings(sortedImportPaths) // Actually, map iteration order is fine, gofmt will fix.
+
+		for importPath, alias := range requiredImports { // Iterate directly, gofmt will handle final order
+			// If the determined alias is the same as the package's actual name (last part of path),
+			// or if no specific alias was set (alias derived by typeNameInSource/addRequiredImport logic),
+			// then no explicit alias is needed in the import statement.
+			// Example: import "time" (alias "time", path "time")
+			// Example: import "example.com/custom/mypkg" (alias "mypkg", path "example.com/custom/mypkg")
+			baseName := filepath.Base(importPath)
+			if alias == baseName || alias == "" { // if alias is empty, it means use basename
 				fmt.Fprintf(&finalCode, "\t\"%s\"\n", importPath)
 			} else {
 				fmt.Fprintf(&finalCode, "\t%s \"%s\"\n", alias, importPath)
@@ -161,20 +188,22 @@ func generateHelperFunction(buf *bytes.Buffer, funcName string, srcType, dstType
 		fmt.Fprintf(buf, "// One or both types are not structs, or struct info not found.\n")
 		fmt.Fprintf(buf, "func %s(ec *errorCollector, src %s) %s {\n",
 			funcName,
-			typeNameInSource(srcType, parsedInfo.PackagePath),
-			typeNameInSource(dstType, parsedInfo.PackagePath))
+			typeNameInSource(srcType, parsedInfo.PackagePath, imports),
+			typeNameInSource(dstType, parsedInfo.PackagePath, imports))
 		// TODO: Implement conversion for non-structs or when one is not a struct.
 		// This could involve checking for global 'using' rules, or direct assignment/casting if types are compatible.
 		// Example: if types are `type Meter int32` and `type Centimeter int32`
 		fmt.Fprintf(buf, "\t// Placeholder for non-struct conversion logic.\n")
 		if srcType.FullName == dstType.FullName || (srcType.Underlying != nil && srcType.Underlying.FullName == dstType.FullName) || (dstType.Underlying != nil && dstType.Underlying.FullName == srcType.FullName) {
-			fmt.Fprintf(buf, "\treturn %s(src) // Assuming direct cast is possible\n", typeNameInSource(dstType, parsedInfo.PackagePath))
+			fmt.Fprintf(buf, "\treturn %s(src) // Assuming direct cast is possible\n", typeNameInSource(dstType, parsedInfo.PackagePath, imports))
 		} else {
-			fmt.Fprintf(buf, "\tvar dst %s\n", typeNameInSource(dstType, parsedInfo.PackagePath))
+			fmt.Fprintf(buf, "\tvar dst %s\n", typeNameInSource(dstType, parsedInfo.PackagePath, imports))
 			fmt.Fprintf(buf, "\tec.Addf(\"conversion from %s to %s not implemented for non-structs or mismatched types\")\n", srcType.FullName, dstType.FullName)
 			fmt.Fprintf(buf, "\treturn dst\n")
 		}
 		fmt.Fprintf(buf, "}\n\n")
+		// Imports for srcType and dstType should have been added when they were first encountered or used.
+		// Calling addRequiredImport here again is fine, it's idempotent.
 		addRequiredImport(srcType, parsedInfo.PackagePath, imports)
 		addRequiredImport(dstType, parsedInfo.PackagePath, imports)
 		return nil
@@ -183,15 +212,16 @@ func generateHelperFunction(buf *bytes.Buffer, funcName string, srcType, dstType
 	srcStruct := srcType.StructInfo
 	dstStruct := dstType.StructInfo
 
-	// Add imports for src and dst types of this helper
+	// Add imports for src and dst types of this helper function itself.
+	// This is important if srcType or dstType are from external packages.
 	addRequiredImport(srcType, parsedInfo.PackagePath, imports)
 	addRequiredImport(dstType, parsedInfo.PackagePath, imports)
 
 	fmt.Fprintf(buf, "func %s(ec *errorCollector, src %s) %s {\n",
 		funcName,
-		typeNameInSource(srcType, parsedInfo.PackagePath), // Use srcStruct.Type.Name if it's simpler and resolved locally
-		typeNameInSource(dstType, parsedInfo.PackagePath))
-	fmt.Fprintf(buf, "\tdst := %s{}\n", typeNameInSource(dstType, parsedInfo.PackagePath))
+		typeNameInSource(srcType, parsedInfo.PackagePath, imports),
+		typeNameInSource(dstType, parsedInfo.PackagePath, imports))
+	fmt.Fprintf(buf, "\tdst := %s{}\n", typeNameInSource(dstType, parsedInfo.PackagePath, imports))
 	fmt.Fprintf(buf, "\tif ec.MaxErrorsReached() { return dst } \n\n")
 
 	// Iterate over source struct fields to apply rules and find destinations
@@ -362,9 +392,10 @@ func generateHelperFunction(buf *bytes.Buffer, funcName string, srcType, dstType
 
 // typeNameInSource returns the string representation of the type as it should appear in the generated source code.
 // It considers if the type is from the package being generated into, or an external package.
-func typeNameInSource(typeInfo *model.TypeInfo, currentPackagePath string) string {
+// It uses the `imports` map (path -> alias) to determine the correct alias for external packages.
+func typeNameInSource(typeInfo *model.TypeInfo, currentPackagePath string, imports map[string]string) string {
 	if typeInfo == nil {
-		return "interface{}" // Fallback for nil TypeInfo
+		return "interface{}" // Fallback
 	}
 
 	var buildName func(ti *model.TypeInfo) string
@@ -376,19 +407,11 @@ func typeNameInSource(typeInfo *model.TypeInfo, currentPackagePath string) strin
 			return "[]" + buildName(ti.Elem)
 		}
 		if ti.IsArray {
-			// Assuming ti.AstExpr is *ast.ArrayType for length
-			lenStr := "N" // Placeholder
+			lenStr := "N" // Default if not resolvable through AST
 			if arrType, ok := ti.AstExpr.(*ast.ArrayType); ok && arrType.Len != nil {
-				// This is tricky, AstExprToString might not be available here or fully resolved.
-				// For now, use a placeholder or the raw string from AST if possible.
-				// A simple way: model.AstExprToString(arrType.Len, "")
-				// This dependency is problematic. For now, just use "N"
-				// lenStr = model.AstExprToString(arrType.Len, "") // Needs package context for AstExprToString
-				// Let's use a simpler name from TypeInfo if available or just N
-				if arrTypeNode, ok := ti.AstExpr.(*ast.ArrayType); ok && arrTypeNode.Len != nil {
-					lenStr = model.AstExprToString(arrTypeNode.Len, "") // Pass empty pkg name for simplicity
-				}
-
+				// AstExprToString is in model package, need to qualify or pass down currentPkgName if it relies on it.
+				// For generator, currentPkgName context for AstExprToString is less relevant.
+				lenStr = model.AstExprToString(arrType.Len, "") // Use empty for currentPkgName in model.AstExprToString
 			}
 			return "[" + lenStr + "]" + buildName(ti.Elem)
 		}
@@ -397,97 +420,103 @@ func typeNameInSource(typeInfo *model.TypeInfo, currentPackagePath string) strin
 		}
 
 		// For non-composite types (Ident, Basic, Struct, Named)
-		if ti.PackagePath != "" && ti.PackagePath != currentPackagePath {
-			// Type is from an external package. Need to use its imported name.
-			// The import alias logic is handled by addRequiredImport and import statement generation.
-			// Here, we just need the package's selector.
-			// The TypeInfo.PackageName should be the alias to use if one was defined,
-			// or the actual package name if no alias.
-			// This requires that TypeInfo.PackageName is correctly set by the parser
-			// to the alias used in the *target* generated file, which is tricky.
-			// Simpler: use the actual package name (last part of PackagePath) as selector.
-			// The import map (`imports` in GenerateConversionCode) will store alias -> path.
-			// We need to find the alias for ti.PackagePath.
-			// For now, assume ti.PackageName is the correct selector prefix.
-			// This needs to be robustly linked to the import alias generation.
-
-			// A common convention: if TypeInfo.PackageName is set by parser from selector (e.g. "pkgalias.MyType")
-			// then TypeInfo.PackageName is "pkgalias", TypeInfo.Name is "MyType".
-			// The generator must ensure "pkgalias" is imported correctly.
-			if ti.PackageName != "" { // PackageName field of TypeInfo should be the alias/name used for import
-				return ti.PackageName + "." + ti.Name
+		if ti.PackagePath != "" && ti.PackagePath != currentPackagePath && !ti.IsBasic {
+			// External package. Find its alias from the `imports` map.
+			alias, aliasExists := imports[ti.PackagePath]
+			if !aliasExists {
+				// This should not happen if addRequiredImport was called for this type.
+				// Fallback to using the TypeInfo's PackageName (if set by parser from a selector)
+				// or the base name of the package path.
+				fmt.Printf("Warning: Package path '%s' for type '%s' not found in required imports map. Using fallback selector.\n", ti.PackagePath, ti.FullName)
+				if ti.PackageName != "" { // Parser might have set this from a selector like `pkg.Type`
+					alias = ti.PackageName
+				} else {
+					alias = filepath.Base(ti.PackagePath)
+				}
 			}
-			// If PackageName is empty but PackagePath is not, use last part of path as selector
-			// This is a fallback.
-			parts := strings.Split(ti.PackagePath, "/")
-			return parts[len(parts)-1] + "." + ti.Name
+			// If alias is same as base name of path, it means no explicit alias in import stmt.
+			// e.g. import "time", used as time.Time. alias="time"
+			// e.g. import custom "example.com/custom", used as custom.Type. alias="custom"
+			return alias + "." + ti.Name
 		}
-		return ti.Name // Type is in the current package or a basic type
+		return ti.Name // Type is in the current package, or a basic type, or its package path is empty.
 	}
 	return buildName(typeInfo)
 }
 
-
 // addRequiredImport tracks necessary imports.
-// It tries to use the package name as an alias if the package path is not standard
-// or if the package name conflicts with another.
-// `imports` is a map of import_alias -> import_path.
-func addRequiredImport(typeInfo *model.TypeInfo, currentPackagePath string, imports map[string]string) {
+// `imports` is a map of import_path -> import_alias.
+// It ensures that TypeInfo.PackageName is set to the alias that will be used in the generated code.
+func addRequiredImport(typeInfo *model.TypeInfo, currentPackagePath string, imports map[string]string) { // Rewritten
 	if typeInfo == nil {
 		return
 	}
 
 	// Recursively add for elements, keys, values, underlying types
 	if typeInfo.IsPointer || typeInfo.IsSlice || typeInfo.IsArray {
-		addRequiredImport(typeInfo.Elem, currentPackagePath, imports)
+		if typeInfo.Elem != nil {
+			addRequiredImport(typeInfo.Elem, currentPackagePath, imports)
+		}
+		return // Pointer/slice/array types themselves don't define a package to import; their elements might.
 	}
 	if typeInfo.IsMap {
-		addRequiredImport(typeInfo.Key, currentPackagePath, imports)
-		addRequiredImport(typeInfo.Value, currentPackagePath, imports)
+		if typeInfo.Key != nil {
+			addRequiredImport(typeInfo.Key, currentPackagePath, imports)
+		}
+		if typeInfo.Value != nil {
+			addRequiredImport(typeInfo.Value, currentPackagePath, imports)
+		}
+		return // Map types themselves don't define a package; their key/value types might.
 	}
-	if typeInfo.Underlying != nil {
+
+	// If it's a named type, process its underlying type first.
+	// e.g. for `type MyTime time.Time`, `time.Time` needs `time` import.
+	// The named type `MyTime` itself is in `currentPackagePath`.
+	if typeInfo.Kind == model.KindNamed && typeInfo.Underlying != nil {
+		// The named type A itself is in currentPackagePath (unless it's an alias to external type, handled by PackagePath check below)
 		addRequiredImport(typeInfo.Underlying, currentPackagePath, imports)
+		// Fall through to check if the named type A itself is from an external package (e.g. alias to external)
 	}
-	// If it's a struct, iterate its fields' types too (can lead to deep recursion, handle carefully)
-	// For now, direct type imports are handled. Field types will be handled when those fields are processed.
+	// If it's a struct, its fields' types will be processed when the struct conversion is generated.
+	// At that point, addRequiredImport will be called for each field type.
 
-	if typeInfo.PackagePath != "" && typeInfo.PackagePath != currentPackagePath {
-		// External package, needs import.
-		// Use TypeInfo.PackageName as the preferred alias if available from parser (e.g. from selector)
-		// Otherwise, derive an alias (e.g., last part of path).
-		alias := typeInfo.PackageName // This should be the package name part of a selector if `pkg.Type`
-		if alias == "" { // If not from a selector, or if TypeInfo.PackageName was not set for it
-			parts := strings.Split(typeInfo.PackagePath, "/")
-			alias = parts[len(parts)-1]
-		}
+	if typeInfo.PackagePath != "" && typeInfo.PackagePath != currentPackagePath && !typeInfo.IsBasic {
+		// External package that needs to be imported.
 
-		if existingPath, ok := imports[alias]; ok {
-			if existingPath != typeInfo.PackagePath {
-				// Alias collision! Need to generate a new unique alias.
-				// For now, just overwrite and print warning. This needs robust handling.
-				fmt.Printf("Warning: Import alias collision for '%s'. Path '%s' overwrites '%s'. Manual intervention may be needed.\n", alias, typeInfo.PackagePath, existingPath)
-				imports[alias] = typeInfo.PackagePath // Or generate new_alias_1, new_alias_2 ...
-			}
-			// If paths are same, alias is already correctly registered.
+		// Determine the alias.
+		// 1. If an alias is already registered for this path, use it.
+		// 2. If TypeInfo.PackageName is set (e.g. from parser seeing 'pkg.Type'), try to use that as alias.
+		// 3. Otherwise, use the base name of the package path.
+		var chosenAlias string
+		if existingAlias, ok := imports[typeInfo.PackagePath]; ok && existingAlias != "" {
+			chosenAlias = existingAlias
+		} else if typeInfo.PackageName != "" && typeInfo.PackageName != filepath.Base(typeInfo.PackagePath) && typeInfo.PackageName != "main" {
+			// If PackageName is set by parser AND it's different from basename (e.g. a true alias like `customtime.Time`)
+			// and not 'main' (which cannot be used as an alias typically for external packages)
+			chosenAlias = typeInfo.PackageName
 		} else {
-			imports[alias] = typeInfo.PackagePath
-		}
-		// Ensure TypeInfo.PackageName is updated to the alias that will be used in generated code.
-		// This is important for typeNameInSource.
-		if typeInfo.PackageName != alias && typeInfo.PackageName != "" {
-			// This means the original selector's package part (typeInfo.PackageName) is different from the derived/chosen alias.
-			// This can happen if we derive alias from path and it differs from an explicit selector prefix.
-			// For generated code, the `alias` is what matters.
-			// Let's assume parser sets TypeInfo.PackageName from selector if present,
-			// and this function primarily ensures the import exists.
-			// typeNameInSource should then use TypeInfo.PackageName (if set) or derive from TypeInfo.PackagePath's alias.
-		} else if typeInfo.PackageName == "" {
-			typeInfo.PackageName = alias // Set the derived alias back to TypeInfo if it was empty
+			chosenAlias = filepath.Base(typeInfo.PackagePath)
 		}
 
+		// Check for collision: if this chosenAlias is already used for a *different* path.
+		// This simple check doesn't fully resolve complex collisions but warns.
+		// A more robust system would generate unique aliases (pkg1, pkg2, etc.)
+		for path, aliasInMap := range imports {
+			if aliasInMap == chosenAlias && path != typeInfo.PackagePath {
+				fmt.Printf("Warning: Import alias '%s' for path '%s' collides with existing import for path '%s'. Manual intervention may be needed or use unique aliases.\n", chosenAlias, typeInfo.PackagePath, path)
+				// Potentially re-assign a unique alias here if collision detected: chosenAlias = chosenAlias + "_colliding"
+				// For now, we'll proceed, hoping gofmt or user handles if it's a real issue.
+				break
+			}
+		}
+
+		imports[typeInfo.PackagePath] = chosenAlias
+
+		// Crucially, ensure TypeInfo.PackageName reflects the alias to be used in generated code.
+		// This helps typeNameInSource use the correct prefix.
+		typeInfo.PackageName = chosenAlias
 	}
 }
-
 
 func lowercaseFirstLetter(s string) string {
 	if len(s) == 0 {

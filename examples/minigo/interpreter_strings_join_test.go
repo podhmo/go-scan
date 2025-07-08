@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -30,13 +29,15 @@ func runMiniGoScriptForTest(t *testing.T, scriptContent string, expectedValue in
 	}
 
 	interpreter := NewInterpreter()
-	// Set ModuleRoot if your tests rely on go.mod discovery for imports,
-	// though for these self-contained strings.Join tests, it might not be strictly necessary
-	// if no external packages are imported by the test scripts themselves.
-	// For consistency with other tests, and if NewInterpreter setup benefits, let's set it.
-	// If tests are simple and don't involve go-scan for imports, this can be simpler.
-	// Assuming these tests don't need complex module resolution beyond what NewInterpreter provides by default.
-	// interpreter.ModuleRoot = baseDir // Or a more appropriate root if shared packages were involved.
+
+	// Determine project root relative to this test file.
+	// This file is in examples/minigo, so ../../ should be the project root.
+	projectRoot, err := filepath.Abs("../../")
+	if err != nil {
+		t.Fatalf("Failed to determine project root: %v", err)
+	}
+	interpreter.ModuleRoot = projectRoot
+	// t.Logf("Set ModuleRoot for interpreter to: %s", interpreter.ModuleRoot) // For debugging
 
 	ctx := context.Background()
 	runErr := interpreter.LoadAndRun(ctx, mainMgoFile, "main")

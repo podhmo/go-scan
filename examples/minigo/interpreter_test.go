@@ -501,7 +501,7 @@ func NewSecretPoint(x, y int) SecretPoint { return SecretPoint{X: x, secretY: y}
 	createTempGoFile(t, testPkgDir, "testpkg.go", testPkgGoContent)
 
 	tests := []struct {
-		name          string
+		name           string
 		input          string
 		expected       interface{}
 		expectError    bool

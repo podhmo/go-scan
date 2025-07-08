@@ -9,12 +9,12 @@ import (
 
 func TestStructDefinitionAndInstantiation(t *testing.T) {
 	tests := []struct {
-		name          string
-		input         string
+		name           string
+		input          string
 		expectedOutput string // Expected output from a Println like function if we had one, or check env state.
-		expectedError string // Substring of the expected error message.
-		setupEnv      func(env *Environment)
-		checkEnv      func(t *testing.T, env *Environment, i *Interpreter)
+		expectedError  string // Substring of the expected error message.
+		setupEnv       func(env *Environment)
+		checkEnv       func(t *testing.T, env *Environment, i *Interpreter)
 	}{
 		{
 			name: "Define and instantiate basic struct",
@@ -118,10 +118,14 @@ func main() {
 					t.Fatalf("Variable 'u' not found")
 				}
 				userInstance, ok := userObj.(*StructInstance)
-				if !ok {t.Fatalf("u is not StructInstance")}
+				if !ok {
+					t.Fatalf("u is not StructInstance")
+				}
 
 				idVal, _ := userInstance.FieldValues["ID"].(*Integer)
-				if idVal.Value != 1 {t.Errorf("Expected u.ID to be 1, got %d", idVal.Value)}
+				if idVal.Value != 1 {
+					t.Errorf("Expected u.ID to be 1, got %d", idVal.Value)
+				}
 
 			},
 		},
@@ -234,9 +238,13 @@ func main() {
 `,
 			checkEnv: func(t *testing.T, env *Environment, i *Interpreter) {
 				valObj, ok := env.Get("val")
-				if !ok { t.Fatalf("Global 'val' not found") }
+				if !ok {
+					t.Fatalf("Global 'val' not found")
+				}
 				valInt, ok := valObj.(*Integer)
-				if !ok { t.Fatalf("'val' is not an Integer, got %T", valObj) }
+				if !ok {
+					t.Fatalf("'val' is not an Integer, got %T", valObj)
+				}
 				if valInt.Value != 123 {
 					t.Errorf("Expected val to be 123, got %d", valInt.Value)
 				}
@@ -268,9 +276,13 @@ func main() {
 `,
 			checkEnv: func(t *testing.T, env *Environment, i *Interpreter) {
 				obj, ok := env.Get("e")
-				if !ok {t.Fatalf("var e not found")}
+				if !ok {
+					t.Fatalf("var e not found")
+				}
 				instance, ok := obj.(*StructInstance)
-				if !ok {t.Fatalf("e is not a StructInstance, got %T", obj)}
+				if !ok {
+					t.Fatalf("e is not a StructInstance, got %T", obj)
+				}
 				if instance.Definition.Name != "Empty" {
 					t.Errorf("e.Definition.Name expected Empty, got %s", instance.Definition.Name)
 				}
@@ -279,7 +291,6 @@ func main() {
 				}
 			},
 		},
-
 	}
 
 	for _, tt := range tests {
@@ -558,7 +569,6 @@ func main() {
 		// TODO: Test multiple levels of embedding.
 	}
 
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			i := NewInterpreter()
@@ -588,11 +598,10 @@ func main() {
 	}
 }
 
-
 // Test case for field re-assignment (if struct fields were mutable)
-	// MiniGo struct instances are currently immutable once created via literal.
-	// Assignment like `p.X = 20` is not `ast.AssignStmt` on `p.X` but `ast.SelectorExpr` as LHS.
-	// This is not supported by `evalAssignStmt` yet.
+// MiniGo struct instances are currently immutable once created via literal.
+// Assignment like `p.X = 20` is not `ast.AssignStmt` on `p.X` but `ast.SelectorExpr` as LHS.
+// This is not supported by `evalAssignStmt` yet.
 
 // TODO:
 // - Test for type checking during instantiation (e.g., Point{X: "not-an-int"}). Needs field type info in StructDefinition to be more than string.

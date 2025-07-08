@@ -316,7 +316,7 @@ func main() {
 			expectedErrorMsgSubstr: []string{
 				"division by zero",
 				"Minigo Call Stack:",
-				"0: main",       // Actual line numbers will vary based on temp file
+				"0: main",     // Actual line numbers will vary based on temp file
 				"Source: b()", // Source line for main calling b
 				"1: b",
 				"Source: c()", // Source line for b calling c
@@ -668,7 +668,7 @@ func main() {
 			os.Stdout = oldStdout
 			os.Stderr = oldStderr
 
-			logOutput := func () {
+			logOutput := func() {
 				t.Logf("Input script for %s:\n%s", tt.name, tt.input)
 				t.Logf("STDOUT for %s:\n%s", tt.name, string(capturedStdout))
 				t.Logf("STDERR for %s:\n%s", tt.name, string(capturedStderr))
@@ -709,8 +709,8 @@ func main() {
 				trimmedExpected := strings.TrimSpace(expectedOutputSuffix)
 
 				if !strings.HasSuffix(trimmedOutput, trimmedExpected) &&
-				   !strings.Contains(outputStr, expectedOutputSuffix) && /* check if it's anywhere */
-				   !strings.Contains(trimmedOutput, trimmedExpected) { /* check if trimmed version contains it */
+					!strings.Contains(outputStr, expectedOutputSuffix) && /* check if it's anywhere */
+					!strings.Contains(trimmedOutput, trimmedExpected) { /* check if trimmed version contains it */
 					logOutput()
 					t.Errorf("expected output to effectively be %q or contain %q. Full stdout:\n%s", trimmedExpected, expectedOutputSuffix, outputStr)
 				}

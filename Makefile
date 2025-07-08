@@ -11,6 +11,7 @@ test:
 	( cd examples/derivingjson && go test ./... )
 	( cd examples/derivingbind && go test ./... )
 	( cd examples/minigo && go test ./... )
+	( cd examples/convert2 && $(MAKE) test )
 
 clean:
 	go clean -cache -testcache # General Go clean

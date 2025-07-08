@@ -14,8 +14,8 @@ import (
 	"example.com/convert/converter" // Adjust module path if different
 	"example.com/convert/models"    // Adjust module path if different
 
-	"github.com/podhmo/go-scan/scanner"
 	typescanner "github.com/podhmo/go-scan"
+	"github.com/podhmo/go-scan/scanner"
 )
 
 func main() {
@@ -29,7 +29,7 @@ func main() {
 
 func runConversionExamples() {
 	ctx := context.Background() // Parent context
-		// --- Example 1: User Conversion ---
+	// --- Example 1: User Conversion ---
 	fmt.Println("--- User Conversion Example ---")
 	phone := "123-456-7890"
 	srcUser := models.SrcUser{
@@ -122,7 +122,6 @@ func printJSON(data interface{}) {
 	fmt.Println(string(jsonData))
 }
 
-
 func generateConverterPrototype() {
 	// Assuming models are in a 'models' subdirectory relative to this file's package.
 	// Adjust this path as necessary.
@@ -177,7 +176,6 @@ func generateConverterPrototype() {
 	if projectRoot != "" {
 		modelsPath = filepath.Join(projectRoot, "examples", "convert", "models")
 	}
-
 
 	log.Printf("Scanning models in: %s\n", modelsPath)
 
@@ -284,7 +282,6 @@ func translateDescription(ctx context.Context, text string, targetLang string) s
 }
 `)
 
-
 	// Write the generated code to a file.
 	generatedFilePath := filepath.Join(filepath.Dir(modelsPath), "converter", "generated_converters.go")
 	if err := os.MkdirAll(filepath.Dir(generatedFilePath), 0755); err != nil {
@@ -315,11 +312,18 @@ func generateStructConverter(sb *strings.Builder, srcType *scanner.TypeInfo, dst
 		funcName = fmt.Sprintf("%sTo%s", camelCase(srcType.Name), strings.Title(dstType.Name))
 	}
 	// Correct common unexported names based on manual converter
-	if srcType.Name == "SrcAddress" && dstType.Name == "DstAddress" { funcName = "srcAddressToDstAddress" }
-	if srcType.Name == "SrcContact" && dstType.Name == "DstContact" { funcName = "srcContactToDstContact" }
-	if srcType.Name == "SrcInternalDetail" && dstType.Name == "DstInternalDetail" { funcName = "srcInternalDetailToDstInternalDetail" }
-	if srcType.Name == "SrcItem" && dstType.Name == "DstItem" { funcName = "srcItemToDstItem" }
-
+	if srcType.Name == "SrcAddress" && dstType.Name == "DstAddress" {
+		funcName = "srcAddressToDstAddress"
+	}
+	if srcType.Name == "SrcContact" && dstType.Name == "DstContact" {
+		funcName = "srcContactToDstContact"
+	}
+	if srcType.Name == "SrcInternalDetail" && dstType.Name == "DstInternalDetail" {
+		funcName = "srcInternalDetailToDstInternalDetail"
+	}
+	if srcType.Name == "SrcItem" && dstType.Name == "DstItem" {
+		funcName = "srcItemToDstItem"
+	}
 
 	sb.WriteString(fmt.Sprintf("// %s converts models.%s to models.%s\n", funcName, srcType.Name, dstType.Name))
 	sb.WriteString(fmt.Sprintf("func %s(ctx context.Context, src models.%s) models.%s {\n", funcName, srcType.Name, dstType.Name))
@@ -350,10 +354,19 @@ func generateStructConverter(sb *strings.Builder, srcType *scanner.TypeInfo, dst
 				mapped = true
 			}
 		} else if srcType.Name == "SrcAddress" && dstType.Name == "DstAddress" {
-			if dstField.Name == "FullStreet" { sb.WriteString(fmt.Sprintf("\tdst.FullStreet = src.Street\n")); mapped = true }
-			if dstField.Name == "CityName" { sb.WriteString(fmt.Sprintf("\tdst.CityName = src.City\n")); mapped = true }
+			if dstField.Name == "FullStreet" {
+				sb.WriteString(fmt.Sprintf("\tdst.FullStreet = src.Street\n"))
+				mapped = true
+			}
+			if dstField.Name == "CityName" {
+				sb.WriteString(fmt.Sprintf("\tdst.CityName = src.City\n"))
+				mapped = true
+			}
 		} else if srcType.Name == "SrcContact" && dstType.Name == "DstContact" {
-			if dstField.Name == "EmailAddress" { sb.WriteString(fmt.Sprintf("\tdst.EmailAddress = src.Email\n")); mapped = true}
+			if dstField.Name == "EmailAddress" {
+				sb.WriteString(fmt.Sprintf("\tdst.EmailAddress = src.Email\n"))
+				mapped = true
+			}
 			if dstField.Name == "PhoneNumber" {
 				sb.WriteString(fmt.Sprintf("\tif src.Phone != nil {\n"))
 				sb.WriteString(fmt.Sprintf("\t\tdst.PhoneNumber = *src.Phone\n"))
@@ -363,24 +376,43 @@ func generateStructConverter(sb *strings.Builder, srcType *scanner.TypeInfo, dst
 				mapped = true
 			}
 		} else if srcType.Name == "SrcInternalDetail" && dstType.Name == "DstInternalDetail" {
-			if dstField.Name == "ItemCode" { sb.WriteString(fmt.Sprintf("\tdst.ItemCode = src.Code\n")); mapped = true}
+			if dstField.Name == "ItemCode" {
+				sb.WriteString(fmt.Sprintf("\tdst.ItemCode = src.Code\n"))
+				mapped = true
+			}
 			if dstField.Name == "LocalizedDesc" {
 				sb.WriteString(fmt.Sprintf("\tdst.LocalizedDesc = translateDescription(ctx, src.Description, \"jp\") // TODO: Make lang configurable\n"))
 				mapped = true
 			}
 		} else if srcType.Name == "SrcOrder" && dstType.Name == "DstOrder" {
-			if dstField.Name == "ID" { sb.WriteString(fmt.Sprintf("\tdst.ID = src.OrderID\n")); mapped = true}
-			if dstField.Name == "TotalAmount" { sb.WriteString(fmt.Sprintf("\tdst.TotalAmount = src.Amount\n")); mapped = true}
+			if dstField.Name == "ID" {
+				sb.WriteString(fmt.Sprintf("\tdst.ID = src.OrderID\n"))
+				mapped = true
+			}
+			if dstField.Name == "TotalAmount" {
+				sb.WriteString(fmt.Sprintf("\tdst.TotalAmount = src.Amount\n"))
+				mapped = true
+			}
 		} else if srcType.Name == "SrcItem" && dstType.Name == "DstItem" {
-			if dstField.Name == "ProductCode" { sb.WriteString(fmt.Sprintf("\tdst.ProductCode = src.SKU\n")); mapped = true}
-			if dstField.Name == "Count" { sb.WriteString(fmt.Sprintf("\tdst.Count = src.Quantity\n")); mapped = true}
+			if dstField.Name == "ProductCode" {
+				sb.WriteString(fmt.Sprintf("\tdst.ProductCode = src.SKU\n"))
+				mapped = true
+			}
+			if dstField.Name == "Count" {
+				sb.WriteString(fmt.Sprintf("\tdst.Count = src.Quantity\n"))
+				mapped = true
+			}
 		}
-
 
 		// Rule 2: Embedded struct conversion
 		if !mapped && dstField.Type.Name == "DstAddress" && srcType.Name == "SrcUser" { // Specific to User embedding Address
 			var srcAddrField *scanner.FieldInfo
-			for _, sf := range srcType.Struct.Fields { if sf.Embedded && sf.Type.Name == "SrcAddress" { srcAddrField = sf; break } }
+			for _, sf := range srcType.Struct.Fields {
+				if sf.Embedded && sf.Type.Name == "SrcAddress" {
+					srcAddrField = sf
+					break
+				}
+			}
 			if srcAddrField != nil {
 				sb.WriteString(fmt.Sprintf("\tdst.%s = srcAddressToDstAddress(ctx, src.%s)\n", dstField.Name, srcAddrField.Type.Name /* Usually src.SrcAddress */))
 				mapped = true
@@ -390,7 +422,12 @@ func generateStructConverter(sb *strings.Builder, srcType *scanner.TypeInfo, dst
 		// Rule 3: Nested struct conversion
 		if !mapped && dstField.Type.Name == "DstContact" && srcType.Name == "SrcUser" { // Specific to User having ContactInfo
 			var srcContactField *scanner.FieldInfo
-			for _, sf := range srcType.Struct.Fields { if sf.Name == "ContactInfo" && sf.Type.Name == "SrcContact" { srcContactField = sf; break } }
+			for _, sf := range srcType.Struct.Fields {
+				if sf.Name == "ContactInfo" && sf.Type.Name == "SrcContact" {
+					srcContactField = sf
+					break
+				}
+			}
 			if srcContactField != nil {
 				sb.WriteString(fmt.Sprintf("\tdst.%s = srcContactToDstContact(ctx, src.%s)\n", dstField.Name, srcContactField.Name))
 				mapped = true
@@ -400,7 +437,9 @@ func generateStructConverter(sb *strings.Builder, srcType *scanner.TypeInfo, dst
 		// Rule 4: Slice of structs conversion
 		if !mapped && dstField.Type.IsSlice {
 			srcFieldName := dstField.Name // Try direct name match first for slice
-			if srcType.Name == "SrcOrder" && dstField.Name == "LineItems" { srcFieldName = "Items" } // Specific rename for Order:Items -> LineItems
+			if srcType.Name == "SrcOrder" && dstField.Name == "LineItems" {
+				srcFieldName = "Items"
+			} // Specific rename for Order:Items -> LineItems
 
 			var srcSliceField *scanner.FieldInfo
 			for _, sf := range srcType.Struct.Fields {
@@ -412,8 +451,12 @@ func generateStructConverter(sb *strings.Builder, srcType *scanner.TypeInfo, dst
 			if srcSliceField != nil && srcSliceField.Type.Elem != nil && dstField.Type.Elem != nil {
 				elemConvertFunc := fmt.Sprintf("%sTo%s", camelCase(srcSliceField.Type.Elem.Name), strings.Title(dstField.Type.Elem.Name))
 				// Correct common unexported names based on manual converter
-				if srcSliceField.Type.Elem.Name == "SrcInternalDetail" && dstField.Type.Elem.Name == "DstInternalDetail" { elemConvertFunc = "srcInternalDetailToDstInternalDetail"}
-				if srcSliceField.Type.Elem.Name == "SrcItem" && dstField.Type.Elem.Name == "DstItem" { elemConvertFunc = "srcItemToDstItem"}
+				if srcSliceField.Type.Elem.Name == "SrcInternalDetail" && dstField.Type.Elem.Name == "DstInternalDetail" {
+					elemConvertFunc = "srcInternalDetailToDstInternalDetail"
+				}
+				if srcSliceField.Type.Elem.Name == "SrcItem" && dstField.Type.Elem.Name == "DstItem" {
+					elemConvertFunc = "srcItemToDstItem"
+				}
 
 				sb.WriteString(fmt.Sprintf("\tif src.%s != nil {\n", srcSliceField.Name))
 				sb.WriteString(fmt.Sprintf("\t\tdst.%s = make([]models.%s, len(src.%s))\n", dstField.Name, dstField.Type.Elem.Name, srcSliceField.Name))
@@ -437,7 +480,6 @@ func generateStructConverter(sb *strings.Builder, srcType *scanner.TypeInfo, dst
 				}
 			}
 		}
-
 
 		if !mapped {
 			sb.WriteString(fmt.Sprintf("\t// TODO: No mapping found for dst.%s (Type: %s)\n", dstField.Name, dstField.Type.Name))

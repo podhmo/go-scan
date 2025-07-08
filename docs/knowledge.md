@@ -108,7 +108,7 @@ To address this, a utility struct `goscan.ImportManager` was introduced within t
 *   **Reduced Boilerplate**: Generators no longer need to implement their own complex import tracking and alias resolution logic.
 *   **Consistency**: Ensures a consistent approach to alias generation and conflict handling across different generators using `go-scan`.
 *   **Improved Robustness**: Centralized logic is easier to test thoroughly, leading to more reliable import management. The `ImportManager` includes specific handling for keywords, invalid identifiers, and common path-based naming issues.
-*   **Simpler Generator Code**: The client code in generators (like `examples/derivingjson/main.go`) becomes cleaner as they can delegate import path and type qualification Nasıls to the `ImportManager`.
+*   **Simpler Generator Code**: The client code in generators (like `examples/derivingjson/main.go`) becomes cleaner as they can delegate import path and type qualification to the `ImportManager`.
 
 **Application:**
 

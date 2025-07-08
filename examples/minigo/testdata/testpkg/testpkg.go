@@ -19,12 +19,12 @@ func NewPointValue(x int, y int) Point {
 }
 
 type Figure struct {
-    Name string
-    P    Point  // Struct field using a type from the same package
+	Name string
+	P    Point // Struct field using a type from the same package
 }
 
 func NewFigure(name string, x int, y int) Figure {
-    return Figure{Name: name, P: Point{X: x, Y: y}}
+	return Figure{Name: name, P: Point{X: x, Y: y}}
 }
 
 func GetPointX(p Point) int {
@@ -32,15 +32,15 @@ func GetPointX(p Point) int {
 }
 
 func GetFigureName(f Figure) string {
-    return f.Name
+	return f.Name
 }
 
 // Function returning a struct with an unexported field (for testing accessibility)
 type SecretPoint struct {
-    X int
-    secretY int // unexported
+	X       int
+	secretY int // unexported
 }
 
 func NewSecretPoint(x, y int) SecretPoint {
-    return SecretPoint{X: x, secretY: y}
+	return SecretPoint{X: x, secretY: y}
 }

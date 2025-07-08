@@ -142,9 +142,9 @@ func (s *String) Compare(other Object) (int, error) {
 
 // --- UserDefinedFunction Object ---
 type UserDefinedFunction struct {
-	Name       string // Simple name of the function
-	Parameters []*ast.Ident
-	Body       *ast.BlockStmt
+	Name           string // Simple name of the function
+	Parameters     []*ast.Ident
+	Body           *ast.BlockStmt
 	Env            *Environment   // Closure: the environment where the function was defined
 	FileSet        *token.FileSet // FileSet for error reporting context
 	ParamTypeExprs []ast.Expr     // AST expressions for parameter types
@@ -281,8 +281,8 @@ func (sd *StructDefinition) Inspect() string {
 // --- StructInstance Object ---
 // StructInstance represents an instance of a struct.
 type StructInstance struct {
-	Definition    *StructDefinition
-	FieldValues   map[string]Object   // Field name to its Object value (for direct fields)
+	Definition     *StructDefinition
+	FieldValues    map[string]Object          // Field name to its Object value (for direct fields)
 	EmbeddedValues map[string]*StructInstance // Key: Embedded struct type name. Value: Instance of the embedded struct.
 }
 

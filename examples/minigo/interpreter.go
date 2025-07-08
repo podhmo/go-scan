@@ -324,39 +324,54 @@ func (i *Interpreter) LoadAndRun(ctx context.Context, filename string, entryPoin
 	// We need to iterate over mainFileAst.Decls and manually create StructDefinition objects
 	// or adapt evalDeclStmt to work with the AST directly without go-scan's PkgInfo for the main file.
 	// The existing evalDeclStmt should work if called with *ast.DeclStmt.
+
+	// Set activeFileSet early, as eval calls below will need it.
+	i.activeFileSet = i.FileSet
+
 	for _, declNode := range mainFileAst.Decls {
 		if genDecl, ok := declNode.(*ast.GenDecl); ok && genDecl.Tok == token.TYPE {
 			tempDeclStmt := &ast.DeclStmt{Decl: genDecl}
-			_, evalErr := i.eval(ctx, tempDeclStmt, i.globalEnv)
+			_, evalErr := i.eval(ctx, tempDeclStmt, i.globalEnv) // Uses i.activeFileSet
 			if evalErr != nil {
-				// Pass genDecl.Pos() for better error location
-				return i.formatErrorWithContext(i.FileSet, genDecl.Pos(), evalErr, "Error evaluating type declaration in main script")
+				return i.formatErrorWithContext(i.activeFileSet, genDecl.Pos(), evalErr, "Error evaluating type declaration in main script")
 			}
 		}
 	}
 
-	// Second pass: Process function declarations from the main script's AST
+	// New pass for CONST declarations (before VAR, as consts might be used in var initializers)
+	for _, declNode := range mainFileAst.Decls {
+		if genDecl, ok := declNode.(*ast.GenDecl); ok && genDecl.Tok == token.CONST {
+			tempDeclStmt := &ast.DeclStmt{Decl: genDecl}
+			_, evalErr := i.eval(ctx, tempDeclStmt, i.globalEnv) // Uses i.activeFileSet
+			if evalErr != nil {
+				return i.formatErrorWithContext(i.activeFileSet, genDecl.Pos(), evalErr, "Error evaluating const declaration in main script")
+			}
+		}
+	}
+
+	// Process function declarations from the main script's AST
 	for _, declNode := range mainFileAst.Decls {
 		if fnDecl, ok := declNode.(*ast.FuncDecl); ok {
-			_, evalErr := i.evalFuncDecl(ctx, fnDecl, i.globalEnv) // evalFuncDecl takes *ast.FuncDecl
+			// evalFuncDecl also needs i.activeFileSet if it were to call formatErrorWithContext directly for its own errors
+			// It uses i.FileSet currently which is fine as i.activeFileSet == i.FileSet here.
+			_, evalErr := i.evalFuncDecl(ctx, fnDecl, i.globalEnv)
 			if evalErr != nil {
-				return i.formatErrorWithContext(i.FileSet, fnDecl.Pos(), evalErr, fmt.Sprintf("Error evaluating function declaration %s in main script", fnDecl.Name.Name))
+				// Use i.activeFileSet for consistency in error reporting source
+				return i.formatErrorWithContext(i.activeFileSet, fnDecl.Pos(), evalErr, fmt.Sprintf("Error evaluating function declaration %s in main script", fnDecl.Name.Name))
 			}
 		}
 	}
 
-	// Third pass: Process global variable declarations from the main script's AST
+	// Process global variable declarations from the main script's AST
 	for _, declNode := range mainFileAst.Decls {
 		if genDecl, ok := declNode.(*ast.GenDecl); ok && genDecl.Tok == token.VAR {
 			tempDeclStmt := &ast.DeclStmt{Decl: genDecl}
-			_, evalErr := i.eval(ctx, tempDeclStmt, i.globalEnv)
+			_, evalErr := i.eval(ctx, tempDeclStmt, i.globalEnv) // Uses i.activeFileSet
 			if evalErr != nil {
-				return i.formatErrorWithContext(i.FileSet, genDecl.Pos(), evalErr, "Error evaluating global variable declaration in main script")
+				return i.formatErrorWithContext(i.activeFileSet, genDecl.Pos(), evalErr, "Error evaluating global variable declaration in main script")
 			}
 		}
 	}
-
-	i.activeFileSet = i.FileSet // Initialize activeFileSet with main script's FileSet
 
 	// Ensure the sharedScanner (for imports) is available if needed.
 	// This might be overridden by tests for specific module contexts.
@@ -1368,7 +1383,7 @@ func (i *Interpreter) resolveTypeAstToObjectType(typeExpr ast.Expr, resolutionEn
 			// IMPORTANT: When resolving the base type of an alias (aliasDef.BaseTypeNode),
 			// we should use the environment where the alias was defined (which should be `env` here,
 			// as `obj` was fetched from it).
-			return i.resolveTypeAstToObjectType(aliasDef.BaseTypeNode, env, nil, resolutionFset)
+			return i.resolveTypeAstToObjectType(aliasDef.BaseTypeNode, resolutionEnv, nil, resolutionFset)
 		}
 		return "", nil, i.formatErrorWithContext(activeFset, te.Pos(), fmt.Errorf("type '%s' is not a struct or alias definition, but %s", typeName, obj.Type()), "")
 
@@ -1956,7 +1971,9 @@ func (i *Interpreter) evalDeclStmt(ctx context.Context, declStmt *ast.DeclStmt, 
 
 			for idx, nameIdent := range valueSpec.Names {
 				varName := nameIdent.Name
-				if len(valueSpec.Values) > idx {
+				var processedAsEnumInit bool = false // Declare and init for each variable in the spec
+
+				if len(valueSpec.Values) > idx { // Variable has an initializer
 					val, err := i.eval(ctx, valueSpec.Values[idx], env)
 					if err != nil {
 						return nil, err
@@ -1968,9 +1985,7 @@ func (i *Interpreter) evalDeclStmt(ctx context.Context, declStmt *ast.DeclStmt, 
 
 						if typeIsKnownInEnv {
 							if csDef, isEnumDef := expectedTypeDefObj.(*ConstrainedStringTypeDefinition); isEnumDef {
-								// Variable `varName` is declared as a constrained string type.
-								// Check if `val` (evaluated RHS) is compatible.
-								if actualStr, isRhsString := val.(*String); isRhsString { // RHS is a raw string literal "value"
+								if actualStr, isRhsString := val.(*String); isRhsString {
 									if csDef.IsAllowed(actualStr.Value) {
 										instance := &ConstrainedStringInstance{Definition: csDef, Value: actualStr.Value}
 										env.Define(varName, instance)
@@ -1978,27 +1993,27 @@ func (i *Interpreter) evalDeclStmt(ctx context.Context, declStmt *ast.DeclStmt, 
 										return nil, i.formatErrorWithContext(i.FileSet, valueSpec.Values[idx].Pos(),
 											fmt.Errorf("string value %q is not allowed for enum type '%s' in declaration of '%s'", actualStr.Value, csDef.Name, varName), "")
 									}
-								} else if enumInstance, isRhsEnum := val.(*ConstrainedStringInstance); isRhsEnum { // RHS is an enum instance e.g. StatusActive
-									if enumInstance.Definition == csDef { // Correct enum type
+								} else if enumInstance, isRhsEnum := val.(*ConstrainedStringInstance); isRhsEnum {
+									if enumInstance.Definition == csDef {
 										env.Define(varName, enumInstance)
-									} else { // Mismatched enum types
+									} else {
 										return nil, i.formatErrorWithContext(i.FileSet, valueSpec.Type.Pos(),
 											fmt.Errorf("cannot use value of enum type '%s' to initialize variable '%s' of enum type '%s'", enumInstance.Definition.Name, varName, csDef.Name), "")
 									}
-								} else { // RHS is neither a string nor a compatible enum instance
+								} else {
 									return nil, i.formatErrorWithContext(i.FileSet, valueSpec.Values[idx].Pos(),
 										fmt.Errorf("cannot initialize variable '%s' of enum type '%s' with a value of type %s", varName, csDef.Name, val.Type()), "")
 								}
-								processedAsEnumInit = true
+								processedAsEnumInit = true // Set true if enum path was taken
 							}
 						}
 					}
 					// ---- END ENUM TYPE CHECKING FOR VAR INITIALIZATION ----
-					if !processedAsEnumInit {
+					if !processedAsEnumInit { // If not handled by enum logic, define with original value
 						env.Define(varName, val)
 					}
 				} else { // No initializer
-					processedAsEnumInit = true // Mark true to prevent falling into zeroVal logic if it's an enum.
+					// `processedAsEnumInit` remains false. Standard zero value logic applies.
 					if valueSpec.Type == nil {
 						return nil, i.formatErrorWithContext(i.FileSet, valueSpec.Pos(), fmt.Errorf("variable '%s' declared without initializer must have a type", varName), "")
 					}

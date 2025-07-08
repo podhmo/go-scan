@@ -70,7 +70,8 @@ func srcSimpleToDstSimple(ec *errorCollector, src SrcSimple) DstSimple {
 		return dst
 	}
 
-	// Mapping field SrcSimple.ID to DstSimple.ID
+	// Mapping field SrcSimple.ID (int) to DstSimple.ID (int)
+	// Src: Ptr=false, ElemFull=nil | Dst: Ptr=false, ElemFull=nil
 	ec.Enter("ID")
 	dst.ID = src.ID
 	ec.Leave()
@@ -78,7 +79,8 @@ func srcSimpleToDstSimple(ec *errorCollector, src SrcSimple) DstSimple {
 		return dst
 	}
 
-	// Mapping field SrcSimple.Name to DstSimple.Name
+	// Mapping field SrcSimple.Name (string) to DstSimple.Name (string)
+	// Src: Ptr=false, ElemFull=nil | Dst: Ptr=false, ElemFull=nil
 	ec.Enter("Name")
 	dst.Name = src.Name
 	ec.Leave()
@@ -87,7 +89,8 @@ func srcSimpleToDstSimple(ec *errorCollector, src SrcSimple) DstSimple {
 	}
 
 	// Source field SrcSimple.Description is skipped due to tag '-'.
-	// Mapping field SrcSimple.Value to DstSimple.Value
+	// Mapping field SrcSimple.Value (float64) to DstSimple.Value (float64)
+	// Src: Ptr=false, ElemFull=nil | Dst: Ptr=false, ElemFull=nil
 	ec.Enter("Value")
 	dst.Value = src.Value
 	ec.Leave()
@@ -95,7 +98,8 @@ func srcSimpleToDstSimple(ec *errorCollector, src SrcSimple) DstSimple {
 		return dst
 	}
 
-	// Mapping field SrcSimple.Timestamp to DstSimple.CreationTime
+	// Mapping field SrcSimple.Timestamp (time.Time) to DstSimple.CreationTime (time.Time)
+	// Src: Ptr=false, ElemFull=nil | Dst: Ptr=false, ElemFull=nil
 	ec.Enter("CreationTime")
 	dst.CreationTime = src.Timestamp
 	ec.Leave()
@@ -103,7 +107,8 @@ func srcSimpleToDstSimple(ec *errorCollector, src SrcSimple) DstSimple {
 		return dst
 	}
 
-	// Mapping field SrcSimple.PtrString to DstSimple.PtrString
+	// Mapping field SrcSimple.PtrString (*string) to DstSimple.PtrString (*string)
+	// Src: Ptr=true, ElemFull=string | Dst: Ptr=true, ElemFull=string
 	ec.Enter("PtrString")
 	dst.PtrString = src.PtrString
 	ec.Leave()
@@ -111,7 +116,8 @@ func srcSimpleToDstSimple(ec *errorCollector, src SrcSimple) DstSimple {
 		return dst
 	}
 
-	// Mapping field SrcSimple.StringPtr to DstSimple.StringPtr
+	// Mapping field SrcSimple.StringPtr (string) to DstSimple.StringPtr (*string)
+	// Src: Ptr=false, ElemFull=nil | Dst: Ptr=true, ElemFull=string
 	ec.Enter("StringPtr")
 	{
 		srcVal := src.StringPtr
@@ -122,7 +128,8 @@ func srcSimpleToDstSimple(ec *errorCollector, src SrcSimple) DstSimple {
 		return dst
 	}
 
-	// Mapping field SrcSimple.PtrToValue to DstSimple.PtrToValue
+	// Mapping field SrcSimple.PtrToValue (*float32) to DstSimple.PtrToValue (float32)
+	// Src: Ptr=true, ElemFull=float32 | Dst: Ptr=false, ElemFull=nil
 	ec.Enter("PtrToValue")
 	if src.PtrToValue != nil {
 		dst.PtrToValue = *src.PtrToValue
@@ -132,7 +139,8 @@ func srcSimpleToDstSimple(ec *errorCollector, src SrcSimple) DstSimple {
 		return dst
 	}
 
-	// Mapping field SrcSimple.RequiredPtrToValue to DstSimple.RequiredPtrToValue
+	// Mapping field SrcSimple.RequiredPtrToValue (*int) to DstSimple.RequiredPtrToValue (int)
+	// Src: Ptr=true, ElemFull=int | Dst: Ptr=false, ElemFull=nil
 	ec.Enter("RequiredPtrToValue")
 	if src.RequiredPtrToValue == nil {
 		ec.Addf("field 'RequiredPtrToValue' is required but source field RequiredPtrToValue is nil")
@@ -144,7 +152,8 @@ func srcSimpleToDstSimple(ec *errorCollector, src SrcSimple) DstSimple {
 		return dst
 	}
 
-	// Mapping field SrcSimple.CustomIntToString to DstSimple.CustomStr
+	// Mapping field SrcSimple.CustomIntToString (int) to DstSimple.CustomStr (string)
+	// Src: Ptr=false, ElemFull=nil | Dst: Ptr=false, ElemFull=nil
 	ec.Enter("CustomStr")
 	// Applying field tag: using IntToStr
 	dst.CustomStr = IntToStr(ec, src.CustomIntToString)
@@ -162,7 +171,8 @@ func srcWithAliasToDstWithAlias(ec *errorCollector, src SrcWithAlias) DstWithAli
 		return dst
 	}
 
-	// Mapping field SrcWithAlias.EventTime to DstWithAlias.EventTimestamp
+	// Mapping field SrcWithAlias.EventTime (example.com/convert2/testdata/simple.MyTime) to DstWithAlias.EventTimestamp (time.Time)
+	// Src: Ptr=false, ElemFull=nil | Dst: Ptr=false, ElemFull=nil
 	ec.Enter("EventTimestamp")
 	// TODO: Implement conversion for EventTime (example.com/convert2/testdata/simple.MyTime) to EventTimestamp (time.Time).
 	ec.Addf("type mismatch or complex conversion not yet implemented for field 'EventTimestamp' (example.com/convert2/testdata/simple.MyTime -> time.Time)")

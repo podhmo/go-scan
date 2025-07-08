@@ -3,8 +3,9 @@ package generator
 import (
 	"bytes"
 	"fmt"
-	"go/ast" // Added for ast.ArrayType in typeNameInSource
+	// "go/ast" // No longer needed
 	"go/format"
+	// "go/token" // No longer needed
 	"os"
 	"path/filepath"
 	"strings"
@@ -254,7 +255,21 @@ func generateHelperFunction(buf *bytes.Buffer, funcName string, srcType, dstType
 
 		// Found source field and corresponding destination field.
 		// Now, implement basic direct assignment if types match.
-		fmt.Fprintf(buf, "\t// Mapping field %s.%s to %s.%s\n", srcStruct.Name, srcField.Name, dstStruct.Name, dstField.Name)
+		fmt.Fprintf(buf, "\t// Mapping field %s.%s (%s) to %s.%s (%s)\n",
+			srcStruct.Name, srcField.Name, srcField.TypeInfo.FullName,
+			dstStruct.Name, dstField.Name, dstField.TypeInfo.FullName)
+
+		srcElemFullName := "nil"
+		if srcField.TypeInfo.Elem != nil {
+			srcElemFullName = srcField.TypeInfo.Elem.FullName
+		}
+		dstElemFullName := "nil"
+		if dstField.TypeInfo.Elem != nil {
+			dstElemFullName = dstField.TypeInfo.Elem.FullName
+		}
+		fmt.Fprintf(buf, "\t// Src: Ptr=%t, ElemFull=%s | Dst: Ptr=%t, ElemFull=%s\n",
+			srcField.TypeInfo.IsPointer, srcElemFullName,
+			dstField.TypeInfo.IsPointer, dstElemFullName)
 		fmt.Fprintf(buf, "\tec.Enter(%q)\n", dstField.Name) // Path uses DstFieldName
 
 		// Add imports for field types
@@ -399,17 +414,10 @@ func typeNameInSource(typeInfo *model.TypeInfo, currentPackagePath string, impor
 		if ti.IsPointer {
 			return "*" + buildName(ti.Elem)
 		}
-		if ti.IsSlice {
+		// IsArray logic removed as model.TypeInfo.ArrayLengthExpr was removed.
+		// All []T are treated as slices now.
+		if ti.IsSlice { // This will now also cover what might have been arrays
 			return "[]" + buildName(ti.Elem)
-		}
-		if ti.IsArray {
-			lenStr := "N" // Default if not resolvable through AST
-			if arrType, ok := ti.AstExpr.(*ast.ArrayType); ok && arrType.Len != nil {
-				// AstExprToString is in model package, need to qualify or pass down currentPkgName if it relies on it.
-				// For generator, currentPkgName context for AstExprToString is less relevant.
-				lenStr = model.AstExprToString(arrType.Len, "") // Use empty for currentPkgName in model.AstExprToString
-			}
-			return "[" + lenStr + "]" + buildName(ti.Elem)
 		}
 		if ti.IsMap {
 			return fmt.Sprintf("map[%s]%s", buildName(ti.Key), buildName(ti.Value))

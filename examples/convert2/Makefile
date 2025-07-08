@@ -25,6 +25,8 @@ generate_test_code: build
 	@echo "Generating Go code for tests in $(TESTDATA_DIR)..."
 	$(CLI_PATH) -input $(TESTDATA_DIR) -output $(TEST_OUTPUT_DIR)
 	@echo "Generated code: $(TEST_GEN_FILE)"
+	@echo "Formatting generated code $(TEST_GEN_FILE)..."
+	@go run golang.org/x/tools/cmd/goimports@latest -w $(TEST_GEN_FILE)
 
 # Alternative: Generate Go code using 'go run' (does not require pre-built CLI)
 .PHONY: generate_test_code_gorun

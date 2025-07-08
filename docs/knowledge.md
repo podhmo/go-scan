@@ -113,3 +113,52 @@ To address this, a utility struct `goscan.ImportManager` was introduced within t
 **Application:**
 
 The `ImportManager` was successfully integrated into `examples/derivingjson/main.go` and `examples/derivingbind/main.go`, significantly simplifying their import management sections. The development process involved iterative refinement of the alias generation rules within `ImportManager.Add` based on test cases covering various scenarios (keyword clashes, dot/hyphen in package names, alias conflicts).
+
+---
+
+## Jules 環境におけるサンドボックスのCWDとコマンド実行の安定化
+
+**注意: 以下の知見は、Jules という特定のAIエージェントのサンドボックス環境におけるものであり、一般的な開発環境の問題や解決策ではありません。**
+
+### 問題の概要
+
+特定の開発タスク（例: `examples/minigo` での `for range` 実装）において、`run_in_bash_session` ツールを使用した際のサンドボックス環境の挙動が不安定になることがありました。主な症状は以下の通りです。
+
+*   `cd` コマンドが `No such file or directory` エラーで失敗する。これは、`ls` コマンドで対象ディレクトリの存在が確認できる状況でも発生しました。
+*   `make format` や `make test` などの `Makefile` ターゲットが、期待されるカレントワーキングディレクトリ (CWD) で実行されずに失敗する。
+*   `reset_all()` ツールで環境をリセットしても、これらの問題が必ずしも解消されない。
+
+これらの問題は、エージェントがファイルシステムの正確な状態を把握し、コマンドを意図通りに実行することを困難にしていました。
+
+### 解決策・安定化のためのプラクティス (Jules環境特有)
+
+長時間の試行錯誤とユーザーからのヒントに基づき、以下の手順でコマンド実行の安定性が向上することが確認されました。
+
+1.  **環境リセットの試行**: まず `reset_all()` を実行し、サンドボックス環境を初期状態に戻すことを試みます。これは、ファイル内容の変更だけでなく、内部的な状態の一部もリセットすることを期待して行います。
+
+2.  **ルートディレクトリへの明示的な `cd`**: `run_in_bash_session` でコマンドを実行する際、特に `reset_all()` の後や、CWDが不明確な場合は、まずサンドボックス内のリポジトリルートと想定される `/app` ディレクトリに `cd` します。
+    ```bash
+    cd /app
+    ```
+
+3.  **目的のコマンドの実行**: 上記の `cd /app` に続けて、`&&` を使って目的のコマンドを実行します。
+    *   特定のディレクトリで `make` ターゲットを実行する場合:
+        ```bash
+        cd /app && make -C path/to/makefile/dir target
+        ```
+        または、`make` ターゲットが内部で `cd` する場合はシンプルに:
+        ```bash
+        cd /app && make target
+        ```
+    *   特定のディレクトリで Go コマンドを実行する場合:
+        ```bash
+        cd /app && cd path/to/go_module_dir && go test -v ./...
+        ```
+
+この `/app` への `cd` を挟むことで、その後のコマンドが期待されるCWDで実行される確率が大幅に向上し、以前は失敗していた `cd` や `make`、Go のテストコマンドが成功するようになりました。
+
+### なぜこの方法が有効だったか（推測）
+
+Jules のサンドボックス環境では、`run_in_bash_session` のセッション間でCWDの状態が完全に引き継がれなかったり、`reset_all()` がCWDを必ずしも `/app` に戻さなかったりする可能性があります。最初に `/app` へ明示的に `cd` することで、その後の相対パスの解釈やサブプロセス（`make`など）のCWDが安定するのではないかと推測されます。
+
+この知見は、Jules 環境でCWD関連の不可解なエラーに遭遇した場合の、有効なトラブルシューティング手順の一つとして記録します。

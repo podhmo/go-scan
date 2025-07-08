@@ -12,12 +12,14 @@ import (
 	"time"
 )
 
-func TestConvertSrcSimple(t *testing.T) {
-	// Helper functions to create pointers
-	strPtr := func(s string) *string { return &s }
-	float32Ptr := func(f float32) *float32 { return &f }
-	intPtr := func(i int) *int { return &i }
+// Helper functions to create pointers, moved to package level for sharing
+var (
+	strPtr     = func(s string) *string { return &s }
+	float32Ptr = func(f float32) *float32 { return &f }
+	intPtr     = func(i int) *int { return &i }
+)
 
+func TestConvertSrcSimple(t *testing.T) {
 	tests := []struct {
 		name          string
 		src           SrcSimple
@@ -123,7 +125,7 @@ func TestConvertSrcSimple(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			dst, err := ConvertSrcSimple(context.Background(), tc.src)
+			dst, err := ConvertSrcSimpleToDstSimple(context.Background(), tc.src)
 
 			if tc.expectError {
 				if err == nil {
@@ -187,8 +189,6 @@ func pointerValue(ptr interface{}) string {
 }
 
 func TestConvertNestedStructs(t *testing.T) {
-	strPtr := func(s string) *string { return &s } // Re-define or move to shared test utility
-
 	tests := []struct {
 		name        string
 		src         OuterSrc

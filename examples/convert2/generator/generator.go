@@ -293,37 +293,35 @@ func generateHelperFunction(
 			continue
 		}
 
-		dstFieldName := srcField.Tag.DstFieldName
-		if dstFieldName == "" { // No specific destination name in tag, use source field name
-			dstFieldName = srcField.Name
+		// The block above this comment (handling original dstFieldName and dstField lookup)
+		// is the one that should be removed if it's causing a redeclaration.
+		// The new logic starts below with DEBUG_SRC_FIELD_TAG_RAW.
+
+		// DEBUG statements for Tag info
+		fmt.Fprintf(&functionBodyBuf, "\t// DEBUG_SRC_FIELD_TAG_RAW: %s\n", srcField.Tag.RawValue)
+		fmt.Fprintf(&functionBodyBuf, "\t// DEBUG_SRC_FIELD_TAG_DSTFIELDNAME: %s\n", srcField.Tag.DstFieldName)
+
+		var resolvedDstFieldName string // Explicitly declare
+		if srcField.Tag.DstFieldName != "" {
+			resolvedDstFieldName = srcField.Tag.DstFieldName
+			fmt.Fprintf(&functionBodyBuf, "\t// DEBUG_DSTFIELDNAME_FROM_TAG: Used tag DstFieldName (%s)\n", resolvedDstFieldName)
+		} else {
+			resolvedDstFieldName = srcField.Name
+			fmt.Fprintf(&functionBodyBuf, "\t// DEBUG_DSTFIELDNAME_FALLBACK: Used srcField.Name (%s)\n", resolvedDstFieldName)
 		}
 
-		var dstField *model.FieldInfo
-		for i := range dstStruct.Fields { // dstStruct がここで使われる
-			if dstStruct.Fields[i].Name == dstFieldName {
+		var dstField *model.FieldInfo // Declare dstField here before use
+		for i := range dstStruct.Fields {
+			if dstStruct.Fields[i].Name == resolvedDstFieldName { // Use the resolved name
 				dstField = &dstStruct.Fields[i]
 				break
 			}
 		}
 
 		if dstField == nil {
-			// No destination field found with the target name.
-			// If auto-mapping by normalized name was intended, that's a later step.
-			// For now, if explicit name or same name doesn't match, we report (or silently skip).
-			// Let's add a comment for now if a DstFieldName was specified in tag but not found.
-			if srcField.Tag.DstFieldName != "" {
-				fmt.Fprintf(&functionBodyBuf, "\t// Warning: Destination field '%s' specified for source field '%s.%s' not found in struct '%s'.\n", srcField.Tag.DstFieldName, srcStruct.Name, srcField.Name, dstStruct.Name)
-			}
-			// continue // Temporarily comment out to see if dstField is the issue
-		}
-		fmt.Fprintf(&functionBodyBuf, "\t// DEBUG: dstFieldName = %s, dstField is nil = %t\n", dstFieldName, dstField == nil) // DEBUG LINE
-		if dstField == nil {
-			if srcField.Tag.DstFieldName != "" { // Only add warning if a DstFieldName was explicitly specified
-				fmt.Fprintf(&functionBodyBuf, "\t// Warning: Destination field '%s' (from tag) not found in '%s'. Field %s.%s skipped.\n", srcField.Tag.DstFieldName, dstStruct.Name, srcStruct.Name, srcField.Name)
-			} else {
-				fmt.Fprintf(&functionBodyBuf, "\t// Info: No destination field named '%s' found in '%s' to match source field %s.%s. Field skipped.\n", dstFieldName, dstStruct.Name, srcStruct.Name, srcField.Name)
-			}
-			continue // Re-enable continue
+			// Warning or info message based on whether DstFieldName was from tag or fallback
+			fmt.Fprintf(&functionBodyBuf, "\t// Info: No destination field named '%s' (determined from tag or src name) found in '%s' to match source field %s.%s. Field skipped.\n", resolvedDstFieldName, dstStruct.Name, srcStruct.Name, srcField.Name)
+			continue
 		}
 		delete(unmappedDstFields, dstField.Name) // Mark as mapped
 
@@ -331,7 +329,7 @@ func generateHelperFunction(
 		// Now, implement basic direct assignment if types match.
 		fmt.Fprintf(&functionBodyBuf, "\t// Mapping field %s.%s (%s) to %s.%s (%s)\n",
 			srcStruct.Name, srcField.Name, srcField.TypeInfo.FullName,
-			dstStruct.Name, dstField.Name, dstField.TypeInfo.FullName)
+			dstStruct.Name, dstField.Name, dstField.TypeInfo.FullName) // Note: dstField.Name should be used here, not dstFieldNameDetermined if they could differ by logic error
 
 		srcElemCommentName := "nil"
 		if srcField.TypeInfo.Elem != nil {
@@ -776,7 +774,18 @@ func typeNameInSource(typeInfo *model.TypeInfo, currentPackagePath string, impor
 			// If alias is same as base name of path, it means no explicit alias in import stmt.
 			// e.g. import "time", used as time.Time. alias="time"
 			// e.g. import custom "example.com/custom", used as custom.Type. alias="custom"
-			return alias + "." + ti.Name
+			fullNameCandidate := alias + "." + ti.Name
+			// Defensive check: if ti.Name somehow already contains the package alias prefix.
+			// This might happen if ti.Name was populated with a fully qualified name from another source.
+			// e.g. alias="time", ti.Name="time.Time" -> results in "time.time.Time" without this check.
+			if strings.HasPrefix(ti.Name, alias+".") && len(ti.Name) > len(alias)+1 {
+				// Check to ensure it's not just Name="time" and alias="time" leading to Name being prefix of itself.
+				// This implies ti.Name is already correctly qualified for its own package, but used via an alias here.
+				// This situation is unusual. Normally ti.Name would be "Time" and alias "time".
+				// If ti.Name is "pkg.Type" and alias is "pkg", we want "pkg.Type".
+				return ti.Name
+			}
+			return fullNameCandidate
 		}
 		return ti.Name // Type is in the current package, or a basic type, or its package path is empty.
 	}

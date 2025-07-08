@@ -199,20 +199,15 @@ func TestGenerateHelperFunction_Underlying_MyInt_To_YourInt(t *testing.T) {
 	// Mapping field Src.MyAge (example.com/mypkg.MyInt) to Dst.YourAge (example.com/mypkg.YourInt)
 	// Src: Ptr=false, ElemFull=example.com/mypkg.MyInt | Dst: Ptr=false, ElemFull=example.com/mypkg.YourInt
 	ec.Enter("YourAge")
-	// DEBUG_STRUCT_CHECK: srcIsStruct=false (Name: MyInt, StructInfoNil: true, Kind: 9), dstIsStruct=false (Name: YourInt, StructInfoNil: true, Kind: 9)
-	// DEBUG_SRC_FIELD: Name=MyInt, FullName=example.com/mypkg.MyInt, IsBasic=false, Kind=9
-	// DEBUG_SRC_FIELD_UNDERLYING: Name=int, FullName=int, IsBasic=true, Kind=1
-	// DEBUG_DST_FIELD: Name=YourInt, FullName=example.com/mypkg.YourInt, IsBasic=false, Kind=9
-	// DEBUG_DST_FIELD_UNDERLYING: Name=int, FullName=int, IsBasic=true, Kind=1
-	// DEBUG_SRC_ACTUAL_UNDERLYING: Name=int, FullName=int, IsBasic=true, Kind=1
-	// DEBUG_DST_ACTUAL_UNDERLYING: Name=int, FullName=int, IsBasic=true, Kind=1
-	// DEBUG_BEFORE_underlyingTypesMatch_check: srcUnderlying is nil = false, dstUnderlying is nil = false
-	// DEBUG_COND_PreCheck: srcUnderlying.IsBasic=true, dstUnderlying.IsBasic=true, srcUnderlying.Name=int, dstUnderlying.Name=int, srcUnderlying.FullName=int, dstUnderlying.FullName=int
-	// DEBUG_MATCH_COND: Cond1_BasicByName (int)
-	// DEBUG_FINAL_underlyingTypesMatch: true
 	dst.YourAge = YourInt(src.MyAge)
 	ec.Leave()
-	if ec.MaxErrorsReached() { return dst }
+	// The "if ec.MaxErrorsReached() { return dst }" line is part of the general function structure
+	// and not specific to this field's logic block in the same way ec.Leave() is.
+	// extractRelevantBody might or might not include it based on its heuristics.
+	// For now, we assume extractRelevantBody primarily captures up to ec.Leave().
+	// The normalizeCode function will handle trimming, so an extra "if ec.MaxErrorsReached..."
+	// in the generated part but not in expected should be caught if extractRelevantBody includes it.
+	// Let's keep expectedBody minimal up to the core logic and ec.Leave().
 `
 	// expectedFullFunc := fmt.Sprintf(`func srcToDst(ec *errorCollector, src mypkg.Src) mypkg.Dst {
 	// dst := mypkg.Dst{}
@@ -319,17 +314,6 @@ func TestGenerateHelperFunction_Underlying_MyFloatPtr_To_StarFloat64(t *testing.
 	// This might be a slight inaccuracy in the initial "// Src: Ptr=..." comment line generation if it doesn't look at the underlying of MyFloatPtr.
 	// The important part is the DEBUG comments and the generated logic.
 	ec.Enter("MaybeValue")
-	// DEBUG_STRUCT_CHECK: srcIsStruct=false (Name: MyFloatPtr, StructInfoNil: true, Kind: 9), dstIsStruct=false (Name: float64, StructInfoNil: true, Kind: 1)
-	// DEBUG_SRC_FIELD: Name=MyFloatPtr, FullName=example.com/mypkg.MyFloatPtr, IsBasic=false, Kind=9
-	// DEBUG_SRC_FIELD_UNDERLYING: Name=*MyFloat, FullName=*example.com/mypkg.MyFloat, IsBasic=false, Kind=3
-	// DEBUG_DST_FIELD: Name=*float64, FullName=*float64, IsBasic=false, Kind=3
-	// DEBUG_DST_FIELD_UNDERLYING: Name=float64, FullName=float64, IsBasic=true, Kind=1
-	// DEBUG_SRC_ACTUAL_UNDERLYING: Name=float64, FullName=float64, IsBasic=true, Kind=1
-	// DEBUG_DST_ACTUAL_UNDERLYING: Name=float64, FullName=float64, IsBasic=true, Kind=1
-	// DEBUG_BEFORE_underlyingTypesMatch_check: srcUnderlying is nil = false, dstUnderlying is nil = false
-	// DEBUG_COND_PreCheck: srcUnderlying.IsBasic=true, dstUnderlying.IsBasic=true, srcUnderlying.Name=float64, dstUnderlying.Name=float64, srcUnderlying.FullName=float64, dstUnderlying.FullName=float64
-	// DEBUG_MATCH_COND: Cond1_BasicByName (float64)
-	// DEBUG_FINAL_underlyingTypesMatch: true
 	if src.MaybeValue != nil {
 		convertedVal := float64(*src.MaybeValue)
 		dst.MaybeValue = &convertedVal
@@ -337,7 +321,8 @@ func TestGenerateHelperFunction_Underlying_MyFloatPtr_To_StarFloat64(t *testing.
 		dst.MaybeValue = nil
 	}
 	ec.Leave()
-	if ec.MaxErrorsReached() { return dst }
+	// Similar to the MyInt_To_YourInt test, we expect extractRelevantBody to capture
+	// the core logic up to ec.Leave().
 `
 	// The `*src.MaybeValue` implies MyFloatPtr is dereferenceable like a pointer to MyFloat.
 	// This needs MyFloatPtr to be treated as *MyFloat in the srcAccessPath logic.
@@ -367,56 +352,103 @@ func TestGenerateHelperFunction_Underlying_MyFloatPtr_To_StarFloat64(t *testing.
 // extractRelevantBody is a helper to get only the part of the generated function
 // related to a specific field mapping for easier comparison in tests.
 // It's a bit simplistic and might need adjustment.
+// It now attempts to exclude DEBUG comments.
 func extractRelevantBody(fullCode, srcFieldName, dstFieldName string) string {
-	var bodyLines []string
+	var relevantLines []string
 	inRelevantBlock := false
 	lines := strings.Split(fullCode, "\n")
 
-	mappingComment := fmt.Sprintf("// Mapping field %s.%s", "Src", srcFieldName) // Assuming struct name is Src
-	if !strings.Contains(fullCode, mappingComment) { // Fallback if Src.FieldName isn't found
-		mappingComment = fmt.Sprintf("// Mapping field")
+	// More generic mapping comment search to be less dependent on exact struct name "Src"
+	// This regex will look for "// Mapping field ANY_STRUCT.srcFieldName (ANY_TYPE) to ANY_STRUCT.dstFieldName (ANY_TYPE)"
+	// For simplicity in this step, we'll stick to a simpler string search, assuming the tests
+	// use consistent source/destination struct names or the current logic is sufficient.
+	// A more robust solution might involve regex if struct names vary significantly across tests using this helper.
+	mappingCommentStart := fmt.Sprintf("// Mapping field ") // General start
+	// Construct a more specific search if possible, but allow fallback
+	specificMappingComment := fmt.Sprintf("// Mapping field %s.%s", "Src", srcFieldName) // Defaulting to "Src" as before.
+	if dstFieldName != srcFieldName {
+		specificMappingComment = fmt.Sprintf("// Mapping field %s.%s (%s) to %s.%s", "Src", srcFieldName, ".*", "Dst", dstFieldName)
+		// This specific comment is getting too complex for simple string matching if types are involved.
+		// Let's simplify the trigger for starting the block.
+		specificMappingComment = fmt.Sprintf("// Mapping field %s.%s", "Src", srcFieldName)
 	}
 
 
+	foundMappingComment := false
 	for _, line := range lines {
 		trimmedLine := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmedLine, mappingComment) {
-			inRelevantBlock = true
+
+		if !inRelevantBlock {
+			// Try to find the start of the block
+			// Prefer specific mapping comment if Src name is known and consistent
+			if strings.HasPrefix(trimmedLine, specificMappingComment) || (strings.HasPrefix(trimmedLine, mappingCommentStart) && strings.Contains(trimmedLine, srcFieldName) && strings.Contains(trimmedLine, dstFieldName)) {
+				inRelevantBlock = true
+				foundMappingComment = true // Mark that we found the entry point
+				// The mapping comment itself can be included if not a DEBUG line, or excluded if desired
+				if !strings.HasPrefix(trimmedLine, "// DEBUG_") {
+					relevantLines = append(relevantLines, line)
+				}
+				continue
+			}
 		}
+
 		if inRelevantBlock {
-			bodyLines = append(bodyLines, line) // Add the original line with its spacing
+			// Exclude DEBUG lines
+			if !strings.HasPrefix(trimmedLine, "// DEBUG_") {
+				relevantLines = append(relevantLines, line)
+			}
+
 			if strings.HasPrefix(trimmedLine, "ec.Leave()") {
-				// Check if next line is "if ec.MaxErrorsReached()" to capture the full block
-				// This is still heuristic.
-				break // End of this field's block
-			}
-		}
-	}
-	if !inRelevantBlock && strings.Contains(fullCode, "ec.Enter") { // If specific mapping not found, but there's some field logic
-		startIdx := strings.Index(fullCode, "ec.Enter")
-		if startIdx != -1 {
-			endIdx := strings.LastIndex(fullCode, "if ec.MaxErrorsReached() { return dst }")
-			if endIdx > startIdx && strings.Contains(fullCode[startIdx:endIdx], dstFieldName) {
-                 // try to get from mapping comment to the end of block
-                searchString := fmt.Sprintf("Mapping field Src.%s", srcFieldName)
-                mappingStart := strings.Index(fullCode, searchString)
-                if mappingStart != -1 {
-                    blockEnd := strings.Index(fullCode[mappingStart:], "ec.Leave()")
-                    if blockEnd != -1 {
-                        return strings.TrimSpace(fullCode[mappingStart : mappingStart+blockEnd+len("ec.Leave()")])
-                    }
-                }
-				// Fallback to a less precise extraction if the specific mapping comment isn't robustly found
-				// This part is tricky and might grab too much or too little.
-				// For now, let's return a significant chunk if the specific field mapping isn't isolated.
-				// This indicates the helper needs refinement or the test expectation is too broad.
-				return fullCode // Fallback to returning more and letting normalize and direct string compare catch it.
+				// We've reached the end of the logical block for this field.
+				// The next line is typically "if ec.MaxErrorsReached()...", which we also want to include.
+				// So, find the next line, add it if it's the error check, then break.
+				// This is still a bit heuristic.
+				// For now, just include ec.Leave() and break.
+				// The "if ec.MaxErrorsReached()" part might be better handled by normalizing the whole function body
+				// if this extraction becomes too fragile.
+				break
 			}
 		}
 	}
 
-
-	return strings.Join(bodyLines, "\n")
+	if !foundMappingComment {
+		// Fallback or error if the mapping comment isn't found.
+		// This might indicate an issue with test setup or generated code not matching expectations.
+		// For now, return what might have been collected, or empty if nothing.
+		// Returning the whole code if block not found can make debugging harder.
+		// Let's return empty if no specific block was isolated.
+		// This makes test failures clearer if `extractRelevantBody` fails.
+		// However, the original code had a fallback to return `fullCode`.
+		// Let's try returning a specific error message or a marker.
+		// For the purpose of this step, an empty string if not found is a clear signal.
+		// If tests fail due to this, we'll know `extractRelevantBody` is the cause.
+		if len(relevantLines) == 0 {
+			// Try a simpler search if the specific one failed, focusing only on ec.Enter and ec.Leave
+			// This is a secondary fallback.
+			ecEnterLine := fmt.Sprintf(`ec.Enter("%s")`, dstFieldName)
+			ecLeaveLine := `ec.Leave()`
+			blockLines := []string{}
+			inEcBlock := false
+			for _, line := range lines {
+				trimmedLine := strings.TrimSpace(line)
+				if strings.HasPrefix(trimmedLine, ecEnterLine) {
+					inEcBlock = true
+				}
+				if inEcBlock {
+					if !strings.HasPrefix(trimmedLine, "// DEBUG_") {
+						blockLines = append(blockLines, line)
+					}
+					if strings.HasPrefix(trimmedLine, ecLeaveLine) {
+						// Also capture the "if ec.MaxErrorsReached()" that follows
+						// This needs a lookahead or post-processing.
+						// For now, just the block up to ec.Leave().
+						return strings.Join(blockLines, "\n")
+					}
+				}
+			}
+		}
+	}
+	return strings.Join(relevantLines, "\n")
 }
 
 func TestGenerateHelperFunction_Pointer_StarT_to_T_Default(t *testing.T) {

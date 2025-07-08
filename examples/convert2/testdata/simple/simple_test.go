@@ -5,155 +5,175 @@ package simple
 
 import (
 	"context"
+	"errors"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
 
 func TestConvertSrcSimple(t *testing.T) {
-	// Helper to create a pointer to a string
+	// Helper functions to create pointers
 	strPtr := func(s string) *string { return &s }
+	float32Ptr := func(f float32) *float32 { return &f }
+	intPtr := func(i int) *int { return &i }
 
 	tests := []struct {
 		name        string
 		src         SrcSimple
 		expectedDst DstSimple
 		expectError bool
+		errorContains []string // Substrings to check for in the error message
 	}{
 		{
-			name: "basic conversion with rename and skip",
+			name: "basic conversion with T -> *T, *T -> T, required",
 			src: SrcSimple{
-				ID:          1,
-				Name:        "Test Name",
-				Description: "This should be skipped",
-				Value:       123.45,
-				Timestamp:   time.Date(2023, 1, 1, 12, 0, 0, 0, time.UTC),
-				NoMatchDst:  "Source specific",
-				PtrString:   strPtr("Hello Pointer"),
-				StringPtr:   "Value To Pointer",
+				ID:                 1,
+				Name:               "Test Name",
+				Description:        "This should be skipped",
+				Value:              123.45,
+				Timestamp:          time.Date(2023, 1, 1, 12, 0, 0, 0, time.UTC),
+				NoMatchDst:         "Source specific",
+				PtrString:          strPtr("Hello Pointer"),
+				StringPtr:          "Value To Pointer", // T -> *T
+				PtrToValue:         float32Ptr(3.14),   // *T -> T (default)
+				RequiredPtrToValue: intPtr(100),        // *T -> T (required)
 			},
 			expectedDst: DstSimple{
-				ID:           1,
-				Name:         "Test Name",
-				// Description is skipped
-				Value:        123.45,
-				CreationTime: time.Date(2023, 1, 1, 12, 0, 0, 0, time.UTC),
-				NoMatchSrc:   "", // Expect zero value as there's no source
-				PtrString:    strPtr("Hello Pointer"),
-				// StringPtr: *string currently results in an error/TODO from generator for string -> *string
-				// Expecting it to be nil for now until T -> *T is implemented.
-				// If generator assigns it (e.g. to address of zero value of string), this needs update.
-				// Current generator adds an error for type mismatch, so dst field remains zero.
-				StringPtr:    nil,
+				ID:                 1,
+				Name:               "Test Name",
+				Value:              123.45,
+				CreationTime:       time.Date(2023, 1, 1, 12, 0, 0, 0, time.UTC),
+				NoMatchSrc:         "",
+				PtrString:          strPtr("Hello Pointer"),
+				StringPtr:          strPtr("Value To Pointer"), // Expect address of source value
+				PtrToValue:         3.14,
+				RequiredPtrToValue: 100,
 			},
-			expectError: true, // Due to StringPtr string -> *string mismatch / not implemented
+			expectError: false,
 		},
 		{
-			name: "nil pointer source",
+			name: "nil pointer source for *T -> T (default)",
 			src: SrcSimple{
-				ID:          2,
-				Name:        "Nil Pointer Test",
-				Description: "Skip me",
-				Value:       67.89,
-				Timestamp:   time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
-				PtrString:   nil, // Nil source pointer
-				StringPtr:   "Another Value",
+				ID:                 2,
+				Name:               "Nil PtrToValue",
+				Timestamp:          time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
+				PtrToValue:         nil, // *T (nil) -> T (default)
+				RequiredPtrToValue: intPtr(200),
+				StringPtr:          "MakeItPointer",
 			},
 			expectedDst: DstSimple{
-				ID:           2,
-				Name:         "Nil Pointer Test",
-				Value:        67.89,
-				CreationTime: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
-				PtrString:    nil, // Expect nil to be propagated for *T -> *T
-				StringPtr:    nil, // Still expect error for string -> *string
+				ID:                 2,
+				Name:               "Nil PtrToValue",
+				CreationTime:       time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
+				PtrToValue:         0,  // Expect zero value for float32
+				RequiredPtrToValue: 200,
+				StringPtr:          strPtr("MakeItPointer"),
 			},
-			expectError: true, // Due to StringPtr string -> *string mismatch / not implemented
+			expectError: false,
+		},
+		{
+			name: "nil pointer source for *T -> T (required)",
+			src: SrcSimple{
+				ID:                 3,
+				Name:               "Nil RequiredPtrToValue",
+				Timestamp:          time.Date(2024, 2, 1, 0, 0, 0, 0, time.UTC),
+				PtrToValue:         float32Ptr(1.0),
+				RequiredPtrToValue: nil, // *T (nil) -> T (required)
+				StringPtr:          "Another",
+			},
+			expectedDst: DstSimple{ // Dst fields will be partially populated before error
+				ID:                 3,
+				Name:               "Nil RequiredPtrToValue",
+				CreationTime:       time.Date(2024, 2, 1, 0, 0, 0, 0, time.UTC),
+				PtrToValue:         1.0,
+				StringPtr:          strPtr("Another"),
+				RequiredPtrToValue: 0, // Expect zero value as conversion error occurs
+			},
+			expectError:   true,
+			errorContains: []string{"RequiredPtrToValue", "is required", "source field RequiredPtrToValue is nil"},
+		},
+		{
+			name: "all pointers nil where possible",
+			src: SrcSimple{
+				ID:                 4,
+				Name:               "All Pointers Nil",
+				Timestamp:          time.Date(2024, 3, 1, 0, 0, 0, 0, time.UTC),
+				PtrString:          nil,
+				StringPtr:          "WillBePointer", // T -> *T
+				PtrToValue:         nil,             // *T -> T (default)
+				RequiredPtrToValue: intPtr(400),     // *T -> T (required)
+			},
+			expectedDst: DstSimple{
+				ID:                 4,
+				Name:               "All Pointers Nil",
+				CreationTime:       time.Date(2024, 3, 1, 0, 0, 0, 0, time.UTC),
+				PtrString:          nil,
+				StringPtr:          strPtr("WillBePointer"),
+				PtrToValue:         0, // default for nil
+				RequiredPtrToValue: 400,
+			},
+			expectError: false,
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			// Assuming ConvertSrcSimple is generated in this package (simple)
-			// The actual generated function will be ConvertSrcSimple
 			dst, err := ConvertSrcSimple(context.Background(), tc.src)
 
 			if tc.expectError {
 				if err == nil {
 					t.Errorf("ConvertSrcSimple() expected an error, but got nil")
+				} else {
+					for _, sub := range tc.errorContains {
+						if !strings.Contains(err.Error(), sub) {
+							t.Errorf("ConvertSrcSimple() error = %v, expected to contain %q", err, sub)
+						}
+					}
 				}
-				// Further error content check can be added if needed.
-				// For now, just checking if an error occurred as expected for unimplemented parts.
-				// The DstSimple struct might be partially populated or zero value depending on error handling.
-				// We will compare against expectedDst which assumes zero values for fields that errored.
 			} else {
 				if err != nil {
 					t.Errorf("ConvertSrcSimple() unexpected error: %v", err)
 				}
 			}
 
-			// Compare only relevant parts if error is expected, or full struct if no error
-			// For now, always compare the DstSimple struct.
-			// Fields that failed conversion (like StringPtr) should have their zero value in dst.
 			if !reflect.DeepEqual(dst, tc.expectedDst) {
-				t.Errorf("ConvertSrcSimple() got = %v, want %v", dst, tc.expectedDst)
-				// Detailed diff might be helpful here for debugging
-				// For example, iterate fields and compare one by one.
+				t.Errorf("ConvertSrcSimple() got = %#v, want %#v", dst, tc.expectedDst)
+				// Provide more detailed diff
+				if dst.ID != tc.expectedDst.ID { t.Errorf("ID: got %v, want %v", dst.ID, tc.expectedDst.ID) }
+				if dst.Name != tc.expectedDst.Name { t.Errorf("Name: got %v, want %v", dst.Name, tc.expectedDst.Name) }
+				if dst.Value != tc.expectedDst.Value { t.Errorf("Value: got %v, want %v", dst.Value, tc.expectedDst.Value) }
+				if !dst.CreationTime.Equal(tc.expectedDst.CreationTime) { t.Errorf("CreationTime: got %v, want %v", dst.CreationTime, tc.expectedDst.CreationTime) }
+
+				if (dst.PtrString == nil && tc.expectedDst.PtrString != nil) || (dst.PtrString != nil && tc.expectedDst.PtrString == nil) || (dst.PtrString != nil && tc.expectedDst.PtrString != nil && *dst.PtrString != *tc.expectedDst.PtrString) {
+					t.Errorf("PtrString: got %v, want %v", pointerValue(dst.PtrString), pointerValue(tc.expectedDst.PtrString))
+				}
+				if (dst.StringPtr == nil && tc.expectedDst.StringPtr != nil) || (dst.StringPtr != nil && tc.expectedDst.StringPtr == nil) || (dst.StringPtr != nil && tc.expectedDst.StringPtr != nil && *dst.StringPtr != *tc.expectedDst.StringPtr) {
+					t.Errorf("StringPtr: got %v, want %v", pointerValue(dst.StringPtr), pointerValue(tc.expectedDst.StringPtr))
+				}
+				if dst.PtrToValue != tc.expectedDst.PtrToValue { t.Errorf("PtrToValue: got %v, want %v", dst.PtrToValue, tc.expectedDst.PtrToValue) }
+				if dst.RequiredPtrToValue != tc.expectedDst.RequiredPtrToValue { t.Errorf("RequiredPtrToValue: got %v, want %v", dst.RequiredPtrToValue, tc.expectedDst.RequiredPtrToValue) }
 			}
 		})
 	}
 }
 
-// Test for SrcWithAlias (Optional, as `using` is not fully implemented by generator yet)
-// This test will likely fail or require adjustments until `using` is handled.
+// Helper to get value of pointer for logging, or "nil"
+func pointerValue(ptr interface{}) string {
+	val := reflect.ValueOf(ptr)
+	if val.Kind() == reflect.Ptr {
+		if val.IsNil() {
+			return "<nil>"
+		}
+		return fmt.Sprintf("%v", val.Elem().Interface())
+	}
+	return fmt.Sprintf("%v", ptr) // Should not happen if used for pointers
+}
+
+
+// Test for SrcWithAlias is still commented out as `using` is not implemented.
 /*
 func TestConvertSrcWithAlias(t *testing.T) {
-	// Dummy myTimeToTime function for testing purposes if it were available to the test.
-	// In reality, this would be in the user's codebase.
-	myTimeToTime := func(ec *errorCollector, mt MyTime) time.Time {
-		// This is a placeholder. A real `using` function would be defined by the user.
-		// For testing, we'd need to ensure the generator calls *something* or handles
-		// the `using` directive by leaving a clear TODO or error if the function isn't found/callable.
-		// Since the generator doesn't yet implement `using` calls, this test is more of a forward-look.
-		return time.Time(mt) // Simple cast for this example
-	}
-
-	src := SrcWithAlias{
-		EventTime: MyTime(time.Date(2023, 5, 5, 10, 0, 0, 0, time.UTC)),
-	}
-	expectedDst := DstWithAlias{
-		EventTimestamp: time.Date(2023, 5, 5, 10, 0, 0, 0, time.UTC),
-	}
-
-	// This test assumes that the generator somehow makes `myTimeToTime` callable
-	// or that the `using` tag is processed. Current generator will likely produce a TODO.
-	// So, this test would fail until `using` is implemented.
-	// For now, we might expect an error or a zero-value DstWithAlias.
-	dst, err := ConvertSrcWithAlias(context.Background(), src)
-
-	// Current generator will produce a TODO for MyTime -> time.Time
-	// and likely an error because of type mismatch if no `using` is applied.
-	if err == nil {
-		t.Logf("ConvertSrcWithAlias() expected an error due to unimplemented 'using' or type mismatch, but got nil. This might be ok if direct assignment/cast worked unexpectedly.")
-	}
-	if err != nil {
-		t.Logf("ConvertSrcWithAlias() returned error as expected (due to unimplemented 'using' or type mismatch): %v", err)
-        // If an error is expected, dst might be zero.
-        // Set expectedDst to zero if an error occurs and no partial conversion is expected.
-        // expectedDst = DstWithAlias{}
-	}
-
-
-	// This comparison will likely fail until 'using' is implemented.
-	if !reflect.DeepEqual(dst, expectedDst) {
-		t.Errorf("ConvertSrcWithAlias() got = %v, want %v", dst, expectedDst)
-	}
+    // ...
 }
 */
-
-// Note: The `errorCollector` type used by `myTimeToTime` in the commented out test
-// would need to be accessible. If `myTimeToTime` is a user function, it would
-// import or have its own definition of `errorCollector` compatible with the generated one.
-// For now, the `TestConvertSrcWithAlias` is commented out as it depends on `using` logic.
-// The build tag `convert2_test_target` ensures this test file is only compiled
-// when specifically targeted, e.g. by the Makefile during the test phase after code generation.
-// It should not be part of the `convert2` tool's own build.

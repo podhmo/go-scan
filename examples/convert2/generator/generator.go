@@ -238,13 +238,49 @@ func generateHelperFunction(buf *bytes.Buffer, funcName string, srcType, dstType
 		// TODO: Priority 1: Field Tag `using=<funcName>`
 		// TODO: Priority 2: Global Rule `convert:rule "<SrcT>" -> "<DstT>", using=<funcName>`
 
-		// Priority 3: Automatic Conversion (Basic Direct Assignment)
-		if srcField.TypeInfo.FullName == dstField.TypeInfo.FullName {
-			// Direct assignment
+		// Priority 3: Automatic Conversion (including pointer logic)
+		srcIsPtr := srcField.TypeInfo.IsPointer
+		dstIsPtr := dstField.TypeInfo.IsPointer
+		srcElemTypeFullName := ""
+		if srcField.TypeInfo.Elem != nil {
+			srcElemTypeFullName = srcField.TypeInfo.Elem.FullName
+		} else if !srcIsPtr {
+			srcElemTypeFullName = srcField.TypeInfo.FullName
+		}
+		dstElemTypeFullName := ""
+		if dstField.TypeInfo.Elem != nil {
+			dstElemTypeFullName = dstField.TypeInfo.Elem.FullName
+		} else if !dstIsPtr {
+			dstElemTypeFullName = dstField.TypeInfo.FullName
+		}
+
+		typesMatchDirectly := srcField.TypeInfo.FullName == dstField.TypeInfo.FullName
+		elementsMatch := srcElemTypeFullName != "" && dstElemTypeFullName != "" && srcElemTypeFullName == dstElemTypeFullName
+
+		if typesMatchDirectly { // Case: T -> T or *T -> *T (elements must also match for *T -> *T, implied by FullName match)
 			fmt.Fprintf(buf, "\tdst.%s = src.%s\n", dstField.Name, srcField.Name)
+		} else if !srcIsPtr && dstIsPtr && elementsMatch { // Case: T -> *T
+			// Ensure that dstField.TypeInfo.Elem.FullName matches srcField.TypeInfo.FullName
+			fmt.Fprintf(buf, "\t{\n")
+			fmt.Fprintf(buf, "\t\tsrcVal := src.%s\n", srcField.Name)
+			fmt.Fprintf(buf, "\t\tdst.%s = &srcVal\n", dstField.Name)
+			fmt.Fprintf(buf, "\t}\n")
+		} else if srcIsPtr && !dstIsPtr && elementsMatch { // Case: *T -> T
+			// Ensure that srcField.TypeInfo.Elem.FullName matches dstField.TypeInfo.FullName
+			if srcField.Tag.Required {
+				fmt.Fprintf(buf, "\tif src.%s == nil {\n", srcField.Name)
+				fmt.Fprintf(buf, "\t\tec.Addf(\"field '%s' is required but source field %s is nil\")\n", dstField.Name, srcField.Name)
+				fmt.Fprintf(buf, "\t} else {\n")
+				fmt.Fprintf(buf, "\t\tdst.%s = *src.%s\n", dstField.Name, srcField.Name)
+				fmt.Fprintf(buf, "\t}\n")
+			} else {
+				fmt.Fprintf(buf, "\tif src.%s != nil {\n", srcField.Name)
+				fmt.Fprintf(buf, "\t\tdst.%s = *src.%s\n", dstField.Name, srcField.Name)
+				fmt.Fprintf(buf, "\t}\n") // If nil, dst field remains zero value, no error
+			}
 		} else {
-			// Types do not match directly. Placeholder for more complex logic.
-			// This is where underlying type checks, pointer logic, slice/map conversions,
+			// Types do not match directly and pointer logic doesn't apply or elements mismatch.
+			// This is where underlying type checks, slice/map conversions,
 			// and recursive struct conversions will go.
 			fmt.Fprintf(buf, "\t// TODO: Implement conversion for %s (%s) to %s (%s).\n",
 				srcField.Name, srcField.TypeInfo.FullName,

@@ -48,6 +48,12 @@
 *   [ ] **Field Mapping Logic (Core)** in `generateHelperFunction`:
     *   [X] **Skipping fields**: If `convert` tag is `"-"`, skip the source field. (Implemented)
     *   [X] **Identical Types & Name Mapping**: Direct assignment (`d.Field = s.Field`) if types and names (or tag-specified name) match. (Basic implementation for `TypeInfo.FullName` match).
+    *   [X] **Pointer Conversions**: (Implemented for `T` <-> `*T` where element types match)
+        *   [X] `T` to `*T`: `valT := s.Field; d.PtrField = &valT`.
+        *   [X] `*T` to `T`:
+            *   [X] Default: `if s.PtrField != nil { d.Field = *s.PtrField }`.
+            *   [X] `required` tag: If `s.PtrField == nil`, add error to `ec`.
+        *   [X] `*T` to `*T`: `d.PtrField = s.PtrField` (Covered by identical type direct assignment).
     *   [ ] **Priority 1: Field Tag `using=<funcName>`**: Generate call to the custom function.
         *   [ ] Validate function signature (best effort with `go/ast`).
         *   [ ] Handle context parameter if `using` function expects it.
@@ -55,12 +61,6 @@
         *   [ ] Match source and destination field types against global rules using resolved `TypeInfo`.
     *   [ ] **Priority 3: Automatic Conversion (Advanced)**:
         *   [ ] **Underlying Type Match**: If `type T1 T2` and `type D1 T2` (and T2 is compatible), convert via cast (`D1(s.T1)`). Needs careful check of compatibility based on `TypeInfo.Underlying`.
-        *   [ ] **Pointer Conversions**:
-            *   `T` to `*T`: `valT := s.Field; d.PtrField = &valT`.
-            *   `*T` to `T`:
-                *   Default: `if s.PtrField != nil { d.Field = *s.PtrField }`.
-                *   `required` tag: If `s.PtrField == nil`, add error to `ec`.
-            *   `*T` to `*T`: `d.PtrField = s.PtrField`.
     *   [ ] **Priority 4: Automatic Field Name Mapping (Normalized)**:
         *   [ ] If `convert` tag's `DstFieldName` is empty, normalize source field name and match with normalized destination field names.
 *   [ ] **Recursive Conversions**:
@@ -89,14 +89,15 @@
 *   [ ] Improve output logging, perhaps with different verbosity levels.
 
 ### General / Project
-*   [X] **Testing (Preparation)**:
+*   [X] **Testing (Preparation & Basic Pointer Tests)**:
     *   [X] Define sample source structs and annotations in `testdata/simple`.
-    *   [X] Manually run generator and visually inspect output (as initial check).
-*   [ ] **Testing (Implementation)**:
+    *   [X] Manually run generator and visually/logically inspect output.
+    *   [X] Updated `simple_test.go` for implemented pointer conversions.
+*   [ ] **Testing (Implementation - Broader Coverage)**:
     *   [ ] **Parser Tests**: Unit tests for `parser.ParseDirectory` with various valid and invalid annotation examples.
-    *   [ ] **Generator Tests**:
+    *   [ ] **Generator Tests (Automated)**:
         *   Compile the generated code from `testdata/simple`.
-        *   Write Go test functions (`_test.go`) in `testdata/simple` that use the generated converters to verify correctness (field values, errors for required nil, etc.).
+        *   Run Go test functions (`_test.go`) in `testdata/simple` that use the generated converters to verify correctness for all implemented features.
         *   Test edge cases (nil pointers, empty slices).
     *   [ ] **Integration Tests**: Test the CLI tool as a whole with different input directories.
 *   [ ] **Documentation (`README.md`)**:

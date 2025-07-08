@@ -96,6 +96,12 @@
 - [ ] Better type system for `Object` interface (e.g. using generics if Go 2, or more specific interfaces)
   - [ ] Implement `Hashable` interface for all relevant object types that can be map keys. (from object.go TODO)
   - [ ] Implement `Callable` interface for function objects (UserDefinedFunction, BuiltinFunction). (from object.go TODO)
+- [ ] **Built-in Auto-generation (`autogen-builtin.md`) Review**
+  - [ ] Update `autogen-builtin.md` to reflect that MiniGo now possesses `object.Array` and `object.Slice` types, making its statement about "MiniGo lacks array types" outdated.
+  - [ ] Re-evaluate `strings.Join` for auto-generation:
+    - Its current variadic signature (`str1, ..., strN, sep`) can be handled by `wrapper_func` as suggested in `autogen-builtin.md`.
+    - However, this signature is suboptimal for `target_go_func` (the preferred simpler auto-generation method) and leads to less representative stubs.
+    - Consider refactoring `strings.Join` to accept a MiniGo slice/array and a separator, or adding a new `strings.JoinSlice`-like function, to better align with auto-generation ideals and MiniGo's current type capabilities.
 - [ ] **Reflection / Introspection Features (`minigo/inspect` package - based on improvement.md)**
   - [ ] Implement `minigo/inspect` package as a built-in or standard library package.
   - [ ] Design and implement `ImportedFunction` object type in `object.go` to hold info about imported Go functions (distinct from callable `UserDefinedFunction`).

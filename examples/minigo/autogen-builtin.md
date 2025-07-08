@@ -133,7 +133,7 @@ Simulating the generation of builtin functions for the `strings` package using t
 
 ### 1. Representing Functions with Complex Argument Structures (e.g., `strings.Join`)
 
-The current `strings.Join` has a special signature because MiniGo lacks array types: "the last argument is the separator, and preceding arguments are strings to be joined." Representing this with annotations poses the following problems:
+The current `strings.Join` in MiniGo has a special variadic signature (elements followed by a separator) which historically arose when MiniGo's support for array/slice types in builtin function signatures was less direct. While MiniGo now has `object.Array` and `object.Slice` types (see `object.go`), this existing signature for `strings.Join` means that representing it with annotations for direct `target_go_func` mapping is complex. This poses the following problems:
 
 *   **P1: Annotation Syntax for Special Argument Parsing:**
     *   Custom syntax like `//minigo:arg index=-1 type=STRING` or `//minigo:arg index_range=0..-2 type=STRING` would complicate the annotation parser.

@@ -49,6 +49,7 @@ func TestConvertSrcSimple(t *testing.T) {
 				StringPtr:          strPtr("Value To Pointer"), // Expect address of source value
 				PtrToValue:         3.14,
 				RequiredPtrToValue: 100,
+				CustomStr:          "converted_0_from_models",
 			},
 			expectError: false,
 		},
@@ -69,6 +70,7 @@ func TestConvertSrcSimple(t *testing.T) {
 				PtrToValue:         0, // Expect zero value for float32
 				RequiredPtrToValue: 200,
 				StringPtr:          strPtr("MakeItPointer"),
+				CustomStr:          "converted_0_from_models",
 			},
 			expectError: false,
 		},
@@ -89,6 +91,7 @@ func TestConvertSrcSimple(t *testing.T) {
 				PtrToValue:         1.0,
 				StringPtr:          strPtr("Another"),
 				RequiredPtrToValue: 0, // Expect zero value as conversion error occurs
+				CustomStr:          "converted_0_from_models",
 			},
 			expectError:   true,
 			errorContains: []string{"RequiredPtrToValue", "is required", "source field RequiredPtrToValue is nil"},
@@ -112,6 +115,7 @@ func TestConvertSrcSimple(t *testing.T) {
 				StringPtr:          strPtr("WillBePointer"),
 				PtrToValue:         0, // default for nil
 				RequiredPtrToValue: 400,
+				CustomStr:          "converted_0_from_models",
 			},
 			expectError: false,
 		},

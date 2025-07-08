@@ -640,6 +640,74 @@ func main() {
 			expectError:   true,
 			errorContains: "type mismatch for argument",
 		},
+		// --- len() function tests ---
+		{
+			name: "len of empty string",
+			input: `
+package main
+func main() {
+	return len("")
+}`,
+			expected: int64(0),
+		},
+		{
+			name: "len of ascii string",
+			input: `
+package main
+func main() {
+	return len("abc")
+}`,
+			expected: int64(3),
+		},
+		{
+			name: "len of multibyte string",
+			input: `
+package main
+func main() {
+	return len("こんにちは")
+}`,
+			expected: int64(15), // UTF-8 byte length
+		},
+		{
+			name: "len with no arguments",
+			input: `
+package main
+func main() {
+	return len()
+}`,
+			expectError:   true,
+			errorContains: "len() takes exactly one argument (0 given)",
+		},
+		{
+			name: "len with too many arguments",
+			input: `
+package main
+func main() {
+	return len("a", "b")
+}`,
+			expectError:   true,
+			errorContains: "len() takes exactly one argument (2 given)",
+		},
+		{
+			name: "len with integer argument",
+			input: `
+package main
+func main() {
+	return len(123)
+}`,
+			expectError:   true,
+			errorContains: "len() not supported for type INTEGER",
+		},
+		{
+			name: "len with boolean argument",
+			input: `
+package main
+func main() {
+	return len(true)
+}`,
+			expectError:   true,
+			errorContains: "len() not supported for type BOOLEAN",
+		},
 	}
 
 	for _, tt := range tests {

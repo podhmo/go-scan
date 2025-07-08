@@ -52,36 +52,61 @@ func GenerateConversionCode(parsedInfo *model.ParsedInfo, outputDir string) erro
 	generatedCode.WriteString("\n\n")
 
 	// --- Generate Conversion Functions ---
-	generatedFunctionBodies := make(map[string]string) // funcName -> funcBody
+	// generatedFunctionBodies stores the actual source code of the generated functions.
+	// Key: function name, Value: function source code.
+	generatedFunctionBodies := make(map[string]string)
 
-	// First, generate all helper functions to ensure they are available
-	// and to collect their required imports.
-	for _, pair := range parsedInfo.ConversionPairs {
+	// conversionWorklist stores pairs that need helper functions to be generated.
+	// Initialize with top-level conversion pairs from parser.
+	conversionWorklist := make([]model.ConversionPair, 0, len(parsedInfo.ConversionPairs))
+	for _, cp := range parsedInfo.ConversionPairs {
+		// Make a copy to avoid modifying the original slice from parsedInfo if the worklist is modified.
+		conversionWorklist = append(conversionWorklist, cp)
+	}
+
+	// processedPairs tracks (SrcTypeFullName, DstTypeFullName) to avoid redundant generation
+	// and infinite loops for recursive types (though full recursion detection is more complex).
+	// Key: "SrcFullName->DstFullName"
+	processedPairs := make(map[string]bool)
+
+	// Loop as long as there are conversion pairs needing helper functions.
+	// generateHelperFunction might add new pairs to conversionWorklist for nested types.
+	idx := 0
+	for idx < len(conversionWorklist) {
+		pair := conversionWorklist[idx]
+		idx++ // Move to next item early, in case new items are appended
+
+		pairKey := fmt.Sprintf("%s->%s", pair.SrcTypeInfo.FullName, pair.DstTypeInfo.FullName)
+		if processedPairs[pairKey] {
+			continue // Already processed or in queue
+		}
+		// Mark as processed *before* calling generateHelperFunction to handle direct recursion
+		// (e.g. A converts to A, or A to B and B to A)
+		processedPairs[pairKey] = true
+
 		coreHelperFuncName := fmt.Sprintf("%sTo%s", lowercaseFirstLetter(pair.SrcTypeInfo.Name), pair.DstTypeInfo.Name)
 		if _, exists := generatedFunctionBodies[coreHelperFuncName]; !exists {
 			var helperFuncBuf bytes.Buffer
-			err := generateHelperFunction(&helperFuncBuf, coreHelperFuncName, pair.SrcTypeInfo, pair.DstTypeInfo, parsedInfo, requiredImports)
+			// Pass the worklist so generateHelperFunction can add to it.
+			err := generateHelperFunction(&helperFuncBuf, coreHelperFuncName, pair.SrcTypeInfo, pair.DstTypeInfo, parsedInfo, requiredImports, &conversionWorklist, processedPairs)
 			if err != nil {
 				return fmt.Errorf("failed to generate helper function %s: %w", coreHelperFuncName, err)
 			}
 			generatedFunctionBodies[coreHelperFuncName] = helperFuncBuf.String()
 		}
 	}
-	// Potentially generate more helpers if rules or nested structs demand them (recursive step)
-	// This part needs to be more sophisticated for deeply nested structures.
-	// For now, we only generate helpers directly from ConversionPairs.
 
-	// Then, generate top-level functions
-	for _, pair := range parsedInfo.ConversionPairs {
-		topLevelFuncName := fmt.Sprintf("Convert%s", pair.SrcTypeInfo.Name)
+	// Then, generate top-level functions that call these helpers
+	for _, pair := range parsedInfo.ConversionPairs { // Iterate original pairs for top-level functions
+		topLevelFuncName := fmt.Sprintf("Convert%sTo%s", pair.SrcTypeInfo.Name, pair.DstTypeInfo.Name) // Make top-level func name more specific
 		if _, exists := generatedFunctionBodies[topLevelFuncName]; exists {
+			fmt.Printf("Warning: Top-level function %s already generated. Skipping duplicate generation.\n", topLevelFuncName)
 			continue
 		}
 
 		var funcBuf bytes.Buffer
 		coreHelperFuncName := fmt.Sprintf("%sTo%s", lowercaseFirstLetter(pair.SrcTypeInfo.Name), pair.DstTypeInfo.Name)
 
-		// Add imports for source and destination types of the top-level function
 		addRequiredImport(pair.SrcTypeInfo, parsedInfo.PackagePath, requiredImports)
 		addRequiredImport(pair.DstTypeInfo, parsedInfo.PackagePath, requiredImports)
 
@@ -89,9 +114,10 @@ func GenerateConversionCode(parsedInfo *model.ParsedInfo, outputDir string) erro
 			topLevelFuncName,
 			typeNameInSource(pair.SrcTypeInfo, parsedInfo.PackagePath, requiredImports),
 			typeNameInSource(pair.DstTypeInfo, parsedInfo.PackagePath, requiredImports))
-		fmt.Fprintf(&funcBuf, "\tec := newErrorCollector(%d)\n", pair.MaxErrors)
-		fmt.Fprintf(&funcBuf, "\tdst := %s(ec, src)\n", coreHelperFuncName) // Call helper
+		fmt.Fprintf(&funcBuf, "\tec := newErrorCollector(%d)\n", pair.MaxErrors) // Use MaxErrors from the pair
+		fmt.Fprintf(&funcBuf, "\tdst := %s(ec, src)\n", coreHelperFuncName)
 		fmt.Fprintf(&funcBuf, "\tif ec.HasErrors() {\n")
+		// Ensure dst is always returned, even if zero value, to match signature
 		fmt.Fprintf(&funcBuf, "\t\treturn dst, errors.Join(ec.Errors()...)\n")
 		fmt.Fprintf(&funcBuf, "\t}\n")
 		fmt.Fprintf(&funcBuf, "\treturn dst, nil\n")
@@ -178,7 +204,16 @@ func GenerateConversionCode(parsedInfo *model.ParsedInfo, outputDir string) erro
 }
 
 // generateHelperFunction generates the non-exported core conversion logic.
-func generateHelperFunction(buf *bytes.Buffer, funcName string, srcType, dstType *model.TypeInfo, parsedInfo *model.ParsedInfo, imports map[string]string) error {
+// It can add new required conversion pairs to the worklist for nested structs.
+func generateHelperFunction(
+	buf *bytes.Buffer,
+	funcName string,
+	srcType, dstType *model.TypeInfo,
+	parsedInfo *model.ParsedInfo,
+	imports map[string]string,
+	worklist *[]model.ConversionPair, // Pointer to the shared worklist
+	processedPairs map[string]bool, // Pointer to the shared set of processed pairs
+) error {
 	if srcType.StructInfo == nil || dstType.StructInfo == nil {
 		// Handle non-struct or unresolved struct types (e.g. named basic types)
 		// This part will require using global conversion rules or direct assignment if types are compatible.
@@ -382,13 +417,91 @@ func generateHelperFunction(buf *bytes.Buffer, funcName string, srcType, dstType
 				}
 			} else {
 				// Types do not match directly and pointer logic doesn't apply or elements mismatch.
-				// This is where underlying type checks, slice/map conversions,
-				// and recursive struct conversions will go.
-				fmt.Fprintf(buf, "\t// TODO: Implement conversion for %s (%s) to %s (%s).\n",
-					srcField.Name, srcField.TypeInfo.FullName,
-					dstField.Name, dstField.TypeInfo.FullName)
-				fmt.Fprintf(buf, "\tec.Addf(\"type mismatch or complex conversion not yet implemented for field '%s' (%s -> %s)\")\n",
-					dstField.Name, srcField.TypeInfo.FullName, dstField.TypeInfo.FullName)
+				// Check for struct-to-struct conversion for nested types.
+				// Ensure both srcField.TypeInfo and dstField.TypeInfo are actual struct types (not just named types that happen to be structs)
+				// or that their underlying types are structs, if they are named types.
+				// The StructInfo field being non-nil is a good indicator from the parser.
+				srcFieldIsStruct := srcField.TypeInfo.StructInfo != nil || (srcField.TypeInfo.Underlying != nil && srcField.TypeInfo.Underlying.StructInfo != nil)
+				dstFieldIsStruct := dstField.TypeInfo.StructInfo != nil || (dstField.TypeInfo.Underlying != nil && dstField.TypeInfo.Underlying.StructInfo != nil)
+
+				// Dereference pointers to get to the struct type for recursive calls
+				actualSrcFieldType := srcField.TypeInfo
+				if actualSrcFieldType.IsPointer && actualSrcFieldType.Elem != nil {
+					actualSrcFieldType = actualSrcFieldType.Elem
+					srcFieldIsStruct = actualSrcFieldType.StructInfo != nil // Re-check after deref
+				}
+				actualDstFieldType := dstField.TypeInfo
+				if actualDstFieldType.IsPointer && actualDstFieldType.Elem != nil {
+					actualDstFieldType = actualDstFieldType.Elem
+					dstFieldIsStruct = actualDstFieldType.StructInfo != nil // Re-check after deref
+				}
+
+
+				if srcFieldIsStruct && dstFieldIsStruct {
+					fmt.Fprintf(buf, "\t// Recursive call for nested struct %s -> %s\n", actualSrcFieldType.Name, actualDstFieldType.Name)
+					nestedHelperFuncName := fmt.Sprintf("%sTo%s", lowercaseFirstLetter(actualSrcFieldType.Name), actualDstFieldType.Name)
+
+					// Prepare to add to worklist if this nested pair hasn't been processed.
+					// MaxErrors for nested calls typically would be inherited or a default. For now, 0 (unlimited).
+					// If the original pair was from a directive with MaxErrors, that's for the top-level.
+					// For implicitly discovered pairs, 0 is a safe default.
+					nestedPair := model.ConversionPair{
+						SrcTypeInfo: actualSrcFieldType,
+						DstTypeInfo: actualDstFieldType,
+						MaxErrors:   0, // Default for implicitly discovered pairs
+					}
+					nestedPairKey := fmt.Sprintf("%s->%s", actualSrcFieldType.FullName, actualDstFieldType.FullName)
+
+					if !processedPairs[nestedPairKey] {
+						*worklist = append(*worklist, nestedPair)
+						// No need to mark processedPairs[nestedPairKey] = true here,
+						// the main loop in GenerateConversionCode will do it before calling generateHelperFunction.
+					}
+
+					// Handle pointer nature of fields for the call
+					// src: T, dst: T  => dst.F = helper(ec, src.F)
+					// src: *T, dst: *T => if src.F != nil { val := helper(ec, *src.F); dst.F = &val } else { dst.F = nil }
+					// src: T, dst: *T => val := helper(ec, src.F); dst.F = &val
+					// src: *T, dst: T => if src.F != nil { dst.F = helper(ec, *src.F) } else { // error if required, else zero val }
+
+					srcAccess := "src." + srcField.Name
+					assignToDst := "dst." + dstField.Name + " = "
+
+					if srcField.TypeInfo.IsPointer && !dstField.TypeInfo.IsPointer { // *S -> D
+						fmt.Fprintf(buf, "\tif src.%s != nil {\n", srcField.Name)
+						fmt.Fprintf(buf, "\t\t%s%s(ec, *%s)\n", assignToDst, nestedHelperFuncName, srcAccess)
+						// TODO: Handle 'required' tag for src pointer if dst non-pointer needs it
+						fmt.Fprintf(buf, "\t} else {\n")
+						if srcField.Tag.Required { // If source pointer is required for a non-pointer destination
+							fmt.Fprintf(buf, "\t\tec.Addf(\"field '%s' is required but source field %s for nested struct is nil\")\n", dstField.Name, srcField.Name)
+						} else {
+							fmt.Fprintf(buf, "\t\t// Source field %s is nil, destination %s remains zero value\n", srcField.Name, dstField.Name)
+						}
+						fmt.Fprintf(buf, "\t}\n")
+					} else if !srcField.TypeInfo.IsPointer && dstField.TypeInfo.IsPointer { // S -> *D
+						fmt.Fprintf(buf, "\t{\n")
+						fmt.Fprintf(buf, "\t\tnestedVal := %s(ec, %s)\n", nestedHelperFuncName, srcAccess)
+						fmt.Fprintf(buf, "\t\t%s&nestedVal\n", assignToDst)
+						fmt.Fprintf(buf, "\t}\n")
+					} else if srcField.TypeInfo.IsPointer && dstField.TypeInfo.IsPointer { // *S -> *D
+						fmt.Fprintf(buf, "\tif src.%s != nil {\n", srcField.Name)
+						fmt.Fprintf(buf, "\t\tnestedVal := %s(ec, *%s)\n", nestedHelperFuncName, srcAccess)
+						fmt.Fprintf(buf, "\t\t%s&nestedVal\n", assignToDst)
+						fmt.Fprintf(buf, "\t} else {\n")
+						fmt.Fprintf(buf, "\t\t%s nil // Source pointer is nil, so destination pointer is nil\n", assignToDst)
+						fmt.Fprintf(buf, "\t}\n")
+					} else { // S -> D (non-pointers)
+						fmt.Fprintf(buf, "\t%s%s(ec, %s)\n", assignToDst, nestedHelperFuncName, srcAccess)
+					}
+
+				} else {
+					// Fallback for non-struct or other complex types not yet handled
+					fmt.Fprintf(buf, "\t// TODO: Implement conversion for %s (%s) to %s (%s).\n",
+						srcField.Name, srcField.TypeInfo.FullName,
+						dstField.Name, dstField.TypeInfo.FullName)
+					fmt.Fprintf(buf, "\tec.Addf(\"type mismatch or complex conversion not yet implemented for field '%s' (%s -> %s)\")\n",
+						dstField.Name, srcField.TypeInfo.FullName, dstField.TypeInfo.FullName)
+				}
 			}
 		} // if appliedUsingFunc != "" の else ブロックの閉じ括弧
 

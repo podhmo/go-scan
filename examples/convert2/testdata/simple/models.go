@@ -53,3 +53,45 @@ func IntToStr(ec *errorCollector, val int) string {
 	// To distinguish from conversions.go version if both were somehow present
 	return fmt.Sprintf("converted_%d_from_models", val)
 }
+
+// --- Nested Structs Test ---
+
+type InnerSrc struct {
+	InnerID   int
+	InnerName string
+}
+
+type InnerDst struct {
+	InnerID   int
+	InnerName string
+}
+
+type OuterSrc struct {
+	OuterID   int
+	Nested    InnerSrc
+	NestedPtr *InnerSrc
+	Name      string `convert:"OuterName"`
+}
+
+type OuterDst struct {
+	OuterID   int
+	Nested    InnerDst
+	NestedPtr *InnerDst
+	OuterName string
+}
+
+// For testing nested with different field names
+type InnerSrcDiff struct {
+	SrcInnerVal int
+}
+type InnerDstDiff struct {
+	DstInnerVal int
+}
+type OuterSrcDiff struct {
+	ID         int
+	DiffNested InnerSrcDiff `convert:"DestNested"`
+}
+type OuterDstDiff struct {
+	ID         int
+	DestNested InnerDstDiff
+}

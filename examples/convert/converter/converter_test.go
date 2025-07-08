@@ -155,12 +155,12 @@ func TestSrcContactToDstContact(t *testing.T) {
 		expected models.DstContact
 	}{
 		{
-			name: "with phone",
+			name:     "with phone",
 			src:      models.SrcContact{Email: "test@example.com", Phone: &phone},
 			expected: models.DstContact{EmailAddress: "test@example.com", PhoneNumber: "555-0100"},
 		},
 		{
-			name: "nil phone",
+			name:     "nil phone",
 			src:      models.SrcContact{Email: "test2@example.com", Phone: nil},
 			expected: models.DstContact{EmailAddress: "test2@example.com", PhoneNumber: "N/A"},
 		},

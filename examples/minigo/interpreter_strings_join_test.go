@@ -255,14 +255,8 @@ func main() {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Construct the full package main structure for the script
-			fullScript := fmt.Sprintf("%s\nvar globalResult interface{}\n%s", "package main", tt.script[len("package main"):])
-			if !strings.Contains(tt.script, "var globalResult") { // Ensure globalResult is declared if script doesn't
-				// This logic is a bit flawed, the helper expects globalResult.
-				// The test cases are structured to define globalResult within their main or globally.
-				// Let's assume test scripts correctly define globalResult.
-			}
-
+			// Each tt.script is expected to be a complete runnable MiniGo program,
+			// including "package main" and definition of "globalResult" variable.
 			runMiniGoScriptForTest(t, tt.script, tt.expectedValue, tt.expectError, tt.expectedErrorMsgSubstring)
 		})
 	}

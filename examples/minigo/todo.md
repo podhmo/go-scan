@@ -59,7 +59,7 @@
 - [x] `Null` object and implicit returns for `null`
 - [x] `len()` function for strings, arrays, slices, maps
 - [x] `append()` function for slices
-- [ ] More `fmt` functions (e.g., `Println`)
+- [x] More `fmt` functions (e.g., `Println`)
 - [ ] More `strings` functions
 - [ ] Basic I/O (e.g., reading files, printing to console beyond Sprintf)
 - [ ] `panic` and `recover`

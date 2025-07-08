@@ -3,7 +3,7 @@
 ## High-Level Goals
 
 *   [ ] Implement full field mapping logic in the generator.
-*   [ ] Implement robust type resolution and import management.
+*   [X] Implement robust type resolution and import management (基本的な仕組みは実装、さらなる改善が必要).
 *   [ ] Add comprehensive tests for parser and generator.
 *   [ ] Refine `README.md` with detailed usage, examples, and installation instructions.
 
@@ -32,35 +32,39 @@
 ## Detailed Implementation Todos
 
 ### Parser (`parser/parser.go`)
-*   [ ] **Type Resolution**:
-    *   [ ] Resolve `ast.Expr` for types (e.g., `pair.SrcTypeExpr`, `field.Type`) to fully qualified names or `model.TypeInfo` structs that include package path and import alias information. This is crucial for the generator.
-    *   [ ] Handle `type NewType BaseType` definitions and determine their underlying types for conversion purposes.
+*   [X] **Type Resolution (Basic Implementation)**:
+    *   [X] Resolve `ast.Expr` for types (e.g., field types, `convert:pair` types) to `model.TypeInfo` including package path and basic kind. (Further robustness needed for complex selectors, dot imports, and forward declarations).
+    *   [X] Handle `type NewType BaseType` definitions: identify and store in `ParsedInfo.NamedTypes`; if `BaseType` is a struct, treat `NewType` as an alias in `ParsedInfo.Structs`. (Underlying type chain resolution for `type T1 T2; type T2 T3;` is still basic).
+*   [ ] **Type Resolution (Advanced)**:
+    *   [ ] Improve resolution of types from dot (`.`) imports.
+    *   [ ] Handle forward declarations more gracefully (may require multiple parsing passes or deferred resolution).
+    *   [ ] Accurately determine `TypeInfo.FullName` and `TypeInfo.PackageName` (as import alias) for all scenarios.
 *   [ ] **Annotation Parsing Robustness**:
-    *   [ ] Add more robust error handling for malformed annotations (e.g., report line numbers).
-    *   [ ] Ensure correct parsing of quoted type names in `convert:rule`, especially those with package selectors (e.g., `"pkg.MyType"`).
-*   [ ] **AST Node Storage**: Store relevant `ast.Node` instances (e.g., `ast.TypeSpec`, `ast.FuncDecl` for `using` functions if parsed) in `model.ParsedInfo` for richer context during generation.
+    *   [ ] Add more robust error handling for malformed annotations (e.g., report line numbers, specific parsing errors).
+    *   [ ] Ensure correct parsing of complex quoted type names in `convert:rule` (e.g., `"[]*pkg.MyType"`).
+*   [ ] **AST Node Storage**: Review if more `ast.Node` instances need to be stored in `model.ParsedInfo` for richer context during generation (e.g., for `using` function signature checks).
 
 ### Generator (`generator/generator.go`)
 *   [ ] **Field Mapping Logic (Core)** in `generateHelperFunction`:
+    *   [X] **Skipping fields**: If `convert` tag is `"-"`, skip the source field. (Implemented)
+    *   [X] **Identical Types & Name Mapping**: Direct assignment (`d.Field = s.Field`) if types and names (or tag-specified name) match. (Basic implementation for `TypeInfo.FullName` match).
     *   [ ] **Priority 1: Field Tag `using=<funcName>`**: Generate call to the custom function.
         *   [ ] Validate function signature (best effort with `go/ast`).
         *   [ ] Handle context parameter if `using` function expects it.
     *   [ ] **Priority 2: Global Rule `convert:rule "<SrcT>" -> "<DstT>", using=<funcName>`**: Generate call to the custom function.
-        *   [ ] Match source and destination field types against global rules.
-    *   [ ] **Priority 3: Automatic Conversion**:
-        *   [ ] **Underlying Type Match**: If `type T1 T2` and `type D1 T2`, convert via cast (`D1(s.T1)`).
-        *   [ ] **Identical Types**: Direct assignment (`d.Field = s.Field`).
+        *   [ ] Match source and destination field types against global rules using resolved `TypeInfo`.
+    *   [ ] **Priority 3: Automatic Conversion (Advanced)**:
+        *   [ ] **Underlying Type Match**: If `type T1 T2` and `type D1 T2` (and T2 is compatible), convert via cast (`D1(s.T1)`). Needs careful check of compatibility based on `TypeInfo.Underlying`.
         *   [ ] **Pointer Conversions**:
-            *   `T` to `*T`: `ptr := s.Field; d.PtrField = &ptr` (or similar).
+            *   `T` to `*T`: `valT := s.Field; d.PtrField = &valT`.
             *   `*T` to `T`:
                 *   Default: `if s.PtrField != nil { d.Field = *s.PtrField }`.
                 *   `required` tag: If `s.PtrField == nil`, add error to `ec`.
             *   `*T` to `*T`: `d.PtrField = s.PtrField`.
-    *   [ ] **Priority 4: Automatic Field Name Mapping**:
+    *   [ ] **Priority 4: Automatic Field Name Mapping (Normalized)**:
         *   [ ] If `convert` tag's `DstFieldName` is empty, normalize source field name and match with normalized destination field names.
-    *   [ ] **Skipping fields**: If `convert` tag is `"-"`, skip the source field.
 *   [ ] **Recursive Conversions**:
-    *   [ ] **Nested Structs**: If a field is a struct, generate a call to the corresponding helper function (e.g., `d.Nested = srcNestedToDstNested(ec, s.Nested)`).
+    *   [ ] **Nested Structs**: If a field is a struct, generate a call to the corresponding helper function (e.g., `d.Nested = srcNestedToDstNested(ec, s.Nested)`). Ensure helper functions for nested structs are generated.
     *   [ ] **Slices**:
         *   Iterate over the source slice.
         *   For each element, call the appropriate helper function for the element type.
@@ -68,29 +72,33 @@
         *   Example: `d.Items = make([]DstItem, len(s.SrcItems)); for i, item := range s.SrcItems { d.Items[i] = srcItemToDstItem(ec, item) }`.
 *   [ ] **`convert:rule "<DstType>", validator=<funcName>`**:
     *   After a destination struct (or field of that type) is populated, generate a call to the validator function: `ValidateMyType(ec, d.MyField)` or `ValidateMyType(ec, dst)`.
-*   [ ] **Import Management**:
-    *   [ ] Accurately track all types used from external packages.
-    *   [ ] Generate correct import statements with aliases if necessary. Consider using `golang.org/x/tools/imports`.
+*   [X] **Import Management (Basic Implementation)**:
+    *   [X] Accurately track types used from external packages based on `TypeInfo.PackagePath`.
+    *   [X] Generate import statements. (Alias collision handling is basic, needs improvement for robustness).
+*   [ ] **Import Management (Advanced)**:
+    *   [ ] Robust import alias generation to avoid conflicts.
+    *   [ ] Consider using `golang.org/x/tools/imports` for final import list cleanup and organization.
 *   [ ] **Code Structure and Formatting**:
-    *   [ ] Ensure generated helper functions are ordered logically (e.g., dependencies first, though not strictly necessary if all in one file).
-    *   [ ] Add `//go:generate ...` comment if specified by user or as a convention.
-*   [ ] **Error Reporting in Generator**: Improve error messages if generation logic fails for a specific construct.
-*   [ ] **Context Propagation**: Ensure `ctx context.Context` is passed down to `using` functions that require it and to recursive helper calls.
+    *   [ ] Ensure generated helper functions are ordered logically if it impacts compilation (e.g. for mutually recursive types, though direct recursion is the main concern).
+    *   [ ] Add `//go:generate ...` comment in generated file if specified by user or as a convention.
+*   [ ] **Error Reporting in Generator**: Improve error messages if generation logic fails for a specific construct (e.g. "cannot convert type X to Y for field Z").
+*   [ ] **Context Propagation**: Ensure `ctx context.Context` is passed down to `using` functions that require it and to recursive helper calls for nested structs/slices.
 
 ### CLI (`main.go`)
 *   [ ] Consider adding a `-version` flag.
 *   [ ] Improve output logging, perhaps with different verbosity levels.
 
 ### General / Project
-*   [ ] **Testing**:
+*   [X] **Testing (Preparation)**:
+    *   [X] Define sample source structs and annotations in `testdata/simple`.
+    *   [X] Manually run generator and visually inspect output (as initial check).
+*   [ ] **Testing (Implementation)**:
     *   [ ] **Parser Tests**: Unit tests for `parser.ParseDirectory` with various valid and invalid annotation examples.
     *   [ ] **Generator Tests**:
-        *   Define sample source structs and annotations.
-        *   Run the generator.
-        *   Compile the generated code.
-        *   Run test functions that use the generated converters to verify correctness.
-        *   Test edge cases (nil pointers, empty slices, required fields, etc.).
-    *   [ ] **Integration Tests**: Test the CLI tool as a whole.
+        *   Compile the generated code from `testdata/simple`.
+        *   Write Go test functions (`_test.go`) in `testdata/simple` that use the generated converters to verify correctness (field values, errors for required nil, etc.).
+        *   Test edge cases (nil pointers, empty slices).
+    *   [ ] **Integration Tests**: Test the CLI tool as a whole with different input directories.
 *   [ ] **Documentation (`README.md`)**:
     *   [ ] Add detailed installation instructions.
     *   [ ] Provide comprehensive examples of all annotation types and options.

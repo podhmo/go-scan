@@ -1355,7 +1355,22 @@ func (i *Interpreter) resolveTypeAstToObjectType(typeExpr ast.Expr, resolutionEn
 		if structDef, ok := obj.(*StructDefinition); ok {
 			return STRUCT_INSTANCE_OBJ, structDef, nil
 		}
-		return "", nil, i.formatErrorWithContext(activeFset, te.Pos(), fmt.Errorf("type '%s' is not a struct definition, but %s", typeName, obj.Type()), "")
+		if aliasDef, ok := obj.(*AliasDefinition); ok {
+			// Recursively resolve the alias's base type.
+			// Pass the alias's resolution environment (env) and its FileSet.
+			// The contextFn might not be relevant here or should be handled carefully if aliases can be methods' receivers.
+			// For now, assume simple alias resolution.
+			// Use aliasDef.FileSet if it's available and more specific than activeFset.
+			resolutionFset := activeFset
+			if aliasDef.FileSet != nil {
+				resolutionFset = aliasDef.FileSet
+			}
+			// IMPORTANT: When resolving the base type of an alias (aliasDef.BaseTypeNode),
+			// we should use the environment where the alias was defined (which should be `env` here,
+			// as `obj` was fetched from it).
+			return i.resolveTypeAstToObjectType(aliasDef.BaseTypeNode, env, nil, resolutionFset)
+		}
+		return "", nil, i.formatErrorWithContext(activeFset, te.Pos(), fmt.Errorf("type '%s' is not a struct or alias definition, but %s", typeName, obj.Type()), "")
 
 	case *ast.SelectorExpr: // e.g., pkg.TypeName
 		pkgIdent, ok := te.X.(*ast.Ident)
@@ -1402,10 +1417,44 @@ func (i *Interpreter) resolveTypeAstToObjectType(typeExpr ast.Expr, resolutionEn
 		if structDef, ok := obj.(*StructDefinition); ok {
 			return STRUCT_INSTANCE_OBJ, structDef, nil
 		}
-		return "", nil, i.formatErrorWithContext(activeFset, te.Pos(), fmt.Errorf("qualified type '%s' is not a struct definition, but %s", qualifiedName, obj.Type()), "")
-	// TODO: Handle *ast.StarExpr for pointers, *ast.ArrayType, *ast.MapType, *ast.InterfaceType etc.
+		if structDef, ok := obj.(*StructDefinition); ok {
+			return STRUCT_INSTANCE_OBJ, structDef, nil
+		}
+		if aliasDef, ok := obj.(*AliasDefinition); ok {
+			resolutionFset := activeFset
+			if aliasDef.FileSet != nil {
+				resolutionFset = aliasDef.FileSet
+			}
+			return i.resolveTypeAstToObjectType(aliasDef.BaseTypeNode, i.globalEnv, nil, resolutionFset) // Use globalEnv for alias base type resolution
+		}
+		// This part is tricky: if obj is not StructDefinition or AliasDefinition, what is it?
+		// It could be a function or variable name that happens to collide.
+		// Or, if we supported imported basic types like `pkg.MyIntAlias`, this would need to handle it.
+		// For now, error if it's not a known type definition.
+		return "", nil, i.formatErrorWithContext(activeFset, te.Pos(), fmt.Errorf("qualified name '%s' resolved to an object of type %s, not a struct or alias definition", qualifiedName, obj.Type()), "Type resolution error")
+
+	case *ast.ArrayType:
+		// For type MySlice []int, the ObjectType is SLICE_OBJ.
+		// For type MyArray [5]int, the ObjectType is ARRAY_OBJ.
+		// The specific element type or length is part of the definition but not captured by ObjectType alone.
+		// We don't have separate definition objects for array/slice types yet, unlike StructDefinition.
+		if te.Len == nil {
+			return SLICE_OBJ, nil, nil
+		}
+		return ARRAY_OBJ, nil, nil
+	case *ast.MapType:
+		// For type MyMap map[string]int, the ObjectType is MAP_OBJ.
+		return MAP_OBJ, nil, nil
+	case *ast.InterfaceType:
+		// For type MyInterface interface{}, ObjectType could be a new INTERFACE_DEF_OBJ or similar.
+		// For now, let's treat it as a distinct type that isn't directly an instance of something else.
+		// Or, if interfaces are not fully supported, this could be an error or a generic type.
+		// Let's return NULL_OBJ for now, indicating it's a type but not one we create instances of directly this way.
+		// This needs more thought for full interface support.
+		return NULL_OBJ, nil, nil // Placeholder for interface types
+		// TODO: Handle *ast.StarExpr for pointers, *ast.ChanType, *ast.FuncType etc.
 	default:
-		return "", nil, i.formatErrorWithContext(activeFset, typeExpr.Pos(), fmt.Errorf("unsupported AST node type for type resolution: %T", typeExpr), "")
+		return "", nil, i.formatErrorWithContext(activeFset, typeExpr.Pos(), fmt.Errorf("unsupported AST node type for type resolution: %T (value: %s)", typeExpr, i.astNodeToString(typeExpr, activeFset)), "")
 	}
 }
 
@@ -1813,6 +1862,91 @@ func (i *Interpreter) evalDeclStmt(ctx context.Context, declStmt *ast.DeclStmt, 
 	}
 
 	switch genDecl.Tok {
+	case token.CONST:
+		for _, spec := range genDecl.Specs {
+			valueSpec, ok := spec.(*ast.ValueSpec)
+			if !ok {
+				return nil, i.formatErrorWithContext(i.FileSet, spec.Pos(), fmt.Errorf("unsupported spec type in const declaration: %T", spec), "")
+			}
+
+			for idx, nameIdent := range valueSpec.Names {
+				constName := nameIdent.Name
+				var constValObj Object
+				var errEval error
+
+				if len(valueSpec.Values) > idx {
+					constValObj, errEval = i.eval(ctx, valueSpec.Values[idx], env)
+					if errEval != nil {
+						return nil, errEval
+					}
+				} else {
+					return nil, i.formatErrorWithContext(i.FileSet, nameIdent.Pos(), fmt.Errorf("missing value in const declaration for '%s'", constName), "")
+				}
+
+				// Enum promotion logic
+				if valueSpec.Type != nil { // If const has a type specifier e.g. `const Active Status = "active"`
+					typeNameNode := valueSpec.Type
+					typeNameStr := i.astNodeToString(typeNameNode, i.FileSet) // e.g., "Status"
+
+					typeDefinitionInEnv, typeDefFound := env.Get(typeNameStr)
+
+					if typeDefFound {
+						processedAsEnum := false
+						switch actualTypeDef := typeDefinitionInEnv.(type) {
+						case *AliasDefinition:
+							// If this alias (e.g. Status) is for `string`
+							if actualTypeDef.BaseObjectType == STRING_OBJ {
+								var csDef *ConstrainedStringTypeDefinition
+								// Check if Status was already promoted by a previous const in this group
+								potentialCsDef, alreadyPromoted := env.Get(actualTypeDef.Name)
+								if alreadyPromoted && potentialCsDef.Type() == CONSTRAINED_STRING_DEF_OBJ {
+									csDef = potentialCsDef.(*ConstrainedStringTypeDefinition)
+								} else {
+									// Promote AliasDefinition to ConstrainedStringTypeDefinition
+									csDef = &ConstrainedStringTypeDefinition{
+										Name:          actualTypeDef.Name, // "Status"
+										AllowedValues: make(map[string]struct{}),
+										FileSet:       actualTypeDef.FileSet,
+										IsExternal:    actualTypeDef.IsExternal,
+										PackagePath:   actualTypeDef.PackagePath,
+									}
+									env.Define(actualTypeDef.Name, csDef) // Replace original AliasDefinition with this CSD
+								}
+
+								strVal, okStr := constValObj.(*String)
+								if !okStr {
+									return nil, i.formatErrorWithContext(i.FileSet, valueSpec.Values[idx].Pos(),
+										fmt.Errorf("const '%s' of string enum type '%s' must be initialized with a string, got %s", constName, csDef.Name, constValObj.Type()), "")
+								}
+								csDef.AddAllowedValue(strVal.Value)
+								instance := &ConstrainedStringInstance{Definition: csDef, Value: strVal.Value}
+								env.Define(constName, instance)
+								processedAsEnum = true
+							}
+						case *ConstrainedStringTypeDefinition:
+							// The type (e.g. Status) is already a CSD, add this const's value to it
+							strVal, okStr := constValObj.(*String)
+							if !okStr {
+								return nil, i.formatErrorWithContext(i.FileSet, valueSpec.Values[idx].Pos(),
+									fmt.Errorf("const '%s' of string enum type '%s' must be initialized with a string, got %s", constName, actualTypeDef.Name, constValObj.Type()), "")
+							}
+							actualTypeDef.AddAllowedValue(strVal.Value)
+							instance := &ConstrainedStringInstance{Definition: actualTypeDef, Value: strVal.Value}
+							env.Define(constName, instance)
+							processedAsEnum = true
+						}
+						if processedAsEnum {
+							continue // To next const in the ValueSpec.Names list or next spec
+						}
+					}
+					// If typeDef was not found, or it was not an AliasDefinition for string or a CSD,
+					// it's either an error (type not defined) or a regular const of a different type.
+					// The regular const definition below will handle it or error if type is incompatible.
+				}
+				// Default: store as a regular constant if not processed as enum or if no type specified
+				env.Define(constName, constValObj)
+			}
+		}
 	case token.VAR:
 		for _, spec := range genDecl.Specs {
 			valueSpec, ok := spec.(*ast.ValueSpec)
@@ -1827,12 +1961,56 @@ func (i *Interpreter) evalDeclStmt(ctx context.Context, declStmt *ast.DeclStmt, 
 					if err != nil {
 						return nil, err
 					}
-					env.Define(varName, val)
-				} else {
+					// ---- START ENUM TYPE CHECKING FOR VAR INITIALIZATION ----
+					if valueSpec.Type != nil { // Variable has explicit type, e.g., var s Status = ...
+						typeNameIfTyped := i.astNodeToString(valueSpec.Type, i.FileSet)
+						expectedTypeDefObj, typeIsKnownInEnv := env.Get(typeNameIfTyped)
+
+						if typeIsKnownInEnv {
+							if csDef, isEnumDef := expectedTypeDefObj.(*ConstrainedStringTypeDefinition); isEnumDef {
+								// Variable `varName` is declared as a constrained string type.
+								// Check if `val` (evaluated RHS) is compatible.
+								if actualStr, isRhsString := val.(*String); isRhsString { // RHS is a raw string literal "value"
+									if csDef.IsAllowed(actualStr.Value) {
+										instance := &ConstrainedStringInstance{Definition: csDef, Value: actualStr.Value}
+										env.Define(varName, instance)
+									} else {
+										return nil, i.formatErrorWithContext(i.FileSet, valueSpec.Values[idx].Pos(),
+											fmt.Errorf("string value %q is not allowed for enum type '%s' in declaration of '%s'", actualStr.Value, csDef.Name, varName), "")
+									}
+								} else if enumInstance, isRhsEnum := val.(*ConstrainedStringInstance); isRhsEnum { // RHS is an enum instance e.g. StatusActive
+									if enumInstance.Definition == csDef { // Correct enum type
+										env.Define(varName, enumInstance)
+									} else { // Mismatched enum types
+										return nil, i.formatErrorWithContext(i.FileSet, valueSpec.Type.Pos(),
+											fmt.Errorf("cannot use value of enum type '%s' to initialize variable '%s' of enum type '%s'", enumInstance.Definition.Name, varName, csDef.Name), "")
+									}
+								} else { // RHS is neither a string nor a compatible enum instance
+									return nil, i.formatErrorWithContext(i.FileSet, valueSpec.Values[idx].Pos(),
+										fmt.Errorf("cannot initialize variable '%s' of enum type '%s' with a value of type %s", varName, csDef.Name, val.Type()), "")
+								}
+								processedAsEnumInit = true
+							}
+						}
+					}
+					// ---- END ENUM TYPE CHECKING FOR VAR INITIALIZATION ----
+					if !processedAsEnumInit {
+						env.Define(varName, val)
+					}
+				} else { // No initializer
+					processedAsEnumInit = true // Mark true to prevent falling into zeroVal logic if it's an enum.
 					if valueSpec.Type == nil {
 						return nil, i.formatErrorWithContext(i.FileSet, valueSpec.Pos(), fmt.Errorf("variable '%s' declared without initializer must have a type", varName), "")
 					}
 
+					// If `var s Status` (no initializer), what should `s` be?
+					// For now, let it follow existing zero value logic.
+					// A stricter enum system might disallow uninitialized enums or default to first enum member.
+					// Current Go-like behavior: zero value of underlying type (empty string for `type Status string`).
+					// This empty string would NOT be a valid ConstrainedStringInstance unless "" is explicitly allowed.
+					// This means `var s Status; fmt.Println(s == StatusActive)` would be problematic.
+					// For now, let's let the existing zero value logic run.
+					// The type checking on assignment (`s = StatusActive`) will then enforce constraints.
 					var zeroVal Object
 					switch T := valueSpec.Type.(type) {
 					case *ast.Ident:
@@ -1995,10 +2173,43 @@ func (i *Interpreter) evalDeclStmt(ctx context.Context, declStmt *ast.DeclStmt, 
 					Fields:       directFields,
 					EmbeddedDefs: embeddedDefs,
 					FieldOrder:   fieldOrder,
+					FileSet:      i.FileSet, // FileSet from the current interpreter context for local definitions
+					IsExternal:   false,     // Local definition
 				}
 				env.Define(typeName, structDef)
+
+			// Handle other type specifications as aliases
 			default:
-				return nil, i.formatErrorWithContext(i.FileSet, typeSpec.Type.Pos(), fmt.Errorf("unsupported type specifier in type declaration '%s': %T", typeName, typeSpec.Type), "")
+				// Try to resolve the base type of the alias
+				// For "type MyInt int", sType is *ast.Ident{Name: "int"}
+				// For "type MyPoint Point", sType is *ast.Ident{Name: "Point"}
+				// For "type MySlice []int", sType is *ast.ArrayType{Elt: *ast.Ident{Name: "int"}}
+				// etc.
+				// We need to determine the ObjectType of this base type.
+				baseObjType, baseStructDef, err := i.resolveTypeAstToObjectType(sType, env, nil, i.FileSet)
+				if err != nil {
+					return nil, i.formatErrorWithContext(i.FileSet, typeSpec.Type.Pos(),
+						fmt.Errorf("could not resolve base type for alias '%s': %w", typeName, err), "Type declaration error")
+				}
+
+				// If the base type resolved to a struct instance, it means the alias is for a struct type.
+				// The BaseObjectType should then be the definition type, e.g., STRUCT_DEF_OBJ.
+				// `baseStructDef` will be non-nil if `baseObjType` is `STRUCT_INSTANCE_OBJ`.
+				actualBaseObjectType := baseObjType
+				if baseObjType == STRUCT_INSTANCE_OBJ && baseStructDef != nil {
+					actualBaseObjectType = STRUCT_DEF_OBJ // The alias is to the struct *definition*
+				}
+				// TODO: Handle if baseObjType is another ALIAS_DEF_OBJ, should resolve to its ultimate concrete type's def.
+				// For now, accept direct base types.
+
+				aliasDef := &AliasDefinition{
+					Name:           typeName,
+					BaseTypeNode:   typeSpec.Type, // Store the AST node for the base type
+					BaseObjectType: actualBaseObjectType,
+					FileSet:        i.FileSet,
+					IsExternal:     false,
+				}
+				env.Define(typeName, aliasDef)
 			}
 		}
 	default:
@@ -2036,6 +2247,20 @@ func (i *Interpreter) evalBinaryExpr(ctx context.Context, node *ast.BinaryExpr, 
 		return i.evalStringBinaryExpr(node.Op, left.(*String), right.(*String), node.Pos())
 	case left.Type() == INTEGER_OBJ && right.Type() == INTEGER_OBJ:
 		return i.evalIntegerBinaryExpr(node.Op, left.(*Integer), right.(*Integer), node.Pos())
+	case left.Type() == CONSTRAINED_STRING_INSTANCE_OBJ && right.Type() == CONSTRAINED_STRING_INSTANCE_OBJ:
+		return i.evalConstrainedStringBinaryExpr(node.Op, left.(*ConstrainedStringInstance), right.(*ConstrainedStringInstance), node.Pos())
+	// Optional: Allow comparison between MyEnum == "string" or "string" == MyEnum
+	// This is generally not type-safe but can be convenient. For now, let's disallow.
+	// To implement, you'd check if the string is a valid member of the enum, then compare values.
+	// Example:
+	// case left.Type() == CONSTRAINED_STRING_INSTANCE_OBJ && right.Type() == STRING_OBJ:
+	//     csiLeft := left.(*ConstrainedStringInstance)
+	//     strRight := right.(*String)
+	//     if csiLeft.Definition.IsAllowed(strRight.Value) { // Check if string is valid member
+	//         // proceed with comparison based on csiLeft.Value and strRight.Value for EQL/NEQ
+	//     } else { // string is not a valid member, so cannot be equal (or type error)
+	//         return FALSE, nil // or error
+	//     }
 	case left.Type() == BOOLEAN_OBJ && right.Type() == BOOLEAN_OBJ:
 		// TODO: Implement short-circuiting for token.LAND and token.LOR
 		// Currently, both left and right operands are evaluated before this point.
@@ -2119,6 +2344,28 @@ func (i *Interpreter) evalBooleanBinaryExpr(op token.Token, left, right *Boolean
 	}
 }
 
+func (i *Interpreter) evalConstrainedStringBinaryExpr(op token.Token, left, right *ConstrainedStringInstance, pos token.Pos) (Object, error) {
+	// Ensure both instances are of the exact same enum definition
+	if left.Definition != right.Definition {
+		return nil, i.formatErrorWithContext(i.activeFileSet, pos,
+			fmt.Errorf("type mismatch: cannot compare instances of different enum types (%s vs %s)", left.Definition.Name, right.Definition.Name), "")
+	}
+
+	leftVal := left.Value
+	rightVal := right.Value
+
+	switch op {
+	case token.EQL:
+		return nativeBoolToBooleanObject(leftVal == rightVal), nil
+	case token.NEQ:
+		return nativeBoolToBooleanObject(leftVal != rightVal), nil
+	// Other ops like <, > are not typically defined for string enums unless explicitly ordered.
+	// Ops like + are definitely not for enums.
+	default:
+		return nil, i.formatErrorWithContext(i.activeFileSet, pos, fmt.Errorf("unknown operator for enum types: %s (for enums %s)", op, left.Definition.Name), "")
+	}
+}
+
 func (i *Interpreter) evalCallExpr(ctx context.Context, node *ast.CallExpr, env *Environment) (Object, error) {
 	funcObj, err := i.eval(ctx, node.Fun, env)
 	if err != nil {
@@ -2175,8 +2422,48 @@ func (i *Interpreter) evalAssignStmt(ctx context.Context, assignStmt *ast.Assign
 			env.Define(varName, rhsValue)
 			return nil, nil
 		case token.ASSIGN: // =
-			if _, ok := env.Assign(varName, rhsValue); !ok {
+			// Get current type/value of varName if it exists, to check if it's an enum
+			existingVal, varExists := env.Get(varName)
+			if !varExists {
 				return nil, i.formatErrorWithContext(i.FileSet, lhsNode.Pos(), fmt.Errorf("cannot assign to undeclared variable '%s'", varName), "")
+			}
+
+			if existingInstance, isEnumInstance := existingVal.(*ConstrainedStringInstance); isEnumInstance {
+				// LHS is already an enum instance. RHS must be compatible.
+				csDef := existingInstance.Definition // Expected definition
+
+				if strVal, okRhsStr := rhsValue.(*String); okRhsStr { // RHS is string literal
+					if csDef.IsAllowed(strVal.Value) {
+						newInstance := &ConstrainedStringInstance{Definition: csDef, Value: strVal.Value}
+						env.Assign(varName, newInstance)
+					} else {
+						return nil, i.formatErrorWithContext(i.FileSet, assignStmt.Rhs[0].Pos(),
+							fmt.Errorf("value %q is not allowed for enum type '%s' of variable '%s'", strVal.Value, csDef.Name, varName), "")
+					}
+				} else if rhsEnumInstance, okRhsEnum := rhsValue.(*ConstrainedStringInstance); okRhsEnum { // RHS is another enum instance
+					if rhsEnumInstance.Definition == csDef {
+						env.Assign(varName, rhsEnumInstance) // Assign directly
+					} else {
+						return nil, i.formatErrorWithContext(i.FileSet, assignStmt.Rhs[0].Pos(),
+							fmt.Errorf("cannot assign value of enum type '%s' to variable '%s' of enum type '%s'", rhsEnumInstance.Definition.Name, varName, csDef.Name), "")
+					}
+				} else {
+					return nil, i.formatErrorWithContext(i.FileSet, assignStmt.Rhs[0].Pos(),
+						fmt.Errorf("cannot assign value of type %s to variable '%s' of enum type '%s'", rhsValue.Type(), varName, csDef.Name), "")
+				}
+			} else {
+				// LHS is not currently an enum instance (could be NULL, or another type)
+				// If MiniGo had full variable type info, we'd check that.
+				// For now, allow assignment if LHS isn't an enum, relying on regular assignment rules.
+				// This means `var x interface{}; x = MyEnumVal` would work, and `x` would hold the enum instance.
+				// And `var s string; s = MyEnumVal` would fail if MyEnumVal is not a string (which it isn't).
+				// This part is tricky without full static type info for variables.
+				// Let's assume if LHS is not an enum, standard assignment applies.
+				// A stricter version would require LHS's declared type to be known and checked.
+				if _, ok := env.Assign(varName, rhsValue); !ok {
+					// This should not happen if varExists was true.
+					return nil, i.formatErrorWithContext(i.FileSet, lhsNode.Pos(), fmt.Errorf("internal error assigning to variable '%s'", varName), "")
+				}
 			}
 			return nil, nil
 		default: // Augmented assignments for identifiers: x += val, etc.

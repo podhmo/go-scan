@@ -28,6 +28,9 @@ const (
 	ARRAY_OBJ            ObjectType = "ARRAY"
 	SLICE_OBJ            ObjectType = "SLICE"
 	MAP_OBJ              ObjectType = "MAP"
+	ALIAS_DEF_OBJ        ObjectType = "ALIAS_DEF" // For type aliases like type MyInt int
+	CONSTRAINED_STRING_DEF_OBJ ObjectType = "CONSTRAINED_STRING_DEF" // For "enum" type definitions
+	CONSTRAINED_STRING_INSTANCE_OBJ ObjectType = "CONSTRAINED_STRING_INSTANCE" // For instances of "enum" types
 )
 
 // Object is the interface that all value types in our interpreter will implement.
@@ -436,4 +439,144 @@ func (si *StructInstance) Inspect() string {
 	finalParts := append(directFieldParts, embeddedParts...)
 
 	return fmt.Sprintf("%s { %s }", si.Definition.Name, strings.Join(finalParts, ", "))
+}
+
+// --- AliasDefinition Object ---
+// AliasDefinition stores the definition of a type alias.
+// e.g. "type MyInt int" or "type MyCustomString string"
+type AliasDefinition struct {
+	Name string // Name of the alias (e.g., "MyInt")
+	// BaseTypeNode stores the AST expression for the base type.
+	// This allows for deferred resolution or more complex type information later.
+	// For "type MyInt int", BaseTypeNode would be an *ast.Ident{Name: "int"}.
+	// For "type MyPoint Point", BaseTypeNode would be an *ast.Ident{Name: "Point"}.
+	BaseTypeNode ast.Expr
+	// BaseObjectType is the resolved ObjectType of the underlying type.
+	// e.g., INTEGER_OBJ for "int", STRING_OBJ for "string".
+	// If the alias is to another user-defined type (struct, another alias),
+	// this would be the ObjectType of that definition (e.g. STRUCT_DEF_OBJ, ALIAS_DEF_OBJ).
+	BaseObjectType ObjectType
+	FileSet        *token.FileSet // FileSet for context
+	IsExternal     bool           // True if this definition came from an imported package
+	PackagePath    string         // Import path of the package if IsExternal is true
+}
+
+func (ad *AliasDefinition) Type() ObjectType { return ALIAS_DEF_OBJ }
+func (ad *AliasDefinition) Inspect() string {
+	// For inspection, we might want to show the base type.
+	// This requires formatting the ast.Expr, which can be complex.
+	// A simple representation:
+	return fmt.Sprintf("type %s = %s (alias for %s)", ad.Name, astExprToString(ad.BaseTypeNode), ad.BaseObjectType)
+}
+
+// astExprToString converts an ast.Expr (typically representing a type) to a string.
+// This is a simplified version for inspection purposes.
+func astExprToString(expr ast.Expr) string {
+	if expr == nil {
+		return "<nil_type_expr>"
+	}
+	switch n := expr.(type) {
+	case *ast.Ident:
+		return n.Name
+	case *ast.SelectorExpr:
+		return astExprToString(n.X) + "." + n.Sel.Name
+	case *ast.StarExpr:
+		return "*" + astExprToString(n.X)
+	case *ast.ArrayType:
+		lenStr := ""
+		if n.Len != nil {
+			lenStr = astExprToString(n.Len)
+		}
+		return fmt.Sprintf("[%s]%s", lenStr, astExprToString(n.Elt))
+	case *ast.MapType:
+		return fmt.Sprintf("map[%s]%s", astExprToString(n.Key), astExprToString(n.Value))
+	case *ast.InterfaceType:
+		// TODO: More detailed interface inspection if needed
+		return "interface{}"
+	// Add other ast.Expr types as needed for type representation.
+	default:
+		return fmt.Sprintf("%T", n) // Fallback to Go type name
+	}
+}
+
+// --- ConstrainedStringTypeDefinition Object ---
+// Defines an "enum" like type based on strings.
+// e.g. type Status string, with consts defining allowed values.
+type ConstrainedStringTypeDefinition struct {
+	Name          string
+	AllowedValues map[string]struct{} // Set of allowed string values
+	FileSet       *token.FileSet      // FileSet for context
+	IsExternal    bool                // True if this definition came from an imported package
+	PackagePath   string              // Import path of the package if IsExternal is true
+}
+
+func (csd *ConstrainedStringTypeDefinition) Type() ObjectType { return CONSTRAINED_STRING_DEF_OBJ }
+func (csd *ConstrainedStringTypeDefinition) Inspect() string {
+	var values []string
+	for val := range csd.AllowedValues {
+		values = append(values, fmt.Sprintf("%q", val))
+	}
+	sort.Strings(values) // For consistent inspection order
+	return fmt.Sprintf("type %s string (enum: %s)", csd.Name, strings.Join(values, ", "))
+}
+
+// AddAllowedValue adds a string value to the set of allowed values for this definition.
+func (csd *ConstrainedStringTypeDefinition) AddAllowedValue(value string) {
+	if csd.AllowedValues == nil {
+		csd.AllowedValues = make(map[string]struct{})
+	}
+	csd.AllowedValues[value] = struct{}{}
+}
+
+// IsAllowed checks if a given string value is part of the allowed set.
+func (csd *ConstrainedStringTypeDefinition) IsAllowed(value string) bool {
+	if csd.AllowedValues == nil {
+		return false
+	}
+	_, ok := csd.AllowedValues[value]
+	return ok
+}
+
+// --- ConstrainedStringInstance Object ---
+// Represents an instance of a ConstrainedStringTypeDefinition.
+type ConstrainedStringInstance struct {
+	Definition *ConstrainedStringTypeDefinition
+	Value      string
+}
+
+func (csi *ConstrainedStringInstance) Type() ObjectType { return CONSTRAINED_STRING_INSTANCE_OBJ }
+func (csi *ConstrainedStringInstance) Inspect() string {
+	return fmt.Sprintf("%s(%q)", csi.Definition.Name, csi.Value)
+}
+
+// HashKey implements the Hashable interface for ConstrainedStringInstance.
+// This allows instances to be used as map keys.
+func (csi *ConstrainedStringInstance) HashKey() (HashKey, error) {
+	// Enums are distinct by their definition and value.
+	// We can combine the hash of the definition's name and the value.
+	// For simplicity, using string representation for now.
+	// A more robust hash would involve definition pointer/ID.
+	// The StrValue should be enough if HashKey collisions are rare.
+	return HashKey{Type: csi.Type(), StrValue: csi.Definition.Name + ":" + csi.Value}, nil
+}
+
+// Compare implements the Comparable interface.
+func (csi *ConstrainedStringInstance) Compare(other Object) (int, error) {
+	otherCsi, ok := other.(*ConstrainedStringInstance)
+	if !ok {
+		return 0, fmt.Errorf("type mismatch: cannot compare %s with %s", csi.Type(), other.Type())
+	}
+
+	// Must be instances of the exact same enum definition
+	if csi.Definition != otherCsi.Definition {
+		return 0, fmt.Errorf("type mismatch: cannot compare instances of different enum types (%s vs %s)", csi.Definition.Name, otherCsi.Definition.Name)
+	}
+
+	if csi.Value < otherCsi.Value {
+		return -1, nil
+	}
+	if csi.Value > otherCsi.Value {
+		return 1, nil
+	}
+	return 0, nil
 }

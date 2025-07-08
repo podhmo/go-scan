@@ -38,7 +38,15 @@
     - [ ] Unkeyed struct literals (e.g. `Point{10,20}`)
     - [ ] Type checking for struct field assignments and initializers.
     - [ ] Zero value for struct types (uninitialized fields are NULL, explicit zero struct via `T{}`)
-  - [ ] Type declarations (`type MyInt int`)
+  - [/] Type declarations (`type MyInt int`)
+    - [x] Basic type aliasing (e.g., `type MyStr string`, `type MyIntAlias MyInt`)
+    - [x] String enums via `type Name string` and `const Member Name = "value"`
+      - [x] Promotion of string alias to constrained type upon const declaration.
+      - [x] Type checking for assignment of allowed values (string literals or other enum members).
+      - [x] Type checking for comparison (only between members of the same enum).
+    - [ ] Support for recognizing and enforcing enums from imported Go packages using `go-scan`
+      - [ ] Investigate `go-scan`'s constant information for imported packages.
+      - [ ] Modify `loadPackageIfNeeded` to create `ConstrainedStringTypeDefinition` for imported string aliases if associated string constants are found.
   - [ ] Enhance type checking using information from go-scan
     - [ ] Basic static type checking for variable assignments based on go-scan TypeInfo.
     - [ ] Type checking for function call arguments against parameter types from go-scan FunctionInfo.

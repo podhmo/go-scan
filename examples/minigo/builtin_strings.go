@@ -6,36 +6,30 @@ import (
 )
 
 // evalStringsJoin handles the execution of a strings.Join call.
-// For MiniGo, due to the lack of explicit array types yet, we'll adopt a convention:
-// strings.Join(str1, str2, ..., strN, separator) will join str1 through strN using separator.
-// This differs from Go's strings.Join(array, separator).
+// It expects two arguments:
+// 1. A Slice of String objects.
+// 2. A String object for the separator.
 func evalStringsJoin(args ...Object) (Object, error) {
-	if len(args) < 2 {
-		// Needs at least one string to "join" (which would be itself) and a separator,
-		// or effectively, at least two args for our convention: element1, separator.
-		// Or, if we interpret it as str1, str2, ..., sep, then len must be >= 2.
-		// Let's say: at least one element and one separator.
-		return nil, fmt.Errorf("strings.Join expects at least two arguments (elements to join and a separator), got %d", len(args))
+	if len(args) != 2 {
+		return nil, fmt.Errorf("strings.Join expects exactly two arguments (a slice of strings and a separator string), got %d", len(args))
 	}
 
-	separatorObj, ok := args[len(args)-1].(*String)
+	elementsSlice, ok := args[0].(*Slice)
 	if !ok {
-		return nil, fmt.Errorf("last argument to strings.Join (separator) must be a STRING, got %s", args[len(args)-1].Type())
+		return nil, fmt.Errorf("first argument to strings.Join must be a SLICE, got %s", args[0].Type())
+	}
+
+	separatorObj, ok := args[1].(*String)
+	if !ok {
+		return nil, fmt.Errorf("second argument to strings.Join (separator) must be a STRING, got %s", args[1].Type())
 	}
 	separator := separatorObj.Value
 
-	elementsToJoin := args[:len(args)-1]
-	if len(elementsToJoin) == 0 {
-		// This case means only a separator was provided, which is an invalid use
-		// according to our convention (e.g. strings.Join(","))
-		return nil, fmt.Errorf("strings.Join requires at least one element to join before the separator")
-	}
-
-	stringElements := make([]string, len(elementsToJoin))
-	for i, arg := range elementsToJoin {
-		strObj, ok := arg.(*String)
+	stringElements := make([]string, len(elementsSlice.Elements))
+	for i, elemObj := range elementsSlice.Elements {
+		strObj, ok := elemObj.(*String)
 		if !ok {
-			return nil, fmt.Errorf("argument %d to strings.Join (element to join) must be a STRING, got %s", i, arg.Type())
+			return nil, fmt.Errorf("element %d in the slice for strings.Join must be a STRING, got %s", i, elemObj.Type())
 		}
 		stringElements[i] = strObj.Value
 	}
@@ -50,11 +44,33 @@ func GetBuiltinStringsFunctions() map[string]*BuiltinFunction {
 		"strings.Join": {
 			Fn: func(env *Environment, args ...Object) (Object, error) {
 				// env is not used by strings.Join, but the signature requires it.
+				// Error formatting for argument count mismatch or type mismatch will be handled by evalStringsJoin.
+				// The BuiltinFunction wrapper in evalCallExpr doesn't need to know the specifics here.
 				return evalStringsJoin(args...)
 			},
 			Name: "strings.Join",
 		},
 		// Add other strings functions here if needed, e.g., strings.HasPrefix, strings.Contains
+		// Example for strings.Contains (if we were adding it here and not auto-generating)
+		/*
+			"strings.Contains": {
+				Fn: func(env *Environment, args ...Object) (Object, error) {
+					if len(args) != 2 {
+						return nil, fmt.Errorf("strings.Contains expects two arguments, got %d", len(args))
+					}
+					s, okS := args[0].(*String)
+					if !okS {
+						return nil, fmt.Errorf("first argument to strings.Contains must be STRING, got %s", args[0].Type())
+					}
+					substr, okSubstr := args[1].(*String)
+					if !okSubstr {
+						return nil, fmt.Errorf("second argument to strings.Contains must be STRING, got %s", args[1].Type())
+					}
+					return nativeBoolToBooleanObject(strings.Contains(s.Value, substr.Value)), nil
+				},
+				Name: "strings.Contains",
+			},
+		*/
 		// "strings.ToUpper": {
 		// 	Fn: func(env *Environment, args ...Object) (Object, error) {
 		// 		if len(args) != 1 {
@@ -78,3 +94,5 @@ func GetBuiltinStringsFunctions() map[string]*BuiltinFunction {
 //   and a separator) would be implemented once MiniGo has those features.
 // - These comments were causing build errors and have been removed for brevity.
 //   The core logic of GetBuiltinStringsFunctions and evalStringsJoin remains.
+//
+// Post-refactor note: evalStringsJoin now implements the Go-idiomatic approach.

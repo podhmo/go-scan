@@ -4,7 +4,7 @@ import (
 	"context" // Added for go-scan
 	"fmt"
 	"go/ast"
-
+	"reflect" // Added for reflect.StructTag
 	// "go/parser" // No longer needed
 	// "go/token" // No longer needed as direct usage is removed
 	"os"
@@ -135,65 +135,44 @@ func ParseDirectory(dirPath string) (*model.ParsedInfo, error) {
 	// Placeholder for the old PASS 1 and PASS 2 logic.
 	// This will be replaced in the next step of the plan.
 	// For now, to make it compile, let's keep the old parsing logic but acknowledge it's wrong.
-	// Populate Structs and NamedTypes from scanInfo.Types
+	// PASS 1: Collect all type definitions (structs, aliases) with initial TypeInfo
+	// During this pass, TypeInfo for fields or alias underlying types are created
+	// using convertScannerTypeToModelType but are not yet fully resolved against other definitions.
 	for _, stypeInfo := range scanInfo.Types { // stypeInfo is *scannermodel.TypeInfo
 		modelType := &model.TypeInfo{
 			Name:        stypeInfo.Name,
 			FullName:    fmt.Sprintf("%s.%s", currentPkgImportPath, stypeInfo.Name),
-			PackageName: currentPkgName, // Assuming types defined are in the current package
+			PackageName: currentPkgName, // This is the current package's name. For external types, PkgName in TypeInfo will be different.
 			PackagePath: currentPkgImportPath,
-			// AstExpr: is tricky. For a TypeSpec "type Foo Bar", Foo is Name, Bar is Type.
-			// stypeInfo.Node is ast.Spec (*ast.TypeSpec). We need an ast.Expr.
-			// For model.TypeInfo representing "Foo", AstExpr should be the *ast.Ident "Foo".
 		}
 		if ts, ok := stypeInfo.Node.(*ast.TypeSpec); ok {
-			modelType.AstExpr = ts.Name // ts.Name is *ast.Ident, which is an ast.Expr
+			modelType.AstExpr = ts.Name
 		} else {
-			slog.WarnContext(ctx, "go-scan TypeInfo.Node was not *ast.TypeSpec as expected for type definition", slog.String("typeName", stypeInfo.Name), slog.Any("nodeType", fmt.Sprintf("%T", stypeInfo.Node)))
+			slog.WarnContext(ctx, "go-scan TypeInfo.Node was not *ast.TypeSpec for top-level type", slog.String("typeName", stypeInfo.Name))
 		}
 
 		switch stypeInfo.Kind {
 		case scannermodel.StructKind:
 			modelType.Kind = model.KindStruct
 			if stypeInfo.Struct == nil {
-				slog.ErrorContext(ctx, "StructKind TypeInfo has nil Struct detail", slog.String("typeName", stypeInfo.Name))
+				slog.ErrorContext(ctx, "StructKind TypeInfo has nil Struct detail in Pass 1", slog.String("typeName", stypeInfo.Name))
 				continue
 			}
-			// var astStructType *ast.StructType // Not needed as model.StructInfo has no Node field
-			// if typeSpec, ok := stypeInfo.Node.(*ast.TypeSpec); ok {
-			// 	if st, ok2 := typeSpec.Type.(*ast.StructType); ok2 {
-			// 		astStructType = st
-			// 	}
-			// }
-			// if astStructType == nil {
-			// 	slog.ErrorContext(ctx, "Could not obtain *ast.StructType from scannermodel.TypeInfo", slog.String("typeName", stypeInfo.Name))
-			// 	continue
-			// }
-
 			sinfo := &model.StructInfo{
 				Name: stypeInfo.Name,
-				// Node: astStructType, // model.StructInfo no longer has Node
 				Type: modelType,
 			}
-			for _, sfield := range stypeInfo.Struct.Fields { // sfield is *scannermodel.FieldInfo
+			for _, sfield := range stypeInfo.Struct.Fields {
 				mfield := model.FieldInfo{
 					Name:         sfield.Name,
-					OriginalName: sfield.Name, // Assuming Name is original name
-					TypeInfo:     convertScannerTypeToModelType(ctx, sfield.Type, currentPkgImportPath),
-					// AstField: // TODO: scannermodel.FieldInfo doesn't expose original *ast.Field.
-					// This might be an issue if more than just tag string is needed.
-					// For now, we hope sfield.Tag (string) is enough.
+					OriginalName: sfield.Name,
+					TypeInfo:     convertScannerTypeToModelType(ctx, sfield.Type, currentPkgImportPath), // Initial, unresolved
 					ParentStruct: sinfo,
 				}
-
 				if sfield.Tag != "" {
-					// parseFieldTag expects the content of a `convert:"..."` tag.
-					// sfield.Tag is the full tag string, e.g., `json:"foo" convert:"bar"`.
-					// We need to extract the `convert` part first.
-					convertTagContent := extractConvertTag(sfield.Tag)
-					if convertTagContent != "" {
-						mfield.Tag = parseFieldTag(convertTagContent)
-					}
+					tag := reflect.StructTag(sfield.Tag)
+					convertTagValue := tag.Get("convert")
+					mfield.Tag = parseFieldTag(convertTagValue)
 				}
 				sinfo.Fields = append(sinfo.Fields, mfield)
 			}
@@ -203,63 +182,94 @@ func ParseDirectory(dirPath string) (*model.ParsedInfo, error) {
 		case scannermodel.AliasKind:
 			modelType.Kind = model.KindNamed
 			if stypeInfo.Underlying == nil {
-				slog.ErrorContext(ctx, "AliasKind TypeInfo has nil Underlying detail", slog.String("typeName", stypeInfo.Name))
-				continue
+				slog.ErrorContext(ctx, "AliasKind TypeInfo has nil Underlying detail in Pass 1", slog.String("typeName", stypeInfo.Name))
+				// Still add it to NamedTypes so it can be potentially resolved if other types refer to it by name.
+			} else {
+				modelType.Underlying = convertScannerTypeToModelType(ctx, stypeInfo.Underlying, currentPkgImportPath) // Initial, unresolved
 			}
-			modelType.Underlying = convertScannerTypeToModelType(ctx, stypeInfo.Underlying, currentPkgImportPath)
 			parsedInfo.NamedTypes[modelType.Name] = modelType
-
-			// Handle aliases to structs (e.g., type MyStructAlias AnotherStruct)
-			// This makes MyStructAlias discoverable as a struct-like type.
-			effectiveUnderlying := modelType.Underlying
-			if effectiveUnderlying != nil && effectiveUnderlying.IsPointer && effectiveUnderlying.Elem != nil {
-				effectiveUnderlying = effectiveUnderlying.Elem
-			}
-			if effectiveUnderlying != nil && (effectiveUnderlying.Kind == model.KindStruct || effectiveUnderlying.Kind == model.KindIdent) {
-				// Try to find the base StructInfo.
-				// If effectiveUnderlying.FullName is "pkg.ActualStruct", look for "ActualStruct" in parsedInfo.Structs
-				// coming from the correct package.
-				var baseStructInfo *model.StructInfo
-				if si, ok := parsedInfo.Structs[effectiveUnderlying.Name]; ok && si.Type.PackagePath == effectiveUnderlying.PackagePath {
-					baseStructInfo = si
-				}
-
-				if baseStructInfo != nil {
-					aliasStructInfo := &model.StructInfo{
-						Name:            stypeInfo.Name, // Name of the alias
-						Type:            modelType,      // TypeInfo of the alias itself
-						IsAlias:         true,
-						UnderlyingAlias: baseStructInfo.Type, // Points to TypeInfo of ActualStruct
-						// Node:            baseStructInfo.Node, // model.StructInfo no longer has Node
-						Fields: baseStructInfo.Fields, // Inherit fields
-					}
-					if _, exists := parsedInfo.Structs[stypeInfo.Name]; !exists {
-						parsedInfo.Structs[stypeInfo.Name] = aliasStructInfo
-					}
-					modelType.StructInfo = aliasStructInfo // Link the alias's TypeInfo to this wrapper
-				}
-			}
 
 		case scannermodel.InterfaceKind:
 			modelType.Kind = model.KindInterface
-			parsedInfo.NamedTypes[modelType.Name] = modelType
+			parsedInfo.NamedTypes[modelType.Name] = modelType // Store interfaces also as NamedTypes
 
-		case scannermodel.FuncKind: // Example: type MyFunc func(int) string
+		case scannermodel.FuncKind:
 			modelType.Kind = model.KindFunc
-			// Details of func signature (params/results) are in stypeInfo.Func if needed.
-			// model.TypeInfo currently just marks it as KindFunc.
-			// If stypeInfo.Func exists, we could try to populate Elem/Key/Value or a new field.
-			// For now, this is consistent with how old parser treated func type aliases.
-			parsedInfo.NamedTypes[modelType.Name] = modelType
+			// TODO: Populate func signature details if needed in model.TypeInfo
+			parsedInfo.NamedTypes[modelType.Name] = modelType // Store func types also as NamedTypes
 
 		default:
-			slog.WarnContext(ctx, "Unhandled scannermodel.TypeKind in parser type loop",
-				slog.Any("kind", stypeInfo.Kind),
-				slog.String("typeName", stypeInfo.Name))
+			slog.WarnContext(ctx, "Unhandled scannermodel.TypeKind in Pass 1", slog.Any("kind", stypeInfo.Kind), slog.String("typeName", stypeInfo.Name))
 		}
 	}
 
-	// Parse directives from comments using ASTs from go-scan
+	// PASS 2: Resolve field types and alias underlying types using the fully collected parsedInfo.
+	// This allows handling of forward declarations or inter-dependencies.
+	for _, sinfo := range parsedInfo.Structs {
+		if sinfo.Type.StructInfo == nil { // Ensure StructInfo is linked from the Type as well
+			sinfo.Type.StructInfo = sinfo
+		}
+		for i := range sinfo.Fields {
+			mfield := &sinfo.Fields[i]
+			if mfield.TypeInfo != nil {
+				mfield.TypeInfo = resolveTypeAgainstParsedInfo(mfield.TypeInfo, parsedInfo, currentPkgImportPath)
+			}
+		}
+	}
+
+	for _, ntInfo := range parsedInfo.NamedTypes {
+		if ntInfo.Kind == model.KindNamed && ntInfo.Underlying != nil {
+			ntInfo.Underlying = resolveTypeAgainstParsedInfo(ntInfo.Underlying, parsedInfo, currentPkgImportPath)
+		}
+
+		// Special handling for aliases that point to structs, to populate their StructInfo field
+		// This makes them behave more like the struct they alias for generator logic.
+		if ntInfo.Kind == model.KindNamed && ntInfo.Underlying != nil {
+			// Resolve the underlying type fully to see if it's a struct
+			// Use a temporary variable for resolved underlying to avoid modifying ntInfo.Underlying directly in this check phase
+			fullyResolvedUnderlying := resolveTypeAgainstParsedInfo(ntInfo.Underlying, parsedInfo, currentPkgImportPath)
+
+			// Check if the fully resolved underlying type is a struct
+			var baseStructInfo *model.StructInfo
+			if fullyResolvedUnderlying != nil {
+				if fullyResolvedUnderlying.Kind == model.KindStruct && fullyResolvedUnderlying.StructInfo != nil {
+					baseStructInfo = fullyResolvedUnderlying.StructInfo
+				} else if fullyResolvedUnderlying.Kind == model.KindIdent || fullyResolvedUnderlying.Kind == model.KindNamed {
+					// It might be an ident/named type that itself is a struct defined in parsedInfo.Structs
+					if si, ok := parsedInfo.Structs[fullyResolvedUnderlying.Name]; ok && si.Type.PackagePath == fullyResolvedUnderlying.PackagePath {
+						baseStructInfo = si
+					}
+				}
+			}
+
+			if baseStructInfo != nil {
+				// This alias (ntInfo) effectively acts as a struct.
+				// We create a StructInfo for it that mirrors the base struct.
+				aliasStructInfo := &model.StructInfo{
+					Name:            ntInfo.Name,         // The name of the alias
+					Type:            ntInfo,              // The TypeInfo of the alias itself
+					IsAlias:         true,
+					UnderlyingAlias: baseStructInfo.Type, // Points to the TypeInfo of the actual struct definition
+					Fields:          baseStructInfo.Fields, // Inherit fields
+					// No Node for StructInfo
+				}
+				ntInfo.StructInfo = aliasStructInfo // Link it to the alias's TypeInfo
+
+				// Optionally, also add this alias to parsedInfo.Structs if we want aliases-to-structs
+				// to be discoverable via parsedInfo.Structs. This was previous behavior.
+				// if _, exists := parsedInfo.Structs[ntInfo.Name]; !exists {
+				// 	parsedInfo.Structs[ntInfo.Name] = aliasStructInfo
+				// }
+			}
+		}
+	}
+
+	// Parse global comment directives (convert:pair, convert:rule)
+	// This should ideally happen after all types are known, but resolveTypeFromString
+	// has its own resolution logic that might need parsedInfo to be partially filled.
+	// For now, keeping it here. If issues arise with resolving types in directives,
+	// this might need to be a Pass 3 or resolveTypeFromString needs to be more robust
+	// or use resolveTypeAgainstParsedInfo.
 	for filePath, fileAst := range scanInfo.AstFiles {
 		currentFileImports := make(map[string]string)
 		for _, importSpec := range fileAst.Imports {
@@ -333,179 +343,131 @@ func convertScannerTypeToModelType(
 
 		if elemModelType.IsBasic {
 			elemModelType.Kind = model.KindBasic
-			elemModelType.Name = stype.Name                                                      // e.g., "string" for *string
-			if stype.PkgName != "" && strings.HasPrefix(elemModelType.Name, stype.PkgName+".") { // e.g. *pkg.MyBasicAlias
-				elemModelType.Name = strings.TrimPrefix(elemModelType.Name, stype.PkgName+".")
-			}
-			elemModelType.FullName = elemModelType.Name
-			elemModelType.PackagePath = "" // Basic types have no package path
+			elemModelType.Name = stype.Name // e.g., "string" for *string. stype.Name is the element name for pointers.
+			// Basic types don't have PkgName like "int.int", so no prefix trimming needed here based on PkgName.
+			elemModelType.FullName = elemModelType.Name // FullName is same as Name for basic types
+			elemModelType.PackagePath = ""              // Basic types have no package path
 			elemModelType.PackageName = ""
 			if stype.Name == "error" { // Special handling for error interface
 				elemModelType.Kind = model.KindInterface
+				// elemModelType.IsBasic is already true from stype.IsBuiltin
 			}
 		} else { // Identifier for the element type T
-			elemModelType.Kind = model.KindIdent
-			if stype.PkgName != "" && strings.HasPrefix(stype.Name, stype.PkgName+".") {
-				elemModelType.Name = strings.TrimPrefix(stype.Name, stype.PkgName+".")
-			} else {
-				elemModelType.Name = stype.Name
-			}
+			elemModelType.Kind = model.KindIdent // Default to Ident, could be Struct, Named later if resolved
+			elemModelType.Name = stype.Name      // For *foo.Bar, stype.Name is "Bar", stype.PkgName is "foo"
 			elemModelType.PackageName = stype.PkgName
 			elemModelType.PackagePath = stype.FullImportPath()
 
-			if elemModelType.PackagePath != "" && elemModelType.PackagePath != currentPkgImportPath { // External
+			if elemModelType.PackagePath != "" && elemModelType.PackagePath != currentPkgImportPath { // External package
 				elemModelType.FullName = elemModelType.PackagePath + "." + elemModelType.Name
-			} else { // Current package or type param
-				elemModelType.PackagePath = currentPkgImportPath
+			} else if elemModelType.PackagePath == currentPkgImportPath { // Current package
 				elemModelType.FullName = elemModelType.PackagePath + "." + elemModelType.Name
-				if stype.IsTypeParam && stype.PkgName == "" && stype.FullImportPath() == "" {
-					elemModelType.FullName = elemModelType.Name
-					elemModelType.PackagePath = ""
-				}
+				elemModelType.PackageName = "" // No PkgName prefix needed for types in the same package for FullName construction
+			} else { // TypeParam (PackagePath is often empty) or unresolvable
+				elemModelType.FullName = elemModelType.Name // e.g. "T"
+				// PackagePath and PackageName might be empty for type parameters
 			}
 		}
 		mtype.Elem = elemModelType
 
-		mtype.Name = elemModelType.Name
-		mtype.FullName = "*" + elemModelType.FullName
-		mtype.PackageName = elemModelType.PackageName
+		// For mtype (*T) itself:
+		mtype.Name = elemModelType.Name           // The "name" of *T is often considered T's name in contexts
+		mtype.FullName = "*" + elemModelType.FullName // FullName is *T_FullName
+		mtype.PackageName = elemModelType.PackageName // Inherits package info from element
 		mtype.PackagePath = elemModelType.PackagePath
 
 	} else if mtype.IsSlice {
 		mtype.Kind = model.KindSlice
 		mtype.Elem = convertScannerTypeToModelType(ctx, stype.Elem, currentPkgImportPath)
 		if mtype.Elem != nil {
-			mtype.Name = mtype.Elem.Name
+			mtype.Name = mtype.Elem.Name // Name of []T is T's name
 			mtype.FullName = "[]" + mtype.Elem.FullName
-			mtype.PackageName = mtype.Elem.PackageName
+			mtype.PackageName = mtype.Elem.PackageName // Inherit from element
 			mtype.PackagePath = mtype.Elem.PackagePath
 		} else {
-			slog.WarnContext(ctx, "Slice FieldType has nil Elem", slog.String("stypeName", stype.Name))
-			name := stype.Name // stype.Name could be "pkg.Type" or "Type"
-			simpleName := name
-			if stype.PkgName != "" && strings.HasPrefix(name, stype.PkgName+".") {
-				simpleName = strings.TrimPrefix(name, stype.PkgName+".")
-			}
-			mtype.Name = simpleName
-			mtype.FullName = "[]" + stype.FullImportPath() + "." + simpleName
+			slog.WarnContext(ctx, "Slice FieldType has nil Elem", slog.String("stypeName", stype.Name), slog.String("stypeFullName", stype.FullImportPath()+"."+stype.Name))
+			// Fallback if Elem is nil (should not happen for valid types)
+			mtype.Name = stype.Name
+			mtype.FullName = "[]" + stype.FullImportPath() + "." + stype.Name // Best guess
 		}
 	} else if mtype.IsMap {
 		mtype.Kind = model.KindMap
 		mtype.Key = convertScannerTypeToModelType(ctx, stype.MapKey, currentPkgImportPath)
-		mtype.Value = convertScannerTypeToModelType(ctx, stype.Elem, currentPkgImportPath) // Elem is Value for maps
+		mtype.Value = convertScannerTypeToModelType(ctx, stype.Elem, currentPkgImportPath) // Elem is Value for maps in scanner.FieldType
 		if mtype.Key != nil && mtype.Value != nil {
-			mtype.Name = fmt.Sprintf("map[%s]%s", mtype.Key.Name, mtype.Value.Name)
+			mtype.Name = fmt.Sprintf("map[%s]%s", mtype.Key.Name, mtype.Value.Name) // Simplified name
 			mtype.FullName = fmt.Sprintf("map[%s]%s", mtype.Key.FullName, mtype.Value.FullName)
+			// Package for map itself is not typical; depends on key/value packages.
 		} else {
 			slog.WarnContext(ctx, "Map FieldType has nil Key or Value", slog.String("stypeName", stype.Name))
-			keyName := "any"
-			if stype.MapKey != nil {
-				name := stype.MapKey.Name
-				simpleName := name
-				if stype.MapKey.PkgName != "" && strings.HasPrefix(name, stype.MapKey.PkgName+".") {
-					simpleName = strings.TrimPrefix(name, stype.MapKey.PkgName+".")
-				}
-				keyName = simpleName
-			}
-			valName := "any"
-			if stype.Elem != nil {
-				name := stype.Elem.Name
-				simpleName := name
-				if stype.Elem.PkgName != "" && strings.HasPrefix(name, stype.Elem.PkgName+".") {
-					simpleName = strings.TrimPrefix(name, stype.Elem.PkgName+".")
-				}
-				valName = simpleName
-			}
-			mtype.Name = fmt.Sprintf("map[%s]%s", keyName, valName)
-			mtype.FullName = mtype.Name
+			mtype.Name = stype.Name // Fallback
+			mtype.FullName = stype.FullImportPath() + "." + stype.Name // Best guess
 		}
 	} else if mtype.IsBasic {
 		mtype.Kind = model.KindBasic
 		mtype.Name = stype.Name
-		mtype.FullName = stype.Name
+		mtype.FullName = stype.Name // Basic types' FullName is their name
 		mtype.PackageName = ""
 		mtype.PackagePath = ""
-		if stype.Name == "error" {
-			mtype.IsInterface = true
+		if stype.Name == "error" { // error is a builtin interface type
+			mtype.IsInterface = true // Already set by stype.IsInterface probably
 			mtype.Kind = model.KindInterface
 		}
-	} else {
-		mtype.Kind = model.KindIdent
-		// Determine simple name for mtype.Name
-		if stype.PkgName != "" && strings.HasPrefix(stype.Name, stype.PkgName+".") {
-			mtype.Name = strings.TrimPrefix(stype.Name, stype.PkgName+".")
-		} else {
-			mtype.Name = stype.Name // Assumed to be simple name already (local type, type param, or PkgName is empty)
-		}
+	} else { // Identifier (could be struct, named type, interface not caught by IsInterface, or type param)
+		mtype.Kind = model.KindIdent // Default, might be refined by ParseDirectory's main loop for top-level types
+		mtype.Name = stype.Name      // For foo.Bar, stype.Name is "Bar"
 
 		if stype.PkgName != "" && stype.FullImportPath() != "" && stype.FullImportPath() != currentPkgImportPath {
 			// External package
-			mtype.PackageName = stype.PkgName // This is the alias used in source, or derived by go-scan
-			mtype.PackagePath = stype.FullImportPath()
+			mtype.PackageName = stype.PkgName // This is the alias/name used in source, e.g. "time"
+			mtype.PackagePath = stype.FullImportPath() // e.g. "time"
+			mtype.FullName = mtype.PackagePath + "." + mtype.Name // e.g. "time.Time"
+		} else if stype.FullImportPath() == currentPkgImportPath {
+			// Current package
+			mtype.PackageName = "" // No package prefix for types in the current package for FullName construction
+			mtype.PackagePath = currentPkgImportPath
+			mtype.FullName = mtype.PackagePath + "." + mtype.Name // e.g. "example.com/mypkg.MyStruct"
+		} else if stype.IsTypeParam {
+			slog.DebugContext(ctx, "Encountered type parameter in convertScannerTypeToModelType", slog.String("name", stype.Name))
+			mtype.PackageName = ""
+			mtype.PackagePath = ""      // Type params don't belong to a package
+			mtype.FullName = mtype.Name // e.g. "T"
+		} else if stype.FullImportPath() == "" && stype.PkgName == "" && !stype.IsBuiltin {
+			// Likely an unresolved type or a type from a package without a clear import path (e.g. vendored, or complex setup)
+			// or a type defined in a file that isn't part of the main module (e.g. test files for external packages)
+			// For model types (like MyInt -> int), the TypeInfo for "MyInt" (KindNamed) would have its Underlying as "int" (KindBasic).
+			// If this 'else' block is hit for something like "MyInt", it implies 'MyInt' wasn't a top-level definition resolved yet.
+			// This function primarily deals with field types.
+			slog.WarnContext(ctx, "Type with empty PkgName and FullImportPath, not builtin or type param",
+				slog.String("stype.Name", stype.Name),
+				slog.String("currentPkgImportPath", currentPkgImportPath))
+			mtype.PackageName = ""
+			mtype.PackagePath = currentPkgImportPath // Assume current package if import path is empty and not type param
 			mtype.FullName = mtype.PackagePath + "." + mtype.Name
 		} else {
-			// Current package, or a type without explicit package path (e.g. could be unresolved type parameter if not caught)
-			mtype.PackageName = "" // Local types don't need package name in model.TypeInfo.PackageName
-			mtype.PackagePath = currentPkgImportPath
-			mtype.FullName = mtype.PackagePath + "." + mtype.Name
-		}
-		if stype.IsTypeParam {
-			slog.DebugContext(ctx, "Encountered type parameter in convertScannerTypeToModelType", slog.String("name", stype.Name))
-			// model.TypeInfo doesn't have IsTypeParam. Treat as KindIdent. Its FullName might be just its name.
-			// This could be an issue if it needs special handling later.
-			// For now, its FullName might be "currentPkg.T" if T is defined in currentPkg.
-			// If it's a generic parameter like `T` from `func foo[T any]()`, its PkgName/Path might be empty from go-scan.
-			if stype.PkgName == "" && stype.FullImportPath() == "" {
-				mtype.FullName = mtype.Name // e.g. "T"
-				mtype.PackagePath = ""      // Type params don't belong to a package in the same way
+			// Default catch-all, should ideally not be hit if above cases are comprehensive
+			slog.WarnContext(ctx, "Unhandled identifier case in convertScannerTypeToModelType",
+				slog.String("stype.Name", stype.Name),
+				slog.String("stype.PkgName", stype.PkgName),
+				slog.String("stype.FullImportPath", stype.FullImportPath()),
+				slog.Bool("stype.IsTypeParam", stype.IsTypeParam))
+			mtype.PackageName = stype.PkgName
+			mtype.PackagePath = stype.FullImportPath()
+			if mtype.PackagePath != "" {
+				mtype.FullName = mtype.PackagePath + "." + mtype.Name
+			} else {
+				mtype.FullName = mtype.Name // Fallback if package path is empty
 			}
 		}
-		// If it's 'error' and wasn't caught by IsBasic
-		if mtype.Name == "error" && mtype.PackagePath == "" {
+
+		// Re-check for 'error' interface if it's an identifier "error" from no specific package (should be caught by IsBasic)
+		if mtype.Name == "error" && mtype.PackagePath == "" && mtype.Kind != model.KindInterface {
 			mtype.IsInterface = true
 			mtype.Kind = model.KindInterface
 			mtype.IsBasic = true // Treat 'error' as a basic type for some classification purposes
 		}
-
 	}
 	return mtype
-}
-
-// extractConvertTag extracts the content of the `convert:"..."` part from a full struct tag string.
-func extractConvertTag(fullTag string) string {
-	// Example tag: `json:"name,omitempty" convert:"target_name,required" validate:"nonempty"`
-	// We need to find `convert:"..."`
-	const convertKey = `convert:"`
-	idx := strings.Index(fullTag, convertKey)
-	if idx == -1 {
-		return ""
-	}
-	// Found the start of convert key
-	valStart := idx + len(convertKey)
-	// Find the closing quote for this value
-	// Need to handle escaped quotes inside, though rare for this specific tag.
-	// For simplicity, find the next quote.
-	endIdx := -1
-	searchStart := valStart
-	for {
-		nextQuote := strings.Index(fullTag[searchStart:], `"`)
-		if nextQuote == -1 {
-			return "" // Malformed, no closing quote
-		}
-		// Check if this quote is escaped
-		if searchStart+nextQuote > 0 && fullTag[searchStart+nextQuote-1] == '\\' {
-			// It's an escaped quote, continue search after it
-			searchStart += nextQuote + 1
-			continue
-		}
-		endIdx = searchStart + nextQuote
-		break
-	}
-
-	if endIdx == -1 {
-		return "" // Malformed
-	}
-	return fullTag[valStart:endIdx]
 }
 
 // derivePackagePath tries to derive an import path from a directory path.
@@ -916,4 +878,98 @@ func parseOptions(optionsStr string) map[string]string {
 		}
 	}
 	return options
+}
+
+// resolveTypeAgainstParsedInfo attempts to refine a TypeInfo object by cross-referencing
+// it with globally parsed named types and structs. This is crucial for populating
+// fields like 'Underlying' or 'StructInfo' for types used as fields or alias targets.
+// currentPkgImportPath is passed to correctly identify types belonging to the package being parsed.
+func resolveTypeAgainstParsedInfo(ti *model.TypeInfo, parsedInfo *model.ParsedInfo, currentPkgImportPath string) *model.TypeInfo {
+	if ti == nil {
+		return nil
+	}
+
+	// Handle pointer, slice, and map types recursively for their element/key/value types.
+	if ti.IsPointer {
+		resolvedElem := resolveTypeAgainstParsedInfo(ti.Elem, parsedInfo, currentPkgImportPath)
+		// If the element type was resolved to a more specific one (e.g., different instance or more fields populated),
+		// create a new pointer TypeInfo wrapper around it.
+		if resolvedElem != nil && resolvedElem != ti.Elem { // Check for actual change to avoid infinite recursion on non-change
+			newPtrType := *ti // Shallow copy
+			newPtrType.Elem = resolvedElem
+			// Update other fields of newPtrType if necessary based on resolvedElem (e.g., FullName)
+			newPtrType.FullName = "*" + resolvedElem.FullName
+			// Ensure PackageName and PackagePath are consistent with the element
+			newPtrType.PackageName = resolvedElem.PackageName
+			newPtrType.PackagePath = resolvedElem.PackagePath
+			return &newPtrType
+		}
+		return ti // Return original if element didn't change or couldn't be resolved further
+	}
+
+	if ti.IsSlice {
+		resolvedElem := resolveTypeAgainstParsedInfo(ti.Elem, parsedInfo, currentPkgImportPath)
+		if resolvedElem != nil && resolvedElem != ti.Elem {
+			newSliceType := *ti // Shallow copy
+			newSliceType.Elem = resolvedElem
+			newSliceType.FullName = "[]" + resolvedElem.FullName
+			newSliceType.PackageName = resolvedElem.PackageName
+			newSliceType.PackagePath = resolvedElem.PackagePath
+			return &newSliceType
+		}
+		return ti
+	}
+
+	if ti.IsMap {
+		resolvedKey := resolveTypeAgainstParsedInfo(ti.Key, parsedInfo, currentPkgImportPath)
+		resolvedValue := resolveTypeAgainstParsedInfo(ti.Value, parsedInfo, currentPkgImportPath)
+		// Check if either key or value type was meaningfully changed
+		keyChanged := resolvedKey != nil && resolvedKey != ti.Key
+		valueChanged := resolvedValue != nil && resolvedValue != ti.Value
+
+		if keyChanged || valueChanged {
+			newMapType := *ti // Shallow copy
+			if keyChanged {
+				newMapType.Key = resolvedKey
+			}
+			if valueChanged {
+				newMapType.Value = resolvedValue
+			}
+			newMapType.FullName = fmt.Sprintf("map[%s]%s", newMapType.Key.FullName, newMapType.Value.FullName)
+			// Package info for maps is tricky; usually determined by key/value types.
+			return &newMapType
+		}
+		return ti
+	}
+
+	// For identifiers (KindIdent) or already somewhat resolved named types (KindNamed),
+	// try to find a more complete definition from parsedInfo.
+	// This is where we link up with top-level type definitions (structs, aliases).
+	// We should only do this if the type 'ti' is from the current package,
+	// because parsedInfo.NamedTypes and parsedInfo.Structs are keyed by simple name
+	// and store definitions for the current package.
+	if ti.Kind == model.KindIdent || ti.Kind == model.KindNamed {
+		isLocalType := ti.PackagePath == currentPkgImportPath
+		// Heuristic for types parsed without full path info but are local (and not basic types)
+		if ti.PackagePath == "" && !ti.IsBasic {
+			// This condition might also be true for type parameters,
+			// but type parameters wouldn't be found in parsedInfo.NamedTypes or parsedInfo.Structs anyway.
+			isLocalType = true
+		}
+
+		if isLocalType {
+			// Check NamedTypes first (aliases, other named types like enums if they were KindNamed)
+			if nt, ok := parsedInfo.NamedTypes[ti.Name]; ok {
+				// Return the fully resolved one from NamedTypes, which includes .Underlying
+				return nt
+			}
+			// Then check Structs (in case it's a struct name not an alias)
+			if st, ok := parsedInfo.Structs[ti.Name]; ok {
+				// Return the TypeInfo associated with the StructInfo
+				return st.Type
+			}
+		}
+	}
+
+	return ti // Return original if no specific resolution found or type is not local ident/named
 }

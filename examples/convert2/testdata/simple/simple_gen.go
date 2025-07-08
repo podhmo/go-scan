@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // errorCollector collects errors with path tracking.
@@ -64,121 +65,31 @@ func (ec *errorCollector) MaxErrorsReached() bool {
 	return ec.maxErrors > 0 && len(ec.errors) >= ec.maxErrors
 }
 
-// srcSimpleToDstSimple converts SrcSimple to DstSimple.
-// Fields in DstSimple not populated by this conversion:
-// - NoMatchSrc
-func srcSimpleToDstSimple(ec *errorCollector, src SrcSimple) DstSimple {
-	dst := DstSimple{}
-	if ec.MaxErrorsReached() {
-		return dst
-	}
-
-	// Mapping field SrcSimple.ID (int) to DstSimple.ID (int)
-	// Src: Ptr=false, ElemFull=nil | Dst: Ptr=false, ElemFull=nil
-	ec.Enter("ID")
-	dst.ID = src.ID
-	ec.Leave()
-	if ec.MaxErrorsReached() {
-		return dst
-	}
-
-	// Mapping field SrcSimple.Name (string) to DstSimple.Name (string)
-	// Src: Ptr=false, ElemFull=nil | Dst: Ptr=false, ElemFull=nil
-	ec.Enter("Name")
-	dst.Name = src.Name
-	ec.Leave()
-	if ec.MaxErrorsReached() {
-		return dst
-	}
-
-	// Source field SrcSimple.Description is skipped due to tag '-'.
-	// Mapping field SrcSimple.Value (float64) to DstSimple.Value (float64)
-	// Src: Ptr=false, ElemFull=nil | Dst: Ptr=false, ElemFull=nil
-	ec.Enter("Value")
-	dst.Value = src.Value
-	ec.Leave()
-	if ec.MaxErrorsReached() {
-		return dst
-	}
-
-	// Mapping field SrcSimple.Timestamp (time.Time) to DstSimple.CreationTime (time.Time)
-	// Src: Ptr=false, ElemFull=nil | Dst: Ptr=false, ElemFull=nil
-	ec.Enter("CreationTime")
-	dst.CreationTime = src.Timestamp
-	ec.Leave()
-	if ec.MaxErrorsReached() {
-		return dst
-	}
-
-	// Mapping field SrcSimple.PtrString (*string) to DstSimple.PtrString (*string)
-	// Src: Ptr=true, ElemFull=string | Dst: Ptr=true, ElemFull=string
-	ec.Enter("PtrString")
-	dst.PtrString = src.PtrString
-	ec.Leave()
-	if ec.MaxErrorsReached() {
-		return dst
-	}
-
-	// Mapping field SrcSimple.StringPtr (string) to DstSimple.StringPtr (*string)
-	// Src: Ptr=false, ElemFull=nil | Dst: Ptr=true, ElemFull=string
-	ec.Enter("StringPtr")
-	{
-		srcVal := src.StringPtr
-		dst.StringPtr = &srcVal
-	}
-	ec.Leave()
-	if ec.MaxErrorsReached() {
-		return dst
-	}
-
-	// Mapping field SrcSimple.PtrToValue (*float32) to DstSimple.PtrToValue (float32)
-	// Src: Ptr=true, ElemFull=float32 | Dst: Ptr=false, ElemFull=nil
-	ec.Enter("PtrToValue")
-	if src.PtrToValue != nil {
-		dst.PtrToValue = *src.PtrToValue
-	}
-	ec.Leave()
-	if ec.MaxErrorsReached() {
-		return dst
-	}
-
-	// Mapping field SrcSimple.RequiredPtrToValue (*int) to DstSimple.RequiredPtrToValue (int)
-	// Src: Ptr=true, ElemFull=int | Dst: Ptr=false, ElemFull=nil
-	ec.Enter("RequiredPtrToValue")
-	if src.RequiredPtrToValue == nil {
-		ec.Addf("field 'RequiredPtrToValue' is required but source field RequiredPtrToValue is nil")
-	} else {
-		dst.RequiredPtrToValue = *src.RequiredPtrToValue
-	}
-	ec.Leave()
-	if ec.MaxErrorsReached() {
-		return dst
-	}
-
-	// Mapping field SrcSimple.CustomIntToString (int) to DstSimple.CustomStr (string)
-	// Src: Ptr=false, ElemFull=nil | Dst: Ptr=false, ElemFull=nil
-	ec.Enter("CustomStr")
-	// Applying field tag: using IntToStr
-	dst.CustomStr = IntToStr(ec, src.CustomIntToString)
-	ec.Leave()
-	if ec.MaxErrorsReached() {
-		return dst
-	}
-
-	return dst
-}
-
 func srcWithAliasToDstWithAlias(ec *errorCollector, src SrcWithAlias) DstWithAlias {
 	dst := DstWithAlias{}
 	if ec.MaxErrorsReached() {
 		return dst
 	}
 
-	// Mapping field SrcWithAlias.EventTime (example.com/convert2/testdata/simple.MyTime) to DstWithAlias.EventTimestamp (time.Time)
-	// Src: Ptr=false, ElemFull=nil | Dst: Ptr=false, ElemFull=nil
+	// DEBUG: Number of source fields: 1 for struct SrcWithAlias
+	// DEBUG: Processing source field: EventTime
+	// DEBUG_SRC_FIELD_TAG_RAW: EventTimestamp
+	// DEBUG_SRC_FIELD_TAG_DSTFIELDNAME: EventTimestamp
+	// DEBUG_DSTFIELDNAME_FROM_TAG: Used tag DstFieldName (EventTimestamp)
+	// Mapping field SrcWithAlias.EventTime (example.com/convert2/testdata/simple.MyTime) to DstWithAlias.EventTimestamp (time.time.Time)
+	// Src: Ptr=false, ElemFull=example.com/convert2/testdata/simple.MyTime | Dst: Ptr=false, ElemFull=time.time.Time
 	ec.Enter("EventTimestamp")
-	// TODO: Implement conversion for EventTime (example.com/convert2/testdata/simple.MyTime) to EventTimestamp (time.Time).
-	ec.Addf("type mismatch or complex conversion not yet implemented for field 'EventTimestamp' (example.com/convert2/testdata/simple.MyTime -> time.Time)")
+	// DEBUG_STRUCT_CHECK: srcIsStruct=false (Name: MyTime, StructInfoNil: true, Kind: 9), dstIsStruct=false (Name: time.Time, StructInfoNil: true, Kind: 2)
+	// DEBUG_SRC_FIELD: Name=MyTime, FullName=example.com/convert2/testdata/simple.MyTime, IsBasic=false, Kind=9
+	// DEBUG_SRC_FIELD_UNDERLYING: Name=time.Time, FullName=time.time.Time, IsBasic=false, Kind=2
+	// DEBUG_DST_FIELD: Name=time.Time, FullName=time.time.Time, IsBasic=false, Kind=2
+	// DEBUG_SRC_ACTUAL_UNDERLYING: Name=time.Time, FullName=time.time.Time, IsBasic=false, Kind=2
+	// DEBUG_DST_ACTUAL_UNDERLYING: Name=time.Time, FullName=time.time.Time, IsBasic=false, Kind=2
+	// DEBUG_BEFORE_underlyingTypesMatch_check: srcUnderlying is nil = false, dstUnderlying is nil = false
+	// DEBUG_COND_PreCheck: srcUnderlying.IsBasic=false, dstUnderlying.IsBasic=false, srcUnderlying.Name=time.Time, dstUnderlying.Name=time.Time, srcUnderlying.FullName=time.time.Time, dstUnderlying.FullName=time.time.Time
+	// DEBUG_MATCH_COND: Cond2_NonBasicByFullName (time.time.Time)
+	// DEBUG_FINAL_underlyingTypesMatch: true
+	dst.EventTimestamp = time.Time(src.EventTime)
 	ec.Leave()
 	if ec.MaxErrorsReached() {
 		return dst
@@ -193,8 +104,13 @@ func innerSrcToInnerDst(ec *errorCollector, src InnerSrc) InnerDst {
 		return dst
 	}
 
+	// DEBUG: Number of source fields: 2 for struct InnerSrc
+	// DEBUG: Processing source field: InnerID
+	// DEBUG_SRC_FIELD_TAG_RAW:
+	// DEBUG_SRC_FIELD_TAG_DSTFIELDNAME:
+	// DEBUG_DSTFIELDNAME_FALLBACK: Used srcField.Name (InnerID)
 	// Mapping field InnerSrc.InnerID (int) to InnerDst.InnerID (int)
-	// Src: Ptr=false, ElemFull=nil | Dst: Ptr=false, ElemFull=nil
+	// Src: Ptr=false, ElemFull=int | Dst: Ptr=false, ElemFull=int
 	ec.Enter("InnerID")
 	dst.InnerID = src.InnerID
 	ec.Leave()
@@ -202,10 +118,161 @@ func innerSrcToInnerDst(ec *errorCollector, src InnerSrc) InnerDst {
 		return dst
 	}
 
+	// DEBUG: Processing source field: InnerName
+	// DEBUG_SRC_FIELD_TAG_RAW:
+	// DEBUG_SRC_FIELD_TAG_DSTFIELDNAME:
+	// DEBUG_DSTFIELDNAME_FALLBACK: Used srcField.Name (InnerName)
 	// Mapping field InnerSrc.InnerName (string) to InnerDst.InnerName (string)
-	// Src: Ptr=false, ElemFull=nil | Dst: Ptr=false, ElemFull=nil
+	// Src: Ptr=false, ElemFull=string | Dst: Ptr=false, ElemFull=string
 	ec.Enter("InnerName")
 	dst.InnerName = src.InnerName
+	ec.Leave()
+	if ec.MaxErrorsReached() {
+		return dst
+	}
+
+	return dst
+}
+
+// srcSimpleToDstSimple converts SrcSimple to DstSimple.
+// Fields in DstSimple not populated by this conversion:
+// - NoMatchSrc
+func srcSimpleToDstSimple(ec *errorCollector, src SrcSimple) DstSimple {
+	dst := DstSimple{}
+	if ec.MaxErrorsReached() {
+		return dst
+	}
+
+	// DEBUG: Number of source fields: 11 for struct SrcSimple
+	// DEBUG: Processing source field: ID
+	// DEBUG_SRC_FIELD_TAG_RAW:
+	// DEBUG_SRC_FIELD_TAG_DSTFIELDNAME:
+	// DEBUG_DSTFIELDNAME_FALLBACK: Used srcField.Name (ID)
+	// Mapping field SrcSimple.ID (int) to DstSimple.ID (int)
+	// Src: Ptr=false, ElemFull=int | Dst: Ptr=false, ElemFull=int
+	ec.Enter("ID")
+	dst.ID = src.ID
+	ec.Leave()
+	if ec.MaxErrorsReached() {
+		return dst
+	}
+
+	// DEBUG: Processing source field: Name
+	// DEBUG_SRC_FIELD_TAG_RAW:
+	// DEBUG_SRC_FIELD_TAG_DSTFIELDNAME:
+	// DEBUG_DSTFIELDNAME_FALLBACK: Used srcField.Name (Name)
+	// Mapping field SrcSimple.Name (string) to DstSimple.Name (string)
+	// Src: Ptr=false, ElemFull=string | Dst: Ptr=false, ElemFull=string
+	ec.Enter("Name")
+	dst.Name = src.Name
+	ec.Leave()
+	if ec.MaxErrorsReached() {
+		return dst
+	}
+
+	// DEBUG: Processing source field: Description
+	// Source field SrcSimple.Description is skipped due to tag '-'.
+	// DEBUG: Processing source field: Value
+	// DEBUG_SRC_FIELD_TAG_RAW:
+	// DEBUG_SRC_FIELD_TAG_DSTFIELDNAME:
+	// DEBUG_DSTFIELDNAME_FALLBACK: Used srcField.Name (Value)
+	// Mapping field SrcSimple.Value (float64) to DstSimple.Value (float64)
+	// Src: Ptr=false, ElemFull=float64 | Dst: Ptr=false, ElemFull=float64
+	ec.Enter("Value")
+	dst.Value = src.Value
+	ec.Leave()
+	if ec.MaxErrorsReached() {
+		return dst
+	}
+
+	// DEBUG: Processing source field: Timestamp
+	// DEBUG_SRC_FIELD_TAG_RAW: CreationTime
+	// DEBUG_SRC_FIELD_TAG_DSTFIELDNAME: CreationTime
+	// DEBUG_DSTFIELDNAME_FROM_TAG: Used tag DstFieldName (CreationTime)
+	// Mapping field SrcSimple.Timestamp (time.time.Time) to DstSimple.CreationTime (time.time.Time)
+	// Src: Ptr=false, ElemFull=time.time.Time | Dst: Ptr=false, ElemFull=time.time.Time
+	ec.Enter("CreationTime")
+	dst.CreationTime = src.Timestamp
+	ec.Leave()
+	if ec.MaxErrorsReached() {
+		return dst
+	}
+
+	// DEBUG: Processing source field: NoMatchDst
+	// DEBUG_SRC_FIELD_TAG_RAW:
+	// DEBUG_SRC_FIELD_TAG_DSTFIELDNAME:
+	// DEBUG_DSTFIELDNAME_FALLBACK: Used srcField.Name (NoMatchDst)
+	// Info: No destination field named 'NoMatchDst' (determined from tag or src name) found in 'DstSimple' to match source field SrcSimple.NoMatchDst. Field skipped.
+	// DEBUG: Processing source field: PtrString
+	// DEBUG_SRC_FIELD_TAG_RAW:
+	// DEBUG_SRC_FIELD_TAG_DSTFIELDNAME:
+	// DEBUG_DSTFIELDNAME_FALLBACK: Used srcField.Name (PtrString)
+	// Mapping field SrcSimple.PtrString (*string) to DstSimple.PtrString (*string)
+	// Src: Ptr=true, ElemFull=string | Dst: Ptr=true, ElemFull=string
+	ec.Enter("PtrString")
+	dst.PtrString = src.PtrString
+	ec.Leave()
+	if ec.MaxErrorsReached() {
+		return dst
+	}
+
+	// DEBUG: Processing source field: StringPtr
+	// DEBUG_SRC_FIELD_TAG_RAW:
+	// DEBUG_SRC_FIELD_TAG_DSTFIELDNAME:
+	// DEBUG_DSTFIELDNAME_FALLBACK: Used srcField.Name (StringPtr)
+	// Mapping field SrcSimple.StringPtr (string) to DstSimple.StringPtr (*string)
+	// Src: Ptr=false, ElemFull=string | Dst: Ptr=true, ElemFull=string
+	ec.Enter("StringPtr")
+	{
+		srcVal := src.StringPtr
+		dst.StringPtr = &srcVal
+	}
+	ec.Leave()
+	if ec.MaxErrorsReached() {
+		return dst
+	}
+
+	// DEBUG: Processing source field: PtrToValue
+	// DEBUG_SRC_FIELD_TAG_RAW:
+	// DEBUG_SRC_FIELD_TAG_DSTFIELDNAME:
+	// DEBUG_DSTFIELDNAME_FALLBACK: Used srcField.Name (PtrToValue)
+	// Mapping field SrcSimple.PtrToValue (*float32) to DstSimple.PtrToValue (float32)
+	// Src: Ptr=true, ElemFull=float32 | Dst: Ptr=false, ElemFull=float32
+	ec.Enter("PtrToValue")
+	if src.PtrToValue != nil {
+		dst.PtrToValue = *src.PtrToValue
+	}
+	ec.Leave()
+	if ec.MaxErrorsReached() {
+		return dst
+	}
+
+	// DEBUG: Processing source field: RequiredPtrToValue
+	// DEBUG_SRC_FIELD_TAG_RAW: ,required
+	// DEBUG_SRC_FIELD_TAG_DSTFIELDNAME:
+	// DEBUG_DSTFIELDNAME_FALLBACK: Used srcField.Name (RequiredPtrToValue)
+	// Mapping field SrcSimple.RequiredPtrToValue (*int) to DstSimple.RequiredPtrToValue (int)
+	// Src: Ptr=true, ElemFull=int | Dst: Ptr=false, ElemFull=int
+	ec.Enter("RequiredPtrToValue")
+	if src.RequiredPtrToValue == nil {
+		ec.Addf("field 'RequiredPtrToValue' is required but source field RequiredPtrToValue is nil")
+	} else {
+		dst.RequiredPtrToValue = *src.RequiredPtrToValue
+	}
+	ec.Leave()
+	if ec.MaxErrorsReached() {
+		return dst
+	}
+
+	// DEBUG: Processing source field: CustomIntToString
+	// DEBUG_SRC_FIELD_TAG_RAW: CustomStr,using=IntToStr
+	// DEBUG_SRC_FIELD_TAG_DSTFIELDNAME: CustomStr
+	// DEBUG_DSTFIELDNAME_FROM_TAG: Used tag DstFieldName (CustomStr)
+	// Mapping field SrcSimple.CustomIntToString (int) to DstSimple.CustomStr (string)
+	// Src: Ptr=false, ElemFull=int | Dst: Ptr=false, ElemFull=string
+	ec.Enter("CustomStr")
+	// Applying field tag: using IntToStr
+	dst.CustomStr = IntToStr(ec, src.CustomIntToString)
 	ec.Leave()
 	if ec.MaxErrorsReached() {
 		return dst
@@ -220,8 +287,13 @@ func outerSrcToOuterDst(ec *errorCollector, src OuterSrc) OuterDst {
 		return dst
 	}
 
+	// DEBUG: Number of source fields: 4 for struct OuterSrc
+	// DEBUG: Processing source field: OuterID
+	// DEBUG_SRC_FIELD_TAG_RAW:
+	// DEBUG_SRC_FIELD_TAG_DSTFIELDNAME:
+	// DEBUG_DSTFIELDNAME_FALLBACK: Used srcField.Name (OuterID)
 	// Mapping field OuterSrc.OuterID (int) to OuterDst.OuterID (int)
-	// Src: Ptr=false, ElemFull=nil | Dst: Ptr=false, ElemFull=nil
+	// Src: Ptr=false, ElemFull=int | Dst: Ptr=false, ElemFull=int
 	ec.Enter("OuterID")
 	dst.OuterID = src.OuterID
 	ec.Leave()
@@ -229,9 +301,14 @@ func outerSrcToOuterDst(ec *errorCollector, src OuterSrc) OuterDst {
 		return dst
 	}
 
+	// DEBUG: Processing source field: Nested
+	// DEBUG_SRC_FIELD_TAG_RAW:
+	// DEBUG_SRC_FIELD_TAG_DSTFIELDNAME:
+	// DEBUG_DSTFIELDNAME_FALLBACK: Used srcField.Name (Nested)
 	// Mapping field OuterSrc.Nested (example.com/convert2/testdata/simple.InnerSrc) to OuterDst.Nested (example.com/convert2/testdata/simple.InnerDst)
-	// Src: Ptr=false, ElemFull=nil | Dst: Ptr=false, ElemFull=nil
+	// Src: Ptr=false, ElemFull=example.com/convert2/testdata/simple.InnerSrc | Dst: Ptr=false, ElemFull=example.com/convert2/testdata/simple.InnerDst
 	ec.Enter("Nested")
+	// DEBUG_STRUCT_CHECK: srcIsStruct=true (Name: InnerSrc, StructInfoNil: false, Kind: 8), dstIsStruct=true (Name: InnerDst, StructInfoNil: false, Kind: 8)
 	// Recursive call for nested struct InnerSrc -> InnerDst
 	dst.Nested = innerSrcToInnerDst(ec, src.Nested)
 	ec.Leave()
@@ -239,9 +316,14 @@ func outerSrcToOuterDst(ec *errorCollector, src OuterSrc) OuterDst {
 		return dst
 	}
 
+	// DEBUG: Processing source field: NestedPtr
+	// DEBUG_SRC_FIELD_TAG_RAW:
+	// DEBUG_SRC_FIELD_TAG_DSTFIELDNAME:
+	// DEBUG_DSTFIELDNAME_FALLBACK: Used srcField.Name (NestedPtr)
 	// Mapping field OuterSrc.NestedPtr (*example.com/convert2/testdata/simple.InnerSrc) to OuterDst.NestedPtr (*example.com/convert2/testdata/simple.InnerDst)
 	// Src: Ptr=true, ElemFull=example.com/convert2/testdata/simple.InnerSrc | Dst: Ptr=true, ElemFull=example.com/convert2/testdata/simple.InnerDst
 	ec.Enter("NestedPtr")
+	// DEBUG_STRUCT_CHECK: srcIsStruct=true (Name: InnerSrc, StructInfoNil: false, Kind: 8), dstIsStruct=true (Name: InnerDst, StructInfoNil: false, Kind: 8)
 	// Recursive call for nested struct InnerSrc -> InnerDst
 	if src.NestedPtr != nil {
 		nestedVal := innerSrcToInnerDst(ec, *src.NestedPtr)
@@ -254,8 +336,12 @@ func outerSrcToOuterDst(ec *errorCollector, src OuterSrc) OuterDst {
 		return dst
 	}
 
+	// DEBUG: Processing source field: Name
+	// DEBUG_SRC_FIELD_TAG_RAW: OuterName
+	// DEBUG_SRC_FIELD_TAG_DSTFIELDNAME: OuterName
+	// DEBUG_DSTFIELDNAME_FROM_TAG: Used tag DstFieldName (OuterName)
 	// Mapping field OuterSrc.Name (string) to OuterDst.OuterName (string)
-	// Src: Ptr=false, ElemFull=nil | Dst: Ptr=false, ElemFull=nil
+	// Src: Ptr=false, ElemFull=string | Dst: Ptr=false, ElemFull=string
 	ec.Enter("OuterName")
 	dst.OuterName = src.Name
 	ec.Leave()
@@ -272,8 +358,13 @@ func innerSrcDiffToInnerDstDiff(ec *errorCollector, src InnerSrcDiff) InnerDstDi
 		return dst
 	}
 
+	// DEBUG: Number of source fields: 1 for struct InnerSrcDiff
+	// DEBUG: Processing source field: SrcInnerVal
+	// DEBUG_SRC_FIELD_TAG_RAW: DstInnerVal
+	// DEBUG_SRC_FIELD_TAG_DSTFIELDNAME: DstInnerVal
+	// DEBUG_DSTFIELDNAME_FROM_TAG: Used tag DstFieldName (DstInnerVal)
 	// Mapping field InnerSrcDiff.SrcInnerVal (int) to InnerDstDiff.DstInnerVal (int)
-	// Src: Ptr=false, ElemFull=nil | Dst: Ptr=false, ElemFull=nil
+	// Src: Ptr=false, ElemFull=int | Dst: Ptr=false, ElemFull=int
 	ec.Enter("DstInnerVal")
 	dst.DstInnerVal = src.SrcInnerVal
 	ec.Leave()
@@ -290,8 +381,13 @@ func outerSrcDiffToOuterDstDiff(ec *errorCollector, src OuterSrcDiff) OuterDstDi
 		return dst
 	}
 
+	// DEBUG: Number of source fields: 2 for struct OuterSrcDiff
+	// DEBUG: Processing source field: ID
+	// DEBUG_SRC_FIELD_TAG_RAW:
+	// DEBUG_SRC_FIELD_TAG_DSTFIELDNAME:
+	// DEBUG_DSTFIELDNAME_FALLBACK: Used srcField.Name (ID)
 	// Mapping field OuterSrcDiff.ID (int) to OuterDstDiff.ID (int)
-	// Src: Ptr=false, ElemFull=nil | Dst: Ptr=false, ElemFull=nil
+	// Src: Ptr=false, ElemFull=int | Dst: Ptr=false, ElemFull=int
 	ec.Enter("ID")
 	dst.ID = src.ID
 	ec.Leave()
@@ -299,9 +395,14 @@ func outerSrcDiffToOuterDstDiff(ec *errorCollector, src OuterSrcDiff) OuterDstDi
 		return dst
 	}
 
+	// DEBUG: Processing source field: DiffNested
+	// DEBUG_SRC_FIELD_TAG_RAW: DestNested
+	// DEBUG_SRC_FIELD_TAG_DSTFIELDNAME: DestNested
+	// DEBUG_DSTFIELDNAME_FROM_TAG: Used tag DstFieldName (DestNested)
 	// Mapping field OuterSrcDiff.DiffNested (example.com/convert2/testdata/simple.InnerSrcDiff) to OuterDstDiff.DestNested (example.com/convert2/testdata/simple.InnerDstDiff)
-	// Src: Ptr=false, ElemFull=nil | Dst: Ptr=false, ElemFull=nil
+	// Src: Ptr=false, ElemFull=example.com/convert2/testdata/simple.InnerSrcDiff | Dst: Ptr=false, ElemFull=example.com/convert2/testdata/simple.InnerDstDiff
 	ec.Enter("DestNested")
+	// DEBUG_STRUCT_CHECK: srcIsStruct=true (Name: InnerSrcDiff, StructInfoNil: false, Kind: 8), dstIsStruct=true (Name: InnerDstDiff, StructInfoNil: false, Kind: 8)
 	// Recursive call for nested struct InnerSrcDiff -> InnerDstDiff
 	dst.DestNested = innerSrcDiffToInnerDstDiff(ec, src.DiffNested)
 	ec.Leave()
@@ -312,9 +413,83 @@ func outerSrcDiffToOuterDstDiff(ec *errorCollector, src OuterSrcDiff) OuterDstDi
 	return dst
 }
 
-func ConvertInnerSrcDiffToInnerDstDiff(ctx context.Context, src InnerSrcDiff) (InnerDstDiff, error) {
+// srcUnderlyingToDstUnderlying converts SrcUnderlying to DstUnderlying.
+// Fields in DstUnderlying not populated by this conversion:
+// - YourAge
+// - YourName
+func srcUnderlyingToDstUnderlying(ec *errorCollector, src SrcUnderlying) DstUnderlying {
+	dst := DstUnderlying{}
+	if ec.MaxErrorsReached() {
+		return dst
+	}
+
+	// DEBUG: Number of source fields: 4 for struct SrcUnderlying
+	// DEBUG: Processing source field: ID
+	// DEBUG_SRC_FIELD_TAG_RAW:
+	// DEBUG_SRC_FIELD_TAG_DSTFIELDNAME:
+	// DEBUG_DSTFIELDNAME_FALLBACK: Used srcField.Name (ID)
+	// Mapping field SrcUnderlying.ID (int) to DstUnderlying.ID (int)
+	// Src: Ptr=false, ElemFull=int | Dst: Ptr=false, ElemFull=int
+	ec.Enter("ID")
+	dst.ID = src.ID
+	ec.Leave()
+	if ec.MaxErrorsReached() {
+		return dst
+	}
+
+	// DEBUG: Processing source field: MyAge
+	// DEBUG_SRC_FIELD_TAG_RAW:
+	// DEBUG_SRC_FIELD_TAG_DSTFIELDNAME:
+	// DEBUG_DSTFIELDNAME_FALLBACK: Used srcField.Name (MyAge)
+	// Info: No destination field named 'MyAge' (determined from tag or src name) found in 'DstUnderlying' to match source field SrcUnderlying.MyAge. Field skipped.
+	// DEBUG: Processing source field: MyName
+	// DEBUG_SRC_FIELD_TAG_RAW:
+	// DEBUG_SRC_FIELD_TAG_DSTFIELDNAME:
+	// DEBUG_DSTFIELDNAME_FALLBACK: Used srcField.Name (MyName)
+	// Info: No destination field named 'MyName' (determined from tag or src name) found in 'DstUnderlying' to match source field SrcUnderlying.MyName. Field skipped.
+	// DEBUG: Processing source field: MaybeValue
+	// DEBUG_SRC_FIELD_TAG_RAW:
+	// DEBUG_SRC_FIELD_TAG_DSTFIELDNAME:
+	// DEBUG_DSTFIELDNAME_FALLBACK: Used srcField.Name (MaybeValue)
+	// Mapping field SrcUnderlying.MaybeValue (example.com/convert2/testdata/simple.MyFloatPtr) to DstUnderlying.MaybeValue (*float64)
+	// Src: Ptr=false, ElemFull=example.com/convert2/testdata/simple.MyFloatPtr | Dst: Ptr=true, ElemFull=float64
+	ec.Enter("MaybeValue")
+	// DEBUG_STRUCT_CHECK: srcIsStruct=false (Name: MyFloatPtr, StructInfoNil: true, Kind: 9), dstIsStruct=false (Name: float64, StructInfoNil: true, Kind: 1)
+	// DEBUG_SRC_FIELD: Name=MyFloatPtr, FullName=example.com/convert2/testdata/simple.MyFloatPtr, IsBasic=false, Kind=9
+	// DEBUG_SRC_FIELD_UNDERLYING: Name=MyFloat, FullName=*example.com/convert2/testdata/simple.MyFloat, IsBasic=false, Kind=3
+	// DEBUG_DST_FIELD: Name=float64, FullName=*float64, IsBasic=true, Kind=3
+	// DEBUG_SRC_ACTUAL_UNDERLYING: Name=float64, FullName=float64, IsBasic=true, Kind=1
+	// DEBUG_DST_ACTUAL_UNDERLYING: Name=float64, FullName=float64, IsBasic=true, Kind=1
+	// DEBUG_BEFORE_underlyingTypesMatch_check: srcUnderlying is nil = false, dstUnderlying is nil = false
+	// DEBUG_COND_PreCheck: srcUnderlying.IsBasic=true, dstUnderlying.IsBasic=true, srcUnderlying.Name=float64, dstUnderlying.Name=float64, srcUnderlying.FullName=float64, dstUnderlying.FullName=float64
+	// DEBUG_MATCH_COND: Cond1_BasicByName (float64)
+	// DEBUG_FINAL_underlyingTypesMatch: true
+	if src.MaybeValue != nil {
+		convertedVal := float64(*src.MaybeValue)
+		dst.MaybeValue = &convertedVal
+	} else {
+		dst.MaybeValue = nil
+	}
+	ec.Leave()
+	if ec.MaxErrorsReached() {
+		return dst
+	}
+
+	return dst
+}
+
+func ConvertInnerSrcToInnerDst(ctx context.Context, src InnerSrc) (InnerDst, error) {
 	ec := newErrorCollector(0)
-	dst := innerSrcDiffToInnerDstDiff(ec, src)
+	dst := innerSrcToInnerDst(ec, src)
+	if ec.HasErrors() {
+		return dst, errors.Join(ec.Errors()...)
+	}
+	return dst, nil
+}
+
+func ConvertOuterSrcToOuterDst(ctx context.Context, src OuterSrc) (OuterDst, error) {
+	ec := newErrorCollector(0)
+	dst := outerSrcToOuterDst(ec, src)
 	if ec.HasErrors() {
 		return dst, errors.Join(ec.Errors()...)
 	}
@@ -348,18 +523,18 @@ func ConvertSrcWithAliasToDstWithAlias(ctx context.Context, src SrcWithAlias) (D
 	return dst, nil
 }
 
-func ConvertInnerSrcToInnerDst(ctx context.Context, src InnerSrc) (InnerDst, error) {
+func ConvertInnerSrcDiffToInnerDstDiff(ctx context.Context, src InnerSrcDiff) (InnerDstDiff, error) {
 	ec := newErrorCollector(0)
-	dst := innerSrcToInnerDst(ec, src)
+	dst := innerSrcDiffToInnerDstDiff(ec, src)
 	if ec.HasErrors() {
 		return dst, errors.Join(ec.Errors()...)
 	}
 	return dst, nil
 }
 
-func ConvertOuterSrcToOuterDst(ctx context.Context, src OuterSrc) (OuterDst, error) {
+func ConvertSrcUnderlyingToDstUnderlying(ctx context.Context, src SrcUnderlying) (DstUnderlying, error) {
 	ec := newErrorCollector(0)
-	dst := outerSrcToOuterDst(ec, src)
+	dst := srcUnderlyingToDstUnderlying(ec, src)
 	if ec.HasErrors() {
 		return dst, errors.Join(ec.Errors()...)
 	}

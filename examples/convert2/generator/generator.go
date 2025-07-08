@@ -21,6 +21,27 @@ const fileSuffix = "_gen.go"
 // GenerateConversionCode generates conversion functions based on parsedInfo
 // and writes them to *_gen.go files in the outputDir.
 func GenerateConversionCode(parsedInfo *model.ParsedInfo, outputDir string) error {
+	// --- DEBUG ---
+	fmt.Printf("DEBUG: ParsedInfo.ConversionPairs:\n")
+	for i, cp := range parsedInfo.ConversionPairs {
+		fmt.Printf("  Pair %d:\n", i)
+		fmt.Printf("    SrcType: Name=%s, FullName=%s, Kind=%v, IsBasic=%t, IsPointer=%t\n", cp.SrcTypeInfo.Name, cp.SrcTypeInfo.FullName, cp.SrcTypeInfo.Kind, cp.SrcTypeInfo.IsBasic, cp.SrcTypeInfo.IsPointer)
+		if cp.SrcTypeInfo.Underlying != nil {
+			fmt.Printf("      Src Underlying: Name=%s, FullName=%s, Kind=%v, IsBasic=%t\n", cp.SrcTypeInfo.Underlying.Name, cp.SrcTypeInfo.Underlying.FullName, cp.SrcTypeInfo.Underlying.Kind, cp.SrcTypeInfo.Underlying.IsBasic)
+		}
+		if cp.SrcTypeInfo.Elem != nil {
+			fmt.Printf("      Src Elem: Name=%s, FullName=%s, Kind=%v, IsBasic=%t\n", cp.SrcTypeInfo.Elem.Name, cp.SrcTypeInfo.Elem.FullName, cp.SrcTypeInfo.Elem.Kind, cp.SrcTypeInfo.Elem.IsBasic)
+		}
+		fmt.Printf("    DstType: Name=%s, FullName=%s, Kind=%v, IsBasic=%t, IsPointer=%t\n", cp.DstTypeInfo.Name, cp.DstTypeInfo.FullName, cp.DstTypeInfo.Kind, cp.DstTypeInfo.IsBasic, cp.DstTypeInfo.IsPointer)
+		if cp.DstTypeInfo.Underlying != nil {
+			fmt.Printf("      Dst Underlying: Name=%s, FullName=%s, Kind=%v, IsBasic=%t\n", cp.DstTypeInfo.Underlying.Name, cp.DstTypeInfo.Underlying.FullName, cp.DstTypeInfo.Underlying.Kind, cp.DstTypeInfo.Underlying.IsBasic)
+		}
+		if cp.DstTypeInfo.Elem != nil {
+			fmt.Printf("      Dst Elem: Name=%s, FullName=%s, Kind=%v, IsBasic=%t\n", cp.DstTypeInfo.Elem.Name, cp.DstTypeInfo.Elem.FullName, cp.DstTypeInfo.Elem.Kind, cp.DstTypeInfo.Elem.IsBasic)
+		}
+	}
+	// --- END DEBUG ---
+
 	if len(parsedInfo.ConversionPairs) == 0 {
 		fmt.Println("No conversion pairs defined. Nothing to generate.")
 		return nil
@@ -263,34 +284,43 @@ func generateHelperFunction(
 	fmt.Fprintf(&functionBodyBuf, "\tdst := %s{}\n", typeNameInSource(dstType, parsedInfo.PackagePath, imports))
 	fmt.Fprintf(&functionBodyBuf, "\tif ec.MaxErrorsReached() { return dst } \n\n")
 
+	fmt.Fprintf(&functionBodyBuf, "\t// DEBUG: Number of source fields: %d for struct %s\n", len(srcStruct.Fields), srcStruct.Name) // DEBUG LINE
 	// Iterate over source struct fields to apply rules and find destinations
 	for _, srcField := range srcStruct.Fields {
+		fmt.Fprintf(&functionBodyBuf, "\t// DEBUG: Processing source field: %s\n", srcField.Name) // DEBUG LINE
 		if srcField.Tag.DstFieldName == "-" {
 			fmt.Fprintf(&functionBodyBuf, "\t// Source field %s.%s is skipped due to tag '-'.\n", srcStruct.Name, srcField.Name)
 			continue
 		}
 
-		dstFieldName := srcField.Tag.DstFieldName
-		if dstFieldName == "" { // No specific destination name in tag, use source field name
-			dstFieldName = srcField.Name
+		// The block above this comment (handling original dstFieldName and dstField lookup)
+		// is the one that should be removed if it's causing a redeclaration.
+		// The new logic starts below with DEBUG_SRC_FIELD_TAG_RAW.
+
+		// DEBUG statements for Tag info
+		fmt.Fprintf(&functionBodyBuf, "\t// DEBUG_SRC_FIELD_TAG_RAW: %s\n", srcField.Tag.RawValue)
+		fmt.Fprintf(&functionBodyBuf, "\t// DEBUG_SRC_FIELD_TAG_DSTFIELDNAME: %s\n", srcField.Tag.DstFieldName)
+
+		var resolvedDstFieldName string // Explicitly declare
+		if srcField.Tag.DstFieldName != "" {
+			resolvedDstFieldName = srcField.Tag.DstFieldName
+			fmt.Fprintf(&functionBodyBuf, "\t// DEBUG_DSTFIELDNAME_FROM_TAG: Used tag DstFieldName (%s)\n", resolvedDstFieldName)
+		} else {
+			resolvedDstFieldName = srcField.Name
+			fmt.Fprintf(&functionBodyBuf, "\t// DEBUG_DSTFIELDNAME_FALLBACK: Used srcField.Name (%s)\n", resolvedDstFieldName)
 		}
 
-		var dstField *model.FieldInfo
-		for i := range dstStruct.Fields { // dstStruct がここで使われる
-			if dstStruct.Fields[i].Name == dstFieldName {
+		var dstField *model.FieldInfo // Declare dstField here before use
+		for i := range dstStruct.Fields {
+			if dstStruct.Fields[i].Name == resolvedDstFieldName { // Use the resolved name
 				dstField = &dstStruct.Fields[i]
 				break
 			}
 		}
 
 		if dstField == nil {
-			// No destination field found with the target name.
-			// If auto-mapping by normalized name was intended, that's a later step.
-			// For now, if explicit name or same name doesn't match, we report (or silently skip).
-			// Let's add a comment for now if a DstFieldName was specified in tag but not found.
-			if srcField.Tag.DstFieldName != "" {
-				fmt.Fprintf(&functionBodyBuf, "\t// Warning: Destination field '%s' specified for source field '%s.%s' not found in struct '%s'.\n", srcField.Tag.DstFieldName, srcStruct.Name, srcField.Name, dstStruct.Name)
-			}
+			// Warning or info message based on whether DstFieldName was from tag or fallback
+			fmt.Fprintf(&functionBodyBuf, "\t// Info: No destination field named '%s' (determined from tag or src name) found in '%s' to match source field %s.%s. Field skipped.\n", resolvedDstFieldName, dstStruct.Name, srcStruct.Name, srcField.Name)
 			continue
 		}
 		delete(unmappedDstFields, dstField.Name) // Mark as mapped
@@ -299,19 +329,23 @@ func generateHelperFunction(
 		// Now, implement basic direct assignment if types match.
 		fmt.Fprintf(&functionBodyBuf, "\t// Mapping field %s.%s (%s) to %s.%s (%s)\n",
 			srcStruct.Name, srcField.Name, srcField.TypeInfo.FullName,
-			dstStruct.Name, dstField.Name, dstField.TypeInfo.FullName)
+			dstStruct.Name, dstField.Name, dstField.TypeInfo.FullName) // Note: dstField.Name should be used here, not dstFieldNameDetermined if they could differ by logic error
 
-		srcElemFullName := "nil"
+		srcElemCommentName := "nil"
 		if srcField.TypeInfo.Elem != nil {
-			srcElemFullName = srcField.TypeInfo.Elem.FullName
+			srcElemCommentName = srcField.TypeInfo.Elem.FullName
+		} else if !srcField.TypeInfo.IsPointer && !srcField.TypeInfo.IsSlice && !srcField.TypeInfo.IsMap {
+			srcElemCommentName = srcField.TypeInfo.FullName // For non-composite, non-pointer types, Elem is the type itself
 		}
-		dstElemFullName := "nil"
+		dstElemCommentName := "nil"
 		if dstField.TypeInfo.Elem != nil {
-			dstElemFullName = dstField.TypeInfo.Elem.FullName
+			dstElemCommentName = dstField.TypeInfo.Elem.FullName
+		} else if !dstField.TypeInfo.IsPointer && !dstField.TypeInfo.IsSlice && !dstField.TypeInfo.IsMap {
+			dstElemCommentName = dstField.TypeInfo.FullName // For non-composite, non-pointer types, Elem is the type itself
 		}
 		fmt.Fprintf(&functionBodyBuf, "\t// Src: Ptr=%t, ElemFull=%s | Dst: Ptr=%t, ElemFull=%s\n",
-			srcField.TypeInfo.IsPointer, srcElemFullName,
-			dstField.TypeInfo.IsPointer, dstElemFullName)
+			srcField.TypeInfo.IsPointer, srcElemCommentName,
+			dstField.TypeInfo.IsPointer, dstElemCommentName)
 		fmt.Fprintf(&functionBodyBuf, "\tec.Enter(%q)\n", dstField.Name) // Path uses DstFieldName
 
 		// Add imports for field types
@@ -488,6 +522,9 @@ func generateHelperFunction(
 					dstIsStruct = true
 					dstStructDef = tempDstTypeInfo.StructInfo
 				}
+				fmt.Fprintf(&functionBodyBuf, "\t// DEBUG_STRUCT_CHECK: srcIsStruct=%t (Name: %s, StructInfoNil: %t, Kind: %v), dstIsStruct=%t (Name: %s, StructInfoNil: %t, Kind: %v)\n",
+					srcIsStruct, tempSrcTypeInfo.Name, tempSrcTypeInfo.StructInfo == nil, tempSrcTypeInfo.Kind,
+					dstIsStruct, tempDstTypeInfo.Name, tempDstTypeInfo.StructInfo == nil, tempDstTypeInfo.Kind)
 
 				if srcIsStruct && dstIsStruct {
 					// Use the TypeInfo from the canonical struct definition for the pair
@@ -556,15 +593,115 @@ func generateHelperFunction(
 						fmt.Fprintf(&functionBodyBuf, "\t%s%s(ec, %s)\n", assignToDst, nestedHelperFuncName, srcAccess)
 					}
 
-				} else {
+				} else { // This is the "else" for "if srcIsStruct && dstIsStruct"
 					// Fallback for non-struct or other complex types not yet handled
-					fmt.Fprintf(&functionBodyBuf, "\t// TODO: Implement conversion for %s (%s) to %s (%s).\n",
-						srcField.Name, srcField.TypeInfo.FullName,
-						dstField.Name, dstField.TypeInfo.FullName)
-					fmt.Fprintf(&functionBodyBuf, "\tec.Addf(\"type mismatch or complex conversion not yet implemented for field '%s' (%s -> %s)\")\n",
-						dstField.Name, srcField.TypeInfo.FullName, dstField.TypeInfo.FullName)
-				}
-			}
+					// Priority 3: Automatic Conversion (Advanced) - Underlying Type Match
+					srcUnderlying := getUnderlyingTypeInfo(srcField.TypeInfo)
+					dstUnderlying := getUnderlyingTypeInfo(dstField.TypeInfo)
+
+					// --- DEBUG COMMENTS START ---
+					fmt.Fprintf(&functionBodyBuf, "\t// DEBUG_SRC_FIELD: Name=%s, FullName=%s, IsBasic=%t, Kind=%v\n", srcField.TypeInfo.Name, srcField.TypeInfo.FullName, srcField.TypeInfo.IsBasic, srcField.TypeInfo.Kind)
+					if srcField.TypeInfo.Underlying != nil {
+						fmt.Fprintf(&functionBodyBuf, "\t// DEBUG_SRC_FIELD_UNDERLYING: Name=%s, FullName=%s, IsBasic=%t, Kind=%v\n", srcField.TypeInfo.Underlying.Name, srcField.TypeInfo.Underlying.FullName, srcField.TypeInfo.Underlying.IsBasic, srcField.TypeInfo.Underlying.Kind)
+					}
+					fmt.Fprintf(&functionBodyBuf, "\t// DEBUG_DST_FIELD: Name=%s, FullName=%s, IsBasic=%t, Kind=%v\n", dstField.TypeInfo.Name, dstField.TypeInfo.FullName, dstField.TypeInfo.IsBasic, dstField.TypeInfo.Kind)
+					if dstField.TypeInfo.Underlying != nil {
+						fmt.Fprintf(&functionBodyBuf, "\t// DEBUG_DST_FIELD_UNDERLYING: Name=%s, FullName=%s, IsBasic=%t, Kind=%v\n", dstField.TypeInfo.Underlying.Name, dstField.TypeInfo.Underlying.FullName, dstField.TypeInfo.Underlying.IsBasic, dstField.TypeInfo.Underlying.Kind)
+					}
+					if srcUnderlying != nil {
+						fmt.Fprintf(&functionBodyBuf, "\t// DEBUG_SRC_ACTUAL_UNDERLYING: Name=%s, FullName=%s, IsBasic=%t, Kind=%v\n", srcUnderlying.Name, srcUnderlying.FullName, srcUnderlying.IsBasic, srcUnderlying.Kind)
+					} else {
+						fmt.Fprintf(&functionBodyBuf, "\t// DEBUG_SRC_ACTUAL_UNDERLYING: nil\n")
+					}
+					if dstUnderlying != nil {
+						fmt.Fprintf(&functionBodyBuf, "\t// DEBUG_DST_ACTUAL_UNDERLYING: Name=%s, FullName=%s, IsBasic=%t, Kind=%v\n", dstUnderlying.Name, dstUnderlying.FullName, dstUnderlying.IsBasic, dstUnderlying.Kind)
+					} else {
+						fmt.Fprintf(&functionBodyBuf, "\t// DEBUG_DST_ACTUAL_UNDERLYING: nil\n")
+					}
+					// --- DEBUG COMMENTS END ---
+
+					fmt.Fprintf(&functionBodyBuf, "\t// DEBUG_BEFORE_underlyingTypesMatch_check: srcUnderlying is nil = %t, dstUnderlying is nil = %t\n", srcUnderlying == nil, dstUnderlying == nil)
+					underlyingTypesMatch := false
+					if srcUnderlying != nil && dstUnderlying != nil {
+						fmt.Fprintf(&functionBodyBuf, "\t// DEBUG_COND_PreCheck: srcUnderlying.IsBasic=%t, dstUnderlying.IsBasic=%t, srcUnderlying.Name=%s, dstUnderlying.Name=%s, srcUnderlying.FullName=%s, dstUnderlying.FullName=%s\n", srcUnderlying.IsBasic, dstUnderlying.IsBasic, srcUnderlying.Name, dstUnderlying.Name, srcUnderlying.FullName, dstUnderlying.FullName)
+						if srcUnderlying.IsBasic && dstUnderlying.IsBasic && srcUnderlying.Name == dstUnderlying.Name {
+							underlyingTypesMatch = true
+							fmt.Fprintf(&functionBodyBuf, "\t// DEBUG_MATCH_COND: Cond1_BasicByName (%s)\n", srcUnderlying.Name)
+						} else if !srcUnderlying.IsBasic && !dstUnderlying.IsBasic && srcUnderlying.FullName == dstUnderlying.FullName {
+							underlyingTypesMatch = true
+							fmt.Fprintf(&functionBodyBuf, "\t// DEBUG_MATCH_COND: Cond2_NonBasicByFullName (%s)\n", srcUnderlying.FullName)
+						} else if srcUnderlying.FullName == dstUnderlying.FullName { // This is a broader fallback
+							underlyingTypesMatch = true
+							fmt.Fprintf(&functionBodyBuf, "\t// DEBUG_MATCH_COND: Cond3_FallbackByFullName (%s).\n", srcUnderlying.FullName)
+						} else {
+							fmt.Fprintf(&functionBodyBuf, "\t// DEBUG_MATCH_COND: No match for underlying types.\n")
+						}
+					} else {
+						fmt.Fprintf(&functionBodyBuf, "\t// DEBUG_MATCH_COND: srcUnderlying or dstUnderlying is nil.\n")
+					}
+					fmt.Fprintf(&functionBodyBuf, "\t// DEBUG_FINAL_underlyingTypesMatch: %t\n", underlyingTypesMatch)
+
+
+					if underlyingTypesMatch &&
+						srcUnderlying.StructInfo == nil && dstUnderlying.StructInfo == nil &&
+						!srcUnderlying.IsMap && !dstUnderlying.IsMap &&
+						!srcUnderlying.IsSlice && !dstUnderlying.IsSlice {
+
+						dstTypeNameStr := typeNameInSource(dstField.TypeInfo, parsedInfo.PackagePath, imports)
+						srcAccessPathBase := "src." + srcField.Name // Base access path
+
+						isSrcUnderlyingEffectivelyPointer := srcField.TypeInfo.IsPointer
+						if !isSrcUnderlyingEffectivelyPointer && srcField.TypeInfo.Kind == model.KindNamed && srcField.TypeInfo.Underlying != nil {
+							isSrcUnderlyingEffectivelyPointer = srcField.TypeInfo.Underlying.IsPointer
+						}
+
+						srcCastOperandForUnderlying := srcAccessPathBase
+						if isSrcUnderlyingEffectivelyPointer { // This applies if the source type (or its underlying if named) is a pointer
+							srcCastOperandForUnderlying = "*" + srcAccessPathBase
+						}
+
+						isActualSrcPointer := srcField.TypeInfo.IsPointer || (srcField.TypeInfo.Kind == model.KindNamed && srcField.TypeInfo.Underlying != nil && srcField.TypeInfo.Underlying.IsPointer)
+						isActualDstPointer := dstField.TypeInfo.IsPointer || (dstField.TypeInfo.Kind == model.KindNamed && dstField.TypeInfo.Underlying != nil && dstField.TypeInfo.Underlying.IsPointer)
+
+
+						if !isActualSrcPointer && !isActualDstPointer {
+							fmt.Fprintf(&functionBodyBuf, "\tdst.%s = %s(%s)\n", dstField.Name, dstTypeNameStr, srcCastOperandForUnderlying)
+						} else if !isActualSrcPointer && isActualDstPointer {
+							fmt.Fprintf(&functionBodyBuf, "\t{\n")
+							fmt.Fprintf(&functionBodyBuf, "\t\tconvertedVal := %s(%s)\n", typeNameInSource(dstField.TypeInfo.Elem, parsedInfo.PackagePath, imports), srcCastOperandForUnderlying)
+							fmt.Fprintf(&functionBodyBuf, "\t\tdst.%s = &convertedVal\n", dstField.Name)
+							fmt.Fprintf(&functionBodyBuf, "\t}\n")
+						} else if isActualSrcPointer && !isActualDstPointer {
+							if srcField.Tag.Required {
+								fmt.Fprintf(&functionBodyBuf, "\tif %s == nil {\n", srcAccessPathBase) // Check original field path for nil
+								fmt.Fprintf(&functionBodyBuf, "\t\tec.Addf(\"field '%s' is required but source field %s for underlying cast is nil\")\n", dstField.Name, srcField.Name)
+								fmt.Fprintf(&functionBodyBuf, "\t} else {\n")
+								fmt.Fprintf(&functionBodyBuf, "\t\tdst.%s = %s(%s)\n", dstField.Name, dstTypeNameStr, srcCastOperandForUnderlying)
+								fmt.Fprintf(&functionBodyBuf, "\t}\n")
+							} else {
+								fmt.Fprintf(&functionBodyBuf, "\tif %s != nil {\n", srcAccessPathBase) // Check original field path for nil
+								fmt.Fprintf(&functionBodyBuf, "\t\tdst.%s = %s(%s)\n", dstField.Name, dstTypeNameStr, srcCastOperandForUnderlying)
+								fmt.Fprintf(&functionBodyBuf, "\t}\n")
+							}
+						} else { // isActualSrcPointer && isActualDstPointer
+							fmt.Fprintf(&functionBodyBuf, "\tif %s != nil {\n", srcAccessPathBase) // Check original field path for nil
+							fmt.Fprintf(&functionBodyBuf, "\t\tconvertedVal := %s(%s)\n", typeNameInSource(dstField.TypeInfo.Elem, parsedInfo.PackagePath, imports), srcCastOperandForUnderlying)
+							fmt.Fprintf(&functionBodyBuf, "\t\tdst.%s = &convertedVal\n", dstField.Name)
+							fmt.Fprintf(&functionBodyBuf, "\t} else {\n")
+							fmt.Fprintf(&functionBodyBuf, "\t\tdst.%s = nil\n", dstField.Name)
+							fmt.Fprintf(&functionBodyBuf, "\t}\n")
+						// } else { // Should be non-pointer to non-pointer if all other pointer cases are handled
+						// 	fmt.Fprintf(&functionBodyBuf, "\tdst.%s = %s(%s)\n", dstField.Name, dstTypeNameStr, srcCastOperandForUnderlying)
+						}
+					} else {
+						fmt.Fprintf(&functionBodyBuf, "\t// TODO: Implement conversion for %s (%s) to %s (%s).\n",
+							srcField.Name, srcField.TypeInfo.FullName,
+							dstField.Name, dstField.TypeInfo.FullName)
+						fmt.Fprintf(&functionBodyBuf, "\tec.Addf(\"type mismatch or complex conversion not yet implemented for field '%s' (%s -> %s)\")\n",
+							dstField.Name, srcField.TypeInfo.FullName, dstField.TypeInfo.FullName)
+					}
+				} // This closes the "else" for "if srcIsStruct && dstIsStruct"
+			} // This closes the "else" for "if typesMatchDirectly || basic pointer conversions"
 		} // if appliedUsingFunc != "" の else ブロックの閉じ括弧
 
 		fmt.Fprintf(&functionBodyBuf, "\tec.Leave()\n")
@@ -637,7 +774,18 @@ func typeNameInSource(typeInfo *model.TypeInfo, currentPackagePath string, impor
 			// If alias is same as base name of path, it means no explicit alias in import stmt.
 			// e.g. import "time", used as time.Time. alias="time"
 			// e.g. import custom "example.com/custom", used as custom.Type. alias="custom"
-			return alias + "." + ti.Name
+			fullNameCandidate := alias + "." + ti.Name
+			// Defensive check: if ti.Name somehow already contains the package alias prefix.
+			// This might happen if ti.Name was populated with a fully qualified name from another source.
+			// e.g. alias="time", ti.Name="time.Time" -> results in "time.time.Time" without this check.
+			if strings.HasPrefix(ti.Name, alias+".") && len(ti.Name) > len(alias)+1 {
+				// Check to ensure it's not just Name="time" and alias="time" leading to Name being prefix of itself.
+				// This implies ti.Name is already correctly qualified for its own package, but used via an alias here.
+				// This situation is unusual. Normally ti.Name would be "Time" and alias "time".
+				// If ti.Name is "pkg.Type" and alias is "pkg", we want "pkg.Type".
+				return ti.Name
+			}
+			return fullNameCandidate
 		}
 		return ti.Name // Type is in the current package, or a basic type, or its package path is empty.
 	}
@@ -723,6 +871,33 @@ func lowercaseFirstLetter(s string) string {
 		return ""
 	}
 	return strings.ToLower(s[0:1]) + s[1:]
+}
+
+// getUnderlyingTypeInfo recursively finds the base type information,
+// stripping away pointers and named type aliases until a non-named, non-pointer type is found,
+// or a named type that is a struct/map/slice itself (not an alias to one).
+// It returns the TypeInfo of this fundamental underlying type.
+func getUnderlyingTypeInfo(ti *model.TypeInfo) *model.TypeInfo {
+	if ti == nil {
+		return nil
+	}
+	current := ti
+	for {
+		if current.IsPointer {
+			if current.Elem == nil {
+				return nil // Should not happen
+			}
+			current = current.Elem
+			continue
+		}
+		// If it's a named type and has a different underlying type, continue unwrapping.
+		if current.Kind == model.KindNamed && current.Underlying != nil && current.Underlying.FullName != current.FullName {
+			current = current.Underlying
+			continue
+		}
+		// No more pointers, and not a named type that can be further unwrapped.
+		return current
+	}
 }
 
 // errorCollectorTemplate (content is the same as before)

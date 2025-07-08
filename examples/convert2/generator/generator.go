@@ -3,6 +3,8 @@ package generator
 import (
 	"bytes"
 	"fmt"
+	"sort"
+
 	// "go/ast" // No longer needed
 	"go/format"
 	// "go/token" // No longer needed
@@ -37,6 +39,7 @@ func GenerateConversionCode(parsedInfo *model.ParsedInfo, outputDir string) erro
 	requiredImports["fmt"] = "fmt"         // For error messages in errorCollector & Sprintf
 	requiredImports["errors"] = "errors"   // For errors.Join
 	requiredImports["strings"] = "strings" // For strings.Join in errorCollector
+	requiredImports["sort"] = "sort"       // For sorting unmapped fields in docstring
 
 	// --- Generate Error Collector ---
 	// The errorCollectorTemplate itself does not declare imports.
@@ -250,17 +253,20 @@ func generateHelperFunction(
 	addRequiredImport(srcType, parsedInfo.PackagePath, imports)
 	addRequiredImport(dstType, parsedInfo.PackagePath, imports)
 
-	fmt.Fprintf(buf, "func %s(ec *errorCollector, src %s) %s {\n",
-		funcName,
-		typeNameInSource(srcType, parsedInfo.PackagePath, imports),
-		typeNameInSource(dstType, parsedInfo.PackagePath, imports))
-	fmt.Fprintf(buf, "\tdst := %s{}\n", typeNameInSource(dstType, parsedInfo.PackagePath, imports))
-	fmt.Fprintf(buf, "\tif ec.MaxErrorsReached() { return dst } \n\n")
+	// Track destination fields that are not set
+	unmappedDstFields := make(map[string]bool)
+	for _, dstF := range dstStruct.Fields {
+		unmappedDstFields[dstF.Name] = true
+	}
+
+	var functionBodyBuf bytes.Buffer
+	fmt.Fprintf(&functionBodyBuf, "\tdst := %s{}\n", typeNameInSource(dstType, parsedInfo.PackagePath, imports))
+	fmt.Fprintf(&functionBodyBuf, "\tif ec.MaxErrorsReached() { return dst } \n\n")
 
 	// Iterate over source struct fields to apply rules and find destinations
 	for _, srcField := range srcStruct.Fields {
 		if srcField.Tag.DstFieldName == "-" {
-			fmt.Fprintf(buf, "\t// Source field %s.%s is skipped due to tag '-'.\n", srcStruct.Name, srcField.Name)
+			fmt.Fprintf(&functionBodyBuf, "\t// Source field %s.%s is skipped due to tag '-'.\n", srcStruct.Name, srcField.Name)
 			continue
 		}
 
@@ -283,14 +289,15 @@ func generateHelperFunction(
 			// For now, if explicit name or same name doesn't match, we report (or silently skip).
 			// Let's add a comment for now if a DstFieldName was specified in tag but not found.
 			if srcField.Tag.DstFieldName != "" {
-				fmt.Fprintf(buf, "\t// Warning: Destination field '%s' specified for source field '%s.%s' not found in struct '%s'.\n", srcField.Tag.DstFieldName, srcStruct.Name, srcField.Name, dstStruct.Name)
+				fmt.Fprintf(&functionBodyBuf, "\t// Warning: Destination field '%s' specified for source field '%s.%s' not found in struct '%s'.\n", srcField.Tag.DstFieldName, srcStruct.Name, srcField.Name, dstStruct.Name)
 			}
 			continue
 		}
+		delete(unmappedDstFields, dstField.Name) // Mark as mapped
 
 		// Found source field and corresponding destination field.
 		// Now, implement basic direct assignment if types match.
-		fmt.Fprintf(buf, "\t// Mapping field %s.%s (%s) to %s.%s (%s)\n",
+		fmt.Fprintf(&functionBodyBuf, "\t// Mapping field %s.%s (%s) to %s.%s (%s)\n",
 			srcStruct.Name, srcField.Name, srcField.TypeInfo.FullName,
 			dstStruct.Name, dstField.Name, dstField.TypeInfo.FullName)
 
@@ -302,10 +309,10 @@ func generateHelperFunction(
 		if dstField.TypeInfo.Elem != nil {
 			dstElemFullName = dstField.TypeInfo.Elem.FullName
 		}
-		fmt.Fprintf(buf, "\t// Src: Ptr=%t, ElemFull=%s | Dst: Ptr=%t, ElemFull=%s\n",
+		fmt.Fprintf(&functionBodyBuf, "\t// Src: Ptr=%t, ElemFull=%s | Dst: Ptr=%t, ElemFull=%s\n",
 			srcField.TypeInfo.IsPointer, srcElemFullName,
 			dstField.TypeInfo.IsPointer, dstElemFullName)
-		fmt.Fprintf(buf, "\tec.Enter(%q)\n", dstField.Name) // Path uses DstFieldName
+		fmt.Fprintf(&functionBodyBuf, "\tec.Enter(%q)\n", dstField.Name) // Path uses DstFieldName
 
 		// Add imports for field types
 		addRequiredImport(srcField.TypeInfo, parsedInfo.PackagePath, imports)
@@ -368,11 +375,11 @@ func generateHelperFunction(
 			}
 
 			if usingFuncIsGlobal {
-				fmt.Fprintf(buf, "\t// Applying global rule: %s -> %s using %s\n", srcField.TypeInfo.FullName, dstField.TypeInfo.FullName, appliedUsingFunc)
+				fmt.Fprintf(&functionBodyBuf, "\t// Applying global rule: %s -> %s using %s\n", srcField.TypeInfo.FullName, dstField.TypeInfo.FullName, appliedUsingFunc)
 			} else {
-				fmt.Fprintf(buf, "\t// Applying field tag: using %s\n", appliedUsingFunc)
+				fmt.Fprintf(&functionBodyBuf, "\t// Applying field tag: using %s\n", appliedUsingFunc)
 			}
-			fmt.Fprintf(buf, "\tdst.%s = %s(ec, src.%s)\n", dstField.Name, funcCallName, srcField.Name)
+			fmt.Fprintf(&functionBodyBuf, "\tdst.%s = %s(ec, src.%s)\n", dstField.Name, funcCallName, srcField.Name)
 
 		} else {
 			// Priority 3: Automatic Conversion (including pointer logic)
@@ -395,25 +402,25 @@ func generateHelperFunction(
 			elementsMatch := srcElemTypeFullName != "" && dstElemTypeFullName != "" && srcElemTypeFullName == dstElemTypeFullName
 
 			if typesMatchDirectly { // Case: T -> T or *T -> *T (elements must also match for *T -> *T, implied by FullName match)
-				fmt.Fprintf(buf, "\tdst.%s = src.%s\n", dstField.Name, srcField.Name)
+				fmt.Fprintf(&functionBodyBuf, "\tdst.%s = src.%s\n", dstField.Name, srcField.Name)
 			} else if !srcIsPtr && dstIsPtr && elementsMatch { // Case: T -> *T
 				// Ensure that dstField.TypeInfo.Elem.FullName matches srcField.TypeInfo.FullName
-				fmt.Fprintf(buf, "\t{\n")
-				fmt.Fprintf(buf, "\t\tsrcVal := src.%s\n", srcField.Name)
-				fmt.Fprintf(buf, "\t\tdst.%s = &srcVal\n", dstField.Name)
-				fmt.Fprintf(buf, "\t}\n")
+				fmt.Fprintf(&functionBodyBuf, "\t{\n")
+				fmt.Fprintf(&functionBodyBuf, "\t\tsrcVal := src.%s\n", srcField.Name)
+				fmt.Fprintf(&functionBodyBuf, "\t\tdst.%s = &srcVal\n", dstField.Name)
+				fmt.Fprintf(&functionBodyBuf, "\t}\n")
 			} else if srcIsPtr && !dstIsPtr && elementsMatch { // Case: *T -> T
 				// Ensure that srcField.TypeInfo.Elem.FullName matches dstField.TypeInfo.FullName
 				if srcField.Tag.Required {
-					fmt.Fprintf(buf, "\tif src.%s == nil {\n", srcField.Name)
-					fmt.Fprintf(buf, "\t\tec.Addf(\"field '%s' is required but source field %s is nil\")\n", dstField.Name, srcField.Name)
-					fmt.Fprintf(buf, "\t} else {\n")
-					fmt.Fprintf(buf, "\t\tdst.%s = *src.%s\n", dstField.Name, srcField.Name)
-					fmt.Fprintf(buf, "\t}\n")
+					fmt.Fprintf(&functionBodyBuf, "\tif src.%s == nil {\n", srcField.Name)
+					fmt.Fprintf(&functionBodyBuf, "\t\tec.Addf(\"field '%s' is required but source field %s is nil\")\n", dstField.Name, srcField.Name)
+					fmt.Fprintf(&functionBodyBuf, "\t} else {\n")
+					fmt.Fprintf(&functionBodyBuf, "\t\tdst.%s = *src.%s\n", dstField.Name, srcField.Name)
+					fmt.Fprintf(&functionBodyBuf, "\t}\n")
 				} else {
-					fmt.Fprintf(buf, "\tif src.%s != nil {\n", srcField.Name)
-					fmt.Fprintf(buf, "\t\tdst.%s = *src.%s\n", dstField.Name, srcField.Name)
-					fmt.Fprintf(buf, "\t}\n") // If nil, dst field remains zero value, no error
+					fmt.Fprintf(&functionBodyBuf, "\tif src.%s != nil {\n", srcField.Name)
+					fmt.Fprintf(&functionBodyBuf, "\t\tdst.%s = *src.%s\n", dstField.Name, srcField.Name)
+					fmt.Fprintf(&functionBodyBuf, "\t}\n") // If nil, dst field remains zero value, no error
 				}
 			} else {
 				// Types do not match directly and pointer logic doesn't apply or elements mismatch.
@@ -461,7 +468,6 @@ func generateHelperFunction(
 					}
 				}
 
-
 				var dstStructDef *model.StructInfo
 				var dstIsStruct bool
 				if tempDstTypeInfo.PackagePath == parsedInfo.PackagePath || tempDstTypeInfo.PackagePath == "" {
@@ -483,13 +489,12 @@ func generateHelperFunction(
 					dstStructDef = tempDstTypeInfo.StructInfo
 				}
 
-
 				if srcIsStruct && dstIsStruct {
 					// Use the TypeInfo from the canonical struct definition for the pair
 					actualSrcFieldType := srcStructDef.Type
 					actualDstFieldType := dstStructDef.Type
 
-					fmt.Fprintf(buf, "\t// Recursive call for nested struct %s -> %s\n", actualSrcFieldType.Name, actualDstFieldType.Name)
+					fmt.Fprintf(&functionBodyBuf, "\t// Recursive call for nested struct %s -> %s\n", actualSrcFieldType.Name, actualDstFieldType.Name)
 					nestedHelperFuncName := fmt.Sprintf("%sTo%s", lowercaseFirstLetter(actualSrcFieldType.Name), actualDstFieldType.Name)
 
 					nestedPair := model.ConversionPair{
@@ -525,46 +530,67 @@ func generateHelperFunction(
 					assignToDst := "dst." + dstField.Name + " = "
 
 					if srcField.TypeInfo.IsPointer && !dstField.TypeInfo.IsPointer { // *S -> D
-						fmt.Fprintf(buf, "\tif src.%s != nil {\n", srcField.Name)
-						fmt.Fprintf(buf, "\t\t%s%s(ec, *%s)\n", assignToDst, nestedHelperFuncName, srcAccess)
+						fmt.Fprintf(&functionBodyBuf, "\tif src.%s != nil {\n", srcField.Name)
+						fmt.Fprintf(&functionBodyBuf, "\t\t%s%s(ec, *%s)\n", assignToDst, nestedHelperFuncName, srcAccess)
 						// TODO: Handle 'required' tag for src pointer if dst non-pointer needs it
-						fmt.Fprintf(buf, "\t} else {\n")
+						fmt.Fprintf(&functionBodyBuf, "\t} else {\n")
 						if srcField.Tag.Required { // If source pointer is required for a non-pointer destination
-							fmt.Fprintf(buf, "\t\tec.Addf(\"field '%s' is required but source field %s for nested struct is nil\")\n", dstField.Name, srcField.Name)
+							fmt.Fprintf(&functionBodyBuf, "\t\tec.Addf(\"field '%s' is required but source field %s for nested struct is nil\")\n", dstField.Name, srcField.Name)
 						} else {
-							fmt.Fprintf(buf, "\t\t// Source field %s is nil, destination %s remains zero value\n", srcField.Name, dstField.Name)
+							fmt.Fprintf(&functionBodyBuf, "\t\t// Source field %s is nil, destination %s remains zero value\n", srcField.Name, dstField.Name)
 						}
-						fmt.Fprintf(buf, "\t}\n")
+						fmt.Fprintf(&functionBodyBuf, "\t}\n")
 					} else if !srcField.TypeInfo.IsPointer && dstField.TypeInfo.IsPointer { // S -> *D
-						fmt.Fprintf(buf, "\t{\n")
-						fmt.Fprintf(buf, "\t\tnestedVal := %s(ec, %s)\n", nestedHelperFuncName, srcAccess)
-						fmt.Fprintf(buf, "\t\t%s&nestedVal\n", assignToDst)
-						fmt.Fprintf(buf, "\t}\n")
+						fmt.Fprintf(&functionBodyBuf, "\t{\n")
+						fmt.Fprintf(&functionBodyBuf, "\t\tnestedVal := %s(ec, %s)\n", nestedHelperFuncName, srcAccess)
+						fmt.Fprintf(&functionBodyBuf, "\t\t%s&nestedVal\n", assignToDst)
+						fmt.Fprintf(&functionBodyBuf, "\t}\n")
 					} else if srcField.TypeInfo.IsPointer && dstField.TypeInfo.IsPointer { // *S -> *D
-						fmt.Fprintf(buf, "\tif src.%s != nil {\n", srcField.Name)
-						fmt.Fprintf(buf, "\t\tnestedVal := %s(ec, *%s)\n", nestedHelperFuncName, srcAccess)
-						fmt.Fprintf(buf, "\t\t%s&nestedVal\n", assignToDst)
-						fmt.Fprintf(buf, "\t} else {\n")
-						fmt.Fprintf(buf, "\t\t%s nil // Source pointer is nil, so destination pointer is nil\n", assignToDst)
-						fmt.Fprintf(buf, "\t}\n")
+						fmt.Fprintf(&functionBodyBuf, "\tif src.%s != nil {\n", srcField.Name)
+						fmt.Fprintf(&functionBodyBuf, "\t\tnestedVal := %s(ec, *%s)\n", nestedHelperFuncName, srcAccess)
+						fmt.Fprintf(&functionBodyBuf, "\t\t%s&nestedVal\n", assignToDst)
+						fmt.Fprintf(&functionBodyBuf, "\t} else {\n")
+						fmt.Fprintf(&functionBodyBuf, "\t\t%s nil // Source pointer is nil, so destination pointer is nil\n", assignToDst)
+						fmt.Fprintf(&functionBodyBuf, "\t}\n")
 					} else { // S -> D (non-pointers)
-						fmt.Fprintf(buf, "\t%s%s(ec, %s)\n", assignToDst, nestedHelperFuncName, srcAccess)
+						fmt.Fprintf(&functionBodyBuf, "\t%s%s(ec, %s)\n", assignToDst, nestedHelperFuncName, srcAccess)
 					}
 
 				} else {
 					// Fallback for non-struct or other complex types not yet handled
-					fmt.Fprintf(buf, "\t// TODO: Implement conversion for %s (%s) to %s (%s).\n",
+					fmt.Fprintf(&functionBodyBuf, "\t// TODO: Implement conversion for %s (%s) to %s (%s).\n",
 						srcField.Name, srcField.TypeInfo.FullName,
 						dstField.Name, dstField.TypeInfo.FullName)
-					fmt.Fprintf(buf, "\tec.Addf(\"type mismatch or complex conversion not yet implemented for field '%s' (%s -> %s)\")\n",
+					fmt.Fprintf(&functionBodyBuf, "\tec.Addf(\"type mismatch or complex conversion not yet implemented for field '%s' (%s -> %s)\")\n",
 						dstField.Name, srcField.TypeInfo.FullName, dstField.TypeInfo.FullName)
 				}
 			}
 		} // if appliedUsingFunc != "" の else ブロックの閉じ括弧
 
-		fmt.Fprintf(buf, "\tec.Leave()\n")
-		fmt.Fprintf(buf, "\tif ec.MaxErrorsReached() { return dst } \n\n")
+		fmt.Fprintf(&functionBodyBuf, "\tec.Leave()\n")
+		fmt.Fprintf(&functionBodyBuf, "\tif ec.MaxErrorsReached() { return dst } \n\n")
 	} // for ループの閉じ括弧
+
+	// --- Write function signature and docstring ---
+	// Add docstring for unmapped fields
+	if len(unmappedDstFields) > 0 {
+		fmt.Fprintf(buf, "// %s converts %s to %s.\n", funcName, srcType.Name, dstType.Name)
+		fmt.Fprintf(buf, "// Fields in %s not populated by this conversion:\n", dstType.Name)
+		sortedUnmappedFields := make([]string, 0, len(unmappedDstFields))
+		for fName := range unmappedDstFields {
+			sortedUnmappedFields = append(sortedUnmappedFields, fName)
+		}
+		sort.Strings(sortedUnmappedFields) // Sort for deterministic output
+		for _, fName := range sortedUnmappedFields {
+			fmt.Fprintf(buf, "// - %s\n", fName)
+		}
+	}
+
+	fmt.Fprintf(buf, "func %s(ec *errorCollector, src %s) %s {\n",
+		funcName,
+		typeNameInSource(srcType, parsedInfo.PackagePath, imports),
+		typeNameInSource(dstType, parsedInfo.PackagePath, imports))
+	buf.Write(functionBodyBuf.Bytes()) // Write the already generated function body
 
 	fmt.Fprintf(buf, "\treturn dst\n")
 	fmt.Fprintf(buf, "}\n\n")

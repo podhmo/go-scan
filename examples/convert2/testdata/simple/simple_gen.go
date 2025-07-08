@@ -64,6 +64,9 @@ func (ec *errorCollector) MaxErrorsReached() bool {
 	return ec.maxErrors > 0 && len(ec.errors) >= ec.maxErrors
 }
 
+// srcSimpleToDstSimple converts SrcSimple to DstSimple.
+// Fields in DstSimple not populated by this conversion:
+// - NoMatchSrc
 func srcSimpleToDstSimple(ec *errorCollector, src SrcSimple) DstSimple {
 	dst := DstSimple{}
 	if ec.MaxErrorsReached() {
@@ -184,7 +187,150 @@ func srcWithAliasToDstWithAlias(ec *errorCollector, src SrcWithAlias) DstWithAli
 	return dst
 }
 
-func ConvertSrcSimple(ctx context.Context, src SrcSimple) (DstSimple, error) {
+func innerSrcToInnerDst(ec *errorCollector, src InnerSrc) InnerDst {
+	dst := InnerDst{}
+	if ec.MaxErrorsReached() {
+		return dst
+	}
+
+	// Mapping field InnerSrc.InnerID (int) to InnerDst.InnerID (int)
+	// Src: Ptr=false, ElemFull=nil | Dst: Ptr=false, ElemFull=nil
+	ec.Enter("InnerID")
+	dst.InnerID = src.InnerID
+	ec.Leave()
+	if ec.MaxErrorsReached() {
+		return dst
+	}
+
+	// Mapping field InnerSrc.InnerName (string) to InnerDst.InnerName (string)
+	// Src: Ptr=false, ElemFull=nil | Dst: Ptr=false, ElemFull=nil
+	ec.Enter("InnerName")
+	dst.InnerName = src.InnerName
+	ec.Leave()
+	if ec.MaxErrorsReached() {
+		return dst
+	}
+
+	return dst
+}
+
+func outerSrcToOuterDst(ec *errorCollector, src OuterSrc) OuterDst {
+	dst := OuterDst{}
+	if ec.MaxErrorsReached() {
+		return dst
+	}
+
+	// Mapping field OuterSrc.OuterID (int) to OuterDst.OuterID (int)
+	// Src: Ptr=false, ElemFull=nil | Dst: Ptr=false, ElemFull=nil
+	ec.Enter("OuterID")
+	dst.OuterID = src.OuterID
+	ec.Leave()
+	if ec.MaxErrorsReached() {
+		return dst
+	}
+
+	// Mapping field OuterSrc.Nested (example.com/convert2/testdata/simple.InnerSrc) to OuterDst.Nested (example.com/convert2/testdata/simple.InnerDst)
+	// Src: Ptr=false, ElemFull=nil | Dst: Ptr=false, ElemFull=nil
+	ec.Enter("Nested")
+	// Recursive call for nested struct InnerSrc -> InnerDst
+	dst.Nested = innerSrcToInnerDst(ec, src.Nested)
+	ec.Leave()
+	if ec.MaxErrorsReached() {
+		return dst
+	}
+
+	// Mapping field OuterSrc.NestedPtr (*example.com/convert2/testdata/simple.InnerSrc) to OuterDst.NestedPtr (*example.com/convert2/testdata/simple.InnerDst)
+	// Src: Ptr=true, ElemFull=example.com/convert2/testdata/simple.InnerSrc | Dst: Ptr=true, ElemFull=example.com/convert2/testdata/simple.InnerDst
+	ec.Enter("NestedPtr")
+	// Recursive call for nested struct InnerSrc -> InnerDst
+	if src.NestedPtr != nil {
+		nestedVal := innerSrcToInnerDst(ec, *src.NestedPtr)
+		dst.NestedPtr = &nestedVal
+	} else {
+		dst.NestedPtr = nil // Source pointer is nil, so destination pointer is nil
+	}
+	ec.Leave()
+	if ec.MaxErrorsReached() {
+		return dst
+	}
+
+	// Mapping field OuterSrc.Name (string) to OuterDst.OuterName (string)
+	// Src: Ptr=false, ElemFull=nil | Dst: Ptr=false, ElemFull=nil
+	ec.Enter("OuterName")
+	dst.OuterName = src.Name
+	ec.Leave()
+	if ec.MaxErrorsReached() {
+		return dst
+	}
+
+	return dst
+}
+
+func innerSrcDiffToInnerDstDiff(ec *errorCollector, src InnerSrcDiff) InnerDstDiff {
+	dst := InnerDstDiff{}
+	if ec.MaxErrorsReached() {
+		return dst
+	}
+
+	// Mapping field InnerSrcDiff.SrcInnerVal (int) to InnerDstDiff.DstInnerVal (int)
+	// Src: Ptr=false, ElemFull=nil | Dst: Ptr=false, ElemFull=nil
+	ec.Enter("DstInnerVal")
+	dst.DstInnerVal = src.SrcInnerVal
+	ec.Leave()
+	if ec.MaxErrorsReached() {
+		return dst
+	}
+
+	return dst
+}
+
+func outerSrcDiffToOuterDstDiff(ec *errorCollector, src OuterSrcDiff) OuterDstDiff {
+	dst := OuterDstDiff{}
+	if ec.MaxErrorsReached() {
+		return dst
+	}
+
+	// Mapping field OuterSrcDiff.ID (int) to OuterDstDiff.ID (int)
+	// Src: Ptr=false, ElemFull=nil | Dst: Ptr=false, ElemFull=nil
+	ec.Enter("ID")
+	dst.ID = src.ID
+	ec.Leave()
+	if ec.MaxErrorsReached() {
+		return dst
+	}
+
+	// Mapping field OuterSrcDiff.DiffNested (example.com/convert2/testdata/simple.InnerSrcDiff) to OuterDstDiff.DestNested (example.com/convert2/testdata/simple.InnerDstDiff)
+	// Src: Ptr=false, ElemFull=nil | Dst: Ptr=false, ElemFull=nil
+	ec.Enter("DestNested")
+	// Recursive call for nested struct InnerSrcDiff -> InnerDstDiff
+	dst.DestNested = innerSrcDiffToInnerDstDiff(ec, src.DiffNested)
+	ec.Leave()
+	if ec.MaxErrorsReached() {
+		return dst
+	}
+
+	return dst
+}
+
+func ConvertInnerSrcDiffToInnerDstDiff(ctx context.Context, src InnerSrcDiff) (InnerDstDiff, error) {
+	ec := newErrorCollector(0)
+	dst := innerSrcDiffToInnerDstDiff(ec, src)
+	if ec.HasErrors() {
+		return dst, errors.Join(ec.Errors()...)
+	}
+	return dst, nil
+}
+
+func ConvertOuterSrcDiffToOuterDstDiff(ctx context.Context, src OuterSrcDiff) (OuterDstDiff, error) {
+	ec := newErrorCollector(0)
+	dst := outerSrcDiffToOuterDstDiff(ec, src)
+	if ec.HasErrors() {
+		return dst, errors.Join(ec.Errors()...)
+	}
+	return dst, nil
+}
+
+func ConvertSrcSimpleToDstSimple(ctx context.Context, src SrcSimple) (DstSimple, error) {
 	ec := newErrorCollector(0)
 	dst := srcSimpleToDstSimple(ec, src)
 	if ec.HasErrors() {
@@ -193,9 +339,27 @@ func ConvertSrcSimple(ctx context.Context, src SrcSimple) (DstSimple, error) {
 	return dst, nil
 }
 
-func ConvertSrcWithAlias(ctx context.Context, src SrcWithAlias) (DstWithAlias, error) {
+func ConvertSrcWithAliasToDstWithAlias(ctx context.Context, src SrcWithAlias) (DstWithAlias, error) {
 	ec := newErrorCollector(0)
 	dst := srcWithAliasToDstWithAlias(ec, src)
+	if ec.HasErrors() {
+		return dst, errors.Join(ec.Errors()...)
+	}
+	return dst, nil
+}
+
+func ConvertInnerSrcToInnerDst(ctx context.Context, src InnerSrc) (InnerDst, error) {
+	ec := newErrorCollector(0)
+	dst := innerSrcToInnerDst(ec, src)
+	if ec.HasErrors() {
+		return dst, errors.Join(ec.Errors()...)
+	}
+	return dst, nil
+}
+
+func ConvertOuterSrcToOuterDst(ctx context.Context, src OuterSrc) (OuterDst, error) {
+	ec := newErrorCollector(0)
+	dst := outerSrcToOuterDst(ec, src)
 	if ec.HasErrors() {
 		return dst, errors.Join(ec.Errors()...)
 	}

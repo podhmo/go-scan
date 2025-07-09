@@ -5,7 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"go/ast"
+	goast "go/ast" // aliased
 
 	// "go/ast" // Removed duplicate import
 	"go/parser" // Ensure go/parser is imported
@@ -125,14 +125,14 @@ func parseInt64(s string) (int64, error) {
 
 // astNodeToString converts an AST node to its string representation.
 // This is a helper for error messages. It's not exhaustive.
-func (i *Interpreter) astNodeToString(node ast.Node, fset *token.FileSet) string {
+func (i *Interpreter) astNodeToString(node goast.Node, fset *token.FileSet) string {
 	// This is a simplified version. For more complex nodes, you might need
 	// to use format.Node from go/format, but that requires an io.Writer.
 	// For simple identifiers or selectors, this should suffice.
 	switch n := node.(type) {
-	case *ast.Ident:
+	case *goast.Ident:
 		return n.Name
-	case *ast.SelectorExpr:
+	case *goast.SelectorExpr:
 		return i.astNodeToString(n.X, fset) + "." + n.Sel.Name
 	// Add other cases as needed
 	default:
@@ -253,7 +253,7 @@ func (i *Interpreter) LoadAndRun(ctx context.Context, filename string, entryPoin
 	// For the main script file (.mgo), parse it directly using go/parser.
 	// go-scan is used for imported Go packages, not for the minigo script itself.
 	i.FileSet = token.NewFileSet() // Initialize a new FileSet for the main script
-	mainFileAst, err := parser.ParseFile(i.FileSet, absFilePath, nil, parser.ParseComments)
+	mainFileGoAst, err := parser.ParseFile(i.FileSet, absFilePath, nil, parser.ParseComments) // Renamed mainFileAst to mainFileGoAst
 	if err != nil {
 		// We don't have a specific token.Pos here for i.formatErrorWithContext if ParseFile itself fails.
 		// However, parser.ParseFile usually returns an error that includes position info.
@@ -283,14 +283,14 @@ func (i *Interpreter) LoadAndRun(ctx context.Context, filename string, entryPoin
 	// For now, errors from imports via sharedScanner will use sharedScanner.Fset() internally if they format.
 
 	// Process import declarations from the AST to populate importAliasMap
-	// This part still uses mainFileAst directly, which is fine.
-	for _, declNode := range mainFileAst.Decls {
-		genDecl, ok := declNode.(*ast.GenDecl)
+	// This part still uses mainFileGoAst directly, which is fine.
+	for _, declNode := range mainFileGoAst.Decls {
+		genDecl, ok := declNode.(*goast.GenDecl)
 		if !ok || genDecl.Tok != token.IMPORT {
 			continue
 		}
 		for _, spec := range genDecl.Specs {
-			impSpec, ok := spec.(*ast.ImportSpec)
+			impSpec, ok := spec.(*goast.ImportSpec)
 			if !ok {
 				continue
 			}
@@ -321,12 +321,12 @@ func (i *Interpreter) LoadAndRun(ctx context.Context, filename string, entryPoin
 	}
 
 	// First pass: Process all TYPE declarations from the main script's AST
-	// We need to iterate over mainFileAst.Decls and manually create StructDefinition objects
+	// We need to iterate over mainFileGoAst.Decls and manually create StructDefinition objects
 	// or adapt evalDeclStmt to work with the AST directly without go-scan's PkgInfo for the main file.
-	// The existing evalDeclStmt should work if called with *ast.DeclStmt.
-	for _, declNode := range mainFileAst.Decls {
-		if genDecl, ok := declNode.(*ast.GenDecl); ok && genDecl.Tok == token.TYPE {
-			tempDeclStmt := &ast.DeclStmt{Decl: genDecl}
+	// The existing evalDeclStmt should work if called with *goast.DeclStmt.
+	for _, declNode := range mainFileGoAst.Decls {
+		if genDecl, ok := declNode.(*goast.GenDecl); ok && genDecl.Tok == token.TYPE {
+			tempDeclStmt := &goast.DeclStmt{Decl: genDecl}
 			_, evalErr := i.eval(ctx, tempDeclStmt, i.globalEnv)
 			if evalErr != nil {
 				// Pass genDecl.Pos() for better error location
@@ -336,9 +336,9 @@ func (i *Interpreter) LoadAndRun(ctx context.Context, filename string, entryPoin
 	}
 
 	// Second pass: Process function declarations from the main script's AST
-	for _, declNode := range mainFileAst.Decls {
-		if fnDecl, ok := declNode.(*ast.FuncDecl); ok {
-			_, evalErr := i.evalFuncDecl(ctx, fnDecl, i.globalEnv) // evalFuncDecl takes *ast.FuncDecl
+	for _, declNode := range mainFileGoAst.Decls {
+		if fnDecl, ok := declNode.(*goast.FuncDecl); ok {
+			_, evalErr := i.evalFuncDecl(ctx, fnDecl, i.globalEnv) // evalFuncDecl takes *goast.FuncDecl
 			if evalErr != nil {
 				return i.formatErrorWithContext(i.FileSet, fnDecl.Pos(), evalErr, fmt.Sprintf("Error evaluating function declaration %s in main script", fnDecl.Name.Name))
 			}
@@ -346,9 +346,9 @@ func (i *Interpreter) LoadAndRun(ctx context.Context, filename string, entryPoin
 	}
 
 	// Third pass: Process global variable declarations from the main script's AST
-	for _, declNode := range mainFileAst.Decls {
-		if genDecl, ok := declNode.(*ast.GenDecl); ok && genDecl.Tok == token.VAR {
-			tempDeclStmt := &ast.DeclStmt{Decl: genDecl}
+	for _, declNode := range mainFileGoAst.Decls {
+		if genDecl, ok := declNode.(*goast.GenDecl); ok && genDecl.Tok == token.VAR {
+			tempDeclStmt := &goast.DeclStmt{Decl: genDecl}
 			_, evalErr := i.eval(ctx, tempDeclStmt, i.globalEnv)
 			if evalErr != nil {
 				return i.formatErrorWithContext(i.FileSet, genDecl.Pos(), evalErr, "Error evaluating global variable declaration in main script")
@@ -380,14 +380,14 @@ func (i *Interpreter) LoadAndRun(ctx context.Context, filename string, entryPoin
 	// For now, errors from imports via sharedScanner will use sharedScanner.Fset() internally if they format.
 
 	// Process import declarations from the AST to populate importAliasMap
-	// This part still uses mainFileAst directly, which is fine.
-	for _, declNode := range mainFileAst.Decls {
-		genDecl, ok := declNode.(*ast.GenDecl)
+	// This part still uses mainFileGoAst directly, which is fine.
+	for _, declNode := range mainFileGoAst.Decls {
+		genDecl, ok := declNode.(*goast.GenDecl)
 		if !ok || genDecl.Tok != token.IMPORT {
 			continue
 		}
 		for _, spec := range genDecl.Specs {
-			impSpec, ok := spec.(*ast.ImportSpec)
+			impSpec, ok := spec.(*goast.ImportSpec)
 			if !ok {
 				continue
 			}
@@ -418,12 +418,12 @@ func (i *Interpreter) LoadAndRun(ctx context.Context, filename string, entryPoin
 	}
 
 	// First pass: Process all TYPE declarations from the main script's AST
-	// We need to iterate over mainFileAst.Decls and manually create StructDefinition objects
+	// We need to iterate over mainFileGoAst.Decls and manually create StructDefinition objects
 	// or adapt evalDeclStmt to work with the AST directly without go-scan's PkgInfo for the main file.
-	// The existing evalDeclStmt should work if called with *ast.DeclStmt.
-	for _, declNode := range mainFileAst.Decls {
-		if genDecl, ok := declNode.(*ast.GenDecl); ok && genDecl.Tok == token.TYPE {
-			tempDeclStmt := &ast.DeclStmt{Decl: genDecl}
+	// The existing evalDeclStmt should work if called with *goast.DeclStmt.
+	for _, declNode := range mainFileGoAst.Decls {
+		if genDecl, ok := declNode.(*goast.GenDecl); ok && genDecl.Tok == token.TYPE {
+			tempDeclStmt := &goast.DeclStmt{Decl: genDecl}
 			_, evalErr := i.eval(ctx, tempDeclStmt, i.globalEnv)
 			if evalErr != nil {
 				// Pass genDecl.Pos() for better error location
@@ -433,9 +433,9 @@ func (i *Interpreter) LoadAndRun(ctx context.Context, filename string, entryPoin
 	}
 
 	// Second pass: Process function declarations from the main script's AST
-	for _, declNode := range mainFileAst.Decls {
-		if fnDecl, ok := declNode.(*ast.FuncDecl); ok {
-			_, evalErr := i.evalFuncDecl(ctx, fnDecl, i.globalEnv) // evalFuncDecl takes *ast.FuncDecl
+	for _, declNode := range mainFileGoAst.Decls {
+		if fnDecl, ok := declNode.(*goast.FuncDecl); ok {
+			_, evalErr := i.evalFuncDecl(ctx, fnDecl, i.globalEnv) // evalFuncDecl takes *goast.FuncDecl
 			if evalErr != nil {
 				return i.formatErrorWithContext(i.activeFileSet, fnDecl.Pos(), evalErr, fmt.Sprintf("Error evaluating function declaration %s in main script", fnDecl.Name.Name))
 			}
@@ -443,9 +443,9 @@ func (i *Interpreter) LoadAndRun(ctx context.Context, filename string, entryPoin
 	}
 
 	// Third pass: Process global variable declarations from the main script's AST
-	for _, declNode := range mainFileAst.Decls {
-		if genDecl, ok := declNode.(*ast.GenDecl); ok && genDecl.Tok == token.VAR {
-			tempDeclStmt := &ast.DeclStmt{Decl: genDecl}
+	for _, declNode := range mainFileGoAst.Decls {
+		if genDecl, ok := declNode.(*goast.GenDecl); ok && genDecl.Tok == token.VAR {
+			tempDeclStmt := &goast.DeclStmt{Decl: genDecl}
 			_, evalErr := i.eval(ctx, tempDeclStmt, i.globalEnv)
 			if evalErr != nil {
 				return i.formatErrorWithContext(i.activeFileSet, genDecl.Pos(), evalErr, "Error evaluating global variable declaration in main script")
@@ -1995,14 +1995,31 @@ func (i *Interpreter) evalDeclStmt(ctx context.Context, declStmt *ast.DeclStmt, 
 					Fields:       directFields,
 					EmbeddedDefs: embeddedDefs,
 					FieldOrder:   fieldOrder,
+					FileSet:      i.activeFileSet, // Structs defined in script use activeFileSet
 				}
-				env.Define(typeName, structDef)
+				// Use SetType for type definitions
+				env.SetType(typeName, structDef) // Changed from Define to SetType
+			// Handle other kinds of type specifications (aliases, named basic types)
 			default:
-				return nil, i.formatErrorWithContext(i.FileSet, typeSpec.Type.Pos(), fmt.Errorf("unsupported type specifier in type declaration '%s': %T", typeName, typeSpec.Type), "")
+				// This is where `type MyInt int` will be handled.
+				// We need to resolve typeSpec.Type (e.g., *ast.Ident "int") to an ObjectType or a base Object.
+				// Then create a DefinedType object.
+				underlyingTypeObj, err := i.resolveAstTypeToUnderlyingObject(typeSpec.Type, env)
+				if err != nil {
+					return nil, i.formatErrorWithContext(i.activeFileSet, typeSpec.Type.Pos(), err, fmt.Sprintf("Failed to resolve underlying type for %s", typeName))
+				}
+
+				definedType := &DefinedType{
+					Name:              typeName,
+					UnderlyingTypeObj: underlyingTypeObj,
+					FileSet:           i.activeFileSet,
+					// IsExternal and PackagePath would be false/empty for types defined directly in the script
+				}
+				env.SetType(typeName, definedType)
 			}
 		}
 	default:
-		return nil, i.formatErrorWithContext(i.FileSet, genDecl.Pos(), fmt.Errorf("unsupported declaration token: %s (expected VAR or TYPE)", genDecl.Tok), "")
+		return nil, i.formatErrorWithContext(i.activeFileSet, genDecl.Pos(), fmt.Errorf("unsupported declaration token: %s (expected VAR or TYPE)", genDecl.Tok), "")
 	}
 	// Processing is done within the switch cases.
 	return nil, nil
@@ -2398,5 +2415,98 @@ func (i *Interpreter) evalUnaryExpr(ctx context.Context, node *ast.UnaryExpr, en
 		}
 	default:
 		return nil, i.formatErrorWithContext(i.activeFileSet, node.Pos(), fmt.Errorf("unsupported unary operator: %s", node.Op), "")
+	}
+
+// resolveAstTypeToUnderlyingObject resolves an AST type expression to a prototypical Minigo Object
+// representing that underlying type. For example, *ast.Ident("int") -> &Integer{},
+// *ast.Ident("MyStruct") -> *StructDefinition{...} (if MyStruct is a defined struct type),
+// *ast.Ident("MyInt") -> &Integer{} (if MyInt is `type MyInt int`).
+// This is used when defining a new type based on an existing one (e.g. `type T1 T2`).
+func (i *Interpreter) resolveAstTypeToUnderlyingObject(typeExpr ast.Expr, env *Environment) (Object, error) {
+	switch te := typeExpr.(type) {
+	case *ast.Ident:
+		typeName := te.Name
+		switch typeName {
+		case "int":
+			return &Integer{}, nil
+		case "string":
+			return &String{}, nil
+		case "bool":
+			return FALSE, nil // Or TRUE, doesn't matter, just need a Boolean object
+		// Add other built-in scalar types if any
+		default:
+			// It's a custom type name. Look it up in the environment.
+			// It could be a StructDefinition or a DefinedType.
+			typeDefObj, found := env.ResolveType(typeName)
+			if !found {
+				return nil, i.formatErrorWithContext(nil, te.Pos(), fmt.Errorf("undefined type: %s", typeName), "Type resolution error")
+			}
+
+			// If it's a StructDefinition, that's our underlying "object" representing the type.
+			if sd, ok := typeDefObj.(*StructDefinition); ok {
+				return sd, nil
+			}
+			// If it's a DefinedType, we need to get *its* underlying object.
+			if dt, ok := typeDefObj.(*DefinedType); ok {
+				// Recursively resolve if the underlying type of dt is another DefinedType.
+				// The UnderlyingTypeObj field should eventually lead to a non-DefinedType object (like Integer, String, StructDefinition).
+				// This handles chains like: type T1 T2; type T2 T3; type T3 int.
+				// We need to be careful here. dt.UnderlyingTypeObj is already the resolved object.
+				return dt.UnderlyingTypeObj, nil
+			}
+			// Found an object with that name, but it's not a recognized type definition.
+			return nil, i.formatErrorWithContext(i.activeFileSet, te.Pos(), fmt.Errorf("name '%s' resolves to a %s, not a usable type definition", typeName, typeDefObj.Type()), "Type resolution error")
+		}
+	case *ast.SelectorExpr: // e.g. pkg.TypeName
+		// Resolve the package
+		pkgIdent, ok := te.X.(*ast.Ident)
+		if !ok {
+			return nil, i.formatErrorWithContext(i.activeFileSet, te.X.Pos(), fmt.Errorf("package selector in type expression must be an identifier, got %T", te.X), "Type resolution error")
+		}
+		pkgName := pkgIdent.Name
+		typeName := te.Sel.Name
+		qualifiedName := pkgName + "." + typeName
+
+		// Ensure package is loaded by trying to resolve the type from the global environment.
+		// loadPackageIfNeeded will be called implicitly if not found during Get.
+		// We expect types from other packages to be in the global environment.
+		typeDefObj, found := i.globalEnv.ResolveType(qualifiedName)
+		if !found {
+			// Attempt to load the package explicitly if not found by ResolveType (which calls Get)
+			_, loadErr := i.loadPackageIfNeeded(context.TODO(), pkgName, i.globalEnv, pkgIdent.Pos())
+			if loadErr != nil {
+				return nil, i.formatErrorWithContext(i.activeFileSet, te.Pos(), loadErr, fmt.Sprintf("Failed to load package '%s' for type resolution of '%s'", pkgName, qualifiedName))
+			}
+			// Retry fetching the type definition after loading
+			typeDefObj, found = i.globalEnv.ResolveType(qualifiedName)
+			if !found {
+				return nil, i.formatErrorWithContext(i.activeFileSet, te.Pos(), fmt.Errorf("undefined type: %s (after attempting package load)", qualifiedName), "Type resolution error")
+			}
+		}
+
+		if sd, ok := typeDefObj.(*StructDefinition); ok {
+			return sd, nil
+		}
+		if dt, ok := typeDefObj.(*DefinedType); ok {
+			return dt.UnderlyingTypeObj, nil // Return the actual underlying object
+		}
+		return nil, i.formatErrorWithContext(i.activeFileSet, te.Pos(), fmt.Errorf("qualified name '%s' resolves to a %s, not a usable type definition", qualifiedName, typeDefObj.Type()), "Type resolution error")
+
+	case *ast.StructType: // Anonymous struct type: struct { ... }
+		// This is complex: defining an anonymous struct type means we need to parse its fields
+		// and create a StructDefinition on the fly. This StructDefinition won't have a name itself
+		// but will be the UnderlyingTypeObj for the DefinedType being created.
+		// For now, let's return an error, as supporting `type MyType struct { ... }` on the fly here is a larger feature.
+		// The existing struct definition logic in evalDeclStmt handles `type MyStruct struct { ... }`
+		// by creating a named StructDefinition. If `type MyType OtherStructType` is used,
+		// `OtherStructType` would be resolved above.
+		// This case is for `type MyType = struct { F int }` (alias) or `type MyType struct { F int }` (new type based on anonymous struct).
+		// The latter is what `typeSpec.Type.(*ast.StructType)` means.
+		// TODO: Implement anonymous struct definition here if needed.
+		return nil, i.formatErrorWithContext(i.activeFileSet, te.Pos(), errors.New("defining new types based directly on anonymous struct literals (e.g., type T struct{...}) is not yet fully supported here, define the struct type first"), "Type resolution error")
+
+	// TODO: Handle other ast.Expr types like *ast.ArrayType, *ast.MapType, *ast.InterfaceType, *ast.StarExpr (pointers)
+	default:
+		return nil, i.formatErrorWithContext(i.activeFileSet, typeExpr.Pos(), fmt.Errorf("unsupported AST node type for resolving underlying type: %T", typeExpr), "Type resolution error")
 	}
 }

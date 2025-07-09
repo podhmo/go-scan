@@ -77,3 +77,34 @@ func (e *Environment) GetAllEntries() map[string]Object {
 	}
 	return allEntries
 }
+
+// SetType defines a type in the current environment.
+// Type definitions (like StructDefinition or DefinedType) are also Objects.
+func (e *Environment) SetType(name string, typeDef Object) {
+	// For now, types are stored in the same map as variables/functions.
+	// Consider a separate map if type namespace needs to be distinct.
+	e.store[name] = typeDef
+}
+
+// ResolveType retrieves a type definition by name from the environment.
+// It checks the current and outer scopes.
+func (e *Environment) ResolveType(name string) (Object, bool) {
+	// For now, types are retrieved using the same mechanism as variables/functions.
+	// The caller is responsible for asserting the Object is a type definition (e.g., *StructDefinition, *DefinedType).
+	obj, ok := e.Get(name)
+	if !ok {
+		return nil, false
+	}
+
+	// Basic check: is the object something that represents a type?
+	switch obj.(type) {
+	case *StructDefinition, *DefinedType:
+		return obj, true
+	default:
+		// It's some other kind of object (e.g., an Integer variable with the same name as a potential type)
+		// This indicates a name collision or misuse if a type was expected.
+		// For now, we return it and let the caller decide.
+		// A stricter ResolveType might return (nil, false) here.
+		return obj, true // Found an object, but maybe not a type definition. Caller must verify.
+	}
+}

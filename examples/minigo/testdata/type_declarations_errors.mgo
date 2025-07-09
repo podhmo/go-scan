@@ -1,0 +1,35 @@
+// Test type declaration errors
+
+// Case 1: Direct assignment between int and MyInt (should fail)
+type MyIntErr1 int
+var x1 MyIntErr1
+var y1 int = 10
+// x1 = y1 // Expected error: cannot use y1 (type int) as type MyIntErr1 in assignment
+
+// Case 2: Direct assignment between MyInt and int (should fail)
+type MyIntErr2 int
+var x2 MyIntErr2 = MyIntErr2(20)
+var y2 int
+// y2 = x2 // Expected error: cannot use x2 (type MyIntErr2) as type int in assignment
+
+// Case 3: Invalid conversion - MyInt(string)
+type MyIntErr3 int
+var s3 string = "hello"
+// var x3 MyIntErr3 = MyIntErr3(s3) // Expected error: cannot convert s3 (type string) to type MyIntErr3
+
+// Case 4: Invalid conversion - MyString(int)
+type MyStringErr4 string
+var i4 int = 40
+// var x4 MyStringErr4 = MyStringErr4(i4) // Expected error: cannot convert i4 (type int) to type MyStringErr4
+
+// Case 5: Assignment between two different defined types with same underlying type
+type MyIntA int
+type MyIntB int
+var valA MyIntA = MyIntA(50)
+var valB MyIntB
+// valB = valA // Expected error: cannot use valA (type MyIntA) as type MyIntB in assignment
+
+func main() {
+    // These lines will cause errors if uncommented.
+    // The test will uncomment them one by one.
+}

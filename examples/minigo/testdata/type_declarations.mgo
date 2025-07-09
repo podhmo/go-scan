@@ -1,0 +1,57 @@
+// Test basic type declarations and conversions
+
+// Basic type declaration
+type MyInt int
+var x MyInt = MyInt(10)
+var x_val int = int(x) // Should be 10
+
+// Type declaration based on another defined type
+type MyIntAlias MyInt
+var a MyIntAlias = MyIntAlias(MyInt(20))
+var a_myint_val MyInt = MyInt(a)    // Convert MyIntAlias to MyInt
+var a_int_val int = int(a_myint_val) // Convert MyInt to int (should be 20)
+
+// Test with string based type
+type MyString string
+var s1 MyString = MyString("hello")
+var s1_val string = string(s1) // Should be "hello"
+
+type MyStringAlias MyString
+var s2 MyStringAlias = MyStringAlias(MyString("world"))
+var s2_mystring_val MyString = MyString(s2)
+var s2_string_val string = string(s2_mystring_val) // Should be "world"
+
+
+// Simple function to return values for checking from Go test
+func get_x_val() int {
+	return x_val
+}
+
+func get_a_int_val() int {
+	return a_int_val
+}
+
+func get_s1_val() string {
+	return s1_val
+}
+
+func get_s2_string_val() string {
+	return s2_string_val
+}
+
+// Test assigning converted value back to original type
+var initial_int int = 100
+type AnotherInt int
+var another_val AnotherInt = AnotherInt(initial_int) // another_val is 100 (type AnotherInt)
+var converted_back_int int = int(another_val)      // converted_back_int is 100 (type int)
+
+var final_assign AnotherInt = AnotherInt(converted_back_int) // final_assign should be 100 (type AnotherInt)
+var final_assign_int int = int(final_assign)
+
+func get_final_assign_int() int {
+    return final_assign_int
+}
+
+func main() {
+	// Entry point, variables are global
+}

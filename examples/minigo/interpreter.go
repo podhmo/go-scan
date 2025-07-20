@@ -1626,7 +1626,7 @@ func (i *Interpreter) loadPackageIfNeeded(ctx context.Context, pkgAlias string, 
 }
 
 // findFieldInEmbedded uses fset passed to it for errors
-func (i *Interpreter) findFieldInEmbedded(instance *StructInstance, fieldName string, fset *token.FileSet, selPos token.Pos) (foundValue Object, found bool, foundIn string, err error) {
+func (i *Interpreter) findFieldInEmbedded(instance *StructInstance, fieldName string, fset *token.FileSet, selPos token.Pos) (foundValue Object, found bool, foundInDefinitionName string, err error) {
 	// ... (no change to i.activeFileSet usage here as fset is explicit)
 	var overallFoundValue Object
 	var overallFoundInDefinitionName string
@@ -1699,6 +1699,96 @@ func (i *Interpreter) findFieldInEmbedded(instance *StructInstance, fieldName st
 	}
 
 	return nil, false, "", nil // Not found
+}
+
+// setFieldInEmbedded attempts to set a field value in an embedded struct.
+// It handles promoted fields and ambiguity.
+// Returns true if the field was successfully set, false otherwise.
+// Error is returned for ambiguity or other issues.
+// fset and selPos are used for error reporting context.
+func (i *Interpreter) setFieldInEmbedded(instance *StructInstance, fieldName string, valueToSet Object, fset *token.FileSet, selPos token.Pos) (assigned bool, err error) {
+	var targetEmbeddedInstance *StructInstance
+	var owningEmbeddedDefName string // Name of the direct embedded struct def that "owns" the field
+	numFoundPaths := 0
+
+	for _, embDef := range instance.Definition.EmbeddedDefs {
+		// Path 1: Field is a direct field of this embedded struct definition.
+		if _, isDirectFieldInEmbDef := embDef.Fields[fieldName]; isDirectFieldInEmbDef {
+			if numFoundPaths > 0 && owningEmbeddedDefName != embDef.Name {
+				return false, i.formatErrorWithContext(fset, selPos,
+					fmt.Errorf("ambiguous assignment to field '%s': found in multiple embedded structs ('%s' and '%s')", fieldName, owningEmbeddedDefName, embDef.Name), "Field assignment error")
+			}
+			// Get or create the instance for this embedded definition
+			embInstance, embInstanceExists := instance.EmbeddedValues[embDef.Name]
+			if !embInstanceExists {
+				// If the embedded struct itself hasn't been initialized, create it.
+				embInstance = &StructInstance{
+					Definition:     embDef,
+					FieldValues:    make(map[string]Object),
+					EmbeddedValues: make(map[string]*StructInstance), // Initialize its own embedded map
+				}
+				instance.EmbeddedValues[embDef.Name] = embInstance
+			}
+			targetEmbeddedInstance = embInstance
+			owningEmbeddedDefName = embDef.Name
+			numFoundPaths++
+			continue // Continue to check for ambiguities with other sibling embedded structs
+		}
+
+		// Path 2: Field is further embedded within this embedded struct.
+		// We need its instance to recurse.
+		embInstance, embInstanceExists := instance.EmbeddedValues[embDef.Name]
+		if !embInstanceExists {
+			// If the intermediate embedded struct doesn't exist, we can't set a field deeper within it.
+			// This path won't find the field unless the intermediate is Path 1.
+			continue
+		}
+
+		// Recursively try to set in this deeper embedded instance
+		// Pass fset and selPos for consistent error reporting.
+		recursivelyAssigned, recErr := i.setFieldInEmbedded(embInstance, fieldName, valueToSet, fset, selPos)
+		if recErr != nil {
+			return false, recErr // Propagate error (e.g., ambiguity from deeper level)
+		}
+		if recursivelyAssigned {
+			if numFoundPaths > 0 && owningEmbeddedDefName != embDef.Name { // embDef.Name here represents the "path" via this top-level embedded struct
+				return false, i.formatErrorWithContext(fset, selPos,
+					fmt.Errorf("ambiguous assignment to field '%s': found in '%s' and via deeper embedding in '%s'", fieldName, owningEmbeddedDefName, embDef.Name), "Field assignment error")
+			}
+			// If successfully assigned recursively, this path is the one.
+			// We don't set targetEmbeddedInstance directly here as the assignment happened deeper.
+			owningEmbeddedDefName = embDef.Name // Mark that we found a path via this embDef
+			numFoundPaths++
+			// Unlike findField, once assigned, we don't need to continue searching *within* this embInstance.
+			// But we do need to check sibling embedded structs for ambiguity.
+			// So, we set assigned=true and will return this if no ambiguity with siblings.
+			// However, the current logic with numFoundPaths handles this: if another path is found, it's an error.
+			// If this is the only path, targetEmbeddedInstance will be nil, but assigned will be true.
+			// Let's adjust so if recursivelyAssigned, we consider it done for *this* branch.
+			if numFoundPaths == 1 { // This was the first and only path found so far
+				return true, nil   // Successfully assigned through this recursive path, and no ambiguity yet.
+			}
+			// If numFoundPaths > 1, it means ambiguity was already detected or will be by the end.
+			// The recursive call already did the assignment.
+		}
+	}
+
+	if numFoundPaths > 1 {
+		return false, i.formatErrorWithContext(fset, selPos,
+			fmt.Errorf("ambiguous assignment to field '%s': field present in multiple embedded structs at the same level or via different paths", fieldName), "Field assignment error")
+	}
+
+	if targetEmbeddedInstance != nil { // A unique direct field in an embedded struct was found
+		// TODO: Type checking for field assignment if desired
+		targetEmbeddedInstance.FieldValues[fieldName] = valueToSet
+		return true, nil
+	}
+
+	// If numFoundPaths was 1 due to a successful recursive assignment,
+	// it would have returned true from inside the loop.
+	// If targetEmbeddedInstance is nil here, and numFoundPaths is 0 or 1 (but not from direct),
+	// it means either not found, or found recursively but already returned.
+	return false, nil // Not found or not assigned directly at this level
 }
 
 func (i *Interpreter) evalBlockStatement(ctx context.Context, block *ast.BlockStmt, env *Environment) (Object, error) {
@@ -2200,7 +2290,7 @@ func (i *Interpreter) evalAssignStmt(ctx context.Context, assignStmt *ast.Assign
 	case *ast.IndexExpr: // Index assignment: arr[idx] = val, map[key] = val
 		// TODO: Support augmented assignments for index expressions e.g. arr[0] += 1
 		if assignStmt.Tok != token.ASSIGN {
-			return nil, i.formatErrorWithContext(i.FileSet, assignStmt.Pos(), fmt.Errorf("augmented assignment (e.g., +=) not yet supported for index expressions"), "Unsupported operation")
+			return nil, i.formatErrorWithContext(i.activeFileSet, assignStmt.Pos(), fmt.Errorf("augmented assignment (e.g., +=) not yet supported for index expressions"), "Unsupported operation")
 		}
 
 		// Evaluate the object being indexed (e.g., array, slice, map)
@@ -2219,33 +2309,33 @@ func (i *Interpreter) evalAssignStmt(ctx context.Context, assignStmt *ast.Assign
 		case *Array:
 			idx, ok := indexObj.(*Integer)
 			if !ok {
-				return nil, i.formatErrorWithContext(i.FileSet, lhsNode.Index.Pos(), fmt.Errorf("array index must be an integer, got %s", indexObj.Type()), "Type error")
+				return nil, i.formatErrorWithContext(i.activeFileSet, lhsNode.Index.Pos(), fmt.Errorf("array index must be an integer, got %s", indexObj.Type()), "Type error")
 			}
 			if idx.Value < 0 || idx.Value >= int64(len(col.Elements)) {
-				return nil, i.formatErrorWithContext(i.FileSet, lhsNode.Index.Pos(), fmt.Errorf("index out of bounds: %d for array of length %d", idx.Value, len(col.Elements)), "Runtime error")
+				return nil, i.formatErrorWithContext(i.activeFileSet, lhsNode.Index.Pos(), fmt.Errorf("index out of bounds: %d for array of length %d", idx.Value, len(col.Elements)), "Runtime error")
 			}
 			col.Elements[idx.Value] = rhsValue // Assign new value
 			return nil, nil
 		case *Slice:
 			idx, ok := indexObj.(*Integer)
 			if !ok {
-				return nil, i.formatErrorWithContext(i.FileSet, lhsNode.Index.Pos(), fmt.Errorf("slice index must be an integer, got %s", indexObj.Type()), "Type error")
+				return nil, i.formatErrorWithContext(i.activeFileSet, lhsNode.Index.Pos(), fmt.Errorf("slice index must be an integer, got %s", indexObj.Type()), "Type error")
 			}
 			if idx.Value < 0 || idx.Value >= int64(len(col.Elements)) {
 				// Note: Go allows assignment to one past the end if slice has capacity (append semantic).
 				// Our simple slices don't have separate capacity yet, so this is strict bounds check.
-				return nil, i.formatErrorWithContext(i.FileSet, lhsNode.Index.Pos(), fmt.Errorf("index out of bounds: %d for slice of length %d", idx.Value, len(col.Elements)), "Runtime error")
+				return nil, i.formatErrorWithContext(i.activeFileSet, lhsNode.Index.Pos(), fmt.Errorf("index out of bounds: %d for slice of length %d", idx.Value, len(col.Elements)), "Runtime error")
 			}
 			col.Elements[idx.Value] = rhsValue // Assign new value
 			return nil, nil
 		case *Map:
 			hashableKey, ok := indexObj.(Hashable)
 			if !ok {
-				return nil, i.formatErrorWithContext(i.FileSet, lhsNode.Index.Pos(), fmt.Errorf("map key type %s is not hashable for assignment", indexObj.Type()), "Type error")
+				return nil, i.formatErrorWithContext(i.activeFileSet, lhsNode.Index.Pos(), fmt.Errorf("map key type %s is not hashable for assignment", indexObj.Type()), "Type error")
 			}
 			hk, err := hashableKey.HashKey()
 			if err != nil {
-				return nil, i.formatErrorWithContext(i.FileSet, lhsNode.Index.Pos(), fmt.Errorf("error getting hash key for map assignment: %v", err), "Runtime error")
+				return nil, i.formatErrorWithContext(i.activeFileSet, lhsNode.Index.Pos(), fmt.Errorf("error getting hash key for map assignment: %v", err), "Runtime error")
 			}
 			if col.Pairs == nil { // Should be initialized by literal eval or make
 				col.Pairs = make(map[HashKey]MapPair)
@@ -2253,11 +2343,50 @@ func (i *Interpreter) evalAssignStmt(ctx context.Context, assignStmt *ast.Assign
 			col.Pairs[hk] = MapPair{Key: indexObj, Value: rhsValue}
 			return nil, nil
 		default:
-			return nil, i.formatErrorWithContext(i.FileSet, lhsNode.X.Pos(), fmt.Errorf("cannot assign to index of type %s, not an array, slice, or map", collectionObj.Type()), "Type error")
+			return nil, i.formatErrorWithContext(i.activeFileSet, lhsNode.X.Pos(), fmt.Errorf("cannot assign to index of type %s, not an array, slice, or map", collectionObj.Type()), "Type error")
 		}
 
+	case *ast.SelectorExpr: // Field assignment: struct.field = val
+		if assignStmt.Tok != token.ASSIGN {
+			return nil, i.formatErrorWithContext(i.activeFileSet, assignStmt.Pos(), fmt.Errorf("augmented assignment (e.g., +=) not yet supported for field assignments"), "Unsupported operation")
+		}
+		selNode := lhsNode
+
+		// Evaluate the object X in X.Sel
+		xObj, err := i.eval(ctx, selNode.X, env)
+		if err != nil {
+			return nil, err // Error already formatted by eval
+		}
+
+		structInstance, ok := xObj.(*StructInstance)
+		if !ok {
+			return nil, i.formatErrorWithContext(i.activeFileSet, selNode.X.Pos(), fmt.Errorf("cannot assign to field of non-struct type %s", xObj.Type()), "Type error")
+		}
+
+		fieldName := selNode.Sel.Name
+
+		// Check if it's a direct field
+		if _, isDirectField := structInstance.Definition.Fields[fieldName]; isDirectField {
+			// TODO: Add type checking for field assignment here if desired
+			structInstance.FieldValues[fieldName] = rhsValue
+			return nil, nil
+		}
+
+		// If not a direct field, try to set it in an embedded struct (promoted field)
+		// Pass i.activeFileSet for error context within setFieldInEmbedded
+		assigned, errSet := i.setFieldInEmbedded(structInstance, fieldName, rhsValue, i.activeFileSet, selNode.Sel.Pos())
+		if errSet != nil {
+			return nil, errSet // Error already formatted by setFieldInEmbedded
+		}
+		if assigned {
+			return nil, nil
+		}
+
+		// If not assigned directly and not assigned in embedded, the field does not exist.
+		return nil, i.formatErrorWithContext(i.activeFileSet, selNode.Sel.Pos(), fmt.Errorf("type %s has no field %s for assignment", structInstance.Definition.Name, fieldName), "Field assignment error")
+
 	default:
-		return nil, i.formatErrorWithContext(i.FileSet, lhsExpr.Pos(), fmt.Errorf("unsupported assignment LHS: expected identifier or index expression, got %T", lhsExpr), "")
+		return nil, i.formatErrorWithContext(i.activeFileSet, lhsExpr.Pos(), fmt.Errorf("unsupported assignment LHS: expected identifier, index expression, or selector expression, got %T", lhsExpr), "")
 	}
 }
 

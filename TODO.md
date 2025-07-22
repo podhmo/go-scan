@@ -34,8 +34,10 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
   - *Description:* Implement the `scantest` library as described in `docs/plan-scantest.md`.
   - *Plan Document:* [docs/plan-scantest.md](./docs/plan-scantest.md)
   - Subtasks:
-    - [ ] Implement the `Run` function.
-    - [ ] Implement the `WriteFiles` function.
+    - [ ] Implement the `WriteFiles` function to set up test files.
+    - [ ] Implement the `Run` function to execute `go-scan`.
+        - [ ] Add logic to detect `go.mod` in the test directory and use it if present.
+        - [ ] Ensure it falls back to the project's `go.mod` if no local `go.mod` is found.
 - [ ] **Use scantest for testing**
   - *Description:* Create example tests using the `scantest` library to demonstrate its usage and integrate it into the project's testing workflow.
   - Subtasks:

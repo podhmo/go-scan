@@ -1,7 +1,10 @@
-module github.com/podhmo/go-scan
+module github.com/podhmo/go-scan/examples/derivingbind
 
-go 1.24
+go 1.22.4
 
-toolchain go1.24.3
+require (
+	github.com/google/go-cmp v0.7.0
+	github.com/podhmo/go-scan v0.0.0
+)
 
-require github.com/google/go-cmp v0.7.0
+replace github.com/podhmo/go-scan => ../../

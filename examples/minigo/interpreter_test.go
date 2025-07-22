@@ -234,7 +234,7 @@ func main() {
 			t.Logf("[%s] Using scannerRoot: %s, ModuleRoot: %s", tt.name, scannerRoot, interpreter.ModuleRoot)
 
 			// Setup sharedScanner specifically for this test execution.
-			testSpecificScanner, errScanner := goscan.New(scannerRoot)
+			testSpecificScanner, errScanner := goscan.New(goscan.WithWorkDir(scannerRoot))
 			if errScanner != nil {
 				t.Fatalf("[%s] Failed to create test-specific shared scanner with startPath %s: %v", tt.name, scannerRoot, errScanner)
 			}

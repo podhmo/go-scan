@@ -272,7 +272,7 @@ func (i *Interpreter) LoadAndRun(ctx context.Context, filename string, entryPoin
 		if i.ModuleRoot != "" {
 			scanPathForShared = i.ModuleRoot
 		}
-		defaultSharedScanner, errSharedGs := goscan.New(scanPathForShared)
+		defaultSharedScanner, errSharedGs := goscan.New(goscan.WithWorkDir(scanPathForShared))
 		if errSharedGs != nil {
 			return i.formatErrorWithContext(i.FileSet, token.NoPos, errSharedGs, fmt.Sprintf("Failed to create default shared go-scan scanner (path: %s): %v", scanPathForShared, errSharedGs))
 		}
@@ -369,7 +369,7 @@ func (i *Interpreter) LoadAndRun(ctx context.Context, filename string, entryPoin
 		if i.ModuleRoot != "" {
 			scanPathForShared = i.ModuleRoot
 		}
-		defaultSharedScanner, errSharedGs := goscan.New(scanPathForShared)
+		defaultSharedScanner, errSharedGs := goscan.New(goscan.WithWorkDir(scanPathForShared))
 		if errSharedGs != nil {
 			return i.formatErrorWithContext(i.activeFileSet, token.NoPos, errSharedGs, fmt.Sprintf("Failed to create default shared go-scan scanner (path: %s): %v", scanPathForShared, errSharedGs))
 		}

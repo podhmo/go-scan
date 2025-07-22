@@ -182,7 +182,7 @@ func generateConverterPrototype() {
 	// Create a go-scan Scanner instance.
 	// The first argument to New is a starting path to find the module root (go.mod).
 	// For this example, we'll use the modelsPath itself, assuming it's within a module.
-	s, err := typescanner.New(modelsPath)
+	s, err := typescanner.New(typescanner.WithWorkDir(modelsPath))
 	if err != nil {
 		log.Fatalf("Failed to create scanner: %v", err)
 	}

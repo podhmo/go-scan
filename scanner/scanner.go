@@ -18,20 +18,25 @@ type Scanner struct {
 	resolver              PackageResolver
 	importLookup          map[string]string // Maps import alias/name to full import path for the current file.
 	ExternalTypeOverrides ExternalTypeOverride
+	Overlay               Overlay
 }
 
 // New creates a new Scanner.
 // The fset must be provided and is used for all parsing operations by this scanner instance.
-func New(fset *token.FileSet, overrides ExternalTypeOverride) (*Scanner, error) {
+func New(fset *token.FileSet, overrides ExternalTypeOverride, overlay Overlay) (*Scanner, error) {
 	if fset == nil {
 		return nil, fmt.Errorf("fset cannot be nil")
 	}
 	if overrides == nil {
 		overrides = make(ExternalTypeOverride)
 	}
+	if overlay == nil {
+		overlay = make(Overlay)
+	}
 	return &Scanner{
 		fset:                  fset,
 		ExternalTypeOverrides: overrides,
+		Overlay:               overlay,
 	}, nil
 }
 
@@ -83,7 +88,11 @@ func (s *Scanner) ScanFiles(ctx context.Context, filePaths []string, pkgDirPath 
 
 	for _, filePath := range filePaths {
 		// filePath here is absolute.
-		fileAst, err := parser.ParseFile(s.fset, filePath, nil, parser.ParseComments)
+		var content any
+		if c, ok := s.Overlay[filePath]; ok {
+			content = c
+		}
+		fileAst, err := parser.ParseFile(s.fset, filePath, content, parser.ParseComments)
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse file %s: %w", filePath, err)
 		}

@@ -55,6 +55,10 @@ type PackageInfo struct {
 // The value is the desired Go type string.
 type ExternalTypeOverride map[string]string
 
+// Overlay provides a way to replace the contents of a file with alternative content.
+// The key is the absolute file path, and the value is the content to use instead.
+type Overlay map[string][]byte
+
 // TypeInfo represents a single type declaration (`type T ...`).
 type TypeInfo struct {
 	Name       string           `json:"name"`

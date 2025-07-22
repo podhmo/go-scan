@@ -8,8 +8,8 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	goscan "github.com/podhmo/go-scan"
-	"github.com/podhmo/go-scan/scanner"
 	"github.com/podhmo/go-scan/scantest"
+	"github.com/podhmo/go-scan/scanner"
 )
 
 func TestGenerate(t *testing.T) {
@@ -44,18 +44,19 @@ package models
 
 import (
 	"errors"
-	"github.com/podhmo/go-scan/examples/derivingbind/parser"
 	"net/http"
+
+	"github.com/podhmo/go-scan/examples/derivingbind/binding"
+	"github.com/podhmo/go-scan/examples/derivingbind/parser"
 )
 
-func (ob *Input) Bind(r *http.Request) (err error) {
-	var errs []error
-	if v, err := parser.String(r.URL.Query()["name"]); err == nil {
-		ob.Name = v
-	} else {
-		errs = append(errs, err)
-	}
-	return errors.Join(errs...)
+func (s *Input) Bind(req *http.Request, pathVar func(string) string) error {
+	b := binding.New(req, pathVar)
+	return errors.Join(
+
+		binding.One(b, &s.Name, binding.Query, "name", parser.String, binding.Optional), // Field: Name ()
+
+	)
 }
 `,
 			},

@@ -152,6 +152,7 @@ func Generate(ctx context.Context, gscn *goscan.Scanner, pkgInfo *scanner.Packag
 	anyCodeGenerated := false
 
 	// Always add parser and binding, as they are fundamental to the template
+	importManager.Add("github.com/podhmo/go-scan/examples/derivingbind/binding", "")
 	importManager.Add("github.com/podhmo/go-scan/examples/derivingbind/parser", "")
 
 	for _, typeInfo := range pkgInfo.Types {

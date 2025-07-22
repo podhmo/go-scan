@@ -24,9 +24,9 @@ type ActionFunc func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Pack
 
 // Result holds the outcome of a Run that has side effects.
 type Result struct {
-	// Files contains the content of files written by go-scan's helper functions.
+	// Outputs contains the content of files written by go-scan's helper functions.
 	// The key is the file path, and the value is the content.
-	Files map[string][]byte
+	Outputs map[string][]byte
 }
 
 // Run sets up and executes a test scenario.
@@ -147,11 +147,11 @@ func TestGenerateCode(t *testing.T) {
 	if result == nil {
 		t.Fatal("expected a non-nil result for a file generation action")
 	}
-	if len(result.Files) != 1 {
-		t.Fatalf("expected 1 generated file, but got %d", len(result.Files))
+	if len(result.Outputs) != 1 {
+		t.Fatalf("expected 1 generated file, but got %d", len(result.Outputs))
 	}
 
-	content, ok := result.Files["main_gen.go"]
+	content, ok := result.Outputs["main_gen.go"]
 	if !ok {
 		t.Fatal("expected file 'main_gen.go' was not in the result")
 	}

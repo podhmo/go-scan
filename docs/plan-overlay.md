@@ -19,7 +19,7 @@ A new type `Overlay` will be added:
 
 ```go
 // Overlay provides a way to replace the contents of a file with alternative content.
-// The key is the absolute file path, and the value is the content to use instead.
+// The key must be an absolute file path, and the value is the content to use instead.
 type Overlay map[string][]byte
 ```
 

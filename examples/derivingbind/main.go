@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"embed"
+	"flag"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -29,15 +30,23 @@ func main() {
 	handler := slog.NewTextHandler(os.Stderr, &opts)
 	slog.SetDefault(slog.New(handler))
 
+	var cwd string
+	flag.StringVar(&cwd, "cwd", ".", "current working directory")
+	flag.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage: derivingbind [options] <file_or_dir_path_1> [file_or_dir_path_2 ...]\n")
+		fmt.Fprintf(os.Stderr, "Example (file): derivingbind examples/derivingbind/testdata/simple/models.go\n")
+		fmt.Fprintf(os.Stderr, "Example (dir):  derivingbind examples/derivingbind/testdata/simple/\n")
+		flag.PrintDefaults()
+	}
+	flag.Parse()
+
 	ctx := context.Background()
-	if len(os.Args) <= 1 {
-		slog.ErrorContext(ctx, "Usage: derivingbind <file_or_dir_path_1> [file_or_dir_path_2 ...]")
-		slog.ErrorContext(ctx, "Example (file): derivingbind examples/derivingbind/testdata/simple/models.go")
-		slog.ErrorContext(ctx, "Example (dir):  derivingbind examples/derivingbind/testdata/simple/")
+	if len(flag.Args()) == 0 {
+		flag.Usage()
 		os.Exit(1)
 	}
 
-	gscn, err := goscan.New(".")
+	gscn, err := goscan.New(cwd)
 	if err != nil {
 		slog.ErrorContext(ctx, "Failed to create go-scan scanner", slog.Any("error", err))
 		os.Exit(1)
@@ -46,7 +55,7 @@ func main() {
 	filesByPackage := make(map[string][]string)
 	dirsToScan := []string{}
 
-	for _, path := range os.Args[1:] {
+	for _, path := range flag.Args() {
 		stat, err := os.Stat(path)
 		if err != nil {
 			slog.ErrorContext(ctx, "Error accessing path", slog.String("path", path), slog.Any("error", err))

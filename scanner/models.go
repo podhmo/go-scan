@@ -7,6 +7,7 @@ import (
 	"go/token" // Added
 	"reflect"  // Added for reflect.StructTag
 	"strings"  // Added for strings.Builder and strings.Fields
+	"sync"
 )
 
 // TypeParamInfo stores information about a single type parameter.
@@ -42,6 +43,20 @@ type PackageInfo struct {
 	Functions  []*FunctionInfo
 	Fset       *token.FileSet       // Added: Fileset for position information
 	AstFiles   map[string]*ast.File // Added: Parsed AST for each file
+
+	lookupOnce sync.Once
+	lookup     map[string]*TypeInfo
+}
+
+// Lookup finds a type by name in the package.
+func (p *PackageInfo) Lookup(name string) *TypeInfo {
+	p.lookupOnce.Do(func() {
+		p.lookup = make(map[string]*TypeInfo, len(p.Types))
+		for _, t := range p.Types {
+			p.lookup[t.Name] = t
+		}
+	})
+	return p.lookup[name]
 }
 
 // ExternalTypeOverride defines a mapping from a fully qualified type name

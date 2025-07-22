@@ -42,7 +42,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	gscn, err := goscan.New(cwd)
+	gscn, err := goscan.New(goscan.WithWorkDir(cwd))
 	if err != nil {
 		slog.ErrorContext(ctx, "Failed to create go-scan scanner", slog.Any("error", err))
 		os.Exit(1)

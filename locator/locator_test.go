@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/podhmo/go-scan/scanner"
 )
 
 // setupTestModuleWithContent creates a temporary module structure for testing.
@@ -54,27 +56,60 @@ func setupTestModule(t *testing.T, modulePath string) (string, func()) {
 }
 
 func TestNew(t *testing.T) {
-	moduleName := "example.com/myproject"
-	// startLookupPath will be .../locator-test-XYZ/internal/api
-	startLookupPath, cleanup := setupTestModule(t, moduleName)
-	defer cleanup()
+	t.Run("from_filesystem", func(t *testing.T) {
+		moduleName := "example.com/myproject"
+		startLookupPath, cleanup := setupTestModule(t, moduleName)
+		defer cleanup()
 
-	l, err := New(startLookupPath)
-	if err != nil {
-		t.Fatalf("New() returned an error: %v", err)
-	}
+		l, err := New(startLookupPath, nil) // No overlay
+		if err != nil {
+			t.Fatalf("New() returned an error: %v", err)
+		}
 
-	// Expected rootDir is where go.mod is, which is two levels above startLookupPath
-	expectedRootDir, _ := filepath.Abs(filepath.Dir(filepath.Dir(startLookupPath)))
-	actualRootDir, _ := filepath.Abs(l.RootDir())
+		expectedRootDir, _ := filepath.Abs(filepath.Dir(filepath.Dir(startLookupPath)))
+		actualRootDir, _ := filepath.Abs(l.RootDir())
 
-	if actualRootDir != expectedRootDir {
-		t.Errorf("Expected root dir %q, got %q", expectedRootDir, actualRootDir)
-	}
+		if actualRootDir != expectedRootDir {
+			t.Errorf("Expected root dir %q, got %q", expectedRootDir, actualRootDir)
+		}
 
-	if l.ModulePath() != moduleName {
-		t.Errorf("Expected module path %q, got %q", moduleName, l.ModulePath())
-	}
+		if l.ModulePath() != moduleName {
+			t.Errorf("Expected module path %q, got %q", moduleName, l.ModulePath())
+		}
+	})
+
+	t.Run("from_overlay", func(t *testing.T) {
+		moduleName := "example.com/fromoverlay"
+		overlayContent := "module " + moduleName
+		// Setup a dummy module on filesystem, but the overlay should take precedence
+		_, startLookupPath, cleanup := setupTestModuleWithContent(t, "module example.com/filesystem", nil)
+		defer cleanup()
+
+		overlay := scanner.Overlay{
+			"go.mod": []byte(overlayContent),
+		}
+
+		l, err := New(startLookupPath, overlay)
+		if err != nil {
+			t.Fatalf("New() with overlay returned an error: %v", err)
+		}
+
+		if l.ModulePath() != moduleName {
+			t.Errorf("Expected module path from overlay %q, got %q", moduleName, l.ModulePath())
+		}
+
+		// Check that replaces are also parsed from overlay
+		overlayWithReplace := scanner.Overlay{
+			"go.mod": []byte("module example.com/rp\nreplace example.com/a => ./b"),
+		}
+		l, err = New(startLookupPath, overlayWithReplace)
+		if err != nil {
+			t.Fatalf("New() with overlay and replace returned an error: %v", err)
+		}
+		if len(l.replaces) != 1 || l.replaces[0].OldPath != "example.com/a" {
+			t.Errorf("Expected replace directives to be parsed from overlay, got %v", l.replaces)
+		}
+	})
 }
 
 func TestFindPackageDir(t *testing.T) {
@@ -86,7 +121,7 @@ func TestFindPackageDir(t *testing.T) {
 	// moduleActualRootDir is where go.mod is.
 	moduleActualRootDir := filepath.Dir(filepath.Dir(startLookupPath))
 
-	l, err := New(startLookupPath)
+	l, err := New(startLookupPath, nil)
 	if err != nil {
 		t.Fatalf("New() returned an error: %v", err)
 	}
@@ -150,8 +185,7 @@ func TestFindPackageDirWithReplace(t *testing.T) {
 	}{
 		{
 			name: "replace_with_local_relative_path",
-			goModContent: `
-module example.com/mainmodule
+			goModContent: `module example.com/mainmodule
 go 1.16
 replace example.com/replacedmodule => ./local/replacedmodule
 `,
@@ -162,8 +196,7 @@ replace example.com/replacedmodule => ./local/replacedmodule
 		},
 		{
 			name: "replace_with_local_path_root",
-			goModContent: `
-module example.com/mainmodule
+			goModContent: `module example.com/mainmodule
 go 1.16
 replace example.com/replacedmodule => ./local/replacedmodule
 `,
@@ -174,8 +207,7 @@ replace example.com/replacedmodule => ./local/replacedmodule
 		},
 		{
 			name: "replace_with_local_path_version_on_old",
-			goModContent: `
-module example.com/mainmodule
+			goModContent: `module example.com/mainmodule
 go 1.16
 replace example.com/replacedmodule v1.0.0 => ./local/versionedreplacedmodule
 `,
@@ -186,11 +218,7 @@ replace example.com/replacedmodule v1.0.0 => ./local/versionedreplacedmodule
 		},
 		{
 			name: "replace_with_local_absolute_path",
-			goModContent: `
-module example.com/mainmodule
-go 1.16
-replace example.com/another => ` + absReplaceDir + `
-`,
+			goModContent: "module example.com/mainmodule\ngo 1.16\nreplace example.com/another => " + absReplaceDir,
 			subDirsToCreate:   []string{}, // No subdirs needed in the main module for this
 			importPath:        "example.com/another/pkg",
 			expectedFoundPath: absReplaceSubPkgDir, // This is an absolute path
@@ -198,8 +226,7 @@ replace example.com/another => ` + absReplaceDir + `
 		},
 		{
 			name: "replace_module_with_another_module_path_within_same_project",
-			goModContent: `
-module example.com/mainmodule
+			goModContent: `module example.com/mainmodule
 go 1.16
 replace example.com/oldinternal => example.com/mainmodule/newinternal v1.0.0
 `,
@@ -210,24 +237,18 @@ replace example.com/oldinternal => example.com/mainmodule/newinternal v1.0.0
 		},
 		{
 			name: "replace_target_local_path_does_not_exist",
-			goModContent: `
-module example.com/mainmodule
+			goModContent: `module example.com/mainmodule
 go 1.16
 replace example.com/nonexistent => ./does/not/exist
 `,
 			subDirsToCreate:   []string{},
 			importPath:        "example.com/nonexistent/pkg",
 			expectedFoundPath: "",
-			// Current behavior: if a replace rule matches, but target is invalid, FindPackageDir continues
-			// and then fails at the end if no other rule or default logic finds the path.
-			// This might need to be stricter: if a replace rule applies, its target *must* be valid.
-			// For now, this will result in an error because ./does/not/exist/pkg won't be found.
 			expectErr: true,
 		},
 		{
 			name: "no_matching_replace_directive_falls_back_to_module_path",
-			goModContent: `
-module example.com/mainmodule
+			goModContent: `module example.com/mainmodule
 go 1.16
 replace example.com/foo => ./bar
 `,
@@ -238,8 +259,7 @@ replace example.com/foo => ./bar
 		},
 		{
 			name: "replace_in_block_form_finds_alpha",
-			goModContent: `
-module example.com/mainmodule
+			goModContent: `module example.com/mainmodule
 go 1.16
 replace (
 	example.com/alpha => ./local/alpha
@@ -253,8 +273,7 @@ replace (
 		},
 		{
 			name: "replace_in_block_form_finds_beta_subpackage",
-			goModContent: `
-module example.com/mainmodule
+			goModContent: `module example.com/mainmodule
 go 1.16
 replace (
 	example.com/alpha => ./local/alpha
@@ -268,8 +287,7 @@ replace (
 		},
 		{
 			name: "replace_to_external_module_not_in_current_locator_scope_fails_gracefully",
-			goModContent: `
-module example.com/mainmodule
+			goModContent: `module example.com/mainmodule
 go 1.16
 replace example.com/currenttomodule => example.com/someothermodule v1.0.0
 `,
@@ -280,8 +298,7 @@ replace example.com/currenttomodule => example.com/someothermodule v1.0.0
 		},
 		{
 			name: "replace_old_path_is_prefix_of_import_path",
-			goModContent: `
-module example.com/mainmodule
+			goModContent: `module example.com/mainmodule
 go 1.16
 replace example.com/prefixmod => ./local/prefixmod
 `,
@@ -292,8 +309,7 @@ replace example.com/prefixmod => ./local/prefixmod
 		},
 		{
 			name: "replace_old_path_is_prefix_of_import_path_targetting_root_of_replacement",
-			goModContent: `
-module example.com/mainmodule
+			goModContent: `module example.com/mainmodule
 go 1.16
 replace example.com/prefixmod => ./local/prefixmod
 `,
@@ -317,7 +333,7 @@ replace example.com/prefixmod => ./local/prefixmod
 			moduleRootDir, startLookupPath, cleanup := setupTestModuleWithContent(t, currentGoModContent, tt.subDirsToCreate)
 			defer cleanup()
 
-			l, err := New(startLookupPath)
+			l, err := New(startLookupPath, nil)
 			if err != nil {
 				// This might indicate an issue with go.mod parsing in New() if the go.mod was intended to be valid.
 				t.Fatalf("Test %q: New() returned an error: %v. go.mod content:\n%s", tt.name, err, currentGoModContent)

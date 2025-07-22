@@ -72,8 +72,8 @@ type Scanner struct {
     moduleRootDir string // From locator
 }
 
-func New(fset *token.FileSet, ..., overlay Overlay, locator *locator.Locator) (*Scanner, error) {
-    // ... store overlay, locator.ModulePath(), locator.RootDir()
+func New(fset *token.FileSet, ..., overlay Overlay, modulePath, moduleRootDir string) (*Scanner, error) {
+    // ... store overlay, modulePath, moduleRootDir
 }
 
 func (s *Scanner) ScanFiles(ctx context.Context, filePaths []string, pkgDirPath string, resolver PackageResolver) (*PackageInfo, error) {
@@ -115,8 +115,8 @@ func (s *Scanner) resolvePathToOverlayKey(absFilePath string) (string, error) {
 ## 3. How `locator` and `scanner` will cooperate
 
 1.  The user provides an `Overlay` map with project-relative paths or package paths as keys.
-2.  `locator.New` is called. It finds the module root directory. It checks for a `go.mod` key in the overlay to read the module definition.
-3.  The `locator` instance is passed to `scanner.New`. The scanner extracts the module root and module path from the locator.
+2.  `locator.New` is called with the `Overlay`. It finds the module root directory. It checks for a `go.mod` key in the overlay to read the module definition.
+3.  The `modulePath` and `moduleRootDir` from the `locator` instance are passed to `scanner.New`, along with the `Overlay`. This avoids a direct dependency from `scanner` to `locator`, preventing a circular import.
 4.  When the scanner processes files, it receives a list of absolute paths (`filePaths` in `ScanFiles`).
 5.  For each absolute path, the scanner will attempt to convert it into a potential overlay key.
     *   **For project-relative keys**: It will calculate the path relative to the module root (e.g., `pkg/user/models.go`).
@@ -155,7 +155,8 @@ func main() {
 
     fset := token.NewFileSet()
     // The API would need to be adjusted to pass the overlay.
-    s, err := goscan.NewScanner("./my-project", fset, nil, overlay)
+    // The top-level goscan.New will handle creating the locator and passing the required values to the scanner.
+    s, err := goscan.New(goscan.WithWorkDir("./my-project"), goscan.WithOverlay(overlay))
     if err != nil {
         log.Fatal(err)
     }

@@ -2,10 +2,13 @@ package locator
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/podhmo/go-scan/scanner"
 )
 
 // ReplaceDirective represents a single replace directive in a go.mod file.
@@ -22,11 +25,13 @@ type Locator struct {
 	modulePath string
 	rootDir    string
 	replaces   []ReplaceDirective
+	overlay    scanner.Overlay
 }
 
 // New creates a new Locator by searching for a go.mod file.
 // It starts searching from startPath and moves up the directory tree.
-func New(startPath string) (*Locator, error) {
+// It accepts an overlay to provide in-memory content for go.mod.
+func New(startPath string, overlay scanner.Overlay) (*Locator, error) {
 	absPath, err := filepath.Abs(startPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get absolute path for %s: %w", startPath, err)
@@ -37,24 +42,39 @@ func New(startPath string) (*Locator, error) {
 		return nil, err
 	}
 
-	goModFilePath := filepath.Join(rootDir, "go.mod")
-	modPath, err := getModulePath(goModFilePath)
-	if err != nil {
-		return nil, err
+	var goModContent []byte
+	if overlay != nil {
+		if content, ok := overlay["go.mod"]; ok {
+			goModContent = content
+		}
 	}
 
-	replaces, err := getReplaceDirectives(goModFilePath)
+	if goModContent == nil {
+		goModFilePath := filepath.Join(rootDir, "go.mod")
+		goModContent, err = os.ReadFile(goModFilePath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read go.mod at %s: %w", goModFilePath, err)
+		}
+	}
+
+	modPath, err := getModulePathFromBytes(goModContent)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get module path from go.mod content: %w", err)
+	}
+
+	replaces, err := getReplaceDirectivesFromBytes(goModContent)
 	if err != nil {
 		// It's okay if parsing replace directives fails, just log it or handle as a warning
 		// For now, we'll proceed without them.
 		// TODO: Add proper logging or error handling strategy.
-		fmt.Fprintf(os.Stderr, "warning: could not parse replace directives in %s: %v\n", goModFilePath, err)
+		fmt.Fprintf(os.Stderr, "warning: could not parse replace directives in go.mod: %v\n", err)
 	}
 
 	return &Locator{
 		modulePath: modPath,
 		rootDir:    rootDir,
 		replaces:   replaces,
+		overlay:    overlay,
 	}, nil
 }
 
@@ -224,15 +244,12 @@ func findModuleRoot(dir string) (string, error) {
 	}
 }
 
-// getModulePath reads the module path from a go.mod file.
-func getModulePath(goModPath string) (string, error) {
-	file, err := os.Open(goModPath)
-	if err != nil {
-		return "", fmt.Errorf("could not open %s: %w", goModPath, err)
+// getModulePathFromBytes reads the module path from go.mod content.
+func getModulePathFromBytes(content []byte) (string, error) {
+	if len(content) == 0 {
+		return "", fmt.Errorf("go.mod content is empty")
 	}
-	defer file.Close()
-
-	scanner := bufio.NewScanner(file)
+	scanner := bufio.NewScanner(bytes.NewReader(content))
 	for scanner.Scan() {
 		line := scanner.Text()
 		if strings.HasPrefix(line, "module") {
@@ -244,22 +261,19 @@ func getModulePath(goModPath string) (string, error) {
 	}
 
 	if err := scanner.Err(); err != nil {
-		return "", fmt.Errorf("error reading %s: %w", goModPath, err)
+		return "", fmt.Errorf("error reading go.mod content: %w", err)
 	}
 
-	return "", fmt.Errorf("module path not found in %s", goModPath)
+	return "", fmt.Errorf("module path not found in go.mod content")
 }
 
-// getReplaceDirectives reads replace directives from a go.mod file.
-func getReplaceDirectives(goModPath string) ([]ReplaceDirective, error) {
-	file, err := os.Open(goModPath)
-	if err != nil {
-		return nil, fmt.Errorf("could not open %s: %w", goModPath, err)
+// getReplaceDirectivesFromBytes reads replace directives from go.mod content.
+func getReplaceDirectivesFromBytes(content []byte) ([]ReplaceDirective, error) {
+	if len(content) == 0 {
+		return nil, nil // No directives in empty file
 	}
-	defer file.Close()
-
 	var directives []ReplaceDirective
-	scanner := bufio.NewScanner(file)
+	scanner := bufio.NewScanner(bytes.NewReader(content))
 	inReplaceBlock := false
 
 	for scanner.Scan() {
@@ -284,7 +298,7 @@ func getReplaceDirectives(goModPath string) ([]ReplaceDirective, error) {
 					if err != nil {
 						// TODO: Log or handle individual line parsing errors more gracefully
 						// For now, skip malformed lines.
-						fmt.Fprintf(os.Stderr, "warning: skipping malformed replace directive line: %q in %s: %v\n", line, goModPath, err)
+						fmt.Fprintf(os.Stderr, "warning: skipping malformed replace directive line: %q in go.mod: %v\n", line, err)
 						continue
 					}
 					directives = append(directives, directive)
@@ -302,7 +316,7 @@ func getReplaceDirectives(goModPath string) ([]ReplaceDirective, error) {
 				directive, err := parseReplaceLine(directiveLine)
 				if err != nil {
 					// Log the original line for better context if parsing fails
-					fmt.Fprintf(os.Stderr, "warning: skipping malformed single-line replace directive content: %q (from line: %q) in %s: %v\n", directiveLine, line, goModPath, err)
+					fmt.Fprintf(os.Stderr, "warning: skipping malformed single-line replace directive content: %q (from line: %q) in go.mod: %v\n", directiveLine, line, err)
 					continue
 				}
 				directives = append(directives, directive)
@@ -315,7 +329,7 @@ func getReplaceDirectives(goModPath string) ([]ReplaceDirective, error) {
 			}
 			directive, err := parseReplaceLine(line)
 			if err != nil {
-				// fmt.Fprintf(os.Stderr, "warning: skipping malformed replace directive line: %q in %s: %v\n", line, goModPath, err)
+				// fmt.Fprintf(os.Stderr, "warning: skipping malformed replace directive line: %q in go.mod: %v\n", line, err)
 				continue
 			}
 			directives = append(directives, directive)
@@ -323,7 +337,7 @@ func getReplaceDirectives(goModPath string) ([]ReplaceDirective, error) {
 	}
 
 	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("error reading %s: %w", goModPath, err)
+		return nil, fmt.Errorf("error reading go.mod content: %w", err)
 	}
 
 	return directives, nil

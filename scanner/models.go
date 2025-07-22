@@ -70,6 +70,11 @@ func (p *PackageInfo) Lookup(name string) *TypeInfo {
 // The value is the desired Go type string.
 type ExternalTypeOverride map[string]string
 
+// Overlay provides a way to replace the contents of a file with alternative content.
+// The key is either a project-relative path (from the module root) or a
+// Go package path concatenated with a file name.
+type Overlay map[string][]byte
+
 // TypeInfo represents a single type declaration (`type T ...`).
 type TypeInfo struct {
 	Name       string           `json:"name"`

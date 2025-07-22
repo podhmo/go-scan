@@ -395,6 +395,7 @@ type Scanner struct {
 	CachePath             string
 	symbolCache           *cache.SymbolCache // Symbol cache (persisted across Scanner instances if path is reused)
 	ExternalTypeOverrides scanner.ExternalTypeOverride
+	overlay               scanner.Overlay
 }
 
 // Fset returns the FileSet associated with the scanner.
@@ -458,6 +459,19 @@ func WithWorkDir(path string) ScannerOption {
 	}
 }
 
+// WithOverlay provides in-memory file content to the scanner.
+func WithOverlay(overlay scanner.Overlay) ScannerOption {
+	return func(s *Scanner) error {
+		if s.overlay == nil {
+			s.overlay = make(scanner.Overlay)
+		}
+		for k, v := range overlay {
+			s.overlay[k] = v
+		}
+		return nil
+	}
+}
+
 // New creates a new Scanner. It finds the module root starting from the given path.
 // It also initializes an empty set of visited files for this scanner instance.
 func New(options ...ScannerOption) (*Scanner, error) {
@@ -466,6 +480,7 @@ func New(options ...ScannerOption) (*Scanner, error) {
 		visitedFiles:          make(map[string]struct{}),
 		fset:                  token.NewFileSet(),
 		ExternalTypeOverrides: make(scanner.ExternalTypeOverride),
+		overlay:               make(scanner.Overlay),
 	}
 
 	for _, option := range options {
@@ -482,13 +497,13 @@ func New(options ...ScannerOption) (*Scanner, error) {
 		s.workDir = cwd
 	}
 
-	loc, err := locator.New(s.workDir)
+	loc, err := locator.New(s.workDir, s.overlay)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize locator: %w", err)
 	}
 	s.locator = loc
 
-	initialScanner, err := scanner.New(s.fset, nil)
+	initialScanner, err := scanner.New(s.fset, s.ExternalTypeOverrides, s.overlay, loc.ModulePath(), loc.RootDir())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create internal scanner: %w", err)
 	}
@@ -503,7 +518,7 @@ func (s *Scanner) SetExternalTypeOverrides(ctx context.Context, overrides scanne
 		overrides = make(scanner.ExternalTypeOverride)
 	}
 	s.ExternalTypeOverrides = overrides
-	newInternalScanner, err := scanner.New(s.fset, s.ExternalTypeOverrides)
+	newInternalScanner, err := scanner.New(s.fset, s.ExternalTypeOverrides, s.overlay, s.locator.ModulePath(), s.locator.RootDir())
 	if err != nil {
 		slog.WarnContext(ctx, "Failed to re-initialize internal scanner with new overrides. Continuing with previous scanner settings.", slog.Any("error", err))
 		return

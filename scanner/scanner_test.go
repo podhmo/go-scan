@@ -2,7 +2,8 @@ package scanner
 
 import (
 	"context"
-	"go/token" // Added for token.NewFileSet
+	"fmt"
+	"go/token"
 	"path/filepath"
 	"testing"
 )
@@ -20,8 +21,11 @@ func (m *MockResolver) ScanPackageByImport(ctx context.Context, importPath strin
 }
 
 func TestNewScanner(t *testing.T) {
+	modulePath := "example.com/test"
+	rootDir := "/tmp/test"
+
 	t.Run("nil_fset", func(t *testing.T) {
-		_, err := New(nil, nil)
+		_, err := New(nil, nil, nil, modulePath, rootDir)
 		if err == nil {
 			t.Error("Expected error when creating scanner with nil fset, got nil")
 		}
@@ -29,7 +33,7 @@ func TestNewScanner(t *testing.T) {
 
 	t.Run("valid_fset", func(t *testing.T) {
 		fset := token.NewFileSet()
-		s, err := New(fset, nil)
+		s, err := New(fset, nil, nil, modulePath, rootDir)
 		if err != nil {
 			t.Errorf("Expected no error when creating scanner with valid fset, got %v", err)
 		}
@@ -43,12 +47,13 @@ func TestNewScanner(t *testing.T) {
 
 func TestScanPackageFeatures(t *testing.T) {
 	fset := token.NewFileSet()
-	s, err := New(fset, nil) // Pass nil for ExternalTypeOverride, provide fset
+	testDir := filepath.Join("..", "testdata", "features")
+	absTestDir, _ := filepath.Abs(testDir)
+	s, err := New(fset, nil, nil, "example.com/test/features", absTestDir)
 	if err != nil {
 		t.Fatalf("scanner.New failed: %v", err)
 	}
 
-	testDir := filepath.Join("..", "testdata", "features")
 	// Scan only features.go and another.go, which belong to the same package "features"
 	filesToScan := []string{
 		filepath.Join(testDir, "features.go"),
@@ -108,12 +113,13 @@ func TestScanPackageFeatures(t *testing.T) {
 
 func TestScanFiles(t *testing.T) {
 	fset := token.NewFileSet()
-	s, err := New(fset, nil)
+	testdataDir := filepath.Join("..", "testdata", "features")
+	absTestdataDir, _ := filepath.Abs(testdataDir)
+	s, err := New(fset, nil, nil, "example.com/test/features", absTestdataDir)
 	if err != nil {
 		t.Fatalf("scanner.New failed: %v", err)
 	}
 	mockResolver := &MockResolver{}
-	testdataDir := filepath.Join("..", "testdata", "features")
 
 	t.Run("scan_single_file", func(t *testing.T) {
 		filePath := filepath.Join(testdataDir, "features.go")
@@ -189,9 +195,8 @@ func TestFieldType_Resolve(t *testing.T) {
 	resolver := &MockResolver{
 		ScanPackageByImportFunc: func(ctx context.Context, importPath string) (*PackageInfo, error) {
 			if importPath == "example.com/models" {
-				// Ensure PackageInfo includes Fset for consistency, though not directly used by this specific test's assertions
 				return &PackageInfo{
-					Fset: token.NewFileSet(), // Add fset
+					Fset: token.NewFileSet(),
 					Types: []*TypeInfo{
 						{Name: "User", Kind: StructKind},
 					},
@@ -229,5 +234,44 @@ func TestFieldType_Resolve(t *testing.T) {
 	}
 	if def2.Name != "User" {
 		t.Errorf("Expected cached resolved type to be 'User', got %q", def2.Name)
+	}
+}
+
+func TestScanWithOverlay(t *testing.T) {
+	fset := token.NewFileSet()
+	testDir := filepath.Join("..", "testdata", "basic")
+	absTestDir, _ := filepath.Abs(testDir)
+	modulePath := "example.com/basic"
+
+	overlayContent := fmt.Sprintf("package basic\n\n// In-memory version of a struct\ntype User struct {\n\tID   int    `json:\"id\"`\n\tName string `json:\"name\"`\n}\n")
+	overlay := Overlay{
+		"basic.go": []byte(overlayContent),
+	}
+
+	// Here, we provide an absolute path for moduleRootDir
+	s, err := New(fset, nil, overlay, modulePath, absTestDir)
+	if err != nil {
+		t.Fatalf("scanner.New with overlay failed: %v", err)
+	}
+
+	// ScanFiles expects absolute paths, so we construct one.
+	scanFilePath := filepath.Join(absTestDir, "basic.go")
+
+	// The pkgDirPath should also be an absolute path to the package directory.
+	pkgInfo, err := s.ScanFiles(context.Background(), []string{scanFilePath}, absTestDir, &MockResolver{})
+	if err != nil {
+		t.Fatalf("ScanFiles with overlay failed: %v", err)
+	}
+
+	userType := pkgInfo.Lookup("User")
+	if userType == nil {
+		t.Fatal("Type 'User' from overlay not found")
+	}
+
+	if len(userType.Struct.Fields) != 2 {
+		t.Fatalf("Expected 2 fields in User struct from overlay, got %d", len(userType.Struct.Fields))
+	}
+	if userType.Struct.Fields[0].Name != "ID" || userType.Struct.Fields[1].Name != "Name" {
+		t.Error("Field names in User struct from overlay are incorrect")
 	}
 }

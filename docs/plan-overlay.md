@@ -4,14 +4,18 @@ This document proposes an "overlay" feature for `go-scan`, similar to the `Overl
 
 ## 1. High-Level Design
 
-The overlay feature will be implemented by introducing an `Overlay` map to the core `go-scan` components. This map will have file paths as keys and their byte-slice content as values.
+The overlay feature will be implemented by introducing an `Overlay` map to the core `go-scan` components. To ensure portability across different environments (like CI/CD), the keys of this map will not be absolute paths. Instead, they will be one of the following:
+
+1.  **Project-Relative Path**: A path relative to the module root (the directory containing the `go.mod` file). For example, `pkg/user/models.go`.
+2.  **Package Path + File Name**: A combination of the Go package's import path and the file name. For example, `example.com/mymodule/pkg/user/models.go`.
+
+The `locator` will be responsible for finding the module root. The `scanner` will then use this information to resolve the overlay keys into the paths it expects.
 
 -   **`scanner.Overlay` type**: A new type `type Overlay map[string][]byte` will be defined in `scanner/models.go`.
--   **`locator.Locator`**: The `Locator` will be updated to accept an `Overlay`. It will use the overlay to read the `go.mod` file if it is present in the map.
--   **`scanner.Scanner`**: The `Scanner` will be updated to accept an `Overlay`. When parsing Go files, it will first check if a file exists in the overlay. If so, it will use the content from the overlay; otherwise, it will read the file from the disk.
--   **Entry Point**: The main entry point for `go-scan` will be updated to accept the `Overlay` map, allowing users to provide overlay data.
+-   **`locator.Locator`**: The `Locator` will be updated to accept an `Overlay`. It will use the overlay to read the `go.mod` file. The key for `go.mod` will simply be `go.mod`.
+-   **`scanner.Scanner`**: The `Scanner` will be updated to accept an `Overlay`. It will contain the logic to resolve overlay keys against the files it's processing.
 
-## 2. Proposed API Changes
+## 2. Proposed API Changes & Key Resolution Logic
 
 ### `scanner.models.go`
 
@@ -19,13 +23,14 @@ A new type `Overlay` will be added:
 
 ```go
 // Overlay provides a way to replace the contents of a file with alternative content.
-// The key must be an absolute file path, and the value is the content to use instead.
+// The key is either a project-relative path (from the module root) or a
+// Go package path concatenated with a file name.
 type Overlay map[string][]byte
 ```
 
 ### `locator/locator.go`
 
-The `Locator` struct will be updated to include the `Overlay` map. The `New` function will be modified to accept it.
+The `Locator` will need to find the `go.mod` file from the overlay.
 
 ```go
 // In locator.go
@@ -33,78 +38,92 @@ The `Locator` struct will be updated to include the `Overlay` map. The `New` fun
 type Locator struct {
     // ... existing fields
     overlay Overlay
+    rootDir string // The located module root directory
 }
 
 func New(startPath string, overlay Overlay) (*Locator, error) {
-    // ...
+    // ... find rootDir ...
+
+    // The key for go.mod is consistently "go.mod"
     goModFilePath := filepath.Join(rootDir, "go.mod")
     var goModBytes []byte
     var err error
-    if content, ok := overlay[goModFilePath]; ok {
+    if content, ok := overlay["go.mod"]; ok {
         goModBytes = content
     } else {
         goModBytes, err = os.ReadFile(goModFilePath)
-        if err != nil {
-            return nil, err
-        }
-    }
-
-    modPath, err := getModulePath(goModFilePath, goModBytes)
-    // ...
-    replaces, err := getReplaceDirectives(goModFilePath, goModBytes)
-    // ...
-}
-
-func getModulePath(goModPath string, content []byte) (string, error) {
-    // ... implementation using content
-}
-
-func getReplaceDirectives(goModPath string, content []byte) ([]ReplaceDirective, error) {
-    // ... implementation using content
-}
-```
-
-### `scanner/scanner.go`
-
-The `Scanner` struct and its `New` function will be updated to handle the `Overlay`. The `ScanFiles` method will be modified to use the overlay content.
-
-```go
-// In scanner.go
-
-type Scanner struct {
-    // ... existing fields
-    Overlay Overlay
-}
-
-func New(fset *token.FileSet, overrides ExternalTypeOverride, overlay Overlay) (*Scanner, error) {
-    // ...
-}
-
-func (s *Scanner) ScanFiles(ctx context.Context, filePaths []string, pkgDirPath string, resolver PackageResolver) (*PackageInfo, error) {
-    // ...
-    for _, filePath := range filePaths {
-        var content any
-        if c, ok := s.Overlay[filePath]; ok {
-            content = c
-        }
-        fileAst, err := parser.ParseFile(s.fset, filePath, content, parser.ParseComments)
         // ...
     }
     // ...
 }
 ```
 
+### `scanner/scanner.go`
+
+The `Scanner` will perform the key resolution.
+
+```go
+// In scanner.go
+
+type Scanner struct {
+    // ... existing fields
+    Overlay      Overlay
+    modulePath   string // From locator
+    moduleRootDir string // From locator
+}
+
+func New(fset *token.FileSet, ..., overlay Overlay, locator *locator.Locator) (*Scanner, error) {
+    // ... store overlay, locator.ModulePath(), locator.RootDir()
+}
+
+func (s *Scanner) ScanFiles(ctx context.Context, filePaths []string, pkgDirPath string, resolver PackageResolver) (*PackageInfo, error) {
+    // ...
+    for _, absFilePath := range filePaths {
+        // Resolve the absolute file path to a key that might be in the overlay
+        overlayKey, err := s.resolvePathToOverlayKey(absFilePath)
+        if err != nil {
+            // Handle error or log a warning
+            continue
+        }
+
+        var content any
+        if c, ok := s.Overlay[overlayKey]; ok {
+            content = c
+        }
+
+        // The key could also be the package path + filename, so we need to check that too.
+        // This requires getting the package import path for the given absFilePath.
+        // This logic can get complex and might need a helper.
+        // For a first pass, we can assume project-relative paths.
+
+        fileAst, err := parser.ParseFile(s.fset, absFilePath, content, parser.ParseComments)
+        // ...
+    }
+    // ...
+}
+
+// resolvePathToOverlayKey converts an absolute file path to a project-relative path.
+func (s *Scanner) resolvePathToOverlayKey(absFilePath string) (string, error) {
+    if !strings.HasPrefix(absFilePath, s.moduleRootDir) {
+        return "", fmt.Errorf("file %s is outside the module root %s", absFilePath, s.moduleRootDir)
+    }
+    return filepath.Rel(s.moduleRootDir, absFilePath)
+}
+
+```
+
 ## 3. How `locator` and `scanner` will cooperate
 
-1.  The user of the `go-scan` library will create an `Overlay` map containing the virtual file contents.
-2.  This `Overlay` map will be passed to `locator.New` and `scanner.New`.
-3.  When `locator.New` is called, it will look for the `go.mod` file path in the `Overlay` map. If found, it will use the provided content to parse the module path and replace directives. Otherwise, it will read from the filesystem.
-4.  When `scanner.Scanner`'s methods (like `ScanPackage` or `ScanFiles`) are called, the scanner will iterate through the list of Go files to be parsed.
-5.  For each file, the scanner will check if its path exists in the `Overlay` map.
-6.  If the file path is in the `Overlay`, `parser.ParseFile` will be called with the content from the map.
-7.  If the file path is not in the `Overlay`, `parser.ParseFile` will be called with `nil` for the content, which instructs it to read the file from the filesystem.
+1.  The user provides an `Overlay` map with project-relative paths or package paths as keys.
+2.  `locator.New` is called. It finds the module root directory. It checks for a `go.mod` key in the overlay to read the module definition.
+3.  The `locator` instance is passed to `scanner.New`. The scanner extracts the module root and module path from the locator.
+4.  When the scanner processes files, it receives a list of absolute paths (`filePaths` in `ScanFiles`).
+5.  For each absolute path, the scanner will attempt to convert it into a potential overlay key.
+    *   **For project-relative keys**: It will calculate the path relative to the module root (e.g., `pkg/user/models.go`).
+    *   **For package path keys**: It will need to determine the import path of the package containing the file, and append the filename. This is more complex and may require reversing the logic in `locator.FindPackageDir`.
+6.  It then looks up these potential keys in the `Overlay` map. If a match is found, it uses the overlay content for parsing.
 
-This design ensures that both the module resolution and the source code parsing respect the overlay, providing a consistent virtual view of the project.
+This revised design avoids absolute paths, making it robust for CI/CD environments, while still providing the flexibility of overlays. The primary keying strategy should be project-relative paths for simplicity.
 
 ## 4. Example Usage
 
@@ -120,8 +139,10 @@ import (
 )
 
 func main() {
+    // Using project-relative paths as keys
     overlay := scanner.Overlay{
-        "/path/to/project/main.go": []byte(`
+        "go.mod": []byte("module example.com/mymodule\n\ngo 1.21\n"),
+        "main.go": []byte(`
 package main
 
 import "fmt"
@@ -133,20 +154,18 @@ func main() {
     }
 
     fset := token.NewFileSet()
-    // The main entry point of go-scan needs to be updated to accept the overlay.
-    // Assuming a function like `goscan.NewScanner` exists and is updated.
-    s, err := goscan.NewScanner(fset, nil, overlay)
+    // The API would need to be adjusted to pass the overlay.
+    s, err := goscan.NewScanner("./my-project", fset, nil, overlay)
     if err != nil {
         log.Fatal(err)
     }
 
-    pkg, err := s.ScanPackage("/path/to/project")
+    // ScanPackage would start from "./my-project"
+    pkg, err := s.ScanPackage("./my-project")
     if err != nil {
         log.Fatal(err)
     }
 
-    // Now, `pkg` contains information parsed from the overlay content for main.go
-    // and from the filesystem for other files in the package.
     log.Printf("Scanned package: %s\n", pkg.Name)
 }
 ```

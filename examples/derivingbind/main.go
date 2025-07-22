@@ -23,42 +23,17 @@ var bindMethodTemplateFS embed.FS
 var bindMethodTemplateString string
 
 func main() {
+	logLevel := new(slog.LevelVar)
+	logLevel.Set(slog.LevelDebug)
+	opts := slog.HandlerOptions{Level: logLevel}
+	handler := slog.NewTextHandler(os.Stderr, &opts)
+	slog.SetDefault(slog.New(handler))
+
 	ctx := context.Background()
-
 	if len(os.Args) <= 1 {
-		slog.ErrorContext(ctx, "Usage: derivingbind <file1.go> [file2.go ...]")
-		slog.ErrorContext(ctx, "Example: derivingbind examples/derivingbind/testdata/simple/models.go")
-		os.Exit(1)
-	}
-	targetFiles := os.Args[1:]
-
-	filesByPackageDir := make(map[string][]string)
-	for _, filePath := range targetFiles {
-		stat, err := os.Stat(filePath)
-		if err != nil {
-			if os.IsNotExist(err) {
-				slog.ErrorContext(ctx, "File does not exist", slog.String("file_path", filePath))
-			} else {
-				slog.ErrorContext(ctx, "Error accessing file", slog.String("file_path", filePath), slog.Any("error", err))
-			}
-			continue
-		}
-		if stat.IsDir() {
-			slog.ErrorContext(ctx, "Argument is a directory, expected a file", slog.String("path", filePath))
-			continue
-		}
-
-		absPath, err := filepath.Abs(filePath)
-		if err != nil {
-			slog.ErrorContext(ctx, "Failed to get absolute path", slog.String("file_path", filePath), slog.Any("error", err))
-			continue
-		}
-		dir := filepath.Dir(absPath)
-		filesByPackageDir[dir] = append(filesByPackageDir[dir], absPath)
-	}
-
-	if len(filesByPackageDir) == 0 {
-		slog.ErrorContext(ctx, "No valid files to process.")
+		slog.ErrorContext(ctx, "Usage: derivingbind <file_or_dir_path_1> [file_or_dir_path_2 ...]")
+		slog.ErrorContext(ctx, "Example (file): derivingbind examples/derivingbind/testdata/simple/models.go")
+		slog.ErrorContext(ctx, "Example (dir):  derivingbind examples/derivingbind/testdata/simple/")
 		os.Exit(1)
 	}
 
@@ -68,22 +43,67 @@ func main() {
 		os.Exit(1)
 	}
 
-	overallSuccess := true
-	for pkgDir, filePathsInDir := range filesByPackageDir {
-		slog.InfoContext(ctx, "Generating Bind method for package", slog.String("package_dir", pkgDir), slog.Any("files", filePathsInDir))
-		if err := GenerateFiles(ctx, pkgDir, filePathsInDir, gscn); err != nil {
-			slog.ErrorContext(ctx, "Error generating code for package", slog.String("package_dir", pkgDir), slog.Any("error", err))
-			overallSuccess = false
+	filesByPackage := make(map[string][]string)
+	dirsToScan := []string{}
+
+	for _, path := range os.Args[1:] {
+		stat, err := os.Stat(path)
+		if err != nil {
+			slog.ErrorContext(ctx, "Error accessing path", slog.String("path", path), slog.Any("error", err))
 			continue
 		}
-		slog.InfoContext(ctx, "Successfully generated Bind methods for package", slog.String("package_dir", pkgDir))
+		if stat.IsDir() {
+			dirsToScan = append(dirsToScan, path)
+		} else if strings.HasSuffix(path, ".go") {
+			pkgDir := filepath.Dir(path)
+			filesByPackage[pkgDir] = append(filesByPackage[pkgDir], path)
+		} else {
+			slog.WarnContext(ctx, "Argument is not a .go file or directory, skipping", slog.String("path", path))
+		}
 	}
 
-	if !overallSuccess {
-		slog.ErrorContext(ctx, "One or more packages failed to generate.")
+	var successCount, errorCount int
+
+	// Process directories
+	for _, dirPath := range dirsToScan {
+		slog.InfoContext(ctx, "Scanning directory", "path", dirPath)
+		pkgInfo, err := gscn.ScanPackage(ctx, dirPath)
+		if err != nil {
+			slog.ErrorContext(ctx, "Error scanning package", "path", dirPath, slog.Any("error", err))
+			errorCount++
+			continue
+		}
+		if err := Generate(ctx, gscn, pkgInfo); err != nil {
+			slog.ErrorContext(ctx, "Error generating code for package", "path", dirPath, slog.Any("error", err))
+			errorCount++
+		} else {
+			slog.InfoContext(ctx, "Successfully generated Bind method for package", "path", dirPath)
+			successCount++
+		}
+	}
+
+	// Process file groups
+	for pkgDir, filePaths := range filesByPackage {
+		slog.InfoContext(ctx, "Scanning files in package", "package", pkgDir, "files", filePaths)
+		pkgInfo, err := gscn.ScanFiles(ctx, filePaths)
+		if err != nil {
+			slog.ErrorContext(ctx, "Error scanning files", "package", pkgDir, slog.Any("error", err))
+			errorCount++
+			continue
+		}
+		if err := Generate(ctx, gscn, pkgInfo); err != nil {
+			slog.ErrorContext(ctx, "Error generating code for files", "package", pkgDir, slog.Any("error", err))
+			errorCount++
+		} else {
+			slog.InfoContext(ctx, "Successfully generated Bind method for package", "package", pkgDir)
+			successCount++
+		}
+	}
+
+	slog.InfoContext(ctx, "Generation summary", slog.Int("successful_packages", successCount), slog.Int("failed_packages/files", errorCount))
+	if errorCount > 0 {
 		os.Exit(1)
 	}
-	slog.InfoContext(ctx, "All specified files processed.")
 }
 
 const bindingAnnotation = "@derivng:binding"
@@ -113,18 +133,11 @@ type FieldBindingInfo struct {
 	IsSliceElementPointer   bool
 }
 
-func GenerateFiles(ctx context.Context, packageDir string, absFilePaths []string, gscn *goscan.Scanner) error {
-	pkgInfo, err := gscn.ScanFiles(ctx, absFilePaths)
-	if err != nil {
-		return fmt.Errorf("go-scan failed to scan files in package %s: %w", packageDir, err)
-	}
+func Generate(ctx context.Context, gscn *goscan.Scanner, pkgInfo *scanner.PackageInfo) error {
 	if pkgInfo == nil {
-		return fmt.Errorf("go-scan returned nil package info for %s (using files: %v)", packageDir, absFilePaths)
+		return fmt.Errorf("cannot generate code for a nil package")
 	}
-	if pkgInfo.Name == "" {
-		slog.WarnContext(ctx, "ScanFiles resulted in an empty package name.", slog.String("packageDir", packageDir), slog.Any("absFilePaths", absFilePaths))
-	}
-
+	packageDir := pkgInfo.Path
 	importManager := goscan.NewImportManager(pkgInfo)
 	var generatedCodeForAllStructs bytes.Buffer
 	anyCodeGenerated := false

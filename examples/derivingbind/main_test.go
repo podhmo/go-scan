@@ -54,7 +54,7 @@ func (s *Input) Bind(req *http.Request, pathVar func(string) string) error {
 	b := binding.New(req, pathVar)
 	return errors.Join(
 
-		binding.One(b, &s.Name, binding.Query, "name", parser.String, binding.Optional), // Field: Name ()
+		binding.One(b, &s.Name, binding.Query, "name", parser.String, binding.Optional), // Field: Name (string)
 
 	)
 }

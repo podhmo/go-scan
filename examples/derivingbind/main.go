@@ -7,9 +7,9 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"text/template"
 
@@ -160,64 +160,173 @@ func Generate(ctx context.Context, gscn *goscan.Scanner, pkgInfo *scanner.Packag
 			continue
 		}
 
-		_, hasBindingAnnotationOnStruct := typeInfo.Annotation("derivng:binding")
+		annotationValue, hasBindingAnnotationOnStruct := typeInfo.Annotation("derivng:binding")
+		structLevelInTag := ""
+		if hasBindingAnnotationOnStruct {
+			parts := strings.Fields(annotationValue)
+			for _, part := range parts {
+				if strings.HasPrefix(part, "in:") {
+					structLevelInTag = strings.TrimSuffix(strings.SplitN(part, ":", 2)[1], `"`)
+					structLevelInTag = strings.TrimPrefix(structLevelInTag, `"`)
+					break
+				}
+			}
+		}
+
 		if !hasBindingAnnotationOnStruct {
 			continue
 		}
 		slog.DebugContext(ctx, "Processing struct for binding", slog.String("struct", typeInfo.Name))
 
 		data := TemplateData{
-			StructName: typeInfo.Name,
-			Fields:     []FieldBindingInfo{},
+			StructName:                 typeInfo.Name,
+			Fields:                     []FieldBindingInfo{},
+			NeedsBody:                  (structLevelInTag == "body"),
+			HasSpecificBodyFieldTarget: false,
+			ErrNoCookie:                http.ErrNoCookie,
 		}
 		importManager.Add("net/http", "") // For http.ErrNoCookie and request object (r *http.Request)
 
+		structHasBindableFields := false
 		for _, field := range typeInfo.Struct.Fields {
 			bindFrom := field.TagValue("in")
 			if bindFrom == "" {
+				if data.NeedsBody && structLevelInTag == "body" {
+					// Field is part of struct-level body, handled by overall JSON decode.
+				}
 				continue
 			}
 			bindFrom = strings.ToLower(strings.TrimSpace(bindFrom))
 			bindName := field.TagValue(bindFrom)
 
-			if bindName == "" {
+			switch bindFrom {
+			case "path", "query", "header", "cookie":
+				if bindName == "" {
+					slog.DebugContext(ctx, "Skipping field: tag requires corresponding name tag", "struct", typeInfo.Name, "field", field.Name, "in_tag", bindFrom)
+					continue
+				}
+			case "body":
+				data.NeedsBody = true
+			default:
+				slog.DebugContext(ctx, "Skipping field: unknown 'in' tag value", "struct", typeInfo.Name, "field", field.Name, "in_tag", bindFrom)
 				continue
+			}
+
+			// Use field.Type.String() for OriginalFieldTypeString as it gives the full type representation
+			// including package alias if it's from an external package resolved by the core scanner.
+			// ImportManager's role here is mainly to ensure the *package* is imported,
+			// not to rewrite these type strings unless they are being constructed from parts.
+			originalFieldTypeStr := field.Type.String()
+			if field.Type.FullImportPath() != "" && field.Type.FullImportPath() != pkgInfo.ImportPath {
+				// Ensure the package of this field type is registered for import
+				originalFieldTypeStr = importManager.Qualify(field.Type.FullImportPath(), field.Type.Name)
+				if field.Type.IsSlice && field.Type.Elem != nil {
+					sliceElemStr := importManager.Qualify(field.Type.Elem.FullImportPath(), field.Type.Elem.Name)
+					if field.Type.Elem.IsPointer {
+						sliceElemStr = "*" + sliceElemStr
+					}
+					originalFieldTypeStr = "[]" + sliceElemStr
+				} else if field.Type.IsPointer && field.Type.Elem != nil {
+					originalFieldTypeStr = "*" + importManager.Qualify(field.Type.Elem.FullImportPath(), field.Type.Elem.Name)
+				}
 			}
 
 			fInfo := FieldBindingInfo{
-				FieldName: field.Name,
-				BindFrom:  bindFrom,
-				BindName:  bindName,
-				IsPointer: field.Type.IsPointer,
+				FieldName:               field.Name,
+				BindFrom:                bindFrom,
+				BindName:                bindName,
+				IsRequired:              (field.TagValue("required") == "true"),
+				OriginalFieldTypeString: originalFieldTypeStr,
+				IsPointer:               field.Type.IsPointer,
 			}
 
 			currentScannerType := field.Type
-			baseTypeForConversion := ""
-			if currentScannerType.IsPointer {
+			baseTypeForConversion := "" // This will be the simple, unqualified type name for parser lookup
+
+			if currentScannerType.IsSlice {
+				fInfo.IsSlice = true
+				if currentScannerType.Elem != nil {
+					// For SliceElementType, we also want the potentially qualified name for the template
+					fInfo.SliceElementType = importManager.Qualify(currentScannerType.Elem.FullImportPath(), currentScannerType.Elem.Name)
+					if currentScannerType.Elem.IsPointer {
+						fInfo.SliceElementType = "*" + fInfo.SliceElementType
+					}
+					fInfo.IsSliceElementPointer = currentScannerType.Elem.IsPointer
+
+					// For baseTypeForConversion (parser lookup), use the unqualified name
+					sliceElemForParser := currentScannerType.Elem
+					if sliceElemForParser.IsPointer && sliceElemForParser.Elem != nil {
+						baseTypeForConversion = sliceElemForParser.Elem.Name
+					} else { // Non-pointer element or pointer to built-in
+						baseTypeForConversion = sliceElemForParser.Name
+					}
+				} else {
+					slog.DebugContext(ctx, "Skipping field: slice with nil Elem type", "struct", typeInfo.Name, "field", field.Name)
+					continue
+				}
+			} else if currentScannerType.IsPointer {
 				if currentScannerType.Elem != nil {
 					baseTypeForConversion = currentScannerType.Elem.Name
-				} else {
-					baseTypeForConversion = currentScannerType.Name
+				} else { // Pointer to a built-in or unresolved type
+					baseTypeForConversion = currentScannerType.Name // e.g. *string, Name would be "string"
 				}
-			} else {
+			} else { // Not a slice, not a pointer
 				baseTypeForConversion = currentScannerType.Name
 			}
-			fInfo.FieldType = baseTypeForConversion
+			fInfo.FieldType = baseTypeForConversion // Store the base (unqualified) type for parser lookup
 
+			// Determine parser function based on the unqualified base type
 			switch baseTypeForConversion {
 			case "string":
 				fInfo.ParserFunc = "parser.String"
+			case "int", "int8", "int16", "int32", "int64":
+				fInfo.ParserFunc = "parser." + strings.Title(baseTypeForConversion)
+			case "uint", "uint8", "uint16", "uint32", "uint64", "uintptr":
+				fInfo.ParserFunc = "parser." + strings.Title(baseTypeForConversion)
+			case "bool":
+				fInfo.ParserFunc = "parser.Bool"
+			case "float32", "float64":
+				fInfo.ParserFunc = "parser." + strings.Title(baseTypeForConversion)
+			case "complex64", "complex128":
+				fInfo.ParserFunc = "parser." + strings.Title(baseTypeForConversion)
 			default:
-				continue
+				if bindFrom != "body" { // Custom types not supported for non-body binding directly by these parsers
+					slog.DebugContext(ctx, "Skipping field: unhandled base type for non-body binding", "struct", typeInfo.Name, "field", field.Name, "baseType", baseTypeForConversion, "bindFrom", bindFrom)
+					continue
+				}
+				// For 'body' binding, fInfo.ParserFunc is not used; it's direct unmarshaling.
 			}
 
-			importManager.Add("errors", "") // For errors.Join
+			if bindFrom != "body" {
+				importManager.Add("errors", "") // For errors.Join
+				if fInfo.ParserFunc == "" {
+					slog.DebugContext(ctx, "Skipping field: No parser func for non-body binding", "struct", typeInfo.Name, "field", field.Name)
+					continue
+				}
+			} else { // bindFrom == "body"
+				fInfo.IsBody = true
+				data.NeedsBody = true // Ensure this is true if any field is body-bound
+				data.HasSpecificBodyFieldTarget = true
+				importManager.Add("encoding/json", "")
+				importManager.Add("io", "")
+				importManager.Add("fmt", "")    // For fmt.Errorf
+				importManager.Add("errors", "") // For errors.Join
+			}
 			data.Fields = append(data.Fields, fInfo)
-			anyCodeGenerated = true
+			structHasBindableFields = true
 		}
 
-		if !anyCodeGenerated {
+		if !structHasBindableFields && !data.NeedsBody { // If no fields were processed for binding and it's not a global body target
+			slog.DebugContext(ctx, "Skipping struct: no bindable fields or global body target", "struct", typeInfo.Name)
 			continue
+		}
+		anyCodeGenerated = true
+
+		if data.NeedsBody && !data.HasSpecificBodyFieldTarget { // Struct itself is body target
+			importManager.Add("encoding/json", "")
+			importManager.Add("io", "")
+			importManager.Add("fmt", "")
+			importManager.Add("errors", "")
 		}
 
 		funcMap := template.FuncMap{"TitleCase": strings.Title}
@@ -234,26 +343,26 @@ func Generate(ctx context.Context, gscn *goscan.Scanner, pkgInfo *scanner.Packag
 	}
 
 	if !anyCodeGenerated {
+		slog.InfoContext(ctx, "No structs found requiring Bind method generation in package", slog.String("packageDir", packageDir))
 		return nil
 	}
 
-	outputPkgDir := goscan.NewPackageDirectory(packageDir, pkgInfo.Name)
-	importSpecs := importManager.Imports()
-	paths := make([]string, 0, len(importSpecs))
-	for path := range importSpecs {
-		paths = append(paths, path)
+	actualPackageName := pkgInfo.Name
+	if actualPackageName == "" {
+		actualPackageName = filepath.Base(packageDir) // Fallback to directory name
+		slog.InfoContext(ctx, "Using directory name as package name for generated file", "package_name", actualPackageName, "package_dir", packageDir)
 	}
-	sort.Strings(paths)
 
+	outputPkgDir := goscan.NewPackageDirectory(packageDir, actualPackageName)
 	goFile := goscan.GoFile{
-		PackageName: pkgInfo.Name,
+		PackageName: actualPackageName,
 		Imports:     importManager.Imports(),
 		CodeSet:     generatedCodeForAllStructs.String(),
 	}
 
-	outputFilename := fmt.Sprintf("%s_deriving.go", strings.ToLower(pkgInfo.Name))
+	outputFilename := fmt.Sprintf("%s_deriving.go", strings.ToLower(actualPackageName))
 	if err := outputPkgDir.SaveGoFile(ctx, goFile, outputFilename); err != nil {
-		return fmt.Errorf("failed to save generated bind file for package %s: %w", pkgInfo.Name, err)
+		return fmt.Errorf("failed to save generated bind file for package %s: %w", actualPackageName, err)
 	}
 	return nil
 }

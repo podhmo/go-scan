@@ -30,6 +30,18 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 
 ## To Be Implemented
 
+- [ ] **Implement scantest library**
+  - *Description:* Implement the `scantest` library as described in `docs/plan-scantest.md`.
+  - *Plan Document:* [docs/plan-scantest.md](./docs/plan-scantest.md)
+  - Subtasks:
+    - [ ] Implement the `Run` function.
+    - [ ] Implement the `WriteFiles` function.
+- [ ] **Use scantest for testing**
+  - *Description:* Create example tests using the `scantest` library to demonstrate its usage and integrate it into the project's testing workflow.
+  - Subtasks:
+    - [ ] Create a new test suite for an existing analyzer using `scantest`.
+    - [ ] Integrate `scantest`-based tests into the CI/CD pipeline.
+
 - [x] **Implement Improved Scanning Logic in Example Tools**
   - *Description:* The command-line tools in `examples/` have been updated to handle file and directory paths more intelligently, as outlined in the proposal. This involves distinguishing between file and directory arguments and grouping multiple file arguments by package.
   - *Proposal Document:* [docs/scan-improvement.md](./docs/scan-improvement.md)

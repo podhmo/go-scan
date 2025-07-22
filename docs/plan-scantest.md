@@ -8,7 +8,7 @@ The core idea is to provide helpers to run `go-scan` on a test codebase, which c
 
 ## 2. Core API
 
-The library will provide utilities to test code generation tasks that use `go-scan`.
+The `scantest` library provides helpers to test tasks that use `go-scan`, such as static checks or code generation.
 
 ```go
 package scantest
@@ -18,19 +18,17 @@ import (
 	"github.com/podhmo/go-scan"
 )
 
-// ActionFunc is a function that performs an action, such as code generation,
-// based on the results of a go-scan.
-// It receives the scanner instance and the scanned packages.
+// ActionFunc is a function that performs a check or an action (e.g., code generation)
+// based on the results of a go-scan. It should return an error to fail the test.
 type ActionFunc func(s *goscan.Scanner, pkgs []*goscan.Package) error
 
-// Run sets up a test environment, runs go-scan, executes a user-provided action,
-// and returns the results for verification.
+// Run sets up a test environment, runs go-scan, and executes a user-provided action.
 // t is the testing object.
 // dir is the root directory for the scanner (where go.mod is).
 // patterns are the import path patterns to scan.
 // action is the function to execute after scanning.
-// It returns a map of generated/modified file paths to their content.
-func Run(t *testing.T, dir string, patterns []string, action ActionFunc) (map[string][]byte, error)
+// It returns an error if the scan or the action fails.
+func Run(t *testing.T, dir string, patterns []string, action ActionFunc) error
 
 // WriteFiles creates a temporary directory and populates it with the given files.
 // It returns the path to the temporary directory and a cleanup function.
@@ -39,16 +37,14 @@ func WriteFiles(t *testing.T, files map[string]string) (string, func())
 
 ## 3. `Run` Function
 
-The `Run` function orchestrates the testing of a code generation task. It is responsible for:
+The `Run` function orchestrates the testing of a `go-scan` based task. Its responsibilities are to:
 
-1.  **Setup**: Initializing a `goscan.Scanner` for the given `dir`.
-2.  **Scan**: Scanning all packages that match the provided `patterns`.
-3.  **Execute Action**: Invoking the user-provided `action` function with the scanner instance and the list of scanned packages. This is where the actual code generation logic is executed.
-4.  **Capture Results**: After the action completes, `Run` will detect which files in the directory were created or modified.
-5.  **Return**: It returns a map where keys are the paths of the new/modified files and values are their complete content. This allows the test to easily verify the output of the code generation.
-6.  **Error Handling**: It will return any error that occurs during scanning or the execution of the action.
+1.  **Setup**: Initialize a `goscan.Scanner` for the given `dir`.
+2.  **Scan**: Scan all packages that match the provided `patterns`.
+3.  **Execute Action**: Invoke the user-provided `action` function with the scanner instance and the list of scanned packages. The action function contains the core test logic (e.g., checking for specific type properties or generating code).
+4.  **Propagate Errors**: Return any error that occurs during scanning or is returned by the `action` function.
 
-This workflow enables testing of complex code generation logic (like in `examples/derivingjson`) in a self-contained and verifiable way.
+The verification of any side effects (like generated files) is the responsibility of the test author, not the `Run` function. This keeps the helper focused and flexible.
 
 ## 4. `WriteFiles` Function
 
@@ -63,7 +59,56 @@ This allows test authors to easily create isolated test environments without nee
 
 ## 5. Example Usage
 
-Here's how the library might be used in a test:
+### Example 1: Pure Check (No Side Effects)
+
+This example shows how to use `scantest` to verify properties of scanned types without creating any files.
+
+```go
+package main_test
+
+import (
+	"fmt"
+	"testing"
+
+	"github.com/podhmo/go-scan"
+	"github.com/podhmo/go-scan/scantest"
+)
+
+func TestStructFields(t *testing.T) {
+	dir, cleanup := scantest.WriteFiles(t, map[string]string{
+		"go.mod": "module example.com/me",
+		"person.go": `
+package main
+type Person struct {
+	Name string
+	Age  int
+}`,
+	})
+	defer cleanup()
+
+	action := func(s *goscan.Scanner, pkgs []*goscan.Package) error {
+		if len(pkgs) != 1 {
+			return fmt.Errorf("expected 1 package, got %d", len(pkgs))
+		}
+		personType := pkgs[0].Lookup.Type("Person")
+		if personType == nil {
+			return fmt.Errorf("type Person not found")
+		}
+		if len(personType.Struct.Fields) != 2 {
+			return fmt.Errorf("expected Person to have 2 fields, but got %d", len(personType.Struct.Fields))
+		}
+		return nil
+	}
+
+	if err := scantest.Run(t, dir, []string{"example.com/me"}, action); err != nil {
+		t.Fatal(err)
+	}
+}
+```
+
+### Example 2: Code Generation (With Side Effects)
+
+This example demonstrates testing a code generation task. The `action` function creates a new file, and the test code verifies its content afterward.
 
 ```go
 package main_test
@@ -80,72 +125,35 @@ import (
 	"github.com/podhmo/go-scan/scantest"
 )
 
-// This is a simplified version of a code generation action,
-// similar to what examples/derivingjson might do.
-func generateJSONMarshaller(s *goscan.Scanner, pkgs []*goscan.Package) error {
-	var target *goscan.Type
-	for _, p := range pkgs {
-		for _, t := range p.Types {
-			if t.Name == "Person" {
-				target = t
-				break
-			}
-		}
-	}
-	if target == nil {
-		return fmt.Errorf("type Person not found")
-	}
-
-	var b bytes.Buffer
-	b.WriteString(fmt.Sprintf("package %s\n\n", target.Package.Name))
-	b.WriteString(fmt.Sprintf("func (p *%s) MarshalJSON() ([]byte, error) {\n", target.Name))
-	// simplified marshalling logic
-	b.WriteString(`	return []byte("{\"name\":\"" + p.Name + "\"}"), nil`)
-	b.WriteString("\n}\n")
-
-	// Output to a new file
-	outputPath := filepath.Join(filepath.Dir(target.Position.Filename), "person_gen.go")
-	return os.WriteFile(outputPath, b.Bytes(), 0644)
+func generateFileAction(s *goscan.Scanner, pkgs []*goscan.Package) error {
+	// In a real scenario, you would generate code based on the scanned packages.
+	// Here, we just write a static file for simplicity.
+	content := []byte("package main\n\n// Code generated by test\n")
+	outputPath := filepath.Join(s.RootDir, "main_gen.go")
+	return os.WriteFile(outputPath, content, 0644)
 }
 
 func TestGenerateCode(t *testing.T) {
 	dir, cleanup := scantest.WriteFiles(t, map[string]string{
-		"go.mod": "module example.com/me",
-		"person.go": `
-package main
-
-// +gen:json
-type Person struct {
-	Name string
-}`,
+		"go.mod":  "module example.com/me",
+		"main.go": "package main",
 	})
 	defer cleanup()
 
-	// Action: run the json marshaller code generator
-	generatedFiles, err := scantest.Run(t, dir, []string{"example.com/me"}, generateJSONMarshaller)
-	if err != nil {
+	// Run the action which generates a file.
+	if err := scantest.Run(t, dir, []string{"example.com/me"}, generateFileAction); err != nil {
 		t.Fatal(err)
 	}
 
-	// Verification
-	if len(generatedFiles) != 1 {
-		t.Fatalf("expected 1 generated file, but got %d", len(generatedFiles))
+	// Verify the side effect (the generated file).
+	generatedPath := filepath.Join(dir, "main_gen.go")
+	content, err := os.ReadFile(generatedPath)
+	if err != nil {
+		t.Fatalf("failed to read generated file: %v", err)
 	}
 
-	genFile, ok := generatedFiles["person_gen.go"]
-	if !ok {
-		t.Fatalf("expected file 'person_gen.go' was not generated")
-	}
-
-	expected := `
-package main
-
-func (p *Person) MarshalJSON() ([]byte, error) {
-	return []byte("{\"name\":\"" + p.Name + "\"}"), nil
-}
-`
-	if !strings.Contains(string(genFile), strings.TrimSpace(expected)) {
-		t.Errorf("generated file content mismatch:\n--- expected ---\n%s\n--- got ---\n%s", expected, string(genFile))
+	if !strings.Contains(string(content), "Code generated by test") {
+		t.Errorf("generated file content is not what was expected")
 	}
 }
 ```

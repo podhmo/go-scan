@@ -41,3 +41,10 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     - [ ] Update `locator.Locator` to accept and use the overlay for `go.mod`.
     - [ ] Update `scanner.Scanner` to accept and use the overlay for source files.
     - [ ] Implement overlay key resolution (project-relative paths).
+
+- [ ] **Add Integration Tests for Examples using `scantest`**
+  - *Description:* Add integration tests for the code generation tools in the `examples/` directory using the new `scantest` library.
+  - Subtasks:
+    - [ ] Add `scantest`-based tests for `examples/derivingbind`.
+    - [ ] Add `scantest`-based tests for `examples/derivingjson`.
+    - [ ] Refactor `examples/convert/main.go` to extract the generation logic into a testable function and add `scantest`-based tests.

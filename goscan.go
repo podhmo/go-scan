@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"go/format"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -18,6 +19,36 @@ import (
 	"github.com/podhmo/go-scan/locator"
 	"github.com/podhmo/go-scan/scanner"
 )
+
+// ContextKey is a private type for context keys to avoid collisions.
+type ContextKey string
+
+const (
+	// FileWriterKey is the context key for the file writer interceptor.
+	FileWriterKey = ContextKey("fileWriter")
+)
+
+// FileWriter is an interface for writing files, allowing for interception during tests.
+type FileWriter interface {
+	WriteFile(ctx context.Context, path string, data []byte, perm fs.FileMode) error
+}
+
+// defaultFileWriter is the default implementation of FileWriter that writes to the filesystem.
+type defaultFileWriter struct{}
+
+func (w *defaultFileWriter) WriteFile(ctx context.Context, path string, data []byte, perm fs.FileMode) error {
+	return os.WriteFile(path, data, perm)
+}
+
+// WriteFile is a context-aware file writing function.
+// It checks the context for a FileWriter and uses it if available.
+// Otherwise, it falls back to os.WriteFile.
+func WriteFile(ctx context.Context, path string, data []byte, perm fs.FileMode) error {
+	if writer, ok := ctx.Value(FileWriterKey).(FileWriter); ok {
+		return writer.WriteFile(ctx, path, data, perm)
+	}
+	return os.WriteFile(path, data, perm)
+}
 
 // GoFile represents a Go source file to be generated.
 type GoFile struct {
@@ -136,12 +167,15 @@ func (pd *PackageDirectory) SaveGoFile(ctx context.Context, gf GoFile, filename 
 		}
 	}
 
-	if err := os.WriteFile(fullOutputPath, formattedCode, 0644); err != nil {
+	if err := WriteFile(ctx, fullOutputPath, formattedCode, 0644); err != nil {
 		return fmt.Errorf("failed to write generated code to %s: %w", fullOutputPath, err)
 	}
 	slog.InfoContext(ctx, "Generated code written", slog.String("path", fullOutputPath))
 	return nil
 }
+
+// Package is an alias for scanner.PackageInfo, representing all the extracted information from a single package.
+type Package = scanner.PackageInfo
 
 // Re-export scanner kinds for convenience.
 const (
@@ -350,10 +384,11 @@ func compareFieldTypes(type1 *scanner.FieldType, type2 *scanner.FieldType) bool 
 // and caches for improving performance over multiple calls.
 // Scanner instances are stateful regarding which files have been visited (parsed).
 type Scanner struct {
+	workDir      string // The working directory for the scanner.
 	locator      *locator.Locator
 	scanner      *scanner.Scanner
-	packageCache map[string]*scanner.PackageInfo // Cache for PackageInfo from ScanPackage/ScanPackageByImport, key is import path
-	visitedFiles map[string]struct{}             // Set of visited (parsed) file absolute paths for this Scanner instance.
+	packageCache map[string]*Package // Cache for PackageInfo from ScanPackage/ScanPackageByImport, key is import path
+	visitedFiles map[string]struct{} // Set of visited (parsed) file absolute paths for this Scanner instance.
 	mu           sync.RWMutex
 	fset         *token.FileSet
 
@@ -367,28 +402,99 @@ func (s *Scanner) Fset() *token.FileSet {
 	return s.fset
 }
 
+// Scan scans Go packages based on the provided patterns.
+// Each pattern can be a directory path or a file path relative to the scanner's workDir.
+// It returns a list of scanned packages.
+func (s *Scanner) Scan(patterns ...string) ([]*Package, error) {
+	var pkgs []*Package
+	ctx := context.Background() // Or accept a context as an argument
+
+	// This logic is simplified. A real implementation would group files by package.
+	for _, pattern := range patterns {
+		absPath := pattern
+		if !filepath.IsAbs(pattern) {
+			absPath = filepath.Join(s.workDir, pattern)
+		}
+
+		info, err := os.Stat(absPath)
+		if err != nil {
+			// For now, we assume patterns are file paths. Import path resolution could be added here.
+			return nil, fmt.Errorf("could not stat pattern %q (resolved to %q): %w", pattern, absPath, err)
+		}
+
+		if info.IsDir() {
+			pkg, err := s.ScanPackage(ctx, absPath)
+			if err != nil {
+				return nil, fmt.Errorf("failed to scan package in directory %q: %w", absPath, err)
+			}
+			pkgs = append(pkgs, pkg)
+		} else { // Is a file
+			// ScanFiles expects all files to be in the same package.
+			// This simplified loop doesn't handle that grouping.
+			pkg, err := s.ScanFiles(ctx, []string{absPath})
+			if err != nil {
+				return nil, fmt.Errorf("failed to scan file %q: %w", absPath, err)
+			}
+			// TODO: This might add the same package multiple times if files are from the same package.
+			// Needs deduplication logic.
+			pkgs = append(pkgs, pkg)
+		}
+	}
+	return pkgs, nil
+}
+
+// ScannerOption is a function that configures a Scanner.
+type ScannerOption func(*Scanner) error
+
+// WithWorkDir sets the working directory for the scanner.
+func WithWorkDir(path string) ScannerOption {
+	return func(s *Scanner) error {
+		absPath, err := filepath.Abs(path)
+		if err != nil {
+			return fmt.Errorf("getting absolute path for workdir %q: %w", path, err)
+		}
+		s.workDir = absPath
+		return nil
+	}
+}
+
 // New creates a new Scanner. It finds the module root starting from the given path.
 // It also initializes an empty set of visited files for this scanner instance.
-func New(startPath string) (*Scanner, error) {
-	loc, err := locator.New(startPath)
+func New(options ...ScannerOption) (*Scanner, error) {
+	s := &Scanner{
+		packageCache:          make(map[string]*Package),
+		visitedFiles:          make(map[string]struct{}),
+		fset:                  token.NewFileSet(),
+		ExternalTypeOverrides: make(scanner.ExternalTypeOverride),
+	}
+
+	for _, option := range options {
+		if err := option(s); err != nil {
+			return nil, err
+		}
+	}
+
+	if s.workDir == "" {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return nil, fmt.Errorf("getwd: %w", err)
+		}
+		s.workDir = cwd
+	}
+
+	loc, err := locator.New(s.workDir)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize locator: %w", err)
 	}
+	s.locator = loc
 
-	fset := token.NewFileSet()
-	initialScanner, err := scanner.New(fset, nil)
+	initialScanner, err := scanner.New(s.fset, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create internal scanner: %w", err)
 	}
+	s.scanner = initialScanner
 
-	return &Scanner{
-		locator:               loc,
-		scanner:               initialScanner,
-		packageCache:          make(map[string]*scanner.PackageInfo),
-		visitedFiles:          make(map[string]struct{}), // Initialize visitedFiles
-		fset:                  fset,
-		ExternalTypeOverrides: make(scanner.ExternalTypeOverride),
-	}, nil
+	return s, nil
 }
 
 // SetExternalTypeOverrides sets the external type override map for the scanner.

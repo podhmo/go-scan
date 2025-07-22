@@ -31,7 +31,7 @@ func tempScannerDir(t *testing.T) (string, func()) {
 
 // TestNew_Integration tests the creation of a new Scanner and its underlying locator.
 func TestNew_Integration(t *testing.T) {
-	s, err := New("./scanner") // Assuming this test runs from project root where ./scanner is a valid sub-package.
+	s, err := New(WithWorkDir("./scanner")) // Assuming this test runs from project root where ./scanner is a valid sub-package.
 	if err != nil {
 		t.Fatalf("New() failed: %v", err)
 	}
@@ -54,7 +54,7 @@ func TestNew_Integration(t *testing.T) {
 // This test uses testdata/multipkg which should have its own go.mod declaring "example.com/multipkg-test"
 func TestLazyResolution_Integration(t *testing.T) {
 	// Scanner is initialized relative to the "testdata/multipkg" module.
-	s, err := New("./testdata/multipkg")
+	s, err := New(WithWorkDir("./testdata/multipkg"))
 	if err != nil {
 		t.Fatalf("New() for multipkg failed: %v", err)
 	}
@@ -133,7 +133,7 @@ func TestScanner_WithSymbolCache(t *testing.T) {
 	modelsImportPath := "example.com/multipkg-test/models" // Contains User type
 
 	// Initialize scanner relative to the multipkg module
-	sRoot, err := New("./testdata/multipkg")
+	sRoot, err := New(WithWorkDir("./testdata/multipkg"))
 	if err != nil {
 		t.Fatalf("Failed to create scanner for multipkg module: %v", err)
 	}
@@ -147,7 +147,7 @@ func TestScanner_WithSymbolCache(t *testing.T) {
 		defer cleanupTestCacheDir()
 		cacheFilePath := filepath.Join(testCacheDir, "symbols.json")
 
-		s, err := New("./testdata/multipkg") // Scanner for the test module
+		s, err := New(WithWorkDir("./testdata/multipkg")) // Scanner for the test module
 		if err != nil {
 			t.Fatalf("New() failed: %v", err)
 		}
@@ -232,7 +232,7 @@ func TestScanner_WithSymbolCache(t *testing.T) {
 		defer cleanupTestCacheDir()
 		cacheFilePath := filepath.Join(testCacheDir, "symbols_fallback.json")
 
-		s, err := New("./testdata/multipkg")
+		s, err := New(WithWorkDir("./testdata/multipkg"))
 		if err != nil {
 			t.Fatalf("New() failed: %v", err)
 		}
@@ -262,7 +262,7 @@ func TestScanner_WithSymbolCache(t *testing.T) {
 		defer cleanupTestCacheDir()
 		cacheFilePath := filepath.Join(testCacheDir, "symbols_stale.json")
 
-		s, err := New("./testdata/multipkg")
+		s, err := New(WithWorkDir("./testdata/multipkg"))
 		if err != nil {
 			t.Fatalf("New() failed: %v", err)
 		}
@@ -296,7 +296,7 @@ func TestScanner_WithSymbolCache(t *testing.T) {
 
 		s.SaveSymbolCache(context.Background())
 
-		sVerify, _ := New("./testdata/multipkg")
+		sVerify, _ := New(WithWorkDir("./testdata/multipkg"))
 		sVerify.CachePath = cacheFilePath
 
 		locVerify, errVerify := sVerify.FindSymbolDefinitionLocation(context.Background(), staleUserSymbol)
@@ -313,7 +313,7 @@ func TestScanner_WithSymbolCache(t *testing.T) {
 		defer cleanupTestCacheDir()
 		cacheFilePath := filepath.Join(testCacheDir, "symbols_nonexist.json")
 
-		s, err := New("./testdata/multipkg")
+		s, err := New(WithWorkDir("./testdata/multipkg"))
 		if err != nil {
 			t.Fatalf("New() failed: %v", err)
 		}
@@ -336,7 +336,7 @@ func TestScanner_WithSymbolCache(t *testing.T) {
 		defer cleanupTestCacheDir()
 		cacheFilePath := filepath.Join(testCacheDir, "symbols_disabled.json")
 
-		s, err := New("./testdata/multipkg")
+		s, err := New(WithWorkDir("./testdata/multipkg"))
 		if err != nil {
 			t.Fatalf("New() failed: %v", err)
 		}
@@ -375,7 +375,7 @@ func pathsEqual(p1, p2 string) bool {
 }
 
 func TestScannerWithExternalTypeOverrides(t *testing.T) {
-	s, err := New("./testdata/externaltypes")
+	s, err := New(WithWorkDir("./testdata/externaltypes"))
 	if err != nil {
 		t.Fatalf("Failed to create Scanner for testdata/externaltypes: %v", err)
 	}
@@ -444,7 +444,7 @@ func TestScannerWithExternalTypeOverrides(t *testing.T) {
 		t.Errorf("Type 'ObjectWithCustomTime' not found in scanned package")
 	}
 
-	sBasic, err := New("./testdata/basic")
+	sBasic, err := New(WithWorkDir("./testdata/basic"))
 	if err != nil {
 		t.Fatalf("Failed to create scanner for basic testdata: %v", err)
 	}
@@ -507,7 +507,7 @@ func equalStringSlices(a, b []string) bool {
 
 func TestScanFilesAndGetUnscanned(t *testing.T) {
 	// Setup: Initialize scanner relative to the 'testdata/scanfiles' module
-	s, err := New("./testdata/scanfiles")
+	s, err := New(WithWorkDir("./testdata/scanfiles"))
 	if err != nil {
 		t.Fatalf("New() for scanfiles module failed: %v", err)
 	}
@@ -524,7 +524,7 @@ func TestScanFilesAndGetUnscanned(t *testing.T) {
 	// handlersPkgImportPath := "example.com/scanfiles/handlers"
 
 	t.Run("ScanFiles_RelativePath_CoreUser", func(t *testing.T) {
-		sTest, _ := New("./testdata/scanfiles") // Fresh scanner for this subtest
+		sTest, _ := New(WithWorkDir("./testdata/scanfiles")) // Fresh scanner for this subtest
 
 		// Change CWD for this specific sub-test to test CWD-relative paths robustly
 		originalCwd, _ := os.Getwd()
@@ -550,7 +550,7 @@ func TestScanFilesAndGetUnscanned(t *testing.T) {
 	})
 
 	t.Run("ScanFiles_AbsolutePath_CoreItem", func(t *testing.T) {
-		sTest, _ := New("./testdata/scanfiles")
+		sTest, _ := New(WithWorkDir("./testdata/scanfiles"))
 		pkgInfo, err := sTest.ScanFiles(context.Background(), []string{coreItemPathAbs})
 		if err != nil {
 			t.Fatalf("ScanFiles for %s (absolute) failed: %v", coreItemPathAbs, err)
@@ -567,7 +567,7 @@ func TestScanFilesAndGetUnscanned(t *testing.T) {
 	})
 
 	t.Run("ScanFiles_ModuleQualifiedPath_CoreUser", func(t *testing.T) {
-		sTest, _ := New("./testdata/scanfiles") // Scanner initialized at scanfiles module root
+		sTest, _ := New(WithWorkDir("./testdata/scanfiles")) // Scanner initialized at scanfiles module root
 		moduleQualifiedPath := "example.com/scanfiles/core/user.go"
 		pkgInfo, err := sTest.ScanFiles(context.Background(), []string{moduleQualifiedPath})
 		if err != nil {
@@ -582,7 +582,7 @@ func TestScanFilesAndGetUnscanned(t *testing.T) {
 	})
 
 	t.Run("ScanFiles_MultipleCalls_VisitedSkipped", func(t *testing.T) {
-		sTest, _ := New("./testdata/scanfiles")
+		sTest, _ := New(WithWorkDir("./testdata/scanfiles"))
 		// First call: scan user.go
 		_, err := sTest.ScanFiles(context.Background(), []string{coreUserPathAbs})
 		if err != nil {
@@ -613,7 +613,7 @@ func TestScanFilesAndGetUnscanned(t *testing.T) {
 	})
 
 	t.Run("ScanFiles_AllFilesVisited_EmptyResult", func(t *testing.T) {
-		sTest, _ := New("./testdata/scanfiles")
+		sTest, _ := New(WithWorkDir("./testdata/scanfiles"))
 		_, err := sTest.ScanFiles(context.Background(), []string{coreUserPathAbs}) // Visit user.go
 		if err != nil {
 			t.Fatalf("Failed to scan user.go: %v", err)
@@ -632,7 +632,7 @@ func TestScanFilesAndGetUnscanned(t *testing.T) {
 	})
 
 	t.Run("UnscannedGoFiles_CorePackage", func(t *testing.T) {
-		sTest, _ := New("./testdata/scanfiles")
+		sTest, _ := New(WithWorkDir("./testdata/scanfiles"))
 
 		// Initially, all files in core should be unscanned
 		unscanned, err := sTest.UnscannedGoFiles(corePkgImportPath)
@@ -675,7 +675,7 @@ func TestScanFilesAndGetUnscanned(t *testing.T) {
 	})
 
 	t.Run("ScanPackage_RespectsVisitedFiles", func(t *testing.T) {
-		sTest, _ := New("./testdata/scanfiles")
+		sTest, _ := New(WithWorkDir("./testdata/scanfiles"))
 		// Scan core/user.go via ScanFiles first
 		_, err := sTest.ScanFiles(context.Background(), []string{coreUserPathAbs})
 		if err != nil {
@@ -739,7 +739,7 @@ func TestImplements(t *testing.T) {
 	// Setup: Initialize scanner relative to the project root,
 	// as testdata/implements is not a separate Go module.
 	// We'll use ScanPackage with a direct path.
-	s, err := New(".") // Assuming tests are run from project root
+	s, err := New(WithWorkDir(".")) // Assuming tests are run from project root
 	if err != nil {
 		t.Fatalf("New(\".\") failed: %v", err)
 	}
@@ -1335,7 +1335,7 @@ func findFunction(pkgInfo *scanner.PackageInfo, name string) *scanner.FunctionIn
 // func findType(types []*scanner.TypeInfo, name string) *scanner.TypeInfo { ... }
 
 func TestScanner_ScanPackage_Generics(t *testing.T) {
-	s, err := New("./testdata/generics") // Scanner relative to the "generics" module/directory
+	s, err := New(WithWorkDir("./testdata/generics")) // Scanner relative to the "generics" module/directory
 	if err != nil {
 		t.Fatalf("New() for generics testdata failed: %v", err)
 	}

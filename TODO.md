@@ -30,10 +30,10 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 
 ## To Be Implemented
 
-- [ ] **Implement Improved Scanning Logic in Example Tools**
-  - *Description:* The command-line tools in `examples/` should be updated to handle file and directory paths more intelligently, as outlined in the proposal. This involves distinguishing between file and directory arguments and grouping multiple file arguments by package.
+- [x] **Implement Improved Scanning Logic in Example Tools**
+  - *Description:* The command-line tools in `examples/` have been updated to handle file and directory paths more intelligently, as outlined in the proposal. This involves distinguishing between file and directory arguments and grouping multiple file arguments by package.
   - *Proposal Document:* [docs/scan-improvement.md](./docs/scan-improvement.md)
   - Subtasks:
-    - [ ] Refactor `examples/derivingjson`: Modify `main.go` to implement the proposed scanning logic.
-    - [ ] Refactor `examples/derivingbind`: Modify `main.go` to implement the same logic.
-    - [ ] Verify Behavior: Add simple test cases or manual verification steps to confirm that the tools correctly handle single-file, multi-file, and directory inputs.
+    - [x] Refactor `examples/derivingjson`: Modified `main.go` to implement the proposed scanning logic.
+    - [x] Refactor `examples/derivingbind`: Modified `main.go` to implement the same logic.
+    - [x] Verify Behavior: Manually verified that the tools correctly handle single-file, multi-file, and directory inputs.

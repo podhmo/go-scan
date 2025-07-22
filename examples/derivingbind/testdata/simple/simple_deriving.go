@@ -3,14 +3,13 @@
 package simple
 
 import (
-	"encoding/json"
-	"errors"
-	"fmt"
-	"io"
-	"net/http"
-
-	"github.com/podhmo/go-scan/examples/derivingbind/binding"
-	"github.com/podhmo/go-scan/examples/derivingbind/parser"
+	json "encoding/json"
+	errors "errors"
+	fmt "fmt"
+	binding "github.com/podhmo/go-scan/examples/derivingbind/binding"
+	parser "github.com/podhmo/go-scan/examples/derivingbind/parser"
+	io "io"
+	http "net/http"
 )
 
 func (s *ComprehensiveBind) Bind(req *http.Request, pathVar func(string) string) error {

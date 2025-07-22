@@ -27,43 +27,74 @@ func main() {
 
 	ctx := context.Background()
 	if len(os.Args) <= 1 {
-		slog.ErrorContext(ctx, "Usage: derivingjson <file_path_1> [file_path_2 ...]")
-		slog.ErrorContext(ctx, "Example: derivingjson examples/derivingjson/testdata/simple/models.go examples/derivingjson/testdata/separated/models/models.go")
+		slog.ErrorContext(ctx, "Usage: derivingjson <file_or_dir_path_1> [file_or_dir_path_2 ...]")
+		slog.ErrorContext(ctx, "Example (file): derivingjson examples/derivingjson/testdata/simple/models.go")
+		slog.ErrorContext(ctx, "Example (dir):  derivingjson examples/derivingjson/testdata/simple/")
 		os.Exit(1)
 	}
 
-	targetFiles := os.Args[1:]
-	processedDirs := make(map[string]bool)
+	gscn, err := goscan.New(".")
+	if err != nil {
+		slog.ErrorContext(ctx, "Failed to create go-scan scanner", slog.Any("error", err))
+		os.Exit(1)
+	}
+
+	filesByPackage := make(map[string][]string)
+	dirsToScan := []string{}
+
+	for _, path := range os.Args[1:] {
+		stat, err := os.Stat(path)
+		if err != nil {
+			slog.ErrorContext(ctx, "Error accessing path", slog.String("path", path), slog.Any("error", err))
+			continue
+		}
+		if stat.IsDir() {
+			dirsToScan = append(dirsToScan, path)
+		} else if strings.HasSuffix(path, ".go") {
+			pkgDir := filepath.Dir(path)
+			filesByPackage[pkgDir] = append(filesByPackage[pkgDir], path)
+		} else {
+			slog.WarnContext(ctx, "Argument is not a .go file or directory, skipping", slog.String("path", path))
+		}
+	}
+
 	var successCount, errorCount int
 
-	for _, filePath := range targetFiles {
-		stat, err := os.Stat(filePath)
+	// Process directories
+	for _, dirPath := range dirsToScan {
+		slog.InfoContext(ctx, "Scanning directory", "path", dirPath)
+		pkgInfo, err := gscn.ScanPackage(ctx, dirPath)
 		if err != nil {
-			slog.ErrorContext(ctx, "Error accessing file path", slog.String("file_path", filePath), slog.Any("error", err))
+			slog.ErrorContext(ctx, "Error scanning package", "path", dirPath, slog.Any("error", err))
 			errorCount++
 			continue
 		}
-		if stat.IsDir() || !strings.HasSuffix(filePath, ".go") {
-			slog.ErrorContext(ctx, "Argument is not a .go file", slog.String("file_path", filePath))
-			errorCount++
-			continue
-		}
-
-		pkgPath := filepath.Dir(filePath)
-		if processedDirs[pkgPath] {
-			slog.InfoContext(ctx, "Package already processed", slog.String("package_path", pkgPath))
-			continue
-		}
-
-		slog.InfoContext(ctx, "Generating UnmarshalJSON for package", slog.String("package_path", pkgPath), slog.String("triggered_by_file", filePath))
-		if err := Generate(ctx, pkgPath); err != nil {
-			slog.ErrorContext(ctx, "Error generating code for package", slog.String("package_path", pkgPath), slog.Any("error", err))
+		if err := Generate(ctx, gscn, pkgInfo); err != nil {
+			slog.ErrorContext(ctx, "Error generating code for package", "path", dirPath, slog.Any("error", err))
 			errorCount++
 		} else {
-			slog.InfoContext(ctx, "Successfully generated UnmarshalJSON for package", slog.String("package_path", pkgPath))
+			slog.InfoContext(ctx, "Successfully generated UnmarshalJSON for package", "path", dirPath)
 			successCount++
 		}
-		processedDirs[pkgPath] = true
+	}
+
+	// Process file groups
+	for pkgDir, filePaths := range filesByPackage {
+		slog.InfoContext(ctx, "Scanning files in package", "package", pkgDir, "files", filePaths)
+		// Note: ScanFiles requires the package directory to be passed explicitly.
+		pkgInfo, err := gscn.ScanFiles(ctx, filePaths)
+		if err != nil {
+			slog.ErrorContext(ctx, "Error scanning files", "package", pkgDir, slog.Any("error", err))
+			errorCount++
+			continue
+		}
+		if err := Generate(ctx, gscn, pkgInfo); err != nil {
+			slog.ErrorContext(ctx, "Error generating code for files", "package", pkgDir, slog.Any("error", err))
+			errorCount++
+		} else {
+			slog.InfoContext(ctx, "Successfully generated UnmarshalJSON for package", "package", pkgDir)
+			successCount++
+		}
 	}
 
 	slog.InfoContext(ctx, "Generation summary", slog.Int("successful_packages", successCount), slog.Int("failed_packages/files", errorCount))
@@ -108,20 +139,11 @@ func findTypeInPackage(pkgInfo *scanner.PackageInfo, typeName string) *scanner.T
 	return nil
 }
 
-func Generate(ctx context.Context, pkgPath string) error {
-	gscn, err := goscan.New(".")
-	if err != nil {
-		return fmt.Errorf("failed to create go-scan scanner: %w", err)
-	}
-
-	pkgInfo, err := gscn.ScanPackage(ctx, pkgPath)
-	if err != nil {
-		return fmt.Errorf("go-scan failed to scan package at %s: %w", pkgPath, err)
-	}
+func Generate(ctx context.Context, gscn *goscan.Scanner, pkgInfo *scanner.PackageInfo) error {
 	if pkgInfo == nil {
-		return fmt.Errorf("ScanPackage returned nil for %s", pkgPath)
+		return fmt.Errorf("cannot generate code for a nil package")
 	}
-
+	pkgPath := pkgInfo.Path
 	importManager := goscan.NewImportManager(pkgInfo)
 	var generatedCodeForAllStructs bytes.Buffer
 	anyCodeGenerated := false

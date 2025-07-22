@@ -72,6 +72,16 @@ This document outlines the current status, planned features, and areas for impro
 -   **`iota` Evaluation for Constants:** Implement basic logic to correctly evaluate the integer values of constants defined using `iota` (e.g., for simple enums).
     -   *More complex `iota` scenarios and deeper semantic understanding are discussed in [./dream2.md](./dream2.md).*
 
+## CLI and Tooling Improvements
+
+-   **Implement Improved Scanning Logic in Example Tools:**
+    -   **Description:** The command-line tools in `examples/` should be updated to handle file and directory paths more intelligently, as outlined in the proposal. This involves distinguishing between file and directory arguments and grouping multiple file arguments by package.
+    -   **Proposal Document:** [./scan-improvement.md](./scan-improvement.md)
+    -   **Subtasks:**
+        1.  **Refactor `examples/derivingjson`:** Modify `main.go` to implement the proposed scanning logic.
+        2.  **Refactor `examples/derivingbind`:** Modify `main.go` to implement the same logic.
+        3.  **Verify Behavior:** Add simple test cases or manual verification steps to confirm that the tools correctly handle single-file, multi-file, and directory inputs.
+
 ## Broader Vision & Advanced Features
 
 For a detailed exploration of more ambitious, long-term features such as:

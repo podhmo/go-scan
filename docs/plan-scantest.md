@@ -33,6 +33,9 @@ The `Run` function will execute the `go-scan` command in the specified directory
 
 *   Changing the working directory to `dir`.
 *   Executing the `go-scan` command with the provided patterns.
+*   **Module-aware execution:** Before running `go-scan`, it will check for a `go.mod` file in the test directory (`dir`).
+    *   If `go.mod` exists in `dir`, it will be used. This allows for self-contained test modules.
+    *   If `go.mod` does not exist, the `go-scan` command will be run in a way that it discovers the main project's `go.mod`. This will be achieved by setting the working directory appropriately.
 *   Capturing and returning the combined output (stdout and stderr).
 *   Returning an error if the command fails to execute.
 

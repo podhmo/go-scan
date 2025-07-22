@@ -2,19 +2,18 @@ package main
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/scantest"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func TestGenerate(t *testing.T) {
 	// 1. Setup: Create a temporary directory with the source files.
 	dir, cleanup := scantest.WriteFiles(t, map[string]string{
 		"go.mod": `module testing`,
-		"models.go": "package models\n\n// @derivng:binding\ntype Input struct {\n\tName string `in:\"query\" query:\"name\"`\n\tAge  int    `in:\"query\" query:\"age\" required:\"true\"`\n}\n\n// @derivng:binding in:\"body\"\ntype Person struct {\n\tName string `json:\"name\"`\n\tAge  int    `json:\"age\"`\n}\n",
+		"models.go": "package models\n\n// @deriving:binding\ntype Input struct {\n\tName string `in:\"query\" query:\"name\"`\n\tAge  int    `in:\"query\" query:\"age\" required:\"true\"`\n}\n\n// @deriving:binding in:\"body\"\ntype Person struct {\n\tName string `json:\"name\"`\n\tAge  int    `json:\"age\"`\n}\n",
 	})
 	defer cleanup()
 
@@ -29,28 +28,54 @@ func TestGenerate(t *testing.T) {
 	}
 
 	result, err := scantest.Run(t, dir, []string{"models.go"}, action)
-	require.NoError(t, err, "scantest.Run should not fail")
-	require.NotNil(t, result, "scantest.Run should produce a result")
-	require.Contains(t, result.Outputs, "models_deriving.go", "output should contain the generated file")
+	if err != nil {
+		t.Fatalf("scantest.Run should not fail: %v", err)
+	}
+	if result == nil {
+		t.Fatal("scantest.Run should produce a result")
+	}
+	if _, ok := result.Outputs["models_deriving.go"]; !ok {
+		t.Fatal("output should contain the generated file")
+	}
 
 	// 3. Assert: Check the content of the generated file.
 	generatedCode := string(result.Outputs["models_deriving.go"])
 
 	// Check imports
-	assert.Contains(t, generatedCode, `import (`, "should have an import block")
-	assert.Contains(t, generatedCode, `"net/http"`, "should import net/http")
-	assert.Contains(t, generatedCode, `"github.com/podhmo/go-scan/examples/derivingbind/parser"`, "should import parser")
-	assert.Contains(t, generatedCode, `"github.com/podhmo/go-scan/examples/derivingbind/binding"`, "should import binding")
-	assert.Contains(t, generatedCode, `"errors"`, "should import errors")
+	if !strings.Contains(generatedCode, `import (`) {
+		t.Errorf("should have an import block")
+	}
+	if !strings.Contains(generatedCode, `"net/http"`) {
+		t.Errorf("should import net/http")
+	}
+	if !strings.Contains(generatedCode, `"github.com/podhmo/go-scan/examples/derivingbind/parser"`) {
+		t.Errorf("should import parser")
+	}
+	if !strings.Contains(generatedCode, `"github.com/podhmo/go-scan/examples/derivingbind/binding"`) {
+		t.Errorf("should import binding")
+	}
+	if !strings.Contains(generatedCode, `"errors"`) {
+		t.Errorf("should import errors")
+	}
 
 	// Check Input struct Bind method
-	assert.Contains(t, generatedCode, `func (s *Input) Bind(req *http.Request, pathVar func(string) string) error {`, "should define Bind method for Input")
-	assert.Contains(t, generatedCode, `binding.One(b, &s.Age, binding.Query, "age", parser.Int, binding.Required)`, "should parse age from query")
-	assert.Contains(t, generatedCode, `binding.One(b, &s.Name, binding.Query, "name", parser.String, binding.Optional)`, "should parse name from query")
+	if !strings.Contains(generatedCode, `func (s *Input) Bind(req *http.Request, pathVar func(string) string) error {`) {
+		t.Errorf("should define Bind method for Input")
+	}
+	if !strings.Contains(generatedCode, `binding.One(b, &s.Age, binding.Query, "age", parser.Int, binding.Required)`) {
+		t.Errorf("should parse age from query")
+	}
+	if !strings.Contains(generatedCode, `binding.One(b, &s.Name, binding.Query, "name", parser.String, binding.Optional)`) {
+		t.Errorf("should parse name from query")
+	}
 
 	// Check Person struct Bind method
-	assert.Contains(t, generatedCode, `func (s *Person) Bind(req *http.Request, pathVar func(string) string) error {`, "should define Bind method for Person")
-	assert.Contains(t, generatedCode, `if decErr := json.NewDecoder(req.Body).Decode(s); decErr != nil {`, "should decode body for Person")
+	if !strings.Contains(generatedCode, `func (s *Person) Bind(req *http.Request, pathVar func(string) string) error {`) {
+		t.Errorf("should define Bind method for Person")
+	}
+	if !strings.Contains(generatedCode, `if decErr := json.NewDecoder(req.Body).Decode(s); decErr != nil {`) {
+		t.Errorf("should decode body for Person")
+	}
 
 	t.Logf("Generated code:\n%s", generatedCode)
 }

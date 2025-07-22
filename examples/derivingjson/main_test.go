@@ -2,12 +2,11 @@ package main
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/scantest"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func TestGenerate(t *testing.T) {
@@ -29,17 +28,35 @@ func TestGenerate(t *testing.T) {
 	}
 
 	result, err := scantest.Run(t, dir, []string{"models.go"}, action)
-	require.NoError(t, err, "scantest.Run should not fail")
-	require.NotNil(t, result, "scantest.Run should produce a result")
-	require.Contains(t, result.Outputs, "models_deriving.go", "output should contain the generated file")
+	if err != nil {
+		t.Fatalf("scantest.Run should not fail: %v", err)
+	}
+	if result == nil {
+		t.Fatal("scantest.Run should produce a result")
+	}
+	if _, ok := result.Outputs["models_deriving.go"]; !ok {
+		t.Fatal("output should contain the generated file")
+	}
 
 	// 3. Assert: Check the content of the generated file.
 	generatedCode := string(result.Outputs["models_deriving.go"])
 
-	assert.Contains(t, generatedCode, `func (s *EventContainer) UnmarshalJSON(data []byte) error {`)
-	assert.Contains(t, generatedCode, `switch discriminatorDoc.Type {`)
-	assert.Contains(t, generatedCode, `case "message":`)
-	assert.Contains(t, generatedCode, `var content *MessageEvent`)
-	assert.Contains(t, generatedCode, `case "reaction":`)
-	assert.Contains(t, generatedCode, `var content *ReactionEvent`)
+	if !strings.Contains(generatedCode, `func (s *EventContainer) UnmarshalJSON(data []byte) error {`) {
+		t.Errorf("expected to contain UnmarshalJSON method")
+	}
+	if !strings.Contains(generatedCode, `switch discriminatorDoc.Type {`) {
+		t.Errorf("expected to contain switch statement")
+	}
+	if !strings.Contains(generatedCode, `case "message":`) {
+		t.Errorf("expected to contain case for message")
+	}
+	if !strings.Contains(generatedCode, `var content *MessageEvent`) {
+		t.Errorf("expected to contain var for MessageEvent")
+	}
+	if !strings.Contains(generatedCode, `case "reaction":`) {
+		t.Errorf("expected to contain case for reaction")
+	}
+	if !strings.Contains(generatedCode, `var content *ReactionEvent`) {
+		t.Errorf("expected to contain var for ReactionEvent")
+	}
 }

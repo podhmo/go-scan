@@ -4,9 +4,8 @@ import (
 	"bytes"
 	"io"
 	"os"
+	"strings"
 	"testing"
-
-	"github.com/stretchr/testify/assert"
 )
 
 func TestRunConversionExamples(t *testing.T) {
@@ -30,14 +29,34 @@ func TestRunConversionExamples(t *testing.T) {
 
 	// Assert the output
 	output := buf.String()
-	assert.Contains(t, output, "--- User Conversion Example ---")
-	assert.Contains(t, output, "--- Order Conversion Example ---")
-	assert.Contains(t, output, "--- User Conversion with Nil Phone and UpdatedAt ---")
-	assert.Contains(t, output, `"UserID": "user-101"`)
-	assert.Contains(t, output, `"FullName": "John Doe"`)
-	assert.Contains(t, output, `"ID": "ORD-001"`)
-	assert.Contains(t, output, `"TotalAmount": 199.99`)
-	assert.Contains(t, output, `"UserID": "user-102"`)
-	assert.Contains(t, output, `"FullName": "Jane Doe"`)
-	assert.Contains(t, output, `"PhoneNumber": "N/A"`)
+	if !strings.Contains(output, "--- User Conversion Example ---") {
+		t.Errorf("expected to contain user conversion example")
+	}
+	if !strings.Contains(output, "--- Order Conversion Example ---") {
+		t.Errorf("expected to contain order conversion example")
+	}
+	if !strings.Contains(output, "--- User Conversion with Nil Phone and UpdatedAt ---") {
+		t.Errorf("expected to contain user conversion with nil example")
+	}
+	if !strings.Contains(output, `"UserID": "user-101"`) {
+		t.Errorf("expected to contain user-101")
+	}
+	if !strings.Contains(output, `"FullName": "John Doe"`) {
+		t.Errorf("expected to contain John Doe")
+	}
+	if !strings.Contains(output, `"ID": "ORD-001"`) {
+		t.Errorf("expected to contain ORD-001")
+	}
+	if !strings.Contains(output, `"TotalAmount": 199.99`) {
+		t.Errorf("expected to contain 199.99")
+	}
+	if !strings.Contains(output, `"UserID": "user-102"`) {
+		t.Errorf("expected to contain user-102")
+	}
+	if !strings.Contains(output, `"FullName": "Jane Doe"`) {
+		t.Errorf("expected to contain Jane Doe")
+	}
+	if !strings.Contains(output, `"PhoneNumber": "N/A"`) {
+		t.Errorf("expected to contain N/A phone number")
+	}
 }

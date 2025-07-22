@@ -99,7 +99,7 @@ func (ti *TypeInfo) Annotation(name string) (value string, ok bool) {
 		return "", false
 	}
 	lines := strings.Split(ti.Doc, "\n")
-	prefix := "@" + name
+	prefix := name
 	for _, line := range lines {
 		trimmedLine := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmedLine, prefix) {

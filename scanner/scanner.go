@@ -661,7 +661,7 @@ func commentText(cg *ast.CommentGroup) string {
 	if cg == nil {
 		return ""
 	}
-	return strings.TrimSpace(cg.Text())
+	return strings.TrimSpace(strings.TrimPrefix(cg.Text(), "//"))
 }
 
 // (No trailing comments or code after the last function - ensure this is the true end of the file)

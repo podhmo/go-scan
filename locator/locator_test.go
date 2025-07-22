@@ -185,7 +185,10 @@ func TestFindPackageDirWithReplace(t *testing.T) {
 	}{
 		{
 			name: "replace_with_local_relative_path",
-			goModContent: ` + "module example.com/mainmodule\ngo 1.16\nreplace example.com/replacedmodule => ./local/replacedmodule\n" + `,
+			goModContent: `module example.com/mainmodule
+go 1.16
+replace example.com/replacedmodule => ./local/replacedmodule
+`,
 			subDirsToCreate:   []string{filepath.Join("local", "replacedmodule", "pkg")},
 			importPath:        "example.com/replacedmodule/pkg",
 			expectedFoundPath: filepath.Join("local", "replacedmodule", "pkg"), // Relative to module root
@@ -193,7 +196,10 @@ func TestFindPackageDirWithReplace(t *testing.T) {
 		},
 		{
 			name: "replace_with_local_path_root",
-			goModContent: ` + "module example.com/mainmodule\ngo 1.16\nreplace example.com/replacedmodule => ./local/replacedmodule\n" + `,
+			goModContent: `module example.com/mainmodule
+go 1.16
+replace example.com/replacedmodule => ./local/replacedmodule
+`,
 			subDirsToCreate:   []string{filepath.Join("local", "replacedmodule")},
 			importPath:        "example.com/replacedmodule",
 			expectedFoundPath: filepath.Join("local", "replacedmodule"),
@@ -201,7 +207,10 @@ func TestFindPackageDirWithReplace(t *testing.T) {
 		},
 		{
 			name: "replace_with_local_path_version_on_old",
-			goModContent: ` + "module example.com/mainmodule\ngo 1.16\nreplace example.com/replacedmodule v1.0.0 => ./local/versionedreplacedmodule\n" + `,
+			goModContent: `module example.com/mainmodule
+go 1.16
+replace example.com/replacedmodule v1.0.0 => ./local/versionedreplacedmodule
+`,
 			subDirsToCreate:   []string{filepath.Join("local", "versionedreplacedmodule", "subpkg")},
 			importPath:        "example.com/replacedmodule/subpkg",
 			expectedFoundPath: filepath.Join("local", "versionedreplacedmodule", "subpkg"),
@@ -217,7 +226,10 @@ func TestFindPackageDirWithReplace(t *testing.T) {
 		},
 		{
 			name: "replace_module_with_another_module_path_within_same_project",
-			goModContent: ` + "module example.com/mainmodule\ngo 1.16\nreplace example.com/oldinternal => example.com/mainmodule/newinternal v1.0.0\n" + `,
+			goModContent: `module example.com/mainmodule
+go 1.16
+replace example.com/oldinternal => example.com/mainmodule/newinternal v1.0.0
+`,
 			subDirsToCreate:   []string{filepath.Join("newinternal", "api")},
 			importPath:        "example.com/oldinternal/api",
 			expectedFoundPath: filepath.Join("newinternal", "api"), // Relative to module root
@@ -225,7 +237,10 @@ func TestFindPackageDirWithReplace(t *testing.T) {
 		},
 		{
 			name: "replace_target_local_path_does_not_exist",
-			goModContent: ` + "module example.com/mainmodule\ngo 1.16\nreplace example.com/nonexistent => ./does/not/exist\n" + `,
+			goModContent: `module example.com/mainmodule
+go 1.16
+replace example.com/nonexistent => ./does/not/exist
+`,
 			subDirsToCreate:   []string{},
 			importPath:        "example.com/nonexistent/pkg",
 			expectedFoundPath: "",
@@ -233,7 +248,10 @@ func TestFindPackageDirWithReplace(t *testing.T) {
 		},
 		{
 			name: "no_matching_replace_directive_falls_back_to_module_path",
-			goModContent: ` + "module example.com/mainmodule\ngo 1.16\nreplace example.com/foo => ./bar\n" + `,
+			goModContent: `module example.com/mainmodule
+go 1.16
+replace example.com/foo => ./bar
+`,
 			subDirsToCreate:   []string{"actualpkg"}, // Subdir of mainmodule
 			importPath:        "example.com/mainmodule/actualpkg",
 			expectedFoundPath: "actualpkg", // Relative to module root
@@ -241,7 +259,13 @@ func TestFindPackageDirWithReplace(t *testing.T) {
 		},
 		{
 			name: "replace_in_block_form_finds_alpha",
-			goModContent: ` + "module example.com/mainmodule\ngo 1.16\nreplace (\n\texample.com/alpha => ./local/alpha\n\texample.com/beta v1.0.0 => ./local/betaversioned\n)\n" + `,
+			goModContent: `module example.com/mainmodule
+go 1.16
+replace (
+	example.com/alpha => ./local/alpha
+	example.com/beta v1.0.0 => ./local/betaversioned
+)
+`,
 			subDirsToCreate:   []string{filepath.Join("local", "alpha"), filepath.Join("local", "betaversioned", "sub")},
 			importPath:        "example.com/alpha",
 			expectedFoundPath: filepath.Join("local", "alpha"),
@@ -249,7 +273,13 @@ func TestFindPackageDirWithReplace(t *testing.T) {
 		},
 		{
 			name: "replace_in_block_form_finds_beta_subpackage",
-			goModContent: ` + "module example.com/mainmodule\ngo 1.16\nreplace (\n\texample.com/alpha => ./local/alpha\n\texample.com/beta v1.0.0 => ./local/betaversioned\n)\n" + `,
+			goModContent: `module example.com/mainmodule
+go 1.16
+replace (
+	example.com/alpha => ./local/alpha
+	example.com/beta v1.0.0 => ./local/betaversioned
+)
+`,
 			subDirsToCreate:   []string{filepath.Join("local", "alpha"), filepath.Join("local", "betaversioned", "sub")},
 			importPath:        "example.com/beta/sub",
 			expectedFoundPath: filepath.Join("local", "betaversioned", "sub"),
@@ -257,7 +287,10 @@ func TestFindPackageDirWithReplace(t *testing.T) {
 		},
 		{
 			name: "replace_to_external_module_not_in_current_locator_scope_fails_gracefully",
-			goModContent: ` + "module example.com/mainmodule\ngo 1.16\nreplace example.com/currenttomodule => example.com/someothermodule v1.0.0\n" + `,
+			goModContent: `module example.com/mainmodule
+go 1.16
+replace example.com/currenttomodule => example.com/someothermodule v1.0.0
+`,
 			subDirsToCreate:   []string{},
 			importPath:        "example.com/currenttomodule/pkg",
 			expectedFoundPath: "",
@@ -265,7 +298,10 @@ func TestFindPackageDirWithReplace(t *testing.T) {
 		},
 		{
 			name: "replace_old_path_is_prefix_of_import_path",
-			goModContent: ` + "module example.com/mainmodule\ngo 1.16\nreplace example.com/prefixmod => ./local/prefixmod\n" + `,
+			goModContent: `module example.com/mainmodule
+go 1.16
+replace example.com/prefixmod => ./local/prefixmod
+`,
 			subDirsToCreate:   []string{filepath.Join("local", "prefixmod", "sub", "pkg")},
 			importPath:        "example.com/prefixmod/sub/pkg",
 			expectedFoundPath: filepath.Join("local", "prefixmod", "sub", "pkg"),
@@ -273,7 +309,10 @@ func TestFindPackageDirWithReplace(t *testing.T) {
 		},
 		{
 			name: "replace_old_path_is_prefix_of_import_path_targetting_root_of_replacement",
-			goModContent: ` + "module example.com/mainmodule\ngo 1.16\nreplace example.com/prefixmod => ./local/prefixmod\n" + `,
+			goModContent: `module example.com/mainmodule
+go 1.16
+replace example.com/prefixmod => ./local/prefixmod
+`,
 			subDirsToCreate:   []string{filepath.Join("local", "prefixmod")}, // only root of replacement exists
 			importPath:        "example.com/prefixmod",
 			expectedFoundPath: filepath.Join("local", "prefixmod"),

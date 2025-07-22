@@ -33,14 +33,14 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 
 ## To Be Implemented
 
-- [ ] **Implement Overlay Feature**
+- [x] **Implement Overlay Feature**
   - *Description:* Add an "overlay" feature to `go-scan` to allow providing in-memory file content, useful for tools that generate or modify Go source code without writing to the filesystem.
   - *Plan Document:* [docs/plan-overlay.md](./docs/plan-overlay.md)
   - Subtasks:
-    - [ ] Define `scanner.Overlay` type.
-    - [ ] Update `locator.Locator` to accept and use the overlay for `go.mod`.
-    - [ ] Update `scanner.Scanner` to accept and use the overlay for source files.
-    - [ ] Implement overlay key resolution (project-relative paths).
+    - [x] Define `scanner.Overlay` type.
+    - [x] Update `locator.Locator` to accept and use the overlay for `go.mod`.
+    - [x] Update `scanner.Scanner` to accept and use the overlay for source files.
+    - [x] Implement overlay key resolution (project-relative paths).
 
 - [ ] **Add Integration Tests for Examples using `scantest`**
   - *Description:* Add integration tests for the code generation tools in the `examples/` directory using the new `scantest` library.

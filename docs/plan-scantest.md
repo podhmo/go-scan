@@ -2,44 +2,56 @@
 
 ## 1. Overview
 
-The `scantest` library will provide utilities for testing `go-scan` analyzers. It will be inspired by the `golang.org/x/tools/go/analysis/analysistest` package, but with a simplified feature set as requested.
+The `scantest` library provides helpers to test tasks that use `go-scan`. These tasks can range from pure static checks on scanned code to actions with side effects like code generation.
 
-The core idea is to provide helpers to run `go-scan` on a test codebase, which can be located in a `testdata` directory or created in a temporary directory.
+The core idea is to provide a consistent way to set up a test environment, execute an action on scanned packages, and verify the outcome, whether that outcome is an error state or a generated file.
 
 ## 2. Core API
-
-The library will expose two main functions:
 
 ```go
 package scantest
 
-import "testing"
+import (
+	"context"
+	"testing"
+	"github.com/podhmo/go-scan"
+)
 
-// Run runs go-scan on a given directory.
-// t is the testing object.
-// dir is the directory to run go-scan in.
-// patterns are the patterns to pass to go-scan.
-// It returns the combined output of stdout and stderr from the go-scan command.
-func Run(t *testing.T, dir string, patterns ...string) (string, error)
+// ActionFunc is a function that performs a check or an action based on scan results.
+// For actions with side effects, it should use go-scan's top-level functions
+// (e.g., goscan.WriteFile) to allow the test harness to capture the results.
+type ActionFunc func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error
 
-// WriteFiles creates a temporary directory and populates it with the given files.
-// It returns the path to the temporary directory and a cleanup function.
+// Result holds the outcome of a Run that has side effects.
+type Result struct {
+	// Outputs contains the content of files written by go-scan's helper functions.
+	// The key is the file path, and the value is the content.
+	Outputs map[string][]byte
+}
+
+// Run sets up and executes a test scenario.
+// It returns a Result object if the action had side effects captured by the harness.
+func Run(t *testing.T, dir string, patterns []string, action ActionFunc) (*Result, error)
+
+// WriteFiles creates a temporary directory and populates it with initial files.
 func WriteFiles(t *testing.T, files map[string]string) (string, func())
 ```
 
-## 3. `Run` Function
+## 3. `Run` Function and `go-scan` Integration
 
-The `Run` function will execute the `go-scan` command in the specified directory. It will be responsible for:
+The `Run` function is the central piece of the test harness.
 
-*   Changing the working directory to `dir`.
-*   Executing the `go-scan` command with the provided patterns.
-*   **Module-aware execution:** Before running `go-scan`, it will check for a `go.mod` file in the test directory (`dir`).
-    *   If `go.mod` exists in `dir`, it will be used. This allows for self-contained test modules.
-    *   If `go.mod` does not exist, the `go-scan` command will be run in a way that it discovers the main project's `go.mod`. This will be achieved by setting the working directory appropriately.
-*   Capturing and returning the combined output (stdout and stderr).
-*   Returning an error if the command fails to execute.
-
-Test authors can then inspect the output of `go-scan` to verify its behavior.
+1.  **Setup**: It creates a `goscan.Scanner` and prepares a `context.Context` for the test run.
+2.  **Scan**: It scans the packages matching the given `patterns`.
+3.  **Action Execution**: It calls the user-provided `action` function.
+4.  **Result Capturing**: This is the key integration point.
+    *   For `scantest` to capture the results of file I/O, the `action` function **must** use helper functions from the `go-scan` package, such as `goscan.WriteFile(ctx, path, data)`.
+    *   `scantest.Run` will set up the `context` with a mechanism (e.g., a "writer" object) that intercepts these calls. Instead of writing to the actual filesystem, the calls write to an in-memory map.
+    *   This requires a future modification in `go-scan` itself. For example, `goscan.WriteFile` would need to be updated to check the context for this test-specific writer.
+5.  **Return Value**:
+    *   If the interceptor captured any file writes, they are returned in the `Result` struct.
+    -   If the action performed only checks and returned `nil`, `Run` returns `(nil, nil)`.
+    *   If any step fails, an `error` is returned.
 
 ## 4. `WriteFiles` Function
 
@@ -54,38 +66,97 @@ This allows test authors to easily create isolated test environments without nee
 
 ## 5. Example Usage
 
-Here's how the library might be used in a test:
+### Example 1: Pure Check
 
 ```go
-package myanalyzer_test
+package main_test
 
 import (
-    "strings"
-    "testing"
+	"context"
+	"fmt"
+	"testing"
 
-    "github.com/your-org/go-scan/scantest"
+	"github.com/podhmo/go-scan"
+	"github.com/podhmo/go-scan/scantest"
 )
 
-func TestMyAnalyzer(t *testing.T) {
-    dir, cleanup := scantest.WriteFiles(t, map[string]string{
-        "a/a.go": `
-package a
+func TestPureCheck(t *testing.T) {
+	dir, cleanup := scantest.WriteFiles(t, map[string]string{
+		"go.mod": "module example.com/me",
+		"person.go": `package main; type Person struct { Name string }`,
+	})
+	defer cleanup()
 
-func main() {
-    // some code that should be flagged by my-analyzer
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
+		personType := pkgs[0].Lookup.Type("Person")
+		if personType == nil {
+			return fmt.Errorf("type Person not found")
+		}
+		return nil
+	}
+
+	result, err := scantest.Run(t, dir, []string{"example.com/me"}, action)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result != nil {
+		t.Errorf("expected a nil result for a pure check, but got %+v", result)
+	}
 }
-`,
-        "a/go.mod": "module a",
-    })
-    defer cleanup()
+```
 
-    output, err := scantest.Run(t, dir, "./...")
-    if err != nil {
-        t.Fatal(err)
-    }
+### Example 2: Code Generation (Future Vision)
 
-    if !strings.Contains(output, "my-analyzer found an issue") {
-        t.Errorf("expected diagnostic not found in output: %s", output)
-    }
+This example shows the target usage, assuming `goscan.WriteFile` is updated to integrate with the context-based interception mechanism.
+
+```go
+package main_test
+
+import (
+	"context"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/podhmo/go-scan" // Assume this package will be updated
+	"github.com/podhmo/go-scan/scantest"
+)
+
+// This action uses a (hypothetical) context-aware goscan.WriteFile
+func generateAction(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
+	content := []byte("package main\n\n// Code generated by test\n")
+	outputPath := filepath.Join(s.RootDir, "main_gen.go")
+
+	// This function would need to be modified in go-scan to check the context
+	// for a test-specific writer provided by scantest.Run.
+	return goscan.WriteFile(ctx, outputPath, content, 0644)
+}
+
+func TestGenerateCode(t *testing.T) {
+	dir, cleanup := scantest.WriteFiles(t, map[string]string{
+		"go.mod":  "module example.com/me",
+		"main.go": "package main",
+	})
+	defer cleanup()
+
+	result, err := scantest.Run(t, dir, []string{"example.com/me"}, generateAction)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if result == nil {
+		t.Fatal("expected a non-nil result for a file generation action")
+	}
+	if len(result.Outputs) != 1 {
+		t.Fatalf("expected 1 generated file, but got %d", len(result.Outputs))
+	}
+
+	content, ok := result.Outputs["main_gen.go"]
+	if !ok {
+		t.Fatal("expected file 'main_gen.go' was not in the result")
+	}
+	if !strings.Contains(string(content), "Code generated by test") {
+		t.Errorf("generated file content is not what was expected")
+	}
 }
 ```

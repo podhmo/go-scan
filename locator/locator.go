@@ -2,7 +2,6 @@ package locator
 
 import (
 	"bufio"
-	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -23,12 +22,11 @@ type Locator struct {
 	modulePath string
 	rootDir    string
 	replaces   []ReplaceDirective
-	overlay    map[string][]byte
 }
 
 // New creates a new Locator by searching for a go.mod file.
 // It starts searching from startPath and moves up the directory tree.
-func New(startPath string, overlay map[string][]byte) (*Locator, error) {
+func New(startPath string) (*Locator, error) {
 	absPath, err := filepath.Abs(startPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get absolute path for %s: %w", startPath, err)
@@ -40,20 +38,12 @@ func New(startPath string, overlay map[string][]byte) (*Locator, error) {
 	}
 
 	goModFilePath := filepath.Join(rootDir, "go.mod")
-	goModBytes, ok := overlay[goModFilePath]
-	if !ok {
-		goModBytes, err = os.ReadFile(goModFilePath)
-		if err != nil {
-			return nil, fmt.Errorf("could not read %s: %w", goModFilePath, err)
-		}
-	}
-
-	modPath, err := getModulePath(goModFilePath, goModBytes)
+	modPath, err := getModulePath(goModFilePath)
 	if err != nil {
 		return nil, err
 	}
 
-	replaces, err := getReplaceDirectives(goModFilePath, goModBytes)
+	replaces, err := getReplaceDirectives(goModFilePath)
 	if err != nil {
 		// It's okay if parsing replace directives fails, just log it or handle as a warning
 		// For now, we'll proceed without them.
@@ -65,7 +55,6 @@ func New(startPath string, overlay map[string][]byte) (*Locator, error) {
 		modulePath: modPath,
 		rootDir:    rootDir,
 		replaces:   replaces,
-		overlay:    overlay,
 	}, nil
 }
 
@@ -236,8 +225,14 @@ func findModuleRoot(dir string) (string, error) {
 }
 
 // getModulePath reads the module path from a go.mod file.
-func getModulePath(goModPath string, content []byte) (string, error) {
-	scanner := bufio.NewScanner(bytes.NewReader(content))
+func getModulePath(goModPath string) (string, error) {
+	file, err := os.Open(goModPath)
+	if err != nil {
+		return "", fmt.Errorf("could not open %s: %w", goModPath, err)
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		line := scanner.Text()
 		if strings.HasPrefix(line, "module") {
@@ -256,9 +251,15 @@ func getModulePath(goModPath string, content []byte) (string, error) {
 }
 
 // getReplaceDirectives reads replace directives from a go.mod file.
-func getReplaceDirectives(goModPath string, content []byte) ([]ReplaceDirective, error) {
+func getReplaceDirectives(goModPath string) ([]ReplaceDirective, error) {
+	file, err := os.Open(goModPath)
+	if err != nil {
+		return nil, fmt.Errorf("could not open %s: %w", goModPath, err)
+	}
+	defer file.Close()
+
 	var directives []ReplaceDirective
-	scanner := bufio.NewScanner(bytes.NewReader(content))
+	scanner := bufio.NewScanner(file)
 	inReplaceBlock := false
 
 	for scanner.Scan() {

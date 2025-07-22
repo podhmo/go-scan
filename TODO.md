@@ -47,4 +47,5 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
   - Subtasks:
     - [x] Add `scantest`-based tests for `examples/derivingbind`.
     - [ ] Add `scantest`-based tests for `examples/derivingjson`.
+      - (Blocked) `go-scan`'s `Implements` function does not seem to work correctly for interfaces defined in the same package. This needs to be investigated and fixed in `go-scan` itself before tests for `derivingjson` can be completed.
     - [ ] Refactor `examples/convert/main.go` to extract the generation logic into a testable function and add `scantest`-based tests.

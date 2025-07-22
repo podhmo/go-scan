@@ -27,8 +27,18 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 -   **Import Management:** `goscan.ImportManager` for generated code.
 -   **Basic Interface Implementation Check:** `goscan.Implements` (structs implementing interfaces).
 -   **AST Iteration Utilities:** `astwalk.ToplevelStructs`.
+-   **Improved Scanning Logic in Example Tools:** Command-line tools in `examples/` now handle file and directory paths more intelligently, distinguishing between them and grouping file arguments by package.
 
 ## To Be Implemented
+
+- [ ] **Implement Overlay Feature**
+  - *Description:* Add an "overlay" feature to `go-scan` to allow providing in-memory file content, useful for tools that generate or modify Go source code without writing to the filesystem.
+  - *Plan Document:* [docs/plan-overlay.md](./docs/plan-overlay.md)
+  - Subtasks:
+    - [ ] Define `scanner.Overlay` type.
+    - [ ] Update `locator.Locator` to accept and use the overlay for `go.mod`.
+    - [ ] Update `scanner.Scanner` to accept and use the overlay for source files.
+    - [ ] Implement overlay key resolution (project-relative paths).
 
 - [ ] **Implement scantest library**
   - *Description:* Implement the `scantest` library as described in `docs/plan-scantest.md`.
@@ -43,11 +53,3 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
   - Subtasks:
     - [ ] Create a new test suite for an existing analyzer using `scantest`.
     - [ ] Integrate `scantest`-based tests into the CI/CD pipeline.
-
-- [x] **Implement Improved Scanning Logic in Example Tools**
-  - *Description:* The command-line tools in `examples/` have been updated to handle file and directory paths more intelligently, as outlined in the proposal. This involves distinguishing between file and directory arguments and grouping multiple file arguments by package.
-  - *Proposal Document:* [docs/plan-scan-improvement.md](./docs/plan-scan-improvement.md)
-  - Subtasks:
-    - [x] Refactor `examples/derivingjson`: Modified `main.go` to implement the proposed scanning logic.
-    - [x] Refactor `examples/derivingbind`: Modified `main.go` to implement the same logic.
-    - [x] Verify Behavior: Manually verified that the tools correctly handle single-file, multi-file, and directory inputs.

@@ -43,6 +43,9 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     -   Generate an internal `convert<Src>To<Dst>` helper function.
     -   Implement direct field mapping (e.g., `dst.Field = src.Field`).
 -   **Add Tests for Struct Conversion**: Write tests using `scantest` to verify the generated code for struct conversions.
+-   **Refactor `examples/convert` for Cross-Package Conversion**:
+    -   Move `Src` and `Dst` types into separate packages (e.g., `models/source` and `models/destination`).
+    -   Update tests to verify that cross-package conversion works correctly.
 -   **Generator for Pointer Fields**: Extend the generator to handle pointer fields within structs.
     -   Generate code that correctly handles `*SrcType` to `*DstType` conversions (nil checks).
 -   **Add Tests for Pointer Fields**: Write tests for pointer field conversions.

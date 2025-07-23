@@ -38,12 +38,12 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 ## To Be Implemented
 
 ### `convert` Tool Implementation
--   **Generator for Structs**: Implement the code generator to produce conversion functions for basic struct-to-struct conversions based on the parsed `ConversionPair` model.
-    -   Generate a top-level `Convert<Src>To<Dst>` function.
-    -   Generate an internal `convert<Src>To<Dst>` helper function.
-    -   Implement direct field mapping (e.g., `dst.Field = src.Field`).
--   **Add Tests for Struct Conversion**: Write tests using `scantest` to verify the generated code for struct conversions.
--   **Refactor `examples/convert` for Cross-Package Conversion**:
+-   [x] **Generator for Structs**: Implement the code generator to produce conversion functions for basic struct-to-struct conversions based on the parsed `ConversionPair` model.
+    -   [x] Generate a top-level `Convert<Src>To<Dst>` function.
+    -   [x] Generate an internal `convert<Src>To<Dst>` helper function.
+    -   [x] Implement direct field mapping (e.g., `dst.Field = src.Field`).
+-   [x] **Add Tests for Struct Conversion**: Write tests using `scantest` to verify the generated code for struct conversions.
+-   [ ] **Refactor `examples/convert` for Cross-Package Conversion**:
     -   Move `Src` and `Dst` types into separate packages (e.g., `models/source` and `models/destination`).
     -   Update tests to verify that cross-package conversion works correctly.
 -   **Generator for Pointer Fields**: Extend the generator to handle pointer fields within structs.

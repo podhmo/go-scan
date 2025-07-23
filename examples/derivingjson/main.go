@@ -178,7 +178,7 @@ func Generate(ctx context.Context, gscn *goscan.Scanner, pkgInfo *scanner.Packag
 			if field.Type.FullImportPath() == "" {
 				resolvedFieldType = findTypeInPackage(pkgInfo, field.Type.Name)
 			} else {
-				resolvedFieldType, _ = field.Type.Resolve(ctx)
+				resolvedFieldType, _ = gscn.ResolveType(ctx, field.Type)
 			}
 
 			isInterfaceField := false

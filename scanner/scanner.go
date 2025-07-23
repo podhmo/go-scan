@@ -48,6 +48,14 @@ func New(fset *token.FileSet, overrides ExternalTypeOverride, overlay Overlay, m
 	}, nil
 }
 
+// ResolveType starts the type resolution process for a given field type.
+// It handles circular dependencies by tracking the resolution path.
+// It's the public entry point for resolving types, initializing a new resolution tracker.
+func (s *Scanner) ResolveType(ctx context.Context, fieldType *FieldType) (*TypeInfo, error) {
+	// The internal Resolve method is called with a new, empty map for tracking.
+	return fieldType.Resolve(ctx, make(map[string]struct{}))
+}
+
 // ScanPackage parses all .go files in a given directory and returns PackageInfo.
 // It now uses ScanFiles internally.
 func (s *Scanner) ScanPackage(ctx context.Context, dirPath string, resolver PackageResolver) (*PackageInfo, error) {
@@ -163,39 +171,15 @@ func (s *Scanner) buildImportLookup(file *ast.File) {
 
 // parseGenDecl parses a general declaration (types, constants, variables).
 func (s *Scanner) parseGenDecl(ctx context.Context, decl *ast.GenDecl, info *PackageInfo, absFilePath string) {
-	// First pass: create all TypeInfo stubs so they can be referenced.
-	var typeSpecs []*ast.TypeSpec
-	for _, spec := range decl.Specs {
-		if sp, ok := spec.(*ast.TypeSpec); ok {
-			typeSpecs = append(typeSpecs, sp)
-			typeInfo := &TypeInfo{
-				Name:     sp.Name.Name,
-				FilePath: absFilePath,
-				Doc:      commentText(sp.Doc),
-				Node:     sp,
-			}
-			if typeInfo.Doc == "" && decl.Doc != nil {
-				typeInfo.Doc = commentText(decl.Doc)
-			}
-			info.Types = append(info.Types, typeInfo)
-		}
-	}
-
-	// Second pass: fill in the details of the types.
 	for _, spec := range decl.Specs {
 		switch sp := spec.(type) {
 		case *ast.TypeSpec:
-			var typeInfo *TypeInfo
-			for _, ti := range info.Types {
-				if ti.Name == sp.Name.Name {
-					typeInfo = ti
-					break
-				}
+			typeInfo := s.parseTypeSpec(ctx, sp, absFilePath)
+			if typeInfo.Doc == "" && decl.Doc != nil {
+				typeInfo.Doc = commentText(decl.Doc)
 			}
-			if typeInfo == nil {
-				continue // Should not happen
-			}
-			s.fillTypeSpecDetails(ctx, sp, typeInfo)
+			slog.DebugContext(ctx, "Parsed TypeSpec, adding to PackageInfo", slog.String("name", typeInfo.Name), slog.Any("kind", typeInfo.Kind), slog.String("filePath", typeInfo.FilePath), slog.Int("currentTypesCount", len(info.Types)))
+			info.Types = append(info.Types, typeInfo)
 		case *ast.ValueSpec:
 			if decl.Tok == token.CONST {
 				doc := commentText(sp.Doc)
@@ -253,9 +237,15 @@ func (s *Scanner) parseGenDecl(ctx context.Context, decl *ast.GenDecl, info *Pac
 	}
 }
 
-// fillTypeSpecDetails fills in the details of a TypeInfo from its ast.TypeSpec.
-// It assumes the TypeInfo has already been created and added to the package's type list.
-func (s *Scanner) fillTypeSpecDetails(ctx context.Context, sp *ast.TypeSpec, typeInfo *TypeInfo) {
+// parseTypeSpec parses a type specification.
+func (s *Scanner) parseTypeSpec(ctx context.Context, sp *ast.TypeSpec, absFilePath string) *TypeInfo {
+	typeInfo := &TypeInfo{
+		Name:     sp.Name.Name,
+		FilePath: absFilePath,
+		Doc:      commentText(sp.Doc),
+		Node:     sp,
+	}
+
 	// Parse type parameters if they exist (Go 1.18+)
 	if sp.TypeParams != nil {
 		typeInfo.TypeParams = s.parseTypeParamList(ctx, sp.TypeParams.List)
@@ -292,6 +282,7 @@ func (s *Scanner) fillTypeSpecDetails(ctx context.Context, sp *ast.TypeSpec, typ
 		// `sp.Type` (the RHS) is `[]T`. `parseTypeExpr` needs to know about `T`.
 		typeInfo.Underlying = s.parseTypeExpr(ctx, sp.Type, typeInfo.TypeParams) // Pass ctx and type params
 	}
+	return typeInfo
 }
 
 // parseTypeParamList parses a list of ast.Field representing type parameters.

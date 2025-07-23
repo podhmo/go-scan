@@ -50,14 +50,12 @@ type PackageInfo struct {
 
 // Lookup finds a type by name in the package.
 func (p *PackageInfo) Lookup(name string) *TypeInfo {
-	// Rebuild the map on each lookup to ensure it's always up-to-date,
-	// especially when types are added incrementally during scanning.
-	// This is less performant but more robust for the current scanning strategy.
-	lookup := make(map[string]*TypeInfo, len(p.Types))
-	for _, t := range p.Types {
-		lookup[t.Name] = t
-	}
-	p.lookup = lookup
+	p.lookupOnce.Do(func() {
+		p.lookup = make(map[string]*TypeInfo, len(p.Types))
+		for _, t := range p.Types {
+			p.lookup[t.Name] = t
+		}
+	})
 	return p.lookup[name]
 }
 
@@ -278,53 +276,55 @@ func (ft *FieldType) String() string {
 	return sb.String()
 }
 
-func (ft *FieldType) Resolve(ctx context.Context, resolving map[string]bool) (*TypeInfo, error) {
+func (ft *FieldType) Resolve(ctx context.Context, resolving map[string]struct{}) (*TypeInfo, error) {
 	if ft.IsResolvedByConfig {
+		// This type was resolved by an external configuration (e.g. to a primitive like "string").
+		// There's no further TypeInfo definition to resolve in the Go source.
 		return nil, nil
 	}
 	if ft.IsBuiltin {
+		// Built-in types are considered resolved without a specific TypeInfo.
 		return nil, nil
 	}
 	if ft.Definition != nil {
 		return ft.Definition, nil
 	}
 
+	// Cannot resolve types without a resolver or if not a built-in.
 	if ft.resolver == nil {
-		return nil, nil // Cannot resolve without a resolver
+		// For local types (no fullImportPath), we can't resolve further without a resolver.
+		// This can happen for non-exported types or if the package context wasn't fully available.
+		return nil, fmt.Errorf("type %q cannot be resolved: no resolver available", ft.Name)
+	}
+	if ft.fullImportPath == "" {
+		// This is likely a type from the same package being scanned.
+		// Its definition should have been found during the initial scan.
+		// If we are here, it means it's a forward declaration or a scenario
+		// that doesn't require cross-package resolution.
+		return nil, nil // Not an error, just can't resolve further.
 	}
 
-	qualifiedName := ft.fullImportPath + "." + ft.typeName
-	if ft.fullImportPath != "" { // Only track fully qualified types
-		if resolving[qualifiedName] {
-			// Cycle detected. We need to find the TypeInfo stub that was created.
-			// To do this, we need to ask the resolver for the package, but without
-			// triggering a full re-scan if it's already in progress.
-			// The resolver (goscan.Scanner) should handle this via its cache.
-			pkgInfo, err := ft.resolver.ScanPackageByImport(ctx, ft.fullImportPath)
-			if err != nil {
-				// If scanning fails here, it's a legitimate problem.
-				return nil, fmt.Errorf("failed to get package %q during cyclic resolution: %w", ft.fullImportPath, err)
-			}
-			// The type should have been stubbed out in the first pass of the scan.
-			return pkgInfo.Lookup(ft.typeName), nil
-		}
-		resolving[qualifiedName] = true
-		defer delete(resolving, qualifiedName)
+	typeIdentifier := ft.fullImportPath + "." + ft.typeName
+	if _, ok := resolving[typeIdentifier]; ok {
+		// Cycle detected. Return nil, nil to indicate that the type is being resolved
+		// further up the call stack. The caller will link to the partially resolved TypeInfo.
+		return nil, nil
 	}
+	resolving[typeIdentifier] = struct{}{}
+	defer delete(resolving, typeIdentifier)
 
-	// If we are here, it's not a cycle, so proceed with scanning.
 	pkgInfo, err := ft.resolver.ScanPackageByImport(ctx, ft.fullImportPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to scan package %q for type %q: %w", ft.fullImportPath, ft.typeName, err)
 	}
 
-	typeDef := pkgInfo.Lookup(ft.typeName)
-	if typeDef != nil {
-		ft.Definition = typeDef // Cache the result
-		return typeDef, nil
+	// The lookup now uses the efficient map.
+	if t := pkgInfo.Lookup(ft.typeName); t != nil {
+		ft.Definition = t // Cache the result
+		return t, nil
 	}
 
-	return nil, nil // Return nil, nil if not found, not an error.
+	return nil, fmt.Errorf("type %q not found in package %q", ft.typeName, ft.fullImportPath)
 }
 
 // ConstantInfo represents a single top-level constant declaration.

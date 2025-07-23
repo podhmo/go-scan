@@ -8,6 +8,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 
 -   **AST-based Parsing:** Core functionality using `go/parser` and `go/ast`.
 -   **Cross-Package Type Resolution:** Lazy resolution of type definitions within the same module (`FieldType.Resolve()`, `PackageResolver` interface).
+-   **Recursive Type and Dependency Handling**: Gracefully handles recursive type definitions and circular dependencies between packages, preventing infinite loops during type resolution.
 -   **Type Definition Extraction:**
     -   Structs (fields, tags, embedded structs): `StructInfo`, `FieldInfo`.
     -   Complex types (pointers, slices, maps): `FieldType` properties (`IsPointer`, `IsSlice`, `IsMap`, `Elem`, `MapKey`).
@@ -34,11 +35,4 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 
 ## To Be Implemented
 
--   **Handle Recursive Type Definitions and Circular Dependencies:**
-    -   **Description:** Enhance the type resolution logic in `FieldType.Resolve()` to gracefully handle recursive type definitions and circular dependencies between packages, preventing infinite loops.
-    -   **Proposal Document:** [./docs/plan-support-recursive-definition.md](./docs/plan-support-recursive-definition.md)
-    -   **Subtasks:**
-        1.  **Introduce Resolution Context:** Modify `FieldType.Resolve()` to accept a context or map for tracking in-progress resolutions.
-        2.  **Implement Cycle Detection:** Add logic to detect cycles by checking if a type is already in the resolution context.
-        3.  **Update Call Sites:** Refactor internal calls to `Resolve()` to pass the new context.
-        4.  **Add Tests:** Create test cases with direct and mutual recursion to validate the solutio
+-   **Improve Variadic Parameter Parsing**: The scanner currently emits a warning (`Unhandled type expression type=*ast.Ellipsis`) for variadic parameters. The `IsVariadic` flag is correctly set on `FunctionInfo`, but the underlying `FieldType` for the variadic parameter itself is not fully parsed. This should be improved to correctly represent the slice type of the variadic parameter (e.g., `...string` should be represented as a `FieldType` for `[]string`).

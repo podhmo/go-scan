@@ -48,6 +48,24 @@ func New(fset *token.FileSet, overrides ExternalTypeOverride, overlay Overlay, m
 	}, nil
 }
 
+// ResolveType starts the type resolution process for a given field type.
+// It handles circular dependencies by tracking the resolution path.
+// It's the public entry point for resolving types, initializing a new resolution tracker.
+func (s *Scanner) ResolveType(ctx context.Context, fieldType *FieldType) (*TypeInfo, error) {
+	// The internal Resolve method is called with a new, empty map for tracking.
+	return fieldType.Resolve(ctx, make(map[string]struct{}))
+}
+
+// ScanPackageByImport makes scanner.Scanner implement the PackageResolver interface.
+// It delegates the call to the configured resolver, which is typically the top-level
+// goscan.Scanner instance.
+func (s *Scanner) ScanPackageByImport(ctx context.Context, importPath string) (*PackageInfo, error) {
+	if s.resolver == nil {
+		return nil, fmt.Errorf("scanner's internal resolver is not set, cannot scan by import path %q", importPath)
+	}
+	return s.resolver.ScanPackageByImport(ctx, importPath)
+}
+
 // ScanPackage parses all .go files in a given directory and returns PackageInfo.
 // It now uses ScanFiles internally.
 func (s *Scanner) ScanPackage(ctx context.Context, dirPath string, resolver PackageResolver) (*PackageInfo, error) {

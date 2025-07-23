@@ -10,6 +10,7 @@ This tool is designed for applications like OpenAPI document generation, ORM cod
 
 - **AST-based Parsing**: Directly uses `go/parser` and `go/ast` for high performance.
 - **Cross-Package Type Resolution**: Lazily resolves type definitions across different packages within the same module.
+- **Handles Recursive Types**: Correctly resolves recursive type definitions (e.g., `type Node struct { Next *Node }`) and circular dependencies between packages without getting stuck in infinite loops.
 - **Type Definition Extraction**:
     - Parses `struct` definitions, including fields, tags, and embedded structs.
     - Handles complex types like pointers (`*`), slices (`[]`), and maps (`map[K]V`).

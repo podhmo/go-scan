@@ -1,5 +1,10 @@
 # TODO
 
+> **Note on updating this file:**
+> -   Do not move individual tasks to the "Implemented" section.
+> -   A whole feature section (e.g., "convert Tool Implementation") should only be moved to "Implemented" when all of its sub-tasks are complete.
+> -   For partially completed features, use checkboxes (`[x]`) to mark completed sub-tasks.
+
 This file tracks implemented features and immediate, concrete tasks.
 
 For more ambitious, long-term features, see [docs/near-future.md](./docs/near-future.md).

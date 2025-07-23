@@ -4,6 +4,17 @@ This file tracks implemented features and immediate, concrete tasks.
 
 For more ambitious, long-term features, see [docs/near-future.md](./docs/near-future.md).
 
+## In Progress
+
+-   **Handle Recursive Type Definitions and Circular Dependencies:**
+    -   **Description:** Enhance the type resolution logic in `FieldType.Resolve()` to gracefully handle recursive type definitions and circular dependencies between packages, preventing infinite loops.
+    -   **Proposal Document:** [./docs/plan-support-recursive-definition.md](./docs/plan-support-recursive-definition.md)
+    -   **Subtasks:**
+        1.  **Update Documentation:** Align `plan-support-recursive-definition.md` and `TODO.md` with the concrete implementation plan. (Done)
+        2.  **Modify `FieldType.Resolve`:** Change the method signature to accept a `map[string]struct{}` for tracking resolution history and implement cycle detection.
+        3.  **Update Call Sites:** Create a public entry-point method (e.g., `ResolveType` on the `Scanner`) that initializes the tracking map and update internal call sites.
+        4.  **Add Tests:** Create test cases with direct and mutual recursion to validate the solution.
+
 ## Implemented
 
 -   **AST-based Parsing:** Core functionality using `go/parser` and `go/ast`.
@@ -34,11 +45,4 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 
 ## To Be Implemented
 
--   **Handle Recursive Type Definitions and Circular Dependencies:**
-    -   **Description:** Enhance the type resolution logic in `FieldType.Resolve()` to gracefully handle recursive type definitions and circular dependencies between packages, preventing infinite loops.
-    -   **Proposal Document:** [./docs/plan-support-recursive-definition.md](./docs/plan-support-recursive-definition.md)
-    -   **Subtasks:**
-        1.  **Introduce Resolution Context:** Modify `FieldType.Resolve()` to accept a context or map for tracking in-progress resolutions.
-        2.  **Implement Cycle Detection:** Add logic to detect cycles by checking if a type is already in the resolution context.
-        3.  **Update Call Sites:** Refactor internal calls to `Resolve()` to pass the new context.
-        4.  **Add Tests:** Create test cases with direct and mutual recursion to validate the solutio
+(Empty for now)

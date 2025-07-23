@@ -276,13 +276,10 @@ func (ft *FieldType) String() string {
 	return sb.String()
 }
 
-func (ft *FieldType) Resolve(ctx context.Context) (*TypeInfo, error) {
+func (ft *FieldType) Resolve(ctx context.Context, resolving map[string]struct{}) (*TypeInfo, error) {
 	if ft.IsResolvedByConfig {
 		// This type was resolved by an external configuration (e.g. to a primitive like "string").
 		// There's no further TypeInfo definition to resolve in the Go source.
-		// Returning nil, nil indicates that it's "resolved" as far as the config is concerned,
-		// and no error occurred, but there isn't a deeper TypeInfo struct.
-		// Callers should check IsResolvedByConfig if they need to distinguish this case.
 		return nil, nil
 	}
 	if ft.IsBuiltin {
@@ -293,21 +290,38 @@ func (ft *FieldType) Resolve(ctx context.Context) (*TypeInfo, error) {
 		return ft.Definition, nil
 	}
 
-	// Cannot resolve types from the same package without a resolver or if not a built-in.
-	if ft.resolver == nil || ft.fullImportPath == "" {
-		return nil, fmt.Errorf("type %q cannot be resolved: no resolver or import path available", ft.Name)
+	// Cannot resolve types without a resolver or if not a built-in.
+	if ft.resolver == nil {
+		// For local types (no fullImportPath), we can't resolve further without a resolver.
+		// This can happen for non-exported types or if the package context wasn't fully available.
+		return nil, fmt.Errorf("type %q cannot be resolved: no resolver available", ft.Name)
 	}
+	if ft.fullImportPath == "" {
+		// This is likely a type from the same package being scanned.
+		// Its definition should have been found during the initial scan.
+		// If we are here, it means it's a forward declaration or a scenario
+		// that doesn't require cross-package resolution.
+		return nil, nil // Not an error, just can't resolve further.
+	}
+
+	typeIdentifier := ft.fullImportPath + "." + ft.typeName
+	if _, ok := resolving[typeIdentifier]; ok {
+		// Cycle detected. Return nil, nil to indicate that the type is being resolved
+		// further up the call stack. The caller will link to the partially resolved TypeInfo.
+		return nil, nil
+	}
+	resolving[typeIdentifier] = struct{}{}
+	defer delete(resolving, typeIdentifier)
 
 	pkgInfo, err := ft.resolver.ScanPackageByImport(ctx, ft.fullImportPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to scan package %q for type %q: %w", ft.fullImportPath, ft.typeName, err)
 	}
 
-	for _, t := range pkgInfo.Types {
-		if t.Name == ft.typeName {
-			ft.Definition = t // Cache the result
-			return t, nil
-		}
+	// The lookup now uses the efficient map.
+	if t := pkgInfo.Lookup(ft.typeName); t != nil {
+		ft.Definition = t // Cache the result
+		return t, nil
 	}
 
 	return nil, fmt.Errorf("type %q not found in package %q", ft.typeName, ft.fullImportPath)

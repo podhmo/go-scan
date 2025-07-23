@@ -199,8 +199,13 @@ func generateSliceConversion(src, dst string, srcType, dstType *scanner.FieldTyp
 		}
 	}
 
-	dstElemQualifier := field.im.Qualify(dstElem.FullImportPath(), dstElem.Name)
-	dstSliceTypeQualifier := "[]" + dstElemQualifier
+	// Use the String() method on the FieldType to get the full type representation.
+	// This is the most reliable way to get e.g. "[]*destination.MyType".
+	// We must also ensure the package is imported.
+	if dstElem.FullImportPath() != "" {
+		field.im.Add(dstElem.FullImportPath(), "")
+	}
+	dstSliceTypeQualifier := dstType.String()
 
 
 	var conversionLogic string

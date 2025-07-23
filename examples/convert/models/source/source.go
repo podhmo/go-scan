@@ -40,3 +40,15 @@ type SrcItem struct {
 	SKU      string
 	Quantity int
 }
+
+// @derivingconvert("example.com/convert/models/destination.ComplexTarget")
+type ComplexSource struct {
+	Value       string
+	Ptr         *string
+	Slice       []SubSource
+	SliceOfPtrs []*SubSource
+}
+
+type SubSource struct {
+	Value int
+}

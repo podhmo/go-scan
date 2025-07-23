@@ -73,6 +73,9 @@ as described in [docs/plan-neo-convert.md](docs/plan-neo-convert.md)
 -   **Error Handling with `errorCollector`**: Implement the `errorCollector` struct and generate code that uses it to report multiple conversion errors.
 -   **Add Tests for Error Handling**: Write tests to verify that `errorCollector` correctly accumulates and reports errors.
 
+### Known Issues
+*   **Slice/Map Element Conversion**: The generator currently does not produce the recursive helper function calls (`convert<SrcElem>To<DstElem>`) for elements within slices or maps. The loop is generated, but the element conversion is a direct assignment. This needs to be fixed to support slices and maps of structs.
+
 ### Future Tasks (Post-Migration)
 *   **Improve Import Management**: Handle import alias collisions robustly. Consider using `golang.org/x/tools/imports` for final output formatting.
 *   **Expand Test Coverage**: Create a comprehensive test suite that verifies all features and edge cases.

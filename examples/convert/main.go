@@ -2,42 +2,71 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"log"
-	"path/filepath"
-
-	goscan "github.com/podhmo/go-scan"
-	"github.com/podhmo/go-scan/scanner"
+	"os"
 
 	"example.com/convert/generator"
 	"example.com/convert/parser"
+	goscan "github.com/podhmo/go-scan"
+	"github.com/podhmo/go-scan/scanner"
 )
 
-func main() {
-	fmt.Println("\n--- Running go-scan converter generator ---")
-	if err := runGenerate(context.Background()); err != nil {
-		log.Fatalf("Error running generator: %v", err)
-	}
-	fmt.Println("Generator finished successfully.")
+// ContextKey is a private type for context keys to avoid collisions.
+type ContextKey string
+
+const (
+	// FileWriterKey is the context key for the file writer interceptor.
+	FileWriterKey = ContextKey("fileWriter")
+)
+
+// FileWriter is an interface for writing files, allowing for interception during tests.
+type FileWriter interface {
+	WriteFile(ctx context.Context, path string, data []byte, perm os.FileMode) error
 }
 
-func runGenerate(ctx context.Context) error {
-	sourcePath := "./models/source"
-	s, err := goscan.New(goscan.WithWorkDir(filepath.Dir(sourcePath)))
+// WriteFile is a context-aware file writing function.
+func WriteFile(ctx context.Context, path string, data []byte, perm os.FileMode) error {
+	if writer, ok := ctx.Value(FileWriterKey).(FileWriter); ok {
+		return writer.WriteFile(ctx, path, data, perm)
+	}
+	return os.WriteFile(path, data, perm)
+}
+
+func main() {
+	var (
+		input   = flag.String("input", "", "input package path (e.g., example.com/convert/models/source)")
+		output  = flag.String("output", "generated.go", "output file name")
+		pkgname = flag.String("pkgname", "main", "package name for the generated file")
+	)
+	flag.Parse()
+
+	if *input == "" {
+		log.Fatal("-input is required")
+	}
+
+	if err := run(context.Background(), *input, *output, *pkgname); err != nil {
+		log.Fatalf("!! %+v", err)
+	}
+}
+
+func run(ctx context.Context, input, output, pkgname string) error {
+	s, err := goscan.New()
 	if err != nil {
 		return fmt.Errorf("failed to create scanner: %w", err)
 	}
 
-	pkg, err := s.ScanPackage(ctx, sourcePath)
+	pkg, err := s.ScanPackageByImport(ctx, input)
 	if err != nil {
-		return fmt.Errorf("failed to scan package %s: %w", sourcePath, err)
+		return fmt.Errorf("failed to scan package %s: %w", input, err)
 	}
 
-	return Generate(ctx, s, pkg)
+	return Generate(ctx, s, pkg, output, pkgname)
 }
 
 // Generate produces converter code for the given package.
-func Generate(ctx context.Context, s *goscan.Scanner, pkgInfo *scanner.PackageInfo) error {
+func Generate(ctx context.Context, s *goscan.Scanner, pkgInfo *scanner.PackageInfo, output, pkgname string) error {
 	pairs, err := parser.Parse(ctx, pkgInfo, s)
 	if err != nil {
 		return fmt.Errorf("failed to parse conversion pairs: %w", err)
@@ -48,19 +77,10 @@ func Generate(ctx context.Context, s *goscan.Scanner, pkgInfo *scanner.PackageIn
 		return nil
 	}
 
-	generatedCode, err := generator.Generate("converter", pairs, pkgInfo)
+	generatedCode, err := generator.Generate(pkgname, pairs, pkgInfo)
 	if err != nil {
 		return fmt.Errorf("failed to generate converter code: %w", err)
 	}
 
-	// This path assumes the 'converter' package is a sibling of the 'models' package.
-	converterPkgDir := goscan.NewPackageDirectory(filepath.Join(pkgInfo.Path, "..", "..", "converter"), "converter")
-
-	gf := goscan.GoFile{
-		PackageName: "converter",
-		CodeSet:     string(generatedCode),
-	}
-
-	// The generated file will be named 'generated_converters.go' to distinguish it from manual files.
-	return converterPkgDir.SaveGoFile(ctx, gf, "generated_converters.go")
+	return WriteFile(ctx, output, generatedCode, 0644)
 }

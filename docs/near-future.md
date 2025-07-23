@@ -27,6 +27,10 @@ This document outlines the current status, planned features, and areas for impro
 -   **Import Management:** `goscan.ImportManager` for generated code.
 -   **Basic Interface Implementation Check:** `goscan.Implements` (structs implementing interfaces).
 -   **AST Iteration Utilities:** `astwalk.ToplevelStructs`.
+-   **Improved Scanning Logic in Example Tools:** Command-line tools in `examples/` now handle file and directory paths more intelligently, distinguishing between them and grouping file arguments by package. This was implemented as described in [docs/plan-scan-improvement.md](./docs/plan-scan-improvement.md).
+-   **Testing Harness (`scantest`):** Implemented the `scantest` library to provide a testing harness for `go-scan` based tools. The implementation, detailed in [docs/plan-scantest.md](./docs/plan-scantest.md), uses a significant enhancement not in the original plan: I/O operations are intercepted via `context.Context`. This allows `scantest` to capture file generation output in memory without altering the tool's own code, a key difference from initial concepts.
+-   **In-Memory File Overlay:** Added an "overlay" feature to `go-scan` to allow providing in-memory file content. This is useful for tools that generate or modify Go source code without writing to the filesystem. This was implemented as described in [docs/plan-overlay.md](./docs/plan-overlay.md).
+-   **Integration Tests for Examples:** Added integration tests for the code generation tools in the `examples/` directory using the new `scantest` library.
 
 ## Partially Implemented/Experimental/Needs Refinement
 

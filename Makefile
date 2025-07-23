@@ -8,9 +8,10 @@ format:
 
 test:
 	go test ./...
-	( cd examples/derivingjson && go test ./... )
-	( cd examples/derivingbind && go test ./... )
-	( cd examples/minigo && go test ./... )
+	( cd ./examples/derivingjson && go mod tidy && go test ./... )
+	( cd ./examples/derivingbind && go mod tidy && go test ./... )
+	( cd ./examples/minigo && go mod tidy && go test ./... )
+	( cd ./examples/convert && go mod tidy && go test ./... )
 
 clean:
 	go clean -cache -testcache # General Go clean

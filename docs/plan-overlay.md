@@ -1,3 +1,6 @@
+> [!NOTE]
+> This feature has been implemented.
+
 # Proposal: Overlay Feature for go-scan
 
 This document proposes an "overlay" feature for `go-scan`, similar to the `Overlay` option in `go/packages`. This feature will allow users to provide in-memory content for files, which will be used instead of the files on disk. This is particularly useful for tools that generate or modify Go source code before scanning it, without wanting to write the changes to the filesystem.

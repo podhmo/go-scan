@@ -27,24 +27,8 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 -   **Import Management:** `goscan.ImportManager` for generated code.
 -   **Basic Interface Implementation Check:** `goscan.Implements` (structs implementing interfaces).
 -   **AST Iteration Utilities:** `astwalk.ToplevelStructs`.
--   **Improved Scanning Logic in Example Tools:** Command-line tools in `examples/` now handle file and directory paths more intelligently, distinguishing between them and grouping file arguments by package.
--   **Testing Harness (`scantest`):** Implemented the `scantest` library (`scantest.Run`, `scantest.WriteFiles`) to provide a testing harness for `go-scan` based tools.
--   **I/O Interception for Testing:** Enhanced `go-scan` to support I/O interception via `context.Context`, allowing `scantest` to capture file generation output in memory.
-
-## To Be Implemented
-
-- [x] **Implement Overlay Feature**
-  - *Description:* Add an "overlay" feature to `go-scan` to allow providing in-memory file content, useful for tools that generate or modify Go source code without writing to the filesystem.
-  - *Plan Document:* [docs/plan-overlay.md](./docs/plan-overlay.md)
-  - Subtasks:
-    - [x] Define `scanner.Overlay` type.
-    - [x] Update `locator.Locator` to accept and use the overlay for `go.mod`.
-    - [x] Update `scanner.Scanner` to accept and use the overlay for source files.
-    - [x] Implement overlay key resolution (project-relative paths).
-
-- [x] **Add Integration Tests for Examples using `scantest`**
-  - *Description:* Add integration tests for the code generation tools in the `examples/` directory using the new `scantest` library.
-  - Subtasks:
-    - [x] Add `scantest`-based tests for `examples/derivingbind`.
-    - [x] Add `scantest`-based tests for `examples/derivingjson`.
-    - [x] Refactor `examples/convert/main.go` to extract the generation logic into a testable function and add `scantest`-based tests.
+-   **Improved Scanning Logic in Example Tools:** Command-line tools in `examples/` now handle file and directory paths more intelligently, distinguishing between them and grouping file arguments by package. This was implemented as described in [docs/plan-scan-improvement.md](./docs/plan-scan-improvement.md).
+-   **Testing Harness (`scantest`):** Implemented the `scantest` library (`scantest.Run`, `scantest.WriteFiles`) to provide a testing harness for `go-scan` based tools. This was implemented as described in [docs/plan-scantest.md](./docs/plan-scantest.md).
+-   **I/O Interception for Testing:** Enhanced `go-scan` to support I/O interception via `context.Context`, allowing `scantest` to capture file generation output in memory. This is a core part of the `scantest` design.
+-   **In-Memory File Overlay:** Added an "overlay" feature to `go-scan` to allow providing in-memory file content. This is useful for tools that generate or modify Go source code without writing to the filesystem. This was implemented as described in [docs/plan-overlay.md](./docs/plan-overlay.md).
+-   **Integration Tests for Examples:** Added integration tests for the code generation tools in the `examples/` directory using the new `scantest` library.

@@ -120,7 +120,9 @@ func Generate(packageName string, pairs []parser.ConversionPair, pkgInfo *scanne
 		if pair.SrcType.Struct == nil || pair.DstType.Struct == nil {
 			continue
 		}
+		// Correctly use the import path from the source package info for source types
 		srcQualifier := im.Qualify(pkgInfo.ImportPath, pair.SrcType.Name)
+		// And the destination package import path for destination types
 		dstQualifier := im.Qualify(pair.DstPkgImportPath, pair.DstType.Name)
 		fieldMaps := createFieldMaps(pair.SrcType.Struct, pair.DstType.Struct, im)
 		templatePairs = append(templatePairs, TemplatePair{

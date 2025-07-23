@@ -8,20 +8,21 @@ import (
 	"text/template"
 
 	"example.com/convert/parser"
+	"github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/scanner"
 )
 
 const codeTemplate = `
 import (
 	"context"
-	{{- range .Imports }}
-	"{{ . }}"
+	{{- range $path, $alias := .Imports }}
+	{{ $alias }} "{{ $path }}"
 	{{- end }}
 )
 
 {{ range .Pairs }}
 // {{ .ExportedFuncName }} converts {{ .SrcType.Name }} to {{ .DstType.Name }}.
-func {{ .ExportedFuncName }}(ctx context.Context, src {{ .ModelsPackageName }}.{{ .SrcType.Name }}) ({{ .ModelsPackageName }}.{{ .DstType.Name }}, error) {
+func {{ .ExportedFuncName }}(ctx context.Context, src {{ .SrcType.Qualifier }}) ({{ .DstType.Qualifier }}, error) {
 	// In the future, this will use an error collector.
 	// For now, we just call the internal function.
 	dst := {{ .InternalFuncName }}(ctx, src)
@@ -29,13 +30,9 @@ func {{ .ExportedFuncName }}(ctx context.Context, src {{ .ModelsPackageName }}.{
 }
 
 // {{ .InternalFuncName }} is the internal conversion function.
-func {{ .InternalFuncName }}(ctx context.Context, src {{ .ModelsPackageName }}.{{ .SrcType.Name }}) {{ .ModelsPackageName }}.{{ .DstType.Name }} {
-	dst := {{ .ModelsPackageName }}.{{ .DstType.Name }}{}
-
-	{{- range .FieldMappings }}
-	dst.{{ .DstField }} = src.{{ .SrcField }}
-	{{- end }}
-
+func {{ .InternalFuncName }}(ctx context.Context, src {{ .SrcType.Qualifier }}) {{ .DstType.Qualifier }} {
+	dst := {{ .DstType.Qualifier }}{}
+	// Field mapping is not implemented in this version.
 	return dst
 }
 {{ end }}
@@ -43,72 +40,63 @@ func {{ .InternalFuncName }}(ctx context.Context, src {{ .ModelsPackageName }}.{
 
 type TemplateData struct {
 	PackageName string
-	Imports     []string
+	Imports     map[string]string
 	Pairs       []TemplatePair
 }
 
 type TemplatePair struct {
-	ExportedFuncName  string
-	InternalFuncName  string
-	SrcType           *scanner.TypeInfo
-	DstType           *scanner.TypeInfo
-	FieldMappings     []FieldMapping
-	ModelsPackageName string
+	ExportedFuncName string
+	InternalFuncName string
+	SrcType          QualifiedType
+	DstType          QualifiedType
 }
 
-type FieldMapping struct {
-	SrcField string
-	DstField string
+type QualifiedType struct {
+	Name      string
+	Qualifier string
 }
 
 // Generate generates the Go code for the conversion functions.
 func Generate(packageName string, pairs []parser.ConversionPair, pkgInfo *scanner.PackageInfo) ([]byte, error) {
-	imports := map[string]bool{
-		"context":        true,
-		pkgInfo.ImportPath: true,
-	}
+	// The import manager should be initialized with the context of the *target* package, not the source.
+	im := goscan.NewImportManager(&scanner.PackageInfo{ImportPath: "example.com/convert/" + packageName})
+	im.Add("context", "context")
 
-	templateData := TemplateData{
-		PackageName: packageName,
-	}
+	templatePairs := make([]TemplatePair, 0, len(pairs))
 
 	for _, pair := range pairs {
 		if pair.SrcType.Struct == nil || pair.DstType.Struct == nil {
-			continue // Skip non-struct types
+			continue
 		}
+
+		srcQualifier := im.Qualify(pkgInfo.ImportPath, pair.SrcType.Name)
+		dstQualifier := im.Qualify(pair.DstPkgImportPath, pair.DstType.Name)
 
 		templatePair := TemplatePair{
-			ExportedFuncName:  fmt.Sprintf("Convert%sTo%s", pair.SrcType.Name, pair.DstType.Name),
-			InternalFuncName:  fmt.Sprintf("convert%sTo%s", pair.SrcType.Name, pair.DstType.Name),
-			SrcType:           pair.SrcType,
-			DstType:           pair.DstType,
-			ModelsPackageName: pkgInfo.Name,
+			ExportedFuncName: fmt.Sprintf("Convert%sTo%s", pair.SrcType.Name, pair.DstType.Name),
+			InternalFuncName: fmt.Sprintf("convert%sTo%s", pair.SrcType.Name, pair.DstType.Name),
+			SrcType: QualifiedType{
+				Name:      pair.SrcType.Name,
+				Qualifier: srcQualifier,
+			},
+			DstType: QualifiedType{
+				Name:      pair.DstType.Name,
+				Qualifier: dstQualifier,
+			},
 		}
-
-		// Basic field mapping: match by name
-		dstFields := make(map[string]bool)
-		for _, field := range pair.DstType.Struct.Fields {
-			dstFields[field.Name] = true
-		}
-
-		for _, srcField := range pair.SrcType.Struct.Fields {
-			if _, exists := dstFields[srcField.Name]; exists {
-				// TODO: Check if types are compatible
-				templatePair.FieldMappings = append(templatePair.FieldMappings, FieldMapping{
-					SrcField: srcField.Name,
-					DstField: srcField.Name,
-				})
-			}
-		}
-		templateData.Pairs = append(templateData.Pairs, templatePair)
+		templatePairs = append(templatePairs, templatePair)
 	}
 
-	for imp := range imports {
-		templateData.Imports = append(templateData.Imports, imp)
+	imports := im.Imports()
+	delete(imports, "context")
+
+	templateData := TemplateData{
+		PackageName: packageName,
+		Imports:     imports,
+		Pairs:       templatePairs,
 	}
 
-
-	tmpl, err := template.New("converter").Parse(codeTemplate)
+	tmpl, err := template.New("converter").Parse(strings.TrimSpace(codeTemplate))
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse template: %w", err)
 	}
@@ -118,18 +106,13 @@ func Generate(packageName string, pairs []parser.ConversionPair, pkgInfo *scanne
 		return nil, fmt.Errorf("failed to execute template: %w", err)
 	}
 
-	// Format the generated code
-	formatted, err := format.Source(buf.Bytes())
+	header := fmt.Sprintf("// Code generated by go-scan for package %s. DO NOT EDIT.\n\npackage %s\n\n", packageName, packageName)
+	finalCode := append([]byte(header), buf.Bytes()...)
+
+	formatted, err := format.Source(finalCode)
 	if err != nil {
-		return nil, fmt.Errorf("failed to format generated code: %w", err)
+		return nil, fmt.Errorf("failed to format generated code: %w\n---\n%s\n---", err, string(finalCode))
 	}
 
 	return formatted, nil
-}
-
-func camelCase(s string) string {
-	if s == "" {
-		return ""
-	}
-	return strings.ToLower(s[0:1]) + s[1:]
 }

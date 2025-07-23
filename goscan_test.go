@@ -1717,22 +1717,35 @@ func findMethod(iinfo *scanner.InterfaceInfo, name string) *scanner.MethodInfo {
 // Ensure existing TestImplements and other tests still pass by keeping their structure.
 // The `findType` helper was already present.
 
+func writeTestFiles(t *testing.T, files map[string]string) (string, func()) {
+	t.Helper()
+	tmpdir, err := os.MkdirTemp("", "goscan_test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+
+	for name, content := range files {
+		path := filepath.Join(tmpdir, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			t.Fatalf("failed to create parent dir for %s: %v", name, err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+			t.Fatalf("failed to write file %s: %v", name, err)
+		}
+	}
+
+	return tmpdir, func() { os.RemoveAll(tmpdir) }
+}
+
+
 func TestImplements_DerivingJSON_Scenario(t *testing.T) {
 	ctx := context.Background()
-	s, err := New(WithWorkDir("."))
-	if err != nil {
-		t.Fatalf("New() failed: %v", err)
-	}
-
-	pkgPath := "./testdata/derivingjson_scenario"
-	// Create the directory and file for the test
-	if err := os.MkdirAll(pkgPath, 0755); err != nil {
-		t.Fatalf("failed to create test directory: %v", err)
-	}
-	defer os.RemoveAll("./testdata/derivingjson_scenario")
-
-	filePath := filepath.Join(pkgPath, "types.go")
-	content := `
+	files := map[string]string{
+		"go.mod": `
+module example.com/derivingjson_scenario
+go 1.22.4
+`,
+		"types.go": `
 package derivingjson_scenario
 
 type EventData interface {
@@ -1746,14 +1759,20 @@ type MessagePosted struct{}
 func (e *MessagePosted) EventData() {}
 
 type NotAnImplementer struct{}
-`
-	if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
-		t.Fatalf("failed to write test file: %v", err)
+`,
 	}
 
-	pkgInfo, err := s.ScanPackage(ctx, pkgPath)
+	tmpdir, cleanup := writeTestFiles(t, files)
+	defer cleanup()
+
+	s, err := New(WithWorkDir(tmpdir))
 	if err != nil {
-		t.Fatalf("ScanPackage(%q) failed: %v", pkgPath, err)
+		t.Fatalf("New() failed: %v", err)
+	}
+
+	pkgInfo, err := s.ScanPackage(ctx, tmpdir)
+	if err != nil {
+		t.Fatalf("ScanPackage(%q) failed: %v", tmpdir, err)
 	}
 
 	// Find the interface

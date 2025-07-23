@@ -38,6 +38,9 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 ## To Be Implemented
 
 ### `convert` Tool Implementation
+
+as described in [docs/plan-neo-convert.md](docs/plan-neo-convert.md)
+
 -   [x] **Generator for Structs**: Implement the code generator to produce conversion functions for basic struct-to-struct conversions based on the parsed `ConversionPair` model.
     -   [x] Generate a top-level `Convert<Src>To<Dst>` function.
     -   [x] Generate an internal `convert<Src>To<Dst>` helper function.

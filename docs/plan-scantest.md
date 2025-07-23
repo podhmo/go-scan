@@ -1,3 +1,8 @@
+> [!NOTE]
+> This feature has been implemented.
+>
+> **Implementation Note:** The final implementation differs slightly from this initial plan. Instead of relying on specific helper functions, I/O interception was implemented at a lower level using `context.Context`. This allows any code that uses the context-aware `goscan.WriteFile` to be testable without modification, which is a more powerful and flexible approach than originally envisioned.
+
 # Plan for scantest library
 
 ## 1. Overview

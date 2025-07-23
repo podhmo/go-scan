@@ -1,3 +1,6 @@
+> [!NOTE]
+> This feature has been implemented.
+
 # Proposal for Improving File and Directory Scanning
 
 This document outlines a proposal to improve the scanning behavior of tools built with the `go-scan` library, such as `examples/derivingjson` and `examples/derivingbind`. The goal is to align the scanning logic with the library's intended support for lazy, on-demand type resolution.

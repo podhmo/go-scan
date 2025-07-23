@@ -42,7 +42,7 @@ The transition from the prototype to the new tool will involve the following ste
 
 The tool is composed of three main architectural components:
 
-*   **CLI Entrypoint (`main.go`)**: Handles command-line arguments (`-input`, `-output`), orchestrates the parsing and generation steps, and manages logging.
+*   **CLI Entrypoint (`examples/convert/main.go`)**: Handles command-line arguments (`-input`, `-output`), orchestrates the parsing and generation steps, and manages logging.
 *   **Parser (`parser/parser.go`)**: Analyzes the source code to identify conversion rules and build a model of the types involved.
 *   **Generator (`generator/generator.go`)**: Takes the model from the parser and generates the Go source code for the conversion functions.
 

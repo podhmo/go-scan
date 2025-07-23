@@ -130,9 +130,10 @@ func ConvertSrcUserToDstUser(ctx context.Context, src source.SrcUser) (destinati
 
 func convertSrcUserToDstUser(ctx context.Context, src source.SrcUser) destination.DstUser {
 	var dst destination.DstUser
-	dst.Details = src.Details
-	dst.CreatedAt = src.CreatedAt
-	dst.UpdatedAt = src.UpdatedAt
+	// TODO: Actually map fields
+	// dst.Details = src.Details
+	// dst.CreatedAt = src.CreatedAt
+	// dst.UpdatedAt = src.UpdatedAt
 	return dst
 }
 

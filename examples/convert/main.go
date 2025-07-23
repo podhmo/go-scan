@@ -45,7 +45,7 @@ func runGenerate(ctx context.Context) error {
 // Generate produces converter code for the given package.
 func Generate(ctx context.Context, s *goscan.Scanner, pkgInfo *scanner.PackageInfo) error {
 	// The scanner itself can act as the resolver.
-	pairs, err := parser.Parse(pkgInfo, s)
+	pairs, err := parser.Parse(ctx, pkgInfo, s)
 	if err != nil {
 		return fmt.Errorf("failed to parse conversion pairs: %w", err)
 	}

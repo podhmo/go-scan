@@ -5,7 +5,6 @@ import (
 	"go/format"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 

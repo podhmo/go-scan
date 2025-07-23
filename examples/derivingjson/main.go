@@ -112,7 +112,7 @@ func main() {
 	}
 }
 
-const unmarshalAnnotation = "@deriving:unmarshall"
+const unmarshalAnnotation = "deriving:unmarshal"
 
 type TemplateData struct {
 	StructName                 string
@@ -174,7 +174,12 @@ func Generate(ctx context.Context, gscn *goscan.Scanner, pkgInfo *scanner.Packag
 
 		for _, field := range typeInfo.Struct.Fields {
 			jsonTag := field.TagValue("json")
-			resolvedFieldType, _ := field.Type.Resolve(ctx) // Error during resolve is handled by checking resolvedFieldType later
+			var resolvedFieldType *scanner.TypeInfo
+			if field.Type.FullImportPath() == "" {
+				resolvedFieldType = findTypeInPackage(pkgInfo, field.Type.Name)
+			} else {
+				resolvedFieldType, _ = field.Type.Resolve(ctx)
+			}
 
 			isInterfaceField := false
 			if resolvedFieldType != nil && resolvedFieldType.Kind == scanner.InterfaceKind {

@@ -1716,3 +1716,93 @@ func findMethod(iinfo *scanner.InterfaceInfo, name string) *scanner.MethodInfo {
 
 // Ensure existing TestImplements and other tests still pass by keeping their structure.
 // The `findType` helper was already present.
+
+func writeTestFiles(t *testing.T, files map[string]string) (string, func()) {
+	t.Helper()
+	tmpdir, err := os.MkdirTemp("", "goscan_test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+
+	for name, content := range files {
+		path := filepath.Join(tmpdir, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			t.Fatalf("failed to create parent dir for %s: %v", name, err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+			t.Fatalf("failed to write file %s: %v", name, err)
+		}
+	}
+
+	return tmpdir, func() { os.RemoveAll(tmpdir) }
+}
+
+
+func TestImplements_DerivingJSON_Scenario(t *testing.T) {
+	ctx := context.Background()
+	files := map[string]string{
+		"go.mod": `
+module example.com/derivingjson_scenario
+go 1.22.4
+`,
+		"types.go": `
+package derivingjson_scenario
+
+type EventData interface {
+	EventData()
+}
+
+type UserCreated struct{}
+func (e *UserCreated) EventData() {}
+
+type MessagePosted struct{}
+func (e *MessagePosted) EventData() {}
+
+type NotAnImplementer struct{}
+`,
+	}
+
+	tmpdir, cleanup := writeTestFiles(t, files)
+	defer cleanup()
+
+	s, err := New(WithWorkDir(tmpdir))
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+
+	pkgInfo, err := s.ScanPackage(ctx, tmpdir)
+	if err != nil {
+		t.Fatalf("ScanPackage(%q) failed: %v", tmpdir, err)
+	}
+
+	// Find the interface
+	eventDataInterface := findType(pkgInfo.Types, "EventData")
+	if eventDataInterface == nil {
+		t.Fatal("Interface 'EventData' not found")
+	}
+
+	// Find implementers
+	var implementers []*scanner.TypeInfo
+	for _, ti := range pkgInfo.Types {
+		if ti.Kind == StructKind {
+			if Implements(ti, eventDataInterface, pkgInfo) {
+				implementers = append(implementers, ti)
+			}
+		}
+	}
+
+	if len(implementers) != 2 {
+		t.Fatalf("Expected to find 2 implementers, got %d", len(implementers))
+	}
+
+	implementerNames := make([]string, len(implementers))
+	for i, impl := range implementers {
+		implementerNames[i] = impl.Name
+	}
+	sort.Strings(implementerNames)
+
+	expectedImplementers := []string{"MessagePosted", "UserCreated"}
+	if !reflect.DeepEqual(implementerNames, expectedImplementers) {
+		t.Errorf("Expected implementers %v, got %v", expectedImplementers, implementerNames)
+	}
+}

@@ -1737,7 +1737,6 @@ func writeTestFiles(t *testing.T, files map[string]string) (string, func()) {
 	return tmpdir, func() { os.RemoveAll(tmpdir) }
 }
 
-
 func TestImplements_DerivingJSON_Scenario(t *testing.T) {
 	ctx := context.Background()
 	files := map[string]string{

@@ -13,7 +13,7 @@ import (
 
 func TestWriteFiles(t *testing.T) {
 	files := map[string]string{
-		"go.mod": "module example.com/me",
+		"go.mod":  "module example.com/me",
 		"main.go": `package main`,
 	}
 
@@ -35,7 +35,7 @@ func TestWriteFiles(t *testing.T) {
 
 func TestRun_PureCheck(t *testing.T) {
 	dir, cleanup := WriteFiles(t, map[string]string{
-		"go.mod": "module example.com/me",
+		"go.mod":    "module example.com/me",
 		"person.go": `package main; type Person struct { Name string }`,
 	})
 	defer cleanup()

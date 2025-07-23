@@ -10,8 +10,8 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	goscan "github.com/podhmo/go-scan"
-	"github.com/podhmo/go-scan/scantest"
 	"github.com/podhmo/go-scan/scanner"
+	"github.com/podhmo/go-scan/scantest"
 )
 
 func TestGenerate(t *testing.T) {

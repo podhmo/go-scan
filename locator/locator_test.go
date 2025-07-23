@@ -217,8 +217,8 @@ replace example.com/replacedmodule v1.0.0 => ./local/versionedreplacedmodule
 			expectErr:         false,
 		},
 		{
-			name: "replace_with_local_absolute_path",
-			goModContent: "module example.com/mainmodule\ngo 1.16\nreplace example.com/another => " + absReplaceDir,
+			name:              "replace_with_local_absolute_path",
+			goModContent:      "module example.com/mainmodule\ngo 1.16\nreplace example.com/another => " + absReplaceDir,
 			subDirsToCreate:   []string{}, // No subdirs needed in the main module for this
 			importPath:        "example.com/another/pkg",
 			expectedFoundPath: absReplaceSubPkgDir, // This is an absolute path
@@ -244,7 +244,7 @@ replace example.com/nonexistent => ./does/not/exist
 			subDirsToCreate:   []string{},
 			importPath:        "example.com/nonexistent/pkg",
 			expectedFoundPath: "",
-			expectErr: true,
+			expectErr:         true,
 		},
 		{
 			name: "no_matching_replace_directive_falls_back_to_module_path",

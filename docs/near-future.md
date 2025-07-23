@@ -42,9 +42,6 @@ This document outlines the current status, planned features, and areas for impro
         -   Consideration of `ExternalTypeOverride` during type comparisons.
         -   Correct handling of generic types and their instantiations in signatures.
     -   *Advanced type system utilities like full assignability checks are discussed in [./dream2.md](./dream2.md).*
--   **`scanner.FunctionInfo.IsVariadic`:**
-    -   This flag is not explicitly present in `scanner.FunctionInfo`.
-    -   Information is available from `ast.FuncType.Params.List[last].Ellipsis` and should be populated.
 -   **Method Access from `TypeInfo` for Structs:**
     -   `docs/ja/from-minigo.md` suggests a desire for easier access to a struct's methods directly from its `TypeInfo`.
     -   Currently, methods are part of `PackageInfo.Functions` and require filtering by receiver type and name. Consider adding a `Methods []*FunctionInfo` field to `StructInfo` or `TypeInfo` for structs.
@@ -61,7 +58,6 @@ This document outlines the current status, planned features, and areas for impro
 
 ## To Be Implemented (Minigo Driven - from `examples/minigo/improvement.md`)
 
--   **`scanner.FunctionInfo.IsVariadic` flag:** (Covered above) Explicitly add and populate this boolean flag.
 -   **Extraction of Package-Level Variables:**
     -   `scanner.PackageInfo` should include a list of exported top-level variables.
     -   This would be similar to `ConstantInfo`, potentially `VariableInfo { Name string, FilePath string, Doc string, Type *FieldType, IsExported bool, Node ast.Node }`.

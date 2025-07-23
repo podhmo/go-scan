@@ -106,7 +106,7 @@ func Generate(packageName string, pairs []parser.ConversionPair, pkgInfo *scanne
 						allPairs = append(allPairs, parser.ConversionPair{
 							SrcType:          srcElem.Definition,
 							DstType:          dstElem.Definition,
-							DstPkgImportPath: dstElem.Definition.FilePath,
+							DstPkgImportPath: dstElem.FullImportPath(),
 						})
 						worklist[helperKey] = true
 					}
@@ -120,9 +120,7 @@ func Generate(packageName string, pairs []parser.ConversionPair, pkgInfo *scanne
 		if pair.SrcType.Struct == nil || pair.DstType.Struct == nil {
 			continue
 		}
-		// Correctly use the import path from the source package info for source types
 		srcQualifier := im.Qualify(pkgInfo.ImportPath, pair.SrcType.Name)
-		// And the destination package import path for destination types
 		dstQualifier := im.Qualify(pair.DstPkgImportPath, pair.DstType.Name)
 		fieldMaps := createFieldMaps(pair.SrcType.Struct, pair.DstType.Struct, im)
 		templatePairs = append(templatePairs, TemplatePair{
@@ -201,8 +199,12 @@ func generateSliceConversion(src, dst string, srcType, dstType *scanner.FieldTyp
 		}
 	}
 
-	dstElemQualifier := field.im.Qualify(dstElem.FullImportPath(), dstElem.Name)
-	dstSliceTypeQualifier := "[]" + dstElemQualifier
+	// Use the String() method on the FieldType to get the full type representation,
+	// including the package qualifier if necessary. This is more robust than manual construction.
+	// The import manager `im` ensures that the necessary packages are imported.
+	field.im.Import(dstType.FullImportPath())
+	dstSliceTypeQualifier := dstType.String()
+
 
 	var conversionLogic string
 	if helperFuncName != "" {

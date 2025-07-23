@@ -503,6 +503,13 @@ func (s *Scanner) parseFuncType(ctx context.Context, ft *ast.FuncType, currentTy
 
 	if ft.Params != nil {
 		funcInfo.Parameters = s.parseFieldList(ctx, ft.Params.List, currentTypeParams)
+		// Check for variadic parameter
+		if len(ft.Params.List) > 0 {
+			lastParam := ft.Params.List[len(ft.Params.List)-1]
+			if _, ok := lastParam.Type.(*ast.Ellipsis); ok {
+				funcInfo.IsVariadic = true
+			}
+		}
 	}
 	if ft.Results != nil {
 		funcInfo.Results = s.parseFieldList(ctx, ft.Results.List, currentTypeParams)

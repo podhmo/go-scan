@@ -333,6 +333,7 @@ type FunctionInfo struct {
 	TypeParams []*TypeParamInfo `json:"typeParams,omitempty"` // For generic functions
 	Parameters []*FieldInfo     `json:"parameters,omitempty"`
 	Results    []*FieldInfo     `json:"results,omitempty"`
+	IsVariadic bool             `json:"isVariadic,omitempty"`
 	AstDecl    *ast.FuncDecl    `json:"-"` // Avoid cyclic JSON.
 }
 

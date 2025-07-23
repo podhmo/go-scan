@@ -41,4 +41,4 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
         1.  **Introduce Resolution Context:** Modify `FieldType.Resolve()` to accept a context or map for tracking in-progress resolutions.
         2.  **Implement Cycle Detection:** Add logic to detect cycles by checking if a type is already in the resolution context.
         3.  **Update Call Sites:** Refactor internal calls to `Resolve()` to pass the new context.
-        4.  **Add Tests:** Create test cases with direct and mutual recursion to validate the solution.
+        4.  **Add Tests:** Create test cases with direct and mutual recursion to validate the solutio

@@ -358,4 +358,9 @@ type FunctionInfo struct {
 	AstDecl    *ast.FuncDecl    `json:"-"` // Avoid cyclic JSON.
 }
 
+// SetResolver is a test helper to overwrite the internal resolver.
+func (ft *FieldType) SetResolver(r PackageResolver) {
+	ft.resolver = r
+}
+
 // var _ = strings.Builder{} // This helper is no longer needed as "strings" is directly imported.

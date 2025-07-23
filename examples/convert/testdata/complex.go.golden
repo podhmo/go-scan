@@ -6,7 +6,6 @@ import (
 	"context"
 	destination "example.com/convert/models/destination"
 	source "example.com/convert/models/source"
-	"time"
 )
 
 // ConvertSrcUserToDstUser converts SrcUser to DstUser.
@@ -20,9 +19,9 @@ func convertSrcUserToDstUser(ctx context.Context, src source.SrcUser) destinatio
 	dst := destination.DstUser{}
 
 	if src.Details != nil {
-		newSlice := make([]destination.DstInternalDetail, 0, len(src.Details))
+		newSlice := make([]DstInternalDetail, 0, len(src.Details))
 		for _, elem := range src.Details {
-			newSlice = append(newSlice, convertSrcInternalDetailToDstInternalDetail(ctx, elem))
+			newSlice = append(newSlice, elem)
 		}
 		dst.Details = newSlice
 	}
@@ -42,14 +41,6 @@ func ConvertSrcOrderToDstOrder(ctx context.Context, src source.SrcOrder) (destin
 // convertSrcOrderToDstOrder is the internal conversion function.
 func convertSrcOrderToDstOrder(ctx context.Context, src source.SrcOrder) destination.DstOrder {
 	dst := destination.DstOrder{}
-	dst.OrderID = src.OrderID
-	if src.Items != nil {
-		newSlice := make([]destination.DstItem, 0, len(src.Items))
-		for _, elem := range src.Items {
-			newSlice = append(newSlice, convertSrcItemToDstItem(ctx, elem))
-		}
-		dst.Items = newSlice
-	}
 	return dst
 }
 
@@ -69,45 +60,22 @@ func convertComplexSourceToComplexTarget(ctx context.Context, src source.Complex
 	}
 
 	if src.Slice != nil {
-		newSlice := make([]destination.SubTarget, 0, len(src.Slice))
+		newSlice := make([]SubTarget, 0, len(src.Slice))
 		for _, elem := range src.Slice {
-			newSlice = append(newSlice, convertSubSourceToSubTarget(ctx, elem))
+			newSlice = append(newSlice, elem)
 		}
 		dst.Slice = newSlice
 	}
 
 	if src.SliceOfPtrs != nil {
-		newSlice := make([]*destination.SubTarget, 0, len(src.SliceOfPtrs))
+		newSlice := make([]*SubTarget, 0, len(src.SliceOfPtrs))
 		for _, elem := range src.SliceOfPtrs {
 			if elem != nil {
-				tmp := convertSubSourceToSubTarget(ctx, *elem)
+				tmp := *elem
 				newSlice = append(newSlice, &tmp)
 			}
 		}
 		dst.SliceOfPtrs = newSlice
 	}
-	return dst
-}
-
-// convertSrcInternalDetailToDstInternalDetail is the internal conversion function.
-func convertSrcInternalDetailToDstInternalDetail(ctx context.Context, src source.SrcInternalDetail) destination.DstInternalDetail {
-	dst := destination.DstInternalDetail{}
-	dst.Code = src.Code
-	dst.Description = src.Description
-	return dst
-}
-
-// convertSrcItemToDstItem is the internal conversion function.
-func convertSrcItemToDstItem(ctx context.Context, src source.SrcItem) destination.DstItem {
-	dst := destination.DstItem{}
-	dst.SKU = src.SKU
-	dst.Quantity = src.Quantity
-	return dst
-}
-
-// convertSubSourceToSubTarget is the internal conversion function.
-func convertSubSourceToSubTarget(ctx context.Context, src source.SubSource) destination.SubTarget {
-	dst := destination.SubTarget{}
-	dst.Value = src.Value
 	return dst
 }

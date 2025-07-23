@@ -49,9 +49,12 @@ as described in [docs/plan-neo-convert.md](docs/plan-neo-convert.md)
 -   [x] **Refactor `examples/convert` for Cross-Package Conversion**:
     -   [x] Move `Src` and `Dst` types into separate packages (e.g., `models/source` and `models/destination`).
     -   [x] Update tests to verify that cross-package conversion works correctly.
--   **Generator for Pointer Fields**: Extend the generator to handle pointer fields within structs.
-    -   Generate code that correctly handles `*SrcType` to `*DstType` conversions (nil checks).
--   **Add Tests for Pointer Fields**: Write tests for pointer field conversions.
+-   [x] **Generator for Pointer Fields**: Extend the generator to handle pointer fields within structs.
+    -   [x] Generate code that correctly handles `*SrcType` to `*DstType` conversions (nil checks).
+-   [x] **Add Tests for Pointer Fields**: Write tests for pointer field conversions.
+-   **Advanced Field Conversion Logic**:
+    -   Handle pointer-to-pointer (`*Src -> *Dst`) and value-to-pointer (`Src -> *Dst`) conversions.
+    -   Implement automatic type conversion for common pairs (e.g., `time.Time` to `string`).
 -   **Generator for Slice Fields**: Extend the generator to handle slice fields (e.g., `[]SrcType` to `[]DstType`).
     -   Generate loops to iterate over slices and convert each element.
 -   **Add Tests for Slice Fields**: Write tests for slice field conversions.

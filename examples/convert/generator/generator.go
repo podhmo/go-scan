@@ -32,7 +32,15 @@ func {{ .ExportedFuncName }}(ctx context.Context, src {{ .SrcType.Qualifier }}) 
 // {{ .InternalFuncName }} is the internal conversion function.
 func {{ .InternalFuncName }}(ctx context.Context, src {{ .SrcType.Qualifier }}) {{ .DstType.Qualifier }} {
 	dst := {{ .DstType.Qualifier }}{}
-	// Field mapping is not implemented in this version.
+	{{- range .Fields }}
+	{{- if .IsPointer }}
+	if src.{{ .SrcName }} != nil {
+		dst.{{ .DstName }} = *src.{{ .SrcName }}
+	}
+	{{- else }}
+	dst.{{ .DstName }} = src.{{ .SrcName }}
+	{{- end }}
+	{{- end }}
 	return dst
 }
 {{ end }}
@@ -49,6 +57,13 @@ type TemplatePair struct {
 	InternalFuncName string
 	SrcType          QualifiedType
 	DstType          QualifiedType
+	Fields           []FieldMap
+}
+
+type FieldMap struct {
+	SrcName   string
+	DstName   string
+	IsPointer bool
 }
 
 type QualifiedType struct {
@@ -72,6 +87,8 @@ func Generate(packageName string, pairs []parser.ConversionPair, pkgInfo *scanne
 		srcQualifier := im.Qualify(pkgInfo.ImportPath, pair.SrcType.Name)
 		dstQualifier := im.Qualify(pair.DstPkgImportPath, pair.DstType.Name)
 
+		fieldMaps := createFieldMaps(pair.SrcType.Struct, pair.DstType.Struct)
+
 		templatePair := TemplatePair{
 			ExportedFuncName: fmt.Sprintf("Convert%sTo%s", pair.SrcType.Name, pair.DstType.Name),
 			InternalFuncName: fmt.Sprintf("convert%sTo%s", pair.SrcType.Name, pair.DstType.Name),
@@ -83,6 +100,7 @@ func Generate(packageName string, pairs []parser.ConversionPair, pkgInfo *scanne
 				Name:      pair.DstType.Name,
 				Qualifier: dstQualifier,
 			},
+			Fields: fieldMaps,
 		}
 		templatePairs = append(templatePairs, templatePair)
 	}
@@ -115,4 +133,27 @@ func Generate(packageName string, pairs []parser.ConversionPair, pkgInfo *scanne
 	}
 
 	return formatted, nil
+}
+
+func createFieldMaps(srcStruct, dstStruct *scanner.StructInfo) []FieldMap {
+	var fieldMaps []FieldMap
+	dstFields := make(map[string]*scanner.FieldInfo)
+	for _, field := range dstStruct.Fields {
+		dstFields[field.Name] = field
+	}
+
+	for _, srcField := range srcStruct.Fields {
+		if dstField, ok := dstFields[srcField.Name]; ok {
+			// In a real scenario, we would check for type compatibility.
+			// For now, we just map by name.
+			_ = dstField // dstField is currently unused but would be needed for type checks.
+			fieldMaps = append(fieldMaps, FieldMap{
+				SrcName:   srcField.Name,
+				DstName:   srcField.Name, // Assume same name for now
+				IsPointer: srcField.Type.IsPointer,
+			})
+		}
+	}
+
+	return fieldMaps
 }

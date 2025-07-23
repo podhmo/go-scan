@@ -23,14 +23,20 @@ go 1.22.4
 package source
 import "time"
 // @derivingconvert("example.com/convert/models/destination.DstUser")
-type SrcUser struct { ID int64 }
-// @derivingconvert("example.com/convert/models/destination.DstOrder")
-type SrcOrder struct { OrderID string }
+type SrcUser struct {
+	ID        int64
+	Name      string
+	UpdatedAt *time.Time
+}
 `,
 		"models/destination/destination.go": `
 package destination
-type DstUser struct { UserID string }
-type DstOrder struct { ID string }
+import "time"
+type DstUser struct {
+	ID        int64
+	Name      string
+	UpdatedAt time.Time
+}
 `,
 	}
 
@@ -79,22 +85,11 @@ func ConvertSrcUserToDstUser(ctx context.Context, src source.SrcUser) (destinati
 // convertSrcUserToDstUser is the internal conversion function.
 func convertSrcUserToDstUser(ctx context.Context, src source.SrcUser) destination.DstUser {
 	dst := destination.DstUser{}
-	// Field mapping is not implemented in this version.
-	return dst
-}
-
-// ConvertSrcOrderToDstOrder converts SrcOrder to DstOrder.
-func ConvertSrcOrderToDstOrder(ctx context.Context, src source.SrcOrder) (destination.DstOrder, error) {
-	// In the future, this will use an error collector.
-	// For now, we just call the internal function.
-	dst := convertSrcOrderToDstOrder(ctx, src)
-	return dst, nil
-}
-
-// convertSrcOrderToDstOrder is the internal conversion function.
-func convertSrcOrderToDstOrder(ctx context.Context, src source.SrcOrder) destination.DstOrder {
-	dst := destination.DstOrder{}
-	// Field mapping is not implemented in this version.
+	dst.ID = src.ID
+	dst.Name = src.Name
+	if src.UpdatedAt != nil {
+		dst.UpdatedAt = *src.UpdatedAt
+	}
 	return dst
 }
 `

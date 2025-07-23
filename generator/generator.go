@@ -8,8 +8,8 @@ import (
 	"strings"
 	"text/template"
 
-	"example.com/convert/parser"
 	"github.com/podhmo/go-scan"
+	"github.com/podhmo/go-scan/parser"
 	"github.com/podhmo/go-scan/scanner"
 )
 
@@ -224,22 +224,17 @@ func generateSliceConversion(src, dst string, srcType, dstType *scanner.FieldTyp
 		}
 	} else {
 		// No helper function, direct assignment with pointer handling.
-		assign := "elem"
-		if srcElem.IsPointer {
-			assign = "*elem"
-		}
-
 		if dstElem.IsPointer {
 			if srcElem.IsPointer {
-				conversionLogic = fmt.Sprintf("if elem != nil { tmp := %s; newSlice = append(newSlice, &tmp) }", assign)
+				conversionLogic = "if elem != nil { tmp := *elem; newSlice = append(newSlice, &tmp) }"
 			} else {
-				conversionLogic = fmt.Sprintf("tmp := %s\n\t\tnewSlice = append(newSlice, &tmp)", assign)
+				conversionLogic = "tmp := elem\n\t\tnewSlice = append(newSlice, &tmp)"
 			}
 		} else {
 			if srcElem.IsPointer {
-				conversionLogic = fmt.Sprintf("if elem != nil { newSlice = append(newSlice, %s) }", assign)
+				conversionLogic = "if elem != nil { newSlice = append(newSlice, *elem) }"
 			} else {
-				conversionLogic = fmt.Sprintf("newSlice = append(newSlice, %s)", assign)
+				conversionLogic = "newSlice = append(newSlice, elem)"
 			}
 		}
 	}

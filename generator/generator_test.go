@@ -7,30 +7,29 @@ import (
 	"strings"
 	"testing"
 
-	"example.com/convert/parser"
 	"github.com/google/go-cmp/cmp"
 	"github.com/podhmo/go-scan"
+	"github.com/podhmo/go-scan/parser"
 	"github.com/podhmo/go-scan/scantest"
 )
 
 func TestGenerate_CrossPackage_WithSlices(t *testing.T) {
 	files := map[string]string{
 		"go.mod": `
-module example.com/convert
+module github.com/podhmo/go-scan
 go 1.24
-replace github.com/podhmo/go-scan => ../../
 `,
 		"models/source/source.go": `
 package source
 import "time"
 
-// @derivingconvert("example.com/convert/models/destination.DstUser")
+// @derivingconvert("github.com/podhmo/go-scan/models/destination.DstUser")
 type SrcUser struct {
 	ID   int64
 	Name string
 }
 
-// @derivingconvert("example.com/convert/models/destination.DstOrder")
+// @derivingconvert("github.com/podhmo/go-scan/models/destination.DstOrder")
 type SrcOrder struct {
 	OrderID string
 	Items   []SrcItem
@@ -91,8 +90,8 @@ package converter
 
 import (
 	"context"
-	destination "example.com/convert/models/destination"
-	source "example.com/convert/models/source"
+	destination "github.com/podhmo/go-scan/models/destination"
+	source "github.com/podhmo/go-scan/models/source"
 )
 
 // ConvertSrcUserToDstUser converts SrcUser to DstUser.

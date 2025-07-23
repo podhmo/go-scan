@@ -76,8 +76,6 @@ import (
 
 // ConvertSrcUserToDstUser converts SrcUser to DstUser.
 func ConvertSrcUserToDstUser(ctx context.Context, src source.SrcUser) (destination.DstUser, error) {
-	// In the future, this will use an error collector.
-	// For now, we just call the internal function.
 	dst := convertSrcUserToDstUser(ctx, src)
 	return dst, nil
 }

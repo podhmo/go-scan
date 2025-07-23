@@ -55,7 +55,7 @@ func TestConvertUser(t *testing.T) {
 		UpdatedAt: updatedAt.Format(time.RFC3339),
 	}
 
-	dstUser := ConvertSrcUserToDstUser(ctx, srcUser)
+	dstUser := ConvertUser(ctx, srcUser)
 
 	if !reflect.DeepEqual(dstUser, expectedDstUser) {
 		t.Errorf("ConvertUser() got = %v, want %v", dstUser, expectedDstUser)
@@ -103,7 +103,7 @@ func TestConvertUser_NilFields(t *testing.T) {
 		UpdatedAt: "", // Empty string for nil UpdatedAt
 	}
 
-	dstUser := ConvertSrcUserToDstUser(ctx, srcUser)
+	dstUser := ConvertUser(ctx, srcUser)
 
 	if !reflect.DeepEqual(dstUser, expectedDstUser) {
 		t.Errorf("ConvertUser() with nil fields got = %v, want %v", dstUser, expectedDstUser)
@@ -130,7 +130,7 @@ func TestConvertOrder(t *testing.T) {
 		},
 	}
 
-	dstOrder := ConvertSrcOrderToDstOrder(ctx, srcOrder)
+	dstOrder := ConvertOrder(ctx, srcOrder)
 
 	if !reflect.DeepEqual(dstOrder, expectedDstOrder) {
 		t.Errorf("ConvertOrder() got = %v, want %v", dstOrder, expectedDstOrder)
@@ -141,7 +141,7 @@ func TestSrcAddressToDstAddress(t *testing.T) {
 	ctx := context.Background()
 	src := source.SrcAddress{Street: "123 Main St", City: "Anytown"}
 	expected := destination.DstAddress{FullStreet: "123 Main St", CityName: "Anytown"}
-	got := convertSrcAddressToDstAddress(ctx, src)
+	got := srcAddressToDstAddress(ctx, src)
 	if !reflect.DeepEqual(got, expected) {
 		t.Errorf("srcAddressToDstAddress() = %v, want %v", got, expected)
 	}
@@ -168,7 +168,7 @@ func TestSrcContactToDstContact(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := convertSrcContactToDstContact(ctx, tt.src); !reflect.DeepEqual(got, tt.expected) {
+			if got := srcContactToDstContact(ctx, tt.src); !reflect.DeepEqual(got, tt.expected) {
 				t.Errorf("srcContactToDstContact() = %v, want %v", got, tt.expected)
 			}
 		})
@@ -179,7 +179,7 @@ func TestSrcInternalDetailToDstInternalDetail(t *testing.T) {
 	ctx := context.Background()
 	src := source.SrcInternalDetail{Code: 10, Description: "Test Desc"}
 	expected := destination.DstInternalDetail{ItemCode: 10, LocalizedDesc: "翻訳済み (JP): Test Desc"}
-	got := convertSrcInternalDetailToDstInternalDetail(ctx, src)
+	got := srcInternalDetailToDstInternalDetail(ctx, src)
 	if !reflect.DeepEqual(got, expected) {
 		t.Errorf("srcInternalDetailToDstInternalDetail() = %v, want %v", got, expected)
 	}
@@ -189,7 +189,7 @@ func TestSrcItemToDstItem(t *testing.T) {
 	ctx := context.Background()
 	src := source.SrcItem{SKU: "SKU007", Quantity: 3}
 	expected := destination.DstItem{ProductCode: "SKU007", Count: 3}
-	got := convertSrcItemToDstItem(ctx, src)
+	got := srcItemToDstItem(ctx, src)
 	if !reflect.DeepEqual(got, expected) {
 		t.Errorf("srcItemToDstItem() = %v, want %v", got, expected)
 	}

@@ -9,6 +9,10 @@ import (
 	"example.com/convert/models/source"
 )
 
+// This file contains manually written converter functions.
+// These would be used for complex conversions that the generator doesn't handle,
+// or as custom functions invoked by the generator via tags in the future.
+
 // translateDescription is a helper function simulating internal processing.
 func translateDescription(ctx context.Context, text string, targetLang string) string {
 	if targetLang == "jp" {
@@ -19,8 +23,10 @@ func translateDescription(ctx context.Context, text string, targetLang string) s
 
 // --- User Conversion Functions ---
 
-// ConvertSrcUserToDstUser converts a source.SrcUser to a destination.DstUser.
-func ConvertSrcUserToDstUser(ctx context.Context, src source.SrcUser) destination.DstUser {
+// This is a manually implemented converter. The test `TestConvertUser` verifies its behavior.
+// The generated code will produce `ConvertSrcUserToDstUser` and `convertSrcUserToDstUser` in a separate file.
+// To avoid conflicts, we could name this differently, but for the test, we rely on the test calling this specific implementation.
+func ConvertUser(ctx context.Context, src source.SrcUser) destination.DstUser {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -29,13 +35,13 @@ func ConvertSrcUserToDstUser(ctx context.Context, src source.SrcUser) destinatio
 
 	dst.UserID = fmt.Sprintf("user-%d", src.ID)
 	dst.FullName = src.FirstName + " " + src.LastName
-	dst.Address = convertSrcAddressToDstAddress(ctx, src.SrcAddress)
-	dst.Contact = convertSrcContactToDstContact(ctx, src.ContactInfo)
+	dst.Address = srcAddressToDstAddress(ctx, src.SrcAddress)
+	dst.Contact = srcContactToDstContact(ctx, src.ContactInfo)
 
 	if src.Details != nil {
 		dst.Details = make([]destination.DstInternalDetail, len(src.Details))
 		for i, sDetail := range src.Details {
-			dst.Details[i] = convertSrcInternalDetailToDstInternalDetail(ctx, sDetail)
+			dst.Details[i] = srcInternalDetailToDstInternalDetail(ctx, sDetail)
 		}
 	}
 
@@ -50,16 +56,14 @@ func ConvertSrcUserToDstUser(ctx context.Context, src source.SrcUser) destinatio
 	return dst
 }
 
-// convertSrcAddressToDstAddress converts source.SrcAddress to destination.DstAddress.
-func convertSrcAddressToDstAddress(ctx context.Context, src source.SrcAddress) destination.DstAddress {
+func srcAddressToDstAddress(ctx context.Context, src source.SrcAddress) destination.DstAddress {
 	return destination.DstAddress{
 		FullStreet: src.Street,
 		CityName:   src.City,
 	}
 }
 
-// convertSrcContactToDstContact converts source.SrcContact to destination.DstContact.
-func convertSrcContactToDstContact(ctx context.Context, src source.SrcContact) destination.DstContact {
+func srcContactToDstContact(ctx context.Context, src source.SrcContact) destination.DstContact {
 	dst := destination.DstContact{
 		EmailAddress: src.Email,
 	}
@@ -71,8 +75,7 @@ func convertSrcContactToDstContact(ctx context.Context, src source.SrcContact) d
 	return dst
 }
 
-// convertSrcInternalDetailToDstInternalDetail converts source.SrcInternalDetail to destination.DstInternalDetail.
-func convertSrcInternalDetailToDstInternalDetail(ctx context.Context, src source.SrcInternalDetail) destination.DstInternalDetail {
+func srcInternalDetailToDstInternalDetail(ctx context.Context, src source.SrcInternalDetail) destination.DstInternalDetail {
 	localizedDescription := translateDescription(ctx, src.Description, "jp")
 	return destination.DstInternalDetail{
 		ItemCode:      src.Code,
@@ -82,8 +85,7 @@ func convertSrcInternalDetailToDstInternalDetail(ctx context.Context, src source
 
 // --- Order Conversion Functions ---
 
-// ConvertSrcOrderToDstOrder converts a source.SrcOrder to a destination.DstOrder.
-func ConvertSrcOrderToDstOrder(ctx context.Context, src source.SrcOrder) destination.DstOrder {
+func ConvertOrder(ctx context.Context, src source.SrcOrder) destination.DstOrder {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -96,14 +98,13 @@ func ConvertSrcOrderToDstOrder(ctx context.Context, src source.SrcOrder) destina
 	if src.Items != nil {
 		dst.LineItems = make([]destination.DstItem, len(src.Items))
 		for i, sItem := range src.Items {
-			dst.LineItems[i] = convertSrcItemToDstItem(ctx, sItem)
+			dst.LineItems[i] = srcItemToDstItem(ctx, sItem)
 		}
 	}
 	return dst
 }
 
-// convertSrcItemToDstItem converts source.SrcItem to destination.DstItem.
-func convertSrcItemToDstItem(ctx context.Context, src source.SrcItem) destination.DstItem {
+func srcItemToDstItem(ctx context.Context, src source.SrcItem) destination.DstItem {
 	return destination.DstItem{
 		ProductCode: src.SKU,
 		Count:       src.Quantity,

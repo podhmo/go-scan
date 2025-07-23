@@ -1,42 +1,37 @@
 package destination
 
-// --- Destination Structs ---
-
-type DstAddress struct {
-	FullStreet string // Different name
-	CityName   string // Different name
-}
-
-type DstContact struct {
-	EmailAddress string // Different name
-	PhoneNumber  string // Pointer to value
-}
-
-// DstInternalDetail is an example of a type that might have an unexported converter
-// if it's only used within the DstUser conversion.
-type DstInternalDetail struct {
-	ItemCode      int    // Different name
-	LocalizedDesc string // Different name, implies processing
-}
-
-// DstUser is a "top-level type" for which an exported converter will be generated.
 type DstUser struct {
-	UserID    string // Different type (int64 to string)
-	FullName  string // Combination of FirstName and LastName
+	UserID    string
+	FullName  string
 	Address   DstAddress
 	Contact   DstContact
 	Details   []DstInternalDetail
-	CreatedAt string // Different type (time.Time to string)
-	UpdatedAt string // Pointer to value, different type
+	CreatedAt string
+	UpdatedAt string
+}
+
+type DstAddress struct {
+	FullStreet string
+	CityName   string
+}
+
+type DstContact struct {
+	EmailAddress string
+	PhoneNumber  string
+}
+
+type DstInternalDetail struct {
+	ItemCode      int
+	LocalizedDesc string
 }
 
 type DstOrder struct {
 	ID          string
 	TotalAmount float64
-	LineItems   []DstItem // Different name
+	LineItems   []DstItem
 }
 
 type DstItem struct {
-	ProductCode string // Different name
-	Count       int    // Different name
+	ProductCode string
+	Count       int
 }

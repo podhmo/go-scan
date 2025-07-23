@@ -2,6 +2,7 @@ package generator
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"go/format"
 	"strings"
@@ -23,8 +24,6 @@ import (
 {{ range .Pairs }}
 // {{ .ExportedFuncName }} converts {{ .SrcType.Name }} to {{ .DstType.Name }}.
 func {{ .ExportedFuncName }}(ctx context.Context, src {{ .SrcType.Qualifier }}) ({{ .DstType.Qualifier }}, error) {
-	// In the future, this will use an error collector.
-	// For now, we just call the internal function.
 	dst := {{ .InternalFuncName }}(ctx, src)
 	return dst, nil
 }
@@ -33,13 +32,7 @@ func {{ .ExportedFuncName }}(ctx context.Context, src {{ .SrcType.Qualifier }}) 
 func {{ .InternalFuncName }}(ctx context.Context, src {{ .SrcType.Qualifier }}) {{ .DstType.Qualifier }} {
 	dst := {{ .DstType.Qualifier }}{}
 	{{- range .Fields }}
-	{{- if .IsPointer }}
-	if src.{{ .SrcName }} != nil {
-		dst.{{ .DstName }} = *src.{{ .SrcName }}
-	}
-	{{- else }}
-	dst.{{ .DstName }} = src.{{ .SrcName }}
-	{{- end }}
+	{{ getAssignment . "src" "dst" }}
 	{{- end }}
 	return dst
 }
@@ -58,12 +51,17 @@ type TemplatePair struct {
 	SrcType          QualifiedType
 	DstType          QualifiedType
 	Fields           []FieldMap
+	im               *goscan.ImportManager
 }
 
 type FieldMap struct {
-	SrcName   string
-	DstName   string
-	IsPointer bool
+	SrcName     string
+	DstName     string
+	SrcField    *scanner.FieldInfo
+	DstField    *scanner.FieldInfo
+	IsSlice     bool
+	NeedsHelper bool
+	im          *goscan.ImportManager
 }
 
 type QualifiedType struct {
@@ -71,38 +69,68 @@ type QualifiedType struct {
 	Qualifier string
 }
 
-// Generate generates the Go code for the conversion functions.
 func Generate(packageName string, pairs []parser.ConversionPair, pkgInfo *scanner.PackageInfo) ([]byte, error) {
-	// The import manager should be initialized with the context of the *target* package, not the source.
 	im := goscan.NewImportManager(&scanner.PackageInfo{ImportPath: "example.com/convert/" + packageName})
 	im.Add("context", "context")
 
-	templatePairs := make([]TemplatePair, 0, len(pairs))
+	worklist := make(map[string]bool)
+	allPairs := make([]parser.ConversionPair, len(pairs))
+	copy(allPairs, pairs)
 
 	for _, pair := range pairs {
+		key := fmt.Sprintf("%s_to_%s", pair.SrcType.Name, pair.DstType.Name)
+		worklist[key] = true
+	}
+
+	i := 0
+	for i < len(allPairs) {
+		pair := allPairs[i]
+		i++
+		if pair.SrcType.Struct == nil {
+			continue
+		}
+		for _, field := range createFieldMaps(pair.SrcType.Struct, pair.DstType.Struct, im) {
+			if field.NeedsHelper {
+				srcElem := field.SrcField.Type.Elem
+				if srcElem == nil {
+					srcElem = field.SrcField.Type
+				}
+				dstElem := field.DstField.Type.Elem
+				if dstElem == nil {
+					dstElem = field.DstField.Type
+				}
+
+				helperKey := fmt.Sprintf("%s_to_%s", srcElem.Name, dstElem.Name)
+				if !worklist[helperKey] {
+					if srcElem.Definition != nil && dstElem.Definition != nil {
+						allPairs = append(allPairs, parser.ConversionPair{
+							SrcType:          srcElem.Definition,
+							DstType:          dstElem.Definition,
+							DstPkgImportPath: dstElem.Definition.FilePath,
+						})
+						worklist[helperKey] = true
+					}
+				}
+			}
+		}
+	}
+
+	templatePairs := make([]TemplatePair, 0, len(allPairs))
+	for _, pair := range allPairs {
 		if pair.SrcType.Struct == nil || pair.DstType.Struct == nil {
 			continue
 		}
-
 		srcQualifier := im.Qualify(pkgInfo.ImportPath, pair.SrcType.Name)
 		dstQualifier := im.Qualify(pair.DstPkgImportPath, pair.DstType.Name)
-
-		fieldMaps := createFieldMaps(pair.SrcType.Struct, pair.DstType.Struct)
-
-		templatePair := TemplatePair{
+		fieldMaps := createFieldMaps(pair.SrcType.Struct, pair.DstType.Struct, im)
+		templatePairs = append(templatePairs, TemplatePair{
 			ExportedFuncName: fmt.Sprintf("Convert%sTo%s", pair.SrcType.Name, pair.DstType.Name),
 			InternalFuncName: fmt.Sprintf("convert%sTo%s", pair.SrcType.Name, pair.DstType.Name),
-			SrcType: QualifiedType{
-				Name:      pair.SrcType.Name,
-				Qualifier: srcQualifier,
-			},
-			DstType: QualifiedType{
-				Name:      pair.DstType.Name,
-				Qualifier: dstQualifier,
-			},
-			Fields: fieldMaps,
-		}
-		templatePairs = append(templatePairs, templatePair)
+			SrcType:          QualifiedType{Name: pair.SrcType.Name, Qualifier: srcQualifier},
+			DstType:          QualifiedType{Name: pair.DstType.Name, Qualifier: dstQualifier},
+			Fields:           fieldMaps,
+			im:               im,
+		})
 	}
 
 	imports := im.Imports()
@@ -114,7 +142,11 @@ func Generate(packageName string, pairs []parser.ConversionPair, pkgInfo *scanne
 		Pairs:       templatePairs,
 	}
 
-	tmpl, err := template.New("converter").Parse(strings.TrimSpace(codeTemplate))
+	funcMap := template.FuncMap{
+		"getAssignment": getAssignment,
+	}
+
+	tmpl, err := template.New("converter").Funcs(funcMap).Parse(strings.TrimSpace(codeTemplate))
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse template: %w", err)
 	}
@@ -135,7 +167,109 @@ func Generate(packageName string, pairs []parser.ConversionPair, pkgInfo *scanne
 	return formatted, nil
 }
 
-func createFieldMaps(srcStruct, dstStruct *scanner.StructInfo) []FieldMap {
+func getAssignment(field FieldMap, srcVar, dstVar string) string {
+	src := fmt.Sprintf("%s.%s", srcVar, field.SrcName)
+	dst := fmt.Sprintf("%s.%s", dstVar, field.DstName)
+
+	if field.IsSlice {
+		return generateSliceConversion(src, dst, field.SrcField.Type, field.DstField.Type, field)
+	}
+	return generatePointerValueConversion(src, dst, field.SrcField.Type, field.DstField.Type, field)
+}
+
+func generateSliceConversion(src, dst string, srcType, dstType *scanner.FieldType, field FieldMap) string {
+	srcElem := srcType.Elem
+	dstElem := dstType.Elem
+	if srcElem == nil || dstElem == nil {
+		return fmt.Sprintf("// TODO: Cannot determine slice element types for %s", src)
+	}
+
+	helperFuncName := ""
+	if srcElem.Definition != nil && srcElem.Definition.Struct != nil && dstElem.Definition != nil && dstElem.Definition.Struct != nil {
+		helperFuncName = fmt.Sprintf("convert%sTo%s", srcElem.Name, dstElem.Name)
+	}
+
+	dstSliceTypeQualifier := field.im.Qualify(dstType.Elem.FullImportPath(), dstType.Name)
+
+	var conversionLogic string
+	if helperFuncName != "" {
+		if dstElem.IsPointer && !srcElem.IsPointer {
+			conversionLogic = fmt.Sprintf("tmp := %s(ctx, elem)\n\t\tnewSlice = append(newSlice, &tmp)", helperFuncName)
+		} else if dstElem.IsPointer && srcElem.IsPointer {
+			conversionLogic = fmt.Sprintf("if elem != nil {\n\t\t\ttmp := %s(ctx, *elem)\n\t\t\tnewSlice = append(newSlice, &tmp)\n\t\t}", helperFuncName)
+		} else if !dstElem.IsPointer && srcElem.IsPointer {
+			conversionLogic = fmt.Sprintf("if elem != nil {\n\t\t\tnewSlice = append(newSlice, %s(ctx, *elem))\n\t\t}", helperFuncName)
+		} else {
+			conversionLogic = fmt.Sprintf("newSlice = append(newSlice, %s(ctx, elem))", helperFuncName)
+		}
+	} else {
+		if dstElem.IsPointer && !srcElem.IsPointer {
+			conversionLogic = "tmp := elem\n\t\tnewSlice = append(newSlice, &tmp)"
+		} else if dstElem.IsPointer && srcElem.IsPointer {
+			conversionLogic = "if elem != nil { tmp := *elem; newSlice = append(newSlice, &tmp) }"
+		} else if !dstElem.IsPointer && srcElem.IsPointer {
+			conversionLogic = "if elem != nil { newSlice = append(newSlice, *elem) }"
+		} else {
+			conversionLogic = "newSlice = append(newSlice, elem)"
+		}
+	}
+
+	return fmt.Sprintf(`
+	if %s != nil {
+		newSlice := make(%s, 0, len(%s))
+		for _, elem := range %s {
+			%s
+		}
+		%s = newSlice
+	}`, src, dstSliceTypeQualifier, src, src, conversionLogic, dst)
+}
+
+func generatePointerValueConversion(src, dst string, srcType, dstType *scanner.FieldType, field FieldMap) string {
+	srcIsPtr := srcType.IsPointer
+	dstIsPtr := dstType.IsPointer
+
+	srcBaseType := srcType
+	if srcIsPtr {
+		srcBaseType = srcType.Elem
+	}
+	dstBaseType := dstType
+	if dstIsPtr {
+		dstBaseType = dstType.Elem
+	}
+
+	helperFunc := ""
+	if field.NeedsHelper {
+		helperFunc = fmt.Sprintf("convert%sTo%s", srcBaseType.Name, dstBaseType.Name)
+	}
+
+	if !srcIsPtr && !dstIsPtr {
+		if helperFunc != "" {
+			return fmt.Sprintf("%s = %s(ctx, %s)", dst, helperFunc, src)
+		}
+		return fmt.Sprintf("%s = %s", dst, src)
+	}
+	if srcIsPtr && !dstIsPtr {
+		if helperFunc != "" {
+			return fmt.Sprintf("if %s != nil {\n\t\t%s = %s(ctx, *%s)\n\t}", src, dst, helperFunc, src)
+		}
+		return fmt.Sprintf("if %s != nil {\n\t\t%s = *%s\n\t}", src, dst, src)
+	}
+	if !srcIsPtr && dstIsPtr {
+		if helperFunc != "" {
+			return fmt.Sprintf("{\n\t\ttmp := %s(ctx, %s)\n\t\t%s = &tmp\n\t}", helperFunc, src, dst)
+		}
+		return fmt.Sprintf("{\n\t\ttmp := %s\n\t\t%s = &tmp\n\t}", src, dst)
+	}
+	if srcIsPtr && dstIsPtr {
+		if helperFunc != "" {
+			return fmt.Sprintf("if %s != nil {\n\t\ttmp := %s(ctx, *%s)\n\t\t%s = &tmp\n\t}", src, helperFunc, src, dst)
+		}
+		return fmt.Sprintf("if %s != nil {\n\t\ttmp := *%s\n\t\t%s = &tmp\n\t}", src, src, dst)
+	}
+	return fmt.Sprintf("// TODO: Conversion not implemented for %s -> %s", srcType.Name, dstType.Name)
+}
+
+func createFieldMaps(srcStruct, dstStruct *scanner.StructInfo, im *goscan.ImportManager) []FieldMap {
 	var fieldMaps []FieldMap
 	dstFields := make(map[string]*scanner.FieldInfo)
 	for _, field := range dstStruct.Fields {
@@ -144,13 +278,21 @@ func createFieldMaps(srcStruct, dstStruct *scanner.StructInfo) []FieldMap {
 
 	for _, srcField := range srcStruct.Fields {
 		if dstField, ok := dstFields[srcField.Name]; ok {
-			// In a real scenario, we would check for type compatibility.
-			// For now, we just map by name.
-			_ = dstField // dstField is currently unused but would be needed for type checks.
+			srcDef, _ := srcField.Type.Resolve(context.Background(), make(map[string]struct{}))
+			dstDef, _ := dstField.Type.Resolve(context.Background(), make(map[string]struct{}))
+
+			srcIsStruct := (srcDef != nil && srcDef.Struct != nil) || (srcField.Type.Elem != nil && srcField.Type.Elem.Definition != nil && srcField.Type.Elem.Definition.Struct != nil)
+			dstIsStruct := (dstDef != nil && dstDef.Struct != nil) || (dstField.Type.Elem != nil && dstField.Type.Elem.Definition != nil && dstField.Type.Elem.Definition.Struct != nil)
+			needsHelper := srcIsStruct && dstIsStruct
+
 			fieldMaps = append(fieldMaps, FieldMap{
-				SrcName:   srcField.Name,
-				DstName:   srcField.Name, // Assume same name for now
-				IsPointer: srcField.Type.IsPointer,
+				SrcName:     srcField.Name,
+				DstName:     srcField.Name,
+				SrcField:    srcField,
+				DstField:    dstField,
+				IsSlice:     srcField.Type.IsSlice,
+				NeedsHelper: needsHelper,
+				im:          im,
 			})
 		}
 	}

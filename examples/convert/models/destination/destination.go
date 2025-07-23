@@ -35,3 +35,14 @@ type DstItem struct {
 	ProductCode string
 	Count       int
 }
+
+type ComplexTarget struct {
+	Value       string
+	Ptr         *string
+	Slice       []SubTarget
+	SliceOfPtrs []*SubTarget
+}
+
+type SubTarget struct {
+	Value int
+}

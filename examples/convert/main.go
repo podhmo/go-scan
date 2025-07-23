@@ -77,7 +77,7 @@ func Generate(ctx context.Context, s *goscan.Scanner, pkgInfo *scanner.PackageIn
 		return nil
 	}
 
-	generatedCode, err := generator.Generate(pkgname, pairs, pkgInfo)
+	generatedCode, err := generator.Generate(s, pkgname, pairs, pkgInfo)
 	if err != nil {
 		return fmt.Errorf("failed to generate converter code: %w", err)
 	}

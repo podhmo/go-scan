@@ -19,7 +19,7 @@ func convertSrcUserToDstUser(ctx context.Context, src source.SrcUser) destinatio
 	dst := destination.DstUser{}
 
 	if src.Details != nil {
-		newSlice := make(slice, 0, len(src.Details))
+		newSlice := make([]DstInternalDetail, 0, len(src.Details))
 		for _, elem := range src.Details {
 			newSlice = append(newSlice, elem)
 		}
@@ -60,7 +60,7 @@ func convertComplexSourceToComplexTarget(ctx context.Context, src source.Complex
 	}
 
 	if src.Slice != nil {
-		newSlice := make(slice, 0, len(src.Slice))
+		newSlice := make([]SubTarget, 0, len(src.Slice))
 		for _, elem := range src.Slice {
 			newSlice = append(newSlice, elem)
 		}
@@ -68,7 +68,7 @@ func convertComplexSourceToComplexTarget(ctx context.Context, src source.Complex
 	}
 
 	if src.SliceOfPtrs != nil {
-		newSlice := make(slice, 0, len(src.SliceOfPtrs))
+		newSlice := make([]*SubTarget, 0, len(src.SliceOfPtrs))
 		for _, elem := range src.SliceOfPtrs {
 			if elem != nil {
 				tmp := *elem

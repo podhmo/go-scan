@@ -13,29 +13,50 @@ import (
 	"github.com/podhmo/go-scan/scantest"
 )
 
-func TestGenerate_CrossPackage(t *testing.T) {
+func TestGenerate_CrossPackage_WithSlices(t *testing.T) {
 	files := map[string]string{
 		"go.mod": `
 module example.com/convert
-go 1.22.4
+go 1.24
+replace github.com/podhmo/go-scan => ../../
 `,
 		"models/source/source.go": `
 package source
 import "time"
+
 // @derivingconvert("example.com/convert/models/destination.DstUser")
 type SrcUser struct {
-	ID        int64
-	Name      string
-	UpdatedAt *time.Time
+	ID   int64
+	Name string
+}
+
+// @derivingconvert("example.com/convert/models/destination.DstOrder")
+type SrcOrder struct {
+	OrderID string
+	Items   []SrcItem
+}
+
+type SrcItem struct {
+	SKU      string
+	Quantity int
 }
 `,
 		"models/destination/destination.go": `
 package destination
-import "time"
+
 type DstUser struct {
-	ID        int64
-	Name      string
-	UpdatedAt time.Time
+	ID   int64
+	Name string
+}
+
+type DstOrder struct {
+	OrderID string
+	Items   []DstItem
+}
+
+type DstItem struct {
+	SKU      string
+	Quantity int
 }
 `,
 	}
@@ -59,7 +80,7 @@ type DstUser struct {
 		t.Fatalf("parser.Parse failed: %+v", err)
 	}
 
-	got, err := Generate("converter", pairs, pkg)
+	got, err := Generate(s, "converter", pairs, pkg)
 	if err != nil {
 		t.Fatalf("Generate failed: %+v", err)
 	}
@@ -85,8 +106,26 @@ func convertSrcUserToDstUser(ctx context.Context, src source.SrcUser) destinatio
 	dst := destination.DstUser{}
 	dst.ID = src.ID
 	dst.Name = src.Name
-	if src.UpdatedAt != nil {
-		dst.UpdatedAt = *src.UpdatedAt
+	return dst
+}
+
+// ConvertSrcOrderToDstOrder converts SrcOrder to DstOrder.
+func ConvertSrcOrderToDstOrder(ctx context.Context, src source.SrcOrder) (destination.DstOrder, error) {
+	dst := convertSrcOrderToDstOrder(ctx, src)
+	return dst, nil
+}
+
+// convertSrcOrderToDstOrder is the internal conversion function.
+func convertSrcOrderToDstOrder(ctx context.Context, src source.SrcOrder) destination.DstOrder {
+	dst := destination.DstOrder{}
+	dst.OrderID = src.OrderID
+
+	if src.Items != nil {
+		newSlice := make([]DstItem, 0, len(src.Items))
+		for _, elem := range src.Items {
+			newSlice = append(newSlice, elem)
+		}
+		dst.Items = newSlice
 	}
 	return dst
 }

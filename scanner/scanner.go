@@ -694,9 +694,4 @@ func commentText(cg *ast.CommentGroup) string {
 	return strings.TrimSpace(cg.Text())
 }
 
-// SetResolver is a test helper to overwrite the internal resolver.
-func (ft *FieldType) SetResolver(r PackageResolver) {
-	ft.resolver = r
-}
-
 // (No trailing comments or code after the last function - ensure this is the true end of the file)

@@ -1716,3 +1716,74 @@ func findMethod(iinfo *scanner.InterfaceInfo, name string) *scanner.MethodInfo {
 
 // Ensure existing TestImplements and other tests still pass by keeping their structure.
 // The `findType` helper was already present.
+
+func TestImplements_DerivingJSON_Scenario(t *testing.T) {
+	ctx := context.Background()
+	s, err := New(WithWorkDir("."))
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+
+	pkgPath := "./testdata/derivingjson_scenario"
+	// Create the directory and file for the test
+	if err := os.MkdirAll(pkgPath, 0755); err != nil {
+		t.Fatalf("failed to create test directory: %v", err)
+	}
+	defer os.RemoveAll("./testdata/derivingjson_scenario")
+
+	filePath := filepath.Join(pkgPath, "types.go")
+	content := `
+package derivingjson_scenario
+
+type EventData interface {
+	EventData()
+}
+
+type UserCreated struct{}
+func (e *UserCreated) EventData() {}
+
+type MessagePosted struct{}
+func (e *MessagePosted) EventData() {}
+
+type NotAnImplementer struct{}
+`
+	if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
+		t.Fatalf("failed to write test file: %v", err)
+	}
+
+	pkgInfo, err := s.ScanPackage(ctx, pkgPath)
+	if err != nil {
+		t.Fatalf("ScanPackage(%q) failed: %v", pkgPath, err)
+	}
+
+	// Find the interface
+	eventDataInterface := findType(pkgInfo.Types, "EventData")
+	if eventDataInterface == nil {
+		t.Fatal("Interface 'EventData' not found")
+	}
+
+	// Find implementers
+	var implementers []*scanner.TypeInfo
+	for _, ti := range pkgInfo.Types {
+		if ti.Kind == StructKind {
+			if Implements(ti, eventDataInterface, pkgInfo) {
+				implementers = append(implementers, ti)
+			}
+		}
+	}
+
+	if len(implementers) != 2 {
+		t.Fatalf("Expected to find 2 implementers, got %d", len(implementers))
+	}
+
+	implementerNames := make([]string, len(implementers))
+	for i, impl := range implementers {
+		implementerNames[i] = impl.Name
+	}
+	sort.Strings(implementerNames)
+
+	expectedImplementers := []string{"MessagePosted", "UserCreated"}
+	if !reflect.DeepEqual(implementerNames, expectedImplementers) {
+		t.Errorf("Expected implementers %v, got %v", expectedImplementers, implementerNames)
+	}
+}

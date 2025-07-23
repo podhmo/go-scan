@@ -27,6 +27,7 @@ func (s *{{.StructName}}) UnmarshalJSON(data []byte) error {
 
 		switch discriminatorDoc.Type {
 		{{range .Implementers}}
+
 		case "{{.JSONValue}}":
 			var content {{.GoType}}
 			if err := json.Unmarshal(aux.{{$oneOfField.FieldName}}, &content); err != nil {
@@ -34,6 +35,7 @@ func (s *{{.StructName}}) UnmarshalJSON(data []byte) error {
 			}
 			s.{{$oneOfField.FieldName}} = content
 		{{end}}
+
 		default:
 			if discriminatorDoc.Type == "" {
 				return fmt.Errorf("discriminator field '{{$.DiscriminatorFieldJSONName}}' missing or empty in '{{$oneOfField.JSONTag}}' (content: %s)", string(aux.{{$oneOfField.FieldName}}))

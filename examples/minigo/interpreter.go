@@ -1766,7 +1766,7 @@ func (i *Interpreter) setFieldInEmbedded(instance *StructInstance, fieldName str
 			// If this is the only path, targetEmbeddedInstance will be nil, but assigned will be true.
 			// Let's adjust so if recursivelyAssigned, we consider it done for *this* branch.
 			if numFoundPaths == 1 { // This was the first and only path found so far
-				return true, nil   // Successfully assigned through this recursive path, and no ambiguity yet.
+				return true, nil // Successfully assigned through this recursive path, and no ambiguity yet.
 			}
 			// If numFoundPaths > 1, it means ambiguity was already detected or will be by the end.
 			// The recursive call already did the assignment.

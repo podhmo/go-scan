@@ -43,7 +43,6 @@ type Result struct {
 	Outputs map[string][]byte
 }
 
-
 // Run sets up and executes a test scenario.
 // It returns a Result object if the action had side effects captured by the harness.
 func Run(t *testing.T, dir string, patterns []string, action ActionFunc) (*Result, error) {

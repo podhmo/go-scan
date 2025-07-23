@@ -35,3 +35,6 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 -   **Variadic Parameter Parsing**: Correctly parses variadic parameters (e.g., `...string`) as slice types (e.g., `[]string`) within function signatures. The `IsVariadic` flag on `FunctionInfo` is set, and the parameter's `FieldType` accurately reflects the corresponding slice type.
 
 ## To Be Implemented
+
+-   **Implement `convert` Tool**: Implement the annotation-based code generation tool as described in [docs/plan-neo-convert.md](./docs/plan-neo-convert.md).
+    -   Initial task: Create the CLI entrypoint and basic parser structure.

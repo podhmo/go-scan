@@ -58,6 +58,7 @@ func TestScanPackageFeatures(t *testing.T) {
 	filesToScan := []string{
 		filepath.Join(testDir, "features.go"),
 		filepath.Join(testDir, "another.go"),
+		filepath.Join(testDir, "variadic.go"),
 	}
 
 	pkgInfo, err := s.ScanFiles(context.Background(), filesToScan, testDir, &MockResolver{})
@@ -108,6 +109,31 @@ func TestScanPackageFeatures(t *testing.T) {
 	}
 	if handlerFunc.Kind != FuncKind {
 		t.Errorf("Expected HandlerFunc kind to be FuncKind, got %v", handlerFunc.Kind)
+	}
+
+	// Test 5: Variadic function
+	funcs := make(map[string]*FunctionInfo)
+	for _, fi := range pkgInfo.Functions {
+		funcs[fi.Name] = fi
+	}
+
+	variadicFunc, ok := funcs["VariadicFunc"]
+	if !ok {
+		t.Fatal("Function 'VariadicFunc' not found")
+	}
+	if !variadicFunc.IsVariadic {
+		t.Error("Expected VariadicFunc to be variadic")
+	}
+	if len(variadicFunc.Parameters) != 2 {
+		t.Errorf("Expected 2 parameters for VariadicFunc, got %d", len(variadicFunc.Parameters))
+	}
+
+	nonVariadicFunc, ok := funcs["NonVariadicFunc"]
+	if !ok {
+		t.Fatal("Function 'NonVariadicFunc' not found")
+	}
+	if nonVariadicFunc.IsVariadic {
+		t.Error("Expected NonVariadicFunc to not be variadic")
 	}
 }
 

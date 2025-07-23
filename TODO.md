@@ -33,8 +33,9 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 -   **In-Memory File Overlay:** Added an "overlay" feature to `go-scan` to allow providing in-memory file content. This is useful for tools that generate or modify Go source code without writing to the filesystem. This was implemented as described in [docs/plan-overlay.md](./docs/plan-overlay.md).
 -   **Integration Tests for Examples:** Added integration tests for the code generation tools in the `examples/` directory using the new `scantest` library.
 -   **Variadic Parameter Parsing**: Correctly parses variadic parameters (e.g., `...string`) as slice types (e.g., `[]string`) within function signatures. The `IsVariadic` flag on `FunctionInfo` is set, and the parameter's `FieldType` accurately reflects the corresponding slice type.
+-   **Initial `convert` Tool Implementation**: Implemented the CLI entrypoint and a basic parser for the `convert` tool. The tool now uses a `@derivingconvert(DstType)` annotation on source types to define conversion pairs, as documented in the updated `docs/plan-neo-convert.md`.
 
 ## To Be Implemented
 
--   **Implement `convert` Tool**: Implement the annotation-based code generation tool as described in [docs/plan-neo-convert.md](./docs/plan-neo-convert.md).
-    -   Initial task: Create the CLI entrypoint and basic parser structure.
+-   **Implement `convert` Tool**: Continue implementing the annotation-based code generation tool.
+    -   Next: Implement the code generator to produce conversion functions based on the parsed `ConversionPair` model.

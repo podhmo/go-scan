@@ -4,7 +4,7 @@ This document outlines the progress, key decisions, and future tasks for rebuild
 
 ## 1. High-Level Goal
 
-The `convert` tool is a command-line application that parses Go source files for special `// convert:` annotations and generates type conversion functions. The goal is to create a robust, maintainable, and easy-to-use code generation tool that automates the tedious task of writing boilerplate conversion code, replacing the existing prototype in `examples/convert`.
+The `convert` tool is a command-line application that parses Go source files for special `@derivingconvert` annotations in doc comments and generates type conversion functions. The goal is to create a robust, maintainable, and easy-to-use code generation tool that automates the tedious task of writing boilerplate conversion code, replacing the existing prototype in `examples/convert`.
 
 ---
 
@@ -17,7 +17,7 @@ The existing `examples/convert` directory contains a prototype that serves as a 
 | Feature | `examples/convert` (Prototype) | `convert` (This Plan) |
 | :--- | :--- | :--- |
 | **Invocation** | `go run main.go` with hardcoded paths. | Standard CLI tool (`convert -input <pkg> -output <file>`). |
-| **Rule Definition** | Hardcoded logic in `main.go`'s generator. | Annotation-driven (`// convert:pair`, `// convert:rule`). |
+| **Rule Definition** | Hardcoded logic in `main.go`'s generator. | Annotation-driven (`@derivingconvert`, `// convert:rule`). |
 | **Field Mapping** | Basic name matching, some hardcoded logic. | Struct tags (`convert:"..."`) and global rules for full control. |
 | **Error Handling** | None in generated code. | Rich error handling with `errorCollector` to report all errors. |
 | **Extensibility** | Requires changing the generator code. | Pluggable via custom functions (`using=...`). |
@@ -29,7 +29,7 @@ The transition from the prototype to the new tool will involve the following ste
 
 1.  **Develop the Core Tool**: Implement the annotation-based `convert` tool as a standalone CLI application according to this plan.
 2.  **Replicate `examples/convert` Logic**:
-    *   Add `// convert:pair` annotations to the `models` package to define the `SrcUser -> DstUser` and `SrcOrder -> DstOrder` conversions.
+    *   Add `@derivingconvert` annotations to the doc comments of `SrcUser` and `SrcOrder` in the `models` package to define the conversions to `DstUser` and `DstOrder`.
     *   Implement the custom logic from the prototype's `converter/converter.go` (e.g., `translateDescription`, combining `FirstName` and `LastName`) as helper functions.
     *   Use `// convert:rule` and `convert:` tags to map these helper functions to the correct fields and types (e.g., for `time.Time` -> `string`).
 3.  **Generate New Converters**: Run the new `convert` tool on `examples/convert/models` to generate a new `generated_converters.go`.
@@ -143,7 +143,7 @@ These structs directly map to the user-provided annotations.
 
 ```go
 // ConversionPair defines a top-level conversion between two types.
-// Corresponds to: // convert:pair <SrcType> -> <DstType>
+// Corresponds to: @derivingconvert(<DstType>, [option=value, ...])
 type ConversionPair struct {
 	SrcTypeName string
 	DstTypeName string
@@ -181,26 +181,32 @@ type ConvertTag struct {
 
 The tool is driven by annotations in Go comments.
 
-### Top-Level Annotations
+### Type-Level Annotations
 
-These are typically placed at the package level (e.g., in `doc.go` or `conversions.go`).
+This annotation is placed in the doc comment block of a source struct type.
 
-#### `// convert:pair`
+#### `@derivingconvert`
 
-This is the primary annotation that triggers the generation of a top-level conversion function.
+This is the primary annotation that triggers the generation of a top-level conversion function from the source type to a destination type.
 
-**Syntax**: `// convert:pair <SourceType> -> <DestinationType>[, option=value, ...]`
+**Syntax**: `@derivingconvert(<DestinationType>[, option=value, ...])`
 
-*   **`<SourceType>`**: The source struct type.
 *   **`<DestinationType>`**: The destination struct type.
 *   **Options**:
     *   `max_errors=<int>`: The maximum number of errors to collect before stopping the conversion. `0` means unlimited.
 
 **Example**:
 ```go
-// convert:pair User -> UserDTO, max_errors=10
+// @derivingconvert(UserDTO, max_errors=10)
+type User struct {
+    // ... fields
+}
 ```
 This will generate a function `ConvertUserToUserDTO(ctx context.Context, src User) (UserDTO, error)`.
+
+### Global Annotations
+
+These are typically placed at the package level (e.g., in `doc.go` or `conversions.go`).
 
 #### `// convert:rule`
 
@@ -255,7 +261,7 @@ type User struct {
 ## 6. Key Implementation Details & Rationale
 
 *   **Parser Implementation (`go-scan`)**: The parser should be implemented using `github.com/podhmo/go-scan`. This library simplifies walking the AST and resolving type information, which is a significant challenge when using `go/parser` alone.
-*   **Generator Worklist**: The generator should use a worklist pattern. It starts with the pairs from `// convert:pair` annotations. As it processes struct fields, if it encounters a nested struct-to-struct conversion that doesn't have a global `using` rule, it adds a new pair to the worklist. This ensures all necessary helper functions are generated recursively. A `map[string]bool` should be used to track already processed pairs to prevent infinite loops from circular dependencies.
+*   **Generator Worklist**: The generator should use a worklist pattern. It starts with the pairs from `@derivingconvert` annotations. As it processes struct fields, if it encounters a nested struct-to-struct conversion that doesn't have a global `using` rule, it adds a new pair to the worklist. This ensures all necessary helper functions are generated recursively. A `map[string]bool` should be used to track already processed pairs to prevent infinite loops from circular dependencies.
 *   **Error Handling (`errorCollector`)**: The generated code must include a helper struct called `errorCollector`. This struct should accumulate errors along with their field paths (e.g., `User.Address.Street`). This provides much richer debugging information than failing on the first error.
 *   **Rule Priority**: The generator must respect the rule priority:
     1.  Field-level `using` tag.
@@ -273,8 +279,7 @@ package simple
 
 import "time"
 
-// convert:pair Input -> Output
-
+// @derivingconvert(Output)
 type Input struct {
     ID   int
     Name string

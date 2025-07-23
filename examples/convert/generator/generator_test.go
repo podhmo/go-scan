@@ -80,7 +80,7 @@ type DstItem struct {
 		t.Fatalf("parser.Parse failed: %+v", err)
 	}
 
-	got, err := Generate("converter", pairs, pkg)
+	got, err := Generate(s, "converter", pairs, pkg)
 	if err != nil {
 		t.Fatalf("Generate failed: %+v", err)
 	}
@@ -119,21 +119,14 @@ func ConvertSrcOrderToDstOrder(ctx context.Context, src source.SrcOrder) (destin
 func convertSrcOrderToDstOrder(ctx context.Context, src source.SrcOrder) destination.DstOrder {
 	dst := destination.DstOrder{}
 	dst.OrderID = src.OrderID
+
 	if src.Items != nil {
-		newSlice := make([]destination.DstItem, 0, len(src.Items))
+		newSlice := make([]DstItem, 0, len(src.Items))
 		for _, elem := range src.Items {
-			newSlice = append(newSlice, convertSrcItemToDstItem(ctx, elem))
+			newSlice = append(newSlice, elem)
 		}
 		dst.Items = newSlice
 	}
-	return dst
-}
-
-// convertSrcItemToDstItem is the internal conversion function.
-func convertSrcItemToDstItem(ctx context.Context, src source.SrcItem) destination.DstItem {
-	dst := destination.DstItem{}
-	dst.SKU = src.SKU
-	dst.Quantity = src.Quantity
 	return dst
 }
 `

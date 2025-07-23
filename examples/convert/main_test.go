@@ -29,7 +29,8 @@ func (w *memoryFileWriter) WriteFile(ctx context.Context, path string, data []by
 
 func TestMainIntegration(t *testing.T) {
 	writer := &memoryFileWriter{}
-	ctx := context.WithValue(context.Background(), FileWriterKey, writer)
+	ctx := context.Background()
+	ctx = context.WithValue(ctx, FileWriterKey, writer)
 
 	input := "example.com/convert/models/source"
 	output := "generated_test.go"

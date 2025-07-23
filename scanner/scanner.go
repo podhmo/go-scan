@@ -673,6 +673,11 @@ func (s *Scanner) parseTypeExpr(ctx context.Context, expr ast.Expr, currentTypeP
 		// If this interface is a constraint, mark it.
 		// ft.IsConstraint = true; // This should be set if the context implies it's a constraint.
 		// The caller (parseTypeParamList) will set IsConstraint on the resulting FieldType.
+	case *ast.Ellipsis: // Variadic parameter, e.g., ...string
+		// This represents a variadic parameter. The type is effectively a slice.
+		ft.IsSlice = true
+		ft.Name = "slice" // Placeholder, similar to ArrayType
+		ft.Elem = s.parseTypeExpr(ctx, t.Elt, currentTypeParams)
 	default:
 		// Ensure logging uses context if available, or fallback for general utility functions.
 		slog.Warn("Unhandled type expression", slog.String("type", fmt.Sprintf("%T", t)))
@@ -687,6 +692,11 @@ func commentText(cg *ast.CommentGroup) string {
 		return ""
 	}
 	return strings.TrimSpace(cg.Text())
+}
+
+// SetResolver is a test helper to overwrite the internal resolver.
+func (ft *FieldType) SetResolver(r PackageResolver) {
+	ft.resolver = r
 }
 
 // (No trailing comments or code after the last function - ensure this is the true end of the file)

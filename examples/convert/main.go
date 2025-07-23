@@ -4,17 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"time"
-
 	"log"
-	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"example.com/convert/converter" // Adjust module path if different
 	"example.com/convert/models"    // Adjust module path if different
-
-	typescanner "github.com/podhmo/go-scan"
+	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/scanner"
 )
 
@@ -24,175 +21,29 @@ func main() {
 
 	// Part 2: Generator Prototype
 	fmt.Println("\n--- Generator Prototype ---")
-	generateConverterPrototype()
+	if err := runGenerate(context.Background()); err != nil {
+		log.Fatalf("Error running generator: %v", err)
+	}
 }
 
-func runConversionExamples() {
-	ctx := context.Background() // Parent context
-	// --- Example 1: User Conversion ---
-	fmt.Println("--- User Conversion Example ---")
-	phone := "123-456-7890"
-	srcUser := models.SrcUser{
-		ID:        101,
-		FirstName: "John",
-		LastName:  "Doe",
-		SrcAddress: models.SrcAddress{
-			Street: "123 Main St",
-			City:   "Anytown",
-		},
-		ContactInfo: models.SrcContact{
-			Email: "john.doe@example.com",
-			Phone: &phone,
-		},
-		Details: []models.SrcInternalDetail{
-			{Code: 1, Description: "Needs setup"},
-			{Code: 2, Description: "Pending review"},
-		},
-		CreatedAt: time.Now().Add(-24 * time.Hour), // Yesterday
-		UpdatedAt: func() *time.Time { t := time.Now(); return &t }(),
-	}
-
-	// Perform the conversion
-	dstUser := converter.ConvertUser(ctx, srcUser)
-
-	// Print the results (using JSON for readability)
-	fmt.Println("Source User:")
-	printJSON(srcUser)
-	fmt.Println("\nDestination User:")
-	printJSON(dstUser)
-	fmt.Println("------------------------------\n")
-
-	// --- Example 2: Order Conversion ---
-	fmt.Println("--- Order Conversion Example ---")
-	srcOrder := models.SrcOrder{
-		OrderID: "ORD-001",
-		Amount:  199.99,
-		Items: []models.SrcItem{
-			{SKU: "ITEM001", Quantity: 2},
-			{SKU: "ITEM002", Quantity: 1},
-		},
-	}
-
-	// Perform the conversion
-	dstOrder := converter.ConvertOrder(ctx, srcOrder)
-
-	// Print the results
-	fmt.Println("Source Order:")
-	printJSON(srcOrder)
-	fmt.Println("\nDestination Order:")
-	printJSON(dstOrder)
-	fmt.Println("------------------------------\n")
-
-	// --- Example 3: User with nil fields ---
-	fmt.Println("--- User Conversion with Nil Phone and UpdatedAt ---")
-	srcUserNil := models.SrcUser{
-		ID:        102,
-		FirstName: "Jane",
-		LastName:  "Doe",
-		SrcAddress: models.SrcAddress{
-			Street: "456 Oak St",
-			City:   "Otherville",
-		},
-		ContactInfo: models.SrcContact{
-			Email: "jane.doe@example.com",
-			Phone: nil, // Nil phone
-		},
-		Details: []models.SrcInternalDetail{
-			{Code: 3, Description: "Urgent"},
-		},
-		CreatedAt: time.Now().Add(-48 * time.Hour),
-		UpdatedAt: nil, // Nil UpdatedAt
-	}
-
-	dstUserNil := converter.ConvertUser(ctx, srcUserNil)
-	fmt.Println("Source User (with nils):")
-	printJSON(srcUserNil)
-	fmt.Println("\nDestination User (with nils handled):")
-	printJSON(dstUserNil)
-	fmt.Println("------------------------------\n")
-}
-
-// printJSON is a helper to pretty-print structs as JSON.
-func printJSON(data interface{}) {
-	jsonData, err := json.MarshalIndent(data, "", "  ")
+func runGenerate(ctx context.Context) error {
+	modelsPath := "./models"
+	s, err := goscan.New(goscan.WithWorkDir(modelsPath))
 	if err != nil {
-		fmt.Printf("Error marshalling to JSON: %v\n", err)
-		return
-	}
-	fmt.Println(string(jsonData))
-}
-
-func generateConverterPrototype() {
-	// Assuming models are in a 'models' subdirectory relative to this file's package.
-	// Adjust this path as necessary.
-	modelsPath := "./models" // Or an absolute path if needed
-
-	// Get the current working directory to resolve the modelsPath relative to the project root.
-	wd, err := os.Getwd()
-	if err != nil {
-		log.Fatalf("Failed to get current working directory: %v", err)
-	}
-
-	// Construct the full path to the models directory
-	// This assumes the 'examples/convert' directory is the current context for path resolution.
-	// If running from project root, this path needs to be 'examples/convert/models'.
-	// For simplicity, let's assume we are in 'examples/convert' or can resolve it.
-	// A more robust solution would use build tags or configuration.
-
-	// Let's try to locate the 'go-scan' module root to make path resolution more stable.
-	// This is a simplified lookup. A real generator might need more sophisticated path finding.
-	currentDir := wd
-	var projectRoot string
-	for {
-		if _, err := os.Stat(filepath.Join(currentDir, "go.mod")); err == nil {
-			// Check if this go.mod is the main project's go.mod
-			// For this example, we'll assume if it contains "github.com/podhmo/go-scan" it's the one.
-			// This is a heuristic.
-			b, _ := os.ReadFile(filepath.Join(currentDir, "go.mod"))
-			if strings.Contains(string(b), "github.com/podhmo/go-scan") {
-				projectRoot = currentDir
-				break
-			}
-		}
-		parent := filepath.Dir(currentDir)
-		if parent == currentDir {
-			log.Println("Could not reliably find project root containing 'github.com/podhmo/go-scan' in go.mod. Trying relative path.")
-			// Fallback or error if not found, for now, assume relative path works from 'examples/convert'
-			// If running `go run examples/convert/main.go` from project root, wd is projectRoot
-			// and modelsPath should be "examples/convert/models"
-			if strings.HasSuffix(wd, "examples/convert") {
-				modelsPath = filepath.Join(wd, "models")
-			} else {
-				// Try to construct path assuming wd is project root
-				modelsPath = filepath.Join(wd, "examples", "convert", "models")
-				if _, err := os.Stat(modelsPath); os.IsNotExist(err) {
-					log.Fatalf("Models directory not found at %s. Please ensure paths are correct.", modelsPath)
-				}
-			}
-			break // Exit loop if heuristic fails or relative path assumed
-		}
-		currentDir = parent
-	}
-	if projectRoot != "" {
-		modelsPath = filepath.Join(projectRoot, "examples", "convert", "models")
-	}
-
-	log.Printf("Scanning models in: %s\n", modelsPath)
-
-	// Create a go-scan Scanner instance.
-	// The first argument to New is a starting path to find the module root (go.mod).
-	// For this example, we'll use the modelsPath itself, assuming it's within a module.
-	s, err := typescanner.New(typescanner.WithWorkDir(modelsPath))
-	if err != nil {
-		log.Fatalf("Failed to create scanner: %v", err)
+		return fmt.Errorf("failed to create scanner: %w", err)
 	}
 
 	// Scan the package containing the models.
-	pkgInfo, err := s.ScanPackage(modelsPath)
+	pkg, err := s.ScanPackage(ctx, modelsPath)
 	if err != nil {
-		log.Fatalf("Failed to scan package %s: %v", modelsPath, err)
+		return fmt.Errorf("failed to scan package %s: %w", modelsPath, err)
 	}
 
+	return Generate(ctx, s, pkg)
+}
+
+// Generate produces converter code for the given package.
+func Generate(ctx context.Context, s *goscan.Scanner, pkgInfo *scanner.PackageInfo) error {
 	var srcUserType, dstUserType *scanner.TypeInfo
 	var srcOrderType, dstOrderType *scanner.TypeInfo
 	// We'll also need other types for sub-converters
@@ -231,19 +82,17 @@ func generateConverterPrototype() {
 	}
 
 	if srcUserType == nil || dstUserType == nil || srcOrderType == nil || dstOrderType == nil {
-		log.Fatal("One or more top-level source or destination types not found in models package.")
+		return fmt.Errorf("one or more top-level source or destination types not found in models package")
 	}
+	// Create a go-scan GoFile for the generated code.
+	im := goscan.NewImportManager(pkgInfo)
+	im.Add("context", "")
+	im.Add("fmt", "")
+	im.Add("time", "")
+	im.Add(pkgInfo.ImportPath, "")
 
 	// Create a string builder to accumulate the generated code.
 	var sb strings.Builder
-
-	sb.WriteString("package converter\n\n")
-	sb.WriteString("import (\n")
-	sb.WriteString("\t\"context\"\n")
-	sb.WriteString("\t\"fmt\"\n")
-	sb.WriteString("\t\"time\"\n")
-	sb.WriteString("\t\"example.com/convert/models\"\n") // Assuming models are in this path
-	sb.WriteString(")\n\n")
 
 	// Generate User converter
 	if srcUserType != nil && dstUserType != nil {
@@ -255,8 +104,6 @@ func generateConverterPrototype() {
 	}
 
 	// Generate necessary sub-converters (helper functions)
-	// In a real generator, we'd only generate these if they are actually needed by top-level converters
-	// and manage their names to avoid conflicts.
 	if srcAddressType != nil && dstAddressType != nil {
 		generateStructConverter(&sb, srcAddressType, dstAddressType, pkgInfo)
 	}
@@ -273,7 +120,6 @@ func generateConverterPrototype() {
 	// Add the translateDescription helper as it's used by the manual converter
 	sb.WriteString(`
 // translateDescription is a helper function simulating internal processing.
-// In a real scenario, this could be a more complex logic, e.g., calling a translation service.
 func translateDescription(ctx context.Context, text string, targetLang string) string {
 	if targetLang == "jp" {
 		return "翻訳済み (JP): " + text
@@ -282,18 +128,110 @@ func translateDescription(ctx context.Context, text string, targetLang string) s
 }
 `)
 
-	// Write the generated code to a file.
-	generatedFilePath := filepath.Join(filepath.Dir(modelsPath), "converter", "generated_converters.go")
-	if err := os.MkdirAll(filepath.Dir(generatedFilePath), 0755); err != nil {
-		log.Fatalf("Failed to create directory for generated converters: %v", err)
-	}
-	err = os.WriteFile(generatedFilePath, []byte(sb.String()), 0644)
-	if err != nil {
-		log.Fatalf("Failed to write generated converters: %v", err)
+	gf := goscan.GoFile{
+		PackageName: "converter",
+		Imports:     im.Imports(),
+		CodeSet:     sb.String(),
 	}
 
-	log.Printf("Generated converters successfully at: %s\n", generatedFilePath)
-	fmt.Println("--- Generator Prototype Finished ---")
+	// Use goscan.SaveGoFile to allow interception by scantest
+	converterPkgDir := goscan.NewPackageDirectory(filepath.Join(pkgInfo.Path, "..", "converter"), "converter")
+	return converterPkgDir.SaveGoFile(ctx, gf, "generated_converters.go")
+}
+
+func runConversionExamples() {
+	ctx := context.Background() // Parent context
+	// --- Example 1: User Conversion ---
+	fmt.Println("--- User Conversion Example ---")
+	phone := "123-456-7890"
+	srcUser := models.SrcUser{
+		ID:        101,
+		FirstName: "John",
+		LastName:  "Doe",
+		SrcAddress: models.SrcAddress{
+			Street: "123 Main St",
+			City:   "Anytown",
+		},
+		ContactInfo: models.SrcContact{
+			Email: "john.doe@example.com",
+			Phone: &phone,
+		},
+		Details: []models.SrcInternalDetail{
+			{Code: 1, Description: "Needs setup"},
+			{Code: 2, Description: "Pending review"},
+		},
+		CreatedAt: time.Now().Add(-24 * time.Hour), // Yesterday
+		UpdatedAt: func() *time.Time { t := time.Now(); return &t }(),
+	}
+
+	// Perform the conversion
+	dstUser := converter.ConvertUser(ctx, srcUser)
+
+	// Print the results (using JSON for readability)
+	fmt.Println("Source User:")
+	printJSON(srcUser)
+	fmt.Println("\nDestination User:")
+	printJSON(dstUser)
+	fmt.Println("------------------------------")
+
+	// --- Example 2: Order Conversion ---
+	fmt.Println("--- Order Conversion Example ---")
+	srcOrder := models.SrcOrder{
+		OrderID: "ORD-001",
+		Amount:  199.99,
+		Items: []models.SrcItem{
+			{SKU: "ITEM001", Quantity: 2},
+			{SKU: "ITEM002", Quantity: 1},
+		},
+	}
+
+	// Perform the conversion
+	dstOrder := converter.ConvertOrder(ctx, srcOrder)
+
+	// Print the results
+	fmt.Println("Source Order:")
+	printJSON(srcOrder)
+	fmt.Println("\nDestination Order:")
+	printJSON(dstOrder)
+	fmt.Println("------------------------------")
+
+	// --- Example 3: User with nil fields ---
+	fmt.Println("--- User Conversion with Nil Phone and UpdatedAt ---")
+	srcUserNil := models.SrcUser{
+		ID:        102,
+		FirstName: "Jane",
+		LastName:  "Doe",
+		SrcAddress: models.SrcAddress{
+			Street: "456 Oak St",
+			City:   "Otherville",
+		},
+		ContactInfo: models.SrcContact{
+			Email: "jane.doe@example.com",
+			Phone: nil, // Nil phone
+		},
+		Details: []models.SrcInternalDetail{
+			{Code: 3, Description: "Urgent"},
+		},
+		CreatedAt: time.Now().Add(-48 * time.Hour),
+		UpdatedAt: nil, // Nil UpdatedAt
+	}
+
+	dstUserNil := converter.ConvertUser(ctx, srcUserNil)
+	fmt.Println("Source User (with nils):")
+	printJSON(srcUserNil)
+	fmt.Println("\nDestination User (with nils handled):")
+	printJSON(dstUserNil)
+	fmt.Println("------------------------------")
+}
+
+// printJSON is a helper to pretty-print structs as JSON.
+func printJSON(data interface{}) {
+	jsonData, err := json.MarshalIndent(data, "", "  ")
+	if err != nil {
+		fmt.Printf("Error marshalling to JSON: %v\n", err)
+		return
+	}
+	fmt.Println(string(jsonData))
 }
 
 // generateStructConverter generates conversion function code for a single struct pair.

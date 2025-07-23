@@ -19,6 +19,7 @@ type SrcInternalDetail struct {
 	Description string // This might need "translation"
 }
 
+// @derivingconvert(DstUser)
 type SrcUser struct {
 	ID        int64
 	FirstName string
@@ -61,6 +62,7 @@ type DstUser struct {
 }
 
 // Another top-level type for demonstrating multiple exported converters
+// @derivingconvert(DstOrder)
 type SrcOrder struct {
 	OrderID string
 	Amount  float64

@@ -37,5 +37,37 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 
 ## To Be Implemented
 
--   **Implement `convert` Tool**: Continue implementing the annotation-based code generation tool.
-    -   Next: Implement the code generator to produce conversion functions based on the parsed `ConversionPair` model.
+### `convert` Tool Implementation
+-   **Generator for Structs**: Implement the code generator to produce conversion functions for basic struct-to-struct conversions based on the parsed `ConversionPair` model.
+    -   Generate a top-level `Convert<Src>To<Dst>` function.
+    -   Generate an internal `convert<Src>To<Dst>` helper function.
+    -   Implement direct field mapping (e.g., `dst.Field = src.Field`).
+-   **Add Tests for Struct Conversion**: Write tests using `scantest` to verify the generated code for struct conversions.
+-   **Refactor `examples/convert` for Cross-Package Conversion**:
+    -   Move `Src` and `Dst` types into separate packages (e.g., `models/source` and `models/destination`).
+    -   Update tests to verify that cross-package conversion works correctly.
+-   **Generator for Pointer Fields**: Extend the generator to handle pointer fields within structs.
+    -   Generate code that correctly handles `*SrcType` to `*DstType` conversions (nil checks).
+-   **Add Tests for Pointer Fields**: Write tests for pointer field conversions.
+-   **Generator for Slice Fields**: Extend the generator to handle slice fields (e.g., `[]SrcType` to `[]DstType`).
+    -   Generate loops to iterate over slices and convert each element.
+-   **Add Tests for Slice Fields**: Write tests for slice field conversions.
+-   **Generator for Map Fields**: Extend the generator to handle map fields (e.g., `map[string]SrcType` to `map[string]DstType`).
+-   **Add Tests for Map Fields**: Write tests for map field conversions.
+-   **Implement `convert:` Tag Handling**:
+    -   `convert:"-"`: Skip a field.
+    -   `convert:"NewName"`: Map to a different field name.
+    -   `convert:",using=myFunc"`: Use a custom conversion function.
+    -   `convert:",required"`: Report an error if a pointer field is nil.
+-   **Add Tests for `convert:` Tags**: Write comprehensive tests for all `convert:` tag options.
+-   **Implement `// convert:rule`**:
+    -   Implement global type conversion rules (`"<SrcType>" -> "<DstType>", using=<funcName>`).
+    -   Implement validator rules (`"<DstType>", validator=<funcName>`).
+-   **Add Tests for `// convert:rule`**: Write tests for global conversion and validator rules.
+-   **Error Handling with `errorCollector`**: Implement the `errorCollector` struct and generate code that uses it to report multiple conversion errors.
+-   **Add Tests for Error Handling**: Write tests to verify that `errorCollector` correctly accumulates and reports errors.
+
+### Future Tasks (Post-Migration)
+*   **Improve Import Management**: Handle import alias collisions robustly. Consider using `golang.org/x/tools/imports` for final output formatting.
+*   **Expand Test Coverage**: Create a comprehensive test suite that verifies all features and edge cases.
+*   **Complete `README.md`**: Write user-facing documentation with installation, usage, and examples.

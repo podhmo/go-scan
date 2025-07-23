@@ -49,6 +49,9 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 -   [x] **Generator for Pointer Fields**: Extend the generator to handle pointer fields within structs.
     -   [x] Generate code that correctly handles `*SrcType` to `*DstType` conversions (nil checks).
 -   [x] **Add Tests for Pointer Fields**: Write tests for pointer field conversions.
+-   **Advanced Field Conversion Logic**:
+    -   Handle pointer-to-pointer (`*Src -> *Dst`) and value-to-pointer (`Src -> *Dst`) conversions.
+    -   Implement automatic type conversion for common pairs (e.g., `time.Time` to `string`).
 -   **Generator for Slice Fields**: Extend the generator to handle slice fields (e.g., `[]SrcType` to `[]DstType`).
     -   Generate loops to iterate over slices and convert each element.
 -   **Add Tests for Slice Fields**: Write tests for slice field conversions.

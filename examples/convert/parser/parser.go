@@ -19,14 +19,8 @@ type ConversionPair struct {
 var reDerivingConvert = regexp.MustCompile(`@derivingconvert\(([^)]+)\)`)
 
 // Parse scans the package for `@derivingconvert` annotations and returns a list of conversion pairs.
-func Parse(pkgInfo *scanner.PackageInfo) ([]ConversionPair, error) {
+func Parse(pkgInfo *scanner.PackageInfo, s *scanner.Scanner) ([]ConversionPair, error) {
 	var pairs []ConversionPair
-
-	// A map to quickly find types by name
-	typeMap := make(map[string]*scanner.TypeInfo)
-	for _, t := range pkgInfo.Types {
-		typeMap[t.Name] = t
-	}
 
 	for _, t := range pkgInfo.Types {
 		if t.Doc == "" {
@@ -38,12 +32,13 @@ func Parse(pkgInfo *scanner.PackageInfo) ([]ConversionPair, error) {
 			continue
 		}
 
-		// TODO: Parse options as well, for now just the DstType
-		dstTypeName := strings.TrimSpace(matches[1])
+		// The matched string is the full import path and type, e.g., `"example.com/convert/models/destination.DstUser"`
+		fullDstTypeName := strings.Trim(strings.TrimSpace(matches[1]), `"`)
 
-		dstType, ok := typeMap[dstTypeName]
-		if !ok {
-			return nil, fmt.Errorf("destination type %q for source type %q not found in package %s", dstTypeName, t.Name, pkgInfo.Name)
+		// Use the scanner to find the destination type by its fully qualified name
+		dstType, err := s.LookupType(fullDstTypeName)
+		if err != nil {
+			return nil, fmt.Errorf("could not resolve destination type %q for source type %q: %w", fullDstTypeName, t.Name, err)
 		}
 
 		pairs = append(pairs, ConversionPair{

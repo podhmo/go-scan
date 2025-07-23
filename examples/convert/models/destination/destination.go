@@ -1,35 +1,4 @@
-package models
-
-import "time"
-
-// --- Source Structs ---
-
-type SrcAddress struct {
-	Street string
-	City   string
-}
-
-type SrcContact struct {
-	Email string
-	Phone *string // Pointer to allow for nil
-}
-
-type SrcInternalDetail struct {
-	Code        int
-	Description string // This might need "translation"
-}
-
-// @derivingconvert(DstUser)
-type SrcUser struct {
-	ID        int64
-	FirstName string
-	LastName  string
-	SrcAddress
-	ContactInfo SrcContact
-	Details     []SrcInternalDetail
-	CreatedAt   time.Time
-	UpdatedAt   *time.Time
-}
+package destination
 
 // --- Destination Structs ---
 
@@ -59,19 +28,6 @@ type DstUser struct {
 	Details   []DstInternalDetail
 	CreatedAt string // Different type (time.Time to string)
 	UpdatedAt string // Pointer to value, different type
-}
-
-// Another top-level type for demonstrating multiple exported converters
-// @derivingconvert(DstOrder)
-type SrcOrder struct {
-	OrderID string
-	Amount  float64
-	Items   []SrcItem
-}
-
-type SrcItem struct {
-	SKU      string
-	Quantity int
 }
 
 type DstOrder struct {

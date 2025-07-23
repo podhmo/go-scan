@@ -5,15 +5,12 @@ import (
 	"fmt"
 	"time"
 
-	"example.com/convert/models" // Assuming your module path is example.com/convert
+	"example.com/convert/models/destination"
+	"example.com/convert/models/source"
 )
 
 // translateDescription is a helper function simulating internal processing.
-// In a real scenario, this could be a more complex logic, e.g., calling a translation service.
 func translateDescription(ctx context.Context, text string, targetLang string) string {
-	// Simulate a call to a translation service or internal logic
-	// For demonstration, we'll just prepend a string.
-	// The context could be used here for deadlines, cancellation, or passing request-scoped values.
 	if targetLang == "jp" {
 		return "翻訳済み (JP): " + text
 	}
@@ -22,114 +19,93 @@ func translateDescription(ctx context.Context, text string, targetLang string) s
 
 // --- User Conversion Functions ---
 
-// ConvertUser converts a models.SrcUser to a models.DstUser.
-// This function is EXPORTED because DstUser is specified as a "top-level type".
-func ConvertUser(ctx context.Context, src models.SrcUser) models.DstUser {
+// ConvertSrcUserToDstUser converts a source.SrcUser to a destination.DstUser.
+func ConvertSrcUserToDstUser(ctx context.Context, src source.SrcUser) destination.DstUser {
 	if ctx == nil {
-		ctx = context.Background() // Ensure context is never nil
+		ctx = context.Background()
 	}
 
-	dst := models.DstUser{}
+	dst := destination.DstUser{}
 
-	// ID: int64 to string with formatting
 	dst.UserID = fmt.Sprintf("user-%d", src.ID)
-
-	// FullName: Combine FirstName and LastName
 	dst.FullName = src.FirstName + " " + src.LastName
+	dst.Address = convertSrcAddressToDstAddress(ctx, src.SrcAddress)
+	dst.Contact = convertSrcContactToDstContact(ctx, src.ContactInfo)
 
-	// Address: Embedded struct conversion (calls unexported converter)
-	// SrcUser embeds SrcAddress, DstUser has Address DstAddress
-	dst.Address = srcAddressToDstAddress(ctx, src.SrcAddress)
-
-	// Contact: Nested struct conversion (calls unexported converter)
-	// SrcUser has ContactInfo SrcContact, DstUser has Contact DstContact
-	dst.Contact = srcContactToDstContact(ctx, src.ContactInfo)
-
-	// Details: Slice of structs conversion (calls unexported converter for elements)
 	if src.Details != nil {
-		dst.Details = make([]models.DstInternalDetail, len(src.Details))
+		dst.Details = make([]destination.DstInternalDetail, len(src.Details))
 		for i, sDetail := range src.Details {
-			dst.Details[i] = srcInternalDetailToDstInternalDetail(ctx, sDetail)
+			dst.Details[i] = convertSrcInternalDetailToDstInternalDetail(ctx, sDetail)
 		}
 	}
 
-	// CreatedAt: time.Time to string
 	dst.CreatedAt = src.CreatedAt.Format(time.RFC3339)
 
-	// UpdatedAt: *time.Time to string (handle nil)
 	if src.UpdatedAt != nil {
 		dst.UpdatedAt = src.UpdatedAt.Format(time.RFC3339)
 	} else {
-		dst.UpdatedAt = "" // Or handle as per specific requirements for nil
+		dst.UpdatedAt = ""
 	}
 
 	return dst
 }
 
-// srcAddressToDstAddress converts models.SrcAddress to models.DstAddress.
-// This function is UNEXPORTED as models.DstAddress is not a "top-level type" by itself,
-// but rather a component of DstUser.
-func srcAddressToDstAddress(ctx context.Context, src models.SrcAddress) models.DstAddress {
-	return models.DstAddress{
-		FullStreet: src.Street, // Renamed: Street -> FullStreet
-		CityName:   src.City,   // Renamed: City -> CityName
+// convertSrcAddressToDstAddress converts source.SrcAddress to destination.DstAddress.
+func convertSrcAddressToDstAddress(ctx context.Context, src source.SrcAddress) destination.DstAddress {
+	return destination.DstAddress{
+		FullStreet: src.Street,
+		CityName:   src.City,
 	}
 }
 
-// srcContactToDstContact converts models.SrcContact to models.DstContact.
-// This function is UNEXPORTED.
-func srcContactToDstContact(ctx context.Context, src models.SrcContact) models.DstContact {
-	dst := models.DstContact{
-		EmailAddress: src.Email, // Renamed: Email -> EmailAddress
+// convertSrcContactToDstContact converts source.SrcContact to destination.DstContact.
+func convertSrcContactToDstContact(ctx context.Context, src source.SrcContact) destination.DstContact {
+	dst := destination.DstContact{
+		EmailAddress: src.Email,
 	}
 	if src.Phone != nil {
-		dst.PhoneNumber = *src.Phone // Pointer to value
+		dst.PhoneNumber = *src.Phone
 	} else {
-		dst.PhoneNumber = "N/A" // Default value for nil phone
+		dst.PhoneNumber = "N/A"
 	}
 	return dst
 }
 
-// srcInternalDetailToDstInternalDetail converts models.SrcInternalDetail to models.DstInternalDetail.
-// This function is UNEXPORTED and includes internal processing.
-func srcInternalDetailToDstInternalDetail(ctx context.Context, src models.SrcInternalDetail) models.DstInternalDetail {
-	// Simulate internal processing (e.g., translation)
+// convertSrcInternalDetailToDstInternalDetail converts source.SrcInternalDetail to destination.DstInternalDetail.
+func convertSrcInternalDetailToDstInternalDetail(ctx context.Context, src source.SrcInternalDetail) destination.DstInternalDetail {
 	localizedDescription := translateDescription(ctx, src.Description, "jp")
-
-	return models.DstInternalDetail{
-		ItemCode:      src.Code,             // Renamed: Code -> ItemCode
-		LocalizedDesc: localizedDescription, // Processed and Renamed: Description -> LocalizedDesc
+	return destination.DstInternalDetail{
+		ItemCode:      src.Code,
+		LocalizedDesc: localizedDescription,
 	}
 }
 
 // --- Order Conversion Functions ---
 
-// ConvertOrder converts a models.SrcOrder to a models.DstOrder.
-// This function is EXPORTED because DstOrder is specified as a "top-level type".
-func ConvertOrder(ctx context.Context, src models.SrcOrder) models.DstOrder {
+// ConvertSrcOrderToDstOrder converts a source.SrcOrder to a destination.DstOrder.
+func ConvertSrcOrderToDstOrder(ctx context.Context, src source.SrcOrder) destination.DstOrder {
 	if ctx == nil {
-		ctx = context.Background() // Ensure context is never nil
+		ctx = context.Background()
 	}
 
-	dst := models.DstOrder{
-		ID:          src.OrderID, // Renamed: OrderID -> ID
-		TotalAmount: src.Amount,  // Renamed: Amount -> TotalAmount
+	dst := destination.DstOrder{
+		ID:          src.OrderID,
+		TotalAmount: src.Amount,
 	}
 
 	if src.Items != nil {
-		dst.LineItems = make([]models.DstItem, len(src.Items)) // Renamed field: Items -> LineItems
+		dst.LineItems = make([]destination.DstItem, len(src.Items))
 		for i, sItem := range src.Items {
-			dst.LineItems[i] = srcItemToDstItem(ctx, sItem) // Calls unexported converter
+			dst.LineItems[i] = convertSrcItemToDstItem(ctx, sItem)
 		}
 	}
 	return dst
 }
 
-// srcItemToDstItem converts models.SrcItem to models.DstItem.
-// This function is UNEXPORTED.
-func srcItemToDstItem(ctx context.Context, src models.SrcItem) models.DstItem {
-	return models.DstItem{
-		ProductCode: src.SKU,      // Renamed: SKU -> ProductCode
-		Count:       src.Quantity, // Renamed: Quantity -> Count
+// convertSrcItemToDstItem converts source.SrcItem to destination.DstItem.
+func convertSrcItemToDstItem(ctx context.Context, src source.SrcItem) destination.DstItem {
+	return destination.DstItem{
+		ProductCode: src.SKU,
+		Count:       src.Quantity,
 	}
 }

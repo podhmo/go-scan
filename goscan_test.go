@@ -99,7 +99,7 @@ func TestLazyResolution_Integration(t *testing.T) {
 	}
 
 	// Trigger lazy resolution
-	userDef, err := userField.Type.Resolve(context.Background())
+	userDef, err := s.ResolveType(context.Background(), userField.Type)
 	if err != nil {
 		t.Fatalf("Failed to resolve User field type: %v", err)
 	}
@@ -409,12 +409,12 @@ func TestScannerWithExternalTypeOverrides(t *testing.T) {
 					if !field.Type.IsResolvedByConfig {
 						t.Errorf("Expected field ID of ObjectWithUUID to have IsResolvedByConfig=true")
 					}
-					resolvedType, errResolve := field.Type.Resolve(context.Background())
+					resolvedType, errResolve := s.ResolveType(context.Background(), field.Type)
 					if errResolve != nil {
-						t.Errorf("field.Type.Resolve() for overridden type should not error, got %v", errResolve)
+						t.Errorf("s.ResolveType() for overridden type should not error, got %v", errResolve)
 					}
 					if resolvedType != nil {
-						t.Errorf("field.Type.Resolve() for overridden type should return nil TypeInfo, got %v", resolvedType)
+						t.Errorf("s.ResolveType() for overridden type should return nil TypeInfo, got %v", resolvedType)
 					}
 				}
 			}
@@ -733,6 +733,158 @@ func findType(types []*scanner.TypeInfo, name string) *scanner.TypeInfo {
 		}
 	}
 	return nil
+}
+
+func TestRecursiveResolution(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("direct recursion", func(t *testing.T) {
+		tmpdir, cleanup := writeTestFiles(t, map[string]string{
+			"go.mod": "module github.com/podhmo/go-scan/testdata/recursive\ngo 1.22",
+			"models.go": `
+package recursive
+type Node struct {
+	Value int
+	Next *Node
+}
+`,
+		})
+		defer cleanup()
+
+		s, err := New(WithWorkDir(tmpdir))
+		if err != nil {
+			t.Fatalf("failed to create scanner: %+v", err)
+		}
+
+		pkgs, err := s.Scan(tmpdir)
+		if err != nil {
+			t.Fatalf("Scan() failed: %+v", err)
+		}
+		if len(pkgs) != 1 {
+			t.Fatalf("expected 1 package, but got %d", len(pkgs))
+		}
+
+		pkg := pkgs[0]
+		nodeType := pkg.Lookup("Node")
+		if nodeType == nil {
+			t.Fatalf("Node type not found")
+		}
+
+		if nodeType.Struct == nil || len(nodeType.Struct.Fields) != 2 {
+			t.Fatalf("expected Node to have 2 fields, got %d", len(nodeType.Struct.Fields))
+		}
+
+		nextField := nodeType.Struct.Fields[1]
+		if nextField.Name != "Next" {
+			t.Errorf("expected second field to be 'Next', got %q", nextField.Name)
+		}
+
+		// Now, try to resolve the field's type
+		t.Logf("Resolving type for field %q, which is %q", nextField.Name, nextField.Type.String())
+		resolvedType, err := s.ResolveType(ctx, nextField.Type)
+		if err != nil {
+			t.Fatalf("ResolveType() failed: %+v", err)
+		}
+		if resolvedType == nil {
+			t.Logf("Underlying type info for Next field: %+v", nextField.Type)
+		}
+
+		if resolvedType == nil {
+			t.Fatalf("resolved type for Node.Next is nil")
+		}
+
+		if resolvedType.Name != "Node" {
+			t.Errorf("expected resolved type to be 'Node', got %q", resolvedType.Name)
+		}
+		if resolvedType != nodeType {
+			t.Errorf("resolved type is not the same instance as the original Node type")
+		}
+	})
+
+	t.Run("mutual recursion", func(t *testing.T) {
+		tmpdir, cleanup := writeTestFiles(t, map[string]string{
+			"go.mod": "module github.com/podhmo/go-scan/testdata/mutual\ngo 1.22",
+			"a/a.go": `
+package a
+import "github.com/podhmo/go-scan/testdata/mutual/b"
+type A struct {
+	B *b.B
+}
+`,
+			"b/b.go": `
+package b
+import "github.com/podhmo/go-scan/testdata/mutual/a"
+type B struct {
+	A *a.A
+}
+`,
+		})
+		defer cleanup()
+
+		s, err := New(WithWorkDir(tmpdir))
+		if err != nil {
+			t.Fatalf("failed to create scanner: %+v", err)
+		}
+
+		// Scan package 'a' first
+		pkgs, err := s.Scan(filepath.Join(tmpdir, "a"))
+		if err != nil {
+			t.Fatalf("Scan() failed for package a: %+v", err)
+		}
+		if len(pkgs) != 1 {
+			t.Fatalf("expected 1 package, but got %d", len(pkgs))
+		}
+		pkgA := pkgs[0]
+		typeA := pkgA.Lookup("A")
+		if typeA == nil {
+			t.Fatalf("type A not found in package a")
+		}
+
+		// Resolve A.B
+		fieldB := typeA.Struct.Fields[0]
+		typeB, err := s.ResolveType(ctx, fieldB.Type)
+		if err != nil {
+			t.Fatalf("could not resolve type of A.B: %+v", err)
+		}
+		if typeB == nil {
+			t.Fatalf("resolved type B is nil")
+		}
+		if typeB.Name != "B" {
+			t.Fatalf("expected resolved type to be B, got %s", typeB.Name)
+		}
+
+		// Now, go deeper and resolve B.A
+		fieldA := typeB.Struct.Fields[0]
+		resolvedTypeA, err := s.ResolveType(ctx, fieldA.Type)
+		if err != nil {
+			t.Fatalf("could not resolve type of B.A: %+v", err)
+		}
+		if resolvedTypeA == nil {
+			t.Fatalf("resolved type A from B is nil")
+		}
+
+		if resolvedTypeA.Name != "A" {
+			t.Errorf("expected resolved type to be 'A', got %q", resolvedTypeA.Name)
+		}
+		if resolvedTypeA != typeA {
+			t.Errorf("resolved type A is not the same instance as the original type A")
+		}
+	})
+
+	t.Run("resolve should not return error on unresolvable local type", func(t *testing.T) {
+		// This test ensures that when a type cannot be resolved because it's in the same
+		// package and not yet scanned, Resolve returns (nil, nil) instead of an error.
+		// This is the expected behavior for the recursive resolver, which needs to
+		// differentiate "not found" from "cycle detected" or "error".
+		ft := &scanner.FieldType{} // An empty field type with no resolver or import path
+		info, err := ft.Resolve(context.Background(), make(map[string]bool))
+		if err != nil {
+			t.Errorf("Resolve() with unresolvable type should not return error, but got: %v", err)
+		}
+		if info != nil {
+			t.Errorf("Resolve() with unresolvable type should return nil info, but got: %v", info)
+		}
+	})
 }
 
 func TestImplements(t *testing.T) {

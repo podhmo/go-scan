@@ -241,7 +241,7 @@ func TestFieldType_Resolve(t *testing.T) {
 	}
 
 	// First call to Resolve should trigger the resolver
-	def, err := ft.Resolve(context.Background())
+	def, err := ft.Resolve(context.Background(), make(map[string]bool))
 	if err != nil {
 		t.Fatalf("Resolve() failed: %v", err)
 	}
@@ -254,7 +254,7 @@ func TestFieldType_Resolve(t *testing.T) {
 
 	// Second call should use the cache (we can't easily test this, but we can nil out the func)
 	resolver.ScanPackageByImportFunc = nil // To ensure resolver is not called again
-	def2, err := ft.Resolve(context.Background())
+	def2, err := ft.Resolve(context.Background(), make(map[string]bool))
 	if err != nil {
 		t.Fatalf("Second Resolve() call failed: %v", err)
 	}

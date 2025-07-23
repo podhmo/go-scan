@@ -50,12 +50,14 @@ type PackageInfo struct {
 
 // Lookup finds a type by name in the package.
 func (p *PackageInfo) Lookup(name string) *TypeInfo {
-	p.lookupOnce.Do(func() {
-		p.lookup = make(map[string]*TypeInfo, len(p.Types))
-		for _, t := range p.Types {
-			p.lookup[t.Name] = t
-		}
-	})
+	// Rebuild the map on each lookup to ensure it's always up-to-date,
+	// especially when types are added incrementally during scanning.
+	// This is less performant but more robust for the current scanning strategy.
+	lookup := make(map[string]*TypeInfo, len(p.Types))
+	for _, t := range p.Types {
+		lookup[t.Name] = t
+	}
+	p.lookup = lookup
 	return p.lookup[name]
 }
 
@@ -276,41 +278,53 @@ func (ft *FieldType) String() string {
 	return sb.String()
 }
 
-func (ft *FieldType) Resolve(ctx context.Context) (*TypeInfo, error) {
+func (ft *FieldType) Resolve(ctx context.Context, resolving map[string]bool) (*TypeInfo, error) {
 	if ft.IsResolvedByConfig {
-		// This type was resolved by an external configuration (e.g. to a primitive like "string").
-		// There's no further TypeInfo definition to resolve in the Go source.
-		// Returning nil, nil indicates that it's "resolved" as far as the config is concerned,
-		// and no error occurred, but there isn't a deeper TypeInfo struct.
-		// Callers should check IsResolvedByConfig if they need to distinguish this case.
 		return nil, nil
 	}
 	if ft.IsBuiltin {
-		// Built-in types are considered resolved without a specific TypeInfo.
 		return nil, nil
 	}
 	if ft.Definition != nil {
 		return ft.Definition, nil
 	}
 
-	// Cannot resolve types from the same package without a resolver or if not a built-in.
-	if ft.resolver == nil || ft.fullImportPath == "" {
-		return nil, fmt.Errorf("type %q cannot be resolved: no resolver or import path available", ft.Name)
+	if ft.resolver == nil {
+		return nil, nil // Cannot resolve without a resolver
 	}
 
+	qualifiedName := ft.fullImportPath + "." + ft.typeName
+	if ft.fullImportPath != "" { // Only track fully qualified types
+		if resolving[qualifiedName] {
+			// Cycle detected. We need to find the TypeInfo stub that was created.
+			// To do this, we need to ask the resolver for the package, but without
+			// triggering a full re-scan if it's already in progress.
+			// The resolver (goscan.Scanner) should handle this via its cache.
+			pkgInfo, err := ft.resolver.ScanPackageByImport(ctx, ft.fullImportPath)
+			if err != nil {
+				// If scanning fails here, it's a legitimate problem.
+				return nil, fmt.Errorf("failed to get package %q during cyclic resolution: %w", ft.fullImportPath, err)
+			}
+			// The type should have been stubbed out in the first pass of the scan.
+			return pkgInfo.Lookup(ft.typeName), nil
+		}
+		resolving[qualifiedName] = true
+		defer delete(resolving, qualifiedName)
+	}
+
+	// If we are here, it's not a cycle, so proceed with scanning.
 	pkgInfo, err := ft.resolver.ScanPackageByImport(ctx, ft.fullImportPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to scan package %q for type %q: %w", ft.fullImportPath, ft.typeName, err)
 	}
 
-	for _, t := range pkgInfo.Types {
-		if t.Name == ft.typeName {
-			ft.Definition = t // Cache the result
-			return t, nil
-		}
+	typeDef := pkgInfo.Lookup(ft.typeName)
+	if typeDef != nil {
+		ft.Definition = typeDef // Cache the result
+		return typeDef, nil
 	}
 
-	return nil, fmt.Errorf("type %q not found in package %q", ft.typeName, ft.fullImportPath)
+	return nil, nil // Return nil, nil if not found, not an error.
 }
 
 // ConstantInfo represents a single top-level constant declaration.

@@ -891,3 +891,15 @@ func (s *Scanner) FindSymbolDefinitionLocation(ctx context.Context, symbolFullNa
 
 	return "", fmt.Errorf("symbol %s not found in package %s even after scan and cache check", symbolName, importPath)
 }
+
+// ResolveType resolves a field type to its full type information.
+// This is a convenient wrapper around scanner.FieldType.Resolve that handles
+// the initialization of the resolution tracking map for cycle detection.
+func (s *Scanner) ResolveType(ctx context.Context, fieldType *scanner.FieldType) (*scanner.TypeInfo, error) {
+	if fieldType == nil {
+		return nil, fmt.Errorf("cannot resolve a nil FieldType")
+	}
+	// The `resolving` map is the key to detecting cyclical dependencies.
+	// It's created here at the top-level entry point for a resolution query.
+	return fieldType.Resolve(ctx, make(map[string]bool))
+}

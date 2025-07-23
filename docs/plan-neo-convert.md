@@ -1,14 +1,44 @@
-# Plan for `neo-convert`: A Guide to Re-implementation
+# Plan for `convert`: A Guide to Re-implementation and Migration
 
-This document outlines the progress, key decisions, and future tasks for rebuilding the `examples/convert2` tool. It is intended to be detailed enough for a developer to re-implement the tool without direct access to the original source code.
+This document outlines the progress, key decisions, and future tasks for rebuilding the `examples/convert` tool. It is intended to be detailed enough for a developer to re-implement the tool and migrate from the old prototype.
 
 ## 1. High-Level Goal
 
-The `convert2` tool is a command-line application that parses Go source files for special `// convert:` annotations and generates type conversion functions. The goal is to create a robust, maintainable, and easy-to-use code generation tool that automates the tedious task of writing boilerplate conversion code.
+The `convert` tool is a command-line application that parses Go source files for special `// convert:` annotations and generates type conversion functions. The goal is to create a robust, maintainable, and easy-to-use code generation tool that automates the tedious task of writing boilerplate conversion code, replacing the existing prototype in `examples/convert`.
 
 ---
 
-## 2. Core Components
+## 2. Migration from `examples/convert` Prototype
+
+The existing `examples/convert` directory contains a prototype that serves as a proof-of-concept. This new implementation will formalize and replace it.
+
+### Key Differences from the Prototype
+
+| Feature | `examples/convert` (Prototype) | `convert` (This Plan) |
+| :--- | :--- | :--- |
+| **Invocation** | `go run main.go` with hardcoded paths. | Standard CLI tool (`convert -input <pkg> -output <file>`). |
+| **Rule Definition** | Hardcoded logic in `main.go`'s generator. | Annotation-driven (`// convert:pair`, `// convert:rule`). |
+| **Field Mapping** | Basic name matching, some hardcoded logic. | Struct tags (`convert:"..."`) and global rules for full control. |
+| **Error Handling** | None in generated code. | Rich error handling with `errorCollector` to report all errors. |
+| **Extensibility** | Requires changing the generator code. | Pluggable via custom functions (`using=...`). |
+| **Recursion** | Manually written recursive calls. | Automatic recursive generation for nested structs via a worklist. |
+
+### Migration Plan
+
+The transition from the prototype to the new tool will involve the following steps:
+
+1.  **Develop the Core Tool**: Implement the annotation-based `convert` tool as a standalone CLI application according to this plan.
+2.  **Replicate `examples/convert` Logic**:
+    *   Add `// convert:pair` annotations to the `models` package to define the `SrcUser -> DstUser` and `SrcOrder -> DstOrder` conversions.
+    *   Implement the custom logic from the prototype's `converter/converter.go` (e.g., `translateDescription`, combining `FirstName` and `LastName`) as helper functions.
+    *   Use `// convert:rule` and `convert:` tags to map these helper functions to the correct fields and types (e.g., for `time.Time` -> `string`).
+3.  **Generate New Converters**: Run the new `convert` tool on `examples/convert/models` to generate a new `generated_converters.go`.
+4.  **Update Tests**: Modify `converter/converter_test.go` to use the newly generated top-level functions (e.g., `ConvertUserToDstUser`) instead of the old manual ones.
+5.  **Remove Prototype Code**: Once the tests pass with the generated code, delete the prototype's `main.go` and the manual `converter/converter.go`. The `examples/convert` directory will then serve as a clean example of the new tool's usage.
+
+---
+
+## 3. Core Components
 
 The tool is composed of three main architectural components:
 
@@ -18,7 +48,7 @@ The tool is composed of three main architectural components:
 
 ---
 
-## 3. Data Structures (The Intermediate Representation)
+## 4. Data Structures (The Intermediate Representation)
 
 The parser and generator communicate via a set of data structures defined in the `internal/model` package. This is the heart of the tool's architecture.
 
@@ -147,7 +177,7 @@ type ConvertTag struct {
 
 ---
 
-## 4. Annotation Syntax
+## 5. Annotation Syntax
 
 The tool is driven by annotations in Go comments.
 
@@ -222,7 +252,7 @@ type User struct {
 
 ---
 
-## 5. Key Implementation Details & Rationale
+## 6. Key Implementation Details & Rationale
 
 *   **Parser Implementation (`go-scan`)**: The parser should be implemented using `github.com/podhmo/go-scan`. This library simplifies walking the AST and resolving type information, which is a significant challenge when using `go/parser` alone.
 *   **Generator Worklist**: The generator should use a worklist pattern. It starts with the pairs from `// convert:pair` annotations. As it processes struct fields, if it encounters a nested struct-to-struct conversion that doesn't have a global `using` rule, it adds a new pair to the worklist. This ensures all necessary helper functions are generated recursively. A `map[string]bool` should be used to track already processed pairs to prevent infinite loops from circular dependencies.
@@ -234,7 +264,7 @@ type User struct {
 
 ---
 
-## 6. Generated Code Example
+## 7. Generated Code Example
 
 Given these source models and annotations:
 
@@ -265,7 +295,7 @@ func timeToString(ec *errorCollector, t time.Time) string {
 The generator should produce a file like `simple_gen.go` containing approximately this code:
 
 ```go
-// Code generated by convert2 tool. DO NOT EDIT.
+// Code generated by convert tool. DO NOT EDIT.
 package simple
 
 import (
@@ -317,7 +347,7 @@ func ConvertInputToOutput(ctx context.Context, src Input) (Output, error) {
 
 ---
 
-## 7. Future Tasks (TODO)
+## 8. Future Tasks (TODO)
 
 *   **Implement Slice, Map, and Array Conversions**: The generator needs logic to loop through these collections and convert each element/value.
 *   **Validator Rule Implementation**: Implement the logic to call validator functions after a destination struct is populated.

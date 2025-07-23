@@ -306,8 +306,15 @@ func (ft *FieldType) Resolve(ctx context.Context, resolving map[string]struct{})
 
 	typeIdentifier := ft.fullImportPath + "." + ft.typeName
 	if _, ok := resolving[typeIdentifier]; ok {
-		// Cycle detected. Return nil, nil to indicate that the type is being resolved
-		// further up the call stack. The caller will link to the partially resolved TypeInfo.
+		// Cycle detected. Attempt to return the already-allocated TypeInfo pointer
+		// to allow the graph to be linked correctly.
+		if pkgInfo, err := ft.resolver.ScanPackageByImport(ctx, ft.fullImportPath); err == nil && pkgInfo != nil {
+			if t := pkgInfo.Lookup(ft.typeName); t != nil {
+				ft.Definition = t // Cache the result even in the cycle case
+				return t, nil     // Return the existing, partially resolved TypeInfo
+			}
+		}
+		// If we can't find it, returning nil is the last resort, but ideally, the TypeInfo is already in the map.
 		return nil, nil
 	}
 	resolving[typeIdentifier] = struct{}{}

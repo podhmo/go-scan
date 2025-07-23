@@ -323,10 +323,15 @@ func TestResolve_MutualRecursion(t *testing.T) {
 		t.Fatalf("scanner.New failed: %v", err)
 	}
 
-	// The resolver needs to be able to scan packages on demand.
+	// The resolver needs to be able to scan packages on demand and cache the results
+	// to prevent re-parsing and creating duplicate TypeInfo objects.
+	pkgCache := make(map[string]*PackageInfo)
 	var mockResolver *MockResolver
 	mockResolver = &MockResolver{
 		ScanPackageByImportFunc: func(ctx context.Context, importPath string) (*PackageInfo, error) {
+			if pkg, found := pkgCache[importPath]; found {
+				return pkg, nil
+			}
 			var pkgDir string
 			switch importPath {
 			case "example.com/recursion/mutual/pkg_a":
@@ -339,7 +344,11 @@ func TestResolve_MutualRecursion(t *testing.T) {
 			// Use the main scanner 's' to perform the scan.
 			// The resolver passed to ScanFiles should be the mockResolver itself
 			// to handle further package lookups.
-			return s.ScanFiles(ctx, []string{filepath.Join(pkgDir, filepath.Base(pkgDir)+".go")}, pkgDir, mockResolver)
+			pkg, err := s.ScanFiles(ctx, []string{filepath.Join(pkgDir, filepath.Base(pkgDir)+".go")}, pkgDir, mockResolver)
+			if err == nil && pkg != nil {
+				pkgCache[importPath] = pkg // Store in cache
+			}
+			return pkg, err
 		},
 	}
 	s.resolver = mockResolver
@@ -375,15 +384,35 @@ func TestResolve_MutualRecursion(t *testing.T) {
 		t.Errorf("Expected resolved type to be 'B', got '%s'", resolvedType.Name)
 	}
 
-	// Inside the resolution of B, it will try to resolve A.
-	// At that point, a cycle is detected, and Resolve should return (nil, nil).
-	// The ultimate test is that the whole process completes without a stack overflow.
-	// We can also check if the definition of B's field A points back to the original TypeInfo for A.
+	// Inside the resolution of B, it will try to resolve A. At that point, a cycle is detected.
+	// The call should complete without a stack overflow.
+
+	// Now, let's verify that the definitions are linked correctly after the process.
+	if fieldB.Type.Definition == nil {
+		t.Fatalf("The definition for field B (*pkg_b.B) in type A was not set after resolution.")
+	}
+	if fieldB.Type.Definition.Name != "B" {
+		t.Fatalf("fieldB.Type.Definition should be for type B, but was for %s", fieldB.Type.Definition.Name)
+	}
+
+	// Inside the resolution of B, its fields are parsed, but not yet resolved.
+	// We need to explicitly trigger the resolution of the field that causes the cycle.
 	fieldAInB := resolvedType.Struct.Fields[0]
+	if fieldAInB.Name != "A" {
+		t.Fatalf("Expected the field in B to be 'A', but got %s", fieldAInB.Name)
+	}
+
+	// Now, explicitly resolve the field A within B. This call should detect the cycle
+	// and correctly link the definition back to the already-existing `typeA`.
+	_, err = fieldAInB.Type.Resolve(context.Background(), resolving) // Pass the same resolving map
+	if err != nil {
+		t.Fatalf("Resolve() for field A within B failed unexpectedly: %v", err)
+	}
+
+	// After resolving B's field A, its definition should be set correctly.
 	if fieldAInB.Type.Definition != typeA {
-		// This might be tricky to assert depending on when the Definition field is populated.
-		// A successful return without crash is the main goal.
-		// t.Logf("Definition of A in B is not pointing back to the original A. This might be acceptable if resolution completes.")
+		t.Errorf("The definition for field A in type B is not pointing back to the original TypeInfo for A.")
+		t.Errorf("Expected: %p, Got: %p", typeA, fieldAInB.Type.Definition)
 	}
 }
 

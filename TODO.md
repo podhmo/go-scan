@@ -46,9 +46,9 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 -   [x] **Refactor `examples/convert` for Cross-Package Conversion**:
     -   [x] Move `Src` and `Dst` types into separate packages (e.g., `models/source` and `models/destination`).
     -   [x] Update tests to verify that cross-package conversion works correctly.
--   **Generator for Pointer Fields**: Extend the generator to handle pointer fields within structs.
-    -   Generate code that correctly handles `*SrcType` to `*DstType` conversions (nil checks).
--   **Add Tests for Pointer Fields**: Write tests for pointer field conversions.
+-   [x] **Generator for Pointer Fields**: Extend the generator to handle pointer fields within structs.
+    -   [x] Generate code that correctly handles `*SrcType` to `*DstType` conversions (nil checks).
+-   [x] **Add Tests for Pointer Fields**: Write tests for pointer field conversions.
 -   **Generator for Slice Fields**: Extend the generator to handle slice fields (e.g., `[]SrcType` to `[]DstType`).
     -   Generate loops to iterate over slices and convert each element.
 -   **Add Tests for Slice Fields**: Write tests for slice field conversions.

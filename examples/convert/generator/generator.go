@@ -58,7 +58,8 @@ type QualifiedType struct {
 
 // Generate generates the Go code for the conversion functions.
 func Generate(packageName string, pairs []parser.ConversionPair, pkgInfo *scanner.PackageInfo) ([]byte, error) {
-	im := goscan.NewImportManager(pkgInfo)
+	// The import manager should be initialized with the context of the *target* package, not the source.
+	im := goscan.NewImportManager(&scanner.PackageInfo{ImportPath: "example.com/convert/" + packageName})
 	im.Add("context", "context")
 
 	templatePairs := make([]TemplatePair, 0, len(pairs))

@@ -116,21 +116,31 @@ func (s *Scanner) ScanPackage(ctx context.Context, dirPath string, resolver Pack
 		importPath = importPath[:len(importPath)-2]
 	}
 
-	return s.ScanFiles(ctx, filePaths, dirPath, importPath, resolver)
+	return s.ScanFiles(ctx, filePaths, dirPath, resolver)
 }
 
 // ScanFiles parses a specific list of .go files and returns PackageInfo.
 // pkgDirPath is the absolute directory path for this package, used for PackageInfo.Path.
-func (s *Scanner) ScanFiles(ctx context.Context, filePaths []string, pkgDirPath string, pkgImportPath string, resolver PackageResolver) (*PackageInfo, error) { // Added ctx to parseFuncDecl call
+func (s *Scanner) ScanFiles(ctx context.Context, filePaths []string, pkgDirPath string, resolver PackageResolver) (*PackageInfo, error) { // Added ctx to parseFuncDecl call
 	s.resolver = resolver // Ensure resolver is set for this scanning operation.
 
 	if len(filePaths) == 0 {
 		return nil, fmt.Errorf("no files provided to scan for package at %s", pkgDirPath)
 	}
 
+	relPath, err := filepath.Rel(s.moduleRootDir, pkgDirPath)
+	if err != nil {
+		slog.WarnContext(ctx, "Could not determine relative path for import path derivation", "dirPath", pkgDirPath, "moduleRootDir", s.moduleRootDir)
+		relPath = "."
+	}
+	importPath := filepath.ToSlash(filepath.Join(s.modulePath, relPath))
+	if strings.HasSuffix(importPath, "/.") {
+		importPath = importPath[:len(importPath)-2]
+	}
+
 	info := &PackageInfo{
 		Path:       pkgDirPath, // Physical directory path
-		ImportPath: pkgImportPath,
+		ImportPath: importPath,
 		Fset:       s.fset, // Use the shared FileSet
 		Files:      make([]string, 0, len(filePaths)),
 		AstFiles:   make(map[string]*ast.File), // Initialize AstFiles

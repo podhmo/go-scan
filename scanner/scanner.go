@@ -21,6 +21,7 @@ type Scanner struct {
 	Overlay               Overlay
 	modulePath            string
 	moduleRootDir         string
+	currentPkg            *PackageInfo
 }
 
 // New creates a new Scanner.
@@ -92,12 +93,27 @@ func (s *Scanner) ScanPackage(ctx context.Context, dirPath string, resolver Pack
 	// pkgImportPath for ScanFiles could be derived or passed in.
 	// For now, let ScanFiles derive it or handle it based on its needs.
 	// dirPath itself serves as the package's unique path identifier for PackageInfo.Path.
-	return s.ScanFiles(ctx, filePaths, dirPath, resolver)
+
+	// Attempt to derive import path from dirPath relative to module root.
+	relPath, err := filepath.Rel(s.moduleRootDir, dirPath)
+	if err != nil {
+		// Fallback or error, for now, we proceed without a derived import path
+		// but log a warning.
+		slog.WarnContext(ctx, "Could not determine relative path for import path derivation", "dirPath", dirPath, "moduleRootDir", s.moduleRootDir)
+		relPath = "." // Use a non-empty placeholder
+	}
+	importPath := filepath.ToSlash(filepath.Join(s.modulePath, relPath))
+	// Clean up the path, especially if relPath was "."
+	if strings.HasSuffix(importPath, "/.") {
+		importPath = importPath[:len(importPath)-2]
+	}
+
+	return s.ScanFiles(ctx, filePaths, dirPath, importPath, resolver)
 }
 
 // ScanFiles parses a specific list of .go files and returns PackageInfo.
 // pkgDirPath is the absolute directory path for this package, used for PackageInfo.Path.
-func (s *Scanner) ScanFiles(ctx context.Context, filePaths []string, pkgDirPath string, resolver PackageResolver) (*PackageInfo, error) { // Added ctx to parseFuncDecl call
+func (s *Scanner) ScanFiles(ctx context.Context, filePaths []string, pkgDirPath string, pkgImportPath string, resolver PackageResolver) (*PackageInfo, error) { // Added ctx to parseFuncDecl call
 	s.resolver = resolver // Ensure resolver is set for this scanning operation.
 
 	if len(filePaths) == 0 {
@@ -105,11 +121,13 @@ func (s *Scanner) ScanFiles(ctx context.Context, filePaths []string, pkgDirPath 
 	}
 
 	info := &PackageInfo{
-		Path:     pkgDirPath, // Physical directory path
-		Fset:     s.fset,     // Use the shared FileSet
-		Files:    make([]string, 0, len(filePaths)),
-		AstFiles: make(map[string]*ast.File), // Initialize AstFiles
+		Path:       pkgDirPath, // Physical directory path
+		ImportPath: pkgImportPath,
+		Fset:       s.fset, // Use the shared FileSet
+		Files:      make([]string, 0, len(filePaths)),
+		AstFiles:   make(map[string]*ast.File), // Initialize AstFiles
 	}
+	s.currentPkg = info // Set current package for the scanner instance
 	var firstPackageName string
 
 	for _, filePath := range filePaths {
@@ -573,15 +591,22 @@ func (s *Scanner) parseTypeExpr(ctx context.Context, expr ast.Expr, currentTypeP
 		if isTypeParam {
 			ft.IsTypeParam = true
 		} else {
+			isBuiltin := false
 			switch t.Name {
 			case "bool", "byte", "complex64", "complex128", "error", "float32", "float64",
 				"int", "int8", "int16", "int32", "int64", "rune", "string",
 				"uint", "uint8", "uint16", "uint32", "uint64", "uintptr",
-				"any", "comparable": // Add Go 1.18 predeclared identifiers for constraints
+				"any", "comparable":
+				isBuiltin = true
 				ft.IsBuiltin = true
 				if t.Name == "any" || t.Name == "comparable" {
-					ft.IsConstraint = true // Mark them as constraints
+					ft.IsConstraint = true
 				}
+			}
+			if !isBuiltin && s.currentPkg != nil {
+				// Assume it's a type from the current package
+				ft.fullImportPath = s.currentPkg.ImportPath
+				ft.typeName = t.Name
 			}
 		}
 	case *ast.StarExpr:

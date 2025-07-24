@@ -21,6 +21,7 @@ type Scanner struct {
 	Overlay               Overlay
 	modulePath            string
 	moduleRootDir         string
+	currentPkg            *PackageInfo
 }
 
 // New creates a new Scanner.
@@ -60,6 +61,14 @@ func (s *Scanner) ResolveType(ctx context.Context, fieldType *FieldType) (*TypeI
 // It delegates the call to the configured resolver, which is typically the top-level
 // goscan.Scanner instance.
 func (s *Scanner) ScanPackageByImport(ctx context.Context, importPath string) (*PackageInfo, error) {
+	if s.resolver == s {
+		if s.currentPkg != nil && s.currentPkg.ImportPath == importPath {
+			return s.currentPkg, nil
+		}
+		// This might indicate a logic error where the scanner is trying to resolve a package
+		// it's already in the process of scanning, but the import path doesn't match.
+		return nil, fmt.Errorf("internal resolver loop detected for import path %q, current package is %q", importPath, s.currentPkg.ImportPath)
+	}
 	if s.resolver == nil {
 		return nil, fmt.Errorf("scanner's internal resolver is not set, cannot scan by import path %q", importPath)
 	}
@@ -92,6 +101,21 @@ func (s *Scanner) ScanPackage(ctx context.Context, dirPath string, resolver Pack
 	// pkgImportPath for ScanFiles could be derived or passed in.
 	// For now, let ScanFiles derive it or handle it based on its needs.
 	// dirPath itself serves as the package's unique path identifier for PackageInfo.Path.
+
+	// Attempt to derive import path from dirPath relative to module root.
+	relPath, err := filepath.Rel(s.moduleRootDir, dirPath)
+	if err != nil {
+		// Fallback or error, for now, we proceed without a derived import path
+		// but log a warning.
+		slog.WarnContext(ctx, "Could not determine relative path for import path derivation", "dirPath", dirPath, "moduleRootDir", s.moduleRootDir)
+		relPath = "." // Use a non-empty placeholder
+	}
+	importPath := filepath.ToSlash(filepath.Join(s.modulePath, relPath))
+	// Clean up the path, especially if relPath was "."
+	if strings.HasSuffix(importPath, "/.") {
+		importPath = importPath[:len(importPath)-2]
+	}
+
 	return s.ScanFiles(ctx, filePaths, dirPath, resolver)
 }
 
@@ -104,12 +128,24 @@ func (s *Scanner) ScanFiles(ctx context.Context, filePaths []string, pkgDirPath 
 		return nil, fmt.Errorf("no files provided to scan for package at %s", pkgDirPath)
 	}
 
-	info := &PackageInfo{
-		Path:     pkgDirPath, // Physical directory path
-		Fset:     s.fset,     // Use the shared FileSet
-		Files:    make([]string, 0, len(filePaths)),
-		AstFiles: make(map[string]*ast.File), // Initialize AstFiles
+	relPath, err := filepath.Rel(s.moduleRootDir, pkgDirPath)
+	if err != nil {
+		slog.WarnContext(ctx, "Could not determine relative path for import path derivation", "dirPath", pkgDirPath, "moduleRootDir", s.moduleRootDir)
+		relPath = "."
 	}
+	importPath := filepath.ToSlash(filepath.Join(s.modulePath, relPath))
+	if strings.HasSuffix(importPath, "/.") {
+		importPath = importPath[:len(importPath)-2]
+	}
+
+	info := &PackageInfo{
+		Path:       pkgDirPath, // Physical directory path
+		ImportPath: importPath,
+		Fset:       s.fset, // Use the shared FileSet
+		Files:      make([]string, 0, len(filePaths)),
+		AstFiles:   make(map[string]*ast.File), // Initialize AstFiles
+	}
+	s.currentPkg = info // Set current package for the scanner instance
 	var firstPackageName string
 
 	for _, filePath := range filePaths {
@@ -573,15 +609,22 @@ func (s *Scanner) parseTypeExpr(ctx context.Context, expr ast.Expr, currentTypeP
 		if isTypeParam {
 			ft.IsTypeParam = true
 		} else {
+			isBuiltin := false
 			switch t.Name {
 			case "bool", "byte", "complex64", "complex128", "error", "float32", "float64",
 				"int", "int8", "int16", "int32", "int64", "rune", "string",
 				"uint", "uint8", "uint16", "uint32", "uint64", "uintptr",
-				"any", "comparable": // Add Go 1.18 predeclared identifiers for constraints
+				"any", "comparable":
+				isBuiltin = true
 				ft.IsBuiltin = true
 				if t.Name == "any" || t.Name == "comparable" {
-					ft.IsConstraint = true // Mark them as constraints
+					ft.IsConstraint = true
 				}
+			}
+			if !isBuiltin && s.currentPkg != nil {
+				// Assume it's a type from the current package
+				ft.fullImportPath = s.currentPkg.ImportPath
+				ft.typeName = t.Name
 			}
 		}
 	case *ast.StarExpr:

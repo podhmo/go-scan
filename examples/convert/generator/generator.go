@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"go/format"
-	"strings"
 	"text/template"
 
 	"example.com/convert/parser"
@@ -120,12 +119,16 @@ func Generate(s *goscan.Scanner, packageName string, pairs []parser.ConversionPa
 					dstBase = dstBase.Elem
 				}
 
+				if srcBase == nil || dstBase == nil {
+					continue
+				}
+
 				helperKey := fmt.Sprintf("%s_to_%s", srcBase.Name, dstBase.Name)
 				if !worklist[helperKey] {
-					if srcBase.Definition != nil && dstBase.Definition != nil {
+					if field.SrcDef != nil && field.DstDef != nil {
 						allPairs = append(allPairs, parser.ConversionPair{
-							SrcType:          srcBase.Definition,
-							DstType:          dstBase.Definition,
+							SrcType:          field.SrcDef,
+							DstType:          field.DstDef,
 							DstPkgImportPath: dstBase.FullImportPath(),
 						})
 						worklist[helperKey] = true
@@ -166,7 +169,7 @@ func Generate(s *goscan.Scanner, packageName string, pairs []parser.ConversionPa
 		"getAssignment": getAssignment,
 	}
 
-	tmpl, err := template.New("converter").Funcs(funcMap).Parse(strings.TrimSpace(codeTemplate))
+	tmpl, err := template.New("converter").Funcs(funcMap).Parse(codeTemplate)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse template: %w", err)
 	}

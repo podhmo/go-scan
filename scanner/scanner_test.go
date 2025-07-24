@@ -61,7 +61,7 @@ func TestScanPackageFeatures(t *testing.T) {
 		filepath.Join(testDir, "variadic.go"),
 	}
 
-	pkgInfo, err := s.ScanFiles(context.Background(), filesToScan, testDir, &MockResolver{})
+	pkgInfo, err := s.ScanFiles(context.Background(), filesToScan, testDir, "example.com/test/features", &MockResolver{})
 	if err != nil {
 		t.Fatalf("ScanFiles failed for %v: %v", filesToScan, err)
 	}
@@ -149,7 +149,7 @@ func TestScanFiles(t *testing.T) {
 
 	t.Run("scan_single_file", func(t *testing.T) {
 		filePath := filepath.Join(testdataDir, "features.go")
-		pkgInfo, err := s.ScanFiles(context.Background(), []string{filePath}, testdataDir, mockResolver)
+		pkgInfo, err := s.ScanFiles(context.Background(), []string{filePath}, testdataDir, "example.com/test/features", mockResolver)
 		if err != nil {
 			t.Fatalf("ScanFiles single file failed: %v", err)
 		}
@@ -169,7 +169,7 @@ func TestScanFiles(t *testing.T) {
 			filepath.Join(testdataDir, "features.go"),
 			filepath.Join(testdataDir, "another.go"),
 		}
-		pkgInfo, err := s.ScanFiles(context.Background(), filePaths, testdataDir, mockResolver)
+		pkgInfo, err := s.ScanFiles(context.Background(), filePaths, testdataDir, "example.com/test/features", mockResolver)
 		if err != nil {
 			t.Fatalf("ScanFiles multiple files failed: %v", err)
 		}
@@ -194,14 +194,14 @@ func TestScanFiles(t *testing.T) {
 			filepath.Join(testdataDir, "features.go"),     // package features
 			filepath.Join(testdataDir, "differentpkg.go"), // package otherfeatures
 		}
-		_, err := s.ScanFiles(context.Background(), filePaths, testdataDir, mockResolver)
+		_, err := s.ScanFiles(context.Background(), filePaths, testdataDir, "example.com/test/features", mockResolver)
 		if err == nil {
 			t.Error("Expected error when scanning files from different packages, got nil")
 		}
 	})
 
 	t.Run("scan_empty_file_list", func(t *testing.T) {
-		_, err := s.ScanFiles(context.Background(), []string{}, testdataDir, mockResolver)
+		_, err := s.ScanFiles(context.Background(), []string{}, testdataDir, "example.com/test/features", mockResolver)
 		if err == nil {
 			t.Error("Expected error when scanning an empty file list, got nil")
 		}
@@ -209,7 +209,7 @@ func TestScanFiles(t *testing.T) {
 
 	t.Run("scan_non_existent_file", func(t *testing.T) {
 		filePaths := []string{filepath.Join(testdataDir, "nonexistent.go")}
-		_, err := s.ScanFiles(context.Background(), filePaths, testdataDir, mockResolver)
+		_, err := s.ScanFiles(context.Background(), filePaths, testdataDir, "example.com/test/features", mockResolver)
 		if err == nil {
 			t.Error("Expected error when scanning non-existent file, got nil")
 		}
@@ -272,7 +272,7 @@ func TestResolve_DirectRecursion(t *testing.T) {
 		t.Fatalf("scanner.New failed: %v", err)
 	}
 
-	pkgInfo, err := s.ScanFiles(context.Background(), []string{filepath.Join(testDir, "direct.go")}, testDir, s) // s implements PackageResolver
+	pkgInfo, err := s.ScanFiles(context.Background(), []string{filepath.Join(testDir, "direct.go")}, testDir, "example.com/test/recursion/direct", s) // s implements PackageResolver
 	if err != nil {
 		t.Fatalf("ScanFiles failed: %v", err)
 	}
@@ -344,7 +344,7 @@ func TestResolve_MutualRecursion(t *testing.T) {
 			// Use the main scanner 's' to perform the scan.
 			// The resolver passed to ScanFiles should be the mockResolver itself
 			// to handle further package lookups.
-			pkg, err := s.ScanFiles(ctx, []string{filepath.Join(pkgDir, filepath.Base(pkgDir)+".go")}, pkgDir, mockResolver)
+			pkg, err := s.ScanFiles(ctx, []string{filepath.Join(pkgDir, filepath.Base(pkgDir)+".go")}, pkgDir, importPath, mockResolver)
 			if err == nil && pkg != nil {
 				pkgCache[importPath] = pkg // Store in cache
 			}
@@ -437,7 +437,7 @@ func TestScanWithOverlay(t *testing.T) {
 	scanFilePath := filepath.Join(absTestDir, "basic.go")
 
 	// The pkgDirPath should also be an absolute path to the package directory.
-	pkgInfo, err := s.ScanFiles(context.Background(), []string{scanFilePath}, absTestDir, &MockResolver{})
+	pkgInfo, err := s.ScanFiles(context.Background(), []string{scanFilePath}, absTestDir, modulePath, &MockResolver{})
 	if err != nil {
 		t.Fatalf("ScanFiles with overlay failed: %v", err)
 	}

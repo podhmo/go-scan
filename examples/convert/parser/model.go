@@ -1,4 +1,4 @@
-package convert
+package parser
 
 import "github.com/podhmo/go-scan/scanner"
 
@@ -13,11 +13,13 @@ type ParsedInfo struct {
 // ConversionPair defines a top-level conversion between two types.
 // Corresponds to: @derivingconvert(<DstType>)
 type ConversionPair struct {
-	SrcTypeName string
-	DstTypeName string
-	SrcInfo     *scanner.TypeInfo
-	DstInfo     *scanner.TypeInfo
-	MaxErrors   int
+	SrcTypeName      string
+	DstTypeName      string
+	SrcInfo          *scanner.TypeInfo
+	DstInfo          *scanner.TypeInfo
+	SrcPkgImportPath string
+	DstPkgImportPath string
+	MaxErrors        int
 }
 
 // StructInfo holds information about a parsed struct.

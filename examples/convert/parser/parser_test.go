@@ -1,11 +1,11 @@
-package convert
+package parser
 
 import (
 	"context"
 	"os"
 	"testing"
 
-	"github.com/google/go-cmp/cmp"
+	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/scantest"
 )
 
@@ -56,14 +56,37 @@ type Dst struct {}
 			defer os.Chdir(cwd)
 
 			ctx := context.Background()
-			got, err := Parse(ctx, tt.pkgPath)
+			s, err := goscan.New()
+			if err != nil {
+				t.Fatalf("failed to create scanner: %v", err)
+			}
+			got, err := Parse(ctx, s, tt.pkgPath)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Parse() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
-
-			if diff := cmp.Diff(tt.want, got); diff != "" {
-				t.Errorf("Parse() mismatch (-want +got):\n%s", diff)
+			if tt.want != nil {
+				if len(got) != len(tt.want.ConversionPairs) {
+					t.Fatalf("Parse() got %d pairs, want %d", len(got), len(tt.want.ConversionPairs))
+				}
+				for i := range got {
+					wantPair := tt.want.ConversionPairs[i]
+					gotPair := got[i]
+					if wantPair.SrcTypeName != gotPair.SrcTypeName {
+						t.Errorf("pair %d: SrcTypeName mismatch: got %q, want %q", i, gotPair.SrcTypeName, wantPair.SrcTypeName)
+					}
+					if wantPair.DstTypeName != gotPair.DstTypeName {
+						t.Errorf("pair %d: DstTypeName mismatch: got %q, want %q", i, gotPair.DstTypeName, wantPair.DstTypeName)
+					}
+					if gotPair.SrcInfo == nil {
+						t.Errorf("pair %d: got nil SrcInfo", i)
+					}
+					if gotPair.DstInfo == nil {
+						t.Errorf("pair %d: got nil DstInfo", i)
+					}
+				}
+			} else if len(got) != 0 {
+				t.Errorf("Parse() got non-empty pairs, want nil")
 			}
 		})
 	}

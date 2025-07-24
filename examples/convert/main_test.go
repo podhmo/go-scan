@@ -28,6 +28,10 @@ func (w *memoryFileWriter) WriteFile(ctx context.Context, path string, data []by
 }
 
 func TestMainIntegration(t *testing.T) {
+	dir, cleanup := setupTestDir(t)
+	defer cleanup()
+	os.Chdir(dir)
+
 	writer := &memoryFileWriter{}
 	ctx := context.Background()
 	ctx = context.WithValue(ctx, FileWriterKey, writer)

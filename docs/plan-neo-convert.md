@@ -50,106 +50,65 @@ The tool is composed of three main architectural components:
 
 ## 4. Data Structures (The Intermediate Representation)
 
-The parser and generator communicate via a set of data structures defined in the `internal/model` package. This is the heart of the tool's architecture.
+The parser and generator communicate via a set of data structures defined in the `parser` package. These structures are built on top of the core types from `github.com/podhmo/go-scan/scanner`. This is the heart of the tool's architecture.
 
 ### `ParsedInfo`
 
-This is the top-level container that holds all the information extracted from the source code.
+This is the top-level container that holds all the information extracted from the source code. It relies heavily on types from the `go-scan` library.
 
 ```go
+import "github.com/podhmo/go-scan/scanner"
+
 // ParsedInfo holds all parsed conversion rules and type information.
 type ParsedInfo struct {
 	PackageName     string
 	PackagePath     string // Import path of the package being parsed
 	ConversionPairs []ConversionPair
-	GlobalRules     []TypeRule
-	Structs         map[string]*StructInfo       // Keyed by struct name (e.g. "MyStruct")
-	NamedTypes      map[string]*TypeInfo         // Keyed by type name (e.g. "MyInt" for type MyInt int)
-	FileImports     map[string]map[string]string // filePath -> {alias -> importPath}
+	Structs         map[string]*StructInfo // Keyed by struct name
 }
 ```
 
-### `TypeInfo`
+### `ConversionPair`
 
-Represents a resolved Go type. This is a crucial and complex struct.
+This struct directly maps to the `@derivingconvert` annotation.
 
 ```go
-// TypeInfo holds resolved information about a type.
-type TypeInfo struct {
-	Name        string // Simple name (e.g., "MyType", "int", "string")
-	FullName    string // Fully qualified name (e.g., "example.com/pkg.MyType", "int")
-	PackageName string // Package name where the type is defined or alias used (e.g., "pkg", "time")
-	PackagePath string // Full package import path (e.g., "example.com/pkg", "time")
-	Kind        TypeKind
-	IsBasic     bool
-	IsPointer   bool
-	IsSlice     bool
-	IsArray     bool
-	IsMap       bool
-	IsInterface bool
-	IsFunc      bool
-	Elem        *TypeInfo   // Element type for pointers, slices, arrays
-	Key         *TypeInfo   // Key type for maps
-	Value       *TypeInfo   // Value type for maps
-	Underlying  *TypeInfo   // Underlying type for named types (e.g., int for type MyInt int)
-	StructInfo  *StructInfo // If Kind is KindStruct or KindIdent resolving to a struct
-	AstExpr     ast.Expr    // Original AST expression for the type
+// ConversionPair defines a top-level conversion between two types.
+type ConversionPair struct {
+	SrcTypeName      string
+	DstTypeName      string
+	SrcInfo          *scanner.TypeInfo
+	DstInfo          *scanner.TypeInfo
+	DstPkgImportPath string
+	MaxErrors        int
 }
-
-// TypeKind defines the kind of a type.
-type TypeKind int
-const (
-	KindUnknown TypeKind = iota
-	KindBasic
-	KindIdent // Identifier, could be a struct, named type, etc.
-	KindPointer
-	KindSlice
-	KindArray
-	KindMap
-	KindInterface
-	KindStruct // Specifically a struct type definition
-	KindNamed  // A named type (type MyInt int)
-	KindFunc
-)
 ```
 
-### `StructInfo` and `FieldInfo`
+### `StructInfo`, `FieldInfo`, and `ConvertTag`
 
-Represent a struct and its fields.
+These structs hold information about a struct, its fields, and the `convert` tag.
 
 ```go
 // StructInfo holds information about a parsed struct.
 type StructInfo struct {
-	Name            string
-	Fields          []FieldInfo
-	Type            *TypeInfo // TypeInfo for this struct
-	IsAlias         bool      // True if this struct is a type alias to another struct
-	UnderlyingAlias *TypeInfo // If IsAlias, this points to the TypeInfo of the actual struct
+	Name   string
+	Fields []FieldInfo
+	Node   *scanner.TypeInfo
 }
 
 // FieldInfo holds information about a field within a struct.
 type FieldInfo struct {
-	Name         string
-	OriginalName string
-	TypeInfo     *TypeInfo
-	Tag          ConvertTag
-	ParentStruct *StructInfo
+	Name string
+	Tag  ConvertTag
+	Node *scanner.FieldInfo
 }
-```
 
-### `ConversionPair`, `TypeRule`, and `ConvertTag`
-
-These structs directly map to the user-provided annotations.
-
-```go
-// ConversionPair defines a top-level conversion between two types.
-// Corresponds to: @derivingconvert(<DstType>, [option=value, ...])
-type ConversionPair struct {
-	SrcTypeName string
-	DstTypeName string
-	SrcTypeInfo *TypeInfo
-	DstTypeInfo *TypeInfo
-	MaxErrors   int
+// ConvertTag holds parsed values from a `convert` struct tag.
+type ConvertTag struct {
+	DstFieldName string
+	UsingFunc    string
+	Required     bool
+	RawValue     string
 }
 
 // TypeRule defines a global rule for converting between types or validating a type.

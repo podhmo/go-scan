@@ -52,3 +52,10 @@ type ComplexSource struct {
 type SubSource struct {
 	Value int
 }
+
+// @derivingconvert("example.com/convert/models/destination.TargetWithMap")
+type SourceWithMap struct {
+	ValueMap    map[string]SubSource
+	PtrMap      map[string]*SubSource
+	StringToStr map[string]string
+}

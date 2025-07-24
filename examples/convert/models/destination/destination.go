@@ -46,3 +46,9 @@ type ComplexTarget struct {
 type SubTarget struct {
 	Value int
 }
+
+type TargetWithMap struct {
+	ValueMap    map[string]SubTarget
+	PtrMap      map[string]*SubTarget
+	StringToStr map[string]string
+}

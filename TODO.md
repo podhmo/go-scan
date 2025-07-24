@@ -65,6 +65,7 @@ as described in [docs/plan-neo-convert.md](docs/plan-neo-convert.md)
 -   [x] **Add Tests for Slice Fields**: Write tests for slice field conversions.
 -   [x] **Generator for Map Fields**: Extend the generator to handle map fields (e.g., `map[string]SrcType` to `map[string]DstType`). (Note: implementation is in progress, tests are still failing due to formatting issues).
 -   [x] **Add Tests for Map Fields**: Write tests for map field conversions.
+-   [x] **Map Element Conversion**: The generator now produces recursive helper function calls for elements within maps, supporting maps of structs.
 -   **Implement `convert:` Tag Handling**:
     -   `convert:"-"`: Skip a field.
     -   `convert:"NewName"`: Map to a different field name.
@@ -79,7 +80,6 @@ as described in [docs/plan-neo-convert.md](docs/plan-neo-convert.md)
 -   **Add Tests for Error Handling**: Write tests to verify that `errorCollector` correctly accumulates and reports errors.
 
 ### Known Issues
-*   **Map Element Conversion**: The generator currently does not produce the recursive helper function calls for elements within maps. This needs to be fixed to support maps of structs.
 
 ### Future Tasks (Post-Migration)
 *   **Improve Import Management**: Handle import alias collisions robustly. Consider using `golang.org/x/tools/imports` for final output formatting.

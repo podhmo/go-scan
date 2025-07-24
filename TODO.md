@@ -42,6 +42,8 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 
 ## To Be Implemented
 
+-   [ ] **internal/convertをexamples/convertの中に入れる（ドキュメントも修正する）**
+
 ### `convert` Tool Implementation
 
 as described in [docs/plan-neo-convert.md](docs/plan-neo-convert.md)
@@ -66,22 +68,22 @@ as described in [docs/plan-neo-convert.md](docs/plan-neo-convert.md)
 -   [x] **Generator for Map Fields**: Extend the generator to handle map fields (e.g., `map[string]SrcType` to `map[string]DstType`). (Note: implementation is in progress, tests are still failing due to formatting issues).
 -   [x] **Add Tests for Map Fields**: Write tests for map field conversions.
 -   [x] **Map Element Conversion**: The generator now produces recursive helper function calls for elements within maps, supporting maps of structs.
--   **Implement `convert:` Tag Handling**:
-    -   `convert:"-"`: Skip a field.
-    -   `convert:"NewName"`: Map to a different field name.
-    -   `convert:",using=myFunc"`: Use a custom conversion function.
-    -   `convert:",required"`: Report an error if a pointer field is nil.
--   **Add Tests for `convert:` Tags**: Write comprehensive tests for all `convert:` tag options.
--   **Implement `// convert:rule`**:
-    -   Implement global type conversion rules (`"<SrcType>" -> "<DstType>", using=<funcName>`).
-    -   Implement validator rules (`"<DstType>", validator=<funcName>`).
--   **Add Tests for `// convert:rule`**: Write tests for global conversion and validator rules.
--   **Error Handling with `errorCollector`**: Implement the `errorCollector` struct and generate code that uses it to report multiple conversion errors.
--   **Add Tests for Error Handling**: Write tests to verify that `errorCollector` correctly accumulates and reports errors.
+-   [ ] **Implement `convert:` Tag Handling**:
+    -   [ ] `convert:"-"`: Skip a field.
+    -   [ ] `convert:"NewName"`: Map to a different field name.
+    -   [ ] `convert:",using=myFunc"`: Use a custom conversion function.
+    -   [ ] `convert:",required"`: Report an error if a pointer field is nil.
+-   [ ] **Add Tests for `convert:` Tags**: Write comprehensive tests for all `convert:` tag options.
+-   [ ] **Implement `// convert:rule`**:
+    -   [ ] Implement global type conversion rules (`"<SrcType>" -> "<DstType>", using=<funcName>`).
+    -   [ ] Implement validator rules (`"<DstType>", validator=<funcName>`).
+-   [ ] **Add Tests for `// convert:rule`**: Write tests for global conversion and validator rules.
+-   [ ] **Error Handling with `errorCollector`**: Implement the `errorCollector` struct and generate code that uses it to report multiple conversion errors.
+-   [ ] **Add Tests for Error Handling**: Write tests to verify that `errorCollector` correctly accumulates and reports errors.
 
 ### Known Issues
 
 ### Future Tasks (Post-Migration)
-*   **Improve Import Management**: Handle import alias collisions robustly. Consider using `golang.org/x/tools/imports` for final output formatting.
-*   **Expand Test Coverage**: Create a comprehensive test suite that verifies all features and edge cases.
-*   **Complete `README.md`**: Write user-facing documentation with installation, usage, and examples.
+-   [ ] **Improve Import Management**: Handle import alias collisions robustly. Consider using `golang.org/x/tools/imports` for final output formatting.
+-   [ ] **Expand Test Coverage**: Create a comprehensive test suite that verifies all features and edge cases.
+-   [ ] **Complete `README.md`**: Write user-facing documentation with installation, usage, and examples.

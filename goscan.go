@@ -50,6 +50,11 @@ func (s *Scanner) Fset() *token.FileSet {
 	return s.fset
 }
 
+// Locator returns the locator used by the scanner.
+func (s *Scanner) Locator() *locator.Locator {
+	return s.locator
+}
+
 // Scan scans Go packages based on the provided patterns.
 // Each pattern can be a directory path or a file path relative to the scanner's workDir.
 // It returns a list of scanned packages.

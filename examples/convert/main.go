@@ -57,27 +57,28 @@ func run(ctx context.Context, input, output, pkgname string) error {
 		return fmt.Errorf("failed to create scanner: %w", err)
 	}
 
-	pkg, err := s.ScanPackageByImport(ctx, input)
+	pairs, err := parser.Parse(ctx, s, input)
 	if err != nil {
-		return fmt.Errorf("failed to scan package %s: %w", input, err)
+		return fmt.Errorf("failed to parse package %s: %w", input, err)
 	}
 
-	return Generate(ctx, s, pkg, output, pkgname)
+	// Create a dummy PackageInfo for the generated file's package.
+	genPkgInfo := &scanner.PackageInfo{
+		Name:       pkgname,
+		ImportPath: "", // Assuming it's in the main package or a non-importable context
+	}
+
+	return Generate(ctx, s, pairs, genPkgInfo, output, pkgname)
 }
 
 // Generate produces converter code for the given package.
-func Generate(ctx context.Context, s *goscan.Scanner, pkgInfo *scanner.PackageInfo, output, pkgname string) error {
-	pairs, err := parser.Parse(ctx, pkgInfo, s)
-	if err != nil {
-		return fmt.Errorf("failed to parse conversion pairs: %w", err)
-	}
-
+func Generate(ctx context.Context, s *goscan.Scanner, pairs []parser.ConversionPair, genPkgInfo *scanner.PackageInfo, output, pkgname string) error {
 	if len(pairs) == 0 {
 		fmt.Println("No @derivingconvert annotations found.")
 		return nil
 	}
 
-	generatedCode, err := generator.Generate(s, pkgname, pairs, pkgInfo)
+	generatedCode, err := generator.Generate(s, pkgname, pairs, genPkgInfo)
 	if err != nil {
 		return fmt.Errorf("failed to generate converter code: %w", err)
 	}

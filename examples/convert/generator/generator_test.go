@@ -10,6 +10,7 @@ import (
 	"example.com/convert/parser"
 	"github.com/google/go-cmp/cmp"
 	"github.com/podhmo/go-scan"
+	"github.com/podhmo/go-scan/scanner"
 	"github.com/podhmo/go-scan/scantest"
 )
 
@@ -70,17 +71,19 @@ type DstItem struct {
 		t.Fatalf("goscan.New failed: %+v", err)
 	}
 
-	pkg, err := s.ScanPackage(ctx, filepath.Join(tmpdir, "models/source"))
+	// Scan the package to populate the scanner's cache.
+	_, err = s.ScanPackage(ctx, filepath.Join(tmpdir, "models/source"))
 	if err != nil {
 		t.Fatalf("s.ScanPackage failed: %+v", err)
 	}
 
-	pairs, err := parser.Parse(ctx, pkg, s)
+	pairs, err := parser.Parse(ctx, s, "example.com/convert/models/source")
 	if err != nil {
 		t.Fatalf("parser.Parse failed: %+v", err)
 	}
 
-	got, err := Generate(s, "converter", pairs, pkg)
+	genPkgInfo := &scanner.PackageInfo{Name: "converter"}
+	got, err := Generate(s, "converter", pairs, genPkgInfo)
 	if err != nil {
 		t.Fatalf("Generate failed: %+v", err)
 	}
@@ -205,17 +208,19 @@ type DstTag struct {
 		t.Fatalf("goscan.New failed: %+v", err)
 	}
 
-	pkg, err := s.ScanPackage(ctx, filepath.Join(tmpdir, "models/source"))
+	// Scan the package to populate the scanner's cache.
+	_, err = s.ScanPackage(ctx, filepath.Join(tmpdir, "models/source"))
 	if err != nil {
 		t.Fatalf("s.ScanPackage failed: %+v", err)
 	}
 
-	pairs, err := parser.Parse(ctx, pkg, s)
+	pairs, err := parser.Parse(ctx, s, "example.com/convert/models/source")
 	if err != nil {
 		t.Fatalf("parser.Parse failed: %+v", err)
 	}
 
-	got, err := Generate(s, "converter", pairs, pkg)
+	genPkgInfo := &scanner.PackageInfo{Name: "converter"}
+	got, err := Generate(s, "converter", pairs, genPkgInfo)
 	if err != nil {
 		t.Fatalf("Generate failed: %+v", err)
 	}

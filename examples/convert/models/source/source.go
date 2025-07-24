@@ -59,3 +59,17 @@ type SourceWithMap struct {
 	PtrMap      map[string]*SubSource
 	StringToStr map[string]string
 }
+
+// @derivingconvert("example.com/convert/models/destination.DstWithTags")
+type SrcWithTags struct {
+	ID        int    `convert:"TaggedID"`
+	Name      string `convert:"-"`
+	Value     string
+	Timestamp int64 `convert:"TimestampStr,using=convertInt64ToString"`
+}
+
+func convertInt64ToString(v int64) string {
+	// This is a dummy function for testing 'using'.
+	// A real implementation would use strconv.FormatInt.
+	return "dummy"
+}

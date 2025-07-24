@@ -52,3 +52,9 @@ type TargetWithMap struct {
 	PtrMap      map[string]*SubTarget
 	StringToStr map[string]string
 }
+
+type DstWithTags struct {
+	TaggedID     int
+	Value        string
+	TimestampStr string
+}

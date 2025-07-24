@@ -737,4 +737,22 @@ func commentText(cg *ast.CommentGroup) string {
 	return strings.TrimSpace(cg.Text())
 }
 
-// (No trailing comments or code after the last function - ensure this is the true end of the file)
+// GetBaseType returns the non-pointer base type of a field type.
+func (ft *FieldType) GetBaseType() *FieldType {
+	if ft.IsPointer {
+		return ft.Elem.GetBaseType()
+	}
+	return ft
+}
+
+// GetBaseTypeForCheck returns the type that should be checked for recursive struct conversion.
+// For slices and maps, it returns the element type. Otherwise, it returns the type itself.
+func (ft *FieldType) GetBaseTypeForCheck() *FieldType {
+	if ft.IsSlice || ft.IsMap {
+		if ft.Elem != nil {
+			return ft.Elem.GetBaseType()
+		}
+		return nil
+	}
+	return ft.GetBaseType()
+}

@@ -77,6 +77,42 @@ func convertComplexSourceToComplexTarget(ctx context.Context, src source.Complex
 	return dst
 }
 
+// ConvertSourceWithMapToTargetWithMap converts SourceWithMap to TargetWithMap.
+func ConvertSourceWithMapToTargetWithMap(ctx context.Context, src source.SourceWithMap) (destination.TargetWithMap, error) {
+	dst := convertSourceWithMapToTargetWithMap(ctx, src)
+	return dst, nil
+}
+
+// convertSourceWithMapToTargetWithMap is the internal conversion function.
+func convertSourceWithMapToTargetWithMap(ctx context.Context, src source.SourceWithMap) destination.TargetWithMap {
+	dst := destination.TargetWithMap{}
+	if src.ValueMap != nil {
+		newMap := make(map[string]destination.SubTarget, len(src.ValueMap))
+		for key, value := range src.ValueMap {
+			newMap[key] = convertSubSourceToSubTarget(ctx, value)
+		}
+		dst.ValueMap = newMap
+	}
+	if src.PtrMap != nil {
+		newMap := make(map[string]*destination.SubTarget, len(src.PtrMap))
+		for key, value := range src.PtrMap {
+			if value != nil {
+				tmp := convertSubSourceToSubTarget(ctx, *value)
+				newMap[key] = &tmp
+			}
+		}
+		dst.PtrMap = newMap
+	}
+	if src.StringToStr != nil {
+		newMap := make(map[string]string, len(src.StringToStr))
+		for key, value := range src.StringToStr {
+			newMap[key] = value
+		}
+		dst.StringToStr = newMap
+	}
+	return dst
+}
+
 // ConvertSrcInternalDetailToDstInternalDetail converts SrcInternalDetail to DstInternalDetail.
 func ConvertSrcInternalDetailToDstInternalDetail(ctx context.Context, src source.SrcInternalDetail) (destination.DstInternalDetail, error) {
 	dst := convertSrcInternalDetailToDstInternalDetail(ctx, src)

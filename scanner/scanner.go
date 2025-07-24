@@ -61,6 +61,14 @@ func (s *Scanner) ResolveType(ctx context.Context, fieldType *FieldType) (*TypeI
 // It delegates the call to the configured resolver, which is typically the top-level
 // goscan.Scanner instance.
 func (s *Scanner) ScanPackageByImport(ctx context.Context, importPath string) (*PackageInfo, error) {
+	if s.resolver == s {
+		if s.currentPkg != nil && s.currentPkg.ImportPath == importPath {
+			return s.currentPkg, nil
+		}
+		// This might indicate a logic error where the scanner is trying to resolve a package
+		// it's already in the process of scanning, but the import path doesn't match.
+		return nil, fmt.Errorf("internal resolver loop detected for import path %q, current package is %q", importPath, s.currentPkg.ImportPath)
+	}
 	if s.resolver == nil {
 		return nil, fmt.Errorf("scanner's internal resolver is not set, cannot scan by import path %q", importPath)
 	}

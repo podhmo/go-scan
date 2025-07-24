@@ -119,7 +119,6 @@ func ConvertSrcOrderToDstOrder(ctx context.Context, src source.SrcOrder) (destin
 func convertSrcOrderToDstOrder(ctx context.Context, src source.SrcOrder) destination.DstOrder {
 	dst := destination.DstOrder{}
 	dst.OrderID = src.OrderID
-
 	if src.Items != nil {
 		newSlice := make([]destination.DstItem, 0, len(src.Items))
 		for _, elem := range src.Items {
@@ -241,7 +240,6 @@ func ConvertSrcProfileToDstProfile(ctx context.Context, src source.SrcProfile) (
 func convertSrcProfileToDstProfile(ctx context.Context, src source.SrcProfile) destination.DstProfile {
 	dst := destination.DstProfile{}
 	dst.Name = src.Name
-
 	if src.Attributes != nil {
 		newMap := make(map[string]string, len(src.Attributes))
 		for key, value := range src.Attributes {
@@ -249,7 +247,6 @@ func convertSrcProfileToDstProfile(ctx context.Context, src source.SrcProfile) d
 		}
 		dst.Attributes = newMap
 	}
-
 	if src.Tags != nil {
 		newMap := make(map[string]destination.DstTag, len(src.Tags))
 		for key, value := range src.Tags {
@@ -257,7 +254,6 @@ func convertSrcProfileToDstProfile(ctx context.Context, src source.SrcProfile) d
 		}
 		dst.Tags = newMap
 	}
-
 	return dst
 }
 

@@ -17,11 +17,10 @@ func ConvertSrcUserToDstUser(ctx context.Context, src source.SrcUser) (destinati
 // convertSrcUserToDstUser is the internal conversion function.
 func convertSrcUserToDstUser(ctx context.Context, src source.SrcUser) destination.DstUser {
 	dst := destination.DstUser{}
-
 	if src.Details != nil {
-		newSlice := make([]DstInternalDetail, 0, len(src.Details))
+		newSlice := make([]destination.DstInternalDetail, 0, len(src.Details))
 		for _, elem := range src.Details {
-			newSlice = append(newSlice, elem)
+			newSlice = append(newSlice, convertSrcInternalDetailToDstInternalDetail(ctx, elem))
 		}
 		dst.Details = newSlice
 	}
@@ -58,24 +57,47 @@ func convertComplexSourceToComplexTarget(ctx context.Context, src source.Complex
 		tmp := *src.Ptr
 		dst.Ptr = &tmp
 	}
-
 	if src.Slice != nil {
-		newSlice := make([]SubTarget, 0, len(src.Slice))
+		newSlice := make([]destination.SubTarget, 0, len(src.Slice))
 		for _, elem := range src.Slice {
-			newSlice = append(newSlice, elem)
+			newSlice = append(newSlice, convertSubSourceToSubTarget(ctx, elem))
 		}
 		dst.Slice = newSlice
 	}
-
 	if src.SliceOfPtrs != nil {
-		newSlice := make([]*SubTarget, 0, len(src.SliceOfPtrs))
+		newSlice := make([]*destination.SubTarget, 0, len(src.SliceOfPtrs))
 		for _, elem := range src.SliceOfPtrs {
 			if elem != nil {
-				tmp := *elem
+				tmp := convertSubSourceToSubTarget(ctx, *elem)
 				newSlice = append(newSlice, &tmp)
 			}
 		}
 		dst.SliceOfPtrs = newSlice
 	}
+	return dst
+}
+
+// ConvertSrcInternalDetailToDstInternalDetail converts SrcInternalDetail to DstInternalDetail.
+func ConvertSrcInternalDetailToDstInternalDetail(ctx context.Context, src source.SrcInternalDetail) (destination.DstInternalDetail, error) {
+	dst := convertSrcInternalDetailToDstInternalDetail(ctx, src)
+	return dst, nil
+}
+
+// convertSrcInternalDetailToDstInternalDetail is the internal conversion function.
+func convertSrcInternalDetailToDstInternalDetail(ctx context.Context, src source.SrcInternalDetail) destination.DstInternalDetail {
+	dst := destination.DstInternalDetail{}
+	return dst
+}
+
+// ConvertSubSourceToSubTarget converts SubSource to SubTarget.
+func ConvertSubSourceToSubTarget(ctx context.Context, src source.SubSource) (destination.SubTarget, error) {
+	dst := convertSubSourceToSubTarget(ctx, src)
+	return dst, nil
+}
+
+// convertSubSourceToSubTarget is the internal conversion function.
+func convertSubSourceToSubTarget(ctx context.Context, src source.SubSource) destination.SubTarget {
+	dst := destination.SubTarget{}
+	dst.Value = src.Value
 	return dst
 }

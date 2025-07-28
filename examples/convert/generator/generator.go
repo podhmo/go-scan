@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"strings"
 	"text/template"
 
 	"example.com/convert/model"
@@ -26,6 +27,9 @@ import (
 {{ range .Pairs -}}
 // Convert{{ .SrcType.Name }}To{{ .DstType.Name }} converts {{ .SrcType.Name }} to {{ .DstType.Name }}.
 func Convert{{ .SrcType.Name }}To{{ .DstType.Name }}(ctx context.Context, src *{{ .SrcType.Name }}) (*{{ .DstType.Name }}, error) {
+	if src == nil {
+		return nil, nil
+	}
 	dst := &{{ .DstType.Name }}{}
 	{{- range .Fields }}
 	{{ getAssignment $.Im . "src" "dst" }}
@@ -92,119 +96,7 @@ func Generate(s *goscan.Scanner, info *model.ParsedInfo) ([]byte, error) {
 	}
 
 	funcMap := template.FuncMap{
-		"getAssignment": func(im *goscan.ImportManager, field FieldMap, srcVar, dstVar string) string {
-			src := fmt.Sprintf("%s.%s", srcVar, field.SrcName)
-			dst := fmt.Sprintf("%s.%s", dstVar, field.DstName)
-
-			if field.Tag.UsingFunc != "" {
-				return fmt.Sprintf("%s = %s(ctx, %s)", dst, field.Tag.UsingFunc, src)
-			}
-			if field.Tag.Required && field.SrcFieldT.IsPointer {
-				return fmt.Sprintf("if %s == nil {\n\t\treturn nil, fmt.Errorf(\"%s is required\")\n\t}\n\ttmp := *%s\n\t%s = &tmp", src, field.SrcName, src, dst)
-			}
-
-			if field.SrcFieldT.IsPointer && !field.DstFieldT.IsPointer {
-				return fmt.Sprintf("if %s != nil { %s = *%s }", src, dst, src)
-			}
-			if !field.SrcFieldT.IsPointer && field.DstFieldT.IsPointer {
-				return fmt.Sprintf("{ tmp := %s; %s = &tmp }", src, dst)
-			}
-
-			// Pointer to Slice and Slice to Pointer
-			if field.SrcFieldT.IsPointer && field.SrcFieldT.Elem.IsSlice && field.DstFieldT.IsSlice {
-				// *[]Src -> []Dst
-				return fmt.Sprintf("if %s != nil { %s = *%s }", src, dst, src)
-			}
-			if field.SrcFieldT.IsSlice && field.DstFieldT.IsPointer && field.DstFieldT.Elem.IsSlice {
-				// []Src -> *[]Dst
-				return fmt.Sprintf("{ tmp := %s; %s = &tmp }", src, dst)
-			}
-
-			if field.SrcFieldT.IsPointer && field.DstFieldT.IsPointer {
-				if field.SrcFieldT.Elem.IsSlice && field.DstFieldT.Elem.IsSlice {
-					// *[]Src -> *[]Dst
-					srcElem := field.SrcFieldT.Elem.Elem
-					dstElem := field.DstFieldT.Elem.Elem
-					if srcElem.Definition != nil && srcElem.Definition.Kind == scanner.StructKind && dstElem.Definition != nil && dstElem.Definition.Kind == scanner.StructKind {
-						return fmt.Sprintf(`if %s != nil {
-						convertedSlice := make([]%s, len(*%s))
-						for i, item := range *%s {
-							converted, err := Convert%sTo%s(ctx, &item)
-							if err != nil {
-								// TODO: proper error handling
-								return nil, err
-							}
-							convertedSlice[i] = *converted
-						}
-						%s = &convertedSlice
-					}`, src, dstElem.Definition.Name, src, src, srcElem.Definition.Name, dstElem.Definition.Name, dst)
-					}
-				} else if field.SrcFieldT.Elem.IsSlice && field.SrcFieldT.Elem.Elem.IsPointer && field.DstFieldT.Elem.IsSlice && field.DstFieldT.Elem.Elem.IsPointer {
-					// *[]*Src -> *[]*Dst
-					srcElem := field.SrcFieldT.Elem.Elem.Elem
-					dstElem := field.DstFieldT.Elem.Elem.Elem
-					if srcElem.Definition != nil && srcElem.Definition.Kind == scanner.StructKind && dstElem.Definition != nil && dstElem.Definition.Kind == scanner.StructKind {
-						return fmt.Sprintf(`if %s != nil {
-						convertedSlice := make([]*%s, len(**%s))
-						for i, item := range **%s {
-							if item == nil {
-								convertedSlice[i] = nil
-								continue
-							}
-							converted, err := Convert%sTo%s(ctx, item)
-							if err != nil {
-								// TODO: proper error handling
-								return nil, err
-							}
-							convertedSlice[i] = converted
-						}
-						tmp := convertedSlice
-						%s = &tmp
-					}`, src, dstElem.Definition.Name, src, src, srcElem.Definition.Name, dstElem.Definition.Name, dst)
-					}
-				}
-				// *Src -> *Dst
-				return fmt.Sprintf("if %s != nil { tmp := *%s; %s = &tmp }", src, src, dst)
-			}
-
-			// Slice conversion
-			if field.SrcFieldT.IsSlice && field.DstFieldT.IsSlice {
-				srcElem := field.SrcFieldT.Elem
-				dstElem := field.DstFieldT.Elem
-				if srcElem.Definition != nil && srcElem.Definition.Kind == scanner.StructKind && dstElem.Definition != nil && dstElem.Definition.Kind == scanner.StructKind {
-					return fmt.Sprintf(`{
-						convertedSlice := make([]%s, len(%s))
-						for i, item := range %s {
-							converted, err := Convert%sTo%s(ctx, &item)
-							if err != nil {
-								// TODO: proper error handling
-								return nil, err
-							}
-							convertedSlice[i] = *converted
-						}
-						%s = convertedSlice
-					}`, dstElem.Definition.Name, src, src, srcElem.Definition.Name, dstElem.Definition.Name, dst)
-				} else if srcElem.IsPointer && dstElem.IsPointer && srcElem.Elem.Definition != nil && srcElem.Elem.Definition.Kind == scanner.StructKind && dstElem.Elem.Definition != nil && dstElem.Elem.Definition.Kind == scanner.StructKind {
-					return fmt.Sprintf(`{
-						convertedSlice := make([]*%s, len(%s))
-						for i, item := range %s {
-							if item == nil {
-								convertedSlice[i] = nil
-								continue
-							}
-							converted, err := Convert%sTo%s(ctx, item)
-							if err != nil {
-								// TODO: proper error handling
-								return nil, err
-							}
-							convertedSlice[i] = converted
-						}
-						%s = convertedSlice
-					}`, dstElem.Elem.Definition.Name, src, src, srcElem.Elem.Definition.Name, dstElem.Elem.Definition.Name, dst)
-				}
-			}
-			return fmt.Sprintf("%s = %s", dst, src)
-		},
+		"getAssignment": getAssignment,
 	}
 
 	tmpl, err := template.New("converter").Funcs(funcMap).Parse(codeTemplate)
@@ -216,12 +108,6 @@ func Generate(s *goscan.Scanner, info *model.ParsedInfo) ([]byte, error) {
 	if err := tmpl.Execute(&buf, templateData); err != nil {
 		return nil, fmt.Errorf("executing template: %w", err)
 	}
-
-	// formatted, err := format.Source(buf.Bytes())
-	// if err != nil {
-	// 	return nil, fmt.Errorf("formatting generated code: %w\n---\n%s", err, buf.String())
-	// }
-	// return formatted, nil
 	return buf.Bytes(), nil
 }
 
@@ -279,4 +165,163 @@ func resolveFieldType(ctx context.Context, ft *scanner.FieldType) error {
 		}
 	}
 	return nil
+}
+
+// -----------------------------------------------------------------------------
+// Assignment Logic
+// -----------------------------------------------------------------------------
+
+func getAssignment(im *goscan.ImportManager, field FieldMap, srcVar, dstVar string) string {
+	src := fmt.Sprintf("%s.%s", srcVar, field.SrcName)
+	dst := fmt.Sprintf("%s.%s", dstVar, field.DstName)
+
+	if field.Tag.UsingFunc != "" {
+		return fmt.Sprintf("%s = %s(ctx, %s)", dst, field.Tag.UsingFunc, src)
+	}
+
+	if field.Tag.Required && field.SrcFieldT.IsPointer {
+		return fmt.Sprintf("if %s == nil {\n\treturn nil, fmt.Errorf(\"%s is required\")\n}\n%s", src, field.SrcName, generateConversion(im, src, dst, field.SrcFieldT, field.DstFieldT, 0))
+	}
+
+	return generateConversion(im, src, dst, field.SrcFieldT, field.DstFieldT, 0)
+}
+
+func generateConversion(im *goscan.ImportManager, src, dst string, srcT, dstT *scanner.FieldType, depth int) string {
+	if srcT == nil || dstT == nil {
+		return fmt.Sprintf("// srcT or dstT is nil for %s -> %s", src, dst)
+	}
+
+	// Pointer to Pointer
+	if srcT.IsPointer && dstT.IsPointer {
+		if srcT.Elem == nil || dstT.Elem == nil {
+			return fmt.Sprintf("%s = %s // Cannot convert pointer types, element type is nil", dst, src)
+		}
+		var b strings.Builder
+		b.WriteString(fmt.Sprintf("if %s != nil {\n", src))
+		b.WriteString(fmt.Sprintf("\ttmp := %s\n", getTypeName(im, dstT.Elem)))
+		b.WriteString(fmt.Sprintf("\t%s\n", generateConversion(im, "(*"+src+")", "tmp", srcT.Elem, dstT.Elem, depth+1)))
+		b.WriteString(fmt.Sprintf("\t%s = &tmp\n", dst))
+		b.WriteString("}")
+		return b.String()
+	}
+	// Pointer to Value
+	if srcT.IsPointer && !dstT.IsPointer {
+		if srcT.Elem == nil {
+			return fmt.Sprintf("// Cannot convert pointer to value, element type is nil")
+		}
+		return fmt.Sprintf("if %s != nil {\n\t%s\n}", src, generateConversion(im, "(*"+src+")", dst, srcT.Elem, dstT, depth+1))
+	}
+	// Value to Pointer
+	if !srcT.IsPointer && dstT.IsPointer {
+		if dstT.Elem == nil {
+			return fmt.Sprintf("// Cannot convert value to pointer, element type is nil")
+		}
+		var b strings.Builder
+		b.WriteString("{\n")
+		b.WriteString(fmt.Sprintf("\ttmp := %s\n", getTypeName(im, dstT.Elem)))
+		b.WriteString(fmt.Sprintf("\t%s\n", generateConversion(im, src, "tmp", srcT, dstT.Elem, depth+1)))
+		b.WriteString(fmt.Sprintf("\t%s = &tmp\n", dst))
+		b.WriteString("}")
+		return b.String()
+	}
+
+	// Slices
+	if srcT.IsSlice && dstT.IsSlice {
+		return generateSliceConversion(im, src, dst, srcT, dstT, depth)
+	}
+
+	// Maps
+	if srcT.IsMap && dstT.IsMap {
+		return generateMapConversion(im, src, dst, srcT, dstT, depth)
+	}
+
+	// Structs
+	if isStruct(srcT) && isStruct(dstT) && srcT.Name != "" && dstT.Name != "" {
+		return fmt.Sprintf("{ conv, err := Convert%sTo%s(ctx, &%s); if err == nil { %s = *conv } }", srcT.Name, dstT.Name, src, dst)
+	}
+
+	// Basic assignment
+	return fmt.Sprintf("%s = %s", dst, src)
+}
+
+func generateSliceConversion(im *goscan.ImportManager, src, dst string, srcT, dstT *scanner.FieldType, depth int) string {
+	if srcT.Elem == nil || dstT.Elem == nil {
+		return ""
+	}
+
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("{\n"))
+	b.WriteString(fmt.Sprintf("\tconvertedSlice := make([]%s, len(%s))\n", getTypeName(im, dstT.Elem), src))
+	b.WriteString(fmt.Sprintf("\tfor i, item := range %s {\n", src))
+	b.WriteString(fmt.Sprintf("\t\t%s\n", generateConversion(im, "item", "convertedSlice[i]", srcT.Elem, dstT.Elem, depth+2)))
+	b.WriteString(fmt.Sprintf("\t}\n"))
+	b.WriteString(fmt.Sprintf("\t%s = convertedSlice\n", dst))
+	b.WriteString(fmt.Sprintf("}"))
+	return b.String()
+}
+
+func generateMapConversion(im *goscan.ImportManager, src, dst string, srcT, dstT *scanner.FieldType, depth int) string {
+	if srcT.MapKey == nil || srcT.Elem == nil || dstT.MapKey == nil || dstT.Elem == nil {
+		return ""
+	}
+
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("{\n"))
+	b.WriteString(fmt.Sprintf("\tconvertedMap := make(map[%s]%s, len(%s))\n", getTypeName(im, dstT.MapKey), getTypeName(im, dstT.Elem), src))
+	b.WriteString(fmt.Sprintf("\tfor key, value := range %s {\n", src))
+	b.WriteString(fmt.Sprintf("\t\t%s\n", generateConversion(im, "value", "convertedMap[key]", srcT.Elem, dstT.Elem, depth+2)))
+	b.WriteString(fmt.Sprintf("\t}\n"))
+	b.WriteString(fmt.Sprintf("\t%s = convertedMap\n", dst))
+	b.WriteString(fmt.Sprintf("}"))
+	return b.String()
+}
+
+func getTypeName(im *goscan.ImportManager, t *scanner.FieldType) string {
+	if t == nil {
+		return "interface{}"
+	}
+	var sb strings.Builder
+	if t.IsPointer {
+		sb.WriteString("*")
+		if t.Elem != nil {
+			sb.WriteString(getTypeName(im, t.Elem))
+		} else {
+			sb.WriteString("interface{}")
+		}
+		return sb.String()
+	}
+	if t.IsSlice {
+		sb.WriteString("[]")
+		if t.Elem != nil {
+			sb.WriteString(getTypeName(im, t.Elem))
+		} else {
+			sb.WriteString("interface{}")
+		}
+		return sb.String()
+	}
+	if t.IsMap {
+		keyType := "interface{}"
+		if t.MapKey != nil {
+			keyType = getTypeName(im, t.MapKey)
+		}
+		valType := "interface{}"
+		if t.Elem != nil {
+			valType = getTypeName(im, t.Elem)
+		}
+		return fmt.Sprintf("map[%s]%s", keyType, valType)
+	}
+	return im.Qualify(t.FullImportPath(), t.Name)
+}
+
+func isStruct(t *scanner.FieldType) bool {
+	if t == nil {
+		return false
+	}
+	if t.IsPointer {
+		if t.Elem == nil {
+			return false
+		}
+		return isStruct(t.Elem)
+	}
+	return t.Definition != nil && t.Definition.Kind == scanner.StructKind
 }

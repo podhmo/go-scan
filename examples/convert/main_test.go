@@ -3,18 +3,18 @@ package main
 import (
 	"context"
 	"flag"
+	"go/format"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/podhmo/go-scan/scantest"
 )
 
 var update = flag.Bool("update", false, "update golden files")
 
-// memoryFileWriter is an in-memory implementation of FileWriter for testing.
 type memoryFileWriter struct {
 	mu      sync.Mutex
 	Outputs map[string][]byte
@@ -30,28 +30,55 @@ func (w *memoryFileWriter) WriteFile(ctx context.Context, path string, data []by
 	return nil
 }
 
-func TestMainIntegration(t *testing.T) {
-	writer := &memoryFileWriter{}
+func TestIntegration_WithTags(t *testing.T) {
+	files := map[string]string{
+		"go.mod": "module example.com/m\ngo 1.24",
+		"tags.go": `
+package tags
+import "context"
+
+// @derivingconvert("DstWithTags")
+type SrcWithTags struct {
+	ID        string
+	Name      string `+"`convert:\"-\"`"+`
+	Age       int    `+"`convert:\"UserAge\"`"+`
+	Profile   string `+"`convert:\",using=convertProfile\"`"+`
+	ManagerID *int   `+"`convert:\",required\"`"+`
+}
+
+type DstWithTags struct {
+	ID        string
+	UserAge   int
+	Profile   string
+	ManagerID *int
+}
+
+func convertProfile(ctx context.Context, s string) string {
+	return "profile:" + s
+}
+`,
+	}
+
+	tmpdir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
 	ctx := context.Background()
+	writer := &memoryFileWriter{}
 	ctx = context.WithValue(ctx, FileWriterKey, writer)
 
-	input := "example.com/convert/sampledata/source"
-	output := "generated_test.go"
-	pkgname := "converter"
-	goldenFile := "testdata/complex.go.golden"
+	pkgpath := "example.com/m"
+	outputFile := "generated.go"
+	pkgname := "tags"
+	goldenFile := "testdata/tags.go.golden"
 
-	err := run(ctx, input, output, pkgname)
+	err := run(ctx, pkgpath, tmpdir, outputFile, pkgname)
 	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}
 
-	if len(writer.Outputs) != 1 {
-		t.Fatalf("expected 1 output file, got %d", len(writer.Outputs))
-	}
-
-	generatedCode, ok := writer.Outputs[output]
+	generatedCode, ok := writer.Outputs[outputFile]
 	if !ok {
-		t.Fatalf("output file %q not found in captured outputs", output)
+		t.Fatalf("output file %q not found in captured outputs", outputFile)
 	}
 
 	if *update {
@@ -67,11 +94,16 @@ func TestMainIntegration(t *testing.T) {
 		t.Fatalf("failed to read golden file: %v", err)
 	}
 
-	normalizedGenerated := strings.TrimSpace(string(generatedCode))
-	normalizedGolden := strings.TrimSpace(string(golden))
+	formattedGenerated, err := format.Source(generatedCode)
+	if err != nil {
+		t.Fatalf("failed to format generated code: %v", err)
+	}
+	formattedGolden, err := format.Source(golden)
+	if err != nil {
+		t.Fatalf("failed to format golden file: %v", err)
+	}
 
-	if diff := cmp.Diff(normalizedGolden, normalizedGenerated); diff != "" {
+	if diff := cmp.Diff(string(formattedGolden), string(formattedGenerated)); diff != "" {
 		t.Errorf("generated code mismatch (-want +got):\n%s", diff)
-		t.Logf("Dumping generated code:\n\n%s", normalizedGenerated)
 	}
 }

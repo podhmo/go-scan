@@ -12,8 +12,9 @@ import (
 )
 
 var (
-	reDerivingConvert = regexp.MustCompile(`@derivingconvert\("([^"]+)"\)`)
-	reConvertRule     = regexp.MustCompile(`// convert:rule "([^"]+)" -> "([^"]+)", using=([a-zA-Z0-9_]+)`)
+	reDerivingConvert      = regexp.MustCompile(`@derivingconvert\("([^"]+)"\)`)
+	reConvertRule          = regexp.MustCompile(`// convert:rule "([^"]+)" -> "([^"]+)", using=([a-zA-Z0-9_]+)`)
+	reConvertValidatorRule = regexp.MustCompile(`// convert:rule "([^"]+)", validator=([a-zA-Z0-9_]+)`)
 )
 
 func Parse(ctx context.Context, scannedPkg *scanner.PackageInfo) (*model.ParsedInfo, error) {
@@ -87,29 +88,44 @@ func Parse(ctx context.Context, scannedPkg *scanner.PackageInfo) (*model.ParsedI
 	for _, astFile := range scannedPkg.AstFiles {
 		for _, commentGroup := range astFile.Comments {
 			for _, comment := range commentGroup.List {
+				// Try parsing as a conversion rule
 				m := reConvertRule.FindStringSubmatch(comment.Text)
-				if m == nil {
-					continue
+				if m != nil {
+					srcTypeName, dstTypeName, usingFunc := m[1], m[2], m[3]
+					srcTypeInfo, err := resolveType(scannedPkg, srcTypeName)
+					if err != nil {
+						return nil, fmt.Errorf("resolving global rule source type %q: %w", srcTypeName, err)
+					}
+					dstTypeInfo, err := resolveType(scannedPkg, dstTypeName)
+					if err != nil {
+						return nil, fmt.Errorf("resolving global rule destination type %q: %w", dstTypeName, err)
+					}
+					rule := model.TypeRule{
+						SrcTypeName: srcTypeName,
+						DstTypeName: dstTypeName,
+						SrcTypeInfo: srcTypeInfo,
+						DstTypeInfo: dstTypeInfo,
+						UsingFunc:   usingFunc,
+					}
+					info.GlobalRules = append(info.GlobalRules, rule)
+					continue // Move to the next comment
 				}
-				srcTypeName, dstTypeName, usingFunc := m[1], m[2], m[3]
 
-				srcTypeInfo, err := resolveType(scannedPkg, srcTypeName)
-				if err != nil {
-					return nil, fmt.Errorf("resolving global rule source type %q: %w", srcTypeName, err)
+				// Try parsing as a validator rule
+				m = reConvertValidatorRule.FindStringSubmatch(comment.Text)
+				if m != nil {
+					dstTypeName, validatorFunc := m[1], m[2]
+					dstTypeInfo, err := resolveType(scannedPkg, dstTypeName)
+					if err != nil {
+						return nil, fmt.Errorf("resolving global validator rule type %q: %w", dstTypeName, err)
+					}
+					rule := model.TypeRule{
+						DstTypeName:   dstTypeName,
+						DstTypeInfo:   dstTypeInfo,
+						ValidatorFunc: validatorFunc,
+					}
+					info.GlobalRules = append(info.GlobalRules, rule)
 				}
-				dstTypeInfo, err := resolveType(scannedPkg, dstTypeName)
-				if err != nil {
-					return nil, fmt.Errorf("resolving global rule destination type %q: %w", dstTypeName, err)
-				}
-
-				rule := model.TypeRule{
-					SrcTypeName: srcTypeName,
-					DstTypeName: dstTypeName,
-					SrcTypeInfo: srcTypeInfo,
-					DstTypeInfo: dstTypeInfo,
-					UsingFunc:   usingFunc,
-				}
-				info.GlobalRules = append(info.GlobalRules, rule)
 			}
 		}
 	}

@@ -19,10 +19,53 @@ package {{ .PackageName }}
 import (
 	"context"
 	"fmt"
+	"strings"
+	"errors"
 	{{- range $path, $alias := .Imports }}
 	{{ $alias }} "{{ $path }}"
 	{{- end }}
 )
+
+// errorCollector collects errors with their field paths.
+type errorCollector struct {
+	errors []error
+	path   []string
+	max    int
+}
+
+func newErrorCollector(max int) *errorCollector {
+	return &errorCollector{max: max}
+}
+
+func (ec *errorCollector) Add(field string, err error) {
+	if ec.max > 0 && len(ec.errors) >= ec.max {
+		return
+	}
+	path := strings.Join(append(ec.path, field), ".")
+	ec.errors = append(ec.errors, fmt.Errorf("field %q: %w", path, err))
+}
+
+func (ec *errorCollector) Enter(field string) {
+	ec.path = append(ec.path, field)
+}
+
+func (ec *errorCollector) Leave() {
+	if len(ec.path) > 0 {
+		ec.path = ec.path[:len(ec.path)-1]
+	}
+}
+
+func (ec *errorCollector) Errors() []error {
+	return ec.errors
+}
+
+func (ec *errorCollector) HasErrors() bool {
+	return len(ec.errors) > 0
+}
+
+func (ec *errorCollector) MaxErrorsReached() bool {
+	return ec.max > 0 && len(ec.errors) >= ec.max
+}
 
 {{ range .Pairs -}}
 // Convert{{ .SrcType.Name }}To{{ .DstType.Name }} converts {{ .SrcType.Name }} to {{ .DstType.Name }}.
@@ -30,11 +73,32 @@ func Convert{{ .SrcType.Name }}To{{ .DstType.Name }}(ctx context.Context, src *{
 	if src == nil {
 		return nil, nil
 	}
-	dst := &{{ .DstType.Name }}{}
+	ec := newErrorCollector(0) // TODO: Get max_errors from annotation
+	dst := convert{{ .SrcType.Name }}To{{ .DstType.Name }}(ctx, ec, src)
+	if ec.HasErrors() {
+		return &dst, errors.Join(ec.Errors()...)
+	}
+	return &dst, nil
+}
+
+// convert{{ .SrcType.Name }}To{{ .DstType.Name }} is a helper function for conversion.
+func convert{{ .SrcType.Name }}To{{ .DstType.Name }}(ctx context.Context, ec *errorCollector, src *{{ .SrcType.Name }}) {{ .DstType.Name }} {
+	dst := {{ .DstType.Name }}{}
+	if ec.MaxErrorsReached() {
+		return dst
+	}
+
 	{{- range .Fields }}
+	ec.Enter("{{ .DstName }}")
 	{{ getAssignment $.Im $.Info . "src" "dst" }}
+	{{ getValidatorCall $.Im $.Info . "dst" }}
+	ec.Leave()
+	if ec.MaxErrorsReached() {
+		return dst
+	}
 	{{- end }}
-	return dst, nil // TODO: error handling
+
+	return dst
 }
 {{ end }}
 `
@@ -100,6 +164,9 @@ func Generate(s *goscan.Scanner, info *model.ParsedInfo) ([]byte, error) {
 	funcMap := template.FuncMap{
 		"getAssignment": func(im *goscan.ImportManager, info *model.ParsedInfo, field FieldMap, srcVar, dstVar string) string {
 			return getAssignment(im, info, field, srcVar, dstVar)
+		},
+		"getValidatorCall": func(im *goscan.ImportManager, info *model.ParsedInfo, field FieldMap, dstVar string) string {
+			return getValidatorCall(im, info, field, dstVar)
 		},
 	}
 
@@ -171,30 +238,71 @@ func resolveFieldType(ctx context.Context, ft *scanner.FieldType) error {
 // Assignment Logic
 // -----------------------------------------------------------------------------
 
+func getValidatorCall(im *goscan.ImportManager, info *model.ParsedInfo, field FieldMap, dstVar string) string {
+	dst := fmt.Sprintf("%s.%s", dstVar, field.DstName)
+	dstFieldTypeName := getFullTypeNameFromFieldType(field.DstFieldT)
+
+	for _, rule := range info.GlobalRules {
+		if rule.ValidatorFunc == "" {
+			continue
+		}
+		ruleDstName := getFullTypeNameFromTypeInfo(rule.DstTypeInfo)
+		if ruleDstName == dstFieldTypeName {
+			// The validator function is now expected to accept `ec`
+			return fmt.Sprintf("%s(ec, %s)", rule.ValidatorFunc, dst)
+		}
+	}
+	return ""
+}
+
+func getFullTypeNameFromFieldType(t *scanner.FieldType) string {
+	if t == nil {
+		return ""
+	}
+	if t.IsPointer || t.IsSlice || t.IsMap {
+		// For now, we don't support validators on complex types
+		return ""
+	}
+	if t.Definition != nil {
+		return getFullTypeNameFromTypeInfo(t.Definition)
+	}
+	return t.Name // for string, int, etc.
+}
+
 func getAssignment(im *goscan.ImportManager, info *model.ParsedInfo, field FieldMap, srcVar, dstVar string) string {
 	src := fmt.Sprintf("%s.%s", srcVar, field.SrcName)
 	dst := fmt.Sprintf("%s.%s", dstVar, field.DstName)
 
 	// Priority 1: Field-level using tag
 	if field.Tag.UsingFunc != "" {
-		return fmt.Sprintf("%s = %s(ctx, %s)", dst, field.Tag.UsingFunc, src)
+		// Custom conversion functions now receive the error collector
+		return fmt.Sprintf("%s = %s(ec, %s)", dst, field.Tag.UsingFunc, src)
 	}
 
 	// Priority 2: Global conversion rule
-	srcFieldTypeName := getFullTypeNameFromTypeInfo(field.SrcFieldT.Definition)
-	dstFieldTypeName := getFullTypeNameFromTypeInfo(field.DstFieldT.Definition)
+	srcFieldTypeName := getFullTypeNameFromFieldType(field.SrcFieldT)
+	dstFieldTypeName := getFullTypeNameFromFieldType(field.DstFieldT)
 
 	for _, rule := range info.GlobalRules {
+		if rule.UsingFunc == "" {
+			continue
+		}
 		ruleSrcName := getFullTypeNameFromTypeInfo(rule.SrcTypeInfo)
 		ruleDstName := getFullTypeNameFromTypeInfo(rule.DstTypeInfo)
 
 		if ruleSrcName == srcFieldTypeName && ruleDstName == dstFieldTypeName {
-			return fmt.Sprintf("%s = %s(ctx, %s)", dst, rule.UsingFunc, src)
+			return fmt.Sprintf("%s = %s(ec, %s)", dst, rule.UsingFunc, src)
 		}
 	}
 
 	if field.Tag.Required && field.SrcFieldT.IsPointer {
-		return fmt.Sprintf("if %s == nil {\n\treturn nil, fmt.Errorf(\"%s is required\")\n}\n%s", src, field.SrcName, generateConversion(im, src, dst, field.SrcFieldT, field.DstFieldT, 0))
+		var b strings.Builder
+		b.WriteString(fmt.Sprintf("if %s == nil {\n", src))
+		b.WriteString(fmt.Sprintf("\tec.Add(\"\", fmt.Errorf(\"%s is required\"))\n", field.SrcName))
+		b.WriteString("} else {\n")
+		b.WriteString(fmt.Sprintf("\t%s\n", generateConversion(im, src, dst, field.SrcFieldT, field.DstFieldT, 0)))
+		b.WriteString("}")
+		return b.String()
 	}
 
 	// Priority 3: Default conversion logic
@@ -216,6 +324,8 @@ func generateConversion(im *goscan.ImportManager, src, dst string, srcT, dstT *s
 		b.WriteString(fmt.Sprintf("\ttmp := %s\n", getTypeName(im, dstT.Elem)))
 		b.WriteString(fmt.Sprintf("\t%s\n", generateConversion(im, "(*"+src+")", "tmp", srcT.Elem, dstT.Elem, depth+1)))
 		b.WriteString(fmt.Sprintf("\t%s = &tmp\n", dst))
+		b.WriteString("} else {\n")
+		b.WriteString(fmt.Sprintf("\t%s = nil\n", dst))
 		b.WriteString("}")
 		return b.String()
 	}
@@ -252,7 +362,7 @@ func generateConversion(im *goscan.ImportManager, src, dst string, srcT, dstT *s
 
 	// Structs
 	if isStruct(srcT) && isStruct(dstT) && srcT.Name != "" && dstT.Name != "" {
-		return fmt.Sprintf("{ conv, err := Convert%sTo%s(ctx, &%s); if err == nil { %s = *conv } }", srcT.Name, dstT.Name, src, dst)
+		return fmt.Sprintf("%s = convert%sTo%s(ctx, ec, &%s)", dst, srcT.Name, dstT.Name, src)
 	}
 
 	// Basic assignment

@@ -50,7 +50,7 @@ The tool is composed of three main architectural components:
 
 ## 4. Data Structures (The Intermediate Representation)
 
-The parser and generator communicate via a set of data structures defined in the `internal/model` package. This is the heart of the tool's architecture.
+The parser and generator communicate via a set of data structures defined in the `model` package. This is the heart of the tool's architecture.
 
 ### `ParsedInfo`
 

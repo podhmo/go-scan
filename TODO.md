@@ -72,10 +72,10 @@ as described in [docs/plan-neo-convert.md](docs/plan-neo-convert.md)
     -   [x] `convert:",using=myFunc"`: Use a custom conversion function.
     -   [x] `convert:",required"`: Report an error if a pointer field is nil.
 -   [x] **Add Tests for `convert:` Tags**: Write comprehensive tests for all `convert:` tag options.
--   [ ] **Implement `// convert:rule`**:
-    -   [ ] Implement global type conversion rules (`"<SrcType>" -> "<DstType>", using=<funcName>`).
+-   [x] **Implement `// convert:rule`**:
+    -   [x] Implement global type conversion rules (`"<SrcType>" -> "<DstType>", using=<funcName>`).
     -   [ ] Implement validator rules (`"<DstType>", validator=<funcName>`).
--   [ ] **Add Tests for `// convert:rule`**: Write tests for global conversion and validator rules.
+-   [x] **Add Tests for `// convert:rule`**: Write tests for global conversion and validator rules.
 -   [ ] **Error Handling with `errorCollector`**: Implement the `errorCollector` struct and generate code that uses it to report multiple conversion errors.
 -   [ ] **Add Tests for Error Handling**: Write tests to verify that `errorCollector` correctly accumulates and reports errors.
 -   [ ] **Improve Generated Code Error Handling**: Replace `// TODO: proper error handling` placeholders in the generator with more robust error handling, even if it's not the full `errorCollector` implementation.

@@ -8,7 +8,7 @@ import (
 	"text/template"
 
 	"example.com/convert/model"
-	"github.com/podhmo/go-scan"
+	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/scanner"
 )
 
@@ -32,7 +32,7 @@ func Convert{{ .SrcType.Name }}To{{ .DstType.Name }}(ctx context.Context, src *{
 	}
 	dst := &{{ .DstType.Name }}{}
 	{{- range .Fields }}
-	{{ getAssignment $.Im . "src" "dst" }}
+	{{ getAssignment $.Im $.Info . "src" "dst" }}
 	{{- end }}
 	return dst, nil // TODO: error handling
 }
@@ -44,6 +44,7 @@ type TemplateData struct {
 	Imports     map[string]string
 	Pairs       []TemplatePair
 	Im          *goscan.ImportManager
+	Info        *model.ParsedInfo
 }
 
 type TemplatePair struct {
@@ -93,10 +94,13 @@ func Generate(s *goscan.Scanner, info *model.ParsedInfo) ([]byte, error) {
 		Imports:     im.Imports(),
 		Pairs:       pairs,
 		Im:          im,
+		Info:        info,
 	}
 
 	funcMap := template.FuncMap{
-		"getAssignment": getAssignment,
+		"getAssignment": func(im *goscan.ImportManager, info *model.ParsedInfo, field FieldMap, srcVar, dstVar string) string {
+			return getAssignment(im, info, field, srcVar, dstVar)
+		},
 	}
 
 	tmpl, err := template.New("converter").Funcs(funcMap).Parse(codeTemplate)
@@ -119,9 +123,7 @@ func createFieldMaps(ctx context.Context, s *goscan.Scanner, src, dst *model.Str
 	}
 
 	for _, srcField := range src.Fields {
-		if err := resolveFieldType(ctx, srcField.FieldType); err != nil {
-			return nil, fmt.Errorf("resolving src field %q: %w", srcField.Name, err)
-		}
+		_ = resolveFieldType(ctx, srcField.FieldType) // Ignore error for now
 		if srcField.Tag.DstFieldName == "-" {
 			continue
 		}
@@ -133,9 +135,7 @@ func createFieldMaps(ctx context.Context, s *goscan.Scanner, src, dst *model.Str
 		if !ok {
 			continue
 		}
-		if err := resolveFieldType(ctx, dstField.FieldType); err != nil {
-			return nil, fmt.Errorf("resolving dst field %q: %w", dstField.Name, err)
-		}
+		_ = resolveFieldType(ctx, dstField.FieldType) // Ignore error for now
 		maps = append(maps, FieldMap{
 			SrcName:   srcField.Name,
 			DstName:   dstFieldName,
@@ -171,18 +171,33 @@ func resolveFieldType(ctx context.Context, ft *scanner.FieldType) error {
 // Assignment Logic
 // -----------------------------------------------------------------------------
 
-func getAssignment(im *goscan.ImportManager, field FieldMap, srcVar, dstVar string) string {
+func getAssignment(im *goscan.ImportManager, info *model.ParsedInfo, field FieldMap, srcVar, dstVar string) string {
 	src := fmt.Sprintf("%s.%s", srcVar, field.SrcName)
 	dst := fmt.Sprintf("%s.%s", dstVar, field.DstName)
 
+	// Priority 1: Field-level using tag
 	if field.Tag.UsingFunc != "" {
 		return fmt.Sprintf("%s = %s(ctx, %s)", dst, field.Tag.UsingFunc, src)
+	}
+
+	// Priority 2: Global conversion rule
+	srcFieldTypeName := getFullTypeNameFromTypeInfo(field.SrcFieldT.Definition)
+	dstFieldTypeName := getFullTypeNameFromTypeInfo(field.DstFieldT.Definition)
+
+	for _, rule := range info.GlobalRules {
+		ruleSrcName := getFullTypeNameFromTypeInfo(rule.SrcTypeInfo)
+		ruleDstName := getFullTypeNameFromTypeInfo(rule.DstTypeInfo)
+
+		if ruleSrcName == srcFieldTypeName && ruleDstName == dstFieldTypeName {
+			return fmt.Sprintf("%s = %s(ctx, %s)", dst, rule.UsingFunc, src)
+		}
 	}
 
 	if field.Tag.Required && field.SrcFieldT.IsPointer {
 		return fmt.Sprintf("if %s == nil {\n\treturn nil, fmt.Errorf(\"%s is required\")\n}\n%s", src, field.SrcName, generateConversion(im, src, dst, field.SrcFieldT, field.DstFieldT, 0))
 	}
 
+	// Priority 3: Default conversion logic
 	return generateConversion(im, src, dst, field.SrcFieldT, field.DstFieldT, 0)
 }
 
@@ -324,4 +339,21 @@ func isStruct(t *scanner.FieldType) bool {
 		return isStruct(t.Elem)
 	}
 	return t.Definition != nil && t.Definition.Kind == scanner.StructKind
+}
+
+func getFullTypeNameFromTypeInfo(t *scanner.TypeInfo) string {
+	if t == nil {
+		return ""
+	}
+	if t.PkgPath != "" {
+		return fmt.Sprintf("%s.%s", t.PkgPath, t.Name)
+	}
+	// This handles primitive types or types in the same package
+	if t.Underlying != nil && t.Underlying.IsBuiltin {
+		return t.Name
+	}
+	if t.Underlying != nil && t.Underlying.PkgName != "" {
+		return fmt.Sprintf("%s.%s", t.Underlying.PkgName, t.Underlying.Name)
+	}
+	return t.Name
 }

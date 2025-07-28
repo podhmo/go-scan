@@ -11,7 +11,7 @@ import (
 
 	"example.com/convert/generator"
 	"example.com/convert/parser"
-	"github.com/podhmo/go-scan"
+	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/locator"
 )
 
@@ -19,10 +19,13 @@ type FileWriter interface {
 	WriteFile(ctx context.Context, path string, data []byte, perm os.FileMode) error
 }
 type defaultFileWriter struct{}
+
 func (w *defaultFileWriter) WriteFile(ctx context.Context, path string, data []byte, perm os.FileMode) error {
 	return os.WriteFile(path, data, perm)
 }
+
 type contextKey string
+
 const FileWriterKey contextKey = "fileWriter"
 
 func main() {

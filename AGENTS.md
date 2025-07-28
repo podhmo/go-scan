@@ -2,7 +2,7 @@
 
 コードを変更したら以下を必ずやってください
 
-コードのフォーマット
+コードのフォーマット（goimportsを使ってるのでunused importも消えます）
 
 ```shell
 make format

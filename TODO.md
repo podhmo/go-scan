@@ -60,9 +60,9 @@ as described in [docs/plan-neo-convert.md](docs/plan-neo-convert.md)
 -   [x] **Advanced Field Conversion Logic**:
     -   [x] Handle pointer-to-pointer (`*Src -> *Dst`) and value-to-pointer (`Src -> *Dst`) conversions.
     -   [x] Implement automatic type conversion for common pairs (e.g., `time.Time` to `string`).
--   [ ] **Generator for Slice Fields**: Extend the generator to handle slice fields (e.g., `[]SrcType` to `[]DstType`).
-    -   [ ] Generate loops to iterate over slices and convert each element.
--   [ ] **Add Tests for Slice Fields**: Write tests for slice field conversions.
+-   [x] **Generator for Slice Fields**: Extend the generator to handle slice fields (e.g., `[]SrcType` to `[]DstType`).
+    -   [x] Generate loops to iterate over slices and convert each element.
+-   [x] **Add Tests for Slice Fields**: Write tests for slice field conversions.
 -   [ ] **Generator for Map Fields**: Extend the generator to handle map fields (e.g., `map[string]SrcType` to `map[string]DstType`).
 -   [ ] **Add Tests for Map Fields**: Write tests for map field conversions.
 -   [ ] **Map Element Conversion**: The generator now produces recursive helper function calls for elements within maps, supporting maps of structs.
@@ -78,6 +78,7 @@ as described in [docs/plan-neo-convert.md](docs/plan-neo-convert.md)
 -   [ ] **Add Tests for `// convert:rule`**: Write tests for global conversion and validator rules.
 -   [ ] **Error Handling with `errorCollector`**: Implement the `errorCollector` struct and generate code that uses it to report multiple conversion errors.
 -   [ ] **Add Tests for Error Handling**: Write tests to verify that `errorCollector` correctly accumulates and reports errors.
+-   [ ] **Improve Generated Code Error Handling**: Replace `// TODO: proper error handling` placeholders in the generator with more robust error handling, even if it's not the full `errorCollector` implementation.
 
 ### Known Issues
 

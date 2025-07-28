@@ -2,8 +2,8 @@ package generator
 
 import (
 	"bytes"
+	"context"
 	"fmt"
-	"go/format"
 	"text/template"
 
 	"example.com/convert/model"
@@ -28,7 +28,7 @@ import (
 func Convert{{ .SrcType.Name }}To{{ .DstType.Name }}(ctx context.Context, src *{{ .SrcType.Name }}) (*{{ .DstType.Name }}, error) {
 	dst := &{{ .DstType.Name }}{}
 	{{- range .Fields }}
-	{{ getAssignment . "src" "dst" }}
+	{{ getAssignment $.Im . "src" "dst" }}
 	{{- end }}
 	return dst, nil // TODO: error handling
 }
@@ -39,6 +39,7 @@ type TemplateData struct {
 	PackageName string
 	Imports     map[string]string
 	Pairs       []TemplatePair
+	Im          *goscan.ImportManager
 }
 
 type TemplatePair struct {
@@ -71,7 +72,7 @@ func Generate(s *goscan.Scanner, info *model.ParsedInfo) ([]byte, error) {
 			return nil, fmt.Errorf("destination struct %q not found", pair.DstTypeName)
 		}
 
-		fieldMaps, err := createFieldMaps(srcStruct, dstStruct)
+		fieldMaps, err := createFieldMaps(context.Background(), s, srcStruct, dstStruct)
 		if err != nil {
 			return nil, fmt.Errorf("creating field maps for %s -> %s: %w", srcStruct.Name, dstStruct.Name, err)
 		}
@@ -87,10 +88,11 @@ func Generate(s *goscan.Scanner, info *model.ParsedInfo) ([]byte, error) {
 		PackageName: info.PackageName,
 		Imports:     im.Imports(),
 		Pairs:       pairs,
+		Im:          im,
 	}
 
 	funcMap := template.FuncMap{
-		"getAssignment": func(field FieldMap, srcVar, dstVar string) string {
+		"getAssignment": func(im *goscan.ImportManager, field FieldMap, srcVar, dstVar string) string {
 			src := fmt.Sprintf("%s.%s", srcVar, field.SrcName)
 			dst := fmt.Sprintf("%s.%s", dstVar, field.DstName)
 
@@ -107,8 +109,99 @@ func Generate(s *goscan.Scanner, info *model.ParsedInfo) ([]byte, error) {
 			if !field.SrcFieldT.IsPointer && field.DstFieldT.IsPointer {
 				return fmt.Sprintf("{ tmp := %s; %s = &tmp }", src, dst)
 			}
+
+			// Pointer to Slice and Slice to Pointer
+			if field.SrcFieldT.IsPointer && field.SrcFieldT.Elem.IsSlice && field.DstFieldT.IsSlice {
+				// *[]Src -> []Dst
+				return fmt.Sprintf("if %s != nil { %s = *%s }", src, dst, src)
+			}
+			if field.SrcFieldT.IsSlice && field.DstFieldT.IsPointer && field.DstFieldT.Elem.IsSlice {
+				// []Src -> *[]Dst
+				return fmt.Sprintf("{ tmp := %s; %s = &tmp }", src, dst)
+			}
+
 			if field.SrcFieldT.IsPointer && field.DstFieldT.IsPointer {
+				if field.SrcFieldT.Elem.IsSlice && field.DstFieldT.Elem.IsSlice {
+					// *[]Src -> *[]Dst
+					srcElem := field.SrcFieldT.Elem.Elem
+					dstElem := field.DstFieldT.Elem.Elem
+					if srcElem.Definition != nil && srcElem.Definition.Kind == scanner.StructKind && dstElem.Definition != nil && dstElem.Definition.Kind == scanner.StructKind {
+						return fmt.Sprintf(`if %s != nil {
+						convertedSlice := make([]%s, len(*%s))
+						for i, item := range *%s {
+							converted, err := Convert%sTo%s(ctx, &item)
+							if err != nil {
+								// TODO: proper error handling
+								return nil, err
+							}
+							convertedSlice[i] = *converted
+						}
+						%s = &convertedSlice
+					}`, src, dstElem.Definition.Name, src, src, srcElem.Definition.Name, dstElem.Definition.Name, dst)
+					}
+				} else if field.SrcFieldT.Elem.IsSlice && field.SrcFieldT.Elem.Elem.IsPointer && field.DstFieldT.Elem.IsSlice && field.DstFieldT.Elem.Elem.IsPointer {
+					// *[]*Src -> *[]*Dst
+					srcElem := field.SrcFieldT.Elem.Elem.Elem
+					dstElem := field.DstFieldT.Elem.Elem.Elem
+					if srcElem.Definition != nil && srcElem.Definition.Kind == scanner.StructKind && dstElem.Definition != nil && dstElem.Definition.Kind == scanner.StructKind {
+						return fmt.Sprintf(`if %s != nil {
+						convertedSlice := make([]*%s, len(**%s))
+						for i, item := range **%s {
+							if item == nil {
+								convertedSlice[i] = nil
+								continue
+							}
+							converted, err := Convert%sTo%s(ctx, item)
+							if err != nil {
+								// TODO: proper error handling
+								return nil, err
+							}
+							convertedSlice[i] = converted
+						}
+						tmp := convertedSlice
+						%s = &tmp
+					}`, src, dstElem.Definition.Name, src, src, srcElem.Definition.Name, dstElem.Definition.Name, dst)
+					}
+				}
+				// *Src -> *Dst
 				return fmt.Sprintf("if %s != nil { tmp := *%s; %s = &tmp }", src, src, dst)
+			}
+
+			// Slice conversion
+			if field.SrcFieldT.IsSlice && field.DstFieldT.IsSlice {
+				srcElem := field.SrcFieldT.Elem
+				dstElem := field.DstFieldT.Elem
+				if srcElem.Definition != nil && srcElem.Definition.Kind == scanner.StructKind && dstElem.Definition != nil && dstElem.Definition.Kind == scanner.StructKind {
+					return fmt.Sprintf(`{
+						convertedSlice := make([]%s, len(%s))
+						for i, item := range %s {
+							converted, err := Convert%sTo%s(ctx, &item)
+							if err != nil {
+								// TODO: proper error handling
+								return nil, err
+							}
+							convertedSlice[i] = *converted
+						}
+						%s = convertedSlice
+					}`, dstElem.Definition.Name, src, src, srcElem.Definition.Name, dstElem.Definition.Name, dst)
+				} else if srcElem.IsPointer && dstElem.IsPointer && srcElem.Elem.Definition != nil && srcElem.Elem.Definition.Kind == scanner.StructKind && dstElem.Elem.Definition != nil && dstElem.Elem.Definition.Kind == scanner.StructKind {
+					return fmt.Sprintf(`{
+						convertedSlice := make([]*%s, len(%s))
+						for i, item := range %s {
+							if item == nil {
+								convertedSlice[i] = nil
+								continue
+							}
+							converted, err := Convert%sTo%s(ctx, item)
+							if err != nil {
+								// TODO: proper error handling
+								return nil, err
+							}
+							convertedSlice[i] = converted
+						}
+						%s = convertedSlice
+					}`, dstElem.Elem.Definition.Name, src, src, srcElem.Elem.Definition.Name, dstElem.Elem.Definition.Name, dst)
+				}
 			}
 			return fmt.Sprintf("%s = %s", dst, src)
 		},
@@ -124,15 +217,15 @@ func Generate(s *goscan.Scanner, info *model.ParsedInfo) ([]byte, error) {
 		return nil, fmt.Errorf("executing template: %w", err)
 	}
 
-	formatted, err := format.Source(buf.Bytes())
-	if err != nil {
-		return nil, fmt.Errorf("formatting generated code: %w\n---\n%s", err, buf.String())
-	}
-
-	return formatted, nil
+	// formatted, err := format.Source(buf.Bytes())
+	// if err != nil {
+	// 	return nil, fmt.Errorf("formatting generated code: %w\n---\n%s", err, buf.String())
+	// }
+	// return formatted, nil
+	return buf.Bytes(), nil
 }
 
-func createFieldMaps(src, dst *model.StructInfo) ([]FieldMap, error) {
+func createFieldMaps(ctx context.Context, s *goscan.Scanner, src, dst *model.StructInfo) ([]FieldMap, error) {
 	var maps []FieldMap
 	dstFields := make(map[string]model.FieldInfo)
 	for _, f := range dst.Fields {
@@ -140,6 +233,9 @@ func createFieldMaps(src, dst *model.StructInfo) ([]FieldMap, error) {
 	}
 
 	for _, srcField := range src.Fields {
+		if err := resolveFieldType(ctx, srcField.FieldType); err != nil {
+			return nil, fmt.Errorf("resolving src field %q: %w", srcField.Name, err)
+		}
 		if srcField.Tag.DstFieldName == "-" {
 			continue
 		}
@@ -151,6 +247,9 @@ func createFieldMaps(src, dst *model.StructInfo) ([]FieldMap, error) {
 		if !ok {
 			continue
 		}
+		if err := resolveFieldType(ctx, dstField.FieldType); err != nil {
+			return nil, fmt.Errorf("resolving dst field %q: %w", dstField.Name, err)
+		}
 		maps = append(maps, FieldMap{
 			SrcName:   srcField.Name,
 			DstName:   dstFieldName,
@@ -160,4 +259,24 @@ func createFieldMaps(src, dst *model.StructInfo) ([]FieldMap, error) {
 		})
 	}
 	return maps, nil
+}
+
+func resolveFieldType(ctx context.Context, ft *scanner.FieldType) error {
+	if ft == nil {
+		return nil
+	}
+	if _, err := ft.Resolve(ctx, make(map[string]struct{})); err != nil {
+		return err
+	}
+	if ft.Elem != nil {
+		if err := resolveFieldType(ctx, ft.Elem); err != nil {
+			return fmt.Errorf("resolving element type: %w", err)
+		}
+	}
+	if ft.MapKey != nil {
+		if err := resolveFieldType(ctx, ft.MapKey); err != nil {
+			return fmt.Errorf("resolving map key type: %w", err)
+		}
+	}
+	return nil
 }

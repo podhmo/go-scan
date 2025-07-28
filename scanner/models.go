@@ -78,6 +78,7 @@ type Overlay map[string][]byte
 // TypeInfo represents a single type declaration (`type T ...`).
 type TypeInfo struct {
 	Name       string           `json:"name"`
+	PkgPath    string           `json:"pkgPath"`
 	FilePath   string           `json:"filePath"`
 	Doc        string           `json:"doc,omitempty"`
 	Kind       Kind             `json:"kind"`

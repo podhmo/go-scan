@@ -59,3 +59,19 @@ type ConvertTag struct {
 	Required     bool
 	RawValue     string
 }
+
+type TypeKind int
+
+const (
+	KindUnknown TypeKind = iota
+	KindBasic
+	KindIdent // Identifier, could be a struct, named type, etc.
+	KindPointer
+	KindSlice
+	KindArray
+	KindMap
+	KindInterface
+	KindStruct // Specifically a struct type definition
+	KindNamed  // A named type (type MyInt int)
+	KindFunc
+)

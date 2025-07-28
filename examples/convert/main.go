@@ -4,83 +4,105 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 
 	"example.com/convert/generator"
 	"example.com/convert/parser"
-	goscan "github.com/podhmo/go-scan"
-	"github.com/podhmo/go-scan/scanner"
+	"github.com/podhmo/go-scan"
+	"github.com/podhmo/go-scan/locator"
 )
 
-// ContextKey is a private type for context keys to avoid collisions.
-type ContextKey string
-
-const (
-	// FileWriterKey is the context key for the file writer interceptor.
-	FileWriterKey = ContextKey("fileWriter")
-)
-
-// FileWriter is an interface for writing files, allowing for interception during tests.
 type FileWriter interface {
 	WriteFile(ctx context.Context, path string, data []byte, perm os.FileMode) error
 }
-
-// WriteFile is a context-aware file writing function.
-func WriteFile(ctx context.Context, path string, data []byte, perm os.FileMode) error {
-	if writer, ok := ctx.Value(FileWriterKey).(FileWriter); ok {
-		return writer.WriteFile(ctx, path, data, perm)
-	}
+type defaultFileWriter struct{}
+func (w *defaultFileWriter) WriteFile(ctx context.Context, path string, data []byte, perm os.FileMode) error {
 	return os.WriteFile(path, data, perm)
 }
+type contextKey string
+const FileWriterKey contextKey = "fileWriter"
 
 func main() {
 	var (
-		input   = flag.String("input", "", "input package path (e.g., example.com/convert/sampledata/source)")
+		pkgpath = flag.String("pkg", "", "target package path (e.g. example.com/m/models)")
+		workdir = flag.String("cwd", ".", "current working directory")
 		output  = flag.String("output", "generated.go", "output file name")
-		pkgname = flag.String("pkgname", "main", "package name for the generated file")
+		pkgname = flag.String("pkgname", "", "package name for the generated file (default: inferred from output dir)")
 	)
+	flag.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage: convert -pkg <package_path> [-cwd <dir>] [-output <filename>] [-pkgname <name>]\n")
+		flag.PrintDefaults()
+	}
 	flag.Parse()
 
-	if *input == "" {
-		log.Fatal("-input is required")
+	if *pkgpath == "" {
+		flag.Usage()
+		os.Exit(1)
 	}
 
-	if err := run(context.Background(), *input, *output, *pkgname); err != nil {
-		log.Fatalf("!! %+v", err)
+	ctx := context.Background()
+	ctx = context.WithValue(ctx, FileWriterKey, &defaultFileWriter{})
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})))
+
+	if err := run(ctx, *pkgpath, *workdir, *output, *pkgname); err != nil {
+		slog.ErrorContext(ctx, "Error", slog.Any("error", err))
+		os.Exit(1)
 	}
 }
 
-func run(ctx context.Context, input, output, pkgname string) error {
-	s, err := goscan.New()
+func run(ctx context.Context, pkgpath, workdir, output, pkgname string) error {
+	s, err := goscan.New(goscan.WithWorkDir(workdir))
 	if err != nil {
 		return fmt.Errorf("failed to create scanner: %w", err)
 	}
 
-	pkg, err := s.ScanPackageByImport(ctx, input)
+	l, err := locator.New(workdir, nil)
 	if err != nil {
-		return fmt.Errorf("failed to scan package %s: %w", input, err)
+		return fmt.Errorf("failed to create locator: %w", err)
+	}
+	pkgDir, err := l.FindPackageDir(pkgpath)
+	if err != nil {
+		return fmt.Errorf("could not find package dir for %q: %w", pkgpath, err)
 	}
 
-	return Generate(ctx, s, pkg, output, pkgname)
-}
-
-// Generate produces converter code for the given package.
-func Generate(ctx context.Context, s *goscan.Scanner, pkgInfo *scanner.PackageInfo, output, pkgname string) error {
-	info, err := parser.Parse(ctx, pkgInfo.ImportPath, ".")
+	scannedPkg, err := s.ScanPackage(ctx, pkgDir)
 	if err != nil {
-		return fmt.Errorf("failed to parse conversion pairs: %w", err)
+		return fmt.Errorf("failed to scan package: %w", err)
+	}
+
+	slog.DebugContext(ctx, "Parsing package", "path", scannedPkg.ImportPath)
+	info, err := parser.Parse(ctx, scannedPkg)
+	if err != nil {
+		return fmt.Errorf("failed to parse package info: %w", err)
 	}
 
 	if len(info.ConversionPairs) == 0 {
-		fmt.Println("No @derivingconvert annotations found.")
+		slog.InfoContext(ctx, "No @derivingconvert annotations found, nothing to generate.")
 		return nil
 	}
+	slog.DebugContext(ctx, "Found conversion pairs", "count", len(info.ConversionPairs))
 
-	generatedCode, err := generator.Generate(s, pkgname, info.ConversionPairs, pkgInfo)
-	if err != nil {
-		return fmt.Errorf("failed to generate converter code: %w", err)
+	if pkgname == "" {
+		pkgname = info.PackageName
 	}
 
-	return WriteFile(ctx, output, generatedCode, 0644)
+	slog.DebugContext(ctx, "Generating code", "package", pkgname)
+	generatedCode, err := generator.Generate(s, info)
+	if err != nil {
+		return fmt.Errorf("failed to generate code: %w", err)
+	}
+
+	writer, ok := ctx.Value(FileWriterKey).(FileWriter)
+	if !ok {
+		return fmt.Errorf("file writer not found in context")
+	}
+
+	slog.DebugContext(ctx, "Writing output", "file", output)
+	if err := writer.WriteFile(ctx, output, generatedCode, 0644); err != nil {
+		return fmt.Errorf("failed to write generated code to %s: %w", output, err)
+	}
+
+	slog.InfoContext(ctx, "Successfully generated conversion functions", "output", output)
+	return nil
 }

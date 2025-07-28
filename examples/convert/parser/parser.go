@@ -3,49 +3,55 @@ package parser
 import (
 	"context"
 	"fmt"
-	"go/token"
+	"reflect"
 	"regexp"
+	"strings"
 
 	"example.com/convert/model"
-	"github.com/podhmo/go-scan/locator"
 	"github.com/podhmo/go-scan/scanner"
 )
 
-var reDerivingConvert = regexp.MustCompile(`@derivingconvert\("([^,)]+)"\)`)
+var reDerivingConvert = regexp.MustCompile(`@derivingconvert\("([^"]+)"\)`)
 
-// Parse parses the package and returns the parsed information.
-func Parse(ctx context.Context, pkgpath string, workdir string) (*model.ParsedInfo, error) {
-	// 1. Use locator to find module info and package directory
-	if workdir == "" {
-		workdir = "."
-	}
-	l, err := locator.New(workdir, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create locator from current directory: %w", err)
-	}
-
-	pkgDir, err := l.FindPackageDir(pkgpath)
-	if err != nil {
-		return nil, fmt.Errorf("could not find package directory for import path %q: %w", pkgpath, err)
-	}
-
-	// 2. Create and configure the scanner
-	fset := token.NewFileSet()
-	s, err := scanner.New(fset, nil, nil, l.ModulePath(), l.RootDir())
-	if err != nil {
-		return nil, fmt.Errorf("failed to create scanner: %w", err)
-	}
-
-	// 3. Scan the located package directory
-	scannedPkg, err := s.ScanPackage(ctx, pkgDir, s)
-	if err != nil {
-		return nil, fmt.Errorf("failed to scan package at %q: %w", pkgDir, err)
-	}
-
-	// 4. Parse annotations
+func Parse(ctx context.Context, scannedPkg *scanner.PackageInfo) (*model.ParsedInfo, error) {
 	info := &model.ParsedInfo{
-		PackageName: scannedPkg.Name,
-		PackagePath: pkgpath,
+		PackageName:     scannedPkg.Name,
+		PackagePath:     scannedPkg.ImportPath,
+		Structs:         make(map[string]*model.StructInfo),
+		NamedTypes:      make(map[string]*scanner.TypeInfo),
+		ConversionPairs: []model.ConversionPair{},
+	}
+
+	for _, t := range scannedPkg.Types {
+		info.NamedTypes[t.Name] = t
+		if t.Kind == scanner.StructKind {
+			modelStructInfo := &model.StructInfo{
+				Name: t.Name,
+				Type: t,
+			}
+			for _, f := range t.Struct.Fields {
+				tag, err := parseConvertTag(reflect.StructTag(f.Tag))
+				if err != nil {
+					return nil, fmt.Errorf("parsing tag for %s.%s: %w", t.Name, f.Name, err)
+				}
+
+				fieldTypeInfo := scannedPkg.Lookup(f.Type.Name)
+				if fieldTypeInfo == nil {
+					fieldTypeInfo = &scanner.TypeInfo{Name: f.Type.Name}
+				}
+
+				fieldInfo := model.FieldInfo{
+					Name:         f.Name,
+					OriginalName: f.Name,
+					TypeInfo:     fieldTypeInfo,
+					FieldType:    f.Type, // Store the original FieldType
+					Tag:          tag,
+					ParentStruct: modelStructInfo,
+				}
+				modelStructInfo.Fields = append(modelStructInfo.Fields, fieldInfo)
+			}
+			info.Structs[t.Name] = modelStructInfo
+		}
 	}
 
 	for _, t := range scannedPkg.Types {
@@ -56,12 +62,55 @@ func Parse(ctx context.Context, pkgpath string, workdir string) (*model.ParsedIn
 		if m == nil {
 			continue
 		}
+		dstTypeName := m[1]
+		srcTypeInfo, ok := info.NamedTypes[t.Name]
+		if !ok {
+			return nil, fmt.Errorf("internal error: source type %q not found after initial pass", t.Name)
+		}
+		dstTypeInfo := scannedPkg.Lookup(dstTypeName)
+		if dstTypeInfo == nil {
+			return nil, fmt.Errorf("destination type %q for source %q not found in scanned package", dstTypeName, t.Name)
+		}
 		pair := model.ConversionPair{
 			SrcTypeName: t.Name,
-			DstTypeName: m[1],
+			DstTypeName: dstTypeInfo.Name,
+			SrcTypeInfo: srcTypeInfo,
+			DstTypeInfo: dstTypeInfo,
 		}
 		info.ConversionPairs = append(info.ConversionPairs, pair)
 	}
 
 	return info, nil
+}
+
+func parseConvertTag(tag reflect.StructTag) (model.ConvertTag, error) {
+	value := tag.Get("convert")
+	result := model.ConvertTag{RawValue: value}
+	if value == "" {
+		return result, nil
+	}
+	parts := strings.Split(value, ",")
+	if len(parts) == 0 {
+		return result, nil
+	}
+	if !strings.Contains(parts[0], "=") {
+		result.DstFieldName = strings.TrimSpace(parts[0])
+		parts = parts[1:]
+	}
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		switch {
+		case part == "-":
+			result.DstFieldName = "-"
+		case part == "required":
+			result.Required = true
+		case strings.HasPrefix(part, "using="):
+			result.UsingFunc = strings.TrimPrefix(part, "using=")
+		default:
+			if result.DstFieldName == "" && !strings.Contains(part, "=") {
+				result.DstFieldName = part
+			}
+		}
+	}
+	return result, nil
 }

@@ -60,24 +60,24 @@ as described in [docs/plan-neo-convert.md](docs/plan-neo-convert.md)
 -   [x] **Advanced Field Conversion Logic**:
     -   [x] Handle pointer-to-pointer (`*Src -> *Dst`) and value-to-pointer (`Src -> *Dst`) conversions.
     -   [x] Implement automatic type conversion for common pairs (e.g., `time.Time` to `string`).
--   [x] **Generator for Slice Fields**: Extend the generator to handle slice fields (e.g., `[]SrcType` to `[]DstType`).
-    -   [x] Generate loops to iterate over slices and convert each element.
--   [x] **Add Tests for Slice Fields**: Write tests for slice field conversions.
--   [x] **Generator for Map Fields**: Extend the generator to handle map fields (e.g., `map[string]SrcType` to `map[string]DstType`). (Note: implementation is in progress, tests are still failing due to formatting issues).
--   [x] **Add Tests for Map Fields**: Write tests for map field conversions.
--   [x] **Map Element Conversion**: The generator now produces recursive helper function calls for elements within maps, supporting maps of structs.
--   **Implement `convert:` Tag Handling**:
-    -   `convert:"-"`: Skip a field.
-    -   `convert:"NewName"`: Map to a different field name.
-    -   `convert:",using=myFunc"`: Use a custom conversion function.
-    -   `convert:",required"`: Report an error if a pointer field is nil.
--   **Add Tests for `convert:` Tags**: Write comprehensive tests for all `convert:` tag options.
--   **Implement `// convert:rule`**:
-    -   Implement global type conversion rules (`"<SrcType>" -> "<DstType>", using=<funcName>`).
-    -   Implement validator rules (`"<DstType>", validator=<funcName>`).
--   **Add Tests for `// convert:rule`**: Write tests for global conversion and validator rules.
--   **Error Handling with `errorCollector`**: Implement the `errorCollector` struct and generate code that uses it to report multiple conversion errors.
--   **Add Tests for Error Handling**: Write tests to verify that `errorCollector` correctly accumulates and reports errors.
+-   [ ] **Generator for Slice Fields**: Extend the generator to handle slice fields (e.g., `[]SrcType` to `[]DstType`).
+    -   [ ] Generate loops to iterate over slices and convert each element.
+-   [ ] **Add Tests for Slice Fields**: Write tests for slice field conversions.
+-   [ ] **Generator for Map Fields**: Extend the generator to handle map fields (e.g., `map[string]SrcType` to `map[string]DstType`).
+-   [ ] **Add Tests for Map Fields**: Write tests for map field conversions.
+-   [ ] **Map Element Conversion**: The generator now produces recursive helper function calls for elements within maps, supporting maps of structs.
+-   [x] **Implement `convert:` Tag Handling**:
+    -   [x] `convert:"-"`: Skip a field.
+    -   [x] `convert:"NewName"`: Map to a different field name.
+    -   [x] `convert:",using=myFunc"`: Use a custom conversion function.
+    -   [x] `convert:",required"`: Report an error if a pointer field is nil.
+-   [x] **Add Tests for `convert:` Tags**: Write comprehensive tests for all `convert:` tag options.
+-   [ ] **Implement `// convert:rule`**:
+    -   [ ] Implement global type conversion rules (`"<SrcType>" -> "<DstType>", using=<funcName>`).
+    -   [ ] Implement validator rules (`"<DstType>", validator=<funcName>`).
+-   [ ] **Add Tests for `// convert:rule`**: Write tests for global conversion and validator rules.
+-   [ ] **Error Handling with `errorCollector`**: Implement the `errorCollector` struct and generate code that uses it to report multiple conversion errors.
+-   [ ] **Add Tests for Error Handling**: Write tests to verify that `errorCollector` correctly accumulates and reports errors.
 
 ### Known Issues
 

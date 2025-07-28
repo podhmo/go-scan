@@ -4,23 +4,50 @@ package tags
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"example.com/convert/model"
 	context "context"
 	fmt "fmt"
 )
+
+func convertSrcWithTagsToDstWithTags(ec *model.ErrorCollector, src *SrcWithTags) *DstWithTags {
+	if src == nil {
+		return nil
+	}
+	dst := &DstWithTags{}
+	if ec.MaxErrorsReached() { return dst }
+	ec.Enter("ID")
+	dst.ID = src.ID
+	ec.Leave()
+	if ec.MaxErrorsReached() { return dst }
+	ec.Enter("UserAge")
+	dst.UserAge = src.Age
+	ec.Leave()
+	if ec.MaxErrorsReached() { return dst }
+	ec.Enter("Profile")
+	dst.Profile = convertProfile(ec, src.Profile)
+	ec.Leave()
+	if ec.MaxErrorsReached() { return dst }
+	ec.Enter("ManagerID")
+	if src.ManagerID == nil {
+	ec.Add(fmt.Errorf("ManagerID is required"))
+} else {
+	dst.ManagerID = src.ManagerID // Cannot convert pointer types, element type is nil
+}
+	ec.Leave()
+	return dst
+}
 
 // ConvertSrcWithTagsToDstWithTags converts SrcWithTags to DstWithTags.
 func ConvertSrcWithTagsToDstWithTags(ctx context.Context, src *SrcWithTags) (*DstWithTags, error) {
 	if src == nil {
 		return nil, nil
 	}
-	dst := &DstWithTags{}
-	dst.ID = src.ID
-	dst.UserAge = src.Age
-	dst.Profile = convertProfile(ctx, src.Profile)
-	if src.ManagerID == nil {
-	return nil, fmt.Errorf("ManagerID is required")
-}
-dst.ManagerID = src.ManagerID // Cannot convert pointer types, element type is nil
-	return dst, nil // TODO: error handling
+	ec := model.NewErrorCollector(0) // TODO: get maxErrors from annotation
+	dst := convertSrcWithTagsToDstWithTags(ec, src)
+	if ec.HasErrors() {
+		return dst, errors.Join(ec.Errors()...)
+	}
+	return dst, nil
 }

@@ -5,7 +5,9 @@ import (
 	"flag"
 	"go/format"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -105,6 +107,112 @@ func convertProfile(ctx context.Context, s string) string {
 
 	if diff := cmp.Diff(string(formattedGolden), string(formattedGenerated)); diff != "" {
 		t.Errorf("generated code mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestIntegration_WithErrorHandling(t *testing.T) {
+	files := map[string]string{
+		"go.mod": "module example.com/m\ngo 1.24",
+		"errors.go": `
+package errors
+
+import (
+	"context"
+	"errors"
+	"example.com/convert/model"
+)
+
+// @derivingconvert("Dst")
+type Src struct {
+	Name      string    ` + "`convert:\",using=convertNameWithError\"`" + `
+	ManagerID *int      ` + "`convert:\",required\"`" + `
+	SpouseID  *int      ` + "`convert:\",required\"`" + `
+}
+
+type Dst struct {
+	Name      string
+	ManagerID *int
+	SpouseID  *int
+}
+
+func convertNameWithError(ec *model.ErrorCollector, name string) string {
+	ec.Add(errors.New("name conversion failed"))
+	return "error-name"
+}
+`,
+		"errors_test.go": `
+package errors
+import (
+	"context"
+	"strings"
+	"testing"
+)
+
+func TestRun(t *testing.T) {
+	src := &Src{
+		Name: "test",
+		ManagerID: nil, // required field is nil
+		SpouseID: nil,
+	}
+	_, err := ConvertSrcToDst(context.Background(), src)
+	if err == nil {
+		t.Fatal("expected an error, but got nil")
+	}
+
+	expectedErrors := []string{
+		"Name: name conversion failed",
+		"ManagerID: ManagerID is required",
+		"SpouseID: SpouseID is required",
+	}
+
+	errStr := err.Error()
+	for _, sub := range expectedErrors {
+		if !strings.Contains(errStr, sub) {
+			t.Errorf("expected error to contain %q, but it was %q", sub, errStr)
+		}
+	}
+}
+`,
+	}
+
+	// We expect the generator to succeed, but the generated code to fail at runtime.
+	tmpdir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	ctx := context.Background()
+	writer := &memoryFileWriter{}
+	ctx = context.WithValue(ctx, FileWriterKey, writer)
+
+	pkgpath := "example.com/m"
+	outputFile := "generated.go"
+	pkgname := "errors"
+
+	// 1. Generate the converter code
+	err := run(ctx, pkgpath, tmpdir, outputFile, pkgname)
+	if err != nil {
+		t.Fatalf("run() failed: %v", err)
+	}
+
+	generatedCode, ok := writer.Outputs[outputFile]
+	if !ok {
+		t.Fatalf("output file %q not found in captured outputs", outputFile)
+	}
+
+	// 2. Write the generated code to the temp directory
+	generatedPath := filepath.Join(tmpdir, "generated.go")
+	if err := os.WriteFile(generatedPath, generatedCode, 0644); err != nil {
+		t.Fatalf("failed to write generated code: %v", err)
+	}
+
+	// 3. Run the test in the temp directory that uses the generated code
+	cmd := exec.Command("go", "test", "-v")
+	cmd.Dir = tmpdir
+	output, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Errorf("expected go test to fail, but it succeeded. Output:\n%s", output)
+	}
+	if !strings.Contains(string(output), "expected error to contain") {
+		t.Logf("Go test output:\n%s", output)
 	}
 }
 

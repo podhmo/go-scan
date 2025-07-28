@@ -109,7 +109,61 @@ func Generate(s *goscan.Scanner, info *model.ParsedInfo) ([]byte, error) {
 			if !field.SrcFieldT.IsPointer && field.DstFieldT.IsPointer {
 				return fmt.Sprintf("{ tmp := %s; %s = &tmp }", src, dst)
 			}
+
+			// Pointer to Slice and Slice to Pointer
+			if field.SrcFieldT.IsPointer && field.SrcFieldT.Elem.IsSlice && field.DstFieldT.IsSlice {
+				// *[]Src -> []Dst
+				return fmt.Sprintf("if %s != nil { %s = *%s }", src, dst, src)
+			}
+			if field.SrcFieldT.IsSlice && field.DstFieldT.IsPointer && field.DstFieldT.Elem.IsSlice {
+				// []Src -> *[]Dst
+				return fmt.Sprintf("{ tmp := %s; %s = &tmp }", src, dst)
+			}
+
 			if field.SrcFieldT.IsPointer && field.DstFieldT.IsPointer {
+				if field.SrcFieldT.Elem.IsSlice && field.DstFieldT.Elem.IsSlice {
+					// *[]Src -> *[]Dst
+					srcElem := field.SrcFieldT.Elem.Elem
+					dstElem := field.DstFieldT.Elem.Elem
+					if srcElem.Definition != nil && srcElem.Definition.Kind == scanner.StructKind && dstElem.Definition != nil && dstElem.Definition.Kind == scanner.StructKind {
+						return fmt.Sprintf(`if %s != nil {
+						convertedSlice := make([]%s, len(*%s))
+						for i, item := range *%s {
+							converted, err := Convert%sTo%s(ctx, &item)
+							if err != nil {
+								// TODO: proper error handling
+								return nil, err
+							}
+							convertedSlice[i] = *converted
+						}
+						%s = &convertedSlice
+					}`, src, dstElem.Definition.Name, src, src, srcElem.Definition.Name, dstElem.Definition.Name, dst)
+					}
+				} else if field.SrcFieldT.Elem.IsSlice && field.SrcFieldT.Elem.Elem.IsPointer && field.DstFieldT.Elem.IsSlice && field.DstFieldT.Elem.Elem.IsPointer {
+					// *[]*Src -> *[]*Dst
+					srcElem := field.SrcFieldT.Elem.Elem.Elem
+					dstElem := field.DstFieldT.Elem.Elem.Elem
+					if srcElem.Definition != nil && srcElem.Definition.Kind == scanner.StructKind && dstElem.Definition != nil && dstElem.Definition.Kind == scanner.StructKind {
+						return fmt.Sprintf(`if %s != nil {
+						convertedSlice := make([]*%s, len(**%s))
+						for i, item := range **%s {
+							if item == nil {
+								convertedSlice[i] = nil
+								continue
+							}
+							converted, err := Convert%sTo%s(ctx, item)
+							if err != nil {
+								// TODO: proper error handling
+								return nil, err
+							}
+							convertedSlice[i] = converted
+						}
+						tmp := convertedSlice
+						%s = &tmp
+					}`, src, dstElem.Definition.Name, src, src, srcElem.Definition.Name, dstElem.Definition.Name, dst)
+					}
+				}
+				// *Src -> *Dst
 				return fmt.Sprintf("if %s != nil { tmp := *%s; %s = &tmp }", src, src, dst)
 			}
 
@@ -130,6 +184,23 @@ func Generate(s *goscan.Scanner, info *model.ParsedInfo) ([]byte, error) {
 						}
 						%s = convertedSlice
 					}`, dstElem.Definition.Name, src, src, srcElem.Definition.Name, dstElem.Definition.Name, dst)
+				} else if srcElem.IsPointer && dstElem.IsPointer && srcElem.Elem.Definition != nil && srcElem.Elem.Definition.Kind == scanner.StructKind && dstElem.Elem.Definition != nil && dstElem.Elem.Definition.Kind == scanner.StructKind {
+					return fmt.Sprintf(`{
+						convertedSlice := make([]*%s, len(%s))
+						for i, item := range %s {
+							if item == nil {
+								convertedSlice[i] = nil
+								continue
+							}
+							converted, err := Convert%sTo%s(ctx, item)
+							if err != nil {
+								// TODO: proper error handling
+								return nil, err
+							}
+							convertedSlice[i] = converted
+						}
+						%s = convertedSlice
+					}`, dstElem.Elem.Definition.Name, src, src, srcElem.Elem.Definition.Name, dstElem.Elem.Definition.Name, dst)
 				}
 			}
 			return fmt.Sprintf("%s = %s", dst, src)

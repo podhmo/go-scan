@@ -2,6 +2,7 @@ package generator
 
 import (
 	"context"
+	"flag"
 	"go/format"
 	"path/filepath"
 	"strings"
@@ -13,6 +14,8 @@ import (
 	"github.com/podhmo/go-scan/scantest"
 )
 
+var update = flag.Bool("update", false, "update golden files")
+
 func TestGenerate_CrossPackage_WithSlices(t *testing.T) {
 	files := map[string]string{
 		"go.mod": `
@@ -20,17 +23,17 @@ module example.com/convert
 go 1.24
 replace github.com/podhmo/go-scan => ../../
 `,
-		"models/source/source.go": `
+		"sampledata/source/source.go": `
 package source
 import "time"
 
-// @derivingconvert("example.com/convert/models/destination.DstUser")
+// @derivingconvert("example.com/convert/sampledata/destination.DstUser")
 type SrcUser struct {
 	ID   int64
 	Name string
 }
 
-// @derivingconvert("example.com/convert/models/destination.DstOrder")
+// @derivingconvert("example.com/convert/sampledata/destination.DstOrder")
 type SrcOrder struct {
 	OrderID string
 	Items   []SrcItem
@@ -41,7 +44,7 @@ type SrcItem struct {
 	Quantity int
 }
 `,
-		"models/destination/destination.go": `
+		"sampledata/destination/destination.go": `
 package destination
 
 type DstUser struct {
@@ -70,17 +73,17 @@ type DstItem struct {
 		t.Fatalf("goscan.New failed: %+v", err)
 	}
 
-	pkg, err := s.ScanPackage(ctx, filepath.Join(tmpdir, "models/source"))
+	pkg, err := s.ScanPackage(ctx, filepath.Join(tmpdir, "sampledata/source"))
 	if err != nil {
 		t.Fatalf("s.ScanPackage failed: %+v", err)
 	}
 
-	pairs, err := parser.Parse(ctx, pkg, s)
+	info, err := parser.Parse(ctx, pkg.ImportPath, tmpdir)
 	if err != nil {
 		t.Fatalf("parser.Parse failed: %+v", err)
 	}
 
-	got, err := Generate(s, "converter", pairs, pkg)
+	got, err := Generate(s, "converter", info.ConversionPairs, pkg)
 	if err != nil {
 		t.Fatalf("Generate failed: %+v", err)
 	}
@@ -91,8 +94,8 @@ package converter
 
 import (
 	"context"
-	destination "example.com/convert/models/destination"
-	source "example.com/convert/models/source"
+	destination "example.com/convert/sampledata/destination"
+	source "example.com/convert/sampledata/source"
 )
 
 // ConvertSrcUserToDstUser converts SrcUser to DstUser.
@@ -128,20 +131,6 @@ func convertSrcOrderToDstOrder(ctx context.Context, src source.SrcOrder) destina
 	}
 	return dst
 }
-
-// ConvertSrcItemToDstItem converts SrcItem to DstItem.
-func ConvertSrcItemToDstItem(ctx context.Context, src source.SrcItem) (destination.DstItem, error) {
-	dst := convertSrcItemToDstItem(ctx, src)
-	return dst, nil
-}
-
-// convertSrcItemToDstItem is the internal conversion function.
-func convertSrcItemToDstItem(ctx context.Context, src source.SrcItem) destination.DstItem {
-	dst := destination.DstItem{}
-	dst.SKU = src.SKU
-	dst.Quantity = src.Quantity
-	return dst
-}
 `
 
 	formattedGot, err := format.Source(got)
@@ -167,10 +156,10 @@ module example.com/convert
 go 1.24
 replace github.com/podhmo/go-scan => ../../
 `,
-		"models/source/source.go": `
+		"sampledata/source/source.go": `
 package source
 
-// @derivingconvert("example.com/convert/models/destination.DstProfile")
+// @derivingconvert("example.com/convert/sampledata/destination.DstProfile")
 type SrcProfile struct {
 	Name       string
 	Attributes map[string]string
@@ -181,7 +170,7 @@ type SrcTag struct {
 	Value string
 }
 `,
-		"models/destination/destination.go": `
+		"sampledata/destination/destination.go": `
 package destination
 
 type DstProfile struct {
@@ -205,17 +194,17 @@ type DstTag struct {
 		t.Fatalf("goscan.New failed: %+v", err)
 	}
 
-	pkg, err := s.ScanPackage(ctx, filepath.Join(tmpdir, "models/source"))
+	pkg, err := s.ScanPackage(ctx, filepath.Join(tmpdir, "sampledata/source"))
 	if err != nil {
 		t.Fatalf("s.ScanPackage failed: %+v", err)
 	}
 
-	pairs, err := parser.Parse(ctx, pkg, s)
+	info, err := parser.Parse(ctx, pkg.ImportPath, tmpdir)
 	if err != nil {
 		t.Fatalf("parser.Parse failed: %+v", err)
 	}
 
-	got, err := Generate(s, "converter", pairs, pkg)
+	got, err := Generate(s, "converter", info.ConversionPairs, pkg)
 	if err != nil {
 		t.Fatalf("Generate failed: %+v", err)
 	}
@@ -226,8 +215,8 @@ package converter
 
 import (
 	"context"
-	destination "example.com/convert/models/destination"
-	source "example.com/convert/models/source"
+	destination "example.com/convert/sampledata/destination"
+	source "example.com/convert/sampledata/source"
 )
 
 // ConvertSrcProfileToDstProfile converts SrcProfile to DstProfile.
@@ -254,19 +243,6 @@ func convertSrcProfileToDstProfile(ctx context.Context, src source.SrcProfile) d
 		}
 		dst.Tags = newMap
 	}
-	return dst
-}
-
-// ConvertSrcTagToDstTag converts SrcTag to DstTag.
-func ConvertSrcTagToDstTag(ctx context.Context, src source.SrcTag) (destination.DstTag, error) {
-	dst := convertSrcTagToDstTag(ctx, src)
-	return dst, nil
-}
-
-// convertSrcTagToDstTag is the internal conversion function.
-func convertSrcTagToDstTag(ctx context.Context, src source.SrcTag) destination.DstTag {
-	dst := destination.DstTag{}
-	dst.Value = src.Value
 	return dst
 }
 `

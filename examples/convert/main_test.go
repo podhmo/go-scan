@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +11,8 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 )
+
+var update = flag.Bool("update", false, "update golden files")
 
 // memoryFileWriter is an in-memory implementation of FileWriter for testing.
 type memoryFileWriter struct {
@@ -32,9 +35,10 @@ func TestMainIntegration(t *testing.T) {
 	ctx := context.Background()
 	ctx = context.WithValue(ctx, FileWriterKey, writer)
 
-	input := "example.com/convert/models/source"
+	input := "example.com/convert/sampledata/source"
 	output := "generated_test.go"
 	pkgname := "converter"
+	goldenFile := "testdata/complex.go.golden"
 
 	err := run(ctx, input, output, pkgname)
 	if err != nil {
@@ -50,7 +54,15 @@ func TestMainIntegration(t *testing.T) {
 		t.Fatalf("output file %q not found in captured outputs", output)
 	}
 
-	golden, err := os.ReadFile("testdata/complex.go.golden")
+	if *update {
+		if err := os.WriteFile(goldenFile, generatedCode, 0644); err != nil {
+			t.Fatalf("failed to update golden file: %v", err)
+		}
+		t.Logf("golden file updated: %s", goldenFile)
+		return
+	}
+
+	golden, err := os.ReadFile(goldenFile)
 	if err != nil {
 		t.Fatalf("failed to read golden file: %v", err)
 	}

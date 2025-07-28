@@ -36,7 +36,7 @@ func WriteFile(ctx context.Context, path string, data []byte, perm os.FileMode) 
 
 func main() {
 	var (
-		input   = flag.String("input", "", "input package path (e.g., example.com/convert/models/source)")
+		input   = flag.String("input", "", "input package path (e.g., example.com/convert/sampledata/source)")
 		output  = flag.String("output", "generated.go", "output file name")
 		pkgname = flag.String("pkgname", "main", "package name for the generated file")
 	)
@@ -67,17 +67,17 @@ func run(ctx context.Context, input, output, pkgname string) error {
 
 // Generate produces converter code for the given package.
 func Generate(ctx context.Context, s *goscan.Scanner, pkgInfo *scanner.PackageInfo, output, pkgname string) error {
-	pairs, err := parser.Parse(ctx, pkgInfo, s)
+	info, err := parser.Parse(ctx, pkgInfo.ImportPath, ".")
 	if err != nil {
 		return fmt.Errorf("failed to parse conversion pairs: %w", err)
 	}
 
-	if len(pairs) == 0 {
+	if len(info.ConversionPairs) == 0 {
 		fmt.Println("No @derivingconvert annotations found.")
 		return nil
 	}
 
-	generatedCode, err := generator.Generate(s, pkgname, pairs, pkgInfo)
+	generatedCode, err := generator.Generate(s, pkgname, info.ConversionPairs, pkgInfo)
 	if err != nil {
 		return fmt.Errorf("failed to generate converter code: %w", err)
 	}

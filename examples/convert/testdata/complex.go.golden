@@ -4,8 +4,8 @@ package converter
 
 import (
 	"context"
-	destination "example.com/convert/models/destination"
-	source "example.com/convert/models/source"
+	destination "example.com/convert/sampledata/destination"
+	source "example.com/convert/sampledata/source"
 )
 
 // ConvertSrcUserToDstUser converts SrcUser to DstUser.
@@ -110,30 +110,5 @@ func convertSourceWithMapToTargetWithMap(ctx context.Context, src source.SourceW
 		}
 		dst.StringToStr = newMap
 	}
-	return dst
-}
-
-// ConvertSrcInternalDetailToDstInternalDetail converts SrcInternalDetail to DstInternalDetail.
-func ConvertSrcInternalDetailToDstInternalDetail(ctx context.Context, src source.SrcInternalDetail) (destination.DstInternalDetail, error) {
-	dst := convertSrcInternalDetailToDstInternalDetail(ctx, src)
-	return dst, nil
-}
-
-// convertSrcInternalDetailToDstInternalDetail is the internal conversion function.
-func convertSrcInternalDetailToDstInternalDetail(ctx context.Context, src source.SrcInternalDetail) destination.DstInternalDetail {
-	dst := destination.DstInternalDetail{}
-	return dst
-}
-
-// ConvertSubSourceToSubTarget converts SubSource to SubTarget.
-func ConvertSubSourceToSubTarget(ctx context.Context, src source.SubSource) (destination.SubTarget, error) {
-	dst := convertSubSourceToSubTarget(ctx, src)
-	return dst, nil
-}
-
-// convertSubSourceToSubTarget is the internal conversion function.
-func convertSubSourceToSubTarget(ctx context.Context, src source.SubSource) destination.SubTarget {
-	dst := destination.SubTarget{}
-	dst.Value = src.Value
 	return dst
 }

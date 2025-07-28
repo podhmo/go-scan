@@ -287,6 +287,7 @@ func (s *Scanner) parseGenDecl(ctx context.Context, decl *ast.GenDecl, info *Pac
 func (s *Scanner) parseTypeSpec(ctx context.Context, sp *ast.TypeSpec, absFilePath string) *TypeInfo {
 	typeInfo := &TypeInfo{
 		Name:     sp.Name.Name,
+		PkgPath:  s.currentPkg.ImportPath,
 		FilePath: absFilePath,
 		Doc:      commentText(sp.Doc),
 		Node:     sp,

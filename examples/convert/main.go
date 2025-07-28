@@ -1,11 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"flag"
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 
 	"example.com/convert/generator"
 	"example.com/convert/parser"
@@ -99,8 +101,24 @@ func run(ctx context.Context, pkgpath, workdir, output, pkgname string) error {
 	}
 
 	slog.DebugContext(ctx, "Writing output", "file", output)
-	if err := writer.WriteFile(ctx, output, generatedCode, 0644); err != nil {
-		return fmt.Errorf("failed to write generated code to %s: %w", output, err)
+
+	cmd := exec.CommandContext(ctx, "goimports")
+	cmd.Stdin = bytes.NewReader(generatedCode)
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	var errBuf bytes.Buffer
+	cmd.Stderr = &errBuf
+
+	if err := cmd.Run(); err != nil {
+		// fallback to original generated code if goimports fails
+		slog.WarnContext(ctx, "goimports failed, using unformatted code", "error", err, "stderr", errBuf.String())
+		if err := writer.WriteFile(ctx, output, generatedCode, 0644); err != nil {
+			return fmt.Errorf("failed to write (unformatted) generated code to %s: %w", output, err)
+		}
+	} else {
+		if err := writer.WriteFile(ctx, output, out.Bytes(), 0644); err != nil {
+			return fmt.Errorf("failed to write formatted code to %s: %w", output, err)
+		}
 	}
 
 	slog.InfoContext(ctx, "Successfully generated conversion functions", "output", output)

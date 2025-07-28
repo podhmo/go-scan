@@ -1,4 +1,4 @@
-package convert
+package model
 
 // ParsedInfo holds all parsed conversion rules and type information.
 type ParsedInfo struct {
@@ -12,5 +12,4 @@ type ParsedInfo struct {
 type ConversionPair struct {
 	SrcTypeName string
 	DstTypeName string
-	MaxErrors   int
 }

@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"example.com/convert/models/destination"
-	"example.com/convert/models/source"
+	"example.com/convert/sampledata/destination"
+	"example.com/convert/sampledata/source"
 )
 
 func TestConvertUser(t *testing.T) {

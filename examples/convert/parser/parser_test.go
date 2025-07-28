@@ -1,10 +1,11 @@
-package convert
+package parser
 
 import (
 	"context"
 	"os"
 	"testing"
 
+	"example.com/convert/model"
 	"github.com/google/go-cmp/cmp"
 	"github.com/podhmo/go-scan/scantest"
 )
@@ -14,7 +15,7 @@ func TestParse(t *testing.T) {
 		name    string
 		files   map[string]string
 		pkgPath string
-		want    *ParsedInfo
+		want    *model.ParsedInfo
 		wantErr bool
 	}{
 		{
@@ -24,17 +25,17 @@ func TestParse(t *testing.T) {
 				"models/models.go": `
 package models
 
-// @derivingconvert(Dst)
+// @derivingconvert("Dst")
 type Src struct {}
 
 type Dst struct {}
 `,
 			},
 			pkgPath: "myapp/models",
-			want: &ParsedInfo{
+			want: &model.ParsedInfo{
 				PackageName: "models",
 				PackagePath: "myapp/models",
-				ConversionPairs: []ConversionPair{
+				ConversionPairs: []model.ConversionPair{
 					{SrcTypeName: "Src", DstTypeName: "Dst"},
 				},
 			},
@@ -56,7 +57,7 @@ type Dst struct {}
 			defer os.Chdir(cwd)
 
 			ctx := context.Background()
-			got, err := Parse(ctx, tt.pkgPath)
+			got, err := Parse(ctx, tt.pkgPath, dir)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Parse() error = %v, wantErr %v", err, tt.wantErr)
 				return

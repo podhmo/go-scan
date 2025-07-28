@@ -5,9 +5,10 @@ import (
 	"context"
 	"fmt"
 	"go/format"
+	"strings"
 	"text/template"
 
-	"example.com/convert/parser"
+	"example.com/convert/model"
 	"github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/scanner"
 )
@@ -21,7 +22,7 @@ import (
 )
 
 {{ range .Pairs }}
-// {{ .ExportedFuncName }} converts {{ .SrcType.Name }} to {{ .DstType.Name }}.
+// {{ .ExportedFuncName }} converts {{ .SrcTypeName }} to {{ .DstTypeName }}.
 func {{ .ExportedFuncName }}(ctx context.Context, src {{ .SrcType.Qualifier }}) ({{ .DstType.Qualifier }}, error) {
 	dst := {{ .InternalFuncName }}(ctx, src)
 	return dst, nil
@@ -47,6 +48,8 @@ type TemplateData struct {
 type TemplatePair struct {
 	ExportedFuncName string
 	InternalFuncName string
+	SrcTypeName      string
+	DstTypeName      string
 	SrcType          QualifiedType
 	DstType          QualifiedType
 	Fields           []FieldMap
@@ -71,86 +74,49 @@ type QualifiedType struct {
 	Qualifier string
 }
 
-func Generate(s *goscan.Scanner, packageName string, pairs []parser.ConversionPair, pkgInfo *scanner.PackageInfo) ([]byte, error) {
+func Generate(s *goscan.Scanner, packageName string, pairs []model.ConversionPair, pkgInfo *scanner.PackageInfo) ([]byte, error) {
 	im := goscan.NewImportManager(&scanner.PackageInfo{ImportPath: "example.com/convert/" + packageName})
 	im.Add("context", "context")
 
-	worklist := make(map[string]bool)
-	allPairs := make([]parser.ConversionPair, len(pairs))
-	copy(allPairs, pairs)
+	dstPackages := make(map[string]*scanner.PackageInfo)
 
+	templatePairs := make([]TemplatePair, 0, len(pairs))
 	for _, pair := range pairs {
-		key := fmt.Sprintf("%s_to_%s", pair.SrcType.Name, pair.DstType.Name)
-		worklist[key] = true
-	}
-
-	i := 0
-	for i < len(allPairs) {
-		pair := allPairs[i]
-		i++
-		if pair.SrcType.Struct == nil {
-			continue
+		srcType := findType(pkgInfo.Types, pair.SrcTypeName)
+		if srcType == nil {
+			return nil, fmt.Errorf("could not find source type %q in package %q", pair.SrcTypeName, pkgInfo.ImportPath)
 		}
-		for _, field := range createFieldMaps(s, pair.SrcType.Struct, pair.DstType.Struct, im) {
-			if field.NeedsHelper {
-				var srcElem, dstElem *scanner.FieldType
-				if field.IsSlice {
-					srcElem = field.SrcField.Type.Elem
-					dstElem = field.DstField.Type.Elem
-				} else if field.IsMap {
-					srcElem = field.SrcField.Type.Elem
-					dstElem = field.DstField.Type.Elem
-				} else {
-					srcElem = field.SrcField.Type
-					dstElem = field.DstField.Type
-				}
 
-				if srcElem == nil || dstElem == nil {
-					continue
-				}
-
-				// Dereference pointers to get the base type for the key
-				srcBase := srcElem
-				if srcBase.IsPointer {
-					srcBase = srcBase.Elem
-				}
-				dstBase := dstElem
-				if dstBase.IsPointer {
-					dstBase = dstBase.Elem
-				}
-
-				if srcBase == nil || dstBase == nil {
-					continue
-				}
-
-				helperKey := fmt.Sprintf("%s_to_%s", srcBase.Name, dstBase.Name)
-				if !worklist[helperKey] {
-					if field.SrcDef != nil && field.DstDef != nil {
-						allPairs = append(allPairs, parser.ConversionPair{
-							SrcType:          field.SrcDef,
-							DstType:          field.DstDef,
-							DstPkgImportPath: dstBase.FullImportPath(),
-						})
-						worklist[helperKey] = true
-					}
-				}
+		dstPkgPath, dstTypeName := splitFullTypeName(pair.DstTypeName)
+		dstPkg, ok := dstPackages[dstPkgPath]
+		if !ok {
+			var err error
+			dstPkg, err = s.ScanPackageByImport(context.Background(), dstPkgPath)
+			if err != nil {
+				return nil, fmt.Errorf("could not find destination package %q: %w", dstPkgPath, err)
 			}
+			dstPackages[dstPkgPath] = dstPkg
 		}
-	}
+		dstType := findType(dstPkg.Types, dstTypeName)
+		if dstType == nil {
+			return nil, fmt.Errorf("could not find destination type %q in package %q", dstTypeName, dstPkgPath)
+		}
 
-	templatePairs := make([]TemplatePair, 0, len(allPairs))
-	for _, pair := range allPairs {
-		if pair.SrcType.Struct == nil || pair.DstType.Struct == nil {
+		if srcType.Struct == nil || dstType.Struct == nil {
 			continue
 		}
-		srcQualifier := im.Qualify(pkgInfo.ImportPath, pair.SrcType.Name)
-		dstQualifier := im.Qualify(pair.DstPkgImportPath, pair.DstType.Name)
-		fieldMaps := createFieldMaps(s, pair.SrcType.Struct, pair.DstType.Struct, im)
+
+		srcQualifier := im.Qualify(pkgInfo.ImportPath, srcType.Name)
+		dstQualifier := im.Qualify(dstPkgPath, dstType.Name)
+		fieldMaps := createFieldMaps(s, srcType.Struct, dstType.Struct, im)
+
 		templatePairs = append(templatePairs, TemplatePair{
-			ExportedFuncName: fmt.Sprintf("Convert%sTo%s", pair.SrcType.Name, pair.DstType.Name),
-			InternalFuncName: fmt.Sprintf("convert%sTo%s", pair.SrcType.Name, pair.DstType.Name),
-			SrcType:          QualifiedType{Name: pair.SrcType.Name, Qualifier: srcQualifier},
-			DstType:          QualifiedType{Name: pair.DstType.Name, Qualifier: dstQualifier},
+			ExportedFuncName: fmt.Sprintf("Convert%sTo%s", srcType.Name, dstType.Name),
+			InternalFuncName: fmt.Sprintf("convert%sTo%s", srcType.Name, dstType.Name),
+			SrcTypeName:      srcType.Name,
+			DstTypeName:      dstType.Name,
+			SrcType:          QualifiedType{Name: srcType.Name, Qualifier: srcQualifier},
+			DstType:          QualifiedType{Name: dstType.Name, Qualifier: dstQualifier},
 			Fields:           fieldMaps,
 			im:               im,
 		})
@@ -188,6 +154,23 @@ func Generate(s *goscan.Scanner, packageName string, pairs []parser.ConversionPa
 	}
 
 	return formatted, nil
+}
+
+func findType(types []*scanner.TypeInfo, name string) *scanner.TypeInfo {
+	for _, t := range types {
+		if t.Name == name {
+			return t
+		}
+	}
+	return nil
+}
+
+func splitFullTypeName(fullTypeName string) (pkgPath, typeName string) {
+	lastDotIndex := strings.LastIndex(fullTypeName, ".")
+	if lastDotIndex == -1 {
+		return "", fullTypeName
+	}
+	return fullTypeName[:lastDotIndex], fullTypeName[lastDotIndex+1:]
 }
 
 func getAssignment(field FieldMap, srcVar, dstVar string) string {
@@ -437,7 +420,7 @@ func createFieldMaps(s *goscan.Scanner, srcStruct, dstStruct *scanner.StructInfo
 			}
 
 			var srcDef, dstDef *scanner.TypeInfo
-			if checkTypeSrc != nil && checkTypeDst != nil {
+			if checkTypeSrc != nil && checkTypeDst != nil && !checkTypeSrc.IsBuiltin && !checkTypeDst.IsBuiltin {
 				checkTypeSrc.SetResolver(s)
 				checkTypeDst.SetResolver(s)
 				srcDef, _ = checkTypeSrc.Resolve(context.Background(), make(map[string]struct{}))

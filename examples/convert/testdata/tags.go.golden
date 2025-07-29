@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+
 	"github.com/podhmo/go-scan/examples/convert/model"
 )
 
@@ -29,7 +30,7 @@ func convertSrcWithTagsToDstWithTags(ctx context.Context, ec *model.ErrorCollect
 		return dst
 	}
 	ec.Enter("Profile")
-	dst.Profile = convertProfile(ctx, src.Profile)
+	dst.Profile = convertProfile(ctx, ec, src.Profile)
 	ec.Leave()
 	if ec.MaxErrorsReached() {
 		return dst

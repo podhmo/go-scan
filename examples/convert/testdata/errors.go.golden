@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+
 	"github.com/podhmo/go-scan/examples/convert/model"
 )
 
@@ -17,7 +18,7 @@ func convertSrcToDst(ctx context.Context, ec *model.ErrorCollector, src *Src) *D
 		return dst
 	}
 	ec.Enter("Name")
-	dst.Name = convertNameWithError(ctx, src.Name)
+	dst.Name = convertNameWithError(ctx, ec, src.Name)
 	ec.Leave()
 	if ec.MaxErrorsReached() {
 		return dst

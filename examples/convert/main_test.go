@@ -53,7 +53,7 @@ type DstWithTags struct {
 	ManagerID *int
 }
 
-func convertProfile(ctx context.Context, s string) string {
+func convertProfile(ctx context.Context, ec *model.ErrorCollector, s string) string {
 	return "profile:" + s
 }
 `,
@@ -216,10 +216,10 @@ import (
 	"example.com/m/model"
 )
 
-func TimeToString(ctx context.Context, t time.Time) string {
+func TimeToString(ctx context.Context, ec *model.ErrorCollector, t time.Time) string {
 	return t.Format("2006-01-02")
 }
-func ValidateString(ec *model.ErrorCollector, s string) {
+func ValidateString(ctx context.Context, ec *model.ErrorCollector, s string) {
 	if s == "" {
 		ec.Add(fmt.Errorf("string is empty"))
 	}
@@ -231,12 +231,22 @@ package model
 import "fmt"
 type ErrorCollector struct {
 	errors []error
+	path []string
+}
+func NewErrorCollector(max int) *ErrorCollector {
+	return &ErrorCollector{}
 }
 func (ec *ErrorCollector) Add(err error) {
 	ec.errors = append(ec.errors, err)
 }
-func (ec *ErrorCollector) Enter(s string) {}
-func (ec *ErrorCollector) Leave() {}
+func (ec *ErrorCollector) Enter(s string) {
+	ec.path = append(ec.path, s)
+}
+func (ec *ErrorCollector) Leave() {
+	if len(ec.path) > 0 {
+		ec.path = ec.path[:len(ec.path)-1]
+	}
+}
 func (ec *ErrorCollector) MaxErrorsReached() bool { return false }
 `,
 	}
@@ -683,7 +693,7 @@ type Dst struct {
 	SpouseID  *int
 }
 
-func convertNameWithError(ec *model.ErrorCollector, name string) string {
+func convertNameWithError(ctx context.Context, ec *model.ErrorCollector, name string) string {
 	ec.Add(errors.New("name conversion failed"))
 	return "error-name"
 }
@@ -797,11 +807,11 @@ type Dst struct {
 	UpdatedAt string
 }
 
-func convertTimeToString(ctx context.Context, t time.Time) string {
+func convertTimeToString(ctx context.Context, ec *model.ErrorCollector, t time.Time) string {
 	return t.Format("2006-01-02")
 }
 
-func overrideTime(ctx context.Context, t time.Time) string {
+func overrideTime(ctx context.Context, ec *model.ErrorCollector, t time.Time) string {
 	return "overridden"
 }
 `,
@@ -1210,7 +1220,7 @@ type Dst struct {
 	Data map[string]string
 }
 // convert:rule "int" -> "string", using=convertIntToString
-func convertIntToString(ctx context.Context, i int) string {
+func convertIntToString(ctx context.Context, ec *model.ErrorCollector, i int) string {
 	return strconv.Itoa(i)
 }
 `,

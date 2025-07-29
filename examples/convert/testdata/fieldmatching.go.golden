@@ -4,7 +4,7 @@ package fieldmatching
 import (
 	"context"
 	"errors"
-	"fmt"
+
 	"github.com/podhmo/go-scan/examples/convert/model"
 )
 

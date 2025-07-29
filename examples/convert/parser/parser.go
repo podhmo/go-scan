@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"example.com/convert/model"
+	"github.com/podhmo/go-scan/examples/convert/model"
 	"github.com/podhmo/go-scan/scanner"
 )
 

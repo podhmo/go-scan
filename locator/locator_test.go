@@ -370,3 +370,67 @@ replace example.com/prefixmod => ./local/prefixmod
 
 // TODO: Add tests for getReplaceDirectives specifically if complex parsing logic needs unit testing.
 // For now, its behavior is indirectly tested via TestFindPackageDirWithReplace.
+
+func TestFindPackageDirWithReplaceParent(t *testing.T) {
+	// This test simulates a common scenario in development where a tool (sub-module)
+	// wants to use the development version of its dependency (the parent module).
+	// Structure:
+	// /tmp/root/
+	//   go.mod (module example.com/parent)
+	//   dependency/
+	//     ...
+	//   sub/
+	//     go.mod (module example.com/parent/sub, replace example.com/parent => ../)
+	//     main.go
+
+	// 1. Setup parent module structure
+	parentDir, err := os.MkdirTemp("", "parent-module-*")
+	if err != nil {
+		t.Fatalf("Failed to create parent temp dir: %v", err)
+	}
+	defer os.RemoveAll(parentDir)
+
+	if err := os.WriteFile(filepath.Join(parentDir, "go.mod"), []byte("module example.com/parent\n"), 0644); err != nil {
+		t.Fatalf("Failed to write parent go.mod: %v", err)
+	}
+	dependencyDir := filepath.Join(parentDir, "dependency")
+	if err := os.Mkdir(dependencyDir, 0755); err != nil {
+		t.Fatalf("Failed to create dependency dir: %v", err)
+	}
+
+	// 2. Setup sub-module structure inside parent
+	subDir := filepath.Join(parentDir, "sub")
+	if err := os.Mkdir(subDir, 0755); err != nil {
+		t.Fatalf("Failed to create sub dir: %v", err)
+	}
+	subGoModContent := `
+module example.com/parent/sub
+go 1.16
+replace example.com/parent => ../
+`
+	if err := os.WriteFile(filepath.Join(subDir, "go.mod"), []byte(subGoModContent), 0644); err != nil {
+		t.Fatalf("Failed to write sub go.mod: %v", err)
+	}
+
+	// 3. Test: from within the sub-module, locate a package in the parent module via replace
+	l, err := New(subDir, nil)
+	if err != nil {
+		t.Fatalf("New() failed in sub-directory: %v", err)
+	}
+
+	// We are in "sub", trying to find "example.com/parent/dependency"
+	// The replace rule should map "example.com/parent" to "../" relative to sub's root, which is `parentDir`.
+	// So, "example.com/parent/dependency" becomes "../dependency", which resolves to `parentDir/dependency`.
+	importPath := "example.com/parent/dependency"
+	foundPath, err := l.FindPackageDir(importPath)
+	if err != nil {
+		t.Fatalf("FindPackageDir() for %q returned an error: %v", importPath, err)
+	}
+
+	expectedPath, _ := filepath.Abs(dependencyDir)
+	foundPathAbs, _ := filepath.Abs(foundPath)
+
+	if foundPathAbs != expectedPath {
+		t.Errorf("Expected path %q, got %q", expectedPath, foundPathAbs)
+	}
+}

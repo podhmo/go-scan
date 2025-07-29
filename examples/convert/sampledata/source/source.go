@@ -2,7 +2,7 @@ package source
 
 import "time"
 
-// @derivingconvert("example.com/convert/sampledata/destination.DstUser")
+// @derivingconvert("github.com/podhmo/go-scan/examples/convert/sampledata/destination.DstUser")
 type SrcUser struct {
 	ID        int64
 	FirstName string
@@ -29,7 +29,7 @@ type SrcInternalDetail struct {
 	Description string
 }
 
-// @derivingconvert("example.com/convert/sampledata/destination.DstOrder")
+// @derivingconvert("github.com/podhmo/go-scan/examples/convert/sampledata/destination.DstOrder")
 type SrcOrder struct {
 	OrderID string
 	Amount  float64
@@ -41,7 +41,7 @@ type SrcItem struct {
 	Quantity int
 }
 
-// @derivingconvert("example.com/convert/sampledata/destination.ComplexTarget")
+// @derivingconvert("github.com/podhmo/go-scan/examples/convert/sampledata/destination.ComplexTarget")
 type ComplexSource struct {
 	Value       string
 	Ptr         *string
@@ -53,7 +53,7 @@ type SubSource struct {
 	Value int
 }
 
-// @derivingconvert("example.com/convert/sampledata/destination.TargetWithMap")
+// @derivingconvert("github.com/podhmo/go-scan/examples/convert/sampledata/destination.TargetWithMap")
 type SourceWithMap struct {
 	ValueMap    map[string]SubSource
 	PtrMap      map[string]*SubSource

@@ -342,8 +342,7 @@ type DstItem struct {
 	pkgpath := "example.com/m"
 	outputFile := "generated.go"
 	pkgname := "maps"
-	goldenFile := "testdata/maps.go.golden"
-
+        goldenFile := "testdata/maps.go.golden"
 	err := run(ctx, pkgpath, tmpdir, outputFile, pkgname)
 	if err != nil {
 		t.Fatalf("run() failed: %v", err)

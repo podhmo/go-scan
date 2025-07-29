@@ -6,7 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"example.com/convert/model"
+	"github.com/podhmo/go-scan/examples/convert/model"
 	context "context"
 	fmt "fmt"
 )

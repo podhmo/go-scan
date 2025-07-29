@@ -87,6 +87,10 @@ as described in [docs/plan-neo-convert.md](docs/plan-neo-convert.md)
 -   [x] **Support assignment for assignable embedded fields**
 -   [x] **Add Tests for `max_errors` and Map Key Conversion**: Write integration tests for the `max_errors` and map key conversion features.
 -   [x] **Support `replace` directives in `go.mod`**: Enhanced `go-scan`'s dependency resolution to correctly handle `replace` directives in `go.mod` files.
+-   **Implement `// convert:import` annotation**: Introduce a new global annotation (`// convert:import <alias> <path>`) to allow `using` and `validator` rules to reference functions from external packages. This will remove the current limitation that requires these functions to be in the same package as the generated code.
+    -   Update the parser to recognize and process the `// convert:import` annotation.
+    -   Ensure the parser registers the specified alias and path with the `ImportManager`.
+    -   Modify the `using` and `validator` logic to correctly resolve function references that use these imported aliases (e.g., `pkg.MyFunc`).
 
 ### Known Issues
 

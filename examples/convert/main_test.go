@@ -10,14 +10,10 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/podhmo/go-scan/scantest"
 )
 
 var update = flag.Bool("update", false, "update golden files")
-
-func TestMain(m *testing.M) {
-	flag.Parse()
-	os.Exit(m.Run())
-}
 
 type memoryFileWriter struct {
 	mu      sync.Mutex
@@ -63,23 +59,8 @@ func convertProfile(ctx context.Context, s string) string {
 `,
 	}
 
-	tmpdir, err := os.MkdirTemp("", "tags-test-")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpdir)
-
-	for name, content := range files {
-		path := filepath.Join(tmpdir, name)
-		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-			t.Fatalf("MkdirAll(%q): %v", filepath.Dir(path), err)
-		}
-		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-			t.Fatalf("WriteFile(%q): %v", path, err)
-		}
-	}
-
-
+	tmpdir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
 
 	ctx := context.Background()
 	writer := &memoryFileWriter{}
@@ -90,7 +71,8 @@ func convertProfile(ctx context.Context, s string) string {
 	pkgname := "tags"
 	goldenFile := "testdata/tags.go.golden"
 
-	if err := run(ctx, pkgpath, tmpdir, outputFile, pkgname); err != nil {
+	err := run(ctx, pkgpath, tmpdir, outputFile, pkgname)
+	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}
 
@@ -259,21 +241,8 @@ func TestValidation(t *testing.T) {
 `,
 	}
 
-	tmpdir, err := os.MkdirTemp("", "validator-test-")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpdir)
-
-	for name, content := range files {
-		path := filepath.Join(tmpdir, name)
-		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-			t.Fatalf("MkdirAll(%q): %v", filepath.Dir(path), err)
-		}
-		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-			t.Fatalf("WriteFile(%q): %v", path, err)
-		}
-	}
+	tmpdir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
 
 	ctx := context.Background()
 	writer := &memoryFileWriter{}
@@ -283,7 +252,8 @@ func TestValidation(t *testing.T) {
 	outputFile := "generated.go"
 	pkgname := "validator"
 
-	if err = run(ctx, pkgpath, tmpdir, outputFile, pkgname); err != nil {
+	err := run(ctx, pkgpath, tmpdir, outputFile, pkgname)
+	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}
 
@@ -367,7 +337,8 @@ func TestIntegration_WithEmbeddedFields(t *testing.T) {
 	goldenFile := "testdata/embedded.go.golden"
 
 	// run() expects a single directory path for scanning.
-	if err = run(ctx, pkgpath, tmpdir, outputFile, pkgname); err != nil {
+	err = run(ctx, pkgpath, tmpdir, outputFile, pkgname)
+	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}
 
@@ -424,21 +395,8 @@ type Dst struct {
 `,
 	}
 
-	tmpdir, err := os.MkdirTemp("", "fieldmatching-test-")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpdir)
-
-	for name, content := range files {
-		path := filepath.Join(tmpdir, name)
-		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-			t.Fatalf("MkdirAll(%q): %v", filepath.Dir(path), err)
-		}
-		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-			t.Fatalf("WriteFile(%q): %v", path, err)
-		}
-	}
+	tmpdir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
 
 	ctx := context.Background()
 	writer := &memoryFileWriter{}
@@ -449,7 +407,8 @@ type Dst struct {
 	pkgname := "fieldmatching"
 	goldenFile := "testdata/fieldmatching.go.golden"
 
-	if err := run(ctx, pkgpath, tmpdir, outputFile, pkgname); err != nil {
+	err := run(ctx, pkgpath, tmpdir, outputFile, pkgname)
+	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}
 
@@ -582,21 +541,8 @@ func TestRun(t *testing.T) {
 	}
 
 	// We expect the generator to succeed, but the generated code to fail at runtime.
-	tmpdir, err := os.MkdirTemp("", "errors-test-")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpdir)
-
-	for name, content := range files {
-		path := filepath.Join(tmpdir, name)
-		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-			t.Fatalf("MkdirAll(%q): %v", filepath.Dir(path), err)
-		}
-		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-			t.Fatalf("WriteFile(%q): %v", path, err)
-		}
-	}
+	tmpdir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
 
 	ctx := context.Background()
 	writer := &memoryFileWriter{}
@@ -607,7 +553,8 @@ func TestRun(t *testing.T) {
 	pkgname := "errors"
 
 	// 1. Generate the converter code
-	if err = run(ctx, pkgpath, tmpdir, outputFile, pkgname); err != nil {
+	err := run(ctx, pkgpath, tmpdir, outputFile, pkgname)
+	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}
 
@@ -677,21 +624,8 @@ func overrideTime(ctx context.Context, t time.Time) string {
 `,
 	}
 
-	tmpdir, err := os.MkdirTemp("", "rules-test-")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpdir)
-
-	for name, content := range files {
-		path := filepath.Join(tmpdir, name)
-		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-			t.Fatalf("MkdirAll(%q): %v", filepath.Dir(path), err)
-		}
-		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-			t.Fatalf("WriteFile(%q): %v", path, err)
-		}
-	}
+	tmpdir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
 
 	ctx := context.Background()
 	writer := &memoryFileWriter{}
@@ -707,7 +641,8 @@ func overrideTime(ctx context.Context, t time.Time) string {
 		os.WriteFile(goldenFile, []byte(""), 0644)
 	}
 
-	if err := run(ctx, pkgpath, tmpdir, outputFile, pkgname); err != nil {
+	err := run(ctx, pkgpath, tmpdir, outputFile, pkgname)
+	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}
 
@@ -772,21 +707,8 @@ type DstItem struct {
 `,
 	}
 
-	tmpdir, err := os.MkdirTemp("", "maps-test-")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpdir)
-
-	for name, content := range files {
-		path := filepath.Join(tmpdir, name)
-		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-			t.Fatalf("MkdirAll(%q): %v", filepath.Dir(path), err)
-		}
-		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-			t.Fatalf("WriteFile(%q): %v", path, err)
-		}
-	}
+	tmpdir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
 
 	ctx := context.Background()
 	writer := &memoryFileWriter{}
@@ -796,7 +718,8 @@ type DstItem struct {
 	outputFile := "generated.go"
 	pkgname := "maps"
 	goldenFile := "testdata/maps.go.golden"
-	if err := run(ctx, pkgpath, tmpdir, outputFile, pkgname); err != nil {
+	err := run(ctx, pkgpath, tmpdir, outputFile, pkgname)
+	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}
 
@@ -863,21 +786,8 @@ type DstItem struct {
 `,
 	}
 
-	tmpdir, err := os.MkdirTemp("", "pointers-test-")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpdir)
-
-	for name, content := range files {
-		path := filepath.Join(tmpdir, name)
-		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-			t.Fatalf("MkdirAll(%q): %v", filepath.Dir(path), err)
-		}
-		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-			t.Fatalf("WriteFile(%q): %v", path, err)
-		}
-	}
+	tmpdir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
 
 	ctx := context.Background()
 	writer := &memoryFileWriter{}
@@ -888,7 +798,8 @@ type DstItem struct {
 	pkgname := "pointers"
 	goldenFile := "testdata/pointers.go.golden"
 
-	if err := run(ctx, pkgpath, tmpdir, outputFile, pkgname); err != nil {
+	err := run(ctx, pkgpath, tmpdir, outputFile, pkgname)
+	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}
 
@@ -947,21 +858,8 @@ type DstItem struct {
 `,
 	}
 
-	tmpdir, err := os.MkdirTemp("", "slices-test-")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpdir)
-
-	for name, content := range files {
-		path := filepath.Join(tmpdir, name)
-		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-			t.Fatalf("MkdirAll(%q): %v", filepath.Dir(path), err)
-		}
-		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-			t.Fatalf("WriteFile(%q): %v", path, err)
-		}
-	}
+	tmpdir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
 
 	ctx := context.Background()
 	writer := &memoryFileWriter{}
@@ -972,7 +870,8 @@ type DstItem struct {
 	pkgname := "slices"
 	goldenFile := "testdata/slices.go.golden"
 
-	if err := run(ctx, pkgpath, tmpdir, outputFile, pkgname); err != nil {
+	err := run(ctx, pkgpath, tmpdir, outputFile, pkgname)
+	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}
 
@@ -1134,21 +1033,8 @@ func convertIntToString(ctx context.Context, i int) string {
 `,
 	}
 
-	tmpdir, err := os.MkdirTemp("", "mapkeys-test-")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpdir)
-
-	for name, content := range files {
-		path := filepath.Join(tmpdir, name)
-		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-			t.Fatalf("MkdirAll(%q): %v", filepath.Dir(path), err)
-		}
-		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-			t.Fatalf("WriteFile(%q): %v", path, err)
-		}
-	}
+	tmpdir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
 
 	ctx := context.Background()
 	writer := &memoryFileWriter{}
@@ -1159,7 +1045,8 @@ func convertIntToString(ctx context.Context, i int) string {
 	pkgname := "mapkeys"
 	goldenFile := "testdata/mapkeys.go.golden"
 
-	if err := run(ctx, pkgpath, tmpdir, outputFile, pkgname); err != nil {
+	err := run(ctx, pkgpath, tmpdir, outputFile, pkgname)
+	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}
 

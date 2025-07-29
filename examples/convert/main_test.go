@@ -182,7 +182,6 @@ type Dst struct {
 }
 
 func TestIntegration_WithErrorHandling(t *testing.T) {
-	t.Skip("skipping due to relative path issue in test")
 	files := map[string]string{
 		"go.mod": `
 module example.com/m

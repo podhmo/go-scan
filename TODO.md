@@ -84,12 +84,11 @@ as described in [docs/plan-neo-convert.md](docs/plan-neo-convert.md)
 -   [ ] **Handle Map Key Conversion**: Implement logic to convert map keys when the source and destination map key types are different.
 -   [-] **Implement automatic field selection for untagged fields**: Use `json` tag as a fallback for field name matching (priority: `convert` tag > `json` tag > normalized field name).
 -   [ ] **Support assignment for assignable embedded fields**
--   [x] **Add Tests for `max_errors` and Map Key Conversion**: Write integration tests for the `max_errors` and map key conversion features. (Blocked by `go mod tidy` issue in tests)
--   [x] **Support `replace` directives in `go.mod`**: Enhanced `go-scan`'s dependency resolution to correctly handle `replace` directives in `go.mod` files. (Note: integration tests revealed issues with `go mod tidy` in temporary directories)
+-   [x] **Add Tests for `max_errors` and Map Key Conversion**: Write integration tests for the `max_errors` and map key conversion features.
+-   [x] **Support `replace` directives in `go.mod`**: Enhanced `go-scan`'s dependency resolution to correctly handle `replace` directives in `go.mod` files.
 
 ### Known Issues
 -   **Duplicate Imports in Generated Code**: The `goscan.ImportManager` sometimes generates duplicate import statements, which can cause compilation errors. This should be fixed to ensure each package is imported only once.
--   **`replace` directive path resolution in `scantest`**: Integration tests using `scantest` fail when the temporary `go.mod` uses a `replace` directive with a relative path. `scantest` needs to be improved to handle this scenario, possibly by adjusting the temporary directory structure or the `go` command's working directory.
 
 ### Future Tasks (Post-Migration)
 *   **Improve Import Management**: Handle import alias collisions robustly. Consider using `golang.org/x/tools/imports` for final output formatting.

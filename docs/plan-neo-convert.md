@@ -14,14 +14,16 @@ The existing `examples/convert` directory contains a prototype that serves as a 
 
 ### Key Differences from the Prototype
 
-| Feature | `examples/convert` (Prototype) | `convert` (This Plan) |
+| Feature | `examples/convert` (Prototype) | `convert` (Current Implementation) |
 | :--- | :--- | :--- |
-| **Invocation** | `go run main.go` with hardcoded paths. | Standard CLI tool (`convert -input <pkg> -output <file>`). |
+| **Invocation** | `go run main.go` with hardcoded paths. | Standard CLI tool (`convert -pkg <pkg> -output <file>`). |
 | **Rule Definition** | Hardcoded logic in `main.go`'s generator. | Annotation-driven (`@derivingconvert`, `// convert:rule`). |
 | **Field Mapping** | Basic name matching, some hardcoded logic. | Struct tags (`convert:"..."`) and global rules for full control. |
-| **Error Handling** | None in generated code. | Rich error handling with `errorCollector` to report all errors. |
+| **Error Handling** | None in generated code. | Rich error handling with `model.ErrorCollector` to report all errors. |
 | **Extensibility** | Requires changing the generator code. | Pluggable via custom functions (`using=...`). |
-| **Recursion** | Manually written recursive calls. | Automatic recursive generation for nested structs via a worklist. |
+| **Recursion** | Manually written recursive calls. | Automatic recursive generation for nested structs, slices, and maps. |
+| **Type Resolution** | Basic, within the same package. | Advanced, cross-package resolution powered by `go-scan`. |
+| **Code Formatting** | Manual. | Automatic formatting using `goimports`. |
 
 ### Migration Plan
 
@@ -260,9 +262,9 @@ type User struct {
 
 ## 6. Key Implementation Details & Rationale
 
-*   **Parser Implementation (`go-scan`)**: The parser should be implemented using `github.com/podhmo/go-scan`. This library simplifies walking the AST and resolving type information, which is a significant challenge when using `go/parser` alone.
-*   **Generator Worklist**: The generator should use a worklist pattern. It starts with the pairs from `@derivingconvert` annotations. As it processes struct fields, if it encounters a nested struct-to-struct conversion that doesn't have a global `using` rule, it adds a new pair to the worklist. This ensures all necessary helper functions are generated recursively. A `map[string]bool` should be used to track already processed pairs to prevent infinite loops from circular dependencies.
-*   **Error Handling (`errorCollector`)**: The generated code must include a helper struct called `errorCollector`. This struct should accumulate errors along with their field paths (e.g., `User.Address.Street`). This provides much richer debugging information than failing on the first error.
+*   **Parser Implementation (`go-scan`)**: The parser is heavily reliant on `github.com/podhmo/go-scan`. The tool uses `go-scan` not just for walking the AST, but critically for resolving type information across packages. The `scanner.FieldType` and `goscan.ImportManager` are core components that the generator depends on to understand type structures and manage imports in the generated code.
+*   **Implicit Recursive Generation**: Instead of an explicit worklist, the generator leverages `go-scan`'s type resolution to achieve recursion. When generating the conversion for a field, it checks if the field's type is another struct that has a known conversion pair. If so, it generates a direct call to that pair's conversion function (e.g., `convertSrcSubStructToDstSubStruct(...)`). This approach simplifies the generator logic by relying on the completeness of the parsed model provided by the parser and `go-scan`.
+*   **Error Handling (`model.ErrorCollector`)**: The generated code uses the `model.ErrorCollector` struct, which is included in the `model` package. This struct accumulates errors along with their field paths (e.g., `User.Address.Street`), providing rich debugging information instead of failing on the first error. The collector's path tracking (`Enter`/`Leave`) is generated for nested structs, slices, and maps.
 *   **Rule Priority**: The generator must respect the rule priority:
     1.  Field-level `using` tag.
     2.  Global `convert:rule`.
@@ -354,8 +356,9 @@ func ConvertInputToOutput(ctx context.Context, src Input) (Output, error) {
 
 ## 8. Future Tasks (TODO)
 
-*   **Implement Slice, Map, and Array Conversions**: The generator needs logic to loop through these collections and convert each element/value.
 *   **Validator Rule Implementation**: Implement the logic to call validator functions after a destination struct is populated.
-*   **Improve Import Management**: Handle import alias collisions robustly. Consider using `golang.org/x/tools/imports` for final output formatting.
+*   **Improve Import Management**: Handle import alias collisions robustly. The current implementation uses `goimports` which is a good first step, but more complex alias collision scenarios might require more advanced logic.
 *   **Expand Test Coverage**: Create a comprehensive test suite that verifies all features and edge cases.
 *   **Complete `README.md`**: Write user-facing documentation with installation, usage, and examples.
+*   **Parse `max_errors` from Annotation**: Implement parsing for the `max_errors` option in the `@derivingconvert` annotation and pass it to the `ErrorCollector`.
+*   **Handle Map Key Conversion**: Implement logic to convert map keys when the source and destination map key types are different.

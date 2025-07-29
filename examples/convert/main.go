@@ -1,18 +1,17 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"flag"
 	"fmt"
 	"log/slog"
 	"os"
-	"os/exec"
 
 	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/examples/convert/generator"
 	"github.com/podhmo/go-scan/examples/convert/parser"
 	"github.com/podhmo/go-scan/locator"
+	"golang.org/x/tools/imports"
 )
 
 type FileWriter interface {
@@ -105,7 +104,7 @@ func run(ctx context.Context, pkgpath, workdir, output, pkgname string) error {
 
 	slog.DebugContext(ctx, "Writing output", "file", output)
 
-	formatted, err := formatCode(ctx, generatedCode)
+	formatted, err := formatCode(ctx, output, generatedCode)
 	if err != nil {
 		slog.WarnContext(ctx, "code formatting failed, using unformatted code", "error", err)
 		// Even if formatting fails, write the unformatted code.
@@ -123,16 +122,13 @@ func run(ctx context.Context, pkgpath, workdir, output, pkgname string) error {
 	return nil
 }
 
-func formatCode(ctx context.Context, src []byte) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, "gofmt")
-	cmd.Stdin = bytes.NewReader(src)
-	var out bytes.Buffer
-	var errBuf bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &errBuf
-
-	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("gofmt failed: %w: %s", err, errBuf.String())
+func formatCode(ctx context.Context, filename string, src []byte) ([]byte, error) {
+	// The first argument to Process is a filename, which is used for context
+	// when resolving imports. We can use the output file name here.
+	// The third argument is options, which we can leave as nil for now.
+	formatted, err := imports.Process(filename, src, nil)
+	if err != nil {
+		return nil, fmt.Errorf("goimports failed: %w", err)
 	}
-	return out.Bytes(), nil
+	return formatted, nil
 }

@@ -35,7 +35,8 @@ func Parse(ctx context.Context, scannedPkg *scanner.PackageInfo) (*model.ParsedI
 				Type: t,
 			}
 			for _, f := range t.Struct.Fields {
-				tag, err := parseConvertTag(reflect.StructTag(f.Tag))
+				structTag := reflect.StructTag(f.Tag)
+				tag, err := parseConvertTag(structTag)
 				if err != nil {
 					return nil, fmt.Errorf("parsing tag for %s.%s: %w", t.Name, f.Name, err)
 				}
@@ -48,6 +49,7 @@ func Parse(ctx context.Context, scannedPkg *scanner.PackageInfo) (*model.ParsedI
 				fieldInfo := model.FieldInfo{
 					Name:         f.Name,
 					OriginalName: f.Name,
+					JSONTag:      parseJSONTag(structTag),
 					TypeInfo:     fieldTypeInfo,
 					FieldType:    f.Type, // Store the original FieldType
 					Tag:          tag,
@@ -238,4 +240,13 @@ func parseConvertTag(tag reflect.StructTag) (model.ConvertTag, error) {
 		}
 	}
 	return result, nil
+}
+
+func parseJSONTag(tag reflect.StructTag) string {
+	jsonTag := tag.Get("json")
+	if jsonTag == "" {
+		return ""
+	}
+	parts := strings.Split(jsonTag, ",")
+	return parts[0]
 }

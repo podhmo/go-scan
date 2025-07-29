@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"log"
 	"strings"
 	"text/template"
 
@@ -136,34 +137,75 @@ func Generate(s *goscan.Scanner, info *model.ParsedInfo) ([]byte, error) {
 
 func createFieldMaps(ctx context.Context, s *goscan.Scanner, src, dst *model.StructInfo) ([]FieldMap, error) {
 	var maps []FieldMap
-	dstFields := make(map[string]model.FieldInfo)
+	dstFieldsByName := make(map[string]model.FieldInfo)
+	dstFieldsByNormalizedJSONTag := make(map[string]model.FieldInfo)
+	dstFieldsByNormalizedName := make(map[string]model.FieldInfo)
+
+	log.Printf("Destination struct: %s", dst.Name)
 	for _, f := range dst.Fields {
-		dstFields[f.Name] = f
+		dstFieldsByName[f.Name] = f
+		if f.JSONTag != "" && f.JSONTag != "-" {
+			normalized := normalizeFieldName(f.JSONTag)
+			dstFieldsByNormalizedJSONTag[normalized] = f
+			log.Printf("  dst field %s, json: %s, normalized json: %s", f.Name, f.JSONTag, normalized)
+		}
+		normalized := normalizeFieldName(f.Name)
+		dstFieldsByNormalizedName[normalized] = f
+		log.Printf("  dst field %s, normalized name: %s", f.Name, normalized)
 	}
 
+	log.Printf("Source struct: %s", src.Name)
 	for _, srcField := range src.Fields {
-		_ = resolveFieldType(ctx, srcField.FieldType) // Ignore error for now
+		_ = resolveFieldType(ctx, srcField.FieldType)
 		if srcField.Tag.DstFieldName == "-" {
+			log.Printf("  src field %s: skipped by `convert:\"-\"`", srcField.Name)
 			continue
 		}
-		dstFieldName := srcField.Tag.DstFieldName
-		if dstFieldName == "" {
-			dstFieldName = srcField.Name
+
+		var dstField model.FieldInfo
+		var ok bool
+		var reason string
+
+		// Priority 1: `convert` tag
+		if srcField.Tag.DstFieldName != "" {
+			dstField, ok = dstFieldsByName[srcField.Tag.DstFieldName]
+			reason = fmt.Sprintf("`convert` tag (%s)", srcField.Tag.DstFieldName)
 		}
-		dstField, ok := dstFields[dstFieldName]
+
+		// Priority 2: Normalized `json` tag
+		if !ok && srcField.JSONTag != "" && srcField.JSONTag != "-" {
+			normalizedJSONTag := normalizeFieldName(srcField.JSONTag)
+			dstField, ok = dstFieldsByNormalizedJSONTag[normalizedJSONTag]
+			reason = fmt.Sprintf("normalized `json` tag (%s -> %s)", srcField.JSONTag, normalizedJSONTag)
+		}
+
+		// Priority 3: Normalized field name
 		if !ok {
+			normalizedSrcName := normalizeFieldName(srcField.Name)
+			dstField, ok = dstFieldsByNormalizedName[normalizedSrcName]
+			reason = fmt.Sprintf("normalized name (%s -> %s)", srcField.Name, normalizedSrcName)
+		}
+
+		if !ok {
+			log.Printf("  src field %s: no match found", srcField.Name)
 			continue
 		}
-		_ = resolveFieldType(ctx, dstField.FieldType) // Ignore error for now
+
+		log.Printf("  src field %s -> dst field %s (matched by %s)", srcField.Name, dstField.Name, reason)
+		_ = resolveFieldType(ctx, dstField.FieldType)
 		maps = append(maps, FieldMap{
 			SrcName:   srcField.Name,
-			DstName:   dstFieldName,
+			DstName:   dstField.Name,
 			Tag:       srcField.Tag,
 			SrcFieldT: srcField.FieldType,
 			DstFieldT: dstField.FieldType,
 		})
 	}
 	return maps, nil
+}
+
+func normalizeFieldName(name string) string {
+	return strings.ToLower(strings.ReplaceAll(name, "_", ""))
 }
 
 func resolveFieldType(ctx context.Context, ft *scanner.FieldType) error {

@@ -111,7 +111,6 @@ func convertProfile(ctx context.Context, s string) string {
 }
 
 func TestIntegration_WithFieldMatching(t *testing.T) {
-	t.Skip("skipping due to import manager issue")
 	files := map[string]string{
 		"go.mod": "module example.com/m\ngo 1.24",
 		"fieldmatching.go": `

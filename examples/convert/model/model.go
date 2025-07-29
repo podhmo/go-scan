@@ -7,10 +7,17 @@ import (
 	"github.com/podhmo/go-scan/scanner"
 )
 
+// Import holds information about a `// convert:import` annotation.
+type Import struct {
+	Alias string
+	Path  string
+}
+
 // ParsedInfo holds all parsed conversion rules and type information.
 type ParsedInfo struct {
 	PackageName     string
 	PackagePath     string // Import path of the package being parsed
+	Imports         []Import
 	ConversionPairs []ConversionPair
 	GlobalRules     []TypeRule
 	Structs         map[string]*StructInfo       // Keyed by struct name (e.g. "MyStruct")

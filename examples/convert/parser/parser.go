@@ -15,13 +15,15 @@ import (
 
 var (
 	reDerivingConvert = regexp.MustCompile(`@derivingconvert\(([^,)]+)(?:,\s*([^)]+))?\)`)
-	reConvertRule     = regexp.MustCompile(`// convert:rule "([^"]+)"(?: -> "([^"]+)")?, (?:using=([a-zA-Z0-9_]+)|validator=([a-zA-Z0-9_]+))`)
+	reConvertRule     = regexp.MustCompile(`// convert:rule "([^"]+)"(?: -> "([^"]+)")?, (?:using=([a-zA-Z0-9_.]+)|validator=([a-zA-Z0-9_.]+))`)
+	reConvertImport   = regexp.MustCompile(`// convert:import "([^"]+)" "([^"]+)"`)
 )
 
 func Parse(ctx context.Context, scannedPkg *scanner.PackageInfo) (*model.ParsedInfo, error) {
 	info := &model.ParsedInfo{
 		PackageName:     scannedPkg.Name,
 		PackagePath:     scannedPkg.ImportPath,
+		Imports:         []model.Import{},
 		Structs:         make(map[string]*model.StructInfo),
 		NamedTypes:      make(map[string]*scanner.TypeInfo),
 		ConversionPairs: []model.ConversionPair{},
@@ -96,48 +98,52 @@ func Parse(ctx context.Context, scannedPkg *scanner.PackageInfo) (*model.ParsedI
 	for _, astFile := range scannedPkg.AstFiles {
 		for _, commentGroup := range astFile.Comments {
 			for _, comment := range commentGroup.List {
-				m := reConvertRule.FindStringSubmatch(comment.Text)
-				if m == nil {
+				// Try parsing as import rule
+				if m := reConvertImport.FindStringSubmatch(comment.Text); m != nil {
+					info.Imports = append(info.Imports, model.Import{
+						Alias: m[1],
+						Path:  m[2],
+					})
 					continue
 				}
 
-				rule := model.TypeRule{}
-				type1Name := m[1]
-				type2Name := m[2]
-				usingFunc := m[3]
-				validatorFunc := m[4]
+				// Try parsing as conversion/validation rule
+				if m := reConvertRule.FindStringSubmatch(comment.Text); m != nil {
+					rule := model.TypeRule{}
+					type1Name := m[1]
+					type2Name := m[2]
+					usingFunc := m[3]
+					validatorFunc := m[4]
 
-				if validatorFunc != "" {
-					// Validator rule: // convert:rule "<DstType>", validator=<func>
-					rule.ValidatorFunc = validatorFunc
-					rule.DstTypeName = type1Name
-					dstTypeInfo, err := resolveType(scannedPkg, rule.DstTypeName)
-					if err != nil {
-						return nil, fmt.Errorf("resolving validator rule destination type %q: %w", rule.DstTypeName, err)
-					}
-					rule.DstTypeInfo = dstTypeInfo
-				} else if usingFunc != "" {
-					// Conversion rule: // convert:rule "<SrcType>" -> "<DstType>", using=<func>
-					rule.UsingFunc = usingFunc
-					rule.SrcTypeName = type1Name
-					rule.DstTypeName = type2Name
+					if validatorFunc != "" {
+						rule.ValidatorFunc = validatorFunc
+						rule.DstTypeName = type1Name
+						dstTypeInfo, err := resolveType(scannedPkg, info, rule.DstTypeName)
+						if err != nil {
+							return nil, fmt.Errorf("resolving validator rule destination type %q: %w", rule.DstTypeName, err)
+						}
+						rule.DstTypeInfo = dstTypeInfo
+					} else if usingFunc != "" {
+						rule.UsingFunc = usingFunc
+						rule.SrcTypeName = type1Name
+						rule.DstTypeName = type2Name
 
-					srcTypeInfo, err := resolveType(scannedPkg, rule.SrcTypeName)
-					if err != nil {
-						return nil, fmt.Errorf("resolving global rule source type %q: %w", rule.SrcTypeName, err)
-					}
-					rule.SrcTypeInfo = srcTypeInfo
+						srcTypeInfo, err := resolveType(scannedPkg, info, rule.SrcTypeName)
+						if err != nil {
+							return nil, fmt.Errorf("resolving global rule source type %q: %w", rule.SrcTypeName, err)
+						}
+						rule.SrcTypeInfo = srcTypeInfo
 
-					dstTypeInfo, err := resolveType(scannedPkg, rule.DstTypeName)
-					if err != nil {
-						return nil, fmt.Errorf("resolving global rule destination type %q: %w", rule.DstTypeName, err)
+						dstTypeInfo, err := resolveType(scannedPkg, info, rule.DstTypeName)
+						if err != nil {
+							return nil, fmt.Errorf("resolving global rule destination type %q: %w", rule.DstTypeName, err)
+						}
+						rule.DstTypeInfo = dstTypeInfo
+					} else {
+						continue
 					}
-					rule.DstTypeInfo = dstTypeInfo
-				} else {
-					continue // Should not happen with the new regex
+					info.GlobalRules = append(info.GlobalRules, rule)
 				}
-
-				info.GlobalRules = append(info.GlobalRules, rule)
 			}
 		}
 	}
@@ -148,7 +154,7 @@ func Parse(ctx context.Context, scannedPkg *scanner.PackageInfo) (*model.ParsedI
 	return info, nil
 }
 
-func resolveType(p *scanner.PackageInfo, typeName string) (*scanner.TypeInfo, error) {
+func resolveType(p *scanner.PackageInfo, info *model.ParsedInfo, typeName string) (*scanner.TypeInfo, error) {
 	// Check for primitive types first
 	if !strings.Contains(typeName, ".") {
 		t := p.Lookup(typeName)
@@ -167,30 +173,45 @@ func resolveType(p *scanner.PackageInfo, typeName string) (*scanner.TypeInfo, er
 	}
 
 	parts := strings.Split(typeName, ".")
-	if len(parts) != 2 {
-		return nil, fmt.Errorf("unsupported type format for resolution: %q, expected 'pkg.Type'", typeName)
-	}
 	pkgAlias := parts[0]
-	name := parts[1]
+	name := strings.Join(parts[1:], ".") // Handle cases like v.New().Var
 
 	// Find the full import path from the alias
 	pkgPath, found := "", false
-	for _, f := range p.AstFiles {
-		for _, i := range f.Imports {
-			path := strings.Trim(i.Path.Value, `"`)
-			if i.Name != nil && i.Name.Name == pkgAlias {
-				pkgPath = path
-				found = true
-				break
-			}
-			if i.Name == nil && strings.HasSuffix(path, "/"+pkgAlias) {
-				pkgPath = path
-				found = true
-				break
-			}
-		}
-		if found {
+
+	// Priority 1: Check `// convert:import` annotations
+	for _, imp := range info.Imports {
+		if imp.Alias == pkgAlias {
+			pkgPath = imp.Path
+			found = true
 			break
+		}
+	}
+
+	// Priority 2: Check file imports
+	if !found {
+		for _, f := range p.AstFiles {
+			for _, i := range f.Imports {
+				path := strings.Trim(i.Path.Value, `"`)
+				if i.Name != nil && i.Name.Name == pkgAlias {
+					pkgPath = path
+					found = true
+					break
+				}
+				// This logic is tricky and can be incorrect for complex cases.
+				// e.g. import "github.com/a/b" and alias is "b"
+				if i.Name == nil {
+					importParts := strings.Split(path, "/")
+					if len(importParts) > 0 && importParts[len(importParts)-1] == pkgAlias {
+						pkgPath = path
+						found = true
+						break
+					}
+				}
+			}
+			if found {
+				break
+			}
 		}
 	}
 
@@ -199,7 +220,7 @@ func resolveType(p *scanner.PackageInfo, typeName string) (*scanner.TypeInfo, er
 		if pkgAlias == "time" {
 			pkgPath = "time"
 		} else {
-			return nil, fmt.Errorf("could not resolve package path for alias %q", pkgAlias)
+			return nil, fmt.Errorf("could not resolve package path for alias %q in type %q", pkgAlias, typeName)
 		}
 	}
 

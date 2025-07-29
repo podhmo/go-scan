@@ -17,13 +17,15 @@ func convertSrcToDst(ctx context.Context, ec *model.ErrorCollector, src *Src) *D
 		return dst
 	}
 	ec.Enter("Name")
-	dst.Name = src.NamevalidateString(ec, dst.Name)
+	dst.Name = src.Name
+	validateString(ec, dst.Name)
 	ec.Leave()
 	if ec.MaxErrorsReached() {
 		return dst
 	}
 	ec.Enter("Age")
-	dst.Age = src.AgevalidateInt(ec, dst.Age)
+	dst.Age = src.Age
+	validateInt(ec, dst.Age)
 	ec.Leave()
 	return dst
 }

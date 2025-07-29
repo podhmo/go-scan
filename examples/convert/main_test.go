@@ -5,6 +5,7 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -105,6 +106,114 @@ func convertProfile(ctx context.Context, s string) string {
 
 	if diff := cmp.Diff(string(formattedGolden), string(formattedGenerated)); diff != "" {
 		t.Errorf("generated code mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestIntegration_WithExternalImport(t *testing.T) {
+	files := map[string]string{
+		"go.mod": `
+module example.com/m
+go 1.24
+require (
+	github.com/go-playground/validator/v10 v10.27.0
+	example.com/project/converters v0.0.0
+)
+replace example.com/project/converters => ../converters
+`,
+		"external.go": `
+package external
+
+import (
+	"context"
+	"time"
+)
+
+// // convert:import "v" "github.com/go-playground/validator/v10"
+// // convert:import "customconv" "example.com/project/converters"
+//
+// // convert:rule "string", validator=validateName
+// // convert:rule "time.Time" -> "string", using=customconv.TimeToString
+//
+// // @derivingconvert("Output")
+type Input struct {
+	ID        int
+	Name      string
+	CreatedAt time.Time
+}
+type Output struct {
+	ID        int
+	Name      string
+	CreatedAt string
+}
+func validateName(ec *model.ErrorCollector, name string) {
+	validate := v.New()
+	err := validate.Var(name, "required")
+	if err != nil {
+		ec.Add(err)
+	}
+}
+`,
+		"../converters/converters.go": `
+package converters
+import (
+	"context"
+	"time"
+)
+func TimeToString(ctx context.Context, t time.Time) string {
+	return t.Format(time.RFC3339)
+}
+`,
+	}
+
+	tmpdir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+	// create converters directory
+	if err := os.Mkdir(filepath.Join(tmpdir, "converters"), 0755); err != nil {
+		t.Fatalf("failed to create converters dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpdir, "converters", "converters.go"), []byte(files["../converters/converters.go"]), 0644); err != nil {
+		t.Fatalf("failed to write converters.go: %v", err)
+	}
+
+	ctx := context.Background()
+	writer := &memoryFileWriter{}
+	ctx = context.WithValue(ctx, FileWriterKey, writer)
+
+	pkgpath := "example.com/m"
+	outputFile := "generated.go"
+	pkgname := "external"
+
+	err := run(ctx, pkgpath, tmpdir, outputFile, pkgname)
+	if err != nil {
+		t.Fatalf("run() failed: %v", err)
+	}
+
+	generatedCode, ok := writer.Outputs[outputFile]
+	if !ok {
+		t.Fatalf("output file %q not found in captured outputs", outputFile)
+	}
+
+	// For external import test, we check the content directly
+	// instead of comparing with a golden file because the alias might change.
+	code := string(generatedCode)
+	t.Logf("generated code:\n%s", code)
+
+	// 1. Check for imports
+	if !strings.Contains(code, `v "github.com/go-playground/validator/v10"`) {
+		t.Errorf("expected to find import for validator")
+	}
+	if !strings.Contains(code, `customconv "example.com/project/converters"`) {
+		t.Errorf("expected to find import for customconv")
+	}
+
+	// 2. Check for validator usage
+	if !strings.Contains(code, `validateName(ec, dst.Name)`) {
+		t.Errorf("expected to find validator function call, but got: %s", code)
+	}
+
+	// 3. Check for using usage
+	if !strings.Contains(code, `dst.CreatedAt = customconv.TimeToString(ctx, src.CreatedAt)`) {
+		t.Errorf("expected to find custom converter function call, but got: %s", code)
 	}
 }
 

@@ -79,9 +79,9 @@ as described in [docs/plan-neo-convert.md](docs/plan-neo-convert.md)
 -   [x] **Error Handling with `errorCollector`**: Implement the `errorCollector` struct and generate code that uses it to report multiple conversion errors.
 -   [x] **Add Tests for Error Handling**: Write tests to verify that `errorCollector` correctly accumulates and reports errors.
 -   [x] **Improve Generated Code Error Handling**: Replace `// TODO: proper error handling` placeholders in the generator with more robust error handling, even if it's not the full `errorCollector` implementation.
--   [x] **Parse `max_errors` from Annotation**: Implemented, but requires integration tests.
--   [x] **Handle Map Key Conversion**: Implemented, but requires integration tests.
--   [x] **Add Tests for `max_errors` and Map Key Conversion**: Write integration tests for the new features. This may require `go-scan` to support `replace` directives in `go.mod` for test dependency resolution.
+-   [ ] **Parse `max_errors` from Annotation**: Implement parsing for the `max_errors` option in the `@derivingconvert` annotation.
+-   [ ] **Handle Map Key Conversion**: Implement logic to convert map keys when the source and destination map key types are different.
+-   [ ] **Add Tests for `max_errors` and Map Key Conversion**: Write integration tests for the `max_errors` and map key conversion features.
 -   [x] **Support `replace` directives in `go.mod`**: Enhanced `go-scan`'s dependency resolution to correctly handle `replace` directives in `go.mod` files, simplifying integration testing.
 
 ### Known Issues

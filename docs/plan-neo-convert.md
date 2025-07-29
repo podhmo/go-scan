@@ -234,6 +234,24 @@ Defines a global rule for type conversions or validations.
 // convert:rule "string", validator=validateStringNotEmpty
 ```
 
+#### `// convert:import`
+
+Defines an alias for an external package path, similar to Go's `import` statement. This allows `using` and `validator` rules to reference functions from other packages.
+
+**Syntax**: `// convert:import <alias> <path>`
+
+*   **`<alias>`**: The alias to use for the package (e.g., `myfuncs`).
+*   **`<path>`**: The full import path of the package (e.g., `"example.com/project/utils/myfuncs"`).
+
+**Example**:
+```go
+// convert:import funcs "example.com/project/converters"
+// convert:rule "time.Time" -> "string", using=funcs.TimeToString
+// convert:rule "string", validator=funcs.ValidateNonEmpty
+```
+
+This makes the implementation feel more like standard Go, removing the distinction between using functions from the same package versus an external one.
+
 ### Field-Level Annotation (`convert` tag)
 
 This annotation is placed in a struct field tag to control the conversion of that specific field.
@@ -272,9 +290,10 @@ type User struct {
     *   **Embedded Structs**: Fields from embedded structs are treated as if they belong to the parent struct, participating in the same matching logic.
     *   *(Note: This feature needs to be verified against the current implementation. If not implemented, it should be added to `TODO.md`.)*
 *   **Rationale for Annotation Options**: Each annotation option provides a critical escape hatch or safety feature, enhancing the tool's power and reliability.
-    *   **`using=<funcName>` (Field Tag and Global Rule)**
-        *   **Purpose**: To handle complex or mismatched type conversions that the generator cannot perform automatically. This is essential for scenarios like `string` to `int` conversion, combining multiple fields (`FirstName`, `LastName` -> `FullName`), or applying custom formatting.
-        *   **Impact of Removal**: Without `using`, the tool would be limited to simple, name-and-type-identical field mappings. Users would have to write post-processing code to handle any non-trivial conversion, which defeats the purpose of the tool and re-introduces significant boilerplate.
+    *   **`using=<funcName>` and `validator=<funcName>` (Field Tag and Global Rule)**
+        *   **Purpose**: To handle complex or mismatched type conversions (`using`) and to enforce business logic (`validator`). These are the primary mechanisms for extensibility.
+        *   **Design Goal**: The key design principle is to make the experience of using these functions as close to native Go as possible. With the introduction of `// convert:import`, users can now seamlessly reference functions from external packages (e.g., `pkg.MyConverter`) just as they would for functions within the same package. This eliminates the previous limitation where all custom functions had to reside in the same package as the generated code, thereby unifying the user experience and removing arbitrary restrictions.
+        *   **Impact of Removal**: Without `using` and `validator`, the tool would be limited to simple, name-and-type-identical field mappings. Users would have to write significant post-processing code, defeating the purpose of the tool. The `// convert:import` annotation is crucial for making this feature scalable and practical in larger projects with shared utility packages.
     *   **`required` (Field Tag)**
         *   **Purpose**: To enforce "not-nil" constraints on pointer fields during conversion. It provides a declarative way to ensure that required data is present, preventing `nil` values from propagating silently.
         *   **Impact of Removal**: Developers would need to write manual `if src.Field == nil` checks after the conversion, increasing the risk of runtime nil-dereference errors if a check is forgotten. This option makes the conversion process more robust and the data constraints explicit.
@@ -374,9 +393,8 @@ func ConvertInputToOutput(ctx context.Context, src Input) (Output, error) {
 
 ## 8. Future Tasks (TODO)
 
-*   **Validator Rule Implementation**: Implement the logic to call validator functions after a destination struct is populated.
-*   **Improve Import Management**: Handle import alias collisions robustly. The current implementation uses `goimports` which is a good first step, but more complex alias collision scenarios might require more advanced logic.
-*   **Expand Test Coverage**: Create a comprehensive test suite that verifies all features and edge cases.
+*   **Implement `// convert:import` annotation**: Introduce the new global annotation (`// convert:import <alias> <path>`) to allow using and validator rules to reference functions from external packages.
+*   **Expand Test Coverage**: Create a comprehensive test suite that verifies all features and edge cases, including the new import functionality.
 *   **Complete `README.md`**: Write user-facing documentation with installation, usage, and examples.
 *   **Parse `max_errors` from Annotation**: Implement parsing for the `max_errors` option in the `@derivingconvert` annotation and pass it to the `ErrorCollector`.
 *   **Handle Map Key Conversion**: Implement logic to convert map keys when the source and destination map key types are different.

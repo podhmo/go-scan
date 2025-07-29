@@ -49,6 +49,7 @@ type StructInfo struct {
 type FieldInfo struct {
 	Name         string
 	OriginalName string
+	JSONTag      string
 	TypeInfo     *scanner.TypeInfo  // The resolved TypeInfo for the field's type
 	FieldType    *scanner.FieldType // The detailed FieldType
 	Tag          ConvertTag

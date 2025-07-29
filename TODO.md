@@ -3,6 +3,7 @@
 > **Note on updating this file:**
 > -   Do not move individual tasks to the "Implemented" section.
 > -   A whole feature section (e.g., "convert Tool Implementation") should only be moved to "Implemented" when all of its sub-tasks are complete.
+> -   For partially completed features, use checkboxes (`[x]` for complete, `[-]` for partially complete). A feature is considered partially complete if it has been implemented but has associated tests that are currently disabled.
 > -   For partially completed features, use checkboxes (`[x]`) to mark completed sub-tasks.
 
 This file tracks implemented features and immediate, concrete tasks.
@@ -81,12 +82,14 @@ as described in [docs/plan-neo-convert.md](docs/plan-neo-convert.md)
 -   [x] **Improve Generated Code Error Handling**: Replace `// TODO: proper error handling` placeholders in the generator with more robust error handling, even if it's not the full `errorCollector` implementation.
 -   [x] **Parse `max_errors` from Annotation**: Implement parsing for the `max_errors` option in the `@derivingconvert` annotation.
 -   [ ] **Handle Map Key Conversion**: Implement logic to convert map keys when the source and destination map key types are different.
--   [ ] **Implement automatic field selection for untagged fields**: Use `json` tag as a fallback for field name matching (priority: `convert` tag > `json` tag > normalized field name).
+-   [-] **Implement automatic field selection for untagged fields**: Use `json` tag as a fallback for field name matching (priority: `convert` tag > `json` tag > normalized field name).
 -   [ ] **Support assignment for assignable embedded fields**
 -   [x] **Add Tests for `max_errors` and Map Key Conversion**: Write integration tests for the `max_errors` and map key conversion features. (Blocked by `go mod tidy` issue in tests)
 -   [x] **Support `replace` directives in `go.mod`**: Enhanced `go-scan`'s dependency resolution to correctly handle `replace` directives in `go.mod` files. (Note: integration tests revealed issues with `go mod tidy` in temporary directories)
 
 ### Known Issues
+-   **Duplicate Imports in Generated Code**: The `goscan.ImportManager` sometimes generates duplicate import statements, which can cause compilation errors. This should be fixed to ensure each package is imported only once.
+-   **`replace` directive path resolution in `scantest`**: Integration tests using `scantest` fail when the temporary `go.mod` uses a `replace` directive with a relative path. `scantest` needs to be improved to handle this scenario, possibly by adjusting the temporary directory structure or the `go` command's working directory.
 
 ### Future Tasks (Post-Migration)
 *   **Improve Import Management**: Handle import alias collisions robustly. Consider using `golang.org/x/tools/imports` for final output formatting.

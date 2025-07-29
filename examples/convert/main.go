@@ -105,25 +105,34 @@ func run(ctx context.Context, pkgpath, workdir, output, pkgname string) error {
 
 	slog.DebugContext(ctx, "Writing output", "file", output)
 
-	cmd := exec.CommandContext(ctx, "goimports")
-	cmd.Stdin = bytes.NewReader(generatedCode)
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	var errBuf bytes.Buffer
-	cmd.Stderr = &errBuf
+	formatted, err := formatCode(ctx, generatedCode)
+	if err != nil {
+		slog.WarnContext(ctx, "code formatting failed, using unformatted code", "error", err)
+		// Even if formatting fails, write the unformatted code.
+		if writeErr := writer.WriteFile(ctx, output, generatedCode, 0644); writeErr != nil {
+			return fmt.Errorf("failed to write (unformatted) generated code to %s: %w", output, writeErr)
+		}
+		return nil // Do not treat as an error.
+	}
 
-	if err := cmd.Run(); err != nil {
-		// fallback to original generated code if goimports fails
-		slog.WarnContext(ctx, "goimports failed, using unformatted code", "error", err, "stderr", errBuf.String())
-		if err := writer.WriteFile(ctx, output, generatedCode, 0644); err != nil {
-			return fmt.Errorf("failed to write (unformatted) generated code to %s: %w", output, err)
-		}
-	} else {
-		if err := writer.WriteFile(ctx, output, out.Bytes(), 0644); err != nil {
-			return fmt.Errorf("failed to write formatted code to %s: %w", output, err)
-		}
+	if err := writer.WriteFile(ctx, output, formatted, 0644); err != nil {
+		return fmt.Errorf("failed to write formatted code to %s: %w", output, err)
 	}
 
 	slog.InfoContext(ctx, "Successfully generated conversion functions", "output", output)
 	return nil
+}
+
+func formatCode(ctx context.Context, src []byte) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, "gofmt")
+	cmd.Stdin = bytes.NewReader(src)
+	var out bytes.Buffer
+	var errBuf bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errBuf
+
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("gofmt failed: %w: %s", err, errBuf.String())
+	}
+	return out.Bytes(), nil
 }

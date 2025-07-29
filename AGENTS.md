@@ -56,6 +56,7 @@ make test
 - 禁止。go buildで作成したバイナリはコミットしないこと。
 - 禁止。デバッグ用に一時的に作成したファイルはコミットしないこと。
 - 禁止。 github.com/stretchr/testify は使わないこと
+- 強制。 テストの比較時には github.com/google/go-cmp/cmp を使うこと。
 - 強制。ログにはlog/slogを使うこと。使うときはcontextを受け取るメソッドを使うこと（e.g. DebugContext()）
 - 禁止。logパッケージを使わないこと。
 - 強制。docs直下のファイルは英語で書くこと

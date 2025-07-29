@@ -264,9 +264,12 @@ type User struct {
 
 *   **Parser Implementation (`go-scan`)**: The parser is heavily reliant on `github.com/podhmo/go-scan`. The tool uses `go-scan` not just for walking the AST, but critically for resolving type information across packages. The `scanner.FieldType` and `goscan.ImportManager` are core components that the generator depends on to understand type structures and manage imports in the generated code.
 *   **Implicit Recursive Generation**: Instead of an explicit worklist, the generator leverages `go-scan`'s type resolution to achieve recursion. When generating the conversion for a field, it checks if the field's type is another struct that has a known conversion pair. If so, it generates a direct call to that pair's conversion function (e.g., `convertSrcSubStructToDstSubStruct(...)`). This approach simplifies the generator logic by relying on the completeness of the parsed model provided by the parser and `go-scan`.
-*   **Automatic Field Matching**: For fields without a `convert` tag, the tool should automatically match source and destination fields.
-    *   **Untagged Fields**: The matching logic normalizes field names by converting them to lowercase and removing underscores (`_`). If the normalized names of a source and a destination field are identical, they are considered a match (e.g., `UserEmail` matches `user_email`).
-    *   **Embedded Structs**: Fields from embedded structs are treated as if they belong to the parent struct. If a field in an embedded struct is assignable to a destination field, the conversion is performed directly.
+*   **Automatic Field Matching**: For fields without a specific `convert:"<dstName>"` tag, the tool should automatically match source and destination fields using a fallback mechanism. This allows for flexible and intuitive mapping, reusing existing metadata where possible.
+    *   **Matching Priority**:
+        1.  **`json` Tag**: If a field has a `json:"<name>"` tag, the `<name>` is used for matching. This is useful for reusing data transfer object (DTO) definitions.
+        2.  **Normalized Field Name**: If no `json` tag is present, the logic normalizes the field's actual name by converting it to lowercase and removing underscores (`_`).
+    *   **Logic**: The tool compares the identifier (from `json` tag or normalized name) of each source field with each destination field. A match is made if the identifiers are identical.
+    *   **Embedded Structs**: Fields from embedded structs are treated as if they belong to the parent struct, participating in the same matching logic.
     *   *(Note: This feature needs to be verified against the current implementation. If not implemented, it should be added to `TODO.md`.)*
 *   **Rationale for Annotation Options**: Each annotation option provides a critical escape hatch or safety feature, enhancing the tool's power and reliability.
     *   **`using=<funcName>` (Field Tag and Global Rule)**

@@ -86,17 +86,15 @@ func NewImportManager(currentPkgInfo *scanner.PackageInfo) *ImportManager {
 // Returns the actual alias that should be used for the package.
 // If the path is the current package's path, it returns an empty string (no alias needed for qualification).
 func (im *ImportManager) Add(path string, requestedAlias string) string {
-	im.mu.Lock()
-	defer im.mu.Unlock()
-
 	if path == "" {
 		return "" // Cannot import an empty path
 	}
-
-	// If the path is the current package, no import line is needed, and types are not qualified with an alias.
 	if im.currentPackagePath != "" && path == im.currentPackagePath {
 		return "" // Return empty string to signify no alias needed for qualification
 	}
+
+	im.mu.Lock()
+	defer im.mu.Unlock()
 
 	// Check if this path is already imported
 	if alias, ok := im.imports[path]; ok {
@@ -227,14 +225,19 @@ func (im *ImportManager) Qualify(packagePath string, typeName string) string {
 		return typeName // Type is in current package, built-in, or no package path given
 	}
 
-	// Ensure the package is added and get its alias.
-	// Pass the original package name (last part of path) as a requested alias hint.
-	requestedAliasHint := ""
-	if packagePath != "" {
-		requestedAliasHint = filepath.Base(packagePath)
-	}
+	im.mu.Lock()
+	alias, ok := im.imports[packagePath]
+	im.mu.Unlock()
 
-	alias := im.Add(packagePath, requestedAliasHint)
+	if !ok {
+		// Ensure the package is added and get its alias.
+		// Pass the original package name (last part of path) as a requested alias hint.
+		requestedAliasHint := ""
+		if packagePath != "" {
+			requestedAliasHint = filepath.Base(packagePath)
+		}
+		alias = im.Add(packagePath, requestedAliasHint)
+	}
 
 	if alias == "" { // This implies it's the current package (handled by Add) or an error/empty path.
 		return typeName

@@ -79,14 +79,12 @@ as described in [docs/plan-neo-convert.md](docs/plan-neo-convert.md)
 -   [x] **Error Handling with `errorCollector`**: Implement the `errorCollector` struct and generate code that uses it to report multiple conversion errors.
 -   [x] **Add Tests for Error Handling**: Write tests to verify that `errorCollector` correctly accumulates and reports errors.
 -   [x] **Improve Generated Code Error Handling**: Replace `// TODO: proper error handling` placeholders in the generator with more robust error handling, even if it's not the full `errorCollector` implementation.
--   [-] **Parse `max_errors` from Annotation**: Implemented, but requires integration tests.
--   [-] **Handle Map Key Conversion**: Implemented, but requires integration tests.
--   [ ] **Add Tests for `max_errors` and Map Key Conversion**: Write integration tests for the new features. This may require `go-scan` to support `replace` directives in `go.mod` for test dependency resolution.
+-   [x] **Parse `max_errors` from Annotation**: Implemented, but requires integration tests.
+-   [x] **Handle Map Key Conversion**: Implemented, but requires integration tests.
+-   [x] **Add Tests for `max_errors` and Map Key Conversion**: Write integration tests for the new features. This may require `go-scan` to support `replace` directives in `go.mod` for test dependency resolution.
+-   [x] **Support `replace` directives in `go.mod`**: Enhanced `go-scan`'s dependency resolution to correctly handle `replace` directives in `go.mod` files, simplifying integration testing.
 
 ### Known Issues
-
-### `go-scan` Enhancements
--   [ ] **Support `replace` directives in `go.mod`**: Enhance `go-scan`'s dependency resolution to correctly handle `replace` directives in `go.mod` files. This is crucial for simplifying integration testing for tools built with `go-scan`.
 
 ### Future Tasks (Post-Migration)
 *   **Improve Import Management**: Handle import alias collisions robustly. Consider using `golang.org/x/tools/imports` for final output formatting.

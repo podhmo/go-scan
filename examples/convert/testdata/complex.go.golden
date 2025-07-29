@@ -4,8 +4,8 @@ package converter
 
 import (
 	"context"
-	destination "example.com/convert/sampledata/destination"
-	source "example.com/convert/sampledata/source"
+	destination "github.com/podhmo/go-scan/examples/convert/sampledata/destination"
+	source "github.com/podhmo/go-scan/examples/convert/sampledata/source"
 )
 
 // ConvertSrcUserToDstUser converts SrcUser to DstUser.

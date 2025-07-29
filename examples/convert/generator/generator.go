@@ -7,7 +7,7 @@ import (
 	"strings"
 	"text/template"
 
-	"example.com/convert/model"
+	"github.com/podhmo/go-scan/examples/convert/model"
 	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/scanner"
 )
@@ -20,7 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"example.com/convert/model"
+	"github.com/podhmo/go-scan/examples/convert/model"
 	{{- range $path, $alias := .Imports }}
 	{{ $alias }} "{{ $path }}"
 	{{- end }}

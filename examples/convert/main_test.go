@@ -119,7 +119,7 @@ package errors
 import (
 	"context"
 	"errors"
-	"example.com/convert/model"
+	"github.com/podhmo/go-scan/examples/convert/model"
 )
 
 // @derivingconvert("Dst")

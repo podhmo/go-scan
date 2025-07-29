@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"example.com/convert/sampledata/destination"
-	"example.com/convert/sampledata/source"
+	"github.com/podhmo/go-scan/examples/convert/sampledata/destination"
+	"github.com/podhmo/go-scan/examples/convert/sampledata/source"
 )
 
 // This file contains manually written converter functions.

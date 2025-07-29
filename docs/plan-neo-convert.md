@@ -397,3 +397,28 @@ func ConvertInputToOutput(ctx context.Context, src Input) (Output, error) {
 *   **Complete `README.md`**: Write user-facing documentation with installation, usage, and examples.
 *   **Parse `max_errors` from Annotation**: Implement parsing for the `max_errors` option in the `@derivingconvert` annotation and pass it to the `ErrorCollector`.
 *   **Handle Map Key Conversion**: Implement logic to convert map keys when the source and destination map key types are different.
+
+---
+
+## 9. Documentation and Example Updates
+
+To improve clarity and maintainability, the documentation and examples for the `convert` tool have been updated.
+
+### Relocation of Manual Converter Example
+
+*   **What was done**: The `examples/convert/converter` directory, which contained manually written conversion functions, was moved to `examples/convert/sampledata/converter`.
+*   **Rationale**: This move clarifies the role of this code. It is not part of the core tool but serves as a sample for users who need to implement complex, manual conversion logic that the generator doesn't handle automatically. Placing it within `sampledata` makes its purpose as an example explicit.
+*   **New `README.md`**: A `README.md` file was added to the new `examples/convert/sampledata/converter` directory. This file explains that the code is a manual implementation sample and is not used in the automated code generation process.
+
+### Updates to `examples/convert/README.md`
+
+The main `README.md` for the `convert` example has been updated to provide a clearer understanding of the tool's capabilities.
+
+*   **New Sections**: Two new sections, "What This Tool Can Do" and "What This Tool Currently Doesn't Support Automatically," were added.
+*   **Clarification of Capabilities**:
+    *   The "What This Tool Can Do" section now explicitly mentions that combining multiple source fields into a single destination field is possible using a custom function with the `using` tag, often in conjunction with `// convert:variable`.
+    *   This addresses a previous ambiguity and highlights the power and flexibility of the `using` tag for complex mapping scenarios.
+*   **Clarification of Limitations**:
+    *   The "What This Tool Currently Doesn't Support Automatically" section outlines scenarios that still require manual implementation, such as automatic resolution of field name mismatches and embedding complex business logic.
+    *   It now directs users to the relocated manual converter example for guidance on implementing these custom solutions.
+*   **Language**: All documentation has been updated to be in English to ensure consistency and accessibility for a broader audience.

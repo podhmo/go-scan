@@ -3,6 +3,7 @@ package parser
 import (
 	"context"
 	"fmt"
+	"log"
 	"reflect"
 	"regexp"
 	"strconv"
@@ -137,6 +138,9 @@ func Parse(ctx context.Context, scannedPkg *scanner.PackageInfo) (*model.ParsedI
 		}
 	}
 
+	for _, rule := range info.GlobalRules {
+		log.Printf("GlobalRule: Src=%q, Dst=%q, Using=%q", rule.SrcTypeName, rule.DstTypeName, rule.UsingFunc)
+	}
 	return info, nil
 }
 

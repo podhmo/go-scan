@@ -1,12 +1,12 @@
-# 手動実装の変換関数サンプル
+# Manual Conversion Function Sample
 
-このディレクトリに含まれる `converter.go` は、手動で実装された変換関数のサンプルです。
+The `converter.go` file in this directory contains a sample of manually implemented conversion functions.
 
-これは、`@derivingconvert` アノテーションによるコード生成では対応できない、以下のような複雑な変換処理を実装する際の参考となることを目的としています。
+This is intended to serve as a reference for implementing complex conversion processes that cannot be handled by code generation with the `@derivingconvert` annotation, such as:
 
-*   フィールド名の不一致の解決
-*   複数のフィールドを組み合わせた変換
-*   外部関数や独自のビジネスロジックの組み込み
-*   `nil` チェックとデフォルト値の設定
+*   Resolving field name mismatches.
+*   Conversions that combine multiple fields.
+*   Embedding external functions or custom business logic.
+*   `nil` checks and setting default values.
 
-**注意:** このディレクトリのコードは、現在のコード生成プロセスでは直接使用されていません。あくまで手動実装のサンプルとして提供されています。
+**Note:** The code in this directory is not directly used in the current code generation process. It is provided purely as a sample of manual implementation.

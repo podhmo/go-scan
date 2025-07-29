@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"flag"
-	"go/format"
 	"os"
 	"path/filepath"
 	"sync"
@@ -11,6 +10,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/podhmo/go-scan/scantest"
+	"golang.org/x/tools/imports"
 )
 
 var update = flag.Bool("update", false, "update golden files")
@@ -94,11 +94,11 @@ func convertProfile(ctx context.Context, s string) string {
 		t.Fatalf("failed to read golden file: %v", err)
 	}
 
-	formattedGenerated, err := format.Source(generatedCode)
+	formattedGenerated, err := imports.Process(outputFile, generatedCode, nil)
 	if err != nil {
 		t.Fatalf("failed to format generated code: %v", err)
 	}
-	formattedGolden, err := format.Source(golden)
+	formattedGolden, err := imports.Process(goldenFile, golden, nil)
 	if err != nil {
 		t.Fatalf("failed to format golden file: %v", err)
 	}
@@ -276,11 +276,11 @@ func TestValidation(t *testing.T) {
 		t.Fatalf("failed to read golden file: %v", err)
 	}
 
-	formattedGenerated, err := format.Source(generatedCode)
+	formattedGenerated, err := imports.Process(outputFile, generatedCode, nil)
 	if err != nil {
 		t.Fatalf("failed to format generated code: %v", err)
 	}
-	formattedGolden, err := format.Source(golden)
+	formattedGolden, err := imports.Process(goldenFile, golden, nil)
 	if err != nil {
 		t.Fatalf("failed to format golden file: %v", err)
 	}
@@ -360,11 +360,11 @@ func TestIntegration_WithEmbeddedFields(t *testing.T) {
 		t.Fatalf("failed to read golden file: %v", err)
 	}
 
-	formattedGenerated, err := format.Source(generatedCode)
+	formattedGenerated, err := imports.Process(outputFile, generatedCode, nil)
 	if err != nil {
 		t.Fatalf("failed to format generated code: %v\n---\n%s", err, string(generatedCode))
 	}
-	formattedGolden, err := format.Source(golden)
+	formattedGolden, err := imports.Process(goldenFile, golden, nil)
 	if err != nil {
 		t.Fatalf("failed to format golden file: %v", err)
 	}
@@ -430,11 +430,11 @@ type Dst struct {
 		t.Fatalf("failed to read golden file: %v", err)
 	}
 
-	formattedGenerated, err := format.Source(generatedCode)
+	formattedGenerated, err := imports.Process(outputFile, generatedCode, nil)
 	if err != nil {
 		t.Fatalf("failed to format generated code: %v", err)
 	}
-	formattedGolden, err := format.Source(golden)
+	formattedGolden, err := imports.Process(goldenFile, golden, nil)
 	if err != nil {
 		t.Fatalf("failed to format golden file: %v", err)
 	}
@@ -577,11 +577,11 @@ func TestRun(t *testing.T) {
 		t.Fatalf("failed to read golden file: %v", err)
 	}
 
-	formattedGenerated, err := format.Source(generatedCode)
+	formattedGenerated, err := imports.Process(outputFile, generatedCode, nil)
 	if err != nil {
 		t.Fatalf("failed to format generated code: %v", err)
 	}
-	formattedGolden, err := format.Source(golden)
+	formattedGolden, err := imports.Process(goldenFile, golden, nil)
 	if err != nil {
 		t.Fatalf("failed to format golden file: %v", err)
 	}
@@ -664,11 +664,11 @@ func overrideTime(ctx context.Context, t time.Time) string {
 		t.Fatalf("failed to read golden file: %v", err)
 	}
 
-	formattedGenerated, err := format.Source(generatedCode)
+	formattedGenerated, err := imports.Process(outputFile, generatedCode, nil)
 	if err != nil {
 		t.Fatalf("failed to format generated code: %v\n---\n%s", err, string(generatedCode))
 	}
-	formattedGolden, err := format.Source(golden)
+	formattedGolden, err := imports.Process(goldenFile, golden, nil)
 	if err != nil {
 		t.Fatalf("failed to format golden file: %v", err)
 	}
@@ -741,11 +741,11 @@ type DstItem struct {
 		t.Fatalf("failed to read golden file: %v", err)
 	}
 
-	formattedGenerated, err := format.Source(generatedCode)
+	formattedGenerated, err := imports.Process(outputFile, generatedCode, nil)
 	if err != nil {
 		t.Fatalf("failed to format generated code: %v", err)
 	}
-	formattedGolden, err := format.Source(golden)
+	formattedGolden, err := imports.Process(goldenFile, golden, nil)
 	if err != nil {
 		t.Fatalf("failed to format golden file: %v", err)
 	}
@@ -821,11 +821,11 @@ type DstItem struct {
 		t.Fatalf("failed to read golden file: %v", err)
 	}
 
-	formattedGenerated, err := format.Source(generatedCode)
+	formattedGenerated, err := imports.Process(outputFile, generatedCode, nil)
 	if err != nil {
 		t.Fatalf("failed to format generated code: %v", err)
 	}
-	formattedGolden, err := format.Source(golden)
+	formattedGolden, err := imports.Process(goldenFile, golden, nil)
 	if err != nil {
 		t.Fatalf("failed to format golden file: %v", err)
 	}
@@ -893,11 +893,11 @@ type DstItem struct {
 		t.Fatalf("failed to read golden file: %v", err)
 	}
 
-	formattedGenerated, err := format.Source(generatedCode)
+	formattedGenerated, err := imports.Process(outputFile, generatedCode, nil)
 	if err != nil {
 		t.Fatalf("failed to format generated code: %v", err)
 	}
-	formattedGolden, err := format.Source(golden)
+	formattedGolden, err := imports.Process(goldenFile, golden, nil)
 	if err != nil {
 		t.Fatalf("failed to format golden file: %v", err)
 	}
@@ -1068,11 +1068,11 @@ func convertIntToString(ctx context.Context, i int) string {
 		t.Fatalf("failed to read golden file: %v", err)
 	}
 
-	formattedGenerated, err := format.Source(generatedCode)
+	formattedGenerated, err := imports.Process(outputFile, generatedCode, nil)
 	if err != nil {
 		t.Fatalf("failed to format generated code: %v", err)
 	}
-	formattedGolden, err := format.Source(golden)
+	formattedGolden, err := imports.Process(goldenFile, golden, nil)
 	if err != nil {
 		t.Fatalf("failed to format golden file: %v", err)
 	}

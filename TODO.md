@@ -40,6 +40,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 -   **Integration Tests for Examples:** Added integration tests for the code generation tools in the `examples/` directory using the new `scantest` library.
 -   **Variadic Parameter Parsing**: Correctly parses variadic parameters (e.g., `...string`) as slice types (e.g., `[]string`) within function signatures. The `IsVariadic` flag on `FunctionInfo` is set, and the parameter's `FieldType` accurately reflects the corresponding slice type.
 -   **Initial `convert` Tool Implementation**: Implemented the CLI entrypoint and a basic parser for the `convert` tool. The tool now uses a `@derivingconvert(DstType)` annotation on source types to define conversion pairs, as documented in the updated `docs/plan-neo-convert.md`.
+-   **Improved Import Management**: Handle import alias collisions robustly. By pre-registering types with the `ImportManager` and using `golang.org/x/tools/imports` for final output formatting, the generator now correctly handles complex import scenarios and avoids unused imports.
 
 ## To Be Implemented
 
@@ -91,6 +92,5 @@ as described in [docs/plan-neo-convert.md](docs/plan-neo-convert.md)
 
 
 ### Future Tasks (Post-Migration)
-*   **Improve Import Management**: Handle import alias collisions robustly. Consider using `golang.org/x/tools/imports` for final output formatting.
 *   **Expand Test Coverage**: Create a comprehensive test suite that verifies all features and edge cases.
 *   **Complete `README.md`**: Write user-facing documentation with installation, usage, and examples.

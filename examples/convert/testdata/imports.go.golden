@@ -4,10 +4,8 @@ package main
 import (
 	"context"
 	"errors"
-	ext "example.com/m/external"
-	"fmt"
+
 	"github.com/podhmo/go-scan/examples/convert/model"
-	time "time"
 )
 
 func convertSrcToDst(ctx context.Context, ec *model.ErrorCollector, src *Src) *Dst {

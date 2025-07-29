@@ -393,7 +393,6 @@ func ConvertInputToOutput(ctx context.Context, src Input) (Output, error) {
 
 ## 8. Future Tasks (TODO)
 
-*   **Implement `// convert:import` annotation**: Introduce the new global annotation (`// convert:import <alias> <path>`) to allow using and validator rules to reference functions from external packages.
 *   **Expand Test Coverage**: Create a comprehensive test suite that verifies all features and edge cases, including the new import functionality.
 *   **Complete `README.md`**: Write user-facing documentation with installation, usage, and examples.
 *   **Parse `max_errors` from Annotation**: Implement parsing for the `max_errors` option in the `@derivingconvert` annotation and pass it to the `ErrorCollector`.

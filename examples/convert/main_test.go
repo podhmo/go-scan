@@ -108,6 +108,118 @@ func convertProfile(ctx context.Context, s string) string {
 	}
 }
 
+func TestIntegration_WithImports(t *testing.T) {
+	// This test involves multiple packages, so we set up a proper module structure.
+	files := map[string]string{
+		"go.mod": "module example.com/m\ngo 1.24",
+		"main.go": `
+package main
+import (
+	"context"
+	"time"
+	ext "example.com/m/external"
+)
+
+// convert:import ext "example.com/m/external"
+// convert:rule "time.Time" -> "string", using=ext.TimeToString
+// convert:rule "string", validator=ext.ValidateString
+
+// @derivingconvert("Dst")
+type Src struct {
+	Timestamp time.Time
+	Comment   string
+}
+
+type Dst struct {
+	Timestamp string
+	Comment   string
+}
+`,
+		"external/funcs.go": `
+package external
+
+import (
+	"context"
+	"fmt"
+	"time"
+	"example.com/m/model"
+)
+
+func TimeToString(ctx context.Context, t time.Time) string {
+	return t.Format("2006-01-02")
+}
+func ValidateString(ec *model.ErrorCollector, s string) {
+	if s == "" {
+		ec.Add(fmt.Errorf("string is empty"))
+	}
+}
+`,
+		// model is needed by the validator
+		"model/model.go": `
+package model
+import "fmt"
+type ErrorCollector struct {
+	errors []error
+}
+func (ec *ErrorCollector) Add(err error) {
+	ec.errors = append(ec.errors, err)
+}
+func (ec *ErrorCollector) Enter(s string) {}
+func (ec *ErrorCollector) Leave() {}
+func (ec *ErrorCollector) MaxErrorsReached() bool { return false }
+`,
+	}
+
+	tmpdir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	ctx := context.Background()
+	writer := &memoryFileWriter{}
+	ctx = context.WithValue(ctx, FileWriterKey, writer)
+
+	// The package to scan is the main package
+	pkgpath := "example.com/m"
+	outputFile := "generated.go"
+	pkgname := "main"
+	goldenFile := "testdata/imports.go.golden"
+
+	err := run(ctx, pkgpath, tmpdir, outputFile, pkgname)
+	if err != nil {
+		t.Fatalf("run() failed: %v", err)
+	}
+
+	generatedCode, ok := writer.Outputs[outputFile]
+	if !ok {
+		t.Fatalf("output file %q not found in captured outputs", outputFile)
+	}
+
+	if *update {
+		if err := os.WriteFile(goldenFile, generatedCode, 0644); err != nil {
+			t.Fatalf("failed to update golden file: %v", err)
+		}
+		t.Logf("golden file updated: %s", goldenFile)
+		return
+	}
+
+	golden, err := os.ReadFile(goldenFile)
+	if err != nil {
+		t.Fatalf("failed to read golden file: %v", err)
+	}
+
+	formattedGenerated, err := imports.Process(outputFile, generatedCode, nil)
+	if err != nil {
+		t.Fatalf("failed to format generated code: %v\n---\n%s", err, string(generatedCode))
+	}
+	formattedGolden, err := imports.Process(goldenFile, golden, nil)
+	if err != nil {
+		t.Fatalf("failed to format golden file: %v", err)
+	}
+
+	if diff := cmp.Diff(string(formattedGolden), string(formattedGenerated)); diff != "" {
+		t.Errorf("generated code mismatch (-want +got):\n%s", diff)
+	}
+}
+
 func TestIntegration_WithValidator(t *testing.T) {
 	files := map[string]string{
 		"go.mod": `

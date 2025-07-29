@@ -13,6 +13,7 @@ type ParsedInfo struct {
 	PackagePath     string // Import path of the package being parsed
 	ConversionPairs []ConversionPair
 	GlobalRules     []TypeRule
+	Imports         map[string]string            // alias -> import path
 	Structs         map[string]*StructInfo       // Keyed by struct name (e.g. "MyStruct")
 	NamedTypes      map[string]*scanner.TypeInfo // Keyed by type name (e.g. "MyInt" for type MyInt int)
 }

@@ -42,55 +42,52 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 -   **Initial `convert` Tool Implementation**: Implemented the CLI entrypoint and a basic parser for the `convert` tool. The tool now uses a `@derivingconvert(DstType)` annotation on source types to define conversion pairs, as documented in the updated `docs/plan-neo-convert.md`.
 -   **Improved Import Management**: Handle import alias collisions robustly. By pre-registering types with the `ImportManager` and using `golang.org/x/tools/imports` for final output formatting, the generator now correctly handles complex import scenarios and avoids unused imports.
 
+-   **`convert` Tool Implementation**: as described in [docs/plan-neo-convert.md](docs/plan-neo-convert.md)
+    -   [x] **Generator for Structs**: Implement the code generator to produce conversion functions for basic struct-to-struct conversions based on the parsed `ConversionPair` model.
+        -   [x] Generate a top-level `Convert<Src>To<Dst>` function.
+        -   [x] Generate an internal `convert<Src>To<Dst>` helper function.
+        -   [x] Implement direct field mapping (e.g., `dst.Field = src.Field`).
+    -   [x] **Add Tests for Struct Conversion**: Write tests using `scantest` to verify the generated code for struct conversions.
+    -   [x] **Refactor `examples/convert` for Cross-Package Conversion**:
+        -   [x] Move `Src` and `Dst` types into separate packages (e.g., `models/source` and `models/destination`).
+        -   [x] Update tests to verify that cross-package conversion works correctly.
+    -   [x] **Generator for Pointer Fields**: Extend the generator to handle pointer fields within structs.
+        -   [x] Generate code that correctly handles `*SrcType` to `*DstType` conversions (nil checks).
+    -   [x] **Add Tests for Pointer Fields**: Write tests for pointer field conversions.
+    -   [x] **Advanced Field Conversion Logic**:
+        -   [x] Handle pointer-to-pointer (`*Src -> *Dst`) and value-to-pointer (`Src -> *Dst`) conversions.
+        -   [x] Implement automatic type conversion for common pairs (e.g., `time.Time` to `string`).
+    -   [x] **Generator for Slice Fields**: Extend the generator to handle slice fields (e.g., `[]SrcType` to `[]DstType`).
+        -   [x] Generate loops to iterate over slices and convert each element.
+    -   [x] **Add Tests for Slice Fields**: Write tests for slice field conversions.
+    -   [x] **Generator for Map Fields**: Extend the generator to handle map fields (e.g., `map[string]SrcType` to `map[string]DstType`).
+    -   [x] **Add Tests for Map Fields**: Write tests for map field conversions.
+    -   [x] **Map Element Conversion**: The generator now produces recursive helper function calls for elements within maps, supporting maps of structs.
+    -   [x] **Implement `convert:` Tag Handling**:
+        -   [x] `convert:"-"`: Skip a field.
+        -   [x] `convert:"NewName"`: Map to a different field name.
+        -   [x] `convert:",using=myFunc"`: Use a custom conversion function.
+        -   [x] `convert:",required"`: Report an error if a pointer field is nil.
+    -   [x] **Add Tests for `convert:` Tags**: Write comprehensive tests for all `convert:` tag options.
+    -   [x] **Implement `// convert:rule`**:
+        -   [x] Implement global type conversion rules (`"<SrcType>" -> "<DstType>", using=<funcName>`).
+        -   [x] Implement validator rules (`"<DstType>", validator=<funcName>`).
+    -   [x] **Add Tests for `// convert:rule`**: Write tests for global conversion and validator rules.
+    -   [x] **Error Handling with `errorCollector`**: Implement the `errorCollector` struct and generate code that uses it to report multiple conversion errors.
+    -   [x] **Add Tests for Error Handling**: Write tests to verify that `errorCollector` correctly accumulates and reports errors.
+    -   [x] **Improve Generated Code Error Handling**: Replace `// TODO: proper error handling` placeholders in the generator with more robust error handling, even if it's not the full `errorCollector` implementation.
+    -   [x] **Parse `max_errors` from Annotation**: Implement parsing for the `max_errors` option in the `@derivingconvert` annotation.
+    -   [x] **Handle Map Key Conversion**: Implement logic to convert map keys when the source and destination map key types are different.
+    -   [x] **Implement automatic field selection for untagged fields**: Use `json` tag as a fallback for field name matching (priority: `convert` tag > `json` tag > normalized field name).
+    -   [x] **Support assignment for assignable embedded fields**
+    -   [x] **Add Tests for `max_errors` and Map Key Conversion**: Write integration tests for the `max_errors` and map key conversion features.
+    -   [x] **Support `replace` directives in `go.mod`**: Enhanced `go-scan`'s dependency resolution to correctly handle `replace` directives in `go.mod` files.
+    -   [x] **Implement `// convert:import` annotation**: Introduce a new global annotation (`// convert:import <alias> <path>`) to allow `using` and `validator` rules to reference functions from external packages. This will remove the current limitation that requires these functions to be in the same package as the generated code.
+        -   [x] Update the parser to recognize and process the `// convert:import` annotation.
+        -   [x] Ensure the parser registers the specified alias and path with the `ImportManager`.
+        -   [x] Modify the `using` and `validator` logic to correctly resolve function references that use these imported aliases (e.g., `pkg.MyFunc`).
+
 ## To Be Implemented
-
-### `convert` Tool Implementation
-
-as described in [docs/plan-neo-convert.md](docs/plan-neo-convert.md)
-
--   [x] **Generator for Structs**: Implement the code generator to produce conversion functions for basic struct-to-struct conversions based on the parsed `ConversionPair` model.
-    -   [x] Generate a top-level `Convert<Src>To<Dst>` function.
-    -   [x] Generate an internal `convert<Src>To<Dst>` helper function.
-    -   [x] Implement direct field mapping (e.g., `dst.Field = src.Field`).
--   [x] **Add Tests for Struct Conversion**: Write tests using `scantest` to verify the generated code for struct conversions.
--   [x] **Refactor `examples/convert` for Cross-Package Conversion**:
-    -   [x] Move `Src` and `Dst` types into separate packages (e.g., `models/source` and `models/destination`).
-    -   [x] Update tests to verify that cross-package conversion works correctly.
--   [x] **Generator for Pointer Fields**: Extend the generator to handle pointer fields within structs.
-    -   [x] Generate code that correctly handles `*SrcType` to `*DstType` conversions (nil checks).
--   [x] **Add Tests for Pointer Fields**: Write tests for pointer field conversions.
--   [x] **Advanced Field Conversion Logic**:
-    -   [x] Handle pointer-to-pointer (`*Src -> *Dst`) and value-to-pointer (`Src -> *Dst`) conversions.
-    -   [x] Implement automatic type conversion for common pairs (e.g., `time.Time` to `string`).
--   [x] **Generator for Slice Fields**: Extend the generator to handle slice fields (e.g., `[]SrcType` to `[]DstType`).
-    -   [x] Generate loops to iterate over slices and convert each element.
--   [x] **Add Tests for Slice Fields**: Write tests for slice field conversions.
--   [x] **Generator for Map Fields**: Extend the generator to handle map fields (e.g., `map[string]SrcType` to `map[string]DstType`).
--   [x] **Add Tests for Map Fields**: Write tests for map field conversions.
--   [x] **Map Element Conversion**: The generator now produces recursive helper function calls for elements within maps, supporting maps of structs.
--   [x] **Implement `convert:` Tag Handling**:
-    -   [x] `convert:"-"`: Skip a field.
-    -   [x] `convert:"NewName"`: Map to a different field name.
-    -   [x] `convert:",using=myFunc"`: Use a custom conversion function.
-    -   [x] `convert:",required"`: Report an error if a pointer field is nil.
--   [x] **Add Tests for `convert:` Tags**: Write comprehensive tests for all `convert:` tag options.
--   [x] **Implement `// convert:rule`**:
-    -   [x] Implement global type conversion rules (`"<SrcType>" -> "<DstType>", using=<funcName>`).
-    -   [x] Implement validator rules (`"<DstType>", validator=<funcName>`).
--   [x] **Add Tests for `// convert:rule`**: Write tests for global conversion and validator rules.
--   [x] **Error Handling with `errorCollector`**: Implement the `errorCollector` struct and generate code that uses it to report multiple conversion errors.
--   [x] **Add Tests for Error Handling**: Write tests to verify that `errorCollector` correctly accumulates and reports errors.
--   [x] **Improve Generated Code Error Handling**: Replace `// TODO: proper error handling` placeholders in the generator with more robust error handling, even if it's not the full `errorCollector` implementation.
--   [x] **Parse `max_errors` from Annotation**: Implement parsing for the `max_errors` option in the `@derivingconvert` annotation.
--   [x] **Handle Map Key Conversion**: Implement logic to convert map keys when the source and destination map key types are different.
--   [x] **Implement automatic field selection for untagged fields**: Use `json` tag as a fallback for field name matching (priority: `convert` tag > `json` tag > normalized field name).
--   [x] **Support assignment for assignable embedded fields**
--   [x] **Add Tests for `max_errors` and Map Key Conversion**: Write integration tests for the `max_errors` and map key conversion features.
--   [x] **Support `replace` directives in `go.mod`**: Enhanced `go-scan`'s dependency resolution to correctly handle `replace` directives in `go.mod` files.
--   **Implement `// convert:import` annotation**: Introduce a new global annotation (`// convert:import <alias> <path>`) to allow `using` and `validator` rules to reference functions from external packages. This will remove the current limitation that requires these functions to be in the same package as the generated code.
-    -   Update the parser to recognize and process the `// convert:import` annotation.
-    -   Ensure the parser registers the specified alias and path with the `ImportManager`.
-    -   Modify the `using` and `validator` logic to correctly resolve function references that use these imported aliases (e.g., `pkg.MyFunc`).
 
 ### Known Issues
 

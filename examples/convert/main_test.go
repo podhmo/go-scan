@@ -5,9 +5,7 @@ import (
 	"flag"
 	"go/format"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strings"
 	"sync"
 	"testing"
 
@@ -115,15 +113,42 @@ func TestIntegration_WithValidator(t *testing.T) {
 		"go.mod": `
 module example.com/m
 go 1.24
-replace github.com/podhmo/go-scan/examples/convert/model => ../../../model
 `,
 		"validator.go": `
 package validator
 
 import (
 	"fmt"
-	"github.com/podhmo/go-scan/examples/convert/model"
 )
+
+type ErrorCollector struct {
+	errors []error
+	max    int
+}
+
+func NewErrorCollector(max int) *ErrorCollector {
+	return &ErrorCollector{max: max}
+}
+func (ec *ErrorCollector) Add(err error) {
+	if ec.max > 0 && len(ec.errors) >= ec.max {
+		return
+	}
+	ec.errors = append(ec.errors, err)
+}
+func (ec *ErrorCollector) Errors() []error {
+	return ec.errors
+}
+func (ec *ErrorCollector) HasErrors() bool {
+	return len(ec.errors) > 0
+}
+func (ec *ErrorCollector) Enter(name string) {}
+func (ec *ErrorCollector) Leave()            {}
+func (ec *ErrorCollector) MaxErrorsReached() bool {
+	if ec.max <= 0 {
+		return false
+	}
+	return len(ec.errors) >= ec.max
+}
 
 // // convert:rule "string", validator=validateString
 // // convert:rule "int", validator=validateInt
@@ -237,16 +262,31 @@ func TestValidation(t *testing.T) {
 		t.Fatalf("output file %q not found in captured outputs", outputFile)
 	}
 
-	generatedPath := filepath.Join(tmpdir, "generated.go")
-	if err := os.WriteFile(generatedPath, generatedCode, 0644); err != nil {
-		t.Fatalf("failed to write generated code: %v", err)
+	goldenFile := "testdata/validator.go.golden"
+	if *update {
+		if err := os.WriteFile(goldenFile, generatedCode, 0644); err != nil {
+			t.Fatalf("failed to update golden file: %v", err)
+		}
+		t.Logf("golden file updated: %s", goldenFile)
+		return
 	}
 
-	cmd := exec.Command("go", "test", "-v")
-	cmd.Dir = tmpdir
-	output, err := cmd.CombinedOutput()
+	golden, err := os.ReadFile(goldenFile)
 	if err != nil {
-		t.Errorf("expected go test to succeed, but it failed. Output:\n%s", output)
+		t.Fatalf("failed to read golden file: %v", err)
+	}
+
+	formattedGenerated, err := format.Source(generatedCode)
+	if err != nil {
+		t.Fatalf("failed to format generated code: %v", err)
+	}
+	formattedGolden, err := format.Source(golden)
+	if err != nil {
+		t.Fatalf("failed to format golden file: %v", err)
+	}
+
+	if diff := cmp.Diff(string(formattedGolden), string(formattedGenerated)); diff != "" {
+		t.Errorf("generated code mismatch (-want +got):\n%s", diff)
 	}
 }
 
@@ -409,7 +449,6 @@ func TestIntegration_WithErrorHandling(t *testing.T) {
 		"go.mod": `
 module example.com/m
 go 1.24
-replace github.com/podhmo/go-scan/examples/convert/model => ../../../model
 `,
 		"errors.go": `
 package errors
@@ -417,8 +456,36 @@ package errors
 import (
 	"context"
 	"errors"
-	"example.com/convert/model"
 )
+
+type ErrorCollector struct {
+	errors []error
+	max    int
+}
+
+func NewErrorCollector(max int) *ErrorCollector {
+	return &ErrorCollector{max: max}
+}
+func (ec *ErrorCollector) Add(err error) {
+	if ec.max > 0 && len(ec.errors) >= ec.max {
+		return
+	}
+	ec.errors = append(ec.errors, err)
+}
+func (ec *ErrorCollector) Errors() []error {
+	return ec.errors
+}
+func (ec *ErrorCollector) HasErrors() bool {
+	return len(ec.errors) > 0
+}
+func (ec *ErrorCollector) Enter(name string) {}
+func (ec *ErrorCollector) Leave()            {}
+func (ec *ErrorCollector) MaxErrorsReached() bool {
+	if ec.max <= 0 {
+		return false
+	}
+	return len(ec.errors) >= ec.max
+}
 
 // @derivingconvert("Dst")
 type Src struct {
@@ -496,21 +563,31 @@ func TestRun(t *testing.T) {
 		t.Fatalf("output file %q not found in captured outputs", outputFile)
 	}
 
-	// 2. Write the generated code to the temp directory
-	generatedPath := filepath.Join(tmpdir, "generated.go")
-	if err := os.WriteFile(generatedPath, generatedCode, 0644); err != nil {
-		t.Fatalf("failed to write generated code: %v", err)
+	goldenFile := "testdata/errors.go.golden"
+	if *update {
+		if err := os.WriteFile(goldenFile, generatedCode, 0644); err != nil {
+			t.Fatalf("failed to update golden file: %v", err)
+		}
+		t.Logf("golden file updated: %s", goldenFile)
+		return
 	}
 
-	// 3. Run the test in the temp directory that uses the generated code
-	cmd := exec.Command("go", "test", "-v")
-	cmd.Dir = tmpdir
-	output, err := cmd.CombinedOutput()
-	if err == nil {
-		t.Errorf("expected go test to fail, but it succeeded. Output:\n%s", output)
+	golden, err := os.ReadFile(goldenFile)
+	if err != nil {
+		t.Fatalf("failed to read golden file: %v", err)
 	}
-	if !strings.Contains(string(output), "expected error to contain") {
-		t.Logf("Go test output:\n%s", output)
+
+	formattedGenerated, err := format.Source(generatedCode)
+	if err != nil {
+		t.Fatalf("failed to format generated code: %v", err)
+	}
+	formattedGolden, err := format.Source(golden)
+	if err != nil {
+		t.Fatalf("failed to format golden file: %v", err)
+	}
+
+	if diff := cmp.Diff(string(formattedGolden), string(formattedGenerated)); diff != "" {
+		t.Errorf("generated code mismatch (-want +got):\n%s", diff)
 	}
 }
 

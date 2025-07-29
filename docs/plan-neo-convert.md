@@ -264,11 +264,26 @@ type User struct {
 
 *   **Parser Implementation (`go-scan`)**: The parser is heavily reliant on `github.com/podhmo/go-scan`. The tool uses `go-scan` not just for walking the AST, but critically for resolving type information across packages. The `scanner.FieldType` and `goscan.ImportManager` are core components that the generator depends on to understand type structures and manage imports in the generated code.
 *   **Implicit Recursive Generation**: Instead of an explicit worklist, the generator leverages `go-scan`'s type resolution to achieve recursion. When generating the conversion for a field, it checks if the field's type is another struct that has a known conversion pair. If so, it generates a direct call to that pair's conversion function (e.g., `convertSrcSubStructToDstSubStruct(...)`). This approach simplifies the generator logic by relying on the completeness of the parsed model provided by the parser and `go-scan`.
+*   **Automatic Field Matching**: For fields without a `convert` tag, the tool should automatically match source and destination fields.
+    *   **Untagged Fields**: The matching logic normalizes field names by converting them to lowercase and removing underscores (`_`). If the normalized names of a source and a destination field are identical, they are considered a match (e.g., `UserEmail` matches `user_email`).
+    *   **Embedded Structs**: Fields from embedded structs are treated as if they belong to the parent struct. If a field in an embedded struct is assignable to a destination field, the conversion is performed directly.
+    *   *(Note: This feature needs to be verified against the current implementation. If not implemented, it should be added to `TODO.md`.)*
+*   **Rationale for Annotation Options**: Each annotation option provides a critical escape hatch or safety feature, enhancing the tool's power and reliability.
+    *   **`using=<funcName>` (Field Tag and Global Rule)**
+        *   **Purpose**: To handle complex or mismatched type conversions that the generator cannot perform automatically. This is essential for scenarios like `string` to `int` conversion, combining multiple fields (`FirstName`, `LastName` -> `FullName`), or applying custom formatting.
+        *   **Impact of Removal**: Without `using`, the tool would be limited to simple, name-and-type-identical field mappings. Users would have to write post-processing code to handle any non-trivial conversion, which defeats the purpose of the tool and re-introduces significant boilerplate.
+    *   **`required` (Field Tag)**
+        *   **Purpose**: To enforce "not-nil" constraints on pointer fields during conversion. It provides a declarative way to ensure that required data is present, preventing `nil` values from propagating silently.
+        *   **Impact of Removal**: Developers would need to write manual `if src.Field == nil` checks after the conversion, increasing the risk of runtime nil-dereference errors if a check is forgotten. This option makes the conversion process more robust and the data constraints explicit.
+    *   **`validator=<funcName>` (Global Rule)**
+        *   **Purpose**: To ensure data integrity *after* a value has been converted and populated. It separates the concern of conversion (changing shape) from validation (enforcing business rules like string length or numeric range).
+        *   **Impact of Removal**: If the validator feature were removed, users would be responsible for explicitly calling validation functions on the destination object. This increases boilerplate, raises the risk of developers forgetting to call validators, and tightly couples the calling code with the validation logic of the model, which should ideally be self-contained.
 *   **Error Handling (`model.ErrorCollector`)**: The generated code uses the `model.ErrorCollector` struct, which is included in the `model` package. This struct accumulates errors along with their field paths (e.g., `User.Address.Street`), providing rich debugging information instead of failing on the first error. The collector's path tracking (`Enter`/`Leave`) is generated for nested structs, slices, and maps.
 *   **Rule Priority**: The generator must respect the rule priority:
     1.  Field-level `using` tag.
-    2.  Global `convert:rule`.
+    2.  Global `convert:rule` for conversion.
     3.  Automatic conversion (direct assignment, pointer handling, recursive call for nested structs).
+    4.  Global `validator` rule (applied after population).
 
 ---
 

@@ -126,6 +126,31 @@ type User struct {
 }
 ```
 
+## What This Tool Can Do
+
+*   **Annotation-Driven Code Generation**: Generates conversion functions based on `@derivingconvert` annotations.
+*   **Basic Type Conversion**: Handles conversions for basic types like `string`, `int`, etc.
+*   **Handling of Complex Types**: Supports nested structs, slices, maps, and pointers.
+*   **Flexible Field Mapping**:
+    *   Use the `convert:"<name>"` tag to specify a different field name.
+    *   Use `convert:"-"` to skip a field.
+*   **Custom Conversion Logic**:
+    *   Use the `convert:",using=<func>"` tag to specify a custom conversion function. This is powerful for complex scenarios.
+    *   Combine multiple source fields into a single destination field using a custom function with the `using` tag.
+    *   Use `// convert:variable` to declare local variables within the generated function, which can be shared across multiple `using` functions.
+*   **Global Conversion Rules**: Define global type conversion rules using `// convert:rule`.
+*   **Customizable Time Conversion**: Convert `time.Time` to `string` in `RFC3339` format or other custom formats using a custom function.
+
+## What This Tool Currently Doesn't Support Automatically
+
+While the `using` tag provides a lot of flexibility, some scenarios require manual implementation:
+
+*   **Automatic Field Name Resolution**: The tool does not automatically resolve field name mismatches (e.g., `SrcUser.ID` to `DstUser.UserID`). You must explicitly map them using the `convert` tag.
+*   **Complex Business Logic**: For conversions that require external API calls or complex business logic, you need to implement a custom function and specify it with the `using` tag.
+*   **Conditional Logic and Default Values**: Complex conditional logic, such as setting a default value when a source pointer is `nil`, needs to be handled within a custom function.
+
+For examples of how to implement custom logic, see the manually implemented converters in `examples/convert/sampledata/converter/converter.go`.
+
 ## How to Use
 
 The `convert` tool is a command-line application.

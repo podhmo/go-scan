@@ -88,7 +88,7 @@ as described in [docs/plan-neo-convert.md](docs/plan-neo-convert.md)
 -   [x] **Support `replace` directives in `go.mod`**: Enhanced `go-scan`'s dependency resolution to correctly handle `replace` directives in `go.mod` files.
 
 ### Known Issues
--   **Duplicate Imports in Generated Code**: The `goscan.ImportManager` sometimes generates duplicate import statements, which can cause compilation errors. This should be fixed to ensure each package is imported only once.
+
 
 ### Future Tasks (Post-Migration)
 *   **Improve Import Management**: Handle import alias collisions robustly. Consider using `golang.org/x/tools/imports` for final output formatting.

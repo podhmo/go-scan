@@ -119,7 +119,7 @@ package errors
 import (
 	"context"
 	"errors"
-	"github.com/podhmo/go-scan/examples/convert/model"
+	"example.com/convert/model"
 )
 
 // @derivingconvert("Dst")
@@ -342,7 +342,6 @@ type DstItem struct {
 	pkgpath := "example.com/m"
 	outputFile := "generated.go"
 	pkgname := "maps"
-	goldenFile := "testdata/maps.go.golden"
 
 	err := run(ctx, pkgpath, tmpdir, outputFile, pkgname)
 	if err != nil {

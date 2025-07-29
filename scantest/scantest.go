@@ -10,8 +10,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/podhmo/go-scan/scanner"
 	scan "github.com/podhmo/go-scan"
+	"github.com/podhmo/go-scan/scanner"
 )
 
 // memoryFileWriter is an in-memory implementation of scan.FileWriter for testing.

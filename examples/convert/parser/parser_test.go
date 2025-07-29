@@ -8,8 +8,8 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
-	"github.com/podhmo/go-scan/scanner"
 	"github.com/podhmo/go-scan/examples/convert/model"
+	"github.com/podhmo/go-scan/scanner"
 )
 
 func TestParse(t *testing.T) {

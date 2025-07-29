@@ -99,3 +99,94 @@ func TestRun_GenerateFile(t *testing.T) {
 		t.Errorf("generated file content is not what was expected")
 	}
 }
+
+func TestRun_WithReplaceDirective(t *testing.T) {
+	// Create a temporary directory structure that requires a `replace` directive.
+	// root/
+	//   - go.mod (module example.com/me)
+	//   - project/
+	//     - go.mod (module example.com/project, replace example.com/lib => ../lib)
+	//     - main.go (imports example.com/lib)
+	//   - lib/
+	//     - go.mod (module example.com/lib)
+	//     - lib.go (defines type Thing)
+
+	tmpDir := t.TempDir()
+
+	// Create lib module
+	libDir := filepath.Join(tmpDir, "lib")
+	if err := os.Mkdir(libDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(libDir, "go.mod"), []byte("module example.com/lib"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(libDir, "lib.go"), []byte("package lib; type Thing struct { Name string }"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create project module
+	projectDir := filepath.Join(tmpDir, "project")
+	if err := os.Mkdir(projectDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	projectGoMod := `
+module example.com/project
+go 1.18
+replace example.com/lib => ../lib
+`
+	if err := os.WriteFile(filepath.Join(projectDir, "go.mod"), []byte(projectGoMod), 0644); err != nil {
+		t.Fatal(err)
+	}
+	projectMainGo := `
+package main
+import "example.com/lib"
+type Model struct {
+    Thing lib.Thing
+}
+`
+	if err := os.WriteFile(filepath.Join(projectDir, "main.go"), []byte(projectMainGo), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Action to verify that the type from the replaced module is resolved
+	action := func(ctx context.Context, s *scan.Scanner, pkgs []*scan.Package) error {
+		if len(pkgs) == 0 {
+			return fmt.Errorf("no packages found")
+		}
+		pkg := pkgs[0]
+		modelType := pkg.Lookup("Model")
+		if modelType == nil {
+			return fmt.Errorf("type Model not found")
+		}
+		if modelType.Struct == nil || len(modelType.Struct.Fields) == 0 {
+			return fmt.Errorf("Model struct is empty")
+		}
+		thingField := modelType.Struct.Fields[0]
+		if thingField.Type.Name != "lib.Thing" {
+			return fmt.Errorf("expected field type name to be 'lib.Thing', got %q", thingField.Type.Name)
+		}
+
+		// Try to resolve the field type
+		resolvedType, err := s.ResolveType(ctx, thingField.Type)
+		if err != nil {
+			return fmt.Errorf("failed to resolve lib.Thing: %w", err)
+		}
+		if resolvedType == nil {
+			return fmt.Errorf("resolved lib.Thing is nil")
+		}
+		if resolvedType.Name != "Thing" {
+			return fmt.Errorf("expected resolved type name to be 'Thing', got %q", resolvedType.Name)
+		}
+		if resolvedType.PkgPath != "example.com/lib" {
+			return fmt.Errorf("expected resolved type package path to be 'example.com/lib', got %q", resolvedType.PkgPath)
+		}
+		return nil
+	}
+
+	// Run the test on the project directory
+	_, err := Run(t, projectDir, []string{"."}, action)
+	if err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+}

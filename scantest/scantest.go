@@ -6,9 +6,11 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
+	"github.com/podhmo/go-scan/scanner"
 	scan "github.com/podhmo/go-scan"
 )
 
@@ -47,7 +49,19 @@ type Result struct {
 // It returns a Result object if the action had side effects captured by the harness.
 func Run(t *testing.T, dir string, patterns []string, action ActionFunc) (*Result, error) {
 	t.Helper()
-	s, err := scan.New(scan.WithWorkDir(dir))
+
+	// Automatically handle go.mod replace directives with relative paths.
+	overlay, err := createGoModOverlay(dir)
+	if err != nil {
+		return nil, fmt.Errorf("creating go.mod overlay: %w", err)
+	}
+
+	options := []scan.ScannerOption{scan.WithWorkDir(dir)}
+	if overlay != nil {
+		options = append(options, scan.WithOverlay(overlay))
+	}
+
+	s, err := scan.New(options...)
 	if err != nil {
 		return nil, fmt.Errorf("new scanner: %w", err)
 	}
@@ -85,4 +99,84 @@ func WriteFiles(t *testing.T, files map[string]string) (string, func()) {
 		}
 	}
 	return dir, func() { /* t.TempDir handles cleanup */ }
+}
+
+// createGoModOverlay reads the go.mod file in the given directory,
+// and if it contains `replace` directives with relative file paths,
+// it creates an in-memory overlay with those paths converted to absolute paths.
+// This is necessary because the `go-scan` tool resolves paths relative
+// to the module root, and in tests, the temp directory is not the CWD.
+func createGoModOverlay(dir string) (scanner.Overlay, error) {
+	goModPath := filepath.Join(dir, "go.mod")
+	_, err := os.Stat(goModPath)
+	if os.IsNotExist(err) {
+		return nil, nil // No go.mod, no overlay needed.
+	}
+	if err != nil {
+		return nil, fmt.Errorf("stat go.mod: %w", err)
+	}
+
+	content, err := os.ReadFile(goModPath)
+	if err != nil {
+		return nil, fmt.Errorf("read go.mod: %w", err)
+	}
+
+	lines := strings.Split(string(content), "\n")
+	var newLines []string
+	var modified bool
+
+	inReplaceBlock := false
+	for _, line := range lines {
+		trimmedLine := strings.TrimSpace(line)
+
+		isReplaceLine := strings.HasPrefix(trimmedLine, "replace")
+		if !inReplaceBlock && isReplaceLine && strings.HasSuffix(trimmedLine, "(") {
+			inReplaceBlock = true
+		} else if inReplaceBlock && trimmedLine == ")" {
+			inReplaceBlock = false
+		}
+
+		if isReplaceLine || inReplaceBlock {
+			parts := strings.Fields(trimmedLine)
+			// A valid replace line looks like: "replace module/path => ../local/path"
+			// or inside a block: "module/path => ../local/path"
+			arrowIndex := -1
+			for i, p := range parts {
+				if p == "=>" {
+					arrowIndex = i
+					break
+				}
+			}
+
+			if arrowIndex != -1 && arrowIndex < len(parts)-1 {
+				pathPart := parts[len(parts)-1]
+				if strings.HasPrefix(pathPart, "./") || strings.HasPrefix(pathPart, "../") {
+					// This is a relative path, resolve it against `dir`
+					absPath, err := filepath.Abs(filepath.Join(dir, pathPart))
+					if err != nil {
+						return nil, fmt.Errorf("could not make path absolute for %q: %w", pathPart, err)
+					}
+					// Reconstruct the line with the absolute path
+					parts[len(parts)-1] = absPath
+					// Get the original line's indentation
+					indent := ""
+					if len(line) > len(trimmedLine) {
+						indent = line[:strings.Index(line, trimmedLine)]
+					}
+					line = indent + strings.Join(parts, " ")
+					modified = true
+				}
+			}
+		}
+		newLines = append(newLines, line)
+	}
+
+	if !modified {
+		return nil, nil // No changes, no overlay needed.
+	}
+
+	overlay := scanner.Overlay{
+		"go.mod": []byte(strings.Join(newLines, "\n")),
+	}
+	return overlay, nil
 }

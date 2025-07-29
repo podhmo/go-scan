@@ -89,7 +89,6 @@ as described in [docs/plan-neo-convert.md](docs/plan-neo-convert.md)
 
 ### Known Issues
 -   **Duplicate Imports in Generated Code**: The `goscan.ImportManager` sometimes generates duplicate import statements, which can cause compilation errors. This should be fixed to ensure each package is imported only once.
--   **`replace` directive path resolution in `scantest`**: Integration tests using `scantest` fail when the temporary `go.mod` uses a `replace` directive with a relative path. `scantest` needs to be improved to handle this scenario, possibly by adjusting the temporary directory structure or the `go` command's working directory.
 
 ### Future Tasks (Post-Migration)
 *   **Improve Import Management**: Handle import alias collisions robustly. Consider using `golang.org/x/tools/imports` for final output formatting.

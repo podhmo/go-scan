@@ -35,28 +35,13 @@ func Parse(ctx context.Context, scannedPkg *scanner.PackageInfo) (*model.ParsedI
 				Name: t.Name,
 				Type: t,
 			}
-			for _, f := range t.Struct.Fields {
-				structTag := reflect.StructTag(f.Tag)
-				tag, err := parseConvertTag(structTag)
-				if err != nil {
-					return nil, fmt.Errorf("parsing tag for %s.%s: %w", t.Name, f.Name, err)
-				}
-
-				fieldTypeInfo := scannedPkg.Lookup(f.Type.Name)
-				if fieldTypeInfo == nil {
-					fieldTypeInfo = &scanner.TypeInfo{Name: f.Type.Name}
-				}
-
-				fieldInfo := model.FieldInfo{
-					Name:         f.Name,
-					OriginalName: f.Name,
-					JSONTag:      parseJSONTag(structTag),
-					TypeInfo:     fieldTypeInfo,
-					FieldType:    f.Type, // Store the original FieldType
-					Tag:          tag,
-					ParentStruct: modelStructInfo,
-				}
-				modelStructInfo.Fields = append(modelStructInfo.Fields, fieldInfo)
+			fields, err := collectFields(ctx, t, scannedPkg, make(map[string]struct{}))
+			if err != nil {
+				return nil, fmt.Errorf("collecting fields for struct %s: %w", t.Name, err)
+			}
+			modelStructInfo.Fields = fields
+			for i := range modelStructInfo.Fields {
+				modelStructInfo.Fields[i].ParentStruct = modelStructInfo
 			}
 			info.Structs[t.Name] = modelStructInfo
 		}
@@ -253,4 +238,70 @@ func parseJSONTag(tag reflect.StructTag) string {
 	}
 	parts := strings.Split(jsonTag, ",")
 	return parts[0]
+}
+
+func collectFields(ctx context.Context, t *scanner.TypeInfo, p *scanner.PackageInfo, visited map[string]struct{}) ([]model.FieldInfo, error) {
+	if _, ok := visited[t.Name]; ok {
+		return nil, nil // cycle detected
+	}
+	visited[t.Name] = struct{}{}
+
+	var fields []model.FieldInfo
+	if t.Struct == nil {
+		return nil, fmt.Errorf("type %s is not a struct", t.Name)
+	}
+
+	for _, f := range t.Struct.Fields {
+		if f.Embedded {
+			// Resolve the embedded field's type to get its own fields.
+			// This requires the FieldType to be resolved to a TypeInfo.
+			embeddedTypeName := f.Type.Name
+			if f.Type.IsPointer {
+				if f.Type.Elem != nil {
+					embeddedTypeName = f.Type.Elem.Name
+				}
+			}
+
+			// Look up the TypeInfo for the embedded struct.
+			embeddedTypeInfo := p.Lookup(embeddedTypeName)
+			if embeddedTypeInfo == nil || embeddedTypeInfo.Struct == nil {
+				// If not found in the current package, it might be in an external package.
+				// This part requires resolving external types, which might be complex.
+				// For now, we assume embedded types are within the same scanned package.
+				log.Printf("Could not resolve embedded struct type %s, skipping", embeddedTypeName)
+				continue
+			}
+
+			// Recursively collect fields from the embedded struct.
+			embeddedFields, err := collectFields(ctx, embeddedTypeInfo, p, visited)
+			if err != nil {
+				return nil, fmt.Errorf("collecting fields from embedded struct %s: %w", embeddedTypeName, err)
+			}
+			fields = append(fields, embeddedFields...)
+		} else {
+			// This is a regular field.
+			structTag := reflect.StructTag(f.Tag)
+			tag, err := parseConvertTag(structTag)
+			if err != nil {
+				return nil, fmt.Errorf("parsing tag for %s.%s: %w", t.Name, f.Name, err)
+			}
+
+			fieldTypeInfo := p.Lookup(f.Type.Name)
+			if fieldTypeInfo == nil {
+				fieldTypeInfo = &scanner.TypeInfo{Name: f.Type.Name}
+			}
+
+			fieldInfo := model.FieldInfo{
+				Name:         f.Name,
+				OriginalName: f.Name,
+				JSONTag:      parseJSONTag(structTag),
+				TypeInfo:     fieldTypeInfo,
+				FieldType:    f.Type,
+				Tag:          tag,
+				// ParentStruct is set by the caller
+			}
+			fields = append(fields, fieldInfo)
+		}
+	}
+	return fields, nil
 }

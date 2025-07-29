@@ -110,6 +110,90 @@ func convertProfile(ctx context.Context, s string) string {
 	}
 }
 
+func TestIntegration_WithEmbeddedFields(t *testing.T) {
+	// For this test, we use actual source files instead of in-memory files
+	// to test the scanner's ability to handle file paths correctly.
+	sourceDir := "testdata/embedded"
+
+	// Create a temporary directory and copy the source files there.
+	// This is because the tool might create a go.mod file, and we don't
+	// want to pollute the original testdata directory.
+	tmpdir, err := os.MkdirTemp("", "embedded-test-")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpdir)
+
+	// Copy source files to temp dir
+	srcEntries, err := os.ReadDir(sourceDir)
+	if err != nil {
+		t.Fatalf("failed to read source dir %s: %v", sourceDir, err)
+	}
+	for _, entry := range srcEntries {
+		srcPath := filepath.Join(sourceDir, entry.Name())
+		dstPath := filepath.Join(tmpdir, entry.Name())
+		data, err := os.ReadFile(srcPath)
+		if err != nil {
+			t.Fatalf("failed to read source file %s: %v", srcPath, err)
+		}
+		if err := os.WriteFile(dstPath, data, 0644); err != nil {
+			t.Fatalf("failed to write to temp file %s: %v", dstPath, err)
+		}
+	}
+
+	// Create a go.mod file in the temp directory
+	goModPath := filepath.Join(tmpdir, "go.mod")
+	if err := os.WriteFile(goModPath, []byte("module example.com/m\ngo 1.24"), 0644); err != nil {
+		t.Fatalf("failed to write go.mod: %v", err)
+	}
+
+	ctx := context.Background()
+	writer := &memoryFileWriter{}
+	ctx = context.WithValue(ctx, FileWriterKey, writer)
+
+	pkgpath := "example.com/m"
+	outputFile := "generated.go"
+	pkgname := "embedded"
+	goldenFile := "testdata/embedded.go.golden"
+
+	// run() expects a single directory path for scanning.
+	err = run(ctx, pkgpath, tmpdir, outputFile, pkgname)
+	if err != nil {
+		t.Fatalf("run() failed: %v", err)
+	}
+
+	generatedCode, ok := writer.Outputs[outputFile]
+	if !ok {
+		t.Fatalf("output file %q not found in captured outputs", outputFile)
+	}
+
+	if *update {
+		if err := os.WriteFile(goldenFile, generatedCode, 0644); err != nil {
+			t.Fatalf("failed to update golden file: %v", err)
+		}
+		t.Logf("golden file updated: %s", goldenFile)
+		return
+	}
+
+	golden, err := os.ReadFile(goldenFile)
+	if err != nil {
+		t.Fatalf("failed to read golden file: %v", err)
+	}
+
+	formattedGenerated, err := format.Source(generatedCode)
+	if err != nil {
+		t.Fatalf("failed to format generated code: %v\n---\n%s", err, string(generatedCode))
+	}
+	formattedGolden, err := format.Source(golden)
+	if err != nil {
+		t.Fatalf("failed to format golden file: %v", err)
+	}
+
+	if diff := cmp.Diff(string(formattedGolden), string(formattedGenerated)); diff != "" {
+		t.Errorf("generated code mismatch (-want +got):\n%s", diff)
+	}
+}
+
 func TestIntegration_WithFieldMatching(t *testing.T) {
 	files := map[string]string{
 		"go.mod": "module example.com/m\ngo 1.24",

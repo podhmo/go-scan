@@ -8,8 +8,8 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/podhmo/go-scan/examples/convert/model"
 	goscan "github.com/podhmo/go-scan"
+	"github.com/podhmo/go-scan/examples/convert/model"
 	"github.com/podhmo/go-scan/scanner"
 )
 

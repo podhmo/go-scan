@@ -9,9 +9,9 @@ import (
 	"os"
 	"os/exec"
 
+	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/examples/convert/generator"
 	"github.com/podhmo/go-scan/examples/convert/parser"
-	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/locator"
 )
 

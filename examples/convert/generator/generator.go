@@ -36,8 +36,8 @@ func convert{{ .SrcType.Name }}To{{ .DstType.Name }}(ctx context.Context, ec *mo
 	{{ range .Fields -}}
 	if ec.MaxErrorsReached() { return dst }
 	ec.Enter("{{ .DstName }}")
-	{{ getAssignment $.Im $.Info . "src" "dst" "ec" "ctx" }}
-	{{ getValidator $.Im $.Info . "dst" "ec" "ctx" }}
+	{{ getAssignment $.Im $.Info . "src" "dst" "ec" "ctx" -}}
+	{{- getValidator $.Im $.Info . "dst" "ec" "ctx" }}
 	ec.Leave()
 	{{ end -}}
 	return dst

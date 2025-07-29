@@ -15,7 +15,7 @@ import (
 
 var (
 	reDerivingConvert = regexp.MustCompile(`@derivingconvert\(([^,)]+)(?:,\s*([^)]+))?\)`)
-	reConvertRule     = regexp.MustCompile(`// convert:rule "([^"]+)" -> "([^"]+)", using=([a-zA-Z0-9_]+)`)
+	reConvertRule     = regexp.MustCompile(`// convert:rule "([^"]+)"(?: -> "([^"]+)")?, (?:using=([a-zA-Z0-9_]+)|validator=([a-zA-Z0-9_]+))`)
 )
 
 func Parse(ctx context.Context, scannedPkg *scanner.PackageInfo) (*model.ParsedInfo, error) {
@@ -100,24 +100,43 @@ func Parse(ctx context.Context, scannedPkg *scanner.PackageInfo) (*model.ParsedI
 				if m == nil {
 					continue
 				}
-				srcTypeName, dstTypeName, usingFunc := m[1], m[2], m[3]
 
-				srcTypeInfo, err := resolveType(scannedPkg, srcTypeName)
-				if err != nil {
-					return nil, fmt.Errorf("resolving global rule source type %q: %w", srcTypeName, err)
-				}
-				dstTypeInfo, err := resolveType(scannedPkg, dstTypeName)
-				if err != nil {
-					return nil, fmt.Errorf("resolving global rule destination type %q: %w", dstTypeName, err)
+				rule := model.TypeRule{}
+				type1Name := m[1]
+				type2Name := m[2]
+				usingFunc := m[3]
+				validatorFunc := m[4]
+
+				if validatorFunc != "" {
+					// Validator rule: // convert:rule "<DstType>", validator=<func>
+					rule.ValidatorFunc = validatorFunc
+					rule.DstTypeName = type1Name
+					dstTypeInfo, err := resolveType(scannedPkg, rule.DstTypeName)
+					if err != nil {
+						return nil, fmt.Errorf("resolving validator rule destination type %q: %w", rule.DstTypeName, err)
+					}
+					rule.DstTypeInfo = dstTypeInfo
+				} else if usingFunc != "" {
+					// Conversion rule: // convert:rule "<SrcType>" -> "<DstType>", using=<func>
+					rule.UsingFunc = usingFunc
+					rule.SrcTypeName = type1Name
+					rule.DstTypeName = type2Name
+
+					srcTypeInfo, err := resolveType(scannedPkg, rule.SrcTypeName)
+					if err != nil {
+						return nil, fmt.Errorf("resolving global rule source type %q: %w", rule.SrcTypeName, err)
+					}
+					rule.SrcTypeInfo = srcTypeInfo
+
+					dstTypeInfo, err := resolveType(scannedPkg, rule.DstTypeName)
+					if err != nil {
+						return nil, fmt.Errorf("resolving global rule destination type %q: %w", rule.DstTypeName, err)
+					}
+					rule.DstTypeInfo = dstTypeInfo
+				} else {
+					continue // Should not happen with the new regex
 				}
 
-				rule := model.TypeRule{
-					SrcTypeName: srcTypeName,
-					DstTypeName: dstTypeName,
-					SrcTypeInfo: srcTypeInfo,
-					DstTypeInfo: dstTypeInfo,
-					UsingFunc:   usingFunc,
-				}
 				info.GlobalRules = append(info.GlobalRules, rule)
 			}
 		}

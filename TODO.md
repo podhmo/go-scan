@@ -75,7 +75,7 @@ as described in [docs/plan-neo-convert.md](docs/plan-neo-convert.md)
 -   [x] **Add Tests for `convert:` Tags**: Write comprehensive tests for all `convert:` tag options.
 -   [x] **Implement `// convert:rule`**:
     -   [x] Implement global type conversion rules (`"<SrcType>" -> "<DstType>", using=<funcName>`).
-    -   [ ] Implement validator rules (`"<DstType>", validator=<funcName>`).
+    -   [x] Implement validator rules (`"<DstType>", validator=<funcName>`).
 -   [x] **Add Tests for `// convert:rule`**: Write tests for global conversion and validator rules.
 -   [x] **Error Handling with `errorCollector`**: Implement the `errorCollector` struct and generate code that uses it to report multiple conversion errors.
 -   [x] **Add Tests for Error Handling**: Write tests to verify that `errorCollector` correctly accumulates and reports errors.

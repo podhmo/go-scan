@@ -67,6 +67,20 @@ Defines a global rule for type conversion or validation. Typically placed at the
 // convert:rule "string", validator=validateStringNotEmpty
 ```
 
+### `// convert:import`
+Defines an alias for an external package path, which can then be used in `using` and `validator` rules. This is useful for centralizing conversion or validation logic in a shared package.
+
+**Syntax**: `// convert:import <alias> <path>`
+*   `<alias>`: The alias to use for the package (e.g., `myfuncs`).
+*   `<path>`: The full import path of the package (e.g., `"example.com/project/utils/myfuncs"`).
+
+**Example**:
+```go
+// convert:import funcs "example.com/project/converters"
+// convert:rule "time.Time" -> "string", using=funcs.TimeToString
+// convert:rule "string", validator=funcs.ValidateNonEmpty
+```
+
 ### `convert` Struct Tag
 Controls the conversion of a specific field.
 

@@ -69,6 +69,7 @@ type MyTime time.Time
 	want := &model.ParsedInfo{
 		PackageName: "sample",
 		PackagePath: "example.com/sample",
+		Imports:     make(map[string]string),
 		ConversionPairs: []model.ConversionPair{
 			{SrcTypeName: "Source", DstTypeName: "Destination", MaxErrors: 0},
 			{SrcTypeName: "SourceWithOption", DstTypeName: "DestinationWithOption", MaxErrors: 5},

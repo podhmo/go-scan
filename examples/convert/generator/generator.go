@@ -85,6 +85,10 @@ func Generate(s *goscan.Scanner, info *model.ParsedInfo) ([]byte, error) {
 	im := goscan.NewImportManager(&scanner.PackageInfo{ImportPath: info.PackagePath, Name: info.PackageName})
 
 	// Pre-register all necessary imports
+	for alias, path := range info.Imports {
+		im.Add(path, alias)
+	}
+
 	for _, pair := range info.ConversionPairs {
 		srcStruct, ok := info.Structs[pair.SrcTypeName]
 		if !ok {
@@ -276,10 +280,30 @@ func getValidator(im *goscan.ImportManager, info *model.ParsedInfo, field FieldM
 
 		ruleDstName := getFullTypeNameFromTypeInfo(rule.DstTypeInfo)
 		if ruleDstName == dstFieldTypeName {
-			return fmt.Sprintf("%s(%s, %s)", rule.ValidatorFunc, ecVar, dst)
+			funcName := qualifyFunc(im, info, rule.ValidatorFunc)
+			return fmt.Sprintf("%s(%s, %s)", funcName, ecVar, dst)
 		}
 	}
 	return ""
+}
+
+func qualifyFunc(im *goscan.ImportManager, info *model.ParsedInfo, funcName string) string {
+	parts := strings.Split(funcName, ".")
+	if len(parts) != 2 {
+		return funcName // Not a qualified function name, assume it's in the current package
+	}
+	alias, name := parts[0], parts[1]
+	path, ok := info.Imports[alias]
+	if !ok {
+		// If the alias is not in our explicit import list, it might be a standard import
+		// from the file itself. The import manager might know about it.
+		// However, the current import manager API doesn't provide a direct way to get a path from an alias.
+		// We'll assume for now that any qualified function must be from an explicit `// convert:import`.
+		log.Printf("Warning: could not find import path for alias %q in function %q", alias, funcName)
+		return funcName // Return as is, might fail compilation but gives a hint.
+	}
+	// Use the import manager to get the final, possibly-aliased name for the package
+	return im.Qualify(path, name)
 }
 
 func registerImports(im *goscan.ImportManager, t *scanner.FieldType) {
@@ -312,10 +336,11 @@ func getMapKeyAssignment(im *goscan.ImportManager, info *model.ParsedInfo, srcVa
 		ruleDstName := getFullTypeNameFromTypeInfo(rule.DstTypeInfo)
 
 		if ruleSrcName == srcFieldTypeName && ruleDstName == dstFieldTypeName {
+			funcName := qualifyFunc(im, info, rule.UsingFunc)
 			if dstVar != "" {
-				return fmt.Sprintf("%s = %s(%s, %s)", dstVar, rule.UsingFunc, ctxVar, srcVar)
+				return fmt.Sprintf("%s = %s(%s, %s)", dstVar, funcName, ctxVar, srcVar)
 			}
-			return fmt.Sprintf("%s(%s, %s)", rule.UsingFunc, ctxVar, srcVar)
+			return fmt.Sprintf("%s(%s, %s)", funcName, ctxVar, srcVar)
 		}
 	}
 	return generateConversion(im, info, srcVar, dstVar, srcT, dstT, 0, ecVar, ctxVar)
@@ -327,15 +352,8 @@ func getAssignment(im *goscan.ImportManager, info *model.ParsedInfo, field Field
 
 	// Priority 1: Field-level using tag
 	if field.Tag.UsingFunc != "" {
-		// Custom functions can have two signatures:
-		// 1. func(T) U
-		// 2. func(context.Context, T) U
-		// 3. func(context.Context, *model.ErrorCollector, T) U
-		// We'll check the function signature to decide which arguments to pass.
-		// For now, let's assume the most complex one to guide implementation,
-		// but the simplest is often `func(T) U`.
-		// Let's stick to the documented `func(context.Context, T) U` for now.
-		return fmt.Sprintf("%s = %s(%s, %s)", dst, field.Tag.UsingFunc, ctxVar, src)
+		funcName := qualifyFunc(im, info, field.Tag.UsingFunc)
+		return fmt.Sprintf("%s = %s(%s, %s)", dst, funcName, ctxVar, src)
 	}
 
 	// Priority 2: Global conversion rule
@@ -347,7 +365,8 @@ func getAssignment(im *goscan.ImportManager, info *model.ParsedInfo, field Field
 		ruleDstName := getFullTypeNameFromTypeInfo(rule.DstTypeInfo)
 
 		if ruleSrcName == srcFieldTypeName && ruleDstName == dstFieldTypeName {
-			return fmt.Sprintf("%s = %s(%s, %s)", dst, rule.UsingFunc, ctxVar, src)
+			funcName := qualifyFunc(im, info, rule.UsingFunc)
+			return fmt.Sprintf("%s = %s(%s, %s)", dst, funcName, ctxVar, src)
 		}
 	}
 

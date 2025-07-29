@@ -84,6 +84,33 @@ type FieldMap struct {
 func Generate(s *goscan.Scanner, info *model.ParsedInfo) ([]byte, error) {
 	im := goscan.NewImportManager(&scanner.PackageInfo{ImportPath: info.PackagePath, Name: info.PackageName})
 
+	// Pre-register all necessary imports
+	for _, pair := range info.ConversionPairs {
+		srcStruct, ok := info.Structs[pair.SrcTypeName]
+		if !ok {
+			return nil, fmt.Errorf("source struct %q not found", pair.SrcTypeName)
+		}
+		dstStruct, ok := info.Structs[pair.DstTypeName]
+		if !ok {
+			return nil, fmt.Errorf("destination struct %q not found", pair.DstTypeName)
+		}
+
+		for _, field := range srcStruct.Fields {
+			registerImports(im, field.FieldType)
+		}
+		for _, field := range dstStruct.Fields {
+			registerImports(im, field.FieldType)
+		}
+	}
+	for _, rule := range info.GlobalRules {
+		if rule.SrcTypeInfo != nil {
+			im.Qualify(rule.SrcTypeInfo.PkgPath, rule.SrcTypeInfo.Name)
+		}
+		if rule.DstTypeInfo != nil {
+			im.Qualify(rule.DstTypeInfo.PkgPath, rule.DstTypeInfo.Name)
+		}
+	}
+
 	var pairs []TemplatePair
 	for _, pair := range info.ConversionPairs {
 		srcStruct, ok := info.Structs[pair.SrcTypeName]
@@ -253,6 +280,22 @@ func getValidator(im *goscan.ImportManager, info *model.ParsedInfo, field FieldM
 		}
 	}
 	return ""
+}
+
+func registerImports(im *goscan.ImportManager, t *scanner.FieldType) {
+	if t == nil {
+		return
+	}
+	im.Qualify(t.FullImportPath(), t.Name)
+	if t.Elem != nil {
+		registerImports(im, t.Elem)
+	}
+	if t.MapKey != nil {
+		registerImports(im, t.MapKey)
+	}
+	for _, arg := range t.TypeArgs {
+		registerImports(im, arg)
+	}
 }
 
 // -----------------------------------------------------------------------------

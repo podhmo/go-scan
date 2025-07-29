@@ -108,11 +108,11 @@ func run(ctx context.Context, pkgpath, workdir, output, pkgname string) error {
 	formatted, err := formatCode(ctx, generatedCode)
 	if err != nil {
 		slog.WarnContext(ctx, "code formatting failed, using unformatted code", "error", err)
-		// フォーマットに失敗しても、フォーマットされていないコードを書き出す
+		// Even if formatting fails, write the unformatted code.
 		if writeErr := writer.WriteFile(ctx, output, generatedCode, 0644); writeErr != nil {
 			return fmt.Errorf("failed to write (unformatted) generated code to %s: %w", output, writeErr)
 		}
-		return nil // エラーとしては扱わない
+		return nil // Do not treat as an error.
 	}
 
 	if err := writer.WriteFile(ctx, output, formatted, 0644); err != nil {

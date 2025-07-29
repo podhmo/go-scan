@@ -2,8 +2,6 @@ package testdata
 
 import (
 	"time"
-
-	"github.com/podhmo/go-scan/examples/convert/testdata/external"
 )
 
 // convert:import ext "github.com/podhmo/go-scan/examples/convert/testdata/external"

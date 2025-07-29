@@ -53,7 +53,7 @@ type DstWithTags struct {
 	ManagerID *int
 }
 
-func convertProfile(ec *model.ErrorCollector, s string) string {
+func convertProfile(ctx context.Context, ec *model.ErrorCollector, s string) string {
 	return "profile:" + s
 }
 `,
@@ -216,10 +216,10 @@ import (
 	"example.com/m/model"
 )
 
-func TimeToString(ec *model.ErrorCollector, t time.Time) string {
+func TimeToString(ctx context.Context, ec *model.ErrorCollector, t time.Time) string {
 	return t.Format("2006-01-02")
 }
-func ValidateString(ec *model.ErrorCollector, s string) {
+func ValidateString(ctx context.Context, ec *model.ErrorCollector, s string) {
 	if s == "" {
 		ec.Add(fmt.Errorf("string is empty"))
 	}
@@ -649,8 +649,36 @@ package errors
 import (
 	"context"
 	"errors"
-	"example.com/m/model"
 )
+
+type ErrorCollector struct {
+	errors []error
+	max    int
+}
+
+func NewErrorCollector(max int) *ErrorCollector {
+	return &ErrorCollector{max: max}
+}
+func (ec *ErrorCollector) Add(err error) {
+	if ec.max > 0 && len(ec.errors) >= ec.max {
+		return
+	}
+	ec.errors = append(ec.errors, err)
+}
+func (ec *ErrorCollector) Errors() []error {
+	return ec.errors
+}
+func (ec *ErrorCollector) HasErrors() bool {
+	return len(ec.errors) > 0
+}
+func (ec *ErrorCollector) Enter(name string) {}
+func (ec *ErrorCollector) Leave()            {}
+func (ec *ErrorCollector) MaxErrorsReached() bool {
+	if ec.max <= 0 {
+		return false
+	}
+	return len(ec.errors) >= ec.max
+}
 
 // @derivingconvert("Dst")
 type Src struct {
@@ -665,7 +693,7 @@ type Dst struct {
 	SpouseID  *int
 }
 
-func convertNameWithError(ec *model.ErrorCollector, name string) string {
+func convertNameWithError(ctx context.Context, ec *model.ErrorCollector, name string) string {
 	ec.Add(errors.New("name conversion failed"))
 	return "error-name"
 }
@@ -702,29 +730,6 @@ func TestRun(t *testing.T) {
 		}
 	}
 }
-`,
-		"model/model.go": `
-package model
-import "fmt"
-type ErrorCollector struct {
-	errors []error
-	path []string
-}
-func NewErrorCollector(max int) *ErrorCollector {
-	return &ErrorCollector{}
-}
-func (ec *ErrorCollector) Add(err error) {
-	ec.errors = append(ec.errors, err)
-}
-func (ec *ErrorCollector) Enter(s string) {
-	ec.path = append(ec.path, s)
-}
-func (ec *ErrorCollector) Leave() {
-	if len(ec.path) > 0 {
-		ec.path = ec.path[:len(ec.path)-1]
-	}
-}
-func (ec *ErrorCollector) MaxErrorsReached() bool { return false }
 `,
 	}
 
@@ -802,11 +807,11 @@ type Dst struct {
 	UpdatedAt string
 }
 
-func convertTimeToString(_ *model.ErrorCollector, t time.Time) string {
+func convertTimeToString(ctx context.Context, ec *model.ErrorCollector, t time.Time) string {
 	return t.Format("2006-01-02")
 }
 
-func overrideTime(_ *model.ErrorCollector, t time.Time) string {
+func overrideTime(ctx context.Context, ec *model.ErrorCollector, t time.Time) string {
 	return "overridden"
 }
 `,
@@ -1215,7 +1220,7 @@ type Dst struct {
 	Data map[string]string
 }
 // convert:rule "int" -> "string", using=convertIntToString
-func convertIntToString(_ *model.ErrorCollector, i int) string {
+func convertIntToString(ctx context.Context, ec *model.ErrorCollector, i int) string {
 	return strconv.Itoa(i)
 }
 `,

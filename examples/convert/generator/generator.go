@@ -341,9 +341,9 @@ func getMapKeyAssignment(im *goscan.ImportManager, info *model.ParsedInfo, srcVa
 		if ruleSrcName == srcFieldTypeName && ruleDstName == dstFieldTypeName {
 			funcName := qualifyFunc(im, info, rule.UsingFunc)
 			if dstVar != "" {
-				return fmt.Sprintf("%s = %s(%s, %s)", dstVar, funcName, ecVar, srcVar)
+				return fmt.Sprintf("%s = %s(%s, %s, %s)", dstVar, funcName, ctxVar, ecVar, srcVar)
 			}
-			return fmt.Sprintf("%s(%s, %s)", funcName, ecVar, srcVar)
+			return fmt.Sprintf("%s(%s, %s, %s)", funcName, ctxVar, ecVar, srcVar)
 		}
 	}
 	return generateConversion(im, info, srcVar, dstVar, srcT, dstT, 0, ecVar, ctxVar)
@@ -356,8 +356,7 @@ func getAssignment(im *goscan.ImportManager, info *model.ParsedInfo, field Field
 	// Priority 1: Field-level using tag
 	if field.Tag.UsingFunc != "" {
 		funcName := qualifyFunc(im, info, field.Tag.UsingFunc)
-		// Assume the function signature is `func(ec *model.ErrorCollector, src <type>) <type>`
-		return fmt.Sprintf("%s = %s(%s, %s)", dst, funcName, ecVar, src)
+		return fmt.Sprintf("%s = %s(%s, %s, %s)", dst, funcName, ctxVar, ecVar, src)
 	}
 
 	// Priority 2: Global conversion rule
@@ -370,8 +369,7 @@ func getAssignment(im *goscan.ImportManager, info *model.ParsedInfo, field Field
 
 		if ruleSrcName == srcFieldTypeName && ruleDstName == dstFieldTypeName {
 			funcName := qualifyFunc(im, info, rule.UsingFunc)
-			// Assume the function signature is `func(ec *model.ErrorCollector, src <type>) <type>`
-			return fmt.Sprintf("%s = %s(%s, %s)", dst, funcName, ecVar, src)
+			return fmt.Sprintf("%s = %s(%s, %s, %s)", dst, funcName, ctxVar, ecVar, src)
 		}
 	}
 

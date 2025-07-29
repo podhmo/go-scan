@@ -30,7 +30,7 @@ func convertSrcWithTagsToDstWithTags(ctx context.Context, ec *model.ErrorCollect
 		return dst
 	}
 	ec.Enter("Profile")
-	dst.Profile = convertProfile(ec, src.Profile)
+	dst.Profile = convertProfile(ctx, ec, src.Profile)
 	ec.Leave()
 	if ec.MaxErrorsReached() {
 		return dst

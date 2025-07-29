@@ -18,7 +18,7 @@ func convertSrcToDst(ctx context.Context, ec *model.ErrorCollector, src *Src) *D
 		return dst
 	}
 	ec.Enter("Name")
-	dst.Name = convertNameWithError(ec, src.Name)
+	dst.Name = convertNameWithError(ctx, ec, src.Name)
 	ec.Leave()
 	if ec.MaxErrorsReached() {
 		return dst

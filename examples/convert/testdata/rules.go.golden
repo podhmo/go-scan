@@ -23,7 +23,7 @@ func convertSrcToDst(ctx context.Context, ec *model.ErrorCollector, src *Src) *D
 		return dst
 	}
 	ec.Enter("UpdatedAt")
-	dst.UpdatedAt = overrideTime(ec, src.UpdatedAt)
+	dst.UpdatedAt = overrideTime(ctx, ec, src.UpdatedAt)
 	ec.Leave()
 	return dst
 }

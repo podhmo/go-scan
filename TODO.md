@@ -79,10 +79,11 @@ as described in [docs/plan-neo-convert.md](docs/plan-neo-convert.md)
 -   [x] **Error Handling with `errorCollector`**: Implement the `errorCollector` struct and generate code that uses it to report multiple conversion errors.
 -   [x] **Add Tests for Error Handling**: Write tests to verify that `errorCollector` correctly accumulates and reports errors.
 -   [x] **Improve Generated Code Error Handling**: Replace `// TODO: proper error handling` placeholders in the generator with more robust error handling, even if it's not the full `errorCollector` implementation.
--   [ ] **Parse `max_errors` from Annotation**: Implement parsing for the `max_errors` option in the `@derivingconvert` annotation and pass it to the `ErrorCollector`. (from `generator/generator.go`)
--   [ ] **Handle Map Key Conversion**: Implement logic to convert map keys when the source and destination map key types are different. (from `generator/generator.go`)
+-   [x] **Parse `max_errors` from Annotation**: Implement parsing for the `max_errors` option in the `@derivingconvert` annotation and pass it to the `ErrorCollector`. (from `generator/generator.go`)
+-   [x] **Handle Map Key Conversion**: Implement logic to convert map keys when the source and destination map key types are different. (from `generator/generator.go`)
 
 ### Known Issues
+-   **Integration tests for `max_errors` and map key conversion**: The integration tests for these features could not be implemented because `go-scan` does not seem to support `replace` directives in `go.mod` files, which is necessary to resolve dependencies in the test environment. This needs to be investigated and addressed.
 
 ### Future Tasks (Post-Migration)
 *   **Improve Import Management**: Handle import alias collisions robustly. Consider using `golang.org/x/tools/imports` for final output formatting.

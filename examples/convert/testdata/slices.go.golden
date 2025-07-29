@@ -36,7 +36,7 @@ func ConvertSrcToDst(ctx context.Context, src *Src) (*Dst, error) {
 	if src == nil {
 		return nil, nil
 	}
-	ec := model.NewErrorCollector(0) // TODO: get maxErrors from annotation
+	ec := model.NewErrorCollector(0)
 	dst := convertSrcToDst(ec, src)
 	if ec.HasErrors() {
 		return dst, errors.Join(ec.Errors()...)
@@ -60,7 +60,7 @@ func ConvertSrcItemToDstItem(ctx context.Context, src *SrcItem) (*DstItem, error
 	if src == nil {
 		return nil, nil
 	}
-	ec := model.NewErrorCollector(0) // TODO: get maxErrors from annotation
+	ec := model.NewErrorCollector(0)
 	dst := convertSrcItemToDstItem(ec, src)
 	if ec.HasErrors() {
 		return dst, errors.Join(ec.Errors()...)

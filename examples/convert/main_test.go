@@ -467,21 +467,17 @@ func TestIntegration_WithSlices(t *testing.T) {
 		"slices.go": `
 package slices
 import "context"
-
 // @derivingconvert("Dst")
 type Src struct {
 	Items []SrcItem
 }
-
 type Dst struct {
 	Items []DstItem
 }
-
 // @derivingconvert("DstItem")
 type SrcItem struct {
 	Value string
 }
-
 type DstItem struct {
 	Value string
 }
@@ -536,3 +532,183 @@ type DstItem struct {
 		t.Errorf("generated code mismatch (-want +got):\n%s", diff)
 	}
 }
+
+// func TestIntegration_WithMaxErrors(t *testing.T) {
+// 	files := map[string]string{
+// 		"go.mod": `
+// module example.com/m
+// go 1.24
+// `,
+// 		"errors.go": `
+// package errors
+
+// import (
+// 	"context"
+// 	"errors"
+// 	"example.com/convert/model"
+// )
+
+// // @derivingconvert("Dst", max_errors=1)
+// type Src struct {
+// 	Name      string    ` + "`convert:\",using=convertNameWithError\"`" + `
+// 	ManagerID *int      ` + "`convert:\",required\"`" + `
+// }
+
+// type Dst struct {
+// 	Name      string
+// 	ManagerID *int
+// }
+
+// func convertNameWithError(ec *model.ErrorCollector, name string) string {
+// 	ec.Add(errors.New("name conversion failed"))
+// 	return "error-name"
+// }
+// `,
+// 		"errors_test.go": `
+// package errors
+// import (
+// 	"context"
+// 	"strings"
+// 	"testing"
+// )
+
+// func TestRun(t *testing.T) {
+// 	src := &Src{
+// 		Name: "test",
+// 		ManagerID: nil, // required field is nil
+// 	}
+// 	_, err := ConvertSrcToDst(context.Background(), src)
+// 	if err == nil {
+// 		t.Fatal("expected an error, but got nil")
+// 	}
+
+// 	errStr := err.Error()
+// 	if strings.Contains(errStr, "ManagerID") {
+// 		t.Errorf("expected only one error, but got more: %s", errStr)
+// 	}
+// 	if !strings.Contains(errStr, "name conversion failed") {
+// 		t.Errorf("expected error to contain %q, but it was %q", "name conversion failed", errStr)
+// 	}
+// }
+// `,
+// 	}
+
+// 	tmpdir, cleanup := scantest.WriteFiles(t, files)
+// 	defer cleanup()
+
+// 	ctx := context.Background()
+// 	writer := &memoryFileWriter{}
+// 	ctx = context.WithValue(ctx, FileWriterKey, writer)
+
+// 	pkgpath := "example.com/m"
+// 	outputFile := "generated.go"
+// 	pkgname := "errors"
+
+// 	err := run(ctx, pkgpath, tmpdir, outputFile, pkgname)
+// 	if err != nil {
+// 		t.Fatalf("run() failed: %v", err)
+// 	}
+
+// 	generatedCode, ok := writer.Outputs[outputFile]
+// 	if !ok {
+// 		t.Fatalf("output file %q not found in captured outputs", outputFile)
+// 	}
+
+// 	generatedPath := filepath.Join(tmpdir, "generated.go")
+// 	if err := os.WriteFile(generatedPath, generatedCode, 0644); err != nil {
+// 		t.Fatalf("failed to write generated code: %v", err)
+// 	}
+
+// 	cmd := exec.Command("go", "mod", "tidy")
+// 	cmd.Dir = tmpdir
+// 	if out, err := cmd.CombinedOutput(); err != nil {
+// 		t.Fatalf("go mod tidy failed: %s\n%s", err, out)
+// 	}
+
+// 	cmd = exec.Command("go", "test", "-v")
+// 	cmd.Dir = tmpdir
+// 	output, err := cmd.CombinedOutput()
+// 	if err != nil {
+// 		t.Errorf("expected go test to succeed, but it failed. Output:\n%s", output)
+// 	}
+// }
+
+// func TestIntegration_WithMapKeyConversion(t *testing.T) {
+// 	files := map[string]string{
+// 		"go.mod": `
+// module example.com/m
+// go 1.24
+// `,
+// 		"mapkeys.go": `
+// package mapkeys
+
+// import (
+// 	"context"
+// 	"example.com/convert/model"
+// 	"strconv"
+// )
+
+// // @derivingconvert("Dst")
+// type Src struct {
+// 	Data map[int]string
+// }
+
+// type Dst struct {
+// 	Data map[string]string
+// }
+
+// // // convert:rule "int" -> "string", using=convertIntToString
+// func convertIntToString(ec *model.ErrorCollector, i int) string {
+// 	return strconv.Itoa(i)
+// }
+// `,
+// 	}
+
+// 	tmpdir, cleanup := scantest.WriteFiles(t, files)
+// 	defer cleanup()
+
+// 	ctx := context.Background()
+// 	writer := &memoryFileWriter{}
+// 	ctx = context.WithValue(ctx, FileWriterKey, writer)
+
+// 	pkgpath := "example.com/m"
+// 	outputFile := "generated.go"
+// 	pkgname := "mapkeys"
+// 	goldenFile := "testdata/mapkeys.go.golden"
+
+// 	err := run(ctx, pkgpath, tmpdir, outputFile, pkgname)
+// 	if err != nil {
+// 		t.Fatalf("run() failed: %v", err)
+// 	}
+
+// 	generatedCode, ok := writer.Outputs[outputFile]
+// 	if !ok {
+// 		t.Fatalf("output file %q not found in captured outputs", outputFile)
+// 	}
+
+// 	if *update {
+// 		if err := os.WriteFile(goldenFile, generatedCode, 0644); err != nil {
+// 			t.Fatalf("failed to update golden file: %v", err)
+// 		}
+// 		t.Logf("golden file updated: %s", goldenFile)
+// 		return
+// 	}
+
+// 	golden, err := os.ReadFile(goldenFile)
+// 	if err != nil {
+// 		t.Fatalf("failed to read golden file: %v", err)
+// 	}
+
+// 	formattedGenerated, err := format.Source(generatedCode)
+// 	if err != nil {
+// 		t.Fatalf("failed to format generated code: %v", err)
+// 	}
+// 	formattedGolden, err := format.Source(golden)
+// 	if err != nil {
+// 		t.Fatalf("failed to format golden file: %v", err)
+// 	}
+
+// 	if diff := cmp.Diff(string(formattedGolden), string(formattedGenerated)); diff != "" {
+// 		t.Errorf("generated code mismatch (-want +got):\n%s", diff)
+// 	}
+// }

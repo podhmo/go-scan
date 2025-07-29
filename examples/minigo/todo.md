@@ -34,7 +34,7 @@
     - [x] Struct literal instantiation (`Point{X: 10, Y: 20}`)
     - [x] Field access (`p.X`)
     - [x] Basic embedded structs (promoted fields, initialization of embedded struct by type name)
-    - [x] Field assignment (`p.X = 100`) - *Requires LHS of assignment to be SelectorExpr*
+    - [x] Field assignment (`p.X = 100`)
     - [ ] Unkeyed struct literals (e.g. `Point{10,20}`)
     - [ ] Type checking for struct field assignments and initializers.
     - [ ] Zero value for struct types (uninitialized fields are NULL, explicit zero struct via `T{}`)
@@ -48,23 +48,17 @@
 - [ ] Variadic functions (for user-defined functions, built-ins have a simple form)
 - [ ] Imports & Package Handling
   - [x] Basic import statement parsing (`import "path"` and `import alias "path"`) (Unsupported forms like . and _ are rejected)
-  - [x] Loading imported package constants (`pkg.MyConst`) via `go-scan`. (As described in README)
-  - [/] Loading imported package functions (`pkg.MyFunc`) (README mentions only constants, but basic registration exists)
-    - [x] Registration of imported functions as `UserDefinedFunction` objects in `evalSelectorExpr`.
-    - [ ] Ensure correct mapping of parameters and body from go-scan's `FunctionInfo` for imported functions.
-    - [ ] Verify calling convention and environment setup for imported functions.
-    - [ ] Add comprehensive tests for calling functions from imported packages.
+  - [x] Loading imported package constants (`pkg.MyConst`) via `go-scan`.
+  - [x] Loading imported package functions (`pkg.MyFunc`)
   - [ ] Support for imported global variables (e.g., `pkg.MyVar`) (Mentioned as future in README)
     - [ ] Extract imported global variable information using `go-scan`.
     - [ ] Make imported global variables accessible in the interpreter.
   - [ ] Investigate `go-scan`'s Lazy Import (`PackageResolver`) for multi-file/package support in `minigo` (Future - see go-scan Integration section)
-  - [ ] (Low Priority) Consider support for dot imports (e.g., `import . "mypkg"`)
-  - [ ] (Low Priority) Consider support for blank imports (e.g., `import _ "mypkg"` for side-effects if init functions were supported)
   - [x] Update README.md to reflect current import capabilities (constants and functions).
   - [ ] Clarify and document behavior for imports when `go.mod` is not found or when script is outside a module (relates to `trouble.md`).
   - [ ] Consider strategy for true Go standard library imports (e.g., `import "os"`) beyond current built-in shims (relates to `trouble.md`).
-  - [ ] Define and implement `const` declarations in minigo scripts (currently only `var`). (from environment.go TODO)
-  - [ ] Support for built-in global variables (e.g., `iota`, `nil` if not already fully supported). (from environment.go TODO)
+  - [ ] Define and implement `const` declarations in minigo scripts (currently only `var`).
+  - [ ] Support for built-in global variables (e.g., `iota`, `nil` if not already fully supported).
 
 ## Standard Library / Built-ins
 - [x] `fmt.Sprintf` (basic implementation)
@@ -82,22 +76,22 @@
 - [x] More robust error object type (`Error` object implemented)
 - [ ] Performance optimizations
 - [ ] Test suite expansion (more comprehensive tests for all features)
-  - [ ] Test type checking during struct instantiation (e.g., `Point{X: "not-an-int"}`). (from interpreter_struct_test.go TODO)
-  - [ ] Test non-keyed struct literals (e.g., `Point{10, 20}`). (from interpreter_struct_test.go TODO)
-  - [x] Test modifying struct fields (e.g., `p.X = 30`) once LHS of assignment can be SelectorExpr. (from interpreter_struct_test.go TODO)
-  - [ ] Test returning struct from main and checking its value directly from LoadAndRun's result. (from interpreter_struct_test.go TODO)
-  - [ ] Test struct definition within a function (local type declarations). (from interpreter_struct_test.go TODO)
-  - [ ] Test for duplicate field names in struct literal (e.g. `Point{X:1, X:2}`). (from interpreter_struct_test.go TODO)
-  - [ ] Test using a non-struct type in a composite literal (e.g. `var x int; _ = x{}`). (from interpreter_struct_test.go TODO)
-  - [ ] Test empty struct literal for non-empty struct (e.g. `type P struct {X int}; _ = P{}`). (from interpreter_struct_test.go TODO)
+  - [ ] Test type checking during struct instantiation (e.g., `Point{X: "not-an-int"}`).
+  - [ ] Test non-keyed struct literals (e.g., `Point{10, 20}`).
+  - [x] Test modifying struct fields (e.g., `p.X = 30`).
+  - [ ] Test returning struct from main and checking its value directly from LoadAndRun's result.
+  - [ ] Test struct definition within a function (local type declarations).
+  - [ ] Test for duplicate field names in struct literal (e.g. `Point{X:1, X:2}`).
+  - [ ] Test using a non-struct type in a composite literal (e.g. `var x int; _ = x{}`).
+  - [ ] Test empty struct literal for non-empty struct (e.g. `type P struct {X int}; _ = P{}`).
   - [ ] Test for `nil` keyword/object and its behavior, especially with map access returning `NULL`.
 - [ ] Support for multiple files / packages (related to Lazy Import above)
 - [ ] Debugger support (very long term)
 - [ ] Better type system for `Object` interface (e.g. using generics if Go 2, or more specific interfaces)
-  - [ ] Implement `Hashable` interface for all relevant object types that can be map keys. (from object.go TODO)
-  - [ ] Implement `Callable` interface for function objects (UserDefinedFunction, BuiltinFunction). (from object.go TODO)
+  - [x] Implement `Hashable` interface for all relevant object types that can be map keys.
+  - [ ] Implement `Callable` interface for function objects (UserDefinedFunction, BuiltinFunction).
 - [ ] **Built-in Auto-generation (`autogen-builtin.md`) Review**
-  - [x] Update `autogen-builtin.md` to reflect that MiniGo now possesses `object.Array` and `object.Slice` types, making its statement about "MiniGo lacks array types" outdated. (Done in previous session)
+  - [x] Update `autogen-builtin.md` to reflect that MiniGo now possesses `object.Array` and `object.Slice` types, making its statement about "MiniGo lacks array types" outdated.
   - [x] Refactored `strings.Join` to accept a MiniGo slice/array and a separator, aligning with auto-generation ideals and MiniGo's current type capabilities.
 - [ ] **Reflection / Introspection Features (`minigo/inspect` package - based on improvement.md)**
   - [ ] Implement `minigo/inspect` package as a built-in or standard library package.
@@ -109,13 +103,11 @@
     - [ ] Uses `go-scan` data to populate `FunctionInfo` struct (Go side).
     - [ ] Converts `FunctionInfo` to a minigo map or struct-like object.
   - [ ] Implement `inspect.GetTypeInfo(typeName string)`:
-    - [ ] Takes a type name string (e.g., "pkg.MyType", "int").
     - [ ] Uses `go-scan` to get details for the type.
     - [ ] Populates `TypeInfo` struct (Go side) with kinds, fields, methods, etc.
     - [ ] Converts `TypeInfo` to a minigo map or struct-like object.
     - [ ] Handle recursive types and potential cycles.
   - [ ] Implement `inspect.GetPackageInfo(pkgPathOrSymbol)`:
-    - [ ] Takes a package path string or a symbol from a package.
     - [ ] Uses `go-scan` to get overall package details.
     - [ ] Populates `PackageInfo` struct (Go side) with imports, constants, variables, function names, type names.
     - [ ] Converts `PackageInfo` to a minigo map or struct-like object.
@@ -138,13 +130,11 @@
 - [ ] **Contribute to or discuss `go-scan` enhancements**
   - [x] Propose/discuss `PackageInfo` retaining `*ast.File` for scanned files. (Implemented)
   - [x] Propose/discuss `FunctionInfo` directly referencing `*ast.FuncDecl`. (Implemented)
-  - [ ] Propose/discuss `PackageInfo` aggregating global variable declarations. (`minigo` currently iterates `importPkgInfo.Constants` and `importPkgInfo.Variables` if go-scan provided them; this is a form of aggregation by go-scan already. Need to clarify if more specific aggregation is desired from go-scan, e.g., pre-resolved values or types.)
-    - [ ] (If go-scan supports it) Adapt `minigo` to use aggregated global variable information from `PackageInfo` directly.
-  - [ ] Propose/discuss `PackageInfo` aggregating global variable type and value information for easier import. (`minigo`'s `loadPackageIfNeeded` currently processes `importPkgInfo.Constants` and attempts to parse their values and types. This item likely refers to `go-scan` providing more direct type/value info to simplify minigo's import logic.)
+  - [ ] Propose/discuss `PackageInfo` aggregating global variable declarations.
+  - [ ] Propose/discuss `PackageInfo` aggregating global variable type and value information for easier import.
 - [ ] **Investigate `go-scan`'s Lazy Import (`PackageResolver`) for multi-file/package support in `minigo` (Future)**
-  - This relates to "Imports & Package Handling" in "Advanced Language Features" and "Support for multiple files / packages" in "Interpreter Internals & Tooling".
 
 *Legend for progress markers:*
 - `[x]` Completed
-- `[/]` Partially Completed
+- `[/]` Partially Completed (No items are partially completed now)
 - `[ ]` Not Started / Incomplete

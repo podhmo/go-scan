@@ -4,9 +4,27 @@ This directory contains example projects that demonstrate the capabilities and u
 
 ## Available Examples
 
+- [convert](#convert)
 - [derivingjson](#derivingjson)
 - [derivingbind](#derivingbind)
 - [minigo](#minigo)
+
+---
+
+## convert
+
+The `convert` example is a command-line tool that automates the generation of type conversion functions between Go structs.
+
+**Purpose**: To eliminate the boilerplate involved in writing manual conversion functions for tasks like mapping database models to API DTOs or transforming data between different representations.
+
+**Key Features**:
+- Triggers code generation based on a `@derivingconvert` annotation in struct doc comments.
+- Provides fine-grained control over field mapping and custom logic using `convert` struct tags.
+- Supports global conversion and validation rules.
+- Automatically handles nested structs, slices, maps, and pointers.
+- Collects and reports multiple errors from a single conversion pass.
+
+This example demonstrates how `go-scan` can be used to build a sophisticated and practical code generation tool that simplifies common development tasks.
 
 ---
 

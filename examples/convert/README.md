@@ -1,85 +1,113 @@
 # Go Type Converter Example (`examples/convert`)
 
-This example demonstrates a prototype for generating Go type conversion functions using the `go-scan` library. It explores how `go-scan` can be leveraged to read Go source code, understand type structures, and then automatically generate boilerplate code for converting one struct type to another.
+This directory contains the `convert` tool, a command-line application that automatically generates Go type conversion functions. It uses `go-scan` to parse Go source code, understand type structures via annotations and struct tags, and then generate the necessary boilerplate code for converting one struct type to another.
+
+This tool formalizes and replaces the original prototype that was in this directory.
 
 ## Overview
 
-In many applications, you often need to convert data between different Go struct types. For example:
-*   Converting from a database model to an API response model.
+In many Go applications, you need to convert data between different struct types, such as:
+*   Converting from a database model to an API response model (DTO).
 *   Transforming data from an external service's format to an internal application format.
 *   Mapping between different versions of a data structure.
 
-Manually writing these conversion functions can be tedious, error-prone, and repetitive, especially when dealing with complex nested structures or many fields. This example aims to automate this process.
+Manually writing these conversion functions is tedious, error-prone, and repetitive. This tool automates the process, providing powerful features for customization and error handling.
+
+## Key Features
+
+*   **Annotation-Driven**: Generation is triggered by a `@derivingconvert` annotation in the source struct's doc comment.
+*   **Flexible Field Mapping**: Fields are matched automatically with a clear priority:
+    1.  An explicit name in a `convert:"<name>"` tag.
+    2.  A name in a `json:"<name>"` tag.
+    3.  The normalized field name.
+*   **Custom Conversion Logic**:
+    *   Use the `convert:",using=<func>"` tag for field-specific custom conversion functions.
+    *   Define global type-to-type conversion rules with `// convert:rule "<Src>" -> "<Dst>", using=<func>`.
+*   **Validation**: Add validation rules for destination types using `// convert:rule "<Dst>", validator=<func>`.
+*   **Rich Error Handling**: The generated code can collect multiple errors during a single conversion and return them as a single `error`.
+*   **Recursive Generation**: Automatically handles nested structs, slices, maps, and pointers.
+*   **CLI Tool**: A proper command-line interface for easy integration into build processes.
 
 ## Project Structure
 
-*   `models/models.go`: Defines the source (`Src*`) and destination (`Dst*`) struct types that we want to convert between.
-*   `converter/converter.go`: Contains **manually written** conversion functions. This serves as a reference for what the generator should ideally produce.
-*   `converter/converter_test.go`: Unit tests for the manually written conversion functions in `converter.go`.
-*   `converter/generated_converters.go`: This file will be **generated** by the prototype generator logic in `main.go`.
-*   `mapping/mapping.minigo`: A conceptual DSL (Domain Specific Language) file outlining how users might specify custom conversion rules in a more advanced version of the generator. This is currently for discussion and not fully implemented.
-*   `main.go`:
-    1.  Runs examples using the manually written converters (`runConversionExamples()`).
-    2.  Contains the prototype generator logic (`generateConverterPrototype()`) which uses `go-scan` to parse `models/models.go` and generate conversion functions into `converter/generated_converters.go`.
+*   `main.go`: The CLI entrypoint for the `convert` tool.
+*   `parser/parser.go`: Contains the logic for parsing Go source files, reading annotations, and building an intermediate representation of the conversion requirements.
+*   `generator/generator.go`: Takes the parsed information and generates the Go conversion functions.
+*   `model/`: Defines the data structures (e.g., `ConversionPair`, `TypeRule`) used to pass information between the parser and generator.
+*   `sampledata/`: Contains sample source and destination structs used for demonstrating and testing the tool.
+*   `testdata/`: Contains golden files for testing the output of the generator.
 
-## How it Works (Conceptual & Prototype)
+## Annotation and Tag Reference
 
-1.  **Model Definition**: You define your source and destination Go structs in `models/models.go`.
-2.  **Scanning with `go-scan`**: The `generateConverterPrototype()` function in `main.go` uses `go-scan` to:
-    *   Parse the `models` package.
-    *   Extract detailed information about `struct` types, including fields, field types, tags, and embedded structs.
-3.  **Generator Logic (Prototype in `main.go`)**:
-    *   It identifies pairs of source and destination types (e.g., `SrcUser` and `DstUser`).
-    *   It attempts to map fields between the source and destination structs based on:
-        *   (Future) Name normalization (e.g., converting `UserID` to `user_id` for matching).
-        *   (Future) Struct tags (e.g., `convert:"targetFieldName"`).
-        *   (Current) Some hardcoded rules based on the manual `converter.go` for demonstration.
-    *   It generates Go functions that perform the assignments, including:
-        *   Direct assignment for type-compatible fields.
-        *   Calls to other generated or helper functions for nested structs or complex type conversions (e.g., `time.Time` to `string`).
-        *   Handling of slices by iterating and converting each element.
-4.  **Code Output**: The generated Go conversion functions are written to `converter/generated_converters.go`.
+### `@derivingconvert`
+Triggers the generation of a conversion function. Placed in the doc comment of the source struct.
 
-## Running the Example
+**Syntax**: `@derivingconvert(<DestinationType>[, option=value, ...])`
+*   `<DestinationType>`: The destination struct type.
+*   `max_errors=<int>`: The maximum number of errors to collect. `0` means unlimited.
 
-You can run this example from the root directory of the `go-scan` project.
+**Example**:
+```go
+// @derivingconvert(UserDTO, max_errors=10)
+type User struct {
+    // ...
+}
+```
 
-1.  **Run the main program**:
-    This will first execute the examples using the manual converters and then run the generator prototype, which will create/overwrite `examples/convert/converter/generated_converters.go`.
+### `// convert:rule`
+Defines a global rule for type conversion or validation. Typically placed at the package level.
+
+**Conversion Rule**: `// convert:rule "<SourceType>" -> "<DestinationType>", using=<FunctionName>`
+```go
+// convert:rule "time.Time" -> "string", using=convertTimeToString
+```
+
+**Validator Rule**: `// convert:rule "<DestinationType>", validator=<FunctionName>`
+```go
+// convert:rule "string", validator=validateStringNotEmpty
+```
+
+### `convert` Struct Tag
+Controls the conversion of a specific field.
+
+**Syntax**: `` `convert:"[destinationFieldName],[option=value],..."` ``
+*   `[destinationFieldName]`: Maps to a different field name in the destination struct. Use `-` to skip the field.
+*   `using=<funcName>`: Use a custom function for this field's conversion.
+*   `required`: Reports an error if a source pointer field is `nil`.
+
+**Example**:
+```go
+type User struct {
+    ID        int64
+    Email     string    `convert:"UserEmail"`
+    Password  string    `convert:"-"`
+    CreatedAt time.Time `convert:",using=convertTimeToString"`
+    Manager   *User     `convert:",required"`
+}
+```
+
+## How to Use
+
+The `convert` tool is a command-line application.
+
+1.  **Annotate your code**: Add `@derivingconvert` annotations to your source structs and any necessary `convert` tags or `// convert:rule` comments.
+
+2.  **Run the tool**: Execute the tool from your terminal, specifying the target package and output file.
 
     ```bash
-    go run ./examples/convert/main.go
+    go run github.com/podhmo/go-scan/examples/convert \
+      -pkg "github.com/your/project/models" \
+      -output "github.com/your/project/models/generated_converters.go"
     ```
+    *(Note: Adjust paths for your project structure.)*
 
-2.  **Inspect Generated Code**:
-    After running, inspect `examples/convert/converter/generated_converters.go` to see the output of the prototype.
-
-3.  **Run Tests**:
-    To test the manually written converters (and potentially the generated ones if you integrate them into the test path):
-    ```bash
-    go test ./examples/convert/converter/...
-    ```
-    (You might need to be in the `examples/convert` directory or adjust paths if your Go workspace setup differs).
+3.  **Use the generated code**: The tool will create a file (e.g., `generated_converters.go`) containing the conversion functions. You can then call these functions directly in your application code. For a source type `User` and destination `UserDTO`, the tool will generate:
+    *   `func ConvertUserToUserDTO(ctx context.Context, src *User) (*UserDTO, error)`
 
 ## Role of `go-scan`
 
-`go-scan` is crucial for this example because:
-
-*   It allows the generator to understand the structure of Go types **without relying on `go/types` or compiling the code**. This makes the generator faster and more lightweight.
-*   It provides detailed information about fields (name, type, tags, embedded status), which is essential for mapping logic.
-*   Its `PackageResolver` and type resolution capabilities (e.g., `FieldType.Resolve()`) are key to handling types from different packages (though this example primarily focuses on types within the same `models` package for simplicity in its current prototype stage).
-*   It can access documentation comments, which could be used in the future for annotation-driven conversion rules.
-
-## Future Development (for this example)
-
-The current generator in `main.go` is a very basic prototype. A more complete generator would:
-
-*   Implement robust field name normalization and matching.
-*   Fully support struct tags for explicit field mapping.
-*   Allow users to specify custom transformation functions for incompatible types (potentially via a DSL like in `mapping.minigo` or Go code registration).
-*   Handle pointer-to-value, value-to-pointer, and other complex conversions more generically.
-*   Manage imports in the generated file dynamically (e.g., using `go-scan`'s `ImportManager`).
-*   Provide better error handling and reporting during generation.
-*   Be structured as a proper command-line tool.
-
-This example serves as a starting point and a testbed for exploring these more advanced code generation capabilities using `go-scan`.
+`go-scan` is essential for this tool. It allows the parser to:
+*   Read and understand the structure of Go types (structs, fields, tags) **without compiling the code**.
+*   Resolve type information across different packages, which is critical for handling complex models.
+*   Access documentation comments to find the driving `@derivingconvert` annotations.
+*   Manage imports dynamically in the generated code via its `ImportManager`.

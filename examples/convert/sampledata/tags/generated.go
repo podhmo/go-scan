@@ -7,8 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"github.com/podhmo/go-scan/examples/convert/model"
-	context "context"
-	fmt "fmt"
 )
 
 func convertSrcWithTagsToDstWithTags(ctx context.Context, ec *model.ErrorCollector, src *SrcWithTags) *DstWithTags {
@@ -36,6 +34,14 @@ func convertSrcWithTagsToDstWithTags(ctx context.Context, ec *model.ErrorCollect
 	dst.ManagerID = src.ManagerID // Cannot convert pointer types, element type is nil
 }
 	ec.Leave()
+	if ec.MaxErrorsReached() { return dst }
+	ec.Enter("TeamID")
+	if src.TeamID == nil {
+	ec.Add(fmt.Errorf("TeamID is required"))
+} else {
+	dst.TeamID = src.TeamID // Cannot convert pointer types, element type is nil
+}
+	ec.Leave()
 	return dst
 }
 
@@ -44,7 +50,7 @@ func ConvertSrcWithTagsToDstWithTags(ctx context.Context, src *SrcWithTags) (*Ds
 	if src == nil {
 		return nil, nil
 	}
-	ec := model.NewErrorCollector(0)
+	ec := model.NewErrorCollector(1)
 	dst := convertSrcWithTagsToDstWithTags(ctx, ec, src)
 	if ec.HasErrors() {
 		return dst, errors.Join(ec.Errors()...)

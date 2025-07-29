@@ -11,7 +11,7 @@ import (
 	fmt "fmt"
 )
 
-func convertSrcToDst(ec *model.ErrorCollector, src *Src) *Dst {
+func convertSrcToDst(ctx context.Context, ec *model.ErrorCollector, src *Src) *Dst {
 	if src == nil {
 		return nil
 	}
@@ -22,7 +22,7 @@ func convertSrcToDst(ec *model.ErrorCollector, src *Src) *Dst {
 	ec.Leave()
 	if ec.MaxErrorsReached() { return dst }
 	ec.Enter("UpdatedAt")
-	dst.UpdatedAt = overrideTime(ec, src.UpdatedAt)
+	dst.UpdatedAt = overrideTime(ctx, src.UpdatedAt)
 	ec.Leave()
 	return dst
 }
@@ -33,7 +33,7 @@ func ConvertSrcToDst(ctx context.Context, src *Src) (*Dst, error) {
 		return nil, nil
 	}
 	ec := model.NewErrorCollector(0)
-	dst := convertSrcToDst(ec, src)
+	dst := convertSrcToDst(ctx, ec, src)
 	if ec.HasErrors() {
 		return dst, errors.Join(ec.Errors()...)
 	}

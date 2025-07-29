@@ -11,7 +11,7 @@ import (
 	fmt "fmt"
 )
 
-func convertSrcToDst(ec *model.ErrorCollector, src *Src) *Dst {
+func convertSrcToDst(ctx context.Context, ec *model.ErrorCollector, src *Src) *Dst {
 	if src == nil {
 		return nil
 	}
@@ -37,13 +37,13 @@ func ConvertSrcToDst(ctx context.Context, src *Src) (*Dst, error) {
 		return nil, nil
 	}
 	ec := model.NewErrorCollector(0)
-	dst := convertSrcToDst(ec, src)
+	dst := convertSrcToDst(ctx, ec, src)
 	if ec.HasErrors() {
 		return dst, errors.Join(ec.Errors()...)
 	}
 	return dst, nil
 }
-func convertSrcItemToDstItem(ec *model.ErrorCollector, src *SrcItem) *DstItem {
+func convertSrcItemToDstItem(ctx context.Context, ec *model.ErrorCollector, src *SrcItem) *DstItem {
 	if src == nil {
 		return nil
 	}
@@ -61,7 +61,7 @@ func ConvertSrcItemToDstItem(ctx context.Context, src *SrcItem) (*DstItem, error
 		return nil, nil
 	}
 	ec := model.NewErrorCollector(0)
-	dst := convertSrcItemToDstItem(ec, src)
+	dst := convertSrcItemToDstItem(ctx, ec, src)
 	if ec.HasErrors() {
 		return dst, errors.Join(ec.Errors()...)
 	}

@@ -274,12 +274,14 @@ type User struct {
 *   **Rationale for Annotation Options**: Each annotation option provides a critical escape hatch or safety feature, enhancing the tool's power and reliability.
     *   **`using=<funcName>` (Field Tag and Global Rule)**
         *   **Purpose**: To handle complex or mismatched type conversions that the generator cannot perform automatically. This is essential for scenarios like `string` to `int` conversion, combining multiple fields (`FirstName`, `LastName` -> `FullName`), or applying custom formatting.
+        *   **Current Limitation**: The specified function (`<funcName>`) must be defined within the same package where the code is being generated. There is currently no mechanism to use a function from an external package directly (e.g., `pkg.MyFunc`).
         *   **Impact of Removal**: Without `using`, the tool would be limited to simple, name-and-type-identical field mappings. Users would have to write post-processing code to handle any non-trivial conversion, which defeats the purpose of the tool and re-introduces significant boilerplate.
     *   **`required` (Field Tag)**
         *   **Purpose**: To enforce "not-nil" constraints on pointer fields during conversion. It provides a declarative way to ensure that required data is present, preventing `nil` values from propagating silently.
         *   **Impact of Removal**: Developers would need to write manual `if src.Field == nil` checks after the conversion, increasing the risk of runtime nil-dereference errors if a check is forgotten. This option makes the conversion process more robust and the data constraints explicit.
     *   **`validator=<funcName>` (Global Rule)**
         *   **Purpose**: To ensure data integrity *after* a value has been converted and populated. It separates the concern of conversion (changing shape) from validation (enforcing business rules like string length or numeric range).
+        *   **Current Limitation**: Similar to `using`, the specified function (`<funcName>`) must be defined within the same package as the generated code.
         *   **Impact of Removal**: If the validator feature were removed, users would be responsible for explicitly calling validation functions on the destination object. This increases boilerplate, raises the risk of developers forgetting to call validators, and tightly couples the calling code with the validation logic of the model, which should ideally be self-contained.
 *   **Error Handling (`model.ErrorCollector`)**: The generated code uses the `model.ErrorCollector` struct, which is included in the `model` package. This struct accumulates errors along with their field paths (e.g., `User.Address.Street`), providing rich debugging information instead of failing on the first error. The collector's path tracking (`Enter`/`Leave`) is generated for nested structs, slices, and maps.
 *   **Rule Priority**: The generator must respect the rule priority:
@@ -374,6 +376,22 @@ func ConvertInputToOutput(ctx context.Context, src Input) (Output, error) {
 
 ## 8. Future Tasks (TODO)
 
+*   **Support for External Package Functions in Rules**:
+    *   **Goal**: Allow `using` and `validator` functions to be specified from external packages, resolving the current limitation where they must be in the same package as the generated code.
+    *   **Proposed Syntax**: Introduce a new global annotation to manage imports explicitly.
+        ```go
+        // convert:import "v" "github.com/go-playground/validator/v10"
+        // convert:import "customconv" "example.com/project/converters"
+
+        // // convert:rule "string" -> "custom.String", using=customconv.ConvertString
+        // // convert:rule "string", validator=v.New().Var
+        ```
+    *   **Implementation Steps**:
+        1.  **Parser**: Enhance the parser to recognize and store these `convert:import` rules.
+        2.  **Generator**: Modify the generator to:
+            -   Add the specified imports to the generated file, handling aliases correctly.
+            -   Use the qualified function names (e.g., `v.New().Var`) directly in the generated code.
+        3.  **Dependency Resolution**: Ensure that `go-scan` can correctly resolve types and packages based on these new import statements.
 *   **Validator Rule Implementation**: Implement the logic to call validator functions after a destination struct is populated.
 *   **Improve Import Management**: Handle import alias collisions robustly. The current implementation uses `goimports` which is a good first step, but more complex alias collision scenarios might require more advanced logic.
 *   **Expand Test Coverage**: Create a comprehensive test suite that verifies all features and edge cases.

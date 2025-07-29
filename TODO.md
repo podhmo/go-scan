@@ -75,7 +75,7 @@ as described in [docs/plan-neo-convert.md](docs/plan-neo-convert.md)
 -   [x] **Add Tests for `convert:` Tags**: Write comprehensive tests for all `convert:` tag options.
 -   [x] **Implement `// convert:rule`**:
     -   [x] Implement global type conversion rules (`"<SrcType>" -> "<DstType>", using=<funcName>`).
-    -   [ ] Implement validator rules (`"<DstType>", validator=<funcName>`).
+    -   [x] Implement validator rules (`"<DstType>", validator=<funcName>`).
 -   [x] **Add Tests for `// convert:rule`**: Write tests for global conversion and validator rules.
 -   [x] **Error Handling with `errorCollector`**: Implement the `errorCollector` struct and generate code that uses it to report multiple conversion errors.
 -   [x] **Add Tests for Error Handling**: Write tests to verify that `errorCollector` correctly accumulates and reports errors.
@@ -91,6 +91,7 @@ as described in [docs/plan-neo-convert.md](docs/plan-neo-convert.md)
 
 
 ### Future Tasks (Post-Migration)
+*   **Implement `// convert:import` annotation**: Introduce a new global annotation (`// convert:import <alias> <path>`) to allow `using` and `validator` rules to reference functions from external packages. This will remove the current limitation that requires these functions to be in the same package as the generated code.
 *   **Improve Import Management**: Handle import alias collisions robustly. Consider using `golang.org/x/tools/imports` for final output formatting.
 *   **Expand Test Coverage**: Create a comprehensive test suite that verifies all features and edge cases.
 *   **Complete `README.md`**: Write user-facing documentation with installation, usage, and examples.

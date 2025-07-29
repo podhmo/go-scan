@@ -110,6 +110,146 @@ func convertProfile(ctx context.Context, s string) string {
 	}
 }
 
+func TestIntegration_WithValidator(t *testing.T) {
+	files := map[string]string{
+		"go.mod": `
+module example.com/m
+go 1.24
+replace github.com/podhmo/go-scan/examples/convert/model => ../../../model
+`,
+		"validator.go": `
+package validator
+
+import (
+	"fmt"
+	"github.com/podhmo/go-scan/examples/convert/model"
+)
+
+// // convert:rule "string", validator=validateString
+// // convert:rule "int", validator=validateInt
+
+// @derivingconvert("Dst")
+type Src struct {
+	Name string
+	Age  int
+}
+
+type Dst struct {
+	Name string
+	Age  int
+}
+
+func validateString(ec *model.ErrorCollector, s string) {
+	if s == "" {
+		ec.Add(fmt.Errorf("string is empty"))
+	}
+}
+
+func validateInt(ec *model.ErrorCollector, i int) {
+	if i < 0 {
+		ec.Add(fmt.Errorf("int is negative"))
+	}
+}
+`,
+		"validator_test.go": `
+package validator
+
+import (
+	"context"
+	"strings"
+	"testing"
+)
+
+func TestValidation(t *testing.T) {
+	cases := []struct {
+		name          string
+		src           *Src
+		expectErr     bool
+		expectedErrs []string
+	}{
+		{
+			name: "valid",
+			src:  &Src{Name: "test", Age: 20},
+			expectErr: false,
+		},
+		{
+			name: "invalid string",
+			src:  &Src{Name: "", Age: 20},
+			expectErr: true,
+			expectedErrs: []string{"Name: string is empty"},
+		},
+		{
+			name: "invalid int",
+			src:  &Src{Name: "test", Age: -1},
+			expectErr: true,
+			expectedErrs: []string{"Age: int is negative"},
+		},
+		{
+			name: "multiple errors",
+			src:  &Src{Name: "", Age: -1},
+			expectErr: true,
+			expectedErrs: []string{"Name: string is empty", "Age: int is negative"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := ConvertSrcToDst(context.Background(), tc.src)
+			if tc.expectErr {
+				if err == nil {
+					t.Fatal("expected an error, but got nil")
+				}
+				errStr := err.Error()
+				for _, sub := range tc.expectedErrs {
+					if !strings.Contains(errStr, sub) {
+						t.Errorf("expected error to contain %q, but it was %q", sub, errStr)
+					}
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("expected no error, but got: %v", err)
+				}
+			}
+		})
+	}
+}
+`,
+	}
+
+	tmpdir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	ctx := context.Background()
+	writer := &memoryFileWriter{}
+	ctx = context.WithValue(ctx, FileWriterKey, writer)
+
+	pkgpath := "example.com/m"
+	outputFile := "generated.go"
+	pkgname := "validator"
+
+	err := run(ctx, pkgpath, tmpdir, outputFile, pkgname)
+	if err != nil {
+		t.Fatalf("run() failed: %v", err)
+	}
+
+	generatedCode, ok := writer.Outputs[outputFile]
+	if !ok {
+		t.Fatalf("output file %q not found in captured outputs", outputFile)
+	}
+
+	generatedPath := filepath.Join(tmpdir, "generated.go")
+	if err := os.WriteFile(generatedPath, generatedCode, 0644); err != nil {
+		t.Fatalf("failed to write generated code: %v", err)
+	}
+
+	cmd := exec.Command("go", "test", "-v")
+	cmd.Dir = tmpdir
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Errorf("expected go test to succeed, but it failed. Output:\n%s", output)
+	}
+}
+
 func TestIntegration_WithEmbeddedFields(t *testing.T) {
 	// For this test, we use actual source files instead of in-memory files
 	// to test the scanner's ability to handle file paths correctly.

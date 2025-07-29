@@ -18,6 +18,12 @@ type ParsedInfo struct {
 	NamedTypes      map[string]*scanner.TypeInfo // Keyed by type name (e.g. "MyInt" for type MyInt int)
 }
 
+// Variable defines a variable to be declared in the converter function.
+type Variable struct {
+	Name string
+	Type string
+}
+
 // ConversionPair defines a top-level conversion between two types.
 type ConversionPair struct {
 	SrcTypeName string
@@ -25,6 +31,7 @@ type ConversionPair struct {
 	SrcTypeInfo *scanner.TypeInfo
 	DstTypeInfo *scanner.TypeInfo
 	MaxErrors   int
+	Variables   []Variable
 }
 
 // TypeRule defines a global rule for converting between types or validating a type.

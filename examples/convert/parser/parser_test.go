@@ -71,8 +71,8 @@ type MyTime time.Time
 		PackagePath: "example.com/sample",
 		Imports:     make(map[string]string),
 		ConversionPairs: []model.ConversionPair{
-			{SrcTypeName: "Source", DstTypeName: "Destination", MaxErrors: 0},
-			{SrcTypeName: "SourceWithOption", DstTypeName: "DestinationWithOption", MaxErrors: 5},
+			{SrcTypeName: "Source", DstTypeName: "Destination", MaxErrors: 0, Variables: []model.Variable{}},
+			{SrcTypeName: "SourceWithOption", DstTypeName: "DestinationWithOption", MaxErrors: 5, Variables: []model.Variable{}},
 		},
 		GlobalRules: []model.TypeRule{
 			{SrcTypeName: "time.Time", DstTypeName: "string", UsingFunc: "TimeToString"},

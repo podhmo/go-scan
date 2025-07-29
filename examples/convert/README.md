@@ -81,6 +81,32 @@ Defines an alias for an external package path, which can then be used in `using`
 // convert:rule "string", validator=funcs.ValidateNonEmpty
 ```
 
+### `// convert:variable`
+Declares a local variable within the generated converter function. This is useful for stateful operations that need to be shared across multiple `using` functions, such as using a `strings.Builder` to construct a value from several source fields.
+
+**Syntax**: `// convert:variable <name> <type>`
+*   `<name>`: The name of the variable.
+*   `<type>`: The type of the variable (e.g., `strings.Builder`, `*int`).
+
+**Example**:
+The variable is declared once per function and can be accessed by any `using` function that takes it as an argument.
+```go
+// // convert:variable builder strings.Builder
+// @derivingconvert(Dst)
+type Src struct {
+	FirstName string
+	LastName  string
+}
+
+type Dst struct {
+	FullName string `convert:",using=buildFullName(&builder, src.FirstName, src.LastName)"`
+}
+
+// buildFullName would be a helper function you write.
+// func buildFullName(builder *strings.Builder, firstName, lastName string) string { ... }
+```
+
+
 ### `convert` Struct Tag
 Controls the conversion of a specific field.
 

@@ -17,6 +17,7 @@ var (
 	reDerivingConvert = regexp.MustCompile(`@derivingconvert\(([^,)]+)(?:,\s*([^)]+))?\)`)
 	reConvertRule     = regexp.MustCompile(`// convert:rule "([^"]+)"(?: -> "([^"]+)")?, (?:using=([a-zA-Z0-9_.]+)|validator=([a-zA-Z0-9_.]+))`)
 	reConvertImport   = regexp.MustCompile(`// convert:import ([a-zA-Z0-9_.]+) "([^"]+)"`)
+	reConvertVariable = regexp.MustCompile(`// convert:variable (\w+)\s+(.+)`)
 )
 
 func Parse(ctx context.Context, scannedPkg *scanner.PackageInfo) (*model.ParsedInfo, error) {
@@ -91,6 +92,16 @@ func Parse(ctx context.Context, scannedPkg *scanner.PackageInfo) (*model.ParsedI
 					pair.MaxErrors = maxErrors
 				}
 			}
+
+			// Also parse variables from the same doc comment block
+			variables := []model.Variable{}
+			for _, docLine := range strings.Split(t.Doc, "\n") {
+				if m := reConvertVariable.FindStringSubmatch(docLine); m != nil {
+					variables = append(variables, model.Variable{Name: m[1], Type: m[2]})
+				}
+			}
+			pair.Variables = variables
+
 			info.ConversionPairs = append(info.ConversionPairs, pair)
 		}
 	}

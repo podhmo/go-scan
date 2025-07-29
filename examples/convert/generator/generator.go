@@ -18,23 +18,40 @@ package {{ .PackageName }}
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"example.com/convert/model"
 	{{- range $path, $alias := .Imports }}
 	{{ $alias }} "{{ $path }}"
 	{{- end }}
 )
 
 {{ range .Pairs -}}
+func convert{{ .SrcType.Name }}To{{ .DstType.Name }}(ec *model.ErrorCollector, src *{{ .SrcType.Name }}) *{{ .DstType.Name }} {
+	if src == nil {
+		return nil
+	}
+	dst := &{{ .DstType.Name }}{}
+	{{ range .Fields -}}
+	if ec.MaxErrorsReached() { return dst }
+	ec.Enter("{{ .DstName }}")
+	{{ getAssignment $.Im $.Info . "src" "dst" "ec" }}
+	ec.Leave()
+	{{ end -}}
+	return dst
+}
+
 // Convert{{ .SrcType.Name }}To{{ .DstType.Name }} converts {{ .SrcType.Name }} to {{ .DstType.Name }}.
 func Convert{{ .SrcType.Name }}To{{ .DstType.Name }}(ctx context.Context, src *{{ .SrcType.Name }}) (*{{ .DstType.Name }}, error) {
 	if src == nil {
 		return nil, nil
 	}
-	dst := &{{ .DstType.Name }}{}
-	{{- range .Fields }}
-	{{ getAssignment $.Im $.Info . "src" "dst" }}
-	{{- end }}
-	return dst, nil // TODO: error handling
+	ec := model.NewErrorCollector(0) // TODO: get maxErrors from annotation
+	dst := convert{{ .SrcType.Name }}To{{ .DstType.Name }}(ec, src)
+	if ec.HasErrors() {
+		return dst, errors.Join(ec.Errors()...)
+	}
+	return dst, nil
 }
 {{ end }}
 `
@@ -98,8 +115,8 @@ func Generate(s *goscan.Scanner, info *model.ParsedInfo) ([]byte, error) {
 	}
 
 	funcMap := template.FuncMap{
-		"getAssignment": func(im *goscan.ImportManager, info *model.ParsedInfo, field FieldMap, srcVar, dstVar string) string {
-			return getAssignment(im, info, field, srcVar, dstVar)
+		"getAssignment": func(im *goscan.ImportManager, info *model.ParsedInfo, field FieldMap, srcVar, dstVar, ecVar string) string {
+			return getAssignment(im, info, field, srcVar, dstVar, ecVar)
 		},
 	}
 
@@ -171,13 +188,13 @@ func resolveFieldType(ctx context.Context, ft *scanner.FieldType) error {
 // Assignment Logic
 // -----------------------------------------------------------------------------
 
-func getAssignment(im *goscan.ImportManager, info *model.ParsedInfo, field FieldMap, srcVar, dstVar string) string {
+func getAssignment(im *goscan.ImportManager, info *model.ParsedInfo, field FieldMap, srcVar, dstVar, ecVar string) string {
 	src := fmt.Sprintf("%s.%s", srcVar, field.SrcName)
 	dst := fmt.Sprintf("%s.%s", dstVar, field.DstName)
 
 	// Priority 1: Field-level using tag
 	if field.Tag.UsingFunc != "" {
-		return fmt.Sprintf("%s = %s(ctx, %s)", dst, field.Tag.UsingFunc, src)
+		return fmt.Sprintf("%s = %s(%s, %s)", dst, field.Tag.UsingFunc, ecVar, src)
 	}
 
 	// Priority 2: Global conversion rule
@@ -189,19 +206,19 @@ func getAssignment(im *goscan.ImportManager, info *model.ParsedInfo, field Field
 		ruleDstName := getFullTypeNameFromTypeInfo(rule.DstTypeInfo)
 
 		if ruleSrcName == srcFieldTypeName && ruleDstName == dstFieldTypeName {
-			return fmt.Sprintf("%s = %s(ctx, %s)", dst, rule.UsingFunc, src)
+			return fmt.Sprintf("%s = %s(%s, %s)", dst, rule.UsingFunc, ecVar, src)
 		}
 	}
 
 	if field.Tag.Required && field.SrcFieldT.IsPointer {
-		return fmt.Sprintf("if %s == nil {\n\treturn nil, fmt.Errorf(\"%s is required\")\n}\n%s", src, field.SrcName, generateConversion(im, src, dst, field.SrcFieldT, field.DstFieldT, 0))
+		return fmt.Sprintf("if %s == nil {\n\t%s.Add(fmt.Errorf(\"%s is required\"))\n} else {\n\t%s\n}", src, ecVar, field.SrcName, generateConversion(im, src, dst, field.SrcFieldT, field.DstFieldT, 0, ecVar))
 	}
 
 	// Priority 3: Default conversion logic
-	return generateConversion(im, src, dst, field.SrcFieldT, field.DstFieldT, 0)
+	return generateConversion(im, src, dst, field.SrcFieldT, field.DstFieldT, 0, ecVar)
 }
 
-func generateConversion(im *goscan.ImportManager, src, dst string, srcT, dstT *scanner.FieldType, depth int) string {
+func generateConversion(im *goscan.ImportManager, src, dst string, srcT, dstT *scanner.FieldType, depth int, ecVar string) string {
 	if srcT == nil || dstT == nil {
 		return fmt.Sprintf("// srcT or dstT is nil for %s -> %s", src, dst)
 	}
@@ -214,7 +231,7 @@ func generateConversion(im *goscan.ImportManager, src, dst string, srcT, dstT *s
 		var b strings.Builder
 		b.WriteString(fmt.Sprintf("if %s != nil {\n", src))
 		b.WriteString(fmt.Sprintf("\ttmp := %s\n", getTypeName(im, dstT.Elem)))
-		b.WriteString(fmt.Sprintf("\t%s\n", generateConversion(im, "(*"+src+")", "tmp", srcT.Elem, dstT.Elem, depth+1)))
+		b.WriteString(fmt.Sprintf("\t%s\n", generateConversion(im, "(*"+src+")", "tmp", srcT.Elem, dstT.Elem, depth+1, ecVar)))
 		b.WriteString(fmt.Sprintf("\t%s = &tmp\n", dst))
 		b.WriteString("}")
 		return b.String()
@@ -224,7 +241,7 @@ func generateConversion(im *goscan.ImportManager, src, dst string, srcT, dstT *s
 		if srcT.Elem == nil {
 			return fmt.Sprintf("// Cannot convert pointer to value, element type is nil")
 		}
-		return fmt.Sprintf("if %s != nil {\n\t%s\n}", src, generateConversion(im, "(*"+src+")", dst, srcT.Elem, dstT, depth+1))
+		return fmt.Sprintf("if %s != nil {\n\t%s\n}", src, generateConversion(im, "(*"+src+")", dst, srcT.Elem, dstT, depth+1, ecVar))
 	}
 	// Value to Pointer
 	if !srcT.IsPointer && dstT.IsPointer {
@@ -234,7 +251,7 @@ func generateConversion(im *goscan.ImportManager, src, dst string, srcT, dstT *s
 		var b strings.Builder
 		b.WriteString("{\n")
 		b.WriteString(fmt.Sprintf("\ttmp := %s\n", getTypeName(im, dstT.Elem)))
-		b.WriteString(fmt.Sprintf("\t%s\n", generateConversion(im, src, "tmp", srcT, dstT.Elem, depth+1)))
+		b.WriteString(fmt.Sprintf("\t%s\n", generateConversion(im, src, "tmp", srcT, dstT.Elem, depth+1, ecVar)))
 		b.WriteString(fmt.Sprintf("\t%s = &tmp\n", dst))
 		b.WriteString("}")
 		return b.String()
@@ -242,24 +259,29 @@ func generateConversion(im *goscan.ImportManager, src, dst string, srcT, dstT *s
 
 	// Slices
 	if srcT.IsSlice && dstT.IsSlice {
-		return generateSliceConversion(im, src, dst, srcT, dstT, depth)
+		return generateSliceConversion(im, src, dst, srcT, dstT, depth, ecVar)
 	}
 
 	// Maps
 	if srcT.IsMap && dstT.IsMap {
-		return generateMapConversion(im, src, dst, srcT, dstT, depth)
+		return generateMapConversion(im, src, dst, srcT, dstT, depth, ecVar)
 	}
 
 	// Structs
 	if isStruct(srcT) && isStruct(dstT) && srcT.Name != "" && dstT.Name != "" {
-		return fmt.Sprintf("{ conv, err := Convert%sTo%s(ctx, &%s); if err == nil { %s = *conv } }", srcT.Name, dstT.Name, src, dst)
+		// This should be a pointer type, but we handle both cases.
+		srcPtr := src
+		if !srcT.IsPointer {
+			srcPtr = "&" + src
+		}
+		return fmt.Sprintf("%s = *convert%sTo%s(%s, %s)", dst, srcT.Name, dstT.Name, ecVar, srcPtr)
 	}
 
 	// Basic assignment
 	return fmt.Sprintf("%s = %s", dst, src)
 }
 
-func generateSliceConversion(im *goscan.ImportManager, src, dst string, srcT, dstT *scanner.FieldType, depth int) string {
+func generateSliceConversion(im *goscan.ImportManager, src, dst string, srcT, dstT *scanner.FieldType, depth int, ecVar string) string {
 	if srcT.Elem == nil || dstT.Elem == nil {
 		return ""
 	}
@@ -268,14 +290,16 @@ func generateSliceConversion(im *goscan.ImportManager, src, dst string, srcT, ds
 	b.WriteString(fmt.Sprintf("{\n"))
 	b.WriteString(fmt.Sprintf("\tconvertedSlice := make([]%s, len(%s))\n", getTypeName(im, dstT.Elem), src))
 	b.WriteString(fmt.Sprintf("\tfor i, item := range %s {\n", src))
-	b.WriteString(fmt.Sprintf("\t\t%s\n", generateConversion(im, "item", "convertedSlice[i]", srcT.Elem, dstT.Elem, depth+2)))
+	b.WriteString("\t\t" + ecVar + ".Enter(fmt.Sprintf(\"[%d]\", i))\n")
+	b.WriteString(fmt.Sprintf("\t\t%s\n", generateConversion(im, "item", "convertedSlice[i]", srcT.Elem, dstT.Elem, depth+2, ecVar)))
+	b.WriteString("\t\t" + ecVar + ".Leave()\n")
 	b.WriteString(fmt.Sprintf("\t}\n"))
 	b.WriteString(fmt.Sprintf("\t%s = convertedSlice\n", dst))
 	b.WriteString(fmt.Sprintf("}"))
 	return b.String()
 }
 
-func generateMapConversion(im *goscan.ImportManager, src, dst string, srcT, dstT *scanner.FieldType, depth int) string {
+func generateMapConversion(im *goscan.ImportManager, src, dst string, srcT, dstT *scanner.FieldType, depth int, ecVar string) string {
 	if srcT.MapKey == nil || srcT.Elem == nil || dstT.MapKey == nil || dstT.Elem == nil {
 		return ""
 	}
@@ -284,7 +308,10 @@ func generateMapConversion(im *goscan.ImportManager, src, dst string, srcT, dstT
 	b.WriteString(fmt.Sprintf("{\n"))
 	b.WriteString(fmt.Sprintf("\tconvertedMap := make(map[%s]%s, len(%s))\n", getTypeName(im, dstT.MapKey), getTypeName(im, dstT.Elem), src))
 	b.WriteString(fmt.Sprintf("\tfor key, value := range %s {\n", src))
-	b.WriteString(fmt.Sprintf("\t\t%s\n", generateConversion(im, "value", "convertedMap[key]", srcT.Elem, dstT.Elem, depth+2)))
+	// TODO: handle key conversion if types are different
+	b.WriteString("\t\t" + ecVar + ".Enter(fmt.Sprintf(\"[%v]\", key))\n")
+	b.WriteString(fmt.Sprintf("\t\t%s\n", generateConversion(im, "value", "convertedMap[key]", srcT.Elem, dstT.Elem, depth+2, ecVar)))
+	b.WriteString("\t\t" + ecVar + ".Leave()\n")
 	b.WriteString(fmt.Sprintf("\t}\n"))
 	b.WriteString(fmt.Sprintf("\t%s = convertedMap\n", dst))
 	b.WriteString(fmt.Sprintf("}"))

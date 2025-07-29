@@ -4,32 +4,66 @@ package slices
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"example.com/convert/model"
 	context "context"
 	fmt "fmt"
 )
+
+func convertSrcToDst(ec *model.ErrorCollector, src *Src) *Dst {
+	if src == nil {
+		return nil
+	}
+	dst := &Dst{}
+	if ec.MaxErrorsReached() { return dst }
+	ec.Enter("Items")
+	{
+	convertedSlice := make([]DstItem, len(src.Items))
+	for i, item := range src.Items {
+		ec.Enter(fmt.Sprintf("[%d]", i))
+		convertedSlice[i] = *convertSrcItemToDstItem(ec, &item)
+		ec.Leave()
+	}
+	dst.Items = convertedSlice
+}
+	ec.Leave()
+	return dst
+}
 
 // ConvertSrcToDst converts Src to Dst.
 func ConvertSrcToDst(ctx context.Context, src *Src) (*Dst, error) {
 	if src == nil {
 		return nil, nil
 	}
-	dst := &Dst{}
-	{
-	convertedSlice := make([]DstItem, len(src.Items))
-	for i, item := range src.Items {
-		{ conv, err := ConvertSrcItemToDstItem(ctx, &item); if err == nil { convertedSlice[i] = *conv } }
+	ec := model.NewErrorCollector(0) // TODO: get maxErrors from annotation
+	dst := convertSrcToDst(ec, src)
+	if ec.HasErrors() {
+		return dst, errors.Join(ec.Errors()...)
 	}
-	dst.Items = convertedSlice
+	return dst, nil
 }
-	return dst, nil // TODO: error handling
+func convertSrcItemToDstItem(ec *model.ErrorCollector, src *SrcItem) *DstItem {
+	if src == nil {
+		return nil
+	}
+	dst := &DstItem{}
+	if ec.MaxErrorsReached() { return dst }
+	ec.Enter("Value")
+	dst.Value = src.Value
+	ec.Leave()
+	return dst
 }
+
 // ConvertSrcItemToDstItem converts SrcItem to DstItem.
 func ConvertSrcItemToDstItem(ctx context.Context, src *SrcItem) (*DstItem, error) {
 	if src == nil {
 		return nil, nil
 	}
-	dst := &DstItem{}
-	dst.Value = src.Value
-	return dst, nil // TODO: error handling
+	ec := model.NewErrorCollector(0) // TODO: get maxErrors from annotation
+	dst := convertSrcItemToDstItem(ec, src)
+	if ec.HasErrors() {
+		return dst, errors.Join(ec.Errors()...)
+	}
+	return dst, nil
 }

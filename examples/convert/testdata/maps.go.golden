@@ -4,39 +4,78 @@ package maps
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"example.com/convert/model"
 	context "context"
 	fmt "fmt"
 )
+
+func convertSrcToDst(ec *model.ErrorCollector, src *Src) *Dst {
+	if src == nil {
+		return nil
+	}
+	dst := &Dst{}
+	if ec.MaxErrorsReached() { return dst }
+	ec.Enter("Items")
+	{
+	convertedMap := make(map[string]DstItem, len(src.Items))
+	for key, value := range src.Items {
+		ec.Enter(fmt.Sprintf("[%v]", key))
+		convertedMap[key] = *convertSrcItemToDstItem(ec, &value)
+		ec.Leave()
+	}
+	dst.Items = convertedMap
+}
+	ec.Leave()
+	if ec.MaxErrorsReached() { return dst }
+	ec.Enter("ItemPtrs")
+	{
+	convertedMap := make(map[string]*interface{}, len(src.ItemPtrs))
+	for key, value := range src.ItemPtrs {
+		ec.Enter(fmt.Sprintf("[%v]", key))
+		convertedMap[key] = value // Cannot convert pointer types, element type is nil
+		ec.Leave()
+	}
+	dst.ItemPtrs = convertedMap
+}
+	ec.Leave()
+	return dst
+}
 
 // ConvertSrcToDst converts Src to Dst.
 func ConvertSrcToDst(ctx context.Context, src *Src) (*Dst, error) {
 	if src == nil {
 		return nil, nil
 	}
-	dst := &Dst{}
-	{
-	convertedMap := make(map[string]DstItem, len(src.Items))
-	for key, value := range src.Items {
-		{ conv, err := ConvertSrcItemToDstItem(ctx, &value); if err == nil { convertedMap[key] = *conv } }
+	ec := model.NewErrorCollector(0) // TODO: get maxErrors from annotation
+	dst := convertSrcToDst(ec, src)
+	if ec.HasErrors() {
+		return dst, errors.Join(ec.Errors()...)
 	}
-	dst.Items = convertedMap
+	return dst, nil
 }
-	{
-	convertedMap := make(map[string]*interface{}, len(src.ItemPtrs))
-	for key, value := range src.ItemPtrs {
-		convertedMap[key] = value // Cannot convert pointer types, element type is nil
+func convertSrcItemToDstItem(ec *model.ErrorCollector, src *SrcItem) *DstItem {
+	if src == nil {
+		return nil
 	}
-	dst.ItemPtrs = convertedMap
+	dst := &DstItem{}
+	if ec.MaxErrorsReached() { return dst }
+	ec.Enter("Value")
+	dst.Value = src.Value
+	ec.Leave()
+	return dst
 }
-	return dst, nil // TODO: error handling
-}
+
 // ConvertSrcItemToDstItem converts SrcItem to DstItem.
 func ConvertSrcItemToDstItem(ctx context.Context, src *SrcItem) (*DstItem, error) {
 	if src == nil {
 		return nil, nil
 	}
-	dst := &DstItem{}
-	dst.Value = src.Value
-	return dst, nil // TODO: error handling
+	ec := model.NewErrorCollector(0) // TODO: get maxErrors from annotation
+	dst := convertSrcItemToDstItem(ec, src)
+	if ec.HasErrors() {
+		return dst, errors.Join(ec.Errors()...)
+	}
+	return dst, nil
 }

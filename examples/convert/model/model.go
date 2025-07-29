@@ -1,6 +1,9 @@
 package model
 
 import (
+	"fmt"
+	"strings"
+
 	"github.com/podhmo/go-scan/scanner"
 )
 
@@ -75,3 +78,53 @@ const (
 	KindNamed  // A named type (type MyInt int)
 	KindFunc
 )
+
+// ErrorCollector accumulates errors during a conversion process.
+type ErrorCollector struct {
+	errors    []error
+	MaxErrors int
+	path      []string
+}
+
+// NewErrorCollector creates a new ErrorCollector.
+func NewErrorCollector(maxErrors int) *ErrorCollector {
+	return &ErrorCollector{
+		MaxErrors: maxErrors,
+	}
+}
+
+// Add records a new error with the current field path.
+func (ec *ErrorCollector) Add(err error) {
+	if ec.MaxErrorsReached() {
+		return
+	}
+	path := strings.Join(ec.path, ".")
+	ec.errors = append(ec.errors, fmt.Errorf("%s: %w", path, err))
+}
+
+// Enter steps into a nested field.
+func (ec *ErrorCollector) Enter(field string) {
+	ec.path = append(ec.path, field)
+}
+
+// Leave steps out of a nested field.
+func (ec *ErrorCollector) Leave() {
+	if len(ec.path) > 0 {
+		ec.path = ec.path[:len(ec.path)-1]
+	}
+}
+
+// MaxErrorsReached returns true if the number of collected errors has reached the maximum limit.
+func (ec *ErrorCollector) MaxErrorsReached() bool {
+	return ec.MaxErrors > 0 && len(ec.errors) >= ec.MaxErrors
+}
+
+// HasErrors returns true if any errors have been collected.
+func (ec *ErrorCollector) HasErrors() bool {
+	return len(ec.errors) > 0
+}
+
+// Errors returns the collected errors.
+func (ec *ErrorCollector) Errors() []error {
+	return ec.errors
+}

@@ -706,82 +706,77 @@ type DstItem struct {
 // 	}
 // }
 
-// func TestIntegration_WithMapKeyConversion(t *testing.T) {
-// 	files := map[string]string{
-// 		"go.mod": `
-// module example.com/m
-// go 1.24
-// `,
-// 		"mapkeys.go": `
-// package mapkeys
+func TestIntegration_WithMapKeyConversion(t *testing.T) {
+	files := map[string]string{
+		"go.mod": `
+module example.com/m
+go 1.24
+`,
+		"mapkeys.go": `
+package mapkeys
+import (
+	"context"
+	"strconv"
+)
+// @derivingconvert("Dst")
+type Src struct {
+	Data map[int]string
+}
+type Dst struct {
+	Data map[string]string
+}
+// convert:rule "int" -> "string", using=convertIntToString
+func convertIntToString(ctx context.Context, i int) string {
+	return strconv.Itoa(i)
+}
+`,
+	}
 
-// import (
-// 	"context"
-// 	"example.com/convert/model"
-// 	"strconv"
-// )
+	tmpdir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
 
-// // @derivingconvert("Dst")
-// type Src struct {
-// 	Data map[int]string
-// }
+	ctx := context.Background()
+	writer := &memoryFileWriter{}
+	ctx = context.WithValue(ctx, FileWriterKey, writer)
 
-// type Dst struct {
-// 	Data map[string]string
-// }
+	pkgpath := "example.com/m"
+	outputFile := "generated.go"
+	pkgname := "mapkeys"
+	goldenFile := "testdata/mapkeys.go.golden"
 
-// // // convert:rule "int" -> "string", using=convertIntToString
-// func convertIntToString(ec *model.ErrorCollector, i int) string {
-// 	return strconv.Itoa(i)
-// }
-// `,
-// 	}
+	err := run(ctx, pkgpath, tmpdir, outputFile, pkgname)
+	if err != nil {
+		t.Fatalf("run() failed: %v", err)
+	}
 
-// 	tmpdir, cleanup := scantest.WriteFiles(t, files)
-// 	defer cleanup()
+	generatedCode, ok := writer.Outputs[outputFile]
+	if !ok {
+		t.Fatalf("output file %q not found in captured outputs", outputFile)
+	}
 
-// 	ctx := context.Background()
-// 	writer := &memoryFileWriter{}
-// 	ctx = context.WithValue(ctx, FileWriterKey, writer)
+	if *update {
+		if err := os.WriteFile(goldenFile, generatedCode, 0644); err != nil {
+			t.Fatalf("failed to update golden file: %v", err)
+		}
+		t.Logf("golden file updated: %s", goldenFile)
+		return
+	}
 
-// 	pkgpath := "example.com/m"
-// 	outputFile := "generated.go"
-// 	pkgname := "mapkeys"
-// 	goldenFile := "testdata/mapkeys.go.golden"
+	golden, err := os.ReadFile(goldenFile)
+	if err != nil {
+		t.Fatalf("failed to read golden file: %v", err)
+	}
 
-// 	err := run(ctx, pkgpath, tmpdir, outputFile, pkgname)
-// 	if err != nil {
-// 		t.Fatalf("run() failed: %v", err)
-// 	}
+	formattedGenerated, err := format.Source(generatedCode)
+	if err != nil {
+		t.Fatalf("failed to format generated code: %v", err)
+	}
+	formattedGolden, err := format.Source(golden)
+	if err != nil {
+		t.Fatalf("failed to format golden file: %v", err)
+	}
 
-// 	generatedCode, ok := writer.Outputs[outputFile]
-// 	if !ok {
-// 		t.Fatalf("output file %q not found in captured outputs", outputFile)
-// 	}
-
-// 	if *update {
-// 		if err := os.WriteFile(goldenFile, generatedCode, 0644); err != nil {
-// 			t.Fatalf("failed to update golden file: %v", err)
-// 		}
-// 		t.Logf("golden file updated: %s", goldenFile)
-// 		return
-// 	}
-
-// 	golden, err := os.ReadFile(goldenFile)
-// 	if err != nil {
-// 		t.Fatalf("failed to read golden file: %v", err)
-// 	}
-
-// 	formattedGenerated, err := format.Source(generatedCode)
-// 	if err != nil {
-// 		t.Fatalf("failed to format generated code: %v", err)
-// 	}
-// 	formattedGolden, err := format.Source(golden)
-// 	if err != nil {
-// 		t.Fatalf("failed to format golden file: %v", err)
-// 	}
-
-// 	if diff := cmp.Diff(string(formattedGolden), string(formattedGenerated)); diff != "" {
-// 		t.Errorf("generated code mismatch (-want +got):\n%s", diff)
-// 	}
-// }
+	if diff := cmp.Diff(string(formattedGolden), string(formattedGenerated)); diff != "" {
+		t.Errorf("generated code mismatch (-want +got):\n%s", diff)
+	}
+}

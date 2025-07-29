@@ -17,24 +17,25 @@ func convertSrcToDst(ctx context.Context, ec *model.ErrorCollector, src *Src) *D
 		return dst
 	}
 	ec.Enter("Items")
-	{
+	dst.Items = func() []*interface{} {
 		convertedSlice := make([]*interface{}, len(src.Items))
 		for i, item := range src.Items {
 			ec.Enter(fmt.Sprintf("[%d]", i))
-			convertedSlice[i] = item // Cannot convert pointer types, element type is nil
+			convertedSlice[i] = item
 			ec.Leave()
 		}
-		dst.Items = convertedSlice
-	}
+		return convertedSlice
+	}()
 	ec.Leave()
 	if ec.MaxErrorsReached() {
 		return dst
 	}
 	ec.Enter("ItemsPtr")
 	if src.ItemsPtr != nil {
-		tmp := DstItem
-		tmp = *convertSrcItemToDstItem(ec, &(*src.ItemsPtr))
+		tmp := *convertSrcItemToDstItem(ctx, ec, &(*src.ItemsPtr))
 		dst.ItemsPtr = &tmp
+	} else {
+		dst.ItemsPtr = nil
 	}
 	ec.Leave()
 	if ec.MaxErrorsReached() {
@@ -42,9 +43,10 @@ func convertSrcToDst(ctx context.Context, ec *model.ErrorCollector, src *Src) *D
 	}
 	ec.Enter("ItemsPtrPtr")
 	if src.ItemsPtrPtr != nil {
-		tmp := *interface{}
-		tmp = (*src.ItemsPtrPtr) // Cannot convert pointer types, element type is nil
+		tmp := (*src.ItemsPtrPtr)
 		dst.ItemsPtrPtr = &tmp
+	} else {
+		dst.ItemsPtrPtr = nil
 	}
 	ec.Leave()
 	return dst

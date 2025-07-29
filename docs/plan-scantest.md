@@ -111,28 +111,7 @@ func TestPureCheck(t *testing.T) {
 }
 ```
 
-## 7. Handling `replace` directives in `go.mod`
-
-A challenge arises when testing modules that use `replace` directives with relative paths in their `go.mod` files. For example:
-
-```
-replace github.com/podhmo/go-scan => ../../
-```
-
-When `scantest` copies these files to a temporary directory for testing, the relative path `../../` becomes invalid because the temporary directory's location relative to the project root is different.
-
-**Problem:** `go test`, when run as a subprocess on the generated code, fails to resolve the dependency because the path in the `replace` directive is incorrect in the context of the temporary directory.
-
-**Solution:** `scantest.Run` must automatically adjust these relative paths.
-
-1.  **Detect Project Root:** `scantest.Run` will locate the project's root directory (e.g., by finding the main `go.mod` file or a `.git` directory).
-2.  **Rewrite `go.mod` in Memory:** Before scanning, it will read the test's `go.mod` file and create an in-memory overlay.
-3.  **Adjust Relative Paths:** In the overlay, it will find any `replace` directives with relative paths and rewrite them to be correct relative to the temporary test directory. For example, it will calculate the new relative path from the temporary directory to the project root.
-4.  **Use Overlay:** The `goscan.Scanner` will be initialized with this in-memory overlay, ensuring that the scanner (and any subprocesses like `go test`) can correctly resolve the replaced modules.
-
-This process ensures that tests for modules with relative `replace` directives are robust and independent of the test execution environment.
-
-## 8. Future Work
+## 6. Future Work
 
 ### File Change Detection
 

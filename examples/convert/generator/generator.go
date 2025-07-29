@@ -32,6 +32,9 @@ func convert{{ .SrcType.Name }}To{{ .DstType.Name }}(ctx context.Context, ec *mo
 	if src == nil {
 		return nil
 	}
+	{{ range .Pair.Variables -}}
+	var {{ .Name }} {{ .Type }}
+	{{ end -}}
 	dst := &{{ .DstType.Name }}{}
 	{{ range .Fields -}}
 	if ec.MaxErrorsReached() { return dst }

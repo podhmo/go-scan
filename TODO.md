@@ -82,7 +82,7 @@ as described in [docs/plan-neo-convert.md](docs/plan-neo-convert.md)
 -   [x] **Improve Generated Code Error Handling**: Replace `// TODO: proper error handling` placeholders in the generator with more robust error handling, even if it's not the full `errorCollector` implementation.
 -   [x] **Parse `max_errors` from Annotation**: Implement parsing for the `max_errors` option in the `@derivingconvert` annotation.
 -   [ ] **Handle Map Key Conversion**: Implement logic to convert map keys when the source and destination map key types are different.
--   [-] **Implement automatic field selection for untagged fields**: Use `json` tag as a fallback for field name matching (priority: `convert` tag > `json` tag > normalized field name).
+-   [x] **Implement automatic field selection for untagged fields**: Use `json` tag as a fallback for field name matching (priority: `convert` tag > `json` tag > normalized field name).
 -   [ ] **Support assignment for assignable embedded fields**
 -   [x] **Add Tests for `max_errors` and Map Key Conversion**: Write integration tests for the `max_errors` and map key conversion features.
 -   [x] **Support `replace` directives in `go.mod`**: Enhanced `go-scan`'s dependency resolution to correctly handle `replace` directives in `go.mod` files.

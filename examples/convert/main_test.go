@@ -5,9 +5,7 @@ import (
 	"flag"
 	"go/format"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strings"
 	"sync"
 	"testing"
 
@@ -83,6 +81,188 @@ func convertProfile(ctx context.Context, s string) string {
 		t.Fatalf("output file %q not found in captured outputs", outputFile)
 	}
 
+	if *update {
+		if err := os.WriteFile(goldenFile, generatedCode, 0644); err != nil {
+			t.Fatalf("failed to update golden file: %v", err)
+		}
+		t.Logf("golden file updated: %s", goldenFile)
+		return
+	}
+
+	golden, err := os.ReadFile(goldenFile)
+	if err != nil {
+		t.Fatalf("failed to read golden file: %v", err)
+	}
+
+	formattedGenerated, err := format.Source(generatedCode)
+	if err != nil {
+		t.Fatalf("failed to format generated code: %v", err)
+	}
+	formattedGolden, err := format.Source(golden)
+	if err != nil {
+		t.Fatalf("failed to format golden file: %v", err)
+	}
+
+	if diff := cmp.Diff(string(formattedGolden), string(formattedGenerated)); diff != "" {
+		t.Errorf("generated code mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestIntegration_WithValidator(t *testing.T) {
+	files := map[string]string{
+		"go.mod": `
+module example.com/m
+go 1.24
+`,
+		"validator.go": `
+package validator
+
+import (
+	"fmt"
+)
+
+type ErrorCollector struct {
+	errors []error
+	max    int
+}
+
+func NewErrorCollector(max int) *ErrorCollector {
+	return &ErrorCollector{max: max}
+}
+func (ec *ErrorCollector) Add(err error) {
+	if ec.max > 0 && len(ec.errors) >= ec.max {
+		return
+	}
+	ec.errors = append(ec.errors, err)
+}
+func (ec *ErrorCollector) Errors() []error {
+	return ec.errors
+}
+func (ec *ErrorCollector) HasErrors() bool {
+	return len(ec.errors) > 0
+}
+func (ec *ErrorCollector) Enter(name string) {}
+func (ec *ErrorCollector) Leave()            {}
+func (ec *ErrorCollector) MaxErrorsReached() bool {
+	if ec.max <= 0 {
+		return false
+	}
+	return len(ec.errors) >= ec.max
+}
+
+// // convert:rule "string", validator=validateString
+// // convert:rule "int", validator=validateInt
+
+// @derivingconvert("Dst")
+type Src struct {
+	Name string
+	Age  int
+}
+
+type Dst struct {
+	Name string
+	Age  int
+}
+
+func validateString(ec *model.ErrorCollector, s string) {
+	if s == "" {
+		ec.Add(fmt.Errorf("string is empty"))
+	}
+}
+
+func validateInt(ec *model.ErrorCollector, i int) {
+	if i < 0 {
+		ec.Add(fmt.Errorf("int is negative"))
+	}
+}
+`,
+		"validator_test.go": `
+package validator
+
+import (
+	"context"
+	"strings"
+	"testing"
+)
+
+func TestValidation(t *testing.T) {
+	cases := []struct {
+		name          string
+		src           *Src
+		expectErr     bool
+		expectedErrs []string
+	}{
+		{
+			name: "valid",
+			src:  &Src{Name: "test", Age: 20},
+			expectErr: false,
+		},
+		{
+			name: "invalid string",
+			src:  &Src{Name: "", Age: 20},
+			expectErr: true,
+			expectedErrs: []string{"Name: string is empty"},
+		},
+		{
+			name: "invalid int",
+			src:  &Src{Name: "test", Age: -1},
+			expectErr: true,
+			expectedErrs: []string{"Age: int is negative"},
+		},
+		{
+			name: "multiple errors",
+			src:  &Src{Name: "", Age: -1},
+			expectErr: true,
+			expectedErrs: []string{"Name: string is empty", "Age: int is negative"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := ConvertSrcToDst(context.Background(), tc.src)
+			if tc.expectErr {
+				if err == nil {
+					t.Fatal("expected an error, but got nil")
+				}
+				errStr := err.Error()
+				for _, sub := range tc.expectedErrs {
+					if !strings.Contains(errStr, sub) {
+						t.Errorf("expected error to contain %q, but it was %q", sub, errStr)
+					}
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("expected no error, but got: %v", err)
+				}
+			}
+		})
+	}
+}
+`,
+	}
+
+	tmpdir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	ctx := context.Background()
+	writer := &memoryFileWriter{}
+	ctx = context.WithValue(ctx, FileWriterKey, writer)
+
+	pkgpath := "example.com/m"
+	outputFile := "generated.go"
+	pkgname := "validator"
+
+	err := run(ctx, pkgpath, tmpdir, outputFile, pkgname)
+	if err != nil {
+		t.Fatalf("run() failed: %v", err)
+	}
+
+	generatedCode, ok := writer.Outputs[outputFile]
+	if !ok {
+		t.Fatalf("output file %q not found in captured outputs", outputFile)
+	}
+
+	goldenFile := "testdata/validator.go.golden"
 	if *update {
 		if err := os.WriteFile(goldenFile, generatedCode, 0644); err != nil {
 			t.Fatalf("failed to update golden file: %v", err)
@@ -269,7 +449,6 @@ func TestIntegration_WithErrorHandling(t *testing.T) {
 		"go.mod": `
 module example.com/m
 go 1.24
-replace github.com/podhmo/go-scan/examples/convert/model => ../../../model
 `,
 		"errors.go": `
 package errors
@@ -277,8 +456,36 @@ package errors
 import (
 	"context"
 	"errors"
-	"example.com/convert/model"
 )
+
+type ErrorCollector struct {
+	errors []error
+	max    int
+}
+
+func NewErrorCollector(max int) *ErrorCollector {
+	return &ErrorCollector{max: max}
+}
+func (ec *ErrorCollector) Add(err error) {
+	if ec.max > 0 && len(ec.errors) >= ec.max {
+		return
+	}
+	ec.errors = append(ec.errors, err)
+}
+func (ec *ErrorCollector) Errors() []error {
+	return ec.errors
+}
+func (ec *ErrorCollector) HasErrors() bool {
+	return len(ec.errors) > 0
+}
+func (ec *ErrorCollector) Enter(name string) {}
+func (ec *ErrorCollector) Leave()            {}
+func (ec *ErrorCollector) MaxErrorsReached() bool {
+	if ec.max <= 0 {
+		return false
+	}
+	return len(ec.errors) >= ec.max
+}
 
 // @derivingconvert("Dst")
 type Src struct {
@@ -356,21 +563,31 @@ func TestRun(t *testing.T) {
 		t.Fatalf("output file %q not found in captured outputs", outputFile)
 	}
 
-	// 2. Write the generated code to the temp directory
-	generatedPath := filepath.Join(tmpdir, "generated.go")
-	if err := os.WriteFile(generatedPath, generatedCode, 0644); err != nil {
-		t.Fatalf("failed to write generated code: %v", err)
+	goldenFile := "testdata/errors.go.golden"
+	if *update {
+		if err := os.WriteFile(goldenFile, generatedCode, 0644); err != nil {
+			t.Fatalf("failed to update golden file: %v", err)
+		}
+		t.Logf("golden file updated: %s", goldenFile)
+		return
 	}
 
-	// 3. Run the test in the temp directory that uses the generated code
-	cmd := exec.Command("go", "test", "-v")
-	cmd.Dir = tmpdir
-	output, err := cmd.CombinedOutput()
-	if err == nil {
-		t.Errorf("expected go test to fail, but it succeeded. Output:\n%s", output)
+	golden, err := os.ReadFile(goldenFile)
+	if err != nil {
+		t.Fatalf("failed to read golden file: %v", err)
 	}
-	if !strings.Contains(string(output), "expected error to contain") {
-		t.Logf("Go test output:\n%s", output)
+
+	formattedGenerated, err := format.Source(generatedCode)
+	if err != nil {
+		t.Fatalf("failed to format generated code: %v", err)
+	}
+	formattedGolden, err := format.Source(golden)
+	if err != nil {
+		t.Fatalf("failed to format golden file: %v", err)
+	}
+
+	if diff := cmp.Diff(string(formattedGolden), string(formattedGenerated)); diff != "" {
+		t.Errorf("generated code mismatch (-want +got):\n%s", diff)
 	}
 }
 

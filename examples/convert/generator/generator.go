@@ -36,7 +36,8 @@ func convert{{ .SrcType.Name }}To{{ .DstType.Name }}(ctx context.Context, ec *mo
 	{{ range .Fields -}}
 	if ec.MaxErrorsReached() { return dst }
 	ec.Enter("{{ .DstName }}")
-	{{ getAssignment $.Im $.Info . "src" "dst" "ec" "ctx" }}
+	{{ getAssignment $.Im $.Info . "src" "dst" "ec" "ctx" -}}
+	{{- getValidator $.Im $.Info . "dst" "ec" "ctx" }}
 	ec.Leave()
 	{{ end -}}
 	return dst
@@ -121,6 +122,9 @@ func Generate(s *goscan.Scanner, info *model.ParsedInfo) ([]byte, error) {
 		},
 		"getMapKeyAssignment": func(im *goscan.ImportManager, info *model.ParsedInfo, srcVar, dstVar string, srcT, dstT *scanner.FieldType, ecVar, ctxVar string) string {
 			return getMapKeyAssignment(im, info, srcVar, dstVar, srcT, dstT, ecVar, ctxVar)
+		},
+		"getValidator": func(im *goscan.ImportManager, info *model.ParsedInfo, field FieldMap, dstVar, ecVar, ctxVar string) string {
+			return getValidator(im, info, field, dstVar, ecVar, ctxVar)
 		},
 	}
 
@@ -227,6 +231,28 @@ func resolveFieldType(ctx context.Context, ft *scanner.FieldType) error {
 		}
 	}
 	return nil
+}
+
+// -----------------------------------------------------------------------------
+// Validator Logic
+// -----------------------------------------------------------------------------
+
+func getValidator(im *goscan.ImportManager, info *model.ParsedInfo, field FieldMap, dstVar, ecVar, ctxVar string) string {
+	dstFieldT := field.DstFieldT
+	dstFieldTypeName := getFullTypeNameFromFieldType(dstFieldT)
+	dst := fmt.Sprintf("%s.%s", dstVar, field.DstName)
+
+	for _, rule := range info.GlobalRules {
+		if rule.ValidatorFunc == "" {
+			continue
+		}
+
+		ruleDstName := getFullTypeNameFromTypeInfo(rule.DstTypeInfo)
+		if ruleDstName == dstFieldTypeName {
+			return fmt.Sprintf("%s(%s, %s)", rule.ValidatorFunc, ecVar, dst)
+		}
+	}
+	return ""
 }
 
 // -----------------------------------------------------------------------------
@@ -494,15 +520,35 @@ func isStruct(t *scanner.FieldType) bool {
 	return t.Definition != nil && t.Definition.Kind == scanner.StructKind
 }
 
+func getFullTypeNameFromFieldType(ft *scanner.FieldType) string {
+	if ft == nil {
+		return ""
+	}
+	if ft.Definition != nil {
+		return getFullTypeNameFromTypeInfo(ft.Definition)
+	}
+	if ft.IsPointer {
+		return "*" + getFullTypeNameFromFieldType(ft.Elem)
+	}
+	// This is a fallback for basic types or unresolved types.
+	return ft.Name
+}
+
 func getFullTypeNameFromTypeInfo(t *scanner.TypeInfo) string {
 	if t == nil {
 		return ""
 	}
 	if t.PkgPath != "" {
+		// For external packages, PkgPath is the full import path.
+		// For the current package, it's also the full import path.
 		return fmt.Sprintf("%s.%s", t.PkgPath, t.Name)
 	}
 	if t.Name != "" {
+		// This handles built-in types like "string", "int", etc.
 		return t.Name
+	}
+	if t.Underlying != nil && t.Underlying.Definition != nil {
+		return getFullTypeNameFromTypeInfo(t.Underlying.Definition)
 	}
 	if t.Underlying != nil {
 		return t.Underlying.Name

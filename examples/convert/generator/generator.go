@@ -46,7 +46,7 @@ func Convert{{ .SrcType.Name }}To{{ .DstType.Name }}(ctx context.Context, src *{
 	if src == nil {
 		return nil, nil
 	}
-	ec := model.NewErrorCollector(0) // TODO: get maxErrors from annotation
+	ec := model.NewErrorCollector({{ .Pair.MaxErrors }})
 	dst := convert{{ .SrcType.Name }}To{{ .DstType.Name }}(ec, src)
 	if ec.HasErrors() {
 		return dst, errors.Join(ec.Errors()...)
@@ -68,6 +68,7 @@ type TemplatePair struct {
 	SrcType *model.StructInfo
 	DstType *model.StructInfo
 	Fields  []FieldMap
+	Pair    model.ConversionPair
 }
 
 type FieldMap struct {
@@ -103,6 +104,7 @@ func Generate(s *goscan.Scanner, info *model.ParsedInfo) ([]byte, error) {
 			SrcType: srcStruct,
 			DstType: dstStruct,
 			Fields:  fieldMaps,
+			Pair:    pair,
 		})
 	}
 
@@ -308,9 +310,23 @@ func generateMapConversion(im *goscan.ImportManager, src, dst string, srcT, dstT
 	b.WriteString(fmt.Sprintf("{\n"))
 	b.WriteString(fmt.Sprintf("\tconvertedMap := make(map[%s]%s, len(%s))\n", getTypeName(im, dstT.MapKey), getTypeName(im, dstT.Elem), src))
 	b.WriteString(fmt.Sprintf("\tfor key, value := range %s {\n", src))
-	// TODO: handle key conversion if types are different
+
+	dstKeyTypeStr := getTypeName(im, dstT.MapKey)
+	dstKeyVar := "convertedKey"
+	assignKey := ""
+
+	// Check if key types are different and require conversion.
+	if getFullTypeNameFromTypeInfo(srcT.MapKey.Definition) != getFullTypeNameFromTypeInfo(dstT.MapKey.Definition) {
+		b.WriteString(fmt.Sprintf("\t\tvar %s %s\n", dstKeyVar, dstKeyTypeStr))
+		b.WriteString(fmt.Sprintf("\t\t%s\n", generateConversion(im, "key", dstKeyVar, srcT.MapKey, dstT.MapKey, depth+2, ecVar)))
+		assignKey = dstKeyVar
+	} else {
+		// Types are the same, direct assignment.
+		assignKey = "key"
+	}
+
 	b.WriteString("\t\t" + ecVar + ".Enter(fmt.Sprintf(\"[%v]\", key))\n")
-	b.WriteString(fmt.Sprintf("\t\t%s\n", generateConversion(im, "value", "convertedMap[key]", srcT.Elem, dstT.Elem, depth+2, ecVar)))
+	b.WriteString(fmt.Sprintf("\t\t%s\n", generateConversion(im, "value", fmt.Sprintf("convertedMap[%s]", assignKey), srcT.Elem, dstT.Elem, depth+2, ecVar)))
 	b.WriteString("\t\t" + ecVar + ".Leave()\n")
 	b.WriteString(fmt.Sprintf("\t}\n"))
 	b.WriteString(fmt.Sprintf("\t%s = convertedMap\n", dst))

@@ -44,7 +44,7 @@ func ConvertSrcWithTagsToDstWithTags(ctx context.Context, src *SrcWithTags) (*Ds
 	if src == nil {
 		return nil, nil
 	}
-	ec := model.NewErrorCollector(0) // TODO: get maxErrors from annotation
+	ec := model.NewErrorCollector(0)
 	dst := convertSrcWithTagsToDstWithTags(ec, src)
 	if ec.HasErrors() {
 		return dst, errors.Join(ec.Errors()...)

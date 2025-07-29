@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"reflect"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"example.com/convert/model"
@@ -12,7 +13,7 @@ import (
 )
 
 var (
-	reDerivingConvert = regexp.MustCompile(`@derivingconvert\("([^"]+)"\)`)
+	reDerivingConvert = regexp.MustCompile(`@derivingconvert\(([^,)]+)(?:,\s*([^)]+))?\)`)
 	reConvertRule     = regexp.MustCompile(`// convert:rule "([^"]+)" -> "([^"]+)", using=([a-zA-Z0-9_]+)`)
 )
 
@@ -62,26 +63,46 @@ func Parse(ctx context.Context, scannedPkg *scanner.PackageInfo) (*model.ParsedI
 		if t.Doc == "" {
 			continue
 		}
-		m := reDerivingConvert.FindStringSubmatch(t.Doc)
-		if m == nil {
-			continue
+		for _, line := range strings.Split(t.Doc, "\n") {
+			m := reDerivingConvert.FindStringSubmatch(line)
+			if m == nil {
+				continue
+			}
+
+			dstTypeName := strings.Trim(m[1], `"`)
+			optionsStr := ""
+			if len(m) > 2 {
+				optionsStr = m[2]
+			}
+
+			srcTypeInfo, ok := info.NamedTypes[t.Name]
+			if !ok {
+				return nil, fmt.Errorf("internal error: source type %q not found after initial pass", t.Name)
+			}
+			dstTypeInfo := scannedPkg.Lookup(dstTypeName)
+			if dstTypeInfo == nil {
+				return nil, fmt.Errorf("destination type %q for source %q not found in scanned package", dstTypeName, t.Name)
+			}
+
+			pair := model.ConversionPair{
+				SrcTypeName: t.Name,
+				DstTypeName: dstTypeInfo.Name,
+				SrcTypeInfo: srcTypeInfo,
+				DstTypeInfo: dstTypeInfo,
+			}
+
+			if optionsStr != "" {
+				parts := strings.Split(strings.TrimSpace(optionsStr), "=")
+				if len(parts) == 2 && strings.TrimSpace(parts[0]) == "max_errors" {
+					maxErrors, err := strconv.Atoi(strings.TrimSpace(parts[1]))
+					if err != nil {
+						return nil, fmt.Errorf("invalid max_errors value %q for %s: %w", parts[1], t.Name, err)
+					}
+					pair.MaxErrors = maxErrors
+				}
+			}
+			info.ConversionPairs = append(info.ConversionPairs, pair)
 		}
-		dstTypeName := m[1]
-		srcTypeInfo, ok := info.NamedTypes[t.Name]
-		if !ok {
-			return nil, fmt.Errorf("internal error: source type %q not found after initial pass", t.Name)
-		}
-		dstTypeInfo := scannedPkg.Lookup(dstTypeName)
-		if dstTypeInfo == nil {
-			return nil, fmt.Errorf("destination type %q for source %q not found in scanned package", dstTypeName, t.Name)
-		}
-		pair := model.ConversionPair{
-			SrcTypeName: t.Name,
-			DstTypeName: dstTypeInfo.Name,
-			SrcTypeInfo: srcTypeInfo,
-			DstTypeInfo: dstTypeInfo,
-		}
-		info.ConversionPairs = append(info.ConversionPairs, pair)
 	}
 
 	for _, astFile := range scannedPkg.AstFiles {

@@ -21,6 +21,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 	"github.com/podhmo/go-scan/examples/convert/model"
 	{{- range $path, $alias := .Imports }}
 	{{ $alias }} "{{ $path }}"
@@ -485,11 +486,35 @@ func generateConversion(im *goscan.ImportManager, info *model.ParsedInfo, src, d
 		return conversion
 	}
 
-	// Basic assignment
-	if dst != "" {
-		return fmt.Sprintf("%s = %s", dst, src)
+	// Time to string
+	if srcT.Name == "Time" && srcT.FullImportPath() == "time" && dstT.Name == "string" {
+		if dst != "" {
+			return fmt.Sprintf("%s = %s.Format(time.RFC3339)", dst, src)
+		}
+		return fmt.Sprintf("%s.Format(time.RFC3339)", src)
 	}
-	return src
+	// Pointer of Time to string
+	if srcT.IsPointer && srcT.Elem != nil && srcT.Elem.Name == "Time" && srcT.Elem.FullImportPath() == "time" && dstT.Name == "string" {
+		var b strings.Builder
+		b.WriteString(fmt.Sprintf("if %s != nil {\n", src))
+		b.WriteString(fmt.Sprintf("\t%s = %s.Format(time.RFC3339)\n", dst, "(*"+src+")"))
+		b.WriteString("} else {\n")
+		b.WriteString(fmt.Sprintf("\t%s = \"\"\n", dst))
+		b.WriteString("}")
+		return b.String()
+	}
+
+	// Basic assignment
+	if dstT.IsPointer {
+		if srcT.IsPointer {
+			return fmt.Sprintf("%s = %s", dst, src)
+		}
+		return fmt.Sprintf("{ tmp := %s; %s = &tmp }", src, dst)
+	}
+	if srcT.IsPointer {
+		return fmt.Sprintf("if %s != nil { %s = *%s }", src, dst, src)
+	}
+	return fmt.Sprintf("%s = %s", dst, src)
 }
 
 func generateSliceConversion(im *goscan.ImportManager, info *model.ParsedInfo, src, dst string, srcT, dstT *scanner.FieldType, depth int, ecVar, ctxVar string) string {
@@ -498,8 +523,8 @@ func generateSliceConversion(im *goscan.ImportManager, info *model.ParsedInfo, s
 	}
 
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("func() []%s {\n", getTypeName(im, dstT.Elem)))
-	b.WriteString(fmt.Sprintf("\tconvertedSlice := make([]%s, len(%s))\n", getTypeName(im, dstT.Elem), src))
+	b.WriteString(fmt.Sprintf("func() []%s {\n", getTypeName(im, info, dstT.Elem)))
+	b.WriteString(fmt.Sprintf("\tconvertedSlice := make([]%s, len(%s))\n", getTypeName(im, info, dstT.Elem), src))
 	b.WriteString(fmt.Sprintf("\tfor i, item := range %s {\n", src))
 	b.WriteString("\t\t" + ecVar + ".Enter(fmt.Sprintf(\"[%d]\", i))\n")
 	b.WriteString(fmt.Sprintf("\t\tconvertedSlice[i] = %s\n", generateConversion(im, info, "item", "", srcT.Elem, dstT.Elem, depth+2, ecVar, ctxVar)))
@@ -516,8 +541,8 @@ func generateMapConversion(im *goscan.ImportManager, info *model.ParsedInfo, src
 	}
 
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("func() map[%s]%s {\n", getTypeName(im, dstT.MapKey), getTypeName(im, dstT.Elem)))
-	b.WriteString(fmt.Sprintf("\tconvertedMap := make(map[%s]%s, len(%s))\n", getTypeName(im, dstT.MapKey), getTypeName(im, dstT.Elem), src))
+	b.WriteString(fmt.Sprintf("func() map[%s]%s {\n", getTypeName(im, info, dstT.MapKey), getTypeName(im, info, dstT.Elem)))
+	b.WriteString(fmt.Sprintf("\tconvertedMap := make(map[%s]%s, len(%s))\n", getTypeName(im, info, dstT.MapKey), getTypeName(im, info, dstT.Elem), src))
 	b.WriteString(fmt.Sprintf("\tfor key, value := range %s {\n", src))
 
 	b.WriteString("\t\t" + ecVar + ".Enter(fmt.Sprintf(\"[%v]\", key))\n")
@@ -535,41 +560,25 @@ func generateMapConversion(im *goscan.ImportManager, info *model.ParsedInfo, src
 	return b.String()
 }
 
-func getTypeName(im *goscan.ImportManager, t *scanner.FieldType) string {
+func getTypeName(im *goscan.ImportManager, info *model.ParsedInfo, t *scanner.FieldType) string {
 	if t == nil {
 		return "interface{}"
 	}
-	var sb strings.Builder
+
 	if t.IsPointer {
-		sb.WriteString("*")
-		if t.Elem != nil {
-			sb.WriteString(getTypeName(im, t.Elem))
-		} else {
-			sb.WriteString("interface{}")
-		}
-		return sb.String()
+		return "*" + getTypeName(im, info, t.Elem)
 	}
 	if t.IsSlice {
-		sb.WriteString("[]")
-		if t.Elem != nil {
-			sb.WriteString(getTypeName(im, t.Elem))
-		} else {
-			sb.WriteString("interface{}")
-		}
-		return sb.String()
+		return "[]" + getTypeName(im, info, t.Elem)
 	}
 	if t.IsMap {
-		keyType := "interface{}"
-		if t.MapKey != nil {
-			keyType = getTypeName(im, t.MapKey)
-		}
-		valType := "interface{}"
-		if t.Elem != nil {
-			valType = getTypeName(im, t.Elem)
-		}
-		return fmt.Sprintf("map[%s]%s", keyType, valType)
+		return fmt.Sprintf("map[%s]%s", getTypeName(im, info, t.MapKey), getTypeName(im, info, t.Elem))
 	}
-	return im.Qualify(t.FullImportPath(), t.Name)
+
+	if t.FullImportPath() != "" && t.FullImportPath() != info.PackagePath {
+		return im.Qualify(t.FullImportPath(), t.Name)
+	}
+	return t.Name
 }
 
 func isStruct(t *scanner.FieldType) bool {

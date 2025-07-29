@@ -1,12 +1,8 @@
-package source
+package generated
 
-import (
-	"time"
+import "time"
 
-	_ "github.com/podhmo/go-scan/examples/convert/sampledata/destination"
-)
-
-// @derivingconvert("github.com/podhmo/go-scan/examples/convert/sampledata/destination.DstUser")
+// @derivingconvert("github.com/podhmo/go-scan/examples/convert/sampledata/generated.DstUser")
 type SrcUser struct {
 	ID        int64
 	FirstName string
@@ -28,13 +24,12 @@ type SrcContact struct {
 	Phone *string
 }
 
-// @derivingconvert("github.com/podhmo/go-scan/examples/convert/sampledata/destination.DstInternalDetail")
 type SrcInternalDetail struct {
 	Code        int
 	Description string
 }
 
-// @derivingconvert("github.com/podhmo/go-scan/examples/convert/sampledata/destination.DstOrder")
+// @derivingconvert("github.com/podhmo/go-scan/examples/convert/sampledata/generated.DstOrder")
 type SrcOrder struct {
 	OrderID string
 	Amount  float64
@@ -46,7 +41,7 @@ type SrcItem struct {
 	Quantity int
 }
 
-// @derivingconvert("github.com/podhmo/go-scan/examples/convert/sampledata/destination.ComplexTarget")
+// @derivingconvert("github.com/podhmo/go-scan/examples/convert/sampledata/generated.ComplexTarget")
 type ComplexSource struct {
 	Value       string
 	Ptr         *string
@@ -54,12 +49,11 @@ type ComplexSource struct {
 	SliceOfPtrs []*SubSource
 }
 
-// @derivingconvert("github.com/podhmo/go-scan/examples/convert/sampledata/destination.SubTarget")
 type SubSource struct {
 	Value int
 }
 
-// @derivingconvert("github.com/podhmo/go-scan/examples/convert/sampledata/destination.TargetWithMap")
+// @derivingconvert("github.com/podhmo/go-scan/examples/convert/sampledata/generated.TargetWithMap")
 type SourceWithMap struct {
 	ValueMap    map[string]SubSource
 	PtrMap      map[string]*SubSource

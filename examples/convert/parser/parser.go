@@ -70,9 +70,24 @@ func Parse(ctx context.Context, scannedPkg *scanner.PackageInfo) (*model.ParsedI
 			if !ok {
 				return nil, fmt.Errorf("internal error: source type %q not found after initial pass", t.Name)
 			}
-			dstTypeInfo := scannedPkg.Lookup(dstTypeName)
+			dstPkgPath, dstStructName := splitFullTypeName(dstTypeName)
+			var dstTypeInfo *scanner.TypeInfo
+			if dstPkgPath == "" || dstPkgPath == scannedPkg.ImportPath {
+				dstTypeInfo = scannedPkg.Lookup(dstStructName)
+			} else {
+				// This assumes the destination package was already scanned and merged.
+				// We need a way to look up a type by its full import path within the merged package.
+				// For now, let's iterate through the types to find it.
+				for _, typ := range scannedPkg.Types {
+					if typ.PkgPath == dstPkgPath && typ.Name == dstStructName {
+						dstTypeInfo = typ
+						break
+					}
+				}
+			}
+
 			if dstTypeInfo == nil {
-				return nil, fmt.Errorf("destination type %q for source %q not found in scanned package", dstTypeName, t.Name)
+				return nil, fmt.Errorf("destination type %q (parsed as %s.%s) not found after scanning", dstTypeName, dstPkgPath, dstStructName)
 			}
 
 			pair := model.ConversionPair{
@@ -287,6 +302,16 @@ func parseJSONTag(tag reflect.StructTag) string {
 	}
 	parts := strings.Split(jsonTag, ",")
 	return parts[0]
+}
+
+// splitFullTypeName splits a fully qualified type name like "path/to/pkg.TypeName"
+// into the package path and the type name.
+func splitFullTypeName(fullName string) (pkgPath, typeName string) {
+	lastDot := strings.LastIndex(fullName, ".")
+	if lastDot == -1 {
+		return "", fullName // Assumed to be in the current package
+	}
+	return fullName[:lastDot], fullName[lastDot+1:]
 }
 
 func collectFields(ctx context.Context, t *scanner.TypeInfo, p *scanner.PackageInfo, visited map[string]struct{}) ([]model.FieldInfo, error) {

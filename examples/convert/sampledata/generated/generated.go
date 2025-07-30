@@ -203,7 +203,7 @@ func convertSourceWithMapToTargetWithMap(ctx context.Context, ec *model.ErrorCol
 	convertedMap := make(map[string]string, len(src.StringToStr))
 	for key, value := range src.StringToStr {
 		ec.Enter(fmt.Sprintf("[%v]", key))
-		convertedMap[key] =  = value
+		convertedMap[key] = value
 		ec.Leave()
 	}
 	return convertedMap

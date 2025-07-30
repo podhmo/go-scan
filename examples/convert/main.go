@@ -70,31 +70,13 @@ func run(ctx context.Context, pkgpath, workdir, output, pkgname string) error {
 		return fmt.Errorf("could not find package dir for %q: %w", pkgpath, err)
 	}
 
-	srcPkg, err := s.ScanPackage(ctx, pkgDir)
+	scannedPkg, err := s.ScanPackage(ctx, pkgDir)
 	if err != nil {
-		return fmt.Errorf("failed to scan source package: %w", err)
+		return fmt.Errorf("failed to scan package: %w", err)
 	}
 
-	dstPkgPath := "github.com/podhmo/go-scan/examples/convert/sampledata/destination"
-	dstPkgDir, err := l.FindPackageDir(dstPkgPath)
-	if err != nil {
-		return fmt.Errorf("could not find destination package dir for %q: %w", dstPkgPath, err)
-	}
-	dstPkg, err := s.ScanPackage(ctx, dstPkgDir)
-	if err != nil {
-		return fmt.Errorf("failed to scan destination package: %w", err)
-	}
-
-	// Merge packages
-	for _, t := range dstPkg.Types {
-		srcPkg.Types = append(srcPkg.Types, t)
-	}
-	for k, v := range dstPkg.AstFiles {
-		srcPkg.AstFiles[k] = v
-	}
-
-	slog.DebugContext(ctx, "Parsing package", "path", srcPkg.ImportPath)
-	info, err := parser.Parse(ctx, srcPkg)
+	slog.DebugContext(ctx, "Parsing package", "path", scannedPkg.ImportPath)
+	info, err := parser.Parse(ctx, scannedPkg)
 	if err != nil {
 		return fmt.Errorf("failed to parse package info: %w", err)
 	}
@@ -105,8 +87,8 @@ func run(ctx context.Context, pkgpath, workdir, output, pkgname string) error {
 	}
 	slog.DebugContext(ctx, "Found conversion pairs", "count", len(info.ConversionPairs))
 
-	if pkgname != "" {
-		info.PackageName = pkgname
+	if pkgname == "" {
+		pkgname = info.PackageName
 	}
 
 	slog.DebugContext(ctx, "Generating code", "package", pkgname)

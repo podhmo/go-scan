@@ -90,6 +90,19 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 
 ## To Be Implemented
 
+### Multi-Package Support for Code Generation
+*   [ ] **Enhance `go-scan` Core for Multi-Package Context**:
+    *   [ ] Refactor `goscan.Scanner` to act as a unified context, managing a cache of all scanned packages.
+    *   [ ] Modify type resolution logic to search for types across all packages in the scanner's cache.
+*   [ ] **Refactor `convert` Tool for On-Demand Scanning**:
+    *   [ ] Update `convert/parser` to parse destination types from `@derivingconvert` annotations.
+    *   [ ] Implement lazy scanning by calling `scanner.ScanPackageByImport` from the parser when an external package is encountered.
+*   [ ] **Improve `convert` Generator for Cross-Package Types**:
+    *   [ ] Fix type name generation to correctly qualify types from external packages using the `ImportManager`.
+*   [ ] **Update Tests for Multi-Package Scenarios**:
+    *   [ ] Add unit tests to `go-scan` for cross-package type resolution.
+    *   [ ] Update `convert` integration tests to cover code generation between different packages.
+
 ### Known Issues
 
 

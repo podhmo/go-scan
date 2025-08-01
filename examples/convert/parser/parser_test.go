@@ -2,7 +2,8 @@ package parser
 
 import (
 	"context"
-	"go/token"
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 
@@ -59,25 +60,47 @@ type DestinationWithOption struct {
 type MyTime time.Time
 `
 
-	fset := token.NewFileSet()
 	overlay := map[string][]byte{
 		"source.go": []byte(source),
 	}
 
-	resolver := &MockResolver{}
-	s, err := scanner.New(fset, nil, overlay, "example.com/sample", ".", resolver)
-	if err != nil {
-		t.Fatalf("scanner.New() failed: %v", err)
+	overrides := scanner.ExternalTypeOverride{
+		"time.Time": {
+			Name:    "Time",
+			PkgPath: "time",
+			Kind:    scanner.StructKind,
+		},
 	}
 
-	pkg, err := s.ScanFiles(context.Background(), []string{"source.go"}, ".")
+	// Create a temporary directory for the test to act as a module root.
+	tmpdir, err := os.MkdirTemp("", "parser-test")
 	if err != nil {
-		t.Fatalf("ScanFiles() failed: %v", err)
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpdir)
+	if err := os.WriteFile(filepath.Join(tmpdir, "go.mod"), []byte("module example.com/sample\ngo 1.22"), 0644); err != nil {
+		t.Fatalf("failed to write go.mod: %v", err)
+	}
+	srcPath := filepath.Join(tmpdir, "source.go")
+	if err := os.WriteFile(srcPath, []byte(source), 0644); err != nil {
+		t.Fatalf("failed to write source.go: %v", err)
 	}
 
-	// Create a dummy goscan.Scanner. The test doesn't need a real one as it uses a mock resolver.
-	dummyGoScanner := &goscan.Scanner{}
-	got, err := Parse(context.Background(), dummyGoScanner, pkg)
+	s, err := goscan.New(
+		goscan.WithWorkDir(tmpdir),
+		goscan.WithExternalTypeOverrides(overrides),
+		goscan.WithOverlay(overlay),
+	)
+	if err != nil {
+		t.Fatalf("goscan.New() failed: %v", err)
+	}
+
+	pkg, err := s.ScanPackage(context.Background(), tmpdir)
+	if err != nil {
+		t.Fatalf("ScanPackage() failed: %v", err)
+	}
+
+	got, err := Parse(context.Background(), s, pkg)
 	if err != nil {
 		t.Fatalf("Parse() failed: %v", err)
 	}

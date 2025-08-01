@@ -51,6 +51,15 @@ func (s *Scanner) Fset() *token.FileSet {
 	return s.fset
 }
 
+// LookupOverride checks if a fully qualified type name exists in the external type override map.
+func (s *Scanner) LookupOverride(qualifiedName string) (*scanner.TypeInfo, bool) {
+	if s.ExternalTypeOverrides == nil {
+		return nil, false
+	}
+	ti, ok := s.ExternalTypeOverrides[qualifiedName]
+	return ti, ok
+}
+
 // Scan scans Go packages based on the provided patterns.
 // Each pattern can be a directory path or a file path relative to the scanner's workDir.
 // It returns a list of scanned packages.
@@ -123,6 +132,19 @@ func WithOverlay(overlay scanner.Overlay) ScannerOption {
 		}
 		for k, v := range overlay {
 			s.overlay[k] = v
+		}
+		return nil
+	}
+}
+
+// WithExternalTypeOverrides sets the external type override map for the scanner.
+func WithExternalTypeOverrides(overrides scanner.ExternalTypeOverride) ScannerOption {
+	return func(s *Scanner) error {
+		if s.ExternalTypeOverrides == nil {
+			s.ExternalTypeOverrides = make(scanner.ExternalTypeOverride)
+		}
+		for k, v := range overrides {
+			s.ExternalTypeOverrides[k] = v
 		}
 		return nil
 	}

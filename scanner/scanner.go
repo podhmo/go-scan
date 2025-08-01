@@ -468,11 +468,21 @@ func (s *Scanner) parseTypeExpr(ctx context.Context, expr ast.Expr, currentTypeP
 		pkgImportPath, _ := importLookup[pkgIdent.Name]
 		qualifiedName := fmt.Sprintf("%s.%s", pkgImportPath, t.Sel.Name)
 
-		if overrideType, ok := s.ExternalTypeOverrides[qualifiedName]; ok {
-			ft.Name = overrideType
-			ft.IsResolvedByConfig = true
-			return ft
+		// Check for external type overrides first.
+		if overrideInfo, ok := s.ExternalTypeOverrides[qualifiedName]; ok {
+			// If an override is found, create a FieldType from the synthetic TypeInfo.
+			return &FieldType{
+				Name:               overrideInfo.Name,
+				PkgName:            overrideInfo.PkgPath,
+				FullImportPath:     overrideInfo.PkgPath,
+				TypeName:           overrideInfo.Name,
+				IsResolvedByConfig: true,
+				Definition:         overrideInfo, // Link to the synthetic definition
+				Resolver:           s.resolver,
+			}
 		}
+
+		// If no override, proceed with normal parsing.
 		ft.PkgName = pkgIdent.Name
 		ft.TypeName = t.Sel.Name
 		ft.FullImportPath = pkgImportPath

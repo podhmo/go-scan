@@ -60,15 +60,14 @@ func (p *PackageInfo) Lookup(name string) *TypeInfo {
 }
 
 // ExternalTypeOverride defines a mapping from a fully qualified type name
-// (e.g., "github.com/google/uuid.UUID") to a target Go type string (e.g., "string").
-// This allows users to specify how types from external packages (or even internal ones)
-// should be interpreted by the scanner, overriding the default parsing behavior.
-// For instance, if you want all instances of `uuid.UUID` to be treated as `string`
-// in your scanned output, you would provide a mapping like:
-// {"github.com/google/uuid.UUID": "string"}
+// (e.g., "time.Time") to a pre-defined TypeInfo struct.
+// This allows users to provide a "synthetic" type definition for certain types,
+// bypassing the need for the scanner to parse them from source. This is particularly
+// useful for standard library types that can cause issues when scanned from
+// within a test binary, or for any type where manual definition is preferred.
 // The key is the fully qualified type name (ImportPath + "." + TypeName).
-// The value is the desired Go type string.
-type ExternalTypeOverride map[string]string
+// The value is a pointer to a scanner.TypeInfo struct that defines the type.
+type ExternalTypeOverride map[string]*TypeInfo
 
 // Overlay provides a way to replace the contents of a file with alternative content.
 // The key is either a project-relative path (from the module root) or a
@@ -276,17 +275,18 @@ func (ft *FieldType) String() string {
 }
 
 func (ft *FieldType) Resolve(ctx context.Context, resolving map[string]struct{}) (*TypeInfo, error) {
+	// If the definition is already cached (e.g. by an override), return it immediately.
+	if ft.Definition != nil {
+		return ft.Definition, nil
+	}
 	if ft.IsResolvedByConfig {
-		// This type was resolved by an external configuration (e.g. to a primitive like "string").
-		// There's no further TypeInfo definition to resolve in the Go source.
+		// This type was marked as resolved by config, but has no pre-supplied definition.
+		// This can happen for overrides that map to primitives.
 		return nil, nil
 	}
 	if ft.IsBuiltin {
 		// Built-in types are considered resolved without a specific TypeInfo.
 		return nil, nil
-	}
-	if ft.Definition != nil {
-		return ft.Definition, nil
 	}
 
 	// Cannot resolve types without a resolver or if not a built-in.

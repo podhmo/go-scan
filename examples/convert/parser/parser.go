@@ -178,12 +178,10 @@ func isBuiltin(name string) bool {
 }
 
 func resolveType(ctx context.Context, s *goscan.Scanner, info *model.ParsedInfo, p *scanner.PackageInfo, typeNameStr string) (*scanner.TypeInfo, error) {
-	if typeNameStr == "time.Time" {
-		return &scanner.TypeInfo{
-			Name: "Time", PkgPath: "time", Kind: scanner.InterfaceKind,
-			Underlying: &scanner.FieldType{Name: "Time", PkgName: "time", IsResolvedByConfig: true},
-		}, nil
+	if ti, ok := s.LookupOverride(typeNameStr); ok {
+		return ti, nil
 	}
+
 	if !strings.Contains(typeNameStr, ".") {
 		if t := p.Lookup(typeNameStr); t != nil {
 			return t, nil
@@ -209,9 +207,11 @@ func resolveType(ctx context.Context, s *goscan.Scanner, info *model.ParsedInfo,
 					pkgPath, found = path, true
 					break
 				}
-				if i.Name == nil && strings.HasSuffix(path, "/"+pkgAlias) {
-					pkgPath, found = path, true
-					break
+				if i.Name == nil {
+					if path == pkgAlias || strings.HasSuffix(path, "/"+pkgAlias) {
+						pkgPath, found = path, true
+						break
+					}
 				}
 			}
 			if found {
@@ -264,7 +264,7 @@ func collectFields(ctx context.Context, s *goscan.Scanner, info *model.ParsedInf
 				log.Printf("Could not resolve field type %s, skipping: %v", f.Type.String(), err)
 			}
 
-			if fieldTypeInfo != nil && fieldTypeInfo.PkgPath != "" && fieldTypeInfo.PkgPath != p.ImportPath {
+			if fieldTypeInfo != nil && fieldTypeInfo.PkgPath != "" && fieldTypeInfo.PkgPath != p.ImportPath && !f.Type.IsResolvedByConfig {
 				fieldPkgInfo, err := s.ScanPackageByImport(ctx, fieldTypeInfo.PkgPath)
 				if err != nil {
 					return nil, fmt.Errorf("could not scan package for field type %s: %w", fieldTypeInfo.Name, err)

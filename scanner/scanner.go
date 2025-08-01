@@ -122,8 +122,9 @@ func (s *Scanner) ScanPackage(ctx context.Context, dirPath string) (*PackageInfo
 }
 
 // ScanFiles parses a specific list of .go files and returns PackageInfo.
+// It derives the import path from the file's directory relative to the module root.
 // pkgDirPath is the absolute directory path for this package, used for PackageInfo.Path.
-func (s *Scanner) ScanFiles(ctx context.Context, filePaths []string, pkgDirPath string) (*PackageInfo, error) { // Added ctx to parseFuncDecl call
+func (s *Scanner) ScanFiles(ctx context.Context, filePaths []string, pkgDirPath string) (*PackageInfo, error) {
 	if len(filePaths) == 0 {
 		return nil, fmt.Errorf("no files provided to scan for package at %s", pkgDirPath)
 	}
@@ -138,10 +139,28 @@ func (s *Scanner) ScanFiles(ctx context.Context, filePaths []string, pkgDirPath 
 		importPath = importPath[:len(importPath)-2]
 	}
 
+	return s.scanGoFiles(ctx, filePaths, pkgDirPath, importPath)
+}
+
+// ScanFilesWithKnownImportPath parses a specific list of .go files with a predefined import path.
+// This is useful for scanning packages where the import path cannot be easily derived from the file path,
+// such as the Go standard library.
+// pkgDirPath is the absolute physical directory path of the package.
+// canonicalImportPath is the official import path to assign to the parsed package.
+func (s *Scanner) ScanFilesWithKnownImportPath(ctx context.Context, filePaths []string, pkgDirPath string, canonicalImportPath string) (*PackageInfo, error) {
+	if len(filePaths) == 0 {
+		return nil, fmt.Errorf("no files provided to scan for package at %s", pkgDirPath)
+	}
+	return s.scanGoFiles(ctx, filePaths, pkgDirPath, canonicalImportPath)
+}
+
+// scanGoFiles is the internal implementation that parses a list of Go files.
+// It uses the provided canonicalImportPath directly for the PackageInfo.
+func (s *Scanner) scanGoFiles(ctx context.Context, filePaths []string, pkgDirPath string, canonicalImportPath string) (*PackageInfo, error) {
 	info := &PackageInfo{
-		Path:       pkgDirPath, // Physical directory path
-		ImportPath: importPath,
-		Fset:       s.fset, // Use the shared FileSet
+		Path:       pkgDirPath,          // Physical directory path
+		ImportPath: canonicalImportPath, // Use the provided canonical import path
+		Fset:       s.fset,              // Use the shared FileSet
 		Files:      make([]string, 0, len(filePaths)),
 		AstFiles:   make(map[string]*ast.File), // Initialize AstFiles
 	}

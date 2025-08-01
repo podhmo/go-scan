@@ -657,12 +657,25 @@ func (s *Scanner) ScanPackageByImport(ctx context.Context, importPath string) (*
 
 	var currentCallPkgInfo *scanner.PackageInfo
 	if len(filesToParseThisCall) > 0 {
-		currentCallPkgInfo, err = s.scanner.ScanFiles(ctx, filesToParseThisCall, pkgDirAbs)
+		// Heuristic to check if it's a standard library package.
+		isStdLib := !strings.Contains(importPath, ".")
+
+		if isStdLib {
+			currentCallPkgInfo, err = s.scanner.ScanFilesWithKnownImportPath(ctx, filesToParseThisCall, pkgDirAbs, importPath)
+		} else {
+			currentCallPkgInfo, err = s.scanner.ScanFiles(ctx, filesToParseThisCall, pkgDirAbs)
+		}
+
 		if err != nil {
 			return nil, fmt.Errorf("ScanPackageByImport: scanning files for %s failed: %w", importPath, err)
 		}
+
 		if currentCallPkgInfo != nil {
-			currentCallPkgInfo.ImportPath = importPath    // Set import path
+			// For non-std-lib packages, ScanFiles already calculates the import path.
+			// For std-lib, ScanFilesWithKnownImportPath sets it.
+			// We can still enforce it here to be safe, or trust the scanner.
+			// Let's ensure it's what we expect.
+			currentCallPkgInfo.ImportPath = importPath
 			currentCallPkgInfo.Path = pkgDirAbs           // Ensure path
 			for _, fp := range currentCallPkgInfo.Files { // Mark newly parsed files as visited by this instance
 				s.visitedFiles[fp] = struct{}{}

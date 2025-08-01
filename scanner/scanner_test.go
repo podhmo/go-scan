@@ -153,9 +153,11 @@ func TestScanPackageFeatures(t *testing.T) {
 }
 
 func TestScanFiles(t *testing.T) {
-	testdataDir := filepath.Join("..", "testdata", "features")
-	absTestdataDir, _ := filepath.Abs(testdataDir)
-	s := newTestScanner(t, "example.com/test/features", absTestdataDir)
+	testdataDir, err := filepath.Abs(filepath.Join("..", "testdata", "features"))
+	if err != nil {
+		t.Fatalf("Failed to get absolute path for testdata dir: %v", err)
+	}
+	s := newTestScanner(t, "example.com/test/features", testdataDir)
 
 	t.Run("scan_single_file", func(t *testing.T) {
 		filePath := filepath.Join(testdataDir, "features.go")
@@ -222,6 +224,22 @@ func TestScanFiles(t *testing.T) {
 		_, err := s.ScanFiles(context.Background(), filePaths, testdataDir)
 		if err == nil {
 			t.Error("Expected error when scanning non-existent file, got nil")
+		}
+	})
+
+	t.Run("scan_with_known_import_path", func(t *testing.T) {
+		filePath := filepath.Join(testdataDir, "features.go")
+		canonicalPath := "my/canonical/path"
+		pkgInfo, err := s.ScanFilesWithKnownImportPath(context.Background(), []string{filePath}, testdataDir, canonicalPath)
+		if err != nil {
+			t.Fatalf("ScanFilesWithKnownImportPath failed: %v", err)
+		}
+		if pkgInfo.ImportPath != canonicalPath {
+			t.Errorf("Expected import path %q, got %q", canonicalPath, pkgInfo.ImportPath)
+		}
+		// Verify the physical path is still correct
+		if pkgInfo.Path != testdataDir {
+			t.Errorf("Expected physical path %q, got %q", testdataDir, pkgInfo.Path)
 		}
 	})
 }

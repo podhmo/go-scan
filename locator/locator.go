@@ -223,6 +223,18 @@ func (l *Locator) FindPackageDir(importPath string) (string, error) {
 		}
 	}
 
+	// 3. Try standard library packages in GOROOT
+	// This is a heuristic: standard library packages usually don't have dots.
+	if !strings.Contains(importPath, ".") {
+		goRoot := os.Getenv("GOROOT")
+		if goRoot != "" {
+			candidatePath := filepath.Join(goRoot, "src", importPath)
+			if stat, err := os.Stat(candidatePath); err == nil && stat.IsDir() {
+				return candidatePath, nil
+			}
+		}
+	}
+
 	// If no replace directive matched and led to a path, and the original logic failed, then error.
 	return "", fmt.Errorf("import path %q could not be resolved. Current module is %q (root: %s)", importPath, l.modulePath, l.rootDir)
 }

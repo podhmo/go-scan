@@ -87,6 +87,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
         -   [x] Update the parser to recognize and process the `// convert:import` annotation.
         -   [x] Ensure the parser registers the specified alias and path with the `ImportManager`.
         -   [x] Modify the `using` and `validator` logic to correctly resolve function references that use these imported aliases (e.g., `pkg.MyFunc`).
+-   **Fix for Standard Library Scanning in Tests**: Resolved the `mismatched package names` error that occurred when scanning standard library packages (like `time`) from within a test binary. This was achieved by enhancing the `ExternalTypeOverride` mechanism to accept synthetic `scanner.TypeInfo` objects, allowing tools to bypass problematic scans without hardcoding workarounds in their parsers.
 
 ## To Be Implemented
 
@@ -122,9 +123,6 @@ Based on the plan in [docs/plan-multi-package-handling.md](./docs/plan-multi-pac
 **Part 3: CI and Regression Prevention**
 *   [ ] **Add CI Check for `examples/convert`**:
     *   [ ] Add a new target to the `Makefile` to run the `examples/convert` tool.
-
-### Known Issues
-*   The scanner can fail with a `mismatched package names` error when a nested scan of a standard library package (e.g., `time`) is triggered from within a test binary that uses `package main`. A workaround has been implemented in the `convert` tool's parser to treat `time.Time` as a special synthetic type, avoiding the nested scan.
 
 ### Future Tasks (Post-Migration)
 *   **Expand Test Coverage**: Create a comprehensive test suite that verifies all features and edge cases.

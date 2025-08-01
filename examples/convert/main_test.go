@@ -114,8 +114,13 @@ func TestIntegration_WithTimeTime(t *testing.T) {
 		"go.mod": "module example.com/m\ngo 1.24",
 		"timetime.go": `
 package timetime
-import "time"
-import "example.com/m/model"
+import (
+	"context"
+	"time"
+	"example.com/m/model"
+)
+
+// convert:rule "time.Time" -> "string", using=TimeToString
 
 // @derivingconvert("Dst")
 type Src struct {
@@ -123,15 +128,26 @@ type Src struct {
 }
 
 type Dst struct {
-	Timestamp time.Time
+	Timestamp string
+}
+
+func TimeToString(ctx context.Context, ec *model.ErrorCollector, t time.Time) string {
+	return t.Format("2006-01-02")
 }
 `,
 		"model/model.go": `
 package model
-type ErrorCollector struct{}
+import "fmt"
+type ErrorCollector struct {
+	errors []error
+}
 func NewErrorCollector(max int) *ErrorCollector { return &ErrorCollector{} }
-func (ec *ErrorCollector) HasErrors() bool { return false }
-func (ec *ErrorCollector) Errors() error { return nil }
+func (ec *ErrorCollector) Add(err error) { ec.errors = append(ec.errors, err) }
+func (ec *ErrorCollector) Enter(s string) {}
+func (ec *ErrorCollector) Leave() {}
+func (ec *ErrorCollector) HasErrors() bool { return len(ec.errors) > 0 }
+func (ec *ErrorCollector) Errors() []error { return ec.errors }
+func (ec *ErrorCollector) MaxErrorsReached() bool { return false }
 `,
 	}
 
@@ -346,7 +362,6 @@ import (
 )
 
 // convert:import ext "example.com/m/external"
-// convert:import time "time"
 // convert:rule "time.Time" -> "string", using=ext.TimeToString
 // convert:rule "string", validator=ext.ValidateString
 
@@ -949,7 +964,6 @@ import (
 	"time"
 )
 
-// convert:import time "time"
 // convert:rule "time.Time" -> "string", using=convertTimeToString
 
 // @derivingconvert("Dst")

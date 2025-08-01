@@ -9,13 +9,14 @@ import (
 
 // ParsedInfo holds all parsed conversion rules and type information.
 type ParsedInfo struct {
-	PackageName     string
-	PackagePath     string // Import path of the package being parsed
-	ConversionPairs []ConversionPair
-	GlobalRules     []TypeRule
-	Imports         map[string]string            // alias -> import path
-	Structs         map[string]*StructInfo       // Keyed by struct name (e.g. "MyStruct")
-	NamedTypes      map[string]*scanner.TypeInfo // Keyed by type name (e.g. "MyInt" for type MyInt int)
+	PackageName       string
+	PackagePath       string // Import path of the package being parsed
+	ConversionPairs   []ConversionPair
+	GlobalRules       []TypeRule
+	Imports           map[string]string // alias -> import path
+	Structs           map[string]*StructInfo
+	NamedTypes        map[string]*scanner.TypeInfo
+	ProcessedPackages map[string]bool // Tracks import paths that have been parsed
 }
 
 // Variable defines a variable to be declared in the converter function.

@@ -39,10 +39,6 @@ To implement lazy scanning, we must establish a clear relationship between the g
 -   **`scanner.Scanner` (Child)**: The internal worker responsible for parsing the AST of a *single* package.
     -   Crucially, the `scanner.FieldType` instances created by the child scanner must retain a reference back to the parent `goscan.Scanner`. This allows the `Resolve()` method to access the global cache and trigger new scans.
 
-### 2.4. Handling Annotations and Markers
-
-A key requirement for code generators is to read annotations (e.g., `// @deriving...`) on located type definitions. The lazy-loading model seamlessly supports this. When `FieldType.Resolve()` is called for a type in an external package, that package's source files are fully parsed. The resulting `TypeInfo` will contain all associated documentation and comments, making annotations available for inspection immediately.
-
 ## 3. Implementation Plan
 
 ### 3.1. `goscan.Scanner` and `scanner.Scanner` Modifications
@@ -51,68 +47,78 @@ A key requirement for code generators is to read annotations (e.g., `// @derivin
     -   The `goscan.Scanner` will pass a reference to itself (`s`) to the internal `scanner.Scanner` when it initiates a scan.
     -   This reference will be stored on the `scanner.Scanner` and subsequently attached to all `scanner.FieldType` instances it creates.
 
-    ```go
-    // In goscan.go
-    func (s *Scanner) ScanFiles(ctx context.Context, filePaths []string) (*scanner.PackageInfo, error) {
-        // ...
-        // The internal scanner now receives a reference to the parent `goscan.Scanner`.
-        pkgInfo, err := s.scanner.ScanFiles(ctx, filesToParse, pkgDirAbs, s)
-        // ...
-    }
-
-    // In scanner/scanner.go
-    // The FieldType needs a way to call back to the parent scanner to find a definition.
-    type FieldType struct {
-        // ... existing fields
-        parent *goscan.Scanner // Reference to the top-level scanner
-    }
-
-    // The Resolve method uses this parent reference to trigger an on-demand scan.
-    func (ft *FieldType) Resolve() (*TypeInfo, error) {
-        if ft.IsResolved() {
-            return ft.resolved, nil
-        }
-        if ft.parent == nil {
-            return nil, errors.New("cannot find definition: parent scanner is not available")
-        }
-
-        // Use the parent to lazily scan the package and find the type definition.
-        pkgInfo, err := ft.parent.ScanPackageByImport(context.Background(), ft.PkgPath)
-        if err != nil {
-            return nil, fmt.Errorf("failed to scan package %q to find type %q: %w", ft.PkgPath, ft.Name, err)
-        }
-
-        // Find the specific type definition within the newly scanned package.
-        def, ok := pkgInfo.Types[ft.Name]
-        if !ok {
-            return nil, fmt.Errorf("type definition %q not found in package %q", ft.Name, ft.PkgPath)
-        }
-        ft.resolved = def
-        return def, nil
-    }
-    ```
-
 ### 3.2. Refactoring `examples/convert`
 
-The `convert` tool will be refactored to demonstrate the power and simplicity of the new approach.
-
-1.  **Simplify `main.go`**:
-    -   The `main` function will only be responsible for scanning the initial source package.
-
-2.  **Enhance `parser/parser.go`**:
-    -   The `Parse` function will no longer need to manually trigger scans.
-    -   When it parses an annotation like `@derivingconvert(pkg.DstType)`, it will get the `TypeInfo` by calling the `Resolve()` method on its `FieldType`. The lazy-scanning mechanism will handle finding the definition of `pkg.DstType` automatically.
+The `convert` tool will be refactored to demonstrate the power and simplicity of the new approach by relying entirely on the recursive `Resolve()` method.
 
 ### 3.3. `generator` Improvements
 
 The `generator` will use the `TypeInfo.PkgPath` to correctly qualify type names from different packages, leveraging the `ImportManager`. Since `Resolve()` provides the necessary `TypeInfo`, the generator has all the information it needs.
+
+### 3.4. Example Use Case: Nested Cross-Package Scanning
+
+To make the process concrete, consider how `examples/convert` would handle a nested conversion.
+
+**The Types:**
+
+```go
+// in package: path/to/source
+package source
+import "path/to/models"
+
+// @derivingconvert(destination.User)
+type User struct {
+    ID      string
+    Profile models.Profile // From another package
+}
+
+// in package: path/to/models
+package models
+type Profile struct {
+    Name string
+    Age  int
+}
+
+// in package: path/to/destination
+package destination
+import "path/to/dmodels"
+
+type User struct {
+    ID      string
+    Profile dmodels.Profile // From yet another package
+}
+
+// in package: path/to/dmodels
+package dmodels
+type Profile struct {
+    Name string
+    Age  int
+}
+```
+
+**The Process:**
+
+1.  **Initial Scan**: The `convert` tool starts by scanning the `source` package. It finds `source.User` and its `@derivingconvert(destination.User)` annotation.
+
+2.  **First `Resolve()` Call**: To understand the conversion target, the tool calls `Resolve()` on the type `destination.User`. This triggers the first on-demand scan, loading the `destination` package. Now, the tool has the top-level `TypeInfo` for both `source.User` and `destination.User`.
+
+3.  **Field-by-Field Analysis**: The generator starts comparing the fields of `source.User` and `destination.User`. It sees the `Profile` field in both.
+
+4.  **Recursive `Resolve()` Calls**: To generate code for the `Profile` field, the generator needs to understand the structure of `models.Profile` and `dmodels.Profile`.
+    -   It calls `Resolve()` on the `source.User.Profile` field's type (`models.Profile`). This triggers a **second** on-demand scan, loading the `models` package.
+    -   It then calls `Resolve()` on the `destination.User.Profile` field's type (`dmodels.Profile`). This triggers a **third** on-demand scan, loading the `dmodels` package.
+
+5.  **Code Generation**: Now that the `TypeInfo` for both `models.Profile` and `dmodels.Profile` has been loaded, the generator can see they are compatible structs. It can then generate a recursive call to a helper function, like `convertModelsProfileToDmodelsProfile()`, to handle the nested conversion.
+
+This recursive, on-demand scanning is the key to handling complex, multi-package structures in a clean and efficient way.
 
 ## 4. Testing Plan
 
 -   **Unit Tests for `go-scan`**:
     -   Create a test `TestFieldType_Resolve_CrossPackage` that verifies `FieldType.Resolve()` can successfully scan and find a type definition from a separate, uncached package.
     -   Add a test to ensure that calling `Resolve()` multiple times on the same type only triggers one scan.
+    -   Add a test for the nested scanning scenario described in the use case above.
 -   **Integration Tests for `examples/convert`**:
-    -   Update the integration tests to use a scenario where the `source` and `destination` types reside in different packages.
-    -   Verify that the generated code compiles and includes the correct `import` statement for the destination package.
+    -   Update the integration tests to use a scenario where the `source` and `destination` types reside in different packages, including nested structs from other packages.
+    -   Verify that the generated code compiles and includes all necessary `import` statements.
     -   Assert that the generated code performs the conversion correctly.

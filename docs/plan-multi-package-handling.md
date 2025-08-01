@@ -47,7 +47,18 @@ To implement lazy scanning, we must establish a clear relationship between the g
     -   The `goscan.Scanner` will pass a reference to itself (`s`) to the internal `scanner.Scanner` when it initiates a scan.
     -   This reference will be stored on the `scanner.Scanner` and subsequently attached to all `scanner.FieldType` instances it creates.
 
-### 3.2. Refactoring `examples/convert`
+### 3.2. Consumer API Requirements
+
+A key challenge discovered during implementation is that consumers of the `go-scan` library, like the `convert` tool, need to resolve types that are not directly discovered from the AST of a struct field (e.g., type names specified in string literals within annotations).
+
+The scanner automatically creates resolvable `FieldType` instances for types it finds in the source code. However, there is no public API to create a new, resolvable `FieldType` from scratch using a string representation of a type (e.g., `"destination.User"`).
+
+To solve this, the following modifications to the core library are necessary:
+-   **Export `FieldType` Fields:** The internal fields required for resolution (`resolver`, `fullImportPath`, `typeName`) must be exported (`Resolver`, `FullImportPath`, `TypeName`). This allows a consumer to manually construct a `FieldType`, populate it with the necessary information (the resolver from the parent `goscan.Scanner` and the parsed type details), and then call the public `ResolveType` method on the scanner.
+
+This change is critical for enabling tools that derive behavior from metadata outside of the Go's strong type system, such as from comments or struct tags.
+
+### 3.3. Refactoring `examples/convert`
 
 The `convert` tool will be refactored to demonstrate the power and simplicity of the new approach by relying entirely on the recursive `Resolve()` method.
 

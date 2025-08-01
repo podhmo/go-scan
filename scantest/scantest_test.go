@@ -163,8 +163,11 @@ type Model struct {
 			return fmt.Errorf("Model struct is empty")
 		}
 		thingField := modelType.Struct.Fields[0]
-		if thingField.Type.Name != "lib.Thing" {
-			return fmt.Errorf("expected field type name to be 'lib.Thing', got %q", thingField.Type.Name)
+		if thingField.Type.Name != "Thing" {
+			return fmt.Errorf("expected field type name to be 'Thing', got %q", thingField.Type.Name)
+		}
+		if thingField.Type.PkgName != "lib" {
+			return fmt.Errorf("expected field type package name to be 'lib', got %q", thingField.Type.PkgName)
 		}
 
 		// Try to resolve the field type

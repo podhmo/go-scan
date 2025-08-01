@@ -28,7 +28,7 @@ import (
 )
 
 {{ range .Pairs -}}
-func convert{{ .SrcType.Name }}To{{ .DstType.Name }}(ctx context.Context, ec *model.ErrorCollector, src *{{ .SrcType.Name }}) *{{ .DstType.Name }} {
+func convert{{ .SrcType.Name | sanitize }}To{{ .DstType.Name | sanitize }}(ctx context.Context, ec *model.ErrorCollector, src *{{ .SrcType.Name }}) *{{ .DstType.Name }} {
 	if src == nil {
 		return nil
 	}
@@ -46,13 +46,13 @@ func convert{{ .SrcType.Name }}To{{ .DstType.Name }}(ctx context.Context, ec *mo
 	return dst
 }
 
-// Convert{{ .SrcType.Name }}To{{ .DstType.Name }} converts {{ .SrcType.Name }} to {{ .DstType.Name }}.
-func Convert{{ .SrcType.Name }}To{{ .DstType.Name }}(ctx context.Context, src *{{ .SrcType.Name }}) (*{{ .DstType.Name }}, error) {
+// Convert{{ .SrcType.Name | sanitize }}To{{ .DstType.Name | sanitize }} converts {{ .SrcType.Name }} to {{ .DstType.Name }}.
+func Convert{{ .SrcType.Name | sanitize }}To{{ .DstType.Name | sanitize }}(ctx context.Context, src *{{ .SrcType.Name }}) (*{{ .DstType.Name }}, error) {
 	if src == nil {
 		return nil, nil
 	}
 	ec := model.NewErrorCollector({{ .Pair.MaxErrors }})
-	dst := convert{{ .SrcType.Name }}To{{ .DstType.Name }}(ctx, ec, src)
+	dst := convert{{ .SrcType.Name | sanitize }}To{{ .DstType.Name | sanitize }}(ctx, ec, src)
 	if ec.HasErrors() {
 		return dst, errors.Join(ec.Errors()...)
 	}
@@ -159,6 +159,9 @@ func Generate(s *goscan.Scanner, info *model.ParsedInfo) ([]byte, error) {
 		},
 		"getValidator": func(im *goscan.ImportManager, info *model.ParsedInfo, field FieldMap, dstVar, ecVar, ctxVar string) string {
 			return getValidator(im, info, field, dstVar, ecVar, ctxVar)
+		},
+		"sanitize": func(name string) string {
+			return strings.ReplaceAll(name, ".", "")
 		},
 	}
 
@@ -490,9 +493,12 @@ func generateConversion(im *goscan.ImportManager, info *model.ParsedInfo, src, d
 			srcPtr = "&" + src
 		}
 		// Qualify the type names to handle cross-package conversions.
-		srcTypeName := strings.ReplaceAll(getTypeName(im, srcT), "*", "")
-		dstTypeName := strings.ReplaceAll(getTypeName(im, dstT), "*", "")
-		conversion := fmt.Sprintf("*convert%sTo%s(%s, %s, %s)", srcTypeName, dstTypeName, ctxVar, ecVar, srcPtr)
+		srcTypeName := getTypeName(im, srcT)
+		dstTypeName := getTypeName(im, dstT)
+		srcFuncName := strings.ReplaceAll(strings.ReplaceAll(srcTypeName, "*", ""), ".", "")
+		dstFuncName := strings.ReplaceAll(strings.ReplaceAll(dstTypeName, "*", ""), ".", "")
+
+		conversion := fmt.Sprintf("*convert%sTo%s(%s, %s, %s)", srcFuncName, dstFuncName, ctxVar, ecVar, srcPtr)
 		if dst != "" {
 			return fmt.Sprintf("%s = %s", dst, conversion)
 		}

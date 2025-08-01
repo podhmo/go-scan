@@ -23,7 +23,7 @@ func convertSrcToDst(ctx context.Context, ec *model.ErrorCollector, src *Src) *D
 		return dst
 	}
 	ec.Enter("Info")
-	dst.Info = *convertexternalexternalExternalInfoToexternalexternalExternalInfo(ctx, ec, &src.Info)
+	dst.Info = *convertexternalExternalInfoToexternalExternalInfo(ctx, ec, &src.Info)
 	ec.Leave()
 	return dst
 }

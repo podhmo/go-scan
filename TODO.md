@@ -90,6 +90,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 ## To Be Implemented
 
 ### On-Demand, Multi-Package AST Scanning
+Based on the plan in [docs/plan-multi-package-handling.md](./docs/plan-multi-package-handling.md).
 
 **Part 1: Core Library Foundation**
 *   [x] **Enhance Test Harness (`scantest`)**:
@@ -108,18 +109,18 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     *   [x] Update internal library code to use the new exported fields.
 
 **Part 2: Library Consumer Updates**
-*   [ ] **Refactor `examples/convert`**:
-    *   [ ] Simplify the `main.go` entrypoint to only scan the initial source package.
-    *   [ ] Remove manual `ScanPackageByImport` calls from the `parser`.
-    *   [ ] Modify the `parser` to call `FieldType.Resolve()` to find type definitions referenced in annotations.
-*   [ ] **Update `examples/convert` Integration Tests**:
-    *   [ ] Update the integration tests to use the enhanced `scantest` harness.
-    *   [ ] Cover scenarios with nested structs from multiple different packages.
-    *   [ ] Verify that the generated code compiles, has correct imports, and works as expected.
+*   [x] **Refactor `examples/convert`**:
+    *   [x] Simplify the `main.go` entrypoint to only scan the initial source package.
+    *   [x] Remove manual `ScanPackageByImport` calls from the `parser`.
+    *   [x] Modify the `parser` to call `FieldType.Resolve()` to find type definitions referenced in annotations.
+*   [x] **Update `examples/convert` Integration Tests**:
+    *   [x] Update the integration tests to use the enhanced `scantest` harness.
+    *   [x] Cover scenarios with nested structs from multiple different packages.
+    *   [x] Verify that the generated code compiles, has correct imports, and works as expected.
 
 **Part 3: CI and Regression Prevention**
-*   [ ] **Add CI Check for `examples/convert`**:
-    *   [ ] Add a new target to the `Makefile` to run the `examples/convert` tool.
+*   [x] **Add CI Check for `examples/convert`**:
+    *   [x] Add a new target to the `Makefile` to run the `examples/convert` tool.
 
 ### Known Issues
 

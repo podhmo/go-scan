@@ -4,15 +4,43 @@ package source
 import (
 	"context"
 	"errors"
-
+	"example.com/m/destination"
+	"example.com/m/external"
 	"github.com/podhmo/go-scan/examples/convert/model"
 )
 
-func convertSrcToDst(ctx context.Context, ec *model.ErrorCollector, src *Src) *Dst {
+func convertExternalInfoToDstInfo(ctx context.Context, ec *model.ErrorCollector, src *external.ExternalInfo) *external.DstInfo {
 	if src == nil {
 		return nil
 	}
-	dst := &Dst{}
+	dst := &external.DstInfo{}
+	if ec.MaxErrorsReached() {
+		return dst
+	}
+	ec.Enter("Value")
+	dst.Value = src.Value
+	ec.Leave()
+	return dst
+}
+
+// ConvertExternalInfoToDstInfo converts ExternalInfo to DstInfo.
+func ConvertExternalInfoToDstInfo(ctx context.Context, src *external.ExternalInfo) (*external.DstInfo, error) {
+	if src == nil {
+		return nil, nil
+	}
+	ec := model.NewErrorCollector(0)
+	dst := convertExternalInfoToDstInfo(ctx, ec, src)
+	if ec.HasErrors() {
+		return dst, errors.Join(ec.Errors()...)
+	}
+	return dst, nil
+}
+
+func convertSrcToDst(ctx context.Context, ec *model.ErrorCollector, src *Src) *destination.Dst {
+	if src == nil {
+		return nil
+	}
+	dst := &destination.Dst{}
 	if ec.MaxErrorsReached() {
 		return dst
 	}
@@ -29,7 +57,7 @@ func convertSrcToDst(ctx context.Context, ec *model.ErrorCollector, src *Src) *D
 }
 
 // ConvertSrcToDst converts Src to Dst.
-func ConvertSrcToDst(ctx context.Context, src *Src) (*Dst, error) {
+func ConvertSrcToDst(ctx context.Context, src *Src) (*destination.Dst, error) {
 	if src == nil {
 		return nil, nil
 	}

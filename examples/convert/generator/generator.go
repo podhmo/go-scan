@@ -576,21 +576,6 @@ func getTypeName(im *goscan.ImportManager, t *scanner.FieldType) string {
 	return im.Qualify(t.FullImportPath, t.Name)
 }
 
-func getBaseTypeName(t *scanner.FieldType) string {
-	if t == nil {
-		return ""
-	}
-	if t.IsPointer {
-		return getBaseTypeName(t.Elem)
-	}
-	// For external types, TypeName holds the unqualified name.
-	// For local types, Name is already unqualified.
-	if t.TypeName != "" {
-		return t.TypeName
-	}
-	return t.Name
-}
-
 func isStruct(t *scanner.FieldType) bool {
 	if t == nil {
 		return false

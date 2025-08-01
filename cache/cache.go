@@ -443,3 +443,21 @@ func (sc *SymbolCache) GetFilesToScan(ctx context.Context, packageDirPath string
 
 	return newFilesToScan, existingFilesInCache, nil
 }
+
+// DebugDump prints the content of the cache for debugging purposes.
+func (sc *SymbolCache) DebugDump() {
+	sc.mu.RLock()
+	defer sc.mu.RUnlock()
+
+	fmt.Println("  enabled:", sc.useCache)
+	fmt.Println("  filePath:", sc.filePath)
+	fmt.Println("  rootDir:", sc.rootDir)
+	fmt.Println("  content.Symbols:")
+	for k, v := range sc.content.Symbols {
+		fmt.Printf("    %s: %s\n", k, v)
+	}
+	fmt.Println("  content.Files:")
+	for k, v := range sc.content.Files {
+		fmt.Printf("    %s: %+v\n", k, v)
+	}
+}

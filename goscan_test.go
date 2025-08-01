@@ -175,6 +175,7 @@ func TestScanner_WithSymbolCache(t *testing.T) {
 		if err := s.SaveSymbolCache(context.Background()); err != nil {
 			t.Fatalf("Explicit save failed: %v", err)
 		}
+		s.debugDump(context.Background())
 
 		data, err := os.ReadFile(cacheFilePath)
 		if err != nil {
@@ -526,14 +527,12 @@ func TestScanFilesAndGetUnscanned(t *testing.T) {
 	t.Run("ScanFiles_RelativePath_CoreUser", func(t *testing.T) {
 		sTest, _ := New(WithWorkDir("./testdata/scanfiles")) // Fresh scanner for this subtest
 
-		// Change CWD for this specific sub-test to test CWD-relative paths robustly
-		originalCwd, _ := os.Getwd()
-		os.Chdir("testdata/scanfiles/core") // Change to core directory
-		defer os.Chdir(originalCwd)         // Change back
+		// Path should be relative to the scanner's workDir ("./testdata/scanfiles")
+		relativePath := "core/user.go"
 
-		pkgInfo, err := sTest.ScanFiles(context.Background(), []string{"user.go"}) // Relative to new CWD: testdata/scanfiles/core
+		pkgInfo, err := sTest.ScanFiles(context.Background(), []string{relativePath})
 		if err != nil {
-			t.Fatalf("ScanFiles for core/user.go (relative) failed: %v", err)
+			t.Fatalf("ScanFiles for %s (relative) failed: %v", relativePath, err)
 		}
 		if pkgInfo == nil {
 			t.Fatal("ScanFiles returned nil pkgInfo")

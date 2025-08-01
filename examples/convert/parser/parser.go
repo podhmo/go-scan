@@ -192,44 +192,28 @@ func resolveType(ctx context.Context, s *goscan.Scanner, info *model.ParsedInfo,
 		return nil, fmt.Errorf("unqualified type %q not found in package %s", typeNameStr, p.Name)
 	}
 
-	parts := strings.Split(typeNameStr, ".")
-	if len(parts) != 2 {
-		return nil, fmt.Errorf("unsupported type format: %q", typeNameStr)
-	}
-	pkgAlias, name := parts[0], parts[1]
-
-	pkgPath, found := info.Imports[pkgAlias]
-	if !found {
-		for _, f := range p.AstFiles {
-			for _, i := range f.Imports {
-				path := strings.Trim(i.Path.Value, `"`)
-				if i.Name != nil && i.Name.Name == pkgAlias {
-					pkgPath, found = path, true
-					break
-				}
-				if i.Name == nil {
-					if path == pkgAlias || strings.HasSuffix(path, "/"+pkgAlias) {
-						pkgPath, found = path, true
-						break
-					}
-				}
-			}
-			if found {
-				break
-			}
-		}
+	// Annotation types can be fully qualified paths. The original logic incorrectly
+	// split by "." and assumed a 2-part (alias.Type) structure. This new logic
+	// correctly handles fully qualified paths by splitting at the last ".".
+	lastDot := strings.LastIndex(typeNameStr, ".")
+	if lastDot == -1 {
+		// This case is already handled by the !strings.Contains block, but for safety:
+		return nil, fmt.Errorf("unexpected type format without dot: %q", typeNameStr)
 	}
 
-	if !found {
-		return nil, fmt.Errorf("could not resolve package path for alias %q", pkgAlias)
-	}
+	pkgPath := typeNameStr[:lastDot]
+	name := typeNameStr[lastDot+1:]
 
+	// We have the full package path, so we can skip alias resolution and directly
+	// ask the scanner to resolve the type.
 	resolvableType := &scanner.FieldType{Resolver: s, FullImportPath: pkgPath, TypeName: name}
 	resolvedTypeInfo, err := s.ResolveType(ctx, resolvableType)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve type %q: %w", typeNameStr, err)
 	}
 
+	// If the resolved type is in a package we haven't processed yet, scan it now.
+	// This allows the parser to discover nested types recursively.
 	if resolvedTypeInfo != nil && resolvedTypeInfo.PkgPath != "" && resolvedTypeInfo.PkgPath != p.ImportPath {
 		resolvedPkgInfo, err := s.ScanPackageByImport(ctx, resolvedTypeInfo.PkgPath)
 		if err != nil {

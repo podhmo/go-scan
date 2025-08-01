@@ -5,31 +5,34 @@ import (
 	"context"
 	"errors"
 
+	m "example.com/m"
 	"github.com/podhmo/go-scan/examples/convert/model"
 )
 
-func convertSrcToDst(ctx context.Context, ec *model.ErrorCollector, src *Src) *Dst {
+func convertSrcToDst(ctx context.Context, ec *model.ErrorCollector, src *m.Src) *m.Dst {
 	if src == nil {
 		return nil
 	}
-	dst := &Dst{}
+	dst := &m.Dst{}
 	if ec.MaxErrorsReached() {
 		return dst
 	}
 	ec.Enter("Name")
-	dst.Name = src.NamevalidateString(ec, dst.Name)
+	dst.Name = src.Name
+	validateString(ec, dst.Name)
 	ec.Leave()
 	if ec.MaxErrorsReached() {
 		return dst
 	}
 	ec.Enter("Age")
-	dst.Age = src.AgevalidateInt(ec, dst.Age)
+	dst.Age = src.Age
+	validateInt(ec, dst.Age)
 	ec.Leave()
 	return dst
 }
 
 // ConvertSrcToDst converts Src to Dst.
-func ConvertSrcToDst(ctx context.Context, src *Src) (*Dst, error) {
+func ConvertSrcToDst(ctx context.Context, src *m.Src) (*m.Dst, error) {
 	if src == nil {
 		return nil, nil
 	}

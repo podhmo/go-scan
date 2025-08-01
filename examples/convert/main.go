@@ -10,6 +10,8 @@ import (
 	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/examples/convert/generator"
 	"github.com/podhmo/go-scan/examples/convert/parser"
+	"path"
+
 	"github.com/podhmo/go-scan/scanner"
 	"golang.org/x/tools/imports"
 )
@@ -103,8 +105,9 @@ func run(ctx context.Context, pkgpath, workdir, output, pkgname string) error {
 		pkgname = info.PackageName
 	}
 
-	slog.DebugContext(ctx, "Generating code", "package", pkgname)
-	generatedCode, err := generator.Generate(s, info)
+	targetPkgPath := path.Dir(output)
+	slog.DebugContext(ctx, "Generating code", "package", pkgname, "targetPath", targetPkgPath)
+	generatedCode, err := generator.Generate(s, info, pkgname, targetPkgPath)
 	if err != nil {
 		return fmt.Errorf("failed to generate code: %w", err)
 	}

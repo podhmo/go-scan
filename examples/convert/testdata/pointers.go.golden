@@ -6,20 +6,21 @@ import (
 	"errors"
 	"fmt"
 
+	m "example.com/m"
 	"github.com/podhmo/go-scan/examples/convert/model"
 )
 
-func convertSrcToDst(ctx context.Context, ec *model.ErrorCollector, src *Src) *Dst {
+func convertSrcToDst(ctx context.Context, ec *model.ErrorCollector, src *m.Src) *m.Dst {
 	if src == nil {
 		return nil
 	}
-	dst := &Dst{}
+	dst := &m.Dst{}
 	if ec.MaxErrorsReached() {
 		return dst
 	}
 	ec.Enter("Items")
-	dst.Items = func() []*interface{} {
-		convertedSlice := make([]*interface{}, len(src.Items))
+	dst.Items = func() []*m.DstItem {
+		convertedSlice := make([]*m.DstItem, len(src.Items))
 		for i, item := range src.Items {
 			ec.Enter(fmt.Sprintf("[%d]", i))
 			convertedSlice[i] = item
@@ -54,7 +55,7 @@ func convertSrcToDst(ctx context.Context, ec *model.ErrorCollector, src *Src) *D
 }
 
 // ConvertSrcToDst converts Src to Dst.
-func ConvertSrcToDst(ctx context.Context, src *Src) (*Dst, error) {
+func ConvertSrcToDst(ctx context.Context, src *m.Src) (*m.Dst, error) {
 	if src == nil {
 		return nil, nil
 	}
@@ -65,11 +66,11 @@ func ConvertSrcToDst(ctx context.Context, src *Src) (*Dst, error) {
 	}
 	return dst, nil
 }
-func convertSrcItemToDstItem(ctx context.Context, ec *model.ErrorCollector, src *SrcItem) *DstItem {
+func convertSrcItemToDstItem(ctx context.Context, ec *model.ErrorCollector, src *m.SrcItem) *m.DstItem {
 	if src == nil {
 		return nil
 	}
-	dst := &DstItem{}
+	dst := &m.DstItem{}
 	if ec.MaxErrorsReached() {
 		return dst
 	}
@@ -80,7 +81,7 @@ func convertSrcItemToDstItem(ctx context.Context, ec *model.ErrorCollector, src 
 }
 
 // ConvertSrcItemToDstItem converts SrcItem to DstItem.
-func ConvertSrcItemToDstItem(ctx context.Context, src *SrcItem) (*DstItem, error) {
+func ConvertSrcItemToDstItem(ctx context.Context, src *m.SrcItem) (*m.DstItem, error) {
 	if src == nil {
 		return nil, nil
 	}

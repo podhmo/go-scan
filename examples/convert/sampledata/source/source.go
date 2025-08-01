@@ -2,16 +2,19 @@ package source
 
 import "time"
 
+// convert:import funcs "github.com/podhmo/go-scan/examples/convert/sampledata/funcs"
+// convert:rule "time.Time" -> "string", using=funcs.ConvertTimeToString
+
 // @derivingconvert("github.com/podhmo/go-scan/examples/convert/sampledata/destination.DstUser")
 type SrcUser struct {
-	ID        int64
-	FirstName string
-	LastName  string
+	ID          int64
+	FirstName   string
+	LastName    string
 	SrcAddress
 	ContactInfo SrcContact
 	Details     []SrcInternalDetail
 	CreatedAt   time.Time
-	UpdatedAt   *time.Time
+	UpdatedAt   *time.Time `convert:",using=funcs.ConvertPtrTimeToString"`
 }
 
 type SrcAddress struct {
@@ -24,6 +27,7 @@ type SrcContact struct {
 	Phone *string
 }
 
+// @derivingconvert("github.com/podhmo/go-scan/examples/convert/sampledata/destination.DstInternalDetail")
 type SrcInternalDetail struct {
 	Code        int
 	Description string
@@ -46,9 +50,10 @@ type ComplexSource struct {
 	Value       string
 	Ptr         *string
 	Slice       []SubSource
-	SliceOfPtrs []*SubSource
+	SliceOfPtrs []*SubSource `convert:",using=funcs.ConvertSliceOfPtrs"`
 }
 
+// @derivingconvert("github.com/podhmo/go-scan/examples/convert/sampledata/destination.SubTarget")
 type SubSource struct {
 	Value int
 }
@@ -56,6 +61,6 @@ type SubSource struct {
 // @derivingconvert("github.com/podhmo/go-scan/examples/convert/sampledata/destination.TargetWithMap")
 type SourceWithMap struct {
 	ValueMap    map[string]SubSource
-	PtrMap      map[string]*SubSource
+	PtrMap      map[string]*SubSource `convert:",using=funcs.ConvertMapOfPtrs"`
 	StringToStr map[string]string
 }

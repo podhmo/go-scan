@@ -6,14 +6,15 @@ import (
 	"errors"
 	"fmt"
 
+	m "example.com/m"
 	"github.com/podhmo/go-scan/examples/convert/model"
 )
 
-func convertSrcWithTagsToDstWithTags(ctx context.Context, ec *model.ErrorCollector, src *SrcWithTags) *DstWithTags {
+func convertSrcWithTagsToDstWithTags(ctx context.Context, ec *model.ErrorCollector, src *m.SrcWithTags) *m.DstWithTags {
 	if src == nil {
 		return nil
 	}
-	dst := &DstWithTags{}
+	dst := &m.DstWithTags{}
 	if ec.MaxErrorsReached() {
 		return dst
 	}
@@ -46,7 +47,7 @@ func convertSrcWithTagsToDstWithTags(ctx context.Context, ec *model.ErrorCollect
 }
 
 // ConvertSrcWithTagsToDstWithTags converts SrcWithTags to DstWithTags.
-func ConvertSrcWithTagsToDstWithTags(ctx context.Context, src *SrcWithTags) (*DstWithTags, error) {
+func ConvertSrcWithTagsToDstWithTags(ctx context.Context, src *m.SrcWithTags) (*m.DstWithTags, error) {
 	if src == nil {
 		return nil, nil
 	}

@@ -5,14 +5,15 @@ import (
 	"context"
 	"errors"
 
+	m "example.com/m"
 	"github.com/podhmo/go-scan/examples/convert/model"
 )
 
-func convertSourceToDestination(ctx context.Context, ec *model.ErrorCollector, src *Source) *Destination {
+func convertSourceToDestination(ctx context.Context, ec *model.ErrorCollector, src *m.Source) *m.Destination {
 	if src == nil {
 		return nil
 	}
-	dst := &Destination{}
+	dst := &m.Destination{}
 	if ec.MaxErrorsReached() {
 		return dst
 	}
@@ -29,7 +30,7 @@ func convertSourceToDestination(ctx context.Context, ec *model.ErrorCollector, s
 }
 
 // ConvertSourceToDestination converts Source to Destination.
-func ConvertSourceToDestination(ctx context.Context, src *Source) (*Destination, error) {
+func ConvertSourceToDestination(ctx context.Context, src *m.Source) (*m.Destination, error) {
 	if src == nil {
 		return nil, nil
 	}

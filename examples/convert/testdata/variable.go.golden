@@ -6,20 +6,21 @@ import (
 	"errors"
 	"strings"
 
+	m "example.com/m"
 	"github.com/podhmo/go-scan/examples/convert/model"
 )
 
-func convertSrcVariableToDstVariable(ctx context.Context, ec *model.ErrorCollector, src *SrcVariable) *DstVariable {
+func convertSrcVariableToDstVariable(ctx context.Context, ec *model.ErrorCollector, src *m.SrcVariable) *m.DstVariable {
 	if src == nil {
 		return nil
 	}
 	var builder strings.Builder
-	dst := &DstVariable{}
+	dst := &m.DstVariable{}
 	return dst
 }
 
 // ConvertSrcVariableToDstVariable converts SrcVariable to DstVariable.
-func ConvertSrcVariableToDstVariable(ctx context.Context, src *SrcVariable) (*DstVariable, error) {
+func ConvertSrcVariableToDstVariable(ctx context.Context, src *m.SrcVariable) (*m.DstVariable, error) {
 	if src == nil {
 		return nil, nil
 	}

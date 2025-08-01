@@ -28,26 +28,28 @@ import (
 )
 
 {{ range .Pairs -}}
-func convert{{ .SrcType.Name }}To{{ .DstType.Name }}(ctx context.Context, ec *model.ErrorCollector, src *{{ .SrcType.Name }}) *{{ .DstType.Name }} {
+func convert{{ .SrcType.Name }}To{{ .DstType.Name }}(ctx context.Context, ec *model.ErrorCollector, src *{{ qualify $.Im .SrcType.Type }}) *{{ qualify $.Im .DstType.Type }} {
 	if src == nil {
 		return nil
 	}
 	{{ range .Pair.Variables -}}
 	var {{ .Name }} {{ .Type }}
 	{{ end -}}
-	dst := &{{ .DstType.Name }}{}
+	dst := &{{ qualify $.Im .DstType.Type }}{}
 	{{ range .Fields -}}
 	if ec.MaxErrorsReached() { return dst }
 	ec.Enter("{{ .DstName }}")
-	{{ getAssignment $.Im $.Info . "src" "dst" "ec" "ctx" -}}
-	{{- getValidator $.Im $.Info . "dst" "ec" "ctx" }}
+	{{ getAssignment $.Im $.Info . "src" "dst" "ec" "ctx" }}
+	{{- with (getValidator $.Im $.Info . "dst" "ec" "ctx") -}}
+	{{ . }}
+	{{- end }}
 	ec.Leave()
 	{{ end -}}
 	return dst
 }
 
 // Convert{{ .SrcType.Name }}To{{ .DstType.Name }} converts {{ .SrcType.Name }} to {{ .DstType.Name }}.
-func Convert{{ .SrcType.Name }}To{{ .DstType.Name }}(ctx context.Context, src *{{ .SrcType.Name }}) (*{{ .DstType.Name }}, error) {
+func Convert{{ .SrcType.Name }}To{{ .DstType.Name }}(ctx context.Context, src *{{ qualify $.Im .SrcType.Type }}) (*{{ qualify $.Im .DstType.Type }}, error) {
 	if src == nil {
 		return nil, nil
 	}
@@ -84,8 +86,9 @@ type FieldMap struct {
 	DstFieldT *scanner.FieldType
 }
 
-func Generate(s *goscan.Scanner, info *model.ParsedInfo) ([]byte, error) {
-	im := goscan.NewImportManager(&scanner.PackageInfo{ImportPath: info.PackagePath, Name: info.PackageName})
+func Generate(s *goscan.Scanner, info *model.ParsedInfo, targetPkgName, targetPkgPath string) ([]byte, error) {
+	im := goscan.NewImportManager(&scanner.PackageInfo{ImportPath: targetPkgPath, Name: targetPkgName})
+	im.Add(info.PackagePath, "") // Ensure source package is imported
 
 	// Pre-register all necessary imports
 	for alias, path := range info.Imports {
@@ -143,7 +146,7 @@ func Generate(s *goscan.Scanner, info *model.ParsedInfo) ([]byte, error) {
 	}
 
 	templateData := TemplateData{
-		PackageName: info.PackageName,
+		PackageName: targetPkgName,
 		Imports:     im.Imports(),
 		Pairs:       pairs,
 		Im:          im,
@@ -151,6 +154,12 @@ func Generate(s *goscan.Scanner, info *model.ParsedInfo) ([]byte, error) {
 	}
 
 	funcMap := template.FuncMap{
+		"qualify": func(im *goscan.ImportManager, t *scanner.TypeInfo) string {
+			if t == nil {
+				return "interface{}"
+			}
+			return im.Qualify(t.PkgPath, t.Name)
+		},
 		"getAssignment": func(im *goscan.ImportManager, info *model.ParsedInfo, field FieldMap, srcVar, dstVar, ecVar, ctxVar string) string {
 			return getAssignment(im, info, field, srcVar, dstVar, ecVar, ctxVar)
 		},
@@ -360,14 +369,11 @@ func getAssignment(im *goscan.ImportManager, info *model.ParsedInfo, field Field
 	}
 
 	// Priority 2: Global conversion rule
-	srcFieldTypeName := getFullTypeNameFromTypeInfo(field.SrcFieldT.Definition)
-	dstFieldTypeName := getFullTypeNameFromTypeInfo(field.DstFieldT.Definition)
+	srcFieldTypeName := getFullTypeNameFromFieldType(field.SrcFieldT)
+	dstFieldTypeName := getFullTypeNameFromFieldType(field.DstFieldT)
 
 	for _, rule := range info.GlobalRules {
-		ruleSrcName := getFullTypeNameFromTypeInfo(rule.SrcTypeInfo)
-		ruleDstName := getFullTypeNameFromTypeInfo(rule.DstTypeInfo)
-
-		if ruleSrcName == srcFieldTypeName && ruleDstName == dstFieldTypeName {
+		if rule.SrcTypeName == srcFieldTypeName && rule.DstTypeName == dstFieldTypeName {
 			funcName := qualifyFunc(im, info, rule.UsingFunc)
 			return fmt.Sprintf("%s = %s(%s, %s, %s)", dst, funcName, ctxVar, ecVar, src)
 		}
@@ -542,10 +548,14 @@ func getTypeName(im *goscan.ImportManager, t *scanner.FieldType) string {
 	var sb strings.Builder
 	if t.IsPointer {
 		sb.WriteString("*")
+		// Workaround for cases where Elem is not populated for a pointer type.
 		if t.Elem != nil {
 			sb.WriteString(getTypeName(im, t.Elem))
 		} else {
-			sb.WriteString("interface{}")
+			// Create a temporary non-pointer representation to resolve the base type name.
+			nonPtrT := *t
+			nonPtrT.IsPointer = false
+			sb.WriteString(getTypeName(im, &nonPtrT))
 		}
 		return sb.String()
 	}
@@ -591,13 +601,15 @@ func getFullTypeNameFromFieldType(ft *scanner.FieldType) string {
 	if ft == nil {
 		return ""
 	}
-	if ft.Definition != nil {
+	if ft.Definition != nil && ft.Definition.PkgPath != "" {
 		return getFullTypeNameFromTypeInfo(ft.Definition)
 	}
 	if ft.IsPointer {
 		return "*" + getFullTypeNameFromFieldType(ft.Elem)
 	}
-	// This is a fallback for basic types or unresolved types.
+	if ft.FullImportPath != "" {
+		return ft.FullImportPath + "." + ft.Name
+	}
 	return ft.Name
 }
 
@@ -622,3 +634,5 @@ func getFullTypeNameFromTypeInfo(t *scanner.TypeInfo) string {
 	}
 	return ""
 }
+
+[end of examples/convert/generator/generator.go]

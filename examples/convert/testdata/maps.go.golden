@@ -6,20 +6,21 @@ import (
 	"errors"
 	"fmt"
 
+	m "example.com/m"
 	"github.com/podhmo/go-scan/examples/convert/model"
 )
 
-func convertSrcToDst(ctx context.Context, ec *model.ErrorCollector, src *Src) *Dst {
+func convertSrcToDst(ctx context.Context, ec *model.ErrorCollector, src *m.Src) *m.Dst {
 	if src == nil {
 		return nil
 	}
-	dst := &Dst{}
+	dst := &m.Dst{}
 	if ec.MaxErrorsReached() {
 		return dst
 	}
 	ec.Enter("Items")
-	dst.Items = func() map[string]DstItem {
-		convertedMap := make(map[string]DstItem, len(src.Items))
+	dst.Items = func() map[string]m.DstItem {
+		convertedMap := make(map[string]m.DstItem, len(src.Items))
 		for key, value := range src.Items {
 			ec.Enter(fmt.Sprintf("[%v]", key))
 			convertedMap[key] = *convertSrcItemToDstItem(ctx, ec, &value)
@@ -32,8 +33,8 @@ func convertSrcToDst(ctx context.Context, ec *model.ErrorCollector, src *Src) *D
 		return dst
 	}
 	ec.Enter("ItemPtrs")
-	dst.ItemPtrs = func() map[string]*interface{} {
-		convertedMap := make(map[string]*interface{}, len(src.ItemPtrs))
+	dst.ItemPtrs = func() map[string]*m.DstItem {
+		convertedMap := make(map[string]*m.DstItem, len(src.ItemPtrs))
 		for key, value := range src.ItemPtrs {
 			ec.Enter(fmt.Sprintf("[%v]", key))
 			convertedMap[key] = value
@@ -46,7 +47,7 @@ func convertSrcToDst(ctx context.Context, ec *model.ErrorCollector, src *Src) *D
 }
 
 // ConvertSrcToDst converts Src to Dst.
-func ConvertSrcToDst(ctx context.Context, src *Src) (*Dst, error) {
+func ConvertSrcToDst(ctx context.Context, src *m.Src) (*m.Dst, error) {
 	if src == nil {
 		return nil, nil
 	}
@@ -57,11 +58,11 @@ func ConvertSrcToDst(ctx context.Context, src *Src) (*Dst, error) {
 	}
 	return dst, nil
 }
-func convertSrcItemToDstItem(ctx context.Context, ec *model.ErrorCollector, src *SrcItem) *DstItem {
+func convertSrcItemToDstItem(ctx context.Context, ec *model.ErrorCollector, src *m.SrcItem) *m.DstItem {
 	if src == nil {
 		return nil
 	}
-	dst := &DstItem{}
+	dst := &m.DstItem{}
 	if ec.MaxErrorsReached() {
 		return dst
 	}
@@ -72,7 +73,7 @@ func convertSrcItemToDstItem(ctx context.Context, ec *model.ErrorCollector, src 
 }
 
 // ConvertSrcItemToDstItem converts SrcItem to DstItem.
-func ConvertSrcItemToDstItem(ctx context.Context, src *SrcItem) (*DstItem, error) {
+func ConvertSrcItemToDstItem(ctx context.Context, src *m.SrcItem) (*m.DstItem, error) {
 	if src == nil {
 		return nil, nil
 	}

@@ -366,8 +366,20 @@ func TestScannerWithExternalTypeOverrides(t *testing.T) {
 	}
 
 	overrides := scanner.ExternalTypeOverride{
-		"github.com/google/uuid.UUID": "string",
-		"example.com/somepkg.Time":    "mypkg.MyTime",
+		"github.com/google/uuid.UUID": {
+			Name:    "UUID",
+			PkgPath: "github.com/google/uuid",
+			Kind:    scanner.AliasKind,
+			Underlying: &scanner.FieldType{
+				Name:      "string",
+				IsBuiltin: true,
+			},
+		},
+		"example.com/somepkg.Time": {
+			Name:    "MyTime",
+			PkgPath: "mypkg",
+			Kind:    scanner.StructKind, // Treat as a struct
+		},
 	}
 	s.SetExternalTypeOverrides(context.Background(), overrides)
 
@@ -388,8 +400,8 @@ func TestScannerWithExternalTypeOverrides(t *testing.T) {
 			}
 			for _, field := range typeInfo.Struct.Fields {
 				if field.Name == "ID" {
-					if field.Type.Name != "string" {
-						t.Errorf("Expected field ID of ObjectWithUUID to be overridden to 'string', got '%s'", field.Type.Name)
+					if field.Type.Name != "UUID" || field.Type.PkgName != "github.com/google/uuid" {
+						t.Errorf("Expected field ID of ObjectWithUUID to be overridden to 'github.com/google/uuid.UUID', got '%s.%s'", field.Type.PkgName, field.Type.Name)
 					}
 					if !field.Type.IsResolvedByConfig {
 						t.Errorf("Expected field ID of ObjectWithUUID to have IsResolvedByConfig=true")
@@ -398,8 +410,10 @@ func TestScannerWithExternalTypeOverrides(t *testing.T) {
 					if errResolve != nil {
 						t.Errorf("field.Type.Resolve() for overridden type should not error, got %v", errResolve)
 					}
-					if resolvedType != nil {
-						t.Errorf("field.Type.Resolve() for overridden type should return nil TypeInfo, got %v", resolvedType)
+					if resolvedType == nil {
+						t.Errorf("field.Type.Resolve() for overridden type should return the synthetic TypeInfo, got nil")
+					} else if resolvedType.Name != "UUID" {
+						t.Errorf("Resolved type has wrong name: got %s, want UUID", resolvedType.Name)
 					}
 				}
 			}
@@ -411,8 +425,8 @@ func TestScannerWithExternalTypeOverrides(t *testing.T) {
 			}
 			for _, field := range typeInfo.Struct.Fields {
 				if field.Name == "Timestamp" {
-					if field.Type.Name != "mypkg.MyTime" {
-						t.Errorf("Expected field Timestamp of ObjectWithCustomTime to be overridden to 'mypkg.MyTime', got '%s'", field.Type.Name)
+					if field.Type.Name != "MyTime" || field.Type.PkgName != "mypkg" {
+						t.Errorf("Expected field Timestamp of ObjectWithCustomTime to be overridden to 'mypkg.MyTime', got '%s.%s'", field.Type.PkgName, field.Type.Name)
 					}
 					if !field.Type.IsResolvedByConfig {
 						t.Errorf("Expected field Timestamp of ObjectWithCustomTime to have IsResolvedByConfig=true")

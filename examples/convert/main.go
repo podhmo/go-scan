@@ -10,6 +10,7 @@ import (
 	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/examples/convert/generator"
 	"github.com/podhmo/go-scan/examples/convert/parser"
+	"github.com/podhmo/go-scan/scanner"
 	"golang.org/x/tools/imports"
 )
 
@@ -55,8 +56,27 @@ func main() {
 }
 
 func run(ctx context.Context, pkgpath, workdir, output, pkgname string) error {
-	// Create a scanner with the module resolver enabled, as this tool needs to see external types.
-	s, err := goscan.New(goscan.WithWorkDir(workdir), goscan.WithGoModuleResolver())
+	// Define an external type override for time.Time to avoid scanning the stdlib time package,
+	// which can cause issues in certain build contexts (like tests).
+	overrides := scanner.ExternalTypeOverride{
+		"time.Time": &scanner.TypeInfo{
+			Name:    "Time",
+			PkgPath: "time",
+			Kind:    scanner.StructKind, // Treat it as a struct, not an interface
+			Underlying: &scanner.FieldType{
+				Name:               "Time",
+				PkgName:            "time",
+				IsResolvedByConfig: true,
+			},
+		},
+	}
+
+	// Create a scanner with the module resolver and the external type override.
+	s, err := goscan.New(
+		goscan.WithWorkDir(workdir),
+		goscan.WithGoModuleResolver(),
+		goscan.WithExternalTypeOverrides(overrides),
+	)
 	if err != nil {
 		return fmt.Errorf("failed to create scanner: %w", err)
 	}

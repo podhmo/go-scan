@@ -109,6 +109,81 @@ func convertProfile(ctx context.Context, ec *model.ErrorCollector, s string) str
 	}
 }
 
+func TestIntegration_WithTimeTime(t *testing.T) {
+	files := map[string]string{
+		"go.mod": "module example.com/m\ngo 1.24",
+		"timetime.go": `
+package timetime
+import "time"
+import "example.com/m/model"
+
+// @derivingconvert("Dst")
+type Src struct {
+	Timestamp time.Time
+}
+
+type Dst struct {
+	Timestamp time.Time
+}
+`,
+		"model/model.go": `
+package model
+type ErrorCollector struct{}
+func NewErrorCollector(max int) *ErrorCollector { return &ErrorCollector{} }
+func (ec *ErrorCollector) HasErrors() bool { return false }
+func (ec *ErrorCollector) Errors() error { return nil }
+`,
+	}
+
+	tmpdir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	ctx := context.Background()
+	writer := &memoryFileWriter{}
+	ctx = context.WithValue(ctx, FileWriterKey, writer)
+
+	pkgpath := "example.com/m"
+	outputFile := "generated.go"
+	pkgname := "timetime"
+	goldenFile := "testdata/timetime.go.golden"
+
+	err := run(ctx, pkgpath, tmpdir, outputFile, pkgname)
+	if err != nil {
+		t.Fatalf("run() failed: %v", err)
+	}
+
+	generatedCode, ok := writer.Outputs[outputFile]
+	if !ok {
+		t.Fatalf("output file %q not found in captured outputs", outputFile)
+	}
+
+	if *update {
+		if err := os.WriteFile(goldenFile, generatedCode, 0644); err != nil {
+			t.Fatalf("failed to update golden file: %v", err)
+		}
+		t.Logf("golden file updated: %s", goldenFile)
+		return
+	}
+
+	golden, err := os.ReadFile(goldenFile)
+	if err != nil {
+		t.Fatalf("failed to read golden file: %v", err)
+	}
+
+	formattedGenerated, err := imports.Process(outputFile, generatedCode, nil)
+	if err != nil {
+		t.Fatalf("failed to format generated code: %v\n---\n%s", err, string(generatedCode))
+	}
+	formattedGolden, err := imports.Process(goldenFile, golden, nil)
+	if err != nil {
+		t.Fatalf("failed to format golden file: %v", err)
+	}
+
+	if diff := cmp.Diff(string(formattedGolden), string(formattedGenerated)); diff != "" {
+		t.Errorf("generated code mismatch (-want +got):\n%s", diff)
+	}
+}
+
 func TestIntegration_WithRecursiveAnnotations(t *testing.T) {
 	files := map[string]string{
 		"go.mod": "module example.com/m\ngo 1.24",
@@ -271,6 +346,7 @@ import (
 )
 
 // convert:import ext "example.com/m/external"
+// convert:import time "time"
 // convert:rule "time.Time" -> "string", using=ext.TimeToString
 // convert:rule "string", validator=ext.ValidateString
 
@@ -873,7 +949,8 @@ import (
 	"time"
 )
 
-// // convert:rule "time.Time" -> "string", using=convertTimeToString
+// convert:import time "time"
+// convert:rule "time.Time" -> "string", using=convertTimeToString
 
 // @derivingconvert("Dst")
 type Src struct {

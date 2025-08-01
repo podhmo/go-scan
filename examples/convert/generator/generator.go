@@ -582,7 +582,9 @@ func isStruct(t *scanner.FieldType) bool {
 		}
 		return isStruct(t.Elem)
 	}
-	return t.Definition != nil && t.Definition.Kind == scanner.StructKind
+	// A struct that needs a recursive conversion is one defined in the scanned code,
+	// not one provided by an override.
+	return t.Definition != nil && t.Definition.Kind == scanner.StructKind && !t.IsResolvedByConfig
 }
 
 func getFullTypeNameFromFieldType(ft *scanner.FieldType) string {

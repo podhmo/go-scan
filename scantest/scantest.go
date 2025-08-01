@@ -64,10 +64,10 @@ func WithModuleRoot(path string) RunOption {
 // It returns a Result object if the action had side effects captured by the harness.
 //
 // By default, `Run` determines the module root for the scanner by performing a two-phase search for `go.mod`:
-// 1. It first searches from the temporary test directory (`dir`) upwards to the filesystem root.
-//    This is useful if the test's file layout (created via `WriteFiles`) constitutes a self-contained module.
-// 2. If not found, it searches from the current working directory (`os.Getwd()`) upwards.
-//    This allows the scanner to resolve dependencies against the actual project's `go.mod` file.
+//  1. It first searches from the temporary test directory (`dir`) upwards to the filesystem root.
+//     This is useful if the test's file layout (created via `WriteFiles`) constitutes a self-contained module.
+//  2. If not found, it searches from the current working directory (`os.Getwd()`) upwards.
+//     This allows the scanner to resolve dependencies against the actual project's `go.mod` file.
 //
 // This default behavior can be overridden by using the `WithModuleRoot()` option to specify an explicit path.
 func Run(t *testing.T, dir string, patterns []string, action ActionFunc, opts ...RunOption) (*Result, error) {

@@ -19,16 +19,6 @@ import (
 	"github.com/podhmo/go-scan/scanner"
 )
 
-// Helper to create a temporary directory for testing scanner cache
-func tempScannerDir(t *testing.T) (string, func()) {
-	t.Helper()
-	dir, err := os.MkdirTemp("", "scanner_cache_test_")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir for scanner test: %v", err)
-	}
-	return dir, func() { os.RemoveAll(dir) }
-}
-
 // TestNew_Integration tests the creation of a new Scanner and its underlying locator.
 func TestNew_Integration(t *testing.T) {
 	s, err := New(WithWorkDir("./scanner")) // Assuming this test runs from project root where ./scanner is a valid sub-package.
@@ -143,8 +133,7 @@ func TestScanner_WithSymbolCache(t *testing.T) {
 	expectedUserFilePath, _ := filepath.Abs(filepath.Join(moduleRootDir, "models/user.go"))
 
 	t.Run("ScanAndUpdateCache_FindSymbol_CacheHit", func(t *testing.T) {
-		testCacheDir, cleanupTestCacheDir := tempScannerDir(t)
-		defer cleanupTestCacheDir()
+		testCacheDir := t.TempDir()
 		cacheFilePath := filepath.Join(testCacheDir, "symbols.json")
 
 		s, err := New(WithWorkDir("./testdata/multipkg")) // Scanner for the test module
@@ -228,8 +217,7 @@ func TestScanner_WithSymbolCache(t *testing.T) {
 	})
 
 	t.Run("FindSymbol_CacheMiss_FallbackScanSuccess", func(t *testing.T) {
-		testCacheDir, cleanupTestCacheDir := tempScannerDir(t)
-		defer cleanupTestCacheDir()
+		testCacheDir := t.TempDir()
 		cacheFilePath := filepath.Join(testCacheDir, "symbols_fallback.json")
 
 		s, err := New(WithWorkDir("./testdata/multipkg"))
@@ -258,8 +246,7 @@ func TestScanner_WithSymbolCache(t *testing.T) {
 	})
 
 	t.Run("FindSymbol_CacheStale_FallbackScanSuccess", func(t *testing.T) {
-		testCacheDir, cleanupTestCacheDir := tempScannerDir(t)
-		defer cleanupTestCacheDir()
+		testCacheDir := t.TempDir()
 		cacheFilePath := filepath.Join(testCacheDir, "symbols_stale.json")
 
 		s, err := New(WithWorkDir("./testdata/multipkg"))
@@ -309,8 +296,7 @@ func TestScanner_WithSymbolCache(t *testing.T) {
 	})
 
 	t.Run("FindSymbol_NonExistentSymbol_FallbackScanFail", func(t *testing.T) {
-		testCacheDir, cleanupTestCacheDir := tempScannerDir(t)
-		defer cleanupTestCacheDir()
+		testCacheDir := t.TempDir()
 		cacheFilePath := filepath.Join(testCacheDir, "symbols_nonexist.json")
 
 		s, err := New(WithWorkDir("./testdata/multipkg"))
@@ -332,8 +318,7 @@ func TestScanner_WithSymbolCache(t *testing.T) {
 	})
 
 	t.Run("CacheDisabled_NoCacheFileCreated", func(t *testing.T) {
-		testCacheDir, cleanupTestCacheDir := tempScannerDir(t)
-		defer cleanupTestCacheDir()
+		testCacheDir := t.TempDir()
 		cacheFilePath := filepath.Join(testCacheDir, "symbols_disabled.json")
 
 		s, err := New(WithWorkDir("./testdata/multipkg"))
@@ -1004,8 +989,7 @@ func TestImplements(t *testing.T) {
 
 func TestSaveGoFile_Imports(t *testing.T) {
 	ctx := context.Background()
-	tempDir, cleanup := tempScannerDir(t)
-	defer cleanup()
+	tempDir := t.TempDir()
 
 	pkgDir := NewPackageDirectory(tempDir, "testpkg")
 

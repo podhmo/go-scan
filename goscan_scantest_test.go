@@ -1,0 +1,93 @@
+package goscan_test
+
+import (
+	"context"
+	"fmt"
+	"sort"
+	"testing"
+
+	"github.com/google/go-cmp/cmp"
+	goscan "github.com/podhmo/go-scan"
+	"github.com/podhmo/go-scan/scanner"
+	"github.com/podhmo/go-scan/scantest"
+)
+
+// findType is a helper to find a type by name in PackageInfo.
+func findType(types []*scanner.TypeInfo, name string) *scanner.TypeInfo {
+	for _, ti := range types {
+		if ti.Name == name {
+			return ti
+		}
+	}
+	return nil
+}
+
+func TestImplements_DerivingJSON_Scenario_WithScantest(t *testing.T) {
+	files := map[string]string{
+		"go.mod": `
+module example.com/derivingjson_scenario
+go 1.22.4
+`,
+		"types.go": `
+package derivingjson_scenario
+
+type EventData interface {
+	EventData()
+}
+
+type UserCreated struct{}
+func (e *UserCreated) EventData() {}
+
+type MessagePosted struct{}
+func (e *MessagePosted) EventData() {}
+
+type NotAnImplementer struct{}
+`,
+	}
+
+	dir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
+		if len(pkgs) != 1 {
+			return fmt.Errorf("expected 1 package, but got %d", len(pkgs))
+		}
+		pkgInfo := pkgs[0]
+
+		// Find the interface
+		eventDataInterface := findType(pkgInfo.Types, "EventData")
+		if eventDataInterface == nil {
+			t.Fatal("Interface 'EventData' not found")
+		}
+
+		// Find implementers
+		var implementers []*scanner.TypeInfo
+		for _, ti := range pkgInfo.Types {
+			if ti.Kind == scanner.StructKind {
+				if goscan.Implements(ti, eventDataInterface, pkgInfo) {
+					implementers = append(implementers, ti)
+				}
+			}
+		}
+
+		if len(implementers) != 2 {
+			t.Fatalf("Expected to find 2 implementers, got %d", len(implementers))
+		}
+
+		implementerNames := make([]string, len(implementers))
+		for i, impl := range implementers {
+			implementerNames[i] = impl.Name
+		}
+		sort.Strings(implementerNames)
+
+		expectedImplementers := []string{"MessagePosted", "UserCreated"}
+		if diff := cmp.Diff(expectedImplementers, implementerNames); diff != "" {
+			t.Errorf("mismatch (-want +got):\n%s", diff)
+		}
+		return nil
+	}
+
+	if _, err := scantest.Run(t, dir, []string{"."}, action); err != nil {
+		t.Fatalf("scantest.Run() failed: %v", err)
+	}
+}

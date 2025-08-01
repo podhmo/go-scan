@@ -93,17 +93,17 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 Based on the plan in [docs/plan-multi-package-handling.md](./docs/plan-multi-package-handling.md).
 
 **Part 1: Core Library Foundation**
-*   [ ] **Enhance Test Harness (`scantest`)**:
-    *   [ ] Modify `scantest` to automatically search parent directories for `go.mod` to use as a default module root.
-    *   [ ] Add an option to `scantest` to allow explicitly setting the module root path for a test run.
-*   [ ] **Implement Core Scanning Logic**:
-    *   [ ] The parent `goscan.Scanner` must pass a reference to itself to the internal `scanner.Scanner` upon creation.
-    *   [ ] The `scanner.FieldType` struct must be modified to store the reference to the parent `goscan.Scanner`.
-    *   [ ] Implement the `Resolve()` method on `scanner.FieldType` to trigger an on-demand scan.
-*   [ ] **Add Core Unit Tests**:
-    *   [ ] Add a unit test (`TestFieldType_Resolve_CrossPackage`) for finding type definitions in an uncached package.
-    *   [ ] Add a unit test to confirm `Resolve()` is idempotent.
-    *   [ ] Add a unit test for the nested, multi-package scanning scenario.
+*   [x] **Enhance Test Harness (`scantest`)**:
+    *   [x] Modify `scantest` to automatically search parent directories for `go.mod` to use as a default module root.
+    *   [x] Add an option to `scantest` to allow explicitly setting the module root path for a test run.
+*   [x] **Implement Core Scanning Logic**:
+    *   [x] The parent `goscan.Scanner` must pass a reference to itself to the internal `scanner.Scanner` upon creation.
+    *   [x] The `scanner.FieldType` struct must be modified to store the reference to the parent `goscan.Scanner`.
+    *   [x] Implement the `Resolve()` method on `scanner.FieldType` to trigger an on-demand scan.
+*   [x] **Add Core Unit Tests**:
+    *   [x] Add a unit test (`TestFieldType_Resolve_CrossPackage`) for finding type definitions in an uncached package.
+    *   [x] Add a unit test to confirm `Resolve()` is idempotent.
+    *   [x] Add a unit test for the nested, multi-package scanning scenario.
 
 **Part 2: Library Consumer Updates**
 *   [ ] **Refactor `examples/convert`**:

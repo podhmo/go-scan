@@ -478,7 +478,18 @@ func generateConversion(im *goscan.ImportManager, info *model.ParsedInfo, src, d
 		if !srcT.IsPointer {
 			srcPtr = "&" + src
 		}
-		conversion := fmt.Sprintf("*convert%sTo%s(%s, %s, %s)", srcT.Name, dstT.Name, ctxVar, ecVar, srcPtr)
+
+		// Use TypeName for unqualified name to avoid duplicate package prefixes
+		srcTypeName := srcT.TypeName
+		if srcTypeName == "" {
+			srcTypeName = srcT.Name // fallback
+		}
+		dstTypeName := dstT.TypeName
+		if dstTypeName == "" {
+			dstTypeName = dstT.Name // fallback
+		}
+
+		conversion := fmt.Sprintf("*convert%sTo%s(%s, %s, %s)", srcTypeName, dstTypeName, ctxVar, ecVar, srcPtr)
 		if dst != "" {
 			return fmt.Sprintf("%s = %s", dst, conversion)
 		}

@@ -175,7 +175,7 @@ func Generate(ctx context.Context, gscn *goscan.Scanner, pkgInfo *scanner.Packag
 		for _, field := range typeInfo.Struct.Fields {
 			jsonTag := field.TagValue("json")
 			var resolvedFieldType *scanner.TypeInfo
-			if field.Type.FullImportPath() == "" {
+			if field.Type.FullImportPath == "" {
 				resolvedFieldType = findTypeInPackage(pkgInfo, field.Type.Name)
 			} else {
 				resolvedFieldType, _ = gscn.ResolveType(ctx, field.Type)
@@ -202,8 +202,8 @@ func Generate(ctx context.Context, gscn *goscan.Scanner, pkgInfo *scanner.Packag
 				var interfaceDefiningPkgImportPath string
 
 				if interfaceDef != nil { // Resolved interface
-					if field.Type.FullImportPath() != "" && field.Type.FullImportPath() != pkgInfo.ImportPath {
-						interfaceDefiningPkgImportPath = field.Type.FullImportPath()
+					if field.Type.FullImportPath != "" && field.Type.FullImportPath != pkgInfo.ImportPath {
+						interfaceDefiningPkgImportPath = field.Type.FullImportPath
 					} else if interfaceDef.FilePath != "" {
 						interfaceDir := filepath.Dir(interfaceDef.FilePath)
 						scannedPkgForInterfaceFile, errPkgScan := gscn.ScanPackage(ctx, interfaceDir)
@@ -302,12 +302,12 @@ func Generate(ctx context.Context, gscn *goscan.Scanner, pkgInfo *scanner.Packag
 						} else if errScan != nil {
 							slog.DebugContext(ctx, "Could not scan package for resolved field type, using current package for qualification.", "field", field.Name, "resolvedTypeName", resolvedFieldType.Name, "error", errScan)
 						}
-					} else if field.Type.FullImportPath() != "" { // Fallback to FieldType's import path if FilePath on resolved is empty
-						definingPkgPath = field.Type.FullImportPath()
+					} else if field.Type.FullImportPath != "" { // Fallback to FieldType's import path if FilePath on resolved is empty
+						definingPkgPath = field.Type.FullImportPath
 					}
 					typeName = importManager.Qualify(definingPkgPath, resolvedFieldType.Name)
 				} else { // Fallback to original FieldType info if resolution failed or name is empty
-					typeName = importManager.Qualify(field.Type.FullImportPath(), field.Type.Name)
+					typeName = importManager.Qualify(field.Type.FullImportPath, field.Type.Name)
 				}
 				data.OtherFields = append(data.OtherFields, FieldInfo{Name: field.Name, Type: typeName, JSONTag: jsonTag})
 			}

@@ -186,15 +186,13 @@ type FieldType struct {
 	IsResolvedByConfig bool      `json:"isResolvedByConfig,omitempty"`
 	IsBuiltin          bool      `json:"isBuiltin,omitempty"`
 
-	resolver       PackageResolver `json:"-"` // For lazy-loading the type definition.
-	fullImportPath string          `json:"-"` // Full import path of the type, e.g., "example.com/project/models".
-	typeName       string          `json:"-"` // The name of the type within its package, e.g., "User".
-}
-
-// FullImportPath returns the fully qualified import path if this type is from an external package.
-// Returns an empty string if the type is local or not from a qualified package.
-func (ft *FieldType) FullImportPath() string {
-	return ft.fullImportPath
+	// Resolver, FullImportPath, and TypeName are used for on-demand package scanning.
+	// They are exported to allow consumers of the library to construct a resolvable
+	// FieldType manually, for instance when parsing type information from an
+	// annotation rather than from a Go AST node.
+	Resolver       PackageResolver `json:"-"` // For lazy-loading the type definition.
+	FullImportPath string          `json:"-"` // Full import path of the type, e.g., "example.com/project/models".
+	TypeName       string          `json:"-"` // The name of the type within its package, e.g., "User".
 }
 
 // Resolve finds and returns the full definition of the type.
@@ -253,10 +251,10 @@ func (ft *FieldType) String() string {
 		// For qualified types like "pkg.MyType"
 		// ft.Name might already be "pkg.MyType" if parsed from SelectorExpr.
 		// Or ft.Name is "MyType" and ft.PkgName is "pkg".
-		// Prefer ft.typeName if available (set by SelectorExpr parsing for the base name).
+		// Prefer ft.TypeName if available (set by SelectorExpr parsing for the base name).
 		actualName := ft.Name
-		if ft.typeName != "" {
-			actualName = ft.typeName
+		if ft.TypeName != "" {
+			actualName = ft.TypeName
 		}
 		name = fmt.Sprintf("%s.%s", ft.PkgName, actualName)
 	}
@@ -292,12 +290,12 @@ func (ft *FieldType) Resolve(ctx context.Context, resolving map[string]struct{})
 	}
 
 	// Cannot resolve types without a resolver or if not a built-in.
-	if ft.resolver == nil {
-		// For local types (no fullImportPath), we can't resolve further without a resolver.
+	if ft.Resolver == nil {
+		// For local types (no FullImportPath), we can't resolve further without a resolver.
 		// This can happen for non-exported types or if the package context wasn't fully available.
 		return nil, fmt.Errorf("type %q cannot be resolved: no resolver available", ft.Name)
 	}
-	if ft.fullImportPath == "" {
+	if ft.FullImportPath == "" {
 		// This is likely a type from the same package being scanned.
 		// Its definition should have been found during the initial scan.
 		// If we are here, it means it's a forward declaration or a scenario
@@ -305,12 +303,12 @@ func (ft *FieldType) Resolve(ctx context.Context, resolving map[string]struct{})
 		return nil, nil // Not an error, just can't resolve further.
 	}
 
-	typeIdentifier := ft.fullImportPath + "." + ft.typeName
+	typeIdentifier := ft.FullImportPath + "." + ft.TypeName
 	if _, ok := resolving[typeIdentifier]; ok {
 		// Cycle detected. Attempt to return the already-allocated TypeInfo pointer
 		// to allow the graph to be linked correctly.
-		if pkgInfo, err := ft.resolver.ScanPackageByImport(ctx, ft.fullImportPath); err == nil && pkgInfo != nil {
-			if t := pkgInfo.Lookup(ft.typeName); t != nil {
+		if pkgInfo, err := ft.Resolver.ScanPackageByImport(ctx, ft.FullImportPath); err == nil && pkgInfo != nil {
+			if t := pkgInfo.Lookup(ft.TypeName); t != nil {
 				ft.Definition = t // Cache the result even in the cycle case
 				return t, nil     // Return the existing, partially resolved TypeInfo
 			}
@@ -321,18 +319,18 @@ func (ft *FieldType) Resolve(ctx context.Context, resolving map[string]struct{})
 	resolving[typeIdentifier] = struct{}{}
 	defer delete(resolving, typeIdentifier)
 
-	pkgInfo, err := ft.resolver.ScanPackageByImport(ctx, ft.fullImportPath)
+	pkgInfo, err := ft.Resolver.ScanPackageByImport(ctx, ft.FullImportPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to scan package %q for type %q: %w", ft.fullImportPath, ft.typeName, err)
+		return nil, fmt.Errorf("failed to scan package %q for type %q: %w", ft.FullImportPath, ft.TypeName, err)
 	}
 
 	// The lookup now uses the efficient map.
-	if t := pkgInfo.Lookup(ft.typeName); t != nil {
+	if t := pkgInfo.Lookup(ft.TypeName); t != nil {
 		ft.Definition = t // Cache the result
 		return t, nil
 	}
 
-	return nil, fmt.Errorf("type %q not found in package %q", ft.typeName, ft.fullImportPath)
+	return nil, fmt.Errorf("type %q not found in package %q", ft.TypeName, ft.FullImportPath)
 }
 
 // ConstantInfo represents a single top-level constant declaration.
@@ -361,7 +359,7 @@ type FunctionInfo struct {
 
 // SetResolver is a test helper to overwrite the internal resolver.
 func (ft *FieldType) SetResolver(r PackageResolver) {
-	ft.resolver = r
+	ft.Resolver = r
 }
 
 // var _ = strings.Builder{} // This helper is no longer needed as "strings" is directly imported.

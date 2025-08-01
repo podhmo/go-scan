@@ -313,7 +313,7 @@ func registerImports(im *goscan.ImportManager, t *scanner.FieldType) {
 	if t == nil {
 		return
 	}
-	im.Qualify(t.FullImportPath(), t.Name)
+	im.Qualify(t.FullImportPath, t.Name)
 	if t.Elem != nil {
 		registerImports(im, t.Elem)
 	}
@@ -569,7 +569,7 @@ func getTypeName(im *goscan.ImportManager, t *scanner.FieldType) string {
 		}
 		return fmt.Sprintf("map[%s]%s", keyType, valType)
 	}
-	return im.Qualify(t.FullImportPath(), t.Name)
+	return im.Qualify(t.FullImportPath, t.Name)
 }
 
 func isStruct(t *scanner.FieldType) bool {

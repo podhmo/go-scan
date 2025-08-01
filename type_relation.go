@@ -121,8 +121,8 @@ func compareSignatures(interfaceMethod *scanner.MethodInfo, structMethod *scanne
 // This is a simplified comparison. A robust solution needs full type resolution.
 func compareFieldTypes(type1 *scanner.FieldType, type2 *scanner.FieldType) bool {
 	fmt.Printf("DEBUG: compareFieldTypes: type1_name=%s, type1_pkg=%s, type1_full_import=%s, type1_is_pointer=%t, type1_is_slice=%t, type1_is_map=%t -- type2_name=%s, type2_pkg=%s, type2_full_import=%s, type2_is_pointer=%t, type2_is_slice=%t, type2_is_map=%t\n",
-		type1.Name, type1.PkgName, type1.FullImportPath(), type1.IsPointer, type1.IsSlice, type1.IsMap,
-		type2.Name, type2.PkgName, type2.FullImportPath(), type2.IsPointer, type2.IsSlice, type2.IsMap,
+		type1.Name, type1.PkgName, type1.FullImportPath, type1.IsPointer, type1.IsSlice, type1.IsMap,
+		type2.Name, type2.PkgName, type2.FullImportPath, type2.IsPointer, type2.IsSlice, type2.IsMap,
 	)
 	if type1 == nil && type2 == nil {
 		fmt.Println("DEBUG: compareFieldTypes: both nil, returning true")

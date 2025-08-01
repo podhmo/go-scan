@@ -245,9 +245,9 @@ func TestFieldType_Resolve(t *testing.T) {
 	ft := &FieldType{
 		Name:           "models.User",
 		PkgName:        "models",
-		resolver:       resolver,
-		fullImportPath: "example.com/models",
-		typeName:       "User",
+		Resolver:       resolver,
+		FullImportPath: "example.com/models",
+		TypeName:       "User",
 	}
 
 	// First call to Resolve should trigger the resolver

@@ -86,41 +86,12 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
         -   [x] Update the parser to recognize and process the `// convert:import` annotation.
         -   [x] Ensure the parser registers the specified alias and path with the `ImportManager`.
         -   [x] Modify the `using` and `validator` logic to correctly resolve function references that use these imported aliases (e.g., `pkg.MyFunc`).
+-   **On-Demand, Multi-Package AST Scanning**: The scanner can now parse packages on-demand. When resolving a type from an un-scanned package, it locates, parses, and caches the necessary package-level information automatically. This feature is primarily driven by the `FieldType.Resolve()` method.
+    -   [x] **Core Library Foundation**: The core `go-scan` library was updated with the foundational logic for on-demand scanning, including modifications to `FieldType` and the `PackageResolver` interface.
+    -   [x] **Library Consumer Updates**: The `examples/convert` tool was refactored to use the new on-demand scanning feature. Its parser now resolves types from annotations dynamically instead of requiring all packages to be scanned upfront.
+    -   [x] **CI and Regression Prevention**: The `Makefile` was updated to ensure the `convert` example is built and its tests are run as part of the main test suite, preventing regressions.
 
 ## To Be Implemented
-
-### On-Demand, Multi-Package AST Scanning
-Based on the plan in [docs/plan-multi-package-handling.md](./docs/plan-multi-package-handling.md).
-
-**Part 1: Core Library Foundation**
-*   [x] **Enhance Test Harness (`scantest`)**:
-    *   [x] Modify `scantest` to automatically search parent directories for `go.mod` to use as a default module root.
-    *   [x] Add an option to `scantest` to allow explicitly setting the module root path for a test run.
-*   [x] **Implement Core Scanning Logic**:
-    *   [x] The parent `goscan.Scanner` must pass a reference to itself to the internal `scanner.Scanner` upon creation.
-    *   [x] The `scanner.FieldType` struct must be modified to store the reference to the parent `goscan.Scanner`.
-    *   [x] Implement the `Resolve()` method on `scanner.FieldType` to trigger an on-demand scan.
-*   [x] **Add Core Unit Tests**:
-    *   [x] Add a unit test (`TestFieldType_Resolve_CrossPackage`) for finding type definitions in an uncached package.
-    *   [x] Add a unit test to confirm `Resolve()` is idempotent.
-    *   [x] Add a unit test for the nested, multi-package scanning scenario.
-*   [x] **Expose Fields for Manual `FieldType` Creation**:
-    *   [x] Export `Resolver`, `FullImportPath`, and `TypeName` on `scanner.FieldType` to allow consumers to construct resolvable types from non-AST sources (e.g., annotations).
-    *   [x] Update internal library code to use the new exported fields.
-
-**Part 2: Library Consumer Updates**
-*   [x] **Refactor `examples/convert`**:
-    *   [x] Simplify the `main.go` entrypoint to only scan the initial source package.
-    *   [x] Remove manual `ScanPackageByImport` calls from the `parser`.
-    *   [x] Modify the `parser` to call `FieldType.Resolve()` to find type definitions referenced in annotations.
-*   [x] **Update `examples/convert` Integration Tests**:
-    *   [x] Update the integration tests to use the enhanced `scantest` harness.
-    *   [x] Cover scenarios with nested structs from multiple different packages.
-    *   [x] Verify that the generated code compiles, has correct imports, and works as expected.
-
-**Part 3: CI and Regression Prevention**
-*   [x] **Add CI Check for `examples/convert`**:
-    *   [x] Add a new target to the `Makefile` to run the `examples/convert` tool.
 
 ### Known Issues
 

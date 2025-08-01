@@ -121,8 +121,8 @@ Based on the plan in [docs/plan-multi-package-handling.md](./docs/plan-multi-pac
     *   [x] Verify that the generated code compiles, has correct imports, and works as expected.
 
 **Part 3: CI and Regression Prevention**
-*   [ ] **Add CI Check for `examples/convert`**:
-    *   [ ] Add a new target to the `Makefile` to run the `examples/convert` tool.
+*   [x] **Add CI Check for `examples/convert`**:
+    *   [x] Add a new target to the `Makefile` to run the `examples/convert` tool.
 
 ### Future Tasks (Post-Migration)
 *   **Expand Test Coverage**: Create a comprehensive test suite that verifies all features and edge cases.

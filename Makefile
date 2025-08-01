@@ -12,6 +12,16 @@ test:
 	go -C ./examples/derivingbind test ./...
 	go -C ./examples/minigo test ./...
 	go -C ./examples/convert test ./...
+	$(MAKE) test-example-convert
+
+test-example-convert:
+	@echo "Building convert tool..."
+	cd ./examples/convert && go build -o /tmp/convert .
+	@echo "Running convert tool integration test (cross-package)..."
+	cd ./examples/convert/ci-test && /tmp/convert -cwd . -pkg ci-test/source -output source/generated.go
+	@echo "Cleaning up generated file and binary..."
+	rm ./examples/convert/ci-test/source/generated.go
+	rm /tmp/convert
 
 clean:
 	go clean -cache -testcache # General Go clean

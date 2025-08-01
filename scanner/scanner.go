@@ -593,7 +593,7 @@ func (s *Scanner) parseFieldList(ctx context.Context, fields []*ast.Field, curre
 // parseTypeExpr parses an expression representing a type.
 // It now accepts ctx for logging.
 func (s *Scanner) parseTypeExpr(ctx context.Context, expr ast.Expr, currentTypeParams []*TypeParamInfo) *FieldType {
-	ft := &FieldType{resolver: s.resolver}
+	ft := &FieldType{Resolver: s.resolver}
 	switch t := expr.(type) {
 	case *ast.Ident:
 		ft.Name = t.Name
@@ -624,8 +624,8 @@ func (s *Scanner) parseTypeExpr(ctx context.Context, expr ast.Expr, currentTypeP
 			}
 			if !isBuiltin && s.currentPkg != nil {
 				// Assume it's a type from the current package
-				ft.fullImportPath = s.currentPkg.ImportPath
-				ft.typeName = t.Name
+				ft.FullImportPath = s.currentPkg.ImportPath
+				ft.TypeName = t.Name
 			}
 		}
 	case *ast.StarExpr:
@@ -662,8 +662,8 @@ func (s *Scanner) parseTypeExpr(ctx context.Context, expr ast.Expr, currentTypeP
 		}
 		ft.Name = fmt.Sprintf("%s.%s", pkgIdent.Name, t.Sel.Name) // This might be too simple; Name should be t.Sel.Name
 		ft.PkgName = pkgIdent.Name
-		ft.typeName = t.Sel.Name
-		ft.fullImportPath = pkgImportPath
+		ft.TypeName = t.Sel.Name
+		ft.FullImportPath = pkgImportPath
 	case *ast.IndexExpr: // For single type argument, e.g., MyType[string]
 		// t.X is the generic type (e.g., MyType)
 		// t.Index is the type argument (e.g., string)

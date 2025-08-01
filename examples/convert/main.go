@@ -10,7 +10,6 @@ import (
 	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/examples/convert/generator"
 	"github.com/podhmo/go-scan/examples/convert/parser"
-	"github.com/podhmo/go-scan/locator"
 	"golang.org/x/tools/imports"
 )
 
@@ -56,23 +55,16 @@ func main() {
 }
 
 func run(ctx context.Context, pkgpath, workdir, output, pkgname string) error {
-	s, err := goscan.New(goscan.WithWorkDir(workdir))
+	// Create a scanner with the module resolver enabled, as this tool needs to see external types.
+	s, err := goscan.New(goscan.WithWorkDir(workdir), goscan.WithGoModuleResolver())
 	if err != nil {
 		return fmt.Errorf("failed to create scanner: %w", err)
 	}
 
-	l, err := locator.New(workdir, nil)
+	// Use ScanPackageByImport to leverage the scanner's configured locator.
+	scannedPkg, err := s.ScanPackageByImport(ctx, pkgpath)
 	if err != nil {
-		return fmt.Errorf("failed to create locator: %w", err)
-	}
-	pkgDir, err := l.FindPackageDir(pkgpath)
-	if err != nil {
-		return fmt.Errorf("could not find package dir for %q: %w", pkgpath, err)
-	}
-
-	scannedPkg, err := s.ScanPackage(ctx, pkgDir)
-	if err != nil {
-		return fmt.Errorf("failed to scan package: %w", err)
+		return fmt.Errorf("failed to scan package %q: %w", pkgpath, err)
 	}
 
 	slog.DebugContext(ctx, "Parsing package", "path", scannedPkg.ImportPath)

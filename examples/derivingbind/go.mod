@@ -9,4 +9,6 @@ require (
 	github.com/podhmo/go-scan v0.0.0
 )
 
+require golang.org/x/mod v0.26.0 // indirect
+
 replace github.com/podhmo/go-scan => ../../

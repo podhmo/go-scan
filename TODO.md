@@ -92,27 +92,28 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 ### On-Demand, Multi-Package AST Scanning
 Based on the plan in [docs/plan-multi-package-handling.md](./docs/plan-multi-package-handling.md).
 
-*   [ ] **Core `go-scan` Enhancements for Lazy Scanning**:
+**Part 1: Core Library Foundation**
+*   [ ] **Enhance Test Harness (`scantest`)**:
+    *   [ ] Modify `scantest` to automatically search parent directories for `go.mod` to use as a default module root.
+    *   [ ] Add an option to `scantest` to allow explicitly setting the module root path for a test run.
+*   [ ] **Implement Core Scanning Logic**:
     *   [ ] The parent `goscan.Scanner` must pass a reference to itself to the internal `scanner.Scanner` upon creation.
     *   [ ] The `scanner.FieldType` struct must be modified to store the reference to the parent `goscan.Scanner`.
-    *   [ ] Implement the `Resolve()` method on `scanner.FieldType` to trigger an on-demand scan. This method will:
-        *   Use the parent `goscan.Scanner` reference to request a package scan via its import path.
-        *   Handle caching within the parent `goscan.Scanner` to ensure packages are only scanned once.
-        *   Look up and return the found `TypeInfo` from the scanned package's AST.
+    *   [ ] Implement the `Resolve()` method on `scanner.FieldType` to trigger an on-demand scan.
+*   [ ] **Add Core Unit Tests**:
+    *   [ ] Add a unit test (`TestFieldType_Resolve_CrossPackage`) for finding type definitions in an uncached package.
+    *   [ ] Add a unit test to confirm `Resolve()` is idempotent.
+    *   [ ] Add a unit test for the nested, multi-package scanning scenario.
 
-*   [ ] **Refactor `examples/convert` to Use Lazy Scanning**:
+**Part 2: Library Consumer Updates**
+*   [ ] **Refactor `examples/convert`**:
     *   [ ] Simplify the `main.go` entrypoint to only scan the initial source package.
     *   [ ] Remove manual `ScanPackageByImport` calls from the `parser`.
-    *   [ ] Modify the `parser` to call `FieldType.Resolve()` to find the type definition referenced in the `@derivingconvert` annotation.
-
-*   [ ] **Generator Improvements**:
-    *   [ ] Ensure the `generator` uses the `PkgPath` from the found `TypeInfo` to correctly qualify type names with the `ImportManager`.
-
-*   [ ] **New Tests for Multi-Package Scanning**:
-    *   [ ] Add a unit test (`TestFieldType_Resolve_CrossPackage`) to `go-scan` to verify that finding a type definition in an uncached package works correctly.
-    *   [ ] Add a unit test to `go-scan` to confirm that `Resolve()` is idempotent and does not trigger redundant scans.
-    *   [ ] Update the `examples/convert` integration tests to cover a scenario where source and destination types are in different packages.
-    -   [ ] The integration test must verify that the generated code has the correct `import` statements and compiles successfully.
+    *   [ ] Modify the `parser` to call `FieldType.Resolve()` to find type definitions referenced in annotations.
+*   [ ] **Update `examples/convert` Integration Tests**:
+    *   [ ] Update the integration tests to use the enhanced `scantest` harness.
+    *   [ ] Cover scenarios with nested structs from multiple different packages.
+    *   [ ] Verify that the generated code compiles, has correct imports, and works as expected.
 
 ### Known Issues
 

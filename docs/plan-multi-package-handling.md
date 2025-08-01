@@ -114,11 +114,15 @@ This recursive, on-demand scanning is the key to handling complex, multi-package
 
 ## 4. Testing Plan
 
+-   **Test Harness Enhancements (`scantest`)**:
+    -   To prevent the historical problem of tests failing in temporary directories, `scantest` must be enhanced. It should, by default, automatically search parent directories to locate the project's `go.mod` file and use it as the module root.
+    -   It should also provide an option to explicitly specify a module root path, to override the default behavior when needed.
 -   **Unit Tests for `go-scan`**:
     -   Create a test `TestFieldType_Resolve_CrossPackage` that verifies `FieldType.Resolve()` can successfully scan and find a type definition from a separate, uncached package.
     -   Add a test to ensure that calling `Resolve()` multiple times on the same type only triggers one scan.
     -   Add a test for the nested scanning scenario described in the use case above.
 -   **Integration Tests for `examples/convert`**:
-    -   Update the integration tests to use a scenario where the `source` and `destination` types reside in different packages, including nested structs from other packages.
+    -   Update the integration tests to use the enhanced `scantest` harness.
+    -   The tests must cover a scenario where the `source` and `destination` types reside in different packages, including nested structs from other packages.
     -   Verify that the generated code compiles and includes all necessary `import` statements.
     -   Assert that the generated code performs the conversion correctly.

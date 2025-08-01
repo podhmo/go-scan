@@ -45,18 +45,64 @@ type Result struct {
 	Outputs map[string][]byte
 }
 
+// RunOption configures a test run.
+type RunOption func(*runConfig)
+
+type runConfig struct {
+	moduleRoot string
+}
+
+// WithModuleRoot explicitly sets the module root directory for the test run.
+// If this option is not used, the search behavior for `go.mod` is described in the `Run` function's documentation.
+func WithModuleRoot(path string) RunOption {
+	return func(c *runConfig) {
+		c.moduleRoot = path
+	}
+}
+
 // Run sets up and executes a test scenario.
 // It returns a Result object if the action had side effects captured by the harness.
-func Run(t *testing.T, dir string, patterns []string, action ActionFunc) (*Result, error) {
+//
+// By default, `Run` determines the module root for the scanner by performing a two-phase search for `go.mod`:
+// 1. It first searches from the temporary test directory (`dir`) upwards to the filesystem root.
+//    This is useful if the test's file layout (created via `WriteFiles`) constitutes a self-contained module.
+// 2. If not found, it searches from the current working directory (`os.Getwd()`) upwards.
+//    This allows the scanner to resolve dependencies against the actual project's `go.mod` file.
+//
+// This default behavior can be overridden by using the `WithModuleRoot()` option to specify an explicit path.
+func Run(t *testing.T, dir string, patterns []string, action ActionFunc, opts ...RunOption) (*Result, error) {
 	t.Helper()
 
+	cfg := &runConfig{}
+	for _, opt := range opts {
+		opt(cfg)
+	}
+
+	workDir := cfg.moduleRoot
+	if workDir == "" {
+		// Phase 1: Search up from the temp test directory.
+		foundRoot, err := findModuleRoot(dir)
+		if err != nil {
+			// Phase 2: If not found, search up from the current working directory.
+			cwd, err_cwd := os.Getwd()
+			if err_cwd != nil {
+				return nil, fmt.Errorf("scantest: could not get current working directory: %w", err_cwd)
+			}
+			foundRoot, err = findModuleRoot(cwd)
+			if err != nil {
+				return nil, fmt.Errorf("scantest: failed to find go.mod root from temp dir (%s) or cwd (%s)", dir, cwd)
+			}
+		}
+		workDir = foundRoot
+	}
+
 	// Automatically handle go.mod replace directives with relative paths.
-	overlay, err := createGoModOverlay(dir)
+	overlay, err := createGoModOverlay(workDir)
 	if err != nil {
 		return nil, fmt.Errorf("creating go.mod overlay: %w", err)
 	}
 
-	options := []scan.ScannerOption{scan.WithWorkDir(dir)}
+	options := []scan.ScannerOption{scan.WithWorkDir(workDir)}
 	if overlay != nil {
 		options = append(options, scan.WithOverlay(overlay))
 	}
@@ -66,7 +112,19 @@ func Run(t *testing.T, dir string, patterns []string, action ActionFunc) (*Resul
 		return nil, fmt.Errorf("new scanner: %w", err)
 	}
 
-	pkgs, err := s.Scan(patterns...)
+	// Adjust patterns to be relative to the temp `dir` if they are not absolute.
+	// The scanner's workDir is the module root, so we need to provide paths that
+	// can be resolved from there. The easiest way is to make them absolute.
+	absPatterns := make([]string, len(patterns))
+	for i, p := range patterns {
+		if filepath.IsAbs(p) {
+			absPatterns[i] = p
+		} else {
+			absPatterns[i] = filepath.Join(dir, p)
+		}
+	}
+
+	pkgs, err := s.Scan(absPatterns...)
 	if err != nil {
 		return nil, fmt.Errorf("scan: %w", err)
 	}
@@ -99,6 +157,24 @@ func WriteFiles(t *testing.T, files map[string]string) (string, func()) {
 		}
 	}
 	return dir, func() { /* t.TempDir handles cleanup */ }
+}
+
+// findModuleRoot searches for a go.mod file starting from startDir and walking
+// up the directory tree. It returns the directory containing the go.mod file.
+func findModuleRoot(startDir string) (string, error) {
+	dir := startDir
+	for {
+		goModPath := filepath.Join(dir, "go.mod")
+		if _, err := os.Stat(goModPath); err == nil {
+			return dir, nil
+		}
+
+		parent := filepath.Dir(dir)
+		if parent == dir { // Reached the root directory
+			return "", fmt.Errorf("go.mod not found in or above %s", startDir)
+		}
+		dir = parent
+	}
 }
 
 // createGoModOverlay reads the go.mod file in the given directory,

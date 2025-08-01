@@ -20,12 +20,23 @@ func (m *MockResolver) ScanPackageByImport(ctx context.Context, importPath strin
 	return nil, nil // Default mock behavior
 }
 
+func newTestScanner(t *testing.T, modulePath, rootDir string) *Scanner {
+	t.Helper()
+	fset := token.NewFileSet()
+	s, err := New(fset, nil, nil, modulePath, rootDir, &MockResolver{})
+	if err != nil {
+		t.Fatalf("scanner.New failed: %v", err)
+	}
+	return s
+}
+
 func TestNewScanner(t *testing.T) {
 	modulePath := "example.com/test"
 	rootDir := "/tmp/test"
+	resolver := &MockResolver{}
 
 	t.Run("nil_fset", func(t *testing.T) {
-		_, err := New(nil, nil, nil, modulePath, rootDir)
+		_, err := New(nil, nil, nil, modulePath, rootDir, resolver)
 		if err == nil {
 			t.Error("Expected error when creating scanner with nil fset, got nil")
 		}
@@ -33,7 +44,7 @@ func TestNewScanner(t *testing.T) {
 
 	t.Run("valid_fset", func(t *testing.T) {
 		fset := token.NewFileSet()
-		s, err := New(fset, nil, nil, modulePath, rootDir)
+		s, err := New(fset, nil, nil, modulePath, rootDir, resolver)
 		if err != nil {
 			t.Errorf("Expected no error when creating scanner with valid fset, got %v", err)
 		}
@@ -43,16 +54,20 @@ func TestNewScanner(t *testing.T) {
 			t.Error("Scanner fset not set correctly")
 		}
 	})
+
+	t.Run("nil_resolver", func(t *testing.T) {
+		fset := token.NewFileSet()
+		_, err := New(fset, nil, nil, modulePath, rootDir, nil)
+		if err == nil {
+			t.Error("Expected error when creating scanner with nil resolver, got nil")
+		}
+	})
 }
 
 func TestScanPackageFeatures(t *testing.T) {
-	fset := token.NewFileSet()
 	testDir := filepath.Join("..", "testdata", "features")
 	absTestDir, _ := filepath.Abs(testDir)
-	s, err := New(fset, nil, nil, "example.com/test/features", absTestDir)
-	if err != nil {
-		t.Fatalf("scanner.New failed: %v", err)
-	}
+	s := newTestScanner(t, "example.com/test/features", absTestDir)
 
 	// Scan only features.go and another.go, which belong to the same package "features"
 	filesToScan := []string{
@@ -61,7 +76,7 @@ func TestScanPackageFeatures(t *testing.T) {
 		filepath.Join(testDir, "variadic.go"),
 	}
 
-	pkgInfo, err := s.ScanFiles(context.Background(), filesToScan, testDir, &MockResolver{})
+	pkgInfo, err := s.ScanFiles(context.Background(), filesToScan, testDir)
 	if err != nil {
 		t.Fatalf("ScanFiles failed for %v: %v", filesToScan, err)
 	}
@@ -138,18 +153,13 @@ func TestScanPackageFeatures(t *testing.T) {
 }
 
 func TestScanFiles(t *testing.T) {
-	fset := token.NewFileSet()
 	testdataDir := filepath.Join("..", "testdata", "features")
 	absTestdataDir, _ := filepath.Abs(testdataDir)
-	s, err := New(fset, nil, nil, "example.com/test/features", absTestdataDir)
-	if err != nil {
-		t.Fatalf("scanner.New failed: %v", err)
-	}
-	mockResolver := &MockResolver{}
+	s := newTestScanner(t, "example.com/test/features", absTestdataDir)
 
 	t.Run("scan_single_file", func(t *testing.T) {
 		filePath := filepath.Join(testdataDir, "features.go")
-		pkgInfo, err := s.ScanFiles(context.Background(), []string{filePath}, testdataDir, mockResolver)
+		pkgInfo, err := s.ScanFiles(context.Background(), []string{filePath}, testdataDir)
 		if err != nil {
 			t.Fatalf("ScanFiles single file failed: %v", err)
 		}
@@ -169,7 +179,7 @@ func TestScanFiles(t *testing.T) {
 			filepath.Join(testdataDir, "features.go"),
 			filepath.Join(testdataDir, "another.go"),
 		}
-		pkgInfo, err := s.ScanFiles(context.Background(), filePaths, testdataDir, mockResolver)
+		pkgInfo, err := s.ScanFiles(context.Background(), filePaths, testdataDir)
 		if err != nil {
 			t.Fatalf("ScanFiles multiple files failed: %v", err)
 		}
@@ -194,14 +204,14 @@ func TestScanFiles(t *testing.T) {
 			filepath.Join(testdataDir, "features.go"),     // package features
 			filepath.Join(testdataDir, "differentpkg.go"), // package otherfeatures
 		}
-		_, err := s.ScanFiles(context.Background(), filePaths, testdataDir, mockResolver)
+		_, err := s.ScanFiles(context.Background(), filePaths, testdataDir)
 		if err == nil {
 			t.Error("Expected error when scanning files from different packages, got nil")
 		}
 	})
 
 	t.Run("scan_empty_file_list", func(t *testing.T) {
-		_, err := s.ScanFiles(context.Background(), []string{}, testdataDir, mockResolver)
+		_, err := s.ScanFiles(context.Background(), []string{}, testdataDir)
 		if err == nil {
 			t.Error("Expected error when scanning an empty file list, got nil")
 		}
@@ -209,7 +219,7 @@ func TestScanFiles(t *testing.T) {
 
 	t.Run("scan_non_existent_file", func(t *testing.T) {
 		filePaths := []string{filepath.Join(testdataDir, "nonexistent.go")}
-		_, err := s.ScanFiles(context.Background(), filePaths, testdataDir, mockResolver)
+		_, err := s.ScanFiles(context.Background(), filePaths, testdataDir)
 		if err == nil {
 			t.Error("Expected error when scanning non-existent file, got nil")
 		}
@@ -267,12 +277,15 @@ func TestResolve_DirectRecursion(t *testing.T) {
 	fset := token.NewFileSet()
 	testDir := filepath.Join("..", "testdata", "recursion", "direct")
 	absTestDir, _ := filepath.Abs(testDir)
-	s, err := New(fset, nil, nil, "example.com/test/recursion/direct", absTestDir)
+
+	// Create scanner, but we'll set the resolver to the scanner itself for this test.
+	s, err := New(fset, nil, nil, "example.com/test/recursion/direct", absTestDir, &MockResolver{})
 	if err != nil {
 		t.Fatalf("scanner.New failed: %v", err)
 	}
+	s.resolver = s // s implements PackageResolver, for self-lookup.
 
-	pkgInfo, err := s.ScanFiles(context.Background(), []string{filepath.Join(testDir, "direct.go")}, testDir, s) // s implements PackageResolver
+	pkgInfo, err := s.ScanFiles(context.Background(), []string{filepath.Join(testDir, "direct.go")}, testDir)
 	if err != nil {
 		t.Fatalf("ScanFiles failed: %v", err)
 	}
@@ -318,7 +331,7 @@ func TestResolve_MutualRecursion(t *testing.T) {
 	absRootDir, _ := filepath.Abs(rootDir)
 
 	// This scanner will be used by the MockResolver to perform actual scanning.
-	s, err := New(fset, nil, nil, "example.com/recursion/mutual", absRootDir)
+	s, err := New(fset, nil, nil, "example.com/recursion/mutual", absRootDir, &MockResolver{})
 	if err != nil {
 		t.Fatalf("scanner.New failed: %v", err)
 	}
@@ -326,8 +339,7 @@ func TestResolve_MutualRecursion(t *testing.T) {
 	// The resolver needs to be able to scan packages on demand and cache the results
 	// to prevent re-parsing and creating duplicate TypeInfo objects.
 	pkgCache := make(map[string]*PackageInfo)
-	var mockResolver *MockResolver
-	mockResolver = &MockResolver{
+	mockResolver := &MockResolver{
 		ScanPackageByImportFunc: func(ctx context.Context, importPath string) (*PackageInfo, error) {
 			if pkg, found := pkgCache[importPath]; found {
 				return pkg, nil
@@ -342,9 +354,7 @@ func TestResolve_MutualRecursion(t *testing.T) {
 				return nil, fmt.Errorf("unexpected import path: %s", importPath)
 			}
 			// Use the main scanner 's' to perform the scan.
-			// The resolver passed to ScanFiles should be the mockResolver itself
-			// to handle further package lookups.
-			pkg, err := s.ScanFiles(ctx, []string{filepath.Join(pkgDir, filepath.Base(pkgDir)+".go")}, pkgDir, mockResolver)
+			pkg, err := s.ScanFiles(ctx, []string{filepath.Join(pkgDir, filepath.Base(pkgDir)+".go")}, pkgDir)
 			if err == nil && pkg != nil {
 				pkgCache[importPath] = pkg // Store in cache
 			}
@@ -428,7 +438,7 @@ func TestScanWithOverlay(t *testing.T) {
 	}
 
 	// Here, we provide an absolute path for moduleRootDir
-	s, err := New(fset, nil, overlay, modulePath, absTestDir)
+	s, err := New(fset, nil, overlay, modulePath, absTestDir, &MockResolver{})
 	if err != nil {
 		t.Fatalf("scanner.New with overlay failed: %v", err)
 	}
@@ -437,7 +447,7 @@ func TestScanWithOverlay(t *testing.T) {
 	scanFilePath := filepath.Join(absTestDir, "basic.go")
 
 	// The pkgDirPath should also be an absolute path to the package directory.
-	pkgInfo, err := s.ScanFiles(context.Background(), []string{scanFilePath}, absTestDir, &MockResolver{})
+	pkgInfo, err := s.ScanFiles(context.Background(), []string{scanFilePath}, absTestDir)
 	if err != nil {
 		t.Fatalf("ScanFiles with overlay failed: %v", err)
 	}

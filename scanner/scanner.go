@@ -26,7 +26,7 @@ type Scanner struct {
 
 // New creates a new Scanner.
 // The fset must be provided and is used for all parsing operations by this scanner instance.
-func New(fset *token.FileSet, overrides ExternalTypeOverride, overlay Overlay, modulePath string, moduleRootDir string) (*Scanner, error) {
+func New(fset *token.FileSet, overrides ExternalTypeOverride, overlay Overlay, modulePath string, moduleRootDir string, resolver PackageResolver) (*Scanner, error) {
 	if fset == nil {
 		return nil, fmt.Errorf("fset cannot be nil")
 	}
@@ -39,6 +39,9 @@ func New(fset *token.FileSet, overrides ExternalTypeOverride, overlay Overlay, m
 	if modulePath == "" || moduleRootDir == "" {
 		return nil, fmt.Errorf("modulePath and moduleRootDir must be provided")
 	}
+	if resolver == nil {
+		return nil, fmt.Errorf("resolver cannot be nil")
+	}
 
 	return &Scanner{
 		fset:                  fset,
@@ -46,6 +49,7 @@ func New(fset *token.FileSet, overrides ExternalTypeOverride, overlay Overlay, m
 		Overlay:               overlay,
 		modulePath:            modulePath,
 		moduleRootDir:         moduleRootDir,
+		resolver:              resolver,
 	}, nil
 }
 
@@ -77,9 +81,7 @@ func (s *Scanner) ScanPackageByImport(ctx context.Context, importPath string) (*
 
 // ScanPackage parses all .go files in a given directory and returns PackageInfo.
 // It now uses ScanFiles internally.
-func (s *Scanner) ScanPackage(ctx context.Context, dirPath string, resolver PackageResolver) (*PackageInfo, error) {
-	s.resolver = resolver // Store resolver for use by parseTypeExpr etc.
-
+func (s *Scanner) ScanPackage(ctx context.Context, dirPath string) (*PackageInfo, error) {
 	// List all .go files in the directory, excluding _test.go files.
 	dirEntries, err := os.ReadDir(dirPath)
 	if err != nil {
@@ -116,14 +118,12 @@ func (s *Scanner) ScanPackage(ctx context.Context, dirPath string, resolver Pack
 		importPath = importPath[:len(importPath)-2]
 	}
 
-	return s.ScanFiles(ctx, filePaths, dirPath, resolver)
+	return s.ScanFiles(ctx, filePaths, dirPath)
 }
 
 // ScanFiles parses a specific list of .go files and returns PackageInfo.
 // pkgDirPath is the absolute directory path for this package, used for PackageInfo.Path.
-func (s *Scanner) ScanFiles(ctx context.Context, filePaths []string, pkgDirPath string, resolver PackageResolver) (*PackageInfo, error) { // Added ctx to parseFuncDecl call
-	s.resolver = resolver // Ensure resolver is set for this scanning operation.
-
+func (s *Scanner) ScanFiles(ctx context.Context, filePaths []string, pkgDirPath string) (*PackageInfo, error) { // Added ctx to parseFuncDecl call
 	if len(filePaths) == 0 {
 		return nil, fmt.Errorf("no files provided to scan for package at %s", pkgDirPath)
 	}

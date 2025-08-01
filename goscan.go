@@ -150,7 +150,7 @@ func New(options ...ScannerOption) (*Scanner, error) {
 	}
 	s.locator = loc
 
-	initialScanner, err := scanner.New(s.fset, s.ExternalTypeOverrides, s.overlay, loc.ModulePath(), loc.RootDir())
+	initialScanner, err := scanner.New(s.fset, s.ExternalTypeOverrides, s.overlay, loc.ModulePath(), loc.RootDir(), s)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create internal scanner: %w", err)
 	}
@@ -165,7 +165,7 @@ func (s *Scanner) SetExternalTypeOverrides(ctx context.Context, overrides scanne
 		overrides = make(scanner.ExternalTypeOverride)
 	}
 	s.ExternalTypeOverrides = overrides
-	newInternalScanner, err := scanner.New(s.fset, s.ExternalTypeOverrides, s.overlay, s.locator.ModulePath(), s.locator.RootDir())
+	newInternalScanner, err := scanner.New(s.fset, s.ExternalTypeOverrides, s.overlay, s.locator.ModulePath(), s.locator.RootDir(), s)
 	if err != nil {
 		slog.WarnContext(ctx, "Failed to re-initialize internal scanner with new overrides. Continuing with previous scanner settings.", slog.Any("error", err))
 		return
@@ -273,7 +273,7 @@ func (s *Scanner) ScanPackage(ctx context.Context, pkgPath string) (*scanner.Pac
 
 	var currentCallPkgInfo *scanner.PackageInfo
 	if len(filesToParseNow) > 0 {
-		currentCallPkgInfo, err = s.scanner.ScanFiles(ctx, filesToParseNow, absPkgPath, s)
+		currentCallPkgInfo, err = s.scanner.ScanFiles(ctx, filesToParseNow, absPkgPath)
 		if err != nil {
 			return nil, fmt.Errorf("ScanPackage: internal scan of files for package %s failed: %w", absPkgPath, err)
 		}
@@ -469,7 +469,7 @@ func (s *Scanner) ScanFiles(ctx context.Context, filePaths []string) (*scanner.P
 		}, nil
 	}
 
-	pkgInfo, err := s.scanner.ScanFiles(ctx, filesToParse, pkgDirAbs, s) // Scan only unvisited files
+	pkgInfo, err := s.scanner.ScanFiles(ctx, filesToParse, pkgDirAbs) // Scan only unvisited files
 	if err != nil {
 		return nil, fmt.Errorf("failed to scan files in %s (import path %s): %w", pkgDirAbs, importPath, err)
 	}
@@ -657,7 +657,7 @@ func (s *Scanner) ScanPackageByImport(ctx context.Context, importPath string) (*
 
 	var currentCallPkgInfo *scanner.PackageInfo
 	if len(filesToParseThisCall) > 0 {
-		currentCallPkgInfo, err = s.scanner.ScanFiles(ctx, filesToParseThisCall, pkgDirAbs, s)
+		currentCallPkgInfo, err = s.scanner.ScanFiles(ctx, filesToParseThisCall, pkgDirAbs)
 		if err != nil {
 			return nil, fmt.Errorf("ScanPackageByImport: scanning files for %s failed: %w", importPath, err)
 		}

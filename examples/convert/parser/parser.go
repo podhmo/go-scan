@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/examples/convert/model"
 	"github.com/podhmo/go-scan/scanner"
 )
@@ -20,7 +21,7 @@ var (
 	reConvertVariable = regexp.MustCompile(`// convert:variable (\w+)\s+(.+)`)
 )
 
-func Parse(ctx context.Context, scannedPkg *scanner.PackageInfo) (*model.ParsedInfo, error) {
+func Parse(ctx context.Context, s *goscan.Scanner, scannedPkg *scanner.PackageInfo) (*model.ParsedInfo, error) {
 	info := &model.ParsedInfo{
 		PackageName:     scannedPkg.Name,
 		PackagePath:     scannedPkg.ImportPath,
@@ -31,54 +32,70 @@ func Parse(ctx context.Context, scannedPkg *scanner.PackageInfo) (*model.ParsedI
 		GlobalRules:     []model.TypeRule{},
 	}
 
+	// Initial population of types from the main scanned package
 	for _, t := range scannedPkg.Types {
 		info.NamedTypes[t.Name] = t
-		if t.Kind == scanner.StructKind {
-			modelStructInfo := &model.StructInfo{
-				Name: t.Name,
-				Type: t,
-			}
-			fields, err := collectFields(ctx, t, scannedPkg, make(map[string]struct{}))
-			if err != nil {
-				return nil, fmt.Errorf("collecting fields for struct %s: %w", t.Name, err)
-			}
-			modelStructInfo.Fields = fields
-			for i := range modelStructInfo.Fields {
-				modelStructInfo.Fields[i].ParentStruct = modelStructInfo
-			}
-			info.Structs[t.Name] = modelStructInfo
-		}
 	}
 
-	for _, t := range scannedPkg.Types {
+	// Worklist for types to process for annotations. Start with types from the initial package.
+	var worklist []*scanner.TypeInfo
+	worklist = append(worklist, scannedPkg.Types...)
+
+	processed := make(map[string]bool) // Key: PkgPath.TypeName
+
+	for len(worklist) > 0 {
+		t := worklist[0]
+		worklist = worklist[1:]
+
+		typeIdentifier := fmt.Sprintf("%s.%s", t.PkgPath, t.Name)
+		if processed[typeIdentifier] {
+			continue
+		}
+		processed[typeIdentifier] = true
+
+		// Ensure the type is processed as a struct if it is one
+		if _, err := processStruct(ctx, info, t); err != nil {
+			return nil, fmt.Errorf("processing initial struct %q: %w", t.Name, err)
+		}
+
 		if t.Doc == "" {
 			continue
 		}
+
 		for _, line := range strings.Split(t.Doc, "\n") {
 			m := reDerivingConvert.FindStringSubmatch(line)
 			if m == nil {
 				continue
 			}
 
-			dstTypeName := strings.Trim(m[1], `"`)
+			dstTypeStr := strings.Trim(m[1], `"`)
 			optionsStr := ""
 			if len(m) > 2 {
 				optionsStr = m[2]
 			}
 
-			srcTypeInfo, ok := info.NamedTypes[t.Name]
-			if !ok {
-				return nil, fmt.Errorf("internal error: source type %q not found after initial pass", t.Name)
+			// Resolve the destination type using the on-demand scanner
+			dstTypeInfo, err := resolveTypeByName(ctx, s, info, scannedPkg, t.PkgPath, dstTypeStr)
+			if err != nil {
+				return nil, fmt.Errorf("resolving destination type %q for source %q: %w", dstTypeStr, t.Name, err)
 			}
-			dstTypeInfo := scannedPkg.Lookup(dstTypeName)
 			if dstTypeInfo == nil {
-				return nil, fmt.Errorf("destination type %q for source %q not found in scanned package", dstTypeName, t.Name)
+				return nil, fmt.Errorf("destination type %q for source %q not found", dstTypeStr, t.Name)
+			}
+
+			// Process the newly resolved type if it's a struct and we haven't seen it before
+			wasNewlyProcessed, err := processStruct(ctx, info, dstTypeInfo)
+			if err != nil {
+				return nil, fmt.Errorf("processing resolved destination struct %q: %w", dstTypeInfo.Name, err)
+			}
+			if wasNewlyProcessed {
+				worklist = append(worklist, dstTypeInfo)
 			}
 
 			pair := model.ConversionPair{
 				SrcTypeName: t.Name,
 				DstTypeName: dstTypeInfo.Name,
-				SrcTypeInfo: srcTypeInfo,
+				SrcTypeInfo: t,
 				DstTypeInfo: dstTypeInfo,
 			}
 
@@ -93,7 +110,6 @@ func Parse(ctx context.Context, scannedPkg *scanner.PackageInfo) (*model.ParsedI
 				}
 			}
 
-			// Also parse variables from the same doc comment block
 			variables := []model.Variable{}
 			for _, docLine := range strings.Split(t.Doc, "\n") {
 				if m := reConvertVariable.FindStringSubmatch(docLine); m != nil {
@@ -106,110 +122,125 @@ func Parse(ctx context.Context, scannedPkg *scanner.PackageInfo) (*model.ParsedI
 		}
 	}
 
+	// Parse global rules from comments, as before
 	for _, astFile := range scannedPkg.AstFiles {
 		for _, commentGroup := range astFile.Comments {
 			for _, comment := range commentGroup.List {
-				// Try parsing as an import rule
+				// Import rule
 				if m := reConvertImport.FindStringSubmatch(comment.Text); m != nil {
-					alias := m[1]
-					path := m[2]
+					alias, path := m[1], m[2]
 					if _, ok := info.Imports[alias]; ok {
 						return nil, fmt.Errorf("duplicate import alias %q", alias)
 					}
 					info.Imports[alias] = path
-					log.Printf("Found import rule: alias=%s, path=%s", alias, path)
 					continue
 				}
 
-				// Try parsing as a conversion/validation rule
+				// Conversion/validation rule
 				if m := reConvertRule.FindStringSubmatch(comment.Text); m != nil {
 					rule := model.TypeRule{}
-					type1Name := m[1]
-					type2Name := m[2]
-					usingFunc := m[3]
-					validatorFunc := m[4]
+					type1Name, type2Name, usingFunc, validatorFunc := m[1], m[2], m[3], m[4]
 
 					if validatorFunc != "" {
-						// Validator rule: // convert:rule "<DstType>", validator=<func>
 						rule.ValidatorFunc = validatorFunc
 						rule.DstTypeName = type1Name
-						dstTypeInfo, err := resolveType(info, scannedPkg, rule.DstTypeName)
+						dstTypeInfo, err := resolveTypeByName(ctx, s, info, scannedPkg, scannedPkg.ImportPath, rule.DstTypeName)
 						if err != nil {
 							return nil, fmt.Errorf("resolving validator rule destination type %q: %w", rule.DstTypeName, err)
 						}
 						rule.DstTypeInfo = dstTypeInfo
 					} else if usingFunc != "" {
-						// Conversion rule: // convert:rule "<SrcType>" -> "<DstType>", using=<func>
 						rule.UsingFunc = usingFunc
 						rule.SrcTypeName = type1Name
 						rule.DstTypeName = type2Name
-
-						srcTypeInfo, err := resolveType(info, scannedPkg, rule.SrcTypeName)
+						srcTypeInfo, err := resolveTypeByName(ctx, s, info, scannedPkg, scannedPkg.ImportPath, rule.SrcTypeName)
 						if err != nil {
 							return nil, fmt.Errorf("resolving global rule source type %q: %w", rule.SrcTypeName, err)
 						}
 						rule.SrcTypeInfo = srcTypeInfo
-
-						dstTypeInfo, err := resolveType(info, scannedPkg, rule.DstTypeName)
+						dstTypeInfo, err := resolveTypeByName(ctx, s, info, scannedPkg, scannedPkg.ImportPath, rule.DstTypeName)
 						if err != nil {
 							return nil, fmt.Errorf("resolving global rule destination type %q: %w", rule.DstTypeName, err)
 						}
 						rule.DstTypeInfo = dstTypeInfo
-					} else {
-						continue // Should not happen with the new regex
 					}
-
 					info.GlobalRules = append(info.GlobalRules, rule)
 				}
 			}
 		}
 	}
 
-	for _, rule := range info.GlobalRules {
-		log.Printf("GlobalRule: Src=%q, Dst=%q, Using=%q", rule.SrcTypeName, rule.DstTypeName, rule.UsingFunc)
-	}
 	return info, nil
 }
 
-func resolveType(info *model.ParsedInfo, p *scanner.PackageInfo, typeName string) (*scanner.TypeInfo, error) {
-	// Check for primitive types first
-	if !strings.Contains(typeName, ".") {
-		t := p.Lookup(typeName)
-		if t != nil {
+func processStruct(ctx context.Context, info *model.ParsedInfo, t *scanner.TypeInfo) (bool, error) {
+	if t.Kind != scanner.StructKind {
+		return false, nil
+	}
+	if _, exists := info.Structs[t.Name]; exists {
+		return false, nil
+	}
+
+	log.Printf("Processing newly discovered struct: %s.%s", t.PkgPath, t.Name)
+	modelStructInfo := &model.StructInfo{
+		Name: t.Name,
+		Type: t,
+	}
+
+	fields, err := collectFields(ctx, t, make(map[string]struct{}))
+	if err != nil {
+		return false, fmt.Errorf("collecting fields for struct %s: %w", t.Name, err)
+	}
+	modelStructInfo.Fields = fields
+	for i := range modelStructInfo.Fields {
+		modelStructInfo.Fields[i].ParentStruct = modelStructInfo
+	}
+	info.Structs[t.Name] = modelStructInfo
+	info.NamedTypes[t.Name] = t
+	return true, nil
+}
+
+func resolveTypeByName(ctx context.Context, s *goscan.Scanner, info *model.ParsedInfo, initialPkg *scanner.PackageInfo, currentPkgPath, typeName string) (*scanner.TypeInfo, error) {
+	// Handle built-in types
+	switch typeName {
+	case "string", "int", "bool": // Add other primitives as needed
+		return &scanner.TypeInfo{Name: typeName, Underlying: &scanner.FieldType{Name: typeName, IsBuiltin: true}}, nil
+	}
+
+	var pkgPath, name string
+	lastDot := strings.LastIndex(typeName, ".")
+
+	if lastDot == -1 {
+		// Local type, e.g., "MyType". It must be in the current package scope.
+		name = typeName
+		// Check already parsed types first.
+		if t, ok := info.NamedTypes[name]; ok {
 			return t, nil
 		}
-		// It might be a primitive type like "string", "int", etc.
-		return &scanner.TypeInfo{
-			Name: typeName,
-			Kind: scanner.AliasKind, // Treat as alias to underlying primitive
-			Underlying: &scanner.FieldType{
-				Name:      typeName,
-				IsBuiltin: true,
-			},
-		}, nil
+		// Check the initial package info.
+		if t := initialPkg.Lookup(name); t != nil {
+			return t, nil
+		}
+		return nil, fmt.Errorf("local type %q not found in package %q", name, currentPkgPath)
 	}
 
-	parts := strings.Split(typeName, ".")
-	if len(parts) != 2 {
-		return nil, fmt.Errorf("unsupported type format for resolution: %q, expected 'pkg.Type'", typeName)
-	}
-	pkgAlias := parts[0]
-	name := parts[1]
+	// Potentially qualified type, e.g., "pkg.Type" or "path/to/pkg.Type"
+	pkgStr := typeName[:lastDot]
+	name = typeName[lastDot+1:]
 
-	// Find the full import path from the alias
-	pkgPath, found := info.Imports[pkgAlias]
+	// Now resolve pkgStr to a full import path.
+	pkgPath, found := info.Imports[pkgStr] // Check //convert:import aliases
 	if !found {
-		// Fallback to searching file imports
-		for _, f := range p.AstFiles {
+		// Fallback to searching file imports of the initial package
+		for _, f := range initialPkg.AstFiles {
 			for _, i := range f.Imports {
 				path := strings.Trim(i.Path.Value, `"`)
-				if i.Name != nil && i.Name.Name == pkgAlias {
+				if i.Name != nil && i.Name.Name == pkgStr { // "alias"
 					pkgPath = path
 					found = true
 					break
 				}
-				// Heuristic: if alias matches the last part of the import path
-				if i.Name == nil && strings.HasSuffix(path, "/"+pkgAlias) {
+				if i.Name == nil && (strings.HasSuffix(path, "/"+pkgStr) || path == pkgStr) { // "pkg" or "path/pkg"
 					pkgPath = path
 					found = true
 					break
@@ -222,30 +253,30 @@ func resolveType(info *model.ParsedInfo, p *scanner.PackageInfo, typeName string
 	}
 
 	if !found {
-		// Final fallback for built-in packages like "time"
-		if pkgAlias == "time" {
-			pkgPath = "time"
+		// If it's not an alias, it might be a full import path already.
+		// Or a built-in package like "time".
+		if strings.Contains(pkgStr, "/") || pkgStr == "time" {
+			pkgPath = pkgStr
 			found = true
 		}
 	}
 
 	if !found {
-		return nil, fmt.Errorf("could not resolve package path for alias %q", pkgAlias)
+		return nil, fmt.Errorf("could not resolve package path for alias/path %q in type %q", pkgStr, typeName)
 	}
 
-	// Create a synthetic TypeInfo for the external type.
-	isBuiltIn := (pkgPath == "time") // A bit of a hack, but works for "time"
+	resolvableType := &scanner.FieldType{
+		Resolver:       s,
+		FullImportPath: pkgPath,
+		TypeName:       name,
+		Name:           name,
+	}
 
-	return &scanner.TypeInfo{
-		Name:    name,
-		PkgPath: pkgPath,
-		Kind:    scanner.InterfaceKind, // Use a generic kind
-		Underlying: &scanner.FieldType{
-			Name:               name,
-			PkgName:            pkgAlias,
-			IsResolvedByConfig: isBuiltIn, // Prevent further resolution for these types
-		},
-	}, nil
+	resolvedTypeInfo, err := resolvableType.Resolve(ctx, make(map[string]struct{}))
+	if err != nil {
+		return nil, fmt.Errorf("resolution failed for type %q in package %q: %w", name, pkgPath, err)
+	}
+	return resolvedTypeInfo, nil
 }
 
 func parseConvertTag(tag reflect.StructTag) (model.ConvertTag, error) {
@@ -289,7 +320,7 @@ func parseJSONTag(tag reflect.StructTag) string {
 	return parts[0]
 }
 
-func collectFields(ctx context.Context, t *scanner.TypeInfo, p *scanner.PackageInfo, visited map[string]struct{}) ([]model.FieldInfo, error) {
+func collectFields(ctx context.Context, t *scanner.TypeInfo, visited map[string]struct{}) ([]model.FieldInfo, error) {
 	if _, ok := visited[t.Name]; ok {
 		return nil, nil // cycle detected
 	}
@@ -302,52 +333,34 @@ func collectFields(ctx context.Context, t *scanner.TypeInfo, p *scanner.PackageI
 
 	for _, f := range t.Struct.Fields {
 		if f.Embedded {
-			// Resolve the embedded field's type to get its own fields.
-			// This requires the FieldType to be resolved to a TypeInfo.
-			embeddedTypeName := f.Type.Name
-			if f.Type.IsPointer {
-				if f.Type.Elem != nil {
-					embeddedTypeName = f.Type.Elem.Name
-				}
+			if _, err := f.Type.Resolve(ctx, make(map[string]struct{})); err != nil {
+				return nil, fmt.Errorf("resolving embedded field type %q: %w", f.Type.Name, err)
 			}
-
-			// Look up the TypeInfo for the embedded struct.
-			embeddedTypeInfo := p.Lookup(embeddedTypeName)
-			if embeddedTypeInfo == nil || embeddedTypeInfo.Struct == nil {
-				// If not found in the current package, it might be in an external package.
-				// This part requires resolving external types, which might be complex.
-				// For now, we assume embedded types are within the same scanned package.
-				log.Printf("Could not resolve embedded struct type %s, skipping", embeddedTypeName)
+			embeddedTypeInfo := f.Type.Definition
+			if embeddedTypeInfo == nil {
+				log.Printf("Could not resolve embedded struct type %s, skipping", f.Type.Name)
 				continue
 			}
 
-			// Recursively collect fields from the embedded struct.
-			embeddedFields, err := collectFields(ctx, embeddedTypeInfo, p, visited)
+			embeddedFields, err := collectFields(ctx, embeddedTypeInfo, visited)
 			if err != nil {
-				return nil, fmt.Errorf("collecting fields from embedded struct %s: %w", embeddedTypeName, err)
+				return nil, fmt.Errorf("collecting fields from embedded struct %s: %w", embeddedTypeInfo.Name, err)
 			}
 			fields = append(fields, embeddedFields...)
 		} else {
-			// This is a regular field.
 			structTag := reflect.StructTag(f.Tag)
 			tag, err := parseConvertTag(structTag)
 			if err != nil {
 				return nil, fmt.Errorf("parsing tag for %s.%s: %w", t.Name, f.Name, err)
 			}
 
-			fieldTypeInfo := p.Lookup(f.Type.Name)
-			if fieldTypeInfo == nil {
-				fieldTypeInfo = &scanner.TypeInfo{Name: f.Type.Name}
-			}
-
 			fieldInfo := model.FieldInfo{
 				Name:         f.Name,
 				OriginalName: f.Name,
 				JSONTag:      parseJSONTag(structTag),
-				TypeInfo:     fieldTypeInfo,
+				TypeInfo:     f.Type.Definition,
 				FieldType:    f.Type,
 				Tag:          tag,
-				// ParentStruct is set by the caller
 			}
 			fields = append(fields, fieldInfo)
 		}

@@ -74,7 +74,8 @@ type MyTime time.Time
 		t.Fatalf("ScanFiles() failed: %v", err)
 	}
 
-	got, err := Parse(context.Background(), pkg)
+	// The main scanner `s` is now passed to Parse.
+	got, err := Parse(context.Background(), s, pkg)
 	if err != nil {
 		t.Fatalf("Parse() failed: %v", err)
 	}

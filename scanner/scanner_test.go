@@ -204,9 +204,28 @@ func TestScanFiles(t *testing.T) {
 			filepath.Join(testdataDir, "features.go"),     // package features
 			filepath.Join(testdataDir, "differentpkg.go"), // package otherfeatures
 		}
-		_, err := s.ScanFiles(context.Background(), filePaths, testdataDir)
-		if err == nil {
-			t.Error("Expected error when scanning files from different packages, got nil")
+		// With the new lenient logic, this should not return an error.
+		pkgInfo, err := s.ScanFiles(context.Background(), filePaths, testdataDir)
+		if err != nil {
+			t.Fatalf("Expected no error when scanning files from different packages, got %v", err)
+		}
+
+		// It should have processed only the files from the first package.
+		if pkgInfo.Name != "features" {
+			t.Errorf("Expected package name to be 'features', got %q", pkgInfo.Name)
+		}
+		if len(pkgInfo.Files) != 1 {
+			t.Errorf("Expected only 1 file to be processed, got %d", len(pkgInfo.Files))
+		}
+		if filepath.Base(pkgInfo.Files[0]) != "features.go" {
+			t.Errorf("Expected processed file to be 'features.go', got %s", pkgInfo.Files[0])
+		}
+
+		// Verify that types from the skipped package are not present.
+		for _, ti := range pkgInfo.Types {
+			if ti.Name == "OtherItem" { // OtherItem is in differentpkg.go
+				t.Error("Found type 'OtherItem' from skipped package 'otherfeatures'")
+			}
 		}
 	})
 

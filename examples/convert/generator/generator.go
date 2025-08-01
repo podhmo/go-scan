@@ -472,17 +472,21 @@ func generateConversion(im *goscan.ImportManager, info *model.ParsedInfo, src, d
 	}
 
 	// Structs
-	if isStruct(srcT) && isStruct(dstT) && srcT.Name != "" && dstT.Name != "" {
-		// This should be a pointer type, but we handle both cases.
-		srcPtr := src
-		if !srcT.IsPointer {
-			srcPtr = "&" + src
+	if isStruct(srcT) && isStruct(dstT) {
+		srcName := getBaseTypeName(srcT)
+		dstName := getBaseTypeName(dstT)
+		if srcName != "" && dstName != "" {
+			// This should be a pointer type, but we handle both cases.
+			srcPtr := src
+			if !srcT.IsPointer {
+				srcPtr = "&" + src
+			}
+			conversion := fmt.Sprintf("*convert%sTo%s(%s, %s, %s)", srcName, dstName, ctxVar, ecVar, srcPtr)
+			if dst != "" {
+				return fmt.Sprintf("%s = %s", dst, conversion)
+			}
+			return conversion
 		}
-		conversion := fmt.Sprintf("*convert%sTo%s(%s, %s, %s)", srcT.Name, dstT.Name, ctxVar, ecVar, srcPtr)
-		if dst != "" {
-			return fmt.Sprintf("%s = %s", dst, conversion)
-		}
-		return conversion
 	}
 
 	// Basic assignment
@@ -570,6 +574,21 @@ func getTypeName(im *goscan.ImportManager, t *scanner.FieldType) string {
 		return fmt.Sprintf("map[%s]%s", keyType, valType)
 	}
 	return im.Qualify(t.FullImportPath, t.Name)
+}
+
+func getBaseTypeName(t *scanner.FieldType) string {
+	if t == nil {
+		return ""
+	}
+	if t.IsPointer {
+		return getBaseTypeName(t.Elem)
+	}
+	// For external types, TypeName holds the unqualified name.
+	// For local types, Name is already unqualified.
+	if t.TypeName != "" {
+		return t.TypeName
+	}
+	return t.Name
 }
 
 func isStruct(t *scanner.FieldType) bool {

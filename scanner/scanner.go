@@ -165,12 +165,16 @@ func (s *Scanner) ScanFiles(ctx context.Context, filePaths []string, pkgDirPath 
 			return nil, fmt.Errorf("failed to parse file %s: %w", filePath, err)
 		}
 
-		if info.Name == "" {
-			info.Name = fileAst.Name.Name
+		if firstPackageName == "" {
 			firstPackageName = fileAst.Name.Name
+			info.Name = firstPackageName
 		} else if fileAst.Name.Name != firstPackageName {
-			return nil, fmt.Errorf("mismatched package names: %s and %s in directory %s",
-				firstPackageName, fileAst.Name.Name, pkgDirPath)
+			slog.WarnContext(ctx, "Skipping file with mismatched package name in directory",
+				"directory", pkgDirPath,
+				"expected_package", firstPackageName,
+				"found_package", fileAst.Name.Name,
+				"file_path", filePath)
+			continue // Skip this file
 		}
 
 		info.Files = append(info.Files, filePath) // Store absolute file path

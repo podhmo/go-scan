@@ -76,7 +76,7 @@ func run(ctx context.Context, pkgpath, workdir, output, pkgname string) error {
 	}
 
 	slog.DebugContext(ctx, "Parsing package", "path", scannedPkg.ImportPath)
-	info, err := parser.Parse(ctx, scannedPkg)
+	info, err := parser.Parse(ctx, s, scannedPkg)
 	if err != nil {
 		return fmt.Errorf("failed to parse package info: %w", err)
 	}

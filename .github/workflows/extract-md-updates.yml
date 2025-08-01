@@ -25,7 +25,7 @@ jobs:
       - name: Get original PR base branch
         id: pr_info
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.CREATE_PULL_REQUEST }}
         run: |
           PR_NUMBER=${{ github.event.inputs.pull_request_number }}
           BASE_BRANCH=$(gh pr view $PR_NUMBER --json baseRefName -q '.baseRefName')
@@ -33,7 +33,7 @@ jobs:
 
       - name: Extract and commit .md files
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.CREATE_PULL_REQUEST }}
         run: |
           set -e
           PR_NUMBER=${{ github.event.inputs.pull_request_number }}

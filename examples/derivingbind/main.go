@@ -217,17 +217,17 @@ func Generate(ctx context.Context, gscn *goscan.Scanner, pkgInfo *scanner.Packag
 			// ImportManager's role here is mainly to ensure the *package* is imported,
 			// not to rewrite these type strings unless they are being constructed from parts.
 			originalFieldTypeStr := field.Type.String()
-			if field.Type.FullImportPath() != "" && field.Type.FullImportPath() != pkgInfo.ImportPath {
+			if field.Type.FullImportPath != "" && field.Type.FullImportPath != pkgInfo.ImportPath {
 				// Ensure the package of this field type is registered for import
-				originalFieldTypeStr = importManager.Qualify(field.Type.FullImportPath(), field.Type.Name)
+				originalFieldTypeStr = importManager.Qualify(field.Type.FullImportPath, field.Type.Name)
 				if field.Type.IsSlice && field.Type.Elem != nil {
-					sliceElemStr := importManager.Qualify(field.Type.Elem.FullImportPath(), field.Type.Elem.Name)
+					sliceElemStr := importManager.Qualify(field.Type.Elem.FullImportPath, field.Type.Elem.Name)
 					if field.Type.Elem.IsPointer {
 						sliceElemStr = "*" + sliceElemStr
 					}
 					originalFieldTypeStr = "[]" + sliceElemStr
 				} else if field.Type.IsPointer && field.Type.Elem != nil {
-					originalFieldTypeStr = "*" + importManager.Qualify(field.Type.Elem.FullImportPath(), field.Type.Elem.Name)
+					originalFieldTypeStr = "*" + importManager.Qualify(field.Type.Elem.FullImportPath, field.Type.Elem.Name)
 				}
 			}
 
@@ -247,7 +247,7 @@ func Generate(ctx context.Context, gscn *goscan.Scanner, pkgInfo *scanner.Packag
 				fInfo.IsSlice = true
 				if currentScannerType.Elem != nil {
 					// For SliceElementType, we also want the potentially qualified name for the template
-					fInfo.SliceElementType = importManager.Qualify(currentScannerType.Elem.FullImportPath(), currentScannerType.Elem.Name)
+					fInfo.SliceElementType = importManager.Qualify(currentScannerType.Elem.FullImportPath, currentScannerType.Elem.Name)
 					if currentScannerType.Elem.IsPointer {
 						fInfo.SliceElementType = "*" + fInfo.SliceElementType
 					}

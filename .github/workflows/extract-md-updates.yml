@@ -27,75 +27,80 @@ jobs:
       - name: Get original PR base branch
         id: pr_info
         env:
-          # ghコマンドの実行にはトークンが必要
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # ghコマンドの実行にはGITHUB_TOKENが必要
+          GH_TOKEN: ${{ secrets.CREATE_PULL_REQUEST }}
         run: |
           PR_NUMBER=${{ github.event.inputs.pull_request_number }}
           BASE_BRANCH=$(gh pr view $PR_NUMBER --json baseRefName -q '.baseRefName')
           echo "base_branch=$BASE_BRANCH" >> $GITHUB_OUTPUT
 
-      # Step 4: PRの変更内容（追加・変更・削除）を適用
+      # Step 4: PRの変更内容（追加・変更・削除・リネーム）を適用
       - name: Apply markdown changes from PR
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.CREATE_PULL_REQUEST }}
+          PR_NUMBER: ${{ github.event.inputs.pull_request_number }}
+          REPO: ${{ github.repository }}
         run: |
           set -e
-          PR_NUMBER=${{ github.event.inputs.pull_request_number }}
           BASE_BRANCH=${{ steps.pr_info.outputs.base_branch }}
 
           # 作業の基準として、まずPRのベースブランチをチェックアウトする
           echo "Checking out base branch: ${BASE_BRANCH}"
           git checkout $BASE_BRANCH
           
-          # 対象PRのブランチをフェッチし、'pr-branch'という名前で参照できるようにする
+          # 対象PRのブランチをフェッチし、'pr-branch'という名前でローカルに作成
+          echo "Fetching PR branch..."
           git fetch origin pull/$PR_NUMBER/head:pr-branch
 
-          # PRで変更された.mdファイルのリスト（ステータス付き）を取得
-          # `|| true` はgrepで何も見つからなくてもエラーにしないため
-          CHANGED_FILES=$(gh pr diff $PR_NUMBER --name-status | grep '\.md$' || true)
-
-          if [ -z "$CHANGED_FILES" ]; then
+          echo "Getting list of modified markdown files from PR #${PR_NUMBER} via GitHub API..."
+          # gh apiでPRのファイルリストを取得し、jqで.mdファイルのみにフィルタリング
+          # status, filename, previous_filename (リネーム時のみ) を含むJSONオブジェクトのリストを取得
+          MODIFIED_FILES_JSON=$(gh api "repos/$REPO/pulls/$PR_NUMBER/files" --paginate -q '[.[] | select(.filename | endswith(".md")) | {status: .status, filename: .filename, previous_filename: .previous_filename}]')
+          
+          if [ "$(echo "$MODIFIED_FILES_JSON" | jq 'length')" -eq 0 ]; then
             echo "No markdown files were modified in the pull request."
             exit 0
           fi
           
-          echo "Applying markdown changes from PR #${PR_NUMBER}..."
+          echo "Applying markdown changes..."
           
-          # IFSにタブを指定し、ファイル名にスペースが含まれていても正しく処理する
-          while IFS=$'\t' read -r status path1 path2; do
-            # statusの先頭1文字で処理を分岐
-            case "${status:0:1}" in
-              "A" | "M") # 追加 または 変更
-                echo "Applying addition/modification for: ${path1}"
+          # JSONの各要素をループ処理
+          echo "$MODIFIED_FILES_JSON" | jq -c '.[]' | while read -r line; do
+            status=$(echo "$line" | jq -r '.status')
+            filename=$(echo "$line" | jq -r '.filename')
+            # previous_filenameはリネーム以外では 'null' 文字列になる
+            previous_filename=$(echo "$line" | jq -r '.previous_filename')
+
+            case "$status" in
+              "added" | "modified")
+                echo "Applying addition/modification for: ${filename}"
                 # 親ディレクトリが存在しない場合に備えて作成
-                mkdir -p "$(dirname "${path1}")"
+                mkdir -p "$(dirname "${filename}")"
                 # 'pr-branch'からファイルを取得
-                git checkout pr-branch -- "${path1}"
+                git checkout pr-branch -- "${filename}"
                 ;;
-              "D") # 削除
-                echo "Applying deletion for: ${path1}"
+              "removed")
+                echo "Applying deletion for: ${filename}"
                 # ファイルが存在する場合のみ削除
-                if [ -f "${path1}" ]; then
-                  rm -f "${path1}"
-                else
-                  echo "File ${path1} not found, skipping deletion."
+                if [ -f "${filename}" ]; then
+                  rm -f "${filename}"
                 fi
                 ;;
-              "R") # リネーム
-                echo "Applying rename from: ${path1} to: ${path2}"
+              "renamed")
+                echo "Applying rename from: ${previous_filename} to: ${filename}"
                 # 古いファイルを削除
-                if [ -f "${path1}" ]; then
-                  rm -f "${path1}"
+                if [ -f "${previous_filename}" ]; then
+                  rm -f "${previous_filename}"
                 fi
                 # 新しいファイルを取得
-                mkdir -p "$(dirname "${path2}")"
-                git checkout pr-branch -- "${path2}"
+                mkdir -p "$(dirname "${filename}")"
+                git checkout pr-branch -- "${filename}"
                 ;;
               *)
-                echo "Unknown status '${status}' for '${path1}'"
+                echo "Unknown status '${status}' for '${filename}'"
                 ;;
             esac
-          done <<< "$CHANGED_FILES"
+          done
 
       # Step 5: 変更内容を元に新しいプルリクエストを作成
       - name: Create Pull Request

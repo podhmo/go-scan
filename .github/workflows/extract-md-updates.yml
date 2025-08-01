@@ -46,7 +46,13 @@ jobs:
           fi
 
           for file in $MD_FILES; do
-            git checkout pr-$PR_NUMBER -- $file
+            if [ "$file" = "TODO.md" ]; then
+              # Special handling for TODO.md: turn [x] back to [ ]
+              git show "pr-$PR_NUMBER:$file" | sed 's/\[x\]/\[ \]/g' > "$file"
+            else
+              # Default behavior for other .md files
+              git checkout "pr-$PR_NUMBER" -- "$file"
+            fi
           done
 
       - name: Create Pull Request

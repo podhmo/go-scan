@@ -118,7 +118,6 @@ Based on the plan in [docs/plan-multi-package-handling.md](./docs/plan-multi-pac
 **Part 3: CI and Regression Prevention**
 *   [ ] **Add CI Check for `examples/convert`**:
     *   [ ] Add a new target to the `Makefile` to run the `examples/convert` tool.
-    *   [ ] Add a step to the CI workflow to execute this `make` target to ensure it runs without panicking.
 
 ### Known Issues
 

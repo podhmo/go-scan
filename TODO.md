@@ -41,7 +41,6 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 -   **Variadic Parameter Parsing**: Correctly parses variadic parameters (e.g., `...string`) as slice types (e.g., `[]string`) within function signatures. The `IsVariadic` flag on `FunctionInfo` is set, and the parameter's `FieldType` accurately reflects the corresponding slice type.
 -   **Initial `convert` Tool Implementation**: Implemented the CLI entrypoint and a basic parser for the `convert` tool. The tool now uses a `@derivingconvert(DstType)` annotation on source types to define conversion pairs, as documented in the updated `docs/plan-neo-convert.md`.
 -   **Improved Import Management**: Handle import alias collisions robustly. By pre-registering types with the `ImportManager` and using `golang.org/x/tools/imports` for final output formatting, the generator now correctly handles complex import scenarios and avoids unused imports.
-
 -   **`convert` Tool Implementation**: as described in [docs/plan-neo-convert.md](docs/plan-neo-convert.md)
     -   [x] **Generator for Structs**: Implement the code generator to produce conversion functions for basic struct-to-struct conversions based on the parsed `ConversionPair` model.
         -   [x] Generate a top-level `Convert<Src>To<Dst>` function.
@@ -90,18 +89,30 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 
 ## To Be Implemented
 
-### Multi-Package Support for Code Generation
-*   [ ] **Enhance `go-scan` Core for Multi-Package Context**:
-    *   [ ] Refactor `goscan.Scanner` to act as a unified context, managing a cache of all scanned packages.
-    *   [ ] Modify type resolution logic to search for types across all packages in the scanner's cache.
-*   [ ] **Refactor `convert` Tool for On-Demand Scanning**:
-    *   [ ] Update `convert/parser` to parse destination types from `@derivingconvert` annotations.
-    *   [ ] Implement lazy scanning by calling `scanner.ScanPackageByImport` from the parser when an external package is encountered.
-*   [ ] **Improve `convert` Generator for Cross-Package Types**:
-    *   [ ] Fix type name generation to correctly qualify types from external packages using the `ImportManager`.
-*   [ ] **Update Tests for Multi-Package Scenarios**:
-    *   [ ] Add unit tests to `go-scan` for cross-package type resolution.
-    *   [ ] Update `convert` integration tests to cover code generation between different packages.
+### Refined Multi-Package Type Resolution
+Based on the plan in [docs/plan-multi-package-handling.md](./docs/plan-multi-package-handling.md).
+
+*   [ ] **Core `go-scan` Enhancements for Lazy Resolution**:
+    *   [ ] The parent `goscan.Scanner` must pass a reference to itself to the internal `scanner.Scanner` upon creation.
+    *   [ ] The `scanner.FieldType` struct must be modified to store the reference to the parent `goscan.Scanner`.
+    *   [ ] Implement the `Resolve()` method on `scanner.FieldType` to trigger lazy-loading. This method will:
+        *   Use the parent `goscan.Scanner` reference to request a package scan via its import path.
+        *   Handle the caching logic within the parent `goscan.Scanner` to ensure packages are only scanned once.
+        *   Look up and return the resolved `TypeInfo` from the scanned package.
+
+*   [ ] **Refactor `examples/convert` to Use Lazy Resolution**:
+    *   [ ] Simplify the `main.go` entrypoint to only scan the initial source package.
+    *   [ ] Remove manual `ScanPackageByImport` calls from the `parser`.
+    *   [ ] Modify the `parser` to call `FieldType.Resolve()` on the destination type parsed from the `@derivingconvert` annotation.
+
+*   [ ] **Generator Improvements**:
+    *   [ ] Ensure the `generator` uses the `PkgPath` from the fully resolved `TypeInfo` to correctly qualify type names with the `ImportManager`.
+
+*   [ ] **New Tests for Multi-Package Resolution**:
+    *   [ ] Add a unit test (`TestFieldType_Resolve_CrossPackage`) to `go-scan` to verify that resolving a type from an uncached package works correctly.
+    *   [ ] Add a unit test to `go-scan` to confirm that `Resolve()` is idempotent and does not trigger redundant scans.
+    *   [ ] Update the `examples/convert` integration tests to cover a scenario where source and destination types are in different packages.
+    -   [ ] The integration test must verify that the generated code has the correct `import` statements and compiles successfully.
 
 ### Known Issues
 

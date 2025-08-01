@@ -1,138 +1,139 @@
-# 複数パッケージにまたがる型解決の改善計画
+# Refined Plan for Multi-Package Type Resolution
 
-## 1. 概要
+## 1. Overview
 
-`go-scan` の現在の実装、特に `examples/convert` ツールでは、単一のパッケージを起点としたスキャンしか想定されていない。しかし、パッケージをまたいだコード生成（例：`source` パッケージの型から `destination` パッケージの型への変換）を行うには、複数のパッケージから型情報を収集し、それらを関連付けて解決する仕組みが必要不可欠である。
+The current implementation of `go-scan` is primarily designed for single-package scanning. To support advanced code generation tools like `examples/convert`, which must operate across package boundaries (e.g., converting a type from a `source` package to a type in a `destination` package), the core type resolution mechanism must be enhanced.
 
-`docs/ja/trouble-from-convert.md` に記述されているように、`main.go` で複数の `scanner.PackageInfo` を手動でマージするアプローチは、`parser` や `generator` がその構造を想定していないため、多くの問題を引き起こした。
+This plan outlines a refined approach to solve this problem by introducing a robust, lazy-loading type resolution system. The central `goscan.Scanner` will act as a "unified package context," while the actual scanning of external packages will be deferred until a type from that package is explicitly requested. This respects the library's design principle of lazy, on-demand parsing and simplifies the API for consumers.
 
-本計画では、この問題を根本的に解決するため、`go-scan` のコア機能を拡張し、複数のパッケージ情報を一元的に管理・解決する「統合パッケージコンテキスト」の概念を導入する。これにより、`examples/convert` のようなツールは、よりクリーンで堅牢な方法で複数パッケージを扱えるようになる。
+## 2. Core Concepts
 
-## 2. TODOリスト
+### 2.1. The Unified Package Context (`goscan.Scanner`)
 
--   **`go-scan` のコア機能拡張**:
-    -   `goscan.Scanner` を、スキャンした全パッケージ情報を保持する「統合コンテキスト」として機能するように強化する。
-    -   型解決ロジックを修正し、コンテキスト内の全パッケージを横断して型を検索できるようにする。
--   **`examples/convert` のリファクタリング**:
-    -   `parser` が `@derivingconvert` アノテーションを解析し、未知のパッケージを検出した際に、`goscan.Scanner` を通じて動的に（遅延して）スキャンするよう修正する。
--   **`generator` の改善**:
-    -   `ImportManager` を活用し、生成コード内で外部パッケージの型名が正しくパッケージプレフィックスで修飾されるよう修正する。
--   **テストの拡充**:
-    -   複数パッケージにまたがる型解決のユニットテストを `go-scan` に追加する。
-    -   `examples/convert` のインテグレーションテストを更新し、クロスパッケージ変換のシナリオを網羅する。
+The main `goscan.Scanner` instance will be treated as the single source of truth. It will maintain a cache of all packages that have been scanned during its lifecycle.
 
-## 3. 計画と詳細設計
+-   **Role**: To manage the global `packageCache` (`map[string]*scanner.PackageInfo`).
+-   **Functionality**: All package scanning operations, like `ScanPackageByImport`, will be idempotent. They will first check the cache and only perform a file scan if the package has not been previously loaded.
 
-### 3.1. `go-scan` のコア機能拡張: 統合パッケージコンテキスト
+### 2.2. Lazy Resolution via `FieldType.Resolve()`
 
-**目的**: `goscan.Scanner` が、単一の `Scan` 呼び出しのライフサイクルを超えて、複数のパッケージ情報を一元管理するコンテキストとして機能するようにする。
+This is the cornerstone of the new design. Instead of pre-scanning all possible dependencies, the system will automatically scan a new package only when a type within it is being resolved.
 
-**現状の課題**: `goscan.Scanner` の `packageCache` は存在するが、型解決（`ResolveType`）は、ある特定の `PackageInfo` のコンテキスト内でのみ行われることが多く、キャッシュされた他のパッケージ情報を横断的に利用する明確な仕組みがない。
+The workflow is as follows:
+1.  When the scanner parses a source file, it encounters type identifiers from other packages (e.g., `models.User` in a field definition).
+2.  It creates a `scanner.FieldType` struct for this identifier. This struct is initially **unresolved**. It contains the import path (`"path/to/models"`) and the type name (`"User"`), but not the full `TypeInfo`.
+3.  The consumer of the library (e.g., the `convert` tool) calls the `Resolve()` method on this `scanner.FieldType`.
+4.  The `Resolve()` method triggers the lazy-loading mechanism:
+    a. It requests the full `PackageInfo` for the required import path from the parent `goscan.Scanner`.
+    b. The `goscan.Scanner` checks its central cache. If the package is not present, it locates the package on disk, scans its files, and stores the new `PackageInfo` in the cache.
+    c. Once the `PackageInfo` is available, the `Resolve()` method looks up the type name (`"User"`) within that package's `Types` map.
+    d. It returns the complete `TypeInfo` for `models.User`.
 
-**変更点**:
+This process ensures that no package is scanned until it is absolutely necessary.
 
-1.  **`goscan.Scanner` の役割の明確化**:
-    -   `Scanner` インスタンスを、スキャンされた全パッケージの型情報を保持する唯一の信頼できる情報源（Single Source of Truth）として位置づける。
-    -   `packageCache` (`map[string]*scanner.PackageInfo`) をこのコンテキストの基盤とし、`ScanPackage` や `ScanPackageByImport` は常にこのキャッシュを更新・利用する。
+### 2.3. Parent-Child Scanner Relationship
 
-2.  **型解決ロジックの修正**:
-    -   `scanner.Scanner.ResolveType`（内部スキャナ）が、型を解決する際に、まず自身のパッケージ内で型を探し、見つからない場合は親の `goscan.Scanner` の `packageCache` 全体を検索するよう修正する。
-    -   このため、`scanner.Scanner` は、自身を生成した `goscan.Scanner` への参照を保持する必要がある。`goscan.Scanner.ScanFiles` を呼び出す際に、`s` (自分自身) を渡すことでこれを実現する。
+To implement lazy resolution, we must establish a clear relationship between the global scanner and the internal, per-package scanner.
+
+-   **`goscan.Scanner` (Parent)**: The public-facing scanner that manages the unified context (the package cache) and orchestrates high-level scanning operations.
+-   **`scanner.Scanner` (Child)**: The internal worker responsible for parsing the AST of a *single* package. It should not be aware of other packages.
+    -   Crucially, the `scanner.FieldType` instances created by the child scanner must retain a reference back to the parent `goscan.Scanner`. This allows the `Resolve()` method to access the global cache and trigger new scans.
+
+### 2.4. Handling Annotations and Markers
+
+A key requirement for code generators is to read annotations (e.g., `// @deriving...`) on resolved types. The lazy-loading model seamlessly supports this. When `FieldType.Resolve()` is called for a type in an external package, that package's source files are fully parsed. The resulting `TypeInfo` will contain all associated documentation and comments, making annotations available for inspection immediately after resolution.
+
+## 3. Implementation Plan
+
+### 3.1. `goscan.Scanner` and `scanner.Scanner` Modifications
+
+1.  **Pass Parent Scanner Reference**:
+    -   The `goscan.Scanner` will pass a reference to itself (`s`) to the internal `scanner.Scanner` when it initiates a scan.
+    -   This reference will be stored on the `scanner.Scanner` and subsequently attached to all `scanner.FieldType` instances it creates.
 
     ```go
-    // in goscan.go
-
-    // scanner.Scannerに、親のgoscan.Scannerへのポインタを追加
-    type Scanner struct {
-        // ... existing fields
-        parent *goscan.Scanner
-    }
-
-    // goscan.Scannerが内部スキャナを呼び出す際に自身を渡す
+    // In goscan.go
     func (s *Scanner) ScanFiles(ctx context.Context, filePaths []string) (*scanner.PackageInfo, error) {
         // ...
-        // 内部スキャナに自分自身(s)への参照を渡す
+        // The internal scanner now receives a reference to the parent `goscan.Scanner`.
         pkgInfo, err := s.scanner.ScanFiles(ctx, filesToParse, pkgDirAbs, s)
         // ...
     }
 
-    // in scanner/scanner.go
+    // In scanner/scanner.go
+    // The FieldType needs a way to call back to the parent scanner to resolve itself.
+    type FieldType struct {
+        // ... existing fields
+        parent *goscan.Scanner // Reference to the top-level scanner
+    }
 
-    // 内部スキャナのResolveTypeが親のキャッシュを参照する
-    func (s *Scanner) ResolveType(ctx context.Context, fieldType *FieldType) (*TypeInfo, error) {
-        // ...
-        // 自パッケージで見つからない場合...
-        if s.parent != nil {
-            // 親のキャッシュ全体から型を探すロジックを追加
-            pkg, err := s.parent.ScanPackageByImport(ctx, fieldType.PkgPath)
-            if err == nil && pkg != nil {
-                 // pkg.Typesから型を探す
-            }
+    // The Resolve method will use this parent reference.
+    func (ft *FieldType) Resolve() (*TypeInfo, error) {
+        if ft.IsResolved() {
+            return ft.resolved, nil
         }
-        // ...
+        if ft.parent == nil {
+            return nil, errors.New("cannot resolve type: parent scanner is not available")
+        }
+
+        // Use the parent to lazily scan the package and find the type.
+        pkgInfo, err := ft.parent.ScanPackageByImport(context.Background(), ft.PkgPath)
+        if err != nil {
+            return nil, fmt.Errorf("failed to scan package %q for type %q: %w", ft.PkgPath, ft.Name, err)
+        }
+
+        // Find the specific type definition within the newly scanned package.
+        def, ok := pkgInfo.Types[ft.Name]
+        if !ok {
+            return nil, fmt.Errorf("type %q not found in package %q", ft.Name, ft.PkgPath)
+        }
+        ft.resolved = def
+        return def, nil
     }
     ```
 
-### 3.2. `examples/convert` のリファクタリング: 遅延パッケージスキャン
+### 3.2. Refactoring `examples/convert`
 
-**目的**: `main.go` で事前にすべてのパッケージをスキャンするのではなく、`parser` がアノテーションを解釈する過程で、必要になったパッケージをその場でスキャンする。
+The `convert` tool will be refactored to demonstrate the power and simplicity of the new approach.
 
-**変更点**:
+1.  **Simplify `main.go`**:
+    -   The `main` function will only be responsible for scanning the initial source package specified by the `-pkg` flag. It will no longer need to manually pre-scan destination packages.
 
-1.  **`convert/main.go` のシンプル化**:
-    -   `-pkg` フラグで指定された単一のソースパッケージを `s.ScanPackage()` でスキャンするだけの、シンプルな作りに留める。
-
-2.  **`convert/parser/parser.go` の機能強化**:
-    -   `Parse` 関数が `*goscan.Scanner` のインスタンスを引数として受け取るようにする。
-    -   `@derivingconvert(pkg.DstType)` のようなアノテーションを解析する。
-    -   `pkg` 部分のインポートパスを特定する。
-    -   `s.ScanPackageByImport(ctx, destinationImportPath)` を呼び出す。これにより、宛先パッケージの型情報が `goscan.Scanner` の中央キャッシュにロードされる。
-    -   キャッシュが更新された後、`DstType` の型情報を `Scanner` に問い合わせて取得する。
+2.  **Enhance `parser/parser.go`**:
+    -   The `Parse` function will no longer need to manually trigger scans.
+    -   When it parses an annotation like `@derivingconvert(pkg.DstType)`, it will resolve the `DstType`'s `TypeInfo` by simply calling the `Resolve()` method on its `FieldType`. The lazy-loading mechanism will handle the scanning of `pkg` automatically.
 
     ```go
     // in examples/convert/parser/parser.go
-
-    // Parse関数が*goscan.Scannerを受け取る
     func Parse(ctx context.Context, s *goscan.Scanner, scannedPkg *scanner.PackageInfo) (*Info, error) {
         // ...
         for _, t := range scannedPkg.Types {
-            // @derivingconvert アノテーションを解析
-            // ...
-            // dstPkgPath と dstTypeName を取得
-            // ...
+            // After parsing the annotation and finding the destination type identifier...
+            // e.g., we have a `FieldType` for the destination type.
 
-            // 宛先パッケージを動的にスキャン
-            _, err := s.ScanPackageByImport(ctx, dstPkgPath)
+            // Simply resolve it. The scanner handles the lazy-loading.
+            dstTypeInfo, err := destinationFieldType.Resolve()
             if err != nil {
-                return nil, fmt.Errorf("failed to scan destination package %q: %w", dstPkgPath, err)
+                return nil, fmt.Errorf("failed to resolve destination type: %w", err)
             }
 
-            // 改めて型情報を解決する
-            dstTypeInfo, err := s.ResolveType(...) // ResolveTypeはgoscan.Scannerのメソッドとして提供する必要があるかもしれない
-            // ...
+            // Now dstTypeInfo is fully populated, including its documentation and fields.
+            // We can inspect it for further annotations or properties.
         }
         // ...
     }
     ```
 
-### 3.3. `generator` の改善: 正確な型名生成
+### 3.3. `generator` Improvements
 
-**目的**: 生成されるコードにおいて、異なるパッケージの型名を `ImportManager` を用いて正しく修飾する。
+The `generator` will use the `TypeInfo.PkgPath` to correctly qualify type names from different packages, leveraging the `ImportManager` as originally planned. Since `Resolve()` provides the full `TypeInfo`, the generator has all the information it needs.
 
-**変更点**:
+## 4. Testing Plan
 
-1.  **`generator/generator.go` の `getTypeName` (またはそれに類する関数) の修正**:
-    -   `TypeInfo` が持つ `PkgPath`（インポートパス）と、現在コードを生成しているパッケージのインポートパスを比較する。
-    -   インポートパスが異なる場合、その `PkgPath` を `ImportManager` に登録し、適切なパッケージエイリアス（またはパッケージ名）を取得する。
-    -   `alias.TypeName` の形式で、修飾された型名を返す。
-    -   インポートパスが同じ場合は、型名のみを返す。
-
-## 4. テスト計画
-
--   **`goscan` のユニットテスト**:
-    -   `TestResolveType_CrossPackage` のようなテストケースを追加する。
-    -   `Scanner` に2つの異なるパッケージ（例：`pkgA`, `pkgB`）をスキャンさせ、`pkgA` の型定義内から `pkgB` の型が正しく解決できることを検証する。
--   **`examples/convert` のインテグレーションテスト**:
-    -   `scantest` を使用して、`source` と `destination` が異なるパッケージに存在するテストケースを整備する。
-    -   `main_test.go` から `convert` の `run` 関数を呼び出し、生成されたコードがコンパイル可能であり、かつ期待通りに動作することを確認する。
-    -   生成されたコードに、正しい `import` 文と、正しく修飾された型名が含まれていることをアサーションで確認する。
+-   **Unit Tests for `go-scan`**:
+    -   Create a test `TestFieldType_Resolve_CrossPackage` that verifies `FieldType.Resolve()` can successfully scan and resolve a type from a separate, uncached package.
+    -   Add a test to ensure that calling `Resolve()` multiple times on the same type only triggers one scan.
+-   **Integration Tests for `examples/convert`**:
+    -   Update the integration tests to use a scenario where the `source` and `destination` types reside in different packages.
+    -   Verify that the generated code compiles and includes the correct `import` statement for the destination package.
+    -   Assert that the generated code performs the conversion correctly.

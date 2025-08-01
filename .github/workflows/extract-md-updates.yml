@@ -14,41 +14,90 @@ jobs:
       contents: write
       pull-requests: write
     steps:
+      # Step 1: リポジトリをチェックアウト
       - uses: actions/checkout@v4
 
+      # Step 2: Gitのユーザー情報を設定
       - name: Set up Git
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
+      # Step 3: 対象PRのベースブランチ名を取得
       - name: Get original PR base branch
         id: pr_info
         env:
-          GH_TOKEN: ${{ secrets.CREATE_PULL_REQUEST }}
+          # ghコマンドの実行にはトークンが必要
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           PR_NUMBER=${{ github.event.inputs.pull_request_number }}
           BASE_BRANCH=$(gh pr view $PR_NUMBER --json baseRefName -q '.baseRefName')
           echo "base_branch=$BASE_BRANCH" >> $GITHUB_OUTPUT
 
-      - name: Extract .md files
+      # Step 4: PRの変更内容（追加・変更・削除）を適用
+      - name: Apply markdown changes from PR
         env:
-          GH_TOKEN: ${{ secrets.CREATE_PULL_REQUEST }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -e
           PR_NUMBER=${{ github.event.inputs.pull_request_number }}
-          git fetch origin pull/$PR_NUMBER/head:pr-$PR_NUMBER
+          BASE_BRANCH=${{ steps.pr_info.outputs.base_branch }}
 
-          MD_FILES=$(gh pr diff $PR_NUMBER --name-only | grep '\.md$' || true)
+          # 作業の基準として、まずPRのベースブランチをチェックアウトする
+          echo "Checking out base branch: ${BASE_BRANCH}"
+          git checkout $BASE_BRANCH
+          
+          # 対象PRのブランチをフェッチし、'pr-branch'という名前で参照できるようにする
+          git fetch origin pull/$PR_NUMBER/head:pr-branch
 
-          if [ -z "$MD_FILES" ]; then
-            echo "No markdown files found in the pull request."
+          # PRで変更された.mdファイルのリスト（ステータス付き）を取得
+          # `|| true` はgrepで何も見つからなくてもエラーにしないため
+          CHANGED_FILES=$(gh pr diff $PR_NUMBER --name-status | grep '\.md$' || true)
+
+          if [ -z "$CHANGED_FILES" ]; then
+            echo "No markdown files were modified in the pull request."
             exit 0
           fi
+          
+          echo "Applying markdown changes from PR #${PR_NUMBER}..."
+          
+          # IFSにタブを指定し、ファイル名にスペースが含まれていても正しく処理する
+          while IFS=$'\t' read -r status path1 path2; do
+            # statusの先頭1文字で処理を分岐
+            case "${status:0:1}" in
+              "A" | "M") # 追加 または 変更
+                echo "Applying addition/modification for: ${path1}"
+                # 親ディレクトリが存在しない場合に備えて作成
+                mkdir -p "$(dirname "${path1}")"
+                # 'pr-branch'からファイルを取得
+                git checkout pr-branch -- "${path1}"
+                ;;
+              "D") # 削除
+                echo "Applying deletion for: ${path1}"
+                # ファイルが存在する場合のみ削除
+                if [ -f "${path1}" ]; then
+                  rm -f "${path1}"
+                else
+                  echo "File ${path1} not found, skipping deletion."
+                fi
+                ;;
+              "R") # リネーム
+                echo "Applying rename from: ${path1} to: ${path2}"
+                # 古いファイルを削除
+                if [ -f "${path1}" ]; then
+                  rm -f "${path1}"
+                fi
+                # 新しいファイルを取得
+                mkdir -p "$(dirname "${path2}")"
+                git checkout pr-branch -- "${path2}"
+                ;;
+              *)
+                echo "Unknown status '${status}' for '${path1}'"
+                ;;
+            esac
+          done <<< "$CHANGED_FILES"
 
-          for file in $MD_FILES; do
-            git checkout pr-$PR_NUMBER -- $file
-          done
-
+      # Step 5: 変更内容を元に新しいプルリクエストを作成
       - name: Create Pull Request
         uses: peter-evans/create-pull-request@v6
         with:

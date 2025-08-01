@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/podhmo/go-scan/scanner"
+	"golang.org/x/mod/module"
 )
 
 // setupTestModuleWithContent creates a temporary module structure for testing.
@@ -61,7 +62,7 @@ func TestNew(t *testing.T) {
 		startLookupPath, cleanup := setupTestModule(t, moduleName)
 		defer cleanup()
 
-		l, err := New(startLookupPath, nil) // No overlay
+		l, err := New(startLookupPath) // No options
 		if err != nil {
 			t.Fatalf("New() returned an error: %v", err)
 		}
@@ -89,7 +90,7 @@ func TestNew(t *testing.T) {
 			"go.mod": []byte(overlayContent),
 		}
 
-		l, err := New(startLookupPath, overlay)
+		l, err := New(startLookupPath, WithOverlay(overlay))
 		if err != nil {
 			t.Fatalf("New() with overlay returned an error: %v", err)
 		}
@@ -102,7 +103,7 @@ func TestNew(t *testing.T) {
 		overlayWithReplace := scanner.Overlay{
 			"go.mod": []byte("module example.com/rp\nreplace example.com/a => ./b"),
 		}
-		l, err = New(startLookupPath, overlayWithReplace)
+		l, err = New(startLookupPath, WithOverlay(overlayWithReplace))
 		if err != nil {
 			t.Fatalf("New() with overlay and replace returned an error: %v", err)
 		}
@@ -121,7 +122,7 @@ func TestFindPackageDir(t *testing.T) {
 	// moduleActualRootDir is where go.mod is.
 	moduleActualRootDir := filepath.Dir(filepath.Dir(startLookupPath))
 
-	l, err := New(startLookupPath, nil)
+	l, err := New(startLookupPath)
 	if err != nil {
 		t.Fatalf("New() returned an error: %v", err)
 	}
@@ -333,7 +334,7 @@ replace example.com/prefixmod => ./local/prefixmod
 			moduleRootDir, startLookupPath, cleanup := setupTestModuleWithContent(t, currentGoModContent, tt.subDirsToCreate)
 			defer cleanup()
 
-			l, err := New(startLookupPath, nil)
+			l, err := New(startLookupPath)
 			if err != nil {
 				// This might indicate an issue with go.mod parsing in New() if the go.mod was intended to be valid.
 				t.Fatalf("Test %q: New() returned an error: %v. go.mod content:\n%s", tt.name, err, currentGoModContent)
@@ -413,7 +414,7 @@ replace example.com/parent => ../
 	}
 
 	// 3. Test: from within the sub-module, locate a package in the parent module via replace
-	l, err := New(subDir, nil)
+	l, err := New(subDir)
 	if err != nil {
 		t.Fatalf("New() failed in sub-directory: %v", err)
 	}
@@ -433,4 +434,145 @@ replace example.com/parent => ../
 	if foundPathAbs != expectedPath {
 		t.Errorf("Expected path %q, got %q", expectedPath, foundPathAbs)
 	}
+}
+
+func TestFindPackageDirWithGoModuleResolver(t *testing.T) {
+	// Setup: Create a fake GOMODCACHE
+	fakeGoModCache, err := os.MkdirTemp("", "gomodcache-*")
+	if err != nil {
+		t.Fatalf("failed to create fake gomodcache: %v", err)
+	}
+	defer os.RemoveAll(fakeGoModCache)
+
+	// Setup: Create a fake external module in the cache
+	depPath := "github.com/some/dependency"
+	depVersion := "v1.2.3"
+	depDir := filepath.Join(fakeGoModCache, depPath+"@"+depVersion, "pkg")
+	if err := os.MkdirAll(depDir, 0755); err != nil {
+		t.Fatalf("failed to create fake dependency dir: %v", err)
+	}
+
+	// Setup: Create another fake external module with uppercase letters
+	depPathWithUpper := "github.com/Azure/go-autorest"
+	escapedDepPath, _ := module.EscapePath(depPathWithUpper)
+	depVersionWithUpper := "v0.1.0"
+	depDirWithUpper := filepath.Join(fakeGoModCache, escapedDepPath+"@"+depVersionWithUpper, "autorest")
+	if err := os.MkdirAll(depDirWithUpper, 0755); err != nil {
+		t.Fatalf("failed to create fake dependency dir: %v", err)
+	}
+
+	// Setup: Create a test module that requires the fake dependency
+	goModContent := `
+module example.com/testproject
+go 1.18
+require (
+	github.com/some/dependency v1.2.3
+	github.com/Azure/go-autorest v0.1.0
+)
+`
+	_, startPath, cleanup := setupTestModuleWithContent(t, goModContent, []string{"cmd"})
+	defer cleanup()
+
+	originalGoModCache := os.Getenv("GOMODCACHE")
+	os.Setenv("GOMODCACHE", fakeGoModCache)
+	defer os.Setenv("GOMODCACHE", originalGoModCache)
+
+	testCases := []struct {
+		name                 string
+		importPath           string
+		useResolver          bool
+		expectFound          bool
+		expectedPathContains string
+	}{
+		// Standard Library tests
+		{"stdlib_found_with_resolver", "fmt", true, true, filepath.Join("src", "fmt")},
+		{"stdlib_not_found_without_resolver_heuristic_miss", "net/http", false, false, ""}, // This might pass if old heuristic is kept, but new logic is what we test
+		{"stdlib_subpkg_found_with_resolver", "net/http", true, true, filepath.Join("src", "net", "http")},
+
+		// External Dependency tests
+		{"external_dep_found_with_resolver", "github.com/some/dependency/pkg", true, true, depDir},
+		{"external_dep_not_found_without_resolver", "github.com/some/dependency/pkg", false, false, ""},
+		{"external_dep_root_found_with_resolver", "github.com/some/dependency", true, true, filepath.Dir(depDir)},
+		{"external_dep_with_upper_found", "github.com/Azure/go-autorest/autorest", true, true, depDirWithUpper},
+
+		// Negative tests
+		{"non_existent_dep_not_found", "github.com/non/existent", true, false, ""},
+		{"package_in_module_still_found", "example.com/testproject/cmd", true, true, "cmd"},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			var opts []Option
+			if tc.useResolver {
+				opts = append(opts, WithGoModuleResolver())
+			}
+
+			// The overlay needs to be passed via an option now
+			overlay := scanner.Overlay{"go.mod": []byte(goModContent)}
+			opts = append(opts, WithOverlay(overlay))
+
+			l, err := New(startPath, opts...)
+			if err != nil {
+				t.Fatalf("New() failed: %v", err)
+			}
+
+			foundPath, err := l.FindPackageDir(tc.importPath)
+
+			if tc.expectFound {
+				if err != nil {
+					t.Errorf("expected to find path for %q, but got error: %v", tc.importPath, err)
+					return
+				}
+				absFoundPath, _ := filepath.Abs(foundPath)
+				if !strings.Contains(absFoundPath, tc.expectedPathContains) {
+					t.Errorf("expected found path %q to contain %q", absFoundPath, tc.expectedPathContains)
+				}
+			} else { // expect not found
+				if err == nil {
+					t.Errorf("expected error for %q, but found path: %q", tc.importPath, foundPath)
+				}
+			}
+		})
+	}
+}
+
+func TestGetGoModCache(t *testing.T) {
+	t.Run("GOMODCACHE_is_set", func(t *testing.T) {
+		expected := "/test/gomodcache"
+		original := os.Getenv("GOMODCACHE")
+		os.Setenv("GOMODCACHE", expected)
+		defer os.Setenv("GOMODCACHE", original)
+
+		path, err := getGoModCache()
+		if err != nil {
+			t.Fatalf("getGoModCache() error = %v", err)
+		}
+		if path != expected {
+			t.Errorf("got %v, want %v", path, expected)
+		}
+	})
+
+	t.Run("GOPATH_is_set", func(t *testing.T) {
+		gopath := "/test/gopath"
+		originalGOMODCACHE := os.Getenv("GOMODCACHE")
+		originalGOPATH := os.Getenv("GOPATH")
+		os.Setenv("GOMODCACHE", "") // Unset
+		os.Setenv("GOPATH", gopath)
+		defer func() {
+			os.Setenv("GOMODCACHE", originalGOMODCACHE)
+			os.Setenv("GOPATH", originalGOPATH)
+		}()
+
+		expected := filepath.Join(gopath, "pkg", "mod")
+		path, err := getGoModCache()
+		if err != nil {
+			t.Fatalf("getGoModCache() error = %v", err)
+		}
+		if path != expected {
+			t.Errorf("got %v, want %v", path, expected)
+		}
+	})
+
+	// Testing the home directory case is complex as it depends on the user's environment.
+	// We'll skip it as the two main cases are covered.
 }

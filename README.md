@@ -45,8 +45,11 @@ import (
 func main() {
 	ctx := context.Background() // Or your application's context
 
-	// Create a new scanner, starting search for go.mod from the current directory
-	scanner, err := goscan.New(".")
+	// Create a new scanner.
+	// By default, it only scans packages within the current Go module.
+	// To enable resolution of standard library and external packages from the module cache,
+	// use the `WithGoModuleResolver` option.
+	scanner, err := goscan.New(".", goscan.WithGoModuleResolver())
 	if err != nil {
 		slog.ErrorContext(ctx, "Failed to create scanner", slog.Any("error", err))
 		os.Exit(1)

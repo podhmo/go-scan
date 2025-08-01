@@ -5,11 +5,13 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 
 	"github.com/podhmo/go-scan/scanner"
+	"golang.org/x/mod/module"
 )
 
 // ReplaceDirective represents a single replace directive in a go.mod file.
@@ -27,12 +29,46 @@ type Locator struct {
 	rootDir    string
 	replaces   []ReplaceDirective
 	overlay    scanner.Overlay
+
+	// Options for advanced resolution
+	UseGoModuleResolver bool
+	goRoot              string
+	goModCache          string
+	requires            map[string]string // module path -> version
+}
+
+// Option is a functional option for configuring the Locator.
+type Option func(*Locator)
+
+// WithOverlay provides in-memory file content for go.mod.
+func WithOverlay(overlay scanner.Overlay) Option {
+	return func(l *Locator) {
+		if l.overlay == nil {
+			l.overlay = make(scanner.Overlay)
+		}
+		for k, v := range overlay {
+			l.overlay[k] = v
+		}
+	}
+}
+
+// WithGoModuleResolver enables resolving packages from GOROOT and the module cache.
+func WithGoModuleResolver() Option {
+	return func(l *Locator) {
+		l.UseGoModuleResolver = true
+	}
 }
 
 // New creates a new Locator by searching for a go.mod file.
 // It starts searching from startPath and moves up the directory tree.
-// It accepts an overlay to provide in-memory content for go.mod.
-func New(startPath string, overlay scanner.Overlay) (*Locator, error) {
+func New(startPath string, options ...Option) (*Locator, error) {
+	l := &Locator{
+		requires: make(map[string]string),
+	}
+	for _, opt := range options {
+		opt(l)
+	}
+
 	absPath, err := filepath.Abs(startPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get absolute path for %s: %w", startPath, err)
@@ -40,43 +76,64 @@ func New(startPath string, overlay scanner.Overlay) (*Locator, error) {
 
 	rootDir, err := findModuleRoot(absPath)
 	if err != nil {
-		return nil, err
+		// If resolver is enabled, not finding a go.mod is not a fatal error
+		// as we might be resolving stdlib packages.
+		if !l.UseGoModuleResolver {
+			return nil, err
+		}
+		// We can proceed without a module root, but some features will be limited.
+		// Let's assign rootDir to startPath to have a reference point.
+		rootDir = absPath
 	}
+	l.rootDir = rootDir
 
 	var goModContent []byte
-	if overlay != nil {
-		if content, ok := overlay["go.mod"]; ok {
+	if l.overlay != nil {
+		if content, ok := l.overlay["go.mod"]; ok {
 			goModContent = content
 		}
 	}
 
-	if goModContent == nil {
-		goModFilePath := filepath.Join(rootDir, "go.mod")
-		goModContent, err = os.ReadFile(goModFilePath)
-		if err != nil {
-			return nil, fmt.Errorf("failed to read go.mod at %s: %w", goModFilePath, err)
+	if goModContent == nil && l.rootDir != "" {
+		goModFilePath := filepath.Join(l.rootDir, "go.mod")
+		// It's okay if go.mod doesn't exist, especially if UseGoModuleResolver is true
+		if content, readErr := os.ReadFile(goModFilePath); readErr == nil {
+			goModContent = content
 		}
 	}
 
-	modPath, err := getModulePathFromBytes(goModContent)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get module path from go.mod content: %w", err)
+	if len(goModContent) > 0 {
+		modPath, err := getModulePathFromBytes(goModContent)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get module path from go.mod content: %w", err)
+		}
+		l.modulePath = modPath
+
+		replaces, err := getReplaceDirectivesFromBytes(goModContent)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: could not parse replace directives in go.mod: %v\n", err)
+		}
+		l.replaces = replaces
+
+		if l.UseGoModuleResolver {
+			requires, err := getRequireDirectivesFromBytes(goModContent)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "warning: could not parse require directives in go.mod: %v\n", err)
+			}
+			l.requires = requires
+		}
 	}
 
-	replaces, err := getReplaceDirectivesFromBytes(goModContent)
-	if err != nil {
-		// It's okay if parsing replace directives fails, just log it or handle as a warning
-		// For now, we'll proceed without them.
-		// TODO: Add proper logging or error handling strategy.
-		fmt.Fprintf(os.Stderr, "warning: could not parse replace directives in go.mod: %v\n", err)
+	if l.UseGoModuleResolver {
+		l.goRoot = runtime.GOROOT()
+		cache, err := getGoModCache()
+		if err != nil {
+			return nil, fmt.Errorf("could not determine go mod cache location: %w", err)
+		}
+		l.goModCache = cache
 	}
 
-	return &Locator{
-		modulePath: modPath,
-		rootDir:    rootDir,
-		replaces:   replaces,
-		overlay:    overlay,
-	}, nil
+	return l, nil
 }
 
 // RootDir returns the project's root directory (where go.mod is located).
@@ -90,154 +147,100 @@ func (l *Locator) ModulePath() string {
 }
 
 // FindPackageDir converts an import path to a physical directory path.
-// It now considers replace directives.
 func (l *Locator) FindPackageDir(importPath string) (string, error) {
 	// 1. Check replace directives
 	for _, r := range l.replaces {
-		// Check if the importPath matches the OldPath of a replace directive.
-		// This handles cases like:
-		// replace old.module/path => ./local/path
-		// replace old.module/path => new.module/path v1.2.3
-		// replace old.module/path/subpkg => ./local/path/subpkg (implicit if old.module/path is replaced)
-		//
-		// We need to check if importPath starts with r.OldPath, and if so,
-		// construct the new potential import path or local path.
 		if strings.HasPrefix(importPath, r.OldPath) {
 			remainingPath := strings.TrimPrefix(importPath, r.OldPath)
 			if remainingPath != "" && !strings.HasPrefix(remainingPath, "/") {
-				// This ensures we are matching a full path component, e.g. "old.mod/pkg" vs "old.modpkg"
 				continue
 			}
 			remainingPath = strings.TrimPrefix(remainingPath, "/")
 
 			if r.IsLocal {
-				// Local replacement: construct the full local path
-				// The r.NewPath is relative to l.rootDir
 				var localCandidatePath string
 				if filepath.IsAbs(r.NewPath) {
 					localCandidatePath = filepath.Join(r.NewPath, remainingPath)
 				} else {
 					localCandidatePath = filepath.Join(l.rootDir, r.NewPath, remainingPath)
 				}
-
 				absLocalCandidatePath, err := filepath.Abs(localCandidatePath)
 				if err != nil {
-					// Problematic path, skip
-					// fmt.Fprintf(os.Stderr, "warning: could not get absolute path for replaced local path %s: %v\n", localCandidatePath, err)
 					continue
 				}
-				// Temporary debug was here
-
-				stat, statErr := os.Stat(absLocalCandidatePath)
-				// Temporary debug was here
-
-				if statErr == nil && stat.IsDir() {
+				if stat, statErr := os.Stat(absLocalCandidatePath); statErr == nil && stat.IsDir() {
 					return absLocalCandidatePath, nil
 				}
-				// If local replacement doesn't exist, we might fall through or error.
-				// For now, if a replace rule matched, we prioritize its outcome.
-				// If it doesn't lead to a valid dir, this specific rule fails.
-				// We could opt to error here if the replace rule was specific and not found.
-				// Or, allow falling through to other rules or default resolution.
-				// Current Go behavior: if a replace directive applies, it's used. If the target is invalid, it's an error.
-				// So, if we found a matching replace, and it leads to a non-existent local path, we should probably error.
-				// However, to allow for multiple replace rules, we'll continue and error at the end if nothing is found.
-				// Let's refine this: if a specific replace rule (OldPath matches importPath exactly) fails, it's an error.
-				// If it's a prefix match (importPath is a sub-package), and the sub-package doesn't exist, that's also an error for this rule.
-				// The original plan was to only do one level. Let's stick to that for now.
-				// If a matching replace directive is found and the local path is invalid, we error out for this path.
-				// This means we don't fall back to other resolution methods if a specific replace was attempted.
-				// return "", fmt.Errorf("replaced import path %q (to local %s) could not be resolved: directory does not exist or is not a directory", importPath, absLocalCandidatePath)
-				// Let's allow falling through for now to see if other rules or the default mechanism works.
-				// This might need adjustment based on expected go tool behavior.
-				// For now, if a local replacement points to a non-existent dir, we just continue to the next rule or default logic.
 			} else {
-				// Module-to-module replacement: construct the new import path
 				newImportPath := r.NewPath
 				if remainingPath != "" {
 					newImportPath = r.NewPath + "/" + remainingPath
 				}
-
-				// Here, we need to resolve this newImportPath.
-				// This could be complex if it's outside the current module context,
-				// or if it itself is subject to another replace.
-				// For simplicity, let's assume this newImportPath should be resolvable
-				// within the standard GOPATH/GOROOT or relative to the current module if it matches modulePath.
-				// This part is tricky because `FindPackageDir` is designed for the current module context.
-				// A replaced module path might point to something outside the current module's structure.
-				// The `go list -m -json <pkg>` command would be more robust for this.
-				// However, we are trying to implement this within go-scan's locator.
-
-				// If the new import path matches the current module path, resolve it locally.
-				if strings.HasPrefix(newImportPath, l.modulePath) {
+				// If the replaced path points to a different module, this simple locator cannot find it
+				// unless that different module's path is passed to a *new* Locator instance for that module.
+				// For the current request, we can't resolve it if it's truly external.
+				// We will let it fall through, and it will likely fail unless another rule matches,
+				// or the original importPath itself matches the current module (which it wouldn't if a replace rule was hit).
+				// This implies that module-to-module replaces that point to *other* modules are not fully supported by this iteration.
+				// Let's try to resolve it within the current module context.
+				if l.modulePath != "" && strings.HasPrefix(newImportPath, l.modulePath) {
 					relPath := strings.TrimPrefix(newImportPath, l.modulePath)
 					candidatePath := filepath.Join(l.rootDir, relPath)
 					if stat, err := os.Stat(candidatePath); err == nil && stat.IsDir() {
 						return candidatePath, nil
 					}
-				}
-				// TODO: How to handle replaced paths that are *not* part of the current module?
-				// This would typically involve looking into GOPATH/pkg/mod or GOROOT.
-				// For now, if a module replace points outside, and it's not the main module,
-				// this basic locator might not find it.
-				// We can log a warning or acknowledge this limitation.
-				// fmt.Fprintf(os.Stderr, "warning: replaced import path %s (from %s) is outside current module scope and may not be found by this locator\n", newImportPath, importPath)
-
-				// For now, we will attempt to resolve it as if it were a top-level import,
-				// which means it must match the current modulePath if it's to be found by *this* Locator instance.
-				// This is a simplification. A full resolver would check GOPATH/GOROOT.
-				// If we simply call l.FindPackageDir(newImportPath) recursively, we risk infinite loops if not careful.
-				// Let's try a direct resolution attempt based on the newImportPath relative to modulePath.
-				// This is what the original logic below does.
-				// Fall through to the original logic, but with newImportPath.
-				// This is still not quite right for external modules.
-				// The current structure of Locator is tied to a single module.
-				//
-				// Let's simplify: if it's a module-to-module replace, and the new module path
-				// is the *same* as our current module path, then we resolve it.
-				// Otherwise, we state it's outside our current capability.
-				if strings.HasPrefix(newImportPath, l.modulePath) {
-					relPath := strings.TrimPrefix(newImportPath, l.modulePath)
-					candidatePath := filepath.Join(l.rootDir, relPath)
-					if stat, err := os.Stat(candidatePath); err == nil && stat.IsDir() {
-						return candidatePath, nil
-					}
-				} else {
-					// If the replaced path points to a different module, this simple locator cannot find it
-					// unless that different module's path is passed to a *new* Locator instance for that module.
-					// For the current request, we can't resolve it if it's truly external.
-					// We will let it fall through, and it will likely fail unless another rule matches,
-					// or the original importPath itself matches the current module (which it wouldn't if a replace rule was hit).
-					// This implies that module-to-module replaces that point to *other* modules are not fully supported by this iteration.
 				}
 			}
 		}
 	}
 
-	// 2. Try with the current module context first (original logic)
-	if strings.HasPrefix(importPath, l.modulePath) {
+	// 2. Try with the current module context
+	if l.modulePath != "" && strings.HasPrefix(importPath, l.modulePath) {
 		relPath := strings.TrimPrefix(importPath, l.modulePath)
 		candidatePath := filepath.Join(l.rootDir, relPath)
-		// Check if directory exists before returning
 		if stat, err := os.Stat(candidatePath); err == nil && stat.IsDir() {
 			return candidatePath, nil
 		}
 	}
 
-	// 3. Try standard library packages in GOROOT
-	// This is a heuristic: standard library packages usually don't have dots.
-	if !strings.Contains(importPath, ".") {
-		goRoot := runtime.GOROOT()
-		if goRoot != "" {
-			candidatePath := filepath.Join(goRoot, "src", importPath)
+	// 3. If resolver is enabled, try GOROOT and GOMODCACHE
+	if l.UseGoModuleResolver {
+		// Try standard library in GOROOT
+		if l.goRoot != "" {
+			candidatePath := filepath.Join(l.goRoot, "src", importPath)
 			if stat, err := os.Stat(candidatePath); err == nil && stat.IsDir() {
 				return candidatePath, nil
 			}
 		}
+
+		// Try external modules in GOMODCACHE
+		if l.goModCache != "" {
+			for mod, ver := range l.requires {
+				if strings.HasPrefix(importPath, mod) {
+					// Path in cache is ${GOMODCACHE}/${module}@${version}/${subpath}
+					// Module paths with uppercase letters are encoded.
+					escapedMod, err := module.EscapePath(mod)
+					if err != nil {
+						// Should not happen for valid module paths
+						continue
+					}
+					baseDir := filepath.Join(l.goModCache, escapedMod+"@"+ver)
+					remainingPath := strings.TrimPrefix(importPath, mod)
+					candidatePath := filepath.Join(baseDir, remainingPath)
+
+					if stat, err := os.Stat(candidatePath); err == nil && stat.IsDir() {
+						return candidatePath, nil
+					}
+				}
+			}
+		}
 	}
 
-	// If no replace directive matched and led to a path, and the original logic failed, then error.
-	return "", fmt.Errorf("import path %q could not be resolved. Current module is %q (root: %s)", importPath, l.modulePath, l.rootDir)
+	// If no resolution method succeeded, return an error.
+	if l.modulePath != "" {
+		return "", fmt.Errorf("import path %q could not be resolved. Current module is %q (root: %s)", importPath, l.modulePath, l.rootDir)
+	}
+	return "", fmt.Errorf("import path %q could not be resolved", importPath)
 }
 
 // findModuleRoot searches for any go.mod starting from a given directory and moving upwards.
@@ -354,6 +357,75 @@ func getReplaceDirectivesFromBytes(content []byte) ([]ReplaceDirective, error) {
 	}
 
 	return directives, nil
+}
+
+// getGoModCache finds the path to the module cache directory by calling `go env GOMODCACHE`.
+func getGoModCache() (string, error) {
+	cmd := exec.Command("go", "env", "GOMODCACHE")
+	output, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("failed to run 'go env GOMODCACHE': %w", err)
+	}
+	return strings.TrimSpace(string(output)), nil
+}
+
+// getRequireDirectivesFromBytes reads require directives from go.mod content.
+func getRequireDirectivesFromBytes(content []byte) (map[string]string, error) {
+	if len(content) == 0 {
+		return nil, nil
+	}
+	requires := make(map[string]string)
+	scanner := bufio.NewScanner(bytes.NewReader(content))
+	inRequireBlock := false
+
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+
+		if strings.HasPrefix(line, "//") {
+			continue
+		}
+		if line == "" {
+			continue
+		}
+
+		if strings.HasPrefix(line, "require") {
+			if strings.Contains(line, "(") {
+				inRequireBlock = true
+				// Potentially a require statement on the same line as `require (`
+				line = strings.TrimSpace(strings.TrimPrefix(line, "require"))
+				line = strings.TrimSpace(strings.TrimPrefix(line, "("))
+			} else {
+				// Single line require
+				parts := strings.Fields(line)
+				if len(parts) == 3 { // require <path> <version>
+					requires[parts[1]] = parts[2]
+				}
+				continue
+			}
+		}
+
+		if inRequireBlock {
+			if line == ")" {
+				inRequireBlock = false
+				continue
+			}
+			parts := strings.Fields(line)
+			if len(parts) >= 2 { // <path> <version>
+				// Handle potential // indirect comments
+				version := parts[1]
+				if len(parts) > 2 && parts[2] == "//" {
+					// it's indirect, but we still record it
+				}
+				requires[parts[0]] = version
+			}
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("error reading go.mod content for require directives: %w", err)
+	}
+
+	return requires, nil
 }
 
 // parseReplaceLine parses a single line of a replace directive.

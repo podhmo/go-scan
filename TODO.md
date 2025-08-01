@@ -25,6 +25,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 -   **Function/Method Signature Extraction:** Top-level functions and methods (`FunctionInfo`, including receiver).
 -   **Documentation Parsing:** GoDoc comments for types, fields, functions, constants (`TypeInfo.Doc`, `FieldInfo.Doc`, etc.).
 -   **Package Locator:** Module root finding and import path resolution (`locator.Locator`).
+-   **External and Standard Library Package Resolution**: Added an option (`WithGoModuleResolver`) to enable resolving packages from the Go standard library (`GOROOT`) and external dependencies listed in `go.mod` (from `GOMODCACHE`). This allows the scanner to "see" types outside the main module without relying on `go/packages`.
 -   **External Type Overrides:** Mechanism to treat specified external types as other Go types (`Scanner.ExternalTypeOverrides`, `FieldType.IsResolvedByConfig`).
 -   **Basic Generic Type Parsing:**
     -   Type parameters for types and functions: `TypeInfo.TypeParams`, `FunctionInfo.TypeParams`, `TypeParamInfo`.

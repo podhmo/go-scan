@@ -296,14 +296,24 @@ func TestResolve_DirectRecursion(t *testing.T) {
 	testDir := filepath.Join("..", "testdata", "recursion", "direct")
 	absTestDir, _ := filepath.Abs(testDir)
 
-	// Create scanner, but we'll set the resolver to the scanner itself for this test.
+	// Create scanner with a mock resolver that can return the package being scanned.
 	s, err := New(fset, nil, nil, "example.com/test/recursion/direct", absTestDir, &MockResolver{})
 	if err != nil {
 		t.Fatalf("scanner.New failed: %v", err)
 	}
-	s.resolver = s // s implements PackageResolver, for self-lookup.
 
 	pkgInfo, err := s.ScanFiles(context.Background(), []string{filepath.Join(testDir, "direct.go")}, testDir)
+	if err != nil {
+		t.Fatalf("ScanFiles failed: %v", err)
+	}
+
+	// Set up the mock resolver to return the already scanned package, simulating a cache hit.
+	s.resolver.(*MockResolver).ScanPackageByImportFunc = func(ctx context.Context, importPath string) (*PackageInfo, error) {
+		if importPath == "example.com/test/recursion/direct" {
+			return pkgInfo, nil
+		}
+		return nil, fmt.Errorf("unexpected import path in test: %s", importPath)
+	}
 	if err != nil {
 		t.Fatalf("ScanFiles failed: %v", err)
 	}

@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/examples/convert/model"
 	"github.com/podhmo/go-scan/scanner"
 )
@@ -74,7 +75,9 @@ type MyTime time.Time
 		t.Fatalf("ScanFiles() failed: %v", err)
 	}
 
-	got, err := Parse(context.Background(), pkg)
+	// Create a dummy goscan.Scanner. The test doesn't need a real one as it uses a mock resolver.
+	dummyGoScanner := &goscan.Scanner{}
+	got, err := Parse(context.Background(), dummyGoScanner, pkg)
 	if err != nil {
 		t.Fatalf("Parse() failed: %v", err)
 	}
@@ -84,13 +87,14 @@ type MyTime time.Time
 		PackagePath: "example.com/sample",
 		Imports:     make(map[string]string),
 		ConversionPairs: []model.ConversionPair{
-			{SrcTypeName: "Source", DstTypeName: "Destination", MaxErrors: 0, Variables: []model.Variable{}},
-			{SrcTypeName: "SourceWithOption", DstTypeName: "DestinationWithOption", MaxErrors: 5, Variables: []model.Variable{}},
+			{SrcTypeName: "Source", DstTypeName: "Destination", MaxErrors: 0, Variables: nil},
+			{SrcTypeName: "SourceWithOption", DstTypeName: "DestinationWithOption", MaxErrors: 5, Variables: nil},
 		},
 		GlobalRules: []model.TypeRule{
 			{SrcTypeName: "time.Time", DstTypeName: "string", UsingFunc: "TimeToString"},
 			{SrcTypeName: "string", DstTypeName: "time.Time", UsingFunc: "StringToTime"},
 		},
+		ProcessedPackages: map[string]bool{"example.com/sample": true},
 		Structs: map[string]*model.StructInfo{
 			"Source": {
 				Name: "Source",

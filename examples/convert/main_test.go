@@ -5,6 +5,7 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -105,6 +106,84 @@ func convertProfile(ctx context.Context, ec *model.ErrorCollector, s string) str
 
 	if diff := cmp.Diff(string(formattedGolden), string(formattedGenerated)); diff != "" {
 		t.Errorf("generated code mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestIntegration_WithRecursiveAnnotations(t *testing.T) {
+	files := map[string]string{
+		"go.mod": "module example.com/m\ngo 1.24",
+		"a/a.go": `
+package a
+import "example.com/m/b"
+
+// @derivingconvert("DstA")
+type SrcA struct {
+	B b.SrcB
+}
+type DstA struct {
+	B b.DstB
+}
+`,
+		"b/b.go": `
+package b
+import "example.com/m/c"
+
+// @derivingconvert("DstB")
+type SrcB struct {
+	C c.SrcC
+}
+type DstB struct {
+	C c.DstC
+}
+`,
+		"c/c.go": `
+package c
+
+// @derivingconvert("DstC")
+type SrcC struct {
+	Name string
+}
+type DstC struct {
+	Name string
+}
+`,
+	}
+
+	tmpdir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	ctx := context.Background()
+	writer := &memoryFileWriter{}
+	ctx = context.WithValue(ctx, FileWriterKey, writer)
+
+	// Start scanning from package "a"
+	pkgpath := "example.com/m/a"
+	outputFile := "generated.go"
+	pkgname := "a"
+
+	err := run(ctx, pkgpath, tmpdir, outputFile, pkgname)
+	if err != nil {
+		t.Fatalf("run() failed: %v", err)
+	}
+
+	generatedCode, ok := writer.Outputs[outputFile]
+	if !ok {
+		t.Fatalf("output file %q not found in captured outputs", outputFile)
+	}
+
+	// For this test, we just check that the generated code contains all three conversion functions.
+	// This proves that the annotations were found recursively.
+	generatedStr := string(generatedCode)
+	expectedFunctions := []string{
+		"ConvertSrcAToDstA",
+		"ConvertSrcBToDstB",
+		"ConvertSrcCToDstC",
+	}
+
+	for _, fn := range expectedFunctions {
+		if !strings.Contains(generatedStr, "func "+fn) {
+			t.Errorf("generated code did not contain expected function %q", fn)
+		}
 	}
 }
 

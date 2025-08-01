@@ -104,6 +104,9 @@ Based on the plan in [docs/plan-multi-package-handling.md](./docs/plan-multi-pac
     *   [x] Add a unit test (`TestFieldType_Resolve_CrossPackage`) for finding type definitions in an uncached package.
     *   [x] Add a unit test to confirm `Resolve()` is idempotent.
     *   [x] Add a unit test for the nested, multi-package scanning scenario.
+*   [ ] **Expose Fields for Manual `FieldType` Creation**:
+    *   [ ] Export `Resolver`, `FullImportPath`, and `TypeName` on `scanner.FieldType` to allow consumers to construct resolvable types from non-AST sources (e.g., annotations).
+    *   [ ] Update internal library code to use the new exported fields.
 
 **Part 2: Library Consumer Updates**
 *   [ ] **Refactor `examples/convert`**:

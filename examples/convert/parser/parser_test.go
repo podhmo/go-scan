@@ -20,15 +20,14 @@ import "time"
 type Source struct {
 	ID   int
 	Name string
-	tags []string
 }
 
 type Destination struct {
-	ID      int
-	Name    string
-	Tags    []string
-	private bool
+	ID   int
+	Name string
 }
+
+// convert:rule "time.Time" -> "string", using=TimeToString
 `
 	files := map[string]string{
 		"go.mod":  "module example.com/m\ngo 1.24",
@@ -53,22 +52,29 @@ type Destination struct {
 		t.Fatalf("Parse() failed: %v", err)
 	}
 
-	// Basic checks to ensure parsing happened correctly
+	// Assertions
 	if got.PackageName != "sample" {
 		t.Errorf("expected package name 'sample', got %q", got.PackageName)
 	}
 	if len(got.ConversionPairs) != 1 {
 		t.Fatalf("expected 1 conversion pair, got %d", len(got.ConversionPairs))
 	}
-	pair := got.ConversionPairs[0]
-	if pair.SrcTypeName != "Source" || pair.DstTypeName != "Destination" {
-		t.Errorf("unexpected conversion pair: %s -> %s", pair.SrcTypeName, pair.DstTypeName)
+	if len(got.GlobalRules) != 1 {
+		t.Fatalf("expected 1 global rule, got %d", len(got.GlobalRules))
 	}
-	if _, ok := got.Structs["Source"]; !ok {
-		t.Error("expected 'Source' struct to be parsed")
+
+	rule := got.GlobalRules[0]
+	if rule.SrcTypeName != "time.Time" {
+		t.Errorf("expected rule source type name to be 'time.Time', got %q", rule.SrcTypeName)
 	}
-	if _, ok := got.Structs["Destination"]; !ok {
-		t.Error("expected 'Destination' struct to be parsed")
+	if rule.SrcTypeInfo == nil {
+		t.Fatal("expected rule SrcTypeInfo to be resolved, but it was nil")
+	}
+	if rule.SrcTypeInfo.Name != "Time" {
+		t.Errorf("expected resolved type name to be 'Time', got %q", rule.SrcTypeInfo.Name)
+	}
+	if rule.SrcTypeInfo.PkgPath != "time" {
+		t.Errorf("expected resolved type package path to be 'time', got %q", rule.SrcTypeInfo.PkgPath)
 	}
 }
 

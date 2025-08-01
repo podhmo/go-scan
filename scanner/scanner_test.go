@@ -76,7 +76,7 @@ func TestScanPackageFeatures(t *testing.T) {
 		filepath.Join(testDir, "variadic.go"),
 	}
 
-	pkgInfo, err := s.ScanFiles(context.Background(), filesToScan, testDir)
+	pkgInfo, err := s.ScanFiles(context.Background(), filesToScan, testDir, "")
 	if err != nil {
 		t.Fatalf("ScanFiles failed for %v: %v", filesToScan, err)
 	}
@@ -159,7 +159,7 @@ func TestScanFiles(t *testing.T) {
 
 	t.Run("scan_single_file", func(t *testing.T) {
 		filePath := filepath.Join(testdataDir, "features.go")
-		pkgInfo, err := s.ScanFiles(context.Background(), []string{filePath}, testdataDir)
+		pkgInfo, err := s.ScanFiles(context.Background(), []string{filePath}, testdataDir, "")
 		if err != nil {
 			t.Fatalf("ScanFiles single file failed: %v", err)
 		}
@@ -179,7 +179,7 @@ func TestScanFiles(t *testing.T) {
 			filepath.Join(testdataDir, "features.go"),
 			filepath.Join(testdataDir, "another.go"),
 		}
-		pkgInfo, err := s.ScanFiles(context.Background(), filePaths, testdataDir)
+		pkgInfo, err := s.ScanFiles(context.Background(), filePaths, testdataDir, "")
 		if err != nil {
 			t.Fatalf("ScanFiles multiple files failed: %v", err)
 		}
@@ -205,7 +205,7 @@ func TestScanFiles(t *testing.T) {
 			filepath.Join(testdataDir, "differentpkg.go"), // package otherfeatures
 		}
 		// With the new lenient logic, this should not return an error.
-		pkgInfo, err := s.ScanFiles(context.Background(), filePaths, testdataDir)
+		pkgInfo, err := s.ScanFiles(context.Background(), filePaths, testdataDir, "")
 		if err != nil {
 			t.Fatalf("Expected no error when scanning files from different packages, got %v", err)
 		}
@@ -230,7 +230,7 @@ func TestScanFiles(t *testing.T) {
 	})
 
 	t.Run("scan_empty_file_list", func(t *testing.T) {
-		_, err := s.ScanFiles(context.Background(), []string{}, testdataDir)
+		_, err := s.ScanFiles(context.Background(), []string{}, testdataDir, "")
 		if err == nil {
 			t.Error("Expected error when scanning an empty file list, got nil")
 		}
@@ -238,7 +238,7 @@ func TestScanFiles(t *testing.T) {
 
 	t.Run("scan_non_existent_file", func(t *testing.T) {
 		filePaths := []string{filepath.Join(testdataDir, "nonexistent.go")}
-		_, err := s.ScanFiles(context.Background(), filePaths, testdataDir)
+		_, err := s.ScanFiles(context.Background(), filePaths, testdataDir, "")
 		if err == nil {
 			t.Error("Expected error when scanning non-existent file, got nil")
 		}
@@ -304,7 +304,7 @@ func TestResolve_DirectRecursion(t *testing.T) {
 	}
 	s.resolver = s // s implements PackageResolver, for self-lookup.
 
-	pkgInfo, err := s.ScanFiles(context.Background(), []string{filepath.Join(testDir, "direct.go")}, testDir)
+	pkgInfo, err := s.ScanFiles(context.Background(), []string{filepath.Join(testDir, "direct.go")}, testDir, "")
 	if err != nil {
 		t.Fatalf("ScanFiles failed: %v", err)
 	}
@@ -373,7 +373,7 @@ func TestResolve_MutualRecursion(t *testing.T) {
 				return nil, fmt.Errorf("unexpected import path: %s", importPath)
 			}
 			// Use the main scanner 's' to perform the scan.
-			pkg, err := s.ScanFiles(ctx, []string{filepath.Join(pkgDir, filepath.Base(pkgDir)+".go")}, pkgDir)
+			pkg, err := s.ScanFiles(ctx, []string{filepath.Join(pkgDir, filepath.Base(pkgDir)+".go")}, pkgDir, "")
 			if err == nil && pkg != nil {
 				pkgCache[importPath] = pkg // Store in cache
 			}
@@ -466,7 +466,7 @@ func TestScanWithOverlay(t *testing.T) {
 	scanFilePath := filepath.Join(absTestDir, "basic.go")
 
 	// The pkgDirPath should also be an absolute path to the package directory.
-	pkgInfo, err := s.ScanFiles(context.Background(), []string{scanFilePath}, absTestDir)
+	pkgInfo, err := s.ScanFiles(context.Background(), []string{scanFilePath}, absTestDir, "")
 	if err != nil {
 		t.Fatalf("ScanFiles with overlay failed: %v", err)
 	}

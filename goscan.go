@@ -273,7 +273,7 @@ func (s *Scanner) ScanPackage(ctx context.Context, pkgPath string) (*scanner.Pac
 
 	var currentCallPkgInfo *scanner.PackageInfo
 	if len(filesToParseNow) > 0 {
-		currentCallPkgInfo, err = s.scanner.ScanFiles(ctx, filesToParseNow, absPkgPath)
+		currentCallPkgInfo, err = s.scanner.ScanFiles(ctx, filesToParseNow, absPkgPath, importPath)
 		if err != nil {
 			return nil, fmt.Errorf("ScanPackage: internal scan of files for package %s failed: %w", absPkgPath, err)
 		}
@@ -469,7 +469,7 @@ func (s *Scanner) ScanFiles(ctx context.Context, filePaths []string) (*scanner.P
 		}, nil
 	}
 
-	pkgInfo, err := s.scanner.ScanFiles(ctx, filesToParse, pkgDirAbs) // Scan only unvisited files
+	pkgInfo, err := s.scanner.ScanFiles(ctx, filesToParse, pkgDirAbs, "") // No import path override
 	if err != nil {
 		return nil, fmt.Errorf("failed to scan files in %s (import path %s): %w", pkgDirAbs, importPath, err)
 	}
@@ -657,7 +657,7 @@ func (s *Scanner) ScanPackageByImport(ctx context.Context, importPath string) (*
 
 	var currentCallPkgInfo *scanner.PackageInfo
 	if len(filesToParseThisCall) > 0 {
-		currentCallPkgInfo, err = s.scanner.ScanFiles(ctx, filesToParseThisCall, pkgDirAbs)
+		currentCallPkgInfo, err = s.scanner.ScanFiles(ctx, filesToParseThisCall, pkgDirAbs, importPath) // Pass importPath as override
 		if err != nil {
 			return nil, fmt.Errorf("ScanPackageByImport: scanning files for %s failed: %w", importPath, err)
 		}

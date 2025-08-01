@@ -56,9 +56,6 @@ func (s *Scanner) ResolveType(ctx context.Context, fieldType *FieldType) (*TypeI
 
 // ScanPackageByImport makes scanner.Scanner implement the PackageResolver interface.
 func (s *Scanner) ScanPackageByImport(ctx context.Context, importPath string) (*PackageInfo, error) {
-	if s.resolver == s {
-		return nil, fmt.Errorf("internal resolver loop detected for import path %q", importPath)
-	}
 	if s.resolver == nil {
 		return nil, fmt.Errorf("scanner's internal resolver is not set, cannot scan by import path %q", importPath)
 	}

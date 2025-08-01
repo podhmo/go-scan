@@ -59,36 +59,4 @@ jobs:
           branch: "automation/md-updates-${{ github.event.inputs.pull_request_number }}"
           base: ${{ steps.pr_info.outputs.base_branch }}
           delete-branch: true
-          labels: "automated-pr, documentation"        run: |
-          set -e
-          PR_NUMBER=${{ github.event.inputs.pull_request_number }}
-          git fetch origin pull/$PR_NUMBER/head:pr-$PR_NUMBER
-
-          # Get the list of changed files in the PR, filter for .md files
-          MD_FILES=$(gh pr diff $PR_NUMBER --name-only | grep '\.md$' || true)
-
-          if [ -z "$MD_FILES" ]; then
-            echo "No markdown files found in the pull request."
-            exit 0
-          fi
-
-          # Checkout the .md files from the PR branch
-          for file in $MD_FILES; do
-            git checkout pr-$PR_NUMBER -- $file
-          done
-
-          # Commit the changes
-          git add .
-          git commit -m "docs: extract markdown updates from #${PR_NUMBER}"
-
-      - name: Create Pull Request
-        uses: peter-evans/create-pull-request@v6
-        with:
-          token: ${{ secrets.CREATE_PULL_REQUEST }}
-          commit-message: "docs: extract markdown updates from #${{ github.event.inputs.pull_request_number }}"
-          title: "Docs: Extract markdown updates from #${{ github.event.inputs.pull_request_number }}"
-          body: "This PR extracts markdown file updates from #${{ github.event.inputs.pull_request_number }}. Original PR: #${{ github.event.inputs.pull_request_number }}"
-          branch: "automation/md-updates-${{ github.event.inputs.pull_request_number }}"
-          base: ${{ steps.pr_info.outputs.base_branch }}
-          delete-branch: true
           labels: "automated-pr, documentation"

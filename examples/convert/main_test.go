@@ -108,6 +108,95 @@ func convertProfile(ctx context.Context, ec *model.ErrorCollector, s string) str
 	}
 }
 
+func TestIntegration_WithMultiPackage(t *testing.T) {
+	files := map[string]string{
+		"go.mod": "module example.com/m\ngo 1.24",
+		"source/models.go": `
+package source
+import (
+	"example.com/m/destination"
+	"example.com/m/external"
+)
+
+// @derivingconvert("destination.Dst")
+type Src struct {
+	ID   string
+	Info external.ExternalInfo
+}
+`,
+		"destination/models.go": `
+package destination
+import "example.com/m/external"
+
+type Dst struct {
+	ID   string
+	Info external.ExternalInfo
+}
+`,
+		"external/models.go": `
+package external
+
+// @derivingconvert("DstInfo")
+type ExternalInfo struct {
+	Value string
+}
+
+type DstInfo struct {
+	Value string
+}
+`,
+	}
+
+	tmpdir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	ctx := context.Background()
+	writer := &memoryFileWriter{}
+	ctx = context.WithValue(ctx, FileWriterKey, writer)
+
+	// The package to scan is the source package
+	pkgpath := "example.com/m/source"
+	outputFile := "generated.go"
+	pkgname := "source"
+	goldenFile := "testdata/multipkg.go.golden"
+
+	err := run(ctx, pkgpath, tmpdir, outputFile, pkgname)
+	if err != nil {
+		t.Fatalf("run() failed: %v", err)
+	}
+
+	generatedCode, ok := writer.Outputs[outputFile]
+	if !ok {
+		t.Fatalf("output file %q not found in captured outputs", outputFile)
+	}
+
+	if *update {
+		if err := os.WriteFile(goldenFile, generatedCode, 0644); err != nil {
+			t.Fatalf("failed to update golden file: %v", err)
+		}
+		t.Logf("golden file updated: %s", goldenFile)
+		return
+	}
+
+	golden, err := os.ReadFile(goldenFile)
+	if err != nil {
+		t.Fatalf("failed to read golden file: %v", err)
+	}
+
+	formattedGenerated, err := imports.Process(outputFile, generatedCode, nil)
+	if err != nil {
+		t.Fatalf("failed to format generated code: %v\n---\n%s", err, string(generatedCode))
+	}
+	formattedGolden, err := imports.Process(goldenFile, golden, nil)
+	if err != nil {
+		t.Fatalf("failed to format golden file: %v", err)
+	}
+
+	if diff := cmp.Diff(string(formattedGolden), string(formattedGenerated)); diff != "" {
+		t.Errorf("generated code mismatch (-want +got):\n%s", diff)
+	}
+}
+
 func TestIntegration_WithVariable(t *testing.T) {
 	sourceDir := "testdata"
 	targetFile := "variable.go"

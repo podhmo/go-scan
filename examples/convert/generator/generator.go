@@ -129,7 +129,7 @@ func Generate(s *goscan.Scanner, info *model.ParsedInfo) ([]byte, error) {
 			return nil, fmt.Errorf("destination struct %q not found", pair.DstTypeName)
 		}
 
-		fieldMaps, err := createFieldMaps(context.Background(), s, srcStruct, dstStruct)
+		fieldMaps, err := createFieldMaps(context.Background(), s, info, srcStruct, dstStruct)
 		if err != nil {
 			return nil, fmt.Errorf("creating field maps for %s -> %s: %w", srcStruct.Name, dstStruct.Name, err)
 		}
@@ -174,7 +174,7 @@ func Generate(s *goscan.Scanner, info *model.ParsedInfo) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-func createFieldMaps(ctx context.Context, s *goscan.Scanner, src, dst *model.StructInfo) ([]FieldMap, error) {
+func createFieldMaps(ctx context.Context, s *goscan.Scanner, info *model.ParsedInfo, src, dst *model.StructInfo) ([]FieldMap, error) {
 	var maps []FieldMap
 	dstFieldsByName := make(map[string]model.FieldInfo)
 	dstFieldsByNormalizedJSONTag := make(map[string]model.FieldInfo)
@@ -232,12 +232,26 @@ func createFieldMaps(ctx context.Context, s *goscan.Scanner, src, dst *model.Str
 
 		log.Printf("  src field %s -> dst field %s (matched by %s)", srcField.Name, dstField.Name, reason)
 		_ = resolveFieldType(ctx, dstField.FieldType)
+
+		// Check if there is a conversion rule for the source field's type.
+		// If so, use the destination type from that rule.
+		finalDstFieldT := dstField.FieldType
+		for _, pair := range info.ConversionPairs {
+			if pair.SrcTypeInfo != nil && pair.SrcTypeInfo.Name == srcField.FieldType.Name {
+				if pair.DstTypeInfo != nil && pair.DstTypeInfo.Underlying != nil {
+					finalDstFieldT = pair.DstTypeInfo.Underlying
+					log.Printf("  found conversion pair for %s -> %s, using %s as dst type", srcField.FieldType.Name, pair.DstTypeInfo.Name, finalDstFieldT.Name)
+				}
+				break
+			}
+		}
+
 		maps = append(maps, FieldMap{
 			SrcName:   srcField.Name,
 			DstName:   dstField.Name,
 			Tag:       srcField.Tag,
 			SrcFieldT: srcField.FieldType,
-			DstFieldT: dstField.FieldType,
+			DstFieldT: finalDstFieldT,
 		})
 	}
 	return maps, nil
@@ -313,7 +327,7 @@ func registerImports(im *goscan.ImportManager, t *scanner.FieldType) {
 	if t == nil {
 		return
 	}
-	im.Qualify(t.FullImportPath(), t.Name)
+	im.Qualify(t.GetFullImportPath(), t.Name)
 	if t.Elem != nil {
 		registerImports(im, t.Elem)
 	}
@@ -386,13 +400,10 @@ func generateConversion(im *goscan.ImportManager, info *model.ParsedInfo, src, d
 	srcFieldTypeName := getFullTypeNameFromTypeInfo(srcT.Definition)
 	dstFieldTypeName := getFullTypeNameFromTypeInfo(dstT.Definition)
 
-	log.Printf("generateConversion: src=%q, dst=%q", srcFieldTypeName, dstFieldTypeName)
 	for _, rule := range info.GlobalRules {
 		ruleSrcName := getFullTypeNameFromTypeInfo(rule.SrcTypeInfo)
 		ruleDstName := getFullTypeNameFromTypeInfo(rule.DstTypeInfo)
-		log.Printf("  checking rule: src=%q, dst=%q", ruleSrcName, ruleDstName)
 		if ruleSrcName == srcFieldTypeName && ruleDstName == dstFieldTypeName {
-			log.Printf("  rule matched!")
 			if dst != "" {
 				return fmt.Sprintf("%s = %s(%s, %s)", dst, rule.UsingFunc, ctxVar, src)
 			}
@@ -478,7 +489,10 @@ func generateConversion(im *goscan.ImportManager, info *model.ParsedInfo, src, d
 		if !srcT.IsPointer {
 			srcPtr = "&" + src
 		}
-		conversion := fmt.Sprintf("*convert%sTo%s(%s, %s, %s)", srcT.Name, dstT.Name, ctxVar, ecVar, srcPtr)
+		// Qualify the type names to handle cross-package conversions.
+		srcTypeName := strings.ReplaceAll(getTypeName(im, srcT), "*", "")
+		dstTypeName := strings.ReplaceAll(getTypeName(im, dstT), "*", "")
+		conversion := fmt.Sprintf("*convert%sTo%s(%s, %s, %s)", srcTypeName, dstTypeName, ctxVar, ecVar, srcPtr)
 		if dst != "" {
 			return fmt.Sprintf("%s = %s", dst, conversion)
 		}
@@ -569,7 +583,7 @@ func getTypeName(im *goscan.ImportManager, t *scanner.FieldType) string {
 		}
 		return fmt.Sprintf("map[%s]%s", keyType, valType)
 	}
-	return im.Qualify(t.FullImportPath(), t.Name)
+	return im.Qualify(t.GetFullImportPath(), t.Name)
 }
 
 func isStruct(t *scanner.FieldType) bool {

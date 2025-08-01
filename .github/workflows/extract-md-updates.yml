@@ -28,7 +28,7 @@ jobs:
         id: pr_info
         env:
           # ghコマンドの実行にはGITHUB_TOKENが必要
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.CREATE_PULL_REQUEST }}
         run: |
           PR_NUMBER=${{ github.event.inputs.pull_request_number }}
           BASE_BRANCH=$(gh pr view $PR_NUMBER --json baseRefName -q '.baseRefName')
@@ -37,7 +37,7 @@ jobs:
       # Step 4: PRの変更内容（追加・変更・削除・リネーム）を適用
       - name: Apply markdown changes from PR
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.CREATE_PULL_REQUEST }}
           PR_NUMBER: ${{ github.event.inputs.pull_request_number }}
           REPO: ${{ github.repository }}
         run: |

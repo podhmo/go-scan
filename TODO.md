@@ -41,7 +41,6 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 -   **Variadic Parameter Parsing**: Correctly parses variadic parameters (e.g., `...string`) as slice types (e.g., `[]string`) within function signatures. The `IsVariadic` flag on `FunctionInfo` is set, and the parameter's `FieldType` accurately reflects the corresponding slice type.
 -   **Initial `convert` Tool Implementation**: Implemented the CLI entrypoint and a basic parser for the `convert` tool. The tool now uses a `@derivingconvert(DstType)` annotation on source types to define conversion pairs, as documented in the updated `docs/plan-neo-convert.md`.
 -   **Improved Import Management**: Handle import alias collisions robustly. By pre-registering types with the `ImportManager` and using `golang.org/x/tools/imports` for final output formatting, the generator now correctly handles complex import scenarios and avoids unused imports.
-
 -   **`convert` Tool Implementation**: as described in [docs/plan-neo-convert.md](docs/plan-neo-convert.md)
     -   [x] **Generator for Structs**: Implement the code generator to produce conversion functions for basic struct-to-struct conversions based on the parsed `ConversionPair` model.
         -   [x] Generate a top-level `Convert<Src>To<Dst>` function.
@@ -89,6 +88,36 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
         -   [x] Modify the `using` and `validator` logic to correctly resolve function references that use these imported aliases (e.g., `pkg.MyFunc`).
 
 ## To Be Implemented
+
+### On-Demand, Multi-Package AST Scanning
+Based on the plan in [docs/plan-multi-package-handling.md](./docs/plan-multi-package-handling.md).
+
+**Part 1: Core Library Foundation**
+*   [ ] **Enhance Test Harness (`scantest`)**:
+    *   [ ] Modify `scantest` to automatically search parent directories for `go.mod` to use as a default module root.
+    *   [ ] Add an option to `scantest` to allow explicitly setting the module root path for a test run.
+*   [ ] **Implement Core Scanning Logic**:
+    *   [ ] The parent `goscan.Scanner` must pass a reference to itself to the internal `scanner.Scanner` upon creation.
+    *   [ ] The `scanner.FieldType` struct must be modified to store the reference to the parent `goscan.Scanner`.
+    *   [ ] Implement the `Resolve()` method on `scanner.FieldType` to trigger an on-demand scan.
+*   [ ] **Add Core Unit Tests**:
+    *   [ ] Add a unit test (`TestFieldType_Resolve_CrossPackage`) for finding type definitions in an uncached package.
+    *   [ ] Add a unit test to confirm `Resolve()` is idempotent.
+    *   [ ] Add a unit test for the nested, multi-package scanning scenario.
+
+**Part 2: Library Consumer Updates**
+*   [ ] **Refactor `examples/convert`**:
+    *   [ ] Simplify the `main.go` entrypoint to only scan the initial source package.
+    *   [ ] Remove manual `ScanPackageByImport` calls from the `parser`.
+    *   [ ] Modify the `parser` to call `FieldType.Resolve()` to find type definitions referenced in annotations.
+*   [ ] **Update `examples/convert` Integration Tests**:
+    *   [ ] Update the integration tests to use the enhanced `scantest` harness.
+    *   [ ] Cover scenarios with nested structs from multiple different packages.
+    *   [ ] Verify that the generated code compiles, has correct imports, and works as expected.
+
+**Part 3: CI and Regression Prevention**
+*   [ ] **Add CI Check for `examples/convert`**:
+    *   [ ] Add a new target to the `Makefile` to run the `examples/convert` tool.
 
 ### Known Issues
 

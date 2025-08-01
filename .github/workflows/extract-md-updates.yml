@@ -36,7 +36,10 @@ jobs:
         run: |
           set -e
           PR_NUMBER=${{ github.event.inputs.pull_request_number }}
+          BASE_BRANCH=${{ steps.pr_info.outputs.base_branch }}
           git fetch origin pull/$PR_NUMBER/head:pr-$PR_NUMBER
+          # Also fetch base branch to have it locally for git show
+          git fetch origin $BASE_BRANCH:$BASE_BRANCH
 
           MD_FILES=$(gh pr diff $PR_NUMBER --name-only | grep '\.md$' || true)
 
@@ -46,7 +49,36 @@ jobs:
           fi
 
           for file in $MD_FILES; do
-            git checkout pr-$PR_NUMBER -- $file
+            if [ "$file" = "TODO.md" ]; then
+              # Get base and head versions of the file
+              git show "$BASE_BRANCH:$file" > TODO.md.base
+              git show "pr-$PR_NUMBER:$file" > TODO.md.head
+
+              # Use awk to revert only the tasks that were checked in this PR
+              awk '
+                NR==FNR { base_lines[$0]; next }
+                {
+                  line = $0
+                  # See if line contains a checked task
+                  if (sub(/- \[x\]/, "- [ ]", line)) {
+                    # If the unchecked version of the line existed in the base file...
+                    if (line in base_lines) {
+                      # ...then print the reverted (unchecked) line.
+                      print line
+                      next
+                    }
+                  }
+                  # Otherwise, print the original line from the PR branch.
+                  print $0
+                }
+              ' TODO.md.base TODO.md.head > "$file"
+
+              # Clean up temp files
+              rm TODO.md.base TODO.md.head
+            else
+              # Default behavior for other .md files
+              git checkout "pr-$PR_NUMBER" -- "$file"
+            fi
           done
 
       - name: Create Pull Request

@@ -115,6 +115,11 @@ Based on the plan in [docs/plan-multi-package-handling.md](./docs/plan-multi-pac
     *   [ ] Cover scenarios with nested structs from multiple different packages.
     *   [ ] Verify that the generated code compiles, has correct imports, and works as expected.
 
+**Part 3: CI and Regression Prevention**
+*   [ ] **Add CI Check for `examples/convert`**:
+    *   [ ] Add a new target to the `Makefile` to run the `examples/convert` tool.
+    *   [ ] Add a step to the CI workflow to execute this `make` target to ensure it runs without panicking.
+
 ### Known Issues
 
 

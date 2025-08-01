@@ -10,6 +10,9 @@ on:
 jobs:
   extract-md-updates:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
     steps:
       - uses: actions/checkout@v4
 
@@ -17,10 +20,6 @@ jobs:
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-
-      - name: Create new branch
-        run: |
-          git checkout -b automation/md-updates-${{ github.event.inputs.pull_request_number }}
 
       - name: Get original PR base branch
         id: pr_info
@@ -31,10 +30,36 @@ jobs:
           BASE_BRANCH=$(gh pr view $PR_NUMBER --json baseRefName -q '.baseRefName')
           echo "base_branch=$BASE_BRANCH" >> $GITHUB_OUTPUT
 
-      - name: Extract and commit .md files
+      - name: Extract .md files
         env:
           GH_TOKEN: ${{ secrets.CREATE_PULL_REQUEST }}
         run: |
+          set -e
+          PR_NUMBER=${{ github.event.inputs.pull_request_number }}
+          git fetch origin pull/$PR_NUMBER/head:pr-$PR_NUMBER
+
+          MD_FILES=$(gh pr diff $PR_NUMBER --name-only | grep '\.md$' || true)
+
+          if [ -z "$MD_FILES" ]; then
+            echo "No markdown files found in the pull request."
+            exit 0
+          fi
+
+          for file in $MD_FILES; do
+            git checkout pr-$PR_NUMBER -- $file
+          done
+
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.CREATE_PULL_REQUEST }}
+          commit-message: "docs: extract markdown updates from #${{ github.event.inputs.pull_request_number }}"
+          title: "Docs: Extract markdown updates from #${{ github.event.inputs.pull_request_number }}"
+          body: "This PR extracts markdown file updates from #${{ github.event.inputs.pull_request_number }}. Original PR: #${{ github.event.inputs.pull_request_number }}"
+          branch: "automation/md-updates-${{ github.event.inputs.pull_request_number }}"
+          base: ${{ steps.pr_info.outputs.base_branch }}
+          delete-branch: true
+          labels: "automated-pr, documentation"        run: |
           set -e
           PR_NUMBER=${{ github.event.inputs.pull_request_number }}
           git fetch origin pull/$PR_NUMBER/head:pr-$PR_NUMBER

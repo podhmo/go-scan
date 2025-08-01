@@ -12,6 +12,18 @@ import (
 	"github.com/podhmo/go-scan/scanner"
 )
 
+// MockResolver is a mock implementation of PackageResolver for tests.
+type MockResolver struct {
+	ScanPackageByImportFunc func(ctx context.Context, importPath string) (*scanner.PackageInfo, error)
+}
+
+func (m *MockResolver) ScanPackageByImport(ctx context.Context, importPath string) (*scanner.PackageInfo, error) {
+	if m.ScanPackageByImportFunc != nil {
+		return m.ScanPackageByImportFunc(ctx, importPath)
+	}
+	return nil, nil // Default mock behavior
+}
+
 func TestParse(t *testing.T) {
 	source := `
 package sample
@@ -51,12 +63,13 @@ type MyTime time.Time
 		"source.go": []byte(source),
 	}
 
-	s, err := scanner.New(fset, nil, overlay, "example.com/sample", ".")
+	resolver := &MockResolver{}
+	s, err := scanner.New(fset, nil, overlay, "example.com/sample", ".", resolver)
 	if err != nil {
 		t.Fatalf("scanner.New() failed: %v", err)
 	}
 
-	pkg, err := s.ScanFiles(context.Background(), []string{"source.go"}, ".", s)
+	pkg, err := s.ScanFiles(context.Background(), []string{"source.go"}, ".")
 	if err != nil {
 		t.Fatalf("ScanFiles() failed: %v", err)
 	}

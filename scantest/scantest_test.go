@@ -54,7 +54,7 @@ func TestRun_PureCheck(t *testing.T) {
 		return nil
 	}
 
-	result, err := Run(t, dir, []string{"."}, action)
+	result, err := Run(t, dir, []string{"."}, action, WithModuleRoot(dir))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +79,7 @@ func TestRun_GenerateFile(t *testing.T) {
 		return pd.SaveGoFile(ctx, gf, "main_gen.go")
 	}
 
-	result, err := Run(t, dir, []string{"."}, generateAction)
+	result, err := Run(t, dir, []string{"."}, generateAction, WithModuleRoot(dir))
 	if err != nil {
 		t.Fatal(err)
 	}

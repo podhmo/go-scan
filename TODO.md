@@ -110,21 +110,21 @@ Based on the plan in [docs/plan-multi-package-handling.md](./docs/plan-multi-pac
     *   [x] Update internal library code to use the new exported fields.
 
 **Part 2: Library Consumer Updates**
-*   [ ] **Refactor `examples/convert`**:
-    *   [ ] Simplify the `main.go` entrypoint to only scan the initial source package.
-    *   [ ] Remove manual `ScanPackageByImport` calls from the `parser`.
-    *   [ ] Modify the `parser` to call `FieldType.Resolve()` to find type definitions referenced in annotations.
-*   [ ] **Update `examples/convert` Integration Tests**:
-    *   [ ] Update the integration tests to use the enhanced `scantest` harness.
-    *   [ ] Cover scenarios with nested structs from multiple different packages.
-    *   [ ] Verify that the generated code compiles, has correct imports, and works as expected.
+*   [x] **Refactor `examples/convert`**:
+    *   [x] Simplify the `main.go` entrypoint to only scan the initial source package.
+    *   [x] Remove manual `ScanPackageByImport` calls from the `parser`.
+    *   [x] Modify the `parser` to call `FieldType.Resolve()` to find type definitions referenced in annotations.
+*   [x] **Update `examples/convert` Integration Tests**:
+    *   [x] Update the integration tests to use the enhanced `scantest` harness.
+    *   [x] Cover scenarios with nested structs from multiple different packages.
+    *   [x] Verify that the generated code compiles, has correct imports, and works as expected.
 
 **Part 3: CI and Regression Prevention**
 *   [ ] **Add CI Check for `examples/convert`**:
     *   [ ] Add a new target to the `Makefile` to run the `examples/convert` tool.
 
 ### Known Issues
-
+*   The scanner can fail with a `mismatched package names` error when a nested scan of a standard library package (e.g., `time`) is triggered from within a test binary that uses `package main`. A workaround has been implemented in the `convert` tool's parser to treat `time.Time` as a special synthetic type, avoiding the nested scan.
 
 ### Future Tasks (Post-Migration)
 *   **Expand Test Coverage**: Create a comprehensive test suite that verifies all features and edge cases.

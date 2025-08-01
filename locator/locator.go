@@ -4,8 +4,10 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/podhmo/go-scan/scanner"
@@ -223,6 +225,19 @@ func (l *Locator) FindPackageDir(importPath string) (string, error) {
 		}
 	}
 
+	// 3. Check for standard library packages in GOROOT.
+	if !strings.Contains(importPath, ".") {
+		slog.Debug("Attempting to resolve as stdlib package", "importPath", importPath)
+		goroot := runtime.GOROOT()
+		if goroot != "" {
+			stdLibPath := filepath.Join(goroot, "src", importPath)
+			slog.Debug("Checking for stdlib package at", "path", stdLibPath)
+			if _, err := os.Stat(stdLibPath); err == nil {
+				slog.Debug("Found stdlib package", "path", stdLibPath)
+				return stdLibPath, nil
+			}
+		}
+	}
 	// If no replace directive matched and led to a path, and the original logic failed, then error.
 	return "", fmt.Errorf("import path %q could not be resolved. Current module is %q (root: %s)", importPath, l.modulePath, l.rootDir)
 }

@@ -290,6 +290,23 @@ func getValidator(im *goscan.ImportManager, info *model.ParsedInfo, field FieldM
 	return ""
 }
 
+func getBaseTypeName(t *scanner.FieldType) string {
+	if t == nil {
+		return ""
+	}
+	if t.IsPointer {
+		return getBaseTypeName(t.Elem)
+	}
+	if t.IsSlice {
+		return getBaseTypeName(t.Elem)
+	}
+	if t.IsMap {
+		// This is a simplification. A better implementation would handle complex maps.
+		return t.Name
+	}
+	return t.Name
+}
+
 func qualifyFunc(im *goscan.ImportManager, info *model.ParsedInfo, funcName string) string {
 	parts := strings.Split(funcName, ".")
 	if len(parts) != 2 {

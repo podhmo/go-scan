@@ -2,12 +2,14 @@ package parser
 
 import (
 	"context"
-	"go/token"
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	"github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/examples/convert/model"
 	"github.com/podhmo/go-scan/scanner"
 )
@@ -58,23 +60,20 @@ type DestinationWithOption struct {
 type MyTime time.Time
 `
 
-	fset := token.NewFileSet()
-	overlay := map[string][]byte{
-		"source.go": []byte(source),
-	}
+	dir, cleanup := newTestDir(t, map[string]string{"source.go": source})
+	defer cleanup()
 
-	resolver := &MockResolver{}
-	s, err := scanner.New(fset, nil, overlay, "example.com/sample", ".", resolver)
+	s, err := goscan.New(goscan.WithWorkDir(dir))
 	if err != nil {
-		t.Fatalf("scanner.New() failed: %v", err)
+		t.Fatalf("goscan.New() failed: %v", err)
 	}
 
-	pkg, err := s.ScanFiles(context.Background(), []string{"source.go"}, ".")
+	pkg, err := s.ScanFiles(context.Background(), []string{"source.go"})
 	if err != nil {
 		t.Fatalf("ScanFiles() failed: %v", err)
 	}
 
-	got, err := Parse(context.Background(), pkg)
+	got, err := Parse(context.Background(), s, pkg)
 	if err != nil {
 		t.Fatalf("Parse() failed: %v", err)
 	}
@@ -153,6 +152,24 @@ type MyTime time.Time
 	if diff := cmp.Diff(want.NamedTypes, got.NamedTypes, opts...); diff != "" {
 		t.Errorf("Parse() NamedTypes mismatch (-want +got):\n%s", diff)
 	}
+}
+
+func newTestDir(t *testing.T, files map[string]string) (string, func()) {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "parser_test")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	files["go.mod"] = "module example.com/sample"
+	for name, content := range files {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	return dir, func() { os.RemoveAll(dir) }
 }
 
 func TestParseConvertTag(t *testing.T) {

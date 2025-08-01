@@ -51,3 +51,50 @@
 - **シンボルキャッシュの実装**: シンボルキャッシュの更新ロジックに誤りがあり、キャッシュが正しく機能していなかった。`updateSymbolCacheWithPackageInfo`関数を正しく実装し、関連するテストが成功するように修正した。
 
 現在の状況として、すべてのテストが成功し、リファクタリングとバグ修正は完了した。コードは提出可能な状態である。
+
+## デバッグ用の関数
+
+デバッグの過程で、以下の関数を`goscan.go`に追加した。これは、スキャナの内部状態を確認するために役立つ。
+
+```go
+func (s *Scanner) debugDump(ctx context.Context) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	fmt.Println("--- visited files ---")
+	for k := range s.visitedFiles {
+		fmt.Println(k)
+	}
+
+	fmt.Println("--- package cache ---")
+	for k, v := range s.packageCache {
+		fmt.Printf("%s: %v\n", k, v.Files)
+	}
+
+	fmt.Println("--- symbol cache ---")
+	if s.symbolCache != nil {
+		s.symbolCache.DebugDump()
+	}
+}
+```
+
+また、`cache/cache.go`に以下の関数を追加した。
+
+```go
+// DebugDump prints the content of the cache for debugging purposes.
+func (sc *SymbolCache) DebugDump() {
+	sc.mu.RLock()
+	defer sc.mu.RUnlock()
+
+	fmt.Println("  enabled:", sc.useCache)
+	fmt.Println("  filePath:", sc.filePath)
+	fmt.Println("  rootDir:", sc.rootDir)
+	fmt.Println("  content.Symbols:")
+	for k, v := range sc.content.Symbols {
+		fmt.Printf("    %s: %s\n", k, v)
+	}
+	fmt.Println("  content.Files:")
+	for k, v := range sc.content.Files {
+		fmt.Printf("    %s: %+v\n", k, v)
+	}
+}
+```

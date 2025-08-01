@@ -89,27 +89,27 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 
 ## To Be Implemented
 
-### Refined Multi-Package Type Resolution
+### On-Demand, Multi-Package AST Scanning
 Based on the plan in [docs/plan-multi-package-handling.md](./docs/plan-multi-package-handling.md).
 
-*   [ ] **Core `go-scan` Enhancements for Lazy Resolution**:
+*   [ ] **Core `go-scan` Enhancements for Lazy Scanning**:
     *   [ ] The parent `goscan.Scanner` must pass a reference to itself to the internal `scanner.Scanner` upon creation.
     *   [ ] The `scanner.FieldType` struct must be modified to store the reference to the parent `goscan.Scanner`.
-    *   [ ] Implement the `Resolve()` method on `scanner.FieldType` to trigger lazy-loading. This method will:
+    *   [ ] Implement the `Resolve()` method on `scanner.FieldType` to trigger an on-demand scan. This method will:
         *   Use the parent `goscan.Scanner` reference to request a package scan via its import path.
-        *   Handle the caching logic within the parent `goscan.Scanner` to ensure packages are only scanned once.
-        *   Look up and return the resolved `TypeInfo` from the scanned package.
+        *   Handle caching within the parent `goscan.Scanner` to ensure packages are only scanned once.
+        *   Look up and return the found `TypeInfo` from the scanned package's AST.
 
-*   [ ] **Refactor `examples/convert` to Use Lazy Resolution**:
+*   [ ] **Refactor `examples/convert` to Use Lazy Scanning**:
     *   [ ] Simplify the `main.go` entrypoint to only scan the initial source package.
     *   [ ] Remove manual `ScanPackageByImport` calls from the `parser`.
-    *   [ ] Modify the `parser` to call `FieldType.Resolve()` on the destination type parsed from the `@derivingconvert` annotation.
+    *   [ ] Modify the `parser` to call `FieldType.Resolve()` to find the type definition referenced in the `@derivingconvert` annotation.
 
 *   [ ] **Generator Improvements**:
-    *   [ ] Ensure the `generator` uses the `PkgPath` from the fully resolved `TypeInfo` to correctly qualify type names with the `ImportManager`.
+    *   [ ] Ensure the `generator` uses the `PkgPath` from the found `TypeInfo` to correctly qualify type names with the `ImportManager`.
 
-*   [ ] **New Tests for Multi-Package Resolution**:
-    *   [ ] Add a unit test (`TestFieldType_Resolve_CrossPackage`) to `go-scan` to verify that resolving a type from an uncached package works correctly.
+*   [ ] **New Tests for Multi-Package Scanning**:
+    *   [ ] Add a unit test (`TestFieldType_Resolve_CrossPackage`) to `go-scan` to verify that finding a type definition in an uncached package works correctly.
     *   [ ] Add a unit test to `go-scan` to confirm that `Resolve()` is idempotent and does not trigger redundant scans.
     *   [ ] Update the `examples/convert` integration tests to cover a scenario where source and destination types are in different packages.
     -   [ ] The integration test must verify that the generated code has the correct `import` statements and compiles successfully.

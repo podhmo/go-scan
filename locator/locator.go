@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/podhmo/go-scan/scanner"
@@ -226,7 +227,7 @@ func (l *Locator) FindPackageDir(importPath string) (string, error) {
 	// 3. Try standard library packages in GOROOT
 	// This is a heuristic: standard library packages usually don't have dots.
 	if !strings.Contains(importPath, ".") {
-		goRoot := os.Getenv("GOROOT")
+		goRoot := runtime.GOROOT()
 		if goRoot != "" {
 			candidatePath := filepath.Join(goRoot, "src", importPath)
 			if stat, err := os.Stat(candidatePath); err == nil && stat.IsDir() {

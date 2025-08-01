@@ -123,9 +123,11 @@ func main() {
 
 ## Overriding External Type Resolution
 
-In some scenarios, you might want to treat specific types from external (or even internal) packages as different Go types. For example, you might want all instances of `github.com/google/uuid.UUID` to be recognized as a simple `string` by the scanner, or a custom `pkg.MyTime` to be treated as `time.Time`.
+In some scenarios, you may need to prevent the scanner from parsing a specific type from its source file. This is particularly useful for standard library types like `time.Time`, which can cause a `mismatched package names` error when a scan is triggered from a test binary (`package main`).
 
-The `go-scan.Scanner` provides a method `SetExternalTypeOverrides()` to achieve this. You pass a map where the key is the fully qualified type name (e.g., `"github.com/google/uuid.UUID"`) and the value is the target Go type string (e.g., `"string"`).
+To handle this, you can provide a "synthetic" type definition to the scanner. The scanner will use this synthetic definition instead of attempting to parse the type's source code.
+
+This is configured via the `WithExternalTypeOverrides` option, which accepts a `map[string]*scanner.TypeInfo`.
 
 ```go
 package main
@@ -136,71 +138,48 @@ import (
 	"os"
 
 	"github.com/podhmo/go-scan"
-	"github.com/podhmo/go-scan/scanner" // For scanner.ExternalTypeOverride type
+	"github.com/podhmo/go-scan/scanner" // For scanner.TypeInfo and scanner.ExternalTypeOverride
 )
 
 func main() {
-	ctx := context.Background() // Or your application's context
+	ctx := context.Background()
 
-	s, err := goscan.New("./testdata/externaltypes") // Assuming testdata/externaltypes has its own go.mod
+	// Define an override for "time.Time".
+	// The key is the fully qualified type name.
+	// The value is a pointer to a scanner.TypeInfo struct that describes the type.
+	overrides := scanner.ExternalTypeOverride{
+		"time.Time": &scanner.TypeInfo{
+			Name:    "Time",
+			PkgPath: "time",
+			Kind:    scanner.StructKind, // It's a struct
+		},
+	}
+
+	// Pass the overrides to the scanner during creation.
+	s, err := goscan.New(
+		".", // Start scanning from the current directory
+		goscan.WithGoModuleResolver(),      // Still useful for other packages
+		goscan.WithExternalTypeOverrides(overrides),
+	)
 	if err != nil {
 		slog.ErrorContext(ctx, "Failed to create scanner", slog.Any("error", err))
 		os.Exit(1)
 	}
 
-	// Define overrides
-	overrides := scanner.ExternalTypeOverride{
-		"github.com/google/uuid.UUID": "string",    // Treat uuid.UUID as string
-		"example.com/somepkg.Time":    "time.Time", // Treat somepkg.Time as time.Time
-	}
-	s.SetExternalTypeOverrides(overrides)
-
-	// Scan a package that uses these types
-	pkgInfo, err := s.ScanPackageByImport("example.com/externaltypes") // Module from testdata
-	if err != nil {
-		slog.ErrorContext(ctx, "Failed to scan package", slog.String("package", "example.com/externaltypes"), slog.Any("error", err))
-		os.Exit(1)
-	}
-
-	for _, typeInfo := range pkgInfo.Types {
-		if typeInfo.Name == "ObjectWithUUID" && typeInfo.Struct != nil {
-			for _, field := range typeInfo.Struct.Fields {
-				if field.Name == "ID" {
-					// field.Type.Name will be "string"
-					// field.Type.IsResolvedByConfig will be true
-					slog.InfoContext(ctx, "Field overridden",
-						slog.String("field_name", field.Name),
-						slog.String("original_pkg", field.Type.PkgName),
-						slog.String("original_type", field.Type.Name), // This will show the overridden type name
-						slog.String("overridden_to_type", field.Type.Name), // Correctly shows the target type
-						slog.Bool("is_resolved_by_config", field.Type.IsResolvedByConfig),
-					)
-				}
-			}
-		}
-		if typeInfo.Name == "ObjectWithCustomTime" && typeInfo.Struct != nil {
-			for _, field := range typeInfo.Struct.Fields {
-				if field.Name == "Timestamp" {
-					// field.Type.Name will be "time.Time"
-					// field.Type.IsResolvedByConfig will be true
-					slog.InfoContext(ctx, "Field overridden",
-						slog.String("field_name", field.Name),
-						slog.String("overridden_to_type", field.Type.Name),
-						slog.Bool("is_resolved_by_config", field.Type.IsResolvedByConfig),
-					)
-				}
-			}
-		}
-	}
+	// Now, when the scanner encounters a field of type `time.Time`, it will use the
+	// synthetic TypeInfo provided above instead of trying to scan the "time" package.
+	// The resulting scanner.FieldType will have its `IsResolvedByConfig` flag set to true,
+	// and its `Definition` field will point to the synthetic `TypeInfo`.
 }
 ```
 
 When a type is resolved using an override:
-- The `FieldType.Name` will reflect the target type string from the override map.
+- A `scanner.FieldType` is created based on the provided `scanner.TypeInfo`.
 - The `FieldType.IsResolvedByConfig` flag will be set to `true`.
-- Calling `FieldType.Resolve()` on such a type will return `nil, nil` (no error, no further `TypeInfo`), as it's considered "resolved" by the configuration.
+- The `FieldType.Definition` field will point to the synthetic `TypeInfo` you provided.
+- Calling `FieldType.Resolve()` on such a type will immediately return the linked `TypeInfo` without performing a scan.
 
-This feature is useful for simplifying complex external types down to their common representations (like `string` or `int`) or for mapping types from non-existent/stub packages during analysis.
+This feature gives you fine-grained control over how specific types are interpreted, which is essential for working around complex build contexts or for simplifying external types.
 
 ## Caching Symbol Locations
 

@@ -31,13 +31,14 @@ const (
 // and caches for improving performance over multiple calls.
 // Scanner instances are stateful regarding which files have been visited (parsed).
 type Scanner struct {
-	workDir      string // The working directory for the scanner.
-	locator      *locator.Locator
-	scanner      *scanner.Scanner
-	packageCache map[string]*Package // Cache for PackageInfo from ScanPackage/ScanPackageByImport, key is import path
-	visitedFiles map[string]struct{} // Set of visited (parsed) file absolute paths for this Scanner instance.
-	mu           sync.RWMutex
-	fset         *token.FileSet
+	workDir             string // The working directory for the scanner.
+	locator             *locator.Locator
+	scanner             *scanner.Scanner
+	packageCache        map[string]*Package // Cache for PackageInfo from ScanPackage/ScanPackageByImport, key is import path
+	visitedFiles        map[string]struct{} // Set of visited (parsed) file absolute paths for this Scanner instance.
+	mu                  sync.RWMutex
+	fset                *token.FileSet
+	useGoModuleResolver bool // To be set by WithGoModuleResolver
 
 	CachePath             string
 	symbolCache           *cache.SymbolCache // Symbol cache (persisted across Scanner instances if path is reused)
@@ -106,6 +107,14 @@ func WithWorkDir(path string) ScannerOption {
 	}
 }
 
+// WithGoModuleResolver enables the scanner to find packages in the Go module cache and GOROOT.
+func WithGoModuleResolver() ScannerOption {
+	return func(s *Scanner) error {
+		s.useGoModuleResolver = true
+		return nil
+	}
+}
+
 // WithOverlay provides in-memory file content to the scanner.
 func WithOverlay(overlay scanner.Overlay) ScannerOption {
 	return func(s *Scanner) error {
@@ -144,7 +153,12 @@ func New(options ...ScannerOption) (*Scanner, error) {
 		s.workDir = cwd
 	}
 
-	loc, err := locator.New(s.workDir, s.overlay)
+	locatorOpts := []locator.Option{locator.WithOverlay(s.overlay)}
+	if s.useGoModuleResolver {
+		locatorOpts = append(locatorOpts, locator.WithGoModuleResolver())
+	}
+
+	loc, err := locator.New(s.workDir, locatorOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize locator: %w", err)
 	}

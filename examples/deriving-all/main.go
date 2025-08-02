@@ -8,15 +8,25 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	goscan "github.com/podhmo/go-scan"
 	bindgen "github.com/podhmo/go-scan/examples/derivingbind/gen"
 	jsongen "github.com/podhmo/go-scan/examples/derivingjson/gen"
 	"github.com/podhmo/go-scan/scanner"
+	"golang.org/x/tools/imports"
 )
 
 type GeneratorFunc func(context.Context, *goscan.Scanner, *scanner.PackageInfo, *goscan.ImportManager) ([]byte, error)
+
+func formatCode(ctx context.Context, filename string, src []byte) ([]byte, error) {
+	formatted, err := imports.Process(filename, src, nil)
+	if err != nil {
+		return nil, fmt.Errorf("goimports failed: %w", err)
+	}
+	return formatted, nil
+}
 
 func main() {
 	logLevel := new(slog.LevelVar)
@@ -114,7 +124,42 @@ func main() {
 		}
 
 		outputFilename := fmt.Sprintf("%s_deriving.go", strings.ToLower(pkgInfo.Name))
-		if err := outputDir.SaveGoFile(ctx, goFile, outputFilename); err != nil {
+
+		// Manually construct the file content
+		var buf bytes.Buffer
+		fmt.Fprintf(&buf, "package %s\n\n", goFile.PackageName)
+		if len(goFile.Imports) > 0 {
+			fmt.Fprintln(&buf, "import (")
+			// Sort imports for consistent output
+			importPaths := make([]string, 0, len(goFile.Imports))
+			for path := range goFile.Imports {
+				importPaths = append(importPaths, path)
+			}
+			sort.Strings(importPaths)
+
+			for _, path := range importPaths {
+				alias := goFile.Imports[path]
+				if alias != "" {
+					fmt.Fprintf(&buf, "\t%s \"%s\"\n", alias, path)
+				} else {
+					fmt.Fprintf(&buf, "\t\"%s\"\n", path)
+				}
+			}
+			fmt.Fprintln(&buf, ")")
+		}
+		buf.WriteString("\n")
+		buf.WriteString(goFile.CodeSet)
+
+		// Format the code using goimports
+		formatted, err := formatCode(ctx, outputFilename, buf.Bytes())
+		if err != nil {
+			slog.WarnContext(ctx, "code formatting failed, using unformatted code", "path", pkgInfo.Path, "error", err)
+			formatted = buf.Bytes() // Fallback to unformatted code
+		}
+
+		// Write the file
+		outputPath := filepath.Join(outputDir.Path, outputFilename)
+		if err := os.WriteFile(outputPath, formatted, 0644); err != nil {
 			slog.ErrorContext(ctx, "Failed to save generated file for package", "path", pkgInfo.Path, slog.Any("error", err))
 			errorCount++
 		} else {

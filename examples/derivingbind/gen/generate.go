@@ -20,13 +20,14 @@ var bindMethodTemplateFS embed.FS
 //go:embed bind_method.tmpl
 var bindMethodTemplateString string
 
-const bindingAnnotation = "@derivng:binding"
+const bindingAnnotation = "deriving:binding"
 
 type TemplateData struct {
 	StructName                 string
 	Fields                     []FieldBindingInfo
 	NeedsBody                  bool
 	HasSpecificBodyFieldTarget bool
+	HasNonBodyFields           bool // New flag
 	ErrNoCookie                error
 }
 
@@ -54,16 +55,12 @@ func Generate(ctx context.Context, gscn *goscan.Scanner, pkgInfo *scanner.Packag
 	var generatedCodeForAllStructs bytes.Buffer
 	anyCodeGenerated := false
 
-	// Always add parser and binding, as they are fundamental to the template
-	importManager.Add("github.com/podhmo/go-scan/examples/derivingbind/binding", "")
-	importManager.Add("github.com/podhmo/go-scan/examples/derivingbind/parser", "")
-
 	for _, typeInfo := range pkgInfo.Types {
 		if typeInfo.Kind != scanner.StructKind || typeInfo.Struct == nil {
 			continue
 		}
 
-		annotationValue, hasBindingAnnotationOnStruct := typeInfo.Annotation("derivng:binding")
+		annotationValue, hasBindingAnnotationOnStruct := typeInfo.Annotation(bindingAnnotation)
 		structLevelInTag := ""
 		if hasBindingAnnotationOnStruct {
 			parts := strings.Fields(annotationValue)
@@ -86,6 +83,7 @@ func Generate(ctx context.Context, gscn *goscan.Scanner, pkgInfo *scanner.Packag
 			Fields:                     []FieldBindingInfo{},
 			NeedsBody:                  (structLevelInTag == "body"),
 			HasSpecificBodyFieldTarget: false,
+			HasNonBodyFields:           false, // Initialize
 			ErrNoCookie:                http.ErrNoCookie,
 		}
 		importManager.Add("net/http", "") // For http.ErrNoCookie and request object (r *http.Request)
@@ -192,6 +190,9 @@ func Generate(ctx context.Context, gscn *goscan.Scanner, pkgInfo *scanner.Packag
 			}
 
 			if bindFrom != "body" {
+				data.HasNonBodyFields = true
+				importManager.Add("github.com/podhmo/go-scan/examples/derivingbind/binding", "")
+				importManager.Add("github.com/podhmo/go-scan/examples/derivingbind/parser", "")
 				importManager.Add("errors", "") // For errors.Join
 				if fInfo.ParserFunc == "" {
 					slog.DebugContext(ctx, "Skipping field: No parser func for non-body binding", "struct", typeInfo.Name, "field", field.Name)

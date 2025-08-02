@@ -16,6 +16,7 @@ test:
 
 test-e2e:
 	make -C examples/convert e2e
+	make -C examples/deriving-all e2e
 
 clean:
 	go clean -cache -testcache # General Go clean

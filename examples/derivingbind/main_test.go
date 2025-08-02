@@ -31,7 +31,7 @@ go 1.22.4
 `,
 				"models.go": `
 package models
-// @derivng:binding
+// @deriving:binding
 type Input struct {
 	Name string ` + "`in:\"query\" query:\"name\"`" + `
 }

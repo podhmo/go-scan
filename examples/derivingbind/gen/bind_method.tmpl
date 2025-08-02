@@ -27,71 +27,87 @@ FieldBindingInfo struct {
 }
 */}}
 func (s *{{.StructName}}) Bind(req *http.Request, pathVar func(string) string) error {
+	var errs []error
+
+	{{if .HasNonBodyFields}}
 	b := binding.New(req, pathVar)
-	return errors.Join(
-	{{range .Fields}}
-		{{if not .IsBody}}
-		{{$bindSource := ""}}
-		{{if eq .BindFrom "query"}}{{$bindSource = "binding.Query"}}
-		{{else if eq .BindFrom "header"}}{{$bindSource = "binding.Header"}}
-		{{else if eq .BindFrom "cookie"}}{{$bindSource = "binding.Cookie"}}
-		{{else if eq .BindFrom "path"}}{{$bindSource = "binding.Path"}}
-		{{end}}
-		{{$requiredVar := "binding.Optional"}}{{if .IsRequired}}{{$requiredVar = "binding.Required"}}{{end}}
-		{{if .IsSlice}}
-			{{if .IsSliceElementPointer}}
-			binding.SlicePtr(b, &s.{{.FieldName}}, {{$bindSource}}, "{{.BindName}}", {{.ParserFunc}}, {{$requiredVar}}), // Field: {{.FieldName}} ({{.OriginalFieldTypeString}})
-			{{else}}
-			binding.Slice(b, &s.{{.FieldName}}, {{$bindSource}}, "{{.BindName}}", {{.ParserFunc}}, {{$requiredVar}}), // Field: {{.FieldName}} ({{.OriginalFieldTypeString}})
-			{{end}}
-		{{else}}
-			{{if .IsPointer}}
-			binding.OnePtr(b, &s.{{.FieldName}}, {{$bindSource}}, "{{.BindName}}", {{.ParserFunc}}, {{$requiredVar}}), // Field: {{.FieldName}} ({{.OriginalFieldTypeString}})
-			{{else}}
-			binding.One(b, &s.{{.FieldName}}, {{$bindSource}}, "{{.BindName}}", {{.ParserFunc}}, {{$requiredVar}}), // Field: {{.FieldName}} ({{.OriginalFieldTypeString}})
-			{{end}}
-		{{end}}
-		{{end}}
-	{{end}}
-	{{if .NeedsBody}}
-		func() error { // Anonymous function to handle body binding logic
-			if req.Body != nil && req.Body != http.NoBody {
-				var bodyHandledBySpecificField = false
-				{{range .Fields}}
-				{{if .IsBody}}
-				// Field {{.FieldName}} (type {{.OriginalFieldTypeString}}) is the target for the entire request body
-				if decErr := json.NewDecoder(req.Body).Decode(&s.{{.FieldName}}); decErr != nil {
-					if decErr != io.EOF { // EOF might be acceptable if body is optional and empty
-						return fmt.Errorf("binding: failed to decode request body into field {{.FieldName}}: %w", decErr)
-					}
-				}
-				bodyHandledBySpecificField = true
-				return nil // Successfully handled specific body field
+	var err error
+		{{range .Fields}}
+			{{if not .IsBody}}
+				{{$bindSource := ""}}
+				{{if eq .BindFrom "query"}}{{$bindSource = "binding.Query"}}
+				{{else if eq .BindFrom "header"}}{{$bindSource = "binding.Header"}}
+				{{else if eq .BindFrom "cookie"}}{{$bindSource = "binding.Cookie"}}
+				{{else if eq .BindFrom "path"}}{{$bindSource = "binding.Path"}}
 				{{end}}
-				{{end}}
-				// If no specific field was designated 'in:"body"', decode into the struct 's' itself.
-				if !bodyHandledBySpecificField {
-					if decErr := json.NewDecoder(req.Body).Decode(s); decErr != nil {
-						if decErr != io.EOF { // EOF might be acceptable if body is optional and empty
-							return fmt.Errorf("binding: failed to decode request body into struct {{.StructName}}: %w", decErr)
-						}
-					}
-				}
-				return nil // Body processed (or EOF ignored)
-			} else {
-				// Check if body was required.
-				isStructOrFieldBodyRequired := false
-				{{range .Fields}}
-					{{if and .IsBody .IsRequired}}
-					isStructOrFieldBodyRequired = true
+				{{$requiredVar := "binding.Optional"}}{{if .IsRequired}}{{$requiredVar = "binding.Required"}}{{end}}
+
+				{{if .IsSlice}}
+					{{if .IsSliceElementPointer}}
+						err = binding.SlicePtr(b, &s.{{.FieldName}}, {{$bindSource}}, "{{.BindName}}", {{.ParserFunc}}, {{$requiredVar}}) // Field: {{.FieldName}} ({{.OriginalFieldTypeString}})
+					{{else}}
+						err = binding.Slice(b, &s.{{.FieldName}}, {{$bindSource}}, "{{.BindName}}", {{.ParserFunc}}, {{$requiredVar}}) // Field: {{.FieldName}} ({{.OriginalFieldTypeString}})
+					{{end}}
+				{{else}}
+					{{if .IsPointer}}
+						err = binding.OnePtr(b, &s.{{.FieldName}}, {{$bindSource}}, "{{.BindName}}", {{.ParserFunc}}, {{$requiredVar}}) // Field: {{.FieldName}} ({{.OriginalFieldTypeString}})
+					{{else}}
+						err = binding.One(b, &s.{{.FieldName}}, {{$bindSource}}, "{{.BindName}}", {{.ParserFunc}}, {{$requiredVar}}) // Field: {{.FieldName}} ({{.OriginalFieldTypeString}})
 					{{end}}
 				{{end}}
-				if isStructOrFieldBodyRequired {
-					return errors.New("binding: request body is required but was not provided or was empty")
+				if err != nil {
+					errs = append(errs, err)
+				}
+			{{end}}
+		{{end}}
+	{{end}}
+
+	{{if .NeedsBody}}
+	bodyErr := func() error { // Anonymous function to handle body binding logic
+		if req.Body != nil && req.Body != http.NoBody {
+			var bodyHandledBySpecificField = false
+			{{range .Fields}}
+			{{if .IsBody}}
+			// Field {{.FieldName}} (type {{.OriginalFieldTypeString}}) is the target for the entire request body
+			if decErr := json.NewDecoder(req.Body).Decode(&s.{{.FieldName}}); decErr != nil {
+				if decErr != io.EOF { // EOF might be acceptable if body is optional and empty
+					return fmt.Errorf("binding: failed to decode request body into field {{.FieldName}}: %w", decErr)
 				}
 			}
-			return nil // No body or body not required
-		}(),
+			bodyHandledBySpecificField = true
+			return nil // Successfully handled specific body field
+			{{end}}
+			{{end}}
+			// If no specific field was designated 'in:"body"', decode into the struct 's' itself.
+			if !bodyHandledBySpecificField {
+				if decErr := json.NewDecoder(req.Body).Decode(s); decErr != nil {
+					if decErr != io.EOF { // EOF might be acceptable if body is optional and empty
+						return fmt.Errorf("binding: failed to decode request body into struct {{.StructName}}: %w", decErr)
+					}
+				}
+			}
+			return nil // Body processed (or EOF ignored)
+		} else {
+			// Check if body was required.
+			isStructOrFieldBodyRequired := false
+			{{range .Fields}}
+				{{if and .IsBody .IsRequired}}
+				isStructOrFieldBodyRequired = true
+				{{end}}
+			{{end}}
+			if isStructOrFieldBodyRequired {
+				return errors.New("binding: request body is required but was not provided or was empty")
+			}
+		}
+		return nil // No body or body not required
+	}()
+	if bodyErr != nil {
+		errs = append(errs, bodyErr)
+	}
 	{{end}}
-	)
+
+	if len(errs) > 0 {
+		return errors.Join(errs...)
+	}
+	return nil
 }

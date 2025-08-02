@@ -31,7 +31,7 @@ func TestUnifiedGenerator(t *testing.T) {
 package models
 import "time"
 // @deriving:unmarshal
-// @derivng:binding in:"body"
+// @deriving:binding in:"body"
 type Event struct {
 	ID        string    ` + "`json:\"id\"`" + `
 	CreatedAt time.Time ` + "`json:\"createdAt\"`" + `
@@ -82,7 +82,7 @@ func (UserCreated) isEventData() {}
 				"models.go": `
 package models
 import "time"
-// @derivng:binding in:"body"
+// @deriving:binding in:"body"
 type Event struct {
 	Name string ` + "`json:\"name\"`" + `
 }`,

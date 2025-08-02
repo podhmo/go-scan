@@ -40,7 +40,7 @@ The `derivingbind` example demonstrates a code generator built with `go-scan`.
 
 **Key Features**:
 - Uses `go-scan` to analyze struct definitions.
-- Processes structs annotated with `@derivng:binding` in their GoDoc comments.
+- Processes structs annotated with `@deriving:binding` in their GoDoc comments.
 - Determines data binding sources for fields based on a combination of struct-level GoDoc annotations and individual field tags (e.g., `in:"path"`, `query:"name"`, `header:"X-API-Key"`).
 - Supports a wide range of Go built-in types for binding, including scalars, pointers to scalars, and slices of scalars.
 - Can bind the entire request body to a specific field or map JSON body fields to struct fields if the struct itself is marked with `in:"body"`.

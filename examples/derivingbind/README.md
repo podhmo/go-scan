@@ -11,13 +11,13 @@ This directory contains an example of a code generator, `derivingbind`, built us
 
 ## How it Works
 
-The generator scans struct definitions that have the `@derivng:binding` annotation in their GoDoc.
+The generator scans struct definitions that have the `@deriving:binding` annotation in their GoDoc.
 It then determines how to bind data to the struct's fields based on a combination of the struct's GoDoc and individual field tags.
 
 **Struct-Level Annotation:**
 
--   `@derivng:binding`: Marks the struct for processing.
--   `@derivng:binding in:"body"`: If `in:"body"` is present in the same GoDoc line as `@derivng:binding`, the entire struct is considered a target for the JSON request body. Fields within this struct that do *not* have their own `in` tags will be populated from the JSON body based on their `json` tags.
+-   `@deriving:binding`: Marks the struct for processing.
+-   `@deriving:binding in:"body"`: If `in:"body"` is present in the same GoDoc line as `@deriving:binding`, the entire struct is considered a target for the JSON request body. Fields within this struct that do *not* have their own `in` tags will be populated from the JSON body based on their `json` tags.
 
 **Field-Level Tags:**
 
@@ -70,7 +70,7 @@ The `required:"true"` tag can be used with any of these field types to indicate 
 
 ## Usage
 
-1.  Define your structs with the `@derivng:binding` annotation and appropriate `in:` tags.
+1.  Define your structs with the `@deriving:binding` annotation and appropriate `in:` tags.
 2.  Run the generator:
     ```bash
     go run main.go generator.go <path_to_your_package_with_models>

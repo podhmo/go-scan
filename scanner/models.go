@@ -117,13 +117,13 @@ func (ti *TypeInfo) Annotation(name string) (value string, ok bool) {
 				// Annotation exists without a value part, e.g. @myannotation
 				value = ""
 			} else {
-				// This case handles annotations like "@derivng:binding in:"body""
+				// This case handles annotations like "@deriving:binding in:"body""
 				// where the "value" is everything after "@name "
 				value = rest
 			}
 			// Further parsing for specific formats like `in:"body"` can be done by the caller
 			// if the raw value after the colon is needed.
-			// For `@derivng:binding in:"body"`, this will return `in:"body"` as value for `binding` annotation.
+			// For `@deriving:binding in:"body"`, this will return `in:"body"` as value for `binding` annotation.
 			return value, ok
 		}
 	}

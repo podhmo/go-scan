@@ -31,35 +31,35 @@ For the purpose of this feature, an "enum" is defined by the following pattern:
 -   The constants can be defined in a single `const (...)` block or across multiple separate `const` declarations. As long as they share the same type, they belong to the same enum.
 -   Untyped constants (e.g., `const MaxRetries = 5`) will not be considered part of any enum.
 
-### Example of what should be detected:
+## 3. API and Retrieval Methods
 
-```go
-package model
+There are two primary ways this feature could be exposed to a developer:
 
-// Status should be identified as an enum type.
-type Status int
+### Method 1: Package-Level Discovery
 
-const (
-    // These three constants should be identified as members of Status.
-    StatusPending Status = iota
-    StatusInProgress
-    StatusCompleted
-)
+This is the primary, discovery-focused approach. The scanner processes an entire package and automatically identifies all types that fit the enum pattern.
 
-// Another enum type in the same package.
-type LogLevel string
+-   **Use Case:** A code generator that needs to find all enums in a package to create OpenAPI schemas, validation rules, or string-conversion methods for all of them.
+-   **Implementation:** This is achieved by the two-pass scanning process described in section 5. The results are embedded directly into the `PackageInfo` structure.
 
-const (
-    // These constants should be members of LogLevel.
-    LogLevelDebug LogLevel = "debug"
-    LogLevelInfo  LogLevel = "info"
-)
+### Method 2: Symbol-Specific Lookup
 
-// This constant should NOT be associated with any enum.
-const DefaultTimeout = 10
-```
+This is a targeted lookup approach. The developer already knows the type they are interested in and wants to retrieve its enum members.
 
-## 3. Proposed Data Structure Changes
+-   **Use Case:** A tool that is analyzing a specific struct field and, upon finding its type is, for example, `models.Status`, needs to look up the possible values for `Status`.
+-   **Implementation:** This can be built on top of the data gathered by Method 1. A helper function could be provided:
+    ```go
+    // Example of a possible helper function
+    func GetEnumMembers(scanner *goscan.Scanner, typeName string) ([]*scanner.ConstantInfo, error) {
+        // 1. Resolve the type symbol to get its TypeInfo.
+        // 2. Check if TypeInfo.IsEnum is true.
+        // 3. Return TypeInfo.EnumMembers.
+    }
+    ```
+
+This plan focuses on implementing the foundational **Method 1**, which in turn enables the future implementation of **Method 2**.
+
+## 4. Proposed Data Structure Changes
 
 To support this feature, the following changes will be made to the data models in `scanner/models.go`.
 
@@ -87,7 +87,7 @@ type TypeInfo struct {
 
 No changes are required for `ConstantInfo`.
 
-## 4. Proposed Scanning Process Changes
+## 5. Proposed Scanning Process Changes
 
 The current scanning process is a single pass that populates `PackageInfo.Types` and `PackageInfo.Constants` independently. To reliably associate constants with their types, a second "linking" pass is required after the initial scan of a package is complete.
 
@@ -144,13 +144,13 @@ This method will be called at the end of `scanGoFiles` in `scanner/scanner.go` b
 }
 ```
 
-## 5. Implementation Steps
+## 6. Implementation Steps
 
 1.  **Modify `scanner/models.go`:**
     -   Add the `IsEnum bool` and `EnumMembers []*ConstantInfo` fields to the `TypeInfo` struct.
 
 2.  **Implement the Linking Logic:**
-    -   Create a new method `resolveEnums()` on `PackageInfo` in `scanner/models.go` (or as a private function in `scanner/scanner.go` that takes `*PackageInfo`). The logic will be as described in section 4.
+    -   Create a new method `resolveEnums()` on `PackageInfo` in `scanner/models.go` (or as a private function in `scanner/scanner.go` that takes `*PackageInfo`). The logic will be as described in section 5.
 
 3.  **Update the Scanner:**
     -   In `scanner/scanner.go`, call the new linking function/method at the end of `scanGoFiles` before returning the `PackageInfo`.
@@ -168,8 +168,9 @@ This method will be called at the end of `scanGoFiles` in `scanner/scanner.go` b
         -   `TypeInfo.EnumMembers` contains the correct `ConstantInfo` objects.
         -   The correct number of enums and members are found.
 
-## 6. Considerations
+## 7. Considerations
 
--   **Cross-Package Enums:** The proposed logic only links constants to types defined within the same package. Associating a constant with a type from an external package is out of scope for this initial implementation, as it would require ensuring the external package is fully scanned and resolved first.
--   **Performance:** The linking step involves one loop over all constants in the package. For a typical package, this should have a negligible impact on performance, as it's an in-memory operation.
--   **Sorting:** The `EnumMembers` will be appended in the order that constants are found. If a consistent order is required (e.g., sorted by value or name), this should be explicitly handled, but for now, declaration order is sufficient.
+-   **Cross-Package Enums:** The proposed logic only links constants to types defined within the same package. Associating a constant with a type from an external package is out of scope for this initial implementation.
+-   **Performance:** The linking step involves one loop over all constants in the package. For a typical package, this should have a negligible impact on performance.
+-   **Sorting:** The `EnumMembers` will be appended in the order that constants are found. If a consistent order is required (e.g., sorted by value or name), this should be explicitly handled.
+-   **Targeted Lookup Assumption:** For the symbol-specific lookup (Method 2), it could be assumed that the enum's type definition and its constant values reside in the same file. The `TypeInfo` struct contains the `FilePath`, making it possible to get the file path for a type and then perform a targeted search for `const` declarations within that file only. This could be an optimization for the targeted lookup, but the package-level scan must check all files in the package.

@@ -17,11 +17,11 @@ import (
 
 func TestUnifiedGenerator(t *testing.T) {
 	testCases := []struct {
-		name              string
-		input             map[string]string
+		name               string
+		input              map[string]string
 		expectedToGenerate bool
-		mustContain       []string
-		mustNotContain    []string
+		mustContain        []string
+		mustNotContain     []string
 	}{
 		{
 			name: "struct with both annotations",

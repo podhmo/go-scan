@@ -60,7 +60,6 @@ func TestBindUser(t *testing.T) {
 	})
 }
 
-
 func TestMarshalEvent(t *testing.T) {
 	t.Run("user created event", func(t *testing.T) {
 		eventTime, _ := time.Parse(time.RFC3339, "2023-01-01T12:00:00Z")

@@ -192,36 +192,52 @@ func resolveType(ctx context.Context, s *goscan.Scanner, info *model.ParsedInfo,
 		return nil, fmt.Errorf("unqualified type %q not found in package %s", typeNameStr, p.Name)
 	}
 
-	parts := strings.Split(typeNameStr, ".")
-	if len(parts) != 2 {
-		return nil, fmt.Errorf("unsupported type format: %q", typeNameStr)
-	}
-	pkgAlias, name := parts[0], parts[1]
+	var pkgPath string
+	var name string
+	var found bool
 
-	pkgPath, found := info.Imports[pkgAlias]
-	if !found {
-		for _, f := range p.AstFiles {
-			for _, i := range f.Imports {
-				path := strings.Trim(i.Path.Value, `"`)
-				if i.Name != nil && i.Name.Name == pkgAlias {
-					pkgPath, found = path, true
-					break
-				}
-				if i.Name == nil {
-					if path == pkgAlias || strings.HasSuffix(path, "/"+pkgAlias) {
+	lastDotIndex := strings.LastIndex(typeNameStr, ".")
+	// this should not happen due to the strings.Contains check above, but as a safeguard
+	if lastDotIndex == -1 {
+		return nil, fmt.Errorf("qualified type %q does not contain a '.'", typeNameStr)
+	}
+
+	pkgIdentifier := typeNameStr[:lastDotIndex]
+	name = typeNameStr[lastDotIndex+1:]
+
+	if strings.Contains(pkgIdentifier, "/") {
+		// Assume it's a full package path
+		pkgPath = pkgIdentifier
+		found = true
+	} else {
+		// Assume it's a package alias
+		pkgAlias := pkgIdentifier
+		pkgPath, found = info.Imports[pkgAlias]
+		if !found {
+			for _, f := range p.AstFiles {
+				for _, i := range f.Imports {
+					path := strings.Trim(i.Path.Value, `"`)
+					if i.Name != nil && i.Name.Name == pkgAlias {
 						pkgPath, found = path, true
 						break
 					}
+					if i.Name == nil {
+						// Heuristic: match alias with package name if no explicit alias
+						if path == pkgAlias || strings.HasSuffix(path, "/"+pkgAlias) {
+							pkgPath, found = path, true
+							break
+						}
+					}
 				}
-			}
-			if found {
-				break
+				if found {
+					break
+				}
 			}
 		}
 	}
 
 	if !found {
-		return nil, fmt.Errorf("could not resolve package path for alias %q", pkgAlias)
+		return nil, fmt.Errorf("could not resolve package path for identifier %q", pkgIdentifier)
 	}
 
 	resolvableType := &scanner.FieldType{Resolver: s, FullImportPath: pkgPath, TypeName: name}

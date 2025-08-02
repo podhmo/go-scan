@@ -31,33 +31,34 @@ For the purpose of this feature, an "enum" is defined by the following pattern:
 -   The constants can be defined in a single `const (...)` block or across multiple separate `const` declarations. As long as they share the same type, they belong to the same enum.
 -   Untyped constants (e.g., `const MaxRetries = 5`) will not be considered part of any enum.
 
-## 3. API and Retrieval Methods
+## 3. Core Implementation Strategies
 
-There are two primary ways this feature could be exposed to a developer:
+To align with `go-scan`'s design philosophy of lazy and partial scanning, two distinct and independent methods will be implemented to retrieve enum information.
 
-### Method 1: Package-Level Discovery
+### Strategy 1: Package-Level Discovery
 
-This is the primary, discovery-focused approach. The scanner processes an entire package and automatically identifies all types that fit the enum pattern.
+This strategy is designed for tools that need to discover all enum definitions within an entire package.
 
--   **Use Case:** A code generator that needs to find all enums in a package to create OpenAPI schemas, validation rules, or string-conversion methods for all of them.
--   **Implementation:** This is achieved by the two-pass scanning process described in section 5. The results are embedded directly into the `PackageInfo` structure.
+-   **Use Case:** An OpenAPI generator that needs to define schemas for all enums in a `models` package.
+-   **Implementation:**
+    1.  Perform a full scan of all `.go` files in the target package, populating `PackageInfo.Types` and `PackageInfo.Constants`.
+    2.  Perform a second, "linking" pass that iterates over the collected constants.
+    3.  For each constant with an explicit type, it finds the corresponding `TypeInfo` within the same package and appends the constant to the `TypeInfo.EnumMembers` slice.
+    4.  This populates the `PackageInfo` with a complete map of all enums in the package.
 
-### Method 2: Symbol-Specific Lookup
+### Strategy 2: Lazy Symbol-Based Lookup
 
-This is a targeted lookup approach. The developer already knows the type they are interested in and wants to retrieve its enum members.
+This strategy is for targeted lookups of a specific enum type, designed to be fast and avoid unnecessary scanning. **This method does not depend on a prior package-level scan.**
 
--   **Use Case:** A tool that is analyzing a specific struct field and, upon finding its type is, for example, `models.Status`, needs to look up the possible values for `Status`.
--   **Implementation:** This can be built on top of the data gathered by Method 1. A helper function could be provided:
-    ```go
-    // Example of a possible helper function
-    func GetEnumMembers(scanner *goscan.Scanner, typeName string) ([]*scanner.ConstantInfo, error) {
-        // 1. Resolve the type symbol to get its TypeInfo.
-        // 2. Check if TypeInfo.IsEnum is true.
-        // 3. Return TypeInfo.EnumMembers.
-    }
-    ```
+-   **Use Case:** A tool analyzing a struct field of type `models.Status` needs to find the members of `Status` without scanning the entire `models` package.
+-   **Implementation:**
+    1.  The user provides a fully qualified type name (e.g., `"github.com/project/models.Status"`).
+    2.  The scanner uses its internal resolver and cache (if enabled) to find the absolute file path where the `Status` symbol is defined.
+    3.  The scanner then parses **only that single file's AST**.
+    4.  It traverses the AST of that file to find the `TypeSpec` for `Status` and all `const` declarations.
+    5.  It identifies the constants that are explicitly typed as `Status` and returns them as the enum members.
 
-This plan focuses on implementing the foundational **Method 1**, which in turn enables the future implementation of **Method 2**.
+This dual approach provides both broad discovery and efficient, targeted lookups, respecting the library's core principles.
 
 ## 4. Proposed Data Structure Changes
 
@@ -87,90 +88,24 @@ type TypeInfo struct {
 
 No changes are required for `ConstantInfo`.
 
-## 5. Proposed Scanning Process Changes
-
-The current scanning process is a single pass that populates `PackageInfo.Types` and `PackageInfo.Constants` independently. To reliably associate constants with their types, a second "linking" pass is required after the initial scan of a package is complete.
-
-The updated process will be:
-
-1.  **First Pass (Existing Logic):** The `scanGoFiles` function in `scanner/scanner.go` will parse all `.go` files in the package as it currently does. It will populate `info.Types` and `info.Constants` with all the types and constants found. At this stage, there is no link between them.
-
-2.  **Second Pass (New Logic):** After the file parsing loop in `scanGoFiles` is finished, a new private method will be called, for example, `info.resolveEnums()`. This method will implement the linking logic.
-
-### `resolveEnums()` Method Logic:
-
-This method will be added to `PackageInfo`.
-
-```go
-// Can be a method on PackageInfo
-func (p *PackageInfo) resolveEnums() {
-    // The type lookup is already efficient thanks to PackageInfo.Lookup()
-
-    for _, c := range p.Constants {
-        // Skip constants without an explicit type or with a built-in type.
-        if c.Type == nil || c.Type.IsBuiltin || c.Type.FullImportPath == "" {
-            continue
-        }
-
-        // We only care about constants whose type is defined in the current package.
-        if c.Type.FullImportPath != p.ImportPath {
-            continue
-        }
-
-        // Find the TypeInfo for this constant's type.
-        typeName := c.Type.TypeName
-        typeInfo := p.Lookup(typeName)
-
-        if typeInfo != nil {
-            // Found the corresponding type. Link the constant to it.
-            typeInfo.IsEnum = true
-            typeInfo.EnumMembers = append(typeInfo.EnumMembers, c)
-        }
-    }
-}
-```
-
-This method will be called at the end of `scanGoFiles` in `scanner/scanner.go` before returning the `PackageInfo`.
-
-```go
-// scanner/scanner.go -> scanGoFiles(...)
-
-    // ... end of the for loop iterating through files ...
-
-    // NEW: Perform enum linking
-    info.resolveEnums() // Assuming it's a method on PackageInfo
-
-    return info, nil
-}
-```
-
-## 6. Implementation Steps
+## 5. Implementation Steps
 
 1.  **Modify `scanner/models.go`:**
-    -   Add the `IsEnum bool` and `EnumMembers []*ConstantInfo` fields to the `TypeInfo` struct.
+    -   Add `IsEnum bool` and `EnumMembers []*ConstantInfo` to `TypeInfo`.
 
-2.  **Implement the Linking Logic:**
-    -   Create a new method `resolveEnums()` on `PackageInfo` in `scanner/models.go` (or as a private function in `scanner/scanner.go` that takes `*PackageInfo`). The logic will be as described in section 5.
+2.  **Implement Package-Level Discovery (Strategy 1):**
+    -   Implement the linking logic (e.g., `resolveEnums()`) and call it at the end of the existing `scanGoFiles` function in `scanner/scanner.go`.
 
-3.  **Update the Scanner:**
-    -   In `scanner/scanner.go`, call the new linking function/method at the end of `scanGoFiles` before returning the `PackageInfo`.
+3.  **Implement Lazy Symbol-Based Lookup (Strategy 2):**
+    -   Create a new public method on the scanner, e.g., `ScanEnumMembers(ctx context.Context, typeSymbol string) ([]*ConstantInfo, error)`.
+    -   This method will implement the single-file parsing logic as described in Strategy 2. It will leverage `FindSymbolDefinitionLocation` or a similar mechanism to locate the file.
 
-4.  **Add Unit and Integration Tests:**
-    -   Create a new test file, e.g., `goscan_enum_test.go`.
-    -   Add test cases in the `testdata` directory with various enum patterns:
-        -   A simple enum with `iota`.
-        -   A string-based enum.
-        -   Constants for one enum defined across multiple `const` blocks.
-        -   A file with multiple different enum types.
-        -   A file with types and constants that should *not* be matched as enums.
-    -   The tests should scan the testdata and assert that:
-        -   `TypeInfo.IsEnum` is correctly set.
-        -   `TypeInfo.EnumMembers` contains the correct `ConstantInfo` objects.
-        -   The correct number of enums and members are found.
+4.  **Add Tests for Both Strategies:**
+    -   Create `goscan_enum_test.go`.
+    -   Add tests for the package-level discovery.
+    -   Add separate tests specifically for the lazy lookup, ensuring it only parses one file and correctly retrieves members.
 
-## 7. Considerations
-
--   **Cross-Package Enums:** The proposed logic only links constants to types defined within the same package. Associating a constant with a type from an external package is out of scope for this initial implementation.
--   **Performance:** The linking step involves one loop over all constants in the package. For a typical package, this should have a negligible impact on performance.
+## 6. Considerations
+-   **Cache Importance:** The efficiency of the Lazy Symbol-Based Lookup is highly dependent on the symbol cache being enabled and populated, as this allows for a quick mapping from symbol to file path.
+-   **Cross-Package Enums:** Both strategies will initially only support enums where the type and constants are defined within the same package.
 -   **Sorting:** The `EnumMembers` will be appended in the order that constants are found. If a consistent order is required (e.g., sorted by value or name), this should be explicitly handled.
--   **Targeted Lookup Assumption:** For the symbol-specific lookup (Method 2), it could be assumed that the enum's type definition and its constant values reside in the same file. The `TypeInfo` struct contains the `FilePath`, making it possible to get the file path for a type and then perform a targeted search for `const` declarations within that file only. This could be an optimization for the targeted lookup, but the package-level scan must check all files in the package.

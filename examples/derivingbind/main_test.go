@@ -31,7 +31,7 @@ go 1.22.4
 `,
 				"models.go": `
 package models
-// @derivng:binding
+// @deriving:binding
 type Input struct {
 	Name string ` + "`in:\"query\" query:\"name\"`" + `
 }
@@ -51,12 +51,21 @@ import (
 )
 
 func (s *Input) Bind(req *http.Request, pathVar func(string) string) error {
+	var errs []error
+
 	b := binding.New(req, pathVar)
-	return errors.Join(
+	var err error
 
-		binding.One(b, &s.Name, binding.Query, "name", parser.String, binding.Optional), // Field: Name (string)
+	err = binding.One(b, &s.Name, binding.Query, "name", parser.String, binding.Optional) // Field: Name (string)
 
-	)
+	if err != nil {
+		errs = append(errs, err)
+	}
+
+	if len(errs) > 0 {
+		return errors.Join(errs...)
+	}
+	return nil
 }
 `,
 			},

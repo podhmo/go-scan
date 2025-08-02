@@ -201,7 +201,7 @@ func TestSpecificBodyFieldBind_Bind(t *testing.T) {
 }
 
 func TestFullBodyBind_Bind(t *testing.T) {
-	// This struct is tagged `@derivng:binding in:"body"`
+	// This struct is tagged `@deriving:binding in:"body"`
 	rawBody := `{"title": "My Document", "count": 5, "is_published": false}`
 	req := httptest.NewRequest("PUT", "/documents/1", strings.NewReader(rawBody))
 	req.Header.Set("Content-Type", "application/json")

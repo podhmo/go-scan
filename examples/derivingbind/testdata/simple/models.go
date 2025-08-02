@@ -1,6 +1,6 @@
 package simple
 
-// @derivng:binding in:"body"
+// @deriving:binding in:"body"
 // This struct will have its fields bound from various parts of an HTTP request.
 // If the struct doc comment also contains `in:"body"`, then fields without specific 'in' tags
 // are assumed to be from the JSON body.
@@ -19,7 +19,7 @@ type ComprehensiveBind struct {
 	Value       int    `json:"value"`
 }
 
-// @derivng:binding
+// @deriving:binding
 // This struct demonstrates a specific field being the target for `in:"body"`.
 type SpecificBodyFieldBind struct {
 	RequestID       string      `in:"header" header:"X-Request-ID"`
@@ -33,7 +33,7 @@ type RequestBody struct {
 	IsMember bool   `json:"isMember"`
 }
 
-// @derivng:binding in:"body"
+// @deriving:binding in:"body"
 // This struct itself is the target for the request body because of `in:"body"` in the doc comment.
 // Fields without other `in:` tags are expected from JSON.
 type FullBodyBind struct {
@@ -43,7 +43,7 @@ type FullBodyBind struct {
 	SourceHeader string `in:"header" header:"X-Source"` // This field explicitly comes from a header
 }
 
-// @derivng:binding
+// @deriving:binding
 // Test case for a struct that is NOT a body target itself, but has query/path params.
 // Used to ensure that non-body structs are handled correctly.
 type QueryAndPathOnlyBind struct {
@@ -53,7 +53,7 @@ type QueryAndPathOnlyBind struct {
 }
 
 // TestPointerFields is a struct for testing pointer fields.
-// @derivng:binding
+// @deriving:binding
 type TestPointerFields struct {
 	QueryStrOptional  *string `in:"query" query:"qStrOpt"`
 	QueryStrRequired  *string `in:"query" query:"qStrReq" required:"true"`
@@ -70,7 +70,7 @@ type TestPointerFields struct {
 }
 
 // TestRequiredNonPointerFields is a struct for testing required non-pointer fields.
-// @derivng:binding
+// @deriving:binding
 type TestRequiredNonPointerFields struct {
 	QueryStrRequired  string `in:"query" query:"qStrReq" required:"true"`
 	QueryIntRequired  int    `in:"query" query:"qIntReq" required:"true"`
@@ -79,7 +79,7 @@ type TestRequiredNonPointerFields struct {
 	CookieStrRequired string `in:"cookie" cookie:"cStrReq" required:"true"`
 }
 
-// @derivng:binding
+// @deriving:binding
 // TestExtendedTypesBind is a struct for testing newly supported types including slices and various numerics.
 type TestExtendedTypesBind struct {
 	// Slice types
@@ -137,7 +137,7 @@ type TestExtendedTypesBind struct {
 	QueryPtrStringSliceWithEmpty []*string `in:"query" query:"qPtrStrSliceEmpty"` // ?qPtrStrSliceEmpty=&qPtrStrSliceEmpty=foo&qPtrStrSliceEmpty=
 }
 
-// @derivng:binding
+// @deriving:binding
 // TestNewTypesBind is a struct for testing uintptr, complex64, complex128 types.
 type TestNewTypesBind struct {
 	// uintptr

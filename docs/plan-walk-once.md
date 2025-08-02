@@ -4,7 +4,7 @@
 
 The primary objective is to combine the functionality of the `derivingjson` and `derivingbind` tools into a single, efficient command-line tool.
 
-The key requirement is that this new tool must parse the target Go source files **only once** to generate code for both `deriving:unmarshal` and `derivng:binding` annotations. This will improve performance by eliminating redundant file I/O and AST parsing.
+The key requirement is that this new tool must parse the target Go source files **only once** to generate code for both `deriving:unmarshal` and `deriving:binding` annotations. This will improve performance by eliminating redundant file I/O and AST parsing.
 
 ## 2. Analysis of Existing Implementations
 
@@ -104,7 +104,7 @@ The testing approach will be as follows:
         "models.go": `
     package models
     // deriving:unmarshal
-    // derivng:binding in:"body"
+    // deriving:binding in:"body"
     type User struct {
         Name string `json:"name"`
         ID   int    `json:"id"`
@@ -186,7 +186,7 @@ This project can be broken down into the following incremental steps.
 -   [ ] **Step 5: Implement tests for the unified generator using `scantest`.**
     -   Create a new test file, `deriving_all_test.go`.
     -   Write a test case for a struct with only the `deriving:unmarshal` annotation.
-    -   Write a test case for a struct with only the `derivng:binding` annotation.
+    -   Write a test case for a struct with only the `deriving:binding` annotation.
     -   Write a test case for a struct with both annotations, and verify that the output file contains the code from both generators.
     -   Write a test case for a struct with no relevant annotations to ensure an empty output is handled gracefully.
 

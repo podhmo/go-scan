@@ -32,7 +32,7 @@ This section explores features that would grant `go-scan` a much deeper, almost 
         *   **Programmable and Extensible Structured Annotation System:**
             *   Allow users or generators to define custom annotation formats (e.g., `// @myGen:option="value"`) and provide `go-scan` with parsers or rules for these.
             *   Support for sophisticated annotations like `// @validate:"required,min=0"` or `// @json:"name,omitempty"`, making them as easy to query as struct tags.
-            *   Enable extraction of specific annotation values, for instance, `// @oneOfValue:"cat"` for deriving JSON unmarshalers. (Inspired by `docs/ja/from-derivngjson.md`)
+            *   Enable extraction of specific annotation values, for instance, `// @oneOfValue:"cat"` for deriving JSON unmarshalers. (Inspired by `docs/ja/from-derivingjson.md`)
         *   **Annotations Influencing Analysis:** Allow annotations to provide hints or directives to the `go-scan` engine itself, perhaps influencing type resolution strategies or marking code sections for specific analysis passes.
 
 ## 2. Next-Generation Code Generation Ecosystem

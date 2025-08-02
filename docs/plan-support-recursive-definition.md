@@ -1,8 +1,9 @@
+> [!NOTE]
+> This feature has been implemented.
+
 # Handling of Recursive Type Definitions and Circular Dependencies
 
 This document outlines how `go-scan` robustly handles recursive type definitions (e.g., a struct containing a field that is a pointer to itself) and circular dependencies between packages during type resolution.
-
-**Status: Implemented.** The logic described here is implemented and tested.
 
 ## The Challenge: Infinite Loops
 

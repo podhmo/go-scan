@@ -13,7 +13,6 @@ func convertSrcToDst(ctx context.Context, ec *model.ErrorCollector, src *Src) *D
 		return nil
 	}
 	dst := &Dst{}
-	// Timestamp -> Timestamp
 	if ec.MaxErrorsReached() {
 		return dst
 	}

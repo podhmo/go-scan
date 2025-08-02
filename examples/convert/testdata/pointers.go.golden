@@ -14,7 +14,6 @@ func convertSrcToDst(ctx context.Context, ec *model.ErrorCollector, src *Src) *D
 		return nil
 	}
 	dst := &Dst{}
-	// Items -> Items
 	if ec.MaxErrorsReached() {
 		return dst
 	}
@@ -30,7 +29,6 @@ func convertSrcToDst(ctx context.Context, ec *model.ErrorCollector, src *Src) *D
 	}
 
 	ec.Leave()
-
 	if ec.MaxErrorsReached() {
 		return dst
 	}
@@ -51,7 +49,6 @@ func convertSrcToDst(ctx context.Context, ec *model.ErrorCollector, src *Src) *D
 	}
 
 	ec.Leave()
-
 	if ec.MaxErrorsReached() {
 		return dst
 	}
@@ -92,7 +89,6 @@ func convertSrcItemToDstItem(ctx context.Context, ec *model.ErrorCollector, src 
 		return nil
 	}
 	dst := &DstItem{}
-	// Value -> Value
 	if ec.MaxErrorsReached() {
 		return dst
 	}

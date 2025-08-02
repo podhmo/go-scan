@@ -14,7 +14,6 @@ func convertSrcWithTagsToDstWithTags(ctx context.Context, ec *model.ErrorCollect
 		return nil
 	}
 	dst := &DstWithTags{}
-	// ID -> ID
 	if ec.MaxErrorsReached() {
 		return dst
 	}
@@ -22,7 +21,6 @@ func convertSrcWithTagsToDstWithTags(ctx context.Context, ec *model.ErrorCollect
 	dst.ID = src.ID
 
 	ec.Leave()
-	// Age -> UserAge
 	if ec.MaxErrorsReached() {
 		return dst
 	}
@@ -30,7 +28,6 @@ func convertSrcWithTagsToDstWithTags(ctx context.Context, ec *model.ErrorCollect
 	dst.UserAge = src.Age
 
 	ec.Leave()
-	// Profile -> Profile
 	if ec.MaxErrorsReached() {
 		return dst
 	}
@@ -38,7 +35,6 @@ func convertSrcWithTagsToDstWithTags(ctx context.Context, ec *model.ErrorCollect
 	dst.Profile = convertProfile(ctx, ec, src.Profile)
 
 	ec.Leave()
-	// ManagerID -> ManagerID
 	if ec.MaxErrorsReached() {
 		return dst
 	}

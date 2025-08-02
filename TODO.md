@@ -87,7 +87,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
         -   [x] Update the parser to recognize and process the `// convert:import` annotation.
         -   [x] Ensure the parser registers the specified alias and path with the `ImportManager`.
         -   [x] Modify the `using` and `validator` logic to correctly resolve function references that use these imported aliases (e.g., `pkg.MyFunc`).
-    -   [x] **Add Docstrings for Non-Pointer or Required Fields**: The generator now adds a docstring comment (`// src.Field -> dst.Field`) for fields that are not skipped and are either not a pointer or are marked as `required`.
+    -   [x] **Add Docstring for Unmapped Fields**: The generator now adds a docstring to the generated function, listing any destination fields that are not mapped and are not pointer types, to alert developers about potentially uninitialized fields.
 -   **Fix for Standard Library Scanning in Tests**: Resolved the `mismatched package names` error that occurred when scanning standard library packages (like `time`) from within a test binary. This was achieved by enhancing the `ExternalTypeOverride` mechanism to accept synthetic `scanner.TypeInfo` objects, allowing tools to bypass problematic scans without hardcoding workarounds in their parsers.
 -   **On-Demand, Multi-Package AST Scanning**: All features based on the plan in [docs/plan-multi-package-handling.md](./docs/plan-multi-package-handling.md) have been implemented, including core library logic, consumer updates, and CI checks.
 -   **Generator Logic Enhancements**:

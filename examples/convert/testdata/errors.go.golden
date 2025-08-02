@@ -14,7 +14,6 @@ func convertSrcToDst(ctx context.Context, ec *model.ErrorCollector, src *Src) *D
 		return nil
 	}
 	dst := &Dst{}
-	// Name -> Name
 	if ec.MaxErrorsReached() {
 		return dst
 	}
@@ -22,7 +21,6 @@ func convertSrcToDst(ctx context.Context, ec *model.ErrorCollector, src *Src) *D
 	dst.Name = convertNameWithError(ctx, ec, src.Name)
 
 	ec.Leave()
-	// ManagerID -> ManagerID
 	if ec.MaxErrorsReached() {
 		return dst
 	}
@@ -39,7 +37,6 @@ func convertSrcToDst(ctx context.Context, ec *model.ErrorCollector, src *Src) *D
 	}
 
 	ec.Leave()
-	// SpouseID -> SpouseID
 	if ec.MaxErrorsReached() {
 		return dst
 	}

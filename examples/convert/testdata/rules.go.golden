@@ -13,7 +13,6 @@ func convertSrcToDst(ctx context.Context, ec *model.ErrorCollector, src *Src) *D
 		return nil
 	}
 	dst := &Dst{}
-	// CreatedAt -> CreatedAt
 	if ec.MaxErrorsReached() {
 		return dst
 	}
@@ -21,7 +20,6 @@ func convertSrcToDst(ctx context.Context, ec *model.ErrorCollector, src *Src) *D
 	dst.CreatedAt = convertTimeToString(ctx, ec, src.CreatedAt)
 
 	ec.Leave()
-	// UpdatedAt -> UpdatedAt
 	if ec.MaxErrorsReached() {
 		return dst
 	}

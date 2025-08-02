@@ -28,6 +28,7 @@ import (
 )
 
 {{ range .Pairs -}}
+{{ .UnmappedFieldsDocstring }}
 func convert{{ .SrcType.Name }}To{{ .DstType.Name }}(ctx context.Context, ec *model.ErrorCollector, src *{{ getQualifiedTypeName $.Im .SrcType }}) *{{ getQualifiedTypeName $.Im .DstType }} {
 	if src == nil {
 		return nil
@@ -37,7 +38,6 @@ func convert{{ .SrcType.Name }}To{{ .DstType.Name }}(ctx context.Context, ec *mo
 	{{ end -}}
 	dst := &{{ getQualifiedTypeName $.Im .DstType }}{}
 	{{ range .Fields -}}
-	{{ .Docstring }}
 	if ec.MaxErrorsReached() { return dst }
 	ec.Enter("{{ .DstName }}")
 	{{ $assignment := getAssignment $.Im $.Info . "src" "dst" "ec" "ctx" -}}
@@ -75,16 +75,16 @@ type TemplateData struct {
 }
 
 type TemplatePair struct {
-	SrcType *model.StructInfo
-	DstType *model.StructInfo
-	Fields  []FieldMap
-	Pair    model.ConversionPair
+	SrcType                 *model.StructInfo
+	DstType                 *model.StructInfo
+	Fields                  []FieldMap
+	Pair                    model.ConversionPair
+	UnmappedFieldsDocstring string
 }
 
 type FieldMap struct {
 	SrcName   string
 	DstName   string
-	Docstring string
 	Tag       model.ConvertTag
 	SrcFieldT *scanner.FieldType
 	DstFieldT *scanner.FieldType
@@ -166,11 +166,32 @@ func Generate(s *goscan.Scanner, info *model.ParsedInfo) ([]byte, error) {
 			}
 		}
 
+		// Identify unmapped fields
+		mappedDstFields := make(map[string]bool)
+		for _, fm := range fieldMaps {
+			mappedDstFields[fm.DstName] = true
+		}
+
+		var unmappedFields []string
+		for _, dstField := range dstStruct.Fields {
+			if !mappedDstFields[dstField.Name] {
+				if !dstField.FieldType.IsPointer {
+					unmappedFields = append(unmappedFields, dstField.Name)
+				}
+			}
+		}
+
+		unmappedFieldsDocstring := ""
+		if len(unmappedFields) > 0 {
+			unmappedFieldsDocstring = fmt.Sprintf("// The following fields are not filled by this conversion: %s", strings.Join(unmappedFields, ", "))
+		}
+
 		allPairs = append(allPairs, TemplatePair{
-			SrcType: srcStruct,
-			DstType: dstStruct,
-			Fields:  fieldMaps,
-			Pair:    pair,
+			SrcType:                 srcStruct,
+			DstType:                 dstStruct,
+			Fields:                  fieldMaps,
+			Pair:                    pair,
+			UnmappedFieldsDocstring: unmappedFieldsDocstring,
 		})
 	}
 
@@ -283,16 +304,9 @@ func createFieldMaps(ctx context.Context, s *goscan.Scanner, src, dst *model.Str
 
 		slog.DebugContext(ctx, "src field matched", "src", srcField.Name, "dst", dstField.Name, "reason", reason)
 		_ = resolveFieldType(ctx, dstField.FieldType)
-
-		docstring := ""
-		if !dstField.FieldType.IsPointer || srcField.Tag.Required {
-			docstring = fmt.Sprintf("// %s -> %s", srcField.Name, dstField.Name)
-		}
-
 		maps = append(maps, FieldMap{
 			SrcName:   srcField.Name,
 			DstName:   dstField.Name,
-			Docstring: docstring,
 			Tag:       srcField.Tag,
 			SrcFieldT: srcField.FieldType,
 			DstFieldT: dstField.FieldType,

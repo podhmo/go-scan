@@ -78,18 +78,18 @@ func (s *Scanner) ScanFiles(ctx context.Context, filePaths []string, pkgDirPath 
 		importPath = importPath[:len(importPath)-2]
 	}
 
-	return s.scanGoFiles(ctx, filePaths, pkgDirPath, importPath)
+	return s.scanGoFiles(ctx, filePaths, pkgDirPath, importPath, false /* lenientPackageCheck */)
 }
 
 // ScanFilesWithKnownImportPath parses files with a predefined import path.
-func (s *Scanner) ScanFilesWithKnownImportPath(ctx context.Context, filePaths []string, pkgDirPath string, canonicalImportPath string) (*PackageInfo, error) {
+func (s *Scanner) ScanFilesWithKnownImportPath(ctx context.Context, filePaths []string, pkgDirPath string, canonicalImportPath string, lenientPackageCheck bool) (*PackageInfo, error) {
 	if len(filePaths) == 0 {
 		return nil, fmt.Errorf("no files provided to scan for package at %s", pkgDirPath)
 	}
-	return s.scanGoFiles(ctx, filePaths, pkgDirPath, canonicalImportPath)
+	return s.scanGoFiles(ctx, filePaths, pkgDirPath, canonicalImportPath, lenientPackageCheck)
 }
 
-func (s *Scanner) scanGoFiles(ctx context.Context, filePaths []string, pkgDirPath string, canonicalImportPath string) (*PackageInfo, error) {
+func (s *Scanner) scanGoFiles(ctx context.Context, filePaths []string, pkgDirPath string, canonicalImportPath string, lenientPackageCheck bool) (*PackageInfo, error) {
 	info := &PackageInfo{
 		Path:       pkgDirPath,
 		ImportPath: canonicalImportPath,
@@ -119,6 +119,14 @@ func (s *Scanner) scanGoFiles(ctx context.Context, filePaths []string, pkgDirPat
 			info.Name = fileAst.Name.Name
 			firstPackageName = fileAst.Name.Name
 		} else if fileAst.Name.Name != firstPackageName {
+			if lenientPackageCheck {
+				slog.DebugContext(ctx, "Skipping file with mismatched package name (lenient mode)",
+					slog.String("file", filePath),
+					slog.String("expected_package", firstPackageName),
+					slog.String("found_package", fileAst.Name.Name),
+				)
+				continue // Skip this file and its declarations
+			}
 			return nil, fmt.Errorf("mismatched package names: %s and %s in directory %s", firstPackageName, fileAst.Name.Name, pkgDirPath)
 		}
 

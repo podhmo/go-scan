@@ -712,8 +712,9 @@ func (s *Scanner) ScanPackageByImport(ctx context.Context, importPath string) (*
 		isStdLib := !strings.Contains(importPath, ".")
 
 		if isStdLib {
-			currentCallPkgInfo, err = s.scanner.ScanFilesWithKnownImportPath(ctx, filesToParseThisCall, pkgDirAbs, importPath)
+			currentCallPkgInfo, err = s.scanner.ScanFilesWithKnownImportPath(ctx, filesToParseThisCall, pkgDirAbs, importPath, true /* lenientPackageCheck */)
 		} else {
+			// For non-stdlib packages, we still use ScanFiles which enforces strict package checking.
 			currentCallPkgInfo, err = s.scanner.ScanFiles(ctx, filesToParseThisCall, pkgDirAbs)
 		}
 

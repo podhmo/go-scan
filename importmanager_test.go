@@ -20,7 +20,7 @@ func TestImportManager_Add_Concurrent(t *testing.T) {
 		"custom/errors",
 		"github.com/pkg/errors",
 		"github.com/pkg/errors", // duplicate
-		"log",
+		"log/slog",
 		"net/http",
 		"github.com/another/pkg",
 		"github.com/another/pkg/v2",
@@ -69,7 +69,7 @@ func TestImportManager_Qualify_Concurrent(t *testing.T) {
 		{"fmt", "Println"},
 		{"custom/errors", "New"},
 		{"github.com/pkg/errors", "Wrap"},
-		{"log", "Printf"},
+		{"log/slog", "Debug"},
 		{"net/http", "Request"},
 		{"github.com/another/pkg", "Thing"},
 		{"github.com/another/pkg/v2", "Thing"},

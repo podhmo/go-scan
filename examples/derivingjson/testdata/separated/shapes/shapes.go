@@ -1,14 +1,12 @@
 package shapes
 
 // Shape is an interface for geometric shapes.
-// @deriving:unmarshal
 type Shape interface {
 	isShape()
 	GetType() string
 }
 
 // Circle represents a circle.
-// @deriving:unmarshal
 type Circle struct {
 	Type   string `json:"type"` // Discriminator field
 	Radius int    `json:"radius"`
@@ -23,7 +21,6 @@ func (c Circle) GetType() string {
 }
 
 // Rectangle represents a rectangle.
-// @deriving:unmarshal
 type Rectangle struct {
 	Type   string `json:"type"` // Discriminator field
 	Width  int    `json:"width"`

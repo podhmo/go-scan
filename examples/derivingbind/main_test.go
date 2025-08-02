@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	goscan "github.com/podhmo/go-scan"
+	"github.com/podhmo/go-scan/examples/derivingbind/gen"
 	"github.com/podhmo/go-scan/scanner"
 	"github.com/podhmo/go-scan/scantest"
 )
@@ -68,12 +69,24 @@ func (s *Input) Bind(req *http.Request, pathVar func(string) string) error {
 			defer cleanup()
 
 			action := func(ctx context.Context, s *goscan.Scanner, pkgs []*scanner.PackageInfo) error {
-				for _, pkg := range pkgs {
-					if err := Generate(ctx, s, pkg); err != nil {
-						return err
-					}
+				pkgInfo := pkgs[0]
+				importManager := goscan.NewImportManager(pkgInfo)
+				code, err := gen.Generate(ctx, s, pkgInfo, importManager)
+				if err != nil {
+					return err
 				}
-				return nil
+
+				if len(code) == 0 {
+					return nil // no output
+				}
+
+				outputDir := goscan.NewPackageDirectory(pkgInfo.Path, pkgInfo.Name)
+				goFile := goscan.GoFile{
+					PackageName: pkgInfo.Name,
+					Imports:     importManager.Imports(),
+					CodeSet:     string(code),
+				}
+				return outputDir.SaveGoFile(ctx, goFile, "models_deriving.go")
 			}
 
 			result, err := scantest.Run(t, tmpdir, []string{"."}, action)

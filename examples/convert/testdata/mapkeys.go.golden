@@ -18,15 +18,15 @@ func convertSrcToDst(ctx context.Context, ec *model.ErrorCollector, src *Src) *D
 		return dst
 	}
 	ec.Enter("Data")
-	dst.Data = func() map[string]string {
+	{
 		convertedMap := make(map[string]string, len(src.Data))
 		for key, value := range src.Data {
 			ec.Enter(fmt.Sprintf("[%v]", key))
 			convertedMap[key] = value
 			ec.Leave()
 		}
-		return convertedMap
-	}()
+		dst.Data = convertedMap
+	}
 
 	ec.Leave()
 	return dst

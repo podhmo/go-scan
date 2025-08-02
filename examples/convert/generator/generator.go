@@ -517,20 +517,12 @@ func generateConversion(im *goscan.ImportManager, info *model.ParsedInfo, src, d
 
 	// Slices
 	if srcT.IsSlice && dstT.IsSlice {
-		sliceConversion := generateSliceConversion(im, info, src, "", srcT, dstT, depth, ecVar, ctxVar)
-		if dst != "" {
-			return fmt.Sprintf("%s = %s", dst, sliceConversion)
-		}
-		return sliceConversion
+		return generateSliceConversion(im, info, src, dst, srcT, dstT, depth, ecVar, ctxVar)
 	}
 
 	// Maps
 	if srcT.IsMap && dstT.IsMap {
-		mapConversion := generateMapConversion(im, info, src, "", srcT, dstT, depth, ecVar, ctxVar)
-		if dst != "" {
-			return fmt.Sprintf("%s = %s", dst, mapConversion)
-		}
-		return mapConversion
+		return generateMapConversion(im, info, src, dst, srcT, dstT, depth, ecVar, ctxVar)
 	}
 
 	// Structs
@@ -559,15 +551,27 @@ func generateSliceConversion(im *goscan.ImportManager, info *model.ParsedInfo, s
 	}
 
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("func() []%s {\n", getTypeName(im, dstT.Elem)))
-	b.WriteString(fmt.Sprintf("\tconvertedSlice := make([]%s, len(%s))\n", getTypeName(im, dstT.Elem), src))
-	b.WriteString(fmt.Sprintf("\tfor i, item := range %s {\n", src))
-	b.WriteString("\t\t" + ecVar + ".Enter(fmt.Sprintf(\"[%d]\", i))\n")
-	b.WriteString(fmt.Sprintf("\t\tconvertedSlice[i] = %s\n", generateConversion(im, info, "item", "", srcT.Elem, dstT.Elem, depth+2, ecVar, ctxVar)))
-	b.WriteString("\t\t" + ecVar + ".Leave()\n")
-	b.WriteString(fmt.Sprintf("\t}\n"))
-	b.WriteString(fmt.Sprintf("\treturn convertedSlice\n"))
-	b.WriteString(fmt.Sprintf("}()"))
+	if dst != "" {
+		b.WriteString("{\n")
+		b.WriteString(fmt.Sprintf("\tconvertedSlice := make([]%s, len(%s))\n", getTypeName(im, dstT.Elem), src))
+		b.WriteString(fmt.Sprintf("\tfor i, item := range %s {\n", src))
+		b.WriteString("\t\t" + ecVar + ".Enter(fmt.Sprintf(\"[%d]\", i))\n")
+		b.WriteString(fmt.Sprintf("\t\tconvertedSlice[i] = %s\n", generateConversion(im, info, "item", "", srcT.Elem, dstT.Elem, depth+2, ecVar, ctxVar)))
+		b.WriteString("\t\t" + ecVar + ".Leave()\n")
+		b.WriteString("\t}\n")
+		b.WriteString(fmt.Sprintf("\t%s = convertedSlice\n", dst))
+		b.WriteString("}")
+	} else {
+		b.WriteString(fmt.Sprintf("func() []%s {\n", getTypeName(im, dstT.Elem)))
+		b.WriteString(fmt.Sprintf("\tconvertedSlice := make([]%s, len(%s))\n", getTypeName(im, dstT.Elem), src))
+		b.WriteString(fmt.Sprintf("\tfor i, item := range %s {\n", src))
+		b.WriteString("\t\t" + ecVar + ".Enter(fmt.Sprintf(\"[%d]\", i))\n")
+		b.WriteString(fmt.Sprintf("\t\tconvertedSlice[i] = %s\n", generateConversion(im, info, "item", "", srcT.Elem, dstT.Elem, depth+2, ecVar, ctxVar)))
+		b.WriteString("\t\t" + ecVar + ".Leave()\n")
+		b.WriteString("\t}\n")
+		b.WriteString("\treturn convertedSlice\n")
+		b.WriteString("}()")
+	}
 	return b.String()
 }
 
@@ -577,22 +581,40 @@ func generateMapConversion(im *goscan.ImportManager, info *model.ParsedInfo, src
 	}
 
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("func() map[%s]%s {\n", getTypeName(im, dstT.MapKey), getTypeName(im, dstT.Elem)))
-	b.WriteString(fmt.Sprintf("\tconvertedMap := make(map[%s]%s, len(%s))\n", getTypeName(im, dstT.MapKey), getTypeName(im, dstT.Elem), src))
-	b.WriteString(fmt.Sprintf("\tfor key, value := range %s {\n", src))
+	if dst != "" {
+		b.WriteString("{\n")
+		b.WriteString(fmt.Sprintf("\tconvertedMap := make(map[%s]%s, len(%s))\n", getTypeName(im, dstT.MapKey), getTypeName(im, dstT.Elem), src))
+		b.WriteString(fmt.Sprintf("\tfor key, value := range %s {\n", src))
+		b.WriteString("\t\t" + ecVar + ".Enter(fmt.Sprintf(\"[%v]\", key))\n")
+		keyExpr := "key"
+		if getFullTypeNameFromTypeInfo(srcT.MapKey.Definition) != getFullTypeNameFromTypeInfo(dstT.MapKey.Definition) {
+			keyExpr = getMapKeyAssignment(im, info, "key", "", srcT.MapKey, dstT.MapKey, ecVar, ctxVar)
+		}
+		b.WriteString(fmt.Sprintf("\t\tconvertedMap[%s] = %s\n",
+			keyExpr,
+			generateConversion(im, info, "value", "", srcT.Elem, dstT.Elem, depth+2, ecVar, ctxVar)))
+		b.WriteString("\t\t" + ecVar + ".Leave()\n")
+		b.WriteString("\t}\n")
+		b.WriteString(fmt.Sprintf("\t%s = convertedMap\n", dst))
+		b.WriteString("}")
+	} else {
+		b.WriteString(fmt.Sprintf("func() map[%s]%s {\n", getTypeName(im, dstT.MapKey), getTypeName(im, dstT.Elem)))
+		b.WriteString(fmt.Sprintf("\tconvertedMap := make(map[%s]%s, len(%s))\n", getTypeName(im, dstT.MapKey), getTypeName(im, dstT.Elem), src))
+		b.WriteString(fmt.Sprintf("\tfor key, value := range %s {\n", src))
 
-	b.WriteString("\t\t" + ecVar + ".Enter(fmt.Sprintf(\"[%v]\", key))\n")
-	keyExpr := "key"
-	if getFullTypeNameFromTypeInfo(srcT.MapKey.Definition) != getFullTypeNameFromTypeInfo(dstT.MapKey.Definition) {
-		keyExpr = getMapKeyAssignment(im, info, "key", "", srcT.MapKey, dstT.MapKey, ecVar, ctxVar)
+		b.WriteString("\t\t" + ecVar + ".Enter(fmt.Sprintf(\"[%v]\", key))\n")
+		keyExpr := "key"
+		if getFullTypeNameFromTypeInfo(srcT.MapKey.Definition) != getFullTypeNameFromTypeInfo(dstT.MapKey.Definition) {
+			keyExpr = getMapKeyAssignment(im, info, "key", "", srcT.MapKey, dstT.MapKey, ecVar, ctxVar)
+		}
+		b.WriteString(fmt.Sprintf("\t\tconvertedMap[%s] = %s\n",
+			keyExpr,
+			generateConversion(im, info, "value", "", srcT.Elem, dstT.Elem, depth+2, ecVar, ctxVar)))
+		b.WriteString("\t\t" + ecVar + ".Leave()\n")
+		b.WriteString("\t}\n")
+		b.WriteString("\treturn convertedMap\n")
+		b.WriteString("}()")
 	}
-	b.WriteString(fmt.Sprintf("\t\tconvertedMap[%s] = %s\n",
-		keyExpr,
-		generateConversion(im, info, "value", "", srcT.Elem, dstT.Elem, depth+2, ecVar, ctxVar)))
-	b.WriteString("\t\t" + ecVar + ".Leave()\n")
-	b.WriteString(fmt.Sprintf("\t}\n"))
-	b.WriteString(fmt.Sprintf("\treturn convertedMap\n"))
-	b.WriteString(fmt.Sprintf("}()"))
 	return b.String()
 }
 

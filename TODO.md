@@ -98,14 +98,13 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     -   Fixed the underlying scanner and generator bugs that caused the `make e2e` command to fail.
     -   The `go install` command in the `e2e` target has been updated to `go build`.
     -   The main `test` target now incorporates the `e2e` tests.
+-   **Enum-like Constant Scanning**: Implemented scanning for idiomatic Go enums (a custom type with a group of related constants). This includes package-level discovery and linking constants to their type, and it correctly handles `iota`. The feature is detailed in [docs/plan-scan-enum.md](./docs/plan-scan-enum.md).
+    -   [x] Modify `scanner/models.go` to support enum members.
+    -   [x] Implement Package-Level Discovery for enums.
+    -   [x] Implement Lazy Symbol-Based Lookup for enums (via the existing package resolver).
+    -   [x] Add Tests for Both Enum Scanning Strategies.
 
 ## To Be Implemented
-
-### Enum-like Constant Scanning ([docs/plan-scan-enum.md](./docs/plan-scan-enum.md))
-- [ ] Modify `scanner/models.go` to support enum members
-- [ ] Implement Package-Level Discovery for enums
-- [ ] Implement Lazy Symbol-Based Lookup for enums
-- [ ] Add Tests for Both Enum Scanning Strategies
 
 ### Unified Single-Pass Generator ([docs/plan-walk-once.md](./docs/plan-walk-once.md))
 - [ ] Step 1: Create the `GeneratedCode` struct.

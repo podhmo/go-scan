@@ -55,8 +55,6 @@ func convertSrcWithTagsToDstWithTags(ctx context.Context, ec *model.ErrorCollect
 }
 
 // ConvertSrcWithTagsToDstWithTags converts SrcWithTags to DstWithTags.
-//
-// Fields that are not populated by this converter:
 func ConvertSrcWithTagsToDstWithTags(ctx context.Context, src *SrcWithTags) (*DstWithTags, error) {
 	if src == nil {
 		return nil, nil

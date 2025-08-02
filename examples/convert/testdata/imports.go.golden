@@ -32,8 +32,6 @@ func convertSrcToDst(ctx context.Context, ec *model.ErrorCollector, src *Src) *D
 }
 
 // ConvertSrcToDst converts Src to Dst.
-//
-// Fields that are not populated by this converter:
 func ConvertSrcToDst(ctx context.Context, src *Src) (*Dst, error) {
 	if src == nil {
 		return nil, nil

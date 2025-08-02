@@ -31,8 +31,6 @@ func convertSourceToDestination(ctx context.Context, ec *model.ErrorCollector, s
 }
 
 // ConvertSourceToDestination converts Source to Destination.
-//
-// Fields that are not populated by this converter:
 func ConvertSourceToDestination(ctx context.Context, src *Source) (*Destination, error) {
 	if src == nil {
 		return nil, nil

@@ -52,9 +52,9 @@ func convert{{ .SrcType.Name }}To{{ .DstType.Name }}(ctx context.Context, ec *mo
 }
 
 // Convert{{ .SrcType.Name }}To{{ .DstType.Name }} converts {{ getQualifiedTypeName $.Im .SrcType }} to {{ getQualifiedTypeName $.Im .DstType }}.
+{{- if .UnmappedFields }}
 //
 // Fields that are not populated by this converter:
-{{- if .UnmappedFields }}
 {{- range .UnmappedFields }}
 //   - {{ . }}
 {{- end }}

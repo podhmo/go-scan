@@ -1,7 +1,10 @@
-.PHONY: test clean e2e
+.PHONY: test clean e2e update-golden
 
-test: clean
-	go test -v ./...
+test: e2e
+	go test -v ./... ./generated_test
+
+update-golden: e2e
+	go test -v . -update
 
 clean:
 	rm -rf sampledata/generated

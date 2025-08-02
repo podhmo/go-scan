@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"text/template"
 
@@ -51,6 +52,15 @@ func convert{{ .SrcType.Name }}To{{ .DstType.Name }}(ctx context.Context, ec *mo
 }
 
 // Convert{{ .SrcType.Name }}To{{ .DstType.Name }} converts {{ getQualifiedTypeName $.Im .SrcType }} to {{ getQualifiedTypeName $.Im .DstType }}.
+//
+// Fields that are not populated by this converter:
+{{- if .UnmappedFields }}
+{{- range .UnmappedFields }}
+//   - {{ . }}
+{{- end }}
+{{- else }}
+//   (all fields are populated)
+{{- end }}
 func Convert{{ .SrcType.Name }}To{{ .DstType.Name }}(ctx context.Context, src *{{ getQualifiedTypeName $.Im .SrcType }}) (*{{ getQualifiedTypeName $.Im .DstType }}, error) {
 	if src == nil {
 		return nil, nil
@@ -74,10 +84,11 @@ type TemplateData struct {
 }
 
 type TemplatePair struct {
-	SrcType *model.StructInfo
-	DstType *model.StructInfo
-	Fields  []FieldMap
-	Pair    model.ConversionPair
+	SrcType        *model.StructInfo
+	DstType        *model.StructInfo
+	Fields         []FieldMap
+	Pair           model.ConversionPair
+	UnmappedFields []string
 }
 
 type FieldMap struct {
@@ -133,7 +144,7 @@ func Generate(s *goscan.Scanner, info *model.ParsedInfo) ([]byte, error) {
 			registerImports(im, field.FieldType)
 		}
 
-		fieldMaps, err := createFieldMaps(ctx, s, srcStruct, dstStruct)
+		fieldMaps, unmappedFields, err := createFieldMaps(ctx, s, srcStruct, dstStruct)
 		if err != nil {
 			return nil, fmt.Errorf("creating field maps for %s -> %s: %w", srcStruct.Name, dstStruct.Name, err)
 		}
@@ -165,10 +176,11 @@ func Generate(s *goscan.Scanner, info *model.ParsedInfo) ([]byte, error) {
 		}
 
 		allPairs = append(allPairs, TemplatePair{
-			SrcType: srcStruct,
-			DstType: dstStruct,
-			Fields:  fieldMaps,
-			Pair:    pair,
+			SrcType:        srcStruct,
+			DstType:        dstStruct,
+			Fields:         fieldMaps,
+			Pair:           pair,
+			UnmappedFields: unmappedFields,
 		})
 	}
 
@@ -223,11 +235,12 @@ func Generate(s *goscan.Scanner, info *model.ParsedInfo) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-func createFieldMaps(ctx context.Context, s *goscan.Scanner, src, dst *model.StructInfo) ([]FieldMap, error) {
+func createFieldMaps(ctx context.Context, s *goscan.Scanner, src, dst *model.StructInfo) ([]FieldMap, []string, error) {
 	var maps []FieldMap
 	dstFieldsByName := make(map[string]model.FieldInfo)
 	dstFieldsByNormalizedJSONTag := make(map[string]model.FieldInfo)
 	dstFieldsByNormalizedName := make(map[string]model.FieldInfo)
+	unmappedDstFields := make(map[string]bool)
 
 	slog.DebugContext(ctx, "Destination struct", "name", dst.Name)
 	for _, f := range dst.Fields {
@@ -240,6 +253,7 @@ func createFieldMaps(ctx context.Context, s *goscan.Scanner, src, dst *model.Str
 		normalized := normalizeFieldName(f.Name)
 		dstFieldsByNormalizedName[normalized] = f
 		slog.DebugContext(ctx, "dst field", "name", f.Name, "normalized_name", normalized)
+		unmappedDstFields[f.Name] = true
 	}
 
 	slog.DebugContext(ctx, "Source struct", "name", src.Name)
@@ -280,6 +294,7 @@ func createFieldMaps(ctx context.Context, s *goscan.Scanner, src, dst *model.Str
 		}
 
 		slog.DebugContext(ctx, "src field matched", "src", srcField.Name, "dst", dstField.Name, "reason", reason)
+		delete(unmappedDstFields, dstField.Name)
 		_ = resolveFieldType(ctx, dstField.FieldType)
 		maps = append(maps, FieldMap{
 			SrcName:   srcField.Name,
@@ -289,7 +304,16 @@ func createFieldMaps(ctx context.Context, s *goscan.Scanner, src, dst *model.Str
 			DstFieldT: dstField.FieldType,
 		})
 	}
-	return maps, nil
+
+	// Collect unmapped fields
+	var unmapped []string
+	for fieldName := range unmappedDstFields {
+		unmapped = append(unmapped, fieldName)
+	}
+	// sort for deterministic output
+	slices.Sort(unmapped)
+
+	return maps, unmapped, nil
 }
 
 func normalizeFieldName(name string) string {

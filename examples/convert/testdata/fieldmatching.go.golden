@@ -18,18 +18,21 @@ func convertSrcToDst(ctx context.Context, ec *model.ErrorCollector, src *Src) *D
 	}
 	ec.Enter("ID")
 	dst.ID = src.UserID
+
 	ec.Leave()
 	if ec.MaxErrorsReached() {
 		return dst
 	}
 	ec.Enter("Name")
 	dst.Name = src.UserName
+
 	ec.Leave()
 	if ec.MaxErrorsReached() {
 		return dst
 	}
 	ec.Enter("UserAge")
 	dst.UserAge = src.User_Age
+
 	ec.Leave()
 	return dst
 }

@@ -27,6 +27,7 @@ func convertSrcToDst(ctx context.Context, ec *model.ErrorCollector, src *Src) *D
 		}
 		return convertedMap
 	}()
+
 	ec.Leave()
 	return dst
 }

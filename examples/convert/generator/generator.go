@@ -39,8 +39,12 @@ func convert{{ .SrcType.Name }}To{{ .DstType.Name }}(ctx context.Context, ec *mo
 	{{ range .Fields -}}
 	if ec.MaxErrorsReached() { return dst }
 	ec.Enter("{{ .DstName }}")
-	{{ getAssignment $.Im $.Info . "src" "dst" "ec" "ctx" -}}
-	{{- getValidator $.Im $.Info . "dst" "ec" "ctx" }}
+	{{ $assignment := getAssignment $.Im $.Info . "src" "dst" "ec" "ctx" -}}
+	{{ $validator := getValidator $.Im $.Info . "dst" "ec" "ctx" -}}
+	{{ $assignment }}
+	{{ if $validator -}}
+	{{ $validator }}
+	{{- end }}
 	ec.Leave()
 	{{ end -}}
 	return dst
@@ -374,17 +378,70 @@ func registerImports(im *goscan.ImportManager, t *scanner.FieldType) {
 // Assignment Logic
 // -----------------------------------------------------------------------------
 
-func getMapKeyAssignment(im *goscan.ImportManager, info *model.ParsedInfo, srcVar, dstVar string, srcT, dstT *scanner.FieldType, ecVar, ctxVar string) string {
-	// Global conversion rule
-	srcFieldTypeName := getFullTypeNameFromTypeInfo(srcT.Definition)
-	dstFieldTypeName := getFullTypeNameFromTypeInfo(dstT.Definition)
+type ruleMatchResult struct {
+	Rule           *model.TypeRule
+	IsPointerMatch bool
+}
 
-	for _, rule := range info.GlobalRules {
+func findMatchingRule(info *model.ParsedInfo, srcT, dstT *scanner.FieldType) *ruleMatchResult {
+	if srcT == nil || dstT == nil {
+		return nil
+	}
+
+	// Exact match first
+	srcFieldTypeName := getFullTypeNameFromFieldType(srcT)
+	dstFieldTypeName := getFullTypeNameFromFieldType(dstT)
+
+	for i := range info.GlobalRules {
+		rule := &info.GlobalRules[i]
+		if rule.UsingFunc == "" {
+			continue
+		}
 		ruleSrcName := getFullTypeNameFromTypeInfo(rule.SrcTypeInfo)
 		ruleDstName := getFullTypeNameFromTypeInfo(rule.DstTypeInfo)
 
 		if ruleSrcName == srcFieldTypeName && ruleDstName == dstFieldTypeName {
-			funcName := qualifyFunc(im, info, rule.UsingFunc)
+			return &ruleMatchResult{Rule: rule, IsPointerMatch: false}
+		}
+	}
+
+	// Pointer-aware match
+	if srcT.IsPointer && dstT.IsPointer {
+		// Create temporary non-pointer representations to check the rule.
+		// This is necessary because the scanner sets IsPointer=true on the type itself,
+		// rather than populating the Elem field for pointers.
+		srcElemT := *srcT
+		srcElemT.IsPointer = false
+		dstElemT := *dstT
+		dstElemT.IsPointer = false
+
+		srcElemTypeName := getFullTypeNameFromFieldType(&srcElemT)
+		dstElemTypeName := getFullTypeNameFromFieldType(&dstElemT)
+
+		for i := range info.GlobalRules {
+			rule := &info.GlobalRules[i]
+			if rule.UsingFunc == "" {
+				continue
+			}
+			ruleSrcName := getFullTypeNameFromTypeInfo(rule.SrcTypeInfo)
+			ruleDstName := getFullTypeNameFromTypeInfo(rule.DstTypeInfo)
+
+			if ruleSrcName == srcElemTypeName && ruleDstName == dstElemTypeName {
+				return &ruleMatchResult{Rule: rule, IsPointerMatch: true}
+			}
+		}
+	}
+
+	return nil
+}
+
+func getMapKeyAssignment(im *goscan.ImportManager, info *model.ParsedInfo, srcVar, dstVar string, srcT, dstT *scanner.FieldType, ecVar, ctxVar string) string {
+	// Global conversion rule (now pointer-aware)
+	if match := findMatchingRule(info, srcT, dstT); match != nil {
+		funcName := qualifyFunc(im, info, match.Rule.UsingFunc)
+		// Pointer-to-pointer conversion for map keys is complex and rare.
+		// For now, we only support direct rule application.
+		if !match.IsPointerMatch {
 			if dstVar != "" {
 				return fmt.Sprintf("%s = %s(%s, %s, %s)", dstVar, funcName, ctxVar, ecVar, srcVar)
 			}
@@ -404,18 +461,21 @@ func getAssignment(im *goscan.ImportManager, info *model.ParsedInfo, field Field
 		return fmt.Sprintf("%s = %s(%s, %s, %s)", dst, funcName, ctxVar, ecVar, src)
 	}
 
-	// Priority 2: Global conversion rule
-	srcFieldTypeName := getFullTypeNameFromTypeInfo(field.SrcFieldT.Definition)
-	dstFieldTypeName := getFullTypeNameFromTypeInfo(field.DstFieldT.Definition)
-
-	for _, rule := range info.GlobalRules {
-		ruleSrcName := getFullTypeNameFromTypeInfo(rule.SrcTypeInfo)
-		ruleDstName := getFullTypeNameFromTypeInfo(rule.DstTypeInfo)
-
-		if ruleSrcName == srcFieldTypeName && ruleDstName == dstFieldTypeName {
-			funcName := qualifyFunc(im, info, rule.UsingFunc)
-			return fmt.Sprintf("%s = %s(%s, %s, %s)", dst, funcName, ctxVar, ecVar, src)
+	// Priority 2: Global conversion rule (now pointer-aware)
+	if match := findMatchingRule(info, field.SrcFieldT, field.DstFieldT); match != nil {
+		funcName := qualifyFunc(im, info, match.Rule.UsingFunc)
+		if match.IsPointerMatch {
+			var b strings.Builder
+			b.WriteString(fmt.Sprintf("if %s != nil {\n", src))
+			b.WriteString(fmt.Sprintf("\ttmp := %s(%s, %s, *%s)\n", funcName, ctxVar, ecVar, src))
+			b.WriteString(fmt.Sprintf("\t%s = &tmp\n", dst))
+			b.WriteString("} else {\n")
+			b.WriteString(fmt.Sprintf("\t%s = nil\n", dst))
+			b.WriteString("}")
+			return b.String()
 		}
+		// Standard rule application
+		return fmt.Sprintf("%s = %s(%s, %s, %s)", dst, funcName, ctxVar, ecVar, src)
 	}
 
 	if field.Tag.Required && field.SrcFieldT.IsPointer {
@@ -427,22 +487,28 @@ func getAssignment(im *goscan.ImportManager, info *model.ParsedInfo, field Field
 }
 
 func generateConversion(im *goscan.ImportManager, info *model.ParsedInfo, src, dst string, srcT, dstT *scanner.FieldType, depth int, ecVar, ctxVar string) string {
-	// Global conversion rule
-	srcFieldTypeName := getFullTypeNameFromTypeInfo(srcT.Definition)
-	dstFieldTypeName := getFullTypeNameFromTypeInfo(dstT.Definition)
-
-	log.Printf("generateConversion: src=%q, dst=%q", srcFieldTypeName, dstFieldTypeName)
-	for _, rule := range info.GlobalRules {
-		ruleSrcName := getFullTypeNameFromTypeInfo(rule.SrcTypeInfo)
-		ruleDstName := getFullTypeNameFromTypeInfo(rule.DstTypeInfo)
-		log.Printf("  checking rule: src=%q, dst=%q", ruleSrcName, ruleDstName)
-		if ruleSrcName == srcFieldTypeName && ruleDstName == dstFieldTypeName {
-			log.Printf("  rule matched!")
+	// Global conversion rule (now pointer-aware)
+	if match := findMatchingRule(info, srcT, dstT); match != nil {
+		funcName := qualifyFunc(im, info, match.Rule.UsingFunc)
+		if match.IsPointerMatch {
+			var b strings.Builder
+			b.WriteString(fmt.Sprintf("func() *%s {\n", getTypeName(im, dstT.Elem)))
+			b.WriteString(fmt.Sprintf("\tif %s == nil { return nil }\n", src))
+			b.WriteString(fmt.Sprintf("\ttmp := %s(%s, %s, *%s)\n", funcName, ctxVar, ecVar, src))
+			b.WriteString("\treturn &tmp\n")
+			b.WriteString("}()")
+			result := b.String()
 			if dst != "" {
-				return fmt.Sprintf("%s = %s(%s, %s)", dst, rule.UsingFunc, ctxVar, src)
+				return fmt.Sprintf("%s = %s", dst, result)
 			}
-			return fmt.Sprintf("%s(%s, %s)", rule.UsingFunc, ctxVar, src)
+			return result
 		}
+		// Standard rule application
+		result := fmt.Sprintf("%s(%s, %s, %s)", funcName, ctxVar, ecVar, src)
+		if dst != "" {
+			return fmt.Sprintf("%s = %s", dst, result)
+		}
+		return result
 	}
 
 	if srcT == nil || dstT == nil {
@@ -659,14 +725,29 @@ func getFullTypeNameFromFieldType(ft *scanner.FieldType) string {
 	if ft == nil {
 		return ""
 	}
-	if ft.Definition != nil {
-		return getFullTypeNameFromTypeInfo(ft.Definition)
-	}
+
+	prefix := ""
 	if ft.IsPointer {
-		return "*" + getFullTypeNameFromFieldType(ft.Elem)
+		prefix = "*"
 	}
-	// This is a fallback for basic types or unresolved types.
-	return ft.Name
+
+	// This is the most reliable way if the type was fully resolved.
+	if ft.Definition != nil {
+		// We need to handle the prefix here because getFullTypeNameFromTypeInfo doesn't know about the pointer context.
+		return prefix + getFullTypeNameFromTypeInfo(ft.Definition)
+	}
+
+	// Fallback for types without a full Definition (e.g. built-ins or complex unresolved types)
+	var b strings.Builder
+	b.WriteString(prefix)
+
+	if ft.FullImportPath != "" {
+		b.WriteString(ft.FullImportPath)
+		b.WriteString(".")
+	}
+	b.WriteString(ft.Name)
+
+	return b.String()
 }
 
 func getFullTypeNameFromTypeInfo(t *scanner.TypeInfo) string {

@@ -17,7 +17,8 @@ func convertSrcToDst(ctx context.Context, ec *model.ErrorCollector, src *Src) *D
 		return dst
 	}
 	ec.Enter("Timestamp")
-	dst.Timestamp = src.Timestamp
+	dst.Timestamp = TimeToString(ctx, ec, src.Timestamp)
+
 	ec.Leave()
 	return dst
 }

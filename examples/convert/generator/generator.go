@@ -112,6 +112,9 @@ type FieldMap struct {
 }
 
 func Generate(s *goscan.Scanner, info *model.ParsedInfo) ([]byte, error) {
+	for _, pair := range info.ConversionPairs {
+		slog.Info("pair", "src", pair.SrcTypeName, "dst", pair.DstTypeName, "computed", pair.Computed)
+	}
 	im := goscan.NewImportManager(&scanner.PackageInfo{ImportPath: info.PackagePath, Name: info.PackageName})
 	ctx := context.Background()
 

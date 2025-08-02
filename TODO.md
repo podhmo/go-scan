@@ -101,13 +101,13 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 
 ## To Be Implemented
 
-### Enum-like Constant Scanning (`plan-scan-enum.md`)
+### Enum-like Constant Scanning ([docs/plan-scan-enum.md](./docs/plan-scan-enum.md))
 - [ ] Modify `scanner/models.go` to support enum members
 - [ ] Implement Package-Level Discovery for enums
 - [ ] Implement Lazy Symbol-Based Lookup for enums
 - [ ] Add Tests for Both Enum Scanning Strategies
 
-### Unified Single-Pass Generator (`plan-walk-once.md`)
+### Unified Single-Pass Generator ([docs/plan-walk-once.md](./docs/plan-walk-once.md))
 - [ ] Step 1: Create the `GeneratedCode` struct.
 - [ ] Step 2: Refactor the `derivingjson` generator.
 - [ ] Step 3: Refactor the `derivingbind` generator.
@@ -115,9 +115,9 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [ ] Step 5: Implement tests for the unified generator using `scantest`.
 - [ ] Step 6: Refine and Finalize the unified tool.
 
-### `convert` Tool Future Tasks (`plan-neo-convert.md`)
+### `convert` Tool Future Tasks ([docs/plan-neo-convert.md](./docs/plan-neo-convert.md))
 - [ ] **Expand Test Coverage**: Create a comprehensive test suite that verifies all features and edge cases, including the new import functionality.
 - [ ] **Complete `README.md`**: Write user-facing documentation with installation, usage, and examples.
 
-### `scantest` Library Future Work (`plan-scantest.md`)
+### `scantest` Library Future Work ([docs/plan-scantest.md](./docs/plan-scantest.md))
 - [ ] Implement file change detection to verify modifications to existing files during tests.

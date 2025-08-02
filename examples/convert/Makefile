@@ -1,6 +1,6 @@
 .PHONY: test clean e2e update-golden
 
-test: clean
+test:
 	go test -v ./...
 
 # The 'e2e' and 'test' targets are separate because in CI,

@@ -3,7 +3,6 @@ package funcs
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/podhmo/go-scan/examples/convert/model"
 	"github.com/podhmo/go-scan/examples/convert/sampledata/destination"
@@ -34,7 +33,6 @@ func ConvertSrcContactToDstContact(ctx context.Context, ec *model.ErrorCollector
 	return dst
 }
 
-// ConcatName combines first and last name to create a full name.
-func ConcatName(ctx context.Context, ec *model.ErrorCollector, firstName string, lastName string) string {
-	return strings.TrimSpace(fmt.Sprintf("%s %s", firstName, lastName))
+func MakeFullName(firstName string, lastName string) string {
+	return firstName + " " + lastName
 }

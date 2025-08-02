@@ -27,6 +27,7 @@ func convertSrcToDst(ctx context.Context, ec *model.ErrorCollector, src *Src) *D
 		}
 		return convertedMap
 	}()
+
 	ec.Leave()
 	if ec.MaxErrorsReached() {
 		return dst
@@ -41,6 +42,7 @@ func convertSrcToDst(ctx context.Context, ec *model.ErrorCollector, src *Src) *D
 		}
 		return convertedMap
 	}()
+
 	ec.Leave()
 	return dst
 }
@@ -67,6 +69,7 @@ func convertSrcItemToDstItem(ctx context.Context, ec *model.ErrorCollector, src 
 	}
 	ec.Enter("Value")
 	dst.Value = src.Value
+
 	ec.Leave()
 	return dst
 }

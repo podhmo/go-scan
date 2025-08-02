@@ -18,12 +18,14 @@ func convertSourceToDestination(ctx context.Context, ec *model.ErrorCollector, s
 	}
 	ec.Enter("ID")
 	dst.ID = src.ID
+
 	ec.Leave()
 	if ec.MaxErrorsReached() {
 		return dst
 	}
 	ec.Enter("Name")
 	dst.Name = src.Name
+
 	ec.Leave()
 	return dst
 }

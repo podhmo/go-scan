@@ -29,10 +29,10 @@ const FileWriterKey contextKey = "fileWriter"
 
 func main() {
 	var (
-		pkgpath = flag.String("pkg", "", "target package path (e.g. example.com/m/models)")
-		workdir = flag.String("cwd", ".", "current working directory")
-		output      = flag.String("output", "generated.go", "output file name")
-		pkgname     = flag.String("pkgname", "", "package name for the generated file (default: inferred from output dir)")
+		pkgpath       = flag.String("pkg", "", "target package path (e.g. example.com/m/models)")
+		workdir       = flag.String("cwd", ".", "current working directory")
+		output        = flag.String("output", "generated.go", "output file name")
+		pkgname       = flag.String("pkgname", "", "package name for the generated file (default: inferred from output dir)")
 		outputPkgPath = flag.String("output-pkgpath", "", "full package import path for the generated file (e.g. example.com/m/generated)")
 	)
 	flag.Usage = func() {

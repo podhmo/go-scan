@@ -2,8 +2,8 @@ package complex
 
 // @derivingconvert("Dst")
 type Src struct {
-	Items      []*SrcItem
-	ItemMap    map[string]*SrcItem
+	Items   []*SrcItem
+	ItemMap map[string]*SrcItem
 }
 
 type Dst struct {

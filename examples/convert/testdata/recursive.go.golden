@@ -20,12 +20,14 @@ func convertSrcParentToDstParent(ctx context.Context, ec *model.ErrorCollector, 
 	}
 	ec.Enter("ID")
 	dst.ID = src.ID
+
 	ec.Leave()
 	if ec.MaxErrorsReached() {
 		return dst
 	}
 	ec.Enter("Child")
 	dst.Child = *convertSrcChildToDstChild(ctx, ec, &src.Child)
+
 	ec.Leave()
 	return dst
 }
@@ -52,6 +54,7 @@ func convertSrcChildToDstChild(ctx context.Context, ec *model.ErrorCollector, sr
 	}
 	ec.Enter("Value")
 	dst.Value = src.Value
+
 	ec.Leave()
 	return dst
 }

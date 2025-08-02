@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 
+	ext "example.com/m/external"
 	"github.com/podhmo/go-scan/examples/convert/model"
 )
 
@@ -17,13 +18,15 @@ func convertSrcToDst(ctx context.Context, ec *model.ErrorCollector, src *Src) *D
 		return dst
 	}
 	ec.Enter("Timestamp")
-	dst.Timestamp = src.Timestampext.ValidateString(ec, dst.Timestamp)
+	dst.Timestamp = ext.TimeToString(ctx, ec, src.Timestamp)
+	ext.ValidateString(ec, dst.Timestamp)
 	ec.Leave()
 	if ec.MaxErrorsReached() {
 		return dst
 	}
 	ec.Enter("Comment")
-	dst.Comment = src.Commentext.ValidateString(ec, dst.Comment)
+	dst.Comment = src.Comment
+	ext.ValidateString(ec, dst.Comment)
 	ec.Leave()
 	return dst
 }

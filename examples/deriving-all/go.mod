@@ -10,6 +10,10 @@ require (
 	github.com/podhmo/go-scan/examples/derivingjson v0.0.0
 )
 
+require golang.org/x/mod v0.26.0 // indirect
+
 replace github.com/podhmo/go-scan => ../../
+
 replace github.com/podhmo/go-scan/examples/derivingjson => ../derivingjson
+
 replace github.com/podhmo/go-scan/examples/derivingbind => ../derivingbind

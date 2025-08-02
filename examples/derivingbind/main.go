@@ -1,13 +1,10 @@
 package main
 
 import (
-	"bytes"
 	"context"
-	"embed"
 	"flag"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"

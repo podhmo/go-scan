@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -25,64 +26,79 @@ func TestUnifiedGenerator(t *testing.T) {
 		{
 			name: "struct with both annotations",
 			input: map[string]string{
+				"go.mod": "module mytest",
 				"models.go": `
 package models
+import "time"
 // @deriving:unmarshal
 // @derivng:binding in:"body"
-type User struct {
-	Name string ` + "`json:\"name\"`" + `
-	ID   int    ` + "`json:\"id\"`" + `
-	Data any ` + "`json:\"data\"`" + `
-}`,
+type Event struct {
+	ID        string    ` + "`json:\"id\"`" + `
+	CreatedAt time.Time ` + "`json:\"createdAt\"`" + `
+	Data      EventData ` + "`json:\"data\"`" + `
+}
+type EventData interface { isEventData() }
+type UserCreated struct { UserID string }
+func (UserCreated) isEventData() {}
+`,
 			},
 			expectedToGenerate: true,
 			mustContain: []string{
-				"func (s *User) UnmarshalJSON(data []byte) error",
-				"func (s *User) Bind(req *http.Request, pathVar func(string) string) error",
+				"func (s *Event) UnmarshalJSON(data []byte) error",
+				"func (s *Event) Bind(req *http.Request, pathVar func(string) string) error",
 				"package models",
-				`import "encoding/json"`,
-				`import "net/http"`,
+				`"encoding/json"`,
+				`"net/http"`,
 			},
 		},
 		{
 			name: "struct with only json unmarshal annotation",
 			input: map[string]string{
+				"go.mod": "module mytest",
 				"models.go": `
 package models
+import "time"
 // @deriving:unmarshal
-type User struct {
-	Data any ` + "`json:\"data\"`" + `
-}`,
+type Event struct {
+	Data EventData ` + "`json:\"data\"`" + `
+}
+type EventData interface { isEventData() }
+type UserCreated struct { UserID string }
+func (UserCreated) isEventData() {}
+`,
 			},
 			expectedToGenerate: true,
 			mustContain: []string{
-				"func (s *User) UnmarshalJSON(data []byte) error",
+				"func (s *Event) UnmarshalJSON(data []byte) error",
 			},
 			mustNotContain: []string{
-				"func (s *User) Bind(req *http.Request, pathVar func(string) string) error",
+				"func (s *Event) Bind(req *http.Request, pathVar func(string) string) error",
 			},
 		},
 		{
 			name: "struct with only binding annotation",
 			input: map[string]string{
+				"go.mod": "module mytest",
 				"models.go": `
 package models
+import "time"
 // @derivng:binding in:"body"
-type User struct {
+type Event struct {
 	Name string ` + "`json:\"name\"`" + `
 }`,
 			},
 			expectedToGenerate: true,
 			mustContain: []string{
-				"func (s *User) Bind(req *http.Request, pathVar func(string) string) error",
+				"func (s *Event) Bind(req *http.Request, pathVar func(string) string) error",
 			},
 			mustNotContain: []string{
-				"func (s *User) UnmarshalJSON(data []byte) error",
+				"func (s *Event) UnmarshalJSON(data []byte) error",
 			},
 		},
 		{
 			name: "struct with no annotations",
 			input: map[string]string{
+				"go.mod": "module mytest",
 				"models.go": `
 package models
 type User struct {
@@ -150,8 +166,10 @@ type User struct {
 			// Assertion
 			generatedFileName := "models_deriving.go"
 			if !tc.expectedToGenerate {
-				if _, exists := result.Outputs[generatedFileName]; exists {
-					t.Errorf("expected no file to be generated, but %s was created", generatedFileName)
+				if result != nil {
+					if _, exists := result.Outputs[generatedFileName]; exists {
+						t.Errorf("expected no file to be generated, but %s was created", generatedFileName)
+					}
 				}
 				return // Test passed
 			}

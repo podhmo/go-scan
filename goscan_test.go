@@ -15,7 +15,6 @@ import (
 
 	// For deep comparison
 	// For options like IgnoreUnexported
-	"github.com/podhmo/go-scan/cache" // Now needed for direct cache content manipulation
 	"github.com/podhmo/go-scan/scanner"
 )
 
@@ -170,7 +169,7 @@ func TestScanner_WithSymbolCache(t *testing.T) {
 			t.Fatalf("Failed to read cache file: %v", err)
 		}
 
-		var loadedCacheContent cache.CacheContent
+		var loadedCacheContent cacheContent
 		if err := json.Unmarshal(data, &loadedCacheContent); err != nil {
 			t.Fatalf("Failed to unmarshal cache content: %v", err)
 		}
@@ -259,11 +258,11 @@ func TestScanner_WithSymbolCache(t *testing.T) {
 		staleUserSymbol := modelsImportPath + ".User"
 		staleFileRelativePath := "models/non_existent_user.go"
 
-		prefilledCacheContent := cache.CacheContent{
+		prefilledCacheContent := cacheContent{
 			Symbols: map[string]string{
 				staleUserSymbol: staleFileRelativePath,
 			},
-			Files: map[string]cache.FileMetadata{
+			Files: map[string]fileMetadata{
 				staleFileRelativePath: {
 					Symbols: []string{"User"},
 				},

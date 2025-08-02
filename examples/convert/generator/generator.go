@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"strings"
 	"text/template"
 
@@ -116,12 +116,12 @@ func Generate(s *goscan.Scanner, info *model.ParsedInfo) ([]byte, error) {
 		srcStruct, ok := info.Structs[pair.SrcTypeName]
 		if !ok {
 			// This can happen if a struct is referenced but not defined in the scanned packages.
-			log.Printf("Warning: source struct %q for conversion not found in parsed info, skipping.", pair.SrcTypeName)
+			slog.WarnContext(ctx, "source struct for conversion not found in parsed info, skipping", "type", pair.SrcTypeName)
 			continue
 		}
 		dstStruct, ok := info.Structs[pair.DstTypeName]
 		if !ok {
-			log.Printf("Warning: destination struct %q for conversion not found in parsed info, skipping.", pair.DstTypeName)
+			slog.WarnContext(ctx, "destination struct for conversion not found in parsed info, skipping", "type", pair.DstTypeName)
 			continue
 		}
 
@@ -145,13 +145,13 @@ func Generate(s *goscan.Scanner, info *model.ParsedInfo) ([]byte, error) {
 
 			if srcFieldType != nil && dstFieldType != nil {
 				if srcFieldType.Definition == nil || dstFieldType.Definition == nil {
-					log.Printf("Warning: could not resolve definition for field conversion %s -> %s", srcFieldType.Name, dstFieldType.Name)
+					slog.WarnContext(ctx, "could not resolve definition for field conversion", "src", srcFieldType.Name, "dst", dstFieldType.Name)
 					continue
 				}
 
 				key := fmt.Sprintf("%s.%s -> %s.%s", srcFieldType.Definition.PkgPath, srcFieldType.Name, dstFieldType.Definition.PkgPath, dstFieldType.Name)
 				if !processed[key] {
-					log.Printf("Discovered required conversion: %s", key)
+					slog.DebugContext(ctx, "Discovered required conversion", "key", key)
 					newPair := model.ConversionPair{
 						SrcTypeName: srcFieldType.Name,
 						DstTypeName: dstFieldType.Name,
@@ -229,24 +229,24 @@ func createFieldMaps(ctx context.Context, s *goscan.Scanner, src, dst *model.Str
 	dstFieldsByNormalizedJSONTag := make(map[string]model.FieldInfo)
 	dstFieldsByNormalizedName := make(map[string]model.FieldInfo)
 
-	log.Printf("Destination struct: %s", dst.Name)
+	slog.DebugContext(ctx, "Destination struct", "name", dst.Name)
 	for _, f := range dst.Fields {
 		dstFieldsByName[f.Name] = f
 		if f.JSONTag != "" && f.JSONTag != "-" {
 			normalized := normalizeFieldName(f.JSONTag)
 			dstFieldsByNormalizedJSONTag[normalized] = f
-			log.Printf("  dst field %s, json: %s, normalized json: %s", f.Name, f.JSONTag, normalized)
+			slog.DebugContext(ctx, "dst field", "name", f.Name, "json", f.JSONTag, "normalized_json", normalized)
 		}
 		normalized := normalizeFieldName(f.Name)
 		dstFieldsByNormalizedName[normalized] = f
-		log.Printf("  dst field %s, normalized name: %s", f.Name, normalized)
+		slog.DebugContext(ctx, "dst field", "name", f.Name, "normalized_name", normalized)
 	}
 
-	log.Printf("Source struct: %s", src.Name)
+	slog.DebugContext(ctx, "Source struct", "name", src.Name)
 	for _, srcField := range src.Fields {
 		_ = resolveFieldType(ctx, srcField.FieldType)
 		if srcField.Tag.DstFieldName == "-" {
-			log.Printf("  src field %s: skipped by `convert:\"-\"`", srcField.Name)
+			slog.DebugContext(ctx, "src field skipped by `convert:\"-\"`", "name", srcField.Name)
 			continue
 		}
 
@@ -275,11 +275,11 @@ func createFieldMaps(ctx context.Context, s *goscan.Scanner, src, dst *model.Str
 		}
 
 		if !ok {
-			log.Printf("  src field %s: no match found", srcField.Name)
+			slog.DebugContext(ctx, "src field no match found", "name", srcField.Name)
 			continue
 		}
 
-		log.Printf("  src field %s -> dst field %s (matched by %s)", srcField.Name, dstField.Name, reason)
+		slog.DebugContext(ctx, "src field matched", "src", srcField.Name, "dst", dstField.Name, "reason", reason)
 		_ = resolveFieldType(ctx, dstField.FieldType)
 		maps = append(maps, FieldMap{
 			SrcName:   srcField.Name,
@@ -347,7 +347,7 @@ func qualifyFunc(im *goscan.ImportManager, info *model.ParsedInfo, funcName stri
 	alias, name := parts[0], parts[1]
 	path, ok := info.Imports[alias]
 	if !ok {
-		log.Printf("Warning: could not find import path for alias %q in function %q", alias, funcName)
+		slog.Warn("could not find import path for alias in function", "alias", alias, "funcName", funcName)
 		return funcName
 	}
 	finalAlias := im.Add(path, alias)

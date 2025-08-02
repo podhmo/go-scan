@@ -3,7 +3,7 @@ package parser
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"reflect"
 	"regexp"
 	"strconv"
@@ -45,7 +45,7 @@ func processPackage(ctx context.Context, s *goscan.Scanner, info *model.ParsedIn
 		return nil
 	}
 	info.ProcessedPackages[pkgInfo.ImportPath] = true
-	log.Printf("Processing package: %s", pkgInfo.ImportPath)
+	slog.DebugContext(ctx, "Processing package", "path", pkgInfo.ImportPath)
 
 	for _, astFile := range pkgInfo.AstFiles {
 		for _, commentGroup := range astFile.Comments {
@@ -283,7 +283,7 @@ func collectFields(ctx context.Context, s *goscan.Scanner, info *model.ParsedInf
 			var err error
 			fieldTypeInfo, err = s.ResolveType(ctx, f.Type)
 			if err != nil {
-				log.Printf("Could not resolve field type %s, skipping: %v", f.Type.String(), err)
+				slog.WarnContext(ctx, "Could not resolve field type, skipping", "type", f.Type.String(), "error", err)
 			}
 
 			if fieldTypeInfo != nil && fieldTypeInfo.PkgPath != "" && fieldTypeInfo.PkgPath != p.ImportPath && !f.Type.IsResolvedByConfig {
@@ -300,11 +300,11 @@ func collectFields(ctx context.Context, s *goscan.Scanner, info *model.ParsedInf
 		if f.Embedded {
 			if isTest {
 				// Cannot resolve in test environment without a real scanner
-				log.Printf("Skipping embedded field %s in test environment", f.Type.String())
+				slog.DebugContext(ctx, "Skipping embedded field in test environment", "type", f.Type.String())
 				continue
 			}
 			if fieldTypeInfo == nil || fieldTypeInfo.Struct == nil {
-				log.Printf("Resolved embedded type %s is not a struct, skipping", f.Type.String())
+				slog.WarnContext(ctx, "Resolved embedded type is not a struct, skipping", "type", f.Type.String())
 				continue
 			}
 			embeddedPkgInfo, err := s.ScanPackageByImport(ctx, fieldTypeInfo.PkgPath)

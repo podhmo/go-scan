@@ -3,18 +3,20 @@ package main
 import (
 	"bytes"
 	"context"
-	"embed"
 	"flag"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+
 	goscan "github.com/podhmo/go-scan"
-	"github.com/podhmo/go-scan/examples/derivingbind/gen"
+	bindgen "github.com/podhmo/go-scan/examples/derivingbind/gen"
+	jsongen "github.com/podhmo/go-scan/examples/derivingjson/gen"
 	"github.com/podhmo/go-scan/scanner"
 )
+
+type GeneratorFunc func(context.Context, *goscan.Scanner, *scanner.PackageInfo, *goscan.ImportManager) ([]byte, error)
 
 func main() {
 	logLevel := new(slog.LevelVar)
@@ -26,9 +28,7 @@ func main() {
 	var cwd string
 	flag.StringVar(&cwd, "cwd", ".", "current working directory")
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: derivingbind [options] <file_or_dir_path_1> [file_or_dir_path_2 ...]\n")
-		fmt.Fprintf(os.Stderr, "Example (file): derivingbind examples/derivingbind/testdata/simple/models.go\n")
-		fmt.Fprintf(os.Stderr, "Example (dir):  derivingbind examples/derivingbind/testdata/simple/\n")
+		fmt.Fprintf(os.Stderr, "Usage: deriving-all [options] <file_or_dir_path_1> [file_or_dir_path_2 ...]\n")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
@@ -66,6 +66,11 @@ func main() {
 
 	var successCount, errorCount int
 
+	generators := []GeneratorFunc{
+		jsongen.Generate,
+		bindgen.Generate,
+	}
+
 	processPackage := func(pkgInfo *scanner.PackageInfo) {
 		if pkgInfo == nil {
 			slog.ErrorContext(ctx, "Scanned package info is nil")
@@ -74,14 +79,28 @@ func main() {
 		}
 
 		importManager := goscan.NewImportManager(pkgInfo)
-		code, err := gen.Generate(ctx, gscn, pkgInfo, importManager)
-		if err != nil {
-			slog.ErrorContext(ctx, "Error generating code for package", "path", pkgInfo.Path, slog.Any("error", err))
+		var masterCode bytes.Buffer
+		var totalErrors []error
+
+		for _, generate := range generators {
+			code, err := generate(ctx, gscn, pkgInfo, importManager)
+			if err != nil {
+				totalErrors = append(totalErrors, err)
+				continue
+			}
+			if len(code) > 0 {
+				masterCode.Write(code)
+				masterCode.WriteString("\n\n")
+			}
+		}
+
+		if len(totalErrors) > 0 {
+			slog.ErrorContext(ctx, "Errors during code generation", "path", pkgInfo.Path, "errors", totalErrors)
 			errorCount++
 			return
 		}
 
-		if len(code) == 0 {
+		if masterCode.Len() == 0 {
 			slog.InfoContext(ctx, "No code generated for package", "path", pkgInfo.Path)
 			successCount++
 			return
@@ -91,7 +110,7 @@ func main() {
 		goFile := goscan.GoFile{
 			PackageName: pkgInfo.Name,
 			Imports:     importManager.Imports(),
-			CodeSet:     string(code),
+			CodeSet:     masterCode.String(),
 		}
 
 		outputFilename := fmt.Sprintf("%s_deriving.go", strings.ToLower(pkgInfo.Name))
@@ -99,7 +118,7 @@ func main() {
 			slog.ErrorContext(ctx, "Failed to save generated file for package", "path", pkgInfo.Path, slog.Any("error", err))
 			errorCount++
 		} else {
-			slog.InfoContext(ctx, "Successfully generated Bind method for package", "path", pkgInfo.Path)
+			slog.InfoContext(ctx, "Successfully generated combined code for package", "path", pkgInfo.Path)
 			successCount++
 		}
 	}

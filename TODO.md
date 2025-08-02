@@ -103,16 +103,12 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     -   [x] Implement Package-Level Discovery for enums.
     -   [x] Implement Lazy Symbol-Based Lookup for enums (via the existing package resolver).
     -   [x] Add Tests for Both Enum Scanning Strategies.
+-   **Unified Single-Pass Generator**: Combined the `derivingjson` and `derivingbind` tools into a single, efficient `deriving-all` command. This tool parses source files only once and uses refactored, composable generator functions to produce the combined output. The implementation followed the plan in [docs/plan-walk-once.md](./docs/plan-walk-once.md).
+    -   [x] Refactored `derivingjson` and `derivingbind` to separate generation logic from file I/O.
+    -   [x] Implemented the `deriving-all` orchestrator tool.
+    -   [x] Added integration tests for the unified tool using `scantest`.
 
 ## To Be Implemented
-
-### Unified Single-Pass Generator ([docs/plan-walk-once.md](./docs/plan-walk-once.md))
-- [ ] Step 1: Create the `GeneratedCode` struct.
-- [ ] Step 2: Refactor the `derivingjson` generator.
-- [ ] Step 3: Refactor the `derivingbind` generator.
-- [ ] Step 4: Implement the initial version of the unified `deriving-all` tool.
-- [ ] Step 5: Implement tests for the unified generator using `scantest`.
-- [ ] Step 6: Refine and Finalize the unified tool.
 
 ### `convert` Tool Future Tasks ([docs/plan-neo-convert.md](./docs/plan-neo-convert.md))
 - [ ] **Expand Test Coverage**: Create a comprehensive test suite that verifies all features and edge cases, including the new import functionality.

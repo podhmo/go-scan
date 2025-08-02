@@ -1,0 +1,2 @@
+- [x] Document unpopulated fields in the docstrings of generated converter functions.
+- [x] Add a test to verify that the documented fields are indeed unpopulated.

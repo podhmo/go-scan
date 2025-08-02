@@ -21,15 +21,15 @@ func convertSrcUserToDstUser(ctx context.Context, ec *model.ErrorCollector, src 
 		return dst
 	}
 	ec.Enter("Details")
-	dst.Details = func() []destination.DstInternalDetail {
+	{
 		convertedSlice := make([]destination.DstInternalDetail, len(src.Details))
 		for i, item := range src.Details {
 			ec.Enter(fmt.Sprintf("[%d]", i))
 			convertedSlice[i] = *convertSrcInternalDetailToDstInternalDetail(ctx, ec, &item)
 			ec.Leave()
 		}
-		return convertedSlice
-	}()
+		dst.Details = convertedSlice
+	}
 
 	ec.Leave()
 	if ec.MaxErrorsReached() {
@@ -50,6 +50,12 @@ func convertSrcUserToDstUser(ctx context.Context, ec *model.ErrorCollector, src 
 }
 
 // ConvertSrcUserToDstUser converts source.SrcUser to destination.DstUser.
+//
+// Fields that are not populated by this converter:
+//   - Address
+//   - Contact
+//   - FullName
+//   - UserID
 func ConvertSrcUserToDstUser(ctx context.Context, src *source.SrcUser) (*destination.DstUser, error) {
 	if src == nil {
 		return nil, nil
@@ -70,6 +76,11 @@ func convertSrcOrderToDstOrder(ctx context.Context, ec *model.ErrorCollector, sr
 }
 
 // ConvertSrcOrderToDstOrder converts source.SrcOrder to destination.DstOrder.
+//
+// Fields that are not populated by this converter:
+//   - ID
+//   - LineItems
+//   - TotalAmount
 func ConvertSrcOrderToDstOrder(ctx context.Context, src *source.SrcOrder) (*destination.DstOrder, error) {
 	if src == nil {
 		return nil, nil
@@ -109,30 +120,30 @@ func convertComplexSourceToComplexTarget(ctx context.Context, ec *model.ErrorCol
 		return dst
 	}
 	ec.Enter("Slice")
-	dst.Slice = func() []destination.SubTarget {
+	{
 		convertedSlice := make([]destination.SubTarget, len(src.Slice))
 		for i, item := range src.Slice {
 			ec.Enter(fmt.Sprintf("[%d]", i))
 			convertedSlice[i] = *convertSubSourceToSubTarget(ctx, ec, &item)
 			ec.Leave()
 		}
-		return convertedSlice
-	}()
+		dst.Slice = convertedSlice
+	}
 
 	ec.Leave()
 	if ec.MaxErrorsReached() {
 		return dst
 	}
 	ec.Enter("SliceOfPtrs")
-	dst.SliceOfPtrs = func() []*destination.SubTarget {
+	{
 		convertedSlice := make([]*destination.SubTarget, len(src.SliceOfPtrs))
 		for i, item := range src.SliceOfPtrs {
 			ec.Enter(fmt.Sprintf("[%d]", i))
 			convertedSlice[i] = convertSubSourceToSubTarget(ctx, ec, item)
 			ec.Leave()
 		}
-		return convertedSlice
-	}()
+		dst.SliceOfPtrs = convertedSlice
+	}
 
 	ec.Leave()
 	return dst
@@ -159,45 +170,45 @@ func convertSourceWithMapToTargetWithMap(ctx context.Context, ec *model.ErrorCol
 		return dst
 	}
 	ec.Enter("ValueMap")
-	dst.ValueMap = func() map[string]destination.SubTarget {
+	{
 		convertedMap := make(map[string]destination.SubTarget, len(src.ValueMap))
 		for key, value := range src.ValueMap {
 			ec.Enter(fmt.Sprintf("[%v]", key))
 			convertedMap[key] = *convertSubSourceToSubTarget(ctx, ec, &value)
 			ec.Leave()
 		}
-		return convertedMap
-	}()
+		dst.ValueMap = convertedMap
+	}
 
 	ec.Leave()
 	if ec.MaxErrorsReached() {
 		return dst
 	}
 	ec.Enter("PtrMap")
-	dst.PtrMap = func() map[string]*destination.SubTarget {
+	{
 		convertedMap := make(map[string]*destination.SubTarget, len(src.PtrMap))
 		for key, value := range src.PtrMap {
 			ec.Enter(fmt.Sprintf("[%v]", key))
 			convertedMap[key] = convertSubSourceToSubTarget(ctx, ec, value)
 			ec.Leave()
 		}
-		return convertedMap
-	}()
+		dst.PtrMap = convertedMap
+	}
 
 	ec.Leave()
 	if ec.MaxErrorsReached() {
 		return dst
 	}
 	ec.Enter("StringToStr")
-	dst.StringToStr = func() map[string]string {
+	{
 		convertedMap := make(map[string]string, len(src.StringToStr))
 		for key, value := range src.StringToStr {
 			ec.Enter(fmt.Sprintf("[%v]", key))
 			convertedMap[key] = value
 			ec.Leave()
 		}
-		return convertedMap
-	}()
+		dst.StringToStr = convertedMap
+	}
 
 	ec.Leave()
 	return dst
@@ -224,6 +235,10 @@ func convertSrcInternalDetailToDstInternalDetail(ctx context.Context, ec *model.
 }
 
 // ConvertSrcInternalDetailToDstInternalDetail converts source.SrcInternalDetail to destination.DstInternalDetail.
+//
+// Fields that are not populated by this converter:
+//   - ItemCode
+//   - LocalizedDesc
 func ConvertSrcInternalDetailToDstInternalDetail(ctx context.Context, src *source.SrcInternalDetail) (*destination.DstInternalDetail, error) {
 	if src == nil {
 		return nil, nil

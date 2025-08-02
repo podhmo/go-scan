@@ -97,7 +97,12 @@ func convertComplexSourceToComplexTarget(ctx context.Context, ec *model.ErrorCol
 		return dst
 	}
 	ec.Enter("Ptr")
-	dst.Ptr = src.Ptr
+	if src.Ptr != nil {
+		tmp := (*src.Ptr)
+		dst.Ptr = &tmp
+	} else {
+		dst.Ptr = nil
+	}
 
 	ec.Leave()
 	if ec.MaxErrorsReached() {

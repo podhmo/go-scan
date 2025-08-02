@@ -28,7 +28,12 @@ func convertSrcToDst(ctx context.Context, ec *model.ErrorCollector, src *Src) *D
 	if src.ManagerID == nil {
 		ec.Add(fmt.Errorf("ManagerID is required"))
 	} else {
-		dst.ManagerID = src.ManagerID
+		if src.ManagerID != nil {
+			tmp := (*src.ManagerID)
+			dst.ManagerID = &tmp
+		} else {
+			dst.ManagerID = nil
+		}
 	}
 
 	ec.Leave()
@@ -39,7 +44,12 @@ func convertSrcToDst(ctx context.Context, ec *model.ErrorCollector, src *Src) *D
 	if src.SpouseID == nil {
 		ec.Add(fmt.Errorf("SpouseID is required"))
 	} else {
-		dst.SpouseID = src.SpouseID
+		if src.SpouseID != nil {
+			tmp := (*src.SpouseID)
+			dst.SpouseID = &tmp
+		} else {
+			dst.SpouseID = nil
+		}
 	}
 
 	ec.Leave()

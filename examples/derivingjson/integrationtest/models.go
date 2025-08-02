@@ -17,7 +17,7 @@ type APIResponse struct {
 
 // UserProfile is one of the possible types for the Data field.
 // It represents a user's profile information.
-// @derivingmarshal
+// @deriving:marshal
 type UserProfile struct {
 	Type     string `json:"type"` // Discriminator: "user_profile" (expected value based on original user request)
 	UserID   string `json:"userId"`
@@ -29,7 +29,7 @@ func (UserProfile) isData() {}
 
 // ProductInfo is another possible type for the Data field.
 // It represents information about a product.
-// @derivingmarshal
+// @deriving:marshal
 type ProductInfo struct {
 	Type        string `json:"type"` // Discriminator: "product_info" (expected value based on original user request)
 	ProductID   string `json:"productId"`

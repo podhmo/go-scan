@@ -72,7 +72,7 @@ func Generate(ctx context.Context, gscn *goscan.Scanner, pkgInfo *scanner.Packag
 		if typeInfo.Kind != scanner.StructKind || typeInfo.Struct == nil {
 			continue
 		}
-		if _, ok := typeInfo.Annotation(unmarshalAnnotation); !ok {
+		if value, ok := typeInfo.Annotation("deriving"); !ok || value != "unmarshal" {
 			continue
 		}
 
@@ -231,7 +231,7 @@ func Generate(ctx context.Context, gscn *goscan.Scanner, pkgInfo *scanner.Packag
 		if typeInfo.Kind != scanner.StructKind || typeInfo.Struct == nil {
 			continue
 		}
-		if _, ok := typeInfo.Annotation(marshalAnnotation); !ok {
+		if value, ok := typeInfo.Annotation("deriving"); !ok || value != "marshal" {
 			continue
 		}
 

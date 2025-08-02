@@ -14,14 +14,14 @@ This tool aims to generate:
 
 -   Type information analysis using `github.com/podhmo/go-scan`.
 -   **Unmarshaling**: Targets container structs annotated with `@deriving:unmarshal`.
--   **Marshaling**: Targets concrete implementer structs annotated with `@derivingmarshal`.
+-   **Marshaling**: Targets concrete implementer structs annotated with `@deriving:marshal`.
 -   Identifies the discriminator field (e.g., `Type string `json:"type"``) and the `oneOf` target interface field to generate the appropriate logic.
 -   The tool searches for concrete types implementing the interface within the same package.
 
 ## Usage (Conceptual)
 
 1.  Add the `@deriving:unmarshal` annotation in the comment of the **container struct** (the one with the interface field) to generate `UnmarshalJSON` for it.
-2.  Add the `@derivingmarshal` annotation in the comment of each **concrete struct** that implements the `oneOf` interface to generate `MarshalJSON` for it.
+2.  Add the `@deriving:marshal` annotation in the comment of each **concrete struct** that implements the `oneOf` interface to generate `MarshalJSON` for it.
 3.  Run `derivingjson` from the command line, specifying the target package path.
 
     ```bash

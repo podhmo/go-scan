@@ -14,9 +14,6 @@ import (
 )
 
 // convertSrcUserToDstUser converts source.SrcUser to destination.DstUser.
-//
-// Fields that are not populated by this converter:
-//   - FullName
 func convertSrcUserToDstUser(ctx context.Context, ec *model.ErrorCollector, src *source.SrcUser) *destination.DstUser {
 	if src == nil {
 		return nil
@@ -72,13 +69,16 @@ func convertSrcUserToDstUser(ctx context.Context, ec *model.ErrorCollector, src 
 	dst.UpdatedAt = convutil.PtrTimeToString(ctx, ec, src.UpdatedAt)
 
 	ec.Leave()
+	if ec.MaxErrorsReached() {
+		return dst
+	}
+	ec.Enter("FullName")
+	dst.FullName = funcs.MakeFullName(src.FirstName, src.LastName)
+	ec.Leave()
 	return dst
 }
 
 // ConvertSrcUserToDstUser converts source.SrcUser to destination.DstUser.
-//
-// Fields that are not populated by this converter:
-//   - FullName
 func ConvertSrcUserToDstUser(ctx context.Context, src *source.SrcUser) (*destination.DstUser, error) {
 	if src == nil {
 		return nil, nil

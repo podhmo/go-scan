@@ -20,7 +20,7 @@ type fileMetadata struct {
 
 // cacheContent holds all data that is serialized to the cache file.
 type cacheContent struct {
-	Symbols map[string]string      `json:"symbols"` // Key: "<pkg_path>.<symbol_name>", Value: "relative_filepath"
+	Symbols map[string]string       `json:"symbols"` // Key: "<pkg_path>.<symbol_name>", Value: "relative_filepath"
 	Files   map[string]fileMetadata `json:"files"`   // Key: "relative_filepath", Value: fileMetadata
 }
 

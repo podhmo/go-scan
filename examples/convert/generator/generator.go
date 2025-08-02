@@ -56,6 +56,12 @@ func convert{{ .SrcType.Name }}To{{ .DstType.Name }}(ctx context.Context, ec *mo
 	{{- end }}
 	ec.Leave()
 	{{ end -}}
+	{{ range .Pair.Computed -}}
+	if ec.MaxErrorsReached() { return dst }
+	ec.Enter("{{ .DstName }}")
+	dst.{{ .DstName }} = {{ .Expr }}
+	ec.Leave()
+	{{ end -}}
 	return dst
 }
 
@@ -150,7 +156,7 @@ func Generate(s *goscan.Scanner, info *model.ParsedInfo) ([]byte, error) {
 			registerImports(im, field.FieldType)
 		}
 
-		fieldMaps, unmappedFields, err := createFieldMaps(ctx, s, srcStruct, dstStruct)
+		fieldMaps, unmappedFields, err := createFieldMaps(ctx, s, srcStruct, dstStruct, &pair)
 		if err != nil {
 			return nil, fmt.Errorf("creating field maps for %s -> %s: %w", srcStruct.Name, dstStruct.Name, err)
 		}
@@ -241,7 +247,7 @@ func Generate(s *goscan.Scanner, info *model.ParsedInfo) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-func createFieldMaps(ctx context.Context, s *goscan.Scanner, src, dst *model.StructInfo) ([]FieldMap, []string, error) {
+func createFieldMaps(ctx context.Context, s *goscan.Scanner, src, dst *model.StructInfo, pair *model.ConversionPair) ([]FieldMap, []string, error) {
 	var maps []FieldMap
 	dstFieldsByName := make(map[string]model.FieldInfo)
 	dstFieldsByNormalizedJSONTag := make(map[string]model.FieldInfo)
@@ -260,6 +266,11 @@ func createFieldMaps(ctx context.Context, s *goscan.Scanner, src, dst *model.Str
 		dstFieldsByNormalizedName[normalized] = f
 		slog.DebugContext(ctx, "dst field", "name", f.Name, "normalized_name", normalized)
 		unmappedDstFields[f.Name] = true
+	}
+
+	// Remove computed fields from the unmapped list
+	for _, computed := range pair.Computed {
+		delete(unmappedDstFields, computed.DstName)
 	}
 
 	slog.DebugContext(ctx, "Source struct", "name", src.Name)

@@ -1,6 +1,6 @@
 .PHONY: test clean e2e update-golden
 
-test: clean
+test:
 	go test -v ./...
 
 # The 'e2e' and 'test' targets are separate because in CI,
@@ -20,4 +20,4 @@ e2e:
 		-output sampledata/generated/generated.go \
 		-pkgname generated \
 		-output-pkgpath github.com/podhmo/go-scan/examples/convert/sampledata/generated
-	go install -v ./sampledata/...
+	go test -v -tags=e2e ./...

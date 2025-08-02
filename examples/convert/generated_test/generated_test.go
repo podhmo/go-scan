@@ -1,3 +1,5 @@
+//go:build e2e
+
 package generated_test
 
 import (
@@ -39,7 +41,7 @@ func TestGeneratedUserConversion(t *testing.T) {
 	// With the new annotations, most fields should be correctly converted.
 	expected := &destination.DstUser{
 		UserID:   "user-101",
-		FullName: "", // Not implemented
+		FullName: "John Doe",
 		Address: destination.DstAddress{
 			FullStreet: "123 Main St",
 			CityName:   "Anytown",
@@ -60,10 +62,7 @@ func TestGeneratedUserConversion(t *testing.T) {
 		t.Fatalf("ConvertSrcUserToDstUser() failed: %v", err)
 	}
 
-	// FullName is not implemented, so we ignore it in the comparison.
-	if diff := cmp.Diff(expected, got, cmp.FilterPath(func(p cmp.Path) bool {
-		return p.String() == "FullName"
-	}, cmp.Ignore())); diff != "" {
+	if diff := cmp.Diff(expected, got); diff != "" {
 		t.Errorf("ConvertSrcUserToDstUser() mismatch (-want +got):\n%s", diff)
 	}
 }

@@ -2,6 +2,10 @@ package source
 
 import "time"
 
+// convert:import converter "github.com/podhmo/go-scan/examples/convert/sampledata/converter"
+// convert:rule "time.Time" -> "string", using=converter.TimeToString
+// convert:rule "*time.Time" -> "string", using=converter.PtrTimeToString
+
 // @derivingconvert("github.com/podhmo/go-scan/examples/convert/sampledata/destination.DstUser")
 type SrcUser struct {
 	ID        int64

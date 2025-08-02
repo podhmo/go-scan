@@ -93,9 +93,9 @@ func Generate(s *goscan.Scanner, info *model.ParsedInfo) ([]byte, error) {
 	ctx := context.Background()
 
 	// Pre-register all necessary imports
-	for alias, path := range info.Imports {
-		im.Add(path, alias)
-	}
+	// for alias, path := range info.Imports {
+	// 	im.Add(path, alias)
+	// }
 
 	worklist := make([]model.ConversionPair, 0, len(info.ConversionPairs))
 	processed := make(map[string]bool)
@@ -140,10 +140,10 @@ func Generate(s *goscan.Scanner, info *model.ParsedInfo) ([]byte, error) {
 
 		// Discover new pairs from fields
 		for _, fm := range fieldMaps {
-			if isStruct(fm.SrcFieldT) && isStruct(fm.DstFieldT) {
-				srcFieldType := getUnderlyingStructType(fm.SrcFieldT)
-				dstFieldType := getUnderlyingStructType(fm.DstFieldT)
+			srcFieldType := getUnderlyingStructType(fm.SrcFieldT)
+			dstFieldType := getUnderlyingStructType(fm.DstFieldT)
 
+			if srcFieldType != nil && dstFieldType != nil {
 				if srcFieldType.Definition == nil || dstFieldType.Definition == nil {
 					log.Printf("Warning: could not resolve definition for field conversion %s -> %s", srcFieldType.Name, dstFieldType.Name)
 					continue
@@ -347,15 +347,11 @@ func qualifyFunc(im *goscan.ImportManager, info *model.ParsedInfo, funcName stri
 	alias, name := parts[0], parts[1]
 	path, ok := info.Imports[alias]
 	if !ok {
-		// If the alias is not in our explicit import list, it might be a standard import
-		// from the file itself. The import manager might know about it.
-		// However, the current import manager API doesn't provide a direct way to get a path from an alias.
-		// We'll assume for now that any qualified function must be from an explicit `// convert:import`.
 		log.Printf("Warning: could not find import path for alias %q in function %q", alias, funcName)
-		return funcName // Return as is, might fail compilation but gives a hint.
+		return funcName
 	}
-	// Use the import manager to get the final, possibly-aliased name for the package
-	return im.Qualify(path, name)
+	finalAlias := im.Add(path, alias)
+	return finalAlias + "." + name
 }
 
 func registerImports(im *goscan.ImportManager, t *scanner.FieldType) {
@@ -388,7 +384,6 @@ func findMatchingRule(info *model.ParsedInfo, srcT, dstT *scanner.FieldType) *ru
 		return nil
 	}
 
-	// Exact match first
 	srcFieldTypeName := getFullTypeNameFromFieldType(srcT)
 	dstFieldTypeName := getFullTypeNameFromFieldType(dstT)
 
@@ -397,38 +392,12 @@ func findMatchingRule(info *model.ParsedInfo, srcT, dstT *scanner.FieldType) *ru
 		if rule.UsingFunc == "" {
 			continue
 		}
-		ruleSrcName := getFullTypeNameFromTypeInfo(rule.SrcTypeInfo)
-		ruleDstName := getFullTypeNameFromTypeInfo(rule.DstTypeInfo)
 
-		if ruleSrcName == srcFieldTypeName && ruleDstName == dstFieldTypeName {
-			return &ruleMatchResult{Rule: rule, IsPointerMatch: false}
-		}
-	}
-
-	// Pointer-aware match
-	if srcT.IsPointer && dstT.IsPointer {
-		// Create temporary non-pointer representations to check the rule.
-		// This is necessary because the scanner sets IsPointer=true on the type itself,
-		// rather than populating the Elem field for pointers.
-		srcElemT := *srcT
-		srcElemT.IsPointer = false
-		dstElemT := *dstT
-		dstElemT.IsPointer = false
-
-		srcElemTypeName := getFullTypeNameFromFieldType(&srcElemT)
-		dstElemTypeName := getFullTypeNameFromFieldType(&dstElemT)
-
-		for i := range info.GlobalRules {
-			rule := &info.GlobalRules[i]
-			if rule.UsingFunc == "" {
-				continue
-			}
-			ruleSrcName := getFullTypeNameFromTypeInfo(rule.SrcTypeInfo)
-			ruleDstName := getFullTypeNameFromTypeInfo(rule.DstTypeInfo)
-
-			if ruleSrcName == srcElemTypeName && ruleDstName == dstElemTypeName {
-				return &ruleMatchResult{Rule: rule, IsPointerMatch: true}
-			}
+		// Use the raw type names from the rule, which preserve pointers.
+		if rule.SrcTypeName == srcFieldTypeName && rule.DstTypeName == dstFieldTypeName {
+			// Determine if it's a pointer match based on the source field type.
+			// This is simpler than trying to infer from the rule's TypeInfo.
+			return &ruleMatchResult{Rule: rule, IsPointerMatch: srcT.IsPointer}
 		}
 	}
 
@@ -436,17 +405,13 @@ func findMatchingRule(info *model.ParsedInfo, srcT, dstT *scanner.FieldType) *ru
 }
 
 func getMapKeyAssignment(im *goscan.ImportManager, info *model.ParsedInfo, srcVar, dstVar string, srcT, dstT *scanner.FieldType, ecVar, ctxVar string) string {
-	// Global conversion rule (now pointer-aware)
+	// Global conversion rule
 	if match := findMatchingRule(info, srcT, dstT); match != nil {
 		funcName := qualifyFunc(im, info, match.Rule.UsingFunc)
-		// Pointer-to-pointer conversion for map keys is complex and rare.
-		// For now, we only support direct rule application.
-		if !match.IsPointerMatch {
-			if dstVar != "" {
-				return fmt.Sprintf("%s = %s(%s, %s, %s)", dstVar, funcName, ctxVar, ecVar, srcVar)
-			}
-			return fmt.Sprintf("%s(%s, %s, %s)", funcName, ctxVar, ecVar, srcVar)
+		if dstVar != "" {
+			return fmt.Sprintf("%s = %s(%s, %s, %s)", dstVar, funcName, ctxVar, ecVar, srcVar)
 		}
+		return fmt.Sprintf("%s(%s, %s, %s)", funcName, ctxVar, ecVar, srcVar)
 	}
 	return generateConversion(im, info, srcVar, dstVar, srcT, dstT, 0, ecVar, ctxVar)
 }
@@ -461,20 +426,11 @@ func getAssignment(im *goscan.ImportManager, info *model.ParsedInfo, field Field
 		return fmt.Sprintf("%s = %s(%s, %s, %s)", dst, funcName, ctxVar, ecVar, src)
 	}
 
-	// Priority 2: Global conversion rule (now pointer-aware)
+	// Priority 2: Global conversion rule
 	if match := findMatchingRule(info, field.SrcFieldT, field.DstFieldT); match != nil {
 		funcName := qualifyFunc(im, info, match.Rule.UsingFunc)
-		if match.IsPointerMatch {
-			var b strings.Builder
-			b.WriteString(fmt.Sprintf("if %s != nil {\n", src))
-			b.WriteString(fmt.Sprintf("\ttmp := %s(%s, %s, *%s)\n", funcName, ctxVar, ecVar, src))
-			b.WriteString(fmt.Sprintf("\t%s = &tmp\n", dst))
-			b.WriteString("} else {\n")
-			b.WriteString(fmt.Sprintf("\t%s = nil\n", dst))
-			b.WriteString("}")
-			return b.String()
-		}
-		// Standard rule application
+		// The user-provided rule function is expected to have the correct signature
+		// (e.g., handle pointers correctly). We just call it.
 		return fmt.Sprintf("%s = %s(%s, %s, %s)", dst, funcName, ctxVar, ecVar, src)
 	}
 
@@ -487,23 +443,9 @@ func getAssignment(im *goscan.ImportManager, info *model.ParsedInfo, field Field
 }
 
 func generateConversion(im *goscan.ImportManager, info *model.ParsedInfo, src, dst string, srcT, dstT *scanner.FieldType, depth int, ecVar, ctxVar string) string {
-	// Global conversion rule (now pointer-aware)
+	// Global conversion rule
 	if match := findMatchingRule(info, srcT, dstT); match != nil {
 		funcName := qualifyFunc(im, info, match.Rule.UsingFunc)
-		if match.IsPointerMatch {
-			var b strings.Builder
-			b.WriteString(fmt.Sprintf("func() *%s {\n", getTypeName(im, dstT.Elem)))
-			b.WriteString(fmt.Sprintf("\tif %s == nil { return nil }\n", src))
-			b.WriteString(fmt.Sprintf("\ttmp := %s(%s, %s, *%s)\n", funcName, ctxVar, ecVar, src))
-			b.WriteString("\treturn &tmp\n")
-			b.WriteString("}()")
-			result := b.String()
-			if dst != "" {
-				return fmt.Sprintf("%s = %s", dst, result)
-			}
-			return result
-		}
-		// Standard rule application
 		result := fmt.Sprintf("%s(%s, %s, %s)", funcName, ctxVar, ecVar, src)
 		if dst != "" {
 			return fmt.Sprintf("%s = %s", dst, result)
@@ -518,22 +460,14 @@ func generateConversion(im *goscan.ImportManager, info *model.ParsedInfo, src, d
 	// Pointer to Pointer
 	if srcT.IsPointer && dstT.IsPointer {
 		if srcT.Elem == nil || dstT.Elem == nil {
-			// This is the path taken when the scanner fails to populate Elem for a pointer.
-			// We can work around this by checking if the type name corresponds to a known struct.
 			if _, ok := info.Structs[srcT.Name]; ok {
-				// It's a known struct, so we can generate the recursive conversion call.
-				// The helper function `convert<SrcName>To<DstName>` handles the nil check.
 				return fmt.Sprintf("convert%sTo%s(%s, %s, %s)", srcT.Name, dstT.Name, ctxVar, ecVar, src)
 			}
-
-			// Not a known struct, so fallback to simple assignment.
 			if dst != "" {
 				return fmt.Sprintf("%s = %s", dst, src)
 			}
 			return src
 		}
-
-		// This is the original logic for when Elem is correctly populated.
 		var b strings.Builder
 		b.WriteString(fmt.Sprintf("if %s != nil {\n", src))
 		b.WriteString(fmt.Sprintf("\ttmp := %s\n", generateConversion(im, info, "(*"+src+")", "", srcT.Elem, dstT.Elem, depth+1, ecVar, ctxVar)))
@@ -595,7 +529,6 @@ func generateConversion(im *goscan.ImportManager, info *model.ParsedInfo, src, d
 
 	// Structs
 	if isStruct(srcT) && isStruct(dstT) && srcT.Name != "" && dstT.Name != "" {
-		// This should be a pointer type, but we handle both cases.
 		srcPtr := src
 		if !srcT.IsPointer {
 			srcPtr = "&" + src
@@ -666,15 +599,9 @@ func getTypeName(im *goscan.ImportManager, t *scanner.FieldType) string {
 
 	if t.IsPointer {
 		sb.WriteString("*")
-		// The scanner might fail to populate Elem for a pointer type.
-		// In that case, the type name is on the pointer FieldType itself.
-		// If Elem is populated, recurse. Otherwise, use the current type's name.
 		if t.Elem != nil {
 			sb.WriteString(getTypeName(im, t.Elem))
 		} else {
-			// This is the fallback for when Elem is nil. The type name is on the pointer itself.
-			// We just need to qualify it. This assumes no further nesting like *[]T.
-			// A more robust scanner would populate Elem correctly.
 			sb.WriteString(im.Qualify(t.FullImportPath, t.Name))
 		}
 		return sb.String()
@@ -682,7 +609,7 @@ func getTypeName(im *goscan.ImportManager, t *scanner.FieldType) string {
 
 	if t.IsSlice {
 		sb.WriteString("[]")
-		sb.WriteString(getTypeName(im, t.Elem)) // Recurse, will be caught by t == nil if Elem is nil
+		sb.WriteString(getTypeName(im, t.Elem))
 		return sb.String()
 	}
 
@@ -692,7 +619,6 @@ func getTypeName(im *goscan.ImportManager, t *scanner.FieldType) string {
 		return fmt.Sprintf("map[%s]%s", keyType, valType)
 	}
 
-	// Base case: a named type
 	return im.Qualify(t.FullImportPath, t.Name)
 }
 
@@ -706,8 +632,6 @@ func isStruct(t *scanner.FieldType) bool {
 		}
 		return isStruct(t.Elem)
 	}
-	// A struct that needs a recursive conversion is one defined in the scanned code,
-	// not one provided by an override.
 	return t.Definition != nil && t.Definition.Kind == scanner.StructKind && !t.IsResolvedByConfig
 }
 
@@ -715,10 +639,16 @@ func getUnderlyingStructType(t *scanner.FieldType) *scanner.FieldType {
 	if t == nil {
 		return nil
 	}
-	if t.IsPointer {
+	if t.IsPointer || t.IsSlice {
 		return getUnderlyingStructType(t.Elem)
 	}
-	return t
+	if t.IsMap {
+		return getUnderlyingStructType(t.Elem)
+	}
+	if t.Definition != nil && t.Definition.Kind == scanner.StructKind {
+		return t
+	}
+	return nil
 }
 
 func getFullTypeNameFromFieldType(ft *scanner.FieldType) string {
@@ -727,27 +657,30 @@ func getFullTypeNameFromFieldType(ft *scanner.FieldType) string {
 	}
 
 	prefix := ""
+	baseType := ft
 	if ft.IsPointer {
 		prefix = "*"
+		if ft.Elem != nil {
+			baseType = ft.Elem
+		}
 	}
 
-	// This is the most reliable way if the type was fully resolved.
-	if ft.Definition != nil {
-		// We need to handle the prefix here because getFullTypeNameFromTypeInfo doesn't know about the pointer context.
-		return prefix + getFullTypeNameFromTypeInfo(ft.Definition)
+	def := baseType.Definition
+	if def == nil && ft.Definition != nil {
+		def = ft.Definition
 	}
 
-	// Fallback for types without a full Definition (e.g. built-ins or complex unresolved types)
-	var b strings.Builder
-	b.WriteString(prefix)
-
-	if ft.FullImportPath != "" {
-		b.WriteString(ft.FullImportPath)
-		b.WriteString(".")
+	if def != nil && def.PkgPath != "" {
+		return prefix + def.PkgPath + "." + def.Name
 	}
-	b.WriteString(ft.Name)
 
-	return b.String()
+	if baseType.FullImportPath != "" {
+		return prefix + baseType.FullImportPath + "." + baseType.Name
+	}
+	if baseType.Name != "" {
+		return prefix + baseType.Name
+	}
+	return ""
 }
 
 func getFullTypeNameFromTypeInfo(t *scanner.TypeInfo) string {
@@ -755,12 +688,9 @@ func getFullTypeNameFromTypeInfo(t *scanner.TypeInfo) string {
 		return ""
 	}
 	if t.PkgPath != "" {
-		// For external packages, PkgPath is the full import path.
-		// For the current package, it's also the full import path.
 		return fmt.Sprintf("%s.%s", t.PkgPath, t.Name)
 	}
 	if t.Name != "" {
-		// This handles built-in types like "string", "int", etc.
 		return t.Name
 	}
 	if t.Underlying != nil && t.Underlying.Definition != nil {

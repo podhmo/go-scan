@@ -25,6 +25,12 @@ type Variable struct {
 	Type string
 }
 
+// ComputedField defines a field that is computed from an expression.
+type ComputedField struct {
+	DstName string
+	Expr    string
+}
+
 // ConversionPair defines a top-level conversion between two types.
 type ConversionPair struct {
 	SrcTypeName string
@@ -33,6 +39,7 @@ type ConversionPair struct {
 	DstTypeInfo *scanner.TypeInfo
 	MaxErrors   int
 	Variables   []Variable
+	Computed    []ComputedField
 }
 
 // TypeRule defines a global rule for converting between types or validating a type.

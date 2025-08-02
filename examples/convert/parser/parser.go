@@ -19,6 +19,7 @@ var (
 	reConvertRule     = regexp.MustCompile(`// convert:rule "([^"]+)"(?: -> "([^"]+)")?, (?:using=([a-zA-Z0-9_.]+)|validator=([a-zA-Z0-9_.]+))`)
 	reConvertImport   = regexp.MustCompile(`// convert:import ([a-zA-Z0-9_.]+) "([^"]+)"`)
 	reConvertVariable = regexp.MustCompile(`// convert:variable (\w+)\s+(.+)`)
+	reConvertComputed = regexp.MustCompile(`// convert:computed (\w+)\s*=\s*(.+)`)
 )
 
 func Parse(ctx context.Context, s *goscan.Scanner, scannedPkg *scanner.PackageInfo) (*model.ParsedInfo, error) {
@@ -125,6 +126,9 @@ func processPackage(ctx context.Context, s *goscan.Scanner, info *model.ParsedIn
 			for _, docLine := range strings.Split(t.Doc, "\n") {
 				if m := reConvertVariable.FindStringSubmatch(docLine); m != nil {
 					pair.Variables = append(pair.Variables, model.Variable{Name: m[1], Type: m[2]})
+				}
+				if m := reConvertComputed.FindStringSubmatch(docLine); m != nil {
+					pair.Computed = append(pair.Computed, model.ComputedField{DstName: m[1], Expr: m[2]})
 				}
 			}
 			info.ConversionPairs = append(info.ConversionPairs, pair)

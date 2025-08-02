@@ -8,6 +8,7 @@ import "time"
 // convert:rule "*time.Time" -> "string", using=convutil.PtrTimeToString
 
 // @derivingconvert("github.com/podhmo/go-scan/examples/convert/sampledata/destination.DstUser")
+// convert:computed FullName = funcs.ConcatName(ctx, ec, src.FirstName, src.LastName)
 type SrcUser struct {
 	ID          int64 `convert:"UserID,using=funcs.UserIDToString"`
 	FirstName   string

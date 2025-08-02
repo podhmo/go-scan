@@ -74,6 +74,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
         -   [x] Implement validator rules (`"<DstType>", validator=<funcName>`).
     -   [x] **Add Tests for `// convert:rule`**: Write tests for global conversion and validator rules.
     -   [x] **Implement `// convert:variable`**: Support for declaring local variables (`// convert:variable <name> <type>`) within the generated function's scope, enabling stateful operations across multiple `using` functions (e.g., sharing a `strings.Builder`).
+    -   [x] **Implement `// convert:computed`**: Support for computing destination fields from a Go expression (`// convert:computed <FieldName> = <GoExpression>`), useful for combining fields.
     -   [x] **Error Handling with `errorCollector`**: Implement the `errorCollector` struct and generate code that uses it to report multiple conversion errors.
     -   [x] **Add Tests for Error Handling**: Write tests to verify that `errorCollector` correctly accumulates and reports errors.
     -   [x] **Improve Generated Code Error Handling**: Replace `// TODO: proper error handling` placeholders in the generator with more robust error handling, even if it's not the full `errorCollector` implementation.

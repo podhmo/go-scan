@@ -2,7 +2,6 @@ package generated_test
 
 import (
 	"context"
-	"reflect"
 	"testing"
 	"time"
 
@@ -21,12 +20,13 @@ func TestGeneratedUserConversion(t *testing.T) {
 		ID:        101,
 		FirstName: "John",
 		LastName:  "Doe",
-		SrcAddress: source.SrcAddress{
+		Address: source.SrcAddress{
 			Street: "123 Main St",
 			City:   "Anytown",
 		},
 		ContactInfo: source.SrcContact{
 			Email: "john.doe@example.com",
+			Phone: nil, // important: phone is nil
 		},
 		Details: []source.SrcInternalDetail{
 			{Code: 1, Description: "Detail 1"},
@@ -36,15 +36,20 @@ func TestGeneratedUserConversion(t *testing.T) {
 	}
 
 	// Expected result from the *generated* converter.
-	// Note that many fields will be zero-valued because the generator
-	// doesn't handle name mismatches or custom logic.
+	// With the new annotations, most fields should be correctly converted.
 	expected := &destination.DstUser{
-		// UserID is not mapped (ID vs UserID)
-		// FullName is not mapped (requires combining FirstName and LastName)
-		// Address is not mapped (SrcAddress vs Address)
-		// Contact is not mapped (ContactInfo vs Contact)
+		UserID:   "user-101",
+		FullName: "", // Not implemented
+		Address: destination.DstAddress{
+			FullStreet: "123 Main St",
+			CityName:   "Anytown",
+		},
+		Contact: destination.DstContact{
+			EmailAddress: "john.doe@example.com",
+			PhoneNumber:  "N/A", // nil phone becomes "N/A"
+		},
 		Details: []destination.DstInternalDetail{
-			{}, // Inner fields are not mapped (Code vs ItemCode, etc.)
+			{ItemCode: 1, LocalizedDesc: "翻訳済み (JP): Detail 1"},
 		},
 		CreatedAt: now.Format(time.RFC3339),
 		UpdatedAt: updatedAt.Format(time.RFC3339),
@@ -55,34 +60,11 @@ func TestGeneratedUserConversion(t *testing.T) {
 		t.Fatalf("ConvertSrcUserToDstUser() failed: %v", err)
 	}
 
-	// We can't use reflect.DeepEqual because of the unexported fields in time.Time
-	// and the fact that we have zero-valued structs with potentially unexported fields.
-	// Let's check the fields we care about.
-	if got.UserID != expected.UserID {
-		t.Errorf("got UserID %q, want %q", got.UserID, expected.UserID)
-	}
-	if got.FullName != expected.FullName {
-		t.Errorf("got FullName %q, want %q", got.FullName, expected.FullName)
-	}
-	if !reflect.DeepEqual(got.Address, expected.Address) {
-		t.Errorf("got Address %+v, want %+v", got.Address, expected.Address)
-	}
-	if !reflect.DeepEqual(got.Contact, expected.Contact) {
-		t.Errorf("got Contact %+v, want %+v", got.Contact, expected.Contact)
-	}
-	if got.CreatedAt != expected.CreatedAt {
-		t.Errorf("got CreatedAt %q, want %q", got.CreatedAt, expected.CreatedAt)
-	}
-	if got.UpdatedAt != expected.UpdatedAt {
-		t.Errorf("got UpdatedAt %q, want %q", got.UpdatedAt, expected.UpdatedAt)
-	}
-
-	// Check inner slice details
-	if len(got.Details) != len(expected.Details) {
-		t.Fatalf("got %d details, want %d", len(got.Details), len(expected.Details))
-	}
-	if !reflect.DeepEqual(got.Details[0], expected.Details[0]) {
-		t.Errorf("got Details[0] %+v, want %+v", got.Details[0], expected.Details[0])
+	// FullName is not implemented, so we ignore it in the comparison.
+	if diff := cmp.Diff(expected, got, cmp.FilterPath(func(p cmp.Path) bool {
+		return p.String() == "FullName"
+	}, cmp.Ignore())); diff != "" {
+		t.Errorf("ConvertSrcUserToDstUser() mismatch (-want +got):\n%s", diff)
 	}
 }
 
@@ -96,8 +78,14 @@ func TestGeneratedOrderConversion(t *testing.T) {
 		},
 	}
 
-	// The generated function is currently empty, so all fields should be zero-valued.
-	expected := &destination.DstOrder{}
+	// With the new annotations, all fields should be converted.
+	expected := &destination.DstOrder{
+		ID:          "ORD-001",
+		TotalAmount: 99.99,
+		LineItems: []destination.DstItem{
+			{ProductCode: "item-1", Count: 2},
+		},
+	}
 
 	got, err := generated.ConvertSrcOrderToDstOrder(ctx, src)
 	if err != nil {

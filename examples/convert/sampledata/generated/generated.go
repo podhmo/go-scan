@@ -9,21 +9,40 @@ import (
 	convutil "github.com/podhmo/go-scan/examples/convert/convutil"
 	"github.com/podhmo/go-scan/examples/convert/model"
 	destination "github.com/podhmo/go-scan/examples/convert/sampledata/destination"
+	funcs "github.com/podhmo/go-scan/examples/convert/sampledata/funcs"
 	source "github.com/podhmo/go-scan/examples/convert/sampledata/source"
 )
 
 // convertSrcUserToDstUser converts source.SrcUser to destination.DstUser.
 //
 // Fields that are not populated by this converter:
-//   - Address
-//   - Contact
 //   - FullName
-//   - UserID
 func convertSrcUserToDstUser(ctx context.Context, ec *model.ErrorCollector, src *source.SrcUser) *destination.DstUser {
 	if src == nil {
 		return nil
 	}
 	dst := &destination.DstUser{}
+	if ec.MaxErrorsReached() {
+		return dst
+	}
+	ec.Enter("UserID")
+	dst.UserID = funcs.UserIDToString(ctx, ec, src.ID)
+
+	ec.Leave()
+	if ec.MaxErrorsReached() {
+		return dst
+	}
+	ec.Enter("Address")
+	dst.Address = *convertSrcAddressToDstAddress(ctx, ec, &src.Address)
+
+	ec.Leave()
+	if ec.MaxErrorsReached() {
+		return dst
+	}
+	ec.Enter("Contact")
+	dst.Contact = funcs.ConvertSrcContactToDstContact(ctx, ec, src.ContactInfo)
+
+	ec.Leave()
 	if ec.MaxErrorsReached() {
 		return dst
 	}
@@ -59,10 +78,7 @@ func convertSrcUserToDstUser(ctx context.Context, ec *model.ErrorCollector, src 
 // ConvertSrcUserToDstUser converts source.SrcUser to destination.DstUser.
 //
 // Fields that are not populated by this converter:
-//   - Address
-//   - Contact
 //   - FullName
-//   - UserID
 func ConvertSrcUserToDstUser(ctx context.Context, src *source.SrcUser) (*destination.DstUser, error) {
 	if src == nil {
 		return nil, nil
@@ -75,32 +91,159 @@ func ConvertSrcUserToDstUser(ctx context.Context, src *source.SrcUser) (*destina
 	return dst, nil
 }
 
+// convertSrcAddressToDstAddress converts source.SrcAddress to destination.DstAddress.
+func convertSrcAddressToDstAddress(ctx context.Context, ec *model.ErrorCollector, src *source.SrcAddress) *destination.DstAddress {
+	if src == nil {
+		return nil
+	}
+	dst := &destination.DstAddress{}
+	if ec.MaxErrorsReached() {
+		return dst
+	}
+	ec.Enter("FullStreet")
+	dst.FullStreet = src.Street
+
+	ec.Leave()
+	if ec.MaxErrorsReached() {
+		return dst
+	}
+	ec.Enter("CityName")
+	dst.CityName = src.City
+
+	ec.Leave()
+	return dst
+}
+
+// ConvertSrcAddressToDstAddress converts source.SrcAddress to destination.DstAddress.
+func ConvertSrcAddressToDstAddress(ctx context.Context, src *source.SrcAddress) (*destination.DstAddress, error) {
+	if src == nil {
+		return nil, nil
+	}
+	ec := model.NewErrorCollector(0)
+	dst := convertSrcAddressToDstAddress(ctx, ec, src)
+	if ec.HasErrors() {
+		return dst, errors.Join(ec.Errors()...)
+	}
+	return dst, nil
+}
+
+// convertSrcInternalDetailToDstInternalDetail converts source.SrcInternalDetail to destination.DstInternalDetail.
+func convertSrcInternalDetailToDstInternalDetail(ctx context.Context, ec *model.ErrorCollector, src *source.SrcInternalDetail) *destination.DstInternalDetail {
+	if src == nil {
+		return nil
+	}
+	dst := &destination.DstInternalDetail{}
+	if ec.MaxErrorsReached() {
+		return dst
+	}
+	ec.Enter("ItemCode")
+	dst.ItemCode = src.Code
+
+	ec.Leave()
+	if ec.MaxErrorsReached() {
+		return dst
+	}
+	ec.Enter("LocalizedDesc")
+	dst.LocalizedDesc = funcs.Translate(ctx, ec, src.Description)
+
+	ec.Leave()
+	return dst
+}
+
+// ConvertSrcInternalDetailToDstInternalDetail converts source.SrcInternalDetail to destination.DstInternalDetail.
+func ConvertSrcInternalDetailToDstInternalDetail(ctx context.Context, src *source.SrcInternalDetail) (*destination.DstInternalDetail, error) {
+	if src == nil {
+		return nil, nil
+	}
+	ec := model.NewErrorCollector(0)
+	dst := convertSrcInternalDetailToDstInternalDetail(ctx, ec, src)
+	if ec.HasErrors() {
+		return dst, errors.Join(ec.Errors()...)
+	}
+	return dst, nil
+}
+
 // convertSrcOrderToDstOrder converts source.SrcOrder to destination.DstOrder.
-//
-// Fields that are not populated by this converter:
-//   - ID
-//   - LineItems
-//   - TotalAmount
 func convertSrcOrderToDstOrder(ctx context.Context, ec *model.ErrorCollector, src *source.SrcOrder) *destination.DstOrder {
 	if src == nil {
 		return nil
 	}
 	dst := &destination.DstOrder{}
+	if ec.MaxErrorsReached() {
+		return dst
+	}
+	ec.Enter("ID")
+	dst.ID = src.OrderID
+
+	ec.Leave()
+	if ec.MaxErrorsReached() {
+		return dst
+	}
+	ec.Enter("TotalAmount")
+	dst.TotalAmount = src.Amount
+
+	ec.Leave()
+	if ec.MaxErrorsReached() {
+		return dst
+	}
+	ec.Enter("LineItems")
+	{
+		convertedSlice := make([]destination.DstItem, len(src.Items))
+		for i, item := range src.Items {
+			ec.Enter(fmt.Sprintf("[%d]", i))
+			convertedSlice[i] = *convertSrcItemToDstItem(ctx, ec, &item)
+			ec.Leave()
+		}
+		dst.LineItems = convertedSlice
+	}
+
+	ec.Leave()
 	return dst
 }
 
 // ConvertSrcOrderToDstOrder converts source.SrcOrder to destination.DstOrder.
-//
-// Fields that are not populated by this converter:
-//   - ID
-//   - LineItems
-//   - TotalAmount
 func ConvertSrcOrderToDstOrder(ctx context.Context, src *source.SrcOrder) (*destination.DstOrder, error) {
 	if src == nil {
 		return nil, nil
 	}
 	ec := model.NewErrorCollector(0)
 	dst := convertSrcOrderToDstOrder(ctx, ec, src)
+	if ec.HasErrors() {
+		return dst, errors.Join(ec.Errors()...)
+	}
+	return dst, nil
+}
+
+// convertSrcItemToDstItem converts source.SrcItem to destination.DstItem.
+func convertSrcItemToDstItem(ctx context.Context, ec *model.ErrorCollector, src *source.SrcItem) *destination.DstItem {
+	if src == nil {
+		return nil
+	}
+	dst := &destination.DstItem{}
+	if ec.MaxErrorsReached() {
+		return dst
+	}
+	ec.Enter("ProductCode")
+	dst.ProductCode = src.SKU
+
+	ec.Leave()
+	if ec.MaxErrorsReached() {
+		return dst
+	}
+	ec.Enter("Count")
+	dst.Count = src.Quantity
+
+	ec.Leave()
+	return dst
+}
+
+// ConvertSrcItemToDstItem converts source.SrcItem to destination.DstItem.
+func ConvertSrcItemToDstItem(ctx context.Context, src *source.SrcItem) (*destination.DstItem, error) {
+	if src == nil {
+		return nil, nil
+	}
+	ec := model.NewErrorCollector(0)
+	dst := convertSrcItemToDstItem(ctx, ec, src)
 	if ec.HasErrors() {
 		return dst, errors.Join(ec.Errors()...)
 	}
@@ -245,30 +388,30 @@ func ConvertSourceWithMapToTargetWithMap(ctx context.Context, src *source.Source
 	return dst, nil
 }
 
-// convertSrcInternalDetailToDstInternalDetail converts source.SrcInternalDetail to destination.DstInternalDetail.
+// convertSrcContactToDstContact converts source.SrcContact to destination.DstContact.
 //
 // Fields that are not populated by this converter:
-//   - ItemCode
-//   - LocalizedDesc
-func convertSrcInternalDetailToDstInternalDetail(ctx context.Context, ec *model.ErrorCollector, src *source.SrcInternalDetail) *destination.DstInternalDetail {
+//   - EmailAddress
+//   - PhoneNumber
+func convertSrcContactToDstContact(ctx context.Context, ec *model.ErrorCollector, src *source.SrcContact) *destination.DstContact {
 	if src == nil {
 		return nil
 	}
-	dst := &destination.DstInternalDetail{}
+	dst := &destination.DstContact{}
 	return dst
 }
 
-// ConvertSrcInternalDetailToDstInternalDetail converts source.SrcInternalDetail to destination.DstInternalDetail.
+// ConvertSrcContactToDstContact converts source.SrcContact to destination.DstContact.
 //
 // Fields that are not populated by this converter:
-//   - ItemCode
-//   - LocalizedDesc
-func ConvertSrcInternalDetailToDstInternalDetail(ctx context.Context, src *source.SrcInternalDetail) (*destination.DstInternalDetail, error) {
+//   - EmailAddress
+//   - PhoneNumber
+func ConvertSrcContactToDstContact(ctx context.Context, src *source.SrcContact) (*destination.DstContact, error) {
 	if src == nil {
 		return nil, nil
 	}
 	ec := model.NewErrorCollector(0)
-	dst := convertSrcInternalDetailToDstInternalDetail(ctx, ec, src)
+	dst := convertSrcContactToDstContact(ctx, ec, src)
 	if ec.HasErrors() {
 		return dst, errors.Join(ec.Errors()...)
 	}

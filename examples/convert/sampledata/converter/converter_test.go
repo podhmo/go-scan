@@ -20,7 +20,7 @@ func TestConvertUser(t *testing.T) {
 		ID:        101,
 		FirstName: "John",
 		LastName:  "Doe",
-		SrcAddress: source.SrcAddress{
+		Address: source.SrcAddress{
 			Street: "123 Main St",
 			City:   "Anytown",
 		},
@@ -70,7 +70,7 @@ func TestConvertUser_NilFields(t *testing.T) {
 		ID:        102,
 		FirstName: "Jane",
 		LastName:  "Doe",
-		SrcAddress: source.SrcAddress{
+		Address: source.SrcAddress{
 			Street: "456 Oak St",
 			City:   "Otherville",
 		},

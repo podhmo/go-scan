@@ -10,8 +10,7 @@ on:
     types: [ opened, synchronize, reopened ]
 
 jobs:
-
-  build:
+  test:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
@@ -21,8 +20,18 @@ jobs:
       with:
         go-version-file: 'go.mod'
 
-    - name: Build
-      run: go build -v ./...
-
     - name: Test
       run: make test
+
+  e2e-test:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version-file: 'go.mod'
+
+    - name: E2E Test
+      run: make test-e2e

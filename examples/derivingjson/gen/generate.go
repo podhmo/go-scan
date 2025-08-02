@@ -18,7 +18,7 @@ import (
 var templateFile embed.FS
 
 const unmarshalAnnotation = "deriving:unmarshal"
-const marshalAnnotation = "derivingmarshall"
+const marshalAnnotation = "derivingmarshal"
 
 type TemplateData struct {
 	StructName                 string
@@ -66,6 +66,7 @@ func Generate(ctx context.Context, gscn *goscan.Scanner, pkgInfo *scanner.Packag
 	}
 	var generatedCodeForAllStructs bytes.Buffer
 	anyCodeGenerated := false
+	unmarshalGenerated := false
 
 	for _, typeInfo := range pkgInfo.Types {
 		if typeInfo.Kind != scanner.StructKind || typeInfo.Struct == nil {
@@ -211,6 +212,7 @@ func Generate(ctx context.Context, gscn *goscan.Scanner, pkgInfo *scanner.Packag
 			continue
 		}
 		anyCodeGenerated = true
+		unmarshalGenerated = true
 
 		tmpl, err := template.ParseFS(templateFile, "unmarshal.tmpl")
 		if err != nil {
@@ -233,7 +235,7 @@ func Generate(ctx context.Context, gscn *goscan.Scanner, pkgInfo *scanner.Packag
 			continue
 		}
 
-		// Prepare data for the marshalling template
+		// Prepare data for the marshaling template
 		marshalData := MarshalTemplateData{
 			StructName:                 typeInfo.Name,
 			DiscriminatorFieldJSONName: "type", // Hardcoded for now
@@ -260,7 +262,9 @@ func Generate(ctx context.Context, gscn *goscan.Scanner, pkgInfo *scanner.Packag
 	}
 
 	importManager.Add("encoding/json", "")
-	importManager.Add("fmt", "")
+	if unmarshalGenerated {
+		importManager.Add("fmt", "")
+	}
 
 	return generatedCodeForAllStructs.Bytes(), nil
 }

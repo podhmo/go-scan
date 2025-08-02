@@ -7,21 +7,21 @@
 In JSON Schema, `oneOf` signifies that a field can be one of several types. A common way to represent this concept in Go involves using an interface type, a set of concrete structs that implement this interface, and a container struct that includes a discriminator field to identify the specific type.
 
 This tool aims to generate:
-- An `UnmarshalJSON` method for container structs, enabling unmarshalling into the appropriate concrete type based on the discriminator's value.
+- An `UnmarshalJSON` method for container structs, enabling unmarshaling into the appropriate concrete type based on the discriminator's value.
 - A `MarshalJSON` method for the concrete types, which injects the discriminator field and value into the JSON output.
 
 ## Features
 
 -   Type information analysis using `github.com/podhmo/go-scan`.
--   **Unmarshalling**: Targets container structs annotated with `@deriving:unmarshall`.
--   **Marshalling**: Targets concrete implementer structs annotated with `@derivingmarshall`.
+-   **Unmarshaling**: Targets container structs annotated with `@deriving:unmarshal`.
+-   **Marshaling**: Targets concrete implementer structs annotated with `@derivingmarshal`.
 -   Identifies the discriminator field (e.g., `Type string `json:"type"``) and the `oneOf` target interface field to generate the appropriate logic.
 -   The tool searches for concrete types implementing the interface within the same package.
 
 ## Usage (Conceptual)
 
-1.  Add the `@deriving:unmarshall` annotation in the comment of the **container struct** (the one with the interface field) to generate `UnmarshalJSON` for it.
-2.  Add the `@derivingmarshall` annotation in the comment of each **concrete struct** that implements the `oneOf` interface to generate `MarshalJSON` for it.
+1.  Add the `@deriving:unmarshal` annotation in the comment of the **container struct** (the one with the interface field) to generate `UnmarshalJSON` for it.
+2.  Add the `@derivingmarshal` annotation in the comment of each **concrete struct** that implements the `oneOf` interface to generate `MarshalJSON` for it.
 3.  Run `derivingjson` from the command line, specifying the target package path.
 
     ```bash

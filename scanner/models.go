@@ -95,7 +95,7 @@ type TypeInfo struct {
 
 // Annotation extracts the value of a specific annotation from the TypeInfo's Doc string.
 // Annotations are expected to be in the format "@<name>[:<value>]".
-// For example, if Doc contains "@deriving:unmarshall", Annotation("deriving") returns "unmarshall", true.
+// For example, if Doc contains "@deriving:unmarshal", Annotation("deriving") returns "unmarshal", true.
 // If Doc contains "@myannotation", Annotation("myannotation") returns "", true (value is optional).
 // If the annotation is not found, it returns "", false.
 func (ti *TypeInfo) Annotation(name string) (value string, ok bool) {

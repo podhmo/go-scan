@@ -17,7 +17,7 @@ type Vehicle interface {
 // --- Implementers for Animal ---
 
 // Dog implements Animal
-// @derivingmarshall
+// @derivingmarshal
 type Dog struct {
 	Breed string `json:"breed"`
 	Noise string `json:"noise"`
@@ -27,7 +27,7 @@ func (d *Dog) Speak() string      { return d.Noise }
 func (d *Dog) AnimalKind() string { return "dog" }
 
 // Cat implements Animal
-// @derivingmarshall
+// @derivingmarshal
 type Cat struct {
 	Color string `json:"color"`
 	Purr  bool   `json:"purr"`
@@ -39,7 +39,7 @@ func (c *Cat) AnimalKind() string { return "cat" }
 // --- Implementers for Vehicle ---
 
 // Car implements Vehicle
-// @derivingmarshall
+// @derivingmarshal
 type Car struct {
 	Make   string `json:"make"`
 	Wheels int    `json:"wheels"`
@@ -49,7 +49,7 @@ func (c *Car) Move() string        { return "vroom" }
 func (c *Car) VehicleType() string { return "car" }
 
 // Bicycle implements Vehicle
-// @derivingmarshall
+// @derivingmarshal
 type Bicycle struct {
 	Gears   int  `json:"gears"`
 	HasBell bool `json:"has_bell"`
@@ -61,7 +61,7 @@ func (b *Bicycle) VehicleType() string { return "bicycle" }
 // --- Structs with multiple oneOf fields ---
 
 // Scene contains multiple different oneOf fields
-// @deriving:unmarshall
+// @deriving:unmarshal
 type Scene struct {
 	Name        string  `json:"name"`
 	MainAnimal  Animal  `json:"main_animal,omitempty"`  // oneOf
@@ -70,7 +70,7 @@ type Scene struct {
 }
 
 // Parade contains multiple oneOf fields of the same interface type
-// @deriving:unmarshall
+// @deriving:unmarshal
 type Parade struct {
 	EventName      string `json:"event_name"`
 	LeadAnimal     Animal `json:"lead_animal,omitempty"`     // oneOf (Animal)
@@ -92,7 +92,7 @@ type Pet interface {
 	PetKind() string
 }
 
-// @derivingmarshall
+// @derivingmarshal
 type Goldfish struct {
 	Name      string `json:"name"`
 	BowlShape string `json:"bowl_shape"`
@@ -101,7 +101,7 @@ type Goldfish struct {
 func (g *Goldfish) IsFriendly() bool { return true }
 func (g *Goldfish) PetKind() string  { return "goldfish" }
 
-// @deriving:unmarshall
+// @deriving:unmarshal
 type PetOwner struct {
 	OwnerName string  `json:"owner_name"`
 	Pet       Pet     `json:"pet_data,omitempty"`  // oneOf

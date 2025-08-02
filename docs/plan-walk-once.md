@@ -89,3 +89,69 @@ To facilitate this, the project structure will be adjusted:
 ## 5. Conclusion
 
 This plan achieves the goal of a single-pass scan by effectively separating the concerns of code-parsing and code-generation. By refactoring the existing generators to be pure functions, we can create a new tool that composes their functionalities efficiently, leading to better performance and a more modular design.
+
+## 6. Testing Strategy
+
+The `scantest` package is the ideal tool for testing the new unified generator. It allows for the creation of isolated, in-memory test environments, preventing the need for golden files and ensuring tests are fast and self-contained.
+
+The testing approach will be as follows:
+
+1.  **Test Case Setup**: For each test case, use `scantest.WriteFiles` to create a temporary directory with a set of Go source files representing the input for the generator. This can include single or multiple files, and even a `go.mod` file if needed.
+
+    ```go
+    dir, cleanup := scantest.WriteFiles(t, map[string]string{
+        "go.mod": "module example.com/me",
+        "models.go": `
+    package models
+    // deriving:unmarshal
+    // derivng:binding in:"body"
+    type User struct {
+        Name string `json:"name"`
+        ID   int    `json:"id"`
+    }`,
+    })
+    defer cleanup()
+    ```
+
+2.  **Action Definition**: Define an `ActionFunc` that will be executed by `scantest.Run`. This function will contain the core logic of the test. It will invoke the unified generator and perform assertions.
+
+3.  **Execution and Assertion**: Use `scantest.Run` to execute the scanner and the action. The `Run` function captures any generated files in its `Result` object. The test will then assert on the content of this captured output.
+
+    ```go
+    action := func(ctx context.Context, s *scan.Scanner, pkgs []*scan.Package) error {
+        // The unified generator's main logic would be called here.
+        // This is a simplified representation.
+        // It would internally call the json and bind generators.
+        // For the test, we can simulate this by calling a wrapper that
+        // orchestrates the generation and writes the output.
+
+        // This call to SaveGoFile uses the memoryFileWriter from the context
+        // provided by scantest.Run
+        return unifiedGenerator.GenerateAndSave(ctx, s, pkgs)
+    }
+
+    result, err := scantest.Run(t, dir, []string{"."}, action)
+    if err != nil {
+        t.Fatal(err)
+    }
+
+    // Assert on the output
+    if result == nil {
+        t.Fatal("expected a non-nil result for a file generation action")
+    }
+
+    generatedCode, ok := result.Outputs["models_deriving.go"]
+    if !ok {
+        t.Fatal("expected generated file was not in the result")
+    }
+
+    // Check for content from both generators
+    if !strings.Contains(string(generatedCode), "UnmarshalJSON") {
+        t.Error("generated code does not contain UnmarshalJSON method")
+    }
+    if !strings.Contains(string(generatedCode), "Bind(r *http.Request)") {
+        t.Error("generated code does not contain Bind method")
+    }
+    ```
+
+This strategy allows us to test the entire flow of the unified generator—from scanning to code generation—in a controlled and reproducible manner. We can easily create test cases for various scenarios, including structs with one, both, or no annotations, and verify that the combined output is correct.

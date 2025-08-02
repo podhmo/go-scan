@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 
+	convutil "github.com/podhmo/go-scan/examples/convert/convutil"
 	"github.com/podhmo/go-scan/examples/convert/model"
 )
 
@@ -18,7 +19,7 @@ func convertSrcToDst(ctx context.Context, ec *model.ErrorCollector, src *Src) *D
 	}
 	ec.Enter("CreatedAt")
 	if src.CreatedAt != nil {
-		tmp := convertTimeToString(ctx, ec, (*src.CreatedAt))
+		tmp := convutil.TimeToString(ctx, ec, (*src.CreatedAt))
 		dst.CreatedAt = &tmp
 	} else {
 		dst.CreatedAt = nil

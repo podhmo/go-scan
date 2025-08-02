@@ -6,6 +6,7 @@ import (
 	"errors"
 
 	ext "example.com/m/external"
+	convutil "github.com/podhmo/go-scan/examples/convert/convutil"
 	"github.com/podhmo/go-scan/examples/convert/model"
 )
 
@@ -18,7 +19,7 @@ func convertSrcToDst(ctx context.Context, ec *model.ErrorCollector, src *Src) *D
 		return dst
 	}
 	ec.Enter("Timestamp")
-	dst.Timestamp = ext.TimeToString(ctx, ec, src.Timestamp)
+	dst.Timestamp = convutil.TimeToString(ctx, ec, src.Timestamp)
 	ext.ValidateString(ec, dst.Timestamp)
 	ec.Leave()
 	if ec.MaxErrorsReached() {

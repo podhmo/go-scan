@@ -55,7 +55,8 @@ type DestinationWithOption struct {
 }
 
 
-// convert:rule "time.Time" -> "string", using=TimeToString
+// convert:import convutil "github.com/podhmo/go-scan/examples/convert/convutil"
+// convert:rule "time.Time" -> "string", using=convutil.TimeToString
 // convert:rule "string" -> "time.Time", using=StringToTime
 type MyTime time.Time
 `
@@ -78,7 +79,19 @@ type MyTime time.Time
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
 	defer os.RemoveAll(tmpdir)
-	if err := os.WriteFile(filepath.Join(tmpdir, "go.mod"), []byte("module example.com/sample\ngo 1.22"), 0644); err != nil {
+
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get working directory: %v", err)
+	}
+	// go.mod file with a replace directive to find the local convutil package.
+	goModContent := []byte(`
+module example.com/sample
+go 1.22
+require github.com/podhmo/go-scan/examples/convert v0.0.0
+replace github.com/podhmo/go-scan/examples/convert => ` + filepath.ToSlash(filepath.Join(wd, "..")) + `
+`)
+	if err := os.WriteFile(filepath.Join(tmpdir, "go.mod"), goModContent, 0644); err != nil {
 		t.Fatalf("failed to write go.mod: %v", err)
 	}
 	srcPath := filepath.Join(tmpdir, "source.go")
@@ -108,13 +121,13 @@ type MyTime time.Time
 	want := &model.ParsedInfo{
 		PackageName: "sample",
 		PackagePath: "example.com/sample",
-		Imports:     make(map[string]string),
+		Imports:     map[string]string{"convutil": "github.com/podhmo/go-scan/examples/convert/convutil"},
 		ConversionPairs: []model.ConversionPair{
 			{SrcTypeName: "Source", DstTypeName: "Destination", MaxErrors: 0, Variables: nil},
 			{SrcTypeName: "SourceWithOption", DstTypeName: "DestinationWithOption", MaxErrors: 5, Variables: nil},
 		},
 		GlobalRules: []model.TypeRule{
-			{SrcTypeName: "time.Time", DstTypeName: "string", UsingFunc: "TimeToString"},
+			{SrcTypeName: "time.Time", DstTypeName: "string", UsingFunc: "convutil.TimeToString"},
 			{SrcTypeName: "string", DstTypeName: "time.Time", UsingFunc: "StringToTime"},
 		},
 		ProcessedPackages: map[string]bool{"example.com/sample": true},

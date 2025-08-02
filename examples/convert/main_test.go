@@ -110,17 +110,29 @@ func convertProfile(ctx context.Context, ec *model.ErrorCollector, s string) str
 }
 
 func TestIntegration_WithPointerAwareGlobalRule(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get working directory: %v", err)
+	}
+	goModContent := `
+module example.com/m
+go 1.24
+require github.com/podhmo/go-scan/examples/convert v0.0.0
+replace github.com/podhmo/go-scan/examples/convert => ` + filepath.ToSlash(filepath.Join(wd, "..")) + `
+`
 	files := map[string]string{
-		"go.mod": "module example.com/m\ngo 1.24",
+		"go.mod": goModContent,
 		"pointer_rules.go": `
 package pointerrules
 import (
 	"context"
 	"time"
-	"example.com/m/model"
+	"github.com/podhmo/go-scan/examples/convert/convutil"
+	"github.com/podhmo/go-scan/examples/convert/model"
 )
 
-// convert:rule "time.Time" -> "string", using=convertTimeToString
+// convert:import convutil "github.com/podhmo/go-scan/examples/convert/convutil"
+// convert:rule "time.Time" -> "string", using=convutil.TimeToString
 
 // @derivingconvert("Dst")
 type Src struct {
@@ -129,10 +141,6 @@ type Src struct {
 
 type Dst struct {
 	CreatedAt *string
-}
-
-func convertTimeToString(ctx context.Context, ec *model.ErrorCollector, t time.Time) string {
-	return t.Format("2006-01-02")
 }
 `,
 		"model/model.go": `
@@ -168,7 +176,7 @@ func (ec *ErrorCollector) MaxErrorsReached() bool { return false }
 		os.WriteFile(goldenFile, []byte(""), 0644)
 	}
 
-	err := run(ctx, pkgpath, tmpdir, outputFile, pkgname, "")
+	err = run(ctx, pkgpath, tmpdir, outputFile, pkgname, "")
 	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}
@@ -371,17 +379,28 @@ func TestIntegration_WithRecursiveGeneration(t *testing.T) {
 }
 
 func TestIntegration_WithTimeTime(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get working directory: %v", err)
+	}
+	goModContent := `
+module example.com/m
+go 1.24
+require github.com/podhmo/go-scan/examples/convert v0.0.0
+replace github.com/podhmo/go-scan/examples/convert => ` + filepath.ToSlash(filepath.Join(wd, "..")) + `
+`
 	files := map[string]string{
-		"go.mod": "module example.com/m\ngo 1.24",
+		"go.mod": goModContent,
 		"timetime.go": `
 package timetime
 import (
 	"context"
 	"time"
-	"example.com/m/model"
+	"github.com/podhmo/go-scan/examples/convert/convutil"
+	"github.com/podhmo/go-scan/examples/convert/model"
 )
 
-// convert:rule "time.Time" -> "string", using=TimeToString
+// convert:rule "time.Time" -> "string", using=convutil.TimeToString
 
 // @derivingconvert("Dst")
 type Src struct {
@@ -390,10 +409,6 @@ type Src struct {
 
 type Dst struct {
 	Timestamp string
-}
-
-func TimeToString(ctx context.Context, ec *model.ErrorCollector, t time.Time) string {
-	return t.Format("2006-01-02")
 }
 `,
 		"model/model.go": `
@@ -424,7 +439,7 @@ func (ec *ErrorCollector) MaxErrorsReached() bool { return false }
 	pkgname := "timetime"
 	goldenFile := "testdata/timetime.go.golden"
 
-	err := run(ctx, pkgpath, tmpdir, outputFile, pkgname, "")
+	err = run(ctx, pkgpath, tmpdir, outputFile, pkgname, "")
 	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}
@@ -611,19 +626,31 @@ func TestIntegration_WithVariable(t *testing.T) {
 }
 
 func TestIntegration_WithImports(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get working directory: %v", err)
+	}
+	goModContent := `
+module example.com/m
+go 1.24
+require github.com/podhmo/go-scan/examples/convert v0.0.0
+replace github.com/podhmo/go-scan/examples/convert => ` + filepath.ToSlash(filepath.Join(wd, "..")) + `
+`
 	// This test involves multiple packages, so we set up a proper module structure.
 	files := map[string]string{
-		"go.mod": "module example.com/m\ngo 1.24",
+		"go.mod": goModContent,
 		"main.go": `
 package main
 import (
 	"context"
 	"time"
+	"github.com/podhmo/go-scan/examples/convert/convutil"
 	ext "example.com/m/external"
 )
 
 // convert:import ext "example.com/m/external"
-// convert:rule "time.Time" -> "string", using=ext.TimeToString
+// convert:import convutil "github.com/podhmo/go-scan/examples/convert/convutil"
+// convert:rule "time.Time" -> "string", using=convutil.TimeToString
 // convert:rule "string", validator=ext.ValidateString
 
 // @derivingconvert("Dst")
@@ -643,13 +670,9 @@ package external
 import (
 	"context"
 	"fmt"
-	"time"
 	"example.com/m/model"
 )
 
-func TimeToString(ctx context.Context, ec *model.ErrorCollector, t time.Time) string {
-	return t.Format("2006-01-02")
-}
 func ValidateString(ctx context.Context, ec *model.ErrorCollector, s string) {
 	if s == "" {
 		ec.Add(fmt.Errorf("string is empty"))
@@ -695,7 +718,7 @@ func (ec *ErrorCollector) MaxErrorsReached() bool { return false }
 	pkgname := "main"
 	goldenFile := "testdata/imports.go.golden"
 
-	err := run(ctx, pkgpath, tmpdir, outputFile, pkgname, "")
+	err = run(ctx, pkgpath, tmpdir, outputFile, pkgname, "")
 	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}
@@ -1216,16 +1239,28 @@ func TestRun(t *testing.T) {
 }
 
 func TestIntegration_WithGlobalRule(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get working directory: %v", err)
+	}
+	goModContent := `
+module example.com/m
+go 1.24
+require github.com/podhmo/go-scan/examples/convert v0.0.0
+replace github.com/podhmo/go-scan/examples/convert => ` + filepath.ToSlash(filepath.Join(wd, "..")) + `
+`
 	files := map[string]string{
-		"go.mod": "module example.com/m\ngo 1.24",
+		"go.mod": goModContent,
 		"rules.go": `
 package rules
 import (
 	"context"
 	"time"
+	"github.com/podhmo/go-scan/examples/convert/convutil"
 )
 
-// convert:rule "time.Time" -> "string", using=convertTimeToString
+// convert:import convutil "github.com/podhmo/go-scan/examples/convert/convutil"
+// convert:rule "time.Time" -> "string", using=convutil.TimeToString
 
 // @derivingconvert("Dst")
 type Src struct {
@@ -1236,10 +1271,6 @@ type Src struct {
 type Dst struct {
 	CreatedAt string
 	UpdatedAt string
-}
-
-func convertTimeToString(ctx context.Context, ec *model.ErrorCollector, t time.Time) string {
-	return t.Format("2006-01-02")
 }
 
 func overrideTime(ctx context.Context, ec *model.ErrorCollector, t time.Time) string {
@@ -1265,7 +1296,7 @@ func overrideTime(ctx context.Context, ec *model.ErrorCollector, t time.Time) st
 		os.WriteFile(goldenFile, []byte(""), 0644)
 	}
 
-	err := run(ctx, pkgpath, tmpdir, outputFile, pkgname, "")
+	err = run(ctx, pkgpath, tmpdir, outputFile, pkgname, "")
 	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}

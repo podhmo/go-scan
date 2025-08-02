@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/podhmo/go-scan/examples/convert/convutil"
 	"github.com/podhmo/go-scan/examples/convert/model"
 )
 
@@ -17,7 +18,7 @@ func convertSrcToDst(ctx context.Context, ec *model.ErrorCollector, src *Src) *D
 		return dst
 	}
 	ec.Enter("Timestamp")
-	dst.Timestamp = TimeToString(ctx, ec, src.Timestamp)
+	dst.Timestamp = convutil.TimeToString(ctx, ec, src.Timestamp)
 
 	ec.Leave()
 	return dst

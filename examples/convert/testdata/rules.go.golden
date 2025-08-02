@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 
+	convutil "github.com/podhmo/go-scan/examples/convert/convutil"
 	"github.com/podhmo/go-scan/examples/convert/model"
 )
 
@@ -17,7 +18,7 @@ func convertSrcToDst(ctx context.Context, ec *model.ErrorCollector, src *Src) *D
 		return dst
 	}
 	ec.Enter("CreatedAt")
-	dst.CreatedAt = convertTimeToString(ctx, ec, src.CreatedAt)
+	dst.CreatedAt = convutil.TimeToString(ctx, ec, src.CreatedAt)
 
 	ec.Leave()
 	if ec.MaxErrorsReached() {

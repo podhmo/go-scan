@@ -24,6 +24,7 @@ type EventData interface {
 	isEventData()
 }
 
+// @deriving:marshal
 type UserCreated struct {
 	UserID   string `json:"userId"`
 	Username string `json:"username"`
@@ -31,6 +32,7 @@ type UserCreated struct {
 
 func (UserCreated) isEventData() {}
 
+// @deriving:marshal
 type MessagePosted struct {
 	MessageID string `json:"messageId"`
 	Content   string `json:"content"`

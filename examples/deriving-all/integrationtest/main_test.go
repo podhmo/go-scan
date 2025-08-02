@@ -60,6 +60,79 @@ func TestBindUser(t *testing.T) {
 	})
 }
 
+
+func TestMarshalEvent(t *testing.T) {
+	t.Run("user created event", func(t *testing.T) {
+		eventTime, _ := time.Parse(time.RFC3339, "2023-01-01T12:00:00Z")
+		event := models.Event{
+			ID:        "evt-001",
+			CreatedAt: eventTime,
+			Data:      &models.UserCreated{UserID: "user-123", Username: "tester"},
+		}
+
+		// Standard library's json.Marshal escapes HTML, so we use an encoder
+		// to get the raw JSON string without escaping.
+		var buf bytes.Buffer
+		encoder := json.NewEncoder(&buf)
+		encoder.SetEscapeHTML(false)
+		if err := encoder.Encode(event); err != nil {
+			t.Fatalf("Marshal() failed: %v", err)
+		}
+		got := strings.TrimSpace(buf.String())
+
+		// Note: The order of fields in the output JSON is not guaranteed.
+		// A simple string comparison is brittle. A better approach would be to
+		// unmarshal both `got` and `expected` into a generic map[string]any
+		// and then compare them. For this test, we'll stick to string
+		// comparison but be mindful of its limitations.
+
+		expected := `{"id":"evt-001","createdAt":"2023-01-01T12:00:00Z","data":{"type":"usercreated","userId":"user-123","username":"tester"}}`
+
+		// To make the test robust against JSON key order variations,
+		// we unmarshal both the generated and expected JSON into maps
+		// and compare the maps.
+		var gotMap, expectedMap map[string]any
+		if err := json.Unmarshal([]byte(got), &gotMap); err != nil {
+			t.Fatalf("failed to unmarshal actual JSON: %v", err)
+		}
+		if err := json.Unmarshal([]byte(expected), &expectedMap); err != nil {
+			t.Fatalf("failed to unmarshal expected JSON: %v", err)
+		}
+		if diff := cmp.Diff(expectedMap, gotMap); diff != "" {
+			t.Errorf("Marshal() structural mismatch (-want +got):\n%s", diff)
+		}
+	})
+
+	t.Run("message posted event", func(t *testing.T) {
+		eventTime, _ := time.Parse(time.RFC3339, "2023-01-02T15:30:00Z")
+		event := models.Event{
+			ID:        "evt-002",
+			CreatedAt: eventTime,
+			Data:      &models.MessagePosted{MessageID: "msg-456", Content: "Hello world"},
+		}
+
+		var buf bytes.Buffer
+		encoder := json.NewEncoder(&buf)
+		encoder.SetEscapeHTML(false)
+		if err := encoder.Encode(event); err != nil {
+			t.Fatalf("Marshal() failed: %v", err)
+		}
+		got := strings.TrimSpace(buf.String())
+		expected := `{"id":"evt-002","createdAt":"2023-01-02T15:30:00Z","data":{"type":"messageposted","messageId":"msg-456","content":"Hello world"}}`
+
+		var gotMap, expectedMap map[string]any
+		if err := json.Unmarshal([]byte(got), &gotMap); err != nil {
+			t.Fatalf("failed to unmarshal actual JSON: %v", err)
+		}
+		if err := json.Unmarshal([]byte(expected), &expectedMap); err != nil {
+			t.Fatalf("failed to unmarshal expected JSON: %v", err)
+		}
+		if diff := cmp.Diff(expectedMap, gotMap); diff != "" {
+			t.Errorf("Marshal() structural mismatch (-want +got):\n%s", diff)
+		}
+	})
+}
+
 func TestUnmarshalEvent(t *testing.T) {
 	t.Run("user created event", func(t *testing.T) {
 		jsonData := `{

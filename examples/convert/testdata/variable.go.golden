@@ -9,6 +9,10 @@ import (
 	"github.com/podhmo/go-scan/examples/convert/model"
 )
 
+// convertSrcVariableToDstVariable converts SrcVariable to DstVariable.
+//
+// Fields that are not populated by this converter:
+//   - FullName
 func convertSrcVariableToDstVariable(ctx context.Context, ec *model.ErrorCollector, src *SrcVariable) *DstVariable {
 	if src == nil {
 		return nil
@@ -19,6 +23,9 @@ func convertSrcVariableToDstVariable(ctx context.Context, ec *model.ErrorCollect
 }
 
 // ConvertSrcVariableToDstVariable converts SrcVariable to DstVariable.
+//
+// Fields that are not populated by this converter:
+//   - FullName
 func ConvertSrcVariableToDstVariable(ctx context.Context, src *SrcVariable) (*DstVariable, error) {
 	if src == nil {
 		return nil, nil

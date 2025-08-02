@@ -9,6 +9,7 @@ import (
 	"github.com/podhmo/go-scan/examples/convert/model"
 )
 
+// convertSrcToDst converts Src to Dst.
 func convertSrcToDst(ctx context.Context, ec *model.ErrorCollector, src *Src) *Dst {
 	if src == nil {
 		return nil

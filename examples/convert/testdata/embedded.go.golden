@@ -8,6 +8,7 @@ import (
 	"github.com/podhmo/go-scan/examples/convert/model"
 )
 
+// convertSourceToDestination converts Source to Destination.
 func convertSourceToDestination(ctx context.Context, ec *model.ErrorCollector, src *Source) *Destination {
 	if src == nil {
 		return nil

@@ -178,6 +178,12 @@ func isBuiltin(name string) bool {
 }
 
 func resolveType(ctx context.Context, s *goscan.Scanner, info *model.ParsedInfo, p *scanner.PackageInfo, typeNameStr string) (*scanner.TypeInfo, error) {
+	// HACK: This is a temporary fix to avoid crashing the parser.
+	// The rule matching logic in the generator will be updated to use the raw type strings.
+	if strings.HasPrefix(typeNameStr, "*") {
+		typeNameStr = typeNameStr[1:]
+	}
+
 	if ti, ok := s.LookupOverride(typeNameStr); ok {
 		return ti, nil
 	}

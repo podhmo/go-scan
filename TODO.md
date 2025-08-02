@@ -129,6 +129,11 @@ Based on the plan in [docs/plan-multi-package-handling.md](./docs/plan-multi-pac
 *   [x] **Pointer-Aware Global Rules**: Global conversion rules (`// convert:rule`) should correctly apply to pointer types. For example, a rule for `time.Time` -> `string` should also be applicable to a field of type `*time.Time` without needing a separate rule, by automatically handling the `nil` check and dereferencing.
 *   [x] **Improved Type Resolution for Generics/Pointers**: The `getTypeName` function in the generator needs to be more robust. It currently defaults to `interface{}` for some complex types like pointers to structs within slices or maps (e.g., `[]*MyStruct`), causing compilation errors in the generated code. This may be due to a bug in how `scanner.FieldType.Elem` is populated or how `getTypeName` handles it.
 
+### CLI and Build
+*   The `make e2e` command is still failing with `undefined: converter.TimeToString`. This is because the `converter` package is not being imported into the generated `generated.go` file. The logic in `generator/generator.go` needs to be fixed to ensure that imports for packages used in `// convert:rule` annotations are correctly added.
+*   The `go install` command in the `e2e` target should be changed to `go build` to avoid installing the binary.
+*   The `test` target should also run the `e2e` tests.
+
 ### Future Tasks (Post-Migration)
 *   **Expand Test Coverage**: Create a comprehensive test suite that verifies all features and edge cases.
 *   **Complete `README.md`**: Write user-facing documentation with installation, usage, and examples.

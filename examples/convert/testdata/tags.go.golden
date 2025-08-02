@@ -39,7 +39,7 @@ func convertSrcWithTagsToDstWithTags(ctx context.Context, ec *model.ErrorCollect
 	if src.ManagerID == nil {
 		ec.Add(fmt.Errorf("ManagerID is required"))
 	} else {
-		dst.ManagerID = src.ManagerID // Cannot convert pointer types, element type is nil
+		dst.ManagerID = src.ManagerID
 	}
 	ec.Leave()
 	return dst

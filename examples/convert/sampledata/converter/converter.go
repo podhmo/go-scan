@@ -35,7 +35,7 @@ func ConvertUser(ctx context.Context, src source.SrcUser) destination.DstUser {
 
 	dst.UserID = fmt.Sprintf("user-%d", src.ID)
 	dst.FullName = src.FirstName + " " + src.LastName
-	dst.Address = srcAddressToDstAddress(ctx, src.SrcAddress)
+	dst.Address = srcAddressToDstAddress(ctx, src.Address)
 	dst.Contact = srcContactToDstContact(ctx, src.ContactInfo)
 
 	if src.Details != nil {

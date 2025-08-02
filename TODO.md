@@ -114,21 +114,14 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     -   [x] **Lightweight "Imports-Only" Scanning Mode**: Added `ScanPackageImports` for efficient dependency discovery without a full AST parse.
     -   [x] **Generic Graph Traversal Utility**: Added the `Walk` method and `Visitor` interface to allow for flexible dependency graph traversal.
     -   [x] **Unit Tests**: Added comprehensive unit tests for the new scanning and walking features.
+-   **`deps-walk` Command-Line Tool**: Implemented the `deps-walk` tool as described in [docs/plan-in-module-deps-walk.md](./docs/plan-in-module-deps-walk.md).
+    -   [x] **Initial Tool Setup**: Created the basic CLI structure for the `deps-walk` tool and implemented the logic to call the `goscan.Scanner.Walk` method.
+    -   [x] **Core Visualization Features**: Implemented graph generation in DOT format and added support for the `--hops` flag to limit traversal depth.
+    -   [x] **Filtering and Usability**: Added support for the `--ignore` flag for package exclusion and a `--full` flag to include external dependencies (defaulting to in-module only).
+    -   [x] **Integration Tests**: Added integration tests for the `deps-walk` tool using `scantest`.
 ## To Be Implemented
 
 ### In-Module Dependency Walker ([docs/plan-in-module-deps-walk.md](./docs/plan-in-module-deps-walk.md))
-
-- [ ] **2. `deps-walk` Command-Line Tool**
-  - [ ] **Initial Tool Setup**
-    - [ ] Create the basic CLI structure for the `deps-walk` tool.
-    - [ ] Implement the logic to call the new `goscan.Scanner.Walk` method.
-  - [ ] **Core Visualization Features**
-    - [ ] Implement graph generation in DOT format.
-    - [ ] Add support for the `--hops` flag to limit traversal depth.
-  - [ ] **Filtering and Usability**
-    - [ ] Add support for the `--ignore` flag for package exclusion.
-  - [ ] **Integration Tests**
-    - [ ] Add integration tests for the `deps-walk` tool using `scantest`.
 
 - [ ] **3. Future Enhancements**
   - [ ] **File-Level Granularity**

@@ -32,6 +32,15 @@ The user will be able to provide a list of package import patterns to ignore or 
 
 The tool will output the graph in a standard format like DOT, which can be rendered by tools like Graphviz.
 
+### 2.4. Dependency Scope (In-Module vs. Full)
+
+By default, the tool will only traverse dependencies that are part of the current Go module. This is the most common use case, as it focuses on the internal architecture of the project without getting cluttered by standard library or third-party dependencies.
+
+The user can include external dependencies in the graph by using a specific flag.
+
+-   **Default:** Only packages within the current Go module are included.
+-   **Flag:** `go-deps-walk --start-pkg=./api --full` will include all dependencies, including those from the standard library and external modules.
+
 ## 3. Analysis of the `go-scan` Library
 
 To build this tool, we must first analyze the capabilities of the existing `go-scan` library.

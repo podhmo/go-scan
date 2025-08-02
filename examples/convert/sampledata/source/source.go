@@ -2,9 +2,9 @@ package source
 
 import "time"
 
-// convert:import converter "github.com/podhmo/go-scan/examples/convert/sampledata/converter"
-// convert:rule "time.Time" -> "string", using=converter.TimeToString
-// convert:rule "*time.Time" -> "string", using=converter.PtrTimeToString
+// convert:import convutil "github.com/podhmo/go-scan/examples/convert/convutil"
+// convert:rule "time.Time" -> "string", using=convutil.TimeToString
+// convert:rule "*time.Time" -> "string", using=convutil.PtrTimeToString
 
 // @derivingconvert("github.com/podhmo/go-scan/examples/convert/sampledata/destination.DstUser")
 type SrcUser struct {

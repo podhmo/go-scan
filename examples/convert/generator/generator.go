@@ -93,9 +93,9 @@ func Generate(s *goscan.Scanner, info *model.ParsedInfo) ([]byte, error) {
 	ctx := context.Background()
 
 	// Pre-register all necessary imports
-	// for alias, path := range info.Imports {
-	// 	im.Add(path, alias)
-	// }
+	for alias, path := range info.Imports {
+		im.Add(path, alias)
+	}
 
 	worklist := make([]model.ConversionPair, 0, len(info.ConversionPairs))
 	processed := make(map[string]bool)
@@ -460,29 +460,35 @@ func generateConversion(im *goscan.ImportManager, info *model.ParsedInfo, src, d
 	// Pointer to Pointer
 	if srcT.IsPointer && dstT.IsPointer {
 		if srcT.Elem == nil || dstT.Elem == nil {
-			if _, ok := info.Structs[srcT.Name]; ok {
-				return fmt.Sprintf("convert%sTo%s(%s, %s, %s)", srcT.Name, dstT.Name, ctxVar, ecVar, src)
-			}
+			// Fallback for unresolved types or built-in pointers like *int
 			if dst != "" {
 				return fmt.Sprintf("%s = %s", dst, src)
 			}
 			return src
 		}
+
+		// If the elements are structs that have a dedicated converter, use it directly.
+		if isStruct(srcT.Elem) && isStruct(dstT.Elem) {
+			return fmt.Sprintf("convert%sTo%s(%s, %s, %s)", srcT.Elem.Name, dstT.Elem.Name, ctxVar, ecVar, src)
+		}
+
 		var b strings.Builder
-		b.WriteString(fmt.Sprintf("if %s != nil {\n", src))
-		b.WriteString(fmt.Sprintf("\ttmp := %s\n", generateConversion(im, info, "(*"+src+")", "", srcT.Elem, dstT.Elem, depth+1, ecVar, ctxVar)))
 		if dst != "" {
+			// If dst is specified, we generate a block of statements.
+			b.WriteString(fmt.Sprintf("if %s != nil {\n", src))
+			b.WriteString(fmt.Sprintf("\ttmp := %s\n", generateConversion(im, info, "(*"+src+")", "", srcT.Elem, dstT.Elem, depth+1, ecVar, ctxVar)))
 			b.WriteString(fmt.Sprintf("\t%s = &tmp\n", dst))
-		} else {
-			b.WriteString(fmt.Sprintf("\treturn &tmp\n"))
-		}
-		b.WriteString("} else {\n")
-		if dst != "" {
+			b.WriteString("} else {\n")
 			b.WriteString(fmt.Sprintf("\t%s = nil\n", dst))
+			b.WriteString("}")
 		} else {
-			b.WriteString(fmt.Sprintf("\treturn nil\n"))
+			// If dst is empty, we must generate an expression, which we do with an anonymous func.
+			b.WriteString(fmt.Sprintf("func() %s {\n", getTypeName(im, dstT)))
+			b.WriteString(fmt.Sprintf("\tif %s == nil { return nil }\n", src))
+			b.WriteString(fmt.Sprintf("\ttmp := %s\n", generateConversion(im, info, "(*"+src+")", "", srcT.Elem, dstT.Elem, depth+1, ecVar, ctxVar)))
+			b.WriteString("\treturn &tmp\n")
+			b.WriteString("}()")
 		}
-		b.WriteString("}")
 		return b.String()
 	}
 	// Pointer to Value

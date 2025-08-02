@@ -42,7 +42,12 @@ func convertSrcWithTagsToDstWithTags(ctx context.Context, ec *model.ErrorCollect
 	if src.ManagerID == nil {
 		ec.Add(fmt.Errorf("ManagerID is required"))
 	} else {
-		dst.ManagerID = src.ManagerID
+		if src.ManagerID != nil {
+			tmp := (*src.ManagerID)
+			dst.ManagerID = &tmp
+		} else {
+			dst.ManagerID = nil
+		}
 	}
 
 	ec.Leave()

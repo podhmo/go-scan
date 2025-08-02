@@ -62,6 +62,28 @@ func (s *Event) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+func (s *UserCreated) MarshalJSON() ([]byte, error) {
+	type Alias UserCreated
+	return json.Marshal(&struct {
+		*Alias
+		Type string `json:"type"`
+	}{
+		Alias: (*Alias)(s),
+		Type:  "usercreated",
+	})
+}
+
+func (s *MessagePosted) MarshalJSON() ([]byte, error) {
+	type Alias MessagePosted
+	return json.Marshal(&struct {
+		*Alias
+		Type string `json:"type"`
+	}{
+		Alias: (*Alias)(s),
+		Type:  "messageposted",
+	})
+}
+
 func (s *User) Bind(req *http.Request, pathVar func(string) string) error {
 	var errs []error
 

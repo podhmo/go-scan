@@ -8,6 +8,7 @@ This directory contains example projects that demonstrate the capabilities and u
 - [derivingbind](#derivingbind)
 - [convert](#convert)
 - [minigo](#minigo)
+- [deps-walk](#deps-walk)
 
 ---
 
@@ -79,3 +80,19 @@ The `minigo` example features a miniature Go interpreter, illustrating how `go-s
 -   Demonstrates a "lazy import specification": imported packages are only fully parsed when their symbols are referenced, optimizing resource usage.
 
 This example showcases `go-scan`'s capabilities in building complex Go language tools, with a focus on efficient dependency handling through lazy loading and selective parsing.
+
+---
+
+## deps-walk
+
+The `deps-walk` example is a command-line tool that visualizes the dependency graph of packages within a Go module.
+
+**Purpose**: To help developers understand the internal architecture of a Go project by generating a focused dependency graph. The tool outputs a graph in the DOT language, which can be rendered into an image using tools like Graphviz.
+
+**Key Features**:
+- Uses `go-scan`'s `Walk` API, which leverages an efficient "imports-only" scanning mode.
+- Allows limiting the traversal depth with a `--hops` flag.
+- Supports filtering packages from the graph with an `--ignore` flag.
+- Can switch between traversing only in-module dependencies (default) and all dependencies (`--full` flag).
+
+This example demonstrates how the `go-scan` library can be used to build developer utilities for dependency analysis and visualization.

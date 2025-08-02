@@ -1,3 +1,6 @@
+> [!NOTE]
+> This feature has been implemented.
+
 # Plan for On-Demand, Multi-Package AST Scanning
 
 ## 1. Overview

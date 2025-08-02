@@ -1,3 +1,6 @@
+> [!NOTE]
+> This feature has been implemented.
+
 # Plan for `convert`: A Guide to Re-implementation and Migration
 
 This document outlines the progress, key decisions, and future tasks for rebuilding the `examples/convert` tool. It is intended to be detailed enough for a developer to re-implement the tool and migrate from the old prototype.

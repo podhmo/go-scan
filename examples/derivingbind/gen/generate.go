@@ -3,7 +3,7 @@ package gen
 import (
 	"bytes"
 	"context"
-	"embed"
+	_ "embed"
 	"fmt"
 	"log/slog"
 	"net/http"

@@ -18,7 +18,7 @@ import (
 var templateFile embed.FS
 
 const unmarshalAnnotation = "deriving:unmarshal"
-const marshalAnnotation = "derivingmarshall"
+const marshalAnnotation = "deriving:marshal"
 
 type TemplateData struct {
 	StructName                 string
@@ -233,7 +233,7 @@ func Generate(ctx context.Context, gscn *goscan.Scanner, pkgInfo *scanner.Packag
 			continue
 		}
 
-		// Prepare data for the marshalling template
+		// Prepare data for the marshaling template
 		marshalData := MarshalTemplateData{
 			StructName:                 typeInfo.Name,
 			DiscriminatorFieldJSONName: "type", // Hardcoded for now

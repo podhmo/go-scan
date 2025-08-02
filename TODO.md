@@ -108,8 +108,8 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     -   [x] Implemented the `deriving-all` orchestrator tool.
     -   [x] Added integration tests for the unified tool using `scantest`.
 -   **`derivingjson` Tool**:
-    -   [x] `UnmarshalJSON` generation for `oneOf` style interfaces using `@deriving:unmarshall`.
-    -   [x] `MarshalJSON` generation for `oneOf` concrete types using `@derivingmarshall` to add a type discriminator.
+    -   [x] `UnmarshalJSON` generation for `oneOf` style interfaces using `@deriving:unmarshal`.
+    -   [x] `MarshalJSON` generation for `oneOf` concrete types using `@deriving:marshal` to add a type discriminator.
 
 ## To Be Implemented
 

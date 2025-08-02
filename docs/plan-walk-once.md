@@ -155,3 +155,41 @@ The testing approach will be as follows:
     ```
 
 This strategy allows us to test the entire flow of the unified generator—from scanning to code generation—in a controlled and reproducible manner. We can easily create test cases for various scenarios, including structs with one, both, or no annotations, and verify that the combined output is correct.
+
+## 7. `go-scan` Library Impact
+
+After further analysis, we can confirm that **no changes are required to the core `go-scan` library**. The existing components, including the `Scanner`, `ImportManager`, `ResolveType`, and `Implements` functions, are sufficient to support the refactored, composable generators. The library's design is flexible enough to accommodate this new unified approach without modification.
+
+## 8. Incremental Development Plan (TODO)
+
+This project can be broken down into the following incremental steps.
+
+-   [ ] **Step 1: Create the `GeneratedCode` struct.**
+    -   Define the shared `GeneratedCode` struct (or a similar structure) to standardize the output of all generators. This could be in a new package like `examples/internal/generator`.
+
+-   [ ] **Step 2: Refactor the `derivingjson` generator.**
+    -   Create a new `gen/generate.go` file in the `derivingjson` example.
+    -   Move the `Generate` function into this new file.
+    -   Modify its signature to `func Generate(...) (*generator.GeneratedCode, error)`.
+    -   Update the function to return the generated code and imports instead of writing to a file.
+    -   Update the original `derivingjson/main.go` to call this new function and handle the file writing, ensuring the standalone tool still works.
+
+-   [ ] **Step 3: Refactor the `derivingbind` generator.**
+    -   Repeat the process from Step 2 for the `derivingbind` example.
+
+-   [ ] **Step 4: Implement the initial version of the unified `deriving-all` tool.**
+    -   Create the `examples/deriving-all/main.go` file.
+    -   Implement the core logic: initialize the scanner, scan the package, and call the refactored `json` and `bind` generators.
+    -   Implement the logic to merge the `GeneratedCode` results (both code and imports) from all generators.
+    -   Write the combined result to a single output file.
+
+-   [ ] **Step 5: Implement tests for the unified generator using `scantest`.**
+    -   Create a new test file, `deriving_all_test.go`.
+    -   Write a test case for a struct with only the `deriving:unmarshal` annotation.
+    -   Write a test case for a struct with only the `derivng:binding` annotation.
+    -   Write a test case for a struct with both annotations, and verify that the output file contains the code from both generators.
+    -   Write a test case for a struct with no relevant annotations to ensure an empty output is handled gracefully.
+
+-   [ ] **Step 6: Refine and Finalize.**
+    -   Clean up the code, add comments, and ensure the CLI interface for the new tool is user-friendly.
+    -   Update the main `README.md` to document the new unified tool.

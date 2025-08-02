@@ -452,11 +452,22 @@ func generateConversion(im *goscan.ImportManager, info *model.ParsedInfo, src, d
 	// Pointer to Pointer
 	if srcT.IsPointer && dstT.IsPointer {
 		if srcT.Elem == nil || dstT.Elem == nil {
+			// This is the path taken when the scanner fails to populate Elem for a pointer.
+			// We can work around this by checking if the type name corresponds to a known struct.
+			if _, ok := info.Structs[srcT.Name]; ok {
+				// It's a known struct, so we can generate the recursive conversion call.
+				// The helper function `convert<SrcName>To<DstName>` handles the nil check.
+				return fmt.Sprintf("convert%sTo%s(%s, %s, %s)", srcT.Name, dstT.Name, ctxVar, ecVar, src)
+			}
+
+			// Not a known struct, so fallback to simple assignment.
 			if dst != "" {
-				return fmt.Sprintf("%s = %s // Cannot convert pointer types, element type is nil", dst, src)
+				return fmt.Sprintf("%s = %s", dst, src)
 			}
 			return src
 		}
+
+		// This is the original logic for when Elem is correctly populated.
 		var b strings.Builder
 		b.WriteString(fmt.Sprintf("if %s != nil {\n", src))
 		b.WriteString(fmt.Sprintf("\ttmp := %s\n", generateConversion(im, info, "(*"+src+")", "", srcT.Elem, dstT.Elem, depth+1, ecVar, ctxVar)))
@@ -582,38 +593,40 @@ func generateMapConversion(im *goscan.ImportManager, info *model.ParsedInfo, src
 
 func getTypeName(im *goscan.ImportManager, t *scanner.FieldType) string {
 	if t == nil {
-		return "interface{}"
+		return "interface{}" // Should not happen in valid code
 	}
+
 	var sb strings.Builder
+
 	if t.IsPointer {
 		sb.WriteString("*")
+		// The scanner might fail to populate Elem for a pointer type.
+		// In that case, the type name is on the pointer FieldType itself.
+		// If Elem is populated, recurse. Otherwise, use the current type's name.
 		if t.Elem != nil {
 			sb.WriteString(getTypeName(im, t.Elem))
 		} else {
-			sb.WriteString("interface{}")
+			// This is the fallback for when Elem is nil. The type name is on the pointer itself.
+			// We just need to qualify it. This assumes no further nesting like *[]T.
+			// A more robust scanner would populate Elem correctly.
+			sb.WriteString(im.Qualify(t.FullImportPath, t.Name))
 		}
 		return sb.String()
 	}
+
 	if t.IsSlice {
 		sb.WriteString("[]")
-		if t.Elem != nil {
-			sb.WriteString(getTypeName(im, t.Elem))
-		} else {
-			sb.WriteString("interface{}")
-		}
+		sb.WriteString(getTypeName(im, t.Elem)) // Recurse, will be caught by t == nil if Elem is nil
 		return sb.String()
 	}
+
 	if t.IsMap {
-		keyType := "interface{}"
-		if t.MapKey != nil {
-			keyType = getTypeName(im, t.MapKey)
-		}
-		valType := "interface{}"
-		if t.Elem != nil {
-			valType = getTypeName(im, t.Elem)
-		}
+		keyType := getTypeName(im, t.MapKey)
+		valType := getTypeName(im, t.Elem)
 		return fmt.Sprintf("map[%s]%s", keyType, valType)
 	}
+
+	// Base case: a named type
 	return im.Qualify(t.FullImportPath, t.Name)
 }
 

@@ -32,11 +32,11 @@ func convertSrcToDst(ctx context.Context, ec *model.ErrorCollector, src *Src) *D
 		return dst
 	}
 	ec.Enter("ItemPtrs")
-	dst.ItemPtrs = func() map[string]*interface{} {
-		convertedMap := make(map[string]*interface{}, len(src.ItemPtrs))
+	dst.ItemPtrs = func() map[string]*DstItem {
+		convertedMap := make(map[string]*DstItem, len(src.ItemPtrs))
 		for key, value := range src.ItemPtrs {
 			ec.Enter(fmt.Sprintf("[%v]", key))
-			convertedMap[key] = value
+			convertedMap[key] = convertSrcItemToDstItem(ctx, ec, value)
 			ec.Leave()
 		}
 		return convertedMap

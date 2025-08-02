@@ -110,12 +110,25 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 -   **`derivingjson` Tool**:
     -   [x] `UnmarshalJSON` generation for `oneOf` style interfaces using `@deriving:unmarshal`.
     -   [x] `MarshalJSON` generation for `oneOf` concrete types using `@deriving:marshal` to add a type discriminator.
-
 ## To Be Implemented
 
-### `convert` Tool Future Tasks ([docs/plan-neo-convert.md](./docs/plan-neo-convert.md))
-- [ ] **Expand Test Coverage**: Create a comprehensive test suite that verifies all features and edge cases, including the new import functionality.
-- [ ] **Complete `README.md`**: Write user-facing documentation with installation, usage, and examples.
-
-### `scantest` Library Future Work ([docs/plan-scantest.md](./docs/plan-scantest.md))
-- [x] Implement file change detection to verify modifications to existing files during tests.
+### In-Module Dependency Walker ([docs/plan-in-module-deps-walk.md](./docs/plan-in-module-deps-walk.md))
+- [ ] **Core `go-deps-walk` Tool**
+  - [ ] Create a command-line tool `go-deps-walk` for visualizing in-module dependencies.
+  - [ ] Implement hop count limiting (`--hops`) to control graph depth.
+  - [ ] Implement package exclusion (`--ignore`) using glob patterns.
+  - [ ] Output the dependency graph in DOT format for rendering with Graphviz.
+- [ ] **`go-scan` Library Enhancements**
+  - [ ] **Imports-Only Scanning**:
+    - [ ] Add `scanner.ScanImportsOnly` method using `parser.ImportsOnly` for efficient parsing.
+    - [ ] Define `goscan.PackageImports` struct to hold minimal package import data.
+    - [ ] Add `goscan.Scanner.ScanPackageImports` to orchestrate lightweight scanning with caching.
+  - [ ] **Graph Traversal Utility**:
+    - [ ] Define a `goscan.Visitor` interface for injecting logic into the graph walk.
+    - [ ] Implement a `goscan.Scanner.Walk` method to perform a generic dependency graph traversal.
+- [ ] **Future Enhancements**
+  - [ ] **File-Level Granularity**:
+    - [ ] Extend `goscan.PackageImports` to include a file-by-file breakdown of imports.
+    - [ ] Add a `--granularity=file` flag to the `go-deps-walk` tool.
+  - [ ] **Reverse Dependencies**:
+    - [ ] Investigate finding reverse dependencies (importers), possibly via text search or an index.

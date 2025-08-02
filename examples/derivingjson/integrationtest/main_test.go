@@ -407,3 +407,143 @@ func TestUnmarshalMultiOneOfStructs(t *testing.T) {
 		}
 	})
 }
+
+// TestMarshalAPIResponse tests the custom MarshalJSON functionality.
+func TestMarshalAPIResponse(t *testing.T) {
+	t.Run("UserProfile", func(t *testing.T) {
+		response := APIResponse{
+			Status: "ok",
+			Data: &UserProfile{
+				UserID:   "u-123",
+				UserName: "Taro",
+			},
+		}
+
+		b, err := json.Marshal(response)
+		if err != nil {
+			t.Fatalf("json.Marshal() error = %v", err)
+		}
+
+		jsonString := string(b)
+		fmt.Printf("Marshalled JSON (UserProfile): %s\n", jsonString)
+
+		// Check for discriminator and other fields.
+		if !strings.Contains(jsonString, `"type":"userprofile"`) {
+			t.Errorf("marshalled JSON does not contain type discriminator for UserProfile")
+		}
+		if !strings.Contains(jsonString, `"userId":"u-123"`) {
+			t.Errorf("marshalled JSON does not contain userId field")
+		}
+	})
+
+	t.Run("ProductInfo", func(t *testing.T) {
+		response := APIResponse{
+			Status: "ok",
+			Data: &ProductInfo{
+				ProductID:   "p-456",
+				ProductName: "Book",
+				Price:       1500,
+			},
+		}
+
+		b, err := json.Marshal(response)
+		if err != nil {
+			t.Fatalf("json.Marshal() error = %v", err)
+		}
+
+		jsonString := string(b)
+		fmt.Printf("Marshalled JSON (ProductInfo): %s\n", jsonString)
+
+		if !strings.Contains(jsonString, `"type":"productinfo"`) {
+			t.Errorf("marshalled JSON does not contain type discriminator for ProductInfo")
+		}
+		if !strings.Contains(jsonString, `"productId":"p-456"`) {
+			t.Errorf("marshalled JSON does not contain productId field")
+		}
+	})
+
+	t.Run("NilData", func(t *testing.T) {
+		response := APIResponse{
+			Status: "ok",
+			Data:   nil,
+		}
+
+		b, err := json.Marshal(response)
+		if err != nil {
+			t.Fatalf("json.Marshal() error = %v", err)
+		}
+
+		jsonString := string(b)
+		fmt.Printf("Marshalled JSON (NilData): %s\n", jsonString)
+
+		if !strings.Contains(jsonString, `"data":null`) {
+			t.Errorf("marshalled JSON should have null for data field")
+		}
+	})
+}
+
+func TestMarshalMultiOneOfStructs(t *testing.T) {
+	t.Run("Scene: with dog and bicycle", func(t *testing.T) {
+		scene := Scene{
+			Name: "Park Life",
+			MainAnimal: &Dog{
+				Breed: "Golden Retriever",
+				Noise: "Bark",
+			},
+			MainVehicle: &Bicycle{
+				Gears:   18,
+				HasBell: true,
+			},
+		}
+
+		b, err := json.Marshal(scene)
+		if err != nil {
+			t.Fatalf("json.Marshal() error = %v", err)
+		}
+
+		jsonString := string(b)
+		fmt.Printf("Marshalled JSON (Scene): %s\n", jsonString)
+
+		if !strings.Contains(jsonString, `"type":"dog"`) {
+			t.Errorf("marshalled JSON does not contain type discriminator for Dog")
+		}
+		if !strings.Contains(jsonString, `"type":"bicycle"`) {
+			t.Errorf("marshalled JSON does not contain type discriminator for Bicycle")
+		}
+		if !strings.Contains(jsonString, `"breed":"Golden Retriever"`) {
+			t.Errorf("marshalled JSON does not contain breed")
+		}
+		if !strings.Contains(jsonString, `"gears":18`) {
+			t.Errorf("marshalled JSON does not contain gears")
+		}
+	})
+
+	t.Run("Parade: with cat and dog", func(t *testing.T) {
+		parade := Parade{
+			EventName: "Pet Parade",
+			LeadAnimal: &Cat{
+				Color: "black",
+				Purr:  true,
+			},
+			TrailingAnimal: &Dog{
+				Breed: "Poodle",
+				Noise: "Yap",
+			},
+		}
+
+		b, err := json.Marshal(parade)
+		if err != nil {
+			t.Fatalf("json.Marshal() error = %v", err)
+		}
+
+		jsonString := string(b)
+		fmt.Printf("Marshalled JSON (Parade): %s\n", jsonString)
+
+		if !strings.Contains(jsonString, `"type":"cat"`) {
+			t.Errorf("marshalled JSON does not contain type discriminator for Cat")
+		}
+		if !strings.Contains(jsonString, `"type":"dog"`) {
+			t.Errorf("marshalled JSON does not contain type discriminator for Dog")
+		}
+	})
+}

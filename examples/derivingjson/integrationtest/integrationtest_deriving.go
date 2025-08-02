@@ -3,8 +3,8 @@
 package integrationtest
 
 import (
-	"encoding/json"
-	"fmt"
+	json "encoding/json"
+	fmt "fmt"
 )
 
 func (s *APIResponse) UnmarshalJSON(data []byte) error {
@@ -325,4 +325,81 @@ func (s *PetOwner) UnmarshalJSON(data []byte) error {
 	}
 
 	return nil
+}
+
+func (s *UserProfile) MarshalJSON() ([]byte, error) {
+	type Alias UserProfile
+	return json.Marshal(&struct {
+		*Alias
+		Type string `json:"type"`
+	}{
+		Alias: (*Alias)(s),
+		Type:  "userprofile",
+	})
+}
+
+func (s *ProductInfo) MarshalJSON() ([]byte, error) {
+	type Alias ProductInfo
+	return json.Marshal(&struct {
+		*Alias
+		Type string `json:"type"`
+	}{
+		Alias: (*Alias)(s),
+		Type:  "productinfo",
+	})
+}
+
+func (s *Dog) MarshalJSON() ([]byte, error) {
+	type Alias Dog
+	return json.Marshal(&struct {
+		*Alias
+		Type string `json:"type"`
+	}{
+		Alias: (*Alias)(s),
+		Type:  "dog",
+	})
+}
+
+func (s *Cat) MarshalJSON() ([]byte, error) {
+	type Alias Cat
+	return json.Marshal(&struct {
+		*Alias
+		Type string `json:"type"`
+	}{
+		Alias: (*Alias)(s),
+		Type:  "cat",
+	})
+}
+
+func (s *Car) MarshalJSON() ([]byte, error) {
+	type Alias Car
+	return json.Marshal(&struct {
+		*Alias
+		Type string `json:"type"`
+	}{
+		Alias: (*Alias)(s),
+		Type:  "car",
+	})
+}
+
+func (s *Bicycle) MarshalJSON() ([]byte, error) {
+	type Alias Bicycle
+	return json.Marshal(&struct {
+		*Alias
+		Type string `json:"type"`
+	}{
+		Alias: (*Alias)(s),
+		Type:  "bicycle",
+	})
+}
+
+func (s *Goldfish) MarshalJSON() ([]byte, error) {
+	type Alias Goldfish
+	return json.Marshal(&struct {
+		*Alias
+		Type string `json:"type"`
+	}{
+		Alias: (*Alias)(s),
+		Type:  "goldfish",
+	})
 }

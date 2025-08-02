@@ -14,16 +14,23 @@ import (
 	"github.com/podhmo/go-scan/scanner"
 )
 
-//go:embed unmarshal.tmpl
+//go:embed unmarshal.tmpl marshal.tmpl
 var templateFile embed.FS
 
 const unmarshalAnnotation = "deriving:unmarshal"
+const marshalAnnotation = "derivingmarshall"
 
 type TemplateData struct {
 	StructName                 string
 	OtherFields                []FieldInfo
 	OneOfFields                []OneOfFieldDetail
 	DiscriminatorFieldJSONName string
+}
+
+type MarshalTemplateData struct {
+	StructName                 string
+	DiscriminatorFieldJSONName string
+	DiscriminatorValue         string
 }
 
 type FieldInfo struct {
@@ -215,6 +222,36 @@ func Generate(ctx context.Context, gscn *goscan.Scanner, pkgInfo *scanner.Packag
 		}
 		generatedCodeForAllStructs.Write(currentGeneratedCode.Bytes())
 		generatedCodeForAllStructs.WriteString("\n\n")
+	}
+
+	// Scan for marshal annotation
+	for _, typeInfo := range pkgInfo.Types {
+		if typeInfo.Kind != scanner.StructKind || typeInfo.Struct == nil {
+			continue
+		}
+		if _, ok := typeInfo.Annotation(marshalAnnotation); !ok {
+			continue
+		}
+
+		// Prepare data for the marshalling template
+		marshalData := MarshalTemplateData{
+			StructName:                 typeInfo.Name,
+			DiscriminatorFieldJSONName: "type", // Hardcoded for now
+			DiscriminatorValue:         strings.ToLower(typeInfo.Name),
+		}
+
+		// Generate code using the marshal template
+		tmpl, err := template.ParseFS(templateFile, "marshal.tmpl")
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse marshal template: %w", err)
+		}
+		var currentGeneratedCode bytes.Buffer
+		if err := tmpl.Execute(&currentGeneratedCode, marshalData); err != nil {
+			return nil, fmt.Errorf("failed to execute marshal template for struct %s: %w", typeInfo.Name, err)
+		}
+		generatedCodeForAllStructs.Write(currentGeneratedCode.Bytes())
+		generatedCodeForAllStructs.WriteString("\n\n")
+		anyCodeGenerated = true // Mark that we've generated some code
 	}
 
 	if !anyCodeGenerated {

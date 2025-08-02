@@ -17,6 +17,7 @@ type Vehicle interface {
 // --- Implementers for Animal ---
 
 // Dog implements Animal
+// @derivingmarshall
 type Dog struct {
 	Breed string `json:"breed"`
 	Noise string `json:"noise"`
@@ -26,6 +27,7 @@ func (d *Dog) Speak() string      { return d.Noise }
 func (d *Dog) AnimalKind() string { return "dog" }
 
 // Cat implements Animal
+// @derivingmarshall
 type Cat struct {
 	Color string `json:"color"`
 	Purr  bool   `json:"purr"`
@@ -37,6 +39,7 @@ func (c *Cat) AnimalKind() string { return "cat" }
 // --- Implementers for Vehicle ---
 
 // Car implements Vehicle
+// @derivingmarshall
 type Car struct {
 	Make   string `json:"make"`
 	Wheels int    `json:"wheels"`
@@ -46,6 +49,7 @@ func (c *Car) Move() string        { return "vroom" }
 func (c *Car) VehicleType() string { return "car" }
 
 // Bicycle implements Vehicle
+// @derivingmarshall
 type Bicycle struct {
 	Gears   int  `json:"gears"`
 	HasBell bool `json:"has_bell"`
@@ -88,6 +92,7 @@ type Pet interface {
 	PetKind() string
 }
 
+// @derivingmarshall
 type Goldfish struct {
 	Name      string `json:"name"`
 	BowlShape string `json:"bowl_shape"`

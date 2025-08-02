@@ -1,0 +1,10 @@
+func (s *{{.StructName}}) MarshalJSON() ([]byte, error) {
+	type Alias {{.StructName}}
+	return json.Marshal(&struct {
+		*Alias
+		Type string `json:"{{.DiscriminatorFieldJSONName}}"`
+	}{
+		Alias: (*Alias)(s),
+		Type:  "{{.DiscriminatorValue}}",
+	})
+}

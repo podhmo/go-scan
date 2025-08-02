@@ -1,6 +1,7 @@
 package scantest
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io/fs"
@@ -18,6 +19,7 @@ import (
 type memoryFileWriter struct {
 	mu      sync.Mutex
 	Outputs map[string][]byte
+	BaseDir string // The root directory for test files.
 }
 
 // WriteFile captures the output in memory instead of writing to disk.
@@ -27,9 +29,15 @@ func (w *memoryFileWriter) WriteFile(ctx context.Context, path string, data []by
 	if w.Outputs == nil {
 		w.Outputs = make(map[string][]byte)
 	}
-	// In tests, we often care about the relative path from the test's root dir.
-	// The path passed here will be absolute. We may need to strip the temp dir prefix.
-	w.Outputs[filepath.Base(path)] = data // Storing with basename for simplicity.
+
+	relPath, err := filepath.Rel(w.BaseDir, path)
+	if err != nil {
+		// If the path is not relative to BaseDir, use the original path.
+		// This might happen for unexpected write locations.
+		relPath = path
+	}
+
+	w.Outputs[relPath] = data
 	return nil
 }
 
@@ -40,9 +48,12 @@ type ActionFunc func(ctx context.Context, s *scan.Scanner, pkgs []*scan.Package)
 
 // Result holds the outcome of a Run that has side effects.
 type Result struct {
-	// Outputs contains the content of files written by go-scan's helper functions.
+	// Outputs contains the content of newly created files written during the action.
 	// The key is the file path, and the value is the content.
 	Outputs map[string][]byte
+	// Modified contains the content of existing files that were modified during the action.
+	// The key is the file path, and the value is the new content.
+	Modified map[string][]byte
 }
 
 // RunOption configures a test run.
@@ -76,6 +87,12 @@ func Run(t *testing.T, dir string, patterns []string, action ActionFunc, opts ..
 	cfg := &runConfig{}
 	for _, opt := range opts {
 		opt(cfg)
+	}
+
+	// Capture initial state of the directory
+	initialFiles, err := readFilesInDir(dir)
+	if err != nil {
+		return nil, fmt.Errorf("scantest: failed to read initial files: %w", err)
 	}
 
 	workDir := cfg.moduleRoot
@@ -129,17 +146,56 @@ func Run(t *testing.T, dir string, patterns []string, action ActionFunc, opts ..
 		return nil, fmt.Errorf("scan: %w", err)
 	}
 
-	writer := &memoryFileWriter{}
+	// The memoryFileWriter is still useful for tools that expect the context writer,
+	// but the primary source of truth for file changes will be the directory snapshot.
+	writer := &memoryFileWriter{BaseDir: dir}
 	ctx := context.WithValue(context.Background(), scan.FileWriterKey, writer)
 
 	if err := action(ctx, s, pkgs); err != nil {
 		return nil, fmt.Errorf("action: %w", err)
 	}
 
-	if len(writer.Outputs) > 0 {
-		return &Result{Outputs: writer.Outputs}, nil
+	// Capture final state and compare
+	finalFiles, err := readFilesInDir(dir)
+	if err != nil {
+		return nil, fmt.Errorf("scantest: failed to read final files: %w", err)
 	}
-	return nil, nil
+
+	result := &Result{
+		Outputs:  make(map[string][]byte),
+		Modified: make(map[string][]byte),
+	}
+	hasChanges := false
+
+	for path, finalContent := range finalFiles {
+		initialContent, ok := initialFiles[path]
+		if !ok {
+			// New file
+			result.Outputs[path] = finalContent
+			hasChanges = true
+		} else if !bytes.Equal(initialContent, finalContent) {
+			// Modified file
+			result.Modified[path] = finalContent
+			hasChanges = true
+		}
+	}
+
+	// Also account for files created via the in-memory writer that might not be
+	// reflected in the final directory scan if the action func doesn't write to disk.
+	for path, content := range writer.Outputs {
+		if _, existsInFinal := finalFiles[path]; !existsInFinal {
+			if _, existsInInitial := initialFiles[path]; !existsInInitial {
+				result.Outputs[path] = content
+				hasChanges = true
+			}
+		}
+	}
+
+	if !hasChanges {
+		return nil, nil
+	}
+
+	return result, nil
 }
 
 // WriteFiles creates a temporary directory and populates it with initial files.
@@ -157,6 +213,33 @@ func WriteFiles(t *testing.T, files map[string]string) (string, func()) {
 		}
 	}
 	return dir, func() { /* t.TempDir handles cleanup */ }
+}
+
+// readFilesInDir walks the given directory and reads all files, returning a map
+// where keys are file paths relative to the root, and values are their content.
+func readFilesInDir(root string) (map[string][]byte, error) {
+	files := make(map[string][]byte)
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() {
+			relPath, err := filepath.Rel(root, path)
+			if err != nil {
+				return fmt.Errorf("failed to get relative path for %s: %w", path, err)
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return fmt.Errorf("failed to read file %s: %w", path, err)
+			}
+			files[relPath] = data
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return files, nil
 }
 
 // findModuleRoot searches for a go.mod file starting from startDir and walking

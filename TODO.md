@@ -119,4 +119,4 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [ ] **Complete `README.md`**: Write user-facing documentation with installation, usage, and examples.
 
 ### `scantest` Library Future Work ([docs/plan-scantest.md](./docs/plan-scantest.md))
-- [ ] Implement file change detection to verify modifications to existing files during tests.
+- [x] Implement file change detection to verify modifications to existing files during tests.

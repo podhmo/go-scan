@@ -28,14 +28,14 @@ import (
 )
 
 {{ range .Pairs -}}
-func convert{{ .SrcType.Name }}To{{ .DstType.Name }}(ctx context.Context, ec *model.ErrorCollector, src *{{ .SrcType.Name }}) *{{ .DstType.Name }} {
+func convert{{ .SrcType.Name }}To{{ .DstType.Name }}(ctx context.Context, ec *model.ErrorCollector, src *{{ getQualifiedTypeName $.Im .SrcType }}) *{{ getQualifiedTypeName $.Im .DstType }} {
 	if src == nil {
 		return nil
 	}
 	{{ range .Pair.Variables -}}
 	var {{ .Name }} {{ .Type }}
 	{{ end -}}
-	dst := &{{ .DstType.Name }}{}
+	dst := &{{ getQualifiedTypeName $.Im .DstType }}{}
 	{{ range .Fields -}}
 	if ec.MaxErrorsReached() { return dst }
 	ec.Enter("{{ .DstName }}")
@@ -46,8 +46,8 @@ func convert{{ .SrcType.Name }}To{{ .DstType.Name }}(ctx context.Context, ec *mo
 	return dst
 }
 
-// Convert{{ .SrcType.Name }}To{{ .DstType.Name }} converts {{ .SrcType.Name }} to {{ .DstType.Name }}.
-func Convert{{ .SrcType.Name }}To{{ .DstType.Name }}(ctx context.Context, src *{{ .SrcType.Name }}) (*{{ .DstType.Name }}, error) {
+// Convert{{ .SrcType.Name }}To{{ .DstType.Name }} converts {{ getQualifiedTypeName $.Im .SrcType }} to {{ getQualifiedTypeName $.Im .DstType }}.
+func Convert{{ .SrcType.Name }}To{{ .DstType.Name }}(ctx context.Context, src *{{ getQualifiedTypeName $.Im .SrcType }}) (*{{ getQualifiedTypeName $.Im .DstType }}, error) {
 	if src == nil {
 		return nil, nil
 	}
@@ -86,29 +86,88 @@ type FieldMap struct {
 
 func Generate(s *goscan.Scanner, info *model.ParsedInfo) ([]byte, error) {
 	im := goscan.NewImportManager(&scanner.PackageInfo{ImportPath: info.PackagePath, Name: info.PackageName})
+	ctx := context.Background()
 
 	// Pre-register all necessary imports
 	for alias, path := range info.Imports {
 		im.Add(path, alias)
 	}
 
+	worklist := make([]model.ConversionPair, 0, len(info.ConversionPairs))
+	processed := make(map[string]bool)
+	allPairs := make([]TemplatePair, 0, len(info.ConversionPairs))
+
+	// Initial population from explicit @derivingconvert annotations
 	for _, pair := range info.ConversionPairs {
+		key := fmt.Sprintf("%s.%s -> %s.%s", pair.SrcTypeInfo.PkgPath, pair.SrcTypeName, pair.DstTypeInfo.PkgPath, pair.DstTypeName)
+		if !processed[key] {
+			worklist = append(worklist, pair)
+			processed[key] = true
+		}
+	}
+
+	for i := 0; i < len(worklist); i++ {
+		pair := worklist[i]
+
 		srcStruct, ok := info.Structs[pair.SrcTypeName]
 		if !ok {
-			return nil, fmt.Errorf("source struct %q not found", pair.SrcTypeName)
+			// This can happen if a struct is referenced but not defined in the scanned packages.
+			log.Printf("Warning: source struct %q for conversion not found in parsed info, skipping.", pair.SrcTypeName)
+			continue
 		}
 		dstStruct, ok := info.Structs[pair.DstTypeName]
 		if !ok {
-			return nil, fmt.Errorf("destination struct %q not found", pair.DstTypeName)
+			log.Printf("Warning: destination struct %q for conversion not found in parsed info, skipping.", pair.DstTypeName)
+			continue
 		}
 
+		// Register imports for the current pair's types
 		for _, field := range srcStruct.Fields {
 			registerImports(im, field.FieldType)
 		}
 		for _, field := range dstStruct.Fields {
 			registerImports(im, field.FieldType)
 		}
+
+		fieldMaps, err := createFieldMaps(ctx, s, srcStruct, dstStruct)
+		if err != nil {
+			return nil, fmt.Errorf("creating field maps for %s -> %s: %w", srcStruct.Name, dstStruct.Name, err)
+		}
+
+		// Discover new pairs from fields
+		for _, fm := range fieldMaps {
+			if isStruct(fm.SrcFieldT) && isStruct(fm.DstFieldT) {
+				srcFieldType := getUnderlyingStructType(fm.SrcFieldT)
+				dstFieldType := getUnderlyingStructType(fm.DstFieldT)
+
+				if srcFieldType.Definition == nil || dstFieldType.Definition == nil {
+					log.Printf("Warning: could not resolve definition for field conversion %s -> %s", srcFieldType.Name, dstFieldType.Name)
+					continue
+				}
+
+				key := fmt.Sprintf("%s.%s -> %s.%s", srcFieldType.Definition.PkgPath, srcFieldType.Name, dstFieldType.Definition.PkgPath, dstFieldType.Name)
+				if !processed[key] {
+					log.Printf("Discovered required conversion: %s", key)
+					newPair := model.ConversionPair{
+						SrcTypeName: srcFieldType.Name,
+						DstTypeName: dstFieldType.Name,
+						SrcTypeInfo: srcFieldType.Definition,
+						DstTypeInfo: dstFieldType.Definition,
+					}
+					worklist = append(worklist, newPair)
+					processed[key] = true
+				}
+			}
+		}
+
+		allPairs = append(allPairs, TemplatePair{
+			SrcType: srcStruct,
+			DstType: dstStruct,
+			Fields:  fieldMaps,
+			Pair:    pair,
+		})
 	}
+
 	for _, rule := range info.GlobalRules {
 		if rule.SrcTypeInfo != nil {
 			im.Qualify(rule.SrcTypeInfo.PkgPath, rule.SrcTypeInfo.Name)
@@ -118,34 +177,10 @@ func Generate(s *goscan.Scanner, info *model.ParsedInfo) ([]byte, error) {
 		}
 	}
 
-	var pairs []TemplatePair
-	for _, pair := range info.ConversionPairs {
-		srcStruct, ok := info.Structs[pair.SrcTypeName]
-		if !ok {
-			return nil, fmt.Errorf("source struct %q not found", pair.SrcTypeName)
-		}
-		dstStruct, ok := info.Structs[pair.DstTypeName]
-		if !ok {
-			return nil, fmt.Errorf("destination struct %q not found", pair.DstTypeName)
-		}
-
-		fieldMaps, err := createFieldMaps(context.Background(), s, srcStruct, dstStruct)
-		if err != nil {
-			return nil, fmt.Errorf("creating field maps for %s -> %s: %w", srcStruct.Name, dstStruct.Name, err)
-		}
-
-		pairs = append(pairs, TemplatePair{
-			SrcType: srcStruct,
-			DstType: dstStruct,
-			Fields:  fieldMaps,
-			Pair:    pair,
-		})
-	}
-
 	templateData := TemplateData{
 		PackageName: info.PackageName,
 		Imports:     im.Imports(),
-		Pairs:       pairs,
+		Pairs:       allPairs,
 		Im:          im,
 		Info:        info,
 	}
@@ -159,6 +194,16 @@ func Generate(s *goscan.Scanner, info *model.ParsedInfo) ([]byte, error) {
 		},
 		"getValidator": func(im *goscan.ImportManager, info *model.ParsedInfo, field FieldMap, dstVar, ecVar, ctxVar string) string {
 			return getValidator(im, info, field, dstVar, ecVar, ctxVar)
+		},
+		"getQualifiedTypeName": func(im *goscan.ImportManager, structInfo *model.StructInfo) string {
+			if structInfo == nil || structInfo.Type == nil {
+				return "invalid"
+			}
+			// When generating code for a specific package, types within that package don't need qualification.
+			if structInfo.Type.PkgPath == info.PackagePath {
+				return structInfo.Name
+			}
+			return im.Qualify(structInfo.Type.PkgPath, structInfo.Name)
 		},
 	}
 
@@ -585,6 +630,16 @@ func isStruct(t *scanner.FieldType) bool {
 	// A struct that needs a recursive conversion is one defined in the scanned code,
 	// not one provided by an override.
 	return t.Definition != nil && t.Definition.Kind == scanner.StructKind && !t.IsResolvedByConfig
+}
+
+func getUnderlyingStructType(t *scanner.FieldType) *scanner.FieldType {
+	if t == nil {
+		return nil
+	}
+	if t.IsPointer {
+		return getUnderlyingStructType(t.Elem)
+	}
+	return t
 }
 
 func getFullTypeNameFromFieldType(ft *scanner.FieldType) string {

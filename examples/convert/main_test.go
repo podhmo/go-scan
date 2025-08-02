@@ -72,7 +72,7 @@ func convertProfile(ctx context.Context, ec *model.ErrorCollector, s string) str
 	pkgname := "tags"
 	goldenFile := "testdata/tags.go.golden"
 
-	err := run(ctx, pkgpath, tmpdir, outputFile, pkgname)
+	err := run(ctx, pkgpath, tmpdir, outputFile, pkgname, "")
 	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}
@@ -98,6 +98,93 @@ func convertProfile(ctx context.Context, ec *model.ErrorCollector, s string) str
 	formattedGenerated, err := imports.Process(outputFile, generatedCode, nil)
 	if err != nil {
 		t.Fatalf("failed to format generated code: %v", err)
+	}
+	formattedGolden, err := imports.Process(goldenFile, golden, nil)
+	if err != nil {
+		t.Fatalf("failed to format golden file: %v", err)
+	}
+
+	if diff := cmp.Diff(string(formattedGolden), string(formattedGenerated)); diff != "" {
+		t.Errorf("generated code mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestIntegration_WithRecursiveGeneration(t *testing.T) {
+	sourceDir := "testdata/recursive"
+	tmpdir, err := os.MkdirTemp("", "recursive-test-")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpdir)
+
+	// Create subdirectories for source and destination packages
+	sourcePkgDir := filepath.Join(tmpdir, "source")
+	destPkgDir := filepath.Join(tmpdir, "destination")
+	if err := os.Mkdir(sourcePkgDir, 0755); err != nil {
+		t.Fatalf("failed to create source package dir: %v", err)
+	}
+	if err := os.Mkdir(destPkgDir, 0755); err != nil {
+		t.Fatalf("failed to create destination package dir: %v", err)
+	}
+
+	// Copy source files into the correct subdirectories
+	filesToCopy := map[string]string{
+		"source.go":      sourcePkgDir,
+		"destination.go": destPkgDir,
+	}
+	for fname, destDir := range filesToCopy {
+		srcPath := filepath.Join(sourceDir, fname)
+		dstPath := filepath.Join(destDir, fname)
+		data, err := os.ReadFile(srcPath)
+		if err != nil {
+			t.Fatalf("failed to read source file %s: %v", srcPath, err)
+		}
+		if err := os.WriteFile(dstPath, data, 0644); err != nil {
+			t.Fatalf("failed to write to temp file %s: %v", dstPath, err)
+		}
+	}
+
+	goModPath := filepath.Join(tmpdir, "go.mod")
+	if err := os.WriteFile(goModPath, []byte("module example.com/m\ngo 1.24"), 0644); err != nil {
+		t.Fatalf("failed to write go.mod: %v", err)
+	}
+
+	ctx := context.Background()
+	writer := &memoryFileWriter{}
+	ctx = context.WithValue(ctx, FileWriterKey, writer)
+
+	pkgpath := "example.com/m/source" // Start scanning from the source package
+	outputFile := "generated.go"
+	pkgname := "recursive"
+	goldenFile := "testdata/recursive.go.golden"
+
+	outputPkgPath := "example.com/m/recursive"
+	err = run(ctx, pkgpath, tmpdir, outputFile, pkgname, outputPkgPath)
+	if err != nil {
+		t.Fatalf("run() failed: %v", err)
+	}
+
+	generatedCode, ok := writer.Outputs[outputFile]
+	if !ok {
+		t.Fatalf("output file %q not found in captured outputs", outputFile)
+	}
+
+	if *update {
+		if err := os.WriteFile(goldenFile, generatedCode, 0644); err != nil {
+			t.Fatalf("failed to update golden file: %v", err)
+		}
+		t.Logf("golden file updated: %s", goldenFile)
+		return
+	}
+
+	golden, err := os.ReadFile(goldenFile)
+	if err != nil {
+		t.Fatalf("failed to read golden file: %v", err)
+	}
+
+	formattedGenerated, err := imports.Process(outputFile, generatedCode, nil)
+	if err != nil {
+		t.Fatalf("failed to format generated code: %v\n---\n%s", err, string(generatedCode))
 	}
 	formattedGolden, err := imports.Process(goldenFile, golden, nil)
 	if err != nil {
@@ -163,7 +250,7 @@ func (ec *ErrorCollector) MaxErrorsReached() bool { return false }
 	pkgname := "timetime"
 	goldenFile := "testdata/timetime.go.golden"
 
-	err := run(ctx, pkgpath, tmpdir, outputFile, pkgname)
+	err := run(ctx, pkgpath, tmpdir, outputFile, pkgname, "")
 	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}
@@ -252,7 +339,7 @@ type DstC struct {
 	outputFile := "generated.go"
 	pkgname := "a"
 
-	err := run(ctx, pkgpath, tmpdir, outputFile, pkgname)
+	err := run(ctx, pkgpath, tmpdir, outputFile, pkgname, "")
 	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}
@@ -312,7 +399,7 @@ func TestIntegration_WithVariable(t *testing.T) {
 	pkgname := "testdata"
 	goldenFile := "testdata/variable.go.golden"
 
-	err = run(ctx, pkgpath, tmpdir, outputFile, pkgname)
+	err = run(ctx, pkgpath, tmpdir, outputFile, pkgname, "")
 	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}
@@ -434,7 +521,7 @@ func (ec *ErrorCollector) MaxErrorsReached() bool { return false }
 	pkgname := "main"
 	goldenFile := "testdata/imports.go.golden"
 
-	err := run(ctx, pkgpath, tmpdir, outputFile, pkgname)
+	err := run(ctx, pkgpath, tmpdir, outputFile, pkgname, "")
 	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}
@@ -615,7 +702,7 @@ func TestValidation(t *testing.T) {
 	outputFile := "generated.go"
 	pkgname := "validator"
 
-	err := run(ctx, pkgpath, tmpdir, outputFile, pkgname)
+	err := run(ctx, pkgpath, tmpdir, outputFile, pkgname, "")
 	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}
@@ -700,7 +787,7 @@ func TestIntegration_WithEmbeddedFields(t *testing.T) {
 	goldenFile := "testdata/embedded.go.golden"
 
 	// run() expects a single directory path for scanning.
-	err = run(ctx, pkgpath, tmpdir, outputFile, pkgname)
+	err = run(ctx, pkgpath, tmpdir, outputFile, pkgname, "")
 	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}
@@ -770,7 +857,7 @@ type Dst struct {
 	pkgname := "fieldmatching"
 	goldenFile := "testdata/fieldmatching.go.golden"
 
-	err := run(ctx, pkgpath, tmpdir, outputFile, pkgname)
+	err := run(ctx, pkgpath, tmpdir, outputFile, pkgname, "")
 	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}
@@ -916,7 +1003,7 @@ func TestRun(t *testing.T) {
 	pkgname := "errors"
 
 	// 1. Generate the converter code
-	err := run(ctx, pkgpath, tmpdir, outputFile, pkgname)
+	err := run(ctx, pkgpath, tmpdir, outputFile, pkgname, "")
 	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}
@@ -1004,7 +1091,7 @@ func overrideTime(ctx context.Context, ec *model.ErrorCollector, t time.Time) st
 		os.WriteFile(goldenFile, []byte(""), 0644)
 	}
 
-	err := run(ctx, pkgpath, tmpdir, outputFile, pkgname)
+	err := run(ctx, pkgpath, tmpdir, outputFile, pkgname, "")
 	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}
@@ -1081,7 +1168,7 @@ type DstItem struct {
 	outputFile := "generated.go"
 	pkgname := "maps"
 	goldenFile := "testdata/maps.go.golden"
-	err := run(ctx, pkgpath, tmpdir, outputFile, pkgname)
+	err := run(ctx, pkgpath, tmpdir, outputFile, pkgname, "")
 	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}
@@ -1161,7 +1248,7 @@ type DstItem struct {
 	pkgname := "pointers"
 	goldenFile := "testdata/pointers.go.golden"
 
-	err := run(ctx, pkgpath, tmpdir, outputFile, pkgname)
+	err := run(ctx, pkgpath, tmpdir, outputFile, pkgname, "")
 	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}
@@ -1233,7 +1320,7 @@ type DstItem struct {
 	pkgname := "slices"
 	goldenFile := "testdata/slices.go.golden"
 
-	err := run(ctx, pkgpath, tmpdir, outputFile, pkgname)
+	err := run(ctx, pkgpath, tmpdir, outputFile, pkgname, "")
 	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}
@@ -1408,7 +1495,7 @@ func convertIntToString(ctx context.Context, ec *model.ErrorCollector, i int) st
 	pkgname := "mapkeys"
 	goldenFile := "testdata/mapkeys.go.golden"
 
-	err := run(ctx, pkgpath, tmpdir, outputFile, pkgname)
+	err := run(ctx, pkgpath, tmpdir, outputFile, pkgname, "")
 	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}

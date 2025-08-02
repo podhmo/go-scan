@@ -31,11 +31,12 @@ func main() {
 	var (
 		pkgpath = flag.String("pkg", "", "target package path (e.g. example.com/m/models)")
 		workdir = flag.String("cwd", ".", "current working directory")
-		output  = flag.String("output", "generated.go", "output file name")
-		pkgname = flag.String("pkgname", "", "package name for the generated file (default: inferred from output dir)")
+		output      = flag.String("output", "generated.go", "output file name")
+		pkgname     = flag.String("pkgname", "", "package name for the generated file (default: inferred from output dir)")
+		outputPkgPath = flag.String("output-pkgpath", "", "full package import path for the generated file (e.g. example.com/m/generated)")
 	)
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: convert -pkg <package_path> [-cwd <dir>] [-output <filename>] [-pkgname <name>]\n")
+		fmt.Fprintf(os.Stderr, "Usage: convert -pkg <package_path> [-cwd <dir>] [-output <filename>] [-pkgname <name>] [-output-pkgpath <path>]\n")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
@@ -49,13 +50,13 @@ func main() {
 	ctx = context.WithValue(ctx, FileWriterKey, &defaultFileWriter{})
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})))
 
-	if err := run(ctx, *pkgpath, *workdir, *output, *pkgname); err != nil {
+	if err := run(ctx, *pkgpath, *workdir, *output, *pkgname, *outputPkgPath); err != nil {
 		slog.ErrorContext(ctx, "Error", slog.Any("error", err))
 		os.Exit(1)
 	}
 }
 
-func run(ctx context.Context, pkgpath, workdir, output, pkgname string) error {
+func run(ctx context.Context, pkgpath, workdir, output, pkgname, outputPkgPath string) error {
 	// Define an external type override for time.Time to avoid scanning the stdlib time package,
 	// which can cause issues in certain build contexts (like tests).
 	overrides := scanner.ExternalTypeOverride{
@@ -103,7 +104,15 @@ func run(ctx context.Context, pkgpath, workdir, output, pkgname string) error {
 		pkgname = info.PackageName
 	}
 
-	slog.DebugContext(ctx, "Generating code", "package", pkgname)
+	// Override package name and path if provided
+	if pkgname != "" {
+		info.PackageName = pkgname
+	}
+	if outputPkgPath != "" {
+		info.PackagePath = outputPkgPath
+	}
+
+	slog.DebugContext(ctx, "Generating code", "package", info.PackageName, "pkgpath", info.PackagePath)
 	generatedCode, err := generator.Generate(s, info)
 	if err != nil {
 		return fmt.Errorf("failed to generate code: %w", err)

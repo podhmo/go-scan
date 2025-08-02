@@ -15,4 +15,3 @@ require (
 
 replace github.com/podhmo/go-scan => ../../
 
-replace github.com/podhmo/go-scan/examples/convert/sampledata/generated => ./sampledata/generated

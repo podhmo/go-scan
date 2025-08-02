@@ -124,6 +124,11 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 ### In-Module Dependency Walker ([docs/plan-in-module-deps-walk.md](./docs/plan-in-module-deps-walk.md))
 
 - [ ] **3. Future Enhancements**
+  - [x] **Mermaid Output Format**
+    - [x] Add a `-format` flag to `deps-walk` (default: "dot", options: "mermaid").
+    - [x] Implement `WriteMermaid` in the `graphVisitor`.
+    - [x] Add a test case with a golden file for the Mermaid output.
+    - [ ] Update documentation for the new format.
   - [ ] **File-Level Granularity**
     - [ ] Extend `goscan.PackageImports` to include a file-by-file breakdown of imports.
     - [ ] Add a `--granularity=file` flag to the `deps-walk` tool.

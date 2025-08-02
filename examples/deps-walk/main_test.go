@@ -58,6 +58,7 @@ func TestRun(t *testing.T) {
 				"hops":      1,
 				"full":      false,
 				"ignore":    "",
+				"format":    "dot",
 			},
 			goldenFile: "default.golden",
 		},
@@ -68,6 +69,7 @@ func TestRun(t *testing.T) {
 				"hops":      2,
 				"full":      true, // to see external deps
 				"ignore":    "",
+				"format":    "dot",
 			},
 			goldenFile: "hops2.golden",
 		},
@@ -78,6 +80,7 @@ func TestRun(t *testing.T) {
 				"hops":      1,
 				"full":      false,
 				"ignore":    "github.com/podhmo/go-scan/testdata/walk/c",
+				"format":    "dot",
 			},
 			goldenFile: "ignore-c.golden",
 		},
@@ -88,8 +91,20 @@ func TestRun(t *testing.T) {
 				"hops":      1,
 				"full":      true,
 				"ignore":    "",
+				"format":    "dot",
 			},
 			goldenFile: "full.golden",
+		},
+		{
+			name: "mermaid-output",
+			args: map[string]interface{}{
+				"start-pkg": "github.com/podhmo/go-scan/testdata/walk/a",
+				"hops":      1,
+				"full":      false,
+				"ignore":    "",
+				"format":    "mermaid",
+			},
+			goldenFile: "mermaid.golden",
 		},
 	}
 
@@ -107,7 +122,7 @@ func TestRun(t *testing.T) {
 			}
 			defer os.Chdir(originalWD)
 
-			outputFile := filepath.Join(tmpdir, "output.dot")
+			outputFile := filepath.Join(tmpdir, "output.txt") // generic name
 			startPkg := tc.args["start-pkg"].(string)
 
 			err = run(
@@ -116,6 +131,7 @@ func TestRun(t *testing.T) {
 				tc.args["hops"].(int),
 				tc.args["ignore"].(string),
 				outputFile,
+				tc.args["format"].(string),
 				tc.args["full"].(bool),
 			)
 			if err != nil {

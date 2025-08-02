@@ -21,13 +21,15 @@ func main() {
 		hops     int
 		ignore   string
 		output   string
+		format   string
 		full     bool
 	)
 
 	flag.StringVar(&startPkg, "start-pkg", "", "The root package to start the dependency walk from (required)")
 	flag.IntVar(&hops, "hops", 1, "Maximum number of hops to walk from the start package")
 	flag.StringVar(&ignore, "ignore", "", "A comma-separated list of package patterns to ignore")
-	flag.StringVar(&output, "output", "", "Output file path for the DOT graph (defaults to stdout)")
+	flag.StringVar(&output, "output", "", "Output file path for the graph (defaults to stdout)")
+	flag.StringVar(&format, "format", "dot", "Output format (dot or mermaid)")
 	flag.BoolVar(&full, "full", false, "Include dependencies outside the current module")
 	flag.Parse()
 
@@ -35,12 +37,12 @@ func main() {
 		log.Fatal("-start-pkg is required")
 	}
 
-	if err := run(context.Background(), startPkg, hops, ignore, output, full); err != nil {
+	if err := run(context.Background(), startPkg, hops, ignore, output, format, full); err != nil {
 		log.Fatalf("Error: %+v", err)
 	}
 }
 
-func run(ctx context.Context, startPkg string, hops int, ignore string, output string, full bool) error {
+func run(ctx context.Context, startPkg string, hops int, ignore string, output string, format string, full bool) error {
 	s, err := goscan.New()
 	if err != nil {
 		return fmt.Errorf("failed to create scanner: %w", err)
@@ -68,8 +70,17 @@ func run(ctx context.Context, startPkg string, hops int, ignore string, output s
 	}
 
 	var buf bytes.Buffer
-	if err := visitor.WriteDOT(&buf); err != nil {
-		return fmt.Errorf("failed to generate DOT graph: %w", err)
+	switch format {
+	case "dot":
+		if err := visitor.WriteDOT(&buf); err != nil {
+			return fmt.Errorf("failed to generate DOT graph: %w", err)
+		}
+	case "mermaid":
+		if err := visitor.WriteMermaid(&buf); err != nil {
+			return fmt.Errorf("failed to generate Mermaid graph: %w", err)
+		}
+	default:
+		return fmt.Errorf("unsupported output format: %q", format)
 	}
 
 	if output == "" {
@@ -186,5 +197,28 @@ func (v *graphVisitor) WriteDOT(w io.Writer) error {
 	}
 
 	fmt.Fprintln(w, "}")
+	return nil
+}
+
+func (v *graphVisitor) WriteMermaid(w io.Writer) error {
+	fmt.Fprintln(w, "graph TD;")
+
+	// Sort dependencies for deterministic output
+	sortedFroms := make([]string, 0, len(v.dependencies))
+	for from := range v.dependencies {
+		sortedFroms = append(sortedFroms, from)
+	}
+	sort.Strings(sortedFroms)
+
+	// Define all edges
+	for _, from := range sortedFroms {
+		toList := v.dependencies[from]
+		sort.Strings(toList) // Sort the 'to' packages as well
+		for _, to := range toList {
+			// Mermaid syntax: A[import/path/A] --> B[import/path/B]
+			fmt.Fprintf(w, `    %s[%s] --> %s[%s]`+"\n", from, from, to, to)
+		}
+	}
+
 	return nil
 }

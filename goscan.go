@@ -10,7 +10,6 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/podhmo/go-scan/cache"
 	"github.com/podhmo/go-scan/locator"
 	"github.com/podhmo/go-scan/scanner"
 )
@@ -41,7 +40,7 @@ type Scanner struct {
 	useGoModuleResolver bool // To be set by WithGoModuleResolver
 
 	CachePath             string
-	symbolCache           *cache.SymbolCache // Symbol cache (persisted across Scanner instances if path is reused)
+	symbolCache           *symbolCache // Symbol cache (persisted across Scanner instances if path is reused)
 	ExternalTypeOverrides scanner.ExternalTypeOverride
 	overlay               scanner.Overlay
 }
@@ -656,14 +655,14 @@ func (s *Scanner) ScanPackageByImport(ctx context.Context, importPath string) (*
 
 	var filesToParseThisCall []string
 	symCache, _ := s.getOrCreateSymbolCache(ctx) // Error getting cache is not fatal here
-	slog.DebugContext(ctx, "ScanPackageByImport symbol cache status", slog.String("importPath", importPath), slog.Bool("enabled", symCache != nil && symCache.IsEnabled()))
+	slog.DebugContext(ctx, "ScanPackageByImport symbol cache status", slog.String("importPath", importPath), slog.Bool("enabled", symCache != nil && symCache.isEnabled()))
 
 	filesConsideredBySymCache := make(map[string]struct{})
 
-	if symCache != nil && symCache.IsEnabled() {
-		newDiskFiles, existingDiskFiles, errSym := symCache.GetFilesToScan(ctx, pkgDirAbs)
+	if symCache != nil && symCache.isEnabled() {
+		newDiskFiles, existingDiskFiles, errSym := symCache.getFilesToScan(ctx, pkgDirAbs)
 		if errSym != nil {
-			slog.WarnContext(ctx, "GetFilesToScan failed. Will scan all unvisited files in the package.", slog.String("import_path", importPath), slog.String("package_dir", pkgDirAbs), slog.Any("error", errSym))
+			slog.WarnContext(ctx, "getFilesToScan failed. Will scan all unvisited files in the package.", slog.String("import_path", importPath), slog.String("package_dir", pkgDirAbs), slog.Any("error", errSym))
 			// Fallback: scan all files in the package that this Scanner instance hasn't visited.
 			for _, f := range allGoFilesInPkg {
 				if _, visited := s.visitedFiles[f]; !visited {
@@ -774,14 +773,14 @@ func (s *Scanner) ScanPackageByImport(ctx context.Context, importPath string) (*
 }
 
 // getOrCreateSymbolCache ensures the symbolCache is initialized.
-func (s *Scanner) getOrCreateSymbolCache(ctx context.Context) (*cache.SymbolCache, error) {
+func (s *Scanner) getOrCreateSymbolCache(ctx context.Context) (*symbolCache, error) {
 	if s.CachePath == "" {
-		if s.symbolCache == nil || s.symbolCache.IsEnabled() {
+		if s.symbolCache == nil || s.symbolCache.isEnabled() {
 			rootDir := ""
 			if s.locator != nil {
 				rootDir = s.locator.RootDir()
 			}
-			disabledCache, err := cache.NewSymbolCache(rootDir, "")
+			disabledCache, err := newSymbolCache(rootDir, "")
 			if err != nil {
 				return nil, fmt.Errorf("failed to initialize a disabled symbol cache: %w", err)
 			}
@@ -790,7 +789,7 @@ func (s *Scanner) getOrCreateSymbolCache(ctx context.Context) (*cache.SymbolCach
 		return s.symbolCache, nil
 	}
 
-	if s.symbolCache != nil && s.symbolCache.IsEnabled() && s.symbolCache.FilePath() == s.CachePath {
+	if s.symbolCache != nil && s.symbolCache.isEnabled() && s.symbolCache.getFilePath() == s.CachePath {
 		return s.symbolCache, nil
 	}
 
@@ -801,14 +800,14 @@ func (s *Scanner) getOrCreateSymbolCache(ctx context.Context) (*cache.SymbolCach
 		return nil, fmt.Errorf("scanner locator is not initialized, cannot determine root directory for cache")
 	}
 
-	sc, err := cache.NewSymbolCache(rootDir, s.CachePath)
+	sc, err := newSymbolCache(rootDir, s.CachePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize symbol cache with path %s: %w", s.CachePath, err)
 	}
 	s.symbolCache = sc
 
-	if err := s.symbolCache.Load(ctx); err != nil {
-		slog.WarnContext(ctx, "Could not load symbol cache", slog.String("path", s.symbolCache.FilePath()), slog.Any("error", err))
+	if err := s.symbolCache.load(ctx); err != nil {
+		slog.WarnContext(ctx, "Could not load symbol cache", slog.String("path", s.symbolCache.getFilePath()), slog.Any("error", err))
 	}
 	return s.symbolCache, nil
 }
@@ -825,7 +824,7 @@ func (s *Scanner) updateSymbolCacheWithPackageInfo(ctx context.Context, importPa
 		slog.ErrorContext(ctx, "Error getting symbol cache for update", slog.Any("error", err))
 		return
 	}
-	if !symCache.IsEnabled() {
+	if !symCache.isEnabled() {
 		return
 	}
 
@@ -835,7 +834,7 @@ func (s *Scanner) updateSymbolCacheWithPackageInfo(ctx context.Context, importPa
 			// Ensure absFilePath is truly absolute for consistency
 			absFilePath, _ = filepath.Abs(absFilePath) // error unlikely if path came from system
 			key := importPath + "." + symbolName
-			if err := symCache.SetSymbol(key, absFilePath); err != nil {
+			if err := symCache.setSymbol(key, absFilePath); err != nil {
 				slog.ErrorContext(ctx, "Error setting cache for symbol", slog.String("symbol_key", key), slog.Any("error", err))
 			}
 			symbolsByFile[absFilePath] = append(symbolsByFile[absFilePath], symbolName)
@@ -855,15 +854,15 @@ func (s *Scanner) updateSymbolCacheWithPackageInfo(ctx context.Context, importPa
 	for _, absFilePath := range pkgInfo.Files { // These are files that were actually parsed for pkgInfo
 		absFilePath, _ = filepath.Abs(absFilePath) // Ensure absolute
 		if _, err := os.Stat(absFilePath); os.IsNotExist(err) {
-			slog.WarnContext(ctx, "File from pkgInfo.Files not found, skipping for FileMetadata update", slog.String("file", absFilePath))
+			slog.WarnContext(ctx, "File from pkgInfo.Files not found, skipping for fileMetadata update", slog.String("file", absFilePath))
 			continue
 		}
 		fileSymbols := symbolsByFile[absFilePath]
 		if fileSymbols == nil {
 			fileSymbols = []string{}
 		}
-		metadata := cache.FileMetadata{Symbols: fileSymbols}
-		if err := symCache.SetFileMetadata(absFilePath, metadata); err != nil {
+		metadata := fileMetadata{Symbols: fileSymbols}
+		if err := symCache.setFileMetadata(absFilePath, metadata); err != nil {
 			slog.ErrorContext(ctx, "Error setting file metadata", slog.String("file", absFilePath), slog.Any("error", err))
 		}
 	}
@@ -877,9 +876,9 @@ func (s *Scanner) SaveSymbolCache(ctx context.Context) error {
 	if _, err := s.getOrCreateSymbolCache(ctx); err != nil {
 		return fmt.Errorf("cannot save symbol cache, failed to ensure cache initialization for path %s: %w", s.CachePath, err)
 	}
-	if s.symbolCache != nil && s.symbolCache.IsEnabled() {
-		if err := s.symbolCache.Save(); err != nil {
-			return fmt.Errorf("failed to save symbol cache to %s: %w", s.symbolCache.FilePath(), err)
+	if s.symbolCache != nil && s.symbolCache.isEnabled() {
+		if err := s.symbolCache.save(); err != nil {
+			return fmt.Errorf("failed to save symbol cache to %s: %w", s.symbolCache.getFilePath(), err)
 		}
 	}
 	return nil
@@ -905,8 +904,8 @@ func (s *Scanner) FindSymbolDefinitionLocation(ctx context.Context, symbolFullNa
 		symCache, err := s.getOrCreateSymbolCache(ctx)
 		if err != nil {
 			slog.WarnContext(ctx, "Could not get symbol cache. Proceeding with full scan.", slog.String("symbol", symbolFullName), slog.Any("error", err))
-		} else if symCache != nil && symCache.IsEnabled() {
-			filePath, found := symCache.VerifyAndGet(ctx, cacheKey)
+		} else if symCache != nil && symCache.isEnabled() {
+			filePath, found := symCache.verifyAndGet(ctx, cacheKey)
 			if found {
 				return filePath, nil
 			}
@@ -920,8 +919,8 @@ func (s *Scanner) FindSymbolDefinitionLocation(ctx context.Context, symbolFullNa
 
 	// After scan, check cache again (if enabled)
 	if s.CachePath != "" {
-		if s.symbolCache != nil && s.symbolCache.IsEnabled() {
-			filePath, found := s.symbolCache.Get(cacheKey) // Get does not need context
+		if s.symbolCache != nil && s.symbolCache.isEnabled() {
+			filePath, found := s.symbolCache.get(cacheKey) // Get does not need context
 			if found {
 				if _, statErr := os.Stat(filePath); statErr == nil {
 					return filePath, nil

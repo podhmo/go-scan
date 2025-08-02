@@ -10,6 +10,7 @@ import (
 	"github.com/podhmo/go-scan/examples/convert/model"
 )
 
+// convertSrcParentToDstParent converts source.SrcParent to destination.DstParent.
 func convertSrcParentToDstParent(ctx context.Context, ec *model.ErrorCollector, src *source.SrcParent) *destination.DstParent {
 	if src == nil {
 		return nil
@@ -44,6 +45,8 @@ func ConvertSrcParentToDstParent(ctx context.Context, src *source.SrcParent) (*d
 	}
 	return dst, nil
 }
+
+// convertSrcChildToDstChild converts source.SrcChild to destination.DstChild.
 func convertSrcChildToDstChild(ctx context.Context, ec *model.ErrorCollector, src *source.SrcChild) *destination.DstChild {
 	if src == nil {
 		return nil

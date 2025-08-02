@@ -29,6 +29,14 @@ import (
 )
 
 {{ range .Pairs -}}
+// convert{{ .SrcType.Name }}To{{ .DstType.Name }} converts {{ getQualifiedTypeName $.Im .SrcType }} to {{ getQualifiedTypeName $.Im .DstType }}.
+{{- if .UnmappedFields }}
+//
+// Fields that are not populated by this converter:
+{{- range .UnmappedFields }}
+//   - {{ . }}
+{{- end }}
+{{- end }}
 func convert{{ .SrcType.Name }}To{{ .DstType.Name }}(ctx context.Context, ec *model.ErrorCollector, src *{{ getQualifiedTypeName $.Im .SrcType }}) *{{ getQualifiedTypeName $.Im .DstType }} {
 	if src == nil {
 		return nil

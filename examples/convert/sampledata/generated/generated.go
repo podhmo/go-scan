@@ -12,6 +12,13 @@ import (
 	source "github.com/podhmo/go-scan/examples/convert/sampledata/source"
 )
 
+// convertSrcUserToDstUser converts source.SrcUser to destination.DstUser.
+//
+// Fields that are not populated by this converter:
+//   - Address
+//   - Contact
+//   - FullName
+//   - UserID
 func convertSrcUserToDstUser(ctx context.Context, ec *model.ErrorCollector, src *source.SrcUser) *destination.DstUser {
 	if src == nil {
 		return nil
@@ -67,6 +74,13 @@ func ConvertSrcUserToDstUser(ctx context.Context, src *source.SrcUser) (*destina
 	}
 	return dst, nil
 }
+
+// convertSrcOrderToDstOrder converts source.SrcOrder to destination.DstOrder.
+//
+// Fields that are not populated by this converter:
+//   - ID
+//   - LineItems
+//   - TotalAmount
 func convertSrcOrderToDstOrder(ctx context.Context, ec *model.ErrorCollector, src *source.SrcOrder) *destination.DstOrder {
 	if src == nil {
 		return nil
@@ -92,6 +106,8 @@ func ConvertSrcOrderToDstOrder(ctx context.Context, src *source.SrcOrder) (*dest
 	}
 	return dst, nil
 }
+
+// convertComplexSourceToComplexTarget converts source.ComplexSource to destination.ComplexTarget.
 func convertComplexSourceToComplexTarget(ctx context.Context, ec *model.ErrorCollector, src *source.ComplexSource) *destination.ComplexTarget {
 	if src == nil {
 		return nil
@@ -161,6 +177,8 @@ func ConvertComplexSourceToComplexTarget(ctx context.Context, src *source.Comple
 	}
 	return dst, nil
 }
+
+// convertSourceWithMapToTargetWithMap converts source.SourceWithMap to destination.TargetWithMap.
 func convertSourceWithMapToTargetWithMap(ctx context.Context, ec *model.ErrorCollector, src *source.SourceWithMap) *destination.TargetWithMap {
 	if src == nil {
 		return nil
@@ -226,6 +244,12 @@ func ConvertSourceWithMapToTargetWithMap(ctx context.Context, src *source.Source
 	}
 	return dst, nil
 }
+
+// convertSrcInternalDetailToDstInternalDetail converts source.SrcInternalDetail to destination.DstInternalDetail.
+//
+// Fields that are not populated by this converter:
+//   - ItemCode
+//   - LocalizedDesc
 func convertSrcInternalDetailToDstInternalDetail(ctx context.Context, ec *model.ErrorCollector, src *source.SrcInternalDetail) *destination.DstInternalDetail {
 	if src == nil {
 		return nil
@@ -250,6 +274,8 @@ func ConvertSrcInternalDetailToDstInternalDetail(ctx context.Context, src *sourc
 	}
 	return dst, nil
 }
+
+// convertSubSourceToSubTarget converts source.SubSource to destination.SubTarget.
 func convertSubSourceToSubTarget(ctx context.Context, ec *model.ErrorCollector, src *source.SubSource) *destination.SubTarget {
 	if src == nil {
 		return nil

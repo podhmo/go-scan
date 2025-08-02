@@ -9,6 +9,7 @@ import (
 	"github.com/podhmo/go-scan/examples/convert/model"
 )
 
+// convertSrcWithTagsToDstWithTags converts SrcWithTags to DstWithTags.
 func convertSrcWithTagsToDstWithTags(ctx context.Context, ec *model.ErrorCollector, src *SrcWithTags) *DstWithTags {
 	if src == nil {
 		return nil

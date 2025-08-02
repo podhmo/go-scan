@@ -106,6 +106,7 @@ This log is generated for every annotation check.
 -   **`type_file_path`**: `"/path/to/project/models/user.go:10:1"` (The file path and position of the type definition)
 -   **`annotation_name`**: `"@deriving:json"` (The full annotation string being searched for)
 -   **`result`**: `"hit"` or `"miss"`
+-   **`resolution_path`**: `"SrcStruct.FieldA -> NestedStruct.FieldB"` (The chain of fields that led to this type resolution, if applicable)
 
 **Example Log Record (JSON format):**
 ```json
@@ -134,6 +135,7 @@ This log is generated only when an annotation is successfully found.
 -   **`type_file_path`**: `"/path/to/project/models/user.go:10:1"`
 -   **`annotation_name`**: `"@deriving:json"`
 -   **`annotation_value`**: `"omitempty"` (The extracted value of the annotation, if any)
+-   **`resolution_path`**: `"SrcStruct.FieldA -> NestedStruct.FieldB"` (The chain of fields that led to this type resolution, if applicable)
 
 **Example Log Record (JSON format):**
 ```json
@@ -151,3 +153,7 @@ This log is generated only when an annotation is successfully found.
 ```
 
 By including these fields, logs become much more powerful for filtering and querying. For example, a user could easily find all failed annotation checks for a specific type or all successful hits for a particular annotation across the entire project. The `type_file_path` is especially useful for direct navigation from logs to the source code.
+
+#### Implementation Note for `resolution_path`
+
+To capture the `resolution_path`, the implementation would need to pass a `context.Context` through the type resolution process (e.g., `FieldType.Resolve(ctx, ...)`). As the resolution process traverses through struct fields, the path can be appended to a value within the context. The logging function would then extract this path from the context to add it to the log record. This approach ensures that the path information is available at the point of logging without requiring significant changes to method signatures throughout the call stack.

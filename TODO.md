@@ -41,7 +41,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 -   **Integration Tests for Examples:** Added integration tests for the code generation tools in the `examples/` directory using the new `scantest` library.
 -   **Variadic Parameter Parsing**: Correctly parses variadic parameters (e.g., `...string`) as slice types (e.g., `[]string`) within function signatures. The `IsVariadic` flag on `FunctionInfo` is set, and the parameter's `FieldType` accurately reflects the corresponding slice type.
 -   **Initial `convert` Tool Implementation**: Implemented the CLI entrypoint and a basic parser for the `convert` tool. The tool now uses a `@derivingconvert(DstType)` annotation on source types to define conversion pairs, as documented in the updated `docs/plan-neo-convert.md`.
--   **Improved Import Management**: Handle import alias collisions robustly. By pre-registering types with the `ImportManager` and using `golang.org/x/tools/imports` for final output formatting, the generator now correctly handles complex import scenarios and avoids unused imports.
+-   **Improved Import Management**: Handle import alias collisions robustly. By pre-registering types with the `ImportManager` and.
 -   **`convert` Tool Implementation**: as described in [docs/plan-neo-convert.md](docs/plan-neo-convert.md)
     -   [x] **Generator for Structs**: Implement the code generator to produce conversion functions for basic struct-to-struct conversions based on the parsed `ConversionPair` model.
         -   [x] Generate a top-level `Convert<Src>To<Dst>` function.
@@ -110,12 +110,37 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 -   **`derivingjson` Tool**:
     -   [x] `UnmarshalJSON` generation for `oneOf` style interfaces using `@deriving:unmarshal`.
     -   [x] `MarshalJSON` generation for `oneOf` concrete types using `@deriving:marshal` to add a type discriminator.
-
 ## To Be Implemented
 
-### `convert` Tool Future Tasks ([docs/plan-neo-convert.md](./docs/plan-neo-convert.md))
-- [ ] **Expand Test Coverage**: Create a comprehensive test suite that verifies all features and edge cases, including the new import functionality.
-- [ ] **Complete `README.md`**: Write user-facing documentation with installation, usage, and examples.
+### In-Module Dependency Walker ([docs/plan-in-module-deps-walk.md](./docs/plan-in-module-deps-walk.md))
 
-### `scantest` Library Future Work ([docs/plan-scantest.md](./docs/plan-scantest.md))
-- [x] Implement file change detection to verify modifications to existing files during tests.
+- [ ] **1. `go-scan` Library Core Enhancements**
+  - [ ] **Lightweight "Imports-Only" Scanning Mode**
+    - [ ] Define `goscan.PackageImports` struct to hold minimal package import data.
+    - [ ] Implement `scanner.ScanImportsOnly` method using `parser.ImportsOnly` for efficient parsing.
+    - [ ] Implement `goscan.Scanner.ScanPackageImports` to orchestrate lightweight scanning with caching.
+  - [ ] **Generic Graph Traversal Utility**
+    - [ ] Define `goscan.Visitor` interface for injecting logic into the graph walk.
+    - [ ] Implement `goscan.Scanner.Walk` method to perform a generic dependency graph traversal.
+  - [ ] **Add Unit Tests for New `go-scan` Features**
+    - [ ] Write unit tests for `ScanPackageImports`.
+    - [ ] Write unit tests for the `Walk` method with a mock visitor.
+
+- [ ] **2. `deps-walk` Command-Line Tool**
+  - [ ] **Initial Tool Setup**
+    - [ ] Create the basic CLI structure for the `deps-walk` tool.
+    - [ ] Implement the logic to call the new `goscan.Scanner.Walk` method.
+  - [ ] **Core Visualization Features**
+    - [ ] Implement graph generation in DOT format.
+    - [ ] Add support for the `--hops` flag to limit traversal depth.
+  - [ ] **Filtering and Usability**
+    - [ ] Add support for the `--ignore` flag for package exclusion.
+  - [ ] **Integration Tests**
+    - [ ] Add integration tests for the `deps-walk` tool using `scantest`.
+
+- [ ] **3. Future Enhancements**
+  - [ ] **File-Level Granularity**
+    - [ ] Extend `goscan.PackageImports` to include a file-by-file breakdown of imports.
+    - [ ] Add a `--granularity=file` flag to the `deps-walk` tool.
+  - [ ] **Reverse Dependencies (Importers)**
+    - [ ] Investigate strategies for finding reverse dependencies (e.g., text search, pre-built index).

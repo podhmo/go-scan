@@ -10,6 +10,8 @@ This tool will provide a focused view, helping developers answer questions like,
 
 The tool will be a command-line application that uses the `go-scan` library as its engine.
 
+A secondary use case for this dependency walking mechanism is to programmatically collect a set of target packages for other tools. For example, a code generator that operates on marker comments (like `derivingjson`) could use the walker to find all packages within a certain part of the module, and then run its more intensive scanning process only on that collected set.
+
 ## 2. Core Features of the Visualization Tool
 
 The command-line tool will support the following features:
@@ -22,9 +24,9 @@ The user will be able to specify the maximum number of hops (degrees of separati
 
 ### 2.2. Package Exclusion
 
-The user will be able to provide a list of package import patterns to ignore or exclude from the graph. This is useful for hiding ubiquitous dependencies like logging, configuration, or common utility packages to de-clutter the output.
+The user will be able to provide a list of package import patterns to ignore or exclude from the graph. This is useful for hiding ubiquitous dependencies like logging, configuration, or common utility packages to de-clutter the output. The patterns should support glob-style matching for more flexibility.
 
--   **Example:** `go-deps-walk --start-pkg=./api --ignore="github.com/my-org/core/log,github.com/my-org/core/config"`
+-   **Example:** `go-deps-walk --start-pkg=./api --ignore="github.com/my-org/core/*,*.test"`
 
 ### 2.3. Output Format
 

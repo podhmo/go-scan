@@ -18,30 +18,30 @@ func convertSrcToDst(ctx context.Context, ec *model.ErrorCollector, src *Src) *D
 		return dst
 	}
 	ec.Enter("Items")
-	dst.Items = func() []*DstItem {
+	{
 		convertedSlice := make([]*DstItem, len(src.Items))
 		for i, item := range src.Items {
 			ec.Enter(fmt.Sprintf("[%d]", i))
 			convertedSlice[i] = convertSrcItemToDstItem(ctx, ec, item)
 			ec.Leave()
 		}
-		return convertedSlice
-	}()
+		dst.Items = convertedSlice
+	}
 
 	ec.Leave()
 	if ec.MaxErrorsReached() {
 		return dst
 	}
 	ec.Enter("ItemMap")
-	dst.ItemMap = func() map[string]*DstItem {
+	{
 		convertedMap := make(map[string]*DstItem, len(src.ItemMap))
 		for key, value := range src.ItemMap {
 			ec.Enter(fmt.Sprintf("[%v]", key))
 			convertedMap[key] = convertSrcItemToDstItem(ctx, ec, value)
 			ec.Leave()
 		}
-		return convertedMap
-	}()
+		dst.ItemMap = convertedMap
+	}
 
 	ec.Leave()
 	return dst

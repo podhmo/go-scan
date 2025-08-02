@@ -37,6 +37,7 @@ func convert{{ .SrcType.Name }}To{{ .DstType.Name }}(ctx context.Context, ec *mo
 	{{ end -}}
 	dst := &{{ getQualifiedTypeName $.Im .DstType }}{}
 	{{ range .Fields -}}
+	{{ .Docstring }}
 	if ec.MaxErrorsReached() { return dst }
 	ec.Enter("{{ .DstName }}")
 	{{ $assignment := getAssignment $.Im $.Info . "src" "dst" "ec" "ctx" -}}
@@ -83,6 +84,7 @@ type TemplatePair struct {
 type FieldMap struct {
 	SrcName   string
 	DstName   string
+	Docstring string
 	Tag       model.ConvertTag
 	SrcFieldT *scanner.FieldType
 	DstFieldT *scanner.FieldType
@@ -281,9 +283,16 @@ func createFieldMaps(ctx context.Context, s *goscan.Scanner, src, dst *model.Str
 
 		slog.DebugContext(ctx, "src field matched", "src", srcField.Name, "dst", dstField.Name, "reason", reason)
 		_ = resolveFieldType(ctx, dstField.FieldType)
+
+		docstring := ""
+		if !dstField.FieldType.IsPointer || srcField.Tag.Required {
+			docstring = fmt.Sprintf("// %s -> %s", srcField.Name, dstField.Name)
+		}
+
 		maps = append(maps, FieldMap{
 			SrcName:   srcField.Name,
 			DstName:   dstField.Name,
+			Docstring: docstring,
 			Tag:       srcField.Tag,
 			SrcFieldT: srcField.FieldType,
 			DstFieldT: dstField.FieldType,

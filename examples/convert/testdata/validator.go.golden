@@ -13,6 +13,7 @@ func convertSrcToDst(ctx context.Context, ec *model.ErrorCollector, src *Src) *D
 		return nil
 	}
 	dst := &Dst{}
+	// Name -> Name
 	if ec.MaxErrorsReached() {
 		return dst
 	}
@@ -20,6 +21,7 @@ func convertSrcToDst(ctx context.Context, ec *model.ErrorCollector, src *Src) *D
 	dst.Name = src.Name
 	validateString(ec, dst.Name)
 	ec.Leave()
+	// Age -> Age
 	if ec.MaxErrorsReached() {
 		return dst
 	}

@@ -14,6 +14,7 @@ func convertSrcToDst(ctx context.Context, ec *model.ErrorCollector, src *Src) *D
 		return nil
 	}
 	dst := &Dst{}
+	// Data -> Data
 	if ec.MaxErrorsReached() {
 		return dst
 	}

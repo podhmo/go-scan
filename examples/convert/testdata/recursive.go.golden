@@ -15,6 +15,7 @@ func convertSrcParentToDstParent(ctx context.Context, ec *model.ErrorCollector, 
 		return nil
 	}
 	dst := &destination.DstParent{}
+	// ID -> ID
 	if ec.MaxErrorsReached() {
 		return dst
 	}
@@ -22,6 +23,7 @@ func convertSrcParentToDstParent(ctx context.Context, ec *model.ErrorCollector, 
 	dst.ID = src.ID
 
 	ec.Leave()
+	// Child -> Child
 	if ec.MaxErrorsReached() {
 		return dst
 	}
@@ -49,6 +51,7 @@ func convertSrcChildToDstChild(ctx context.Context, ec *model.ErrorCollector, sr
 		return nil
 	}
 	dst := &destination.DstChild{}
+	// Value -> Value
 	if ec.MaxErrorsReached() {
 		return dst
 	}

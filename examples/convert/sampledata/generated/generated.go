@@ -152,8 +152,6 @@ func convertComplexSourceToComplexTarget(ctx context.Context, ec *model.ErrorCol
 // ConvertComplexSourceToComplexTarget converts source.ComplexSource to destination.ComplexTarget.
 //
 // Fields that are not populated by this converter:
-//
-//	(all fields are populated)
 func ConvertComplexSourceToComplexTarget(ctx context.Context, src *source.ComplexSource) (*destination.ComplexTarget, error) {
 	if src == nil {
 		return nil, nil
@@ -221,8 +219,6 @@ func convertSourceWithMapToTargetWithMap(ctx context.Context, ec *model.ErrorCol
 // ConvertSourceWithMapToTargetWithMap converts source.SourceWithMap to destination.TargetWithMap.
 //
 // Fields that are not populated by this converter:
-//
-//	(all fields are populated)
 func ConvertSourceWithMapToTargetWithMap(ctx context.Context, src *source.SourceWithMap) (*destination.TargetWithMap, error) {
 	if src == nil {
 		return nil, nil
@@ -276,8 +272,6 @@ func convertSubSourceToSubTarget(ctx context.Context, ec *model.ErrorCollector, 
 // ConvertSubSourceToSubTarget converts source.SubSource to destination.SubTarget.
 //
 // Fields that are not populated by this converter:
-//
-//	(all fields are populated)
 func ConvertSubSourceToSubTarget(ctx context.Context, src *source.SubSource) (*destination.SubTarget, error) {
 	if src == nil {
 		return nil, nil

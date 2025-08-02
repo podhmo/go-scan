@@ -35,8 +35,6 @@ func convertSrcToDst(ctx context.Context, ec *model.ErrorCollector, src *Src) *D
 // ConvertSrcToDst converts Src to Dst.
 //
 // Fields that are not populated by this converter:
-//
-//	(all fields are populated)
 func ConvertSrcToDst(ctx context.Context, src *Src) (*Dst, error) {
 	if src == nil {
 		return nil, nil
@@ -66,8 +64,6 @@ func convertSrcItemToDstItem(ctx context.Context, ec *model.ErrorCollector, src 
 // ConvertSrcItemToDstItem converts SrcItem to DstItem.
 //
 // Fields that are not populated by this converter:
-//
-//	(all fields are populated)
 func ConvertSrcItemToDstItem(ctx context.Context, src *SrcItem) (*DstItem, error) {
 	if src == nil {
 		return nil, nil

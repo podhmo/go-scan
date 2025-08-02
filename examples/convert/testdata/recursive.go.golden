@@ -35,8 +35,6 @@ func convertSrcParentToDstParent(ctx context.Context, ec *model.ErrorCollector, 
 // ConvertSrcParentToDstParent converts source.SrcParent to destination.DstParent.
 //
 // Fields that are not populated by this converter:
-//
-//	(all fields are populated)
 func ConvertSrcParentToDstParent(ctx context.Context, src *source.SrcParent) (*destination.DstParent, error) {
 	if src == nil {
 		return nil, nil
@@ -66,8 +64,6 @@ func convertSrcChildToDstChild(ctx context.Context, ec *model.ErrorCollector, sr
 // ConvertSrcChildToDstChild converts source.SrcChild to destination.DstChild.
 //
 // Fields that are not populated by this converter:
-//
-//	(all fields are populated)
 func ConvertSrcChildToDstChild(ctx context.Context, src *source.SrcChild) (*destination.DstChild, error) {
 	if src == nil {
 		return nil, nil

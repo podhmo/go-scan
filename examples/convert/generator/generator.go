@@ -58,8 +58,6 @@ func convert{{ .SrcType.Name }}To{{ .DstType.Name }}(ctx context.Context, ec *mo
 {{- range .UnmappedFields }}
 //   - {{ . }}
 {{- end }}
-{{- else }}
-//   (all fields are populated)
 {{- end }}
 func Convert{{ .SrcType.Name }}To{{ .DstType.Name }}(ctx context.Context, src *{{ getQualifiedTypeName $.Im .SrcType }}) (*{{ getQualifiedTypeName $.Im .DstType }}, error) {
 	if src == nil {

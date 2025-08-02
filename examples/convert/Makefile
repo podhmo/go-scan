@@ -1,13 +1,17 @@
 .PHONY: test clean e2e update-golden
 
-test: e2e
-	go test -v ./... ./generated_test
+test: clean
+	go test -v ./...
 
-update-golden: e2e
+# The 'e2e' and 'test' targets are separate because in CI,
+# the generation step (e2e) and the testing step (test) are run independently.
+# The 'update-golden' target is for local development to update testdata.
+update-golden:
 	go test -v . -update
 
 clean:
 	rm -rf sampledata/generated
+	rm -rf generated_test
 
 e2e:
 	mkdir -p sampledata/generated

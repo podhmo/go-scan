@@ -100,6 +100,35 @@ Every tool that needs to walk the dependency graph will have to re-implement the
 
 2.  **New `Walk` Method:** Create a new public method `goscan.Scanner.Walk(ctx, rootImportPath, visitor)`. This function will perform a breadth-first or depth-first search of the dependency graph. It will handle the queue, manage the `visited` set, and call the new `ScanPackageImports` method to get dependencies. At each package, it will invoke the `visitor.Visit` method, giving the calling tool control over the process, including implementing hop limits and ignore lists.
 
-## 5. Conclusion
+## 5. Further Considerations
 
-By adding an efficient **imports-only scanning mode** and a **reusable graph walking utility** to the `go-scan` library, we can build the desired dependency visualization tool cleanly and efficiently. The implementation should proceed by first adding these core features to the `go-scan` library, then building the command-line tool on top of that enhanced foundation.
+### 5.1. Reverse Dependencies (Importers)
+
+The proposed `Walk` utility follows `import` statements, which is a directed graph. A common related task is to find all packages that *import* a given package (i.e., finding "importers" or "reverse dependencies"). This is a much harder problem as it requires searching the entire codebase for import declarations, rather than just following a direct graph.
+
+This is out of scope for the initial tool, but a potential future enhancement could involve:
+- **Text-based Search**: Integrating a fast search tool like `ripgrep` to `grep` for import paths across the module.
+- **Building an Index**: A more advanced solution could involve a separate tool that builds a full import index of the module. The `go-scan` symbol cache could potentially be extended for this purpose.
+
+### 5.2. Dependency Granularity
+
+The current plan focuses on package-level dependencies. However, dependencies can also be analyzed at a more granular, file-level. For example, `file_A.go` might import package `P`, while `file_B.go` in the same package does not.
+
+The proposed `goscan.PackageImports` struct could be extended to support this:
+
+```go
+// Extended PackageImports struct
+type PackageImports struct {
+    Name       string
+    ImportPath string
+    // Imports is the aggregated list of all imports in the package
+    Imports []string
+    // FileImports provides a file-by-file breakdown
+    FileImports map[string][]string // map[filePath][]importPath
+}
+```
+The visualization tool could then have a flag (`--granularity=file`) to render the more detailed graph. This would be a valuable feature for understanding coupling within a package.
+
+## 6. Conclusion
+
+By adding an efficient **imports-only scanning mode** and a **reusable graph walking utility** to the `go-scan` library, we can build the desired dependency visualization tool cleanly and efficiently. The further considerations of reverse dependencies and file-level granularity should be kept in mind for future iterations. The implementation should proceed by first adding these core features to the `go-scan` library, then building the command-line tool on top of that enhanced foundation.

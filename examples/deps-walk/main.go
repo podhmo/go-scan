@@ -22,6 +22,7 @@ func main() {
 		ignore   string
 		output   string
 		full     bool
+		short    bool
 	)
 
 	flag.StringVar(&startPkg, "start-pkg", "", "The root package to start the dependency walk from (required)")
@@ -29,18 +30,19 @@ func main() {
 	flag.StringVar(&ignore, "ignore", "", "A comma-separated list of package patterns to ignore")
 	flag.StringVar(&output, "output", "", "Output file path for the DOT graph (defaults to stdout)")
 	flag.BoolVar(&full, "full", false, "Include dependencies outside the current module")
+	flag.BoolVar(&short, "short", false, "Omit module prefix from package paths in the output")
 	flag.Parse()
 
 	if startPkg == "" {
 		log.Fatal("-start-pkg is required")
 	}
 
-	if err := run(context.Background(), startPkg, hops, ignore, output, full); err != nil {
+	if err := run(context.Background(), startPkg, hops, ignore, output, full, short); err != nil {
 		log.Fatalf("Error: %+v", err)
 	}
 }
 
-func run(ctx context.Context, startPkg string, hops int, ignore string, output string, full bool) error {
+func run(ctx context.Context, startPkg string, hops int, ignore string, output string, full bool, short bool) error {
 	s, err := goscan.New()
 	if err != nil {
 		return fmt.Errorf("failed to create scanner: %w", err)
@@ -55,6 +57,7 @@ func run(ctx context.Context, startPkg string, hops int, ignore string, output s
 		s:              s,
 		hops:           hops,
 		full:           full,
+		short:          short,
 		ignorePatterns: ignorePatterns,
 		dependencies:   make(map[string][]string),
 		packageHops:    make(map[string]int),
@@ -86,6 +89,7 @@ type graphVisitor struct {
 	s              *goscan.Scanner
 	hops           int
 	full           bool
+	short          bool
 	ignorePatterns []string
 	dependencies   map[string][]string // from -> to[]
 	packageHops    map[string]int      // package -> hop level
@@ -162,9 +166,16 @@ func (v *graphVisitor) WriteDOT(w io.Writer) error {
 	}
 	sort.Strings(sortedPackages)
 
+	modulePath := v.s.ModulePath()
+
 	// Declare all nodes with their import paths as labels
 	for _, pkg := range sortedPackages {
-		fmt.Fprintf(w, `  "%s" [label="%s"];`+"\n", pkg, pkg)
+		label := pkg
+		if v.short && modulePath != "" && strings.HasPrefix(pkg, modulePath) {
+			label = strings.TrimPrefix(pkg, modulePath)
+			label = strings.TrimPrefix(label, "/")
+		}
+		fmt.Fprintf(w, `  "%s" [label="%s"];`+"\n", pkg, label)
 	}
 
 	fmt.Fprintln(w, "") // separator

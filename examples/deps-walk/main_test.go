@@ -57,9 +57,21 @@ func TestRun(t *testing.T) {
 				"start-pkg": "github.com/podhmo/go-scan/testdata/walk/a",
 				"hops":      1,
 				"full":      false,
+				"short":     false,
 				"ignore":    "",
 			},
 			goldenFile: "default.golden",
+		},
+		{
+			name: "default-short",
+			args: map[string]interface{}{
+				"start-pkg": "github.com/podhmo/go-scan/testdata/walk/a",
+				"hops":      1,
+				"full":      false,
+				"short":     true,
+				"ignore":    "",
+			},
+			goldenFile: "default-short.golden",
 		},
 		{
 			name: "hops=2",
@@ -67,6 +79,7 @@ func TestRun(t *testing.T) {
 				"start-pkg": "github.com/podhmo/go-scan/testdata/walk/a",
 				"hops":      2,
 				"full":      true, // to see external deps
+				"short":     false,
 				"ignore":    "",
 			},
 			goldenFile: "hops2.golden",
@@ -77,6 +90,7 @@ func TestRun(t *testing.T) {
 				"start-pkg": "github.com/podhmo/go-scan/testdata/walk/a",
 				"hops":      1,
 				"full":      false,
+				"short":     false,
 				"ignore":    "github.com/podhmo/go-scan/testdata/walk/c",
 			},
 			goldenFile: "ignore-c.golden",
@@ -87,6 +101,7 @@ func TestRun(t *testing.T) {
 				"start-pkg": "github.com/podhmo/go-scan/testdata/walk/d", // d imports an external package
 				"hops":      1,
 				"full":      true,
+				"short":     false,
 				"ignore":    "",
 			},
 			goldenFile: "full.golden",
@@ -117,6 +132,7 @@ func TestRun(t *testing.T) {
 				tc.args["ignore"].(string),
 				outputFile,
 				tc.args["full"].(bool),
+				tc.args["short"].(bool),
 			)
 			if err != nil {
 				t.Fatalf("run() failed unexpectedly: %+v", err)

@@ -34,7 +34,15 @@ func convertSrcToDst(ctx context.Context, ec *model.ErrorCollector, src *Src) *D
 	}
 	ec.Enter("ItemsPtr")
 	if src.ItemsPtr != nil {
-		tmp := *convertSrcItemToDstItem(ctx, ec, &(*src.ItemsPtr))
+		tmp := func() []DstItem {
+			convertedSlice := make([]DstItem, len((*src.ItemsPtr)))
+			for i, item := range *src.ItemsPtr {
+				ec.Enter(fmt.Sprintf("[%d]", i))
+				convertedSlice[i] = *convertSrcItemToDstItem(ctx, ec, &item)
+				ec.Leave()
+			}
+			return convertedSlice
+		}()
 		dst.ItemsPtr = &tmp
 	} else {
 		dst.ItemsPtr = nil
@@ -46,7 +54,15 @@ func convertSrcToDst(ctx context.Context, ec *model.ErrorCollector, src *Src) *D
 	}
 	ec.Enter("ItemsPtrPtr")
 	if src.ItemsPtrPtr != nil {
-		tmp := convertSrcItemToDstItem(ctx, ec, (*src.ItemsPtrPtr))
+		tmp := func() []*DstItem {
+			convertedSlice := make([]*DstItem, len((*src.ItemsPtrPtr)))
+			for i, item := range *src.ItemsPtrPtr {
+				ec.Enter(fmt.Sprintf("[%d]", i))
+				convertedSlice[i] = convertSrcItemToDstItem(ctx, ec, item)
+				ec.Leave()
+			}
+			return convertedSlice
+		}()
 		dst.ItemsPtrPtr = &tmp
 	} else {
 		dst.ItemsPtrPtr = nil

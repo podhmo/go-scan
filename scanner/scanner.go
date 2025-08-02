@@ -457,9 +457,17 @@ func (s *Scanner) parseTypeExpr(ctx context.Context, expr ast.Expr, currentTypeP
 			}
 		}
 	case *ast.StarExpr:
-		underlyingType := s.parseTypeExpr(ctx, t.X, currentTypeParams, info, importLookup)
-		underlyingType.IsPointer = true
-		return underlyingType
+		elemType := s.parseTypeExpr(ctx, t.X, currentTypeParams, info, importLookup)
+		return &FieldType{
+			Resolver:       s.resolver,
+			Name:           elemType.Name,
+			IsPointer:      true,
+			Elem:           elemType,
+			FullImportPath: elemType.FullImportPath,
+			TypeName:       elemType.TypeName,
+			PkgName:        elemType.PkgName,
+			TypeArgs:       elemType.TypeArgs,
+		}
 	case *ast.SelectorExpr:
 		pkgIdent, ok := t.X.(*ast.Ident)
 		if !ok {

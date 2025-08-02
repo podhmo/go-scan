@@ -6,8 +6,8 @@ import (
 	"errors"
 	"fmt"
 
+	convutil "github.com/podhmo/go-scan/examples/convert/convutil"
 	"github.com/podhmo/go-scan/examples/convert/model"
-	converter "github.com/podhmo/go-scan/examples/convert/sampledata/converter"
 	destination "github.com/podhmo/go-scan/examples/convert/sampledata/destination"
 	source "github.com/podhmo/go-scan/examples/convert/sampledata/source"
 )
@@ -36,14 +36,14 @@ func convertSrcUserToDstUser(ctx context.Context, ec *model.ErrorCollector, src 
 		return dst
 	}
 	ec.Enter("CreatedAt")
-	dst.CreatedAt = converter.TimeToString(ctx, ec, src.CreatedAt)
+	dst.CreatedAt = convutil.TimeToString(ctx, ec, src.CreatedAt)
 
 	ec.Leave()
 	if ec.MaxErrorsReached() {
 		return dst
 	}
 	ec.Enter("UpdatedAt")
-	dst.UpdatedAt = converter.PtrTimeToString(ctx, ec, src.UpdatedAt)
+	dst.UpdatedAt = convutil.PtrTimeToString(ctx, ec, src.UpdatedAt)
 
 	ec.Leave()
 	return dst
@@ -97,7 +97,12 @@ func convertComplexSourceToComplexTarget(ctx context.Context, ec *model.ErrorCol
 		return dst
 	}
 	ec.Enter("Ptr")
-	dst.Ptr = src.Ptr
+	if src.Ptr != nil {
+		tmp := (*src.Ptr)
+		dst.Ptr = &tmp
+	} else {
+		dst.Ptr = nil
+	}
 
 	ec.Leave()
 	if ec.MaxErrorsReached() {

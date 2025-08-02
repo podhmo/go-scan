@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
 	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/examples/derivingbind/gen"
 	"github.com/podhmo/go-scan/scanner"

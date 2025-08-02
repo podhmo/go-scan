@@ -139,7 +139,36 @@ func (s *Scanner) scanGoFiles(ctx context.Context, filePaths []string, pkgDirPat
 	if info.Name == "" && len(filePaths) > 0 {
 		return nil, fmt.Errorf("could not determine package name from scanned files in %s", pkgDirPath)
 	}
+
+	s.resolveEnums(info)
+
 	return info, nil
+}
+
+// resolveEnums performs a linking pass to connect constants with their enum types.
+func (s *Scanner) resolveEnums(pkgInfo *PackageInfo) {
+	for _, c := range pkgInfo.Constants {
+		// A constant must have an explicit type to be considered an enum member.
+		if c.Type == nil || c.Type.TypeName == "" {
+			continue
+		}
+
+		// The constant's type must belong to the package being scanned.
+		// The parser sets FullImportPath for local types, so this check is reliable.
+		if c.Type.FullImportPath != pkgInfo.ImportPath {
+			continue
+		}
+
+		// Find the TypeInfo corresponding to the constant's type name.
+		typeInfo := pkgInfo.Lookup(c.Type.TypeName)
+		if typeInfo == nil {
+			continue
+		}
+
+		// Link the constant to the type.
+		typeInfo.EnumMembers = append(typeInfo.EnumMembers, c)
+		typeInfo.IsEnum = true
+	}
 }
 
 func (s *Scanner) buildImportLookup(file *ast.File) map[string]string {
@@ -157,6 +186,8 @@ func (s *Scanner) buildImportLookup(file *ast.File) map[string]string {
 }
 
 func (s *Scanner) parseGenDecl(ctx context.Context, decl *ast.GenDecl, info *PackageInfo, absFilePath string, importLookup map[string]string) {
+	var lastConstType *FieldType // Holds the type for iota-based const blocks
+
 	for _, spec := range decl.Specs {
 		switch sp := spec.(type) {
 		case *ast.TypeSpec:
@@ -165,6 +196,7 @@ func (s *Scanner) parseGenDecl(ctx context.Context, decl *ast.GenDecl, info *Pac
 				typeInfo.Doc = commentText(decl.Doc)
 			}
 			info.Types = append(info.Types, typeInfo)
+			lastConstType = nil // Reset on a type spec within the same GenDecl
 		case *ast.ValueSpec:
 			if decl.Tok == token.CONST {
 				doc := commentText(sp.Doc)
@@ -174,6 +206,16 @@ func (s *Scanner) parseGenDecl(ctx context.Context, decl *ast.GenDecl, info *Pac
 				if doc == "" && decl.Doc != nil {
 					doc = commentText(decl.Doc)
 				}
+
+				var currentSpecType *FieldType
+				if sp.Type != nil {
+					currentSpecType = s.parseTypeExpr(ctx, sp.Type, nil, info, importLookup)
+					lastConstType = currentSpecType // Remember this type for subsequent specs
+				} else {
+					// If type is not explicit, inherit from the previous const spec in this block.
+					currentSpecType = lastConstType
+				}
+
 				for i, name := range sp.Names {
 					var val string
 					var inferredFieldType *FieldType
@@ -195,10 +237,8 @@ func (s *Scanner) parseGenDecl(ctx context.Context, decl *ast.GenDecl, info *Pac
 						}
 					}
 
-					var finalFieldType *FieldType
-					if sp.Type != nil {
-						finalFieldType = s.parseTypeExpr(ctx, sp.Type, nil, info, importLookup)
-					} else {
+					finalFieldType := currentSpecType
+					if finalFieldType == nil {
 						finalFieldType = inferredFieldType
 					}
 

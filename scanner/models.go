@@ -87,6 +87,10 @@ type TypeInfo struct {
 	Func       *FunctionInfo    `json:"func,omitempty"` // For type alias to func type
 	Interface  *InterfaceInfo   `json:"interface,omitempty"`
 	Underlying *FieldType       `json:"underlying,omitempty"` // For alias types
+
+	// --- Fields for Enum-like patterns ---
+	IsEnum      bool            `json:"isEnum,omitempty"`      // True if this type is identified as an enum
+	EnumMembers []*ConstantInfo `json:"enumMembers,omitempty"` // List of constants belonging to this enum type
 }
 
 // Annotation extracts the value of a specific annotation from the TypeInfo's Doc string.

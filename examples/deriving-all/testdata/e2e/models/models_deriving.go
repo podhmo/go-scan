@@ -1,11 +1,11 @@
 package models
 
 import (
-	json "encoding/json"
-	errors "errors"
-	fmt "fmt"
-	io "io"
-	http "net/http"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
 )
 
 func (s *Event) UnmarshalJSON(data []byte) error {

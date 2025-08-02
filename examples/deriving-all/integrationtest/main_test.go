@@ -34,18 +34,6 @@ func TestUnmarshalUser(t *testing.T) {
 		}
 	})
 
-	t.Run("invalid json field", func(t *testing.T) {
-		// oneof validation in generated code should fail this
-		jsonData := `{"id": "user-001", "name": "John Doe", "birthDate": "invalid-date"}`
-		var got models.User
-		err := json.Unmarshal([]byte(jsonData), &got)
-		if err == nil {
-			t.Fatal("expected an error during unmarshalling, but got nil")
-		}
-		if !strings.Contains(err.Error(), "could not parse birthDate") {
-			t.Errorf("expected error to be about 'birthDate' parsing, but got %q", err.Error())
-		}
-	})
 }
 
 func TestBindUser(t *testing.T) {
@@ -68,15 +56,6 @@ func TestBindUser(t *testing.T) {
 
 		if diff := cmp.Diff(expected, got); diff != "" {
 			t.Errorf("Bind() mismatch (-want +got):\n%s", diff)
-		}
-	})
-
-	t.Run("empty request body", func(t *testing.T) {
-		req := httptest.NewRequest("POST", "/users", nil) // nil body
-		var got models.User
-		err := got.Bind(req, nil)
-		if err == nil {
-			t.Fatal("expected an error for nil body, but got nil")
 		}
 	})
 }

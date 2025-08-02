@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 
 	goscan "github.com/podhmo/go-scan"
@@ -125,29 +124,10 @@ func main() {
 
 		outputFilename := fmt.Sprintf("%s_deriving.go", strings.ToLower(pkgInfo.Name))
 
-		// Manually construct the file content
+		// Manually construct the file content, but without the import block.
+		// Let goimports handle the imports entirely.
 		var buf bytes.Buffer
 		fmt.Fprintf(&buf, "package %s\n\n", goFile.PackageName)
-		if len(goFile.Imports) > 0 {
-			fmt.Fprintln(&buf, "import (")
-			// Sort imports for consistent output
-			importPaths := make([]string, 0, len(goFile.Imports))
-			for path := range goFile.Imports {
-				importPaths = append(importPaths, path)
-			}
-			sort.Strings(importPaths)
-
-			for _, path := range importPaths {
-				alias := goFile.Imports[path]
-				if alias != "" {
-					fmt.Fprintf(&buf, "\t%s \"%s\"\n", alias, path)
-				} else {
-					fmt.Fprintf(&buf, "\t\"%s\"\n", path)
-				}
-			}
-			fmt.Fprintln(&buf, ")")
-		}
-		buf.WriteString("\n")
 		buf.WriteString(goFile.CodeSet)
 
 		// Format the code using goimports

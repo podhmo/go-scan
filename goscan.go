@@ -51,6 +51,22 @@ func (s *Scanner) Fset() *token.FileSet {
 	return s.fset
 }
 
+// ModulePath returns the module path from the scanner's locator.
+func (s *Scanner) ModulePath() string {
+	if s.locator == nil {
+		return ""
+	}
+	return s.locator.ModulePath()
+}
+
+// RootDir returns the module root directory from the scanner's locator.
+func (s *Scanner) RootDir() string {
+	if s.locator == nil {
+		return ""
+	}
+	return s.locator.RootDir()
+}
+
 // LookupOverride checks if a fully qualified type name exists in the external type override map.
 func (s *Scanner) LookupOverride(qualifiedName string) (*scanner.TypeInfo, bool) {
 	if s.ExternalTypeOverrides == nil {

@@ -125,7 +125,7 @@ Based on the plan in [docs/plan-multi-package-handling.md](./docs/plan-multi-pac
     *   [x] Add a new target to the `Makefile` to run the `examples/convert` tool.
 
 ### Generator Logic Enhancements
-*   [ ] **Recursive Converter Generation**: The generator should automatically create converters for nested struct types that are required for a top-level conversion, even if they don't have a `@derivingconvert` annotation themselves. Currently, all required structs must be explicitly annotated.
+*   [x] **Recursive Converter Generation**: The generator should automatically create converters for nested struct types that are required for a top-level conversion, even if they don't have a `@derivingconvert` annotation themselves. Currently, all required structs must be explicitly annotated.
 *   [ ] **Pointer-Aware Global Rules**: Global conversion rules (`// convert:rule`) should correctly apply to pointer types. For example, a rule for `time.Time` -> `string` should also be applicable to a field of type `*time.Time` without needing a separate rule, by automatically handling the `nil` check and dereferencing.
 *   [ ] **Improved Type Resolution for Generics/Pointers**: The `getTypeName` function in the generator needs to be more robust. It currently defaults to `interface{}` for some complex types like pointers to structs within slices or maps (e.g., `[]*MyStruct`), causing compilation errors in the generated code. This may be due to a bug in how `scanner.FieldType.Elem` is populated or how `getTypeName` handles it.
 

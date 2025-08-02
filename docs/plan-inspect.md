@@ -89,3 +89,65 @@ package main
 ```
 
 This implementation would provide powerful debugging tools while maintaining a clean separation of concerns between the core library and the applications that use it.
+
+## 4. Structured Logging Fields
+
+To maximize the utility of the `inspect` mode, especially when logs are consumed by automated systems, the following structured fields should be included in the `slog` output.
+
+### 4.1. `DEBUG` Level Log (Annotation Check)
+
+This log is generated for every annotation check.
+
+-   **`level`**: `DEBUG`
+-   **`msg`**: `"checking for annotation"`
+-   **`component`**: `"go-scan"` (To identify the log source)
+-   **`type_name`**: `"User"` (The name of the struct/type being inspected)
+-   **`type_pkg_path`**: `"example.com/m/models"` (The full package path of the type)
+-   **`type_file_path`**: `"/path/to/project/models/user.go:10:1"` (The file path and position of the type definition)
+-   **`annotation_name`**: `"@deriving:json"` (The full annotation string being searched for)
+-   **`result`**: `"hit"` or `"miss"`
+
+**Example Log Record (JSON format):**
+```json
+{
+  "time": "2023-10-27T10:00:00.000Z",
+  "level": "DEBUG",
+  "msg": "checking for annotation",
+  "component": "go-scan",
+  "type_name": "User",
+  "type_pkg_path": "example.com/m/models",
+  "type_file_path": "/path/to/project/models/user.go:10:1",
+  "annotation_name": "@deriving:json",
+  "result": "hit"
+}
+```
+
+### 4.2. `INFO` Level Log (Annotation Found)
+
+This log is generated only when an annotation is successfully found.
+
+-   **`level`**: `INFO`
+-   **`msg`**: `"found annotation"`
+-   **`component`**: `"go-scan"`
+-   **`type_name`**: `"User"`
+-   **`type_pkg_path`**: `"example.com/m/models"`
+-   **`type_file_path`**: `"/path/to/project/models/user.go:10:1"`
+-   **`annotation_name`**: `"@deriving:json"`
+-   **`annotation_value`**: `"omitempty"` (The extracted value of the annotation, if any)
+
+**Example Log Record (JSON format):**
+```json
+{
+  "time": "2023-10-27T10:00:00.000Z",
+  "level": "INFO",
+  "msg": "found annotation",
+  "component": "go-scan",
+  "type_name": "User",
+  "type_pkg_path": "example.com/m/models",
+  "type_file_path": "/path/to/project/models/user.go:10:1",
+  "annotation_name": "@deriving:json",
+  "annotation_value": "omitempty"
+}
+```
+
+By including these fields, logs become much more powerful for filtering and querying. For example, a user could easily find all failed annotation checks for a specific type or all successful hits for a particular annotation across the entire project. The `type_file_path` is especially useful for direct navigation from logs to the source code.

@@ -110,21 +110,13 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 -   **`derivingjson` Tool**:
     -   [x] `UnmarshalJSON` generation for `oneOf` style interfaces using `@deriving:unmarshal`.
     -   [x] `MarshalJSON` generation for `oneOf` concrete types using `@deriving:marshal` to add a type discriminator.
+-   **In-Module Dependency Walker (`go-scan` Library Core)**: Implemented the core library features for dependency walking as described in [docs/plan-in-module-deps-walk.md](./docs/plan-in-module-deps-walk.md).
+    -   [x] **Lightweight "Imports-Only" Scanning Mode**: Added `ScanPackageImports` for efficient dependency discovery without a full AST parse.
+    -   [x] **Generic Graph Traversal Utility**: Added the `Walk` method and `Visitor` interface to allow for flexible dependency graph traversal.
+    -   [x] **Unit Tests**: Added comprehensive unit tests for the new scanning and walking features.
 ## To Be Implemented
 
 ### In-Module Dependency Walker ([docs/plan-in-module-deps-walk.md](./docs/plan-in-module-deps-walk.md))
-
-- [ ] **1. `go-scan` Library Core Enhancements**
-  - [ ] **Lightweight "Imports-Only" Scanning Mode**
-    - [ ] Define `goscan.PackageImports` struct to hold minimal package import data.
-    - [ ] Implement `scanner.ScanImportsOnly` method using `parser.ImportsOnly` for efficient parsing.
-    - [ ] Implement `goscan.Scanner.ScanPackageImports` to orchestrate lightweight scanning with caching.
-  - [ ] **Generic Graph Traversal Utility**
-    - [ ] Define `goscan.Visitor` interface for injecting logic into the graph walk.
-    - [ ] Implement `goscan.Scanner.Walk` method to perform a generic dependency graph traversal.
-  - [ ] **Add Unit Tests for New `go-scan` Features**
-    - [ ] Write unit tests for `ScanPackageImports`.
-    - [ ] Write unit tests for the `Walk` method with a mock visitor.
 
 - [ ] **2. `deps-walk` Command-Line Tool**
   - [ ] **Initial Tool Setup**

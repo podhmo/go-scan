@@ -378,3 +378,20 @@ func (ft *FieldType) SetResolver(r PackageResolver) {
 }
 
 // var _ = strings.Builder{} // This helper is no longer needed as "strings" is directly imported.
+
+// PackageImports holds the minimal information about a package's direct imports.
+type PackageImports struct {
+	Name       string
+	ImportPath string
+	Imports    []string
+}
+
+// Visitor defines the interface for operations to be performed at each node
+// during a dependency graph walk.
+type Visitor interface {
+	// Visit is called for each package discovered during the walk.
+	// It can inspect the package's imports and return the list of
+	// imports that the walker should follow next. Returning an empty
+	// slice stops the traversal from that node.
+	Visit(pkg *PackageImports) (importsToFollow []string, err error)
+}

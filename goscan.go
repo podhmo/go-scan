@@ -17,6 +17,12 @@ import (
 // Package is an alias for scanner.PackageInfo, representing all the extracted information from a single package.
 type Package = scanner.PackageInfo
 
+// PackageImports is an alias for scanner.PackageImports.
+type PackageImports = scanner.PackageImports
+
+// Visitor is an alias for scanner.Visitor.
+type Visitor = scanner.Visitor
+
 // Re-export scanner kinds for convenience.
 const (
 	StructKind    = scanner.StructKind
@@ -34,6 +40,7 @@ type Scanner struct {
 	locator             *locator.Locator
 	scanner             *scanner.Scanner
 	packageCache        map[string]*Package // Cache for PackageInfo from ScanPackage/ScanPackageByImport, key is import path
+	packageImportsCache map[string]*scanner.PackageImports
 	visitedFiles        map[string]struct{} // Set of visited (parsed) file absolute paths for this Scanner instance.
 	mu                  sync.RWMutex
 	fset                *token.FileSet
@@ -170,6 +177,7 @@ func WithExternalTypeOverrides(overrides scanner.ExternalTypeOverride) ScannerOp
 func New(options ...ScannerOption) (*Scanner, error) {
 	s := &Scanner{
 		packageCache:          make(map[string]*Package),
+		packageImportsCache:   make(map[string]*scanner.PackageImports),
 		visitedFiles:          make(map[string]struct{}),
 		fset:                  token.NewFileSet(),
 		ExternalTypeOverrides: make(scanner.ExternalTypeOverride),
@@ -376,6 +384,56 @@ func (s *Scanner) ScanPackage(ctx context.Context, pkgPath string) (*scanner.Pac
 	s.mu.Unlock()
 
 	return currentCallPkgInfo, nil
+}
+
+// ScanPackageImports scans a single Go package identified by its import path,
+// parsing only the package clause and import declarations for efficiency.
+// It returns a lightweight PackageImports struct containing the package name
+// and a list of its direct dependencies.
+// Results are cached in memory for the lifetime of the Scanner instance.
+func (s *Scanner) ScanPackageImports(ctx context.Context, importPath string) (*scanner.PackageImports, error) {
+	s.mu.RLock()
+	cachedPkg, found := s.packageImportsCache[importPath]
+	s.mu.RUnlock()
+	if found {
+		slog.DebugContext(ctx, "ScanPackageImports CACHE HIT", slog.String("importPath", importPath))
+		return cachedPkg, nil
+	}
+	slog.DebugContext(ctx, "ScanPackageImports CACHE MISS", slog.String("importPath", importPath))
+
+	pkgDirAbs, err := s.locator.FindPackageDir(importPath)
+	if err != nil {
+		return nil, fmt.Errorf("could not find directory for import path %s: %w", importPath, err)
+	}
+
+	allGoFilesInPkg, err := listGoFiles(pkgDirAbs)
+	if err != nil {
+		return nil, fmt.Errorf("ScanPackageImports: failed to list go files in %s: %w", pkgDirAbs, err)
+	}
+
+	if len(allGoFilesInPkg) == 0 {
+		// If a directory for an import path exists but has no .go files, cache an empty PackageImports.
+		pkgInfo := &scanner.PackageImports{
+			ImportPath: importPath,
+			Name:       filepath.Base(pkgDirAbs), // Best guess for name
+			Imports:    []string{},
+		}
+		s.mu.Lock()
+		s.packageImportsCache[importPath] = pkgInfo
+		s.mu.Unlock()
+		return pkgInfo, nil
+	}
+
+	pkgImports, err := s.scanner.ScanPackageImports(ctx, allGoFilesInPkg, pkgDirAbs, importPath)
+	if err != nil {
+		return nil, fmt.Errorf("ScanPackageImports: scanning imports for %s failed: %w", importPath, err)
+	}
+
+	s.mu.Lock()
+	s.packageImportsCache[importPath] = pkgImports
+	s.mu.Unlock()
+
+	return pkgImports, nil
 }
 
 // resolveFilePath attempts to resolve a given path string (rawPath) into an absolute file path.
@@ -966,4 +1024,43 @@ func (s *Scanner) FindSymbolDefinitionLocation(ctx context.Context, symbolFullNa
 	}
 
 	return "", fmt.Errorf("symbol %s not found in package %s even after scan and cache check", symbolName, importPath)
+}
+
+// Walk performs a dependency graph traversal starting from a root import path.
+// It uses the efficient ScanPackageImports method to fetch dependencies at each step.
+// The provided Visitor's Visit method is called for each discovered package,
+// allowing the caller to inspect the package and control which of its dependencies
+// are followed next.
+func (s *Scanner) Walk(ctx context.Context, rootImportPath string, visitor Visitor) error {
+	queue := []string{rootImportPath}
+	visited := make(map[string]struct{})
+
+	for len(queue) > 0 {
+		currentImportPath := queue[0]
+		queue = queue[1:]
+
+		if _, ok := visited[currentImportPath]; ok {
+			continue
+		}
+		visited[currentImportPath] = struct{}{}
+
+		pkgImports, err := s.ScanPackageImports(ctx, currentImportPath)
+		if err != nil {
+			// For a visualization tool, it might be better to log and continue.
+			// However, for a generic utility, failing fast is safer.
+			return fmt.Errorf("error scanning imports for %s: %w", currentImportPath, err)
+		}
+
+		importsToFollow, err := visitor.Visit(pkgImports)
+		if err != nil {
+			return fmt.Errorf("visitor failed for package %s: %w", currentImportPath, err)
+		}
+
+		for _, imp := range importsToFollow {
+			if _, ok := visited[imp]; !ok {
+				queue = append(queue, imp)
+			}
+		}
+	}
+	return nil
 }

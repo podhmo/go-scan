@@ -89,6 +89,60 @@ func (s *Scanner) ScanFilesWithKnownImportPath(ctx context.Context, filePaths []
 	return s.scanGoFiles(ctx, filePaths, pkgDirPath, canonicalImportPath)
 }
 
+// ScanPackageImports parses only the import declarations from a set of Go files.
+func (s *Scanner) ScanPackageImports(ctx context.Context, filePaths []string, pkgDirPath string, canonicalImportPath string) (*PackageImports, error) {
+	info := &PackageImports{
+		ImportPath: canonicalImportPath,
+	}
+	imports := make(map[string]struct{})
+	var firstPackageName string
+
+	for _, filePath := range filePaths {
+		var content any
+		if s.Overlay != nil {
+			relPath, err := filepath.Rel(s.moduleRootDir, filePath)
+			if err == nil {
+				if overlayContent, ok := s.Overlay[relPath]; ok {
+					content = overlayContent
+				}
+			}
+		}
+
+		// Use ImportsOnly mode for efficiency
+		fileAst, err := parser.ParseFile(s.fset, filePath, content, parser.ImportsOnly)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse imports for file %s: %w", filePath, err)
+		}
+
+		if info.Name == "" {
+			if fileAst.Name != nil {
+				info.Name = fileAst.Name.Name
+				firstPackageName = fileAst.Name.Name
+			}
+		} else if fileAst.Name != nil && fileAst.Name.Name != firstPackageName {
+			return nil, fmt.Errorf("mismatched package names: %s and %s in directory %s", firstPackageName, fileAst.Name.Name, pkgDirPath)
+		}
+
+		for _, imp := range fileAst.Imports {
+			if imp.Path != nil {
+				importPath := strings.Trim(imp.Path.Value, `"`)
+				imports[importPath] = struct{}{}
+			}
+		}
+	}
+
+	if info.Name == "" && len(filePaths) > 0 {
+		return nil, fmt.Errorf("could not determine package name from files in %s", pkgDirPath)
+	}
+
+	info.Imports = make([]string, 0, len(imports))
+	for imp := range imports {
+		info.Imports = append(info.Imports, imp)
+	}
+
+	return info, nil
+}
+
 func (s *Scanner) scanGoFiles(ctx context.Context, filePaths []string, pkgDirPath string, canonicalImportPath string) (*PackageInfo, error) {
 	info := &PackageInfo{
 		Path:       pkgDirPath,

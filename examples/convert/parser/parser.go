@@ -19,7 +19,7 @@ var (
 	reConvertRule     = regexp.MustCompile(`// convert:rule "([^"]+)"(?: -> "([^"]+)")?, (?:using=([a-zA-Z0-9_.]+)|validator=([a-zA-Z0-9_.]+))`)
 	reConvertImport   = regexp.MustCompile(`// convert:import ([a-zA-Z0-9_.]+) "([^"]+)"`)
 	reConvertVariable = regexp.MustCompile(`// convert:variable (\w+)\s+(.+)`)
-	reConvertComputed = regexp.MustCompile(`// convert:computed (\w+)\s*=\s*(.+)`)
+	reConvertComputed = regexp.MustCompile(`^\s*convert:computed\s+([\w\d]+)\s*=\s*(.+)`)
 )
 
 func Parse(ctx context.Context, s *goscan.Scanner, scannedPkg *scanner.PackageInfo) (*model.ParsedInfo, error) {

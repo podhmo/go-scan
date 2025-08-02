@@ -9,7 +9,7 @@ type DataInterface interface {
 
 // APIResponse is a generic API response structure where the Data field
 // can contain different types of objects that implement DataInterface.
-// @deriving:unmarshall
+// @deriving:unmarshal
 type APIResponse struct {
 	Status string        `json:"status"`
 	Data   DataInterface `json:"data"` // Changed from interface{} to DataInterface
@@ -17,7 +17,7 @@ type APIResponse struct {
 
 // UserProfile is one of the possible types for the Data field.
 // It represents a user's profile information.
-// @derivingmarshall
+// @derivingmarshal
 type UserProfile struct {
 	Type     string `json:"type"` // Discriminator: "user_profile" (expected value based on original user request)
 	UserID   string `json:"userId"`
@@ -29,7 +29,7 @@ func (UserProfile) isData() {}
 
 // ProductInfo is another possible type for the Data field.
 // It represents information about a product.
-// @derivingmarshall
+// @derivingmarshal
 type ProductInfo struct {
 	Type        string `json:"type"` // Discriminator: "product_info" (expected value based on original user request)
 	ProductID   string `json:"productId"`

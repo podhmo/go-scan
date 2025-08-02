@@ -120,7 +120,7 @@ func TestUnmarshalAPIResponse(t *testing.T) {
 						t.Errorf("Expected response.Data to be *UserProfile, but it's not")
 					} else {
 						if userProfile.UserID == "" || userProfile.UserName == "" {
-							t.Errorf("UserProfile fields are not correctly unmarshalled: %+v", userProfile)
+							t.Errorf("UserProfile fields are not correctly unmarshaled: %+v", userProfile)
 						}
 					}
 				}
@@ -131,7 +131,7 @@ func TestUnmarshalAPIResponse(t *testing.T) {
 						t.Errorf("Expected response.Data to be *ProductInfo, but it's not")
 					} else {
 						if productInfo.ProductID == "" || productInfo.ProductName == "" || productInfo.Price == 0 {
-							t.Errorf("ProductInfo fields are not correctly unmarshalled: %+v", productInfo)
+							t.Errorf("ProductInfo fields are not correctly unmarshaled: %+v", productInfo)
 						}
 					}
 				}
@@ -425,14 +425,14 @@ func TestMarshalAPIResponse(t *testing.T) {
 		}
 
 		jsonString := string(b)
-		fmt.Printf("Marshalled JSON (UserProfile): %s\n", jsonString)
+		fmt.Printf("Marshaled JSON (UserProfile): %s\n", jsonString)
 
 		// Check for discriminator and other fields.
 		if !strings.Contains(jsonString, `"type":"userprofile"`) {
-			t.Errorf("marshalled JSON does not contain type discriminator for UserProfile")
+			t.Errorf("marshaled JSON does not contain type discriminator for UserProfile")
 		}
 		if !strings.Contains(jsonString, `"userId":"u-123"`) {
-			t.Errorf("marshalled JSON does not contain userId field")
+			t.Errorf("marshaled JSON does not contain userId field")
 		}
 	})
 
@@ -452,13 +452,13 @@ func TestMarshalAPIResponse(t *testing.T) {
 		}
 
 		jsonString := string(b)
-		fmt.Printf("Marshalled JSON (ProductInfo): %s\n", jsonString)
+		fmt.Printf("Marshaled JSON (ProductInfo): %s\n", jsonString)
 
 		if !strings.Contains(jsonString, `"type":"productinfo"`) {
-			t.Errorf("marshalled JSON does not contain type discriminator for ProductInfo")
+			t.Errorf("marshaled JSON does not contain type discriminator for ProductInfo")
 		}
 		if !strings.Contains(jsonString, `"productId":"p-456"`) {
-			t.Errorf("marshalled JSON does not contain productId field")
+			t.Errorf("marshaled JSON does not contain productId field")
 		}
 	})
 
@@ -474,10 +474,10 @@ func TestMarshalAPIResponse(t *testing.T) {
 		}
 
 		jsonString := string(b)
-		fmt.Printf("Marshalled JSON (NilData): %s\n", jsonString)
+		fmt.Printf("Marshaled JSON (NilData): %s\n", jsonString)
 
 		if !strings.Contains(jsonString, `"data":null`) {
-			t.Errorf("marshalled JSON should have null for data field")
+			t.Errorf("marshaled JSON should have null for data field")
 		}
 	})
 }
@@ -502,19 +502,19 @@ func TestMarshalMultiOneOfStructs(t *testing.T) {
 		}
 
 		jsonString := string(b)
-		fmt.Printf("Marshalled JSON (Scene): %s\n", jsonString)
+		fmt.Printf("Marshaled JSON (Scene): %s\n", jsonString)
 
 		if !strings.Contains(jsonString, `"type":"dog"`) {
-			t.Errorf("marshalled JSON does not contain type discriminator for Dog")
+			t.Errorf("marshaled JSON does not contain type discriminator for Dog")
 		}
 		if !strings.Contains(jsonString, `"type":"bicycle"`) {
-			t.Errorf("marshalled JSON does not contain type discriminator for Bicycle")
+			t.Errorf("marshaled JSON does not contain type discriminator for Bicycle")
 		}
 		if !strings.Contains(jsonString, `"breed":"Golden Retriever"`) {
-			t.Errorf("marshalled JSON does not contain breed")
+			t.Errorf("marshaled JSON does not contain breed")
 		}
 		if !strings.Contains(jsonString, `"gears":18`) {
-			t.Errorf("marshalled JSON does not contain gears")
+			t.Errorf("marshaled JSON does not contain gears")
 		}
 	})
 
@@ -537,13 +537,13 @@ func TestMarshalMultiOneOfStructs(t *testing.T) {
 		}
 
 		jsonString := string(b)
-		fmt.Printf("Marshalled JSON (Parade): %s\n", jsonString)
+		fmt.Printf("Marshaled JSON (Parade): %s\n", jsonString)
 
 		if !strings.Contains(jsonString, `"type":"cat"`) {
-			t.Errorf("marshalled JSON does not contain type discriminator for Cat")
+			t.Errorf("marshaled JSON does not contain type discriminator for Cat")
 		}
 		if !strings.Contains(jsonString, `"type":"dog"`) {
-			t.Errorf("marshalled JSON does not contain type discriminator for Dog")
+			t.Errorf("marshaled JSON does not contain type discriminator for Dog")
 		}
 	})
 }

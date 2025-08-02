@@ -45,7 +45,7 @@ Fields use a combination of an `in` tag to specify the source and a source-speci
     -   Example: `SessionID string \`in:"cookie" cookie:"session_id"\``
 
 -   **Request Body (Field-Specific):**
-    -   `in:"body"`: If this tag is on a specific field, the entire JSON request body will be unmarshalled into this field. The field's type should be a struct or a pointer to a struct suitable for `json.Unmarshal`.
+    -   `in:"body"`: If this tag is on a specific field, the entire JSON request body will be unmarshaled into this field. The field's type should be a struct or a pointer to a struct suitable for `json.Unmarshal`.
     -   Example: `Payload MyPayloadStruct \`in:"body"\``
 
 **Supported Field Types:**
@@ -64,7 +64,7 @@ For path, query, header, and cookie binding, the generator supports a comprehens
     - Cookie parameters: Parsed from comma-separated values within a single cookie (e.g., `Cookie: key=val1,val2,val3`). This corresponds to OpenAPI's `style: form, explode: false`.
     - Path parameters: Slice binding is not supported for path parameters.
 
-For fields bound from the request body (`in:"body"`), any type compatible with `encoding/json` Unmarshalling is supported.
+For fields bound from the request body (`in:"body"`), any type compatible with `encoding/json` Unmarshaling is supported.
 
 The `required:"true"` tag can be used with any of these field types to indicate that the parameter must be present.
 

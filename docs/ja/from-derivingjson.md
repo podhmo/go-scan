@@ -7,7 +7,7 @@
 ## 1. アノテーション/コメントベースの型フィルタリング
 
 *   **現状の `derivingjson`**:
-    `go-scan` でパッケージ内の全ての型情報を取得した後、ループ処理で各 `TypeInfo` の `Doc` 文字列を調べ、特定のマーカーコメント（`@deriving:unmarshall`）が含まれているかを確認することで、処理対象の構造体をフィルタリングしています。
+    `go-scan` でパッケージ内の全ての型情報を取得した後、ループ処理で各 `TypeInfo` の `Doc` 文字列を調べ、特定のマーカーコメント（`@deriving:unmarshal`）が含まれているかを確認することで、処理対象の構造体をフィルタリングしています。
 
     ```go
     // examples/derivingjson/generator.go より抜粋

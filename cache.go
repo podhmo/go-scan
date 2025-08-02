@@ -96,7 +96,7 @@ func (sc *symbolCache) load(ctx context.Context) error {
 	var newContent cacheContent
 	err = json.Unmarshal(data, &newContent)
 	if err != nil {
-		// If unmarshalling fails, treat it as a corrupted cache and start fresh
+		// If unmarshaling fails, treat it as a corrupted cache and start fresh
 		slog.WarnContext(ctx, "Failed to unmarshal cache file, starting with an empty cache", slog.String("path", sc.filePath), slog.Any("error", err))
 		sc.content = cacheContent{ // Initialize with empty maps
 			Symbols: make(map[string]string),

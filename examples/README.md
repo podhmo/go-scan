@@ -15,12 +15,12 @@ This directory contains example projects that demonstrate the capabilities and u
 
 The `derivingjson` example showcases an experimental tool that leverages the `go-scan` library.
 
-**Purpose**: To automatically generate `UnmarshalJSON` methods for Go structs that are structured to represent `oneOf` semantics (similar to JSON Schema's `oneOf`). This is useful when a field can be one of several distinct types, and a discriminator field is used to determine the actual type during unmarshalling.
+**Purpose**: To automatically generate `UnmarshalJSON` methods for Go structs that are structured to represent `oneOf` semantics (similar to JSON Schema's `oneOf`). This is useful when a field can be one of several distinct types, and a discriminator field is used to determine the actual type during unmarshaling.
 
 **Key Features**:
 - Uses `go-scan` for type information analysis.
-- Targets structs specifically annotated with `@deriving:unmarshall` in their GoDoc comments.
-- Identifies a discriminator field (e.g., `Type string \`json:"type"\``) and a target interface field to generate the appropriate unmarshalling logic.
+- Targets structs specifically annotated with `@deriving:unmarshal` in their GoDoc comments.
+- Identifies a discriminator field (e.g., `Type string \`json:"type"\``) and a target interface field to generate the appropriate unmarshaling logic.
 - Searches for concrete types that implement the target interface within the same package.
 
 This example demonstrates how `go-scan` can be used to build tools for advanced code generation tasks based on static analysis of Go source code.

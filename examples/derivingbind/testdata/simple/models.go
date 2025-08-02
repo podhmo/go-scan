@@ -23,7 +23,7 @@ type ComprehensiveBind struct {
 // This struct demonstrates a specific field being the target for `in:"body"`.
 type SpecificBodyFieldBind struct {
 	RequestID       string      `in:"header" header:"X-Request-ID"`
-	Payload         RequestBody `in:"body"` // The entire request body will be unmarshalled into this field
+	Payload         RequestBody `in:"body"` // The entire request body will be unmarshaled into this field
 	OtherQueryParam string      `in:"query" query:"other"`
 }
 

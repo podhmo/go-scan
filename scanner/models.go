@@ -94,10 +94,13 @@ type TypeInfo struct {
 }
 
 // Annotation extracts the value of a specific annotation from the TypeInfo's Doc string.
-// Annotations are expected to be in the format "@<name>[:<value>]".
-// For example, if Doc contains "@deriving:unmarshall", Annotation("deriving") returns "unmarshall", true.
-// If Doc contains "@myannotation", Annotation("myannotation") returns "", true (value is optional).
-// If the annotation is not found, it returns "", false.
+// Annotations are expected to be in the format "@<name>[:<value>]" or "@<name> <value>".
+// It finds the first line in the doc comment that starts with "@<name>" and returns the rest of the line as the value.
+// For example:
+// - Doc: "@foo: bar", name: "foo" -> "bar", true
+// - Doc: "@foo bar", name: "foo" -> "bar", true
+// - Doc: "@foo", name: "foo" -> "", true
+// - Doc: "@deriving:binding in:\"body\"", name: "deriving:binding" -> "in:\"body\"", true
 func (ti *TypeInfo) Annotation(name string) (value string, ok bool) {
 	if ti.Doc == "" {
 		return "", false
@@ -105,27 +108,35 @@ func (ti *TypeInfo) Annotation(name string) (value string, ok bool) {
 	lines := strings.Split(ti.Doc, "\n")
 	prefix := "@" + name
 	for _, line := range lines {
+		// Trim whitespace and comment markers from the line
 		trimmedLine := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmedLine, prefix) {
-			// Found the annotation
-			ok = true
-			// Check if there's a value after the annotation name
-			rest := strings.TrimSpace(strings.TrimPrefix(trimmedLine, prefix))
-			if strings.HasPrefix(rest, ":") {
-				value = strings.TrimSpace(strings.TrimPrefix(rest, ":"))
-			} else if rest == "" {
-				// Annotation exists without a value part, e.g. @myannotation
-				value = ""
-			} else {
-				// This case handles annotations like "@deriving:binding in:"body""
-				// where the "value" is everything after "@name "
-				value = rest
-			}
-			// Further parsing for specific formats like `in:"body"` can be done by the caller
-			// if the raw value after the colon is needed.
-			// For `@deriving:binding in:"body"`, this will return `in:"body"` as value for `binding` annotation.
-			return value, ok
+		trimmedLine = strings.TrimPrefix(trimmedLine, "//")
+		trimmedLine = strings.TrimPrefix(trimmedLine, "/*")
+		trimmedLine = strings.TrimSuffix(trimmedLine, "*/")
+		trimmedLine = strings.TrimSpace(trimmedLine)
+
+		if !strings.HasPrefix(trimmedLine, prefix) {
+			continue
 		}
+
+		rest := trimmedLine[len(prefix):]
+
+		// Check if the annotation is exactly matched or followed by a separator.
+		if rest != "" {
+			firstChar := rest[0]
+			if firstChar != ':' && firstChar != ' ' && firstChar != '\t' {
+				// This is a prefix of another annotation, e.g. looking for "@foo" in "@foobar"
+				continue
+			}
+		}
+
+		// We found the correct annotation.
+		ok = true
+		value = strings.TrimSpace(rest)
+		if len(value) > 0 && value[0] == ':' {
+			value = strings.TrimSpace(value[1:])
+		}
+		return value, ok
 	}
 	return "", false
 }

@@ -74,6 +74,9 @@ func run(ctx context.Context, startPkg string, hops int, ignore string, output s
 		packageHops:         make(map[string]int),
 	}
 
+	if aggressive && !(direction == "reverse" || direction == "bidi") {
+		return fmt.Errorf("--aggressive is only valid with --direction=reverse or --direction=bidi")
+	}
 	if granularity == "file" && (direction == "reverse" || direction == "bidi") {
 		return fmt.Errorf("--granularity=file is not compatible with --direction=reverse or --direction=bidi")
 	}
@@ -84,15 +87,44 @@ func run(ctx context.Context, startPkg string, hops int, ignore string, output s
 	}
 
 	doReverseSearch := func() error {
+		if aggressive {
+			// Aggressive search using git grep
+			queue := []string{startPkg}
+			pkgHops := map[string]int{startPkg: 0}
+			head := 0
+			for head < len(queue) {
+				currentPkg := queue[head]
+				head++
+
+				currentHops := pkgHops[currentPkg]
+				if currentHops >= hops {
+					continue
+				}
+
+				importers, err := s.FindImportersAggressively(ctx, currentPkg)
+				if err != nil {
+					return fmt.Errorf("aggressive search for importers of %s failed: %w", currentPkg, err)
+				}
+
+				for _, importer := range importers {
+					visitor.reverseDependencies[importer.ImportPath] = append(visitor.reverseDependencies[importer.ImportPath], currentPkg)
+					if _, visited := pkgHops[importer.ImportPath]; !visited {
+						pkgHops[importer.ImportPath] = currentHops + 1
+						queue = append(queue, importer.ImportPath)
+					}
+				}
+			}
+			return nil
+		}
+
+		// Default search using pre-built map
 		revDepMap, err := s.BuildReverseDependencyMap(ctx)
 		if err != nil {
 			return fmt.Errorf("could not build reverse dependency map: %w", err)
 		}
 
 		queue := []string{startPkg}
-		// Keep track of hops for each package
 		pkgHops := map[string]int{startPkg: 0}
-
 		head := 0
 		for head < len(queue) {
 			currentPkg := queue[head]
@@ -105,9 +137,7 @@ func run(ctx context.Context, startPkg string, hops int, ignore string, output s
 
 			importers := revDepMap[currentPkg]
 			for _, importer := range importers {
-				// Always add the dependency edge
 				visitor.reverseDependencies[importer] = append(visitor.reverseDependencies[importer], currentPkg)
-
 				if _, visited := pkgHops[importer]; !visited {
 					pkgHops[importer] = currentHops + 1
 					queue = append(queue, importer)

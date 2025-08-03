@@ -135,6 +135,19 @@ func TestRun(t *testing.T) {
 			},
 			goldenFile: "full.golden",
 		},
+		{
+			name: "file-granularity",
+			args: map[string]interface{}{
+				"start-pkg":   "github.com/podhmo/go-scan/testdata/walk/a",
+				"hops":        1,
+				"format":      "dot",
+				"granularity": "file",
+				"full":        false,
+				"short":       false,
+				"ignore":      "",
+			},
+			goldenFile: "file-granularity.golden",
+		},
 	}
 
 	for _, tc := range cases {
@@ -159,6 +172,11 @@ func TestRun(t *testing.T) {
 			outputFile := filepath.Join(tmpdir, "output."+format)
 			startPkg := tc.args["start-pkg"].(string)
 
+			granularity, ok := tc.args["granularity"].(string)
+			if !ok {
+				granularity = "package"
+			}
+
 			err = run(
 				context.Background(),
 				startPkg,
@@ -166,6 +184,7 @@ func TestRun(t *testing.T) {
 				tc.args["ignore"].(string),
 				outputFile,
 				format,
+				granularity,
 				tc.args["full"].(bool),
 				tc.args["short"].(bool),
 			)
@@ -178,12 +197,21 @@ func TestRun(t *testing.T) {
 				t.Fatalf("failed to read generated output file: %v", err)
 			}
 
+			normalizedGenerated := strings.ReplaceAll(string(generated), "\r\n", "\n")
+
+			// Normalize temporary directory paths in file granularity tests
+			if tc.name == "file-granularity" {
+				// In the generated output, replace the temp dir path with a stable placeholder.
+				normalizedGenerated = strings.ReplaceAll(normalizedGenerated, tmpdir, "<tmp>")
+			}
+
 			goldenPath := filepath.Join(originalWD, "testdata", tc.goldenFile)
 			if *update {
 				if err := os.MkdirAll(filepath.Dir(goldenPath), 0755); err != nil {
 					t.Fatalf("failed to create testdata dir: %v", err)
 				}
-				if err := os.WriteFile(goldenPath, generated, 0644); err != nil {
+				// When updating, write the *normalized* content to the golden file.
+				if err := os.WriteFile(goldenPath, []byte(normalizedGenerated), 0644); err != nil {
 					t.Fatalf("failed to update golden file: %v", err)
 				}
 				t.Logf("golden file updated: %s", goldenPath)
@@ -194,8 +222,6 @@ func TestRun(t *testing.T) {
 			if err != nil {
 				t.Fatalf("failed to read golden file %s: %v", goldenPath, err)
 			}
-
-			normalizedGenerated := strings.ReplaceAll(string(generated), "\r\n", "\n")
 			normalizedGolden := strings.ReplaceAll(string(golden), "\r\n", "\n")
 
 			if diff := cmp.Diff(normalizedGolden, normalizedGenerated); diff != "" {

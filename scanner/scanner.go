@@ -92,7 +92,8 @@ func (s *Scanner) ScanFilesWithKnownImportPath(ctx context.Context, filePaths []
 // ScanPackageImports parses only the import declarations from a set of Go files.
 func (s *Scanner) ScanPackageImports(ctx context.Context, filePaths []string, pkgDirPath string, canonicalImportPath string) (*PackageImports, error) {
 	info := &PackageImports{
-		ImportPath: canonicalImportPath,
+		ImportPath:  canonicalImportPath,
+		FileImports: make(map[string][]string),
 	}
 	imports := make(map[string]struct{})
 	var firstPackageName string
@@ -123,11 +124,16 @@ func (s *Scanner) ScanPackageImports(ctx context.Context, filePaths []string, pk
 			return nil, fmt.Errorf("mismatched package names: %s and %s in directory %s", firstPackageName, fileAst.Name.Name, pkgDirPath)
 		}
 
+		var fileImports []string
 		for _, imp := range fileAst.Imports {
 			if imp.Path != nil {
 				importPath := strings.Trim(imp.Path.Value, `"`)
 				imports[importPath] = struct{}{}
+				fileImports = append(fileImports, importPath)
 			}
+		}
+		if len(fileImports) > 0 {
+			info.FileImports[filePath] = fileImports
 		}
 	}
 

@@ -381,9 +381,10 @@ func (ft *FieldType) SetResolver(r PackageResolver) {
 
 // PackageImports holds the minimal information about a package's direct imports.
 type PackageImports struct {
-	Name       string
-	ImportPath string
-	Imports    []string
+	Name        string
+	ImportPath  string
+	Imports     []string
+	FileImports map[string][]string // file path -> import paths
 }
 
 // Visitor defines the interface for operations to be performed at each node

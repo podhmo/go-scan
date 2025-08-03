@@ -126,9 +126,9 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 
 ### In-Module Dependency Walker ([docs/plan-in-module-deps-walk.md](./docs/plan-in-module-deps-walk.md))
 
-- [ ] **3. Future Enhancements**
-  - [ ] **File-Level Granularity**
-    - [ ] Extend `goscan.PackageImports` to include a file-by-file breakdown of imports.
-    - [ ] Add a `--granularity=file` flag to the `deps-walk` tool.
+- [x] **3. Future Enhancements**
+  - [x] **File-Level Granularity**
+    - [x] Extend `goscan.PackageImports` to include a file-by-file breakdown of imports.
+    - [x] Add a `--granularity=file` flag to the `deps-walk` tool.
   - [ ] **Reverse Dependencies (Importers)**
     - [ ] Investigate strategies for finding reverse dependencies (e.g., text search, pre-built index).

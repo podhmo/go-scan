@@ -1,8 +1,8 @@
 digraph dependencies {
   rankdir="LR";
   node [shape=box, style="rounded,filled", fillcolor=lightgrey];
-  "github.com/podhmo/go-scan/testdata/walk/a" [label="github.com/podhmo/go-scan/testdata/walk/a"];
   "github.com/podhmo/go-scan/testdata/walk/d" [label="github.com/podhmo/go-scan/testdata/walk/d"];
+  "github.com/podhmo/go-scan/testdata/walk/e" [label="github.com/podhmo/go-scan/testdata/walk/e"];
 
-  "github.com/podhmo/go-scan/testdata/walk/d" -> "github.com/podhmo/go-scan/testdata/walk/a";
+  "github.com/podhmo/go-scan/testdata/walk/d" -> "github.com/podhmo/go-scan/testdata/walk/e";
 }

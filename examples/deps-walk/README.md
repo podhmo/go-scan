@@ -83,3 +83,28 @@ digraph dependencies {
   "github.com/podhmo/go-scan/testdata/walk/b" -> "github.com/podhmo/go-scan/testdata/walk/d";
 }
 ```
+
+## Reverse Dependencies
+
+You can find which packages import a specific package by using the `--direction=reverse` flag.
+
+```bash
+$ go run ./examples/deps-walk \
+    -start-pkg=github.com/podhmo/go-scan/testdata/walk/c \
+    -direction=reverse
+```
+
+This will output a graph showing that packages `a` and `b` import package `c`.
+
+### Aggressive Search Mode
+
+In very large repositories, the default reverse dependency search can be slow because it inspects every package in the module. For a much faster search, you can use the `--aggressive` flag.
+
+```bash
+$ go run ./examples/deps-walk \
+    -start-pkg=github.com/podhmo/go-scan/testdata/walk/c \
+    -direction=reverse \
+    -aggressive
+```
+
+This mode uses `git grep` to quickly find files that contain the import path. It then parses only those files to confirm the dependency. This requires `git` to be installed and the project to be a git repository. The output will be identical to the non-aggressive search.

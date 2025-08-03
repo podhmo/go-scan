@@ -1,0 +1,17 @@
+{
+  "config": {
+    "direction": "bidi",
+    "hops": 1,
+    "startPkg": "github.com/podhmo/go-scan/testdata/walk/b"
+  },
+  "dependencies": {
+    "github.com/podhmo/go-scan/testdata/walk/b": [
+      "github.com/podhmo/go-scan/testdata/walk/d"
+    ]
+  },
+  "reverseDependencies": {
+    "github.com/podhmo/go-scan/testdata/walk/a": [
+      "github.com/podhmo/go-scan/testdata/walk/b"
+    ]
+  }
+}

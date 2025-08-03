@@ -125,3 +125,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 -   **Refactoring**:
     -   [x] **Isolate `examples/deps-walk` Test Data**: Moved the test data for the `deps-walk` example from the root `testdata` directory to its own `examples/deps-walk/testdata` directory, making the example more self-contained.
 ## To Be Implemented
+
+-   **`deps-walk`**: Add hop count limiting for reverse dependency searches.
+    -   Currently, the `--hops` flag only applies to forward searches.
+    -   It would be useful to have a similar mechanism (e.g., `--reverse-hops`) to limit the scope of reverse and bidi searches.

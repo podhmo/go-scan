@@ -115,3 +115,12 @@ $ go run ./examples/deps-walk \
 ```
 
 This mode uses `git grep` to quickly find files that contain the import path. It then parses only those files to confirm the dependency. This requires `git` to be installed and the project to be a git repository. The output will be identical to the non-aggressive search.
+
+#### Limitations of Aggressive Mode
+
+Because this mode relies on `git grep`, it only searches within the files tracked in the current git repository. This means it cannot resolve reverse dependencies that cross module boundaries, such as:
+
+-   Dependencies from other local modules referenced via a `replace` directive in `go.mod`.
+-   Dependencies from external packages located in the Go module cache.
+
+For a completely accurate dependency graph that includes these cases, run the tool without the `--aggressive` flag.

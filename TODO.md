@@ -127,9 +127,13 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 
 ### In-Module Dependency Walker ([docs/plan-in-module-deps-walk.md](./docs/plan-in-module-deps-walk.md))
 
-- [x] **3. Future Enhancements**
+- [ ] **3. Future Enhancements**
   - [x] **File-Level Granularity**
     - [x] Extend `goscan.PackageImports` to include a file-by-file breakdown of imports.
     - [x] Add a `--granularity=file` flag to the `deps-walk` tool.
   - [x] **Reverse Dependencies (Importers)**
     - [x] Implemented a reverse dependency search feature in the `deps-walk` tool via a `--reverse` flag. It uses a new `goscan.FindImporters` function that performs an efficient, module-wide text-based search for import statements.
+  - [ ] **Aggressive Reverse Dependency Search**
+    - [ ] Add an option (e.g., `--reverse-aggressive`) that uses `git grep` to find all files containing an import path string and then parses only those files to confirm the import. This could be faster in very large repositories.
+  - [ ] **Bidirectional Dependency Graph**
+    - [ ] Add an option (e.g., `--bidirectional`) to show both forward dependencies (up to `--hops`) and reverse dependencies (importers) in the same graph.

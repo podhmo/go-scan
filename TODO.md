@@ -121,19 +121,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     -   [x] **Filtering and Usability**: Added support for the `--ignore` flag for package exclusion and a `--full` flag to include external dependencies (defaulting to in-module only).
     -   [x] **Integration Tests**: Added integration tests for the `deps-walk` tool using `scantest`.
     -   [x] **Reverse Dependency Search**: Added a `--direction=reverse` option to find and visualize reverse dependencies (importers). This is supported by a new `goscan.FindImporters` method that efficiently scans the module for import statements.
+    -   [x] **Bidirectional Dependency Graph**: Added a `--direction=bidi` option to show both forward dependencies (up to `--hops`) and reverse dependencies (importers) in the same graph.
 -   **Refactoring**:
     -   [x] **Isolate `examples/deps-walk` Test Data**: Moved the test data for the `deps-walk` example from the root `testdata` directory to its own `examples/deps-walk/testdata` directory, making the example more self-contained.
 ## To Be Implemented
-
-### In-Module Dependency Walker ([docs/plan-in-module-deps-walk.md](./docs/plan-in-module-deps-walk.md))
-
-- [ ] **3. Future Enhancements**
-  - [x] **File-Level Granularity**
-    - [x] Extend `goscan.PackageImports` to include a file-by-file breakdown of imports.
-    - [x] Add a `--granularity=file` flag to the `deps-walk` tool.
-  - [x] **Reverse Dependencies (Importers)**
-    - [x] Implemented a reverse dependency search feature in the `deps-walk` tool via a `--reverse` flag. It uses a new `goscan.FindImporters` function that performs an efficient, module-wide text-based search for import statements.
-  - [x] **Aggressive Reverse Dependency Search**
-    - [x] Add an option (e.g., `--direction=reverse --aggressive`) that uses `git grep` to find all files containing an import path string and then parses only those files to confirm the import. This could be faster in very large repositories.
-  - [ ] **Bidirectional Dependency Graph**
-    - [ ] Implement the `--direction=bidi` option to show both forward dependencies (up to `--hops`) and reverse dependencies (importers) in the same graph.

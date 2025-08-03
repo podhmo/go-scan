@@ -252,6 +252,19 @@ func TestRun(t *testing.T) {
 			},
 			goldenFile: "reverse-hops2-aggressive.golden",
 		},
+		{
+			name: "with-test-files",
+			args: map[string]interface{}{
+				"start-pkg": "github.com/podhmo/go-scan/testdata/walk/a",
+				"hops":      1,
+				"format":    "dot",
+				"full":      false,
+				"short":     false,
+				"ignore":    "",
+				"test":      true,
+			},
+			goldenFile: "with-test-files.golden",
+		},
 	}
 
 	for _, tc := range cases {
@@ -304,6 +317,10 @@ func TestRun(t *testing.T) {
 			if !ok {
 				aggressive = false
 			}
+			test, ok := tc.args["test"].(bool)
+			if !ok {
+				test = false
+			}
 
 			err = run(
 				context.Background(),
@@ -317,6 +334,7 @@ func TestRun(t *testing.T) {
 				tc.args["short"].(bool),
 				direction,
 				aggressive,
+				test,
 			)
 			if err != nil {
 				t.Fatalf("run() failed unexpectedly: %+v", err)

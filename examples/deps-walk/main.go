@@ -28,6 +28,7 @@ func main() {
 		short       bool
 		direction   string
 		aggressive  bool
+		test        bool
 	)
 
 	flag.StringVar(&startPkg, "start-pkg", "", "The root package to start the dependency walk from (required)")
@@ -40,22 +41,24 @@ func main() {
 	flag.BoolVar(&short, "short", false, "Omit module prefix from package paths in the output")
 	flag.StringVar(&direction, "direction", "forward", "Direction of dependency walk (forward, reverse, bidi)")
 	flag.BoolVar(&aggressive, "aggressive", false, "Use aggressive git-grep based search for reverse mode")
+	flag.BoolVar(&test, "test", false, "Include test files in the analysis")
 	flag.Parse()
 
 	if startPkg == "" {
 		log.Fatal("-start-pkg is required")
 	}
 
-	if err := run(context.Background(), startPkg, hops, ignore, output, format, granularity, full, short, direction, aggressive); err != nil {
+	if err := run(context.Background(), startPkg, hops, ignore, output, format, granularity, full, short, direction, aggressive, test); err != nil {
 		log.Fatalf("Error: %+v", err)
 	}
 }
 
-func run(ctx context.Context, startPkg string, hops int, ignore string, output string, format string, granularity string, full bool, short bool, direction string, aggressive bool) error {
+func run(ctx context.Context, startPkg string, hops int, ignore string, output string, format string, granularity string, full bool, short bool, direction string, aggressive bool, test bool) error {
 	var scannerOpts []goscan.ScannerOption
 	if full {
 		scannerOpts = append(scannerOpts, goscan.WithGoModuleResolver())
 	}
+	scannerOpts = append(scannerOpts, goscan.WithIncludeTests(test))
 
 	s, err := goscan.New(scannerOpts...)
 	if err != nil {

@@ -1,0 +1,9 @@
+graph LR;
+  "github.com/podhmo/go-scan/testdata/walk/a"["a"];
+  "github.com/podhmo/go-scan/testdata/walk/b"["b"];
+  "github.com/podhmo/go-scan/testdata/walk/c"["c"];
+  "github.com/podhmo/go-scan/testdata/walk/d"["d"];
+
+  "github.com/podhmo/go-scan/testdata/walk/a" --> "github.com/podhmo/go-scan/testdata/walk/b";
+  "github.com/podhmo/go-scan/testdata/walk/a" --> "github.com/podhmo/go-scan/testdata/walk/c";
+  "github.com/podhmo/go-scan/testdata/walk/a" --> "github.com/podhmo/go-scan/testdata/walk/d";

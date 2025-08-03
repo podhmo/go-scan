@@ -76,6 +76,18 @@ func TestRun(t *testing.T) {
 			goldenFile: "default-mermaid.golden",
 		},
 		{
+			name: "mermaid-short",
+			args: map[string]interface{}{
+				"start-pkg": "github.com/podhmo/go-scan/testdata/walk/a",
+				"hops":      1,
+				"format":    "mermaid",
+				"full":      false,
+				"short":     true,
+				"ignore":    "",
+			},
+			goldenFile: "default-mermaid-short.golden",
+		},
+		{
 			name: "default-short",
 			args: map[string]interface{}{
 				"start-pkg": "github.com/podhmo/go-scan/testdata/walk/a",

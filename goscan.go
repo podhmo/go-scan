@@ -50,6 +50,7 @@ type Scanner struct {
 	mu                  sync.RWMutex
 	fset                *token.FileSet
 	useGoModuleResolver bool // To be set by WithGoModuleResolver
+	IncludeTests        bool // To be set by WithTests
 
 	CachePath             string
 	symbolCache           *symbolCache // Symbol cache (persisted across Scanner instances if path is reused)
@@ -139,6 +140,14 @@ func WithWorkDir(path string) ScannerOption {
 			return fmt.Errorf("getting absolute path for workdir %q: %w", path, err)
 		}
 		s.workDir = absPath
+		return nil
+	}
+}
+
+// WithIncludeTests includes test files in the scan.
+func WithIncludeTests(include bool) ScannerOption {
+	return func(s *Scanner) error {
+		s.IncludeTests = include
 		return nil
 	}
 }
@@ -249,22 +258,32 @@ func (s *Scanner) ResolveType(ctx context.Context, fieldType *scanner.FieldType)
 	return s.scanner.ResolveType(ctx, fieldType)
 }
 
-// listGoFiles lists all .go files (excluding _test.go) in a directory.
+// listGoFiles lists all .go files in a directory.
+// If includeTests is false, it excludes _test.go files.
 // It returns a list of absolute file paths.
-func listGoFiles(dirPath string) ([]string, error) {
+func listGoFiles(dirPath string, includeTests bool) ([]string, error) {
 	var files []string
 	entries, err := os.ReadDir(dirPath)
 	if err != nil {
 		return nil, fmt.Errorf("listGoFiles: failed to read dir %s: %w", dirPath, err)
 	}
 	for _, entry := range entries {
-		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".go") && !strings.HasSuffix(entry.Name(), "_test.go") {
-			absPath, err := filepath.Abs(filepath.Join(dirPath, entry.Name()))
-			if err != nil {
-				return nil, fmt.Errorf("listGoFiles: could not get absolute path for %s: %w", entry.Name(), err)
-			}
-			files = append(files, absPath)
+		if entry.IsDir() {
+			continue
 		}
+		name := entry.Name()
+		if !strings.HasSuffix(name, ".go") {
+			continue
+		}
+		if !includeTests && strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+
+		absPath, err := filepath.Abs(filepath.Join(dirPath, name))
+		if err != nil {
+			return nil, fmt.Errorf("listGoFiles: could not get absolute path for %s: %w", name, err)
+		}
+		files = append(files, absPath)
 	}
 	return files, nil
 }
@@ -323,7 +342,7 @@ func (s *Scanner) ScanPackage(ctx context.Context, pkgPath string) (*scanner.Pac
 		}
 	}
 
-	allFilesInDir, err := listGoFiles(absPkgPath)
+	allFilesInDir, err := listGoFiles(absPkgPath, s.IncludeTests)
 	if err != nil {
 		return nil, fmt.Errorf("ScanPackage: could not list go files in %s: %w", absPkgPath, err)
 	}
@@ -411,7 +430,7 @@ func (s *Scanner) ScanPackageImports(ctx context.Context, importPath string) (*s
 		return nil, fmt.Errorf("could not find directory for import path %s: %w", importPath, err)
 	}
 
-	allGoFilesInPkg, err := listGoFiles(pkgDirAbs)
+	allGoFilesInPkg, err := listGoFiles(pkgDirAbs, s.IncludeTests)
 	if err != nil {
 		return nil, fmt.Errorf("ScanPackageImports: failed to list go files in %s: %w", pkgDirAbs, err)
 	}
@@ -601,8 +620,9 @@ func (s *Scanner) ScanFiles(ctx context.Context, filePaths []string) (*scanner.P
 	return pkgInfo, nil
 }
 
-// UnscannedGoFiles returns a list of absolute paths to .go files (excluding _test.go files)
-// within the specified package that have not yet been visited (parsed) by this Scanner instance.
+// UnscannedGoFiles returns a list of absolute paths to .go files
+// (and optionally _test.go files) within the specified package that have not
+// yet been visited (parsed) by this Scanner instance.
 //
 // The `packagePathOrImportPath` argument can be:
 //  1. An absolute directory path to the package.
@@ -643,7 +663,7 @@ func (s *Scanner) UnscannedGoFiles(packagePathOrImportPath string) ([]string, er
 		}
 	}
 
-	allGoFilesInDir, err := listGoFiles(pkgDirAbs) // listGoFiles returns absolute paths
+	allGoFilesInDir, err := listGoFiles(pkgDirAbs, s.IncludeTests) // listGoFiles returns absolute paths
 	if err != nil {
 		return nil, fmt.Errorf("UnscannedGoFiles: could not list go files in %s: %w", pkgDirAbs, err)
 	}
@@ -700,7 +720,7 @@ func (s *Scanner) ScanPackageByImport(ctx context.Context, importPath string) (*
 	}
 	slog.DebugContext(ctx, "ScanPackageByImport resolved import path", slog.String("importPath", importPath), slog.String("pkgDirAbs", pkgDirAbs))
 
-	allGoFilesInPkg, err := listGoFiles(pkgDirAbs) // Gets absolute paths
+	allGoFilesInPkg, err := listGoFiles(pkgDirAbs, s.IncludeTests) // Gets absolute paths
 	if err != nil {
 		return nil, fmt.Errorf("ScanPackageByImport: failed to list go files in %s: %w", pkgDirAbs, err)
 	}
@@ -978,7 +998,7 @@ func (s *Scanner) FindImporters(ctx context.Context, targetImportPath string) ([
 
 		// path is a directory. Let's see if it's a package.
 		// We can check for .go files inside it.
-		goFiles, err := listGoFiles(path) // listGoFiles is an existing helper in goscan.go
+		goFiles, err := listGoFiles(path, s.IncludeTests) // listGoFiles is an existing helper in goscan.go
 		if err != nil {
 			slog.WarnContext(ctx, "could not list go files in directory, skipping", slog.String("path", path), slog.Any("error", err))
 			return nil // continue walking
@@ -1228,7 +1248,7 @@ func (s *Scanner) BuildReverseDependencyMap(ctx context.Context) (map[string][]s
 		if d.Name() == "vendor" || (len(d.Name()) > 1 && d.Name()[0] == '.') {
 			return filepath.SkipDir
 		}
-		goFiles, err := listGoFiles(path)
+		goFiles, err := listGoFiles(path, s.IncludeTests)
 		if err != nil {
 			slog.WarnContext(ctx, "could not list go files in directory, skipping", "path", path, "error", err)
 			return nil

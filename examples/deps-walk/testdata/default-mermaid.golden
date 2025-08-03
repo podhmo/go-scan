@@ -1,9 +1,9 @@
-graph LR;
-  "github.com/podhmo/go-scan/testdata/walk/a"["github.com/podhmo/go-scan/testdata/walk/a"];
-  "github.com/podhmo/go-scan/testdata/walk/b"["github.com/podhmo/go-scan/testdata/walk/b"];
-  "github.com/podhmo/go-scan/testdata/walk/c"["github.com/podhmo/go-scan/testdata/walk/c"];
-  "github.com/podhmo/go-scan/testdata/walk/d"["github.com/podhmo/go-scan/testdata/walk/d"];
+graph LR
+  id0["github.com/podhmo/go-scan/testdata/walk/a"]
+  id1["github.com/podhmo/go-scan/testdata/walk/b"]
+  id2["github.com/podhmo/go-scan/testdata/walk/c"]
+  id3["github.com/podhmo/go-scan/testdata/walk/d"]
 
-  "github.com/podhmo/go-scan/testdata/walk/a" --> "github.com/podhmo/go-scan/testdata/walk/b";
-  "github.com/podhmo/go-scan/testdata/walk/a" --> "github.com/podhmo/go-scan/testdata/walk/c";
-  "github.com/podhmo/go-scan/testdata/walk/a" --> "github.com/podhmo/go-scan/testdata/walk/d";
+  id0 --> id1
+  id0 --> id2
+  id0 --> id3

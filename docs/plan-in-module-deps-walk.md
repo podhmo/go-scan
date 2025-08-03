@@ -33,6 +33,7 @@ The user will be able to provide a list of package import patterns to ignore or 
 The tool will output the graph in standard formats. Initially, it will support:
 - **DOT**: For rendering with tools like Graphviz.
 - **Mermaid**: For easy embedding in Markdown documents (e.g., on GitHub).
+- **JSON**: For programmatic use or integration with other tools.
 
 ### 2.4. Dependency Scope (In-Module vs. Full)
 

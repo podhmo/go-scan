@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -33,7 +34,7 @@ func main() {
 	flag.IntVar(&hops, "hops", 1, "Maximum number of hops to walk from the start package")
 	flag.StringVar(&ignore, "ignore", "", "A comma-separated list of package patterns to ignore")
 	flag.StringVar(&output, "output", "", "Output file path for the graph (defaults to stdout)")
-	flag.StringVar(&format, "format", "dot", "Output format (dot or mermaid)")
+	flag.StringVar(&format, "format", "dot", "Output format (dot, mermaid, or json)")
 	flag.StringVar(&granularity, "granularity", "package", "Dependency granularity (package or file)")
 	flag.BoolVar(&full, "full", false, "Include dependencies outside the current module")
 	flag.BoolVar(&short, "short", false, "Omit module prefix from package paths in the output")
@@ -62,14 +63,15 @@ func run(ctx context.Context, startPkg string, hops int, ignore string, output s
 	}
 
 	visitor := &graphVisitor{
-		s:              s,
-		hops:           hops,
-		full:           full,
-		short:          short,
-		granularity:    granularity,
-		ignorePatterns: ignorePatterns,
-		dependencies:   make(map[string][]string),
-		packageHops:    make(map[string]int),
+		s:                   s,
+		hops:                hops,
+		full:                full,
+		short:               short,
+		granularity:         granularity,
+		ignorePatterns:      ignorePatterns,
+		dependencies:        make(map[string][]string),
+		reverseDependencies: make(map[string][]string),
+		packageHops:         make(map[string]int),
 	}
 
 	if aggressive && !(direction == "reverse" || direction == "bidi") {
@@ -79,15 +81,12 @@ func run(ctx context.Context, startPkg string, hops int, ignore string, output s
 		return fmt.Errorf("--granularity=file is not compatible with --direction=reverse or --direction=bidi")
 	}
 
-	switch direction {
-	case "forward":
-		// Set the starting hop level for the root package
+	doForwardSearch := func() error {
 		visitor.packageHops[startPkg] = 0
+		return s.Walk(ctx, startPkg, visitor)
+	}
 
-		if err := s.Walk(ctx, startPkg, visitor); err != nil {
-			return fmt.Errorf("walk failed: %w", err)
-		}
-	case "reverse":
+	doReverseSearch := func() error {
 		var importers []*goscan.PackageImports
 		var err error
 		if aggressive {
@@ -95,39 +94,30 @@ func run(ctx context.Context, startPkg string, hops int, ignore string, output s
 		} else {
 			importers, err = s.FindImporters(ctx, startPkg)
 		}
-
 		if err != nil {
+			return err
+		}
+		for _, imp := range importers {
+			visitor.reverseDependencies[imp.ImportPath] = append(visitor.reverseDependencies[imp.ImportPath], startPkg)
+		}
+		return nil
+	}
+
+	switch direction {
+	case "forward":
+		if err := doForwardSearch(); err != nil {
+			return fmt.Errorf("walk failed: %w", err)
+		}
+	case "reverse":
+		if err := doReverseSearch(); err != nil {
 			return fmt.Errorf("find importers failed: %w", err)
 		}
-		for _, imp := range importers {
-			visitor.dependencies[imp.ImportPath] = []string{startPkg}
-		}
 	case "bidi":
-		// Forward pass
-		visitor.packageHops[startPkg] = 0
-		if err := s.Walk(ctx, startPkg, visitor); err != nil {
+		if err := doForwardSearch(); err != nil {
 			return fmt.Errorf("bidi walk (forward part) failed: %w", err)
 		}
-
-		// Reverse pass
-		var importers []*goscan.PackageImports
-		var rErr error
-		if aggressive {
-			importers, rErr = s.FindImportersAggressively(ctx, startPkg)
-		} else {
-			importers, rErr = s.FindImporters(ctx, startPkg)
-		}
-
-		if rErr != nil {
-			return fmt.Errorf("bidi walk (reverse part) failed: %w", rErr)
-		}
-		for _, imp := range importers {
-			// Ensure the importer node itself is added if it wasn't part of the forward walk
-			if _, exists := visitor.dependencies[imp.ImportPath]; !exists {
-				visitor.dependencies[imp.ImportPath] = []string{}
-			}
-			// Add the reverse edge
-			visitor.dependencies[imp.ImportPath] = append(visitor.dependencies[imp.ImportPath], startPkg)
+		if err := doReverseSearch(); err != nil {
+			return fmt.Errorf("bidi walk (reverse part) failed: %w", err)
 		}
 	default:
 		return fmt.Errorf("invalid direction: %q. must be one of forward, reverse, or bidi", direction)
@@ -142,6 +132,10 @@ func run(ctx context.Context, startPkg string, hops int, ignore string, output s
 	case "mermaid":
 		if err := visitor.WriteMermaid(&buf); err != nil {
 			return fmt.Errorf("failed to generate Mermaid graph: %w", err)
+		}
+	case "json":
+		if err := visitor.WriteJSON(&buf, startPkg, direction); err != nil {
+			return fmt.Errorf("failed to generate JSON output: %w", err)
 		}
 	default:
 		return fmt.Errorf("unsupported format: %q", format)
@@ -158,14 +152,15 @@ func run(ctx context.Context, startPkg string, hops int, ignore string, output s
 }
 
 type graphVisitor struct {
-	s              *goscan.Scanner
-	hops           int
-	full           bool
-	short          bool
-	granularity    string
-	ignorePatterns []string
-	dependencies   map[string][]string // from -> to[]
-	packageHops    map[string]int      // package -> hop level
+	s                   *goscan.Scanner
+	hops                int
+	full                bool
+	short               bool
+	granularity         string
+	ignorePatterns      []string
+	dependencies        map[string][]string // from -> to[]
+	reverseDependencies map[string][]string // to -> from[]
+	packageHops         map[string]int      // package -> hop level
 }
 
 func (v *graphVisitor) Visit(pkg *goscan.PackageImports) ([]string, error) {
@@ -226,12 +221,20 @@ func (v *graphVisitor) WriteDOT(w io.Writer) error {
 	}
 
 	allNodes := make(map[string]string) // name -> type ("file" or "package")
+
+	// Collect all nodes from both dependency maps
 	for from, toList := range v.dependencies {
 		if v.granularity == "file" {
 			allNodes[from] = "file"
 		} else {
 			allNodes[from] = "package"
 		}
+		for _, to := range toList {
+			allNodes[to] = "package"
+		}
+	}
+	for from, toList := range v.reverseDependencies {
+		allNodes[from] = "package"
 		for _, to := range toList {
 			allNodes[to] = "package"
 		}
@@ -272,6 +275,7 @@ func (v *graphVisitor) WriteDOT(w io.Writer) error {
 
 	fmt.Fprintln(w, "")
 
+	// Write forward dependencies
 	sortedFroms := make([]string, 0, len(v.dependencies))
 	for from := range v.dependencies {
 		sortedFroms = append(sortedFroms, from)
@@ -283,6 +287,22 @@ func (v *graphVisitor) WriteDOT(w io.Writer) error {
 		sort.Strings(toList)
 		for _, to := range toList {
 			fmt.Fprintf(w, `  "%s" -> "%s";`+"\n", from, to)
+		}
+	}
+
+	// Write reverse dependencies with a different style
+	sortedFromsRev := make([]string, 0, len(v.reverseDependencies))
+	for from := range v.reverseDependencies {
+		sortedFromsRev = append(sortedFromsRev, from)
+	}
+	sort.Strings(sortedFromsRev)
+
+	for _, from := range sortedFromsRev {
+		toList := v.reverseDependencies[from]
+		sort.Strings(toList)
+		for _, to := range toList {
+			// Using [dir=back] to indicate a reverse dependency
+			fmt.Fprintf(w, `  "%s" -> "%s" [dir=back, style=dashed];`+"\n", to, from)
 		}
 	}
 
@@ -300,6 +320,12 @@ func (v *graphVisitor) WriteMermaid(w io.Writer) error {
 		} else {
 			allNodes[from] = "package"
 		}
+		for _, to := range toList {
+			allNodes[to] = "package"
+		}
+	}
+	for from, toList := range v.reverseDependencies {
+		allNodes[from] = "package"
 		for _, to := range toList {
 			allNodes[to] = "package"
 		}
@@ -342,16 +368,15 @@ func (v *graphVisitor) WriteMermaid(w io.Writer) error {
 
 		switch allNodes[node] {
 		case "file":
-			// Mermaid: id(label) for rectangle with rounded corners
 			fmt.Fprintf(w, `%s%s("%s")`+"\n", indent, id, label)
 		case "package":
-			// Mermaid: id["label"] for rectangle
 			fmt.Fprintf(w, `%s%s["%s"]`+"\n", indent, id, label)
 		}
 	}
 
 	fmt.Fprintln(w, "")
 
+	// Write forward dependencies
 	sortedFroms := make([]string, 0, len(v.dependencies))
 	for from := range v.dependencies {
 		sortedFroms = append(sortedFroms, from)
@@ -371,9 +396,69 @@ func (v *graphVisitor) WriteMermaid(w io.Writer) error {
 		}
 	}
 
+	// Write reverse dependencies
+	sortedFromsRev := make([]string, 0, len(v.reverseDependencies))
+	for from := range v.reverseDependencies {
+		sortedFromsRev = append(sortedFromsRev, from)
+	}
+	sort.Strings(sortedFromsRev)
+
+	for _, from := range sortedFromsRev {
+		toList := v.reverseDependencies[from]
+		sort.Strings(toList)
+		fromID := nodeIDs[from]
+		for _, to := range toList {
+			toID, ok := nodeIDs[to]
+			if !ok {
+				continue
+			}
+			// Using a dashed line for reverse dependencies
+			fmt.Fprintf(w, "%s%s -.-> %s\n", indent, fromID, toID)
+		}
+	}
+
 	if v.short && modulePath != "" && v.granularity == "package" {
 		fmt.Fprintln(w, "  end")
 	}
 
+	return nil
+}
+
+func (v *graphVisitor) WriteJSON(w io.Writer, startPkg, direction string) error {
+	type jsonOutput struct {
+		Config              map[string]interface{} `json:"config"`
+		Dependencies        map[string][]string    `json:"dependencies"`
+		ReverseDependencies map[string][]string    `json:"reverseDependencies"`
+	}
+
+	sortMap := func(m map[string][]string) map[string][]string {
+		sortedMap := make(map[string][]string, len(m))
+		keys := make([]string, 0, len(m))
+		for k := range m {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			sort.Strings(m[k])
+			sortedMap[k] = m[k]
+		}
+		return sortedMap
+	}
+
+	output := jsonOutput{
+		Config: map[string]interface{}{
+			"startPkg":  startPkg,
+			"direction": direction,
+			"hops":      v.hops,
+		},
+		Dependencies:        sortMap(v.dependencies),
+		ReverseDependencies: sortMap(v.reverseDependencies),
+	}
+
+	encoder := json.NewEncoder(w)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(output); err != nil {
+		return fmt.Errorf("failed to encode dependencies to JSON: %w", err)
+	}
 	return nil
 }

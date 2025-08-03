@@ -5,6 +5,6 @@ digraph dependencies {
   "github.com/podhmo/go-scan/testdata/walk/b" [label="github.com/podhmo/go-scan/testdata/walk/b"];
   "github.com/podhmo/go-scan/testdata/walk/d" [label="github.com/podhmo/go-scan/testdata/walk/d"];
 
-  "github.com/podhmo/go-scan/testdata/walk/a" -> "github.com/podhmo/go-scan/testdata/walk/b";
   "github.com/podhmo/go-scan/testdata/walk/b" -> "github.com/podhmo/go-scan/testdata/walk/d";
+  "github.com/podhmo/go-scan/testdata/walk/b" -> "github.com/podhmo/go-scan/testdata/walk/a" [dir=back, style=dashed];
 }

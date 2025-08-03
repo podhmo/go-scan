@@ -76,6 +76,57 @@ func TestRun(t *testing.T) {
 			goldenFile: "default-mermaid.golden",
 		},
 		{
+			name: "default-json",
+			args: map[string]interface{}{
+				"start-pkg": "github.com/podhmo/go-scan/testdata/walk/a",
+				"hops":      1,
+				"format":    "json",
+				"full":      false,
+				"short":     false,
+				"ignore":    "",
+			},
+			goldenFile: "default-json.golden",
+		},
+		{
+			name: "default-json",
+			args: map[string]interface{}{
+				"start-pkg": "github.com/podhmo/go-scan/testdata/walk/a",
+				"hops":      1,
+				"format":    "json",
+				"full":      false,
+				"short":     false,
+				"ignore":    "",
+				"direction": "forward",
+			},
+			goldenFile: "default-json.golden",
+		},
+		{
+			name: "reverse-json",
+			args: map[string]interface{}{
+				"start-pkg": "github.com/podhmo/go-scan/testdata/walk/c",
+				"hops":      1,
+				"format":    "json",
+				"full":      false,
+				"short":     false,
+				"ignore":    "",
+				"direction": "reverse",
+			},
+			goldenFile: "reverse-json.golden",
+		},
+		{
+			name: "bidi-json",
+			args: map[string]interface{}{
+				"start-pkg": "github.com/podhmo/go-scan/testdata/walk/b",
+				"hops":      1,
+				"format":    "json",
+				"full":      false,
+				"short":     false,
+				"ignore":    "",
+				"direction": "bidi",
+			},
+			goldenFile: "bidi-json.golden",
+		},
+		{
 			name: "mermaid-short",
 			args: map[string]interface{}{
 				"start-pkg": "github.com/podhmo/go-scan/testdata/walk/a",

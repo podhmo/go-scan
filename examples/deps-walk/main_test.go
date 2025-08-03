@@ -44,7 +44,7 @@ func loadTestdata(t *testing.T, root string) map[string]string {
 }
 
 func TestRun(t *testing.T) {
-	testdataFiles := loadTestdata(t, "../../testdata/walk")
+	testdataFiles := loadTestdata(t, "testdata/walk")
 
 	cases := []struct {
 		name       string

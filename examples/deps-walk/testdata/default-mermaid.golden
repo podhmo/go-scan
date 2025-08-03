@@ -1,6 +1,8 @@
 graph LR
 
-  id0["github.com/podhmo/go-scan/testdata/walk/a"]
-  id1["github.com/podhmo/go-scan/testdata/walk/b"]
+  id0["fmt"]
+  id1["github.com/podhmo/go-scan/testdata/walk/a"]
+  id2["github.com/podhmo/go-scan/testdata/walk/b"]
 
-  id0 --> id1
+  id1 --> id0
+  id1 --> id2

@@ -52,10 +52,11 @@ func TestRun(t *testing.T) {
 		goldenFile string
 	}{
 		{
-			name: "default-hops=1-in-module",
+			name: "default-dot",
 			args: map[string]interface{}{
 				"start-pkg": "github.com/podhmo/go-scan/testdata/walk/a",
 				"hops":      1,
+				"format":    "dot",
 				"full":      false,
 				"short":     false,
 				"ignore":    "",
@@ -63,10 +64,23 @@ func TestRun(t *testing.T) {
 			goldenFile: "default.golden",
 		},
 		{
+			name: "default-mermaid",
+			args: map[string]interface{}{
+				"start-pkg": "github.com/podhmo/go-scan/testdata/walk/a",
+				"hops":      1,
+				"format":    "mermaid",
+				"full":      false,
+				"short":     false,
+				"ignore":    "",
+			},
+			goldenFile: "default-mermaid.golden",
+		},
+		{
 			name: "default-short",
 			args: map[string]interface{}{
 				"start-pkg": "github.com/podhmo/go-scan/testdata/walk/a",
 				"hops":      1,
+				"format":    "dot",
 				"full":      false,
 				"short":     true,
 				"ignore":    "",
@@ -78,6 +92,7 @@ func TestRun(t *testing.T) {
 			args: map[string]interface{}{
 				"start-pkg": "github.com/podhmo/go-scan/testdata/walk/a",
 				"hops":      2,
+				"format":    "dot",
 				"full":      true, // to see external deps
 				"short":     false,
 				"ignore":    "",
@@ -89,6 +104,7 @@ func TestRun(t *testing.T) {
 			args: map[string]interface{}{
 				"start-pkg": "github.com/podhmo/go-scan/testdata/walk/a",
 				"hops":      1,
+				"format":    "dot",
 				"full":      false,
 				"short":     false,
 				"ignore":    "github.com/podhmo/go-scan/testdata/walk/c",
@@ -100,6 +116,7 @@ func TestRun(t *testing.T) {
 			args: map[string]interface{}{
 				"start-pkg": "github.com/podhmo/go-scan/testdata/walk/d", // d imports an external package
 				"hops":      1,
+				"format":    "dot",
 				"full":      true,
 				"short":     false,
 				"ignore":    "",
@@ -122,7 +139,12 @@ func TestRun(t *testing.T) {
 			}
 			defer os.Chdir(originalWD)
 
-			outputFile := filepath.Join(tmpdir, "output.dot")
+			format, ok := tc.args["format"].(string)
+			if !ok {
+				format = "dot" // default format
+			}
+
+			outputFile := filepath.Join(tmpdir, "output."+format)
 			startPkg := tc.args["start-pkg"].(string)
 
 			err = run(
@@ -131,6 +153,7 @@ func TestRun(t *testing.T) {
 				tc.args["hops"].(int),
 				tc.args["ignore"].(string),
 				outputFile,
+				format,
 				tc.args["full"].(bool),
 				tc.args["short"].(bool),
 			)

@@ -15,11 +15,22 @@ The tool outputs a dependency graph in the DOT language, which can be rendered i
 - **Package Filtering**: Supports ignoring specific packages or package patterns (e.g., common utilities, logging) using the `--ignore` flag to declutter the graph.
 - **Configurable Scope**: By default, it traverses only packages within the current Go module. The `--full` flag can be used to include external dependencies (from the standard library or third-party modules).
 - **DOT Output**: Generates a graph in the DOT format, ready for visualization.
+- **Multiple Output Formats**: Supports graph generation in DOT (default) and Mermaid formats via the `--format` flag.
 - **Path Shortening**: The `--short` flag simplifies package paths in the output by omitting the module prefix.
 
 ## Usage
 
-You can run the tool by specifying a starting package.
+You can run the tool by specifying a starting package. You can also choose the output format.
+
+### Generating a DOT graph (default)
+```bash
+$ go run ./examples/deps-walk -start-pkg=github.com/podhmo/go-scan/testdata/walk/a
+```
+
+### Generating a Mermaid graph
+```bash
+$ go run ./examples/deps-walk -start-pkg=github.com/podhmo/go-scan/testdata/walk/a -format=mermaid
+```
 
 ### Basic Example
 

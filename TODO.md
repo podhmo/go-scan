@@ -117,6 +117,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 -   **`deps-walk` Command-Line Tool**: Implemented the `deps-walk` tool as described in [docs/plan-in-module-deps-walk.md](./docs/plan-in-module-deps-walk.md).
     -   [x] **Initial Tool Setup**: Created the basic CLI structure for the `deps-walk` tool and implemented the logic to call the `goscan.Scanner.Walk` method.
     -   [x] **Core Visualization Features**: Implemented graph generation in DOT format and added support for the `--hops` flag to limit traversal depth.
+    -   [x] **Multiple Output Formats**: Added support for Mermaid as an output format alongside DOT via the `--format` flag.
     -   [x] **Filtering and Usability**: Added support for the `--ignore` flag for package exclusion and a `--full` flag to include external dependencies (defaulting to in-module only).
     -   [x] **Integration Tests**: Added integration tests for the `deps-walk` tool using `scantest`.
 -   **Refactoring**:

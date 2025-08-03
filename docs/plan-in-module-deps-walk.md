@@ -30,7 +30,9 @@ The user will be able to provide a list of package import patterns to ignore or 
 
 ### 2.3. Output Format
 
-The tool will output the graph in a standard format like DOT, which can be rendered by tools like Graphviz.
+The tool will output the graph in standard formats. Initially, it will support:
+- **DOT**: For rendering with tools like Graphviz.
+- **Mermaid**: For easy embedding in Markdown documents (e.g., on GitHub).
 
 ### 2.4. Dependency Scope (In-Module vs. Full)
 

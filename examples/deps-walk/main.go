@@ -72,6 +72,13 @@ func run(ctx context.Context, startPkg string, hops int, ignore string, output s
 		packageHops:    make(map[string]int),
 	}
 
+	if aggressive && !(direction == "reverse" || direction == "bidi") {
+		return fmt.Errorf("--aggressive is only valid with --direction=reverse or --direction=bidi")
+	}
+	if granularity == "file" && (direction == "reverse" || direction == "bidi") {
+		return fmt.Errorf("--granularity=file is not compatible with --direction=reverse or --direction=bidi")
+	}
+
 	switch direction {
 	case "forward":
 		// Set the starting hop level for the root package
@@ -81,13 +88,6 @@ func run(ctx context.Context, startPkg string, hops int, ignore string, output s
 			return fmt.Errorf("walk failed: %w", err)
 		}
 	case "reverse":
-		if granularity == "file" {
-			return fmt.Errorf("--direction=reverse is not compatible with --granularity=file")
-		}
-		if aggressive && direction != "reverse" {
-			return fmt.Errorf("--aggressive is only valid with --direction=reverse")
-		}
-
 		var importers []*goscan.PackageImports
 		var err error
 		if aggressive {
@@ -103,7 +103,32 @@ func run(ctx context.Context, startPkg string, hops int, ignore string, output s
 			visitor.dependencies[imp.ImportPath] = []string{startPkg}
 		}
 	case "bidi":
-		return fmt.Errorf("--direction=bidi is not yet implemented")
+		// Forward pass
+		visitor.packageHops[startPkg] = 0
+		if err := s.Walk(ctx, startPkg, visitor); err != nil {
+			return fmt.Errorf("bidi walk (forward part) failed: %w", err)
+		}
+
+		// Reverse pass
+		var importers []*goscan.PackageImports
+		var rErr error
+		if aggressive {
+			importers, rErr = s.FindImportersAggressively(ctx, startPkg)
+		} else {
+			importers, rErr = s.FindImporters(ctx, startPkg)
+		}
+
+		if rErr != nil {
+			return fmt.Errorf("bidi walk (reverse part) failed: %w", rErr)
+		}
+		for _, imp := range importers {
+			// Ensure the importer node itself is added if it wasn't part of the forward walk
+			if _, exists := visitor.dependencies[imp.ImportPath]; !exists {
+				visitor.dependencies[imp.ImportPath] = []string{}
+			}
+			// Add the reverse edge
+			visitor.dependencies[imp.ImportPath] = append(visitor.dependencies[imp.ImportPath], startPkg)
+		}
 	default:
 		return fmt.Errorf("invalid direction: %q. must be one of forward, reverse, or bidi", direction)
 	}

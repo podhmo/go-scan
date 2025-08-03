@@ -212,7 +212,7 @@ func (v *graphVisitor) WriteDOT(w io.Writer) error {
 }
 
 func (v *graphVisitor) WriteMermaid(w io.Writer) error {
-	fmt.Fprintln(w, "graph LR;")
+	fmt.Fprintln(w, "graph LR")
 
 	// Collect all unique packages to declare them as nodes
 	allPackagesSet := make(map[string]struct{})
@@ -230,23 +230,24 @@ func (v *graphVisitor) WriteMermaid(w io.Writer) error {
 	}
 	sort.Strings(sortedPackages)
 
+	// Create a map from package path to a simplified ID
+	packageIDs := make(map[string]string)
+	for i, pkg := range sortedPackages {
+		packageIDs[pkg] = fmt.Sprintf("id%d", i)
+	}
+
 	modulePath := v.s.ModulePath()
 
 	// Declare all nodes with their labels
 	for _, pkg := range sortedPackages {
+		id := packageIDs[pkg]
 		label := pkg
 		if v.short && modulePath != "" && strings.HasPrefix(pkg, modulePath) {
 			label = strings.TrimPrefix(pkg, modulePath)
 			label = strings.TrimPrefix(label, "/")
 		}
 		// Mermaid syntax for node declaration with a label is id["label"]
-		// Using the full import path as the ID, and the (potentially shortened) path as the label.
-		// Mermaid requires IDs to not contain special characters like slashes, so we need to be careful.
-		// Let's use a simplified ID. But for now, let's try with quotes.
-		// After checking mermaid docs, IDs can be quoted. `graph TD; "a/b" --> "c/d";` is valid.
-		// But labels are like `a["label for a"]`. So we need to use a stable ID.
-		// The import path is the most stable ID.
-		fmt.Fprintf(w, `  "%s"["%s"];`+"\n", pkg, label)
+		fmt.Fprintf(w, `  %s["%s"]`+"\n", id, label)
 	}
 
 	fmt.Fprintln(w, "") // separator
@@ -262,8 +263,13 @@ func (v *graphVisitor) WriteMermaid(w io.Writer) error {
 	for _, from := range sortedFroms {
 		toList := v.dependencies[from]
 		sort.Strings(toList) // Sort the 'to' packages as well
+		fromID := packageIDs[from]
 		for _, to := range toList {
-			fmt.Fprintf(w, `  "%s" --> "%s";`+"\n", from, to)
+			toID, ok := packageIDs[to]
+			if !ok {
+				continue
+			}
+			fmt.Fprintf(w, "  %s --> %s\n", fromID, toID)
 		}
 	}
 

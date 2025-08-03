@@ -206,6 +206,7 @@ func TestRun(t *testing.T) {
 				tc.args["full"].(bool),
 				tc.args["short"].(bool),
 				direction,
+				false, // aggressive
 			)
 			if err != nil {
 				t.Fatalf("run() failed unexpectedly: %+v", err)

@@ -26,6 +26,7 @@ func main() {
 		full        bool
 		short       bool
 		direction   string
+		aggressive  bool
 	)
 
 	flag.StringVar(&startPkg, "start-pkg", "", "The root package to start the dependency walk from (required)")
@@ -37,18 +38,19 @@ func main() {
 	flag.BoolVar(&full, "full", false, "Include dependencies outside the current module")
 	flag.BoolVar(&short, "short", false, "Omit module prefix from package paths in the output")
 	flag.StringVar(&direction, "direction", "forward", "Direction of dependency walk (forward, reverse, bidi)")
+	flag.BoolVar(&aggressive, "aggressive", false, "Use aggressive git-grep based search for reverse mode")
 	flag.Parse()
 
 	if startPkg == "" {
 		log.Fatal("-start-pkg is required")
 	}
 
-	if err := run(context.Background(), startPkg, hops, ignore, output, format, granularity, full, short, direction); err != nil {
+	if err := run(context.Background(), startPkg, hops, ignore, output, format, granularity, full, short, direction, aggressive); err != nil {
 		log.Fatalf("Error: %+v", err)
 	}
 }
 
-func run(ctx context.Context, startPkg string, hops int, ignore string, output string, format string, granularity string, full bool, short bool, direction string) error {
+func run(ctx context.Context, startPkg string, hops int, ignore string, output string, format string, granularity string, full bool, short bool, direction string, aggressive bool) error {
 	s, err := goscan.New()
 	if err != nil {
 		return fmt.Errorf("failed to create scanner: %w", err)
@@ -82,7 +84,18 @@ func run(ctx context.Context, startPkg string, hops int, ignore string, output s
 		if granularity == "file" {
 			return fmt.Errorf("--direction=reverse is not compatible with --granularity=file")
 		}
-		importers, err := s.FindImporters(ctx, startPkg)
+		if aggressive && direction != "reverse" {
+			return fmt.Errorf("--aggressive is only valid with --direction=reverse")
+		}
+
+		var importers []*goscan.PackageImports
+		var err error
+		if aggressive {
+			importers, err = s.FindImportersAggressively(ctx, startPkg)
+		} else {
+			importers, err = s.FindImporters(ctx, startPkg)
+		}
+
 		if err != nil {
 			return fmt.Errorf("find importers failed: %w", err)
 		}

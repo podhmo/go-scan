@@ -1,12 +1,14 @@
 package goscan
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"go/token"
 	"io/fs"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -1016,6 +1018,91 @@ func (s *Scanner) FindImporters(ctx context.Context, targetImportPath string) ([
 
 	if err != nil {
 		return nil, fmt.Errorf("error walking module directory for importers: %w", err)
+	}
+
+	// Sort for deterministic output
+	sort.Slice(importers, func(i, j int) bool {
+		return importers[i].ImportPath < importers[j].ImportPath
+	})
+
+	return importers, nil
+}
+
+// FindImportersAggressively scans the module using `git grep` to quickly find files
+// that likely import the targetImportPath, then confirms them. This can be much
+// faster than walking the entire directory structure in large repositories.
+// A git repository is required.
+func (s *Scanner) FindImportersAggressively(ctx context.Context, targetImportPath string) ([]*PackageImports, error) {
+	s.mu.RLock()
+	rootDir := s.locator.RootDir()
+	modulePath := s.locator.ModulePath()
+	s.mu.RUnlock()
+
+	if rootDir == "" {
+		return nil, fmt.Errorf("module root directory not found, cannot perform aggressive reverse dependency search")
+	}
+
+	// Pattern to find import statements. We just look for the quoted import path.
+	// This is a broad but effective pattern for `git grep`, as the results are
+	// verified by a proper Go parser anyway. This correctly handles both
+	// `import "..."` and `import ( ... "..." ... )` forms.
+	pattern := fmt.Sprintf(`"%s"`, targetImportPath)
+
+	cmd := exec.CommandContext(ctx, "git", "grep", "-l", "-F", pattern, "--", "*.go")
+	cmd.Dir = rootDir
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	slog.DebugContext(ctx, "executing git grep", slog.String("dir", cmd.Dir), slog.Any("args", cmd.Args))
+
+	if err := cmd.Run(); err != nil {
+		// git grep exits with 1 if no matches are found, which is not an error for us.
+		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+			// No files found, return empty list.
+			return nil, nil
+		}
+		return nil, fmt.Errorf("git grep failed: %w\n%s", err, stderr.String())
+	}
+
+	potentialFiles := strings.Split(strings.TrimSpace(stdout.String()), "\n")
+	if len(potentialFiles) == 0 || (len(potentialFiles) == 1 && potentialFiles[0] == "") {
+		return nil, nil // No matches
+	}
+
+	// Group files by directory (package)
+	packagesToScan := make(map[string]struct{})
+	for _, fileRelPath := range potentialFiles {
+		if fileRelPath == "" {
+			continue
+		}
+		dir := filepath.Dir(fileRelPath)
+		packagesToScan[dir] = struct{}{}
+	}
+
+	var importers []*PackageImports
+	for relDir := range packagesToScan {
+		var currentPkgImportPath string
+		if relDir == "." {
+			currentPkgImportPath = modulePath
+		} else {
+			currentPkgImportPath = filepath.ToSlash(filepath.Join(modulePath, relDir))
+		}
+
+		// Now we can use the existing efficient scanner method to confirm.
+		pkgImports, err := s.ScanPackageImports(ctx, currentPkgImportPath)
+		if err != nil {
+			slog.WarnContext(ctx, "failed to scan potential importer package, skipping", "importPath", currentPkgImportPath, "error", err)
+			continue
+		}
+
+		// Check if it really imports our target
+		for _, imp := range pkgImports.Imports {
+			if imp == targetImportPath {
+				importers = append(importers, pkgImports)
+				break
+			}
+		}
 	}
 
 	// Sort for deterministic output

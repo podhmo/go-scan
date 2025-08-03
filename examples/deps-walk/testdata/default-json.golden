@@ -6,7 +6,6 @@
   },
   "dependencies": {
     "github.com/podhmo/go-scan/testdata/walk/a": [
-      "fmt",
       "github.com/podhmo/go-scan/testdata/walk/b"
     ]
   },

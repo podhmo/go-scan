@@ -277,6 +277,11 @@ func TestRun(t *testing.T) {
 				scantest.RunCommand(t, tmpdir, "git", "commit", "-m", "initial commit")
 			}
 
+			// For tests that involve external dependencies, run `go mod tidy`
+			if full, ok := tc.args["full"].(bool); ok && full {
+				scantest.RunCommand(t, tmpdir, "go", "mod", "tidy")
+			}
+
 			format, ok := tc.args["format"].(string)
 			if !ok {
 				format = "dot" // default format

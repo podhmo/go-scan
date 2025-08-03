@@ -1,9 +1,7 @@
 digraph dependencies {
   rankdir="LR";
   "<tmp>/a/a.go" [label="a/a.go", shape=note, style=filled, fillcolor=khaki];
-  "fmt" [label="fmt", shape=box, style="rounded,filled", fillcolor=lightgrey];
   "github.com/podhmo/go-scan/testdata/walk/b" [label="github.com/podhmo/go-scan/testdata/walk/b", shape=box, style="rounded,filled", fillcolor=lightgrey];
 
-  "<tmp>/a/a.go" -> "fmt";
   "<tmp>/a/a.go" -> "github.com/podhmo/go-scan/testdata/walk/b";
 }

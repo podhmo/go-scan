@@ -199,3 +199,4 @@ This library is currently under development. See `docs/todo.md` for planned feat
 *   **`examples/derivingbind`**: Shows how to generate methods for binding data from HTTP requests (query, path, header, body) to struct fields.
 *   **`examples/minigo`**: A mini Go interpreter that uses `go-scan` for parsing and understanding Go code structure.
 *   **`examples/convert`**: A prototype for generating type conversion functions between different Go structs. See `examples/convert/README.md` for details.
+*   **`examples/deps-walk`**: A command-line tool to visualize package dependencies within a module. See `examples/deps-walk/README.md` for details.

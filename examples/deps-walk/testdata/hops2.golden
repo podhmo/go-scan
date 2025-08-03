@@ -1,10 +1,32 @@
 digraph dependencies {
   rankdir="LR";
   node [shape=box, style="rounded,filled", fillcolor=lightgrey];
+  "errors" [label="errors"];
+  "fmt" [label="fmt"];
   "github.com/podhmo/go-scan/testdata/walk/a" [label="github.com/podhmo/go-scan/testdata/walk/a"];
   "github.com/podhmo/go-scan/testdata/walk/b" [label="github.com/podhmo/go-scan/testdata/walk/b"];
   "github.com/podhmo/go-scan/testdata/walk/c" [label="github.com/podhmo/go-scan/testdata/walk/c"];
+  "internal/fmtsort" [label="internal/fmtsort"];
+  "io" [label="io"];
+  "math" [label="math"];
+  "os" [label="os"];
+  "reflect" [label="reflect"];
+  "slices" [label="slices"];
+  "strconv" [label="strconv"];
+  "sync" [label="sync"];
+  "unicode/utf8" [label="unicode/utf8"];
 
+  "fmt" -> "errors";
+  "fmt" -> "internal/fmtsort";
+  "fmt" -> "io";
+  "fmt" -> "math";
+  "fmt" -> "os";
+  "fmt" -> "reflect";
+  "fmt" -> "slices";
+  "fmt" -> "strconv";
+  "fmt" -> "sync";
+  "fmt" -> "unicode/utf8";
+  "github.com/podhmo/go-scan/testdata/walk/a" -> "fmt";
   "github.com/podhmo/go-scan/testdata/walk/a" -> "github.com/podhmo/go-scan/testdata/walk/b";
   "github.com/podhmo/go-scan/testdata/walk/b" -> "github.com/podhmo/go-scan/testdata/walk/c";
 }

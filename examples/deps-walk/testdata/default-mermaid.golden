@@ -1,4 +1,5 @@
 graph LR
+
   id0["github.com/podhmo/go-scan/testdata/walk/a"]
   id1["github.com/podhmo/go-scan/testdata/walk/b"]
   id2["github.com/podhmo/go-scan/testdata/walk/c"]

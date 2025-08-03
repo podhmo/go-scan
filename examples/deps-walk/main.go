@@ -17,13 +17,14 @@ import (
 
 func main() {
 	var (
-		startPkg string
-		hops     int
-		ignore   string
-		output   string
-		format   string
-		full     bool
-		short    bool
+		startPkg    string
+		hops        int
+		ignore      string
+		output      string
+		format      string
+		granularity string
+		full        bool
+		short       bool
 	)
 
 	flag.StringVar(&startPkg, "start-pkg", "", "The root package to start the dependency walk from (required)")
@@ -31,6 +32,7 @@ func main() {
 	flag.StringVar(&ignore, "ignore", "", "A comma-separated list of package patterns to ignore")
 	flag.StringVar(&output, "output", "", "Output file path for the graph (defaults to stdout)")
 	flag.StringVar(&format, "format", "dot", "Output format (dot or mermaid)")
+	flag.StringVar(&granularity, "granularity", "package", "Dependency granularity (package or file)")
 	flag.BoolVar(&full, "full", false, "Include dependencies outside the current module")
 	flag.BoolVar(&short, "short", false, "Omit module prefix from package paths in the output")
 	flag.Parse()
@@ -39,12 +41,12 @@ func main() {
 		log.Fatal("-start-pkg is required")
 	}
 
-	if err := run(context.Background(), startPkg, hops, ignore, output, format, full, short); err != nil {
+	if err := run(context.Background(), startPkg, hops, ignore, output, format, granularity, full, short); err != nil {
 		log.Fatalf("Error: %+v", err)
 	}
 }
 
-func run(ctx context.Context, startPkg string, hops int, ignore string, output string, format string, full bool, short bool) error {
+func run(ctx context.Context, startPkg string, hops int, ignore string, output string, format string, granularity string, full bool, short bool) error {
 	s, err := goscan.New()
 	if err != nil {
 		return fmt.Errorf("failed to create scanner: %w", err)
@@ -60,6 +62,7 @@ func run(ctx context.Context, startPkg string, hops int, ignore string, output s
 		hops:           hops,
 		full:           full,
 		short:          short,
+		granularity:    granularity,
 		ignorePatterns: ignorePatterns,
 		dependencies:   make(map[string][]string),
 		packageHops:    make(map[string]int),
@@ -101,6 +104,7 @@ type graphVisitor struct {
 	hops           int
 	full           bool
 	short          bool
+	granularity    string
 	ignorePatterns []string
 	dependencies   map[string][]string // from -> to[]
 	packageHops    map[string]int      // package -> hop level
@@ -109,13 +113,6 @@ type graphVisitor struct {
 func (v *graphVisitor) Visit(pkg *goscan.PackageImports) ([]string, error) {
 	currentHop, exists := v.packageHops[pkg.ImportPath]
 	if !exists {
-		// This can happen for packages that are imported but not yet visited via the queue.
-		// It's a dependency of a package we are visiting.
-		// We should not proceed if it's an externally discovered package beyond hop 0.
-		// However, the Walk function's design means this will be a package from the queue.
-		// If it's not in packageHops, it means it's a new package, and its hop level should have been set when it was added to the queue.
-		// The logic below handles setting the hop for newly discovered packages.
-		// Let's be safe and assume if it's not in the map, we can't determine its hop count, so we stop.
 		return nil, fmt.Errorf("internal error: visiting package %q with no hop level assigned", pkg.ImportPath)
 	}
 
@@ -126,82 +123,106 @@ func (v *graphVisitor) Visit(pkg *goscan.PackageImports) ([]string, error) {
 	var importsToFollow []string
 	modulePath := v.s.ModulePath()
 
-	for _, imp := range pkg.Imports {
-		// Check ignore patterns
-		isIgnored := false
-		for _, pattern := range v.ignorePatterns {
-			if matched, _ := filepath.Match(pattern, imp); matched {
-				isIgnored = true
-				break
+	var importsToProcess map[string][]string
+	if v.granularity == "file" {
+		importsToProcess = pkg.FileImports
+	} else {
+		importsToProcess = map[string][]string{pkg.ImportPath: pkg.Imports}
+	}
+
+	for source, imps := range importsToProcess {
+		for _, imp := range imps {
+			isIgnored := false
+			for _, pattern := range v.ignorePatterns {
+				if matched, _ := filepath.Match(pattern, imp); matched {
+					isIgnored = true
+					break
+				}
+			}
+			if isIgnored {
+				continue
+			}
+
+			v.dependencies[source] = append(v.dependencies[source], imp)
+
+			isInternal := modulePath != "" && strings.HasPrefix(imp, modulePath)
+			if !v.full && !isInternal {
+				continue
+			}
+
+			if _, visited := v.packageHops[imp]; !visited {
+				v.packageHops[imp] = currentHop + 1
+				importsToFollow = append(importsToFollow, imp)
 			}
 		}
-		if isIgnored {
-			continue
-		}
-
-		// Record the dependency, regardless of whether we follow it or not
-		v.dependencies[pkg.ImportPath] = append(v.dependencies[pkg.ImportPath], imp)
-
-		// Check if we should follow this import
-		isInternal := modulePath != "" && strings.HasPrefix(imp, modulePath)
-		if !v.full && !isInternal {
-			continue // Skip external dependencies if not in full mode
-		}
-
-		if _, visited := v.packageHops[imp]; !visited {
-			v.packageHops[imp] = currentHop + 1
-			importsToFollow = append(importsToFollow, imp)
-		}
 	}
+
 	return importsToFollow, nil
 }
 
 func (v *graphVisitor) WriteDOT(w io.Writer) error {
 	fmt.Fprintln(w, "digraph dependencies {")
 	fmt.Fprintln(w, `  rankdir="LR";`)
-	fmt.Fprintln(w, `  node [shape=box, style="rounded,filled", fillcolor=lightgrey];`)
+	if v.granularity == "package" {
+		fmt.Fprintln(w, `  node [shape=box, style="rounded,filled", fillcolor=lightgrey];`)
+	}
 
-	// Collect all unique packages to declare them as nodes
-	allPackagesSet := make(map[string]struct{})
+	allNodes := make(map[string]string) // name -> type ("file" or "package")
 	for from, toList := range v.dependencies {
-		allPackagesSet[from] = struct{}{}
+		if v.granularity == "file" {
+			allNodes[from] = "file"
+		} else {
+			allNodes[from] = "package"
+		}
 		for _, to := range toList {
-			allPackagesSet[to] = struct{}{}
+			allNodes[to] = "package"
 		}
 	}
 
-	// Sort packages for deterministic output
-	sortedPackages := make([]string, 0, len(allPackagesSet))
-	for pkg := range allPackagesSet {
-		sortedPackages = append(sortedPackages, pkg)
+	sortedNodes := make([]string, 0, len(allNodes))
+	for node := range allNodes {
+		sortedNodes = append(sortedNodes, node)
 	}
-	sort.Strings(sortedPackages)
+	sort.Strings(sortedNodes)
 
 	modulePath := v.s.ModulePath()
+	moduleRootDir := v.s.RootDir()
 
-	// Declare all nodes with their import paths as labels
-	for _, pkg := range sortedPackages {
-		label := pkg
-		if v.short && modulePath != "" && strings.HasPrefix(pkg, modulePath) {
-			label = strings.TrimPrefix(pkg, modulePath)
+	for _, node := range sortedNodes {
+		label := node
+		if v.granularity == "file" {
+			relPath, err := filepath.Rel(moduleRootDir, node)
+			if err == nil {
+				label = relPath
+			}
+		} else if v.short && modulePath != "" && strings.HasPrefix(node, modulePath) {
+			label = strings.TrimPrefix(node, modulePath)
 			label = strings.TrimPrefix(label, "/")
 		}
-		fmt.Fprintf(w, `  "%s" [label="%s"];`+"\n", pkg, label)
+
+		switch allNodes[node] {
+		case "file":
+			fmt.Fprintf(w, `  "%s" [label="%s", shape=note, style=filled, fillcolor=khaki];`+"\n", node, label)
+		case "package":
+			if v.granularity == "package" {
+				fmt.Fprintf(w, `  "%s" [label="%s"];`+"\n", node, label)
+			} else {
+				fmt.Fprintf(w, `  "%s" [label="%s", shape=box, style="rounded,filled", fillcolor=lightgrey];`+"\n", node, label)
+			}
+		}
 	}
 
-	fmt.Fprintln(w, "") // separator
+	fmt.Fprintln(w, "")
 
-	// Sort dependencies for deterministic output
 	sortedFroms := make([]string, 0, len(v.dependencies))
 	for from := range v.dependencies {
 		sortedFroms = append(sortedFroms, from)
 	}
 	sort.Strings(sortedFroms)
 
-	// Define all edges
 	for _, from := range sortedFroms {
 		toList := v.dependencies[from]
-		sort.Strings(toList) // Sort the 'to' packages as well
+		sort.Strings(toList)
 		for _, to := range toList {
 			fmt.Fprintf(w, `  "%s" -> "%s";`+"\n", from, to)
 		}
@@ -214,69 +235,77 @@ func (v *graphVisitor) WriteDOT(w io.Writer) error {
 func (v *graphVisitor) WriteMermaid(w io.Writer) error {
 	fmt.Fprintln(w, "graph LR")
 
-	// Collect all unique packages to declare them as nodes
-	allPackagesSet := make(map[string]struct{})
+	allNodes := make(map[string]string) // name -> type ("file" or "package")
 	for from, toList := range v.dependencies {
-		allPackagesSet[from] = struct{}{}
+		if v.granularity == "file" {
+			allNodes[from] = "file"
+		} else {
+			allNodes[from] = "package"
+		}
 		for _, to := range toList {
-			allPackagesSet[to] = struct{}{}
+			allNodes[to] = "package"
 		}
 	}
 
-	// Sort packages for deterministic output
-	sortedPackages := make([]string, 0, len(allPackagesSet))
-	for pkg := range allPackagesSet {
-		sortedPackages = append(sortedPackages, pkg)
+	sortedNodes := make([]string, 0, len(allNodes))
+	for node := range allNodes {
+		sortedNodes = append(sortedNodes, node)
 	}
-	sort.Strings(sortedPackages)
+	sort.Strings(sortedNodes)
 
-	// Create a map from package path to a simplified ID
-	packageIDs := make(map[string]string)
-	for i, pkg := range sortedPackages {
-		packageIDs[pkg] = fmt.Sprintf("id%d", i)
+	nodeIDs := make(map[string]string)
+	for i, node := range sortedNodes {
+		nodeIDs[node] = fmt.Sprintf("id%d", i)
 	}
 
 	modulePath := v.s.ModulePath()
-
-	// Start subgraph if short option is enabled
-	if v.short && modulePath != "" {
-		// Using the module path in the label, with a simple id for the subgraph
-		fmt.Fprintf(w, "\n  subgraph module [%s]\n", modulePath)
-	}
-
+	moduleRootDir := v.s.RootDir()
 	indent := "  "
-	if v.short && modulePath != "" {
+
+	if v.short && modulePath != "" && v.granularity == "package" {
+		fmt.Fprintf(w, "\n  subgraph module [%s]\n", modulePath)
 		indent = "    "
 	}
 
-	// Declare all nodes with their labels
-	for _, pkg := range sortedPackages {
-		id := packageIDs[pkg]
-		label := pkg
-		if v.short && modulePath != "" && strings.HasPrefix(pkg, modulePath) {
-			label = strings.TrimPrefix(pkg, modulePath)
+	fmt.Fprintln(w, "")
+
+	for _, node := range sortedNodes {
+		id := nodeIDs[node]
+		label := node
+		if v.granularity == "file" {
+			relPath, err := filepath.Rel(moduleRootDir, node)
+			if err == nil {
+				label = relPath
+			}
+		} else if v.short && modulePath != "" && strings.HasPrefix(node, modulePath) {
+			label = strings.TrimPrefix(node, modulePath)
 			label = strings.TrimPrefix(label, "/")
 		}
-		// Mermaid syntax for node declaration with a label is id["label"]
-		fmt.Fprintf(w, `%s%s["%s"]`+"\n", indent, id, label)
+
+		switch allNodes[node] {
+		case "file":
+			// Mermaid: id(label) for rectangle with rounded corners
+			fmt.Fprintf(w, `%s%s("%s")`+"\n", indent, id, label)
+		case "package":
+			// Mermaid: id["label"] for rectangle
+			fmt.Fprintf(w, `%s%s["%s"]`+"\n", indent, id, label)
+		}
 	}
 
-	fmt.Fprintln(w, "") // separator
+	fmt.Fprintln(w, "")
 
-	// Sort dependencies for deterministic output
 	sortedFroms := make([]string, 0, len(v.dependencies))
 	for from := range v.dependencies {
 		sortedFroms = append(sortedFroms, from)
 	}
 	sort.Strings(sortedFroms)
 
-	// Define all edges
 	for _, from := range sortedFroms {
 		toList := v.dependencies[from]
-		sort.Strings(toList) // Sort the 'to' packages as well
-		fromID := packageIDs[from]
+		sort.Strings(toList)
+		fromID := nodeIDs[from]
 		for _, to := range toList {
-			toID, ok := packageIDs[to]
+			toID, ok := nodeIDs[to]
 			if !ok {
 				continue
 			}
@@ -284,8 +313,7 @@ func (v *graphVisitor) WriteMermaid(w io.Writer) error {
 		}
 	}
 
-	// End subgraph if short option is enabled
-	if v.short && modulePath != "" {
+	if v.short && modulePath != "" && v.granularity == "package" {
 		fmt.Fprintln(w, "  end")
 	}
 

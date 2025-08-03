@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"go/token"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 
@@ -940,6 +942,88 @@ func (s *Scanner) SaveSymbolCache(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// FindImporters scans the entire module to find packages that import the targetImportPath.
+// It performs an efficient, imports-only scan of all potential package directories in the module.
+// The result is a list of packages that have a direct dependency on the target.
+func (s *Scanner) FindImporters(ctx context.Context, targetImportPath string) ([]*PackageImports, error) {
+	s.mu.RLock()
+	rootDir := s.locator.RootDir()
+	modulePath := s.locator.ModulePath()
+	s.mu.RUnlock()
+
+	if rootDir == "" {
+		return nil, fmt.Errorf("module root directory not found, cannot perform reverse dependency search")
+	}
+
+	var importers []*PackageImports
+
+	err := filepath.WalkDir(rootDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+
+		if !d.IsDir() {
+			return nil
+		}
+
+		// Skip hidden directories and vendor
+		if d.Name() == "vendor" || (len(d.Name()) > 1 && d.Name()[0] == '.') {
+			return filepath.SkipDir
+		}
+
+		// path is a directory. Let's see if it's a package.
+		// We can check for .go files inside it.
+		goFiles, err := listGoFiles(path) // listGoFiles is an existing helper in goscan.go
+		if err != nil {
+			slog.WarnContext(ctx, "could not list go files in directory, skipping", slog.String("path", path), slog.Any("error", err))
+			return nil // continue walking
+		}
+
+		if len(goFiles) == 0 {
+			return nil // Not a package, continue
+		}
+
+		// We have a package. Determine its import path.
+		relPath, err := filepath.Rel(rootDir, path)
+		if err != nil {
+			slog.WarnContext(ctx, "could not determine relative path for package, skipping", slog.String("path", path), slog.Any("error", err))
+			return nil // Continue walking
+		}
+
+		currentPkgImportPath := filepath.ToSlash(filepath.Join(modulePath, relPath))
+		if relPath == "." {
+			currentPkgImportPath = modulePath
+		}
+
+		// Now we can use the existing efficient scanner method.
+		pkgImports, err := s.ScanPackageImports(ctx, currentPkgImportPath)
+		if err != nil {
+			slog.WarnContext(ctx, "failed to scan package imports, skipping", "importPath", currentPkgImportPath, "error", err)
+			return nil // continue
+		}
+
+		// Check if it imports our target
+		for _, imp := range pkgImports.Imports {
+			if imp == targetImportPath {
+				importers = append(importers, pkgImports)
+				break // Found it, no need to check other imports
+			}
+		}
+		return nil
+	})
+
+	if err != nil {
+		return nil, fmt.Errorf("error walking module directory for importers: %w", err)
+	}
+
+	// Sort for deterministic output
+	sort.Slice(importers, func(i, j int) bool {
+		return importers[i].ImportPath < importers[j].ImportPath
+	})
+
+	return importers, nil
 }
 
 // FindSymbolDefinitionLocation attempts to find the absolute file path where a given symbol is defined.

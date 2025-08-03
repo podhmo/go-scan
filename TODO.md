@@ -120,6 +120,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     -   [x] **Multiple Output Formats**: Added support for Mermaid as an output format alongside DOT via the `--format` flag.
     -   [x] **Filtering and Usability**: Added support for the `--ignore` flag for package exclusion and a `--full` flag to include external dependencies (defaulting to in-module only).
     -   [x] **Integration Tests**: Added integration tests for the `deps-walk` tool using `scantest`.
+    -   [x] **Reverse Dependency Search**: Added a `--reverse` flag to find and visualize reverse dependencies (importers). This is supported by a new `goscan.FindImporters` method that efficiently scans the module for import statements.
 -   **Refactoring**:
     -   [x] **Isolate `examples/deps-walk` Test Data**: Moved the test data for the `deps-walk` example from the root `testdata` directory to its own `examples/deps-walk/testdata` directory, making the example more self-contained.
 ## To Be Implemented
@@ -130,5 +131,5 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
   - [x] **File-Level Granularity**
     - [x] Extend `goscan.PackageImports` to include a file-by-file breakdown of imports.
     - [x] Add a `--granularity=file` flag to the `deps-walk` tool.
-  - [ ] **Reverse Dependencies (Importers)**
-    - [ ] Investigate strategies for finding reverse dependencies (e.g., text search, pre-built index).
+  - [x] **Reverse Dependencies (Importers)**
+    - [x] Implemented a reverse dependency search feature in the `deps-walk` tool via a `--reverse` flag. It uses a new `goscan.FindImporters` function that performs an efficient, module-wide text-based search for import statements.

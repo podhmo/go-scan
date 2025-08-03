@@ -45,6 +45,7 @@ type Scanner struct {
 	scanner             *scanner.Scanner
 	packageCache        map[string]*Package // Cache for PackageInfo from ScanPackage/ScanPackageByImport, key is import path
 	packageImportsCache map[string]*scanner.PackageImports
+	reverseDepCache     map[string][]string // Cache for the reverse dependency map
 	visitedFiles        map[string]struct{} // Set of visited (parsed) file absolute paths for this Scanner instance.
 	mu                  sync.RWMutex
 	fset                *token.FileSet
@@ -1195,6 +1196,80 @@ func (s *Scanner) FindSymbolDefinitionLocation(ctx context.Context, symbolFullNa
 	}
 
 	return "", fmt.Errorf("symbol %s not found in package %s even after scan and cache check", symbolName, importPath)
+}
+
+// BuildReverseDependencyMap scans the entire module to build a map of reverse dependencies.
+// The key of the map is an import path, and the value is a list of packages that import it.
+// The result is cached within the scanner instance.
+func (s *Scanner) BuildReverseDependencyMap(ctx context.Context) (map[string][]string, error) {
+	s.mu.RLock()
+	if s.reverseDepCache != nil {
+		s.mu.RUnlock()
+		return s.reverseDepCache, nil
+	}
+	s.mu.RUnlock()
+
+	rootDir := s.locator.RootDir()
+	modulePath := s.locator.ModulePath()
+
+	if rootDir == "" {
+		return nil, fmt.Errorf("module root directory not found, cannot build reverse dependency map")
+	}
+
+	reverseDeps := make(map[string][]string)
+
+	err := filepath.WalkDir(rootDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() {
+			return nil
+		}
+		if d.Name() == "vendor" || (len(d.Name()) > 1 && d.Name()[0] == '.') {
+			return filepath.SkipDir
+		}
+		goFiles, err := listGoFiles(path)
+		if err != nil {
+			slog.WarnContext(ctx, "could not list go files in directory, skipping", "path", path, "error", err)
+			return nil
+		}
+		if len(goFiles) == 0 {
+			return nil
+		}
+		relPath, err := filepath.Rel(rootDir, path)
+		if err != nil {
+			slog.WarnContext(ctx, "could not determine relative path for package, skipping", "path", path, "error", err)
+			return nil
+		}
+		currentPkgImportPath := filepath.ToSlash(filepath.Join(modulePath, relPath))
+		if relPath == "." {
+			currentPkgImportPath = modulePath
+		}
+		pkgImports, err := s.ScanPackageImports(ctx, currentPkgImportPath)
+		if err != nil {
+			slog.WarnContext(ctx, "failed to scan package imports, skipping", "importPath", currentPkgImportPath, "error", err)
+			return nil
+		}
+		for _, imp := range pkgImports.Imports {
+			reverseDeps[imp] = append(reverseDeps[imp], currentPkgImportPath)
+		}
+		return nil
+	})
+
+	if err != nil {
+		return nil, fmt.Errorf("error walking module directory for reverse dependency map: %w", err)
+	}
+
+	// Sort for deterministic output
+	for _, importers := range reverseDeps {
+		sort.Strings(importers)
+	}
+
+	s.mu.Lock()
+	s.reverseDepCache = reverseDeps
+	s.mu.Unlock()
+
+	return reverseDeps, nil
 }
 
 // Walk performs a dependency graph traversal starting from a root import path.

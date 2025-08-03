@@ -225,6 +225,19 @@ func TestRun(t *testing.T) {
 			},
 			goldenFile: "bidi.golden",
 		},
+		{
+			name: "reverse-hops2",
+			args: map[string]interface{}{
+				"start-pkg": "github.com/podhmo/go-scan/testdata/walk/c",
+				"hops":      2,
+				"format":    "dot",
+				"full":      false,
+				"short":     false,
+				"ignore":    "",
+				"direction": "reverse",
+			},
+			goldenFile: "reverse-hops2.golden",
+		},
 	}
 
 	for _, tc := range cases {

@@ -74,9 +74,6 @@ func run(ctx context.Context, startPkg string, hops int, ignore string, output s
 		packageHops:         make(map[string]int),
 	}
 
-	if aggressive && !(direction == "reverse" || direction == "bidi") {
-		return fmt.Errorf("--aggressive is only valid with --direction=reverse or --direction=bidi")
-	}
 	if granularity == "file" && (direction == "reverse" || direction == "bidi") {
 		return fmt.Errorf("--granularity=file is not compatible with --direction=reverse or --direction=bidi")
 	}
@@ -87,18 +84,35 @@ func run(ctx context.Context, startPkg string, hops int, ignore string, output s
 	}
 
 	doReverseSearch := func() error {
-		var importers []*goscan.PackageImports
-		var err error
-		if aggressive {
-			importers, err = s.FindImportersAggressively(ctx, startPkg)
-		} else {
-			importers, err = s.FindImporters(ctx, startPkg)
-		}
+		revDepMap, err := s.BuildReverseDependencyMap(ctx)
 		if err != nil {
-			return err
+			return fmt.Errorf("could not build reverse dependency map: %w", err)
 		}
-		for _, imp := range importers {
-			visitor.reverseDependencies[imp.ImportPath] = append(visitor.reverseDependencies[imp.ImportPath], startPkg)
+
+		queue := []string{startPkg}
+		// Keep track of hops for each package
+		pkgHops := map[string]int{startPkg: 0}
+
+		head := 0
+		for head < len(queue) {
+			currentPkg := queue[head]
+			head++
+
+			currentHops := pkgHops[currentPkg]
+			if currentHops >= hops {
+				continue
+			}
+
+			importers := revDepMap[currentPkg]
+			for _, importer := range importers {
+				// Always add the dependency edge
+				visitor.reverseDependencies[importer] = append(visitor.reverseDependencies[importer], currentPkg)
+
+				if _, visited := pkgHops[importer]; !visited {
+					pkgHops[importer] = currentHops + 1
+					queue = append(queue, importer)
+				}
+			}
 		}
 		return nil
 	}

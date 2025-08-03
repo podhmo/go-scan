@@ -238,6 +238,17 @@ func (v *graphVisitor) WriteMermaid(w io.Writer) error {
 
 	modulePath := v.s.ModulePath()
 
+	// Start subgraph if short option is enabled
+	if v.short && modulePath != "" {
+		// Using the module path in the label, with a simple id for the subgraph
+		fmt.Fprintf(w, "\n  subgraph module [%s]\n", modulePath)
+	}
+
+	indent := "  "
+	if v.short && modulePath != "" {
+		indent = "    "
+	}
+
 	// Declare all nodes with their labels
 	for _, pkg := range sortedPackages {
 		id := packageIDs[pkg]
@@ -247,7 +258,7 @@ func (v *graphVisitor) WriteMermaid(w io.Writer) error {
 			label = strings.TrimPrefix(label, "/")
 		}
 		// Mermaid syntax for node declaration with a label is id["label"]
-		fmt.Fprintf(w, `  %s["%s"]`+"\n", id, label)
+		fmt.Fprintf(w, `%s%s["%s"]`+"\n", indent, id, label)
 	}
 
 	fmt.Fprintln(w, "") // separator
@@ -269,8 +280,13 @@ func (v *graphVisitor) WriteMermaid(w io.Writer) error {
 			if !ok {
 				continue
 			}
-			fmt.Fprintf(w, "  %s --> %s\n", fromID, toID)
+			fmt.Fprintf(w, "%s%s --> %s\n", indent, fromID, toID)
 		}
+	}
+
+	// End subgraph if short option is enabled
+	if v.short && modulePath != "" {
+		fmt.Fprintln(w, "  end")
 	}
 
 	return nil

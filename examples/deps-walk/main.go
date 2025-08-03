@@ -87,18 +87,62 @@ func run(ctx context.Context, startPkg string, hops int, ignore string, output s
 	}
 
 	doReverseSearch := func() error {
-		var importers []*goscan.PackageImports
-		var err error
 		if aggressive {
-			importers, err = s.FindImportersAggressively(ctx, startPkg)
-		} else {
-			importers, err = s.FindImporters(ctx, startPkg)
+			// Aggressive search using git grep
+			queue := []string{startPkg}
+			pkgHops := map[string]int{startPkg: 0}
+			head := 0
+			for head < len(queue) {
+				currentPkg := queue[head]
+				head++
+
+				currentHops := pkgHops[currentPkg]
+				if currentHops >= hops {
+					continue
+				}
+
+				importers, err := s.FindImportersAggressively(ctx, currentPkg)
+				if err != nil {
+					return fmt.Errorf("aggressive search for importers of %s failed: %w", currentPkg, err)
+				}
+
+				for _, importer := range importers {
+					visitor.reverseDependencies[importer.ImportPath] = append(visitor.reverseDependencies[importer.ImportPath], currentPkg)
+					if _, visited := pkgHops[importer.ImportPath]; !visited {
+						pkgHops[importer.ImportPath] = currentHops + 1
+						queue = append(queue, importer.ImportPath)
+					}
+				}
+			}
+			return nil
 		}
+
+		// Default search using pre-built map
+		revDepMap, err := s.BuildReverseDependencyMap(ctx)
 		if err != nil {
-			return err
+			return fmt.Errorf("could not build reverse dependency map: %w", err)
 		}
-		for _, imp := range importers {
-			visitor.reverseDependencies[imp.ImportPath] = append(visitor.reverseDependencies[imp.ImportPath], startPkg)
+
+		queue := []string{startPkg}
+		pkgHops := map[string]int{startPkg: 0}
+		head := 0
+		for head < len(queue) {
+			currentPkg := queue[head]
+			head++
+
+			currentHops := pkgHops[currentPkg]
+			if currentHops >= hops {
+				continue
+			}
+
+			importers := revDepMap[currentPkg]
+			for _, importer := range importers {
+				visitor.reverseDependencies[importer] = append(visitor.reverseDependencies[importer], currentPkg)
+				if _, visited := pkgHops[importer]; !visited {
+					pkgHops[importer] = currentHops + 1
+					queue = append(queue, importer)
+				}
+			}
 		}
 		return nil
 	}

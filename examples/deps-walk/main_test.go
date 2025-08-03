@@ -225,6 +225,33 @@ func TestRun(t *testing.T) {
 			},
 			goldenFile: "bidi.golden",
 		},
+		{
+			name: "reverse-hops2",
+			args: map[string]interface{}{
+				"start-pkg": "github.com/podhmo/go-scan/testdata/walk/c",
+				"hops":      2,
+				"format":    "dot",
+				"full":      false,
+				"short":     false,
+				"ignore":    "",
+				"direction": "reverse",
+			},
+			goldenFile: "reverse-hops2.golden",
+		},
+		{
+			name: "reverse-hops2-aggressive",
+			args: map[string]interface{}{
+				"start-pkg":    "github.com/podhmo/go-scan/testdata/walk/c",
+				"hops":         2,
+				"format":       "dot",
+				"full":         false,
+				"short":        false,
+				"ignore":       "",
+				"direction":    "reverse",
+				"aggressive":   true,
+			},
+			goldenFile: "reverse-hops2-aggressive.golden",
+		},
 	}
 
 	for _, tc := range cases {
@@ -240,6 +267,15 @@ func TestRun(t *testing.T) {
 				t.Fatalf("failed to change wd to tmpdir: %v", err)
 			}
 			defer os.Chdir(originalWD)
+
+			// For aggressive tests, we need a git repo
+			if aggressive, ok := tc.args["aggressive"].(bool); ok && aggressive {
+				scantest.RunCommand(t, tmpdir, "git", "init")
+				scantest.RunCommand(t, tmpdir, "git", "config", "user.email", "you@example.com")
+				scantest.RunCommand(t, tmpdir, "git", "config", "user.name", "Your Name")
+				scantest.RunCommand(t, tmpdir, "git", "add", ".")
+				scantest.RunCommand(t, tmpdir, "git", "commit", "-m", "initial commit")
+			}
 
 			format, ok := tc.args["format"].(string)
 			if !ok {
@@ -259,6 +295,11 @@ func TestRun(t *testing.T) {
 				direction = "forward"
 			}
 
+			aggressive, ok := tc.args["aggressive"].(bool)
+			if !ok {
+				aggressive = false
+			}
+
 			err = run(
 				context.Background(),
 				startPkg,
@@ -270,7 +311,7 @@ func TestRun(t *testing.T) {
 				tc.args["full"].(bool),
 				tc.args["short"].(bool),
 				direction,
-				false, // aggressive
+				aggressive,
 			)
 			if err != nil {
 				t.Fatalf("run() failed unexpectedly: %+v", err)

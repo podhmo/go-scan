@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -257,6 +258,17 @@ func findModuleRoot(startDir string) (string, error) {
 			return "", fmt.Errorf("go.mod not found in or above %s", startDir)
 		}
 		dir = parent
+	}
+}
+
+// RunCommand executes a command in the specified directory and fails the test if it fails.
+func RunCommand(t *testing.T, dir string, name string, arg ...string) {
+	t.Helper()
+	cmd := exec.Command(name, arg...)
+	cmd.Dir = dir
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("command %q failed in %s: %v\noutput:\n%s", strings.Join(append([]string{name}, arg...), " "), dir, err, string(output))
 	}
 }
 

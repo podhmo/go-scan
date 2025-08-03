@@ -96,8 +96,11 @@ func (s *Scanner) ScanPackageImports(ctx context.Context, filePaths []string, pk
 		FileImports: make(map[string][]string),
 	}
 	imports := make(map[string]struct{})
-	var firstPackageName string
 
+	packageNames := make(map[string]int)
+	fileAsts := make(map[string]*ast.File)
+
+	// First pass: parse all files and collect package names
 	for _, filePath := range filePaths {
 		var content any
 		if s.Overlay != nil {
@@ -109,19 +112,50 @@ func (s *Scanner) ScanPackageImports(ctx context.Context, filePaths []string, pk
 			}
 		}
 
-		// Use ImportsOnly mode for efficiency
 		fileAst, err := parser.ParseFile(s.fset, filePath, content, parser.ImportsOnly)
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse imports for file %s: %w", filePath, err)
 		}
+		fileAsts[filePath] = fileAst
+		if fileAst.Name != nil {
+			packageNames[fileAst.Name.Name]++
+		}
+	}
 
-		if info.Name == "" {
-			if fileAst.Name != nil {
-				info.Name = fileAst.Name.Name
-				firstPackageName = fileAst.Name.Name
+	// Determine the dominant package name, ignoring 'main' if another name exists
+	var dominantPackageName string
+	if len(packageNames) > 1 {
+		if _, hasMain := packageNames["main"]; hasMain {
+			for name := range packageNames {
+				if name != "main" {
+					dominantPackageName = name
+					break // Pick the first non-main package
+				}
 			}
-		} else if fileAst.Name != nil && fileAst.Name.Name != firstPackageName {
-			return nil, fmt.Errorf("mismatched package names: %s and %s in directory %s", firstPackageName, fileAst.Name.Name, pkgDirPath)
+		}
+		// If there are multiple non-main packages, or only main and no other, it's an error
+		if dominantPackageName == "" {
+			var names []string
+			for name := range packageNames {
+				names = append(names, name)
+			}
+			return nil, fmt.Errorf("mismatched package names: %v in directory %s", names, pkgDirPath)
+		}
+	} else if len(packageNames) == 1 {
+		for name := range packageNames {
+			dominantPackageName = name
+		}
+	}
+
+	if dominantPackageName == "" && len(filePaths) > 0 {
+		return nil, fmt.Errorf("could not determine package name from files in %s", pkgDirPath)
+	}
+	info.Name = dominantPackageName
+
+	// Second pass: process imports only for files matching the dominant package name
+	for filePath, fileAst := range fileAsts {
+		if fileAst.Name == nil || fileAst.Name.Name != dominantPackageName {
+			continue // Skip files not belonging to the dominant package
 		}
 
 		var fileImports []string

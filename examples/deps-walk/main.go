@@ -52,7 +52,12 @@ func main() {
 }
 
 func run(ctx context.Context, startPkg string, hops int, ignore string, output string, format string, granularity string, full bool, short bool, direction string, aggressive bool) error {
-	s, err := goscan.New()
+	var scannerOpts []goscan.ScannerOption
+	if full {
+		scannerOpts = append(scannerOpts, goscan.WithGoModuleResolver())
+	}
+
+	s, err := goscan.New(scannerOpts...)
 	if err != nil {
 		return fmt.Errorf("failed to create scanner: %w", err)
 	}
@@ -240,13 +245,17 @@ func (v *graphVisitor) Visit(pkg *goscan.PackageImports) ([]string, error) {
 				continue
 			}
 
-			v.dependencies[source] = append(v.dependencies[source], imp)
+			isInternalModule := modulePath != "" && strings.HasPrefix(imp, modulePath)
 
-			isInternal := modulePath != "" && strings.HasPrefix(imp, modulePath)
-			if !v.full && !isInternal {
+			// If not in full mode, we skip any dependency that is not part of the current module.
+			if !v.full && !isInternalModule {
 				continue
 			}
 
+			// Add the dependency to the graph data.
+			v.dependencies[source] = append(v.dependencies[source], imp)
+
+			// Add the dependency to the queue for the next level of the walk if it hasn't been visited.
 			if _, visited := v.packageHops[imp]; !visited {
 				v.packageHops[imp] = currentHop + 1
 				importsToFollow = append(importsToFollow, imp)

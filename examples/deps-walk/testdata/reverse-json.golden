@@ -6,7 +6,7 @@
   },
   "dependencies": {},
   "reverseDependencies": {
-    "github.com/podhmo/go-scan/testdata/walk/a": [
+    "github.com/podhmo/go-scan/testdata/walk/b": [
       "github.com/podhmo/go-scan/testdata/walk/c"
     ]
   }

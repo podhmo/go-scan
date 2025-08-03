@@ -119,6 +119,8 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     -   [x] **Core Visualization Features**: Implemented graph generation in DOT format and added support for the `--hops` flag to limit traversal depth.
     -   [x] **Filtering and Usability**: Added support for the `--ignore` flag for package exclusion and a `--full` flag to include external dependencies (defaulting to in-module only).
     -   [x] **Integration Tests**: Added integration tests for the `deps-walk` tool using `scantest`.
+-   **Refactoring**:
+    -   [x] **Isolate `examples/deps-walk` Test Data**: Moved the test data for the `deps-walk` example from the root `testdata` directory to its own `examples/deps-walk/testdata` directory, making the example more self-contained.
 ## To Be Implemented
 
 ### In-Module Dependency Walker ([docs/plan-in-module-deps-walk.md](./docs/plan-in-module-deps-walk.md))

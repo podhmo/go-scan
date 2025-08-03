@@ -148,6 +148,19 @@ func TestRun(t *testing.T) {
 			},
 			goldenFile: "file-granularity.golden",
 		},
+		{
+			name: "reverse",
+			args: map[string]interface{}{
+				"start-pkg": "github.com/podhmo/go-scan/testdata/walk/c",
+				"hops":      1,
+				"format":    "dot",
+				"full":      false,
+				"short":     false,
+				"ignore":    "",
+				"direction": "reverse",
+			},
+			goldenFile: "reverse.golden",
+		},
 	}
 
 	for _, tc := range cases {
@@ -177,6 +190,11 @@ func TestRun(t *testing.T) {
 				granularity = "package"
 			}
 
+			direction, ok := tc.args["direction"].(string)
+			if !ok {
+				direction = "forward"
+			}
+
 			err = run(
 				context.Background(),
 				startPkg,
@@ -187,6 +205,7 @@ func TestRun(t *testing.T) {
 				granularity,
 				tc.args["full"].(bool),
 				tc.args["short"].(bool),
+				direction,
 			)
 			if err != nil {
 				t.Fatalf("run() failed unexpectedly: %+v", err)

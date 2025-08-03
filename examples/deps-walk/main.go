@@ -25,6 +25,7 @@ func main() {
 		granularity string
 		full        bool
 		short       bool
+		direction   string
 	)
 
 	flag.StringVar(&startPkg, "start-pkg", "", "The root package to start the dependency walk from (required)")
@@ -35,18 +36,19 @@ func main() {
 	flag.StringVar(&granularity, "granularity", "package", "Dependency granularity (package or file)")
 	flag.BoolVar(&full, "full", false, "Include dependencies outside the current module")
 	flag.BoolVar(&short, "short", false, "Omit module prefix from package paths in the output")
+	flag.StringVar(&direction, "direction", "forward", "Direction of dependency walk (forward, reverse, bidi)")
 	flag.Parse()
 
 	if startPkg == "" {
 		log.Fatal("-start-pkg is required")
 	}
 
-	if err := run(context.Background(), startPkg, hops, ignore, output, format, granularity, full, short); err != nil {
+	if err := run(context.Background(), startPkg, hops, ignore, output, format, granularity, full, short, direction); err != nil {
 		log.Fatalf("Error: %+v", err)
 	}
 }
 
-func run(ctx context.Context, startPkg string, hops int, ignore string, output string, format string, granularity string, full bool, short bool) error {
+func run(ctx context.Context, startPkg string, hops int, ignore string, output string, format string, granularity string, full bool, short bool, direction string) error {
 	s, err := goscan.New()
 	if err != nil {
 		return fmt.Errorf("failed to create scanner: %w", err)
@@ -68,11 +70,29 @@ func run(ctx context.Context, startPkg string, hops int, ignore string, output s
 		packageHops:    make(map[string]int),
 	}
 
-	// Set the starting hop level for the root package
-	visitor.packageHops[startPkg] = 0
+	switch direction {
+	case "forward":
+		// Set the starting hop level for the root package
+		visitor.packageHops[startPkg] = 0
 
-	if err := s.Walk(ctx, startPkg, visitor); err != nil {
-		return fmt.Errorf("walk failed: %w", err)
+		if err := s.Walk(ctx, startPkg, visitor); err != nil {
+			return fmt.Errorf("walk failed: %w", err)
+		}
+	case "reverse":
+		if granularity == "file" {
+			return fmt.Errorf("--direction=reverse is not compatible with --granularity=file")
+		}
+		importers, err := s.FindImporters(ctx, startPkg)
+		if err != nil {
+			return fmt.Errorf("find importers failed: %w", err)
+		}
+		for _, imp := range importers {
+			visitor.dependencies[imp.ImportPath] = []string{startPkg}
+		}
+	case "bidi":
+		return fmt.Errorf("--direction=bidi is not yet implemented")
+	default:
+		return fmt.Errorf("invalid direction: %q. must be one of forward, reverse, or bidi", direction)
 	}
 
 	var buf bytes.Buffer

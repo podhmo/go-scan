@@ -1048,7 +1048,7 @@ func (s *Scanner) FindImportersAggressively(ctx context.Context, targetImportPat
 	// `import "..."` and `import ( ... "..." ... )` forms.
 	pattern := fmt.Sprintf(`"%s"`, targetImportPath)
 
-	cmd := exec.CommandContext(ctx, "git", "grep", "-l", "-F", pattern)
+	cmd := exec.CommandContext(ctx, "git", "grep", "-l", "-F", pattern, "--", "*.go")
 	cmd.Dir = rootDir
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -1065,19 +1065,8 @@ func (s *Scanner) FindImportersAggressively(ctx context.Context, targetImportPat
 		return nil, fmt.Errorf("git grep failed: %w\n%s", err, stderr.String())
 	}
 
-	allPotentialFiles := strings.Split(strings.TrimSpace(stdout.String()), "\n")
-	if len(allPotentialFiles) == 0 {
-		return nil, nil
-	}
-
-	var potentialFiles []string
-	for _, file := range allPotentialFiles {
-		if strings.HasSuffix(file, ".go") {
-			potentialFiles = append(potentialFiles, file)
-		}
-	}
-
-	if len(potentialFiles) == 0 {
+	potentialFiles := strings.Split(strings.TrimSpace(stdout.String()), "\n")
+	if len(potentialFiles) == 0 || (len(potentialFiles) == 1 && potentialFiles[0] == "") {
 		return nil, nil // No matches
 	}
 

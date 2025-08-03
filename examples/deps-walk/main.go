@@ -21,6 +21,7 @@ func main() {
 		hops     int
 		ignore   string
 		output   string
+		format   string
 		full     bool
 		short    bool
 	)
@@ -28,7 +29,8 @@ func main() {
 	flag.StringVar(&startPkg, "start-pkg", "", "The root package to start the dependency walk from (required)")
 	flag.IntVar(&hops, "hops", 1, "Maximum number of hops to walk from the start package")
 	flag.StringVar(&ignore, "ignore", "", "A comma-separated list of package patterns to ignore")
-	flag.StringVar(&output, "output", "", "Output file path for the DOT graph (defaults to stdout)")
+	flag.StringVar(&output, "output", "", "Output file path for the graph (defaults to stdout)")
+	flag.StringVar(&format, "format", "dot", "Output format (dot or mermaid)")
 	flag.BoolVar(&full, "full", false, "Include dependencies outside the current module")
 	flag.BoolVar(&short, "short", false, "Omit module prefix from package paths in the output")
 	flag.Parse()
@@ -37,12 +39,12 @@ func main() {
 		log.Fatal("-start-pkg is required")
 	}
 
-	if err := run(context.Background(), startPkg, hops, ignore, output, full, short); err != nil {
+	if err := run(context.Background(), startPkg, hops, ignore, output, format, full, short); err != nil {
 		log.Fatalf("Error: %+v", err)
 	}
 }
 
-func run(ctx context.Context, startPkg string, hops int, ignore string, output string, full bool, short bool) error {
+func run(ctx context.Context, startPkg string, hops int, ignore string, output string, format string, full bool, short bool) error {
 	s, err := goscan.New()
 	if err != nil {
 		return fmt.Errorf("failed to create scanner: %w", err)
@@ -71,8 +73,17 @@ func run(ctx context.Context, startPkg string, hops int, ignore string, output s
 	}
 
 	var buf bytes.Buffer
-	if err := visitor.WriteDOT(&buf); err != nil {
-		return fmt.Errorf("failed to generate DOT graph: %w", err)
+	switch format {
+	case "dot":
+		if err := visitor.WriteDOT(&buf); err != nil {
+			return fmt.Errorf("failed to generate DOT graph: %w", err)
+		}
+	case "mermaid":
+		if err := visitor.WriteMermaid(&buf); err != nil {
+			return fmt.Errorf("failed to generate Mermaid graph: %w", err)
+		}
+	default:
+		return fmt.Errorf("unsupported format: %q", format)
 	}
 
 	if output == "" {
@@ -197,5 +208,64 @@ func (v *graphVisitor) WriteDOT(w io.Writer) error {
 	}
 
 	fmt.Fprintln(w, "}")
+	return nil
+}
+
+func (v *graphVisitor) WriteMermaid(w io.Writer) error {
+	fmt.Fprintln(w, "graph LR;")
+
+	// Collect all unique packages to declare them as nodes
+	allPackagesSet := make(map[string]struct{})
+	for from, toList := range v.dependencies {
+		allPackagesSet[from] = struct{}{}
+		for _, to := range toList {
+			allPackagesSet[to] = struct{}{}
+		}
+	}
+
+	// Sort packages for deterministic output
+	sortedPackages := make([]string, 0, len(allPackagesSet))
+	for pkg := range allPackagesSet {
+		sortedPackages = append(sortedPackages, pkg)
+	}
+	sort.Strings(sortedPackages)
+
+	modulePath := v.s.ModulePath()
+
+	// Declare all nodes with their labels
+	for _, pkg := range sortedPackages {
+		label := pkg
+		if v.short && modulePath != "" && strings.HasPrefix(pkg, modulePath) {
+			label = strings.TrimPrefix(pkg, modulePath)
+			label = strings.TrimPrefix(label, "/")
+		}
+		// Mermaid syntax for node declaration with a label is id["label"]
+		// Using the full import path as the ID, and the (potentially shortened) path as the label.
+		// Mermaid requires IDs to not contain special characters like slashes, so we need to be careful.
+		// Let's use a simplified ID. But for now, let's try with quotes.
+		// After checking mermaid docs, IDs can be quoted. `graph TD; "a/b" --> "c/d";` is valid.
+		// But labels are like `a["label for a"]`. So we need to use a stable ID.
+		// The import path is the most stable ID.
+		fmt.Fprintf(w, `  "%s"["%s"];`+"\n", pkg, label)
+	}
+
+	fmt.Fprintln(w, "") // separator
+
+	// Sort dependencies for deterministic output
+	sortedFroms := make([]string, 0, len(v.dependencies))
+	for from := range v.dependencies {
+		sortedFroms = append(sortedFroms, from)
+	}
+	sort.Strings(sortedFroms)
+
+	// Define all edges
+	for _, from := range sortedFroms {
+		toList := v.dependencies[from]
+		sort.Strings(toList) // Sort the 'to' packages as well
+		for _, to := range toList {
+			fmt.Fprintf(w, `  "%s" --> "%s";`+"\n", from, to)
+		}
+	}
+
 	return nil
 }

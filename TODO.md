@@ -120,7 +120,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     -   [x] **Multiple Output Formats**: Added support for Mermaid as an output format alongside DOT via the `--format` flag.
     -   [x] **Filtering and Usability**: Added support for the `--ignore` flag for package exclusion and a `--full` flag to include external dependencies (defaulting to in-module only).
     -   [x] **Integration Tests**: Added integration tests for the `deps-walk` tool using `scantest`.
-    -   [x] **Reverse Dependency Search**: Added a `--reverse` flag to find and visualize reverse dependencies (importers). This is supported by a new `goscan.FindImporters` method that efficiently scans the module for import statements.
+    -   [x] **Reverse Dependency Search**: Added a `--direction=reverse` option to find and visualize reverse dependencies (importers). This is supported by a new `goscan.FindImporters` method that efficiently scans the module for import statements.
 -   **Refactoring**:
     -   [x] **Isolate `examples/deps-walk` Test Data**: Moved the test data for the `deps-walk` example from the root `testdata` directory to its own `examples/deps-walk/testdata` directory, making the example more self-contained.
 ## To Be Implemented
@@ -134,6 +134,6 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
   - [x] **Reverse Dependencies (Importers)**
     - [x] Implemented a reverse dependency search feature in the `deps-walk` tool via a `--reverse` flag. It uses a new `goscan.FindImporters` function that performs an efficient, module-wide text-based search for import statements.
   - [ ] **Aggressive Reverse Dependency Search**
-    - [ ] Add an option (e.g., `--reverse-aggressive`) that uses `git grep` to find all files containing an import path string and then parses only those files to confirm the import. This could be faster in very large repositories.
+    - [ ] Add an option (e.g., `--direction=reverse --aggressive`) that uses `git grep` to find all files containing an import path string and then parses only those files to confirm the import. This could be faster in very large repositories.
   - [ ] **Bidirectional Dependency Graph**
-    - [ ] Add an option (e.g., `--bidirectional`) to show both forward dependencies (up to `--hops`) and reverse dependencies (importers) in the same graph.
+    - [ ] Implement the `--direction=bidi` option to show both forward dependencies (up to `--hops`) and reverse dependencies (importers) in the same graph.

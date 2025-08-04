@@ -14,7 +14,6 @@ import (
 	"strings"
 
 	goscan "github.com/podhmo/go-scan"
-	"github.com/podhmo/go-scan/locator"
 )
 
 func main() {
@@ -55,7 +54,8 @@ func main() {
 }
 
 func run(ctx context.Context, startPkg string, hops int, ignore string, output string, format string, granularity string, full bool, short bool, direction string, aggressive bool, test bool) error {
-	resolvedStartPkg, err := locator.ResolvePkgPath(ctx, startPkg)
+	// Use the facade function from the root goscan package
+	resolvedStartPkg, err := goscan.ResolvePath(ctx, startPkg)
 	if err != nil {
 		return fmt.Errorf("failed to resolve start package path: %w", err)
 	}

@@ -39,6 +39,19 @@ $ go run ./examples/deps-walk -start-pkg=github.com/podhmo/go-scan/testdata/walk
 
 The JSON output includes the configuration of the run and separate fields for forward and reverse dependencies.
 
+### Using Relative Paths
+
+Instead of a full package import path, you can also provide a relative file path to the `-start-pkg` flag (e.g., `./cmd/my-app`). `deps-walk` will automatically find the `go.mod` file in the parent directories and resolve the path to its correct package path.
+
+For example, to analyze the package in the current directory:
+
+```bash
+# from the repository root, to analyze the package in ./examples/deps-walk/testdata/walk/a
+$ go run ./examples/deps-walk -start-pkg=./examples/deps-walk/testdata/walk/a
+```
+
+This will produce the same output as providing the full package path.
+
 ### Basic Example
 
 To see the direct dependencies of the `github.com/podhmo/go-scan/testdata/walk/a` package within the `go-scan` module:

@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	goscan "github.com/podhmo/go-scan"
+	"golang.org/x/mod/modfile"
 )
 
 func main() {
@@ -53,7 +54,76 @@ func main() {
 	}
 }
 
+func resolvePkgPath(ctx context.Context, startPath string) (string, error) {
+	// If it doesn't start with a . or /, it's probably a package path
+	if !strings.HasPrefix(startPath, ".") && !strings.HasPrefix(startPath, "/") {
+		return startPath, nil
+	}
+
+	absPath, err := filepath.Abs(startPath)
+	if err != nil {
+		return "", fmt.Errorf("could not get absolute path for %q: %w", startPath, err)
+	}
+
+	// Check if path exists
+	info, err := os.Stat(absPath)
+	if err != nil {
+		return "", fmt.Errorf("path %q does not exist: %w", startPath, err)
+	}
+
+	searchDir := absPath
+	if !info.IsDir() {
+		searchDir = filepath.Dir(absPath)
+	}
+
+	var modRoot string
+	var goModPath string
+
+	currentDir := searchDir
+	for {
+		potentialGoMod := filepath.Join(currentDir, "go.mod")
+		if _, err := os.Stat(potentialGoMod); err == nil {
+			modRoot = currentDir
+			goModPath = potentialGoMod
+			break
+		}
+		if parent := filepath.Dir(currentDir); parent != currentDir {
+			currentDir = parent
+		} else {
+			return "", fmt.Errorf("go.mod not found in or above %s", searchDir)
+		}
+	}
+
+	modBytes, err := os.ReadFile(goModPath)
+	if err != nil {
+		return "", fmt.Errorf("could not read go.mod at %s: %w", goModPath, err)
+	}
+
+	modFile, err := modfile.Parse(goModPath, modBytes, nil)
+	if err != nil {
+		return "", fmt.Errorf("could not parse go.mod at %s: %w", goModPath, err)
+	}
+
+	relPath, err := filepath.Rel(modRoot, absPath)
+	if err != nil {
+		return "", fmt.Errorf("could not determine relative path of %s from %s: %w", absPath, modRoot, err)
+	}
+
+	// Join module path with the relative path, ensuring forward slashes
+	pkgPath := filepath.ToSlash(relPath)
+	if pkgPath == "." {
+		return modFile.Module.Mod.Path, nil
+	}
+	return modFile.Module.Mod.Path + "/" + pkgPath, nil
+}
+
 func run(ctx context.Context, startPkg string, hops int, ignore string, output string, format string, granularity string, full bool, short bool, direction string, aggressive bool, test bool) error {
+	resolvedStartPkg, err := resolvePkgPath(ctx, startPkg)
+	if err != nil {
+		return fmt.Errorf("failed to resolve start package path: %w", err)
+	}
+	startPkg = resolvedStartPkg
+
 	var scannerOpts []goscan.ScannerOption
 	if full {
 		scannerOpts = append(scannerOpts, goscan.WithGoModuleResolver())

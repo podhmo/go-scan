@@ -20,34 +20,45 @@ The tool outputs a dependency graph in the DOT language, which can be rendered i
 
 ## Usage
 
-You can run the tool by specifying a starting package. You can also choose the output format.
+You can run the tool by specifying one or more starting packages as positional arguments. You can also choose the output format.
 
 ### Generating a DOT graph (default)
 ```bash
-$ go run ./examples/deps-walk -start-pkg=github.com/podhmo/go-scan/testdata/walk/a
+$ go run ./examples/deps-walk github.com/podhmo/go-scan/testdata/walk/a
 ```
 
 ### Generating a Mermaid graph
 ```bash
-$ go run ./examples/deps-walk -start-pkg=github.com/podhmo/go-scan/testdata/walk/a -format=mermaid
+$ go run ./examples/deps-walk --format=mermaid github.com/podhmo/go-scan/testdata/walk/a
 ```
 
 ### Generating JSON output
 ```bash
-$ go run ./examples/deps-walk -start-pkg=github.com/podhmo/go-scan/testdata/walk/a -format=json
+$ go run ./examples/deps-walk --format=json github.com/podhmo/go-scan/testdata/walk/a
 ```
 
 The JSON output includes the configuration of the run and separate fields for forward and reverse dependencies.
 
+### Analyzing Multiple Packages
+
+You can pass multiple package paths as arguments. The tool will run the analysis for each package and print the corresponding graphs separated by two newlines.
+
+```bash
+# from the repository root
+$ go run ./examples/deps-walk \
+    github.com/podhmo/go-scan/testdata/walk/a \
+    github.com/podhmo/go-scan/testdata/walk/d
+```
+
 ### Using Relative Paths
 
-Instead of a full package import path, you can also provide a relative file path to the `-start-pkg` flag (e.g., `./cmd/my-app`). `deps-walk` will automatically find the `go.mod` file in the parent directories and resolve the path to its correct package path.
+Instead of a full package import path, you can also provide a relative file path (e.g., `./cmd/my-app`). `deps-walk` will automatically find the `go.mod` file in the parent directories and resolve the path to its correct package path.
 
 For example, to analyze the package in the current directory:
 
 ```bash
 # from the repository root, to analyze the package in ./examples/deps-walk/testdata/walk/a
-$ go run ./examples/deps-walk -start-pkg=./examples/deps-walk/testdata/walk/a
+$ go run ./examples/deps-walk ./examples/deps-walk/testdata/walk/a
 ```
 
 This will produce the same output as providing the full package path.
@@ -58,7 +69,7 @@ To see the direct dependencies of the `github.com/podhmo/go-scan/testdata/walk/a
 
 ```bash
 # from the repository root
-$ go run ./examples/deps-walk -start-pkg=github.com/podhmo/go-scan/testdata/walk/a -hops=1
+$ go run ./examples/deps-walk --hops=1 github.com/podhmo/go-scan/testdata/walk/a
 ```
 
 This will produce the following DOT output:
@@ -83,10 +94,10 @@ To visualize a 2-hop dependency graph, ignoring package `c`, and shortening the 
 ```bash
 # from the repository root
 $ go run ./examples/deps-walk \
-    -start-pkg=github.com/podhmo/go-scan/testdata/walk/a \
-    -hops=2 \
-    -ignore="github.com/podhmo/go-scan/testdata/walk/c" \
-    -short
+    --hops=2 \
+    --ignore="github.com/podhmo/go-scan/testdata/walk/c" \
+    --short \
+    github.com/podhmo/go-scan/testdata/walk/a
 ```
 
 This generates a DOT file that can be rendered with Graphviz to create an image like this:
@@ -110,8 +121,8 @@ You can find which packages import a specific package by using the `--direction=
 
 ```bash
 $ go run ./examples/deps-walk \
-    -start-pkg=github.com/podhmo/go-scan/testdata/walk/c \
-    -direction=reverse
+    --direction=reverse \
+    github.com/podhmo/go-scan/testdata/walk/c
 ```
 
 This will output a graph showing that packages `a` and `b` import package `c`.
@@ -122,9 +133,9 @@ In very large repositories, the default reverse dependency search can be slow be
 
 ```bash
 $ go run ./examples/deps-walk \
-    -start-pkg=github.com/podhmo/go-scan/testdata/walk/c \
-    -direction=reverse \
-    -aggressive
+    --direction=reverse \
+    --aggressive \
+    github.com/podhmo/go-scan/testdata/walk/c
 ```
 
 This mode uses `git grep` to quickly find files that contain the import path. It then parses only those files to confirm the dependency. This requires `git` to be installed and the project to be a git repository. The output will be identical to the non-aggressive search.

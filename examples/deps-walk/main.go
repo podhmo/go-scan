@@ -18,7 +18,6 @@ import (
 
 func main() {
 	var (
-		startPkg    string
 		hops        int
 		ignore      string
 		output      string
@@ -31,7 +30,7 @@ func main() {
 		test        bool
 	)
 
-	flag.StringVar(&startPkg, "start-pkg", "", "The root package to start the dependency walk from (required)")
+	// No -start-pkg flag, positional arguments are used instead
 	flag.IntVar(&hops, "hops", 1, "Maximum number of hops to walk from the start package")
 	flag.StringVar(&ignore, "ignore", "", "A comma-separated list of package patterns to ignore")
 	flag.StringVar(&output, "output", "", "Output file path for the graph (defaults to stdout)")
@@ -44,22 +43,18 @@ func main() {
 	flag.BoolVar(&test, "test", false, "Include test files in the analysis")
 	flag.Parse()
 
-	if startPkg == "" {
-		log.Fatal("-start-pkg is required")
+	startPkgs := flag.Args()
+	if len(startPkgs) == 0 {
+		log.Fatal("at least one start package is required")
 	}
 
-	if err := run(context.Background(), startPkg, hops, ignore, output, format, granularity, full, short, direction, aggressive, test); err != nil {
+	if err := run(context.Background(), startPkgs, hops, ignore, output, format, granularity, full, short, direction, aggressive, test); err != nil {
 		log.Fatalf("Error: %+v", err)
 	}
 }
 
-func run(ctx context.Context, startPkg string, hops int, ignore string, output string, format string, granularity string, full bool, short bool, direction string, aggressive bool, test bool) error {
-	// Use the facade function from the root goscan package
-	resolvedStartPkg, err := goscan.ResolvePath(ctx, startPkg)
-	if err != nil {
-		return fmt.Errorf("failed to resolve start package path: %w", err)
-	}
-	startPkg = resolvedStartPkg
+func run(ctx context.Context, startPkgs []string, hops int, ignore string, output string, format string, granularity string, full bool, short bool, direction string, aggressive bool, test bool) error {
+	var finalOutput bytes.Buffer
 
 	var scannerOpts []goscan.ScannerOption
 	if full {
@@ -72,38 +67,80 @@ func run(ctx context.Context, startPkg string, hops int, ignore string, output s
 		return fmt.Errorf("failed to create scanner: %w", err)
 	}
 
-	ignorePatterns := []string{}
-	if ignore != "" {
-		ignorePatterns = strings.Split(ignore, ",")
-	}
+	for i, startPkg := range startPkgs {
+		// Use the facade function from the root goscan package
+		resolvedStartPkg, err := goscan.ResolvePath(ctx, startPkg)
+		if err != nil {
+			return fmt.Errorf("failed to resolve start package path for %q: %w", startPkg, err)
+		}
+		startPkg = resolvedStartPkg
 
-	visitor := &graphVisitor{
-		s:                   s,
-		hops:                hops,
-		full:                full,
-		short:               short,
-		granularity:         granularity,
-		ignorePatterns:      ignorePatterns,
-		dependencies:        make(map[string][]string),
-		reverseDependencies: make(map[string][]string),
-		packageHops:         make(map[string]int),
-	}
+		ignorePatterns := []string{}
+		if ignore != "" {
+			ignorePatterns = strings.Split(ignore, ",")
+		}
 
-	if aggressive && !(direction == "reverse" || direction == "bidi") {
-		return fmt.Errorf("--aggressive is only valid with --direction=reverse or --direction=bidi")
-	}
-	if granularity == "file" && (direction == "reverse" || direction == "bidi") {
-		return fmt.Errorf("--granularity=file is not compatible with --direction=reverse or --direction=bidi")
-	}
+		visitor := &graphVisitor{
+			s:                   s,
+			hops:                hops,
+			full:                full,
+			short:               short,
+			granularity:         granularity,
+			ignorePatterns:      ignorePatterns,
+			dependencies:        make(map[string][]string),
+			reverseDependencies: make(map[string][]string),
+			packageHops:         make(map[string]int),
+		}
 
-	doForwardSearch := func() error {
-		visitor.packageHops[startPkg] = 0
-		return s.Walk(ctx, startPkg, visitor)
-	}
+		if aggressive && !(direction == "reverse" || direction == "bidi") {
+			return fmt.Errorf("--aggressive is only valid with --direction=reverse or --direction=bidi")
+		}
+		if granularity == "file" && (direction == "reverse" || direction == "bidi") {
+			return fmt.Errorf("--granularity=file is not compatible with --direction=reverse or --direction=bidi")
+		}
 
-	doReverseSearch := func() error {
-		if aggressive {
-			// Aggressive search using git grep
+		doForwardSearch := func() error {
+			visitor.packageHops[startPkg] = 0
+			return s.Walk(ctx, startPkg, visitor)
+		}
+
+		doReverseSearch := func() error {
+			if aggressive {
+				// Aggressive search using git grep
+				queue := []string{startPkg}
+				pkgHops := map[string]int{startPkg: 0}
+				head := 0
+				for head < len(queue) {
+					currentPkg := queue[head]
+					head++
+
+					currentHops := pkgHops[currentPkg]
+					if currentHops >= hops {
+						continue
+					}
+
+					importers, err := s.FindImportersAggressively(ctx, currentPkg)
+					if err != nil {
+						return fmt.Errorf("aggressive search for importers of %s failed: %w", currentPkg, err)
+					}
+
+					for _, importer := range importers {
+						visitor.reverseDependencies[importer.ImportPath] = append(visitor.reverseDependencies[importer.ImportPath], currentPkg)
+						if _, visited := pkgHops[importer.ImportPath]; !visited {
+							pkgHops[importer.ImportPath] = currentHops + 1
+							queue = append(queue, importer.ImportPath)
+						}
+					}
+				}
+				return nil
+			}
+
+			// Default search using pre-built map
+			revDepMap, err := s.BuildReverseDependencyMap(ctx)
+			if err != nil {
+				return fmt.Errorf("could not build reverse dependency map: %w", err)
+			}
+
 			queue := []string{startPkg}
 			pkgHops := map[string]int{startPkg: 0}
 			head := 0
@@ -116,98 +153,70 @@ func run(ctx context.Context, startPkg string, hops int, ignore string, output s
 					continue
 				}
 
-				importers, err := s.FindImportersAggressively(ctx, currentPkg)
-				if err != nil {
-					return fmt.Errorf("aggressive search for importers of %s failed: %w", currentPkg, err)
-				}
-
+				importers := revDepMap[currentPkg]
 				for _, importer := range importers {
-					visitor.reverseDependencies[importer.ImportPath] = append(visitor.reverseDependencies[importer.ImportPath], currentPkg)
-					if _, visited := pkgHops[importer.ImportPath]; !visited {
-						pkgHops[importer.ImportPath] = currentHops + 1
-						queue = append(queue, importer.ImportPath)
+					visitor.reverseDependencies[importer] = append(visitor.reverseDependencies[importer], currentPkg)
+					if _, visited := pkgHops[importer]; !visited {
+						pkgHops[importer] = currentHops + 1
+						queue = append(queue, importer)
 					}
 				}
 			}
 			return nil
 		}
 
-		// Default search using pre-built map
-		revDepMap, err := s.BuildReverseDependencyMap(ctx)
-		if err != nil {
-			return fmt.Errorf("could not build reverse dependency map: %w", err)
-		}
-
-		queue := []string{startPkg}
-		pkgHops := map[string]int{startPkg: 0}
-		head := 0
-		for head < len(queue) {
-			currentPkg := queue[head]
-			head++
-
-			currentHops := pkgHops[currentPkg]
-			if currentHops >= hops {
-				continue
+		switch direction {
+		case "forward":
+			if err := doForwardSearch(); err != nil {
+				return fmt.Errorf("walk failed for %q: %w", startPkg, err)
 			}
-
-			importers := revDepMap[currentPkg]
-			for _, importer := range importers {
-				visitor.reverseDependencies[importer] = append(visitor.reverseDependencies[importer], currentPkg)
-				if _, visited := pkgHops[importer]; !visited {
-					pkgHops[importer] = currentHops + 1
-					queue = append(queue, importer)
-				}
+		case "reverse":
+			if err := doReverseSearch(); err != nil {
+				return fmt.Errorf("find importers failed for %q: %w", startPkg, err)
 			}
+		case "bidi":
+			if err := doForwardSearch(); err != nil {
+				return fmt.Errorf("bidi walk (forward part) failed for %q: %w", startPkg, err)
+			}
+			if err := doReverseSearch(); err != nil {
+				return fmt.Errorf("bidi walk (reverse part) failed for %q: %w", startPkg, err)
+			}
+		default:
+			return fmt.Errorf("invalid direction: %q. must be one of forward, reverse, or bidi", direction)
 		}
-		return nil
-	}
 
-	switch direction {
-	case "forward":
-		if err := doForwardSearch(); err != nil {
-			return fmt.Errorf("walk failed: %w", err)
+		var buf bytes.Buffer
+		switch format {
+		case "dot":
+			if err := visitor.WriteDOT(&buf); err != nil {
+				return fmt.Errorf("failed to generate DOT graph for %q: %w", startPkg, err)
+			}
+		case "mermaid":
+			if err := visitor.WriteMermaid(&buf); err != nil {
+				return fmt.Errorf("failed to generate Mermaid graph for %q: %w", startPkg, err)
+			}
+		case "json":
+			if err := visitor.WriteJSON(&buf, startPkg, direction); err != nil {
+				return fmt.Errorf("failed to generate JSON output for %q: %w", startPkg, err)
+			}
+		default:
+			return fmt.Errorf("unsupported format: %q", format)
 		}
-	case "reverse":
-		if err := doReverseSearch(); err != nil {
-			return fmt.Errorf("find importers failed: %w", err)
-		}
-	case "bidi":
-		if err := doForwardSearch(); err != nil {
-			return fmt.Errorf("bidi walk (forward part) failed: %w", err)
-		}
-		if err := doReverseSearch(); err != nil {
-			return fmt.Errorf("bidi walk (reverse part) failed: %w", err)
-		}
-	default:
-		return fmt.Errorf("invalid direction: %q. must be one of forward, reverse, or bidi", direction)
-	}
 
-	var buf bytes.Buffer
-	switch format {
-	case "dot":
-		if err := visitor.WriteDOT(&buf); err != nil {
-			return fmt.Errorf("failed to generate DOT graph: %w", err)
+		finalOutput.Write(buf.Bytes())
+		if i < len(startPkgs)-1 {
+			finalOutput.WriteString("\n\n")
 		}
-	case "mermaid":
-		if err := visitor.WriteMermaid(&buf); err != nil {
-			return fmt.Errorf("failed to generate Mermaid graph: %w", err)
-		}
-	case "json":
-		if err := visitor.WriteJSON(&buf, startPkg, direction); err != nil {
-			return fmt.Errorf("failed to generate JSON output: %w", err)
-		}
-	default:
-		return fmt.Errorf("unsupported format: %q", format)
 	}
 
 	if output == "" {
-		_, err = os.Stdout.Write(buf.Bytes())
+		_, err = os.Stdout.Write(finalOutput.Bytes())
 		if err != nil {
 			return fmt.Errorf("writing to stdout: %w", err)
 		}
 		return nil
 	}
-	return os.WriteFile(output, buf.Bytes(), 0644)
+	return os.WriteFile(output, finalOutput.Bytes(), 0644)
 }
 
 type graphVisitor struct {

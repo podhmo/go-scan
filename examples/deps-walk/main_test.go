@@ -187,6 +187,18 @@ func TestRun(t *testing.T) {
 			goldenFile: "ignore-c.golden",
 		},
 		{
+			name: "ignore-c-short",
+			args: map[string]interface{}{
+				"start-pkgs": []string{"github.com/podhmo/go-scan/testdata/walk/a"},
+				"hops":       1,
+				"format":     "dot",
+				"full":       false,
+				"short":      true,
+				"ignore":     "testdata/walk/c",
+			},
+			goldenFile: "ignore-c-short.golden",
+		},
+		{
 			name: "full",
 			args: map[string]interface{}{
 				"start-pkgs": []string{"github.com/podhmo/go-scan/testdata/walk/d"}, // d imports an external package
@@ -253,14 +265,14 @@ func TestRun(t *testing.T) {
 		{
 			name: "reverse-hops2-aggressive",
 			args: map[string]interface{}{
-				"start-pkgs":   []string{"github.com/podhmo/go-scan/testdata/walk/c"},
-				"hops":         2,
-				"format":       "dot",
-				"full":         false,
-				"short":        false,
-				"ignore":       "",
-				"direction":    "reverse",
-				"aggressive":   true,
+				"start-pkgs": []string{"github.com/podhmo/go-scan/testdata/walk/c"},
+				"hops":       2,
+				"format":     "dot",
+				"full":       false,
+				"short":      false,
+				"ignore":     "",
+				"direction":  "reverse",
+				"aggressive": true,
 			},
 			goldenFile: "reverse-hops2-aggressive.golden",
 		},

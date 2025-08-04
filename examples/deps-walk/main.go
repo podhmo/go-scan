@@ -255,9 +255,23 @@ func (v *graphVisitor) Visit(pkg *goscan.PackageImports) ([]string, error) {
 		for _, imp := range imps {
 			isIgnored := false
 			for _, pattern := range v.ignorePatterns {
+				// Check against full import path
 				if matched, _ := filepath.Match(pattern, imp); matched {
 					isIgnored = true
 					break
+				}
+
+				// If short is enabled, also check against the short package path
+				if v.short {
+					modulePath := v.s.ModulePath()
+					if modulePath != "" && strings.HasPrefix(imp, modulePath) {
+						shortImp := strings.TrimPrefix(imp, modulePath)
+						shortImp = strings.TrimPrefix(shortImp, "/")
+						if matched, _ := filepath.Match(pattern, shortImp); matched {
+							isIgnored = true
+							break
+						}
+					}
 				}
 			}
 			if isIgnored {

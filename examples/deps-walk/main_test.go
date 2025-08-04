@@ -199,6 +199,32 @@ func TestRun(t *testing.T) {
 			goldenFile: "ignore-c-short.golden",
 		},
 		{
+			name: "hide-c",
+			args: map[string]interface{}{
+				"start-pkgs": []string{"github.com/podhmo/go-scan/testdata/walk/a"},
+				"hops":       2,
+				"format":     "dot",
+				"full":       false,
+				"short":      false,
+				"ignore":     "",
+				"hide":       "github.com/podhmo/go-scan/testdata/walk/c",
+			},
+			goldenFile: "hide-c.golden",
+		},
+		{
+			name: "hide-c-short",
+			args: map[string]interface{}{
+				"start-pkgs": []string{"github.com/podhmo/go-scan/testdata/walk/a"},
+				"hops":       2,
+				"format":     "dot",
+				"full":       false,
+				"short":      true,
+				"ignore":     "",
+				"hide":       "c",
+			},
+			goldenFile: "hide-c-short.golden",
+		},
+		{
 			name: "full",
 			args: map[string]interface{}{
 				"start-pkgs": []string{"github.com/podhmo/go-scan/testdata/walk/d"}, // d imports an external package
@@ -361,11 +387,17 @@ func TestRun(t *testing.T) {
 				test = false
 			}
 
+			hide, ok := tc.args["hide"].(string)
+			if !ok {
+				hide = ""
+			}
+
 			err = run(
 				context.Background(),
 				startPkgs,
 				tc.args["hops"].(int),
 				tc.args["ignore"].(string),
+				hide,
 				outputFile,
 				format,
 				granularity,

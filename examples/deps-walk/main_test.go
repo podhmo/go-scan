@@ -64,6 +64,18 @@ func TestRun(t *testing.T) {
 			goldenFile: "default.golden",
 		},
 		{
+			name: "relative-path-dot",
+			args: map[string]interface{}{
+				"start-pkg": "./a",
+				"hops":      1,
+				"format":    "dot",
+				"full":      false,
+				"short":     false,
+				"ignore":    "",
+			},
+			goldenFile: "default.golden",
+		},
+		{
 			name: "default-mermaid",
 			args: map[string]interface{}{
 				"start-pkg": "github.com/podhmo/go-scan/testdata/walk/a",

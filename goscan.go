@@ -232,6 +232,17 @@ func New(options ...ScannerOption) (*Scanner, error) {
 	return s, nil
 }
 
+// ResolvePath converts a file path to a full Go package path.
+// If the path exists on the filesystem, it is treated as a file path and resolved against
+// the module's go.mod file. If it does not exist, it is assumed to be a package path
+// and is returned as-is, unless it has a relative path prefix (like `./`), in which
+// case an error is returned.
+//
+// This function is a facade for `locator.ResolvePkgPath`.
+func ResolvePath(ctx context.Context, path string) (string, error) {
+	return locator.ResolvePkgPath(ctx, path)
+}
+
 // SetExternalTypeOverrides sets the external type override map for the scanner.
 func (s *Scanner) SetExternalTypeOverrides(ctx context.Context, overrides scanner.ExternalTypeOverride) {
 	if overrides == nil {

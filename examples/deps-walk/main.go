@@ -54,6 +54,13 @@ func main() {
 }
 
 func run(ctx context.Context, startPkg string, hops int, ignore string, output string, format string, granularity string, full bool, short bool, direction string, aggressive bool, test bool) error {
+	// Use the facade function from the root goscan package
+	resolvedStartPkg, err := goscan.ResolvePath(ctx, startPkg)
+	if err != nil {
+		return fmt.Errorf("failed to resolve start package path: %w", err)
+	}
+	startPkg = resolvedStartPkg
+
 	var scannerOpts []goscan.ScannerOption
 	if full {
 		scannerOpts = append(scannerOpts, goscan.WithGoModuleResolver())

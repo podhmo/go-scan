@@ -24,7 +24,11 @@ The user will be able to specify the maximum number of hops (degrees of separati
 
 ### 2.2. Package Exclusion
 
-The user will be able to provide a list of package import patterns to ignore or exclude from the graph. This is useful for hiding ubiquitous dependencies like logging, configuration, or common utility packages to de-clutter the output. The patterns should support glob-style matching for more flexibility.
+The user will be able to provide a list of package import patterns to remove from the graph. This is useful for hiding ubiquitous dependencies like logging, configuration, or common utility packages to de-clutter the output. The patterns should support glob-style matching for more flexibility.
+
+Two flags will be provided for this:
+- **`--ignore`**: Excludes a package and its dependencies from the traversal.
+- **`--hide`**: Excludes a package only from the output graph, but still traverses its dependencies.
 
 -   **Example:** `go-deps-walk --start-pkg=./api --ignore="github.com/my-org/core/*,*.test"`
 

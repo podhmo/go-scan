@@ -20,6 +20,7 @@ func main() {
 	var (
 		hops        int
 		ignore      string
+		hide        string
 		output      string
 		format      string
 		granularity string
@@ -33,6 +34,7 @@ func main() {
 	// No -start-pkg flag, positional arguments are used instead
 	flag.IntVar(&hops, "hops", 1, "Maximum number of hops to walk from the start package")
 	flag.StringVar(&ignore, "ignore", "", "A comma-separated list of package patterns to ignore")
+	flag.StringVar(&hide, "hide", "", "A comma-separated list of package patterns to hide from the output")
 	flag.StringVar(&output, "output", "", "Output file path for the graph (defaults to stdout)")
 	flag.StringVar(&format, "format", "dot", "Output format (dot, mermaid, or json)")
 	flag.StringVar(&granularity, "granularity", "package", "Dependency granularity (package or file)")
@@ -48,12 +50,12 @@ func main() {
 		log.Fatal("at least one start package is required")
 	}
 
-	if err := run(context.Background(), startPkgs, hops, ignore, output, format, granularity, full, short, direction, aggressive, test); err != nil {
+	if err := run(context.Background(), startPkgs, hops, ignore, hide, output, format, granularity, full, short, direction, aggressive, test); err != nil {
 		log.Fatalf("Error: %+v", err)
 	}
 }
 
-func run(ctx context.Context, startPkgs []string, hops int, ignore string, output string, format string, granularity string, full bool, short bool, direction string, aggressive bool, test bool) error {
+func run(ctx context.Context, startPkgs []string, hops int, ignore string, hide string, output string, format string, granularity string, full bool, short bool, direction string, aggressive bool, test bool) error {
 	var finalOutput bytes.Buffer
 
 	var scannerOpts []goscan.ScannerOption
@@ -79,6 +81,10 @@ func run(ctx context.Context, startPkgs []string, hops int, ignore string, outpu
 		if ignore != "" {
 			ignorePatterns = strings.Split(ignore, ",")
 		}
+		hidePatterns := []string{}
+		if hide != "" {
+			hidePatterns = strings.Split(hide, ",")
+		}
 
 		visitor := &graphVisitor{
 			s:                   s,
@@ -87,6 +93,7 @@ func run(ctx context.Context, startPkgs []string, hops int, ignore string, outpu
 			short:               short,
 			granularity:         granularity,
 			ignorePatterns:      ignorePatterns,
+			hidePatterns:        hidePatterns,
 			dependencies:        make(map[string][]string),
 			reverseDependencies: make(map[string][]string),
 			packageHops:         make(map[string]int),
@@ -226,6 +233,7 @@ type graphVisitor struct {
 	short               bool
 	granularity         string
 	ignorePatterns      []string
+	hidePatterns        []string
 	dependencies        map[string][]string // from -> to[]
 	reverseDependencies map[string][]string // to -> from[]
 	packageHops         map[string]int      // package -> hop level
@@ -299,6 +307,28 @@ func (v *graphVisitor) Visit(pkg *goscan.PackageImports) ([]string, error) {
 	return importsToFollow, nil
 }
 
+func (v *graphVisitor) isHidden(nodePath string) bool {
+	for _, pattern := range v.hidePatterns {
+		// Check against full import path
+		if matched, _ := filepath.Match(pattern, nodePath); matched {
+			return true
+		}
+
+		// If short is enabled, also check against the short package path
+		if v.short {
+			modulePath := v.s.ModulePath()
+			if modulePath != "" && strings.HasPrefix(nodePath, modulePath) {
+				shortPath := strings.TrimPrefix(nodePath, modulePath)
+				shortPath = strings.TrimPrefix(shortPath, "/")
+				if matched, _ := filepath.Match(pattern, shortPath); matched {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
 func (v *graphVisitor) WriteDOT(w io.Writer) error {
 	fmt.Fprintln(w, "digraph dependencies {")
 	fmt.Fprintln(w, `  rankdir="LR";`)
@@ -336,6 +366,9 @@ func (v *graphVisitor) WriteDOT(w io.Writer) error {
 	moduleRootDir := v.s.RootDir()
 
 	for _, node := range sortedNodes {
+		if v.isHidden(node) {
+			continue
+		}
 		label := node
 		if v.granularity == "file" {
 			relPath, err := filepath.Rel(moduleRootDir, node)
@@ -372,6 +405,9 @@ func (v *graphVisitor) WriteDOT(w io.Writer) error {
 		toList := v.dependencies[from]
 		sort.Strings(toList)
 		for _, to := range toList {
+			if v.isHidden(from) || v.isHidden(to) {
+				continue
+			}
 			fmt.Fprintf(w, `  "%s" -> "%s";`+"\n", from, to)
 		}
 	}
@@ -387,6 +423,9 @@ func (v *graphVisitor) WriteDOT(w io.Writer) error {
 		toList := v.reverseDependencies[from]
 		sort.Strings(toList)
 		for _, to := range toList {
+			if v.isHidden(from) || v.isHidden(to) {
+				continue
+			}
 			// Using [dir=back] to indicate a reverse dependency
 			fmt.Fprintf(w, `  "%s" -> "%s" [dir=back, style=dashed];`+"\n", to, from)
 		}
@@ -440,6 +479,9 @@ func (v *graphVisitor) WriteMermaid(w io.Writer) error {
 	fmt.Fprintln(w, "")
 
 	for _, node := range sortedNodes {
+		if v.isHidden(node) {
+			continue
+		}
 		id := nodeIDs[node]
 		label := node
 		if v.granularity == "file" {
@@ -474,6 +516,9 @@ func (v *graphVisitor) WriteMermaid(w io.Writer) error {
 		sort.Strings(toList)
 		fromID := nodeIDs[from]
 		for _, to := range toList {
+			if v.isHidden(from) || v.isHidden(to) {
+				continue
+			}
 			toID, ok := nodeIDs[to]
 			if !ok {
 				continue
@@ -494,6 +539,9 @@ func (v *graphVisitor) WriteMermaid(w io.Writer) error {
 		sort.Strings(toList)
 		fromID := nodeIDs[from]
 		for _, to := range toList {
+			if v.isHidden(from) || v.isHidden(to) {
+				continue
+			}
 			toID, ok := nodeIDs[to]
 			if !ok {
 				continue
@@ -531,14 +579,47 @@ func (v *graphVisitor) WriteJSON(w io.Writer, startPkg, direction string) error 
 		return sortedMap
 	}
 
+	// Filter hidden nodes
+	filteredDeps := make(map[string][]string)
+	for from, toList := range v.dependencies {
+		if v.isHidden(from) {
+			continue
+		}
+		var filteredToList []string
+		for _, to := range toList {
+			if !v.isHidden(to) {
+				filteredToList = append(filteredToList, to)
+			}
+		}
+		if len(filteredToList) > 0 {
+			filteredDeps[from] = filteredToList
+		}
+	}
+
+	filteredRevDeps := make(map[string][]string)
+	for from, toList := range v.reverseDependencies {
+		if v.isHidden(from) {
+			continue
+		}
+		var filteredToList []string
+		for _, to := range toList {
+			if !v.isHidden(to) {
+				filteredToList = append(filteredToList, to)
+			}
+		}
+		if len(filteredToList) > 0 {
+			filteredRevDeps[from] = filteredToList
+		}
+	}
+
 	output := jsonOutput{
 		Config: map[string]interface{}{
 			"startPkg":  startPkg,
 			"direction": direction,
 			"hops":      v.hops,
 		},
-		Dependencies:        sortMap(v.dependencies),
-		ReverseDependencies: sortMap(v.reverseDependencies),
+		Dependencies:        sortMap(filteredDeps),
+		ReverseDependencies: sortMap(filteredRevDeps),
 	}
 
 	encoder := json.NewEncoder(w)

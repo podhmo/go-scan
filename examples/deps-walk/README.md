@@ -12,7 +12,7 @@ The tool outputs a dependency graph in the DOT language, which can be rendered i
 
 - **Dependency Traversal**: Uses `go-scan`'s efficient "imports-only" scanning mode to walk the dependency tree.
 - **Hop Count Limiting**: Allows you to specify the maximum number of hops (degrees of separation) to explore from the starting package using the `--hops` flag.
-- **Package Filtering**: Supports ignoring specific packages or package patterns (e.g., common utilities, logging) using the `--ignore` flag to declutter the graph.
+- **Package Filtering**: Supports ignoring specific packages or package patterns (e.g., common utilities, logging) using the `--ignore` flag. You can also hide packages from the output without excluding them from the traversal using the `--hide` flag.
 - **Configurable Scope**: By default, it traverses only packages within the current Go module. The `--full` flag can be used to include external dependencies (from the standard library or third-party modules).
 - **DOT Output**: Generates a graph in the DOT format, ready for visualization.
 - **Multiple Output Formats**: Supports graph generation in DOT (default), Mermaid, and JSON formats via the `--format` flag.
@@ -114,6 +114,14 @@ digraph dependencies {
   "github.com/podhmo/go-scan/testdata/walk/b" -> "github.com/podhmo/go-scan/testdata/walk/d";
 }
 ```
+
+### Hiding vs. Ignoring Packages
+
+The tool provides two ways to exclude packages from the graph:
+
+-   `--ignore="<pattern>"`: This completely excludes a package from the analysis. The walker will not traverse through an ignored package, so neither the package itself nor any of its dependencies (that are not reached by other means) will appear in the graph. This is useful for removing large, irrelevant parts of the dependency tree (e.g., a logging framework).
+
+-   `--hide="<pattern>"`: This only hides a package from the final output. The walker *will* traverse through the package to discover its dependencies, but the package itself and any direct edges to or from it will not be rendered. This is useful for removing intermediate "glue" packages while still seeing the relationship between the packages they connect.
 
 ## Reverse Dependencies
 

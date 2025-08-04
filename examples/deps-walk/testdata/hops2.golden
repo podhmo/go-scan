@@ -3,7 +3,7 @@ digraph dependencies {
   node [shape=box, style="rounded,filled", fillcolor=lightgrey];
   "errors" [label="errors"];
   "fmt" [label="fmt"];
-  "github.com/podhmo/go-scan/testdata/walk/a" [label="github.com/podhmo/go-scan/testdata/walk/a"];
+  "github.com/podhmo/go-scan/testdata/walk/a" [label="github.com/podhmo/go-scan/testdata/walk/a", shape=box, style="rounded,filled", fillcolor=lightblue];
   "github.com/podhmo/go-scan/testdata/walk/b" [label="github.com/podhmo/go-scan/testdata/walk/b"];
   "github.com/podhmo/go-scan/testdata/walk/c" [label="github.com/podhmo/go-scan/testdata/walk/c"];
   "internal/fmtsort" [label="internal/fmtsort"];

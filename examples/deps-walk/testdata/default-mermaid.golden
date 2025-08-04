@@ -4,3 +4,5 @@ graph LR
   id1["github.com/podhmo/go-scan/testdata/walk/b"]
 
   id0 --> id1
+
+  style id0 fill:#add8e6,stroke:#333,stroke-width:2px

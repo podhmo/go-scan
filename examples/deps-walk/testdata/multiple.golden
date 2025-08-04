@@ -2,7 +2,7 @@ digraph dependencies {
   rankdir="LR";
   node [shape=box, style="rounded,filled", fillcolor=lightgrey];
   "fmt" [label="fmt"];
-  "github.com/podhmo/go-scan/testdata/walk/a" [label="github.com/podhmo/go-scan/testdata/walk/a"];
+  "github.com/podhmo/go-scan/testdata/walk/a" [label="github.com/podhmo/go-scan/testdata/walk/a", shape=box, style="rounded,filled", fillcolor=lightblue];
   "github.com/podhmo/go-scan/testdata/walk/b" [label="github.com/podhmo/go-scan/testdata/walk/b"];
 
   "github.com/podhmo/go-scan/testdata/walk/a" -> "fmt";
@@ -14,7 +14,7 @@ digraph dependencies {
   rankdir="LR";
   node [shape=box, style="rounded,filled", fillcolor=lightgrey];
   "github.com/google/go-cmp/cmp" [label="github.com/google/go-cmp/cmp"];
-  "github.com/podhmo/go-scan/testdata/walk/d" [label="github.com/podhmo/go-scan/testdata/walk/d"];
+  "github.com/podhmo/go-scan/testdata/walk/d" [label="github.com/podhmo/go-scan/testdata/walk/d", shape=box, style="rounded,filled", fillcolor=lightblue];
   "github.com/podhmo/go-scan/testdata/walk/e" [label="github.com/podhmo/go-scan/testdata/walk/e"];
 
   "github.com/podhmo/go-scan/testdata/walk/d" -> "github.com/google/go-cmp/cmp";

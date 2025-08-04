@@ -7,3 +7,5 @@ graph LR
 
     id0 --> id1
   end
+
+    style id0 fill:#add8e6,stroke:#333,stroke-width:2px

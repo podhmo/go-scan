@@ -87,6 +87,7 @@ func run(ctx context.Context, startPkgs []string, hops int, ignore string, hide 
 		}
 
 		visitor := &graphVisitor{
+			startPkg:            startPkg,
 			s:                   s,
 			hops:                hops,
 			full:                full,
@@ -227,6 +228,7 @@ func run(ctx context.Context, startPkgs []string, hops int, ignore string, hide 
 }
 
 type graphVisitor struct {
+	startPkg            string
 	s                   *goscan.Scanner
 	hops                int
 	full                bool
@@ -378,6 +380,19 @@ func (v *graphVisitor) WriteDOT(w io.Writer) error {
 		} else if v.short && modulePath != "" && strings.HasPrefix(node, modulePath) {
 			label = strings.TrimPrefix(node, modulePath)
 			label = strings.TrimPrefix(label, "/")
+		}
+
+		// Highlight start node
+		if node == v.startPkg {
+			var attributes string
+			switch allNodes[node] {
+			case "file":
+				attributes = `shape=note, style="filled", fillcolor=lightblue`
+			case "package":
+				attributes = `shape=box, style="rounded,filled", fillcolor=lightblue`
+			}
+			fmt.Fprintf(w, `  "%s" [label="%s", %s];`+"\n", node, label, attributes)
+			continue
 		}
 
 		switch allNodes[node] {
@@ -553,6 +568,11 @@ func (v *graphVisitor) WriteMermaid(w io.Writer) error {
 
 	if v.short && modulePath != "" && v.granularity == "package" {
 		fmt.Fprintln(w, "  end")
+	}
+
+	// Add styling for the start package
+	if startNodeID, ok := nodeIDs[v.startPkg]; ok {
+		fmt.Fprintf(w, "\n%sstyle %s fill:#add8e6,stroke:#333,stroke-width:2px\n", indent, startNodeID)
 	}
 
 	return nil

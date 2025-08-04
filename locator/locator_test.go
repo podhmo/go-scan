@@ -1,10 +1,13 @@
 package locator
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/google/go-cmp/cmp"
 
 	"github.com/podhmo/go-scan/scanner"
 	"golang.org/x/mod/module"
@@ -575,4 +578,115 @@ func TestGetGoModCache(t *testing.T) {
 
 	// Testing the home directory case is complex as it depends on the user's environment.
 	// We'll skip it as the two main cases are covered.
+}
+
+func TestResolvePkgPath(t *testing.T) {
+	ctx := context.Background()
+
+	// Manually setup a temporary directory to avoid import cycle with scantest
+	tmpdir, err := os.MkdirTemp("", "resolve-pkg-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpdir)
+
+	files := map[string]string{
+		"go.mod": "module my/app\n",
+		"main.go": `package main
+
+func main() {}
+`,
+		"internal/api/handler.go": `package api`,
+	}
+	for name, content := range files {
+		path := filepath.Join(tmpdir, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			t.Fatalf("failed to create parent dir for %s: %v", name, err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+			t.Fatalf("failed to write file %s: %v", name, err)
+		}
+	}
+
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("could not get working directory: %v", err)
+	}
+	if err := os.Chdir(tmpdir); err != nil {
+		t.Fatalf("could not change to tmpdir: %v", err)
+	}
+	defer os.Chdir(originalWD)
+
+	cases := []struct {
+		name      string
+		startPath string
+		want      string
+		wantErr   bool
+	}{
+		{
+			name:      "current directory",
+			startPath: ".",
+			want:      "my/app",
+			wantErr:   false,
+		},
+		{
+			name:      "subdirectory",
+			startPath: "./internal/api",
+			want:      "my/app/internal/api",
+			wantErr:   false,
+		},
+		{
+			name:      "file in subdirectory",
+			startPath: "./internal/api/handler.go",
+			want:      "my/app/internal/api",
+			wantErr:   false,
+		},
+		{
+			name:      "absolute path to subdirectory",
+			startPath: filepath.Join(tmpdir, "internal/api"),
+			want:      "my/app/internal/api",
+			wantErr:   false,
+		},
+		{
+			name:      "package path that does not exist",
+			startPath: "github.com/foo/bar",
+			want:      "github.com/foo/bar",
+			wantErr:   false,
+		},
+		{
+			name:      "relative file path that does not exist",
+			startPath: "./nonexistent",
+			wantErr:   true,
+		},
+		{
+			name: "path outside module",
+			// This test requires creating a directory outside the module.
+			// We'll create a sibling directory to tmpdir.
+			startPath: func() string {
+				parentDir := filepath.Dir(tmpdir)
+				outsideDir := filepath.Join(parentDir, "outside_module")
+				os.Mkdir(outsideDir, 0755)
+				// Defer cleanup of this new directory
+				t.Cleanup(func() { os.RemoveAll(outsideDir) })
+				return outsideDir
+			}(),
+			wantErr: true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := ResolvePkgPath(ctx, tc.startPath)
+
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("ResolvePkgPath() error = %v, wantErr %v", err, tc.wantErr)
+			}
+			if err != nil {
+				return
+			}
+			if diff := cmp.Diff(tc.want, got); diff != "" {
+				t.Errorf("ResolvePkgPath() mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
 }

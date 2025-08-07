@@ -84,14 +84,16 @@ var (
 
 // Environment holds the bindings for variables and functions.
 type Environment struct {
-	store map[string]Object
-	outer *Environment
+	store  map[string]Object
+	consts map[string]Object // For immutable bindings
+	outer  *Environment
 }
 
 // NewEnvironment creates a new, top-level environment.
 func NewEnvironment() *Environment {
 	s := make(map[string]Object)
-	return &Environment{store: s, outer: nil}
+	c := make(map[string]Object)
+	return &Environment{store: s, consts: c, outer: nil}
 }
 
 // NewEnclosedEnvironment creates a new environment that is enclosed by an outer one.
@@ -102,12 +104,18 @@ func NewEnclosedEnvironment(outer *Environment) *Environment {
 }
 
 // Get retrieves an object by name from the environment, checking outer scopes if necessary.
+// It checks constants first, then variables.
 func (e *Environment) Get(name string) (Object, bool) {
-	obj, ok := e.store[name]
-	if !ok && e.outer != nil {
-		obj, ok = e.outer.Get(name)
+	if obj, ok := e.consts[name]; ok {
+		return obj, true
 	}
-	return obj, ok
+	if obj, ok := e.store[name]; ok {
+		return obj, ok
+	}
+	if e.outer != nil {
+		return e.outer.Get(name)
+	}
+	return nil, false
 }
 
 // Set stores an object by name in the current environment's scope.
@@ -117,17 +125,33 @@ func (e *Environment) Set(name string, val Object) Object {
 	return val
 }
 
+// SetConstant stores an immutable binding.
+func (e *Environment) SetConstant(name string, val Object) Object {
+	e.consts[name] = val
+	return val
+}
+
 // Assign updates the value of an existing variable. It searches up through
 // the enclosing environments. If the variable is found, it's updated and
-// the function returns true. If it's not found, it returns false.
+// the function returns true. If it's not found, or if it's a constant,
+// it returns false.
 func (e *Environment) Assign(name string, val Object) bool {
-	_, ok := e.store[name]
-	if ok {
+	// Constants in the current scope cannot be reassigned.
+	if _, ok := e.consts[name]; ok {
+		return false
+	}
+
+	// If the variable exists in the current scope's store, assign it.
+	if _, ok := e.store[name]; ok {
 		e.store[name] = val
 		return true
 	}
+
+	// If not found locally, try assigning in the outer scope.
 	if e.outer != nil {
 		return e.outer.Assign(name, val)
 	}
+
+	// The variable was not found in any scope.
 	return false
 }

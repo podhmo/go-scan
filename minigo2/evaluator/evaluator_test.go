@@ -87,6 +87,54 @@ func testBooleanObject(t *testing.T, obj object.Object, expected bool) bool {
 	return true
 }
 
+// testNullObject is a helper to check if an object is Null.
+func testNullObject(t *testing.T, obj object.Object) bool {
+	t.Helper()
+	if obj != nil && obj != object.NULL {
+		// Note: Eval returns raw nil for some errors, which is what we check for.
+		t.Errorf("object is not Null. got=%T (%+v)", obj, obj)
+		return false
+	}
+	return true
+}
+
+func TestConstDeclarations(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected any // int64 or "nil" for expected failure
+	}{
+		{"const x = 10; x", int64(10)},
+		{"const x = 10; const y = 20; y", int64(20)},
+		{"const x = 10; var y = x; y", int64(10)},
+		{"const x = 10; x = 20;", "nil"}, // Assignment failure
+		{"const ( a = 1 ); a = 2", "nil"},   // Assignment failure in block
+		{"const ( a = iota ); a", int64(0)},
+		{"const ( a = iota; b ); b", int64(1)},
+		{"const ( a = iota; b; c ); c", int64(2)},
+		{"const ( a = 10; b; c ); c", int64(10)}, // Value carry-over
+		{"const ( a = 10; b = 20; c ); c", int64(20)},
+		{"const ( a = 1 << iota; b; c; d ); d", int64(8)}, // 1 << 3
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			evaluated := testEval(t, tt.input)
+			switch expected := tt.expected.(type) {
+			case int64:
+				testIntegerObject(t, evaluated, expected)
+			case string:
+				if expected == "nil" {
+					testNullObject(t, evaluated)
+				} else {
+					t.Fatalf("unsupported expected type for test: %T", expected)
+				}
+			default:
+				t.Fatalf("unsupported expected type for test: %T", expected)
+			}
+		})
+	}
+}
+
 func TestEvalBooleanExpression(t *testing.T) {
 	tests := []struct {
 		input    string

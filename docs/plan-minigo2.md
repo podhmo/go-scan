@@ -2,229 +2,200 @@
 
 ## 1. Introduction and Concept
 
-**minigo2** will be a reimplementation of the `minigo` concept, evolving from a simple example into a robust, embeddable script engine for Go applications. The primary use case for `minigo2` is to serve as a **configuration language**. It will allow developers to write configuration files using a subset of Go syntax, which can then be interpreted at runtime by a Go application.
+**minigo2** will be a powerful, embeddable **code generation engine** for Go, inspired by `examples/convert`. It will enable developers to create custom, type-safe code generators with a remarkable developer experience, including **full code completion and type checking in IDEs** by leveraging existing Go tooling like `gopls`.
 
-The core goals of `minigo2` are:
-- **Readability and Familiarity**: Leverage Go-like syntax for configuration and scripting, making it intuitive for Go developers.
-- **Go Interoperability**: Seamlessly pass data and functions between the host Go application and the `minigo2` script. The results of script evaluation should be easily accessible from Go, likely via the `reflect` package.
-- **Rich Type System**: Utilize `go-scan` to understand and work with actual Go types defined within the host application or its dependencies.
-- **Developer Experience**: Provide clear, human-readable stack traces on errors to simplify debugging of scripts.
-- **Simplicity**: Prioritize clarity of implementation and ease of use over raw execution speed. The engine does not need to be a JIT or a highly optimized AOT compiler.
+The primary goal is to replace complex, reflection-based code generation logic with simple, declarative **mapping scripts**. These scripts, written in standard Go, will define the transformation logic (e.g., from a database model to a DTO), which `minigo2` will interpret to produce the generated Go code.
 
-`minigo2` will **not** be a full Go implementation. It will interpret a curated subset of the language focused on its role as a configuration and scripting engine. It will strictly avoid `go/packages` and `go/types` in favor of the lazy, AST-based approach provided by `go-scan`.
+The core principles of `minigo2` are:
+- **IDE-First Development**: Mapping scripts are valid Go files, ensuring that developers get full language server support (completion, go-to-definition, find usages) out of the box.
+- **Declarative Logic**: Mappings are defined using a clear, declarative API (e.g., `generate.ConverterFor(...)`) rather than imperative template logic.
+- **Type Safety**: The engine uses `go-scan` to deeply understand the Go types involved, enabling the generation of type-safe code.
+- **Extensibility**: The engine can be extended with custom mapping functions and rules.
 
-## 2. Core Architecture
+This approach pivots from the initial concept of a runtime configuration interpreter to a build-time tool focused on developer productivity and code quality.
 
-The `minigo2` engine will be composed of several key components:
+## 2. Core Architecture & Workflow
 
-![minigo2 Architecture](https://i.imgur.com/example.png)  <!-- Conceptual image placeholder -->
+The `minigo2` engine will operate as a command-line tool, typically invoked via `go:generate`.
 
-1.  **Entry Point (`minigo2.Run`)**: A simple, library-style API for executing scripts. It will accept the script source (as a string or file path) and an optional context for passing in Go variables and functions.
+**Workflow:**
 
-2.  **Parser (Powered by `go-scan`)**: `minigo2` will not have its own parser. Instead, it will use `go/parser` to get the AST of the script, and a dedicated `goscan.Scanner` instance to resolve types and parse imported Go packages. This allows `minigo2` to directly reuse Go's AST structures (`go/ast`).
+1.  **Invocation**: A developer adds a `go:generate` comment to their Go source file.
+    ```go
+    //go:generate go run github.com/podhmo/go-scan/examples/minigo2 -mapping=./mapping.go
+    ```
+2.  **Scanning**: The `minigo2` tool uses `go-scan` to parse the package where it was invoked. It identifies all types in that package.
+3.  **Mapping Script Interpretation**: `minigo2` parses the specified mapping script (e.g., `mapping.go`). This script is a standard Go file (`package main`).
+4.  **AST Analysis**: The tool walks the AST of the mapping script's `main` function. It looks for calls to its special `generate` API (e.g., `generate.ConverterFor`).
+5.  **Code Model Construction**: By analyzing the arguments to the `generate` API calls, `minigo2` builds an internal, structured representation of the code to be generated (a "code model"). This model contains all necessary information: source and destination types, field mappings, required imports, etc.
+6.  **Code Generation**: The constructed code model is passed to a `text/template` engine, which renders the final Go source code for the generated file.
+7.  **Output**: The generated code is formatted using standard Go tools (`goimports`) and written to disk.
 
-3.  **Interpreter Engine (`eval` loop)**: The heart of `minigo2`. This component will be an AST-walking interpreter. It will traverse the AST provided by the parser and evaluate each node recursively.
-    - It will manage the execution state, including scopes and environments.
-    - It will handle control flow statements like `if`, `for`, and function calls.
+**Architectural Components:**
 
-4.  **Object System (`object.Object`)**: A set of internal types used to represent data within the interpreter at runtime. This will be similar to `minigo` but expanded for better Go interoperability.
-    - `object.Integer`, `object.String`, `object.Boolean`
-    - `object.StructInstance`, `object.Function`
-    - A special `object.GoValue` that wraps a `reflect.Value`, allowing native Go values to be passed into the script.
+- **CLI (`main.go`)**: Handles command-line flags and orchestrates the entire process.
+- **Scanner (`go-scan`)**: The underlying engine for parsing Go source code, resolving types across packages, and providing the necessary type information (`scanner.TypeInfo`).
+- **Mapping Script Parser**: A component responsible for analyzing the AST of the user's mapping script and extracting the declarative mapping rules.
+- **Code Model (`model` package)**: A set of structs that represent the code to be generated (similar to `examples/convert/model`).
+- **Generator (`generator` package)**: Contains the `text/template` and the logic for rendering the code model into Go source code.
+- **Built-in `generate` API**: A predefined Go package (`github.com/podhmo/minigo2/generate`) that users import into their mapping scripts. This API provides the declarative functions (`ConverterFor`, `Ignore`, `Using`, etc.).
 
-5.  **Environment Model (`object.Environment`)**: A structure for managing variable and symbol lookups. It will support nested scopes to correctly handle global, function, and block-level variables.
+## 3. Language Server (LSP) Integration Design
 
-6.  **Go Interop Layer (The `reflect` Bridge)**: This is a critical component for the configuration use case.
-    - **Go -> minigo2**: It will allow the host application to "inject" Go variables and functions into the `minigo2` environment. These will be wrapped in `object.GoValue` or a `BuiltinFunction` equivalent.
-    - **minigo2 -> Go**: It will provide a mechanism to extract the result of a script's evaluation and convert it from a `minigo2` internal object back into a Go variable using `reflect.Value.Set`.
+The key to providing a first-class developer experience is ensuring seamless integration with `gopls`. Our design achieves this by making the mapping script a standard, valid Go file.
 
-7.  **Error Handling & Call Stack**: A mechanism to track function calls within the script. If an error occurs, this call stack will be used to generate a formatted, easy-to-read error message, including file names and line numbers.
+**The Strategy:**
 
-## 3. Detailed Component Design
+1.  **Mapping Scripts are `.go` files**: We abandon the idea of a custom `.mgo` extension. Scripts will be regular `.go` files, typically in a `main` package.
+2.  **Declarative API**: The mapping logic is defined by calling functions from a dedicated `generate` package. The `main` function of the mapping script serves as a container for these declarative calls. **This `main` function is never executed directly by `go run` or `go build`**. It exists purely for `gopls` to have an entry point for analysis.
+3.  **Type Imports**: The mapping script directly imports the actual Go types it needs to reference. This allows `gopls` to "see" the types and provide accurate information.
 
-### 3.1. Entry Point API
-
-The primary API will be a function within the `minigo2` package.
+**Example Mapping Script (`mapping.go`):**
 
 ```go
-package minigo2
+package main
 
-// Options configures the interpreter environment.
-type Options struct {
-    // Globals allows injecting Go variables into the script's global scope.
-    // The map key is the variable name in the script.
-    // The value can be any Go variable, which will be made available via reflection.
-    Globals map[string]any
+// Import the user's actual types to make them visible to gopls
+import (
+    "github.com/my/project/models"
+    "github.com/my/project/transport/dto"
 
-    // Source is the script content.
-    Source []byte
+    // Import the minigo2 "verbs"
+    "github.com/podhmo/minigo2/generate"
+)
 
-    // Filename is the name of the script file, used for error messages.
-    Filename string
-
-    // EntryPoint is the name of the function to execute.
-    EntryPoint string
-}
-
-// Result holds the outcome of a script execution.
-type Result struct {
-    // Value is the raw minigo2 object returned by the script.
-    Value object.Object
-
-    // Error contains any runtime error, pre-formatted with a stack trace.
-    Error error
-}
-
-// Run executes a minigo2 script.
-func Run(ctx context.Context, opts Options) (*Result, error) {
-    // ... implementation ...
+// This function is analyzed by the minigo2 tool, not executed by `go run`.
+func main() {
+    // Define a converter from a model.User to a dto.User
+    generate.ConverterFor(
+        models.User{}, // Pass a zero value of the type to capture it
+        dto.User{},
+        generate.Options{
+            FieldMap: generate.FieldMap{
+                "ID":        "ID",
+                "Name":      "FullName",  // Map Name to FullName
+                "Password":  generate.Ignore(), // Explicitly ignore the Password field
+                "CreatedAt": generate.Using(models.FormatTime), // Use a custom function for conversion
+            },
+        },
+    )
 }
 ```
 
-### 3.2. Parsing with `go-scan`
+**Benefits of this Design:**
 
-- A `minigo2.Interpreter` struct will hold a `goscan.Scanner` instance.
-- When `Run` is called, it will first use `go/parser.ParseFile` to get the AST for the user's script (`.mgo` file).
-- The interpreter will walk the declarations of the script AST. When it encounters an `import` statement, it will use its internal `goscan.Scanner` to lazily `ScanPackageByImport` when a symbol from that package is first accessed (e.g., `fmt.Println`).
-- `go-scan` will handle finding the package, parsing it, and returning its exported symbols (`PackageInfo`), which the interpreter will then load into its environment.
+- **Code Completion**: When typing `models.` inside the `ConverterFor` call, the IDE will suggest `User`, `Account`, etc.
+- **Go to Definition**: Right-clicking on `models.User` will navigate directly to its struct definition.
+- **Find Usages**: Searching for usages of `models.User` will correctly list `mapping.go` as a reference.
+- **No Custom LSP Needed**: We leverage `gopls` entirely, avoiding the immense complexity of building a custom language server.
 
-### 3.3. Object System and Go Interop
-
-The `object.Object` interface will be the foundation. The key to interoperability is how we bridge `minigo2` objects and Go's `reflect.Value`.
-
-- **From Go to minigo2**:
-  - When `Options.Globals` is provided, the interpreter will iterate through the map.
-  - For each entry, it will use `reflect.ValueOf(value)` to get a `reflect.Value`.
-  - This `reflect.Value` will be wrapped in a new `object.GoValue{Value: reflect.Value}`.
-  - If the value is a Go function, it will be wrapped in a `BuiltinFunction` that uses `reflect.Value.Call` to execute it. Arguments from the script will be converted from `object.Object` to `reflect.Value` before the call.
-
-- **From minigo2 to Go**:
-  - The `Result` object can have a helper method: `As(target any) error`.
-  - `result.As(&myConfigStruct)` would work as follows:
-    1. It takes a pointer `&myConfigStruct` as `target`.
-    2. It uses `reflect.ValueOf(target).Elem()` to get the settable `reflect.Value` of `myConfigStruct`.
-    3. It inspects the `result.Value` (which would be an `object.StructInstance`).
-    4. It iterates through the fields of the `object.StructInstance` and uses `reflect` to find the corresponding field in `myConfigStruct` and set its value. This involves converting `minigo2` objects (`object.Integer`, `object.String`) back to standard Go types.
-
-### 3.4. Error Handling and Stack Traces
-
-This will be adapted directly from `minigo`.
-- The `Interpreter` will have a `callStack []*CallFrame`.
-- A `CallFrame` will store the function name and the position (`token.Position`) of the call site.
-- When a function is entered, a frame is pushed to the stack. When it exits, the frame is popped.
-- If `eval` encounters an error, it will be wrapped in a custom error type.
-- This custom error will have a `Format()` method that iterates through the `callStack` to build a readable trace, including file, line, and column information from the `token.Position`.
+The `minigo2` tool simply needs to parse this Go file and interpret the AST of the `generate.ConverterFor` function call to build its code generation model.
 
 ## 4. Implementation Phases
 
-The development of `minigo2` will be broken down into the following phases:
+The project will be developed in phases, building from a core engine to the full vision.
 
-1.  **Phase 1: Core Interpreter and Basic Types**
-    - [ ] Set up the project structure (`minigo2/`, `minigo2/object/`, etc.).
-    - [ ] Define the `object.Object` interface and basic types: `Integer`, `String`, `Boolean`, `Null`.
-    - [ ] Implement the basic `eval` loop that can evaluate simple expressions (literals, binary/unary expressions).
-    - [ ] Write unit tests for all expression evaluations.
+1.  **Phase 1: Core Engine and `go-scan` Integration**
+    - [ ] Set up the `minigo2` CLI application structure.
+    - [ ] Integrate `go-scan` to parse a target package specified by a command-line flag.
 
-2.  **Phase 2: Variables, Scopes, and Control Flow**
-    - [ ] Implement the `object.Environment` for managing scopes.
-    - [ ] Add support for `var` declarations and assignments (`=`, `:=`).
-    - [ ] Implement `if/else` statements.
-    - [ ] Implement `for` loops (with conditions, no range-based yet).
-    - [ ] Add support for `break` and `continue`.
+2.  **Phase 2: Mapping Script Parser**
+    - [ ] Define the built-in `generate` API (`generate.ConverterFor`, etc.).
+    - [ ] Implement the parser that walks the AST of a mapping script (`mapping.go`).
+    - [ ] The parser's goal is to find calls to `generate.ConverterFor` and extract the type information and mapping options.
 
-3.  **Phase 3: Functions and Call Stack**
-    - [ ] Implement user-defined functions (`func` declarations).
-    - [ ] Implement the call stack mechanism for function calls.
-    - [ ] Implement `return` statements.
-    - [ ] Implement basic error formatting with the stack trace.
+3.  **Phase 3: Code Model and Generator**
+    - [ ] Define the internal `model` structs to represent the generated code (converters, functions, fields).
+    - [ ] Implement the `generator` which takes the `model` and, using a `text/template`, produces the final Go code. This will be very similar to the generator in `examples/convert`.
 
-4.  **Phase 4: Integration with `go-scan` for Imports**
-    - [ ] Create the main `Interpreter` struct that holds a `goscan.Scanner`.
-    - [ ] Implement the logic to handle `import` statements.
-    - [ ] Implement `evalSelectorExpr` (e.g., `pkg.Symbol`) to trigger `go-scan`'s `ScanPackageByImport`.
-    - [ ] Load constants and functions from scanned packages into the environment.
-    - [ ] Test importing and using functions/constants from standard library packages (e.g., `strings.Join`).
+4.  **Phase 4: End-to-End Workflow**
+    - [ ] Connect all the pieces: CLI -> Scanner -> Mapping Parser -> Code Model -> Generator -> Output file.
+    - [ ] Create a full working example demonstrating the `go:generate` workflow.
 
-5.  **Phase 5: Structs and Go Interop Layer**
-    - [ ] Add support for `type ... struct` declarations and struct literal instantiations.
-    - [ ] Implement the `object.GoValue` to wrap `reflect.Value`.
-    - [ ] Implement the logic to inject Go variables from `Options.Globals`.
-    - [ ] Implement the logic to wrap Go functions as `BuiltinFunction`s.
-    - [ ] Implement the `Result.As(target any)` method for extracting data back into Go structs.
+5.  **Phase 5: Advanced Features & Refinement**
+    - [ ] Implement recursive discovery of required converters (as seen in `examples/convert`).
+    - [ ] Add support for more complex mapping rules (`// convert:rule` equivalent).
+    - [ ] Refine error handling to provide clear messages when a mapping script is invalid.
+    - [ ] Write comprehensive documentation for the tool and the `generate` API.
 
-6.  **Phase 6: Refinement and Documentation**
-    - [ ] Thoroughly test all features, especially the `reflect` bridge.
-    - [ ] Improve error messages and stack traces.
-    - [ ] Write comprehensive documentation for the API and usage examples.
-    - [ ] Ensure `make format` and `make test` pass cleanly.
+## 5. Revised Conceptual Usage Example
 
-## 5. Conceptual Usage Example
+**1. User's Go code (`models/user.go`):**
+```go
+package models
 
+import "time"
+
+//go:generate go run github.com/podhmo/go-scan/examples/minigo2 -mapping=./mapping.go -output=./generated.go
+
+type User struct {
+    ID        int
+    Name      string
+    Password  string
+    CreatedAt time.Time
+}
+
+func FormatTime(t time.Time) string {
+    return t.RFC3339
+}
+```
+
+**2. User's DTO (`dto/user.go`):**
+```go
+package dto
+
+type User struct {
+    ID       int
+    FullName string
+    CreatedAt string
+}
+```
+
+**3. User's Mapping Script (`models/mapping.go`):**
 ```go
 package main
 
 import (
-    "context"
-    "fmt"
-    "github.com/user/project/minigo2"
+    "github.com/my/project/models"
+    "github.com/my/project/transport/dto"
+    "github.com/podhmo/minigo2/generate"
 )
 
-// This is the Go struct we want to populate from the script.
-type AppConfig struct {
-    ListenAddr string
-    TimeoutSec int
-    FeatureFlags []string
-}
-
-// A Go function we want to make available in the script.
-func GetDefaultPort() string {
-    return ":8080"
-}
-
+// This main is the entry point for the minigo2 code generator analysis.
 func main() {
-    // The minigo2 script, acting as a configuration file.
-    script := `
-package main
-
-import "strings"
-
-// The entry point function that returns the config.
-func GetConfig() {
-    // This is the struct we will return.
-    // Its definition is not in this script; it will be matched by reflection.
-    return {
-        ListenAddr: GetDefaultPort(), // Call a Go function from the script.
-        TimeoutSec: 30,
-        FeatureFlags: strings.Split(env.FEATURES, ","), // Use an injected variable.
-    }
-}
-`
-    // The Go variable to inject into the script.
-    injectedVars := map[string]any{
-        "env": map[string]string{
-            "FEATURES": "new_ui,enable_metrics",
+    generate.ConverterFor(
+        models.User{},
+        dto.User{},
+        generate.Options{
+            FieldMap: generate.FieldMap{
+                "ID":        "ID",
+                "Name":      "FullName",
+                "Password":  generate.Ignore(),
+                "CreatedAt": generate.Using(models.FormatTime),
+            },
         },
-        "GetDefaultPort": GetDefaultPort, // Inject the Go function.
-    }
+    )
+}
+```
 
-    // Run the interpreter.
-    result, err := minigo2.Run(context.Background(), minigo2.Options{
-        Source:     []byte(script),
-        Filename:   "config.mgo",
-        EntryPoint: "GetConfig",
-        Globals:    injectedVars,
-    })
-    if err != nil {
-        panic(err) // The error will be nicely formatted with a stack trace.
-    }
+**4. Running `go generate ./...` would create `models/generated.go`:**
+```go
+// Code generated by minigo2. DO NOT EDIT.
+package models
 
-    // Extract the result into our Go struct.
-    var cfg AppConfig
-    if err := result.As(&cfg); err != nil {
-        panic(err)
-    }
+import (
+    "github.com/my/project/transport/dto"
+    // ... other necessary imports
+)
 
-    fmt.Printf("Configuration loaded: %+v\n", cfg)
-    // Output: Configuration loaded: {ListenAddr::8080 TimeoutSec:30 FeatureFlags:[new_ui enable_metrics]}
+func ConvertUserToDTO(src *User) *dto.User {
+    if src == nil {
+        return nil
+    }
+    dst := &dto.User{}
+    dst.ID = src.ID
+    dst.FullName = src.Name
+    dst.CreatedAt = FormatTime(src.CreatedAt)
+    return dst
 }
 ```

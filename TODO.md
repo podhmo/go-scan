@@ -144,8 +144,8 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 ### [-] minigo2 Implementation ([docs/plan-minigo2.md](./docs/plan-minigo2.md))
 - [x] Set up the project structure (`minigo2/`, `minigo2/object/`, `minigo2/evaluator/`, etc.).
 - [x] Define the `object.Object` interface and basic types: `Integer`, `String`, `Boolean`, `Null`.
-- [ ] Implement the core `eval` loop for expression evaluation.
-- [ ] Support basic literals (`123`, `"hello"`).
+- [x] Implement the core `eval` loop for expression evaluation.
+- [x] Support basic literals (`123`, `"hello"`).
 - [ ] Support binary expressions (`+`, `-`, `*`, `/`, `==`, `!=`, `<`, `>`).
 - [ ] Support unary expressions (`-`, `!`).
 - [ ] Write unit tests for all expression evaluations.

@@ -20,6 +20,8 @@ const (
 	CONTINUE_OBJ    ObjectType = "CONTINUE"
 	RETURN_VALUE_OBJ ObjectType = "RETURN_VALUE"
 	FUNCTION_OBJ    ObjectType = "FUNCTION"
+	STRUCT_DEFINITION_OBJ ObjectType = "STRUCT_DEFINITION"
+	STRUCT_INSTANCE_OBJ   ObjectType = "STRUCT_INSTANCE"
 )
 
 // Object is the interface that all value types in our interpreter will implement.
@@ -144,6 +146,50 @@ func (f *Function) Inspect() string {
 
 	return out.String()
 }
+
+// --- Struct Definition Object ---
+
+// StructDefinition represents the definition of a struct type.
+type StructDefinition struct {
+	Name   *ast.Ident
+	Fields []*ast.Field
+}
+
+// Type returns the type of the StructDefinition object.
+func (sd *StructDefinition) Type() ObjectType { return STRUCT_DEFINITION_OBJ }
+
+// Inspect returns a string representation of the struct definition.
+func (sd *StructDefinition) Inspect() string {
+	return fmt.Sprintf("struct %s", sd.Name.String())
+}
+
+// --- Struct Instance Object ---
+
+// StructInstance represents an instance of a struct.
+type StructInstance struct {
+	Def    *StructDefinition
+	Fields map[string]Object
+}
+
+// Type returns the type of the StructInstance object.
+func (si *StructInstance) Type() ObjectType { return STRUCT_INSTANCE_OBJ }
+
+// Inspect returns a string representation of the struct instance.
+func (si *StructInstance) Inspect() string {
+	var out bytes.Buffer
+	fields := []string{}
+	for k, v := range si.Fields {
+		fields = append(fields, fmt.Sprintf("%s: %s", k, v.Inspect()))
+	}
+
+	out.WriteString(si.Def.Name.String())
+	out.WriteString("{")
+	out.WriteString(strings.Join(fields, ", "))
+	out.WriteString("}")
+
+	return out.String()
+}
+
 
 // --- Global Instances ---
 

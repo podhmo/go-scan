@@ -463,6 +463,64 @@ func TestShortVarDeclarations(t *testing.T) {
 	}
 }
 
+func TestStructs(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected any
+	}{
+		{
+			`
+			type Person struct {
+				name string
+				age int
+			}
+			p := Person{name: "Alice", age: 30}
+			p.name
+			`,
+			"Alice",
+		},
+		{
+			`
+			type Point struct {
+				x int
+				y int
+			}
+			p := Point{x: 3, y: 5}
+			p.x + p.y
+			`,
+			int64(8),
+		},
+		{
+			`
+			type User struct {
+				active bool
+				name string
+			}
+			u := User{name: "Bob", active: false}
+			u.active = true
+			u.active
+			`,
+			true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			evaluated := testEval(t, tt.input)
+			switch expected := tt.expected.(type) {
+			case int64:
+				testIntegerObject(t, evaluated, expected)
+			case string:
+				testStringObject(t, evaluated, expected)
+			case bool:
+				testBooleanObject(t, evaluated, expected)
+			default:
+				t.Fatalf("unsupported expected type for test: %T", expected)
+			}
+		})
+	}
+}
+
 func TestLexicalScoping(t *testing.T) {
 	tests := []struct {
 		input    string

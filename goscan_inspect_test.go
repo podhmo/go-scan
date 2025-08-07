@@ -112,3 +112,87 @@ type Group struct { // No annotation
 		t.Errorf("log output did not contain expected result=miss")
 	}
 }
+
+func TestInspectResolutionPath(t *testing.T) {
+	files := map[string]string{
+		"go.mod": "module a.b/c",
+		"pkg1/main.go": `
+package pkg1
+import "a.b/c/pkg2"
+type TypeA struct {
+	B pkg2.TypeB
+}
+`,
+		"pkg2/another.go": `
+package pkg2
+type TypeB struct {
+	Name string
+}
+`,
+	}
+	dir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{
+		Level: slog.LevelDebug,
+		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
+			if a.Key == slog.TimeKey {
+				return slog.Attr{}
+			}
+			return a
+		},
+	}))
+
+	s, err := goscan.New(
+		goscan.WithInspect(true),
+		goscan.WithLogger(logger),
+		goscan.WithWorkDir(dir),
+	)
+	if err != nil {
+		t.Fatalf("goscan.New() failed: %v", err)
+	}
+
+	// Scan the main package first.
+	pkgs, err := s.Scan(dir + "/pkg1")
+	if err != nil {
+		t.Fatalf("s.Scan() failed: %v", err)
+	}
+	if len(pkgs) != 1 {
+		t.Fatalf("expected 1 package, got %d", len(pkgs))
+	}
+	typeA := pkgs[0].Lookup("TypeA")
+	if typeA == nil {
+		t.Fatalf("could not find TypeA in pkg1")
+	}
+
+	// Get the field type for 'B' which is of pkg2.TypeB
+	fieldBType := typeA.Struct.Fields[0].Type
+
+	// Now, resolve it. This should trigger the inspect logging for resolution.
+	ctx := context.Background()
+	typeB, err := s.ResolveType(ctx, fieldBType)
+	if err != nil {
+		t.Fatalf("s.ResolveType() failed: %v", err)
+	}
+	if typeB == nil {
+		t.Fatalf("resolved type should not be nil")
+	}
+	if typeB.Name != "TypeB" {
+		t.Errorf("expected resolved type to be TypeB, got %s", typeB.Name)
+	}
+
+	// Assertions on the log output
+	logOutput := logBuf.String()
+	t.Logf("Captured logs:\n%s", logOutput)
+
+	// Check for the "resolving" message
+	if !strings.Contains(logOutput, `level=DEBUG msg="resolving type" type=a.b/c/pkg2.TypeB resolution_path=[]`) {
+		t.Errorf("log output did not contain expected DEBUG message for resolving type")
+	}
+
+	// Check for the "resolved" message
+	if !strings.Contains(logOutput, `level=INFO msg="resolved type" type=a.b/c/pkg2.TypeB resolution_path=[]`) {
+		t.Errorf("log output did not contain expected INFO message for resolved type")
+	}
+}

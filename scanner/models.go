@@ -11,6 +11,20 @@ import (
 	"sync"
 )
 
+// Context keys for passing information through the resolution process.
+type (
+	resolutionPathKey struct{}
+	loggerKey         struct{}
+	inspectKey        struct{}
+)
+
+// Public context keys to be used by packages like goscan.
+var (
+	ResolutionPathKey = resolutionPathKey{}
+	LoggerKey         = loggerKey{}
+	InspectKey        = inspectKey{}
+)
+
 // TypeParamInfo stores information about a single type parameter.
 type TypeParamInfo struct {
 	Name       string     `json:"name"`
@@ -94,9 +108,10 @@ type TypeInfo struct {
 	EnumMembers []*ConstantInfo `json:"enumMembers,omitempty"` // List of constants belonging to this enum type
 
 	// --- Fields for inspect mode ---
-	Inspect bool         `json:"-"` // Flag to enable inspection logging
-	Logger  *slog.Logger `json:"-"` // Logger for inspection
-	Fset    *token.FileSet `json:"-"` // Fileset for position information
+	Inspect           bool            `json:"-"` // Flag to enable inspection logging
+	Logger            *slog.Logger    `json:"-"` // Logger for inspection
+	Fset              *token.FileSet  `json:"-"` // Fileset for position information
+	ResolutionContext context.Context `json:"-"` // Context for resolving nested types
 }
 
 // Annotation extracts the value of a specific annotation from the TypeInfo's Doc string.
@@ -320,63 +335,81 @@ func (ft *FieldType) String() string {
 	return sb.String()
 }
 
-func (ft *FieldType) Resolve(ctx context.Context, resolving map[string]struct{}) (*TypeInfo, error) {
-	// If the definition is already cached (e.g. by an override), return it immediately.
+func (ft *FieldType) Resolve(ctx context.Context) (*TypeInfo, error) {
+	// If the definition is already cached, return it.
 	if ft.Definition != nil {
 		return ft.Definition, nil
 	}
-	if ft.IsResolvedByConfig {
-		// This type was marked as resolved by config, but has no pre-supplied definition.
-		// This can happen for overrides that map to primitives.
-		return nil, nil
+	if ft.IsResolvedByConfig || ft.IsBuiltin {
+		return nil, nil // These types are considered resolved.
 	}
-	if ft.IsBuiltin {
-		// Built-in types are considered resolved without a specific TypeInfo.
-		return nil, nil
-	}
-
-	// Cannot resolve types without a resolver or if not a built-in.
 	if ft.Resolver == nil {
-		// For local types (no FullImportPath), we can't resolve further without a resolver.
-		// This can happen for non-exported types or if the package context wasn't fully available.
 		return nil, fmt.Errorf("type %q cannot be resolved: no resolver available", ft.Name)
 	}
 	if ft.FullImportPath == "" {
-		// This is likely a type from the same package being scanned.
-		// Its definition should have been found during the initial scan.
-		// If we are here, it means it's a forward declaration or a scenario
-		// that doesn't require cross-package resolution.
-		return nil, nil // Not an error, just can't resolve further.
+		// This is likely a type from the same package, which is already resolved.
+		return nil, nil
+	}
+
+	// Extract logger, inspect flag, and current resolution path from context.
+	logger, _ := ctx.Value(LoggerKey).(*slog.Logger)
+	inspect, _ := ctx.Value(InspectKey).(bool)
+	path, _ := ctx.Value(ResolutionPathKey).([]string)
+	if path == nil {
+		path = []string{} // Should not happen if called via designated entry points.
 	}
 
 	typeIdentifier := ft.FullImportPath + "." + ft.TypeName
-	if _, ok := resolving[typeIdentifier]; ok {
-		// Cycle detected. Attempt to return the already-allocated TypeInfo pointer
-		// to allow the graph to be linked correctly.
-		if pkgInfo, err := ft.Resolver.ScanPackageByImport(ctx, ft.FullImportPath); err == nil && pkgInfo != nil {
-			if t := pkgInfo.Lookup(ft.TypeName); t != nil {
-				ft.Definition = t // Cache the result even in the cycle case
-				return t, nil     // Return the existing, partially resolved TypeInfo
-			}
-		}
-		// If we can't find it, returning nil is the last resort, but ideally, the TypeInfo is already in the map.
-		return nil, nil
-	}
-	resolving[typeIdentifier] = struct{}{}
-	defer delete(resolving, typeIdentifier)
 
+	// --- Cycle Detection ---
+	for _, p := range path {
+		if p == typeIdentifier {
+			return nil, nil // Cycle detected.
+		}
+	}
+
+	// --- Logging (if inspect mode is on) ---
+	if inspect && logger != nil {
+		logger.DebugContext(ctx, "resolving type",
+			"type", typeIdentifier,
+			"resolution_path", path,
+		)
+	}
+
+	// --- Resolve the package ---
 	pkgInfo, err := ft.Resolver.ScanPackageByImport(ctx, ft.FullImportPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to scan package %q for type %q: %w", ft.FullImportPath, ft.TypeName, err)
 	}
 
-	// The lookup now uses the efficient map.
-	if t := pkgInfo.Lookup(ft.TypeName); t != nil {
-		ft.Definition = t // Cache the result
-		return t, nil
+	typeInfo := pkgInfo.Lookup(ft.TypeName)
+	if typeInfo == nil {
+		return nil, fmt.Errorf("type %q not found in package %q", ft.TypeName, ft.FullImportPath)
 	}
 
-	return nil, fmt.Errorf("type %q not found in package %q", ft.TypeName, ft.FullImportPath)
+	// --- Success ---
+	if inspect && logger != nil {
+		logger.InfoContext(ctx, "resolved type",
+			"type", typeIdentifier,
+			"resolution_path", path,
+		)
+	}
+
+	// --- Prepare context for child resolutions ---
+	newPath := append(path, typeIdentifier)
+	childCtx := context.WithValue(ctx, ResolutionPathKey, newPath)
+	// Propagate other necessary values.
+	if logger != nil {
+		childCtx = context.WithValue(childCtx, LoggerKey, logger)
+	}
+	childCtx = context.WithValue(childCtx, InspectKey, inspect)
+
+	typeInfo.ResolutionContext = childCtx
+	typeInfo.Logger = logger
+	typeInfo.Inspect = inspect
+
+	ft.Definition = typeInfo // Cache the result.
+	return typeInfo, nil
 }
 
 // ConstantInfo represents a single top-level constant declaration.

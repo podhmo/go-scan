@@ -137,6 +137,6 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
             -   [x] `examples/deriving-all`
             -   [x] `examples/deps-walk`
         -   [x] **Integration Tests**: Added tests using the `scantest` library to verify the functionality of the new inspect and dry-run modes.
-        -   [ ] **`resolution_path` Logging**: Implement the `resolution_path` field in structured logs to trace how a type was resolved.
+        -   [x] **`resolution_path` Logging**: Implement the `resolution_path` field in structured logs to trace how a type was resolved.
 
 ## To Be Implemented

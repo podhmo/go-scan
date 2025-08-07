@@ -287,14 +287,21 @@ func (s *Scanner) SetExternalTypeOverrides(ctx context.Context, overrides scanne
 }
 
 // ResolveType starts the type resolution process for a given field type.
-// It's the public entry point for resolving types, handling circular dependencies
-// by creating a new resolution tracker for each call.
+// It's the public entry point for resolving types. It prepares the context
+// with necessary loggers and flags for the entire resolution chain.
 func (s *Scanner) ResolveType(ctx context.Context, fieldType *scanner.FieldType) (*scanner.TypeInfo, error) {
 	if s.scanner == nil {
 		return nil, fmt.Errorf("internal scanner is not initialized")
 	}
-	// This delegates to the internal scanner's ResolveType, which in turn
-	// calls the recursive FieldType.Resolve with an initial empty map.
+
+	// Prepare the context for the entire resolution chain starting from this call.
+	if s.Logger != nil {
+		ctx = context.WithValue(ctx, scanner.LoggerKey, s.Logger)
+	}
+	ctx = context.WithValue(ctx, scanner.InspectKey, s.Inspect)
+
+	// This delegates to the internal scanner's ResolveType, which now handles
+	// the creation of the initial resolution path.
 	return s.scanner.ResolveType(ctx, fieldType)
 }
 

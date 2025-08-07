@@ -55,7 +55,9 @@ func New(fset *token.FileSet, overrides ExternalTypeOverride, overlay Overlay, m
 
 // ResolveType starts the type resolution process for a given field type.
 func (s *Scanner) ResolveType(ctx context.Context, fieldType *FieldType) (*TypeInfo, error) {
-	return fieldType.Resolve(ctx, make(map[string]struct{}))
+	// This is the start of a resolution chain. Initialize the path in the context.
+	ctxWithPath := context.WithValue(ctx, ResolutionPathKey, []string{})
+	return fieldType.Resolve(ctxWithPath)
 }
 
 // ScanPackageByImport makes scanner.Scanner implement the PackageResolver interface.
@@ -366,6 +368,17 @@ func (s *Scanner) parseTypeSpec(ctx context.Context, sp *ast.TypeSpec, info *Pac
 		Logger:   s.logger,
 		Fset:     info.Fset,
 	}
+
+	// Set up the initial resolution context for this type.
+	// Any types resolved from this type's fields will have this type's identifier in their path.
+	typeIdentifier := info.ImportPath + "." + sp.Name.Name
+	initialPath := []string{typeIdentifier}
+	childCtx := context.WithValue(context.Background(), ResolutionPathKey, initialPath)
+	if s.logger != nil {
+		childCtx = context.WithValue(childCtx, LoggerKey, s.logger)
+	}
+	childCtx = context.WithValue(childCtx, InspectKey, s.inspect)
+	typeInfo.ResolutionContext = childCtx
 
 	if sp.TypeParams != nil {
 		typeInfo.TypeParams = s.parseTypeParamList(ctx, sp.TypeParams.List, info, importLookup)

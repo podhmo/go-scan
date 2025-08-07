@@ -17,7 +17,7 @@ func testEval(t *testing.T, input string) object.Object {
 	fullSource := fmt.Sprintf("package main\n\nfunc main() {\n%s\n}", input)
 
 	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, "test.go", fullSource, parser.ParseComments)
+	file, err := parser.ParseFile(fset, "test.go", fullSource, 0)
 	if err != nil {
 		t.Fatalf("failed to parse code: %v", err)
 		return nil
@@ -96,6 +96,67 @@ func testNullObject(t *testing.T, obj object.Object) bool {
 		return false
 	}
 	return true
+}
+
+func TestFunctionObject(t *testing.T) {
+	input := "func(x int) { x + 2; };"
+	evaluated := testEval(t, input)
+	fn, ok := evaluated.(*object.Function)
+	if !ok {
+		t.Fatalf("object is not Function. got=%T (%+v)", evaluated, evaluated)
+	}
+	if len(fn.Parameters) != 1 {
+		t.Fatalf("function has wrong parameters. Parameters=%+v", fn.Parameters)
+	}
+	if fn.Parameters[0].String() != "x" {
+		t.Fatalf("parameter is not 'x'. got=%q", fn.Parameters[0])
+	}
+	// The exact string representation of the body is not critical to test here,
+	// as long as we know it's a block statement.
+	if fn.Body == nil {
+		t.Fatalf("function body is nil")
+	}
+}
+
+func TestFunctionApplication(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected int64
+	}{
+		{"identity := func(x int) { x; }; identity(5);", 5},
+		{"identity := func(x int) { return x; }; identity(5);", 5},
+		{"double := func(x int) { x * 2; }; double(5);", 10},
+		{"add := func(x int, y int) { x + y; }; add(5, 5);", 10},
+		{"add := func(x int, y int) { x + y; }; add(5 + 5, add(5, 5));", 20},
+		{"func() { 5; }();", 5},
+		{
+			`
+			newAdder := func(x int) {
+				return func(y int) { x + y; };
+			};
+			addTwo := newAdder(2);
+			addTwo(3);
+			`,
+			5,
+		},
+		{
+			`
+			fib := func(n int) {
+				if (n < 2) {
+					return n;
+				}
+				return fib(n-1) + fib(n-2);
+			};
+			fib(10);
+			`,
+			55,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			testIntegerObject(t, testEval(t, tt.input), tt.expected)
+		})
+	}
 }
 
 func TestConstDeclarations(t *testing.T) {

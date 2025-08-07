@@ -159,10 +159,10 @@ func evalBlockStatement(block *ast.BlockStmt, env *object.Environment) object.Ob
 
 	for _, statement := range block.List {
 		result = Eval(statement, enclosedEnv)
-		// Handle control flow statements like break and continue
+		// Handle early returns and control flow
 		if result != nil {
 			rt := result.Type()
-			if rt == object.BREAK_OBJ || rt == object.CONTINUE_OBJ {
+			if rt == object.RETURN_VALUE_OBJ || rt == object.BREAK_OBJ || rt == object.CONTINUE_OBJ {
 				return result
 			}
 		}
@@ -307,6 +307,54 @@ func evalSwitchStmt(ss *ast.SwitchStmt, env *object.Environment) object.Object {
 	return object.NULL
 }
 
+func evalExpressions(exps []ast.Expr, env *object.Environment) []object.Object {
+	var result []object.Object
+
+	for _, e := range exps {
+		evaluated := Eval(e, env)
+		// TODO: Handle error
+		result = append(result, evaluated)
+	}
+
+	return result
+}
+
+func applyFunction(fn object.Object, args []object.Object) object.Object {
+	function, ok := fn.(*object.Function)
+	if !ok {
+		// TODO: Return error "not a function"
+		return nil
+	}
+
+	if len(function.Parameters) != len(args) {
+		// TODO: Return error "wrong number of arguments"
+		return nil
+	}
+
+	extendedEnv := extendFunctionEnv(function, args)
+	evaluated := Eval(function.Body, extendedEnv)
+
+	return unwrapReturnValue(evaluated)
+}
+
+func extendFunctionEnv(fn *object.Function, args []object.Object) *object.Environment {
+	env := object.NewEnclosedEnvironment(fn.Env)
+
+	for paramIdx, param := range fn.Parameters {
+		env.Set(param.Name, args[paramIdx])
+	}
+
+	return env
+}
+
+func unwrapReturnValue(obj object.Object) object.Object {
+	if returnValue, ok := obj.(*object.ReturnValue); ok {
+		return returnValue.Value
+	}
+	return obj
+}
+
+
 // evalBranchStmt evaluates a break or continue statement.
 func evalBranchStmt(bs *ast.BranchStmt, env *object.Environment) object.Object {
 	// We don't support labels yet.
@@ -345,6 +393,29 @@ func Eval(node ast.Node, env *object.Environment) object.Object {
 		return evalBranchStmt(n, env)
 	case *ast.DeclStmt:
 		return Eval(n.Decl, env)
+	case *ast.FuncDecl:
+		params := []*ast.Ident{}
+		if n.Type.Params != nil {
+			for _, field := range n.Type.Params.List {
+				for _, name := range field.Names {
+					params = append(params, name)
+				}
+			}
+		}
+		fn := &object.Function{
+			Parameters: params,
+			Body:       n.Body,
+			Env:        env,
+		}
+		env.Set(n.Name.Name, fn)
+		return nil // Function declaration is a statement
+	case *ast.ReturnStmt:
+		var val object.Object = object.NULL
+		if len(n.Results) > 0 {
+			val = Eval(n.Results[0], env)
+			// TODO: Handle error
+		}
+		return &object.ReturnValue{Value: val}
 	case *ast.GenDecl:
 		switch n.Tok {
 		case token.VAR:
@@ -432,6 +503,26 @@ func Eval(node ast.Node, env *object.Environment) object.Object {
 	// Expressions
 	case *ast.ParenExpr:
 		return Eval(n.X, env)
+	case *ast.FuncLit:
+		params := []*ast.Ident{}
+		if n.Type.Params != nil {
+			for _, field := range n.Type.Params.List {
+				for _, name := range field.Names {
+					params = append(params, name)
+				}
+			}
+		}
+		return &object.Function{
+			Parameters: params,
+			Body:       n.Body,
+			Env:        env,
+		}
+	case *ast.CallExpr:
+		function := Eval(n.Fun, env)
+		// TODO: check if function is an error
+		args := evalExpressions(n.Args, env)
+		// TODO: check if any arg is an error
+		return applyFunction(function, args)
 	case *ast.UnaryExpr:
 		right := Eval(n.X, env)
 		return evalPrefixExpression(n.Op.String(), right)

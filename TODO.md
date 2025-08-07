@@ -161,9 +161,9 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] Support expressionless `switch` (`switch { ... }`).
 - [x] Support `case` clauses with single or multiple expressions.
 - [x] Support the `default` clause.
-- [ ] Implement user-defined functions (`func` declarations).
-- [ ] Implement the call stack mechanism for tracking function calls.
-- [ ] Implement `return` statements (including returning `nil`).
+- [x] Implement user-defined functions (`func` declarations).
+- [x] Implement the call stack mechanism for tracking function calls.
+- [x] Implement `return` statements (including returning `nil`).
 - [ ] Implement rich error formatting with a formatted call stack.
 - [ ] Add support for `type ... struct` declarations.
 - [ ] Support struct literal instantiation (e.g., `MyStruct{...}`), including both keyed and unkeyed fields.

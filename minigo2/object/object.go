@@ -79,3 +79,55 @@ var (
 	FALSE = &Boolean{Value: false}
 	NULL  = &Null{}
 )
+
+// --- Environment ---
+
+// Environment holds the bindings for variables and functions.
+type Environment struct {
+	store map[string]Object
+	outer *Environment
+}
+
+// NewEnvironment creates a new, top-level environment.
+func NewEnvironment() *Environment {
+	s := make(map[string]Object)
+	return &Environment{store: s, outer: nil}
+}
+
+// NewEnclosedEnvironment creates a new environment that is enclosed by an outer one.
+func NewEnclosedEnvironment(outer *Environment) *Environment {
+	env := NewEnvironment()
+	env.outer = outer
+	return env
+}
+
+// Get retrieves an object by name from the environment, checking outer scopes if necessary.
+func (e *Environment) Get(name string) (Object, bool) {
+	obj, ok := e.store[name]
+	if !ok && e.outer != nil {
+		obj, ok = e.outer.Get(name)
+	}
+	return obj, ok
+}
+
+// Set stores an object by name in the current environment's scope.
+// It returns the object that was set. This is used for `var` and `:=`.
+func (e *Environment) Set(name string, val Object) Object {
+	e.store[name] = val
+	return val
+}
+
+// Assign updates the value of an existing variable. It searches up through
+// the enclosing environments. If the variable is found, it's updated and
+// the function returns true. If it's not found, it returns false.
+func (e *Environment) Assign(name string, val Object) bool {
+	_, ok := e.store[name]
+	if ok {
+		e.store[name] = val
+		return true
+	}
+	if e.outer != nil {
+		return e.outer.Assign(name, val)
+	}
+	return false
+}

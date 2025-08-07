@@ -122,11 +122,20 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     -   [x] **Integration Tests**: Added integration tests for the `deps-walk` tool using `scantest`.
     -   [x] **Reverse Dependency Search**: Added a `--direction=reverse` option to find and visualize reverse dependencies (importers). This is supported by a new `goscan.FindImporters` method that efficiently scans the module for import statements.
     -   [x] **Bidirectional Dependency Graph**: Added a `--direction=bidi` option to show both forward dependencies (up to `--hops`) and reverse dependencies (importers) in the same graph.
+    -   [x] **Hop Count Limiting for Reverse Searches**: The `--hops` flag is now correctly applied to reverse dependency searches, in addition to forward searches.
 -   **Refactoring**:
     -   [x] **Isolate `examples/deps-walk` Test Data**: Moved the test data for the `deps-walk` example from the root `testdata` directory to its own `examples/deps-walk/testdata` directory, making the example more self-contained.
     -   [x] **Centralize Path Resolution**: Moved the logic for resolving relative file paths to Go package paths from the `deps-walk` example into the core `locator` package (`locator.ResolvePkgPath`). This makes the functionality reusable for other tools.
+
 ## To Be Implemented
 
--   **`deps-walk`**: Add hop count limiting for reverse dependency searches.
-    -   Currently, the `--hops` flag only applies to forward searches.
-    -   It would be useful to have a similar mechanism (e.g., `--reverse-hops`) to limit the scope of reverse and bidi searches.
+### Inspect ([docs/plan-inspect.md](./docs/plan-inspect.md))
+- [ ] Goals
+- [ ] Technical Approach
+- [ ] Inspect Mode
+- [ ] Dry-Run Mode
+- [ ] Usage Example
+- [ ] Structured Logging Fields
+- [ ] `DEBUG` Level Log (Annotation Check)
+- [ ] `INFO` Level Log (Annotation Found)
+- [ ] Implementation Note for `resolution_path`

@@ -1,3 +1,6 @@
+> [!NOTE]
+> This feature has been implemented.
+
 # Plan: Enum-like Constant Scanning Feature
 
 ## 1. Introduction

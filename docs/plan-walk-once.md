@@ -1,3 +1,6 @@
+> [!NOTE]
+> This feature has been implemented.
+
 # Plan: Unifying `derivingjson` and `derivingbind` into a Single-Pass Generator
 
 ## 1. Goal

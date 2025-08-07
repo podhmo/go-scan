@@ -1,6 +1,11 @@
 package object
 
-import "fmt"
+import (
+	"bytes"
+	"fmt"
+	"go/ast"
+	"strings"
+)
 
 // ObjectType is a string representation of an object's type.
 type ObjectType string
@@ -11,8 +16,12 @@ const (
 	BOOLEAN_OBJ  ObjectType = "BOOLEAN"
 	STRING_OBJ   ObjectType = "STRING"
 	NULL_OBJ     ObjectType = "NULL"
-	BREAK_OBJ    ObjectType = "BREAK"
-	CONTINUE_OBJ ObjectType = "CONTINUE"
+	BREAK_OBJ       ObjectType = "BREAK"
+	CONTINUE_OBJ    ObjectType = "CONTINUE"
+	RETURN_VALUE_OBJ ObjectType = "RETURN_VALUE"
+	FUNCTION_OBJ    ObjectType = "FUNCTION"
+	STRUCT_DEFINITION_OBJ ObjectType = "STRUCT_DEFINITION"
+	STRUCT_INSTANCE_OBJ   ObjectType = "STRUCT_INSTANCE"
 )
 
 // Object is the interface that all value types in our interpreter will implement.
@@ -94,6 +103,93 @@ func (cs *ContinueStatement) Type() ObjectType { return CONTINUE_OBJ }
 
 // Inspect returns a string representation of the ContinueStatement.
 func (cs *ContinueStatement) Inspect() string { return "continue" }
+
+// --- Return Value Object ---
+
+// ReturnValue represents the value being returned from a function.
+// It wraps another object to signal the "return" state.
+type ReturnValue struct {
+	Value Object
+}
+
+// Type returns the type of the ReturnValue object.
+func (rv *ReturnValue) Type() ObjectType { return RETURN_VALUE_OBJ }
+
+// Inspect returns a string representation of the wrapped value.
+func (rv *ReturnValue) Inspect() string { return rv.Value.Inspect() }
+
+// --- Function Object ---
+
+// Function represents a user-defined function.
+type Function struct {
+	Parameters []*ast.Ident
+	Body       *ast.BlockStmt
+	Env        *Environment
+}
+
+// Type returns the type of the Function object.
+func (f *Function) Type() ObjectType { return FUNCTION_OBJ }
+
+// Inspect returns a string representation of the function.
+func (f *Function) Inspect() string {
+	var out bytes.Buffer
+
+	params := []string{}
+	for _, p := range f.Parameters {
+		params = append(params, p.String())
+	}
+
+	out.WriteString("func")
+	out.WriteString("(")
+	out.WriteString(strings.Join(params, ", "))
+	out.WriteString(") { ... }")
+
+	return out.String()
+}
+
+// --- Struct Definition Object ---
+
+// StructDefinition represents the definition of a struct type.
+type StructDefinition struct {
+	Name   *ast.Ident
+	Fields []*ast.Field
+}
+
+// Type returns the type of the StructDefinition object.
+func (sd *StructDefinition) Type() ObjectType { return STRUCT_DEFINITION_OBJ }
+
+// Inspect returns a string representation of the struct definition.
+func (sd *StructDefinition) Inspect() string {
+	return fmt.Sprintf("struct %s", sd.Name.String())
+}
+
+// --- Struct Instance Object ---
+
+// StructInstance represents an instance of a struct.
+type StructInstance struct {
+	Def    *StructDefinition
+	Fields map[string]Object
+}
+
+// Type returns the type of the StructInstance object.
+func (si *StructInstance) Type() ObjectType { return STRUCT_INSTANCE_OBJ }
+
+// Inspect returns a string representation of the struct instance.
+func (si *StructInstance) Inspect() string {
+	var out bytes.Buffer
+	fields := []string{}
+	for k, v := range si.Fields {
+		fields = append(fields, fmt.Sprintf("%s: %s", k, v.Inspect()))
+	}
+
+	out.WriteString(si.Def.Name.String())
+	out.WriteString("{")
+	out.WriteString(strings.Join(fields, ", "))
+	out.WriteString("}")
+
+	return out.String()
+}
+
 
 // --- Global Instances ---
 

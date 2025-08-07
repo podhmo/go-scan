@@ -159,10 +159,10 @@ func evalBlockStatement(block *ast.BlockStmt, env *object.Environment) object.Ob
 
 	for _, statement := range block.List {
 		result = Eval(statement, enclosedEnv)
-		// Handle control flow statements like break and continue
+		// Handle early returns and control flow
 		if result != nil {
 			rt := result.Type()
-			if rt == object.BREAK_OBJ || rt == object.CONTINUE_OBJ {
+			if rt == object.RETURN_VALUE_OBJ || rt == object.BREAK_OBJ || rt == object.CONTINUE_OBJ {
 				return result
 			}
 		}
@@ -307,6 +307,54 @@ func evalSwitchStmt(ss *ast.SwitchStmt, env *object.Environment) object.Object {
 	return object.NULL
 }
 
+func evalExpressions(exps []ast.Expr, env *object.Environment) []object.Object {
+	var result []object.Object
+
+	for _, e := range exps {
+		evaluated := Eval(e, env)
+		// TODO: Handle error
+		result = append(result, evaluated)
+	}
+
+	return result
+}
+
+func applyFunction(fn object.Object, args []object.Object) object.Object {
+	function, ok := fn.(*object.Function)
+	if !ok {
+		// TODO: Return error "not a function"
+		return nil
+	}
+
+	if len(function.Parameters) != len(args) {
+		// TODO: Return error "wrong number of arguments"
+		return nil
+	}
+
+	extendedEnv := extendFunctionEnv(function, args)
+	evaluated := Eval(function.Body, extendedEnv)
+
+	return unwrapReturnValue(evaluated)
+}
+
+func extendFunctionEnv(fn *object.Function, args []object.Object) *object.Environment {
+	env := object.NewEnclosedEnvironment(fn.Env)
+
+	for paramIdx, param := range fn.Parameters {
+		env.Set(param.Name, args[paramIdx])
+	}
+
+	return env
+}
+
+func unwrapReturnValue(obj object.Object) object.Object {
+	if returnValue, ok := obj.(*object.ReturnValue); ok {
+		return returnValue.Value
+	}
+	return obj
+}
+
+
 // evalBranchStmt evaluates a break or continue statement.
 func evalBranchStmt(bs *ast.BranchStmt, env *object.Environment) object.Object {
 	// We don't support labels yet.
@@ -345,6 +393,29 @@ func Eval(node ast.Node, env *object.Environment) object.Object {
 		return evalBranchStmt(n, env)
 	case *ast.DeclStmt:
 		return Eval(n.Decl, env)
+	case *ast.FuncDecl:
+		params := []*ast.Ident{}
+		if n.Type.Params != nil {
+			for _, field := range n.Type.Params.List {
+				for _, name := range field.Names {
+					params = append(params, name)
+				}
+			}
+		}
+		fn := &object.Function{
+			Parameters: params,
+			Body:       n.Body,
+			Env:        env,
+		}
+		env.Set(n.Name.Name, fn)
+		return nil // Function declaration is a statement
+	case *ast.ReturnStmt:
+		var val object.Object = object.NULL
+		if len(n.Results) > 0 {
+			val = Eval(n.Results[0], env)
+			// TODO: Handle error
+		}
+		return &object.ReturnValue{Value: val}
 	case *ast.GenDecl:
 		switch n.Tok {
 		case token.VAR:
@@ -393,29 +464,56 @@ func Eval(node ast.Node, env *object.Environment) object.Object {
 					env.SetConstant(name.Name, val)
 				}
 			}
+		case token.TYPE:
+			for _, spec := range n.Specs {
+				typeSpec, ok := spec.(*ast.TypeSpec)
+				if !ok {
+					continue
+				}
+				structType, ok := typeSpec.Type.(*ast.StructType)
+				if !ok {
+					// We only support struct type declarations for now
+					continue
+				}
+
+				def := &object.StructDefinition{
+					Name:   typeSpec.Name,
+					Fields: structType.Fields.List,
+				}
+				env.Set(typeSpec.Name.Name, def)
+			}
 		}
-		return nil // var/const declaration is a statement
+		return nil // var/const/type declaration is a statement
 	case *ast.AssignStmt:
 		switch n.Tok {
-		case token.ASSIGN: // x = y
-			// Assuming single assignment for now: `x = val`
+		case token.ASSIGN: // x = y or x.y = z
+			// Assuming single assignment for now
 			val := Eval(n.Rhs[0], env)
 			// TODO: Check for error object from val
 
-			ident, ok := n.Lhs[0].(*ast.Ident)
-			if !ok {
-				// TODO: Return error, not supported assignment target
+			switch lhs := n.Lhs[0].(type) {
+			case *ast.Ident:
+				if !env.Assign(lhs.Name, val) {
+					// TODO: Return error, undeclared variable
+					return nil
+				}
+				return val
+			case *ast.SelectorExpr:
+				obj := Eval(lhs.X, env)
+				if obj.Type() != object.STRUCT_INSTANCE_OBJ {
+					// TODO: Return error, not a struct instance
+					return nil
+				}
+				instance := obj.(*object.StructInstance)
+				instance.Fields[lhs.Sel.Name] = val
+				return val
+			default:
+				// TODO: Return error, unsupported assignment target
 				return nil
 			}
-
-			if !env.Assign(ident.Name, val) {
-				// TODO: Return error, undeclared variable
-				return nil
-			}
-			return val // Assignment can be an expression
 
 		case token.DEFINE: // x := y
-			// Assuming single assignment for now: `x := val`
+			// Assuming single assignment for now
 			val := Eval(n.Rhs[0], env)
 			// TODO: Check for error object from val
 
@@ -432,6 +530,71 @@ func Eval(node ast.Node, env *object.Environment) object.Object {
 	// Expressions
 	case *ast.ParenExpr:
 		return Eval(n.X, env)
+	case *ast.FuncLit:
+		params := []*ast.Ident{}
+		if n.Type.Params != nil {
+			for _, field := range n.Type.Params.List {
+				for _, name := range field.Names {
+					params = append(params, name)
+				}
+			}
+		}
+		return &object.Function{
+			Parameters: params,
+			Body:       n.Body,
+			Env:        env,
+		}
+	case *ast.CallExpr:
+		function := Eval(n.Fun, env)
+		// TODO: check if function is an error
+		args := evalExpressions(n.Args, env)
+		// TODO: check if any arg is an error
+		return applyFunction(function, args)
+	case *ast.SelectorExpr:
+		left := Eval(n.X, env)
+		// TODO: Handle error
+		if left.Type() != object.STRUCT_INSTANCE_OBJ {
+			// TODO: Return error, not a struct
+			return nil
+		}
+		instance := left.(*object.StructInstance)
+		if val, ok := instance.Fields[n.Sel.Name]; ok {
+			return val
+		}
+		// TODO: Return error, undefined field
+		return nil
+	case *ast.CompositeLit:
+		// Evaluate the type being instantiated (e.g., `MyStruct` in `MyStruct{...}`)
+		defObj := Eval(n.Type, env)
+		def, ok := defObj.(*object.StructDefinition)
+		if !ok {
+			// TODO: Return error, not a struct type
+			return nil
+		}
+
+		instance := &object.StructInstance{
+			Def:    def,
+			Fields: make(map[string]object.Object),
+		}
+
+		// Evaluate the key-value pairs in the literal
+		for _, elt := range n.Elts {
+			kv, ok := elt.(*ast.KeyValueExpr)
+			if !ok {
+				// TODO: Return error, unsupported literal element
+				continue
+			}
+			key, ok := kv.Key.(*ast.Ident)
+			if !ok {
+				// TODO: Return error, field name is not an identifier
+				continue
+			}
+
+			value := Eval(kv.Value, env)
+			// TODO: Handle error from value evaluation
+			instance.Fields[key.Name] = value
+		}
+		return instance
 	case *ast.UnaryExpr:
 		right := Eval(n.X, env)
 		return evalPrefixExpression(n.Op.String(), right)

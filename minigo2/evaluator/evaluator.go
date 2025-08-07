@@ -8,6 +8,105 @@ import (
 	"github.com/podhmo/go-scan/minigo2/object"
 )
 
+// nativeBoolToBooleanObject is a helper to convert a native bool to our object.Boolean.
+func nativeBoolToBooleanObject(input bool) *object.Boolean {
+	if input {
+		return object.TRUE
+	}
+	return object.FALSE
+}
+
+// evalBangOperatorExpression evaluates the '!' prefix expression.
+func evalBangOperatorExpression(right object.Object) object.Object {
+	switch right {
+	case object.TRUE:
+		return object.FALSE
+	case object.FALSE:
+		return object.TRUE
+	case object.NULL:
+		return object.TRUE
+	default:
+		return object.FALSE
+	}
+}
+
+// evalMinusPrefixOperatorExpression evaluates the '-' prefix expression.
+func evalMinusPrefixOperatorExpression(right object.Object) object.Object {
+	if right.Type() != object.INTEGER_OBJ {
+		return nil // Later, an error object
+	}
+	value := right.(*object.Integer).Value
+	return &object.Integer{Value: -value}
+}
+
+// evalPrefixExpression dispatches to the correct prefix evaluation function.
+func evalPrefixExpression(operator string, right object.Object) object.Object {
+	switch operator {
+	case "!":
+		return evalBangOperatorExpression(right)
+	case "-":
+		return evalMinusPrefixOperatorExpression(right)
+	default:
+		return nil // Later, an error object
+	}
+}
+
+// evalIntegerInfixExpression evaluates infix expressions for integers.
+func evalIntegerInfixExpression(operator string, left, right object.Object) object.Object {
+	leftVal := left.(*object.Integer).Value
+	rightVal := right.(*object.Integer).Value
+
+	switch operator {
+	case "+":
+		return &object.Integer{Value: leftVal + rightVal}
+	case "-":
+		return &object.Integer{Value: leftVal - rightVal}
+	case "*":
+		return &object.Integer{Value: leftVal * rightVal}
+	case "/":
+		return &object.Integer{Value: leftVal / rightVal}
+	case "<":
+		return nativeBoolToBooleanObject(leftVal < rightVal)
+	case ">":
+		return nativeBoolToBooleanObject(leftVal > rightVal)
+	case "==":
+		return nativeBoolToBooleanObject(leftVal == rightVal)
+	case "!=":
+		return nativeBoolToBooleanObject(leftVal != rightVal)
+	default:
+		return nil // Later, an error object
+	}
+}
+
+// evalStringInfixExpression evaluates infix expressions for strings.
+func evalStringInfixExpression(operator string, left, right object.Object) object.Object {
+	leftVal := left.(*object.String).Value
+	rightVal := right.(*object.String).Value
+
+	if operator != "+" {
+		return nil // Later, an error object
+	}
+
+	return &object.String{Value: leftVal + rightVal}
+}
+
+// evalInfixExpression dispatches to the correct infix evaluation function based on type.
+func evalInfixExpression(operator string, left, right object.Object) object.Object {
+	switch {
+	case left.Type() == object.INTEGER_OBJ && right.Type() == object.INTEGER_OBJ:
+		return evalIntegerInfixExpression(operator, left, right)
+	case left.Type() == object.STRING_OBJ && right.Type() == object.STRING_OBJ:
+		return evalStringInfixExpression(operator, left, right)
+	// Pointer comparison for booleans, as they are singletons.
+	case operator == "==":
+		return nativeBoolToBooleanObject(left == right)
+	case operator == "!=":
+		return nativeBoolToBooleanObject(left != right)
+	default:
+		return nil // Later, an error object
+	}
+}
+
 // Eval is the central function of the evaluator. It traverses the AST
 // and returns the result of the evaluation as an object.Object.
 func Eval(node ast.Node) object.Object {
@@ -17,7 +116,25 @@ func Eval(node ast.Node) object.Object {
 		// For an expression statement, we evaluate the underlying expression.
 		return Eval(n.X)
 
+	// Expressions
+	case *ast.ParenExpr:
+		return Eval(n.X)
+	case *ast.UnaryExpr:
+		right := Eval(n.X)
+		return evalPrefixExpression(n.Op.String(), right)
+	case *ast.BinaryExpr:
+		left := Eval(n.X)
+		right := Eval(n.Y)
+		return evalInfixExpression(n.Op.String(), left, right)
+
 	// Literals
+	case *ast.Ident:
+		switch n.Name {
+		case "true":
+			return object.TRUE
+		case "false":
+			return object.FALSE
+		}
 	case *ast.BasicLit:
 		switch n.Kind {
 		case token.INT:

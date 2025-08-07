@@ -142,30 +142,42 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 ## To Be Implemented
 
 ### minigo2 Implementation ([docs/plan-minigo2.md](./docs/plan-minigo2.md))
-- [ ] Set up the project structure (`minigo2/`, `minigo2/object/`, etc.).
+- [ ] Set up the project structure (`minigo2/`, `minigo2/object/`, `minigo2/evaluator/`, etc.).
 - [ ] Define the `object.Object` interface and basic types: `Integer`, `String`, `Boolean`, `Null`.
-- [ ] Implement the basic `eval` loop that can evaluate simple expressions (literals, binary/unary expressions).
+- [ ] Implement the core `eval` loop for expression evaluation.
+- [ ] Support basic literals (`123`, `"hello"`).
+- [ ] Support binary expressions (`+`, `-`, `*`, `/`, `==`, `!=`, `<`, `>`).
+- [ ] Support unary expressions (`-`, `!`).
 - [ ] Write unit tests for all expression evaluations.
-- [ ] Implement the `object.Environment` for managing scopes.
-- [ ] Add support for `var` declarations and assignments (`=`, `:=`).
+- [ ] Implement the `object.Environment` for managing lexical scopes.
+- [ ] Add support for `var` declarations (e.g., `var x = 10`) and assignments (`x = 20`).
+- [ ] Add support for short variable declarations (`x := 10`).
+- [ ] **Implement `const` declarations**, including typed (`const C int = 1`), untyped (`const C = 1`), and `iota`.
 - [ ] Implement `if/else` statements.
-- [ ] Implement `for` loops (with conditions, no range-based yet).
-- [ ] Add support for `break` and `continue`.
+- [ ] Implement standard `for` loops (`for i := 0; i < 10; i++`).
+- [ ] Implement `break` and `continue` statements.
+- [ ] **Implement `switch` statements**:
+- [ ] Support `switch` with an expression (`switch x { ... }`).
+- [ ] Support expressionless `switch` (`switch { ... }`).
+- [ ] Support `case` clauses with single or multiple expressions.
+- [ ] Support the `default` clause.
+- [ ] Support fallthrough (initially optional, can be added later if complex).
 - [ ] Implement user-defined functions (`func` declarations).
-- [ ] Implement the call stack mechanism for function calls.
-- [ ] Implement `return` statements.
-- [ ] Implement basic error formatting with the stack trace.
+- [ ] Implement the call stack mechanism for tracking function calls.
+- [ ] Implement `return` statements (including returning `nil`).
+- [ ] Implement rich error formatting with a formatted call stack.
+- [ ] Add support for `type ... struct` declarations.
+- [ ] Support struct literal instantiation (e.g., `MyStruct{...}`), including both keyed and unkeyed fields.
+- [ ] Support field access (`myStruct.Field`) and assignment (`myStruct.Field = ...`).
+- [ ] Support slice and array literals (`[]int{1, 2}`, `[2]int{1, 2}`).
+- [ ] Support map literals (`map[string]int{"a": 1}`).
+- [ ] Support indexing for slices, arrays, and maps (`arr[0]`, `m["key"]`).
+- [ ] **Implement `for...range` loops** for iterating over slices, arrays, and maps.
 - [ ] Create the main `Interpreter` struct that holds a `goscan.Scanner`.
-- [ ] Implement the logic to handle `import` statements.
-- [ ] Implement `evalSelectorExpr` (e.g., `pkg.Symbol`) to trigger `go-scan`'s `ScanPackageByImport`.
-- [ ] Load constants and functions from scanned packages into the environment.
-- [ ] Test importing and using functions/constants from standard library packages (e.g., `strings.Join`).
-- [ ] Add support for `type ... struct` declarations and struct literal instantiations.
-- [ ] Implement the `object.GoValue` to wrap `reflect.Value`.
-- [ ] Implement the logic to inject Go variables from `Options.Globals`.
-- [ ] Implement the logic to wrap Go functions as `BuiltinFunction`s.
-- [ ] Implement the `Result.As(target any)` method for extracting data back into Go structs.
-- [ ] Thoroughly test all features, especially the `reflect` bridge.
-- [ ] Improve error messages and stack traces.
-- [ ] Write comprehensive documentation for the API and usage examples.
+- [ ] Implement the logic to handle `import` statements and load symbols from external Go packages.
+- [ ] Implement the `object.GoValue` to wrap `reflect.Value`, allowing Go values to be injected into the script.
+- [ ] Implement the logic to wrap Go functions as `BuiltinFunction` objects.
+- [ ] Implement the `Result.As(target any)` method for unmarshaling script results back into Go structs.
+- [ ] Thoroughly test all features, especially the Go interop layer and error handling.
+- [ ] Write comprehensive documentation for the API, supported language features, and usage examples.
 - [ ] Ensure `make format` and `make test` pass cleanly.

@@ -135,6 +135,59 @@ func TestConstDeclarations(t *testing.T) {
 	}
 }
 
+func TestForStatements(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected int64
+	}{
+		{
+			`
+			var a = 0;
+			for i := 0; i < 10; i = i + 1 {
+				a = a + 1;
+			}
+			a;
+			`,
+			10,
+		},
+		{
+			`
+			var a = 0;
+			for {
+				a = a + 1;
+				if a > 5 {
+					break;
+				}
+			}
+			a;
+			`,
+			6,
+		},
+		{
+			`
+			var a = 0;
+			var i = 0;
+			for i < 10 {
+				i = i + 1;
+				if i % 2 == 0 {
+					continue;
+				}
+				a = a + 1;
+			}
+			a;
+			`,
+			5, // Only increments for odd numbers (1, 3, 5, 7, 9)
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			evaluated := testEval(t, tt.input)
+			testIntegerObject(t, evaluated, tt.expected)
+		})
+	}
+}
+
 func TestIfElseStatements(t *testing.T) {
 	tests := []struct {
 		input    string

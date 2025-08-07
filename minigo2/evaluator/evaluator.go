@@ -151,10 +151,79 @@ func evalBlockStatement(block *ast.BlockStmt, env *object.Environment) object.Ob
 
 	for _, statement := range block.List {
 		result = Eval(statement, enclosedEnv)
-		// NOTE: Later we would handle return values, errors, etc. here
+		// Handle control flow statements like break and continue
+		if result != nil {
+			rt := result.Type()
+			if rt == object.BREAK_OBJ || rt == object.CONTINUE_OBJ {
+				return result
+			}
+		}
 	}
 
 	return result
+}
+
+// evalForStmt evaluates a for loop.
+func evalForStmt(fs *ast.ForStmt, env *object.Environment) object.Object {
+	loopEnv := object.NewEnclosedEnvironment(env)
+
+	if fs.Init != nil {
+		Eval(fs.Init, loopEnv)
+		// TODO: Handle error from Init
+	}
+
+	for {
+		if fs.Cond != nil {
+			condition := Eval(fs.Cond, loopEnv)
+			// TODO: Handle error from condition
+			if !isTruthy(condition) {
+				break
+			}
+		}
+
+		// Evaluate the loop body
+		bodyResult := Eval(fs.Body, loopEnv)
+		// TODO: Handle error from body
+
+		// Check for break or continue statements
+		if bodyResult != nil {
+			if bodyResult.Type() == object.BREAK_OBJ {
+				break // Exit the Go for loop
+			}
+			if bodyResult.Type() == object.CONTINUE_OBJ {
+				if fs.Post != nil {
+					Eval(fs.Post, loopEnv)
+					// TODO: Handle error from post
+				}
+				continue // Continue to the next iteration of the Go for loop
+			}
+		}
+
+		if fs.Post != nil {
+			Eval(fs.Post, loopEnv)
+			// TODO: Handle error from post
+		}
+	}
+
+	return object.NULL // A for loop statement itself evaluates to null
+}
+
+// evalBranchStmt evaluates a break or continue statement.
+func evalBranchStmt(bs *ast.BranchStmt, env *object.Environment) object.Object {
+	// We don't support labels yet.
+	if bs.Label != nil {
+		return nil // Return an error object in the future
+	}
+
+	switch bs.Tok {
+	case token.BREAK:
+		return object.BREAK
+	case token.CONTINUE:
+		return object.CONTINUE
+	default:
+		// Other branch statements like goto, fallthrough are not supported.
+		return nil // Return an error object in the future
+	}
 }
 
 // Eval is the central function of the evaluator. It traverses the AST
@@ -169,6 +238,10 @@ func Eval(node ast.Node, env *object.Environment) object.Object {
 		return Eval(n.X, env)
 	case *ast.IfStmt:
 		return evalIfElseExpression(n, env)
+	case *ast.ForStmt:
+		return evalForStmt(n, env)
+	case *ast.BranchStmt:
+		return evalBranchStmt(n, env)
 	case *ast.DeclStmt:
 		return Eval(n.Decl, env)
 	case *ast.GenDecl:

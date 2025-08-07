@@ -154,9 +154,8 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] Add support for short variable declarations (`x := 10`).
 - [x] **Implement `const` declarations**, including typed (`const C int = 1`), untyped (`const C = 1`), and `iota`.
 - [x] Implement `if/else` statements.
-- [ ] Implement standard `for` loops (`for i := 0; i < 10; i++`).
-  > **Note**: The `minigo2` implementation appears to be a partial rewrite of the more complete `examples/minigo`. The `for` loop feature listed here is already implemented in `examples/minigo`. Work was instead performed on `examples/minigo` to add support for unkeyed struct literals, a feature that was missing there.
-- [ ] Implement `break` and `continue` statements.
+- [x] Implement standard `for` loops (`for i := 0; i < 10; i++`).
+- [x] Implement `break` and `continue` statements.
 - [ ] **Implement `switch` statements**:
 - [ ] Support `switch` with an expression (`switch x { ... }`).
 - [ ] Support expressionless `switch` (`switch { ... }`).

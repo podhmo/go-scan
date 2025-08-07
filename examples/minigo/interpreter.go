@@ -978,45 +978,19 @@ func (i *Interpreter) evalStructLiteral(ctx context.Context, structName string, 
 			}
 			return nil, i.formatErrorWithContext(i.activeFileSet, keyIdent.Pos(), fmt.Errorf("unknown field '%s' in struct literal of type '%s'", fieldName, structDef.Name), "Struct instantiation error")
 		}
-	} else { // Not KeyValue form (e.g. MyStruct{val1, val2}), must be ordered values
-		if len(lit.Elts) > 0 {
-			if len(lit.Elts) != len(structDef.FlatFieldOrder) {
-				return nil, i.formatErrorWithContext(i.activeFileSet, lit.Pos(),
-					fmt.Errorf("wrong number of values in unkeyed struct literal for '%s': expected %d, got %d",
-						structDef.Name, len(structDef.FlatFieldOrder), len(lit.Elts)),
-					"Struct instantiation error")
-			}
-
-			for idx, fieldName := range structDef.FlatFieldOrder {
-				valueExpr := lit.Elts[idx]
-				valObj, err := i.eval(ctx, valueExpr, env)
-				if err != nil {
-					return nil, err
-				}
-
-				// Assign valObj to the field `fieldName`.
-				// Check if it's a direct field of the top-level struct first.
-				if _, isDirectField := structDef.Fields[fieldName]; isDirectField {
-					instance.FieldValues[fieldName] = valObj
-				} else {
-					// If not a direct field, it must be a promoted field from an embedded struct.
-					// Use the existing helper `setFieldInEmbedded` which handles ambiguity and
-					// creation of nested embedded instances.
-					assigned, errSet := i.setFieldInEmbedded(instance, fieldName, valObj, i.activeFileSet, valueExpr.Pos())
-					if errSet != nil {
-						return nil, errSet // Propagate ambiguity or other errors
-					}
-					if !assigned {
-						// This indicates an internal inconsistency if FlatFieldOrder is correct
-						// but setFieldInEmbedded failed without a clear error.
-						return nil, i.formatErrorWithContext(i.activeFileSet, valueExpr.Pos(),
-							fmt.Errorf("internal error: could not assign to field '%s' from flattened field order",
-								fieldName), "Struct instantiation error")
-					}
-				}
+	} else { // Not KeyValue form (e.g. MyStruct{val1, val2})
+		// Go allows this if all fields are provided in order.
+		// This is more complex to implement correctly with type checking and field order.
+		// For now, if it's not keyed and there are elements, and the struct has fields, we error.
+		// If structDef.Fields is empty and lit.Elts is not empty (and not keyed), it's also an error.
+		if len(lit.Elts) > 0 { // If there are elements but not in key-value form
+			if len(structDef.Fields) > 0 || len(structDef.EmbeddedDefs) > 0 { // And struct expects fields/embedded
+				return nil, i.formatErrorWithContext(i.activeFileSet, lit.Pos(), fmt.Errorf("ordered (non-keyed) struct literal values are not supported yet for struct '%s' that has fields/embedded types. Use keyed values e.g. Field:Val.", structDef.Name), "Struct instantiation error")
+			} else { // Struct has no fields/embedded, but values provided without keys
+				return nil, i.formatErrorWithContext(i.activeFileSet, lit.Pos(), fmt.Errorf("non-keyed values provided for struct '%s' which has no fields or embedded types", structDef.Name), "Struct instantiation error")
 			}
 		}
-		// If len(lit.Elts) == 0, it's T{}, handled above.
+		// If len(lit.Elts) == 0, it was handled above.
 	}
 	return instance, nil
 }
@@ -2038,7 +2012,6 @@ func (i *Interpreter) evalDeclStmt(ctx context.Context, declStmt *ast.DeclStmt, 
 				directFields := make(map[string]string)
 				var embeddedDefs []*StructDefinition
 				var fieldOrder []string
-				var flatFieldOrder []string
 
 				if sType.Fields != nil {
 					for _, field := range sType.Fields.List {
@@ -2090,7 +2063,6 @@ func (i *Interpreter) evalDeclStmt(ctx context.Context, declStmt *ast.DeclStmt, 
 								return nil, i.formatErrorWithContext(i.FileSet, field.Type.Pos(), fmt.Errorf("type '%s' embedded in struct '%s' is not a struct definition (got %s)", fieldTypeName, typeName, obj.Type()), "Struct definition error")
 							}
 							embeddedDefs = append(embeddedDefs, embeddedDef)
-							flatFieldOrder = append(flatFieldOrder, embeddedDef.FlatFieldOrder...)
 						} else {
 							// Regular named field
 							// Ensure fieldTypeIdent is *ast.Ident for type name
@@ -2104,17 +2076,15 @@ func (i *Interpreter) evalDeclStmt(ctx context.Context, declStmt *ast.DeclStmt, 
 							for _, nameIdent := range field.Names {
 								directFields[nameIdent.Name] = fieldTypeIdent.Name // Store type name as string
 								fieldOrder = append(fieldOrder, nameIdent.Name)    // Record field name in order
-								flatFieldOrder = append(flatFieldOrder, nameIdent.Name)
 							}
 						}
 					}
 				}
 				structDef := &StructDefinition{
-					Name:           typeName,
-					Fields:         directFields,
-					EmbeddedDefs:   embeddedDefs,
-					FieldOrder:     fieldOrder,
-					FlatFieldOrder: flatFieldOrder,
+					Name:         typeName,
+					Fields:       directFields,
+					EmbeddedDefs: embeddedDefs,
+					FieldOrder:   fieldOrder,
 				}
 				env.Define(typeName, structDef)
 			default:

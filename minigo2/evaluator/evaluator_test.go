@@ -135,6 +135,50 @@ func TestConstDeclarations(t *testing.T) {
 	}
 }
 
+func TestSwitchStatements(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected any // int64 or "nil"
+	}{
+		// Basic switch with tag
+		{"x := 2; switch x { case 1: 10; case 2: 20; case 3: 30; };", int64(20)},
+		// Tag evaluation
+		{"switch 1 + 1 { case 1: 10; case 2: 20; };", int64(20)},
+		// Default case
+		{"x := 4; switch x { case 1: 10; case 2: 20; default: 99; };", int64(99)},
+		// No matching case, no default
+		{"x := 4; switch x { case 1: 10; case 2: 20; };", "nil"},
+		// Expressionless switch (switch true)
+		{"x := 10; switch { case x > 5: 100; case x < 5: 200; };", int64(100)},
+		{"x := 1; switch { case x > 5: 100; case x < 5: 200; };", int64(200)},
+		// Case with multiple expressions
+		{"x := 3; switch x { case 1, 2, 3: 30; default: 99; };", int64(30)},
+		{"x := 4; switch x { case 1, 2, 3: 30; default: 99; };", int64(99)},
+		// Switch with init statement
+		{"switch x := 2; x { case 2: 20; };", int64(20)},
+		// Init statement shadowing
+		{"x := 10; switch x := 2; x { case 2: 20; }; x", int64(10)},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			evaluated := testEval(t, tt.input)
+			switch expected := tt.expected.(type) {
+			case int64:
+				testIntegerObject(t, evaluated, expected)
+			case string:
+				if expected == "nil" {
+					testNullObject(t, evaluated)
+				} else {
+					t.Fatalf("unsupported expected type for test: %T", expected)
+				}
+			default:
+				t.Fatalf("unsupported expected type for test: %T", expected)
+			}
+		})
+	}
+}
+
 func TestForStatements(t *testing.T) {
 	tests := []struct {
 		input    string

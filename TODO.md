@@ -140,3 +140,32 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
         -   [x] **`resolution_path` Logging**: Implement the `resolution_path` field in structured logs to trace how a type was resolved.
 
 ## To Be Implemented
+
+### minigo2 Implementation ([docs/plan-minigo2.md](./docs/plan-minigo2.md))
+- [ ] Set up the project structure (`minigo2/`, `minigo2/object/`, etc.).
+- [ ] Define the `object.Object` interface and basic types: `Integer`, `String`, `Boolean`, `Null`.
+- [ ] Implement the basic `eval` loop that can evaluate simple expressions (literals, binary/unary expressions).
+- [ ] Write unit tests for all expression evaluations.
+- [ ] Implement the `object.Environment` for managing scopes.
+- [ ] Add support for `var` declarations and assignments (`=`, `:=`).
+- [ ] Implement `if/else` statements.
+- [ ] Implement `for` loops (with conditions, no range-based yet).
+- [ ] Add support for `break` and `continue`.
+- [ ] Implement user-defined functions (`func` declarations).
+- [ ] Implement the call stack mechanism for function calls.
+- [ ] Implement `return` statements.
+- [ ] Implement basic error formatting with the stack trace.
+- [ ] Create the main `Interpreter` struct that holds a `goscan.Scanner`.
+- [ ] Implement the logic to handle `import` statements.
+- [ ] Implement `evalSelectorExpr` (e.g., `pkg.Symbol`) to trigger `go-scan`'s `ScanPackageByImport`.
+- [ ] Load constants and functions from scanned packages into the environment.
+- [ ] Test importing and using functions/constants from standard library packages (e.g., `strings.Join`).
+- [ ] Add support for `type ... struct` declarations and struct literal instantiations.
+- [ ] Implement the `object.GoValue` to wrap `reflect.Value`.
+- [ ] Implement the logic to inject Go variables from `Options.Globals`.
+- [ ] Implement the logic to wrap Go functions as `BuiltinFunction`s.
+- [ ] Implement the `Result.As(target any)` method for extracting data back into Go structs.
+- [ ] Thoroughly test all features, especially the `reflect` bridge.
+- [ ] Improve error messages and stack traces.
+- [ ] Write comprehensive documentation for the API and usage examples.
+- [ ] Ensure `make format` and `make test` pass cleanly.

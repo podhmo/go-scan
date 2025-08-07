@@ -153,7 +153,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] Add support for `var` declarations (e.g., `var x = 10`) and assignments (`x = 20`).
 - [x] Add support for short variable declarations (`x := 10`).
 - [x] **Implement `const` declarations**, including typed (`const C int = 1`), untyped (`const C = 1`), and `iota`.
-- [ ] Implement `if/else` statements.
+- [x] Implement `if/else` statements.
 - [ ] Implement standard `for` loops (`for i := 0; i < 10; i++`).
 - [ ] Implement `break` and `continue` statements.
 - [ ] **Implement `switch` statements**:

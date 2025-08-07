@@ -117,6 +117,33 @@ func evalInfixExpression(operator string, left, right object.Object) object.Obje
 	}
 }
 
+// isTruthy checks if an object is considered true in a boolean context.
+// In our language, everything is "truthy" except for `null` and `false`.
+func isTruthy(obj object.Object) bool {
+	switch obj {
+	case object.NULL:
+		return false
+	case object.FALSE:
+		return false
+	default:
+		return true
+	}
+}
+
+// evalIfElseExpression evaluates an if-else expression.
+func evalIfElseExpression(ie *ast.IfStmt, env *object.Environment) object.Object {
+	condition := Eval(ie.Cond, env)
+	// TODO: Handle error from condition evaluation
+
+	if isTruthy(condition) {
+		return Eval(ie.Body, env)
+	} else if ie.Else != nil {
+		return Eval(ie.Else, env)
+	} else {
+		return object.NULL
+	}
+}
+
 // evalBlockStatement evaluates a block of statements within a new scope.
 func evalBlockStatement(block *ast.BlockStmt, env *object.Environment) object.Object {
 	var result object.Object
@@ -140,6 +167,8 @@ func Eval(node ast.Node, env *object.Environment) object.Object {
 	case *ast.ExprStmt:
 		// For an expression statement, we evaluate the underlying expression.
 		return Eval(n.X, env)
+	case *ast.IfStmt:
+		return evalIfElseExpression(n, env)
 	case *ast.DeclStmt:
 		return Eval(n.Decl, env)
 	case *ast.GenDecl:

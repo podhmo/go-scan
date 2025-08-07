@@ -1,3 +1,6 @@
+> [!NOTE]
+> This feature has been implemented.
+
 # Plan: In-Module Dependency Walker
 
 This document outlines a plan to create a tool for visualizing the dependency graph of specific packages within a Go module. This tool will be built upon the existing `go-scan` library, and this document also details the new features required in `go-scan` to support this tool efficiently.

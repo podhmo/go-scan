@@ -7,10 +7,12 @@ type ObjectType string
 
 // Define the basic object types. More will be added later.
 const (
-	INTEGER_OBJ ObjectType = "INTEGER"
-	BOOLEAN_OBJ ObjectType = "BOOLEAN"
-	STRING_OBJ  ObjectType = "STRING"
-	NULL_OBJ    ObjectType = "NULL"
+	INTEGER_OBJ  ObjectType = "INTEGER"
+	BOOLEAN_OBJ  ObjectType = "BOOLEAN"
+	STRING_OBJ   ObjectType = "STRING"
+	NULL_OBJ     ObjectType = "NULL"
+	BREAK_OBJ    ObjectType = "BREAK"
+	CONTINUE_OBJ ObjectType = "CONTINUE"
 )
 
 // Object is the interface that all value types in our interpreter will implement.
@@ -71,13 +73,37 @@ func (n *Null) Type() ObjectType { return NULL_OBJ }
 // Inspect returns a string representation of the Null's value.
 func (n *Null) Inspect() string { return "null" }
 
+// --- Break Statement Object ---
+
+// BreakStatement represents a break statement. It's a singleton.
+type BreakStatement struct{}
+
+// Type returns the type of the BreakStatement object.
+func (bs *BreakStatement) Type() ObjectType { return BREAK_OBJ }
+
+// Inspect returns a string representation of the BreakStatement.
+func (bs *BreakStatement) Inspect() string { return "break" }
+
+// --- Continue Statement Object ---
+
+// ContinueStatement represents a continue statement. It's a singleton.
+type ContinueStatement struct{}
+
+// Type returns the type of the ContinueStatement object.
+func (cs *ContinueStatement) Type() ObjectType { return CONTINUE_OBJ }
+
+// Inspect returns a string representation of the ContinueStatement.
+func (cs *ContinueStatement) Inspect() string { return "continue" }
+
 // --- Global Instances ---
 
 // Pre-create global instances for common values to save allocations.
 var (
-	TRUE  = &Boolean{Value: true}
-	FALSE = &Boolean{Value: false}
-	NULL  = &Null{}
+	TRUE     = &Boolean{Value: true}
+	FALSE    = &Boolean{Value: false}
+	NULL     = &Null{}
+	BREAK    = &BreakStatement{}
+	CONTINUE = &ContinueStatement{}
 )
 
 // --- Environment ---

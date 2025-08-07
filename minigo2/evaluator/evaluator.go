@@ -65,6 +65,16 @@ func evalIntegerInfixExpression(operator string, left, right object.Object) obje
 		return &object.Integer{Value: leftVal * rightVal}
 	case "/":
 		return &object.Integer{Value: leftVal / rightVal}
+	case "<<":
+		return &object.Integer{Value: leftVal << rightVal}
+	case ">>":
+		return &object.Integer{Value: leftVal >> rightVal}
+	case "&":
+		return &object.Integer{Value: leftVal & rightVal}
+	case "|":
+		return &object.Integer{Value: leftVal | rightVal}
+	case "^":
+		return &object.Integer{Value: leftVal ^ rightVal}
 	case "<":
 		return nativeBoolToBooleanObject(leftVal < rightVal)
 	case ">":
@@ -133,7 +143,8 @@ func Eval(node ast.Node, env *object.Environment) object.Object {
 	case *ast.DeclStmt:
 		return Eval(n.Decl, env)
 	case *ast.GenDecl:
-		if n.Tok == token.VAR {
+		switch n.Tok {
+		case token.VAR:
 			for _, spec := range n.Specs {
 				valueSpec := spec.(*ast.ValueSpec)
 				for i, name := range valueSpec.Names {
@@ -142,8 +153,45 @@ func Eval(node ast.Node, env *object.Environment) object.Object {
 					env.Set(name.Name, val)
 				}
 			}
+		case token.CONST:
+			var lastValues []ast.Expr
+
+			// iota is reset for each const block
+			for iotaValue, spec := range n.Specs {
+				valueSpec := spec.(*ast.ValueSpec)
+
+				if len(valueSpec.Values) == 0 {
+					// If there are no values, reuse the last set of expressions.
+					valueSpec.Values = lastValues
+				} else {
+					lastValues = valueSpec.Values
+				}
+
+				for i, name := range valueSpec.Names {
+					var val object.Object
+					// Create a temporary environment for iota evaluation.
+					// This environment is cheap to create and allows us to inject `iota`.
+					iotaEnv := object.NewEnclosedEnvironment(env)
+					iotaEnv.SetConstant("iota", &object.Integer{Value: int64(iotaValue)})
+
+					if i < len(valueSpec.Values) {
+						val = Eval(valueSpec.Values[i], iotaEnv)
+					} else {
+						// This handles `const ( a, b = iota, iota+1 )` where `b` has no value.
+						// The Go spec says the expression is reused, so we evaluate the last one again.
+						if len(valueSpec.Values) > 0 {
+							val = Eval(valueSpec.Values[len(valueSpec.Values)-1], iotaEnv)
+						} else {
+							// Should be unreachable if lastValues logic is correct.
+							return nil // Error: const declaration without value
+						}
+					}
+
+					env.SetConstant(name.Name, val)
+				}
+			}
 		}
-		return nil // var declaration is a statement
+		return nil // var/const declaration is a statement
 	case *ast.AssignStmt:
 		switch n.Tok {
 		case token.ASSIGN: // x = y

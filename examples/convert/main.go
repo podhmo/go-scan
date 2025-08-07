@@ -34,7 +34,11 @@ func main() {
 		output        = flag.String("output", "generated.go", "output file name")
 		pkgname       = flag.String("pkgname", "", "package name for the generated file (default: inferred from output dir)")
 		outputPkgPath = flag.String("output-pkgpath", "", "full package import path for the generated file (e.g. example.com/m/generated)")
+		dryRun        = flag.Bool("dry-run", false, "don't write files, just print to stdout")
+		inspect       = flag.Bool("inspect", false, "enable inspection logging for annotations")
+		logLevel      = new(slog.LevelVar)
 	)
+	flag.Var(logLevel, "log-level", "set log level (debug, info, warn, error)")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: convert -pkg <package_path> [-cwd <dir>] [-output <filename>] [-pkgname <name>] [-output-pkgpath <path>]\n")
 		flag.PrintDefaults()
@@ -46,17 +50,20 @@ func main() {
 		os.Exit(1)
 	}
 
+	opts := slog.HandlerOptions{Level: logLevel}
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &opts))
+	slog.SetDefault(logger)
+
 	ctx := context.Background()
 	ctx = context.WithValue(ctx, FileWriterKey, &defaultFileWriter{})
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})))
 
-	if err := run(ctx, *pkgpath, *workdir, *output, *pkgname, *outputPkgPath); err != nil {
+	if err := run(ctx, *pkgpath, *workdir, *output, *pkgname, *outputPkgPath, *dryRun, *inspect, logger); err != nil {
 		slog.ErrorContext(ctx, "Error", slog.Any("error", err))
 		os.Exit(1)
 	}
 }
 
-func run(ctx context.Context, pkgpath, workdir, output, pkgname, outputPkgPath string) error {
+func run(ctx context.Context, pkgpath, workdir, output, pkgname, outputPkgPath string, dryRun bool, inspect bool, logger *slog.Logger) error {
 	// Define an external type override for time.Time to avoid scanning the stdlib time package,
 	// which can cause issues in certain build contexts (like tests).
 	overrides := scanner.ExternalTypeOverride{
@@ -72,12 +79,17 @@ func run(ctx context.Context, pkgpath, workdir, output, pkgname, outputPkgPath s
 		},
 	}
 
-	// Create a scanner with the module resolver and the external type override.
-	s, err := goscan.New(
+	scannerOptions := []goscan.ScannerOption{
 		goscan.WithWorkDir(workdir),
 		goscan.WithGoModuleResolver(),
 		goscan.WithExternalTypeOverrides(overrides),
-	)
+		goscan.WithDryRun(dryRun),
+		goscan.WithInspect(inspect),
+		goscan.WithLogger(logger),
+	}
+
+	// Create a scanner with the module resolver and the external type override.
+	s, err := goscan.New(scannerOptions...)
 	if err != nil {
 		return fmt.Errorf("failed to create scanner: %w", err)
 	}
@@ -118,25 +130,29 @@ func run(ctx context.Context, pkgpath, workdir, output, pkgname, outputPkgPath s
 		return fmt.Errorf("failed to generate code: %w", err)
 	}
 
-	writer, ok := ctx.Value(FileWriterKey).(FileWriter)
-	if !ok {
-		return fmt.Errorf("file writer not found in context")
-	}
-
 	slog.DebugContext(ctx, "Writing output", "file", output)
 
 	formatted, err := formatCode(ctx, output, generatedCode)
 	if err != nil {
 		slog.WarnContext(ctx, "code formatting failed, using unformatted code", "error", err)
-		// Even if formatting fails, write the unformatted code.
-		if writeErr := writer.WriteFile(ctx, output, generatedCode, 0644); writeErr != nil {
-			return fmt.Errorf("failed to write (unformatted) generated code to %s: %w", output, writeErr)
-		}
-		return nil // Do not treat as an error.
+		// Use unformatted code on format error
+		formatted = generatedCode
 	}
 
-	if err := writer.WriteFile(ctx, output, formatted, 0644); err != nil {
-		return fmt.Errorf("failed to write formatted code to %s: %w", output, err)
+	if s.DryRun {
+		slog.InfoContext(ctx, "Dry run: skipping file write", "path", output)
+		fmt.Fprintf(os.Stdout, "---\n// file: %s\n---\n", output)
+		if _, err := os.Stdout.Write(formatted); err != nil {
+			return fmt.Errorf("failed to write to stdout: %w", err)
+		}
+	} else {
+		writer, ok := ctx.Value(FileWriterKey).(FileWriter)
+		if !ok {
+			return fmt.Errorf("file writer not found in context")
+		}
+		if err := writer.WriteFile(ctx, output, formatted, 0644); err != nil {
+			return fmt.Errorf("failed to write formatted code to %s: %w", output, err)
+		}
 	}
 
 	slog.InfoContext(ctx, "Successfully generated conversion functions", "output", output)

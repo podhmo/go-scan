@@ -126,16 +126,13 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 -   **Refactoring**:
     -   [x] **Isolate `examples/deps-walk` Test Data**: Moved the test data for the `deps-walk` example from the root `testdata` directory to its own `examples/deps-walk/testdata` directory, making the example more self-contained.
     -   [x] **Centralize Path Resolution**: Moved the logic for resolving relative file paths to Go package paths from the `deps-walk` example into the core `locator` package (`locator.ResolvePkgPath`). This makes the functionality reusable for other tools.
+-   **Debuggability and Testing**:
+    -   [x] **Inspect Mode**: Implemented an `--inspect` flag and corresponding `WithInspect()` option to provide detailed structured logging (`slog`) of the annotation detection process. This helps in debugging why a type is or isn't being processed.
+    -   [x] **Dry-Run Mode**: Implemented a `--dry-run` flag and `WithDryRun()` option that prevents file generation, allowing users to preview the output without writing to disk.
+    -   [x] **CLI Tool Integration**: Added the `--inspect` and `--dry-run` flags to the following tools:
+        -   [x] `examples/derivingjson`
+        -   [x] `examples/derivingbind`
+        -   [x] `examples/convert`
+    -   [x] **Integration Tests**: Added tests using the `scantest` library to verify the functionality of the new inspect and dry-run modes.
 
 ## To Be Implemented
-
-### Inspect ([docs/plan-inspect.md](./docs/plan-inspect.md))
-- [ ] Goals
-- [ ] Technical Approach
-- [ ] Inspect Mode
-- [ ] Dry-Run Mode
-- [ ] Usage Example
-- [ ] Structured Logging Fields
-- [ ] `DEBUG` Level Log (Annotation Check)
-- [ ] `INFO` Level Log (Annotation Found)
-- [ ] Implementation Note for `resolution_path`

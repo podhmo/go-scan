@@ -5,8 +5,9 @@ import (
 	"fmt"
 	"go/ast"
 	"go/token" // Added
-	"reflect"  // Added for reflect.StructTag
-	"strings"  // Added for strings.Builder and strings.Fields
+	"log/slog"
+	"reflect" // Added for reflect.StructTag
+	"strings" // Added for strings.Builder and strings.Fields
 	"sync"
 )
 
@@ -91,24 +92,57 @@ type TypeInfo struct {
 	// --- Fields for Enum-like patterns ---
 	IsEnum      bool            `json:"isEnum,omitempty"`      // True if this type is identified as an enum
 	EnumMembers []*ConstantInfo `json:"enumMembers,omitempty"` // List of constants belonging to this enum type
+
+	// --- Fields for inspect mode ---
+	Inspect bool         `json:"-"` // Flag to enable inspection logging
+	Logger  *slog.Logger `json:"-"` // Logger for inspection
+	Fset    *token.FileSet `json:"-"` // Fileset for position information
 }
 
 // Annotation extracts the value of a specific annotation from the TypeInfo's Doc string.
 // Annotations are expected to be in the format "@<name>[:<value>]" or "@<name> <value>".
-// It finds the first line in the doc comment that starts with "@<name>" and returns the rest of the line as the value.
-// For example:
-// - Doc: "@foo: bar", name: "foo" -> "bar", true
-// - Doc: "@foo bar", name: "foo" -> "bar", true
-// - Doc: "@foo", name: "foo" -> "", true
-// - Doc: "@deriving:binding in:\"body\"", name: "deriving:binding" -> "in:\"body\"", true
+// If inspect mode is enabled, it logs the checking process.
 func (ti *TypeInfo) Annotation(name string) (value string, ok bool) {
+	// The core annotation searching logic.
+	searchValue, found := ti.searchAnnotation(name)
+
+	// If inspect mode is off, just return the result.
+	if !ti.Inspect || ti.Logger == nil {
+		return searchValue, found
+	}
+
+	// Prepare structured logging fields.
+	logArgs := []any{
+		slog.String("component", "go-scan"),
+		slog.String("type_name", ti.Name),
+		slog.String("type_pkg_path", ti.PkgPath),
+		slog.String("annotation_name", "@"+name),
+	}
+	if ti.Node != nil && ti.Fset != nil {
+		pos := ti.Fset.Position(ti.Node.Pos())
+		logArgs = append(logArgs, slog.String("type_file_path", fmt.Sprintf("%s:%d:%d", pos.Filename, pos.Line, pos.Column)))
+	}
+
+	// Log the result of the check.
+	if found {
+		logArgs = append(logArgs, slog.String("annotation_value", searchValue))
+		ti.Logger.InfoContext(context.Background(), "found annotation", logArgs...)
+	} else {
+		logArgs = append(logArgs, slog.String("result", "miss"))
+		ti.Logger.DebugContext(context.Background(), "checking for annotation", logArgs...)
+	}
+
+	return searchValue, found
+}
+
+// searchAnnotation is the core logic for finding an annotation, separated to keep the main Annotation method clean.
+func (ti *TypeInfo) searchAnnotation(name string) (value string, ok bool) {
 	if ti.Doc == "" {
 		return "", false
 	}
 	lines := strings.Split(ti.Doc, "\n")
 	prefix := "@" + name
 	for _, line := range lines {
-		// Trim whitespace and comment markers from the line
 		trimmedLine := strings.TrimSpace(line)
 		trimmedLine = strings.TrimPrefix(trimmedLine, "//")
 		trimmedLine = strings.TrimPrefix(trimmedLine, "/*")
@@ -121,16 +155,13 @@ func (ti *TypeInfo) Annotation(name string) (value string, ok bool) {
 
 		rest := trimmedLine[len(prefix):]
 
-		// Check if the annotation is exactly matched or followed by a separator.
 		if rest != "" {
 			firstChar := rest[0]
 			if firstChar != ':' && firstChar != ' ' && firstChar != '\t' {
-				// This is a prefix of another annotation, e.g. looking for "@foo" in "@foobar"
 				continue
 			}
 		}
 
-		// We found the correct annotation.
 		ok = true
 		value = strings.TrimSpace(rest)
 		if len(value) > 0 && value[0] == ':' {

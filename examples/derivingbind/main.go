@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"flag"
 	"fmt"
+	"go/format"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -13,6 +15,36 @@ import (
 	"github.com/podhmo/go-scan/examples/derivingbind/gen"
 	"github.com/podhmo/go-scan/scanner"
 )
+
+// logLevelVar is a custom flag.Value implementation for slog.LevelVar
+type logLevelVar struct {
+	levelVar *slog.LevelVar
+}
+
+func (v *logLevelVar) String() string {
+	if v.levelVar == nil {
+		return ""
+	}
+	return v.levelVar.Level().String()
+}
+
+func (v *logLevelVar) Set(s string) error {
+	var level slog.Level
+	switch strings.ToLower(s) {
+	case "debug":
+		level = slog.LevelDebug
+	case "info":
+		level = slog.LevelInfo
+	case "warn":
+		level = slog.LevelWarn
+	case "error":
+		level = slog.LevelError
+	default:
+		return fmt.Errorf("unknown log level: %s", s)
+	}
+	v.levelVar.Set(level)
+	return nil
+}
 
 func main() {
 	var (
@@ -25,7 +57,7 @@ func main() {
 	flag.StringVar(&cwd, "cwd", ".", "current working directory")
 	flag.BoolVar(&dryRun, "dry-run", false, "don't write files, just print to stdout")
 	flag.BoolVar(&inspect, "inspect", false, "enable inspection logging for annotations")
-	flag.Var(logLevel, "log-level", "set log level (debug, info, warn, error)")
+	flag.Var(&logLevelVar{levelVar: logLevel}, "log-level", "set log level (debug, info, warn, error)")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: derivingbind [options] <file_or_dir_path_1> [file_or_dir_path_2 ...]\n")
 		fmt.Fprintf(os.Stderr, "Example (file): derivingbind examples/derivingbind/testdata/simple/models.go\n")
@@ -109,10 +141,31 @@ func main() {
 		if gscn.DryRun {
 			slog.InfoContext(ctx, "Dry run: skipping file write", "path", filepath.Join(outputDir.Path, outputFilename))
 			fmt.Fprintf(os.Stdout, "---\n// file: %s\n---\n", filepath.Join(outputDir.Path, outputFilename))
-			if err := goFile.FormatAndWrite(os.Stdout); err != nil {
-				slog.ErrorContext(ctx, "Failed to format and write to stdout", "path", pkgInfo.Path, slog.Any("error", err))
+
+			var buf bytes.Buffer
+			// Manually construct and format the file content for stdout
+			buf.WriteString(fmt.Sprintf("package %s\n\n", goFile.PackageName))
+			if len(goFile.Imports) > 0 {
+				buf.WriteString("import (\n")
+				for path, alias := range goFile.Imports {
+					if alias != "" {
+						buf.WriteString(fmt.Sprintf("\t%s \"%s\"\n", alias, path))
+					} else {
+						buf.WriteString(fmt.Sprintf("\t\"%s\"\n", path))
+					}
+				}
+				buf.WriteString(")\n\n")
+			}
+			buf.WriteString(goFile.CodeSet)
+
+			formatted, err := format.Source(buf.Bytes())
+			if err != nil {
+				slog.ErrorContext(ctx, "Failed to format generated code for stdout", "path", pkgInfo.Path, slog.Any("error", err))
+				// Print unformatted code on error
+				os.Stdout.Write(buf.Bytes())
 				errorCount++
 			} else {
+				os.Stdout.Write(formatted)
 				successCount++
 			}
 		} else {

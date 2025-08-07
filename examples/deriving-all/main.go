@@ -19,6 +19,36 @@ import (
 
 type GeneratorFunc func(context.Context, *goscan.Scanner, *scanner.PackageInfo, *goscan.ImportManager) ([]byte, error)
 
+// logLevelVar is a custom flag.Value implementation for slog.LevelVar
+type logLevelVar struct {
+	levelVar *slog.LevelVar
+}
+
+func (v *logLevelVar) String() string {
+	if v.levelVar == nil {
+		return ""
+	}
+	return v.levelVar.Level().String()
+}
+
+func (v *logLevelVar) Set(s string) error {
+	var level slog.Level
+	switch strings.ToLower(s) {
+	case "debug":
+		level = slog.LevelDebug
+	case "info":
+		level = slog.LevelInfo
+	case "warn":
+		level = slog.LevelWarn
+	case "error":
+		level = slog.LevelError
+	default:
+		return fmt.Errorf("unknown log level: %s", s)
+	}
+	v.levelVar.Set(level)
+	return nil
+}
+
 func formatCode(ctx context.Context, filename string, src []byte) ([]byte, error) {
 	formatted, err := imports.Process(filename, src, nil)
 	if err != nil {
@@ -28,19 +58,26 @@ func formatCode(ctx context.Context, filename string, src []byte) ([]byte, error
 }
 
 func main() {
-	logLevel := new(slog.LevelVar)
-	logLevel.Set(slog.LevelDebug)
-	opts := slog.HandlerOptions{Level: logLevel}
-	handler := slog.NewTextHandler(os.Stderr, &opts)
-	slog.SetDefault(slog.New(handler))
+	var (
+		cwd      string
+		dryRun   bool
+		inspect  bool
+		logLevel = new(slog.LevelVar)
+	)
 
-	var cwd string
 	flag.StringVar(&cwd, "cwd", ".", "current working directory")
+	flag.BoolVar(&dryRun, "dry-run", false, "don't write files, just print to stdout")
+	flag.BoolVar(&inspect, "inspect", false, "enable inspection logging for annotations")
+	flag.Var(&logLevelVar{levelVar: logLevel}, "log-level", "set log level (debug, info, warn, error)")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: deriving-all [options] <file_or_dir_path_1> [file_or_dir_path_2 ...]\n")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
+
+	opts := slog.HandlerOptions{Level: logLevel}
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &opts))
+	slog.SetDefault(logger)
 
 	ctx := context.Background()
 	if len(flag.Args()) == 0 {
@@ -48,7 +85,13 @@ func main() {
 		os.Exit(1)
 	}
 
-	gscn, err := goscan.New(goscan.WithWorkDir(cwd))
+	scannerOptions := []goscan.ScannerOption{
+		goscan.WithWorkDir(cwd),
+		goscan.WithDryRun(dryRun),
+		goscan.WithInspect(inspect),
+		goscan.WithLogger(logger),
+	}
+	gscn, err := goscan.New(scannerOptions...)
 	if err != nil {
 		slog.ErrorContext(ctx, "Failed to create go-scan scanner", slog.Any("error", err))
 		os.Exit(1)
@@ -138,13 +181,20 @@ func main() {
 		}
 
 		// Write the file
-		outputPath := filepath.Join(outputDir.Path, outputFilename)
-		if err := os.WriteFile(outputPath, formatted, 0644); err != nil {
-			slog.ErrorContext(ctx, "Failed to save generated file for package", "path", pkgInfo.Path, slog.Any("error", err))
-			errorCount++
-		} else {
-			slog.InfoContext(ctx, "Successfully generated combined code for package", "path", pkgInfo.Path)
+		if gscn.DryRun {
+			slog.InfoContext(ctx, "Dry run: skipping file write", "path", filepath.Join(outputDir.Path, outputFilename))
+			fmt.Fprintf(os.Stdout, "---\n// file: %s\n---\n", filepath.Join(outputDir.Path, outputFilename))
+			os.Stdout.Write(formatted)
 			successCount++
+		} else {
+			outputPath := filepath.Join(outputDir.Path, outputFilename)
+			if err := os.WriteFile(outputPath, formatted, 0644); err != nil {
+				slog.ErrorContext(ctx, "Failed to save generated file for package", "path", pkgInfo.Path, slog.Any("error", err))
+				errorCount++
+			} else {
+				slog.InfoContext(ctx, "Successfully generated combined code for package", "path", pkgInfo.Path)
+				successCount++
+			}
 		}
 	}
 

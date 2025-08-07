@@ -133,6 +133,8 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
         -   [x] `examples/derivingjson`
         -   [x] `examples/derivingbind`
         -   [x] `examples/convert`
+        -   [x] `examples/deriving-all`
+        -   [-] `examples/deps-walk` (Note: `--dry-run` is a no-op if no output file is specified)
     -   [x] **Integration Tests**: Added tests using the `scantest` library to verify the functionality of the new inspect and dry-run modes.
 
 ## To Be Implemented

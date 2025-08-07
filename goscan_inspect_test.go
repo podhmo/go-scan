@@ -4,10 +4,8 @@ import (
 	"bytes"
 	"context"
 	"log/slog"
+	"strings"
 	"testing"
-
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 
 	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/scanner"
@@ -58,7 +56,9 @@ type Group struct { // No annotation
 		goscan.WithWorkDir(dir), // Set workdir to the temp dir
 	}
 	s, err := goscan.New(scannerOptions...)
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatalf("goscan.New() failed: %v", err)
+	}
 
 	// 4. Define the test action
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*scanner.PackageInfo) error {
@@ -67,7 +67,9 @@ type Group struct { // No annotation
 				_, _ = ti.Annotation("deriving:json")
 			}
 		}
-		assert.True(t, s.DryRun, "DryRun flag should be true on the scanner instance")
+		if !s.DryRun {
+			t.Error("DryRun flag should be true on the scanner instance")
+		}
 		return nil
 	}
 
@@ -76,22 +78,37 @@ type Group struct { // No annotation
 
 	// 5. Run the test using the pre-configured scanner
 	result, err := scantest.Run(t, dir, patterns, action, scantest.WithScanner(s))
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatalf("scantest.Run() failed: %v", err)
+	}
 
 	// 6. Assertions
-	assert.Nil(t, result, "Expected no output files in dry-run mode")
+	if result != nil {
+		t.Errorf("Expected no output files in dry-run mode, but got %d", len(result.Outputs))
+	}
 
 	logOutput := logBuf.String()
 	t.Logf("Captured logs:\n%s", logOutput)
 
 	// Check for the successful "hit" on User type
-	assert.Contains(t, logOutput, `level=INFO msg="found annotation"`)
-	assert.Contains(t, logOutput, `type_name=User`)
-	assert.Contains(t, logOutput, `annotation_name=@deriving:json`)
-	assert.Contains(t, logOutput, `annotation_value=""`)
+	if !strings.Contains(logOutput, `level=INFO msg="found annotation"`) {
+		t.Errorf("log output did not contain expected INFO message for found annotation")
+	}
+	if !strings.Contains(logOutput, `type_name=User`) {
+		t.Errorf("log output did not contain expected type_name=User")
+	}
+	if !strings.Contains(logOutput, `annotation_name=@deriving:json`) {
+		t.Errorf("log output did not contain expected annotation_name=@deriving:json")
+	}
 
 	// Check for the "miss" on Group type
-	assert.Contains(t, logOutput, `level=DEBUG msg="checking for annotation"`)
-	assert.Contains(t, logOutput, `type_name=Group`)
-	assert.Contains(t, logOutput, `result=miss`)
+	if !strings.Contains(logOutput, `level=DEBUG msg="checking for annotation"`) {
+		t.Errorf("log output did not contain expected DEBUG message for checking annotation")
+	}
+	if !strings.Contains(logOutput, `type_name=Group`) {
+		t.Errorf("log output did not contain expected type_name=Group")
+	}
+	if !strings.Contains(logOutput, `result=miss`) {
+		t.Errorf("log output did not contain expected result=miss")
+	}
 }

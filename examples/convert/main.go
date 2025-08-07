@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 
 	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/examples/convert/generator"
@@ -13,6 +14,36 @@ import (
 	"github.com/podhmo/go-scan/scanner"
 	"golang.org/x/tools/imports"
 )
+
+// logLevelVar is a custom flag.Value implementation for slog.LevelVar
+type logLevelVar struct {
+	levelVar *slog.LevelVar
+}
+
+func (v *logLevelVar) String() string {
+	if v.levelVar == nil {
+		return ""
+	}
+	return v.levelVar.Level().String()
+}
+
+func (v *logLevelVar) Set(s string) error {
+	var level slog.Level
+	switch strings.ToLower(s) {
+	case "debug":
+		level = slog.LevelDebug
+	case "info":
+		level = slog.LevelInfo
+	case "warn":
+		level = slog.LevelWarn
+	case "error":
+		level = slog.LevelError
+	default:
+		return fmt.Errorf("unknown log level: %s", s)
+	}
+	v.levelVar.Set(level)
+	return nil
+}
 
 type FileWriter interface {
 	WriteFile(ctx context.Context, path string, data []byte, perm os.FileMode) error
@@ -38,7 +69,7 @@ func main() {
 		inspect       = flag.Bool("inspect", false, "enable inspection logging for annotations")
 		logLevel      = new(slog.LevelVar)
 	)
-	flag.Var(logLevel, "log-level", "set log level (debug, info, warn, error)")
+	flag.Var(&logLevelVar{levelVar: logLevel}, "log-level", "set log level (debug, info, warn, error)")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: convert -pkg <package_path> [-cwd <dir>] [-output <filename>] [-pkgname <name>] [-output-pkgpath <path>]\n")
 		flag.PrintDefaults()
@@ -142,9 +173,7 @@ func run(ctx context.Context, pkgpath, workdir, output, pkgname, outputPkgPath s
 	if s.DryRun {
 		slog.InfoContext(ctx, "Dry run: skipping file write", "path", output)
 		fmt.Fprintf(os.Stdout, "---\n// file: %s\n---\n", output)
-		if _, err := os.Stdout.Write(formatted); err != nil {
-			return fmt.Errorf("failed to write to stdout: %w", err)
-		}
+		os.Stdout.Write(formatted)
 	} else {
 		writer, ok := ctx.Value(FileWriterKey).(FileWriter)
 		if !ok {

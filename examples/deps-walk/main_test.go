@@ -406,6 +406,9 @@ func TestRun(t *testing.T) {
 				direction,
 				aggressive,
 				test,
+				false, // dryRun
+				false, // inspect
+				nil,   // logger
 			)
 			if err != nil {
 				t.Fatalf("run() failed unexpectedly: %+v", err)

@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"go/token"
+	"io"
+	"log/slog"
 	"path/filepath"
 	"testing"
 )
@@ -23,7 +25,8 @@ func (m *MockResolver) ScanPackageByImport(ctx context.Context, importPath strin
 func newTestScanner(t *testing.T, modulePath, rootDir string) *Scanner {
 	t.Helper()
 	fset := token.NewFileSet()
-	s, err := New(fset, nil, nil, modulePath, rootDir, &MockResolver{})
+	discardLogger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	s, err := New(fset, nil, nil, modulePath, rootDir, &MockResolver{}, false, discardLogger)
 	if err != nil {
 		t.Fatalf("scanner.New failed: %v", err)
 	}
@@ -34,9 +37,10 @@ func TestNewScanner(t *testing.T) {
 	modulePath := "example.com/test"
 	rootDir := "/tmp/test"
 	resolver := &MockResolver{}
+	discardLogger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
 	t.Run("nil_fset", func(t *testing.T) {
-		_, err := New(nil, nil, nil, modulePath, rootDir, resolver)
+		_, err := New(nil, nil, nil, modulePath, rootDir, resolver, false, discardLogger)
 		if err == nil {
 			t.Error("Expected error when creating scanner with nil fset, got nil")
 		}
@@ -44,7 +48,7 @@ func TestNewScanner(t *testing.T) {
 
 	t.Run("valid_fset", func(t *testing.T) {
 		fset := token.NewFileSet()
-		s, err := New(fset, nil, nil, modulePath, rootDir, resolver)
+		s, err := New(fset, nil, nil, modulePath, rootDir, resolver, false, discardLogger)
 		if err != nil {
 			t.Errorf("Expected no error when creating scanner with valid fset, got %v", err)
 		}
@@ -57,7 +61,7 @@ func TestNewScanner(t *testing.T) {
 
 	t.Run("nil_resolver", func(t *testing.T) {
 		fset := token.NewFileSet()
-		_, err := New(fset, nil, nil, modulePath, rootDir, nil)
+		_, err := New(fset, nil, nil, modulePath, rootDir, nil, false, discardLogger)
 		if err == nil {
 			t.Error("Expected error when creating scanner with nil resolver, got nil")
 		}
@@ -295,9 +299,10 @@ func TestResolve_DirectRecursion(t *testing.T) {
 	fset := token.NewFileSet()
 	testDir := filepath.Join("..", "testdata", "recursion", "direct")
 	absTestDir, _ := filepath.Abs(testDir)
+	discardLogger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
 	// Create scanner with a mock resolver that can return the package being scanned.
-	s, err := New(fset, nil, nil, "example.com/test/recursion/direct", absTestDir, &MockResolver{})
+	s, err := New(fset, nil, nil, "example.com/test/recursion/direct", absTestDir, &MockResolver{}, false, discardLogger)
 	if err != nil {
 		t.Fatalf("scanner.New failed: %v", err)
 	}
@@ -357,9 +362,10 @@ func TestResolve_MutualRecursion(t *testing.T) {
 	fset := token.NewFileSet()
 	rootDir := filepath.Join("..", "testdata", "recursion", "mutual")
 	absRootDir, _ := filepath.Abs(rootDir)
+	discardLogger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
 	// This scanner will be used by the MockResolver to perform actual scanning.
-	s, err := New(fset, nil, nil, "example.com/recursion/mutual", absRootDir, &MockResolver{})
+	s, err := New(fset, nil, nil, "example.com/recursion/mutual", absRootDir, &MockResolver{}, false, discardLogger)
 	if err != nil {
 		t.Fatalf("scanner.New failed: %v", err)
 	}
@@ -459,6 +465,7 @@ func TestScanWithOverlay(t *testing.T) {
 	testDir := filepath.Join("..", "testdata", "basic")
 	absTestDir, _ := filepath.Abs(testDir)
 	modulePath := "example.com/basic"
+	discardLogger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
 	overlayContent := fmt.Sprintf("package basic\n\n// In-memory version of a struct\ntype User struct {\n\tID   int    `json:\"id\"`\n\tName string `json:\"name\"`\n}\n")
 	overlay := Overlay{
@@ -466,7 +473,7 @@ func TestScanWithOverlay(t *testing.T) {
 	}
 
 	// Here, we provide an absolute path for moduleRootDir
-	s, err := New(fset, nil, overlay, modulePath, absTestDir, &MockResolver{})
+	s, err := New(fset, nil, overlay, modulePath, absTestDir, &MockResolver{}, false, discardLogger)
 	if err != nil {
 		t.Fatalf("scanner.New with overlay failed: %v", err)
 	}

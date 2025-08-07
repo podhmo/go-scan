@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"go/token"
+	"io"
+	"log/slog"
 	"path/filepath"
 	"testing"
 )
@@ -74,7 +76,8 @@ func TestEnumScanning_LazyLoaded(t *testing.T) {
 	}
 
 	// This scanner will be used by the MockResolver to perform the actual scanning.
-	s, err := New(token.NewFileSet(), nil, nil, "example.com/enums", absRootDir, &MockResolver{})
+	discardLogger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	s, err := New(token.NewFileSet(), nil, nil, "example.com/enums", absRootDir, &MockResolver{}, false, discardLogger)
 	if err != nil {
 		t.Fatalf("scanner.New failed: %v", err)
 	}

@@ -28,19 +28,42 @@ func formatCode(ctx context.Context, filename string, src []byte) ([]byte, error
 }
 
 func main() {
-	logLevel := new(slog.LevelVar)
-	logLevel.Set(slog.LevelDebug)
-	opts := slog.HandlerOptions{Level: logLevel}
-	handler := slog.NewTextHandler(os.Stderr, &opts)
-	slog.SetDefault(slog.New(handler))
+	var (
+		cwd      string
+		dryRun   bool
+		inspect  bool
+		logLevel string
+	)
 
-	var cwd string
 	flag.StringVar(&cwd, "cwd", ".", "current working directory")
+	flag.BoolVar(&dryRun, "dry-run", false, "perform a dry run without writing files")
+	flag.BoolVar(&inspect, "inspect", false, "enable inspection logging for annotation scanning")
+	flag.StringVar(&logLevel, "log-level", "info", "set the log level (debug, info, warn, error)")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: deriving-all [options] <file_or_dir_path_1> [file_or_dir_path_2 ...]\n")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
+
+	// Configure logger
+	var level slog.Level
+	switch strings.ToLower(logLevel) {
+	case "debug":
+		level = slog.LevelDebug
+	case "info":
+		level = slog.LevelInfo
+	case "warn":
+		level = slog.LevelWarn
+	case "error":
+		level = slog.LevelError
+	default:
+		slog.Error("Invalid log level", slog.String("level", logLevel))
+		os.Exit(1)
+	}
+	opts := slog.HandlerOptions{Level: level}
+	handler := slog.NewTextHandler(os.Stderr, &opts)
+	logger := slog.New(handler)
+	slog.SetDefault(logger)
 
 	ctx := context.Background()
 	if len(flag.Args()) == 0 {
@@ -48,7 +71,19 @@ func main() {
 		os.Exit(1)
 	}
 
-	gscn, err := goscan.New(goscan.WithWorkDir(cwd))
+	// Configure scanner
+	scanOptions := []goscan.ScannerOption{
+		goscan.WithWorkDir(cwd),
+		goscan.WithLogger(logger),
+	}
+	if dryRun {
+		scanOptions = append(scanOptions, goscan.WithDryRun())
+	}
+	if inspect {
+		scanOptions = append(scanOptions, goscan.WithInspect())
+	}
+
+	gscn, err := goscan.New(scanOptions...)
 	if err != nil {
 		slog.ErrorContext(ctx, "Failed to create go-scan scanner", slog.Any("error", err))
 		os.Exit(1)
@@ -139,12 +174,20 @@ func main() {
 
 		// Write the file
 		outputPath := filepath.Join(outputDir.Path, outputFilename)
-		if err := os.WriteFile(outputPath, formatted, 0644); err != nil {
-			slog.ErrorContext(ctx, "Failed to save generated file for package", "path", pkgInfo.Path, slog.Any("error", err))
-			errorCount++
-		} else {
-			slog.InfoContext(ctx, "Successfully generated combined code for package", "path", pkgInfo.Path)
+		if gscn.DryRun() {
+			slog.InfoContext(ctx, "[dry-run] Skipping file write", "path", outputPath)
+			fmt.Println("--- GENERATED CODE ---")
+			fmt.Println(string(formatted))
+			fmt.Println("--- END GENERATED CODE ---")
 			successCount++
+		} else {
+			if err := os.WriteFile(outputPath, formatted, 0644); err != nil {
+				slog.ErrorContext(ctx, "Failed to save generated file for package", "path", pkgInfo.Path, slog.Any("error", err))
+				errorCount++
+			} else {
+				slog.InfoContext(ctx, "Successfully generated combined code for package", "path", pkgInfo.Path)
+				successCount++
+			}
 		}
 	}
 

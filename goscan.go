@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"go/token"
+	"io"
 	"io/fs"
 	"log/slog"
 	"os"
@@ -56,11 +57,21 @@ type Scanner struct {
 	symbolCache           *symbolCache // Symbol cache (persisted across Scanner instances if path is reused)
 	ExternalTypeOverrides scanner.ExternalTypeOverride
 	overlay               scanner.Overlay
+
+	// Fields for inspect and dry-run modes
+	dryRun  bool
+	inspect bool
+	logger  *slog.Logger
 }
 
 // Fset returns the FileSet associated with the scanner.
 func (s *Scanner) Fset() *token.FileSet {
 	return s.fset
+}
+
+// DryRun returns true if the scanner is in dry-run mode.
+func (s *Scanner) DryRun() bool {
+	return s.dryRun
 }
 
 // ModulePath returns the module path from the scanner's locator.
@@ -186,6 +197,34 @@ func WithExternalTypeOverrides(overrides scanner.ExternalTypeOverride) ScannerOp
 	}
 }
 
+// WithDryRun enables dry-run mode. In this mode, operations that would write
+// files are skipped, and the intended action is logged instead.
+func WithDryRun() ScannerOption {
+	return func(s *Scanner) error {
+		s.dryRun = true
+		return nil
+	}
+}
+
+// WithInspect enables inspect mode, which provides detailed logging of the
+// annotation detection process. It requires a logger to be configured via WithLogger.
+func WithInspect() ScannerOption {
+	return func(s *Scanner) error {
+		s.inspect = true
+		return nil
+	}
+}
+
+// WithLogger provides a structured logger (*slog.Logger) for the scanner to use.
+// This is essential for features like inspect mode. If no logger is provided,
+// a default logger that discards all output is used.
+func WithLogger(logger *slog.Logger) ScannerOption {
+	return func(s *Scanner) error {
+		s.logger = logger
+		return nil
+	}
+}
+
 // New creates a new Scanner. It finds the module root starting from the given path.
 // It also initializes an empty set of visited files for this scanner instance.
 func New(options ...ScannerOption) (*Scanner, error) {
@@ -197,6 +236,9 @@ func New(options ...ScannerOption) (*Scanner, error) {
 		ExternalTypeOverrides: make(scanner.ExternalTypeOverride),
 		overlay:               make(scanner.Overlay),
 	}
+
+	// Set a default logger that discards everything, it will be overridden by WithLogger if provided.
+	s.logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 
 	for _, option := range options {
 		if err := option(s); err != nil {
@@ -223,7 +265,7 @@ func New(options ...ScannerOption) (*Scanner, error) {
 	}
 	s.locator = loc
 
-	initialScanner, err := scanner.New(s.fset, s.ExternalTypeOverrides, s.overlay, loc.ModulePath(), loc.RootDir(), s)
+	initialScanner, err := scanner.New(s.fset, s.ExternalTypeOverrides, s.overlay, loc.ModulePath(), loc.RootDir(), s, s.inspect, s.logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create internal scanner: %w", err)
 	}
@@ -249,7 +291,7 @@ func (s *Scanner) SetExternalTypeOverrides(ctx context.Context, overrides scanne
 		overrides = make(scanner.ExternalTypeOverride)
 	}
 	s.ExternalTypeOverrides = overrides
-	newInternalScanner, err := scanner.New(s.fset, s.ExternalTypeOverrides, s.overlay, s.locator.ModulePath(), s.locator.RootDir(), s)
+	newInternalScanner, err := scanner.New(s.fset, s.ExternalTypeOverrides, s.overlay, s.locator.ModulePath(), s.locator.RootDir(), s, s.inspect, s.logger)
 	if err != nil {
 		slog.WarnContext(ctx, "Failed to re-initialize internal scanner with new overrides. Continuing with previous scanner settings.", slog.Any("error", err))
 		return

@@ -5,8 +5,9 @@ import (
 	"fmt"
 	"go/ast"
 	"go/token" // Added
-	"reflect"  // Added for reflect.StructTag
-	"strings"  // Added for strings.Builder and strings.Fields
+	"log/slog"
+	"reflect" // Added for reflect.StructTag
+	"strings" // Added for strings.Builder and strings.Fields
 	"sync"
 )
 
@@ -91,17 +92,52 @@ type TypeInfo struct {
 	// --- Fields for Enum-like patterns ---
 	IsEnum      bool            `json:"isEnum,omitempty"`      // True if this type is identified as an enum
 	EnumMembers []*ConstantInfo `json:"enumMembers,omitempty"` // List of constants belonging to this enum type
+
+	// --- Fields for inspect mode ---
+	Inspect bool           `json:"-"`
+	Logger  *slog.Logger   `json:"-"`
+	Fset    *token.FileSet `json:"-"` // Added for position information in inspect logs
 }
 
 // Annotation extracts the value of a specific annotation from the TypeInfo's Doc string.
+// It wraps the private `annotation` method to add structured logging when inspect mode is enabled.
+func (ti *TypeInfo) Annotation(name string) (value string, ok bool) {
+	value, ok = ti.annotation(name)
+
+	if ti.Inspect && ti.Logger != nil {
+		// Use context.Background() as there's no request context flowing here.
+		ctx := context.Background()
+
+		position := ti.FilePath
+		if ti.Fset != nil && ti.Node != nil && ti.Node.Pos().IsValid() {
+			position = ti.Fset.Position(ti.Node.Pos()).String()
+		}
+
+		logArgs := []any{
+			slog.String("component", "go-scan"),
+			slog.String("type_name", ti.Name),
+			slog.String("type_pkg_path", ti.PkgPath),
+			slog.String("type_file_path", position),
+			slog.String("annotation_name", "@"+name),
+		}
+
+		if ok {
+			logArgs = append(logArgs, slog.String("result", "hit"))
+			logArgs = append(logArgs, slog.String("annotation_value", value))
+			ti.Logger.Log(ctx, slog.LevelInfo, "found annotation", logArgs...)
+		} else {
+			logArgs = append(logArgs, slog.String("result", "miss"))
+			ti.Logger.Log(ctx, slog.LevelDebug, "checking for annotation", logArgs...)
+		}
+	}
+
+	return value, ok
+}
+
+// annotation is the core implementation for extracting annotation values.
 // Annotations are expected to be in the format "@<name>[:<value>]" or "@<name> <value>".
 // It finds the first line in the doc comment that starts with "@<name>" and returns the rest of the line as the value.
-// For example:
-// - Doc: "@foo: bar", name: "foo" -> "bar", true
-// - Doc: "@foo bar", name: "foo" -> "bar", true
-// - Doc: "@foo", name: "foo" -> "", true
-// - Doc: "@deriving:binding in:\"body\"", name: "deriving:binding" -> "in:\"body\"", true
-func (ti *TypeInfo) Annotation(name string) (value string, ok bool) {
+func (ti *TypeInfo) annotation(name string) (value string, ok bool) {
 	if ti.Doc == "" {
 		return "", false
 	}

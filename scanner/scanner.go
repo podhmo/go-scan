@@ -19,10 +19,14 @@ type Scanner struct {
 	Overlay               Overlay
 	modulePath            string
 	moduleRootDir         string
+
+	// New fields for inspect mode
+	Inspect bool
+	Logger  *slog.Logger
 }
 
 // New creates a new Scanner.
-func New(fset *token.FileSet, overrides ExternalTypeOverride, overlay Overlay, modulePath string, moduleRootDir string, resolver PackageResolver) (*Scanner, error) {
+func New(fset *token.FileSet, overrides ExternalTypeOverride, overlay Overlay, modulePath string, moduleRootDir string, resolver PackageResolver, inspect bool, logger *slog.Logger) (*Scanner, error) {
 	if fset == nil {
 		return nil, fmt.Errorf("fset cannot be nil")
 	}
@@ -38,6 +42,9 @@ func New(fset *token.FileSet, overrides ExternalTypeOverride, overlay Overlay, m
 	if resolver == nil {
 		return nil, fmt.Errorf("resolver cannot be nil")
 	}
+	if logger == nil {
+		logger = slog.Default() // Should not happen if called from goscan.New
+	}
 
 	return &Scanner{
 		fset:                  fset,
@@ -46,6 +53,8 @@ func New(fset *token.FileSet, overrides ExternalTypeOverride, overlay Overlay, m
 		modulePath:            modulePath,
 		moduleRootDir:         moduleRootDir,
 		resolver:              resolver,
+		Inspect:               inspect,
+		Logger:                logger,
 	}, nil
 }
 
@@ -358,6 +367,9 @@ func (s *Scanner) parseTypeSpec(ctx context.Context, sp *ast.TypeSpec, info *Pac
 		FilePath: absFilePath,
 		Doc:      commentText(sp.Doc),
 		Node:     sp,
+		Inspect:  s.Inspect,
+		Logger:   s.Logger,
+		Fset:     info.Fset,
 	}
 
 	if sp.TypeParams != nil {

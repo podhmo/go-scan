@@ -125,8 +125,49 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 -   **Refactoring**:
     -   [x] **Isolate `examples/deps-walk` Test Data**: Moved the test data for the `deps-walk` example from the root `testdata` directory to its own `examples/deps-walk/testdata` directory, making the example more self-contained.
     -   [x] **Centralize Path Resolution**: Moved the logic for resolving relative file paths to Go package paths from the `deps-walk` example into the core `locator` package (`locator.ResolvePkgPath`). This makes the functionality reusable for other tools.
+
 ## To Be Implemented
 
--   **`deps-walk`**: Add hop count limiting for reverse dependency searches.
-    -   Currently, the `--hops` flag only applies to forward searches.
-    -   It would be useful to have a similar mechanism (e.g., `--reverse-hops`) to limit the scope of reverse and bidi searches.
+### In Module Deps Walk ([docs/plan-in-module-deps-walk.md](./docs/plan-in-module-deps-walk.md))
+- [ ] Core Features of the Visualization Tool
+- [ ] Hop Count Limiting
+- [ ] Package Exclusion
+- [ ] Output Format
+- [ ] Dependency Scope (In-Module vs. Full)
+- [ ] Analysis of the `go-scan` Library
+- [ ] Current Dependency Resolution Mechanism
+- [ ] Suitability for Dependency Walking
+- [ ] Gap Analysis: Missing Features in `go-scan`
+- [ ] A Lightweight, "Imports-Only" Scanning Mode
+- [ ] A Generic Graph Traversal Utility
+- [ ] Further Considerations
+- [ ] Reverse Dependencies (Importers)
+- [ ] Dependency Granularity
+- [ ] Conclusion
+
+### Inspect ([docs/plan-inspect.md](./docs/plan-inspect.md))
+- [ ] Goals
+- [ ] Technical Approach
+- [ ] Inspect Mode
+- [ ] Dry-Run Mode
+- [ ] Usage Example
+- [ ] Structured Logging Fields
+- [ ] `DEBUG` Level Log (Annotation Check)
+- [ ] `INFO` Level Log (Annotation Found)
+- [ ] Implementation Note for `resolution_path`
+
+### Scan Enum ([docs/plan-scan-enum.md](./docs/plan-scan-enum.md))
+- [ ] Introduction
+- [ ] Definition of an Enum
+- [ ] Core Implementation Strategies
+- [ ] Proposed Data Structure Changes
+- [ ] Implementation Steps
+- [ ] Considerations
+
+### Walk Once ([docs/plan-walk-once.md](./docs/plan-walk-once.md))
+- [ ] **Step 1: Create the `GeneratedCode` struct.**
+- [ ] **Step 2: Refactor the `derivingjson` generator.**
+- [ ] **Step 3: Refactor the `derivingbind` generator.**
+- [ ] **Step 4: Implement the initial version of the unified `deriving-all` tool.**
+- [ ] **Step 5: Implement tests for the unified generator using `scantest`.**
+- [ ] **Step 6: Refine and Finalize.**

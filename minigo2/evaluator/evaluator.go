@@ -107,28 +107,94 @@ func evalInfixExpression(operator string, left, right object.Object) object.Obje
 	}
 }
 
+// evalBlockStatement evaluates a block of statements within a new scope.
+func evalBlockStatement(block *ast.BlockStmt, env *object.Environment) object.Object {
+	var result object.Object
+	enclosedEnv := object.NewEnclosedEnvironment(env)
+
+	for _, statement := range block.List {
+		result = Eval(statement, enclosedEnv)
+		// NOTE: Later we would handle return values, errors, etc. here
+	}
+
+	return result
+}
+
 // Eval is the central function of the evaluator. It traverses the AST
 // and returns the result of the evaluation as an object.Object.
-func Eval(node ast.Node) object.Object {
+func Eval(node ast.Node, env *object.Environment) object.Object {
 	switch n := node.(type) {
 	// Statements
+	case *ast.BlockStmt:
+		return evalBlockStatement(n, env)
 	case *ast.ExprStmt:
 		// For an expression statement, we evaluate the underlying expression.
-		return Eval(n.X)
+		return Eval(n.X, env)
+	case *ast.DeclStmt:
+		return Eval(n.Decl, env)
+	case *ast.GenDecl:
+		if n.Tok == token.VAR {
+			for _, spec := range n.Specs {
+				valueSpec := spec.(*ast.ValueSpec)
+				for i, name := range valueSpec.Names {
+					// Assuming `var x = val` format
+					val := Eval(valueSpec.Values[i], env)
+					env.Set(name.Name, val)
+				}
+			}
+		}
+		return nil // var declaration is a statement
+	case *ast.AssignStmt:
+		switch n.Tok {
+		case token.ASSIGN: // x = y
+			// Assuming single assignment for now: `x = val`
+			val := Eval(n.Rhs[0], env)
+			// TODO: Check for error object from val
+
+			ident, ok := n.Lhs[0].(*ast.Ident)
+			if !ok {
+				// TODO: Return error, not supported assignment target
+				return nil
+			}
+
+			if !env.Assign(ident.Name, val) {
+				// TODO: Return error, undeclared variable
+				return nil
+			}
+			return val // Assignment can be an expression
+
+		case token.DEFINE: // x := y
+			// Assuming single assignment for now: `x := val`
+			val := Eval(n.Rhs[0], env)
+			// TODO: Check for error object from val
+
+			ident, ok := n.Lhs[0].(*ast.Ident)
+			if !ok {
+				// TODO: Return error, not supported assignment target
+				return nil
+			}
+
+			env.Set(ident.Name, val)
+			return val
+		}
 
 	// Expressions
 	case *ast.ParenExpr:
-		return Eval(n.X)
+		return Eval(n.X, env)
 	case *ast.UnaryExpr:
-		right := Eval(n.X)
+		right := Eval(n.X, env)
 		return evalPrefixExpression(n.Op.String(), right)
 	case *ast.BinaryExpr:
-		left := Eval(n.X)
-		right := Eval(n.Y)
+		left := Eval(n.X, env)
+		right := Eval(n.Y, env)
 		return evalInfixExpression(n.Op.String(), left, right)
 
 	// Literals
 	case *ast.Ident:
+		if val, ok := env.Get(n.Name); ok {
+			return val
+		}
+
 		switch n.Name {
 		case "true":
 			return object.TRUE

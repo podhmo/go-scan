@@ -146,9 +146,9 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] Define the `object.Object` interface and basic types: `Integer`, `String`, `Boolean`, `Null`.
 - [x] Implement the core `eval` loop for expression evaluation.
 - [x] Support basic literals (`123`, `"hello"`).
-- [ ] Support binary expressions (`+`, `-`, `*`, `/`, `==`, `!=`, `<`, `>`).
-- [ ] Support unary expressions (`-`, `!`).
-- [ ] Write unit tests for all expression evaluations.
+- [x] Support binary expressions (`+`, `-`, `*`, `/`, `==`, `!=`, `<`, `>`).
+- [x] Support unary expressions (`-`, `!`).
+- [x] Write unit tests for all expression evaluations.
 - [ ] Implement the `object.Environment` for managing lexical scopes.
 - [ ] Add support for `var` declarations (e.g., `var x = 10`) and assignments (`x = 20`).
 - [ ] Add support for short variable declarations (`x := 10`).

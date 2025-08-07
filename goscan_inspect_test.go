@@ -38,7 +38,7 @@ type Group struct { // No annotation
 	logLevel := new(slog.LevelVar)
 	logLevel.Set(slog.LevelDebug) // Ensure DEBUG logs are captured
 	handler := slog.NewTextHandler(&logBuf, &slog.HandlerOptions{
-		Level:       logLevel,
+		Level: logLevel,
 		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
 			if a.Key == slog.TimeKey {
 				return slog.Attr{}

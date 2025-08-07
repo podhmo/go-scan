@@ -1,4 +1,4 @@
-# Prompt for Updating TODO.md from Plan Documents
+### Prompt for Updating TODO.md from Plan Documents
 
 **Task:** Update the `TODO.md` file by transcribing unimplemented tasks from all `docs/plan-*.md` documents.
 
@@ -30,21 +30,21 @@ By following these instructions, the `TODO.md` file will be correctly updated to
 
 ---
 
-### 計画ドキュメントの完了処理
+### Prompt for Finalizing Plan Documents
 
-`plan-*.md`で定義されたタスクがすべて完了した場合、以下の手順でドキュメントを更新してください。
+When all tasks defined in a `plan-*.md` document are completed, follow these steps to update the documentation:
 
-1.  **完了済み`plan-*.md`の更新**:
-    *   `docs/plan-overlay.md`の形式に倣い、完了した`plan-*.md`ファイルの先頭に以下のNoteを追加します。
+1.  **Update the completed `plan-*.md`**:
+    *   Following the format of `docs/plan-overlay.md`, add the following note at the beginning of the completed `plan-*.md` file.
 
     ```markdown
     > [!NOTE]
     > This feature has been implemented.
     ```
 
-2.  **`TODO.md`の更新**:
-    *   関連するタスクリストの項目を完了済みにします（例：`[ ]`を`[x]`に変更）。
-    *   もし、そのタスクが特定の機能セクションの最後の未完了タスクであった場合は、セクション全体を「To Be Implemented」から「Implemented」に移動します。
+2.  **Update `TODO.md`**:
+    *   Mark the relevant task list items as complete (e.g., change `[ ]` to `[x]`).
+    *   If the task was the last remaining item in a feature section, move the entire section from "To Be Implemented" to "Implemented".
 
-3.  **未完了タスクの扱い**:
-    *   もし、`plan-*.md`のタスクをすべて完了できなかった場合は、残りのタスクをサブタスクとして`TODO.md`に追記してください。
+3.  **Handling Incomplete Tasks**:
+    *   If you were unable to complete all tasks in the `plan-*.md`, please add the remaining tasks as sub-tasks in `TODO.md`.

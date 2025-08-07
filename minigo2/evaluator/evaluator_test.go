@@ -135,6 +135,40 @@ func TestConstDeclarations(t *testing.T) {
 	}
 }
 
+func TestIfElseStatements(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected any // int64 or "nil" for null
+	}{
+		{"if (true) { 10 }", int64(10)},
+		{"if (false) { 10 }", "nil"},
+		{"if (1) { 10 }", int64(10)}, // 1 is truthy
+		{"if (1 < 2) { 10 }", int64(10)},
+		{"if (1 > 2) { 10 }", "nil"},
+		{"if (1 > 2) { 10 } else { 20 }", int64(20)},
+		{"if (1 < 2) { 10 } else { 20 }", int64(10)},
+		{"x := 10; if (x > 5) { 100 } else { 200 };", int64(100)},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			evaluated := testEval(t, tt.input)
+			switch expected := tt.expected.(type) {
+			case int64:
+				testIntegerObject(t, evaluated, expected)
+			case string:
+				if expected == "nil" {
+					testNullObject(t, evaluated)
+				} else {
+					t.Fatalf("unsupported expected type for test: %T", expected)
+				}
+			default:
+				t.Fatalf("unsupported expected type for test: %T", expected)
+			}
+		})
+	}
+}
+
 func TestEvalBooleanExpression(t *testing.T) {
 	tests := []struct {
 		input    string

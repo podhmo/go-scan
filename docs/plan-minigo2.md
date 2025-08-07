@@ -6,8 +6,8 @@
 
 The core goals of `minigo2` are:
 - **Readability and Familiarity**: Leverage Go-like syntax for configuration and scripting, making it intuitive for Go developers.
-- **Go Interoperability**: Seamlessly pass data and functions between the host Go application and the `minigo2` script. The results of script evaluation should be easily accessible from Go, likely via the `reflect` package.
-- **Rich Type System**: Utilize `go-scan` to understand and work with actual Go types defined within the host application or its dependencies.
+- **Go Interoperability**: The core feature is the ability to **unmarshal** script results directly into Go structs in a type-safe manner. This allows `minigo2` to act as a powerful, dynamic, and type-safe replacement for static configuration files like JSON or YAML.
+- **Rich Type System**: Utilize `go-scan` to understand Go types defined within the host application. This enables the interpreter to perform more intelligent operations and provide better error messages.
 - **Developer Experience**: Provide clear, human-readable stack traces on errors to simplify debugging of scripts.
 - **Simplicity**: Prioritize clarity of implementation and ease of use over raw execution speed. The engine does not need to be a JIT or a highly optimized AOT compiler.
 
@@ -96,13 +96,40 @@ The `object.Object` interface will be the foundation. The key to interoperabilit
   - This `reflect.Value` will be wrapped in a new `object.GoValue{Value: reflect.Value}`.
   - If the value is a Go function, it will be wrapped in a `BuiltinFunction` that uses `reflect.Value.Call` to execute it. Arguments from the script will be converted from `object.Object` to `reflect.Value` before the call.
 
-- **From minigo2 to Go**:
-  - The `Result` object can have a helper method: `As(target any) error`.
-  - `result.As(&myConfigStruct)` would work as follows:
-    1. It takes a pointer `&myConfigStruct` as `target`.
-    2. It uses `reflect.ValueOf(target).Elem()` to get the settable `reflect.Value` of `myConfigStruct`.
-    3. It inspects the `result.Value` (which would be an `object.StructInstance`).
-    4. It iterates through the fields of the `object.StructInstance` and uses `reflect` to find the corresponding field in `myConfigStruct` and set its value. This involves converting `minigo2` objects (`object.Integer`, `object.String`) back to standard Go types.
+- **From minigo2 to Go: The Unmarshal Bridge**
+
+  The most critical feature of `minigo2` is its ability to type-safely unmarshal (or decode) the script's result into a Go struct. This is achieved via the `Result.As(target any)` method, which makes `minigo2` a powerful alternative to traditional configuration files.
+
+  ```go
+  // --- Go host application code ---
+  type MyConfig struct {
+      Host string
+      Port int
+  }
+
+  // Assume 'result' is the successful outcome of a minigo2.Run() call
+  var cfg MyConfig
+  err := result.As(&cfg) // Pass a pointer to populate the struct
+  if err != nil {
+      // ... handle error
+  }
+  fmt.Printf("Host: %s, Port: %d\n", cfg.Host, cfg.Port)
+  ```
+
+  The `As()` method works as follows, using the `reflect` package:
+
+  1.  It validates that the `result.Value` is a `minigo2` internal struct object (`object.StructInstance`), which corresponds to a `{...}` literal returned by the script.
+      ```go
+      // --- minigo2 script ---
+      return { Host: "localhost", Port: 8080 }
+      ```
+  2.  It takes the `&cfg` pointer and gets a settable `reflect.Value` of the `MyConfig` struct.
+  3.  It iterates through the fields of the `minigo2` struct object (e.g., `Host`, `Port`).
+  4.  For each field, it looks for a corresponding public field in the Go `MyConfig` struct.
+  5.  It checks if the `minigo2` object type can be converted to the Go field's type (e.g., `object.String` to `string`, `object.Integer` to `int`).
+  6.  If the types are compatible, it uses `reflect` to set the value on the Go struct field (e.g., `field.SetString("localhost")`).
+
+  This mechanism allows `minigo2` to function as a type-safe configuration loader, providing a clear advantage over generic scripting engines.
 
 ### 3.4. Error Handling and Stack Traces
 

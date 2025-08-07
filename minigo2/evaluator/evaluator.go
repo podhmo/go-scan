@@ -216,6 +216,97 @@ func evalForStmt(fs *ast.ForStmt, env *object.Environment) object.Object {
 	return object.NULL // A for loop statement itself evaluates to null
 }
 
+// evalSwitchStmt evaluates a switch statement.
+func evalSwitchStmt(ss *ast.SwitchStmt, env *object.Environment) object.Object {
+	// 1. Handle Init statement in a new scope
+	switchEnv := env
+	if ss.Init != nil {
+		switchEnv = object.NewEnclosedEnvironment(env)
+		Eval(ss.Init, switchEnv)
+		// TODO: Handle error from Init
+	}
+
+	// 2. Evaluate the tag
+	var tag object.Object
+	if ss.Tag != nil {
+		tag = Eval(ss.Tag, switchEnv)
+		// TODO: Handle error from tag evaluation
+	} else {
+		// Expressionless switch is like `switch true`
+		tag = object.TRUE
+	}
+
+	// 3. Iterate through case clauses
+	var defaultCase *ast.CaseClause
+	var matched bool
+
+	for _, stmt := range ss.Body.List {
+		clause, ok := stmt.(*ast.CaseClause)
+		if !ok {
+			continue // Should not happen in a valid AST
+		}
+
+		// If it's the default case, save it for later
+		if clause.List == nil {
+			defaultCase = clause
+			continue
+		}
+
+		// 4. Check for a match in the case list
+		for _, caseExpr := range clause.List {
+			caseVal := Eval(caseExpr, switchEnv)
+			// TODO: Handle error from case value evaluation
+
+			// Compare the case value with the tag
+			// For expressionless switch, caseVal is a boolean expression result.
+			// For switch with tag, we do a direct comparison.
+			var condition bool
+			if ss.Tag == nil {
+				condition = isTruthy(caseVal)
+			} else {
+				// Simple equality check for now
+				// TODO: This should use the same logic as `==` operator for proper comparison
+				if tag.Type() == object.INTEGER_OBJ && caseVal.Type() == object.INTEGER_OBJ {
+					condition = (tag.(*object.Integer).Value == caseVal.(*object.Integer).Value)
+				} else {
+					condition = (tag == caseVal)
+				}
+			}
+
+			if condition {
+				matched = true
+				break
+			}
+		}
+
+		if matched {
+			// 5. Execute the body of the matched case
+			// A case body is a list of statements, not a block statement,
+			// so we evaluate them directly in a new scope for the case body.
+			caseEnv := object.NewEnclosedEnvironment(switchEnv)
+			var result object.Object
+			for _, caseBodyStmt := range clause.Body {
+				result = Eval(caseBodyStmt, caseEnv)
+				// TODO: Handle break/fallthrough if ever supported
+			}
+			return result // Return the value of the last expression in the case
+		}
+	}
+
+	// 6. If no case matched, execute the default case if it exists
+	if defaultCase != nil {
+		caseEnv := object.NewEnclosedEnvironment(switchEnv)
+		var result object.Object
+		for _, caseBodyStmt := range defaultCase.Body {
+			result = Eval(caseBodyStmt, caseEnv)
+		}
+		return result
+	}
+
+	// 7. If no case matched and no default, return null
+	return object.NULL
+}
+
 // evalBranchStmt evaluates a break or continue statement.
 func evalBranchStmt(bs *ast.BranchStmt, env *object.Environment) object.Object {
 	// We don't support labels yet.
@@ -246,6 +337,8 @@ func Eval(node ast.Node, env *object.Environment) object.Object {
 		return Eval(n.X, env)
 	case *ast.IfStmt:
 		return evalIfElseExpression(n, env)
+	case *ast.SwitchStmt:
+		return evalSwitchStmt(n, env)
 	case *ast.ForStmt:
 		return evalForStmt(n, env)
 	case *ast.BranchStmt:

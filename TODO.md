@@ -156,11 +156,11 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] Implement `if/else` statements.
 - [x] Implement standard `for` loops (`for i := 0; i < 10; i++`).
 - [x] Implement `break` and `continue` statements.
-- [ ] **Implement `switch` statements**:
-- [ ] Support `switch` with an expression (`switch x { ... }`).
-- [ ] Support expressionless `switch` (`switch { ... }`).
-- [ ] Support `case` clauses with single or multiple expressions.
-- [ ] Support the `default` clause.
+- [x] **Implement `switch` statements**:
+- [x] Support `switch` with an expression (`switch x { ... }`).
+- [x] Support expressionless `switch` (`switch { ... }`).
+- [x] Support `case` clauses with single or multiple expressions.
+- [x] Support the `default` clause.
 - [ ] Implement user-defined functions (`func` declarations).
 - [ ] Implement the call stack mechanism for tracking function calls.
 - [ ] Implement `return` statements (including returning `nil`).

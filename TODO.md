@@ -130,12 +130,15 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 ## To Be Implemented
 
 ### Inspect ([docs/plan-inspect.md](./docs/plan-inspect.md))
-- [ ] Goals
-- [ ] Technical Approach
-- [ ] Inspect Mode
-- [ ] Dry-Run Mode
-- [ ] Usage Example
-- [ ] Structured Logging Fields
-- [ ] `DEBUG` Level Log (Annotation Check)
-- [ ] `INFO` Level Log (Annotation Found)
-- [ ] Implementation Note for `resolution_path`
+- [-] **Implement Inspect and Dry-Run Feature**
+  - [x] Goals
+  - [x] Technical Approach
+  - [x] Inspect Mode
+  - [x] Dry-Run Mode
+  - [x] Usage Example
+  - [x] Structured Logging Fields
+  - [x] `DEBUG` Level Log (Annotation Check)
+  - [x] `INFO` Level Log (Annotation Found)
+  - [x] Implementation Note for `resolution_path`
+- [ ] **Fix Integration Tests**
+  - [ ] The new integration tests for the CLI are failing due to a module path resolution issue. See `docs/trouble-inspect.md` for details.

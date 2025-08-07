@@ -1,3 +1,6 @@
+> [!NOTE]
+> This feature has been implemented.
+
 # Plan for Inspect and Dry-Run Features
 
 This document outlines the plan to introduce `inspect` and `dry-run` modes to the `go-scan` library and its example applications.
@@ -46,4 +49,4 @@ The implementation is divided into two main features: Inspect Mode and Dry-Run M
 
 - [x] **`DEBUG` Level Log (Annotation Check)**
 - [x] **`INFO` Level Log (Annotation Found)**
-- [ ] **Implementation Note for `resolution_path`**: This is a future enhancement and was not part of the initial implementation.
+- [x] **`DEBUG` and `INFO` Level Log (Type Resolution)**: Added `resolution_path` to logs to trace dependency resolution.

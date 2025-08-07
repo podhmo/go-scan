@@ -13,6 +13,19 @@ The core goals of `minigo2` are:
 
 `minigo2` will **not** be a full Go implementation. It will interpret a curated subset of the language focused on its role as a configuration and scripting engine. It will strictly avoid `go/packages` and `go/types` in favor of the lazy, AST-based approach provided by `go-scan`.
 
+### Unsupported Features
+
+To maintain simplicity and focus on its core use case, `minigo2` will intentionally not support certain advanced Go features. While the Go parser will recognize these syntactic constructs, the `minigo2` interpreter will produce a runtime error when it encounters them. This ensures that scripts remain within the bounds of the engine's capabilities.
+
+The following features are explicitly **unsupported**:
+
+-   **Concurrency**: `go` statements, `chan` types, and `select` statements. `minigo2` is a single-threaded interpreter.
+-   **Defer, Panic, and Recover**: The `defer` statement and the `panic`/`recover` mechanism are not supported. Errors should be handled through explicit return values.
+-   **Interfaces**: Full support for `interface` types, type assertions, and type switches is not a goal. Go interoperability will handle specific interface needs on the host side.
+-   **Unsafe Operations**: The `unsafe` package and its functionalities are not supported.
+
+This clear boundary allows `minigo2` to be a predictable and secure scripting environment for configuration tasks.
+
 ## 2. Core Architecture
 
 The `minigo2` engine will be composed of several key components:
@@ -142,45 +155,64 @@ This will be adapted directly from `minigo`.
 
 ## 4. Implementation Phases
 
-The development of `minigo2` will be broken down into the following phases:
+The development of `minigo2` will be broken down into the following phases, with more detailed and granular tasks.
 
-1.  **Phase 1: Core Interpreter and Basic Types**
-    - [ ] Set up the project structure (`minigo2/`, `minigo2/object/`, etc.).
+1.  **Phase 1: Core Interpreter and Expression Evaluation**
+    - [ ] Set up the project structure (`minigo2/`, `minigo2/object/`, `minigo2/evaluator/`, etc.).
     - [ ] Define the `object.Object` interface and basic types: `Integer`, `String`, `Boolean`, `Null`.
-    - [ ] Implement the basic `eval` loop that can evaluate simple expressions (literals, binary/unary expressions).
+    - [ ] Implement the core `eval` loop for expression evaluation.
+    - [ ] Support basic literals (`123`, `"hello"`).
+    - [ ] Support binary expressions (`+`, `-`, `*`, `/`, `==`, `!=`, `<`, `>`).
+    - [ ] Support unary expressions (`-`, `!`).
     - [ ] Write unit tests for all expression evaluations.
 
-2.  **Phase 2: Variables, Scopes, and Control Flow**
-    - [ ] Implement the `object.Environment` for managing scopes.
-    - [ ] Add support for `var` declarations and assignments (`=`, `:=`).
+2.  **Phase 2: Variables, Constants, and Scope**
+    - [ ] Implement the `object.Environment` for managing lexical scopes.
+    - [ ] Add support for `var` declarations (e.g., `var x = 10`) and assignments (`x = 20`).
+    - [ ] Add support for short variable declarations (`x := 10`).
+    - [ ] **Implement `const` declarations**, including typed (`const C int = 1`), untyped (`const C = 1`), and `iota`.
+
+3.  **Phase 3: Control Flow**
     - [ ] Implement `if/else` statements.
-    - [ ] Implement `for` loops (with conditions, no range-based yet).
-    - [ ] Add support for `break` and `continue`.
+    - [ ] Implement standard `for` loops (`for i := 0; i < 10; i++`).
+    - [ ] Implement `break` and `continue` statements.
+    - [ ] **Implement `switch` statements**:
+        - [ ] Support `switch` with an expression (`switch x { ... }`).
+        - [ ] Support expressionless `switch` (`switch { ... }`).
+        - [ ] Support `case` clauses with single or multiple expressions.
+        - [ ] Support the `default` clause.
 
-3.  **Phase 3: Functions and Call Stack**
+4.  **Phase 4: Functions and Call Stack**
     - [ ] Implement user-defined functions (`func` declarations).
-    - [ ] Implement the call stack mechanism for function calls.
-    - [ ] Implement `return` statements.
-    - [ ] Implement basic error formatting with the stack trace.
+    - [ ] Implement the call stack mechanism for tracking function calls.
+    - [ ] Implement `return` statements (including returning `nil`).
+    - [ ] Implement rich error formatting with a formatted call stack.
 
-4.  **Phase 4: Integration with `go-scan` for Imports**
+5.  **Phase 5: Data Structures and Pointers**
+    - [ ] Add support for `type ... struct` declarations.
+    - [ ] Support struct literal instantiation (e.g., `MyStruct{...}`), including both keyed and unkeyed fields.
+    - [ ] Support field access (`myStruct.Field`) and assignment (`myStruct.Field = ...`).
+    - [ ] Support slice and array literals (`[]int{1, 2}`, `[2]int{1, 2}`).
+    - [ ] Support map literals (`map[string]int{"a": 1}`).
+    - [ ] Support indexing for slices, arrays, and maps (`arr[0]`, `m["key"]`).
+    - [ ] **Implement `for...range` loops** for iterating over slices, arrays, and maps.
+    - [ ] **Implement pointer support**:
+        - [ ] Define a `Pointer` object type in the object system.
+        - [ ] Implement the address-of operator (`&`) to create pointers to variables.
+        - [ ] Implement the dereference operator (`*`) to get the value a pointer points to.
+        - [ ] Support pointer-to-struct field access (e.g., `ptr.Field`).
+        - [ ] Support `new()` built-in function.
+
+6.  **Phase 6: Go Interoperability and Imports**
     - [ ] Create the main `Interpreter` struct that holds a `goscan.Scanner`.
-    - [ ] Implement the logic to handle `import` statements.
-    - [ ] Implement `evalSelectorExpr` (e.g., `pkg.Symbol`) to trigger `go-scan`'s `ScanPackageByImport`.
-    - [ ] Load constants and functions from scanned packages into the environment.
-    - [ ] Test importing and using functions/constants from standard library packages (e.g., `strings.Join`).
+    - [ ] Implement the logic to handle `import` statements and load symbols from external Go packages.
+    - [ ] Implement the `object.GoValue` to wrap `reflect.Value`, allowing Go values to be injected into the script.
+    - [ ] Implement the logic to wrap Go functions as `BuiltinFunction` objects.
+    - [ ] Implement the `Result.As(target any)` method for unmarshaling script results back into Go structs.
 
-5.  **Phase 5: Structs and Go Interop Layer**
-    - [ ] Add support for `type ... struct` declarations and struct literal instantiations.
-    - [ ] Implement the `object.GoValue` to wrap `reflect.Value`.
-    - [ ] Implement the logic to inject Go variables from `Options.Globals`.
-    - [ ] Implement the logic to wrap Go functions as `BuiltinFunction`s.
-    - [ ] Implement the `Result.As(target any)` method for extracting data back into Go structs.
-
-6.  **Phase 6: Refinement and Documentation**
-    - [ ] Thoroughly test all features, especially the `reflect` bridge.
-    - [ ] Improve error messages and stack traces.
-    - [ ] Write comprehensive documentation for the API and usage examples.
+7.  **Phase 7: Refinement and Documentation**
+    - [ ] Thoroughly test all features, especially pointer handling and the Go interop layer.
+    - [ ] Write comprehensive documentation for the API, supported language features, and usage examples.
     - [ ] Ensure `make format` and `make test` pass cleanly.
 
 ## 5. Conceptual Usage Example

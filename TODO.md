@@ -140,3 +140,49 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
         -   [x] **`resolution_path` Logging**: Implement the `resolution_path` field in structured logs to trace how a type was resolved.
 
 ## To Be Implemented
+
+### minigo2 Implementation ([docs/plan-minigo2.md](./docs/plan-minigo2.md))
+- [ ] Set up the project structure (`minigo2/`, `minigo2/object/`, `minigo2/evaluator/`, etc.).
+- [ ] Define the `object.Object` interface and basic types: `Integer`, `String`, `Boolean`, `Null`.
+- [ ] Implement the core `eval` loop for expression evaluation.
+- [ ] Support basic literals (`123`, `"hello"`).
+- [ ] Support binary expressions (`+`, `-`, `*`, `/`, `==`, `!=`, `<`, `>`).
+- [ ] Support unary expressions (`-`, `!`).
+- [ ] Write unit tests for all expression evaluations.
+- [ ] Implement the `object.Environment` for managing lexical scopes.
+- [ ] Add support for `var` declarations (e.g., `var x = 10`) and assignments (`x = 20`).
+- [ ] Add support for short variable declarations (`x := 10`).
+- [ ] **Implement `const` declarations**, including typed (`const C int = 1`), untyped (`const C = 1`), and `iota`.
+- [ ] Implement `if/else` statements.
+- [ ] Implement standard `for` loops (`for i := 0; i < 10; i++`).
+- [ ] Implement `break` and `continue` statements.
+- [ ] **Implement `switch` statements**:
+- [ ] Support `switch` with an expression (`switch x { ... }`).
+- [ ] Support expressionless `switch` (`switch { ... }`).
+- [ ] Support `case` clauses with single or multiple expressions.
+- [ ] Support the `default` clause.
+- [ ] Implement user-defined functions (`func` declarations).
+- [ ] Implement the call stack mechanism for tracking function calls.
+- [ ] Implement `return` statements (including returning `nil`).
+- [ ] Implement rich error formatting with a formatted call stack.
+- [ ] Add support for `type ... struct` declarations.
+- [ ] Support struct literal instantiation (e.g., `MyStruct{...}`), including both keyed and unkeyed fields.
+- [ ] Support field access (`myStruct.Field`) and assignment (`myStruct.Field = ...`).
+- [ ] Support slice and array literals (`[]int{1, 2}`, `[2]int{1, 2}`).
+- [ ] Support map literals (`map[string]int{"a": 1}`).
+- [ ] Support indexing for slices, arrays, and maps (`arr[0]`, `m["key"]`).
+- [ ] **Implement `for...range` loops** for iterating over slices, arrays, and maps.
+- [ ] **Implement pointer support**:
+- [ ] Define a `Pointer` object type in the object system.
+- [ ] Implement the address-of operator (`&`) to create pointers to variables.
+- [ ] Implement the dereference operator (`*`) to get the value a pointer points to.
+- [ ] Support pointer-to-struct field access (e.g., `ptr.Field`).
+- [ ] Support `new()` built-in function.
+- [ ] Create the main `Interpreter` struct that holds a `goscan.Scanner`.
+- [ ] Implement the logic to handle `import` statements and load symbols from external Go packages.
+- [ ] Implement the `object.GoValue` to wrap `reflect.Value`, allowing Go values to be injected into the script.
+- [ ] Implement the logic to wrap Go functions as `BuiltinFunction` objects.
+- [ ] Implement the `Result.As(target any)` method for unmarshaling script results back into Go structs.
+- [ ] Thoroughly test all features, especially pointer handling and the Go interop layer.
+- [ ] Write comprehensive documentation for the API, supported language features, and usage examples.
+- [ ] Ensure `make format` and `make test` pass cleanly.

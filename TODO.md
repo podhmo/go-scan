@@ -161,7 +161,6 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [ ] Support expressionless `switch` (`switch { ... }`).
 - [ ] Support `case` clauses with single or multiple expressions.
 - [ ] Support the `default` clause.
-- [ ] Support fallthrough (initially optional, can be added later if complex).
 - [ ] Implement user-defined functions (`func` declarations).
 - [ ] Implement the call stack mechanism for tracking function calls.
 - [ ] Implement `return` statements (including returning `nil`).
@@ -173,11 +172,17 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [ ] Support map literals (`map[string]int{"a": 1}`).
 - [ ] Support indexing for slices, arrays, and maps (`arr[0]`, `m["key"]`).
 - [ ] **Implement `for...range` loops** for iterating over slices, arrays, and maps.
+- [ ] **Implement pointer support**:
+- [ ] Define a `Pointer` object type in the object system.
+- [ ] Implement the address-of operator (`&`) to create pointers to variables.
+- [ ] Implement the dereference operator (`*`) to get the value a pointer points to.
+- [ ] Support pointer-to-struct field access (e.g., `ptr.Field`).
+- [ ] Support `new()` built-in function.
 - [ ] Create the main `Interpreter` struct that holds a `goscan.Scanner`.
 - [ ] Implement the logic to handle `import` statements and load symbols from external Go packages.
 - [ ] Implement the `object.GoValue` to wrap `reflect.Value`, allowing Go values to be injected into the script.
 - [ ] Implement the logic to wrap Go functions as `BuiltinFunction` objects.
 - [ ] Implement the `Result.As(target any)` method for unmarshaling script results back into Go structs.
-- [ ] Thoroughly test all features, especially the Go interop layer and error handling.
+- [ ] Thoroughly test all features, especially pointer handling and the Go interop layer.
 - [ ] Write comprehensive documentation for the API, supported language features, and usage examples.
 - [ ] Ensure `make format` and `make test` pass cleanly.

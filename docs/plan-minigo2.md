@@ -21,7 +21,6 @@ The following features are explicitly **unsupported**:
 
 -   **Concurrency**: `go` statements, `chan` types, and `select` statements. `minigo2` is a single-threaded interpreter.
 -   **Defer, Panic, and Recover**: The `defer` statement and the `panic`/`recover` mechanism are not supported. Errors should be handled through explicit return values.
--   **Pointers**: General pointer manipulation, including taking the address of arbitrary variables (`&`) and dereferencing (`*`), is not supported. The primary mechanism for passing complex data is by value or through the host application's Go interface.
 -   **Interfaces**: Full support for `interface` types, type assertions, and type switches is not a goal. Go interoperability will handle specific interface needs on the host side.
 -   **Unsafe Operations**: The `unsafe` package and its functionalities are not supported.
 
@@ -182,7 +181,6 @@ The development of `minigo2` will be broken down into the following phases, with
         - [ ] Support expressionless `switch` (`switch { ... }`).
         - [ ] Support `case` clauses with single or multiple expressions.
         - [ ] Support the `default` clause.
-        - [ ] Support fallthrough (initially optional, can be added later if complex).
 
 4.  **Phase 4: Functions and Call Stack**
     - [ ] Implement user-defined functions (`func` declarations).
@@ -190,7 +188,7 @@ The development of `minigo2` will be broken down into the following phases, with
     - [ ] Implement `return` statements (including returning `nil`).
     - [ ] Implement rich error formatting with a formatted call stack.
 
-5.  **Phase 5: Data Structures**
+5.  **Phase 5: Data Structures and Pointers**
     - [ ] Add support for `type ... struct` declarations.
     - [ ] Support struct literal instantiation (e.g., `MyStruct{...}`), including both keyed and unkeyed fields.
     - [ ] Support field access (`myStruct.Field`) and assignment (`myStruct.Field = ...`).
@@ -198,6 +196,12 @@ The development of `minigo2` will be broken down into the following phases, with
     - [ ] Support map literals (`map[string]int{"a": 1}`).
     - [ ] Support indexing for slices, arrays, and maps (`arr[0]`, `m["key"]`).
     - [ ] **Implement `for...range` loops** for iterating over slices, arrays, and maps.
+    - [ ] **Implement pointer support**:
+        - [ ] Define a `Pointer` object type in the object system.
+        - [ ] Implement the address-of operator (`&`) to create pointers to variables.
+        - [ ] Implement the dereference operator (`*`) to get the value a pointer points to.
+        - [ ] Support pointer-to-struct field access (e.g., `ptr.Field`).
+        - [ ] Support `new()` built-in function.
 
 6.  **Phase 6: Go Interoperability and Imports**
     - [ ] Create the main `Interpreter` struct that holds a `goscan.Scanner`.
@@ -207,7 +211,7 @@ The development of `minigo2` will be broken down into the following phases, with
     - [ ] Implement the `Result.As(target any)` method for unmarshaling script results back into Go structs.
 
 7.  **Phase 7: Refinement and Documentation**
-    - [ ] Thoroughly test all features, especially the Go interop layer and error handling.
+    - [ ] Thoroughly test all features, especially pointer handling and the Go interop layer.
     - [ ] Write comprehensive documentation for the API, supported language features, and usage examples.
     - [ ] Ensure `make format` and `make test` pass cleanly.
 

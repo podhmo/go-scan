@@ -7,7 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -15,6 +15,36 @@ import (
 
 	goscan "github.com/podhmo/go-scan"
 )
+
+// logLevelVar is a custom flag.Value implementation for slog.LevelVar
+type logLevelVar struct {
+	levelVar *slog.LevelVar
+}
+
+func (v *logLevelVar) String() string {
+	if v.levelVar == nil {
+		return ""
+	}
+	return v.levelVar.Level().String()
+}
+
+func (v *logLevelVar) Set(s string) error {
+	var level slog.Level
+	switch strings.ToLower(s) {
+	case "debug":
+		level = slog.LevelDebug
+	case "info":
+		level = slog.LevelInfo
+	case "warn":
+		level = slog.LevelWarn
+	case "error":
+		level = slog.LevelError
+	default:
+		return fmt.Errorf("unknown log level: %s", s)
+	}
+	v.levelVar.Set(level)
+	return nil
+}
 
 func main() {
 	var (
@@ -29,6 +59,9 @@ func main() {
 		direction   string
 		aggressive  bool
 		test        bool
+		dryRun      bool
+		inspect     bool
+		logLevel    = new(slog.LevelVar)
 	)
 
 	// No -start-pkg flag, positional arguments are used instead
@@ -43,19 +76,28 @@ func main() {
 	flag.StringVar(&direction, "direction", "forward", "Direction of dependency walk (forward, reverse, bidi)")
 	flag.BoolVar(&aggressive, "aggressive", false, "Use aggressive git-grep based search for reverse mode")
 	flag.BoolVar(&test, "test", false, "Include test files in the analysis")
+	flag.BoolVar(&dryRun, "dry-run", false, "don't write to output file, just print to stdout")
+	flag.BoolVar(&inspect, "inspect", false, "enable inspection logging")
+	flag.Var(&logLevelVar{levelVar: logLevel}, "log-level", "set log level (debug, info, warn, error)")
 	flag.Parse()
 
 	startPkgs := flag.Args()
 	if len(startPkgs) == 0 {
-		log.Fatal("at least one start package is required")
+		flag.Usage()
+		os.Exit(1)
 	}
 
-	if err := run(context.Background(), startPkgs, hops, ignore, hide, output, format, granularity, full, short, direction, aggressive, test); err != nil {
-		log.Fatalf("Error: %+v", err)
+	opts := slog.HandlerOptions{Level: logLevel}
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &opts))
+	slog.SetDefault(logger)
+
+	if err := run(context.Background(), startPkgs, hops, ignore, hide, output, format, granularity, full, short, direction, aggressive, test, dryRun, inspect, logger); err != nil {
+		slog.ErrorContext(context.Background(), "Error", slog.Any("error", err))
+		os.Exit(1)
 	}
 }
 
-func run(ctx context.Context, startPkgs []string, hops int, ignore string, hide string, output string, format string, granularity string, full bool, short bool, direction string, aggressive bool, test bool) error {
+func run(ctx context.Context, startPkgs []string, hops int, ignore string, hide string, output string, format string, granularity string, full bool, short bool, direction string, aggressive bool, test bool, dryRun bool, inspect bool, logger *slog.Logger) error {
 	var finalOutput bytes.Buffer
 
 	var scannerOpts []goscan.ScannerOption
@@ -63,6 +105,9 @@ func run(ctx context.Context, startPkgs []string, hops int, ignore string, hide 
 		scannerOpts = append(scannerOpts, goscan.WithGoModuleResolver())
 	}
 	scannerOpts = append(scannerOpts, goscan.WithIncludeTests(test))
+	scannerOpts = append(scannerOpts, goscan.WithDryRun(dryRun))
+	scannerOpts = append(scannerOpts, goscan.WithInspect(inspect))
+	scannerOpts = append(scannerOpts, goscan.WithLogger(logger))
 
 	s, err := goscan.New(scannerOpts...)
 	if err != nil {
@@ -217,7 +262,10 @@ func run(ctx context.Context, startPkgs []string, hops int, ignore string, hide 
 		}
 	}
 
-	if output == "" {
+	if output == "" || dryRun {
+		if dryRun && output != "" {
+			slog.InfoContext(ctx, "Dry run: skipping file write", "path", output)
+		}
 		_, err = os.Stdout.Write(finalOutput.Bytes())
 		if err != nil {
 			return fmt.Errorf("writing to stdout: %w", err)

@@ -52,6 +52,11 @@ type Scanner struct {
 	useGoModuleResolver bool // To be set by WithGoModuleResolver
 	IncludeTests        bool // To be set by WithTests
 
+	// New fields for inspect and dry-run functionality
+	DryRun  bool
+	Inspect bool
+	Logger  *slog.Logger
+
 	CachePath             string
 	symbolCache           *symbolCache // Symbol cache (persisted across Scanner instances if path is reused)
 	ExternalTypeOverrides scanner.ExternalTypeOverride
@@ -144,6 +149,30 @@ func WithWorkDir(path string) ScannerOption {
 	}
 }
 
+// WithDryRun enables or disables dry-run mode.
+func WithDryRun(dryRun bool) ScannerOption {
+	return func(s *Scanner) error {
+		s.DryRun = dryRun
+		return nil
+	}
+}
+
+// WithInspect enables or disables inspect mode.
+func WithInspect(inspect bool) ScannerOption {
+	return func(s *Scanner) error {
+		s.Inspect = inspect
+		return nil
+	}
+}
+
+// WithLogger sets the logger for the scanner.
+func WithLogger(logger *slog.Logger) ScannerOption {
+	return func(s *Scanner) error {
+		s.Logger = logger
+		return nil
+	}
+}
+
 // WithIncludeTests includes test files in the scan.
 func WithIncludeTests(include bool) ScannerOption {
 	return func(s *Scanner) error {
@@ -223,7 +252,7 @@ func New(options ...ScannerOption) (*Scanner, error) {
 	}
 	s.locator = loc
 
-	initialScanner, err := scanner.New(s.fset, s.ExternalTypeOverrides, s.overlay, loc.ModulePath(), loc.RootDir(), s)
+	initialScanner, err := scanner.New(s.fset, s.ExternalTypeOverrides, s.overlay, loc.ModulePath(), loc.RootDir(), s, s.Inspect, s.Logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create internal scanner: %w", err)
 	}
@@ -249,7 +278,7 @@ func (s *Scanner) SetExternalTypeOverrides(ctx context.Context, overrides scanne
 		overrides = make(scanner.ExternalTypeOverride)
 	}
 	s.ExternalTypeOverrides = overrides
-	newInternalScanner, err := scanner.New(s.fset, s.ExternalTypeOverrides, s.overlay, s.locator.ModulePath(), s.locator.RootDir(), s)
+	newInternalScanner, err := scanner.New(s.fset, s.ExternalTypeOverrides, s.overlay, s.locator.ModulePath(), s.locator.RootDir(), s, s.Inspect, s.Logger)
 	if err != nil {
 		slog.WarnContext(ctx, "Failed to re-initialize internal scanner with new overrides. Continuing with previous scanner settings.", slog.Any("error", err))
 		return

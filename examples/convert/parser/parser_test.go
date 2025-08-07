@@ -2,6 +2,7 @@ package parser
 
 import (
 	"context"
+	"go/token"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -158,9 +159,15 @@ type MyTime time.Time
 		},
 	}
 
+	// Set the Fset on the want NamedTypes to match the parsed package's Fset
+	for _, ti := range want.NamedTypes {
+		ti.Fset = pkg.Fset
+	}
+
 	opts := []cmp.Option{
 		cmp.AllowUnexported(model.ParsedInfo{}, model.ConversionPair{}, model.StructInfo{}, model.FieldInfo{}),
-		cmpopts.IgnoreFields(scanner.TypeInfo{}, "PkgPath", "FilePath", "Doc", "Kind", "Node", "Struct", "Func", "Interface", "Underlying", "TypeParams"),
+		cmpopts.IgnoreUnexported(scanner.TypeInfo{}, token.FileSet{}),
+		cmpopts.IgnoreFields(scanner.TypeInfo{}, "PkgPath", "FilePath", "Doc", "Kind", "Node", "Struct", "Func", "Interface", "Underlying", "TypeParams", "Inspect", "Logger"),
 		cmpopts.IgnoreFields(model.ParsedInfo{}, "NamedTypes", "Structs"), // check them separately
 		cmpopts.IgnoreFields(model.ConversionPair{}, "SrcTypeInfo", "DstTypeInfo"),
 		cmpopts.IgnoreFields(model.TypeRule{}, "SrcTypeInfo", "DstTypeInfo"),

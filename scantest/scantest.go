@@ -62,6 +62,7 @@ type RunOption func(*runConfig)
 
 type runConfig struct {
 	moduleRoot string
+	scanner    *scan.Scanner
 }
 
 // WithModuleRoot explicitly sets the module root directory for the test run.
@@ -69,6 +70,14 @@ type runConfig struct {
 func WithModuleRoot(path string) RunOption {
 	return func(c *runConfig) {
 		c.moduleRoot = path
+	}
+}
+
+// WithScanner provides a pre-configured scanner to the Run function.
+// If this is provided, the Run function will not create its own scanner.
+func WithScanner(s *scan.Scanner) RunOption {
+	return func(c *runConfig) {
+		c.scanner = s
 	}
 }
 
@@ -114,20 +123,25 @@ func Run(t *testing.T, dir string, patterns []string, action ActionFunc, opts ..
 		workDir = foundRoot
 	}
 
-	// Automatically handle go.mod replace directives with relative paths.
-	overlay, err := createGoModOverlay(workDir)
-	if err != nil {
-		return nil, fmt.Errorf("creating go.mod overlay: %w", err)
-	}
+	var s *scan.Scanner
+	if cfg.scanner != nil {
+		s = cfg.scanner
+	} else {
+		// Automatically handle go.mod replace directives with relative paths.
+		overlay, err := createGoModOverlay(workDir)
+		if err != nil {
+			return nil, fmt.Errorf("creating go.mod overlay: %w", err)
+		}
 
-	options := []scan.ScannerOption{scan.WithWorkDir(workDir)}
-	if overlay != nil {
-		options = append(options, scan.WithOverlay(overlay))
-	}
+		options := []scan.ScannerOption{scan.WithWorkDir(workDir)}
+		if overlay != nil {
+			options = append(options, scan.WithOverlay(overlay))
+		}
 
-	s, err := scan.New(options...)
-	if err != nil {
-		return nil, fmt.Errorf("new scanner: %w", err)
+		s, err = scan.New(options...)
+		if err != nil {
+			return nil, fmt.Errorf("new scanner: %w", err)
+		}
 	}
 
 	// Adjust patterns to be relative to the temp `dir` if they are not absolute.

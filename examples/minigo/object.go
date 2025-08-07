@@ -231,13 +231,14 @@ func (cs *ContinueStatement) Inspect() string  { return "continue" }
 // --- StructDefinition Object ---
 // StructDefinition stores the definition of a struct.
 type StructDefinition struct {
-	Name         string
-	Fields       map[string]string // Field name to type name (e.g., "int", "string", "pkg.OtherType")
-	EmbeddedDefs []*StructDefinition
-	FieldOrder   []string
-	FileSet      *token.FileSet // FileSet for context, especially for external structs
-	IsExternal   bool           // True if this definition came from an imported package
-	PackagePath  string         // Import path of the package if IsExternal is true
+	Name           string
+	Fields         map[string]string // Field name to type name (e.g., "int", "string", "pkg.OtherType")
+	EmbeddedDefs   []*StructDefinition
+	FieldOrder     []string // Order of fields and embedded type names as they appear in the source
+	FlatFieldOrder []string // Flattened order of all fields, including from embedded structs, for unkeyed literals
+	FileSet        *token.FileSet // FileSet for context, especially for external structs
+	IsExternal     bool           // True if this definition came from an imported package
+	PackagePath    string         // Import path of the package if IsExternal is true
 }
 
 func (sd *StructDefinition) Type() ObjectType { return STRUCT_DEF_OBJ }

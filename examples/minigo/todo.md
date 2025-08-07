@@ -35,7 +35,7 @@
     - [x] Field access (`p.X`)
     - [x] Basic embedded structs (promoted fields, initialization of embedded struct by type name)
     - [x] Field assignment (`p.X = 100`)
-    - [ ] Unkeyed struct literals (e.g. `Point{10,20}`)
+    - [x] Unkeyed struct literals (e.g. `Point{10,20}`)
     - [ ] Type checking for struct field assignments and initializers.
     - [ ] Zero value for struct types (uninitialized fields are NULL, explicit zero struct via `T{}`)
   - [ ] Type declarations (`type MyInt int`)

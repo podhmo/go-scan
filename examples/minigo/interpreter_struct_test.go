@@ -403,6 +403,117 @@ func main() {
 
 }
 
+func TestUnkeyedStructLiterals(t *testing.T) {
+	tests := []struct {
+		name          string
+		input         string
+		expectedError string
+		checkEnv      func(t *testing.T, env *Environment, i *Interpreter)
+	}{
+		{
+			name: "Basic unkeyed struct literal",
+			input: `
+package main
+type Point struct { X int; Y int }
+var p Point
+func main() {
+	p = Point{10, 20}
+}
+`,
+			checkEnv: func(t *testing.T, env *Environment, i *Interpreter) {
+				pObj, _ := env.Get("p")
+				pInst, _ := pObj.(*StructInstance)
+				if x, ok := pInst.FieldValues["X"].(*Integer); !ok || x.Value != 10 {
+					t.Errorf("Expected p.X to be 10, got %v", pInst.FieldValues["X"])
+				}
+				if y, ok := pInst.FieldValues["Y"].(*Integer); !ok || y.Value != 20 {
+					t.Errorf("Expected p.Y to be 20, got %v", pInst.FieldValues["Y"])
+				}
+			},
+		},
+		{
+			name: "Unkeyed struct literal with embedded struct",
+			input: `
+package main
+type Point struct { X int; Y int }
+type Circle struct { Point; Radius int }
+var c Circle
+func main() {
+	// Fields are flattened in order: X, Y, Radius
+	c = Circle{1, 2, 5}
+}
+`,
+			checkEnv: func(t *testing.T, env *Environment, i *Interpreter) {
+				cObj, _ := env.Get("c")
+				cInst, _ := cObj.(*StructInstance)
+				if r, ok := cInst.FieldValues["Radius"].(*Integer); !ok || r.Value != 5 {
+					t.Errorf("Expected c.Radius to be 5, got %v", cInst.FieldValues["Radius"])
+				}
+				pInst, ok := cInst.EmbeddedValues["Point"]
+				if !ok {
+					t.Fatalf("Embedded Point not found in Circle instance")
+				}
+				if x, ok := pInst.FieldValues["X"].(*Integer); !ok || x.Value != 1 {
+					t.Errorf("Expected c.X (promoted) to be 1, got %v", pInst.FieldValues["X"])
+				}
+				if y, ok := pInst.FieldValues["Y"].(*Integer); !ok || y.Value != 2 {
+					t.Errorf("Expected c.Y (promoted) to be 2, got %v", pInst.FieldValues["Y"])
+				}
+			},
+		},
+		{
+			name: "Error: Too few values in unkeyed literal",
+			input: `
+package main
+type Point struct { X int; Y int }
+func main() {
+	_ = Point{10}
+}
+`,
+			expectedError: "wrong number of values in unkeyed struct literal for 'Point': expected 2, got 1",
+		},
+		{
+			name: "Error: Too many values in unkeyed literal",
+			input: `
+package main
+type Point struct { X int; Y int }
+func main() {
+	_ = Point{10, 20, 30}
+}
+`,
+			expectedError: "wrong number of values in unkeyed struct literal for 'Point': expected 2, got 3",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			i := NewInterpreter()
+			dummyFilePath := "dummy_unkeyed_struct_test_" + strings.ReplaceAll(tt.name, " ", "_") + ".go"
+			err := os.WriteFile(dummyFilePath, []byte(tt.input), 0644)
+			if err != nil {
+				t.Fatalf("Failed to write dummy input file: %v", err)
+			}
+			defer os.Remove(dummyFilePath)
+
+			err = i.LoadAndRun(context.Background(), dummyFilePath, "main")
+
+			if tt.expectedError != "" {
+				if err == nil {
+					t.Errorf("Expected error containing '%s', but got nil", tt.expectedError)
+				} else if !strings.Contains(err.Error(), tt.expectedError) {
+					t.Errorf("Expected error containing '%s', got: %v", tt.expectedError, err)
+				}
+			} else if err != nil {
+				t.Errorf("Did not expect error, but got: %v", err)
+			}
+
+			if tt.checkEnv != nil {
+				tt.checkEnv(t, i.globalEnv, i)
+			}
+		})
+	}
+}
+
 func TestStructEmbedding(t *testing.T) {
 	tests := []struct {
 		name          string

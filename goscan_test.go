@@ -88,7 +88,7 @@ func TestLazyResolution_Integration(t *testing.T) {
 	}
 
 	// Trigger lazy resolution
-	userDef, err := userField.Type.Resolve(context.Background(), make(map[string]struct{}))
+	userDef, err := s.ResolveType(context.Background(), userField.Type)
 	if err != nil {
 		t.Fatalf("Failed to resolve User field type: %v", err)
 	}
@@ -405,12 +405,12 @@ func TestScannerWithExternalTypeOverrides(t *testing.T) {
 					if !field.Type.IsResolvedByConfig {
 						t.Errorf("Expected field ID of ObjectWithUUID to have IsResolvedByConfig=true")
 					}
-					resolvedType, errResolve := field.Type.Resolve(context.Background(), make(map[string]struct{}))
+					resolvedType, errResolve := s.ResolveType(context.Background(), field.Type)
 					if errResolve != nil {
-						t.Errorf("field.Type.Resolve() for overridden type should not error, got %v", errResolve)
+						t.Errorf("s.ResolveType() for overridden type should not error, got %v", errResolve)
 					}
 					if resolvedType == nil {
-						t.Errorf("field.Type.Resolve() for overridden type should return the synthetic TypeInfo, got nil")
+						t.Errorf("s.ResolveType() for overridden type should return the synthetic TypeInfo, got nil")
 					} else if resolvedType.Name != "UUID" {
 						t.Errorf("Resolved type has wrong name: got %s, want UUID", resolvedType.Name)
 					}

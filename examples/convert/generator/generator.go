@@ -275,7 +275,7 @@ func createFieldMaps(ctx context.Context, s *goscan.Scanner, src, dst *model.Str
 
 	slog.DebugContext(ctx, "Source struct", "name", src.Name)
 	for _, srcField := range src.Fields {
-		_ = resolveFieldType(ctx, srcField.FieldType)
+		_ = resolveFieldType(ctx, s, srcField.FieldType)
 		if srcField.Tag.DstFieldName == "-" {
 			slog.DebugContext(ctx, "src field skipped by `convert:\"-\"`", "name", srcField.Name)
 			continue
@@ -312,7 +312,7 @@ func createFieldMaps(ctx context.Context, s *goscan.Scanner, src, dst *model.Str
 
 		slog.DebugContext(ctx, "src field matched", "src", srcField.Name, "dst", dstField.Name, "reason", reason)
 		delete(unmappedDstFields, dstField.Name)
-		_ = resolveFieldType(ctx, dstField.FieldType)
+		_ = resolveFieldType(ctx, s, dstField.FieldType)
 		maps = append(maps, FieldMap{
 			SrcName:   srcField.Name,
 			DstName:   dstField.Name,
@@ -337,20 +337,21 @@ func normalizeFieldName(name string) string {
 	return strings.ToLower(strings.ReplaceAll(name, "_", ""))
 }
 
-func resolveFieldType(ctx context.Context, ft *scanner.FieldType) error {
+func resolveFieldType(ctx context.Context, s *goscan.Scanner, ft *scanner.FieldType) error {
 	if ft == nil {
 		return nil
 	}
-	if _, err := ft.Resolve(ctx, make(map[string]struct{})); err != nil {
-		return err
+	if _, err := s.ResolveType(ctx, ft); err != nil {
+		// Non-fatal, just log it. The type might not be resolvable in this context.
+		slog.DebugContext(ctx, "could not resolve field type", "type", ft.Name, "error", err.Error())
 	}
 	if ft.Elem != nil {
-		if err := resolveFieldType(ctx, ft.Elem); err != nil {
+		if err := resolveFieldType(ctx, s, ft.Elem); err != nil {
 			return fmt.Errorf("resolving element type: %w", err)
 		}
 	}
 	if ft.MapKey != nil {
-		if err := resolveFieldType(ctx, ft.MapKey); err != nil {
+		if err := resolveFieldType(ctx, s, ft.MapKey); err != nil {
 			return fmt.Errorf("resolving map key type: %w", err)
 		}
 	}

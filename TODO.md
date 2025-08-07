@@ -127,7 +127,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     -   [x] **Isolate `examples/deps-walk` Test Data**: Moved the test data for the `deps-walk` example from the root `testdata` directory to its own `examples/deps-walk/testdata` directory, making the example more self-contained.
     -   [x] **Centralize Path Resolution**: Moved the logic for resolving relative file paths to Go package paths from the `deps-walk` example into the core `locator` package (`locator.ResolvePkgPath`). This makes the functionality reusable for other tools.
 -   **Debuggability and Testing**:
-    -   [-] **Inspect and Dry-Run Modes**:
+    -   [x] **Inspect and Dry-Run Modes**:
         -   [x] **Inspect Mode**: Implemented an `--inspect` flag and corresponding `WithInspect()` option to provide detailed structured logging (`slog`) of the annotation detection process. This helps in debugging why a type is or isn't being processed.
         -   [x] **Dry-Run Mode**: Implemented a `--dry-run` flag and `WithDryRun()` option that prevents file generation, allowing users to preview the output without writing to disk.
         -   [x] **CLI Tool Integration**: Added the `--inspect` and `--dry-run` flags to the following tools:
@@ -137,6 +137,6 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
             -   [x] `examples/deriving-all`
             -   [x] `examples/deps-walk`
         -   [x] **Integration Tests**: Added tests using the `scantest` library to verify the functionality of the new inspect and dry-run modes.
-        -   [ ] **`resolution_path` Logging**: Implement the `resolution_path` field in structured logs to trace how a type was resolved.
+        -   [x] **`resolution_path` Logging**: Implement the `resolution_path` field in structured logs to trace how a type was resolved.
 
 ## To Be Implemented

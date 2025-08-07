@@ -54,9 +54,9 @@ type Handler struct {
 
 		// --- Act ---
 		// Resolve the type of the 'User' field.
-		resolvedType, err := userField.Type.Resolve(ctx, make(map[string]struct{}))
+		resolvedType, err := s.ResolveType(ctx, userField.Type)
 		if err != nil {
-			return fmt.Errorf("Resolve() failed: %w", err)
+			return fmt.Errorf("ResolveType() failed: %w", err)
 		}
 
 		// --- Assert ---
@@ -72,9 +72,9 @@ type Handler struct {
 		}
 
 		// Test for idempotency: resolve again.
-		resolvedType2, err := userField.Type.Resolve(ctx, make(map[string]struct{}))
+		resolvedType2, err := s.ResolveType(ctx, userField.Type)
 		if err != nil {
-			return fmt.Errorf("second Resolve() failed: %w", err)
+			return fmt.Errorf("second ResolveType() failed: %w", err)
 		}
 		if resolvedType2 == nil {
 			return fmt.Errorf("second Resolve() returned nil")
@@ -168,7 +168,7 @@ type User struct {
 
 		// --- Act & Assert ---
 		// 1. Resolve the source profile type
-		srcProfileResolved, err := srcProfileField.Type.Resolve(ctx, make(map[string]struct{}))
+		srcProfileResolved, err := s.ResolveType(ctx, srcProfileField.Type)
 		if err != nil {
 			return fmt.Errorf("resolving source Profile failed: %w", err)
 		}
@@ -183,7 +183,7 @@ type User struct {
 		}
 
 		// 2. Resolve the destination profile type
-		dstProfileResolved, err := dstProfileField.Type.Resolve(ctx, make(map[string]struct{}))
+		dstProfileResolved, err := s.ResolveType(ctx, dstProfileField.Type)
 		if err != nil {
 			return fmt.Errorf("resolving destination Profile failed: %w", err)
 		}

@@ -1,4 +1,4 @@
-# Prompt for Updating TODO.md from Plan Documents
+### Prompt for Updating TODO.md from Plan Documents
 
 **Task:** Update the `TODO.md` file by transcribing unimplemented tasks from all `docs/plan-*.md` documents.
 
@@ -27,3 +27,24 @@
     -   Each task should be a list item with a checkbox: `- [ ] Task description`.
 
 By following these instructions, the `TODO.md` file will be correctly updated to reflect the current project status based on the detailed planning documents, while respecting the existing structure and manual content of the file.
+
+---
+
+### Prompt for Finalizing Plan Documents
+
+When all tasks defined in a `plan-*.md` document are completed, follow these steps to update the documentation:
+
+1.  **Update the completed `plan-*.md`**:
+    *   Following the format of `docs/plan-overlay.md`, add the following note at the beginning of the completed `plan-*.md` file.
+
+    ```markdown
+    > [!NOTE]
+    > This feature has been implemented.
+    ```
+
+2.  **Update `TODO.md`**:
+    *   Mark the relevant task list items as complete (e.g., change `[ ]` to `[x]`).
+    *   If the task was the last remaining item in a feature section, move the entire section from "To Be Implemented" to "Implemented".
+
+3.  **Handling Incomplete Tasks**:
+    *   If you were unable to complete all tasks in the `plan-*.md`, please add the remaining tasks as sub-tasks in `TODO.md`.

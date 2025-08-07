@@ -268,10 +268,16 @@ func TestFieldType_Resolve(t *testing.T) {
 		TypeName:       "User",
 	}
 
-	// First call to Resolve should trigger the resolver
-	def, err := ft.Resolve(context.Background(), make(map[string]struct{}))
+	// Create a scanner to use its ResolveType method, which sets up the context
+	s, err := New(token.NewFileSet(), nil, nil, "example.com/test", "/tmp", resolver, false, nil)
 	if err != nil {
-		t.Fatalf("Resolve() failed: %v", err)
+		t.Fatalf("scanner.New failed: %v", err)
+	}
+
+	// First call to Resolve should trigger the resolver
+	def, err := s.ResolveType(context.Background(), ft)
+	if err != nil {
+		t.Fatalf("ResolveType() failed: %v", err)
 	}
 	if def.Name != "User" {
 		t.Errorf("Expected resolved type to be 'User', got %q", def.Name)
@@ -282,9 +288,9 @@ func TestFieldType_Resolve(t *testing.T) {
 
 	// Second call should use the cache (we can't easily test this, but we can nil out the func)
 	resolver.ScanPackageByImportFunc = nil // To ensure resolver is not called again
-	def2, err := ft.Resolve(context.Background(), make(map[string]struct{}))
+	def2, err := s.ResolveType(context.Background(), ft)
 	if err != nil {
-		t.Fatalf("Second Resolve() call failed: %v", err)
+		t.Fatalf("Second ResolveType() call failed: %v", err)
 	}
 	if def2.Name != "User" {
 		t.Errorf("Expected cached resolved type to be 'User', got %q", def2.Name)
@@ -334,9 +340,9 @@ func TestResolve_DirectRecursion(t *testing.T) {
 	// Attempt to resolve the recursive field.
 	// With cycle detection, this should not cause a stack overflow.
 	// It should return nil, nil because the type is already in the 'resolving' map.
-	resolvedType, err := nextField.Type.Resolve(context.Background(), make(map[string]struct{}))
+	resolvedType, err := s.ResolveType(context.Background(), nextField.Type)
 	if err != nil {
-		t.Fatalf("Resolve() for recursive type failed with error: %v", err)
+		t.Fatalf("ResolveType() for recursive type failed with error: %v", err)
 	}
 	if resolvedType != nil {
 		// In the new logic, a cycle returns (nil, nil), and the caller is expected to handle it.
@@ -408,10 +414,9 @@ func TestResolve_MutualRecursion(t *testing.T) {
 
 	// Now, attempt to resolve B. This will trigger a scan of pkg_b, which will in turn
 	// try to resolve A from pkg_a, creating a cycle.
-	resolving := make(map[string]struct{})
-	resolvedType, err := fieldB.Type.Resolve(context.Background(), resolving)
+	resolvedType, err := s.ResolveType(context.Background(), fieldB.Type)
 	if err != nil {
-		t.Fatalf("Resolve() for mutual recursion failed: %v", err)
+		t.Fatalf("ResolveType() for mutual recursion failed: %v", err)
 	}
 
 	// The initial resolution of B from A should succeed and return a TypeInfo for B.
@@ -442,7 +447,11 @@ func TestResolve_MutualRecursion(t *testing.T) {
 
 	// Now, explicitly resolve the field A within B. This call should detect the cycle
 	// and correctly link the definition back to the already-existing `typeA`.
-	_, err = fieldAInB.Type.Resolve(context.Background(), resolving) // Pass the same resolving map
+	// We need to use the context from the resolved type B to continue the resolution chain.
+	if resolvedType.ResolutionContext == nil {
+		t.Fatalf("ResolutionContext on resolved type B is nil")
+	}
+	_, err = fieldAInB.Type.Resolve(resolvedType.ResolutionContext)
 	if err != nil {
 		t.Fatalf("Resolve() for field A within B failed unexpectedly: %v", err)
 	}

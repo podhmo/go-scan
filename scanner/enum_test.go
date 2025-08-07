@@ -127,9 +127,9 @@ func TestEnumScanning_LazyLoaded(t *testing.T) {
 	}
 
 	// 3. Resolve the field's type. This should trigger the lazy-loading of the 'models' package.
-	resolvedType, err := statusField.Type.Resolve(ctx, make(map[string]struct{}))
+	resolvedType, err := s.ResolveType(ctx, statusField.Type)
 	if err != nil {
-		t.Fatalf("Resolve() for models.Status failed: %v", err)
+		t.Fatalf("ResolveType() for models.Status failed: %v", err)
 	}
 
 	// 4. Assert that the resolved type has the correct enum information.

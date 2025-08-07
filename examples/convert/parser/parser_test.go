@@ -167,7 +167,7 @@ type MyTime time.Time
 	opts := []cmp.Option{
 		cmp.AllowUnexported(model.ParsedInfo{}, model.ConversionPair{}, model.StructInfo{}, model.FieldInfo{}),
 		cmpopts.IgnoreUnexported(scanner.TypeInfo{}, token.FileSet{}),
-		cmpopts.IgnoreFields(scanner.TypeInfo{}, "PkgPath", "FilePath", "Doc", "Kind", "Node", "Struct", "Func", "Interface", "Underlying", "TypeParams", "Inspect", "Logger"),
+		cmpopts.IgnoreFields(scanner.TypeInfo{}, "PkgPath", "FilePath", "Doc", "Kind", "Node", "Struct", "Func", "Interface", "Underlying", "TypeParams", "Inspect", "Logger", "ResolutionContext"),
 		cmpopts.IgnoreFields(model.ParsedInfo{}, "NamedTypes", "Structs"), // check them separately
 		cmpopts.IgnoreFields(model.ConversionPair{}, "SrcTypeInfo", "DstTypeInfo"),
 		cmpopts.IgnoreFields(model.TypeRule{}, "SrcTypeInfo", "DstTypeInfo"),

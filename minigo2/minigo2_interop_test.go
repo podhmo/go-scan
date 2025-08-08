@@ -58,6 +58,56 @@ var result = myStruct
 			expectedType: object.INTEGER_OBJ,
 			expectedVal:  int64(42),
 		},
+		{
+			name:   "use injected string in expression",
+			script: `package main; var result = myStr + " world"`,
+			globals: map[string]any{
+				"myStr": "hello",
+			},
+			expectedType: object.STRING_OBJ,
+			expectedVal:  "hello world",
+		},
+		{
+			name:   "use injected bool in expression (true)",
+			script: `package main; var result = myBool == true`,
+			globals: map[string]any{
+				"myBool": true,
+			},
+			expectedType: object.BOOLEAN_OBJ,
+			expectedVal:  true,
+		},
+		{
+			name: "use injected bool in conditional (if)",
+			script: `package main
+var final = func() string {
+	if myBool {
+		return "updated"
+	}
+	return "default"
+}()
+`,
+			globals: map[string]any{
+				"myBool": true,
+			},
+			expectedType: object.STRING_OBJ,
+			expectedVal:  "updated",
+		},
+		{
+			name: "use injected bool in conditional (else)",
+			script: `package main
+var final = func() string {
+	if myBool {
+		return "updated"
+	}
+	return "from else"
+}()
+`,
+			globals: map[string]any{
+				"myBool": false,
+			},
+			expectedType: object.STRING_OBJ,
+			expectedVal:  "from else",
+		},
 	}
 
 	for _, tt := range tests {
@@ -105,6 +155,30 @@ var result = myStruct
 				}
 				if intVal.Value != expected {
 					t.Errorf("wrong Integer value. got=%d, want=%d", intVal.Value, expected)
+				}
+			case object.STRING_OBJ:
+				strVal, ok := res.Value.(*object.String)
+				if !ok {
+					t.Fatalf("result is not a String, but a %T", res.Value)
+				}
+				expected, ok := tt.expectedVal.(string)
+				if !ok {
+					t.Fatalf("expectedVal for STRING_OBJ is not a string, but %T", tt.expectedVal)
+				}
+				if strVal.Value != expected {
+					t.Errorf("wrong String value. got=%q, want=%q", strVal.Value, expected)
+				}
+			case object.BOOLEAN_OBJ:
+				boolVal, ok := res.Value.(*object.Boolean)
+				if !ok {
+					t.Fatalf("result is not a Boolean, but a %T", res.Value)
+				}
+				expected, ok := tt.expectedVal.(bool)
+				if !ok {
+					t.Fatalf("expectedVal for BOOLEAN_OBJ is not a bool, but %T", tt.expectedVal)
+				}
+				if boolVal.Value != expected {
+					t.Errorf("wrong Boolean value. got=%t, want=%t", boolVal.Value, expected)
 				}
 			default:
 				t.Fatalf("unhandled expected type in test: %s", tt.expectedType)

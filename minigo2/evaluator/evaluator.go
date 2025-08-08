@@ -300,6 +300,78 @@ func (e *Evaluator) evalIntegerInfixExpression(node ast.Node, operator string, l
 	}
 }
 
+// unwrapToString is a helper to extract a string from a String or a GoValue.
+func (e *Evaluator) unwrapToString(obj object.Object) (string, bool) {
+	switch o := obj.(type) {
+	case *object.String:
+		return o.Value, true
+	case *object.GoValue:
+		if o.Value.Kind() == reflect.String {
+			return o.Value.String(), true
+		}
+	}
+	return "", false
+}
+
+// evalMixedStringInfixExpression handles infix expressions for combinations of String and GoValue(string).
+func (e *Evaluator) evalMixedStringInfixExpression(node ast.Node, operator string, left, right object.Object) object.Object {
+	leftVal, ok1 := e.unwrapToString(left)
+	if !ok1 {
+		// If unwrap fails, it's not a string, so we can't proceed.
+		// Fallback to the generic error message in evalInfixExpression.
+		return e.newError(node.Pos(), "type mismatch: %s %s %s", left.Type(), operator, right.Type())
+	}
+	rightVal, ok2 := e.unwrapToString(right)
+	if !ok2 {
+		return e.newError(node.Pos(), "type mismatch: %s %s %s", left.Type(), operator, right.Type())
+	}
+
+	switch operator {
+	case "+":
+		return &object.String{Value: leftVal + rightVal}
+	case "==":
+		return e.nativeBoolToBooleanObject(leftVal == rightVal)
+	case "!=":
+		return e.nativeBoolToBooleanObject(leftVal != rightVal)
+	default:
+		return e.newError(node.Pos(), "unknown operator for strings: %s", operator)
+	}
+}
+
+// unwrapToBool is a helper to extract a bool from a Boolean or a GoValue.
+func (e *Evaluator) unwrapToBool(obj object.Object) (bool, bool) {
+	switch o := obj.(type) {
+	case *object.Boolean:
+		return o.Value, true
+	case *object.GoValue:
+		if o.Value.Kind() == reflect.Bool {
+			return o.Value.Bool(), true
+		}
+	}
+	return false, false
+}
+
+// evalMixedBoolInfixExpression handles infix expressions for combinations of Boolean and GoValue(bool).
+func (e *Evaluator) evalMixedBoolInfixExpression(node ast.Node, operator string, left, right object.Object) object.Object {
+	leftVal, ok1 := e.unwrapToBool(left)
+	if !ok1 {
+		return e.newError(node.Pos(), "type mismatch: %s %s %s", left.Type(), operator, right.Type())
+	}
+	rightVal, ok2 := e.unwrapToBool(right)
+	if !ok2 {
+		return e.newError(node.Pos(), "type mismatch: %s %s %s", left.Type(), operator, right.Type())
+	}
+
+	switch operator {
+	case "==":
+		return e.nativeBoolToBooleanObject(leftVal == rightVal)
+	case "!=":
+		return e.nativeBoolToBooleanObject(leftVal != rightVal)
+	default:
+		return e.newError(node.Pos(), "unknown operator for booleans: %s", operator)
+	}
+}
+
 // evalStringInfixExpression evaluates infix expressions for strings.
 func (e *Evaluator) evalStringInfixExpression(node ast.Node, operator string, left, right object.Object) object.Object {
 	leftVal := left.(*object.String).Value
@@ -330,6 +402,17 @@ func (e *Evaluator) evalInfixExpression(node ast.Node, operator string, left, ri
 
 	case left.Type() == object.STRING_OBJ && right.Type() == object.STRING_OBJ:
 		return e.evalStringInfixExpression(node, operator, left, right)
+
+	// Handle operations with injected Go values (strings).
+	case (left.Type() == object.STRING_OBJ || left.Type() == object.GO_VALUE_OBJ) &&
+		(right.Type() == object.STRING_OBJ || right.Type() == object.GO_VALUE_OBJ):
+		return e.evalMixedStringInfixExpression(node, operator, left, right)
+
+	// Handle operations with injected Go values (booleans).
+	case (left.Type() == object.BOOLEAN_OBJ || left.Type() == object.GO_VALUE_OBJ) &&
+		(right.Type() == object.BOOLEAN_OBJ || right.Type() == object.GO_VALUE_OBJ):
+		return e.evalMixedBoolInfixExpression(node, operator, left, right)
+
 	case operator == "==":
 		return e.nativeBoolToBooleanObject(left == right)
 	case operator == "!=":
@@ -343,10 +426,19 @@ func (e *Evaluator) evalInfixExpression(node ast.Node, operator string, left, ri
 
 // isTruthy checks if an object is considered true in a boolean context.
 func (e *Evaluator) isTruthy(obj object.Object) bool {
-	switch obj {
-	case object.NULL, object.FALSE:
+	switch o := obj.(type) {
+	case *object.Boolean:
+		return o.Value
+	case *object.GoValue:
+		if val, ok := e.unwrapToBool(o); ok {
+			return val
+		}
+		// If it's a GoValue but not a bool, consider it truthy if it's not nil/zero.
+		return o.Value.IsValid() && !o.Value.IsZero()
+	case *object.Null:
 		return false
 	default:
+		// Any other object type (Integer, String, etc.) is considered truthy.
 		return !isError(obj)
 	}
 }

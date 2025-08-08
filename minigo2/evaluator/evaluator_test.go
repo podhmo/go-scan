@@ -741,15 +741,15 @@ func TestErrorHandling(t *testing.T) {
 		},
 		{
 			"true + false;",
-			"unknown operator: BOOLEAN + BOOLEAN",
+			"unknown operator for booleans: +",
 		},
 		{
 			"5; true + false; 5",
-			"unknown operator: BOOLEAN + BOOLEAN",
+			"unknown operator for booleans: +",
 		},
 		{
 			"if (10 > 1) { true + false; }",
-			"unknown operator: BOOLEAN + BOOLEAN",
+			"unknown operator for booleans: +",
 		},
 		{
 			`
@@ -760,7 +760,7 @@ func TestErrorHandling(t *testing.T) {
 				return 1;
 			}
 			`,
-			"unknown operator: BOOLEAN + BOOLEAN",
+			"unknown operator for booleans: +",
 		},
 		{
 			"foobar",

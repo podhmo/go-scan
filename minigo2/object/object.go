@@ -9,6 +9,8 @@ import (
 	"hash/fnv"
 	"os"
 	"strings"
+
+	"github.com/podhmo/go-scan/scanner"
 )
 
 // ObjectType is a string representation of an object's type.
@@ -31,6 +33,7 @@ const (
 	ARRAY_OBJ             ObjectType = "ARRAY"
 	MAP_OBJ               ObjectType = "MAP"
 	TUPLE_OBJ             ObjectType = "TUPLE"
+	PACKAGE_OBJ           ObjectType = "PACKAGE"
 	ERROR_OBJ             ObjectType = "ERROR"
 )
 
@@ -395,6 +398,24 @@ func (t *Tuple) Inspect() string {
 	out.WriteString(")")
 
 	return out.String()
+}
+
+// --- Package Object ---
+
+// Package represents an imported Go package.
+type Package struct {
+	Name    string
+	Path    string
+	Info    *scanner.PackageInfo
+	Members map[string]Object
+}
+
+// Type returns the type of the Package object.
+func (p *Package) Type() ObjectType { return PACKAGE_OBJ }
+
+// Inspect returns a string representation of the package.
+func (p *Package) Inspect() string {
+	return fmt.Sprintf("package %s (%q)", p.Name, p.Path)
 }
 
 // --- Error Object ---

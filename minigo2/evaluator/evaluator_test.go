@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/minigo2/object"
 )
 
@@ -51,7 +52,11 @@ func testEval(t *testing.T, input string) object.Object {
 		return nil
 	}
 
-	eval := New(fset)
+	scanner, err := goscan.New()
+	if err != nil {
+		t.Fatalf("failed to create scanner: %v", err)
+	}
+	eval := New(fset, scanner)
 	env := object.NewEnvironment()
 	evaluated := eval.Eval(mainFunc.Body, env)
 	if retVal, ok := evaluated.(*object.ReturnValue); ok {

@@ -6,9 +6,31 @@ import (
 	"go/parser"
 	"go/token"
 
+	"github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/minigo2/evaluator"
 	"github.com/podhmo/go-scan/minigo2/object"
 )
+
+// Interpreter is the main entry point for the minigo2 language.
+// It holds the state of the interpreter, including the scanner for package resolution
+// and the root environment for script execution.
+type Interpreter struct {
+	scanner *goscan.Scanner
+	env     *object.Environment
+}
+
+// NewInterpreter creates a new interpreter instance.
+// It initializes a scanner and a root environment.
+func NewInterpreter(options ...goscan.ScannerOption) (*Interpreter, error) {
+	scanner, err := goscan.New(options...)
+	if err != nil {
+		return nil, fmt.Errorf("initializing scanner: %w", err)
+	}
+	return &Interpreter{
+		scanner: scanner,
+		env:     object.NewEnvironment(),
+	}, nil
+}
 
 // Options configures the interpreter environment.
 type Options struct {
@@ -25,22 +47,24 @@ type Result struct {
 	Value object.Object
 }
 
-// Run executes a minigo2 script. It evaluates the entire script from top to bottom.
-func Run(ctx context.Context, opts Options) (*Result, error) {
+// Eval executes a minigo2 script. It evaluates the entire script from top to bottom
+// within the interpreter's persistent environment.
+func (i *Interpreter) Eval(ctx context.Context, opts Options) (*Result, error) {
 	fset := token.NewFileSet()
 	node, err := parser.ParseFile(fset, opts.Filename, opts.Source, parser.ParseComments)
 	if err != nil {
 		return nil, fmt.Errorf("parsing script: %w", err)
 	}
 
-	eval := evaluator.New(fset)
-	env := object.NewEnvironment()
-
-	evaluated := eval.Eval(node, env)
-	if evaluated != nil && evaluated.Type() == object.ERROR_OBJ {
-		// The error object's Inspect() method now returns a fully formatted string.
-		return nil, fmt.Errorf("%s", evaluated.Inspect())
+	eval := evaluator.New(fset, i.scanner)
+	var lastVal object.Object
+	for _, decl := range node.Decls {
+		lastVal = eval.Eval(decl, i.env)
+		if lastVal != nil && lastVal.Type() == object.ERROR_OBJ {
+			// The error object's Inspect() method now returns a fully formatted string.
+			return nil, fmt.Errorf("%s", lastVal.Inspect())
+		}
 	}
 
-	return &Result{Value: evaluated}, nil
+	return &Result{Value: lastVal}, nil
 }

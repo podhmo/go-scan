@@ -181,11 +181,22 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] **Support for variadic arguments** in function definitions and calls.
 - [x] **Support for struct embedding**.
 - [x] **Support for multiple return values** from functions.
-- [ ] Create the main `Interpreter` struct that holds a `goscan.Scanner`.
-- [ ] Implement the logic to handle `import` statements and load symbols from external Go packages.
+- [x] Create the main `Interpreter` struct that holds a `goscan.Scanner`.
+- [x] Implement the logic to handle `import` statements and load symbols from external Go packages.
 - [ ] Implement the `object.GoValue` to wrap `reflect.Value`, allowing Go values to be injected into the script.
 - [ ] Implement the logic to wrap Go functions as `BuiltinFunction` objects.
+- [ ] Support accessing imported variables and constants (e.g., `math.Pi`).
+- [ ] **Advanced Import Handling**:
+    - [ ] Ensure packages are loaded only once, even with complex indirect imports.
+    - [ ] Detect and report circular import errors.
+    - [ ] Support dot imports (`import . "fmt"`).
+    - [ ] Support blank imports (`import _ "driver"`) and associated `init()` execution.
 - [ ] Implement the `Result.As(target any)` method for unmarshaling script results back into Go structs.
+- [ ] **Method and Interface Support**:
+    - [ ] Support method definitions (`func (r Receiver) MethodName() {}`).
+    - [ ] Support method calls on struct instances (`instance.Method()`).
+    - [ ] Support interface definitions (`type MyInterface interface { ... }`).
+    - [ ] Support dynamic dispatch of method calls through interface variables.
 - [ ] Thoroughly test all features, especially pointer handling and the Go interop layer.
 - [ ] Write comprehensive documentation for the API, supported language features, and usage examples.
 - [ ] Ensure `make format` and `make test` pass cleanly.

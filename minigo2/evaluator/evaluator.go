@@ -7,6 +7,7 @@ import (
 	"go/token"
 	"reflect"
 	"strconv"
+	"strings"
 
 	"github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/minigo2/object"
@@ -1180,21 +1181,22 @@ func (e *Evaluator) evalGenDecl(n *ast.GenDecl, env *object.Environment) object.
 				return e.newError(importSpec.Path.Pos(), "invalid import path: %v", err)
 			}
 
-			pkgInfo, err := e.scanner.ScanPackageByImport(context.Background(), path)
-			if err != nil {
-				return e.newError(importSpec.Path.Pos(), "could not import package %q: %v", path, err)
-			}
-
-			pkgName := pkgInfo.Name
+			var pkgName string
 			if importSpec.Name != nil {
 				pkgName = importSpec.Name.Name
+			} else {
+				// Heuristic: use the last part of the import path as the package name.
+				// This is what `goimports` does and is generally expected.
+				parts := strings.Split(path, "/")
+				pkgName = parts[len(parts)-1]
 			}
 
+			// Create a proxy package object. The actual symbols will be loaded on-demand.
 			pkgObj := &object.Package{
-				Name:    pkgInfo.Name, // The real package name
+				Name:    pkgName,
 				Path:    path,
-				Info:    pkgInfo,
-				Members: make(map[string]object.Object), // Lazy loaded
+				Info:    nil, // Mark as not loaded yet
+				Members: make(map[string]object.Object),
 			}
 			env.Set(pkgName, pkgObj)
 		}
@@ -1551,6 +1553,41 @@ func (e *Evaluator) constantInfoToObject(c *goscan.ConstantInfo) (object.Object,
 	return nil, fmt.Errorf("unsupported or malformed constant value: %q", c.Value)
 }
 
+// findSymbolInPackageInfo searches for a symbol within a pre-loaded PackageInfo.
+// It does not trigger new scans. It returns the found object and a boolean.
+func (e *Evaluator) findSymbolInPackageInfo(pkgInfo *goscan.Package, symbolName string) (object.Object, bool) {
+	// Look in functions
+	for _, fn := range pkgInfo.Functions {
+		if fn.Name == symbolName {
+			b := &object.Builtin{
+				Fn: func(fset *token.FileSet, pos token.Pos, args ...object.Object) object.Object {
+					// This is a placeholder. The real implementation will call the native Go function.
+					return object.NULL
+				},
+			}
+			return b, true
+		}
+	}
+
+	// Look in constants
+	for _, c := range pkgInfo.Constants {
+		if c.Name == symbolName {
+			obj, err := e.constantInfoToObject(c)
+			if err != nil {
+				// Return an error object instead of an error, to fit the function signature.
+				return e.newError(token.NoPos, "could not convert constant %q: %v", symbolName, err), true
+			}
+			return obj, true
+		}
+	}
+
+	// Note: Types are not handled here as values yet. They are resolved in other parts
+	// of the evaluator like `evalCompositeLit`. This could be extended if `pkg.MyType`
+	// needs to be treated as a first-class object.
+
+	return nil, false
+}
+
 func (e *Evaluator) evalSelectorExpr(n *ast.SelectorExpr, env *object.Environment) object.Object {
 	left := e.Eval(n.X, env)
 	if isError(left) {
@@ -1560,40 +1597,45 @@ func (e *Evaluator) evalSelectorExpr(n *ast.SelectorExpr, env *object.Environmen
 	switch l := left.(type) {
 	case *object.Package:
 		memberName := n.Sel.Name
-		// Check cache first
+		// 1. Check member cache first.
 		if member, ok := l.Members[memberName]; ok {
 			return member
 		}
 
-		// Look up in functions
-		for _, fn := range l.Info.Functions {
-			if fn.Name == memberName {
-				// For now, we just create a placeholder Builtin.
-				// The real implementation will need to wrap the Go function.
-				b := &object.Builtin{
-					Fn: func(fset *token.FileSet, pos token.Pos, args ...object.Object) object.Object {
-						// This is a placeholder. The real implementation will call the native Go function.
-						return object.NULL
-					},
+		// 2. Check already loaded info.
+		if l.Info != nil {
+			member, found := e.findSymbolInPackageInfo(l.Info, memberName)
+			if found {
+				if err, isErr := member.(*object.Error); isErr {
+					return err // Propagate conversion errors
 				}
-				l.Members[memberName] = b // Cache it
-				return b
+				l.Members[memberName] = member // Cache it
+				return member
 			}
 		}
 
-		// Look up in constants
-		for _, c := range l.Info.Constants {
-			if c.Name == memberName {
-				obj, err := e.constantInfoToObject(c)
-				if err != nil {
-					return e.newError(n.Sel.Pos(), "could not convert constant %q: %v", memberName, err)
-				}
-				l.Members[memberName] = obj // Cache it
-				return obj
-			}
+		// 3. Symbol not in loaded info, try scanning remaining files.
+		cumulativePkgInfo, err := e.scanner.FindSymbolInPackage(context.Background(), l.Path, memberName)
+		if err != nil {
+			// Not found in any unscanned files either. It's undefined.
+			return e.newError(n.Sel.Pos(), "undefined: %s.%s", l.Name, memberName)
 		}
 
-		return e.newError(n.Sel.Pos(), "undefined: %s.%s", l.Name, memberName)
+		// 4. Symbol was found. `cumulativePkgInfo` contains everything scanned so far.
+		// Update the package object with the richer info.
+		l.Info = cumulativePkgInfo
+
+		// 5. Now that info is updated, the symbol must be in it. Find it, cache it, return it.
+		member, found := e.findSymbolInPackageInfo(l.Info, memberName)
+		if !found {
+			// This should be an impossible state if FindSymbolInPackage works correctly.
+			return e.newError(n.Sel.Pos(), "internal inconsistency: symbol %s found by scanner but not in final package info", memberName)
+		}
+		if err, isErr := member.(*object.Error); isErr {
+			return err
+		}
+		l.Members[memberName] = member // Cache it
+		return member
 
 	case *object.StructInstance:
 		// Use the new recursive search function.

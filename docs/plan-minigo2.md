@@ -99,6 +99,36 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 - The interpreter will walk the declarations of the script AST. When it encounters an `import` statement, it will use its internal `goscan.Scanner` to lazily `ScanPackageByImport` when a symbol from that package is first accessed (e.g., `fmt.Println`).
 - `go-scan` will handle finding the package, parsing it, and returning its exported symbols (`PackageInfo`), which the interpreter will then load into its environment.
 
+### 3.2.1. Lazy Loading of Imports and Symbols
+
+To improve performance and minimize unnecessary file I/O, `minigo2` will adopt a lazy-loading strategy for package imports. Instead of scanning an entire package upon encountering an `import` statement, the work will be deferred until a symbol from that package is actually accessed. This approach is particularly beneficial for a configuration engine, where scripts may import large packages but only use a few constants or functions.
+
+The mechanism will work as follows:
+
+1.  **Initial `import` Evaluation**: When the interpreter evaluates an `import "path/to/pkg"` statement, it will **not** immediately scan the package. Instead, it will:
+    -   Create a placeholder `object.Package` in the environment.
+    -   This proxy object will store the import path (`"path/to/pkg"`) and the package name (derived heuristically from the path, e.g., `pkg`).
+    -   Crucially, the `Info` field (which holds the `*scanner.PackageInfo`) of this `object.Package` will be `nil`, signaling that its symbols have not yet been loaded.
+
+2.  **Symbol Access Trigger**: The actual loading is triggered when the script attempts to access a member of the package, for example, in an expression like `pkg.Symbol`.
+
+3.  **On-Demand Symbol Resolution**: When the evaluator encounters this selector expression, it will:
+    -   Check if the `pkg` object's `Info` field is `nil`.
+    -   If it is `nil`, it initiates the symbol resolution process. It will invoke a new function in `go-scan`, such as `FindSymbolInPackage(importPath, symbolName)`.
+
+4.  **File-by-File Scanning in `go-scan`**: The `FindSymbolInPackage` function will avoid scanning the entire package at once.
+    -   It will get a list of all `.go` files in the package directory.
+    -   It will scan files one by one (or in small batches), checking for the requested `symbolName`.
+    -   The `go-scan` cache will ensure that files are not parsed more than once across the lifetime of the scanner.
+    -   Once the symbol is found, the scan stops. This prevents the engine from reading and parsing files that are irrelevant to the current operation.
+
+5.  **Populating the Package Object**:
+    -   `go-scan` returns the `*scanner.PackageInfo` derived from the file(s) that were just scanned.
+    -   The interpreter updates the original `object.Package` proxy: its `Info` field is populated with the new information, and the resolved symbol is cached in its `Members` map.
+    -   The evaluator then proceeds with the original expression, now with the loaded symbol.
+
+This lazy strategy ensures that `minigo2` performs only the minimum work required to execute a script, leading to faster startup times and more efficient resource usage, while the underlying `go-scan` caching mechanism keeps subsequent lookups within the same package fast.
+
 ### 3.3. Object System and Go Interop
 
 The `object.Object` interface will be the foundation. The key to interoperability is how we bridge `minigo2` objects and Go's `reflect.Value`.

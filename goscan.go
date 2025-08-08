@@ -21,6 +21,15 @@ import (
 // Package is an alias for scanner.PackageInfo, representing all the extracted information from a single package.
 type Package = scanner.PackageInfo
 
+// TypeInfo is an alias for scanner.TypeInfo.
+type TypeInfo = scanner.TypeInfo
+
+// ConstantInfo is an alias for scanner.ConstantInfo.
+type ConstantInfo = scanner.ConstantInfo
+
+// FunctionInfo is an alias for scanner.FunctionInfo.
+type FunctionInfo = scanner.FunctionInfo
+
 // PackageImports is an alias for scanner.PackageImports.
 type PackageImports = scanner.PackageImports
 

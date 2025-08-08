@@ -31,7 +31,7 @@ var x = 1 + 2`
 		t.Fatalf("Eval() failed: %v", err)
 	}
 
-	val, ok := i.env.Get("x")
+	val, ok := i.Env.Get("x")
 	if !ok {
 		t.Fatalf("variable 'x' not found in environment")
 	}
@@ -65,7 +65,7 @@ var x = fmt.Println
 		t.Fatalf("Eval() failed: %v", err)
 	}
 
-	val, ok := i.env.Get("x")
+	val, ok := i.Env.Get("x")
 	if !ok {
 		t.Fatalf("variable 'x' not found in environment")
 	}

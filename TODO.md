@@ -98,7 +98,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     -   Fixed the underlying scanner and generator bugs that caused the `make e2e` command to fail.
     -   The `go install` command in the `e2e` target has been updated to `go build`.
     -   The main `test` target now incorporates the `e2e` tests.
--   **Enum-like Constant Scanning**: Implemented scanning for idiomatic Go enums (a custom type with a group of related constants). This includes package-level discovery and linking constants to their type, and it correctly handles `iota`. The feature is detailed in [docs/plan-scan-enum.md](./docs/plan-scan-enum.md).
+-   **Enum-like Constant Scanning**: Implemented scanning for idiomatic Go enums (a custom type with a group of related constants). This includes package-level discovery and linking constants to their type, and it now correctly handles implicit `iota` values. The feature is detailed in [docs/plan-scan-enum.md](./docs/plan-scan-enum.md).
     -   [x] Modify `scanner/models.go` to support enum members.
     -   [x] Implement Package-Level Discovery for enums.
     -   [x] Implement Lazy Symbol-Based Lookup for enums (via the existing package resolver).
@@ -192,9 +192,9 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     - [x] Support operations on injected `slice` values (e.g., `len()`, indexing, `for...range`).
     - [x] Support operations on injected `map` values (e.g., indexing, `for...range`).
     - [x] Support field access and method calls on injected `struct` values.
-- [ ] **Underlying Type Handling**: Add an option or default behavior to treat Go `enum` types (e.g., `type MyEnum int`) as their underlying type within the script, to facilitate sharing constants.
+- [x] **Underlying Type Handling**: Add an option or default behavior to treat Go `enum` types (e.g., `type MyEnum int`) as their underlying type within the script, to facilitate sharing constants.
 - [ ] Implement the logic to wrap Go functions as `BuiltinFunction` objects.
-- [ ] Support accessing imported variables and constants (e.g., `math.Pi`).
+- [x] Support accessing imported variables and constants (e.g., `math.Pi`).
 - [ ] **Advanced Import Handling**:
     - [ ] Ensure packages are loaded only once, even with complex indirect imports.
     - [ ] Detect and report circular import errors.

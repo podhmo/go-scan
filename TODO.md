@@ -178,7 +178,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] Implement the dereference operator (`*`) to get the value a pointer points to.
 - [x] Support pointer-to-struct field access (e.g., `ptr.Field`).
 - [x] Support `new()` built-in function.
-- [ ] **Support for variadic arguments** in function definitions and calls.
+- [x] **Support for variadic arguments** in function definitions and calls.
 - [ ] **Support for struct embedding**.
 - [ ] **Support for multiple return values** from functions.
 - [ ] Create the main `Interpreter` struct that holds a `goscan.Scanner`.

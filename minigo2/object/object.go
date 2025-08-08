@@ -190,9 +190,19 @@ func (rv *ReturnValue) Inspect() string { return rv.Value.Inspect() }
 // Function represents a user-defined function.
 type Function struct {
 	Name       *ast.Ident
-	Parameters []*ast.Ident
+	Parameters *ast.FieldList
 	Body       *ast.BlockStmt
 	Env        *Environment
+}
+
+// IsVariadic returns true if the function is variadic.
+func (f *Function) IsVariadic() bool {
+	if f.Parameters == nil || len(f.Parameters.List) == 0 {
+		return false
+	}
+	lastParam := f.Parameters.List[len(f.Parameters.List)-1]
+	_, ok := lastParam.Type.(*ast.Ellipsis)
+	return ok
 }
 
 // Type returns the type of the Function object.
@@ -203,11 +213,23 @@ func (f *Function) Inspect() string {
 	var out bytes.Buffer
 
 	params := []string{}
-	for _, p := range f.Parameters {
-		params = append(params, p.String())
+	if f.Parameters != nil {
+		for _, p := range f.Parameters.List {
+			paramStr := []string{}
+			for _, name := range p.Names {
+				paramStr = append(paramStr, name.String())
+			}
+			// This is a simplified representation; we don't show the type.
+			// A more advanced version might use format.Node.
+			params = append(params, strings.Join(paramStr, ", "))
+		}
 	}
 
 	out.WriteString("func")
+	if f.Name != nil {
+		out.WriteString(" ")
+		out.WriteString(f.Name.String())
+	}
 	out.WriteString("(")
 	out.WriteString(strings.Join(params, ", "))
 	out.WriteString(") { ... }")

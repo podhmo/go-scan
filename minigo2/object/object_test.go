@@ -6,32 +6,32 @@ import (
 
 func TestObjectTypes(t *testing.T) {
 	tests := []struct {
-		obj      Object
+		obj             Object
 		expectedType    ObjectType
 		expectedInspect string
 	}{
 		{
-			obj:      &Integer{Value: 123},
+			obj:             &Integer{Value: 123},
 			expectedType:    INTEGER_OBJ,
 			expectedInspect: "123",
 		},
 		{
-			obj:      &String{Value: "hello"},
+			obj:             &String{Value: "hello"},
 			expectedType:    STRING_OBJ,
 			expectedInspect: "hello",
 		},
 		{
-			obj:      TRUE,
+			obj:             TRUE,
 			expectedType:    BOOLEAN_OBJ,
 			expectedInspect: "true",
 		},
 		{
-			obj:      FALSE,
+			obj:             FALSE,
 			expectedType:    BOOLEAN_OBJ,
 			expectedInspect: "false",
 		},
 		{
-			obj:      NULL,
+			obj:             NULL,
 			expectedType:    NULL_OBJ,
 			expectedInspect: "null",
 		},

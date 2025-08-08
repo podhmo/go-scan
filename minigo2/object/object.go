@@ -46,9 +46,9 @@ type HashKey struct {
 
 // CallFrame represents a single frame in the call stack.
 type CallFrame struct {
-	Pos        token.Pos
-	Function   string // Name of the function
-	IsBuiltin  bool   // Whether the function is a Go builtin or user-defined
+	Pos       token.Pos
+	Function  string // Name of the function
+	IsBuiltin bool   // Whether the function is a Go builtin or user-defined
 }
 
 // Format formats the call frame into a readable string.
@@ -67,7 +67,6 @@ func (cf *CallFrame) Format(fset *token.FileSet) string {
 
 	return fmt.Sprintf("\t%s:%d:%d:\tin %s%s", position.Filename, position.Line, position.Column, funcName, sourceLine)
 }
-
 
 // Object is the interface that all value types in our interpreter will implement.
 type Object interface {

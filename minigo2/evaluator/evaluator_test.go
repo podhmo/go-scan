@@ -190,6 +190,132 @@ func TestFunctionApplication(t *testing.T) {
 	}
 }
 
+func TestForRangeStatements(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected any
+	}{
+		// Array iteration
+		{
+			`
+			sum := 0;
+			for _, v := range []int{1, 2, 3} {
+				sum = sum + v;
+			}
+			sum
+			`,
+			int64(6),
+		},
+		{
+			`
+			sum := 0;
+			indices := 0;
+			for i, v := range []int{10, 20, 30} {
+				indices = indices + i;
+				sum = sum + v;
+			}
+			sum + indices
+			`,
+			int64(63), // sum=60, indices=3
+		},
+		// String iteration
+		{
+			`
+			sum := 0;
+			for _, r := range "abc" { // runes 'a', 'b', 'c' are 97, 98, 99
+				sum = sum + r;
+			}
+			sum
+			`,
+			int64(97 + 98 + 99),
+		},
+		// Map iteration - order is not guaranteed, so we test existence and sum
+		{
+			`
+			sum := 0;
+			m := map[string]int{"a": 1, "b": 2, "c": 3};
+			for k, v := range m {
+				if k == "a" { sum = sum + v; }
+				if k == "b" { sum = sum + v; }
+				if k == "c" { sum = sum + v; }
+			}
+			sum
+			`,
+			int64(6),
+		},
+		// Break statement
+		{
+			`
+			sum := 0;
+			for _, v := range []int{1, 2, 3, 4, 5} {
+				sum = sum + v;
+				if v == 3 {
+					break;
+				}
+			}
+			sum
+			`,
+			int64(6), // 1 + 2 + 3
+		},
+		// Continue statement
+		{
+			`
+			sum := 0;
+			for _, v := range []int{1, 2, 3, 4, 5} {
+				if v % 2 == 0 {
+					continue;
+				}
+				sum = sum + v;
+			}
+			sum
+			`,
+			int64(9), // 1 + 3 + 5
+		},
+		// Shadowing
+		{
+			`
+			v := 100;
+			sum := 0;
+			for _, v := range []int{1, 2, 3} {
+				sum = sum + v;
+			}
+			sum + v
+			`,
+			int64(106), // sum is 6, outer v is 100
+		},
+		// Empty array
+		{
+			`
+			sum := 1;
+			for _, v := range []int{} {
+				sum = 100;
+			}
+			sum
+			`,
+			int64(1),
+		},
+		// Error case: ranging over integer
+		{
+			`for i := range 123 {}`,
+			"range operator not supported for INTEGER",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			evaluated := testEval(t, tt.input)
+			switch expected := tt.expected.(type) {
+			case int64:
+				testIntegerObject(t, evaluated, expected)
+			case string:
+				testErrorObject(t, evaluated, expected)
+			default:
+				t.Fatalf("unsupported expected type for test: %T", expected)
+			}
+		})
+	}
+}
+
 func TestIndexExpressions(t *testing.T) {
 	tests := []struct {
 		input    string
@@ -306,8 +432,8 @@ func TestMapLiterals(t *testing.T) {
 
 func TestErrorHandling(t *testing.T) {
 	tests := []struct {
-		input           string
-		expected        any // string for single message, []string for multiple substrings
+		input    string
+		expected any // string for single message, []string for multiple substrings
 	}{
 		{
 			"5 + true;",
@@ -782,7 +908,7 @@ func TestLexicalScoping(t *testing.T) {
 		{"var a = 5; { b := 10; }; a;", 5},
 		{"a := 5; { b := a; }; a;", 5},
 		{"var a = 1; { var a = 2; { var a = 3; }; a; }; a;", 1},
-		{"var a = 1; { a = 2; { a = 3; }; a; }; a;", 3},         // nested assignment
+		{"var a = 1; { a = 2; { a = 3; }; a; }; a;", 3}, // nested assignment
 	}
 
 	for _, tt := range tests {

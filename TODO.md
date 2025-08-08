@@ -171,7 +171,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] Support slice and array literals (`[]int{1, 2}`, `[2]int{1, 2}`).
 - [x] Support map literals (`map[string]int{"a": 1}`).
 - [x] Support indexing for slices, arrays, and maps (`arr[0]`, `m["key"]`).
-- [ ] **Implement `for...range` loops** for iterating over slices, arrays, and maps.
+- [x] **Implement `for...range` loops** for iterating over slices, arrays, and maps.
 - [ ] **Implement pointer support**:
 - [ ] Define a `Pointer` object type in the object system.
 - [ ] Implement the address-of operator (`&`) to create pointers to variables.

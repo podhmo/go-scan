@@ -138,11 +138,16 @@ func (e *Evaluator) evalStringInfixExpression(node ast.Node, operator string, le
 	leftVal := left.(*object.String).Value
 	rightVal := right.(*object.String).Value
 
-	if operator != "+" {
+	switch operator {
+	case "+":
+		return &object.String{Value: leftVal + rightVal}
+	case "==":
+		return e.nativeBoolToBooleanObject(leftVal == rightVal)
+	case "!=":
+		return e.nativeBoolToBooleanObject(leftVal != rightVal)
+	default:
 		return e.newError(node.Pos(), "unknown operator: %s %s %s", left.Type(), operator, right.Type())
 	}
-
-	return &object.String{Value: leftVal + rightVal}
 }
 
 // evalInfixExpression dispatches to the correct infix evaluation function based on type.
@@ -257,6 +262,143 @@ func (e *Evaluator) evalForStmt(fs *ast.ForStmt, env *object.Environment) object
 		}
 	}
 
+	return object.NULL
+}
+
+// evalForRangeStmt evaluates a for...range loop.
+func (e *Evaluator) evalForRangeStmt(rs *ast.RangeStmt, env *object.Environment) object.Object {
+	iterable := e.Eval(rs.X, env)
+	if isError(iterable) {
+		return iterable
+	}
+
+	switch iterable := iterable.(type) {
+	case *object.Array:
+		return e.evalRangeArray(rs, iterable, env)
+	case *object.String:
+		return e.evalRangeString(rs, iterable, env)
+	case *object.Map:
+		return e.evalRangeMap(rs, iterable, env)
+	default:
+		return e.newError(rs.X.Pos(), "range operator not supported for %s", iterable.Type())
+	}
+}
+
+func (e *Evaluator) evalRangeArray(rs *ast.RangeStmt, arr *object.Array, env *object.Environment) object.Object {
+	for i, element := range arr.Elements {
+		loopEnv := object.NewEnclosedEnvironment(env)
+		if rs.Key != nil {
+			keyIdent, ok := rs.Key.(*ast.Ident)
+			if !ok {
+				return e.newError(rs.Key.Pos(), "range key must be an identifier")
+			}
+			if keyIdent.Name != "_" {
+				loopEnv.Set(keyIdent.Name, &object.Integer{Value: int64(i)})
+			}
+		}
+		if rs.Value != nil {
+			valueIdent, ok := rs.Value.(*ast.Ident)
+			if !ok {
+				return e.newError(rs.Value.Pos(), "range value must be an identifier")
+			}
+			if valueIdent.Name != "_" {
+				loopEnv.Set(valueIdent.Name, element)
+			}
+		}
+
+		result := e.Eval(rs.Body, loopEnv)
+		if result != nil {
+			rt := result.Type()
+			if rt == object.BREAK_OBJ {
+				break
+			}
+			if rt == object.CONTINUE_OBJ {
+				continue
+			}
+			if rt == object.ERROR_OBJ || rt == object.RETURN_VALUE_OBJ {
+				return result
+			}
+		}
+	}
+	return object.NULL
+}
+
+func (e *Evaluator) evalRangeString(rs *ast.RangeStmt, str *object.String, env *object.Environment) object.Object {
+	for i, r := range str.Value {
+		loopEnv := object.NewEnclosedEnvironment(env)
+		if rs.Key != nil {
+			keyIdent, ok := rs.Key.(*ast.Ident)
+			if !ok {
+				return e.newError(rs.Key.Pos(), "range key must be an identifier")
+			}
+			if keyIdent.Name != "_" {
+				loopEnv.Set(keyIdent.Name, &object.Integer{Value: int64(i)})
+			}
+		}
+		if rs.Value != nil {
+			valueIdent, ok := rs.Value.(*ast.Ident)
+			if !ok {
+				return e.newError(rs.Value.Pos(), "range value must be an identifier")
+			}
+			if valueIdent.Name != "_" {
+				loopEnv.Set(valueIdent.Name, &object.Integer{Value: int64(r)}) // rune is an alias for int32
+			}
+		}
+
+		result := e.Eval(rs.Body, loopEnv)
+		if result != nil {
+			rt := result.Type()
+			if rt == object.BREAK_OBJ {
+				break
+			}
+			if rt == object.CONTINUE_OBJ {
+				continue
+			}
+			if rt == object.ERROR_OBJ || rt == object.RETURN_VALUE_OBJ {
+				return result
+			}
+		}
+	}
+	return object.NULL
+}
+
+func (e *Evaluator) evalRangeMap(rs *ast.RangeStmt, m *object.Map, env *object.Environment) object.Object {
+	// Note: Iteration order over maps is not guaranteed.
+	for _, pair := range m.Pairs {
+		loopEnv := object.NewEnclosedEnvironment(env)
+		if rs.Key != nil {
+			keyIdent, ok := rs.Key.(*ast.Ident)
+			if !ok {
+				return e.newError(rs.Key.Pos(), "range key must be an identifier")
+			}
+			if keyIdent.Name != "_" {
+				loopEnv.Set(keyIdent.Name, pair.Key)
+			}
+		}
+		if rs.Value != nil {
+			valueIdent, ok := rs.Value.(*ast.Ident)
+			if !ok {
+				return e.newError(rs.Value.Pos(), "range value must be an identifier")
+			}
+			if valueIdent.Name != "_" {
+				loopEnv.Set(valueIdent.Name, pair.Value)
+			}
+		}
+
+		result := e.Eval(rs.Body, loopEnv)
+		if result != nil {
+			rt := result.Type()
+			if rt == object.BREAK_OBJ {
+				break
+			}
+			if rt == object.CONTINUE_OBJ {
+				continue
+			}
+			if rt == object.ERROR_OBJ || rt == object.RETURN_VALUE_OBJ {
+				return result
+			}
+		}
+	}
 	return object.NULL
 }
 
@@ -428,6 +570,8 @@ func (e *Evaluator) Eval(node ast.Node, env *object.Environment) object.Object {
 		return e.evalSwitchStmt(n, env)
 	case *ast.ForStmt:
 		return e.evalForStmt(n, env)
+	case *ast.RangeStmt:
+		return e.evalForRangeStmt(n, env)
 	case *ast.BranchStmt:
 		return e.evalBranchStmt(n, env)
 	case *ast.DeclStmt:

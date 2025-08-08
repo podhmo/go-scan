@@ -194,6 +194,79 @@ func TestFunctionApplication(t *testing.T) {
 	}
 }
 
+func TestMultipleReturnValues(t *testing.T) {
+	tests := []struct {
+		input string
+		// probes is a map of expressions to test after running the input,
+		// and their expected values.
+		probes map[string]any
+	}{
+		{
+			input: `f := func() { return 1, "hello" }; a, b := f()`,
+			probes: map[string]any{
+				"a": int64(1),
+				"b": "hello",
+			},
+		},
+		{
+			input: `f := func() { return 1, "hello" }; var a int; var b string; a, b = f()`,
+			probes: map[string]any{
+				"a": int64(1),
+				"b": "hello",
+			},
+		},
+		{
+			input: `f := func() { return 1 + 2, "a" + "b" }; x, y := f()`,
+			probes: map[string]any{
+				"x": int64(3),
+				"y": "ab",
+			},
+		},
+		{
+			input:  `f := func() { return 1, true, 3 }; a, b := f()`,
+			probes: map[string]any{"error": "assignment mismatch: 2 variables but 3 values"},
+		},
+		{
+			input:  `f := func() { return 1, true }; a, b, c := f()`,
+			probes: map[string]any{"error": "assignment mismatch: 3 variables but 2 values"},
+		},
+		{
+			input:  `f := func() { return 1, true }; a := f()`,
+			probes: map[string]any{"error": "multi-value function call in single-value context"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			// For error checks, we can evaluate the input directly.
+			if expectedErr, ok := tt.probes["error"]; ok {
+				evaluated := testEval(t, tt.input)
+				testErrorObject(t, evaluated, expectedErr.(string))
+				return
+			}
+
+			// For success cases, we build a program that includes the setup
+			// and then returns the variable we want to probe.
+			for probeExpr, expected := range tt.probes {
+				// The final expression in the block is its return value.
+				fullInput := tt.input + "; " + probeExpr
+				evaluated := testEval(t, fullInput)
+
+				switch exp := expected.(type) {
+				case int64:
+					testIntegerObject(t, evaluated, exp)
+				case string:
+					testStringObject(t, evaluated, exp)
+				case bool:
+					testBooleanObject(t, evaluated, exp)
+				default:
+					t.Fatalf("unsupported probe type: %T", exp)
+				}
+			}
+		})
+	}
+}
+
 func TestStructEmbedding(t *testing.T) {
 	tests := []struct {
 		input    string

@@ -30,6 +30,7 @@ const (
 	POINTER_OBJ           ObjectType = "POINTER"
 	ARRAY_OBJ             ObjectType = "ARRAY"
 	MAP_OBJ               ObjectType = "MAP"
+	TUPLE_OBJ             ObjectType = "TUPLE"
 	ERROR_OBJ             ObjectType = "ERROR"
 )
 
@@ -366,6 +367,32 @@ func (m *Map) Inspect() string {
 	out.WriteString("{")
 	out.WriteString(strings.Join(pairs, ", "))
 	out.WriteString("}")
+
+	return out.String()
+}
+
+// --- Tuple Object ---
+
+// Tuple represents a tuple of objects, used for multiple return values.
+type Tuple struct {
+	Elements []Object
+}
+
+// Type returns the type of the Tuple object.
+func (t *Tuple) Type() ObjectType { return TUPLE_OBJ }
+
+// Inspect returns a string representation of the Tuple's elements.
+func (t *Tuple) Inspect() string {
+	var out bytes.Buffer
+
+	elements := []string{}
+	for _, e := range t.Elements {
+		elements = append(elements, e.Inspect())
+	}
+
+	out.WriteString("(")
+	out.WriteString(strings.Join(elements, ", "))
+	out.WriteString(")")
 
 	return out.String()
 }

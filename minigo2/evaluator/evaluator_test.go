@@ -190,6 +190,67 @@ func TestFunctionApplication(t *testing.T) {
 	}
 }
 
+func TestIndexExpressions(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected interface{}
+	}{
+		{"var a = []int{1, 2, 3}; a[0]", 1},
+		{"var a = []int{1, 2, 3}; a[1]", 2},
+		{"var a = []int{1, 2, 3}; a[2]", 3},
+		{"var i = 0; var a = []int{1}; a[i]", 1},
+		{"var a = []int{1, 2, 3}; a[1 + 1]", 3},
+		{"var myArray = []int{1, 2, 3}; myArray[2]", 3},
+		{"var myArray = []int{1, 2, 3}; myArray[0] + myArray[1] + myArray[2]", 6},
+		{"var myArray = []int{1, 2, 3}; var i = myArray[0]; myArray[i]", 2},
+		{"var a = []int{1, 2, 3}; a[3]", nil},
+		{"var a = []int{1, 2, 3}; a[-1]", nil},
+		{`var m = map[string]int{"foo": 5}; m["foo"]`, 5},
+		{`var myMap = map[string]int{"foo": 5}; myMap["foo"]`, 5},
+		{`var m = map[string]int{"foo": 5}; m["bar"]`, nil},
+		{`var m = map[string]int{}; m["foo"]`, nil},
+		{`var m = map[int]int{5: 5}; m[5]`, 5},
+		{`var m = map[bool]int{true: 5}; m[true]`, 5},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			evaluated := testEval(t, tt.input)
+			switch expected := tt.expected.(type) {
+			case int:
+				testIntegerObject(t, evaluated, int64(expected))
+			case nil:
+				testNullObject(t, evaluated)
+			default:
+				t.Errorf("unsupported expected type %T", expected)
+			}
+		})
+	}
+}
+
+func TestIndexErrors(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"var a = 5; a[0]", "index operator not supported for INTEGER"},
+		{"var a = []int{1, 2, 3}; a[\"a\"]", "index into array is not an integer"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			evaluated := testEval(t, tt.input)
+			errObj, ok := evaluated.(*object.Error)
+			if !ok {
+				t.Fatalf("expected error object, got %T (%+v)", evaluated, evaluated)
+			}
+			if errObj.Message != tt.expected {
+				t.Errorf("wrong error message. expected=%q, got=%q", tt.expected, errObj.Message)
+			}
+		})
+	}
+}
+
 func TestArrayLiterals(t *testing.T) {
 	input := "[]int{1, 2 * 2, 3 + 3}"
 

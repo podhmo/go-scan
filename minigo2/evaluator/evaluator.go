@@ -461,6 +461,16 @@ func (e *Evaluator) Eval(node ast.Node, env *object.Environment) object.Object {
 	// Expressions
 	case *ast.ParenExpr:
 		return e.Eval(n.X, env)
+	case *ast.IndexExpr:
+		left := e.Eval(n.X, env)
+		if isError(left) {
+			return left
+		}
+		index := e.Eval(n.Index, env)
+		if isError(index) {
+			return index
+		}
+		return e.evalIndexExpression(n, left, index)
 	case *ast.FuncLit:
 		params := []*ast.Ident{}
 		if n.Type.Params != nil {
@@ -565,6 +575,50 @@ func (e *Evaluator) evalGenDecl(n *ast.GenDecl, env *object.Environment) object.
 		}
 	}
 	return nil
+}
+
+func (e *Evaluator) evalIndexExpression(node ast.Node, left, index object.Object) object.Object {
+	switch {
+	case left.Type() == object.ARRAY_OBJ:
+		return e.evalArrayIndexExpression(node, left, index)
+	case left.Type() == object.MAP_OBJ:
+		return e.evalMapIndexExpression(node, left, index)
+	default:
+		return e.newError(node.Pos(), "index operator not supported for %s", left.Type())
+	}
+}
+
+func (e *Evaluator) evalArrayIndexExpression(node ast.Node, array, index object.Object) object.Object {
+	arrayObject := array.(*object.Array)
+	idx, ok := index.(*object.Integer)
+	if !ok {
+		return e.newError(node.Pos(), "index into array is not an integer")
+	}
+
+	i := idx.Value
+	max := int64(len(arrayObject.Elements) - 1)
+
+	if i < 0 || i > max {
+		return object.NULL // Go returns nil for out-of-bounds access, so we do too.
+	}
+
+	return arrayObject.Elements[i]
+}
+
+func (e *Evaluator) evalMapIndexExpression(node ast.Node, m, index object.Object) object.Object {
+	mapObject := m.(*object.Map)
+
+	key, ok := index.(object.Hashable)
+	if !ok {
+		return e.newError(node.Pos(), "unusable as map key: %s", index.Type())
+	}
+
+	pair, ok := mapObject.Pairs[key.HashKey()]
+	if !ok {
+		return object.NULL
+	}
+
+	return pair.Value
 }
 
 func (e *Evaluator) evalAssignStmt(n *ast.AssignStmt, env *object.Environment) object.Object {

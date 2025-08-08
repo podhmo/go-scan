@@ -170,7 +170,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] Support field access (`myStruct.Field`) and assignment (`myStruct.Field = ...`).
 - [x] Support slice and array literals (`[]int{1, 2}`, `[2]int{1, 2}`).
 - [x] Support map literals (`map[string]int{"a": 1}`).
-- [ ] Support indexing for slices, arrays, and maps (`arr[0]`, `m["key"]`).
+- [x] Support indexing for slices, arrays, and maps (`arr[0]`, `m["key"]`).
 - [ ] **Implement `for...range` loops** for iterating over slices, arrays, and maps.
 - [ ] **Implement pointer support**:
 - [ ] Define a `Pointer` object type in the object system.

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"go/parser"
 	"go/token"
+	"reflect"
 
 	"github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/minigo2/evaluator"
@@ -34,6 +35,11 @@ func NewInterpreter(options ...goscan.ScannerOption) (*Interpreter, error) {
 
 // Options configures the interpreter environment.
 type Options struct {
+	// Globals allows injecting Go variables into the script's global scope.
+	// The map key is the variable name in the script.
+	// The value can be any Go variable, which will be made available via reflection.
+	Globals map[string]any
+
 	// Source is the script content.
 	Source []byte
 
@@ -50,6 +56,11 @@ type Result struct {
 // Eval executes a minigo2 script. It evaluates the entire script from top to bottom
 // within the interpreter's persistent environment.
 func (i *Interpreter) Eval(ctx context.Context, opts Options) (*Result, error) {
+	// Inject global variables from Go into the interpreter's environment.
+	for name, value := range opts.Globals {
+		i.env.Set(name, &object.GoValue{Value: reflect.ValueOf(value)})
+	}
+
 	fset := token.NewFileSet()
 	node, err := parser.ParseFile(fset, opts.Filename, opts.Source, parser.ParseComments)
 	if err != nil {

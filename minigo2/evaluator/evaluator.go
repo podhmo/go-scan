@@ -819,6 +819,7 @@ func (e *Evaluator) Eval(node ast.Node, env *object.Environment) object.Object {
 }
 
 func (e *Evaluator) evalGenDecl(n *ast.GenDecl, env *object.Environment) object.Object {
+	var lastVal object.Object
 	switch n.Tok {
 	case token.IMPORT:
 		for _, spec := range n.Specs {
@@ -891,9 +892,10 @@ func (e *Evaluator) evalGenDecl(n *ast.GenDecl, env *object.Environment) object.
 					}
 					env.Set(name.Name, val)
 				}
+				lastVal = val
 			}
 		}
-		return nil
+		return lastVal
 
 	case token.TYPE:
 		for _, spec := range n.Specs {

@@ -185,6 +185,12 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] Implement the logic to handle `import` statements and load symbols from external Go packages.
 - [ ] Implement the `object.GoValue` to wrap `reflect.Value`, allowing Go values to be injected into the script.
 - [ ] Implement the logic to wrap Go functions as `BuiltinFunction` objects.
+- [ ] Support accessing imported variables and constants (e.g., `math.Pi`).
+- [ ] **Advanced Import Handling**:
+    - [ ] Ensure packages are loaded only once, even with complex indirect imports.
+    - [ ] Detect and report circular import errors.
+    - [ ] Support dot imports (`import . "fmt"`).
+    - [ ] Support blank imports (`import _ "driver"`) and associated `init()` execution.
 - [ ] Implement the `Result.As(target any)` method for unmarshaling script results back into Go structs.
 - [ ] Thoroughly test all features, especially pointer handling and the Go interop layer.
 - [ ] Write comprehensive documentation for the API, supported language features, and usage examples.

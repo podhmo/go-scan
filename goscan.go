@@ -1274,6 +1274,103 @@ func (s *Scanner) FindSymbolDefinitionLocation(ctx context.Context, symbolFullNa
 	return "", fmt.Errorf("symbol %s not found in package %s even after scan and cache check", symbolName, importPath)
 }
 
+// FindSymbolInPackage searches for a specific symbol within a package by scanning its files one by one.
+// It only scans files that have not yet been visited by this scanner instance.
+// If the symbol is found, it returns a cumulative PackageInfo of all files scanned in the package up to that point
+// and marks the file as visited. If the symbol is not found after checking all unscanned files, it returns an error.
+func (s *Scanner) FindSymbolInPackage(ctx context.Context, importPath string, symbolName string) (*scanner.PackageInfo, error) {
+	unscannedFiles, err := s.UnscannedGoFiles(importPath)
+	if err != nil {
+		return nil, fmt.Errorf("could not get unscanned files for package %s: %w", importPath, err)
+	}
+
+	// Heuristic to check if it's a standard library package.
+	isStdLib := !strings.Contains(importPath, ".")
+	var pkgDirAbs string
+	if isStdLib {
+		// We need the absolute path for ScanFilesWithKnownImportPath
+		pkgDirAbs, err = s.locator.FindPackageDir(importPath)
+		if err != nil {
+			return nil, fmt.Errorf("could not find directory for stdlib import path %s: %w", importPath, err)
+		}
+	}
+
+	var cumulativePkgInfo *scanner.PackageInfo
+
+	for _, fileToScan := range unscannedFiles {
+		var pkgInfo *scanner.PackageInfo
+		var scanErr error
+
+		if isStdLib {
+			// For stdlib packages, we need to bypass the public `ScanFiles` because it cannot
+			// calculate the import path for paths outside the module root.
+			// We call the internal scanner directly and then manually perform the necessary updates
+			// that the public `ScanFiles` would have done (updating visited files and symbol cache).
+			pkgInfo, scanErr = s.scanner.ScanFilesWithKnownImportPath(ctx, []string{fileToScan}, pkgDirAbs, importPath)
+			if scanErr == nil && pkgInfo != nil {
+				for _, fp := range pkgInfo.Files {
+					s.visitedFiles[fp] = struct{}{}
+				}
+				s.updateSymbolCacheWithPackageInfo(ctx, importPath, pkgInfo)
+			}
+		} else {
+			// For in-module packages, the public `ScanFiles` method works correctly.
+			pkgInfo, scanErr = s.ScanFiles(ctx, []string{fileToScan})
+		}
+
+		if scanErr != nil {
+			// Log the error but continue trying other files. A single file might have syntax errors.
+			slog.WarnContext(ctx, "failed to scan file while searching for symbol", "file", fileToScan, "symbol", symbolName, "error", scanErr)
+			continue
+		}
+
+		if pkgInfo == nil {
+			continue
+		}
+
+		// Merge the just-scanned info into a cumulative PackageInfo for this package.
+		if cumulativePkgInfo == nil {
+			cumulativePkgInfo = pkgInfo
+		} else {
+			// This is a simplified merge. A more robust implementation would handle conflicts.
+			cumulativePkgInfo.Types = append(cumulativePkgInfo.Types, pkgInfo.Types...)
+			cumulativePkgInfo.Functions = append(cumulativePkgInfo.Functions, pkgInfo.Functions...)
+			cumulativePkgInfo.Constants = append(cumulativePkgInfo.Constants, pkgInfo.Constants...)
+
+			// Avoid duplicating file paths
+			existingFiles := make(map[string]struct{}, len(cumulativePkgInfo.Files))
+			for _, f := range cumulativePkgInfo.Files {
+				existingFiles[f] = struct{}{}
+			}
+			for _, f := range pkgInfo.Files {
+				if _, exists := existingFiles[f]; !exists {
+					cumulativePkgInfo.Files = append(cumulativePkgInfo.Files, f)
+					existingFiles[f] = struct{}{}
+				}
+			}
+		}
+
+		// Check if the symbol is in the newly scanned package info.
+		for _, t := range pkgInfo.Types {
+			if t.Name == symbolName {
+				return cumulativePkgInfo, nil // Found it
+			}
+		}
+		for _, f := range pkgInfo.Functions {
+			if f.Name == symbolName {
+				return cumulativePkgInfo, nil // Found it
+			}
+		}
+		for _, c := range pkgInfo.Constants {
+			if c.Name == symbolName {
+				return cumulativePkgInfo, nil // Found it
+			}
+		}
+	}
+
+	return nil, fmt.Errorf("symbol %q not found in package %q", symbolName, importPath)
+}
+
 // BuildReverseDependencyMap scans the entire module to build a map of reverse dependencies.
 // The key of the map is an import path, and the value is a list of packages that import it.
 // The result is cached within the scanner instance.

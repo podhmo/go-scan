@@ -196,6 +196,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [ ] Implement the logic to wrap Go functions as `BuiltinFunction` objects.
 - [x] Support accessing imported variables and constants (e.g., `math.Pi`).
 - [ ] **Advanced Import Handling**:
+    - [x] Implement lazy loading for imports, where symbols are only loaded from a package when they are first accessed.
     - [ ] Ensure packages are loaded only once, even with complex indirect imports.
     - [ ] Detect and report circular import errors.
     - [ ] Support dot imports (`import . "fmt"`).

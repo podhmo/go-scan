@@ -628,20 +628,42 @@ func (e *Evaluator) evalSelectorExpr(n *ast.SelectorExpr, env *object.Environmen
 }
 
 func (e *Evaluator) evalCompositeLit(n *ast.CompositeLit, env *object.Environment) object.Object {
-	defObj := e.Eval(n.Type, env)
-	if isError(defObj) {
-		return defObj
-	}
-	def, ok := defObj.(*object.StructDefinition)
-	if !ok {
-		return e.newError(n.Type.Pos(), "not a struct type in composite literal")
-	}
+	switch typ := n.Type.(type) {
+	case *ast.Ident:
+		// This handles struct literals, e.g., MyStruct{...}
+		defObj := e.Eval(typ, env)
+		if isError(defObj) {
+			return defObj
+		}
+		def, ok := defObj.(*object.StructDefinition)
+		if !ok {
+			return e.newError(n.Type.Pos(), "not a struct type in composite literal")
+		}
+		return e.evalStructLiteral(n, def, env)
 
+	case *ast.ArrayType:
+		// This handles array and slice literals, e.g., []int{...}
+		elements := e.evalExpressions(n.Elts, env)
+		if len(elements) == 1 && isError(elements[0]) {
+			return elements[0]
+		}
+		return &object.Array{Elements: elements}
+
+	case *ast.MapType:
+		// This handles map literals, e.g., map[string]int{...}
+		return e.evalMapLiteral(n, env)
+
+	default:
+		return e.newError(n.Type.Pos(), "unsupported type in composite literal: %T", n.Type)
+	}
+}
+
+func (e *Evaluator) evalStructLiteral(n *ast.CompositeLit, def *object.StructDefinition, env *object.Environment) object.Object {
 	instance := &object.StructInstance{Def: def, Fields: make(map[string]object.Object)}
 	for _, elt := range n.Elts {
 		kv, ok := elt.(*ast.KeyValueExpr)
 		if !ok {
-			return e.newError(elt.Pos(), "unsupported literal element")
+			return e.newError(elt.Pos(), "unsupported literal element in struct literal")
 		}
 		key, ok := kv.Key.(*ast.Ident)
 		if !ok {
@@ -654,6 +676,37 @@ func (e *Evaluator) evalCompositeLit(n *ast.CompositeLit, env *object.Environmen
 		instance.Fields[key.Name] = value
 	}
 	return instance
+}
+
+func (e *Evaluator) evalMapLiteral(n *ast.CompositeLit, env *object.Environment) object.Object {
+	pairs := make(map[object.HashKey]object.MapPair)
+
+	for _, elt := range n.Elts {
+		kv, ok := elt.(*ast.KeyValueExpr)
+		if !ok {
+			return e.newError(elt.Pos(), "non-key-value element in map literal")
+		}
+
+		key := e.Eval(kv.Key, env)
+		if isError(key) {
+			return key
+		}
+
+		hashable, ok := key.(object.Hashable)
+		if !ok {
+			return e.newError(kv.Key.Pos(), "unusable as map key: %s", key.Type())
+		}
+
+		value := e.Eval(kv.Value, env)
+		if isError(value) {
+			return value
+		}
+
+		hashed := hashable.HashKey()
+		pairs[hashed] = object.MapPair{Key: key, Value: value}
+	}
+
+	return &object.Map{Pairs: pairs}
 }
 
 func (e *Evaluator) evalIdent(n *ast.Ident, env *object.Environment) object.Object {

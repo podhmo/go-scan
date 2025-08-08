@@ -190,6 +190,59 @@ func TestFunctionApplication(t *testing.T) {
 	}
 }
 
+func TestArrayLiterals(t *testing.T) {
+	input := "[]int{1, 2 * 2, 3 + 3}"
+
+	evaluated := testEval(t, input)
+	result, ok := evaluated.(*object.Array)
+	if !ok {
+		t.Fatalf("object is not Array. got=%T (%+v)", evaluated, evaluated)
+	}
+
+	if len(result.Elements) != 3 {
+		t.Fatalf("array has wrong num of elements. got=%d", len(result.Elements))
+	}
+
+	testIntegerObject(t, result.Elements[0], 1)
+	testIntegerObject(t, result.Elements[1], 4)
+	testIntegerObject(t, result.Elements[2], 6)
+}
+
+func TestMapLiterals(t *testing.T) {
+	input := `
+		map[string]int{
+			"one": 10 - 9,
+			"two": 2,
+			"three": 6 / 2,
+		}
+	`
+	evaluated := testEval(t, input)
+	result, ok := evaluated.(*object.Map)
+	if !ok {
+		t.Fatalf("object is not Map. got=%T (%+v)", evaluated, evaluated)
+	}
+
+	expected := map[object.HashKey]int64{
+		(&object.String{Value: "one"}).HashKey():   1,
+		(&object.String{Value: "two"}).HashKey():   2,
+		(&object.String{Value: "three"}).HashKey(): 3,
+	}
+
+	if len(result.Pairs) != len(expected) {
+		t.Fatalf("map has wrong num of pairs. got=%d", len(result.Pairs))
+	}
+
+	for expectedKey, expectedValue := range expected {
+		pair, ok := result.Pairs[expectedKey]
+		if !ok {
+			t.Errorf("no pair for given key in Pairs")
+			continue
+		}
+
+		testIntegerObject(t, pair.Value, expectedValue)
+	}
+}
+
 func TestErrorHandling(t *testing.T) {
 	tests := []struct {
 		input           string

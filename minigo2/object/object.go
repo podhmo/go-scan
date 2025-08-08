@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"go/ast"
 	"go/token"
+	"hash/fnv"
 	"os"
 	"strings"
 )
@@ -25,8 +26,23 @@ const (
 	FUNCTION_OBJ          ObjectType = "FUNCTION"
 	STRUCT_DEFINITION_OBJ ObjectType = "STRUCT_DEFINITION"
 	STRUCT_INSTANCE_OBJ   ObjectType = "STRUCT_INSTANCE"
+	ARRAY_OBJ             ObjectType = "ARRAY"
+	MAP_OBJ               ObjectType = "MAP"
 	ERROR_OBJ             ObjectType = "ERROR"
 )
+
+// Hashable is an interface for objects that can be used as map keys.
+type Hashable interface {
+	// HashKey returns a unique key for the object, used for map lookups.
+	HashKey() HashKey
+}
+
+// HashKey is used as a key in the internal hash map for Map objects.
+// It's a combination of the object's type and its calculated hash value.
+type HashKey struct {
+	Type  ObjectType
+	Value uint64
+}
 
 // CallFrame represents a single frame in the call stack.
 type CallFrame struct {
@@ -74,6 +90,11 @@ func (i *Integer) Type() ObjectType { return INTEGER_OBJ }
 // Inspect returns a string representation of the Integer's value.
 func (i *Integer) Inspect() string { return fmt.Sprintf("%d", i.Value) }
 
+// HashKey returns the hash key for an Integer.
+func (i *Integer) HashKey() HashKey {
+	return HashKey{Type: i.Type(), Value: uint64(i.Value)}
+}
+
 // --- String Object ---
 
 // String represents a string value.
@@ -87,6 +108,13 @@ func (s *String) Type() ObjectType { return STRING_OBJ }
 // Inspect returns a string representation of the String's value.
 func (s *String) Inspect() string { return s.Value }
 
+// HashKey returns the hash key for a String.
+func (s *String) HashKey() HashKey {
+	h := fnv.New64a()
+	h.Write([]byte(s.Value))
+	return HashKey{Type: s.Type(), Value: h.Sum64()}
+}
+
 // --- Boolean Object ---
 
 // Boolean represents a boolean value.
@@ -99,6 +127,15 @@ func (b *Boolean) Type() ObjectType { return BOOLEAN_OBJ }
 
 // Inspect returns a string representation of the Boolean's value.
 func (b *Boolean) Inspect() string { return fmt.Sprintf("%t", b.Value) }
+
+// HashKey returns the hash key for a Boolean.
+func (b *Boolean) HashKey() HashKey {
+	var value uint64
+	if b.Value {
+		value = 1
+	}
+	return HashKey{Type: b.Type(), Value: value}
+}
 
 // --- Null Object ---
 
@@ -215,6 +252,65 @@ func (si *StructInstance) Inspect() string {
 	out.WriteString(si.Def.Name.String())
 	out.WriteString("{")
 	out.WriteString(strings.Join(fields, ", "))
+	out.WriteString("}")
+
+	return out.String()
+}
+
+// --- Array Object ---
+
+// Array represents an array data structure.
+type Array struct {
+	Elements []Object
+}
+
+// Type returns the type of the Array object.
+func (a *Array) Type() ObjectType { return ARRAY_OBJ }
+
+// Inspect returns a string representation of the Array's elements.
+func (a *Array) Inspect() string {
+	var out bytes.Buffer
+
+	elements := []string{}
+	for _, e := range a.Elements {
+		elements = append(elements, e.Inspect())
+	}
+
+	out.WriteString("[")
+	out.WriteString(strings.Join(elements, ", "))
+	out.WriteString("]")
+
+	return out.String()
+}
+
+// --- Map Object ---
+
+// MapPair represents a key-value pair in a Map object.
+type MapPair struct {
+	Key   Object
+	Value Object
+}
+
+// Map represents a map data structure.
+type Map struct {
+	Pairs map[HashKey]MapPair
+}
+
+// Type returns the type of the Map object.
+func (m *Map) Type() ObjectType { return MAP_OBJ }
+
+// Inspect returns a string representation of the Map's pairs.
+func (m *Map) Inspect() string {
+	var out bytes.Buffer
+
+	pairs := []string{}
+	// Note: Iteration order over maps is not guaranteed.
+	for _, pair := range m.Pairs {
+		pairs = append(pairs, fmt.Sprintf("%s: %s", pair.Key.Inspect(), pair.Value.Inspect()))
+	}
+
+	out.WriteString("{")
+	out.WriteString(strings.Join(pairs, ", "))
 	out.WriteString("}")
 
 	return out.String()

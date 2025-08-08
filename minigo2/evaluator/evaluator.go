@@ -1,11 +1,13 @@
 package evaluator
 
 import (
+	"context"
 	"fmt"
 	"go/ast"
 	"go/token"
 	"strconv"
 
+	"github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/minigo2/object"
 )
 
@@ -75,13 +77,15 @@ var builtins = map[string]*object.Builtin{
 // Evaluator is the main object that evaluates the AST.
 type Evaluator struct {
 	fset      *token.FileSet
+	scanner   *goscan.Scanner
 	callStack []object.CallFrame
 }
 
 // New creates a new Evaluator.
-func New(fset *token.FileSet) *Evaluator {
+func New(fset *token.FileSet, scanner *goscan.Scanner) *Evaluator {
 	return &Evaluator{
 		fset:      fset,
+		scanner:   scanner,
 		callStack: make([]object.CallFrame, 0),
 	}
 }
@@ -815,28 +819,56 @@ func (e *Evaluator) Eval(node ast.Node, env *object.Environment) object.Object {
 }
 
 func (e *Evaluator) evalGenDecl(n *ast.GenDecl, env *object.Environment) object.Object {
-	var lastValues []ast.Expr // For const value carry-over
+	switch n.Tok {
+	case token.IMPORT:
+		for _, spec := range n.Specs {
+			importSpec := spec.(*ast.ImportSpec)
+			path, err := strconv.Unquote(importSpec.Path.Value)
+			if err != nil {
+				return e.newError(importSpec.Path.Pos(), "invalid import path: %v", err)
+			}
 
-	for iotaValue, spec := range n.Specs {
-		switch s := spec.(type) {
-		case *ast.ValueSpec: // var, const
+			pkgInfo, err := e.scanner.ScanPackageByImport(context.Background(), path)
+			if err != nil {
+				return e.newError(importSpec.Path.Pos(), "could not import package %q: %v", path, err)
+			}
+
+			pkgName := pkgInfo.Name
+			if importSpec.Name != nil {
+				pkgName = importSpec.Name.Name
+			}
+
+			pkgObj := &object.Package{
+				Name:    pkgInfo.Name, // The real package name
+				Path:    path,
+				Info:    pkgInfo,
+				Members: make(map[string]object.Object), // Lazy loaded
+			}
+			env.Set(pkgName, pkgObj)
+		}
+		return nil
+
+	case token.CONST, token.VAR:
+		var lastValues []ast.Expr // For const value carry-over
+		for iotaValue, spec := range n.Specs {
+			valueSpec := spec.(*ast.ValueSpec)
 			// Handle const value carry-over
 			if n.Tok == token.CONST {
-				if len(s.Values) == 0 {
-					s.Values = lastValues
+				if len(valueSpec.Values) == 0 {
+					valueSpec.Values = lastValues
 				} else {
-					lastValues = s.Values
+					lastValues = valueSpec.Values
 				}
 			}
 
-			for i, name := range s.Names {
+			for i, name := range valueSpec.Names {
 				var val object.Object
-				if len(s.Values) > 0 {
-					if i < len(s.Values) {
+				if len(valueSpec.Values) > 0 {
+					if i < len(valueSpec.Values) {
 						// Create a temporary environment for iota evaluation.
 						iotaEnv := object.NewEnclosedEnvironment(env)
 						iotaEnv.SetConstant("iota", &object.Integer{Value: int64(iotaValue)})
-						val = e.Eval(s.Values[i], iotaEnv)
+						val = e.Eval(valueSpec.Values[i], iotaEnv)
 					} else {
 						return e.newError(name.Pos(), "missing value in declaration for %s", name.Name)
 					}
@@ -860,19 +892,26 @@ func (e *Evaluator) evalGenDecl(n *ast.GenDecl, env *object.Environment) object.
 					env.Set(name.Name, val)
 				}
 			}
-		case *ast.TypeSpec: // type
-			structType, ok := s.Type.(*ast.StructType)
+		}
+		return nil
+
+	case token.TYPE:
+		for _, spec := range n.Specs {
+			typeSpec := spec.(*ast.TypeSpec)
+			structType, ok := typeSpec.Type.(*ast.StructType)
 			if !ok {
-				return e.newError(s.Pos(), "unsupported type declaration: not a struct")
+				return e.newError(typeSpec.Pos(), "unsupported type declaration: not a struct")
 			}
 			def := &object.StructDefinition{
-				Name:   s.Name,
+				Name:   typeSpec.Name,
 				Fields: structType.Fields.List,
 			}
-			env.Set(s.Name.Name, def)
+			env.Set(typeSpec.Name.Name, def)
 		}
+		return nil
 	}
-	return nil
+
+	return nil // Should be unreachable
 }
 
 func (e *Evaluator) evalIndexExpression(node ast.Node, left, index object.Object) object.Object {
@@ -1112,25 +1151,57 @@ func (e *Evaluator) evalSelectorExpr(n *ast.SelectorExpr, env *object.Environmen
 		return left
 	}
 
-	// Automatically dereference pointers for the base of the expression.
-	if ptr, ok := left.(*object.Pointer); ok {
-		if ptr.Element == nil || *ptr.Element == nil {
+	switch l := left.(type) {
+	case *object.Package:
+		memberName := n.Sel.Name
+		// Check cache first
+		if member, ok := l.Members[memberName]; ok {
+			return member
+		}
+
+		// Look up in functions
+		for _, fn := range l.Info.Functions {
+			if fn.Name == memberName {
+				// For now, we just create a placeholder Builtin.
+				// The real implementation will need to wrap the Go function.
+				b := &object.Builtin{
+					Fn: func(fset *token.FileSet, pos token.Pos, args ...object.Object) object.Object {
+						// This is a placeholder. The real implementation will call the native Go function.
+						return object.NULL
+					},
+				}
+				l.Members[memberName] = b // Cache it
+				return b
+			}
+		}
+
+		// TODO: Look up in constants and variables as well.
+
+		return e.newError(n.Sel.Pos(), "undefined: %s.%s", l.Name, memberName)
+
+	case *object.StructInstance:
+		// Use the new recursive search function.
+		if val, found := e.findFieldInStruct(l, n.Sel.Name); found {
+			return val
+		}
+		return e.newError(n.Sel.Pos(), "undefined field '%s' on struct '%s'", n.Sel.Name, l.Def.Name.Name)
+
+	case *object.Pointer:
+		if l.Element == nil || *l.Element == nil {
 			return e.newError(n.Pos(), "nil pointer dereference")
 		}
-		left = *ptr.Element
-	}
-
-	instance, ok := left.(*object.StructInstance)
-	if !ok {
+		// Automatically dereference pointers for struct field access.
+		if instance, ok := (*l.Element).(*object.StructInstance); ok {
+			if val, found := e.findFieldInStruct(instance, n.Sel.Name); found {
+				return val
+			}
+			return e.newError(n.Sel.Pos(), "undefined field '%s' on struct '%s'", n.Sel.Name, instance.Def.Name.Name)
+		}
 		return e.newError(n.Pos(), "base of selector expression is not a struct or pointer to struct")
-	}
 
-	// Use the new recursive search function.
-	if val, found := e.findFieldInStruct(instance, n.Sel.Name); found {
-		return val
+	default:
+		return e.newError(n.Pos(), "base of selector expression is not a package or struct")
 	}
-
-	return e.newError(n.Sel.Pos(), "undefined field '%s' on struct '%s'", n.Sel.Name, instance.Def.Name.Name)
 }
 
 func (e *Evaluator) evalCompositeLit(n *ast.CompositeLit, env *object.Environment) object.Object {

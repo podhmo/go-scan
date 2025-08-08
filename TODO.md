@@ -181,8 +181,8 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] **Support for variadic arguments** in function definitions and calls.
 - [x] **Support for struct embedding**.
 - [x] **Support for multiple return values** from functions.
-- [ ] Create the main `Interpreter` struct that holds a `goscan.Scanner`.
-- [ ] Implement the logic to handle `import` statements and load symbols from external Go packages.
+- [x] Create the main `Interpreter` struct that holds a `goscan.Scanner`.
+- [x] Implement the logic to handle `import` statements and load symbols from external Go packages.
 - [ ] Implement the `object.GoValue` to wrap `reflect.Value`, allowing Go values to be injected into the script.
 - [ ] Implement the logic to wrap Go functions as `BuiltinFunction` objects.
 - [ ] Implement the `Result.As(target any)` method for unmarshaling script results back into Go structs.

@@ -188,10 +188,10 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     - [x] Integers (`+`, `-`, `==`, etc.)
     - [x] Strings (`+`, `==`)
     - [x] Booleans (`==`, `if myBool`)
-- [ ] **Go Value Operations (Advanced)**:
-    - [ ] Support operations on injected `slice` values (e.g., `len()`, indexing, `for...range`).
-    - [ ] Support operations on injected `map` values (e.g., indexing, `for...range`).
-    - [ ] Support field access and method calls on injected `struct` values.
+- [x] **Go Value Operations (Advanced)**:
+    - [x] Support operations on injected `slice` values (e.g., `len()`, indexing, `for...range`).
+    - [x] Support operations on injected `map` values (e.g., indexing, `for...range`).
+    - [x] Support field access and method calls on injected `struct` values.
 - [ ] **Underlying Type Handling**: Add an option or default behavior to treat Go `enum` types (e.g., `type MyEnum int`) as their underlying type within the script, to facilitate sharing constants.
 - [ ] Implement the logic to wrap Go functions as `BuiltinFunction` objects.
 - [ ] Support accessing imported variables and constants (e.g., `math.Pi`).

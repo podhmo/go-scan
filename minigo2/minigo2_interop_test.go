@@ -108,6 +108,90 @@ var final = func() string {
 			expectedType: object.STRING_OBJ,
 			expectedVal:  "from else",
 		},
+		{
+			name:         "len() of injected slice",
+			script:       `package main; var result = len(mySlice)`,
+			globals:      map[string]any{"mySlice": []int{1, 2, 3}},
+			expectedType: object.INTEGER_OBJ,
+			expectedVal:  int64(3),
+		},
+		{
+			name:         "len() of injected map",
+			script:       `package main; var result = len(myMap)`,
+			globals:      map[string]any{"myMap": map[string]int{"a": 1, "b": 2}},
+			expectedType: object.INTEGER_OBJ,
+			expectedVal:  int64(2),
+		},
+		{
+			name:   "access field of injected struct",
+			script: `package main; var result = myStruct.Name`,
+			globals: map[string]any{
+				"myStruct": struct{ Name string }{Name: "injected"},
+			},
+			expectedType: object.STRING_OBJ,
+			expectedVal:  "injected",
+		},
+		{
+			name:   "access field of injected pointer to-struct",
+			script: `package main; var result = myStruct.ID`,
+			globals: map[string]any{
+				"myStruct": &struct{ ID int }{ID: 99},
+			},
+			expectedType: object.INTEGER_OBJ,
+			expectedVal:  int64(99),
+		},
+		{
+			name:   "index into injected slice",
+			script: `package main; var result = mySlice[1]`,
+			globals: map[string]any{
+				"mySlice": []string{"a", "b", "c"},
+			},
+			expectedType: object.STRING_OBJ,
+			expectedVal:  "b",
+		},
+		{
+			name:   "index into injected map",
+			script: `package main; var result = myMap["two"]`,
+			globals: map[string]any{
+				"myMap": map[string]int{"one": 1, "two": 2},
+			},
+			expectedType: object.INTEGER_OBJ,
+			expectedVal:  int64(2),
+		},
+		{
+			name: "for...range over injected slice",
+			script: `package main
+var result = func() int {
+    var total = 0
+    for _, v := range mySlice {
+        total = total + v
+    }
+    return total
+}()
+`,
+			globals: map[string]any{
+				"mySlice": []int{10, 20, 5},
+			},
+			expectedType: object.INTEGER_OBJ,
+			expectedVal:  int64(35),
+		},
+		{
+			name: "for...range over injected map",
+			script: `package main
+var result = func() int {
+    var total = 0
+    for _, v := range myMap {
+        total = total + v
+    }
+    return total
+}()
+`,
+			globals: map[string]any{
+				"myMap": map[string]int{"a": 10, "b": 20, "c": 3},
+			},
+			expectedType: object.INTEGER_OBJ,
+			expectedVal:  int64(33),
+		},
 	}
 
 	for _, tt := range tests {

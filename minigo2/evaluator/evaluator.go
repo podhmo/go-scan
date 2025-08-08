@@ -28,6 +28,19 @@ var builtins = map[string]*object.Builtin{
 				return &object.Integer{Value: int64(len(arg.Elements))}
 			case *object.String:
 				return &object.Integer{Value: int64(len(arg.Value))}
+			case *object.GoValue:
+				val := arg.Value
+				switch val.Kind() {
+				case reflect.Array, reflect.Slice, reflect.Map, reflect.String:
+					return &object.Integer{Value: int64(val.Len())}
+				default:
+					err := &object.Error{
+						Pos:     pos,
+						Message: fmt.Sprintf("argument to `len` not supported, got Go value of type %s", val.Kind()),
+					}
+					err.AttachFileSet(fset)
+					return err
+				}
 			default:
 				err := &object.Error{
 					Pos:     pos,
@@ -351,6 +364,96 @@ func (e *Evaluator) unwrapToBool(obj object.Object) (bool, bool) {
 	return false, false
 }
 
+// nativeToValue converts a native Go value (from reflect.Value) into a minigo2 object.
+// This is used when retrieving values from Go collections or structs.
+func (e *Evaluator) nativeToValue(val reflect.Value) object.Object {
+	if !val.IsValid() {
+		return object.NULL
+	}
+
+	// Check if we can convert the interface value directly.
+	// This handles cases where the value might be, for example, a named type
+	// whose underlying type is a primitive.
+	i := val.Interface()
+	switch v := i.(type) {
+	case int:
+		return &object.Integer{Value: int64(v)}
+	case int64:
+		return &object.Integer{Value: v}
+	case string:
+		return &object.String{Value: v}
+	case bool:
+		return e.nativeBoolToBooleanObject(v)
+	case nil:
+		return object.NULL
+	}
+
+	// If direct conversion fails, fall back to Kind-based conversion.
+	switch val.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32:
+		return &object.Integer{Value: val.Int()}
+	case reflect.Ptr, reflect.Interface:
+		if val.IsNil() {
+			return object.NULL
+		}
+		// Re-wrap the value to allow further operations on it.
+		return &object.GoValue{Value: val}
+	case reflect.Struct, reflect.Slice, reflect.Array, reflect.Map:
+		// Wrap complex types so they can be operated on within the interpreter.
+		return &object.GoValue{Value: val}
+	default:
+		// For any other type, we can't safely represent it.
+		// For now, we'll return a GoValue, but this could also be an error.
+		return &object.GoValue{Value: val}
+	}
+}
+
+// objectToReflectValue converts a minigo2 object to a reflect.Value of a specific Go type.
+// This is a crucial helper for map indexing and function calls into Go code.
+func (e *Evaluator) objectToReflectValue(obj object.Object, targetType reflect.Type) (reflect.Value, error) {
+	switch o := obj.(type) {
+	case *object.Integer:
+		// Create a reflect.Value of the target type and set its value.
+		val := reflect.New(targetType).Elem()
+		switch targetType.Kind() {
+		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+			val.SetInt(o.Value)
+			return val, nil
+		default:
+			return reflect.Value{}, fmt.Errorf("cannot convert integer to %s", targetType)
+		}
+	case *object.String:
+		if targetType.Kind() != reflect.String {
+			return reflect.Value{}, fmt.Errorf("cannot convert string to %s", targetType)
+		}
+		return reflect.ValueOf(o.Value).Convert(targetType), nil
+	case *object.Boolean:
+		if targetType.Kind() != reflect.Bool {
+			return reflect.Value{}, fmt.Errorf("cannot convert boolean to %s", targetType)
+		}
+		return reflect.ValueOf(o.Value).Convert(targetType), nil
+	case *object.GoValue:
+		// If the underlying Go value is assignable to the target type, use it directly.
+		if o.Value.Type().AssignableTo(targetType) {
+			return o.Value, nil
+		}
+		// Also check for convertibility (e.g., int to int64).
+		if o.Value.Type().ConvertibleTo(targetType) {
+			return o.Value.Convert(targetType), nil
+		}
+		return reflect.Value{}, fmt.Errorf("GoValue of type %s is not assignable or convertible to %s", o.Value.Type(), targetType)
+	case *object.Null:
+		// For nil, we can return a zero value of the target type if it's a pointer, map, slice, etc.
+		switch targetType.Kind() {
+		case reflect.Ptr, reflect.Map, reflect.Slice, reflect.Interface, reflect.Func:
+			return reflect.Zero(targetType), nil
+		}
+		return reflect.Value{}, fmt.Errorf("cannot convert null to non-nillable type %s", targetType)
+	}
+
+	return reflect.Value{}, fmt.Errorf("unsupported conversion from %s to %s", obj.Type(), targetType)
+}
+
 // evalMixedBoolInfixExpression handles infix expressions for combinations of Boolean and GoValue(bool).
 func (e *Evaluator) evalMixedBoolInfixExpression(node ast.Node, operator string, left, right object.Object) object.Object {
 	leftVal, ok1 := e.unwrapToBool(left)
@@ -544,9 +647,88 @@ func (e *Evaluator) evalForRangeStmt(rs *ast.RangeStmt, env *object.Environment)
 		return e.evalRangeString(rs, iterable, env)
 	case *object.Map:
 		return e.evalRangeMap(rs, iterable, env)
+	case *object.GoValue:
+		return e.evalRangeGoValue(rs, iterable, env)
 	default:
 		return e.newError(rs.X.Pos(), "range operator not supported for %s", iterable.Type())
 	}
+}
+
+func (e *Evaluator) evalRangeGoValue(rs *ast.RangeStmt, goVal *object.GoValue, env *object.Environment) object.Object {
+	val := goVal.Value
+	switch val.Kind() {
+	case reflect.Slice, reflect.Array:
+		for i := 0; i < val.Len(); i++ {
+			loopEnv := object.NewEnclosedEnvironment(env)
+			elem := val.Index(i)
+
+			if rs.Key != nil {
+				keyIdent, _ := rs.Key.(*ast.Ident) // This is safe in a valid AST
+				if keyIdent.Name != "_" {
+					loopEnv.Set(keyIdent.Name, &object.Integer{Value: int64(i)})
+				}
+			}
+			if rs.Value != nil {
+				valueIdent, _ := rs.Value.(*ast.Ident) // This is safe in a valid AST
+				if valueIdent.Name != "_" {
+					loopEnv.Set(valueIdent.Name, e.nativeToValue(elem))
+				}
+			}
+
+			result := e.Eval(rs.Body, loopEnv)
+			if result != nil {
+				rt := result.Type()
+				if rt == object.BREAK_OBJ {
+					break
+				}
+				if rt == object.CONTINUE_OBJ {
+					continue
+				}
+				if rt == object.ERROR_OBJ || rt == object.RETURN_VALUE_OBJ {
+					return result
+				}
+			}
+		}
+		return object.NULL
+
+	case reflect.Map:
+		iter := val.MapRange()
+		for iter.Next() {
+			loopEnv := object.NewEnclosedEnvironment(env)
+			k := iter.Key()
+			v := iter.Value()
+
+			if rs.Key != nil {
+				keyIdent, _ := rs.Key.(*ast.Ident) // This is safe in a valid AST
+				if keyIdent.Name != "_" {
+					loopEnv.Set(keyIdent.Name, e.nativeToValue(k))
+				}
+			}
+			if rs.Value != nil {
+				valueIdent, _ := rs.Value.(*ast.Ident) // This is safe in a valid AST
+				if valueIdent.Name != "_" {
+					loopEnv.Set(valueIdent.Name, e.nativeToValue(v))
+				}
+			}
+
+			result := e.Eval(rs.Body, loopEnv)
+			if result != nil {
+				rt := result.Type()
+				if rt == object.BREAK_OBJ {
+					break
+				}
+				if rt == object.CONTINUE_OBJ {
+					continue
+				}
+				if rt == object.ERROR_OBJ || rt == object.RETURN_VALUE_OBJ {
+					return result
+				}
+			}
+		}
+		return object.NULL
+	}
+
+	return e.newError(rs.X.Pos(), "range operator not supported for Go value of type %s", val.Kind())
 }
 
 func (e *Evaluator) evalRangeArray(rs *ast.RangeStmt, arr *object.Array, env *object.Environment) object.Object {
@@ -1091,8 +1273,45 @@ func (e *Evaluator) evalIndexExpression(node ast.Node, left, index object.Object
 		return e.evalArrayIndexExpression(node, left, index)
 	case left.Type() == object.MAP_OBJ:
 		return e.evalMapIndexExpression(node, left, index)
+	case left.Type() == object.GO_VALUE_OBJ:
+		return e.evalGoValueIndexExpression(node, left.(*object.GoValue), index)
 	default:
 		return e.newError(node.Pos(), "index operator not supported for %s", left.Type())
+	}
+}
+
+func (e *Evaluator) evalGoValueIndexExpression(node ast.Node, goVal *object.GoValue, index object.Object) object.Object {
+	val := goVal.Value
+	switch val.Kind() {
+	case reflect.Slice, reflect.Array:
+		intIndex, ok := index.(*object.Integer)
+		if !ok {
+			return e.newError(node.Pos(), "index into Go slice/array must be an integer, got %s", index.Type())
+		}
+		idx := int(intIndex.Value)
+		if idx < 0 || idx >= val.Len() {
+			// Panic for out-of-bounds access, similar to Go.
+			return e.newError(node.Pos(), "runtime error: index out of range [%d] with length %d", idx, val.Len())
+		}
+		resultVal := val.Index(idx)
+		return e.nativeToValue(resultVal)
+
+	case reflect.Map:
+		// Convert the minigo2 index object to a reflect.Value that can be used as a map key.
+		keyVal, err := e.objectToReflectValue(index, val.Type().Key())
+		if err != nil {
+			return e.newError(node.Pos(), "cannot use %s as type %s in map index: %v", index.Type(), val.Type().Key(), err)
+		}
+		resultVal := val.MapIndex(keyVal)
+		if !resultVal.IsValid() {
+			// Key not found in map. Go would return the zero value.
+			// Let's return NULL for simplicity, as creating a zero value for any type is complex.
+			return object.NULL
+		}
+		return e.nativeToValue(resultVal)
+
+	default:
+		return e.newError(node.Pos(), "index operator not supported for Go value of type %s", val.Kind())
 	}
 }
 
@@ -1369,10 +1588,36 @@ func (e *Evaluator) evalSelectorExpr(n *ast.SelectorExpr, env *object.Environmen
 			return e.newError(n.Sel.Pos(), "undefined field '%s' on struct '%s'", n.Sel.Name, instance.Def.Name.Name)
 		}
 		return e.newError(n.Pos(), "base of selector expression is not a struct or pointer to struct")
-
+	case *object.GoValue:
+		return e.evalGoValueSelectorExpr(n, l, n.Sel.Name)
 	default:
 		return e.newError(n.Pos(), "base of selector expression is not a package or struct")
 	}
+}
+
+func (e *Evaluator) evalGoValueSelectorExpr(node ast.Node, goVal *object.GoValue, sel string) object.Object {
+	val := goVal.Value
+	// Allow field access on pointers to structs
+	if val.Kind() == reflect.Ptr {
+		if val.IsNil() {
+			return e.newError(node.Pos(), "nil pointer dereference")
+		}
+		val = val.Elem()
+	}
+
+	if val.Kind() != reflect.Struct {
+		return e.newError(node.Pos(), "base of selector expression is not a Go struct or pointer to struct")
+	}
+
+	field := val.FieldByName(sel)
+	if !field.IsValid() {
+		return e.newError(node.Pos(), "undefined field '%s' on Go struct %s", sel, val.Type())
+	}
+	if !field.CanInterface() {
+		return e.newError(node.Pos(), "cannot access unexported field '%s' on Go struct %s", sel, val.Type())
+	}
+
+	return e.nativeToValue(field)
 }
 
 func (e *Evaluator) evalCompositeLit(n *ast.CompositeLit, env *object.Environment) object.Object {

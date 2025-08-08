@@ -17,7 +17,7 @@ import (
 // and the root environment for script execution.
 type Interpreter struct {
 	scanner *goscan.Scanner
-	env     *object.Environment
+	Env     *object.Environment
 }
 
 // NewInterpreter creates a new interpreter instance.
@@ -29,7 +29,7 @@ func NewInterpreter(options ...goscan.ScannerOption) (*Interpreter, error) {
 	}
 	return &Interpreter{
 		scanner: scanner,
-		env:     object.NewEnvironment(),
+		Env:     object.NewEnvironment(),
 	}, nil
 }
 
@@ -58,7 +58,7 @@ type Result struct {
 func (i *Interpreter) Eval(ctx context.Context, opts Options) (*Result, error) {
 	// Inject global variables from Go into the interpreter's environment.
 	for name, value := range opts.Globals {
-		i.env.Set(name, &object.GoValue{Value: reflect.ValueOf(value)})
+		i.Env.Set(name, &object.GoValue{Value: reflect.ValueOf(value)})
 	}
 
 	fset := token.NewFileSet()
@@ -70,10 +70,10 @@ func (i *Interpreter) Eval(ctx context.Context, opts Options) (*Result, error) {
 	eval := evaluator.New(fset, i.scanner)
 	var lastVal object.Object
 	for _, decl := range node.Decls {
-		lastVal = eval.Eval(decl, i.env)
-		if lastVal != nil && lastVal.Type() == object.ERROR_OBJ {
+		lastVal = eval.Eval(decl, i.Env)
+		if err, ok := lastVal.(*object.Error); ok {
 			// The error object's Inspect() method now returns a fully formatted string.
-			return nil, fmt.Errorf("%s", lastVal.Inspect())
+			return nil, fmt.Errorf("%s", err.Inspect())
 		}
 	}
 

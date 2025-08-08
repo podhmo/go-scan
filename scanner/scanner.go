@@ -287,8 +287,9 @@ func (s *Scanner) buildImportLookup(file *ast.File) map[string]string {
 
 func (s *Scanner) parseGenDecl(ctx context.Context, decl *ast.GenDecl, info *PackageInfo, absFilePath string, importLookup map[string]string) {
 	var lastConstType *FieldType // Holds the type for iota-based const blocks
+	var lastConstValues []ast.Expr
 
-	for _, spec := range decl.Specs {
+	for iotaValue, spec := range decl.Specs {
 		switch sp := spec.(type) {
 		case *ast.TypeSpec:
 			typeInfo := s.parseTypeSpec(ctx, sp, info, absFilePath, importLookup)
@@ -307,12 +308,17 @@ func (s *Scanner) parseGenDecl(ctx context.Context, decl *ast.GenDecl, info *Pac
 					doc = commentText(decl.Doc)
 				}
 
+				if len(sp.Values) == 0 {
+					sp.Values = lastConstValues
+				} else {
+					lastConstValues = sp.Values
+				}
+
 				var currentSpecType *FieldType
 				if sp.Type != nil {
 					currentSpecType = s.parseTypeExpr(ctx, sp.Type, nil, info, importLookup)
 					lastConstType = currentSpecType // Remember this type for subsequent specs
 				} else {
-					// If type is not explicit, inherit from the previous const spec in this block.
 					currentSpecType = lastConstType
 				}
 
@@ -334,6 +340,9 @@ func (s *Scanner) parseGenDecl(ctx context.Context, decl *ast.GenDecl, info *Pac
 							case token.CHAR:
 								inferredFieldType = &FieldType{Name: "rune", IsBuiltin: true}
 							}
+						} else if ident, ok := valueExpr.(*ast.Ident); ok && ident.Name == "iota" {
+							val = fmt.Sprintf("%d", iotaValue)
+							inferredFieldType = &FieldType{Name: "int", IsBuiltin: true}
 						}
 					}
 

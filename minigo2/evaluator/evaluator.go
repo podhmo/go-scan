@@ -1535,6 +1535,22 @@ func (e *Evaluator) findFieldInStruct(instance *object.StructInstance, fieldName
 	return nil, false
 }
 
+// constantInfoToObject converts a goscan.ConstantInfo into a minigo2 object.
+// This is how the interpreter understands constants from imported Go packages.
+func (e *Evaluator) constantInfoToObject(c *goscan.ConstantInfo) (object.Object, error) {
+	// simplified inference
+	if i, err := strconv.ParseInt(c.Value, 0, 64); err == nil {
+		return &object.Integer{Value: i}, nil
+	}
+	if s, err := strconv.Unquote(c.Value); err == nil {
+		return &object.String{Value: s}, nil
+	}
+	if b, err := strconv.ParseBool(c.Value); err == nil {
+		return e.nativeBoolToBooleanObject(b), nil
+	}
+	return nil, fmt.Errorf("unsupported or malformed constant value: %q", c.Value)
+}
+
 func (e *Evaluator) evalSelectorExpr(n *ast.SelectorExpr, env *object.Environment) object.Object {
 	left := e.Eval(n.X, env)
 	if isError(left) {
@@ -1565,7 +1581,17 @@ func (e *Evaluator) evalSelectorExpr(n *ast.SelectorExpr, env *object.Environmen
 			}
 		}
 
-		// TODO: Look up in constants and variables as well.
+		// Look up in constants
+		for _, c := range l.Info.Constants {
+			if c.Name == memberName {
+				obj, err := e.constantInfoToObject(c)
+				if err != nil {
+					return e.newError(n.Sel.Pos(), "could not convert constant %q: %v", memberName, err)
+				}
+				l.Members[memberName] = obj // Cache it
+				return obj
+			}
+		}
 
 		return e.newError(n.Sel.Pos(), "undefined: %s.%s", l.Name, memberName)
 

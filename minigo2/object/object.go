@@ -8,6 +8,7 @@ import (
 	"go/token"
 	"hash/fnv"
 	"os"
+	"reflect"
 	"strings"
 
 	"github.com/podhmo/go-scan/scanner"
@@ -34,6 +35,7 @@ const (
 	MAP_OBJ               ObjectType = "MAP"
 	TUPLE_OBJ             ObjectType = "TUPLE"
 	PACKAGE_OBJ           ObjectType = "PACKAGE"
+	GO_VALUE_OBJ          ObjectType = "GO_VALUE"
 	ERROR_OBJ             ObjectType = "ERROR"
 )
 
@@ -416,6 +418,31 @@ func (p *Package) Type() ObjectType { return PACKAGE_OBJ }
 // Inspect returns a string representation of the package.
 func (p *Package) Inspect() string {
 	return fmt.Sprintf("package %s (%q)", p.Name, p.Path)
+}
+
+// --- GoValue Object ---
+
+// GoValue wraps a native Go value (`reflect.Value`).
+// This allows Go variables and functions to be injected into the interpreter.
+type GoValue struct {
+	Value reflect.Value
+}
+
+// Type returns the type of the GoValue object.
+func (g *GoValue) Type() ObjectType { return GO_VALUE_OBJ }
+
+// Inspect returns a string representation of the wrapped Go value.
+func (g *GoValue) Inspect() string {
+	// Check if the value is valid to prevent panics with IsNil.
+	if !g.Value.IsValid() {
+		return "<invalid Go value>"
+	}
+	// Check for nil pointers to avoid panics on .Interface().
+	if g.Value.Kind() == reflect.Ptr && g.Value.IsNil() {
+		return "nil"
+	}
+	// For other types, Interface() is safe.
+	return fmt.Sprintf("%v", g.Value.Interface())
 }
 
 // --- Error Object ---

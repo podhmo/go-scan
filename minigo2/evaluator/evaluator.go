@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"go/ast"
 	"go/token"
+	"reflect"
 	"strconv"
 
 	"github.com/podhmo/go-scan"
@@ -184,6 +185,76 @@ func (e *Evaluator) evalAddressOfExpression(node *ast.UnaryExpr, env *object.Env
 	}
 }
 
+// unwrapToInt64 is a helper to extract an int64 from an Integer or a GoValue.
+func (e *Evaluator) unwrapToInt64(obj object.Object) (int64, bool) {
+	switch o := obj.(type) {
+	case *object.Integer:
+		return o.Value, true
+	case *object.GoValue:
+		// Check if the underlying Go value is some kind of integer.
+		switch o.Value.Kind() {
+		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+			return o.Value.Int(), true
+		}
+	}
+	return 0, false
+}
+
+// evalMixedIntInfixExpression handles infix expressions for combinations of Integer and GoValue(int).
+func (e *Evaluator) evalMixedIntInfixExpression(node ast.Node, operator string, left, right object.Object) object.Object {
+	leftVal, ok1 := e.unwrapToInt64(left)
+	if !ok1 {
+		return e.newError(node.Pos(), "left operand is not a valid integer: %s", left.Type())
+	}
+	rightVal, ok2 := e.unwrapToInt64(right)
+	if !ok2 {
+		return e.newError(node.Pos(), "right operand is not a valid integer: %s", right.Type())
+	}
+
+	// Now that we have two int64s, we can perform the operation.
+	// This logic is duplicated from evalIntegerInfixExpression.
+	// A future refactor could merge them.
+	switch operator {
+	case "+":
+		return &object.Integer{Value: leftVal + rightVal}
+	case "-":
+		return &object.Integer{Value: leftVal - rightVal}
+	case "*":
+		return &object.Integer{Value: leftVal * rightVal}
+	case "/":
+		if rightVal == 0 {
+			return e.newError(node.Pos(), "division by zero")
+		}
+		return &object.Integer{Value: leftVal / rightVal}
+	case "%":
+		if rightVal == 0 {
+			return e.newError(node.Pos(), "division by zero")
+		}
+		return &object.Integer{Value: leftVal % rightVal}
+	case "<<":
+		return &object.Integer{Value: leftVal << rightVal}
+	case ">>":
+		return &object.Integer{Value: leftVal >> rightVal}
+	case "&":
+		return &object.Integer{Value: leftVal & rightVal}
+	case "|":
+		return &object.Integer{Value: leftVal | rightVal}
+	case "^":
+		return &object.Integer{Value: leftVal ^ rightVal}
+	case "<":
+		return e.nativeBoolToBooleanObject(leftVal < rightVal)
+	case ">":
+		return e.nativeBoolToBooleanObject(leftVal > rightVal)
+	case "==":
+		return e.nativeBoolToBooleanObject(leftVal == rightVal)
+	case "!=":
+		return e.nativeBoolToBooleanObject(leftVal != rightVal)
+	default:
+		// This should be caught by the outer switch, but as a safeguard:
+		return e.newError(node.Pos(), "unknown integer operator: %s", operator)
+	}
+}
+
 // evalIntegerInfixExpression evaluates infix expressions for integers.
 func (e *Evaluator) evalIntegerInfixExpression(node ast.Node, operator string, left, right object.Object) object.Object {
 	leftVal := left.(*object.Integer).Value
@@ -229,6 +300,78 @@ func (e *Evaluator) evalIntegerInfixExpression(node ast.Node, operator string, l
 	}
 }
 
+// unwrapToString is a helper to extract a string from a String or a GoValue.
+func (e *Evaluator) unwrapToString(obj object.Object) (string, bool) {
+	switch o := obj.(type) {
+	case *object.String:
+		return o.Value, true
+	case *object.GoValue:
+		if o.Value.Kind() == reflect.String {
+			return o.Value.String(), true
+		}
+	}
+	return "", false
+}
+
+// evalMixedStringInfixExpression handles infix expressions for combinations of String and GoValue(string).
+func (e *Evaluator) evalMixedStringInfixExpression(node ast.Node, operator string, left, right object.Object) object.Object {
+	leftVal, ok1 := e.unwrapToString(left)
+	if !ok1 {
+		// If unwrap fails, it's not a string, so we can't proceed.
+		// Fallback to the generic error message in evalInfixExpression.
+		return e.newError(node.Pos(), "type mismatch: %s %s %s", left.Type(), operator, right.Type())
+	}
+	rightVal, ok2 := e.unwrapToString(right)
+	if !ok2 {
+		return e.newError(node.Pos(), "type mismatch: %s %s %s", left.Type(), operator, right.Type())
+	}
+
+	switch operator {
+	case "+":
+		return &object.String{Value: leftVal + rightVal}
+	case "==":
+		return e.nativeBoolToBooleanObject(leftVal == rightVal)
+	case "!=":
+		return e.nativeBoolToBooleanObject(leftVal != rightVal)
+	default:
+		return e.newError(node.Pos(), "unknown operator for strings: %s", operator)
+	}
+}
+
+// unwrapToBool is a helper to extract a bool from a Boolean or a GoValue.
+func (e *Evaluator) unwrapToBool(obj object.Object) (bool, bool) {
+	switch o := obj.(type) {
+	case *object.Boolean:
+		return o.Value, true
+	case *object.GoValue:
+		if o.Value.Kind() == reflect.Bool {
+			return o.Value.Bool(), true
+		}
+	}
+	return false, false
+}
+
+// evalMixedBoolInfixExpression handles infix expressions for combinations of Boolean and GoValue(bool).
+func (e *Evaluator) evalMixedBoolInfixExpression(node ast.Node, operator string, left, right object.Object) object.Object {
+	leftVal, ok1 := e.unwrapToBool(left)
+	if !ok1 {
+		return e.newError(node.Pos(), "type mismatch: %s %s %s", left.Type(), operator, right.Type())
+	}
+	rightVal, ok2 := e.unwrapToBool(right)
+	if !ok2 {
+		return e.newError(node.Pos(), "type mismatch: %s %s %s", left.Type(), operator, right.Type())
+	}
+
+	switch operator {
+	case "==":
+		return e.nativeBoolToBooleanObject(leftVal == rightVal)
+	case "!=":
+		return e.nativeBoolToBooleanObject(leftVal != rightVal)
+	default:
+		return e.newError(node.Pos(), "unknown operator for booleans: %s", operator)
+	}
+}
+
 // evalStringInfixExpression evaluates infix expressions for strings.
 func (e *Evaluator) evalStringInfixExpression(node ast.Node, operator string, left, right object.Object) object.Object {
 	leftVal := left.(*object.String).Value
@@ -251,8 +394,25 @@ func (e *Evaluator) evalInfixExpression(node ast.Node, operator string, left, ri
 	switch {
 	case left.Type() == object.INTEGER_OBJ && right.Type() == object.INTEGER_OBJ:
 		return e.evalIntegerInfixExpression(node, operator, left, right)
+
+	// Handle arithmetic with injected Go values (integers).
+	case (left.Type() == object.INTEGER_OBJ || left.Type() == object.GO_VALUE_OBJ) &&
+		(right.Type() == object.INTEGER_OBJ || right.Type() == object.GO_VALUE_OBJ):
+		return e.evalMixedIntInfixExpression(node, operator, left, right)
+
 	case left.Type() == object.STRING_OBJ && right.Type() == object.STRING_OBJ:
 		return e.evalStringInfixExpression(node, operator, left, right)
+
+	// Handle operations with injected Go values (strings).
+	case (left.Type() == object.STRING_OBJ || left.Type() == object.GO_VALUE_OBJ) &&
+		(right.Type() == object.STRING_OBJ || right.Type() == object.GO_VALUE_OBJ):
+		return e.evalMixedStringInfixExpression(node, operator, left, right)
+
+	// Handle operations with injected Go values (booleans).
+	case (left.Type() == object.BOOLEAN_OBJ || left.Type() == object.GO_VALUE_OBJ) &&
+		(right.Type() == object.BOOLEAN_OBJ || right.Type() == object.GO_VALUE_OBJ):
+		return e.evalMixedBoolInfixExpression(node, operator, left, right)
+
 	case operator == "==":
 		return e.nativeBoolToBooleanObject(left == right)
 	case operator == "!=":
@@ -266,10 +426,19 @@ func (e *Evaluator) evalInfixExpression(node ast.Node, operator string, left, ri
 
 // isTruthy checks if an object is considered true in a boolean context.
 func (e *Evaluator) isTruthy(obj object.Object) bool {
-	switch obj {
-	case object.NULL, object.FALSE:
+	switch o := obj.(type) {
+	case *object.Boolean:
+		return o.Value
+	case *object.GoValue:
+		if val, ok := e.unwrapToBool(o); ok {
+			return val
+		}
+		// If it's a GoValue but not a bool, consider it truthy if it's not nil/zero.
+		return o.Value.IsValid() && !o.Value.IsZero()
+	case *object.Null:
 		return false
 	default:
+		// Any other object type (Integer, String, etc.) is considered truthy.
 		return !isError(obj)
 	}
 }
@@ -819,6 +988,7 @@ func (e *Evaluator) Eval(node ast.Node, env *object.Environment) object.Object {
 }
 
 func (e *Evaluator) evalGenDecl(n *ast.GenDecl, env *object.Environment) object.Object {
+	var lastVal object.Object
 	switch n.Tok {
 	case token.IMPORT:
 		for _, spec := range n.Specs {
@@ -891,9 +1061,10 @@ func (e *Evaluator) evalGenDecl(n *ast.GenDecl, env *object.Environment) object.
 					}
 					env.Set(name.Name, val)
 				}
+				lastVal = val
 			}
 		}
-		return nil
+		return lastVal
 
 	case token.TYPE:
 		for _, spec := range n.Specs {

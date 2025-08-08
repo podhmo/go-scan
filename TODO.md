@@ -172,12 +172,15 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] Support map literals (`map[string]int{"a": 1}`).
 - [x] Support indexing for slices, arrays, and maps (`arr[0]`, `m["key"]`).
 - [x] **Implement `for...range` loops** for iterating over slices, arrays, and maps.
-- [ ] **Implement pointer support**:
-- [ ] Define a `Pointer` object type in the object system.
-- [ ] Implement the address-of operator (`&`) to create pointers to variables.
-- [ ] Implement the dereference operator (`*`) to get the value a pointer points to.
-- [ ] Support pointer-to-struct field access (e.g., `ptr.Field`).
-- [ ] Support `new()` built-in function.
+- [x] **Implement pointer support**:
+- [x] Define a `Pointer` object type in the object system.
+- [x] Implement the address-of operator (`&`) to create pointers to variables.
+- [x] Implement the dereference operator (`*`) to get the value a pointer points to.
+- [x] Support pointer-to-struct field access (e.g., `ptr.Field`).
+- [x] Support `new()` built-in function.
+- [ ] **Support for variadic arguments** in function definitions and calls.
+- [ ] **Support for struct embedding**.
+- [ ] **Support for multiple return values** from functions.
 - [ ] Create the main `Interpreter` struct that holds a `goscan.Scanner`.
 - [ ] Implement the logic to handle `import` statements and load symbols from external Go packages.
 - [ ] Implement the `object.GoValue` to wrap `reflect.Value`, allowing Go values to be injected into the script.

@@ -53,7 +53,11 @@ func testEval(t *testing.T, input string) object.Object {
 
 	eval := New(fset)
 	env := object.NewEnvironment()
-	return eval.Eval(mainFunc.Body, env)
+	evaluated := eval.Eval(mainFunc.Body, env)
+	if retVal, ok := evaluated.(*object.ReturnValue); ok {
+		return retVal.Value
+	}
+	return evaluated
 }
 
 // testIntegerObject is a helper to check if an object is an Integer with the expected value.
@@ -890,6 +894,79 @@ func TestStructs(t *testing.T) {
 				testStringObject(t, evaluated, expected)
 			case bool:
 				testBooleanObject(t, evaluated, expected)
+			default:
+				t.Fatalf("unsupported expected type for test: %T", expected)
+			}
+		})
+	}
+}
+
+func TestPointers(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected any
+	}{
+		// Basic pointer operations
+		{"var a = 10; var p = &a; return *p;", int64(10)},
+		{"var a = 10; var p = &a; *p = 20; return a;", int64(20)},
+		{"var a = 10; var p = &a; var b = *p; return b;", int64(10)},
+
+		// Pointer to struct
+		{
+			`
+			type T struct { V int }
+			var t = T{V: 1}
+			var p = &t
+			return p.V
+			`,
+			int64(1),
+		},
+		{
+			`
+			type T struct { V int }
+			var t = T{V: 1}
+			var p = &t
+			p.V = 2
+			return t.V
+			`,
+			int64(2),
+		},
+
+		// new() function
+		{
+			`
+			type T struct { V int }
+			var p = new(T)
+			return p.V
+			`,
+			nil, // Fields are zero-initialized to NULL for now
+		},
+		{
+			`
+			type T struct { V int }
+			var p = new(T)
+			p.V = 5
+			return p.V
+			`,
+			int64(5),
+		},
+
+		// Error cases
+		{"return *10", "invalid indirect of 10 (type INTEGER)"},
+		{"var a = 10; return *a", "invalid indirect of 10 (type INTEGER)"},
+		{"return &10", "cannot take the address of *ast.BasicLit"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			evaluated := testEval(t, tt.input)
+			switch expected := tt.expected.(type) {
+			case int64:
+				testIntegerObject(t, evaluated, expected)
+			case string:
+				testErrorObject(t, evaluated, expected)
+			case nil:
+				testNullObject(t, evaluated)
 			default:
 				t.Fatalf("unsupported expected type for test: %T", expected)
 			}

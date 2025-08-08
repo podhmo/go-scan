@@ -94,7 +94,6 @@ func fromGenDecl(d *ast.GenDecl, fset *token.FileSet, file *ast.File) ([]interfa
 			if err != nil {
 				return nil, err
 			}
-			// The GenDecl doc applies to the TypeSpec.
 			if genDoc != "" {
 				if ts.Doc != "" {
 					ts.Doc = genDoc + "\n" + ts.Doc
@@ -106,7 +105,6 @@ func fromGenDecl(d *ast.GenDecl, fset *token.FileSet, file *ast.File) ([]interfa
 
 		case *ast.ValueSpec:
 			vs := fromValueSpec(s)
-			// The GenDecl doc applies to each ValueSpec.
 			if genDoc != "" {
 				if vs.Doc != "" {
 					vs.Doc = genDoc + "\n" + vs.Doc
@@ -121,10 +119,11 @@ func fromGenDecl(d *ast.GenDecl, fset *token.FileSet, file *ast.File) ([]interfa
 	return results, nil
 }
 
+// fromTypeSpec only considers the comment group immediately preceding the spec.
 func fromTypeSpec(s *ast.TypeSpec, fset *token.FileSet, file *ast.File) (*TypeSpec, error) {
 	ts := &TypeSpec{
 		Name: s.Name.Name,
-		Doc:  cleanComment(s.Doc, s.Comment), // Doc for the spec itself.
+		Doc:  cleanComment(s.Doc), // FIX: Only use s.Doc, not s.Comment.
 	}
 
 	if st, ok := s.Type.(*ast.StructType); ok {
@@ -146,48 +145,44 @@ func fromValueSpec(s *ast.ValueSpec) *ValueSpec {
 	}
 }
 
+// extractFields processes a field list and extracts documentation for each field.
 func extractFields(fieldList *ast.FieldList, fset *token.FileSet, file *ast.File) []*Field {
 	if fieldList == nil || len(fieldList.List) == 0 {
 		return nil
 	}
-	var fields []*Field
+	fields := make([]*Field, len(fieldList.List))
 	for i, f := range fieldList.List {
-		// Get docs that are automatically associated by the parser.
+		// Start with the parser's automatic association, which works for struct fields.
 		doc := cleanComment(f.Doc, f.Comment)
 
-		// Manually associate comments if context is available.
+		// The parser often fails for function params/results. If we have file context,
+		// we perform a manual search to find what it missed.
 		if file != nil && fset != nil {
-			var associatedComments []*ast.CommentGroup
+			var manualComments []*ast.CommentGroup
 
-			// Define the search boundary. It ends where the next field begins,
-			// or at the closing parenthesis of the list.
-			endPos := fieldList.Closing
+			// Define the search boundary for this field's comments.
+			// It starts after the field's declaration and ends right before the next field begins.
+			startPos := f.End()
+			endPos := fieldList.Closing // The closing ')' of the whole list
 			if i+1 < len(fieldList.List) {
 				endPos = fieldList.List[i+1].Pos()
 			}
 
 			for _, cgroup := range file.Comments {
-				// The comment must start after the field's own declaration starts,
-				// and before the search boundary.
-				if cgroup.Pos() > f.Pos() && cgroup.End() < endPos {
-					// For multi-line parameter lists, ensure comment is on the same line.
-					// This prevents grabbing comments from subsequent lines.
-					if fset.Position(f.Pos()).Line == fset.Position(cgroup.Pos()).Line {
-						associatedComments = append(associatedComments, cgroup)
-					} else if fset.Position(f.End()).Line == fset.Position(cgroup.Pos()).Line {
-						// Also handle comments on the same line as the end of a multi-line field type.
-						associatedComments = append(associatedComments, cgroup)
-					}
+				if cgroup.Pos() > startPos && cgroup.End() < endPos {
+					manualComments = append(manualComments, cgroup)
 				}
 			}
 
-			// Add manually found comments to any that were already there.
-			if len(associatedComments) > 0 {
-				manualDoc := cleanComment(associatedComments...)
-				if doc != "" {
-					doc += "\n" + manualDoc
-				} else {
-					doc = manualDoc
+			if len(manualComments) > 0 {
+				manualDoc := cleanComment(manualComments...)
+				// Only append if the manual doc isn't already part of the automatic one.
+				if !strings.Contains(doc, manualDoc) {
+					if doc != "" {
+						doc += "\n" + manualDoc
+					} else {
+						doc = manualDoc
+					}
 				}
 			}
 		}
@@ -200,12 +195,11 @@ func extractFields(fieldList *ast.FieldList, fset *token.FileSet, file *ast.File
 			names = append(names, typeToString(f.Type))
 		}
 
-		field := &Field{
+		fields[i] = &Field{
 			Names: names,
 			Type:  typeToString(f.Type),
 			Doc:   doc,
 		}
-		fields = append(fields, field)
 	}
 	return fields
 }

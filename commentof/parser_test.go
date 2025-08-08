@@ -161,19 +161,14 @@ func TestFromFile(t *testing.T) {
 			for i, want := range tc.expected {
 				got := docs[i]
 
-				// Special handling for nested struct fields which are not deeply parsed
 				if tsGot, ok := got.(*TypeSpec); ok {
-					if tsWant, ok2 := want.(*TypeSpec); ok2 {
-						if sGot, ok3 := tsGot.Definition.(*Struct); ok3 {
-							if sWant, ok4 := tsWant.Definition.(*Struct); ok4 {
-								for j, fWant := range sWant.Fields {
-									if j >= len(sGot.Fields) {
-										break
-									}
-									fGot := sGot.Fields[j]
-									if fWant.Type == "struct{...}" {
-										fGot.Type = "struct{...}"
-									}
+					if sGot, ok2 := tsGot.Definition.(*Struct); ok2 {
+						if len(sGot.Fields) > 0 {
+							// For nested structs, the type becomes "struct{...}" which is not ideal for DeepEqual.
+							// We normalize the `Nested` field's type for comparison purposes.
+							for _, f := range sGot.Fields {
+								if f.Names[0] == "Nested" {
+									f.Type = "struct{...}"
 								}
 							}
 						}

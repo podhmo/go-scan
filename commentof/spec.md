@@ -22,7 +22,7 @@ Stores comment information for a function.
 Stores comment information for a type declaration.
 
 -   `Name` (string): The type name.
--   `Doc` (string): The comment immediately preceding or on the same line as the type declaration.
+-   `Doc` (string): The comment immediately preceding the type declaration. Trailing line comments are ignored.
 -   `Definition` (interface{}): The definition of the type. Currently, this only stores `*commentof.Struct`. For type aliases, it is `nil`.
 
 ### 2.3. `commentof.ValueSpec`
@@ -58,21 +58,22 @@ Stores comment information for a named element, such as a function parameter, a 
 ### 3.2. Functions (`func`)
 
 -   `ast.FuncDecl.Doc` is extracted as the function's `Doc`.
--   For each `ast.Field` in a function's `Params` and `Results` (`ast.FieldList`):
+-   For each `ast.Field` in a function's `Params` and `Results`:
     -   The parser attempts to associate comments from the source.
-    -   **Manual Association (Current Implementation)**: Due to limitations in the Go AST's automatic comment association for function parameters, a manual, position-based search is performed. It searches for comments on the same line as a parameter/result, between the start of that parameter and the start of the next one.
-    -   **Multi-line Parameters/Results**: If parameters or results are split across multiple lines, the manual association logic correctly handles comments on each line (e.g., `x int, // comment for x`).
-    -   **Interstitial Comments**: Comments placed between parameters (e.g., `x int, /* interstitial */ y string`) are associated with the preceding parameter (`x`).
+    -   **Manual Association**: A manual, position-based search is performed to find comments that the Go parser does not automatically associate, which is common for parameters and results.
+    -   **Multi-line Parameters/Results**: If parameters or results are split across multiple lines, the parser attempts to find the comments on each respective line. For example, in `func(x int, // comment for x\n y int, // comment for y)`, each comment is associated with its corresponding parameter.
+    -   **Interstitial Comments**: Comments placed on the same line between parameters (e.g., `x int, /* interstitial */ y string`) are associated with the preceding parameter (`x`).
+    -   **Known Issues**: The current implementation of manual association is imperfect and may fail to correctly associate comments in complex, single-line function signatures.
 
 ### 3.3. Types (`type`)
 
 -   If a `ast.GenDecl` contains only one `type` declaration, the `ast.GenDecl.Doc` is treated as the `Doc` for that type.
 -   In a grouped declaration like `type (...)`, the `ast.TypeSpec.Doc` for each spec is used. If a `TypeSpec` has no doc, the `GenDecl` doc is used as a fallback.
--   Comments for struct fields (`ast.StructType.Fields`) are extracted similarly to function parameters.
+-   Trailing line comments after the closing brace of a struct are not considered part of the struct's documentation.
 
 ### 3.4. Constants (`const`) and Variables (`var`)
 
--   The documentation rules are analogous to `type` declarations. The `ast.GenDecl.Doc` is applied to all `ValueSpec`s within the declaration, and is combined with any docs specific to the `ValueSpec` itself (both preceding doc comments and trailing line comments).
+-   The documentation rules are analogous to `type` declarations. The `ast.GenDecl.Doc` is applied to all `ValueSpec`s within the declaration, and is combined with any docs specific to the `ValueSpec` itself.
 
 ## 4. API
 

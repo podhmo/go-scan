@@ -10,6 +10,31 @@ import (
 )
 
 var builtins = map[string]*object.Builtin{
+	"len": {
+		Fn: func(fset *token.FileSet, pos token.Pos, args ...object.Object) object.Object {
+			if len(args) != 1 {
+				err := &object.Error{
+					Pos:     pos,
+					Message: fmt.Sprintf("wrong number of arguments. got=%d, want=1", len(args)),
+				}
+				err.AttachFileSet(fset)
+				return err
+			}
+			switch arg := args[0].(type) {
+			case *object.Array:
+				return &object.Integer{Value: int64(len(arg.Elements))}
+			case *object.String:
+				return &object.Integer{Value: int64(len(arg.Value))}
+			default:
+				err := &object.Error{
+					Pos:     pos,
+					Message: fmt.Sprintf("argument to `len` not supported, got %s", args[0].Type()),
+				}
+				err.AttachFileSet(fset)
+				return err
+			}
+		},
+	},
 	"new": {
 		Fn: func(fset *token.FileSet, pos token.Pos, args ...object.Object) object.Object {
 			if len(args) != 1 {
@@ -568,8 +593,19 @@ func (e *Evaluator) evalExpressions(exps []ast.Expr, env *object.Environment) []
 func (e *Evaluator) applyFunction(call *ast.CallExpr, fn object.Object, args []object.Object) object.Object {
 	switch fn := fn.(type) {
 	case *object.Function:
-		if len(fn.Parameters) != len(args) {
-			return e.newError(call.Pos(), "wrong number of arguments. got=%d, want=%d", len(args), len(fn.Parameters))
+		// Check argument count before extending the environment
+		if fn.IsVariadic() {
+			// For variadic functions, we need at least N-1 arguments, where N is the number of parameters.
+			if len(args) < len(fn.Parameters.List)-1 {
+				return e.newError(call.Pos(), "wrong number of arguments for variadic function. got=%d, want at least %d", len(args), len(fn.Parameters.List)-1)
+			}
+		} else {
+			// For non-variadic functions, the number of arguments must match exactly.
+			if fn.Parameters != nil && len(fn.Parameters.List) != len(args) {
+				return e.newError(call.Pos(), "wrong number of arguments. got=%d, want=%d", len(args), len(fn.Parameters.List))
+			} else if fn.Parameters == nil && len(args) != 0 {
+				return e.newError(call.Pos(), "wrong number of arguments. got=%d, want=0", len(args))
+			}
 		}
 
 		funcName := "<anonymous>"
@@ -592,9 +628,38 @@ func (e *Evaluator) applyFunction(call *ast.CallExpr, fn object.Object, args []o
 
 func (e *Evaluator) extendFunctionEnv(fn *object.Function, args []object.Object) *object.Environment {
 	env := object.NewEnclosedEnvironment(fn.Env)
-	for paramIdx, param := range fn.Parameters {
-		env.Set(param.Name, args[paramIdx])
+	if fn.Parameters == nil {
+		return env
 	}
+
+	if fn.IsVariadic() {
+		// Bind non-variadic parameters
+		for i, param := range fn.Parameters.List[:len(fn.Parameters.List)-1] {
+			// A single parameter can have multiple names (e.g., `a, b int`).
+			for _, paramName := range param.Names {
+				env.Set(paramName.Name, args[i])
+			}
+		}
+
+		// Bind variadic parameter
+		lastParam := fn.Parameters.List[len(fn.Parameters.List)-1]
+		variadicArgs := args[len(fn.Parameters.List)-1:]
+		arr := &object.Array{Elements: make([]object.Object, len(variadicArgs))}
+		for i, arg := range variadicArgs {
+			arr.Elements[i] = arg
+		}
+		// The variadic parameter has only one name.
+		env.Set(lastParam.Names[0].Name, arr)
+
+	} else {
+		// Bind regular parameters
+		for i, param := range fn.Parameters.List {
+			for _, paramName := range param.Names {
+				env.Set(paramName.Name, args[i])
+			}
+		}
+	}
+
 	return env
 }
 
@@ -639,15 +704,12 @@ func (e *Evaluator) Eval(node ast.Node, env *object.Environment) object.Object {
 	case *ast.DeclStmt:
 		return e.Eval(n.Decl, env)
 	case *ast.FuncDecl:
-		params := []*ast.Ident{}
-		if n.Type.Params != nil {
-			for _, field := range n.Type.Params.List {
-				for _, name := range field.Names {
-					params = append(params, name)
-				}
-			}
+		fn := &object.Function{
+			Name:       n.Name,
+			Parameters: n.Type.Params,
+			Body:       n.Body,
+			Env:        env,
 		}
-		fn := &object.Function{Name: n.Name, Parameters: params, Body: n.Body, Env: env}
 		env.Set(n.Name.Name, fn)
 		return nil
 	case *ast.ReturnStmt:
@@ -678,15 +740,11 @@ func (e *Evaluator) Eval(node ast.Node, env *object.Environment) object.Object {
 		}
 		return e.evalIndexExpression(n, left, index)
 	case *ast.FuncLit:
-		params := []*ast.Ident{}
-		if n.Type.Params != nil {
-			for _, field := range n.Type.Params.List {
-				for _, name := range field.Names {
-					params = append(params, name)
-				}
-			}
+		return &object.Function{
+			Parameters: n.Type.Params,
+			Body:       n.Body,
+			Env:        env,
 		}
-		return &object.Function{Parameters: params, Body: n.Body, Env: env}
 	case *ast.CallExpr:
 		function := e.Eval(n.Fun, env)
 		if isError(function) {

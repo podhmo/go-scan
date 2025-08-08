@@ -140,11 +140,11 @@ func TestFunctionObject(t *testing.T) {
 	if !ok {
 		t.Fatalf("object is not Function. got=%T (%+v)", evaluated, evaluated)
 	}
-	if len(fn.Parameters) != 1 {
+	if fn.Parameters == nil || len(fn.Parameters.List) != 1 {
 		t.Fatalf("function has wrong parameters. Parameters=%+v", fn.Parameters)
 	}
-	if fn.Parameters[0].String() != "x" {
-		t.Fatalf("parameter is not 'x'. got=%q", fn.Parameters[0])
+	if fn.Parameters.List[0].Names[0].String() != "x" {
+		t.Fatalf("parameter is not 'x'. got=%q", fn.Parameters.List[0].Names[0].String())
 	}
 	// The exact string representation of the body is not critical to test here,
 	// as long as we know it's a block statement.
@@ -190,6 +190,92 @@ func TestFunctionApplication(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
 			testIntegerObject(t, testEval(t, tt.input), tt.expected)
+		})
+	}
+}
+
+func TestVariadicFunctions(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected any
+	}{
+		{
+			`
+			sum := func(nums ...int) {
+				total := 0
+				for _, num := range nums {
+					total = total + num
+				}
+				return total
+			}
+			sum(1, 2, 3, 4)
+			`,
+			int64(10),
+		},
+		{
+			`
+			sum := func(nums ...int) {
+				total := 0
+				for _, num := range nums {
+					total = total + num
+				}
+				return total
+			}
+			sum()
+			`,
+			int64(0),
+		},
+		{
+			`
+			print := func(s string, vals ...int) {
+				// This test just checks if the call works and returns the first value
+				if len(vals) > 0 {
+					return vals[0]
+				}
+				return -1
+			}
+			print("hello", 10, 20)
+			`,
+			int64(10),
+		},
+		{
+			`
+			print := func(s string, vals ...int) {
+				return len(s)
+			}
+			print("hello")
+			`,
+			int64(5), // string length
+		},
+		{
+			`
+			f := func(a int, b ...int) {}
+			f()
+			`,
+			"wrong number of arguments for variadic function. got=0, want at least 1",
+		},
+		{
+			`
+			f := func(a ...int) {
+				return a[1]
+			}
+			f(1, 2, 3)
+			`,
+			int64(2),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			evaluated := testEval(t, tt.input)
+			switch expected := tt.expected.(type) {
+			case int64:
+				testIntegerObject(t, evaluated, expected)
+			case string:
+				testErrorObject(t, evaluated, expected)
+			default:
+				t.Fatalf("unsupported test type: %T", expected)
+			}
 		})
 	}
 }

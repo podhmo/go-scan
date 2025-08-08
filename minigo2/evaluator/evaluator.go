@@ -9,6 +9,44 @@ import (
 	"github.com/podhmo/go-scan/minigo2/object"
 )
 
+var builtins = map[string]*object.Builtin{
+	"new": {
+		Fn: func(fset *token.FileSet, pos token.Pos, args ...object.Object) object.Object {
+			if len(args) != 1 {
+				err := &object.Error{
+					Pos:     pos,
+					Message: fmt.Sprintf("wrong number of arguments. got=%d, want=1", len(args)),
+				}
+				err.AttachFileSet(fset)
+				return err
+			}
+			def, ok := args[0].(*object.StructDefinition)
+			if !ok {
+				err := &object.Error{
+					Pos:     pos,
+					Message: fmt.Sprintf("argument to `new` must be a type, got %s", args[0].Type()),
+				}
+				err.AttachFileSet(fset)
+				return err
+			}
+
+			// Create a zero-valued instance of the struct.
+			instance := &object.StructInstance{
+				Def:    def,
+				Fields: make(map[string]object.Object),
+			}
+			for _, field := range def.Fields {
+				// For now, we'll just initialize with NULL. A more advanced implementation
+				// would handle zero values for different types (0, "", false).
+				instance.Fields[field.Names[0].Name] = object.NULL
+			}
+
+			var obj object.Object = instance
+			return &object.Pointer{Element: &obj}
+		},
+	},
+}
+
 // Evaluator is the main object that evaluates the AST.
 type Evaluator struct {
 	fset      *token.FileSet
@@ -86,6 +124,29 @@ func (e *Evaluator) evalPrefixExpression(node *ast.UnaryExpr, operator string, r
 	default:
 		return e.newError(node.Pos(), "unknown operator: %s%s", operator, right.Type())
 	}
+}
+
+func (e *Evaluator) evalDereferenceExpression(node ast.Node, right object.Object) object.Object {
+	ptr, ok := right.(*object.Pointer)
+	if !ok {
+		return e.newError(node.Pos(), "invalid indirect of %s (type %s)", right.Inspect(), right.Type())
+	}
+	return *ptr.Element
+}
+
+func (e *Evaluator) evalAddressOfExpression(node *ast.UnaryExpr, env *object.Environment) object.Object {
+	ident, ok := node.X.(*ast.Ident)
+	if !ok {
+		// TODO: Could also support &someStruct.field
+		return e.newError(node.Pos(), "cannot take the address of %T", node.X)
+	}
+
+	addr, ok := env.GetAddress(ident.Name)
+	if !ok {
+		return e.newError(node.Pos(), "cannot take the address of undeclared variable: %s", ident.Name)
+	}
+
+	return &object.Pointer{Element: addr}
 }
 
 // evalIntegerInfixExpression evaluates infix expressions for integers.
@@ -522,7 +583,8 @@ func (e *Evaluator) applyFunction(call *ast.CallExpr, fn object.Object, args []o
 		extendedEnv := e.extendFunctionEnv(fn, args)
 		evaluated := e.Eval(fn.Body, extendedEnv)
 		return e.unwrapReturnValue(evaluated)
-
+	case *object.Builtin:
+		return fn.Fn(e.fset, call.Pos(), args...)
 	default:
 		return e.newError(call.Pos(), "not a function: %s", fn.Type())
 	}
@@ -639,7 +701,17 @@ func (e *Evaluator) Eval(node ast.Node, env *object.Environment) object.Object {
 		return e.evalSelectorExpr(n, env)
 	case *ast.CompositeLit:
 		return e.evalCompositeLit(n, env)
+	case *ast.StarExpr:
+		operand := e.Eval(n.X, env)
+		if isError(operand) {
+			return operand
+		}
+		return e.evalDereferenceExpression(n, operand)
 	case *ast.UnaryExpr:
+		// Special case for address-of operator, as we don't evaluate the operand.
+		if n.Op == token.AND {
+			return e.evalAddressOfExpression(n, env)
+		}
 		right := e.Eval(n.X, env)
 		if isError(right) {
 			return right
@@ -786,11 +858,25 @@ func (e *Evaluator) evalAssignStmt(n *ast.AssignStmt, env *object.Environment) o
 			if isError(obj) {
 				return obj
 			}
+			// Automatically dereference pointers.
+			if ptr, ok := obj.(*object.Pointer); ok {
+				obj = *ptr.Element
+			}
 			instance, ok := obj.(*object.StructInstance)
 			if !ok {
 				return e.newError(lhs.Pos(), "assignment to non-struct field")
 			}
 			instance.Fields[lhs.Sel.Name] = val
+		case *ast.StarExpr:
+			ptrObj := e.Eval(lhs.X, env)
+			if isError(ptrObj) {
+				return ptrObj
+			}
+			ptr, ok := ptrObj.(*object.Pointer)
+			if !ok {
+				return e.newError(lhs.Pos(), "cannot assign to non-pointer")
+			}
+			*ptr.Element = val
 		default:
 			return e.newError(n.Pos(), "unsupported assignment target")
 		}
@@ -813,9 +899,14 @@ func (e *Evaluator) evalSelectorExpr(n *ast.SelectorExpr, env *object.Environmen
 		return left
 	}
 
+	// Automatically dereference pointers.
+	if ptr, ok := left.(*object.Pointer); ok {
+		left = *ptr.Element
+	}
+
 	instance, ok := left.(*object.StructInstance)
 	if !ok {
-		return e.newError(n.Pos(), "base of selector expression is not a struct")
+		return e.newError(n.Pos(), "base of selector expression is not a struct or pointer to struct")
 	}
 
 	if val, ok := instance.Fields[n.Sel.Name]; ok {
@@ -910,6 +1001,9 @@ func (e *Evaluator) evalMapLiteral(n *ast.CompositeLit, env *object.Environment)
 func (e *Evaluator) evalIdent(n *ast.Ident, env *object.Environment) object.Object {
 	if val, ok := env.Get(n.Name); ok {
 		return val
+	}
+	if builtin, ok := builtins[n.Name]; ok {
+		return builtin
 	}
 	switch n.Name {
 	case "true":

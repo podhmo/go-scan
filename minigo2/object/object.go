@@ -24,8 +24,10 @@ const (
 	CONTINUE_OBJ          ObjectType = "CONTINUE"
 	RETURN_VALUE_OBJ      ObjectType = "RETURN_VALUE"
 	FUNCTION_OBJ          ObjectType = "FUNCTION"
+	BUILTIN_OBJ           ObjectType = "BUILTIN"
 	STRUCT_DEFINITION_OBJ ObjectType = "STRUCT_DEFINITION"
 	STRUCT_INSTANCE_OBJ   ObjectType = "STRUCT_INSTANCE"
+	POINTER_OBJ           ObjectType = "POINTER"
 	ARRAY_OBJ             ObjectType = "ARRAY"
 	MAP_OBJ               ObjectType = "MAP"
 	ERROR_OBJ             ObjectType = "ERROR"
@@ -213,6 +215,22 @@ func (f *Function) Inspect() string {
 	return out.String()
 }
 
+// --- Builtin Function Object ---
+
+// BuiltinFunction is the type of the function for built-in commands.
+type BuiltinFunction func(fset *token.FileSet, pos token.Pos, args ...Object) Object
+
+// Builtin represents a built-in function.
+type Builtin struct {
+	Fn BuiltinFunction
+}
+
+// Type returns the type of the Builtin object.
+func (b *Builtin) Type() ObjectType { return BUILTIN_OBJ }
+
+// Inspect returns a string representation of the built-in function.
+func (b *Builtin) Inspect() string { return "builtin function" }
+
 // --- Struct Definition Object ---
 
 // StructDefinition represents the definition of a struct type.
@@ -254,6 +272,21 @@ func (si *StructInstance) Inspect() string {
 	out.WriteString("}")
 
 	return out.String()
+}
+
+// --- Pointer Object ---
+
+// Pointer represents a pointer to another object.
+type Pointer struct {
+	Element *Object
+}
+
+// Type returns the type of the Pointer object.
+func (p *Pointer) Type() ObjectType { return POINTER_OBJ }
+
+// Inspect returns a string representation of the Pointer's value.
+func (p *Pointer) Inspect() string {
+	return fmt.Sprintf("0x%x", p.Element)
 }
 
 // --- Array Object ---
@@ -401,14 +434,14 @@ var (
 
 // Environment holds the bindings for variables and functions.
 type Environment struct {
-	store  map[string]Object
-	consts map[string]Object // For immutable bindings
+	store  map[string]*Object
+	consts map[string]Object // Constants are immutable, so they don't need to be pointers.
 	outer  *Environment
 }
 
 // NewEnvironment creates a new, top-level environment.
 func NewEnvironment() *Environment {
-	s := make(map[string]Object)
+	s := make(map[string]*Object)
 	c := make(map[string]Object)
 	return &Environment{store: s, consts: c, outer: nil}
 }
@@ -421,16 +454,27 @@ func NewEnclosedEnvironment(outer *Environment) *Environment {
 }
 
 // Get retrieves an object by name from the environment, checking outer scopes if necessary.
-// It checks constants first, then variables.
+// It checks constants first, then variables. It dereferences the pointer from the store.
 func (e *Environment) Get(name string) (Object, bool) {
 	if obj, ok := e.consts[name]; ok {
 		return obj, true
 	}
-	if obj, ok := e.store[name]; ok {
-		return obj, ok
+	if objPtr, ok := e.store[name]; ok {
+		return *objPtr, true
 	}
 	if e.outer != nil {
 		return e.outer.Get(name)
+	}
+	return nil, false
+}
+
+// GetAddress retrieves the memory address of a variable in the environment.
+func (e *Environment) GetAddress(name string) (*Object, bool) {
+	if objPtr, ok := e.store[name]; ok {
+		return objPtr, true
+	}
+	if e.outer != nil {
+		return e.outer.GetAddress(name)
 	}
 	return nil, false
 }
@@ -447,9 +491,9 @@ func (e *Environment) GetConstant(name string) (Object, bool) {
 }
 
 // Set stores an object by name in the current environment's scope.
-// It returns the object that was set. This is used for `var` and `:=`.
+// It stores a pointer to the object.
 func (e *Environment) Set(name string, val Object) Object {
-	e.store[name] = val
+	e.store[name] = &val
 	return val
 }
 
@@ -464,14 +508,14 @@ func (e *Environment) SetConstant(name string, val Object) Object {
 // the function returns true. If it's not found, or if it's a constant,
 // it returns false.
 func (e *Environment) Assign(name string, val Object) bool {
-	// Constants in the current scope cannot be reassigned.
+	// Constants cannot be reassigned.
 	if _, ok := e.consts[name]; ok {
 		return false
 	}
 
-	// If the variable exists in the current scope's store, assign it.
-	if _, ok := e.store[name]; ok {
-		e.store[name] = val
+	// If the variable exists in the current scope's store, update it.
+	if objPtr, ok := e.store[name]; ok {
+		*objPtr = val
 		return true
 	}
 

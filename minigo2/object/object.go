@@ -1,10 +1,12 @@
 package object
 
 import (
+	"bufio"
 	"bytes"
 	"fmt"
 	"go/ast"
 	"go/token"
+	"os"
 	"strings"
 )
 
@@ -41,7 +43,13 @@ func (cf *CallFrame) Format(fset *token.FileSet) string {
 	if funcName == "" {
 		funcName = "<script>"
 	}
-	return fmt.Sprintf("\t%s:%d:%d:\tin %s", position.Filename, position.Line, position.Column, funcName)
+
+	sourceLine := getSourceLine(position.Filename, position.Line)
+	if sourceLine != "" {
+		sourceLine = "\n\t\t" + sourceLine
+	}
+
+	return fmt.Sprintf("\t%s:%d:%d:\tin %s%s", position.Filename, position.Line, position.Column, funcName, sourceLine)
 }
 
 
@@ -216,6 +224,7 @@ func (si *StructInstance) Inspect() string {
 
 // Error represents a runtime error. It contains a message and a call stack.
 type Error struct {
+	Pos       token.Pos
 	Message   string
 	CallStack []CallFrame
 	fset      *token.FileSet // FileSet to resolve positions
@@ -230,6 +239,15 @@ func (e *Error) Inspect() string {
 
 	out.WriteString("runtime error: ")
 	out.WriteString(e.Message)
+
+	if e.fset != nil && e.Pos.IsValid() {
+		position := e.fset.Position(e.Pos)
+		sourceLine := getSourceLine(position.Filename, position.Line)
+		out.WriteString(fmt.Sprintf("\n\t%s:%d:%d:", position.Filename, position.Line, position.Column))
+		if sourceLine != "" {
+			out.WriteString("\n\t\t" + sourceLine)
+		}
+	}
 	out.WriteString("\n")
 
 	// Print the call stack in reverse order (most recent call first)
@@ -251,6 +269,27 @@ func (e *Error) AttachFileSet(fset *token.FileSet) {
 	e.fset = fset
 }
 
+// getSourceLine reads a specific line from a file.
+func getSourceLine(filename string, lineNum int) string {
+	if filename == "" || lineNum <= 0 {
+		return ""
+	}
+	file, err := os.Open(filename)
+	if err != nil {
+		return fmt.Sprintf("[Error opening source file: %v]", err)
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	currentLine := 1
+	for scanner.Scan() {
+		if currentLine == lineNum {
+			return strings.TrimSpace(scanner.Text())
+		}
+		currentLine++
+	}
+	return ""
+}
 
 // --- Global Instances ---
 

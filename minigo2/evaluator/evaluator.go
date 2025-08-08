@@ -30,6 +30,7 @@ func (e *Evaluator) newError(pos token.Pos, format string, args ...interface{}) 
 	copy(stackCopy, e.callStack)
 
 	err := &object.Error{
+		Pos:       pos,
 		Message:   msg,
 		CallStack: stackCopy,
 	}
@@ -545,6 +546,9 @@ func (e *Evaluator) evalGenDecl(n *ast.GenDecl, env *object.Environment) object.
 				if n.Tok == token.CONST {
 					env.SetConstant(name.Name, val)
 				} else { // token.VAR
+					if fn, ok := val.(*object.Function); ok {
+						fn.Name = name
+					}
 					env.Set(name.Name, val)
 				}
 			}
@@ -596,6 +600,9 @@ func (e *Evaluator) evalAssignStmt(n *ast.AssignStmt, env *object.Environment) o
 		ident, ok := n.Lhs[0].(*ast.Ident)
 		if !ok {
 			return e.newError(n.Pos(), "non-identifier on left side of :=")
+		}
+		if fn, ok := val.(*object.Function); ok {
+			fn.Name = ident
 		}
 		env.Set(ident.Name, val)
 	}

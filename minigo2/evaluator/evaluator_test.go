@@ -5,6 +5,8 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/podhmo/go-scan/minigo2/object"
@@ -16,8 +18,22 @@ func testEval(t *testing.T, input string) object.Object {
 	// To parse statements, we need to wrap the input in a valid Go file structure.
 	fullSource := fmt.Sprintf("package main\n\nfunc main() {\n%s\n}", input)
 
+	// Create a temporary file to hold the source code.
+	tmpfile, err := os.CreateTemp("", "minigo2_test_*.go")
+	if err != nil {
+		t.Fatalf("failed to create temp file: %v", err)
+	}
+	t.Cleanup(func() { os.Remove(tmpfile.Name()) })
+
+	if _, err := tmpfile.Write([]byte(fullSource)); err != nil {
+		t.Fatalf("failed to write to temp file: %v", err)
+	}
+	if err := tmpfile.Close(); err != nil {
+		t.Fatalf("failed to close temp file: %v", err)
+	}
+
 	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, "test.go", fullSource, parser.ParseComments)
+	file, err := parser.ParseFile(fset, tmpfile.Name(), nil, parser.ParseComments)
 	if err != nil {
 		t.Fatalf("failed to parse code: %v", err)
 		return nil
@@ -177,7 +193,7 @@ func TestFunctionApplication(t *testing.T) {
 func TestErrorHandling(t *testing.T) {
 	tests := []struct {
 		input           string
-		expectedMessage string
+		expected        any // string for single message, []string for multiple substrings
 	}{
 		{
 			"5 + true;",
@@ -238,6 +254,24 @@ func TestErrorHandling(t *testing.T) {
 			`,
 			"division by zero",
 		},
+		{
+			`
+			bar := func() {
+				"hello" - "world"
+			};
+			foo := func() {
+				bar()
+			};
+			foo();
+			`,
+			[]string{
+				"runtime error: unknown operator: STRING - STRING",
+				"in bar",
+				`"hello" - "world"`,
+				"in foo",
+				"bar()",
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -245,11 +279,21 @@ func TestErrorHandling(t *testing.T) {
 			evaluated := testEval(t, tt.input)
 			errObj, ok := evaluated.(*object.Error)
 			if !ok {
-				t.Errorf("no error object returned. got=%T(%+v)", evaluated, evaluated)
-				return
+				t.Fatalf("no error object returned. got=%T(%+v)", evaluated, evaluated)
 			}
-			if errObj.Message != tt.expectedMessage {
-				t.Errorf("wrong error message. expected=%q, got=%q", tt.expectedMessage, errObj.Message)
+
+			switch expected := tt.expected.(type) {
+			case string:
+				if errObj.Message != expected {
+					t.Errorf("wrong error message. expected=%q, got=%q", expected, errObj.Message)
+				}
+			case []string:
+				fullMessage := errObj.Inspect()
+				for _, sub := range expected {
+					if !strings.Contains(fullMessage, sub) {
+						t.Errorf("expected error message to contain %q, but it did not.\nFull message:\n%s", sub, fullMessage)
+					}
+				}
 			}
 		})
 	}

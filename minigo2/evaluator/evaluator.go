@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"go/ast"
 	"go/token"
+	"reflect"
 	"strconv"
 
 	"github.com/podhmo/go-scan"
@@ -184,6 +185,76 @@ func (e *Evaluator) evalAddressOfExpression(node *ast.UnaryExpr, env *object.Env
 	}
 }
 
+// unwrapToInt64 is a helper to extract an int64 from an Integer or a GoValue.
+func (e *Evaluator) unwrapToInt64(obj object.Object) (int64, bool) {
+	switch o := obj.(type) {
+	case *object.Integer:
+		return o.Value, true
+	case *object.GoValue:
+		// Check if the underlying Go value is some kind of integer.
+		switch o.Value.Kind() {
+		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+			return o.Value.Int(), true
+		}
+	}
+	return 0, false
+}
+
+// evalMixedIntInfixExpression handles infix expressions for combinations of Integer and GoValue(int).
+func (e *Evaluator) evalMixedIntInfixExpression(node ast.Node, operator string, left, right object.Object) object.Object {
+	leftVal, ok1 := e.unwrapToInt64(left)
+	if !ok1 {
+		return e.newError(node.Pos(), "left operand is not a valid integer: %s", left.Type())
+	}
+	rightVal, ok2 := e.unwrapToInt64(right)
+	if !ok2 {
+		return e.newError(node.Pos(), "right operand is not a valid integer: %s", right.Type())
+	}
+
+	// Now that we have two int64s, we can perform the operation.
+	// This logic is duplicated from evalIntegerInfixExpression.
+	// A future refactor could merge them.
+	switch operator {
+	case "+":
+		return &object.Integer{Value: leftVal + rightVal}
+	case "-":
+		return &object.Integer{Value: leftVal - rightVal}
+	case "*":
+		return &object.Integer{Value: leftVal * rightVal}
+	case "/":
+		if rightVal == 0 {
+			return e.newError(node.Pos(), "division by zero")
+		}
+		return &object.Integer{Value: leftVal / rightVal}
+	case "%":
+		if rightVal == 0 {
+			return e.newError(node.Pos(), "division by zero")
+		}
+		return &object.Integer{Value: leftVal % rightVal}
+	case "<<":
+		return &object.Integer{Value: leftVal << rightVal}
+	case ">>":
+		return &object.Integer{Value: leftVal >> rightVal}
+	case "&":
+		return &object.Integer{Value: leftVal & rightVal}
+	case "|":
+		return &object.Integer{Value: leftVal | rightVal}
+	case "^":
+		return &object.Integer{Value: leftVal ^ rightVal}
+	case "<":
+		return e.nativeBoolToBooleanObject(leftVal < rightVal)
+	case ">":
+		return e.nativeBoolToBooleanObject(leftVal > rightVal)
+	case "==":
+		return e.nativeBoolToBooleanObject(leftVal == rightVal)
+	case "!=":
+		return e.nativeBoolToBooleanObject(leftVal != rightVal)
+	default:
+		// This should be caught by the outer switch, but as a safeguard:
+		return e.newError(node.Pos(), "unknown integer operator: %s", operator)
+	}
+}
+
 // evalIntegerInfixExpression evaluates infix expressions for integers.
 func (e *Evaluator) evalIntegerInfixExpression(node ast.Node, operator string, left, right object.Object) object.Object {
 	leftVal := left.(*object.Integer).Value
@@ -251,6 +322,12 @@ func (e *Evaluator) evalInfixExpression(node ast.Node, operator string, left, ri
 	switch {
 	case left.Type() == object.INTEGER_OBJ && right.Type() == object.INTEGER_OBJ:
 		return e.evalIntegerInfixExpression(node, operator, left, right)
+
+	// Handle arithmetic with injected Go values (integers).
+	case (left.Type() == object.INTEGER_OBJ || left.Type() == object.GO_VALUE_OBJ) &&
+		(right.Type() == object.INTEGER_OBJ || right.Type() == object.GO_VALUE_OBJ):
+		return e.evalMixedIntInfixExpression(node, operator, left, right)
+
 	case left.Type() == object.STRING_OBJ && right.Type() == object.STRING_OBJ:
 		return e.evalStringInfixExpression(node, operator, left, right)
 	case operator == "==":

@@ -719,14 +719,26 @@ func (e *Evaluator) Eval(node ast.Node, env *object.Environment) object.Object {
 		env.Set(n.Name.Name, fn)
 		return nil
 	case *ast.ReturnStmt:
-		var val object.Object = object.NULL
-		if len(n.Results) > 0 {
-			val = e.Eval(n.Results[0], env)
+		if len(n.Results) == 0 {
+			return &object.ReturnValue{Value: object.NULL}
+		}
+
+		// Handle single vs. multiple return values
+		if len(n.Results) == 1 {
+			val := e.Eval(n.Results[0], env)
 			if isError(val) {
 				return val
 			}
+			return &object.ReturnValue{Value: val}
 		}
-		return &object.ReturnValue{Value: val}
+
+		// Multiple return values are evaluated and wrapped in a Tuple.
+		results := e.evalExpressions(n.Results, env)
+		if len(results) > 0 && isError(results[0]) {
+			// evalExpressions returns a single error if one occurs.
+			return results[0]
+		}
+		return &object.ReturnValue{Value: &object.Tuple{Elements: results}}
 	case *ast.GenDecl:
 		return e.evalGenDecl(n, env)
 	case *ast.AssignStmt:
@@ -819,14 +831,20 @@ func (e *Evaluator) evalGenDecl(n *ast.GenDecl, env *object.Environment) object.
 
 			for i, name := range s.Names {
 				var val object.Object
-				if i < len(s.Values) {
-					// Create a temporary environment for iota evaluation.
-					iotaEnv := object.NewEnclosedEnvironment(env)
-					iotaEnv.SetConstant("iota", &object.Integer{Value: int64(iotaValue)})
-					val = e.Eval(s.Values[i], iotaEnv)
+				if len(s.Values) > 0 {
+					if i < len(s.Values) {
+						// Create a temporary environment for iota evaluation.
+						iotaEnv := object.NewEnclosedEnvironment(env)
+						iotaEnv.SetConstant("iota", &object.Integer{Value: int64(iotaValue)})
+						val = e.Eval(s.Values[i], iotaEnv)
+					} else {
+						return e.newError(name.Pos(), "missing value in declaration for %s", name.Name)
+					}
+				} else if n.Tok == token.VAR {
+					// Handle `var x int` (no initial value) -> defaults to null
+					val = object.NULL
 				} else {
-					// This should be handled by the parser, but as a safeguard.
-					return e.newError(name.Pos(), "missing value in declaration")
+					return e.newError(name.Pos(), "missing value in declaration for %s", name.Name)
 				}
 
 				if isError(val) {
@@ -902,59 +920,128 @@ func (e *Evaluator) evalMapIndexExpression(node ast.Node, m, index object.Object
 }
 
 func (e *Evaluator) evalAssignStmt(n *ast.AssignStmt, env *object.Environment) object.Object {
+	if len(n.Lhs) == 1 && len(n.Rhs) == 1 {
+		// Single assignment: a = 1 or a := 1
+		return e.evalSingleAssign(n, env)
+	}
+
+	if len(n.Lhs) > 1 && len(n.Rhs) == 1 {
+		// Multi-assignment: a, b = f() or a, b := f()
+		return e.evalMultiAssign(n, env)
+	}
+
+	// Other cases like a, b = 1, 2 are not supported by Go's parser in this form
+	// for `var` or `:=`, but let's be safe.
+	return e.newError(n.Pos(), "unsupported assignment form: %d LHS values, %d RHS values", len(n.Lhs), len(n.Rhs))
+}
+
+func (e *Evaluator) evalSingleAssign(n *ast.AssignStmt, env *object.Environment) object.Object {
 	val := e.Eval(n.Rhs[0], env)
 	if isError(val) {
 		return val
 	}
 
+	// Calling a multi-return function in a single-value context is an error.
+	if _, ok := val.(*object.Tuple); ok {
+		return e.newError(n.Rhs[0].Pos(), "multi-value function call in single-value context")
+	}
+
+	lhs := n.Lhs[0]
 	switch n.Tok {
-	case token.ASSIGN:
-		switch lhs := n.Lhs[0].(type) {
-		case *ast.Ident:
-			if _, ok := env.GetConstant(lhs.Name); ok {
-				return e.newError(lhs.Pos(), "cannot assign to constant %s", lhs.Name)
-			}
-			if !env.Assign(lhs.Name, val) {
-				return e.newError(lhs.Pos(), "undeclared variable: %s", lhs.Name)
-			}
-		case *ast.SelectorExpr:
-			obj := e.Eval(lhs.X, env)
-			if isError(obj) {
-				return obj
-			}
-			// Automatically dereference pointers.
-			if ptr, ok := obj.(*object.Pointer); ok {
-				obj = *ptr.Element
-			}
-			instance, ok := obj.(*object.StructInstance)
-			if !ok {
-				return e.newError(lhs.Pos(), "assignment to non-struct field")
-			}
-			instance.Fields[lhs.Sel.Name] = val
-		case *ast.StarExpr:
-			ptrObj := e.Eval(lhs.X, env)
-			if isError(ptrObj) {
-				return ptrObj
-			}
-			ptr, ok := ptrObj.(*object.Pointer)
-			if !ok {
-				return e.newError(lhs.Pos(), "cannot assign to non-pointer")
-			}
-			*ptr.Element = val
-		default:
-			return e.newError(n.Pos(), "unsupported assignment target")
-		}
-	case token.DEFINE:
-		ident, ok := n.Lhs[0].(*ast.Ident)
+	case token.ASSIGN: // =
+		return e.assignValue(lhs, val, env)
+	case token.DEFINE: // :=
+		ident, ok := lhs.(*ast.Ident)
 		if !ok {
-			return e.newError(n.Pos(), "non-identifier on left side of :=")
+			return e.newError(lhs.Pos(), "non-identifier on left side of :=")
 		}
 		if fn, ok := val.(*object.Function); ok {
 			fn.Name = ident
 		}
 		env.Set(ident.Name, val)
+		return val
+	default:
+		return e.newError(n.Pos(), "unsupported assignment token: %s", n.Tok)
 	}
-	return val
+}
+
+func (e *Evaluator) assignValue(lhs ast.Expr, val object.Object, env *object.Environment) object.Object {
+	switch lhsNode := lhs.(type) {
+	case *ast.Ident:
+		if _, ok := env.GetConstant(lhsNode.Name); ok {
+			return e.newError(lhsNode.Pos(), "cannot assign to constant %s", lhsNode.Name)
+		}
+		if !env.Assign(lhsNode.Name, val) {
+			return e.newError(lhsNode.Pos(), "undeclared variable: %s", lhsNode.Name)
+		}
+		return val
+	case *ast.SelectorExpr:
+		obj := e.Eval(lhsNode.X, env)
+		if isError(obj) {
+			return obj
+		}
+		// Automatically dereference pointers.
+		if ptr, ok := obj.(*object.Pointer); ok {
+			obj = *ptr.Element
+		}
+		instance, ok := obj.(*object.StructInstance)
+		if !ok {
+			return e.newError(lhsNode.Pos(), "assignment to non-struct field")
+		}
+		instance.Fields[lhsNode.Sel.Name] = val
+		return val
+	case *ast.StarExpr:
+		ptrObj := e.Eval(lhsNode.X, env)
+		if isError(ptrObj) {
+			return ptrObj
+		}
+		ptr, ok := ptrObj.(*object.Pointer)
+		if !ok {
+			return e.newError(lhsNode.Pos(), "cannot assign to non-pointer")
+		}
+		*ptr.Element = val
+		return val
+	default:
+		return e.newError(lhs.Pos(), "unsupported assignment target")
+	}
+}
+
+func (e *Evaluator) evalMultiAssign(n *ast.AssignStmt, env *object.Environment) object.Object {
+	val := e.Eval(n.Rhs[0], env)
+	if isError(val) {
+		return val
+	}
+
+	tuple, ok := val.(*object.Tuple)
+	if !ok {
+		return e.newError(n.Rhs[0].Pos(), "multi-assignment requires a multi-value return, got %s", val.Type())
+	}
+
+	if len(n.Lhs) != len(tuple.Elements) {
+		return e.newError(n.Pos(), "assignment mismatch: %d variables but %d values", len(n.Lhs), len(tuple.Elements))
+	}
+
+	switch n.Tok {
+	case token.ASSIGN: // =
+		for i, lhsExpr := range n.Lhs {
+			res := e.assignValue(lhsExpr, tuple.Elements[i], env)
+			if isError(res) {
+				return res
+			}
+		}
+	case token.DEFINE: // :=
+		for i, lhsExpr := range n.Lhs {
+			ident, ok := lhsExpr.(*ast.Ident)
+			if !ok {
+				return e.newError(lhsExpr.Pos(), "non-identifier on left side of :=")
+			}
+			env.Set(ident.Name, tuple.Elements[i])
+		}
+	default:
+		return e.newError(n.Pos(), "unsupported assignment token: %s", n.Tok)
+	}
+
+	return nil // Assignment statements don't produce a value.
 }
 
 // findFieldInStruct recursively searches for a field within a struct instance,

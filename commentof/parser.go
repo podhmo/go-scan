@@ -12,42 +12,43 @@ import (
 	"strings"
 )
 
-// FromFile parses a Go source file from the given path and extracts documentation
-// for all top-level declarations.
+// FromFile parses a Go source file from the given path and extracts documentation.
 func FromFile(filepath string) ([]interface{}, error) {
 	f, err := os.Open(filepath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open file: %w", err)
 	}
 	defer f.Close()
-
 	return FromReader(f, filepath)
 }
 
-// FromReader parses Go source from an io.Reader and extracts documentation
-// for all top-level declarations.
+// FromReader parses Go source from an io.Reader and extracts documentation.
 func FromReader(src io.Reader, filename string) ([]interface{}, error) {
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, filename, src, parser.ParseComments)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse file: %w", err)
 	}
-
-	return FromDecls(file.Decls)
+	return fromDecls(file.Decls, fset, file)
 }
 
-// FromDecls processes a slice of AST declarations and extracts documentation
-// from each supported declaration type.
+// FromDecls processes a slice of AST declarations. Note: For best results with
+// comment association, use FromFile or FromReader which provide full file context.
 func FromDecls(decls []ast.Decl) ([]interface{}, error) {
+	return fromDecls(decls, token.NewFileSet(), nil)
+}
+
+// fromDecls is the internal engine that requires full file context to work correctly.
+func fromDecls(decls []ast.Decl, fset *token.FileSet, file *ast.File) ([]interface{}, error) {
 	var results []interface{}
 	for _, decl := range decls {
 		switch d := decl.(type) {
 		case *ast.FuncDecl:
-			if doc := FromFuncDecl(d); doc != nil {
+			if doc := fromFuncDecl(d, fset, file); doc != nil {
 				results = append(results, doc)
 			}
 		case *ast.GenDecl:
-			docs, err := FromGenDecl(d)
+			docs, err := fromGenDecl(d, fset, file)
 			if err != nil {
 				return nil, fmt.Errorf("failed to process generic declaration: %w", err)
 			}
@@ -57,46 +58,61 @@ func FromDecls(decls []ast.Decl) ([]interface{}, error) {
 	return results, nil
 }
 
-// FromFuncDecl extracts documentation from a function declaration node.
+// FromFuncDecl extracts documentation from a function declaration.
 func FromFuncDecl(d *ast.FuncDecl) *Function {
+	return fromFuncDecl(d, token.NewFileSet(), nil)
+}
+
+func fromFuncDecl(d *ast.FuncDecl, fset *token.FileSet, file *ast.File) *Function {
 	if d == nil {
 		return nil
 	}
-	fn := &Function{
+	return &Function{
 		Name:    d.Name.Name,
 		Doc:     cleanComment(d.Doc),
-		Params:  extractFields(d.Type.Params),
-		Results: extractFields(d.Type.Results),
+		Params:  extractFields(d.Type.Params, fset, file),
+		Results: extractFields(d.Type.Results, fset, file),
 	}
-	return fn
 }
 
-// FromGenDecl extracts documentation from a generic declaration node (const, type, var).
+// FromGenDecl extracts documentation from a generic declaration.
 func FromGenDecl(d *ast.GenDecl) ([]interface{}, error) {
+	return fromGenDecl(d, token.NewFileSet(), nil)
+}
+
+func fromGenDecl(d *ast.GenDecl, fset *token.FileSet, file *ast.File) ([]interface{}, error) {
 	if d == nil {
 		return nil, nil
 	}
 	var results []interface{}
-	doc := cleanComment(d.Doc)
+	genDoc := cleanComment(d.Doc)
 
 	for _, spec := range d.Specs {
 		switch s := spec.(type) {
 		case *ast.TypeSpec:
-			ts, err := fromTypeSpec(s)
+			ts, err := fromTypeSpec(s, fset, file)
 			if err != nil {
 				return nil, err
 			}
-			// Prepend the GenDecl's doc if the TypeSpec has no doc of its own.
-			if ts.Doc == "" {
-				ts.Doc = doc
+			// The GenDecl doc applies to the TypeSpec.
+			if genDoc != "" {
+				if ts.Doc != "" {
+					ts.Doc = genDoc + "\n" + ts.Doc
+				} else {
+					ts.Doc = genDoc
+				}
 			}
 			results = append(results, ts)
 
 		case *ast.ValueSpec:
 			vs := fromValueSpec(s)
-			// Prepend the GenDecl's doc if the ValueSpec has no doc of its own.
-			if vs.Doc == "" {
-				vs.Doc = doc
+			// The GenDecl doc applies to each ValueSpec.
+			if genDoc != "" {
+				if vs.Doc != "" {
+					vs.Doc = genDoc + "\n" + vs.Doc
+				} else {
+					vs.Doc = genDoc
+				}
 			}
 			vs.Kind = d.Tok
 			results = append(results, vs)
@@ -105,28 +121,20 @@ func FromGenDecl(d *ast.GenDecl) ([]interface{}, error) {
 	return results, nil
 }
 
-// fromTypeSpec extracts documentation from a type specification.
-func fromTypeSpec(s *ast.TypeSpec) (*TypeSpec, error) {
+func fromTypeSpec(s *ast.TypeSpec, fset *token.FileSet, file *ast.File) (*TypeSpec, error) {
 	ts := &TypeSpec{
 		Name: s.Name.Name,
-		Doc:  cleanComment(s.Doc),
+		Doc:  cleanComment(s.Doc, s.Comment), // Doc for the spec itself.
 	}
 
-	switch t := s.Type.(type) {
-	case *ast.StructType:
+	if st, ok := s.Type.(*ast.StructType); ok {
 		ts.Definition = &Struct{
-			Fields: extractFields(t.Fields),
+			Fields: extractFields(st.Fields, fset, file),
 		}
-	case *ast.Ident, *ast.SelectorExpr:
-		// This handles type definitions and aliases, e.g., `type S2 S` or `type S3 = S`.
-		// A more complex type resolver would be needed to get the fully qualified name.
-		// For now, we just store it as a simple definition.
-		ts.Definition = nil // Or a more descriptive structure for aliases.
 	}
 	return ts, nil
 }
 
-// fromValueSpec extracts documentation from a value specification (const or var).
 func fromValueSpec(s *ast.ValueSpec) *ValueSpec {
 	names := make([]string, len(s.Names))
 	for i, name := range s.Names {
@@ -138,38 +146,70 @@ func fromValueSpec(s *ast.ValueSpec) *ValueSpec {
 	}
 }
 
-// extractFields processes a field list (e.g., params, results, struct fields)
-// and extracts the documentation for each field.
-func extractFields(fieldList *ast.FieldList) []*Field {
-	if fieldList == nil {
+func extractFields(fieldList *ast.FieldList, fset *token.FileSet, file *ast.File) []*Field {
+	if fieldList == nil || len(fieldList.List) == 0 {
 		return nil
 	}
 	var fields []*Field
-	for _, f := range fieldList.List {
+	for i, f := range fieldList.List {
+		// Get docs that are automatically associated by the parser.
+		doc := cleanComment(f.Doc, f.Comment)
+
+		// Manually associate comments if context is available.
+		if file != nil && fset != nil {
+			var associatedComments []*ast.CommentGroup
+
+			// Define the search boundary. It ends where the next field begins,
+			// or at the closing parenthesis of the list.
+			endPos := fieldList.Closing
+			if i+1 < len(fieldList.List) {
+				endPos = fieldList.List[i+1].Pos()
+			}
+
+			for _, cgroup := range file.Comments {
+				// The comment must start after the field's own declaration starts,
+				// and before the search boundary.
+				if cgroup.Pos() > f.Pos() && cgroup.End() < endPos {
+					// For multi-line parameter lists, ensure comment is on the same line.
+					// This prevents grabbing comments from subsequent lines.
+					if fset.Position(f.Pos()).Line == fset.Position(cgroup.Pos()).Line {
+						associatedComments = append(associatedComments, cgroup)
+					} else if fset.Position(f.End()).Line == fset.Position(cgroup.Pos()).Line {
+						// Also handle comments on the same line as the end of a multi-line field type.
+						associatedComments = append(associatedComments, cgroup)
+					}
+				}
+			}
+
+			// Add manually found comments to any that were already there.
+			if len(associatedComments) > 0 {
+				manualDoc := cleanComment(associatedComments...)
+				if doc != "" {
+					doc += "\n" + manualDoc
+				} else {
+					doc = manualDoc
+				}
+			}
+		}
+
 		var names []string
 		for _, name := range f.Names {
 			names = append(names, name.Name)
 		}
-
-		// If there are no explicit names (e.g., anonymous parameter),
-		// we might leave the names slice empty or use the type as a placeholder.
 		if len(names) == 0 && f.Type != nil {
-			// Handle unnamed parameters like `context.Context` or `string`.
 			names = append(names, typeToString(f.Type))
 		}
 
 		field := &Field{
 			Names: names,
 			Type:  typeToString(f.Type),
-			Doc:   cleanComment(f.Doc, f.Comment),
+			Doc:   doc,
 		}
 		fields = append(fields, field)
 	}
 	return fields
 }
 
-// typeToString converts an AST expression for a type into a string representation.
-// This is a simplified version.
 func typeToString(expr ast.Expr) string {
 	if expr == nil {
 		return ""
@@ -186,25 +226,26 @@ func typeToString(expr ast.Expr) string {
 	case *ast.Ellipsis:
 		return "..." + typeToString(t.Elt)
 	case *ast.InterfaceType:
-		// A simple representation for interface{}.
 		if t.Methods == nil || len(t.Methods.List) == 0 {
 			return "interface{}"
 		}
 		return "interface{...}"
 	case *ast.StructType:
-		return "struct{...}" // Simplified representation
+		return "struct{...}"
 	default:
 		return "unknown"
 	}
 }
 
-// cleanComment combines multiple comment groups into a single, clean string.
 func cleanComment(groups ...*ast.CommentGroup) string {
 	var parts []string
 	for _, group := range groups {
 		if group != nil {
-			parts = append(parts, group.Text())
+			text := strings.TrimSpace(group.Text())
+			if text != "" {
+				parts = append(parts, text)
+			}
 		}
 	}
-	return strings.TrimSpace(strings.Join(parts, "\n"))
+	return strings.Join(parts, "\n")
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"go/ast"
+	"go/token"
 	"strings"
 )
 
@@ -12,17 +13,37 @@ type ObjectType string
 
 // Define the basic object types. More will be added later.
 const (
-	INTEGER_OBJ  ObjectType = "INTEGER"
-	BOOLEAN_OBJ  ObjectType = "BOOLEAN"
-	STRING_OBJ   ObjectType = "STRING"
-	NULL_OBJ     ObjectType = "NULL"
-	BREAK_OBJ       ObjectType = "BREAK"
-	CONTINUE_OBJ    ObjectType = "CONTINUE"
-	RETURN_VALUE_OBJ ObjectType = "RETURN_VALUE"
-	FUNCTION_OBJ    ObjectType = "FUNCTION"
+	INTEGER_OBJ           ObjectType = "INTEGER"
+	BOOLEAN_OBJ           ObjectType = "BOOLEAN"
+	STRING_OBJ            ObjectType = "STRING"
+	NULL_OBJ              ObjectType = "NULL"
+	BREAK_OBJ             ObjectType = "BREAK"
+	CONTINUE_OBJ          ObjectType = "CONTINUE"
+	RETURN_VALUE_OBJ      ObjectType = "RETURN_VALUE"
+	FUNCTION_OBJ          ObjectType = "FUNCTION"
 	STRUCT_DEFINITION_OBJ ObjectType = "STRUCT_DEFINITION"
 	STRUCT_INSTANCE_OBJ   ObjectType = "STRUCT_INSTANCE"
+	ERROR_OBJ             ObjectType = "ERROR"
 )
+
+// CallFrame represents a single frame in the call stack.
+type CallFrame struct {
+	Pos        token.Pos
+	Function   string // Name of the function
+	IsBuiltin  bool   // Whether the function is a Go builtin or user-defined
+}
+
+// Format formats the call frame into a readable string.
+// fset is required to resolve the position to a file and line number.
+func (cf *CallFrame) Format(fset *token.FileSet) string {
+	position := fset.Position(cf.Pos)
+	funcName := cf.Function
+	if funcName == "" {
+		funcName = "<script>"
+	}
+	return fmt.Sprintf("\t%s:%d:%d:\tin %s", position.Filename, position.Line, position.Column, funcName)
+}
+
 
 // Object is the interface that all value types in our interpreter will implement.
 type Object interface {
@@ -122,6 +143,7 @@ func (rv *ReturnValue) Inspect() string { return rv.Value.Inspect() }
 
 // Function represents a user-defined function.
 type Function struct {
+	Name       *ast.Ident
 	Parameters []*ast.Ident
 	Body       *ast.BlockStmt
 	Env        *Environment
@@ -190,6 +212,45 @@ func (si *StructInstance) Inspect() string {
 	return out.String()
 }
 
+// --- Error Object ---
+
+// Error represents a runtime error. It contains a message and a call stack.
+type Error struct {
+	Message   string
+	CallStack []CallFrame
+	fset      *token.FileSet // FileSet to resolve positions
+}
+
+// Type returns the type of the Error object.
+func (e *Error) Type() ObjectType { return ERROR_OBJ }
+
+// Inspect returns a formatted string representation of the error, including the call stack.
+func (e *Error) Inspect() string {
+	var out bytes.Buffer
+
+	out.WriteString("runtime error: ")
+	out.WriteString(e.Message)
+	out.WriteString("\n")
+
+	// Print the call stack in reverse order (most recent call first)
+	if e.fset != nil {
+		for i := len(e.CallStack) - 1; i >= 0; i-- {
+			out.WriteString(e.CallStack[i].Format(e.fset))
+			out.WriteString("\n")
+		}
+	}
+
+	return out.String()
+}
+
+// AttachFileSet attaches a FileSet to the error object, which is necessary
+// for formatting the call stack. This is done this way because the FileSet
+
+// is part of the evaluator, not the object system itself.
+func (e *Error) AttachFileSet(fset *token.FileSet) {
+	e.fset = fset
+}
+
 
 // --- Global Instances ---
 
@@ -236,6 +297,17 @@ func (e *Environment) Get(name string) (Object, bool) {
 	}
 	if e.outer != nil {
 		return e.outer.Get(name)
+	}
+	return nil, false
+}
+
+// GetConstant retrieves a constant by name, checking outer scopes.
+func (e *Environment) GetConstant(name string) (Object, bool) {
+	if obj, ok := e.consts[name]; ok {
+		return obj, true
+	}
+	if e.outer != nil {
+		return e.outer.GetConstant(name)
 	}
 	return nil, false
 }

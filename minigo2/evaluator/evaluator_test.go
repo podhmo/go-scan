@@ -17,7 +17,7 @@ func testEval(t *testing.T, input string) object.Object {
 	fullSource := fmt.Sprintf("package main\n\nfunc main() {\n%s\n}", input)
 
 	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, "test.go", fullSource, 0)
+	file, err := parser.ParseFile(fset, "test.go", fullSource, parser.ParseComments)
 	if err != nil {
 		t.Fatalf("failed to parse code: %v", err)
 		return nil
@@ -35,8 +35,9 @@ func testEval(t *testing.T, input string) object.Object {
 		return nil
 	}
 
+	eval := New(fset)
 	env := object.NewEnvironment()
-	return Eval(mainFunc.Body, env)
+	return eval.Eval(mainFunc.Body, env)
 }
 
 // testIntegerObject is a helper to check if an object is an Integer with the expected value.
@@ -50,6 +51,20 @@ func testIntegerObject(t *testing.T, obj object.Object, expected int64) bool {
 	}
 	if result.Value != expected {
 		t.Errorf("object has wrong value. got=%d, want=%d", result.Value, expected)
+		return false
+	}
+	return true
+}
+
+func testErrorObject(t *testing.T, obj object.Object, expectedMessage string) bool {
+	t.Helper()
+	errObj, ok := obj.(*object.Error)
+	if !ok {
+		t.Errorf("object is not Error. got=%T (%+v)", obj, obj)
+		return false
+	}
+	if errObj.Message != expectedMessage {
+		t.Errorf("wrong error message. expected=%q, got=%q", expectedMessage, errObj.Message)
 		return false
 	}
 	return true
@@ -159,22 +174,103 @@ func TestFunctionApplication(t *testing.T) {
 	}
 }
 
+func TestErrorHandling(t *testing.T) {
+	tests := []struct {
+		input           string
+		expectedMessage string
+	}{
+		{
+			"5 + true;",
+			"type mismatch: INTEGER + BOOLEAN",
+		},
+		{
+			"5 + true; 5;",
+			"type mismatch: INTEGER + BOOLEAN",
+		},
+		{
+			"-true",
+			"unknown operator: -BOOLEAN",
+		},
+		{
+			"true + false;",
+			"unknown operator: BOOLEAN + BOOLEAN",
+		},
+		{
+			"5; true + false; 5",
+			"unknown operator: BOOLEAN + BOOLEAN",
+		},
+		{
+			"if (10 > 1) { true + false; }",
+			"unknown operator: BOOLEAN + BOOLEAN",
+		},
+		{
+			`
+			if (10 > 1) {
+				if (10 > 1) {
+					return true + false;
+				}
+				return 1;
+			}
+			`,
+			"unknown operator: BOOLEAN + BOOLEAN",
+		},
+		{
+			"foobar",
+			"identifier not found: foobar",
+		},
+		{
+			`"Hello" - "World"`,
+			"unknown operator: STRING - STRING",
+		},
+		{
+			`x := 1; x(1)`,
+			"not a function: INTEGER",
+		},
+		{
+			`
+			f := func(x int) {
+				g := func() {
+					x / 0;
+				}
+				g();
+			}
+			f(10);
+			`,
+			"division by zero",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			evaluated := testEval(t, tt.input)
+			errObj, ok := evaluated.(*object.Error)
+			if !ok {
+				t.Errorf("no error object returned. got=%T(%+v)", evaluated, evaluated)
+				return
+			}
+			if errObj.Message != tt.expectedMessage {
+				t.Errorf("wrong error message. expected=%q, got=%q", tt.expectedMessage, errObj.Message)
+			}
+		})
+	}
+}
+
 func TestConstDeclarations(t *testing.T) {
 	tests := []struct {
 		input    string
-		expected any // int64 or "nil" for expected failure
+		expected any // int64 or error message string
 	}{
 		{"const x = 10; x", int64(10)},
 		{"const x = 10; const y = 20; y", int64(20)},
 		{"const x = 10; var y = x; y", int64(10)},
-		{"const x = 10; x = 20;", "nil"}, // Assignment failure
-		{"const ( a = 1 ); a = 2", "nil"},   // Assignment failure in block
+		{"const x = 10; x = 20;", "cannot assign to constant x"},
+		{"const ( a = 1 ); a = 2", "cannot assign to constant a"},
 		{"const ( a = iota ); a", int64(0)},
 		{"const ( a = iota; b ); b", int64(1)},
 		{"const ( a = iota; b; c ); c", int64(2)},
-		{"const ( a = 10; b; c ); c", int64(10)}, // Value carry-over
+		{"const ( a = 10; b; c ); c", int64(10)},
 		{"const ( a = 10; b = 20; c ); c", int64(20)},
-		{"const ( a = 1 << iota; b; c; d ); d", int64(8)}, // 1 << 3
+		{"const ( a = 1 << iota; b; c; d ); d", int64(8)},
 	}
 
 	for _, tt := range tests {
@@ -184,11 +280,7 @@ func TestConstDeclarations(t *testing.T) {
 			case int64:
 				testIntegerObject(t, evaluated, expected)
 			case string:
-				if expected == "nil" {
-					testNullObject(t, evaluated)
-				} else {
-					t.Fatalf("unsupported expected type for test: %T", expected)
-				}
+				testErrorObject(t, evaluated, expected)
 			default:
 				t.Fatalf("unsupported expected type for test: %T", expected)
 			}

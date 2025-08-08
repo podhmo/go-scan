@@ -194,6 +194,130 @@ func TestFunctionApplication(t *testing.T) {
 	}
 }
 
+func TestStructEmbedding(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected any
+	}{
+		// Simple, one-level embedding
+		{
+			`
+			type Point struct { x int; y int }
+			type Circle struct {
+				Point
+				radius int
+			}
+			c := Circle{Point: Point{x: 1, y: 2}, radius: 10}
+			return c.x
+			`,
+			int64(1),
+		},
+		{
+			`
+			type Point struct { x int; y int }
+			type Circle struct {
+				Point
+				radius int
+			}
+			c := Circle{Point: Point{x: 1, y: 2}, radius: 10}
+			return c.y
+			`,
+			int64(2),
+		},
+		{
+			`
+			type Point struct { x int; y int }
+			type Circle struct {
+				Point
+				radius int
+			}
+			c := Circle{Point: Point{x: 1, y: 2}, radius: 10}
+			return c.radius
+			`,
+			int64(10),
+		},
+		// Multi-level embedding
+		{
+			`
+			type A struct { a int }
+			type B struct { A; b int }
+			type C struct { B; c int }
+			instance := C{B: B{A: A{a: 1}, b: 2}, c: 3}
+			return instance.a
+			`,
+			int64(1),
+		},
+		// Field shadowing
+		{
+			`
+			type A struct { val int }
+			type B struct {
+				A
+				val int
+			}
+			instance := B{A: A{val: 100}, val: 200}
+			return instance.val
+			`,
+			int64(200),
+		},
+		// Access via pointer to outer struct
+		{
+			`
+			type Point struct { x int }
+			type Figure struct { Point; name string }
+			f := Figure{Point: Point{x: 99}, name: "fig"}
+			p := &f
+			return p.x
+			`,
+			int64(99),
+		},
+		// Access via pointer to embedded struct
+		{
+			`
+			type Point struct { x int }
+			type Figure struct { *Point; name string }
+			p := &Figure{Point: &Point{x: 99}, name: "fig"}
+			return p.x
+			`,
+			int64(99),
+		},
+		// Error: field not found
+		{
+			`
+			type A struct { a int }
+			type B struct { A; b int }
+			instance := B{A: A{a: 1}, b: 2}
+			return instance.c
+			`,
+			"undefined field 'c' on struct 'B'",
+		},
+		// Error: nil pointer dereference on embedded pointer
+		{
+			`
+			type Point struct { x int }
+			type Figure struct { *Point; name string }
+			p := &Figure{name: "fig"} // Point is nil
+			return p.x
+			`,
+			"undefined field 'x' on struct 'Figure'", // It's undefined because the path to it is nil
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			evaluated := testEval(t, tt.input)
+			switch expected := tt.expected.(type) {
+			case int64:
+				testIntegerObject(t, evaluated, expected)
+			case string:
+				testErrorObject(t, evaluated, expected)
+			default:
+				t.Fatalf("unsupported expected type for test: %T", expected)
+			}
+		})
+	}
+}
+
 func TestVariadicFunctions(t *testing.T) {
 	tests := []struct {
 		input    string

@@ -179,7 +179,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] Support pointer-to-struct field access (e.g., `ptr.Field`).
 - [x] Support `new()` built-in function.
 - [x] **Support for variadic arguments** in function definitions and calls.
-- [ ] **Support for struct embedding**.
+- [x] **Support for struct embedding**.
 - [ ] **Support for multiple return values** from functions.
 - [ ] Create the main `Interpreter` struct that holds a `goscan.Scanner`.
 - [ ] Implement the logic to handle `import` statements and load symbols from external Go packages.

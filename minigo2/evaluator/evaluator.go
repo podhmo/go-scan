@@ -160,18 +160,24 @@ func (e *Evaluator) evalDereferenceExpression(node ast.Node, right object.Object
 }
 
 func (e *Evaluator) evalAddressOfExpression(node *ast.UnaryExpr, env *object.Environment) object.Object {
-	ident, ok := node.X.(*ast.Ident)
-	if !ok {
-		// TODO: Could also support &someStruct.field
+	switch operand := node.X.(type) {
+	case *ast.Ident:
+		addr, ok := env.GetAddress(operand.Name)
+		if !ok {
+			return e.newError(node.Pos(), "cannot take the address of undeclared variable: %s", operand.Name)
+		}
+		return &object.Pointer{Element: addr}
+	case *ast.CompositeLit:
+		// Evaluate the composite literal to create the object instance.
+		obj := e.evalCompositeLit(operand, env)
+		if isError(obj) {
+			return obj
+		}
+		// Return a pointer to the newly created object.
+		return &object.Pointer{Element: &obj}
+	default:
 		return e.newError(node.Pos(), "cannot take the address of %T", node.X)
 	}
-
-	addr, ok := env.GetAddress(ident.Name)
-	if !ok {
-		return e.newError(node.Pos(), "cannot take the address of undeclared variable: %s", ident.Name)
-	}
-
-	return &object.Pointer{Element: addr}
 }
 
 // evalIntegerInfixExpression evaluates infix expressions for integers.
@@ -951,14 +957,79 @@ func (e *Evaluator) evalAssignStmt(n *ast.AssignStmt, env *object.Environment) o
 	return val
 }
 
+// findFieldInStruct recursively searches for a field within a struct instance,
+// including its embedded structs. It returns the found object and a boolean indicating success.
+func (e *Evaluator) findFieldInStruct(instance *object.StructInstance, fieldName string) (object.Object, bool) {
+	// 1. Check direct fields first. This handles explicit fields and field shadowing.
+	if val, ok := instance.Fields[fieldName]; ok {
+		return val, true
+	}
+
+	// 2. If not found, search in embedded structs in the order they are defined.
+	for _, fieldDef := range instance.Def.Fields {
+		// An embedded field in Go's AST has no names.
+		if len(fieldDef.Names) == 0 {
+			// The type of the embedded field, e.g., 'T' in 'struct { T }'.
+			// We need to resolve this type name to an object in the instance's fields.
+			var typeName string
+			switch t := fieldDef.Type.(type) {
+			case *ast.Ident:
+				typeName = t.Name
+			// Handle pointer to embedded type, e.g., struct { *T }
+			case *ast.StarExpr:
+				if ident, ok := t.X.(*ast.Ident); ok {
+					typeName = ident.Name
+				}
+			}
+
+			if typeName == "" {
+				continue // Unsupported embedded field type, e.g. struct { io.Writer }
+			}
+
+			// The embedded struct instance is stored in the parent's fields map under its type name.
+			embeddedObj, ok := instance.Fields[typeName]
+			if !ok {
+				// This can happen if an embedded field is nil.
+				continue
+			}
+
+			// Automatically dereference if the embedded field is a pointer.
+			if ptr, ok := embeddedObj.(*object.Pointer); ok {
+				// If the pointer is nil, we can't search its fields.
+				if ptr.Element == nil || *ptr.Element == nil {
+					continue
+				}
+				embeddedObj = *ptr.Element
+			}
+
+			embeddedInstance, ok := embeddedObj.(*object.StructInstance)
+			if !ok {
+				// It's an embedded field but the value isn't a struct instance.
+				continue
+			}
+
+			// Recursively search in the embedded struct.
+			if val, found := e.findFieldInStruct(embeddedInstance, fieldName); found {
+				return val, true // First match wins.
+			}
+		}
+	}
+
+	// 3. Field not found anywhere in the hierarchy.
+	return nil, false
+}
+
 func (e *Evaluator) evalSelectorExpr(n *ast.SelectorExpr, env *object.Environment) object.Object {
 	left := e.Eval(n.X, env)
 	if isError(left) {
 		return left
 	}
 
-	// Automatically dereference pointers.
+	// Automatically dereference pointers for the base of the expression.
 	if ptr, ok := left.(*object.Pointer); ok {
+		if ptr.Element == nil || *ptr.Element == nil {
+			return e.newError(n.Pos(), "nil pointer dereference")
+		}
 		left = *ptr.Element
 	}
 
@@ -967,11 +1038,12 @@ func (e *Evaluator) evalSelectorExpr(n *ast.SelectorExpr, env *object.Environmen
 		return e.newError(n.Pos(), "base of selector expression is not a struct or pointer to struct")
 	}
 
-	if val, ok := instance.Fields[n.Sel.Name]; ok {
+	// Use the new recursive search function.
+	if val, found := e.findFieldInStruct(instance, n.Sel.Name); found {
 		return val
 	}
 
-	return e.newError(n.Sel.Pos(), "undefined field '%s' on struct", n.Sel.Name)
+	return e.newError(n.Sel.Pos(), "undefined field '%s' on struct '%s'", n.Sel.Name, instance.Def.Name.Name)
 }
 
 func (e *Evaluator) evalCompositeLit(n *ast.CompositeLit, env *object.Environment) object.Object {

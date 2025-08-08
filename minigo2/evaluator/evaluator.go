@@ -1,6 +1,7 @@
 package evaluator
 
 import (
+	"fmt"
 	"go/ast"
 	"go/token"
 	"strconv"
@@ -8,8 +9,44 @@ import (
 	"github.com/podhmo/go-scan/minigo2/object"
 )
 
+// Evaluator is the main object that evaluates the AST.
+type Evaluator struct {
+	fset      *token.FileSet
+	callStack []object.CallFrame
+}
+
+// New creates a new Evaluator.
+func New(fset *token.FileSet) *Evaluator {
+	return &Evaluator{
+		fset:      fset,
+		callStack: make([]object.CallFrame, 0),
+	}
+}
+
+func (e *Evaluator) newError(pos token.Pos, format string, args ...interface{}) *object.Error {
+	msg := fmt.Sprintf(format, args...)
+	// Create a copy of the current call stack for the error object.
+	stackCopy := make([]object.CallFrame, len(e.callStack))
+	copy(stackCopy, e.callStack)
+
+	err := &object.Error{
+		Pos:       pos,
+		Message:   msg,
+		CallStack: stackCopy,
+	}
+	err.AttachFileSet(e.fset) // Attach fset for formatting
+	return err
+}
+
+func isError(obj object.Object) bool {
+	if obj != nil {
+		return obj.Type() == object.ERROR_OBJ
+	}
+	return false
+}
+
 // nativeBoolToBooleanObject is a helper to convert a native bool to our object.Boolean.
-func nativeBoolToBooleanObject(input bool) *object.Boolean {
+func (e *Evaluator) nativeBoolToBooleanObject(input bool) *object.Boolean {
 	if input {
 		return object.TRUE
 	}
@@ -17,7 +54,7 @@ func nativeBoolToBooleanObject(input bool) *object.Boolean {
 }
 
 // evalBangOperatorExpression evaluates the '!' prefix expression.
-func evalBangOperatorExpression(right object.Object) object.Object {
+func (e *Evaluator) evalBangOperatorExpression(right object.Object) object.Object {
 	switch right {
 	case object.TRUE:
 		return object.FALSE
@@ -31,28 +68,28 @@ func evalBangOperatorExpression(right object.Object) object.Object {
 }
 
 // evalMinusPrefixOperatorExpression evaluates the '-' prefix expression.
-func evalMinusPrefixOperatorExpression(right object.Object) object.Object {
+func (e *Evaluator) evalMinusPrefixOperatorExpression(node ast.Node, right object.Object) object.Object {
 	if right.Type() != object.INTEGER_OBJ {
-		return nil // Later, an error object
+		return e.newError(node.Pos(), "unknown operator: -%s", right.Type())
 	}
 	value := right.(*object.Integer).Value
 	return &object.Integer{Value: -value}
 }
 
 // evalPrefixExpression dispatches to the correct prefix evaluation function.
-func evalPrefixExpression(operator string, right object.Object) object.Object {
+func (e *Evaluator) evalPrefixExpression(node *ast.UnaryExpr, operator string, right object.Object) object.Object {
 	switch operator {
 	case "!":
-		return evalBangOperatorExpression(right)
+		return e.evalBangOperatorExpression(right)
 	case "-":
-		return evalMinusPrefixOperatorExpression(right)
+		return e.evalMinusPrefixOperatorExpression(node, right)
 	default:
-		return nil // Later, an error object
+		return e.newError(node.Pos(), "unknown operator: %s%s", operator, right.Type())
 	}
 }
 
 // evalIntegerInfixExpression evaluates infix expressions for integers.
-func evalIntegerInfixExpression(operator string, left, right object.Object) object.Object {
+func (e *Evaluator) evalIntegerInfixExpression(node ast.Node, operator string, left, right object.Object) object.Object {
 	leftVal := left.(*object.Integer).Value
 	rightVal := right.(*object.Integer).Value
 
@@ -65,12 +102,12 @@ func evalIntegerInfixExpression(operator string, left, right object.Object) obje
 		return &object.Integer{Value: leftVal * rightVal}
 	case "/":
 		if rightVal == 0 {
-			return nil // Error: division by zero
+			return e.newError(node.Pos(), "division by zero")
 		}
 		return &object.Integer{Value: leftVal / rightVal}
 	case "%":
 		if rightVal == 0 {
-			return nil // Error: division by zero
+			return e.newError(node.Pos(), "division by zero")
 		}
 		return &object.Integer{Value: leftVal % rightVal}
 	case "<<":
@@ -84,85 +121,84 @@ func evalIntegerInfixExpression(operator string, left, right object.Object) obje
 	case "^":
 		return &object.Integer{Value: leftVal ^ rightVal}
 	case "<":
-		return nativeBoolToBooleanObject(leftVal < rightVal)
+		return e.nativeBoolToBooleanObject(leftVal < rightVal)
 	case ">":
-		return nativeBoolToBooleanObject(leftVal > rightVal)
+		return e.nativeBoolToBooleanObject(leftVal > rightVal)
 	case "==":
-		return nativeBoolToBooleanObject(leftVal == rightVal)
+		return e.nativeBoolToBooleanObject(leftVal == rightVal)
 	case "!=":
-		return nativeBoolToBooleanObject(leftVal != rightVal)
+		return e.nativeBoolToBooleanObject(leftVal != rightVal)
 	default:
-		return nil // Later, an error object
+		return e.newError(node.Pos(), "unknown operator: %s %s %s", left.Type(), operator, right.Type())
 	}
 }
 
 // evalStringInfixExpression evaluates infix expressions for strings.
-func evalStringInfixExpression(operator string, left, right object.Object) object.Object {
+func (e *Evaluator) evalStringInfixExpression(node ast.Node, operator string, left, right object.Object) object.Object {
 	leftVal := left.(*object.String).Value
 	rightVal := right.(*object.String).Value
 
 	if operator != "+" {
-		return nil // Later, an error object
+		return e.newError(node.Pos(), "unknown operator: %s %s %s", left.Type(), operator, right.Type())
 	}
 
 	return &object.String{Value: leftVal + rightVal}
 }
 
 // evalInfixExpression dispatches to the correct infix evaluation function based on type.
-func evalInfixExpression(operator string, left, right object.Object) object.Object {
+func (e *Evaluator) evalInfixExpression(node ast.Node, operator string, left, right object.Object) object.Object {
 	switch {
 	case left.Type() == object.INTEGER_OBJ && right.Type() == object.INTEGER_OBJ:
-		return evalIntegerInfixExpression(operator, left, right)
+		return e.evalIntegerInfixExpression(node, operator, left, right)
 	case left.Type() == object.STRING_OBJ && right.Type() == object.STRING_OBJ:
-		return evalStringInfixExpression(operator, left, right)
-	// Pointer comparison for booleans, as they are singletons.
+		return e.evalStringInfixExpression(node, operator, left, right)
 	case operator == "==":
-		return nativeBoolToBooleanObject(left == right)
+		return e.nativeBoolToBooleanObject(left == right)
 	case operator == "!=":
-		return nativeBoolToBooleanObject(left != right)
+		return e.nativeBoolToBooleanObject(left != right)
+	case left.Type() != right.Type():
+		return e.newError(node.Pos(), "type mismatch: %s %s %s", left.Type(), operator, right.Type())
 	default:
-		return nil // Later, an error object
+		return e.newError(node.Pos(), "unknown operator: %s %s %s", left.Type(), operator, right.Type())
 	}
 }
 
 // isTruthy checks if an object is considered true in a boolean context.
-// In our language, everything is "truthy" except for `null` and `false`.
-func isTruthy(obj object.Object) bool {
+func (e *Evaluator) isTruthy(obj object.Object) bool {
 	switch obj {
-	case object.NULL:
-		return false
-	case object.FALSE:
+	case object.NULL, object.FALSE:
 		return false
 	default:
-		return true
+		return !isError(obj)
 	}
 }
 
 // evalIfElseExpression evaluates an if-else expression.
-func evalIfElseExpression(ie *ast.IfStmt, env *object.Environment) object.Object {
-	condition := Eval(ie.Cond, env)
-	// TODO: Handle error from condition evaluation
+func (e *Evaluator) evalIfElseExpression(ie *ast.IfStmt, env *object.Environment) object.Object {
+	condition := e.Eval(ie.Cond, env)
+	if isError(condition) {
+		return condition
+	}
 
-	if isTruthy(condition) {
-		return Eval(ie.Body, env)
+	if e.isTruthy(condition) {
+		return e.Eval(ie.Body, env)
 	} else if ie.Else != nil {
-		return Eval(ie.Else, env)
+		return e.Eval(ie.Else, env)
 	} else {
 		return object.NULL
 	}
 }
 
 // evalBlockStatement evaluates a block of statements within a new scope.
-func evalBlockStatement(block *ast.BlockStmt, env *object.Environment) object.Object {
+func (e *Evaluator) evalBlockStatement(block *ast.BlockStmt, env *object.Environment) object.Object {
 	var result object.Object
 	enclosedEnv := object.NewEnclosedEnvironment(env)
 
 	for _, statement := range block.List {
-		result = Eval(statement, enclosedEnv)
-		// Handle early returns and control flow
+		result = e.Eval(statement, enclosedEnv)
 		if result != nil {
 			rt := result.Type()
-			if rt == object.RETURN_VALUE_OBJ || rt == object.BREAK_OBJ || rt == object.CONTINUE_OBJ {
+			if rt == object.RETURN_VALUE_OBJ || rt == object.BREAK_OBJ || rt == object.CONTINUE_OBJ || rt == object.ERROR_OBJ {
 				return result
 			}
 		}
@@ -172,104 +208,109 @@ func evalBlockStatement(block *ast.BlockStmt, env *object.Environment) object.Ob
 }
 
 // evalForStmt evaluates a for loop.
-func evalForStmt(fs *ast.ForStmt, env *object.Environment) object.Object {
+func (e *Evaluator) evalForStmt(fs *ast.ForStmt, env *object.Environment) object.Object {
 	loopEnv := object.NewEnclosedEnvironment(env)
 
 	if fs.Init != nil {
-		Eval(fs.Init, loopEnv)
-		// TODO: Handle error from Init
+		initResult := e.Eval(fs.Init, loopEnv)
+		if isError(initResult) {
+			return initResult
+		}
 	}
 
 	for {
 		if fs.Cond != nil {
-			condition := Eval(fs.Cond, loopEnv)
-			// TODO: Handle error from condition
-			if !isTruthy(condition) {
+			condition := e.Eval(fs.Cond, loopEnv)
+			if isError(condition) {
+				return condition
+			}
+			if !e.isTruthy(condition) {
 				break
 			}
 		}
 
-		// Evaluate the loop body
-		bodyResult := Eval(fs.Body, loopEnv)
-		// TODO: Handle error from body
+		bodyResult := e.Eval(fs.Body, loopEnv)
+		if isError(bodyResult) {
+			return bodyResult
+		}
 
-		// Check for break or continue statements
 		if bodyResult != nil {
 			if bodyResult.Type() == object.BREAK_OBJ {
-				break // Exit the Go for loop
+				break
 			}
 			if bodyResult.Type() == object.CONTINUE_OBJ {
 				if fs.Post != nil {
-					Eval(fs.Post, loopEnv)
-					// TODO: Handle error from post
+					postResult := e.Eval(fs.Post, loopEnv)
+					if isError(postResult) {
+						return postResult
+					}
 				}
-				continue // Continue to the next iteration of the Go for loop
+				continue
 			}
 		}
 
 		if fs.Post != nil {
-			Eval(fs.Post, loopEnv)
-			// TODO: Handle error from post
+			postResult := e.Eval(fs.Post, loopEnv)
+			if isError(postResult) {
+				return postResult
+			}
 		}
 	}
 
-	return object.NULL // A for loop statement itself evaluates to null
+	return object.NULL
 }
 
 // evalSwitchStmt evaluates a switch statement.
-func evalSwitchStmt(ss *ast.SwitchStmt, env *object.Environment) object.Object {
-	// 1. Handle Init statement in a new scope
+func (e *Evaluator) evalSwitchStmt(ss *ast.SwitchStmt, env *object.Environment) object.Object {
 	switchEnv := env
 	if ss.Init != nil {
 		switchEnv = object.NewEnclosedEnvironment(env)
-		Eval(ss.Init, switchEnv)
-		// TODO: Handle error from Init
+		initResult := e.Eval(ss.Init, switchEnv)
+		if isError(initResult) {
+			return initResult
+		}
 	}
 
-	// 2. Evaluate the tag
 	var tag object.Object
 	if ss.Tag != nil {
-		tag = Eval(ss.Tag, switchEnv)
-		// TODO: Handle error from tag evaluation
+		tag = e.Eval(ss.Tag, switchEnv)
+		if isError(tag) {
+			return tag
+		}
 	} else {
-		// Expressionless switch is like `switch true`
 		tag = object.TRUE
 	}
 
-	// 3. Iterate through case clauses
 	var defaultCase *ast.CaseClause
 	var matched bool
 
 	for _, stmt := range ss.Body.List {
 		clause, ok := stmt.(*ast.CaseClause)
 		if !ok {
-			continue // Should not happen in a valid AST
+			continue
 		}
 
-		// If it's the default case, save it for later
 		if clause.List == nil {
 			defaultCase = clause
 			continue
 		}
 
-		// 4. Check for a match in the case list
 		for _, caseExpr := range clause.List {
-			caseVal := Eval(caseExpr, switchEnv)
-			// TODO: Handle error from case value evaluation
+			caseVal := e.Eval(caseExpr, switchEnv)
+			if isError(caseVal) {
+				return caseVal
+			}
 
-			// Compare the case value with the tag
-			// For expressionless switch, caseVal is a boolean expression result.
-			// For switch with tag, we do a direct comparison.
 			var condition bool
 			if ss.Tag == nil {
-				condition = isTruthy(caseVal)
+				condition = e.isTruthy(caseVal)
 			} else {
-				// Simple equality check for now
-				// TODO: This should use the same logic as `==` operator for proper comparison
-				if tag.Type() == object.INTEGER_OBJ && caseVal.Type() == object.INTEGER_OBJ {
-					condition = (tag.(*object.Integer).Value == caseVal.(*object.Integer).Value)
+				eq := e.evalInfixExpression(caseExpr, "==", tag, caseVal)
+				if isError(eq) {
+					// We treat comparison errors as non-matches and continue.
+					condition = false
 				} else {
-					condition = (tag == caseVal)
+					condition = eq == object.TRUE
 				}
 			}
 
@@ -280,119 +321,117 @@ func evalSwitchStmt(ss *ast.SwitchStmt, env *object.Environment) object.Object {
 		}
 
 		if matched {
-			// 5. Execute the body of the matched case
-			// A case body is a list of statements, not a block statement,
-			// so we evaluate them directly in a new scope for the case body.
 			caseEnv := object.NewEnclosedEnvironment(switchEnv)
 			var result object.Object
 			for _, caseBodyStmt := range clause.Body {
-				result = Eval(caseBodyStmt, caseEnv)
-				// TODO: Handle break/fallthrough if ever supported
+				result = e.Eval(caseBodyStmt, caseEnv)
+				if isError(result) {
+					return result
+				}
 			}
-			return result // Return the value of the last expression in the case
+			return result
 		}
 	}
 
-	// 6. If no case matched, execute the default case if it exists
 	if defaultCase != nil {
 		caseEnv := object.NewEnclosedEnvironment(switchEnv)
 		var result object.Object
 		for _, caseBodyStmt := range defaultCase.Body {
-			result = Eval(caseBodyStmt, caseEnv)
+			result = e.Eval(caseBodyStmt, caseEnv)
+			if isError(result) {
+				return result
+			}
 		}
 		return result
 	}
 
-	// 7. If no case matched and no default, return null
 	return object.NULL
 }
 
-func evalExpressions(exps []ast.Expr, env *object.Environment) []object.Object {
+func (e *Evaluator) evalExpressions(exps []ast.Expr, env *object.Environment) []object.Object {
 	var result []object.Object
 
-	for _, e := range exps {
-		evaluated := Eval(e, env)
-		// TODO: Handle error
+	for _, exp := range exps {
+		evaluated := e.Eval(exp, env)
+		if isError(evaluated) {
+			return []object.Object{evaluated}
+		}
 		result = append(result, evaluated)
 	}
 
 	return result
 }
 
-func applyFunction(fn object.Object, args []object.Object) object.Object {
-	function, ok := fn.(*object.Function)
-	if !ok {
-		// TODO: Return error "not a function"
-		return nil
+func (e *Evaluator) applyFunction(call *ast.CallExpr, fn object.Object, args []object.Object) object.Object {
+	switch fn := fn.(type) {
+	case *object.Function:
+		if len(fn.Parameters) != len(args) {
+			return e.newError(call.Pos(), "wrong number of arguments. got=%d, want=%d", len(args), len(fn.Parameters))
+		}
+
+		funcName := "<anonymous>"
+		if fn.Name != nil {
+			funcName = fn.Name.Name
+		}
+		frame := object.CallFrame{Pos: call.Pos(), Function: funcName}
+		e.callStack = append(e.callStack, frame)
+		defer func() { e.callStack = e.callStack[:len(e.callStack)-1] }()
+
+		extendedEnv := e.extendFunctionEnv(fn, args)
+		evaluated := e.Eval(fn.Body, extendedEnv)
+		return e.unwrapReturnValue(evaluated)
+
+	default:
+		return e.newError(call.Pos(), "not a function: %s", fn.Type())
 	}
-
-	if len(function.Parameters) != len(args) {
-		// TODO: Return error "wrong number of arguments"
-		return nil
-	}
-
-	extendedEnv := extendFunctionEnv(function, args)
-	evaluated := Eval(function.Body, extendedEnv)
-
-	return unwrapReturnValue(evaluated)
 }
 
-func extendFunctionEnv(fn *object.Function, args []object.Object) *object.Environment {
+func (e *Evaluator) extendFunctionEnv(fn *object.Function, args []object.Object) *object.Environment {
 	env := object.NewEnclosedEnvironment(fn.Env)
-
 	for paramIdx, param := range fn.Parameters {
 		env.Set(param.Name, args[paramIdx])
 	}
-
 	return env
 }
 
-func unwrapReturnValue(obj object.Object) object.Object {
+func (e *Evaluator) unwrapReturnValue(obj object.Object) object.Object {
 	if returnValue, ok := obj.(*object.ReturnValue); ok {
 		return returnValue.Value
 	}
 	return obj
 }
 
-
-// evalBranchStmt evaluates a break or continue statement.
-func evalBranchStmt(bs *ast.BranchStmt, env *object.Environment) object.Object {
-	// We don't support labels yet.
+func (e *Evaluator) evalBranchStmt(bs *ast.BranchStmt, env *object.Environment) object.Object {
 	if bs.Label != nil {
-		return nil // Return an error object in the future
+		return e.newError(bs.Pos(), "labels are not supported")
 	}
-
 	switch bs.Tok {
 	case token.BREAK:
 		return object.BREAK
 	case token.CONTINUE:
 		return object.CONTINUE
 	default:
-		// Other branch statements like goto, fallthrough are not supported.
-		return nil // Return an error object in the future
+		return e.newError(bs.Pos(), "unsupported branch statement: %s", bs.Tok)
 	}
 }
 
-// Eval is the central function of the evaluator. It traverses the AST
-// and returns the result of the evaluation as an object.Object.
-func Eval(node ast.Node, env *object.Environment) object.Object {
+func (e *Evaluator) Eval(node ast.Node, env *object.Environment) object.Object {
 	switch n := node.(type) {
 	// Statements
 	case *ast.BlockStmt:
-		return evalBlockStatement(n, env)
+		return e.evalBlockStatement(n, env)
 	case *ast.ExprStmt:
-		// For an expression statement, we evaluate the underlying expression.
-		return Eval(n.X, env)
+		return e.Eval(n.X, env)
 	case *ast.IfStmt:
-		return evalIfElseExpression(n, env)
+		return e.evalIfElseExpression(n, env)
 	case *ast.SwitchStmt:
-		return evalSwitchStmt(n, env)
+		return e.evalSwitchStmt(n, env)
 	case *ast.ForStmt:
-		return evalForStmt(n, env)
+		return e.evalForStmt(n, env)
 	case *ast.BranchStmt:
-		return evalBranchStmt(n, env)
+		return e.evalBranchStmt(n, env)
 	case *ast.DeclStmt:
-		return Eval(n.Decl, env)
+		return e.Eval(n.Decl, env)
 	case *ast.FuncDecl:
 		params := []*ast.Ident{}
 		if n.Type.Params != nil {
@@ -402,134 +441,26 @@ func Eval(node ast.Node, env *object.Environment) object.Object {
 				}
 			}
 		}
-		fn := &object.Function{
-			Parameters: params,
-			Body:       n.Body,
-			Env:        env,
-		}
+		fn := &object.Function{Name: n.Name, Parameters: params, Body: n.Body, Env: env}
 		env.Set(n.Name.Name, fn)
-		return nil // Function declaration is a statement
+		return nil
 	case *ast.ReturnStmt:
 		var val object.Object = object.NULL
 		if len(n.Results) > 0 {
-			val = Eval(n.Results[0], env)
-			// TODO: Handle error
+			val = e.Eval(n.Results[0], env)
+			if isError(val) {
+				return val
+			}
 		}
 		return &object.ReturnValue{Value: val}
 	case *ast.GenDecl:
-		switch n.Tok {
-		case token.VAR:
-			for _, spec := range n.Specs {
-				valueSpec := spec.(*ast.ValueSpec)
-				for i, name := range valueSpec.Names {
-					// Assuming `var x = val` format
-					val := Eval(valueSpec.Values[i], env)
-					env.Set(name.Name, val)
-				}
-			}
-		case token.CONST:
-			var lastValues []ast.Expr
-
-			// iota is reset for each const block
-			for iotaValue, spec := range n.Specs {
-				valueSpec := spec.(*ast.ValueSpec)
-
-				if len(valueSpec.Values) == 0 {
-					// If there are no values, reuse the last set of expressions.
-					valueSpec.Values = lastValues
-				} else {
-					lastValues = valueSpec.Values
-				}
-
-				for i, name := range valueSpec.Names {
-					var val object.Object
-					// Create a temporary environment for iota evaluation.
-					// This environment is cheap to create and allows us to inject `iota`.
-					iotaEnv := object.NewEnclosedEnvironment(env)
-					iotaEnv.SetConstant("iota", &object.Integer{Value: int64(iotaValue)})
-
-					if i < len(valueSpec.Values) {
-						val = Eval(valueSpec.Values[i], iotaEnv)
-					} else {
-						// This handles `const ( a, b = iota, iota+1 )` where `b` has no value.
-						// The Go spec says the expression is reused, so we evaluate the last one again.
-						if len(valueSpec.Values) > 0 {
-							val = Eval(valueSpec.Values[len(valueSpec.Values)-1], iotaEnv)
-						} else {
-							// Should be unreachable if lastValues logic is correct.
-							return nil // Error: const declaration without value
-						}
-					}
-
-					env.SetConstant(name.Name, val)
-				}
-			}
-		case token.TYPE:
-			for _, spec := range n.Specs {
-				typeSpec, ok := spec.(*ast.TypeSpec)
-				if !ok {
-					continue
-				}
-				structType, ok := typeSpec.Type.(*ast.StructType)
-				if !ok {
-					// We only support struct type declarations for now
-					continue
-				}
-
-				def := &object.StructDefinition{
-					Name:   typeSpec.Name,
-					Fields: structType.Fields.List,
-				}
-				env.Set(typeSpec.Name.Name, def)
-			}
-		}
-		return nil // var/const/type declaration is a statement
+		return e.evalGenDecl(n, env)
 	case *ast.AssignStmt:
-		switch n.Tok {
-		case token.ASSIGN: // x = y or x.y = z
-			// Assuming single assignment for now
-			val := Eval(n.Rhs[0], env)
-			// TODO: Check for error object from val
-
-			switch lhs := n.Lhs[0].(type) {
-			case *ast.Ident:
-				if !env.Assign(lhs.Name, val) {
-					// TODO: Return error, undeclared variable
-					return nil
-				}
-				return val
-			case *ast.SelectorExpr:
-				obj := Eval(lhs.X, env)
-				if obj.Type() != object.STRUCT_INSTANCE_OBJ {
-					// TODO: Return error, not a struct instance
-					return nil
-				}
-				instance := obj.(*object.StructInstance)
-				instance.Fields[lhs.Sel.Name] = val
-				return val
-			default:
-				// TODO: Return error, unsupported assignment target
-				return nil
-			}
-
-		case token.DEFINE: // x := y
-			// Assuming single assignment for now
-			val := Eval(n.Rhs[0], env)
-			// TODO: Check for error object from val
-
-			ident, ok := n.Lhs[0].(*ast.Ident)
-			if !ok {
-				// TODO: Return error, not supported assignment target
-				return nil
-			}
-
-			env.Set(ident.Name, val)
-			return val
-		}
+		return e.evalAssignStmt(n, env)
 
 	// Expressions
 	case *ast.ParenExpr:
-		return Eval(n.X, env)
+		return e.Eval(n.X, env)
 	case *ast.FuncLit:
 		params := []*ast.Ident{}
 		if n.Type.Params != nil {
@@ -539,101 +470,220 @@ func Eval(node ast.Node, env *object.Environment) object.Object {
 				}
 			}
 		}
-		return &object.Function{
-			Parameters: params,
-			Body:       n.Body,
-			Env:        env,
-		}
+		return &object.Function{Parameters: params, Body: n.Body, Env: env}
 	case *ast.CallExpr:
-		function := Eval(n.Fun, env)
-		// TODO: check if function is an error
-		args := evalExpressions(n.Args, env)
-		// TODO: check if any arg is an error
-		return applyFunction(function, args)
+		function := e.Eval(n.Fun, env)
+		if isError(function) {
+			return function
+		}
+		args := e.evalExpressions(n.Args, env)
+		if len(args) == 1 && isError(args[0]) {
+			return args[0]
+		}
+		return e.applyFunction(n, function, args)
 	case *ast.SelectorExpr:
-		left := Eval(n.X, env)
-		// TODO: Handle error
-		if left.Type() != object.STRUCT_INSTANCE_OBJ {
-			// TODO: Return error, not a struct
-			return nil
-		}
-		instance := left.(*object.StructInstance)
-		if val, ok := instance.Fields[n.Sel.Name]; ok {
-			return val
-		}
-		// TODO: Return error, undefined field
-		return nil
+		return e.evalSelectorExpr(n, env)
 	case *ast.CompositeLit:
-		// Evaluate the type being instantiated (e.g., `MyStruct` in `MyStruct{...}`)
-		defObj := Eval(n.Type, env)
-		def, ok := defObj.(*object.StructDefinition)
-		if !ok {
-			// TODO: Return error, not a struct type
-			return nil
-		}
-
-		instance := &object.StructInstance{
-			Def:    def,
-			Fields: make(map[string]object.Object),
-		}
-
-		// Evaluate the key-value pairs in the literal
-		for _, elt := range n.Elts {
-			kv, ok := elt.(*ast.KeyValueExpr)
-			if !ok {
-				// TODO: Return error, unsupported literal element
-				continue
-			}
-			key, ok := kv.Key.(*ast.Ident)
-			if !ok {
-				// TODO: Return error, field name is not an identifier
-				continue
-			}
-
-			value := Eval(kv.Value, env)
-			// TODO: Handle error from value evaluation
-			instance.Fields[key.Name] = value
-		}
-		return instance
+		return e.evalCompositeLit(n, env)
 	case *ast.UnaryExpr:
-		right := Eval(n.X, env)
-		return evalPrefixExpression(n.Op.String(), right)
+		right := e.Eval(n.X, env)
+		if isError(right) {
+			return right
+		}
+		return e.evalPrefixExpression(n, n.Op.String(), right)
 	case *ast.BinaryExpr:
-		left := Eval(n.X, env)
-		right := Eval(n.Y, env)
-		return evalInfixExpression(n.Op.String(), left, right)
+		left := e.Eval(n.X, env)
+		if isError(left) {
+			return left
+		}
+		right := e.Eval(n.Y, env)
+		if isError(right) {
+			return right
+		}
+		return e.evalInfixExpression(n, n.Op.String(), left, right)
 
 	// Literals
 	case *ast.Ident:
-		if val, ok := env.Get(n.Name); ok {
-			return val
-		}
-
-		switch n.Name {
-		case "true":
-			return object.TRUE
-		case "false":
-			return object.FALSE
-		}
+		return e.evalIdent(n, env)
 	case *ast.BasicLit:
-		switch n.Kind {
-		case token.INT:
-			i, err := strconv.ParseInt(n.Value, 0, 64)
-			if err != nil {
-				// In a real interpreter, we'd return an error object.
-				// For now, we return nil.
-				return nil
-			}
-			return &object.Integer{Value: i}
-		case token.STRING:
-			s, err := strconv.Unquote(n.Value)
-			if err != nil {
-				// Return nil on error for now.
-				return nil
-			}
-			return &object.String{Value: s}
-		}
+		return e.evalBasicLit(n)
 	}
 
+	return e.newError(node.Pos(), "evaluation not implemented for %T", node)
+}
+
+func (e *Evaluator) evalGenDecl(n *ast.GenDecl, env *object.Environment) object.Object {
+	var lastValues []ast.Expr // For const value carry-over
+
+	for iotaValue, spec := range n.Specs {
+		switch s := spec.(type) {
+		case *ast.ValueSpec: // var, const
+			// Handle const value carry-over
+			if n.Tok == token.CONST {
+				if len(s.Values) == 0 {
+					s.Values = lastValues
+				} else {
+					lastValues = s.Values
+				}
+			}
+
+			for i, name := range s.Names {
+				var val object.Object
+				if i < len(s.Values) {
+					// Create a temporary environment for iota evaluation.
+					iotaEnv := object.NewEnclosedEnvironment(env)
+					iotaEnv.SetConstant("iota", &object.Integer{Value: int64(iotaValue)})
+					val = e.Eval(s.Values[i], iotaEnv)
+				} else {
+					// This should be handled by the parser, but as a safeguard.
+					return e.newError(name.Pos(), "missing value in declaration")
+				}
+
+				if isError(val) {
+					return val
+				}
+
+				if n.Tok == token.CONST {
+					env.SetConstant(name.Name, val)
+				} else { // token.VAR
+					if fn, ok := val.(*object.Function); ok {
+						fn.Name = name
+					}
+					env.Set(name.Name, val)
+				}
+			}
+		case *ast.TypeSpec: // type
+			structType, ok := s.Type.(*ast.StructType)
+			if !ok {
+				return e.newError(s.Pos(), "unsupported type declaration: not a struct")
+			}
+			def := &object.StructDefinition{
+				Name:   s.Name,
+				Fields: structType.Fields.List,
+			}
+			env.Set(s.Name.Name, def)
+		}
+	}
 	return nil
+}
+
+func (e *Evaluator) evalAssignStmt(n *ast.AssignStmt, env *object.Environment) object.Object {
+	val := e.Eval(n.Rhs[0], env)
+	if isError(val) {
+		return val
+	}
+
+	switch n.Tok {
+	case token.ASSIGN:
+		switch lhs := n.Lhs[0].(type) {
+		case *ast.Ident:
+			if _, ok := env.GetConstant(lhs.Name); ok {
+				return e.newError(lhs.Pos(), "cannot assign to constant %s", lhs.Name)
+			}
+			if !env.Assign(lhs.Name, val) {
+				return e.newError(lhs.Pos(), "undeclared variable: %s", lhs.Name)
+			}
+		case *ast.SelectorExpr:
+			obj := e.Eval(lhs.X, env)
+			if isError(obj) {
+				return obj
+			}
+			instance, ok := obj.(*object.StructInstance)
+			if !ok {
+				return e.newError(lhs.Pos(), "assignment to non-struct field")
+			}
+			instance.Fields[lhs.Sel.Name] = val
+		default:
+			return e.newError(n.Pos(), "unsupported assignment target")
+		}
+	case token.DEFINE:
+		ident, ok := n.Lhs[0].(*ast.Ident)
+		if !ok {
+			return e.newError(n.Pos(), "non-identifier on left side of :=")
+		}
+		if fn, ok := val.(*object.Function); ok {
+			fn.Name = ident
+		}
+		env.Set(ident.Name, val)
+	}
+	return val
+}
+
+func (e *Evaluator) evalSelectorExpr(n *ast.SelectorExpr, env *object.Environment) object.Object {
+	left := e.Eval(n.X, env)
+	if isError(left) {
+		return left
+	}
+
+	instance, ok := left.(*object.StructInstance)
+	if !ok {
+		return e.newError(n.Pos(), "base of selector expression is not a struct")
+	}
+
+	if val, ok := instance.Fields[n.Sel.Name]; ok {
+		return val
+	}
+
+	return e.newError(n.Sel.Pos(), "undefined field '%s' on struct", n.Sel.Name)
+}
+
+func (e *Evaluator) evalCompositeLit(n *ast.CompositeLit, env *object.Environment) object.Object {
+	defObj := e.Eval(n.Type, env)
+	if isError(defObj) {
+		return defObj
+	}
+	def, ok := defObj.(*object.StructDefinition)
+	if !ok {
+		return e.newError(n.Type.Pos(), "not a struct type in composite literal")
+	}
+
+	instance := &object.StructInstance{Def: def, Fields: make(map[string]object.Object)}
+	for _, elt := range n.Elts {
+		kv, ok := elt.(*ast.KeyValueExpr)
+		if !ok {
+			return e.newError(elt.Pos(), "unsupported literal element")
+		}
+		key, ok := kv.Key.(*ast.Ident)
+		if !ok {
+			return e.newError(kv.Key.Pos(), "field name is not an identifier")
+		}
+		value := e.Eval(kv.Value, env)
+		if isError(value) {
+			return value
+		}
+		instance.Fields[key.Name] = value
+	}
+	return instance
+}
+
+func (e *Evaluator) evalIdent(n *ast.Ident, env *object.Environment) object.Object {
+	if val, ok := env.Get(n.Name); ok {
+		return val
+	}
+	switch n.Name {
+	case "true":
+		return object.TRUE
+	case "false":
+		return object.FALSE
+	}
+	return e.newError(n.Pos(), "identifier not found: %s", n.Name)
+}
+
+func (e *Evaluator) evalBasicLit(n *ast.BasicLit) object.Object {
+	switch n.Kind {
+	case token.INT:
+		i, err := strconv.ParseInt(n.Value, 0, 64)
+		if err != nil {
+			return e.newError(n.Pos(), "could not parse %q as integer", n.Value)
+		}
+		return &object.Integer{Value: i}
+	case token.STRING:
+		s, err := strconv.Unquote(n.Value)
+		if err != nil {
+			return e.newError(n.Pos(), "could not unquote string %q", n.Value)
+		}
+		return &object.String{Value: s}
+	default:
+		return e.newError(n.Pos(), "unsupported literal type: %s", n.Kind)
+	}
 }

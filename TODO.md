@@ -164,7 +164,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] Implement user-defined functions (`func` declarations).
 - [x] Implement the call stack mechanism for tracking function calls.
 - [x] Implement `return` statements (including returning `nil`).
-- [ ] Implement rich error formatting with a formatted call stack.
+- [x] Implement rich error formatting with a formatted call stack.
 - [x] Add support for `type ... struct` declarations.
 - [x] Support struct literal instantiation (e.g., `MyStruct{...}`), including both keyed and unkeyed fields.
 - [x] Support field access (`myStruct.Field`) and assignment (`myStruct.Field = ...`).

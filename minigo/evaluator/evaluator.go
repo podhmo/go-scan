@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"go/ast"
 	"go/token"
+	"io"
+	"os"
 	"reflect"
 	"strconv"
 	"strings"
@@ -15,7 +17,7 @@ import (
 
 var builtins = map[string]*object.Builtin{
 	"len": {
-		Fn: func(fset *token.FileSet, pos token.Pos, args ...object.Object) object.Object {
+		Fn: func(stdout io.Writer, fset *token.FileSet, pos token.Pos, args ...object.Object) object.Object {
 			if len(args) != 1 {
 				err := &object.Error{
 					Pos:     pos,
@@ -55,7 +57,7 @@ var builtins = map[string]*object.Builtin{
 		},
 	},
 	"append": {
-		Fn: func(fset *token.FileSet, pos token.Pos, args ...object.Object) object.Object {
+		Fn: func(stdout io.Writer, fset *token.FileSet, pos token.Pos, args ...object.Object) object.Object {
 			if len(args) < 2 {
 				err := &object.Error{
 					Pos:     pos,
@@ -82,7 +84,7 @@ var builtins = map[string]*object.Builtin{
 		},
 	},
 	"max": {
-		Fn: func(fset *token.FileSet, pos token.Pos, args ...object.Object) object.Object {
+		Fn: func(stdout io.Writer, fset *token.FileSet, pos token.Pos, args ...object.Object) object.Object {
 			if len(args) == 0 {
 				return &object.Error{Pos: pos, Message: "max() requires at least one argument", CallStack: nil}
 			}
@@ -103,7 +105,7 @@ var builtins = map[string]*object.Builtin{
 		},
 	},
 	"min": {
-		Fn: func(fset *token.FileSet, pos token.Pos, args ...object.Object) object.Object {
+		Fn: func(stdout io.Writer, fset *token.FileSet, pos token.Pos, args ...object.Object) object.Object {
 			if len(args) == 0 {
 				return &object.Error{Pos: pos, Message: "min() requires at least one argument", CallStack: nil}
 			}
@@ -124,7 +126,7 @@ var builtins = map[string]*object.Builtin{
 		},
 	},
 	"new": {
-		Fn: func(fset *token.FileSet, pos token.Pos, args ...object.Object) object.Object {
+		Fn: func(stdout io.Writer, fset *token.FileSet, pos token.Pos, args ...object.Object) object.Object {
 			if len(args) != 1 {
 				err := &object.Error{
 					Pos:     pos,
@@ -158,6 +160,29 @@ var builtins = map[string]*object.Builtin{
 			return &object.Pointer{Element: &obj}
 		},
 	},
+	"print": {
+		Fn: func(stdout io.Writer, fset *token.FileSet, pos token.Pos, args ...object.Object) object.Object {
+			for i, arg := range args {
+				if i > 0 {
+					fmt.Fprint(stdout, " ")
+				}
+				fmt.Fprint(stdout, arg.Inspect())
+			}
+			return object.NIL
+		},
+	},
+	"println": {
+		Fn: func(stdout io.Writer, fset *token.FileSet, pos token.Pos, args ...object.Object) object.Object {
+			for i, arg := range args {
+				if i > 0 {
+					fmt.Fprint(stdout, " ")
+				}
+				fmt.Fprint(stdout, arg.Inspect())
+			}
+			fmt.Fprintln(stdout)
+			return object.NIL
+		},
+	},
 }
 
 // Evaluator is the main object that evaluates the AST.
@@ -167,6 +192,7 @@ type Evaluator struct {
 	registry  *object.SymbolRegistry
 	packages  map[string]*object.Package // Central package cache
 	callStack []object.CallFrame
+	Stdout    io.Writer
 }
 
 // New creates a new Evaluator.
@@ -177,6 +203,7 @@ func New(fset *token.FileSet, scanner *goscan.Scanner, registry *object.SymbolRe
 		registry:  registry,
 		packages:  packages,
 		callStack: make([]object.CallFrame, 0),
+		Stdout:    os.Stdout,
 	}
 }
 
@@ -1171,7 +1198,7 @@ func (e *Evaluator) applyFunction(call *ast.CallExpr, fn object.Object, args []o
 		return e.unwrapReturnValue(evaluated)
 
 	case *object.Builtin:
-		return fn.Fn(e.fset, call.Pos(), args...)
+		return fn.Fn(e.Stdout, e.fset, call.Pos(), args...)
 	default:
 		return e.newError(call.Pos(), "not a function: %s", fn.Type())
 	}
@@ -1958,7 +1985,7 @@ func (e *Evaluator) findSymbolInPackageInfo(pkgInfo *goscan.Package, symbolName 
 func (e *Evaluator) wrapGoFunction(pos token.Pos, funcVal reflect.Value) object.Object {
 	funcType := funcVal.Type()
 	return &object.Builtin{
-		Fn: func(fset *token.FileSet, callPos token.Pos, args ...object.Object) object.Object {
+		Fn: func(stdout io.Writer, fset *token.FileSet, callPos token.Pos, args ...object.Object) object.Object {
 			// Check arg count
 			numIn := funcType.NumIn()
 			isVariadic := funcType.IsVariadic()

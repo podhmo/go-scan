@@ -202,6 +202,97 @@ func TestFunctionApplication(t *testing.T) {
 	}
 }
 
+// testEvalWithEvaluator is a helper function to parse and evaluate a string of code with a given evaluator.
+func testEvalWithEvaluator(t *testing.T, eval *Evaluator, input string) object.Object {
+	t.Helper()
+	// To parse statements, we need to wrap the input in a valid Go file structure.
+	fullSource := fmt.Sprintf("package main\n\nfunc main() {\n%s\n}", input)
+
+	// Create a temporary file to hold the source code.
+	tmpfile, err := os.CreateTemp("", "minigo_test_*.go")
+	if err != nil {
+		t.Fatalf("failed to create temp file: %v", err)
+	}
+	t.Cleanup(func() { os.Remove(tmpfile.Name()) })
+
+	if _, err := tmpfile.Write([]byte(fullSource)); err != nil {
+		t.Fatalf("failed to write to temp file: %v", err)
+	}
+	if err := tmpfile.Close(); err != nil {
+		t.Fatalf("failed to close temp file: %v", err)
+	}
+
+	file, err := parser.ParseFile(eval.fset, tmpfile.Name(), nil, parser.ParseComments)
+	if err != nil {
+		t.Fatalf("failed to parse code: %v", err)
+		return nil
+	}
+
+	var mainFunc *ast.FuncDecl
+	for _, decl := range file.Decls {
+		if fn, ok := decl.(*ast.FuncDecl); ok && fn.Name.Name == "main" {
+			mainFunc = fn
+			break
+		}
+	}
+	if mainFunc == nil {
+		t.Fatalf("main function not found in parsed code")
+		return nil
+	}
+
+	fscope := object.NewFileScope(file)
+	env := object.NewEnvironment()
+
+	evaluated := eval.Eval(mainFunc.Body, env, fscope)
+	if retVal, ok := evaluated.(*object.ReturnValue); ok {
+		return retVal.Value
+	}
+	return evaluated
+}
+
+func TestPrintFunctions(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{`print("hello", " ", "world")`, "hello   world"},
+		{`println("hello", "world")`, "hello world\n"},
+		{`println(1, "plus", 2, "is", 3)`, "1 plus 2 is 3\n"},
+		{`println(true, false, nil)`, "true false nil\n"},
+		{`print(1, 2, 3)`, "1 2 3"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			var buf strings.Builder
+			fset := token.NewFileSet()
+			scanner, err := goscan.New()
+			if err != nil {
+				t.Fatalf("failed to create scanner: %v", err)
+			}
+			packages := make(map[string]*object.Package)
+			eval := New(fset, scanner, object.NewSymbolRegistry(), packages)
+			eval.Stdout = &buf
+
+			result := testEvalWithEvaluator(t, eval, tt.input)
+
+			// The print functions should return NIL
+			if result != object.NIL {
+				// Allow errors to be returned for debugging if something goes wrong
+				if err, ok := result.(*object.Error); !ok {
+					t.Errorf("expected result to be NIL, got %s (%s)", result.Type(), result.Inspect())
+				} else {
+					t.Errorf("evaluation failed: %s", err.Inspect())
+				}
+			}
+
+			if got := buf.String(); got != tt.expected {
+				t.Errorf("wrong output.\nexpected: %q\ngot     : %q", tt.expected, got)
+			}
+		})
+	}
+}
+
 func TestBuiltinFunctions(t *testing.T) {
 	tests := []struct {
 		input    string

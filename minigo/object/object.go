@@ -7,6 +7,7 @@ import (
 	"go/ast"
 	"go/token"
 	"hash/fnv"
+	"io"
 	"os"
 	"reflect"
 	"strings"
@@ -264,7 +265,7 @@ func (si *StructInstance) Copy() *StructInstance {
 // --- Builtin Function Object ---
 
 // BuiltinFunction is the type of the function for built-in commands.
-type BuiltinFunction func(fset *token.FileSet, pos token.Pos, args ...Object) Object
+type BuiltinFunction func(stdout io.Writer, fset *token.FileSet, pos token.Pos, args ...Object) Object
 
 // Builtin represents a built-in function.
 type Builtin struct {

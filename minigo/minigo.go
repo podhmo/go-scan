@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"go/parser"
-	"go/token"
 	"reflect"
 	"strings"
 
@@ -215,7 +214,7 @@ func unmarshal(src object.Object, dst reflect.Value) error {
 // LoadFile parses a file and adds it to the interpreter's state without evaluating it yet.
 // This is the first stage of a multi-file evaluation.
 func (i *Interpreter) LoadFile(filename string, source []byte) error {
-	fset := token.NewFileSet() // A single fset for the whole interpreter might be better.
+	fset := i.scanner.Fset() // A single fset for the whole interpreter might be better.
 	node, err := parser.ParseFile(fset, filename, source, parser.ParseComments)
 	if err != nil {
 		return fmt.Errorf("parsing script %q: %w", filename, err)
@@ -235,7 +234,7 @@ func (i *Interpreter) Eval(ctx context.Context) (*Result, error) {
 
 	// For now, we assume a single FileSet for all files.
 	// A more robust implementation might manage a map of fsets.
-	fset := token.NewFileSet()
+	fset := i.scanner.Fset()
 	eval := evaluator.New(fset, i.scanner, i.Registry, i.packages)
 
 	// In a real multi-file Go program, evaluation order is complex (e.g., all `type` decls first).

@@ -146,3 +146,65 @@ var resultB = f.StringsFunc()
 		t.Errorf("resultB has wrong value. got=%q, want=%q", strB.Value, "from strings")
 	}
 }
+
+func TestInterpreterEval_SharedPackageInstance(t *testing.T) {
+	fooFile := `package main
+import x "sharedlib"
+var valA = x.Get()
+`
+	barFile := `package main
+import "sharedlib"
+var valB = sharedlib.Get()
+`
+
+	i, err := NewInterpreter()
+	if err != nil {
+		t.Fatalf("NewInterpreter() failed: %v", err)
+	}
+
+	// Register a mock package
+	i.Register("sharedlib", map[string]any{
+		"Get": func() int { return 42 },
+	})
+
+	// Load both files
+	if err := i.LoadFile("foo.go", []byte(fooFile)); err != nil {
+		t.Fatalf("LoadFile(foo) failed: %v", err)
+	}
+	if err := i.LoadFile("bar.go", []byte(barFile)); err != nil {
+		t.Fatalf("LoadFile(bar) failed: %v", err)
+	}
+
+	// Evaluate
+	_, err = i.Eval(context.Background())
+	if err != nil {
+		t.Fatalf("Eval() failed: %v", err)
+	}
+
+	// Check that both variables were set correctly
+	valA, okA := i.globalEnv.Get("valA")
+	if !okA {
+		t.Fatal("variable 'valA' not found")
+	}
+	intA, okA := valA.(*object.Integer)
+	if !okA || intA.Value != 42 {
+		t.Errorf("valA has wrong value, got %v, want 42", valA)
+	}
+
+	valB, okB := i.globalEnv.Get("valB")
+	if !okB {
+		t.Fatal("variable 'valB' not found")
+	}
+	intB, okB := valB.(*object.Integer)
+	if !okB || intB.Value != 42 {
+		t.Errorf("valB has wrong value, got %v, want 42", valB)
+	}
+
+	// Check that the package instance was shared
+	if len(i.packages) != 1 {
+		t.Errorf("expected 1 cached package, but found %d", len(i.packages))
+	}
+	if _, ok := i.packages["sharedlib"]; !ok {
+		t.Errorf("expected to find 'sharedlib' in package cache, but it was not there")
+	}
+}

@@ -210,10 +210,9 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     - [x] Support dynamic dispatch of method calls through interface variables.
 - [x] Thoroughly test all features, especially pointer handling and the Go interop layer.
 - [ ] Write comprehensive documentation for the API, supported language features, and usage examples.
-- [ ] Ensure `make format` and `make test` pass cleanly.
 
 ### Multi-File Project Support in `minigo2`
-- [ ] **File-Scoped Import Resolution**: Refactor the interpreter to support multi-file projects. This requires moving from a single global environment to a model where each file has its own scope for imports.
-    - [ ] The `eval` loop will need to process multiple files and manage their scopes.
-    - [ ] The `import` statement evaluation logic needs to be updated to handle file-local aliases (e.g., `import str "strings"` in `a.go` should not conflict with `import str "net/http"` in `b.go`).
-    - [ ] The `SymbolRegistry` will remain global, but the resolution of an import alias to a registered package path must become local to each file's AST.
+- [x] **File-Scoped Import Resolution**: Refactor the interpreter to support multi-file projects. This requires moving from a single global environment to a model where each file has its own scope for imports.
+    - [x] The `eval` loop will need to process multiple files and manage their scopes.
+    - [x] The `import` statement evaluation logic needs to be updated to handle file-local aliases (e.g., `import str "strings"` in `a.go` should not conflict with `import str "net/http"` in `b.go`).
+    - [x] The `SymbolRegistry` will remain global, but the resolution of an import alias to a registered package path must become local to each file's AST.

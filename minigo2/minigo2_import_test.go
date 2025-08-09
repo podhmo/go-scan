@@ -314,3 +314,81 @@ var result = "ok"
 		}
 	})
 }
+
+func TestGoInterop_MultiFileDotImport(t *testing.T) {
+	t.Run("dot import is scoped to a single file", func(t *testing.T) {
+		scriptA := `package main
+import . "strings"
+var resultA = ToUpper("hello")`
+
+		scriptB := `package main
+var resultB = ToUpper("world") // This should fail
+`
+		interpreter, err := NewInterpreter()
+		if err != nil {
+			t.Fatalf("NewInterpreter() failed: %v", err)
+		}
+		interpreter.Register("strings", map[string]any{"ToUpper": strings.ToUpper})
+
+		if err := interpreter.LoadFile("a.mgo", []byte(scriptA)); err != nil {
+			t.Fatalf("LoadFile(a.mgo) failed: %v", err)
+		}
+		if err := interpreter.LoadFile("b.mgo", []byte(scriptB)); err != nil {
+			t.Fatalf("LoadFile(b.mgo) failed: %v", err)
+		}
+
+		_, err = interpreter.Eval(context.Background())
+		if err == nil {
+			t.Fatal("expected an error but got none")
+		}
+
+		expectedErr := "identifier not found: ToUpper"
+		if !strings.Contains(err.Error(), expectedErr) {
+			t.Errorf("error message mismatch:\n- want: %q\n- got:  %q", expectedErr, err.Error())
+		}
+
+		// Also check that the first part succeeded
+		val, ok := interpreter.globalEnv.Get("resultA")
+		if !ok {
+			t.Fatal("variable 'resultA' not found, evaluation of a.mgo likely failed")
+		}
+		if s, ok := val.(*object.String); !ok || s.Value != "HELLO" {
+			t.Errorf("wrong value for 'resultA'. got=%s, want='HELLO'", val.Inspect())
+		}
+	})
+
+	t.Run("symbols defined in one file are visible in another", func(t *testing.T) {
+		scriptA := `package main
+import . "strings"
+var greeting = ToUpper("hello")`
+
+		scriptB := `package main
+var result = greeting
+`
+		interpreter, err := NewInterpreter()
+		if err != nil {
+			t.Fatalf("NewInterpreter() failed: %v", err)
+		}
+		interpreter.Register("strings", map[string]any{"ToUpper": strings.ToUpper})
+
+		if err := interpreter.LoadFile("a.mgo", []byte(scriptA)); err != nil {
+			t.Fatalf("LoadFile(a.mgo) failed: %v", err)
+		}
+		if err := interpreter.LoadFile("b.mgo", []byte(scriptB)); err != nil {
+			t.Fatalf("LoadFile(b.mgo) failed: %v", err)
+		}
+
+		_, err = interpreter.Eval(context.Background())
+		if err != nil {
+			t.Fatalf("Eval() returned an unexpected error: %v", err)
+		}
+
+		val, ok := interpreter.globalEnv.Get("result")
+		if !ok {
+			t.Fatal("variable 'result' not found")
+		}
+		if s, ok := val.(*object.String); !ok || s.Value != "HELLO" {
+			t.Errorf("wrong value for 'result'. got=%s, want='HELLO'", val.Inspect())
+		}
+	})
+}

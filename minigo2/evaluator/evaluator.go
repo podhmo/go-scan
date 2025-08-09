@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/podhmo/go-scan"
+	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/minigo2/object"
 )
 
@@ -94,15 +94,17 @@ type Evaluator struct {
 	fset      *token.FileSet
 	scanner   *goscan.Scanner
 	registry  *object.SymbolRegistry
+	packages  map[string]*object.Package // Central package cache
 	callStack []object.CallFrame
 }
 
 // New creates a new Evaluator.
-func New(fset *token.FileSet, scanner *goscan.Scanner, registry *object.SymbolRegistry) *Evaluator {
+func New(fset *token.FileSet, scanner *goscan.Scanner, registry *object.SymbolRegistry, packages map[string]*object.Package) *Evaluator {
 	return &Evaluator{
 		fset:      fset,
 		scanner:   scanner,
 		registry:  registry,
+		packages:  packages,
 		callStack: make([]object.CallFrame, 0),
 	}
 }
@@ -180,7 +182,7 @@ func (e *Evaluator) evalDereferenceExpression(node ast.Node, right object.Object
 	return *ptr.Element
 }
 
-func (e *Evaluator) evalAddressOfExpression(node *ast.UnaryExpr, env *object.Environment) object.Object {
+func (e *Evaluator) evalAddressOfExpression(node *ast.UnaryExpr, env *object.Environment, fscope *object.FileScope) object.Object {
 	switch operand := node.X.(type) {
 	case *ast.Ident:
 		addr, ok := env.GetAddress(operand.Name)
@@ -190,7 +192,7 @@ func (e *Evaluator) evalAddressOfExpression(node *ast.UnaryExpr, env *object.Env
 		return &object.Pointer{Element: addr}
 	case *ast.CompositeLit:
 		// Evaluate the composite literal to create the object instance.
-		obj := e.evalCompositeLit(operand, env)
+		obj := e.evalCompositeLit(operand, env, fscope)
 		if isError(obj) {
 			return obj
 		}
@@ -639,28 +641,28 @@ func (e *Evaluator) isTruthy(obj object.Object) bool {
 }
 
 // evalIfElseExpression evaluates an if-else expression.
-func (e *Evaluator) evalIfElseExpression(ie *ast.IfStmt, env *object.Environment) object.Object {
-	condition := e.Eval(ie.Cond, env)
+func (e *Evaluator) evalIfElseExpression(ie *ast.IfStmt, env *object.Environment, fscope *object.FileScope) object.Object {
+	condition := e.Eval(ie.Cond, env, fscope)
 	if isError(condition) {
 		return condition
 	}
 
 	if e.isTruthy(condition) {
-		return e.Eval(ie.Body, env)
+		return e.Eval(ie.Body, env, fscope)
 	} else if ie.Else != nil {
-		return e.Eval(ie.Else, env)
+		return e.Eval(ie.Else, env, fscope)
 	} else {
 		return object.NIL
 	}
 }
 
 // evalBlockStatement evaluates a block of statements within a new scope.
-func (e *Evaluator) evalBlockStatement(block *ast.BlockStmt, env *object.Environment) object.Object {
+func (e *Evaluator) evalBlockStatement(block *ast.BlockStmt, env *object.Environment, fscope *object.FileScope) object.Object {
 	var result object.Object
 	enclosedEnv := object.NewEnclosedEnvironment(env)
 
 	for _, statement := range block.List {
-		result = e.Eval(statement, enclosedEnv)
+		result = e.Eval(statement, enclosedEnv, fscope)
 		if result != nil {
 			rt := result.Type()
 			if rt == object.RETURN_VALUE_OBJ || rt == object.BREAK_OBJ || rt == object.CONTINUE_OBJ || rt == object.ERROR_OBJ {
@@ -673,11 +675,11 @@ func (e *Evaluator) evalBlockStatement(block *ast.BlockStmt, env *object.Environ
 }
 
 // evalForStmt evaluates a for loop.
-func (e *Evaluator) evalForStmt(fs *ast.ForStmt, env *object.Environment) object.Object {
+func (e *Evaluator) evalForStmt(fs *ast.ForStmt, env *object.Environment, fscope *object.FileScope) object.Object {
 	loopEnv := object.NewEnclosedEnvironment(env)
 
 	if fs.Init != nil {
-		initResult := e.Eval(fs.Init, loopEnv)
+		initResult := e.Eval(fs.Init, loopEnv, fscope)
 		if isError(initResult) {
 			return initResult
 		}
@@ -685,7 +687,7 @@ func (e *Evaluator) evalForStmt(fs *ast.ForStmt, env *object.Environment) object
 
 	for {
 		if fs.Cond != nil {
-			condition := e.Eval(fs.Cond, loopEnv)
+			condition := e.Eval(fs.Cond, loopEnv, fscope)
 			if isError(condition) {
 				return condition
 			}
@@ -694,7 +696,7 @@ func (e *Evaluator) evalForStmt(fs *ast.ForStmt, env *object.Environment) object
 			}
 		}
 
-		bodyResult := e.Eval(fs.Body, loopEnv)
+		bodyResult := e.Eval(fs.Body, loopEnv, fscope)
 		if isError(bodyResult) {
 			return bodyResult
 		}
@@ -705,7 +707,7 @@ func (e *Evaluator) evalForStmt(fs *ast.ForStmt, env *object.Environment) object
 			}
 			if bodyResult.Type() == object.CONTINUE_OBJ {
 				if fs.Post != nil {
-					postResult := e.Eval(fs.Post, loopEnv)
+					postResult := e.Eval(fs.Post, loopEnv, fscope)
 					if isError(postResult) {
 						return postResult
 					}
@@ -715,7 +717,7 @@ func (e *Evaluator) evalForStmt(fs *ast.ForStmt, env *object.Environment) object
 		}
 
 		if fs.Post != nil {
-			postResult := e.Eval(fs.Post, loopEnv)
+			postResult := e.Eval(fs.Post, loopEnv, fscope)
 			if isError(postResult) {
 				return postResult
 			}
@@ -726,27 +728,27 @@ func (e *Evaluator) evalForStmt(fs *ast.ForStmt, env *object.Environment) object
 }
 
 // evalForRangeStmt evaluates a for...range loop.
-func (e *Evaluator) evalForRangeStmt(rs *ast.RangeStmt, env *object.Environment) object.Object {
-	iterable := e.Eval(rs.X, env)
+func (e *Evaluator) evalForRangeStmt(rs *ast.RangeStmt, env *object.Environment, fscope *object.FileScope) object.Object {
+	iterable := e.Eval(rs.X, env, fscope)
 	if isError(iterable) {
 		return iterable
 	}
 
 	switch iterable := iterable.(type) {
 	case *object.Array:
-		return e.evalRangeArray(rs, iterable, env)
+		return e.evalRangeArray(rs, iterable, env, fscope)
 	case *object.String:
-		return e.evalRangeString(rs, iterable, env)
+		return e.evalRangeString(rs, iterable, env, fscope)
 	case *object.Map:
-		return e.evalRangeMap(rs, iterable, env)
+		return e.evalRangeMap(rs, iterable, env, fscope)
 	case *object.GoValue:
-		return e.evalRangeGoValue(rs, iterable, env)
+		return e.evalRangeGoValue(rs, iterable, env, fscope)
 	default:
 		return e.newError(rs.X.Pos(), "range operator not supported for %s", iterable.Type())
 	}
 }
 
-func (e *Evaluator) evalRangeGoValue(rs *ast.RangeStmt, goVal *object.GoValue, env *object.Environment) object.Object {
+func (e *Evaluator) evalRangeGoValue(rs *ast.RangeStmt, goVal *object.GoValue, env *object.Environment, fscope *object.FileScope) object.Object {
 	val := goVal.Value
 	switch val.Kind() {
 	case reflect.Slice, reflect.Array:
@@ -767,7 +769,7 @@ func (e *Evaluator) evalRangeGoValue(rs *ast.RangeStmt, goVal *object.GoValue, e
 				}
 			}
 
-			result := e.Eval(rs.Body, loopEnv)
+			result := e.Eval(rs.Body, loopEnv, fscope)
 			if result != nil {
 				rt := result.Type()
 				if rt == object.BREAK_OBJ {
@@ -803,7 +805,7 @@ func (e *Evaluator) evalRangeGoValue(rs *ast.RangeStmt, goVal *object.GoValue, e
 				}
 			}
 
-			result := e.Eval(rs.Body, loopEnv)
+			result := e.Eval(rs.Body, loopEnv, fscope)
 			if result != nil {
 				rt := result.Type()
 				if rt == object.BREAK_OBJ {
@@ -823,7 +825,7 @@ func (e *Evaluator) evalRangeGoValue(rs *ast.RangeStmt, goVal *object.GoValue, e
 	return e.newError(rs.X.Pos(), "range operator not supported for Go value of type %s", val.Kind())
 }
 
-func (e *Evaluator) evalRangeArray(rs *ast.RangeStmt, arr *object.Array, env *object.Environment) object.Object {
+func (e *Evaluator) evalRangeArray(rs *ast.RangeStmt, arr *object.Array, env *object.Environment, fscope *object.FileScope) object.Object {
 	for i, element := range arr.Elements {
 		loopEnv := object.NewEnclosedEnvironment(env)
 		if rs.Key != nil {
@@ -845,7 +847,7 @@ func (e *Evaluator) evalRangeArray(rs *ast.RangeStmt, arr *object.Array, env *ob
 			}
 		}
 
-		result := e.Eval(rs.Body, loopEnv)
+		result := e.Eval(rs.Body, loopEnv, fscope)
 		if result != nil {
 			rt := result.Type()
 			if rt == object.BREAK_OBJ {
@@ -862,7 +864,7 @@ func (e *Evaluator) evalRangeArray(rs *ast.RangeStmt, arr *object.Array, env *ob
 	return object.NIL
 }
 
-func (e *Evaluator) evalRangeString(rs *ast.RangeStmt, str *object.String, env *object.Environment) object.Object {
+func (e *Evaluator) evalRangeString(rs *ast.RangeStmt, str *object.String, env *object.Environment, fscope *object.FileScope) object.Object {
 	for i, r := range str.Value {
 		loopEnv := object.NewEnclosedEnvironment(env)
 		if rs.Key != nil {
@@ -884,7 +886,7 @@ func (e *Evaluator) evalRangeString(rs *ast.RangeStmt, str *object.String, env *
 			}
 		}
 
-		result := e.Eval(rs.Body, loopEnv)
+		result := e.Eval(rs.Body, loopEnv, fscope)
 		if result != nil {
 			rt := result.Type()
 			if rt == object.BREAK_OBJ {
@@ -901,7 +903,7 @@ func (e *Evaluator) evalRangeString(rs *ast.RangeStmt, str *object.String, env *
 	return object.NIL
 }
 
-func (e *Evaluator) evalRangeMap(rs *ast.RangeStmt, m *object.Map, env *object.Environment) object.Object {
+func (e *Evaluator) evalRangeMap(rs *ast.RangeStmt, m *object.Map, env *object.Environment, fscope *object.FileScope) object.Object {
 	// Note: Iteration order over maps is not guaranteed.
 	for _, pair := range m.Pairs {
 		loopEnv := object.NewEnclosedEnvironment(env)
@@ -924,7 +926,7 @@ func (e *Evaluator) evalRangeMap(rs *ast.RangeStmt, m *object.Map, env *object.E
 			}
 		}
 
-		result := e.Eval(rs.Body, loopEnv)
+		result := e.Eval(rs.Body, loopEnv, fscope)
 		if result != nil {
 			rt := result.Type()
 			if rt == object.BREAK_OBJ {
@@ -942,11 +944,11 @@ func (e *Evaluator) evalRangeMap(rs *ast.RangeStmt, m *object.Map, env *object.E
 }
 
 // evalSwitchStmt evaluates a switch statement.
-func (e *Evaluator) evalSwitchStmt(ss *ast.SwitchStmt, env *object.Environment) object.Object {
+func (e *Evaluator) evalSwitchStmt(ss *ast.SwitchStmt, env *object.Environment, fscope *object.FileScope) object.Object {
 	switchEnv := env
 	if ss.Init != nil {
 		switchEnv = object.NewEnclosedEnvironment(env)
-		initResult := e.Eval(ss.Init, switchEnv)
+		initResult := e.Eval(ss.Init, switchEnv, fscope)
 		if isError(initResult) {
 			return initResult
 		}
@@ -954,7 +956,7 @@ func (e *Evaluator) evalSwitchStmt(ss *ast.SwitchStmt, env *object.Environment) 
 
 	var tag object.Object
 	if ss.Tag != nil {
-		tag = e.Eval(ss.Tag, switchEnv)
+		tag = e.Eval(ss.Tag, switchEnv, fscope)
 		if isError(tag) {
 			return tag
 		}
@@ -977,7 +979,7 @@ func (e *Evaluator) evalSwitchStmt(ss *ast.SwitchStmt, env *object.Environment) 
 		}
 
 		for _, caseExpr := range clause.List {
-			caseVal := e.Eval(caseExpr, switchEnv)
+			caseVal := e.Eval(caseExpr, switchEnv, fscope)
 			if isError(caseVal) {
 				return caseVal
 			}
@@ -1005,7 +1007,7 @@ func (e *Evaluator) evalSwitchStmt(ss *ast.SwitchStmt, env *object.Environment) 
 			caseEnv := object.NewEnclosedEnvironment(switchEnv)
 			var result object.Object
 			for _, caseBodyStmt := range clause.Body {
-				result = e.Eval(caseBodyStmt, caseEnv)
+				result = e.Eval(caseBodyStmt, caseEnv, fscope)
 				if isError(result) {
 					return result
 				}
@@ -1018,7 +1020,7 @@ func (e *Evaluator) evalSwitchStmt(ss *ast.SwitchStmt, env *object.Environment) 
 		caseEnv := object.NewEnclosedEnvironment(switchEnv)
 		var result object.Object
 		for _, caseBodyStmt := range defaultCase.Body {
-			result = e.Eval(caseBodyStmt, caseEnv)
+			result = e.Eval(caseBodyStmt, caseEnv, fscope)
 			if isError(result) {
 				return result
 			}
@@ -1029,11 +1031,11 @@ func (e *Evaluator) evalSwitchStmt(ss *ast.SwitchStmt, env *object.Environment) 
 	return object.NIL
 }
 
-func (e *Evaluator) evalExpressions(exps []ast.Expr, env *object.Environment) []object.Object {
+func (e *Evaluator) evalExpressions(exps []ast.Expr, env *object.Environment, fscope *object.FileScope) []object.Object {
 	var result []object.Object
 
 	for _, exp := range exps {
-		evaluated := e.Eval(exp, env)
+		evaluated := e.Eval(exp, env, fscope)
 		if isError(evaluated) {
 			return []object.Object{evaluated}
 		}
@@ -1043,7 +1045,7 @@ func (e *Evaluator) evalExpressions(exps []ast.Expr, env *object.Environment) []
 	return result
 }
 
-func (e *Evaluator) applyFunction(call *ast.CallExpr, fn object.Object, args []object.Object) object.Object {
+func (e *Evaluator) applyFunction(call *ast.CallExpr, fn object.Object, args []object.Object, fscope *object.FileScope) object.Object {
 	switch fn := fn.(type) {
 	case *object.Function:
 		// Check argument count before extending the environment
@@ -1068,7 +1070,7 @@ func (e *Evaluator) applyFunction(call *ast.CallExpr, fn object.Object, args []o
 		defer func() { e.callStack = e.callStack[:len(e.callStack)-1] }()
 
 		extendedEnv := e.extendFunctionEnv(fn, args)
-		evaluated := e.Eval(fn.Body, extendedEnv)
+		evaluated := e.Eval(fn.Body, extendedEnv, fscope)
 		return e.unwrapReturnValue(evaluated)
 
 	case *object.BoundMethod:
@@ -1094,7 +1096,7 @@ func (e *Evaluator) applyFunction(call *ast.CallExpr, fn object.Object, args []o
 		defer func() { e.callStack = e.callStack[:len(e.callStack)-1] }()
 
 		extendedEnv := e.extendMethodEnv(fn, args)
-		evaluated := e.Eval(fn.Fn.Body, extendedEnv)
+		evaluated := e.Eval(fn.Fn.Body, extendedEnv, fscope)
 		return e.unwrapReturnValue(evaluated)
 
 	case *object.Builtin:
@@ -1193,7 +1195,7 @@ func (e *Evaluator) unwrapReturnValue(obj object.Object) object.Object {
 	return obj
 }
 
-func (e *Evaluator) evalBranchStmt(bs *ast.BranchStmt, env *object.Environment) object.Object {
+func (e *Evaluator) evalBranchStmt(bs *ast.BranchStmt, env *object.Environment, fscope *object.FileScope) object.Object {
 	if bs.Label != nil {
 		return e.newError(bs.Pos(), "labels are not supported")
 	}
@@ -1207,25 +1209,25 @@ func (e *Evaluator) evalBranchStmt(bs *ast.BranchStmt, env *object.Environment) 
 	}
 }
 
-func (e *Evaluator) Eval(node ast.Node, env *object.Environment) object.Object {
+func (e *Evaluator) Eval(node ast.Node, env *object.Environment, fscope *object.FileScope) object.Object {
 	switch n := node.(type) {
 	// Statements
 	case *ast.BlockStmt:
-		return e.evalBlockStatement(n, env)
+		return e.evalBlockStatement(n, env, fscope)
 	case *ast.ExprStmt:
-		return e.Eval(n.X, env)
+		return e.Eval(n.X, env, fscope)
 	case *ast.IfStmt:
-		return e.evalIfElseExpression(n, env)
+		return e.evalIfElseExpression(n, env, fscope)
 	case *ast.SwitchStmt:
-		return e.evalSwitchStmt(n, env)
+		return e.evalSwitchStmt(n, env, fscope)
 	case *ast.ForStmt:
-		return e.evalForStmt(n, env)
+		return e.evalForStmt(n, env, fscope)
 	case *ast.RangeStmt:
-		return e.evalForRangeStmt(n, env)
+		return e.evalForRangeStmt(n, env, fscope)
 	case *ast.BranchStmt:
-		return e.evalBranchStmt(n, env)
+		return e.evalBranchStmt(n, env, fscope)
 	case *ast.DeclStmt:
-		return e.Eval(n.Decl, env)
+		return e.Eval(n.Decl, env, fscope)
 	case *ast.FuncDecl:
 		// Regular function declaration
 		if n.Recv == nil {
@@ -1288,7 +1290,7 @@ func (e *Evaluator) Eval(node ast.Node, env *object.Environment) object.Object {
 
 		// Handle single vs. multiple return values
 		if len(n.Results) == 1 {
-			val := e.Eval(n.Results[0], env)
+			val := e.Eval(n.Results[0], env, fscope)
 			if isError(val) {
 				return val
 			}
@@ -1296,26 +1298,26 @@ func (e *Evaluator) Eval(node ast.Node, env *object.Environment) object.Object {
 		}
 
 		// Multiple return values are evaluated and wrapped in a Tuple.
-		results := e.evalExpressions(n.Results, env)
+		results := e.evalExpressions(n.Results, env, fscope)
 		if len(results) > 0 && isError(results[0]) {
 			// evalExpressions returns a single error if one occurs.
 			return results[0]
 		}
 		return &object.ReturnValue{Value: &object.Tuple{Elements: results}}
 	case *ast.GenDecl:
-		return e.evalGenDecl(n, env)
+		return e.evalGenDecl(n, env, fscope)
 	case *ast.AssignStmt:
-		return e.evalAssignStmt(n, env)
+		return e.evalAssignStmt(n, env, fscope)
 
 	// Expressions
 	case *ast.ParenExpr:
-		return e.Eval(n.X, env)
+		return e.Eval(n.X, env, fscope)
 	case *ast.IndexExpr:
-		left := e.Eval(n.X, env)
+		left := e.Eval(n.X, env, fscope)
 		if isError(left) {
 			return left
 		}
-		index := e.Eval(n.Index, env)
+		index := e.Eval(n.Index, env, fscope)
 		if isError(index) {
 			return index
 		}
@@ -1327,21 +1329,21 @@ func (e *Evaluator) Eval(node ast.Node, env *object.Environment) object.Object {
 			Env:        env,
 		}
 	case *ast.CallExpr:
-		function := e.Eval(n.Fun, env)
+		function := e.Eval(n.Fun, env, fscope)
 		if isError(function) {
 			return function
 		}
-		args := e.evalExpressions(n.Args, env)
+		args := e.evalExpressions(n.Args, env, fscope)
 		if len(args) == 1 && isError(args[0]) {
 			return args[0]
 		}
-		return e.applyFunction(n, function, args)
+		return e.applyFunction(n, function, args, fscope)
 	case *ast.SelectorExpr:
-		return e.evalSelectorExpr(n, env)
+		return e.evalSelectorExpr(n, env, fscope)
 	case *ast.CompositeLit:
-		return e.evalCompositeLit(n, env)
+		return e.evalCompositeLit(n, env, fscope)
 	case *ast.StarExpr:
-		operand := e.Eval(n.X, env)
+		operand := e.Eval(n.X, env, fscope)
 		if isError(operand) {
 			return operand
 		}
@@ -1349,19 +1351,19 @@ func (e *Evaluator) Eval(node ast.Node, env *object.Environment) object.Object {
 	case *ast.UnaryExpr:
 		// Special case for address-of operator, as we don't evaluate the operand.
 		if n.Op == token.AND {
-			return e.evalAddressOfExpression(n, env)
+			return e.evalAddressOfExpression(n, env, fscope)
 		}
-		right := e.Eval(n.X, env)
+		right := e.Eval(n.X, env, fscope)
 		if isError(right) {
 			return right
 		}
 		return e.evalPrefixExpression(n, n.Op.String(), right)
 	case *ast.BinaryExpr:
-		left := e.Eval(n.X, env)
+		left := e.Eval(n.X, env, fscope)
 		if isError(left) {
 			return left
 		}
-		right := e.Eval(n.Y, env)
+		right := e.Eval(n.Y, env, fscope)
 		if isError(right) {
 			return right
 		}
@@ -1369,7 +1371,7 @@ func (e *Evaluator) Eval(node ast.Node, env *object.Environment) object.Object {
 
 	// Literals
 	case *ast.Ident:
-		return e.evalIdent(n, env)
+		return e.evalIdent(n, env, fscope)
 	case *ast.BasicLit:
 		return e.evalBasicLit(n)
 	}
@@ -1377,10 +1379,13 @@ func (e *Evaluator) Eval(node ast.Node, env *object.Environment) object.Object {
 	return e.newError(node.Pos(), "evaluation not implemented for %T", node)
 }
 
-func (e *Evaluator) evalGenDecl(n *ast.GenDecl, env *object.Environment) object.Object {
+func (e *Evaluator) evalGenDecl(n *ast.GenDecl, env *object.Environment, fscope *object.FileScope) object.Object {
 	var lastVal object.Object
 	switch n.Tok {
 	case token.IMPORT:
+		if fscope == nil {
+			return e.newError(n.Pos(), "imports are only allowed at the file level")
+		}
 		for _, spec := range n.Specs {
 			importSpec := spec.(*ast.ImportSpec)
 			path, err := strconv.Unquote(importSpec.Path.Value)
@@ -1388,56 +1393,21 @@ func (e *Evaluator) evalGenDecl(n *ast.GenDecl, env *object.Environment) object.
 				return e.newError(importSpec.Path.Pos(), "invalid import path: %v", err)
 			}
 
-			var pkgName string
+			var alias string
 			if importSpec.Name != nil {
-				pkgName = importSpec.Name.Name
+				alias = importSpec.Name.Name
 			} else {
 				parts := strings.Split(path, "/")
-				pkgName = parts[len(parts)-1]
+				alias = parts[len(parts)-1]
 			}
 
-			// Handle dot import: load all symbols into the current environment.
-			if pkgName == "." {
-				// 1. Get symbols from the registry
-				if symbols, ok := e.registry.GetAllFor(path); ok {
-					for name, symbol := range symbols {
-						var member object.Object
-						val := reflect.ValueOf(symbol)
-						if val.Kind() == reflect.Func {
-							member = e.wrapGoFunction(importSpec.Pos(), val)
-						} else {
-							member = &object.GoValue{Value: val}
-						}
-						env.Set(name, member)
-					}
-				}
-
-				// 2. Scan package for source-level symbols (like consts)
-				pkgInfo, _ := e.scanner.ScanPackage(context.Background(), path)
-				if pkgInfo != nil {
-					for _, c := range pkgInfo.Constants {
-						obj, err := e.constantInfoToObject(c)
-						if err == nil {
-							env.Set(c.Name, obj)
-						}
-					}
-				}
-				continue // Move to the next import spec
+			// For now, we don't handle dot or blank imports in the new model.
+			if alias == "." || alias == "_" {
+				// return e.newError(importSpec.Pos(), "dot and blank imports are not yet supported in multi-file mode")
+				continue // Silently ignore for now
 			}
 
-			// Handle blank import: do nothing. Its side-effects are assumed to be handled.
-			if pkgName == "_" {
-				continue
-			}
-
-			// Regular import: create a proxy package object.
-			pkgObj := &object.Package{
-				Name:    pkgName,
-				Path:    path,
-				Info:    nil, // Mark as not loaded yet
-				Members: make(map[string]object.Object),
-			}
-			env.Set(pkgName, pkgObj)
+			fscope.Aliases[alias] = path
 		}
 		return nil
 
@@ -1448,7 +1418,7 @@ func (e *Evaluator) evalGenDecl(n *ast.GenDecl, env *object.Environment) object.
 
 			// Handle multi-return assignment: var a, b = f()
 			if n.Tok == token.VAR && len(valueSpec.Names) > 1 && len(valueSpec.Values) == 1 {
-				val := e.Eval(valueSpec.Values[0], env)
+				val := e.Eval(valueSpec.Values[0], env, fscope)
 				if isError(val) {
 					return val
 				}
@@ -1480,7 +1450,7 @@ func (e *Evaluator) evalGenDecl(n *ast.GenDecl, env *object.Environment) object.
 			for i, name := range valueSpec.Names {
 				// Handle explicit type declarations, especially for interfaces.
 				if valueSpec.Type != nil {
-					typeObj := e.Eval(valueSpec.Type, env)
+					typeObj := e.Eval(valueSpec.Type, env, fscope)
 					if isError(typeObj) {
 						return typeObj
 					}
@@ -1489,7 +1459,7 @@ func (e *Evaluator) evalGenDecl(n *ast.GenDecl, env *object.Environment) object.
 						var concreteVal object.Object
 						if len(valueSpec.Values) > i {
 							// Case: var w Writer = myStruct
-							concreteVal = e.Eval(valueSpec.Values[i], env)
+							concreteVal = e.Eval(valueSpec.Values[i], env, fscope)
 							if isError(concreteVal) {
 								return concreteVal
 							}
@@ -1515,7 +1485,7 @@ func (e *Evaluator) evalGenDecl(n *ast.GenDecl, env *object.Environment) object.
 					// Create a temporary environment for iota evaluation.
 					iotaEnv := object.NewEnclosedEnvironment(env)
 					iotaEnv.SetConstant("iota", &object.Integer{Value: int64(iotaValue)})
-					val = e.Eval(valueSpec.Values[i], iotaEnv)
+					val = e.Eval(valueSpec.Values[i], iotaEnv, fscope)
 				} else if n.Tok == token.VAR {
 					// Handle `var x int` (no initial value) -> defaults to nil
 					val = object.NIL
@@ -1651,15 +1621,15 @@ func (e *Evaluator) evalMapIndexExpression(node ast.Node, m, index object.Object
 	return pair.Value
 }
 
-func (e *Evaluator) evalAssignStmt(n *ast.AssignStmt, env *object.Environment) object.Object {
+func (e *Evaluator) evalAssignStmt(n *ast.AssignStmt, env *object.Environment, fscope *object.FileScope) object.Object {
 	if len(n.Lhs) == 1 && len(n.Rhs) == 1 {
 		// Single assignment: a = 1 or a := 1
-		return e.evalSingleAssign(n, env)
+		return e.evalSingleAssign(n, env, fscope)
 	}
 
 	if len(n.Lhs) > 1 && len(n.Rhs) == 1 {
 		// Multi-assignment: a, b = f() or a, b := f()
-		return e.evalMultiAssign(n, env)
+		return e.evalMultiAssign(n, env, fscope)
 	}
 
 	// Other cases like a, b = 1, 2 are not supported by Go's parser in this form
@@ -1667,8 +1637,8 @@ func (e *Evaluator) evalAssignStmt(n *ast.AssignStmt, env *object.Environment) o
 	return e.newError(n.Pos(), "unsupported assignment form: %d LHS values, %d RHS values", len(n.Lhs), len(n.Rhs))
 }
 
-func (e *Evaluator) evalSingleAssign(n *ast.AssignStmt, env *object.Environment) object.Object {
-	val := e.Eval(n.Rhs[0], env)
+func (e *Evaluator) evalSingleAssign(n *ast.AssignStmt, env *object.Environment, fscope *object.FileScope) object.Object {
+	val := e.Eval(n.Rhs[0], env, fscope)
 	if isError(val) {
 		return val
 	}
@@ -1681,7 +1651,7 @@ func (e *Evaluator) evalSingleAssign(n *ast.AssignStmt, env *object.Environment)
 	lhs := n.Lhs[0]
 	switch n.Tok {
 	case token.ASSIGN: // =
-		return e.assignValue(lhs, val, env)
+		return e.assignValue(lhs, val, env, fscope)
 	case token.DEFINE: // :=
 		ident, ok := lhs.(*ast.Ident)
 		if !ok {
@@ -1697,7 +1667,7 @@ func (e *Evaluator) evalSingleAssign(n *ast.AssignStmt, env *object.Environment)
 	}
 }
 
-func (e *Evaluator) assignValue(lhs ast.Expr, val object.Object, env *object.Environment) object.Object {
+func (e *Evaluator) assignValue(lhs ast.Expr, val object.Object, env *object.Environment, fscope *object.FileScope) object.Object {
 	switch lhsNode := lhs.(type) {
 	case *ast.Ident:
 		// Check if we are assigning to an existing interface variable.
@@ -1724,7 +1694,7 @@ func (e *Evaluator) assignValue(lhs ast.Expr, val object.Object, env *object.Env
 		}
 		return val
 	case *ast.SelectorExpr:
-		obj := e.Eval(lhsNode.X, env)
+		obj := e.Eval(lhsNode.X, env, fscope)
 		if isError(obj) {
 			return obj
 		}
@@ -1739,7 +1709,7 @@ func (e *Evaluator) assignValue(lhs ast.Expr, val object.Object, env *object.Env
 		instance.Fields[lhsNode.Sel.Name] = val
 		return val
 	case *ast.StarExpr:
-		ptrObj := e.Eval(lhsNode.X, env)
+		ptrObj := e.Eval(lhsNode.X, env, fscope)
 		if isError(ptrObj) {
 			return ptrObj
 		}
@@ -1754,8 +1724,8 @@ func (e *Evaluator) assignValue(lhs ast.Expr, val object.Object, env *object.Env
 	}
 }
 
-func (e *Evaluator) evalMultiAssign(n *ast.AssignStmt, env *object.Environment) object.Object {
-	val := e.Eval(n.Rhs[0], env)
+func (e *Evaluator) evalMultiAssign(n *ast.AssignStmt, env *object.Environment, fscope *object.FileScope) object.Object {
+	val := e.Eval(n.Rhs[0], env, fscope)
 	if isError(val) {
 		return val
 	}
@@ -1772,7 +1742,7 @@ func (e *Evaluator) evalMultiAssign(n *ast.AssignStmt, env *object.Environment) 
 	switch n.Tok {
 	case token.ASSIGN: // =
 		for i, lhsExpr := range n.Lhs {
-			res := e.assignValue(lhsExpr, tuple.Elements[i], env)
+			res := e.assignValue(lhsExpr, tuple.Elements[i], env, fscope)
 			if isError(res) {
 				return res
 			}
@@ -2016,8 +1986,8 @@ func (e *Evaluator) evalStructSelector(n *ast.SelectorExpr, instance *object.Str
 	return e.newError(n.Pos(), "undefined field or method '%s' on struct '%s'", n.Sel.Name, instance.Def.Name.Name)
 }
 
-func (e *Evaluator) evalSelectorExpr(n *ast.SelectorExpr, env *object.Environment) object.Object {
-	left := e.Eval(n.X, env)
+func (e *Evaluator) evalSelectorExpr(n *ast.SelectorExpr, env *object.Environment, fscope *object.FileScope) object.Object {
+	left := e.Eval(n.X, env, fscope)
 	if isError(left) {
 		return left
 	}
@@ -2143,11 +2113,11 @@ func (e *Evaluator) evalGoValueSelectorExpr(node ast.Node, goVal *object.GoValue
 	return e.nativeToValue(field)
 }
 
-func (e *Evaluator) evalCompositeLit(n *ast.CompositeLit, env *object.Environment) object.Object {
+func (e *Evaluator) evalCompositeLit(n *ast.CompositeLit, env *object.Environment, fscope *object.FileScope) object.Object {
 	switch typ := n.Type.(type) {
 	case *ast.Ident:
 		// This handles struct literals, e.g., MyStruct{...}
-		defObj := e.Eval(typ, env)
+		defObj := e.Eval(typ, env, fscope)
 		if isError(defObj) {
 			return defObj
 		}
@@ -2155,11 +2125,11 @@ func (e *Evaluator) evalCompositeLit(n *ast.CompositeLit, env *object.Environmen
 		if !ok {
 			return e.newError(n.Type.Pos(), "not a struct type in composite literal")
 		}
-		return e.evalStructLiteral(n, def, env)
+		return e.evalStructLiteral(n, def, env, fscope)
 
 	case *ast.SelectorExpr:
 		// This handles struct literals with imported types, e.g., pkg.MyStruct{...}
-		defObj := e.Eval(typ, env)
+		defObj := e.Eval(typ, env, fscope)
 		if isError(defObj) {
 			return defObj
 		}
@@ -2167,11 +2137,11 @@ func (e *Evaluator) evalCompositeLit(n *ast.CompositeLit, env *object.Environmen
 		if !ok {
 			return e.newError(n.Type.Pos(), "selector does not resolve to a struct type in composite literal")
 		}
-		return e.evalStructLiteral(n, def, env)
+		return e.evalStructLiteral(n, def, env, fscope)
 
 	case *ast.ArrayType:
 		// This handles array and slice literals, e.g., []int{...}
-		elements := e.evalExpressions(n.Elts, env)
+		elements := e.evalExpressions(n.Elts, env, fscope)
 		if len(elements) == 1 && isError(elements[0]) {
 			return elements[0]
 		}
@@ -2179,7 +2149,7 @@ func (e *Evaluator) evalCompositeLit(n *ast.CompositeLit, env *object.Environmen
 
 	case *ast.MapType:
 		// This handles map literals, e.g., map[string]int{...}
-		return e.evalMapLiteral(n, env)
+		return e.evalMapLiteral(n, env, fscope)
 
 	default:
 		return e.newError(n.Type.Pos(), "unsupported type in composite literal: %T", n.Type)
@@ -2269,7 +2239,7 @@ func (e *Evaluator) checkImplements(pos token.Pos, concrete object.Object, iface
 	return nil
 }
 
-func (e *Evaluator) evalStructLiteral(n *ast.CompositeLit, def *object.StructDefinition, env *object.Environment) object.Object {
+func (e *Evaluator) evalStructLiteral(n *ast.CompositeLit, def *object.StructDefinition, env *object.Environment, fscope *object.FileScope) object.Object {
 	instance := &object.StructInstance{Def: def, Fields: make(map[string]object.Object)}
 	for _, elt := range n.Elts {
 		kv, ok := elt.(*ast.KeyValueExpr)
@@ -2280,7 +2250,7 @@ func (e *Evaluator) evalStructLiteral(n *ast.CompositeLit, def *object.StructDef
 		if !ok {
 			return e.newError(kv.Key.Pos(), "field name is not an identifier")
 		}
-		value := e.Eval(kv.Value, env)
+		value := e.Eval(kv.Value, env, fscope)
 		if isError(value) {
 			return value
 		}
@@ -2289,7 +2259,7 @@ func (e *Evaluator) evalStructLiteral(n *ast.CompositeLit, def *object.StructDef
 	return instance
 }
 
-func (e *Evaluator) evalMapLiteral(n *ast.CompositeLit, env *object.Environment) object.Object {
+func (e *Evaluator) evalMapLiteral(n *ast.CompositeLit, env *object.Environment, fscope *object.FileScope) object.Object {
 	pairs := make(map[object.HashKey]object.MapPair)
 
 	for _, elt := range n.Elts {
@@ -2298,7 +2268,7 @@ func (e *Evaluator) evalMapLiteral(n *ast.CompositeLit, env *object.Environment)
 			return e.newError(elt.Pos(), "non-key-value element in map literal")
 		}
 
-		key := e.Eval(kv.Key, env)
+		key := e.Eval(kv.Key, env, fscope)
 		if isError(key) {
 			return key
 		}
@@ -2308,7 +2278,7 @@ func (e *Evaluator) evalMapLiteral(n *ast.CompositeLit, env *object.Environment)
 			return e.newError(kv.Key.Pos(), "unusable as map key: %s", key.Type())
 		}
 
-		value := e.Eval(kv.Value, env)
+		value := e.Eval(kv.Value, env, fscope)
 		if isError(value) {
 			return value
 		}
@@ -2320,7 +2290,7 @@ func (e *Evaluator) evalMapLiteral(n *ast.CompositeLit, env *object.Environment)
 	return &object.Map{Pairs: pairs}
 }
 
-func (e *Evaluator) evalIdent(n *ast.Ident, env *object.Environment) object.Object {
+func (e *Evaluator) evalIdent(n *ast.Ident, env *object.Environment, fscope *object.FileScope) object.Object {
 	if val, ok := env.Get(n.Name); ok {
 		return val
 	}
@@ -2335,6 +2305,25 @@ func (e *Evaluator) evalIdent(n *ast.Ident, env *object.Environment) object.Obje
 	switch n.Name {
 	case "int", "string", "bool":
 		return object.NIL
+	}
+
+	// Check if it's a package alias in the current file scope.
+	if fscope != nil {
+		if path, ok := fscope.Aliases[n.Name]; ok {
+			// Check if the package is already in the central cache.
+			if pkg, ok := e.packages[path]; ok {
+				return pkg
+			}
+			// If not, create a new proxy object and cache it.
+			pkgObj := &object.Package{
+				Name:    n.Name,
+				Path:    path,
+				Info:    nil, // Mark as not loaded yet
+				Members: make(map[string]object.Object),
+			}
+			e.packages[path] = pkgObj
+			return pkgObj
+		}
 	}
 
 	switch n.Name {

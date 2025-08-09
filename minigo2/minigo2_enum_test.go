@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/podhmo/go-scan"
+	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/minigo2/object"
 )
 
@@ -63,14 +63,14 @@ var result = enum.Undefined
 			}
 
 			// The main test logic
-			_, err = interp.Eval(context.Background(), Options{
-				Source:   []byte(tt.script),
-				Filename: "test.mgo",
-			})
+			if err := interp.LoadFile("test.mgo", []byte(tt.script)); err != nil {
+				t.Fatalf("LoadFile() failed: %v", err)
+			}
+			_, err = interp.Eval(context.Background())
 
 			if tt.wantErrorMsg != "" {
 				if err == nil {
-					val, ok := interp.Env.Get("result")
+					val, ok := interp.globalEnv.Get("result")
 					if ok {
 						t.Fatalf("expected error, but got none. result was: %v", val.Inspect())
 					}
@@ -86,7 +86,7 @@ var result = enum.Undefined
 				t.Fatalf("minigo2.Eval() returned an error: %v", err)
 			}
 
-			val, ok := interp.Env.Get("result")
+			val, ok := interp.globalEnv.Get("result")
 			if !ok {
 				t.Fatalf("variable 'result' not found in environment")
 			}

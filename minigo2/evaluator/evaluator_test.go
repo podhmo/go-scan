@@ -127,12 +127,11 @@ func testBooleanObject(t *testing.T, obj object.Object, expected bool) bool {
 	return true
 }
 
-// testNullObject is a helper to check if an object is Null.
-func testNullObject(t *testing.T, obj object.Object) bool {
+// testNilObject is a helper to check if an object is Nil.
+func testNilObject(t *testing.T, obj object.Object) bool {
 	t.Helper()
-	if obj != nil && obj != object.NULL {
-		// Note: Eval returns raw nil for some errors, which is what we check for.
-		t.Errorf("object is not Null. got=%T (%+v)", obj, obj)
+	if obj != object.NIL {
+		t.Errorf("object is not NIL. got=%T (%+v)", obj, obj)
 		return false
 	}
 	return true
@@ -638,7 +637,7 @@ func TestIndexExpressions(t *testing.T) {
 			case int:
 				testIntegerObject(t, evaluated, int64(expected))
 			case nil:
-				testNullObject(t, evaluated)
+				testNilObject(t, evaluated)
 			default:
 				t.Errorf("unsupported expected type %T", expected)
 			}
@@ -876,7 +875,7 @@ func TestSwitchStatements(t *testing.T) {
 		// Default case
 		{"x := 4; switch x { case 1: 10; case 2: 20; default: 99; };", int64(99)},
 		// No matching case, no default
-		{"x := 4; switch x { case 1: 10; case 2: 20; };", "nil"},
+		{"x := 4; switch x { case 1: 10; case 2: 20; };", nil},
 		// Expressionless switch (switch true)
 		{"x := 10; switch { case x > 5: 100; case x < 5: 200; };", int64(100)},
 		{"x := 1; switch { case x > 5: 100; case x < 5: 200; };", int64(200)},
@@ -895,12 +894,8 @@ func TestSwitchStatements(t *testing.T) {
 			switch expected := tt.expected.(type) {
 			case int64:
 				testIntegerObject(t, evaluated, expected)
-			case string:
-				if expected == "nil" {
-					testNullObject(t, evaluated)
-				} else {
-					t.Fatalf("unsupported expected type for test: %T", expected)
-				}
+			case nil:
+				testNilObject(t, evaluated)
 			default:
 				t.Fatalf("unsupported expected type for test: %T", expected)
 			}
@@ -964,13 +959,13 @@ func TestForStatements(t *testing.T) {
 func TestIfElseStatements(t *testing.T) {
 	tests := []struct {
 		input    string
-		expected any // int64 or "nil" for null
+		expected any // int64 or nil
 	}{
 		{"if (true) { 10 }", int64(10)},
-		{"if (false) { 10 }", "nil"},
+		{"if (false) { 10 }", nil},
 		{"if (1) { 10 }", int64(10)}, // 1 is truthy
 		{"if (1 < 2) { 10 }", int64(10)},
-		{"if (1 > 2) { 10 }", "nil"},
+		{"if (1 > 2) { 10 }", nil},
 		{"if (1 > 2) { 10 } else { 20 }", int64(20)},
 		{"if (1 < 2) { 10 } else { 20 }", int64(10)},
 		{"x := 10; if (x > 5) { 100 } else { 200 };", int64(100)},
@@ -982,12 +977,8 @@ func TestIfElseStatements(t *testing.T) {
 			switch expected := tt.expected.(type) {
 			case int64:
 				testIntegerObject(t, evaluated, expected)
-			case string:
-				if expected == "nil" {
-					testNullObject(t, evaluated)
-				} else {
-					t.Fatalf("unsupported expected type for test: %T", expected)
-				}
+			case nil:
+				testNilObject(t, evaluated)
 			default:
 				t.Fatalf("unsupported expected type for test: %T", expected)
 			}
@@ -1254,7 +1245,7 @@ func TestPointers(t *testing.T) {
 			case string:
 				testErrorObject(t, evaluated, expected)
 			case nil:
-				testNullObject(t, evaluated)
+				testNilObject(t, evaluated)
 			default:
 				t.Fatalf("unsupported expected type for test: %T", expected)
 			}

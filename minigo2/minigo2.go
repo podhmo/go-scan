@@ -99,7 +99,7 @@ func unmarshal(src object.Object, dst reflect.Value) error {
 	}
 
 	switch s := src.(type) {
-	case *object.Null:
+	case *object.Nil:
 		// Set the destination to its zero value (e.g., nil for slices/maps/pointers).
 		dst.Set(reflect.Zero(dst.Type()))
 		return nil

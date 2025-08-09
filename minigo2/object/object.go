@@ -22,7 +22,7 @@ const (
 	INTEGER_OBJ           ObjectType = "INTEGER"
 	BOOLEAN_OBJ           ObjectType = "BOOLEAN"
 	STRING_OBJ            ObjectType = "STRING"
-	NULL_OBJ              ObjectType = "NULL"
+	NIL_OBJ               ObjectType = "NIL"
 	BREAK_OBJ             ObjectType = "BREAK"
 	CONTINUE_OBJ          ObjectType = "CONTINUE"
 	RETURN_VALUE_OBJ      ObjectType = "RETURN_VALUE"
@@ -144,16 +144,16 @@ func (b *Boolean) HashKey() HashKey {
 	return HashKey{Type: b.Type(), Value: value}
 }
 
-// --- Null Object ---
+// --- Nil Object ---
 
-// Null represents a null value.
-type Null struct{}
+// Nil represents a nil value.
+type Nil struct{}
 
-// Type returns the type of the Null object.
-func (n *Null) Type() ObjectType { return NULL_OBJ }
+// Type returns the type of the Nil object.
+func (n *Nil) Type() ObjectType { return NIL_OBJ }
 
-// Inspect returns a string representation of the Null's value.
-func (n *Null) Inspect() string { return "null" }
+// Inspect returns a string representation of the Nil's value.
+func (n *Nil) Inspect() string { return "nil" }
 
 // --- Break Statement Object ---
 
@@ -522,7 +522,7 @@ func getSourceLine(filename string, lineNum int) string {
 var (
 	TRUE     = &Boolean{Value: true}
 	FALSE    = &Boolean{Value: false}
-	NULL     = &Null{}
+	NIL      = &Nil{}
 	BREAK    = &BreakStatement{}
 	CONTINUE = &ContinueStatement{}
 )

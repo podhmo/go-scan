@@ -31,9 +31,9 @@ func TestObjectTypes(t *testing.T) {
 			expectedInspect: "false",
 		},
 		{
-			obj:             NULL,
-			expectedType:    NULL_OBJ,
-			expectedInspect: "null",
+			obj:             NIL,
+			expectedType:    NIL_OBJ,
+			expectedInspect: "nil",
 		},
 	}
 

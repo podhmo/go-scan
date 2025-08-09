@@ -189,7 +189,7 @@ The development of `minigo2` will be broken down into the following phases, with
 
 1.  **Phase 1: Core Interpreter and Expression Evaluation**
     - [ ] Set up the project structure (`minigo2/`, `minigo2/object/`, `minigo2/evaluator/`, etc.).
-    - [ ] Define the `object.Object` interface and basic types: `Integer`, `String`, `Boolean`, `Null`.
+    - [ ] Define the `object.Object` interface and basic types: `Integer`, `String`, `Boolean`, `Nil`.
     - [ ] Implement the core `eval` loop for expression evaluation.
     - [ ] Support basic literals (`123`, `"hello"`).
     - [ ] Support binary expressions (`+`, `-`, `*`, `/`, `==`, `!=`, `<`, `>`).
@@ -215,7 +215,7 @@ The development of `minigo2` will be broken down into the following phases, with
 4.  **Phase 4: Functions and Call Stack**
     - [ ] Implement user-defined functions (`func` declarations).
     - [ ] Implement the call stack mechanism for tracking function calls.
-    - [ ] Implement `return` statements (including returning `nil`).
+    - [ ] Implement `return` statements (including returning the `nil` object).
     - [ ] Implement rich error formatting with a formatted call stack.
 
 5.  **Phase 5: Data Structures and Pointers**

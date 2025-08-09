@@ -6,6 +6,7 @@ import (
 	"go/parser"
 	"go/token"
 	"reflect"
+	"strings"
 
 	"github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/minigo2/evaluator"
@@ -60,6 +61,151 @@ type Options struct {
 type Result struct {
 	// Value is the raw minigo2 object returned by the script.
 	Value object.Object
+}
+
+// As unmarshals the result of the script execution into a Go variable.
+// The target must be a pointer to a Go variable.
+// It uses reflection to populate the fields of the target, similar to how
+// `json.Unmarshal` works.
+func (r *Result) As(target any) error {
+	if target == nil {
+		return fmt.Errorf("target cannot be nil")
+	}
+
+	dstVal := reflect.ValueOf(target)
+	if dstVal.Kind() != reflect.Ptr {
+		return fmt.Errorf("target must be a pointer, but got %T", target)
+	}
+	if dstVal.IsNil() {
+		return fmt.Errorf("target pointer cannot be nil")
+	}
+
+	return unmarshal(r.Value, dstVal.Elem())
+}
+
+// unmarshal is a recursive helper function that populates a Go `reflect.Value` (dst)
+// from a minigo2 `object.Object` (src).
+func unmarshal(src object.Object, dst reflect.Value) error {
+	if !dst.CanSet() {
+		return fmt.Errorf("cannot set destination value of type %s", dst.Type())
+	}
+
+	// Dereference pointers until we reach a non-pointer or a nil pointer.
+	for dst.Kind() == reflect.Ptr {
+		if dst.IsNil() {
+			dst.Set(reflect.New(dst.Type().Elem()))
+		}
+		dst = dst.Elem()
+	}
+
+	switch s := src.(type) {
+	case *object.Null:
+		// Set the destination to its zero value (e.g., nil for slices/maps/pointers).
+		dst.Set(reflect.Zero(dst.Type()))
+		return nil
+
+	case *object.Integer:
+		switch dst.Kind() {
+		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+			dst.SetInt(s.Value)
+		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+			dst.SetUint(uint64(s.Value))
+		case reflect.Float32, reflect.Float64:
+			dst.SetFloat(float64(s.Value))
+		default:
+			return fmt.Errorf("cannot unmarshal integer into %s", dst.Type())
+		}
+		return nil
+
+	case *object.String:
+		if dst.Kind() != reflect.String {
+			return fmt.Errorf("cannot unmarshal string into %s", dst.Type())
+		}
+		dst.SetString(s.Value)
+		return nil
+
+	case *object.Boolean:
+		if dst.Kind() != reflect.Bool {
+			return fmt.Errorf("cannot unmarshal boolean into %s", dst.Type())
+		}
+		dst.SetBool(s.Value)
+		return nil
+
+	case *object.GoValue:
+		if !s.Value.Type().AssignableTo(dst.Type()) {
+			// Allow conversion if possible (e.g., from `int` to `int64`)
+			if s.Value.Type().ConvertibleTo(dst.Type()) {
+				dst.Set(s.Value.Convert(dst.Type()))
+				return nil
+			}
+			return fmt.Errorf("cannot assign Go value of type %s to %s", s.Value.Type(), dst.Type())
+		}
+		dst.Set(s.Value)
+		return nil
+
+	case *object.Array:
+		if dst.Kind() != reflect.Slice {
+			return fmt.Errorf("cannot unmarshal array into non-slice type %s", dst.Type())
+		}
+		sliceType := dst.Type()
+		newSlice := reflect.MakeSlice(sliceType, len(s.Elements), len(s.Elements))
+		for i, elem := range s.Elements {
+			if err := unmarshal(elem, newSlice.Index(i)); err != nil {
+				return fmt.Errorf("error in slice element %d: %w", i, err)
+			}
+		}
+		dst.Set(newSlice)
+		return nil
+
+	case *object.Map:
+		if dst.Kind() != reflect.Map {
+			return fmt.Errorf("cannot unmarshal map into non-map type %s", dst.Type())
+		}
+		mapType := dst.Type()
+		keyType := mapType.Key()
+		valType := mapType.Elem()
+		newMap := reflect.MakeMap(mapType)
+		for _, pair := range s.Pairs {
+			key := reflect.New(keyType).Elem()
+			if err := unmarshal(pair.Key, key); err != nil {
+				return fmt.Errorf("error in map key: %w", err)
+			}
+			val := reflect.New(valType).Elem()
+			if err := unmarshal(pair.Value, val); err != nil {
+				return fmt.Errorf("error in map value for key %v: %w", key, err)
+			}
+			newMap.SetMapIndex(key, val)
+		}
+		dst.Set(newMap)
+		return nil
+
+	case *object.StructInstance:
+		if dst.Kind() != reflect.Struct {
+			return fmt.Errorf("cannot unmarshal struct instance into non-struct type %s", dst.Type())
+		}
+		// Create a map of destination fields for easy lookup (case-insensitive).
+		dstFields := make(map[string]reflect.Value)
+		for i := 0; i < dst.NumField(); i++ {
+			field := dst.Type().Field(i)
+			// Skip unexported fields.
+			if field.PkgPath != "" {
+				continue
+			}
+			dstFields[strings.ToLower(field.Name)] = dst.Field(i)
+		}
+
+		for fieldName, srcFieldVal := range s.Fields {
+			if dstField, ok := dstFields[strings.ToLower(fieldName)]; ok {
+				if err := unmarshal(srcFieldVal, dstField); err != nil {
+					return fmt.Errorf("error in struct field %q: %w", fieldName, err)
+				}
+			}
+		}
+		return nil
+
+	default:
+		return fmt.Errorf("unsupported object type for unmarshaling: %s", src.Type())
+	}
 }
 
 // Eval executes a minigo2 script. It evaluates the entire script from top to bottom

@@ -2014,6 +2014,8 @@ func (e *Evaluator) evalIdent(n *ast.Ident, env *object.Environment) object.Obje
 		return object.TRUE
 	case "false":
 		return object.FALSE
+	case "null":
+		return object.NULL
 	}
 	return e.newError(n.Pos(), "identifier not found: %s", n.Name)
 }

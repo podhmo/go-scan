@@ -5,6 +5,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/podhmo/go-scan/minigo2/testdata/shared"
 )
 
 func TestResult_As(t *testing.T) {
@@ -150,6 +152,14 @@ func TestResult_As(t *testing.T) {
 			script:  "package main\nvar result = 123",
 			target:  new(string),
 			wantErr: true,
+		},
+		{
+			name: "unmarshal cross-package struct",
+			script: `package main
+import "github.com/podhmo/go-scan/minigo2/testdata/shared"
+var result = shared.Point{X: 10, Y: 20}`,
+			target: new(shared.Point),
+			want:   shared.Point{X: 10, Y: 20},
 		},
 	}
 

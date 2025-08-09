@@ -1701,23 +1701,40 @@ func (e *Evaluator) constantInfoToObject(c *goscan.ConstantInfo) (object.Object,
 
 // findSymbolInPackageInfo searches for a symbol within a pre-loaded PackageInfo.
 // It does not trigger new scans. It returns the found object and a boolean.
-// NOTE: This only resolves constants. Functions must be pre-registered.
+// NOTE: This resolves constants and struct type definitions. Functions must be pre-registered.
 func (e *Evaluator) findSymbolInPackageInfo(pkgInfo *goscan.Package, symbolName string) (object.Object, bool) {
 	// Look in constants
 	for _, c := range pkgInfo.Constants {
 		if c.Name == symbolName {
 			obj, err := e.constantInfoToObject(c)
 			if err != nil {
-				// Return an error object instead of an error, to fit the function signature.
 				return e.newError(token.NoPos, "could not convert constant %q: %v", symbolName, err), true
 			}
 			return obj, true
 		}
 	}
 
-	// Note: Types are not handled here as values yet. They are resolved in other parts
-	// of the evaluator like `evalCompositeLit`. This could be extended if `pkg.MyType`
-	// needs to be treated as a first-class object.
+	// Look in types (for struct definitions)
+	for _, t := range pkgInfo.Types {
+		if t.Name == symbolName && t.Kind == goscan.StructKind {
+			// The Node on TypeInfo is an ast.Spec, which should be a *ast.TypeSpec.
+			typeSpec, ok := t.Node.(*ast.TypeSpec)
+			if !ok {
+				continue // Should not happen for valid structs
+			}
+			structType, ok := typeSpec.Type.(*ast.StructType)
+			if !ok {
+				continue // Should not happen for a StructKind
+			}
+
+			// Convert scanner.TypeInfo to object.StructDefinition
+			def := &object.StructDefinition{
+				Name:   typeSpec.Name,
+				Fields: structType.Fields.List,
+			}
+			return def, true
+		}
+	}
 
 	return nil, false
 }
@@ -1931,6 +1948,18 @@ func (e *Evaluator) evalCompositeLit(n *ast.CompositeLit, env *object.Environmen
 		def, ok := defObj.(*object.StructDefinition)
 		if !ok {
 			return e.newError(n.Type.Pos(), "not a struct type in composite literal")
+		}
+		return e.evalStructLiteral(n, def, env)
+
+	case *ast.SelectorExpr:
+		// This handles struct literals with imported types, e.g., pkg.MyStruct{...}
+		defObj := e.Eval(typ, env)
+		if isError(defObj) {
+			return defObj
+		}
+		def, ok := defObj.(*object.StructDefinition)
+		if !ok {
+			return e.newError(n.Type.Pos(), "selector does not resolve to a struct type in composite literal")
 		}
 		return e.evalStructLiteral(n, def, env)
 

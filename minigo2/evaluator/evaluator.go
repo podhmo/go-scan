@@ -29,6 +29,8 @@ var builtins = map[string]*object.Builtin{
 				return &object.Integer{Value: int64(len(arg.Elements))}
 			case *object.String:
 				return &object.Integer{Value: int64(len(arg.Value))}
+			case *object.Map:
+				return &object.Integer{Value: int64(len(arg.Pairs))}
 			case *object.GoValue:
 				val := arg.Value
 				switch val.Kind() {
@@ -50,6 +52,75 @@ var builtins = map[string]*object.Builtin{
 				err.AttachFileSet(fset)
 				return err
 			}
+		},
+	},
+	"append": {
+		Fn: func(fset *token.FileSet, pos token.Pos, args ...object.Object) object.Object {
+			if len(args) < 2 {
+				err := &object.Error{
+					Pos:     pos,
+					Message: fmt.Sprintf("wrong number of arguments. got=%d, want at least 2", len(args)),
+				}
+				err.AttachFileSet(fset)
+				return err
+			}
+			arr, ok := args[0].(*object.Array)
+			if !ok {
+				err := &object.Error{
+					Pos:     pos,
+					Message: fmt.Sprintf("argument to `append` must be array, got %s", args[0].Type()),
+				}
+				err.AttachFileSet(fset)
+				return err
+			}
+
+			newElements := make([]object.Object, len(arr.Elements), len(arr.Elements)+len(args)-1)
+			copy(newElements, arr.Elements)
+			newElements = append(newElements, args[1:]...)
+
+			return &object.Array{Elements: newElements}
+		},
+	},
+	"max": {
+		Fn: func(fset *token.FileSet, pos token.Pos, args ...object.Object) object.Object {
+			if len(args) == 0 {
+				return &object.Error{Pos: pos, Message: "max() requires at least one argument", CallStack: nil}
+			}
+			maxVal, ok := args[0].(*object.Integer)
+			if !ok {
+				return &object.Error{Pos: pos, Message: "all arguments to max() must be integers", CallStack: nil}
+			}
+			for i := 1; i < len(args); i++ {
+				val, ok := args[i].(*object.Integer)
+				if !ok {
+					return &object.Error{Pos: pos, Message: "all arguments to max() must be integers", CallStack: nil}
+				}
+				if val.Value > maxVal.Value {
+					maxVal = val
+				}
+			}
+			return maxVal
+		},
+	},
+	"min": {
+		Fn: func(fset *token.FileSet, pos token.Pos, args ...object.Object) object.Object {
+			if len(args) == 0 {
+				return &object.Error{Pos: pos, Message: "min() requires at least one argument", CallStack: nil}
+			}
+			minVal, ok := args[0].(*object.Integer)
+			if !ok {
+				return &object.Error{Pos: pos, Message: "all arguments to min() must be integers", CallStack: nil}
+			}
+			for i := 1; i < len(args); i++ {
+				val, ok := args[i].(*object.Integer)
+				if !ok {
+					return &object.Error{Pos: pos, Message: "all arguments to min() must be integers", CallStack: nil}
+				}
+				if val.Value < minVal.Value {
+					minVal = val
+				}
+			}
+			return minVal
 		},
 	},
 	"new": {

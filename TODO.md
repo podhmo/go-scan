@@ -208,6 +208,29 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     - [x] Support method calls on struct instances (`instance.Method()`).
     - [x] Support interface definitions (`type MyInterface interface { ... }`).
     - [x] Support dynamic dispatch of method calls through interface variables.
+- [ ] **IO Stream Handling**:
+    - [ ] Make `stdin`, `stdout`, and `stderr` configurable/replaceable in the interpreter.
+- [ ] **Generics Support (Simplified)**:
+    - [ ] Implement support for generic functions and types, assuming calls are correct (no type checking).
+- [ ] **Built-in Functions**:
+    - [x] `append`
+    - [ ] `copy`
+    - [ ] `delete`
+    - [x] `len`
+    - [ ] `cap`
+    - [ ] `make`
+    - [x] `max`
+    - [x] `min`
+    - [ ] `new`
+    - [ ] `complex`
+    - [ ] `real`
+    - [ ] `imag`
+    - [ ] `clear`
+    - [ ] `close`
+    - [ ] `panic`
+    - [ ] `recover`
+    - [ ] `print`
+    - [ ] `println`
 - [x] Thoroughly test all features, especially pointer handling and the Go interop layer.
 - [ ] Write comprehensive documentation for the API, supported language features, and usage examples.
 

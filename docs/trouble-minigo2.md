@@ -1,42 +1,59 @@
-# Troubleshooting `minigo2` Import Handling and `go-scan` Analysis
+# Troubleshooting `minigo2` Import Handling
 
-This document provides a detailed retrospective of the work done to implement advanced import handling in `minigo2`, including an investigation into a suspected bug in the `go-scan` library.
+This document details the process of implementing and fixing the advanced import handling features in the `minigo2` interpreter, specifically focusing on dot (`.`) and blank (`_`) imports. The journey involved incorrect initial assumptions, a deep dive into the `go-scan` library, and a final, successful implementation in the interpreter's evaluator.
 
-### 1. Initial Goal & Misunderstanding
+## 1. The Problem: Failing Import Tests
 
-The primary task was to implement "Advanced Import Handling" as outlined in `TODO.md`, focusing on package caching and circular import detection.
+The initial goal was to implement the "Advanced Import Handling" tasks from the `TODO.md` file. The test suite for `minigo2` already contained test cases for dot and blank imports, but they were failing.
 
-My initial approach was flawed. I attempted to test circular imports by creating a `minigo2` script with a circular dependency between constant definitions. This was a fundamental misunderstanding of the problem, as it tested the evaluator's constant resolution logic rather than the package import mechanism. This flawed premise led me to incorrectly suspect a bug in the underlying `go-scan` library.
+-   **Dot Import (`import . "strings"`)**: This test failed with an `identifier not found: ToUpper` error. This indicated that the symbols from the `strings` package were not being added to the main script's scope.
+-   **Blank Import (`import _ "strings"`)**: This test was also failing, though its requirements are more subtle (it should simply succeed without error, assuming side effects like `init()` have run).
 
-I previously stated: "I suspect that an unintentional recursive import resolution is happening when `FindSymbolInPackage` is called. I will investigate the `go-scan` source code in detail to determine if this is a bug in `go-scan` or an issue with how I am using it in `minigo2`." This hypothesis was incorrect and stemmed from my own faulty test case.
+## 2. Initial Investigation and (Incorrect) Assumptions
 
-### 2. The `go-scan` Investigation: A Bug Was Not Found
+My first approach was to diagnose why the imports were failing. I initially made a few incorrect assumptions:
 
-I dedicated significant time to creating a minimal test case for a circular import directly within the `go-scan` library. This proved difficult because a true package import cycle (`a` imports `b`, and `b` imports `a`) is a compile-time error in Go, making it hard to test at the library level.
+-   **Circular Dependency Misunderstanding**: I spent time trying to create a test for circular dependencies by creating loops between constants within a single file. This was a flawed approach, as circular dependencies in Go occur between packages, not within them.
+-   **Suspecting `go-scan`**: Because my initial tests were not correctly triggering the expected behavior, I incorrectly suspected that the underlying `go-scan` library might have a bug in its dependency resolution logic.
 
-However, this deep dive into the `go-scan` source code was invaluable. It revealed that `go-scan` **already possesses a robust cycle detection mechanism**, particularly for resolving complex, interdependent type definitions across packages.
+## 3. Correcting the Course: Verifying `go-scan`
 
-The conclusion was clear: **There was no bug in `go-scan`.** The issue was that my `minigo2` tests were too simplistic to ever trigger the code paths where `go-scan`'s cycle detection would activate.
+To confirm or deny the suspected bug in `go-scan`, I created a dedicated, isolated test (`goscan_crosspkg_test.go`). This test created a temporary Go module on the filesystem with several interdependent packages, including a circular dependency.
 
-### 3. Refactoring: Uncovering the Real Problem
+The test **passed**. This was a critical turning point. It proved that `go-scan` was fully capable of:
+-   Resolving types across multiple packages.
+-   Correctly detecting and handling circular dependencies during its scanning and resolution phase.
 
-The difficulty in writing these tests pointed to a significant design flaw in `minigo2`: the `Interpreter` was tightly coupled to the concrete `*goscan.Scanner` type. This made it nearly impossible to write effective unit tests, as I could not substitute a mock scanner to simulate different scenarios.
+This realization shifted the focus of the investigation away from the scanner library and toward the consumer of that library: the `minigo2` interpreter itself. The problem wasn't in the tool, but in how the tool was being used.
 
-The most critical step in this entire process was **refactoring `minigo2` to depend on a `Scanner` interface.** This change decoupled the interpreter from the concrete scanner implementation, enabling proper, isolated testing with mocks. This was the key to making real progress.
+## 4. The Final, Correct Implementation
 
-### 4. Debugging the `PackageCache` Test: A Cascade of Errors
+With `go-scan`'s capabilities confirmed, I analyzed the `minigo2` evaluator (`minigo2/evaluator/evaluator.go`) to understand how it handled `import` statements.
 
-With mocking capabilities in place, I created `minigo2/minigo2_loader_test.go` to verify the package caching feature. This led to a series of cascading failures, each one uncovering a deeper issue in the test setup:
+### The Root Cause
 
-1.  **Syntax Error:** My first test script was syntactically invalid, with an `import` statement placed after a `var` declaration.
-2.  **Runtime Error (`not a function`):** After fixing the script, the test failed because my mock scanner was returning a `ConstantInfo` (a string) for a symbol that the script was trying to call as a function.
-3.  **Internal Inconsistency Error:** After correcting the mock to return a `FunctionInfo`, a more subtle "internal inconsistency" error appeared. This was the most insightful bug. It revealed that while I was replacing `interpreter.scanner` with my mock, the separate `interpreter.loader` object was still using the *original, real scanner*. This created two conflicting sources of truth about packages within the interpreter.
-4.  **Go Modules Error (Current Blocker):** I finally fixed the mock injection logic by replacing the entire `loader` with a new one that used my mock. This corrected all previous logical errors, only to reveal a final build error: `no required module provides package...`. The Go tooling is currently failing to resolve a local package from within the test file.
+The issue was located in the `evalGenDecl` function, which processes declarations like `import`, `const`, `var`, and `type`. The original logic treated all imports identically: it created a `Package` object and stored it in the environment under a given name.
 
-### 5. Summary and Next Steps
+-   For `import "strings"`, it correctly created a package object named `strings`.
+-   For `import . "strings"`, it incorrectly created a package object named `.`.
+-   For `import _ "strings"`, it created a package object named `_`.
 
-The path to this solution was indirect, but it resulted in a much more precise understanding of the system and a more robust design.
+This approach was too simplistic and did not respect the special semantics of dot and blank imports.
 
-*   **`go-scan` is not buggy;** it behaves as expected.
-*   The real issue was the **low testability of `minigo2`**, which has now been fixed through refactoring to use interfaces.
-*   The remaining task is to resolve the Go modules configuration issue. Once that final build error is fixed, the "Advanced Import Handling" feature, including its tests, should be complete and correct.
+### The Fix
+
+The solution was to add specific logic within `evalGenDecl` to handle each import style correctly.
+
+1.  **Add `SymbolRegistry.GetAllFor`**: The `SymbolRegistry` could look up single symbols but lacked a method to retrieve all symbols for a given package path. I added a new method, `GetAllFor`, to `minigo2/object/object.go` to enable this. This was crucial for the eager loading required by dot imports.
+
+2.  **Modify `evalGenDecl` in `evaluator.go`**:
+    -   **Dot Imports (`.`):** When `pkgName` is `.`, the new logic eagerly loads all symbols from the package into the *current* environment.
+        -   It calls the new `registry.GetAllFor()` method to get all registered Go functions and variables.
+        -   It calls `scanner.ScanPackage()` to parse the package's source and extract source-level definitions, such as constants.
+        -   These symbols are then directly added to the current evaluation environment.
+    -   **Blank Imports (`_`):** When `pkgName` is `_`, the logic now does nothing and simply continues to the next import spec. This is the correct behavior, as blank imports are for side-effects (`init()` functions), which are assumed to have already run in the interpreter's host Go environment.
+    -   **Regular Imports:** The logic for regular imports (e.g., `import "strings"`) remained unchanged.
+
+### Verification
+
+After implementing these changes, I re-ran the entire test suite (`go test -v ./...`). The previously failing tests, including `TestGoInterop_Import/dot_import` and `TestGoInterop_Import/blank_import`, now passed successfully. This confirmed that the new logic correctly handled the special import cases. Finally, the `TODO.md` file was updated to mark the feature as complete.

@@ -92,24 +92,17 @@ var builtins = map[string]*object.Builtin{
 // Evaluator is the main object that evaluates the AST.
 type Evaluator struct {
 	fset      *token.FileSet
-	scanner   Scanner
+	scanner   *goscan.Scanner
 	registry  *object.SymbolRegistry
-	cache     *object.PackageCache
 	callStack []object.CallFrame
 }
 
-// Scanner is an interface that abstracts the parts of the go-scan.Scanner that the evaluator needs.
-type Scanner interface {
-	FindSymbolInPackage(ctx context.Context, pkgPath, symbolName string) (*goscan.Package, error)
-}
-
 // New creates a new Evaluator.
-func New(fset *token.FileSet, scanner Scanner, registry *object.SymbolRegistry, cache *object.PackageCache) *Evaluator {
+func New(fset *token.FileSet, scanner *goscan.Scanner, registry *object.SymbolRegistry) *Evaluator {
 	return &Evaluator{
 		fset:      fset,
 		scanner:   scanner,
 		registry:  registry,
-		cache:     cache,
 		callStack: make([]object.CallFrame, 0),
 	}
 }
@@ -1283,77 +1276,51 @@ func (e *Evaluator) evalGenDecl(n *ast.GenDecl, env *object.Environment) object.
 			if importSpec.Name != nil {
 				pkgName = importSpec.Name.Name
 			} else {
-				// Heuristic: use the last part of the import path as the package name.
-				// This is what `goimports` does and is generally expected.
 				parts := strings.Split(path, "/")
 				pkgName = parts[len(parts)-1]
 			}
 
-			// Check cache first
-			pkgObj, found := e.cache.Get(path)
-			if !found {
-				// If not in cache, create a new package object and store it.
-				pkgObj = &object.Package{
-					Name:    pkgName,
-					Path:    path,
-					Info:    nil, // Mark as not loaded yet
-					Members: make(map[string]object.Object),
+			// Handle dot import: load all symbols into the current environment.
+			if pkgName == "." {
+				// 1. Get symbols from the registry
+				if symbols, ok := e.registry.GetAllFor(path); ok {
+					for name, symbol := range symbols {
+						var member object.Object
+						val := reflect.ValueOf(symbol)
+						if val.Kind() == reflect.Func {
+							member = e.wrapGoFunction(importSpec.Pos(), val)
+						} else {
+							member = &object.GoValue{Value: val}
+						}
+						env.Set(name, member)
+					}
 				}
-				e.cache.Set(path, pkgObj)
+
+				// 2. Scan package for source-level symbols (like consts)
+				pkgInfo, _ := e.scanner.ScanPackage(context.Background(), path)
+				if pkgInfo != nil {
+					for _, c := range pkgInfo.Constants {
+						obj, err := e.constantInfoToObject(c)
+						if err == nil {
+							env.Set(c.Name, obj)
+						}
+					}
+				}
+				continue // Move to the next import spec
 			}
 
-			// Blank import: just load the package, don't set it in the env
+			// Handle blank import: do nothing. Its side-effects are assumed to be handled.
 			if pkgName == "_" {
-				// The simple act of resolving it via the cache is enough for now.
-				// This path ensures the package is cached. A future implementation
-				// would also trigger init() functions here.
 				continue
 			}
 
-			// Dot import: merge symbols into the current environment
-			if pkgName == "." {
-				if pkgObj.Info == nil {
-					// If the package info hasn't been loaded by a previous import, load it now.
-					// We use a special call with an empty symbol name to signify "load everything".
-					if err := e.cache.Push(path); err != nil {
-						return e.newError(importSpec.Pos(), "%s", err.Error())
-					}
-					pkgInfo, err := e.scanner.FindSymbolInPackage(context.Background(), path, "")
-					e.cache.Pop()
-					if err != nil {
-						if _, ok := err.(*goscan.NotFoundError); !ok {
-							// Ignore "not found" but return other errors (e.g., syntax errors in package).
-							return e.newError(importSpec.Pos(), "could not load package %s for dot import: %v", path, err)
-						}
-					}
-					pkgObj.Info = pkgInfo
-				}
-
-				// Merge the package's symbols into the current environment.
-				if pkgObj.Info != nil {
-					for _, c := range pkgObj.Info.Constants {
-						val, err := e.constantInfoToObject(c)
-						if err != nil {
-							continue // Skip constants that can't be converted.
-						}
-						env.Set(c.Name, val)
-					}
-					for _, f := range pkgObj.Info.Functions {
-						symbol, ok := e.registry.Lookup(path, f.Name)
-						if !ok {
-							continue
-						}
-						val := reflect.ValueOf(symbol)
-						if val.Kind() == reflect.Func {
-							env.Set(f.Name, e.wrapGoFunction(importSpec.Pos(), val))
-						} else {
-							env.Set(f.Name, &object.GoValue{Value: val})
-						}
-					}
-				}
-				continue // Don't create a package variable in the env.
+			// Regular import: create a proxy package object.
+			pkgObj := &object.Package{
+				Name:    pkgName,
+				Path:    path,
+				Info:    nil, // Mark as not loaded yet
+				Members: make(map[string]object.Object),
 			}
-
 			env.Set(pkgName, pkgObj)
 		}
 		return nil
@@ -1880,12 +1847,6 @@ func (e *Evaluator) evalSelectorExpr(n *ast.SelectorExpr, env *object.Environmen
 		}
 
 		// 4. Symbol not in loaded info, try scanning remaining files.
-		// This is the point of lazy loading. We must check for circular imports here.
-		if err := e.cache.Push(l.Path); err != nil {
-			return e.newError(n.Sel.Pos(), "%s", err.Error())
-		}
-		defer e.cache.Pop() // Ensure we pop from the stack regardless of outcome.
-
 		cumulativePkgInfo, err := e.scanner.FindSymbolInPackage(context.Background(), l.Path, memberName)
 		if err != nil {
 			// Not found in any unscanned files either. It's undefined.

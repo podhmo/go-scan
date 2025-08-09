@@ -259,6 +259,50 @@ func TestInterfaces(t *testing.T) {
 			`,
 			"nil pointer dereference (interface is nil)",
 		},
+		// New test cases start here
+		{
+			`
+			type Speaker interface { Speak() string }
+			type Dog struct {}
+			func (d Dog) Speak() string { return "Woof!" }
+			func main() {
+				var s Speaker = Dog{}
+				return s.Speak()
+			}
+			`,
+			"Woof!",
+		},
+		{
+			`
+			type Nullable interface { Do() }
+			func main() {
+				var n Nullable = nil
+				return n
+			}
+			`,
+			"nil-interface",
+		},
+		{
+			`
+			type Abc interface { A() int }
+			type Def struct {}
+			func (d Def) A() {}
+			func main() {
+				var v Abc = Def{}
+			}
+			`,
+			"method A has wrong number of return values (got 0, want 1)",
+		},
+		{
+			`
+			type Abc interface { A() }
+			type Def struct {}
+			func main() {
+				var v Abc = &Def{}
+			}
+			`,
+			"type Def does not implement Abc (missing method A)",
+		},
 	}
 
 	for _, tt := range tests {
@@ -268,13 +312,22 @@ func TestInterfaces(t *testing.T) {
 			case int64:
 				testIntegerObject(t, evaluated, expected)
 			case string:
-				if err, ok := evaluated.(*object.Error); ok {
+				if expected == "nil-interface" {
+					iface, ok := evaluated.(*object.InterfaceInstance)
+					if !ok {
+						t.Errorf("expected a nil-interface, but got %T", evaluated)
+					} else if iface.Value.Type() != object.NIL_OBJ {
+						t.Errorf("expected interface to hold a nil value, but it holds %s", iface.Value.Type())
+					}
+				} else if err, ok := evaluated.(*object.Error); ok {
 					if !strings.Contains(err.Inspect(), expected) {
 						t.Errorf("expected error message to contain %q, but it did not.\nFull message:\n%s", expected, err.Inspect())
 					}
 				} else {
 					testStringObject(t, evaluated, expected)
 				}
+			case nil:
+				testNilObject(t, evaluated)
 			default:
 				t.Fatalf("unsupported expected type for test: %T", expected)
 			}

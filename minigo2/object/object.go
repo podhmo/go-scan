@@ -19,27 +19,27 @@ type ObjectType string
 
 // Define the basic object types. More will be added later.
 const (
-	INTEGER_OBJ           ObjectType = "INTEGER"
-	BOOLEAN_OBJ           ObjectType = "BOOLEAN"
-	STRING_OBJ            ObjectType = "STRING"
-	NIL_OBJ               ObjectType = "NIL"
-	BREAK_OBJ             ObjectType = "BREAK"
-	CONTINUE_OBJ          ObjectType = "CONTINUE"
-	RETURN_VALUE_OBJ      ObjectType = "RETURN_VALUE"
-	FUNCTION_OBJ          ObjectType = "FUNCTION"
-	BUILTIN_OBJ           ObjectType = "BUILTIN"
-	STRUCT_DEFINITION_OBJ ObjectType = "STRUCT_DEFINITION"
-	STRUCT_INSTANCE_OBJ   ObjectType = "STRUCT_INSTANCE"
+	INTEGER_OBJ              ObjectType = "INTEGER"
+	BOOLEAN_OBJ              ObjectType = "BOOLEAN"
+	STRING_OBJ               ObjectType = "STRING"
+	NIL_OBJ                  ObjectType = "NIL"
+	BREAK_OBJ                ObjectType = "BREAK"
+	CONTINUE_OBJ             ObjectType = "CONTINUE"
+	RETURN_VALUE_OBJ         ObjectType = "RETURN_VALUE"
+	FUNCTION_OBJ             ObjectType = "FUNCTION"
+	BUILTIN_OBJ              ObjectType = "BUILTIN"
+	STRUCT_DEFINITION_OBJ    ObjectType = "STRUCT_DEFINITION"
+	STRUCT_INSTANCE_OBJ      ObjectType = "STRUCT_INSTANCE"
 	INTERFACE_DEFINITION_OBJ ObjectType = "INTERFACE_DEFINITION"
 	INTERFACE_INSTANCE_OBJ   ObjectType = "INTERFACE_INSTANCE"
-	BOUND_METHOD_OBJ      ObjectType = "BOUND_METHOD"
-	POINTER_OBJ           ObjectType = "POINTER"
-	ARRAY_OBJ             ObjectType = "ARRAY"
-	MAP_OBJ               ObjectType = "MAP"
-	TUPLE_OBJ             ObjectType = "TUPLE"
-	PACKAGE_OBJ           ObjectType = "PACKAGE"
-	GO_VALUE_OBJ          ObjectType = "GO_VALUE"
-	ERROR_OBJ             ObjectType = "ERROR"
+	BOUND_METHOD_OBJ         ObjectType = "BOUND_METHOD"
+	POINTER_OBJ              ObjectType = "POINTER"
+	ARRAY_OBJ                ObjectType = "ARRAY"
+	MAP_OBJ                  ObjectType = "MAP"
+	TUPLE_OBJ                ObjectType = "TUPLE"
+	PACKAGE_OBJ              ObjectType = "PACKAGE"
+	GO_VALUE_OBJ             ObjectType = "GO_VALUE"
+	ERROR_OBJ                ObjectType = "ERROR"
 )
 
 // Hashable is an interface for objects that can be used as map keys.
@@ -343,7 +343,6 @@ func (ii *InterfaceInstance) Inspect() string {
 	return ii.Value.Inspect()
 }
 
-
 // --- Bound Method Object ---
 
 // BoundMethod represents a method that is bound to a specific receiver instance.
@@ -486,6 +485,22 @@ func (t *Tuple) Inspect() string {
 	out.WriteString(")")
 
 	return out.String()
+}
+
+// --- FileScope ---
+
+// FileScope holds the AST and file-specific import aliases for a single file.
+type FileScope struct {
+	AST     *ast.File
+	Aliases map[string]string // alias -> import path
+}
+
+// NewFileScope creates a new file scope.
+func NewFileScope(ast *ast.File) *FileScope {
+	return &FileScope{
+		AST:     ast,
+		Aliases: make(map[string]string),
+	}
 }
 
 // --- Package Object ---

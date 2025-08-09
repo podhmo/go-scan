@@ -8,7 +8,7 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/podhmo/go-scan"
+	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/minigo2/evaluator"
 	"github.com/podhmo/go-scan/minigo2/object"
 )
@@ -17,9 +17,11 @@ import (
 // It holds the state of the interpreter, including the scanner for package resolution
 // and the root environment for script execution.
 type Interpreter struct {
-	scanner  *goscan.Scanner
-	Env      *object.Environment
-	Registry *object.SymbolRegistry
+	scanner   *goscan.Scanner
+	Registry  *object.SymbolRegistry
+	globalEnv *object.Environment
+	files     []*object.FileScope
+	packages  map[string]*object.Package // Cache for loaded packages, keyed by path
 }
 
 // NewInterpreter creates a new interpreter instance.
@@ -30,9 +32,11 @@ func NewInterpreter(options ...goscan.ScannerOption) (*Interpreter, error) {
 		return nil, fmt.Errorf("initializing scanner: %w", err)
 	}
 	return &Interpreter{
-		scanner:  scanner,
-		Env:      object.NewEnvironment(),
-		Registry: object.NewSymbolRegistry(),
+		scanner:   scanner,
+		Registry:  object.NewSymbolRegistry(),
+		globalEnv: object.NewEnvironment(),
+		files:     make([]*object.FileScope, 0),
+		packages:  make(map[string]*object.Package),
 	}, nil
 }
 
@@ -208,27 +212,43 @@ func unmarshal(src object.Object, dst reflect.Value) error {
 	}
 }
 
-// Eval executes a minigo2 script. It evaluates the entire script from top to bottom
-// within the interpreter's persistent environment.
-func (i *Interpreter) Eval(ctx context.Context, opts Options) (*Result, error) {
-	// Inject global variables from Go into the interpreter's environment.
-	for name, value := range opts.Globals {
-		i.Env.Set(name, &object.GoValue{Value: reflect.ValueOf(value)})
-	}
-
-	fset := token.NewFileSet()
-	node, err := parser.ParseFile(fset, opts.Filename, opts.Source, parser.ParseComments)
+// LoadFile parses a file and adds it to the interpreter's state without evaluating it yet.
+// This is the first stage of a multi-file evaluation.
+func (i *Interpreter) LoadFile(filename string, source []byte) error {
+	fset := token.NewFileSet() // A single fset for the whole interpreter might be better.
+	node, err := parser.ParseFile(fset, filename, source, parser.ParseComments)
 	if err != nil {
-		return nil, fmt.Errorf("parsing script: %w", err)
+		return fmt.Errorf("parsing script %q: %w", filename, err)
 	}
+	fileScope := object.NewFileScope(node)
+	i.files = append(i.files, fileScope)
+	return nil
+}
 
-	eval := evaluator.New(fset, i.scanner, i.Registry)
+// Eval executes the loaded files.
+// It first processes all declarations and then can optionally run an entry point function.
+func (i *Interpreter) Eval(ctx context.Context) (*Result, error) {
+	// Inject global variables from Go into the interpreter's environment.
+	// for name, value := range opts.Globals {
+	// 	i.globalEnv.Set(name, &object.GoValue{Value: reflect.ValueOf(value)})
+	// }
+
+	// For now, we assume a single FileSet for all files.
+	// A more robust implementation might manage a map of fsets.
+	fset := token.NewFileSet()
+	eval := evaluator.New(fset, i.scanner, i.Registry, i.packages)
+
+	// In a real multi-file Go program, evaluation order is complex (e.g., all `type` decls first).
+	// For minigo2, we'll simplify: evaluate all declarations in all files sequentially.
+	// This populates the globalEnv with functions, types, vars, and consts.
 	var lastVal object.Object
-	for _, decl := range node.Decls {
-		lastVal = eval.Eval(decl, i.Env)
-		if err, ok := lastVal.(*object.Error); ok {
-			// The error object's Inspect() method now returns a fully formatted string.
-			return nil, fmt.Errorf("%s", err.Inspect())
+	for _, file := range i.files {
+		for _, decl := range file.AST.Decls {
+			lastVal = eval.Eval(decl, i.globalEnv, file)
+			if err, ok := lastVal.(*object.Error); ok {
+				// The error object's Inspect() method now returns a fully formatted string.
+				return nil, fmt.Errorf("%s", err.Inspect())
+			}
 		}
 	}
 

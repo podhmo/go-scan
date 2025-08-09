@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/podhmo/go-scan"
+	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/minigo2/object"
 )
 
@@ -56,9 +56,13 @@ func testEval(t *testing.T, input string) object.Object {
 	if err != nil {
 		t.Fatalf("failed to create scanner: %v", err)
 	}
-	eval := New(fset, scanner, nil) // Pass nil for registry in this test
+	// For single-file tests, we create a dummy file scope.
+	fscope := object.NewFileScope(file)
+	packages := make(map[string]*object.Package)
+	eval := New(fset, scanner, object.NewSymbolRegistry(), packages)
 	env := object.NewEnvironment()
-	evaluated := eval.Eval(mainFunc.Body, env)
+
+	evaluated := eval.Eval(mainFunc.Body, env, fscope)
 	if retVal, ok := evaluated.(*object.ReturnValue); ok {
 		return retVal.Value
 	}
@@ -351,7 +355,9 @@ func testEvalFile(t *testing.T, input string) object.Object {
 		t.Fatalf("failed to create scanner: %v", err)
 	}
 	env := object.NewEnvironment()
-	eval := New(fset, scanner, object.NewSymbolRegistry())
+	fscope := object.NewFileScope(file)
+	packages := make(map[string]*object.Package)
+	eval := New(fset, scanner, object.NewSymbolRegistry(), packages)
 
 	var mainFunc *ast.FuncDecl
 
@@ -361,7 +367,7 @@ func testEvalFile(t *testing.T, input string) object.Object {
 			mainFunc = fn
 			continue // Don't evaluate main yet
 		}
-		result := eval.Eval(decl, env)
+		result := eval.Eval(decl, env, fscope)
 		if isError(result) {
 			return result // Return early if a top-level declaration fails
 		}
@@ -374,7 +380,7 @@ func testEvalFile(t *testing.T, input string) object.Object {
 		return object.NIL
 	}
 
-	evaluated := eval.Eval(mainFunc.Body, env)
+	evaluated := eval.Eval(mainFunc.Body, env, fscope)
 	if retVal, ok := evaluated.(*object.ReturnValue); ok {
 		return retVal.Value
 	}

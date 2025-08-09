@@ -22,12 +22,12 @@ func TestResult_As(t *testing.T) {
 	}
 
 	tests := []struct {
-		name       string
-		script     string
-		target     any // A pointer to the variable to unmarshal into
-		want       any
-		wantErr    bool
-		checkFunc  func(t *testing.T, target any) // Optional custom check
+		name      string
+		script    string
+		target    any // A pointer to the variable to unmarshal into
+		want      any
+		wantErr   bool
+		checkFunc func(t *testing.T, target any) // Optional custom check
 	}{
 		{
 			name:   "unmarshal integer",
@@ -173,7 +173,7 @@ var result = shared.Container{
 }`,
 			target: new(shared.Container),
 			want: shared.Container{
-				Name: "transitive",
+				Name:    "transitive",
 				Payload: deeper.Payload{Value: "nested-value"},
 			},
 		},
@@ -195,10 +195,11 @@ var result = shared.Container{
 				fullScript = tt.script
 			}
 
-			res, err := interpreter.Eval(context.Background(), Options{
-				Source:   []byte(fullScript),
-				Filename: "test.mgo",
-			})
+			if err := interpreter.LoadFile("test.mgo", []byte(fullScript)); err != nil {
+				t.Fatalf("LoadFile() failed: %v", err)
+			}
+
+			res, err := interpreter.Eval(context.Background())
 			if err != nil {
 				// If we expect an error from As(), the Eval() should not fail.
 				if !tt.wantErr {
@@ -209,11 +210,21 @@ var result = shared.Container{
 			// For tests that expect an error from As(), Eval might have succeeded or failed.
 			// We only proceed if Eval succeeded.
 			if err == nil {
-				val, ok := interpreter.Env.Get("result")
+				val, ok := interpreter.globalEnv.Get("result")
 				if !ok {
-					t.Fatalf("could not find 'result' variable in environment")
+					// The result might be the last evaluated expression, not a variable.
+					if res == nil || res.Value == nil {
+						t.Fatalf("could not find 'result' variable in environment and no result value was returned")
+					}
+					// If it's not in the env, the result is in res.Value from the last expression
+				} else {
+					res.Value = val
 				}
-				res.Value = val
+			}
+
+			// If res is nil because Eval failed, create a dummy result to test As() error handling
+			if res == nil {
+				res = &Result{}
 			}
 
 			err = res.As(tt.target)

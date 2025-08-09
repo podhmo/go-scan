@@ -563,6 +563,64 @@ func (r *SymbolRegistry) Lookup(pkgPath, name string) (any, bool) {
 	return nil, false
 }
 
+// PackageCache stores and manages loaded packages to prevent duplicate work
+// and to detect import cycles.
+type PackageCache struct {
+	packages     map[string]*Package
+	importStack  []string // Used to detect circular imports
+	initExecuted map[string]bool
+}
+
+// NewPackageCache creates a new, empty package cache.
+func NewPackageCache() *PackageCache {
+	return &PackageCache{
+		packages:     make(map[string]*Package),
+		importStack:  make([]string, 0),
+		initExecuted: make(map[string]bool),
+	}
+}
+
+// Get retrieves a package from the cache by its import path.
+func (c *PackageCache) Get(path string) (*Package, bool) {
+	pkg, found := c.packages[path]
+	return pkg, found
+}
+
+// Set adds a package to the cache.
+func (c *PackageCache) Set(path string, pkg *Package) {
+	c.packages[path] = pkg
+}
+
+// Push adds a package path to the import stack and checks for cycles.
+// It returns an error if a cycle is detected.
+func (c *PackageCache) Push(path string) error {
+	for _, p := range c.importStack {
+		if p == path {
+			cycle := append(c.importStack, path)
+			return fmt.Errorf("circular import detected:\n\t%s", strings.Join(cycle, "\n\t-> "))
+		}
+	}
+	c.importStack = append(c.importStack, path)
+	return nil
+}
+
+// Pop removes the last package path from the import stack.
+func (c *PackageCache) Pop() {
+	if len(c.importStack) > 0 {
+		c.importStack = c.importStack[:len(c.importStack)-1]
+	}
+}
+
+// IsInitExecuted checks if the init functions for a package have been run.
+func (c *PackageCache) IsInitExecuted(path string) bool {
+	return c.initExecuted[path]
+}
+
+// MarkInitExecuted marks the init functions for a package as run.
+func (c *PackageCache) MarkInitExecuted(path string) {
+	c.initExecuted[path] = true
+}
+
 // Environment holds the bindings for variables and functions.
 type Environment struct {
 	store  map[string]*Object

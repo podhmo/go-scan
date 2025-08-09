@@ -56,7 +56,7 @@ func testEval(t *testing.T, input string) object.Object {
 	if err != nil {
 		t.Fatalf("failed to create scanner: %v", err)
 	}
-	eval := New(fset, scanner, nil) // Pass nil for registry in this test
+	eval := New(fset, scanner, object.NewSymbolRegistry(), object.NewPackageCache())
 	env := object.NewEnvironment()
 	evaluated := eval.Eval(mainFunc.Body, env)
 	if retVal, ok := evaluated.(*object.ReturnValue); ok {

@@ -16,9 +16,10 @@ import (
 // It holds the state of the interpreter, including the scanner for package resolution
 // and the root environment for script execution.
 type Interpreter struct {
-	scanner  *goscan.Scanner
+	scanner  evaluator.Scanner // Use the interface defined in the evaluator package
 	Env      *object.Environment
 	Registry *object.SymbolRegistry
+	Cache    *object.PackageCache
 }
 
 // NewInterpreter creates a new interpreter instance.
@@ -32,6 +33,7 @@ func NewInterpreter(options ...goscan.ScannerOption) (*Interpreter, error) {
 		scanner:  scanner,
 		Env:      object.NewEnvironment(),
 		Registry: object.NewSymbolRegistry(),
+		Cache:    object.NewPackageCache(),
 	}, nil
 }
 
@@ -76,7 +78,7 @@ func (i *Interpreter) Eval(ctx context.Context, opts Options) (*Result, error) {
 		return nil, fmt.Errorf("parsing script: %w", err)
 	}
 
-	eval := evaluator.New(fset, i.scanner, i.Registry)
+	eval := evaluator.New(fset, i.scanner, i.Registry, i.Cache)
 	var lastVal object.Object
 	for _, decl := range node.Decls {
 		lastVal = eval.Eval(decl, i.Env)

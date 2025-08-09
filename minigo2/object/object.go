@@ -30,6 +30,7 @@ const (
 	BUILTIN_OBJ           ObjectType = "BUILTIN"
 	STRUCT_DEFINITION_OBJ ObjectType = "STRUCT_DEFINITION"
 	STRUCT_INSTANCE_OBJ   ObjectType = "STRUCT_INSTANCE"
+	BOUND_METHOD_OBJ      ObjectType = "BOUND_METHOD"
 	POINTER_OBJ           ObjectType = "POINTER"
 	ARRAY_OBJ             ObjectType = "ARRAY"
 	MAP_OBJ               ObjectType = "MAP"
@@ -193,9 +194,10 @@ func (rv *ReturnValue) Inspect() string { return rv.Value.Inspect() }
 
 // --- Function Object ---
 
-// Function represents a user-defined function.
+// Function represents a user-defined function or method.
 type Function struct {
 	Name       *ast.Ident
+	Recv       *ast.FieldList // nil for regular functions
 	Parameters *ast.FieldList
 	Body       *ast.BlockStmt
 	Env        *Environment
@@ -243,6 +245,19 @@ func (f *Function) Inspect() string {
 	return out.String()
 }
 
+// Copy creates a shallow copy of the struct instance.
+func (si *StructInstance) Copy() *StructInstance {
+	newFields := make(map[string]Object, len(si.Fields))
+	for k, v := range si.Fields {
+		// Note: This is a shallow copy of the field values.
+		newFields[k] = v
+	}
+	return &StructInstance{
+		Def:    si.Def,
+		Fields: newFields,
+	}
+}
+
 // --- Builtin Function Object ---
 
 // BuiltinFunction is the type of the function for built-in commands.
@@ -263,8 +278,9 @@ func (b *Builtin) Inspect() string { return "builtin function" }
 
 // StructDefinition represents the definition of a struct type.
 type StructDefinition struct {
-	Name   *ast.Ident
-	Fields []*ast.Field
+	Name    *ast.Ident
+	Fields  []*ast.Field
+	Methods map[string]*Function
 }
 
 // Type returns the type of the StructDefinition object.
@@ -273,6 +289,23 @@ func (sd *StructDefinition) Type() ObjectType { return STRUCT_DEFINITION_OBJ }
 // Inspect returns a string representation of the struct definition.
 func (sd *StructDefinition) Inspect() string {
 	return fmt.Sprintf("struct %s", sd.Name.String())
+}
+
+// --- Bound Method Object ---
+
+// BoundMethod represents a method that is bound to a specific receiver instance.
+type BoundMethod struct {
+	Fn       *Function
+	Receiver Object
+}
+
+// Type returns the type of the BoundMethod object.
+func (bm *BoundMethod) Type() ObjectType { return BOUND_METHOD_OBJ }
+
+// Inspect returns a string representation of the bound method.
+func (bm *BoundMethod) Inspect() string {
+	// Similar to Function.Inspect, but we could indicate it's a method.
+	return fmt.Sprintf("method %s()", bm.Fn.Name.String())
 }
 
 // --- Struct Instance Object ---

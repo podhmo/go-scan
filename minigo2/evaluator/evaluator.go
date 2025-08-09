@@ -78,9 +78,9 @@ var builtins = map[string]*object.Builtin{
 				Fields: make(map[string]object.Object),
 			}
 			for _, field := range def.Fields {
-				// For now, we'll just initialize with NULL. A more advanced implementation
+				// For now, we'll just initialize with NIL. A more advanced implementation
 				// would handle zero values for different types (0, "", false).
-				instance.Fields[field.Names[0].Name] = object.NULL
+				instance.Fields[field.Names[0].Name] = object.NIL
 			}
 
 			var obj object.Object = instance
@@ -144,7 +144,7 @@ func (e *Evaluator) evalBangOperatorExpression(right object.Object) object.Objec
 		return object.FALSE
 	case object.FALSE:
 		return object.TRUE
-	case object.NULL:
+	case object.NIL:
 		return object.TRUE
 	default:
 		return object.FALSE
@@ -371,7 +371,7 @@ func (e *Evaluator) unwrapToBool(obj object.Object) (bool, bool) {
 // This is used when retrieving values from Go collections or structs.
 func (e *Evaluator) nativeToValue(val reflect.Value) object.Object {
 	if !val.IsValid() {
-		return object.NULL
+		return object.NIL
 	}
 
 	// Check if we can convert the interface value directly.
@@ -388,7 +388,7 @@ func (e *Evaluator) nativeToValue(val reflect.Value) object.Object {
 	case bool:
 		return e.nativeBoolToBooleanObject(v)
 	case nil:
-		return object.NULL
+		return object.NIL
 	}
 
 	// If direct conversion fails, fall back to Kind-based conversion.
@@ -397,7 +397,7 @@ func (e *Evaluator) nativeToValue(val reflect.Value) object.Object {
 		return &object.Integer{Value: val.Int()}
 	case reflect.Ptr, reflect.Interface:
 		if val.IsNil() {
-			return object.NULL
+			return object.NIL
 		}
 		// Re-wrap the value to allow further operations on it.
 		return &object.GoValue{Value: val}
@@ -425,7 +425,7 @@ func (e *Evaluator) objectToReflectValue(obj object.Object, targetType reflect.T
 			nativeVal = o.Value
 		case *object.Boolean:
 			nativeVal = o.Value
-		case *object.Null:
+		case *object.Nil:
 			nativeVal = nil
 		case *object.GoValue:
 			nativeVal = o.Value.Interface()
@@ -506,13 +506,13 @@ func (e *Evaluator) objectToReflectValue(obj object.Object, targetType reflect.T
 			return o.Value.Convert(targetType), nil
 		}
 		return reflect.Value{}, fmt.Errorf("GoValue of type %s is not assignable or convertible to %s", o.Value.Type(), targetType)
-	case *object.Null:
+	case *object.Nil:
 		// For nil, we can return a zero value of the target type if it's a pointer, map, slice, etc.
 		switch targetType.Kind() {
 		case reflect.Ptr, reflect.Map, reflect.Slice, reflect.Interface, reflect.Func:
 			return reflect.Zero(targetType), nil
 		}
-		return reflect.Value{}, fmt.Errorf("cannot convert null to non-nillable type %s", targetType)
+		return reflect.Value{}, fmt.Errorf("cannot convert nil to non-nillable type %s", targetType)
 	}
 
 	return reflect.Value{}, fmt.Errorf("unsupported conversion from %s to %s", obj.Type(), targetType)
@@ -527,7 +527,7 @@ func (e *Evaluator) objectToNativeGoValue(obj object.Object) (any, error) {
 		return o.Value, nil
 	case *object.Boolean:
 		return o.Value, nil
-	case *object.Null:
+	case *object.Nil:
 		return nil, nil
 	case *object.GoValue:
 		return o.Value.Interface(), nil
@@ -630,7 +630,7 @@ func (e *Evaluator) isTruthy(obj object.Object) bool {
 		}
 		// If it's a GoValue but not a bool, consider it truthy if it's not nil/zero.
 		return o.Value.IsValid() && !o.Value.IsZero()
-	case *object.Null:
+	case *object.Nil:
 		return false
 	default:
 		// Any other object type (Integer, String, etc.) is considered truthy.
@@ -650,7 +650,7 @@ func (e *Evaluator) evalIfElseExpression(ie *ast.IfStmt, env *object.Environment
 	} else if ie.Else != nil {
 		return e.Eval(ie.Else, env)
 	} else {
-		return object.NULL
+		return object.NIL
 	}
 }
 
@@ -722,7 +722,7 @@ func (e *Evaluator) evalForStmt(fs *ast.ForStmt, env *object.Environment) object
 		}
 	}
 
-	return object.NULL
+	return object.NIL
 }
 
 // evalForRangeStmt evaluates a for...range loop.
@@ -781,7 +781,7 @@ func (e *Evaluator) evalRangeGoValue(rs *ast.RangeStmt, goVal *object.GoValue, e
 				}
 			}
 		}
-		return object.NULL
+		return object.NIL
 
 	case reflect.Map:
 		iter := val.MapRange()
@@ -817,7 +817,7 @@ func (e *Evaluator) evalRangeGoValue(rs *ast.RangeStmt, goVal *object.GoValue, e
 				}
 			}
 		}
-		return object.NULL
+		return object.NIL
 	}
 
 	return e.newError(rs.X.Pos(), "range operator not supported for Go value of type %s", val.Kind())
@@ -859,7 +859,7 @@ func (e *Evaluator) evalRangeArray(rs *ast.RangeStmt, arr *object.Array, env *ob
 			}
 		}
 	}
-	return object.NULL
+	return object.NIL
 }
 
 func (e *Evaluator) evalRangeString(rs *ast.RangeStmt, str *object.String, env *object.Environment) object.Object {
@@ -898,7 +898,7 @@ func (e *Evaluator) evalRangeString(rs *ast.RangeStmt, str *object.String, env *
 			}
 		}
 	}
-	return object.NULL
+	return object.NIL
 }
 
 func (e *Evaluator) evalRangeMap(rs *ast.RangeStmt, m *object.Map, env *object.Environment) object.Object {
@@ -938,7 +938,7 @@ func (e *Evaluator) evalRangeMap(rs *ast.RangeStmt, m *object.Map, env *object.E
 			}
 		}
 	}
-	return object.NULL
+	return object.NIL
 }
 
 // evalSwitchStmt evaluates a switch statement.
@@ -1026,7 +1026,7 @@ func (e *Evaluator) evalSwitchStmt(ss *ast.SwitchStmt, env *object.Environment) 
 		return result
 	}
 
-	return object.NULL
+	return object.NIL
 }
 
 func (e *Evaluator) evalExpressions(exps []ast.Expr, env *object.Environment) []object.Object {
@@ -1167,7 +1167,7 @@ func (e *Evaluator) Eval(node ast.Node, env *object.Environment) object.Object {
 		return nil
 	case *ast.ReturnStmt:
 		if len(n.Results) == 0 {
-			return &object.ReturnValue{Value: object.NULL}
+			return &object.ReturnValue{Value: object.NIL}
 		}
 
 		// Handle single vs. multiple return values
@@ -1373,8 +1373,8 @@ func (e *Evaluator) evalGenDecl(n *ast.GenDecl, env *object.Environment) object.
 						return e.newError(name.Pos(), "missing value in declaration for %s", name.Name)
 					}
 				} else if n.Tok == token.VAR {
-					// Handle `var x int` (no initial value) -> defaults to null
-					val = object.NULL
+					// Handle `var x int` (no initial value) -> defaults to nil
+					val = object.NIL
 				} else {
 					return e.newError(name.Pos(), "missing value in declaration for %s", name.Name)
 				}
@@ -1453,8 +1453,8 @@ func (e *Evaluator) evalGoValueIndexExpression(node ast.Node, goVal *object.GoVa
 		resultVal := val.MapIndex(keyVal)
 		if !resultVal.IsValid() {
 			// Key not found in map. Go would return the zero value.
-			// Let's return NULL for simplicity, as creating a zero value for any type is complex.
-			return object.NULL
+			// Let's return NIL for simplicity, as creating a zero value for any type is complex.
+			return object.NIL
 		}
 		return e.nativeToValue(resultVal)
 
@@ -1474,7 +1474,7 @@ func (e *Evaluator) evalArrayIndexExpression(node ast.Node, array, index object.
 	max := int64(len(arrayObject.Elements) - 1)
 
 	if i < 0 || i > max {
-		return object.NULL // Go returns nil for out-of-bounds access, so we do too.
+		return object.NIL // Go returns nil for out-of-bounds access, so we do too.
 	}
 
 	return arrayObject.Elements[i]
@@ -1490,7 +1490,7 @@ func (e *Evaluator) evalMapIndexExpression(node ast.Node, m, index object.Object
 
 	pair, ok := mapObject.Pairs[key.HashKey()]
 	if !ok {
-		return object.NULL
+		return object.NIL
 	}
 
 	return pair.Value
@@ -1791,7 +1791,7 @@ func (e *Evaluator) wrapGoFunction(pos token.Pos, funcVal reflect.Value) object.
 			// Handle results
 			numOut := funcType.NumOut()
 			if numOut == 0 {
-				return object.NULL
+				return object.NIL
 			}
 
 			// Check for Go-style error return
@@ -1802,11 +1802,11 @@ func (e *Evaluator) wrapGoFunction(pos token.Pos, funcVal reflect.Value) object.
 				}
 			}
 
-			// Convert all results to minigo2 objects. Replace nil error with NULL.
+			// Convert all results to minigo2 objects. Replace nil error with NIL.
 			resultObjects := make([]object.Object, numOut)
 			for i := 0; i < numOut; i++ {
 				if i == numOut-1 && lastResult.Type().Implements(reflect.TypeOf((*error)(nil)).Elem()) && results[i].IsNil() {
-					resultObjects[i] = object.NULL
+					resultObjects[i] = object.NIL
 				} else {
 					resultObjects[i] = e.nativeToValue(results[i])
 				}
@@ -2043,8 +2043,8 @@ func (e *Evaluator) evalIdent(n *ast.Ident, env *object.Environment) object.Obje
 		return object.TRUE
 	case "false":
 		return object.FALSE
-	case "null":
-		return object.NULL
+	case "nil":
+		return object.NIL
 	}
 	return e.newError(n.Pos(), "identifier not found: %s", n.Name)
 }

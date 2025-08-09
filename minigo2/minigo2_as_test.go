@@ -123,8 +123,8 @@ func TestResult_As(t *testing.T) {
 			},
 		},
 		{
-			name:   "unmarshal null into slice",
-			script: "package main\nvar result = null",
+			name:   "unmarshal nil into slice",
+			script: "package main\nvar result = nil",
 			target: new([]Person),
 			checkFunc: func(t *testing.T, target any) {
 				got, ok := target.(*[]Person)

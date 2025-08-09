@@ -300,8 +300,8 @@ var result = "ok"
 		if resStr, ok := res.(*object.String); !ok || resStr.Value != "success" {
 			t.Errorf("wrong value for 'result'. got=%s, want='success'", res.Inspect())
 		}
-		if errVal != object.NULL {
-			t.Errorf("wrong value for 'err'. got=%s, want=NULL", errVal.Inspect())
+		if errVal != object.NIL {
+			t.Errorf("wrong value for 'err'. got=%s, want=nil", errVal.Inspect())
 		}
 	})
 }

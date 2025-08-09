@@ -208,6 +208,10 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     - [x] Support method calls on struct instances (`instance.Method()`).
     - [x] Support interface definitions (`type MyInterface interface { ... }`).
     - [x] Support dynamic dispatch of method calls through interface variables.
+- [ ] **IO Stream Handling**:
+    - [ ] Make `stdin`, `stdout`, and `stderr` configurable/replaceable in the interpreter.
+- [ ] **Generics Support (Simplified)**:
+    - [ ] Implement support for generic functions and types, assuming calls are correct (no type checking).
 - [ ] **Built-in Functions**:
     - [x] `append`
     - [ ] `copy`
@@ -215,8 +219,8 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     - [x] `len`
     - [ ] `cap`
     - [ ] `make`
-    - [ ] `max`
-    - [ ] `min`
+    - [x] `max`
+    - [x] `min`
     - [ ] `new`
     - [ ] `complex`
     - [ ] `real`

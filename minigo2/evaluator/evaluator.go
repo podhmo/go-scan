@@ -81,6 +81,48 @@ var builtins = map[string]*object.Builtin{
 			return &object.Array{Elements: newElements}
 		},
 	},
+	"max": {
+		Fn: func(fset *token.FileSet, pos token.Pos, args ...object.Object) object.Object {
+			if len(args) == 0 {
+				return &object.Error{Pos: pos, Message: "max() requires at least one argument", CallStack: nil}
+			}
+			maxVal, ok := args[0].(*object.Integer)
+			if !ok {
+				return &object.Error{Pos: pos, Message: "all arguments to max() must be integers", CallStack: nil}
+			}
+			for i := 1; i < len(args); i++ {
+				val, ok := args[i].(*object.Integer)
+				if !ok {
+					return &object.Error{Pos: pos, Message: "all arguments to max() must be integers", CallStack: nil}
+				}
+				if val.Value > maxVal.Value {
+					maxVal = val
+				}
+			}
+			return maxVal
+		},
+	},
+	"min": {
+		Fn: func(fset *token.FileSet, pos token.Pos, args ...object.Object) object.Object {
+			if len(args) == 0 {
+				return &object.Error{Pos: pos, Message: "min() requires at least one argument", CallStack: nil}
+			}
+			minVal, ok := args[0].(*object.Integer)
+			if !ok {
+				return &object.Error{Pos: pos, Message: "all arguments to min() must be integers", CallStack: nil}
+			}
+			for i := 1; i < len(args); i++ {
+				val, ok := args[i].(*object.Integer)
+				if !ok {
+					return &object.Error{Pos: pos, Message: "all arguments to min() must be integers", CallStack: nil}
+				}
+				if val.Value < minVal.Value {
+					minVal = val
+				}
+			}
+			return minVal
+		},
+	},
 	"new": {
 		Fn: func(fset *token.FileSet, pos token.Pos, args ...object.Object) object.Object {
 			if len(args) != 1 {

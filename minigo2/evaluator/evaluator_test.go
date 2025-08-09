@@ -217,6 +217,14 @@ func TestBuiltinFunctions(t *testing.T) {
 		{`append([]int{1}, 2, 3)`, []int{1, 2, 3}},
 		{`append([]int{}, 1)`, []int{1}},
 		{`append(1, 2)`, "argument to `append` must be array, got INTEGER"},
+		{`max(1, 5, 2)`, 5},
+		{`max(10)`, 10},
+		{`min(1, 5, 2)`, 1},
+		{`min(10)`, 10},
+		{`max()`, "max() requires at least one argument"},
+		{`min()`, "min() requires at least one argument"},
+		{`max(1, "a")`, "all arguments to max() must be integers"},
+		{`min(1, "a")`, "all arguments to min() must be integers"},
 	}
 
 	for _, tt := range tests {

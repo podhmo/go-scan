@@ -198,6 +198,90 @@ func TestFunctionApplication(t *testing.T) {
 	}
 }
 
+func TestInterfaces(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected any
+	}{
+		{
+			`
+			type Shaper interface { Area() int }
+			type Rect struct { width, height int }
+			func (r Rect) Area() int { return r.width * r.height }
+			func main() {
+				var s Shaper = Rect{width: 10, height: 5}
+				return s.Area()
+			}
+			`,
+			int64(50),
+		},
+		{
+			`
+			type Greeter interface { Greet() string }
+			type Person struct { name string }
+			func (p *Person) Greet() string { return "Hello, " + p.name }
+			func main() {
+				var g Greeter = &Person{name: "Taro"}
+				return g.Greet()
+			}
+			`,
+			"Hello, Taro",
+		},
+		{
+			`
+			type Abc interface { A(); B() }
+			type Def struct {}
+			func (d Def) A() {}
+			func main() {
+				var v Abc = Def{}
+			}
+			`,
+			"type Def does not implement Abc (missing method B)",
+		},
+		{
+			`
+			type Abc interface { A(x int) }
+			type Def struct {}
+			func (d Def) A() {}
+			func main() {
+				var v Abc = Def{}
+			}
+			`,
+			"method A has wrong number of parameters (got 0, want 1)",
+		},
+		{
+			`
+			type Shaper interface { Area() int }
+			func main() {
+				var s Shaper
+				return s.Area()
+			}
+			`,
+			"nil pointer dereference (interface is nil)",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			evaluated := testEvalFile(t, tt.input)
+			switch expected := tt.expected.(type) {
+			case int64:
+				testIntegerObject(t, evaluated, expected)
+			case string:
+				if err, ok := evaluated.(*object.Error); ok {
+					if !strings.Contains(err.Inspect(), expected) {
+						t.Errorf("expected error message to contain %q, but it did not.\nFull message:\n%s", expected, err.Inspect())
+					}
+				} else {
+					testStringObject(t, evaluated, expected)
+				}
+			default:
+				t.Fatalf("unsupported expected type for test: %T", expected)
+			}
+		})
+	}
+}
+
 // testEvalFile is a helper that evaluates a full source file content.
 // It evaluates all top-level declarations and then executes the main function.
 func testEvalFile(t *testing.T, input string) object.Object {

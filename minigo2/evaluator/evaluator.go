@@ -1232,6 +1232,7 @@ func (e *Evaluator) Eval(node ast.Node, env *object.Environment) object.Object {
 			fn := &object.Function{
 				Name:       n.Name,
 				Parameters: n.Type.Params,
+				Results:    n.Type.Results,
 				Body:       n.Body,
 				Env:        env,
 			}
@@ -1273,6 +1274,7 @@ func (e *Evaluator) Eval(node ast.Node, env *object.Environment) object.Object {
 			Name:       n.Name,
 			Recv:       n.Recv, // Store receiver info
 			Parameters: n.Type.Params,
+			Results:    n.Type.Results,
 			Body:       n.Body,
 			Env:        env, // The environment where the method is defined.
 		}
@@ -1476,16 +1478,44 @@ func (e *Evaluator) evalGenDecl(n *ast.GenDecl, env *object.Environment) object.
 			}
 
 			for i, name := range valueSpec.Names {
-				var val object.Object
-				if len(valueSpec.Values) > 0 {
-					if i < len(valueSpec.Values) {
-						// Create a temporary environment for iota evaluation.
-						iotaEnv := object.NewEnclosedEnvironment(env)
-						iotaEnv.SetConstant("iota", &object.Integer{Value: int64(iotaValue)})
-						val = e.Eval(valueSpec.Values[i], iotaEnv)
-					} else {
-						return e.newError(name.Pos(), "missing value in declaration for %s", name.Name)
+				// Handle explicit type declarations, especially for interfaces.
+				if valueSpec.Type != nil {
+					typeObj := e.Eval(valueSpec.Type, env)
+					if isError(typeObj) {
+						return typeObj
 					}
+
+					if ifaceDef, ok := typeObj.(*object.InterfaceDefinition); ok {
+						var concreteVal object.Object
+						if len(valueSpec.Values) > i {
+							// Case: var w Writer = myStruct
+							concreteVal = e.Eval(valueSpec.Values[i], env)
+							if isError(concreteVal) {
+								return concreteVal
+							}
+							// A nil value can be assigned to an interface without checks.
+							if concreteVal.Type() != object.NIL_OBJ {
+								if errObj := e.checkImplements(valueSpec.Pos(), concreteVal, ifaceDef); errObj != nil {
+									return errObj
+								}
+							}
+						} else {
+							// Case: var w Writer (no initial value)
+							concreteVal = object.NIL
+						}
+						// Wrap the concrete value in an InterfaceInstance to track its interface type.
+						env.Set(name.Name, &object.InterfaceInstance{Def: ifaceDef, Value: concreteVal})
+						continue // Move to the next name in the spec (e.g., var a, b, c Writer)
+					}
+				}
+
+				// Fallback to existing logic for non-interface types or untyped vars.
+				var val object.Object
+				if len(valueSpec.Values) > i {
+					// Create a temporary environment for iota evaluation.
+					iotaEnv := object.NewEnclosedEnvironment(env)
+					iotaEnv.SetConstant("iota", &object.Integer{Value: int64(iotaValue)})
+					val = e.Eval(valueSpec.Values[i], iotaEnv)
 				} else if n.Tok == token.VAR {
 					// Handle `var x int` (no initial value) -> defaults to nil
 					val = object.NIL
@@ -1513,16 +1543,26 @@ func (e *Evaluator) evalGenDecl(n *ast.GenDecl, env *object.Environment) object.
 	case token.TYPE:
 		for _, spec := range n.Specs {
 			typeSpec := spec.(*ast.TypeSpec)
-			structType, ok := typeSpec.Type.(*ast.StructType)
-			if !ok {
-				return e.newError(typeSpec.Pos(), "unsupported type declaration: not a struct")
+
+			switch t := typeSpec.Type.(type) {
+			case *ast.StructType:
+				def := &object.StructDefinition{
+					Name:    typeSpec.Name,
+					Fields:  t.Fields.List,
+					Methods: make(map[string]*object.Function),
+				}
+				env.Set(typeSpec.Name.Name, def)
+
+			case *ast.InterfaceType:
+				def := &object.InterfaceDefinition{
+					Name:    typeSpec.Name,
+					Methods: t.Methods,
+				}
+				env.Set(typeSpec.Name.Name, def)
+
+			default:
+				return e.newError(typeSpec.Pos(), "unsupported type declaration: not a struct or interface")
 			}
-			def := &object.StructDefinition{
-				Name:    typeSpec.Name,
-				Fields:  structType.Fields.List,
-				Methods: make(map[string]*object.Function), // Initialize methods map
-			}
-			env.Set(typeSpec.Name.Name, def)
 		}
 		return nil
 	}
@@ -1660,6 +1700,22 @@ func (e *Evaluator) evalSingleAssign(n *ast.AssignStmt, env *object.Environment)
 func (e *Evaluator) assignValue(lhs ast.Expr, val object.Object, env *object.Environment) object.Object {
 	switch lhsNode := lhs.(type) {
 	case *ast.Ident:
+		// Check if we are assigning to an existing interface variable.
+		if existing, ok := env.Get(lhsNode.Name); ok {
+			if iface, isIface := existing.(*object.InterfaceInstance); isIface {
+				// Allow assigning nil to any interface.
+				if val.Type() != object.NIL_OBJ {
+					// Check if the new value implements the interface.
+					if errObj := e.checkImplements(lhsNode.Pos(), val, iface.Def); errObj != nil {
+						return errObj
+					}
+				}
+				// Update the concrete value held by the interface.
+				iface.Value = val
+				return val
+			}
+		}
+
 		if _, ok := env.GetConstant(lhsNode.Name); ok {
 			return e.newError(lhsNode.Pos(), "cannot assign to constant %s", lhsNode.Name)
 		}
@@ -1967,6 +2023,26 @@ func (e *Evaluator) evalSelectorExpr(n *ast.SelectorExpr, env *object.Environmen
 	}
 
 	switch l := left.(type) {
+	case *object.InterfaceInstance:
+		if l.Value == nil || l.Value.Type() == object.NIL_OBJ {
+			return e.newError(n.Pos(), "nil pointer dereference (interface is nil)")
+		}
+		// Dispatch the selector to the concrete value held by the interface.
+		switch concrete := l.Value.(type) {
+		case *object.StructInstance:
+			return e.evalStructSelector(n, concrete)
+		case *object.Pointer:
+			if concrete.Element == nil || *concrete.Element == nil {
+				return e.newError(n.Pos(), "nil pointer dereference")
+			}
+			if instance, ok := (*concrete.Element).(*object.StructInstance); ok {
+				return e.evalStructSelector(n, instance)
+			}
+			return e.newError(n.Pos(), "interface holds pointer to non-struct, cannot call method")
+		default:
+			return e.newError(n.Pos(), "type %s held by interface does not support method calls", concrete.Type())
+		}
+
 	case *object.Package:
 		memberName := n.Sel.Name
 		// 1. Check member cache first.
@@ -2110,6 +2186,89 @@ func (e *Evaluator) evalCompositeLit(n *ast.CompositeLit, env *object.Environmen
 	}
 }
 
+// checkImplements verifies that a concrete object satisfies an interface definition.
+// It returns nil on success or an *object.Error on failure.
+func (e *Evaluator) checkImplements(pos token.Pos, concrete object.Object, iface *object.InterfaceDefinition) object.Object {
+	var concreteMethods map[string]*object.Function
+	var concreteTypeName string
+
+	// Determine the method set and type name from the concrete object.
+	// This handles both value receivers (StructInstance) and pointer receivers (*Pointer to StructInstance).
+	switch c := concrete.(type) {
+	case *object.StructInstance:
+		concreteMethods = c.Def.Methods
+		concreteTypeName = c.Def.Name.Name
+	case *object.Pointer:
+		if s, ok := (*c.Element).(*object.StructInstance); ok {
+			concreteMethods = s.Def.Methods
+			concreteTypeName = s.Def.Name.Name
+		} else {
+			// A pointer to a non-struct cannot have methods.
+			if len(iface.Methods.List) > 0 {
+				return e.newError(pos, "type %s cannot implement non-empty interface %s", (*c.Element).Type(), iface.Name.Name)
+			}
+			return nil
+		}
+	default:
+		// Any other type cannot have methods.
+		if len(iface.Methods.List) > 0 {
+			return e.newError(pos, "type %s cannot implement non-empty interface %s", concrete.Type(), iface.Name.Name)
+		}
+		return nil // Type can implement an empty interface.
+	}
+
+	// Now check each method required by the interface.
+	for _, ifaceMethodField := range iface.Methods.List {
+		if len(ifaceMethodField.Names) == 0 {
+			continue // Should not happen in a valid interface AST.
+		}
+		methodName := ifaceMethodField.Names[0].Name
+		ifaceFuncType, ok := ifaceMethodField.Type.(*ast.FuncType)
+		if !ok {
+			continue // Also should not happen.
+		}
+
+		concreteMethod, ok := concreteMethods[methodName]
+		if !ok {
+			return e.newError(pos, "type %s does not implement %s (missing method %s)", concreteTypeName, iface.Name.Name, methodName)
+		}
+
+		// Compare parameter counts.
+		ifaceParamCount := 0
+		if ifaceFuncType.Params != nil {
+			ifaceParamCount = len(ifaceFuncType.Params.List)
+		}
+		concreteParamCount := 0
+		if concreteMethod.Parameters != nil {
+			concreteParamCount = len(concreteMethod.Parameters.List)
+		}
+		if ifaceParamCount != concreteParamCount {
+			return e.newError(pos, "cannot use %s as %s value in assignment: method %s has wrong number of parameters (got %d, want %d)",
+				concreteTypeName, iface.Name.Name, methodName, concreteParamCount, ifaceParamCount)
+		}
+
+		// Compare result counts.
+		ifaceResultCount := 0
+		if ifaceFuncType.Results != nil {
+			ifaceResultCount = len(ifaceFuncType.Results.List)
+		}
+		concreteResultCount := 0
+		if concreteMethod.Results != nil {
+			concreteResultCount = len(concreteMethod.Results.List)
+		}
+		if ifaceResultCount != concreteResultCount {
+			return e.newError(pos, "cannot use %s as %s value in assignment: method %s has wrong number of return values (got %d, want %d)",
+				concreteTypeName, iface.Name.Name, methodName, concreteResultCount, ifaceResultCount)
+		}
+
+		// NOTE: A full implementation would also compare the types of parameters and results.
+		// This is complex as it requires resolving type identifiers from the AST.
+		// For now, we only check the counts, which covers many cases.
+	}
+
+	return nil
+}
+
 func (e *Evaluator) evalStructLiteral(n *ast.CompositeLit, def *object.StructDefinition, env *object.Environment) object.Object {
 	instance := &object.StructInstance{Def: def, Fields: make(map[string]object.Object)}
 	for _, elt := range n.Elts {
@@ -2168,6 +2327,16 @@ func (e *Evaluator) evalIdent(n *ast.Ident, env *object.Environment) object.Obje
 	if builtin, ok := builtins[n.Name]; ok {
 		return builtin
 	}
+	// Handle built-in type identifiers. These don't have a first-class object
+	// representation in our interpreter, but they shouldn't cause an "identifier
+	// not found" error when used in declarations like `var x int`.
+	// Returning NIL allows the type-checking logic to see it's not an interface
+	// and fall through to the correct behavior.
+	switch n.Name {
+	case "int", "string", "bool":
+		return object.NIL
+	}
+
 	switch n.Name {
 	case "true":
 		return object.TRUE

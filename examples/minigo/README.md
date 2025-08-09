@@ -1,17 +1,17 @@
 # MiniGo Interpreter CLI
 
-This directory contains `minigo`, a command-line interface (CLI) for the `minigo2` interpreter. The core interpreter logic is located in the `minigo2` package at the root of this repository.
+This directory contains `minigo`, a command-line interface (CLI) for the `minigo` interpreter. The core interpreter logic is located in the `minigo` package at the root of this repository.
 
 ## Overview
 
-This example serves as a runnable demonstration of the `minigo2` interpreter. It shows how the `minigo2` library, which is built on `go-scan`, can be used to execute scripts that look like a subset of Go.
+This example serves as a runnable demonstration of the `minigo` interpreter. It shows how the `minigo` library, which is built on `go-scan`, can be used to execute scripts that look like a subset of Go.
 
 The `minigo` CLI takes one or more script files as arguments, evaluates them, and prints the result of the last evaluated expression to standard output.
 
-## Core `minigo2` & `go-scan` Features Highlighted
+## Core `minigo` & `go-scan` Features Highlighted
 
 -   **Go Interoperability**: The interpreter can import and use real Go functions and variables. This example registers functions from the `fmt` and `strings` packages, making them available within scripts.
--   **Dynamic Symbol Resolution**: When a script imports a Go package (e.g., `import "strings"`), the `minigo2` engine uses `go-scan` to find and load symbols from that package on-demand.
+-   **Dynamic Symbol Resolution**: When a script imports a Go package (e.g., `import "strings"`), the `minigo` engine uses `go-scan` to find and load symbols from that package on-demand.
 -   **File-Scoped Imports**: The interpreter correctly handles file-scoped imports, including standard aliased imports (`import f "fmt"`) and dot imports (`import . "strings"`). The scope of these imports is properly restricted to the file in which they are declared.
 -   **Multi-File Projects**: The CLI can accept multiple script files, which are treated as being part of the same package. Symbols (variables, functions) defined in one file are available in others, but imports are not.
 

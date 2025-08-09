@@ -7,7 +7,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/podhmo/go-scan/minigo2"
+	"github.com/podhmo/go-scan/minigo"
 )
 
 func main() {
@@ -23,8 +23,8 @@ func main() {
 	}
 
 	// Create a new interpreter.
-	// The minigo2 library is located in the parent project, so we use a relative path.
-	interp, err := minigo2.NewInterpreter()
+	// The minigo library is located in the parent project, so we use a relative path.
+	interp, err := minigo.NewInterpreter()
 	if err != nil {
 		log.Fatalf("Failed to create interpreter: %v", err)
 	}

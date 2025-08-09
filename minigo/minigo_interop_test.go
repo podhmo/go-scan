@@ -1,11 +1,11 @@
-package minigo2
+package minigo
 
 import (
 	"context"
 	"reflect"
 	"testing"
 
-	"github.com/podhmo/go-scan/minigo2/object"
+	"github.com/podhmo/go-scan/minigo/object"
 )
 
 func TestGoInterop_InjectGlobals(t *testing.T) {

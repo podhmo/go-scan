@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	goscan "github.com/podhmo/go-scan"
-	"github.com/podhmo/go-scan/minigo2/object"
+	"github.com/podhmo/go-scan/minigo/object"
 )
 
 var builtins = map[string]*object.Builtin{
@@ -440,7 +440,7 @@ func (e *Evaluator) unwrapToBool(obj object.Object) (bool, bool) {
 	return false, false
 }
 
-// nativeToValue converts a native Go value (from reflect.Value) into a minigo2 object.
+// nativeToValue converts a native Go value (from reflect.Value) into a minigo object.
 // This is used when retrieving values from Go collections or structs.
 func (e *Evaluator) nativeToValue(val reflect.Value) object.Object {
 	if !val.IsValid() {
@@ -484,11 +484,11 @@ func (e *Evaluator) nativeToValue(val reflect.Value) object.Object {
 	}
 }
 
-// objectToReflectValue converts a minigo2 object to a reflect.Value of a specific Go type.
+// objectToReflectValue converts a minigo object to a reflect.Value of a specific Go type.
 // This is a crucial helper for map indexing and function calls into Go code.
 func (e *Evaluator) objectToReflectValue(obj object.Object, targetType reflect.Type) (reflect.Value, error) {
 	// Handle target type of interface{} separately.
-	// We convert the minigo2 object to its "best" Go equivalent.
+	// We convert the minigo object to its "best" Go equivalent.
 	if targetType.Kind() == reflect.Interface && targetType.NumMethod() == 0 {
 		var nativeVal any
 		switch o := obj.(type) {
@@ -539,7 +539,7 @@ func (e *Evaluator) objectToReflectValue(obj object.Object, targetType reflect.T
 		if goVal.Value.Type().ConvertibleTo(targetType) {
 			return goVal.Value.Convert(targetType), nil
 		}
-		// Fall through to allow conversions like minigo2 Integer -> Go float64
+		// Fall through to allow conversions like minigo Integer -> Go float64
 	}
 
 	switch o := obj.(type) {
@@ -591,7 +591,7 @@ func (e *Evaluator) objectToReflectValue(obj object.Object, targetType reflect.T
 	return reflect.Value{}, fmt.Errorf("unsupported conversion from %s to %s", obj.Type(), targetType)
 }
 
-// objectToNativeGoValue converts a minigo2 object to its most natural Go counterpart.
+// objectToNativeGoValue converts a minigo object to its most natural Go counterpart.
 func (e *Evaluator) objectToNativeGoValue(obj object.Object) (any, error) {
 	switch o := obj.(type) {
 	case *object.Integer:
@@ -1645,7 +1645,7 @@ func (e *Evaluator) evalGoValueIndexExpression(node ast.Node, goVal *object.GoVa
 		return e.nativeToValue(resultVal)
 
 	case reflect.Map:
-		// Convert the minigo2 index object to a reflect.Value that can be used as a map key.
+		// Convert the minigo index object to a reflect.Value that can be used as a map key.
 		keyVal, err := e.objectToReflectValue(index, val.Type().Key())
 		if err != nil {
 			return e.newError(node.Pos(), "cannot use %s as type %s in map index: %v", index.Type(), val.Type().Key(), err)
@@ -1899,7 +1899,7 @@ func (e *Evaluator) findFieldInStruct(instance *object.StructInstance, fieldName
 	return nil, false
 }
 
-// constantInfoToObject converts a goscan.ConstantInfo into a minigo2 object.
+// constantInfoToObject converts a goscan.ConstantInfo into a minigo object.
 // This is how the interpreter understands constants from imported Go packages.
 func (e *Evaluator) constantInfoToObject(c *goscan.ConstantInfo) (object.Object, error) {
 	// simplified inference
@@ -2018,7 +2018,7 @@ func (e *Evaluator) wrapGoFunction(pos token.Pos, funcVal reflect.Value) object.
 				}
 			}
 
-			// Convert all results to minigo2 objects. Replace nil error with NIL.
+			// Convert all results to minigo objects. Replace nil error with NIL.
 			resultObjects := make([]object.Object, numOut)
 			for i := 0; i < numOut; i++ {
 				if i == numOut-1 && lastResult.Type().Implements(reflect.TypeOf((*error)(nil)).Elem()) && results[i].IsNil() {

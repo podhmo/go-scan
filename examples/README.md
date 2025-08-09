@@ -69,14 +69,14 @@ This example demonstrates how `go-scan` can be used to build a sophisticated and
 
 ## minigo
 
-The `minigo` example is a command-line interface for `minigo2`, a miniature Go interpreter built to demonstrate and test the `go-scan` library.
+The `minigo` example is a command-line interface for `minigo`, a miniature Go interpreter built to demonstrate and test the `go-scan` library.
 
 **Purpose**: To provide a runnable example of a language interpreter that uses `go-scan` for its core analysis features, such as resolving imported Go packages and their symbols on the fly.
 
 **Key Features**:
--   **Powered by `minigo2`**: The actual interpreter logic resides in the `minigo2` package in the parent directory, not in the example itself.
+-   **Powered by `minigo`**: The actual interpreter logic resides in the `minigo` package in the parent directory, not in the example itself.
 -   **Dynamic Go Symbol Resolution**: It leverages `go-scan` to dynamically load information about functions and constants from other Go packages that are `import`ed by a script.
--   **Lazy Loading**: The underlying `minigo2` engine uses `go-scan`'s lazy-loading mechanism, meaning imported Go packages are only fully scanned when their symbols are actually referenced in the script.
+-   **Lazy Loading**: The underlying `minigo` engine uses `go-scan`'s lazy-loading mechanism, meaning imported Go packages are only fully scanned when their symbols are actually referenced in the script.
 -   **File-Scoped Imports**: Demonstrates support for both aliased (`import f "fmt"`) and dot (`import . "strings"`) imports, with the scope of the import correctly constrained to the file in which it is declared.
 
 This example showcases how `go-scan` can be used as a backbone for complex language tooling that needs to interact with and understand other Go code.

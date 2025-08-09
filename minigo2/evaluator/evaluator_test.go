@@ -202,6 +202,57 @@ func TestFunctionApplication(t *testing.T) {
 	}
 }
 
+func TestBuiltinFunctions(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected interface{}
+	}{
+		{`len("")`, 0},
+		{`len("four")`, 4},
+		{`len("hello world")`, 11},
+		{`len(1)`, "argument to `len` not supported, got INTEGER"},
+		{`len("one", "two")`, "wrong number of arguments. got=2, want=1"},
+		{`len([]int{1, 2, 3})`, 3},
+		{`len(map[string]int{"a": 1, "b": 2})`, 2},
+		{`append([]int{1}, 2, 3)`, []int{1, 2, 3}},
+		{`append([]int{}, 1)`, []int{1}},
+		{`append(1, 2)`, "argument to `append` must be array, got INTEGER"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			evaluated := testEval(t, tt.input)
+
+			switch expected := tt.expected.(type) {
+			case int:
+				testIntegerObject(t, evaluated, int64(expected))
+			case []int:
+				arr, ok := evaluated.(*object.Array)
+				if !ok {
+					t.Errorf("object is not Array. got=%T (%+v)", evaluated, evaluated)
+					return
+				}
+				if len(arr.Elements) != len(expected) {
+					t.Errorf("wrong number of elements. want=%d, got=%d", len(expected), len(arr.Elements))
+					return
+				}
+				for i, expectedElem := range expected {
+					testIntegerObject(t, arr.Elements[i], int64(expectedElem))
+				}
+			case string:
+				errObj, ok := evaluated.(*object.Error)
+				if !ok {
+					t.Errorf("object is not Error. got=%T (%+v)", evaluated, evaluated)
+					return
+				}
+				if errObj.Message != expected {
+					t.Errorf("wrong error message. expected=%q, got=%q", expected, errObj.Message)
+				}
+			}
+		})
+	}
+}
+
 func TestInterfaces(t *testing.T) {
 	tests := []struct {
 		input    string

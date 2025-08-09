@@ -29,6 +29,8 @@ var builtins = map[string]*object.Builtin{
 				return &object.Integer{Value: int64(len(arg.Elements))}
 			case *object.String:
 				return &object.Integer{Value: int64(len(arg.Value))}
+			case *object.Map:
+				return &object.Integer{Value: int64(len(arg.Pairs))}
 			case *object.GoValue:
 				val := arg.Value
 				switch val.Kind() {
@@ -50,6 +52,33 @@ var builtins = map[string]*object.Builtin{
 				err.AttachFileSet(fset)
 				return err
 			}
+		},
+	},
+	"append": {
+		Fn: func(fset *token.FileSet, pos token.Pos, args ...object.Object) object.Object {
+			if len(args) < 2 {
+				err := &object.Error{
+					Pos:     pos,
+					Message: fmt.Sprintf("wrong number of arguments. got=%d, want at least 2", len(args)),
+				}
+				err.AttachFileSet(fset)
+				return err
+			}
+			arr, ok := args[0].(*object.Array)
+			if !ok {
+				err := &object.Error{
+					Pos:     pos,
+					Message: fmt.Sprintf("argument to `append` must be array, got %s", args[0].Type()),
+				}
+				err.AttachFileSet(fset)
+				return err
+			}
+
+			newElements := make([]object.Object, len(arr.Elements), len(arr.Elements)+len(args)-1)
+			copy(newElements, arr.Elements)
+			newElements = append(newElements, args[1:]...)
+
+			return &object.Array{Elements: newElements}
 		},
 	},
 	"new": {

@@ -208,6 +208,25 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     - [x] Support method calls on struct instances (`instance.Method()`).
     - [x] Support interface definitions (`type MyInterface interface { ... }`).
     - [x] Support dynamic dispatch of method calls through interface variables.
+- [ ] **Built-in Functions**:
+    - [x] `append`
+    - [ ] `copy`
+    - [ ] `delete`
+    - [x] `len`
+    - [ ] `cap`
+    - [ ] `make`
+    - [ ] `max`
+    - [ ] `min`
+    - [ ] `new`
+    - [ ] `complex`
+    - [ ] `real`
+    - [ ] `imag`
+    - [ ] `clear`
+    - [ ] `close`
+    - [ ] `panic`
+    - [ ] `recover`
+    - [ ] `print`
+    - [ ] `println`
 - [x] Thoroughly test all features, especially pointer handling and the Go interop layer.
 - [ ] Write comprehensive documentation for the API, supported language features, and usage examples.
 

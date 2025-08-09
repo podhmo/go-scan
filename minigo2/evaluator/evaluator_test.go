@@ -198,6 +198,187 @@ func TestFunctionApplication(t *testing.T) {
 	}
 }
 
+// testEvalFile is a helper that evaluates a full source file content.
+// It evaluates all top-level declarations and then executes the main function.
+func testEvalFile(t *testing.T, input string) object.Object {
+	t.Helper()
+	fullSource := "package main\n" + input
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "test.go", fullSource, 0)
+	if err != nil {
+		t.Fatalf("ParseFile error: %v\nSource:\n%s", err, fullSource)
+	}
+
+	scanner, err := goscan.New()
+	if err != nil {
+		t.Fatalf("failed to create scanner: %v", err)
+	}
+	env := object.NewEnvironment()
+	eval := New(fset, scanner, object.NewSymbolRegistry())
+
+	var mainFunc *ast.FuncDecl
+
+	// Evaluate all top-level declarations first
+	for _, decl := range file.Decls {
+		if fn, ok := decl.(*ast.FuncDecl); ok && fn.Name.Name == "main" {
+			mainFunc = fn
+			continue // Don't evaluate main yet
+		}
+		result := eval.Eval(decl, env)
+		if isError(result) {
+			return result // Return early if a top-level declaration fails
+		}
+	}
+
+	// Then evaluate the main function
+	if mainFunc == nil {
+		// If there's no main, there's nothing to execute.
+		// We can return NIL or a specific indicator. Let's return NIL.
+		return object.NIL
+	}
+
+	evaluated := eval.Eval(mainFunc.Body, env)
+	if retVal, ok := evaluated.(*object.ReturnValue); ok {
+		return retVal.Value
+	}
+	// If the last statement is an expression, Eval returns its value.
+	return evaluated
+}
+
+func TestMethodCalls(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected any
+	}{
+		{
+			`
+			type Point struct {
+				x int
+				y int
+			}
+			func (p Point) Add() int {
+				return p.x + p.y
+			}
+			func main() {
+				p := Point{x: 3, y: 4}
+				return p.Add()
+			}
+			`,
+			int64(7),
+		},
+		{
+			`
+			type Counter struct {
+				count int
+			}
+			func (c *Counter) Inc() {
+				c.count = c.count + 1
+			}
+			func main() {
+				c := &Counter{count: 0}
+				c.Inc()
+				c.Inc()
+				return c.count
+			}
+			`,
+			int64(2),
+		},
+		{
+			`
+			type Rect struct {
+				width int
+				height int
+			}
+			func (r Rect) Area() int {
+				return r.width * r.height
+			}
+			func main() {
+				r := Rect{width: 5, height: 10}
+				return r.Area()
+			}
+			`,
+			int64(50),
+		},
+		{
+			`
+			type Rect struct {
+				width int
+				height int
+			}
+			func (r *Rect) Scale(factor int) {
+				r.width = r.width * factor
+				r.height = r.height * factor
+			}
+			func main() {
+				r := &Rect{width: 5, height: 10}
+				r.Scale(2)
+				return r.width + r.height
+			}
+			`,
+			int64(30), // (5*2) + (10*2)
+		},
+		{
+			`
+			type Foo struct {
+				val int
+			}
+			func (f Foo) GetVal() int {
+				return f.val
+			}
+			func (f *Foo) SetVal(v int) {
+				f.val = v
+			}
+			func main() {
+				f := &Foo{val: 10}
+				f.SetVal(20)
+				return f.GetVal()
+			}
+			`,
+			int64(20),
+		},
+		{
+			`
+			type Bar struct { v int }
+			func (b Bar) Val() int { return b.v }
+			func main() {
+				b := Bar{v: 1}
+				m := b.Val
+				b.v = 2
+				return m()
+			}
+			`,
+			int64(1),
+		},
+		{
+			`
+			type Bar struct { v int }
+			func (b *Bar) Val() int { return b.v }
+			func main() {
+				b := &Bar{v: 1}
+				m := b.Val
+				b.v = 2
+				return m()
+			}
+			`,
+			int64(2),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			evaluated := testEvalFile(t, tt.input)
+			switch expected := tt.expected.(type) {
+			case int64:
+				testIntegerObject(t, evaluated, expected)
+			case string:
+				testErrorObject(t, evaluated, expected)
+			default:
+				t.Fatalf("unsupported expected type for test: %T", expected)
+			}
+		})
+	}
+}
+
 func TestMultipleReturnValues(t *testing.T) {
 	tests := []struct {
 		input string
@@ -366,7 +547,7 @@ func TestStructEmbedding(t *testing.T) {
 			instance := B{A: A{a: 1}, b: 2}
 			return instance.c
 			`,
-			"undefined field 'c' on struct 'B'",
+			"undefined field or method 'c' on struct 'B'",
 		},
 		// Error: nil pointer dereference on embedded pointer
 		{
@@ -376,7 +557,7 @@ func TestStructEmbedding(t *testing.T) {
 			p := &Figure{name: "fig"} // Point is nil
 			return p.x
 			`,
-			"undefined field 'x' on struct 'Figure'", // It's undefined because the path to it is nil
+			"undefined field or method 'x' on struct 'Figure'", // It's undefined because the path to it is nil
 		},
 	}
 

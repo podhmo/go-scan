@@ -1048,12 +1048,10 @@ func (e *Evaluator) applyFunction(call *ast.CallExpr, fn object.Object, args []o
 	case *object.Function:
 		// Check argument count before extending the environment
 		if fn.IsVariadic() {
-			// For variadic functions, we need at least N-1 arguments, where N is the number of parameters.
 			if len(args) < len(fn.Parameters.List)-1 {
 				return e.newError(call.Pos(), "wrong number of arguments for variadic function. got=%d, want at least %d", len(args), len(fn.Parameters.List)-1)
 			}
 		} else {
-			// For non-variadic functions, the number of arguments must match exactly.
 			if fn.Parameters != nil && len(fn.Parameters.List) != len(args) {
 				return e.newError(call.Pos(), "wrong number of arguments. got=%d, want=%d", len(args), len(fn.Parameters.List))
 			} else if fn.Parameters == nil && len(args) != 0 {
@@ -1072,11 +1070,83 @@ func (e *Evaluator) applyFunction(call *ast.CallExpr, fn object.Object, args []o
 		extendedEnv := e.extendFunctionEnv(fn, args)
 		evaluated := e.Eval(fn.Body, extendedEnv)
 		return e.unwrapReturnValue(evaluated)
+
+	case *object.BoundMethod:
+		// Argument count check for methods
+		if fn.Fn.IsVariadic() {
+			if len(args) < len(fn.Fn.Parameters.List)-1 {
+				return e.newError(call.Pos(), "wrong number of arguments for variadic method. got=%d, want at least %d", len(args), len(fn.Fn.Parameters.List)-1)
+			}
+		} else {
+			if fn.Fn.Parameters != nil && len(fn.Fn.Parameters.List) != len(args) {
+				return e.newError(call.Pos(), "wrong number of arguments for method. got=%d, want=%d", len(args), len(fn.Fn.Parameters.List))
+			} else if fn.Fn.Parameters == nil && len(args) != 0 {
+				return e.newError(call.Pos(), "wrong number of arguments for method. got=%d, want=0", len(args))
+			}
+		}
+
+		funcName := "<anonymous>"
+		if fn.Fn.Name != nil {
+			funcName = fn.Fn.Name.Name
+		}
+		frame := object.CallFrame{Pos: call.Pos(), Function: funcName}
+		e.callStack = append(e.callStack, frame)
+		defer func() { e.callStack = e.callStack[:len(e.callStack)-1] }()
+
+		extendedEnv := e.extendMethodEnv(fn, args)
+		evaluated := e.Eval(fn.Fn.Body, extendedEnv)
+		return e.unwrapReturnValue(evaluated)
+
 	case *object.Builtin:
 		return fn.Fn(e.fset, call.Pos(), args...)
 	default:
 		return e.newError(call.Pos(), "not a function: %s", fn.Type())
 	}
+}
+
+func (e *Evaluator) extendMethodEnv(method *object.BoundMethod, args []object.Object) *object.Environment {
+	env := object.NewEnclosedEnvironment(method.Fn.Env)
+
+	// Bind the receiver variable (e.g., 's' in 'func (s MyType) ...')
+	if method.Fn.Recv != nil && len(method.Fn.Recv.List) == 1 {
+		recvField := method.Fn.Recv.List[0]
+		if len(recvField.Names) > 0 {
+			env.Set(recvField.Names[0].Name, method.Receiver)
+		}
+	}
+
+	// Bind the method arguments (handles variadic)
+	fn := method.Fn
+	if fn.Parameters == nil {
+		return env
+	}
+
+	if fn.IsVariadic() {
+		// Bind non-variadic parameters
+		for i, param := range fn.Parameters.List[:len(fn.Parameters.List)-1] {
+			for _, paramName := range param.Names {
+				env.Set(paramName.Name, args[i])
+			}
+		}
+
+		// Bind variadic parameter
+		lastParam := fn.Parameters.List[len(fn.Parameters.List)-1]
+		variadicArgs := args[len(fn.Parameters.List)-1:]
+		arr := &object.Array{Elements: make([]object.Object, len(variadicArgs))}
+		for i, arg := range variadicArgs {
+			arr.Elements[i] = arg
+		}
+		env.Set(lastParam.Names[0].Name, arr)
+	} else {
+		// Bind regular parameters
+		for i, param := range fn.Parameters.List {
+			for _, paramName := range param.Names {
+				env.Set(paramName.Name, args[i])
+			}
+		}
+	}
+
+	return env
 }
 
 func (e *Evaluator) extendFunctionEnv(fn *object.Function, args []object.Object) *object.Environment {
@@ -1157,13 +1227,57 @@ func (e *Evaluator) Eval(node ast.Node, env *object.Environment) object.Object {
 	case *ast.DeclStmt:
 		return e.Eval(n.Decl, env)
 	case *ast.FuncDecl:
+		// Regular function declaration
+		if n.Recv == nil {
+			fn := &object.Function{
+				Name:       n.Name,
+				Parameters: n.Type.Params,
+				Body:       n.Body,
+				Env:        env,
+			}
+			env.Set(n.Name.Name, fn)
+			return nil
+		}
+
+		// Method declaration
+		if len(n.Recv.List) != 1 {
+			return e.newError(n.Pos(), "method receiver must have exactly one argument")
+		}
+		recvField := n.Recv.List[0]
+
+		var typeName string
+		switch recvType := recvField.Type.(type) {
+		case *ast.Ident:
+			typeName = recvType.Name
+		case *ast.StarExpr:
+			if ident, ok := recvType.X.(*ast.Ident); ok {
+				typeName = ident.Name
+			} else {
+				return e.newError(recvType.Pos(), "invalid receiver type: expected identifier")
+			}
+		default:
+			return e.newError(recvField.Type.Pos(), "unsupported receiver type: %T", recvField.Type)
+		}
+
+		obj, ok := env.Get(typeName)
+		if !ok {
+			return e.newError(n.Pos(), "type '%s' not defined for method receiver", typeName)
+		}
+
+		def, ok := obj.(*object.StructDefinition)
+		if !ok {
+			return e.newError(n.Pos(), "receiver for method '%s' is not a struct type", n.Name.Name)
+		}
+
 		fn := &object.Function{
 			Name:       n.Name,
+			Recv:       n.Recv, // Store receiver info
 			Parameters: n.Type.Params,
 			Body:       n.Body,
-			Env:        env,
+			Env:        env, // The environment where the method is defined.
 		}
-		env.Set(n.Name.Name, fn)
+
+		def.Methods[n.Name.Name] = fn
 		return nil
 	case *ast.ReturnStmt:
 		if len(n.Results) == 0 {
@@ -1404,8 +1518,9 @@ func (e *Evaluator) evalGenDecl(n *ast.GenDecl, env *object.Environment) object.
 				return e.newError(typeSpec.Pos(), "unsupported type declaration: not a struct")
 			}
 			def := &object.StructDefinition{
-				Name:   typeSpec.Name,
-				Fields: structType.Fields.List,
+				Name:    typeSpec.Name,
+				Fields:  structType.Fields.List,
+				Methods: make(map[string]*object.Function), // Initialize methods map
 			}
 			env.Set(typeSpec.Name.Name, def)
 		}
@@ -1823,6 +1938,28 @@ func (e *Evaluator) wrapGoFunction(pos token.Pos, funcVal reflect.Value) object.
 	}
 }
 
+// evalStructSelector evaluates a selector expression on a struct instance.
+// It checks for fields first, then methods.
+func (e *Evaluator) evalStructSelector(n *ast.SelectorExpr, instance *object.StructInstance) object.Object {
+	// Fields take precedence over methods.
+	if val, found := e.findFieldInStruct(instance, n.Sel.Name); found {
+		return val
+	}
+	// If no field, check for a method.
+	if method, ok := instance.Def.Methods[n.Sel.Name]; ok {
+		// Check if the method has a value or pointer receiver.
+		recvType := method.Recv.List[0].Type
+		if _, isPointer := recvType.(*ast.StarExpr); isPointer {
+			// Pointer receiver, so bind the instance directly.
+			return &object.BoundMethod{Fn: method, Receiver: instance}
+		} else {
+			// Value receiver, so bind a copy of the instance.
+			return &object.BoundMethod{Fn: method, Receiver: instance.Copy()}
+		}
+	}
+	return e.newError(n.Pos(), "undefined field or method '%s' on struct '%s'", n.Sel.Name, instance.Def.Name.Name)
+}
+
 func (e *Evaluator) evalSelectorExpr(n *ast.SelectorExpr, env *object.Environment) object.Object {
 	left := e.Eval(n.X, env)
 	if isError(left) {
@@ -1887,22 +2024,15 @@ func (e *Evaluator) evalSelectorExpr(n *ast.SelectorExpr, env *object.Environmen
 		return member
 
 	case *object.StructInstance:
-		// Use the new recursive search function.
-		if val, found := e.findFieldInStruct(l, n.Sel.Name); found {
-			return val
-		}
-		return e.newError(n.Sel.Pos(), "undefined field '%s' on struct '%s'", n.Sel.Name, l.Def.Name.Name)
+		return e.evalStructSelector(n, l)
 
 	case *object.Pointer:
 		if l.Element == nil || *l.Element == nil {
 			return e.newError(n.Pos(), "nil pointer dereference")
 		}
-		// Automatically dereference pointers for struct field access.
+		// Automatically dereference pointers for struct field/method access.
 		if instance, ok := (*l.Element).(*object.StructInstance); ok {
-			if val, found := e.findFieldInStruct(instance, n.Sel.Name); found {
-				return val
-			}
-			return e.newError(n.Sel.Pos(), "undefined field '%s' on struct '%s'", n.Sel.Name, instance.Def.Name.Name)
+			return e.evalStructSelector(n, instance)
 		}
 		return e.newError(n.Pos(), "base of selector expression is not a struct or pointer to struct")
 	case *object.GoValue:

@@ -216,3 +216,10 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     - [x] The `eval` loop will need to process multiple files and manage their scopes.
     - [x] The `import` statement evaluation logic needs to be updated to handle file-local aliases (e.g., `import str "strings"` in `a.go` should not conflict with `import str "net/http"` in `b.go`).
     - [x] The `SymbolRegistry` will remain global, but the resolution of an import alias to a registered package path must become local to each file's AST.
+
+### Refactoring
+- [x] **Modernize `examples/minigo`**: Replace the old `minigo` implementation with a new one based on the `minigo2` library. This includes:
+    - [x] Deleting the now-redundant `examples/minigo2` directory.
+    - [x] Deleting the old implementation files in `examples/minigo`.
+    - [x] Creating a new `main.go` in `examples/minigo` to act as a CLI for the `minigo2` engine.
+    - [x] Updating `examples/README.md` and `examples/minigo/README.md` to reflect the changes.

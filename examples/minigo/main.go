@@ -2,45 +2,55 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
+	"log"
 	"os"
+	"strings"
 
-	// "github.com/podhmo/go-scan/scanner" // Will be used later
-
-	"github.com/podhmo/go-scan/examples/minigo/stringutils"
+	"github.com/podhmo/go-scan/minigo2"
 )
 
 func main() {
-	// Call stringutils.Concat and print the result
-	s1 := "Hello, "
-	s2 := "World!"
-	concatenatedString := stringutils.Concat(s1, s2)
-	fmt.Println("Concatenated string:", concatenatedString)
-
-	entryPoint := flag.String("entry", "main", "entry point function name")
-	flag.Parse()
-
-	if len(flag.Args()) == 0 {
-		fmt.Fprintln(os.Stderr, "Usage: minigo [options] <filename>")
+	if len(os.Args) < 2 {
+		fmt.Fprintln(os.Stderr, "Usage: minigo <scriptfile>")
 		os.Exit(1)
 	}
+	filename := os.Args[1]
 
-	filename := flag.Args()[0]
-	_, err := os.Stat(filename)
-	if os.IsNotExist(err) {
-		fmt.Fprintf(os.Stderr, "Error: file %s not found\n", filename)
-		os.Exit(1)
-	}
-
-	fmt.Printf("Interpreting %s, entry point: %s\n", filename, *entryPoint)
-
-	interpreter := NewInterpreter()
-	// Store the initial environment, which might be useful for inspection or a REPL later.
-	// For now, LoadAndRun creates its own scope for the main function.
-	err = interpreter.LoadAndRun(context.Background(), filename, *entryPoint)
+	source, err := os.ReadFile(filename)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error running interpreter: %v\n", err)
+		log.Fatalf("Error reading script file: %v", err)
+	}
+
+	// Create a new interpreter.
+	// The minigo2 library is located in the parent project, so we use a relative path.
+	interp, err := minigo2.NewInterpreter()
+	if err != nil {
+		log.Fatalf("Failed to create interpreter: %v", err)
+	}
+
+	// Register some useful Go functions to be available in the script.
+	interp.Register("fmt", map[string]any{
+		"Sprintf": fmt.Sprintf,
+	})
+	interp.Register("strings", map[string]any{
+		"ToUpper": strings.ToUpper,
+		"ToLower": strings.ToLower,
+		"Join":    strings.Join,
+	})
+
+	// Load the script file.
+	if err := interp.LoadFile(filename, source); err != nil {
+		log.Fatalf("Failed to load script: %v", err)
+	}
+
+	// Evaluate the loaded script.
+	result, err := interp.Eval(context.Background())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Runtime error:\n%v\n", err)
 		os.Exit(1)
 	}
+
+	// Print the final result of the script execution.
+	fmt.Println(result.Value.Inspect())
 }

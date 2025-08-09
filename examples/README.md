@@ -69,17 +69,17 @@ This example demonstrates how `go-scan` can be used to build a sophisticated and
 
 ## minigo
 
-The `minigo` example features a miniature Go interpreter, illustrating how `go-scan` can be utilized for parsing and semantic analysis in language tooling.
+The `minigo` example is a command-line interface for `minigo2`, a miniature Go interpreter built to demonstrate and test the `go-scan` library.
 
-**Purpose**: To serve as a practical demonstration for `go-scan`, particularly its ability to analyze Go source for applications like interpreters or static analysis tools.
+**Purpose**: To provide a runnable example of a language interpreter that uses `go-scan` for its core analysis features, such as resolving imported Go packages and their symbols on the fly.
 
 **Key Features**:
--   Parses a subset of Go-like syntax into an AST.
--   Leverages `go-scan` for tasks such as type information extraction and cross-package type resolution.
--   Highlights `go-scan`'s **lazy loading** mechanism for efficient handling of type definitions from different packages.
--   Demonstrates a "lazy import specification": imported packages are only fully parsed when their symbols are referenced, optimizing resource usage.
+-   **Powered by `minigo2`**: The actual interpreter logic resides in the `minigo2` package in the parent directory, not in the example itself.
+-   **Dynamic Go Symbol Resolution**: It leverages `go-scan` to dynamically load information about functions and constants from other Go packages that are `import`ed by a script.
+-   **Lazy Loading**: The underlying `minigo2` engine uses `go-scan`'s lazy-loading mechanism, meaning imported Go packages are only fully scanned when their symbols are actually referenced in the script.
+-   **File-Scoped Imports**: Demonstrates support for both aliased (`import f "fmt"`) and dot (`import . "strings"`) imports, with the scope of the import correctly constrained to the file in which it is declared.
 
-This example showcases `go-scan`'s capabilities in building complex Go language tools, with a focus on efficient dependency handling through lazy loading and selective parsing.
+This example showcases how `go-scan` can be used as a backbone for complex language tooling that needs to interact with and understand other Go code.
 
 ---
 

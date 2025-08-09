@@ -93,14 +93,16 @@ var builtins = map[string]*object.Builtin{
 type Evaluator struct {
 	fset      *token.FileSet
 	scanner   *goscan.Scanner
+	registry  *object.SymbolRegistry
 	callStack []object.CallFrame
 }
 
 // New creates a new Evaluator.
-func New(fset *token.FileSet, scanner *goscan.Scanner) *Evaluator {
+func New(fset *token.FileSet, scanner *goscan.Scanner, registry *object.SymbolRegistry) *Evaluator {
 	return &Evaluator{
 		fset:      fset,
 		scanner:   scanner,
+		registry:  registry,
 		callStack: make([]object.CallFrame, 0),
 	}
 }
@@ -412,6 +414,61 @@ func (e *Evaluator) nativeToValue(val reflect.Value) object.Object {
 // objectToReflectValue converts a minigo2 object to a reflect.Value of a specific Go type.
 // This is a crucial helper for map indexing and function calls into Go code.
 func (e *Evaluator) objectToReflectValue(obj object.Object, targetType reflect.Type) (reflect.Value, error) {
+	// Handle target type of interface{} separately.
+	// We convert the minigo2 object to its "best" Go equivalent.
+	if targetType.Kind() == reflect.Interface && targetType.NumMethod() == 0 {
+		var nativeVal any
+		switch o := obj.(type) {
+		case *object.Integer:
+			nativeVal = o.Value
+		case *object.String:
+			nativeVal = o.Value
+		case *object.Boolean:
+			nativeVal = o.Value
+		case *object.Null:
+			nativeVal = nil
+		case *object.GoValue:
+			nativeVal = o.Value.Interface()
+		case *object.Array:
+			// A simple conversion to []any. More complex conversions would need more logic.
+			slice := make([]any, len(o.Elements))
+			for i, elem := range o.Elements {
+				// This is a recursive call, but it's safe because the target type is concrete.
+				if val, err := e.objectToNativeGoValue(elem); err == nil {
+					slice[i] = val
+				} else {
+					return reflect.Value{}, fmt.Errorf("cannot convert array element %d to Go value: %w", i, err)
+				}
+			}
+			nativeVal = slice
+		default:
+			return reflect.Value{}, fmt.Errorf("unsupported conversion from %s to interface{}", obj.Type())
+		}
+		if nativeVal == nil {
+			return reflect.Zero(targetType), nil
+		}
+		// We have the native Go value; now we need to put it into a reflect.Value
+		// of the target interface type.
+		val := reflect.ValueOf(nativeVal)
+		if !val.Type().AssignableTo(targetType) {
+			// This can happen if nativeVal is e.g. int64 and targetType is a named interface.
+			// For interface{}, this should generally not fail.
+			return reflect.Value{}, fmt.Errorf("value of type %T is not assignable to interface type %s", nativeVal, targetType)
+		}
+		return val, nil
+	}
+
+	// If the object is already a GoValue, try to use its underlying value directly if compatible.
+	if goVal, ok := obj.(*object.GoValue); ok {
+		if goVal.Value.Type().AssignableTo(targetType) {
+			return goVal.Value, nil
+		}
+		if goVal.Value.Type().ConvertibleTo(targetType) {
+			return goVal.Value.Convert(targetType), nil
+		}
+		// Fall through to allow conversions like minigo2 Integer -> Go float64
+	}
+
 	switch o := obj.(type) {
 	case *object.Integer:
 		// Create a reflect.Value of the target type and set its value.
@@ -419,6 +476,12 @@ func (e *Evaluator) objectToReflectValue(obj object.Object, targetType reflect.T
 		switch targetType.Kind() {
 		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 			val.SetInt(o.Value)
+			return val, nil
+		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+			val.SetUint(uint64(o.Value))
+			return val, nil
+		case reflect.Float32, reflect.Float64:
+			val.SetFloat(float64(o.Value))
 			return val, nil
 		default:
 			return reflect.Value{}, fmt.Errorf("cannot convert integer to %s", targetType)
@@ -453,6 +516,34 @@ func (e *Evaluator) objectToReflectValue(obj object.Object, targetType reflect.T
 	}
 
 	return reflect.Value{}, fmt.Errorf("unsupported conversion from %s to %s", obj.Type(), targetType)
+}
+
+// objectToNativeGoValue converts a minigo2 object to its most natural Go counterpart.
+func (e *Evaluator) objectToNativeGoValue(obj object.Object) (any, error) {
+	switch o := obj.(type) {
+	case *object.Integer:
+		return o.Value, nil
+	case *object.String:
+		return o.Value, nil
+	case *object.Boolean:
+		return o.Value, nil
+	case *object.Null:
+		return nil, nil
+	case *object.GoValue:
+		return o.Value.Interface(), nil
+	case *object.Array:
+		slice := make([]any, len(o.Elements))
+		for i, elem := range o.Elements {
+			var err error
+			slice[i], err = e.objectToNativeGoValue(elem)
+			if err != nil {
+				return nil, fmt.Errorf("failed to convert element %d in array: %w", i, err)
+			}
+		}
+		return slice, nil
+	default:
+		return nil, fmt.Errorf("cannot convert object type %s to a native Go value", obj.Type())
+	}
 }
 
 // evalMixedBoolInfixExpression handles infix expressions for combinations of Boolean and GoValue(bool).
@@ -1206,6 +1297,29 @@ func (e *Evaluator) evalGenDecl(n *ast.GenDecl, env *object.Environment) object.
 		var lastValues []ast.Expr // For const value carry-over
 		for iotaValue, spec := range n.Specs {
 			valueSpec := spec.(*ast.ValueSpec)
+
+			// Handle multi-return assignment: var a, b = f()
+			if n.Tok == token.VAR && len(valueSpec.Names) > 1 && len(valueSpec.Values) == 1 {
+				val := e.Eval(valueSpec.Values[0], env)
+				if isError(val) {
+					return val
+				}
+				tuple, ok := val.(*object.Tuple)
+				if !ok {
+					return e.newError(valueSpec.Pos(), "multi-value assignment requires a multi-value return, but got %s", val.Type())
+				}
+				if len(valueSpec.Names) != len(tuple.Elements) {
+					return e.newError(valueSpec.Pos(), "assignment mismatch: %d variables but %d values", len(valueSpec.Names), len(tuple.Elements))
+				}
+				for i, name := range valueSpec.Names {
+					if name.Name == "_" {
+						continue
+					}
+					env.Set(name.Name, tuple.Elements[i])
+				}
+				continue // Move to the next spec in the GenDecl
+			}
+
 			// Handle const value carry-over
 			if n.Tok == token.CONST {
 				if len(valueSpec.Values) == 0 {
@@ -1555,20 +1669,8 @@ func (e *Evaluator) constantInfoToObject(c *goscan.ConstantInfo) (object.Object,
 
 // findSymbolInPackageInfo searches for a symbol within a pre-loaded PackageInfo.
 // It does not trigger new scans. It returns the found object and a boolean.
+// NOTE: This only resolves constants. Functions must be pre-registered.
 func (e *Evaluator) findSymbolInPackageInfo(pkgInfo *goscan.Package, symbolName string) (object.Object, bool) {
-	// Look in functions
-	for _, fn := range pkgInfo.Functions {
-		if fn.Name == symbolName {
-			b := &object.Builtin{
-				Fn: func(fset *token.FileSet, pos token.Pos, args ...object.Object) object.Object {
-					// This is a placeholder. The real implementation will call the native Go function.
-					return object.NULL
-				},
-			}
-			return b, true
-		}
-	}
-
 	// Look in constants
 	for _, c := range pkgInfo.Constants {
 		if c.Name == symbolName {
@@ -1588,6 +1690,90 @@ func (e *Evaluator) findSymbolInPackageInfo(pkgInfo *goscan.Package, symbolName 
 	return nil, false
 }
 
+func (e *Evaluator) wrapGoFunction(pos token.Pos, funcVal reflect.Value) object.Object {
+	funcType := funcVal.Type()
+	return &object.Builtin{
+		Fn: func(fset *token.FileSet, callPos token.Pos, args ...object.Object) object.Object {
+			// Check arg count
+			numIn := funcType.NumIn()
+			isVariadic := funcType.IsVariadic()
+			if isVariadic {
+				if len(args) < numIn-1 {
+					return e.newError(pos, "wrong number of arguments for variadic function: got %d, want at least %d", len(args), numIn-1)
+				}
+			} else {
+				if len(args) != numIn {
+					return e.newError(pos, "wrong number of arguments: got %d, want %d", len(args), numIn)
+				}
+			}
+
+			// Convert args
+			in := make([]reflect.Value, len(args))
+			for i, arg := range args {
+				var targetType reflect.Type
+				if isVariadic && i >= funcType.NumIn()-1 {
+					// For variadic part, target the element type of the slice
+					targetType = funcType.In(funcType.NumIn() - 1).Elem()
+				} else {
+					targetType = funcType.In(i)
+				}
+				val, err := e.objectToReflectValue(arg, targetType)
+				if err != nil {
+					return e.newError(pos, "argument %d type mismatch: %v", i+1, err)
+				}
+				in[i] = val
+			}
+
+			// Call the function
+			var results []reflect.Value
+			// Use a deferred function to recover from panics in the called Go function.
+			defer func() {
+				if r := recover(); r != nil {
+					// Create the error object, but don't assign it to results here
+					// as it might be overwritten by the return.
+					errObj := e.newError(pos, "panic in called Go function: %v", r)
+					// Set results to a slice containing the error to ensure it's propagated.
+					results = []reflect.Value{reflect.ValueOf(errObj)}
+				}
+			}()
+
+			results = funcVal.Call(in)
+
+			// Handle results
+			numOut := funcType.NumOut()
+			if numOut == 0 {
+				return object.NULL
+			}
+
+			// Check for Go-style error return
+			lastResult := results[len(results)-1]
+			if lastResult.Type().Implements(reflect.TypeOf((*error)(nil)).Elem()) {
+				if !lastResult.IsNil() {
+					return e.newError(pos, "error from called Go function: %v", lastResult.Interface())
+				}
+			}
+
+			// Convert all results to minigo2 objects. Replace nil error with NULL.
+			resultObjects := make([]object.Object, numOut)
+			for i := 0; i < numOut; i++ {
+				if i == numOut-1 && lastResult.Type().Implements(reflect.TypeOf((*error)(nil)).Elem()) && results[i].IsNil() {
+					resultObjects[i] = object.NULL
+				} else {
+					resultObjects[i] = e.nativeToValue(results[i])
+				}
+			}
+
+			// If the function only ever returns one value, return it directly.
+			if numOut == 1 {
+				return resultObjects[0]
+			}
+
+			// Otherwise, always return a tuple.
+			return &object.Tuple{Elements: resultObjects}
+		},
+	}
+}
+
 func (e *Evaluator) evalSelectorExpr(n *ast.SelectorExpr, env *object.Environment) object.Object {
 	left := e.Eval(n.X, env)
 	if isError(left) {
@@ -1602,7 +1788,21 @@ func (e *Evaluator) evalSelectorExpr(n *ast.SelectorExpr, env *object.Environmen
 			return member
 		}
 
-		// 2. Check already loaded info.
+		// 2. Check the registry for pre-registered symbols.
+		if symbol, ok := e.registry.Lookup(l.Path, memberName); ok {
+			var member object.Object
+			val := reflect.ValueOf(symbol)
+			if val.Kind() == reflect.Func {
+				member = e.wrapGoFunction(n.Sel.Pos(), val)
+			} else {
+				member = &object.GoValue{Value: val}
+			}
+			l.Members[memberName] = member // Cache it
+			return member
+		}
+
+		// 3. Fallback to scanning source files for constants if not in registry.
+		// Check already loaded info.
 		if l.Info != nil {
 			member, found := e.findSymbolInPackageInfo(l.Info, memberName)
 			if found {
@@ -1614,18 +1814,18 @@ func (e *Evaluator) evalSelectorExpr(n *ast.SelectorExpr, env *object.Environmen
 			}
 		}
 
-		// 3. Symbol not in loaded info, try scanning remaining files.
+		// 4. Symbol not in loaded info, try scanning remaining files.
 		cumulativePkgInfo, err := e.scanner.FindSymbolInPackage(context.Background(), l.Path, memberName)
 		if err != nil {
 			// Not found in any unscanned files either. It's undefined.
 			return e.newError(n.Sel.Pos(), "undefined: %s.%s", l.Name, memberName)
 		}
 
-		// 4. Symbol was found. `cumulativePkgInfo` contains everything scanned so far.
+		// 5. Symbol was found. `cumulativePkgInfo` contains everything scanned so far.
 		// Update the package object with the richer info.
 		l.Info = cumulativePkgInfo
 
-		// 5. Now that info is updated, the symbol must be in it. Find it, cache it, return it.
+		// 6. Now that info is updated, the symbol must be in it. Find it, cache it, return it.
 		member, found := e.findSymbolInPackageInfo(l.Info, memberName)
 		if !found {
 			// This should be an impossible state if FindSymbolInPackage works correctly.

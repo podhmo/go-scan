@@ -193,10 +193,10 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     - [x] Support operations on injected `map` values (e.g., indexing, `for...range`).
     - [x] Support field access and method calls on injected `struct` values.
 - [x] **Underlying Type Handling**: Add an option or default behavior to treat Go `enum` types (e.g., `type MyEnum int`) as their underlying type within the script, to facilitate sharing constants.
-- [ ] Implement the logic to wrap Go functions as `BuiltinFunction` objects.
+- [x] Implement the logic to wrap Go functions as `BuiltinFunction` objects.
 - [x] Support accessing imported variables and constants (e.g., `math.Pi`).
-- [ ] **Advanced Import Handling**:
-    - [x] Implement lazy loading for imports, where symbols are only loaded from a package when they are first accessed.
+- [-] **Advanced Import Handling**:
+    - [x] Implement lazy loading for imports, where symbols are only loaded from a package when they are first accessed via the new `SymbolRegistry`.
     - [ ] Ensure packages are loaded only once, even with complex indirect imports.
     - [ ] Detect and report circular import errors.
     - [ ] Support dot imports (`import . "fmt"`).
@@ -210,3 +210,9 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [ ] Thoroughly test all features, especially pointer handling and the Go interop layer.
 - [ ] Write comprehensive documentation for the API, supported language features, and usage examples.
 - [ ] Ensure `make format` and `make test` pass cleanly.
+
+### Multi-File Project Support in `minigo2`
+- [ ] **File-Scoped Import Resolution**: Refactor the interpreter to support multi-file projects. This requires moving from a single global environment to a model where each file has its own scope for imports.
+    - [ ] The `eval` loop will need to process multiple files and manage their scopes.
+    - [ ] The `import` statement evaluation logic needs to be updated to handle file-local aliases (e.g., `import str "strings"` in `a.go` should not conflict with `import str "net/http"` in `b.go`).
+    - [ ] The `SymbolRegistry` will remain global, but the resolution of an import alias to a registered package path must become local to each file's AST.

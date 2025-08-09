@@ -2,9 +2,9 @@ package minigo2
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
-	"github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/minigo2/object"
 )
 
@@ -52,10 +52,15 @@ import "fmt"
 
 var x = fmt.Println
 `
-	i, err := NewInterpreter(goscan.WithGoModuleResolver())
+	i, err := NewInterpreter()
 	if err != nil {
 		t.Fatalf("NewInterpreter() failed: %v", err)
 	}
+
+	// Register the "fmt" package with the Println function
+	i.Register("fmt", map[string]any{
+		"Println": fmt.Println,
+	})
 
 	_, err = i.Eval(context.Background(), Options{
 		Source:   []byte(input),

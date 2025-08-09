@@ -30,6 +30,8 @@ const (
 	BUILTIN_OBJ           ObjectType = "BUILTIN"
 	STRUCT_DEFINITION_OBJ ObjectType = "STRUCT_DEFINITION"
 	STRUCT_INSTANCE_OBJ   ObjectType = "STRUCT_INSTANCE"
+	INTERFACE_DEFINITION_OBJ ObjectType = "INTERFACE_DEFINITION"
+	INTERFACE_INSTANCE_OBJ   ObjectType = "INTERFACE_INSTANCE"
 	BOUND_METHOD_OBJ      ObjectType = "BOUND_METHOD"
 	POINTER_OBJ           ObjectType = "POINTER"
 	ARRAY_OBJ             ObjectType = "ARRAY"
@@ -199,6 +201,7 @@ type Function struct {
 	Name       *ast.Ident
 	Recv       *ast.FieldList // nil for regular functions
 	Parameters *ast.FieldList
+	Results    *ast.FieldList
 	Body       *ast.BlockStmt
 	Env        *Environment
 }
@@ -290,6 +293,56 @@ func (sd *StructDefinition) Type() ObjectType { return STRUCT_DEFINITION_OBJ }
 func (sd *StructDefinition) Inspect() string {
 	return fmt.Sprintf("struct %s", sd.Name.String())
 }
+
+// --- Interface Definition Object ---
+
+// InterfaceDefinition represents the definition of an interface type.
+type InterfaceDefinition struct {
+	Name    *ast.Ident
+	Methods *ast.FieldList
+}
+
+// Type returns the type of the InterfaceDefinition object.
+func (id *InterfaceDefinition) Type() ObjectType { return INTERFACE_DEFINITION_OBJ }
+
+// Inspect returns a string representation of the interface definition.
+func (id *InterfaceDefinition) Inspect() string {
+	var out bytes.Buffer
+	methods := []string{}
+	if id.Methods != nil {
+		for _, method := range id.Methods.List {
+			if len(method.Names) > 0 {
+				// This is a simplified representation. A full one would need to format the type.
+				methods = append(methods, method.Names[0].Name+"()")
+			}
+		}
+	}
+	out.WriteString("interface { ")
+	out.WriteString(strings.Join(methods, "; "))
+	out.WriteString(" }")
+	return out.String()
+}
+
+// --- Interface Instance Object ---
+
+// InterfaceInstance represents a value that is stored in a variable of an interface type.
+// It holds a reference to the interface definition and the concrete object that implements it.
+type InterfaceInstance struct {
+	Def   *InterfaceDefinition
+	Value Object
+}
+
+// Type returns the type of the InterfaceInstance object.
+func (ii *InterfaceInstance) Type() ObjectType { return INTERFACE_INSTANCE_OBJ }
+
+// Inspect returns a string representation of the underlying concrete value.
+func (ii *InterfaceInstance) Inspect() string {
+	if ii.Value == nil || ii.Value.Type() == NIL_OBJ {
+		return "nil"
+	}
+	return ii.Value.Inspect()
+}
+
 
 // --- Bound Method Object ---
 
@@ -525,6 +578,11 @@ func (e *Error) Inspect() string {
 // is part of the evaluator, not the object system itself.
 func (e *Error) AttachFileSet(fset *token.FileSet) {
 	e.fset = fset
+}
+
+// Error makes it a valid Go error.
+func (e *Error) Error() string {
+	return e.Message
 }
 
 // getSourceLine reads a specific line from a file.

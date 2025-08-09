@@ -529,6 +529,40 @@ var (
 
 // --- Environment ---
 
+// SymbolRegistry holds registered Go symbols (functions, variables) that can be
+// imported by scripts.
+type SymbolRegistry struct {
+	packages map[string]map[string]any
+}
+
+// NewSymbolRegistry creates a new, empty symbol registry.
+func NewSymbolRegistry() *SymbolRegistry {
+	return &SymbolRegistry{
+		packages: make(map[string]map[string]any),
+	}
+}
+
+// Register adds a collection of symbols to a given package path.
+// If the package path already exists, the new symbols are merged with the existing ones.
+func (r *SymbolRegistry) Register(pkgPath string, symbols map[string]any) {
+	if _, ok := r.packages[pkgPath]; !ok {
+		r.packages[pkgPath] = make(map[string]any)
+	}
+	for name, symbol := range symbols {
+		r.packages[pkgPath][name] = symbol
+	}
+}
+
+// Lookup finds a symbol in the registry by its package path and name.
+func (r *SymbolRegistry) Lookup(pkgPath, name string) (any, bool) {
+	if pkg, ok := r.packages[pkgPath]; ok {
+		if symbol, ok := pkg[name]; ok {
+			return symbol, true
+		}
+	}
+	return nil, false
+}
+
 // Environment holds the bindings for variables and functions.
 type Environment struct {
 	store  map[string]*Object

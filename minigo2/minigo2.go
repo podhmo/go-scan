@@ -16,8 +16,9 @@ import (
 // It holds the state of the interpreter, including the scanner for package resolution
 // and the root environment for script execution.
 type Interpreter struct {
-	scanner *goscan.Scanner
-	Env     *object.Environment
+	scanner  *goscan.Scanner
+	Env      *object.Environment
+	Registry *object.SymbolRegistry
 }
 
 // NewInterpreter creates a new interpreter instance.
@@ -28,9 +29,17 @@ func NewInterpreter(options ...goscan.ScannerOption) (*Interpreter, error) {
 		return nil, fmt.Errorf("initializing scanner: %w", err)
 	}
 	return &Interpreter{
-		scanner: scanner,
-		Env:     object.NewEnvironment(),
+		scanner:  scanner,
+		Env:      object.NewEnvironment(),
+		Registry: object.NewSymbolRegistry(),
 	}, nil
+}
+
+// Register makes Go symbols (variables or functions) available for import by a script.
+// For example, `interp.Register("strings", map[string]any{"ToUpper": strings.ToUpper})`
+// allows a script to `import "strings"` and call `strings.ToUpper()`.
+func (i *Interpreter) Register(pkgPath string, symbols map[string]any) {
+	i.Registry.Register(pkgPath, symbols)
 }
 
 // Options configures the interpreter environment.
@@ -67,7 +76,7 @@ func (i *Interpreter) Eval(ctx context.Context, opts Options) (*Result, error) {
 		return nil, fmt.Errorf("parsing script: %w", err)
 	}
 
-	eval := evaluator.New(fset, i.scanner)
+	eval := evaluator.New(fset, i.scanner, i.Registry)
 	var lastVal object.Object
 	for _, decl := range node.Decls {
 		lastVal = eval.Eval(decl, i.Env)

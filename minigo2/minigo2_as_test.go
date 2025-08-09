@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/podhmo/go-scan/minigo2/testdata/deeper"
 	"github.com/podhmo/go-scan/minigo2/testdata/shared"
 )
 
@@ -157,9 +158,24 @@ func TestResult_As(t *testing.T) {
 			name: "unmarshal cross-package struct",
 			script: `package main
 import "github.com/podhmo/go-scan/minigo2/testdata/shared"
-var result = shared.Point{X: 10, Y: 20}`,
-			target: new(shared.Point),
-			want:   shared.Point{X: 10, Y: 20},
+var result = shared.Container{Name: "test"}`,
+			target: new(shared.Container),
+			want:   shared.Container{Name: "test"},
+		},
+		{
+			name: "unmarshal transitive-dependency struct",
+			script: `package main
+import "github.com/podhmo/go-scan/minigo2/testdata/shared"
+import "github.com/podhmo/go-scan/minigo2/testdata/deeper"
+var result = shared.Container{
+	Name: "transitive",
+	Payload: deeper.Payload{Value: "nested-value"},
+}`,
+			target: new(shared.Container),
+			want: shared.Container{
+				Name: "transitive",
+				Payload: deeper.Payload{Value: "nested-value"},
+			},
 		},
 	}
 

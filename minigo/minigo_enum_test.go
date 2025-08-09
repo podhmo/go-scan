@@ -1,4 +1,4 @@
-package minigo2
+package minigo
 
 import (
 	"context"
@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	goscan "github.com/podhmo/go-scan"
-	"github.com/podhmo/go-scan/minigo2/object"
+	"github.com/podhmo/go-scan/minigo/object"
 )
 
 func TestImportedEnumComparison(t *testing.T) {
@@ -20,7 +20,7 @@ func TestImportedEnumComparison(t *testing.T) {
 			name: "integer enum",
 			script: `
 package main
-import "github.com/podhmo/go-scan/minigo2/testdata/enum"
+import "github.com/podhmo/go-scan/minigo/testdata/enum"
 var result = enum.Active == 1
 `,
 			expected: object.TRUE,
@@ -29,7 +29,7 @@ var result = enum.Active == 1
 			name: "integer enum (iota)",
 			script: `
 package main
-import "github.com/podhmo/go-scan/minigo2/testdata/enum"
+import "github.com/podhmo/go-scan/minigo/testdata/enum"
 var result = enum.UntypedActive == 1
 `,
 			expected: object.TRUE,
@@ -38,7 +38,7 @@ var result = enum.UntypedActive == 1
 			name: "string enum",
 			script: `
 package main
-import "github.com/podhmo/go-scan/minigo2/testdata/enum"
+import "github.com/podhmo/go-scan/minigo/testdata/enum"
 var result = enum.StringStatusOK == "ok"
 `,
 			expected: object.TRUE,
@@ -47,7 +47,7 @@ var result = enum.StringStatusOK == "ok"
 			name: "undefined member",
 			script: `
 package main
-import "github.com/podhmo/go-scan/minigo2/testdata/enum"
+import "github.com/podhmo/go-scan/minigo/testdata/enum"
 var result = enum.Undefined
 `,
 			wantErrorMsg: "undefined: enum.Undefined",
@@ -83,7 +83,7 @@ var result = enum.Undefined
 			}
 
 			if err != nil {
-				t.Fatalf("minigo2.Eval() returned an error: %v", err)
+				t.Fatalf("minigo.Eval() returned an error: %v", err)
 			}
 
 			val, ok := interp.globalEnv.Get("result")

@@ -1,12 +1,12 @@
-# minigo2
+# minigo
 
-`minigo2` is a simple, embeddable script engine for Go applications, designed primarily to serve as a powerful and type-safe **configuration language**. It interprets a subset of the Go language, allowing developers to write dynamic configurations with familiar syntax.
+`minigo` is a simple, embeddable script engine for Go applications, designed primarily to serve as a powerful and type-safe **configuration language**. It interprets a subset of the Go language, allowing developers to write dynamic configurations with familiar syntax.
 
 ## Core Concept
 
-The primary goal of `minigo2` is to replace static configuration files like YAML or JSON with dynamic Go-like scripts. Its key feature is the ability to execute a script and **unmarshal the result directly into a Go struct** in a type-safe manner. This provides the flexibility of a real programming language for your configurations, without sacrificing integration with your Go application's static types.
+The primary goal of `minigo` is to replace static configuration files like YAML or JSON with dynamic Go-like scripts. Its key feature is the ability to execute a script and **unmarshal the result directly into a Go struct** in a type-safe manner. This provides the flexibility of a real programming language for your configurations, without sacrificing integration with your Go application's static types.
 
-`minigo2` is powered by `go-scan`, which allows it to understand Go source code without relying on the heavier `go/types` or `go/packages` libraries. It uses an AST-walking interpreter to execute scripts.
+`minigo` is powered by `go-scan`, which allows it to understand Go source code without relying on the heavier `go/types` or `go/packages` libraries. It uses an AST-walking interpreter to execute scripts.
 
 ## Key Features
 
@@ -18,7 +18,7 @@ The primary goal of `minigo2` is to replace static configuration files like YAML
 
 ## Basic Usage
 
-Here is a conceptual example of how to use `minigo2` to load an application configuration.
+Here is a conceptual example of how to use `minigo` to load an application configuration.
 
 #### 1. Your Go Application
 
@@ -31,7 +31,7 @@ package main
 import (
     "context"
     "fmt"
-    "github.com/podhmo/go-scan/minigo2"
+    "github.com/podhmo/go-scan/minigo"
 )
 
 // This is the Go struct we want to populate from the script.
@@ -47,7 +47,7 @@ func GetDefaultPort() string {
 }
 
 func main() {
-    // The minigo2 script, acting as a configuration file.
+    // The minigo script, acting as a configuration file.
     script := `
 package main
 
@@ -73,7 +73,7 @@ func GetConfig() {
     }
 
     // Run the interpreter.
-    result, err := minigo2.Run(context.Background(), minigo2.Options{
+    result, err := minigo.Run(context.Background(), minigo.Options{
         Source:     []byte(script),
         Filename:   "config.mgo",
         EntryPoint: "GetConfig",

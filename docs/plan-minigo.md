@@ -1,40 +1,40 @@
-# Plan for minigo2 Implementation
+# Plan for minigo Implementation
 
 ## 1. Introduction and Concept
 
-**minigo2** will be a reimplementation of the `minigo` concept, evolving from a simple example into a robust, embeddable script engine for Go applications. The primary use case for `minigo2` is to serve as a **configuration language**. It will allow developers to write configuration files using a subset of Go syntax, which can then be interpreted at runtime by a Go application.
+**minigo** will be a reimplementation of the `minigo` concept, evolving from a simple example into a robust, embeddable script engine for Go applications. The primary use case for `minigo` is to serve as a **configuration language**. It will allow developers to write configuration files using a subset of Go syntax, which can then be interpreted at runtime by a Go application.
 
-The core goals of `minigo2` are:
+The core goals of `minigo` are:
 - **Readability and Familiarity**: Leverage Go-like syntax for configuration and scripting, making it intuitive for Go developers.
-- **Go Interoperability**: The core feature is the ability to **unmarshal** script results directly into Go structs in a type-safe manner. This allows `minigo2` to act as a powerful, dynamic, and type-safe replacement for static configuration files like JSON or YAML.
+- **Go Interoperability**: The core feature is the ability to **unmarshal** script results directly into Go structs in a type-safe manner. This allows `minigo` to act as a powerful, dynamic, and type-safe replacement for static configuration files like JSON or YAML.
 - **Rich Type System**: Utilize `go-scan` to understand Go types defined within the host application. This enables the interpreter to perform more intelligent operations and provide better error messages.
 - **Developer Experience**: Provide clear, human-readable stack traces on errors to simplify debugging of scripts.
 - **Simplicity**: Prioritize clarity of implementation and ease of use over raw execution speed. The engine does not need to be a JIT or a highly optimized AOT compiler.
 
-`minigo2` will **not** be a full Go implementation. It will interpret a curated subset of the language focused on its role as a configuration and scripting engine. It will strictly avoid `go/packages` and `go/types` in favor of the lazy, AST-based approach provided by `go-scan`.
+`minigo` will **not** be a full Go implementation. It will interpret a curated subset of the language focused on its role as a configuration and scripting engine. It will strictly avoid `go/packages` and `go/types` in favor of the lazy, AST-based approach provided by `go-scan`.
 
 ### Unsupported Features
 
-To maintain simplicity and focus on its core use case, `minigo2` will intentionally not support certain advanced Go features. While the Go parser will recognize these syntactic constructs, the `minigo2` interpreter will produce a runtime error when it encounters them. This ensures that scripts remain within the bounds of the engine's capabilities.
+To maintain simplicity and focus on its core use case, `minigo` will intentionally not support certain advanced Go features. While the Go parser will recognize these syntactic constructs, the `minigo` interpreter will produce a runtime error when it encounters them. This ensures that scripts remain within the bounds of the engine's capabilities.
 
 The following features are explicitly **unsupported**:
 
--   **Concurrency**: `go` statements, `chan` types, and `select` statements. `minigo2` is a single-threaded interpreter.
+-   **Concurrency**: `go` statements, `chan` types, and `select` statements. `minigo` is a single-threaded interpreter.
 -   **Defer, Panic, and Recover**: The `defer` statement and the `panic`/`recover` mechanism are not supported. Errors should be handled through explicit return values.
 -   **Interfaces**: Full support for `interface` types, type assertions, and type switches is not a goal. Go interoperability will handle specific interface needs on the host side.
 -   **Unsafe Operations**: The `unsafe` package and its functionalities are not supported.
 
-This clear boundary allows `minigo2` to be a predictable and secure scripting environment for configuration tasks.
+This clear boundary allows `minigo` to be a predictable and secure scripting environment for configuration tasks.
 
 ## 2. Core Architecture
 
-The `minigo2` engine will be composed of several key components:
+The `minigo` engine will be composed of several key components:
 
-1.  **Entry Point (`minigo2.Run`)**: A simple, library-style API for executing scripts. It will accept the script source (as a string or file path) and an optional context for passing in Go variables and functions.
+1.  **Entry Point (`minigo.Run`)**: A simple, library-style API for executing scripts. It will accept the script source (as a string or file path) and an optional context for passing in Go variables and functions.
 
-2.  **Parser (Powered by `go-scan`)**: `minigo2` will not have its own parser. Instead, it will use `go/parser` to get the AST of the script, and a dedicated `goscan.Scanner` instance to resolve types and parse imported Go packages. This allows `minigo2` to directly reuse Go's AST structures (`go/ast`).
+2.  **Parser (Powered by `go-scan`)**: `minigo` will not have its own parser. Instead, it will use `go/parser` to get the AST of the script, and a dedicated `goscan.Scanner` instance to resolve types and parse imported Go packages. This allows `minigo` to directly reuse Go's AST structures (`go/ast`).
 
-3.  **Interpreter Engine (`eval` loop)**: The heart of `minigo2`. This component will be an AST-walking interpreter. It will traverse the AST provided by the parser and evaluate each node recursively.
+3.  **Interpreter Engine (`eval` loop)**: The heart of `minigo`. This component will be an AST-walking interpreter. It will traverse the AST provided by the parser and evaluate each node recursively.
     - It will manage the execution state, including scopes and environments.
     - It will handle control flow statements like `if`, `for`, and function calls.
 
@@ -46,8 +46,8 @@ The `minigo2` engine will be composed of several key components:
 5.  **Environment Model (`object.Environment`)**: A structure for managing variable and symbol lookups. It will support nested scopes to correctly handle global, function, and block-level variables.
 
 6.  **Go Interop Layer (The `reflect` Bridge)**: This is a critical component for the configuration use case.
-    - **Go -> minigo2**: It will allow the host application to "inject" Go variables and functions into the `minigo2` environment. These will be wrapped in `object.GoValue` or a `BuiltinFunction` equivalent.
-    - **minigo2 -> Go**: It will provide a mechanism to extract the result of a script's evaluation and convert it from a `minigo2` internal object back into a Go variable using `reflect.Value.Set`.
+    - **Go -> minigo**: It will allow the host application to "inject" Go variables and functions into the `minigo` environment. These will be wrapped in `object.GoValue` or a `BuiltinFunction` equivalent.
+    - **minigo -> Go**: It will provide a mechanism to extract the result of a script's evaluation and convert it from a `minigo` internal object back into a Go variable using `reflect.Value.Set`.
 
 7.  **Error Handling & Call Stack**: A mechanism to track function calls within the script. If an error occurs, this call stack will be used to generate a formatted, easy-to-read error message, including file names and line numbers.
 
@@ -55,10 +55,10 @@ The `minigo2` engine will be composed of several key components:
 
 ### 3.1. Entry Point API
 
-The primary API will be a function within the `minigo2` package.
+The primary API will be a function within the `minigo` package.
 
 ```go
-package minigo2
+package minigo
 
 // Options configures the interpreter environment.
 type Options struct {
@@ -79,14 +79,14 @@ type Options struct {
 
 // Result holds the outcome of a script execution.
 type Result struct {
-    // Value is the raw minigo2 object returned by the script.
+    // Value is the raw minigo object returned by the script.
     Value object.Object
 
     // Error contains any runtime error, pre-formatted with a stack trace.
     Error error
 }
 
-// Run executes a minigo2 script.
+// Run executes a minigo script.
 func Run(ctx context.Context, opts Options) (*Result, error) {
     // ... implementation ...
 }
@@ -94,14 +94,14 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 
 ### 3.2. Parsing with `go-scan`
 
-- A `minigo2.Interpreter` struct will hold a `goscan.Scanner` instance.
+- A `minigo.Interpreter` struct will hold a `goscan.Scanner` instance.
 - When `Run` is called, it will first use `go/parser.ParseFile` to get the AST for the user's script (`.mgo` file).
 - The interpreter will walk the declarations of the script AST. When it encounters an `import` statement, it will use its internal `goscan.Scanner` to lazily `ScanPackageByImport` when a symbol from that package is first accessed (e.g., `fmt.Println`).
 - `go-scan` will handle finding the package, parsing it, and returning its exported symbols (`PackageInfo`), which the interpreter will then load into its environment.
 
 ### 3.2.1. Lazy Loading of Imports and Symbols
 
-To improve performance and minimize unnecessary file I/O, `minigo2` will adopt a lazy-loading strategy for package imports. Instead of scanning an entire package upon encountering an `import` statement, the work will be deferred until a symbol from that package is actually accessed. This approach is particularly beneficial for a configuration engine, where scripts may import large packages but only use a few constants or functions.
+To improve performance and minimize unnecessary file I/O, `minigo` will adopt a lazy-loading strategy for package imports. Instead of scanning an entire package upon encountering an `import` statement, the work will be deferred until a symbol from that package is actually accessed. This approach is particularly beneficial for a configuration engine, where scripts may import large packages but only use a few constants or functions.
 
 The mechanism will work as follows:
 
@@ -127,21 +127,21 @@ The mechanism will work as follows:
     -   The interpreter updates the original `object.Package` proxy: its `Info` field is populated with the new information, and the resolved symbol is cached in its `Members` map.
     -   The evaluator then proceeds with the original expression, now with the loaded symbol.
 
-This lazy strategy ensures that `minigo2` performs only the minimum work required to execute a script, leading to faster startup times and more efficient resource usage, while the underlying `go-scan` caching mechanism keeps subsequent lookups within the same package fast.
+This lazy strategy ensures that `minigo` performs only the minimum work required to execute a script, leading to faster startup times and more efficient resource usage, while the underlying `go-scan` caching mechanism keeps subsequent lookups within the same package fast.
 
 ### 3.3. Object System and Go Interop
 
-The `object.Object` interface will be the foundation. The key to interoperability is how we bridge `minigo2` objects and Go's `reflect.Value`.
+The `object.Object` interface will be the foundation. The key to interoperability is how we bridge `minigo` objects and Go's `reflect.Value`.
 
-- **From Go to minigo2**:
+- **From Go to minigo**:
   - When `Options.Globals` is provided, the interpreter will iterate through the map.
   - For each entry, it will use `reflect.ValueOf(value)` to get a `reflect.Value`.
   - This `reflect.Value` will be wrapped in a new `object.GoValue{Value: reflect.Value}`.
   - If the value is a Go function, it will be wrapped in a `BuiltinFunction` that uses `reflect.Value.Call` to execute it. Arguments from the script will be converted from `object.Object` to `reflect.Value` before the call.
 
-- **From minigo2 to Go: The Unmarshal Bridge**
+- **From minigo to Go: The Unmarshal Bridge**
 
-  The most critical feature of `minigo2` is its ability to type-safely unmarshal (or decode) the script's result into a Go struct. This is achieved via the `Result.As(target any)` method, which makes `minigo2` a powerful alternative to traditional configuration files.
+  The most critical feature of `minigo` is its ability to type-safely unmarshal (or decode) the script's result into a Go struct. This is achieved via the `Result.As(target any)` method, which makes `minigo` a powerful alternative to traditional configuration files.
 
   ```go
   // --- Go host application code ---
@@ -150,7 +150,7 @@ The `object.Object` interface will be the foundation. The key to interoperabilit
       Port int
   }
 
-  // Assume 'result' is the successful outcome of a minigo2.Run() call
+  // Assume 'result' is the successful outcome of a minigo.Run() call
   var cfg MyConfig
   err := result.As(&cfg) // Pass a pointer to populate the struct
   if err != nil {
@@ -161,18 +161,18 @@ The `object.Object` interface will be the foundation. The key to interoperabilit
 
   The `As()` method works as follows, using the `reflect` package:
 
-  1.  It validates that the `result.Value` is a `minigo2` internal struct object (`object.StructInstance`), which corresponds to a `{...}` literal returned by the script.
+  1.  It validates that the `result.Value` is a `minigo` internal struct object (`object.StructInstance`), which corresponds to a `{...}` literal returned by the script.
       ```go
-      // --- minigo2 script ---
+      // --- minigo script ---
       return { Host: "localhost", Port: 8080 }
       ```
   2.  It takes the `&cfg` pointer and gets a settable `reflect.Value` of the `MyConfig` struct.
-  3.  It iterates through the fields of the `minigo2` struct object (e.g., `Host`, `Port`).
+  3.  It iterates through the fields of the `minigo` struct object (e.g., `Host`, `Port`).
   4.  For each field, it looks for a corresponding public field in the Go `MyConfig` struct.
-  5.  It checks if the `minigo2` object type can be converted to the Go field's type (e.g., `object.String` to `string`, `object.Integer` to `int`).
+  5.  It checks if the `minigo` object type can be converted to the Go field's type (e.g., `object.String` to `string`, `object.Integer` to `int`).
   6.  If the types are compatible, it uses `reflect` to set the value on the Go struct field (e.g., `field.SetString("localhost")`).
 
-  This mechanism allows `minigo2` to function as a type-safe configuration loader, providing a clear advantage over generic scripting engines.
+  This mechanism allows `minigo` to function as a type-safe configuration loader, providing a clear advantage over generic scripting engines.
 
 ### 3.4. Error Handling and Stack Traces
 
@@ -185,10 +185,10 @@ This will be adapted directly from `minigo`.
 
 ## 4. Implementation Phases
 
-The development of `minigo2` will be broken down into the following phases, with more detailed and granular tasks.
+The development of `minigo` will be broken down into the following phases, with more detailed and granular tasks.
 
 1.  **Phase 1: Core Interpreter and Expression Evaluation**
-    - [ ] Set up the project structure (`minigo2/`, `minigo2/object/`, `minigo2/evaluator/`, etc.).
+    - [ ] Set up the project structure (`minigo/`, `minigo/object/`, `minigo/evaluator/`, etc.).
     - [ ] Define the `object.Object` interface and basic types: `Integer`, `String`, `Boolean`, `Nil`.
     - [ ] Implement the core `eval` loop for expression evaluation.
     - [ ] Support basic literals (`123`, `"hello"`).
@@ -253,7 +253,7 @@ package main
 import (
     "context"
     "fmt"
-    "github.com/user/project/minigo2"
+    "github.com/user/project/minigo"
 )
 
 // This is the Go struct we want to populate from the script.
@@ -269,7 +269,7 @@ func GetDefaultPort() string {
 }
 
 func main() {
-    // The minigo2 script, acting as a configuration file.
+    // The minigo script, acting as a configuration file.
     script := `
 package main
 
@@ -295,7 +295,7 @@ func GetConfig() {
     }
 
     // Run the interpreter.
-    result, err := minigo2.Run(context.Background(), minigo2.Options{
+    result, err := minigo.Run(context.Background(), minigo.Options{
         Source:     []byte(script),
         Filename:   "config.mgo",
         EntryPoint: "GetConfig",
@@ -320,13 +320,13 @@ func GetConfig() {
 
 ## 6. Future Application: Code Generation and IDE Support
 
-While the primary goal of `minigo2` is to be a runtime configuration engine, its architecture, particularly its deep integration with `go-scan`, makes it an excellent foundation for more advanced build-time tools, such as a type-safe code generator. This section outlines a potential future goal for `minigo2`: powering a tool similar to `examples/convert` while providing a superior developer experience.
+While the primary goal of `minigo` is to be a runtime configuration engine, its architecture, particularly its deep integration with `go-scan`, makes it an excellent foundation for more advanced build-time tools, such as a type-safe code generator. This section outlines a potential future goal for `minigo`: powering a tool similar to `examples/convert` while providing a superior developer experience.
 
 ### 6.1. Concept
 
-The goal is to allow developers to write mapping logic in a standard `.go` file, have `gopls` provide full autocompletion and type checking for that file, and then use the `minigo2` engine to "interpret" that file not for its runtime behavior, but for its declarative structure, to generate code.
+The goal is to allow developers to write mapping logic in a standard `.go` file, have `gopls` provide full autocompletion and type checking for that file, and then use the `minigo` engine to "interpret" that file not for its runtime behavior, but for its declarative structure, to generate code.
 
-A `go:generate` command would trigger the `minigo2` tool, which would analyze a special mapping file.
+A `go:generate` command would trigger the `minigo` tool, which would analyze a special mapping file.
 
 ### 6.2. IDE-Friendly Mapping Scripts
 
@@ -337,7 +337,7 @@ The key insight is to **not create a custom language**. By defining the mapping 
 ```go
 package main
 
-// This file is a "declarative script" for the minigo2 generator.
+// This file is a "declarative script" for the minigo generator.
 // It is never meant to be run directly with 'go run'.
 
 import (
@@ -345,12 +345,12 @@ import (
     "github.com/my/project/models"
     "github.com/my/project/transport/dto"
 
-    // Import the minigo2 "verbs" for code generation
-    "github.com/podhmo/minigo2/generate"
+    // Import the minigo "verbs" for code generation
+    "github.com/podhmo/minigo/generate"
 )
 
 func main() {
-    // The minigo2 tool will parse this function's body, but not execute it.
+    // The minigo tool will parse this function's body, but not execute it.
     // It looks for calls to the 'generate' API.
     generate.ConverterFor(
         models.User{}, // Pass a zero value of the type to capture it
@@ -366,13 +366,13 @@ func main() {
 }
 ```
 
-### 6.3. `minigo2`'s Role as a Generator Tool
+### 6.3. `minigo`'s Role as a Generator Tool
 
-In this mode, the `minigo2` tool would:
+In this mode, the `minigo` tool would:
 1.  Parse the `mapping.go` file using `go-scan`.
 2.  Walk the AST of the `main` function.
 3.  When it finds a call to `generate.ConverterFor`, it analyzes the arguments to understand the user's intent. It can resolve `models.User{}` back to the full `scanner.TypeInfo` for the `User` struct.
 4.  It would build an internal code model from this information (just as the `parser` in `examples/convert` does).
 5.  This code model is then passed to a `text/template` engine to produce the final, generated `_generated.go` file.
 
-This approach elegantly solves the LSP/IDE support problem. The mapping file is a valid Go program, so `gopls` can provide completions for types (`models.User`), and developers can use "go to definition" and "find usages" as they normally would. The `minigo2` tool simply uses this valid Go file as a structured, declarative input for its code generation task. This provides a much better developer experience than using struct tags or custom comment directives.
+This approach elegantly solves the LSP/IDE support problem. The mapping file is a valid Go program, so `gopls` can provide completions for types (`models.User`), and developers can use "go to definition" and "find usages" as they normally would. The `minigo` tool simply uses this valid Go file as a structured, declarative input for its code generation task. This provides a much better developer experience than using struct tags or custom comment directives.

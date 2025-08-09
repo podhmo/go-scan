@@ -1,4 +1,4 @@
-package minigo2
+package minigo
 
 import (
 	"context"
@@ -9,11 +9,11 @@ import (
 	"strings"
 
 	goscan "github.com/podhmo/go-scan"
-	"github.com/podhmo/go-scan/minigo2/evaluator"
-	"github.com/podhmo/go-scan/minigo2/object"
+	"github.com/podhmo/go-scan/minigo/evaluator"
+	"github.com/podhmo/go-scan/minigo/object"
 )
 
-// Interpreter is the main entry point for the minigo2 language.
+// Interpreter is the main entry point for the minigo language.
 // It holds the state of the interpreter, including the scanner for package resolution
 // and the root environment for script execution.
 type Interpreter struct {
@@ -63,7 +63,7 @@ type Options struct {
 
 // Result holds the outcome of a script execution.
 type Result struct {
-	// Value is the raw minigo2 object returned by the script.
+	// Value is the raw minigo object returned by the script.
 	Value object.Object
 }
 
@@ -88,7 +88,7 @@ func (r *Result) As(target any) error {
 }
 
 // unmarshal is a recursive helper function that populates a Go `reflect.Value` (dst)
-// from a minigo2 `object.Object` (src).
+// from a minigo `object.Object` (src).
 func unmarshal(src object.Object, dst reflect.Value) error {
 	if !dst.CanSet() {
 		return fmt.Errorf("cannot set destination value of type %s", dst.Type())
@@ -239,7 +239,7 @@ func (i *Interpreter) Eval(ctx context.Context) (*Result, error) {
 	eval := evaluator.New(fset, i.scanner, i.Registry, i.packages)
 
 	// In a real multi-file Go program, evaluation order is complex (e.g., all `type` decls first).
-	// For minigo2, we'll simplify: evaluate all declarations in all files sequentially.
+	// For minigo, we'll simplify: evaluate all declarations in all files sequentially.
 	// This populates the globalEnv with functions, types, vars, and consts.
 	var lastVal object.Object
 	for _, file := range i.files {

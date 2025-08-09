@@ -1,4 +1,4 @@
-package minigo2
+package minigo
 
 import (
 	"context"
@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/podhmo/go-scan/minigo2/object"
+	"github.com/podhmo/go-scan/minigo/object"
 )
 
 func TestGoInterop_Import(t *testing.T) {

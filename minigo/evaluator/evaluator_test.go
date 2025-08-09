@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	goscan "github.com/podhmo/go-scan"
-	"github.com/podhmo/go-scan/minigo2/object"
+	"github.com/podhmo/go-scan/minigo/object"
 )
 
 // testEval is a helper function to parse and evaluate a string of code.
@@ -20,7 +20,7 @@ func testEval(t *testing.T, input string) object.Object {
 	fullSource := fmt.Sprintf("package main\n\nfunc main() {\n%s\n}", input)
 
 	// Create a temporary file to hold the source code.
-	tmpfile, err := os.CreateTemp("", "minigo2_test_*.go")
+	tmpfile, err := os.CreateTemp("", "minigo_test_*.go")
 	if err != nil {
 		t.Fatalf("failed to create temp file: %v", err)
 	}

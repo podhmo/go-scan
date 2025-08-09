@@ -1,11 +1,11 @@
-package minigo2
+package minigo
 
 import (
 	"context"
 	"fmt"
 	"testing"
 
-	"github.com/podhmo/go-scan/minigo2/object"
+	"github.com/podhmo/go-scan/minigo/object"
 )
 
 func TestNewInterpreter(t *testing.T) {

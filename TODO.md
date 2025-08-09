@@ -203,12 +203,12 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     - [x] Support blank imports (`import _ "driver"`) and associated `init()` execution.
 - [x] Implement the `Result.As(target any)` method for unmarshaling script results back into Go structs.
 - [x] **Replace `null` keyword with `nil`**: To better align with Go's syntax, the `null` keyword (currently implemented) has been replaced with `nil`.
-- [-] **Method and Interface Support**:
+- [x] **Method and Interface Support**:
     - [x] Support method definitions (`func (r Receiver) MethodName() {}`).
     - [x] Support method calls on struct instances (`instance.Method()`).
-    - [ ] Support interface definitions (`type MyInterface interface { ... }`).
-    - [ ] Support dynamic dispatch of method calls through interface variables.
-- [ ] Thoroughly test all features, especially pointer handling and the Go interop layer.
+    - [x] Support interface definitions (`type MyInterface interface { ... }`).
+    - [x] Support dynamic dispatch of method calls through interface variables.
+- [x] Thoroughly test all features, especially pointer handling and the Go interop layer.
 - [ ] Write comprehensive documentation for the API, supported language features, and usage examples.
 - [ ] Ensure `make format` and `make test` pass cleanly.
 

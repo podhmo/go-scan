@@ -195,12 +195,12 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] **Underlying Type Handling**: Add an option or default behavior to treat Go `enum` types (e.g., `type MyEnum int`) as their underlying type within the script, to facilitate sharing constants.
 - [x] Implement the logic to wrap Go functions as `BuiltinFunction` objects.
 - [x] Support accessing imported variables and constants (e.g., `math.Pi`).
-- [-] **Advanced Import Handling**:
+- [x] **Advanced Import Handling**:
     - [x] Implement lazy loading for imports, where symbols are only loaded from a package when they are first accessed via the new `SymbolRegistry`.
-    - [ ] Ensure packages are loaded only once, even with complex indirect imports.
-    - [ ] Detect and report circular import errors.
-    - [ ] Support dot imports (`import . "fmt"`).
-    - [ ] Support blank imports (`import _ "driver"`) and associated `init()` execution.
+    - [x] Ensure packages are loaded only once, even with complex indirect imports.
+    - [x] Detect and report circular import errors.
+    - [x] Support dot imports (`import . "fmt"`).
+    - [x] Support blank imports (`import _ "driver"`) and associated `init()` execution.
 - [ ] Implement the `Result.As(target any)` method for unmarshaling script results back into Go structs.
 - [ ] **Method and Interface Support**:
     - [ ] Support method definitions (`func (r Receiver) MethodName() {}`).

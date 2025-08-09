@@ -141,6 +141,34 @@ var result = nonexistent.Do()
 			expectErr:   true,
 			errContains: `undefined: nonexistent.Do`,
 		},
+		{
+			name: "dot import",
+			script: `package main
+import . "strings"
+var result = ToUpper("dot import test")
+`,
+			setup: func(i *Interpreter) {
+				i.Register("strings", map[string]any{
+					"ToUpper": strings.ToUpper,
+				})
+			},
+			expectedType: object.STRING_OBJ,
+			expectedVal:  "DOT IMPORT TEST",
+		},
+		{
+			name: "blank import",
+			script: `package main
+import _ "strings"
+var result = "ok"
+`,
+			setup: func(i *Interpreter) {
+				i.Register("strings", map[string]any{
+					"Unused": func() {},
+				})
+			},
+			expectedType: object.STRING_OBJ,
+			expectedVal:  "ok",
+		},
 	}
 
 	runTest := func(t *testing.T, tt testCase) {

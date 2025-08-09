@@ -1276,13 +1276,45 @@ func (e *Evaluator) evalGenDecl(n *ast.GenDecl, env *object.Environment) object.
 			if importSpec.Name != nil {
 				pkgName = importSpec.Name.Name
 			} else {
-				// Heuristic: use the last part of the import path as the package name.
-				// This is what `goimports` does and is generally expected.
 				parts := strings.Split(path, "/")
 				pkgName = parts[len(parts)-1]
 			}
 
-			// Create a proxy package object. The actual symbols will be loaded on-demand.
+			// Handle dot import: load all symbols into the current environment.
+			if pkgName == "." {
+				// 1. Get symbols from the registry
+				if symbols, ok := e.registry.GetAllFor(path); ok {
+					for name, symbol := range symbols {
+						var member object.Object
+						val := reflect.ValueOf(symbol)
+						if val.Kind() == reflect.Func {
+							member = e.wrapGoFunction(importSpec.Pos(), val)
+						} else {
+							member = &object.GoValue{Value: val}
+						}
+						env.Set(name, member)
+					}
+				}
+
+				// 2. Scan package for source-level symbols (like consts)
+				pkgInfo, _ := e.scanner.ScanPackage(context.Background(), path)
+				if pkgInfo != nil {
+					for _, c := range pkgInfo.Constants {
+						obj, err := e.constantInfoToObject(c)
+						if err == nil {
+							env.Set(c.Name, obj)
+						}
+					}
+				}
+				continue // Move to the next import spec
+			}
+
+			// Handle blank import: do nothing. Its side-effects are assumed to be handled.
+			if pkgName == "_" {
+				continue
+			}
+
+			// Regular import: create a proxy package object.
 			pkgObj := &object.Package{
 				Name:    pkgName,
 				Path:    path,

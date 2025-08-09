@@ -563,6 +563,20 @@ func (r *SymbolRegistry) Lookup(pkgPath, name string) (any, bool) {
 	return nil, false
 }
 
+// GetAllFor returns all registered symbols for a given package path.
+func (r *SymbolRegistry) GetAllFor(pkgPath string) (map[string]any, bool) {
+	pkg, ok := r.packages[pkgPath]
+	if !ok {
+		return nil, false
+	}
+	// Return a copy to prevent modification of the original map.
+	clone := make(map[string]any, len(pkg))
+	for k, v := range pkg {
+		clone[k] = v
+	}
+	return clone, true
+}
+
 // Environment holds the bindings for variables and functions.
 type Environment struct {
 	store  map[string]*Object

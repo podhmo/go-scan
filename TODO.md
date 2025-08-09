@@ -202,6 +202,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     - [x] Support dot imports (`import . "fmt"`).
     - [x] Support blank imports (`import _ "driver"`) and associated `init()` execution.
 - [x] Implement the `Result.As(target any)` method for unmarshaling script results back into Go structs.
+- [ ] **Replace `null` keyword with `nil`**: To better align with Go's syntax, the `null` keyword (currently implemented) should be replaced with `nil`.
 - [ ] **Method and Interface Support**:
     - [ ] Support method definitions (`func (r Receiver) MethodName() {}`).
     - [ ] Support method calls on struct instances (`instance.Method()`).

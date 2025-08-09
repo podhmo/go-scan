@@ -491,15 +491,17 @@ func (t *Tuple) Inspect() string {
 
 // FileScope holds the AST and file-specific import aliases for a single file.
 type FileScope struct {
-	AST     *ast.File
-	Aliases map[string]string // alias -> import path
+	AST        *ast.File
+	Aliases    map[string]string // alias -> import path
+	DotImports []string          // list of package paths for dot imports
 }
 
 // NewFileScope creates a new file scope.
 func NewFileScope(ast *ast.File) *FileScope {
 	return &FileScope{
-		AST:     ast,
-		Aliases: make(map[string]string),
+		AST:        ast,
+		Aliases:    make(map[string]string),
+		DotImports: make([]string, 0),
 	}
 }
 

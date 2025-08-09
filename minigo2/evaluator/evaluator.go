@@ -1401,13 +1401,17 @@ func (e *Evaluator) evalGenDecl(n *ast.GenDecl, env *object.Environment, fscope 
 				alias = parts[len(parts)-1]
 			}
 
-			// For now, we don't handle dot or blank imports in the new model.
-			if alias == "." || alias == "_" {
-				// return e.newError(importSpec.Pos(), "dot and blank imports are not yet supported in multi-file mode")
-				continue // Silently ignore for now
+			switch alias {
+			case "_":
+				// Blank imports are ignored for now, but we could run init functions here in the future.
+				continue
+			case ".":
+				// Dot import: add the path to the file scope's dot import list.
+				fscope.DotImports = append(fscope.DotImports, path)
+			default:
+				// Regular import with an alias.
+				fscope.Aliases[alias] = path
 			}
-
-			fscope.Aliases[alias] = path
 		}
 		return nil
 
@@ -2014,60 +2018,7 @@ func (e *Evaluator) evalSelectorExpr(n *ast.SelectorExpr, env *object.Environmen
 		}
 
 	case *object.Package:
-		memberName := n.Sel.Name
-		// 1. Check member cache first.
-		if member, ok := l.Members[memberName]; ok {
-			return member
-		}
-
-		// 2. Check the registry for pre-registered symbols.
-		if symbol, ok := e.registry.Lookup(l.Path, memberName); ok {
-			var member object.Object
-			val := reflect.ValueOf(symbol)
-			if val.Kind() == reflect.Func {
-				member = e.wrapGoFunction(n.Sel.Pos(), val)
-			} else {
-				member = &object.GoValue{Value: val}
-			}
-			l.Members[memberName] = member // Cache it
-			return member
-		}
-
-		// 3. Fallback to scanning source files for constants if not in registry.
-		// Check already loaded info.
-		if l.Info != nil {
-			member, found := e.findSymbolInPackageInfo(l.Info, memberName)
-			if found {
-				if err, isErr := member.(*object.Error); isErr {
-					return err // Propagate conversion errors
-				}
-				l.Members[memberName] = member // Cache it
-				return member
-			}
-		}
-
-		// 4. Symbol not in loaded info, try scanning remaining files.
-		cumulativePkgInfo, err := e.scanner.FindSymbolInPackage(context.Background(), l.Path, memberName)
-		if err != nil {
-			// Not found in any unscanned files either. It's undefined.
-			return e.newError(n.Sel.Pos(), "undefined: %s.%s", l.Name, memberName)
-		}
-
-		// 5. Symbol was found. `cumulativePkgInfo` contains everything scanned so far.
-		// Update the package object with the richer info.
-		l.Info = cumulativePkgInfo
-
-		// 6. Now that info is updated, the symbol must be in it. Find it, cache it, return it.
-		member, found := e.findSymbolInPackageInfo(l.Info, memberName)
-		if !found {
-			// This should be an impossible state if FindSymbolInPackage works correctly.
-			return e.newError(n.Sel.Pos(), "internal inconsistency: symbol %s found by scanner but not in final package info", memberName)
-		}
-		if err, isErr := member.(*object.Error); isErr {
-			return err
-		}
-		l.Members[memberName] = member // Cache it
-		return member
+		return e.findSymbolInPackage(l, n.Sel, n.Pos())
 
 	case *object.StructInstance:
 		return e.evalStructSelector(n, l)
@@ -2086,6 +2037,64 @@ func (e *Evaluator) evalSelectorExpr(n *ast.SelectorExpr, env *object.Environmen
 	default:
 		return e.newError(n.Pos(), "base of selector expression is not a package or struct")
 	}
+}
+
+// findSymbolInPackage resolves a symbol within a given package. It handles caching,
+// consulting the symbol registry, and triggering on-demand scanning.
+func (e *Evaluator) findSymbolInPackage(pkg *object.Package, symbolName *ast.Ident, pos token.Pos) object.Object {
+	// 1. Check member cache first.
+	if member, ok := pkg.Members[symbolName.Name]; ok {
+		return member
+	}
+
+	// 2. Check the registry for pre-registered symbols.
+	if symbol, ok := e.registry.Lookup(pkg.Path, symbolName.Name); ok {
+		var member object.Object
+		val := reflect.ValueOf(symbol)
+		if val.Kind() == reflect.Func {
+			member = e.wrapGoFunction(pos, val)
+		} else {
+			member = &object.GoValue{Value: val}
+		}
+		pkg.Members[symbolName.Name] = member // Cache it
+		return member
+	}
+
+	// 3. Fallback to scanning source files for constants if not in registry.
+	// Check already loaded info.
+	if pkg.Info != nil {
+		member, found := e.findSymbolInPackageInfo(pkg.Info, symbolName.Name)
+		if found {
+			if err, isErr := member.(*object.Error); isErr {
+				return err // Propagate conversion errors
+			}
+			pkg.Members[symbolName.Name] = member // Cache it
+			return member
+		}
+	}
+
+	// 4. Symbol not in loaded info, try scanning remaining files.
+	cumulativePkgInfo, err := e.scanner.FindSymbolInPackage(context.Background(), pkg.Path, symbolName.Name)
+	if err != nil {
+		// Not found in any unscanned files either. It's undefined.
+		return e.newError(pos, "undefined: %s.%s", pkg.Name, symbolName.Name)
+	}
+
+	// 5. Symbol was found. `cumulativePkgInfo` contains everything scanned so far.
+	// Update the package object with the richer info.
+	pkg.Info = cumulativePkgInfo
+
+	// 6. Now that info is updated, the symbol must be in it. Find it, cache it, return it.
+	member, found := e.findSymbolInPackageInfo(pkg.Info, symbolName.Name)
+	if !found {
+		// This should be an impossible state if FindSymbolInPackage works correctly.
+		return e.newError(pos, "internal inconsistency: symbol %s found by scanner but not in final package info", symbolName.Name)
+	}
+	if err, isErr := member.(*object.Error); isErr {
+		return err
+	}
+	pkg.Members[symbolName.Name] = member // Cache it
+	return member
 }
 
 func (e *Evaluator) evalGoValueSelectorExpr(node ast.Node, goVal *object.GoValue, sel string) object.Object {
@@ -2290,6 +2299,22 @@ func (e *Evaluator) evalMapLiteral(n *ast.CompositeLit, env *object.Environment,
 	return &object.Map{Pairs: pairs}
 }
 
+func (e *Evaluator) resolvePackage(ident *ast.Ident, path string) *object.Package {
+	// Check if the package is already in the central cache.
+	if pkg, ok := e.packages[path]; ok {
+		return pkg
+	}
+	// If not, create a new proxy object and cache it.
+	pkgObj := &object.Package{
+		Name:    ident.Name,
+		Path:    path,
+		Info:    nil, // Mark as not loaded yet
+		Members: make(map[string]object.Object),
+	}
+	e.packages[path] = pkgObj
+	return pkgObj
+}
+
 func (e *Evaluator) evalIdent(n *ast.Ident, env *object.Environment, fscope *object.FileScope) object.Object {
 	if val, ok := env.Get(n.Name); ok {
 		return val
@@ -2307,22 +2332,33 @@ func (e *Evaluator) evalIdent(n *ast.Ident, env *object.Environment, fscope *obj
 		return object.NIL
 	}
 
-	// Check if it's a package alias in the current file scope.
+	// Check if it's a package alias or a symbol from a dot import.
 	if fscope != nil {
+		// Check dot imports first.
+		for _, path := range fscope.DotImports {
+			// We need a dummy identifier for resolvePackage, as the package itself isn't named in a dot import.
+			dummyIdent := &ast.Ident{Name: "_"}
+			pkg := e.resolvePackage(dummyIdent, path)
+
+			// Now, try to find the symbol `n` within this package.
+			val := e.findSymbolInPackage(pkg, n, n.Pos())
+
+			// If the symbol is found, return it.
+			// We check for "undefined" specifically, because other errors
+			// (like a real error from a function call) should be propagated.
+			// If it's an "undefined" error, we just continue to the next dot-imported package.
+			if err, ok := val.(*object.Error); ok {
+				if strings.Contains(err.Message, "undefined:") {
+					continue
+				}
+			}
+			// If it's not an "undefined" error, we found it or encountered a different error.
+			return val
+		}
+
+		// If not in a dot import, check for a regular package alias.
 		if path, ok := fscope.Aliases[n.Name]; ok {
-			// Check if the package is already in the central cache.
-			if pkg, ok := e.packages[path]; ok {
-				return pkg
-			}
-			// If not, create a new proxy object and cache it.
-			pkgObj := &object.Package{
-				Name:    n.Name,
-				Path:    path,
-				Info:    nil, // Mark as not loaded yet
-				Members: make(map[string]object.Object),
-			}
-			e.packages[path] = pkgObj
-			return pkgObj
+			return e.resolvePackage(n, path)
 		}
 	}
 

@@ -561,6 +561,87 @@ func testEvalFile(t *testing.T, input string) object.Object {
 	return evaluated
 }
 
+func TestGenericStructs(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected any
+	}{
+		{
+			`
+			type Box[T any] struct {
+				Value T
+			}
+			b := Box[int]{Value: 10}
+			b.Value
+			`,
+			10,
+		},
+		{
+			`
+			type Box[T any] struct {
+				Value T
+			}
+			b := Box[string]{Value: "hello"}
+			b.Value
+			`,
+			"hello",
+		},
+		// {
+		// 	`
+		// 	type Pair[K any, V any] struct {
+		// 		Key K
+		// 		Value V
+		// 	}
+		// 	p := Pair[string, int]{Key: "age", Value: 30}
+		// 	p.Value
+		// 	`,
+		// 	30, // Note: The current implementation only supports one type param, so this is commented out.
+		// },
+		{
+			`
+			type Box[T any] struct {
+				Value T
+			}
+			func (b Box[T]) Get() T {
+				return b.Value
+			}
+			b := Box[int]{Value: 42}
+			b.Get()
+			`,
+			42,
+		},
+		{
+			`
+			type Box[T any] struct {
+				Value T
+			}
+			func (b Box[T]) Get() T {
+				return b.Value
+			}
+			b := Box[string]{Value: "world"}
+			b.Get()
+			`,
+			"world",
+		},
+	}
+
+	for i, tt := range tests {
+		t.Run(fmt.Sprintf("test-%d", i), func(t *testing.T) {
+			evaluated := testEval(t, tt.input)
+			switch expected := tt.expected.(type) {
+			case int:
+				testIntegerObject(t, evaluated, int64(expected))
+			case int64:
+				testIntegerObject(t, evaluated, expected)
+			case string:
+				testStringObject(t, evaluated, expected)
+			default:
+				t.Errorf("unsupported expected type: %T", expected)
+			}
+		})
+	}
+}
+
 func TestMethodCalls(t *testing.T) {
 	tests := []struct {
 		input    string

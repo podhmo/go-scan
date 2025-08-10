@@ -1,121 +1,66 @@
-# Plan: API Specification for `minigo`-based `convert` Configuration
+# Final API Specification for IDE-Native `convert` Configuration
 
 ## 1. Introduction
 
-The `convert` tool is a powerful code generator that automates the creation of type-safe conversion functions based on annotations in Go source code. While this annotation-based system is flexible, it lacks IDE support, making complex mapping rules difficult to write and maintain.
+This document provides the final API specification for a new, IDE-native method of configuring the `convert` tool. This approach supersedes previous designs by eliminating all string-based and non-type-safe elements, resulting in a configuration experience that is fully supported by IDEs and the Go compiler.
 
-This document provides a precise API specification for a new, complementary method of configuring the `convert` tool. This method leverages the `minigo` interpreter's underlying components (`go-scan`, AST walking) to parse a standard Go file as a declarative configuration script. This provides a superior, IDE-friendly developer experience.
+The core principle is to define conversion rules within a function literal, allowing a `minigo`-based parser to analyze the Abstract Syntax Tree (AST) of that function to deduce the user's intent.
 
-## 2. Core Concept: The Declarative Mapping File
+## 2. The `generate` API Specification
 
-The configuration is defined in a standard Go file (e.g., `converter.go`), which is marked with a build tag (e.g., `//go:build codegen`) to be excluded from the final application build. Its sole purpose is to serve as a structured input for the `convert` tool.
+The public API is reduced to two primary functions for defining conversions, `generate.Convert` and `generate.Rule`, and one for defining the mappings themselves, `generate.Mapping`.
 
-Inside this file, the user calls functions from a new `generate` package. These functions are declarative stubs that are interpreted by the `minigo`-based parser.
-
-## 3. The `generate` API Specification
-
-This section defines the precise API for the `generate` package.
-
-### 3.1. `generate.Convert()`
-
-This is the top-level function that defines a conversion pair.
+### 2.1. `generate.Convert()`
+Defines a top-level conversion between two struct types.
 
 **Signature:**
 ```go
-func Convert(src any, dst any, options ...Option)
+func Convert(src any, dst any, mapping Mapping)
 ```
-
--   **`src any`**: A zero-value expression of the source struct (e.g., `source.User{}`).
--   **`dst any`**: A zero-value expression of the destination struct (e.g., `destination.User{}`).
--   **`options ...Option`**: A variadic list of configuration options that define the mapping rules.
+-   **`src`, `dst any`**: Zero-value expressions of the source and destination structs (e.g., `source.User{}`, `destination.User{}`).
+-   **`mapping Mapping`**: A single `Mapping` object that defines the conversion rules for this pair.
 
 **Parser Interpretation:**
--   A call to `Convert` creates a `model.ConversionPair` in the `ParsedInfo` IR.
--   The `go-scan` engine resolves the types of `src` and `dst` to populate the `SrcTypeInfo` and `DstTypeInfo` fields of the pair.
+-   A call to `Convert` creates a `model.ConversionPair` in the `ParsedInfo` IR. The parser processes the `mapping` argument to populate the conversion rules for this pair.
 
----
-
-### 3.2. `Option` Functions
-
-These functions are passed as the variadic `options` to `Convert()`.
-
-#### `generate.Map()`
-Maps a source field to a destination field with a different name.
+### 2.2. `generate.Mapping()`
+Defines the field-level mappings for a `Convert` call.
 
 **Signature:**
 ```go
-func Map(dstFieldName string, srcFieldName string) Option
+func Mapping(mapFunc any) Mapping
 ```
+-   **`mapFunc any`**: A function literal with the signature `func(dst *DestType, src *SrcType)`.
 
 **Parser Interpretation:**
--   Creates a mapping rule for a `model.FieldInfo`. The parser looks up `dstFieldName` in the destination struct's fields and `srcFieldName` in the source struct's fields. This directly corresponds to the `convert:"<name>"` tag functionality.
+This is the core of the new parser's logic.
+1.  The parser validates that `mapFunc` is an `ast.FuncLit`.
+2.  It inspects the function body (`BlockStmt`) for a series of `ast.AssignStmt` nodes.
+3.  For each assignment `Lhs = Rhs`:
+    -   `Lhs` must be a `SelectorExpr` (e.g., `dst.FieldA`). The parser extracts "FieldA" as the destination field name. The `dst` identifier must match the first parameter name of the function literal.
+    -   `Rhs` is analyzed to determine the source:
+        -   If `Rhs` is a `SelectorExpr` on the source parameter (e.g., `src.FieldB`), a direct mapping from `FieldB` to `FieldA` is created.
+        -   If `Rhs` is a `CallExpr` (e.g., `funcs.MakeFullName(src.FirstName, src.LastName)`), the parser creates a `ComputedField` rule. It captures the entire call expression, rewriting any references to the `src` parameter to use the generator's internal source variable.
+        -   If a destination field is not present as a `Lhs` in any assignment, it is considered ignored. This replaces `generate.Ignore`.
 
-#### `generate.Ignore()`
-Skips a field in the destination struct.
+### 2.3. `generate.Rule()`
+Defines a global, reusable conversion rule between two types.
 
 **Signature:**
 ```go
-func Ignore(dstFieldName string) Option
+func Rule(customFunc any) Option
 ```
+-   **`customFunc any`**: A function identifier (e.g., `convutil.TimeToString`).
 
 **Parser Interpretation:**
--   Marks the specified `dstFieldName` to be skipped during code generation, equivalent to `convert:"-"`.
+1.  The parser uses `go-scan` to resolve the identifier to its `FuncDecl`.
+2.  It analyzes the function's signature (e.g., `func(time.Time) string`) to automatically determine the source and destination types. This completely replaces the need for separate `srcType` and `dstType` arguments.
+3.  The parser automatically discovers the import path of the function, replacing the need for `generate.Import`.
+4.  A `model.TypeRule` is created in the `ParsedInfo` IR.
 
-#### `generate.Use()`
-Specifies a custom function to handle the conversion of a single field.
+## 3. Final Example: A Fully Type-Safe Mapping File
 
-**Signature:**
-```go
-func Use(dstFieldName string, customFunc any) Option
-```
--   **`customFunc any`**: A function identifier (e.g., `funcs.Translate`).
-
-**Parser Interpretation:**
--   The parser resolves `customFunc` to its function declaration using `go-scan`.
--   It analyzes the function's signature to ensure compatibility.
--   It populates the `UsingFunc` field for the corresponding destination field, equivalent to the `using=<func>` tag. This is used for both simple type conversions (e.g., `int` -> `string`) and full struct conversions (e.g., `func(SrcContact) DstContact`).
-
-#### `generate.Computed()`
-Defines a destination field that is computed from a function call involving source fields.
-
-**Signature:**
-```go
-func Computed(dstFieldName string, computerFuncCall any) Option
-```
--   **`computerFuncCall any`**: A literal function call expression, where arguments reference the source struct type (e.g., `funcs.MakeFullName(source.User{}.FirstName, source.User{}.LastName)`).
-
-**Parser Interpretation:**
--   This is a specialized parser rule. The parser analyzes the `computerFuncCall` expression (`ast.CallExpr`).
--   It identifies the function being called (`funcs.MakeFullName`).
--   It iterates through the function's arguments. For each argument that is a selector on the source type (e.g., `source.User{}.FirstName`), it rewrites the expression to use the generator's source variable (e.g., `src.FirstName`).
--   This populates a `model.ComputedField` rule in the IR, linking the destination field to the generated function call.
-
-#### `generate.Rule()`
-Defines a global type-to-type conversion rule.
-
-**Signature:**
-```go
-func Rule(srcType any, dstType any, customFunc any) Option
-```
--   **`srcType`, `dstType any`**: Zero-value expressions of the source and destination types (e.g., `time.Time{}`, `""`).
-
-**Parser Interpretation:**
--   Creates a `model.TypeRule` in the `ParsedInfo` IR. It resolves the types of `srcType` and `dstType` and associates them with the resolved `customFunc`. This is equivalent to `// convert:rule "<Src>" -> "<Dst>", using=<func>`.
-
-#### `generate.Import()`
-Defines a package import with an alias, making its functions available to other rules.
-
-**Signature:**
-```go
-func Import(alias string, path string) Option
-```
-
-**Parser Interpretation:**
--   Populates the `FileImports` map in the `ParsedInfo` IR. This allows the parser to correctly resolve functions referenced by their alias (e.g., `funcs.Translate`). This is equivalent to `// convert:import <alias> <path>`.
-
-## 4. Revised Example Mapping File
-
-This example demonstrates how the refined API can handle all conversion scenarios from `examples/convert/sampledata/source/source.go`.
+This example demonstrates the final API's elegance and power, covering all scenarios from the sample data in a type-safe, IDE-native way.
 
 ```go
 //go:build codegen
@@ -124,8 +69,6 @@ This example demonstrates how the refined API can handle all conversion scenario
 package main
 
 import (
-	"time"
-
 	"github.com/podhmo/go-scan/examples/convert/convutil"
 	"github.com/podhmo/go-scan/examples/convert/sampledata/destination"
 	"github.com/podhmo/go-scan/examples/convert/sampledata/funcs"
@@ -135,65 +78,85 @@ import (
 )
 
 func main() {
+	// Define global, reusable conversion rules.
+	// The parser infers types and import paths from the function signatures.
+	generate.Rule(convutil.TimeToString)
+	generate.Rule(convutil.PtrTimeToString)
+	generate.Rule(funcs.ConvertSrcContactToDstContact)
+	generate.Rule(funcs.Translate)
+
+	// Define the conversion from SrcUser to DstUser.
 	generate.Convert(source.SrcUser{}, destination.DstUser{},
-		// Define necessary imports for custom functions
-		generate.Import("convutil", "github.com/podhmo/go-scan/examples/convert/convutil"),
-		generate.Import("funcs", "github.com/podhmo/go-scan/examples/convert/sampledata/funcs"),
+		generate.Mapping(func(dst *destination.DstUser, src *source.SrcUser) {
+			// Direct mapping with a different name.
+			dst.UserID = funcs.UserIDToString(src.ID) // using is implicit in the assignment
 
-		// Global conversion rules for time.Time and *time.Time
-		generate.Rule(time.Time{}, "", convutil.TimeToString),
-		generate.Rule(&time.Time{}, "", convutil.PtrTimeToString),
+			// Computed field from multiple source fields.
+			dst.FullName = funcs.MakeFullName(src.FirstName, src.LastName)
 
-		// Field-specific mapping and custom function usage
-		generate.Map("UserID", "ID"),
-		generate.Use("UserID", funcs.UserIDToString), // Note: Chained with Map
+			// Recursive conversion for nested structs is inferred by the generator
+			// because a Convert call exists for SrcAddress.
+			dst.Address = src.Address
 
-		// Computed field from multiple source fields
-		generate.Computed("FullName", funcs.MakeFullName(source.SrcUser{}.FirstName, source.SrcUser{}.LastName)),
+			// A custom function is used for the Contact field.
+			// The `Rule` for ConvertSrcContactToDstContact will be applied.
+			dst.Contact = src.ContactInfo
 
-		// Custom function for a nested struct field
-		generate.Map("Contact", "ContactInfo"),
-		generate.Use("Contact", funcs.ConvertSrcContactToDstContact),
+			// Slices and pointers are also handled automatically by the generator.
+			dst.Details = src.Details
+			dst.CreatedAt = src.CreatedAt
+			dst.UpdatedAt = src.UpdatedAt
+
+			// `Password` field is not assigned, so it is implicitly ignored.
+		}),
 	)
 
-	// Conversion for a nested struct (will be called recursively)
+	// Define conversion for the nested address struct.
 	generate.Convert(source.SrcAddress{}, destination.DstAddress{},
-		generate.Map("FullStreet", "Street"),
-		generate.Map("CityName", "City"),
+		generate.Mapping(func(dst *destination.DstAddress, src *source.SrcAddress) {
+			dst.FullStreet = src.Street
+			dst.CityName = src.City
+		}),
 	)
 
-	// Conversion for a struct in a slice (will be called recursively)
+	// Define conversion for the struct used in slices.
 	generate.Convert(source.SrcInternalDetail{}, destination.DstInternalDetail{},
-		generate.Map("ItemCode", "Code"),
-		generate.Map("LocalizedDesc", "Description"),
-		generate.Use("LocalizedDesc", funcs.Translate),
+		generate.Mapping(func(dst *destination.DstInternalDetail, src *source.SrcInternalDetail) {
+			dst.ItemCode = src.Code
+			// The `Rule` for funcs.Translate will be applied.
+			dst.LocalizedDesc = src.Description
+		}),
 	)
 
-	// Other conversions from the source file
+	// Other conversions from the source file are defined similarly.
 	generate.Convert(source.SrcOrder{}, destination.DstOrder{},
-		generate.Map("ID", "OrderID"),
-		generate.Map("TotalAmount", "Amount"),
-		generate.Map("LineItems", "Items"),
+		generate.Mapping(func(dst *destination.DstOrder, src *source.SrcOrder) {
+			dst.ID = src.OrderID
+			dst.TotalAmount = src.Amount
+			dst.LineItems = src.Items
+		}),
 	)
 	generate.Convert(source.SrcItem{}, destination.DstItem{},
-		generate.Map("ProductCode", "SKU"),
-		generate.Map("Count", "Quantity"),
+		generate.Mapping(func(dst *destination.DstItem, src *source.SrcItem) {
+			dst.ProductCode = src.SKU
+			dst.Count = src.Quantity
+		}),
 	)
 
-	// Conversions for complex types (pointers, slices, maps)
-	// The generator handles recursion automatically once the element type conversions are defined.
+	// Conversions for complex types require no special mapping logic,
+	// as the generator will recursively handle them once the element types
+	// (like SubSource -> SubTarget) are defined.
 	generate.Convert(source.ComplexSource{}, destination.ComplexTarget{})
 	generate.Convert(source.SubSource{}, destination.SubTarget{})
 	generate.Convert(source.SourceWithMap{}, destination.TargetWithMap{})
 }
 ```
 
-## 5. Revised Parser Architecture
+## 4. Final Parser Architecture
 
-The `minigo`-based parser is a purpose-built tool that translates the declarative Go script into the `model.ParsedInfo` IR. Its logic is tightly coupled to the `generate` API.
+The `minigo`-based parser's role becomes even more specialized and powerful with this API.
 
--   **Entry Point**: The tool is invoked with a path to the mapping file (e.g., `go run ./cmd/convert --script=converter.go`).
--   **AST-Walking**: The tool walks the AST of the mapping file, specifically identifying calls to `generate.Convert`.
--   **Stateful Parsing**: The parser maintains state within the context of a `generate.Convert` call. It processes the `Option` functions first (e.g., `Import`, `Rule`) to populate global rules, then processes field-level options (`Map`, `Use`, `Computed`) to configure the `ConversionPair`.
--   **IR Construction**: For each `generate` function call, a specific rule is executed to create or modify the corresponding object in the `ParsedInfo` struct. For example, a `generate.Map` call creates a `model.FieldMap` entry, while a `generate.Computed` call triggers the AST-rewrite logic described in section 3.2.
--   **Generator Handoff**: Once the entire mapping file is parsed, the complete `ParsedInfo` object is passed to the existing, unmodified `generator.Generate()` function. This ensures maximum reuse of the battle-tested code generation logic.
+-   **AST-Centric Logic**: The parser's core task is to analyze the AST of the arguments passed to the `generate` functions. It no longer deals with simple literals like strings, but with complex `ast.FuncLit` and `ast.Ident` nodes.
+-   **Type and Path Inference**: The parser relies heavily on `go-scan`'s resolution capabilities. When it encounters an identifier like `convutil.TimeToString`, it resolves it to its declaration to find its signature and package path, automatically populating the `ParsedInfo` IR with all necessary import and type information.
+-   **Function Body Analysis**: The most complex part is the analysis of the `Mapping` function literal's body. The parser implements a specific sub-walker for `ast.AssignStmt` nodes within that body, transforming Go assignment syntax into the `model.FieldMap` and `model.ComputedField` structures required by the generator.
+-   **Seamless Generator Handoff**: Despite the increased complexity of the parser, its output remains the same: a valid `model.ParsedInfo` object. This maintains the clean separation of concerns and guarantees that the existing, battle-tested code generator can be reused without modification.

@@ -230,7 +230,7 @@ func testEvalWithEvaluator(t *testing.T, eval *Evaluator, input string) object.O
 		t.Fatalf("failed to close temp file: %v", err)
 	}
 
-	file, err := parser.ParseFile(eval.fset, tmpfile.Name(), nil, parser.ParseComments)
+	file, err := parser.ParseFile(eval.Fset, tmpfile.Name(), nil, parser.ParseComments)
 	if err != nil {
 		t.Fatalf("failed to parse code: %v", err)
 		return nil

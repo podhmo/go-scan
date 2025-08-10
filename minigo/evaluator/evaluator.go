@@ -165,14 +165,11 @@ var builtins = map[string]*object.Builtin{
 
 // Evaluator is the main object that evaluates the AST.
 type Evaluator struct {
-	fset      *token.FileSet
+	object.BuiltinContext
 	scanner   *goscan.Scanner
 	registry  *object.SymbolRegistry
 	packages  map[string]*object.Package // Central package cache
 	callStack []object.CallFrame
-	stdin     io.Reader
-	stdout    io.Writer
-	stderr    io.Writer
 }
 
 // Config holds the configuration for creating a new Evaluator.
@@ -188,16 +185,22 @@ type Config struct {
 
 // New creates a new Evaluator.
 func New(cfg Config) *Evaluator {
-	return &Evaluator{
-		fset:      cfg.Fset,
+	e := &Evaluator{
 		scanner:   cfg.Scanner,
 		registry:  cfg.Registry,
 		packages:  cfg.Packages,
 		callStack: make([]object.CallFrame, 0),
-		stdin:     cfg.Stdin,
-		stdout:    cfg.Stdout,
-		stderr:    cfg.Stderr,
 	}
+	e.BuiltinContext = object.BuiltinContext{
+		Stdin:  cfg.Stdin,
+		Stdout: cfg.Stdout,
+		Stderr: cfg.Stderr,
+		Fset:   cfg.Fset,
+		NewError: func(pos token.Pos, format string, v ...interface{}) *object.Error {
+			return e.newError(pos, format, v...)
+		},
+	}
+	return e
 }
 
 func (e *Evaluator) newError(pos token.Pos, format string, args ...interface{}) *object.Error {
@@ -211,7 +214,7 @@ func (e *Evaluator) newError(pos token.Pos, format string, args ...interface{}) 
 		Message:   msg,
 		CallStack: stackCopy,
 	}
-	err.AttachFileSet(e.fset) // Attach fset for formatting
+	err.AttachFileSet(e.Fset) // Attach fset for formatting
 	return err
 }
 
@@ -1191,16 +1194,7 @@ func (e *Evaluator) applyFunction(call *ast.CallExpr, fn object.Object, args []o
 		return e.unwrapReturnValue(evaluated)
 
 	case *object.Builtin:
-		ctx := &object.BuiltinContext{
-			Stdin:  e.stdin,
-			Stdout: e.stdout,
-			Stderr: e.stderr,
-			Fset:   e.fset,
-			NewError: func(pos token.Pos, format string, v ...interface{}) *object.Error {
-				return e.newError(pos, format, v...)
-			},
-		}
-		return fn.Fn(ctx, call.Pos(), args...)
+		return fn.Fn(&e.BuiltinContext, call.Pos(), args...)
 	default:
 		return e.newError(call.Pos(), "not a function: %s", fn.Type())
 	}

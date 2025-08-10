@@ -1337,7 +1337,7 @@ func (e *Evaluator) Eval(node ast.Node, env *object.Environment, fscope *object.
 		if n.Recv == nil {
 			fn := &object.Function{
 				Name:       n.Name,
-				TypeParams: n.TypeParams,
+				TypeParams: n.Type.TypeParams,
 				Parameters: n.Type.Params,
 				Results:    n.Type.Results,
 				Body:       n.Body,
@@ -1363,6 +1363,12 @@ func (e *Evaluator) Eval(node ast.Node, env *object.Environment, fscope *object.
 			} else {
 				return e.newError(recvType.Pos(), "invalid receiver type: expected identifier")
 			}
+		case *ast.IndexExpr: // For generic receivers like `Box[T]`
+			if ident, ok := recvType.X.(*ast.Ident); ok {
+				typeName = ident.Name
+			} else {
+				return e.newError(recvType.Pos(), "invalid receiver type: expected identifier for generic type base")
+			}
 		default:
 			return e.newError(recvField.Type.Pos(), "unsupported receiver type: %T", recvField.Type)
 		}
@@ -1380,7 +1386,7 @@ func (e *Evaluator) Eval(node ast.Node, env *object.Environment, fscope *object.
 		fn := &object.Function{
 			Name:       n.Name,
 			Recv:       n.Recv, // Store receiver info
-			TypeParams: n.TypeParams,
+			TypeParams: n.Type.TypeParams,
 			Parameters: n.Type.Params,
 			Results:    n.Type.Results,
 			Body:       n.Body,

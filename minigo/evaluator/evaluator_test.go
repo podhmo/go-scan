@@ -568,58 +568,43 @@ func TestGenericStructs(t *testing.T) {
 	}{
 		{
 			`
-			type Box[T any] struct {
-				Value T
+			type Box[T any] struct { Value T }
+			func main() {
+				b := Box[int]{Value: 10}
+				return b.Value
 			}
-			b := Box[int]{Value: 10}
-			b.Value
 			`,
-			10,
+			int64(10),
 		},
 		{
 			`
-			type Box[T any] struct {
-				Value T
+			type Box[T any] struct { Value T }
+			func main() {
+				b := Box[string]{Value: "hello"}
+				return b.Value
 			}
-			b := Box[string]{Value: "hello"}
-			b.Value
 			`,
 			"hello",
 		},
-		// {
-		// 	`
-		// 	type Pair[K any, V any] struct {
-		// 		Key K
-		// 		Value V
-		// 	}
-		// 	p := Pair[string, int]{Key: "age", Value: 30}
-		// 	p.Value
-		// 	`,
-		// 	30, // Note: The current implementation only supports one type param, so this is commented out.
-		// },
 		{
 			`
-			type Box[T any] struct {
-				Value T
+			type Box[T any] struct { Value T }
+			func (b Box[T]) Get() T { return b.Value }
+			func main() {
+				b := Box[int]{Value: 42}
+				return b.Get()
 			}
-			func (b Box[T]) Get() T {
-				return b.Value
-			}
-			b := Box[int]{Value: 42}
-			b.Get()
 			`,
-			42,
+			int64(42),
 		},
 		{
 			`
-			type Box[T any] struct {
-				Value T
+			type Box[T any] struct { Value T }
+			func (b Box[T]) Get() T { return b.Value }
+			func main() {
+				b := Box[string]{Value: "world"}
+				return b.Get()
 			}
-			func (b Box[T]) Get() T {
-				return b.Value
-			}
-			b := Box[string]{Value: "world"}
-			b.Get()
 			`,
 			"world",
 		},
@@ -627,10 +612,8 @@ func TestGenericStructs(t *testing.T) {
 
 	for i, tt := range tests {
 		t.Run(fmt.Sprintf("test-%d", i), func(t *testing.T) {
-			evaluated := testEval(t, tt.input)
+			evaluated := testEvalFile(t, tt.input)
 			switch expected := tt.expected.(type) {
-			case int:
-				testIntegerObject(t, evaluated, int64(expected))
 			case int64:
 				testIntegerObject(t, evaluated, expected)
 			case string:

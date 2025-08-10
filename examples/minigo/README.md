@@ -6,7 +6,14 @@ This directory contains `minigo`, a command-line interface (CLI) for the `minigo
 
 This example serves as a runnable demonstration of the `minigo` interpreter. It shows how the `minigo` library, which is built on `go-scan`, can be used to execute scripts that look like a subset of Go.
 
-The `minigo` CLI takes one or more script files as arguments, evaluates them, and prints the result of the last evaluated expression to standard output.
+### Execution Model
+
+The `minigo` CLI has a simple execution model:
+1.  It loads all script files provided as command-line arguments.
+2.  It evaluates all top-level declarations (`var`, `const`, `func`, `type`) sequentially across all files.
+3.  After all declarations are processed, it prints the string representation (`Inspect()`) of the value from the **very last declaration** that was evaluated.
+
+This model is simple for quick scripts but for more complex applications, the `minigo` library's `Interpreter.Call()` method provides a more robust way to execute a specific entry point function.
 
 ## Core `minigo` & `go-scan` Features Highlighted
 
@@ -23,13 +30,12 @@ To run the `minigo` interpreter, provide it with the path to a script file.
     ```go
     // myscript.mgo
     package main
-
     import . "strings"
 
     var message = "Hello, World!"
-    var upper = ToUpper(message)
 
-    upper // This is the last expression, its value will be printed.
+    // The CLI evaluates this declaration last, so its value will be printed.
+    var upper = ToUpper(message)
     ```
 
 2.  **Run the CLI.** From the `go-scan` project root, execute the following command:
@@ -56,7 +62,12 @@ To run the `minigo` interpreter, provide it with the path to a script file.
     ```go
     // file_b.mgo
     package main
-    var message = fmt.Sprintf("hello, %s", name) // 'name' is from file_a.mgo
+    import "fmt"
+
+    // 'name' is from file_a.mgo.
+    // Since this is the last declaration evaluated across both files,
+    // its value will be the script's output.
+    var message = fmt.Sprintf("hello, %s", name)
     ```
 
 3.  **Run with both files:**

@@ -170,8 +170,8 @@ This section provides an ordered, incremental task list for implementing this fe
 ### Phase 2: `define` Tool and Parser Implementation
 *These tasks build the new `define`-based converter tool.*
 
-1.  **Create `tools/define` Package**: Create the new package containing the stub API functions (`Convert`, `Rule`, `Mapping`) and the empty `Config` struct.
-2.  **Create CLI Entrypoint**: Create a new command (`cmd/convert-define`) for the new tool.
+1.  **Create `examples/convert/define` Package**: Create the new package containing the stub API functions (`Convert`, `Rule`, `Mapping`) and the empty `Config` struct.
+2.  **Create CLI Entrypoint**: Create a new command (`examples/convert/cmd/convert-define`) for the new tool.
 3.  **Implement Core Parser**: In the new command, implement the main parser logic that initializes the enhanced `minigo` interpreter and registers the `define` API functions as special forms.
 4.  **Implement `define.Rule` Parsing**: Implement the logic to handle `define.Rule(customFunc)` calls. This involves using `go-scan` to resolve the function, inferring types from its signature, and creating a `model.TypeRule`.
 5.  **Implement `define.Mapping` Parsing**: Implement the logic to handle the `ast.FuncLit` passed to `define.Mapping`. This involves setting up a sub-walker for the function body.

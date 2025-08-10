@@ -33,6 +33,27 @@ var _ = caller()
 				"in caller",
 			},
 		},
+		{
+			name: "named function call",
+			script: `
+package main
+
+func erroringFunc() {
+	var x = 1 + "a" // runtime error
+}
+
+func namedCaller() {
+	erroringFunc()
+}
+
+var _ = namedCaller()
+`,
+			expectedToContain: []string{
+				"runtime error: type mismatch: INTEGER + STRING",
+				"in erroringFunc",
+				"in namedCaller",
+			},
+		},
 	}
 
 	for _, tt := range tests {

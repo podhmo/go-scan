@@ -126,3 +126,31 @@ func main() {
 
 -   **Parser's Role**: The parser translates the `define` API calls into the `model.ParsedInfo` IR. It understands that it is only receiving exceptions to the default behavior.
 -   **Generator's Role**: The generator's logic is enhanced. Before generating the conversion for a struct pair, it first performs a pass to identify and automatically map all fields with matching names that have not been explicitly configured by the parser. It then processes the explicit rules from the IR, which take precedence. This two-phase approach (default mapping + explicit overrides) ensures correctness and implements the desired user experience.
+
+## 5. Required `minigo` Enhancements for AST Analysis
+
+The `define` script paradigm, where the tool analyzes the AST of function arguments, requires specific features in the underlying `minigo` interpreter. The standard Go runtime cannot inspect the AST of a function it receives as an argument; the AST is lost after compilation. `minigo`, as an interpreter, can be enhanced to provide this capability.
+
+The required enhancements fall into three categories:
+
+### 5.1. Special Forms (Unevaluated Arguments)
+`minigo` needs a mechanism to treat certain functions as "special forms" (or macros). When the interpreter's `eval` loop encounters a call to a function registered as a special form, it must **not** evaluate its arguments beforehand. Instead, it should pass the raw, unevaluated argument expressions to the function's implementation.
+
+-   **Implementation**: This could be a new option when registering a Go function with the interpreter, e.g., `interp.RegisterSpecial("define.Mapping", goMappingFunc)`.
+
+### 5.2. AST-as-an-Object
+To pass an unevaluated AST expression through the interpreter, it must be wrapped in a `minigo/object` type.
+
+-   **Implementation**: A new object type, `object.AstNode`, would be created. It would have a field like `Node go/ast.Node`. When a special form is called, the interpreter would wrap the AST node of the unevaluated argument (e.g., the `ast.FuncLit` for the mapping function) into this `object.AstNode` and pass it along.
+
+### 5.3. Go Interop for AST
+The Go function that implements the special form must be able to receive the raw `go/ast.Node`.
+
+-   **Implementation**: The `minigo` Go interoperability layer must be updated to recognize `object.AstNode`. When calling a Go function that expects a `go/ast.Node` argument, the interop layer would unwrap the `object.AstNode` and pass the underlying `Node` to the Go function.
+
+With these enhancements, the `define` tool's workflow would be:
+1.  Initialize a `minigo` interpreter.
+2.  Register the Go implementations of `define.Mapping`, `c.Assign`, etc., as special forms whose arguments should not be evaluated.
+3.  Execute the user's `define.go` script.
+4.  When `minigo` encounters `define.Mapping(func() { ... })`, it sees `define.Mapping` is a special form, wraps the `ast.FuncLit` of the function in an `object.AstNode`, and passes it to the Go implementation.
+5.  The Go implementation receives the `ast.FuncLit` and can now walk it to parse the mapping rules.

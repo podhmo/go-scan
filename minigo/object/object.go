@@ -41,6 +41,7 @@ const (
 	PACKAGE_OBJ              ObjectType = "PACKAGE"
 	GO_VALUE_OBJ             ObjectType = "GO_VALUE"
 	ERROR_OBJ                ObjectType = "ERROR"
+	AST_NODE_OBJ             ObjectType = "AST_NODE"
 
 	// Generics related
 	TYPE_OBJ              ObjectType = "TYPE"
@@ -671,6 +672,24 @@ func (e *Error) AttachFileSet(fset *token.FileSet) {
 // Error makes it a valid Go error.
 func (e *Error) Error() string {
 	return e.Message
+}
+
+// --- AstNode Object ---
+
+// AstNode wraps a go/ast.Node. This is used to pass AST fragments
+// to special-form Go functions without the interpreter evaluating them.
+type AstNode struct {
+	Node ast.Node
+}
+
+// Type returns the type of the AstNode object.
+func (an *AstNode) Type() ObjectType { return AST_NODE_OBJ }
+
+// Inspect returns a string representation of the AstNode.
+// For now, a simple representation is fine. A more advanced
+// version could use go/printer.
+func (an *AstNode) Inspect() string {
+	return fmt.Sprintf("ast.Node[%T]", an.Node)
 }
 
 // --- Type Object ---

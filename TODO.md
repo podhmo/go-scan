@@ -47,7 +47,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [ ] Write comprehensive documentation for the API, supported language features, and usage examples.
 
 ### Final API Specification for IDE-Native convert Configuration ([docs/plan-convert-with-minigo.md](./docs/plan-convert-with-minigo.md))
-- [ ] **Implement `object.AstNode`**: Create a new type in the `minigo/object` package to wrap a `go/ast.Node`.
+- [x] **Implement `object.AstNode`**: Create a new type in the `minigo/object` package to wrap a `go/ast.Node`.
 - [ ] **Implement Special Form Mechanism**: Modify the `minigo` evaluator to recognize "special form" functions and to not evaluate their arguments.
 - [ ] **Enhance Go Interop Layer**: Update the interoperability layer to correctly unwrap `object.AstNode` and pass a raw `ast.Node` to a Go function that expects it.
 - [ ] **Add Unit Tests**: Write unit tests within the `minigo` package to verify that a Go function registered as a special form can correctly receive the AST of its arguments.

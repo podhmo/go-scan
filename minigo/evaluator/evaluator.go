@@ -170,30 +170,33 @@ var builtins = map[string]*object.Builtin{
 // Evaluator is the main object that evaluates the AST.
 type Evaluator struct {
 	object.BuiltinContext
-	scanner   *goscan.Scanner
-	registry  *object.SymbolRegistry
-	packages  map[string]*object.Package // Central package cache
-	callStack []*object.CallFrame
+	scanner      *goscan.Scanner
+	registry     *object.SymbolRegistry
+	specialForms map[string]*object.SpecialForm
+	packages     map[string]*object.Package // Central package cache
+	callStack    []*object.CallFrame
 }
 
 // Config holds the configuration for creating a new Evaluator.
 type Config struct {
-	Fset     *token.FileSet
-	Scanner  *goscan.Scanner
-	Registry *object.SymbolRegistry
-	Packages map[string]*object.Package
-	Stdin    io.Reader
-	Stdout   io.Writer
-	Stderr   io.Writer
+	Fset         *token.FileSet
+	Scanner      *goscan.Scanner
+	Registry     *object.SymbolRegistry
+	SpecialForms map[string]*object.SpecialForm
+	Packages     map[string]*object.Package
+	Stdin        io.Reader
+	Stdout       io.Writer
+	Stderr       io.Writer
 }
 
 // New creates a new Evaluator.
 func New(cfg Config) *Evaluator {
 	e := &Evaluator{
-		scanner:   cfg.Scanner,
-		registry:  cfg.Registry,
-		packages:  cfg.Packages,
-		callStack: make([]*object.CallFrame, 0),
+		scanner:      cfg.Scanner,
+		registry:     cfg.Registry,
+		specialForms: cfg.SpecialForms,
+		packages:     cfg.Packages,
+		callStack:    make([]*object.CallFrame, 0),
 	}
 	e.BuiltinContext = object.BuiltinContext{
 		Stdin:  cfg.Stdin,
@@ -1767,10 +1770,25 @@ func (e *Evaluator) Eval(node ast.Node, env *object.Environment, fscope *object.
 			Env:        env,
 		}
 	case *ast.CallExpr:
+		// Special form handling: check if the function is a registered special form.
+		// Special forms receive the AST of their arguments without evaluation.
+		if ident, ok := n.Fun.(*ast.Ident); ok {
+			if sf, isSpecial := e.specialForms[ident.Name]; isSpecial {
+				return sf.Fn(&e.BuiltinContext, n.Pos(), n.Args)
+			}
+		}
+
 		function := e.Eval(n.Fun, env, fscope)
 		if isError(function) {
 			return function
 		}
+
+		// Check if the resolved function is a special form object. This can happen
+		// if it was passed as an argument or returned from another function.
+		if sf, ok := function.(*object.SpecialForm); ok {
+			return sf.Fn(&e.BuiltinContext, n.Pos(), n.Args)
+		}
+
 		args := e.evalExpressions(n.Args, env, fscope)
 		if len(args) == 1 && isError(args[0]) {
 			return args[0]
@@ -2844,6 +2862,9 @@ func (e *Evaluator) evalIdent(n *ast.Ident, env *object.Environment, fscope *obj
 	}
 	if builtin, ok := builtins[n.Name]; ok {
 		return builtin
+	}
+	if sf, ok := e.specialForms[n.Name]; ok {
+		return sf
 	}
 	// Handle built-in type identifiers. These don't have a first-class object
 	// representation in our interpreter, but they shouldn't cause an "identifier

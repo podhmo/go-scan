@@ -20,10 +20,11 @@ import (
 type Interpreter struct {
 	scanner   *goscan.Scanner
 	Registry  *object.SymbolRegistry
-	eval      *evaluator.Evaluator
-	globalEnv *object.Environment
-	files     []*object.FileScope
-	packages  map[string]*object.Package // Cache for loaded packages, keyed by path
+	eval         *evaluator.Evaluator
+	globalEnv    *object.Environment
+	specialForms map[string]*object.SpecialForm
+	files        []*object.FileScope
+	packages     map[string]*object.Package // Cache for loaded packages, keyed by path
 
 	// I/O streams
 	stdin  io.Reader
@@ -69,10 +70,11 @@ func WithScannerOptions(opts ...goscan.ScannerOption) Option {
 // It initializes a scanner and a root environment, configured with options.
 func NewInterpreter(options ...Option) (*Interpreter, error) {
 	i := &Interpreter{
-		Registry:  object.NewSymbolRegistry(),
-		globalEnv: object.NewEnvironment(),
-		files:     make([]*object.FileScope, 0),
-		packages:  make(map[string]*object.Package),
+		Registry:     object.NewSymbolRegistry(),
+		globalEnv:    object.NewEnvironment(),
+		specialForms: make(map[string]*object.SpecialForm),
+		files:        make([]*object.FileScope, 0),
+		packages:     make(map[string]*object.Package),
 
 		// Default I/O
 		stdin:  os.Stdin,
@@ -92,13 +94,14 @@ func NewInterpreter(options ...Option) (*Interpreter, error) {
 
 	// Initialize the evaluator here, so it persists for the lifetime of the interpreter.
 	i.eval = evaluator.New(evaluator.Config{
-		Fset:     i.scanner.Fset(),
-		Scanner:  i.scanner,
-		Registry: i.Registry,
-		Packages: i.packages,
-		Stdin:    i.stdin,
-		Stdout:   i.stdout,
-		Stderr:   i.stderr,
+		Fset:         i.scanner.Fset(),
+		Scanner:      i.scanner,
+		Registry:     i.Registry,
+		SpecialForms: i.specialForms,
+		Packages:     i.packages,
+		Stdin:        i.stdin,
+		Stdout:       i.stdout,
+		Stderr:       i.stderr,
 	})
 
 	return i, nil
@@ -109,6 +112,14 @@ func NewInterpreter(options ...Option) (*Interpreter, error) {
 // allows a script to `import "strings"` and call `strings.ToUpper()`.
 func (i *Interpreter) Register(pkgPath string, symbols map[string]any) {
 	i.Registry.Register(pkgPath, symbols)
+}
+
+// RegisterSpecial registers a "special form" function.
+// A special form receives the AST of its arguments directly, without them being
+// evaluated first. This is useful for implementing DSLs or control structures.
+// These functions are available in the global scope.
+func (i *Interpreter) RegisterSpecial(name string, fn object.SpecialFormFunction) {
+	i.specialForms[name] = &object.SpecialForm{Fn: fn}
 }
 
 // Options configures the interpreter environment.

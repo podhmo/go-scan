@@ -29,6 +29,7 @@ const (
 	RETURN_VALUE_OBJ         ObjectType = "RETURN_VALUE"
 	FUNCTION_OBJ             ObjectType = "FUNCTION"
 	BUILTIN_OBJ              ObjectType = "BUILTIN"
+	SPECIAL_FORM_OBJ         ObjectType = "SPECIAL_FORM"
 	STRUCT_DEFINITION_OBJ    ObjectType = "STRUCT_DEFINITION"
 	STRUCT_INSTANCE_OBJ      ObjectType = "STRUCT_INSTANCE"
 	INTERFACE_DEFINITION_OBJ ObjectType = "INTERFACE_DEFINITION"
@@ -346,6 +347,23 @@ func (b *Builtin) Type() ObjectType { return BUILTIN_OBJ }
 
 // Inspect returns a string representation of the built-in function.
 func (b *Builtin) Inspect() string { return "builtin function" }
+
+// --- Special Form Function Object ---
+
+// SpecialFormFunction is the signature for special form functions.
+// It receives the execution context, the position of the call, and the *unevaluated* argument expressions.
+type SpecialFormFunction func(ctx *BuiltinContext, pos token.Pos, args []ast.Expr) Object
+
+// SpecialForm represents a special form function.
+type SpecialForm struct {
+	Fn SpecialFormFunction
+}
+
+// Type returns the type of the SpecialForm object.
+func (sf *SpecialForm) Type() ObjectType { return SPECIAL_FORM_OBJ }
+
+// Inspect returns a string representation of the special form function.
+func (sf *SpecialForm) Inspect() string { return "special form" }
 
 // --- Struct Definition Object ---
 

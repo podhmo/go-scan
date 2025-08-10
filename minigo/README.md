@@ -16,6 +16,7 @@ The primary goal of `minigo` is to replace static configuration files like YAML 
 - **Lazy Imports**: To ensure fast startup and efficient execution, package imports are loaded lazily. Files from an imported package are only read and parsed when a symbol from that package is accessed for the first time.
 - **Go Interoperability**: Inject Go variables and functions from your host application into the script's environment.
 - **Lazy Imports**: To ensure fast startup and efficient execution, package imports are only read and parsed when a symbol from that package is accessed for the first time.
+- **Special Forms (Macros)**: Register Go functions that receive the raw AST of their arguments, enabling the creation of custom DSLs and control structures without evaluating the arguments beforehand.
 - **Generics**: Supports generic structs, functions, and type aliases.
 - **Clear Error Reporting**: Provides formatted stack traces on runtime errors, making it easier to debug configuration scripts.
 
@@ -138,5 +139,67 @@ func main() {
 
     fmt.Printf("Configuration loaded: %+v\n", cfg)
     // Expected Output: Configuration loaded: {ListenAddr::8080 TimeoutSec:30 FeatureFlags:[new_ui enable_metrics]}
+}
+```
+
+## Advanced: Special Forms
+
+A "special form" is a function that receives the abstract syntax tree (AST) of its arguments directly, instead of their evaluated results. This is a powerful, low-level feature that allows you to create custom Domain-Specific Languages (DSLs) or new control flow structures within the `minigo` language.
+
+You can register a special form using `interp.RegisterSpecial()`.
+
+### Example: An Assertion Special Form
+
+Imagine you want a function `assert(expression)` that only evaluates the expression if assertions are enabled. A regular function would always evaluate the expression before it is called. A special form can inspect the expression's AST and decide whether to evaluate it.
+
+#### 1. Define the Special Form in Go
+
+The special form function receives the raw `[]ast.Expr` slice for its arguments.
+
+```go
+// main.go
+import (
+    "go/ast"
+    "go/token"
+    "github.com/podhmo/go-scan/minigo/object"
+)
+
+var assertionsEnabled = true // Your application's toggle
+
+// ... in your main function ...
+
+// Register a special form named 'assert'.
+interp.RegisterSpecial("assert", func(ctx *object.BuiltinContext, pos token.Pos, args []ast.Expr) object.Object {
+    if !assertionsEnabled {
+        return object.NIL // Do nothing if assertions are off.
+    }
+    if len(args) != 1 {
+        return ctx.NewError(pos, "assert() requires exactly one argument")
+    }
+
+    // Since we have the AST, we can now choose to evaluate it.
+    // This requires access to the interpreter's internal eval function.
+    // (Note: Exposing the evaluator for this is an advanced use case.)
+    // For simplicity, this example just returns a boolean based on the AST type.
+    if _, ok := args[0].(*ast.BinaryExpr); ok {
+        // In a real implementation, you would evaluate this expression.
+        // For this example, we'll just confirm we received the AST.
+        fmt.Println("Assertion expression is a binary expression!")
+    }
+
+    return object.NIL
+})
+```
+
+#### 2. Use it in a Script
+
+The script can now call `assert` with any expression. The expression `1 + 1 == 2` is not evaluated by `minigo` before being passed to the Go implementation of `assert`.
+
+```go
+// my_script.mgo
+package main
+
+func main() {
+    assert(1 + 1 == 2)
 }
 ```

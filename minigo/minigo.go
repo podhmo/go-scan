@@ -314,3 +314,9 @@ func (i *Interpreter) Eval(ctx context.Context) (*Result, error) {
 
 	return &Result{Value: lastVal}, nil
 }
+
+// GlobalEnvForTest returns the interpreter's global environment.
+// This method is intended for use in tests only.
+func (i *Interpreter) GlobalEnvForTest() *object.Environment {
+	return i.globalEnv
+}

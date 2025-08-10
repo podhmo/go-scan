@@ -211,9 +211,10 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] **IO Stream Handling**:
     - [x] Make `stdout` configurable/replaceable in the interpreter.
     - [x] Make `stdin` and `stderr` configurable/replaceable in the interpreter.
-- [-] **Generics Support (Simplified)**:
+- [x] **Generics Support (Simplified)**:
     - [x] Implement support for generic structs (definition, instantiation, method calls).
-    - [ ] Implement support for generic functions and types, assuming calls are correct (no type checking).
+    - [x] Implement support for generic functions and types, assuming calls are correct (no type checking).
+- [ ] **Support for Generic Type Aliases**: Implement support for generic type aliases (e.g., `type List[T any] = []T`). This requires updating the type declaration logic in the evaluator to handle `ast.TypeSpec` nodes where the `Assign` field is non-nil.
 - [ ] **Built-in Functions**:
     - [x] `append`
     - [ ] `copy`

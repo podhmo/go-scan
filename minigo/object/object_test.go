@@ -1,6 +1,7 @@
 package object
 
 import (
+	"go/ast"
 	"testing"
 )
 
@@ -34,6 +35,11 @@ func TestObjectTypes(t *testing.T) {
 			obj:             NIL,
 			expectedType:    NIL_OBJ,
 			expectedInspect: "nil",
+		},
+		{
+			obj:             &AstNode{Node: &ast.Ident{Name: "x"}},
+			expectedType:    AST_NODE_OBJ,
+			expectedInspect: "ast.Node[*ast.Ident]",
 		},
 	}
 

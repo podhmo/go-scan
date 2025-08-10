@@ -348,7 +348,6 @@ func (b *Builtin) Type() ObjectType { return BUILTIN_OBJ }
 // Inspect returns a string representation of the built-in function.
 func (b *Builtin) Inspect() string { return "builtin function" }
 
-
 // --- Struct Definition Object ---
 
 // StructDefinition represents the definition of a struct type.

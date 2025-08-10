@@ -18,8 +18,8 @@ import (
 // It holds the state of the interpreter, including the scanner for package resolution
 // and the root environment for script execution.
 type Interpreter struct {
-	scanner   *goscan.Scanner
-	Registry  *object.SymbolRegistry
+	scanner      *goscan.Scanner
+	Registry     *object.SymbolRegistry
 	eval         *evaluator.Evaluator
 	globalEnv    *object.Environment
 	specialForms map[string]*evaluator.SpecialForm

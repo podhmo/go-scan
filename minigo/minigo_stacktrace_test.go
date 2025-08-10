@@ -34,6 +34,26 @@ var _ = caller()
 			},
 		},
 		{
+			name: "function assigned to variable",
+			script: `
+package main
+
+func caller() {
+	var f = func() {
+		var x = 1 + "a" // runtime error
+	}
+	f()
+}
+
+var _ = caller()
+`,
+			expectedToContain: []string{
+				"runtime error: type mismatch: INTEGER + STRING",
+				"in f",
+				"in caller",
+			},
+		},
+		{
 			name: "named function call",
 			script: `
 package main

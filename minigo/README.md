@@ -74,7 +74,7 @@ func GetConfig() {
 
 #### 3. Run the Interpreter
 
-The main Go application creates an `Interpreter`, registers the Go functions and variables, loads and evaluates the script files, and then calls the entry point function.
+The main Go application creates an `Interpreter`, registers the Go functions and variables, loads and evaluates the script files, and then calls the desired entry point function. This entry point can be any function defined in the script, not just `main`. This allows for flexible script designs, such as having different configuration functions for different environments (e.g., `GetDevConfig`, `GetProdConfig`).
 
 ```go
 // main.go

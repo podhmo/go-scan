@@ -67,10 +67,12 @@ type HashKey struct {
 
 // CallFrame represents a single frame in the call stack.
 type CallFrame struct {
-	Pos       token.Pos
-	Function  string // Name of the function
-	IsBuiltin bool   // Whether the function is a Go builtin or user-defined
-	Defers    []*DeferredCall
+	Pos          token.Pos
+	Function     string // Name of the function for stack traces
+	Fn           *Function
+	IsBuiltin    bool // Whether the function is a Go builtin or user-defined
+	Defers       []*DeferredCall
+	NamedReturns *Environment // Environment for named return values
 }
 
 // DeferredCall represents a deferred function call.
@@ -233,6 +235,11 @@ func (f *Function) IsVariadic() bool {
 	lastParam := f.Parameters.List[len(f.Parameters.List)-1]
 	_, ok := lastParam.Type.(*ast.Ellipsis)
 	return ok
+}
+
+// HasNamedReturns returns true if the function has named return values.
+func (f *Function) HasNamedReturns() bool {
+	return f.Results != nil && len(f.Results.List) > 0 && len(f.Results.List[0].Names) > 0
 }
 
 // Type returns the type of the Function object.

@@ -154,3 +154,34 @@ With these enhancements, the `define` tool's workflow would be:
 3.  Execute the user's `define.go` script.
 4.  When `minigo` encounters `define.Mapping(func() { ... })`, it sees `define.Mapping` is a special form, wraps the `ast.FuncLit` of the function in an `object.AstNode`, and passes it to the Go implementation.
 5.  The Go implementation receives the `ast.FuncLit` and can now walk it to parse the mapping rules.
+
+## 6. Implementation Task List
+
+This section provides an ordered, incremental task list for implementing this feature.
+
+### Phase 1: `minigo` Core Enhancements
+*These tasks modify the core `minigo` interpreter to support AST analysis.*
+
+1.  **Implement `object.AstNode`**: Create a new type in the `minigo/object` package to wrap a `go/ast.Node`.
+2.  **Implement Special Form Mechanism**: Modify the `minigo` evaluator to recognize "special form" functions and to not evaluate their arguments.
+3.  **Enhance Go Interop Layer**: Update the interoperability layer to correctly unwrap `object.AstNode` and pass a raw `ast.Node` to a Go function that expects it.
+4.  **Add Unit Tests**: Write unit tests within the `minigo` package to verify that a Go function registered as a special form can correctly receive the AST of its arguments.
+
+### Phase 2: `define` Tool and Parser Implementation
+*These tasks build the new `define`-based converter tool.*
+
+1.  **Create `tools/define` Package**: Create the new package containing the stub API functions (`Convert`, `Rule`, `Mapping`) and the empty `Config` struct.
+2.  **Create CLI Entrypoint**: Create a new command (`cmd/convert-define`) for the new tool.
+3.  **Implement Core Parser**: In the new command, implement the main parser logic that initializes the enhanced `minigo` interpreter and registers the `define` API functions as special forms.
+4.  **Implement `define.Rule` Parsing**: Implement the logic to handle `define.Rule(customFunc)` calls. This involves using `go-scan` to resolve the function, inferring types from its signature, and creating a `model.TypeRule`.
+5.  **Implement `define.Mapping` Parsing**: Implement the logic to handle the `ast.FuncLit` passed to `define.Mapping`. This involves setting up a sub-walker for the function body.
+6.  **Implement `Config` Method Parsing**: Implement the logic within the sub-walker to parse calls to `c.Assign`, `c.Convert`, and `c.Compute`. This includes analyzing their arguments (selectors and expressions) and creating the appropriate `model.FieldMap` or `model.ComputedField` rules.
+7.  **IR Construction**: Ensure the parser correctly assembles all the parsed rules into a single, valid `model.ParsedInfo` struct.
+
+### Phase 3: Generator Integration and Finalization
+*These tasks integrate the new parser with the existing generator and finalize the feature.*
+
+1.  **Enhance Generator for Implicit Mapping**: Modify the existing `generator` to automatically map all fields with matching names *before* it processes the explicit rules from the `ParsedInfo` struct.
+2.  **Integrate Parser and Generator**: In the `cmd/convert-define` main function, plumb the `ParsedInfo` struct from the new parser into the enhanced generator.
+3.  **Add Integration Tests**: Create a comprehensive test suite for the `convert-define` command. This should include a `define.go` script as input and assert that the generated Go code is correct.
+4.  **Write User Documentation**: Update the project's `README.md` and any other relevant user-facing documentation to explain the new, preferred method for defining conversions.

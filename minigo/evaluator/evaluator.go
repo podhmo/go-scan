@@ -1140,64 +1140,78 @@ func (e *Evaluator) evalExpressions(exps []ast.Expr, env *object.Environment, fs
 }
 
 func (e *Evaluator) applyFunction(call *ast.CallExpr, fn object.Object, args []object.Object, fscope *object.FileScope) object.Object {
-	switch fn := fn.(type) {
+	var function *object.Function
+	var typeArgs []object.Object
+	var receiver object.Object // For bound methods
+
+	switch f := fn.(type) {
 	case *object.Function:
-		// Check argument count before extending the environment
-		if fn.IsVariadic() {
-			if len(args) < len(fn.Parameters.List)-1 {
-				return e.newError(call.Pos(), "wrong number of arguments for variadic function. got=%d, want at least %d", len(args), len(fn.Parameters.List)-1)
-			}
-		} else {
-			if fn.Parameters != nil && len(fn.Parameters.List) != len(args) {
-				return e.newError(call.Pos(), "wrong number of arguments. got=%d, want=%d", len(args), len(fn.Parameters.List))
-			} else if fn.Parameters == nil && len(args) != 0 {
-				return e.newError(call.Pos(), "wrong number of arguments. got=%d, want=0", len(args))
-			}
+		if f.TypeParams != nil && len(f.TypeParams.List) > 0 {
+			return e.newError(call.Pos(), "cannot call generic function %s without instantiation", f.Name.Name)
 		}
-
-		funcName := "<anonymous>"
-		if fn.Name != nil {
-			funcName = fn.Name.Name
+		function = f
+	case *object.InstantiatedType:
+		genericFn, ok := f.GenericDef.(*object.Function)
+		if !ok {
+			return e.newError(call.Pos(), "not a function: %s", f.GenericDef.Type())
 		}
-		frame := object.CallFrame{Pos: call.Pos(), Function: funcName}
-		e.callStack = append(e.callStack, frame)
-		defer func() { e.callStack = e.callStack[:len(e.callStack)-1] }()
-
-		extendedEnv := e.extendFunctionEnv(fn, args)
-		evaluated := e.Eval(fn.Body, extendedEnv, fscope)
-		return e.unwrapReturnValue(evaluated)
-
+		function = genericFn
+		typeArgs = f.TypeArgs
 	case *object.BoundMethod:
-		// Argument count check for methods
-		if fn.Fn.IsVariadic() {
-			if len(args) < len(fn.Fn.Parameters.List)-1 {
-				return e.newError(call.Pos(), "wrong number of arguments for variadic method. got=%d, want at least %d", len(args), len(fn.Fn.Parameters.List)-1)
-			}
-		} else {
-			if fn.Fn.Parameters != nil && len(fn.Fn.Parameters.List) != len(args) {
-				return e.newError(call.Pos(), "wrong number of arguments for method. got=%d, want=%d", len(args), len(fn.Fn.Parameters.List))
-			} else if fn.Fn.Parameters == nil && len(args) != 0 {
-				return e.newError(call.Pos(), "wrong number of arguments for method. got=%d, want=0", len(args))
-			}
-		}
-
-		funcName := "<anonymous>"
-		if fn.Fn.Name != nil {
-			funcName = fn.Fn.Name.Name
-		}
-		frame := object.CallFrame{Pos: call.Pos(), Function: funcName}
-		e.callStack = append(e.callStack, frame)
-		defer func() { e.callStack = e.callStack[:len(e.callStack)-1] }()
-
-		extendedEnv := e.extendMethodEnv(fn, args)
-		evaluated := e.Eval(fn.Fn.Body, extendedEnv, fscope)
-		return e.unwrapReturnValue(evaluated)
-
+		function = f.Fn
+		receiver = f.Receiver
+		// Generic methods on generic structs are handled by the receiver's type args,
+		// which are already bound in extendMethodEnv.
 	case *object.Builtin:
-		return fn.Fn(&e.BuiltinContext, call.Pos(), args...)
+		return f.Fn(&e.BuiltinContext, call.Pos(), args...)
 	default:
 		return e.newError(call.Pos(), "not a function: %s", fn.Type())
 	}
+
+	// --- Common logic for all user-defined function/method calls ---
+
+	// Check argument count
+	if function.IsVariadic() {
+		if len(args) < len(function.Parameters.List)-1 {
+			return e.newError(call.Pos(), "wrong number of arguments for variadic function. got=%d, want at least %d", len(args), len(function.Parameters.List)-1)
+		}
+	} else {
+		if function.Parameters != nil && len(function.Parameters.List) != len(args) {
+			return e.newError(call.Pos(), "wrong number of arguments. got=%d, want=%d", len(args), len(function.Parameters.List))
+		} else if function.Parameters == nil && len(args) != 0 {
+			return e.newError(call.Pos(), "wrong number of arguments. got=%d, want=0", len(args))
+		}
+	}
+
+	// Check type argument count for generic functions
+	if function.TypeParams != nil && len(function.TypeParams.List) > 0 {
+		if len(typeArgs) != len(function.TypeParams.List) {
+			return e.newError(call.Pos(), "wrong number of type arguments. got=%d, want=%d", len(typeArgs), len(function.TypeParams.List))
+		}
+	}
+
+	// Set up call stack
+	funcName := "<anonymous>"
+	if function.Name != nil {
+		funcName = function.Name.Name
+	}
+	frame := object.CallFrame{Pos: call.Pos(), Function: funcName}
+	e.callStack = append(e.callStack, frame)
+	defer func() { e.callStack = e.callStack[:len(e.callStack)-1] }()
+
+	// Extend environment and evaluate
+	var extendedEnv *object.Environment
+	if receiver != nil {
+		// It's a method call
+		boundMethod := &object.BoundMethod{Fn: function, Receiver: receiver}
+		extendedEnv = e.extendMethodEnv(boundMethod, args)
+	} else {
+		// It's a regular function call
+		extendedEnv = e.extendFunctionEnv(function, args, typeArgs)
+	}
+
+	evaluated := e.Eval(function.Body, extendedEnv, fscope)
+	return e.unwrapReturnValue(evaluated)
 }
 
 func (e *Evaluator) extendMethodEnv(method *object.BoundMethod, args []object.Object) *object.Environment {
@@ -1255,8 +1269,17 @@ func (e *Evaluator) extendMethodEnv(method *object.BoundMethod, args []object.Ob
 	return env
 }
 
-func (e *Evaluator) extendFunctionEnv(fn *object.Function, args []object.Object) *object.Environment {
+func (e *Evaluator) extendFunctionEnv(fn *object.Function, args []object.Object, typeArgs []object.Object) *object.Environment {
 	env := object.NewEnclosedEnvironment(fn.Env)
+
+	// Bind type parameters from the generic function call to the environment.
+	if fn.TypeParams != nil && len(fn.TypeParams.List) > 0 {
+		for i, param := range fn.TypeParams.List {
+			// param.Names[0] is the name of the type parameter, e.g., 'T'
+			env.SetType(param.Names[0].Name, typeArgs[i])
+		}
+	}
+
 	if fn.Parameters == nil {
 		return env
 	}
@@ -1424,7 +1447,8 @@ func (e *Evaluator) Eval(node ast.Node, env *object.Environment, fscope *object.
 	// Expressions
 	case *ast.ParenExpr:
 		return e.Eval(n.X, env, fscope)
-	case *ast.IndexExpr:
+
+	case *ast.IndexExpr: // MyType[T]
 		left := e.Eval(n.X, env, fscope)
 		if isError(left) {
 			return left
@@ -1433,7 +1457,31 @@ func (e *Evaluator) Eval(node ast.Node, env *object.Environment, fscope *object.
 		if isError(index) {
 			return index
 		}
-		return e.evalIndexExpression(n, left, index)
+		// Check if this is a generic type instantiation or a regular index access.
+		switch left.(type) {
+		case *object.StructDefinition, *object.Function:
+			return &object.InstantiatedType{GenericDef: left, TypeArgs: []object.Object{index}}
+		default:
+			// It's a regular index expression like array[i].
+			return e.evalIndexExpression(n, left, index)
+		}
+
+	case *ast.IndexListExpr: // MyType[T, K]
+		left := e.Eval(n.X, env, fscope)
+		if isError(left) {
+			return left
+		}
+		indices := e.evalExpressions(n.Indices, env, fscope)
+		if len(indices) == 1 && isError(indices[0]) {
+			return indices[0]
+		}
+		switch left.(type) {
+		case *object.StructDefinition, *object.Function:
+			return &object.InstantiatedType{GenericDef: left, TypeArgs: indices}
+		default:
+			return e.newError(n.Pos(), "index list operator not supported for %s", left.Type())
+		}
+
 	case *ast.FuncLit:
 		return &object.Function{
 			Parameters: n.Type.Params,

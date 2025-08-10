@@ -41,6 +41,10 @@ const (
 	PACKAGE_OBJ              ObjectType = "PACKAGE"
 	GO_VALUE_OBJ             ObjectType = "GO_VALUE"
 	ERROR_OBJ                ObjectType = "ERROR"
+
+	// Generics related
+	TYPE_OBJ              ObjectType = "TYPE"
+	INSTANTIATED_TYPE_OBJ ObjectType = "INSTANTIATED_TYPE"
 )
 
 // Hashable is an interface for objects that can be used as map keys.
@@ -201,6 +205,7 @@ func (rv *ReturnValue) Inspect() string { return rv.Value.Inspect() }
 type Function struct {
 	Name       *ast.Ident
 	Recv       *ast.FieldList // nil for regular functions
+	TypeParams *ast.FieldList // For generic functions
 	Parameters *ast.FieldList
 	Results    *ast.FieldList
 	Body       *ast.BlockStmt
@@ -294,9 +299,10 @@ func (b *Builtin) Inspect() string { return "builtin function" }
 
 // StructDefinition represents the definition of a struct type.
 type StructDefinition struct {
-	Name    *ast.Ident
-	Fields  []*ast.Field
-	Methods map[string]*Function
+	Name       *ast.Ident
+	TypeParams *ast.FieldList // For generic structs
+	Fields     []*ast.Field
+	Methods    map[string]*Function
 }
 
 // Type returns the type of the StructDefinition object.
@@ -377,8 +383,9 @@ func (bm *BoundMethod) Inspect() string {
 
 // StructInstance represents an instance of a struct.
 type StructInstance struct {
-	Def    *StructDefinition
-	Fields map[string]Object
+	Def      *StructDefinition
+	TypeArgs []Object // For instances of generic structs
+	Fields   map[string]Object
 }
 
 // Type returns the type of the StructInstance object.
@@ -615,6 +622,55 @@ func (e *Error) Error() string {
 	return e.Message
 }
 
+// --- Type Object ---
+
+// Type represents a type identifier like `int` or `string`.
+type Type struct {
+	Name string
+}
+
+// Type returns the type of the Type object.
+func (t *Type) Type() ObjectType { return TYPE_OBJ }
+
+// Inspect returns a string representation of the Type's value.
+func (t *Type) Inspect() string { return t.Name }
+
+// --- InstantiatedType Object ---
+
+// InstantiatedType represents a generic type that has been given concrete type arguments.
+// For example, `MyStruct[int]`.
+type InstantiatedType struct {
+	GenericDef Object   // This will be a *StructDefinition or *Function
+	TypeArgs   []Object // The concrete types, e.g., [*Type{Name:"int"}]
+}
+
+// Type returns the type of the InstantiatedType object.
+func (it *InstantiatedType) Type() ObjectType { return INSTANTIATED_TYPE_OBJ }
+
+// Inspect returns a string representation of the instantiated type.
+func (it *InstantiatedType) Inspect() string {
+	var out bytes.Buffer
+
+	switch def := it.GenericDef.(type) {
+	case *StructDefinition:
+		out.WriteString(def.Name.Name)
+	case *Function:
+		out.WriteString(def.Name.Name)
+	default:
+		out.WriteString("<generic>")
+	}
+
+	out.WriteString("[")
+	args := []string{}
+	for _, arg := range it.TypeArgs {
+		args = append(args, arg.Inspect())
+	}
+	out.WriteString(strings.Join(args, ", "))
+	out.WriteString("]")
+
+	return out.String()
+}
+
 // getSourceLine reads a specific line from a file.
 func getSourceLine(filename string, lineNum int) string {
 	if filename == "" || lineNum <= 0 {
@@ -700,16 +756,18 @@ func (r *SymbolRegistry) GetAllFor(pkgPath string) (map[string]any, bool) {
 
 // Environment holds the bindings for variables and functions.
 type Environment struct {
-	store  map[string]*Object
-	consts map[string]Object // Constants are immutable, so they don't need to be pointers.
-	outer  *Environment
+	store             map[string]*Object
+	consts            map[string]Object // Constants are immutable, so they don't need to be pointers.
+	typeParamBindings map[string]Object // For resolving generic types like 'T'
+	outer             *Environment
 }
 
 // NewEnvironment creates a new, top-level environment.
 func NewEnvironment() *Environment {
 	s := make(map[string]*Object)
 	c := make(map[string]Object)
-	return &Environment{store: s, consts: c, outer: nil}
+	t := make(map[string]Object)
+	return &Environment{store: s, consts: c, typeParamBindings: t, outer: nil}
 }
 
 // NewEnclosedEnvironment creates a new environment that is enclosed by an outer one.
@@ -720,8 +778,11 @@ func NewEnclosedEnvironment(outer *Environment) *Environment {
 }
 
 // Get retrieves an object by name from the environment, checking outer scopes if necessary.
-// It checks constants first, then variables. It dereferences the pointer from the store.
+// It checks type params, then constants, then variables. It dereferences the pointer from the store.
 func (e *Environment) Get(name string) (Object, bool) {
+	if obj, ok := e.typeParamBindings[name]; ok {
+		return obj, true
+	}
 	if obj, ok := e.consts[name]; ok {
 		return obj, true
 	}
@@ -732,6 +793,11 @@ func (e *Environment) Get(name string) (Object, bool) {
 		return e.outer.Get(name)
 	}
 	return nil, false
+}
+
+// SetType stores a type parameter binding in the current environment.
+func (e *Environment) SetType(name string, val Object) {
+	e.typeParamBindings[name] = val
 }
 
 // GetAddress retrieves the memory address of a variable in the environment.

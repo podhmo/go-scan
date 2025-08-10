@@ -561,6 +561,70 @@ func testEvalFile(t *testing.T, input string) object.Object {
 	return evaluated
 }
 
+func TestGenericStructs(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected any
+	}{
+		{
+			`
+			type Box[T any] struct { Value T }
+			func main() {
+				b := Box[int]{Value: 10}
+				return b.Value
+			}
+			`,
+			int64(10),
+		},
+		{
+			`
+			type Box[T any] struct { Value T }
+			func main() {
+				b := Box[string]{Value: "hello"}
+				return b.Value
+			}
+			`,
+			"hello",
+		},
+		{
+			`
+			type Box[T any] struct { Value T }
+			func (b Box[T]) Get() T { return b.Value }
+			func main() {
+				b := Box[int]{Value: 42}
+				return b.Get()
+			}
+			`,
+			int64(42),
+		},
+		{
+			`
+			type Box[T any] struct { Value T }
+			func (b Box[T]) Get() T { return b.Value }
+			func main() {
+				b := Box[string]{Value: "world"}
+				return b.Get()
+			}
+			`,
+			"world",
+		},
+	}
+
+	for i, tt := range tests {
+		t.Run(fmt.Sprintf("test-%d", i), func(t *testing.T) {
+			evaluated := testEvalFile(t, tt.input)
+			switch expected := tt.expected.(type) {
+			case int64:
+				testIntegerObject(t, evaluated, expected)
+			case string:
+				testStringObject(t, evaluated, expected)
+			default:
+				t.Errorf("unsupported expected type: %T", expected)
+			}
+		})
+	}
+}
+
 func TestMethodCalls(t *testing.T) {
 	tests := []struct {
 		input    string

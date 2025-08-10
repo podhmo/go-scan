@@ -1203,6 +1203,16 @@ func (e *Evaluator) applyFunction(call *ast.CallExpr, fn object.Object, args []o
 func (e *Evaluator) extendMethodEnv(method *object.BoundMethod, args []object.Object) *object.Environment {
 	env := object.NewEnclosedEnvironment(method.Fn.Env)
 
+	// Bind type parameters from the generic struct instance to the environment.
+	if instance, ok := method.Receiver.(*object.StructInstance); ok {
+		if instance.Def.TypeParams != nil && len(instance.Def.TypeParams.List) == len(instance.TypeArgs) {
+			for i, param := range instance.Def.TypeParams.List {
+				// param.Names[0] is the name of the type parameter, e.g., 'T'
+				env.SetType(param.Names[0].Name, instance.TypeArgs[i])
+			}
+		}
+	}
+
 	// Bind the receiver variable (e.g., 's' in 'func (s MyType) ...')
 	if method.Fn.Recv != nil && len(method.Fn.Recv.List) == 1 {
 		recvField := method.Fn.Recv.List[0]
@@ -1327,6 +1337,7 @@ func (e *Evaluator) Eval(node ast.Node, env *object.Environment, fscope *object.
 		if n.Recv == nil {
 			fn := &object.Function{
 				Name:       n.Name,
+				TypeParams: n.Type.TypeParams,
 				Parameters: n.Type.Params,
 				Results:    n.Type.Results,
 				Body:       n.Body,
@@ -1352,6 +1363,12 @@ func (e *Evaluator) Eval(node ast.Node, env *object.Environment, fscope *object.
 			} else {
 				return e.newError(recvType.Pos(), "invalid receiver type: expected identifier")
 			}
+		case *ast.IndexExpr: // For generic receivers like `Box[T]`
+			if ident, ok := recvType.X.(*ast.Ident); ok {
+				typeName = ident.Name
+			} else {
+				return e.newError(recvType.Pos(), "invalid receiver type: expected identifier for generic type base")
+			}
 		default:
 			return e.newError(recvField.Type.Pos(), "unsupported receiver type: %T", recvField.Type)
 		}
@@ -1369,6 +1386,7 @@ func (e *Evaluator) Eval(node ast.Node, env *object.Environment, fscope *object.
 		fn := &object.Function{
 			Name:       n.Name,
 			Recv:       n.Recv, // Store receiver info
+			TypeParams: n.Type.TypeParams,
 			Parameters: n.Type.Params,
 			Results:    n.Type.Results,
 			Body:       n.Body,
@@ -1615,9 +1633,10 @@ func (e *Evaluator) evalGenDecl(n *ast.GenDecl, env *object.Environment, fscope 
 			switch t := typeSpec.Type.(type) {
 			case *ast.StructType:
 				def := &object.StructDefinition{
-					Name:    typeSpec.Name,
-					Fields:  t.Fields.List,
-					Methods: make(map[string]*object.Function),
+					Name:       typeSpec.Name,
+					TypeParams: typeSpec.TypeParams,
+					Fields:     t.Fields.List,
+					Methods:    make(map[string]*object.Function),
 				}
 				env.Set(typeSpec.Name.Name, def)
 
@@ -1639,6 +1658,21 @@ func (e *Evaluator) evalGenDecl(n *ast.GenDecl, env *object.Environment, fscope 
 }
 
 func (e *Evaluator) evalIndexExpression(node ast.Node, left, index object.Object) object.Object {
+	// Handle generic type instantiation, e.g. MyType[int]
+	switch l := left.(type) {
+	case *object.StructDefinition:
+		if l.TypeParams != nil && len(l.TypeParams.List) > 0 {
+			// TODO: This currently only handles a single type argument.
+			// To support multiple (e.g., map[K, V]), we would need to inspect
+			// the original ast.IndexListExpr.
+			return &object.InstantiatedType{GenericDef: l, TypeArgs: []object.Object{index}}
+		}
+	case *object.Function:
+		if l.TypeParams != nil && len(l.TypeParams.List) > 0 {
+			return &object.InstantiatedType{GenericDef: l, TypeArgs: []object.Object{index}}
+		}
+	}
+
 	switch {
 	case left.Type() == object.ARRAY_OBJ:
 		return e.evalArrayIndexExpression(node, left, index)
@@ -2218,6 +2252,34 @@ func (e *Evaluator) evalGoValueSelectorExpr(node ast.Node, goVal *object.GoValue
 
 func (e *Evaluator) evalCompositeLit(n *ast.CompositeLit, env *object.Environment, fscope *object.FileScope) object.Object {
 	switch typ := n.Type.(type) {
+	case *ast.IndexExpr: // e.g. MyType[int]{...}
+		instTypeObj := e.Eval(typ, env, fscope)
+		if isError(instTypeObj) {
+			return instTypeObj
+		}
+		instType, ok := instTypeObj.(*object.InstantiatedType)
+		if !ok {
+			return e.newError(typ.Pos(), "type is not a generic instantiation")
+		}
+		structDef, ok := instType.GenericDef.(*object.StructDefinition)
+		if !ok {
+			return e.newError(typ.Pos(), "cannot create composite literal of non-struct generic type")
+		}
+
+		// This part reuses the existing struct literal evaluation logic,
+		// but it also sets the TypeArgs on the created instance.
+		instanceObj := e.evalStructLiteral(n, structDef, env, fscope)
+		if isError(instanceObj) {
+			return instanceObj
+		}
+		structInstance, ok := instanceObj.(*object.StructInstance)
+		if !ok {
+			// Should not happen if evalStructLiteral is correct
+			return e.newError(n.Pos(), "internal error: evalStructLiteral did not return a struct instance")
+		}
+		structInstance.TypeArgs = instType.TypeArgs
+		return structInstance
+
 	case *ast.Ident:
 		// This handles struct literals, e.g., MyStruct{...}
 		defObj := e.Eval(typ, env, fscope)
@@ -2419,11 +2481,9 @@ func (e *Evaluator) evalIdent(n *ast.Ident, env *object.Environment, fscope *obj
 	// Handle built-in type identifiers. These don't have a first-class object
 	// representation in our interpreter, but they shouldn't cause an "identifier
 	// not found" error when used in declarations like `var x int`.
-	// Returning NIL allows the type-checking logic to see it's not an interface
-	// and fall through to the correct behavior.
 	switch n.Name {
 	case "int", "string", "bool":
-		return object.NIL
+		return &object.Type{Name: n.Name}
 	}
 
 	// Check if it's a package alias or a symbol from a dot import.

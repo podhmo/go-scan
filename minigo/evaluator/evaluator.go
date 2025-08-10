@@ -173,7 +173,7 @@ type Evaluator struct {
 	scanner   *goscan.Scanner
 	registry  *object.SymbolRegistry
 	packages  map[string]*object.Package // Central package cache
-	callStack []object.CallFrame
+	callStack []*object.CallFrame
 }
 
 // Config holds the configuration for creating a new Evaluator.
@@ -193,7 +193,7 @@ func New(cfg Config) *Evaluator {
 		scanner:   cfg.Scanner,
 		registry:  cfg.Registry,
 		packages:  cfg.Packages,
-		callStack: make([]object.CallFrame, 0),
+		callStack: make([]*object.CallFrame, 0),
 	}
 	e.BuiltinContext = object.BuiltinContext{
 		Stdin:  cfg.Stdin,
@@ -210,7 +210,7 @@ func New(cfg Config) *Evaluator {
 func (e *Evaluator) newError(pos token.Pos, format string, args ...interface{}) *object.Error {
 	msg := fmt.Sprintf(format, args...)
 	// Create a copy of the current call stack for the error object.
-	stackCopy := make([]object.CallFrame, len(e.callStack))
+	stackCopy := make([]*object.CallFrame, len(e.callStack))
 	copy(stackCopy, e.callStack)
 
 	err := &object.Error{
@@ -1167,30 +1167,38 @@ func (e *Evaluator) applyFunction(call *ast.CallExpr, fn object.Object, args []o
 		// Generic methods on generic structs are handled by the receiver's type args,
 		// which are already bound in extendMethodEnv.
 	case *object.Builtin:
-		return f.Fn(&e.BuiltinContext, call.Pos(), args...)
+		var pos token.Pos
+		if call != nil {
+			pos = call.Pos()
+		}
+		return f.Fn(&e.BuiltinContext, pos, args...)
 	default:
 		return e.newError(call.Pos(), "not a function: %s", fn.Type())
 	}
 
 	// --- Common logic for all user-defined function/method calls ---
+	var callPos token.Pos
+	if call != nil {
+		callPos = call.Pos()
+	}
 
 	// Check argument count
 	if function.IsVariadic() {
 		if len(args) < len(function.Parameters.List)-1 {
-			return e.newError(call.Pos(), "wrong number of arguments for variadic function. got=%d, want at least %d", len(args), len(function.Parameters.List)-1)
+			return e.newError(callPos, "wrong number of arguments for variadic function. got=%d, want at least %d", len(args), len(function.Parameters.List)-1)
 		}
 	} else {
 		if function.Parameters != nil && len(function.Parameters.List) != len(args) {
-			return e.newError(call.Pos(), "wrong number of arguments. got=%d, want=%d", len(args), len(function.Parameters.List))
+			return e.newError(callPos, "wrong number of arguments. got=%d, want=%d", len(args), len(function.Parameters.List))
 		} else if function.Parameters == nil && len(args) != 0 {
-			return e.newError(call.Pos(), "wrong number of arguments. got=%d, want=0", len(args))
+			return e.newError(callPos, "wrong number of arguments. got=%d, want=0", len(args))
 		}
 	}
 
 	// Check type argument count for generic functions
 	if function.TypeParams != nil && len(function.TypeParams.List) > 0 {
 		if len(typeArgs) != len(function.TypeParams.List) {
-			return e.newError(call.Pos(), "wrong number of type arguments. got=%d, want=%d", len(typeArgs), len(function.TypeParams.List))
+			return e.newError(callPos, "wrong number of type arguments. got=%d, want=%d", len(typeArgs), len(function.TypeParams.List))
 		}
 	}
 
@@ -1198,14 +1206,29 @@ func (e *Evaluator) applyFunction(call *ast.CallExpr, fn object.Object, args []o
 	funcName := "<anonymous>"
 	// If the call expression is not directly a func literal (i.e., not an IIFE),
 	// and the function object has a name (from a declaration or assignment), use it.
-	if _, ok := call.Fun.(*ast.FuncLit); !ok {
-		if function.Name != nil {
-			funcName = function.Name.Name
+	if call != nil {
+		if _, ok := call.Fun.(*ast.FuncLit); !ok {
+			if function.Name != nil {
+				funcName = function.Name.Name
+			}
 		}
+	} else if function.Name != nil {
+		funcName = function.Name.Name
 	}
-	frame := object.CallFrame{Pos: call.Pos(), Function: funcName}
+	frame := &object.CallFrame{Pos: callPos, Function: funcName, Defers: make([]*object.DeferredCall, 0)}
 	e.callStack = append(e.callStack, frame)
-	defer func() { e.callStack = e.callStack[:len(e.callStack)-1] }()
+
+	// Defer the execution of deferred calls and popping the stack.
+	defer func() {
+		// The frame is the last one on the stack.
+		currentFrame := e.callStack[len(e.callStack)-1]
+		// Execute defers in LIFO order
+		for i := len(currentFrame.Defers) - 1; i >= 0; i-- {
+			deferred := currentFrame.Defers[i]
+			e.executeDeferredCall(deferred, fscope)
+		}
+		e.callStack = e.callStack[:len(e.callStack)-1]
+	}()
 
 	// Extend environment and evaluate
 	var extendedEnv *object.Environment
@@ -1220,6 +1243,11 @@ func (e *Evaluator) applyFunction(call *ast.CallExpr, fn object.Object, args []o
 
 	evaluated := e.Eval(function.Body, extendedEnv, fscope)
 	return e.unwrapReturnValue(evaluated)
+}
+
+// ApplyFunction is a public wrapper for the internal applyFunction, allowing it to be called from other packages.
+func (e *Evaluator) ApplyFunction(call *ast.CallExpr, fn object.Object, args []object.Object, fscope *object.FileScope) object.Object {
+	return e.applyFunction(call, fn, args, fscope)
 }
 
 func (e *Evaluator) extendMethodEnv(method *object.BoundMethod, args []object.Object) *object.Environment {
@@ -1321,6 +1349,40 @@ func (e *Evaluator) extendFunctionEnv(fn *object.Function, args []object.Object,
 	}
 
 	return env
+}
+
+func (e *Evaluator) executeDeferredCall(deferred *object.DeferredCall, fscope *object.FileScope) {
+	// A deferred call is a simplified function application.
+	// It doesn't return a value and cannot have its own defers.
+	fnObj := e.Eval(deferred.Call.Fun, deferred.Env, fscope)
+	if isError(fnObj) {
+		// TODO: How to handle errors in deferred calls?
+		return
+	}
+
+	args := e.evalExpressions(deferred.Call.Args, deferred.Env, fscope)
+	if len(args) == 1 && isError(args[0]) {
+		// TODO: Handle errors in deferred call arguments.
+		return
+	}
+
+	switch f := fnObj.(type) {
+	case *object.Function:
+		// A deferred function literal runs in the environment it was defined in.
+		// We don't need to extend it as it takes no arguments.
+		e.Eval(f.Body, deferred.Env, fscope)
+	case *object.BoundMethod:
+		// A deferred method call also runs in its captured environment.
+		// We need to bind the arguments, though.
+		extendedEnv := e.extendMethodEnv(f, args)
+		e.Eval(f.Fn.Body, extendedEnv, fscope)
+	case *object.Builtin:
+		// Execute builtin directly. Its return value is discarded.
+		f.Fn(&e.BuiltinContext, deferred.Call.Pos(), args...)
+	default:
+		// Error: trying to defer a non-function.
+		return
+	}
 }
 
 func (e *Evaluator) unwrapReturnValue(obj object.Object) object.Object {
@@ -1506,6 +1568,19 @@ func (e *Evaluator) Eval(node ast.Node, env *object.Environment, fscope *object.
 
 		def.Methods[n.Name.Name] = fn
 		return nil
+	case *ast.DeferStmt:
+		if len(e.callStack) == 0 {
+			return e.newError(n.Pos(), "defer is not allowed outside of a function")
+		}
+		// The call expression and its environment are stored.
+		deferred := &object.DeferredCall{
+			Call: n.Call,
+			Env:  env,
+		}
+		// Append to the defer stack. We will execute in reverse order.
+		currentFrame := e.callStack[len(e.callStack)-1]
+		currentFrame.Defers = append(currentFrame.Defers, deferred)
+		return nil // defer statement itself evaluates to nothing.
 	case *ast.ReturnStmt:
 		if len(n.Results) == 0 {
 			return &object.ReturnValue{Value: object.NIL}

@@ -589,6 +589,15 @@ func (e *Evaluator) objectToReflectValue(obj object.Object, targetType reflect.T
 	}
 
 	switch o := obj.(type) {
+	case *object.AstNode:
+		// Check if the underlying AST node (e.g., *ast.FuncLit) can be assigned
+		// to the target Go function's argument type (e.g., ast.Node or *ast.FuncLit).
+		// The `AssignableTo` method correctly handles assignment to interfaces.
+		nodeType := reflect.TypeOf(o.Node)
+		if nodeType.AssignableTo(targetType) {
+			return reflect.ValueOf(o.Node), nil
+		}
+		return reflect.Value{}, fmt.Errorf("cannot convert %s (from AstNode) to %s", nodeType, targetType)
 	case *object.Integer:
 		// Create a reflect.Value of the target type and set its value.
 		val := reflect.New(targetType).Elem()
@@ -2430,7 +2439,9 @@ func (e *Evaluator) findSymbolInPackageInfo(pkgInfo *goscan.Package, symbolName 
 	return nil, false
 }
 
-func (e *Evaluator) wrapGoFunction(pos token.Pos, funcVal reflect.Value) object.Object {
+// WrapGoFunction is a public method to wrap a native Go function into a minigo object.
+// It is exposed for testing and for tools that need to programmatically inject functions.
+func (e *Evaluator) WrapGoFunction(pos token.Pos, funcVal reflect.Value) object.Object {
 	funcType := funcVal.Type()
 	return &object.Builtin{
 		Fn: func(ctx *object.BuiltinContext, callPos token.Pos, args ...object.Object) object.Object {
@@ -2598,7 +2609,7 @@ func (e *Evaluator) findSymbolInPackage(pkg *object.Package, symbolName *ast.Ide
 		var member object.Object
 		val := reflect.ValueOf(symbol)
 		if val.Kind() == reflect.Func {
-			member = e.wrapGoFunction(pos, val)
+			member = e.WrapGoFunction(pos, val)
 		} else {
 			member = &object.GoValue{Value: val}
 		}

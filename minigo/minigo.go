@@ -371,3 +371,9 @@ func (i *Interpreter) Execute(ctx context.Context, fn *object.Function, args []o
 func (i *Interpreter) GlobalEnvForTest() *object.Environment {
 	return i.globalEnv
 }
+
+// evaluatorForTest returns the interpreter's evaluator instance.
+// This method is intended for use in tests only.
+func (i *Interpreter) evaluatorForTest() *evaluator.Evaluator {
+	return i.eval
+}

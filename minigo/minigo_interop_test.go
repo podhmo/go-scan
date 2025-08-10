@@ -2,11 +2,90 @@ package minigo
 
 import (
 	"context"
+	"fmt"
+	"go/ast"
+	"go/token"
 	"reflect"
 	"testing"
 
+	"github.com/podhmo/go-scan/minigo/evaluator"
 	"github.com/podhmo/go-scan/minigo/object"
 )
+
+func TestGoInterop_AstNodeArgument(t *testing.T) {
+	// This Go function expects an ast.Node interface.
+	// The interop layer must be able to unwrap our *object.AstNode
+	// and pass the raw ast.Node to this function.
+	inspectAstNode := func(node ast.Node) string {
+		return fmt.Sprintf("%T", node)
+	}
+
+	interp, err := NewInterpreter()
+	if err != nil {
+		t.Fatalf("NewInterpreter() failed: %v", err)
+	}
+
+	// Register the Go function directly into the global environment for the test.
+	// This bypasses the need for package/import resolution and lets us focus on the interop call.
+	wrappedFn := interp.evaluatorForTest().WrapGoFunction(token.NoPos, reflect.ValueOf(inspectAstNode))
+	interp.GlobalEnvForTest().Set("inspectAstNode", wrappedFn)
+
+	// This special form acts as a bridge. It captures the AST of its argument
+	// and then tries to call the Go function with it.
+	interp.RegisterSpecial("pass_ast", func(e *evaluator.Evaluator, fscope *object.FileScope, pos token.Pos, args []ast.Expr) object.Object {
+		if len(args) != 1 {
+			return e.NewError(pos, "expected 1 argument")
+		}
+
+		// 1. Wrap the raw AST expression in our object.
+		astNodeObj := &object.AstNode{Node: args[0]}
+
+		// 2. Look up the Go function we want to call.
+		goFuncObj, ok := interp.GlobalEnvForTest().Get("inspectAstNode")
+		if !ok {
+			return e.NewError(pos, "could not find 'inspectAstNode' function")
+		}
+
+		// 3. Call the Go function, passing the AstNode object as the argument.
+		// The evaluator's interop layer is responsible for unwrapping it.
+		return e.ApplyFunction(nil, goFuncObj, []object.Object{astNodeObj}, fscope)
+	})
+
+	script := `
+package main
+
+var result string
+
+func main() {
+	// pass_ast is a special form, so func(){} is not evaluated.
+	// Its AST is captured and passed to the Go function inspectAstNode.
+	result = pass_ast(func(){})
+}`
+
+	if err := interp.LoadFile("test.mgo", []byte(script)); err != nil {
+		t.Fatalf("LoadFile() failed: %v", err)
+	}
+
+	_, err = interp.Eval(context.Background())
+	if err != nil {
+		t.Fatalf("Eval() returned an error: %v", err)
+	}
+
+	res, ok := interp.GlobalEnvForTest().Get("result")
+	if !ok {
+		t.Fatal("result not found in global environment")
+	}
+
+	str, ok := res.(*object.String)
+	if !ok {
+		t.Fatalf("result is not a String object, but %T (%s)", res, res.Inspect())
+	}
+
+	expected := "*ast.FuncLit"
+	if str.Value != expected {
+		t.Errorf("wrong result value. got=%q, want=%q", str.Value, expected)
+	}
+}
 
 func TestGoInterop_InjectGlobals(t *testing.T) {
 	tests := []struct {

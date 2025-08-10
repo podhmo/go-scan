@@ -264,8 +264,20 @@ func (si *StructInstance) Copy() *StructInstance {
 
 // --- Builtin Function Object ---
 
-// BuiltinFunction is the type of the function for built-in commands.
-type BuiltinFunction func(stdout io.Writer, fset *token.FileSet, pos token.Pos, args ...Object) Object
+// BuiltinContext provides the necessary context for a built-in function to execute.
+// It holds I/O streams and a helper function for creating errors, bundling all
+// dependencies needed by built-in functions.
+type BuiltinContext struct {
+	Stdin    io.Reader
+	Stdout   io.Writer
+	Stderr   io.Writer
+	Fset     *token.FileSet
+	NewError func(pos token.Pos, format string, args ...interface{}) *Error
+}
+
+// BuiltinFunction is the signature for built-in functions.
+// It receives the execution context, the position of the call, and the evaluated arguments.
+type BuiltinFunction func(ctx *BuiltinContext, pos token.Pos, args ...Object) Object
 
 // Builtin represents a built-in function.
 type Builtin struct {

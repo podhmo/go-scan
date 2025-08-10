@@ -1,12 +1,12 @@
 package evaluator
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"go/ast"
 	"go/token"
 	"io"
-	"os"
 	"reflect"
 	"strconv"
 	"strings"
@@ -16,15 +16,23 @@ import (
 )
 
 var builtins = map[string]*object.Builtin{
+	"readln": {
+		Fn: func(ctx *object.BuiltinContext, pos token.Pos, args ...object.Object) object.Object {
+			if len(args) != 0 {
+				return ctx.NewError(pos, "wrong number of arguments. got=0, want=0")
+			}
+			reader := bufio.NewReader(ctx.Stdin)
+			line, err := reader.ReadString('\n')
+			if err != nil && err != io.EOF {
+				return ctx.NewError(pos, "error reading from stdin: %v", err)
+			}
+			return &object.String{Value: strings.TrimSpace(line)}
+		},
+	},
 	"len": {
-		Fn: func(stdout io.Writer, fset *token.FileSet, pos token.Pos, args ...object.Object) object.Object {
+		Fn: func(ctx *object.BuiltinContext, pos token.Pos, args ...object.Object) object.Object {
 			if len(args) != 1 {
-				err := &object.Error{
-					Pos:     pos,
-					Message: fmt.Sprintf("wrong number of arguments. got=%d, want=1", len(args)),
-				}
-				err.AttachFileSet(fset)
-				return err
+				return ctx.NewError(pos, "wrong number of arguments. got=%d, want=1", len(args))
 			}
 			switch arg := args[0].(type) {
 			case *object.Array:
@@ -39,41 +47,21 @@ var builtins = map[string]*object.Builtin{
 				case reflect.Array, reflect.Slice, reflect.Map, reflect.String:
 					return &object.Integer{Value: int64(val.Len())}
 				default:
-					err := &object.Error{
-						Pos:     pos,
-						Message: fmt.Sprintf("argument to `len` not supported, got Go value of type %s", val.Kind()),
-					}
-					err.AttachFileSet(fset)
-					return err
+					return ctx.NewError(pos, "argument to `len` not supported, got Go value of type %s", val.Kind())
 				}
 			default:
-				err := &object.Error{
-					Pos:     pos,
-					Message: fmt.Sprintf("argument to `len` not supported, got %s", args[0].Type()),
-				}
-				err.AttachFileSet(fset)
-				return err
+				return ctx.NewError(pos, "argument to `len` not supported, got %s", args[0].Type())
 			}
 		},
 	},
 	"append": {
-		Fn: func(stdout io.Writer, fset *token.FileSet, pos token.Pos, args ...object.Object) object.Object {
+		Fn: func(ctx *object.BuiltinContext, pos token.Pos, args ...object.Object) object.Object {
 			if len(args) < 2 {
-				err := &object.Error{
-					Pos:     pos,
-					Message: fmt.Sprintf("wrong number of arguments. got=%d, want at least 2", len(args)),
-				}
-				err.AttachFileSet(fset)
-				return err
+				return ctx.NewError(pos, "wrong number of arguments. got=%d, want at least 2", len(args))
 			}
 			arr, ok := args[0].(*object.Array)
 			if !ok {
-				err := &object.Error{
-					Pos:     pos,
-					Message: fmt.Sprintf("argument to `append` must be array, got %s", args[0].Type()),
-				}
-				err.AttachFileSet(fset)
-				return err
+				return ctx.NewError(pos, "argument to `append` must be array, got %s", args[0].Type())
 			}
 
 			newElements := make([]object.Object, len(arr.Elements), len(arr.Elements)+len(args)-1)
@@ -84,18 +72,18 @@ var builtins = map[string]*object.Builtin{
 		},
 	},
 	"max": {
-		Fn: func(stdout io.Writer, fset *token.FileSet, pos token.Pos, args ...object.Object) object.Object {
+		Fn: func(ctx *object.BuiltinContext, pos token.Pos, args ...object.Object) object.Object {
 			if len(args) == 0 {
-				return &object.Error{Pos: pos, Message: "max() requires at least one argument", CallStack: nil}
+				return ctx.NewError(pos, "max() requires at least one argument")
 			}
 			maxVal, ok := args[0].(*object.Integer)
 			if !ok {
-				return &object.Error{Pos: pos, Message: "all arguments to max() must be integers", CallStack: nil}
+				return ctx.NewError(pos, "all arguments to max() must be integers")
 			}
 			for i := 1; i < len(args); i++ {
 				val, ok := args[i].(*object.Integer)
 				if !ok {
-					return &object.Error{Pos: pos, Message: "all arguments to max() must be integers", CallStack: nil}
+					return ctx.NewError(pos, "all arguments to max() must be integers")
 				}
 				if val.Value > maxVal.Value {
 					maxVal = val
@@ -105,18 +93,18 @@ var builtins = map[string]*object.Builtin{
 		},
 	},
 	"min": {
-		Fn: func(stdout io.Writer, fset *token.FileSet, pos token.Pos, args ...object.Object) object.Object {
+		Fn: func(ctx *object.BuiltinContext, pos token.Pos, args ...object.Object) object.Object {
 			if len(args) == 0 {
-				return &object.Error{Pos: pos, Message: "min() requires at least one argument", CallStack: nil}
+				return ctx.NewError(pos, "min() requires at least one argument")
 			}
 			minVal, ok := args[0].(*object.Integer)
 			if !ok {
-				return &object.Error{Pos: pos, Message: "all arguments to min() must be integers", CallStack: nil}
+				return ctx.NewError(pos, "all arguments to min() must be integers")
 			}
 			for i := 1; i < len(args); i++ {
 				val, ok := args[i].(*object.Integer)
 				if !ok {
-					return &object.Error{Pos: pos, Message: "all arguments to min() must be integers", CallStack: nil}
+					return ctx.NewError(pos, "all arguments to min() must be integers")
 				}
 				if val.Value < minVal.Value {
 					minVal = val
@@ -126,23 +114,13 @@ var builtins = map[string]*object.Builtin{
 		},
 	},
 	"new": {
-		Fn: func(stdout io.Writer, fset *token.FileSet, pos token.Pos, args ...object.Object) object.Object {
+		Fn: func(ctx *object.BuiltinContext, pos token.Pos, args ...object.Object) object.Object {
 			if len(args) != 1 {
-				err := &object.Error{
-					Pos:     pos,
-					Message: fmt.Sprintf("wrong number of arguments. got=%d, want=1", len(args)),
-				}
-				err.AttachFileSet(fset)
-				return err
+				return ctx.NewError(pos, "wrong number of arguments. got=%d, want=1", len(args))
 			}
 			def, ok := args[0].(*object.StructDefinition)
 			if !ok {
-				err := &object.Error{
-					Pos:     pos,
-					Message: fmt.Sprintf("argument to `new` must be a type, got %s", args[0].Type()),
-				}
-				err.AttachFileSet(fset)
-				return err
+				return ctx.NewError(pos, "argument to `new` must be a type, got %s", args[0].Type())
 			}
 
 			// Create a zero-valued instance of the struct.
@@ -161,25 +139,25 @@ var builtins = map[string]*object.Builtin{
 		},
 	},
 	"print": {
-		Fn: func(stdout io.Writer, fset *token.FileSet, pos token.Pos, args ...object.Object) object.Object {
+		Fn: func(ctx *object.BuiltinContext, pos token.Pos, args ...object.Object) object.Object {
 			for i, arg := range args {
 				if i > 0 {
-					fmt.Fprint(stdout, " ")
+					fmt.Fprint(ctx.Stdout, " ")
 				}
-				fmt.Fprint(stdout, arg.Inspect())
+				fmt.Fprint(ctx.Stdout, arg.Inspect())
 			}
 			return object.NIL
 		},
 	},
 	"println": {
-		Fn: func(stdout io.Writer, fset *token.FileSet, pos token.Pos, args ...object.Object) object.Object {
+		Fn: func(ctx *object.BuiltinContext, pos token.Pos, args ...object.Object) object.Object {
 			for i, arg := range args {
 				if i > 0 {
-					fmt.Fprint(stdout, " ")
+					fmt.Fprint(ctx.Stdout, " ")
 				}
-				fmt.Fprint(stdout, arg.Inspect())
+				fmt.Fprint(ctx.Stdout, arg.Inspect())
 			}
-			fmt.Fprintln(stdout)
+			fmt.Fprintln(ctx.Stdout)
 			return object.NIL
 		},
 	},
@@ -187,24 +165,42 @@ var builtins = map[string]*object.Builtin{
 
 // Evaluator is the main object that evaluates the AST.
 type Evaluator struct {
-	fset      *token.FileSet
+	object.BuiltinContext
 	scanner   *goscan.Scanner
 	registry  *object.SymbolRegistry
 	packages  map[string]*object.Package // Central package cache
 	callStack []object.CallFrame
-	Stdout    io.Writer
+}
+
+// Config holds the configuration for creating a new Evaluator.
+type Config struct {
+	Fset     *token.FileSet
+	Scanner  *goscan.Scanner
+	Registry *object.SymbolRegistry
+	Packages map[string]*object.Package
+	Stdin    io.Reader
+	Stdout   io.Writer
+	Stderr   io.Writer
 }
 
 // New creates a new Evaluator.
-func New(fset *token.FileSet, scanner *goscan.Scanner, registry *object.SymbolRegistry, packages map[string]*object.Package) *Evaluator {
-	return &Evaluator{
-		fset:      fset,
-		scanner:   scanner,
-		registry:  registry,
-		packages:  packages,
+func New(cfg Config) *Evaluator {
+	e := &Evaluator{
+		scanner:   cfg.Scanner,
+		registry:  cfg.Registry,
+		packages:  cfg.Packages,
 		callStack: make([]object.CallFrame, 0),
-		Stdout:    os.Stdout,
 	}
+	e.BuiltinContext = object.BuiltinContext{
+		Stdin:  cfg.Stdin,
+		Stdout: cfg.Stdout,
+		Stderr: cfg.Stderr,
+		Fset:   cfg.Fset,
+		NewError: func(pos token.Pos, format string, v ...interface{}) *object.Error {
+			return e.newError(pos, format, v...)
+		},
+	}
+	return e
 }
 
 func (e *Evaluator) newError(pos token.Pos, format string, args ...interface{}) *object.Error {
@@ -218,7 +214,7 @@ func (e *Evaluator) newError(pos token.Pos, format string, args ...interface{}) 
 		Message:   msg,
 		CallStack: stackCopy,
 	}
-	err.AttachFileSet(e.fset) // Attach fset for formatting
+	err.AttachFileSet(e.Fset) // Attach fset for formatting
 	return err
 }
 
@@ -1198,7 +1194,7 @@ func (e *Evaluator) applyFunction(call *ast.CallExpr, fn object.Object, args []o
 		return e.unwrapReturnValue(evaluated)
 
 	case *object.Builtin:
-		return fn.Fn(e.Stdout, e.fset, call.Pos(), args...)
+		return fn.Fn(&e.BuiltinContext, call.Pos(), args...)
 	default:
 		return e.newError(call.Pos(), "not a function: %s", fn.Type())
 	}
@@ -1985,17 +1981,17 @@ func (e *Evaluator) findSymbolInPackageInfo(pkgInfo *goscan.Package, symbolName 
 func (e *Evaluator) wrapGoFunction(pos token.Pos, funcVal reflect.Value) object.Object {
 	funcType := funcVal.Type()
 	return &object.Builtin{
-		Fn: func(stdout io.Writer, fset *token.FileSet, callPos token.Pos, args ...object.Object) object.Object {
+		Fn: func(ctx *object.BuiltinContext, callPos token.Pos, args ...object.Object) object.Object {
 			// Check arg count
 			numIn := funcType.NumIn()
 			isVariadic := funcType.IsVariadic()
 			if isVariadic {
 				if len(args) < numIn-1 {
-					return e.newError(pos, "wrong number of arguments for variadic function: got %d, want at least %d", len(args), numIn-1)
+					return ctx.NewError(pos, "wrong number of arguments for variadic function: got %d, want at least %d", len(args), numIn-1)
 				}
 			} else {
 				if len(args) != numIn {
-					return e.newError(pos, "wrong number of arguments: got %d, want %d", len(args), numIn)
+					return ctx.NewError(pos, "wrong number of arguments: got %d, want %d", len(args), numIn)
 				}
 			}
 
@@ -2011,7 +2007,7 @@ func (e *Evaluator) wrapGoFunction(pos token.Pos, funcVal reflect.Value) object.
 				}
 				val, err := e.objectToReflectValue(arg, targetType)
 				if err != nil {
-					return e.newError(pos, "argument %d type mismatch: %v", i+1, err)
+					return ctx.NewError(pos, "argument %d type mismatch: %v", i+1, err)
 				}
 				in[i] = val
 			}
@@ -2023,7 +2019,7 @@ func (e *Evaluator) wrapGoFunction(pos token.Pos, funcVal reflect.Value) object.
 				if r := recover(); r != nil {
 					// Create the error object, but don't assign it to results here
 					// as it might be overwritten by the return.
-					errObj := e.newError(pos, "panic in called Go function: %v", r)
+					errObj := ctx.NewError(pos, "panic in called Go function: %v", r)
 					// Set results to a slice containing the error to ensure it's propagated.
 					results = []reflect.Value{reflect.ValueOf(errObj)}
 				}
@@ -2041,7 +2037,7 @@ func (e *Evaluator) wrapGoFunction(pos token.Pos, funcVal reflect.Value) object.
 			lastResult := results[len(results)-1]
 			if lastResult.Type().Implements(reflect.TypeOf((*error)(nil)).Elem()) {
 				if !lastResult.IsNil() {
-					return e.newError(pos, "error from called Go function: %v", lastResult.Interface())
+					return ctx.NewError(pos, "error from called Go function: %v", lastResult.Interface())
 				}
 			}
 

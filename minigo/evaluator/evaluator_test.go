@@ -59,7 +59,15 @@ func testEval(t *testing.T, input string) object.Object {
 	// For single-file tests, we create a dummy file scope.
 	fscope := object.NewFileScope(file)
 	packages := make(map[string]*object.Package)
-	eval := New(fset, scanner, object.NewSymbolRegistry(), packages)
+	eval := New(Config{
+		Fset:     fset,
+		Scanner:  scanner,
+		Registry: object.NewSymbolRegistry(),
+		Packages: packages,
+		Stdin:    os.Stdin,
+		Stdout:   os.Stdout,
+		Stderr:   os.Stderr,
+	})
 	env := object.NewEnvironment()
 
 	evaluated := eval.Eval(mainFunc.Body, env, fscope)
@@ -222,7 +230,7 @@ func testEvalWithEvaluator(t *testing.T, eval *Evaluator, input string) object.O
 		t.Fatalf("failed to close temp file: %v", err)
 	}
 
-	file, err := parser.ParseFile(eval.fset, tmpfile.Name(), nil, parser.ParseComments)
+	file, err := parser.ParseFile(eval.Fset, tmpfile.Name(), nil, parser.ParseComments)
 	if err != nil {
 		t.Fatalf("failed to parse code: %v", err)
 		return nil
@@ -271,8 +279,15 @@ func TestPrintFunctions(t *testing.T) {
 				t.Fatalf("failed to create scanner: %v", err)
 			}
 			packages := make(map[string]*object.Package)
-			eval := New(fset, scanner, object.NewSymbolRegistry(), packages)
-			eval.Stdout = &buf
+			eval := New(Config{
+				Fset:     fset,
+				Scanner:  scanner,
+				Registry: object.NewSymbolRegistry(),
+				Packages: packages,
+				Stdin:    os.Stdin,
+				Stdout:   &buf,
+				Stderr:   os.Stderr,
+			})
 
 			result := testEvalWithEvaluator(t, eval, tt.input)
 
@@ -507,7 +522,15 @@ func testEvalFile(t *testing.T, input string) object.Object {
 	env := object.NewEnvironment()
 	fscope := object.NewFileScope(file)
 	packages := make(map[string]*object.Package)
-	eval := New(fset, scanner, object.NewSymbolRegistry(), packages)
+	eval := New(Config{
+		Fset:     fset,
+		Scanner:  scanner,
+		Registry: object.NewSymbolRegistry(),
+		Packages: packages,
+		Stdin:    os.Stdin,
+		Stdout:   os.Stdout,
+		Stderr:   os.Stderr,
+	})
 
 	var mainFunc *ast.FuncDecl
 

@@ -57,7 +57,7 @@ var result = enum.Undefined
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Create interpreter with Go module resolution enabled
-			interp, err := NewInterpreter(goscan.WithGoModuleResolver())
+			interp, err := NewInterpreter(WithScannerOptions(goscan.WithGoModuleResolver()))
 			if err != nil {
 				t.Fatalf("NewInterpreter() failed: %v", err)
 			}

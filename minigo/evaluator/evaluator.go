@@ -1774,7 +1774,7 @@ func (e *Evaluator) Eval(node ast.Node, env *object.Environment, fscope *object.
 		// Special forms receive the AST of their arguments without evaluation.
 		if ident, ok := n.Fun.(*ast.Ident); ok {
 			if sf, isSpecial := e.specialForms[ident.Name]; isSpecial {
-				return sf.Fn(&e.BuiltinContext, n.Pos(), n.Args)
+				return sf.Fn(e, fscope, n.Pos(), n.Args)
 			}
 		}
 
@@ -1786,7 +1786,7 @@ func (e *Evaluator) Eval(node ast.Node, env *object.Environment, fscope *object.
 		// Check if the resolved function is a special form object. This can happen
 		// if it was passed as an argument or returned from another function.
 		if sf, ok := function.(*object.SpecialForm); ok {
-			return sf.Fn(&e.BuiltinContext, n.Pos(), n.Args)
+			return sf.Fn(e, fscope, n.Pos(), n.Args)
 		}
 
 		args := e.evalExpressions(n.Args, env, fscope)

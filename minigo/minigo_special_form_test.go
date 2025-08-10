@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/podhmo/go-scan/minigo"
+	"github.com/podhmo/go-scan/minigo/evaluator"
 	"github.com/podhmo/go-scan/minigo/object"
 )
 
@@ -16,9 +17,13 @@ func TestSpecialForm(t *testing.T) {
 	}
 
 	var receivedNode ast.Node
-	interp.RegisterSpecial("assert_ast", func(ctx *object.BuiltinContext, pos token.Pos, args []ast.Expr) object.Object {
+	interp.RegisterSpecial("assert_ast", func(e any, fscope *object.FileScope, pos token.Pos, args []ast.Expr) object.Object {
+		eval, ok := e.(*evaluator.Evaluator)
+		if !ok {
+			t.Fatalf("evaluator is not passed")
+		}
 		if len(args) != 1 {
-			return ctx.NewError(pos, "expected 1 argument, got %d", len(args))
+			return eval.NewError(pos, "expected 1 argument, got %d", len(args))
 		}
 		receivedNode = args[0]
 		return object.NIL
@@ -55,10 +60,14 @@ func TestSpecialForm_Vs_RegularFunction(t *testing.T) {
 	}
 
 	// Register a special form
-	interp.RegisterSpecial("is_ast", func(ctx *object.BuiltinContext, pos token.Pos, args []ast.Expr) object.Object {
+	interp.RegisterSpecial("is_ast", func(e any, fscope *object.FileScope, pos token.Pos, args []ast.Expr) object.Object {
+		eval, ok := e.(*evaluator.Evaluator)
+		if !ok {
+			t.Fatalf("evaluator is not passed")
+		}
 		// It should receive an AST node
 		if len(args) != 1 {
-			return ctx.NewError(pos, "is_ast: expected 1 argument")
+			return eval.NewError(pos, "is_ast: expected 1 argument")
 		}
 		_, isIdent := args[0].(*ast.Ident)
 		return &object.Boolean{Value: isIdent}
@@ -141,7 +150,7 @@ func main() {
 
 // A helper function to check for substrings, as the error format might have extra details.
 func contains(s, substr string) bool {
-	return len(s) >= len(substr) && s[:len(expectedErr)] == substr
+	return len(s) >= len(expectedErr) && s[:len(expectedErr)] == substr
 }
 func TestSpecialForm_ArgumentPassing(t *testing.T) {
 	interp, err := minigo.NewInterpreter()
@@ -150,7 +159,7 @@ func TestSpecialForm_ArgumentPassing(t *testing.T) {
 	}
 
 	var receivedArgs []ast.Expr
-	interp.RegisterSpecial("capture_args", func(ctx *object.BuiltinContext, pos token.Pos, args []ast.Expr) object.Object {
+	interp.RegisterSpecial("capture_args", func(e any, fscope *object.FileScope, pos token.Pos, args []ast.Expr) object.Object {
 		receivedArgs = args
 		return object.NIL
 	})

@@ -351,8 +351,9 @@ func (b *Builtin) Inspect() string { return "builtin function" }
 // --- Special Form Function Object ---
 
 // SpecialFormFunction is the signature for special form functions.
-// It receives the execution context, the position of the call, and the *unevaluated* argument expressions.
-type SpecialFormFunction func(ctx *BuiltinContext, pos token.Pos, args []ast.Expr) Object
+// It receives the evaluator instance, the current file scope, the position of the call,
+// and the *unevaluated* argument expressions.
+type SpecialFormFunction func(evaluator any, fscope *FileScope, pos token.Pos, args []ast.Expr) Object
 
 // SpecialForm represents a special form function.
 type SpecialForm struct {

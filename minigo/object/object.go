@@ -348,23 +348,6 @@ func (b *Builtin) Type() ObjectType { return BUILTIN_OBJ }
 // Inspect returns a string representation of the built-in function.
 func (b *Builtin) Inspect() string { return "builtin function" }
 
-// --- Special Form Function Object ---
-
-// SpecialFormFunction is the signature for special form functions.
-// It receives the evaluator instance, the current file scope, the position of the call,
-// and the *unevaluated* argument expressions.
-type SpecialFormFunction func(evaluator any, fscope *FileScope, pos token.Pos, args []ast.Expr) Object
-
-// SpecialForm represents a special form function.
-type SpecialForm struct {
-	Fn SpecialFormFunction
-}
-
-// Type returns the type of the SpecialForm object.
-func (sf *SpecialForm) Type() ObjectType { return SPECIAL_FORM_OBJ }
-
-// Inspect returns a string representation of the special form function.
-func (sf *SpecialForm) Inspect() string { return "special form" }
 
 // --- Struct Definition Object ---
 

@@ -17,11 +17,7 @@ func TestSpecialForm(t *testing.T) {
 	}
 
 	var receivedNode ast.Node
-	interp.RegisterSpecial("assert_ast", func(e any, fscope *object.FileScope, pos token.Pos, args []ast.Expr) object.Object {
-		eval, ok := e.(*evaluator.Evaluator)
-		if !ok {
-			t.Fatalf("evaluator is not passed")
-		}
+	interp.RegisterSpecial("assert_ast", func(eval *evaluator.Evaluator, fscope *object.FileScope, pos token.Pos, args []ast.Expr) object.Object {
 		if len(args) != 1 {
 			return eval.NewError(pos, "expected 1 argument, got %d", len(args))
 		}
@@ -60,11 +56,7 @@ func TestSpecialForm_Vs_RegularFunction(t *testing.T) {
 	}
 
 	// Register a special form
-	interp.RegisterSpecial("is_ast", func(e any, fscope *object.FileScope, pos token.Pos, args []ast.Expr) object.Object {
-		eval, ok := e.(*evaluator.Evaluator)
-		if !ok {
-			t.Fatalf("evaluator is not passed")
-		}
+	interp.RegisterSpecial("is_ast", func(eval *evaluator.Evaluator, fscope *object.FileScope, pos token.Pos, args []ast.Expr) object.Object {
 		// It should receive an AST node
 		if len(args) != 1 {
 			return eval.NewError(pos, "is_ast: expected 1 argument")
@@ -159,7 +151,7 @@ func TestSpecialForm_ArgumentPassing(t *testing.T) {
 	}
 
 	var receivedArgs []ast.Expr
-	interp.RegisterSpecial("capture_args", func(e any, fscope *object.FileScope, pos token.Pos, args []ast.Expr) object.Object {
+	interp.RegisterSpecial("capture_args", func(eval *evaluator.Evaluator, fscope *object.FileScope, pos token.Pos, args []ast.Expr) object.Object {
 		receivedArgs = args
 		return object.NIL
 	})

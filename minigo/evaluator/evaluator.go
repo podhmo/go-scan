@@ -15,6 +15,22 @@ import (
 	"github.com/podhmo/go-scan/minigo/object"
 )
 
+// SpecialFormFunction is the signature for special form functions.
+// It receives the evaluator instance, the current file scope, the position of the call,
+// and the *unevaluated* argument expressions.
+type SpecialFormFunction func(e *Evaluator, fscope *object.FileScope, pos token.Pos, args []ast.Expr) object.Object
+
+// SpecialForm represents a special form function.
+type SpecialForm struct {
+	Fn SpecialFormFunction
+}
+
+// Type returns the type of the SpecialForm object.
+func (sf *SpecialForm) Type() object.ObjectType { return object.SPECIAL_FORM_OBJ }
+
+// Inspect returns a string representation of the special form function.
+func (sf *SpecialForm) Inspect() string { return "special form" }
+
 var builtins = map[string]*object.Builtin{
 	"readln": {
 		Fn: func(ctx *object.BuiltinContext, pos token.Pos, args ...object.Object) object.Object {
@@ -172,7 +188,7 @@ type Evaluator struct {
 	object.BuiltinContext
 	scanner      *goscan.Scanner
 	registry     *object.SymbolRegistry
-	specialForms map[string]*object.SpecialForm
+	specialForms map[string]*SpecialForm
 	packages     map[string]*object.Package // Central package cache
 	callStack    []*object.CallFrame
 }
@@ -182,7 +198,7 @@ type Config struct {
 	Fset         *token.FileSet
 	Scanner      *goscan.Scanner
 	Registry     *object.SymbolRegistry
-	SpecialForms map[string]*object.SpecialForm
+	SpecialForms map[string]*SpecialForm
 	Packages     map[string]*object.Package
 	Stdin        io.Reader
 	Stdout       io.Writer
@@ -1785,7 +1801,7 @@ func (e *Evaluator) Eval(node ast.Node, env *object.Environment, fscope *object.
 
 		// Check if the resolved function is a special form object. This can happen
 		// if it was passed as an argument or returned from another function.
-		if sf, ok := function.(*object.SpecialForm); ok {
+		if sf, ok := function.(*SpecialForm); ok {
 			return sf.Fn(e, fscope, n.Pos(), n.Args)
 		}
 

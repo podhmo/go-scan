@@ -3,6 +3,7 @@ package minigo
 import (
 	"context"
 	"fmt"
+	"go/ast"
 	"go/parser"
 	"io"
 	"os"
@@ -319,4 +320,45 @@ func (i *Interpreter) Eval(ctx context.Context) (*Result, error) {
 // This method is intended for use in tests only.
 func (i *Interpreter) GlobalEnvForTest() *object.Environment {
 	return i.globalEnv
+}
+
+// Call executes a specific function that has been loaded into the interpreter's
+// environment by a previous call to `LoadFile` and `Eval`.
+func (i *Interpreter) Call(ctx context.Context, name string, args ...object.Object) (*Result, error) {
+	fn, ok := i.globalEnv.Get(name)
+	if !ok {
+		return nil, fmt.Errorf("function %q not found in global scope", name)
+	}
+
+	function, ok := fn.(object.Object)
+	if !ok {
+		return nil, fmt.Errorf("global symbol %q is not a function, but %T", name, fn)
+	}
+
+	// We need a new evaluator instance to execute the call.
+	eval := evaluator.New(evaluator.Config{
+		Fset:     i.scanner.Fset(),
+		Scanner:  i.scanner,
+		Registry: i.Registry,
+		Packages: i.packages,
+		Stdin:    i.stdin,
+		Stdout:   i.stdout,
+		Stderr:   i.stderr,
+	})
+
+	// To call the function, we need to create a synthetic call expression.
+	// This is a bit of a hack, but it's the most direct way to use the evaluator's
+	// existing function application logic without a major refactor.
+	// A proper implementation might add a direct `Apply` method to the evaluator.
+	syntheticCall := &ast.CallExpr{
+		Fun: &ast.Ident{Name: name}, // The name is mostly for error messages.
+	}
+
+	// The evaluator's applyFunction expects a slice of object.Object
+	result := eval.Apply(syntheticCall, function, args, nil) // fscope is nil for external calls
+	if err, ok := result.(*object.Error); ok {
+		return nil, fmt.Errorf("%s", err.Inspect())
+	}
+
+	return &Result{Value: result}, nil
 }

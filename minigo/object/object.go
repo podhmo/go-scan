@@ -44,7 +44,12 @@ const (
 
 	// Generics related
 	TYPE_OBJ              ObjectType = "TYPE"
+	TYPE_ALIAS_OBJ        ObjectType = "TYPE_ALIAS"
 	INSTANTIATED_TYPE_OBJ ObjectType = "INSTANTIATED_TYPE"
+
+	// Type Kinds
+	ARRAY_TYPE_OBJ ObjectType = "ARRAY_TYPE"
+	MAP_TYPE_OBJ   ObjectType = "MAP_TYPE"
 )
 
 // Hashable is an interface for objects that can be used as map keys.
@@ -252,6 +257,37 @@ func (f *Function) Inspect() string {
 	out.WriteString(") { ... }")
 
 	return out.String()
+}
+
+// --- ArrayType Object ---
+
+// ArrayType represents the type of an array (or slice).
+type ArrayType struct {
+	ElementType Object // This is a type object, e.g., *Type, *StructDefinition
+}
+
+// Type returns the type of the ArrayType object.
+func (at *ArrayType) Type() ObjectType { return ARRAY_TYPE_OBJ }
+
+// Inspect returns a string representation of the array type.
+func (at *ArrayType) Inspect() string {
+	return "[]" + at.ElementType.Inspect()
+}
+
+// --- MapType Object ---
+
+// MapType represents the type of a map.
+type MapType struct {
+	KeyType   Object
+	ValueType Object
+}
+
+// Type returns the type of the MapType object.
+func (mt *MapType) Type() ObjectType { return MAP_TYPE_OBJ }
+
+// Inspect returns a string representation of the map type.
+func (mt *MapType) Inspect() string {
+	return fmt.Sprintf("map[%s]%s", mt.KeyType.Inspect(), mt.ValueType.Inspect())
 }
 
 // Copy creates a shallow copy of the struct instance.
@@ -634,6 +670,35 @@ func (t *Type) Type() ObjectType { return TYPE_OBJ }
 
 // Inspect returns a string representation of the Type's value.
 func (t *Type) Inspect() string { return t.Name }
+
+// --- Type Alias Object ---
+
+// TypeAlias represents a type alias, including generic ones.
+// e.g., type MyInt int  or  type List[T] = []T
+type TypeAlias struct {
+	Name         *ast.Ident
+	TypeParams   *ast.FieldList
+	Underlying   ast.Expr // The type expression it aliases, e.g., `[]T`
+	Env          *Environment
+	ResolvedType Object // Cache for the resolved type object
+}
+
+// Type returns the type of the TypeAlias object.
+func (ta *TypeAlias) Type() ObjectType { return TYPE_ALIAS_OBJ }
+
+// Inspect returns a string representation of the type alias.
+func (ta *TypeAlias) Inspect() string {
+	// A proper implementation would use go/printer, but this is fine for debugging.
+	var b strings.Builder
+	b.WriteString("type ")
+	b.WriteString(ta.Name.Name)
+	if ta.TypeParams != nil && len(ta.TypeParams.List) > 0 {
+		// Simplified representation of type parameters
+		b.WriteString("[...]")
+	}
+	b.WriteString(" = ...") // We don't have an easy way to print the underlying expr
+	return b.String()
+}
 
 // --- InstantiatedType Object ---
 

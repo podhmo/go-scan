@@ -817,16 +817,102 @@ func TestMultipleReturnValues(t *testing.T) {
 				fullInput := tt.input + "; " + probeExpr
 				evaluated := testEval(t, fullInput)
 
-				switch exp := expected.(type) {
-				case int64:
-					testIntegerObject(t, evaluated, exp)
-				case string:
-					testStringObject(t, evaluated, exp)
-				case bool:
-					testBooleanObject(t, evaluated, exp)
-				default:
-					t.Fatalf("unsupported probe type: %T", exp)
-				}
+				t.Run(probeExpr, func(t *testing.T) {
+					switch exp := expected.(type) {
+					case int64:
+						testIntegerObject(t, evaluated, exp)
+					case string:
+						testStringObject(t, evaluated, exp)
+					case bool:
+						testBooleanObject(t, evaluated, exp)
+					default:
+						t.Fatalf("unsupported probe type: %T", exp)
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestTypeAlias(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected interface{}
+	}{
+		{
+			name:     "simple non-generic alias",
+			input:    "type MyInt = int; func main() { var x MyInt = 10; return x }",
+			expected: int64(10),
+		},
+		{
+			name: "generic slice alias",
+			input: `
+			type List[T any] = []T
+			func main() {
+				var x List[int] = List[int]{1, 2, 3}
+				return x[1]
+			}`,
+			expected: int64(2),
+		},
+		{
+			name: "generic struct alias",
+			input: `
+			type Pair[K any, V any] = struct { Key K; Value V }
+			func main() {
+				var p Pair[string, int] = Pair[string, int]{Key: "hello", Value: 42}
+				return p.Value
+			}`,
+			expected: int64(42),
+		},
+		{
+			name: "non-generic slice alias",
+			input: `
+			type IntSlice = []int
+			func main() {
+				var s IntSlice = IntSlice{100, 200}
+				return s[0]
+			}`,
+			expected: int64(100),
+		},
+		{
+			name: "alias of an alias",
+			input: `
+			type MyInt = int
+			type SuperInt = MyInt
+			func main() {
+				var x SuperInt = 99
+				return x
+			}`,
+			expected: int64(99),
+		},
+		{
+			name: "alias with method",
+			input: `
+			type Point = struct{ X int; Y int }
+			func (p Point) dist() int {
+				return p.X * p.X + p.Y * p.Y
+			}
+			func main() {
+				var myPoint Point = Point{X: 3, Y: 4}
+				return myPoint.dist()
+			}`,
+			expected: int64(25),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			evaluated := testEvalFile(t, tt.input)
+			switch expected := tt.expected.(type) {
+			case int64:
+				testIntegerObject(t, evaluated, expected)
+			case string:
+				testStringObject(t, evaluated, expected)
+			case bool:
+				testBooleanObject(t, evaluated, expected)
+			default:
+				t.Errorf("unsupported expected type: %T", expected)
 			}
 		})
 	}

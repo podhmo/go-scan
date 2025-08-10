@@ -70,6 +70,14 @@ type CallFrame struct {
 	Pos       token.Pos
 	Function  string // Name of the function
 	IsBuiltin bool   // Whether the function is a Go builtin or user-defined
+	Defers    []*DeferredCall
+}
+
+// DeferredCall represents a deferred function call.
+// For this basic implementation, we just store the call expression and its environment.
+type DeferredCall struct {
+	Call *ast.CallExpr
+	Env  *Environment
 }
 
 // Format formats the call frame into a readable string.
@@ -610,7 +618,7 @@ func (g *GoValue) Inspect() string {
 type Error struct {
 	Pos       token.Pos
 	Message   string
-	CallStack []CallFrame
+	CallStack []*CallFrame
 	fset      *token.FileSet // FileSet to resolve positions
 }
 
@@ -898,6 +906,11 @@ func (e *Environment) Set(name string, val Object) Object {
 func (e *Environment) SetConstant(name string, val Object) Object {
 	e.consts[name] = val
 	return val
+}
+
+// Outer returns the enclosing environment.
+func (e *Environment) Outer() *Environment {
+	return e.outer
 }
 
 // Assign updates the value of an existing variable. It searches up through

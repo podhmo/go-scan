@@ -11,13 +11,13 @@ import (
 
 func TestGenericFunctions(t *testing.T) {
 	tests := []struct {
-		name           string
-		script         string
-		expectedVar    string
-		expectedValue  any
-		expectedType   object.ObjectType
-		wantErr        bool
-		wantErrorMsg   string
+		name          string
+		script        string
+		expectedVar   string
+		expectedValue any
+		expectedType  object.ObjectType
+		wantErr       bool
+		wantErrorMsg  string
 	}{
 		{
 			name: "simple identity function with int",

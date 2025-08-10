@@ -20,6 +20,7 @@ import (
 type Interpreter struct {
 	scanner   *goscan.Scanner
 	Registry  *object.SymbolRegistry
+	eval      *evaluator.Evaluator
 	globalEnv *object.Environment
 	files     []*object.FileScope
 	packages  map[string]*object.Package // Cache for loaded packages, keyed by path
@@ -88,6 +89,17 @@ func NewInterpreter(options ...Option) (*Interpreter, error) {
 		return nil, fmt.Errorf("initializing scanner: %w", err)
 	}
 	i.scanner = scanner
+
+	// Initialize the evaluator here, so it persists for the lifetime of the interpreter.
+	i.eval = evaluator.New(evaluator.Config{
+		Fset:     i.scanner.Fset(),
+		Scanner:  i.scanner,
+		Registry: i.Registry,
+		Packages: i.packages,
+		Stdin:    i.stdin,
+		Stdout:   i.stdout,
+		Stderr:   i.stderr,
+	})
 
 	return i, nil
 }
@@ -277,42 +289,70 @@ func (i *Interpreter) LoadFile(filename string, source []byte) error {
 	return nil
 }
 
-// Eval executes the loaded files.
-// It first processes all declarations and then can optionally run an entry point function.
-func (i *Interpreter) Eval(ctx context.Context) (*Result, error) {
-	// Inject global variables from Go into the interpreter's environment.
-	// for name, value := range opts.Globals {
-	// 	i.globalEnv.Set(name, &object.GoValue{Value: reflect.ValueOf(value)})
-	// }
-
-	// For now, we assume a single FileSet for all files.
-	// A more robust implementation might manage a map of fsets.
-	fset := i.scanner.Fset()
-	eval := evaluator.New(evaluator.Config{
-		Fset:     fset,
-		Scanner:  i.scanner,
-		Registry: i.Registry,
-		Packages: i.packages,
-		Stdin:    i.stdin,
-		Stdout:   i.stdout,
-		Stderr:   i.stderr,
-	})
-
-	// In a real multi-file Go program, evaluation order is complex (e.g., all `type` decls first).
-	// For minigo, we'll simplify: evaluate all declarations in all files sequentially.
-	// This populates the globalEnv with functions, types, vars, and consts.
-	var lastVal object.Object
+// EvalDeclarations evaluates all top-level declarations in the loaded files.
+func (i *Interpreter) EvalDeclarations(ctx context.Context) error {
 	for _, file := range i.files {
 		for _, decl := range file.AST.Decls {
-			lastVal = eval.Eval(decl, i.globalEnv, file)
-			if err, ok := lastVal.(*object.Error); ok {
-				// The error object's Inspect() method now returns a fully formatted string.
-				return nil, fmt.Errorf("%s", err.Inspect())
+			result := i.eval.Eval(decl, i.globalEnv, file)
+			if err, ok := result.(*object.Error); ok {
+				return fmt.Errorf("%s", err.Inspect())
 			}
 		}
 	}
+	return nil
+}
 
-	return &Result{Value: lastVal}, nil
+// Eval executes the loaded files.
+// It first processes all declarations and then can optionally run an entry point function.
+func (i *Interpreter) Eval(ctx context.Context) (*Result, error) {
+	if err := i.EvalDeclarations(ctx); err != nil {
+		return nil, err
+	}
+
+	// After declarations, find and execute the main function.
+	mainFunc, fscope, err := i.FindFunction("main")
+	if err != nil {
+		// If main doesn't exist, it's not an error. The script might just be a library.
+		return &Result{Value: object.NIL}, nil
+	}
+
+	return i.Execute(ctx, mainFunc, nil, fscope)
+}
+
+// FindFunction finds a function in the global scope and the file scope it was defined in.
+func (i *Interpreter) FindFunction(name string) (*object.Function, *object.FileScope, error) {
+	obj, ok := i.globalEnv.Get(name)
+	if !ok {
+		return nil, nil, fmt.Errorf("function %q not found", name)
+	}
+	fn, ok := obj.(*object.Function)
+	if !ok {
+		return nil, nil, fmt.Errorf("%q is not a function, but %s", name, obj.Type())
+	}
+
+	// Find the file scope associated with the function's environment.
+	// This is a bit of a hack; a better way would be to store the file scope
+	// with the function object itself. A top-level function's environment is the global one.
+	if fn.Env == i.globalEnv {
+		// This doesn't uniquely identify the file if main is defined in multiple files.
+		// For now, we just return the first file scope. This is a limitation.
+		if len(i.files) > 0 {
+			return fn, i.files[0], nil
+		}
+	}
+
+	return fn, nil, fmt.Errorf("could not find file scope for function %q", name)
+}
+
+// Execute runs a given function with the provided arguments using the interpreter's persistent evaluator.
+func (i *Interpreter) Execute(ctx context.Context, fn *object.Function, args []object.Object, fscope *object.FileScope) (*Result, error) {
+	// We pass a nil CallExpr because we are not in a real call site from the source.
+	result := i.eval.ApplyFunction(nil, fn, args, fscope)
+	if err, ok := result.(*object.Error); ok {
+		return nil, fmt.Errorf("%s", err.Inspect())
+	}
+
+	return &Result{Value: result}, nil
 }
 
 // GlobalEnvForTest returns the interpreter's global environment.

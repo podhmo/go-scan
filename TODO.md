@@ -215,6 +215,8 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     - [x] Implement support for generic structs (definition, instantiation, method calls).
     - [x] Implement support for generic functions and types, assuming calls are correct (no type checking).
 - [x] **Support for Generic Type Aliases**: Implement support for generic type aliases (e.g., `type List[T any] = []T`). This requires updating the type declaration logic in the evaluator to handle `ast.TypeSpec` nodes where the `Assign` field is non-nil.
+- [x] **`defer` statement (basic)**: Implement `defer` statement without support for modifying named return values.
+- [ ] **`defer` with named returns**: Extend `defer` to correctly interact with and modify named return values.
 - [ ] **Built-in Functions**:
     - [x] `append`
     - [ ] `copy`

@@ -266,3 +266,87 @@ var _ = println("Hello,", name)
 		t.Errorf("name has wrong value. got=%q, want=%q", str.Value, "Gopher")
 	}
 }
+
+func TestInterpreterEval_Defer_Simple(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		check func(t *testing.T, i *Interpreter, stdout *bytes.Buffer)
+	}{
+		{
+			name: "simple defer",
+			input: `package main
+var x = 1
+func main() {
+	defer func() { x = 10 }()
+	x = 2
+}`,
+			check: func(t *testing.T, i *Interpreter, stdout *bytes.Buffer) {
+				val, ok := i.globalEnv.Get("x")
+				if !ok {
+					t.Fatalf("variable 'x' not found")
+				}
+				integer, ok := val.(*object.Integer)
+				if !ok {
+					t.Fatalf("x is not Integer, got %T", val)
+				}
+				if integer.Value != 10 {
+					t.Errorf("x should be 10, got %d", integer.Value)
+				}
+			},
+		},
+		{
+			name: "LIFO order",
+			input: `package main
+import "fmt"
+func main() {
+	defer fmt.Print("1")
+	defer fmt.Print("2")
+	fmt.Print("0")
+}`,
+			check: func(t *testing.T, i *Interpreter, stdout *bytes.Buffer) {
+				expected := "021"
+				if got := stdout.String(); got != expected {
+					t.Errorf("stdout got %q, want %q", got, expected)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var stdout bytes.Buffer
+			i, err := NewInterpreter(WithStdout(&stdout))
+			if err != nil {
+				t.Fatalf("NewInterpreter() failed: %v", err)
+			}
+
+			i.Register("fmt", map[string]any{
+				"Print": func(s string) {
+					fmt.Fprint(&stdout, s)
+				},
+			})
+
+			if err := i.LoadFile("test.go", []byte(tt.input)); err != nil {
+				t.Fatalf("LoadFile() failed: %v", err)
+			}
+
+			if err := i.EvalDeclarations(context.Background()); err != nil {
+				t.Fatalf("EvalDeclarations() failed: %v", err)
+			}
+
+			// We need to execute main to test defer
+			mainFunc, fscope, err := i.FindFunction("main")
+			if err != nil {
+				t.Fatalf("FindFunction('main') failed: %v", err)
+			}
+
+			_, err = i.Execute(context.Background(), mainFunc, nil, fscope)
+			if err != nil {
+				t.Fatalf("Execute() failed: %v", err)
+			}
+
+			tt.check(t, i, &stdout)
+		})
+	}
+}

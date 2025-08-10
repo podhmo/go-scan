@@ -20,7 +20,7 @@ To maintain simplicity and focus on its core use case, `minigo` will intentional
 The following features are explicitly **unsupported**:
 
 -   **Concurrency**: `go` statements, `chan` types, and `select` statements. `minigo` is a single-threaded interpreter.
--   **Defer, Panic, and Recover**: The `defer` statement and the `panic`/`recover` mechanism are not supported. Errors should be handled through explicit return values.
+-   **Panic, and Recover**: The `panic`/`recover` mechanism are not supported. Errors should be handled through explicit return values.
 -   **Interfaces**: Full support for `interface` types, type assertions, and type switches is not a goal. Go interoperability will handle specific interface needs on the host side.
 -   **Unsafe Operations**: The `unsafe` package and its functionalities are not supported.
 

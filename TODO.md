@@ -22,58 +22,29 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     - **`scantest` Library**: A testing harness for creating isolated, in-memory tests for tools built with `go-scan`.
     - **In-Memory File Overlay**: Allows providing file content in memory, essential for testing and tools that modify code before scanning.
     - **Debuggability**: Provides `--inspect` and `--dry-run` modes for easier debugging and testing of code generators.
-- **`minigo` Script Engine (Partial Implementation)**: A significant portion of the `minigo` interpreter has been implemented, including:
-    - **Core Language**: A large subset of Go's syntax, including expressions, variables (`var`, `const`, `iota`), control flow (`if`, `for`, `switch`), functions, and data structures (structs, slices, maps).
-    - **Go Interoperability**: Support for calling Go functions, accessing Go variables, and unmarshaling script results back into Go structs via `Result.As()`.
-    - **Advanced Features**: Includes full pointer support (`&`, `*`), method definitions and calls, basic generics, and a rich error-reporting system with stack traces.
+- **`minigo` Script Engine**: A nearly complete, embeddable script engine that interprets a large subset of Go.
+    - **Core Interpreter**: The engine is fully implemented, supporting expressions, variables (`var`, `const`, `iota`), assignments, and all major control flow statements (`if`, `for`, `switch`, `break`, `continue`).
+    - **Functions and Data Structures**: Supports user-defined functions, rich error reporting with stack traces, and composite types including structs, slices, and maps.
+    - **Advanced Language Features**: Includes full support for pointers (`&`, `*`), method definitions on structs, interface definitions and dynamic dispatch, struct embedding, and basic generics.
+    - **Go Interoperability**: Provides a robust bridge to Go, allowing scripts to call Go functions, access Go variables, and unmarshal script results back into Go structs via `Result.As()`. Lazy, on-demand loading of imported Go packages is also supported.
 
 ## To Be Implemented
 
-### minigo Implementation ([docs/plan-minigo.md](./docs/plan-minigo.md))
-- [ ] Set up the project structure (`minigo/`, `minigo/object/`, `minigo/evaluator/`, etc.).
-- [ ] Define the `object.Object` interface and basic types: `Integer`, `String`, `Boolean`, `Nil`.
-- [ ] Implement the core `eval` loop for expression evaluation.
-- [ ] Support basic literals (`123`, `"hello"`).
-- [ ] Support binary expressions (`+`, `-`, `*`, `/`, `==`, `!=`, `<`, `>`).
-- [ ] Support unary expressions (`-`, `!`).
-- [ ] Write unit tests for all expression evaluations.
-- [ ] Implement the `object.Environment` for managing lexical scopes.
-- [ ] Add support for `var` declarations (e.g., `var x = 10`) and assignments (`x = 20`).
-- [ ] Add support for short variable declarations (`x := 10`).
-- [ ] **Implement `const` declarations**, including typed (`const C int = 1`), untyped (`const C = 1`), and `iota`.
-- [ ] Implement `if/else` statements.
-- [ ] Implement standard `for` loops (`for i := 0; i < 10; i++`).
-- [ ] Implement `break` and `continue` statements.
-- [ ] **Implement `switch` statements**:
-- [ ] Support `switch` with an expression (`switch x { ... }`).
-- [ ] Support expressionless `switch` (`switch { ... }`).
-- [ ] Support `case` clauses with single or multiple expressions.
-- [ ] Support the `default` clause.
-- [ ] Implement user-defined functions (`func` declarations).
-- [ ] Implement the call stack mechanism for tracking function calls.
-- [ ] Implement `return` statements (including returning the `nil` object).
-- [ ] Implement rich error formatting with a formatted call stack.
-- [ ] Add support for `type ... struct` declarations.
-- [ ] Support struct literal instantiation (e.g., `MyStruct{...}`), including both keyed and unkeyed fields.
-- [ ] Support field access (`myStruct.Field`) and assignment (`myStruct.Field = ...`).
-- [ ] Support slice and array literals (`[]int{1, 2}`, `[2]int{1, 2}`).
-- [ ] Support map literals (`map[string]int{"a": 1}`).
-- [ ] Support indexing for slices, arrays, and maps (`arr[0]`, `m["key"]`).
-- [ ] **Implement `for...range` loops** for iterating over slices, arrays, and maps.
-- [ ] **Implement pointer support**:
-- [ ] Define a `Pointer` object type in the object system.
-- [ ] Implement the address-of operator (`&`) to create pointers to variables.
-- [ ] Implement the dereference operator (`*`) to get the value a pointer points to.
-- [ ] Support pointer-to-struct field access (e.g., `ptr.Field`).
-- [ ] Support `new()` built-in function.
-- [ ] Create the main `Interpreter` struct that holds a `goscan.Scanner`.
-- [ ] Implement the logic to handle `import` statements and load symbols from external Go packages.
-- [ ] Implement the `object.GoValue` to wrap `reflect.Value`, allowing Go values to be injected into the script.
-- [ ] Implement the logic to wrap Go functions as `BuiltinFunction` objects.
-- [ ] Implement the `Result.As(target any)` method for unmarshaling script results back into Go structs.
-- [ ] Thoroughly test all features, especially pointer handling and the Go interop layer.
+### `minigo` Refinements ([docs/plan-minigo.md](./docs/plan-minigo.md))
+- [ ] **Implement Remaining Built-in Functions**:
+    - [ ] `copy`
+    - [ ] `delete`
+    - [ ] `cap`
+    - [ ] `make`
+    - [ ] `new`
+    - [ ] `complex`
+    - [ ] `real`
+    - [ ] `imag`
+    - [ ] `clear`
+    - [ ] `close`
+    - [ ] `panic`
+    - [ ] `recover`
 - [ ] Write comprehensive documentation for the API, supported language features, and usage examples.
-- [ ] Ensure `make format` and `make test` pass cleanly.
 
 ### Final API Specification for IDE-Native convert Configuration ([docs/plan-convert-with-minigo.md](./docs/plan-convert-with-minigo.md))
 - [ ] **Implement `object.AstNode`**: Create a new type in the `minigo/object` package to wrap a `go/ast.Node`.

@@ -237,15 +237,3 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] Thoroughly test all features, especially pointer handling and the Go interop layer.
 - [ ] Write comprehensive documentation for the API, supported language features, and usage examples.
 
-### Multi-File Project Support in `minigo`
-- [x] **File-Scoped Import Resolution**: Refactor the interpreter to support multi-file projects. This requires moving from a single global environment to a model where each file has its own scope for imports.
-    - [x] The `eval` loop will need to process multiple files and manage their scopes.
-    - [x] The `import` statement evaluation logic needs to be updated to handle file-local aliases (e.g., `import str "strings"` in `a.go` should not conflict with `import str "net/http"` in `b.go`).
-    - [x] The `SymbolRegistry` will remain global, but the resolution of an import alias to a registered package path must become local to each file's AST.
-
-### Refactoring
-- [x] **Modernize `examples/minigo`**: Replace the old `minigo` implementation with a new one based on the `minigo` library. This includes:
-    - [x] Deleting the now-redundant `examples/minigo` directory.
-    - [x] Deleting the old implementation files in `examples/minigo`.
-    - [x] Creating a new `main.go` in `examples/minigo` to act as a CLI for the `minigo` engine.
-    - [x] Updating `examples/README.md` and `examples/minigo/README.md` to reflect the changes.

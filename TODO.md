@@ -139,103 +139,68 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
         -   [x] **Integration Tests**: Added tests using the `scantest` library to verify the functionality of the new inspect and dry-run modes.
         -   [x] **`resolution_path` Logging**: Implement the `resolution_path` field in structured logs to trace how a type was resolved.
 
+
 ## To Be Implemented
 
-### [-] minigo Implementation ([docs/plan-minigo.md](./docs/plan-minigo.md))
-- [x] Set up the project structure (`minigo/`, `minigo/object/`, `minigo/evaluator/`, etc.).
-- [x] Define the `object.Object` interface and basic types: `Integer`, `String`, `Boolean`, `Null`.
-- [x] Implement the core `eval` loop for expression evaluation.
-- [x] Support basic literals (`123`, `"hello"`).
-- [x] Support binary expressions (`+`, `-`, `*`, `/`, `==`, `!=`, `<`, `>`).
-- [x] Support unary expressions (`-`, `!`).
-- [x] Write unit tests for all expression evaluations.
-- [x] Implement the `object.Environment` for managing lexical scopes.
-- [x] Add support for `var` declarations (e.g., `var x = 10`) and assignments (`x = 20`).
-- [x] Add support for short variable declarations (`x := 10`).
-- [x] **Implement `const` declarations**, including typed (`const C int = 1`), untyped (`const C = 1`), and `iota`.
-- [x] Implement `if/else` statements.
-- [x] Implement standard `for` loops (`for i := 0; i < 10; i++`).
-- [x] Implement `break` and `continue` statements.
-- [x] **Implement `switch` statements**:
-- [x] Support `switch` with an expression (`switch x { ... }`).
-- [x] Support expressionless `switch` (`switch { ... }`).
-- [x] Support `case` clauses with single or multiple expressions.
-- [x] Support the `default` clause.
-- [x] Implement user-defined functions (`func` declarations).
-- [x] Implement the call stack mechanism for tracking function calls.
-- [x] Implement `return` statements (including returning `nil`).
-- [x] Implement rich error formatting with a formatted call stack.
-- [x] Add support for `type ... struct` declarations.
-- [x] Support struct literal instantiation (e.g., `MyStruct{...}`), including both keyed and unkeyed fields.
-- [x] Support field access (`myStruct.Field`) and assignment (`myStruct.Field = ...`).
-- [x] Support slice and array literals (`[]int{1, 2}`, `[2]int{1, 2}`).
-- [x] Support map literals (`map[string]int{"a": 1}`).
-- [x] Support indexing for slices, arrays, and maps (`arr[0]`, `m["key"]`).
-- [x] **Implement `for...range` loops** for iterating over slices, arrays, and maps.
-- [x] **Implement pointer support**:
-- [x] Define a `Pointer` object type in the object system.
-- [x] Implement the address-of operator (`&`) to create pointers to variables.
-- [x] Implement the dereference operator (`*`) to get the value a pointer points to.
-- [x] Support pointer-to-struct field access (e.g., `ptr.Field`).
-- [x] Support `new()` built-in function.
-- [x] **Support for variadic arguments** in function definitions and calls.
-- [x] **Support for struct embedding**.
-- [x] **Support for multiple return values** from functions.
-- [x] Create the main `Interpreter` struct that holds a `goscan.Scanner`.
-- [x] Implement the logic to handle `import` statements and load symbols from external Go packages.
-- [x] Implement the `object.GoValue` to wrap `reflect.Value`, allowing Go values to be injected into the script.
-- [x] **Go Value Operations**: Support operations on injected Go values.
-    - [x] Integers (`+`, `-`, `==`, etc.)
-    - [x] Strings (`+`, `==`)
-    - [x] Booleans (`==`, `if myBool`)
-- [x] **Go Value Operations (Advanced)**:
-    - [x] Support operations on injected `slice` values (e.g., `len()`, indexing, `for...range`).
-    - [x] Support operations on injected `map` values (e.g., indexing, `for...range`).
-    - [x] Support field access and method calls on injected `struct` values.
-- [x] **Underlying Type Handling**: Add an option or default behavior to treat Go `enum` types (e.g., `type MyEnum int`) as their underlying type within the script, to facilitate sharing constants.
-- [x] Implement the logic to wrap Go functions as `BuiltinFunction` objects.
-- [x] Support accessing imported variables and constants (e.g., `math.Pi`).
-- [x] **Advanced Import Handling**:
-    - [x] Implement lazy loading for imports, where symbols are only loaded from a package when they are first accessed via the new `SymbolRegistry`.
-    - [x] Ensure packages are loaded only once, even with complex indirect imports.
-    - [x] Detect and report circular import errors.
-    - [x] Support dot imports (`import . "fmt"`).
-    - [x] Support blank imports (`import _ "driver"`) and associated `init()` execution.
-- [x] Implement the `Result.As(target any)` method for unmarshaling script results back into Go structs.
-- [x] **Replace `null` keyword with `nil`**: To better align with Go's syntax, the `null` keyword (currently implemented) has been replaced with `nil`.
-- [x] **Method and Interface Support**:
-    - [x] Support method definitions (`func (r Receiver) MethodName() {}`).
-    - [x] Support method calls on struct instances (`instance.Method()`).
-    - [x] Support interface definitions (`type MyInterface interface { ... }`).
-    - [x] Support dynamic dispatch of method calls through interface variables.
-- [x] **IO Stream Handling**:
-    - [x] Make `stdout` configurable/replaceable in the interpreter.
-    - [x] Make `stdin` and `stderr` configurable/replaceable in the interpreter.
-- [x] **Generics Support (Simplified)**:
-    - [x] Implement support for generic structs (definition, instantiation, method calls).
-    - [x] Implement support for generic functions and types, assuming calls are correct (no type checking).
-- [x] **Support for Generic Type Aliases**: Implement support for generic type aliases (e.g., `type List[T any] = []T`). This requires updating the type declaration logic in the evaluator to handle `ast.TypeSpec` nodes where the `Assign` field is non-nil.
-- [x] **`defer` statement (basic)**: Implement `defer` statement without support for modifying named return values.
-- [x] **`defer` with named returns**: Extend `defer` to correctly interact with and modify named return values.
-- [ ] **Built-in Functions**:
-    - [x] `append`
-    - [ ] `copy`
-    - [ ] `delete`
-    - [x] `len`
-    - [ ] `cap`
-    - [ ] `make`
-    - [x] `max`
-    - [x] `min`
-    - [ ] `new`
-    - [ ] `complex`
-    - [ ] `real`
-    - [ ] `imag`
-    - [ ] `clear`
-    - [ ] `close`
-    - [ ] `panic`
-    - [ ] `recover`
-    - [x] `print`
-    - [x] `println`
-- [x] Thoroughly test all features, especially pointer handling and the Go interop layer.
-- [ ] Write comprehensive documentation for the API, supported language features, and usage examples.
+### Final API Specification for IDE-Native convert Configuration ([docs/plan-convert-with-minigo.md](./docs/plan-convert-with-minigo.md))
+- [ ] Implement object.AstNode: Create a new type in the minigo/object package to wrap a go/ast.Node.
+- [ ] Implement Special Form Mechanism: Modify the minigo evaluator to recognize "special form" functions and to not evaluate their arguments.
+- [ ] Enhance Go Interop Layer: Update the interoperability layer to correctly unwrap object.AstNode and pass a raw ast.Node to a Go function that expects it.
+- [ ] Add Unit Tests: Write unit tests within the minigo package to verify that a Go function registered as a special form can correctly receive the AST of its arguments.
+- [ ] Create examples/convert/define Package: Create the new package containing the stub API functions (Convert, Rule, Mapping) and the empty Config struct.
+- [ ] Create CLI Entrypoint: Create a new command (examples/convert/cmd/convert-define) for the new tool.
+- [ ] Implement Core Parser: In the new command, implement the main parser logic that initializes the enhanced minigo interpreter and registers the define API functions as special forms.
+- [ ] Implement define.Rule Parsing: Implement the logic to handle define.Rule(customFunc) calls. This involves using go-scan to resolve the function, inferring types from its signature, and creating a model.TypeRule.
+- [ ] Implement define.Mapping Parsing: Implement the logic to handle the ast.FuncLit passed to define.Mapping. This involves setting up a sub-walker for the function body.
+- [ ] Implement Config Method Parsing: Implement the logic within the sub-walker to parse calls to c.Assign, c.Convert, and c.Compute. This includes analyzing their arguments (selectors and expressions) and creating the appropriate model.FieldMap or model.ComputedField rules.
+- [ ] IR Construction: Ensure the parser correctly assembles all the parsed rules into a single, valid model.ParsedInfo struct.
+- [ ] Enhance Generator for Implicit Mapping: Modify the existing generator to automatically map all fields with matching names *before* it processes the explicit rules from the ParsedInfo struct.
+- [ ] Integrate Parser and Generator: In the cmd/convert-define main function, plumb the ParsedInfo struct from the new parser into the enhanced generator.
+- [ ] Add Integration Tests: Create a comprehensive test suite for the convert-define command. This should include a define.go script as input and assert that the generated Go code is correct.
+- [ ] Write User Documentation: Update the project's README.md and any other relevant user-facing documentation to explain the new, preferred method for defining conversions.
 
+### minigo Implementation ([docs/plan-minigo.md](./docs/plan-minigo.md))
+- [ ] Set up the project structure (minigo/, minigo/object/, minigo/evaluator/, etc.).
+- [ ] Define the object.Object interface and basic types: Integer, String, Boolean, Nil.
+- [ ] Implement the core eval loop for expression evaluation.
+- [ ] Support basic literals (123, "hello").
+- [ ] Support binary expressions (+, -, *, /, ==, !=, <, >).
+- [ ] Support unary expressions (-, !).
+- [ ] Write unit tests for all expression evaluations.
+- [ ] Implement the object.Environment for managing lexical scopes.
+- [ ] Add support for var declarations (e.g., var x = 10) and assignments (x = 20).
+- [ ] Add support for short variable declarations (x := 10).
+- [ ] Implement const declarations, including typed (const C int = 1), untyped (const C = 1), and iota.
+- [ ] Implement if/else statements.
+- [ ] Implement standard for loops (for i := 0; i < 10; i++).
+- [ ] Implement break and continue statements.
+- [ ] Implement switch statements:
+- [ ] Support switch with an expression (switch x { ... }).
+- [ ] Support expressionless switch (switch { ... }).
+- [ ] Support case clauses with single or multiple expressions.
+- [ ] Support the default clause.
+- [ ] Implement user-defined functions (func declarations).
+- [ ] Implement the call stack mechanism for tracking function calls.
+- [ ] Implement return statements (including returning the nil object).
+- [ ] Implement rich error formatting with a formatted call stack.
+- [ ] Add support for type ... struct declarations.
+- [ ] Support struct literal instantiation (e.g., MyStruct{...}), including both keyed and unkeyed fields.
+- [ ] Support field access (myStruct.Field) and assignment (myStruct.Field = ...).
+- [ ] Support slice and array literals ([]int{1, 2}, [2]int{1, 2}).
+- [ ] Support map literals (map[string]int{"a": 1}).
+- [ ] Support indexing for slices, arrays, and maps (arr[0], m["key"]).
+- [ ] Implement for...range loops for iterating over slices, arrays, and maps.
+- [ ] Implement pointer support:
+- [ ] Define a Pointer object type in the object system.
+- [ ] Implement the address-of operator (&) to create pointers to variables.
+- [ ] Implement the dereference operator (*) to get the value a pointer points to.
+- [ ] Support pointer-to-struct field access (e.g., ptr.Field).
+- [ ] Support new() built-in function.
+- [ ] Create the main Interpreter struct that holds a goscan.Scanner.
+- [ ] Implement the logic to handle import statements and load symbols from external Go packages.
+- [ ] Implement the object.GoValue to wrap reflect.Value, allowing Go values to be injected into the script.
+- [ ] Implement the logic to wrap Go functions as BuiltinFunction objects.
+- [ ] Implement the Result.As(target any) method for unmarshaling script results back into Go structs.
+- [ ] Thoroughly test all features, especially pointer handling and the Go interop layer.
+- [ ] Write comprehensive documentation for the API, supported language features, and usage examples.
+- [ ] Ensure make format and make test pass cleanly.

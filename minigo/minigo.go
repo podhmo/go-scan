@@ -22,7 +22,7 @@ type Interpreter struct {
 	Registry  *object.SymbolRegistry
 	eval         *evaluator.Evaluator
 	globalEnv    *object.Environment
-	specialForms map[string]*object.SpecialForm
+	specialForms map[string]*evaluator.SpecialForm
 	files        []*object.FileScope
 	packages     map[string]*object.Package // Cache for loaded packages, keyed by path
 
@@ -72,7 +72,7 @@ func NewInterpreter(options ...Option) (*Interpreter, error) {
 	i := &Interpreter{
 		Registry:     object.NewSymbolRegistry(),
 		globalEnv:    object.NewEnvironment(),
-		specialForms: make(map[string]*object.SpecialForm),
+		specialForms: make(map[string]*evaluator.SpecialForm),
 		files:        make([]*object.FileScope, 0),
 		packages:     make(map[string]*object.Package),
 
@@ -118,8 +118,8 @@ func (i *Interpreter) Register(pkgPath string, symbols map[string]any) {
 // A special form receives the AST of its arguments directly, without them being
 // evaluated first. This is useful for implementing DSLs or control structures.
 // These functions are available in the global scope.
-func (i *Interpreter) RegisterSpecial(name string, fn object.SpecialFormFunction) {
-	i.specialForms[name] = &object.SpecialForm{Fn: fn}
+func (i *Interpreter) RegisterSpecial(name string, fn evaluator.SpecialFormFunction) {
+	i.specialForms[name] = &evaluator.SpecialForm{Fn: fn}
 }
 
 // Options configures the interpreter environment.

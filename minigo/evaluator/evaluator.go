@@ -118,9 +118,13 @@ var builtins = map[string]*object.Builtin{
 			if len(args) != 1 {
 				return ctx.NewError(pos, "wrong number of arguments. got=%d, want=1", len(args))
 			}
+			// We can't call resolveType here directly because we don't have the evaluator.
+			// This means `new(MyAlias)` where `MyAlias = MyStruct` won't work yet.
+			// This is a limitation we'll accept for now. A better design would
+			// make the evaluator available to builtins that need it.
 			def, ok := args[0].(*object.StructDefinition)
 			if !ok {
-				return ctx.NewError(pos, "argument to `new` must be a type, got %s", args[0].Type())
+				return ctx.NewError(pos, "argument to `new` must be a struct type, got %s", args[0].Type())
 			}
 
 			// Create a zero-valued instance of the struct.
@@ -1326,6 +1330,80 @@ func (e *Evaluator) unwrapReturnValue(obj object.Object) object.Object {
 	return obj
 }
 
+func (e *Evaluator) instantiateTypeAlias(pos token.Pos, alias *object.TypeAlias, typeArgs []object.Object) object.Object {
+	if alias.TypeParams == nil || len(alias.TypeParams.List) == 0 {
+		return e.newError(pos, "type %s is not generic", alias.Name.Name)
+	}
+
+	if len(alias.TypeParams.List) != len(typeArgs) {
+		return e.newError(pos, "wrong number of type arguments for %s: got %d, want %d", alias.Name.Name, len(typeArgs), len(alias.TypeParams.List))
+	}
+
+	// Create a new environment for evaluating the underlying type expression.
+	// This environment is enclosed by the one where the alias was defined.
+	evalEnv := object.NewEnclosedEnvironment(alias.Env)
+
+	// Bind the type parameters (e.g., T, K) to the provided type arguments (e.g., int, string).
+	for i, param := range alias.TypeParams.List {
+		for _, paramName := range param.Names {
+			evalEnv.SetType(paramName.Name, typeArgs[i])
+		}
+	}
+
+	// Evaluate the underlying type expression (e.g., `[]T`) in the new environment.
+	// The result will be the concrete type object (e.g., an Array object).
+	// We pass fscope as nil because type resolution within the alias should
+	// be self-contained within its definition environment.
+	return e.Eval(alias.Underlying, evalEnv, nil)
+}
+
+func (e *Evaluator) resolveType(typeObj object.Object, env *object.Environment, fscope *object.FileScope) object.Object {
+	alias, ok := typeObj.(*object.TypeAlias)
+	if !ok {
+		return typeObj // Not an alias, return as is.
+	}
+
+	// 1. Check cache
+	if alias.ResolvedType != nil {
+		return alias.ResolvedType
+	}
+
+	// It is an alias, so we need to resolve it.
+	// Keep track of the top-level alias name to name anonymous structs.
+	originalName := alias.Name
+	currentAlias := alias
+
+	// Loop to resolve nested aliases (e.g., type A = B; type B = C; type C = int)
+	for {
+		if currentAlias.TypeParams != nil && len(currentAlias.TypeParams.List) > 0 {
+			return e.newError(currentAlias.Name.Pos(), "cannot use generic type %s without instantiation", currentAlias.Name.Name)
+		}
+
+		// Evaluate the underlying type of the current alias.
+		resolved := e.Eval(currentAlias.Underlying, currentAlias.Env, fscope)
+		if isError(resolved) {
+			return resolved
+		}
+
+		// Check if the resolved type is another alias.
+		nextAlias, isAlias := resolved.(*object.TypeAlias)
+		if !isAlias {
+			// Resolution finished. `resolved` is the base type object.
+			// If it's a struct def that was defined anonymously, give it the original alias's name.
+			if sd, ok := resolved.(*object.StructDefinition); ok {
+				if sd.Name == nil {
+					sd.Name = originalName
+				}
+			}
+			// 2. Write to cache before returning
+			alias.ResolvedType = resolved
+			return resolved
+		}
+		// Continue the loop with the next alias in the chain.
+		currentAlias = nextAlias
+	}
+}
+
 func (e *Evaluator) evalBranchStmt(bs *ast.BranchStmt, env *object.Environment, fscope *object.FileScope) object.Object {
 	if bs.Label != nil {
 		return e.newError(bs.Pos(), "labels are not supported")
@@ -1405,7 +1483,13 @@ func (e *Evaluator) Eval(node ast.Node, env *object.Environment, fscope *object.
 			return e.newError(n.Pos(), "type '%s' not defined for method receiver", typeName)
 		}
 
-		def, ok := obj.(*object.StructDefinition)
+		// Resolve the type in case it's an alias.
+		resolvedObj := e.resolveType(obj, env, fscope)
+		if isError(resolvedObj) {
+			return resolvedObj
+		}
+
+		def, ok := resolvedObj.(*object.StructDefinition)
 		if !ok {
 			return e.newError(n.Pos(), "receiver for method '%s' is not a struct type", n.Name.Name)
 		}
@@ -1462,9 +1546,12 @@ func (e *Evaluator) Eval(node ast.Node, env *object.Environment, fscope *object.
 			return index
 		}
 		// Check if this is a generic type instantiation or a regular index access.
-		switch left.(type) {
+		switch l := left.(type) {
 		case *object.StructDefinition, *object.Function:
 			return &object.InstantiatedType{GenericDef: left, TypeArgs: []object.Object{index}}
+		case *object.TypeAlias:
+			// This is a generic alias instantiation, e.g., List[int]
+			return e.instantiateTypeAlias(n.Pos(), l, []object.Object{index})
 		default:
 			// It's a regular index expression like array[i].
 			return e.evalIndexExpression(n, left, index)
@@ -1479,9 +1566,12 @@ func (e *Evaluator) Eval(node ast.Node, env *object.Environment, fscope *object.
 		if len(indices) == 1 && isError(indices[0]) {
 			return indices[0]
 		}
-		switch left.(type) {
+		switch l := left.(type) {
 		case *object.StructDefinition, *object.Function:
 			return &object.InstantiatedType{GenericDef: left, TypeArgs: indices}
+		case *object.TypeAlias:
+			// This is a generic alias instantiation, e.g., Pair[int, string]
+			return e.instantiateTypeAlias(n.Pos(), l, indices)
 		default:
 			return e.newError(n.Pos(), "index list operator not supported for %s", left.Type())
 		}
@@ -1538,6 +1628,31 @@ func (e *Evaluator) Eval(node ast.Node, env *object.Environment, fscope *object.
 		return e.evalIdent(n, env, fscope)
 	case *ast.BasicLit:
 		return e.evalBasicLit(n)
+
+	// Type Expressions
+	case *ast.ArrayType:
+		eltType := e.Eval(n.Elt, env, fscope)
+		if isError(eltType) {
+			return eltType
+		}
+		return &object.ArrayType{ElementType: eltType}
+	case *ast.MapType:
+		keyType := e.Eval(n.Key, env, fscope)
+		if isError(keyType) {
+			return keyType
+		}
+		valueType := e.Eval(n.Value, env, fscope)
+		if isError(valueType) {
+			return valueType
+		}
+		return &object.MapType{KeyType: keyType, ValueType: valueType}
+	case *ast.StructType:
+		// This creates a definition for an anonymous struct type.
+		return &object.StructDefinition{
+			Name:    nil, // Anonymous
+			Fields:  n.Fields.List,
+			Methods: make(map[string]*object.Function),
+		}
 	}
 
 	return e.newError(node.Pos(), "evaluation not implemented for %T", node)
@@ -1680,27 +1795,50 @@ func (e *Evaluator) evalGenDecl(n *ast.GenDecl, env *object.Environment, fscope 
 
 	case token.TYPE:
 		for _, spec := range n.Specs {
-			typeSpec := spec.(*ast.TypeSpec)
+			typeSpec, ok := spec.(*ast.TypeSpec)
+			if !ok {
+				continue
+			}
 
-			switch t := typeSpec.Type.(type) {
-			case *ast.StructType:
-				def := &object.StructDefinition{
+			// Check for type alias: type T = some.Type
+			if typeSpec.Assign.IsValid() {
+				alias := &object.TypeAlias{
 					Name:       typeSpec.Name,
 					TypeParams: typeSpec.TypeParams,
-					Fields:     t.Fields.List,
-					Methods:    make(map[string]*object.Function),
+					Underlying: typeSpec.Type,
+					Env:        env,
 				}
-				env.Set(typeSpec.Name.Name, def)
+				env.Set(typeSpec.Name.Name, alias)
+			} else {
+				// Regular type definition: type T struct { ... }
+				switch t := typeSpec.Type.(type) {
+				case *ast.StructType:
+					def := &object.StructDefinition{
+						Name:       typeSpec.Name,
+						TypeParams: typeSpec.TypeParams,
+						Fields:     t.Fields.List,
+						Methods:    make(map[string]*object.Function),
+					}
+					env.Set(typeSpec.Name.Name, def)
 
-			case *ast.InterfaceType:
-				def := &object.InterfaceDefinition{
-					Name:    typeSpec.Name,
-					Methods: t.Methods,
+				case *ast.InterfaceType:
+					def := &object.InterfaceDefinition{
+						Name:    typeSpec.Name,
+						Methods: t.Methods,
+					}
+					env.Set(typeSpec.Name.Name, def)
+
+				default:
+					// This could be a type definition like `type MyInt int`.
+					// We can treat this as a non-generic type alias for now.
+					alias := &object.TypeAlias{
+						Name:       typeSpec.Name,
+						TypeParams: nil, // No type params for this form
+						Underlying: typeSpec.Type,
+						Env:        env,
+					}
+					env.Set(typeSpec.Name.Name, alias)
 				}
-				env.Set(typeSpec.Name.Name, def)
-
-			default:
-				return e.newError(typeSpec.Pos(), "unsupported type declaration: not a struct or interface")
 			}
 		}
 		return nil
@@ -2303,73 +2441,56 @@ func (e *Evaluator) evalGoValueSelectorExpr(node ast.Node, goVal *object.GoValue
 }
 
 func (e *Evaluator) evalCompositeLit(n *ast.CompositeLit, env *object.Environment, fscope *object.FileScope) object.Object {
-	switch typ := n.Type.(type) {
-	case *ast.IndexExpr: // e.g. MyType[int]{...}
-		instTypeObj := e.Eval(typ, env, fscope)
-		if isError(instTypeObj) {
-			return instTypeObj
-		}
-		instType, ok := instTypeObj.(*object.InstantiatedType)
-		if !ok {
-			return e.newError(typ.Pos(), "type is not a generic instantiation")
-		}
-		structDef, ok := instType.GenericDef.(*object.StructDefinition)
-		if !ok {
-			return e.newError(typ.Pos(), "cannot create composite literal of non-struct generic type")
-		}
+	// First, evaluate the type expression itself. This could be an identifier (MyStruct),
+	// a selector (pkg.MyStruct), an index expression (MyGeneric[int]), or a type literal ([]int).
+	typeObj := e.Eval(n.Type, env, fscope)
+	if isError(typeObj) {
+		return typeObj
+	}
 
-		// This part reuses the existing struct literal evaluation logic,
-		// but it also sets the TypeArgs on the created instance.
+	// Now, resolve the evaluated type object. This handles non-generic aliases.
+	// For generic types, `typeObj` will already be the instantiated type object
+	// (e.g., a StructDefinition or an ArrayType from `instantiateTypeAlias`).
+	resolvedType := e.resolveType(typeObj, env, fscope)
+	if isError(resolvedType) {
+		return resolvedType
+	}
+
+	switch def := resolvedType.(type) {
+	case *object.InstantiatedType:
+		// Handle composite literals for instantiated generic types, e.g., Box[int]{...}
+		structDef, ok := def.GenericDef.(*object.StructDefinition)
+		if !ok {
+			return e.newError(n.Pos(), "cannot create composite literal of non-struct generic type %s", def.GenericDef.Type())
+		}
 		instanceObj := e.evalStructLiteral(n, structDef, env, fscope)
-		if isError(instanceObj) {
-			return instanceObj
+		if si, ok := instanceObj.(*object.StructInstance); ok {
+			si.TypeArgs = def.TypeArgs // Attach the type arguments from the instantiation
 		}
-		structInstance, ok := instanceObj.(*object.StructInstance)
-		if !ok {
-			// Should not happen if evalStructLiteral is correct
-			return e.newError(n.Pos(), "internal error: evalStructLiteral did not return a struct instance")
-		}
-		structInstance.TypeArgs = instType.TypeArgs
-		return structInstance
+		return instanceObj
 
-	case *ast.Ident:
-		// This handles struct literals, e.g., MyStruct{...}
-		defObj := e.Eval(typ, env, fscope)
-		if isError(defObj) {
-			return defObj
+	case *object.StructDefinition:
+		instanceObj := e.evalStructLiteral(n, def, env, fscope)
+		// If the original type was a generic instantiation, we need to attach the type arguments.
+		if instType, ok := typeObj.(*object.InstantiatedType); ok {
+			if si, ok := instanceObj.(*object.StructInstance); ok {
+				si.TypeArgs = instType.TypeArgs
+			}
 		}
-		def, ok := defObj.(*object.StructDefinition)
-		if !ok {
-			return e.newError(n.Type.Pos(), "not a struct type in composite literal")
-		}
-		return e.evalStructLiteral(n, def, env, fscope)
+		return instanceObj
 
-	case *ast.SelectorExpr:
-		// This handles struct literals with imported types, e.g., pkg.MyStruct{...}
-		defObj := e.Eval(typ, env, fscope)
-		if isError(defObj) {
-			return defObj
-		}
-		def, ok := defObj.(*object.StructDefinition)
-		if !ok {
-			return e.newError(n.Type.Pos(), "selector does not resolve to a struct type in composite literal")
-		}
-		return e.evalStructLiteral(n, def, env, fscope)
-
-	case *ast.ArrayType:
-		// This handles array and slice literals, e.g., []int{...}
+	case *object.ArrayType:
 		elements := e.evalExpressions(n.Elts, env, fscope)
 		if len(elements) == 1 && isError(elements[0]) {
 			return elements[0]
 		}
 		return &object.Array{Elements: elements}
 
-	case *ast.MapType:
-		// This handles map literals, e.g., map[string]int{...}
+	case *object.MapType:
 		return e.evalMapLiteral(n, env, fscope)
 
 	default:
-		return e.newError(n.Type.Pos(), "unsupported type in composite literal: %T", n.Type)
+		return e.newError(n.Pos(), "cannot create composite literal for type %s", resolvedType.Type())
 	}
 }
 

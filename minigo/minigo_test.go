@@ -1,8 +1,10 @@
 package minigo
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/podhmo/go-scan/minigo/object"
@@ -206,5 +208,61 @@ var valB = sharedlib.Get()
 	}
 	if _, ok := i.packages["sharedlib"]; !ok {
 		t.Errorf("expected to find 'sharedlib' in package cache, but it was not there")
+	}
+}
+
+func TestInterpreter_WithIO(t *testing.T) {
+	// We wrap calls in var declarations because the interpreter's Eval loop
+	// only evaluates top-level declarations, not statements.
+	inputScript := `package main
+
+var _ = println("Please enter your name:")
+var name = readln()
+var _ = println("Hello,", name)
+`
+	stdin := strings.NewReader("Gopher\n")
+	var stdout, stderr bytes.Buffer
+
+	// Create a new interpreter with custom I/O
+	i, err := NewInterpreter(
+		WithStdin(stdin),
+		WithStdout(&stdout),
+		WithStderr(&stderr),
+	)
+	if err != nil {
+		t.Fatalf("NewInterpreter() failed: %v", err)
+	}
+
+	if err := i.LoadFile("test.go", []byte(inputScript)); err != nil {
+		t.Fatalf("LoadFile() failed: %v", err)
+	}
+
+	_, err = i.Eval(context.Background())
+	if err != nil {
+		t.Fatalf("Eval() failed: %v\nStderr: %s", err, stderr.String())
+	}
+
+	// Verify stdout
+	expectedOutput := "Please enter your name:\nHello, Gopher\n"
+	if stdout.String() != expectedOutput {
+		t.Errorf("wrong output to stdout.\ngot:\n%s\nwant:\n%s", stdout.String(), expectedOutput)
+	}
+
+	// Verify stderr is empty
+	if stderr.String() != "" {
+		t.Errorf("stderr should be empty, but got: %s", stderr.String())
+	}
+
+	// Verify the variable was set correctly
+	val, ok := i.globalEnv.Get("name")
+	if !ok {
+		t.Fatalf("variable 'name' not found in environment")
+	}
+	str, ok := val.(*object.String)
+	if !ok {
+		t.Fatalf("name is not a String, got %T", val)
+	}
+	if str.Value != "Gopher" {
+		t.Errorf("name has wrong value. got=%q, want=%q", str.Value, "Gopher")
 	}
 }

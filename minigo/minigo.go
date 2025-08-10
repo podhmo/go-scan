@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"go/parser"
+	"io"
+	"os"
 	"reflect"
 	"strings"
 
@@ -21,22 +23,73 @@ type Interpreter struct {
 	globalEnv *object.Environment
 	files     []*object.FileScope
 	packages  map[string]*object.Package // Cache for loaded packages, keyed by path
+
+	// I/O streams
+	stdin  io.Reader
+	stdout io.Writer
+	stderr io.Writer
+
+	// Internal fields for configuration
+	scannerOptions []goscan.ScannerOption
+}
+
+// Option is a functional option for configuring the Interpreter.
+type Option func(*Interpreter)
+
+// WithStdin sets the standard input for the interpreter.
+func WithStdin(r io.Reader) Option {
+	return func(i *Interpreter) {
+		i.stdin = r
+	}
+}
+
+// WithStdout sets the standard output for the interpreter.
+func WithStdout(w io.Writer) Option {
+	return func(i *Interpreter) {
+		i.stdout = w
+	}
+}
+
+// WithStderr sets the standard error for the interpreter.
+func WithStderr(w io.Writer) Option {
+	return func(i *Interpreter) {
+		i.stderr = w
+	}
+}
+
+// WithScannerOptions provides a way to configure the underlying goscan.Scanner.
+func WithScannerOptions(opts ...goscan.ScannerOption) Option {
+	return func(i *Interpreter) {
+		i.scannerOptions = append(i.scannerOptions, opts...)
+	}
 }
 
 // NewInterpreter creates a new interpreter instance.
-// It initializes a scanner and a root environment.
-func NewInterpreter(options ...goscan.ScannerOption) (*Interpreter, error) {
-	scanner, err := goscan.New(options...)
-	if err != nil {
-		return nil, fmt.Errorf("initializing scanner: %w", err)
-	}
-	return &Interpreter{
-		scanner:   scanner,
+// It initializes a scanner and a root environment, configured with options.
+func NewInterpreter(options ...Option) (*Interpreter, error) {
+	i := &Interpreter{
 		Registry:  object.NewSymbolRegistry(),
 		globalEnv: object.NewEnvironment(),
 		files:     make([]*object.FileScope, 0),
 		packages:  make(map[string]*object.Package),
-	}, nil
+
+		// Default I/O
+		stdin:  os.Stdin,
+		stdout: os.Stdout,
+		stderr: os.Stderr,
+	}
+
+	for _, opt := range options {
+		opt(i)
+	}
+
+	scanner, err := goscan.New(i.scannerOptions...)
+	if err != nil {
+		return nil, fmt.Errorf("initializing scanner: %w", err)
+	}
+	i.scanner = scanner
+
+	return i, nil
 }
 
 // Register makes Go symbols (variables or functions) available for import by a script.
@@ -235,7 +288,15 @@ func (i *Interpreter) Eval(ctx context.Context) (*Result, error) {
 	// For now, we assume a single FileSet for all files.
 	// A more robust implementation might manage a map of fsets.
 	fset := i.scanner.Fset()
-	eval := evaluator.New(fset, i.scanner, i.Registry, i.packages)
+	eval := evaluator.New(evaluator.Config{
+		Fset:     fset,
+		Scanner:  i.scanner,
+		Registry: i.Registry,
+		Packages: i.packages,
+		Stdin:    i.stdin,
+		Stdout:   i.stdout,
+		Stderr:   i.stderr,
+	})
 
 	// In a real multi-file Go program, evaluation order is complex (e.g., all `type` decls first).
 	// For minigo, we'll simplify: evaluate all declarations in all files sequentially.

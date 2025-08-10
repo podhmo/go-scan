@@ -1,0 +1,116 @@
+package main
+
+import (
+	"context"
+	"flag"
+	"fmt"
+	"log/slog"
+	"os"
+	"strings"
+
+	"golang.org/x/tools/imports"
+)
+
+// logLevelVar is a custom flag.Value implementation for slog.LevelVar
+type logLevelVar struct {
+	levelVar *slog.LevelVar
+}
+
+func (v *logLevelVar) String() string {
+	if v.levelVar == nil {
+		return ""
+	}
+	return v.levelVar.Level().String()
+}
+
+func (v *logLevelVar) Set(s string) error {
+	var level slog.Level
+	switch strings.ToLower(s) {
+	case "debug":
+		level = slog.LevelDebug
+	case "info":
+		level = slog.LevelInfo
+	case "warn":
+		level = slog.LevelWarn
+	case "error":
+		level = slog.LevelError
+	default:
+		return fmt.Errorf("unknown log level: %s", s)
+	}
+	v.levelVar.Set(level)
+	return nil
+}
+
+func main() {
+	var (
+		defineFile = flag.String("file", "", "path to the go file with conversion definitions")
+		output     = flag.String("output", "generated.go", "output file name")
+		dryRun     = flag.Bool("dry-run", false, "don't write files, just print to stdout")
+		logLevel   = new(slog.LevelVar)
+	)
+	flag.Var(&logLevelVar{levelVar: logLevel}, "log-level", "set log level (debug, info, warn, error)")
+	flag.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage: convert-define -file <definitions.go> [-output <filename>]\n")
+		flag.PrintDefaults()
+	}
+	flag.Parse()
+
+	if *defineFile == "" {
+		flag.Usage()
+		os.Exit(1)
+	}
+
+	opts := slog.HandlerOptions{Level: logLevel}
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &opts))
+	slog.SetDefault(logger)
+
+	ctx := context.Background()
+
+	if err := run(ctx, *defineFile, *output, *dryRun); err != nil {
+		slog.ErrorContext(ctx, "Error", slog.Any("error", err))
+		os.Exit(1)
+	}
+}
+
+func run(ctx context.Context, defineFile, output string, dryRun bool) error {
+	slog.InfoContext(ctx, "Starting parser", "file", defineFile)
+
+	// TODO:
+	// 1. Initialize minigo interpreter.
+	// 2. Register 'define' API functions as special forms.
+	// 3. Execute the 'defineFile' with the interpreter.
+	// 4. This will produce a model.ParsedInfo struct.
+
+	slog.WarnContext(ctx, "Core logic not implemented yet")
+
+	// For now, generate an empty file to verify the pipeline.
+	generatedCode := []byte("package main\n\n// Not implemented yet\n")
+
+	slog.DebugContext(ctx, "Writing output", "file", output)
+	formatted, err := formatCode(ctx, output, generatedCode)
+	if err != nil {
+		slog.WarnContext(ctx, "code formatting failed, using unformatted code", "error", err)
+		formatted = generatedCode // Use unformatted code on format error
+	}
+
+	if dryRun {
+		slog.InfoContext(ctx, "Dry run: skipping file write", "path", output)
+		fmt.Fprintf(os.Stdout, "---\n// file: %s\n---\n", output)
+		os.Stdout.Write(formatted)
+	} else {
+		if err := os.WriteFile(output, formatted, 0644); err != nil {
+			return fmt.Errorf("failed to write formatted code to %s: %w", output, err)
+		}
+	}
+
+	slog.InfoContext(ctx, "Successfully generated skeleton file", "output", output)
+	return nil
+}
+
+func formatCode(ctx context.Context, filename string, src []byte) ([]byte, error) {
+	formatted, err := imports.Process(filename, src, nil)
+	if err != nil {
+		return nil, fmt.Errorf("goimports failed: %w", err)
+	}
+	return formatted, nil
+}

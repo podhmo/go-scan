@@ -265,19 +265,19 @@ func (si *StructInstance) Copy() *StructInstance {
 // --- Builtin Function Object ---
 
 // BuiltinContext provides the necessary context for a built-in function to execute.
-// This interface is implemented by the evaluator and passed to built-in functions,
-// avoiding a direct dependency from the object package to the evaluator package.
-type BuiltinContext interface {
-	Stdin() io.Reader
-	Stdout() io.Writer
-	Stderr() io.Writer
-	Fset() *token.FileSet
-	NewError(pos token.Pos, format string, args ...interface{}) *Error
+// It holds I/O streams and a helper function for creating errors, bundling all
+// dependencies needed by built-in functions.
+type BuiltinContext struct {
+	Stdin    io.Reader
+	Stdout   io.Writer
+	Stderr   io.Writer
+	Fset     *token.FileSet
+	NewError func(pos token.Pos, format string, args ...interface{}) *Error
 }
 
 // BuiltinFunction is the signature for built-in functions.
 // It receives the execution context, the position of the call, and the evaluated arguments.
-type BuiltinFunction func(ctx BuiltinContext, pos token.Pos, args ...Object) Object
+type BuiltinFunction func(ctx *BuiltinContext, pos token.Pos, args ...Object) Object
 
 // Builtin represents a built-in function.
 type Builtin struct {

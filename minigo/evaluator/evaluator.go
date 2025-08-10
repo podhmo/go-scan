@@ -17,11 +17,11 @@ import (
 
 var builtins = map[string]*object.Builtin{
 	"readln": {
-		Fn: func(ctx object.BuiltinContext, pos token.Pos, args ...object.Object) object.Object {
+		Fn: func(ctx *object.BuiltinContext, pos token.Pos, args ...object.Object) object.Object {
 			if len(args) != 0 {
 				return ctx.NewError(pos, "wrong number of arguments. got=0, want=0")
 			}
-			reader := bufio.NewReader(ctx.Stdin())
+			reader := bufio.NewReader(ctx.Stdin)
 			line, err := reader.ReadString('\n')
 			if err != nil && err != io.EOF {
 				return ctx.NewError(pos, "error reading from stdin: %v", err)
@@ -30,7 +30,7 @@ var builtins = map[string]*object.Builtin{
 		},
 	},
 	"len": {
-		Fn: func(ctx object.BuiltinContext, pos token.Pos, args ...object.Object) object.Object {
+		Fn: func(ctx *object.BuiltinContext, pos token.Pos, args ...object.Object) object.Object {
 			if len(args) != 1 {
 				return ctx.NewError(pos, "wrong number of arguments. got=%d, want=1", len(args))
 			}
@@ -55,7 +55,7 @@ var builtins = map[string]*object.Builtin{
 		},
 	},
 	"append": {
-		Fn: func(ctx object.BuiltinContext, pos token.Pos, args ...object.Object) object.Object {
+		Fn: func(ctx *object.BuiltinContext, pos token.Pos, args ...object.Object) object.Object {
 			if len(args) < 2 {
 				return ctx.NewError(pos, "wrong number of arguments. got=%d, want at least 2", len(args))
 			}
@@ -72,7 +72,7 @@ var builtins = map[string]*object.Builtin{
 		},
 	},
 	"max": {
-		Fn: func(ctx object.BuiltinContext, pos token.Pos, args ...object.Object) object.Object {
+		Fn: func(ctx *object.BuiltinContext, pos token.Pos, args ...object.Object) object.Object {
 			if len(args) == 0 {
 				return ctx.NewError(pos, "max() requires at least one argument")
 			}
@@ -93,7 +93,7 @@ var builtins = map[string]*object.Builtin{
 		},
 	},
 	"min": {
-		Fn: func(ctx object.BuiltinContext, pos token.Pos, args ...object.Object) object.Object {
+		Fn: func(ctx *object.BuiltinContext, pos token.Pos, args ...object.Object) object.Object {
 			if len(args) == 0 {
 				return ctx.NewError(pos, "min() requires at least one argument")
 			}
@@ -114,7 +114,7 @@ var builtins = map[string]*object.Builtin{
 		},
 	},
 	"new": {
-		Fn: func(ctx object.BuiltinContext, pos token.Pos, args ...object.Object) object.Object {
+		Fn: func(ctx *object.BuiltinContext, pos token.Pos, args ...object.Object) object.Object {
 			if len(args) != 1 {
 				return ctx.NewError(pos, "wrong number of arguments. got=%d, want=1", len(args))
 			}
@@ -139,25 +139,25 @@ var builtins = map[string]*object.Builtin{
 		},
 	},
 	"print": {
-		Fn: func(ctx object.BuiltinContext, pos token.Pos, args ...object.Object) object.Object {
+		Fn: func(ctx *object.BuiltinContext, pos token.Pos, args ...object.Object) object.Object {
 			for i, arg := range args {
 				if i > 0 {
-					fmt.Fprint(ctx.Stdout(), " ")
+					fmt.Fprint(ctx.Stdout, " ")
 				}
-				fmt.Fprint(ctx.Stdout(), arg.Inspect())
+				fmt.Fprint(ctx.Stdout, arg.Inspect())
 			}
 			return object.NIL
 		},
 	},
 	"println": {
-		Fn: func(ctx object.BuiltinContext, pos token.Pos, args ...object.Object) object.Object {
+		Fn: func(ctx *object.BuiltinContext, pos token.Pos, args ...object.Object) object.Object {
 			for i, arg := range args {
 				if i > 0 {
-					fmt.Fprint(ctx.Stdout(), " ")
+					fmt.Fprint(ctx.Stdout, " ")
 				}
-				fmt.Fprint(ctx.Stdout(), arg.Inspect())
+				fmt.Fprint(ctx.Stdout, arg.Inspect())
 			}
-			fmt.Fprintln(ctx.Stdout())
+			fmt.Fprintln(ctx.Stdout)
 			return object.NIL
 		},
 	},
@@ -198,15 +198,6 @@ func New(cfg Config) *Evaluator {
 		stdout:    cfg.Stdout,
 		stderr:    cfg.Stderr,
 	}
-}
-
-// BuiltinContext implementation
-func (e *Evaluator) Stdin() io.Reader  { return e.stdin }
-func (e *Evaluator) Stdout() io.Writer { return e.stdout }
-func (e *Evaluator) Stderr() io.Writer { return e.stderr }
-func (e *Evaluator) Fset() *token.FileSet { return e.fset }
-func (e *Evaluator) NewError(pos token.Pos, format string, args ...interface{}) *object.Error {
-	return e.newError(pos, format, args...)
 }
 
 func (e *Evaluator) newError(pos token.Pos, format string, args ...interface{}) *object.Error {
@@ -1200,7 +1191,16 @@ func (e *Evaluator) applyFunction(call *ast.CallExpr, fn object.Object, args []o
 		return e.unwrapReturnValue(evaluated)
 
 	case *object.Builtin:
-		return fn.Fn(e, call.Pos(), args...)
+		ctx := &object.BuiltinContext{
+			Stdin:  e.stdin,
+			Stdout: e.stdout,
+			Stderr: e.stderr,
+			Fset:   e.fset,
+			NewError: func(pos token.Pos, format string, v ...interface{}) *object.Error {
+				return e.newError(pos, format, v...)
+			},
+		}
+		return fn.Fn(ctx, call.Pos(), args...)
 	default:
 		return e.newError(call.Pos(), "not a function: %s", fn.Type())
 	}
@@ -1987,17 +1987,17 @@ func (e *Evaluator) findSymbolInPackageInfo(pkgInfo *goscan.Package, symbolName 
 func (e *Evaluator) wrapGoFunction(pos token.Pos, funcVal reflect.Value) object.Object {
 	funcType := funcVal.Type()
 	return &object.Builtin{
-		Fn: func(ctx object.BuiltinContext, callPos token.Pos, args ...object.Object) object.Object {
+		Fn: func(ctx *object.BuiltinContext, callPos token.Pos, args ...object.Object) object.Object {
 			// Check arg count
 			numIn := funcType.NumIn()
 			isVariadic := funcType.IsVariadic()
 			if isVariadic {
 				if len(args) < numIn-1 {
-					return e.newError(pos, "wrong number of arguments for variadic function: got %d, want at least %d", len(args), numIn-1)
+					return ctx.NewError(pos, "wrong number of arguments for variadic function: got %d, want at least %d", len(args), numIn-1)
 				}
 			} else {
 				if len(args) != numIn {
-					return e.newError(pos, "wrong number of arguments: got %d, want %d", len(args), numIn)
+					return ctx.NewError(pos, "wrong number of arguments: got %d, want %d", len(args), numIn)
 				}
 			}
 
@@ -2013,7 +2013,7 @@ func (e *Evaluator) wrapGoFunction(pos token.Pos, funcVal reflect.Value) object.
 				}
 				val, err := e.objectToReflectValue(arg, targetType)
 				if err != nil {
-					return e.newError(pos, "argument %d type mismatch: %v", i+1, err)
+					return ctx.NewError(pos, "argument %d type mismatch: %v", i+1, err)
 				}
 				in[i] = val
 			}
@@ -2025,7 +2025,7 @@ func (e *Evaluator) wrapGoFunction(pos token.Pos, funcVal reflect.Value) object.
 				if r := recover(); r != nil {
 					// Create the error object, but don't assign it to results here
 					// as it might be overwritten by the return.
-					errObj := e.newError(pos, "panic in called Go function: %v", r)
+					errObj := ctx.NewError(pos, "panic in called Go function: %v", r)
 					// Set results to a slice containing the error to ensure it's propagated.
 					results = []reflect.Value{reflect.ValueOf(errObj)}
 				}
@@ -2043,7 +2043,7 @@ func (e *Evaluator) wrapGoFunction(pos token.Pos, funcVal reflect.Value) object.
 			lastResult := results[len(results)-1]
 			if lastResult.Type().Implements(reflect.TypeOf((*error)(nil)).Elem()) {
 				if !lastResult.IsNil() {
-					return e.newError(pos, "error from called Go function: %v", lastResult.Interface())
+					return ctx.NewError(pos, "error from called Go function: %v", lastResult.Interface())
 				}
 			}
 

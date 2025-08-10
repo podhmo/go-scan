@@ -1664,9 +1664,6 @@ func (e *Evaluator) evalGenDecl(n *ast.GenDecl, env *object.Environment, fscope 
 				if n.Tok == token.CONST {
 					env.SetConstant(name.Name, val)
 				} else { // token.VAR
-					if fn, ok := val.(*object.Function); ok {
-						fn.Name = name
-					}
 					env.Set(name.Name, val)
 				}
 				lastVal = val
@@ -1836,9 +1833,6 @@ func (e *Evaluator) evalSingleAssign(n *ast.AssignStmt, env *object.Environment,
 		ident, ok := lhs.(*ast.Ident)
 		if !ok {
 			return e.newError(lhs.Pos(), "non-identifier on left side of :=")
-		}
-		if fn, ok := val.(*object.Function); ok {
-			fn.Name = ident
 		}
 		env.Set(ident.Name, val)
 		return val

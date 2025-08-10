@@ -1143,6 +1143,23 @@ func (e *Evaluator) evalExpressions(exps []ast.Expr, env *object.Environment, fs
 	return result
 }
 
+func (e *Evaluator) getZeroValueForType(typeExpr ast.Expr, env *object.Environment, fscope *object.FileScope) object.Object {
+	// For simplicity, we'll check for basic type identifiers.
+	// A more robust implementation would evaluate the typeExpr.
+	if ident, ok := typeExpr.(*ast.Ident); ok {
+		switch ident.Name {
+		case "int":
+			return &object.Integer{Value: 0}
+		case "string":
+			return &object.String{Value: ""}
+		case "bool":
+			return object.FALSE
+		}
+	}
+	// For any other type (pointers, structs, etc.), the zero value is nil.
+	return object.NIL
+}
+
 func (e *Evaluator) applyFunction(call *ast.CallExpr, fn object.Object, args []object.Object, fscope *object.FileScope) object.Object {
 	var function *object.Function
 	var typeArgs []object.Object
@@ -1215,34 +1232,80 @@ func (e *Evaluator) applyFunction(call *ast.CallExpr, fn object.Object, args []o
 	} else if function.Name != nil {
 		funcName = function.Name.Name
 	}
-	frame := &object.CallFrame{Pos: callPos, Function: funcName, Defers: make([]*object.DeferredCall, 0)}
+	frame := &object.CallFrame{
+		Pos:      callPos,
+		Function: funcName,
+		Fn:       function,
+		Defers:   make([]*object.DeferredCall, 0),
+	}
 	e.callStack = append(e.callStack, frame)
+	// Ensure the stack is popped even if a Go panic occurs within the evaluator.
+	defer func() { e.callStack = e.callStack[:len(e.callStack)-1] }()
 
-	// Defer the execution of deferred calls and popping the stack.
-	defer func() {
-		// The frame is the last one on the stack.
-		currentFrame := e.callStack[len(e.callStack)-1]
-		// Execute defers in LIFO order
-		for i := len(currentFrame.Defers) - 1; i >= 0; i-- {
-			deferred := currentFrame.Defers[i]
-			e.executeDeferredCall(deferred, fscope)
-		}
-		e.callStack = e.callStack[:len(e.callStack)-1]
-	}()
-
-	// Extend environment and evaluate
-	var extendedEnv *object.Environment
+	// --- Environment Setup ---
+	var baseEnv *object.Environment
 	if receiver != nil {
-		// It's a method call
 		boundMethod := &object.BoundMethod{Fn: function, Receiver: receiver}
-		extendedEnv = e.extendMethodEnv(boundMethod, args)
+		baseEnv = e.extendMethodEnv(boundMethod, args)
 	} else {
-		// It's a regular function call
-		extendedEnv = e.extendFunctionEnv(function, args, typeArgs)
+		baseEnv = e.extendFunctionEnv(function, args, typeArgs)
 	}
 
-	evaluated := e.Eval(function.Body, extendedEnv, fscope)
+	bodyEnv := baseEnv
+	if function.HasNamedReturns() {
+		namedReturnsEnv := object.NewEnclosedEnvironment(baseEnv)
+		for _, field := range function.Results.List {
+			for _, name := range field.Names {
+				zeroVal := e.getZeroValueForType(field.Type, namedReturnsEnv, fscope)
+				namedReturnsEnv.Set(name.Name, zeroVal)
+			}
+		}
+		frame.NamedReturns = namedReturnsEnv
+		bodyEnv = namedReturnsEnv
+	}
+
+	// Evaluate the function body. This will return a ReturnValue on `return`.
+	evaluated := e.Eval(function.Body, bodyEnv, fscope)
+
+	// Now, *after* the body has run and `return` has been hit, execute the defers.
+	for i := len(frame.Defers) - 1; i >= 0; i-- {
+		e.executeDeferredCall(frame.Defers[i], fscope)
+	}
+
+	// --- Return Value Handling ---
+	// After defers have run, construct the final return value if necessary.
+	if ret, ok := evaluated.(*object.ReturnValue); ok && ret.Value == nil {
+		if frame.NamedReturns != nil {
+			// This now happens *after* defers, so it will see modified values.
+			return e.constructNamedReturnValue(function, frame.NamedReturns)
+		}
+		return &object.ReturnValue{Value: object.NIL}
+	}
+
+	// For regular returns, unwrap the value.
 	return e.unwrapReturnValue(evaluated)
+}
+
+// constructNamedReturnValue collects the values from the named return environment
+// and packages them into a single return value (or a tuple for multiple returns).
+func (e *Evaluator) constructNamedReturnValue(fn *object.Function, env *object.Environment) object.Object {
+	numReturns := len(fn.Results.List)
+	if numReturns == 0 {
+		return &object.ReturnValue{Value: object.NIL}
+	}
+
+	values := make([]object.Object, 0, numReturns)
+	for _, field := range fn.Results.List {
+		for _, name := range field.Names {
+			val, _ := env.Get(name.Name) // We can ignore 'ok' because we initialized them.
+			values = append(values, val)
+		}
+	}
+
+	if len(values) == 1 {
+		return &object.ReturnValue{Value: values[0]}
+	}
+	return &object.ReturnValue{Value: &object.Tuple{Elements: values}}
 }
 
 // ApplyFunction is a public wrapper for the internal applyFunction, allowing it to be called from other packages.
@@ -1369,8 +1432,18 @@ func (e *Evaluator) executeDeferredCall(deferred *object.DeferredCall, fscope *o
 	switch f := fnObj.(type) {
 	case *object.Function:
 		// A deferred function literal runs in the environment it was defined in.
-		// We don't need to extend it as it takes no arguments.
-		e.Eval(f.Body, deferred.Env, fscope)
+		// We evaluate the statements in its body directly in that environment,
+		// without creating a new block scope. This allows the deferred function
+		// to modify variables in the parent function's scope (like named returns).
+		for _, stmt := range f.Body.List {
+			evaluated := e.Eval(stmt, deferred.Env, fscope)
+			// We should probably handle errors and return signals here,
+			// but for now, we'll ignore them as `defer` behavior with `return` is complex.
+			if isError(evaluated) {
+				// TODO: How to handle errors in deferred calls?
+				return
+			}
+		}
 	case *object.BoundMethod:
 		// A deferred method call also runs in its captured environment.
 		// We need to bind the arguments, though.
@@ -1582,23 +1655,59 @@ func (e *Evaluator) Eval(node ast.Node, env *object.Environment, fscope *object.
 		currentFrame.Defers = append(currentFrame.Defers, deferred)
 		return nil // defer statement itself evaluates to nothing.
 	case *ast.ReturnStmt:
+		// Check if we are in a function with named returns.
+		var currentFrame *object.CallFrame
+		if len(e.callStack) > 0 {
+			currentFrame = e.callStack[len(e.callStack)-1]
+		}
+
+		// --- Logic for Named Returns ---
+		if currentFrame != nil && currentFrame.NamedReturns != nil {
+			if len(n.Results) > 0 {
+				// Case: return x, y
+				// Evaluate the expressions and assign them to the named return variables.
+				values := e.evalExpressions(n.Results, env, fscope)
+				if len(values) == 1 && isError(values[0]) {
+					return values[0]
+				}
+
+				// This is a simplified assignment; it assumes the number of return
+				// expressions matches the number of named return variables.
+				i := 0
+				for _, field := range currentFrame.Fn.Results.List {
+					for _, name := range field.Names {
+						if i < len(values) {
+							// Use Assign, not Set, to update the existing variable.
+							currentFrame.NamedReturns.Assign(name.Name, values[i])
+							i++
+						}
+					}
+				}
+			}
+			// For both `return x` and a bare `return`, we signal to `applyFunction`
+			// that it needs to construct the final return value from the environment.
+			// We use a ReturnValue with a nil `Value` for this.
+			return &object.ReturnValue{Value: nil}
+		}
+
+		// --- Logic for Regular (non-named) Returns ---
 		if len(n.Results) == 0 {
 			return &object.ReturnValue{Value: object.NIL}
 		}
-
-		// Handle single vs. multiple return values
 		if len(n.Results) == 1 {
 			val := e.Eval(n.Results[0], env, fscope)
 			if isError(val) {
 				return val
 			}
+			// If the expression is already a return value (e.g. from a function call),
+			// don't wrap it again.
+			if ret, ok := val.(*object.ReturnValue); ok {
+				return ret
+			}
 			return &object.ReturnValue{Value: val}
 		}
-
-		// Multiple return values are evaluated and wrapped in a Tuple.
 		results := e.evalExpressions(n.Results, env, fscope)
 		if len(results) > 0 && isError(results[0]) {
-			// evalExpressions returns a single error if one occurs.
 			return results[0]
 		}
 		return &object.ReturnValue{Value: &object.Tuple{Elements: results}}
@@ -2040,6 +2149,11 @@ func (e *Evaluator) evalSingleAssign(n *ast.AssignStmt, env *object.Environment,
 		return val
 	}
 
+	// Unwrap return value from function calls
+	if ret, ok := val.(*object.ReturnValue); ok {
+		val = ret.Value
+	}
+
 	// Calling a multi-return function in a single-value context is an error.
 	if _, ok := val.(*object.Tuple); ok {
 		return e.newError(n.Rhs[0].Pos(), "multi-value function call in single-value context")
@@ -2125,6 +2239,11 @@ func (e *Evaluator) evalMultiAssign(n *ast.AssignStmt, env *object.Environment, 
 	val := e.Eval(n.Rhs[0], env, fscope)
 	if isError(val) {
 		return val
+	}
+
+	// Unwrap return value from function calls
+	if ret, ok := val.(*object.ReturnValue); ok {
+		val = ret.Value
 	}
 
 	tuple, ok := val.(*object.Tuple)

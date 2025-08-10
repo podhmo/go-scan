@@ -210,6 +210,94 @@ func TestFunctionApplication(t *testing.T) {
 	}
 }
 
+func TestDeferWithNamedReturns(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected interface{}
+	}{
+		{
+			`
+			func f() (i int) {
+				defer func() { i = 2 }()
+				return 1
+			}
+			func main() { return f() }
+			`,
+			int64(2),
+		},
+		{
+			`
+			func double() (i int) {
+				i = 5
+				defer func() { i = i * 2 }()
+				return
+			}
+			func main() { return double() }
+			`,
+			int64(10),
+		},
+		{
+			`
+			func multi() (a int, b string) {
+				a = 1
+				b = "hello"
+				defer func() { a = 5 }()
+				defer func() { b = "world" }()
+				return
+			}
+			func main() {
+				x, y := multi()
+				return x
+			}
+			`,
+			int64(5),
+		},
+		{
+			`
+			func multi2() (a int, b string) {
+				a = 1
+				b = "hello"
+				defer func() { a = 5 }()
+				defer func() { b = "world" }()
+				return
+			}
+			func main() {
+				x, y := multi2()
+				return y
+			}
+			`,
+			"world",
+		},
+		{
+			`
+			func noOpDefer() (i int) {
+				i = 1
+				defer func() {
+					// does nothing
+				}()
+				return
+			}
+			func main() { return noOpDefer() }
+			`,
+			int64(1),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			evaluated := testEvalFile(t, tt.input)
+			switch expected := tt.expected.(type) {
+			case int64:
+				testIntegerObject(t, evaluated, expected)
+			case string:
+				testStringObject(t, evaluated, expected)
+			default:
+				t.Fatalf("unsupported expected type %T for input %s", tt.expected, tt.input)
+			}
+		})
+	}
+}
+
 // testEvalWithEvaluator is a helper function to parse and evaluate a string of code with a given evaluator.
 func testEvalWithEvaluator(t *testing.T, eval *Evaluator, input string) object.Object {
 	t.Helper()

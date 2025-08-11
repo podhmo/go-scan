@@ -195,23 +195,14 @@ func (r *Runner) handleRule(e *evaluator.Evaluator, fscope *object.FileScope, po
 	srcField := foundFunc.Parameters[0]
 	dstField := foundFunc.Results[0]
 
-	// Get the resolved TypeInfo.
-	// If the type was resolved by an override, its Definition will already be populated.
-	// Otherwise, we need to call Resolve() to trigger an on-demand scan.
-	srcTypeInfo := srcField.Type.Definition
-	if srcTypeInfo == nil {
-		srcTypeInfo, err = srcField.Type.Resolve(ctx)
-		if err != nil {
-			return e.NewError(pos, "could not resolve source type for rule: %v", err)
-		}
+	srcTypeInfo, err := srcField.Type.Resolve(ctx)
+	if err != nil {
+		return e.NewError(pos, "could not resolve source type for rule: %v", err)
 	}
 
-	dstTypeInfo := dstField.Type.Definition
-	if dstTypeInfo == nil {
-		dstTypeInfo, err = dstField.Type.Resolve(ctx)
-		if err != nil {
-			return e.NewError(pos, "could not resolve destination type for rule: %v", err)
-		}
+	dstTypeInfo, err := dstField.Type.Resolve(ctx)
+	if err != nil {
+		return e.NewError(pos, "could not resolve destination type for rule: %v", err)
 	}
 
 	// This can happen for built-in types like 'string' which don't have a full TypeInfo definition.

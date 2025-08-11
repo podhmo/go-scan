@@ -336,12 +336,14 @@ func (ft *FieldType) String() string {
 }
 
 func (ft *FieldType) Resolve(ctx context.Context) (*TypeInfo, error) {
-	// If the definition is already cached, return it.
+	// If the definition is already cached (e.g. from an override), return it.
 	if ft.Definition != nil {
 		return ft.Definition, nil
 	}
-	if ft.IsResolvedByConfig || ft.IsBuiltin {
-		return nil, nil // These types are considered resolved.
+	if ft.IsBuiltin {
+		// Built-in types like 'string' do not have a full TypeInfo definition, so we return nil.
+		// The caller can inspect ft.IsBuiltin if it needs to differentiate.
+		return nil, nil
 	}
 	if ft.Resolver == nil {
 		return nil, fmt.Errorf("type %q cannot be resolved: no resolver available", ft.Name)

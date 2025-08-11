@@ -4,8 +4,8 @@
 package main
 
 import (
+	"github.com/podhmo/go-scan/examples/convert-define/define"
 	"github.com/podhmo/go-scan/examples/convert/convutil"
-	"github.com/podhmo/go-scan/examples/convert/define"
 	"github.com/podhmo/go-scan/examples/convert/sampledata/destination"
 	"github.com/podhmo/go-scan/examples/convert/sampledata/funcs"
 	"github.com/podhmo/go-scan/examples/convert/sampledata/source"

@@ -1,17 +1,16 @@
-# Go Type Converter Example (`examples/convert`)
+# Go Type Converter (`examples/convert`)
 
-This directory contains the `convert` tool, a command-line application that automatically generates Go type conversion functions. It uses `go-scan` to parse Go source code, understand type structures via annotations and struct tags, and then generate the necessary boilerplate code for converting one struct type to another.
+This directory contains the `convert` tool, a command-line application that automatically generates Go type conversion functions based on **annotations** and **struct tags**. It uses `go-scan` to parse Go source code, understand type structures, and then generate the necessary boilerplate code for converting one struct type to another.
 
-This tool formalizes and replaces the original prototype that was in this directory.
+> **Note: New IDE-Friendly Method Available**
+>
+> This annotation-based tool is the original generator. For new projects, we recommend using the new `define`-based tool, which provides a more robust, type-safe, and IDE-friendly way to configure conversions.
+>
+> See the [**`../convert-define`**](../convert-define) example for details.
 
 ## Overview
 
-In many Go applications, you need to convert data between different struct types, such as:
-*   Converting from a database model to an API response model (DTO).
-*   Transforming data from an external service's format to an internal application format.
-*   Mapping between different versions of a data structure.
-
-Manually writing these conversion functions is tedious, error-prone, and repetitive. This tool automates the process, providing powerful features for customization and error handling.
+In many Go applications, you need to convert data between different struct types. Manually writing these conversion functions is tedious and error-prone. This tool automates the process using source code annotations.
 
 ## Key Features
 
@@ -23,19 +22,8 @@ Manually writing these conversion functions is tedious, error-prone, and repetit
 *   **Custom Conversion Logic**:
     *   Use the `convert:",using=<func>"` tag for field-specific custom conversion functions.
     *   Define global type-to-type conversion rules with `// convert:rule "<Src>" -> "<Dst>", using=<func>`.
-*   **Validation**: Add validation rules for destination types using `// convert:rule "<Dst>", validator=<func>`.
-*   **Rich Error Handling**: The generated code can collect multiple errors during a single conversion and return them as a single `error`.
 *   **Recursive Generation**: Automatically handles nested structs, slices, maps, and pointers.
 *   **CLI Tool**: A proper command-line interface for easy integration into build processes.
-
-## Project Structure
-
-*   `main.go`: The CLI entrypoint for the `convert` tool.
-*   `parser/parser.go`: Contains the logic for parsing Go source files, reading annotations, and building an intermediate representation of the conversion requirements.
-*   `generator/generator.go`: Takes the parsed information and generates the Go conversion functions.
-*   `model/`: Defines the data structures (e.g., `ConversionPair`, `TypeRule`) used to pass information between the parser and generator.
-*   `sampledata/`: Contains sample source and destination structs used for demonstrating and testing the tool.
-*   `testdata/`: Contains golden files for testing the output of the generator.
 
 ## Annotation and Tag Reference
 
@@ -43,69 +31,11 @@ Manually writing these conversion functions is tedious, error-prone, and repetit
 Triggers the generation of a conversion function. Placed in the doc comment of the source struct.
 
 **Syntax**: `@derivingconvert(<DestinationType>[, option=value, ...])`
-*   `<DestinationType>`: The destination struct type.
-*   `max_errors=<int>`: The maximum number of errors to collect. `0` means unlimited.
-
-**Example**:
-```go
-// @derivingconvert(UserDTO, max_errors=10)
-type User struct {
-    // ...
-}
-```
 
 ### `// convert:rule`
-Defines a global rule for type conversion or validation. Typically placed at the package level.
+Defines a global rule for type conversion or validation.
 
 **Conversion Rule**: `// convert:rule "<SourceType>" -> "<DestinationType>", using=<FunctionName>`
-```go
-// convert:rule "time.Time" -> "string", using=convertTimeToString
-```
-
-**Validator Rule**: `// convert:rule "<DestinationType>", validator=<FunctionName>`
-```go
-// convert:rule "string", validator=validateStringNotEmpty
-```
-
-### `// convert:import`
-Defines an alias for an external package path, which can then be used in `using` and `validator` rules. This is useful for centralizing conversion or validation logic in a shared package.
-
-**Syntax**: `// convert:import <alias> <path>`
-*   `<alias>`: The alias to use for the package (e.g., `myfuncs`).
-*   `<path>`: The full import path of the package (e.g., `"example.com/project/utils/myfuncs"`).
-
-**Example**:
-```go
-// convert:import funcs "example.com/project/converters"
-// convert:rule "time.Time" -> "string", using=funcs.TimeToString
-// convert:rule "string", validator=funcs.ValidateNonEmpty
-```
-
-### `// convert:variable`
-Declares a local variable within the generated converter function. This is useful for stateful operations that need to be shared across multiple `using` functions, such as using a `strings.Builder` to construct a value from several source fields.
-
-**Syntax**: `// convert:variable <name> <type>`
-*   `<name>`: The name of the variable.
-*   `<type>`: The type of the variable (e.g., `strings.Builder`, `*int`).
-
-**Example**:
-The variable is declared once per function and can be accessed by any `using` function that takes it as an argument.
-```go
-// // convert:variable builder strings.Builder
-// @derivingconvert(Dst)
-type Src struct {
-	FirstName string
-	LastName  string
-}
-
-type Dst struct {
-	FullName string `convert:",using=buildFullName(&builder, src.FirstName, src.LastName)"`
-}
-
-// buildFullName would be a helper function you write.
-// func buildFullName(builder *strings.Builder, firstName, lastName string) string { ... }
-```
-
 
 ### `convert` Struct Tag
 Controls the conversion of a specific field.
@@ -113,47 +43,8 @@ Controls the conversion of a specific field.
 **Syntax**: `` `convert:"[destinationFieldName],[option=value],..."` ``
 *   `[destinationFieldName]`: Maps to a different field name in the destination struct. Use `-` to skip the field.
 *   `using=<funcName>`: Use a custom function for this field's conversion.
-*   `required`: Reports an error if a source pointer field is `nil`.
-
-**Example**:
-```go
-type User struct {
-    ID        int64
-    Email     string    `convert:"UserEmail"`
-    Password  string    `convert:"-"`
-    CreatedAt time.Time `convert:",using=convertTimeToString"`
-    Manager   *User     `convert:",required"`
-}
-```
-
-## What This Tool Can Do
-
-*   **Annotation-Driven Code Generation**: Generates conversion functions based on `@derivingconvert` annotations.
-*   **Basic Type Conversion**: Handles conversions for basic types like `string`, `int`, etc.
-*   **Handling of Complex Types**: Supports nested structs, slices, maps, and pointers.
-*   **Flexible Field Mapping**:
-    *   Use the `convert:"<name>"` tag to specify a different field name.
-    *   Use `convert:"-"` to skip a field.
-*   **Custom Conversion Logic**:
-    *   Use the `convert:",using=<func>"` tag to specify a custom conversion function. This is powerful for complex scenarios.
-    *   Combine multiple source fields into a single destination field using a custom function with the `using` tag.
-    *   Use `// convert:variable` to declare local variables within the generated function, which can be shared across multiple `using` functions.
-*   **Global Conversion Rules**: Define global type conversion rules using `// convert:rule`.
-*   **Customizable Time Conversion**: Convert `time.Time` to `string` in `RFC3339` format or other custom formats using a custom function.
-
-## What This Tool Currently Doesn't Support Automatically
-
-While the `using` tag provides a lot of flexibility, some scenarios require manual implementation:
-
-*   **Automatic Field Name Resolution**: The tool does not automatically resolve field name mismatches (e.g., `SrcUser.ID` to `DstUser.UserID`). You must explicitly map them using the `convert` tag.
-*   **Complex Business Logic**: For conversions that require external API calls or complex business logic, you need to implement a custom function and specify it with the `using` tag.
-*   **Conditional Logic and Default Values**: Complex conditional logic, such as setting a default value when a source pointer is `nil`, needs to be handled within a custom function.
-
-For examples of how to implement custom logic, see the manually implemented converters in `examples/convert/sampledata/converter/converter.go`.
 
 ## How to Use
-
-The `convert` tool is a command-line application.
 
 1.  **Annotate your code**: Add `@derivingconvert` annotations to your source structs and any necessary `convert` tags or `// convert:rule` comments.
 
@@ -164,15 +55,7 @@ The `convert` tool is a command-line application.
       -pkg "github.com/your/project/models" \
       -output "github.com/your/project/models/generated_converters.go"
     ```
-    *(Note: Adjust paths for your project structure.)*
 
-3.  **Use the generated code**: The tool will create a file (e.g., `generated_converters.go`) containing the conversion functions. You can then call these functions directly in your application code. For a source type `User` and destination `UserDTO`, the tool will generate:
-    *   `func ConvertUserToUserDTO(ctx context.Context, src *User) (*UserDTO, error)`
+## As a Library
 
-## Role of `go-scan`
-
-`go-scan` is essential for this tool. It allows the parser to:
-*   Read and understand the structure of Go types (structs, fields, tags) **without compiling the code**.
-*   Resolve type information across different packages, which is critical for handling complex models.
-*   Access documentation comments to find the driving `@derivingconvert` annotations.
-*   Manage imports dynamically in the generated code via its `ImportManager`.
+The components of this tool (`parser`, `generator`, `model`) can also be used as a library to build more complex code generation tools. The `../convert-define` example is a demonstration of this, as it uses the `generator` and `model` packages from this module.

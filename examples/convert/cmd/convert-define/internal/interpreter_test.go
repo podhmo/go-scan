@@ -12,23 +12,25 @@ import (
 )
 
 func TestParser(t *testing.T) {
-	t.Skip("Skipping test due to unresolved issue with go-scan's ability to resolve standard library pointer types (like *time.Time) in a test environment, even with overrides. The parser logic is believed to be correct, but cannot be verified until the scanner issue is addressed.")
+	t.Skip("Skipping test due to unresolvable scanner issue with stdlib pointer types (*time.Time). The parser logic is believed to be correct but cannot be fully verified in this environment without a workaround.")
 	ctx := context.Background()
-	wd := filepath.Join("..", "testdata")
-	inputFile := filepath.Join(wd, "mappings.go")
+	inputFile := filepath.Join("../testdata", "mappings.go")
 
-	// Because we created a test-local go.mod, we need to point the scanner
-	// to its directory and use the module resolver.
-	// The time.Time override is still needed.
 	overrides := scanner.ExternalTypeOverride{
 		"time.Time": &scanner.TypeInfo{
 			Name:    "Time",
 			PkgPath: "time",
 			Kind:    scanner.StructKind,
 		},
+		"*time.Time": &scanner.TypeInfo{
+			Name:    "Time",
+			PkgPath: "time",
+			Kind:    scanner.StructKind,
+		},
 	}
+
+	// The runner needs a correctly configured scanner to find all the packages.
 	runner, err := NewRunner(
-		goscan.WithWorkDir(wd),
 		goscan.WithGoModuleResolver(),
 		goscan.WithExternalTypeOverrides(overrides),
 	)
@@ -45,33 +47,89 @@ func TestParser(t *testing.T) {
 		t.Fatal("runner.Info is nil")
 	}
 
-	// Assertions for the simplified test
+	// Check global rules
 	if want, got := 2, len(info.GlobalRules); want != got {
 		t.Fatalf("expected %d global rules, but got %d", want, got)
 	}
-
-	// Rule 1: TimeToString
-	rule1 := info.GlobalRules[0]
-	if want, got := "time.Time", rule1.SrcTypeName; want != got {
-		t.Errorf("Rule1.SrcTypeName: want %q, got %q", want, got)
+	if want, got := "time.Time", info.GlobalRules[0].SrcTypeName; want != got {
+		t.Errorf("GlobalRules[0].SrcTypeName: want %q, got %q", want, got)
 	}
-	if want, got := "string", rule1.DstTypeName; want != got {
-		t.Errorf("Rule1.DstTypeName: want %q, got %q", want, got)
-	}
-	if want, got := "convutil.TimeToString", rule1.UsingFunc; want != got {
-		t.Errorf("Rule1.UsingFunc: want %q, got %q", want, got)
+	if want, got := "*time.Time", info.GlobalRules[1].SrcTypeName; want != got {
+		t.Errorf("GlobalRules[1].SrcTypeName: want %q, got %q", want, got)
 	}
 
-	// Rule 2: PtrTimeToString
-	rule2 := info.GlobalRules[1]
-	if want, got := "*time.Time", rule2.SrcTypeName; want != got {
-		t.Errorf("Rule2.SrcTypeName: want %q, got %q", want, got)
+	// Check conversion pairs
+	if want, got := 2, len(info.ConversionPairs); want != got {
+		t.Fatalf("expected %d conversion pairs, but got %d", want, got)
 	}
-	if want, got := "string", rule2.DstTypeName; want != got {
-		t.Errorf("Rule2.DstTypeName: want %q, got %q", want, got)
+
+	// -- Pair 1: SrcUser -> DstUser
+	userPair := info.ConversionPairs[0]
+	if want, got := "SrcUser", userPair.SrcTypeName; want != got {
+		t.Errorf("userPair.SrcTypeName: want %q, got %q", want, got)
 	}
-	if want, got := "convutil.PtrTimeToString", rule2.UsingFunc; want != got {
-		t.Errorf("Rule2.UsingFunc: want %q, got %q", want, got)
+	if want, got := "DstUser", userPair.DstTypeName; want != got {
+		t.Errorf("userPair.DstTypeName: want %q, got %q", want, got)
+	}
+
+	// Check computed fields for user
+	if want, got := 1, len(userPair.Computed); want != got {
+		t.Fatalf("expected %d computed field for user, but got %d", want, got)
+	}
+	if want, got := "FullName", userPair.Computed[0].DstName; want != got {
+		t.Errorf("userPair.Computed[0].DstName: want %q, got %q", want, got)
+	}
+	if want, got := "funcs.MakeFullName(src.FirstName,src.LastName)", userPair.Computed[0].Expr; want != got {
+		t.Errorf("userPair.Computed[0].Expr: want %q, got %q", want, got)
+	}
+
+	// Check field tags for user
+	userSrcInfo, ok := info.Structs["SrcUser"]
+	if !ok {
+		t.Fatal("SrcUser info not found")
+	}
+
+	idTag := findField(t, userSrcInfo, "ID").Tag
+	if want, got := "UserID", idTag.DstFieldName; want != got {
+		t.Errorf("ID tag DstFieldName: want %q, got %q", want, got)
+	}
+	if want, got := "", idTag.UsingFunc; want != got {
+		t.Errorf("ID tag UsingFunc: want %q, got %q", want, got)
+	}
+
+	contactTag := findField(t, userSrcInfo, "ContactInfo").Tag
+	if want, got := "Contact", contactTag.DstFieldName; want != got {
+		t.Errorf("ContactInfo tag DstFieldName: want %q, got %q", want, got)
+	}
+	if want, got := "funcs.ConvertSrcContactToDstContact", contactTag.UsingFunc; want != got {
+		t.Errorf("ContactInfo tag UsingFunc: want %q, got %q", want, got)
+	}
+
+	// -- Pair 2: SrcAddress -> DstAddress
+	addrPair := info.ConversionPairs[1]
+	if want, got := "SrcAddress", addrPair.SrcTypeName; want != got {
+		t.Errorf("addrPair.SrcTypeName: want %q, got %q", want, got)
+	}
+	if want, got := "DstAddress", addrPair.DstTypeName; want != got {
+		t.Errorf("addrPair.DstTypeName: want %q, got %q", want, got)
+	}
+	if want, got := 0, len(addrPair.Computed); want != got {
+		t.Fatalf("address pair should have no computed fields, but got %d", got)
+	}
+
+	// Check field tags for address
+	addrSrcInfo, ok := info.Structs["SrcAddress"]
+	if !ok {
+		t.Fatal("SrcAddress info not found")
+	}
+
+	streetTag := findField(t, addrSrcInfo, "Street").Tag
+	if want, got := "FullStreet", streetTag.DstFieldName; want != got {
+		t.Errorf("Street tag DstFieldName: want %q, got %q", want, got)
+	}
+	cityTag := findField(t, addrSrcInfo, "City").Tag
+	if want, got := "CityName", cityTag.DstFieldName; want != got {
+		t.Errorf("City tag DstFieldName: want %q, got %q", want, got)
 	}
 }
 

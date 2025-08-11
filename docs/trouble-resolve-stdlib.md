@@ -1,81 +1,34 @@
-# Troubleshooting: Resolving Standard Library Types in Tests
+# Troubleshooting: Resolving Standard Library Types
 
 ## 1. Summary
 
-When running tests for tools that use the `go-scan` library, there was a persistent issue with resolving types from the standard library, particularly pointer types like `*time.Time`.
+A persistent issue in `go-scan` was its inability to scan standard library packages (e.g., `time`) when run from within a `go test` binary. This would manifest as a `mismatched package names` error. The standard workaround was to use `goscan.WithExternalTypeOverrides` to provide a "synthetic" definition for types like `time.Time`, but this was a cumbersome requirement.
 
-The scanner failed with a `mismatched package names` error when it attempted to parse the source files of a standard library package (e.g., `time`) from within a Go test binary. This document details the problem, the investigation, and the final solution.
+This document details the investigation into this issue and the two-part fix that makes stdlib scanning robust and removes the need for mandatory overrides.
 
-## 2. The Problem
+## 2. The Core Problem: `mismatched package names` in Tests
 
-The issue was discovered while writing a test for the `convert-define` tool. The test, located in `examples/convert/cmd/convert-define/internal/interpreter_test.go`, attempts to parse a Go file that defines a conversion rule for `*time.Time`. A similar issue was also found in an integration test for the `convert` tool, which used a pointer to a stdlib type in a struct field.
+When you run `go test`, the Go toolchain compiles a special test binary where the `main` package is a test runner synthesized by the tool. When `go-scan`, executing inside this binary, attempts to parse the source files of a standard library package (e.g., `/usr/local/go/src/time`), a conflict occurs. The scanner's parser would see that some files belong to `package time` while also being influenced by the test binary's `package main` context. This resulted in the scanner believing there were two different packages in the same directory, causing the `mismatched package names: time and main` error.
 
-### Triggering Code
+This is a known, tricky issue related to using Go analysis tools within a test environment.
 
-The tests would fail when trying to process code that used `*time.Time`, either as a function argument or a struct field, when an `ExternalTypeOverride` was provided for `time.Time`.
+## 3. The Solution: Two-Pass Resilient Scanning
 
-```go
-// Example 1: Function argument
-define.Rule(convutil.PtrTimeToString) // PtrTimeToString is func(..., t *time.Time) string
+The issue was resolved by making the scanner's file parsing logic more resilient to this environmental quirk. The `scanGoFiles` function in `scanner/scanner.go` was refactored from a single-pass to a two-pass approach.
 
-// Example 2: Struct field
-// @derivingconvert("Dst")
-type Src struct {
-	CreatedAt *time.Time // This field would cause the error
-}
-```
+1.  **First Pass (Package Clause Scan)**: The scanner first makes a quick pass over all `.go` files in a directory, parsing *only* the `package <name>` clause. It counts the occurrences of each package name found.
 
-### Error Message
+2.  **Dominant Package Detection**: It then determines the "dominant" package name. The logic is specifically designed to handle the test-binary issue: if it finds both `"main"` and another name (e.g., `"time"`), it correctly chooses the non-`main` name as dominant.
 
-When the parser attempted to resolve the `*time.Time` type, the scanner produced the following error:
+3.  **Second Pass (Full AST Parse)**: The scanner makes a second, full pass over the files. It now *only* parses the full AST for files that belong to the dominant package name identified in the previous step. Any files that would have caused a name mismatch are safely ignored.
 
-```
-runner.Run() failed: evaluating define file: runtime error: could not resolve source type for rule: failed to scan package "time" for type "Time": ScanPackageByImport: scanning files for time failed: mismatched package names: time and main in directory /usr/local/go/src/time
-```
+This enhancement makes the scanner robust enough to handle stdlib packages directly, even within a test. As a result, **the `ExternalTypeOverride` workaround is no longer necessary for standard library types.**
 
-## 3. Investigation & Root Cause
+## 4. Related Issue: Pointer Resolution
 
-The "mismatched package names" error is a known issue when scanning GOROOT packages from a test. The standard workaround is to use the `goscan.WithExternalTypeOverrides` scanner option to provide a synthetic definition for stdlib types like `time.Time`.
+During the initial investigation, a related bug was found and fixed concerning pointers to overridden types (e.g., `*time.Time`).
 
-While this worked for `time.Time`, it failed for `*time.Time`. The investigation revealed a two-part problem in the type resolution logic.
+-   **Problem**: Even when an override was provided for `time.Time`, resolving `*time.Time` would still fail. This was because the scanner's logic did not propagate the "resolved by config" status from the element type (`time.Time`) to the pointer type that wrapped it.
+-   **Solution**: The scanner was fixed to ensure that if a type is resolved by an override, any pointer to that type is also marked as resolved by the override.
 
-### Part 1: Pointer Resolution in `FieldType.Resolve`
-
-The initial hypothesis was that the `FieldType.Resolve` method was not correctly handling pointers to overridden types. When `Resolve()` was called on a `FieldType` for `*time.Time`, it would see that the pointer type itself didn't have a `Definition` and would immediately try to scan the `"time"` package, causing the error.
-
-This was fixed by adding logic to `FieldType.Resolve` in `scanner/models.go` to first check if the type is a pointer. If so, it recursively calls `Resolve()` on the pointer's element. If the element is resolved (e.g., via an override), the pointer itself is considered resolved, and the element's `TypeInfo` is returned. This prevented the unnecessary package scan for the case in `interpreter_test.go`.
-
-### Part 2: Propagation of `IsResolvedByConfig`
-
-After fixing Part 1, a regression appeared in another test (`TestIntegration_WithPointerAwareGlobalRule`). The `mismatched package names` error persisted.
-
-Further debugging revealed that a downstream consumer of the resolved type, `parser.collectFields`, was performing its own check to avoid re-scanning packages:
-
-```go
-// parser/parser.go
-if fieldTypeInfo != nil && ... && !f.Type.IsResolvedByConfig {
-    fieldPkgInfo, err := s.ScanPackageByImport(ctx, fieldTypeInfo.PkgPath) // <-- Error here
-    // ...
-}
-```
-The problem was that while `*time.Time` was now being correctly *resolved* to the `TypeInfo` of `time.Time`, the original `FieldType` for the pointer (`f.Type`) did not have its `IsResolvedByConfig` flag set to `true`. The flag was `true` on the *element* type (`time.Time`), but this status was not being propagated to the pointer `FieldType` that wrapped it during the initial parsing phase.
-
-This caused the check `!f.Type.IsResolvedByConfig` to pass, wrongly triggering another package scan.
-
-## 4. Solution
-
-The root cause was fixed in `scanner/scanner.go` within the `parseTypeExpr` function. When parsing a pointer (`*ast.StarExpr`), the `IsResolvedByConfig` field from the element type is now explicitly copied to the new pointer `FieldType`.
-
-```go
-// scanner/scanner.go
-
-// ... in parseTypeExpr
-case *ast.StarExpr:
-    elemType := s.parseTypeExpr(ctx, t.X, currentTypeParams, info, importLookup)
-    return &FieldType{
-        // ... other fields
-        IsResolvedByConfig: elemType.IsResolvedByConfig, // Propagate from element
-    }
-```
-
-This ensures that any logic checking the resolution status of a `FieldType` will correctly identify that a pointer to an overridden type is also considered "resolved by config", preventing incorrect and failing package scans. This single change fixed both failing test cases.
+While this fix was effective, it is now largely superseded by the two-pass scanning solution, which removes the need for the override in the first place. Both fixes working together create a more robust and user-friendly scanning engine.

@@ -8,30 +8,16 @@ import (
 	"github.com/google/go-cmp/cmp"
 	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/examples/convert/model"
-	"github.com/podhmo/go-scan/scanner"
 )
 
 func TestParser(t *testing.T) {
 	ctx := context.Background()
 	inputFile := filepath.Join("../testdata", "mappings.go")
 
-	overrides := scanner.ExternalTypeOverride{
-		"time.Time": &scanner.TypeInfo{
-			Name:    "Time",
-			PkgPath: "time",
-			Kind:    scanner.StructKind,
-		},
-		"*time.Time": &scanner.TypeInfo{
-			Name:    "Time",
-			PkgPath: "time",
-			Kind:    scanner.StructKind,
-		},
-	}
-
 	// The runner needs a correctly configured scanner to find all the packages.
+	// Overrides are no longer needed.
 	runner, err := NewRunner(
 		goscan.WithGoModuleResolver(),
-		goscan.WithExternalTypeOverrides(overrides),
 	)
 	if err != nil {
 		t.Fatalf("NewRunner() failed: %+v", err)
@@ -150,17 +136,9 @@ func findField(t *testing.T, structInfo *model.StructInfo, name string) model.Fi
 func TestRunner(t *testing.T) {
 	wd := filepath.Join("..", "testdata", "success")
 
-	overrides := scanner.ExternalTypeOverride{
-		"time.Time": &scanner.TypeInfo{
-			Name:    "Time",
-			PkgPath: "time",
-			Kind:    scanner.StructKind,
-		},
-	}
 	runner, err := NewRunner(
 		goscan.WithWorkDir(wd),
 		goscan.WithGoModuleResolver(),
-		goscan.WithExternalTypeOverrides(overrides),
 	)
 	if err != nil {
 		t.Fatalf("NewRunner() failed: %+v", err)

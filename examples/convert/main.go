@@ -11,7 +11,6 @@ import (
 	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/examples/convert/generator"
 	"github.com/podhmo/go-scan/examples/convert/parser"
-	"github.com/podhmo/go-scan/scanner"
 	"golang.org/x/tools/imports"
 )
 
@@ -95,25 +94,11 @@ func main() {
 }
 
 func run(ctx context.Context, pkgpath, workdir, output, pkgname, outputPkgPath string, dryRun bool, inspect bool, logger *slog.Logger) error {
-	// Define an external type override for time.Time to avoid scanning the stdlib time package,
-	// which can cause issues in certain build contexts (like tests).
-	overrides := scanner.ExternalTypeOverride{
-		"time.Time": &scanner.TypeInfo{
-			Name:    "Time",
-			PkgPath: "time",
-			Kind:    scanner.StructKind, // Treat it as a struct, not an interface
-			Underlying: &scanner.FieldType{
-				Name:               "Time",
-				PkgName:            "time",
-				IsResolvedByConfig: true,
-			},
-		},
-	}
-
 	scannerOptions := []goscan.ScannerOption{
 		goscan.WithWorkDir(workdir),
 		goscan.WithGoModuleResolver(),
-		goscan.WithExternalTypeOverrides(overrides),
+		// ExternalTypeOverrides is no longer needed for stdlib types.
+		// goscan.WithExternalTypeOverrides(overrides),
 		goscan.WithDryRun(dryRun),
 		goscan.WithInspect(inspect),
 		goscan.WithLogger(logger),

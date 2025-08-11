@@ -190,15 +190,10 @@ func (s *Scanner) ScanPackageImports(ctx context.Context, filePaths []string, pk
 }
 
 func (s *Scanner) scanGoFiles(ctx context.Context, filePaths []string, pkgDirPath string, canonicalImportPath string) (*PackageInfo, error) {
-	info := &PackageInfo{
-		Path:       pkgDirPath,
-		ImportPath: canonicalImportPath,
-		Fset:       s.fset,
-		Files:      make([]string, 0, len(filePaths)),
-		AstFiles:   make(map[string]*ast.File),
-	}
-	var firstPackageName string
+	packageNames := make(map[string]int)
+	var fileContents = make(map[string][]byte) // Store overlay content
 
+	// 1. First pass: Parse only package clauses to find the dominant package name
 	for _, filePath := range filePaths {
 		var content any
 		if s.Overlay != nil {
@@ -206,20 +201,76 @@ func (s *Scanner) scanGoFiles(ctx context.Context, filePaths []string, pkgDirPat
 			if err == nil {
 				if overlayContent, ok := s.Overlay[relPath]; ok {
 					content = overlayContent
+					fileContents[filePath] = overlayContent // Save for second pass
 				}
 			}
 		}
 
+		// Use ImportsOnly because it's faster and still gets the package name.
+		fileAst, err := parser.ParseFile(s.fset, filePath, content, parser.ImportsOnly)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse package clause for file %s: %w", filePath, err)
+		}
+		if fileAst.Name != nil {
+			packageNames[fileAst.Name.Name]++
+		}
+	}
+
+	// 2. Determine the dominant package name, ignoring "main" if other candidates exist.
+	var dominantPackageName string
+	if len(packageNames) == 0 && len(filePaths) > 0 {
+		return nil, fmt.Errorf("could not determine package name from any files in %s", pkgDirPath)
+	}
+	if len(packageNames) == 1 {
+		for name := range packageNames {
+			dominantPackageName = name
+		}
+	} else if len(packageNames) > 1 {
+		// If "main" is one of the packages, and there are others, pick a non-main one.
+		// This handles the `go test` scenario where the test binary's main package can interfere.
+		if _, hasMain := packageNames["main"]; hasMain {
+			for name := range packageNames {
+				if name != "main" {
+					dominantPackageName = name
+					break
+				}
+			}
+		}
+		// If we still haven't found a dominant name, it means there are multiple non-main packages.
+		if dominantPackageName == "" {
+			var names []string
+			for name := range packageNames {
+				names = append(names, name)
+			}
+			return nil, fmt.Errorf("mismatched package names: %v in directory %s", names, pkgDirPath)
+		}
+	}
+
+	// 3. Second pass: Fully parse only the files belonging to the dominant package.
+	info := &PackageInfo{
+		Name:       dominantPackageName,
+		Path:       pkgDirPath,
+		ImportPath: canonicalImportPath,
+		Fset:       s.fset,
+		Files:      make([]string, 0, len(filePaths)),
+		AstFiles:   make(map[string]*ast.File),
+	}
+
+	for _, filePath := range filePaths {
+		var content any
+		if overlayContent, ok := fileContents[filePath]; ok {
+			content = overlayContent
+		}
+
+		// Full parse for the second pass
 		fileAst, err := parser.ParseFile(s.fset, filePath, content, parser.ParseComments)
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse file %s: %w", filePath, err)
 		}
 
-		if info.Name == "" {
-			info.Name = fileAst.Name.Name
-			firstPackageName = fileAst.Name.Name
-		} else if fileAst.Name.Name != firstPackageName {
-			return nil, fmt.Errorf("mismatched package names: %s and %s in directory %s", firstPackageName, fileAst.Name.Name, pkgDirPath)
+		// Only include files that match the dominant package name
+		if fileAst.Name == nil || fileAst.Name.Name != dominantPackageName {
+			continue
 		}
 
 		info.Files = append(info.Files, filePath)
@@ -236,6 +287,7 @@ func (s *Scanner) scanGoFiles(ctx context.Context, filePaths []string, pkgDirPat
 			}
 		}
 	}
+
 	if info.Name == "" && len(filePaths) > 0 {
 		return nil, fmt.Errorf("could not determine package name from scanned files in %s", pkgDirPath)
 	}

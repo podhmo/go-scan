@@ -2,9 +2,9 @@
 
 ## 1. Summary
 
-A persistent issue in `go-scan` was its inability to scan standard library packages (e.g., `time`) when run from within a `go test` binary. This would manifest as a `mismatched package names` error. The standard workaround was to use `goscan.WithExternalTypeOverrides` to provide a "synthetic" definition for types like `time.Time`, but this was a cumbersome requirement.
+A persistent issue in `go-scan` was its inability to scan standard library packages (e.g., `time`) when run from within a `go test` binary. This would manifest as a `mismatched package names` error. The initial workaround was to use `goscan.WithExternalTypeOverrides` to provide a "synthetic" definition for types like `time.Time`, but this was a cumbersome requirement.
 
-This document details the investigation into this issue and the two-part fix that makes stdlib scanning robust and removes the need for mandatory overrides.
+This document details the investigation into this issue and the final, optimized solution that makes stdlib scanning robust and performant, removing the need for mandatory overrides.
 
 ## 2. The Core Problem: `mismatched package names` in Tests
 
@@ -12,17 +12,17 @@ When you run `go test`, the Go toolchain compiles a special test binary where th
 
 This is a known, tricky issue related to using Go analysis tools within a test environment.
 
-## 3. The Solution: Two-Pass Resilient Scanning
+## 3. The Solution: Optimistic Single-Pass Scanning
 
-The issue was resolved by making the scanner's file parsing logic more resilient to this environmental quirk. The `scanGoFiles` function in `scanner/scanner.go` was refactored from a single-pass to a two-pass approach.
+The issue was resolved by making the scanner's file parsing logic both resilient and performant. The `scanGoFiles` function in `scanner/scanner.go` was refactored to use an "optimistic single-pass" approach with a fallback heuristic.
 
-1.  **First Pass (Package Clause Scan)**: The scanner first makes a quick pass over all `.go` files in a directory, parsing *only* the `package <name>` clause. It counts the occurrences of each package name found.
+1.  **Optimistic Single Pass**: The scanner starts by parsing files one by one, assuming the first package name it sees is the correct "dominant" name for the directory. This is fast and avoids the I/O overhead of reading every file twice.
 
-2.  **Dominant Package Detection**: It then determines the "dominant" package name. The logic is specifically designed to handle the test-binary issue: if it finds both `"main"` and another name (e.g., `"time"`), it correctly chooses the non-`main` name as dominant.
+2.  **Heuristic-Based Mismatch Resolution**: If a file is encountered with a different package name, a heuristic is applied. If the mismatch is between the dominant name and `"main"`, the scanner correctly assumes `"main"` is an artifact of the `go test` environment and safely ignores the file associated with it. This prevents the error without sacrificing performance for the common case.
 
-3.  **Second Pass (Full AST Parse)**: The scanner makes a second, full pass over the files. It now *only* parses the full AST for files that belong to the dominant package name identified in the previous step. Any files that would have caused a name mismatch are safely ignored.
+3.  **Error for Genuine Mismatches**: If the mismatch is between two non-`main` packages (e.g., `package_a` and `package_b` in the same directory), the scanner correctly reports this as a fatal error, as this indicates a real problem with the code being scanned.
 
-This enhancement makes the scanner robust enough to handle stdlib packages directly, even within a test. As a result, **the `ExternalTypeOverride` workaround is no longer necessary for standard library types.**
+This enhancement makes the scanner robust enough to handle stdlib packages directly, even within a test, while maintaining optimal performance. As a result, **the `ExternalTypeOverride` workaround is no longer necessary for standard library types.**
 
 ## 4. Related Issue: Pointer Resolution
 
@@ -31,4 +31,4 @@ During the initial investigation, a related bug was found and fixed concerning p
 -   **Problem**: Even when an override was provided for `time.Time`, resolving `*time.Time` would still fail. This was because the scanner's logic did not propagate the "resolved by config" status from the element type (`time.Time`) to the pointer type that wrapped it.
 -   **Solution**: The scanner was fixed to ensure that if a type is resolved by an override, any pointer to that type is also marked as resolved by the override.
 
-While this fix was effective, it is now largely superseded by the two-pass scanning solution, which removes the need for the override in the first place. Both fixes working together create a more robust and user-friendly scanning engine.
+This fix remains in place and works in concert with the optimistic scanning to ensure all forms of type resolution are robust.

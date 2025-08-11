@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/podhmo/go-scan/examples/convert/cmd/convert-define/internal"
 	"golang.org/x/tools/imports"
 )
 
@@ -75,13 +76,18 @@ func main() {
 func run(ctx context.Context, defineFile, output string, dryRun bool) error {
 	slog.InfoContext(ctx, "Starting parser", "file", defineFile)
 
-	// TODO:
-	// 1. Initialize minigo interpreter.
-	// 2. Register 'define' API functions as special forms.
-	// 3. Execute the 'defineFile' with the interpreter.
-	// 4. This will produce a model.ParsedInfo struct.
+	runner, err := internal.NewRunner()
+	if err != nil {
+		return fmt.Errorf("failed to create interpreter runner: %w", err)
+	}
 
-	slog.WarnContext(ctx, "Core logic not implemented yet")
+	if err := runner.Run(ctx, defineFile); err != nil {
+		return fmt.Errorf("failed to run definition script: %w", err)
+	}
+
+	slog.InfoContext(ctx, "Successfully parsed define file", "parsed_info", runner.Info)
+
+	// TODO: Plumb the `runner.Info` struct into the generator.
 
 	// For now, generate an empty file to verify the pipeline.
 	generatedCode := []byte("package main\n\n// Not implemented yet\n")

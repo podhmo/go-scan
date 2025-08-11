@@ -377,3 +377,8 @@ func (i *Interpreter) GlobalEnvForTest() *object.Environment {
 func (i *Interpreter) evaluatorForTest() *evaluator.Evaluator {
 	return i.eval
 }
+
+// Scanner returns the underlying goscan.Scanner instance.
+func (i *Interpreter) Scanner() *goscan.Scanner {
+	return i.scanner
+}

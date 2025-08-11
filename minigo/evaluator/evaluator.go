@@ -1797,9 +1797,19 @@ func (e *Evaluator) Eval(node ast.Node, env *object.Environment, fscope *object.
 	case *ast.CallExpr:
 		// Special form handling: check if the function is a registered special form.
 		// Special forms receive the AST of their arguments without evaluation.
-		if ident, ok := n.Fun.(*ast.Ident); ok {
-			if sf, isSpecial := e.specialForms[ident.Name]; isSpecial {
+		switch fun := n.Fun.(type) {
+		case *ast.Ident:
+			if sf, isSpecial := e.specialForms[fun.Name]; isSpecial {
 				return sf.Fn(e, fscope, n.Pos(), n.Args)
+			}
+		case *ast.SelectorExpr:
+			if pkgIdent, ok := fun.X.(*ast.Ident); ok && fscope != nil {
+				if path, isAlias := fscope.Aliases[pkgIdent.Name]; isAlias {
+					qualifiedName := fmt.Sprintf("%s.%s", path, fun.Sel.Name)
+					if sf, isSpecial := e.specialForms[qualifiedName]; isSpecial {
+						return sf.Fn(e, fscope, n.Pos(), n.Args)
+					}
+				}
 			}
 		}
 
@@ -2959,4 +2969,9 @@ func (e *Evaluator) evalBasicLit(n *ast.BasicLit) object.Object {
 	default:
 		return e.newError(n.Pos(), "unsupported literal type: %s", n.Kind)
 	}
+}
+
+// Scanner returns the underlying goscan.Scanner instance.
+func (e *Evaluator) Scanner() *goscan.Scanner {
+	return e.scanner
 }

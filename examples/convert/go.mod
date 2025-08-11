@@ -14,4 +14,3 @@ require (
 )
 
 replace github.com/podhmo/go-scan => ../../
-

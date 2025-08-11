@@ -31,15 +31,30 @@ type ComputedField struct {
 	Expr    string
 }
 
+// FieldMap defines a mapping between a source and destination field,
+// optionally with a custom conversion function.
+type FieldMap struct {
+	DstName   string
+	SrcName   string
+	Converter string // e.g. "funcs.UserIDToString"
+}
+
+// MappingInfo holds the set of explicit mapping rules defined within a define.Mapping call.
+type MappingInfo struct {
+	Maps     []FieldMap
+	Computes []ComputedField
+}
+
 // ConversionPair defines a top-level conversion between two types.
 type ConversionPair struct {
 	SrcTypeName string
 	DstTypeName string
 	SrcTypeInfo *scanner.TypeInfo
 	DstTypeInfo *scanner.TypeInfo
+	Mapping     *MappingInfo // Explicit mapping rules from define.Mapping
 	MaxErrors   int
 	Variables   []Variable
-	Computed    []ComputedField
+	Computed    []ComputedField // TODO: This might be deprecated in favor of Mapping.Computes
 }
 
 // TypeRule defines a global rule for converting between types or validating a type.

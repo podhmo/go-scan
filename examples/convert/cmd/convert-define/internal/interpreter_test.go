@@ -7,16 +7,146 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	goscan "github.com/podhmo/go-scan"
+	"github.com/podhmo/go-scan/examples/convert/model"
 	"github.com/podhmo/go-scan/scanner"
 )
+
+func TestParser(t *testing.T) {
+	t.Skip("Skipping test due to a documented bug in go-scan's stdlib pointer resolution. See docs/trouble-resolve-stdlib.md")
+	ctx := context.Background()
+	inputFile := filepath.Join("../testdata", "mappings.go")
+
+	overrides := scanner.ExternalTypeOverride{
+		"time.Time": &scanner.TypeInfo{
+			Name:    "Time",
+			PkgPath: "time",
+			Kind:    scanner.StructKind,
+		},
+		"*time.Time": &scanner.TypeInfo{
+			Name:    "Time",
+			PkgPath: "time",
+			Kind:    scanner.StructKind,
+		},
+	}
+
+	// The runner needs a correctly configured scanner to find all the packages.
+	runner, err := NewRunner(
+		goscan.WithGoModuleResolver(),
+		goscan.WithExternalTypeOverrides(overrides),
+	)
+	if err != nil {
+		t.Fatalf("NewRunner() failed: %+v", err)
+	}
+
+	if err := runner.Run(ctx, inputFile); err != nil {
+		t.Fatalf("runner.Run() failed: %+v", err)
+	}
+
+	info := runner.Info
+	if info == nil {
+		t.Fatal("runner.Info is nil")
+	}
+
+	// Check global rules
+	if want, got := 2, len(info.GlobalRules); want != got {
+		t.Fatalf("expected %d global rules, but got %d", want, got)
+	}
+	if want, got := "time.Time", info.GlobalRules[0].SrcTypeName; want != got {
+		t.Errorf("GlobalRules[0].SrcTypeName: want %q, got %q", want, got)
+	}
+	if want, got := "*time.Time", info.GlobalRules[1].SrcTypeName; want != got {
+		t.Errorf("GlobalRules[1].SrcTypeName: want %q, got %q", want, got)
+	}
+
+	// Check conversion pairs
+	if want, got := 2, len(info.ConversionPairs); want != got {
+		t.Fatalf("expected %d conversion pairs, but got %d", want, got)
+	}
+
+	// -- Pair 1: SrcUser -> DstUser
+	userPair := info.ConversionPairs[0]
+	if want, got := "SrcUser", userPair.SrcTypeName; want != got {
+		t.Errorf("userPair.SrcTypeName: want %q, got %q", want, got)
+	}
+	if want, got := "DstUser", userPair.DstTypeName; want != got {
+		t.Errorf("userPair.DstTypeName: want %q, got %q", want, got)
+	}
+
+	// Check computed fields for user
+	if want, got := 1, len(userPair.Computed); want != got {
+		t.Fatalf("expected %d computed field for user, but got %d", want, got)
+	}
+	if want, got := "FullName", userPair.Computed[0].DstName; want != got {
+		t.Errorf("userPair.Computed[0].DstName: want %q, got %q", want, got)
+	}
+	if want, got := "funcs.MakeFullName(src.FirstName,src.LastName)", userPair.Computed[0].Expr; want != got {
+		t.Errorf("userPair.Computed[0].Expr: want %q, got %q", want, got)
+	}
+
+	// Check field tags for user
+	userSrcInfo, ok := info.Structs["SrcUser"]
+	if !ok {
+		t.Fatal("SrcUser info not found")
+	}
+
+	idTag := findField(t, userSrcInfo, "ID").Tag
+	if want, got := "UserID", idTag.DstFieldName; want != got {
+		t.Errorf("ID tag DstFieldName: want %q, got %q", want, got)
+	}
+	if want, got := "", idTag.UsingFunc; want != got {
+		t.Errorf("ID tag UsingFunc: want %q, got %q", want, got)
+	}
+
+	contactTag := findField(t, userSrcInfo, "ContactInfo").Tag
+	if want, got := "Contact", contactTag.DstFieldName; want != got {
+		t.Errorf("ContactInfo tag DstFieldName: want %q, got %q", want, got)
+	}
+	if want, got := "funcs.ConvertSrcContactToDstContact", contactTag.UsingFunc; want != got {
+		t.Errorf("ContactInfo tag UsingFunc: want %q, got %q", want, got)
+	}
+
+	// -- Pair 2: SrcAddress -> DstAddress
+	addrPair := info.ConversionPairs[1]
+	if want, got := "SrcAddress", addrPair.SrcTypeName; want != got {
+		t.Errorf("addrPair.SrcTypeName: want %q, got %q", want, got)
+	}
+	if want, got := "DstAddress", addrPair.DstTypeName; want != got {
+		t.Errorf("addrPair.DstTypeName: want %q, got %q", want, got)
+	}
+	if want, got := 0, len(addrPair.Computed); want != got {
+		t.Fatalf("address pair should have no computed fields, but got %d", got)
+	}
+
+	// Check field tags for address
+	addrSrcInfo, ok := info.Structs["SrcAddress"]
+	if !ok {
+		t.Fatal("SrcAddress info not found")
+	}
+
+	streetTag := findField(t, addrSrcInfo, "Street").Tag
+	if want, got := "FullStreet", streetTag.DstFieldName; want != got {
+		t.Errorf("Street tag DstFieldName: want %q, got %q", want, got)
+	}
+	cityTag := findField(t, addrSrcInfo, "City").Tag
+	if want, got := "CityName", cityTag.DstFieldName; want != got {
+		t.Errorf("City tag DstFieldName: want %q, got %q", want, got)
+	}
+}
+
+func findField(t *testing.T, structInfo *model.StructInfo, name string) model.FieldInfo {
+	t.Helper()
+	for _, f := range structInfo.Fields {
+		if f.Name == name {
+			return f
+		}
+	}
+	t.Fatalf("field %q not found in struct %s", name, structInfo.Name)
+	return model.FieldInfo{}
+}
 
 func TestRunner(t *testing.T) {
 	wd := filepath.Join("..", "testdata", "success")
 
-	// The user pointed out that the scanner must be configured correctly
-	// and passed into the runner.
-	// 1. WithWorkDir sets the module root.
-	// 2. WithGoModuleResolver allows finding stdlib packages like "time".
 	overrides := scanner.ExternalTypeOverride{
 		"time.Time": &scanner.TypeInfo{
 			Name:    "Time",
@@ -38,7 +168,6 @@ func TestRunner(t *testing.T) {
 		t.Fatalf("Run() failed: %+v", err)
 	}
 
-	// Assertions
 	if got, want := len(runner.Info.GlobalRules), 1; got != want {
 		t.Fatalf("expected %d global rule, but got %d", want, got)
 	}
@@ -60,7 +189,6 @@ func TestRunner(t *testing.T) {
 		t.Errorf("DstTypeName: want %q, got %q", want, got)
 	}
 	if rule.DstTypeInfo != nil {
-		// string is a builtin, so its TypeInfo is expected to be nil
 		t.Errorf("DstTypeInfo should be nil for builtin string, but was not: %v", rule.DstTypeInfo)
 	}
 

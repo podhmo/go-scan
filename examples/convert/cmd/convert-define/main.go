@@ -8,7 +8,10 @@ import (
 	"os"
 	"strings"
 
+	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/examples/convert/cmd/convert-define/internal"
+	"github.com/podhmo/go-scan/examples/convert/generator"
+	"github.com/podhmo/go-scan/scanner"
 	"golang.org/x/tools/imports"
 )
 
@@ -76,7 +79,23 @@ func main() {
 func run(ctx context.Context, defineFile, output string, dryRun bool) error {
 	slog.InfoContext(ctx, "Starting parser", "file", defineFile)
 
-	runner, err := internal.NewRunner()
+	// Add overrides for standard library types that cause scanning issues.
+	overrides := scanner.ExternalTypeOverride{
+		"time.Time": &scanner.TypeInfo{
+			Name:    "Time",
+			PkgPath: "time",
+			Kind:    scanner.StructKind,
+		},
+		"*time.Time": &scanner.TypeInfo{
+			Name:    "Time",
+			PkgPath: "time",
+			Kind:    scanner.StructKind,
+		},
+	}
+	runner, err := internal.NewRunner(
+		goscan.WithGoModuleResolver(),
+		goscan.WithExternalTypeOverrides(overrides),
+	)
 	if err != nil {
 		return fmt.Errorf("failed to create interpreter runner: %w", err)
 	}
@@ -87,10 +106,10 @@ func run(ctx context.Context, defineFile, output string, dryRun bool) error {
 
 	slog.InfoContext(ctx, "Successfully parsed define file", "parsed_info", runner.Info)
 
-	// TODO: Plumb the `runner.Info` struct into the generator.
-
-	// For now, generate an empty file to verify the pipeline.
-	generatedCode := []byte("package main\n\n// Not implemented yet\n")
+	generatedCode, err := generator.Generate(runner.Scanner(), runner.Info)
+	if err != nil {
+		return fmt.Errorf("failed to generate code: %w", err)
+	}
 
 	slog.DebugContext(ctx, "Writing output", "file", output)
 	formatted, err := formatCode(ctx, output, generatedCode)

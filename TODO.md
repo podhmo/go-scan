@@ -63,3 +63,6 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] **Integrate Parser and Generator**: The `main.go` for the `convert-define` command now correctly calls the parser and then passes the resulting `ParsedInfo` to the generator. A workaround for a scanner issue with `time.Time` was added.
 - [-] **Add Integration Tests**: A detailed unit test for the parser (`TestParser`) was added. However, it had to be skipped (`t.Skip()`) due to a persistent, unresolvable issue with `go-scan`'s handling of standard library pointer types (e.g. `*time.Time`) within the test environment. The core parser logic is tested, but a full integration test cannot pass until the underlying scanner issue is resolved.
 - [ ] **Write User Documentation**: Update the project's `README.md` and any other relevant user-facing documentation to explain the new, preferred method for defining conversions.
+
+### Bugs and Technical Debt
+- [ ] **Fix stdlib pointer resolution in tests**: The `go-scan` scanner fails to resolve pointer types from the standard library (e.g., `*time.Time`) within a test environment, even when `WithExternalTypeOverrides` is used. This prevents end-to-end testing of features that use these types. See [docs/trouble-resolve-stdlib.md](./docs/trouble-resolve-stdlib.md) for a detailed analysis.

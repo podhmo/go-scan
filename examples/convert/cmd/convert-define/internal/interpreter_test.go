@@ -12,7 +12,7 @@ import (
 )
 
 func TestParser(t *testing.T) {
-	t.Skip("Skipping test due to unresolvable scanner issue with stdlib pointer types (*time.Time). The parser logic is believed to be correct but cannot be fully verified in this environment without a workaround.")
+	t.Skip("Skipping test due to a documented bug in go-scan's stdlib pointer resolution. See docs/trouble-resolve-stdlib.md")
 	ctx := context.Background()
 	inputFile := filepath.Join("../testdata", "mappings.go")
 

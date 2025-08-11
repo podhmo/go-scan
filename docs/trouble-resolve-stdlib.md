@@ -2,91 +2,80 @@
 
 ## 1. Summary
 
-When running tests for tools that use the `go-scan` library, there is a persistent issue with resolving types from the standard library, particularly pointer types like `*time.Time`.
+When running tests for tools that use the `go-scan` library, there was a persistent issue with resolving types from the standard library, particularly pointer types like `*time.Time`.
 
-The scanner fails with a `mismatched package names` error when it attempts to parse the source files of a standard library package (e.g., `time`) from within a Go test binary. This document details the problem, the attempted solutions, and the current hypothesis about the cause.
+The scanner failed with a `mismatched package names` error when it attempted to parse the source files of a standard library package (e.g., `time`) from within a Go test binary. This document details the problem, the investigation, and the final solution.
 
 ## 2. The Problem
 
-The issue was discovered while writing a test for the `convert-define` tool. The test, located in `examples/convert/cmd/convert-define/internal/interpreter_test.go`, attempts to parse a Go file that defines a conversion rule for `*time.Time`.
+The issue was discovered while writing a test for the `convert-define` tool. The test, located in `examples/convert/cmd/convert-define/internal/interpreter_test.go`, attempts to parse a Go file that defines a conversion rule for `*time.Time`. A similar issue was also found in an integration test for the `convert` tool, which used a pointer to a stdlib type in a struct field.
 
 ### Triggering Code
 
-The test sets up a `minigo.Interpreter` with a `go-scan.Scanner`. The scanner is configured with `goscan.WithGoModuleResolver()` to find packages. The test then runs the interpreter on the following Go code:
+The tests would fail when trying to process code that used `*time.Time`, either as a function argument or a struct field, when an `ExternalTypeOverride` was provided for `time.Time`.
 
 ```go
-// testdata/mappings.go
-package main
+// Example 1: Function argument
+define.Rule(convutil.PtrTimeToString) // PtrTimeToString is func(..., t *time.Time) string
 
-import (
-	"github.com/podhmo/go-scan/examples/convert/convutil"
-	"github.com/podhmo/go-scan/examples/convert/define"
-)
-
-func main() {
-	define.Rule(convutil.TimeToString)
-	define.Rule(convutil.PtrTimeToString) // This line triggers the error
+// Example 2: Struct field
+// @derivingconvert("Dst")
+type Src struct {
+	CreatedAt *time.Time // This field would cause the error
 }
 ```
-The `convutil.PtrTimeToString` function has the signature `func(ctx context.Context, ec *model.ErrorCollector, t *time.Time) string`.
 
 ### Error Message
 
-When the parser attempts to resolve the `*time.Time` type, the scanner produces the following error:
+When the parser attempted to resolve the `*time.Time` type, the scanner produced the following error:
 
 ```
 runner.Run() failed: evaluating define file: runtime error: could not resolve source type for rule: failed to scan package "time" for type "Time": ScanPackageByImport: scanning files for time failed: mismatched package names: time and main in directory /usr/local/go/src/time
 ```
 
-## 3. Attempted Solutions & Analysis
+## 3. Investigation & Root Cause
 
-This "mismatched package names" error is a known issue when scanning GOROOT packages from a test. The standard workaround is to use the `goscan.WithExternalTypeOverrides` scanner option.
+The "mismatched package names" error is a known issue when scanning GOROOT packages from a test. The standard workaround is to use the `goscan.WithExternalTypeOverrides` scanner option to provide a synthetic definition for stdlib types like `time.Time`.
 
-### Attempt 1: Override `time.Time`
+While this worked for `time.Time`, it failed for `*time.Time`. The investigation revealed a two-part problem in the type resolution logic.
 
-The first attempt was to provide an override for the base type, `time.Time`.
+### Part 1: Pointer Resolution in `FieldType.Resolve`
 
-```go
-// interpreter_test.go
-overrides := scanner.ExternalTypeOverride{
-    "time.Time": &scanner.TypeInfo{
-        Name:    "Time",
-        PkgPath: "time",
-        Kind:    scanner.StructKind,
-    },
-}
-runner, err := NewRunner(
-    goscan.WithGoModuleResolver(),
-    goscan.WithExternalTypeOverrides(overrides),
-)
-```
-**Result:** This successfully resolved the `define.Rule(convutil.TimeToString)` call, but still failed on `PtrTimeToString` with the same error. This indicates the override works for the base type but not for a pointer to it.
+The initial hypothesis was that the `FieldType.Resolve` method was not correctly handling pointers to overridden types. When `Resolve()` was called on a `FieldType` for `*time.Time`, it would see that the pointer type itself didn't have a `Definition` and would immediately try to scan the `"time"` package, causing the error.
 
-### Attempt 2: Override `*time.Time`
+This was fixed by adding logic to `FieldType.Resolve` in `scanner/models.go` to first check if the type is a pointer. If so, it recursively calls `Resolve()` on the pointer's element. If the element is resolved (e.g., via an override), the pointer itself is considered resolved, and the element's `TypeInfo` is returned. This prevented the unnecessary package scan for the case in `interpreter_test.go`.
 
-The next attempt was to add an override for the pointer type directly.
+### Part 2: Propagation of `IsResolvedByConfig`
+
+After fixing Part 1, a regression appeared in another test (`TestIntegration_WithPointerAwareGlobalRule`). The `mismatched package names` error persisted.
+
+Further debugging revealed that a downstream consumer of the resolved type, `parser.collectFields`, was performing its own check to avoid re-scanning packages:
 
 ```go
-// interpreter_test.go
-overrides := scanner.ExternalTypeOverride{
-    "time.Time": &scanner.TypeInfo{...},
-    "*time.Time": &scanner.TypeInfo{ // Added this
-        Name:    "Time",
-        PkgPath: "time",
-        Kind:    scanner.StructKind,
-    },
+// parser/parser.go
+if fieldTypeInfo != nil && ... && !f.Type.IsResolvedByConfig {
+    fieldPkgInfo, err := s.ScanPackageByImport(ctx, fieldTypeInfo.PkgPath) // <-- Error here
+    // ...
 }
 ```
-**Result:** This had no effect. The error remained identical. The `scanner.ExternalTypeOverride` map key is defined as `ImportPath + "." + TypeName`, so a key like `"*time.Time"` is likely ignored by the scanner, which does not expect a `*` prefix.
+The problem was that while `*time.Time` was now being correctly *resolved* to the `TypeInfo` of `time.Time`, the original `FieldType` for the pointer (`f.Type`) did not have its `IsResolvedByConfig` flag set to `true`. The flag was `true` on the *element* type (`time.Time`), but this status was not being propagated to the pointer `FieldType` that wrapped it during the initial parsing phase.
 
-### Attempt 3: Test-local Modules
+This caused the check `!f.Type.IsResolvedByConfig` to pass, wrongly triggering another package scan.
 
-A third attempt involved creating a test-local `go.mod` and a mocked `convutil` package to remove the dependency on the real `time` package. While this allowed the parser logic to be tested in isolation, it did not solve the underlying problem of using the real types.
+## 4. Solution
 
-## 4. Hypothesis
+The root cause was fixed in `scanner/scanner.go` within the `parseTypeExpr` function. When parsing a pointer (`*ast.StarExpr`), the `IsResolvedByConfig` field from the element type is now explicitly copied to the new pointer `FieldType`.
 
-The `go-scan` scanner's `ExternalTypeOverride` feature does not seem to be fully effective for pointer types of external packages. When `go-scan` resolves a `FieldType` for `*time.Time`, it correctly identifies it as a pointer to an element of type `time.Time`. However, when resolving that element, it does not appear to hit the override cache for `"time.Time"`. Instead, it proceeds to try and scan the `time` package from GOROOT, which fails inside a test binary.
+```go
+// scanner/scanner.go
 
-The expected behavior is that the scanner should check the override map for `"time.Time"` before attempting to scan the package's source files, even when resolving the element of a pointer type.
+// ... in parseTypeExpr
+case *ast.StarExpr:
+    elemType := s.parseTypeExpr(ctx, t.X, currentTypeParams, info, importLookup)
+    return &FieldType{
+        // ... other fields
+        IsResolvedByConfig: elemType.IsResolvedByConfig, // Propagate from element
+    }
+```
 
-This suggests a potential bug or limitation in the scanner's type resolution logic. A future task should be to debug the `go-scan` library to fix this behavior.
+This ensures that any logic checking the resolution status of a `FieldType` will correctly identify that a pointer to an overridden type is also considered "resolved by config", preventing incorrect and failing package scans. This single change fixed both failing test cases.

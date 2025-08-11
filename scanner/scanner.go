@@ -622,14 +622,15 @@ func (s *Scanner) parseTypeExpr(ctx context.Context, expr ast.Expr, currentTypeP
 	case *ast.StarExpr:
 		elemType := s.parseTypeExpr(ctx, t.X, currentTypeParams, info, importLookup)
 		return &FieldType{
-			Resolver:       s.resolver,
-			Name:           elemType.Name,
-			IsPointer:      true,
-			Elem:           elemType,
-			FullImportPath: elemType.FullImportPath,
-			TypeName:       elemType.TypeName,
-			PkgName:        elemType.PkgName,
-			TypeArgs:       elemType.TypeArgs,
+			Resolver:           s.resolver,
+			Name:               elemType.Name,
+			IsPointer:          true,
+			Elem:               elemType,
+			FullImportPath:     elemType.FullImportPath,
+			TypeName:           elemType.TypeName,
+			PkgName:            elemType.PkgName,
+			TypeArgs:           elemType.TypeArgs,
+			IsResolvedByConfig: elemType.IsResolvedByConfig, // Propagate from element
 		}
 	case *ast.SelectorExpr:
 		pkgIdent, ok := t.X.(*ast.Ident)

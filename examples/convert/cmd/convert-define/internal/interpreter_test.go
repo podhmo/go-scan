@@ -12,7 +12,6 @@ import (
 )
 
 func TestParser(t *testing.T) {
-	t.Skip("Skipping test due to a documented bug in go-scan's stdlib pointer resolution. See docs/trouble-resolve-stdlib.md")
 	ctx := context.Background()
 	inputFile := filepath.Join("../testdata", "mappings.go")
 
@@ -79,8 +78,12 @@ func TestParser(t *testing.T) {
 	if want, got := "FullName", userPair.Computed[0].DstName; want != got {
 		t.Errorf("userPair.Computed[0].DstName: want %q, got %q", want, got)
 	}
-	if want, got := "funcs.MakeFullName(src.FirstName,src.LastName)", userPair.Computed[0].Expr; want != got {
-		t.Errorf("userPair.Computed[0].Expr: want %q, got %q", want, got)
+	{
+		want := "funcs.MakeFullName(src.FirstName, src.LastName)"
+		got := userPair.Computed[0].Expr
+		if diff := cmp.Diff(want, got); diff != "" {
+			t.Errorf("userPair.Computed[0].Expr mismatch (-want +got):\n%s", diff)
+		}
 	}
 
 	// Check field tags for user

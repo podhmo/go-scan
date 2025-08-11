@@ -169,7 +169,8 @@ func (r *Runner) handleRule(e *evaluator.Evaluator, fscope *object.FileScope, po
 	slog.Info("resolving rule function", "pkg", pkgPath, "func", funcName)
 
 	// Use the scanner to get the package info
-	pkgInfo, err := e.Scanner().ScanPackageByImport(context.Background(), pkgPath)
+	ctx := context.Background()
+	pkgInfo, err := e.Scanner().ScanPackageByImport(ctx, pkgPath)
 	if err != nil {
 		return e.NewError(pos, "could not scan package %q: %v", pkgPath, err)
 	}
@@ -191,12 +192,55 @@ func (r *Runner) handleRule(e *evaluator.Evaluator, fscope *object.FileScope, po
 		return e.NewError(pos, "rule function %s must have signature func(T) S", foundFunc.Name)
 	}
 
-	srcType := foundFunc.Parameters[0]
-	dstType := foundFunc.Results[0]
+	srcField := foundFunc.Parameters[0]
+	dstField := foundFunc.Results[0]
 
-	slog.Info("found rule", "src", srcType.Type.String(), "dst", dstType.Type.String())
+	// Get the resolved TypeInfo.
+	// If the type was resolved by an override, its Definition will already be populated.
+	// Otherwise, we need to call Resolve() to trigger an on-demand scan.
+	srcTypeInfo := srcField.Type.Definition
+	if srcTypeInfo == nil {
+		srcTypeInfo, err = srcField.Type.Resolve(ctx)
+		if err != nil {
+			return e.NewError(pos, "could not resolve source type for rule: %v", err)
+		}
+	}
 
-	// TODO: Store this information in r.Info
+	dstTypeInfo := dstField.Type.Definition
+	if dstTypeInfo == nil {
+		dstTypeInfo, err = dstField.Type.Resolve(ctx)
+		if err != nil {
+			return e.NewError(pos, "could not resolve destination type for rule: %v", err)
+		}
+	}
+
+	// This can happen for built-in types like 'string' which don't have a full TypeInfo definition.
+	if srcTypeInfo == nil && !srcField.Type.IsBuiltin {
+		return e.NewError(pos, "could not resolve source type definition for rule: %s", srcField.Type.String())
+	}
+	if dstTypeInfo == nil && !dstField.Type.IsBuiltin {
+		return e.NewError(pos, "could not resolve destination type definition for rule: %s", dstField.Type.String())
+	}
+
+	slog.Info("found rule", "src", srcField.Type.String(), "dst", dstField.Type.String())
+
+	// e.g. "convutil.TimeToString"
+	usingFunc := fmt.Sprintf("%s.%s", pkgIdent.Name, funcName)
+
+	rule := model.TypeRule{
+		SrcTypeName: srcField.Type.String(),
+		DstTypeName: dstField.Type.String(),
+		SrcTypeInfo: srcTypeInfo,
+		DstTypeInfo: dstTypeInfo,
+		UsingFunc:   usingFunc,
+	}
+	r.Info.GlobalRules = append(r.Info.GlobalRules, rule)
+
+	// ensure the import is registered
+	if _, ok := r.Info.Imports[pkgIdent.Name]; !ok {
+		r.Info.Imports[pkgIdent.Name] = pkgPath
+	}
+
 	return object.NIL
 }
 

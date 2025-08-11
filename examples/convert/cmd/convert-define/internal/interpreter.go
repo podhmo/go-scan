@@ -16,15 +16,15 @@ import (
 	"github.com/podhmo/go-scan/minigo/evaluator"
 	"github.com/podhmo/go-scan/minigo/object"
 	"github.com/podhmo/go-scan/scanner"
-	"reflect"
 )
 
 const definePkgPath = "github.com/podhmo/go-scan/examples/convert/define"
 
 // Runner manages the execution of a minigo script for conversion definitions.
 type Runner struct {
-	interp *minigo.Interpreter
-	Info   *model.ParsedInfo
+	interp             *minigo.Interpreter
+	Info               *model.ParsedInfo
+	currentMappingArgs *mappingArgs // temporary state for passing args between special forms
 }
 
 // NewRunner creates a new interpreter runner.
@@ -77,7 +77,7 @@ func (r *Runner) Run(ctx context.Context, filename string) error {
 	return nil
 }
 
-func (r *Runner) handleConvert(e *evaluator.Evaluator, env *object.Environment, fscope *object.FileScope, pos token.Pos, args []ast.Expr) object.Object {
+func (r *Runner) handleConvert(e *evaluator.Evaluator, fscope *object.FileScope, pos token.Pos, args []ast.Expr) object.Object {
 	if len(args) != 3 {
 		return e.NewError(pos, "Convert() expects 3 arguments, got %d", len(args))
 	}
@@ -106,18 +106,17 @@ func (r *Runner) handleConvert(e *evaluator.Evaluator, env *object.Environment, 
 	}
 
 	// Arg 2: Mapping
-	// The third argument is a `NewMapping` call. We need to tell its handler
-	// which pair and structs it's modifying. We do this by passing them
-	// through a custom object in the environment.
-	mappingArgs := &mappingArgs{
+	// Set the context on the runner for handleMapping to pick up.
+	r.currentMappingArgs = &mappingArgs{
 		pair:    &pair,
 		srcInfo: r.Info.Structs[srcType.Name],
 	}
-	env.Set("__mapping_args__", &object.GoValue{Value: reflect.ValueOf(mappingArgs)})
+	defer func() { r.currentMappingArgs = nil }() // Clean up afterwards
 
-	// Now when we evaluate the `NewMapping` call, its handler (`handleMapping`)
-	// will be able to access the arguments from the environment.
-	mappingObj := e.Eval(args[2], env, fscope)
+	// Evaluate the `NewMapping` call. The special form handler will use the context we just set.
+	// The environment is passed as nil because the mapping function literal does not
+	// need to resolve any external variables; it only defines a structure.
+	mappingObj := e.Eval(args[2], nil, fscope)
 	if err, isErr := mappingObj.(*object.Error); isErr {
 		return err
 	}
@@ -187,7 +186,7 @@ func (r *Runner) resolveTypeFromExpr(e *evaluator.Evaluator, fscope *object.File
 	return nil, fmt.Errorf("type %q not found in package %q", typeName, pkgPath)
 }
 
-func (r *Runner) handleRule(e *evaluator.Evaluator, env *object.Environment, fscope *object.FileScope, pos token.Pos, args []ast.Expr) object.Object {
+func (r *Runner) handleRule(e *evaluator.Evaluator, fscope *object.FileScope, pos token.Pos, args []ast.Expr) object.Object {
 	if len(args) != 1 {
 		return e.NewError(pos, "Rule() expects 1 argument, got %d", len(args))
 	}
@@ -263,7 +262,7 @@ type mappingArgs struct {
 	srcInfo *model.StructInfo
 }
 
-func (r *Runner) handleMapping(e *evaluator.Evaluator, env *object.Environment, fscope *object.FileScope, pos token.Pos, args []ast.Expr) object.Object {
+func (r *Runner) handleMapping(e *evaluator.Evaluator, fscope *object.FileScope, pos token.Pos, args []ast.Expr) object.Object {
 	if len(args) != 1 {
 		return e.NewError(pos, "NewMapping() expects 1 argument, got %d", len(args))
 	}
@@ -272,20 +271,15 @@ func (r *Runner) handleMapping(e *evaluator.Evaluator, env *object.Environment, 
 		return e.NewError(pos, "argument to NewMapping() must be a function literal")
 	}
 
-	margsObj, ok := env.Get("__mapping_args__")
-	if !ok {
-		return e.NewError(pos, "internal error: mapping args not found in environment")
-	}
-	margs, ok := margsObj.(*object.GoValue).Value.Interface().(*mappingArgs)
-	if !ok {
-		return e.NewError(pos, "internal error: incorrect mapping args type")
+	if r.currentMappingArgs == nil {
+		return e.NewError(pos, "internal error: mapping called without context")
 	}
 
 	walker := &mappingWalker{
 		evaluator: e,
 		fscope:    fscope,
-		pair:      margs.pair,
-		srcInfo:   margs.srcInfo,
+		pair:      r.currentMappingArgs.pair,
+		srcInfo:   r.currentMappingArgs.srcInfo,
 	}
 
 	ast.Walk(walker, fnLit.Body)

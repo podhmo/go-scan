@@ -27,6 +27,11 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     - **Functions and Data Structures**: Supports user-defined functions, rich error reporting with stack traces, and composite types including structs, slices, and maps.
     - **Advanced Language Features**: Includes full support for pointers (`&`, `*`), method definitions on structs, interface definitions and dynamic dispatch, struct embedding, and basic generics.
     - **Go Interoperability**: Provides a robust bridge to Go, allowing scripts to call Go functions, access Go variables, and unmarshal script results back into Go structs via `Result.As()`. Lazy, on-demand loading of imported Go packages is also supported.
+- **Final API for `convert` Tool**: A new IDE-native method for configuring the `convert` tool using a `define` package. This allows for type-safe, statically valid Go code for defining conversion rules, improving the developer experience over the previous annotation-based system.
+    - [x] **`minigo` Enhancements**: The underlying `minigo` interpreter was enhanced with special form support, allowing it to analyze the AST of function arguments.
+    - [x] **`define` API**: A new `define` package with functions like `Convert`, `Rule`, and `NewMapping` was created to provide a clean, user-facing API.
+    - [x] **`convert-define` Command**: A new command was created to parse these definition files and generate the conversion code.
+    - [x] **Comprehensive Documentation**: The `README.md` for the `convert` example was updated to reflect the new recommended workflow.
 
 ## To Be Implemented
 
@@ -45,24 +50,6 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     - [ ] `panic`
     - [ ] `recover`
 - [ ] Write comprehensive documentation for the API, supported language features, and usage examples.
-
-### Final API Specification for IDE-Native convert Configuration ([docs/plan-convert-with-minigo.md](./docs/plan-convert-with-minigo.md))
-- [x] **Implement `object.AstNode`**: Create a new type in the `minigo/object` package to wrap a `go/ast.Node`.
-- [x] **Implement Special Form Mechanism**: Modify the `minigo` evaluator to recognize "special form" functions and to not evaluate their arguments.
-- [x] **Enhance Special Forms with Evaluator Context**: Modify the `SpecialFormFunction` signature to receive more context (like the evaluator instance or the current file scope), providing access to the scanner and symbol resolution capabilities.
-- [x] **Enhance Go Interop Layer**: Update the interoperability layer to correctly unwrap `object.AstNode` and pass a raw `ast.Node` to a Go function that expects it.
-- [x] **Add Unit Tests**: Write unit tests within the `minigo` package to verify that a Go function registered as a special form can correctly receive the AST of its arguments. (Note: Existing tests like `TestSpecialForm` already cover this.)
-- [x] **Create `examples/convert/define` Package**: Create the new package containing the stub API functions (`Convert`, `Rule`, `Mapping`) and the empty `Config` struct.
-- [x] **Create CLI Entrypoint**: Create a new command (`examples/convert/cmd/convert-define`) for the new tool.
-- [x] **Implement Core Interpreter**: In the new command, implement `minigo` interpreter and registers the `define` API functions as special forms.  (in examples/convert/cmd/convert-define/internal)
-- [x] **Implement `define.Rule` Parsing**: Implement the logic to handle `define.Rule(customFunc)` calls. This involves using `go-scan` to resolve the function, inferring types from its signature, and creating a `model.TypeRule`.
-- [x] **Implement `define.Mapping` Parsing**: Implemented in `internal/interpreter.go`. The `handleMapping` special form now uses an AST walker to parse the function literal.
-- [x] **Implement `Config` Method Parsing**: The `mappingWalker` now correctly parses calls to `c.Map`, `c.Convert`, and `c.Compute`.
-- [x] **IR Construction**: The parser now correctly populates the `model.ParsedInfo` struct. It creates `ConversionPair`s, `ComputedField`s, and modifies the `ConvertTag` on the source `StructInfo`'s fields, which is what the existing generator expects.
-- [ ] **Enhance Generator for Implicit Mapping**: Per user feedback, this was not done. The existing generator is unmodified and is expected to handle implicit mapping.
-- [x] **Integrate Parser and Generator**: The `main.go` for the `convert-define` command now correctly calls the parser and then passes the resulting `ParsedInfo` to the generator. A workaround for a scanner issue with `time.Time` was added.
-- [x] **Add Integration Tests**: A detailed unit test for the parser (`TestParser`) was added and is now passing after fixing the underlying scanner issue with stdlib pointer resolution.
-- [ ] **Write User Documentation**: Update the project's `README.md` and any other relevant user-facing documentation to explain the new, preferred method for defining conversions.
 
 ### Bugs and Technical Debt
 - [x] **Fix stdlib pointer resolution in tests**: The `go-scan` scanner now correctly resolves pointer types to overridden stdlib types (e.g., `*time.Time`) within a test environment. See [docs/trouble-resolve-stdlib.md](./docs/trouble-resolve-stdlib.md) for a detailed analysis of the fix.

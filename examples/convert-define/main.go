@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	goscan "github.com/podhmo/go-scan"
-	"github.com/podhmo/go-scan/examples/convert/cmd/convert-define/internal"
+	"github.com/podhmo/go-scan/examples/convert-define/internal"
 	"github.com/podhmo/go-scan/examples/convert/generator"
 	"github.com/podhmo/go-scan/scanner"
 	"golang.org/x/tools/imports"

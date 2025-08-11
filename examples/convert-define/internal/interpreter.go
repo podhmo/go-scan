@@ -18,7 +18,7 @@ import (
 	"github.com/podhmo/go-scan/scanner"
 )
 
-const definePkgPath = "github.com/podhmo/go-scan/examples/convert/define"
+const definePkgPath = "github.com/podhmo/go-scan/examples/convert-define/define"
 
 // Runner manages the execution of a minigo script for conversion definitions.
 type Runner struct {

@@ -106,6 +106,7 @@ func run(ctx context.Context, defineFile, output string, dryRun bool) error {
 
 	// Set the package name after running, so the file has been parsed.
 	runner.Info.PackageName = runner.PackageName()
+
 	slog.InfoContext(ctx, "Successfully parsed define file", "parsed_info", runner.Info)
 
 	generatedCode, err := generator.Generate(runner.Scanner(), runner.Info)

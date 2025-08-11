@@ -382,3 +382,8 @@ func (i *Interpreter) evaluatorForTest() *evaluator.Evaluator {
 func (i *Interpreter) Scanner() *goscan.Scanner {
 	return i.scanner
 }
+
+// Files returns the file scopes that have been loaded into the interpreter.
+func (i *Interpreter) Files() []*object.FileScope {
+	return i.files
+}

@@ -58,6 +58,16 @@ func (r *Runner) Scanner() *goscan.Scanner {
 	return r.interp.Scanner()
 }
 
+// PackageName returns the package name of the loaded define file.
+// It assumes the first loaded file's package is the one we want.
+func (r *Runner) PackageName() string {
+	files := r.interp.Files()
+	if len(files) == 0 {
+		return ""
+	}
+	return files[0].AST.Name.Name
+}
+
 // Run loads and executes the definition script.
 func (r *Runner) Run(ctx context.Context, filename string) error {
 	slog.InfoContext(ctx, "Executing define script", "filename", filename)

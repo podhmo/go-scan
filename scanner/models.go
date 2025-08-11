@@ -340,6 +340,29 @@ func (ft *FieldType) Resolve(ctx context.Context) (*TypeInfo, error) {
 	if ft.Definition != nil {
 		return ft.Definition, nil
 	}
+
+	// For pointer types, try to resolve the element first. If the element is
+	// resolved (e.g., by an override), the pointer itself is considered resolved.
+	// This prevents unnecessary package scanning for pointers to overridden types.
+	if ft.IsPointer && ft.Elem != nil {
+		elemDef, err := ft.Elem.Resolve(ctx)
+		if err != nil {
+			// Return the error, but wrap it to provide context.
+			return nil, fmt.Errorf("could not resolve pointer element for %s: %w", ft.String(), err)
+		}
+		// If the element's resolution returned a definition, the pointer is resolved.
+		// A pointer's definition is its element's definition.
+		if elemDef != nil {
+			ft.Definition = elemDef // Cache the result
+			return elemDef, nil
+		}
+		// If the element is a built-in type (like *string), it resolves to a nil TypeInfo.
+		// In this case, the pointer is also considered resolved.
+		if ft.Elem.IsBuiltin {
+			return nil, nil
+		}
+	}
+
 	if ft.IsBuiltin {
 		// Built-in types like 'string' do not have a full TypeInfo definition, so we return nil.
 		// The caller can inspect ft.IsBuiltin if it needs to differentiate.

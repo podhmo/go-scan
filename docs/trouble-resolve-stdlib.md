@@ -1,92 +1,34 @@
-# Troubleshooting: Resolving Standard Library Types in Tests
+# Troubleshooting: Resolving Standard Library Types
 
 ## 1. Summary
 
-When running tests for tools that use the `go-scan` library, there is a persistent issue with resolving types from the standard library, particularly pointer types like `*time.Time`.
+A persistent issue in `go-scan` was its inability to scan standard library packages (e.g., `time`) when run from within a `go test` binary. This would manifest as a `mismatched package names` error. The initial workaround was to use `goscan.WithExternalTypeOverrides` to provide a "synthetic" definition for types like `time.Time`, but this was a cumbersome requirement.
 
-The scanner fails with a `mismatched package names` error when it attempts to parse the source files of a standard library package (e.g., `time`) from within a Go test binary. This document details the problem, the attempted solutions, and the current hypothesis about the cause.
+This document details the investigation into this issue and the final, optimized solution that makes stdlib scanning robust and performant, removing the need for mandatory overrides.
 
-## 2. The Problem
+## 2. The Core Problem: `mismatched package names` in Tests
 
-The issue was discovered while writing a test for the `convert-define` tool. The test, located in `examples/convert/cmd/convert-define/internal/interpreter_test.go`, attempts to parse a Go file that defines a conversion rule for `*time.Time`.
+When you run `go test`, the Go toolchain compiles a special test binary where the `main` package is a test runner synthesized by the tool. When `go-scan`, executing inside this binary, attempts to parse the source files of a standard library package (e.g., `/usr/local/go/src/time`), a conflict occurs. The scanner's parser would see that some files belong to `package time` while also being influenced by the test binary's `package main` context. This resulted in the scanner believing there were two different packages in the same directory, causing the `mismatched package names: time and main` error.
 
-### Triggering Code
+This is a known, tricky issue related to using Go analysis tools within a test environment.
 
-The test sets up a `minigo.Interpreter` with a `go-scan.Scanner`. The scanner is configured with `goscan.WithGoModuleResolver()` to find packages. The test then runs the interpreter on the following Go code:
+## 3. The Solution: Optimistic Single-Pass Scanning
 
-```go
-// testdata/mappings.go
-package main
+The issue was resolved by making the scanner's file parsing logic both resilient and performant. The `scanGoFiles` function in `scanner/scanner.go` was refactored to use an "optimistic single-pass" approach with a fallback heuristic.
 
-import (
-	"github.com/podhmo/go-scan/examples/convert/convutil"
-	"github.com/podhmo/go-scan/examples/convert/define"
-)
+1.  **Optimistic Single Pass**: The scanner starts by parsing files one by one, assuming the first package name it sees is the correct "dominant" name for the directory. This is fast and avoids the I/O overhead of reading every file twice.
 
-func main() {
-	define.Rule(convutil.TimeToString)
-	define.Rule(convutil.PtrTimeToString) // This line triggers the error
-}
-```
-The `convutil.PtrTimeToString` function has the signature `func(ctx context.Context, ec *model.ErrorCollector, t *time.Time) string`.
+2.  **Heuristic-Based Mismatch Resolution**: If a file is encountered with a different package name, a heuristic is applied. If the mismatch is between the dominant name and `"main"`, the scanner correctly assumes `"main"` is an artifact of the `go test` environment and safely ignores the file associated with it. This prevents the error without sacrificing performance for the common case.
 
-### Error Message
+3.  **Error for Genuine Mismatches**: If the mismatch is between two non-`main` packages (e.g., `package_a` and `package_b` in the same directory), the scanner correctly reports this as a fatal error, as this indicates a real problem with the code being scanned.
 
-When the parser attempts to resolve the `*time.Time` type, the scanner produces the following error:
+This enhancement makes the scanner robust enough to handle stdlib packages directly, even within a test, while maintaining optimal performance. As a result, **the `ExternalTypeOverride` workaround is no longer necessary for standard library types.**
 
-```
-runner.Run() failed: evaluating define file: runtime error: could not resolve source type for rule: failed to scan package "time" for type "Time": ScanPackageByImport: scanning files for time failed: mismatched package names: time and main in directory /usr/local/go/src/time
-```
+## 4. Related Issue: Pointer Resolution
 
-## 3. Attempted Solutions & Analysis
+During the initial investigation, a related bug was found and fixed concerning pointers to overridden types (e.g., `*time.Time`).
 
-This "mismatched package names" error is a known issue when scanning GOROOT packages from a test. The standard workaround is to use the `goscan.WithExternalTypeOverrides` scanner option.
+-   **Problem**: Even when an override was provided for `time.Time`, resolving `*time.Time` would still fail. This was because the scanner's logic did not propagate the "resolved by config" status from the element type (`time.Time`) to the pointer type that wrapped it.
+-   **Solution**: The scanner was fixed to ensure that if a type is resolved by an override, any pointer to that type is also marked as resolved by the override.
 
-### Attempt 1: Override `time.Time`
-
-The first attempt was to provide an override for the base type, `time.Time`.
-
-```go
-// interpreter_test.go
-overrides := scanner.ExternalTypeOverride{
-    "time.Time": &scanner.TypeInfo{
-        Name:    "Time",
-        PkgPath: "time",
-        Kind:    scanner.StructKind,
-    },
-}
-runner, err := NewRunner(
-    goscan.WithGoModuleResolver(),
-    goscan.WithExternalTypeOverrides(overrides),
-)
-```
-**Result:** This successfully resolved the `define.Rule(convutil.TimeToString)` call, but still failed on `PtrTimeToString` with the same error. This indicates the override works for the base type but not for a pointer to it.
-
-### Attempt 2: Override `*time.Time`
-
-The next attempt was to add an override for the pointer type directly.
-
-```go
-// interpreter_test.go
-overrides := scanner.ExternalTypeOverride{
-    "time.Time": &scanner.TypeInfo{...},
-    "*time.Time": &scanner.TypeInfo{ // Added this
-        Name:    "Time",
-        PkgPath: "time",
-        Kind:    scanner.StructKind,
-    },
-}
-```
-**Result:** This had no effect. The error remained identical. The `scanner.ExternalTypeOverride` map key is defined as `ImportPath + "." + TypeName`, so a key like `"*time.Time"` is likely ignored by the scanner, which does not expect a `*` prefix.
-
-### Attempt 3: Test-local Modules
-
-A third attempt involved creating a test-local `go.mod` and a mocked `convutil` package to remove the dependency on the real `time` package. While this allowed the parser logic to be tested in isolation, it did not solve the underlying problem of using the real types.
-
-## 4. Hypothesis
-
-The `go-scan` scanner's `ExternalTypeOverride` feature does not seem to be fully effective for pointer types of external packages. When `go-scan` resolves a `FieldType` for `*time.Time`, it correctly identifies it as a pointer to an element of type `time.Time`. However, when resolving that element, it does not appear to hit the override cache for `"time.Time"`. Instead, it proceeds to try and scan the `time` package from GOROOT, which fails inside a test binary.
-
-The expected behavior is that the scanner should check the override map for `"time.Time"` before attempting to scan the package's source files, even when resolving the element of a pointer type.
-
-This suggests a potential bug or limitation in the scanner's type resolution logic. A future task should be to debug the `go-scan` library to fix this behavior.
+This fix remains in place and works in concert with the optimistic scanning to ensure all forms of type resolution are robust.

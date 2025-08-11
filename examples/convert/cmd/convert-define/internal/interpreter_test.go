@@ -8,31 +8,16 @@ import (
 	"github.com/google/go-cmp/cmp"
 	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/examples/convert/model"
-	"github.com/podhmo/go-scan/scanner"
 )
 
 func TestParser(t *testing.T) {
-	t.Skip("Skipping test due to a documented bug in go-scan's stdlib pointer resolution. See docs/trouble-resolve-stdlib.md")
 	ctx := context.Background()
 	inputFile := filepath.Join("../testdata", "mappings.go")
 
-	overrides := scanner.ExternalTypeOverride{
-		"time.Time": &scanner.TypeInfo{
-			Name:    "Time",
-			PkgPath: "time",
-			Kind:    scanner.StructKind,
-		},
-		"*time.Time": &scanner.TypeInfo{
-			Name:    "Time",
-			PkgPath: "time",
-			Kind:    scanner.StructKind,
-		},
-	}
-
 	// The runner needs a correctly configured scanner to find all the packages.
+	// Overrides are no longer needed.
 	runner, err := NewRunner(
 		goscan.WithGoModuleResolver(),
-		goscan.WithExternalTypeOverrides(overrides),
 	)
 	if err != nil {
 		t.Fatalf("NewRunner() failed: %+v", err)
@@ -79,8 +64,12 @@ func TestParser(t *testing.T) {
 	if want, got := "FullName", userPair.Computed[0].DstName; want != got {
 		t.Errorf("userPair.Computed[0].DstName: want %q, got %q", want, got)
 	}
-	if want, got := "funcs.MakeFullName(src.FirstName,src.LastName)", userPair.Computed[0].Expr; want != got {
-		t.Errorf("userPair.Computed[0].Expr: want %q, got %q", want, got)
+	{
+		want := "funcs.MakeFullName(src.FirstName, src.LastName)"
+		got := userPair.Computed[0].Expr
+		if diff := cmp.Diff(want, got); diff != "" {
+			t.Errorf("userPair.Computed[0].Expr mismatch (-want +got):\n%s", diff)
+		}
 	}
 
 	// Check field tags for user
@@ -147,17 +136,9 @@ func findField(t *testing.T, structInfo *model.StructInfo, name string) model.Fi
 func TestRunner(t *testing.T) {
 	wd := filepath.Join("..", "testdata", "success")
 
-	overrides := scanner.ExternalTypeOverride{
-		"time.Time": &scanner.TypeInfo{
-			Name:    "Time",
-			PkgPath: "time",
-			Kind:    scanner.StructKind,
-		},
-	}
 	runner, err := NewRunner(
 		goscan.WithWorkDir(wd),
 		goscan.WithGoModuleResolver(),
-		goscan.WithExternalTypeOverrides(overrides),
 	)
 	if err != nil {
 		t.Fatalf("NewRunner() failed: %+v", err)

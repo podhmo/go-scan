@@ -197,8 +197,10 @@ func (s *Scanner) scanGoFiles(ctx context.Context, filePaths []string, pkgDirPat
 		Files:      make([]string, 0, len(filePaths)),
 		AstFiles:   make(map[string]*ast.File),
 	}
-	var firstPackageName string
+	var dominantPackageName string
+	var parsedFiles []*ast.File
 
+	// Optimistic single pass
 	for _, filePath := range filePaths {
 		var content any
 		if s.Overlay != nil {
@@ -215,16 +217,57 @@ func (s *Scanner) scanGoFiles(ctx context.Context, filePaths []string, pkgDirPat
 			return nil, fmt.Errorf("failed to parse file %s: %w", filePath, err)
 		}
 
-		if info.Name == "" {
-			info.Name = fileAst.Name.Name
-			firstPackageName = fileAst.Name.Name
-		} else if fileAst.Name.Name != firstPackageName {
-			return nil, fmt.Errorf("mismatched package names: %s and %s in directory %s", firstPackageName, fileAst.Name.Name, pkgDirPath)
+		if fileAst.Name == nil {
+			continue // Skip files with no package name
 		}
+		currentPackageName := fileAst.Name.Name
 
-		info.Files = append(info.Files, filePath)
+		if dominantPackageName == "" {
+			dominantPackageName = currentPackageName
+			info.Name = currentPackageName
+			info.Files = append(info.Files, filePath)
+			parsedFiles = append(parsedFiles, fileAst)
+		} else if currentPackageName != dominantPackageName {
+			// Mismatch detected. Apply heuristic for `go test` main package issue.
+			if dominantPackageName == "main" && currentPackageName != "main" {
+				// The real package is `currentPackageName`. Discard previous `main` files.
+				dominantPackageName = currentPackageName
+				info.Name = currentPackageName
+
+				// Filter previously parsed files, keeping only those with the new dominant name.
+				newParsedFiles := []*ast.File{}
+				newFiles := []string{}
+				for i, astFile := range parsedFiles {
+					if astFile.Name.Name == dominantPackageName {
+						newParsedFiles = append(newParsedFiles, astFile)
+						newFiles = append(newFiles, info.Files[i])
+					}
+				}
+				parsedFiles = newParsedFiles
+				info.Files = newFiles
+
+				// Add the current file
+				parsedFiles = append(parsedFiles, fileAst)
+				info.Files = append(info.Files, filePath)
+
+			} else if dominantPackageName != "main" && currentPackageName == "main" {
+				// The real package is `dominantPackageName`. Ignore the `main` file.
+				continue
+			} else {
+				// Two different non-main packages. This is a real error.
+				return nil, fmt.Errorf("mismatched package names: %s and %s in directory %s", dominantPackageName, currentPackageName, pkgDirPath)
+			}
+		} else {
+			// Package names match, just add the file.
+			info.Files = append(info.Files, filePath)
+			parsedFiles = append(parsedFiles, fileAst)
+		}
+	}
+
+	// Process declarations from the final list of valid ASTs
+	for i, fileAst := range parsedFiles {
+		filePath := info.Files[i]
 		info.AstFiles[filePath] = fileAst
-
 		importLookup := s.buildImportLookup(fileAst)
 
 		for _, decl := range fileAst.Decls {
@@ -236,12 +279,12 @@ func (s *Scanner) scanGoFiles(ctx context.Context, filePaths []string, pkgDirPat
 			}
 		}
 	}
+
 	if info.Name == "" && len(filePaths) > 0 {
 		return nil, fmt.Errorf("could not determine package name from scanned files in %s", pkgDirPath)
 	}
 
 	s.resolveEnums(info)
-
 	return info, nil
 }
 
@@ -622,14 +665,15 @@ func (s *Scanner) parseTypeExpr(ctx context.Context, expr ast.Expr, currentTypeP
 	case *ast.StarExpr:
 		elemType := s.parseTypeExpr(ctx, t.X, currentTypeParams, info, importLookup)
 		return &FieldType{
-			Resolver:       s.resolver,
-			Name:           elemType.Name,
-			IsPointer:      true,
-			Elem:           elemType,
-			FullImportPath: elemType.FullImportPath,
-			TypeName:       elemType.TypeName,
-			PkgName:        elemType.PkgName,
-			TypeArgs:       elemType.TypeArgs,
+			Resolver:           s.resolver,
+			Name:               elemType.Name,
+			IsPointer:          true,
+			Elem:               elemType,
+			FullImportPath:     elemType.FullImportPath,
+			TypeName:           elemType.TypeName,
+			PkgName:            elemType.PkgName,
+			TypeArgs:           elemType.TypeArgs,
+			IsResolvedByConfig: elemType.IsResolvedByConfig, // Propagate from element
 		}
 	case *ast.SelectorExpr:
 		pkgIdent, ok := t.X.(*ast.Ident)

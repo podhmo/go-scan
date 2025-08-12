@@ -869,9 +869,74 @@ func (e *Evaluator) evalForRangeStmt(rs *ast.RangeStmt, env *object.Environment,
 		return e.evalRangeMap(rs, iterable, env, fscope)
 	case *object.GoValue:
 		return e.evalRangeGoValue(rs, iterable, env, fscope)
+	case *object.Function:
+		return e.evalRangeFunction(rs, iterable, env, fscope)
 	default:
 		return e.newError(rs.X.Pos(), "range operator not supported for %s", iterable.Type())
 	}
+}
+
+func (e *Evaluator) evalRangeFunction(rs *ast.RangeStmt, fn *object.Function, env *object.Environment, fscope *object.FileScope) object.Object {
+	var loopErr object.Object // To capture errors/returns from the yield function
+
+	yield := &object.Builtin{
+		Fn: func(ctx *object.BuiltinContext, pos token.Pos, args ...object.Object) object.Object {
+			loopEnv := object.NewEnclosedEnvironment(env)
+
+			keyIdent, _ := rs.Key.(*ast.Ident)
+
+			if rs.Value == nil {
+				// Form: for v := range f
+				if len(args) != 1 {
+					loopErr = ctx.NewError(pos, "yield must be called with 1 argument for a single-variable range loop, got %d", len(args))
+					return object.FALSE // Stop iteration on error
+				}
+				if keyIdent != nil && keyIdent.Name != "_" {
+					loopEnv.Set(keyIdent.Name, args[0])
+				}
+			} else {
+				// Form: for k, v := range f
+				valIdent, _ := rs.Value.(*ast.Ident)
+				if len(args) != 2 {
+					loopErr = ctx.NewError(pos, "yield must be called with 2 arguments for a two-variable range loop, got %d", len(args))
+					return object.FALSE // Stop iteration on error
+				}
+				if keyIdent != nil && keyIdent.Name != "_" {
+					loopEnv.Set(keyIdent.Name, args[0])
+				}
+				if valIdent != nil && valIdent.Name != "_" {
+					loopEnv.Set(valIdent.Name, args[1])
+				}
+			}
+
+			result := e.Eval(rs.Body, loopEnv, fscope)
+
+			switch result {
+			case object.BREAK:
+				return object.FALSE
+			case object.CONTINUE:
+				return object.TRUE
+			}
+
+			if result != nil {
+				rt := result.Type()
+				if rt == object.ERROR_OBJ || rt == object.RETURN_VALUE_OBJ {
+					loopErr = result
+					return object.FALSE
+				}
+			}
+
+			return object.TRUE
+		},
+	}
+
+	e.applyFunction(nil, fn, []object.Object{yield}, fscope)
+
+	if loopErr != nil {
+		return loopErr
+	}
+
+	return object.NIL
 }
 
 func (e *Evaluator) evalRangeGoValue(rs *ast.RangeStmt, goVal *object.GoValue, env *object.Environment, fscope *object.FileScope) object.Object {

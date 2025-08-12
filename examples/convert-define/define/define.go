@@ -27,3 +27,19 @@ func NewMapping(mapFunc any) Mapping {
 	// This is a stub function for the parser.
 	return Mapping{}
 }
+
+func (c *Config) Map(dstField any, srcField any) {
+	// This is a stub function for the parser.
+}
+func (c *Config) Convert(
+	dstField any, srcField any,
+	convertFunc any, /* func(ctx context.Context, ec *model.ErrorCollector, src any) any */
+) {
+	// This is a stub function for the parser.
+}
+func (c *Config) Compute(
+	dstField any,
+	computeFunc any,
+) {
+	// This is a stub function for the parser.
+}

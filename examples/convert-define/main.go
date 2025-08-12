@@ -50,6 +50,7 @@ func main() {
 		defineFile = flag.String("file", "", "path to the go file with conversion definitions")
 		output     = flag.String("output", "generated.go", "output file name")
 		dryRun     = flag.Bool("dry-run", false, "don't write files, just print to stdout")
+		buildTags  = flag.String("tags", "", "build tags to use when running the code generator")
 		logLevel   = new(slog.LevelVar)
 	)
 	flag.Var(&logLevelVar{levelVar: logLevel}, "log-level", "set log level (debug, info, warn, error)")
@@ -70,13 +71,13 @@ func main() {
 
 	ctx := context.Background()
 
-	if err := run(ctx, *defineFile, *output, *dryRun); err != nil {
+	if err := run(ctx, *defineFile, *output, *dryRun, *buildTags); err != nil {
 		slog.ErrorContext(ctx, "Error", slog.Any("error", err))
 		os.Exit(1)
 	}
 }
 
-func run(ctx context.Context, defineFile, output string, dryRun bool) error {
+func run(ctx context.Context, defineFile, output string, dryRun bool, buildTags string) error {
 	slog.InfoContext(ctx, "Starting parser", "file", defineFile)
 
 	// Add overrides for standard library types that cause scanning issues.
@@ -109,7 +110,11 @@ func run(ctx context.Context, defineFile, output string, dryRun bool) error {
 
 	slog.InfoContext(ctx, "Successfully parsed define file", "parsed_info", runner.Info)
 
-	generatedCode, err := generator.Generate(runner.Scanner(), runner.Info)
+	header := ""
+	if buildTags != "" {
+		header = fmt.Sprintf("\n//go:build %s\n// +build %s\n\n", buildTags, buildTags)
+	}
+	generatedCode, err := generator.Generate(runner.Scanner(), runner.Info, header)
 	if err != nil {
 		return fmt.Errorf("failed to generate code: %w", err)
 	}

@@ -8,9 +8,9 @@ type Mapping struct{}
 type Config struct{}
 
 // Convert defines a conversion between two struct types, specifying custom mapping logic.
-// The src and dst parameters are zero-value expressions of the source and destination structs.
-// The mapping parameter defines the exceptional mapping rules.
-func Convert(src any, dst any, mapping Mapping) {
+// The mapFunc parameter is a function literal with a specific signature,
+// e.g., func(c *Config, dst *DestType, src *SrcType).
+func Convert(mapFunc any) {
 	// This is a stub function for the parser.
 }
 
@@ -18,14 +18,6 @@ func Convert(src any, dst any, mapping Mapping) {
 // The customFunc parameter is a function identifier (e.g., convutil.TimeToString).
 func Rule(customFunc any) {
 	// This is a stub function for the parser.
-}
-
-// NewMapping creates the mapping configuration for a Convert call.
-// The mapFunc parameter is a function literal with a specific signature,
-// e.g., func(c *Config, dst *DestType, src *SrcType).
-func NewMapping(mapFunc any) Mapping {
-	// This is a stub function for the parser.
-	return Mapping{}
 }
 
 func (c *Config) Map(dstField any, srcField any) {

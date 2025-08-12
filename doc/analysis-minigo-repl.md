@@ -94,7 +94,17 @@ Key features would include:
 *   **Command History**: Store each submitted line in a slice and allow the user to navigate it with up/down arrow keys.
 *   **Multi-line Input**: The text input component from `bubbletea` can easily handle multi-line input, making it trivial to define functions or structs interactively.
 *   **Syntax Highlighting**: While not built-in, `bubbletea` can be integrated with syntax highlighting libraries to provide real-time feedback.
-*   **Autocompletion**: A more advanced feature where pressing `Tab` could suggest completions for variables or functions stored in the `interp.globalEnv`. This would require custom logic in the `bubbletea` update function.
+*   **Autocompletion**: A more advanced feature where pressing `Tab` could suggest completions. This is a complex feature that warrants a more detailed breakdown.
+
+#### 4.1.1. A Deep-Dive into Autocompletion
+
+A robust autocompletion system would need to handle several different contexts:
+
+*   **Global Symbol Completion**: When the user starts typing a word in an empty context (e.g., `my_v`), the REPL should suggest matching symbols from the current scope. This would include user-defined variables, functions, built-in functions (`len`, `append`), and even meta-commands (`:help`).
+*   **Package Member Completion**: After the user types a package alias and a dot (e.g., `fmt.`), the REPL should suggest exported members of that package (`Println`, `Sprintf`, etc.).
+*   **Struct Field and Method Completion**: After the user types a variable that holds a struct and a dot (e.g., `myPerson.`), the REPL should suggest the fields and methods of that struct (`Name`, `Age`, `SayHello`).
+
+Implementing this requires the REPL to have a deep, contextual understanding of the code being typed.
 
 ### 4.2. Pros and Cons
 
@@ -109,9 +119,15 @@ Key features would include:
 
 ### 4.3. Required Core Library Changes
 
-In addition to the `EvalString()` method needed for the simple REPL, a rich REPL with features like autocompletion requires more introspection capabilities.
+In addition to the `EvalString()` method needed for the simple REPL, a rich REPL with advanced autocompletion requires significant introspection capabilities.
 
-*   **`minigo.Interpreter` needs a symbol listing method**: To implement autocompletion, the REPL needs to know what variables and functions are currently in scope. A new public method, for example `ListSymbols() []string`, would be required. This method would inspect the `globalEnv` and return a slice of all defined symbol names.
+*   **For global symbol completion**:
+    *   **`minigo.Interpreter` needs a symbol listing method**: To suggest completions for variables and functions in the global scope, a public method like `ListSymbols() []string` is required. This method would inspect the `globalEnv` and return a slice of all defined symbol names.
+
+*   **For contextual completion (struct fields, package members)**:
+    *   **`minigo.Interpreter` needs a type analysis method**: This is the most complex requirement. For the REPL to suggest struct fields (e.g., after a user types `myVar.`), it must be able to determine the type of `myVar`. This requires a new, advanced method on the interpreter, such as `GetTypeInfoOf(expression string) (*TypeInfo, error)`.
+    *   This method would need to parse the partial input string (the expression), evaluate it in a temporary/analytical context to get the resulting `object.Object`, and then inspect that object's type definition to return a list of its members (fields and methods). This is a non-trivial feature that turns the interpreter into a static analysis tool on the fly.
+    *   The `go-scan` changes proposed in Approach 3 (i.e., `ScanPackage`) would also be essential for completing members of imported packages.
 
 ## 5. Approach 3: Interpreter-Specific Features
 

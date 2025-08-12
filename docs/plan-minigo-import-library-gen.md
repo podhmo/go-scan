@@ -217,13 +217,11 @@ This approach is robust, automated, and provides a clean, modular way to extend 
 To implement the proposed feature, we will first build the core logic into the `go-scan` library itself, then build the generator tool on top of it. This makes the symbol extraction logic reusable for other purposes, such as REPL autocompletion or documentation tools.
 
 1.  **Core Function: List Exported Symbols:**
-    *   **Goal:** Create a new public function in the `go-scan` library, e.g., `goscan.ListExportedSymbols(pkgPath string) ([]string, error)`.
-    *   **Implementation:** This function will encapsulate the package discovery and AST parsing logic.
-        1.  Use `go/build.Import()` to find the package directory and source files.
-        2.  Use `go/parser.ParseFile()` to parse the non-test `.go` files.
-        3.  Walk the combined ASTs to find all exported top-level function, variable, and constant names.
-        4.  Return a sorted list of the symbol names.
-    *   **Testing:** Add a unit test for this function, perhaps by running it on a known package (like `fmt`) and asserting that the output contains expected symbols (`"Sprintf"`, `"Println"`, etc.).
+    *   **Goal:** Create a new public function in the `go-scan` library, e.g., `goscan.ListExportedSymbols(pkgPath string) ([]string, error)`, to extract all exported symbol names from a given package.
+    *   **Implementation Strategy:** Two versions of this function should be considered.
+        *   **Primary (go-scan native):** This version will use `go-scan`'s own `Scanner` to locate and parse the files for the target package. This is the preferred "dog-fooding" approach, as it aligns with `go-scan`'s philosophy of avoiding the eager loading of dependency information that `go/build` can cause. This ensures the tool remains lightweight and focused.
+        *   **Fallback (`go/build` based):** A simpler version that uses `go/build.Import()` to locate the package files. This can serve as a straightforward initial implementation or an "emergency hatch" if the native scanning approach proves too complex at first. The primary long-term goal is to rely on the `go-scan` native implementation.
+    *   **Testing:** Add a unit test for this function. The test should be able to validate either implementation by running against a standard library package (e.g., `strings`) and asserting that the returned list of symbols is correct.
 
 2.  **Build the Generator Tool:**
     *   **Goal:** Create the `minigo-gen-bindings` command-line tool.

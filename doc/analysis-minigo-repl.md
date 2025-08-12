@@ -149,6 +149,34 @@ This approach requires the most significant changes to the underlying libraries,
     *   **`go-scan` needs a way to list all package members**: The current `goscan.Scanner` is designed to find specific symbols on demand (`FindSymbolInPackage`). It does not have a public method to simply scan an entire package and return all of its members.
     *   A new method on `goscan.Scanner`, such as `ScanPackage(path string) (*goscan.Package, error)`, would be required. This method would proactively parse all files in a package and return a complete `Package` object containing lists of all its `Constants`, `Vars`, `Funcs`, and `Types`. This is a fundamental addition to `go-scan`'s capabilities.
 
+### 5.4. Analysis of Dynamic Imports
+
+A key feature for a REPL is the ability to import packages on the fly. This could be implemented in two main ways.
+
+#### 5.4.1. Option A: As a Language Feature
+
+In this model, the user would just type `import "fmt"` directly into the REPL.
+
+*   **Implementation**: The `minigo` evaluator already has logic to handle `import` statements within `evalGenDecl`. However, this logic is tied to a `*object.FileScope`. To make this work, the REPL's `Interpreter` instance would need to own a single, persistent `FileScope` that represents the entire REPL session. Each line of input would be evaluated within this scope, allowing `import` statements to progressively add aliases to it.
+*   **Pros**: This is the most natural and user-friendly option, as it uses standard Go syntax. It properly leverages the existing evaluator logic.
+*   **Cons**: It requires careful management of the REPL's "session scope" object within the `Interpreter`.
+
+#### 5.4.2. Option B: As a Meta-Command
+
+In this model, the user would type `:import "fmt"`.
+
+*   **Implementation**: The REPL loop would recognize the `:import` command and would not pass the line to the evaluator. Instead, it would parse the package path and call a new method on the interpreter, e.g., `ImportPackage(path string, alias string) error`. This method would then manually update the persistent "session scope" with the new package information.
+*   **Pros**: It cleanly separates the REPL's functionality from the core language evaluator. The evaluator's code would not need to be touched.
+*   **Cons**: It introduces non-standard syntax that the user must learn, making the REPL behave differently from a standard `.minigo` script.
+
+#### 5.4.3. Recommendation & Required Changes
+
+Both options require the same fundamental change: **the `Interpreter` must manage a persistent `*object.FileScope` for the REPL session**.
+
+Given this shared requirement, **Option A (Language Feature) is recommended**. It provides a superior user experience at a comparable implementation cost to Option B.
+
+The required change would be to augment the `Interpreter` to create and hold a `FileScope` for the REPL session, and to ensure the proposed `EvalString()` method uses this scope for all evaluations.
+
 ## 6. Conclusion & Recommendation
 
 All three approaches have merit and are not mutually exclusive.

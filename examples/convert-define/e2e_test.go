@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"os"
 	"path/filepath"
 	"testing"
@@ -9,6 +10,8 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/podhmo/go-scan/scantest"
 )
+
+var update = flag.Bool("update", false, "update golden files")
 
 func TestE2E(t *testing.T) {
 	// a lot of files are needed to run the test.
@@ -97,7 +100,7 @@ func main() {
 	}
 
 	goldenFile := filepath.Join(cwd, "testdata", "e2e.go.golden")
-	if os.Getenv("UPDATE_GOLDEN") != "" {
+	if *update {
 		if err := os.WriteFile(goldenFile, got, 0644); err != nil {
 			t.Fatalf("writing golden file: %v", err)
 		}

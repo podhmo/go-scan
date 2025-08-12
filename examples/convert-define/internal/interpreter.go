@@ -22,9 +22,8 @@ const definePkgPath = "github.com/podhmo/go-scan/examples/convert-define/define"
 
 // Runner manages the execution of a minigo script for conversion definitions.
 type Runner struct {
-	interp             *minigo.Interpreter
-	Info               *model.ParsedInfo
-	currentMappingArgs *mappingArgs // temporary state for passing args between special forms
+	interp *minigo.Interpreter
+	Info   *model.ParsedInfo
 }
 
 // NewRunner creates a new interpreter runner.
@@ -48,7 +47,6 @@ func NewRunner(scannerOpts ...goscan.ScannerOption) (*Runner, error) {
 	// Register special forms with their fully qualified names.
 	r.interp.RegisterSpecial(fmt.Sprintf("%s.Convert", definePkgPath), r.handleConvert)
 	r.interp.RegisterSpecial(fmt.Sprintf("%s.Rule", definePkgPath), r.handleRule)
-	r.interp.RegisterSpecial(fmt.Sprintf("%s.NewMapping", definePkgPath), r.handleMapping)
 
 	return r, nil
 }
@@ -88,21 +86,43 @@ func (r *Runner) Run(ctx context.Context, filename string) error {
 }
 
 func (r *Runner) handleConvert(e *evaluator.Evaluator, fscope *object.FileScope, pos token.Pos, args []ast.Expr) object.Object {
-	if len(args) != 3 {
-		return e.NewError(pos, "Convert() expects 3 arguments, got %d", len(args))
+	if len(args) != 1 {
+		return e.NewError(pos, "Convert() expects 1 argument (the mapping function), got %d", len(args))
+	}
+	fnLit, ok := args[0].(*ast.FuncLit)
+	if !ok {
+		return e.NewError(pos, "argument to Convert() must be a function literal")
+	}
+	if fnLit.Type == nil || fnLit.Type.Params == nil || len(fnLit.Type.Params.List) != 3 {
+		return e.NewError(pos, "mapping function must have the signature func(c *Config, dst *DstType, src *SrcType)")
 	}
 
-	// Arg 0: Source Type
-	srcType, err := r.resolveTypeFromExpr(e, fscope, args[0])
+	// Infer types from function signature: func(c *Config, dst *Dst, src *Src)
+	// Param 1 is dst, Param 2 is src (after skipping config)
+	dstTypeExpr := fnLit.Type.Params.List[1].Type
+	srcTypeExpr := fnLit.Type.Params.List[2].Type
+
+	// The types will be *ast.StarExpr, we need to get the underlying type expr.
+	if star, ok := dstTypeExpr.(*ast.StarExpr); ok {
+		dstTypeExpr = star.X
+	} else {
+		return e.NewError(pos, "destination type in mapping function must be a pointer")
+	}
+	if star, ok := srcTypeExpr.(*ast.StarExpr); ok {
+		srcTypeExpr = star.X
+	} else {
+		return e.NewError(pos, "source type in mapping function must be a pointer")
+	}
+
+	srcType, err := r.resolveTypeFromExpr(e, fscope, srcTypeExpr)
 	if err != nil {
-		return e.NewError(pos, "could not resolve source type: %v", err)
+		return e.NewError(pos, "could not resolve source type from mapping function: %v", err)
 	}
 	r.ensureStructInfo(srcType)
 
-	// Arg 1: Destination Type
-	dstType, err := r.resolveTypeFromExpr(e, fscope, args[1])
+	dstType, err := r.resolveTypeFromExpr(e, fscope, dstTypeExpr)
 	if err != nil {
-		return e.NewError(pos, "could not resolve destination type: %v", err)
+		return e.NewError(pos, "could not resolve destination type from mapping function: %v", err)
 	}
 	r.ensureStructInfo(dstType)
 
@@ -115,20 +135,17 @@ func (r *Runner) handleConvert(e *evaluator.Evaluator, fscope *object.FileScope,
 		DstTypeInfo: dstType,
 	}
 
-	// Arg 2: Mapping
-	// Set the context on the runner for handleMapping to pick up.
-	r.currentMappingArgs = &mappingArgs{
-		pair:    &pair,
-		srcInfo: r.Info.Structs[srcType.Name],
+	// Walk the function body to find Map/Convert/Compute calls
+	walker := &mappingWalker{
+		evaluator: e,
+		fscope:    fscope,
+		pair:      &pair,
+		srcInfo:   r.Info.Structs[srcType.Name],
 	}
-	defer func() { r.currentMappingArgs = nil }() // Clean up afterwards
 
-	// Evaluate the `NewMapping` call. The special form handler will use the context we just set.
-	// The environment is passed as nil because the mapping function literal does not
-	// need to resolve any external variables; it only defines a structure.
-	mappingObj := e.Eval(args[2], nil, fscope)
-	if err, isErr := mappingObj.(*object.Error); isErr {
-		return err
+	ast.Walk(walker, fnLit.Body)
+	if walker.err != nil {
+		return e.NewError(pos, "error while parsing mapping function: %v", walker.err)
 	}
 
 	r.Info.ConversionPairs = append(r.Info.ConversionPairs, pair)
@@ -265,38 +282,6 @@ func (r *Runner) handleRule(e *evaluator.Evaluator, fscope *object.FileScope, po
 		r.Info.Imports[pkgIdent.Name] = pkgPath
 	}
 	return object.NIL
-}
-
-type mappingArgs struct {
-	pair    *model.ConversionPair
-	srcInfo *model.StructInfo
-}
-
-func (r *Runner) handleMapping(e *evaluator.Evaluator, fscope *object.FileScope, pos token.Pos, args []ast.Expr) object.Object {
-	if len(args) != 1 {
-		return e.NewError(pos, "NewMapping() expects 1 argument, got %d", len(args))
-	}
-	fnLit, ok := args[0].(*ast.FuncLit)
-	if !ok {
-		return e.NewError(pos, "argument to NewMapping() must be a function literal")
-	}
-
-	if r.currentMappingArgs == nil {
-		return e.NewError(pos, "internal error: mapping called without context")
-	}
-
-	walker := &mappingWalker{
-		evaluator: e,
-		fscope:    fscope,
-		pair:      r.currentMappingArgs.pair,
-		srcInfo:   r.currentMappingArgs.srcInfo,
-	}
-
-	ast.Walk(walker, fnLit.Body)
-	if walker.err != nil {
-		return e.NewError(pos, "error while parsing mapping function: %v", walker.err)
-	}
-	return object.NIL // This function's result is not used, it modifies state directly.
 }
 
 type mappingWalker struct {

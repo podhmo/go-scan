@@ -19,14 +19,13 @@ By default, the generator will automatically map any field in the source struct 
 ### 2.2. Top-Level Functions
 
 #### `define.Convert()`
-Defines a conversion between two struct types, specifying any custom mapping logic.
+Defines a conversion between two struct types. The source and destination types are inferred from the signature of the mapping function.
 
 **Signature:**
 ```go
-func Convert(src any, dst any, mapping Mapping)
+func Convert(mapFunc any)
 ```
--   `src`, `dst any`: Zero-value expressions of the source and destination structs.
--   `mapping Mapping`: A `Mapping` object that defines the exceptional mapping rules for this pair.
+-   `mapFunc any`: A function literal with the signature `func(c *Config, dst *DestType, src *SrcType)`.
 
 #### `define.Rule()`
 Defines a global, reusable conversion rule for a specific type-to-type conversion.
@@ -39,17 +38,7 @@ func Rule(customFunc any)
 
 ### 2.3. The Configurator Pattern
 
-#### `define.Mapping()`
-Creates the mapping configuration for a `Convert` call.
-
-**Signature:**
-```go
-func Mapping(mapFunc any) Mapping
-```
--   `mapFunc any`: A function literal with the signature `func(c *Config, dst *DestType, src *SrcType)`.
-
-#### `define.Config`
-The `Config` object, `c`, provides methods to define field-level exceptions to the default mapping behavior.
+The mapping function passed to `define.Convert` receives a `*define.Config` object as its first argument. This object, conventionally named `c`, provides methods to define field-level exceptions to the default mapping behavior.
 
 **`c.Map(dstField, srcField any)`**
 Defines a mapping between two fields with **different names**.
@@ -91,34 +80,26 @@ func main() {
 	define.Rule(convutil.PtrTimeToString)
 
 	// Define the conversion from SrcUser to DstUser, only specifying the exceptions.
-	define.Convert(source.SrcUser{}, destination.DstUser{},
-		define.Mapping(func(c *define.Config, dst *destination.DstUser, src *source.SrcUser) {
-			// Exception 1: Different names AND a custom function.
-			c.Convert(dst.UserID, src.ID, funcs.UserIDToString)
-
-			// Exception 2: A computed field.
-			c.Compute(dst.FullName, funcs.MakeFullName(src.FirstName, src.LastName))
-
-			// Exception 3: Different names.
-			c.Map(dst.Contact, src.ContactInfo)
-		}),
-	)
+	define.Convert(func(c *define.Config, dst *destination.DstUser, src *source.SrcUser) {
+		// Exception 1: Different names
+		c.Map(dst.UserID, src.ID)
+		// Exception 2: Different names and a custom function.
+		c.Convert(dst.Contact, src.ContactInfo, funcs.ConvertSrcContactToDstContact)
+		// Exception 3: A computed field.
+		c.Compute(dst.FullName, funcs.MakeFullName(src.FirstName, src.LastName))
+	})
 
 	// Define conversion for a nested struct with name differences.
-	define.Convert(source.SrcAddress{}, destination.DstAddress{},
-		define.Mapping(func(c *define.Config, dst *destination.DstAddress, src *source.SrcAddress) {
-			c.Map(dst.FullStreet, src.Street)
-			c.Map(dst.CityName, src.City)
-		}),
-	)
+	define.Convert(func(c *define.Config, dst *destination.DstAddress, src *source.SrcAddress) {
+		c.Map(dst.FullStreet, src.Street)
+		c.Map(dst.CityName, src.City)
+	})
 
 	// Define conversion for another struct with name differences and a custom function.
-	define.Convert(source.SrcInternalDetail{}, destination.DstInternalDetail{},
-		define.Mapping(func(c *define.Config, dst *destination.DstInternalDetail, src *source.SrcInternalDetail) {
-			c.Map(dst.ItemCode, src.Code)
-			c.Convert(dst.LocalizedDesc, src.Description, funcs.Translate)
-		}),
-	)
+	define.Convert(func(c *define.Config, dst *destination.DstInternalDetail, src *source.SrcInternalDetail) {
+		c.Map(dst.ItemCode, src.Code)
+		c.Convert(dst.LocalizedDesc, src.Description, funcs.Translate)
+	})
 }
 ```
 

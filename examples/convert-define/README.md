@@ -44,27 +44,24 @@ func main() {
 	define.Rule(convutil.PtrTimeToString)
 
 	// Define the conversion from SrcUser to DstUser, only specifying the exceptions.
+	// The source and destination types are inferred from the function signature.
 	// Fields with matching names (e.g., Details, CreatedAt) are mapped automatically.
-	define.Convert(source.SrcUser{}, destination.DstUser{},
-		define.NewMapping(func(c *define.Config, dst *destination.DstUser, src *source.SrcUser) {
-			// Exception 1: Different names AND a custom function.
-			c.Convert(dst.UserID, src.ID, funcs.UserIDToString)
+	define.Convert(func(c *define.Config, dst *destination.DstUser, src *source.SrcUser) {
+		// Exception 1: Different names.
+		c.Map(dst.UserID, src.ID)
 
-			// Exception 2: A computed field.
-			c.Compute(dst.FullName, funcs.MakeFullName(src.FirstName, src.LastName))
+		// Exception 2: Different names AND a custom conversion function.
+		c.Convert(dst.Contact, src.ContactInfo, funcs.ConvertSrcContactToDstContact)
 
-			// Exception 3: Different names.
-			c.Map(dst.Contact, src.ContactInfo)
-		}),
-	)
+		// Exception 3: A computed field.
+		c.Compute(dst.FullName, funcs.MakeFullName(src.FirstName, src.LastName))
+	})
 
 	// Define conversion for a nested struct with name differences.
-	define.Convert(source.SrcAddress{}, destination.DstAddress{},
-		define.NewMapping(func(c *define.Config, dst *destination.DstAddress, src *source.SrcAddress) {
-			c.Map(dst.FullStreet, src.Street)
-			c.Map(dst.CityName, src.City)
-		}),
-	)
+	define.Convert(func(c *define.Config, dst *destination.DstAddress, src *source.SrcAddress) {
+		c.Map(dst.FullStreet, src.Street)
+		c.Map(dst.CityName, src.City)
+	})
 }
 ```
 
@@ -88,9 +85,8 @@ You can then call this function directly in your application code.
 
 The public API is housed in the `github.com/podhmo/go-scan/tools/define` package.
 
-*   `define.Convert(src, dst, mapping)`: Defines a conversion between two struct types.
+*   `define.Convert(mapFunc)`: Defines a conversion between two struct types. The source and destination types are inferred from the signature of the mapping function, which must be `func(c *Config, dst *DstType, src *SrcType)`.
 *   `define.Rule(customFunc)`: Defines a global, reusable conversion rule for a specific type-to-type conversion (e.g., `time.Time` to `string`).
-*   `define.NewMapping(mapFunc)`: Creates the configuration for a `Convert` call. The `mapFunc` is a function literal where you define field-level exceptions.
 *   `c.Map(dstField, srcField)`: Maps a source field to a destination field with a **different name**.
 *   `c.Convert(dstField, srcField, converterFunc)`: Maps two fields that require a **custom conversion function**.
 *   `c.Compute(dstField, expression)`: Maps a destination field that is **computed from an expression**.

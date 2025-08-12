@@ -55,13 +55,11 @@ import (
 func main() {
 	define.Rule(convutil.TimeToString)
 	define.Rule(convutil.PtrTimeToString)
-	define.Convert(source.SrcUser{}, destination.DstUser{},
-		define.NewMapping(func(c *define.Config, dst *destination.DstUser, src *source.SrcUser) {
-			c.Map(dst.UserID, src.ID)
-			c.Convert(dst.Contact, src.ContactInfo, funcs.ConvertSrcContactToDstContact)
-			c.Compute(dst.FullName, funcs.MakeFullName(src.FirstName, src.LastName))
-		}),
-	)
+	define.Convert(func(c *define.Config, dst *destination.DstUser, src *source.SrcUser) {
+		c.Map(dst.UserID, src.ID)
+		c.Convert(dst.Contact, src.ContactInfo, funcs.ConvertSrcContactToDstContact)
+		c.Compute(dst.FullName, funcs.MakeFullName(src.FirstName, src.LastName))
+	})
 }
 `,
 		"sampledata/source/source.go":           string(sampleSrc),

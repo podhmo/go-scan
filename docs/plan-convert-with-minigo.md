@@ -1,3 +1,6 @@
+> [!NOTE]
+> This feature has been implemented.
+
 # Final API Specification for IDE-Native `convert` Configuration
 
 ## 1. Introduction

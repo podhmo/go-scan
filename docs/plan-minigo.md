@@ -1,3 +1,6 @@
+> [!NOTE]
+> This feature has been implemented.
+
 # Plan for minigo Implementation
 
 ## 1. Introduction and Concept

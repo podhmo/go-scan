@@ -32,9 +32,11 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     - [x] **`define` API**: A new `define` package with functions like `Convert`, `Rule`, and `NewMapping` was created to provide a clean, user-facing API.
     - [x] **`convert-define` Command**: A new command was created to parse these definition files and generate the conversion code.
     - [x] **Comprehensive Documentation**: The `README.md` for the `convert` example was updated to reflect the new recommended workflow.
+- **Parallel go-scan**:
+    - [x] **Task 1: Make `goscan.Scanner` Thread-Safe**
+    - [x] **Task 2: Refactor `scanner.scanGoFiles` for Concurrent Parsing**
 
 ## To Be Implemented
-
 
 ### `minigo` Refinements ([docs/plan-minigo.md](./docs/plan-minigo.md))
 - [ ] **Implement Remaining Built-in Functions**:
@@ -54,14 +56,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] **Support Increment and Decrement Operators**: Implement `++` and `--` as statements.
 - [ ] Write comprehensive documentation for the API, supported language features, and usage examples.
 
-### Parallel go-scan ([docs/plan-parallel-go-scan.md](./docs/plan-parallel-go-scan.md))
-- [x] **Task 1: Make `goscan.Scanner` Thread-Safe**
-    - [x] Locate every read and write operation on `s.visitedFiles`.
-    - [x] Wrap read operations with `s.mu.RLock()` and `s.mu.RUnlock()`.
-    - [x] Wrap write operations with `s.mu.Lock()` and `s.mu.Unlock()`.
-- [x] **Task 2: Refactor `scanner.scanGoFiles` for Concurrent Parsing**
-    - [x] **Sub-Task 2.1: Define a Result Struct**: Create a private struct to hold the result of a single file parse.
-    - [x] **Sub-Task 2.2: Implement the Parallel Parsing Loop**: Rewrite the beginning of `scanGoFiles` to manage goroutines.
-    - [x] **Sub-Task 2.3: Implement the Result Collection Logic**: After the `g.Wait()` call, collect all the results from the channel.
-    - [x] **Sub-Task 2.4: Adapt the Sequential Processing Logic**: The second half of the original `scanGoFiles` can now be adapted to work with the `parsedFileResults` slice.
-
+### Automated Minigo Bindings Generation ([docs/plan-minigo-gen-bindings.md](./docs/plan-minigo-gen-bindings.md))
+- [ ] **Core Function: List Exported Symbols**
+- [ ] **Build the Generator Tool**
+- [ ] **Generate and Test Standard Library Bindings**

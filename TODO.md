@@ -40,13 +40,13 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [ ] **Implement Remaining Built-in Functions**:
     - [x] `copy`
     - [x] `delete`
-    - [ ] `cap`
-    - [ ] `make`
-    - [ ] `new`
+    - [x] `cap`
+    - [x] `make`
+    - [x] `new`
     - [ ] `complex`
     - [ ] `real`
     - [ ] `imag`
-    - [ ] `clear`
+    - [x] `clear`
     - [ ] `close`
     - [ ] `panic`
     - [ ] `recover`

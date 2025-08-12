@@ -70,6 +70,27 @@ var builtins = map[string]*object.Builtin{
 			}
 		},
 	},
+	"cap": {
+		Fn: func(ctx *object.BuiltinContext, pos token.Pos, args ...object.Object) object.Object {
+			if len(args) != 1 {
+				return ctx.NewError(pos, "wrong number of arguments. got=%d, want=1", len(args))
+			}
+			switch arg := args[0].(type) {
+			case *object.Array:
+				return &object.Integer{Value: int64(cap(arg.Elements))}
+			case *object.GoValue:
+				val := arg.Value
+				switch val.Kind() {
+				case reflect.Array, reflect.Slice:
+					return &object.Integer{Value: int64(val.Cap())}
+				default:
+					return ctx.NewError(pos, "argument to `cap` not supported, got Go value of type %s", val.Kind())
+				}
+			default:
+				return ctx.NewError(pos, "argument to `cap` not supported, got %s", args[0].Type())
+			}
+		},
+	},
 	"copy": {
 		Fn: func(ctx *object.BuiltinContext, pos token.Pos, args ...object.Object) object.Object {
 			if len(args) != 2 {
@@ -103,6 +124,74 @@ var builtins = map[string]*object.Builtin{
 			}
 			delete(m.Pairs, key.HashKey())
 			return object.NIL
+		},
+	},
+	"make": {
+		Fn: func(ctx *object.BuiltinContext, pos token.Pos, args ...object.Object) object.Object {
+			if len(args) == 0 {
+				return ctx.NewError(pos, "missing argument to make")
+			}
+
+			switch typeArg := args[0].(type) {
+			case *object.MapType:
+				if len(args) > 2 {
+					return ctx.NewError(pos, "make(map) takes at most 1 size argument")
+				}
+				// The optional size argument is ignored for now.
+				return &object.Map{Pairs: make(map[object.HashKey]object.MapPair)}
+
+			case *object.ArrayType:
+				if len(args) < 2 || len(args) > 3 {
+					return ctx.NewError(pos, "make([]T) requires len and optional cap arguments")
+				}
+				lenArg, ok := args[1].(*object.Integer)
+				if !ok {
+					return ctx.NewError(pos, "argument 2 to `make` must be an integer, got %s", args[1].Type())
+				}
+				length := lenArg.Value
+
+				var capacity int64
+				if len(args) == 3 {
+					capArg, ok := args[2].(*object.Integer)
+					if !ok {
+						return ctx.NewError(pos, "argument 3 to `make` must be an integer, got %s", args[2].Type())
+					}
+					capacity = capArg.Value
+				} else {
+					capacity = length
+				}
+
+				if length < 0 || capacity < 0 || length > capacity {
+					return ctx.NewError(pos, "invalid arguments: len=%d, cap=%d", length, capacity)
+				}
+
+				elements := make([]object.Object, length, capacity)
+				for i := range elements {
+					elements[i] = object.NIL // Zero-value for slices is nil elements
+				}
+				return &object.Array{Elements: elements}
+			default:
+				return ctx.NewError(pos, "argument 1 to `make` must be a slice or map type, got %s", typeArg.Type())
+			}
+		},
+	},
+	"clear": {
+		Fn: func(ctx *object.BuiltinContext, pos token.Pos, args ...object.Object) object.Object {
+			if len(args) != 1 {
+				return ctx.NewError(pos, "wrong number of arguments. got=%d, want=1", len(args))
+			}
+			switch arg := args[0].(type) {
+			case *object.Map:
+				arg.Pairs = make(map[object.HashKey]object.MapPair)
+				return object.NIL
+			case *object.Array:
+				for i := range arg.Elements {
+					arg.Elements[i] = object.NIL // In a real GC'd language, this would be the zero value for the element type.
+				}
+				return object.NIL
+			default:
+				return ctx.NewError(pos, "argument to `clear` must be map or slice, got %s", arg.Type())
+			}
 		},
 	},
 	"append": {
@@ -1258,14 +1347,14 @@ func (e *Evaluator) evalSwitchStmt(ss *ast.SwitchStmt, env *object.Environment, 
 }
 
 func (e *Evaluator) evalExpressions(exps []ast.Expr, env *object.Environment, fscope *object.FileScope) []object.Object {
-	var result []object.Object
+	result := make([]object.Object, len(exps))
 
-	for _, exp := range exps {
+	for i, exp := range exps {
 		evaluated := e.Eval(exp, env, fscope)
 		if isError(evaluated) {
 			return []object.Object{evaluated}
 		}
-		result = append(result, evaluated)
+		result[i] = evaluated
 	}
 
 	return result

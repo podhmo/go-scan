@@ -32,6 +32,9 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     - [x] **`define` API**: A new `define` package with functions like `Convert`, `Rule`, and `NewMapping` was created to provide a clean, user-facing API.
     - [x] **`convert-define` Command**: A new command was created to parse these definition files and generate the conversion code.
     - [x] **Comprehensive Documentation**: The `README.md` for the `convert` example was updated to reflect the new recommended workflow.
+- **Parallel go-scan**:
+    - [x] **Task 1: Make `goscan.Scanner` Thread-Safe**
+    - [x] **Task 2: Refactor `scanner.scanGoFiles` for Concurrent Parsing**
 
 ## To Be Implemented
 
@@ -57,11 +60,3 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [ ] **Core Function: List Exported Symbols**
 - [ ] **Build the Generator Tool**
 - [ ] **Generate and Test Standard Library Bindings**
-
-### Parallel go-scan ([docs/plan-parallel-go-scan.md](./docs/plan-parallel-go-scan.md))
-- [ ] **Task 1: Make `goscan.Scanner` Thread-Safe**
-- [ ] **Task 2: Refactor `scanner.scanGoFiles` for Concurrent Parsing**
-  - [ ] **Sub-Task 2.1: Define a Result Struct**
-  - [ ] **Sub-Task 2.2: Implement the Parallel Parsing Loop**
-  - [ ] **Sub-Task 2.3: Implement the Result Collection Logic**
-  - [ ] **Sub-Task 2.4: Adapt the Sequential Processing Logic**

@@ -1,3 +1,6 @@
+> [!NOTE]
+> This feature has been implemented.
+
 # Detailed Implementation Plan for Parallelizing `go-scan`
 
 This document provides a concrete, step-by-step plan for refactoring the `go-scan` library to perform scanning operations concurrently, aiming to improve performance while ensuring thread safety.

@@ -36,12 +36,12 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 ## To Be Implemented
 
 ### Parallel go-scan ([docs/plan-parallel-go-scan.md](./docs/plan-parallel-go-scan.md))
-- [ ] **Task 1: Make `goscan.Scanner` Thread-Safe**
-    - [ ] Locate every read and write operation on `s.visitedFiles`.
-    - [ ] Wrap read operations with `s.mu.RLock()` and `s.mu.RUnlock()`.
-    - [ ] Wrap write operations with `s.mu.Lock()` and `s.mu.Unlock()`.
-- [ ] **Task 2: Refactor `scanner.scanGoFiles` for Concurrent Parsing**
-    - [ ] **Sub-Task 2.1: Define a Result Struct**: Create a private struct to hold the result of a single file parse.
-    - [ ] **Sub-Task 2.2: Implement the Parallel Parsing Loop**: Rewrite the beginning of `scanGoFiles` to manage goroutines.
-    - [ ] **Sub-Task 2.3: Implement the Result Collection Logic**: After the `g.Wait()` call, collect all the results from the channel.
-    - [ ] **Sub-Task 2.4: Adapt the Sequential Processing Logic**: The second half of the original `scanGoFiles` can now be adapted to work with the `parsedFileResults` slice.
+- [x] **Task 1: Make `goscan.Scanner` Thread-Safe**
+    - [x] Locate every read and write operation on `s.visitedFiles`.
+    - [x] Wrap read operations with `s.mu.RLock()` and `s.mu.RUnlock()`.
+    - [x] Wrap write operations with `s.mu.Lock()` and `s.mu.Unlock()`.
+- [x] **Task 2: Refactor `scanner.scanGoFiles` for Concurrent Parsing**
+    - [x] **Sub-Task 2.1: Define a Result Struct**: Create a private struct to hold the result of a single file parse.
+    - [x] **Sub-Task 2.2: Implement the Parallel Parsing Loop**: Rewrite the beginning of `scanGoFiles` to manage goroutines.
+    - [x] **Sub-Task 2.3: Implement the Result Collection Logic**: After the `g.Wait()` call, collect all the results from the channel.
+    - [x] **Sub-Task 2.4: Adapt the Sequential Processing Logic**: The second half of the original `scanGoFiles` can now be adapted to work with the `parsedFileResults` slice.

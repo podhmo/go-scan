@@ -404,11 +404,13 @@ func (s *Scanner) ScanPackage(ctx context.Context, pkgPath string) (*scanner.Pac
 	}
 
 	var filesToParseNow []string
+	s.mu.RLock()
 	for _, fp := range allFilesInDir {
 		if _, visited := s.visitedFiles[fp]; !visited {
 			filesToParseNow = append(filesToParseNow, fp)
 		}
 	}
+	s.mu.RUnlock()
 
 	var currentCallPkgInfo *scanner.PackageInfo
 	if len(filesToParseNow) > 0 {
@@ -417,9 +419,11 @@ func (s *Scanner) ScanPackage(ctx context.Context, pkgPath string) (*scanner.Pac
 			return nil, fmt.Errorf("ScanPackage: internal scan of files for package %s failed: %w", absPkgPath, err)
 		}
 		if currentCallPkgInfo != nil {
+			s.mu.Lock()
 			for _, fp := range currentCallPkgInfo.Files { // Files actually parsed in this call
 				s.visitedFiles[fp] = struct{}{}
 			}
+			s.mu.Unlock()
 			currentCallPkgInfo.ImportPath = importPath // Set import path for this call's result
 			currentCallPkgInfo.Path = absPkgPath       // Ensure path is set
 			s.updateSymbolCacheWithPackageInfo(ctx, importPath, currentCallPkgInfo)
@@ -641,11 +645,13 @@ func (s *Scanner) ScanFiles(ctx context.Context, filePaths []string) (*scanner.P
 	}
 
 	var filesToParse []string
+	s.mu.RLock()
 	for _, absFp := range resolvedAbsFilePaths {
 		if _, visited := s.visitedFiles[absFp]; !visited {
 			filesToParse = append(filesToParse, absFp)
 		}
 	}
+	s.mu.RUnlock()
 
 	if len(filesToParse) == 0 { // All specified files already visited
 		// Return an empty PackageInfo but with correct Path/ImportPath
@@ -664,11 +670,13 @@ func (s *Scanner) ScanFiles(ctx context.Context, filePaths []string) (*scanner.P
 	}
 
 	if pkgInfo != nil {
-		pkgInfo.ImportPath = importPath    // Set the calculated import path
-		pkgInfo.Path = pkgDirAbs           // Ensure directory path is also set
+		pkgInfo.ImportPath = importPath // Set the calculated import path
+		pkgInfo.Path = pkgDirAbs        // Ensure directory path is also set
+		s.mu.Lock()
 		for _, fp := range pkgInfo.Files { // Mark newly parsed files as visited
 			s.visitedFiles[fp] = struct{}{}
 		}
+		s.mu.Unlock()
 		// Results from ScanFiles (which are partial by design based on unvisited files)
 		// are NOT cached in s.packageCache. Only symbol cache is updated.
 		s.updateSymbolCacheWithPackageInfo(ctx, importPath, pkgInfo)
@@ -725,11 +733,13 @@ func (s *Scanner) UnscannedGoFiles(packagePathOrImportPath string) ([]string, er
 	}
 
 	var unscannedFiles []string
+	s.mu.RLock()
 	for _, absFilePath := range allGoFilesInDir {
 		if _, visited := s.visitedFiles[absFilePath]; !visited {
 			unscannedFiles = append(unscannedFiles, absFilePath)
 		}
 	}
+	s.mu.RUnlock()
 	return unscannedFiles, nil
 }
 
@@ -803,11 +813,13 @@ func (s *Scanner) ScanPackageByImport(ctx context.Context, importPath string) (*
 		if errSym != nil {
 			slog.WarnContext(ctx, "getFilesToScan failed. Will scan all unvisited files in the package.", slog.String("import_path", importPath), slog.String("package_dir", pkgDirAbs), slog.Any("error", errSym))
 			// Fallback: scan all files in the package that this Scanner instance hasn't visited.
+			s.mu.RLock()
 			for _, f := range allGoFilesInPkg {
 				if _, visited := s.visitedFiles[f]; !visited {
 					filesToParseThisCall = append(filesToParseThisCall, f)
 				}
 			}
+			s.mu.RUnlock()
 		} else {
 			// Add files symCache identified as new/changed
 			for _, f := range newDiskFiles {
@@ -816,16 +828,19 @@ func (s *Scanner) ScanPackageByImport(ctx context.Context, importPath string) (*
 			}
 			// For files symCache says are existing (potentially unchanged),
 			// only parse if this Scanner instance hasn't visited them yet.
+			s.mu.RLock()
 			for _, f := range existingDiskFiles {
 				filesConsideredBySymCache[f] = struct{}{} // Mark as considered
 				if _, visited := s.visitedFiles[f]; !visited {
 					filesToParseThisCall = append(filesToParseThisCall, f)
 				}
 			}
+			s.mu.RUnlock()
 		}
 	}
 
 	// Add any file in the directory not mentioned by symCache (e.g. untracked) if unvisited by this Scanner instance
+	s.mu.RLock()
 	for _, f := range allGoFilesInPkg {
 		if _, considered := filesConsideredBySymCache[f]; !considered {
 			if _, visited := s.visitedFiles[f]; !visited {
@@ -833,6 +848,7 @@ func (s *Scanner) ScanPackageByImport(ctx context.Context, importPath string) (*
 			}
 		}
 	}
+	s.mu.RUnlock()
 
 	// Deduplicate filesToParseThisCall (abs paths, so simple map is fine)
 	uniqueFilesToParse := make(map[string]struct{})
@@ -866,10 +882,12 @@ func (s *Scanner) ScanPackageByImport(ctx context.Context, importPath string) (*
 			// We can still enforce it here to be safe, or trust the scanner.
 			// Let's ensure it's what we expect.
 			currentCallPkgInfo.ImportPath = importPath
-			currentCallPkgInfo.Path = pkgDirAbs           // Ensure path
+			currentCallPkgInfo.Path = pkgDirAbs // Ensure path
+			s.mu.Lock()
 			for _, fp := range currentCallPkgInfo.Files { // Mark newly parsed files as visited by this instance
 				s.visitedFiles[fp] = struct{}{}
 			}
+			s.mu.Unlock()
 			s.updateSymbolCacheWithPackageInfo(ctx, importPath, currentCallPkgInfo) // Update global symbol cache
 		}
 	}
@@ -1308,9 +1326,11 @@ func (s *Scanner) FindSymbolInPackage(ctx context.Context, importPath string, sy
 			// that the public `ScanFiles` would have done (updating visited files and symbol cache).
 			pkgInfo, scanErr = s.scanner.ScanFilesWithKnownImportPath(ctx, []string{fileToScan}, pkgDirAbs, importPath)
 			if scanErr == nil && pkgInfo != nil {
+				s.mu.Lock()
 				for _, fp := range pkgInfo.Files {
 					s.visitedFiles[fp] = struct{}{}
 				}
+				s.mu.Unlock()
 				s.updateSymbolCacheWithPackageInfo(ctx, importPath, pkgInfo)
 			}
 		} else {

@@ -9,7 +9,16 @@ import (
 	"log/slog"
 	"path/filepath"
 	"strings"
+
+	"golang.org/x/sync/errgroup"
 )
+
+// fileParseResult holds the result of parsing a single Go source file.
+type fileParseResult struct {
+	filePath string
+	fileAst  *ast.File
+	err      error
+}
 
 // Scanner parses Go source files within a package.
 type Scanner struct {
@@ -194,61 +203,88 @@ func (s *Scanner) scanGoFiles(ctx context.Context, filePaths []string, pkgDirPat
 		Path:       pkgDirPath,
 		ImportPath: canonicalImportPath,
 		Fset:       s.fset,
-		Files:      make([]string, 0, len(filePaths)),
 		AstFiles:   make(map[string]*ast.File),
 	}
-	var dominantPackageName string
-	var parsedFiles []*ast.File
 
-	// Optimistic single pass
+	// Stage 1: Parallel Parsing
+	results := make(chan fileParseResult, len(filePaths))
+	g, ctx := errgroup.WithContext(ctx)
+
 	for _, filePath := range filePaths {
-		var content any
-		if s.Overlay != nil {
-			relPath, err := filepath.Rel(s.moduleRootDir, filePath)
-			if err == nil {
-				if overlayContent, ok := s.Overlay[relPath]; ok {
-					content = overlayContent
+		fp := filePath // create a new variable for the closure
+		g.Go(func() error {
+			var content any
+			if s.Overlay != nil {
+				relPath, err := filepath.Rel(s.moduleRootDir, fp)
+				if err == nil {
+					if overlayContent, ok := s.Overlay[relPath]; ok {
+						content = overlayContent
+					}
 				}
 			}
-		}
 
-		fileAst, err := parser.ParseFile(s.fset, filePath, content, parser.ParseComments)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse file %s: %w", filePath, err)
-		}
+			fileAst, err := parser.ParseFile(s.fset, fp, content, parser.ParseComments)
 
-		if fileAst.Name == nil {
+			select {
+			case results <- fileParseResult{filePath: fp, fileAst: fileAst, err: err}:
+				return nil
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		})
+	}
+
+	if err := g.Wait(); err != nil {
+		close(results)
+		return nil, err
+	}
+	close(results)
+
+	// Stage 2: Collect Results
+	parsedFileResults := make([]fileParseResult, 0, len(filePaths))
+	for result := range results {
+		if result.err != nil {
+			return nil, fmt.Errorf("failed to parse file %s: %w", result.filePath, result.err)
+		}
+		if result.fileAst.Name == nil {
 			continue // Skip files with no package name
 		}
-		currentPackageName := fileAst.Name.Name
+		parsedFileResults = append(parsedFileResults, result)
+	}
+
+	// Stage 3: Sequential Processing
+	var dominantPackageName string
+	var parsedFiles []*ast.File
+	var filePathsForDominantPkg []string
+
+	// First pass over results to determine dominant package name
+	for _, result := range parsedFileResults {
+		currentPackageName := result.fileAst.Name.Name
 
 		if dominantPackageName == "" {
 			dominantPackageName = currentPackageName
-			info.Name = currentPackageName
-			info.Files = append(info.Files, filePath)
-			parsedFiles = append(parsedFiles, fileAst)
+			parsedFiles = append(parsedFiles, result.fileAst)
+			filePathsForDominantPkg = append(filePathsForDominantPkg, result.filePath)
 		} else if currentPackageName != dominantPackageName {
 			// Mismatch detected. Apply heuristic for `go test` main package issue.
 			if dominantPackageName == "main" && currentPackageName != "main" {
 				// The real package is `currentPackageName`. Discard previous `main` files.
 				dominantPackageName = currentPackageName
-				info.Name = currentPackageName
 
-				// Filter previously parsed files, keeping only those with the new dominant name.
 				newParsedFiles := []*ast.File{}
-				newFiles := []string{}
+				newFilePaths := []string{}
 				for i, astFile := range parsedFiles {
 					if astFile.Name.Name == dominantPackageName {
 						newParsedFiles = append(newParsedFiles, astFile)
-						newFiles = append(newFiles, info.Files[i])
+						newFilePaths = append(newFilePaths, filePathsForDominantPkg[i])
 					}
 				}
 				parsedFiles = newParsedFiles
-				info.Files = newFiles
+				filePathsForDominantPkg = newFilePaths
 
 				// Add the current file
-				parsedFiles = append(parsedFiles, fileAst)
-				info.Files = append(info.Files, filePath)
+				parsedFiles = append(parsedFiles, result.fileAst)
+				filePathsForDominantPkg = append(filePathsForDominantPkg, result.filePath)
 
 			} else if dominantPackageName != "main" && currentPackageName == "main" {
 				// The real package is `dominantPackageName`. Ignore the `main` file.
@@ -259,12 +295,15 @@ func (s *Scanner) scanGoFiles(ctx context.Context, filePaths []string, pkgDirPat
 			}
 		} else {
 			// Package names match, just add the file.
-			info.Files = append(info.Files, filePath)
-			parsedFiles = append(parsedFiles, fileAst)
+			parsedFiles = append(parsedFiles, result.fileAst)
+			filePathsForDominantPkg = append(filePathsForDominantPkg, result.filePath)
 		}
 	}
 
-	// Process declarations from the final list of valid ASTs
+	info.Name = dominantPackageName
+	info.Files = filePathsForDominantPkg
+
+	// Second pass: Process declarations from the final list of valid ASTs
 	for i, fileAst := range parsedFiles {
 		filePath := info.Files[i]
 		info.AstFiles[filePath] = fileAst

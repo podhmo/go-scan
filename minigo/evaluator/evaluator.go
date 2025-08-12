@@ -88,6 +88,23 @@ var builtins = map[string]*object.Builtin{
 			return &object.Integer{Value: int64(n)}
 		},
 	},
+	"delete": {
+		Fn: func(ctx *object.BuiltinContext, pos token.Pos, args ...object.Object) object.Object {
+			if len(args) != 2 {
+				return ctx.NewError(pos, "wrong number of arguments. got=%d, want=2", len(args))
+			}
+			m, ok := args[0].(*object.Map)
+			if !ok {
+				return ctx.NewError(pos, "argument to `delete` must be a map, got %s", args[0].Type())
+			}
+			key, ok := args[1].(object.Hashable)
+			if !ok {
+				return ctx.NewError(pos, "unusable as map key: %s", args[1].Type())
+			}
+			delete(m.Pairs, key.HashKey())
+			return object.NIL
+		},
+	},
 	"append": {
 		Fn: func(ctx *object.BuiltinContext, pos token.Pos, args ...object.Object) object.Object {
 			if len(args) < 2 {

@@ -210,6 +210,69 @@ func TestFunctionApplication(t *testing.T) {
 	}
 }
 
+func TestDeleteFunction(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected map[string]int64
+	}{
+		{
+			`m := map[string]int{"foo": 5}; delete(m, "foo"); m`,
+			map[string]int64{},
+		},
+		{
+			`m := map[string]int{"foo": 5, "bar": 6}; delete(m, "foo"); m`,
+			map[string]int64{"bar": 6},
+		},
+		{
+			`m := map[string]int{"foo": 5}; delete(m, "bar"); m`,
+			map[string]int64{"foo": 5},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			evaluated := testEval(t, tt.input)
+			m, ok := evaluated.(*object.Map)
+			if !ok {
+				t.Fatalf("evaluation result is not a map, got %T", evaluated)
+			}
+
+			if len(m.Pairs) != len(tt.expected) {
+				t.Fatalf("map has wrong number of pairs. want=%d, got=%d", len(tt.expected), len(m.Pairs))
+			}
+
+			for k, v := range tt.expected {
+				key := &object.String{Value: k}
+				pair, ok := m.Pairs[key.HashKey()]
+				if !ok {
+					t.Errorf("expected key %q not found in map", k)
+					continue
+				}
+				testIntegerObject(t, pair.Value, v)
+			}
+		})
+	}
+}
+
+func TestDeleteFunction_Errors(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{`delete()`, "wrong number of arguments. got=0, want=2"},
+		{`delete(1)`, "wrong number of arguments. got=1, want=2"},
+		{`delete(1, 2)`, "argument to `delete` must be a map, got INTEGER"},
+		{`delete(map[string]int{}, func() {})`, "unusable as map key: FUNCTION"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			evaluated := testEval(t, tt.input)
+			testErrorObject(t, evaluated, tt.expected)
+		})
+	}
+}
+
 func TestCopyFunction(t *testing.T) {
 	tests := []struct {
 		input           string

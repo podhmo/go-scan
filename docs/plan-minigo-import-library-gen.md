@@ -98,9 +98,9 @@ This approach provides a more granular and idiomatic way to manage bindings, all
 
 The `minigo-gen-bindings` tool would operate as follows:
 
-1.  **Input**: The tool would accept a Go package import path and an output directory.
+1.  **Input**: The tool accepts one or more Go package paths as positional arguments. The output directory can be specified with an optional `--output` flag.
     ```sh
-    go run ./tools/minigo-gen-bindings --pkg "strings" --output "minigo/stdlib"
+    go run ./tools/minigo-gen-bindings --output "minigo/stdlib" strings fmt bytes
     ```
 
 2.  **Package Location**: It will use the `go/build` package to locate the source code for the target package. `build.Import("strings", "", build.FindOnly)` would provide the directory path of the "strings" package.
@@ -226,18 +226,17 @@ To implement the proposed feature, we will first build the core logic into the `
 2.  **Build the Generator Tool:**
     *   **Goal:** Create the `minigo-gen-bindings` command-line tool.
     *   **Implementation:**
-        1.  Create the command skeleton in `tools/minigo-gen-bindings/main.go` with `--pkg` and `--output` flags.
-        2.  Call the `goscan.ListExportedSymbols()` function created in the previous step to get the list of symbols for the given `--pkg`.
-        3.  Use a `text/template` to generate the `install.go` file content.
-        4.  Create the output directory (e.g., `minigo/stdlib/strings`) and write the generated file.
+        1.  Create the command skeleton in `tools/minigo-gen-bindings/main.go`. Use the `flag` package to parse the optional `--output` flag and get the remaining positional arguments as the list of package paths.
+        2.  Iterate through the list of package paths. For each path, call the `goscan.ListExportedSymbols()` function to get the list of symbols.
+        3.  Use a `text/template` to generate the `install.go` file content for that package.
+        4.  Create the output directory (e.g., `minigo/stdlib/<pkg-name>`) and write the generated file.
 
 3.  **Generate and Test Standard Library Bindings:**
     *   **Goal:** Use the new tool to generate bindings and verify they work.
     *   **Implementation:**
-        1.  Run the generator for `strings` and `fmt`.
+        1.  Run the generator for `strings` and `fmt` in a single command.
             ```sh
-            go run ./tools/minigo-gen-bindings --pkg "strings" --output "minigo/stdlib"
-            go run ./tools/minigo-gen-bindings --pkg "fmt" --output "minigo/stdlib"
+            go run ./tools/minigo-gen-bindings --output "minigo/stdlib" strings fmt
             ```
         2.  Create an integration test (`minigo/minigo_stdlib_test.go`) that imports these new packages, calls their `Install()` functions on an interpreter instance, and successfully runs a minigo script that uses functions from both `strings` and `fmt`.
 

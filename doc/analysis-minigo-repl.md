@@ -74,6 +74,14 @@ This new method would:
     *   Error handling would be basic, likely printing the error and restarting the loop.
     *   Handling multi-line statements (like function or struct definitions) would be difficult.
 
+### 3.3. Required Core Library Changes
+
+The core `minigo` library is missing a key feature for a REPL: the ability to evaluate a single string of input.
+
+*   **`minigo.Interpreter` needs a new method**: A new public method, for example `EvalString(ctx context.Context, input string) (object.Object, error)`, is required.
+    *   The current `Eval()` method is designed to evaluate a set of pre-loaded files and find a `main` function.
+    *   The new `EvalString()` method would need to take a string, parse it into an AST, evaluate all statements within it against the interpreter's persistent `globalEnv`, and return the `object.Object` result of the final expression. This allows the REPL to print the result of something like `1 + 1` or show `nil` for an assignment like `x := 10`.
+
 ## 4. Approach 2: A Rich REPL with Bubble Tea
 
 This approach focuses on building a modern, user-friendly REPL using the `github.com/charmbracelet/bubbletea` library.
@@ -99,6 +107,12 @@ Key features would include:
     *   Significantly more complex to implement than the simple REPL.
     *   Requires learning the `bubbletea` framework (The Elm Architecture).
 
+### 4.3. Required Core Library Changes
+
+In addition to the `EvalString()` method needed for the simple REPL, a rich REPL with features like autocompletion requires more introspection capabilities.
+
+*   **`minigo.Interpreter` needs a symbol listing method**: To implement autocompletion, the REPL needs to know what variables and functions are currently in scope. A new public method, for example `ListSymbols() []string`, would be required. This method would inspect the `globalEnv` and return a slice of all defined symbol names.
+
 ## 5. Approach 3: Interpreter-Specific Features
 
 This approach is orthogonal to the UI and focuses on adding powerful "meta-commands" to the REPL that are not part of the `minigo` language itself. These commands would be intercepted by the REPL loop before being sent to the interpreter.
@@ -108,9 +122,9 @@ This approach is orthogonal to the UI and focuses on adding powerful "meta-comma
 The REPL loop (whether simple or `bubbletea`-based) would check if the input line starts with a special prefix, such as a colon (`:`).
 
 *   **:help**: Display a list of available meta-commands.
-*   **:symbols** or **:ls**: Inspect the `interp.globalEnv` and print a list of all user-defined variables and functions.
-*   **:cd <path>**: Change the current working directory for the interpreter's internal `goscan.Scanner`. This would allow `import` statements to resolve packages relative to a new path. This requires exposing a way to reconfigure or interact with the scanner after the interpreter is created.
-*   **:pkg <package_path>**: List all the exported symbols (functions, constants, types) from a given Go package by leveraging the `goscan.Scanner`. For example, `:pkg strings` would list `ToUpper`, `ToLower`, `Join`, etc.
+*   **:symbols** or **:ls [pkgpath]**: Inspect the `interp.globalEnv` and print a list of all user-defined variables and functions. If a package path is provided, it lists the symbols in that package instead.
+*   **:cd <pkgpath>**: Functions like `cd` in a shell, setting the "current package" context for the REPL. Subsequent commands like `:ls` would then operate on this package context by default. Calling `:cd` with no arguments would return to the global (user-defined) context.
+*   **:pkg <package_path>**: (Superseded by `:ls <pkgpath>`) List all the exported symbols (functions, constants, types) from a given Go package by leveraging the `goscan.Scanner`. For example, `:pkg strings` would list `ToUpper`, `ToLower`, `Join`, etc.
 *   **:reset**: Clear the current interpreter state (variables, functions) and start fresh, without having to restart the REPL application itself. This would involve creating a new `minigo.Interpreter` instance.
 
 ### 5.2. Pros and Cons
@@ -120,7 +134,20 @@ The REPL loop (whether simple or `bubbletea`-based) would check if the input lin
     *   Allows for environment control that is impossible from within the language itself.
 *   **Cons**:
     *   Increases the complexity of the REPL's logic.
-    *   Some features might require small modifications to the core `minigo` library to expose necessary components (like the scanner's configuration).
+    *   Some features might require small modifications to the core `minigo` and `go-scan` libraries.
+
+### 5.3. Required Core Library Changes
+
+This approach requires the most significant changes to the underlying libraries, as it needs to expose more of the interpreter's internal state and enhance the `go-scan` library's capabilities.
+
+*   **For `:ls` and `:cd`**:
+    *   **`minigo.Interpreter` needs a package context**: It needs a new field, e.g., `currentPackageContext string`, to store the path set by `:cd`.
+    *   **`minigo.Interpreter` needs a context management method**: A method like `SetPackageContext(path string) error` would be needed to validate and set the context.
+    *   The `ListSymbols()` method proposed in Approach 2 would need to be enhanced to `ListSymbols(pkgPath ...string) []string`, allowing it to list symbols from either the `globalEnv` or a specified package.
+
+*   **For package symbol listing (`:ls some/pkg`)**:
+    *   **`go-scan` needs a way to list all package members**: The current `goscan.Scanner` is designed to find specific symbols on demand (`FindSymbolInPackage`). It does not have a public method to simply scan an entire package and return all of its members.
+    *   A new method on `goscan.Scanner`, such as `ScanPackage(path string) (*goscan.Package, error)`, would be required. This method would proactively parse all files in a package and return a complete `Package` object containing lists of all its `Constants`, `Vars`, `Funcs`, and `Types`. This is a fundamental addition to `go-scan`'s capabilities.
 
 ## 6. Conclusion & Recommendation
 

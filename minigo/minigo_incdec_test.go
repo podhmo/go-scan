@@ -9,11 +9,11 @@ import (
 
 func TestInterpreterEval_IncDec(t *testing.T) {
 	tests := []struct {
-		name         string
-		input        string
-		setup        func(i *Interpreter)
-		check        func(t *testing.T, i *Interpreter)
-		expectErr    bool
+		name      string
+		input     string
+		setup     func(i *Interpreter)
+		check     func(t *testing.T, i *Interpreter)
+		expectErr bool
 	}{
 		{
 			name: "increment global variable",

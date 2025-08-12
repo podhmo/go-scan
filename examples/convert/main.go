@@ -66,6 +66,7 @@ func main() {
 		outputPkgPath = flag.String("output-pkgpath", "", "full package import path for the generated file (e.g. example.com/m/generated)")
 		dryRun        = flag.Bool("dry-run", false, "don't write files, just print to stdout")
 		inspect       = flag.Bool("inspect", false, "enable inspection logging for annotations")
+		buildTags     = flag.String("tags", "", "build tags to use when running the code generator")
 		logLevel      = new(slog.LevelVar)
 	)
 	flag.Var(&logLevelVar{levelVar: logLevel}, "log-level", "set log level (debug, info, warn, error)")
@@ -87,13 +88,13 @@ func main() {
 	ctx := context.Background()
 	ctx = context.WithValue(ctx, FileWriterKey, &defaultFileWriter{})
 
-	if err := run(ctx, *pkgpath, *workdir, *output, *pkgname, *outputPkgPath, *dryRun, *inspect, logger); err != nil {
+	if err := run(ctx, *pkgpath, *workdir, *output, *pkgname, *outputPkgPath, *dryRun, *inspect, logger, *buildTags); err != nil {
 		slog.ErrorContext(ctx, "Error", slog.Any("error", err))
 		os.Exit(1)
 	}
 }
 
-func run(ctx context.Context, pkgpath, workdir, output, pkgname, outputPkgPath string, dryRun bool, inspect bool, logger *slog.Logger) error {
+func run(ctx context.Context, pkgpath, workdir, output, pkgname, outputPkgPath string, dryRun bool, inspect bool, logger *slog.Logger, buildTags string) error {
 	scannerOptions := []goscan.ScannerOption{
 		goscan.WithWorkDir(workdir),
 		goscan.WithGoModuleResolver(),
@@ -141,7 +142,11 @@ func run(ctx context.Context, pkgpath, workdir, output, pkgname, outputPkgPath s
 	}
 
 	slog.DebugContext(ctx, "Generating code", "package", info.PackageName, "pkgpath", info.PackagePath)
-	generatedCode, err := generator.Generate(s, info)
+	header := ""
+	if buildTags != "" {
+		header = fmt.Sprintf("\n//go:build %s\n// +build %s\n\n", buildTags, buildTags)
+	}
+	generatedCode, err := generator.Generate(s, info, header)
 	if err != nil {
 		return fmt.Errorf("failed to generate code: %w", err)
 	}

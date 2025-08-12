@@ -70,6 +70,24 @@ var builtins = map[string]*object.Builtin{
 			}
 		},
 	},
+	"copy": {
+		Fn: func(ctx *object.BuiltinContext, pos token.Pos, args ...object.Object) object.Object {
+			if len(args) != 2 {
+				return ctx.NewError(pos, "wrong number of arguments. got=%d, want=2", len(args))
+			}
+			dst, ok := args[0].(*object.Array)
+			if !ok {
+				return ctx.NewError(pos, "argument 1 to `copy` must be array, got %s", args[0].Type())
+			}
+			src, ok := args[1].(*object.Array)
+			if !ok {
+				return ctx.NewError(pos, "argument 2 to `copy` must be array, got %s", args[1].Type())
+			}
+
+			n := copy(dst.Elements, src.Elements)
+			return &object.Integer{Value: int64(n)}
+		},
+	},
 	"append": {
 		Fn: func(ctx *object.BuiltinContext, pos token.Pos, args ...object.Object) object.Object {
 			if len(args) < 2 {

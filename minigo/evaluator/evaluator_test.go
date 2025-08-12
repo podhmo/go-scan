@@ -210,6 +210,71 @@ func TestFunctionApplication(t *testing.T) {
 	}
 }
 
+func TestCopyFunction(t *testing.T) {
+	tests := []struct {
+		input           string
+		expectedN       int64
+		expectedDst     []int64
+		expectedVarName string
+	}{
+		{
+			input:           `dst := []int{0, 0, 0}; src := []int{99, 98}; n := copy(dst, src); return n, dst`,
+			expectedN:       2,
+			expectedDst:     []int64{99, 98, 0},
+			expectedVarName: "dst",
+		},
+		{
+			input:           `dst := []int{1, 2}; src := []int{99, 98, 97}; n := copy(dst, src); return n, dst`,
+			expectedN:       2,
+			expectedDst:     []int64{99, 98},
+			expectedVarName: "dst",
+		},
+		{
+			input:           `dst := []int{}; src := []int{1, 2, 3}; n := copy(dst, src); return n, dst`,
+			expectedN:       0,
+			expectedDst:     []int64{},
+			expectedVarName: "dst",
+		},
+		{
+			input:           `dst := []int{1, 2, 3}; src := []int{}; n := copy(dst, src); return n, dst`,
+			expectedN:       0,
+			expectedDst:     []int64{1, 2, 3},
+			expectedVarName: "dst",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			// testEval evaluates the code and returns the last expression's value.
+			// In our case, this is a tuple `(n, dst)`.
+			evaluated := testEval(t, tt.input)
+
+			tuple, ok := evaluated.(*object.Tuple)
+			if !ok {
+				t.Fatalf("expected a tuple return value, got %T", evaluated)
+			}
+			if len(tuple.Elements) != 2 {
+				t.Fatalf("expected tuple to have 2 elements, got %d", len(tuple.Elements))
+			}
+
+			// Check n
+			testIntegerObject(t, tuple.Elements[0], tt.expectedN)
+
+			// Check dst
+			arr, ok := tuple.Elements[1].(*object.Array)
+			if !ok {
+				t.Fatalf("expected second return value to be an array, got %T", tuple.Elements[1])
+			}
+			if len(arr.Elements) != len(tt.expectedDst) {
+				t.Fatalf("destination array has wrong length. want=%d, got=%d", len(tt.expectedDst), len(arr.Elements))
+			}
+			for i, expectedVal := range tt.expectedDst {
+				testIntegerObject(t, arr.Elements[i], expectedVal)
+			}
+		})
+	}
+}
+
 func TestDeferWithNamedReturns(t *testing.T) {
 	tests := []struct {
 		input    string
@@ -419,6 +484,12 @@ func TestBuiltinFunctions(t *testing.T) {
 		{`min()`, "min() requires at least one argument"},
 		{`max(1, "a")`, "all arguments to max() must be integers"},
 		{`min(1, "a")`, "all arguments to min() must be integers"},
+		{`copy([]int{1}, 2)`, "argument 2 to `copy` must be array, got INTEGER"},
+		{`copy(1, []int{1})`, "argument 1 to `copy` must be array, got INTEGER"},
+		{`copy("a", "b")`, "argument 1 to `copy` must be array, got STRING"},
+		{`copy()`, "wrong number of arguments. got=0, want=2"},
+		{`copy([]int{1})`, "wrong number of arguments. got=1, want=2"},
+		{`copy([]int{1}, []int{2}, []int{3})`, "wrong number of arguments. got=3, want=2"},
 	}
 
 	for _, tt := range tests {

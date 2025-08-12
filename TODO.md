@@ -35,6 +35,25 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 
 ## To Be Implemented
 
+
+### `minigo` Refinements ([docs/plan-minigo.md](./docs/plan-minigo.md))
+- [ ] **Implement Remaining Built-in Functions**:
+    - [x] `copy`
+    - [ ] `delete`
+    - [ ] `cap`
+    - [ ] `make`
+    - [ ] `new`
+    - [ ] `complex`
+    - [ ] `real`
+    - [ ] `imag`
+    - [ ] `clear`
+    - [ ] `close`
+    - [ ] `panic`
+    - [ ] `recover`
+- [x] **Range Over Function**: Support `for...range` loops over functions.
+- [x] **Support Increment and Decrement Operators**: Implement `++` and `--` as statements.
+- [ ] Write comprehensive documentation for the API, supported language features, and usage examples.
+
 ### Parallel go-scan ([docs/plan-parallel-go-scan.md](./docs/plan-parallel-go-scan.md))
 - [x] **Task 1: Make `goscan.Scanner` Thread-Safe**
     - [x] Locate every read and write operation on `s.visitedFiles`.
@@ -45,3 +64,4 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     - [x] **Sub-Task 2.2: Implement the Parallel Parsing Loop**: Rewrite the beginning of `scanGoFiles` to manage goroutines.
     - [x] **Sub-Task 2.3: Implement the Result Collection Logic**: After the `g.Wait()` call, collect all the results from the channel.
     - [x] **Sub-Task 2.4: Adapt the Sequential Processing Logic**: The second half of the original `scanGoFiles` can now be adapted to work with the `parsedFileResults` slice.
+

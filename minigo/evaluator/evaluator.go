@@ -1808,6 +1808,8 @@ func (e *Evaluator) Eval(node ast.Node, env *object.Environment, fscope *object.
 		return e.evalGenDecl(n, env, fscope)
 	case *ast.AssignStmt:
 		return e.evalAssignStmt(n, env, fscope)
+	case *ast.IncDecStmt:
+		return e.evalIncDecStmt(n, env, fscope)
 
 	// Expressions
 	case *ast.ParenExpr:
@@ -2243,6 +2245,33 @@ func (e *Evaluator) evalMapIndexExpression(node ast.Node, m, index object.Object
 	}
 
 	return pair.Value
+}
+
+func (e *Evaluator) evalIncDecStmt(n *ast.IncDecStmt, env *object.Environment, fscope *object.FileScope) object.Object {
+	// 1. Evaluate the left-hand side to get the current value.
+	// This re-uses the logic for evaluating identifiers, selectors, etc.
+	currentVal := e.Eval(n.X, env, fscope)
+	if isError(currentVal) {
+		return currentVal
+	}
+
+	// 2. Ensure the value is an integer.
+	integer, ok := currentVal.(*object.Integer)
+	if !ok {
+		return e.newError(n.Pos(), "cannot %s non-integer type %s", n.Tok, currentVal.Type())
+	}
+
+	// 3. Calculate the new value.
+	var newVal int64
+	if n.Tok == token.INC {
+		newVal = integer.Value + 1
+	} else {
+		newVal = integer.Value - 1
+	}
+
+	// 4. Assign the new value back to the variable.
+	// We can reuse the `assignValue` logic.
+	return e.assignValue(n.X, &object.Integer{Value: newVal}, env, fscope)
 }
 
 func (e *Evaluator) evalAssignStmt(n *ast.AssignStmt, env *object.Environment, fscope *object.FileScope) object.Object {

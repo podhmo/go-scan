@@ -18,7 +18,7 @@ test:
 
 test-e2e:
 	make -C examples/convert e2e
-	make -C examples/deriving-define e2e
+	make -C examples/convert-define e2e
 	make -C examples/deriving-all e2e
 
 clean:

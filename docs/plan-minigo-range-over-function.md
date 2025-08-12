@@ -1,3 +1,6 @@
+> [!NOTE]
+> This feature has been implemented.
+
 # Implementation Plan for Range Over Function in `minigo`
 
 ## 1. Introduction

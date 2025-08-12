@@ -553,6 +553,22 @@ func TestBuiltinFunctions(t *testing.T) {
 		{`copy()`, "wrong number of arguments. got=0, want=2"},
 		{`copy([]int{1})`, "wrong number of arguments. got=1, want=2"},
 		{`copy([]int{1}, []int{2}, []int{3})`, "wrong number of arguments. got=3, want=2"},
+		{`cap([]int{1, 2, 3})`, 3},
+		{`s := make([]int, 2, 5); cap(s)`, 5},
+		{`cap("hello")`, "argument to `cap` not supported, got STRING"},
+		{`s := make([]int, 5); len(s)`, 5},
+		{`s := make([]int, 5); cap(s)`, 5},
+		{`s := make([]int, 0, 5); len(s)`, 0},
+		{`s := make([]int, 0, 5); cap(s)`, 5},
+		{`m := make(map[string]int); len(m)`, 0},
+		{`m := make(map[string]int, 10); len(m)`, 0}, // size hint is ignored
+		{`make(map[string]int, 1, 2)`, "make(map) takes at most 1 size argument"},
+		{`make([]int, -1)`, "invalid arguments: len=-1, cap=-1"},
+		{`make([]int, 5, 2)`, "invalid arguments: len=5, cap=2"},
+		{`m := map[string]int{"a": 1}; clear(m); len(m)`, 0},
+		{`s := []int{1, 2, 3}; clear(s); len(s)`, 3},
+		{`s := []int{1, 2, 3}; clear(s); s[0]`, nil},
+		{`clear(1)`, "argument to `clear` must be map or slice, got INTEGER"},
 	}
 
 	for _, tt := range tests {
@@ -562,6 +578,8 @@ func TestBuiltinFunctions(t *testing.T) {
 			switch expected := tt.expected.(type) {
 			case int:
 				testIntegerObject(t, evaluated, int64(expected))
+			case nil:
+				testNilObject(t, evaluated)
 			case []int:
 				arr, ok := evaluated.(*object.Array)
 				if !ok {

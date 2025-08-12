@@ -132,23 +132,29 @@ func ConvertSrcAddressToDstAddress(ctx context.Context, src *source.SrcAddress) 
 }
 
 // convertSrcInternalDetailToDstInternalDetail converts source.SrcInternalDetail to destination.DstInternalDetail.
-//
-// Fields that are not populated by this converter:
-//   - ItemCode
-//   - LocalizedDesc
 func convertSrcInternalDetailToDstInternalDetail(ctx context.Context, ec *model.ErrorCollector, src *source.SrcInternalDetail) *destination.DstInternalDetail {
 	if src == nil {
 		return nil
 	}
 	dst := &destination.DstInternalDetail{}
+	if ec.MaxErrorsReached() {
+		return dst
+	}
+	ec.Enter("ItemCode")
+	dst.ItemCode = src.Code
+
+	ec.Leave()
+	if ec.MaxErrorsReached() {
+		return dst
+	}
+	ec.Enter("LocalizedDesc")
+	dst.LocalizedDesc = funcs.Translate(ctx, ec, src.Description)
+
+	ec.Leave()
 	return dst
 }
 
 // ConvertSrcInternalDetailToDstInternalDetail converts source.SrcInternalDetail to destination.DstInternalDetail.
-//
-// Fields that are not populated by this converter:
-//   - ItemCode
-//   - LocalizedDesc
 func ConvertSrcInternalDetailToDstInternalDetail(ctx context.Context, src *source.SrcInternalDetail) (*destination.DstInternalDetail, error) {
 	if src == nil {
 		return nil, nil
@@ -162,9 +168,6 @@ func ConvertSrcInternalDetailToDstInternalDetail(ctx context.Context, src *sourc
 }
 
 // convertSrcOrderToDstOrder converts source.SrcOrder to destination.DstOrder.
-//
-// Fields that are not populated by this converter:
-//   - LineItems
 func convertSrcOrderToDstOrder(ctx context.Context, ec *model.ErrorCollector, src *source.SrcOrder) *destination.DstOrder {
 	if src == nil {
 		return nil
@@ -184,13 +187,25 @@ func convertSrcOrderToDstOrder(ctx context.Context, ec *model.ErrorCollector, sr
 	dst.TotalAmount = src.Amount
 
 	ec.Leave()
+	if ec.MaxErrorsReached() {
+		return dst
+	}
+	ec.Enter("LineItems")
+	{
+		convertedSlice := make([]destination.DstItem, len(src.Items))
+		for i, item := range src.Items {
+			ec.Enter(fmt.Sprintf("[%d]", i))
+			convertedSlice[i] = *convertSrcItemToDstItem(ctx, ec, &item)
+			ec.Leave()
+		}
+		dst.LineItems = convertedSlice
+	}
+
+	ec.Leave()
 	return dst
 }
 
 // ConvertSrcOrderToDstOrder converts source.SrcOrder to destination.DstOrder.
-//
-// Fields that are not populated by this converter:
-//   - LineItems
 func ConvertSrcOrderToDstOrder(ctx context.Context, src *source.SrcOrder) (*destination.DstOrder, error) {
 	if src == nil {
 		return nil, nil
@@ -204,23 +219,29 @@ func ConvertSrcOrderToDstOrder(ctx context.Context, src *source.SrcOrder) (*dest
 }
 
 // convertSrcItemToDstItem converts source.SrcItem to destination.DstItem.
-//
-// Fields that are not populated by this converter:
-//   - Count
-//   - ProductCode
 func convertSrcItemToDstItem(ctx context.Context, ec *model.ErrorCollector, src *source.SrcItem) *destination.DstItem {
 	if src == nil {
 		return nil
 	}
 	dst := &destination.DstItem{}
+	if ec.MaxErrorsReached() {
+		return dst
+	}
+	ec.Enter("ProductCode")
+	dst.ProductCode = src.SKU
+
+	ec.Leave()
+	if ec.MaxErrorsReached() {
+		return dst
+	}
+	ec.Enter("Count")
+	dst.Count = src.Quantity
+
+	ec.Leave()
 	return dst
 }
 
 // ConvertSrcItemToDstItem converts source.SrcItem to destination.DstItem.
-//
-// Fields that are not populated by this converter:
-//   - Count
-//   - ProductCode
 func ConvertSrcItemToDstItem(ctx context.Context, src *source.SrcItem) (*destination.DstItem, error) {
 	if src == nil {
 		return nil, nil

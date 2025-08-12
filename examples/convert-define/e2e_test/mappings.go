@@ -26,14 +26,21 @@ func main() {
 		c.Map(dst.CityName, src.City)
 	})
 
-	define.Convert(func(c *define.Config, dst *destination.DstInternalDetail, src *source.SrcInternalDetail) {})
+	define.Convert(func(c *define.Config, dst *destination.DstInternalDetail, src *source.SrcInternalDetail) {
+		c.Map(dst.ItemCode, src.Code)
+		c.Convert(dst.LocalizedDesc, src.Description, funcs.Translate)
+	})
 
 	define.Convert(func(c *define.Config, dst *destination.DstOrder, src *source.SrcOrder) {
 		c.Map(dst.ID, src.OrderID)
 		c.Map(dst.TotalAmount, src.Amount)
+		c.Map(dst.LineItems, src.Items)
 	})
 
-	define.Convert(func(c *define.Config, dst *destination.DstItem, src *source.SrcItem) {})
+	define.Convert(func(c *define.Config, dst *destination.DstItem, src *source.SrcItem) {
+		c.Map(dst.ProductCode, src.SKU)
+		c.Map(dst.Count, src.Quantity)
+	})
 
 	define.Convert(func(c *define.Config, dst *destination.ComplexTarget, src *source.ComplexSource) {})
 	define.Convert(func(c *define.Config, dst *destination.SubTarget, src *source.SubSource) {})

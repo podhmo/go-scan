@@ -18,6 +18,21 @@ The core of the refactoring will happen in the `scanner.scanGoFiles` method. The
 
 This architecture provides the maximum performance benefit (from parallel parsing) with the minimum implementation risk (by keeping the stateful processing sequential).
 
+### 2.1 Handling Concurrent Lazy Loading and Caching
+
+A key feature of `go-scan` is its ability to "lazy load" package information. When resolving a type from an un-scanned package, `go-scan` triggers a new, on-demand scan for that package. In a concurrent environment, multiple threads could try to resolve types from the same external package simultaneously, leading to a race to scan that package.
+
+The proposed architecture inherently solves this problem through the same mechanisms that ensure general thread safety:
+
+*   **Synchronized Cache Access:** All high-level scan functions (e.g., `ScanPackageByImport`) will begin by checking the `packageCache` for the requested package inside a mutex-protected block.
+*   **Preventing Redundant Work:**
+    1.  The first goroutine to request a scan for a package (e.g., `pkg-C`) will acquire the lock, see that it's not in the cache, and proceed to scan it.
+    2.  While the first goroutine is scanning, any other goroutine that requests `pkg-C` will block waiting for the lock.
+    3.  Once the first goroutine finishes, it places the result in the cache and releases the lock.
+    4.  The waiting goroutines will then acquire the lock one by one, check the cache, and find the pre-computed result. They will get a cache hit and return immediately without performing a redundant scan.
+
+This "check-lock-check" pattern on the `packageCache` ensures that even with many concurrent lazy-loading requests, any given package is only ever scanned once. This not only prevents race conditions but also ensures optimal performance by avoiding duplicate work. The thread-safety measures in **Task 1** are therefore crucial for both correctness and performance in a lazy-loading context.
+
 ## 3. Detailed Task List
 
 This task list is designed to be executed in order, with each step building on the last.

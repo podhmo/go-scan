@@ -13,5 +13,5 @@ clean:
 	rm -rf generated_test
 
 e2e:
-	go run . -file ./generated_test/mappings.go -output ./generated_test/generated.go
+	go run . -file ./generated_test/mappings.go -output ./generated_test/generated.go --tags e2e
 	go test -v -tags=e2e ./generated_test/...

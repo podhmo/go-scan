@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
-	"github.com/podhmo/go-scan/examples/convert-define/generated_test/generated"
+	generated "github.com/podhmo/go-scan/examples/convert-define/generated_test"
 	"github.com/podhmo/go-scan/examples/convert/sampledata/destination"
 	"github.com/podhmo/go-scan/examples/convert/sampledata/source"
 )

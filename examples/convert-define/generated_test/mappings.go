@@ -1,7 +1,7 @@
 //go:build codegen
 // +build codegen
 
-package main
+package generated
 
 import (
 	"github.com/podhmo/go-scan/examples/convert-define/define"
@@ -12,26 +12,31 @@ import (
 )
 
 func main() {
-	// Global rules
 	define.Rule(convutil.TimeToString)
 	define.Rule(convutil.PtrTimeToString)
 
-	// User conversion with all mapping types
 	define.Convert(func(c *define.Config, dst *destination.DstUser, src *source.SrcUser) {
-		// Implicit: CreatedAt, UpdatedAt
-		// Explicit Map: different names
-		c.Map(dst.UserID, src.ID)
-		// Explicit Convert: different names and type conversion
+		c.Convert(dst.UserID, src.ID, funcs.UserIDToString)
 		c.Convert(dst.Contact, src.ContactInfo, funcs.ConvertSrcContactToDstContact)
-		// Explicit Compute: computed value
 		c.Compute(dst.FullName, funcs.MakeFullName(src.FirstName, src.LastName))
 	})
 
-	// Address conversion with only mapping
 	define.Convert(func(c *define.Config, dst *destination.DstAddress, src *source.SrcAddress) {
-		// Implicit: City -> CityName (should not be mapped automatically)
-		// Explicit Map: different names
 		c.Map(dst.FullStreet, src.Street)
 		c.Map(dst.CityName, src.City)
 	})
+
+	define.Convert(func(c *define.Config, dst *destination.DstInternalDetail, src *source.SrcInternalDetail) {})
+
+	define.Convert(func(c *define.Config, dst *destination.DstOrder, src *source.SrcOrder) {
+		c.Map(dst.ID, src.OrderID)
+		c.Map(dst.TotalAmount, src.Amount)
+	})
+
+	define.Convert(func(c *define.Config, dst *destination.DstItem, src *source.SrcItem) {})
+
+	define.Convert(func(c *define.Config, dst *destination.ComplexTarget, src *source.ComplexSource) {})
+	define.Convert(func(c *define.Config, dst *destination.SubTarget, src *source.SubSource) {})
+
+	define.Convert(func(c *define.Config, dst *destination.TargetWithMap, src *source.SourceWithMap) {})
 }

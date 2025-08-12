@@ -90,7 +90,7 @@ func main() {
 	}
 	defer os.Chdir(cwd)
 
-	if err := run(ctx, defineFile, outputFile, false /* dryRun */); err != nil {
+	if err := run(ctx, defineFile, outputFile, false /* dryRun */, ""); err != nil {
 		t.Fatalf("run failed: %+v", err)
 	}
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"os"
 	"path/filepath"
 	"testing"
@@ -10,7 +11,9 @@ import (
 	"github.com/podhmo/go-scan/scantest"
 )
 
-func TestE2E(t *testing.T) {
+var update = flag.Bool("update", false, "update golden files")
+
+func TestIntegration(t *testing.T) {
 	// a lot of files are needed to run the test.
 	// - define.go (the conversion definition)
 	// - go.mod (for the module root)
@@ -87,7 +90,7 @@ func main() {
 	}
 	defer os.Chdir(cwd)
 
-	if err := run(ctx, defineFile, outputFile, false /* dryRun */); err != nil {
+	if err := run(ctx, defineFile, outputFile, false /* dryRun */, ""); err != nil {
 		t.Fatalf("run failed: %+v", err)
 	}
 
@@ -96,8 +99,8 @@ func main() {
 		t.Fatalf("reading generated.go: %v", err)
 	}
 
-	goldenFile := filepath.Join(cwd, "testdata", "e2e.go.golden")
-	if os.Getenv("UPDATE_GOLDEN") != "" {
+	goldenFile := filepath.Join(cwd, "testdata", "integration.go.golden")
+	if *update {
 		if err := os.WriteFile(goldenFile, got, 0644); err != nil {
 			t.Fatalf("writing golden file: %v", err)
 		}

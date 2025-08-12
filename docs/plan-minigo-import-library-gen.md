@@ -214,45 +214,38 @@ This approach is robust, automated, and provides a clean, modular way to extend 
 
 ## Implementation Task List
 
-To implement the proposed feature, the following incremental tasks should be completed:
+To implement the proposed feature, we will first build the core logic into the `go-scan` library itself, then build the generator tool on top of it. This makes the symbol extraction logic reusable for other purposes, such as REPL autocompletion or documentation tools.
 
-1.  **Create the Generator Tool Skeleton:**
-    *   Set up the basic command structure in a new file, e.g., `tools/minigo-gen-bindings/main.go`.
-    *   Use the standard `flag` package to define and parse the required command-line arguments: `--pkg` (the target package path) and `--output` (the base directory for the generated package).
+1.  **Core Function: List Exported Symbols:**
+    *   **Goal:** Create a new public function in the `go-scan` library, e.g., `goscan.ListExportedSymbols(pkgPath string) ([]string, error)`.
+    *   **Implementation:** This function will encapsulate the package discovery and AST parsing logic.
+        1.  Use `go/build.Import()` to find the package directory and source files.
+        2.  Use `go/parser.ParseFile()` to parse the non-test `.go` files.
+        3.  Walk the combined ASTs to find all exported top-level function, variable, and constant names.
+        4.  Return a sorted list of the symbol names.
+    *   **Testing:** Add a unit test for this function, perhaps by running it on a known package (like `fmt`) and asserting that the output contains expected symbols (`"Sprintf"`, `"Println"`, etc.).
 
-2.  **Implement Package Discovery:**
-    *   In the generator, use `go/build.Import()` to resolve the input package path to a file system directory.
-    *   Collect the list of `.go` source files (excluding test files) in that directory.
+2.  **Build the Generator Tool:**
+    *   **Goal:** Create the `minigo-gen-bindings` command-line tool.
+    *   **Implementation:**
+        1.  Create the command skeleton in `tools/minigo-gen-bindings/main.go` with `--pkg` and `--output` flags.
+        2.  Call the `goscan.ListExportedSymbols()` function created in the previous step to get the list of symbols for the given `--pkg`.
+        3.  Use a `text/template` to generate the `install.go` file content.
+        4.  Create the output directory (e.g., `minigo/stdlib/strings`) and write the generated file.
 
-3.  **Implement AST Parsing and Symbol Extraction:**
-    *   Iterate through the located Go files and parse each one using `go/parser.ParseFile()`.
-    *   Create a function to walk the AST of each file and collect the names of all exported top-level declarations (`ast.FuncDecl`, `ast.ValueSpec` in `ast.GenDecl`).
+3.  **Generate and Test Standard Library Bindings:**
+    *   **Goal:** Use the new tool to generate bindings and verify they work.
+    *   **Implementation:**
+        1.  Run the generator for `strings` and `fmt`.
+            ```sh
+            go run ./tools/minigo-gen-bindings --pkg "strings" --output "minigo/stdlib"
+            go run ./tools/minigo-gen-bindings --pkg "fmt" --output "minigo/stdlib"
+            ```
+        2.  Create an integration test (`minigo/minigo_stdlib_test.go`) that imports these new packages, calls their `Install()` functions on an interpreter instance, and successfully runs a minigo script that uses functions from both `strings` and `fmt`.
 
-4.  **Implement Code Generation with Templates:**
-    *   Create a `text/template` for the `install.go` file.
-    *   The template should generate the `package <pkgname>`, `import (...)`, and `func Install(...)` boilerplate.
-    *   It should accept the list of exported symbol names and range over them to populate the `map[string]any` for the `interp.Register()` call.
+### Future Goal: Dog-fooding the Generator
 
-5.  **Implement File and Directory Creation:**
-    *   The generator must ensure the output path exists. For an output of `minigo/stdlib` and a package of `strings`, it should create the `minigo/stdlib/strings` directory.
-    *   Write the result of executing the template into the `install.go` file in the correct directory.
-
-6.  **Generate Initial Standard Library Bindings:**
-    *   Once the tool is functional, run it to generate the bindings for a few key standard library packages.
-    *   Example commands:
-        ```sh
-        go run ./tools/minigo-gen-bindings --pkg "strings" --output "minigo/stdlib"
-        go run ./tools/minigo-gen-bindings --pkg "fmt" --output "minigo/stdlib"
-        ```
-
-7.  **Add Integration Tests:**
-    *   Create a new test file (`minigo/minigo_stdlib_test.go`) to verify the generated bindings.
-    *   The test should:
-        1.  Create a new minigo interpreter.
-        2.  Import the generated packages (e.g., `github.com/podhmo/go-scan/minigo/stdlib/strings`).
-        3.  Call the `Install()` function for each package.
-        4.  Execute a minigo script that uses functions from the newly available packages.
-        5.  Assert that the script runs successfully and produces the correct result.
+A long-term objective is to "dog-food" this entire process. Once the `go-scan` library is sufficiently powerful and exposed to minigo through these generated bindings, it should be possible to write a new version of the `minigo-gen-bindings` script *in minigo itself*. This would be a powerful demonstration of the minigo ecosystem's capabilities and a testament to its practical utility.
 
 ## 3. Concurrency and Goroutines
 

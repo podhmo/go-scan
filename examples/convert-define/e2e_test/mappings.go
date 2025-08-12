@@ -1,7 +1,7 @@
 //go:build codegen
 // +build codegen
 
-package generated
+package e2e
 
 import (
 	"github.com/podhmo/go-scan/examples/convert-define/define"

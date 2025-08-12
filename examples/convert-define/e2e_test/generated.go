@@ -3,7 +3,7 @@
 //go:build e2e
 // +build e2e
 
-package generated
+package e2e
 
 import (
 	"context"

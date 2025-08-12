@@ -1,6 +1,6 @@
 //go:build e2e
 
-package generated_test
+package e2e_test
 
 import (
 	"context"
@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
-	generated "github.com/podhmo/go-scan/examples/convert-define/generated_test"
+	generated "github.com/podhmo/go-scan/examples/convert-define/e2e_test"
 	"github.com/podhmo/go-scan/examples/convert/sampledata/destination"
 	"github.com/podhmo/go-scan/examples/convert/sampledata/source"
 )

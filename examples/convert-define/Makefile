@@ -10,8 +10,8 @@ update-golden:
 	go test -v . -update
 
 clean:
-	rm -rf generated_test
+	rm -rf e2e_test
 
 e2e:
-	go run . -file ./generated_test/mappings.go -output ./generated_test/generated.go --tags e2e
-	go test -v -tags=e2e ./generated_test/...
+	go run . -file ./e2e_test/mappings.go -output ./e2e_test/generated.go --tags e2e
+	go test -v -tags=e2e ./e2e_test/...

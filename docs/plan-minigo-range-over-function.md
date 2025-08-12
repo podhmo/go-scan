@@ -8,7 +8,7 @@ The goal is to implement this feature in a way that is idiomatic to `minigo`'s a
 
 ## 2. Background: Go 1.22 Range Over Function
 
-In Go 1.22, the `for...range` statement was extended to work with functions. A function suitable for ranging must have one of the following signatures:
+In Go 1.22, the `for...range` statement was extended to work with functions. A function suitable for ranging (an "iterator") must have one of the following signatures:
 
 ```go
 func(yield func() bool)
@@ -17,6 +17,27 @@ func(yield func(K, V) bool)
 ```
 
 The loop body is effectively transformed into the `yield` function. When `yield` is called, the loop body executes with the provided values bound to the loop variables. If `yield` returns `false`, the iteration stops.
+
+A common pattern is to use a "generator" function that returns an iterator function. The `range` statement then consumes the iterator. `minigo` supports this pattern naturally due to its dynamic typing.
+
+```go
+// Generator function that returns an iterator
+func rangeUpTo(n int) iter.Seq[int] { // iter.Seq[int] is an alias for func(yield func(int) bool)
+    // The returned function is the iterator
+    return func(yield func(int) bool) {
+        for i := 0; i < n; i++ {
+            if !yield(i) {
+                return
+            }
+        }
+    }
+}
+
+// The for...range statement operates on the iterator returned by rangeUpTo(5)
+for num := range rangeUpTo(5) {
+    fmt.Println(num)
+}
+```
 
 ## 3. `minigo`'s Current Architecture
 

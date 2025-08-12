@@ -887,7 +887,6 @@ func (e *Evaluator) evalRangeFunction(rs *ast.RangeStmt, fn *object.Function, en
 
 			if rs.Value == nil {
 				// Form: for v := range f
-				// Expect 1 argument from yield.
 				if len(args) != 1 {
 					loopErr = ctx.NewError(pos, "yield must be called with 1 argument for a single-variable range loop, got %d", len(args))
 					return object.FALSE // Stop iteration on error
@@ -897,7 +896,6 @@ func (e *Evaluator) evalRangeFunction(rs *ast.RangeStmt, fn *object.Function, en
 				}
 			} else {
 				// Form: for k, v := range f
-				// Expect 2 arguments from yield.
 				valIdent, _ := rs.Value.(*ast.Ident)
 				if len(args) != 2 {
 					loopErr = ctx.NewError(pos, "yield must be called with 2 arguments for a two-variable range loop, got %d", len(args))
@@ -911,30 +909,27 @@ func (e *Evaluator) evalRangeFunction(rs *ast.RangeStmt, fn *object.Function, en
 				}
 			}
 
-			// Evaluate the loop body
 			result := e.Eval(rs.Body, loopEnv, fscope)
 
 			switch result {
 			case object.BREAK:
-				return object.FALSE // Stop iteration
+				return object.FALSE
 			case object.CONTINUE:
-				return object.TRUE // Continue to next iteration
+				return object.TRUE
 			}
 
 			if result != nil {
 				rt := result.Type()
 				if rt == object.ERROR_OBJ || rt == object.RETURN_VALUE_OBJ {
 					loopErr = result
-					return object.FALSE // Stop iteration
+					return object.FALSE
 				}
 			}
 
-			return object.TRUE // Continue iteration
+			return object.TRUE
 		},
 	}
 
-	// Call the user's function with our yield implementation.
-	// We pass nil for the call expression as this is not a direct call from the source.
 	e.applyFunction(nil, fn, []object.Object{yield}, fscope)
 
 	if loopErr != nil {

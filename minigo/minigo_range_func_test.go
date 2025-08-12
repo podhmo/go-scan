@@ -171,6 +171,30 @@ var result = func() any {
 `,
 			expected: "early exit",
 		},
+		{
+			name: "generator function pattern",
+			input: `
+package main
+var result = func() {
+	rangeUpTo := func(n int) {
+		return func(yield int) {
+			for i := 0; i < n; i = i + 1 {
+				if !yield(i) {
+					return
+				}
+			}
+		}
+	}
+
+	var r = []int{}
+	for v := range rangeUpTo(5) {
+		r = append(r, v)
+	}
+	return r
+}()
+`,
+			expected: []any{int64(0), int64(1), int64(2), int64(3), int64(4)},
+		},
 	}
 
 	for _, tt := range tests {
@@ -188,8 +212,6 @@ var result = func() any {
 					if !ok {
 						return ctx.NewError(pos, "panic argument must be a string")
 					}
-					// The interpreter's Eval loop has a recover that turns this into an Error object.
-					// For testing, we can just return the error directly.
 					return ctx.NewError(pos, "panic: %s", str.Value)
 				},
 			})
@@ -201,7 +223,6 @@ var result = func() any {
 
 			if tt.wantErrorMsg != "" {
 				if err == nil {
-					// To see the actual result in case of unexpected success
 					val, _ := interp.globalEnv.Get("result")
 					nativeVal, _ := toGoValue(val)
 					t.Fatalf("expected error, but got none. result was: %#v", nativeVal)
@@ -209,11 +230,30 @@ var result = func() any {
 				if !strings.Contains(err.Error(), tt.wantErrorMsg) {
 					t.Errorf("wrong error message.\n- want: %q\n- got:  %q", tt.wantErrorMsg, err.Error())
 				}
-				return // Test passes if the correct error is found
+				return
 			}
 
 			if err != nil {
 				t.Fatalf("minigo.Eval() returned an unexpected error: %v", err)
+			}
+
+			// Handle special cases for stateful/stateless tests
+			if tt.name == "stateless iterator resumes from start" || tt.name == "stateful iterator resumes from last position" {
+				val1, ok1 := interp.globalEnv.Get("result1")
+				if !ok1 {
+					t.Fatalf("variable 'result1' not found")
+				}
+				val2, ok2 := interp.globalEnv.Get("result2")
+				if !ok2 {
+					t.Fatalf("variable 'result2' not found")
+				}
+				native1, _ := toGoValue(val1)
+				native2, _ := toGoValue(val2)
+				combinedResult := []any{native1, native2}
+				if diff := cmp.Diff(tt.expected, combinedResult); diff != "" {
+					t.Errorf("result mismatch (-want +got):\n%s", diff)
+				}
+				return
 			}
 
 			val, ok := interp.globalEnv.Get("result")

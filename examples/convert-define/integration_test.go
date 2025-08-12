@@ -13,7 +13,7 @@ import (
 
 var update = flag.Bool("update", false, "update golden files")
 
-func TestE2E(t *testing.T) {
+func TestIntegration(t *testing.T) {
 	// a lot of files are needed to run the test.
 	// - define.go (the conversion definition)
 	// - go.mod (for the module root)
@@ -99,7 +99,7 @@ func main() {
 		t.Fatalf("reading generated.go: %v", err)
 	}
 
-	goldenFile := filepath.Join(cwd, "testdata", "e2e.go.golden")
+	goldenFile := filepath.Join(cwd, "testdata", "integration.go.golden")
 	if *update {
 		if err := os.WriteFile(goldenFile, got, 0644); err != nil {
 			t.Fatalf("writing golden file: %v", err)

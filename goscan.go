@@ -1044,12 +1044,7 @@ func (s *Scanner) SaveSymbolCache(ctx context.Context) error {
 
 // ListExportedSymbols scans a package by its import path and returns a list of all
 // its exported top-level symbol names (functions, types, and constants).
-func ListExportedSymbols(ctx context.Context, pkgPath string) ([]string, error) {
-	s, err := New(WithGoModuleResolver())
-	if err != nil {
-		return nil, fmt.Errorf("failed to create scanner: %w", err)
-	}
-
+func (s *Scanner) ListExportedSymbols(ctx context.Context, pkgPath string) ([]string, error) {
 	pkgInfo, err := s.ScanPackageByImport(ctx, pkgPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to scan package %s: %w", pkgPath, err)

@@ -346,9 +346,13 @@ func TestScanner_WithSymbolCache(t *testing.T) {
 
 func TestListExportedSymbols(t *testing.T) {
 	ctx := context.Background()
-	symbols, err := ListExportedSymbols(ctx, "strings")
+	s, err := New(WithGoModuleResolver())
 	if err != nil {
-		t.Fatalf("ListExportedSymbols failed: %v", err)
+		t.Fatalf("New() failed: %v", err)
+	}
+	symbols, err := s.ListExportedSymbols(ctx, "strings")
+	if err != nil {
+		t.Fatalf("s.ListExportedSymbols failed: %v", err)
 	}
 
 	// This is the list of all exported functions and types from the 'strings' package.

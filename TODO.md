@@ -35,33 +35,72 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 
 ## To Be Implemented
 
+### Final API for `convert` Tool ([docs/plan-convert-with-minigo.md](./docs/plan-convert-with-minigo.md))
+- [ ] **Phase 1: `minigo` Core Enhancements**
+  - [ ] Implement `object.AstNode`
+  - [ ] Implement Special Form Mechanism
+  - [ ] Enhance Go Interop Layer
+  - [ ] Add Unit Tests
+- [ ] **Phase 2: `define` Tool and Parser Implementation**
+  - [ ] Create `examples/convert/define` Package
+  - [ ] Create CLI Entrypoint
+  - [ ] Implement Core Parser
+  - [ ] Implement `define.Rule` Parsing
+  - [ ] Implement `define.Mapping` Parsing
+  - [ ] Implement `Config` Method Parsing
+  - [ ] IR Construction
+- [ ] **Phase 3: Generator Integration and Finalization**
+  - [ ] Enhance Generator for Implicit Mapping
+  - [ ] Integrate Parser and Generator
+  - [ ] Add Integration Tests
+  - [ ] Write User Documentation
 
-### `minigo` Refinements ([docs/plan-minigo.md](./docs/plan-minigo.md))
-- [ ] **Implement Remaining Built-in Functions**:
-    - [x] `copy`
-    - [x] `delete`
-    - [x] `cap`
-    - [x] `make`
-    - [x] `new`
-    - [ ] `complex`
-    - [ ] `real`
-    - [ ] `imag`
-    - [x] `clear`
-    - [ ] `close`
-    - [ ] `panic`
-    - [ ] `recover`
-- [x] **Range Over Function**: Support `for...range` loops over functions.
-- [x] **Support Increment and Decrement Operators**: Implement `++` and `--` as statements.
-- [ ] Write comprehensive documentation for the API, supported language features, and usage examples.
+### Automated Minigo Bindings Generation ([docs/plan-minigo-gen-bindings.md](./docs/plan-minigo-gen-bindings.md))
+- [ ] **Core Function: List Exported Symbols**
+- [ ] **Build the Generator Tool**
+- [ ] **Generate and Test Standard Library Bindings**
+
+### `minigo` Implementation ([docs/plan-minigo.md](./docs/plan-minigo.md))
+- [ ] **Phase 1: Core Interpreter and Expression Evaluation**
+  - [ ] Setup project structure
+  - [ ] Define `object.Object` interface and basic types (`Integer`, `String`, etc.)
+  - [ ] Implement `eval` loop for basic expressions (`+`, `-`, `*`, `/`, `==`, `!`, etc.)
+  - [ ] Add unit tests for expressions
+- [ ] **Phase 2: Variables, Constants, and Scope**
+  - [ ] Implement `object.Environment` for lexical scopes
+  - [ ] Support `var`, assignment, and short variable declaration (`:=`)
+  - [ ] Implement `const` declarations and `iota`
+- [ ] **Phase 3: Control Flow**
+  - [ ] Implement `if/else` statements
+  - [ ] Implement `for` loops (standard C-style)
+  - [ ] Implement `break` and `continue`
+  - [ ] Implement `switch` statements
+- [ ] **Phase 4: Functions and Call Stack**
+  - [ ] Implement user-defined functions (`func`)
+  - [ ] Implement call stack for error reporting
+  - [ ] Implement `return` statements
+  - [ ] Implement rich error formatting with stack traces
+- [ ] **Phase 5: Data Structures and Pointers**
+  - [ ] Support `type ... struct` declarations and literals
+  - [ ] Support field access and assignment
+  - [ ] Support slice, array, and map literals
+  - [ ] Support indexing for slices, arrays, and maps
+  - [ ] Implement `for...range` loops
+  - [ ] Implement pointers (`&`, `*`) and `new()`
+- [ ] **Phase 6: Go Interoperability and Imports**
+  - [ ] Implement lazy, on-demand `import` handling
+  - [ ] Implement `object.GoValue` to wrap `reflect.Value` for Go -> minigo interop
+  - [ ] Wrap Go functions as callable `BuiltinFunction` objects
+  - [ ] Implement `Result.As(target any)` for minigo -> Go struct unmarshaling
+- [ ] **Phase 7: Refinement and Documentation**
+  - [ ] Write comprehensive tests for all features
+  - [ ] Write user documentation for API and language features
+  - [ ] Ensure all CI checks (`make format`, `make test`) pass
 
 ### Parallel go-scan ([docs/plan-parallel-go-scan.md](./docs/plan-parallel-go-scan.md))
-- [x] **Task 1: Make `goscan.Scanner` Thread-Safe**
-    - [x] Locate every read and write operation on `s.visitedFiles`.
-    - [x] Wrap read operations with `s.mu.RLock()` and `s.mu.RUnlock()`.
-    - [x] Wrap write operations with `s.mu.Lock()` and `s.mu.Unlock()`.
-- [x] **Task 2: Refactor `scanner.scanGoFiles` for Concurrent Parsing**
-    - [x] **Sub-Task 2.1: Define a Result Struct**: Create a private struct to hold the result of a single file parse.
-    - [x] **Sub-Task 2.2: Implement the Parallel Parsing Loop**: Rewrite the beginning of `scanGoFiles` to manage goroutines.
-    - [x] **Sub-Task 2.3: Implement the Result Collection Logic**: After the `g.Wait()` call, collect all the results from the channel.
-    - [x] **Sub-Task 2.4: Adapt the Sequential Processing Logic**: The second half of the original `scanGoFiles` can now be adapted to work with the `parsedFileResults` slice.
-
+- [ ] **Task 1: Make `goscan.Scanner` Thread-Safe**
+- [ ] **Task 2: Refactor `scanner.scanGoFiles` for Concurrent Parsing**
+  - [ ] **Sub-Task 2.1: Define a Result Struct**
+  - [ ] **Sub-Task 2.2: Implement the Parallel Parsing Loop**
+  - [ ] **Sub-Task 2.3: Implement the Result Collection Logic**
+  - [ ] **Sub-Task 2.4: Adapt the Sequential Processing Logic**

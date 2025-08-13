@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	goscan "github.com/podhmo/go-scan"
+	"github.com/podhmo/go-scan/minigo/ffibridge"
 	"github.com/podhmo/go-scan/minigo/object"
 )
 
@@ -849,6 +850,19 @@ func (e *Evaluator) objectToReflectValue(obj object.Object, targetType reflect.T
 			return reflect.Zero(targetType), nil
 		}
 		return reflect.Value{}, fmt.Errorf("cannot convert nil to non-nillable type %s", targetType)
+	case *object.Array:
+		// Handle conversion to []byte, which is common for stdlib functions.
+		if targetType.Kind() == reflect.Slice && targetType.Elem().Kind() == reflect.Uint8 {
+			bytes := make([]byte, len(o.Elements))
+			for i, el := range o.Elements {
+				intVal, ok := el.(*object.Integer)
+				if !ok {
+					return reflect.Value{}, fmt.Errorf("cannot convert non-integer element in array to byte")
+				}
+				bytes[i] = byte(intVal.Value)
+			}
+			return reflect.ValueOf(bytes), nil
+		}
 	}
 
 	return reflect.Value{}, fmt.Errorf("unsupported conversion from %s to %s", obj.Type(), targetType)
@@ -1209,7 +1223,7 @@ func (e *Evaluator) evalRangeFunction(rs *ast.RangeStmt, fn *object.Function, en
 		},
 	}
 
-	e.applyFunction(nil, fn, []object.Object{yield}, fscope)
+	e.applyFunction(nil, fn, []object.Object{yield}, env, fscope)
 
 	if loopErr != nil {
 		return loopErr
@@ -1532,7 +1546,7 @@ func (e *Evaluator) getZeroValueForType(typeExpr ast.Expr, env *object.Environme
 	return object.NIL
 }
 
-func (e *Evaluator) applyFunction(call *ast.CallExpr, fn object.Object, args []object.Object, fscope *object.FileScope) object.Object {
+func (e *Evaluator) applyFunction(call *ast.CallExpr, fn object.Object, args []object.Object, env *object.Environment, fscope *object.FileScope) object.Object {
 	var function *object.Function
 	var typeArgs []object.Object
 	var receiver object.Object // For bound methods
@@ -1560,6 +1574,7 @@ func (e *Evaluator) applyFunction(call *ast.CallExpr, fn object.Object, args []o
 		if call != nil {
 			pos = call.Pos()
 		}
+		e.BuiltinContext.Env = env // Pass the current environment to the builtin
 		return f.Fn(&e.BuiltinContext, pos, args...)
 	default:
 		return e.newError(call.Pos(), "not a function: %s", fn.Type())
@@ -1702,7 +1717,11 @@ func (e *Evaluator) constructNamedReturnValue(fn *object.Function, env *object.E
 
 // ApplyFunction is a public wrapper for the internal applyFunction, allowing it to be called from other packages.
 func (e *Evaluator) ApplyFunction(call *ast.CallExpr, fn object.Object, args []object.Object, fscope *object.FileScope) object.Object {
-	return e.applyFunction(call, fn, args, fscope)
+	// This is a simplification. A real implementation would need to determine the correct environment.
+	// For now, we'll use a new top-level environment, which will work for pure functions
+	// but not for closures that capture variables.
+	env := object.NewEnvironment()
+	return e.applyFunction(call, fn, args, env, fscope)
 }
 
 func (e *Evaluator) extendMethodEnv(method *object.BoundMethod, args []object.Object) *object.Environment {
@@ -2203,17 +2222,27 @@ func (e *Evaluator) Eval(node ast.Node, env *object.Environment, fscope *object.
 		if len(args) == 1 && isError(args[0]) {
 			return args[0]
 		}
-		return e.applyFunction(n, function, args, fscope)
+		return e.applyFunction(n, function, args, env, fscope)
 	case *ast.SelectorExpr:
 		return e.evalSelectorExpr(n, env, fscope)
 	case *ast.CompositeLit:
 		return e.evalCompositeLit(n, env, fscope)
 	case *ast.StarExpr:
+		// This can be a dereference operation (*p) or a pointer type (*T).
+		// We can differentiate based on the context, but a simpler heuristic
+		// is to check if the operand evaluates to a type object.
 		operand := e.Eval(n.X, env, fscope)
 		if isError(operand) {
 			return operand
 		}
-		return e.evalDereferenceExpression(n, operand)
+		switch operand.(type) {
+		case *object.StructDefinition, *object.Type, *object.PointerType, *object.ArrayType, *object.MapType, *object.InterfaceDefinition:
+			// It's a pointer type expression, like `*MyStruct`.
+			return &object.PointerType{ElementType: operand}
+		default:
+			// It's a dereference operation, like `*myPointer`.
+			return e.evalDereferenceExpression(n, operand)
+		}
 	case *ast.UnaryExpr:
 		// Special case for address-of operator, as we don't evaluate the operand.
 		if n.Op == token.AND {
@@ -2382,8 +2411,27 @@ func (e *Evaluator) evalGenDecl(n *ast.GenDecl, env *object.Environment, fscope 
 					iotaEnv.SetConstant("iota", &object.Integer{Value: int64(iotaValue)})
 					val = e.Eval(valueSpec.Values[i], iotaEnv, fscope)
 				} else if n.Tok == token.VAR {
-					// Handle `var x int` (no initial value) -> defaults to nil
-					val = object.NIL
+					// Handle `var x T` (no initial value)
+					if valueSpec.Type != nil {
+						typeObj := e.Eval(valueSpec.Type, env, fscope)
+						if isError(typeObj) {
+							return typeObj
+						}
+						resolvedType := e.resolveType(typeObj, env, fscope)
+						if isError(resolvedType) {
+							return resolvedType
+						}
+
+						if def, ok := resolvedType.(*object.StructDefinition); ok {
+							// It's a struct, so initialize an empty instance instead of NIL.
+							instance := &object.StructInstance{Def: def, Fields: make(map[string]object.Object)}
+							val = instance
+						} else {
+							val = object.NIL // Default to NIL for non-structs
+						}
+					} else {
+						val = object.NIL
+					}
 				} else {
 					return e.newError(name.Pos(), "missing value in declaration for %s", name.Name)
 				}
@@ -2866,24 +2914,104 @@ func (e *Evaluator) findSymbolInPackageInfo(pkgInfo *goscan.Package, symbolName 
 	return nil, false
 }
 
+func (e *Evaluator) updateMiniGoStructFromNative(ctx *object.BuiltinContext, src map[string]any, dst *object.StructInstance, visited map[uintptr]object.Object) error {
+	// Use pointer address of the destination struct to detect cycles.
+	dstPtr := reflect.ValueOf(dst).Pointer()
+	if _, ok := visited[dstPtr]; ok {
+		return nil // Cycle detected
+	}
+	visited[dstPtr] = dst
+
+	jsonToFieldName := make(map[string]string)
+	for fieldName, tag := range dst.Def.FieldTags {
+		tagName := strings.Split(tag, ",")[0]
+		if tagName != "" && tagName != "-" {
+			jsonToFieldName[tagName] = fieldName
+		}
+	}
+
+	for jsonKey, nativeValue := range src {
+		fieldName, ok := jsonToFieldName[jsonKey]
+		if !ok {
+			fieldName = jsonKey
+		}
+
+		var astField *ast.Field
+		for _, f := range dst.Def.Fields {
+			for _, name := range f.Names {
+				if name.Name == fieldName {
+					astField = f
+					break
+				}
+			}
+			if astField != nil {
+				break
+			}
+		}
+		if astField == nil {
+			continue
+		}
+
+		var newFieldValue object.Object
+		if nativeValue == nil {
+			newFieldValue = object.NIL
+		} else if nestedMap, isMap := nativeValue.(map[string]any); isMap {
+			fieldTypeObj := e.Eval(astField.Type, ctx.Env, nil) // Pass nil for fscope
+			if isError(fieldTypeObj) {
+				return fieldTypeObj.(*object.Error)
+			}
+
+			switch fieldType := fieldTypeObj.(type) {
+			case *object.StructDefinition:
+				if nestedInstance, ok := dst.Fields[fieldName].(*object.StructInstance); ok {
+					if err := e.updateMiniGoStructFromNative(ctx, nestedMap, nestedInstance, visited); err != nil {
+						return err
+					}
+					newFieldValue = nestedInstance
+				} else {
+					// Field was nil, create a new instance
+					newInstance := &object.StructInstance{Def: fieldType, Fields: make(map[string]object.Object)}
+					if err := e.updateMiniGoStructFromNative(ctx, nestedMap, newInstance, visited); err != nil {
+						return err
+					}
+					newFieldValue = newInstance
+				}
+			case *object.PointerType:
+				if nestedStructDef, ok := fieldType.ElementType.(*object.StructDefinition); ok {
+					newInstance := &object.StructInstance{Def: nestedStructDef, Fields: make(map[string]object.Object)}
+					if err := e.updateMiniGoStructFromNative(ctx, nestedMap, newInstance, visited); err != nil {
+						return err
+					}
+					var obj object.Object = newInstance
+					newFieldValue = &object.Pointer{Element: &obj}
+				} else {
+					newFieldValue = object.NIL
+				}
+			default:
+				newFieldValue = e.nativeToValue(reflect.ValueOf(nativeValue))
+			}
+		} else if f, isFloat := nativeValue.(float64); isFloat {
+			newFieldValue = &object.Integer{Value: int64(f)}
+		} else {
+			newFieldValue = e.nativeToValue(reflect.ValueOf(nativeValue))
+		}
+		dst.Fields[fieldName] = newFieldValue
+	}
+	return nil
+}
+
 // WrapGoFunction is a public method to wrap a native Go function into a minigo object.
-// It is exposed for testing and for tools that need to programmatically inject functions.
 func (e *Evaluator) WrapGoFunction(pos token.Pos, funcVal reflect.Value) object.Object {
 	funcType := funcVal.Type()
 	return &object.Builtin{
 		Fn: func(ctx *object.BuiltinContext, callPos token.Pos, args ...object.Object) (ret object.Object) {
-			// Use a deferred function to recover from panics in the called Go function.
-			// This converts a Go panic into a minigo panic.
 			defer func() {
 				if r := recover(); r != nil {
-					// Convert the recovered Go panic value into a minigo object.
-					// A string representation is a safe default.
 					panicValue := &object.String{Value: fmt.Sprintf("%v", r)}
 					ret = &object.Panic{Value: panicValue}
 				}
 			}()
 
-			// Check arg count
 			numIn := funcType.NumIn()
 			isVariadic := funcType.IsVariadic()
 			if isVariadic {
@@ -2896,41 +3024,69 @@ func (e *Evaluator) WrapGoFunction(pos token.Pos, funcVal reflect.Value) object.
 				}
 			}
 
-			// Convert args
 			in := make([]reflect.Value, len(args))
+			var ptrBridges []*ffibridge.Pointer
 			for i, arg := range args {
 				var targetType reflect.Type
 				if isVariadic && i >= funcType.NumIn()-1 {
-					// For variadic part, target the element type of the slice
 					targetType = funcType.In(funcType.NumIn() - 1).Elem()
 				} else {
 					targetType = funcType.In(i)
 				}
-				val, err := e.objectToReflectValue(arg, targetType)
-				if err != nil {
-					return ctx.NewError(pos, "argument %d type mismatch: %v", i+1, err)
+
+				if ptr, isPtr := arg.(*object.Pointer); isPtr && targetType.Kind() == reflect.Interface {
+					var nativePtr any
+					underlying := *ptr.Element
+					if _, ok := underlying.(*object.StructInstance); ok {
+						var m map[string]any
+						nativePtr = &m
+					} else if underlying == object.NIL {
+						// This is the case for `var p Person; Unmarshal(..., &p)` where p starts as nil.
+						// The var initialization change should handle this, but as a fallback,
+						// we create the map anyway, and the post-call update will populate the struct.
+						var m map[string]any
+						nativePtr = &m
+					} else {
+						return ctx.NewError(pos, "passing pointers to Go functions is only supported for struct types, got %s", underlying.Type())
+					}
+					bridge := &ffibridge.Pointer{Source: ptr, Dest: reflect.ValueOf(nativePtr)}
+					ptrBridges = append(ptrBridges, bridge)
+					in[i] = bridge.Dest
+				} else {
+					val, err := e.objectToReflectValue(arg, targetType)
+					if err != nil {
+						return ctx.NewError(pos, "argument %d type mismatch: %v", i+1, err)
+					}
+					in[i] = val
 				}
-				in[i] = val
 			}
 
-			// Call the function
 			results := funcVal.Call(in)
 
-			// Handle results
+			for _, bridge := range ptrBridges {
+				nativeValue := bridge.Dest.Elem().Interface()
+				targetObj := *bridge.Source.Element
+
+				// The var declaration should have initialized this to a zero struct instance.
+				if dst, ok := targetObj.(*object.StructInstance); ok {
+					if src, ok := nativeValue.(map[string]any); ok {
+						if err := e.updateMiniGoStructFromNative(ctx, src, dst, make(map[uintptr]object.Object)); err != nil {
+							return ctx.NewError(pos, "error updating struct from Go function result: %v", err)
+						}
+					}
+				}
+			}
+
 			numOut := funcType.NumOut()
 			if numOut == 0 {
 				return object.NIL
 			}
-
-			// Check for Go-style error return
 			lastResult := results[len(results)-1]
 			if lastResult.Type().Implements(reflect.TypeOf((*error)(nil)).Elem()) {
 				if !lastResult.IsNil() {
 					return ctx.NewError(pos, "error from called Go function: %v", lastResult.Interface())
 				}
 			}
-
-			// Convert all results to minigo objects. Replace nil error with NIL.
 			resultObjects := make([]object.Object, numOut)
 			for i := 0; i < numOut; i++ {
 				if i == numOut-1 && lastResult.Type().Implements(reflect.TypeOf((*error)(nil)).Elem()) && results[i].IsNil() {
@@ -2939,13 +3095,9 @@ func (e *Evaluator) WrapGoFunction(pos token.Pos, funcVal reflect.Value) object.
 					resultObjects[i] = e.nativeToValue(results[i])
 				}
 			}
-
-			// If the function only ever returns one value, return it directly.
 			if numOut == 1 {
 				return resultObjects[0]
 			}
-
-			// Otherwise, always return a tuple.
 			return &object.Tuple{Elements: resultObjects}
 		},
 	}

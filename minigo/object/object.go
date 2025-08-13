@@ -39,6 +39,7 @@ const (
 	INTERFACE_INSTANCE_OBJ   ObjectType = "INTERFACE_INSTANCE"
 	BOUND_METHOD_OBJ         ObjectType = "BOUND_METHOD"
 	POINTER_OBJ              ObjectType = "POINTER"
+	POINTER_TYPE_OBJ         ObjectType = "POINTER_TYPE"
 	ARRAY_OBJ                ObjectType = "ARRAY"
 	MAP_OBJ                  ObjectType = "MAP"
 	TUPLE_OBJ                ObjectType = "TUPLE"
@@ -382,6 +383,7 @@ type BuiltinContext struct {
 	Stdout           io.Writer
 	Stderr           io.Writer
 	Fset             *token.FileSet
+	Env              *Environment // The environment of the function call
 	IsExecutingDefer func() bool
 	GetPanic         func() *Panic
 	ClearPanic       func()
@@ -530,6 +532,22 @@ func (p *Pointer) Type() ObjectType { return POINTER_OBJ }
 func (p *Pointer) Inspect() string {
 	return fmt.Sprintf("0x%x", p.Element)
 }
+
+// --- PointerType Object ---
+
+// PointerType represents the type of a pointer.
+type PointerType struct {
+	ElementType Object // This is a type object, e.g., *StructDefinition
+}
+
+// Type returns the type of the PointerType object.
+func (pt *PointerType) Type() ObjectType { return POINTER_TYPE_OBJ }
+
+// Inspect returns a string representation of the pointer type.
+func (pt *PointerType) Inspect() string {
+	return "*" + pt.ElementType.Inspect()
+}
+
 
 // --- Array Object ---
 

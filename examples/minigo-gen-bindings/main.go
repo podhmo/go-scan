@@ -7,7 +7,7 @@ import (
 	"go/ast"
 	"log"
 
-	"github.com/podhmo/go-scan"
+	goscan "github.com/podhmo/go-scan"
 )
 
 func main() {

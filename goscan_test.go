@@ -15,6 +15,7 @@ import (
 
 	// For deep comparison
 	// For options like IgnoreUnexported
+	"github.com/google/go-cmp/cmp"
 	"github.com/podhmo/go-scan/scanner"
 )
 
@@ -341,6 +342,92 @@ func TestScanner_WithSymbolCache(t *testing.T) {
 			t.Errorf("Cache file %s was created even when s.CachePath is empty", cacheFilePath)
 		}
 	})
+}
+
+func TestListExportedSymbols(t *testing.T) {
+	ctx := context.Background()
+	s, err := New(WithGoModuleResolver())
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+	symbols, err := s.ListExportedSymbols(ctx, "strings")
+	if err != nil {
+		t.Fatalf("s.ListExportedSymbols failed: %v", err)
+	}
+
+	// This is the list of all exported functions and types from the 'strings' package.
+	// Methods of types (like Builder.Len) are excluded.
+	expectedSymbols := []string{
+		"Builder",
+		"Clone",
+		"Compare",
+		"Contains",
+		"ContainsAny",
+		"ContainsFunc",
+		"ContainsRune",
+		"Count",
+		"Cut",
+		"CutPrefix",
+		"CutSuffix",
+		"EqualFold",
+		"Fields",
+		"FieldsFunc",
+		"FieldsFuncSeq",
+		"FieldsSeq",
+		"HasPrefix",
+		"HasSuffix",
+		"Index",
+		"IndexAny",
+		"IndexByte",
+		"IndexFunc",
+		"IndexRune",
+		"Join",
+		"LastIndex",
+		"LastIndexAny",
+		"LastIndexByte",
+		"LastIndexFunc",
+		"Lines",
+		"Map",
+		"NewReader",
+		"NewReplacer",
+		"Reader",
+		"Repeat",
+		"Replace",
+		"ReplaceAll",
+		"Replacer",
+		"Split",
+		"SplitAfter",
+		"SplitAfterN",
+		"SplitAfterSeq",
+		"SplitN",
+		"SplitSeq",
+		"Title",
+		"ToLower",
+		"ToLowerSpecial",
+		"ToTitle",
+		"ToTitleSpecial",
+		"ToUpper",
+		"ToUpperSpecial",
+		"ToValidUTF8",
+		"Trim",
+		"TrimFunc",
+		"TrimLeft",
+		"TrimLeftFunc",
+		"TrimPrefix",
+		"TrimRight",
+		"TrimRightFunc",
+		"TrimSpace",
+		"TrimSuffix",
+	}
+
+	if diff := cmp.Diff(expectedSymbols, symbols); diff != "" {
+		// The test output for `symbols` is already sorted by the function itself.
+		// We just need to ensure our expected list is also sorted for a stable diff.
+		sort.Strings(expectedSymbols)
+		if diff = cmp.Diff(expectedSymbols, symbols); diff != "" {
+			t.Errorf("ListExportedSymbols() mismatch (-want +got):\n%s", diff)
+		}
+	}
 }
 
 func pathsEqual(p1, p2 string) bool {

@@ -57,6 +57,6 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [ ] Write comprehensive documentation for the API, supported language features, and usage examples.
 
 ### Automated Minigo Bindings Generation ([docs/plan-minigo-gen-bindings.md](./docs/plan-minigo-gen-bindings.md))
-- [ ] **Core Function: List Exported Symbols**
+- [x] **Core Function: List Exported Symbols**
 - [ ] **Build the Generator Tool**
 - [ ] **Generate and Test Standard Library Bindings**

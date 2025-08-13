@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"go/ast"
 	"go/token"
 	"io/fs"
 	"log/slog"
@@ -1039,6 +1040,41 @@ func (s *Scanner) SaveSymbolCache(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// ListExportedSymbols scans a package by its import path and returns a list of all
+// its exported top-level symbol names (functions, types, and constants).
+func (s *Scanner) ListExportedSymbols(ctx context.Context, pkgPath string) ([]string, error) {
+	pkgInfo, err := s.ScanPackageByImport(ctx, pkgPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to scan package %s: %w", pkgPath, err)
+	}
+
+	var exportedSymbols []string
+
+	for _, f := range pkgInfo.Functions {
+		// We only care about top-level functions, not methods on types.
+		if f.Receiver == nil && f.AstDecl != nil && f.AstDecl.Name != nil && f.AstDecl.Name.IsExported() {
+			exportedSymbols = append(exportedSymbols, f.Name)
+		}
+	}
+
+	for _, t := range pkgInfo.Types {
+		if typeSpec, ok := t.Node.(*ast.TypeSpec); ok {
+			if typeSpec.Name != nil && typeSpec.Name.IsExported() {
+				exportedSymbols = append(exportedSymbols, t.Name)
+			}
+		}
+	}
+
+	for _, c := range pkgInfo.Constants {
+		if c.IsExported {
+			exportedSymbols = append(exportedSymbols, c.Name)
+		}
+	}
+
+	sort.Strings(exportedSymbols)
+	return exportedSymbols, nil
 }
 
 // FindImporters scans the entire module to find packages that import the targetImportPath.

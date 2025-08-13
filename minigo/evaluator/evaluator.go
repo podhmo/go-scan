@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	goscan "github.com/podhmo/go-scan"
+	"github.com/podhmo/go-scan/minigo/ffibridge"
 	"github.com/podhmo/go-scan/minigo/object"
 )
 
@@ -849,6 +850,20 @@ func (e *Evaluator) objectToReflectValue(obj object.Object, targetType reflect.T
 			return reflect.Zero(targetType), nil
 		}
 		return reflect.Value{}, fmt.Errorf("cannot convert nil to non-nillable type %s", targetType)
+	case *object.Array:
+		// Handle conversion to []byte, which is common for stdlib functions.
+		if targetType.Kind() == reflect.Slice && targetType.Elem().Kind() == reflect.Uint8 {
+			bytes := make([]byte, len(o.Elements))
+			for i, el := range o.Elements {
+				intVal, ok := el.(*object.Integer)
+				if !ok {
+					return reflect.Value{}, fmt.Errorf("cannot convert non-integer element in array to byte")
+				}
+				// TODO: check for overflow?
+				bytes[i] = byte(intVal.Value)
+			}
+			return reflect.ValueOf(bytes), nil
+		}
 	}
 
 	return reflect.Value{}, fmt.Errorf("unsupported conversion from %s to %s", obj.Type(), targetType)
@@ -2382,8 +2397,27 @@ func (e *Evaluator) evalGenDecl(n *ast.GenDecl, env *object.Environment, fscope 
 					iotaEnv.SetConstant("iota", &object.Integer{Value: int64(iotaValue)})
 					val = e.Eval(valueSpec.Values[i], iotaEnv, fscope)
 				} else if n.Tok == token.VAR {
-					// Handle `var x int` (no initial value) -> defaults to nil
-					val = object.NIL
+					// Handle `var x T` (no initial value)
+					if valueSpec.Type != nil {
+						typeObj := e.Eval(valueSpec.Type, env, fscope)
+						if isError(typeObj) {
+							return typeObj
+						}
+						resolvedType := e.resolveType(typeObj, env, fscope)
+						if isError(resolvedType) {
+							return resolvedType
+						}
+
+						if def, ok := resolvedType.(*object.StructDefinition); ok {
+							// It's a struct, so initialize an empty instance instead of NIL.
+							instance := &object.StructInstance{Def: def, Fields: make(map[string]object.Object)}
+							val = instance
+						} else {
+							val = object.NIL // Default to NIL for non-structs
+						}
+					} else {
+						val = object.NIL
+					}
 				} else {
 					return e.newError(name.Pos(), "missing value in declaration for %s", name.Name)
 				}
@@ -2866,6 +2900,65 @@ func (e *Evaluator) findSymbolInPackageInfo(pkgInfo *goscan.Package, symbolName 
 	return nil, false
 }
 
+// updateMiniGoStructFromNative takes a native Go map (typically from json.Unmarshal)
+// and updates the fields of a MiniGo struct instance based on it.
+func (e *Evaluator) updateMiniGoStructFromNative(src map[string]any, dst *object.StructInstance) error {
+	// Create a reverse map from JSON tag name to a field's actual name.
+	jsonToFieldName := make(map[string]string)
+	for fieldName, tag := range dst.Def.FieldTags {
+		tagName := strings.Split(tag, ",")[0]
+		if tagName != "" && tagName != "-" {
+			jsonToFieldName[tagName] = fieldName
+		}
+	}
+
+	for jsonKey, nativeValue := range src {
+		fieldName, ok := jsonToFieldName[jsonKey]
+		if !ok {
+			// If no tag mapping, assume the JSON key is the field name.
+			fieldName = jsonKey
+		}
+
+		// Check if this field actually exists in the struct definition.
+		var fieldExists bool
+		for _, field := range dst.Def.Fields {
+			for _, name := range field.Names {
+				if name.Name == fieldName {
+					fieldExists = true
+					break
+				}
+			}
+			if fieldExists {
+				break
+			}
+		}
+		if !fieldExists {
+			continue // This key from the JSON doesn't map to a field.
+		}
+
+		// Convert the native Go value from the map into a MiniGo object.
+		// The nativeToValue function is a good start, but json.Unmarshal uses float64 for all numbers.
+		// We need to potentially convert it back to an Integer if the struct expects one.
+		var obj object.Object
+		if f, isFloat := nativeValue.(float64); isFloat {
+			// If it's a float, but the struct field is an int, convert it.
+			// This is a simplification; a full implementation would inspect the struct field type.
+			if float64(int64(f)) == f {
+				obj = &object.Integer{Value: int64(f)}
+			} else {
+				obj = &object.Float{Value: f}
+			}
+		} else {
+			// For other types (string, bool, nil), nativeToValue is fine.
+			obj = e.nativeToValue(reflect.ValueOf(nativeValue))
+		}
+
+		// Update the field on the MiniGo struct instance.
+		dst.Fields[fieldName] = obj
+	}
+	return nil
+}
+
 // WrapGoFunction is a public method to wrap a native Go function into a minigo object.
 // It is exposed for testing and for tools that need to programmatically inject functions.
 func (e *Evaluator) WrapGoFunction(pos token.Pos, funcVal reflect.Value) object.Object {
@@ -2896,27 +2989,75 @@ func (e *Evaluator) WrapGoFunction(pos token.Pos, funcVal reflect.Value) object.
 				}
 			}
 
-			// Convert args
+			// --- Argument Conversion ---
 			in := make([]reflect.Value, len(args))
+			var ptrBridges []*ffibridge.Pointer // To hold pointers that need data copied back.
+
 			for i, arg := range args {
 				var targetType reflect.Type
 				if isVariadic && i >= funcType.NumIn()-1 {
-					// For variadic part, target the element type of the slice
 					targetType = funcType.In(funcType.NumIn() - 1).Elem()
 				} else {
 					targetType = funcType.In(i)
 				}
-				val, err := e.objectToReflectValue(arg, targetType)
-				if err != nil {
-					return ctx.NewError(pos, "argument %d type mismatch: %v", i+1, err)
+
+				// Pointer-bridging logic for `interface{}` arguments
+				if ptr, isPtr := arg.(*object.Pointer); isPtr && targetType.Kind() == reflect.Interface {
+					// We are passing a MiniGo pointer to a Go function that expects `any`.
+					// This is the special case for `json.Unmarshal`.
+					// We need to create a native Go value that the function can populate.
+					var nativePtr any
+					underlying := *ptr.Element
+					switch underlying.(type) {
+					case *object.StructInstance:
+						// For a struct, the best native equivalent for json.Unmarshal is a *map[string]any.
+						var m map[string]any
+						nativePtr = &m
+					default:
+						// For other types, we could create pointers to them, e.g., new(string).
+						// For now, we only support the struct case.
+						return ctx.NewError(pos, "passing pointers to Go functions is only supported for struct types, got %s", underlying.Type())
+					}
+
+					bridge := &ffibridge.Pointer{
+						Source: ptr,
+						Dest:   reflect.ValueOf(nativePtr),
+					}
+					ptrBridges = append(ptrBridges, bridge)
+					in[i] = bridge.Dest // Pass the destination pointer to the Go function.
+
+				} else {
+					// Default conversion for all other types
+					val, err := e.objectToReflectValue(arg, targetType)
+					if err != nil {
+						return ctx.NewError(pos, "argument %d type mismatch: %v", i+1, err)
+					}
+					in[i] = val
 				}
-				in[i] = val
 			}
 
 			// Call the function
 			results := funcVal.Call(in)
 
-			// Handle results
+			// --- Post-call data copy-back for pointers ---
+			for _, bridge := range ptrBridges {
+				// Dereference the destination pointer to get the actual value (e.g., map[string]any).
+				nativeValue := bridge.Dest.Elem().Interface()
+
+				// The source of a pointer is a pointer to an object. We need to update the object.
+				targetObj := *bridge.Source.Element
+
+				switch dst := targetObj.(type) {
+				case *object.StructInstance:
+					if src, ok := nativeValue.(map[string]any); ok {
+						if err := e.updateMiniGoStructFromNative(src, dst); err != nil {
+							return ctx.NewError(pos, "error updating struct from Go function result: %v", err)
+						}
+					}
+				}
+			}
+
+			// --- Result Handling ---
 			numOut := funcType.NumOut()
 			if numOut == 0 {
 				return object.NIL
@@ -2940,12 +3081,9 @@ func (e *Evaluator) WrapGoFunction(pos token.Pos, funcVal reflect.Value) object.
 				}
 			}
 
-			// If the function only ever returns one value, return it directly.
 			if numOut == 1 {
 				return resultObjects[0]
 			}
-
-			// Otherwise, always return a tuple.
 			return &object.Tuple{Elements: resultObjects}
 		},
 	}

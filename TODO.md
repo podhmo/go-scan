@@ -54,6 +54,10 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     - [x] **Task 7: Verify `import` statement functionality.**
     - [x] **Task 8: Add tests for the new REPL functionality.**
     - [x] **Task 9: Run `make format` and `make test` to ensure all checks pass.**
+- **Full `encoding/json` Support in `minigo`** ([docs/trouble-minigo-encoding-json.md](docs/trouble-minigo-encoding-json.md)):
+    - [x] **Implement `json.Marshal` for structs**: Enhance the FFI to convert `minigo` structs to `map[string]any` when calling Go functions that accept `interface{}`, as detailed in `docs/trouble-minigo-encoding-json.md`.
+    - [x] **Support `json.Unmarshal`**: Implemented an FFI pointer bridge to allow Go functions to modify MiniGo variables, enabling `json.Unmarshal` to populate MiniGo structs.
+    - [x] **Support Struct Field Tags**: Requires parser and object model changes to recognize and utilize `json:"..."` tags.
 
 
 ## To Be Implemented
@@ -75,8 +79,3 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] **Range Over Function**: Support `for...range` loops over functions.
 - [x] **Support Increment and Decrement Operators**: Implement `++` and `--` as statements.
 - [ ] Write comprehensive documentation for the API, supported language features, and usage examples.
-
-### Full `encoding/json` Support in `minigo` [docs/trouble-minigo-encoding-json.md](docs/trouble-minigo-encoding-json.md)
-- [x] **Implement `json.Marshal` for structs**: Enhance the FFI to convert `minigo` structs to `map[string]any` when calling Go functions that accept `interface{}`, as detailed in `docs/trouble-minigo-encoding-json.md`.
-- [ ] **Support `json.Unmarshal`**: Requires a major redesign of the FFI to handle passing mutable pointers from `minigo` to Go functions.
-- [x] **Support Struct Field Tags**: Requires parser and object model changes to recognize and utilize `json:"..."` tags.

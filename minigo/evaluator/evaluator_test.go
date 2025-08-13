@@ -611,6 +611,10 @@ func TestBuiltinFunctions(t *testing.T) {
 		{`complex(1)`, "wrong number of arguments. got=1, want=2"},
 		{`real(1)`, "argument to `real` must be a complex number, got INTEGER"},
 		{`imag(1)`, "argument to `imag` must be a complex number, got INTEGER"},
+		{`close(1)`, "argument to `close` must be a channel, got INTEGER"},
+		{`close("hello")`, "argument to `close` must be a channel, got STRING"},
+		{`close()`, "wrong number of arguments. got=0, want=1"},
+		{`close(1, 2)`, "wrong number of arguments. got=2, want=1"},
 	}
 
 	for _, tt := range tests {

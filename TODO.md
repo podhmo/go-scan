@@ -43,7 +43,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 ## To Be Implemented
 
 ### `minigo` Refinements ([docs/plan-minigo.md](./docs/plan-minigo.md))
-- [ ] **Implement Remaining Built-in Functions**:
+- [x] **Implement Remaining Built-in Functions**:
     - [x] `copy`
     - [x] `delete`
     - [x] `cap`

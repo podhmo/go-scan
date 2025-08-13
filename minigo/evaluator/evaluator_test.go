@@ -1713,6 +1713,21 @@ func() {
 `,
 			nil,
 		},
+		{
+			`
+func() {
+    defer func() {
+        r := recover()
+        if r != "original" {
+            panic("wrong value recovered")
+        }
+        panic("new panic")
+    }()
+    panic("original")
+}()
+`,
+			"new panic", // The new panic should be the final result
+		},
 	}
 
 	for _, tt := range tests {

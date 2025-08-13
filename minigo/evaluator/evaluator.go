@@ -194,6 +194,59 @@ var builtins = map[string]*object.Builtin{
 			}
 		},
 	},
+	"complex": {
+		Fn: func(ctx *object.BuiltinContext, pos token.Pos, args ...object.Object) object.Object {
+			if len(args) != 2 {
+				return ctx.NewError(pos, "wrong number of arguments. got=%d, want=2", len(args))
+			}
+
+			getNumberAsFloat := func(arg object.Object) (float64, bool) {
+				switch n := arg.(type) {
+				case *object.Integer:
+					return float64(n.Value), true
+				case *object.Float:
+					return n.Value, true
+				default:
+					return 0, false
+				}
+			}
+
+			r, ok := getNumberAsFloat(args[0])
+			if !ok {
+				return ctx.NewError(pos, "argument 1 to `complex` must be a number, got %s", args[0].Type())
+			}
+			i, ok := getNumberAsFloat(args[1])
+			if !ok {
+				return ctx.NewError(pos, "argument 2 to `complex` must be a number, got %s", args[1].Type())
+			}
+
+			return &object.Complex{Real: r, Imag: i}
+		},
+	},
+	"real": {
+		Fn: func(ctx *object.BuiltinContext, pos token.Pos, args ...object.Object) object.Object {
+			if len(args) != 1 {
+				return ctx.NewError(pos, "wrong number of arguments. got=%d, want=1", len(args))
+			}
+			c, ok := args[0].(*object.Complex)
+			if !ok {
+				return ctx.NewError(pos, "argument to `real` must be a complex number, got %s", args[0].Type())
+			}
+			return &object.Float{Value: c.Real}
+		},
+	},
+	"imag": {
+		Fn: func(ctx *object.BuiltinContext, pos token.Pos, args ...object.Object) object.Object {
+			if len(args) != 1 {
+				return ctx.NewError(pos, "wrong number of arguments. got=%d, want=1", len(args))
+			}
+			c, ok := args[0].(*object.Complex)
+			if !ok {
+				return ctx.NewError(pos, "argument to `imag` must be a complex number, got %s", args[0].Type())
+			}
+			return &object.Float{Value: c.Imag}
+		},
+	},
 	"append": {
 		Fn: func(ctx *object.BuiltinContext, pos token.Pos, args ...object.Object) object.Object {
 			if len(args) < 2 {
@@ -334,13 +387,13 @@ var builtins = map[string]*object.Builtin{
 // Evaluator is the main object that evaluates the AST.
 type Evaluator struct {
 	object.BuiltinContext
-	scanner            *goscan.Scanner
-	registry           *object.SymbolRegistry
-	specialForms       map[string]*SpecialForm
-	packages           map[string]*object.Package // Central package cache
-	callStack          []*object.CallFrame
-	currentPanic       *object.Panic // The currently active panic
-	isExecutingDefer   bool          // True if the evaluator is currently running a deferred function
+	scanner          *goscan.Scanner
+	registry         *object.SymbolRegistry
+	specialForms     map[string]*SpecialForm
+	packages         map[string]*object.Package // Central package cache
+	callStack        []*object.CallFrame
+	currentPanic     *object.Panic // The currently active panic
+	isExecutingDefer bool          // True if the evaluator is currently running a deferred function
 }
 
 // Config holds the configuration for creating a new Evaluator.
@@ -3251,6 +3304,12 @@ func (e *Evaluator) evalBasicLit(n *ast.BasicLit) object.Object {
 			return e.newError(n.Pos(), "could not parse %q as integer", n.Value)
 		}
 		return &object.Integer{Value: i}
+	case token.FLOAT:
+		f, err := strconv.ParseFloat(n.Value, 64)
+		if err != nil {
+			return e.newError(n.Pos(), "could not parse %q as float", n.Value)
+		}
+		return &object.Float{Value: f}
 	case token.STRING:
 		s, err := strconv.Unquote(n.Value)
 		if err != nil {

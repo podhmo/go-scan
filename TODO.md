@@ -49,9 +49,9 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     - [x] `cap`
     - [x] `make`
     - [x] `new`
-    - [ ] `complex`
-    - [ ] `real`
-    - [ ] `imag`
+    - [x] `complex`
+    - [x] `real`
+    - [x] `imag`
     - [x] `clear`
     - [ ] `close`
     - [x] `panic`

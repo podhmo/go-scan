@@ -21,6 +21,8 @@ type ObjectType string
 // Define the basic object types. More will be added later.
 const (
 	INTEGER_OBJ              ObjectType = "INTEGER"
+	FLOAT_OBJ                ObjectType = "FLOAT"
+	COMPLEX_OBJ              ObjectType = "COMPLEX"
 	BOOLEAN_OBJ              ObjectType = "BOOLEAN"
 	STRING_OBJ               ObjectType = "STRING"
 	NIL_OBJ                  ObjectType = "NIL"
@@ -126,6 +128,42 @@ func (i *Integer) Inspect() string { return fmt.Sprintf("%d", i.Value) }
 // HashKey returns the hash key for an Integer.
 func (i *Integer) HashKey() HashKey {
 	return HashKey{Type: i.Type(), Value: uint64(i.Value)}
+}
+
+// --- Float Object ---
+
+// Float represents a floating-point number.
+type Float struct {
+	Value float64
+}
+
+// Type returns the type of the Float object.
+func (f *Float) Type() ObjectType { return FLOAT_OBJ }
+
+// Inspect returns a string representation of the Float's value.
+func (f *Float) Inspect() string { return fmt.Sprintf("%g", f.Value) }
+
+// HashKey returns the hash key for a Float.
+func (f *Float) HashKey() HashKey {
+	h := fnv.New64a()
+	fmt.Fprintf(h, "%f", f.Value) // Use a stable string representation for hashing
+	return HashKey{Type: f.Type(), Value: h.Sum64()}
+}
+
+// --- Complex Object ---
+
+// Complex represents a complex number.
+type Complex struct {
+	Real float64
+	Imag float64
+}
+
+// Type returns the type of the Complex object.
+func (c *Complex) Type() ObjectType { return COMPLEX_OBJ }
+
+// Inspect returns a string representation of the Complex's value.
+func (c *Complex) Inspect() string {
+	return fmt.Sprintf("(%g+%gi)", c.Real, c.Imag)
 }
 
 // --- String Object ---

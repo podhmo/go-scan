@@ -411,6 +411,7 @@ type StructDefinition struct {
 	TypeParams *ast.FieldList // For generic structs
 	Fields     []*ast.Field
 	Methods    map[string]*Function
+	FieldTags  map[string]string // Added to store parsed json tags, mapping field name to json tag name.
 }
 
 // Type returns the type of the StructDefinition object.

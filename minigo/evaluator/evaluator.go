@@ -359,6 +359,15 @@ var builtins = map[string]*object.Builtin{
 			return object.NIL
 		},
 	},
+	"close": {
+		Fn: func(ctx *object.BuiltinContext, pos token.Pos, args ...object.Object) object.Object {
+			if len(args) != 1 {
+				return ctx.NewError(pos, "wrong number of arguments. got=%d, want=1", len(args))
+			}
+			// Since channels are not supported, any argument is invalid.
+			return ctx.NewError(pos, "argument to `close` must be a channel, got %s", args[0].Type())
+		},
+	},
 	"print": {
 		Fn: func(ctx *object.BuiltinContext, pos token.Pos, args ...object.Object) object.Object {
 			for i, arg := range args {

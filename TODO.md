@@ -53,7 +53,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     - [x] `real`
     - [x] `imag`
     - [x] `clear`
-    - [ ] `close`
+    - [x] `close`
     - [x] `panic`
     - [x] `recover`
 - [x] **Range Over Function**: Support `for...range` loops over functions.

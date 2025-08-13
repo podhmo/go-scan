@@ -43,6 +43,18 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
         - [x] `strings`
         - [x] `strconv`
         - [-] `encoding/json` (bindings generated, but runtime support is incomplete; see `docs/trouble-minigo-encoding-json.md`)
+    - [x] **Generate and Test Standard Library Bindings**
+- **MiniGo REPL** ([docs/plan-minigo-repl.md](./docs/plan-minigo-repl.md)):
+    - [x] **Task 1: Modify `main.go` to conditionally start the REPL.**
+    - [x] **Task 2: Implement the basic REPL loop in `main.go`.**
+    - [x] **Task 3: Add the `replFileScope` field to the `Interpreter` struct.**
+    - [x] **Task 4: Implement the `EvalLine` method in `minigo.go`.**
+    - [x] **Task 5: Integrate `EvalLine` into the REPL loop.**
+    - [x] **Task 6: Implement the `.help` and `.reset` meta-commands.**
+    - [x] **Task 7: Verify `import` statement functionality.**
+    - [x] **Task 8: Add tests for the new REPL functionality.**
+    - [x] **Task 9: Run `make format` and `make test` to ensure all checks pass.**
+
 
 ## To Be Implemented
 
@@ -64,7 +76,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] **Support Increment and Decrement Operators**: Implement `++` and `--` as statements.
 - [ ] Write comprehensive documentation for the API, supported language features, and usage examples.
 
-### Full `encoding/json` Support in `minigo`
+### Full `encoding/json` Support in `minigo` [docs/trouble-minigo-encoding-json.md](docs/trouble-minigo-encoding-json.md)
 - [ ] **Implement `json.Marshal` for structs**: Enhance the FFI to convert `minigo` structs to `map[string]any` when calling Go functions that accept `interface{}`, as detailed in `docs/trouble-minigo-encoding-json.md`.
 - [ ] **Support `json.Unmarshal`**: Requires a major redesign of the FFI to handle passing mutable pointers from `minigo` to Go functions.
 - [ ] **Support Struct Field Tags**: Requires parser and object model changes to recognize and utilize `json:"..."` tags.

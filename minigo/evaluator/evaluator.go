@@ -727,6 +727,12 @@ func (e *Evaluator) nativeToValue(val reflect.Value) object.Object {
 		return &object.String{Value: v}
 	case bool:
 		return e.nativeBoolToBooleanObject(v)
+	case []byte:
+		elements := make([]object.Object, len(v))
+		for i, b := range v {
+			elements[i] = &object.Integer{Value: int64(b)}
+		}
+		return &object.Array{Elements: elements}
 	case nil:
 		return object.NIL
 	}
@@ -757,42 +763,23 @@ func (e *Evaluator) objectToReflectValue(obj object.Object, targetType reflect.T
 	// Handle target type of interface{} separately.
 	// We convert the minigo object to its "best" Go equivalent.
 	if targetType.Kind() == reflect.Interface && targetType.NumMethod() == 0 {
-		var nativeVal any
-		switch o := obj.(type) {
-		case *object.Integer:
-			nativeVal = o.Value
-		case *object.String:
-			nativeVal = o.Value
-		case *object.Boolean:
-			nativeVal = o.Value
-		case *object.Nil:
-			nativeVal = nil
-		case *object.GoValue:
-			nativeVal = o.Value.Interface()
-		case *object.Array:
-			// A simple conversion to []any. More complex conversions would need more logic.
-			slice := make([]any, len(o.Elements))
-			for i, elem := range o.Elements {
-				// This is a recursive call, but it's safe because the target type is concrete.
-				if val, err := e.objectToNativeGoValue(elem); err == nil {
-					slice[i] = val
-				} else {
-					return reflect.Value{}, fmt.Errorf("cannot convert array element %d to Go value: %w", i, err)
-				}
-			}
-			nativeVal = slice
-		default:
-			return reflect.Value{}, fmt.Errorf("unsupported conversion from %s to interface{}", obj.Type())
+		nativeVal, err := e.objectToNativeGoValue(obj)
+		if err != nil {
+			return reflect.Value{}, fmt.Errorf("unsupported conversion from %s to interface{}: %w", obj.Type(), err)
 		}
+
 		if nativeVal == nil {
 			return reflect.Zero(targetType), nil
 		}
 		// We have the native Go value; now we need to put it into a reflect.Value
 		// of the target interface type.
 		val := reflect.ValueOf(nativeVal)
+
+		// This check is important. For example, if nativeVal is a map[string]any
+		// from a struct, its type is not directly assignable to `any` if `any`
+		// is from a different type system context (less common now, but good practice).
+		// More importantly, it handles named interfaces.
 		if !val.Type().AssignableTo(targetType) {
-			// This can happen if nativeVal is e.g. int64 and targetType is a named interface.
-			// For interface{}, this should generally not fail.
 			return reflect.Value{}, fmt.Errorf("value of type %T is not assignable to interface type %s", nativeVal, targetType)
 		}
 		return val, nil
@@ -890,6 +877,16 @@ func (e *Evaluator) objectToNativeGoValue(obj object.Object) (any, error) {
 			}
 		}
 		return slice, nil
+	case *object.StructInstance:
+		m := make(map[string]any, len(o.Fields))
+		for name, fieldObj := range o.Fields {
+			var err error
+			m[name], err = e.objectToNativeGoValue(fieldObj)
+			if err != nil {
+				return nil, fmt.Errorf("failed to convert field %q: %w", name, err)
+			}
+		}
+		return m, nil
 	default:
 		return nil, fmt.Errorf("cannot convert object type %s to a native Go value", obj.Type())
 	}

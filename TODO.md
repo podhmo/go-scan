@@ -35,6 +35,10 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - **Parallel go-scan**:
     - [x] **Task 1: Make `goscan.Scanner` Thread-Safe**
     - [x] **Task 2: Refactor `scanner.scanGoFiles` for Concurrent Parsing**
+- **Automated Minigo Bindings Generation** ([docs/plan-minigo-gen-bindings.md](./docs/plan-minigo-gen-bindings.md)):
+    - [x] **Core Function: List Exported Symbols**
+    - [x] **Build the Generator Tool**
+    - [x] **Generate and Test Standard Library Bindings**
 
 ## To Be Implemented
 
@@ -55,8 +59,3 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] **Range Over Function**: Support `for...range` loops over functions.
 - [x] **Support Increment and Decrement Operators**: Implement `++` and `--` as statements.
 - [ ] Write comprehensive documentation for the API, supported language features, and usage examples.
-
-### Automated Minigo Bindings Generation ([docs/plan-minigo-gen-bindings.md](./docs/plan-minigo-gen-bindings.md))
-- [x] **Core Function: List Exported Symbols**
-- [ ] **Build the Generator Tool**
-- [ ] **Generate and Test Standard Library Bindings**

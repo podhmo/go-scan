@@ -1,3 +1,6 @@
+> [!NOTE]
+> This feature has been implemented.
+
 # MiniGo REPL Implementation Plan
 
 ## 1. Overview

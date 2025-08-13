@@ -350,3 +350,70 @@ func main() {
 		})
 	}
 }
+
+func TestEvalLine(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("state persistence", func(t *testing.T) {
+		i, err := NewInterpreter()
+		if err != nil {
+			t.Fatalf("NewInterpreter() failed: %v", err)
+		}
+		i.Register("strings", map[string]any{
+			"ToUpper": strings.ToUpper,
+		})
+
+		// 1. Define a variable
+		_, err = i.EvalLine(ctx, "x := 10")
+		if err != nil {
+			t.Fatalf("EvalLine 1 failed: %v", err)
+		}
+
+		// 2. Use the variable
+		res, err := i.EvalLine(ctx, "x * 2")
+		if err != nil {
+			t.Fatalf("EvalLine 2 failed: %v", err)
+		}
+		if integer, ok := res.(*object.Integer); !ok || integer.Value != 20 {
+			t.Errorf("Expected result to be 20, got %s", res.Inspect())
+		}
+
+		// 3. Import a package
+		_, err = i.EvalLine(ctx, `import "strings"`)
+		if err != nil {
+			t.Fatalf("EvalLine 3 failed: %v", err)
+		}
+
+		// 4. Use the imported package
+		res, err = i.EvalLine(ctx, `strings.ToUpper("gopher")`)
+		if err != nil {
+			t.Fatalf("EvalLine 4 failed: %v", err)
+		}
+		if str, ok := res.(*object.String); !ok || str.Value != "GOPHER" {
+			t.Errorf("Expected result to be 'GOPHER', got %s", res.Inspect())
+		}
+	})
+
+	t.Run("error handling", func(t *testing.T) {
+		i, err := NewInterpreter()
+		if err != nil {
+			t.Fatalf("NewInterpreter() failed: %v", err)
+		}
+
+		// Syntax error
+		_, err = i.EvalLine(ctx, "x :=")
+		if err == nil {
+			t.Error("Expected a syntax error, but got nil")
+		}
+
+		// Runtime error
+		_, err = i.EvalLine(ctx, "x + 1") // x is not defined
+		if err == nil {
+			t.Error("Expected a runtime error, but got nil")
+		} else {
+			if !strings.Contains(err.Error(), "identifier not found: x") {
+				t.Errorf("Expected 'identifier not found' error, got: %v", err)
+			}
+		}
+	})
+}

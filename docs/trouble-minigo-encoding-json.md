@@ -125,3 +125,38 @@ Supporting `json.Marshal` is feasible with localized changes. The plan involves 
 It is **recommended to proceed** with implementing the proposed path to support `json.Marshal`. This would provide significant value and partially fulfill the goal of `encoding/json` support.
 
 However, it should be clearly understood that this will **not** enable `json.Unmarshal` or custom field naming via tags. Full support for `encoding/json` should be considered a separate, much larger feature that requires a more fundamental redesign of `minigo`'s FFI and memory model.
+
+---
+
+## Path to Full `encoding/json` Support
+
+This section outlines a more detailed plan for achieving more complete `encoding/json` support, based on the analysis above.
+
+### 1. `json.Unmarshal` Runtime Error
+
+The current runtime error for `json.Unmarshal` is a generic "unsupported conversion" message. This can be improved.
+
+*   **Feasibility**: **High**. It is feasible to add a specific check to the FFI logic.
+*   **Implementation**: Before calling a Go function, the FFI wrapper can check if the function is `encoding/json.Unmarshal`. If it is, it can inspect the second argument. If the argument is not a pointer to a type it can handle, it can return a more specific error message, such as: "`runtime error: json.Unmarshal is not yet supported because passing mutable pointers to Go functions is not implemented.`" This would provide much better feedback to the user.
+
+### 2. Implementation Plan for `json.Marshal` with Tag Support
+
+This is a more involved feature that requires changes across the `go-scan` stack.
+
+*   **Step 1: Enhance the Parser (`go-scan`)**
+    *   **Goal**: Make the scanner aware of struct field tags.
+    *   **Action**: Modify the `parseStructType` function in `scanner/scanner.go`. When iterating through `ast.Field`s, read the `field.Tag` property (which is an `*ast.BasicLit`).
+    *   The `scanner.FieldInfo` struct already has a `Tag` field. This field should be populated with the string value of the AST tag.
+
+*   **Step 2: Enhance the Interpreter Object Model (`minigo`)**
+    *   **Goal**: Allow `minigo` struct definitions to store parsed tag information.
+    *   **Action**: The `object.StructDefinition` in `minigo/object/object.go` needs a new field, for example, `FieldTags map[string]string`, which would map a field name to its `json` tag name.
+    *   The `evalGenDecl` function in `evaluator.go`, which creates `StructDefinition` objects, must be updated. It will need to iterate over the `ast.Field` list, parse the raw tag string (e.g., `` `json:"my_field,omitempty"` ``), extract the JSON name, and populate the new `FieldTags` map.
+
+*   **Step 3: Enhance the FFI Conversion Logic (`minigo`)**
+    *   **Goal**: Use the stored tag information during the conversion to a Go `map`.
+    *   **Action**: The `objectToNativeGoValue` function in `evaluator.go` must be modified. When converting a `StructInstance`, it should:
+        1.  For each field, look up the corresponding JSON tag name from `StructInstance.Def.FieldTags`.
+        2.  If a tag exists, use it as the key for the `map[string]any`.
+        3.  If no tag exists, use the original field name as the key.
+        4.  (Optional) Add logic to handle tag options like `omitempty`.

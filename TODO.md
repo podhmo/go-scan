@@ -79,4 +79,4 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 ### Full `encoding/json` Support in `minigo` [docs/trouble-minigo-encoding-json.md](docs/trouble-minigo-encoding-json.md)
 - [x] **Implement `json.Marshal` for structs**: Enhance the FFI to convert `minigo` structs to `map[string]any` when calling Go functions that accept `interface{}`, as detailed in `docs/trouble-minigo-encoding-json.md`.
 - [ ] **Support `json.Unmarshal`**: Requires a major redesign of the FFI to handle passing mutable pointers from `minigo` to Go functions.
-- [ ] **Support Struct Field Tags**: Requires parser and object model changes to recognize and utilize `json:"..."` tags.
+- [x] **Support Struct Field Tags**: Requires parser and object model changes to recognize and utilize `json:"..."` tags.

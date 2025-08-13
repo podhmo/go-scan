@@ -122,6 +122,64 @@ var data, err1 = json.Marshal(p1)
 	// }
 }
 
+func TestStdlib_json_with_tags(t *testing.T) {
+	script := "package main\n" +
+		`import "encoding/json"` + "\n" +
+		"type Point struct {\n" +
+		`	X int ` + "`json:\"x_coord\"`" + "\n" +
+		`	Y int ` + "`json:\"y_coord,omitempty\"`" + "\n" +
+		`	Z int ` + "`json:\"-\"`" + "\n" +
+		"}\n" +
+		"var p1 = Point{X: 10, Y: 0, Z: 30}\n" +
+		"var data, err = json.Marshal(p1)\n"
+
+	interp, err := minigo.NewInterpreter()
+	if err != nil {
+		t.Fatalf("failed to create interpreter: %+v", err)
+	}
+	stdjson.Install(interp)
+
+	if err := interp.LoadFile("test.mgo", []byte(script)); err != nil {
+		t.Fatalf("failed to load script: %+v", err)
+	}
+	if _, err := interp.Eval(context.Background()); err != nil {
+		t.Fatalf("failed to evaluate script: %+v", err)
+	}
+
+	env := interp.GlobalEnvForTest()
+	{
+		got, ok := env.Get("err")
+		if !ok {
+			t.Fatalf("variable 'err' not found")
+		}
+		if got != object.NIL {
+			t.Errorf("variable 'err' is not nil, but %#v", got)
+		}
+	}
+	{
+		want := `{"x_coord":10}` // Y should be omitted, Z should be ignored
+		got, ok := env.Get("data")
+		if !ok {
+			t.Fatalf("variable 'data' not found")
+		}
+		gotSlice, ok := got.(*object.Array)
+		if !ok {
+			t.Fatalf("variable 'data' is not a array, but %T", got)
+		}
+		bytes := make([]byte, len(gotSlice.Elements))
+		for i, el := range gotSlice.Elements {
+			intVal, ok := el.(*object.Integer)
+			if !ok {
+				t.Fatalf("element in slice is not an integer, but %T", el)
+			}
+			bytes[i] = byte(intVal.Value)
+		}
+		if diff := cmp.Diff(want, string(bytes)); diff != "" {
+			t.Errorf("mismatched data (-want +got):\n%s", diff)
+		}
+	}
+}
+
 func TestStdlib_strconv(t *testing.T) {
 	script := `
 package main

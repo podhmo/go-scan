@@ -42,6 +42,17 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 
 ## To Be Implemented
 
+### MiniGo REPL ([docs/plan-minigo-repl.md](./docs/plan-minigo-repl.md))
+- [ ] **Task 1: Modify `main.go` to conditionally start the REPL.**
+- [ ] **Task 2: Implement the basic REPL loop in `main.go`.**
+- [ ] **Task 3: Add the `replFileScope` field to the `Interpreter` struct.**
+- [ ] **Task 4: Implement the `EvalLine` method in `minigo.go`.**
+- [ ] **Task 5: Integrate `EvalLine` into the REPL loop.**
+- [ ] **Task 6: Implement the `.help` and `.reset` meta-commands.**
+- [ ] **Task 7: Verify `import` statement functionality.**
+- [ ] **Task 8: Add tests for the new REPL functionality.**
+- [ ] **Task 9: Run `make format` and `make test` to ensure all checks pass.**
+
 ### `minigo` Refinements ([docs/plan-minigo.md](./docs/plan-minigo.md))
 - [x] **Implement Remaining Built-in Functions**:
     - [x] `copy`

@@ -3,6 +3,7 @@ package minigo
 import (
 	"context"
 	"fmt"
+	"go/ast"
 	"go/parser"
 	"io"
 	"os"
@@ -18,13 +19,14 @@ import (
 // It holds the state of the interpreter, including the scanner for package resolution
 // and the root environment for script execution.
 type Interpreter struct {
-	scanner      *goscan.Scanner
-	Registry     *object.SymbolRegistry
-	eval         *evaluator.Evaluator
-	globalEnv    *object.Environment
-	specialForms map[string]*evaluator.SpecialForm
-	files        []*object.FileScope
-	packages     map[string]*object.Package // Cache for loaded packages, keyed by path
+	scanner       *goscan.Scanner
+	Registry      *object.SymbolRegistry
+	eval          *evaluator.Evaluator
+	globalEnv     *object.Environment
+	specialForms  map[string]*evaluator.SpecialForm
+	files         []*object.FileScope
+	packages      map[string]*object.Package // Cache for loaded packages, keyed by path
+	replFileScope *object.FileScope          // Persistent scope for the REPL session
 
 	// I/O streams
 	stdin  io.Reader
@@ -386,4 +388,65 @@ func (i *Interpreter) Scanner() *goscan.Scanner {
 // Files returns the file scopes that have been loaded into the interpreter.
 func (i *Interpreter) Files() []*object.FileScope {
 	return i.files
+}
+
+const replFilename = "REPL"
+
+// EvalLine evaluates a single line of input, which is the core of the REPL.
+// It maintains state across calls by using a persistent, single FileScope.
+func (i *Interpreter) EvalLine(ctx context.Context, line string) (object.Object, error) {
+	// Initialize the REPL's file scope on the first call.
+	if i.replFileScope == nil {
+		// We create a dummy AST node because FileScope requires one.
+		// A valid Go file must start with a package declaration.
+		node, err := parser.ParseFile(i.scanner.Fset(), replFilename, "package REPL", parser.ParseComments)
+		if err != nil {
+			return nil, fmt.Errorf("initializing repl scope: %w", err)
+		}
+		i.replFileScope = object.NewFileScope(node)
+	}
+
+	fset := i.scanner.Fset()
+
+	// First, try to parse the line as a top-level declaration (var, func, import, etc.).
+	srcAsDecl := "package REPL\n" + line
+	node, err := parser.ParseFile(fset, replFilename, srcAsDecl, parser.ParseComments)
+	if err == nil {
+		// It's a valid declaration.
+		i.replFileScope.AST.Decls = append(i.replFileScope.AST.Decls, node.Decls...)
+		var result object.Object = object.NIL
+		for _, decl := range node.Decls {
+			result = i.eval.Eval(decl, i.globalEnv, i.replFileScope)
+			if err, ok := result.(*object.Error); ok {
+				return nil, fmt.Errorf("%s", err.Inspect())
+			}
+		}
+		return result, nil
+	}
+
+	// If parsing as a declaration fails, it might be a statement or expression.
+	// Wrap it in a function to parse it as a statement.
+	srcAsStmt := "package REPL\nfunc _() {\n" + line + "\n}"
+	node, err = parser.ParseFile(fset, replFilename, srcAsStmt, parser.ParseComments)
+	if err != nil {
+		// If it fails both ways, it's a real syntax error.
+		// Return the original, more intuitive error from the declaration parsing attempt.
+		return nil, err
+	}
+
+	// It's a valid statement. Extract it from the function body.
+	if len(node.Decls) == 0 || len(node.Decls[0].(*ast.FuncDecl).Body.List) == 0 {
+		return object.NIL, nil // Empty line or just comments
+	}
+	stmts := node.Decls[0].(*ast.FuncDecl).Body.List
+
+	var result object.Object = object.NIL
+	for _, stmt := range stmts {
+		result = i.eval.Eval(stmt, i.globalEnv, i.replFileScope)
+		if err, ok := result.(*object.Error); ok {
+			return nil, fmt.Errorf("%s", err.Inspect())
+		}
+	}
+
+	return result, nil
 }

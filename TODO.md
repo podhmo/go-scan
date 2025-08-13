@@ -50,8 +50,8 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     - [ ] `imag`
     - [x] `clear`
     - [ ] `close`
-    - [ ] `panic`
-    - [ ] `recover`
+    - [x] `panic`
+    - [x] `recover`
 - [x] **Range Over Function**: Support `for...range` loops over functions.
 - [x] **Support Increment and Decrement Operators**: Implement `++` and `--` as statements.
 - [ ] Write comprehensive documentation for the API, supported language features, and usage examples.

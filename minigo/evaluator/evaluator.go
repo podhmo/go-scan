@@ -282,6 +282,30 @@ var builtins = map[string]*object.Builtin{
 			return &object.Pointer{Element: &obj}
 		},
 	},
+	"panic": {
+		Fn: func(ctx *object.BuiltinContext, pos token.Pos, args ...object.Object) object.Object {
+			if len(args) != 1 {
+				return ctx.NewError(pos, "wrong number of arguments. got=%d, want=1", len(args))
+			}
+			return &object.Panic{Value: args[0]}
+		},
+	},
+	"recover": {
+		Fn: func(ctx *object.BuiltinContext, pos token.Pos, args ...object.Object) object.Object {
+			if len(args) != 0 {
+				return ctx.NewError(pos, "wrong number of arguments. got=%d, want=0", len(args))
+			}
+			// recover is only effective in deferred functions.
+			if !ctx.IsExecutingDefer() {
+				return object.NIL
+			}
+			if p := ctx.GetPanic(); p != nil {
+				ctx.ClearPanic()
+				return p.Value
+			}
+			return object.NIL
+		},
+	},
 	"print": {
 		Fn: func(ctx *object.BuiltinContext, pos token.Pos, args ...object.Object) object.Object {
 			for i, arg := range args {
@@ -310,11 +334,13 @@ var builtins = map[string]*object.Builtin{
 // Evaluator is the main object that evaluates the AST.
 type Evaluator struct {
 	object.BuiltinContext
-	scanner      *goscan.Scanner
-	registry     *object.SymbolRegistry
-	specialForms map[string]*SpecialForm
-	packages     map[string]*object.Package // Central package cache
-	callStack    []*object.CallFrame
+	scanner            *goscan.Scanner
+	registry           *object.SymbolRegistry
+	specialForms       map[string]*SpecialForm
+	packages           map[string]*object.Package // Central package cache
+	callStack          []*object.CallFrame
+	currentPanic       *object.Panic // The currently active panic
+	isExecutingDefer   bool          // True if the evaluator is currently running a deferred function
 }
 
 // Config holds the configuration for creating a new Evaluator.
@@ -343,6 +369,15 @@ func New(cfg Config) *Evaluator {
 		Stdout: cfg.Stdout,
 		Stderr: cfg.Stderr,
 		Fset:   cfg.Fset,
+		IsExecutingDefer: func() bool {
+			return e.isExecutingDefer
+		},
+		GetPanic: func() *object.Panic {
+			return e.currentPanic
+		},
+		ClearPanic: func() {
+			e.currentPanic = nil
+		},
 		NewError: func(pos token.Pos, format string, v ...interface{}) *object.Error {
 			return e.newError(pos, format, v...)
 		},
@@ -892,15 +927,25 @@ func (e *Evaluator) isTruthy(obj object.Object) bool {
 
 // evalIfElseExpression evaluates an if-else expression.
 func (e *Evaluator) evalIfElseExpression(ie *ast.IfStmt, env *object.Environment, fscope *object.FileScope) object.Object {
-	condition := e.Eval(ie.Cond, env, fscope)
+	// Handle if with initializer
+	ifEnv := env
+	if ie.Init != nil {
+		ifEnv = object.NewEnclosedEnvironment(env)
+		initResult := e.Eval(ie.Init, ifEnv, fscope)
+		if isError(initResult) {
+			return initResult
+		}
+	}
+
+	condition := e.Eval(ie.Cond, ifEnv, fscope)
 	if isError(condition) {
 		return condition
 	}
 
 	if e.isTruthy(condition) {
-		return e.Eval(ie.Body, env, fscope)
+		return e.Eval(ie.Body, ifEnv, fscope)
 	} else if ie.Else != nil {
-		return e.Eval(ie.Else, env, fscope)
+		return e.Eval(ie.Else, ifEnv, fscope)
 	} else {
 		return object.NIL
 	}
@@ -915,7 +960,7 @@ func (e *Evaluator) evalBlockStatement(block *ast.BlockStmt, env *object.Environ
 		result = e.Eval(statement, enclosedEnv, fscope)
 		if result != nil {
 			rt := result.Type()
-			if rt == object.RETURN_VALUE_OBJ || rt == object.BREAK_OBJ || rt == object.CONTINUE_OBJ || rt == object.ERROR_OBJ {
+			if rt == object.RETURN_VALUE_OBJ || rt == object.BREAK_OBJ || rt == object.CONTINUE_OBJ || rt == object.ERROR_OBJ || rt == object.PANIC_OBJ {
 				return result
 			}
 		}
@@ -1484,9 +1529,29 @@ func (e *Evaluator) applyFunction(call *ast.CallExpr, fn object.Object, args []o
 	// Evaluate the function body. This will return a ReturnValue on `return`.
 	evaluated := e.Eval(function.Body, bodyEnv, fscope)
 
-	// Now, *after* the body has run and `return` has been hit, execute the defers.
+	// Check if the evaluation resulted in a panic.
+	isPanic := false
+	if p, ok := evaluated.(*object.Panic); ok {
+		isPanic = true
+		e.currentPanic = p
+	}
+
+	// Now, *after* the body has run, execute the defers. This happens even if a panic occurred.
 	for i := len(frame.Defers) - 1; i >= 0; i-- {
 		e.executeDeferredCall(frame.Defers[i], fscope)
+	}
+
+	// If a panic was active and was not cleared by a recover() in a defer,
+	// then it should be propagated up the call stack.
+	if e.currentPanic != nil {
+		return e.currentPanic
+	}
+
+	// If a panic occurred but was recovered, the function's normal execution
+	// was aborted. It should return NIL, not continue processing the original
+	// panic object as a return value.
+	if isPanic {
+		return object.NIL
 	}
 
 	// --- Return Value Handling ---
@@ -1646,6 +1711,10 @@ func (e *Evaluator) executeDeferredCall(deferred *object.DeferredCall, fscope *o
 		return
 	}
 
+	// Set the deferred execution flag.
+	e.isExecutingDefer = true
+	defer func() { e.isExecutingDefer = false }() // Ensure it's always reset.
+
 	switch f := fnObj.(type) {
 	case *object.Function:
 		// A deferred function literal runs in the environment it was defined in.
@@ -1656,6 +1725,11 @@ func (e *Evaluator) executeDeferredCall(deferred *object.DeferredCall, fscope *o
 			evaluated := e.Eval(stmt, deferred.Env, fscope)
 			// We should probably handle errors and return signals here,
 			// but for now, we'll ignore them as `defer` behavior with `return` is complex.
+			if p, isPanic := evaluated.(*object.Panic); isPanic {
+				// A new panic inside a defer replaces the currently recovering one.
+				e.currentPanic = p
+				return // Stop executing this deferred function.
+			}
 			if isError(evaluated) {
 				// TODO: How to handle errors in deferred calls?
 				return
@@ -2672,7 +2746,18 @@ func (e *Evaluator) findSymbolInPackageInfo(pkgInfo *goscan.Package, symbolName 
 func (e *Evaluator) WrapGoFunction(pos token.Pos, funcVal reflect.Value) object.Object {
 	funcType := funcVal.Type()
 	return &object.Builtin{
-		Fn: func(ctx *object.BuiltinContext, callPos token.Pos, args ...object.Object) object.Object {
+		Fn: func(ctx *object.BuiltinContext, callPos token.Pos, args ...object.Object) (ret object.Object) {
+			// Use a deferred function to recover from panics in the called Go function.
+			// This converts a Go panic into a minigo panic.
+			defer func() {
+				if r := recover(); r != nil {
+					// Convert the recovered Go panic value into a minigo object.
+					// A string representation is a safe default.
+					panicValue := &object.String{Value: fmt.Sprintf("%v", r)}
+					ret = &object.Panic{Value: panicValue}
+				}
+			}()
+
 			// Check arg count
 			numIn := funcType.NumIn()
 			isVariadic := funcType.IsVariadic()
@@ -2704,19 +2789,7 @@ func (e *Evaluator) WrapGoFunction(pos token.Pos, funcVal reflect.Value) object.
 			}
 
 			// Call the function
-			var results []reflect.Value
-			// Use a deferred function to recover from panics in the called Go function.
-			defer func() {
-				if r := recover(); r != nil {
-					// Create the error object, but don't assign it to results here
-					// as it might be overwritten by the return.
-					errObj := ctx.NewError(pos, "panic in called Go function: %v", r)
-					// Set results to a slice containing the error to ensure it's propagated.
-					results = []reflect.Value{reflect.ValueOf(errObj)}
-				}
-			}()
-
-			results = funcVal.Call(in)
+			results := funcVal.Call(in)
 
 			// Handle results
 			numOut := funcType.NumOut()

@@ -27,6 +27,7 @@ const (
 	BREAK_OBJ                ObjectType = "BREAK"
 	CONTINUE_OBJ             ObjectType = "CONTINUE"
 	RETURN_VALUE_OBJ         ObjectType = "RETURN_VALUE"
+	PANIC_OBJ                ObjectType = "PANIC"
 	FUNCTION_OBJ             ObjectType = "FUNCTION"
 	BUILTIN_OBJ              ObjectType = "BUILTIN"
 	SPECIAL_FORM_OBJ         ObjectType = "SPECIAL_FORM"
@@ -216,6 +217,19 @@ func (rv *ReturnValue) Type() ObjectType { return RETURN_VALUE_OBJ }
 // Inspect returns a string representation of the wrapped value.
 func (rv *ReturnValue) Inspect() string { return rv.Value.Inspect() }
 
+// --- Panic Object ---
+
+// Panic represents a panic signal. It wraps the value passed to panic().
+type Panic struct {
+	Value Object
+}
+
+// Type returns the type of the Panic object.
+func (p *Panic) Type() ObjectType { return PANIC_OBJ }
+
+// Inspect returns a string representation of the wrapped value.
+func (p *Panic) Inspect() string { return p.Value.Inspect() }
+
 // --- Function Object ---
 
 // Function represents a user-defined function or method.
@@ -326,11 +340,14 @@ func (si *StructInstance) Copy() *StructInstance {
 // It holds I/O streams and a helper function for creating errors, bundling all
 // dependencies needed by built-in functions.
 type BuiltinContext struct {
-	Stdin    io.Reader
-	Stdout   io.Writer
-	Stderr   io.Writer
-	Fset     *token.FileSet
-	NewError func(pos token.Pos, format string, args ...interface{}) *Error
+	Stdin            io.Reader
+	Stdout           io.Writer
+	Stderr           io.Writer
+	Fset             *token.FileSet
+	IsExecutingDefer func() bool
+	GetPanic         func() *Panic
+	ClearPanic       func()
+	NewError         func(pos token.Pos, format string, args ...interface{}) *Error
 }
 
 // BuiltinFunction is the signature for built-in functions.

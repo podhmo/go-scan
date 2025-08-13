@@ -1608,6 +1608,85 @@ func TestMapLiterals(t *testing.T) {
 	}
 }
 
+func TestPanicAndRecover(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected any // Can be an integer for success cases, or a string for panic cases
+	}{
+		{`panic("testing panic")`, "testing panic"},
+		{
+			`
+func() {
+    defer func() {
+        if r := recover(); r != "recovered" {
+            panic("wrong value recovered")
+        }
+    }()
+    panic("recovered")
+}()
+`,
+			nil, // Successful recovery should result in nil from the IIFE
+		},
+		{`recover()`, nil}, // recover outside of panic/defer is a no-op
+		{
+			`
+func() {
+    defer func() {
+        recover() // Should do nothing
+    }()
+    return 10
+}()
+`,
+			int64(10),
+		},
+		{
+			`
+func() {
+    defer func() {
+        if r := recover(); r != "final panic" {
+            panic("wrong value recovered at top level")
+        }
+    }()
+
+    func() {
+        defer func() {
+            // This recover handles the "inner panic"
+            if r := recover(); r != "inner panic" {
+                panic("wrong value recovered at inner level")
+            }
+        }()
+        panic("inner panic")
+    }()
+
+    panic("final panic")
+}()
+`,
+			nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			evaluated := testEval(t, tt.input)
+
+			switch expected := tt.expected.(type) {
+			case int64:
+				testIntegerObject(t, evaluated, expected)
+			case string:
+				p, ok := evaluated.(*object.Panic)
+				if !ok {
+					t.Fatalf("object is not Panic. got=%T (%+v)", evaluated, evaluated)
+				}
+				testStringObject(t, p.Value, expected)
+			case nil:
+				if evaluated != object.NIL && evaluated != nil {
+					t.Errorf("object is not NIL. got=%T (%+v)", evaluated, evaluated)
+				}
+			}
+		})
+	}
+}
+
 func TestErrorHandling(t *testing.T) {
 	tests := []struct {
 		input    string

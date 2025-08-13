@@ -11,7 +11,7 @@ The REPL will support:
 - A basic line-by-line evaluation loop.
 - Persistent state for variables and functions within a session.
 - The ability to import Go packages dynamically using the standard `import` keyword.
-- A few essential meta-commands for controlling the REPL session (e.g., `.help`, `.reset`, `.exit`).
+- A few essential meta-commands for controlling the REPL session (e.g., `:help`, `:reset`, `:exit`).
 
 ## 2. Core REPL Implementation
 
@@ -48,7 +48,7 @@ To ensure that variable declarations (`x := 10`) and `import` statements persist
 
 ## 4. Meta-Commands and Features
 
-Meta-commands will be prefixed with a dot (`.`) and handled by the REPL loop in `main.go` before the line is sent to the interpreter.
+Meta-commands will be prefixed with a colon (`:`) and handled by the REPL loop in `main.go` before the line is sent to the interpreter.
 
 ### 4.1. Import Handling (Language Feature)
 
@@ -60,15 +60,15 @@ As recommended in the analysis, `import` will be a standard language feature, no
 
 The following meta-commands will be implemented:
 
-- **`.help`**:
+- **`:help`**:
     - **Action:** Prints a brief help message listing available commands and features.
     - **Implementation:** A simple `fmt.Println` in the `main.go` REPL loop.
 
-- **`.reset`**:
+- **`:reset`**:
     - **Action:** Resets the interpreter's state, clearing all variables, functions, and imports from the current session.
     - **Implementation:** The REPL loop will discard the current `*minigo.Interpreter` instance and create a new one by calling `minigo.NewInterpreter()`. This is a clean and effective way to reset the entire environment.
 
-- **`.exit`**:
+- **`:exit`**:
     - **Action:** Exits the REPL and terminates the program.
     - **Implementation:** A `break` statement in the REPL's `for` loop.
 

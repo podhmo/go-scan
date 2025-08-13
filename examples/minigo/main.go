@@ -49,7 +49,7 @@ func runFile(filename string) {
 
 func runREPL() {
 	fmt.Println("Welcome to the MiniGo REPL!")
-	fmt.Println("Type .help for more information.")
+	fmt.Println("Type :help for more information.")
 
 	interp, err := newInterpreterWithStdlib()
 	if err != nil {
@@ -71,19 +71,19 @@ func runREPL() {
 		}
 
 		switch line {
-		case ".help":
+		case ":help":
 			fmt.Println("Available commands:")
-			fmt.Println("  .help    - Show this help message")
-			fmt.Println("  .reset   - Reset the interpreter state")
-			fmt.Println("  .exit    - Exit the REPL")
+			fmt.Println("  :help    - Show this help message")
+			fmt.Println("  :reset   - Reset the interpreter state")
+			fmt.Println("  :exit    - Exit the REPL")
 			fmt.Println("You can also type any valid Go expression.")
-		case ".reset":
+		case ":reset":
 			fmt.Println("Resetting interpreter state.")
 			interp, err = newInterpreterWithStdlib()
 			if err != nil {
 				log.Fatalf("Failed to create interpreter: %v", err)
 			}
-		case ".exit":
+		case ":exit":
 			return
 		default:
 			result, err := interp.EvalLine(ctx, line)

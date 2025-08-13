@@ -93,6 +93,36 @@ func testIntegerObject(t *testing.T, obj object.Object, expected int64) bool {
 	return true
 }
 
+func testFloatObject(t *testing.T, obj object.Object, expected float64) bool {
+	t.Helper()
+
+	result, ok := obj.(*object.Float)
+	if !ok {
+		t.Errorf("object is not Float. got=%T (%+v)", obj, obj)
+		return false
+	}
+	if result.Value != expected {
+		t.Errorf("object has wrong value. got=%f, want=%f", result.Value, expected)
+		return false
+	}
+	return true
+}
+
+func testComplexObject(t *testing.T, obj object.Object, expected complex128) bool {
+	t.Helper()
+
+	result, ok := obj.(*object.Complex)
+	if !ok {
+		t.Errorf("object is not Complex. got=%T (%+v)", obj, obj)
+		return false
+	}
+	if result.Real != real(expected) || result.Imag != imag(expected) {
+		t.Errorf("object has wrong value. got=(%f + %fi), want=(%f + %fi)", result.Real, result.Imag, real(expected), imag(expected))
+		return false
+	}
+	return true
+}
+
 func testErrorObject(t *testing.T, obj object.Object, expectedMessage string) bool {
 	t.Helper()
 	errObj, ok := obj.(*object.Error)
@@ -569,6 +599,18 @@ func TestBuiltinFunctions(t *testing.T) {
 		{`s := []int{1, 2, 3}; clear(s); len(s)`, 3},
 		{`s := []int{1, 2, 3}; clear(s); s[0]`, nil},
 		{`clear(1)`, "argument to `clear` must be map or slice, got INTEGER"},
+		{`complex(1, 2)`, complex(1, 2)},
+		{`complex(1.5, 2.5)`, complex(1.5, 2.5)},
+		{`complex(1, 2.5)`, complex(1, 2.5)},
+		{`real(complex(5, 10))`, float64(5)},
+		{`imag(complex(5, 10))`, float64(10)},
+		{`real(complex(5.2, 10.8))`, 5.2},
+		{`imag(complex(5.2, 10.8))`, 10.8},
+		{`complex("a", 1)`, "argument 1 to `complex` must be a number, got STRING"},
+		{`complex(1, "b")`, "argument 2 to `complex` must be a number, got STRING"},
+		{`complex(1)`, "wrong number of arguments. got=1, want=2"},
+		{`real(1)`, "argument to `real` must be a complex number, got INTEGER"},
+		{`imag(1)`, "argument to `imag` must be a complex number, got INTEGER"},
 	}
 
 	for _, tt := range tests {
@@ -578,6 +620,10 @@ func TestBuiltinFunctions(t *testing.T) {
 			switch expected := tt.expected.(type) {
 			case int:
 				testIntegerObject(t, evaluated, int64(expected))
+			case float64:
+				testFloatObject(t, evaluated, expected)
+			case complex128:
+				testComplexObject(t, evaluated, expected)
 			case nil:
 				testNilObject(t, evaluated)
 			case []int:

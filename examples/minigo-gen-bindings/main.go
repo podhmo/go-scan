@@ -4,7 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"text/template"
@@ -38,16 +38,23 @@ func main() {
 	flag.Parse()
 
 	if *outputDir == "" {
-		log.Fatal("-output flag is required")
+		slog.Error("-output flag is required")
+		os.Exit(1)
 	}
 
 	pkgPaths := flag.Args()
 	if len(pkgPaths) == 0 {
-		log.Fatal("at least one package path is required")
+		slog.Error("at least one package path is required")
+		os.Exit(1)
 	}
 
-	if err := run(context.Background(), *outputDir, pkgPaths); err != nil {
-		log.Fatalf("!! %+v", err)
+	ctx := context.Background()
+	logger := slog.Default()
+	ctx = context.WithValue(ctx, "logger", logger)
+
+	if err := run(ctx, *outputDir, pkgPaths); err != nil {
+		slog.ErrorContext(ctx, "!!", slog.Any("error", err))
+		os.Exit(1)
 	}
 }
 
@@ -58,7 +65,7 @@ func run(ctx context.Context, outputDir string, pkgPaths []string) error {
 	}
 
 	for _, pkgPath := range pkgPaths {
-		log.Printf("processing package %q", pkgPath)
+		slog.InfoContext(ctx, "processing package", slog.String("package", pkgPath))
 		if err := generate(ctx, s, outputDir, pkgPath); err != nil {
 			return fmt.Errorf("failed to generate for package %q: %w", pkgPath, err)
 		}
@@ -111,6 +118,6 @@ func generate(ctx context.Context, s *goscan.Scanner, outputDir, pkgPath string)
 	if err := tmpl.Execute(f, params); err != nil {
 		return fmt.Errorf("failed to execute template: %w", err)
 	}
-	log.Printf("generated %s", filePath)
+	slog.InfoContext(ctx, "generated", slog.String("path", filePath))
 	return nil
 }

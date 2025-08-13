@@ -288,3 +288,177 @@ var message = fmt.Sprintf("Message: %s", upper)
 		t.Errorf("mismatched message (-want +got):\n%s", diff)
 	}
 }
+
+func TestStdlib_json_nested(t *testing.T) {
+	jsonData := `{"Name":"parent","Child":{"Value":"child"}}`
+	script := `
+package main
+import "encoding/json"
+type Inner struct {
+	Value string
+}
+type Outer struct {
+	Name  string
+	Child Inner
+}
+var result Outer
+var err = json.Unmarshal(data, &result)
+`
+	interp, err := minigo.NewInterpreter()
+	if err != nil {
+		t.Fatalf("failed to create interpreter: %+v", err)
+	}
+	stdjson.Install(interp)
+
+	// Inject the data variable
+	dataBytes := []byte(jsonData)
+	elements := make([]object.Object, len(dataBytes))
+	for i, b := range dataBytes {
+		elements[i] = &object.Integer{Value: int64(b)}
+	}
+	interp.GlobalEnvForTest().Set("data", &object.Array{Elements: elements})
+
+	if err := interp.LoadFile("test.mgo", []byte(script)); err != nil {
+		t.Fatalf("failed to load script: %+v", err)
+	}
+	if _, err := interp.Eval(context.Background()); err != nil {
+		t.Fatalf("failed to evaluate script: %+v", err)
+	}
+
+	env := interp.GlobalEnvForTest()
+	if err, _ := env.Get("err"); err != object.NIL {
+		t.Fatalf("expected err to be nil, but got: %#v", err)
+	}
+
+	result, _ := env.Get("result")
+	outerStruct, ok := result.(*object.StructInstance)
+	if !ok {
+		t.Fatalf("result is not a struct instance: %T", result)
+	}
+
+	if name, _ := outerStruct.Fields["Name"].(*object.String); name.Value != "parent" {
+		t.Errorf("expected Name to be 'parent', got %q", name.Value)
+	}
+
+	child, ok := outerStruct.Fields["Child"].(*object.StructInstance)
+	if !ok {
+		t.Fatalf("Child is not a struct instance: %T", outerStruct.Fields["Child"])
+	}
+	if val, _ := child.Fields["Value"].(*object.String); val.Value != "child" {
+		t.Errorf("expected Child.Value to be 'child', got %q", val.Value)
+	}
+}
+
+func TestStdlib_json_recursive(t *testing.T) {
+	jsonData := `{"Name":"Worker", "Manager": {"Name":"Boss", "Manager":null}}`
+	script := `
+package main
+import "encoding/json"
+type Employee struct {
+	Name    string
+	Manager *Employee
+}
+var result Employee
+var err = json.Unmarshal(data, &result)
+`
+	interp, err := minigo.NewInterpreter()
+	if err != nil {
+		t.Fatalf("failed to create interpreter: %+v", err)
+	}
+	stdjson.Install(interp)
+
+	// Inject the data variable
+	dataBytes := []byte(jsonData)
+	elements := make([]object.Object, len(dataBytes))
+	for i, b := range dataBytes {
+		elements[i] = &object.Integer{Value: int64(b)}
+	}
+	interp.GlobalEnvForTest().Set("data", &object.Array{Elements: elements})
+
+	if err := interp.LoadFile("test.mgo", []byte(script)); err != nil {
+		t.Fatalf("failed to load script: %+v", err)
+	}
+	if _, err := interp.Eval(context.Background()); err != nil {
+		t.Fatalf("failed to evaluate script: %+v", err)
+	}
+
+	env := interp.GlobalEnvForTest()
+	if err, _ := env.Get("err"); err != object.NIL {
+		t.Fatalf("expected err to be nil, but got: %#v", err)
+	}
+
+	result, _ := env.Get("result")
+	worker, ok := result.(*object.StructInstance)
+	if !ok {
+		t.Fatalf("result is not a struct instance: %T", result)
+	}
+
+	if name, _ := worker.Fields["Name"].(*object.String); name.Value != "Worker" {
+		t.Errorf("expected Name to be 'Worker', got %q", name.Value)
+	}
+
+	managerPtr, ok := worker.Fields["Manager"].(*object.Pointer)
+	if !ok {
+		t.Fatalf("Manager is not a pointer: %T", worker.Fields["Manager"])
+	}
+	boss, ok := (*managerPtr.Element).(*object.StructInstance)
+	if !ok {
+		t.Fatalf("Manager pointer does not point to a struct instance: %T", *managerPtr.Element)
+	}
+	if name, _ := boss.Fields["Name"].(*object.String); name.Value != "Boss" {
+		t.Errorf("expected Manager.Name to be 'Boss', got %q", name.Value)
+	}
+
+	if boss.Fields["Manager"] != object.NIL {
+		t.Errorf("expected Manager.Manager to be nil, but got: %#v", boss.Fields["Manager"])
+	}
+}
+
+func TestStdlib_json_crosspackage(t *testing.T) {
+	jsonData := `{"Name":"John Doe","Age":42}`
+	script := `
+package main
+import "encoding/json"
+import "github.com/podhmo/go-scan/minigo/testdata/jsonstructs"
+var result jsonstructs.Person
+var err = json.Unmarshal(data, &result)
+`
+	interp, err := minigo.NewInterpreter()
+	if err != nil {
+		t.Fatalf("failed to create interpreter: %+v", err)
+	}
+	stdjson.Install(interp)
+
+	// Inject the data variable
+	dataBytes := []byte(jsonData)
+	elements := make([]object.Object, len(dataBytes))
+	for i, b := range dataBytes {
+		elements[i] = &object.Integer{Value: int64(b)}
+	}
+	interp.GlobalEnvForTest().Set("data", &object.Array{Elements: elements})
+
+	if err := interp.LoadFile("test.mgo", []byte(script)); err != nil {
+		t.Fatalf("failed to load script: %+v", err)
+	}
+	if _, err := interp.Eval(context.Background()); err != nil {
+		t.Fatalf("failed to evaluate script: %+v", err)
+	}
+
+	env := interp.GlobalEnvForTest()
+	if err, _ := env.Get("err"); err != object.NIL {
+		t.Fatalf("expected err to be nil, but got: %#v", err)
+	}
+
+	result, _ := env.Get("result")
+	person, ok := result.(*object.StructInstance)
+	if !ok {
+		t.Fatalf("result is not a struct instance: %T", result)
+	}
+
+	if name, _ := person.Fields["Name"].(*object.String); name.Value != "John Doe" {
+		t.Errorf("expected Name to be 'John Doe', got %q", name.Value)
+	}
+	if age, _ := person.Fields["Age"].(*object.Integer); age.Value != 42 {
+		t.Errorf("expected Age to be 42, got %d", age.Value)
+	}
+}

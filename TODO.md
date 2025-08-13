@@ -56,7 +56,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     - [x] **Task 9: Run `make format` and `make test` to ensure all checks pass.**
 - **Full `encoding/json` Support in `minigo`** ([docs/trouble-minigo-encoding-json.md](docs/trouble-minigo-encoding-json.md)):
     - [x] **Implement `json.Marshal` for structs**: Enhance the FFI to convert `minigo` structs to `map[string]any` when calling Go functions that accept `interface{}`, as detailed in `docs/trouble-minigo-encoding-json.md`.
-    - [x] **Support `json.Unmarshal`**: Implemented an FFI pointer bridge to allow Go functions to modify MiniGo variables, enabling `json.Unmarshal` to populate MiniGo structs.
+    - [x] **Support `json.Unmarshal`**: Implemented a recursive `json.Unmarshal` solution with an FFI pointer bridge. It now supports nested, recursive, and cross-package structs.
     - [x] **Support Struct Field Tags**: Requires parser and object model changes to recognize and utilize `json:"..."` tags.
 
 

@@ -73,3 +73,55 @@ This failure highlights a fundamental limitation in the current implementation o
 3.  **Struct Field Tag Support:** For `encoding/json` to be truly useful, the MiniGo struct definition would need to support field tags (e.g., `` `json:"x_coordinate"` ``). The current `go-scan` parser and `minigo` object system do not have a concept of struct field tags. The `json.Marshal` function relies on these tags for customizing the output.
 
 In summary, while the bindings for the functions in `encoding/json` can be generated, their practical use is blocked by the MiniGo runtime's current inability to bridge the gap between its own type system and Go's reflection-based `interface{}` and pointer semantics.
+
+---
+
+## Deeper Analysis and Path to Implementation
+
+Following the initial analysis, a deeper investigation was conducted to determine the feasibility of overcoming these limitations. This analysis is modeled after the one in `docs/analysis-minigo-goroutine.md`.
+
+### 1. FFI Architecture and a Path for `json.Marshal`
+
+**Current FFI (Foreign Function Interface) Architecture:**
+The core of MiniGo's interoperability with Go lies in the `minigo/evaluator/evaluator.go` file.
+- **`WrapGoFunction`**: This function wraps a Go function (as a `reflect.Value`) into a `minigo/object.Builtin` object that the interpreter can call.
+- **`objectToReflectValue`**: When a Go function is called, this helper function is responsible for converting the MiniGo arguments (`object.Object`) into the `reflect.Value`s that the Go function expects.
+
+**The Point of Failure:**
+The investigation confirmed that the failure occurs within `objectToReflectValue`. When it receives a MiniGo `object.StructInstance` and sees that the target Go function ( `json.Marshal`) expects an `interface{}`, it has no defined conversion path and returns the "unsupported conversion" error.
+
+**Proposed Implementation Path for `json.Marshal`:**
+Supporting `json.Marshal` is feasible with localized changes. The plan involves enhancing the conversion logic to handle structs:
+
+1.  **Create a Recursive Converter**: Implement or enhance a function, `objectToNativeGoValue(obj object.Object) (any, error)`, that can recursively convert MiniGo objects into their natural Go counterparts. The key addition would be a case for `*object.StructInstance`:
+    ```go
+    // In minigo/evaluator/evaluator.go
+    case *object.StructInstance:
+        m := make(map[string]any, len(o.Fields))
+        for name, fieldObj := range o.Fields {
+            var err error
+            // Recursively convert each field
+            m[name], err = e.objectToNativeGoValue(fieldObj)
+            if err != nil {
+                return nil, fmt.Errorf("failed to convert field %q: %w", name, err)
+            }
+        }
+        return m, nil
+    ```
+    This would turn a MiniGo struct into a `map[string]any`, which `json.Marshal` can handle perfectly.
+
+2.  **Integrate with the FFI**: Modify the `objectToReflectValue` function. When its target type is `interface{}`, it should call the enhanced `objectToNativeGoValue` converter. This bridges the gap for `json.Marshal`.
+
+### 2. Feasibility and Remaining Limitations
+
+| Feature | Feasibility | Notes |
+| :--- | :--- | :--- |
+| **`json.Marshal(MyStruct)`** | **High** | Feasible with the localized changes described above. Does not require a major architectural redesign. |
+| **`json.Unmarshal(data, &MyStruct)`** | **Very Low** | **Not** addressed by the proposed path. `Unmarshal` requires passing a mutable pointer from MiniGo to Go, allowing the Go function to modify MiniGo memory. This is a significant architectural challenge related to memory management and pointer semantics in the FFI, and is considered out of scope for an incremental fix. |
+| **Struct Field Tags (`json:"..."`)** | **Low** | **Not** addressed by the proposed path. This would require substantial work in multiple components: updating the `go-scan` parser to recognize and store tags, adding a field for them in the `minigo/object.StructDefinition`, and updating the conversion logic to use them. |
+
+### 3. Conclusion and Recommendation
+
+It is **recommended to proceed** with implementing the proposed path to support `json.Marshal`. This would provide significant value and partially fulfill the goal of `encoding/json` support.
+
+However, it should be clearly understood that this will **not** enable `json.Unmarshal` or custom field naming via tags. Full support for `encoding/json` should be considered a separate, much larger feature that requires a more fundamental redesign of `minigo`'s FFI and memory model.

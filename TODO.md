@@ -38,7 +38,11 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - **Automated Minigo Bindings Generation** ([docs/plan-minigo-gen-bindings.md](./docs/plan-minigo-gen-bindings.md)):
     - [x] **Core Function: List Exported Symbols**
     - [x] **Build the Generator Tool**
-    - [x] **Generate and Test Standard Library Bindings**
+    - [x] **Generate and Test Standard Library Bindings**:
+        - [x] `fmt`
+        - [x] `strings`
+        - [x] `strconv`
+        - [-] `encoding/json` (bindings generated, but runtime support is incomplete; see `docs/trouble-minigo-encoding-json.md`)
 
 ## To Be Implemented
 

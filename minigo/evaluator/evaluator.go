@@ -880,8 +880,59 @@ func (e *Evaluator) objectToNativeGoValue(obj object.Object) (any, error) {
 	case *object.StructInstance:
 		m := make(map[string]any, len(o.Fields))
 		for name, fieldObj := range o.Fields {
+			tag, ok := o.Def.FieldTags[name]
+			if !ok {
+				tag = name // Default to field name if no tag
+			}
+
+			if tag == "-" {
+				continue // Skip ignored fields
+			}
+
+			tagName := tag
+			omitempty := false
+			if strings.HasSuffix(tag, ",omitempty") {
+				omitempty = true
+				tagName = strings.TrimSuffix(tag, ",omitempty")
+			}
+
+			if omitempty {
+				isZero := false
+				switch v := fieldObj.(type) {
+				case *object.Integer:
+					if v.Value == 0 {
+						isZero = true
+					}
+				case *object.Float:
+					if v.Value == 0.0 {
+						isZero = true
+					}
+				case *object.String:
+					if v.Value == "" {
+						isZero = true
+					}
+				case *object.Boolean:
+					if !v.Value {
+						isZero = true
+					}
+				case *object.Nil:
+					isZero = true
+				case *object.Array:
+					if len(v.Elements) == 0 {
+						isZero = true
+					}
+				case *object.Map:
+					if len(v.Pairs) == 0 {
+						isZero = true
+					}
+				}
+				if isZero {
+					continue
+				}
+			}
+
 			var err error
-			m[name], err = e.objectToNativeGoValue(fieldObj)
+			m[tagName], err = e.objectToNativeGoValue(fieldObj)
 			if err != nil {
 				return nil, fmt.Errorf("failed to convert field %q: %w", name, err)
 			}
@@ -2374,11 +2425,26 @@ func (e *Evaluator) evalGenDecl(n *ast.GenDecl, env *object.Environment, fscope 
 				// Regular type definition: type T struct { ... }
 				switch t := typeSpec.Type.(type) {
 				case *ast.StructType:
+					fieldTags := make(map[string]string)
+					for _, field := range t.Fields.List {
+						if field.Tag == nil {
+							continue
+						}
+						tag := reflect.StructTag(strings.Trim(field.Tag.Value, "`"))
+						jsonTag := tag.Get("json")
+
+						// The parser gives us one Field with multiple Names for `X, Y int`.
+						for _, name := range field.Names {
+							fieldTags[name.Name] = jsonTag
+						}
+					}
+
 					def := &object.StructDefinition{
 						Name:       typeSpec.Name,
 						TypeParams: typeSpec.TypeParams,
 						Fields:     t.Fields.List,
 						Methods:    make(map[string]*object.Function),
+						FieldTags:  fieldTags,
 					}
 					env.Set(typeSpec.Name.Name, def)
 

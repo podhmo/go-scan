@@ -14,7 +14,6 @@ import (
 )
 
 func TestStdlib_json(t *testing.T) {
-	// t.Skip("skipping json test for now, as it is expected to fail due to runtime limitations")
 	script := `
 package main
 import "encoding/json"

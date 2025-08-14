@@ -54,3 +54,16 @@ Based on these findings, the following workflow is recommended when adding a new
 3.  **Use FFI Binding as a Fallback**: If direct interpretation is not feasible (e.g., the package has CGO dependencies), use the `minigo-gen-bindings` tool to create bindings for a curated list of essential, non-generic, package-level functions.
 
 A detailed technical breakdown of the specific limitations encountered with the FFI binding approach is documented in **[`trouble-minigo-stdlib-limitations.md`](./trouble-minigo-stdlib-limitations.md)**.
+
+### 3. Testing Strategy
+
+The testing approach was designed to uncover compatibility issues and limitations.
+
+- **Test File**: A new test file, `minigo/minigo_stdlib_custom_test.go`, was created to house all new tests for the generated bindings.
+- **Testing Pattern**: Tests follow a consistent pattern:
+    1. A minigo script is defined as a Go string.
+    2. A new `minigo.Interpreter` instance is created.
+    3. The relevant standard library bindings are installed (e.g., `stdbytes.Install(interp)`).
+    4. The script is loaded and evaluated by the interpreter.
+    5. The state of the interpreter's global environment is checked to assert that the script produced the correct results.
+- **Goal-Oriented Testing**: The goal is to test both common use cases and boundary conditions to ensure broad compatibility. The initial testing phase successfully identified several fundamental limitations in the interpreter, which currently block more extensive testing. The tests have been adapted to validate the working functionality while clearly documenting these limitations.

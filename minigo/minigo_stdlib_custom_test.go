@@ -2,8 +2,11 @@ package minigo_test
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"reflect"
+	"runtime"
 	"testing"
-
 	// "time" // Temporarily unused until error handling is clarified
 
 	"github.com/podhmo/go-scan/minigo"
@@ -14,6 +17,61 @@ import (
 	stdregexp "github.com/podhmo/go-scan/minigo/stdlib/regexp"
 	// stdtime "github.com/podhmo/go-scan/minigo/stdlib/time" // Temporarily unused
 )
+
+func TestStdlib_slices(t *testing.T) {
+	script := `
+package main
+import "slices"
+
+func main() {
+    s1 := []int{1, 2, 3}
+    s2 := slices.Clone(s1)
+
+    // Modify the original slice
+    s1[0] = 99
+
+    // Return the new slice to check that it's an independent copy
+    return s2
+}
+`
+	interp, err := minigo.NewInterpreter()
+	if err != nil {
+		t.Fatalf("failed to create interpreter: %+v", err)
+	}
+
+	// The 'slices' package is not a pre-generated binding, but is loaded from source.
+	// This tests the interpreter's ability to parse and use standard library source code.
+	goroot := runtime.GOROOT()
+	if goroot == "" {
+		t.Skip("GOROOT not found, skipping test")
+	}
+	srcPath := filepath.Join(goroot, "src", "slices", "slices.go")
+	src, err := os.ReadFile(srcPath)
+	if err != nil {
+		t.Fatalf("could not read 'slices.go' source: %v", err)
+	}
+
+	if err := interp.LoadGoSourceAsPackage("slices", string(src)); err != nil {
+		t.Fatalf("failed to load 'slices' package from source: %+v", err)
+	}
+
+	// Evaluate the main script that uses the loaded package.
+	result, err := interp.EvalString(script)
+	if err != nil {
+		t.Fatalf("failed to evaluate script: %+v", err)
+	}
+
+	var s2 []int64
+	res := &minigo.Result{Value: result}
+	if err := res.As(&s2); err != nil {
+		t.Fatalf("failed to unmarshal result into slice: %v", err)
+	}
+
+	expected := []int64{1, 2, 3}
+	if !reflect.DeepEqual(s2, expected) {
+		t.Errorf("unexpected slice content\nwant: %v\n got: %v", expected, s2)
+	}
+}
 
 /*
 // TestStdlib_time_limitation is temporarily disabled.

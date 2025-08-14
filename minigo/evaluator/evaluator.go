@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"go/ast"
+	"go/parser"
 	"go/token"
 	"io"
 	"reflect"
@@ -407,6 +408,7 @@ type Evaluator struct {
 	registry         *object.SymbolRegistry
 	specialForms     map[string]*SpecialForm
 	packages         map[string]*object.Package // Central package cache
+	globalEnv        *object.Environment      // The top-level environment
 	callStack        []*object.CallFrame
 	currentPanic     *object.Panic // The currently active panic
 	isExecutingDefer bool          // True if the evaluator is currently running a deferred function
@@ -419,6 +421,7 @@ type Config struct {
 	Registry     *object.SymbolRegistry
 	SpecialForms map[string]*SpecialForm
 	Packages     map[string]*object.Package
+	GlobalEnv    *object.Environment
 	Stdin        io.Reader
 	Stdout       io.Writer
 	Stderr       io.Writer
@@ -431,6 +434,7 @@ func New(cfg Config) *Evaluator {
 		registry:     cfg.Registry,
 		specialForms: cfg.SpecialForms,
 		packages:     cfg.Packages,
+		globalEnv:    cfg.GlobalEnv,
 		callStack:    make([]*object.CallFrame, 0),
 	}
 	e.BuiltinContext = object.BuiltinContext{
@@ -3565,14 +3569,14 @@ func (e *Evaluator) evalSelectorExpr(n *ast.SelectorExpr, env *object.Environmen
 }
 
 // findSymbolInPackage resolves a symbol within a given package. It handles caching,
-// consulting the symbol registry, and triggering on-demand scanning.
+// consulting the symbol registry, and triggering on-demand scanning and evaluation.
 func (e *Evaluator) findSymbolInPackage(pkg *object.Package, symbolName *ast.Ident, pos token.Pos) object.Object {
-	// 1. Check member cache first.
+	// 1. Check member cache first. This is the fastest path.
 	if member, ok := pkg.Members[symbolName.Name]; ok {
 		return member
 	}
 
-	// 2. Check the registry for pre-registered symbols.
+	// 2. Check the FFI registry for pre-compiled, bound Go functions.
 	if symbol, ok := e.registry.Lookup(pkg.Path, symbolName.Name); ok {
 		var member object.Object
 		val := reflect.ValueOf(symbol)
@@ -3581,45 +3585,56 @@ func (e *Evaluator) findSymbolInPackage(pkg *object.Package, symbolName *ast.Ide
 		} else {
 			member = &object.GoValue{Value: val}
 		}
-		pkg.Members[symbolName.Name] = member // Cache it
+		pkg.Members[symbolName.Name] = member // Cache for next time
 		return member
 	}
 
-	// 3. Fallback to scanning source files for constants if not in registry.
-	// Check already loaded info.
-	if pkg.Info != nil {
-		member, found := e.findSymbolInPackageInfo(pkg.Info, symbolName.Name)
-		if found {
-			if err, isErr := member.(*object.Error); isErr {
-				return err // Propagate conversion errors
-			}
-			pkg.Members[symbolName.Name] = member // Cache it
-			return member
-		}
-	}
-
-	// 4. Symbol not in loaded info, try scanning remaining files.
+	// 3. If not in cache or registry, try to find the symbol by scanning Go source files.
+	// This will find the package source in GOROOT or the module cache.
 	cumulativePkgInfo, err := e.scanner.FindSymbolInPackage(context.Background(), pkg.Path, symbolName.Name)
 	if err != nil {
-		// Not found in any unscanned files either. It's undefined.
+		// The symbol could not be found in any registered bindings or Go source files.
 		return e.newError(pos, "undefined: %s.%s", pkg.Name, symbolName.Name)
 	}
 
-	// 5. Symbol was found. `cumulativePkgInfo` contains everything scanned so far.
-	// Update the package object with the richer info.
-	pkg.Info = cumulativePkgInfo
+	// 4. The symbol was found in source. Now, we need to evaluate the entire package
+	// to make all its functions, types, and constants available.
+	pkg.Info = cumulativePkgInfo // Update the package with the scanned info.
 
-	// 6. Now that info is updated, the symbol must be in it. Find it, cache it, return it.
-	member, found := e.findSymbolInPackageInfo(pkg.Info, symbolName.Name)
-	if !found {
-		// This should be an impossible state if FindSymbolInPackage works correctly.
-		return e.newError(pos, "internal inconsistency: symbol %s found by scanner but not in final package info", symbolName.Name)
+	// Create a new, dedicated environment for this package, enclosed by the global env.
+	pkgEnv := object.NewEnclosedEnvironment(e.globalEnv)
+
+	// Evaluate all declarations from all files in the package.
+	for _, filePath := range pkg.Info.Files {
+		fileAST, err := parser.ParseFile(e.Fset, filePath, nil, parser.ParseComments)
+		if err != nil {
+			return e.newError(pos, "failed to parse source file %s for package %s: %v", filePath, pkg.Path, err)
+		}
+
+		// Each file needs its own file-level scope for imports.
+		fileScope := object.NewFileScope(fileAST)
+		for _, decl := range fileAST.Decls {
+			result := e.Eval(decl, pkgEnv, fileScope)
+			if isError(result) {
+				// If any declaration fails, we can't continue.
+				return e.newError(decl.Pos(), "error evaluating declaration in imported package %s: %s", pkg.Path, result.Inspect())
+			}
+		}
 	}
-	if err, isErr := member.(*object.Error); isErr {
-		return err
+
+	// 5. After evaluation, transfer all the newly defined symbols from the package's
+	// environment into its public member cache.
+	for name, obj := range pkgEnv.GetAll() {
+		pkg.Members[name] = obj
 	}
-	pkg.Members[symbolName.Name] = member // Cache it
-	return member
+
+	// 6. Now that the cache is populated, look for the originally requested symbol again.
+	// It must be present, otherwise it's an internal inconsistency.
+	if member, ok := pkg.Members[symbolName.Name]; ok {
+		return member
+	}
+
+	return e.newError(pos, "internal inconsistency: symbol %s found by scanner but not available after package evaluation", symbolName.Name)
 }
 
 func (e *Evaluator) evalGoValueSelectorExpr(node ast.Node, goVal *object.GoValue, sel string) object.Object {

@@ -117,6 +117,7 @@ func NewInterpreter(options ...Option) (*Interpreter, error) {
 		Registry:     i.Registry,
 		SpecialForms: i.specialForms,
 		Packages:     i.packages,
+		GlobalEnv:    i.globalEnv,
 		Stdin:        i.stdin,
 		Stdout:       i.stdout,
 		Stderr:       i.stderr,

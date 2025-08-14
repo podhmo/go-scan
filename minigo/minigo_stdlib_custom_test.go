@@ -2,10 +2,7 @@ package minigo_test
 
 import (
 	"context"
-	"os"
-	"path/filepath"
 	"reflect"
-	"runtime"
 	"testing"
 	// "time" // Temporarily unused until error handling is clarified
 
@@ -34,28 +31,14 @@ func main() {
     return s2
 }
 `
+	// This test checks if the interpreter can automatically find and load
+	// the 'slices' package from the GOROOT source when it's imported.
 	interp, err := minigo.NewInterpreter()
 	if err != nil {
 		t.Fatalf("failed to create interpreter: %+v", err)
 	}
 
-	// The 'slices' package is not a pre-generated binding, but is loaded from source.
-	// This tests the interpreter's ability to parse and use standard library source code.
-	goroot := runtime.GOROOT()
-	if goroot == "" {
-		t.Skip("GOROOT not found, skipping test")
-	}
-	srcPath := filepath.Join(goroot, "src", "slices", "slices.go")
-	src, err := os.ReadFile(srcPath)
-	if err != nil {
-		t.Fatalf("could not read 'slices.go' source: %v", err)
-	}
-
-	if err := interp.LoadGoSourceAsPackage("slices", string(src)); err != nil {
-		t.Fatalf("failed to load 'slices' package from source: %+v", err)
-	}
-
-	// Evaluate the main script that uses the loaded package.
+	// Evaluate the main script that uses the imported package.
 	result, err := interp.EvalString(script)
 	if err != nil {
 		t.Fatalf("failed to evaluate script: %+v", err)

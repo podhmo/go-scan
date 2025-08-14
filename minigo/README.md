@@ -229,4 +229,3 @@ func main() {
 While `minigo` is a powerful tool for configuration and scripting, it is not a full-featured Go environment and has some important limitations:
 
 -   **No Concurrency**: `minigo` does not support `goroutine`s or `channel`s. The interpreter is single-threaded. For a detailed analysis, see [`docs/analysis-minigo-goroutine.md`](../docs/analysis-minigo-goroutine.md).
--   **`encoding/json` Support**: Full support for `json.Marshal` and `json.Unmarshal` is provided. This includes marshaling MiniGo structs to JSON and unmarshaling JSON into MiniGo structs, with support for nested, recursive, and cross-package struct definitions.

@@ -76,7 +76,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     - [x] Assignment to index expressions (`slice[i] = value`).
     - [x] Full 3-index slice expressions (`slice[low:high:max]`).
     - [x] Variadic arguments in function calls (`...`).
-- [x] **Fix `slices.Clone` bug**: The `append` builtin in the interpreter did not correctly handle `nil` slices, which is a valid use case in Go (e.g., `append(nil, "a", "b")`). This was fixed by updating the builtin to treat a `nil` first argument as an empty slice.
+- [x] **Fix `slices.Clone` bug**: The interpreter now correctly handles on-demand source loading of standard library packages like `slices`. The underlying issue was that the evaluator did not fully process and evaluate all declarations from a newly discovered package source. This has been fixed by implementing a full evaluation step within the symbol resolution logic. A related bug in the `append` builtin's handling of `nil` slices was also fixed.
 
 ### `minigo` FFI and Language Limitations ([docs/trouble-minigo-stdlib-limitations.md](./docs/trouble-minigo-stdlib-limitations.md))
 - [ ] **Implement Method Calls on Go Objects**: Enhance the interpreter to support calling methods on Go structs returned from bound functions (e.g., `(*bytes.Buffer).Write`). This is the highest-impact improvement for stdlib compatibility. (See `docs/trouble-minigo-stdlib-limitations.md`).

@@ -4,6 +4,7 @@ import (
 	"context"
 	"reflect"
 	"testing"
+
 	// "time" // Temporarily unused until error handling is clarified
 
 	"github.com/podhmo/go-scan/minigo"

@@ -54,14 +54,14 @@ The testing approach was designed to uncover compatibility issues and limitation
     3. The relevant standard library bindings are installed (e.g., `stdbytes.Install(interp)`).
     4. The script is loaded and evaluated by the interpreter.
     5. The state of the interpreter's global environment is checked to assert that the script produced the correct results.
-- **Goal-Oriented Testing**: The initial goal was to test both common use cases and boundary conditions. However, the testing process quickly pivoted to investigating and confirming fundamental limitations of the interpreter. The tests were rewritten multiple times to isolate and prove these limitations.
+- **Goal-Oriented Testing**: The goal is to test both common use cases and boundary conditions to ensure broad compatibility. The initial testing phase successfully identified several fundamental limitations in the interpreter, which currently block more extensive testing. The tests have been adapted to validate the working functionality while clearly documenting these limitations.
 
 ### 4. Summary of Findings and Limitations
 
 The testing phase was successful in identifying several major limitations in `minigo`'s ability to interoperate with standard Go code. The key findings include:
 
 - Inability to call methods on Go structs returned by bound functions.
-- Lack of support for Go generics.
+- Inability of the binding generator to handle generic Go functions.
 - Interpreter halting on Go functions that return errors.
 - Unrecognized `byte` type alias.
 

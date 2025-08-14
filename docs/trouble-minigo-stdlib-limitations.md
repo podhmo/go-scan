@@ -70,3 +70,29 @@ The investigation revealed several fundamental limitations in the FFI bridge. Th
 
 -   **Limitation (Direct Source Interpretation)**: Incorrect Function Signature Parsing.
 -   **Analysis**: An attempt to use `bytes.Equal` fails with the error `wrong number of arguments. got=2, want=1`. The `minigo` interpreter incorrectly determines that `bytes.Equal` takes only one argument, despite its Go signature being `func Equal(a, b []byte) bool`. This suggests a flaw in how the interpreter parses or registers function signatures from source files.
+
+### `path/filepath`
+
+-   **Limitation (Direct Source Interpretation)**: Sequential Declaration Order.
+-   **Analysis**: An attempt to use `filepath.Join` fails with the error `identifier not found: join`. This is the same limitation discovered with the `errors` package, where an exported function relies on an unexported helper function that is defined later in the source file.
+
+### `strconv`
+
+-   **Limitation (Direct Source Interpretation)**: Sequential Declaration Order.
+-   **Analysis**: An attempt to use `strconv.Atoi` fails with the error `identifier not found: intSize`. This is another instance of the sequential declaration limitation, where an unexported constant (`intSize`) is used by a function before it has been declared in the file.
+
+### `encoding/json`
+
+-   **Limitation (Direct Source Interpretation)**: Sequential Declaration Order.
+-   **Analysis**: An attempt to use `json.Marshal` fails with the error `identifier not found: newEncodeState`. The test did not even reach code that uses `reflect`, as it was blocked by the same sequential declaration limitation seen in other packages. An unexported helper function (`newEncodeState`) is called before it is defined in the source file.
+
+---
+
+## Analysis of Untested Complex Packages
+
+Based on the limitations discovered above, the remaining standard library packages were not individually tested, as their failure is predictable.
+
+-   **`os`, `net/http`, `net`**: These packages are fundamentally incompatible because they rely on `CGO` and direct `syscalls` to interact with the operating system and network stack. The `minigo` interpreter is pure Go and cannot execute C code or make system calls.
+-   **`time`, `net/url`, `regexp`**: These packages rely heavily on methods defined on their core struct types (`time.Time`, `url.URL`, `regexp.Regexp`). As discovered with the FFI-based tests, `minigo` does not support method calls on Go objects, so these would fail.
+-   **`io`**: This package's utility comes from its core interfaces, `io.Reader` and `io.Writer`. While `minigo` has some support for interfaces, the complexity of implementing and using them for I/O operations is beyond its current capabilities.
+-   **`fmt`, `text/template`**: These packages are highly complex and make extensive use of reflection (`reflect`), which is not fully supported by `minigo`. They would also fail due to the other limitations already identified (sequential declaration, method calls, etc.).

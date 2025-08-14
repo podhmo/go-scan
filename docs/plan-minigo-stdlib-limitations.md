@@ -69,3 +69,37 @@ The testing approach was designed to uncover compatibility issues and limitation
     4. The script is loaded and evaluated by the interpreter.
     5. The state of the interpreter's global environment is checked to assert that the script produced the correct results.
 - **Goal-Oriented Testing**: The goal is to test both common use cases and boundary conditions to ensure broad compatibility. The initial testing phase successfully identified several fundamental limitations in the interpreter, which currently block more extensive testing. The tests have been adapted to validate the working functionality while clearly documenting these limitations.
+
+### Analysis of Incompatible Go Features
+
+The investigation into supporting the standard library via direct source interpretation has revealed several fundamental Go features and coding patterns that are incompatible with the current `minigo` interpreter. FFI bindings remain the only viable option for packages that rely on these features.
+
+1.  **CGO, `syscall`, and `unsafe`**:
+    -   **Description**: Many core packages (`os`, `net`, `time`) rely on CGO, direct system calls (`syscall`), or the `unsafe` package to interact with the operating system kernel.
+    -   **Limitation**: `minigo` is a sandboxed, pure Go interpreter. It has no mechanism to execute C code, make system calls, or perform unsafe memory operations. This is a hard security and implementation boundary.
+    -   **Impact**: Any package using these features is fundamentally incompatible with direct source interpretation.
+
+2.  **Sequential Declaration Processing**:
+    -   **Description**: In Go, the order of top-level declarations (functions, types, constants, variables) within a single file does not matter. A function can legally reference a type or constant defined later in the file.
+    -   **Limitation**: The `minigo` interpreter processes source files sequentially. It fails to resolve identifiers that are used before they are declared. This was observed in packages like `errors`, `strconv`, `path/filepath`, and `encoding/json`.
+    -   **Impact**: This is the most common blocker for simple and complex packages alike, as this declaration pattern is widespread in the standard library for organizing code.
+
+3.  **Method Calls on Go Objects**:
+    -   **Description**: A common Go pattern is for a function to return a struct, on which the user then calls methods (e.g., `t := time.Now(); year := t.Year()`).
+    -   **Limitation**: This was a known limitation of the FFI bridge, but it also applies to direct source interpretation. `minigo` cannot resolve method calls on Go objects that are returned from or passed into the interpreted environment.
+    -   **Impact**: Affects a vast number of packages, including `time`, `net/url`, `regexp`, `text/template`, etc.
+
+4.  **Lack of Transitive Dependency Resolution**:
+    -   **Description**: Go packages often import other packages to function (e.g., `sort` imports `slices`).
+    -   **Limitation**: When `minigo` interprets a source file for a package (e.g., `sort`), it does not automatically interpret the source for the packages it imports (`slices`).
+    -   **Impact**: This prevents packages that build on each other from working, requiring a manual and complex process of pre-loading all dependencies.
+
+5.  **Incomplete Language Feature Support**:
+    -   **Description**: The standard library uses the full Go language specification.
+    -   **Limitation**: `minigo` only implements a subset of the Go language. Key missing features discovered during this investigation include string indexing (`s[i]`) and correct parsing of all function signature variations.
+    -   **Impact**: Even simple packages like `strings` fail because they use common language features that `minigo` lacks.
+
+6.  **Complex Reflection (`reflect`)**:
+    -   **Description**: Packages like `encoding/json` and `fmt` rely heavily on reflection to inspect and manipulate arbitrary data structures at runtime.
+    -   **Limitation**: While many tests failed before hitting reflection-specific code, it is assumed that `minigo`'s support for reflection is insufficient for the complex operations performed in these packages.
+    -   **Impact**: Makes packages that provide generic serialization or formatting functionality unsuitable for direct interpretation.

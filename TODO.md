@@ -71,21 +71,21 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 
 ### Standard Library Migration to Direct Source Interpretation
 - [-] `bytes` (Direct source interpretation failed due to incorrect function signature parsing; FFI binding retained)
-- [ ] `encoding/json`
+- [-] `encoding/json` (Direct source interpretation failed due to sequential declaration limitation; FFI binding retained)
 - [-] `errors` (Direct source interpretation failed due to sequential declaration limitation; FFI binding retained)
-- [ ] `fmt`
-- [ ] `io`
-- [ ] `math/rand`
-- [ ] `net/http`
-- [ ] `net/url`
-- [ ] `os`
-- [ ] `path/filepath`
-- [ ] `regexp`
+- [-] `fmt` (Not tested; guaranteed to fail due to reflection and complexity)
+- [-] `io` (Not tested; guaranteed to fail due to interface/method complexity)
+- [-] `math/rand` (Not tested; presumed to fail due to sequential declaration)
+- [-] `net/http` (Not tested; guaranteed to fail due to CGO, syscalls, interfaces, and methods)
+- [-] `net/url` (Not tested; guaranteed to fail due to method calls on `url.URL`)
+- [-] `os` (Not tested; guaranteed to fail due to CGO and syscalls)
+- [-] `path/filepath` (Direct source interpretation failed due to sequential declaration limitation; FFI binding retained)
+- [-] `regexp` (Not tested; guaranteed to fail due to method calls on `regexp.Regexp`)
 - [-] `sort` (Direct source interpretation failed due to lack of transitive dependency resolution; FFI binding retained)
-- [ ] `strconv`
+- [-] `strconv` (Direct source interpretation failed due to sequential declaration limitation; FFI binding retained)
 - [-] `strings` (Direct source interpretation failed due to lack of string indexing support; FFI binding retained)
-- [ ] `text/template`
-- [ ] `time`
+- [-] `text/template` (Not tested; guaranteed to fail due to reflection and complexity)
+- [-] `time` (Not tested; guaranteed to fail due to method calls on `time.Time`)
 
 ### `minigo` Standard Library Support (`slices`)
 - [x] **Implement source loading**: Add a mechanism (`LoadGoSourceAsPackage`) to load a Go source file and evaluate it as a self-contained package.

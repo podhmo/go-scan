@@ -96,7 +96,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     - [x] Variadic arguments in function calls (`...`).
 
 ### `minigo` FFI and Language Limitations ([docs/trouble-minigo-stdlib-limitations.md](./docs/trouble-minigo-stdlib-limitations.md))
-- [ ] **Implement Method Calls on Go Objects**: Enhance the interpreter to support calling methods on Go structs returned from bound functions (e.g., `(*bytes.Buffer).Write`). This is the highest-impact improvement for stdlib compatibility. (See `docs/trouble-minigo-stdlib-limitations.md`).
+- [x] **Implement Method Calls on Go Objects**: Enhance the interpreter to support calling methods on Go structs returned from bound functions (e.g., `(*bytes.Buffer).Write`). This is the highest-impact improvement for stdlib compatibility. (See `docs/trouble-minigo-stdlib-limitations.md`).
 - [ ] **Graceful Error Handling for Go Functions**: Modify the FFI to return `error` values from Go functions as `minigo` error objects, rather than halting execution.
 - [ ] **Improve FFI Support for Go Generics**: Update the binding generator to correctly handle (or at least ignore) generic Go functions to prevent it from generating non-compiling code. This is a limitation of the binding tool, not the core interpreter.
 - [ ] **Add `byte` as a Built-in Type**: Add the `byte` keyword as a built-in alias for `uint8` in the interpreter to support `[]byte` literals.

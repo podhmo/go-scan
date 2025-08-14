@@ -227,3 +227,33 @@ var s2 = slices.Clone(s)
 		t.Fatalf("expected s2 to have 3 elements, but got %d", len(s2Array.Elements))
 	}
 }
+
+func TestStdlib_methodCallOnGoObject(t *testing.T) {
+	script := `
+package main
+import "regexp"
+var re, err1 = regexp.Compile("p([a-z]+)ch")
+var matched = re.MatchString("peach")
+`
+	interp, err := minigo.NewInterpreter()
+	if err != nil {
+		t.Fatalf("failed to create interpreter: %+v", err)
+	}
+	stdregexp.Install(interp)
+
+	if err := interp.LoadFile("test.mgo", []byte(script)); err != nil {
+		t.Fatalf("failed to load script: %+v", err)
+	}
+	if _, err := interp.Eval(context.Background()); err != nil {
+		t.Fatalf("failed to evaluate script: %+v", err)
+	}
+
+	env := interp.GlobalEnvForTest()
+	if err, _ := env.Get("err1"); err != object.NIL {
+		t.Fatalf("err1 was not nil: %v", err)
+	}
+
+	if got, _ := env.Get("matched"); got != object.TRUE {
+		t.Errorf("expected 'matched' to be true, but got %v", got)
+	}
+}

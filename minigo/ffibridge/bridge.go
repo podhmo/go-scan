@@ -12,12 +12,12 @@
 // scenarios. For example, to support Go channels, a `ChannelBridge` could be
 // created:
 //
-//	// ChannelBridge could wrap a Go channel, allowing MiniGo code to send
-//	// and receive data from it. (NOT IMPLEMENTED)
-//	type ChannelBridge struct {
-//	    SourceChan reflect.Value // The native Go channel
-//	    // ... methods to convert between Go and MiniGo values ...
-//	}
+//   // ChannelBridge could wrap a Go channel, allowing MiniGo code to send
+//   // and receive data from it. (NOT IMPLEMENTED)
+//   type ChannelBridge struct {
+//       SourceChan reflect.Value // The native Go channel
+//       // ... methods to convert between Go and MiniGo values ...
+//   }
 //
 // Other potential uses include:
 // - Handling function pointers or callbacks from Go to MiniGo.
@@ -25,9 +25,8 @@
 package ffibridge
 
 import (
-	"reflect"
-
 	"github.com/podhmo/go-scan/minigo/object"
+	"reflect"
 )
 
 // Pointer is a bridge for passing MiniGo pointers to Go functions

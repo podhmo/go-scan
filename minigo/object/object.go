@@ -548,6 +548,7 @@ func (pt *PointerType) Inspect() string {
 	return "*" + pt.ElementType.Inspect()
 }
 
+
 // --- Array Object ---
 
 // Array represents an array data structure.

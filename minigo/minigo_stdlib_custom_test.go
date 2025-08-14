@@ -2,7 +2,6 @@ package minigo_test
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	// "time" // Temporarily unused until error handling is clarified
@@ -13,7 +12,6 @@ import (
 	// standard library bindings
 	stdbytes "github.com/podhmo/go-scan/minigo/stdlib/bytes"
 	stdregexp "github.com/podhmo/go-scan/minigo/stdlib/regexp"
-	stdslices "github.com/podhmo/go-scan/minigo/stdlib/slices"
 	// stdtime "github.com/podhmo/go-scan/minigo/stdlib/time" // Temporarily unused
 )
 
@@ -145,36 +143,5 @@ var r_compare_lt = bytes.Compare(c, a)
 	}
 	if got, _ := env.Get("r_compare_lt"); got.(*object.Integer).Value != -1 {
 		t.Errorf("expected 'r_compare_lt' to be -1, got %d", got.(*object.Integer).Value)
-	}
-}
-
-// TestStdlib_slices_empty_binding verifies that the 'slices' package can be imported
-// but that accessing its functions fails, confirming the binding is empty as intended.
-func TestStdlib_slices_empty_binding(t *testing.T) {
-	script := `
-package main
-import "slices"
-var x = slices.Clip // This should fail
-`
-	interp, err := minigo.NewInterpreter()
-	if err != nil {
-		t.Fatalf("failed to create interpreter: %+v", err)
-	}
-	stdslices.Install(interp)
-
-	if err := interp.LoadFile("test.mgo", []byte(script)); err != nil {
-		t.Fatalf("failed to load script with slices import: %+v", err)
-	}
-
-	// We expect an error during evaluation because 'slices.Clip' should not be defined.
-	_, err = interp.Eval(context.Background())
-	if err == nil {
-		t.Fatalf("expected an error when accessing a function from the empty slices package, but got none")
-	}
-
-	// Check if the error is the one we expect.
-	expectedErrorPart := `undefined: slices.Clip`
-	if !strings.Contains(err.Error(), expectedErrorPart) {
-		t.Errorf("expected error to contain %q, but got: %v", expectedErrorPart, err)
 	}
 }

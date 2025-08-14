@@ -22,8 +22,7 @@ STDLIB_PKGS= \
 	net/http \
 	net/url \
 	path/filepath \
-	sort \
-	slices
+	sort
 
 gen-stdlib:
 	rm -rf minigo/stdlib/* # clean first

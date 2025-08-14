@@ -1013,6 +1013,19 @@ func (e *Environment) Outer() *Environment {
 	return e.outer
 }
 
+// GetAll returns a map of all variables and constants defined in the current scope.
+// This is primarily for tools and special cases like building a package object from source.
+func (e *Environment) GetAll() map[string]Object {
+	all := make(map[string]Object)
+	for k, v := range e.store {
+		all[k] = *v
+	}
+	for k, v := range e.consts {
+		all[k] = v
+	}
+	return all
+}
+
 // Assign updates the value of an existing variable. It searches up through
 // the enclosing environments. If the variable is found, it's updated and
 // the function returns true. If it's not found, or if it's a constant,

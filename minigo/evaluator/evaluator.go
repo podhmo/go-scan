@@ -7,6 +7,7 @@ import (
 	"go/ast"
 	"go/token"
 	"io"
+	"os"
 	"reflect"
 	"strconv"
 	"strings"
@@ -17,8 +18,6 @@ import (
 )
 
 // SpecialFormFunction is the signature for special form functions.
-// It receives the evaluator instance, the current file scope, the position of the call,
-// and the *unevaluated* argument expressions.
 type SpecialFormFunction func(e *Evaluator, fscope *object.FileScope, pos token.Pos, args []ast.Expr) object.Object
 
 // SpecialForm represents a special form function.
@@ -473,9 +472,19 @@ func (e *Evaluator) inferTypeOf(obj object.Object) object.Object {
 		return &object.PointerType{ElementType: elemType}
 	case *object.Array:
 		// For a fully typed system, we would need to know the array's element type.
-		// For now, we can't infer a specific `[]T` type, so we return a generic indicator or nil.
-		// This part of inference is limited.
-		return nil
+		if len(o.Elements) == 0 {
+			// Cannot infer type from an empty slice.
+			// This is a known limitation in Go's type inference too.
+			// We could potentially return a special "any" type here if needed.
+			return nil
+		}
+		// Infer from the first element. Assumes a homogeneous slice.
+		elemType := e.inferTypeOf(o.Elements[0])
+		if elemType == nil {
+			return nil
+		}
+		// Return an ArrayType object that represents `[]<elemType>`
+		return &object.ArrayType{ElementType: elemType}
 	default:
 		// Fallback for types we can't infer simply.
 		return nil
@@ -527,7 +536,44 @@ func (e *Evaluator) inferGenericTypes(pos token.Pos, f *object.Function, args []
 		}
 	}
 
-	// 4. Convert the map of inferred types into an ordered slice
+	// 4. Second pass for constraint-based inference.
+	// This loop allows inferences to feed into each other. For example, inferring S
+	// might allow us to infer E, which might then be used in another constraint.
+	madeProgress := true
+	for madeProgress {
+		madeProgress = false
+		for _, typeParamField := range f.TypeParams.List {
+			paramName := typeParamField.Names[0].Name
+
+			// If we have an inferred type for this parameter...
+			if inferredType, ok := inferredTypes[paramName]; ok {
+				// ...and its constraint is an array/slice type...
+				constraintExpr := typeParamField.Type
+				if unary, ok := constraintExpr.(*ast.UnaryExpr); ok && unary.Op == token.TILDE {
+					constraintExpr = unary.X // Look past the ~
+				}
+
+				if arrayConstraint, ok := constraintExpr.(*ast.ArrayType); ok {
+					// ...and the inferred type is indeed an array...
+					if inferredArray, ok := inferredType.(*object.ArrayType); ok {
+						// ...then we can try to infer the element type parameter.
+						if elemParamIdent, ok := arrayConstraint.Elt.(*ast.Ident); ok {
+							elemParamName := elemParamIdent.Name
+							// If we haven't inferred this element type yet...
+							if _, alreadyInferred := inferredTypes[elemParamName]; !alreadyInferred {
+								// ...then infer it from the actual array's element type.
+								inferredTypes[elemParamName] = inferredArray.ElementType
+								madeProgress = true // We made progress, so loop again.
+							}
+						}
+					}
+				}
+				// TODO: Add cases for other constraints like map[K]V
+			}
+		}
+	}
+
+	// 5. Convert the map of inferred types into an ordered slice
 	finalTypeArgs := make([]object.Object, len(f.TypeParams.List))
 	for i, field := range f.TypeParams.List {
 		name := field.Names[0].Name
@@ -1617,14 +1663,36 @@ func (e *Evaluator) evalSwitchStmt(ss *ast.SwitchStmt, env *object.Environment, 
 }
 
 func (e *Evaluator) evalExpressions(exps []ast.Expr, env *object.Environment, fscope *object.FileScope) []object.Object {
-	result := make([]object.Object, len(exps))
+	result := []object.Object{}
 
-	for i, exp := range exps {
-		evaluated := e.Eval(exp, env, fscope)
-		if isError(evaluated) {
-			return []object.Object{evaluated}
+	for _, exp := range exps {
+		if ellipsis, ok := exp.(*ast.Ellipsis); ok {
+			argToSpread := e.Eval(ellipsis.Elt, env, fscope)
+			if isError(argToSpread) {
+				return []object.Object{argToSpread}
+			}
+
+			switch arg := argToSpread.(type) {
+			case *object.Array:
+				result = append(result, arg.Elements...)
+			case *object.GoValue:
+				if arg.Value.Kind() == reflect.Slice {
+					for i := 0; i < arg.Value.Len(); i++ {
+						result = append(result, e.nativeToValue(arg.Value.Index(i)))
+					}
+				} else {
+					return []object.Object{e.newError(ellipsis.Pos(), "argument to ... must be a slice, got %s", arg.Value.Type())}
+				}
+			default:
+				return []object.Object{e.newError(ellipsis.Pos(), "argument to ... must be a slice, got %s", argToSpread.Type())}
+			}
+		} else {
+			evaluated := e.Eval(exp, env, fscope)
+			if isError(evaluated) {
+				return []object.Object{evaluated}
+			}
+			result = append(result, evaluated)
 		}
-		result[i] = evaluated
 	}
 
 	return result
@@ -2083,9 +2151,35 @@ func (e *Evaluator) evalBranchStmt(bs *ast.BranchStmt, env *object.Environment, 
 	}
 }
 
+func (e *Evaluator) evalProgram(program *ast.File, env *object.Environment, fscope *object.FileScope) object.Object {
+	// First, evaluate all top-level declarations
+	for _, decl := range program.Decls {
+		result := e.Eval(decl, env, fscope)
+		if isError(result) {
+			return result
+		}
+	}
+
+	// After all declarations are processed, find and execute the main function.
+	mainObj, ok := env.Get("main")
+	if !ok {
+		return object.NIL // No main function, not an error
+	}
+
+	mainFn, ok := mainObj.(*object.Function)
+	if !ok {
+		return e.newError(program.Pos(), "main is not a function, but %s", mainObj.Type())
+	}
+
+	// Call the main function with no arguments.
+	return e.applyFunction(nil, mainFn, []object.Object{}, env, fscope)
+}
+
 func (e *Evaluator) Eval(node ast.Node, env *object.Environment, fscope *object.FileScope) object.Object {
 	switch n := node.(type) {
 	// Statements
+	case *ast.File:
+		return e.evalProgram(n, env, fscope)
 	case *ast.BlockStmt:
 		return e.evalBlockStatement(n, env, fscope)
 	case *ast.ExprStmt:
@@ -2404,9 +2498,97 @@ func (e *Evaluator) Eval(node ast.Node, env *object.Environment, fscope *object.
 			Fields:  n.Fields.List,
 			Methods: make(map[string]*object.Function),
 		}
+	case *ast.SliceExpr:
+		return e.evalSliceExpr(n, env, fscope)
 	}
 
 	return e.newError(node.Pos(), "evaluation not implemented for %T", node)
+}
+
+func (e *Evaluator) evalSliceExpr(node *ast.SliceExpr, env *object.Environment, fscope *object.FileScope) object.Object {
+	left := e.Eval(node.X, env, fscope)
+	if isError(left) {
+		return left
+	}
+
+	evalIndex := func(expr ast.Expr, defaultVal int64) (int64, object.Object) {
+		if expr == nil {
+			return defaultVal, nil
+		}
+		val := e.Eval(expr, env, fscope)
+		if isError(val) {
+			return 0, val
+		}
+		intVal, ok := val.(*object.Integer)
+		if !ok {
+			return 0, e.newError(expr.Pos(), "slice index must be an integer, got %s", val.Type())
+		}
+		return intVal.Value, nil
+	}
+
+	switch l := left.(type) {
+	case *object.Array:
+		capacity := int64(cap(l.Elements))
+		length := int64(len(l.Elements))
+
+		var err object.Object
+		var low, high, max int64
+
+		low, err = evalIndex(node.Low, 0)
+		if err != nil {
+			return err
+		}
+
+		high, err = evalIndex(node.High, length)
+		if err != nil {
+			return err
+		}
+
+		if node.Slice3 {
+			max, err = evalIndex(node.Max, capacity)
+			if err != nil {
+				return err
+			}
+		} else {
+			max = capacity
+		}
+
+		if low < 0 || high < low || max < high || high > capacity || max > capacity {
+			return e.newError(node.Pos(), "slice bounds out of range: low=%d, high=%d, max=%d, cap=%d", low, high, max, capacity)
+		}
+
+		// The Go equivalent of a[low:high:max] is (a[low:max])[:high-low]
+		subSlice := l.Elements[low:max]
+		finalSlice := subSlice[:high-low]
+		return &object.Array{Elements: finalSlice}
+
+	case *object.String:
+		length := int64(len(l.Value))
+		var err object.Object
+		var low, high int64
+
+		low, err = evalIndex(node.Low, 0)
+		if err != nil {
+			return err
+		}
+		high, err = evalIndex(node.High, length)
+		if err != nil {
+			return err
+		}
+
+		if node.Slice3 {
+			return e.newError(node.Pos(), "full slice expression not supported for strings")
+		}
+
+		if low < 0 || high < low || high > length {
+			return e.newError(node.Pos(), "slice bounds out of range: low=%d, high=%d, len=%d", low, high, length)
+		}
+
+		return &object.String{Value: l.Value[low:high]}
+
+	default:
+		return e.newError(node.Pos(), "slice operator not supported for %s", left.Type())
+	}
 }
 
 func (e *Evaluator) evalGenDecl(n *ast.GenDecl, env *object.Environment, fscope *object.FileScope) object.Object {
@@ -2909,6 +3091,38 @@ func (e *Evaluator) assignValue(lhs ast.Expr, val object.Object, env *object.Env
 		}
 		*ptr.Element = val
 		return val
+	case *ast.IndexExpr:
+		indexed := e.Eval(lhsNode.X, env, fscope)
+		if isError(indexed) {
+			return indexed
+		}
+		index := e.Eval(lhsNode.Index, env, fscope)
+		if isError(index) {
+			return index
+		}
+		switch obj := indexed.(type) {
+		case *object.Array:
+			intIndex, ok := index.(*object.Integer)
+			if !ok {
+				return e.newError(lhsNode.Index.Pos(), "index into array is not an integer")
+			}
+			idx := intIndex.Value
+			if idx < 0 || idx >= int64(len(obj.Elements)) {
+				return e.newError(lhsNode.Index.Pos(), "runtime error: index out of range")
+			}
+			obj.Elements[idx] = val
+			return val
+		case *object.Map:
+			key, ok := index.(object.Hashable)
+			if !ok {
+				return e.newError(lhsNode.Index.Pos(), "unusable as map key: %s", index.Type())
+			}
+			hashKey := key.HashKey()
+			obj.Pairs[hashKey] = object.MapPair{Key: index, Value: val}
+			return val
+		default:
+			return e.newError(lhsNode.X.Pos(), "index assignment not supported for %s", indexed.Type())
+		}
 	default:
 		return e.newError(lhs.Pos(), "unsupported assignment target")
 	}
@@ -3462,7 +3676,10 @@ func (e *Evaluator) evalCompositeLit(n *ast.CompositeLit, env *object.Environmen
 		if len(elements) == 1 && isError(elements[0]) {
 			return elements[0]
 		}
-		return &object.Array{Elements: elements}
+		// Create a new slice with capacity equal to length to mimic Go's behavior for literals.
+		finalElements := make([]object.Object, len(elements))
+		copy(finalElements, elements)
+		return &object.Array{Elements: finalElements}
 
 	case *object.MapType:
 		return e.evalMapLiteral(n, env, fscope)

@@ -23,7 +23,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     - **In-Memory File Overlay**: Allows providing file content in memory, essential for testing and tools that modify code before scanning.
     - **Debuggability**: Provides `--inspect` and `--dry-run` modes for easier debugging and testing of code generators.
 - **`minigo` Script Engine**: A nearly complete, embeddable script engine that interprets a large subset of Go.
-    - **Core Interpreter**: The engine is fully implemented, supporting expressions, variables (`var`, `const`, `iota`), assignments, and all major control flow statements (`if`, `for`, `switch`, `break`, `continue`).
+    - **Core Interpreter**: The engine is fully implemented, a`supp`orting expressions, variables (`var`, `const`, `iota`), assignments, and all major control flow statements (`if`, `for`, `switch`, `break`, `continue`).
     - **Functions and Data Structures**: Supports user-defined functions, rich error reporting with stack traces, and composite types including structs, slices, and maps.
     - **Advanced Language Features**: Includes full support for pointers (`&`, `*`), method definitions on structs, interface definitions and dynamic dispatch, struct embedding, and basic generics.
     - **Go Interoperability**: Provides a robust bridge to Go, allowing scripts to call Go functions, access Go variables, and unmarshal script results back into Go structs via `Result.As()`. Lazy, on-demand loading of imported Go packages is also supported.
@@ -69,6 +69,24 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 
 ## To Be Implemented
 
+### Standard Library Migration to Direct Source Interpretation
+- [-] `bytes` (Direct source interpretation failed due to incorrect function signature parsing; FFI binding retained)
+- [-] `encoding/json` (Direct source interpretation failed due to sequential declaration limitation; FFI binding retained)
+- [-] `errors` (Direct source interpretation failed due to sequential declaration limitation; FFI binding retained)
+- [-] `fmt` (Not tested; guaranteed to fail due to reflection and complexity)
+- [-] `io` (Not tested; guaranteed to fail due to interface/method complexity)
+- [-] `math/rand` (Not tested; presumed to fail due to sequential declaration)
+- [-] `net/http` (Not tested; guaranteed to fail due to CGO, syscalls, interfaces, and methods)
+- [-] `net/url` (Not tested; guaranteed to fail due to method calls on `url.URL`)
+- [-] `os` (Not tested; guaranteed to fail due to CGO and syscalls)
+- [-] `path/filepath` (Direct source interpretation failed due to sequential declaration limitation; FFI binding retained)
+- [-] `regexp` (Not tested; guaranteed to fail due to method calls on `regexp.Regexp`)
+- [-] `sort` (Direct source interpretation failed due to lack of transitive dependency resolution; FFI binding retained)
+- [-] `strconv` (Direct source interpretation failed due to sequential declaration limitation; FFI binding retained)
+- [-] `strings` (Direct source interpretation failed due to lack of string indexing support; FFI binding retained)
+- [-] `text/template` (Not tested; guaranteed to fail due to reflection and complexity)
+- [-] `time` (Not tested; guaranteed to fail due to method calls on `time.Time`)
+
 ### `minigo` Standard Library Support (`slices`)
 - [x] **Implement source loading**: Add a mechanism (`LoadGoSourceAsPackage`) to load a Go source file and evaluate it as a self-contained package.
 - [x] **Add required language features**: To support `slices.Clone`, implement the following in the evaluator:
@@ -86,6 +104,12 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [ ] **Graceful Error Handling for Go Functions**: Modify the FFI to return `error` values from Go functions as `minigo` error objects, rather than halting execution.
 - [ ] **Improve FFI Support for Go Generics**: Update the binding generator to correctly handle (or at least ignore) generic Go functions to prevent it from generating non-compiling code. This is a limitation of the binding tool, not the core interpreter.
 - [ ] **Add `byte` as a Built-in Type**: Add the `byte` keyword as a built-in alias for `uint8` in the interpreter to support `[]byte` literals.
+
+### Future Interpreter Enhancements (for Stdlib Support)
+- [ ] **Implement two-pass evaluation for top-level declarations**: To fix the "Sequential Declaration Processing" limitation, modify the interpreter to first scan all top-level declarations (types, funcs, vars, consts) in a package before evaluating any code.
+- [ ] **Add support for string indexing**: Enhance the evaluator to handle the index operator (`s[i]`) on string objects.
+- [ ] **Implement transitive dependency loading**: Add a mechanism to the interpreter to automatically load and parse imported packages that are not already in memory.
+- [ ] **Audit and fix function signature parsing**: Investigate and fix bugs in the function signature parsing logic, using the `bytes.Equal` case as a starting point.
 
 ### `minigo` Refinements ([docs/plan-minigo.md](./docs/plan-minigo.md))
 - [x] **Implement Remaining Built-in Functions**:

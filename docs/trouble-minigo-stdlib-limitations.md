@@ -50,3 +50,52 @@ The investigation revealed several fundamental limitations in the FFI bridge. Th
 -   **Error Handling**: The FFI bridge (`ffibridge`) needs to be modified to check for non-nil error return values and wrap them in a `minigo` error object instead of panicking. This seems more achievable than full method support.
 -   **Generics (for FFI)**: The binding generator could be improved to simply ignore generic functions, preventing it from generating non-compiling code. However, given the success of the source interpretation method, improving the FFI generator for generics is a low priority.
 -   **`byte` Keyword**: This would require adding `byte` as a built-in type alias for `uint8` in the `minigo` parser or evaluator. This is a feasible fix.
+
+### `errors`
+
+-   **Limitation (Direct Source Interpretation)**: Sequential Declaration Order.
+-   **Analysis**: An attempt to load `errors` via direct source interpretation fails with the error `identifier not found: errorString`. This occurs because the standard library's `errors.go` file defines the `New` function *before* it defines the unexported `errorString` struct that `New` returns. The `minigo` interpreter appears to process top-level declarations sequentially and does not resolve symbols that are defined later in the same file. This limitation makes it incompatible with standard Go source files that rely on out-of-order declarations.
+
+### `strings`
+
+-   **Limitation (Direct Source Interpretation)**: No String Indexing.
+-   **Analysis**: An attempt to use `strings.ToUpper` fails with the error `index operator not supported for STRING`. The `minigo` interpreter does not currently support accessing individual characters or bytes of a string via an index (e.g., `s[i]`). This is a fundamental language feature required by many functions in the `strings` package.
+
+### `sort`
+
+-   **Limitation (Direct Source Interpretation)**: No Transitive Dependency Resolution.
+-   **Analysis**: An attempt to use `sort.Ints` fails with the error `identifier not found: slices`. The root cause is that the lazy-loading mechanism is not recursive.
+    -   **Code Path**: When `sort.Ints` is first accessed, `minigo` correctly finds and parses `sort.go` to get the AST for the `Ints` function.
+    -   **The Flaw**: When the interpreter later evaluates the body of the `Ints` function (`slices.Sort(x)`), it does so using the file scope (`fscope`) of the *original user script*. The `import "slices"` statement at the top of `sort.go` is never processed by the `minigo` evaluator to create a new file scope for the context of the `sort` package. As a result, the identifier `slices` is not defined in the environment, and the evaluation fails.
+    -   **Conclusion**: The current implementation only lazy-loads symbols from packages directly imported by the user's script. It does not handle `import` statements within the source code of its dependencies.
+
+### `bytes`
+
+-   **Limitation (Direct Source Interpretation)**: Incorrect Function Signature Parsing.
+-   **Analysis**: An attempt to use `bytes.Equal` fails with the error `wrong number of arguments. got=2, want=1`. The `minigo` interpreter incorrectly determines that `bytes.Equal` takes only one argument, despite its Go signature being `func Equal(a, b []byte) bool`. This suggests a flaw in how the interpreter parses or registers function signatures from source files.
+
+### `path/filepath`
+
+-   **Limitation (Direct Source Interpretation)**: Sequential Declaration Order.
+-   **Analysis**: An attempt to use `filepath.Join` fails with the error `identifier not found: join`. This is the same limitation discovered with the `errors` package, where an exported function relies on an unexported helper function that is defined later in the source file.
+
+### `strconv`
+
+-   **Limitation (Direct Source Interpretation)**: Sequential Declaration Order.
+-   **Analysis**: An attempt to use `strconv.Atoi` fails with the error `identifier not found: intSize`. This is another instance of the sequential declaration limitation, where an unexported constant (`intSize`) is used by a function before it has been declared in the file.
+
+### `encoding/json`
+
+-   **Limitation (Direct Source Interpretation)**: Sequential Declaration Order.
+-   **Analysis**: An attempt to use `json.Marshal` fails with the error `identifier not found: newEncodeState`. The test did not even reach code that uses `reflect`, as it was blocked by the same sequential declaration limitation seen in other packages. An unexported helper function (`newEncodeState`) is called before it is defined in the source file.
+
+---
+
+## Analysis of Untested Complex Packages
+
+Based on the limitations discovered above, the remaining standard library packages were not individually tested, as their failure is predictable.
+
+-   **`os`, `net/http`, `net`**: These packages are fundamentally incompatible because they rely on `CGO` and direct `syscalls` to interact with the operating system and network stack. The `minigo` interpreter is pure Go and cannot execute C code or make system calls.
+-   **`time`, `net/url`, `regexp`**: These packages rely heavily on methods defined on their core struct types (`time.Time`, `url.URL`, `regexp.Regexp`). As discovered with the FFI-based tests, `minigo` does not support method calls on Go objects, so these would fail.
+-   **`io`**: This package's utility comes from its core interfaces, `io.Reader` and `io.Writer`. While `minigo` has some support for interfaces, the complexity of implementing and using them for I/O operations is beyond its current capabilities.
+-   **`fmt`, `text/template`**: These packages are highly complex and make extensive use of reflection (`reflect`), which is not fully supported by `minigo`. They would also fail due to the other limitations already identified (sequential declaration, method calls, etc.).

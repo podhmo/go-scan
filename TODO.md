@@ -94,10 +94,6 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     - [x] Assignment to index expressions (`slice[i] = value`).
     - [x] Full 3-index slice expressions (`slice[low:high:max]`).
     - [x] Variadic arguments in function calls (`...`).
-- [ ] **Fix `slices.Clone` bug**: The test for `slices.Clone` is failing. The clone is not created correctly, resulting in a nested array (`[[1 2 3]]`) instead of a flat one.
-    - **Problem**: Debugging shows that the `append` builtin is not being called from within the context of the loaded `Clone` function.
-    - **Hypothesis**: There is an issue with the environment scoping when calling a builtin from a function that was loaded from an external Go source file. The `append` identifier is not resolving to the builtin as expected.
-    - **Next Step**: Investigate the environment chain (`globalEnv` -> `pkgEnv` -> `funcEnv`) during the evaluation of `slices.Clone` to find why the builtin is not being resolved.
 
 ### `minigo` FFI and Language Limitations ([docs/trouble-minigo-stdlib-limitations.md](./docs/trouble-minigo-stdlib-limitations.md))
 - [ ] **Implement Method Calls on Go Objects**: Enhance the interpreter to support calling methods on Go structs returned from bound functions (e.g., `(*bytes.Buffer).Write`). This is the highest-impact improvement for stdlib compatibility. (See `docs/trouble-minigo-stdlib-limitations.md`).

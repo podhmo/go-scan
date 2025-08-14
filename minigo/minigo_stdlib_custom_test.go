@@ -228,7 +228,7 @@ var s2 = slices.Clone(s)
 	}
 }
 
-func TestStdlib_methodCallOnGoObject(t *testing.T) {
+func TestStdlib_regexp(t *testing.T) {
 	script := `
 package main
 import "regexp"

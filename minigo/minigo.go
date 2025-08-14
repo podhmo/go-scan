@@ -25,15 +25,13 @@ type Interpreter struct {
 	globalEnv     *object.Environment
 	specialForms  map[string]*evaluator.SpecialForm
 	files         []*object.FileScope
-	packages      map[string]*object.Package // Cache for loaded packages, keyed by path
-	replFileScope *object.FileScope          // Persistent scope for the REPL session
+	packages      map[string]*object.Package
+	replFileScope *object.FileScope
 
-	// I/O streams
 	stdin  io.Reader
 	stdout io.Writer
 	stderr io.Writer
 
-	// Internal fields for configuration
 	scannerOptions []goscan.ScannerOption
 }
 
@@ -68,8 +66,28 @@ func WithScannerOptions(opts ...goscan.ScannerOption) Option {
 	}
 }
 
-// NewInterpreter creates a new interpreter instance.
-// It initializes a scanner and a root environment, configured with options.
+// WithGlobals allows injecting Go variables into the script's global scope.
+// The map key is the variable name in the script.
+// The value can be any Go variable, which will be made available via reflection.
+func WithGlobals(globals map[string]any) Option {
+	return func(i *Interpreter) {
+		for name, value := range globals {
+			i.globalEnv.Set(name, &object.GoValue{Value: reflect.ValueOf(value)})
+		}
+	}
+}
+
+// New creates a new interpreter instance with default I/O streams.
+// It panics if initialization fails.
+func New(r io.Reader, stdout, stderr io.Writer) *Interpreter {
+	i, err := NewInterpreter(WithStdin(r), WithStdout(stdout), WithStderr(stderr))
+	if err != nil {
+		panic(err) // Should not happen with default options
+	}
+	return i
+}
+
+// NewInterpreter creates a new interpreter instance, configured with options.
 func NewInterpreter(options ...Option) (*Interpreter, error) {
 	i := &Interpreter{
 		Registry:     object.NewSymbolRegistry(),
@@ -77,24 +95,22 @@ func NewInterpreter(options ...Option) (*Interpreter, error) {
 		specialForms: make(map[string]*evaluator.SpecialForm),
 		files:        make([]*object.FileScope, 0),
 		packages:     make(map[string]*object.Package),
-
-		// Default I/O
-		stdin:  os.Stdin,
-		stdout: os.Stdout,
-		stderr: os.Stderr,
+		stdin:        os.Stdin,
+		stdout:       os.Stdout,
+		stderr:       os.Stderr,
 	}
 
 	for _, opt := range options {
 		opt(i)
 	}
 
+	i.scannerOptions = append(i.scannerOptions, goscan.WithGoModuleResolver())
 	scanner, err := goscan.New(i.scannerOptions...)
 	if err != nil {
 		return nil, fmt.Errorf("initializing scanner: %w", err)
 	}
 	i.scanner = scanner
 
-	// Initialize the evaluator here, so it persists for the lifetime of the interpreter.
 	i.eval = evaluator.New(evaluator.Config{
 		Fset:         i.scanner.Fset(),
 		Scanner:      i.scanner,
@@ -124,23 +140,56 @@ func (i *Interpreter) RegisterSpecial(name string, fn evaluator.SpecialFormFunct
 	i.specialForms[name] = &evaluator.SpecialForm{Fn: fn}
 }
 
-// Options configures the interpreter environment.
-type Options struct {
-	// Globals allows injecting Go variables into the script's global scope.
-	// The map key is the variable name in the script.
-	// The value can be any Go variable, which will be made available via reflection.
-	Globals map[string]any
+// LoadGoSourceAsPackage parses and evaluates a single Go source file as a self-contained package.
+func (i *Interpreter) LoadGoSourceAsPackage(pkgName, source string) error {
+	node, err := parser.ParseFile(i.scanner.Fset(), pkgName+".go", source, parser.ParseComments)
+	if err != nil {
+		return fmt.Errorf("parsing source for package %q: %w", pkgName, err)
+	}
 
-	// Source is the script content.
-	Source []byte
+	pkgObj := &object.Package{
+		Name:    pkgName,
+		Path:    pkgName,
+		Members: make(map[string]object.Object),
+	}
 
-	// Filename is the name of the script file, used for error messages.
-	Filename string
+	pkgEnv := object.NewEnclosedEnvironment(i.globalEnv)
+	fileScope := object.NewFileScope(node)
+
+	for _, decl := range node.Decls {
+		result := i.eval.Eval(decl, pkgEnv, fileScope)
+		if isError(result) {
+			return fmt.Errorf("error evaluating declaration in %s: %s", pkgName, result.Inspect())
+		}
+	}
+
+	for name, obj := range pkgEnv.GetAll() {
+		pkgObj.Members[name] = obj
+	}
+
+	i.packages[pkgName] = pkgObj
+	return nil
+}
+
+// EvalString evaluates the given source code string as a complete file.
+// It parses the source, evaluates all declarations, and then executes the main function if it exists.
+func (i *Interpreter) EvalString(source string) (object.Object, error) {
+	fset := i.scanner.Fset()
+	node, err := parser.ParseFile(fset, "main.go", source, parser.ParseComments)
+	if err != nil {
+		return nil, fmt.Errorf("parsing script: %w", err)
+	}
+
+	fileScope := object.NewFileScope(node)
+	result := i.eval.Eval(node, i.globalEnv, fileScope)
+	if err, ok := result.(*object.Error); ok {
+		return nil, fmt.Errorf("%s", err.Inspect())
+	}
+	return result, nil
 }
 
 // Result holds the outcome of a script execution.
 type Result struct {
-	// Value is the raw minigo object returned by the script.
 	Value object.Object
 }
 
@@ -152,15 +201,10 @@ func (r *Result) As(target any) error {
 	if target == nil {
 		return fmt.Errorf("target cannot be nil")
 	}
-
 	dstVal := reflect.ValueOf(target)
-	if dstVal.Kind() != reflect.Ptr {
-		return fmt.Errorf("target must be a pointer, but got %T", target)
+	if dstVal.Kind() != reflect.Ptr || dstVal.IsNil() {
+		return fmt.Errorf("target must be a non-nil pointer, but got %T", target)
 	}
-	if dstVal.IsNil() {
-		return fmt.Errorf("target pointer cannot be nil")
-	}
-
 	return unmarshal(r.Value, dstVal.Elem())
 }
 
@@ -170,21 +214,16 @@ func unmarshal(src object.Object, dst reflect.Value) error {
 	if !dst.CanSet() {
 		return fmt.Errorf("cannot set destination value of type %s", dst.Type())
 	}
-
-	// Dereference pointers until we reach a non-pointer or a nil pointer.
 	for dst.Kind() == reflect.Ptr {
 		if dst.IsNil() {
 			dst.Set(reflect.New(dst.Type().Elem()))
 		}
 		dst = dst.Elem()
 	}
-
 	switch s := src.(type) {
 	case *object.Nil:
-		// Set the destination to its zero value (e.g., nil for slices/maps/pointers).
 		dst.Set(reflect.Zero(dst.Type()))
 		return nil
-
 	case *object.Integer:
 		switch dst.Kind() {
 		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
@@ -197,24 +236,20 @@ func unmarshal(src object.Object, dst reflect.Value) error {
 			return fmt.Errorf("cannot unmarshal integer into %s", dst.Type())
 		}
 		return nil
-
 	case *object.String:
 		if dst.Kind() != reflect.String {
 			return fmt.Errorf("cannot unmarshal string into %s", dst.Type())
 		}
 		dst.SetString(s.Value)
 		return nil
-
 	case *object.Boolean:
 		if dst.Kind() != reflect.Bool {
 			return fmt.Errorf("cannot unmarshal boolean into %s", dst.Type())
 		}
 		dst.SetBool(s.Value)
 		return nil
-
 	case *object.GoValue:
 		if !s.Value.Type().AssignableTo(dst.Type()) {
-			// Allow conversion if possible (e.g., from `int` to `int64`)
 			if s.Value.Type().ConvertibleTo(dst.Type()) {
 				dst.Set(s.Value.Convert(dst.Type()))
 				return nil
@@ -223,7 +258,6 @@ func unmarshal(src object.Object, dst reflect.Value) error {
 		}
 		dst.Set(s.Value)
 		return nil
-
 	case *object.Array:
 		if dst.Kind() != reflect.Slice {
 			return fmt.Errorf("cannot unmarshal array into non-slice type %s", dst.Type())
@@ -237,7 +271,6 @@ func unmarshal(src object.Object, dst reflect.Value) error {
 		}
 		dst.Set(newSlice)
 		return nil
-
 	case *object.Map:
 		if dst.Kind() != reflect.Map {
 			return fmt.Errorf("cannot unmarshal map into non-map type %s", dst.Type())
@@ -259,22 +292,18 @@ func unmarshal(src object.Object, dst reflect.Value) error {
 		}
 		dst.Set(newMap)
 		return nil
-
 	case *object.StructInstance:
 		if dst.Kind() != reflect.Struct {
 			return fmt.Errorf("cannot unmarshal struct instance into non-struct type %s", dst.Type())
 		}
-		// Create a map of destination fields for easy lookup (case-insensitive).
 		dstFields := make(map[string]reflect.Value)
 		for i := 0; i < dst.NumField(); i++ {
 			field := dst.Type().Field(i)
-			// Skip unexported fields.
 			if field.PkgPath != "" {
 				continue
 			}
 			dstFields[strings.ToLower(field.Name)] = dst.Field(i)
 		}
-
 		for fieldName, srcFieldVal := range s.Fields {
 			if dstField, ok := dstFields[strings.ToLower(fieldName)]; ok {
 				if err := unmarshal(srcFieldVal, dstField); err != nil {
@@ -283,7 +312,6 @@ func unmarshal(src object.Object, dst reflect.Value) error {
 			}
 		}
 		return nil
-
 	default:
 		return fmt.Errorf("unsupported object type for unmarshaling: %s", src.Type())
 	}
@@ -292,7 +320,7 @@ func unmarshal(src object.Object, dst reflect.Value) error {
 // LoadFile parses a file and adds it to the interpreter's state without evaluating it yet.
 // This is the first stage of a multi-file evaluation.
 func (i *Interpreter) LoadFile(filename string, source []byte) error {
-	fset := i.scanner.Fset() // A single fset for the whole interpreter might be better.
+	fset := i.scanner.Fset()
 	node, err := parser.ParseFile(fset, filename, source, parser.ParseComments)
 	if err != nil {
 		return fmt.Errorf("parsing script %q: %w", filename, err)
@@ -316,19 +344,15 @@ func (i *Interpreter) EvalDeclarations(ctx context.Context) error {
 }
 
 // Eval executes the loaded files.
-// It first processes all declarations and then can optionally run an entry point function.
+// It first processes all declarations and then runs the main function if it exists.
 func (i *Interpreter) Eval(ctx context.Context) (*Result, error) {
 	if err := i.EvalDeclarations(ctx); err != nil {
 		return nil, err
 	}
-
-	// After declarations, find and execute the main function.
 	mainFunc, fscope, err := i.FindFunction("main")
 	if err != nil {
-		// If main doesn't exist, it's not an error. The script might just be a library.
 		return &Result{Value: object.NIL}, nil
 	}
-
 	return i.Execute(ctx, mainFunc, nil, fscope)
 }
 
@@ -342,36 +366,70 @@ func (i *Interpreter) FindFunction(name string) (*object.Function, *object.FileS
 	if !ok {
 		return nil, nil, fmt.Errorf("%q is not a function, but %s", name, obj.Type())
 	}
-
-	// Find the file scope associated with the function's environment.
-	// This is a bit of a hack; a better way would be to store the file scope
-	// with the function object itself. A top-level function's environment is the global one.
 	if fn.Env == i.globalEnv {
-		// This doesn't uniquely identify the file if main is defined in multiple files.
-		// For now, we just return the first file scope. This is a limitation.
 		if len(i.files) > 0 {
 			return fn, i.files[0], nil
 		}
 	}
-
 	return fn, nil, fmt.Errorf("could not find file scope for function %q", name)
 }
 
 // Execute runs a given function with the provided arguments using the interpreter's persistent evaluator.
 func (i *Interpreter) Execute(ctx context.Context, fn *object.Function, args []object.Object, fscope *object.FileScope) (*Result, error) {
-	// We pass a nil CallExpr because we are not in a real call site from the source.
 	result := i.eval.ApplyFunction(nil, fn, args, fscope)
 	if err, ok := result.(*object.Error); ok {
 		return nil, fmt.Errorf("%s", err.Inspect())
 	}
-
 	return &Result{Value: result}, nil
 }
 
-// GlobalEnvForTest returns the interpreter's global environment.
-// This method is intended for use in tests only.
-func (i *Interpreter) GlobalEnvForTest() *object.Environment {
-	return i.globalEnv
+// EvalLine evaluates a single line of input for the REPL.
+// It maintains state across calls by using a persistent, single FileScope.
+func (i *Interpreter) EvalLine(ctx context.Context, line string) (object.Object, error) {
+	if i.replFileScope == nil {
+		node, err := parser.ParseFile(i.scanner.Fset(), "REPL", "package REPL", parser.ParseComments)
+		if err != nil {
+			return nil, fmt.Errorf("initializing repl scope: %w", err)
+		}
+		i.replFileScope = object.NewFileScope(node)
+	}
+	srcAsDecl := "package REPL\n" + line
+	node, err := parser.ParseFile(i.scanner.Fset(), "REPL", srcAsDecl, parser.ParseComments)
+	if err == nil {
+		i.replFileScope.AST.Decls = append(i.replFileScope.AST.Decls, node.Decls...)
+		var result object.Object = object.NIL
+		for _, decl := range node.Decls {
+			result = i.eval.Eval(decl, i.globalEnv, i.replFileScope)
+			if err, ok := result.(*object.Error); ok {
+				return nil, fmt.Errorf("%s", err.Inspect())
+			}
+		}
+		return result, nil
+	}
+	srcAsStmt := "package REPL\nfunc _() {\n" + line + "\n}"
+	node, err = parser.ParseFile(i.scanner.Fset(), "REPL", srcAsStmt, parser.ParseComments)
+	if err != nil {
+		return nil, err
+	}
+	if len(node.Decls) == 0 || len(node.Decls[0].(*ast.FuncDecl).Body.List) == 0 {
+		return object.NIL, nil // Empty line or just comments
+	}
+	stmts := node.Decls[0].(*ast.FuncDecl).Body.List
+	var result object.Object = object.NIL
+	for _, stmt := range stmts {
+		result = i.eval.Eval(stmt, i.globalEnv, i.replFileScope)
+		if err, ok := result.(*object.Error); ok {
+			return nil, fmt.Errorf("%s", err.Inspect())
+		}
+	}
+	return result, nil
+}
+
+func isError(obj object.Object) bool {
+	if obj != nil {
+		return obj.Type() == object.ERROR_OBJ
+	}
+	return false
 }
 
 // evaluatorForTest returns the interpreter's evaluator instance.
@@ -380,24 +438,12 @@ func (i *Interpreter) evaluatorForTest() *evaluator.Evaluator {
 	return i.eval
 }
 
-// Scanner returns the underlying goscan.Scanner instance.
-func (i *Interpreter) Scanner() *goscan.Scanner {
-	return i.scanner
-}
-
-// Files returns the file scopes that have been loaded into the interpreter.
-func (i *Interpreter) Files() []*object.FileScope {
-	return i.files
-}
-
-const replFilename = "REPL"
-
 // EvalFileInREPL parses and evaluates a file's declarations within the persistent REPL scope.
 // This allows loaded files to affect the REPL's state, including imports.
 func (i *Interpreter) EvalFileInREPL(ctx context.Context, filename string) error {
 	// Initialize the REPL's file scope on the first call, if it doesn't exist.
 	if i.replFileScope == nil {
-		node, err := parser.ParseFile(i.scanner.Fset(), replFilename, "package REPL", parser.ParseComments)
+		node, err := parser.ParseFile(i.scanner.Fset(), "REPL", "package REPL", parser.ParseComments)
 		if err != nil {
 			return fmt.Errorf("initializing repl scope: %w", err)
 		}
@@ -430,61 +476,18 @@ func (i *Interpreter) EvalFileInREPL(ctx context.Context, filename string) error
 	return nil
 }
 
-// EvalLine evaluates a single line of input, which is the core of the REPL.
-// It maintains state across calls by using a persistent, single FileScope.
-func (i *Interpreter) EvalLine(ctx context.Context, line string) (object.Object, error) {
-	// Initialize the REPL's file scope on the first call.
-	if i.replFileScope == nil {
-		// We create a dummy AST node because FileScope requires one.
-		// A valid Go file must start with a package declaration.
-		node, err := parser.ParseFile(i.scanner.Fset(), replFilename, "package REPL", parser.ParseComments)
-		if err != nil {
-			return nil, fmt.Errorf("initializing repl scope: %w", err)
-		}
-		i.replFileScope = object.NewFileScope(node)
-	}
+// Scanner returns the underlying goscan.Scanner instance.
+func (i *Interpreter) Scanner() *goscan.Scanner {
+	return i.scanner
+}
 
-	fset := i.scanner.Fset()
+// Files returns the file scopes that have been loaded into the interpreter.
+func (i *Interpreter) Files() []*object.FileScope {
+	return i.files
+}
 
-	// First, try to parse the line as a top-level declaration (var, func, import, etc.).
-	srcAsDecl := "package REPL\n" + line
-	node, err := parser.ParseFile(fset, replFilename, srcAsDecl, parser.ParseComments)
-	if err == nil {
-		// It's a valid declaration.
-		i.replFileScope.AST.Decls = append(i.replFileScope.AST.Decls, node.Decls...)
-		var result object.Object = object.NIL
-		for _, decl := range node.Decls {
-			result = i.eval.Eval(decl, i.globalEnv, i.replFileScope)
-			if err, ok := result.(*object.Error); ok {
-				return nil, fmt.Errorf("%s", err.Inspect())
-			}
-		}
-		return result, nil
-	}
-
-	// If parsing as a declaration fails, it might be a statement or expression.
-	// Wrap it in a function to parse it as a statement.
-	srcAsStmt := "package REPL\nfunc _() {\n" + line + "\n}"
-	node, err = parser.ParseFile(fset, replFilename, srcAsStmt, parser.ParseComments)
-	if err != nil {
-		// If it fails both ways, it's a real syntax error.
-		// Return the original, more intuitive error from the declaration parsing attempt.
-		return nil, err
-	}
-
-	// It's a valid statement. Extract it from the function body.
-	if len(node.Decls) == 0 || len(node.Decls[0].(*ast.FuncDecl).Body.List) == 0 {
-		return object.NIL, nil // Empty line or just comments
-	}
-	stmts := node.Decls[0].(*ast.FuncDecl).Body.List
-
-	var result object.Object = object.NIL
-	for _, stmt := range stmts {
-		result = i.eval.Eval(stmt, i.globalEnv, i.replFileScope)
-		if err, ok := result.(*object.Error); ok {
-			return nil, fmt.Errorf("%s", err.Inspect())
-		}
-	}
-
-	return result, nil
+// GlobalEnvForTest returns the interpreter's global environment.
+// This method is intended for use in tests only.
+func (i *Interpreter) GlobalEnvForTest() *object.Environment {
+	return i.globalEnv
 }

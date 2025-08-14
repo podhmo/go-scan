@@ -392,6 +392,44 @@ func (i *Interpreter) Files() []*object.FileScope {
 
 const replFilename = "REPL"
 
+// EvalFileInREPL parses and evaluates a file's declarations within the persistent REPL scope.
+// This allows loaded files to affect the REPL's state, including imports.
+func (i *Interpreter) EvalFileInREPL(ctx context.Context, filename string) error {
+	// Initialize the REPL's file scope on the first call, if it doesn't exist.
+	if i.replFileScope == nil {
+		node, err := parser.ParseFile(i.scanner.Fset(), replFilename, "package REPL", parser.ParseComments)
+		if err != nil {
+			return fmt.Errorf("initializing repl scope: %w", err)
+		}
+		i.replFileScope = object.NewFileScope(node)
+	}
+
+	source, err := os.ReadFile(filename)
+	if err != nil {
+		return fmt.Errorf("reading file %q: %w", filename, err)
+	}
+
+	// Parse the file content.
+	node, err := parser.ParseFile(i.scanner.Fset(), filename, source, parser.ParseComments)
+	if err != nil {
+		return fmt.Errorf("parsing script %q: %w", filename, err)
+	}
+
+	// Add the declarations from the loaded file to the REPL's scope AST.
+	i.replFileScope.AST.Decls = append(i.replFileScope.AST.Decls, node.Decls...)
+
+	// Evaluate each new declaration in the context of the REPL.
+	// This will process imports and function/variable definitions.
+	for _, decl := range node.Decls {
+		result := i.eval.Eval(decl, i.globalEnv, i.replFileScope)
+		if err, ok := result.(*object.Error); ok {
+			return fmt.Errorf("%s", err.Inspect())
+		}
+	}
+
+	return nil
+}
+
 // EvalLine evaluates a single line of input, which is the core of the REPL.
 // It maintains state across calls by using a persistent, single FileScope.
 func (i *Interpreter) EvalLine(ctx context.Context, line string) (object.Object, error) {

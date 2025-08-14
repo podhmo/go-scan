@@ -117,4 +117,35 @@ func TestREPL(t *testing.T) {
 			t.Errorf("expected 'loaded!\\n' from loaded function, got %q", output)
 		}
 	})
+
+	t.Run("metacommand :load with import", func(t *testing.T) {
+		file, err := os.CreateTemp(t.TempDir(), "test_import_*.go")
+		if err != nil {
+			t.Fatal(err)
+		}
+		filename := file.Name()
+		defer os.Remove(filename)
+
+		content := `
+package main
+
+import "strings"
+
+func shout(s string) string {
+	return strings.ToUpper(s)
+}
+`
+		if _, err := file.WriteString(content); err != nil {
+			t.Fatal(err)
+		}
+		file.Close()
+
+		input := ":load " + filename + "\n" + `shout("hello")` + "\n:exit\n"
+		output := runCase(t, input, nil)
+
+		// The expected output is the inspected string, which for minigo is just the raw string value.
+		if !strings.Contains(output, "HELLO\n") {
+			t.Errorf("expected 'HELLO\\n' from loaded function using import, got %q", output)
+		}
+	})
 }

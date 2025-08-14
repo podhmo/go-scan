@@ -109,19 +109,8 @@ func runREPL(in io.Reader, out io.Writer) error {
 				continue
 			}
 
-			source, err := os.ReadFile(filename)
-			if err != nil {
-				fmt.Fprintf(out, "Error reading file %q: %v\n", filename, err)
-				continue
-			}
-
-			if err := interp.LoadFile(filename, source); err != nil {
+			if err := interp.EvalFileInREPL(ctx, filename); err != nil {
 				fmt.Fprintf(out, "Error loading file %q: %v\n", filename, err)
-				continue
-			}
-			// also eval it
-			if _, err := interp.Eval(ctx); err != nil {
-				fmt.Fprintf(out, "Error evaluating file %q: %v\n", filename, err)
 				continue
 			}
 

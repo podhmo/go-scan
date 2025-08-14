@@ -14,11 +14,11 @@ func Install(interp *minigo.Interpreter) {
 		"HTMLEscape":    json.HTMLEscape,
 		"Compact":       json.Compact,
 		"Indent":        json.Indent,
-		"NewDecoder":    json.NewDecoder,
+		"Marshal":       json.Marshal,
+		"MarshalIndent": json.MarshalIndent,
 		"NewEncoder":    json.NewEncoder,
 		"Valid":         json.Valid,
 		"Unmarshal":     json.Unmarshal,
-		"Marshal":       json.Marshal,
-		"MarshalIndent": json.MarshalIndent,
+		"NewDecoder":    json.NewDecoder,
 	})
 }

@@ -79,16 +79,21 @@ func generate(ctx context.Context, s *goscan.Scanner, outputDir, pkgPath string)
 		return fmt.Errorf("failed to scan package %s: %w", pkgPath, err)
 	}
 
-	var symbols []string
+	symbols := make(map[string]struct{})
 	for _, f := range pkgInfo.Functions {
 		if f.Receiver == nil && f.AstDecl != nil && f.AstDecl.Name != nil && f.AstDecl.Name.IsExported() {
-			symbols = append(symbols, f.Name)
+			symbols[f.Name] = struct{}{}
 		}
 	}
 	for _, c := range pkgInfo.Constants {
 		if c.IsExported {
-			symbols = append(symbols, c.Name)
+			symbols[c.Name] = struct{}{}
 		}
+	}
+
+	symbolSlice := make([]string, 0, len(symbols))
+	for s := range symbols {
+		symbolSlice = append(symbolSlice, s)
 	}
 
 	pkgName := pkgInfo.Name
@@ -100,10 +105,10 @@ func generate(ctx context.Context, s *goscan.Scanner, outputDir, pkgPath string)
 	}{
 		PackageName: pkgName,
 		PackagePath: pkgPath,
-		Symbols:     symbols,
+		Symbols:     symbolSlice,
 	}
 
-	pkgOutputDir := filepath.Join(outputDir, pkgName)
+	pkgOutputDir := filepath.Join(outputDir, pkgPath)
 	if err := os.MkdirAll(pkgOutputDir, 0755); err != nil {
 		return fmt.Errorf("failed to create output directory %q: %w", pkgOutputDir, err)
 	}

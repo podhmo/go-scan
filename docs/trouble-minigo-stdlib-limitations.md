@@ -64,7 +64,10 @@ The investigation revealed several fundamental limitations in the FFI bridge. Th
 ### `sort`
 
 -   **Limitation (Direct Source Interpretation)**: No Transitive Dependency Resolution.
--   **Analysis**: An attempt to use `sort.Ints` fails with the error `identifier not found: slices`. This happens because the Go implementation of `sort.Ints` calls `slices.Sort`. Although the `sort.go` source file imports the `slices` package, the `minigo` interpreter does not automatically load this transitive dependency. Each required package must seemingly be loaded explicitly.
+-   **Analysis**: An attempt to use `sort.Ints` fails with the error `identifier not found: slices`. The root cause is that the lazy-loading mechanism is not recursive.
+    -   **Code Path**: When `sort.Ints` is first accessed, `minigo` correctly finds and parses `sort.go` to get the AST for the `Ints` function.
+    -   **The Flaw**: When the interpreter later evaluates the body of the `Ints` function (`slices.Sort(x)`), it does so using the file scope (`fscope`) of the *original user script*. The `import "slices"` statement at the top of `sort.go` is never processed by the `minigo` evaluator to create a new file scope for the context of the `sort` package. As a result, the identifier `slices` is not defined in the environment, and the evaluation fails.
+    -   **Conclusion**: The current implementation only lazy-loads symbols from packages directly imported by the user's script. It does not handle `import` statements within the source code of its dependencies.
 
 ### `bytes`
 

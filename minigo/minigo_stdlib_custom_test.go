@@ -60,43 +60,6 @@ var _, err = time.Parse(layout, "not-a-valid-date")
 }
 */
 
-// TestStdlib_regexp tests package-level functions of the regexp package.
-// It avoids using methods on a compiled regexp object, which was found to be unsupported.
-func TestStdlib_regexp(t *testing.T) {
-	script := `
-package main
-import "regexp"
-var valid, err1 = regexp.MatchString("p([a-z]+)ch", "peach")
-var invalid, err2 = regexp.MatchString("p([a-z]+)ch", "apple")
-`
-	interp, err := minigo.NewInterpreter()
-	if err != nil {
-		t.Fatalf("failed to create interpreter: %+v", err)
-	}
-	stdregexp.Install(interp)
-
-	if err := interp.LoadFile("test.mgo", []byte(script)); err != nil {
-		t.Fatalf("failed to load script: %+v", err)
-	}
-	if _, err := interp.Eval(context.Background()); err != nil {
-		t.Fatalf("failed to evaluate script: %+v", err)
-	}
-
-	env := interp.GlobalEnvForTest()
-	if err, _ := env.Get("err1"); err != object.NIL {
-		t.Fatalf("err1 was not nil: %v", err)
-	}
-	if err, _ := env.Get("err2"); err != object.NIL {
-		t.Fatalf("err2 was not nil: %v", err)
-	}
-
-	if got, _ := env.Get("valid"); got != object.TRUE {
-		t.Errorf("expected 'valid' to be true")
-	}
-	if got, _ := env.Get("invalid"); got != object.FALSE {
-		t.Errorf("expected 'invalid' to be false")
-	}
-}
 
 // TestStdlib_bytes tests package-level functions of the bytes package.
 // It avoids using methods on a bytes.Buffer object and avoids using the `byte` keyword,
@@ -225,5 +188,35 @@ var s2 = slices.Clone(s)
 
 	if len(s2Array.Elements) != 3 {
 		t.Fatalf("expected s2 to have 3 elements, but got %d", len(s2Array.Elements))
+	}
+}
+
+func TestStdlib_regexp(t *testing.T) {
+	script := `
+package main
+import "regexp"
+var re, err1 = regexp.Compile("p([a-z]+)ch")
+var matched = re.MatchString("peach")
+`
+	interp, err := minigo.NewInterpreter()
+	if err != nil {
+		t.Fatalf("failed to create interpreter: %+v", err)
+	}
+	stdregexp.Install(interp)
+
+	if err := interp.LoadFile("test.mgo", []byte(script)); err != nil {
+		t.Fatalf("failed to load script: %+v", err)
+	}
+	if _, err := interp.Eval(context.Background()); err != nil {
+		t.Fatalf("failed to evaluate script: %+v", err)
+	}
+
+	env := interp.GlobalEnvForTest()
+	if err, _ := env.Get("err1"); err != object.NIL {
+		t.Fatalf("err1 was not nil: %v", err)
+	}
+
+	if got, _ := env.Get("matched"); got != object.TRUE {
+		t.Errorf("expected 'matched' to be true, but got %v", got)
 	}
 }

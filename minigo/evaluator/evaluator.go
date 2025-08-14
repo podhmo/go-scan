@@ -3651,27 +3651,126 @@ func (e *Evaluator) findSymbolInPackage(pkg *object.Package, symbolName *ast.Ide
 
 func (e *Evaluator) evalGoValueSelectorExpr(node ast.Node, goVal *object.GoValue, sel string) object.Object {
 	val := goVal.Value
-	// Allow field access on pointers to structs
-	if val.Kind() == reflect.Ptr {
-		if val.IsNil() {
+
+	// --- 1. Method Resolution ---
+	// Try to find the method on the value itself, or on a pointer to the value.
+	var method reflect.Value
+
+	// a) Check value receiver
+	method = val.MethodByName(sel)
+
+	// b) If not found, and the value is addressable, check pointer receiver.
+	// This is crucial for methods like `(*bytes.Buffer).Write`.
+	if !method.IsValid() && val.CanAddr() {
+		method = val.Addr().MethodByName(sel)
+	}
+
+	// --- 2. Method Invocation ---
+	// If a method was found, return a callable Builtin object that wraps the Go method.
+	if method.IsValid() {
+		funcType := method.Type()
+		return &object.Builtin{
+			Fn: func(ctx *object.BuiltinContext, callPos token.Pos, args ...object.Object) (ret object.Object) {
+				defer func() {
+					if r := recover(); r != nil {
+						ret = ctx.NewError(callPos, "panic in Go method call '%s': %v", sel, r)
+					}
+				}()
+
+				numIn := funcType.NumIn()
+				isVariadic := funcType.IsVariadic()
+
+				// Check argument count against the Go method's signature.
+				if isVariadic {
+					if len(args) < numIn-1 {
+						return ctx.NewError(callPos, "wrong number of arguments for variadic method %s: got %d, want at least %d", sel, len(args), numIn-1)
+					}
+				} else {
+					if len(args) != numIn {
+						return ctx.NewError(callPos, "wrong number of arguments for method %s: got %d, want %d", sel, len(args), numIn)
+					}
+				}
+
+				// Prepare arguments for reflection call.
+				in := make([]reflect.Value, len(args))
+				for i, arg := range args {
+					var targetType reflect.Type
+					if isVariadic && i >= numIn-1 {
+						targetType = funcType.In(numIn - 1).Elem()
+					} else {
+						targetType = funcType.In(i)
+					}
+
+					// Use the evaluator's conversion helper.
+					val, err := e.objectToReflectValue(arg, targetType)
+					if err != nil {
+						return ctx.NewError(callPos, "argument %d type mismatch for method %s: %v", i+1, sel, err)
+					}
+					in[i] = val
+				}
+
+				// Call the method.
+				results := method.Call(in)
+
+				// Process results.
+				numOut := funcType.NumOut()
+				if numOut == 0 {
+					return object.NIL
+				}
+
+				// Handle the common Go pattern of `(result, error)`.
+				lastResult := results[len(results)-1]
+				errorInterface := reflect.TypeOf((*error)(nil)).Elem()
+				if lastResult.Type().Implements(errorInterface) {
+					if !lastResult.IsNil() {
+						return ctx.NewError(callPos, "error from Go method '%s': %v", sel, lastResult.Interface())
+					}
+					// If the error is nil, we have one less "real" return value.
+					numOut--
+					results = results[:numOut]
+					if numOut == 0 {
+						return object.NIL
+					}
+				}
+
+				// Convert remaining results to minigo objects.
+				resultObjects := make([]object.Object, numOut)
+				for i := 0; i < numOut; i++ {
+					resultObjects[i] = e.nativeToValue(results[i])
+				}
+
+				if len(resultObjects) == 1 {
+					return resultObjects[0]
+				}
+				// Wrap multiple return values in a tuple.
+				return &object.Tuple{Elements: resultObjects}
+			},
+		}
+	}
+
+	// --- 3. Field Access ---
+	// If no method was found, try to access a field on the struct.
+	objToInspect := val
+	if objToInspect.Kind() == reflect.Ptr {
+		if objToInspect.IsNil() {
 			return e.newError(node.Pos(), "nil pointer dereference")
 		}
-		val = val.Elem()
+		objToInspect = objToInspect.Elem()
 	}
 
-	if val.Kind() != reflect.Struct {
-		return e.newError(node.Pos(), "base of selector expression is not a Go struct or pointer to struct")
+	if objToInspect.Kind() == reflect.Struct {
+		field := objToInspect.FieldByName(sel)
+		if field.IsValid() {
+			if !field.CanInterface() {
+				return e.newError(node.Pos(), "cannot access unexported field '%s' on Go struct %s", sel, objToInspect.Type())
+			}
+			return e.nativeToValue(field)
+		}
 	}
 
-	field := val.FieldByName(sel)
-	if !field.IsValid() {
-		return e.newError(node.Pos(), "undefined field '%s' on Go struct %s", sel, val.Type())
-	}
-	if !field.CanInterface() {
-		return e.newError(node.Pos(), "cannot access unexported field '%s' on Go struct %s", sel, val.Type())
-	}
-
-	return e.nativeToValue(field)
+	// --- 4. Not Found ---
+	// If neither a method nor a field was found, it's an error.
+	return e.newError(node.Pos(), "undefined field or method '%s' on Go object of type %s", sel, val.Type())
 }
 
 func (e *Evaluator) evalCompositeLit(n *ast.CompositeLit, env *object.Environment, fscope *object.FileScope) object.Object {

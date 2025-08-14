@@ -16,6 +16,8 @@ import (
 )
 
 // Interpreter is the main entry point for the minigo language.
+// It holds the state of the interpreter, including the scanner for package resolution
+// and the root environment for script execution.
 type Interpreter struct {
 	scanner       *goscan.Scanner
 	Registry      *object.SymbolRegistry
@@ -36,30 +38,37 @@ type Interpreter struct {
 // Option is a functional option for configuring the Interpreter.
 type Option func(*Interpreter)
 
+// WithStdin sets the standard input for the interpreter.
 func WithStdin(r io.Reader) Option {
 	return func(i *Interpreter) {
 		i.stdin = r
 	}
 }
 
+// WithStdout sets the standard output for the interpreter.
 func WithStdout(w io.Writer) Option {
 	return func(i *Interpreter) {
 		i.stdout = w
 	}
 }
 
+// WithStderr sets the standard error for the interpreter.
 func WithStderr(w io.Writer) Option {
 	return func(i *Interpreter) {
 		i.stderr = w
 	}
 }
 
+// WithScannerOptions provides a way to configure the underlying goscan.Scanner.
 func WithScannerOptions(opts ...goscan.ScannerOption) Option {
 	return func(i *Interpreter) {
 		i.scannerOptions = append(i.scannerOptions, opts...)
 	}
 }
 
+// WithGlobals allows injecting Go variables into the script's global scope.
+// The map key is the variable name in the script.
+// The value can be any Go variable, which will be made available via reflection.
 func WithGlobals(globals map[string]any) Option {
 	return func(i *Interpreter) {
 		for name, value := range globals {
@@ -68,7 +77,8 @@ func WithGlobals(globals map[string]any) Option {
 	}
 }
 
-// New creates a new interpreter instance.
+// New creates a new interpreter instance with default I/O streams.
+// It panics if initialization fails.
 func New(r io.Reader, stdout, stderr io.Writer) *Interpreter {
 	i, err := NewInterpreter(WithStdin(r), WithStdout(stdout), WithStderr(stderr))
 	if err != nil {
@@ -77,7 +87,7 @@ func New(r io.Reader, stdout, stderr io.Writer) *Interpreter {
 	return i
 }
 
-// NewInterpreter creates a new interpreter instance.
+// NewInterpreter creates a new interpreter instance, configured with options.
 func NewInterpreter(options ...Option) (*Interpreter, error) {
 	i := &Interpreter{
 		Registry:     object.NewSymbolRegistry(),
@@ -115,10 +125,17 @@ func NewInterpreter(options ...Option) (*Interpreter, error) {
 	return i, nil
 }
 
+// Register makes Go symbols (variables or functions) available for import by a script.
+// For example, `interp.Register("strings", map[string]any{"ToUpper": strings.ToUpper})`
+// allows a script to `import "strings"` and call `strings.ToUpper()`.
 func (i *Interpreter) Register(pkgPath string, symbols map[string]any) {
 	i.Registry.Register(pkgPath, symbols)
 }
 
+// RegisterSpecial registers a "special form" function.
+// A special form receives the AST of its arguments directly, without them being
+// evaluated first. This is useful for implementing DSLs or control structures.
+// These functions are available in the global scope.
 func (i *Interpreter) RegisterSpecial(name string, fn evaluator.SpecialFormFunction) {
 	i.specialForms[name] = &evaluator.SpecialForm{Fn: fn}
 }
@@ -154,7 +171,8 @@ func (i *Interpreter) LoadGoSourceAsPackage(pkgName, source string) error {
 	return nil
 }
 
-// EvalString evaluates the given source code string.
+// EvalString evaluates the given source code string as a complete file.
+// It parses the source, evaluates all declarations, and then executes the main function if it exists.
 func (i *Interpreter) EvalString(source string) (object.Object, error) {
 	fset := i.scanner.Fset()
 	node, err := parser.ParseFile(fset, "main.go", source, parser.ParseComments)
@@ -176,6 +194,9 @@ type Result struct {
 }
 
 // As unmarshals the result of the script execution into a Go variable.
+// The target must be a pointer to a Go variable.
+// It uses reflection to populate the fields of the target, similar to how
+// `json.Unmarshal` works.
 func (r *Result) As(target any) error {
 	if target == nil {
 		return fmt.Errorf("target cannot be nil")
@@ -187,6 +208,8 @@ func (r *Result) As(target any) error {
 	return unmarshal(r.Value, dstVal.Elem())
 }
 
+// unmarshal is a recursive helper function that populates a Go `reflect.Value` (dst)
+// from a minigo `object.Object` (src).
 func unmarshal(src object.Object, dst reflect.Value) error {
 	if !dst.CanSet() {
 		return fmt.Errorf("cannot set destination value of type %s", dst.Type())
@@ -294,6 +317,8 @@ func unmarshal(src object.Object, dst reflect.Value) error {
 	}
 }
 
+// LoadFile parses a file and adds it to the interpreter's state without evaluating it yet.
+// This is the first stage of a multi-file evaluation.
 func (i *Interpreter) LoadFile(filename string, source []byte) error {
 	fset := i.scanner.Fset()
 	node, err := parser.ParseFile(fset, filename, source, parser.ParseComments)
@@ -305,6 +330,7 @@ func (i *Interpreter) LoadFile(filename string, source []byte) error {
 	return nil
 }
 
+// EvalDeclarations evaluates all top-level declarations in the loaded files.
 func (i *Interpreter) EvalDeclarations(ctx context.Context) error {
 	for _, file := range i.files {
 		for _, decl := range file.AST.Decls {
@@ -317,6 +343,8 @@ func (i *Interpreter) EvalDeclarations(ctx context.Context) error {
 	return nil
 }
 
+// Eval executes the loaded files.
+// It first processes all declarations and then runs the main function if it exists.
 func (i *Interpreter) Eval(ctx context.Context) (*Result, error) {
 	if err := i.EvalDeclarations(ctx); err != nil {
 		return nil, err
@@ -328,6 +356,7 @@ func (i *Interpreter) Eval(ctx context.Context) (*Result, error) {
 	return i.Execute(ctx, mainFunc, nil, fscope)
 }
 
+// FindFunction finds a function in the global scope and the file scope it was defined in.
 func (i *Interpreter) FindFunction(name string) (*object.Function, *object.FileScope, error) {
 	obj, ok := i.globalEnv.Get(name)
 	if !ok {
@@ -345,6 +374,7 @@ func (i *Interpreter) FindFunction(name string) (*object.Function, *object.FileS
 	return fn, nil, fmt.Errorf("could not find file scope for function %q", name)
 }
 
+// Execute runs a given function with the provided arguments using the interpreter's persistent evaluator.
 func (i *Interpreter) Execute(ctx context.Context, fn *object.Function, args []object.Object, fscope *object.FileScope) (*Result, error) {
 	result := i.eval.ApplyFunction(nil, fn, args, fscope)
 	if err, ok := result.(*object.Error); ok {
@@ -353,6 +383,8 @@ func (i *Interpreter) Execute(ctx context.Context, fn *object.Function, args []o
 	return &Result{Value: result}, nil
 }
 
+// EvalLine evaluates a single line of input for the REPL.
+// It maintains state across calls by using a persistent, single FileScope.
 func (i *Interpreter) EvalLine(ctx context.Context, line string) (object.Object, error) {
 	if i.replFileScope == nil {
 		node, err := parser.ParseFile(i.scanner.Fset(), "REPL", "package REPL", parser.ParseComments)
@@ -380,7 +412,7 @@ func (i *Interpreter) EvalLine(ctx context.Context, line string) (object.Object,
 		return nil, err
 	}
 	if len(node.Decls) == 0 || len(node.Decls[0].(*ast.FuncDecl).Body.List) == 0 {
-		return object.NIL, nil
+		return object.NIL, nil // Empty line or just comments
 	}
 	stmts := node.Decls[0].(*ast.FuncDecl).Body.List
 	var result object.Object = object.NIL
@@ -454,6 +486,8 @@ func (i *Interpreter) Files() []*object.FileScope {
 	return i.files
 }
 
+// GlobalEnvForTest returns the interpreter's global environment.
+// This method is intended for use in tests only.
 func (i *Interpreter) GlobalEnvForTest() *object.Environment {
 	return i.globalEnv
 }

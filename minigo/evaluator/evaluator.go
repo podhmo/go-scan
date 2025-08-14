@@ -693,8 +693,12 @@ func (e *Evaluator) evalMixedIntInfixExpression(node ast.Node, operator string, 
 		return &object.Integer{Value: leftVal ^ rightVal}
 	case "<":
 		return e.nativeBoolToBooleanObject(leftVal < rightVal)
+	case "<=":
+		return e.nativeBoolToBooleanObject(leftVal <= rightVal)
 	case ">":
 		return e.nativeBoolToBooleanObject(leftVal > rightVal)
+	case ">=":
+		return e.nativeBoolToBooleanObject(leftVal >= rightVal)
 	case "==":
 		return e.nativeBoolToBooleanObject(leftVal == rightVal)
 	case "!=":
@@ -739,8 +743,12 @@ func (e *Evaluator) evalIntegerInfixExpression(node ast.Node, operator string, l
 		return &object.Integer{Value: leftVal ^ rightVal}
 	case "<":
 		return e.nativeBoolToBooleanObject(leftVal < rightVal)
+	case "<=":
+		return e.nativeBoolToBooleanObject(leftVal <= rightVal)
 	case ">":
 		return e.nativeBoolToBooleanObject(leftVal > rightVal)
+	case ">=":
+		return e.nativeBoolToBooleanObject(leftVal >= rightVal)
 	case "==":
 		return e.nativeBoolToBooleanObject(leftVal == rightVal)
 	case "!=":
@@ -2754,13 +2762,58 @@ func (e *Evaluator) evalAssignStmt(n *ast.AssignStmt, env *object.Environment, f
 	}
 
 	if len(n.Lhs) > 1 && len(n.Rhs) == 1 {
-		// Multi-assignment: a, b = f() or a, b := f()
+		// Multi-assignment from single function call: a, b = f() or a, b := f()
 		return e.evalMultiAssign(n, env, fscope)
 	}
 
-	// Other cases like a, b = 1, 2 are not supported by Go's parser in this form
-	// for `var` or `:=`, but let's be safe.
-	return e.newError(n.Pos(), "unsupported assignment form: %d LHS values, %d RHS values", len(n.Lhs), len(n.Rhs))
+	if len(n.Lhs) > 0 && len(n.Lhs) == len(n.Rhs) {
+		// Destructuring assignment: a, b = 1, 2 or a, b = b, a
+		return e.evalDestructuringAssign(n, env, fscope)
+	}
+
+	return e.newError(n.Pos(), "assignment mismatch: %d variables but %d values", len(n.Lhs), len(n.Rhs))
+}
+
+func (e *Evaluator) evalDestructuringAssign(n *ast.AssignStmt, env *object.Environment, fscope *object.FileScope) object.Object {
+	// Evaluate all RHS expressions first and store them temporarily.
+	// This is crucial for `a, b = b, a` to work correctly.
+	values := make([]object.Object, len(n.Rhs))
+	for i, rhsExpr := range n.Rhs {
+		val := e.Eval(rhsExpr, env, fscope)
+		if isError(val) {
+			return val
+		}
+		values[i] = val
+	}
+
+	// Now, assign the evaluated values to the LHS variables.
+	switch n.Tok {
+	case token.ASSIGN: // =
+		for i, lhsExpr := range n.Lhs {
+			res := e.assignValue(lhsExpr, values[i], env, fscope)
+			if isError(res) {
+				return res
+			}
+		}
+	case token.DEFINE: // :=
+		for i, lhsExpr := range n.Lhs {
+			ident, ok := lhsExpr.(*ast.Ident)
+			if !ok {
+				return e.newError(lhsExpr.Pos(), "non-identifier on left side of :=")
+			}
+			if ident.Name == "_" {
+				continue // Discard value
+			}
+			if fn, ok := values[i].(*object.Function); ok {
+				fn.Name = ident
+			}
+			env.Set(ident.Name, values[i])
+		}
+	default:
+		return e.newError(n.Pos(), "unsupported assignment token: %s", n.Tok)
+	}
+
+	return nil // Assignment statements don't produce a value.
 }
 
 func (e *Evaluator) evalSingleAssign(n *ast.AssignStmt, env *object.Environment, fscope *object.FileScope) object.Object {
@@ -2788,6 +2841,9 @@ func (e *Evaluator) evalSingleAssign(n *ast.AssignStmt, env *object.Environment,
 		if !ok {
 			return e.newError(lhs.Pos(), "non-identifier on left side of :=")
 		}
+		if ident.Name == "_" {
+			return nil // Assignment to blank identifier does nothing.
+		}
 		if fn, ok := val.(*object.Function); ok {
 			fn.Name = ident
 		}
@@ -2801,6 +2857,9 @@ func (e *Evaluator) evalSingleAssign(n *ast.AssignStmt, env *object.Environment,
 func (e *Evaluator) assignValue(lhs ast.Expr, val object.Object, env *object.Environment, fscope *object.FileScope) object.Object {
 	switch lhsNode := lhs.(type) {
 	case *ast.Ident:
+		if lhsNode.Name == "_" {
+			return nil // Assignment to blank identifier does nothing.
+		}
 		// Check if we are assigning to an existing interface variable.
 		if existing, ok := env.Get(lhsNode.Name); ok {
 			if iface, isIface := existing.(*object.InterfaceInstance); isIface {

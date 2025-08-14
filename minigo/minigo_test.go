@@ -351,6 +351,128 @@ func main() {
 	}
 }
 
+func TestInterpreterEval_DestructuringAssignment(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		check func(t *testing.T, i *Interpreter)
+	}{
+		{
+			name: "simple assignment",
+			input: `package main
+var a, b = 1, 2
+`,
+			check: func(t *testing.T, i *Interpreter) {
+				valA, _ := i.globalEnv.Get("a")
+				valB, _ := i.globalEnv.Get("b")
+				if valA.(*object.Integer).Value != 1 {
+					t.Errorf("a should be 1, got %v", valA)
+				}
+				if valB.(*object.Integer).Value != 2 {
+					t.Errorf("b should be 2, got %v", valB)
+				}
+			},
+		},
+		{
+			name: "swap assignment",
+			input: `package main
+var a, b = 1, 2
+var c, d = b, a
+`,
+			check: func(t *testing.T, i *Interpreter) {
+				valC, _ := i.globalEnv.Get("c")
+				valD, _ := i.globalEnv.Get("d")
+				if valC.(*object.Integer).Value != 2 {
+					t.Errorf("c should be 2, got %v", valC)
+				}
+				if valD.(*object.Integer).Value != 1 {
+					t.Errorf("d should be 1, got %v", valD)
+				}
+			},
+		},
+		{
+			name: "define assignment",
+			input: `package main
+func main() {
+	a, b := 1, 2
+	_ = a
+	_ = b
+}
+`,
+			check: nil, // Can't check local variables easily, just check for no error
+		},
+		{
+			name: "define and swap",
+			input: `package main
+var a, b = 1, 2
+func main() {
+	c, d := b, a
+	_ = c
+	_ = d
+}
+`,
+			check: nil, // Can't check local variables easily, just check for no error
+		},
+		{
+			name: "existing var swap",
+			input: `package main
+var a, b = 1, 2
+func main() {
+	a, b = b, a
+}
+`,
+			check: func(t *testing.T, i *Interpreter) {
+				valA, _ := i.globalEnv.Get("a")
+				valB, _ := i.globalEnv.Get("b")
+				if valA.(*object.Integer).Value != 2 {
+					t.Errorf("a should be 2 after swap, got %v", valA)
+				}
+				if valB.(*object.Integer).Value != 1 {
+					t.Errorf("b should be 1 after swap, got %v", valB)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			i, err := NewInterpreter()
+			if err != nil {
+				t.Fatalf("NewInterpreter() failed: %v", err)
+			}
+			if err := i.LoadFile("test.go", []byte(tt.input)); err != nil {
+				t.Fatalf("LoadFile() failed: %v", err)
+			}
+			if err := i.LoadFile("test.go", []byte(tt.input)); err != nil {
+				t.Fatalf("LoadFile() for %s failed: %v", tt.name, err)
+			}
+
+			// First, evaluate all top-level declarations
+			if err := i.EvalDeclarations(context.Background()); err != nil {
+				t.Fatalf("EvalDeclarations() for %s failed: %v", tt.name, err)
+			}
+
+			// If there's a main function, execute it to test assignments
+			var execErr error
+			mainFunc, fscope, findErr := i.FindFunction("main")
+			if findErr == nil {
+				_, execErr = i.Execute(context.Background(), mainFunc, nil, fscope)
+			}
+
+			if findErr != nil && strings.Contains(tt.input, "main()") {
+				t.Fatalf("Expected to find main function for %s, but didn't: %v", tt.name, findErr)
+			}
+			if execErr != nil {
+				t.Fatalf("Execution failed unexpectedly for %s: %v", tt.name, execErr)
+			}
+
+			if tt.check != nil {
+				tt.check(t, i)
+			}
+		})
+	}
+}
+
 func TestEvalLine(t *testing.T) {
 	ctx := context.Background()
 
@@ -416,4 +538,63 @@ func TestEvalLine(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestInterpreterEval_ComparisonOperators(t *testing.T) {
+	input := `package main
+var t1 = 1 < 2
+var t2 = 1 > 2
+var t3 = 1 == 1
+var t4 = 1 != 1
+var t5 = 1 <= 1
+var t6 = 1 <= 2
+var t7 = 1 >= 1
+var t8 = 1 >= 2
+
+var f1 = 2 < 1
+var f2 = 2 > 1
+var f3 = 2 == 1
+var f4 = 2 != 1
+var f5 = 2 <= 1
+var f6 = 2 >= 3
+`
+	i, err := NewInterpreter()
+	if err != nil {
+		t.Fatalf("NewInterpreter() failed: %v", err)
+	}
+
+	if err := i.LoadFile("test.go", []byte(input)); err != nil {
+		t.Fatalf("LoadFile() failed: %v", err)
+	}
+
+	_, err = i.Eval(context.Background())
+	if err != nil {
+		t.Fatalf("Eval() failed: %v", err)
+	}
+
+	tests := []struct {
+		name string
+		want bool
+	}{
+		{"t1", true}, {"t2", false}, {"t3", true}, {"t4", false},
+		{"t5", true}, {"t6", true}, {"t7", true}, {"t8", false},
+		{"f1", false}, {"f2", true}, {"f3", false}, {"f4", true},
+		{"f5", false}, {"f6", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			val, ok := i.globalEnv.Get(tt.name)
+			if !ok {
+				t.Fatalf("variable '%s' not found", tt.name)
+			}
+			b, ok := val.(*object.Boolean)
+			if !ok {
+				t.Fatalf("variable '%s' is not a Boolean. got=%T", tt.name, val)
+			}
+			if b.Value != tt.want {
+				t.Errorf("variable '%s' has wrong value. got=%v, want=%v", tt.name, b.Value, tt.want)
+			}
+		})
+	}
 }

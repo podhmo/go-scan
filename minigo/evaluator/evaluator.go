@@ -448,6 +448,40 @@ func New(cfg Config) *Evaluator {
 	return e
 }
 
+// inferTypeOf infers the object.Object representing the type of a given value object.
+func (e *Evaluator) inferTypeOf(obj object.Object) object.Object {
+	switch o := obj.(type) {
+	case *object.Integer:
+		return &object.Type{Name: "int"}
+	case *object.String:
+		return &object.Type{Name: "string"}
+	case *object.Boolean:
+		return &object.Type{Name: "bool"}
+	case *object.StructInstance:
+		// The type of a struct instance is its definition.
+		return o.Def
+	case *object.Pointer:
+		if o.Element == nil || *o.Element == nil {
+			// Cannot infer type from a nil pointer.
+			return object.NIL
+		}
+		// Recursively find the type of the pointed-to element and wrap it in a pointer type.
+		elemType := e.inferTypeOf(*o.Element)
+		if elemType == object.NIL {
+			return object.NIL
+		}
+		return &object.PointerType{ElementType: elemType}
+	case *object.Array:
+		// For a fully typed system, we would need to know the array's element type.
+		// For now, we can't infer a specific `[]T` type, so we return a generic indicator or nil.
+		// This part of inference is limited.
+		return nil
+	default:
+		// Fallback for types we can't infer simply.
+		return nil
+	}
+}
+
 func (e *Evaluator) newError(pos token.Pos, format string, args ...interface{}) *object.Error {
 	msg := fmt.Sprintf(format, args...)
 	// Create a copy of the current call stack for the error object.
@@ -1553,10 +1587,34 @@ func (e *Evaluator) applyFunction(call *ast.CallExpr, fn object.Object, args []o
 
 	switch f := fn.(type) {
 	case *object.Function:
+		// Check if this is a generic function being called without instantiation.
 		if f.TypeParams != nil && len(f.TypeParams.List) > 0 {
-			return e.newError(call.Pos(), "cannot call generic function %s without instantiation", f.Name.Name)
+			// It's a generic function. Try to infer type arguments from value arguments.
+			numTypeParams := len(f.TypeParams.List)
+			inferredTypeArgs := make([]object.Object, numTypeParams)
+
+			// This is a simplified inference model. It assumes a 1-to-1 mapping
+			// from the first N arguments to the N type parameters.
+			// e.g., for `func foo[T, K any](a T, b K)`, it infers T from `a` and K from `b`.
+			if len(args) < numTypeParams {
+				return e.newError(call.Pos(), "cannot infer type arguments: not enough arguments passed to function %s", f.Name.Name)
+			}
+
+			for i := 0; i < numTypeParams; i++ {
+				inferredType := e.inferTypeOf(args[i])
+				if inferredType == nil || inferredType == object.NIL {
+					return e.newError(call.Pos(), "cannot infer type for argument %d in call to %s", i, f.Name.Name)
+				}
+				inferredTypeArgs[i] = inferredType
+			}
+
+			// Now that we have inferred the types, we can proceed as if it were an instantiated call.
+			function = f
+			typeArgs = inferredTypeArgs
+		} else {
+			// It's a regular, non-generic function.
+			function = f
 		}
-		function = f
 	case *object.InstantiatedType:
 		genericFn, ok := f.GenericDef.(*object.Function)
 		if !ok {

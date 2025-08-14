@@ -11,14 +11,14 @@ import (
 // Install binds all exported symbols from the "encoding/json" package to the interpreter.
 func Install(interp *minigo.Interpreter) {
 	interp.Register("encoding/json", map[string]any{
+		"Marshal":       json.Marshal,
+		"Valid":         json.Valid,
+		"Unmarshal":     json.Unmarshal,
+		"MarshalIndent": json.MarshalIndent,
 		"HTMLEscape":    json.HTMLEscape,
 		"Compact":       json.Compact,
 		"Indent":        json.Indent,
-		"Marshal":       json.Marshal,
-		"MarshalIndent": json.MarshalIndent,
-		"NewEncoder":    json.NewEncoder,
-		"Valid":         json.Valid,
-		"Unmarshal":     json.Unmarshal,
 		"NewDecoder":    json.NewDecoder,
+		"NewEncoder":    json.NewEncoder,
 	})
 }

@@ -11,15 +11,15 @@ import (
 // Install binds all exported symbols from the "net/url" package to the interpreter.
 func Install(interp *minigo.Interpreter) {
 	interp.Register("net/url", map[string]any{
-		"UserPassword":    url.UserPassword,
-		"Parse":           url.Parse,
 		"ParseRequestURI": url.ParseRequestURI,
+		"JoinPath":        url.JoinPath,
 		"QueryUnescape":   url.QueryUnescape,
 		"PathUnescape":    url.PathUnescape,
-		"QueryEscape":     url.QueryEscape,
-		"PathEscape":      url.PathEscape,
 		"User":            url.User,
 		"ParseQuery":      url.ParseQuery,
-		"JoinPath":        url.JoinPath,
+		"QueryEscape":     url.QueryEscape,
+		"PathEscape":      url.PathEscape,
+		"UserPassword":    url.UserPassword,
+		"Parse":           url.Parse,
 	})
 }

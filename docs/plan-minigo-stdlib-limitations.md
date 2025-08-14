@@ -31,7 +31,7 @@ The process began with a curated list of essential standard library packages. Th
 - `net/url`
 - `path/filepath`
 - `sort`
-- `slices` (This was later removed due to limitations with Go generics).
+- `slices`
 
 ### 2. Binding Generation
 

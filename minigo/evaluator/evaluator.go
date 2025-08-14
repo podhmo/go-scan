@@ -448,6 +448,99 @@ func New(cfg Config) *Evaluator {
 	return e
 }
 
+// inferTypeOf infers the object.Object representing the type of a given value object.
+func (e *Evaluator) inferTypeOf(obj object.Object) object.Object {
+	switch o := obj.(type) {
+	case *object.Integer:
+		return &object.Type{Name: "int"}
+	case *object.String:
+		return &object.Type{Name: "string"}
+	case *object.Boolean:
+		return &object.Type{Name: "bool"}
+	case *object.StructInstance:
+		// The type of a struct instance is its definition.
+		return o.Def
+	case *object.Pointer:
+		if o.Element == nil || *o.Element == nil {
+			// Cannot infer type from a nil pointer.
+			return object.NIL
+		}
+		// Recursively find the type of the pointed-to element and wrap it in a pointer type.
+		elemType := e.inferTypeOf(*o.Element)
+		if elemType == object.NIL {
+			return object.NIL
+		}
+		return &object.PointerType{ElementType: elemType}
+	case *object.Array:
+		// For a fully typed system, we would need to know the array's element type.
+		// For now, we can't infer a specific `[]T` type, so we return a generic indicator or nil.
+		// This part of inference is limited.
+		return nil
+	default:
+		// Fallback for types we can't infer simply.
+		return nil
+	}
+}
+
+func (e *Evaluator) inferGenericTypes(pos token.Pos, f *object.Function, args []object.Object) ([]object.Object, object.Object) {
+	// 1. Get the names of all type parameters (e.g., {"T": true, "K": true})
+	typeParamNames := make(map[string]bool)
+	for _, field := range f.TypeParams.List {
+		for _, name := range field.Names {
+			typeParamNames[name.Name] = true
+		}
+	}
+
+	// 2. Map inferred types by name (e.g., "T" -> &object.Type{Name:"int"})
+	inferredTypes := make(map[string]object.Object)
+
+	// 3. Iterate through function parameters and corresponding arguments
+	for i, paramField := range f.Parameters.List {
+		paramTypeIdent, ok := paramField.Type.(*ast.Ident)
+		if !ok {
+			// Parameter type is not a simple identifier (e.g., it's '[]T' or 'pkg.Type'), skip for now.
+			// A more advanced implementation would parse these expressions.
+			continue
+		}
+
+		// Check if the parameter's type is one of the generic type parameters
+		if _, isGeneric := typeParamNames[paramTypeIdent.Name]; isGeneric {
+			if i >= len(args) {
+				// Not enough arguments provided to infer this type.
+				return nil, e.newError(pos, "cannot infer type for generic parameter %s: not enough arguments", paramTypeIdent.Name)
+			}
+
+			argType := e.inferTypeOf(args[i])
+			if argType == nil || argType == object.NIL {
+				return nil, e.newError(pos, "cannot infer type for generic parameter %s from argument %d of type %s", paramTypeIdent.Name, i, args[i].Type())
+			}
+
+			// Check for conflicting inferences
+			if existing, ok := inferredTypes[paramTypeIdent.Name]; ok {
+				// A simple pointer comparison for types works for primitives. For complex types, we compare inspect strings.
+				if existing != argType && existing.Inspect() != argType.Inspect() {
+					return nil, e.newError(pos, "cannot infer type for %s: conflicting types %s and %s", paramTypeIdent.Name, existing.Inspect(), argType.Inspect())
+				}
+			} else {
+				inferredTypes[paramTypeIdent.Name] = argType
+			}
+		}
+	}
+
+	// 4. Convert the map of inferred types into an ordered slice
+	finalTypeArgs := make([]object.Object, len(f.TypeParams.List))
+	for i, field := range f.TypeParams.List {
+		name := field.Names[0].Name
+		inferred, ok := inferredTypes[name]
+		if !ok {
+			return nil, e.newError(pos, "could not infer type for generic parameter %s", name)
+		}
+		finalTypeArgs[i] = inferred
+	}
+
+	return finalTypeArgs, nil
+}
+
 func (e *Evaluator) newError(pos token.Pos, format string, args ...interface{}) *object.Error {
 	msg := fmt.Sprintf(format, args...)
 	// Create a copy of the current call stack for the error object.
@@ -1553,10 +1646,19 @@ func (e *Evaluator) applyFunction(call *ast.CallExpr, fn object.Object, args []o
 
 	switch f := fn.(type) {
 	case *object.Function:
+		// Check if this is a generic function being called without instantiation.
 		if f.TypeParams != nil && len(f.TypeParams.List) > 0 {
-			return e.newError(call.Pos(), "cannot call generic function %s without instantiation", f.Name.Name)
+			// It's a generic function. Try to infer type arguments from value arguments.
+			inferred, errObj := e.inferGenericTypes(call.Pos(), f, args)
+			if errObj != nil {
+				return errObj
+			}
+			function = f
+			typeArgs = inferred
+		} else {
+			// It's a regular, non-generic function.
+			function = f
 		}
-		function = f
 	case *object.InstantiatedType:
 		genericFn, ok := f.GenericDef.(*object.Function)
 		if !ok {

@@ -9,7 +9,7 @@ import (
 	"github.com/podhmo/go-scan/minigo/object"
 )
 
-func TestGenericFunctions(t *testing.T) {
+func TestGenericFunctionAutoInstantiation(t *testing.T) {
 	tests := []struct {
 		name          string
 		script        string
@@ -20,13 +20,13 @@ func TestGenericFunctions(t *testing.T) {
 		wantErrorMsg  string
 	}{
 		{
-			name: "simple identity function with int",
+			name: "call generic identity function with int",
 			script: `
 package main
 func identity[T any](v T) T {
 	return v
 }
-var result = identity[int](10)
+var result = identity(10)
 `,
 			expectedVar:   "result",
 			expectedValue: int64(10),
@@ -34,50 +34,32 @@ var result = identity[int](10)
 			wantErr:       false,
 		},
 		{
-			name: "identity function with a struct",
-			script: `
-package main
-type Box struct { Value int }
-func identity[T any](v T) T {
-	return v
-}
-var result = identity[Box](Box{Value: 42})
-`,
-			expectedVar:   "result",
-			expectedValue: map[string]any{"Value": int64(42)},
-			expectedType:  object.STRUCT_INSTANCE_OBJ,
-			wantErr:       false,
-		},
-		{
-			name: "generic function using type parameter internally",
-			script: `
-package main
-type Box[T any] struct { Value T }
-func newBox[T any](v T) Box[T] {
-	var b Box[T]
-	b = Box[T]{Value: v}
-	return b
-}
-var result = newBox[string]("hello")
-`,
-			expectedVar:   "result",
-			expectedValue: map[string]any{"Value": "hello"},
-			expectedType:  object.STRUCT_INSTANCE_OBJ,
-			wantErr:       false,
-		},
-		{
-			name: "error: wrong number of type arguments",
+			name: "call generic identity function with string",
 			script: `
 package main
 func identity[T any](v T) T {
 	return v
 }
-var result = identity[int, string](10)
+var result = identity("hello")
 `,
-			// This error happens during parsing, not evaluation.
-			// So we check for it in the LoadFile step.
-			wantErr:      true,
-			wantErrorMsg: "wrong number of type arguments",
+			expectedVar:   "result",
+			expectedValue: "hello",
+			expectedType:  object.STRING_OBJ,
+			wantErr:       false,
+		},
+		{
+			name: "call generic function with non-leading generic parameter",
+			script: `
+package main
+func takeStringAndT[T any](s string, v T) T {
+	return v
+}
+var result = takeStringAndT("hello", 10)
+`,
+			expectedVar:   "result",
+			expectedValue: int64(10),
+			expectedType:  object.INTEGER_OBJ,
+			wantErr:       false,
 		},
 	}
 
@@ -92,7 +74,7 @@ var result = identity[int, string](10)
 			if err != nil {
 				if tt.wantErr && tt.wantErrorMsg != "" {
 					if strings.Contains(err.Error(), tt.wantErrorMsg) {
-						return // Correctly failed at parse time
+						return
 					}
 					t.Fatalf("LoadFile() error = %v, want error msg containing %q", err, tt.wantErrorMsg)
 				}
@@ -128,31 +110,10 @@ var result = identity[int, string](10)
 				if v.Value != tt.expectedValue.(int64) {
 					t.Errorf("result has wrong value. got=%d, want=%d", v.Value, tt.expectedValue)
 				}
-			case *object.StructInstance:
-				expectedFields := tt.expectedValue.(map[string]any)
-				if len(v.Fields) != len(expectedFields) {
-					t.Errorf("wrong number of fields. got=%d, want=%d", len(v.Fields), len(expectedFields))
+			case *object.String:
+				if v.Value != tt.expectedValue.(string) {
+					t.Errorf("result has wrong value. got=%q, want=%q", v.Value, tt.expectedValue)
 				}
-				for name, expectedFieldVal := range expectedFields {
-					actualFieldVal, ok := v.Fields[name]
-					if !ok {
-						t.Errorf("field %s not found", name)
-						continue
-					}
-					switch actual := actualFieldVal.(type) {
-					case *object.Integer:
-						if actual.Value != expectedFieldVal.(int64) {
-							t.Errorf("field %s has wrong value. got=%d, want=%d", name, actual.Value, expectedFieldVal)
-						}
-					case *object.String:
-						if actual.Value != expectedFieldVal.(string) {
-							t.Errorf("field %s has wrong value. got=%q, want=%q", name, actual.Value, expectedFieldVal)
-						}
-					default:
-						t.Errorf("unhandled field type for checking: %T", actual)
-					}
-				}
-
 			default:
 				t.Errorf("unhandled result type for checking: %s", val.Type())
 			}

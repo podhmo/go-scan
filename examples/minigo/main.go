@@ -7,10 +7,28 @@ import (
 	"io"
 	"log"
 	"os"
-	"strings"
 
 	"github.com/podhmo/go-scan/minigo"
+
+	json_ "github.com/podhmo/go-scan/minigo/stdlib/encoding/json"
+	fmt_ "github.com/podhmo/go-scan/minigo/stdlib/fmt"
+	strconv_ "github.com/podhmo/go-scan/minigo/stdlib/strconv"
+	strings_ "github.com/podhmo/go-scan/minigo/stdlib/strings"
 )
+
+// newInterpreterWithStdlib is a helper to create an interpreter and register standard libs.
+func newInterpreterWithStdlib() (*minigo.Interpreter, error) {
+	interp, err := minigo.NewInterpreter()
+	if err != nil {
+		return nil, err
+	}
+	// Register some useful Go functions to be available in the script.
+	strings_.Install(interp)
+	fmt_.Install(interp)
+	json_.Install(interp)
+	strconv_.Install(interp)
+	return interp, nil
+}
 
 func main() {
 	if len(os.Args) > 1 {
@@ -103,22 +121,4 @@ func runREPL() {
 			fmt.Fprintln(os.Stderr, "Error reading input:", err)
 		}
 	}
-}
-
-// newInterpreterWithStdlib is a helper to create an interpreter and register standard libs.
-func newInterpreterWithStdlib() (*minigo.Interpreter, error) {
-	interp, err := minigo.NewInterpreter()
-	if err != nil {
-		return nil, err
-	}
-	// Register some useful Go functions to be available in the script.
-	interp.Register("fmt", map[string]any{
-		"Sprintf": fmt.Sprintf,
-	})
-	interp.Register("strings", map[string]any{
-		"ToUpper": strings.ToUpper,
-		"ToLower": strings.ToLower,
-		"Join":    strings.Join,
-	})
-	return interp, nil
 }

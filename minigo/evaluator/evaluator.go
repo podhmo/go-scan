@@ -251,13 +251,18 @@ var builtins = map[string]*object.Builtin{
 			if len(args) < 2 {
 				return ctx.NewError(pos, "wrong number of arguments. got=%d, want at least 2", len(args))
 			}
-			arr, ok := args[0].(*object.Array)
-			if !ok {
-				return ctx.NewError(pos, "argument to `append` must be array, got %s", args[0].Type())
+
+			var elements []object.Object
+			if arr, ok := args[0].(*object.Array); ok {
+				elements = arr.Elements
+			} else if args[0] == object.NIL {
+				elements = []object.Object{}
+			} else {
+				return ctx.NewError(pos, "argument to `append` must be array or nil, got %s", args[0].Type())
 			}
 
-			newElements := make([]object.Object, len(arr.Elements), len(arr.Elements)+len(args)-1)
-			copy(newElements, arr.Elements)
+			newElements := make([]object.Object, len(elements), len(elements)+len(args)-1)
+			copy(newElements, elements)
 			newElements = append(newElements, args[1:]...)
 
 			return &object.Array{Elements: newElements}
@@ -1008,6 +1013,18 @@ func (e *Evaluator) objectToReflectValue(obj object.Object, targetType reflect.T
 				bytes[i] = byte(intVal.Value)
 			}
 			return reflect.ValueOf(bytes), nil
+		}
+		// Handle conversion to []int.
+		if targetType.Kind() == reflect.Slice && targetType.Elem().Kind() == reflect.Int {
+			ints := make([]int, len(o.Elements))
+			for i, el := range o.Elements {
+				intVal, ok := el.(*object.Integer)
+				if !ok {
+					return reflect.Value{}, fmt.Errorf("cannot convert non-integer element in array to int")
+				}
+				ints[i] = int(intVal.Value)
+			}
+			return reflect.ValueOf(ints), nil
 		}
 	}
 
@@ -3258,7 +3275,7 @@ func (e *Evaluator) constantInfoToObject(c *goscan.ConstantInfo) (object.Object,
 
 // findSymbolInPackageInfo searches for a symbol within a pre-loaded PackageInfo.
 // It does not trigger new scans. It returns the found object and a boolean.
-// NOTE: This resolves constants and struct type definitions. Functions must be pre-registered.
+// NOTE: This resolves constants, struct type definitions, and function declarations from AST.
 func (e *Evaluator) findSymbolInPackageInfo(pkgInfo *goscan.Package, symbolName string) (object.Object, bool) {
 	// Look in constants
 	for _, c := range pkgInfo.Constants {
@@ -3286,10 +3303,28 @@ func (e *Evaluator) findSymbolInPackageInfo(pkgInfo *goscan.Package, symbolName 
 
 			// Convert scanner.TypeInfo to object.StructDefinition
 			def := &object.StructDefinition{
-				Name:   typeSpec.Name,
-				Fields: structType.Fields.List,
+				Name:    typeSpec.Name,
+				Fields:  structType.Fields.List,
+				Methods: make(map[string]*object.Function), // Initialize methods map
 			}
 			return def, true
+		}
+	}
+
+	// Look in functions
+	for _, f := range pkgInfo.Functions {
+		if f.Name == symbolName {
+			if f.AstDecl == nil {
+				continue
+			}
+			return &object.Function{
+				Name:       f.AstDecl.Name,
+				TypeParams: f.AstDecl.Type.TypeParams,
+				Parameters: f.AstDecl.Type.Params,
+				Results:    f.AstDecl.Type.Results,
+				Body:       f.AstDecl.Body,
+				Env:        nil, // Stubs from go source scanning don't have a closure env.
+			}, true
 		}
 	}
 

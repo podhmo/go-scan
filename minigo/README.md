@@ -13,12 +13,28 @@ The primary goal of `minigo` is to replace static configuration files like YAML 
 - **Familiar Syntax**: Write configurations using a subset of Go's syntax, including variables, functions, `if` statements, and `for` loops.
 - **Type-Safe Unmarshaling**: Directly populate your Go structs from script results.
 - **Go Interoperability**: Inject Go variables and functions from your host application into the script's environment.
-- **Lazy Imports**: To ensure fast startup and efficient execution, package imports are loaded lazily. Files from an imported package are only read and parsed when a symbol from that package is accessed for the first time.
-- **Go Interoperability**: Inject Go variables and functions from your host application into the script's environment.
 - **Lazy Imports**: To ensure fast startup and efficient execution, package imports are only read and parsed when a symbol from that package is accessed for the first time.
 - **Special Forms (Macros)**: Register Go functions that receive the raw AST of their arguments, enabling the creation of custom DSLs and control structures without evaluating the arguments beforehand.
 - **Generics**: Supports generic structs, functions, and type aliases.
 - **Clear Error Reporting**: Provides formatted stack traces on runtime errors, making it easier to debug configuration scripts.
+
+## Standard Library Support
+
+`minigo` can interact with Go's standard library using two primary methods. The recommended approach is to use direct source interpretation whenever possible.
+
+### 1. Direct Source Interpretation (Recommended)
+
+`minigo` can directly load, parse, and interpret the Go source code of many standard library packages at runtime. This is the most powerful and modern integration method.
+
+-   **How it Works**: The interpreter finds the stdlib source in your `GOROOT`, parses it into an AST, and makes the package available for import within your script.
+-   **Key Advantage**: This method fully supports **generic functions**, such as those in the `slices` package. It executes the actual Go source, providing high fidelity to Go's semantics.
+
+### 2. FFI Bindings (Fallback)
+
+For packages that cannot be directly interpreted (e.g., those using CGO or complex `unsafe` operations), you can use the `minigo-gen-bindings` tool. This tool generates Go files that create a Foreign Function Interface (FFI) bridge between `minigo` and the pre-compiled Go package.
+
+-   **How it Works**: The tool scans a compiled package and generates `install.go` code that registers the package's functions with the `minigo` interpreter.
+-   **Limitation**: This method **does not support generic functions**. It is best suited for exposing specific, non-generic functions from packages like `bytes` or `net/http`.
 
 ## Usage
 

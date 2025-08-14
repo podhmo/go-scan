@@ -12,6 +12,7 @@ import (
 	// standard library bindings
 	stdbytes "github.com/podhmo/go-scan/minigo/stdlib/bytes"
 	stdregexp "github.com/podhmo/go-scan/minigo/stdlib/regexp"
+	stdsort "github.com/podhmo/go-scan/minigo/stdlib/sort"
 	// stdtime "github.com/podhmo/go-scan/minigo/stdlib/time" // Temporarily unused
 )
 
@@ -143,5 +144,86 @@ var r_compare_lt = bytes.Compare(c, a)
 	}
 	if got, _ := env.Get("r_compare_lt"); got.(*object.Integer).Value != -1 {
 		t.Errorf("expected 'r_compare_lt' to be -1, got %d", got.(*object.Integer).Value)
+	}
+}
+
+func TestStdlib_sort(t *testing.T) {
+	script := `
+package main
+import "sort"
+var s1 = []int{1, 2, 4, 8}
+var r1 = sort.IntsAreSorted(s1)
+var s2 = []int{3, 1, 4, 1, 5, 9}
+var r2 = sort.IntsAreSorted(s2)
+`
+	interp, err := minigo.NewInterpreter()
+	if err != nil {
+		t.Fatalf("failed to create interpreter: %+v", err)
+	}
+
+	stdsort.Install(interp)
+
+	if err := interp.LoadFile("test.mgo", []byte(script)); err != nil {
+		t.Fatalf("failed to load script: %+v", err)
+	}
+	if _, err := interp.Eval(context.Background()); err != nil {
+		t.Fatalf("failed to evaluate script: %+v", err)
+	}
+
+	env := interp.GlobalEnvForTest()
+
+	r1, ok := env.Get("r1")
+	if !ok {
+		t.Fatalf("variable 'r1' not found")
+	}
+	if r1 != object.TRUE {
+		t.Errorf("expected r1 to be true, but got %v", r1)
+	}
+
+	r2, ok := env.Get("r2")
+	if !ok {
+		t.Fatalf("variable 'r2' not found")
+	}
+	if r2 != object.FALSE {
+		t.Errorf("expected r2 to be false, but got %v", r2)
+	}
+}
+
+func TestStdlib_slices(t *testing.T) {
+	script := `
+package main
+import "slices"
+var s = []int{1, 2, 3}
+var s2 = slices.Clone(s)
+`
+	interp, err := minigo.NewInterpreter()
+	if err != nil {
+		t.Fatalf("failed to create interpreter: %+v", err)
+	}
+
+	if err := interp.LoadFile("test.mgo", []byte(script)); err != nil {
+		t.Fatalf("failed to load script: %+v", err)
+	}
+	if _, err := interp.Eval(context.Background()); err != nil {
+		t.Fatalf("failed to evaluate script: %+v", err)
+	}
+
+	env := interp.GlobalEnvForTest()
+
+	s2, ok := env.Get("s2")
+	if !ok {
+		t.Fatalf("variable 's2' not found")
+	}
+	if s2 == object.NIL {
+		t.Fatalf("expected s2 to be non-nil, but it was nil")
+	}
+
+	s2Array, ok := s2.(*object.Array)
+	if !ok {
+		t.Fatalf("expected s2 to be an array, but got %T", s2)
+	}
+
+	if len(s2Array.Elements) != 3 {
+		t.Fatalf("expected s2 to have 3 elements, but got %d", len(s2Array.Elements))
 	}
 }

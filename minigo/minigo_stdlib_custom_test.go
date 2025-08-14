@@ -2,6 +2,7 @@ package minigo_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	// "time" // Temporarily unused until error handling is clarified
@@ -147,14 +148,13 @@ var r_compare_lt = bytes.Compare(c, a)
 	}
 }
 
-// TestStdlib_slices_import verifies that the 'slices' package can be imported.
-// This is a basic check to ensure the binding generator correctly created a
-// placeholder for the package, even though it contains no functions due to generics.
-func TestStdlib_slices_import(t *testing.T) {
+// TestStdlib_slices_empty_binding verifies that the 'slices' package can be imported
+// but that accessing its functions fails, confirming the binding is empty as intended.
+func TestStdlib_slices_empty_binding(t *testing.T) {
 	script := `
 package main
 import "slices"
-// We don't do anything with the package, just check for import errors.
+var x = slices.Clip // This should fail
 `
 	interp, err := minigo.NewInterpreter()
 	if err != nil {
@@ -165,7 +165,16 @@ import "slices"
 	if err := interp.LoadFile("test.mgo", []byte(script)); err != nil {
 		t.Fatalf("failed to load script with slices import: %+v", err)
 	}
-	if _, err := interp.Eval(context.Background()); err != nil {
-		t.Fatalf("failed to evaluate script with slices import: %+v", err)
+
+	// We expect an error during evaluation because 'slices.Clip' should not be defined.
+	_, err = interp.Eval(context.Background())
+	if err == nil {
+		t.Fatalf("expected an error when accessing a function from the empty slices package, but got none")
+	}
+
+	// Check if the error is the one we expect.
+	expectedErrorPart := `undefined: slices.Clip`
+	if !strings.Contains(err.Error(), expectedErrorPart) {
+		t.Errorf("expected error to contain %q, but got: %v", expectedErrorPart, err)
 	}
 }

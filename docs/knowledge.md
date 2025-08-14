@@ -162,3 +162,34 @@ Prepending `cd /app` significantly increased the likelihood that subsequent comm
 In the Jules sandbox environment, it's possible that the CWD state is not consistently maintained across `run_in_bash_session` calls, or that `reset_all()` does not reliably set the CWD back to `/app`. By explicitly changing to `/app` first, subsequent relative path interpretations and the CWD for subprocesses (like `make`) may become more stable.
 
 This insight is recorded as a potentially effective troubleshooting step for CWD-related anomalies encountered within the Jules environment.
+
+---
+
+## Dynamic Resolution of Standard Library Functions
+
+**Context:**
+
+A requirement emerged to support functions from standard library packages (like `slices.Clone`) without pre-generating or manually registering bindings. The `minigo` interpreter, via `go-scan`'s `WithGoModuleResolver` option, is capable of locating the source code for these packages.
+
+**Problem & Discovery:**
+
+Initial attempts to call `slices.Clone` led to an `internal inconsistency: symbol ... found by scanner but not in final package info` error. This was traced to the `findSymbolInPackageInfo` function in `minigo/evaluator/evaluator.go`, which was only equipped to look for constants and struct types within the scanned package information, but not functions.
+
+**Solution & Surprising Behavior:**
+
+1.  **The Fix**: The immediate fix was to enhance `findSymbolInPackageInfo` to also search the `Functions` slice of the `goscan.Package` info. When a function is found, a stub `*object.Function` is created using the AST (`*ast.FuncDecl`) provided by the scanner.
+
+2.  **Unexpected Success**: It was hypothesized that this would lead to a new runtime error, as the `minigo` evaluator should not be able to execute the raw Go AST body of a standard library function like `slices.Clone`. Surprisingly, the test *passed*.
+
+**Analysis of Success:**
+
+Further investigation revealed that the `minigo` evaluator, when encountering the `*object.Function` stub for `slices.Clone`, proceeded to evaluate its body: `return append(S(nil), s...)`. The key factors for its success are:
+*   The body consists of a call to another function, `append`, which is a `minigo` **builtin**.
+*   The evaluator's generic type inference (`inferGenericTypes`) was capable of resolving the generic type parameter `S` to the concrete type of the slice passed to `Clone`.
+*   The type conversion `S(nil)` was successfully handled, likely being interpreted as creating a `nil` value of the inferred slice type.
+
+**Conclusion:**
+
+The `minigo` interpreter possesses a powerful, albeit perhaps unintentional, capability: it can dynamically resolve and execute the AST of Go standard library functions, provided that the function's body is composed entirely of constructs that the `minigo` evaluator itself can understand (like calls to its own builtins).
+
+This hybrid approach—finding a function's AST via `go-scan` and then evaluating that AST within `minigo`—allows for the dynamic use of some Go code without explicit bindings. This is a significant piece of knowledge about the system's architecture. The crucial fix was ensuring the symbol resolution path (`findSymbolInPackageInfo`) correctly identified function ASTs from the scanner's output.

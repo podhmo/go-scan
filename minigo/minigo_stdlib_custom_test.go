@@ -145,3 +145,42 @@ var r_compare_lt = bytes.Compare(c, a)
 		t.Errorf("expected 'r_compare_lt' to be -1, got %d", got.(*object.Integer).Value)
 	}
 }
+
+func TestStdlib_slices(t *testing.T) {
+	script := `
+package main
+import "slices"
+var s = []int{1, 2, 3}
+var s2 = slices.Clone(s)
+`
+	interp, err := minigo.NewInterpreter()
+	if err != nil {
+		t.Fatalf("failed to create interpreter: %+v", err)
+	}
+
+	if err := interp.LoadFile("test.mgo", []byte(script)); err != nil {
+		t.Fatalf("failed to load script: %+v", err)
+	}
+	if _, err := interp.Eval(context.Background()); err != nil {
+		t.Fatalf("failed to evaluate script: %+v", err)
+	}
+
+	env := interp.GlobalEnvForTest()
+
+	s2, ok := env.Get("s2")
+	if !ok {
+		t.Fatalf("variable 's2' not found")
+	}
+	if s2 == object.NIL {
+		t.Fatalf("expected s2 to be non-nil, but it was nil")
+	}
+
+	s2Array, ok := s2.(*object.Array)
+	if !ok {
+		t.Fatalf("expected s2 to be an array, but got %T", s2)
+	}
+
+	if len(s2Array.Elements) != 3 {
+		t.Fatalf("expected s2 to have 3 elements, but got %d", len(s2Array.Elements))
+	}
+}

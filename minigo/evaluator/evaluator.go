@@ -248,16 +248,24 @@ var builtins = map[string]*object.Builtin{
 	},
 	"append": {
 		Fn: func(ctx *object.BuiltinContext, pos token.Pos, args ...object.Object) object.Object {
-			if len(args) < 2 {
-				return ctx.NewError(pos, "wrong number of arguments. got=%d, want at least 2", len(args))
-			}
-			arr, ok := args[0].(*object.Array)
-			if !ok {
-				return ctx.NewError(pos, "argument to `append` must be array, got %s", args[0].Type())
+			if len(args) < 1 {
+				return ctx.NewError(pos, "wrong number of arguments for append: got=%d, want at least 1", len(args))
 			}
 
-			newElements := make([]object.Object, len(arr.Elements), len(arr.Elements)+len(args)-1)
-			copy(newElements, arr.Elements)
+			var originalElements []object.Object
+			if arr, ok := args[0].(*object.Array); ok {
+				originalElements = arr.Elements
+			} else if args[0] == object.NIL {
+				originalElements = []object.Object{}
+			} else {
+				return ctx.NewError(pos, "argument to `append` must be array or nil, got %s", args[0].Type())
+			}
+
+			// The new slice will have the length of the original plus all new elements.
+			// The capacity will be at least that large.
+			newLen := len(originalElements) + len(args) - 1
+			newElements := make([]object.Object, len(originalElements), newLen)
+			copy(newElements, originalElements)
 			newElements = append(newElements, args[1:]...)
 
 			return &object.Array{Elements: newElements}

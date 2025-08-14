@@ -50,3 +50,23 @@ The investigation revealed several fundamental limitations in the FFI bridge. Th
 -   **Error Handling**: The FFI bridge (`ffibridge`) needs to be modified to check for non-nil error return values and wrap them in a `minigo` error object instead of panicking. This seems more achievable than full method support.
 -   **Generics (for FFI)**: The binding generator could be improved to simply ignore generic functions, preventing it from generating non-compiling code. However, given the success of the source interpretation method, improving the FFI generator for generics is a low priority.
 -   **`byte` Keyword**: This would require adding `byte` as a built-in type alias for `uint8` in the `minigo` parser or evaluator. This is a feasible fix.
+
+### `errors`
+
+-   **Limitation (Direct Source Interpretation)**: Sequential Declaration Order.
+-   **Analysis**: An attempt to load `errors` via direct source interpretation fails with the error `identifier not found: errorString`. This occurs because the standard library's `errors.go` file defines the `New` function *before* it defines the unexported `errorString` struct that `New` returns. The `minigo` interpreter appears to process top-level declarations sequentially and does not resolve symbols that are defined later in the same file. This limitation makes it incompatible with standard Go source files that rely on out-of-order declarations.
+
+### `strings`
+
+-   **Limitation (Direct Source Interpretation)**: No String Indexing.
+-   **Analysis**: An attempt to use `strings.ToUpper` fails with the error `index operator not supported for STRING`. The `minigo` interpreter does not currently support accessing individual characters or bytes of a string via an index (e.g., `s[i]`). This is a fundamental language feature required by many functions in the `strings` package.
+
+### `sort`
+
+-   **Limitation (Direct Source Interpretation)**: No Transitive Dependency Resolution.
+-   **Analysis**: An attempt to use `sort.Ints` fails with the error `identifier not found: slices`. This happens because the Go implementation of `sort.Ints` calls `slices.Sort`. Although the `sort.go` source file imports the `slices` package, the `minigo` interpreter does not automatically load this transitive dependency. Each required package must seemingly be loaded explicitly.
+
+### `bytes`
+
+-   **Limitation (Direct Source Interpretation)**: Incorrect Function Signature Parsing.
+-   **Analysis**: An attempt to use `bytes.Equal` fails with the error `wrong number of arguments. got=2, want=1`. The `minigo` interpreter incorrectly determines that `bytes.Equal` takes only one argument, despite its Go signature being `func Equal(a, b []byte) bool`. This suggests a flaw in how the interpreter parses or registers function signatures from source files.

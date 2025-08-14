@@ -1,7 +1,6 @@
 package minigo_test
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -35,19 +34,16 @@ func TestStdlibSource(t *testing.T) {
 			`
 package main
 
-import (
-	"fmt"
-	"slices"
-)
+import "slices"
 
 func main() {
 	s1 := []int{1, 2, 3}
 	s2 := slices.Clone(s1)
-	fmt.Printf("%v\n", s2)
+	println(s2)
 
 	s1[0] = 99
-	fmt.Printf("%v\n", s1)
-	fmt.Printf("%v\n", s2)
+	println(s1)
+	println(s2)
 }
 `,
 		},
@@ -66,11 +62,6 @@ func main() {
 				t.Fatal(err)
 			}
 
-			// Register native go functions that the script will use
-			interpreter.Register("fmt", map[string]any{
-				"Printf": fmt.Printf,
-			})
-
 			err = interpreter.LoadGoSourceAsPackage("slices", string(src))
 			if err != nil {
 				t.Fatal(err)
@@ -78,7 +69,7 @@ func main() {
 
 			_, err = interpreter.EvalString(tc.script)
 			if err != nil {
-				t.Fatal(err)
+				t.Fatalf("eval failed: %v\nstderr:\n%s", err, errbuf.String())
 			}
 
 			// The script prints s2, then s1, then s2 again.

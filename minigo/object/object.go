@@ -568,7 +568,7 @@ func (a *Array) Inspect() string {
 	}
 
 	out.WriteString("[")
-	out.WriteString(strings.Join(elements, ", "))
+	out.WriteString(strings.Join(elements, " "))
 	out.WriteString("]")
 
 	return out.String()

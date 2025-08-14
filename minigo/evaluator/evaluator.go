@@ -7,7 +7,6 @@ import (
 	"go/ast"
 	"go/token"
 	"io"
-	"os"
 	"reflect"
 	"strconv"
 	"strings"
@@ -1663,36 +1662,14 @@ func (e *Evaluator) evalSwitchStmt(ss *ast.SwitchStmt, env *object.Environment, 
 }
 
 func (e *Evaluator) evalExpressions(exps []ast.Expr, env *object.Environment, fscope *object.FileScope) []object.Object {
-	result := []object.Object{}
+	result := make([]object.Object, len(exps))
 
-	for _, exp := range exps {
-		if ellipsis, ok := exp.(*ast.Ellipsis); ok {
-			argToSpread := e.Eval(ellipsis.Elt, env, fscope)
-			if isError(argToSpread) {
-				return []object.Object{argToSpread}
-			}
-
-			switch arg := argToSpread.(type) {
-			case *object.Array:
-				result = append(result, arg.Elements...)
-			case *object.GoValue:
-				if arg.Value.Kind() == reflect.Slice {
-					for i := 0; i < arg.Value.Len(); i++ {
-						result = append(result, e.nativeToValue(arg.Value.Index(i)))
-					}
-				} else {
-					return []object.Object{e.newError(ellipsis.Pos(), "argument to ... must be a slice, got %s", arg.Value.Type())}
-				}
-			default:
-				return []object.Object{e.newError(ellipsis.Pos(), "argument to ... must be a slice, got %s", argToSpread.Type())}
-			}
-		} else {
-			evaluated := e.Eval(exp, env, fscope)
-			if isError(evaluated) {
-				return []object.Object{evaluated}
-			}
-			result = append(result, evaluated)
+	for i, exp := range exps {
+		evaluated := e.Eval(exp, env, fscope)
+		if isError(evaluated) {
+			return []object.Object{evaluated}
 		}
+		result[i] = evaluated
 	}
 
 	return result
@@ -2422,9 +2399,39 @@ func (e *Evaluator) Eval(node ast.Node, env *object.Environment, fscope *object.
 			return sf.Fn(e, fscope, n.Pos(), n.Args)
 		}
 
-		args := e.evalExpressions(n.Args, env, fscope)
-		if len(args) == 1 && isError(args[0]) {
-			return args[0]
+		var args []object.Object
+		if n.Ellipsis.IsValid() {
+			// Handle variadic call, e.g., fn(a, b, c...)
+			if len(n.Args) == 0 {
+				return e.newError(n.Pos(), "cannot use ... on empty argument list")
+			}
+
+			// Evaluate all but the last argument normally.
+			args = e.evalExpressions(n.Args[:len(n.Args)-1], env, fscope)
+			if len(args) > 0 && isError(args[len(args)-1]) {
+				return args[len(args)-1]
+			}
+
+			// Evaluate the last argument, which is the slice to be spread.
+			lastArg := n.Args[len(n.Args)-1]
+			sliceToSpread := e.Eval(lastArg, env, fscope)
+			if isError(sliceToSpread) {
+				return sliceToSpread
+			}
+
+			// Spread the elements of the slice.
+			switch s := sliceToSpread.(type) {
+			case *object.Array:
+				args = append(args, s.Elements...)
+			default:
+				return e.newError(lastArg.Pos(), "cannot use ... on non-slice type %s", sliceToSpread.Type())
+			}
+		} else {
+			// Regular function call.
+			args = e.evalExpressions(n.Args, env, fscope)
+			if len(args) > 0 && isError(args[len(args)-1]) {
+				return args[len(args)-1]
+			}
 		}
 		return e.applyFunction(n, function, args, env, fscope)
 	case *ast.SelectorExpr:

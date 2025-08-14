@@ -1014,6 +1014,18 @@ func (e *Evaluator) objectToReflectValue(obj object.Object, targetType reflect.T
 			}
 			return reflect.ValueOf(bytes), nil
 		}
+		// Handle conversion to []int.
+		if targetType.Kind() == reflect.Slice && targetType.Elem().Kind() == reflect.Int {
+			ints := make([]int, len(o.Elements))
+			for i, el := range o.Elements {
+				intVal, ok := el.(*object.Integer)
+				if !ok {
+					return reflect.Value{}, fmt.Errorf("cannot convert non-integer element in array to int")
+				}
+				ints[i] = int(intVal.Value)
+			}
+			return reflect.ValueOf(ints), nil
+		}
 	}
 
 	return reflect.Value{}, fmt.Errorf("unsupported conversion from %s to %s", obj.Type(), targetType)

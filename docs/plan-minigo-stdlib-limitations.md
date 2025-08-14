@@ -8,26 +8,23 @@ The primary goal is to expand `minigo`'s standard library support, making it a m
 
 ## Strategies and Findings
 
-`minigo` now supports two primary methods for integrating standard library packages. The interpreter seamlessly attempts the best method first, making usage transparent to the end user.
+Two primary methods for integrating standard library packages have been explored, each with its own trade-offs.
 
-### Strategy 1: On-Demand Source Interpretation (Preferred Method)
+### Strategy 1: Direct Source Interpretation (Preferred Method)
 
-This is the most powerful and preferred approach. It involves finding and evaluating the Go source code of a standard library package at runtime, the first time a symbol from that package is accessed.
+This is a new and powerful approach that involves loading the Go source code of a standard library package directly into the `minigo` interpreter at runtime.
 
 - **Process**:
-    1. A script executes `import "some/package"`.
-    2. Later, the script accesses a symbol, e.g., `some.Function()`.
-    3. The `minigo` evaluator's `findSymbolInPackage` logic is triggered.
-    4. It first checks an internal registry for pre-compiled FFI bindings (see Strategy 2).
-    5. If no binding is found, it uses the `goscan.Scanner` (which contains a `goscan.Locator` configured with `WithGoModuleResolver`) to find the package's source code in the host `GOROOT` or Go module cache.
-    6. Once found, the interpreter parses and evaluates all Go files in that package, creating native `minigo` function and type objects.
-    7. These objects are cached, and the requested symbol is returned to the script. Subsequent access is fast.
+    1. The `goscan.Locator` (with `WithGoModuleResolver`) is used to find the source directory of a stdlib package from the host `GOROOT`.
+    2. A new `interpreter.LoadGoSourceAsPackage()` method reads the `.go` files, parses them into an AST, and evaluates the declarations within the interpreter's environment.
+    3. This creates a native `minigo` package object that can be imported and used by scripts.
+
+- **Success Case (`slices` package)**: This method was successfully used to implement the `slices` package. This was a significant achievement because `slices` consists entirely of generic functions, which the FFI binding generator (Strategy 2) cannot handle. This approach required enhancing the `minigo` evaluator with several new language features, including variadic arguments (`...`) and full 3-index slice expressions.
 
 - **Advantages**:
-    - **Automatic and Transparent**: No special configuration is needed. A standard `import` statement is sufficient.
-    - **Supports Generics**: Can interpret modern, generic Go code (e.g., the `slices` package) that the FFI generator cannot handle.
+    - **Supports Generics**: Bypasses the limitations of the FFI generator, allowing `minigo` to use modern, generic Go code.
     - **Full Compatibility**: Executes the actual Go source, providing high fidelity to Go's semantics (assuming the interpreter supports all required language features).
-    - **No Pre-compilation Step**: Integration is done entirely at runtime.
+    - **No Pre-compilation Step**: Integration is done at runtime, simplifying the build process.
 
 - **Limitations**:
     - The `minigo` interpreter must support all Go syntax used in the source file.

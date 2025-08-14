@@ -14,56 +14,11 @@ The primary goal of `minigo` is to replace static configuration files like YAML 
 - **Type-Safe Unmarshaling**: Directly populate your Go structs from script results.
 - **Go Interoperability**: Inject Go variables and functions from your host application into the script's environment.
 - **Lazy Imports**: To ensure fast startup and efficient execution, package imports are loaded lazily. Files from an imported package are only read and parsed when a symbol from that package is accessed for the first time.
-- **Standard Library Support**: Import and use standard library packages like `strings`, `regexp`, and even generic packages like `slices` with a standard `import` statement.
+- **Go Interoperability**: Inject Go variables and functions from your host application into the script's environment.
+- **Lazy Imports**: To ensure fast startup and efficient execution, package imports are only read and parsed when a symbol from that package is accessed for the first time.
 - **Special Forms (Macros)**: Register Go functions that receive the raw AST of their arguments, enabling the creation of custom DSLs and control structures without evaluating the arguments beforehand.
 - **Generics**: Supports generic structs, functions, and type aliases.
 - **Clear Error Reporting**: Provides formatted stack traces on runtime errors, making it easier to debug configuration scripts.
-
-## Standard Library Usage
-
-`minigo` can interact with Go's standard library in two ways. The interpreter transparently handles both, trying the most powerful method (source interpretation) first.
-
-### 1. Direct Import from Source (No Setup Needed)
-
-For many standard library packages (like `slices`, `errors`, `io`), you can simply `import` them and use them directly. `minigo` will automatically find the Go source code in your `GOROOT`, interpret it at runtime, and make it available to your script. This is the preferred method as it requires no setup and supports modern generic packages.
-
-```go
-// Your script can import and use 'slices' without any special
-// configuration in the host Go application.
-//
-// script.mgo
-import "slices"
-
-func main() {
-    s := []int{3, 1, 2}
-    slices.Sort(s) // The 'slices' package is found and loaded from source automatically
-    return s[0]    // Returns 1
-}
-```
-
-### 2. Packages Requiring FFI Bindings
-
-Some packages are too complex to be fully interpreted from source (e.g., those using `unsafe` or CGO). For these, `minigo` uses pre-compiled **FFI bindings**. A selection of bindings (e.g., for `strings`, `regexp`, `bytes`, `strconv`) are included in the `minigo/stdlib` directory.
-
-To use these packages, you must explicitly "install" them on your interpreter instance.
-
-```go
-// In your host Go application:
-import (
-    "github.com/podhmo/go-scan/minigo"
-    stdstrings "github.com/podhmo/go-scan/minigo/stdlib/strings" // Import the binding
-)
-
-// Create an interpreter
-interp, _ := minigo.NewInterpreter()
-
-// Install the 'strings' package bindings
-stdstrings.Install(interp)
-
-// Now, any script run by this interpreter can `import "strings"`
-// and it will use the fast, pre-compiled FFI functions.
-interp.EvalString(`import "strings"; strings.ToUpper("hello")`)
-```
 
 ## Usage
 

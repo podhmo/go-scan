@@ -6,6 +6,28 @@ all:
 format:
 	go run golang.org/x/tools/cmd/goimports@latest -w $(shell find . -name '*.go')
 
+STDLIB_PKGS= \
+	fmt \
+	strings \
+	encoding/json \
+	strconv \
+	math/rand \
+	time \
+	bytes \
+	io \
+	os \
+	regexp \
+	text/template \
+	errors \
+	net/http \
+	net/url \
+	path/filepath \
+	sort
+
+gen-stdlib:
+	rm -rf minigo/stdlib/* # clean first
+	go run ./examples/minigo-gen-bindings --output minigo/stdlib $(STDLIB_PKGS)
+
 test:
 	go test ./...
 	go -C ./examples/derivingjson test ./...

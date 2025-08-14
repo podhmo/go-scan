@@ -58,9 +58,22 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     - [x] **Implement `json.Marshal` for structs**: Enhance the FFI to convert `minigo` structs to `map[string]any` when calling Go functions that accept `interface{}`, as detailed in `docs/trouble-minigo-encoding-json.md`.
     - [x] **Support `json.Unmarshal`**: Implemented a recursive `json.Unmarshal` solution with an FFI pointer bridge. It now supports nested, recursive, and cross-package structs.
     - [x] **Support Struct Field Tags**: Requires parser and object model changes to recognize and utilize `json:"..."` tags.
+- **Extended Standard Library Support & Compatibility Analysis**:
+    - [x] **Fix Binding Generator**: Patched the `minigo-gen-bindings` tool to support sub-package directory structures (e.g., `encoding/json`) and to de-duplicate symbols, preventing compilation errors.
+    - [x] **Automate Generation**: Added a `make gen-stdlib` target to automate the generation of a wide range of stdlib packages.
+    - [x] **Implement Test Suite**: Created a test suite (`minigo/minigo_stdlib_custom_test.go`) to validate the generated bindings.
+    - [x] **Investigate & Document Limitations**: Through testing, identified and documented several core limitations of the `minigo` interpreter. See `docs/trouble-minigo-stdlib-limitations.md` for a full analysis.
+    - [x] **Generated Bindings For**:
+        - `fmt`, `strings`, `encoding/json`, `strconv`, `math/rand`, `time`, `bytes`, `io`, `os`, `regexp`, `text/template`, `errors`, `net/http`, `net/url`, `path/filepath`, `sort`.
 
 
 ## To Be Implemented
+
+### `minigo` FFI and Language Limitations ([docs/trouble-minigo-stdlib-limitations.md](./docs/trouble-minigo-stdlib-limitations.md))
+- [ ] **Implement Method Calls on Go Objects**: Enhance the interpreter to support calling methods on Go structs returned from bound functions (e.g., `(*bytes.Buffer).Write`). This is the highest-impact improvement for stdlib compatibility. (See `docs/trouble-minigo-stdlib-limitations.md`).
+- [ ] **Graceful Error Handling for Go Functions**: Modify the FFI to return `error` values from Go functions as `minigo` error objects, rather than halting execution.
+- [ ] **Improve FFI Support for Go Generics**: Update the binding generator to correctly handle (or at least ignore) generic Go functions to prevent it from generating non-compiling code. This is a limitation of the binding tool, not the core interpreter.
+- [ ] **Add `byte` as a Built-in Type**: Add the `byte` keyword as a built-in alias for `uint8` in the interpreter to support `[]byte` literals.
 
 ### `minigo` Refinements ([docs/plan-minigo.md](./docs/plan-minigo.md))
 - [x] **Implement Remaining Built-in Functions**:

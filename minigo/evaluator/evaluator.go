@@ -3669,20 +3669,16 @@ func (e *Evaluator) WrapGoFunction(pos token.Pos, funcVal reflect.Value) object.
 			if numOut == 0 {
 				return object.NIL
 			}
-			lastResult := results[len(results)-1]
-			if lastResult.Type().Implements(reflect.TypeOf((*error)(nil)).Elem()) {
-				if !lastResult.IsNil() {
-					return ctx.NewError(pos, "error from called Go function: %v", lastResult.Interface())
-				}
-			}
+
+			// Convert all results to minigo objects.
+			// This new logic correctly handles the `(value, error)` pattern by
+			// wrapping the non-nil error in a GoValue, instead of halting execution.
+			// The minigo script is then responsible for checking if the error is nil.
 			resultObjects := make([]object.Object, numOut)
 			for i := 0; i < numOut; i++ {
-				if i == numOut-1 && lastResult.Type().Implements(reflect.TypeOf((*error)(nil)).Elem()) && results[i].IsNil() {
-					resultObjects[i] = object.NIL
-				} else {
-					resultObjects[i] = e.nativeToValue(results[i])
-				}
+				resultObjects[i] = e.nativeToValue(results[i])
 			}
+
 			if numOut == 1 {
 				return resultObjects[0]
 			}

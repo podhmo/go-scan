@@ -3,8 +3,7 @@ package minigo_test
 import (
 	"context"
 	"testing"
-
-	// "time" // Temporarily unused until error handling is clarified
+	"time"
 
 	"github.com/podhmo/go-scan/minigo"
 	"github.com/podhmo/go-scan/minigo/object"
@@ -13,15 +12,12 @@ import (
 	stdbytes "github.com/podhmo/go-scan/minigo/stdlib/bytes"
 	stdregexp "github.com/podhmo/go-scan/minigo/stdlib/regexp"
 	stdsort "github.com/podhmo/go-scan/minigo/stdlib/sort"
-	// stdtime "github.com/podhmo/go-scan/minigo/stdlib/time" // Temporarily unused
+	stdtime "github.com/podhmo/go-scan/minigo/stdlib/time"
 )
 
-/*
-// TestStdlib_time_limitation is temporarily disabled.
-// It was discovered that the minigo interpreter panics when a bound Go function returns an error,
-// instead of returning the error as a value. This makes it difficult to test for expected errors.
-// This behavior is a key limitation that needs to be documented.
-func TestStdlib_time_limitation(t *testing.T) {
+// TestStdlib_time_error_handling verifies that the FFI bridge correctly returns
+// a Go error as a usable value in the minigo script, rather than panicking.
+func TestStdlib_time_error_handling(t *testing.T) {
 	script := `
 package main
 import "time"
@@ -58,7 +54,6 @@ var _, err = time.Parse(layout, "not-a-valid-date")
 		t.Errorf("expected error to be of type *time.ParseError, but got %T", errValue.Value.Interface())
 	}
 }
-*/
 
 
 // TestStdlib_bytes tests package-level functions of the bytes package.

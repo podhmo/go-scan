@@ -16,9 +16,9 @@ func Install(interp *minigo.Interpreter, installed map[string]bool) {
 
 	interp.Register("errors", map[string]any{
 		"New": errors.New,
+		"Join": errors.Join,
 		"Unwrap": errors.Unwrap,
 		"Is": errors.Is,
 		"As": errors.As,
-		"Join": errors.Join,
 	})
 }

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"text/template"
 
@@ -137,6 +138,9 @@ func generate(ctx context.Context, s *goscan.Scanner, outputDir, pkgPath string)
 			Path:    depPath,
 		}
 	}
+	sort.Slice(depInfos, func(i, j int) bool {
+		return depInfos[i].Path < depInfos[j].Path
+	})
 
 	params := struct {
 		PackageName  string

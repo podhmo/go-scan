@@ -15,17 +15,17 @@ func Install(interp *minigo.Interpreter, installed map[string]bool) {
 	installed["context"] = true
 
 	interp.Register("context", map[string]any{
-		"WithDeadlineCause": context.WithDeadlineCause,
+		"TODO": context.TODO,
 		"WithCancel": context.WithCancel,
 		"WithCancelCause": context.WithCancelCause,
-		"Cause": context.Cause,
-		"WithDeadline": context.WithDeadline,
+		"AfterFunc": context.AfterFunc,
+		"WithDeadlineCause": context.WithDeadlineCause,
 		"WithTimeout": context.WithTimeout,
-		"WithTimeoutCause": context.WithTimeoutCause,
 		"WithValue": context.WithValue,
 		"Background": context.Background,
-		"TODO": context.TODO,
-		"AfterFunc": context.AfterFunc,
+		"Cause": context.Cause,
 		"WithoutCancel": context.WithoutCancel,
+		"WithDeadline": context.WithDeadline,
+		"WithTimeoutCause": context.WithTimeoutCause,
 	})
 }

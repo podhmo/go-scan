@@ -31,18 +31,18 @@ func Install(interp *minigo.Interpreter, installed map[string]bool) {
 	stdstrings.Install(interp, installed)
 
 	interp.Register("text/template", map[string]any{
-		"URLQueryEscaper": template.URLQueryEscaper,
-		"IsTrue": template.IsTrue,
+		"HTMLEscapeString": template.HTMLEscapeString,
 		"Must": template.Must,
 		"ParseFiles": template.ParseFiles,
-		"HTMLEscapeString": template.HTMLEscapeString,
 		"HTMLEscaper": template.HTMLEscaper,
-		"JSEscaper": template.JSEscaper,
-		"New": template.New,
-		"ParseGlob": template.ParseGlob,
-		"ParseFS": template.ParseFS,
-		"HTMLEscape": template.HTMLEscape,
 		"JSEscape": template.JSEscape,
 		"JSEscapeString": template.JSEscapeString,
+		"JSEscaper": template.JSEscaper,
+		"URLQueryEscaper": template.URLQueryEscaper,
+		"IsTrue": template.IsTrue,
+		"ParseGlob": template.ParseGlob,
+		"ParseFS": template.ParseFS,
+		"New": template.New,
+		"HTMLEscape": template.HTMLEscape,
 	})
 }

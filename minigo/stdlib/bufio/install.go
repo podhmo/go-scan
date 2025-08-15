@@ -15,16 +15,16 @@ func Install(interp *minigo.Interpreter, installed map[string]bool) {
 	installed["bufio"] = true
 
 	interp.Register("bufio", map[string]any{
-		"NewScanner": bufio.NewScanner,
-		"ScanBytes": bufio.ScanBytes,
 		"ScanRunes": bufio.ScanRunes,
-		"ScanLines": bufio.ScanLines,
 		"ScanWords": bufio.ScanWords,
-		"NewReaderSize": bufio.NewReaderSize,
 		"NewWriterSize": bufio.NewWriterSize,
 		"NewWriter": bufio.NewWriter,
-		"NewReader": bufio.NewReader,
 		"NewReadWriter": bufio.NewReadWriter,
+		"NewScanner": bufio.NewScanner,
+		"ScanBytes": bufio.ScanBytes,
+		"ScanLines": bufio.ScanLines,
+		"NewReaderSize": bufio.NewReaderSize,
+		"NewReader": bufio.NewReader,
 		"MaxScanTokenSize": bufio.MaxScanTokenSize,
 	})
 }

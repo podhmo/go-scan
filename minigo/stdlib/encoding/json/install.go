@@ -15,14 +15,14 @@ func Install(interp *minigo.Interpreter, installed map[string]bool) {
 	installed["encoding/json"] = true
 
 	interp.Register("encoding/json", map[string]any{
+		"HTMLEscape": json.HTMLEscape,
 		"Compact": json.Compact,
 		"Indent": json.Indent,
 		"Valid": json.Valid,
-		"NewDecoder": json.NewDecoder,
 		"NewEncoder": json.NewEncoder,
-		"Marshal": json.Marshal,
 		"Unmarshal": json.Unmarshal,
-		"HTMLEscape": json.HTMLEscape,
+		"Marshal": json.Marshal,
+		"NewDecoder": json.NewDecoder,
 		"MarshalIndent": json.MarshalIndent,
 	})
 }

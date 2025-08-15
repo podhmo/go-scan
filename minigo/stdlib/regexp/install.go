@@ -15,7 +15,6 @@ func Install(interp *minigo.Interpreter, installed map[string]bool) {
 	installed["regexp"] = true
 
 	interp.Register("regexp", map[string]any{
-		"QuoteMeta": regexp.QuoteMeta,
 		"Compile": regexp.Compile,
 		"CompilePOSIX": regexp.CompilePOSIX,
 		"MustCompile": regexp.MustCompile,
@@ -23,5 +22,6 @@ func Install(interp *minigo.Interpreter, installed map[string]bool) {
 		"MatchReader": regexp.MatchReader,
 		"MatchString": regexp.MatchString,
 		"Match": regexp.Match,
+		"QuoteMeta": regexp.QuoteMeta,
 	})
 }

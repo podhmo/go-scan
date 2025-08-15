@@ -15,15 +15,15 @@ func Install(interp *minigo.Interpreter, installed map[string]bool) {
 	installed["net/url"] = true
 
 	interp.Register("net/url", map[string]any{
-		"QueryUnescape": url.QueryUnescape,
 		"PathUnescape": url.PathUnescape,
-		"QueryEscape": url.QueryEscape,
 		"User": url.User,
-		"ParseQuery": url.ParseQuery,
-		"PathEscape": url.PathEscape,
 		"UserPassword": url.UserPassword,
+		"JoinPath": url.JoinPath,
+		"QueryEscape": url.QueryEscape,
+		"PathEscape": url.PathEscape,
 		"Parse": url.Parse,
 		"ParseRequestURI": url.ParseRequestURI,
-		"JoinPath": url.JoinPath,
+		"ParseQuery": url.ParseQuery,
+		"QueryUnescape": url.QueryUnescape,
 	})
 }

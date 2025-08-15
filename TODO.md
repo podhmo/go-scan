@@ -96,7 +96,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] **Implement two-pass evaluation for top-level declarations**: To fix the "Sequential Declaration Processing" limitation, modify the interpreter to first scan all top-level declarations (types, funcs, vars, consts) in a package before evaluating any code.
 - [x] **Add support for string indexing**: Enhance the evaluator to handle the index operator (`s[i]`) on string objects.
 - [x] **Implement transitive dependency loading**: Add a mechanism to the interpreter to automatically load and parse imported packages that are not already in memory.
-- [ ] **Audit and fix function signature parsing**: Investigate and fix bugs in the function signature parsing logic, using the `bytes.Equal` case as a starting point.
+- [x] **Audit and fix function signature parsing**: Investigate and fix bugs in the function signature parsing logic, using the `bytes.Equal` case as a starting point.
 - [x] **Improve FFI type conversions**:
     - [x] Implement conversion from `minigo` array of strings to Go `[]string`.
 - [ ] **Add built-in type conversions**:

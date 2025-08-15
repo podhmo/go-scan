@@ -119,3 +119,9 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] **Range Over Function**: Support `for...range` loops over functions.
 - [x] **Support Increment and Decrement Operators**: Implement `++` and `--` as statements.
 - [ ] Write comprehensive documentation for the API, supported language features, and usage examples.
+
+### FFI Improvements
+- **Improve FFI `Install` function to handle dependencies**
+  - Change the signature of the `Install` functions for FFI bindings.
+  - The goal is to automatically install dependencies. For example, installing `text/template` should also automatically install `bytes`.
+  - Avoid duplicate installations by passing a map (e.g., `map[string]bool`) to track which packages have already been installed.

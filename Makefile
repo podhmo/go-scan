@@ -7,22 +7,25 @@ format:
 	go run golang.org/x/tools/cmd/goimports@latest -w $(shell find . -name '*.go')
 
 STDLIB_PKGS= \
-	fmt \
-	strings \
-	encoding/json \
-	strconv \
-	math/rand \
-	time \
+	bufio \
 	bytes \
-	io \
-	os \
-	regexp \
-	text/template \
+	context \
+	encoding/json \
 	errors \
+	fmt \
+	io \
+	math/rand \
 	net/http \
 	net/url \
+	os \
 	path/filepath \
-	sort
+	regexp \
+	sort \
+	strconv \
+	strings \
+	text/scanner \
+	text/template \
+	time
 
 gen-stdlib:
 	rm -rf minigo/stdlib/* # clean first

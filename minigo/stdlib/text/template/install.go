@@ -11,18 +11,18 @@ import (
 // Install binds all exported symbols from the "text/template" package to the interpreter.
 func Install(interp *minigo.Interpreter) {
 	interp.Register("text/template", map[string]any{
-		"New":              template.New,
-		"Must":             template.Must,
+		"ParseFiles":       template.ParseFiles,
 		"ParseGlob":        template.ParseGlob,
 		"ParseFS":          template.ParseFS,
+		"HTMLEscapeString": template.HTMLEscapeString,
+		"JSEscape":         template.JSEscape,
+		"URLQueryEscaper":  template.URLQueryEscaper,
+		"IsTrue":           template.IsTrue,
+		"New":              template.New,
 		"HTMLEscape":       template.HTMLEscape,
 		"HTMLEscaper":      template.HTMLEscaper,
-		"JSEscape":         template.JSEscape,
-		"IsTrue":           template.IsTrue,
-		"ParseFiles":       template.ParseFiles,
-		"HTMLEscapeString": template.HTMLEscapeString,
 		"JSEscapeString":   template.JSEscapeString,
 		"JSEscaper":        template.JSEscaper,
-		"URLQueryEscaper":  template.URLQueryEscaper,
+		"Must":             template.Must,
 	})
 }

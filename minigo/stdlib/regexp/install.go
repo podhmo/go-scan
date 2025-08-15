@@ -11,13 +11,13 @@ import (
 // Install binds all exported symbols from the "regexp" package to the interpreter.
 func Install(interp *minigo.Interpreter) {
 	interp.Register("regexp", map[string]any{
+		"MatchReader":      regexp.MatchReader,
+		"MatchString":      regexp.MatchString,
 		"Match":            regexp.Match,
 		"QuoteMeta":        regexp.QuoteMeta,
 		"Compile":          regexp.Compile,
 		"CompilePOSIX":     regexp.CompilePOSIX,
 		"MustCompile":      regexp.MustCompile,
 		"MustCompilePOSIX": regexp.MustCompilePOSIX,
-		"MatchReader":      regexp.MatchReader,
-		"MatchString":      regexp.MatchString,
 	})
 }

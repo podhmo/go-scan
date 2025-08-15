@@ -4,20 +4,21 @@ package json
 
 import (
 	"encoding/json"
+
 	"github.com/podhmo/go-scan/minigo"
 )
 
 // Install binds all exported symbols from the "encoding/json" package to the interpreter.
 func Install(interp *minigo.Interpreter) {
 	interp.Register("encoding/json", map[string]any{
-		"Compact": json.Compact,
-		"HTMLEscape": json.HTMLEscape,
-		"Indent": json.Indent,
-		"Marshal": json.Marshal,
+		"Compact":       json.Compact,
+		"HTMLEscape":    json.HTMLEscape,
+		"Indent":        json.Indent,
+		"Marshal":       json.Marshal,
 		"MarshalIndent": json.MarshalIndent,
-		"NewDecoder": json.NewDecoder,
-		"NewEncoder": json.NewEncoder,
-		"Unmarshal": json.Unmarshal,
-		"Valid": json.Valid,
+		"NewDecoder":    json.NewDecoder,
+		"NewEncoder":    json.NewEncoder,
+		"Unmarshal":     json.Unmarshal,
+		"Valid":         json.Valid,
 	})
 }

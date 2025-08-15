@@ -4,34 +4,35 @@ package filepath
 
 import (
 	"path/filepath"
+
 	"github.com/podhmo/go-scan/minigo"
 )
 
 // Install binds all exported symbols from the "path/filepath" package to the interpreter.
 func Install(interp *minigo.Interpreter) {
 	interp.Register("path/filepath", map[string]any{
-		"Abs": filepath.Abs,
-		"Base": filepath.Base,
-		"Clean": filepath.Clean,
-		"Dir": filepath.Dir,
-		"EvalSymlinks": filepath.EvalSymlinks,
-		"Ext": filepath.Ext,
-		"FromSlash": filepath.FromSlash,
-		"Glob": filepath.Glob,
-		"HasPrefix": filepath.HasPrefix,
-		"IsAbs": filepath.IsAbs,
-		"IsLocal": filepath.IsLocal,
-		"Join": filepath.Join,
+		"Abs":           filepath.Abs,
+		"Base":          filepath.Base,
+		"Clean":         filepath.Clean,
+		"Dir":           filepath.Dir,
+		"EvalSymlinks":  filepath.EvalSymlinks,
+		"Ext":           filepath.Ext,
+		"FromSlash":     filepath.FromSlash,
+		"Glob":          filepath.Glob,
+		"HasPrefix":     filepath.HasPrefix,
+		"IsAbs":         filepath.IsAbs,
+		"IsLocal":       filepath.IsLocal,
+		"Join":          filepath.Join,
 		"ListSeparator": filepath.ListSeparator,
-		"Localize": filepath.Localize,
-		"Match": filepath.Match,
-		"Rel": filepath.Rel,
-		"Separator": filepath.Separator,
-		"Split": filepath.Split,
-		"SplitList": filepath.SplitList,
-		"ToSlash": filepath.ToSlash,
-		"VolumeName": filepath.VolumeName,
-		"Walk": filepath.Walk,
-		"WalkDir": filepath.WalkDir,
+		"Localize":      filepath.Localize,
+		"Match":         filepath.Match,
+		"Rel":           filepath.Rel,
+		"Separator":     filepath.Separator,
+		"Split":         filepath.Split,
+		"SplitList":     filepath.SplitList,
+		"ToSlash":       filepath.ToSlash,
+		"VolumeName":    filepath.VolumeName,
+		"Walk":          filepath.Walk,
+		"WalkDir":       filepath.WalkDir,
 	})
 }

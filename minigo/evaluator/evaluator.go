@@ -4203,20 +4203,39 @@ func (e *Evaluator) checkImplements(pos token.Pos, concrete object.Object, iface
 
 func (e *Evaluator) evalStructLiteral(n *ast.CompositeLit, def *object.StructDefinition, env *object.Environment, fscope *object.FileScope) object.Object {
 	instance := &object.StructInstance{Def: def, Fields: make(map[string]object.Object)}
+
+	// Initialize all fields to their zero value (nil) first.
+	// This ensures that even uninitialized fields exist in the Fields map.
+	for _, field := range def.Fields {
+		for _, name := range field.Names {
+			instance.Fields[name.Name] = object.NIL
+		}
+	}
+
 	for _, elt := range n.Elts {
-		kv, ok := elt.(*ast.KeyValueExpr)
-		if !ok {
-			return e.newError(elt.Pos(), "unsupported literal element in struct literal")
+		switch node := elt.(type) {
+		case *ast.KeyValueExpr:
+			key, ok := node.Key.(*ast.Ident)
+			if !ok {
+				return e.newError(node.Key.Pos(), "field name is not an identifier")
+			}
+			value := e.Eval(node.Value, env, fscope)
+			if isError(value) {
+				return value
+			}
+			instance.Fields[key.Name] = value
+		case *ast.Ident:
+			// This handles shorthand struct literals, e.g., `MyStruct{Field}`
+			// which is equivalent to `MyStruct{Field: Field}`.
+			fieldName := node.Name
+			value := e.Eval(node, env, fscope) // Evaluate the identifier in the current env
+			if isError(value) {
+				return value
+			}
+			instance.Fields[fieldName] = value
+		default:
+			return e.newError(elt.Pos(), "unsupported literal element in struct literal: %T", elt)
 		}
-		key, ok := kv.Key.(*ast.Ident)
-		if !ok {
-			return e.newError(kv.Key.Pos(), "field name is not an identifier")
-		}
-		value := e.Eval(kv.Value, env, fscope)
-		if isError(value) {
-			return value
-		}
-		instance.Fields[key.Name] = value
 	}
 	return instance
 }

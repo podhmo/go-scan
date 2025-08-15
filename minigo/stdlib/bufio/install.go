@@ -4,6 +4,7 @@ package bufio
 
 import (
 	"bufio"
+
 	"github.com/podhmo/go-scan/minigo"
 )
 
@@ -11,15 +12,15 @@ import (
 func Install(interp *minigo.Interpreter) {
 	interp.Register("bufio", map[string]any{
 		"MaxScanTokenSize": bufio.MaxScanTokenSize,
-		"NewReadWriter": bufio.NewReadWriter,
-		"NewReader": bufio.NewReader,
-		"NewReaderSize": bufio.NewReaderSize,
-		"NewScanner": bufio.NewScanner,
-		"NewWriter": bufio.NewWriter,
-		"NewWriterSize": bufio.NewWriterSize,
-		"ScanBytes": bufio.ScanBytes,
-		"ScanLines": bufio.ScanLines,
-		"ScanRunes": bufio.ScanRunes,
-		"ScanWords": bufio.ScanWords,
+		"NewReadWriter":    bufio.NewReadWriter,
+		"NewReader":        bufio.NewReader,
+		"NewReaderSize":    bufio.NewReaderSize,
+		"NewScanner":       bufio.NewScanner,
+		"NewWriter":        bufio.NewWriter,
+		"NewWriterSize":    bufio.NewWriterSize,
+		"ScanBytes":        bufio.ScanBytes,
+		"ScanLines":        bufio.ScanLines,
+		"ScanRunes":        bufio.ScanRunes,
+		"ScanWords":        bufio.ScanWords,
 	})
 }

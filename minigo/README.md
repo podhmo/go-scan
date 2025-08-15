@@ -229,3 +229,4 @@ func main() {
 While `minigo` is a powerful tool for configuration and scripting, it is not a full-featured Go environment and has some important limitations:
 
 -   **No Concurrency**: `minigo` does not support `goroutine`s or `channel`s. The interpreter is single-threaded. For a detailed analysis, see [`docs/analysis-minigo-goroutine.md`](../docs/analysis-minigo-goroutine.md).
+-   **Simplified Type System**: To simplify the interpreter, all integer types (`int`, `uint`, `byte`, `uint64`, etc.) are treated as a single `int64` type internally. Similarly, all floating-point types are treated as `float64`. This is sufficient for many scripting and configuration use cases but may not be suitable for tasks that require precise integer sizing or overflow behavior.

@@ -21,11 +21,15 @@ The investigation revealed several fundamental limitations in the FFI bridge. Th
 
 ## Package-Specific Analysis
 
-### `slices` (Now Supported via Source Interpretation)
+### `slices` (Partially Supported via Source Interpretation)
 
--   **Original Limitation**: Go Generics.
--   **Analysis**: This package could not be used with the FFI binding generator. The generator produced a non-compiling `install.go` file because it cannot handle generic functions.
--   **Resolution**: The `slices` package was successfully implemented using the new **direct source interpretation** method. The `minigo` interpreter was enhanced to evaluate the `slices.go` source file directly, bypassing the FFI limitations entirely. This proves that the interpreter itself can handle complex generic code when it has access to the source.
+-   **Status**: Partially Compatible.
+-   **Analysis**: The `slices` package can be loaded via direct source interpretation, but several functions fail due to two distinct limitations in the `minigo` interpreter's handling of generics.
+-   **Working Functions**: `Clone`, `Index`
+-   **Failing Functions**:
+    -   `Equal`, `Compare`: These fail with a `wrong number of arguments` error. This appears to be caused by a bug in the interpreter where it incorrectly counts the number of arguments if multiple arguments share the same generic type parameter (e.g., `s1, s2 S`).
+    -   `Sort`: This function causes a panic (`nil pointer dereference`) during symbol lookup. The root cause is that `Sort`'s signature uses the `cmp.Ordered` interface as a constraint. The `minigo` interpreter does not support the type list syntax (`type Ordered interface { ~int | ... }`) used to define this interface in the `cmp` package, so it fails to resolve the type.
+-   **Conclusion**: While basic `slices` functions work, those that use more advanced generic features (multiple parameters of the same generic type) or depend on packages with unsupported syntax (like `cmp`) will fail.
 
 ### `strconv`
 

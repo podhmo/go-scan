@@ -4,24 +4,23 @@ package context
 
 import (
 	"context"
-
 	"github.com/podhmo/go-scan/minigo"
 )
 
 // Install binds all exported symbols from the "context" package to the interpreter.
 func Install(interp *minigo.Interpreter) {
 	interp.Register("context", map[string]any{
-		"Background":        context.Background,
-		"TODO":              context.TODO,
-		"WithCancelCause":   context.WithCancelCause,
-		"WithoutCancel":     context.WithoutCancel,
-		"WithDeadline":      context.WithDeadline,
+		"AfterFunc": context.AfterFunc,
+		"Background": context.Background,
+		"Cause": context.Cause,
+		"TODO": context.TODO,
+		"WithCancel": context.WithCancel,
+		"WithCancelCause": context.WithCancelCause,
+		"WithDeadline": context.WithDeadline,
 		"WithDeadlineCause": context.WithDeadlineCause,
-		"WithTimeout":       context.WithTimeout,
-		"WithCancel":        context.WithCancel,
-		"Cause":             context.Cause,
-		"AfterFunc":         context.AfterFunc,
-		"WithTimeoutCause":  context.WithTimeoutCause,
-		"WithValue":         context.WithValue,
+		"WithTimeout": context.WithTimeout,
+		"WithTimeoutCause": context.WithTimeoutCause,
+		"WithValue": context.WithValue,
+		"WithoutCancel": context.WithoutCancel,
 	})
 }

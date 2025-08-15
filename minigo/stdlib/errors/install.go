@@ -4,17 +4,16 @@ package errors
 
 import (
 	"errors"
-
 	"github.com/podhmo/go-scan/minigo"
 )
 
 // Install binds all exported symbols from the "errors" package to the interpreter.
 func Install(interp *minigo.Interpreter) {
 	interp.Register("errors", map[string]any{
-		"New":    errors.New,
+		"As": errors.As,
+		"Is": errors.Is,
+		"Join": errors.Join,
+		"New": errors.New,
 		"Unwrap": errors.Unwrap,
-		"Is":     errors.Is,
-		"As":     errors.As,
-		"Join":   errors.Join,
 	})
 }

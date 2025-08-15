@@ -120,12 +120,6 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] **Support Increment and Decrement Operators**: Implement `++` and `--` as statements.
 - [ ] Write comprehensive documentation for the API, supported language features, and usage examples.
 
-### FFI Improvements
-- **Improve FFI `Install` function to handle dependencies**
-  - Change the signature of the `Install` functions for FFI bindings.
-  - The goal is to automatically install dependencies. For example, installing `text/template` should also automatically install `bytes`.
-  - Avoid duplicate installations by passing a map (e.g., `map[string]bool`) to track which packages have already been installed.
-
 ### `minigo` Language and FFI Enhancements from Stdlib Investigation ([docs/trouble-minigo-stdlib-limitations.md](./docs/trouble-minigo-stdlib-limitations.md))
 - [ ] **Support Struct Literals with Local Variables**: Enhance the evaluator to handle struct literals that are initialized with variables from the current function's scope (e.g., `&errorString{text}`). This was found to be a blocker for interpreting the `errors` package from source.
 - [ ] **Support Methods on In-Script Pointers**: Enable the FFI bridge to resolve method calls on pointers to structs that are created and manipulated entirely within a `minigo` script (e.g., `var s scanner.Scanner; var p = &s; p.Init(...)`). This was a blocker for using the `text/scanner` package.

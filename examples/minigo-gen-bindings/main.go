@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"text/template"
 
 	goscan "github.com/podhmo/go-scan"
@@ -95,6 +96,7 @@ func generate(ctx context.Context, s *goscan.Scanner, outputDir, pkgPath string)
 	for s := range symbols {
 		symbolSlice = append(symbolSlice, s)
 	}
+	sort.Strings(symbolSlice)
 
 	pkgName := pkgInfo.Name
 

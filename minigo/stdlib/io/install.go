@@ -4,30 +4,29 @@ package io
 
 import (
 	"io"
-
 	"github.com/podhmo/go-scan/minigo"
 )
 
 // Install binds all exported symbols from the "io" package to the interpreter.
 func Install(interp *minigo.Interpreter) {
 	interp.Register("io", map[string]any{
-		"Pipe":             io.Pipe,
-		"Copy":             io.Copy,
-		"NewOffsetWriter":  io.NewOffsetWriter,
-		"TeeReader":        io.TeeReader,
-		"NopCloser":        io.NopCloser,
-		"ReadAll":          io.ReadAll,
-		"CopyN":            io.CopyN,
-		"MultiReader":      io.MultiReader,
-		"MultiWriter":      io.MultiWriter,
-		"LimitReader":      io.LimitReader,
+		"Copy": io.Copy,
+		"CopyBuffer": io.CopyBuffer,
+		"CopyN": io.CopyN,
+		"LimitReader": io.LimitReader,
+		"MultiReader": io.MultiReader,
+		"MultiWriter": io.MultiWriter,
+		"NewOffsetWriter": io.NewOffsetWriter,
 		"NewSectionReader": io.NewSectionReader,
-		"SeekStart":        io.SeekStart,
-		"SeekCurrent":      io.SeekCurrent,
-		"SeekEnd":          io.SeekEnd,
-		"WriteString":      io.WriteString,
-		"ReadAtLeast":      io.ReadAtLeast,
-		"ReadFull":         io.ReadFull,
-		"CopyBuffer":       io.CopyBuffer,
+		"NopCloser": io.NopCloser,
+		"Pipe": io.Pipe,
+		"ReadAll": io.ReadAll,
+		"ReadAtLeast": io.ReadAtLeast,
+		"ReadFull": io.ReadFull,
+		"SeekCurrent": io.SeekCurrent,
+		"SeekEnd": io.SeekEnd,
+		"SeekStart": io.SeekStart,
+		"TeeReader": io.TeeReader,
+		"WriteString": io.WriteString,
 	})
 }

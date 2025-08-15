@@ -10,7 +10,6 @@ import (
 )
 
 func TestStdlib_bytes_comprehensive(t *testing.T) {
-	t.Skip("Skipping comprehensive bytes test as it exposes known limitations in type conversion (e.g., []byte(string)) that are not yet implemented.")
 	script := `
 package main
 import "bytes"

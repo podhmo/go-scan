@@ -10,7 +10,6 @@ import (
 )
 
 func TestStdlib_strings_comprehensive(t *testing.T) {
-	t.Skip("Skipping comprehensive strings test as it exposes known FFI limitations in type conversion (e.g., minigo array to Go []string) that are not yet implemented.")
 	script := `
 package main
 import "strings"

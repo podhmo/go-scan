@@ -905,6 +905,12 @@ func (e *Evaluator) nativeToValue(val reflect.Value) object.Object {
 			elements[i] = &object.Integer{Value: int64(b)}
 		}
 		return &object.Array{Elements: elements}
+	case []string:
+		elements := make([]object.Object, len(v))
+		for i, s := range v {
+			elements[i] = &object.String{Value: s}
+		}
+		return &object.Array{Elements: elements}
 	case nil:
 		return object.NIL
 	}
@@ -1070,6 +1076,18 @@ func (e *Evaluator) objectToReflectValue(obj object.Object, targetType reflect.T
 				floats[i] = floatVal.Value
 			}
 			return reflect.ValueOf(floats), nil
+		}
+		// Handle conversion to []string.
+		if targetType.Kind() == reflect.Slice && targetType.Elem().Kind() == reflect.String {
+			strings := make([]string, len(o.Elements))
+			for i, el := range o.Elements {
+				strVal, ok := el.(*object.String)
+				if !ok {
+					return reflect.Value{}, fmt.Errorf("cannot convert non-string element in array to string")
+				}
+				strings[i] = strVal.Value
+			}
+			return reflect.ValueOf(strings), nil
 		}
 	}
 

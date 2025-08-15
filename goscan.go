@@ -1393,6 +1393,16 @@ func (s *Scanner) FindSymbolInPackage(ctx context.Context, importPath string, sy
 			cumulativePkgInfo.Functions = append(cumulativePkgInfo.Functions, pkgInfo.Functions...)
 			cumulativePkgInfo.Constants = append(cumulativePkgInfo.Constants, pkgInfo.Constants...)
 
+			// Merge AstFiles and Files lists
+			if cumulativePkgInfo.AstFiles == nil {
+				cumulativePkgInfo.AstFiles = make(map[string]*ast.File)
+			}
+			for path, ast := range pkgInfo.AstFiles {
+				if _, exists := cumulativePkgInfo.AstFiles[path]; !exists {
+					cumulativePkgInfo.AstFiles[path] = ast
+				}
+			}
+
 			// Avoid duplicating file paths
 			existingFiles := make(map[string]struct{}, len(cumulativePkgInfo.Files))
 			for _, f := range cumulativePkgInfo.Files {
@@ -1406,21 +1416,26 @@ func (s *Scanner) FindSymbolInPackage(ctx context.Context, importPath string, sy
 			}
 		}
 
-		// Check if the symbol is in the newly scanned package info.
-		for _, t := range pkgInfo.Types {
-			if t.Name == symbolName {
-				return cumulativePkgInfo, nil // Found it
-			}
+	}
+
+	if cumulativePkgInfo == nil {
+		return nil, fmt.Errorf("no unscanned files found and symbol %q not in cache for package %q", symbolName, importPath)
+	}
+
+	// Now, check for the symbol in the fully cumulative package info.
+	for _, t := range cumulativePkgInfo.Types {
+		if t.Name == symbolName {
+			return cumulativePkgInfo, nil // Found it
 		}
-		for _, f := range pkgInfo.Functions {
-			if f.Name == symbolName {
-				return cumulativePkgInfo, nil // Found it
-			}
+	}
+	for _, f := range cumulativePkgInfo.Functions {
+		if f.Name == symbolName {
+			return cumulativePkgInfo, nil // Found it
 		}
-		for _, c := range pkgInfo.Constants {
-			if c.Name == symbolName {
-				return cumulativePkgInfo, nil // Found it
-			}
+	}
+	for _, c := range cumulativePkgInfo.Constants {
+		if c.Name == symbolName {
+			return cumulativePkgInfo, nil // Found it
 		}
 	}
 

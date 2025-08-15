@@ -998,6 +998,15 @@ func (e *Evaluator) objectToReflectValue(obj object.Object, targetType reflect.T
 		default:
 			return reflect.Value{}, fmt.Errorf("cannot convert integer to %s", targetType)
 		}
+	case *object.Float:
+		val := reflect.New(targetType).Elem()
+		switch targetType.Kind() {
+		case reflect.Float32, reflect.Float64:
+			val.SetFloat(o.Value)
+			return val, nil
+		default:
+			return reflect.Value{}, fmt.Errorf("cannot convert float to %s", targetType)
+		}
 	case *object.String:
 		if targetType.Kind() != reflect.String {
 			return reflect.Value{}, fmt.Errorf("cannot convert string to %s", targetType)
@@ -3957,31 +3966,18 @@ func (e *Evaluator) evalGoValueSelectorExpr(node ast.Node, goVal *object.GoValue
 					return object.NIL
 				}
 
-				// Handle the common Go pattern of `(result, error)`.
-				lastResult := results[len(results)-1]
-				errorInterface := reflect.TypeOf((*error)(nil)).Elem()
-				if lastResult.Type().Implements(errorInterface) {
-					if !lastResult.IsNil() {
-						return ctx.NewError(callPos, "error from Go method '%s': %v", sel, lastResult.Interface())
-					}
-					// If the error is nil, we have one less "real" return value.
-					numOut--
-					results = results[:numOut]
-					if numOut == 0 {
-						return object.NIL
-					}
-				}
-
-				// Convert remaining results to minigo objects.
+				// Convert all results to minigo objects.
+				// This new logic correctly handles the `(value, error)` pattern by
+				// wrapping the non-nil error in a GoValue, instead of halting execution.
+				// The minigo script is then responsible for checking if the error is nil.
 				resultObjects := make([]object.Object, numOut)
 				for i := 0; i < numOut; i++ {
 					resultObjects[i] = e.nativeToValue(results[i])
 				}
 
-				if len(resultObjects) == 1 {
+				if numOut == 1 {
 					return resultObjects[0]
 				}
-				// Wrap multiple return values in a tuple.
 				return &object.Tuple{Elements: resultObjects}
 			},
 		}
@@ -4299,6 +4295,15 @@ func (e *Evaluator) evalBasicLit(n *ast.BasicLit) object.Object {
 			return e.newError(n.Pos(), "could not unquote string %q", n.Value)
 		}
 		return &object.String{Value: s}
+	case token.CHAR:
+		// Unquote the char literal (e.g., "'a'" -> "a")
+		s, err := strconv.Unquote(n.Value)
+		if err != nil {
+			return e.newError(n.Pos(), "could not unquote char literal %q", n.Value)
+		}
+		// A char literal in Go is a rune, which is an alias for int32.
+		// We represent it as our standard Integer object.
+		return &object.Integer{Value: int64(rune(s[0]))}
 	default:
 		return e.newError(n.Pos(), "unsupported literal type: %s", n.Kind)
 	}

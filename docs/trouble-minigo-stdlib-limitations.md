@@ -28,8 +28,8 @@ The investigation revealed several fundamental limitations in the FFI bridge. Th
 
 ### `strconv`
 
--   **Limitation**: None observed for basic functions.
--   **Analysis**: FFI-based tests for `strconv.Atoi`, `strconv.Itoa`, and `strconv.FormatBool` all passed. Error handling for invalid input to `Atoi` was also successful, with the error value being correctly propagated to the script. This package appears to be highly compatible via the FFI bridge due to its reliance on primitive types.
+-   **Limitation**: None observed.
+-   **Analysis**: A comprehensive FFI-based test for `strconv` now passes. This required fixing the interpreter to handle `rune` literals (e.g., `'f'`) and adding support for converting `minigo` float objects to Go `float64` types in the FFI bridge. The test covers `Atoi`, `Itoa`, `ParseFloat`, `FormatFloat`, `ParseBool`, and `FormatBool`, including error handling cases. This package is now considered highly compatible with the FFI bridge.
 
 ### `time`
 
@@ -51,8 +51,8 @@ The investigation revealed several fundamental limitations in the FFI bridge. Th
 
 ### `text/template`
 
--   **Limitation**: Fails on multi-value assignment from method calls.
--   **Analysis**: A test was constructed to test the common `template.New("...").Parse("...").Execute(...)` pattern. The test failed on the call to the `Parse` method. `Parse` returns `(*template.Template, error)`. The FFI's method wrapper currently discards the second `error` return value if it is `nil`, rather than returning a `(GoValue, nil)` tuple. This causes a "multi-value assignment requires a multi-value return" error in the `minigo` interpreter when the script tries to assign the two return values (e.g., `tpl, err := ...`). This reveals a subtle limitation in the FFI's handling of method return values.
+-   **Limitation**: None observed for basic FFI usage. **(FIXED)**
+-   **Analysis**: A test using the common `template.New("...").Parse("...").Execute(...)` pattern now passes. Previously, this test failed because the FFI wrapper for method calls would incorrectly discard a `nil` error value in `(value, error)` return pairs. This caused a multi-value assignment error in the `minigo` script. The FFI logic has been corrected to always return all values, ensuring that a `nil` error is correctly passed to the script as `nil`. This demonstrates that the FFI can now handle methods with multi-value returns correctly.
 
 ### `io`, `net/http`, and other interface-heavy packages
 

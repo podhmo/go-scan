@@ -998,6 +998,15 @@ func (e *Evaluator) objectToReflectValue(obj object.Object, targetType reflect.T
 		default:
 			return reflect.Value{}, fmt.Errorf("cannot convert integer to %s", targetType)
 		}
+	case *object.Float:
+		val := reflect.New(targetType).Elem()
+		switch targetType.Kind() {
+		case reflect.Float32, reflect.Float64:
+			val.SetFloat(o.Value)
+			return val, nil
+		default:
+			return reflect.Value{}, fmt.Errorf("cannot convert float to %s", targetType)
+		}
 	case *object.String:
 		if targetType.Kind() != reflect.String {
 			return reflect.Value{}, fmt.Errorf("cannot convert string to %s", targetType)
@@ -4286,6 +4295,15 @@ func (e *Evaluator) evalBasicLit(n *ast.BasicLit) object.Object {
 			return e.newError(n.Pos(), "could not unquote string %q", n.Value)
 		}
 		return &object.String{Value: s}
+	case token.CHAR:
+		// Unquote the char literal (e.g., "'a'" -> "a")
+		s, err := strconv.Unquote(n.Value)
+		if err != nil {
+			return e.newError(n.Pos(), "could not unquote char literal %q", n.Value)
+		}
+		// A char literal in Go is a rune, which is an alias for int32.
+		// We represent it as our standard Integer object.
+		return &object.Integer{Value: int64(rune(s[0]))}
 	default:
 		return e.newError(n.Pos(), "unsupported literal type: %s", n.Kind)
 	}

@@ -4215,7 +4215,7 @@ func (e *Evaluator) evalIdent(n *ast.Ident, env *object.Environment, fscope *obj
 	// representation in our interpreter, but they shouldn't cause an "identifier
 	// not found" error when used in declarations like `var x int`.
 	switch n.Name {
-	case "int", "string", "bool", "uint", "uint64", "float64":
+	case "int", "string", "bool", "uint", "uint64", "float64", "byte":
 		return &object.Type{Name: n.Name}
 	}
 

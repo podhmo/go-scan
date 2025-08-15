@@ -112,6 +112,10 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [ ] **Add support for string indexing**: Enhance the evaluator to handle the index operator (`s[i]`) on string objects.
 - [x] **Implement transitive dependency loading**: Add a mechanism to the interpreter to automatically load and parse imported packages that are not already in memory.
 - [ ] **Audit and fix function signature parsing**: Investigate and fix bugs in the function signature parsing logic, using the `bytes.Equal` case as a starting point.
+- [ ] **Improve FFI type conversions**:
+    - [ ] Implement conversion from `minigo` array of strings to Go `[]string`.
+- [ ] **Add built-in type conversions**:
+    - [ ] Implement mutual conversion between `string` and `[]byte` (e.g., `[]byte("foo")`).
 
 ### `minigo` Refinements ([docs/plan-minigo.md](./docs/plan-minigo.md))
 - [x] **Implement Remaining Built-in Functions**:

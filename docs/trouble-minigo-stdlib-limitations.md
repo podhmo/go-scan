@@ -76,6 +76,22 @@ The investigation revealed several fundamental limitations in the FFI bridge. Th
 
 ---
 
+## Fundamental Design Limitations
+
+Beyond the specific features required for individual packages, the investigation revealed some fundamental design choices in `minigo` that limit its broader compatibility with standard Go code.
+
+### Integer Type Simplification
+
+-   **Description**: For simplicity, the `minigo` interpreter treats all Go integer types (`int`, `int8`, `uint8`, `uint64`, etc.) as a single internal type: `object.Integer`, which holds a standard `int64` value. The original type information is discarded during evaluation.
+-   **Limitation**: This simplification prevents `minigo` from correctly handling:
+    1.  **Unsigned Integers**: The distinction between signed and unsigned integers is lost.
+    2.  **Integer Overflow**: `minigo` does not replicate Go's specific overflow rules for different integer sizes.
+    3.  **Large `uint64` Values**: Values greater than `math.MaxInt64` cannot be represented, even though they are valid in Go's `uint64`.
+-   **Impact**: While this simplification works for many common cases, it makes `minigo` unsuitable for scripts that rely on precise integer typing, bitwise operations on unsigned integers, or large `uint64` values (e.g., in cryptography or hashing packages).
+-   **Potential Solutions**:
+    -   **Approach A (High Effort, High Correctness)**: Introduce distinct object types for different integer kinds (e.g., `object.Uint8`, `object.Int32`, `object.Uint64`). This would be a major undertaking, requiring changes to the parser, evaluator, object system, and FFI bridge, but would provide the most accurate simulation of Go's type system.
+    -   **Approach B (Medium Effort, Medium Correctness)**: Enhance the existing `object.Integer` to include metadata about its original Go type (e.g., `Kind: reflect.Uint8`). This would allow the FFI bridge to make more intelligent conversions and could enable the evaluator to simulate some type-specific behaviors without a full type system overhaul.
+
 ## Analysis of Untested Complex Packages
 
 Based on the limitations discovered above, the remaining standard library packages were not individually tested, as their failure is predictable.

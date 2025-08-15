@@ -116,7 +116,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [ ] **Improve FFI type conversions**:
     - [ ] Implement conversion from `minigo` array of strings to Go `[]string`.
 - [ ] **Add built-in type conversions**:
-    - [ ] Implement mutual conversion between `string` and `[]byte` (e.g., `[]byte("foo")`).
+    - [x] Implement mutual conversion between `string` and `[]byte` (e.g., `[]byte("foo")`).
 
 ### `minigo` Refinements ([docs/plan-minigo.md](./docs/plan-minigo.md))
 - [x] **Implement Remaining Built-in Functions**:

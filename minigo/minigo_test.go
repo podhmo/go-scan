@@ -351,6 +351,62 @@ func main() {
 	}
 }
 
+func TestInterpreterEval_TypeConversions(t *testing.T) {
+	input := `package main
+var bs = []byte("hello")
+var s = string([]byte{119, 111, 114, 108, 100}) // "world"
+`
+	i, err := NewInterpreter()
+	if err != nil {
+		t.Fatalf("NewInterpreter() failed: %v", err)
+	}
+
+	if err := i.LoadFile("test.go", []byte(input)); err != nil {
+		t.Fatalf("LoadFile() failed: %v", err)
+	}
+
+	_, err = i.Eval(context.Background())
+	if err != nil {
+		t.Fatalf("Eval() failed: %v", err)
+	}
+
+	// Check []byte("hello")
+	valBs, ok := i.globalEnv.Get("bs")
+	if !ok {
+		t.Fatalf("variable 'bs' not found in environment")
+	}
+	arrayBs, ok := valBs.(*object.Array)
+	if !ok {
+		t.Fatalf("bs is not Array. got=%T (%+v)", valBs, valBs)
+	}
+	expectedBytes := []byte("hello")
+	if len(arrayBs.Elements) != len(expectedBytes) {
+		t.Fatalf("bs should have %d elements. got=%d", len(expectedBytes), len(arrayBs.Elements))
+	}
+	for i, el := range arrayBs.Elements {
+		integerEl, ok := el.(*object.Integer)
+		if !ok {
+			t.Fatalf("element %d in bs is not Integer. got=%T", i, el)
+		}
+		if integerEl.Value != int64(expectedBytes[i]) {
+			t.Errorf("element %d should be %d. got=%d", i, expectedBytes[i], integerEl.Value)
+		}
+	}
+
+	// Check string([]byte{...})
+	valS, ok := i.globalEnv.Get("s")
+	if !ok {
+		t.Fatalf("variable 's' not found in environment")
+	}
+	stringS, ok := valS.(*object.String)
+	if !ok {
+		t.Fatalf("s is not String. got=%T (%+v)", valS, valS)
+	}
+	if stringS.Value != "world" {
+		t.Errorf("s should be 'world'. got=%q", stringS.Value)
+	}
+}
+
 func TestInterpreterEval_ByteType(t *testing.T) {
 	input := `package main
 var b byte = 65

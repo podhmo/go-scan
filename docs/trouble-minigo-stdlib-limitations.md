@@ -8,9 +8,9 @@ This document outlines the limitations discovered while attempting to generate b
 
 The investigation revealed several fundamental limitations in the FFI bridge. These limitations prevent many common Go programming patterns from working correctly when called via FFI bindings.
 
-1.  **No Support for Method Calls on Go Structs**: The most significant limitation is that `minigo` cannot call methods on Go structs that are returned by bound functions. The bindings only register package-level functions. When a function like `regexp.Compile` returns a `*regexp.Regexp` struct, any subsequent method calls on that struct (e.g., `compiled.FindStringSubmatch(...)`) will fail with an `undefined field` error. This affects a large portion of the standard library, which relies heavily on this object-oriented pattern.
+1.  **Support for Method Calls on Go Structs**: `minigo`'s evaluator can execute methods on Go objects that are returned by FFI function calls (e.g., a `*regexp.Regexp` object returned by `regexp.Compile`). This is achieved at runtime by using reflection to look up and invoke the method on the wrapped Go value (`object.GoValue`). This is a powerful feature that enables significant compatibility with object-oriented patterns in the standard library.
 
-2.  **Interpreter Halts on Returned Go Errors**: When a bound Go function returns a non-nil `error` as its second return value (a common Go pattern), the `minigo` interpreter appears to halt or panic. It does not return the error as a usable value to the script. This makes it impossible to write idiomatic error-handling code in `minigo` for functions that can fail.
+2.  **Graceful Error Handling**: The FFI bridge now correctly handles Go functions that return an `error` value. Instead of halting, the interpreter wraps the non-nil `error` in an `object.GoValue`, allowing the `minigo` script to receive it and perform idiomatic error checking. This was verified with `time.Parse`.
 
 3.  **Binding Generator Fails on Generic Functions**: The binding generator (`minigo-gen-bindings`) does not support Go generics. When it encounters a generic function, it attempts to bind it without type instantiation, resulting in generated Go code that fails to compile.
 
@@ -33,8 +33,8 @@ The investigation revealed several fundamental limitations in the FFI bridge. Th
 
 ### `time`
 
--   **Limitation**: Method calls and error handling.
--   **Analysis**: A test attempting to call `t.Year()` on a `time.Time` object returned by `time.Parse` failed, demonstrating the method call limitation. A second test attempting to check the error returned by `time.Parse("invalid-date")` failed because the interpreter halted instead of returning the `*time.ParseError` object.
+-   **Limitation**: Method calls (`t.Year()`) have not been successfully tested.
+-   **Analysis**: The FFI bridge now correctly handles errors from `time.Parse`, returning a non-nil error object to the script instead of halting. This is a significant improvement. However, tests for method calls on the returned `time.Time` object are still needed to confirm full compatibility, as the evaluator's general method support might not cover all cases (e.g., non-struct receivers or other `time.Time` specifics).
 
 ### `bytes`
 
@@ -46,8 +46,8 @@ The investigation revealed several fundamental limitations in the FFI bridge. Th
 
 ### `regexp`
 
--   **Limitation**: Method calls.
--   **Analysis**: A test using `regexp.Compile` succeeded in getting a `*regexp.Regexp` object, but failed when trying to call the `.FindStringSubmatch()` method on it. Tests must be limited to package-level functions like `regexp.MatchString`.
+-   **Limitation**: None observed for basic FFI usage.
+-   **Analysis**: A test using `regexp.Compile` successfully returns a `*regexp.Regexp` object. Crucially, method calls on this returned object (e.g., `re.MatchString(...)`) are supported by the evaluator's reflection-based method invocation and work correctly. This demonstrates that the FFI bridge can handle object-oriented patterns.
 
 ### `io`, `net/http`, and other interface-heavy packages
 
@@ -56,8 +56,6 @@ The investigation revealed several fundamental limitations in the FFI bridge. Th
 
 ## Potential for Future Fixes
 
--   **Method Calls**: This would require a significant change to the `minigo` evaluator, allowing it to look up methods on the `reflect.Type` of a wrapped `object.GoValue`. This is a major undertaking.
--   **Error Handling**: The FFI bridge (`ffibridge`) needs to be modified to check for non-nil error return values and wrap them in a `minigo` error object instead of panicking. This seems more achievable than full method support.
 -   **Generics (for FFI)**: The binding generator could be improved to simply ignore generic functions, preventing it from generating non-compiling code. However, given the success of the source interpretation method, improving the FFI generator for generics is a low priority.
 -   **`byte` Keyword**: ~~This would require adding `byte` as a built-in type alias for `uint8` in the `minigo` parser or evaluator. This is a feasible fix.~~ **(FIXED)** The interpreter now recognizes `byte` as a built-in type name.
 
@@ -73,9 +71,14 @@ The investigation revealed several fundamental limitations in the FFI bridge. Th
     -   **Direct Source Interpretation**: The interpreter does not support string indexing (`s[i]`), which is required by many functions in the `strings` package.
 -   **Analysis**: The `strings` package is partially usable via FFI for functions that take and return simple strings (`Contains`, `HasPrefix`, `ToUpper`, etc.). However, functions that operate on slices of strings (`Join`) fail due to the FFI's missing type conversion logic. Direct source interpretation is blocked by the lack of string indexing support in the interpreter, a fundamental language feature.
 
-### `sort`
+### `sort` (FFI)
 
--   **Limitation (Direct Source Interpretation)**: ~~No Transitive Dependency Resolution~~. **(FIXED)**
+-   **Limitation**: None observed for tested functions.
+-   **Analysis**: FFI-based tests for `sort.IntsAreSorted`, `sort.Ints`, and `sort.Float64s` all passed. This includes functions that take slice arguments and, in the case of `sort.Ints`, modify the slice in-place.
+
+### `sort` (Direct Source Interpretation)
+
+-   **Limitation**: ~~No Transitive Dependency Resolution~~. **(FIXED)**
 -   **Analysis**: An attempt to use `sort.Ints` previously failed because the interpreter did not recursively load dependencies (i.e., `sort`'s import of `slices`).
 -   **Resolution**: The `go-scan` library's file merging logic was fixed, and the `minigo` interpreter was enhanced to create a unified `FileScope` for all files in a package. This ensures that when a package like `sort` is loaded, its own imports (like `slices`) are correctly resolved.
 

@@ -12,6 +12,8 @@ import (
 
 	// standard library bindings
 	stdbytes "github.com/podhmo/go-scan/minigo/stdlib/bytes"
+	stdjson "github.com/podhmo/go-scan/minigo/stdlib/encoding/json"
+	stderrors "github.com/podhmo/go-scan/minigo/stdlib/errors"
 	stdmathrand "github.com/podhmo/go-scan/minigo/stdlib/math/rand"
 	stdpathfilepath "github.com/podhmo/go-scan/minigo/stdlib/path/filepath"
 	stdregexp "github.com/podhmo/go-scan/minigo/stdlib/regexp"
@@ -504,5 +506,103 @@ var base = filepath.Base(joined)
 	expectedBase := "c"
 	if baseStr.Value != expectedBase {
 		t.Errorf("unexpected base name: got %q, want %q", baseStr.Value, expectedBase)
+	}
+}
+
+// TestStdlib_Errors_FFI tests the `errors` package using the pre-generated
+// FFI bindings. This is the fallback test after direct source interpretation
+// was found to be incompatible.
+func TestStdlib_Errors_FFI(t *testing.T) {
+	script := `
+package main
+import "errors"
+var err = errors.New("a new error")
+`
+	interp, err := minigo.NewInterpreter()
+	if err != nil {
+		t.Fatalf("failed to create interpreter: %+v", err)
+	}
+
+	stderrors.Install(interp)
+
+	if err := interp.LoadFile("test.mgo", []byte(script)); err != nil {
+		t.Fatalf("failed to load script: %+v", err)
+	}
+	if _, err := interp.Eval(context.Background()); err != nil {
+		t.Fatalf("failed to evaluate script: %+v", err)
+	}
+
+	env := interp.GlobalEnvForTest()
+	errObj, ok := env.Get("err")
+	if !ok {
+		t.Fatalf("variable 'err' not found")
+	}
+	if errObj == object.NIL {
+		t.Fatalf("expected err to be a non-nil error object, but it was nil")
+	}
+
+	// We can check if the returned object is a GoValue wrapping an error.
+	goVal, ok := errObj.(*object.GoValue)
+	if !ok {
+		t.Fatalf("expected 'err' to be a GoValue, but got %T", errObj)
+	}
+
+	// And we can check the error string.
+	nativeErr, ok := goVal.Value.Interface().(error)
+	if !ok {
+		t.Fatalf("GoValue does not wrap an error, but %T", goVal.Value.Interface())
+	}
+
+	expectedMsg := "a new error"
+	if nativeErr.Error() != expectedMsg {
+		t.Errorf("unexpected error message: got %q, want %q", nativeErr.Error(), expectedMsg)
+	}
+}
+
+// TestStdlib_EncodingJson_FFI tests the `encoding/json` package using FFI bindings.
+func TestStdlib_EncodingJson_FFI(t *testing.T) {
+	script := `
+package main
+import "encoding/json"
+
+type Point struct { X int; Y int }
+var p = Point{X: 1, Y: 2}
+var data, err = json.Marshal(p)
+var result = string(data)
+`
+	interp, err := minigo.NewInterpreter()
+	if err != nil {
+		t.Fatalf("failed to create interpreter: %+v", err)
+	}
+
+	stdjson.Install(interp)
+
+	if err := interp.LoadFile("test.mgo", []byte(script)); err != nil {
+		t.Fatalf("failed to load script: %+v", err)
+	}
+	if _, err := interp.Eval(context.Background()); err != nil {
+		t.Fatalf("failed to evaluate script: %+v", err)
+	}
+
+	env := interp.GlobalEnvForTest()
+
+	if errObj, _ := env.Get("err"); errObj != object.NIL {
+		t.Fatalf("json.Marshal returned an unexpected error: %v", errObj.Inspect())
+	}
+
+	resultObj, ok := env.Get("result")
+	if !ok {
+		t.Fatal("variable 'result' not found")
+	}
+	resultStr, ok := resultObj.(*object.String)
+	if !ok {
+		t.Fatalf("result is not a string, got %T", resultObj)
+	}
+
+	// NOTE: The order of fields in JSON is not guaranteed.
+	expected1 := `{"X":1,"Y":2}`
+	expected2 := `{"Y":2,"X":1}`
+	if resultStr.Value != expected1 && resultStr.Value != expected2 {
+		t.Errorf("unexpected json output: got %q, want %q or %q", resultStr.Value, expected1, expected2)
 	}
 }

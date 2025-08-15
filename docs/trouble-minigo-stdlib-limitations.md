@@ -65,9 +65,9 @@ The investigation revealed several fundamental limitations in the FFI bridge. Th
 
 ### `errors`
 
--   **Limitation (Direct Source Interpretation)**: ~~Sequential Declaration Order~~. **(FIXED)**
--   **Analysis**: An attempt to load `errors` via direct source interpretation previously failed because the interpreter processed declarations sequentially.
--   **Resolution**: The interpreter now implements a **two-pass evaluation strategy**. The first pass registers all top-level identifiers (types, functions, vars, consts), and the second pass evaluates variable and constant initializers. This resolves the sequential declaration issue, and the `errors` package can now be interpreted from source.
+-   **Limitation (Direct Source Interpretation)**: Unsupported struct literal evaluation.
+-   **Analysis**: An attempt to load `errors` via direct source interpretation confirmed that the original "Sequential Declaration Order" issue has been resolved by the interpreter's two-pass evaluation strategy. However, the test failed with a new error: `unsupported literal element in struct literal`. This occurs because the `errors.New` function uses the syntax `&errorString{text}`, where `text` is a function argument. The `minigo` evaluator currently cannot handle struct literals that are initialized with variables from a local scope.
+-   **Conclusion**: The `errors` package remains incompatible with direct source interpretation due to this fundamental limitation in the evaluator. The FFI binding method should be used instead.
 
 ### `strings`
 -   **Limitation**: Direct source interpretation is not possible due to the lack of string indexing support (`s[i]`) in the interpreter.
@@ -96,6 +96,14 @@ The investigation revealed several fundamental limitations in the FFI bridge. Th
 -   **Limitation**: Direct source interpretation was not successful due to a build error in the test code, not a fundamental interpreter limitation.
 -   **Status**: **Highly Compatible (via FFI)**
 -   **Analysis**: An initial attempt to test `path/filepath` using direct source interpretation failed because the test attempted to use an unexported method to determine the host OS for path validation. Rather than modify the interpreter, the test was reverted to use the FFI-based approach. The FFI-based test for `path/filepath` passed successfully, covering basic functions like `Join` and `Base`. This confirms the FFI bindings for this package are robust. The original goal of verifying the fix for the sequential declaration issue via this package remains unconfirmed, but the successful FFI test provides a good level of confidence in its usability.
+
+### `encoding/json`
+
+-   **Limitation (Direct Source Interpretation)**: Identifier not found during evaluation.
+-   **Limitation (FFI)**: None observed for basic marshalling.
+-   **Status**: **Partially Compatible (via FFI)**
+-   **Analysis**: An attempt to test `json.Marshal` using direct source interpretation failed with the error `identifier not found: encodeStatePool`, likely due to the interpreter's inability to handle complex package-level variable initialization. However, switching to the FFI-based bindings was successful for a basic `json.Marshal` test on a simple struct.
+-   **Conclusion**: `encoding/json` is incompatible with direct source interpretation. Basic marshalling works via FFI, but the package's full functionality (especially `Unmarshal` into arbitrary structs) is likely limited due to the interpreter's incomplete reflection support.
 
 ---
 

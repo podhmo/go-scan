@@ -26,6 +26,11 @@ The investigation revealed several fundamental limitations in the FFI bridge. Th
 -   **Analysis**: This package could not be used with the FFI binding generator. The generator produced a non-compiling `install.go` file because it cannot handle generic functions.
 -   **Resolution**: The `slices` package was successfully implemented using the new **direct source interpretation** method. The `minigo` interpreter was enhanced to evaluate the `slices.go` source file directly, bypassing the FFI limitations entirely. This proves that the interpreter itself can handle complex generic code when it has access to the source.
 
+### `strconv`
+
+-   **Limitation**: None observed for basic functions.
+-   **Analysis**: FFI-based tests for `strconv.Atoi`, `strconv.Itoa`, and `strconv.FormatBool` all passed. Error handling for invalid input to `Atoi` was also successful, with the error value being correctly propagated to the script. This package appears to be highly compatible via the FFI bridge due to its reliance on primitive types.
+
 ### `time`
 
 -   **Limitation**: Method calls and error handling.

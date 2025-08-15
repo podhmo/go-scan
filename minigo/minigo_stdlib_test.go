@@ -185,8 +185,11 @@ package main
 import (
 	"strconv"
 )
-var i, err = strconv.Atoi("123")
+var i, err_ok = strconv.Atoi("123")
 var s = strconv.Itoa(456)
+var r_atoi_ng, err_ng = strconv.Atoi("abc")
+var r_fb_t = strconv.FormatBool(true)
+var r_fb_f = strconv.FormatBool(false)
 `
 	interp, err := minigo.NewInterpreter()
 	if err != nil {
@@ -216,12 +219,12 @@ var s = strconv.Itoa(456)
 		}
 	}
 	{
-		got, ok := env.Get("err")
+		got, ok := env.Get("err_ok")
 		if !ok {
-			t.Fatalf("variable 'err' not found")
+			t.Fatalf("variable 'err_ok' not found")
 		}
 		if got != object.NIL {
-			t.Errorf("variable 'err' is not nil, but %T", got)
+			t.Errorf("variable 'err_ok' is not nil, but %T", got)
 		}
 	}
 	{
@@ -236,6 +239,41 @@ var s = strconv.Itoa(456)
 		}
 		if diff := cmp.Diff(want, gotStr.Value); diff != "" {
 			t.Errorf("mismatched s (-want +got):\n%s", diff)
+		}
+	}
+
+	// Check error case from Atoi("abc")
+	{
+		got, ok := env.Get("r_atoi_ng")
+		if !ok {
+			t.Fatalf("variable 'r_atoi_ng' not found")
+		}
+		if got.(*object.Integer).Value != 0 {
+			t.Errorf("expected 'r_atoi_ng' to be 0 on error, got %d", got.(*object.Integer).Value)
+		}
+		err_ng, ok := env.Get("err_ng")
+		if !ok || err_ng == object.NIL {
+			t.Fatalf("expected 'err_ng' to be a non-nil error")
+		}
+		if _, ok := err_ng.(*object.GoValue); !ok {
+			t.Errorf("expected error to be a GoValue, got %T", err_ng)
+		}
+	}
+
+	// Check FormatBool
+	{
+		got, _ := env.Get("r_fb_t")
+		if got.Type() != object.STRING_OBJ {
+			t.Errorf("expected 'r_fb_t' to be a STRING, but got %s", got.Type())
+		} else if got.Inspect() != "true" {
+			t.Errorf("expected 'r_fb_t' to have value \"true\", got %q", got.Inspect())
+		}
+
+		got, _ = env.Get("r_fb_f")
+		if got.Type() != object.STRING_OBJ {
+			t.Errorf("expected 'r_fb_f' to be a STRING, but got %s", got.Type())
+		} else if got.Inspect() != "false" {
+			t.Errorf("expected 'r_fb_f' to have value \"false\", got %q", got.Inspect())
 		}
 	}
 }

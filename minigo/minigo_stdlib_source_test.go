@@ -28,10 +28,11 @@ func TestStdlibSource(t *testing.T) {
 	testCases := []struct {
 		name   string
 		script string
+		want   string
 	}{
 		{
-			"slices.Clone",
-			`
+			name: "slices.Clone",
+			script: `
 package main
 
 import "slices"
@@ -45,6 +46,26 @@ func main() {
 	println(s1)
 	println(s2)
 }
+`,
+			want: `[1 2 3]
+[99 2 3]
+[1 2 3]
+`,
+		},
+		{
+			name: "sort.Ints",
+			script: `
+package main
+
+import "sort"
+
+func main() {
+	s := []int{3, 1, 2}
+	sort.Ints(s)
+	println(s)
+}
+`,
+			want: `[1 2 3]
 `,
 		},
 	}
@@ -62,9 +83,13 @@ func main() {
 				t.Fatal(err)
 			}
 
-			err = interpreter.LoadGoSourceAsPackage("slices", string(src))
-			if err != nil {
-				t.Fatal(err)
+			// For the slices.Clone test, we preload the source.
+			// For the sort.Ints test, we rely on the on-demand loader.
+			if tc.name == "slices.Clone" {
+				err = interpreter.LoadGoSourceAsPackage("slices", string(src))
+				if err != nil {
+					t.Fatal(err)
+				}
 			}
 
 			_, err = interpreter.EvalString(tc.script)
@@ -72,15 +97,8 @@ func main() {
 				t.Fatalf("eval failed: %v\nstderr:\n%s", err, errbuf.String())
 			}
 
-			// The script prints s2, then s1, then s2 again.
-			// We want to check the final state of s2.
-			// output should be:
-			// [1 2 3]
-			// [99 2 3]
-			// [1 2 3]
-			expectedSuffix := "[1 2 3]\n"
-			if !strings.HasSuffix(outbuf.String(), expectedSuffix) {
-				t.Fatalf("unexpected output. expected suffix=%q, but got=%q", expectedSuffix, outbuf.String())
+			if outbuf.String() != tc.want {
+				t.Fatalf("unexpected output.\nwant:\n%s\ngot:\n%s", tc.want, outbuf.String())
 			}
 		})
 	}

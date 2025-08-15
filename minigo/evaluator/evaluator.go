@@ -3604,7 +3604,7 @@ func (e *Evaluator) findSymbolInPackage(pkg *object.Package, symbolName *ast.Ide
 		return member
 	}
 
-	// 2. Check the registry for pre-registered symbols.
+	// 2. Check the registry for pre-registered symbols (FFI).
 	if symbol, ok := e.registry.Lookup(pkg.Path, symbolName.Name); ok {
 		var member object.Object
 		val := reflect.ValueOf(symbol)
@@ -3617,87 +3617,65 @@ func (e *Evaluator) findSymbolInPackage(pkg *object.Package, symbolName *ast.Ide
 		return member
 	}
 
-	// 3. Fallback to scanning source files for constants if not in registry.
-	// Check already loaded info.
-	if pkg.Info != nil {
-		// If info is loaded, fscope should also have been loaded. This is a slight simplification;
-		// a package could be pre-loaded without an FScope. A more robust implementation
-		// would create the FScope here if it's missing. For now, we assume it's created
-		// when the package is first scanned and loaded.
-		member, found := e.findSymbolInPackageInfo(pkg.Info, symbolName.Name, pkg.FScope)
-		if found {
-			if err, isErr := member.(*object.Error); isErr {
-				return err // Propagate conversion errors
+	// 3. If package source has not been scanned yet, scan the whole package now.
+	if pkg.Info == nil {
+		// Use ScanPackageByImport to get all files in the package, ensuring
+		// we have all necessary imports for transitive dependency resolution.
+		completePkgInfo, err := e.scanner.ScanPackageByImport(context.Background(), pkg.Path)
+		if err != nil {
+			return e.newError(pos, "undefined: %s.%s (package not found or scan failed)", pkg.Name, symbolName.Name)
+		}
+		pkg.Info = completePkgInfo
+
+		// Now that we have the complete info, build the FScope from all files.
+		if pkg.Info != nil && len(pkg.Info.AstFiles) > 0 {
+			newFScope := object.NewFileScope(nil) // The AST pointer is a formality.
+			for _, astFile := range pkg.Info.AstFiles {
+				if newFScope.AST == nil {
+					newFScope.AST = astFile // Point to the first file encountered.
+				}
+				for _, importSpec := range astFile.Imports {
+					path, err := strconv.Unquote(importSpec.Path.Value)
+					if err != nil {
+						return e.newError(importSpec.Path.Pos(), "invalid import path: %v", err)
+					}
+
+					var alias string
+					var aliasIdent *ast.Ident
+					if importSpec.Name != nil {
+						alias = importSpec.Name.Name
+						aliasIdent = importSpec.Name
+					} else {
+						parts := strings.Split(path, "/")
+						alias = parts[len(parts)-1]
+						aliasIdent = &ast.Ident{Name: alias, NamePos: importSpec.Path.Pos()}
+					}
+					e.resolvePackage(aliasIdent, path)
+					switch alias {
+					case "_":
+						continue
+					case ".":
+						newFScope.DotImports = append(newFScope.DotImports, path)
+					default:
+						newFScope.Aliases[alias] = path
+					}
+				}
 			}
-			pkg.Members[symbolName.Name] = member // Cache it
-			return member
+			pkg.FScope = newFScope
 		}
 	}
 
-	// 4. Symbol not in loaded info, try scanning remaining files.
-	cumulativePkgInfo, err := e.scanner.FindSymbolInPackage(context.Background(), pkg.Path, symbolName.Name)
-	if err != nil {
-		// Not found in any unscanned files either. It's undefined.
+	// 4. Now that Info and FScope are guaranteed to be populated, find the symbol.
+	member, found := e.findSymbolInPackageInfo(pkg.Info, symbolName.Name, pkg.FScope)
+	if !found {
 		return e.newError(pos, "undefined: %s.%s", pkg.Name, symbolName.Name)
 	}
 
-	// 5. Symbol was found. `cumulativePkgInfo` contains everything scanned so far.
-	// Update the package object with the richer info.
-	pkg.Info = cumulativePkgInfo
-
-	// Create a new FileScope for the newly loaded package source by aggregating
-	// imports from all files in the package.
-	if cumulativePkgInfo != nil && len(cumulativePkgInfo.AstFiles) > 0 {
-		// All files in a package share the same scope.
-		newFScope := object.NewFileScope(nil) // The AST pointer is a formality.
-		for _, astFile := range cumulativePkgInfo.AstFiles {
-			if newFScope.AST == nil {
-				newFScope.AST = astFile // Set to the first file encountered.
-			}
-			for _, importSpec := range astFile.Imports {
-				path, err := strconv.Unquote(importSpec.Path.Value)
-				if err != nil {
-					return e.newError(importSpec.Path.Pos(), "invalid import path: %v", err)
-				}
-
-				var alias string
-				var aliasIdent *ast.Ident
-				if importSpec.Name != nil {
-					alias = importSpec.Name.Name
-					aliasIdent = importSpec.Name
-				} else {
-					parts := strings.Split(path, "/")
-					alias = parts[len(parts)-1]
-					aliasIdent = &ast.Ident{Name: alias, NamePos: importSpec.Path.Pos()}
-				}
-
-				// This is crucial: we resolve the package for the import, which ensures
-				// it gets cached in e.packages if it's not already there.
-				e.resolvePackage(aliasIdent, path)
-
-				switch alias {
-				case "_":
-					continue
-				case ".":
-					newFScope.DotImports = append(newFScope.DotImports, path)
-				default:
-					newFScope.Aliases[alias] = path
-				}
-			}
-		}
-		pkg.FScope = newFScope
-	}
-
-	// 6. Now that info is updated, the symbol must be in it. Find it, cache it, return it.
-	member, found := e.findSymbolInPackageInfo(pkg.Info, symbolName.Name, pkg.FScope)
-	if !found {
-		// This should be an impossible state if FindSymbolInPackage works correctly.
-		return e.newError(pos, "internal inconsistency: symbol %s found by scanner but not in final package info", symbolName.Name)
-	}
+	// 5. Cache and return.
 	if err, isErr := member.(*object.Error); isErr {
 		return err
 	}
-	pkg.Members[symbolName.Name] = member // Cache it
+	pkg.Members[symbolName.Name] = member
 	return member
 }
 

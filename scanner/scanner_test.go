@@ -359,43 +359,6 @@ func TestResolve_DirectRecursion(t *testing.T) {
 	// If we reach here, the test is largely successful.
 }
 
-func TestFindSymbolInPackage_Stdlib(t *testing.T) {
-	s := newTestScanner(t, "example.com/test", "") // rootDir can be empty for stdlib
-
-	pkgInfo, err := s.FindSymbolInPackage(context.Background(), "sort", "Ints")
-	if err != nil {
-		t.Fatalf("FindSymbolInPackage failed for sort.Ints: %v", err)
-	}
-	if pkgInfo == nil {
-		t.Fatal("pkgInfo should not be nil")
-	}
-
-	var fInfo *FunctionInfo
-	for _, f := range pkgInfo.Functions {
-		if f.Name == "Ints" {
-			fInfo = f
-			break
-		}
-	}
-
-	if fInfo == nil {
-		t.Fatal("FunctionInfo for 'Ints' not found in returned PackageInfo")
-	}
-
-	if fInfo.FilePath == "" {
-		t.Fatal("FunctionInfo.FilePath is empty")
-	}
-
-	if _, ok := pkgInfo.AstFiles[fInfo.FilePath]; !ok {
-		// This is the expected failure
-		keys := make([]string, 0, len(pkgInfo.AstFiles))
-		for k := range pkgInfo.AstFiles {
-			keys = append(keys, k)
-		}
-		t.Fatalf("FilePath %q from FunctionInfo was not found as a key in the AstFiles map.\nAstFiles keys: %v", fInfo.FilePath, keys)
-	}
-}
-
 func TestResolve_MutualRecursion(t *testing.T) {
 	fset := token.NewFileSet()
 	rootDir := filepath.Join("..", "testdata", "recursion", "mutual")

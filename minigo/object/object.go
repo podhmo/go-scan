@@ -659,7 +659,8 @@ type Package struct {
 	Name    string
 	Path    string
 	Info    *scanner.PackageInfo
-	FScope  *FileScope // The file scope for this package's source code.
+	Env     *Environment // The environment containing all package-level declarations.
+	FScope  *FileScope   // The file scope for this package's source code.
 	Members map[string]Object
 }
 
@@ -1013,6 +1014,11 @@ func (e *Environment) SetConstant(name string, val Object) Object {
 // Outer returns the enclosing environment.
 func (e *Environment) Outer() *Environment {
 	return e.outer
+}
+
+// IsEmpty checks if the environment has any local bindings (excluding outer).
+func (e *Environment) IsEmpty() bool {
+	return len(e.store) == 0 && len(e.consts) == 0 && len(e.typeParamBindings) == 0
 }
 
 // GetAll returns a map of all variables and constants defined in the current scope.

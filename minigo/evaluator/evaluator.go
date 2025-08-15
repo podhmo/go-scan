@@ -3280,7 +3280,7 @@ func (e *Evaluator) constantInfoToObject(c *goscan.ConstantInfo) (object.Object,
 // findSymbolInPackageInfo searches for a symbol within a pre-loaded PackageInfo.
 // It does not trigger new scans. It returns the found object and a boolean.
 // NOTE: This resolves constants, struct type definitions, and function declarations from AST.
-func (e *Evaluator) findSymbolInPackageInfo(pkgInfo *goscan.Package, symbolName string, fscope *object.FileScope) (object.Object, bool) {
+func (e *Evaluator) findSymbolInPackageInfo(pkgInfo *goscan.Package, symbolName string, pkgEnv *object.Environment, fscope *object.FileScope) (object.Object, bool) {
 	// Look in constants
 	for _, c := range pkgInfo.Constants {
 		if c.Name == symbolName {
@@ -3327,7 +3327,7 @@ func (e *Evaluator) findSymbolInPackageInfo(pkgInfo *goscan.Package, symbolName 
 				Parameters: f.AstDecl.Type.Params,
 				Results:    f.AstDecl.Type.Results,
 				Body:       f.AstDecl.Body,
-				Env:        nil,      // Stubs from go source scanning don't have a closure env.
+				Env:        pkgEnv, // Functions defined in a package capture the package's environment.
 				FScope:     fscope, // Attach the package's filescope
 			}, true
 		}
@@ -3617,112 +3617,94 @@ func (e *Evaluator) findSymbolInPackage(pkg *object.Package, symbolName *ast.Ide
 		return member
 	}
 
-	// 3. Fallback to scanning source files for constants if not in registry.
-	// Check already loaded info.
-	if pkg.Info != nil {
-		// If info is loaded, fscope should also have been loaded. This is a slight simplification;
-		// a package could be pre-loaded without an FScope. A more robust implementation
-		// would create the FScope here if it's missing. For now, we assume it's created
-		// when the package is first scanned and loaded.
-		member, found := e.findSymbolInPackageInfo(pkg.Info, symbolName.Name, pkg.FScope)
-		if found {
-			if err, isErr := member.(*object.Error); isErr {
-				return err // Propagate conversion errors
-			}
-			pkg.Members[symbolName.Name] = member // Cache it
-			return member
+	// 3. If the package's environment is empty, it means we haven't scanned it yet.
+	// This is the main entry point for on-demand, lazy loading of a package's source.
+	if pkg.Env.IsEmpty() {
+		cumulativePkgInfo, err := e.scanner.FindSymbolInPackage(context.Background(), pkg.Path, symbolName.Name)
+		if err != nil {
+			// Not found in any unscanned files either.
+			return e.newError(pos, "undefined: %s.%s (package scan failed: %v)", pkg.Name, symbolName.Name, err)
 		}
-	}
 
-	// 4. Symbol not in loaded info, try scanning remaining files.
-	cumulativePkgInfo, err := e.scanner.FindSymbolInPackage(context.Background(), pkg.Path, symbolName.Name)
-	if err != nil {
-		// Not found in any unscanned files either. It's undefined.
-		return e.newError(pos, "undefined: %s.%s", pkg.Name, symbolName.Name)
-	}
+		// Update the package object with the richer info from the scan.
+		pkg.Info = cumulativePkgInfo
 
-	// 5. Symbol was found. `cumulativePkgInfo` contains everything scanned so far.
-	// Update the package object with the richer info.
-	pkg.Info = cumulativePkgInfo
-
-	// Find the AST file that contains the symbol we just found, so we can process its imports.
-	var symbolFile *ast.File
-	if cumulativePkgInfo != nil {
-		var foundSymbolPath string
-		for _, f := range cumulativePkgInfo.Functions {
-			if f.Name == symbolName.Name {
-				foundSymbolPath = f.FilePath
-				break
+		// Create a new, unified FileScope for the entire package from all its files.
+		if cumulativePkgInfo != nil && len(cumulativePkgInfo.AstFiles) > 0 {
+			var representativeAST *ast.File
+			for _, astFile := range cumulativePkgInfo.AstFiles {
+				if representativeAST == nil {
+					representativeAST = astFile
+				}
 			}
+			unifiedFScope := object.NewFileScope(representativeAST)
+			for _, astFile := range cumulativePkgInfo.AstFiles {
+				for _, importSpec := range astFile.Imports {
+					path, err := strconv.Unquote(importSpec.Path.Value)
+					if err != nil {
+						return e.newError(importSpec.Path.Pos(), "invalid import path: %v", err)
+					}
+					var alias string
+					var aliasIdent *ast.Ident
+					if importSpec.Name != nil {
+						alias = importSpec.Name.Name
+						aliasIdent = importSpec.Name
+					} else {
+						parts := strings.Split(path, "/")
+						alias = parts[len(parts)-1]
+						aliasIdent = &ast.Ident{Name: alias, NamePos: importSpec.Path.Pos()}
+					}
+					e.resolvePackage(aliasIdent, path)
+					switch alias {
+					case "_":
+						continue
+					case ".":
+						unifiedFScope.DotImports = append(unifiedFScope.DotImports, path)
+					default:
+						unifiedFScope.Aliases[alias] = path
+					}
+				}
+			}
+			pkg.FScope = unifiedFScope
 		}
-		if foundSymbolPath == "" {
-			for _, c := range cumulativePkgInfo.Constants {
-				if c.Name == symbolName.Name {
-					foundSymbolPath = c.FilePath
-					break
+
+		// Proactively populate all symbols from the package info into the package's environment.
+		// This acts as the "second pass" to resolve all top-level declarations before execution.
+		if pkg.Info != nil {
+			for _, t := range pkg.Info.Types {
+				if _, ok := pkg.Env.Get(t.Name); !ok {
+					typeObj, _ := e.findSymbolInPackageInfo(pkg.Info, t.Name, pkg.Env, pkg.FScope)
+					if typeObj != nil {
+						pkg.Env.Set(t.Name, typeObj)
+					}
+				}
+			}
+			for _, c := range pkg.Info.Constants {
+				if _, ok := pkg.Env.GetConstant(c.Name); !ok {
+					constObj, _ := e.findSymbolInPackageInfo(pkg.Info, c.Name, pkg.Env, pkg.FScope)
+					if constObj != nil {
+						pkg.Env.SetConstant(c.Name, constObj)
+					}
+				}
+			}
+			for _, f := range pkg.Info.Functions {
+				if _, ok := pkg.Env.Get(f.Name); !ok {
+					fnObj, _ := e.findSymbolInPackageInfo(pkg.Info, f.Name, pkg.Env, pkg.FScope)
+					if fnObj != nil {
+						pkg.Env.Set(f.Name, fnObj)
+					}
 				}
 			}
 		}
-		if foundSymbolPath == "" {
-			for _, t := range cumulativePkgInfo.Types {
-				if t.Name == symbolName.Name {
-					foundSymbolPath = t.FilePath
-					break
-				}
-			}
-		}
-		if astFile, ok := cumulativePkgInfo.AstFiles[foundSymbolPath]; ok {
-			symbolFile = astFile
-		}
 	}
 
-	// Create a new FileScope for the newly loaded package source.
-	if symbolFile != nil {
-		newFScope := object.NewFileScope(symbolFile)
-		for _, importSpec := range symbolFile.Imports {
-			path, err := strconv.Unquote(importSpec.Path.Value)
-			if err != nil {
-				return e.newError(importSpec.Path.Pos(), "invalid import path: %v", err)
-			}
-
-			var alias string
-			var aliasIdent *ast.Ident
-			if importSpec.Name != nil {
-				alias = importSpec.Name.Name
-				aliasIdent = importSpec.Name
-			} else {
-				parts := strings.Split(path, "/")
-				alias = parts[len(parts)-1]
-				aliasIdent = &ast.Ident{Name: alias, NamePos: importSpec.Path.Pos()}
-			}
-
-			// This is crucial: we resolve the package for the import, which ensures
-			// it gets cached in e.packages if it's not already there.
-			e.resolvePackage(aliasIdent, path)
-
-			switch alias {
-			case "_":
-				continue
-			case ".":
-				newFScope.DotImports = append(newFScope.DotImports, path)
-			default:
-				newFScope.Aliases[alias] = path
-			}
-		}
-		pkg.FScope = newFScope
+	// 4. Now that the package environment is populated, retrieve the symbol and cache it in Members.
+	if member, ok := pkg.Env.Get(symbolName.Name); ok {
+		pkg.Members[symbolName.Name] = member
+		return member
 	}
 
-	// 6. Now that info is updated, the symbol must be in it. Find it, cache it, return it.
-	member, found := e.findSymbolInPackageInfo(pkg.Info, symbolName.Name, pkg.FScope)
-	if !found {
-		// This should be an impossible state if FindSymbolInPackage works correctly.
-		return e.newError(pos, "internal inconsistency: symbol %s found by scanner but not in final package info", symbolName.Name)
-	}
-	if err, isErr := member.(*object.Error); isErr {
-		return err
-	}
-	pkg.Members[symbolName.Name] = member // Cache it
-	return member
+	return e.newError(pos, "undefined: %s.%s", pkg.Name, symbolName.Name)
 }
 
 func (e *Evaluator) evalGoValueSelectorExpr(node ast.Node, goVal *object.GoValue, sel string) object.Object {
@@ -4049,7 +4031,8 @@ func (e *Evaluator) resolvePackage(ident *ast.Ident, path string) *object.Packag
 	pkgObj := &object.Package{
 		Name:    ident.Name,
 		Path:    path,
-		Info:    nil, // Mark as not loaded yet
+		Env:     object.NewEnvironment(), // Create a new environment for the package.
+		Info:    nil,                     // Mark as not loaded yet
 		Members: make(map[string]object.Object),
 	}
 	e.packages[path] = pkgObj

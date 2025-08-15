@@ -82,6 +82,10 @@ func generate(ctx context.Context, s *goscan.Scanner, outputDir, pkgPath string)
 
 	symbols := make(map[string]struct{})
 	for _, f := range pkgInfo.Functions {
+		// Skip generic functions
+		if len(f.TypeParams) > 0 {
+			continue
+		}
 		if f.Receiver == nil && f.AstDecl != nil && f.AstDecl.Name != nil && f.AstDecl.Name.IsExported() {
 			symbols[f.Name] = struct{}{}
 		}

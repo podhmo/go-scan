@@ -351,6 +351,44 @@ func main() {
 	}
 }
 
+func TestInterpreter_SequentialDeclaration(t *testing.T) {
+	t.Run("calling a function defined later should succeed after two-pass evaluation", func(t *testing.T) {
+		input := `package main
+var x = getX()
+func getX() int {
+	return 42
+}
+`
+		i, err := NewInterpreter()
+		if err != nil {
+			t.Fatalf("NewInterpreter() failed: %v", err)
+		}
+
+		if err := i.LoadFile("test.go", []byte(input)); err != nil {
+			t.Fatalf("LoadFile() failed: %v", err)
+		}
+
+		// With the old single-pass evaluator, this would fail.
+		// The goal is to make this pass.
+		_, err = i.Eval(context.Background())
+		if err != nil {
+			t.Fatalf("Eval() failed unexpectedly: %v", err)
+		}
+
+		val, ok := i.globalEnv.Get("x")
+		if !ok {
+			t.Fatalf("variable 'x' not found")
+		}
+		integer, ok := val.(*object.Integer)
+		if !ok {
+			t.Fatalf("x is not an Integer, got %T", val)
+		}
+		if integer.Value != 42 {
+			t.Errorf("x should be 42, got %d", integer.Value)
+		}
+	})
+}
+
 func TestInterpreterEval_DestructuringAssignment(t *testing.T) {
 	tests := []struct {
 		name  string

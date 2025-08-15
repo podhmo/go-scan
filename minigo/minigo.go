@@ -332,13 +332,19 @@ func (i *Interpreter) LoadFile(filename string, source []byte) error {
 
 // EvalDeclarations evaluates all top-level declarations in the loaded files.
 func (i *Interpreter) EvalDeclarations(ctx context.Context) error {
+	// Associate each declaration with its original file scope to respect
+	// file-scoped imports.
+	var allDecls []object.DeclWithScope
 	for _, file := range i.files {
 		for _, decl := range file.AST.Decls {
-			result := i.eval.Eval(decl, i.globalEnv, file)
-			if err, ok := result.(*object.Error); ok {
-				return fmt.Errorf("%s", err.Inspect())
-			}
+			allDecls = append(allDecls, object.DeclWithScope{Decl: decl, Scope: file})
 		}
+	}
+
+	// The new top-level evaluation function will handle the two-pass evaluation.
+	result := i.eval.EvalToplevel(allDecls, i.globalEnv)
+	if err, ok := result.(*object.Error); ok {
+		return fmt.Errorf("%s", err.Inspect())
 	}
 	return nil
 }

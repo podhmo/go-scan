@@ -18,6 +18,12 @@ import (
 // ObjectType is a string representation of an object's type.
 type ObjectType string
 
+// DeclWithScope is a helper struct to associate a declaration with its file scope.
+type DeclWithScope struct {
+	Decl  ast.Decl
+	Scope *FileScope
+}
+
 // Define the basic object types. More will be added later.
 const (
 	INTEGER_OBJ              ObjectType = "INTEGER"

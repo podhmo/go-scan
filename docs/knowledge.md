@@ -193,3 +193,37 @@ Further investigation revealed that the `minigo` evaluator, when encountering th
 The `minigo` interpreter possesses a powerful, albeit perhaps unintentional, capability: it can dynamically resolve and execute the AST of Go standard library functions, provided that the function's body is composed entirely of constructs that the `minigo` evaluator itself can understand (like calls to its own builtins).
 
 This hybrid approach—finding a function's AST via `go-scan` and then evaluating that AST within `minigo`—allows for the dynamic use of some Go code without explicit bindings. This is a significant piece of knowledge about the system's architecture. The crucial fix was ensuring the symbol resolution path (`findSymbolInPackageInfo`) correctly identified function ASTs from the scanner's output.
+
+---
+
+## The Journey to Supporting `sort.Ints`
+
+**Context:**
+
+The implementation of two-pass evaluation was intended to fix the "Sequential Declaration Processing" limitation in the `minigo` interpreter. The primary success metric for this task was the ability to correctly interpret the standard library's `sort.Ints` function, which transitively depends on the `slices` package—a package that uses forward-referencing internally.
+
+This task evolved into a multi-stage debugging process that revealed several other core limitations of the interpreter and its interaction with the FFI (Foreign Function Interface).
+
+**The Debugging Cascade:**
+
+1.  **Initial Goal: Direct Source Interpretation**: The initial plan was to test `sort.Ints` by having the interpreter load its source code directly. The new two-pass evaluator was expected to handle the forward references in the `slices` dependency.
+
+2.  **Failure 1: Missing Built-in Types**: The test immediately failed with `identifier not found: uint`. This was because the interpreter's `evalIdent` function did not recognize `uint` as a valid built-in type name. This was patched, only to lead to a subsequent failure for `uint64`. This revealed that the interpreter's list of known primitive types was incomplete.
+
+3.  **Failure 2: Type Conversion**: After adding the types, a new error, `not a function: TYPE`, occurred. This was because the interpreter was trying to handle a type conversion, `uint(n)`, as a regular function call. The `Eval` logic for `ast.CallExpr` was enhanced to detect when the "function" being called is actually a type and to dispatch to a new `evalTypeConversion` handler.
+
+4.  **Failure 3: Complex Constant Evaluation**: The next failure, `could not convert constant "len8tab"`, revealed a more fundamental limitation. The `go-scan` tool, when encountering a complex computed constant (like the array literal for `len8tab` in `math/bits`), was unable to resolve its value and returned an empty string. The interpreter's `constantInfoToObject` function could not handle this. This was deemed a significant blocker for the direct source interpretation approach for this package.
+
+5.  **Strategic Pivot to FFI**: As per the project's own documentation (`plan-minigo-stdlib-limitations.md`), when direct interpretation is not feasible, the fallback is to use FFI bindings. The test case for `sort.Ints` was rewritten to use the pre-generated bindings (`stdsort.Install`).
+
+6.  **Failure 4: Pass-by-Value Slice Semantics**: The FFI-based test then failed with an assertion error: the slice was not being sorted. This was because the FFI bridge (`objectToReflectValue`) was creating a *copy* of the minigo slice's data into a new Go slice. The Go `sort.Ints` function sorted this copy, leaving the original interpreter-side array untouched.
+
+7.  **Failure 5: FFI Data Copy-Back Bug**: A fix was implemented to copy the data from the (now sorted) Go slice back into the original `minigo` array after the FFI call completed. This fix, however, introduced new regressions. The `nativeToValue` function, responsible for converting the Go slice elements back to `minigo` objects, was not comprehensive. It incorrectly wrapped primitive types like `float64` and `uint8` in a generic `*object.GoValue` instead of their specific `*object.Float` or `*object.Integer` types, causing type mismatch errors in other tests.
+
+**Final Resolution:**
+
+The final fix involved two key changes:
+1.  **Enhancing `nativeToValue`**: The function was updated to correctly handle a wider range of Go primitive numeric types (`float64`, `uint8`, etc.), ensuring that data copied back from the FFI bridge retained the correct `minigo` object type.
+2.  **Pragmatic Simplification**: During this fix, the decision was made to treat all Go integer types (signed and unsigned) as a single `minigo` `*object.Integer` (which wraps an `int64`). This was a pragmatic choice to solve the immediate problem and get the `sort` test passing, with the understanding that a more nuanced internal type system is a possible future enhancement but not strictly necessary for the current scope.
+
+This entire process highlights the interconnectedness of the interpreter's components and provides valuable knowledge for future standard library integration efforts. The `sort.Ints` test case served as an excellent catalyst for hardening the type system, FFI bridge, and evaluation strategy.

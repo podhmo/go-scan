@@ -49,12 +49,13 @@ The investigation revealed several fundamental limitations in the FFI bridge. Th
 -   **Method Calls**: This would require a significant change to the `minigo` evaluator, allowing it to look up methods on the `reflect.Type` of a wrapped `object.GoValue`. This is a major undertaking.
 -   **Error Handling**: The FFI bridge (`ffibridge`) needs to be modified to check for non-nil error return values and wrap them in a `minigo` error object instead of panicking. This seems more achievable than full method support.
 -   **Generics (for FFI)**: The binding generator could be improved to simply ignore generic functions, preventing it from generating non-compiling code. However, given the success of the source interpretation method, improving the FFI generator for generics is a low priority.
--   **`byte` Keyword**: This would require adding `byte` as a built-in type alias for `uint8` in the `minigo` parser or evaluator. This is a feasible fix.
+-   **`byte` Keyword**: ~~This would require adding `byte` as a built-in type alias for `uint8` in the `minigo` parser or evaluator. This is a feasible fix.~~ **(FIXED)** The interpreter now recognizes `byte`, `uint`, `uint64`, and `float64` as built-in type names.
 
 ### `errors`
 
--   **Limitation (Direct Source Interpretation)**: Sequential Declaration Order.
--   **Analysis**: An attempt to load `errors` via direct source interpretation fails with the error `identifier not found: errorString`. This occurs because the standard library's `errors.go` file defines the `New` function *before* it defines the unexported `errorString` struct that `New` returns. The `minigo` interpreter appears to process top-level declarations sequentially and does not resolve symbols that are defined later in the same file. This limitation makes it incompatible with standard Go source files that rely on out-of-order declarations.
+-   **Limitation (Direct Source Interpretation)**: ~~Sequential Declaration Order~~. **(FIXED)**
+-   **Analysis**: An attempt to load `errors` via direct source interpretation previously failed because the interpreter processed declarations sequentially.
+-   **Resolution**: The interpreter now implements a **two-pass evaluation strategy**. The first pass registers all top-level identifiers (types, functions, vars, consts), and the second pass evaluates variable and constant initializers. This resolves the sequential declaration issue, and the `errors` package can now be interpreted from source.
 
 ### `strings`
 
@@ -63,11 +64,9 @@ The investigation revealed several fundamental limitations in the FFI bridge. Th
 
 ### `sort`
 
--   **Limitation (Direct Source Interpretation)**: No Transitive Dependency Resolution.
--   **Analysis**: An attempt to use `sort.Ints` fails with the error `identifier not found: slices`. The root cause is that the lazy-loading mechanism is not recursive.
-    -   **Code Path**: When `sort.Ints` is first accessed, `minigo` correctly finds and parses `sort.go` to get the AST for the `Ints` function.
-    -   **The Flaw**: When the interpreter later evaluates the body of the `Ints` function (`slices.Sort(x)`), it does so using the file scope (`fscope`) of the *original user script*. The `import "slices"` statement at the top of `sort.go` is never processed by the `minigo` evaluator to create a new file scope for the context of the `sort` package. As a result, the identifier `slices` is not defined in the environment, and the evaluation fails.
-    -   **Conclusion**: The current implementation only lazy-loads symbols from packages directly imported by the user's script. It does not handle `import` statements within the source code of its dependencies.
+-   **Limitation (Direct Source Interpretation)**: ~~No Transitive Dependency Resolution~~. **(FIXED)**
+-   **Analysis**: An attempt to use `sort.Ints` previously failed because the interpreter did not recursively load dependencies (i.e., `sort`'s import of `slices`).
+-   **Resolution**: The `go-scan` library's file merging logic was fixed, and the `minigo` interpreter was enhanced to create a unified `FileScope` for all files in a package. This ensures that when a package like `sort` is loaded, its own imports (like `slices`) are correctly resolved.
 
 ### `bytes`
 

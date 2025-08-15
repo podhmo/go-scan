@@ -152,6 +152,84 @@ var r2 = sort.IntsAreSorted(s2)
 	}
 }
 
+// TestStdlib_SortInts_FFI tests the `sort.Ints` function using the FFI bindings.
+// Direct source interpretation failed due to limitations in constant evaluation
+// in transitive dependencies (math/bits).
+func TestStdlib_SortInts_FFI(t *testing.T) {
+	script := `
+package main
+import "sort"
+var s = []int{5, 2, 6, 3, 1, 4}
+var _ = sort.Ints(s)
+
+var f = []float64{3.3, 1.1, 4.4, 2.2}
+var _ = sort.Float64s(f)
+`
+	interp, err := minigo.NewInterpreter()
+	if err != nil {
+		t.Fatalf("failed to create interpreter: %+v", err)
+	}
+
+	// Use the pre-generated FFI bindings as a fallback.
+	stdsort.Install(interp)
+
+	if err := interp.LoadFile("test.mgo", []byte(script)); err != nil {
+		t.Fatalf("failed to load script: %+v", err)
+	}
+
+	if _, err := interp.Eval(context.Background()); err != nil {
+		t.Fatalf("failed to evaluate script: %+v", err)
+	}
+
+	env := interp.GlobalEnvForTest()
+
+	// Check the sorted integer slice
+	sObj, ok := env.Get("s")
+	if !ok {
+		t.Fatalf("variable 's' not found")
+	}
+	sArr, ok := sObj.(*object.Array)
+	if !ok {
+		t.Fatalf("variable 's' is not an array, got %T", sObj)
+	}
+	expectedInts := []int64{1, 2, 3, 4, 5, 6}
+	if len(sArr.Elements) != len(expectedInts) {
+		t.Fatalf("sorted int slice has wrong length, got %d, want %d", len(sArr.Elements), len(expectedInts))
+	}
+	for i, el := range sArr.Elements {
+		intVal, ok := el.(*object.Integer)
+		if !ok {
+			t.Fatalf("element %d is not an integer, got %T", i, el)
+		}
+		if intVal.Value != expectedInts[i] {
+			t.Errorf("s[%d] is wrong, got %d, want %d", i, intVal.Value, expectedInts[i])
+		}
+	}
+
+	// Check the sorted float slice
+	fObj, ok := env.Get("f")
+	if !ok {
+		t.Fatalf("variable 'f' not found")
+	}
+	fArr, ok := fObj.(*object.Array)
+	if !ok {
+		t.Fatalf("variable 'f' is not an array, got %T", fObj)
+	}
+	expectedFloats := []float64{1.1, 2.2, 3.3, 4.4}
+	if len(fArr.Elements) != len(expectedFloats) {
+		t.Fatalf("sorted float slice has wrong length, got %d, want %d", len(fArr.Elements), len(expectedFloats))
+	}
+	for i, el := range fArr.Elements {
+		floatVal, ok := el.(*object.Float)
+		if !ok {
+			t.Fatalf("element %d is not a float, got %T", i, el)
+		}
+		if floatVal.Value != expectedFloats[i] {
+			t.Errorf("f[%d] is wrong, got %f, want %f", i, floatVal.Value, expectedFloats[i])
+		}
+	}
+}
+
 func TestStdlib_slices(t *testing.T) {
 	script := `
 package main

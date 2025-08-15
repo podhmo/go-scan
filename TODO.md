@@ -82,7 +82,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [-] `path/filepath` (Direct source interpretation failed due to sequential declaration limitation; FFI binding retained)
 - [-] `regexp` (Not tested; guaranteed to fail due to method calls on `regexp.Regexp`)
 - [-] `sort` (Direct source interpretation failed due to lack of transitive dependency resolution; FFI binding retained)
-- [-] `strconv` (Sequential declaration limitation is now fixed, but direct source interpretation not yet re-evaluated; FFI binding retained)
+- [-] `strconv` (Sequential declaration limitation is now fixed, but direct source interpretation not yet re-evaluated; FFI binding retained, compatibility improved via new comprehensive tests)
 - [-] `strings` (String indexing now supported, but direct source interpretation not yet re-evaluated; FFI binding retained)
 - [-] `text/template` (Not tested; guaranteed to fail due to reflection and complexity)
 - [x] `time` (FFI error handling test now passes; method call limitations remain)

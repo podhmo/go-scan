@@ -65,6 +65,11 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     - [x] **Investigate & Document Limitations**: Through testing, identified and documented several core limitations of the `minigo` interpreter. See `docs/trouble-minigo-stdlib-limitations.md` for a full analysis.
     - [x] **Generated Bindings For**:
         - `fmt`, `strings`, `encoding/json`, `strconv`, `math/rand`, `time`, `bytes`, `io`, `os`, `regexp`, `text/template`, `errors`, `net/http`, `net/url`, `path/filepath`, `sort`.
+- **FFI Improvements**:
+    - [x] **Improve FFI `Install` function to handle dependencies**:
+        - [x] Changed the signature of the `Install` functions for FFI bindings.
+        - [x] The `minigo-gen-bindings` tool was updated to automatically install dependencies.
+        - [x] Avoids duplicate installations by passing a map (`map[string]bool`) to track which packages have already been installed.
 
 
 ## To Be Implemented
@@ -120,11 +125,11 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] **Support Increment and Decrement Operators**: Implement `++` and `--` as statements.
 - [ ] Write comprehensive documentation for the API, supported language features, and usage examples.
 
-### FFI Improvements
-- **Improve FFI `Install` function to handle dependencies**
-  - Change the signature of the `Install` functions for FFI bindings.
-  - The goal is to automatically install dependencies. For example, installing `text/template` should also automatically install `bytes`.
-  - Avoid duplicate installations by passing a map (e.g., `map[string]bool`) to track which packages have already been installed.
+- **FFI Improvements**:
+    - [x] **Improve FFI `Install` function to handle dependencies**:
+        - [x] Changed the signature of the `Install` functions for FFI bindings.
+        - [x] The `minigo-gen-bindings` tool was updated to automatically install dependencies.
+        - [x] Avoids duplicate installations by passing a map (`map[string]bool`) to track which packages have already been installed.
 
 ### `minigo` Language and FFI Enhancements from Stdlib Investigation ([docs/trouble-minigo-stdlib-limitations.md](./docs/trouble-minigo-stdlib-limitations.md))
 - [ ] **Support Struct Literals with Local Variables**: Enhance the evaluator to handle struct literals that are initialized with variables from the current function's scope (e.g., `&errorString{text}`). This was found to be a blocker for interpreting the `errors` package from source.

@@ -4,31 +4,35 @@ package scanner
 
 import (
 	"text/scanner"
-
 	"github.com/podhmo/go-scan/minigo"
 )
 
 // Install binds all exported symbols from the "text/scanner" package to the interpreter.
-func Install(interp *minigo.Interpreter) {
+func Install(interp *minigo.Interpreter, installed map[string]bool) {
+	if installed["text/scanner"] {
+		return
+	}
+	installed["text/scanner"] = true
+
 	interp.Register("text/scanner", map[string]any{
-		"RawString":      scanner.RawString,
-		"Comment":        scanner.Comment,
-		"TokenString":    scanner.TokenString,
-		"ScanIdents":     scanner.ScanIdents,
-		"ScanComments":   scanner.ScanComments,
-		"ScanChars":      scanner.ScanChars,
-		"ScanStrings":    scanner.ScanStrings,
-		"SkipComments":   scanner.SkipComments,
-		"GoTokens":       scanner.GoTokens,
-		"Int":            scanner.Int,
-		"String":         scanner.String,
-		"GoWhitespace":   scanner.GoWhitespace,
-		"ScanFloats":     scanner.ScanFloats,
-		"Ident":          scanner.Ident,
-		"Float":          scanner.Float,
-		"ScanInts":       scanner.ScanInts,
+		"RawString": scanner.RawString,
+		"Comment": scanner.Comment,
+		"ScanFloats": scanner.ScanFloats,
+		"ScanStrings": scanner.ScanStrings,
+		"Float": scanner.Float,
+		"ScanChars": scanner.ScanChars,
 		"ScanRawStrings": scanner.ScanRawStrings,
-		"EOF":            scanner.EOF,
-		"Char":           scanner.Char,
+		"ScanComments": scanner.ScanComments,
+		"SkipComments": scanner.SkipComments,
+		"EOF": scanner.EOF,
+		"String": scanner.String,
+		"ScanInts": scanner.ScanInts,
+		"GoTokens": scanner.GoTokens,
+		"Int": scanner.Int,
+		"Char": scanner.Char,
+		"GoWhitespace": scanner.GoWhitespace,
+		"TokenString": scanner.TokenString,
+		"ScanIdents": scanner.ScanIdents,
+		"Ident": scanner.Ident,
 	})
 }

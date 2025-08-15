@@ -4,20 +4,24 @@ package regexp
 
 import (
 	"regexp"
-
 	"github.com/podhmo/go-scan/minigo"
 )
 
 // Install binds all exported symbols from the "regexp" package to the interpreter.
-func Install(interp *minigo.Interpreter) {
+func Install(interp *minigo.Interpreter, installed map[string]bool) {
+	if installed["regexp"] {
+		return
+	}
+	installed["regexp"] = true
+
 	interp.Register("regexp", map[string]any{
-		"MatchReader":      regexp.MatchReader,
-		"MatchString":      regexp.MatchString,
-		"Match":            regexp.Match,
-		"QuoteMeta":        regexp.QuoteMeta,
-		"Compile":          regexp.Compile,
-		"CompilePOSIX":     regexp.CompilePOSIX,
-		"MustCompile":      regexp.MustCompile,
+		"QuoteMeta": regexp.QuoteMeta,
+		"Compile": regexp.Compile,
+		"CompilePOSIX": regexp.CompilePOSIX,
+		"MustCompile": regexp.MustCompile,
 		"MustCompilePOSIX": regexp.MustCompilePOSIX,
+		"MatchReader": regexp.MatchReader,
+		"MatchString": regexp.MatchString,
+		"Match": regexp.Match,
 	})
 }

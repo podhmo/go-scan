@@ -40,7 +40,7 @@ var _, err = time.Parse(layout, "not-a-valid-date")
 	if err != nil {
 		t.Fatalf("failed to create interpreter: %+v", err)
 	}
-	stdtime.Install(interp)
+	stdtime.Install(interp, make(map[string]bool))
 
 	if err := interp.LoadFile("test.mgo", []byte(script)); err != nil {
 		t.Fatalf("failed to load script: %+v", err)
@@ -86,7 +86,7 @@ func main() (any, any) {
 	if err != nil {
 		t.Fatalf("failed to create interpreter: %+v", err)
 	}
-	stdtime.Install(interp)
+	stdtime.Install(interp, make(map[string]bool))
 
 	if err := interp.LoadFile("test.mgo", []byte(script)); err != nil {
 		t.Fatalf("LoadFile() failed: %v", err)
@@ -140,7 +140,7 @@ var r_compare_lt = bytes.Compare(c, a)
 	if err != nil {
 		t.Fatalf("failed to create interpreter: %+v", err)
 	}
-	stdbytes.Install(interp)
+	stdbytes.Install(interp, make(map[string]bool))
 
 	if err := interp.LoadFile("test.mgo", []byte(script)); err != nil {
 		t.Fatalf("failed to load script: %+v", err)
@@ -182,7 +182,7 @@ var r2 = sort.IntsAreSorted(s2)
 		t.Fatalf("failed to create interpreter: %+v", err)
 	}
 
-	stdsort.Install(interp)
+	stdsort.Install(interp, make(map[string]bool))
 
 	if err := interp.LoadFile("test.mgo", []byte(script)); err != nil {
 		t.Fatalf("failed to load script: %+v", err)
@@ -229,7 +229,7 @@ var _ = sort.Float64s(f)
 	}
 
 	// Use the pre-generated FFI bindings as a fallback.
-	stdsort.Install(interp)
+	stdsort.Install(interp, make(map[string]bool))
 
 	if err := interp.LoadFile("test.mgo", []byte(script)); err != nil {
 		t.Fatalf("failed to load script: %+v", err)
@@ -338,7 +338,7 @@ var matched = re.MatchString("peach")
 	if err != nil {
 		t.Fatalf("failed to create interpreter: %+v", err)
 	}
-	stdregexp.Install(interp)
+	stdregexp.Install(interp, make(map[string]bool))
 
 	if err := interp.LoadFile("test.mgo", []byte(script)); err != nil {
 		t.Fatalf("failed to load script: %+v", err)
@@ -379,8 +379,9 @@ var result = buf.String()
 		t.Fatalf("failed to create interpreter: %+v", err)
 	}
 
-	stdtemplate.Install(interp)
-	stdbytes.Install(interp) // Need bytes.Buffer
+	installed := make(map[string]bool)
+	stdtemplate.Install(interp, installed)
+	stdbytes.Install(interp, installed) // Need bytes.Buffer
 
 	if err := interp.LoadFile("test.mgo", []byte(script)); err != nil {
 		t.Fatalf("failed to load script: %+v", err)
@@ -427,7 +428,7 @@ var n = r.Intn(100)
 	if err != nil {
 		t.Fatalf("failed to create interpreter: %+v", err)
 	}
-	stdmathrand.Install(interp)
+	stdmathrand.Install(interp, make(map[string]bool))
 
 	if err := interp.LoadFile("test.mgo", []byte(script)); err != nil {
 		t.Fatalf("failed to load script: %+v", err)
@@ -469,7 +470,7 @@ var base = filepath.Base(joined)
 		t.Fatalf("failed to create interpreter: %+v", err)
 	}
 
-	stdpathfilepath.Install(interp)
+	stdpathfilepath.Install(interp, make(map[string]bool))
 
 	if err := interp.LoadFile("test.mgo", []byte(script)); err != nil {
 		t.Fatalf("failed to load script: %+v", err)
@@ -526,7 +527,7 @@ var err = errors.New("a new error")
 		t.Fatalf("failed to create interpreter: %+v", err)
 	}
 
-	stderrors.Install(interp)
+	stderrors.Install(interp, make(map[string]bool))
 
 	if err := interp.LoadFile("test.mgo", []byte(script)); err != nil {
 		t.Fatalf("failed to load script: %+v", err)
@@ -578,7 +579,7 @@ var result = string(data)
 		t.Fatalf("failed to create interpreter: %+v", err)
 	}
 
-	stdjson.Install(interp)
+	stdjson.Install(interp, make(map[string]bool))
 
 	if err := interp.LoadFile("test.mgo", []byte(script)); err != nil {
 		t.Fatalf("failed to load script: %+v", err)
@@ -637,8 +638,9 @@ var err = scanner.Err()
 		t.Fatalf("failed to create interpreter: %+v", err)
 	}
 
-	stdbufio.Install(interp)
-	stdstrings.Install(interp)
+	installed := make(map[string]bool)
+	stdbufio.Install(interp, installed)
+	stdstrings.Install(interp, installed)
 
 	// We expect this to fail during LoadFile
 	err = interp.LoadFile("test.mgo", []byte(script))
@@ -682,8 +684,9 @@ func main() {
 	}
 
 	// Install the necessary FFI bindings.
-	stdtextscanner.Install(interp)
-	stdstrings.Install(interp)
+	installed := make(map[string]bool)
+	stdtextscanner.Install(interp, installed)
+	stdstrings.Install(interp, installed)
 
 	if err := interp.LoadFile("test.mgo", []byte(script)); err != nil {
 		t.Fatalf("failed to load script: %+v", err)
@@ -738,7 +741,7 @@ var val = ctx.Value(key)
 	}
 
 	// Install the necessary FFI bindings.
-	stdcontext.Install(interp)
+	stdcontext.Install(interp, make(map[string]bool))
 
 	if err := interp.LoadFile("test.mgo", []byte(script)); err != nil {
 		t.Fatalf("failed to load script: %+v", err)
@@ -761,5 +764,71 @@ var val = ctx.Value(key)
 
 	if valStr.Value != "my-value" {
 		t.Errorf("unexpected value from context: got %q, want %q", valStr.Value, "my-value")
+	}
+}
+
+func TestStdlib_TextTemplate_WithDependencies(t *testing.T) {
+	script := `
+package main
+import (
+	"text/template"
+	"bytes"
+	"strings"
+	"fmt"
+)
+// This script uses functions from text/template's dependencies
+// to verify they are auto-installed.
+// - bytes.NewBuffer (from "bytes")
+// - strings.Contains (from "strings")
+// - fmt.Sprintf (from "fmt")
+type Person struct {
+	Name string
+}
+var data = Person{Name: "World"}
+var tpl, err1 = template.New("test").Parse("Hello, {{.Name}}!")
+var buf = bytes.NewBuffer(nil) // from "bytes"
+var err2 = tpl.Execute(buf, data)
+var result = buf.String()
+var contains = strings.Contains(result, "World") // from "strings"
+var final_msg = fmt.Sprintf("Success: %t", contains) // from "fmt"
+`
+	interp, err := minigo.NewInterpreter()
+	if err != nil {
+		t.Fatalf("failed to create interpreter: %+v", err)
+	}
+
+	// Only install text/template. Dependencies should be pulled in automatically.
+	stdtemplate.Install(interp, make(map[string]bool))
+
+	if err := interp.LoadFile("test.mgo", []byte(script)); err != nil {
+		t.Fatalf("failed to load script: %+v", err)
+	}
+	if _, err := interp.Eval(context.Background()); err != nil {
+		t.Fatalf("failed to evaluate script: %+v", err)
+	}
+
+	env := interp.GlobalEnvForTest()
+
+	// Check for errors during template processing
+	if err1, _ := env.Get("err1"); err1 != object.NIL {
+		t.Errorf("expected err1 to be nil, but got: %v", err1.Inspect())
+	}
+	if err2, _ := env.Get("err2"); err2 != object.NIL {
+		t.Errorf("expected err2 to be nil, but got: %v", err2.Inspect())
+	}
+
+	// Check the final message
+	finalMsg, ok := env.Get("final_msg")
+	if !ok {
+		t.Fatalf("variable 'final_msg' not found")
+	}
+	str, ok := finalMsg.(*object.String)
+	if !ok {
+		t.Fatalf("final_msg is not a string, got %T", finalMsg)
+	}
+
+	expected := "Success: true"
+	if str.Value != expected {
+		t.Errorf("unexpected result:\ngot:  %q\nwant: %q", str.Value, expected)
 	}
 }

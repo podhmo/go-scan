@@ -4,22 +4,26 @@ package url
 
 import (
 	"net/url"
-
 	"github.com/podhmo/go-scan/minigo"
 )
 
 // Install binds all exported symbols from the "net/url" package to the interpreter.
-func Install(interp *minigo.Interpreter) {
+func Install(interp *minigo.Interpreter, installed map[string]bool) {
+	if installed["net/url"] {
+		return
+	}
+	installed["net/url"] = true
+
 	interp.Register("net/url", map[string]any{
-		"QueryUnescape":   url.QueryUnescape,
-		"QueryEscape":     url.QueryEscape,
-		"UserPassword":    url.UserPassword,
-		"Parse":           url.Parse,
+		"QueryUnescape": url.QueryUnescape,
+		"PathUnescape": url.PathUnescape,
+		"QueryEscape": url.QueryEscape,
+		"User": url.User,
+		"ParseQuery": url.ParseQuery,
+		"PathEscape": url.PathEscape,
+		"UserPassword": url.UserPassword,
+		"Parse": url.Parse,
 		"ParseRequestURI": url.ParseRequestURI,
-		"JoinPath":        url.JoinPath,
-		"PathUnescape":    url.PathUnescape,
-		"PathEscape":      url.PathEscape,
-		"User":            url.User,
-		"ParseQuery":      url.ParseQuery,
+		"JoinPath": url.JoinPath,
 	})
 }

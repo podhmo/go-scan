@@ -4,31 +4,35 @@ package rand
 
 import (
 	"math/rand"
-
 	"github.com/podhmo/go-scan/minigo"
 )
 
 // Install binds all exported symbols from the "math/rand" package to the interpreter.
-func Install(interp *minigo.Interpreter) {
+func Install(interp *minigo.Interpreter, installed map[string]bool) {
+	if installed["math/rand"] {
+		return
+	}
+	installed["math/rand"] = true
+
 	interp.Register("math/rand", map[string]any{
-		"Perm":        rand.Perm,
-		"Int63":       rand.Int63,
-		"Int31":       rand.Int31,
-		"Int":         rand.Int,
-		"NewZipf":     rand.NewZipf,
-		"New":         rand.New,
-		"Int63n":      rand.Int63n,
-		"Float64":     rand.Float64,
-		"Float32":     rand.Float32,
-		"Shuffle":     rand.Shuffle,
+		"Uint32": rand.Uint32,
+		"Int63n": rand.Int63n,
+		"Perm": rand.Perm,
+		"Float64": rand.Float64,
+		"Float32": rand.Float32,
+		"NewZipf": rand.NewZipf,
+		"New": rand.New,
+		"Seed": rand.Seed,
+		"Int31": rand.Int31,
+		"Intn": rand.Intn,
 		"NormFloat64": rand.NormFloat64,
-		"ExpFloat64":  rand.ExpFloat64,
-		"NewSource":   rand.NewSource,
-		"Seed":        rand.Seed,
-		"Int31n":      rand.Int31n,
-		"Read":        rand.Read,
-		"Uint32":      rand.Uint32,
-		"Uint64":      rand.Uint64,
-		"Intn":        rand.Intn,
+		"Int63": rand.Int63,
+		"Uint64": rand.Uint64,
+		"Int": rand.Int,
+		"Int31n": rand.Int31n,
+		"Shuffle": rand.Shuffle,
+		"Read": rand.Read,
+		"ExpFloat64": rand.ExpFloat64,
+		"NewSource": rand.NewSource,
 	})
 }

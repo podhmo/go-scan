@@ -4,23 +4,27 @@ package bufio
 
 import (
 	"bufio"
-
 	"github.com/podhmo/go-scan/minigo"
 )
 
 // Install binds all exported symbols from the "bufio" package to the interpreter.
-func Install(interp *minigo.Interpreter) {
+func Install(interp *minigo.Interpreter, installed map[string]bool) {
+	if installed["bufio"] {
+		return
+	}
+	installed["bufio"] = true
+
 	interp.Register("bufio", map[string]any{
-		"ScanWords":        bufio.ScanWords,
-		"NewWriterSize":    bufio.NewWriterSize,
-		"NewReadWriter":    bufio.NewReadWriter,
+		"NewScanner": bufio.NewScanner,
+		"ScanBytes": bufio.ScanBytes,
+		"ScanRunes": bufio.ScanRunes,
+		"ScanLines": bufio.ScanLines,
+		"ScanWords": bufio.ScanWords,
+		"NewReaderSize": bufio.NewReaderSize,
+		"NewWriterSize": bufio.NewWriterSize,
+		"NewWriter": bufio.NewWriter,
+		"NewReader": bufio.NewReader,
+		"NewReadWriter": bufio.NewReadWriter,
 		"MaxScanTokenSize": bufio.MaxScanTokenSize,
-		"NewScanner":       bufio.NewScanner,
-		"ScanBytes":        bufio.ScanBytes,
-		"ScanRunes":        bufio.ScanRunes,
-		"NewReaderSize":    bufio.NewReaderSize,
-		"NewReader":        bufio.NewReader,
-		"NewWriter":        bufio.NewWriter,
-		"ScanLines":        bufio.ScanLines,
 	})
 }

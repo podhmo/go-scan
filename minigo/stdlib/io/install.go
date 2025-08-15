@@ -4,30 +4,34 @@ package io
 
 import (
 	"io"
-
 	"github.com/podhmo/go-scan/minigo"
 )
 
 // Install binds all exported symbols from the "io" package to the interpreter.
-func Install(interp *minigo.Interpreter) {
+func Install(interp *minigo.Interpreter, installed map[string]bool) {
+	if installed["io"] {
+		return
+	}
+	installed["io"] = true
+
 	interp.Register("io", map[string]any{
-		"Pipe":             io.Pipe,
-		"Copy":             io.Copy,
-		"NewOffsetWriter":  io.NewOffsetWriter,
-		"TeeReader":        io.TeeReader,
-		"NopCloser":        io.NopCloser,
-		"ReadAll":          io.ReadAll,
-		"CopyN":            io.CopyN,
-		"MultiReader":      io.MultiReader,
-		"MultiWriter":      io.MultiWriter,
-		"LimitReader":      io.LimitReader,
+		"NewOffsetWriter": io.NewOffsetWriter,
+		"WriteString": io.WriteString,
+		"NopCloser": io.NopCloser,
+		"SeekStart": io.SeekStart,
+		"SeekCurrent": io.SeekCurrent,
+		"MultiWriter": io.MultiWriter,
+		"ReadAtLeast": io.ReadAtLeast,
+		"CopyBuffer": io.CopyBuffer,
+		"LimitReader": io.LimitReader,
 		"NewSectionReader": io.NewSectionReader,
-		"SeekStart":        io.SeekStart,
-		"SeekCurrent":      io.SeekCurrent,
-		"SeekEnd":          io.SeekEnd,
-		"WriteString":      io.WriteString,
-		"ReadAtLeast":      io.ReadAtLeast,
-		"ReadFull":         io.ReadFull,
-		"CopyBuffer":       io.CopyBuffer,
+		"ReadAll": io.ReadAll,
+		"Pipe": io.Pipe,
+		"MultiReader": io.MultiReader,
+		"CopyN": io.CopyN,
+		"TeeReader": io.TeeReader,
+		"SeekEnd": io.SeekEnd,
+		"ReadFull": io.ReadFull,
+		"Copy": io.Copy,
 	})
 }

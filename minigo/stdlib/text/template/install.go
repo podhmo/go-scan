@@ -4,25 +4,45 @@ package template
 
 import (
 	"text/template"
-
 	"github.com/podhmo/go-scan/minigo"
+	stdbytes "github.com/podhmo/go-scan/minigo/stdlib/bytes"
+	stderrors "github.com/podhmo/go-scan/minigo/stdlib/errors"
+	stdfmt "github.com/podhmo/go-scan/minigo/stdlib/fmt"
+	stdio "github.com/podhmo/go-scan/minigo/stdlib/io"
+	stdurl "github.com/podhmo/go-scan/minigo/stdlib/net/url"
+	stdos "github.com/podhmo/go-scan/minigo/stdlib/os"
+	stdfilepath "github.com/podhmo/go-scan/minigo/stdlib/path/filepath"
+	stdstrings "github.com/podhmo/go-scan/minigo/stdlib/strings"
 )
 
 // Install binds all exported symbols from the "text/template" package to the interpreter.
-func Install(interp *minigo.Interpreter) {
+func Install(interp *minigo.Interpreter, installed map[string]bool) {
+	if installed["text/template"] {
+		return
+	}
+	installed["text/template"] = true
+	stdbytes.Install(interp, installed)
+	stderrors.Install(interp, installed)
+	stdfmt.Install(interp, installed)
+	stdio.Install(interp, installed)
+	stdurl.Install(interp, installed)
+	stdos.Install(interp, installed)
+	stdfilepath.Install(interp, installed)
+	stdstrings.Install(interp, installed)
+
 	interp.Register("text/template", map[string]any{
-		"ParseFiles":       template.ParseFiles,
-		"ParseGlob":        template.ParseGlob,
-		"ParseFS":          template.ParseFS,
+		"URLQueryEscaper": template.URLQueryEscaper,
+		"IsTrue": template.IsTrue,
+		"Must": template.Must,
+		"ParseFiles": template.ParseFiles,
 		"HTMLEscapeString": template.HTMLEscapeString,
-		"JSEscape":         template.JSEscape,
-		"URLQueryEscaper":  template.URLQueryEscaper,
-		"IsTrue":           template.IsTrue,
-		"New":              template.New,
-		"HTMLEscape":       template.HTMLEscape,
-		"HTMLEscaper":      template.HTMLEscaper,
-		"JSEscapeString":   template.JSEscapeString,
-		"JSEscaper":        template.JSEscaper,
-		"Must":             template.Must,
+		"HTMLEscaper": template.HTMLEscaper,
+		"JSEscaper": template.JSEscaper,
+		"New": template.New,
+		"ParseGlob": template.ParseGlob,
+		"ParseFS": template.ParseFS,
+		"HTMLEscape": template.HTMLEscape,
+		"JSEscape": template.JSEscape,
+		"JSEscapeString": template.JSEscapeString,
 	})
 }

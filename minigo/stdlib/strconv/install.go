@@ -4,47 +4,51 @@ package strconv
 
 import (
 	"strconv"
-
 	"github.com/podhmo/go-scan/minigo"
 )
 
 // Install binds all exported symbols from the "strconv" package to the interpreter.
-func Install(interp *minigo.Interpreter) {
+func Install(interp *minigo.Interpreter, installed map[string]bool) {
+	if installed["strconv"] {
+		return
+	}
+	installed["strconv"] = true
+
 	interp.Register("strconv", map[string]any{
-		"ParseBool":                strconv.ParseBool,
-		"Quote":                    strconv.Quote,
-		"AppendQuoteToGraphic":     strconv.AppendQuoteToGraphic,
-		"QuotedPrefix":             strconv.QuotedPrefix,
-		"AppendUint":               strconv.AppendUint,
-		"ParseInt":                 strconv.ParseInt,
-		"QuoteRuneToASCII":         strconv.QuoteRuneToASCII,
-		"QuoteRuneToGraphic":       strconv.QuoteRuneToGraphic,
-		"UnquoteChar":              strconv.UnquoteChar,
-		"FormatFloat":              strconv.FormatFloat,
-		"AppendQuoteRuneToASCII":   strconv.AppendQuoteRuneToASCII,
-		"AppendInt":                strconv.AppendInt,
-		"Atoi":                     strconv.Atoi,
-		"QuoteToGraphic":           strconv.QuoteToGraphic,
+		"QuoteRune": strconv.QuoteRune,
+		"Unquote": strconv.Unquote,
+		"ParseComplex": strconv.ParseComplex,
+		"ParseInt": strconv.ParseInt,
+		"AppendQuoteToGraphic": strconv.AppendQuoteToGraphic,
+		"UnquoteChar": strconv.UnquoteChar,
+		"IsGraphic": strconv.IsGraphic,
+		"ParseUint": strconv.ParseUint,
+		"AppendQuote": strconv.AppendQuote,
+		"AppendQuoteRuneToASCII": strconv.AppendQuoteRuneToASCII,
+		"Atoi": strconv.Atoi,
+		"AppendQuoteRune": strconv.AppendQuoteRune,
+		"FormatBool": strconv.FormatBool,
+		"FormatInt": strconv.FormatInt,
+		"CanBackquote": strconv.CanBackquote,
+		"Quote": strconv.Quote,
+		"QuoteToGraphic": strconv.QuoteToGraphic,
+		"QuoteRuneToGraphic": strconv.QuoteRuneToGraphic,
+		"AppendUint": strconv.AppendUint,
+		"FormatFloat": strconv.FormatFloat,
+		"QuoteToASCII": strconv.QuoteToASCII,
+		"IsPrint": strconv.IsPrint,
+		"FormatComplex": strconv.FormatComplex,
+		"Itoa": strconv.Itoa,
+		"AppendInt": strconv.AppendInt,
+		"AppendQuoteToASCII": strconv.AppendQuoteToASCII,
+		"QuoteRuneToASCII": strconv.QuoteRuneToASCII,
+		"IntSize": strconv.IntSize,
 		"AppendQuoteRuneToGraphic": strconv.AppendQuoteRuneToGraphic,
-		"AppendFloat":              strconv.AppendFloat,
-		"FormatUint":               strconv.FormatUint,
-		"FormatComplex":            strconv.FormatComplex,
-		"IntSize":                  strconv.IntSize,
-		"FormatBool":               strconv.FormatBool,
-		"AppendBool":               strconv.AppendBool,
-		"QuoteRune":                strconv.QuoteRune,
-		"CanBackquote":             strconv.CanBackquote,
-		"ParseUint":                strconv.ParseUint,
-		"ParseFloat":               strconv.ParseFloat,
-		"QuoteToASCII":             strconv.QuoteToASCII,
-		"Unquote":                  strconv.Unquote,
-		"AppendQuote":              strconv.AppendQuote,
-		"AppendQuoteToASCII":       strconv.AppendQuoteToASCII,
-		"IsPrint":                  strconv.IsPrint,
-		"IsGraphic":                strconv.IsGraphic,
-		"FormatInt":                strconv.FormatInt,
-		"AppendQuoteRune":          strconv.AppendQuoteRune,
-		"Itoa":                     strconv.Itoa,
-		"ParseComplex":             strconv.ParseComplex,
+		"QuotedPrefix": strconv.QuotedPrefix,
+		"ParseBool": strconv.ParseBool,
+		"AppendBool": strconv.AppendBool,
+		"ParseFloat": strconv.ParseFloat,
+		"AppendFloat": strconv.AppendFloat,
+		"FormatUint": strconv.FormatUint,
 	})
 }

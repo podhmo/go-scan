@@ -4,35 +4,39 @@ package fmt
 
 import (
 	"fmt"
-
 	"github.com/podhmo/go-scan/minigo"
 )
 
 // Install binds all exported symbols from the "fmt" package to the interpreter.
-func Install(interp *minigo.Interpreter) {
+func Install(interp *minigo.Interpreter, installed map[string]bool) {
+	if installed["fmt"] {
+		return
+	}
+	installed["fmt"] = true
+
 	interp.Register("fmt", map[string]any{
-		"Scanln":       fmt.Scanln,
-		"Sscan":        fmt.Sscan,
-		"Sscanf":       fmt.Sscanf,
-		"Fscan":        fmt.Fscan,
-		"Fscanln":      fmt.Fscanln,
-		"Fscanf":       fmt.Fscanf,
-		"Sprintf":      fmt.Sprintf,
-		"Scanf":        fmt.Scanf,
-		"Sscanln":      fmt.Sscanln,
-		"Fprint":       fmt.Fprint,
-		"Sprint":       fmt.Sprint,
-		"Append":       fmt.Append,
-		"Sprintln":     fmt.Sprintln,
-		"Print":        fmt.Print,
-		"Appendln":     fmt.Appendln,
-		"Scan":         fmt.Scan,
+		"Fprintf": fmt.Fprintf,
+		"Printf": fmt.Printf,
+		"Appendf": fmt.Appendf,
+		"Fprint": fmt.Fprint,
+		"Sprint": fmt.Sprint,
+		"Append": fmt.Append,
+		"Scanf": fmt.Scanf,
+		"Sscan": fmt.Sscan,
+		"Fscanf": fmt.Fscanf,
+		"Print": fmt.Print,
+		"Println": fmt.Println,
+		"Sprintln": fmt.Sprintln,
+		"Appendln": fmt.Appendln,
+		"Scanln": fmt.Scanln,
+		"Sscanf": fmt.Sscanf,
+		"Sprintf": fmt.Sprintf,
+		"Errorf": fmt.Errorf,
+		"Scan": fmt.Scan,
+		"Sscanln": fmt.Sscanln,
+		"Fscanln": fmt.Fscanln,
 		"FormatString": fmt.FormatString,
-		"Fprintf":      fmt.Fprintf,
-		"Printf":       fmt.Printf,
-		"Appendf":      fmt.Appendf,
-		"Fprintln":     fmt.Fprintln,
-		"Println":      fmt.Println,
-		"Errorf":       fmt.Errorf,
+		"Fprintln": fmt.Fprintln,
+		"Fscan": fmt.Fscan,
 	})
 }

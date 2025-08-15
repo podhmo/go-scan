@@ -8,30 +8,25 @@ import (
 )
 
 // Install binds all exported symbols from the "sort" package to the interpreter.
-func Install(interp *minigo.Interpreter, installed map[string]bool) {
-	if installed["sort"] {
-		return
-	}
-	installed["sort"] = true
-
+func Install(interp *minigo.Interpreter) {
 	interp.Register("sort", map[string]any{
-		"SliceStable": sort.SliceStable,
 		"Find": sort.Find,
-		"SearchStrings": sort.SearchStrings,
 		"Float64s": sort.Float64s,
 		"Float64sAreSorted": sort.Float64sAreSorted,
-		"StringsAreSorted": sort.StringsAreSorted,
-		"SliceIsSorted": sort.SliceIsSorted,
-		"SearchInts": sort.SearchInts,
-		"SearchFloat64s": sort.SearchFloat64s,
 		"Ints": sort.Ints,
 		"IntsAreSorted": sort.IntsAreSorted,
-		"Search": sort.Search,
-		"Sort": sort.Sort,
-		"Reverse": sort.Reverse,
 		"IsSorted": sort.IsSorted,
-		"Strings": sort.Strings,
-		"Stable": sort.Stable,
+		"Reverse": sort.Reverse,
+		"Search": sort.Search,
+		"SearchFloat64s": sort.SearchFloat64s,
+		"SearchInts": sort.SearchInts,
+		"SearchStrings": sort.SearchStrings,
 		"Slice": sort.Slice,
+		"SliceIsSorted": sort.SliceIsSorted,
+		"SliceStable": sort.SliceStable,
+		"Sort": sort.Sort,
+		"Stable": sort.Stable,
+		"Strings": sort.Strings,
+		"StringsAreSorted": sort.StringsAreSorted,
 	})
 }

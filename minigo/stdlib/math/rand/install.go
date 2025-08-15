@@ -8,31 +8,26 @@ import (
 )
 
 // Install binds all exported symbols from the "math/rand" package to the interpreter.
-func Install(interp *minigo.Interpreter, installed map[string]bool) {
-	if installed["math/rand"] {
-		return
-	}
-	installed["math/rand"] = true
-
+func Install(interp *minigo.Interpreter) {
 	interp.Register("math/rand", map[string]any{
-		"Uint64": rand.Uint64,
-		"Int31n": rand.Int31n,
-		"Shuffle": rand.Shuffle,
-		"Read": rand.Read,
-		"New": rand.New,
-		"Int63n": rand.Int63n,
-		"Float64": rand.Float64,
 		"ExpFloat64": rand.ExpFloat64,
-		"NewZipf": rand.NewZipf,
-		"Seed": rand.Seed,
-		"Int31": rand.Int31,
-		"Int": rand.Int,
-		"Intn": rand.Intn,
-		"Perm": rand.Perm,
-		"NormFloat64": rand.NormFloat64,
-		"Int63": rand.Int63,
-		"Uint32": rand.Uint32,
 		"Float32": rand.Float32,
+		"Float64": rand.Float64,
+		"Int": rand.Int,
+		"Int31": rand.Int31,
+		"Int31n": rand.Int31n,
+		"Int63": rand.Int63,
+		"Int63n": rand.Int63n,
+		"Intn": rand.Intn,
+		"New": rand.New,
 		"NewSource": rand.NewSource,
+		"NewZipf": rand.NewZipf,
+		"NormFloat64": rand.NormFloat64,
+		"Perm": rand.Perm,
+		"Read": rand.Read,
+		"Seed": rand.Seed,
+		"Shuffle": rand.Shuffle,
+		"Uint32": rand.Uint32,
+		"Uint64": rand.Uint64,
 	})
 }

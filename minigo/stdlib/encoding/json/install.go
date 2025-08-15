@@ -8,21 +8,16 @@ import (
 )
 
 // Install binds all exported symbols from the "encoding/json" package to the interpreter.
-func Install(interp *minigo.Interpreter, installed map[string]bool) {
-	if installed["encoding/json"] {
-		return
-	}
-	installed["encoding/json"] = true
-
+func Install(interp *minigo.Interpreter) {
 	interp.Register("encoding/json", map[string]any{
-		"HTMLEscape": json.HTMLEscape,
 		"Compact": json.Compact,
+		"HTMLEscape": json.HTMLEscape,
 		"Indent": json.Indent,
-		"Valid": json.Valid,
+		"Marshal": json.Marshal,
+		"MarshalIndent": json.MarshalIndent,
+		"NewDecoder": json.NewDecoder,
 		"NewEncoder": json.NewEncoder,
 		"Unmarshal": json.Unmarshal,
-		"Marshal": json.Marshal,
-		"NewDecoder": json.NewDecoder,
-		"MarshalIndent": json.MarshalIndent,
+		"Valid": json.Valid,
 	})
 }

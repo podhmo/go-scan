@@ -8,35 +8,30 @@ import (
 )
 
 // Install binds all exported symbols from the "path/filepath" package to the interpreter.
-func Install(interp *minigo.Interpreter, installed map[string]bool) {
-	if installed["path/filepath"] {
-		return
-	}
-	installed["path/filepath"] = true
-
+func Install(interp *minigo.Interpreter) {
 	interp.Register("path/filepath", map[string]any{
-		"Rel": filepath.Rel,
-		"WalkDir": filepath.WalkDir,
-		"Separator": filepath.Separator,
-		"HasPrefix": filepath.HasPrefix,
-		"ToSlash": filepath.ToSlash,
-		"EvalSymlinks": filepath.EvalSymlinks,
-		"IsAbs": filepath.IsAbs,
-		"ListSeparator": filepath.ListSeparator,
-		"Clean": filepath.Clean,
-		"Split": filepath.Split,
 		"Abs": filepath.Abs,
-		"Walk": filepath.Walk,
 		"Base": filepath.Base,
+		"Clean": filepath.Clean,
 		"Dir": filepath.Dir,
-		"VolumeName": filepath.VolumeName,
-		"Match": filepath.Match,
+		"EvalSymlinks": filepath.EvalSymlinks,
 		"Ext": filepath.Ext,
-		"Glob": filepath.Glob,
-		"IsLocal": filepath.IsLocal,
-		"Localize": filepath.Localize,
 		"FromSlash": filepath.FromSlash,
-		"SplitList": filepath.SplitList,
+		"Glob": filepath.Glob,
+		"HasPrefix": filepath.HasPrefix,
+		"IsAbs": filepath.IsAbs,
+		"IsLocal": filepath.IsLocal,
 		"Join": filepath.Join,
+		"ListSeparator": filepath.ListSeparator,
+		"Localize": filepath.Localize,
+		"Match": filepath.Match,
+		"Rel": filepath.Rel,
+		"Separator": filepath.Separator,
+		"Split": filepath.Split,
+		"SplitList": filepath.SplitList,
+		"ToSlash": filepath.ToSlash,
+		"VolumeName": filepath.VolumeName,
+		"Walk": filepath.Walk,
+		"WalkDir": filepath.WalkDir,
 	})
 }

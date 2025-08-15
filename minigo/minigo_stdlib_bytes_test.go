@@ -43,7 +43,7 @@ var r_trim_space = string(bytes.TrimSpace([]byte(spaced)))
 	if err != nil {
 		t.Fatalf("failed to create interpreter: %+v", err)
 	}
-	stdbytes.Install(interp, make(map[string]bool))
+	stdbytes.Install(interp)
 
 	if err := interp.LoadFile("test.mgo", []byte(script)); err != nil {
 		t.Fatalf("failed to load script: %+v", err)

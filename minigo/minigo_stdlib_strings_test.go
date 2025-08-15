@@ -47,7 +47,7 @@ var r_split = strings.Split(csv, ",")
 	if err != nil {
 		t.Fatalf("failed to create interpreter: %+v", err)
 	}
-	stdstrings.Install(interp, make(map[string]bool))
+	stdstrings.Install(interp)
 
 	if err := interp.LoadFile("test.mgo", []byte(script)); err != nil {
 		t.Fatalf("failed to load script: %+v", err)

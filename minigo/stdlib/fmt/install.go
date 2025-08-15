@@ -8,35 +8,30 @@ import (
 )
 
 // Install binds all exported symbols from the "fmt" package to the interpreter.
-func Install(interp *minigo.Interpreter, installed map[string]bool) {
-	if installed["fmt"] {
-		return
-	}
-	installed["fmt"] = true
-
+func Install(interp *minigo.Interpreter) {
 	interp.Register("fmt", map[string]any{
-		"Sscan": fmt.Sscan,
-		"Sscanln": fmt.Sscanln,
-		"Sscanf": fmt.Sscanf,
+		"Append": fmt.Append,
+		"Appendf": fmt.Appendf,
 		"Appendln": fmt.Appendln,
-		"Fprintf": fmt.Fprintf,
-		"Sprint": fmt.Sprint,
-		"Fprintln": fmt.Fprintln,
-		"Println": fmt.Println,
-		"Scanln": fmt.Scanln,
-		"Fscan": fmt.Fscan,
-		"Scan": fmt.Scan,
-		"Fscanln": fmt.Fscanln,
-		"Fscanf": fmt.Fscanf,
-		"Sprintln": fmt.Sprintln,
 		"Errorf": fmt.Errorf,
 		"FormatString": fmt.FormatString,
-		"Appendf": fmt.Appendf,
 		"Fprint": fmt.Fprint,
-		"Scanf": fmt.Scanf,
-		"Printf": fmt.Printf,
-		"Sprintf": fmt.Sprintf,
+		"Fprintf": fmt.Fprintf,
+		"Fprintln": fmt.Fprintln,
+		"Fscan": fmt.Fscan,
+		"Fscanf": fmt.Fscanf,
+		"Fscanln": fmt.Fscanln,
 		"Print": fmt.Print,
-		"Append": fmt.Append,
+		"Printf": fmt.Printf,
+		"Println": fmt.Println,
+		"Scan": fmt.Scan,
+		"Scanf": fmt.Scanf,
+		"Scanln": fmt.Scanln,
+		"Sprint": fmt.Sprint,
+		"Sprintf": fmt.Sprintf,
+		"Sprintln": fmt.Sprintln,
+		"Sscan": fmt.Sscan,
+		"Sscanf": fmt.Sscanf,
+		"Sscanln": fmt.Sscanln,
 	})
 }

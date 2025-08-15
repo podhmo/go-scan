@@ -33,7 +33,7 @@ var _, err_bad_bool = strconv.ParseBool("nope")
 	if err != nil {
 		t.Fatalf("failed to create interpreter: %+v", err)
 	}
-	stdstrconv.Install(interp, make(map[string]bool))
+	stdstrconv.Install(interp)
 
 	if err := interp.LoadFile("test.mgo", []byte(script)); err != nil {
 		t.Fatalf("failed to load script: %+v", err)

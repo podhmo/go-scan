@@ -8,30 +8,25 @@ import (
 )
 
 // Install binds all exported symbols from the "io" package to the interpreter.
-func Install(interp *minigo.Interpreter, installed map[string]bool) {
-	if installed["io"] {
-		return
-	}
-	installed["io"] = true
-
+func Install(interp *minigo.Interpreter) {
 	interp.Register("io", map[string]any{
-		"Pipe": io.Pipe,
-		"CopyN": io.CopyN,
-		"CopyBuffer": io.CopyBuffer,
-		"LimitReader": io.LimitReader,
-		"TeeReader": io.TeeReader,
-		"ReadAll": io.ReadAll,
-		"SeekStart": io.SeekStart,
-		"SeekCurrent": io.SeekCurrent,
-		"MultiReader": io.MultiReader,
-		"ReadFull": io.ReadFull,
 		"Copy": io.Copy,
-		"NewOffsetWriter": io.NewOffsetWriter,
-		"SeekEnd": io.SeekEnd,
-		"WriteString": io.WriteString,
-		"NopCloser": io.NopCloser,
+		"CopyBuffer": io.CopyBuffer,
+		"CopyN": io.CopyN,
+		"LimitReader": io.LimitReader,
+		"MultiReader": io.MultiReader,
 		"MultiWriter": io.MultiWriter,
-		"ReadAtLeast": io.ReadAtLeast,
+		"NewOffsetWriter": io.NewOffsetWriter,
 		"NewSectionReader": io.NewSectionReader,
+		"NopCloser": io.NopCloser,
+		"Pipe": io.Pipe,
+		"ReadAll": io.ReadAll,
+		"ReadAtLeast": io.ReadAtLeast,
+		"ReadFull": io.ReadFull,
+		"SeekCurrent": io.SeekCurrent,
+		"SeekEnd": io.SeekEnd,
+		"SeekStart": io.SeekStart,
+		"TeeReader": io.TeeReader,
+		"WriteString": io.WriteString,
 	})
 }

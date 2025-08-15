@@ -8,23 +8,18 @@ import (
 )
 
 // Install binds all exported symbols from the "bufio" package to the interpreter.
-func Install(interp *minigo.Interpreter, installed map[string]bool) {
-	if installed["bufio"] {
-		return
-	}
-	installed["bufio"] = true
-
+func Install(interp *minigo.Interpreter) {
 	interp.Register("bufio", map[string]any{
-		"ScanRunes": bufio.ScanRunes,
-		"ScanWords": bufio.ScanWords,
-		"NewWriterSize": bufio.NewWriterSize,
-		"NewWriter": bufio.NewWriter,
+		"MaxScanTokenSize": bufio.MaxScanTokenSize,
 		"NewReadWriter": bufio.NewReadWriter,
+		"NewReader": bufio.NewReader,
+		"NewReaderSize": bufio.NewReaderSize,
 		"NewScanner": bufio.NewScanner,
+		"NewWriter": bufio.NewWriter,
+		"NewWriterSize": bufio.NewWriterSize,
 		"ScanBytes": bufio.ScanBytes,
 		"ScanLines": bufio.ScanLines,
-		"NewReaderSize": bufio.NewReaderSize,
-		"NewReader": bufio.NewReader,
-		"MaxScanTokenSize": bufio.MaxScanTokenSize,
+		"ScanRunes": bufio.ScanRunes,
+		"ScanWords": bufio.ScanWords,
 	})
 }

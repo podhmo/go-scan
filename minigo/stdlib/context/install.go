@@ -8,24 +8,19 @@ import (
 )
 
 // Install binds all exported symbols from the "context" package to the interpreter.
-func Install(interp *minigo.Interpreter, installed map[string]bool) {
-	if installed["context"] {
-		return
-	}
-	installed["context"] = true
-
+func Install(interp *minigo.Interpreter) {
 	interp.Register("context", map[string]any{
+		"AfterFunc": context.AfterFunc,
+		"Background": context.Background,
+		"Cause": context.Cause,
 		"TODO": context.TODO,
 		"WithCancel": context.WithCancel,
 		"WithCancelCause": context.WithCancelCause,
-		"AfterFunc": context.AfterFunc,
+		"WithDeadline": context.WithDeadline,
 		"WithDeadlineCause": context.WithDeadlineCause,
 		"WithTimeout": context.WithTimeout,
-		"WithValue": context.WithValue,
-		"Background": context.Background,
-		"Cause": context.Cause,
-		"WithoutCancel": context.WithoutCancel,
-		"WithDeadline": context.WithDeadline,
 		"WithTimeoutCause": context.WithTimeoutCause,
+		"WithValue": context.WithValue,
+		"WithoutCancel": context.WithoutCancel,
 	})
 }

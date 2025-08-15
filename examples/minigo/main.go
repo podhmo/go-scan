@@ -24,11 +24,10 @@ func newInterpreterWithStdlib() (*minigo.Interpreter, error) {
 		return nil, err
 	}
 	// Register some useful Go functions to be available in the script.
-	installed := make(map[string]bool)
-	strings_.Install(interp, installed)
-	fmt_.Install(interp, installed)
-	json_.Install(interp, installed)
-	strconv_.Install(interp, installed)
+	strings_.Install(interp)
+	fmt_.Install(interp)
+	json_.Install(interp)
+	strconv_.Install(interp)
 	return interp, nil
 }
 

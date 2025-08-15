@@ -8,31 +8,26 @@ import (
 )
 
 // Install binds all exported symbols from the "text/scanner" package to the interpreter.
-func Install(interp *minigo.Interpreter, installed map[string]bool) {
-	if installed["text/scanner"] {
-		return
-	}
-	installed["text/scanner"] = true
-
+func Install(interp *minigo.Interpreter) {
 	interp.Register("text/scanner", map[string]any{
+		"Char": scanner.Char,
 		"Comment": scanner.Comment,
 		"EOF": scanner.EOF,
-		"Int": scanner.Int,
 		"Float": scanner.Float,
-		"Char": scanner.Char,
-		"TokenString": scanner.TokenString,
-		"ScanFloats": scanner.ScanFloats,
-		"ScanChars": scanner.ScanChars,
-		"ScanStrings": scanner.ScanStrings,
-		"SkipComments": scanner.SkipComments,
+		"GoTokens": scanner.GoTokens,
 		"GoWhitespace": scanner.GoWhitespace,
+		"Ident": scanner.Ident,
+		"Int": scanner.Int,
+		"RawString": scanner.RawString,
+		"ScanChars": scanner.ScanChars,
+		"ScanComments": scanner.ScanComments,
+		"ScanFloats": scanner.ScanFloats,
 		"ScanIdents": scanner.ScanIdents,
 		"ScanInts": scanner.ScanInts,
 		"ScanRawStrings": scanner.ScanRawStrings,
-		"ScanComments": scanner.ScanComments,
-		"GoTokens": scanner.GoTokens,
-		"Ident": scanner.Ident,
+		"ScanStrings": scanner.ScanStrings,
+		"SkipComments": scanner.SkipComments,
 		"String": scanner.String,
-		"RawString": scanner.RawString,
+		"TokenString": scanner.TokenString,
 	})
 }

@@ -8,17 +8,12 @@ import (
 )
 
 // Install binds all exported symbols from the "errors" package to the interpreter.
-func Install(interp *minigo.Interpreter, installed map[string]bool) {
-	if installed["errors"] {
-		return
-	}
-	installed["errors"] = true
-
+func Install(interp *minigo.Interpreter) {
 	interp.Register("errors", map[string]any{
-		"New": errors.New,
-		"Join": errors.Join,
-		"Unwrap": errors.Unwrap,
-		"Is": errors.Is,
 		"As": errors.As,
+		"Is": errors.Is,
+		"Join": errors.Join,
+		"New": errors.New,
+		"Unwrap": errors.Unwrap,
 	})
 }

@@ -8,22 +8,17 @@ import (
 )
 
 // Install binds all exported symbols from the "net/url" package to the interpreter.
-func Install(interp *minigo.Interpreter, installed map[string]bool) {
-	if installed["net/url"] {
-		return
-	}
-	installed["net/url"] = true
-
+func Install(interp *minigo.Interpreter) {
 	interp.Register("net/url", map[string]any{
+		"JoinPath": url.JoinPath,
+		"Parse": url.Parse,
+		"ParseQuery": url.ParseQuery,
+		"ParseRequestURI": url.ParseRequestURI,
+		"PathEscape": url.PathEscape,
 		"PathUnescape": url.PathUnescape,
+		"QueryEscape": url.QueryEscape,
+		"QueryUnescape": url.QueryUnescape,
 		"User": url.User,
 		"UserPassword": url.UserPassword,
-		"JoinPath": url.JoinPath,
-		"QueryEscape": url.QueryEscape,
-		"PathEscape": url.PathEscape,
-		"Parse": url.Parse,
-		"ParseRequestURI": url.ParseRequestURI,
-		"ParseQuery": url.ParseQuery,
-		"QueryUnescape": url.QueryUnescape,
 	})
 }

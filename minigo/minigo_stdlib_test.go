@@ -30,7 +30,7 @@ var err2 = json.Unmarshal(data, &p2)
 	if err != nil {
 		t.Fatalf("failed to create interpreter: %+v", err)
 	}
-	stdjson.Install(interp, make(map[string]bool))
+	stdjson.Install(interp)
 
 	if err := interp.LoadFile("test.mgo", []byte(script)); err != nil {
 		t.Fatalf("failed to load script: %+v", err)
@@ -136,7 +136,7 @@ func TestStdlib_json_with_tags(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create interpreter: %+v", err)
 	}
-	stdjson.Install(interp, make(map[string]bool))
+	stdjson.Install(interp)
 
 	if err := interp.LoadFile("test.mgo", []byte(script)); err != nil {
 		t.Fatalf("failed to load script: %+v", err)
@@ -195,7 +195,7 @@ var r_fb_f = strconv.FormatBool(false)
 	if err != nil {
 		t.Fatalf("failed to create interpreter: %+v", err)
 	}
-	stdstrconv.Install(interp, make(map[string]bool))
+	stdstrconv.Install(interp)
 	if err := interp.LoadFile("test.mgo", []byte(script)); err != nil {
 		t.Fatalf("failed to load script: %+v", err)
 	}
@@ -299,9 +299,8 @@ var message = fmt.Sprintf("Message: %s", upper)
 	}
 
 	// Install the generated bindings
-	installed := make(map[string]bool)
-	stdstrings.Install(interp, installed)
-	stdfmt.Install(interp, installed)
+	stdstrings.Install(interp)
+	stdfmt.Install(interp)
 
 	if err := interp.LoadFile("test.mgo", []byte(script)); err != nil {
 		t.Fatalf("failed to load script: %+v", err)
@@ -347,7 +346,7 @@ var err = json.Unmarshal(data, &result)
 	if err != nil {
 		t.Fatalf("failed to create interpreter: %+v", err)
 	}
-	stdjson.Install(interp, make(map[string]bool))
+	stdjson.Install(interp)
 
 	// Inject the data variable
 	dataBytes := []byte(jsonData)
@@ -404,7 +403,7 @@ var err = json.Unmarshal(data, &result)
 	if err != nil {
 		t.Fatalf("failed to create interpreter: %+v", err)
 	}
-	stdjson.Install(interp, make(map[string]bool))
+	stdjson.Install(interp)
 
 	// Inject the data variable
 	dataBytes := []byte(jsonData)
@@ -466,7 +465,7 @@ var err = json.Unmarshal(data, &result)
 	if err != nil {
 		t.Fatalf("failed to create interpreter: %+v", err)
 	}
-	stdjson.Install(interp, make(map[string]bool))
+	stdjson.Install(interp)
 
 	// Inject the data variable
 	dataBytes := []byte(jsonData)

@@ -5,44 +5,23 @@ package template
 import (
 	"text/template"
 	"github.com/podhmo/go-scan/minigo"
-	stdbytes "github.com/podhmo/go-scan/minigo/stdlib/bytes"
-	stderrors "github.com/podhmo/go-scan/minigo/stdlib/errors"
-	stdfmt "github.com/podhmo/go-scan/minigo/stdlib/fmt"
-	stdio "github.com/podhmo/go-scan/minigo/stdlib/io"
-	stdurl "github.com/podhmo/go-scan/minigo/stdlib/net/url"
-	stdos "github.com/podhmo/go-scan/minigo/stdlib/os"
-	stdfilepath "github.com/podhmo/go-scan/minigo/stdlib/path/filepath"
-	stdstrings "github.com/podhmo/go-scan/minigo/stdlib/strings"
 )
 
 // Install binds all exported symbols from the "text/template" package to the interpreter.
-func Install(interp *minigo.Interpreter, installed map[string]bool) {
-	if installed["text/template"] {
-		return
-	}
-	installed["text/template"] = true
-	stdbytes.Install(interp, installed)
-	stderrors.Install(interp, installed)
-	stdfmt.Install(interp, installed)
-	stdio.Install(interp, installed)
-	stdurl.Install(interp, installed)
-	stdos.Install(interp, installed)
-	stdfilepath.Install(interp, installed)
-	stdstrings.Install(interp, installed)
-
+func Install(interp *minigo.Interpreter) {
 	interp.Register("text/template", map[string]any{
+		"HTMLEscape": template.HTMLEscape,
 		"HTMLEscapeString": template.HTMLEscapeString,
-		"Must": template.Must,
-		"ParseFiles": template.ParseFiles,
 		"HTMLEscaper": template.HTMLEscaper,
+		"IsTrue": template.IsTrue,
 		"JSEscape": template.JSEscape,
 		"JSEscapeString": template.JSEscapeString,
 		"JSEscaper": template.JSEscaper,
-		"URLQueryEscaper": template.URLQueryEscaper,
-		"IsTrue": template.IsTrue,
-		"ParseGlob": template.ParseGlob,
-		"ParseFS": template.ParseFS,
+		"Must": template.Must,
 		"New": template.New,
-		"HTMLEscape": template.HTMLEscape,
+		"ParseFS": template.ParseFS,
+		"ParseFiles": template.ParseFiles,
+		"ParseGlob": template.ParseGlob,
+		"URLQueryEscaper": template.URLQueryEscaper,
 	})
 }

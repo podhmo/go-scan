@@ -8,20 +8,15 @@ import (
 )
 
 // Install binds all exported symbols from the "regexp" package to the interpreter.
-func Install(interp *minigo.Interpreter, installed map[string]bool) {
-	if installed["regexp"] {
-		return
-	}
-	installed["regexp"] = true
-
+func Install(interp *minigo.Interpreter) {
 	interp.Register("regexp", map[string]any{
 		"Compile": regexp.Compile,
 		"CompilePOSIX": regexp.CompilePOSIX,
-		"MustCompile": regexp.MustCompile,
-		"MustCompilePOSIX": regexp.MustCompilePOSIX,
+		"Match": regexp.Match,
 		"MatchReader": regexp.MatchReader,
 		"MatchString": regexp.MatchString,
-		"Match": regexp.Match,
+		"MustCompile": regexp.MustCompile,
+		"MustCompilePOSIX": regexp.MustCompilePOSIX,
 		"QuoteMeta": regexp.QuoteMeta,
 	})
 }

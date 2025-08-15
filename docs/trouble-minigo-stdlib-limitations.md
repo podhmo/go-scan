@@ -131,3 +131,28 @@ Based on the limitations discovered above, the remaining standard library packag
 -   **`time`, `net/url`, `regexp`**: These packages rely heavily on methods defined on their core struct types (`time.Time`, `url.URL`, `regexp.Regexp`). As discovered with the FFI-based tests, `minigo` does not support method calls on Go objects, so these would fail.
 -   **`io`**: This package's utility comes from its core interfaces, `io.Reader` and `io.Writer`. While `minigo` has some support for interfaces, the complexity of implementing and using them for I/O operations is beyond its current capabilities.
 -   **`fmt`, `text/template`**: These packages are highly complex and make extensive use of reflection (`reflect`), which is not fully supported by `minigo`. They would also fail due to the other limitations already identified (sequential declaration, method calls, etc.).
+
+## Future Investigation Candidates
+
+Based on the investigation so far, the following packages are recommended for future testing to further probe the capabilities and limitations of the `minigo` interpreter. These packages do not currently have pre-generated FFI bindings.
+
+### Recommended for String/Code Generation Tasks
+
+These packages are highly relevant to the project's goals of supporting configuration, templating, and code generation tasks.
+
+-   **`text/scanner`**: For tokenizing text. A fundamental tool for parsing.
+-   **`path`**: For URL path manipulation (as opposed to `path/filepath`).
+-   **`text/tabwriter`**: For generating aligned, column-based text output.
+-   **`go/parser`**, **`go/ast`**, **`go/token`**: The core Go language parsing libraries. Supporting these would be a major step towards advanced code generation but is expected to be very challenging.
+-   **`go/format`**: For formatting generated Go code.
+
+### Recommended for Discovering New Limitations
+
+These packages are likely to fail in new and informative ways, helping to reveal the boundaries of the interpreter's capabilities.
+
+-   **`container/list`**: Would test more complex pointer manipulation and data structures.
+-   **`container/heap`**: Would test the interpreter's ability to handle interface-based APIs where user-defined types must satisfy the interface.
+-   **`crypto/*` (e.g., `crypto/md5`)**: Would rigorously test the integer and bitwise operation support.
+-   **`compress/gzip`**: Would be a practical test of `io.Reader`/`io.Writer` interface implementation.
+-   **`flag`**: Would test interaction with OS arguments and reflection-based struct population.
+-   **`sync`**: Would confirm the expected limitation that the single-threaded `minigo` interpreter cannot support Go's concurrency model.

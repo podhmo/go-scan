@@ -292,6 +292,20 @@ func unmarshal(src object.Object, dst reflect.Value) error {
 		}
 		dst.Set(newMap)
 		return nil
+	case *object.Tuple:
+		if dst.Kind() != reflect.Struct {
+			return fmt.Errorf("cannot unmarshal tuple into non-struct type %s", dst.Type())
+		}
+		if len(s.Elements) > dst.NumField() {
+			return fmt.Errorf("tuple has more elements (%d) than destination struct has fields (%d)", len(s.Elements), dst.NumField())
+		}
+		for i, elem := range s.Elements {
+			dstField := dst.Field(i)
+			if err := unmarshal(elem, dstField); err != nil {
+				return fmt.Errorf("error in tuple element %d into field %s: %w", i, dst.Type().Field(i).Name, err)
+			}
+		}
+		return nil
 	case *object.StructInstance:
 		if dst.Kind() != reflect.Struct {
 			return fmt.Errorf("cannot unmarshal struct instance into non-struct type %s", dst.Type())

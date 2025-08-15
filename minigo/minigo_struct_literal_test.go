@@ -4,9 +4,8 @@ import (
 	"bytes"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/podhmo/go-scan/minigo"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 // TestStructLiteralShorthand tests support for struct literals with shorthand
@@ -32,10 +31,18 @@ func main() {
 	m, err := minigo.NewInterpreter(
 		minigo.WithStdout(&out),
 	)
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatalf("NewInterpreter failed: %+v", err)
+	}
 
 	_, err = m.EvalString(source)
-	require.NoError(t, err, "compilation should succeed")
+	if err != nil {
+		t.Fatalf("EvalString failed: %+v", err)
+	}
 
-	assert.Equal(t, "something went wrong\n", out.String(), "output mismatch")
+	want := "something went wrong\n"
+	got := out.String()
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("output mismatch (-want +got):\n%s", diff)
+	}
 }

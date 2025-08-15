@@ -21,38 +21,38 @@ func TestGenerate(t *testing.T) {
 	}{
 		{
 			name:       "generics",
-		pkgPath:    "./testdata/generics",
+			pkgPath:    "./testdata/generics",
 			goldenFile: "generics.golden",
 		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-		tmpdir := t.TempDir()
+			tmpdir := t.TempDir()
 
-		// The 'run' function expects to be run from the module root.
-		// The pkgPath for ScanPackageByImport should be an import path.
-		// Let's use the full path from the module root.
-		// The module is `github.com/podhmo/go-scan`.
-		// The import path is relative to the module root.
-		// This is getting complicated. Let's adjust the `run` function's expectation.
-		// No, let's adjust the test. The tool is a command-line tool, it should work with relative paths.
-		// The pkgPath for ScanPackageByImport should be an import path.
-		// Let's assume the test runs from the `minigo-gen-bindings` directory.
-		// No, tests run from the package directory.
-		// The package path needs to be a proper Go import path.
-		// Let's use the full path from the module root.
-		// The module is `github.com/podhmo/go-scan`.
-		importPath := "github.com/podhmo/go-scan/examples/minigo-gen-bindings/testdata/generics"
+			// The 'run' function expects to be run from the module root.
+			// The pkgPath for ScanPackageByImport should be an import path.
+			// Let's use the full path from the module root.
+			// The module is `github.com/podhmo/go-scan`.
+			// The import path is relative to the module root.
+			// This is getting complicated. Let's adjust the `run` function's expectation.
+			// No, let's adjust the test. The tool is a command-line tool, it should work with relative paths.
+			// The pkgPath for ScanPackageByImport should be an import path.
+			// Let's assume the test runs from the `minigo-gen-bindings` directory.
+			// No, tests run from the package directory.
+			// The package path needs to be a proper Go import path.
+			// Let's use the full path from the module root.
+			// The module is `github.com/podhmo/go-scan`.
+			importPath := "github.com/podhmo/go-scan/examples/minigo-gen-bindings/testdata/generics"
 
-		if err := run(context.Background(), tmpdir, []string{importPath}); err != nil {
-			t.Fatalf("run() failed unexpectedly: %+v", err)
-		}
+			if err := run(context.Background(), tmpdir, []string{importPath}); err != nil {
+				t.Fatalf("run() failed unexpectedly: %+v", err)
+			}
 
-		generatedFile := filepath.Join(tmpdir, importPath, "install.go")
+			generatedFile := filepath.Join(tmpdir, importPath, "install.go")
 			generated, err := os.ReadFile(generatedFile)
 			if err != nil {
-			t.Fatalf("failed to read generated output file %q: %v", generatedFile, err)
+				t.Fatalf("failed to read generated output file %q: %v", generatedFile, err)
 			}
 			normalizedGenerated := strings.ReplaceAll(string(generated), "\r\n", "\n")
 

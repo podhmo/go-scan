@@ -4,24 +4,25 @@ package template
 
 import (
 	"text/template"
+
 	"github.com/podhmo/go-scan/minigo"
 )
 
 // Install binds all exported symbols from the "text/template" package to the interpreter.
 func Install(interp *minigo.Interpreter) {
 	interp.Register("text/template", map[string]any{
-		"HTMLEscape": template.HTMLEscape,
+		"HTMLEscape":       template.HTMLEscape,
 		"HTMLEscapeString": template.HTMLEscapeString,
-		"HTMLEscaper": template.HTMLEscaper,
-		"IsTrue": template.IsTrue,
-		"JSEscape": template.JSEscape,
-		"JSEscapeString": template.JSEscapeString,
-		"JSEscaper": template.JSEscaper,
-		"Must": template.Must,
-		"New": template.New,
-		"ParseFS": template.ParseFS,
-		"ParseFiles": template.ParseFiles,
-		"ParseGlob": template.ParseGlob,
-		"URLQueryEscaper": template.URLQueryEscaper,
+		"HTMLEscaper":      template.HTMLEscaper,
+		"IsTrue":           template.IsTrue,
+		"JSEscape":         template.JSEscape,
+		"JSEscapeString":   template.JSEscapeString,
+		"JSEscaper":        template.JSEscaper,
+		"Must":             template.Must,
+		"New":              template.New,
+		"ParseFS":          template.ParseFS,
+		"ParseFiles":       template.ParseFiles,
+		"ParseGlob":        template.ParseGlob,
+		"URLQueryEscaper":  template.URLQueryEscaper,
 	})
 }

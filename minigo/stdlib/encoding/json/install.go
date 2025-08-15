@@ -15,10 +15,10 @@ func Install(interp *minigo.Interpreter) {
 		"Compact":       json.Compact,
 		"Indent":        json.Indent,
 		"Marshal":       json.Marshal,
-		"MarshalIndent": json.MarshalIndent,
-		"NewEncoder":    json.NewEncoder,
 		"Valid":         json.Valid,
 		"Unmarshal":     json.Unmarshal,
 		"NewDecoder":    json.NewDecoder,
+		"NewEncoder":    json.NewEncoder,
+		"MarshalIndent": json.MarshalIndent,
 	})
 }

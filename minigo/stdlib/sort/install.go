@@ -11,23 +11,23 @@ import (
 // Install binds all exported symbols from the "sort" package to the interpreter.
 func Install(interp *minigo.Interpreter) {
 	interp.Register("sort", map[string]any{
-		"Slice":             sort.Slice,
-		"SliceStable":       sort.SliceStable,
-		"SliceIsSorted":     sort.SliceIsSorted,
-		"Ints":              sort.Ints,
-		"Search":            sort.Search,
-		"Find":              sort.Find,
-		"SearchInts":        sort.SearchInts,
+		"SearchFloat64s":    sort.SearchFloat64s,
 		"Sort":              sort.Sort,
 		"Reverse":           sort.Reverse,
 		"IsSorted":          sort.IsSorted,
 		"Float64s":          sort.Float64s,
 		"Stable":            sort.Stable,
-		"SearchFloat64s":    sort.SearchFloat64s,
-		"SearchStrings":     sort.SearchStrings,
+		"Search":            sort.Search,
+		"Float64sAreSorted": sort.Float64sAreSorted,
+		"Slice":             sort.Slice,
+		"SliceStable":       sort.SliceStable,
+		"Find":              sort.Find,
 		"Strings":           sort.Strings,
 		"IntsAreSorted":     sort.IntsAreSorted,
-		"Float64sAreSorted": sort.Float64sAreSorted,
 		"StringsAreSorted":  sort.StringsAreSorted,
+		"SliceIsSorted":     sort.SliceIsSorted,
+		"SearchStrings":     sort.SearchStrings,
+		"Ints":              sort.Ints,
+		"SearchInts":        sort.SearchInts,
 	})
 }

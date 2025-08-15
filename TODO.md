@@ -94,7 +94,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 
 ### Future Interpreter Enhancements (for Stdlib Support)
 - [x] **Implement two-pass evaluation for top-level declarations**: To fix the "Sequential Declaration Processing" limitation, modify the interpreter to first scan all top-level declarations (types, funcs, vars, consts) in a package before evaluating any code.
-- [x] **Add support for string indexing**: Enhance the evaluator to handle the index operator (`s[i]`) on string objects.
+- [x] **Add support for string indexing**: Enhance the evaluator to handle the index operator (`s[i]`) on string objects. 
 - [x] **Implement transitive dependency loading**: Add a mechanism to the interpreter to automatically load and parse imported packages that are not already in memory.
 - [x] **Audit and fix function signature parsing**: Investigate and fix bugs in the function signature parsing logic, using the `bytes.Equal` case as a starting point.
 - [x] **Improve FFI type conversions**:
@@ -119,3 +119,13 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] **Range Over Function**: Support `for...range` loops over functions.
 - [x] **Support Increment and Decrement Operators**: Implement `++` and `--` as statements.
 - [ ] Write comprehensive documentation for the API, supported language features, and usage examples.
+
+### FFI Improvements
+- **Improve FFI `Install` function to handle dependencies**
+  - Change the signature of the `Install` functions for FFI bindings.
+  - The goal is to automatically install dependencies. For example, installing `text/template` should also automatically install `bytes`.
+  - Avoid duplicate installations by passing a map (e.g., `map[string]bool`) to track which packages have already been installed.
+
+### `minigo` Language and FFI Enhancements from Stdlib Investigation ([docs/trouble-minigo-stdlib-limitations.md](./docs/trouble-minigo-stdlib-limitations.md))
+- [ ] **Support Struct Literals with Local Variables**: Enhance the evaluator to handle struct literals that are initialized with variables from the current function's scope (e.g., `&errorString{text}`). This was found to be a blocker for interpreting the `errors` package from source.
+- [ ] **Support Methods on In-Script Pointers**: Enable the FFI bridge to resolve method calls on pointers to structs that are created and manipulated entirely within a `minigo` script (e.g., `var s scanner.Scanner; var p = &s; p.Init(...)`). This was a blocker for using the `text/scanner` package.

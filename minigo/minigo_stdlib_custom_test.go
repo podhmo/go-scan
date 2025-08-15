@@ -3,8 +3,7 @@ package minigo_test
 import (
 	"context"
 	"testing"
-
-	// "time" // Temporarily unused until error handling is clarified
+	"time"
 
 	"github.com/podhmo/go-scan/minigo"
 	"github.com/podhmo/go-scan/minigo/object"
@@ -13,15 +12,12 @@ import (
 	stdbytes "github.com/podhmo/go-scan/minigo/stdlib/bytes"
 	stdregexp "github.com/podhmo/go-scan/minigo/stdlib/regexp"
 	stdsort "github.com/podhmo/go-scan/minigo/stdlib/sort"
-	// stdtime "github.com/podhmo/go-scan/minigo/stdlib/time" // Temporarily unused
+	stdtime "github.com/podhmo/go-scan/minigo/stdlib/time"
 )
 
-/*
-// TestStdlib_time_limitation is temporarily disabled.
-// It was discovered that the minigo interpreter panics when a bound Go function returns an error,
-// instead of returning the error as a value. This makes it difficult to test for expected errors.
-// This behavior is a key limitation that needs to be documented.
-func TestStdlib_time_limitation(t *testing.T) {
+// TestStdlib_time_error_handling verifies that the FFI bridge correctly returns
+// a Go error as a usable value in the minigo script, rather than panicking.
+func TestStdlib_time_error_handling(t *testing.T) {
 	script := `
 package main
 import "time"
@@ -58,8 +54,60 @@ var _, err = time.Parse(layout, "not-a-valid-date")
 		t.Errorf("expected error to be of type *time.ParseError, but got %T", errValue.Value.Interface())
 	}
 }
-*/
 
+
+// TestStdlib_time_success_as unmarshals a time.Time object from a script result.
+// It verifies that a successful time.Parse call in-script can be returned
+// and correctly converted back to a Go time.Time object using the As() method.
+func TestStdlib_time_success_as(t *testing.T) {
+	script := `
+package main
+
+import "time"
+
+// main returns the result of time.Parse as a tuple (time.Time, error).
+// The Go test will unmarshal this tuple into a struct.
+func main() (any, any) {
+	layout := "2006-01-02T15:04:05Z"
+	return time.Parse(layout, "2024-07-26T10:30:00Z")
+}
+`
+	interp, err := minigo.NewInterpreter()
+	if err != nil {
+		t.Fatalf("failed to create interpreter: %+v", err)
+	}
+	stdtime.Install(interp)
+
+	if err := interp.LoadFile("test.mgo", []byte(script)); err != nil {
+		t.Fatalf("LoadFile() failed: %v", err)
+	}
+
+	result, err := interp.Eval(context.Background())
+	if err != nil {
+		t.Fatalf("failed to evaluate script: %+v", err)
+	}
+
+	// Define a Go struct to receive the (time.Time, error) tuple.
+	type TimeParseResult struct {
+		Time time.Time
+		Err  error
+	}
+
+	var res TimeParseResult
+	if err := result.As(&res); err != nil {
+		t.Fatalf("As() failed: %v", err)
+	}
+
+	// Verify the results.
+	if res.Err != nil {
+		t.Errorf("expected nil error, but got: %v", res.Err)
+	}
+
+	expectedTime, _ := time.Parse("2006-01-02T15:04:05Z", "2024-07-26T10:30:00Z")
+	if !res.Time.Equal(expectedTime) {
+		t.Errorf("time mismatch:\ngot:  %v\nwant: %v", res.Time, expectedTime)
+	}
+}
 
 // TestStdlib_bytes tests package-level functions of the bytes package.
 // It avoids using methods on a bytes.Buffer object and avoids using the `byte` keyword,

@@ -100,16 +100,16 @@ var result, err = custom.MayError(false)
 			name: "call function that returns an error (non-nil)",
 			script: `package main
 import "custom"
-var result = custom.MustError()
+var result, err = custom.MustError()
 `,
 			setup: func(i *Interpreter) {
 				mustError := func() (string, error) {
-					return "", errors.New("this is a test error")
+					return "should be ignored", errors.New("this is a test error")
 				}
 				i.Register("custom", map[string]any{"MustError": mustError})
 			},
-			expectErr:   true,
-			errContains: "error from called Go function: this is a test error",
+			// This test now passes Eval, and we check the resulting 'err' variable.
+			// It needs a custom check, so it's handled outside the main loop.
 		},
 		{
 			name: "call variadic function",
@@ -236,7 +236,10 @@ var result = "ok"
 
 	for _, tt := range tests {
 		// These tests require custom validation logic, so they are handled separately.
-		if tt.name == "call function with multiple return values" || tt.name == "call function that returns an error (nil)" || tt.name == "call variadic function" {
+		if tt.name == "call function with multiple return values" ||
+			tt.name == "call function that returns an error (nil)" ||
+			tt.name == "call function that returns an error (non-nil)" ||
+			tt.name == "call variadic function" {
 			continue
 		}
 		t.Run(tt.name, func(t *testing.T) {
@@ -311,6 +314,47 @@ var result = "ok"
 		}
 		if errVal != object.NIL {
 			t.Errorf("wrong value for 'err'. got=%s, want=nil", errVal.Inspect())
+		}
+	})
+
+	t.Run("call function that returns an error (non-nil)", func(t *testing.T) {
+		var tt testCase
+		for _, test := range tests {
+			if test.name == "call function that returns an error (non-nil)" {
+				tt = test
+				break
+			}
+		}
+
+		interpreter, _ := NewInterpreter()
+		tt.setup(interpreter)
+		if err := interpreter.LoadFile("test.mgo", []byte(tt.script)); err != nil {
+			t.Fatalf("LoadFile() failed: %v", err)
+		}
+		_, err := interpreter.Eval(context.Background())
+		if err != nil {
+			t.Fatalf("Eval() returned an unexpected error: %v", err)
+		}
+
+		errVal, okErr := interpreter.globalEnv.Get("err")
+		if !okErr {
+			t.Fatal("variable 'err' not found")
+		}
+
+		if errVal == object.NIL {
+			t.Fatal("expected err to be non-nil, but it was")
+		}
+		goVal, ok := errVal.(*object.GoValue)
+		if !ok {
+			t.Fatalf("expected err to be a GoValue, got %T", errVal)
+		}
+		e, ok := goVal.Value.Interface().(error)
+		if !ok {
+			t.Fatalf("GoValue does not contain an error, got %T", goVal.Value.Interface())
+		}
+		const want = "this is a test error"
+		if e.Error() != want {
+			t.Errorf("wrong error message. got=%q, want=%q", e.Error(), want)
 		}
 	})
 }

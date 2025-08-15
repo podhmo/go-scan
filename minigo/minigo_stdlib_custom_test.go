@@ -12,6 +12,7 @@ import (
 	stdbytes "github.com/podhmo/go-scan/minigo/stdlib/bytes"
 	stdregexp "github.com/podhmo/go-scan/minigo/stdlib/regexp"
 	stdsort "github.com/podhmo/go-scan/minigo/stdlib/sort"
+	stdtemplate "github.com/podhmo/go-scan/minigo/stdlib/text/template"
 	stdtime "github.com/podhmo/go-scan/minigo/stdlib/time"
 )
 
@@ -344,5 +345,63 @@ var matched = re.MatchString("peach")
 
 	if got, _ := env.Get("matched"); got != object.TRUE {
 		t.Errorf("expected 'matched' to be true, but got %v", got)
+	}
+}
+
+func TestStdlib_TextTemplate(t *testing.T) {
+	script := `
+package main
+import (
+	"bytes"
+	"text/template"
+)
+type Person struct {
+	Name string
+}
+var data = Person{Name: "World"}
+var tpl = template.New("test")
+var _, err1 = tpl.Parse("Hello, {{.Name}}!")
+var buf = bytes.NewBuffer(nil)
+var err2 = tpl.Execute(buf, data)
+var result = buf.String()
+`
+	interp, err := minigo.NewInterpreter()
+	if err != nil {
+		t.Fatalf("failed to create interpreter: %+v", err)
+	}
+
+	stdtemplate.Install(interp)
+	stdbytes.Install(interp) // Need bytes.Buffer
+
+	if err := interp.LoadFile("test.mgo", []byte(script)); err != nil {
+		t.Fatalf("failed to load script: %+v", err)
+	}
+	if _, err := interp.Eval(context.Background()); err != nil {
+		t.Fatalf("failed to evaluate script: %+v", err)
+	}
+
+	env := interp.GlobalEnvForTest()
+
+	// Check for errors during template processing
+	if err1, _ := env.Get("err1"); err1 != object.NIL {
+		t.Errorf("expected err1 to be nil, but got: %v", err1.Inspect())
+	}
+	if err2, _ := env.Get("err2"); err2 != object.NIL {
+		t.Errorf("expected err2 to be nil, but got: %v", err2.Inspect())
+	}
+
+	// Check the final rendered string
+	result, ok := env.Get("result")
+	if !ok {
+		t.Fatalf("variable 'result' not found")
+	}
+	str, ok := result.(*object.String)
+	if !ok {
+		t.Fatalf("result is not a string, got %T", result)
+	}
+
+	expected := "Hello, World!"
+	if str.Value != expected {
+		t.Errorf("unexpected result:\ngot:  %q\nwant: %q", str.Value, expected)
 	}
 }

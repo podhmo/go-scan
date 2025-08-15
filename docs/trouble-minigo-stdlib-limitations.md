@@ -49,6 +49,11 @@ The investigation revealed several fundamental limitations in the FFI bridge. Th
 -   **Limitation**: None observed for basic FFI usage.
 -   **Analysis**: A test using `regexp.Compile` successfully returns a `*regexp.Regexp` object. Crucially, method calls on this returned object (e.g., `re.MatchString(...)`) are supported by the evaluator's reflection-based method invocation and work correctly. This demonstrates that the FFI bridge can handle object-oriented patterns.
 
+### `text/template`
+
+-   **Limitation**: Fails on multi-value assignment from method calls.
+-   **Analysis**: A test was constructed to test the common `template.New("...").Parse("...").Execute(...)` pattern. The test failed on the call to the `Parse` method. `Parse` returns `(*template.Template, error)`. The FFI's method wrapper currently discards the second `error` return value if it is `nil`, rather than returning a `(GoValue, nil)` tuple. This causes a "multi-value assignment requires a multi-value return" error in the `minigo` interpreter when the script tries to assign the two return values (e.g., `tpl, err := ...`). This reveals a subtle limitation in the FFI's handling of method return values.
+
 ### `io`, `net/http`, and other interface-heavy packages
 
 -   **Limitation (Inferred)**: Method calls on interfaces.

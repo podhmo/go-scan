@@ -99,13 +99,23 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] **Implement Method Calls on Go Objects**: Enhance the interpreter to support calling methods on Go structs returned from bound functions (e.g., `(*bytes.Buffer).Write`). This is the highest-impact improvement for stdlib compatibility. (See `docs/trouble-minigo-stdlib-limitations.md`).
 - [x] **Graceful Error Handling for Go Functions**: Modify the FFI to return `error` values from Go functions as `minigo` error objects, rather than halting execution.
 - [ ] **Improve FFI Support for Go Generics**: Update the binding generator to correctly handle (or at least ignore) generic Go functions to prevent it from generating non-compiling code. This is a limitation of the binding tool, not the core interpreter.
-- [ ] **Add `byte` as a Built-in Type**: Add the `byte` keyword as a built-in alias for `uint8` in the interpreter to support `[]byte` literals.
+- [x] **Add `byte` as a Built-in Type**: Add the `byte` keyword as a built-in alias for `uint8` in the interpreter to support `[]byte` literals.
+
+### `minigo` Standard Library Compatibility Analysis (`bytes`, `strings`)
+- [x] **Write tests for `bytes` package functions.**
+- [x] **Write tests for `strings` package functions.**
+- [x] **Analyze test results and document limitations.**
+- [x] **Update `docs/trouble-minigo-stdlib-limitations.md` with findings.**
 
 ### Future Interpreter Enhancements (for Stdlib Support)
 - [x] **Implement two-pass evaluation for top-level declarations**: To fix the "Sequential Declaration Processing" limitation, modify the interpreter to first scan all top-level declarations (types, funcs, vars, consts) in a package before evaluating any code.
 - [ ] **Add support for string indexing**: Enhance the evaluator to handle the index operator (`s[i]`) on string objects.
 - [x] **Implement transitive dependency loading**: Add a mechanism to the interpreter to automatically load and parse imported packages that are not already in memory.
 - [ ] **Audit and fix function signature parsing**: Investigate and fix bugs in the function signature parsing logic, using the `bytes.Equal` case as a starting point.
+- [ ] **Improve FFI type conversions**:
+    - [ ] Implement conversion from `minigo` array of strings to Go `[]string`.
+- [ ] **Add built-in type conversions**:
+    - [ ] Implement mutual conversion between `string` and `[]byte` (e.g., `[]byte("foo")`).
 
 ### `minigo` Refinements ([docs/plan-minigo.md](./docs/plan-minigo.md))
 - [x] **Implement Remaining Built-in Functions**:

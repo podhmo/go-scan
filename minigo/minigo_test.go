@@ -351,6 +351,63 @@ func main() {
 	}
 }
 
+func TestInterpreterEval_ByteType(t *testing.T) {
+	input := `package main
+var b byte = 65
+var bs []byte = []byte{66, 67, 68}
+`
+	i, err := NewInterpreter()
+	if err != nil {
+		t.Fatalf("NewInterpreter() failed: %v", err)
+	}
+
+	if err := i.LoadFile("test.go", []byte(input)); err != nil {
+		t.Fatalf("LoadFile() failed: %v", err)
+	}
+
+	_, err = i.Eval(context.Background())
+	if err != nil {
+		t.Fatalf("Eval() failed: %v", err)
+	}
+
+	// Check single byte variable
+	valB, ok := i.globalEnv.Get("b")
+	if !ok {
+		t.Fatalf("variable 'b' not found in environment")
+	}
+	integerB, ok := valB.(*object.Integer)
+	if !ok {
+		t.Fatalf("b is not Integer. got=%T (%+v)", valB, valB)
+	}
+	if integerB.Value != 65 {
+		t.Errorf("b should be 65. got=%d", integerB.Value)
+	}
+
+	// Check byte slice variable
+	valBs, ok := i.globalEnv.Get("bs")
+	if !ok {
+		t.Fatalf("variable 'bs' not found in environment")
+	}
+	arrayBs, ok := valBs.(*object.Array)
+	if !ok {
+		t.Fatalf("bs is not Array. got=%T (%+v)", valBs, valBs)
+	}
+	if len(arrayBs.Elements) != 3 {
+		t.Fatalf("bs should have 3 elements. got=%d", len(arrayBs.Elements))
+	}
+
+	expected := []int64{66, 67, 68}
+	for i, el := range arrayBs.Elements {
+		integerEl, ok := el.(*object.Integer)
+		if !ok {
+			t.Fatalf("element %d in bs is not Integer. got=%T", i, el)
+		}
+		if integerEl.Value != expected[i] {
+			t.Errorf("element %d should be %d. got=%d", i, expected[i], integerEl.Value)
+		}
+	}
+}
+
 func TestInterpreter_SequentialDeclaration(t *testing.T) {
 	t.Run("calling a function defined later should succeed after two-pass evaluation", func(t *testing.T) {
 		input := `package main

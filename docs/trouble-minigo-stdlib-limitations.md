@@ -14,9 +14,10 @@ The investigation revealed several fundamental limitations in the FFI bridge. Th
 
 3.  **Binding Generator Fails on Generic Functions**: The binding generator (`minigo-gen-bindings`) does not support Go generics. When it encounters a generic function, it attempts to bind it without type instantiation, resulting in generated Go code that fails to compile.
 
-4.  **Unsupported Type Conversions**: The FFI bridge and interpreter have limited support for type conversions.
-    -   The `[]byte("string")` conversion is not implemented, failing with a `not a function: ARRAY_TYPE` error.
-    -   The conversion of a `minigo` array of strings to a Go `[]string` is not implemented, causing functions like `strings.Join` to fail with a `unsupported conversion from ARRAY to []string` error.
+4.  **Unsupported Type Conversions**: **(FIXED)** The FFI bridge and interpreter previously had limited support for type conversions. These issues have been resolved.
+    -   ~~The `[]byte("string")` conversion is not implemented, failing with a `not a function: ARRAY_TYPE` error.~~ **(FIXED)**
+    -   ~~The conversion of a `minigo` array of strings to a Go `[]string` is not implemented, causing functions like `strings.Join` to fail with a `unsupported conversion from ARRAY to []string` error.~~ **(FIXED)**
+    -   **Resolution**: The interpreter's type conversion logic and FFI bridge have been enhanced. Conversions for `[]byte(string)`, `string([]byte)`, `minigo` array to `[]string`, and Go `[]string` to `minigo` array are now all supported.
 
 ## Package-Specific Analysis
 
@@ -38,11 +39,9 @@ The investigation revealed several fundamental limitations in the FFI bridge. Th
 
 ### `bytes`
 
--   **Limitations**:
-    -   **FFI**: Method calls (e.g., `(*bytes.Buffer).Write`) are not supported.
-    -   **FFI**: The `[]byte("string")` type conversion is not supported by the interpreter.
-    -   **Direct Source Interpretation**: The interpreter incorrectly parses the function signature for `bytes.Equal`, causing a "wrong number of arguments" error.
--   **Analysis**: The `bytes` package is partially usable via FFI bindings for its package-level functions (`Equal`, `Compare`, `Contains`, etc.). However, scripts must manually construct byte slices as `[]int` literals. The idiomatic Go conversion `[]byte("...")` fails because the interpreter does not have a built-in conversion handler and incorrectly treats it as a function call on the `ARRAY_TYPE`. Direct source interpretation is currently blocked by a bug in the interpreter's function signature parsing logic.
+-   **Limitation**: Method calls on returned structs (e.g., `(*bytes.Buffer).Write`) have not been tested. Direct source interpretation has known parsing bugs.
+-   **Status**: **Highly Compatible (via FFI)**
+-   **Analysis**: The previously blocking limitation, the lack of a `[]byte(string)` type conversion, has been **fixed**. The comprehensive FFI-based test for `bytes` now passes, confirming that all major package-level functions are compatible with the interpreter.
 
 ### `regexp`
 
@@ -71,10 +70,9 @@ The investigation revealed several fundamental limitations in the FFI bridge. Th
 -   **Resolution**: The interpreter now implements a **two-pass evaluation strategy**. The first pass registers all top-level identifiers (types, functions, vars, consts), and the second pass evaluates variable and constant initializers. This resolves the sequential declaration issue, and the `errors` package can now be interpreted from source.
 
 ### `strings`
--   **Limitations**:
-    -   **FFI**: The FFI bridge cannot convert a `minigo` array of strings into a Go `[]string`, causing functions like `strings.Join` to fail.
-    -   **Direct Source Interpretation**: The interpreter does not support string indexing (`s[i]`), which is required by many functions in the `strings` package.
--   **Analysis**: The `strings` package is partially usable via FFI for functions that take and return simple strings (`Contains`, `HasPrefix`, `ToUpper`, etc.). However, functions that operate on slices of strings (`Join`) fail due to the FFI's missing type conversion logic. Direct source interpretation is blocked by the lack of string indexing support in the interpreter, a fundamental language feature.
+-   **Limitation**: Direct source interpretation is not possible due to the lack of string indexing support (`s[i]`) in the interpreter.
+-   **Status**: **Highly Compatible (via FFI)**
+-   **Analysis**: The previously blocking FFI limitations for this package have been **fixed**. The interpreter now supports converting `minigo` arrays to Go `[]string` (for `strings.Join`) and converting Go `[]string` back to `minigo` arrays (for the result of `strings.Split`). The comprehensive FFI-based test now passes.
 
 ### `sort` (FFI)
 
@@ -86,6 +84,12 @@ The investigation revealed several fundamental limitations in the FFI bridge. Th
 -   **Limitation**: ~~No Transitive Dependency Resolution~~. **(FIXED)**
 -   **Analysis**: An attempt to use `sort.Ints` previously failed because the interpreter did not recursively load dependencies (i.e., `sort`'s import of `slices`).
 -   **Resolution**: The `go-scan` library's file merging logic was fixed, and the `minigo` interpreter was enhanced to create a unified `FileScope` for all files in a package. This ensures that when a package like `sort` is loaded, its own imports (like `slices`) are correctly resolved.
+
+### `math/rand`
+
+-   **Limitation**: None observed for FFI usage.
+-   **Status**: **Highly Compatible (via FFI)**
+-   **Analysis**: The `math/rand` package is fully compatible with the FFI bridge. Tests confirm that scripts can create new `rand.Rand` instances (`rand.New(rand.NewSource(seed))`) and call methods on them (e.g., `r.Intn(100)`) to get deterministic random numbers. This is the recommended approach for testing, as using the global functions (`rand.Seed`, `rand.Intn`) can lead to non-deterministic results due to test runner state pollution.
 
 ---
 

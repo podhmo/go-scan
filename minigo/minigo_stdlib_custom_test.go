@@ -10,6 +10,7 @@ import (
 
 	// standard library bindings
 	stdbytes "github.com/podhmo/go-scan/minigo/stdlib/bytes"
+	stdmathrand "github.com/podhmo/go-scan/minigo/stdlib/math/rand"
 	stdregexp "github.com/podhmo/go-scan/minigo/stdlib/regexp"
 	stdsort "github.com/podhmo/go-scan/minigo/stdlib/sort"
 	stdtemplate "github.com/podhmo/go-scan/minigo/stdlib/text/template"
@@ -403,5 +404,44 @@ var result = buf.String()
 	expected := "Hello, World!"
 	if str.Value != expected {
 		t.Errorf("unexpected result:\ngot:  %q\nwant: %q", str.Value, expected)
+	}
+}
+
+func TestStdlib_MathRand(t *testing.T) {
+	script := `
+package main
+import "math/rand"
+var src = rand.NewSource(1)
+var r = rand.New(src)
+var n = r.Intn(100)
+`
+	interp, err := minigo.NewInterpreter()
+	if err != nil {
+		t.Fatalf("failed to create interpreter: %+v", err)
+	}
+	stdmathrand.Install(interp)
+
+	if err := interp.LoadFile("test.mgo", []byte(script)); err != nil {
+		t.Fatalf("failed to load script: %+v", err)
+	}
+	if _, err := interp.Eval(context.Background()); err != nil {
+		t.Fatalf("failed to evaluate script: %+v", err)
+	}
+
+	env := interp.GlobalEnvForTest()
+	val, ok := env.Get("n")
+	if !ok {
+		t.Fatalf("variable 'n' not found")
+	}
+
+	integer, ok := val.(*object.Integer)
+	if !ok {
+		t.Fatalf("n is not an Integer, got %T", val)
+	}
+
+	// With rand.Seed(1), the first call to Intn(100) returns 81.
+	expected := int64(81)
+	if integer.Value != expected {
+		t.Errorf("expected n to be %d, but got %d", expected, integer.Value)
 	}
 }

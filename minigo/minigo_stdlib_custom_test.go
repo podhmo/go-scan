@@ -8,9 +8,12 @@ import (
 	"github.com/podhmo/go-scan/minigo"
 	"github.com/podhmo/go-scan/minigo/object"
 
+	"path/filepath"
+
 	// standard library bindings
 	stdbytes "github.com/podhmo/go-scan/minigo/stdlib/bytes"
 	stdmathrand "github.com/podhmo/go-scan/minigo/stdlib/math/rand"
+	stdpathfilepath "github.com/podhmo/go-scan/minigo/stdlib/path/filepath"
 	stdregexp "github.com/podhmo/go-scan/minigo/stdlib/regexp"
 	stdsort "github.com/podhmo/go-scan/minigo/stdlib/sort"
 	stdtemplate "github.com/podhmo/go-scan/minigo/stdlib/text/template"
@@ -443,5 +446,63 @@ var n = r.Intn(100)
 	expected := int64(81)
 	if integer.Value != expected {
 		t.Errorf("expected n to be %d, but got %d", expected, integer.Value)
+	}
+}
+
+// TestStdlib_PathFilepath_FFI tests the `path/filepath` package using the
+// pre-generated FFI bindings. This is used as a fallback because direct source
+// interpretation resulted in a compile error in the test code.
+func TestStdlib_PathFilepath_FFI(t *testing.T) {
+	script := `
+package main
+import "path/filepath"
+var joined = filepath.Join("a", "b", "c")
+var base = filepath.Base(joined)
+`
+	interp, err := minigo.NewInterpreter()
+	if err != nil {
+		t.Fatalf("failed to create interpreter: %+v", err)
+	}
+
+	stdpathfilepath.Install(interp)
+
+	if err := interp.LoadFile("test.mgo", []byte(script)); err != nil {
+		t.Fatalf("failed to load script: %+v", err)
+	}
+	if _, err := interp.Eval(context.Background()); err != nil {
+		t.Fatalf("failed to evaluate script: %+v", err)
+	}
+
+	env := interp.GlobalEnvForTest()
+
+	// Check joined path
+	joinedObj, ok := env.Get("joined")
+	if !ok {
+		t.Fatalf("variable 'joined' not found")
+	}
+	joinedStr, ok := joinedObj.(*object.String)
+	if !ok {
+		t.Fatalf("variable 'joined' is not a string, got %T", joinedObj)
+	}
+
+	// Use filepath.Join from the host Go's standard library to get the expected
+	// OS-specific path. This makes the test robust across platforms.
+	expectedJoined := filepath.Join("a", "b", "c")
+	if joinedStr.Value != expectedJoined {
+		t.Errorf("unexpected joined path: got %q, want %q", joinedStr.Value, expectedJoined)
+	}
+
+	// Check base name
+	baseObj, ok := env.Get("base")
+	if !ok {
+		t.Fatalf("variable 'base' not found")
+	}
+	baseStr, ok := baseObj.(*object.String)
+	if !ok {
+		t.Fatalf("variable 'base' is not a string, got %T", baseObj)
+	}
+	expectedBase := "c"
+	if baseStr.Value != expectedBase {
+		t.Errorf("unexpected base name: got %q, want %q", baseStr.Value, expectedBase)
 	}
 }

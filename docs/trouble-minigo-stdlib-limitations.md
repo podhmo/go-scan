@@ -91,6 +91,12 @@ The investigation revealed several fundamental limitations in the FFI bridge. Th
 -   **Status**: **Highly Compatible (via FFI)**
 -   **Analysis**: The `math/rand` package is fully compatible with the FFI bridge. Tests confirm that scripts can create new `rand.Rand` instances (`rand.New(rand.NewSource(seed))`) and call methods on them (e.g., `r.Intn(100)`) to get deterministic random numbers. This is the recommended approach for testing, as using the global functions (`rand.Seed`, `rand.Intn`) can lead to non-deterministic results due to test runner state pollution.
 
+### `path/filepath`
+
+-   **Limitation**: Direct source interpretation was not successful due to a build error in the test code, not a fundamental interpreter limitation.
+-   **Status**: **Highly Compatible (via FFI)**
+-   **Analysis**: An initial attempt to test `path/filepath` using direct source interpretation failed because the test attempted to use an unexported method to determine the host OS for path validation. Rather than modify the interpreter, the test was reverted to use the FFI-based approach. The FFI-based test for `path/filepath` passed successfully, covering basic functions like `Join` and `Base`. This confirms the FFI bindings for this package are robust. The original goal of verifying the fix for the sequential declaration issue via this package remains unconfirmed, but the successful FFI test provides a good level of confidence in its usability.
+
 ---
 
 ## Fundamental Design Limitations

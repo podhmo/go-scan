@@ -873,8 +873,28 @@ func (e *Evaluator) nativeToValue(val reflect.Value) object.Object {
 	switch v := i.(type) {
 	case int:
 		return &object.Integer{Value: int64(v)}
+	case int8:
+		return &object.Integer{Value: int64(v)}
+	case int16:
+		return &object.Integer{Value: int64(v)}
+	case int32:
+		return &object.Integer{Value: int64(v)}
 	case int64:
 		return &object.Integer{Value: v}
+	case uint:
+		return &object.Integer{Value: int64(v)}
+	case uint8: // byte
+		return &object.Integer{Value: int64(v)}
+	case uint16:
+		return &object.Integer{Value: int64(v)}
+	case uint32:
+		return &object.Integer{Value: int64(v)}
+	case uint64:
+		return &object.Integer{Value: int64(v)}
+	case float32:
+		return &object.Float{Value: float64(v)}
+	case float64:
+		return &object.Float{Value: v}
 	case string:
 		return &object.String{Value: v}
 	case bool:
@@ -891,8 +911,12 @@ func (e *Evaluator) nativeToValue(val reflect.Value) object.Object {
 
 	// If direct conversion fails, fall back to Kind-based conversion.
 	switch val.Kind() {
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32:
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 		return &object.Integer{Value: val.Int()}
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return &object.Integer{Value: int64(val.Uint())} // Treat unsigned as signed for simplicity
+	case reflect.Float32, reflect.Float64:
+		return &object.Float{Value: val.Float()}
 	case reflect.Ptr, reflect.Interface:
 		if val.IsNil() {
 			return object.NIL
@@ -1025,6 +1049,18 @@ func (e *Evaluator) objectToReflectValue(obj object.Object, targetType reflect.T
 				ints[i] = int(intVal.Value)
 			}
 			return reflect.ValueOf(ints), nil
+		}
+		// Handle conversion to []float64.
+		if targetType.Kind() == reflect.Slice && targetType.Elem().Kind() == reflect.Float64 {
+			floats := make([]float64, len(o.Elements))
+			for i, el := range o.Elements {
+				floatVal, ok := el.(*object.Float)
+				if !ok {
+					return reflect.Value{}, fmt.Errorf("cannot convert non-float element in array to float64")
+				}
+				floats[i] = floatVal.Value
+			}
+			return reflect.ValueOf(floats), nil
 		}
 	}
 
@@ -2206,6 +2242,42 @@ func (e *Evaluator) evalInitializers(decls []object.DeclWithScope, env *object.E
 	return result
 }
 
+func (e *Evaluator) evalTypeConversion(call *ast.CallExpr, typeObj object.Object, args []object.Object) object.Object {
+	if len(args) != 1 {
+		return e.newError(call.Pos(), "wrong number of arguments for type conversion: got=%d, want=1", len(args))
+	}
+	arg := args[0]
+	var typeName string
+
+	switch t := typeObj.(type) {
+	case *object.Type:
+		typeName = t.Name
+	default:
+		return e.newError(call.Pos(), "invalid type for conversion: %s", typeObj.Type())
+	}
+
+	switch typeName {
+	case "int", "uint", "uint64": // For now, treat uint as int.
+		switch input := arg.(type) {
+		case *object.Integer:
+			return input // It's already an integer, no-op.
+		case *object.Float:
+			return &object.Integer{Value: int64(input.Value)}
+		default:
+			return e.newError(call.Pos(), "cannot convert %s to type %s", arg.Type(), typeName)
+		}
+	case "string":
+		// In a real implementation, you might convert integers, etc.
+		// For now, we only support string(string) which is a no-op.
+		if str, ok := arg.(*object.String); ok {
+			return str
+		}
+		return e.newError(call.Pos(), "cannot convert %s to type string", arg.Type())
+	default:
+		return e.newError(call.Pos(), "unsupported type conversion: %s", typeName)
+	}
+}
+
 func (e *Evaluator) evalProgram(program *ast.File, env *object.Environment, fscope *object.FileScope) object.Object {
 	// Use the new two-pass evaluation for the program's declarations.
 	var decls []object.DeclWithScope
@@ -2471,6 +2543,15 @@ func (e *Evaluator) Eval(node ast.Node, env *object.Environment, fscope *object.
 		function := e.Eval(n.Fun, env, fscope)
 		if isError(function) {
 			return function
+		}
+
+		// Check if the "function" is actually a type, indicating a type conversion.
+		if _, ok := function.(*object.Type); ok {
+			args := e.evalExpressions(n.Args, env, fscope)
+			if len(args) == 1 && isError(args[0]) {
+				return args[0]
+			}
+			return e.evalTypeConversion(n, function, args)
 		}
 
 		// Check if the resolved function is a special form object. This can happen
@@ -3323,6 +3404,13 @@ func (e *Evaluator) findFieldInStruct(instance *object.StructInstance, fieldName
 // constantInfoToObject converts a goscan.ConstantInfo into a minigo object.
 // This is how the interpreter understands constants from imported Go packages.
 func (e *Evaluator) constantInfoToObject(c *goscan.ConstantInfo) (object.Object, error) {
+	// HACK: Workaround for computed constants like `math/bits.UintSize` that go-scan
+	// may not be able to resolve statically.
+	if c.Name == "UintSize" && c.Value == "" {
+		// For the interpreter's purposes, we can assume a 64-bit architecture.
+		return &object.Integer{Value: 64}, nil
+	}
+
 	// simplified inference
 	if i, err := strconv.ParseInt(c.Value, 0, 64); err == nil {
 		return &object.Integer{Value: i}, nil
@@ -3543,6 +3631,25 @@ func (e *Evaluator) WrapGoFunction(pos token.Pos, funcVal reflect.Value) object.
 			}
 
 			results := funcVal.Call(in)
+
+			// After the call, check for in-place modifications to slice arguments.
+			for i, arg := range args {
+				if arr, ok := arg.(*object.Array); ok {
+					// `in[i]` holds the `reflect.Value` of the Go slice that was passed.
+					goSlice := in[i]
+					if goSlice.Kind() == reflect.Slice {
+						// Copy the (potentially modified) elements from the Go slice
+						// back into our minigo Array object.
+						for j := 0; j < goSlice.Len(); j++ {
+							if j < len(arr.Elements) {
+								goElement := goSlice.Index(j)
+								objElement := e.nativeToValue(goElement)
+								arr.Elements[j] = objElement
+							}
+						}
+					}
+				}
+			}
 
 			for _, bridge := range ptrBridges {
 				nativeValue := bridge.Dest.Elem().Interface()
@@ -4112,7 +4219,7 @@ func (e *Evaluator) evalIdent(n *ast.Ident, env *object.Environment, fscope *obj
 	// representation in our interpreter, but they shouldn't cause an "identifier
 	// not found" error when used in declarations like `var x int`.
 	switch n.Name {
-	case "int", "string", "bool":
+	case "int", "string", "bool", "uint", "uint64", "float64":
 		return &object.Type{Name: n.Name}
 	}
 

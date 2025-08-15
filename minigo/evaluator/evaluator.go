@@ -3001,6 +3001,8 @@ func (e *Evaluator) evalIndexExpression(node ast.Node, left, index object.Object
 	switch {
 	case left.Type() == object.ARRAY_OBJ:
 		return e.evalArrayIndexExpression(node, left, index)
+	case left.Type() == object.STRING_OBJ:
+		return e.evalStringIndexExpression(node, left, index)
 	case left.Type() == object.MAP_OBJ:
 		return e.evalMapIndexExpression(node, left, index)
 	case left.Type() == object.GO_VALUE_OBJ:
@@ -3060,6 +3062,23 @@ func (e *Evaluator) evalArrayIndexExpression(node ast.Node, array, index object.
 	}
 
 	return arrayObject.Elements[i]
+}
+
+func (e *Evaluator) evalStringIndexExpression(node ast.Node, str, index object.Object) object.Object {
+	stringObject := str.(*object.String)
+	idx, ok := index.(*object.Integer)
+	if !ok {
+		return e.newError(node.Pos(), "index into string is not an integer")
+	}
+
+	i := idx.Value
+	max := int64(len(stringObject.Value) - 1)
+
+	if i < 0 || i > max {
+		return e.newError(node.Pos(), "runtime error: index out of range [%d] with length %d", i, len(stringObject.Value))
+	}
+
+	return &object.Integer{Value: int64(stringObject.Value[i])}
 }
 
 func (e *Evaluator) evalMapIndexExpression(node ast.Node, m, index object.Object) object.Object {

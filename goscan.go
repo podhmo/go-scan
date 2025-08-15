@@ -1393,7 +1393,12 @@ func (s *Scanner) FindSymbolInPackage(ctx context.Context, importPath string, sy
 			cumulativePkgInfo.Functions = append(cumulativePkgInfo.Functions, pkgInfo.Functions...)
 			cumulativePkgInfo.Constants = append(cumulativePkgInfo.Constants, pkgInfo.Constants...)
 
-			// Avoid duplicating file paths
+			// Merge AstFiles and Files lists
+			for path, ast := range pkgInfo.AstFiles {
+				if _, exists := cumulativePkgInfo.AstFiles[path]; !exists {
+					cumulativePkgInfo.AstFiles[path] = ast
+				}
+			}
 			existingFiles := make(map[string]struct{}, len(cumulativePkgInfo.Files))
 			for _, f := range cumulativePkgInfo.Files {
 				existingFiles[f] = struct{}{}

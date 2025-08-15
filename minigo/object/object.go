@@ -280,6 +280,7 @@ type Function struct {
 	Results    *ast.FieldList
 	Body       *ast.BlockStmt
 	Env        *Environment
+	FScope     *FileScope // The file scope where the function was defined.
 }
 
 // IsVariadic returns true if the function is variadic.
@@ -658,6 +659,7 @@ type Package struct {
 	Name    string
 	Path    string
 	Info    *scanner.PackageInfo
+	FScope  *FileScope // The file scope for this package's source code.
 	Members map[string]Object
 }
 

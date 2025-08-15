@@ -83,7 +83,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [-] `regexp` (Not tested; guaranteed to fail due to method calls on `regexp.Regexp`)
 - [-] `sort` (Direct source interpretation failed due to lack of transitive dependency resolution; FFI binding retained)
 - [-] `strconv` (Direct source interpretation failed due to sequential declaration limitation; FFI binding retained)
-- [-] `strings` (Direct source interpretation failed due to lack of string indexing support; FFI binding retained)
+- [-] `strings` (String indexing now supported, but direct source interpretation not yet re-evaluated; FFI binding retained)
 - [-] `text/template` (Not tested; guaranteed to fail due to reflection and complexity)
 - [x] `time` (FFI error handling test now passes; method call limitations remain)
 
@@ -109,7 +109,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 
 ### Future Interpreter Enhancements (for Stdlib Support)
 - [x] **Implement two-pass evaluation for top-level declarations**: To fix the "Sequential Declaration Processing" limitation, modify the interpreter to first scan all top-level declarations (types, funcs, vars, consts) in a package before evaluating any code.
-- [ ] **Add support for string indexing**: Enhance the evaluator to handle the index operator (`s[i]`) on string objects.
+- [x] **Add support for string indexing**: Enhance the evaluator to handle the index operator (`s[i]`) on string objects.
 - [x] **Implement transitive dependency loading**: Add a mechanism to the interpreter to automatically load and parse imported packages that are not already in memory.
 - [ ] **Audit and fix function signature parsing**: Investigate and fix bugs in the function signature parsing logic, using the `bytes.Equal` case as a starting point.
 - [ ] **Improve FFI type conversions**:

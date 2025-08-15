@@ -905,6 +905,12 @@ func (e *Evaluator) nativeToValue(val reflect.Value) object.Object {
 			elements[i] = &object.Integer{Value: int64(b)}
 		}
 		return &object.Array{Elements: elements}
+	case []string:
+		elements := make([]object.Object, len(v))
+		for i, s := range v {
+			elements[i] = &object.String{Value: s}
+		}
+		return &object.Array{Elements: elements}
 	case nil:
 		return object.NIL
 	}
@@ -1070,6 +1076,18 @@ func (e *Evaluator) objectToReflectValue(obj object.Object, targetType reflect.T
 				floats[i] = floatVal.Value
 			}
 			return reflect.ValueOf(floats), nil
+		}
+		// Handle conversion to []string.
+		if targetType.Kind() == reflect.Slice && targetType.Elem().Kind() == reflect.String {
+			strings := make([]string, len(o.Elements))
+			for i, el := range o.Elements {
+				strVal, ok := el.(*object.String)
+				if !ok {
+					return reflect.Value{}, fmt.Errorf("cannot convert non-string element in array to string")
+				}
+				strings[i] = strVal.Value
+			}
+			return reflect.ValueOf(strings), nil
 		}
 	}
 
@@ -2256,34 +2274,68 @@ func (e *Evaluator) evalTypeConversion(call *ast.CallExpr, typeObj object.Object
 		return e.newError(call.Pos(), "wrong number of arguments for type conversion: got=%d, want=1", len(args))
 	}
 	arg := args[0]
-	var typeName string
 
 	switch t := typeObj.(type) {
+	case *object.ArrayType:
+		// Handle []byte("a string")
+		eltType, ok := t.ElementType.(*object.Type)
+		if !ok || eltType.Name != "byte" {
+			return e.newError(call.Pos(), "unsupported array type conversion to %s", typeObj.Inspect())
+		}
+
+		str, ok := arg.(*object.String)
+		if !ok {
+			return e.newError(call.Pos(), "cannot convert %s to type %s", arg.Type(), typeObj.Inspect())
+		}
+
+		bytes := []byte(str.Value)
+		elements := make([]object.Object, len(bytes))
+		for i, b := range bytes {
+			elements[i] = &object.Integer{Value: int64(b)}
+		}
+		return &object.Array{Elements: elements}
+
 	case *object.Type:
-		typeName = t.Name
+		typeName := t.Name
+		switch typeName {
+		case "int", "uint", "uint64": // For now, treat uint as int.
+			switch input := arg.(type) {
+			case *object.Integer:
+				return input // It's already an integer, no-op.
+			case *object.Float:
+				return &object.Integer{Value: int64(input.Value)}
+			default:
+				return e.newError(call.Pos(), "cannot convert %s to type %s", arg.Type(), typeName)
+			}
+		case "string":
+			// Handle string([]byte{...})
+			if arr, ok := arg.(*object.Array); ok {
+				bytes := make([]byte, len(arr.Elements))
+				for i, el := range arr.Elements {
+					integer, ok := el.(*object.Integer)
+					if !ok {
+						return e.newError(call.Pos(), "cannot convert non-integer element in array to byte for string conversion")
+					}
+					if integer.Value < 0 || integer.Value > 255 {
+						return e.newError(call.Pos(), "byte value out of range for string conversion: %d", integer.Value)
+					}
+					bytes[i] = byte(integer.Value)
+				}
+				return &object.String{Value: string(bytes)}
+			}
+
+			// In a real implementation, you might convert integers, etc.
+			// For now, we only support string(string) which is a no-op.
+			if str, ok := arg.(*object.String); ok {
+				return str
+			}
+			return e.newError(call.Pos(), "cannot convert %s to type string", arg.Type())
+		default:
+			return e.newError(call.Pos(), "unsupported type conversion: %s", typeName)
+		}
+
 	default:
 		return e.newError(call.Pos(), "invalid type for conversion: %s", typeObj.Type())
-	}
-
-	switch typeName {
-	case "int", "uint", "uint64": // For now, treat uint as int.
-		switch input := arg.(type) {
-		case *object.Integer:
-			return input // It's already an integer, no-op.
-		case *object.Float:
-			return &object.Integer{Value: int64(input.Value)}
-		default:
-			return e.newError(call.Pos(), "cannot convert %s to type %s", arg.Type(), typeName)
-		}
-	case "string":
-		// In a real implementation, you might convert integers, etc.
-		// For now, we only support string(string) which is a no-op.
-		if str, ok := arg.(*object.String); ok {
-			return str
-		}
-		return e.newError(call.Pos(), "cannot convert %s to type string", arg.Type())
-	default:
-		return e.newError(call.Pos(), "unsupported type conversion: %s", typeName)
 	}
 }
 
@@ -2555,7 +2607,8 @@ func (e *Evaluator) Eval(node ast.Node, env *object.Environment, fscope *object.
 		}
 
 		// Check if the "function" is actually a type, indicating a type conversion.
-		if _, ok := function.(*object.Type); ok {
+		switch function.(type) {
+		case *object.Type, *object.ArrayType:
 			args := e.evalExpressions(n.Args, env, fscope)
 			if len(args) == 1 && isError(args[0]) {
 				return args[0]

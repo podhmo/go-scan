@@ -34,5 +34,11 @@ func Install(interp *minigo.Interpreter) {
 		"Sscan":        fmt.Sscan,
 		"Sscanf":       fmt.Sscanf,
 		"Sscanln":      fmt.Sscanln,
+		"Formatter":    (*fmt.Formatter)(nil),
+		"GoStringer":   (*fmt.GoStringer)(nil),
+		"ScanState":    (*fmt.ScanState)(nil),
+		"Scanner":      (*fmt.Scanner)(nil),
+		"State":        (*fmt.State)(nil),
+		"Stringer":     (*fmt.Stringer)(nil),
 	})
 }

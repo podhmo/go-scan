@@ -15,6 +15,7 @@ func Install(interp *minigo.Interpreter) {
 		"Base":          filepath.Base,
 		"Clean":         filepath.Clean,
 		"Dir":           filepath.Dir,
+		"ErrBadPattern": filepath.ErrBadPattern,
 		"EvalSymlinks":  filepath.EvalSymlinks,
 		"Ext":           filepath.Ext,
 		"FromSlash":     filepath.FromSlash,
@@ -28,11 +29,14 @@ func Install(interp *minigo.Interpreter) {
 		"Match":         filepath.Match,
 		"Rel":           filepath.Rel,
 		"Separator":     filepath.Separator,
+		"SkipAll":       filepath.SkipAll,
+		"SkipDir":       filepath.SkipDir,
 		"Split":         filepath.Split,
 		"SplitList":     filepath.SplitList,
 		"ToSlash":       filepath.ToSlash,
 		"VolumeName":    filepath.VolumeName,
 		"Walk":          filepath.Walk,
 		"WalkDir":       filepath.WalkDir,
+		"WalkFunc":      (*filepath.WalkFunc)(nil),
 	})
 }

@@ -427,6 +427,27 @@ func (s *Scanner) parseGenDecl(ctx context.Context, decl *ast.GenDecl, info *Pac
 				info.Types = append(info.Types, typeInfo)
 			}
 		}
+	} else if decl.Tok == token.VAR {
+		for _, spec := range decl.Specs {
+			if vs, ok := spec.(*ast.ValueSpec); ok {
+				var varType *FieldType
+				if vs.Type != nil {
+					varType = s.parseTypeExpr(ctx, vs.Type, nil, info, importLookup)
+				}
+
+				for _, name := range vs.Names {
+					varInfo := &VariableInfo{
+						Name:       name.Name,
+						FilePath:   absFilePath,
+						Doc:        commentText(vs.Doc),
+						Type:       varType,
+						IsExported: name.IsExported(),
+						Node:       name,
+					}
+					info.Variables = append(info.Variables, varInfo)
+				}
+			}
+		}
 	}
 }
 
@@ -446,12 +467,29 @@ func (s *Scanner) evaluateAllConstants(ctx context.Context, info *PackageInfo) {
 	}
 }
 
+// safeEvalConstExpr wraps evalConstExpr with a recover block to prevent panics
+// from the go/constant package from crashing the scanner.
+func (s *Scanner) safeEvalConstExpr(cctx *constContext, currentConst *ConstantInfo, expr ast.Expr) (val constant.Value, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("panic during constant evaluation: %v", r)
+			val = constant.MakeUnknown()
+		}
+	}()
+	return s.evalConstExpr(cctx, currentConst, expr)
+}
+
 // evaluateConstant is the entry point for evaluating a single constant. It handles caching and cycle detection.
 func (s *Scanner) evaluateConstant(cctx *constContext, c *ConstantInfo) {
 	// Pragmatic workaround for architecture-dependent constants in the stdlib.
 	// Based on the user's hint that the target context (minigo) is always 64-bit.
 	if cctx.pkg.ImportPath == "math/bits" && (c.Name == "UintSize" || c.Name == "uintSize") {
 		c.ConstVal = constant.MakeInt64(64)
+		c.Value = "64"
+		return
+	}
+	if cctx.pkg.ImportPath == "strconv" && c.Name == "intSize" {
+		c.ConstVal = constant.MakeInt64(64) // Assume 64-bit for consistency
 		c.Value = "64"
 		return
 	}
@@ -473,10 +511,13 @@ func (s *Scanner) evaluateConstant(cctx *constContext, c *ConstantInfo) {
 		return
 	}
 
-	val, err := s.evalConstExpr(cctx, c, c.ValExpr)
+	val, err := s.safeEvalConstExpr(cctx, c, c.ValExpr)
 	if err != nil {
-		c.Value = fmt.Sprintf("evaluation_error: %v", err)
+		// If evaluation fails, just leave the value as unknown.
+		// The binding generator can still bind the symbol by name,
+		// and the Go compiler will handle the actual value.
 		c.ConstVal = constant.MakeUnknown()
+		c.Value = "" // Leave it empty to signify it's not resolved.
 		return
 	}
 	c.ConstVal = val

@@ -56,6 +56,7 @@ type PackageInfo struct {
 	Files      []string
 	Types      []*TypeInfo
 	Constants  []*ConstantInfo
+	Variables  []*VariableInfo
 	Functions  []*FunctionInfo
 	Fset       *token.FileSet       // Added: Fileset for position information
 	AstFiles   map[string]*ast.File // Added: Parsed AST for each file
@@ -451,6 +452,16 @@ type ConstantInfo struct {
 	ConstVal   constant.Value
 	IotaValue  int // The value of iota for the spec this constant was in.
 	ValExpr    ast.Expr
+}
+
+// VariableInfo represents a single top-level variable declaration.
+type VariableInfo struct {
+	Name       string
+	FilePath   string
+	Doc        string
+	Type       *FieldType
+	IsExported bool
+	Node       ast.Node
 }
 
 // FunctionInfo represents a single top-level function or method declaration.

@@ -75,10 +75,10 @@ The investigation revealed several fundamental limitations in the FFI bridge. Th
 
 ### `text/scanner`
 
--   **Limitation**: None observed. **(FIXED)**
--   **Status**: **Compatible (via FFI)**
--   **Analysis**: A test for `text/scanner` now passes. The previously blocking issue was that the interpreter would create a `minigo` native struct object (`*object.StructInstance`) for a variable of an FFI type (`var s scanner.Scanner`), which lacked the necessary reflection information to resolve methods. The interpreter has been enhanced to correctly instantiate such variables as `*object.GoValue` objects. This allows the existing reflection-based method lookup logic to find and execute methods (like `Init` and `Scan`) on pointers to these in-script struct instances.
--   **Conclusion**: The package is now considered compatible and usable via FFI bindings.
+-   **Limitation**: The interpreter does not support taking the address of a struct variable that was declared inside a script.
+-   **Status**: **Incompatible (via FFI)**
+-   **Analysis**: A test for `text/scanner` fails because it requires creating an instance of `scanner.Scanner` locally within the script, and then taking its address to call pointer-receiver methods like `Init()` and `Scan()`. The script attempts this with `var s scanner.Scanner; var s_ptr = &s`. However, the interpreter fails at runtime with the error `base of selector expression is not a pointer to a struct or Go value`. This indicates that the `&s` operation does not produce a valid pointer that the evaluator can use for method calls.
+-   **Conclusion**: The package is unusable because its primary API requires calling pointer-receiver methods on a locally-created struct instance, a pattern `minigo` does not currently support. The test has been skipped.
 
 ### `io`, `net/http`, and other interface-heavy packages
 
@@ -201,3 +201,15 @@ These packages are likely to fail in new and informative ways, helping to reveal
 -   **`compress/gzip`**: Would be a practical test of `io.Reader`/`io.Writer` interface implementation.
 -   **`flag`**: Would test interaction with OS arguments and reflection-based struct population.
 -   **`sync`**: Would confirm the expected limitation that the single-threaded `minigo` interpreter cannot support Go's concurrency model.
+
+### Incorrect Error Value from `json.Unmarshal`
+
+-   **Limitation**: When `encoding/json.Unmarshal` is called via the FFI with data that should produce a specific error (e.g., `*json.UnmarshalTypeError`), the interpreter receives a `nil` error value instead of the expected error object.
+-   **Impact**: This prevents scripts from correctly detecting and handling specific JSON parsing errors. While the FFI bridge correctly handles functions that return `(value, error)`, its handling of functions that return a single `error` value appears to be flawed in this specific case.
+-   **Example (`minigo/minigo_stdlib_custom_test.go`)**:
+    ```go
+    // This script should produce an UnmarshalTypeError, but `err` is nil.
+    var data = []byte(`{"X":1,"Y":"not-a-number"}`)
+    var p Point
+    var err = json.Unmarshal(data, &p)
+    ```

@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"reflect"
+	"strconv"
 	"strings"
 
 	goscan "github.com/podhmo/go-scan"
@@ -153,17 +154,42 @@ func (i *Interpreter) LoadGoSourceAsPackage(pkgName, source string) error {
 		Members: make(map[string]object.Object),
 	}
 
-	pkgEnv := object.NewEnclosedEnvironment(i.globalEnv)
+	pkgObj.Env = object.NewEnclosedEnvironment(i.globalEnv)
 	fileScope := object.NewFileScope(node)
 
-	for _, decl := range node.Decls {
-		result := i.eval.Eval(decl, pkgEnv, fileScope)
-		if isError(result) {
-			return fmt.Errorf("error evaluating declaration in %s: %s", pkgName, result.Inspect())
+	// Manually process imports to populate the file scope for the evaluator.
+	for _, importSpec := range node.Imports {
+		path, err := strconv.Unquote(importSpec.Path.Value)
+		if err != nil {
+			return fmt.Errorf("invalid import path in %s: %w", pkgName, err)
+		}
+		var alias string
+		if importSpec.Name != nil {
+			alias = importSpec.Name.Name
+		} else {
+			parts := strings.Split(path, "/")
+			alias = parts[len(parts)-1]
+		}
+
+		if alias == "." {
+			fileScope.DotImports = append(fileScope.DotImports, path)
+		} else if alias != "_" {
+			fileScope.Aliases[alias] = path
 		}
 	}
 
-	for name, obj := range pkgEnv.GetAll() {
+	// Use the new two-pass evaluation logic to correctly handle out-of-order declarations.
+	var decls []object.DeclWithScope
+	for _, decl := range node.Decls {
+		decls = append(decls, object.DeclWithScope{Decl: decl, Scope: fileScope})
+	}
+	result := i.eval.EvalToplevel(decls, pkgObj.Env)
+	if isError(result) {
+		return fmt.Errorf("error evaluating package %s: %s", pkgName, result.Inspect())
+	}
+
+	// Populate the package's public members from its environment.
+	for name, obj := range pkgObj.Env.GetAll() {
 		pkgObj.Members[name] = obj
 	}
 

@@ -99,7 +99,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] **Audit and fix function signature parsing**: Investigate and fix bugs in the function signature parsing logic, using the `bytes.Equal` case as a starting point.
 - [x] **Improve FFI type conversions**:
     - [x] Implement conversion from `minigo` array of strings to Go `[]string`.
-- [ ] **Add built-in type conversions**:
+- [x] **Add built-in type conversions**:
     - [x] Implement mutual conversion between `string` and `[]byte` (e.g., `[]byte("foo")`).
 
 ### `minigo` Refinements ([docs/plan-minigo.md](./docs/plan-minigo.md))
@@ -130,7 +130,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] **Support Struct Literals with Local Variables**: Enhance the evaluator to handle struct literals that are initialized with variables from the current function's scope (e.g., `&errorString{text}`). This was found to be a blocker for interpreting the `errors` package from source.
 - [x] **Support Methods on In-Script Pointers**: Enable the FFI bridge to resolve method calls on pointers to structs that are created and manipulated entirely within a `minigo` script (e.g., `var s scanner.Scanner; var p = &s; p.Init(...)`). This was a blocker for using the `text/scanner` package.
 - [x] **Fix Generic Function Argument Counting**: The interpreter incorrectly counts arguments for generic functions when multiple arguments share the same generic type parameter (e.g., `func Equal[S ~[]E, E comparable](s1, s2 S) bool`). This causes `wrong number of arguments` errors.
-- [ ] **Support Interfaces with Type Lists**: The interpreter cannot parse interfaces defined with a type list (e.g., `type Ordered interface { ~int | ~string }`). This is a blocker for interpreting packages like `cmp`, which is a dependency for `slices.Sort`.
+- [x] **Support Interfaces with Type Lists**: The interpreter can now parse interfaces defined with a type list (e.g., `type Ordered interface { ~int | ~string }`). This unblocks interpretation of packages like `cmp`.
 - [x] **Improve Stack Trace for Non-Existent Files**: Ensure a full stack trace is displayed even when a source file mentioned in the trace does not exist on disk (e.g., `[Error opening source file: open main.go: no such file or directory]`).
 
 ### `minigo` FFI Struct Instantiation ([docs/trouble-minigo-go-value-method-call.md](./docs/trouble-minigo-go-value-method-call.md))

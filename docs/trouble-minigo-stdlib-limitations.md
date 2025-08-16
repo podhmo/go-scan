@@ -23,12 +23,12 @@ The investigation revealed several fundamental limitations in the FFI bridge. Th
 
 ### `slices` (Mostly Supported via Source Interpretation)
 
--   **Status**: Mostly Compatible.
--   **Analysis**: The `slices` package is now largely compatible with direct source interpretation. Previous bugs in argument counting/binding and a missing unary plus (`+`) operator in the interpreter have been fixed, enabling most functions.
--   **Working Functions**: `Clone`, `Index`, `Equal`, `Compare`
--   **Failing Functions**:
-    -   `Sort`: This function still fails, but for a different reason. The underlying `go-scan` static analysis tool has been improved and can now correctly evaluate the complex computed constants (`UintSize`, etc.) in `Sort`'s dependencies. However, the `minigo` interpreter now fails when it receives the resolved string constant `len8tab` from `math/bits`. This indicates a limitation in `minigo`'s handling of specific string values (potentially those with null bytes), not in `go-scan`'s constant evaluation.
--   **Conclusion**: Most of the `slices` package is usable. The `Sort` function is blocked by a limitation in the `minigo` interpreter itself.
+-   **Status**: Partially Compatible (Blocked).
+-   **Analysis**: Support for type list interfaces (e.g. `cmp.Ordered`) has been implemented in the parser and evaluator. However, testing with the `slices` package revealed deeper, pre-existing bugs in the interpreter's environment handling for generic functions loaded from source.
+-   **Failing Functions**: `Clone`, `Index`, `Sort`, etc.
+    -   **Root Cause 1: `identifier not found: E`**: When evaluating the body of a generic function like `slices.Clone[S ~[]E, E any](s S) S`, the type parameter `E` is not found in the evaluation environment. The logic in `extendFunctionEnv` appears to correctly bind the type parameter, but this binding is lost before the function body is evaluated. This is a fundamental bug in generic function scope management.
+    -   **Root Cause 2: `undefined: slices.Sort`**: Even with fixes to `LoadGoSourceAsPackage` to handle imports, the `Sort` function itself is not found. This points to a failure in registering declarations from a source-loaded package that has its own dependencies (`slices` imports `cmp`).
+-   **Conclusion**: The `slices` package is currently unusable with source interpretation until these fundamental environment and scope issues are resolved. The core type-list interface parsing is complete, but cannot be fully validated with `stdlib` tests.
 
 ### `strconv`
 

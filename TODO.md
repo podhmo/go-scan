@@ -129,3 +129,15 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] **Fix Generic Function Argument Counting**: The interpreter incorrectly counts arguments for generic functions when multiple arguments share the same generic type parameter (e.g., `func Equal[S ~[]E, E comparable](s1, s2 S) bool`). This causes `wrong number of arguments` errors.
 - [ ] **Support Interfaces with Type Lists**: The interpreter cannot parse interfaces defined with a type list (e.g., `type Ordered interface { ~int | ~string }`). This is a blocker for interpreting packages like `cmp`, which is a dependency for `slices.Sort`.
 - [ ] **Improve Stack Trace for Non-Existent Files**: Ensure a full stack trace is displayed even when a source file mentioned in the trace does not exist on disk (e.g., `[Error opening source file: open main.go: no such file or directory]`).
+
+### `minigo` FFI Struct Instantiation ([docs/trouble-minigo-go-value-method-call.md](./docs/trouble-minigo-go-value-method-call.md))
+- [x] **Task 1: Differentiate FFI types from in-script types.**
+  - In `evalGenDecl`, when evaluating `var s T`, determine if `T` refers to a Go type from the FFI or a struct defined in the script. This may require adding a flag or method to `object.Type` or `object.StructDefinition` to mark its origin.
+- [x] **Task 2: Instantiate FFI types as `*object.GoValue`.**
+  - Modify `evalGenDecl` so that if `T` is an FFI type, it creates a `*object.GoValue` that wraps a zero-valued instance of the corresponding Go type (`reflect.Zero(goType)`). This will involve looking up the `reflect.Type` from a registry.
+- [x] **Task 3: Update pointer evaluation logic.**
+  - The `evalSelectorExpr` and `assignValue` functions need to be updated to correctly handle `*object.Pointer`s that point to `*object.GoValue`s, allowing method calls and field assignments to work via reflection.
+- [x] **Task 4: Re-enable and verify the `text/scanner` test.**
+  - Remove the skip from `TestStdlib_TextScanner_FFI` in `minigo/minigo_stdlib_custom_test.go` and ensure it passes.
+- [x] **Task 5: Update documentation.**
+  - Update `docs/trouble-minigo-go-value-method-call.md` and `docs/trouble-minigo-stdlib-limitations.md` to reflect that the issue is resolved.

@@ -1,3 +1,6 @@
+> [!NOTE]
+> This issue has been resolved. The minigo interpreter now correctly instantiates variables of FFI-provided types as `*object.GoValue` wrappers, allowing reflection-based method calls to succeed. This document is preserved for historical context.
+
 # Problem: Method Calls on In-Script Instances of FFI Structs
 
 This document details a fundamental architectural issue in the `minigo` interpreter concerning the boundary between its native object system and Go types imported via the FFI (Foreign Function Interface).

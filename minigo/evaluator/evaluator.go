@@ -2987,18 +2987,22 @@ func (e *Evaluator) evalGenDecl(n *ast.GenDecl, env *object.Environment, fscope 
 							return resolvedType
 						}
 
-						if def, ok := resolvedType.(*object.StructDefinition); ok {
-							// It's a struct, so initialize a zero-valued instance.
-							instance := &object.StructInstance{Def: def, Fields: make(map[string]object.Object)}
-							for _, field := range def.Fields {
+						switch rt := resolvedType.(type) {
+						case *object.GoType:
+							// The type is a registered Go type. Instantiate its zero value.
+							val = &object.GoValue{Value: reflect.New(rt.GoType).Elem()}
+						case *object.StructDefinition:
+							// It's a minigo-defined struct, so initialize a zero-valued instance.
+							instance := &object.StructInstance{Def: rt, Fields: make(map[string]object.Object)}
+							for _, field := range rt.Fields {
 								zeroVal := e.getZeroValueForType(field.Type, env, fscope)
 								for _, name := range field.Names {
 									instance.Fields[name.Name] = zeroVal
 								}
 							}
 							val = instance
-						} else {
-							val = object.NIL // Default to NIL for non-structs
+						default:
+							val = object.NIL // Default to NIL for other types
 						}
 					} else {
 						val = object.NIL
@@ -3369,26 +3373,44 @@ func (e *Evaluator) assignValue(lhs ast.Expr, val object.Object, env *object.Env
 			return obj
 		}
 
-		var instance *object.StructInstance
-		var ok bool
-
+		var underlying object.Object
 		if ptr, isPtr := obj.(*object.Pointer); isPtr {
 			if ptr.Element == nil || *ptr.Element == nil {
 				return e.newError(lhsNode.Pos(), "nil pointer dereference on assignment")
 			}
-			instance, ok = (*ptr.Element).(*object.StructInstance)
-			if !ok {
-				return e.newError(lhsNode.Pos(), "assignment to field of non-struct pointer")
-			}
+			underlying = *ptr.Element
 		} else {
-			instance, ok = obj.(*object.StructInstance)
-			if !ok {
-				return e.newError(lhsNode.Pos(), "assignment to non-struct field")
-			}
+			underlying = obj
 		}
 
-		instance.Fields[lhsNode.Sel.Name] = val
-		return val
+		switch base := underlying.(type) {
+		case *object.StructInstance:
+			base.Fields[lhsNode.Sel.Name] = val
+			return val
+		case *object.GoValue:
+			structVal := base.Value
+			if structVal.Kind() == reflect.Ptr {
+				structVal = structVal.Elem()
+			}
+			if structVal.Kind() != reflect.Struct {
+				return e.newError(lhsNode.Pos(), "assignment to field of non-struct Go value")
+			}
+			field := structVal.FieldByName(lhsNode.Sel.Name)
+			if !field.IsValid() {
+				return e.newError(lhsNode.Pos(), "no such field: %s in type %s", lhsNode.Sel.Name, structVal.Type())
+			}
+			if !field.CanSet() {
+				return e.newError(lhsNode.Pos(), "cannot set field %s", lhsNode.Sel.Name)
+			}
+			goVal, err := e.objectToReflectValue(val, field.Type())
+			if err != nil {
+				return e.newError(lhsNode.Pos(), "type mismatch on assignment: %v", err)
+			}
+			field.Set(goVal)
+			return val
+		default:
+			return e.newError(lhsNode.Pos(), "assignment to non-struct or non-Go-value field")
+		}
 	case *ast.StarExpr:
 		ptrObj := e.Eval(lhsNode.X, env, fscope)
 		if isError(ptrObj) {
@@ -3569,6 +3591,11 @@ func (e *Evaluator) constantInfoToObject(c *goscan.ConstantInfo) (object.Object,
 // It does not trigger new scans. It returns the found object and a boolean.
 // NOTE: This resolves constants, struct type definitions, and function declarations from AST.
 func (e *Evaluator) findSymbolInPackageInfo(pkgInfo *goscan.Package, symbolName string, pkgEnv *object.Environment, fscope *object.FileScope) (object.Object, bool) {
+	// Check for FFI types first
+	if t, ok := e.registry.LookupType(pkgInfo.Path, symbolName); ok {
+		return &object.GoType{GoType: t}, true
+	}
+
 	// Look in constants
 	for _, c := range pkgInfo.Constants {
 		if c.Name == symbolName {
@@ -3938,24 +3965,31 @@ func (e *Evaluator) evalSelectorExpr(n *ast.SelectorExpr, env *object.Environmen
 		if l.Element == nil || *l.Element == nil {
 			return e.newError(n.Pos(), "nil pointer dereference")
 		}
-		instance, ok := (*l.Element).(*object.StructInstance)
-		if !ok {
-			return e.newError(n.Pos(), "base of selector expression is not a pointer to a struct")
-		}
 
-		// 1. Look for a method. Pass the pointer `l` as the receiver.
-		if method := e.evalMethodCall(n, l, instance.Def); method != nil {
-			if err, isErr := method.(*object.Error); isErr {
-				return err
+		// Handle pointers to both minigo structs and Go values
+		switch elem := (*l.Element).(type) {
+		case *object.StructInstance:
+			// This is a pointer to a minigo-defined struct.
+			// 1. Look for a method. Pass the pointer `l` as the receiver.
+			if method := e.evalMethodCall(n, l, elem.Def); method != nil {
+				if err, isErr := method.(*object.Error); isErr {
+					return err
+				}
+				return method
 			}
-			return method
-		}
+			// 2. If not a method, look for a field on the dereferenced struct.
+			if val, found := e.findFieldInStruct(elem, n.Sel.Name); found {
+				return val
+			}
+			return e.newError(n.Pos(), "undefined field or method '%s' on pointer to struct '%s'", n.Sel.Name, elem.Def.Name.Name)
 
-		// 2. If not a method, look for a field on the dereferenced struct.
-		if val, found := e.findFieldInStruct(instance, n.Sel.Name); found {
-			return val
+		case *object.GoValue:
+			// This is a pointer to a Go value. Delegate to the Go value selector logic.
+			return e.evalGoValueSelectorExpr(n, elem, n.Sel.Name)
+
+		default:
+			return e.newError(n.Pos(), "base of selector expression is not a pointer to a struct or Go value")
 		}
-		return e.newError(n.Pos(), "undefined field or method '%s' on pointer to struct '%s'", n.Sel.Name, instance.Def.Name.Name)
 
 	case *object.GoValue:
 		return e.evalGoValueSelectorExpr(n, l, n.Sel.Name)
@@ -3972,7 +4006,7 @@ func (e *Evaluator) findSymbolInPackage(pkg *object.Package, symbolName *ast.Ide
 		return member
 	}
 
-	// 2. Check the registry for pre-registered symbols.
+	// 2. Check the registry for pre-registered symbols (values and types).
 	if symbol, ok := e.registry.Lookup(pkg.Path, symbolName.Name); ok {
 		var member object.Object
 		val := reflect.ValueOf(symbol)
@@ -3981,6 +4015,11 @@ func (e *Evaluator) findSymbolInPackage(pkg *object.Package, symbolName *ast.Ide
 		} else {
 			member = &object.GoValue{Value: val}
 		}
+		pkg.Members[symbolName.Name] = member // Cache it
+		return member
+	}
+	if t, ok := e.registry.LookupType(pkg.Path, symbolName.Name); ok {
+		member := &object.GoType{GoType: t}
 		pkg.Members[symbolName.Name] = member // Cache it
 		return member
 	}

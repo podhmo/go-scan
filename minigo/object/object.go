@@ -51,6 +51,7 @@ const (
 	TUPLE_OBJ                ObjectType = "TUPLE"
 	PACKAGE_OBJ              ObjectType = "PACKAGE"
 	GO_VALUE_OBJ             ObjectType = "GO_VALUE"
+	GO_TYPE_OBJ              ObjectType = "GO_TYPE"
 	ERROR_OBJ                ObjectType = "ERROR"
 	AST_NODE_OBJ             ObjectType = "AST_NODE"
 
@@ -788,6 +789,17 @@ func (t *Type) Type() ObjectType { return TYPE_OBJ }
 // Inspect returns a string representation of the Type's value.
 func (t *Type) Inspect() string { return t.Name }
 
+// GoType represents a native Go type that has been registered with the interpreter.
+type GoType struct {
+	GoType reflect.Type
+}
+
+// Type returns the type of the GoType object.
+func (gt *GoType) Type() ObjectType { return GO_TYPE_OBJ }
+
+// Inspect returns a string representation of the GoType's value.
+func (gt *GoType) Inspect() string { return gt.GoType.String() }
+
 // --- Type Alias Object ---
 
 // TypeAlias represents a type alias, including generic ones.
@@ -888,27 +900,38 @@ var (
 
 // --- Environment ---
 
-// SymbolRegistry holds registered Go symbols (functions, variables) that can be
-// imported by scripts.
+// SymbolRegistry holds registered Go symbols (functions, variables, types) that
+// can be imported by scripts.
 type SymbolRegistry struct {
 	packages map[string]map[string]any
+	types    map[string]map[string]reflect.Type
 }
 
 // NewSymbolRegistry creates a new, empty symbol registry.
 func NewSymbolRegistry() *SymbolRegistry {
 	return &SymbolRegistry{
 		packages: make(map[string]map[string]any),
+		types:    make(map[string]map[string]reflect.Type),
 	}
 }
 
 // Register adds a collection of symbols to a given package path.
 // If the package path already exists, the new symbols are merged with the existing ones.
+// It differentiates between regular symbols (vars, funcs) and type definitions.
 func (r *SymbolRegistry) Register(pkgPath string, symbols map[string]any) {
 	if _, ok := r.packages[pkgPath]; !ok {
 		r.packages[pkgPath] = make(map[string]any)
 	}
+	if _, ok := r.types[pkgPath]; !ok {
+		r.types[pkgPath] = make(map[string]reflect.Type)
+	}
+
 	for name, symbol := range symbols {
-		r.packages[pkgPath][name] = symbol
+		if t, ok := symbol.(reflect.Type); ok {
+			r.types[pkgPath][name] = t
+		} else {
+			r.packages[pkgPath][name] = symbol
+		}
 	}
 }
 
@@ -917,6 +940,16 @@ func (r *SymbolRegistry) Lookup(pkgPath, name string) (any, bool) {
 	if pkg, ok := r.packages[pkgPath]; ok {
 		if symbol, ok := pkg[name]; ok {
 			return symbol, true
+		}
+	}
+	return nil, false
+}
+
+// LookupType finds a registered Go type by its package path and name.
+func (r *SymbolRegistry) LookupType(pkgPath, name string) (reflect.Type, bool) {
+	if pkg, ok := r.types[pkgPath]; ok {
+		if t, ok := pkg[name]; ok {
+			return t, true
 		}
 	}
 	return nil, false

@@ -72,10 +72,10 @@ The investigation revealed several fundamental limitations in the FFI bridge. Th
 
 ### `text/scanner`
 
--   **Limitation**: Cannot call methods on pointers to structs created within a script.
--   **Status**: **Incompatible (via FFI)**
--   **Analysis**: A test for `text/scanner` failed with the error `undefined field or method 'Init' on struct 'Scanner'`. The `Init` method has a pointer receiver (`*scanner.Scanner`). The test first attempted to call the method on a struct value (`var s scanner.Scanner; s.Init(...)`), which failed because `minigo` does not automatically take the address of the value for pointer-receiver calls. A second attempt was made by manually creating a pointer in the script (`var s_ptr = &s; s_ptr.Init(...)`). This also failed with the same error.
--   **Conclusion**: This reveals a fundamental limitation: the FFI bridge can call methods on Go objects returned from other FFI functions, but it cannot resolve method calls on pointers to objects that are created and manipulated entirely within the `minigo` script. The package is therefore unusable.
+-   **Limitation**: None observed. **(FIXED)**
+-   **Status**: **Compatible (via FFI)**
+-   **Analysis**: A test for `text/scanner` now passes. The previously blocking issue was that the interpreter would create a `minigo` native struct object (`*object.StructInstance`) for a variable of an FFI type (`var s scanner.Scanner`), which lacked the necessary reflection information to resolve methods. The interpreter has been enhanced to correctly instantiate such variables as `*object.GoValue` objects. This allows the existing reflection-based method lookup logic to find and execute methods (like `Init` and `Scan`) on pointers to these in-script struct instances.
+-   **Conclusion**: The package is now considered compatible and usable via FFI bindings.
 
 ### `io`, `net/http`, and other interface-heavy packages
 

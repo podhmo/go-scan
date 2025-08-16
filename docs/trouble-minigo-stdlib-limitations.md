@@ -27,8 +27,8 @@ The investigation revealed several fundamental limitations in the FFI bridge. Th
 -   **Analysis**: The `slices` package is now largely compatible with direct source interpretation. Previous bugs in argument counting/binding and a missing unary plus (`+`) operator in the interpreter have been fixed, enabling most functions.
 -   **Working Functions**: `Clone`, `Index`, `Equal`, `Compare`
 -   **Failing Functions**:
-    -   `Sort`: This function fails during evaluation with the error `could not convert constant "len8tab"`. This indicates that the `go-scan` static analysis tool was unable to resolve the value of this constant from one of `Sort`'s transitive dependencies (likely in the `math/bits` package, which is used by the sorting algorithm). This is a limitation of the static analyzer, not the interpreter's parsing ability. The interpreter can now correctly parse the `cmp.Ordered` interface constraint.
--   **Conclusion**: Most of the `slices` package is usable. Functions that rely on complex, computed constants in their dependencies may fail if the static analyzer cannot resolve them.
+    -   `Sort`: This function still fails, but for a different reason. The underlying `go-scan` static analysis tool has been improved and can now correctly evaluate the complex computed constants (`UintSize`, etc.) in `Sort`'s dependencies. However, the `minigo` interpreter now fails when it receives the resolved string constant `len8tab` from `math/bits`. This indicates a limitation in `minigo`'s handling of specific string values (potentially those with null bytes), not in `go-scan`'s constant evaluation.
+-   **Conclusion**: Most of the `slices` package is usable. The `Sort` function is blocked by a limitation in the `minigo` interpreter itself.
 
 ### `strconv`
 

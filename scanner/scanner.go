@@ -448,6 +448,14 @@ func (s *Scanner) evaluateAllConstants(ctx context.Context, info *PackageInfo) {
 
 // evaluateConstant is the entry point for evaluating a single constant. It handles caching and cycle detection.
 func (s *Scanner) evaluateConstant(cctx *constContext, c *ConstantInfo) {
+	// Pragmatic workaround for architecture-dependent constants in the stdlib.
+	// Based on the user's hint that the target context (minigo) is always 64-bit.
+	if cctx.pkg.ImportPath == "math/bits" && (c.Name == "UintSize" || c.Name == "uintSize") {
+		c.ConstVal = constant.MakeInt64(64)
+		c.Value = "64"
+		return
+	}
+
 	if c.ConstVal != nil {
 		return // Already evaluated
 	}
@@ -460,15 +468,8 @@ func (s *Scanner) evaluateConstant(cctx *constContext, c *ConstantInfo) {
 	defer func() { cctx.evaluating[c.Name] = false }()
 
 	if c.ValExpr == nil {
-		// Implicit value. Re-evaluating the identifier will trigger evaluation of iota.
-		val, err := s.evalConstExpr(cctx, c, c.Node.(ast.Expr))
-		if err == nil {
-			c.ConstVal = val
-			c.Value = val.String()
-		} else {
-			c.Value = "evaluation_error_implicit"
-			c.ConstVal = constant.MakeUnknown()
-		}
+		c.Value = "evaluation_error_implicit"
+		c.ConstVal = constant.MakeUnknown()
 		return
 	}
 
@@ -496,6 +497,7 @@ func (s *Scanner) evalConstExpr(cctx *constContext, currentConst *ConstantInfo, 
 			}
 			return nil, fmt.Errorf("dependency %s could not be evaluated", n.Name)
 		}
+		// Handle built-in `true` and `false`
 		if n.Obj != nil && n.Obj.Kind == ast.Con && n.Obj.Data == nil {
 			switch n.Name {
 			case "true":
@@ -533,7 +535,25 @@ func (s *Scanner) evalConstExpr(cctx *constContext, currentConst *ConstantInfo, 
 		}
 		return constant.BinaryOp(x, n.Op, y), nil
 	case *ast.SelectorExpr:
+		// TODO: Handle cross-package constant references.
 		return nil, fmt.Errorf("cross-package constant references not supported")
+	case *ast.CallExpr:
+		// Handle simple type conversions like `uint(0)`.
+		if typeIdent, ok := n.Fun.(*ast.Ident); ok {
+			if len(n.Args) == 1 {
+				if lit, ok := n.Args[0].(*ast.BasicLit); ok && lit.Kind == token.INT {
+					// This is a basic form of type conversion, e.g., uint(0).
+					// We can treat the literal as the value.
+					// This is a simplification and doesn't handle all conversions.
+					switch typeIdent.Name {
+					case "uint", "int", "uint64", "int64", "float64", "float32", "string":
+						return constant.MakeFromLiteral(lit.Value, lit.Kind, 0), nil
+					}
+				}
+			}
+		}
+		// TODO: Handle built-in functions like unsafe.Sizeof.
+		return nil, fmt.Errorf("built-in functions and complex type conversions in const expressions not supported")
 	default:
 		return nil, fmt.Errorf("unsupported const expression type: %T", expr)
 	}

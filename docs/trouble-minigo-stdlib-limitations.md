@@ -39,8 +39,9 @@ The investigation revealed several fundamental limitations in the FFI bridge. Th
 
 ### `time`
 
--   **Limitation**: Method calls (`t.Year()`) have not been successfully tested.
--   **Analysis**: The FFI bridge now correctly handles errors from `time.Parse`, returning a non-nil error object to the script instead of halting. This is a significant improvement. However, tests for method calls on the returned `time.Time` object are still needed to confirm full compatibility, as the evaluator's general method support might not cover all cases (e.g., non-struct receivers or other `time.Time` specifics).
+-   **Limitation**: None observed.
+-   **Status**: **Highly Compatible (via FFI)**
+-   **Analysis**: The FFI bridge correctly handles errors from `time.Parse`. Furthermore, method calls on the returned `time.Time` object (e.g., `t.Year()`, `t.Month()`) are now tested and work as expected. This confirms that the reflection-based method invocation is effective for this core package.
 
 ### `bytes`
 
@@ -176,9 +177,27 @@ These packages are highly relevant to the project's goals of supporting configur
 
 These packages are likely to fail in new and informative ways, helping to reveal the boundaries of the interpreter's capabilities.
 
--   **`container/list`**: Would test more complex pointer manipulation and data structures.
+### `path`
+
+-   **Limitation**: None observed.
+-   **Status**: **Highly Compatible (via FFI)**
+-   **Analysis**: A test for the `path` package passed successfully, covering basic functions like `Join`, `Base`, and `Ext`. This confirms the FFI bindings for this package are robust for common path manipulation tasks.
+
+### `container/list`
+
+-   **Limitation**: Methods on returned objects do not work correctly for chained calls or modifications.
+-   **Status**: **Incompatible (via FFI)**
+-   **Analysis**: A test for `container/list` was created to test creating a new list (`list.New()`) and manipulating it with methods like `PushBack`, `PushFront`, and iterating with `Front()` and `Next()`. The test failed during evaluation. This is likely because the interpreter's support for methods on Go objects returned via FFI is not complete enough to handle the stateful modifications and chained method calls required to use this package effectively. The test has been skipped.
+
+### `crypto/md5`
+
+-   **Limitation**: The slice operator (`[:]`) is not supported for Go-native array types returned via FFI.
+-   **Status**: **Partially Compatible (Blocked)**
+-   **Analysis**: A test was created for `crypto/md5` to hash a byte slice. The `md5.Sum()` function returns a Go native array (`[16]byte`). The test failed when attempting to slice this array (`hash[:]`) to pass it to `hex.EncodeToString()`. The interpreter's evaluator does not support the slice operator on `object.GoValue` types that wrap Go arrays.
+-   **Conclusion**: Basic hashing is possible, but using the result is difficult without slice support. The test has been skipped.
+
 -   **`container/heap`**: Would test the interpreter's ability to handle interface-based APIs where user-defined types must satisfy the interface.
--   **`crypto/*` (e.g., `crypto/md5`)**: Would rigorously test the integer and bitwise operation support.
+-   **`crypto/*`**: Would rigorously test the integer and bitwise operation support beyond the limitations found in `crypto/md5`.
 -   **`compress/gzip`**: Would be a practical test of `io.Reader`/`io.Writer` interface implementation.
 -   **`flag`**: Would test interaction with OS arguments and reflection-based struct population.
 -   **`sync`**: Would confirm the expected limitation that the single-threaded `minigo` interpreter cannot support Go's concurrency model.

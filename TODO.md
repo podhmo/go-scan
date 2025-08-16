@@ -120,6 +120,10 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] **Support Increment and Decrement Operators**: Implement `++` and `--` as statements.
 - [ ] Write comprehensive documentation for the API, supported language features, and usage examples.
 
+### `minigo` FFI and Language Limitations (New Findings)
+- [ ] **Improve method call support for stateful objects**: The FFI and evaluator have trouble with packages like `container/list` where methods (`PushBack`, `Next`) modify the internal state of a Go object in a way that is not correctly reflected back into the script environment. This prevents effective use of stateful, object-oriented packages.
+- [ ] **Support slice operator on Go-native arrays**: The interpreter does not support the slice operator (`[:]`) on `object.GoValue` types that wrap Go arrays (e.g., `[16]byte`). This was discovered when testing `crypto/md5` and blocks the use of functions that return native Go arrays.
+
 ### `minigo` Interpreter Enhancements
 - [x] **Support arbitrary byte sequences in string literals**: The interpreter fails when it encounters string constants containing null bytes (`\x00`), such as `len8tab` from the `math/bits` package. This blocks the interpretation of packages like `slices` that depend on it. The string handling logic in `minigo` needs to be improved to support these literals correctly.
 - [x] **Fix generic type parameter scope**: The interpreter fails to resolve type parameters (e.g., `E` in `slices.Sort[S ~[]E, E cmp.Ordered]`) within the body of a generic function when the function is loaded from source. This points to a bug in how the evaluation environment is managed for generic functions. This currently blocks the use of the `slices` package.

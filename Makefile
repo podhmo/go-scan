@@ -9,7 +9,9 @@ format:
 STDLIB_PKGS= \
 	bufio \
 	bytes \
+	container/list \
 	context \
+	crypto/md5 \
 	encoding/json \
 	errors \
 	fmt \
@@ -18,6 +20,7 @@ STDLIB_PKGS= \
 	net/http \
 	net/url \
 	os \
+	path \
 	path/filepath \
 	regexp \
 	sort \

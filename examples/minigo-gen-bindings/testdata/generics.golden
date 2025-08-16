@@ -3,7 +3,9 @@
 package generics
 
 import (
+
 	"github.com/podhmo/go-scan/examples/minigo-gen-bindings/testdata/generics"
+
 	"github.com/podhmo/go-scan/minigo"
 )
 

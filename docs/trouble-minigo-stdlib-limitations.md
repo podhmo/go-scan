@@ -24,11 +24,12 @@ The investigation revealed several fundamental limitations in the FFI bridge. Th
 ### `slices` (Mostly Supported via Source Interpretation)
 
 -   **Status**: Partially Compatible (Blocked).
--   **Analysis**: Support for type list interfaces (e.g. `cmp.Ordered`) has been implemented in the parser and evaluator. However, testing with the `slices` package revealed deeper, pre-existing bugs in the interpreter's environment handling for generic functions loaded from source.
--   **Failing Functions**: `Clone`, `Index`, `Sort`, etc.
-    -   **Root Cause 1: `identifier not found: E`**: When evaluating the body of a generic function like `slices.Clone[S ~[]E, E any](s S) S`, the type parameter `E` is not found in the evaluation environment. The logic in `extendFunctionEnv` appears to correctly bind the type parameter, but this binding is lost before the function body is evaluated. This is a fundamental bug in generic function scope management.
-    -   **Root Cause 2: `undefined: slices.Sort`**: Even with fixes to `LoadGoSourceAsPackage` to handle imports, the `Sort` function itself is not found. This points to a failure in registering declarations from a source-loaded package that has its own dependencies (`slices` imports `cmp`).
--   **Conclusion**: The `slices` package is currently unusable with source interpretation until these fundamental environment and scope issues are resolved. The core type-list interface parsing is complete, but cannot be fully validated with `stdlib` tests.
+-   **Analysis**: Several issues blocking the `slices` package have been resolved.
+    -   **FIXED**: The `go-scan` tool can now correctly evaluate complex string constants containing arbitrary byte sequences (e.g., `\x00`). This was a blocker for interpreting `math/bits`, a dependency of `slices`.
+    -   **FIXED**: The interpreter can now correctly load transitive dependencies (e.g., `slices` -> `cmp`), resolving the `undefined: slices.Sort` issue.
+-   **Current Blocker**: With the previous issues fixed, testing of `slices.Sort` now reveals a limitation in the interpreter's handling of generics.
+    -   **Root Cause: `identifier not found: E`**: When evaluating the body of a generic function like `slices.Sort[S ~[]E, E cmp.Ordered](x S)`, the type parameter `E` (representing the element type of the slice) is not found in the evaluation environment. This points to a fundamental bug in how the interpreter manages scope for generic type parameters during function evaluation.
+-   **Conclusion**: The `slices` package is currently unusable with source interpretation until this generics scope issue is resolved.
 
 ### `strconv`
 

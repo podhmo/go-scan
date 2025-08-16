@@ -76,13 +76,13 @@ func Install(interp *minigo.Interpreter) {
 		"UnixMilli":              time.UnixMilli,
 		"Until":                  time.Until,
 		"Wednesday":              time.Wednesday,
-		"Location":               time.Location{},
-		"ParseError":             time.ParseError{},
-		"Ticker":                 time.Ticker{},
-		"Time":                   time.Time{},
-		"Timer":                  time.Timer{},
 		"Duration":               (*time.Duration)(nil),
+		"Location":               (*time.Location)(nil),
 		"Month":                  (*time.Month)(nil),
+		"ParseError":             (*time.ParseError)(nil),
+		"Ticker":                 (*time.Ticker)(nil),
+		"Time":                   (*time.Time)(nil),
+		"Timer":                  (*time.Timer)(nil),
 		"Weekday":                (*time.Weekday)(nil),
 	})
 }

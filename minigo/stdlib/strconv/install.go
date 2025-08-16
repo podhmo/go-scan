@@ -48,6 +48,6 @@ func Install(interp *minigo.Interpreter) {
 		"QuotedPrefix":             strconv.QuotedPrefix,
 		"Unquote":                  strconv.Unquote,
 		"UnquoteChar":              strconv.UnquoteChar,
-		"NumError":                 strconv.NumError{},
+		"NumError":                 (*strconv.NumError)(nil),
 	})
 }

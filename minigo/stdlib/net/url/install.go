@@ -21,11 +21,11 @@ func Install(interp *minigo.Interpreter) {
 		"QueryUnescape":    url.QueryUnescape,
 		"User":             url.User,
 		"UserPassword":     url.UserPassword,
-		"Error":            url.Error{},
-		"URL":              url.URL{},
-		"Userinfo":         url.Userinfo{},
+		"Error":            (*url.Error)(nil),
 		"EscapeError":      (*url.EscapeError)(nil),
 		"InvalidHostError": (*url.InvalidHostError)(nil),
+		"URL":              (*url.URL)(nil),
+		"Userinfo":         (*url.Userinfo)(nil),
 		"Values":           (*url.Values)(nil),
 	})
 }

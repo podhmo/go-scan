@@ -30,7 +30,7 @@ func Install(interp *minigo.Interpreter) {
 		"SkipComments":   scanner.SkipComments,
 		"String":         scanner.String,
 		"TokenString":    scanner.TokenString,
-		"Position":       scanner.Position{},
-		"Scanner":        scanner.Scanner{},
+		"Position":       (*scanner.Position)(nil),
+		"Scanner":        (*scanner.Scanner)(nil),
 	})
 }

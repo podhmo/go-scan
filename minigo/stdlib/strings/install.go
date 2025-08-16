@@ -68,8 +68,8 @@ func Install(interp *minigo.Interpreter) {
 		"TrimRightFunc":  strings.TrimRightFunc,
 		"TrimSpace":      strings.TrimSpace,
 		"TrimSuffix":     strings.TrimSuffix,
-		"Builder":        strings.Builder{},
-		"Reader":         strings.Reader{},
-		"Replacer":       strings.Replacer{},
+		"Builder":        (*strings.Builder)(nil),
+		"Reader":         (*strings.Reader)(nil),
+		"Replacer":       (*strings.Replacer)(nil),
 	})
 }

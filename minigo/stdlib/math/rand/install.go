@@ -30,9 +30,9 @@ func Install(interp *minigo.Interpreter) {
 		"Shuffle":     rand.Shuffle,
 		"Uint32":      rand.Uint32,
 		"Uint64":      rand.Uint64,
-		"Rand":        rand.Rand{},
-		"Zipf":        rand.Zipf{},
+		"Rand":        (*rand.Rand)(nil),
 		"Source":      (*rand.Source)(nil),
 		"Source64":    (*rand.Source64)(nil),
+		"Zipf":        (*rand.Zipf)(nil),
 	})
 }

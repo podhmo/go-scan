@@ -16,11 +16,12 @@ import (
 
 func TestConstantEvaluation(t *testing.T) {
 	tests := []struct {
-		name       string
-		content    string
-		wantConsts map[string]string // map[constName]constValue
-		wantErr    bool
-		only       bool
+		name          string
+		content       string
+		wantConsts    map[string]string // map[constName]constValue (literal representation)
+		wantConstsRaw map[string]string // map[constName]constRawValue (raw string value)
+		wantErr       bool
+		only          bool
 	}{
 		{
 			name: "simple literal",
@@ -28,7 +29,8 @@ func TestConstantEvaluation(t *testing.T) {
 package main
 const MyConst = "hello"
 `,
-			wantConsts: map[string]string{"MyConst": `"hello"`},
+			wantConsts:    map[string]string{"MyConst": `"hello"`},
+			wantConstsRaw: map[string]string{"MyConst": "hello"},
 		},
 		{
 			name: "integer literal",
@@ -145,16 +147,26 @@ const C = -1 << 63
 `,
 			wantConsts: map[string]string{"C": "-9223372036854775808"},
 		},
+		{
+			name: "string with escape sequences",
+			content: `
+package main
+const SpecialChars = "hello\x00world\n\t\""
+`,
+			wantConsts:    map[string]string{"SpecialChars": `"hello\x00world\n\t\""`},
+			wantConstsRaw: map[string]string{"SpecialChars": "hello\x00world\n\t\""},
+		},
 	}
 
 	for _, tt := range tests {
 		if tt.only {
 			tests = []struct {
-				name       string
-				content    string
-				wantConsts map[string]string
-				wantErr    bool
-				only       bool
+				name          string
+				content       string
+				wantConsts    map[string]string
+				wantConstsRaw map[string]string
+				wantErr       bool
+				only          bool
 			}{tt}
 			break
 		}
@@ -196,12 +208,22 @@ const C = -1 << 63
 				}
 
 				gotConsts := make(map[string]string)
+				gotConstsRaw := make(map[string]string)
 				for _, c := range pkg.Constants {
 					gotConsts[c.Name] = c.Value
+					if c.RawValue != "" || tt.wantConstsRaw != nil {
+						gotConstsRaw[c.Name] = c.RawValue
+					}
 				}
 
 				if diff := cmp.Diff(tt.wantConsts, gotConsts); diff != "" {
-					return fmt.Errorf("constants mismatch (-want +got):\n%s", diff)
+					return fmt.Errorf("constants 'Value' mismatch (-want +got):\n%s", diff)
+				}
+
+				if tt.wantConstsRaw != nil {
+					if diff := cmp.Diff(tt.wantConstsRaw, gotConstsRaw); diff != "" {
+						return fmt.Errorf("constants 'RawValue' mismatch (-want +got):\n%s", diff)
+					}
 				}
 				return nil
 			}

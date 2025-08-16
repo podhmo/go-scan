@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"go/ast"
+	"go/constant"
 	"go/parser"
 	"go/token"
 	"log/slog"
@@ -323,6 +324,9 @@ func (s *Scanner) scanGoFiles(ctx context.Context, filePaths []string, pkgDirPat
 		return nil, fmt.Errorf("could not determine package name from scanned files in %s", pkgDirPath)
 	}
 
+	// Third pass: Evaluate all collected constants
+	s.evaluateAllConstants(ctx, info)
+
 	s.resolveEnums(info)
 	return info, nil
 }
@@ -367,84 +371,191 @@ func (s *Scanner) buildImportLookup(file *ast.File) map[string]string {
 	return importLookup
 }
 
+// constContext holds the state needed for evaluating constants across a package.
+type constContext struct {
+	pkg        *PackageInfo
+	env        map[string]*ConstantInfo // Maps constant name to its info
+	evaluating map[string]bool          // For cycle detection
+}
+
+// Pass 1: Just collect constant declarations without evaluating them.
 func (s *Scanner) parseGenDecl(ctx context.Context, decl *ast.GenDecl, info *PackageInfo, absFilePath string, importLookup map[string]string) {
-	var lastConstType *FieldType // Holds the type for iota-based const blocks
-	var lastConstValues []ast.Expr
-
-	for iotaValue, spec := range decl.Specs {
-		switch sp := spec.(type) {
-		case *ast.TypeSpec:
-			typeInfo := s.parseTypeSpec(ctx, sp, info, absFilePath, importLookup)
-			if typeInfo.Doc == "" && decl.Doc != nil {
-				typeInfo.Doc = commentText(decl.Doc)
-			}
-			info.Types = append(info.Types, typeInfo)
-			lastConstType = nil // Reset on a type spec within the same GenDecl
-		case *ast.ValueSpec:
-			if decl.Tok == token.CONST {
-				doc := commentText(sp.Doc)
-				if doc == "" && sp.Comment != nil {
-					doc = commentText(sp.Comment)
-				}
-				if doc == "" && decl.Doc != nil {
-					doc = commentText(decl.Doc)
-				}
-
-				if len(sp.Values) == 0 {
-					sp.Values = lastConstValues
-				} else {
-					lastConstValues = sp.Values
-				}
-
+	if decl.Tok == token.CONST {
+		var lastConstType *FieldType
+		var lastConstValues []ast.Expr
+		for iota, spec := range decl.Specs {
+			if vs, ok := spec.(*ast.ValueSpec); ok {
 				var currentSpecType *FieldType
-				if sp.Type != nil {
-					currentSpecType = s.parseTypeExpr(ctx, sp.Type, nil, info, importLookup)
-					lastConstType = currentSpecType // Remember this type for subsequent specs
+				if vs.Type != nil {
+					currentSpecType = s.parseTypeExpr(ctx, vs.Type, nil, info, importLookup)
+					lastConstType = currentSpecType
 				} else {
 					currentSpecType = lastConstType
 				}
 
-				for i, name := range sp.Names {
-					var val string
-					var inferredFieldType *FieldType
+				if len(vs.Values) > 0 {
+					lastConstValues = vs.Values
+				}
 
-					if i < len(sp.Values) {
-						valueExpr := sp.Values[i]
-						if lit, ok := valueExpr.(*ast.BasicLit); ok {
-							val = lit.Value
-							switch lit.Kind {
-							case token.STRING:
-								inferredFieldType = &FieldType{Name: "string", IsBuiltin: true}
-							case token.INT:
-								inferredFieldType = &FieldType{Name: "int", IsBuiltin: true}
-							case token.FLOAT:
-								inferredFieldType = &FieldType{Name: "float64", IsBuiltin: true}
-							case token.CHAR:
-								inferredFieldType = &FieldType{Name: "rune", IsBuiltin: true}
-							}
-						} else if ident, ok := valueExpr.(*ast.Ident); ok && ident.Name == "iota" {
-							val = fmt.Sprintf("%d", iotaValue)
-							inferredFieldType = &FieldType{Name: "int", IsBuiltin: true}
-						}
+				for i, name := range vs.Names {
+					var valExpr ast.Expr
+					if i < len(lastConstValues) {
+						valExpr = lastConstValues[i]
 					}
 
-					finalFieldType := currentSpecType
-					if finalFieldType == nil {
-						finalFieldType = inferredFieldType
-					}
-
-					info.Constants = append(info.Constants, &ConstantInfo{
+					constInfo := &ConstantInfo{
 						Name:       name.Name,
 						FilePath:   absFilePath,
-						Doc:        doc,
-						Value:      val,
-						Type:       finalFieldType,
+						Doc:        commentText(vs.Doc),
+						Type:       currentSpecType,
 						IsExported: name.IsExported(),
 						Node:       name,
-					})
+						IotaValue:  iota,
+						ValExpr:    valExpr,
+					}
+					info.Constants = append(info.Constants, constInfo)
 				}
 			}
 		}
+	} else if decl.Tok == token.TYPE {
+		for _, spec := range decl.Specs {
+			if ts, ok := spec.(*ast.TypeSpec); ok {
+				typeInfo := s.parseTypeSpec(ctx, ts, info, absFilePath, importLookup)
+				if typeInfo.Doc == "" && decl.Doc != nil {
+					typeInfo.Doc = commentText(decl.Doc)
+				}
+				info.Types = append(info.Types, typeInfo)
+			}
+		}
+	}
+}
+
+// Pass 2: Evaluate all collected constants.
+func (s *Scanner) evaluateAllConstants(ctx context.Context, info *PackageInfo) {
+	cctx := &constContext{
+		pkg:        info,
+		env:        make(map[string]*ConstantInfo),
+		evaluating: make(map[string]bool),
+	}
+	for _, c := range info.Constants {
+		cctx.env[c.Name] = c
+	}
+
+	for _, c := range info.Constants {
+		s.evaluateConstant(cctx, c)
+	}
+}
+
+// evaluateConstant is the entry point for evaluating a single constant. It handles caching and cycle detection.
+func (s *Scanner) evaluateConstant(cctx *constContext, c *ConstantInfo) {
+	// Pragmatic workaround for architecture-dependent constants in the stdlib.
+	// Based on the user's hint that the target context (minigo) is always 64-bit.
+	if cctx.pkg.ImportPath == "math/bits" && (c.Name == "UintSize" || c.Name == "uintSize") {
+		c.ConstVal = constant.MakeInt64(64)
+		c.Value = "64"
+		return
+	}
+
+	if c.ConstVal != nil {
+		return // Already evaluated
+	}
+	if cctx.evaluating[c.Name] {
+		c.Value = "evaluation_error_cycle"
+		c.ConstVal = constant.MakeUnknown()
+		return
+	}
+	cctx.evaluating[c.Name] = true
+	defer func() { cctx.evaluating[c.Name] = false }()
+
+	if c.ValExpr == nil {
+		c.Value = "evaluation_error_implicit"
+		c.ConstVal = constant.MakeUnknown()
+		return
+	}
+
+	val, err := s.evalConstExpr(cctx, c, c.ValExpr)
+	if err != nil {
+		c.Value = fmt.Sprintf("evaluation_error: %v", err)
+		c.ConstVal = constant.MakeUnknown()
+		return
+	}
+	c.ConstVal = val
+	c.Value = val.String()
+}
+
+// evalConstExpr recursively evaluates an AST expression to a constant.Value.
+func (s *Scanner) evalConstExpr(cctx *constContext, currentConst *ConstantInfo, expr ast.Expr) (constant.Value, error) {
+	switch n := expr.(type) {
+	case *ast.Ident:
+		if n.Name == "iota" {
+			return constant.MakeFromLiteral(fmt.Sprintf("%d", currentConst.IotaValue), token.INT, 0), nil
+		}
+		if c, ok := cctx.env[n.Name]; ok {
+			s.evaluateConstant(cctx, c) // Ensure dependency is evaluated
+			if c.ConstVal != nil && c.ConstVal.Kind() != constant.Unknown {
+				return c.ConstVal, nil
+			}
+			return nil, fmt.Errorf("dependency %s could not be evaluated", n.Name)
+		}
+		// Handle built-in `true` and `false`
+		if n.Obj != nil && n.Obj.Kind == ast.Con && n.Obj.Data == nil {
+			switch n.Name {
+			case "true":
+				return constant.MakeBool(true), nil
+			case "false":
+				return constant.MakeBool(false), nil
+			}
+		}
+		return nil, fmt.Errorf("unresolved identifier: %s", n.Name)
+	case *ast.BasicLit:
+		return constant.MakeFromLiteral(n.Value, n.Kind, 0), nil
+	case *ast.ParenExpr:
+		return s.evalConstExpr(cctx, currentConst, n.X)
+	case *ast.UnaryExpr:
+		x, err := s.evalConstExpr(cctx, currentConst, n.X)
+		if err != nil {
+			return nil, err
+		}
+		return constant.UnaryOp(n.Op, x, 0), nil
+	case *ast.BinaryExpr:
+		x, err := s.evalConstExpr(cctx, currentConst, n.X)
+		if err != nil {
+			return nil, err
+		}
+		y, err := s.evalConstExpr(cctx, currentConst, n.Y)
+		if err != nil {
+			return nil, err
+		}
+
+		if n.Op == token.SHL || n.Op == token.SHR {
+			if y_uint64, exact := constant.Uint64Val(y); exact {
+				return constant.Shift(x, n.Op, uint(y_uint64)), nil
+			}
+			return nil, fmt.Errorf("shift amount must be an unsigned integer, got %s", y.String())
+		}
+		return constant.BinaryOp(x, n.Op, y), nil
+	case *ast.SelectorExpr:
+		// TODO: Handle cross-package constant references.
+		return nil, fmt.Errorf("cross-package constant references not supported")
+	case *ast.CallExpr:
+		// Handle simple type conversions like `uint(0)`.
+		if typeIdent, ok := n.Fun.(*ast.Ident); ok {
+			if len(n.Args) == 1 {
+				if lit, ok := n.Args[0].(*ast.BasicLit); ok && lit.Kind == token.INT {
+					// This is a basic form of type conversion, e.g., uint(0).
+					// We can treat the literal as the value.
+					// This is a simplification and doesn't handle all conversions.
+					switch typeIdent.Name {
+					case "uint", "int", "uint64", "int64", "float64", "float32", "string":
+						return constant.MakeFromLiteral(lit.Value, lit.Kind, 0), nil
+					}
+				}
+			}
+		}
+		// TODO: Handle built-in functions like unsafe.Sizeof.
+		return nil, fmt.Errorf("built-in functions and complex type conversions in const expressions not supported")
+	default:
+		return nil, fmt.Errorf("unsupported const expression type: %T", expr)
 	}
 }
 

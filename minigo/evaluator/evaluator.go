@@ -660,6 +660,10 @@ func (e *Evaluator) evalPrefixExpression(node *ast.UnaryExpr, operator string, r
 			return e.newError(node.Pos(), "invalid operation: unary + on non-number %s", right.Type())
 		}
 		return right
+	case "~":
+		// The tilde is for type approximation in constraints.
+		// For our dynamic evaluation, we can treat ~T as just T.
+		return right
 	default:
 		return e.newError(node.Pos(), "unknown operator: %s%s", operator, right.Type())
 	}
@@ -1870,26 +1874,36 @@ func (e *Evaluator) applyFunction(call *ast.CallExpr, fn object.Object, args []o
 	// Check type constraints before setting up the environment.
 	if function.TypeParams != nil {
 		// We need an environment to evaluate the constraint expressions.
-		// It should be based on the function's definition environment so that
-		// package-level types referenced in the constraint can be found.
-		var constraintEnv *object.Environment
+		// It should be based on the function's definition environment...
+		var baseConstraintEnv *object.Environment
 		if function.Env != nil {
-			constraintEnv = function.Env
+			baseConstraintEnv = function.Env
 		} else {
-			constraintEnv = env // Fallback to the calling environment
+			baseConstraintEnv = env // Fallback to the calling environment
 		}
+		// ... and it must also contain the type parameters themselves, since a
+		// constraint for one parameter might refer to another (e.g., S ~[]E).
+		constraintEnv := object.NewEnclosedEnvironment(baseConstraintEnv)
+		e.bindTypeParams(constraintEnv, function.TypeParams, typeArgs)
 
-		for i, param := range function.TypeParams.List {
-			concreteType := typeArgs[i]
-			constraintExpr := param.Type
+		// This loop needs to be careful with multi-name fields.
+		typeArgIndex := 0
+		for _, param := range function.TypeParams.List {
+			for range param.Names {
+				if typeArgIndex < len(typeArgs) {
+					concreteType := typeArgs[typeArgIndex]
+					constraintExpr := param.Type
 
-			constraintObj := e.Eval(constraintExpr, constraintEnv, function.FScope)
-			if isError(constraintObj) {
-				return constraintObj
-			}
+					constraintObj := e.Eval(constraintExpr, constraintEnv, function.FScope)
+					if isError(constraintObj) {
+						return constraintObj
+					}
 
-			if err := e.checkTypeConstraint(param.Pos(), concreteType, constraintObj, constraintEnv, function.FScope); err != nil {
-				return err
+					if err := e.checkTypeConstraint(param.Pos(), concreteType, constraintObj, constraintEnv, function.FScope); err != nil {
+						return err
+					}
+					typeArgIndex++
+				}
 			}
 		}
 	}
@@ -2091,12 +2105,7 @@ func (e *Evaluator) extendMethodEnv(method *object.BoundMethod, args []object.Ob
 
 	// Bind type parameters from the generic struct instance to the environment.
 	if instance, ok := method.Receiver.(*object.StructInstance); ok {
-		if instance.Def.TypeParams != nil && len(instance.Def.TypeParams.List) == len(instance.TypeArgs) {
-			for i, param := range instance.Def.TypeParams.List {
-				// param.Names[0] is the name of the type parameter, e.g., 'T'
-				env.SetType(param.Names[0].Name, instance.TypeArgs[i])
-			}
-		}
+		e.bindTypeParams(env, instance.Def.TypeParams, instance.TypeArgs)
 	}
 
 	// Bind the receiver variable (e.g., 's' in 'func (s MyType) ...')
@@ -2151,14 +2160,24 @@ func (e *Evaluator) extendMethodEnv(method *object.BoundMethod, args []object.Ob
 	return env
 }
 
-func (e *Evaluator) extendFunctionEnv(env *object.Environment, fn *object.Function, args []object.Object, typeArgs []object.Object) {
-	// Bind type parameters from the generic function call to the environment.
-	if fn.TypeParams != nil && len(fn.TypeParams.List) > 0 {
-		for i, param := range fn.TypeParams.List {
-			// param.Names[0] is the name of the type parameter, e.g., 'T'
-			env.SetType(param.Names[0].Name, typeArgs[i])
+func (e *Evaluator) bindTypeParams(env *object.Environment, typeParams *ast.FieldList, typeArgs []object.Object) {
+	if typeParams == nil || len(typeParams.List) == 0 {
+		return
+	}
+	typeArgIndex := 0
+	for _, param := range typeParams.List {
+		for _, paramName := range param.Names {
+			if typeArgIndex < len(typeArgs) {
+				env.SetType(paramName.Name, typeArgs[typeArgIndex])
+				typeArgIndex++
+			}
 		}
 	}
+}
+
+func (e *Evaluator) extendFunctionEnv(env *object.Environment, fn *object.Function, args []object.Object, typeArgs []object.Object) {
+	// Bind type parameters from the generic function call to the environment.
+	e.bindTypeParams(env, fn.TypeParams, typeArgs)
 
 	if fn.Parameters == nil {
 		return

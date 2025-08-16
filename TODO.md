@@ -122,7 +122,8 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 
 ### `minigo` Interpreter Enhancements
 - [x] **Support arbitrary byte sequences in string literals**: The interpreter fails when it encounters string constants containing null bytes (`\x00`), such as `len8tab` from the `math/bits` package. This blocks the interpretation of packages like `slices` that depend on it. The string handling logic in `minigo` needs to be improved to support these literals correctly.
-- [ ] **Fix generic type parameter scope**: The interpreter fails to resolve type parameters (e.g., `E` in `slices.Sort[S ~[]E, E cmp.Ordered]`) within the body of a generic function when the function is loaded from source. This points to a bug in how the evaluation environment is managed for generic functions. This currently blocks the use of the `slices` package.
+- [x] **Fix generic type parameter scope**: The interpreter fails to resolve type parameters (e.g., `E` in `slices.Sort[S ~[]E, E cmp.Ordered]`) within the body of a generic function when the function is loaded from source. This points to a bug in how the evaluation environment is managed for generic functions. This currently blocks the use of the `slices` package.
+- [ ] **Resolve transitive dependencies in generic constraints**: The interpreter fails to resolve identifiers from imported packages when they are used within a generic function's type constraints (e.g., `cmp.Ordered` in `func Sort[S ~[]E, E cmp.Ordered](x S)`). The transitive dependency loading needs to be improved to handle this case.
 
 ### Toolchain Improvements
 - [x] **Improve `go-scan` constant evaluation**: The static analyzer currently fails to resolve the values of some computed constants (e.g., `len8tab` in `math/bits`), causing `minigo` to fail when interpreting packages that depend on them (like `slices.Sort`). The scanner should be enhanced to evaluate these constant expressions.

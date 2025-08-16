@@ -24,12 +24,12 @@ The investigation revealed several fundamental limitations in the FFI bridge. Th
 ### `slices` (Mostly Supported via Source Interpretation)
 
 -   **Status**: Partially Compatible (Blocked).
--   **Analysis**: Several issues blocking the `slices` package have been resolved.
+-   **Analysis**:
     -   **FIXED**: The `go-scan` tool can now correctly evaluate complex string constants containing arbitrary byte sequences (e.g., `\x00`). This was a blocker for interpreting `math/bits`, a dependency of `slices`.
-    -   **FIXED**: The interpreter can now correctly load transitive dependencies (e.g., `slices` -> `cmp`), resolving the `undefined: slices.Sort` issue.
--   **Current Blocker**: With the previous issues fixed, testing of `slices.Sort` now reveals a limitation in the interpreter's handling of generics.
-    -   **Root Cause: `identifier not found: E`**: When evaluating the body of a generic function like `slices.Sort[S ~[]E, E cmp.Ordered](x S)`, the type parameter `E` (representing the element type of the slice) is not found in the evaluation environment. This points to a fundamental bug in how the interpreter manages scope for generic type parameters during function evaluation.
--   **Conclusion**: The `slices` package is currently unusable with source interpretation until this generics scope issue is resolved.
+    -   **FIXED**: The interpreter's environment management for generic functions has been improved. The previous "identifier not found: E" error, caused by evaluating type constraints in the wrong scope, is now resolved.
+-   **Current Blocker**: With the generics scope issue fixed, testing now reveals a new blocker: failure to resolve identifiers from imported packages within type parameter constraints.
+    -   **Root Cause: `undefined: cmp.Ordered`**: When evaluating a function signature like `func Sort[S ~[]E, E cmp.Ordered](x S)`, the interpreter fails to resolve `cmp.Ordered`. This indicates that while the `slices` package is being loaded from source, its import `cmp` is not being correctly resolved or loaded during the evaluation of the generic type constraint.
+-   **Conclusion**: The `slices` package is currently unusable with source interpretation until this transitive dependency issue within generic constraints is resolved.
 
 ### `strconv`
 

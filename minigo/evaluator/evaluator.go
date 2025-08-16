@@ -3778,24 +3778,53 @@ func (e *Evaluator) findSymbolInPackageInfo(pkgInfo *goscan.Package, symbolName 
 
 	// Look in types (for struct definitions)
 	for _, t := range pkgInfo.Types {
-		if t.Name == symbolName && t.Kind == goscan.StructKind {
-			// The Node on TypeInfo is an ast.Spec, which should be a *ast.TypeSpec.
-			typeSpec, ok := t.Node.(*ast.TypeSpec)
-			if !ok {
-				continue // Should not happen for valid structs
-			}
-			structType, ok := typeSpec.Type.(*ast.StructType)
-			if !ok {
-				continue // Should not happen for a StructKind
-			}
+		if t.Name == symbolName {
+			switch t.Kind {
+			case goscan.StructKind:
+				// The Node on TypeInfo is an ast.Spec, which should be a *ast.TypeSpec.
+				typeSpec, ok := t.Node.(*ast.TypeSpec)
+				if !ok {
+					continue // Should not happen for valid structs
+				}
+				structType, ok := typeSpec.Type.(*ast.StructType)
+				if !ok {
+					continue // Should not happen for a StructKind
+				}
 
-			// Convert scanner.TypeInfo to object.StructDefinition
-			def := &object.StructDefinition{
-				Name:    typeSpec.Name,
-				Fields:  structType.Fields.List,
-				Methods: make(map[string]*object.Function), // Initialize methods map
+				// Convert scanner.TypeInfo to object.StructDefinition
+				def := &object.StructDefinition{
+					Name:    typeSpec.Name,
+					Fields:  structType.Fields.List,
+					Methods: make(map[string]*object.Function), // Initialize methods map
+				}
+				return def, true
+
+			case goscan.InterfaceKind:
+				typeSpec, ok := t.Node.(*ast.TypeSpec)
+				if !ok {
+					continue
+				}
+				ifaceType, ok := typeSpec.Type.(*ast.InterfaceType)
+				if !ok {
+					continue
+				}
+
+				def := &object.InterfaceDefinition{
+					Name:     typeSpec.Name,
+					Methods:  &ast.FieldList{},
+					TypeList: make([]ast.Expr, 0),
+				}
+				if ifaceType.Methods != nil {
+					for _, field := range ifaceType.Methods.List {
+						if len(field.Names) > 0 {
+							def.Methods.List = append(def.Methods.List, field)
+						} else {
+							def.TypeList = append(def.TypeList, e.flattenTypeUnion(field.Type)...)
+						}
+					}
+				}
+				return def, true
 			}
-			return def, true
 		}
 	}
 

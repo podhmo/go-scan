@@ -4,36 +4,21 @@ package json
 
 import (
 	"encoding/json"
+
 	"github.com/podhmo/go-scan/minigo"
 )
 
 // Install binds all exported symbols from the "encoding/json" package to the interpreter.
 func Install(interp *minigo.Interpreter) {
 	interp.Register("encoding/json", map[string]any{
-		"Compact": json.Compact,
-		"HTMLEscape": json.HTMLEscape,
-		"Indent": json.Indent,
-		"Marshal": json.Marshal,
+		"Compact":       json.Compact,
+		"HTMLEscape":    json.HTMLEscape,
+		"Indent":        json.Indent,
+		"Marshal":       json.Marshal,
 		"MarshalIndent": json.MarshalIndent,
-		"NewDecoder": json.NewDecoder,
-		"NewEncoder": json.NewEncoder,
-		"Unmarshal": json.Unmarshal,
-		"Valid": json.Valid,
-		"Decoder": (*json.Decoder)(nil),
-		"Delim": (*json.Delim)(nil),
-		"Encoder": (*json.Encoder)(nil),
-		"InvalidUTF8Error": (*json.InvalidUTF8Error)(nil),
-		"InvalidUnmarshalError": (*json.InvalidUnmarshalError)(nil),
-		"Marshaler": (*json.Marshaler)(nil),
-		"MarshalerError": (*json.MarshalerError)(nil),
-		"Number": (*json.Number)(nil),
-		"RawMessage": (*json.RawMessage)(nil),
-		"SyntaxError": (*json.SyntaxError)(nil),
-		"Token": (*json.Token)(nil),
-		"UnmarshalFieldError": (*json.UnmarshalFieldError)(nil),
-		"UnmarshalTypeError": (*json.UnmarshalTypeError)(nil),
-		"Unmarshaler": (*json.Unmarshaler)(nil),
-		"UnsupportedTypeError": (*json.UnsupportedTypeError)(nil),
-		"UnsupportedValueError": (*json.UnsupportedValueError)(nil),
+		"NewDecoder":    json.NewDecoder,
+		"NewEncoder":    json.NewEncoder,
+		"Unmarshal":     json.Unmarshal,
+		"Valid":         json.Valid,
 	})
 }

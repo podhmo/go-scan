@@ -201,3 +201,15 @@ These packages are likely to fail in new and informative ways, helping to reveal
 -   **`compress/gzip`**: Would be a practical test of `io.Reader`/`io.Writer` interface implementation.
 -   **`flag`**: Would test interaction with OS arguments and reflection-based struct population.
 -   **`sync`**: Would confirm the expected limitation that the single-threaded `minigo` interpreter cannot support Go's concurrency model.
+
+### Incorrect Error Value from `json.Unmarshal`
+
+-   **Limitation**: When `encoding/json.Unmarshal` is called via the FFI with data that should produce a specific error (e.g., `*json.UnmarshalTypeError`), the interpreter receives a `nil` error value instead of the expected error object.
+-   **Impact**: This prevents scripts from correctly detecting and handling specific JSON parsing errors. While the FFI bridge correctly handles functions that return `(value, error)`, its handling of functions that return a single `error` value appears to be flawed in this specific case.
+-   **Example (`minigo/minigo_stdlib_custom_test.go`)**:
+    ```go
+    // This script should produce an UnmarshalTypeError, but `err` is nil.
+    var data = []byte(`{"X":1,"Y":"not-a-number"}`)
+    var p Point
+    var err = json.Unmarshal(data, &p)
+    ```

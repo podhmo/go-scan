@@ -42,7 +42,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
         - [x] `fmt`
         - [x] `strings`
         - [x] `strconv`
-        - [-] `encoding/json` (bindings generated, but runtime support is incomplete; see `docs/trouble-minigo-encoding-json.md`)
+        - [x] `encoding/json` (Generator now supports types and variables, though a runtime issue with `Unmarshal` error propagation persists and is tracked separately).
     - [x] **Generate and Test Standard Library Bindings**
 - **MiniGo REPL** ([docs/plan-minigo-repl.md](./docs/plan-minigo-repl.md)):
     - [x] **Task 1: Modify `main.go` to conditionally start the REPL.**
@@ -121,6 +121,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [ ] Write comprehensive documentation for the API, supported language features, and usage examples.
 
 ### `minigo` FFI and Language Limitations (New Findings)
+- [ ] **Fix `json.Unmarshal` error propagation**: The FFI fails to correctly propagate `*json.UnmarshalTypeError` from `json.Unmarshal`, returning a `nil` value instead. This prevents scripts from handling JSON validation errors correctly.
 - [ ] **Improve method call support for stateful objects**: The FFI and evaluator have trouble with packages like `container/list` where methods (`PushBack`, `Next`) modify the internal state of a Go object in a way that is not correctly reflected back into the script environment. This prevents effective use of stateful, object-oriented packages.
 - [ ] **Support slice operator on Go-native arrays**: The interpreter does not support the slice operator (`[:]`) on `object.GoValue` types that wrap Go arrays (e.g., `[16]byte`). This was discovered when testing `crypto/md5` and blocks the use of functions that return native Go arrays.
 

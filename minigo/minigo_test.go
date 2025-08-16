@@ -351,6 +351,54 @@ func main() {
 	}
 }
 
+func TestInterpreter_PointerReceiverMethodCall(t *testing.T) {
+	input := `package main
+
+type Counter struct {
+	value int
+}
+
+func (c *Counter) Inc() {
+	c.value = c.value + 1
+}
+
+func (c *Counter) Get() int {
+    return c.value
+}
+
+var c Counter
+var p = &c
+var _ = p.Inc()
+var val = p.Get()
+`
+	i, err := NewInterpreter()
+	if err != nil {
+		t.Fatalf("NewInterpreter() failed: %v", err)
+	}
+
+	if err := i.LoadFile("test.go", []byte(input)); err != nil {
+		t.Fatalf("LoadFile() failed: %v", err)
+	}
+
+	_, err = i.Eval(context.Background())
+	if err != nil {
+		t.Fatalf("Eval() failed: %v", err)
+	}
+
+	// Check the final value
+	result, ok := i.globalEnv.Get("val")
+	if !ok {
+		t.Fatalf("variable 'val' not found in environment")
+	}
+	integer, ok := result.(*object.Integer)
+	if !ok {
+		t.Fatalf("val is not Integer. got=%T (%+v)", result, result)
+	}
+	if integer.Value != 1 {
+		t.Errorf("val should be 1. got=%d", integer.Value)
+	}
+}
+
 func TestInterpreterEval_TypeConversions(t *testing.T) {
 	input := `package main
 var bs = []byte("hello")

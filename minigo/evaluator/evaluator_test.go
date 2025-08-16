@@ -1314,7 +1314,7 @@ func TestStructEmbedding(t *testing.T) {
 			p := &Figure{name: "fig"} // Point is nil
 			return p.x
 			`,
-			"undefined field or method 'x' on struct 'Figure'", // It's undefined because the path to it is nil
+			"undefined field or method 'x' on pointer to struct 'Figure'", // It's undefined because the path to it is nil
 		},
 	}
 

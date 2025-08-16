@@ -1821,16 +1821,33 @@ func (e *Evaluator) applyFunction(call *ast.CallExpr, fn object.Object, args []o
 		callPos = call.Pos()
 	}
 
+	// Calculate the total number of non-variadic parameter names.
+	paramCount := 0
+	if function.Parameters != nil {
+		for _, field := range function.Parameters.List {
+			// For `func(a, b int)`, field.Names is ["a", "b"].
+			// For `func(int)`, field.Names is empty, but there's one field.
+			if len(field.Names) > 0 {
+				paramCount += len(field.Names)
+			} else {
+				// This handles unnamed parameters, which appear one per field.
+				// It also correctly handles the `...T` in a variadic function,
+				// which also appears as a single field with no name.
+				paramCount++
+			}
+		}
+	}
+
 	// Check argument count
 	if function.IsVariadic() {
-		if len(args) < len(function.Parameters.List)-1 {
-			return e.newError(callPos, "wrong number of arguments for variadic function. got=%d, want at least %d", len(args), len(function.Parameters.List)-1)
+		// For a variadic function, we need at least (paramCount - 1) arguments.
+		// The `paramCount` includes the variadic `...T` parameter itself.
+		if len(args) < paramCount-1 {
+			return e.newError(callPos, "wrong number of arguments for variadic function. got=%d, want at least %d", len(args), paramCount-1)
 		}
 	} else {
-		if function.Parameters != nil && len(function.Parameters.List) != len(args) {
-			return e.newError(callPos, "wrong number of arguments. got=%d, want=%d", len(args), len(function.Parameters.List))
-		} else if function.Parameters == nil && len(args) != 0 {
-			return e.newError(callPos, "wrong number of arguments. got=%d, want=0", len(args))
+		if paramCount != len(args) {
+			return e.newError(callPos, "wrong number of arguments. got=%d, want=%d", len(args), paramCount)
 		}
 	}
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"go/ast"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -25,8 +26,11 @@ import (
 // Install binds all exported symbols from the "{{ .PackagePath }}" package to the interpreter.
 func Install(interp *minigo.Interpreter) {
 	interp.Register("{{ .PackagePath }}", map[string]any{
-		{{- range .Symbols }}
+		{{- range .ValueSymbols }}
 		"{{ . }}": {{ $.PackageName }}.{{ . }},
+		{{- end }}
+		{{- range .TypeSymbols }}
+		"{{ . }}": (*{{ $.PackageName }}.{{ . }})(nil),
 		{{- end }}
 	})
 }
@@ -80,38 +84,57 @@ func generate(ctx context.Context, s *goscan.Scanner, outputDir, pkgPath string)
 		return fmt.Errorf("failed to scan package %s: %w", pkgPath, err)
 	}
 
-	symbols := make(map[string]struct{})
+	valueSymbols := make(map[string]struct{})
+	typeSymbols := make(map[string]struct{})
+
 	for _, f := range pkgInfo.Functions {
-		// Skip generic functions
 		if len(f.TypeParams) > 0 {
 			continue
 		}
 		if f.Receiver == nil && f.AstDecl != nil && f.AstDecl.Name != nil && f.AstDecl.Name.IsExported() {
-			symbols[f.Name] = struct{}{}
+			valueSymbols[f.Name] = struct{}{}
 		}
 	}
 	for _, c := range pkgInfo.Constants {
 		if c.IsExported {
-			symbols[c.Name] = struct{}{}
+			valueSymbols[c.Name] = struct{}{}
+		}
+	}
+	for _, v := range pkgInfo.Variables {
+		if v.IsExported {
+			valueSymbols[v.Name] = struct{}{}
+		}
+	}
+	for _, t := range pkgInfo.Types {
+		if t.Name != "" && ast.IsExported(t.Name) {
+			typeSymbols[t.Name] = struct{}{}
 		}
 	}
 
-	symbolSlice := make([]string, 0, len(symbols))
-	for s := range symbols {
-		symbolSlice = append(symbolSlice, s)
+	valueSymbolSlice := make([]string, 0, len(valueSymbols))
+	for s := range valueSymbols {
+		valueSymbolSlice = append(valueSymbolSlice, s)
 	}
-	sort.Strings(symbolSlice)
+	sort.Strings(valueSymbolSlice)
+
+	typeSymbolSlice := make([]string, 0, len(typeSymbols))
+	for s := range typeSymbols {
+		typeSymbolSlice = append(typeSymbolSlice, s)
+	}
+	sort.Strings(typeSymbolSlice)
 
 	pkgName := pkgInfo.Name
 
 	params := struct {
-		PackageName string
-		PackagePath string
-		Symbols     []string
+		PackageName  string
+		PackagePath  string
+		ValueSymbols []string
+		TypeSymbols  []string
 	}{
-		PackageName: pkgName,
-		PackagePath: pkgPath,
-		Symbols:     symbolSlice,
+		PackageName:  pkgName,
+		PackagePath:  pkgPath,
+		ValueSymbols: valueSymbolSlice,
+		TypeSymbols:  typeSymbolSlice,
 	}
 
 	pkgOutputDir := filepath.Join(outputDir, pkgPath)

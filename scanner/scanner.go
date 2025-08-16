@@ -427,6 +427,27 @@ func (s *Scanner) parseGenDecl(ctx context.Context, decl *ast.GenDecl, info *Pac
 				info.Types = append(info.Types, typeInfo)
 			}
 		}
+	} else if decl.Tok == token.VAR {
+		for _, spec := range decl.Specs {
+			if vs, ok := spec.(*ast.ValueSpec); ok {
+				var varType *FieldType
+				if vs.Type != nil {
+					varType = s.parseTypeExpr(ctx, vs.Type, nil, info, importLookup)
+				}
+
+				for _, name := range vs.Names {
+					varInfo := &VariableInfo{
+						Name:       name.Name,
+						FilePath:   absFilePath,
+						Doc:        commentText(vs.Doc),
+						Type:       varType,
+						IsExported: name.IsExported(),
+						Node:       name,
+					}
+					info.Variables = append(info.Variables, varInfo)
+				}
+			}
+		}
 	}
 }
 

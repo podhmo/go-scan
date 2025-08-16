@@ -12,7 +12,7 @@ import (
 func Install(interp *minigo.Interpreter) {
 	interp.Register("container/list", map[string]any{
 		"New":     list.New,
-		"Element": (*list.Element)(nil),
-		"List":    (*list.List)(nil),
+		"Element": list.Element{},
+		"List":    list.List{},
 	})
 }

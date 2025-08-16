@@ -31,10 +31,10 @@ func Install(interp *minigo.Interpreter) {
 		"ScanLines":            bufio.ScanLines,
 		"ScanRunes":            bufio.ScanRunes,
 		"ScanWords":            bufio.ScanWords,
-		"ReadWriter":           (*bufio.ReadWriter)(nil),
-		"Reader":               (*bufio.Reader)(nil),
-		"Scanner":              (*bufio.Scanner)(nil),
+		"ReadWriter":           bufio.ReadWriter{},
+		"Reader":               bufio.Reader{},
+		"Scanner":              bufio.Scanner{},
+		"Writer":               bufio.Writer{},
 		"SplitFunc":            (*bufio.SplitFunc)(nil),
-		"Writer":               (*bufio.Writer)(nil),
 	})
 }

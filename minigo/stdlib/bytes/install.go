@@ -73,7 +73,7 @@ func Install(interp *minigo.Interpreter) {
 		"TrimRightFunc":   bytes.TrimRightFunc,
 		"TrimSpace":       bytes.TrimSpace,
 		"TrimSuffix":      bytes.TrimSuffix,
-		"Buffer":          (*bytes.Buffer)(nil),
-		"Reader":          (*bytes.Reader)(nil),
+		"Buffer":          bytes.Buffer{},
+		"Reader":          bytes.Reader{},
 	})
 }

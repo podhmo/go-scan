@@ -21,15 +21,14 @@ The investigation revealed several fundamental limitations in the FFI bridge. Th
 
 ## Package-Specific Analysis
 
-### `slices` (Partially Supported via Source Interpretation)
+### `slices` (Mostly Supported via Source Interpretation)
 
--   **Status**: Partially Compatible.
--   **Analysis**: The `slices` package can be loaded via direct source interpretation, but several functions fail due to two distinct limitations in the `minigo` interpreter's handling of generics.
--   **Working Functions**: `Clone`, `Index`
+-   **Status**: Mostly Compatible.
+-   **Analysis**: The `slices` package is now largely compatible with direct source interpretation. Previous bugs in argument counting/binding and a missing unary plus (`+`) operator in the interpreter have been fixed, enabling most functions.
+-   **Working Functions**: `Clone`, `Index`, `Equal`, `Compare`
 -   **Failing Functions**:
-    -   `Equal`, `Compare`: These fail with a `wrong number of arguments` error. This appears to be caused by a bug in the interpreter where it incorrectly counts the number of arguments if multiple arguments share the same generic type parameter (e.g., `s1, s2 S`).
-    -   `Sort`: This function causes a panic (`nil pointer dereference`) during symbol lookup. The root cause is that `Sort`'s signature uses the `cmp.Ordered` interface as a constraint. The `minigo` interpreter does not support the type list syntax (`type Ordered interface { ~int | ... }`) used to define this interface in the `cmp` package, so it fails to resolve the type.
--   **Conclusion**: While basic `slices` functions work, those that use more advanced generic features (multiple parameters of the same generic type) or depend on packages with unsupported syntax (like `cmp`) will fail.
+    -   `Sort`: This function fails during evaluation with the error `could not convert constant "len8tab"`. This indicates that the `go-scan` static analysis tool was unable to resolve the value of this constant from one of `Sort`'s transitive dependencies (likely in the `math/bits` package, which is used by the sorting algorithm). This is a limitation of the static analyzer, not the interpreter's parsing ability. The interpreter can now correctly parse the `cmp.Ordered` interface constraint.
+-   **Conclusion**: Most of the `slices` package is usable. Functions that rely on complex, computed constants in their dependencies may fail if the static analyzer cannot resolve them.
 
 ### `strconv`
 

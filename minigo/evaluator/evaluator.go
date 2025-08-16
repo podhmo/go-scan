@@ -651,6 +651,12 @@ func (e *Evaluator) evalPrefixExpression(node *ast.UnaryExpr, operator string, r
 		return e.evalBangOperatorExpression(right)
 	case "-":
 		return e.evalMinusPrefixOperatorExpression(node, right)
+	case "+":
+		// Unary plus is a no-op for numbers.
+		if right.Type() != object.INTEGER_OBJ && right.Type() != object.FLOAT_OBJ {
+			return e.newError(node.Pos(), "invalid operation: unary + on non-number %s", right.Type())
+		}
+		return right
 	default:
 		return e.newError(node.Pos(), "unknown operator: %s%s", operator, right.Type())
 	}
@@ -2025,9 +2031,19 @@ func (e *Evaluator) extendMethodEnv(method *object.BoundMethod, args []object.Ob
 		env.Set(lastParam.Names[0].Name, arr)
 	} else {
 		// Bind regular parameters
-		for i, param := range fn.Parameters.List {
-			for _, paramName := range param.Names {
-				env.Set(paramName.Name, args[i])
+		argIndex := 0
+		for _, param := range fn.Parameters.List {
+			if len(param.Names) > 0 {
+				for _, paramName := range param.Names {
+					if argIndex < len(args) {
+						env.Set(paramName.Name, args[argIndex])
+						argIndex++
+					}
+				}
+			} else {
+				// This handles unnamed parameters, which appear one per field.
+				// We don't bind a name, but we still consume an argument.
+				argIndex++
 			}
 		}
 	}
@@ -2071,9 +2087,19 @@ func (e *Evaluator) extendFunctionEnv(fn *object.Function, args []object.Object,
 
 	} else {
 		// Bind regular parameters
-		for i, param := range fn.Parameters.List {
-			for _, paramName := range param.Names {
-				env.Set(paramName.Name, args[i])
+		argIndex := 0
+		for _, param := range fn.Parameters.List {
+			if len(param.Names) > 0 {
+				for _, paramName := range param.Names {
+					if argIndex < len(args) {
+						env.Set(paramName.Name, args[argIndex])
+						argIndex++
+					}
+				}
+			} else {
+				// This handles unnamed parameters, which appear one per field.
+				// We don't bind a name, but we still consume an argument.
+				argIndex++
 			}
 		}
 	}

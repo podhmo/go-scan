@@ -439,6 +439,9 @@ func (sd *StructDefinition) Inspect() string {
 type InterfaceDefinition struct {
 	Name    *ast.Ident
 	Methods *ast.FieldList
+	// For interfaces with type lists, like `type Ordered interface { ~int | ~string }`
+	// This will store the expressions for `~int` and `string`.
+	TypeList []ast.Expr
 }
 
 // Type returns the type of the InterfaceDefinition object.

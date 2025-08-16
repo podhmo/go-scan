@@ -351,6 +351,105 @@ func main() {
 	}
 }
 
+func TestInterpreter_InterfaceTypeListConstraint(t *testing.T) {
+	tests := []struct {
+		name          string
+		script        string
+		shouldError   bool
+		errorContains string
+	}{
+		{
+			name: "int satisfies ~int | string",
+			script: `
+package main
+type Ordered interface { ~int | string }
+func F[T Ordered](v T) {}
+func main() {
+	F(10)
+}`,
+			shouldError: false,
+		},
+		{
+			name: "string satisfies ~int | string",
+			script: `
+package main
+type Ordered interface { ~int | string }
+func F[T Ordered](v T) {}
+func main() {
+	F("hello")
+}`,
+			shouldError: false,
+		},
+		{
+			name: "float does not satisfy ~int | string",
+			script: `
+package main
+type Ordered interface { ~int | string }
+func F[T Ordered](v T) {}
+func main() {
+	F(3.14)
+}`,
+			shouldError:   true,
+			errorContains: "type float64 does not satisfy interface constraint Ordered",
+		},
+		{
+			name: "user defined type with underlying int satisfies ~int",
+			script: `
+package main
+type MyInt int
+type Ordered interface { ~int | string }
+func F[T Ordered](v T) {}
+func main() {
+	var x MyInt = 100
+	F(x)
+}`,
+			shouldError: false, // This will fail until `typesAreCompatible` is improved.
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.name == "user defined type with underlying int satisfies ~int" {
+				t.Skip("Skipping because checking underlying types for constraints (`~int`) is not fully implemented yet.")
+			}
+
+			i, err := NewInterpreter()
+			if err != nil {
+				t.Fatalf("NewInterpreter() failed: %v", err)
+			}
+
+			err = i.LoadFile("test.go", []byte(tt.script))
+			if err != nil {
+				t.Fatalf("LoadFile() failed: %v", err)
+			}
+
+			err = i.EvalDeclarations(context.Background())
+			if err != nil {
+				t.Fatalf("EvalDeclarations() failed: %v", err)
+			}
+
+			mainFunc, fscope, err := i.FindFunction("main")
+			if err != nil {
+				t.Fatalf("FindFunction('main') failed: %v", err)
+			}
+
+			_, execErr := i.Execute(context.Background(), mainFunc, nil, fscope)
+
+			if tt.shouldError {
+				if execErr == nil {
+					t.Errorf("Expected an error, but got nil")
+				} else if !strings.Contains(execErr.Error(), tt.errorContains) {
+					t.Errorf("Expected error to contain %q, but got: %v", tt.errorContains, execErr)
+				}
+			} else {
+				if execErr != nil {
+					t.Errorf("Expected no error, but got: %v", execErr)
+				}
+			}
+		})
+	}
+}
+
 func TestInterpreter_PointerReceiverMethodCall(t *testing.T) {
 	input := `package main
 

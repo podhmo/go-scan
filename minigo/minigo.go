@@ -153,17 +153,21 @@ func (i *Interpreter) LoadGoSourceAsPackage(pkgName, source string) error {
 		Members: make(map[string]object.Object),
 	}
 
-	pkgEnv := object.NewEnclosedEnvironment(i.globalEnv)
+	pkgObj.Env = object.NewEnclosedEnvironment(i.globalEnv)
 	fileScope := object.NewFileScope(node)
 
+	// Use the new two-pass evaluation logic to correctly handle out-of-order declarations.
+	var decls []object.DeclWithScope
 	for _, decl := range node.Decls {
-		result := i.eval.Eval(decl, pkgEnv, fileScope)
-		if isError(result) {
-			return fmt.Errorf("error evaluating declaration in %s: %s", pkgName, result.Inspect())
-		}
+		decls = append(decls, object.DeclWithScope{Decl: decl, Scope: fileScope})
+	}
+	result := i.eval.EvalToplevel(decls, pkgObj.Env)
+	if isError(result) {
+		return fmt.Errorf("error evaluating package %s: %s", pkgName, result.Inspect())
 	}
 
-	for name, obj := range pkgEnv.GetAll() {
+	// Populate the package's public members from its environment.
+	for name, obj := range pkgObj.Env.GetAll() {
 		pkgObj.Members[name] = obj
 	}
 

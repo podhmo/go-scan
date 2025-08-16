@@ -120,6 +120,9 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] **Support Increment and Decrement Operators**: Implement `++` and `--` as statements.
 - [ ] Write comprehensive documentation for the API, supported language features, and usage examples.
 
+### `minigo` Interpreter Enhancements
+- [ ] **Support arbitrary byte sequences in string literals**: The interpreter fails when it encounters string constants containing null bytes (`\x00`), such as `len8tab` from the `math/bits` package. This blocks the interpretation of packages like `slices` that depend on it. The string handling logic in `minigo` needs to be improved to support these literals correctly.
+
 ### Toolchain Improvements
 - [x] **Improve `go-scan` constant evaluation**: The static analyzer currently fails to resolve the values of some computed constants (e.g., `len8tab` in `math/bits`), causing `minigo` to fail when interpreting packages that depend on them (like `slices.Sort`). The scanner should be enhanced to evaluate these constant expressions.
 

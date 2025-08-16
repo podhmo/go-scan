@@ -687,7 +687,6 @@ var err = scanner.Err()
 
 // TestStdlib_TextScanner_FFI tests the `text/scanner` package.
 func TestStdlib_TextScanner_FFI(t *testing.T) {
-	t.Skip("Skipping text/scanner test: FFI cannot resolve methods on pointers to structs created in-script.")
 	script := `
 package main
 

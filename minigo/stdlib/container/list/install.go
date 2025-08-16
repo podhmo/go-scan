@@ -4,6 +4,7 @@ package list
 
 import (
 	"container/list"
+
 	"github.com/podhmo/go-scan/minigo"
 )
 

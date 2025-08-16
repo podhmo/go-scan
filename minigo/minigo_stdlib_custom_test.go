@@ -1015,7 +1015,6 @@ var hashStr = hex.EncodeToString(hash[:])
 		"EncodeToString": hex.EncodeToString,
 	})
 
-
 	if err := interp.LoadFile("test.mgo", []byte(script)); err != nil {
 		t.Fatalf("failed to load script: %+v", err)
 	}

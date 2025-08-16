@@ -136,21 +136,21 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 
 ### `minigo` Language and FFI Enhancements from Stdlib Investigation ([docs/trouble-minigo-stdlib-limitations.md](./docs/trouble-minigo-stdlib-limitations.md))
 - [x] **Support Struct Literals with Local Variables**: Enhance the evaluator to handle struct literals that are initialized with variables from the current function's scope (e.g., `&errorString{text}`). This was found to be a blocker for interpreting the `errors` package from source.
-- [ ] **Support Methods on In-Script Pointers**: Enable the FFI bridge to resolve method calls on pointers to structs that are created and manipulated entirely within a `minigo` script (e.g., `var s scanner.Scanner; var p = &s; p.Init(...)`). This was a blocker for using the `text/scanner` package.
+- [x] **Support Methods on In-Script Pointers**: Enable the FFI bridge to resolve method calls on pointers to structs that are created and manipulated entirely within a `minigo` script (e.g., `var s scanner.Scanner; var p = &s; p.Init(...)`). This was a blocker for using the `text/scanner` package.
 - [x] **Fix Generic Function Argument Counting**: The interpreter incorrectly counts arguments for generic functions when multiple arguments share the same generic type parameter (e.g., `func Equal[S ~[]E, E comparable](s1, s2 S) bool`). This causes `wrong number of arguments` errors.
 - [x] **Support Interfaces with Type Lists**: The interpreter can now parse interfaces defined with a type list (e.g., `type Ordered interface { ~int | ~string }`). This unblocks interpretation of packages like `cmp`.
 - [x] **Improve Stack Trace for Non-Existent Files**: Ensure a full stack trace is displayed even when a source file mentioned in the trace does not exist on disk (e.g., `[Error opening source file: open main.go: no such file or directory]`).
 
 ### `minigo` FFI Struct Instantiation ([docs/trouble-minigo-go-value-method-call.md](./docs/trouble-minigo-go-value-method-call.md))
-- [-] **Task 1: Differentiate FFI types from in-script types.**
+- [x] **Task 1: Differentiate FFI types from in-script types.**
   - In `evalGenDecl`, when evaluating `var s T`, determine if `T` refers to a Go type from the FFI or a struct defined in the script. This may require adding a flag or method to `object.Type` or `object.StructDefinition` to mark its origin.
 - [x] **Task 2: Instantiate FFI types as `*object.GoValue`.**
   - Modify `evalGenDecl` so that if `T` is an FFI type, it creates a `*object.GoValue` that wraps a zero-valued instance of the corresponding Go type (`reflect.Zero(goType)`). This will involve looking up the `reflect.Type` from a registry.
 - [x] **Task 3: Update pointer evaluation logic.**
   - The `evalSelectorExpr` and `assignValue` functions need to be updated to correctly handle `*object.Pointer`s that point to `*object.GoValue`s, allowing method calls and field assignments to work via reflection.
-- [ ] **Task 4: Re-enable and verify the `text/scanner` test.**
+- [x] **Task 4: Re-enable and verify the `text/scanner` test.**
   - Remove the skip from `TestStdlib_TextScanner_FFI` in `minigo/minigo_stdlib_custom_test.go` and ensure it passes.
-- [ ] **Task 5: Update documentation.**
+- [x] **Task 5: Update documentation.**
   - Update `docs/trouble-minigo-go-value-method-call.md` and `docs/trouble-minigo-stdlib-limitations.md` to reflect that the issue is resolved.
-- [ ] **Task 6: Investigate and fix address-of operator (`&`) for in-script variables of FFI struct types.**
+- [x] **Task 6: Investigate and fix address-of operator (`&`) for in-script variables of FFI struct types.**
   - The `text/scanner` test fails because `&s` (where `s` is `scanner.Scanner`) does not produce a valid pointer for method calls. The evaluation of the `&` operator needs to be fixed for this case.

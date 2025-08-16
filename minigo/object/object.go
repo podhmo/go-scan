@@ -104,12 +104,13 @@ func (cf *CallFrame) Format(fset *token.FileSet) string {
 		funcName = "<script>"
 	}
 
-	sourceLine := getSourceLine(position.Filename, position.Line)
-	if sourceLine != "" {
-		sourceLine = "\n\t\t" + sourceLine
+	sourceLine, err := getSourceLine(position.Filename, position.Line)
+	formattedSourceLine := ""
+	if err == nil && sourceLine != "" {
+		formattedSourceLine = "\n\t\t" + sourceLine
 	}
 
-	return fmt.Sprintf("\t%s:%d:%d:\tin %s%s", position.Filename, position.Line, position.Column, funcName, sourceLine)
+	return fmt.Sprintf("\t%s:%d:%d:\tin %s%s", position.Filename, position.Line, position.Column, funcName, formattedSourceLine)
 }
 
 // Object is the interface that all value types in our interpreter will implement.
@@ -726,9 +727,9 @@ func (e *Error) Inspect() string {
 
 	if e.fset != nil && e.Pos.IsValid() {
 		position := e.fset.Position(e.Pos)
-		sourceLine := getSourceLine(position.Filename, position.Line)
+		sourceLine, err := getSourceLine(position.Filename, position.Line)
 		out.WriteString(fmt.Sprintf("\n\t%s:%d:%d:", position.Filename, position.Line, position.Column))
-		if sourceLine != "" {
+		if err == nil && sourceLine != "" {
 			out.WriteString("\n\t\t" + sourceLine)
 		}
 	}
@@ -865,14 +866,14 @@ func (it *InstantiatedType) Inspect() string {
 	return out.String()
 }
 
-// getSourceLine reads a specific line from a file.
-func getSourceLine(filename string, lineNum int) string {
+// getSourceLine reads a specific line from a file. It returns the line and any error encountered.
+func getSourceLine(filename string, lineNum int) (string, error) {
 	if filename == "" || lineNum <= 0 {
-		return ""
+		return "", nil
 	}
 	file, err := os.Open(filename)
 	if err != nil {
-		return fmt.Sprintf("[Error opening source file: %v]", err)
+		return "", err
 	}
 	defer file.Close()
 
@@ -880,11 +881,14 @@ func getSourceLine(filename string, lineNum int) string {
 	currentLine := 1
 	for scanner.Scan() {
 		if currentLine == lineNum {
-			return strings.TrimSpace(scanner.Text())
+			return strings.TrimSpace(scanner.Text()), nil
 		}
 		currentLine++
 	}
-	return ""
+	if err := scanner.Err(); err != nil {
+		return "", err
+	}
+	return "", nil // Line not found is not considered an error here.
 }
 
 // --- Global Instances ---

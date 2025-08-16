@@ -445,6 +445,7 @@ type ConstantInfo struct {
 	Doc        string
 	Type       *FieldType // Changed from string to *FieldType
 	Value      string
+	RawValue   string   // The raw, unquoted string value, if the constant is a string.
 	IsExported bool     // Added to indicate if the constant is exported
 	Node       ast.Node // Added: AST node for position, if needed, though FilePath is primary
 	ConstVal   constant.Value

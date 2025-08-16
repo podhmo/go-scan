@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"go/ast"
+	"go/constant"
 	"go/token"
 	"io"
 	"reflect"
@@ -3699,6 +3700,31 @@ func (e *Evaluator) constantInfoToObject(c *goscan.ConstantInfo) (object.Object,
 	}
 
 	// simplified inference
+	if c.ConstVal != nil {
+		switch c.ConstVal.Kind() {
+		case constant.String:
+			// Prefer RawValue if available, as it's the direct unquoted value.
+			if c.RawValue != "" {
+				return &object.String{Value: c.RawValue}, nil
+			}
+			// Fallback to unquoting the literal representation from .Value
+			if s, err := strconv.Unquote(c.Value); err == nil {
+				return &object.String{Value: s}, nil
+			}
+			return nil, fmt.Errorf("could not unquote string constant value: %q", c.Value)
+		case constant.Int:
+			if i, err := strconv.ParseInt(c.Value, 0, 64); err == nil {
+				return &object.Integer{Value: i}, nil
+			}
+		case constant.Bool:
+			if b, err := strconv.ParseBool(c.Value); err == nil {
+				return e.nativeBoolToBooleanObject(b), nil
+			}
+		}
+	}
+
+	// Fallback for when c.ConstVal is nil or for unhandled kinds.
+	// This maintains the old behavior.
 	if i, err := strconv.ParseInt(c.Value, 0, 64); err == nil {
 		return &object.Integer{Value: i}, nil
 	}

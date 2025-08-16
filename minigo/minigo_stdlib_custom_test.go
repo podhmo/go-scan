@@ -800,7 +800,7 @@ var val = ctx.Value(key)
 }
 
 func TestStdlib_slices_Sort(t *testing.T) {
-	t.Skip("Skipping slices.Sort test: go-scan constant evaluation is now fixed, but minigo fails to handle the resolved 'len8tab' string constant.")
+	t.Skip("Skipping slices.Sort test: String literal constant evaluation is fixed, but now fails on generics support (identifier not found: E).")
 	script := `
 package main
 import "slices"

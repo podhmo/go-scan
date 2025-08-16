@@ -481,6 +481,9 @@ func (s *Scanner) evaluateConstant(cctx *constContext, c *ConstantInfo) {
 	}
 	c.ConstVal = val
 	c.Value = val.String()
+	if val.Kind() == constant.String {
+		c.RawValue = constant.StringVal(val)
+	}
 }
 
 // evalConstExpr recursively evaluates an AST expression to a constant.Value.

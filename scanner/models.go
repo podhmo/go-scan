@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"go/ast"
+	"go/constant"
 	"go/token" // Added
 	"log/slog"
 	"reflect" // Added for reflect.StructTag
@@ -446,6 +447,9 @@ type ConstantInfo struct {
 	Value      string
 	IsExported bool     // Added to indicate if the constant is exported
 	Node       ast.Node // Added: AST node for position, if needed, though FilePath is primary
+	ConstVal   constant.Value
+	IotaValue  int // The value of iota for the spec this constant was in.
+	ValExpr    ast.Expr
 }
 
 // FunctionInfo represents a single top-level function or method declaration.

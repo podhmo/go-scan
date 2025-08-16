@@ -79,6 +79,20 @@ var result = identity[int, string](10)
 			wantErr:      true,
 			wantErrorMsg: "wrong number of type arguments",
 		},
+		{
+			name: "generic function with two args of same type",
+			script: `
+package main
+func equal[T comparable](a, b T) bool {
+	return a == b
+}
+var result = equal[int](10, 10)
+`,
+			expectedVar:   "result",
+			expectedValue: true,
+			expectedType:  object.BOOLEAN_OBJ,
+			wantErr:       false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -127,6 +141,10 @@ var result = identity[int, string](10)
 			case *object.Integer:
 				if v.Value != tt.expectedValue.(int64) {
 					t.Errorf("result has wrong value. got=%d, want=%d", v.Value, tt.expectedValue)
+				}
+			case *object.Boolean:
+				if v.Value != tt.expectedValue.(bool) {
+					t.Errorf("result has wrong value. got=%t, want=%t", v.Value, tt.expectedValue)
 				}
 			case *object.StructInstance:
 				expectedFields := tt.expectedValue.(map[string]any)

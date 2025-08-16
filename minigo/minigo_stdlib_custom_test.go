@@ -292,13 +292,26 @@ func TestStdlib_slices(t *testing.T) {
 	script := `
 package main
 import "slices"
-var s = []int{1, 2, 3}
-var s2 = slices.Clone(s)
+var s1 = []int{1, 2, 3}
+var s2 = slices.Clone(s1)
+var s3 = []int{1, 2, 3}
+var s4 = []int{1, 2, 4}
+
+var r_clone_ok = len(s2) == 3
+
+var r_equal_true = slices.Equal(s1, s3)
+var r_equal_false = slices.Equal(s1, s4)
+
+var r_cmp_eq = slices.Compare(s1, s3)
+var r_cmp_lt = slices.Compare(s1, s4)
+var r_cmp_gt = slices.Compare(s4, s1)
 `
 	interp, err := minigo.NewInterpreter()
 	if err != nil {
 		t.Fatalf("failed to create interpreter: %+v", err)
 	}
+
+	// The slices package is loaded from source, so no Install() call is needed.
 
 	if err := interp.LoadFile("test.mgo", []byte(script)); err != nil {
 		t.Fatalf("failed to load script: %+v", err)
@@ -309,22 +322,44 @@ var s2 = slices.Clone(s)
 
 	env := interp.GlobalEnvForTest()
 
-	s2, ok := env.Get("s2")
-	if !ok {
-		t.Fatalf("variable 's2' not found")
-	}
-	if s2 == object.NIL {
-		t.Fatalf("expected s2 to be non-nil, but it was nil")
+	// Helper to check boolean variables
+	checkBool := func(name string, expected bool) {
+		t.Helper()
+		obj, ok := env.Get(name)
+		if !ok {
+			t.Fatalf("variable '%s' not found", name)
+		}
+		b, ok := obj.(*object.Boolean)
+		if !ok {
+			t.Fatalf("variable '%s' is not a boolean, got %T", name, obj)
+		}
+		if b.Value != expected {
+			t.Errorf("variable '%s' was %t, want %t", name, b.Value, expected)
+		}
 	}
 
-	s2Array, ok := s2.(*object.Array)
-	if !ok {
-		t.Fatalf("expected s2 to be an array, but got %T", s2)
+	// Helper to check integer variables
+	checkInt := func(name string, expected int64) {
+		t.Helper()
+		obj, ok := env.Get(name)
+		if !ok {
+			t.Fatalf("variable '%s' not found", name)
+		}
+		i, ok := obj.(*object.Integer)
+		if !ok {
+			t.Fatalf("variable '%s' is not an integer, got %T", name, obj)
+		}
+		if i.Value != expected {
+			t.Errorf("variable '%s' was %d, want %d", name, i.Value, expected)
+		}
 	}
 
-	if len(s2Array.Elements) != 3 {
-		t.Fatalf("expected s2 to have 3 elements, but got %d", len(s2Array.Elements))
-	}
+	checkBool("r_clone_ok", true)
+	checkBool("r_equal_true", true)
+	checkBool("r_equal_false", false)
+	checkInt("r_cmp_eq", 0)
+	checkInt("r_cmp_lt", -1)
+	checkInt("r_cmp_gt", 1)
 }
 
 func TestStdlib_regexp(t *testing.T) {
@@ -761,5 +796,56 @@ var val = ctx.Value(key)
 
 	if valStr.Value != "my-value" {
 		t.Errorf("unexpected value from context: got %q, want %q", valStr.Value, "my-value")
+	}
+}
+
+func TestStdlib_slices_Sort(t *testing.T) {
+	t.Skip("Skipping slices.Sort test: fails due to go-scan's inability to resolve the 'len8tab' constant from a dependency.")
+	script := `
+package main
+import "slices"
+var s = []int{3, 1, 2}
+var _ = slices.Sort(s)
+`
+	interp, err := minigo.NewInterpreter()
+	if err != nil {
+		t.Fatalf("failed to create interpreter: %+v", err)
+	}
+
+	// The slices package is loaded from source, so no Install() call is needed.
+	err = interp.LoadFile("test.mgo", []byte(script))
+	if err != nil {
+		t.Fatalf("expected script loading to succeed, but it failed: %v", err)
+	}
+
+	// Now Eval the script
+	if _, err := interp.Eval(context.Background()); err != nil {
+		t.Fatalf("failed to evaluate script: %+v", err)
+	}
+
+	// Check if the slice 's' is sorted
+	env := interp.GlobalEnvForTest()
+	sObj, ok := env.Get("s")
+	if !ok {
+		t.Fatalf("variable 's' not found")
+	}
+	sArr, ok := sObj.(*object.Array)
+	if !ok {
+		t.Fatalf("variable 's' is not an array, got %T", sObj)
+	}
+
+	expected := []int64{1, 2, 3}
+	if len(sArr.Elements) != len(expected) {
+		t.Fatalf("sorted slice has wrong length, got %d, want %d", len(sArr.Elements), len(expected))
+	}
+
+	for i, el := range sArr.Elements {
+		intVal, ok := el.(*object.Integer)
+		if !ok {
+			t.Fatalf("element %d is not an integer", i)
+		}
+		if intVal.Value != expected[i] {
+			t.Errorf("s[%d] is wrong, got %d, want %d", i, intVal.Value, expected[i])
+		}
 	}
 }

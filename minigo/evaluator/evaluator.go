@@ -2987,12 +2987,22 @@ func (e *Evaluator) evalGenDecl(n *ast.GenDecl, env *object.Environment, fscope 
 							return resolvedType
 						}
 
-						if def, ok := resolvedType.(*object.StructDefinition); ok {
-							// It's a struct, so initialize an empty instance instead of NIL.
-							instance := &object.StructInstance{Def: def, Fields: make(map[string]object.Object)}
+						switch rt := resolvedType.(type) {
+						case *object.GoType:
+							// The type is a registered Go type. Instantiate its zero value.
+							val = &object.GoValue{Value: reflect.New(rt.GoType).Elem()}
+						case *object.StructDefinition:
+							// It's a minigo-defined struct, so initialize a zero-valued instance.
+							instance := &object.StructInstance{Def: rt, Fields: make(map[string]object.Object)}
+							for _, field := range rt.Fields {
+								zeroVal := e.getZeroValueForType(field.Type, env, fscope)
+								for _, name := range field.Names {
+									instance.Fields[name.Name] = zeroVal
+								}
+							}
 							val = instance
-						} else {
-							val = object.NIL // Default to NIL for non-structs
+						default:
+							val = object.NIL // Default to NIL for other types
 						}
 					} else {
 						val = object.NIL
@@ -3362,16 +3372,45 @@ func (e *Evaluator) assignValue(lhs ast.Expr, val object.Object, env *object.Env
 		if isError(obj) {
 			return obj
 		}
-		// Automatically dereference pointers.
-		if ptr, ok := obj.(*object.Pointer); ok {
-			obj = *ptr.Element
+
+		var underlying object.Object
+		if ptr, isPtr := obj.(*object.Pointer); isPtr {
+			if ptr.Element == nil || *ptr.Element == nil {
+				return e.newError(lhsNode.Pos(), "nil pointer dereference on assignment")
+			}
+			underlying = *ptr.Element
+		} else {
+			underlying = obj
 		}
-		instance, ok := obj.(*object.StructInstance)
-		if !ok {
-			return e.newError(lhsNode.Pos(), "assignment to non-struct field")
+
+		switch base := underlying.(type) {
+		case *object.StructInstance:
+			base.Fields[lhsNode.Sel.Name] = val
+			return val
+		case *object.GoValue:
+			structVal := base.Value
+			if structVal.Kind() == reflect.Ptr {
+				structVal = structVal.Elem()
+			}
+			if structVal.Kind() != reflect.Struct {
+				return e.newError(lhsNode.Pos(), "assignment to field of non-struct Go value")
+			}
+			field := structVal.FieldByName(lhsNode.Sel.Name)
+			if !field.IsValid() {
+				return e.newError(lhsNode.Pos(), "no such field: %s in type %s", lhsNode.Sel.Name, structVal.Type())
+			}
+			if !field.CanSet() {
+				return e.newError(lhsNode.Pos(), "cannot set field %s", lhsNode.Sel.Name)
+			}
+			goVal, err := e.objectToReflectValue(val, field.Type())
+			if err != nil {
+				return e.newError(lhsNode.Pos(), "type mismatch on assignment: %v", err)
+			}
+			field.Set(goVal)
+			return val
+		default:
+			return e.newError(lhsNode.Pos(), "assignment to non-struct or non-Go-value field")
 		}
-		instance.Fields[lhsNode.Sel.Name] = val
-		return val
 	case *ast.StarExpr:
 		ptrObj := e.Eval(lhsNode.X, env, fscope)
 		if isError(ptrObj) {
@@ -3552,6 +3591,11 @@ func (e *Evaluator) constantInfoToObject(c *goscan.ConstantInfo) (object.Object,
 // It does not trigger new scans. It returns the found object and a boolean.
 // NOTE: This resolves constants, struct type definitions, and function declarations from AST.
 func (e *Evaluator) findSymbolInPackageInfo(pkgInfo *goscan.Package, symbolName string, pkgEnv *object.Environment, fscope *object.FileScope) (object.Object, bool) {
+	// Check for FFI types first
+	if t, ok := e.registry.LookupType(pkgInfo.Path, symbolName); ok {
+		return &object.GoType{GoType: t}, true
+	}
+
 	// Look in constants
 	for _, c := range pkgInfo.Constants {
 		if c.Name == symbolName {
@@ -3811,26 +3855,44 @@ func (e *Evaluator) WrapGoFunction(pos token.Pos, funcVal reflect.Value) object.
 	}
 }
 
-// evalStructSelector evaluates a selector expression on a struct instance.
-// It checks for fields first, then methods.
-func (e *Evaluator) evalStructSelector(n *ast.SelectorExpr, instance *object.StructInstance) object.Object {
-	// Fields take precedence over methods.
-	if val, found := e.findFieldInStruct(instance, n.Sel.Name); found {
-		return val
+// evalMethodCall handles resolving and binding a method to a receiver.
+// The receiver can be a struct instance or a pointer to a struct instance.
+func (e *Evaluator) evalMethodCall(n *ast.SelectorExpr, receiver object.Object, def *object.StructDefinition) object.Object {
+	method, ok := def.Methods[n.Sel.Name]
+	if !ok {
+		return nil // Not a method, signal to caller to check for fields.
 	}
-	// If no field, check for a method.
-	if method, ok := instance.Def.Methods[n.Sel.Name]; ok {
-		// Check if the method has a value or pointer receiver.
-		recvType := method.Recv.List[0].Type
-		if _, isPointer := recvType.(*ast.StarExpr); isPointer {
-			// Pointer receiver, so bind the instance directly.
-			return &object.BoundMethod{Fn: method, Receiver: instance}
-		} else {
-			// Value receiver, so bind a copy of the instance.
-			return &object.BoundMethod{Fn: method, Receiver: instance.Copy()}
+
+	// Determine if the method requires a pointer receiver.
+	isPointerReceiver := false
+	if method.Recv != nil && len(method.Recv.List) > 0 {
+		if _, ok := method.Recv.List[0].Type.(*ast.StarExpr); ok {
+			isPointerReceiver = true
 		}
 	}
-	return e.newError(n.Pos(), "undefined field or method '%s' on struct '%s'", n.Sel.Name, instance.Def.Name.Name)
+
+	// Check if the receiver is compatible.
+	if isPointerReceiver {
+		if _, isPointer := receiver.(*object.Pointer); !isPointer {
+			// This is a limitation of minigo: it doesn't automatically take the address.
+			// e.g., `var c Counter; c.Inc()` where Inc has a pointer receiver.
+			// A real Go compiler would implicitly convert `c` to `&c`.
+			return e.newError(n.Pos(), "cannot call pointer method %s on value %s", n.Sel.Name, def.Name.Name)
+		}
+		// Receiver is a pointer, and method wants a pointer. This is correct.
+		return &object.BoundMethod{Fn: method, Receiver: receiver}
+	}
+
+	// Method has a value receiver.
+	if ptr, isPointer := receiver.(*object.Pointer); isPointer {
+		// If receiver is a pointer, dereference it for the method call.
+		return &object.BoundMethod{Fn: method, Receiver: *ptr.Element}
+	}
+
+	// Receiver is a value, and method wants a value. This is correct.
+	// We pass a copy to prevent the method from modifying the original struct.
+	instance := receiver.(*object.StructInstance)
+	return &object.BoundMethod{Fn: method, Receiver: instance.Copy()}
 }
 
 func (e *Evaluator) evalSelectorExpr(n *ast.SelectorExpr, env *object.Environment, fscope *object.FileScope) object.Object {
@@ -3845,36 +3907,90 @@ func (e *Evaluator) evalSelectorExpr(n *ast.SelectorExpr, env *object.Environmen
 			return e.newError(n.Pos(), "nil pointer dereference (interface is nil)")
 		}
 		// Dispatch the selector to the concrete value held by the interface.
+		// This is effectively a re-dispatch of evalSelectorExpr's logic.
 		switch concrete := l.Value.(type) {
 		case *object.StructInstance:
-			return e.evalStructSelector(n, concrete)
+			// Re-run the logic for StructInstance
+			if method := e.evalMethodCall(n, concrete, concrete.Def); method != nil {
+				if err, isErr := method.(*object.Error); isErr {
+					return err
+				}
+				return method
+			}
+			if val, found := e.findFieldInStruct(concrete, n.Sel.Name); found {
+				return val
+			}
+			return e.newError(n.Pos(), "undefined field or method '%s' on struct '%s' held by interface", n.Sel.Name, concrete.Def.Name.Name)
 		case *object.Pointer:
+			// Re-run the logic for Pointer
 			if concrete.Element == nil || *concrete.Element == nil {
-				return e.newError(n.Pos(), "nil pointer dereference")
+				return e.newError(n.Pos(), "nil pointer dereference in interface")
 			}
-			if instance, ok := (*concrete.Element).(*object.StructInstance); ok {
-				return e.evalStructSelector(n, instance)
+			instance, ok := (*concrete.Element).(*object.StructInstance)
+			if !ok {
+				return e.newError(n.Pos(), "interface holds pointer to non-struct")
 			}
-			return e.newError(n.Pos(), "interface holds pointer to non-struct, cannot call method")
+			if method := e.evalMethodCall(n, concrete, instance.Def); method != nil {
+				if err, isErr := method.(*object.Error); isErr {
+					return err
+				}
+				return method
+			}
+			if val, found := e.findFieldInStruct(instance, n.Sel.Name); found {
+				return val
+			}
+			return e.newError(n.Pos(), "undefined field or method '%s' on pointer to struct '%s' held by interface", n.Sel.Name, instance.Def.Name.Name)
 		default:
-			return e.newError(n.Pos(), "type %s held by interface does not support method calls", concrete.Type())
+			return e.newError(n.Pos(), "type %s held by interface does not support method or field access", concrete.Type())
 		}
 
 	case *object.Package:
 		return e.findSymbolInPackage(l, n.Sel, n.Pos())
 
 	case *object.StructInstance:
-		return e.evalStructSelector(n, l)
+		// 1. Look for a method.
+		if method := e.evalMethodCall(n, l, l.Def); method != nil {
+			if err, isErr := method.(*object.Error); isErr {
+				return err
+			}
+			return method
+		}
+		// 2. If not a method, look for a field.
+		if val, found := e.findFieldInStruct(l, n.Sel.Name); found {
+			return val
+		}
+		return e.newError(n.Pos(), "undefined field or method '%s' on struct '%s'", n.Sel.Name, l.Def.Name.Name)
 
 	case *object.Pointer:
 		if l.Element == nil || *l.Element == nil {
 			return e.newError(n.Pos(), "nil pointer dereference")
 		}
-		// Automatically dereference pointers for struct field/method access.
-		if instance, ok := (*l.Element).(*object.StructInstance); ok {
-			return e.evalStructSelector(n, instance)
+
+		// Handle pointers to both minigo structs and Go values
+		switch elem := (*l.Element).(type) {
+		case *object.StructInstance:
+			// This is a pointer to a minigo-defined struct.
+			// 1. Look for a method. Pass the pointer `l` as the receiver.
+			if method := e.evalMethodCall(n, l, elem.Def); method != nil {
+				if err, isErr := method.(*object.Error); isErr {
+					return err
+				}
+				return method
+			}
+			// 2. If not a method, look for a field on the dereferenced struct.
+			if val, found := e.findFieldInStruct(elem, n.Sel.Name); found {
+				return val
+			}
+			return e.newError(n.Pos(), "undefined field or method '%s' on pointer to struct '%s'", n.Sel.Name, elem.Def.Name.Name)
+
+		case *object.GoValue:
+			// This is a pointer to a Go value. Delegate to the Go value selector logic.
+			return e.evalGoValueSelectorExpr(n, elem, n.Sel.Name)
+
+		default:
+			return e.newError(n.Pos(), "base of selector expression is not a pointer to a struct or Go value")
 		}
-		return e.newError(n.Pos(), "base of selector expression is not a struct or pointer to struct")
+
 	case *object.GoValue:
 		return e.evalGoValueSelectorExpr(n, l, n.Sel.Name)
 	default:
@@ -3890,7 +4006,7 @@ func (e *Evaluator) findSymbolInPackage(pkg *object.Package, symbolName *ast.Ide
 		return member
 	}
 
-	// 2. Check the registry for pre-registered symbols.
+	// 2. Check the registry for pre-registered symbols (values and types).
 	if symbol, ok := e.registry.Lookup(pkg.Path, symbolName.Name); ok {
 		var member object.Object
 		val := reflect.ValueOf(symbol)
@@ -3899,6 +4015,11 @@ func (e *Evaluator) findSymbolInPackage(pkg *object.Package, symbolName *ast.Ide
 		} else {
 			member = &object.GoValue{Value: val}
 		}
+		pkg.Members[symbolName.Name] = member // Cache it
+		return member
+	}
+	if t, ok := e.registry.LookupType(pkg.Path, symbolName.Name); ok {
+		member := &object.GoType{GoType: t}
 		pkg.Members[symbolName.Name] = member // Cache it
 		return member
 	}

@@ -3,6 +3,7 @@
 package scanner
 
 import (
+	"reflect"
 	"text/scanner"
 
 	"github.com/podhmo/go-scan/minigo"
@@ -30,5 +31,6 @@ func Install(interp *minigo.Interpreter) {
 		"SkipComments":   scanner.SkipComments,
 		"String":         scanner.String,
 		"TokenString":    scanner.TokenString,
+		"Scanner":        reflect.TypeOf(scanner.Scanner{}),
 	})
 }

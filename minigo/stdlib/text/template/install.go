@@ -24,5 +24,8 @@ func Install(interp *minigo.Interpreter) {
 		"ParseFiles":       template.ParseFiles,
 		"ParseGlob":        template.ParseGlob,
 		"URLQueryEscaper":  template.URLQueryEscaper,
+		"ExecError":        (*template.ExecError)(nil),
+		"FuncMap":          (*template.FuncMap)(nil),
+		"Template":         (*template.Template)(nil),
 	})
 }

@@ -19,5 +19,6 @@ func Install(interp *minigo.Interpreter) {
 		"MustCompile":      regexp.MustCompile,
 		"MustCompilePOSIX": regexp.MustCompilePOSIX,
 		"QuoteMeta":        regexp.QuoteMeta,
+		"Regexp":           (*regexp.Regexp)(nil),
 	})
 }

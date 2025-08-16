@@ -29,5 +29,9 @@ func Install(interp *minigo.Interpreter) {
 		"Stable":            sort.Stable,
 		"Strings":           sort.Strings,
 		"StringsAreSorted":  sort.StringsAreSorted,
+		"Float64Slice":      (*sort.Float64Slice)(nil),
+		"IntSlice":          (*sort.IntSlice)(nil),
+		"Interface":         (*sort.Interface)(nil),
+		"StringSlice":       (*sort.StringSlice)(nil),
 	})
 }

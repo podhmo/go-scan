@@ -13,7 +13,9 @@ func Install(interp *minigo.Interpreter) {
 	interp.Register("context", map[string]any{
 		"AfterFunc":         context.AfterFunc,
 		"Background":        context.Background,
+		"Canceled":          context.Canceled,
 		"Cause":             context.Cause,
+		"DeadlineExceeded":  context.DeadlineExceeded,
 		"TODO":              context.TODO,
 		"WithCancel":        context.WithCancel,
 		"WithCancelCause":   context.WithCancelCause,
@@ -23,5 +25,8 @@ func Install(interp *minigo.Interpreter) {
 		"WithTimeoutCause":  context.WithTimeoutCause,
 		"WithValue":         context.WithValue,
 		"WithoutCancel":     context.WithoutCancel,
+		"CancelCauseFunc":   (*context.CancelCauseFunc)(nil),
+		"CancelFunc":        (*context.CancelFunc)(nil),
+		"Context":           (*context.Context)(nil),
 	})
 }

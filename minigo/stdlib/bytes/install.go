@@ -23,6 +23,7 @@ func Install(interp *minigo.Interpreter) {
 		"CutSuffix":       bytes.CutSuffix,
 		"Equal":           bytes.Equal,
 		"EqualFold":       bytes.EqualFold,
+		"ErrTooLarge":     bytes.ErrTooLarge,
 		"Fields":          bytes.Fields,
 		"FieldsFunc":      bytes.FieldsFunc,
 		"FieldsFuncSeq":   bytes.FieldsFuncSeq,
@@ -72,5 +73,7 @@ func Install(interp *minigo.Interpreter) {
 		"TrimRightFunc":   bytes.TrimRightFunc,
 		"TrimSpace":       bytes.TrimSpace,
 		"TrimSuffix":      bytes.TrimSuffix,
+		"Buffer":          (*bytes.Buffer)(nil),
+		"Reader":          (*bytes.Reader)(nil),
 	})
 }

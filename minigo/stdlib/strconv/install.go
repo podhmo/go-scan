@@ -23,6 +23,8 @@ func Install(interp *minigo.Interpreter) {
 		"AppendUint":               strconv.AppendUint,
 		"Atoi":                     strconv.Atoi,
 		"CanBackquote":             strconv.CanBackquote,
+		"ErrRange":                 strconv.ErrRange,
+		"ErrSyntax":                strconv.ErrSyntax,
 		"FormatBool":               strconv.FormatBool,
 		"FormatComplex":            strconv.FormatComplex,
 		"FormatFloat":              strconv.FormatFloat,
@@ -46,5 +48,6 @@ func Install(interp *minigo.Interpreter) {
 		"QuotedPrefix":             strconv.QuotedPrefix,
 		"Unquote":                  strconv.Unquote,
 		"UnquoteChar":              strconv.UnquoteChar,
+		"NumError":                 (*strconv.NumError)(nil),
 	})
 }

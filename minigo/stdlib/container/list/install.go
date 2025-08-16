@@ -11,6 +11,8 @@ import (
 // Install binds all exported symbols from the "container/list" package to the interpreter.
 func Install(interp *minigo.Interpreter) {
 	interp.Register("container/list", map[string]any{
-		"New": list.New,
+		"New":     list.New,
+		"Element": (*list.Element)(nil),
+		"List":    (*list.List)(nil),
 	})
 }

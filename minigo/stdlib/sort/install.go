@@ -3,6 +3,7 @@
 package sort
 
 import (
+	"reflect"
 	"sort"
 
 	"github.com/podhmo/go-scan/minigo"
@@ -11,27 +12,27 @@ import (
 // Install binds all exported symbols from the "sort" package to the interpreter.
 func Install(interp *minigo.Interpreter) {
 	interp.Register("sort", map[string]any{
-		"Find":              sort.Find,
-		"Float64s":          sort.Float64s,
+		"Find": sort.Find,
+		"Float64s": sort.Float64s,
 		"Float64sAreSorted": sort.Float64sAreSorted,
-		"Ints":              sort.Ints,
-		"IntsAreSorted":     sort.IntsAreSorted,
-		"IsSorted":          sort.IsSorted,
-		"Reverse":           sort.Reverse,
-		"Search":            sort.Search,
-		"SearchFloat64s":    sort.SearchFloat64s,
-		"SearchInts":        sort.SearchInts,
-		"SearchStrings":     sort.SearchStrings,
-		"Slice":             sort.Slice,
-		"SliceIsSorted":     sort.SliceIsSorted,
-		"SliceStable":       sort.SliceStable,
-		"Sort":              sort.Sort,
-		"Stable":            sort.Stable,
-		"Strings":           sort.Strings,
-		"StringsAreSorted":  sort.StringsAreSorted,
-		"Float64Slice":      (*sort.Float64Slice)(nil),
-		"IntSlice":          (*sort.IntSlice)(nil),
-		"Interface":         (*sort.Interface)(nil),
-		"StringSlice":       (*sort.StringSlice)(nil),
+		"Ints": sort.Ints,
+		"IntsAreSorted": sort.IntsAreSorted,
+		"IsSorted": sort.IsSorted,
+		"Reverse": sort.Reverse,
+		"Search": sort.Search,
+		"SearchFloat64s": sort.SearchFloat64s,
+		"SearchInts": sort.SearchInts,
+		"SearchStrings": sort.SearchStrings,
+		"Slice": sort.Slice,
+		"SliceIsSorted": sort.SliceIsSorted,
+		"SliceStable": sort.SliceStable,
+		"Sort": sort.Sort,
+		"Stable": sort.Stable,
+		"Strings": sort.Strings,
+		"StringsAreSorted": sort.StringsAreSorted,
+		"Float64Slice": reflect.TypeOf((*sort.Float64Slice)(nil)).Elem(),
+		"IntSlice": reflect.TypeOf((*sort.IntSlice)(nil)).Elem(),
+		"Interface": reflect.TypeOf((*sort.Interface)(nil)).Elem(),
+		"StringSlice": reflect.TypeOf((*sort.StringSlice)(nil)).Elem(),
 	})
 }

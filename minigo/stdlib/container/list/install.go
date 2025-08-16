@@ -3,6 +3,7 @@
 package list
 
 import (
+	"reflect"
 	"container/list"
 
 	"github.com/podhmo/go-scan/minigo"
@@ -11,8 +12,8 @@ import (
 // Install binds all exported symbols from the "container/list" package to the interpreter.
 func Install(interp *minigo.Interpreter) {
 	interp.Register("container/list", map[string]any{
-		"New":     list.New,
-		"Element": (*list.Element)(nil),
-		"List":    (*list.List)(nil),
+		"New": list.New,
+		"Element": reflect.TypeOf((*list.Element)(nil)).Elem(),
+		"List": reflect.TypeOf((*list.List)(nil)).Elem(),
 	})
 }

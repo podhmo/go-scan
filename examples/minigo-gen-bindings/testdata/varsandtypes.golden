@@ -3,7 +3,9 @@
 package varsandtypes
 
 import (
+	"reflect"
 	"github.com/podhmo/go-scan/examples/minigo-gen-bindings/testdata/varsandtypes"
+
 	"github.com/podhmo/go-scan/minigo"
 )
 
@@ -12,7 +14,7 @@ func Install(interp *minigo.Interpreter) {
 	interp.Register("github.com/podhmo/go-scan/examples/minigo-gen-bindings/testdata/varsandtypes", map[string]any{
 		"ExportedConstant": varsandtypes.ExportedConstant,
 		"ExportedFunction": varsandtypes.ExportedFunction,
-		"ExportedVar": varsandtypes.ExportedVar,
-		"ExportedType": (*varsandtypes.ExportedType)(nil),
+		"ExportedVar":      varsandtypes.ExportedVar,
+		"ExportedType":     reflect.TypeOf((*varsandtypes.ExportedType)(nil)).Elem(),
 	})
 }

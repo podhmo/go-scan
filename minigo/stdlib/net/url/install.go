@@ -3,6 +3,7 @@
 package url
 
 import (
+	"reflect"
 	"net/url"
 
 	"github.com/podhmo/go-scan/minigo"
@@ -11,21 +12,21 @@ import (
 // Install binds all exported symbols from the "net/url" package to the interpreter.
 func Install(interp *minigo.Interpreter) {
 	interp.Register("net/url", map[string]any{
-		"JoinPath":         url.JoinPath,
-		"Parse":            url.Parse,
-		"ParseQuery":       url.ParseQuery,
-		"ParseRequestURI":  url.ParseRequestURI,
-		"PathEscape":       url.PathEscape,
-		"PathUnescape":     url.PathUnescape,
-		"QueryEscape":      url.QueryEscape,
-		"QueryUnescape":    url.QueryUnescape,
-		"User":             url.User,
-		"UserPassword":     url.UserPassword,
-		"Error":            (*url.Error)(nil),
-		"EscapeError":      (*url.EscapeError)(nil),
-		"InvalidHostError": (*url.InvalidHostError)(nil),
-		"URL":              (*url.URL)(nil),
-		"Userinfo":         (*url.Userinfo)(nil),
-		"Values":           (*url.Values)(nil),
+		"JoinPath": url.JoinPath,
+		"Parse": url.Parse,
+		"ParseQuery": url.ParseQuery,
+		"ParseRequestURI": url.ParseRequestURI,
+		"PathEscape": url.PathEscape,
+		"PathUnescape": url.PathUnescape,
+		"QueryEscape": url.QueryEscape,
+		"QueryUnescape": url.QueryUnescape,
+		"User": url.User,
+		"UserPassword": url.UserPassword,
+		"Error": reflect.TypeOf((*url.Error)(nil)).Elem(),
+		"EscapeError": reflect.TypeOf((*url.EscapeError)(nil)).Elem(),
+		"InvalidHostError": reflect.TypeOf((*url.InvalidHostError)(nil)).Elem(),
+		"URL": reflect.TypeOf((*url.URL)(nil)).Elem(),
+		"Userinfo": reflect.TypeOf((*url.Userinfo)(nil)).Elem(),
+		"Values": reflect.TypeOf((*url.Values)(nil)).Elem(),
 	})
 }

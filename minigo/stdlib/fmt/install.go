@@ -3,6 +3,7 @@
 package fmt
 
 import (
+	"reflect"
 	"fmt"
 
 	"github.com/podhmo/go-scan/minigo"
@@ -11,34 +12,34 @@ import (
 // Install binds all exported symbols from the "fmt" package to the interpreter.
 func Install(interp *minigo.Interpreter) {
 	interp.Register("fmt", map[string]any{
-		"Append":       fmt.Append,
-		"Appendf":      fmt.Appendf,
-		"Appendln":     fmt.Appendln,
-		"Errorf":       fmt.Errorf,
+		"Append": fmt.Append,
+		"Appendf": fmt.Appendf,
+		"Appendln": fmt.Appendln,
+		"Errorf": fmt.Errorf,
 		"FormatString": fmt.FormatString,
-		"Fprint":       fmt.Fprint,
-		"Fprintf":      fmt.Fprintf,
-		"Fprintln":     fmt.Fprintln,
-		"Fscan":        fmt.Fscan,
-		"Fscanf":       fmt.Fscanf,
-		"Fscanln":      fmt.Fscanln,
-		"Print":        fmt.Print,
-		"Printf":       fmt.Printf,
-		"Println":      fmt.Println,
-		"Scan":         fmt.Scan,
-		"Scanf":        fmt.Scanf,
-		"Scanln":       fmt.Scanln,
-		"Sprint":       fmt.Sprint,
-		"Sprintf":      fmt.Sprintf,
-		"Sprintln":     fmt.Sprintln,
-		"Sscan":        fmt.Sscan,
-		"Sscanf":       fmt.Sscanf,
-		"Sscanln":      fmt.Sscanln,
-		"Formatter":    (*fmt.Formatter)(nil),
-		"GoStringer":   (*fmt.GoStringer)(nil),
-		"ScanState":    (*fmt.ScanState)(nil),
-		"Scanner":      (*fmt.Scanner)(nil),
-		"State":        (*fmt.State)(nil),
-		"Stringer":     (*fmt.Stringer)(nil),
+		"Fprint": fmt.Fprint,
+		"Fprintf": fmt.Fprintf,
+		"Fprintln": fmt.Fprintln,
+		"Fscan": fmt.Fscan,
+		"Fscanf": fmt.Fscanf,
+		"Fscanln": fmt.Fscanln,
+		"Print": fmt.Print,
+		"Printf": fmt.Printf,
+		"Println": fmt.Println,
+		"Scan": fmt.Scan,
+		"Scanf": fmt.Scanf,
+		"Scanln": fmt.Scanln,
+		"Sprint": fmt.Sprint,
+		"Sprintf": fmt.Sprintf,
+		"Sprintln": fmt.Sprintln,
+		"Sscan": fmt.Sscan,
+		"Sscanf": fmt.Sscanf,
+		"Sscanln": fmt.Sscanln,
+		"Formatter": reflect.TypeOf((*fmt.Formatter)(nil)).Elem(),
+		"GoStringer": reflect.TypeOf((*fmt.GoStringer)(nil)).Elem(),
+		"ScanState": reflect.TypeOf((*fmt.ScanState)(nil)).Elem(),
+		"Scanner": reflect.TypeOf((*fmt.Scanner)(nil)).Elem(),
+		"State": reflect.TypeOf((*fmt.State)(nil)).Elem(),
+		"Stringer": reflect.TypeOf((*fmt.Stringer)(nil)).Elem(),
 	})
 }

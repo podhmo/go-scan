@@ -12,8 +12,8 @@ import (
 func Install(interp *minigo.Interpreter) {
 	interp.Register("crypto/md5", map[string]any{
 		"BlockSize": md5.BlockSize,
-		"New":       md5.New,
-		"Size":      md5.Size,
-		"Sum":       md5.Sum,
+		"New": md5.New,
+		"Size": md5.Size,
+		"Sum": md5.Sum,
 	})
 }

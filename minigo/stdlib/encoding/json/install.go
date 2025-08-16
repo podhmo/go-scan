@@ -3,6 +3,7 @@
 package json
 
 import (
+	"reflect"
 	"encoding/json"
 
 	"github.com/podhmo/go-scan/minigo"
@@ -11,30 +12,30 @@ import (
 // Install binds all exported symbols from the "encoding/json" package to the interpreter.
 func Install(interp *minigo.Interpreter) {
 	interp.Register("encoding/json", map[string]any{
-		"Compact":               json.Compact,
-		"HTMLEscape":            json.HTMLEscape,
-		"Indent":                json.Indent,
-		"Marshal":               json.Marshal,
-		"MarshalIndent":         json.MarshalIndent,
-		"NewDecoder":            json.NewDecoder,
-		"NewEncoder":            json.NewEncoder,
-		"Unmarshal":             json.Unmarshal,
-		"Valid":                 json.Valid,
-		"Decoder":               (*json.Decoder)(nil),
-		"Delim":                 (*json.Delim)(nil),
-		"Encoder":               (*json.Encoder)(nil),
-		"InvalidUTF8Error":      (*json.InvalidUTF8Error)(nil),
-		"InvalidUnmarshalError": (*json.InvalidUnmarshalError)(nil),
-		"Marshaler":             (*json.Marshaler)(nil),
-		"MarshalerError":        (*json.MarshalerError)(nil),
-		"Number":                (*json.Number)(nil),
-		"RawMessage":            (*json.RawMessage)(nil),
-		"SyntaxError":           (*json.SyntaxError)(nil),
-		"Token":                 (*json.Token)(nil),
-		"UnmarshalFieldError":   (*json.UnmarshalFieldError)(nil),
-		"UnmarshalTypeError":    (*json.UnmarshalTypeError)(nil),
-		"Unmarshaler":           (*json.Unmarshaler)(nil),
-		"UnsupportedTypeError":  (*json.UnsupportedTypeError)(nil),
-		"UnsupportedValueError": (*json.UnsupportedValueError)(nil),
+		"Compact": json.Compact,
+		"HTMLEscape": json.HTMLEscape,
+		"Indent": json.Indent,
+		"Marshal": json.Marshal,
+		"MarshalIndent": json.MarshalIndent,
+		"NewDecoder": json.NewDecoder,
+		"NewEncoder": json.NewEncoder,
+		"Unmarshal": json.Unmarshal,
+		"Valid": json.Valid,
+		"Decoder": reflect.TypeOf((*json.Decoder)(nil)).Elem(),
+		"Delim": reflect.TypeOf((*json.Delim)(nil)).Elem(),
+		"Encoder": reflect.TypeOf((*json.Encoder)(nil)).Elem(),
+		"InvalidUTF8Error": reflect.TypeOf((*json.InvalidUTF8Error)(nil)).Elem(),
+		"InvalidUnmarshalError": reflect.TypeOf((*json.InvalidUnmarshalError)(nil)).Elem(),
+		"Marshaler": reflect.TypeOf((*json.Marshaler)(nil)).Elem(),
+		"MarshalerError": reflect.TypeOf((*json.MarshalerError)(nil)).Elem(),
+		"Number": reflect.TypeOf((*json.Number)(nil)).Elem(),
+		"RawMessage": reflect.TypeOf((*json.RawMessage)(nil)).Elem(),
+		"SyntaxError": reflect.TypeOf((*json.SyntaxError)(nil)).Elem(),
+		"Token": reflect.TypeOf((*json.Token)(nil)).Elem(),
+		"UnmarshalFieldError": reflect.TypeOf((*json.UnmarshalFieldError)(nil)).Elem(),
+		"UnmarshalTypeError": reflect.TypeOf((*json.UnmarshalTypeError)(nil)).Elem(),
+		"Unmarshaler": reflect.TypeOf((*json.Unmarshaler)(nil)).Elem(),
+		"UnsupportedTypeError": reflect.TypeOf((*json.UnsupportedTypeError)(nil)).Elem(),
+		"UnsupportedValueError": reflect.TypeOf((*json.UnsupportedValueError)(nil)).Elem(),
 	})
 }

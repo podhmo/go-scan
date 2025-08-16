@@ -11,11 +11,11 @@ import (
 // Install binds all exported symbols from the "errors" package to the interpreter.
 func Install(interp *minigo.Interpreter) {
 	interp.Register("errors", map[string]any{
-		"As":             errors.As,
+		"As": errors.As,
 		"ErrUnsupported": errors.ErrUnsupported,
-		"Is":             errors.Is,
-		"Join":           errors.Join,
-		"New":            errors.New,
-		"Unwrap":         errors.Unwrap,
+		"Is": errors.Is,
+		"Join": errors.Join,
+		"New": errors.New,
+		"Unwrap": errors.Unwrap,
 	})
 }

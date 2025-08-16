@@ -75,10 +75,10 @@ The investigation revealed several fundamental limitations in the FFI bridge. Th
 
 ### `text/scanner`
 
--   **Limitation**: None observed. **(FIXED)**
--   **Status**: **Compatible (via FFI)**
--   **Analysis**: A test for `text/scanner` now passes. The previously blocking issue was that the interpreter would create a `minigo` native struct object (`*object.StructInstance`) for a variable of an FFI type (`var s scanner.Scanner`), which lacked the necessary reflection information to resolve methods. The interpreter has been enhanced to correctly instantiate such variables as `*object.GoValue` objects. This allows the existing reflection-based method lookup logic to find and execute methods (like `Init` and `Scan`) on pointers to these in-script struct instances.
--   **Conclusion**: The package is now considered compatible and usable via FFI bindings.
+-   **Limitation**: The interpreter does not support taking the address of a struct variable that was declared inside a script.
+-   **Status**: **Incompatible (via FFI)**
+-   **Analysis**: A test for `text/scanner` fails because it requires creating an instance of `scanner.Scanner` locally within the script, and then taking its address to call pointer-receiver methods like `Init()` and `Scan()`. The script attempts this with `var s scanner.Scanner; var s_ptr = &s`. However, the interpreter fails at runtime with the error `base of selector expression is not a pointer to a struct or Go value`. This indicates that the `&s` operation does not produce a valid pointer that the evaluator can use for method calls.
+-   **Conclusion**: The package is unusable because its primary API requires calling pointer-receiver methods on a locally-created struct instance, a pattern `minigo` does not currently support. The test has been skipped.
 
 ### `io`, `net/http`, and other interface-heavy packages
 

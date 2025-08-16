@@ -27,9 +27,10 @@ The investigation revealed several fundamental limitations in the FFI bridge. Th
 -   **Analysis**:
     -   **FIXED**: The `go-scan` tool can now correctly evaluate complex string constants containing arbitrary byte sequences (e.g., `\x00`). This was a blocker for interpreting `math/bits`, a dependency of `slices`.
     -   **FIXED**: The interpreter's environment management for generic functions has been improved. The previous "identifier not found: E" error, caused by evaluating type constraints in the wrong scope, is now resolved.
--   **Current Blocker**: With the generics scope issue fixed, testing now reveals a new blocker: failure to resolve identifiers from imported packages within type parameter constraints.
-    -   **Root Cause: `undefined: cmp.Ordered`**: When evaluating a function signature like `func Sort[S ~[]E, E cmp.Ordered](x S)`, the interpreter fails to resolve `cmp.Ordered`. This indicates that while the `slices` package is being loaded from source, its import `cmp` is not being correctly resolved or loaded during the evaluation of the generic type constraint.
--   **Conclusion**: The `slices` package is currently unusable with source interpretation until this transitive dependency issue within generic constraints is resolved.
+-   **FIXED**: The interpreter can now resolve transitive dependencies found within generic type constraints (e.g., `cmp.Ordered` in `slices.Sort`).
+-   **Current Blocker**: The type inference engine is not powerful enough to handle composite types.
+    -   **Root Cause: `could not infer type for generic parameter E`**: When calling a function like `slices.Sort`, the interpreter successfully resolves `cmp.Ordered`. However, it then fails while executing the body of `Sort`. The `Sort` function calls internal helper functions (e.g., `pdqsortOrdered`) which have parameters that are composite generic types (e.g., `x []E`). The `minigo` type inference engine is not yet capable of inferring a type parameter (`E`) from an argument passed to a composite type (`[]E`). It can only infer from simple generic parameters (e.g., `x E`).
+-   **Conclusion**: The `slices` package remains unusable with source interpretation until the type inference engine is enhanced to support inferring from composite generic types.
 
 ### `strconv`
 

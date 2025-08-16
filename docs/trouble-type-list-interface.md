@@ -36,9 +36,15 @@ The investigation into the `stdlib` test failures points to deeper, pre-existing
 
 ## Conclusion & Next Steps
 
-The core task of implementing type list interface support is functionally complete and verified by targeted unit tests. The remaining `stdlib` test failures are significant but appear to stem from more fundamental, pre-existing issues in the interpreter's handling of package environments and generic function scopes, especially for source-loaded packages.
+The core task of implementing type list interface support is functionally complete and verified by targeted unit tests.
 
-Therefore, the decision was made to:
-1.  Merge the working type list interface feature.
-2.  Re-skip the failing `TestStdlibSource` tests for `slices`.
-3.  Document these unresolved issues here for future investigation. A separate, dedicated effort will be required to debug the environment and scope resolution for generics and source-loaded packages.
+The remaining `stdlib` test failures were also investigated and resolved. The root causes were:
+
+1.  **`undefined: slices.Sort`**: This was caused by the `minigo.LoadGoSourceAsPackage` function not parsing or processing the `import` declarations within the provided source code. This meant that when `slices.go` was loaded, its import of the `cmp` package was ignored. The evaluator therefore could not resolve `cmp.Ordered`, which is the constraint on `slices.Sort`.
+    -   **Fix**: The `LoadGoSourceAsPackage` function was updated to parse the `*ast.File`'s `Imports` list and populate the `FileScope` with the necessary import aliases.
+
+2.  **`identifier not found: E`**: This was a symptom of the same root cause as the `undefined: slices.Sort` error. Because the `cmp` package could not be resolved, the entire evaluation of the `slices.Sort` function signature and its constraints failed, leading to a state where the generic function's environment was not correctly set up. Fixing the import resolution in `LoadGoSourceAsPackage` also resolved this class of errors.
+
+3.  **`cannot infer type for generic parameter` for floats**: This was a simple bug in the `evaluator.inferTypeOf` function, which was missing a case for `*object.Float`. Adding the case resolved the issue.
+
+With these fixes, all tests now pass, including the previously-skipped `stdlib` tests.

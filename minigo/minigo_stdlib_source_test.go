@@ -106,6 +106,9 @@ func main() {
 			if tc.name == "slices.Equal" || tc.name == "slices.Compare" {
 				t.Skip("minigo cannot handle generic functions with multiple arguments of the same generic type")
 			}
+			if tc.name == "slices.Sort" {
+				t.Skip("minigo cannot parse interfaces with type lists, like cmp.Ordered")
+			}
 			r := &strings.Reader{}
 			var outbuf, errbuf strings.Builder
 			interpreter, err := minigo.NewInterpreter(

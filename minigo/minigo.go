@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"reflect"
+	"strconv"
 	"strings"
 
 	goscan "github.com/podhmo/go-scan"
@@ -155,6 +156,27 @@ func (i *Interpreter) LoadGoSourceAsPackage(pkgName, source string) error {
 
 	pkgObj.Env = object.NewEnclosedEnvironment(i.globalEnv)
 	fileScope := object.NewFileScope(node)
+
+	// Manually process imports to populate the file scope for the evaluator.
+	for _, importSpec := range node.Imports {
+		path, err := strconv.Unquote(importSpec.Path.Value)
+		if err != nil {
+			return fmt.Errorf("invalid import path in %s: %w", pkgName, err)
+		}
+		var alias string
+		if importSpec.Name != nil {
+			alias = importSpec.Name.Name
+		} else {
+			parts := strings.Split(path, "/")
+			alias = parts[len(parts)-1]
+		}
+
+		if alias == "." {
+			fileScope.DotImports = append(fileScope.DotImports, path)
+		} else if alias != "_" {
+			fileScope.Aliases[alias] = path
+		}
+	}
 
 	// Use the new two-pass evaluation logic to correctly handle out-of-order declarations.
 	var decls []object.DeclWithScope

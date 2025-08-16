@@ -1922,7 +1922,8 @@ func (e *Evaluator) applyFunction(call *ast.CallExpr, fn object.Object, args []o
 		boundMethod := &object.BoundMethod{Fn: function, Receiver: receiver}
 		baseEnv = e.extendMethodEnv(boundMethod, args)
 	} else {
-		baseEnv = e.extendFunctionEnv(function, args, typeArgs)
+		baseEnv = object.NewEnclosedEnvironment(function.Env)
+		e.extendFunctionEnv(baseEnv, function, args, typeArgs)
 	}
 
 	bodyEnv := baseEnv
@@ -1984,6 +1985,8 @@ func (e *Evaluator) applyFunction(call *ast.CallExpr, fn object.Object, args []o
 	return e.unwrapReturnValue(evaluated)
 }
 
+// constructNamedReturnValue collects the values from the named return environment
+// and packages them into a single return value (or a tuple for multiple returns).
 func (e *Evaluator) typesAreCompatible(concrete, constraint object.Object, approximate bool) bool {
 	// A simple inspect comparison works for basic types and struct definitions.
 	// e.g., "int" == "int" or "struct MyStruct" == "struct MyStruct"
@@ -2147,9 +2150,7 @@ func (e *Evaluator) extendMethodEnv(method *object.BoundMethod, args []object.Ob
 	return env
 }
 
-func (e *Evaluator) extendFunctionEnv(fn *object.Function, args []object.Object, typeArgs []object.Object) *object.Environment {
-	env := object.NewEnclosedEnvironment(fn.Env)
-
+func (e *Evaluator) extendFunctionEnv(env *object.Environment, fn *object.Function, args []object.Object, typeArgs []object.Object) {
 	// Bind type parameters from the generic function call to the environment.
 	if fn.TypeParams != nil && len(fn.TypeParams.List) > 0 {
 		for i, param := range fn.TypeParams.List {
@@ -2159,7 +2160,7 @@ func (e *Evaluator) extendFunctionEnv(fn *object.Function, args []object.Object,
 	}
 
 	if fn.Parameters == nil {
-		return env
+		return
 	}
 
 	if fn.IsVariadic() {
@@ -2200,7 +2201,6 @@ func (e *Evaluator) extendFunctionEnv(fn *object.Function, args []object.Object,
 		}
 	}
 
-	return env
 }
 
 func (e *Evaluator) executeDeferredCall(deferred *object.DeferredCall, fscope *object.FileScope) {

@@ -393,6 +393,7 @@ type BuiltinContext struct {
 	Stderr           io.Writer
 	Fset             *token.FileSet
 	Env              *Environment // The environment of the function call
+	FScope           *FileScope   // The file scope of the function call
 	IsExecutingDefer func() bool
 	GetPanic         func() *Panic
 	ClearPanic       func()

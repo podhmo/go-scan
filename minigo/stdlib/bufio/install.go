@@ -3,38 +3,39 @@
 package bufio
 
 import (
-	"reflect"
 	"bufio"
+	"reflect"
+
 	"github.com/podhmo/go-scan/minigo"
 )
 
 // Install binds all exported symbols from the "bufio" package to the interpreter.
 func Install(interp *minigo.Interpreter) {
 	interp.Register("bufio", map[string]any{
-		"ErrAdvanceTooFar": bufio.ErrAdvanceTooFar,
-		"ErrBadReadCount": bufio.ErrBadReadCount,
-		"ErrBufferFull": bufio.ErrBufferFull,
-		"ErrFinalToken": bufio.ErrFinalToken,
+		"ErrAdvanceTooFar":     bufio.ErrAdvanceTooFar,
+		"ErrBadReadCount":      bufio.ErrBadReadCount,
+		"ErrBufferFull":        bufio.ErrBufferFull,
+		"ErrFinalToken":        bufio.ErrFinalToken,
 		"ErrInvalidUnreadByte": bufio.ErrInvalidUnreadByte,
 		"ErrInvalidUnreadRune": bufio.ErrInvalidUnreadRune,
-		"ErrNegativeAdvance": bufio.ErrNegativeAdvance,
-		"ErrNegativeCount": bufio.ErrNegativeCount,
-		"ErrTooLong": bufio.ErrTooLong,
-		"MaxScanTokenSize": bufio.MaxScanTokenSize,
-		"NewReadWriter": bufio.NewReadWriter,
-		"NewReader": bufio.NewReader,
-		"NewReaderSize": bufio.NewReaderSize,
-		"NewScanner": bufio.NewScanner,
-		"NewWriter": bufio.NewWriter,
-		"NewWriterSize": bufio.NewWriterSize,
-		"ScanBytes": bufio.ScanBytes,
-		"ScanLines": bufio.ScanLines,
-		"ScanRunes": bufio.ScanRunes,
-		"ScanWords": bufio.ScanWords,
-		"ReadWriter": reflect.TypeOf((*bufio.ReadWriter)(nil)).Elem(),
-		"Reader": reflect.TypeOf((*bufio.Reader)(nil)).Elem(),
-		"Scanner": reflect.TypeOf((*bufio.Scanner)(nil)).Elem(),
-		"SplitFunc": reflect.TypeOf((*bufio.SplitFunc)(nil)).Elem(),
-		"Writer": reflect.TypeOf((*bufio.Writer)(nil)).Elem(),
+		"ErrNegativeAdvance":   bufio.ErrNegativeAdvance,
+		"ErrNegativeCount":     bufio.ErrNegativeCount,
+		"ErrTooLong":           bufio.ErrTooLong,
+		"MaxScanTokenSize":     bufio.MaxScanTokenSize,
+		"NewReadWriter":        bufio.NewReadWriter,
+		"NewReader":            bufio.NewReader,
+		"NewReaderSize":        bufio.NewReaderSize,
+		"NewScanner":           bufio.NewScanner,
+		"NewWriter":            bufio.NewWriter,
+		"NewWriterSize":        bufio.NewWriterSize,
+		"ScanBytes":            bufio.ScanBytes,
+		"ScanLines":            bufio.ScanLines,
+		"ScanRunes":            bufio.ScanRunes,
+		"ScanWords":            bufio.ScanWords,
+		"ReadWriter":           reflect.TypeOf((*bufio.ReadWriter)(nil)).Elem(),
+		"Reader":               reflect.TypeOf((*bufio.Reader)(nil)).Elem(),
+		"Scanner":              reflect.TypeOf((*bufio.Scanner)(nil)).Elem(),
+		"SplitFunc":            reflect.TypeOf((*bufio.SplitFunc)(nil)).Elem(),
+		"Writer":               reflect.TypeOf((*bufio.Writer)(nil)).Elem(),
 	})
 }

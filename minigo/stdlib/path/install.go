@@ -4,20 +4,21 @@ package path
 
 import (
 	"path"
+
 	"github.com/podhmo/go-scan/minigo"
 )
 
 // Install binds all exported symbols from the "path" package to the interpreter.
 func Install(interp *minigo.Interpreter) {
 	interp.Register("path", map[string]any{
-		"Base": path.Base,
-		"Clean": path.Clean,
-		"Dir": path.Dir,
+		"Base":          path.Base,
+		"Clean":         path.Clean,
+		"Dir":           path.Dir,
 		"ErrBadPattern": path.ErrBadPattern,
-		"Ext": path.Ext,
-		"IsAbs": path.IsAbs,
-		"Join": path.Join,
-		"Match": path.Match,
-		"Split": path.Split,
+		"Ext":           path.Ext,
+		"IsAbs":         path.IsAbs,
+		"Join":          path.Join,
+		"Match":         path.Match,
+		"Split":         path.Split,
 	})
 }

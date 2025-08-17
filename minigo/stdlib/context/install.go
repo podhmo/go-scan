@@ -3,30 +3,31 @@
 package context
 
 import (
-	"reflect"
 	"context"
+	"reflect"
+
 	"github.com/podhmo/go-scan/minigo"
 )
 
 // Install binds all exported symbols from the "context" package to the interpreter.
 func Install(interp *minigo.Interpreter) {
 	interp.Register("context", map[string]any{
-		"AfterFunc": context.AfterFunc,
-		"Background": context.Background,
-		"Canceled": context.Canceled,
-		"Cause": context.Cause,
-		"DeadlineExceeded": context.DeadlineExceeded,
-		"TODO": context.TODO,
-		"WithCancel": context.WithCancel,
-		"WithCancelCause": context.WithCancelCause,
-		"WithDeadline": context.WithDeadline,
+		"AfterFunc":         context.AfterFunc,
+		"Background":        context.Background,
+		"Canceled":          context.Canceled,
+		"Cause":             context.Cause,
+		"DeadlineExceeded":  context.DeadlineExceeded,
+		"TODO":              context.TODO,
+		"WithCancel":        context.WithCancel,
+		"WithCancelCause":   context.WithCancelCause,
+		"WithDeadline":      context.WithDeadline,
 		"WithDeadlineCause": context.WithDeadlineCause,
-		"WithTimeout": context.WithTimeout,
-		"WithTimeoutCause": context.WithTimeoutCause,
-		"WithValue": context.WithValue,
-		"WithoutCancel": context.WithoutCancel,
-		"CancelCauseFunc": reflect.TypeOf((*context.CancelCauseFunc)(nil)).Elem(),
-		"CancelFunc": reflect.TypeOf((*context.CancelFunc)(nil)).Elem(),
-		"Context": reflect.TypeOf((*context.Context)(nil)).Elem(),
+		"WithTimeout":       context.WithTimeout,
+		"WithTimeoutCause":  context.WithTimeoutCause,
+		"WithValue":         context.WithValue,
+		"WithoutCancel":     context.WithoutCancel,
+		"CancelCauseFunc":   reflect.TypeOf((*context.CancelCauseFunc)(nil)).Elem(),
+		"CancelFunc":        reflect.TypeOf((*context.CancelFunc)(nil)).Elem(),
+		"Context":           reflect.TypeOf((*context.Context)(nil)).Elem(),
 	})
 }

@@ -3,40 +3,41 @@
 package filepath
 
 import (
-	"reflect"
 	"path/filepath"
+	"reflect"
+
 	"github.com/podhmo/go-scan/minigo"
 )
 
 // Install binds all exported symbols from the "path/filepath" package to the interpreter.
 func Install(interp *minigo.Interpreter) {
 	interp.Register("path/filepath", map[string]any{
-		"Abs": filepath.Abs,
-		"Base": filepath.Base,
-		"Clean": filepath.Clean,
-		"Dir": filepath.Dir,
+		"Abs":           filepath.Abs,
+		"Base":          filepath.Base,
+		"Clean":         filepath.Clean,
+		"Dir":           filepath.Dir,
 		"ErrBadPattern": filepath.ErrBadPattern,
-		"EvalSymlinks": filepath.EvalSymlinks,
-		"Ext": filepath.Ext,
-		"FromSlash": filepath.FromSlash,
-		"Glob": filepath.Glob,
-		"HasPrefix": filepath.HasPrefix,
-		"IsAbs": filepath.IsAbs,
-		"IsLocal": filepath.IsLocal,
-		"Join": filepath.Join,
+		"EvalSymlinks":  filepath.EvalSymlinks,
+		"Ext":           filepath.Ext,
+		"FromSlash":     filepath.FromSlash,
+		"Glob":          filepath.Glob,
+		"HasPrefix":     filepath.HasPrefix,
+		"IsAbs":         filepath.IsAbs,
+		"IsLocal":       filepath.IsLocal,
+		"Join":          filepath.Join,
 		"ListSeparator": filepath.ListSeparator,
-		"Localize": filepath.Localize,
-		"Match": filepath.Match,
-		"Rel": filepath.Rel,
-		"Separator": filepath.Separator,
-		"SkipAll": filepath.SkipAll,
-		"SkipDir": filepath.SkipDir,
-		"Split": filepath.Split,
-		"SplitList": filepath.SplitList,
-		"ToSlash": filepath.ToSlash,
-		"VolumeName": filepath.VolumeName,
-		"Walk": filepath.Walk,
-		"WalkDir": filepath.WalkDir,
-		"WalkFunc": reflect.TypeOf((*filepath.WalkFunc)(nil)).Elem(),
+		"Localize":      filepath.Localize,
+		"Match":         filepath.Match,
+		"Rel":           filepath.Rel,
+		"Separator":     filepath.Separator,
+		"SkipAll":       filepath.SkipAll,
+		"SkipDir":       filepath.SkipDir,
+		"Split":         filepath.Split,
+		"SplitList":     filepath.SplitList,
+		"ToSlash":       filepath.ToSlash,
+		"VolumeName":    filepath.VolumeName,
+		"Walk":          filepath.Walk,
+		"WalkDir":       filepath.WalkDir,
+		"WalkFunc":      reflect.TypeOf((*filepath.WalkFunc)(nil)).Elem(),
 	})
 }

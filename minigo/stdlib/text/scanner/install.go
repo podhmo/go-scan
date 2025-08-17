@@ -5,32 +5,33 @@ package scanner
 import (
 	"reflect"
 	"text/scanner"
+
 	"github.com/podhmo/go-scan/minigo"
 )
 
 // Install binds all exported symbols from the "text/scanner" package to the interpreter.
 func Install(interp *minigo.Interpreter) {
 	interp.Register("text/scanner", map[string]any{
-		"Char": scanner.Char,
-		"Comment": scanner.Comment,
-		"EOF": scanner.EOF,
-		"Float": scanner.Float,
-		"GoTokens": scanner.GoTokens,
-		"GoWhitespace": scanner.GoWhitespace,
-		"Ident": scanner.Ident,
-		"Int": scanner.Int,
-		"RawString": scanner.RawString,
-		"ScanChars": scanner.ScanChars,
-		"ScanComments": scanner.ScanComments,
-		"ScanFloats": scanner.ScanFloats,
-		"ScanIdents": scanner.ScanIdents,
-		"ScanInts": scanner.ScanInts,
+		"Char":           scanner.Char,
+		"Comment":        scanner.Comment,
+		"EOF":            scanner.EOF,
+		"Float":          scanner.Float,
+		"GoTokens":       scanner.GoTokens,
+		"GoWhitespace":   scanner.GoWhitespace,
+		"Ident":          scanner.Ident,
+		"Int":            scanner.Int,
+		"RawString":      scanner.RawString,
+		"ScanChars":      scanner.ScanChars,
+		"ScanComments":   scanner.ScanComments,
+		"ScanFloats":     scanner.ScanFloats,
+		"ScanIdents":     scanner.ScanIdents,
+		"ScanInts":       scanner.ScanInts,
 		"ScanRawStrings": scanner.ScanRawStrings,
-		"ScanStrings": scanner.ScanStrings,
-		"SkipComments": scanner.SkipComments,
-		"String": scanner.String,
-		"TokenString": scanner.TokenString,
-		"Position": reflect.TypeOf((*scanner.Position)(nil)).Elem(),
-		"Scanner": reflect.TypeOf((*scanner.Scanner)(nil)).Elem(),
+		"ScanStrings":    scanner.ScanStrings,
+		"SkipComments":   scanner.SkipComments,
+		"String":         scanner.String,
+		"TokenString":    scanner.TokenString,
+		"Position":       reflect.TypeOf((*scanner.Position)(nil)).Elem(),
+		"Scanner":        reflect.TypeOf((*scanner.Scanner)(nil)).Elem(),
 	})
 }

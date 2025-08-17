@@ -3120,7 +3120,11 @@ func (e *Evaluator) evalGenDecl(n *ast.GenDecl, env *object.Environment, fscope 
 						switch rt := resolvedType.(type) {
 						case *object.GoType:
 							// The type is a registered Go type. Instantiate its zero value.
-							val = &object.GoValue{Value: reflect.New(rt.GoType).Elem()}
+							// We create a pointer to a new value, then get the element it points to.
+							// This ensures the resulting reflect.Value is addressable, which is crucial
+							// for calling pointer-receiver methods on it later.
+							ptr := reflect.New(rt.GoType)
+							val = &object.GoValue{Value: ptr.Elem()}
 						case *object.StructDefinition:
 							// It's a minigo-defined struct, so initialize a zero-valued instance.
 							instance := &object.StructInstance{Def: rt, Fields: make(map[string]object.Object)}

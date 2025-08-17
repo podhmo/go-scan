@@ -94,6 +94,80 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 
 ### Future Interpreter Enhancements (for Stdlib Support)
 - [x] **Implement two-pass evaluation for top-level declarations**: To fix the "Sequential Declaration Processing" limitation, modify the interpreter to first scan all top-level declarations (types, funcs, vars, consts) in a package before evaluating any code.
+- [x] **Add support for string indexing**: Enhance the evaluator to handle the index operator (`s[i]`) on string objects.
+- [x] **Implement transitive dependency loading**: Add a mechanism to the interpreter to automatically load and parse imported packages that are not already in memory.
+- [x] **Audit and fix function signature parsing**: Investigate and fix bugs in the function signature parsing logic, using the `bytes.Equal` case as a starting point.
+- [x] **Improve FFI type conversions**:
+    - [x] Implement conversion from `minigo` array of strings to Go `[]string`.
+- [x] **Add built-in type conversions**:
+    - [x] Implement mutual conversion between `string` and `[]byte` (e.g., `[]byte("foo")`).
+
+### `minigo` Refinements ([docs/plan-minigo.md](./docs/plan-minigo.md))
+- [x] **Implement Remaining Built-in Functions**:
+    - [x] `copy`
+    - [x] `delete`
+    - [x] `cap`
+    - [x] `make`
+    - [x] `new`
+    - [x] `complex`
+    - [x] `real`
+    - [x] `imag`
+    - [x] `clear`
+    - [x] `close`
+    - [x] `panic`
+    - [x] `recover`
+- [x] **Range Over Function**: Support `for...range` loops over functions.
+- [x] **Support Increment and Decrement Operators**: Implement `++` and `--` as statements.
+- [ ] Write comprehensive documentation for the API, supported language features, and usage examples.
+
+### `minigo` FFI and Language Limitations (New Findings)
+- [ ] **Fix `json.Unmarshal` error propagation**: The FFI fails to correctly propagate `*json.UnmarshalTypeError` from `json.Unmarshal`, returning a `nil` value instead. This prevents scripts from handling JSON validation errors correctly.
+- [ ] **Improve method call support for stateful objects**: The FFI and evaluator have trouble with packages like `container/list` where methods (`PushBack`, `Next`) modify the internal state of a Go object in a way that is not correctly reflected back into the script environment. This prevents effective use of stateful, object-oriented packages.
+- [ ] **Support slice operator on Go-native arrays**: The interpreter does not support the slice operator (`[:]`) on `object.GoValue` types that wrap Go arrays (e.g., `[16]byte`). This was discovered when testing `crypto/md5` and blocks the use of functions that return native Go arrays.
+
+### `minigo` Interpreter Enhancements
+- [x] **Support arbitrary byte sequences in string literals**: The interpreter fails when it encounters string constants containing null bytes (`\x00`), such as `len8tab` from the `math/bits` package. This blocks the interpretation of packages like `slices` that depend on it. The string handling logic in `minigo` needs to be improved to support these literals correctly.
+- [x] **Fix generic type parameter scope**: The interpreter fails to resolve type parameters (e.g., `E` in `slices.Sort[S ~[]E, E cmp.Ordered]`) within the body of a generic function when the function is loaded from source. This points to a bug in how the evaluation environment is managed for generic functions. This currently blocks the use of the `slices` package.
+- [x] **Resolve transitive dependencies in generic constraints**: The interpreter fails to resolve identifiers from imported packages when they are used within a generic function's type constraints (e.g., `cmp.Ordered` in `func Sort[S ~[]E, E cmp.Ordered](x S)`). The transitive dependency loading needs to be improved to handle this case.
+- [ ] **Improve generic type inference for composite types**: The type inference engine fails to infer type parameters when they are part of a composite type in a function argument (e.g., inferring `E` from a parameter of type `[]E`). This was discovered when testing `slices.Sort` and currently blocks its use via source interpretation.
+
+### Toolchain Improvements
+- [x] **Improve `go-scan` constant evaluation**: The static analyzer currently fails to resolve the values of some computed constants (e.g., `len8tab` in `math/bits`), causing `minigo` to fail when interpreting packages that depend on them (like `slices.Sort`). The scanner should be enhanced to evaluate these constant expressions.
+
+- **`minigo` FFI Struct Instantiation** ([docs/trouble-minigo-go-value-method-call.md](./docs/trouble-minigo-go-value-method-call.md)): Addressed a critical bug where in-script variables of FFI struct types (e.g., `var s scanner.Scanner`) were not correctly instantiated, preventing method calls on their pointers.
+    - [x] **Differentiate FFI types from in-script types**: The `evalGenDecl` function now correctly identifies whether a type is from the FFI or defined in the script.
+    - [x] **Instantiate FFI types as `*object.GoValue`**: When a `var` declaration uses an FFI type, the interpreter now creates an `*object.GoValue` wrapping an *addressable* zero-valued instance of the Go type. This was the key to the fix.
+    - [x] **Update pointer evaluation logic**: The `&` operator and method call logic now correctly handle pointers to these in-script FFI-typed variables.
+    - [x] **Re-enable and verify the `text/scanner` test**: The previously-skipped test case, which relies on this functionality, now passes.
+    - [x] **Update documentation**: Ensured related troubleshooting documents are up-to-date.
+
+## To Be Implemented
+
+
+### `minigo` Standard Library Support (`slices`)
+- [x] **Implement source loading**: Add a mechanism (`LoadGoSourceAsPackage`) to load a Go source file and evaluate it as a self-contained package.
+- [x] **Add required language features**: To support `slices.Clone`, implement the following in the evaluator:
+    - [x] Evaluation of `*ast.File` nodes.
+    - [x] Assignment to index expressions (`slice[i] = value`).
+    - [x] Full 3-index slice expressions (`slice[low:high:max]`).
+    - [x] Variadic arguments in function calls (`...`).
+
+### `minigo` FFI and Language Limitations ([docs/trouble-minigo-stdlib-limitations.md](./docs/trouble-minigo-stdlib-limitations.md))
+- [x] **Implement Method Calls on Go Objects**: Enhance the interpreter to support calling methods on Go structs returned from bound functions (e.g., `(*bytes.Buffer).Write`). This is the highest-impact improvement for stdlib compatibility. (See `docs/trouble-minigo-stdlib-limitations.md`).
+- [x] **Graceful Error Handling for Go Functions**: Modify the FFI to return `error` values from Go functions as `minigo` error objects, rather than halting execution.
+- [x] **Fix FFI method call return handling**: The FFI wrapper for method calls currently discards `nil` error values in `(value, error)` returns, preventing correct multi-value assignment. This was discovered while testing `text/template`.
+- [x] **Improve FFI Support for Go Generics**: Update the binding generator to correctly handle (or at least ignore) generic Go functions to prevent it from generating non-compiling code. This is a limitation of the binding tool, not the core interpreter.
+- [x] **Add `byte` as a Built-in Type**: Add the `byte` keyword as a built-in alias for `uint8` in the interpreter to support `[]byte` literals.
+
+### `minigo` Standard Library Compatibility Analysis (`bytes`, `strings`, `math/rand`)
+- [x] **Write tests for `bytes` package functions.**
+- [x] **Write tests for `strings` package functions.**
+- [x] **Write tests for `math/rand` package functions.**
+- [x] **Analyze test results and document limitations.**
+- [x] **Update `docs/trouble-minigo-stdlib-limitations.md` with findings.**
+
+### Future Interpreter Enhancements (for Stdlib Support)
+- [x] **Implement two-pass evaluation for top-level declarations**: To fix the "Sequential Declaration Processing" limitation, modify the interpreter to first scan all top-level declarations (types, funcs, vars, consts) in a package before evaluating any code.
 - [x] **Add support for string indexing**: Enhance the evaluator to handle the index operator (`s[i]`) on string objects. 
 - [x] **Implement transitive dependency loading**: Add a mechanism to the interpreter to automatically load and parse imported packages that are not already in memory.
 - [x] **Audit and fix function signature parsing**: Investigate and fix bugs in the function signature parsing logic, using the `bytes.Equal` case as a starting point.
@@ -136,21 +210,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 
 ### `minigo` Language and FFI Enhancements from Stdlib Investigation ([docs/trouble-minigo-stdlib-limitations.md](./docs/trouble-minigo-stdlib-limitations.md))
 - [x] **Support Struct Literals with Local Variables**: Enhance the evaluator to handle struct literals that are initialized with variables from the current function's scope (e.g., `&errorString{text}`). This was found to be a blocker for interpreting the `errors` package from source.
-- [ ] **Support Methods on In-Script Pointers**: Enable the FFI bridge to resolve method calls on pointers to structs that are created and manipulated entirely within a `minigo` script (e.g., `var s scanner.Scanner; var p = &s; p.Init(...)`). This was a blocker for using the `text/scanner` package.
+- [x] **Support Methods on In-Script Pointers**: Enable the FFI bridge to resolve method calls on pointers to structs that are created and manipulated entirely within a `minigo` script (e.g., `var s scanner.Scanner; var p = &s; p.Init(...)`). This was a blocker for using the `text/scanner` package.
 - [x] **Fix Generic Function Argument Counting**: The interpreter incorrectly counts arguments for generic functions when multiple arguments share the same generic type parameter (e.g., `func Equal[S ~[]E, E comparable](s1, s2 S) bool`). This causes `wrong number of arguments` errors.
 - [x] **Support Interfaces with Type Lists**: The interpreter can now parse interfaces defined with a type list (e.g., `type Ordered interface { ~int | ~string }`). This unblocks interpretation of packages like `cmp`.
 - [x] **Improve Stack Trace for Non-Existent Files**: Ensure a full stack trace is displayed even when a source file mentioned in the trace does not exist on disk (e.g., `[Error opening source file: open main.go: no such file or directory]`).
-
-### `minigo` FFI Struct Instantiation ([docs/trouble-minigo-go-value-method-call.md](./docs/trouble-minigo-go-value-method-call.md))
-- [-] **Task 1: Differentiate FFI types from in-script types.**
-  - In `evalGenDecl`, when evaluating `var s T`, determine if `T` refers to a Go type from the FFI or a struct defined in the script. This may require adding a flag or method to `object.Type` or `object.StructDefinition` to mark its origin.
-- [x] **Task 2: Instantiate FFI types as `*object.GoValue`.**
-  - Modify `evalGenDecl` so that if `T` is an FFI type, it creates a `*object.GoValue` that wraps a zero-valued instance of the corresponding Go type (`reflect.Zero(goType)`). This will involve looking up the `reflect.Type` from a registry.
-- [x] **Task 3: Update pointer evaluation logic.**
-  - The `evalSelectorExpr` and `assignValue` functions need to be updated to correctly handle `*object.Pointer`s that point to `*object.GoValue`s, allowing method calls and field assignments to work via reflection.
-- [ ] **Task 4: Re-enable and verify the `text/scanner` test.**
-  - Remove the skip from `TestStdlib_TextScanner_FFI` in `minigo/minigo_stdlib_custom_test.go` and ensure it passes.
-- [ ] **Task 5: Update documentation.**
-  - Update `docs/trouble-minigo-go-value-method-call.md` and `docs/trouble-minigo-stdlib-limitations.md` to reflect that the issue is resolved.
-- [ ] **Task 6: Investigate and fix address-of operator (`&`) for in-script variables of FFI struct types.**
-  - The `text/scanner` test fails because `&s` (where `s` is `scanner.Scanner`) does not produce a valid pointer for method calls. The evaluation of the `&` operator needs to be fixed for this case.

@@ -4,6 +4,7 @@ package os
 
 import (
 	"os"
+	"reflect"
 
 	"github.com/podhmo/go-scan/minigo"
 )
@@ -117,17 +118,17 @@ func Install(interp *minigo.Interpreter) {
 		"UserConfigDir":       os.UserConfigDir,
 		"UserHomeDir":         os.UserHomeDir,
 		"WriteFile":           os.WriteFile,
-		"DirEntry":            (*os.DirEntry)(nil),
-		"File":                (*os.File)(nil),
-		"FileInfo":            (*os.FileInfo)(nil),
-		"FileMode":            (*os.FileMode)(nil),
-		"LinkError":           (*os.LinkError)(nil),
-		"PathError":           (*os.PathError)(nil),
-		"ProcAttr":            (*os.ProcAttr)(nil),
-		"Process":             (*os.Process)(nil),
-		"ProcessState":        (*os.ProcessState)(nil),
-		"Root":                (*os.Root)(nil),
-		"Signal":              (*os.Signal)(nil),
-		"SyscallError":        (*os.SyscallError)(nil),
+		"DirEntry":            reflect.TypeOf((*os.DirEntry)(nil)).Elem(),
+		"File":                reflect.TypeOf((*os.File)(nil)).Elem(),
+		"FileInfo":            reflect.TypeOf((*os.FileInfo)(nil)).Elem(),
+		"FileMode":            reflect.TypeOf((*os.FileMode)(nil)).Elem(),
+		"LinkError":           reflect.TypeOf((*os.LinkError)(nil)).Elem(),
+		"PathError":           reflect.TypeOf((*os.PathError)(nil)).Elem(),
+		"ProcAttr":            reflect.TypeOf((*os.ProcAttr)(nil)).Elem(),
+		"Process":             reflect.TypeOf((*os.Process)(nil)).Elem(),
+		"ProcessState":        reflect.TypeOf((*os.ProcessState)(nil)).Elem(),
+		"Root":                reflect.TypeOf((*os.Root)(nil)).Elem(),
+		"Signal":              reflect.TypeOf((*os.Signal)(nil)).Elem(),
+		"SyscallError":        reflect.TypeOf((*os.SyscallError)(nil)).Elem(),
 	})
 }

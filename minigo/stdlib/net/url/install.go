@@ -4,6 +4,7 @@ package url
 
 import (
 	"net/url"
+	"reflect"
 
 	"github.com/podhmo/go-scan/minigo"
 )
@@ -21,11 +22,11 @@ func Install(interp *minigo.Interpreter) {
 		"QueryUnescape":    url.QueryUnescape,
 		"User":             url.User,
 		"UserPassword":     url.UserPassword,
-		"Error":            (*url.Error)(nil),
-		"EscapeError":      (*url.EscapeError)(nil),
-		"InvalidHostError": (*url.InvalidHostError)(nil),
-		"URL":              (*url.URL)(nil),
-		"Userinfo":         (*url.Userinfo)(nil),
-		"Values":           (*url.Values)(nil),
+		"Error":            reflect.TypeOf((*url.Error)(nil)).Elem(),
+		"EscapeError":      reflect.TypeOf((*url.EscapeError)(nil)).Elem(),
+		"InvalidHostError": reflect.TypeOf((*url.InvalidHostError)(nil)).Elem(),
+		"URL":              reflect.TypeOf((*url.URL)(nil)).Elem(),
+		"Userinfo":         reflect.TypeOf((*url.Userinfo)(nil)).Elem(),
+		"Values":           reflect.TypeOf((*url.Values)(nil)).Elem(),
 	})
 }

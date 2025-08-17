@@ -3,6 +3,7 @@
 package strings
 
 import (
+	"reflect"
 	"strings"
 
 	"github.com/podhmo/go-scan/minigo"
@@ -68,8 +69,8 @@ func Install(interp *minigo.Interpreter) {
 		"TrimRightFunc":  strings.TrimRightFunc,
 		"TrimSpace":      strings.TrimSpace,
 		"TrimSuffix":     strings.TrimSuffix,
-		"Builder":        (*strings.Builder)(nil),
-		"Reader":         (*strings.Reader)(nil),
-		"Replacer":       (*strings.Replacer)(nil),
+		"Builder":        reflect.TypeOf((*strings.Builder)(nil)).Elem(),
+		"Reader":         reflect.TypeOf((*strings.Reader)(nil)).Elem(),
+		"Replacer":       reflect.TypeOf((*strings.Replacer)(nil)).Elem(),
 	})
 }

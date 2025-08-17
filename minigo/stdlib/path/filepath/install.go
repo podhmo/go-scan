@@ -4,6 +4,7 @@ package filepath
 
 import (
 	"path/filepath"
+	"reflect"
 
 	"github.com/podhmo/go-scan/minigo"
 )
@@ -37,6 +38,6 @@ func Install(interp *minigo.Interpreter) {
 		"VolumeName":    filepath.VolumeName,
 		"Walk":          filepath.Walk,
 		"WalkDir":       filepath.WalkDir,
-		"WalkFunc":      (*filepath.WalkFunc)(nil),
+		"WalkFunc":      reflect.TypeOf((*filepath.WalkFunc)(nil)).Elem(),
 	})
 }

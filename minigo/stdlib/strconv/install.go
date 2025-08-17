@@ -3,6 +3,7 @@
 package strconv
 
 import (
+	"reflect"
 	"strconv"
 
 	"github.com/podhmo/go-scan/minigo"
@@ -48,6 +49,6 @@ func Install(interp *minigo.Interpreter) {
 		"QuotedPrefix":             strconv.QuotedPrefix,
 		"Unquote":                  strconv.Unquote,
 		"UnquoteChar":              strconv.UnquoteChar,
-		"NumError":                 (*strconv.NumError)(nil),
+		"NumError":                 reflect.TypeOf((*strconv.NumError)(nil)).Elem(),
 	})
 }

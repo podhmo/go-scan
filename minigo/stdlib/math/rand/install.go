@@ -4,6 +4,7 @@ package rand
 
 import (
 	"math/rand"
+	"reflect"
 
 	"github.com/podhmo/go-scan/minigo"
 )
@@ -30,9 +31,9 @@ func Install(interp *minigo.Interpreter) {
 		"Shuffle":     rand.Shuffle,
 		"Uint32":      rand.Uint32,
 		"Uint64":      rand.Uint64,
-		"Rand":        (*rand.Rand)(nil),
-		"Source":      (*rand.Source)(nil),
-		"Source64":    (*rand.Source64)(nil),
-		"Zipf":        (*rand.Zipf)(nil),
+		"Rand":        reflect.TypeOf((*rand.Rand)(nil)).Elem(),
+		"Source":      reflect.TypeOf((*rand.Source)(nil)).Elem(),
+		"Source64":    reflect.TypeOf((*rand.Source64)(nil)).Elem(),
+		"Zipf":        reflect.TypeOf((*rand.Zipf)(nil)).Elem(),
 	})
 }

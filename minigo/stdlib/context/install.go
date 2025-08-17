@@ -4,6 +4,7 @@ package context
 
 import (
 	"context"
+	"reflect"
 
 	"github.com/podhmo/go-scan/minigo"
 )
@@ -25,8 +26,8 @@ func Install(interp *minigo.Interpreter) {
 		"WithTimeoutCause":  context.WithTimeoutCause,
 		"WithValue":         context.WithValue,
 		"WithoutCancel":     context.WithoutCancel,
-		"CancelCauseFunc":   (*context.CancelCauseFunc)(nil),
-		"CancelFunc":        (*context.CancelFunc)(nil),
-		"Context":           (*context.Context)(nil),
+		"CancelCauseFunc":   reflect.TypeOf((*context.CancelCauseFunc)(nil)).Elem(),
+		"CancelFunc":        reflect.TypeOf((*context.CancelFunc)(nil)).Elem(),
+		"Context":           reflect.TypeOf((*context.Context)(nil)).Elem(),
 	})
 }

@@ -4,6 +4,7 @@ package bufio
 
 import (
 	"bufio"
+	"reflect"
 
 	"github.com/podhmo/go-scan/minigo"
 )
@@ -31,10 +32,10 @@ func Install(interp *minigo.Interpreter) {
 		"ScanLines":            bufio.ScanLines,
 		"ScanRunes":            bufio.ScanRunes,
 		"ScanWords":            bufio.ScanWords,
-		"ReadWriter":           (*bufio.ReadWriter)(nil),
-		"Reader":               (*bufio.Reader)(nil),
-		"Scanner":              (*bufio.Scanner)(nil),
-		"SplitFunc":            (*bufio.SplitFunc)(nil),
-		"Writer":               (*bufio.Writer)(nil),
+		"ReadWriter":           reflect.TypeOf((*bufio.ReadWriter)(nil)).Elem(),
+		"Reader":               reflect.TypeOf((*bufio.Reader)(nil)).Elem(),
+		"Scanner":              reflect.TypeOf((*bufio.Scanner)(nil)).Elem(),
+		"SplitFunc":            reflect.TypeOf((*bufio.SplitFunc)(nil)).Elem(),
+		"Writer":               reflect.TypeOf((*bufio.Writer)(nil)).Elem(),
 	})
 }

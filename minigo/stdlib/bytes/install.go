@@ -4,6 +4,7 @@ package bytes
 
 import (
 	"bytes"
+	"reflect"
 
 	"github.com/podhmo/go-scan/minigo"
 )
@@ -73,7 +74,7 @@ func Install(interp *minigo.Interpreter) {
 		"TrimRightFunc":   bytes.TrimRightFunc,
 		"TrimSpace":       bytes.TrimSpace,
 		"TrimSuffix":      bytes.TrimSuffix,
-		"Buffer":          (*bytes.Buffer)(nil),
-		"Reader":          (*bytes.Reader)(nil),
+		"Buffer":          reflect.TypeOf((*bytes.Buffer)(nil)).Elem(),
+		"Reader":          reflect.TypeOf((*bytes.Reader)(nil)).Elem(),
 	})
 }

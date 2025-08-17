@@ -4,6 +4,7 @@ package fmt
 
 import (
 	"fmt"
+	"reflect"
 
 	"github.com/podhmo/go-scan/minigo"
 )
@@ -34,11 +35,11 @@ func Install(interp *minigo.Interpreter) {
 		"Sscan":        fmt.Sscan,
 		"Sscanf":       fmt.Sscanf,
 		"Sscanln":      fmt.Sscanln,
-		"Formatter":    (*fmt.Formatter)(nil),
-		"GoStringer":   (*fmt.GoStringer)(nil),
-		"ScanState":    (*fmt.ScanState)(nil),
-		"Scanner":      (*fmt.Scanner)(nil),
-		"State":        (*fmt.State)(nil),
-		"Stringer":     (*fmt.Stringer)(nil),
+		"Formatter":    reflect.TypeOf((*fmt.Formatter)(nil)).Elem(),
+		"GoStringer":   reflect.TypeOf((*fmt.GoStringer)(nil)).Elem(),
+		"ScanState":    reflect.TypeOf((*fmt.ScanState)(nil)).Elem(),
+		"Scanner":      reflect.TypeOf((*fmt.Scanner)(nil)).Elem(),
+		"State":        reflect.TypeOf((*fmt.State)(nil)).Elem(),
+		"Stringer":     reflect.TypeOf((*fmt.Stringer)(nil)).Elem(),
 	})
 }

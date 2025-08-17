@@ -3,6 +3,7 @@
 package sort
 
 import (
+	"reflect"
 	"sort"
 
 	"github.com/podhmo/go-scan/minigo"
@@ -29,9 +30,9 @@ func Install(interp *minigo.Interpreter) {
 		"Stable":            sort.Stable,
 		"Strings":           sort.Strings,
 		"StringsAreSorted":  sort.StringsAreSorted,
-		"Float64Slice":      (*sort.Float64Slice)(nil),
-		"IntSlice":          (*sort.IntSlice)(nil),
-		"Interface":         (*sort.Interface)(nil),
-		"StringSlice":       (*sort.StringSlice)(nil),
+		"Float64Slice":      reflect.TypeOf((*sort.Float64Slice)(nil)).Elem(),
+		"IntSlice":          reflect.TypeOf((*sort.IntSlice)(nil)).Elem(),
+		"Interface":         reflect.TypeOf((*sort.Interface)(nil)).Elem(),
+		"StringSlice":       reflect.TypeOf((*sort.StringSlice)(nil)).Elem(),
 	})
 }

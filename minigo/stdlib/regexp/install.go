@@ -3,6 +3,7 @@
 package regexp
 
 import (
+	"reflect"
 	"regexp"
 
 	"github.com/podhmo/go-scan/minigo"
@@ -19,6 +20,6 @@ func Install(interp *minigo.Interpreter) {
 		"MustCompile":      regexp.MustCompile,
 		"MustCompilePOSIX": regexp.MustCompilePOSIX,
 		"QuoteMeta":        regexp.QuoteMeta,
-		"Regexp":           (*regexp.Regexp)(nil),
+		"Regexp":           reflect.TypeOf((*regexp.Regexp)(nil)).Elem(),
 	})
 }

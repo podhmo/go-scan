@@ -3,6 +3,7 @@
 package time
 
 import (
+	"reflect"
 	"time"
 
 	"github.com/podhmo/go-scan/minigo"
@@ -76,13 +77,13 @@ func Install(interp *minigo.Interpreter) {
 		"UnixMilli":              time.UnixMilli,
 		"Until":                  time.Until,
 		"Wednesday":              time.Wednesday,
-		"Duration":               (*time.Duration)(nil),
-		"Location":               (*time.Location)(nil),
-		"Month":                  (*time.Month)(nil),
-		"ParseError":             (*time.ParseError)(nil),
-		"Ticker":                 (*time.Ticker)(nil),
-		"Time":                   (*time.Time)(nil),
-		"Timer":                  (*time.Timer)(nil),
-		"Weekday":                (*time.Weekday)(nil),
+		"Duration":               reflect.TypeOf((*time.Duration)(nil)).Elem(),
+		"Location":               reflect.TypeOf((*time.Location)(nil)).Elem(),
+		"Month":                  reflect.TypeOf((*time.Month)(nil)).Elem(),
+		"ParseError":             reflect.TypeOf((*time.ParseError)(nil)).Elem(),
+		"Ticker":                 reflect.TypeOf((*time.Ticker)(nil)).Elem(),
+		"Time":                   reflect.TypeOf((*time.Time)(nil)).Elem(),
+		"Timer":                  reflect.TypeOf((*time.Timer)(nil)).Elem(),
+		"Weekday":                reflect.TypeOf((*time.Weekday)(nil)).Elem(),
 	})
 }

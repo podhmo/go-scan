@@ -3,6 +3,7 @@
 package template
 
 import (
+	"reflect"
 	"text/template"
 
 	"github.com/podhmo/go-scan/minigo"
@@ -24,8 +25,8 @@ func Install(interp *minigo.Interpreter) {
 		"ParseFiles":       template.ParseFiles,
 		"ParseGlob":        template.ParseGlob,
 		"URLQueryEscaper":  template.URLQueryEscaper,
-		"ExecError":        (*template.ExecError)(nil),
-		"FuncMap":          (*template.FuncMap)(nil),
-		"Template":         (*template.Template)(nil),
+		"ExecError":        reflect.TypeOf((*template.ExecError)(nil)).Elem(),
+		"FuncMap":          reflect.TypeOf((*template.FuncMap)(nil)).Elem(),
+		"Template":         reflect.TypeOf((*template.Template)(nil)).Elem(),
 	})
 }

@@ -1,6 +1,7 @@
 package minigo_test
 
 import (
+	"container/list"
 	"context"
 	"encoding/hex"
 	"encoding/json"
@@ -932,7 +933,6 @@ var ext = path.Ext("/a/b/c.txt")
 
 // TestStdlib_ContainerList tests the `container/list` package.
 func TestStdlib_ContainerList(t *testing.T) {
-	t.Skip("Skipping container/list test: Fails because methods on returned objects (like *list.List) are not yet fully supported in a way that allows chained calls or modifications.")
 	script := `
 package main
 import "container/list"
@@ -983,6 +983,45 @@ func main() {
 		}
 		if intVal.Value != expected[i] {
 			t.Errorf("element %d is wrong, got %d, want %d", i, intVal.Value, expected[i])
+		}
+	}
+
+	// Direct inspection of the list object from Go
+	lObj, ok := env.Get("l")
+	if !ok {
+		t.Fatalf("variable 'l' not found in script environment")
+	}
+	goVal, ok := lObj.(*object.GoValue)
+	if !ok {
+		t.Fatalf("variable 'l' is not a GoValue, got %T", lObj)
+	}
+	goList, ok := goVal.Value.Interface().(*list.List)
+	if !ok {
+		t.Fatalf("GoValue does not wrap a *list.List, but %T", goVal.Value.Interface())
+	}
+
+	// Now, iterate the list from Go and check its contents
+	directCheckResult := []int64{}
+	for e := goList.Front(); e != nil; e = e.Next() {
+		// The values pushed were integers, but the FFI may have converted them.
+		// We need to handle the actual type stored in e.Value.
+		switch v := e.Value.(type) {
+		case int:
+			directCheckResult = append(directCheckResult, int64(v))
+		case int64:
+			directCheckResult = append(directCheckResult, v)
+		default:
+			t.Fatalf("list element value is not an int64 or int, but %T", e.Value)
+		}
+	}
+
+	// Compare with expected
+	if len(directCheckResult) != len(expected) {
+		t.Fatalf("direct check: expected %d elements, got %d", len(expected), len(directCheckResult))
+	}
+	for i, v := range directCheckResult {
+		if v != expected[i] {
+			t.Errorf("direct check: element %d is wrong, got %d, want %d", i, v, expected[i])
 		}
 	}
 }

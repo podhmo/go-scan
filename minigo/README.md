@@ -27,18 +27,12 @@ The primary goal of `minigo` is to replace static configuration files like YAML 
 The most reliable way to use standard library features is via the `minigo-gen-bindings` tool. This tool generates Go files that create a Foreign Function Interface (FFI) bridge between `minigo` and pre-compiled Go packages.
 
 -   **How it Works**: The tool scans a compiled package and generates `install.go` code that registers the package's functions with the `minigo` interpreter.
--   **Limitation**: This method **does not support generic functions**. It is best suited for exposing specific, non-generic functions from packages like `bytes` or `net/http`.
 
 ### 2. Direct Source Interpretation (Experimental)
 
 `minigo` has an experimental feature to directly load, parse, and interpret the Go source code of standard library packages at runtime. While powerful, this method is currently only suitable for simple, self-contained packages.
 
 -   **How it Works**: The interpreter finds the stdlib source in your `GOROOT`, parses it into an AST, and makes the package available for import within your script.
--   **Key Advantage**: This method successfully supports some **generic functions** (e.g., in the `slices` package), which the FFI generator cannot handle.
--   **Current Limitations**: This approach is not yet robust enough for general use with the standard library. Our analysis shows that most stdlib packages fail to load due to a few core interpreter limitations:
-    -   **Sequential Declaration Processing**: `minigo` requires types and functions to be declared before they are used, a rule Go does not enforce at the top level.
-    -   **Missing Language Features**: The interpreter lacks support for common features like string indexing (`s[i]`).
-    -   **No Transitive Dependency Resolution**: It cannot automatically load packages that are imported by the package being interpreted (e.g., `sort` importing `slices`).
 
 ## Usage
 

@@ -4,7 +4,6 @@ package path
 
 import (
 	"path"
-
 	"github.com/podhmo/go-scan/minigo"
 )
 

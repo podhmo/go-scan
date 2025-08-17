@@ -5,7 +5,6 @@ package filepath
 import (
 	"reflect"
 	"path/filepath"
-
 	"github.com/podhmo/go-scan/minigo"
 )
 

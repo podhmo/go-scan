@@ -5,7 +5,6 @@ package template
 import (
 	"reflect"
 	"text/template"
-
 	"github.com/podhmo/go-scan/minigo"
 )
 

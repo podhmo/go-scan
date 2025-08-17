@@ -4,7 +4,6 @@ package errors
 
 import (
 	"errors"
-
 	"github.com/podhmo/go-scan/minigo"
 )
 

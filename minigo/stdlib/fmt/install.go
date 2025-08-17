@@ -5,7 +5,6 @@ package fmt
 import (
 	"reflect"
 	"fmt"
-
 	"github.com/podhmo/go-scan/minigo"
 )
 

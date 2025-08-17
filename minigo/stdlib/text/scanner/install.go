@@ -5,7 +5,6 @@ package scanner
 import (
 	"reflect"
 	"text/scanner"
-
 	"github.com/podhmo/go-scan/minigo"
 )
 

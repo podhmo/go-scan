@@ -4,7 +4,6 @@ package md5
 
 import (
 	"crypto/md5"
-
 	"github.com/podhmo/go-scan/minigo"
 )
 

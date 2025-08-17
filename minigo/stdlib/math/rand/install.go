@@ -5,7 +5,6 @@ package rand
 import (
 	"reflect"
 	"math/rand"
-
 	"github.com/podhmo/go-scan/minigo"
 )
 

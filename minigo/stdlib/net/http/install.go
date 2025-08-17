@@ -5,7 +5,6 @@ package http
 import (
 	"reflect"
 	"net/http"
-
 	"github.com/podhmo/go-scan/minigo"
 )
 

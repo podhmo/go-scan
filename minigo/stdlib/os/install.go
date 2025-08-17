@@ -5,7 +5,6 @@ package os
 import (
 	"reflect"
 	"os"
-
 	"github.com/podhmo/go-scan/minigo"
 )
 

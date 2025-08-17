@@ -5,7 +5,6 @@ package sort
 import (
 	"reflect"
 	"sort"
-
 	"github.com/podhmo/go-scan/minigo"
 )
 

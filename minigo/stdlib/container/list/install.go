@@ -5,7 +5,6 @@ package list
 import (
 	"reflect"
 	"container/list"
-
 	"github.com/podhmo/go-scan/minigo"
 )
 

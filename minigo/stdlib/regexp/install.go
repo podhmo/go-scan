@@ -5,7 +5,6 @@ package regexp
 import (
 	"reflect"
 	"regexp"
-
 	"github.com/podhmo/go-scan/minigo"
 )
 

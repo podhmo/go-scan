@@ -5,7 +5,6 @@ package strings
 import (
 	"reflect"
 	"strings"
-
 	"github.com/podhmo/go-scan/minigo"
 )
 

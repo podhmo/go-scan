@@ -5,7 +5,6 @@ package json
 import (
 	"reflect"
 	"encoding/json"
-
 	"github.com/podhmo/go-scan/minigo"
 )
 

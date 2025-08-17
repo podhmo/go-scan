@@ -5,7 +5,6 @@ package url
 import (
 	"reflect"
 	"net/url"
-
 	"github.com/podhmo/go-scan/minigo"
 )
 

@@ -23,7 +23,6 @@ import (
 	"reflect"
 	{{- end }}
 	"{{ .PackagePath }}"
-
 	"github.com/podhmo/go-scan/minigo"
 )
 

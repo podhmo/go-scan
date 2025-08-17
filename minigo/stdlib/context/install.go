@@ -5,7 +5,6 @@ package context
 import (
 	"reflect"
 	"context"
-
 	"github.com/podhmo/go-scan/minigo"
 )
 

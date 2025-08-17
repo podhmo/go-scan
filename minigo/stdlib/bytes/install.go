@@ -5,7 +5,6 @@ package bytes
 import (
 	"reflect"
 	"bytes"
-
 	"github.com/podhmo/go-scan/minigo"
 )
 

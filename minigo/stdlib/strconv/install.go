@@ -5,7 +5,6 @@ package strconv
 import (
 	"reflect"
 	"strconv"
-
 	"github.com/podhmo/go-scan/minigo"
 )
 

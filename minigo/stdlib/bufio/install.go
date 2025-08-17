@@ -5,7 +5,6 @@ package bufio
 import (
 	"reflect"
 	"bufio"
-
 	"github.com/podhmo/go-scan/minigo"
 )
 

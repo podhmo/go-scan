@@ -5,7 +5,6 @@ package time
 import (
 	"reflect"
 	"time"
-
 	"github.com/podhmo/go-scan/minigo"
 )
 

@@ -393,6 +393,7 @@ type BuiltinContext struct {
 	Stderr           io.Writer
 	Fset             *token.FileSet
 	Env              *Environment // The environment of the function call
+	FScope           *FileScope   // The file scope at the call site.
 	IsExecutingDefer func() bool
 	GetPanic         func() *Panic
 	ClearPanic       func()
@@ -423,6 +424,7 @@ type StructDefinition struct {
 	Fields     []*ast.Field
 	Methods    map[string]*Function
 	FieldTags  map[string]string // Added to store parsed json tags, mapping field name to json tag name.
+	Env        *Environment      // The environment where the struct was defined.
 }
 
 // Type returns the type of the StructDefinition object.

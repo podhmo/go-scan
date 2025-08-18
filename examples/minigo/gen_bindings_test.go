@@ -21,12 +21,12 @@ func TestGenerate(t *testing.T) {
 	}{
 		{
 			name:       "generics",
-			pkgPath:    "github.com/podhmo/go-scan/examples/minigo/testpackages/generics",
+			pkgPath:    "examples/minigo/testpackages/generics",
 			goldenFile: "generics.golden",
 		},
 		{
 			name:       "varsandtypes",
-			pkgPath:    "github.com/podhmo/go-scan/examples/minigo/testpackages/varsandtypes",
+			pkgPath:    "examples/minigo/testpackages/varsandtypes",
 			goldenFile: "varsandtypes.golden",
 		},
 	}

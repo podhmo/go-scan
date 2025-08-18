@@ -33,8 +33,50 @@ func (e *Evaluator) Eval(node ast.Node, s *scope.Scope) object.Object {
 		return e.evalBlockStatement(n, s)
 	case *ast.ReturnStmt:
 		return e.evalReturnStmt(n, s)
+	case *ast.IfStmt:
+		return e.evalIfStmt(n, s)
+	case *ast.ForStmt:
+		return e.evalForStmt(n, s)
+	case *ast.SwitchStmt:
+		return e.evalSwitchStmt(n, s)
 	}
 	return newError("evaluation not implemented for %T", node)
+}
+
+// evalSwitchStmt evaluates a switch statement. It traverses all case clauses
+// to discover patterns that could occur in any branch.
+func (e *Evaluator) evalSwitchStmt(n *ast.SwitchStmt, s *scope.Scope) object.Object {
+	// The result of a switch statement is the result of the last evaluated statement
+	// in the taken branch. Since we evaluate all branches, we'll just return the
+	// result of the last statement in the last case block for now.
+	var result object.Object
+	if n.Body != nil {
+		for _, c := range n.Body.List {
+			if caseClause, ok := c.(*ast.CaseClause); ok {
+				for _, stmt := range caseClause.Body {
+					result = e.Eval(stmt, s)
+					// We don't break early on return/error here because we want
+					// to analyze all branches. A more sophisticated implementation
+					// might collect results from all branches.
+				}
+			}
+		}
+	}
+	return result
+}
+
+// evalForStmt evaluates a for statement. Following the "bounded analysis" principle,
+// it evaluates the loop body exactly once to find patterns within it.
+// It ignores the loop's condition, initializer, and post-iteration statement.
+func (e *Evaluator) evalForStmt(n *ast.ForStmt, s *scope.Scope) object.Object {
+	return e.Eval(n.Body, s)
+}
+
+// evalIfStmt evaluates an if statement. Following our heuristic-based approach,
+// it evaluates the body to see what *could* happen, without complex path forking.
+// For simplicity, it currently ignores the condition and the else block.
+func (e *Evaluator) evalIfStmt(n *ast.IfStmt, s *scope.Scope) object.Object {
+	return e.Eval(n.Body, s)
 }
 
 func (e *Evaluator) evalBlockStatement(block *ast.BlockStmt, s *scope.Scope) object.Object {

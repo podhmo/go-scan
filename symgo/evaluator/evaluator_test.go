@@ -141,9 +141,9 @@ func TestEval_ReturnStmt(t *testing.T) {
 
 func TestEval_UnsupportedNode(t *testing.T) {
 	// Use a node type we haven't implemented yet
-	node := &ast.ForStmt{
-		For:  token.NoPos,
-		Body: &ast.BlockStmt{},
+	node := &ast.ChanType{
+		Dir:   ast.SEND,
+		Value: &ast.Ident{Name: "int"},
 	}
 
 	eval := New()
@@ -155,8 +155,107 @@ func TestEval_UnsupportedNode(t *testing.T) {
 		t.Fatalf("Eval() did not return an error for unsupported node. got=%T", obj)
 	}
 
-	expectedMsg := "evaluation not implemented for *ast.ForStmt"
+	expectedMsg := "evaluation not implemented for *ast.ChanType"
 	if errObj.Message != expectedMsg {
 		t.Errorf("Error message wrong. want=%q, got=%q", expectedMsg, errObj.Message)
 	}
+}
+
+func TestEval_IfStmt(t *testing.T) {
+	// The evaluator should step into the if block regardless of the condition.
+	input := `if true { x = "inside" }`
+	stmt := parseStmt(t, input)
+
+	eval := New()
+	s := scope.NewScope()
+	eval.Eval(stmt, s)
+
+	obj, ok := s.Get("x")
+	if !ok {
+		t.Fatalf("x not found in scope")
+	}
+	str, ok := obj.(*object.String)
+	if !ok {
+		t.Fatalf("x is not a string, got %T", obj)
+	}
+	if str.Value != "inside" {
+		t.Errorf("x has wrong value, want 'inside', got %q", str.Value)
+	}
+}
+
+func TestEval_ForStmt(t *testing.T) {
+	// The evaluator should evaluate the body once.
+	input := `for i := 0; i < 10; i++ { y = "in-loop" }`
+	stmt := parseStmt(t, input)
+
+	eval := New()
+	s := scope.NewScope()
+	eval.Eval(stmt, s)
+
+	obj, ok := s.Get("y")
+	if !ok {
+		t.Fatalf("y not found in scope")
+	}
+	str, ok := obj.(*object.String)
+	if !ok {
+		t.Fatalf("y is not a string, got %T", obj)
+	}
+	if str.Value != "in-loop" {
+		t.Errorf("y has wrong value, want 'in-loop', got %q", str.Value)
+	}
+}
+
+func TestEval_SwitchStmt(t *testing.T) {
+	// The evaluator should evaluate all case blocks.
+	input := `
+switch "a" {
+case "a":
+	x = "is-a"
+case "b":
+	y = "is-b"
+default:
+	z = "is-default"
+}
+`
+	stmt := parseStmt(t, input)
+
+	eval := New()
+	s := scope.NewScope()
+	eval.Eval(stmt, s)
+
+	// Check x
+	objX, _ := s.Get("x")
+	strX, ok := objX.(*object.String)
+	if !ok || strX.Value != "is-a" {
+		t.Errorf("x has wrong value, want 'is-a', got %v", objX)
+	}
+
+	// Check y
+	objY, _ := s.Get("y")
+	strY, ok := objY.(*object.String)
+	if !ok || strY.Value != "is-b" {
+		t.Errorf("y has wrong value, want 'is-b', got %v", objY)
+	}
+
+	// Check z
+	objZ, _ := s.Get("z")
+	strZ, ok := objZ.(*object.String)
+	if !ok || strZ.Value != "is-default" {
+		t.Errorf("z has wrong value, want 'is-default', got %v", objZ)
+	}
+}
+
+// parseStmt is a helper to parse a single statement for testing.
+func parseStmt(t *testing.T, input string) ast.Stmt {
+	t.Helper()
+	src := fmt.Sprintf("package main\n\nfunc main() {\n\t%s\n}", input)
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "src.go", src, 0)
+	if err != nil {
+		t.Fatalf("parser.ParseFile() failed for input\n%s\nerror: %v", input, err)
+	}
+	if len(file.Decls) == 0 || len(file.Decls[0].(*ast.FuncDecl).Body.List) == 0 {
+		t.Fatalf("could not find statement in parsed file for input:\n%s", input)
+	}
+	return file.Decls[0].(*ast.FuncDecl).Body.List[0]
 }

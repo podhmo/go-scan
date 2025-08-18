@@ -143,7 +143,7 @@ func generate(ctx context.Context, s *goscan.Scanner, outputDir, pkgPath string)
 		TypeSymbols  []string
 	}{
 		PackageName:  pkgName,
-		PackagePath:  pkgPath,
+		PackagePath:  pkgInfo.ImportPath,
 		ValueSymbols: valueSymbolSlice,
 		TypeSymbols:  typeSymbolSlice,
 	}

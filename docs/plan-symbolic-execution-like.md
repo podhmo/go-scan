@@ -46,7 +46,108 @@ To avoid brittle, hardcoded analysis, `docgen` will use a configurable registry 
 
 ## 4. Detailed Design and Code-to-Spec Mapping
 
-(This section provides concrete examples of the end-to-end analysis process.)
+This section provides concrete examples of the end-to-end analysis process.
+
+### Example Target Go Code
+
+```go
+// In main.go
+package main
+
+import (
+	"encoding/json"
+	"net/http"
+)
+
+// CreateUserRequest represents the request body for creating a user.
+type CreateUserRequest struct {
+	Name string `json:"name"` // The user's name
+}
+
+// User represents a user in our system.
+type User struct {
+	ID   int    `json:"id"`
+	Name string `json:"name"`
+}
+
+// UserHandler handles requests for the /users endpoint.
+// It supports GET to list users and POST to create a new user.
+func UserHandler(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		// GET /users?limit=10
+		_ = r.URL.Query().Get("limit") // Parameter extraction
+
+		// Response
+		users := []User{{ID: 1, Name: "Alice"}}
+		json.NewEncoder(w).Encode(users)
+
+	case http.MethodPost:
+		// Request Body
+		var req CreateUserRequest
+		json.NewDecoder(r.Body).Decode(&req)
+
+		// Response
+		user := User{ID: 2, Name: req.Name}
+		json.NewEncoder(w).Encode(user)
+	}
+}
+
+func main() {
+	http.HandleFunc("/users", UserHandler)
+	http.ListenAndServe(":8080", nil)
+}
+```
+
+### Mapping Details
+
+#### 4.1. Path, Method, and Operation
+
+*   **Go Code:** `http.HandleFunc("/users", myapp.UserHandler)`
+*   **Extraction Logic:**
+    1.  `docgen` registers an intrinsic for `http.HandleFunc`.
+    2.  `symgo` executes the intrinsic, extracting the path `/users` and the symbolic function for `myapp.UserHandler`.
+    3.  `docgen` analyzes the `UserHandler`'s AST, looking for `switch r.Method` blocks to find the handled HTTP methods (GET, POST).
+*   **Final OpenAPI Snippet:** `paths: { /users: { get: ..., post: ... } }`
+
+#### 4.2. Description and OperationID
+
+*   **Go Code:** `// UserHandler handles user requests. \n func UserHandler(...)`
+*   **Extraction Logic:**
+    1.  The `OperationID` is derived from the function name (`UserHandler_GET`).
+    2.  The `Description` is extracted from the `Doc` field of the function's `*ast.FuncDecl`.
+    3.  **`go-scan` Note:** This relies on `go-scan` providing the full AST node with its documentation.
+*   **Final OpenAPI Snippet:** `get: { operationId: UserHandler_GET, description: "UserHandler handles user requests." }`
+
+#### 4.3. Request Body
+
+*   **Go Code:** `utils.DecodeJSON(r, &req)` where `req` is `CreateUserRequest`.
+*   **Extraction Logic:**
+    1.  The engine encounters `utils.DecodeJSON`, which is not an intrinsic. It recursively evaluates it (per section 3.2).
+    2.  Inside `DecodeJSON`, it finds the `json.NewDecoder(...).Decode(...)` call.
+    3.  The `docgen` tool has a registered pattern analyzer for this call. The analyzer finds the variable passed to `Decode` (`&req`).
+    4.  **`minigo` Note:** Using the `minigo`-style scope, it resolves `req` to its type, `CreateUserRequest`.
+    5.  It then analyzes the `CreateUserRequest` struct definition to build the schema.
+*   **Final OpenAPI Snippet:** `post: { requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/CreateUserRequest' } } } } }`
+
+#### 4.4. Query Parameters
+
+*   **Go Code:** `name := GetQuery(r, "name")`
+*   **Extraction Logic:**
+    1.  The `docgen` AST walker applies its registered `CallPattern` list to the handler's code.
+    2.  It finds a match with a user-defined pattern: `{TargetFunc: "myapp/utils.GetQuery", ArgIndex: 1}`.
+    3.  It extracts the parameter name "name" from the second argument.
+    4.  It defaults the type to `string`, as type inference is a complex extension.
+*   **Final OpenAPI Snippet:** `get: { parameters: [ { name: name, in: query, schema: { type: string } } ] }`
+
+#### 4.5. Responses
+
+*   **Go Code:** `render.JSON(w, 200, users)` where `users` is `[]User`.
+*   **Extraction Logic:**
+    1.  `docgen` registers an intrinsic for its `render.JSON` helper.
+    2.  The intrinsic is executed. It identifies the second argument (`200`) as the status code and the third argument (`users`) as the response body.
+    3.  It resolves the symbolic type of `users` to `[]User` and generates the corresponding schema.
+*   **Final OpenAPI Snippet:** `get: { responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/User' } } } } } } }`
 
 ## 5. Design Q&A Checklist
 

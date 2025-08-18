@@ -189,13 +189,12 @@ These packages are likely to fail in new and informative ways, helping to reveal
 -   **Status**: **Incompatible (via FFI)**
 -   **Analysis**: A test for `container/list` was created to test creating a new list (`list.New()`) and manipulating it with methods like `PushBack`, `PushFront`, and iterating with `Front()` and `Next()`. The test failed during evaluation. This is likely because the interpreter's support for methods on Go objects returned via FFI is not complete enough to handle the stateful modifications and chained method calls required to use this package effectively. The test has been skipped.
 
-### `crypto/md5`
+### `crypto/md5` **(FIXED)**
 
--   **Limitation**: ~~The slice operator (`[:]`) is not supported for Go-native array types returned via FFI.~~ **(FIXED)**
 -   **Status**: **Compatible (via FFI)**
--   **Analysis**: ~~A test was created for `crypto/md5` to hash a byte slice. The `md5.Sum()` function returns a Go native array (`[16]byte`). The test failed when attempting to slice this array (`hash[:]`) to pass it to `hex.EncodeToString()`. The interpreter's evaluator does not support the slice operator on `object.GoValue` types that wrap Go arrays.~~
--   **Conclusion**: ~~Basic hashing is possible, but using the result is difficult without slice support. The test has been skipped.~~
--   **Resolution**: The `evalSliceExpr` function in the evaluator now supports slicing `object.GoValue` types that wrap Go arrays or slices. It also correctly handles the case where a Go array returned by a function is not addressable by creating an addressable copy before slicing. The test for `crypto/md5` now passes.
+-   **Previous Limitation**: The interpreter could not slice Go-native arrays (like the `[16]byte` returned by `md5.Sum`), which made it difficult to use the result of hashing functions.
+-   **Resolution**: The slice operator (`[:]`) is now supported for Go-native arrays and slices wrapped as `object.GoValue`. The interpreter now correctly handles non-addressable arrays by creating a temporary copy before slicing.
+-   **Conclusion**: The `crypto/md5` package is now usable. The test case which calls `md5.Sum()` and slices the result now passes successfully.
 
 -   **`container/heap`**: Would test the interpreter's ability to handle interface-based APIs where user-defined types must satisfy the interface.
 -   **`crypto/*`**: Would rigorously test the integer and bitwise operation support beyond the limitations found in `crypto/md5`.

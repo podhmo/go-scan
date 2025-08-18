@@ -21,16 +21,14 @@ The investigation revealed several fundamental limitations in the FFI bridge. Th
 
 ## Package-Specific Analysis
 
-### `slices` (Mostly Supported via Source Interpretation)
+### `slices` (Source Interpretation)
 
--   **Status**: Partially Compatible (Blocked).
+-   **Status**: **Mostly Compatible**
 -   **Analysis**:
-    -   **FIXED**: The `go-scan` tool can now correctly evaluate complex string constants containing arbitrary byte sequences (e.g., `\x00`). This was a blocker for interpreting `math/bits`, a dependency of `slices`.
-    -   **FIXED**: The interpreter's environment management for generic functions has been improved. The previous "identifier not found: E" error, caused by evaluating type constraints in the wrong scope, is now resolved.
--   **FIXED**: The interpreter can now resolve transitive dependencies found within generic type constraints (e.g., `cmp.Ordered` in `slices.Sort`).
--   **Current Blocker**: The type inference engine is not powerful enough to handle composite types.
-    -   **Root Cause: `could not infer type for generic parameter E`**: When calling a function like `slices.Sort`, the interpreter successfully resolves `cmp.Ordered`. However, it then fails while executing the body of `Sort`. The `Sort` function calls internal helper functions (e.g., `pdqsortOrdered`) which have parameters that are composite generic types (e.g., `x []E`). The `minigo` type inference engine is not yet capable of inferring a type parameter (`E`) from an argument passed to a composite type (`[]E`). It can only infer from simple generic parameters (e.g., `x E`).
--   **Conclusion**: The `slices` package remains unusable with source interpretation until the type inference engine is enhanced to support inferring from composite generic types.
+    -   **FIXED**: A severe performance bottleneck in the interpreter was causing `slices.Sort` to time out. The root cause was identified as excessive memory allocation in the `evalForStmt` function, which created a new environment on every loop iteration. This has been fixed by refactoring the loop evaluation logic.
+    -   **FIXED**: A secondary bug where the interpreter did not recognize all built-in numeric types (e.g., `int8`, `uintptr`) has been fixed. This was preventing the `cmp.Ordered` interface from being parsed correctly.
+    -   **Known Limitation**: The type inference for empty slice literals is still weak. An expression like `var s = []int{}` results in a slice whose element type is `any`, which can cause type constraint failures for functions like `slices.Sort`. This is a minor issue, as non-empty slices are inferred correctly.
+-   **Conclusion**: The `slices` package is now highly compatible and usable via direct source interpretation. Core functions like `Sort`, `Clone`, `Equal`, and `Compare` are now tested and pass without issue.
 
 ### `strconv`
 

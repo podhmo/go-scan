@@ -1354,7 +1354,19 @@ func (e *Evaluator) evalBlockStatement(block *ast.BlockStmt, env *object.Environ
 func (e *Evaluator) evalForStmt(fs *ast.ForStmt, env *object.Environment, fscope *object.FileScope) object.Object {
 	loopEnv := object.NewEnclosedEnvironment(env)
 
+	var loopVars []string
 	if fs.Init != nil {
+		// If the init statement is a short variable declaration (:=),
+		// record the names of the variables it declares. This is key
+		// to emulating Go 1.22's per-iteration variable semantics.
+		if assign, ok := fs.Init.(*ast.AssignStmt); ok && assign.Tok == token.DEFINE {
+			for _, lhs := range assign.Lhs {
+				if ident, ok := lhs.(*ast.Ident); ok {
+					loopVars = append(loopVars, ident.Name)
+				}
+			}
+		}
+
 		initResult := e.Eval(fs.Init, loopEnv, fscope)
 		if isError(initResult) {
 			return initResult
@@ -1372,35 +1384,38 @@ func (e *Evaluator) evalForStmt(fs *ast.ForStmt, env *object.Environment, fscope
 			}
 		}
 
-		// Instead of calling Eval on the whole block, which creates a new env,
-		// evaluate the statements within the existing loopEnv to prevent allocations on each iteration.
-		var bodyResult object.Object
-		for _, stmt := range fs.Body.List {
-			bodyResult = e.Eval(stmt, loopEnv, fscope)
-			if bodyResult != nil {
-				rt := bodyResult.Type()
-				if rt == object.BREAK_OBJ || rt == object.CONTINUE_OBJ || rt == object.ERROR_OBJ || rt == object.RETURN_VALUE_OBJ || rt == object.PANIC_OBJ {
-					break // Break from the inner statement loop to handle the control flow signal.
-				}
+		// Create a new environment for the loop body for each iteration.
+		bodyEnv := object.NewEnclosedEnvironment(loopEnv)
+		// If we identified loop variables from a `:=` statement, we create
+		// a copy of them in the new body-specific environment.
+		// This is the magic that makes closures capture the variable per-iteration.
+		for _, varName := range loopVars {
+			val, ok := loopEnv.Get(varName)
+			if ok {
+				bodyEnv.Set(varName, val)
 			}
 		}
 
+		// Evaluate the loop body in this new, per-iteration environment.
+		bodyResult := e.Eval(fs.Body, bodyEnv, fscope)
+
+		// Check for control flow statements
 		if bodyResult != nil {
-			if bodyResult.Type() == object.BREAK_OBJ {
-				break // Break from the outer for-loop.
+			rt := bodyResult.Type()
+			if rt == object.BREAK_OBJ {
+				break // Break from the for-loop
 			}
-			if bodyResult.Type() == object.CONTINUE_OBJ {
+			if rt == object.CONTINUE_OBJ {
+				// Execute the post statement before continuing.
 				if fs.Post != nil {
-					postResult := e.Eval(fs.Post, loopEnv, fscope)
-					if isError(postResult) {
+					if postResult := e.Eval(fs.Post, loopEnv, fscope); isError(postResult) {
 						return postResult
 					}
 				}
 				continue
 			}
-			// Propagate errors, returns, and panics up the call stack.
-			if bodyResult.Type() == object.ERROR_OBJ || bodyResult.Type() == object.RETURN_VALUE_OBJ || bodyResult.Type() == object.PANIC_OBJ {
-				return bodyResult
+			if rt == object.ERROR_OBJ || rt == object.RETURN_VALUE_OBJ || rt == object.PANIC_OBJ {
+				return bodyResult // Propagate up
 			}
 		}
 
@@ -2561,6 +2576,47 @@ func (e *Evaluator) evalTypeConversion(call *ast.CallExpr, typeObj object.Object
 	}
 }
 
+// evalFuncType evaluates an ast.FuncType node and returns an object.FuncType.
+func (e *Evaluator) evalFuncType(n *ast.FuncType, env *object.Environment, fscope *object.FileScope) object.Object {
+	params := []object.Object{}
+	if n.Params != nil {
+		for _, p := range n.Params.List {
+			pType := e.Eval(p.Type, env, fscope)
+			if isError(pType) {
+				return pType
+			}
+			// For `func(a, b int)`, there are two names but one type.
+			if len(p.Names) > 0 {
+				for i := 0; i < len(p.Names); i++ {
+					params = append(params, pType)
+				}
+			} else {
+				// For `func(int)`, there are no names, but one type.
+				params = append(params, pType)
+			}
+		}
+	}
+
+	results := []object.Object{}
+	if n.Results != nil {
+		for _, r := range n.Results.List {
+			rType := e.Eval(r.Type, env, fscope)
+			if isError(rType) {
+				return rType
+			}
+			if len(r.Names) > 0 {
+				for i := 0; i < len(r.Names); i++ {
+					results = append(results, rType)
+				}
+			} else {
+				results = append(results, rType)
+			}
+		}
+	}
+
+	return &object.FuncType{Parameters: params, Results: results}
+}
+
 // flattenTypeUnion takes a type expression from an interface definition and flattens it
 // into a list of individual type expressions. This is used to handle union types
 // like `int | string | MyType`. The AST represents this as a binary tree of `|` operations.
@@ -2972,6 +3028,8 @@ func (e *Evaluator) Eval(node ast.Node, env *object.Environment, fscope *object.
 		return e.evalBasicLit(n)
 
 	// Type Expressions
+	case *ast.FuncType:
+		return e.evalFuncType(n, env, fscope)
 	case *ast.ArrayType:
 		eltType := e.Eval(n.Elt, env, fscope)
 		if isError(eltType) {

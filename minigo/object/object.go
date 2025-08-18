@@ -63,6 +63,7 @@ const (
 	// Type Kinds
 	ARRAY_TYPE_OBJ ObjectType = "ARRAY_TYPE"
 	MAP_TYPE_OBJ   ObjectType = "MAP_TYPE"
+	FUNC_TYPE_OBJ  ObjectType = "FUNC_TYPE"
 )
 
 // Hashable is an interface for objects that can be used as map keys.
@@ -894,6 +895,46 @@ func getSourceLine(filename string, lineNum int) (string, error) {
 		return "", err
 	}
 	return "", nil // Line not found is not considered an error here.
+}
+
+// --- FuncType Object ---
+
+// FuncType represents the type of a function, e.g., func(int) string.
+type FuncType struct {
+	Parameters []Object // Types of parameters
+	Results    []Object // Types of results
+}
+
+// Type returns the type of the FuncType object.
+func (ft *FuncType) Type() ObjectType { return FUNC_TYPE_OBJ }
+
+// Inspect returns a string representation of the function type.
+func (ft *FuncType) Inspect() string {
+	var out bytes.Buffer
+	out.WriteString("func(")
+	params := []string{}
+	for _, p := range ft.Parameters {
+		params = append(params, p.Inspect())
+	}
+	out.WriteString(strings.Join(params, ", "))
+	out.WriteString(")")
+
+	if len(ft.Results) > 0 {
+		out.WriteString(" ")
+		if len(ft.Results) > 1 {
+			out.WriteString("(")
+		}
+		results := []string{}
+		for _, r := range ft.Results {
+			results = append(results, r.Inspect())
+		}
+		out.WriteString(strings.Join(results, ", "))
+		if len(ft.Results) > 1 {
+			out.WriteString(")")
+		}
+	}
+
+	return out.String()
 }
 
 // --- Global Instances ---

@@ -4399,6 +4399,14 @@ func (e *Evaluator) findSymbolInPackage(pkg *object.Package, symbolName *ast.Ide
 
 	// 2. Check the registry for pre-registered symbols (values and types).
 	if symbol, ok := e.registry.Lookup(pkg.Path, symbolName.Name); ok {
+		// If the registered symbol is already a minigo object (e.g., a custom *object.Builtin),
+		// use it directly.
+		if obj, isObj := symbol.(object.Object); isObj {
+			pkg.Members[symbolName.Name] = obj
+			return obj
+		}
+
+		// Otherwise, wrap the native Go value.
 		var member object.Object
 		val := reflect.ValueOf(symbol)
 		if val.Kind() == reflect.Func {

@@ -42,6 +42,20 @@ When analysis requires entering an intra-module helper function, the engine will
 
 To avoid brittle, hardcoded analysis, `docgen` will use a configurable registry of "Pattern Analyzers." This allows analysis rules (e.g., how to find a query parameter) to be defined as data, making the tool adaptable to project-specific helper functions.
 
+### 3.4. Handling Control Flow (`if`, `for`)
+
+A full symbolic execution of all control flow paths is computationally expensive and often unnecessary for static analysis tools like `docgen`. `symgo` will adopt a pragmatic, heuristic-based approach.
+
+*   **Conditional Statements (`if`, `switch`):**
+    The primary goal is not to prove a single path is taken, but to discover what *could* happen in any branch. Instead of complex state forking and path constraint analysis, the engine will favor a simpler traversal model. For example, when analyzing an `http.HandlerFunc` that uses a `switch r.Method` block, the analyzer will simply inspect the AST of each `case` block sequentially to collect the patterns for `GET`, `POST`, etc. This approach gathers all potential behaviors without the overhead of simulating a true execution fork.
+
+*   **Loops (`for`):**
+    Loops present a halting problem and cannot be analyzed to completion in the general case. The engine will use a **bounded analysis** strategy:
+    1.  **Limited Unrolling (Default):** By default, the engine will "unroll" a loop once. This means it will evaluate the body of the loop a single time to discover important function calls or patterns within it (e.g., decoding a single item from a request stream).
+    2.  **Symbolic Generalization (Fallback):** After the single iteration (or if the loop is skipped entirely), any variables assigned or modified within the loop body will be treated as `SymbolicPlaceholder`s. This correctly marks their state as indeterminate after the loop, preventing the engine from making unsound assumptions.
+
+This strategy balances the need to inspect code within control flow structures with the practical limitations of static analysis, ensuring the engine remains fast and fit for its purpose of pattern extraction.
+
 ## 4. Detailed Design and Code-to-Spec Mapping
 
 This section provides concrete examples of the end-to-end analysis process.

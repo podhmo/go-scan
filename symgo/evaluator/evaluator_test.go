@@ -1,6 +1,7 @@
 package evaluator
 
 import (
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -69,6 +70,72 @@ func TestEval_IdentifierNotFound(t *testing.T) {
 	expectedMsg := "identifier not found: nonExistent"
 	if errObj.Message != expectedMsg {
 		t.Errorf("Error message wrong. want=%q, got=%q", expectedMsg, errObj.Message)
+	}
+}
+
+func TestEval_AssignStmt(t *testing.T) {
+	input := `x = "hello"`
+	// Use parser.ParseFile to get a statement list, as assignment is a statement, not an expression.
+	src := fmt.Sprintf("package main\n\nfunc main() {\n\t%s\n}", input)
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "src.go", src, 0)
+	if err != nil {
+		t.Fatalf("parser.ParseFile() failed: %v", err)
+	}
+	// Extract the assignment statement from the AST
+	stmt := file.Decls[0].(*ast.FuncDecl).Body.List[0]
+
+	eval := New()
+	s := scope.NewScope()
+	// s.Set("x", &object.String{Value: "initial"}) // Pre-declare the variable
+
+	eval.Eval(stmt, s)
+
+	// Check if the value was set correctly in the scope
+	obj, ok := s.Get("x")
+	if !ok {
+		t.Fatalf("scope.Get() failed, 'x' not found")
+	}
+
+	str, ok := obj.(*object.String)
+	if !ok {
+		t.Fatalf("scope contains wrong type for 'x'. want=*object.String, got=%T (%+v)", obj, obj)
+	}
+
+	if str.Value != "hello" {
+		t.Errorf("String has wrong value. want=%q, got=%q", "hello", str.Value)
+	}
+}
+
+func TestEval_ReturnStmt(t *testing.T) {
+	input := `return "hello"`
+	src := fmt.Sprintf("package main\n\nfunc main() {\n\t%s\n}", input)
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "src.go", src, 0)
+	if err != nil {
+		t.Fatalf("parser.ParseFile() failed: %v", err)
+	}
+	// We evaluate the whole function body
+	block := file.Decls[0].(*ast.FuncDecl).Body
+
+	eval := New()
+	s := scope.NewScope()
+	obj := eval.Eval(block, s)
+
+	// The result of the block should be a ReturnValue
+	retVal, ok := obj.(*object.ReturnValue)
+	if !ok {
+		t.Fatalf("Eval() did not return *object.ReturnValue. got=%T (%+v)", obj, obj)
+	}
+
+	// The wrapped value should be a String
+	str, ok := retVal.Value.(*object.String)
+	if !ok {
+		t.Fatalf("ReturnValue has wrong type. want=*object.String, got=%T (%+v)", retVal.Value, retVal.Value)
+	}
+
+	if str.Value != "hello" {
+		t.Errorf("String has wrong value. want=%q, got=%q", "hello", str.Value)
 	}
 }
 

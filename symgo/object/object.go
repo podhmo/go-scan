@@ -14,6 +14,7 @@ const (
 	FUNCTION_OBJ    ObjectType = "FUNCTION"
 	ERROR_OBJ       ObjectType = "ERROR"
 	SYMBOLIC_OBJ    ObjectType = "SYMBOLIC_PLACEHOLDER"
+	RETURN_VALUE_OBJ ObjectType = "RETURN_VALUE"
 )
 
 // Object is the interface that all value types in our symbolic engine will implement.
@@ -84,3 +85,17 @@ func (sp *SymbolicPlaceholder) Type() ObjectType { return SYMBOLIC_OBJ }
 func (sp *SymbolicPlaceholder) Inspect() string {
 	return fmt.Sprintf("<Symbolic: %s>", sp.Reason)
 }
+
+// --- ReturnValue Object ---
+
+// ReturnValue represents the value being returned from a function.
+// It wraps another Object.
+type ReturnValue struct {
+	Value Object
+}
+
+// Type returns the type of the ReturnValue object.
+func (rv *ReturnValue) Type() ObjectType { return RETURN_VALUE_OBJ }
+
+// Inspect returns a string representation of the wrapped value.
+func (rv *ReturnValue) Inspect() string { return rv.Value.Inspect() }

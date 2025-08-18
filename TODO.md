@@ -58,7 +58,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     - [x] **Scope Management**: Implement the `symgo/scope` package for lexical scoping, supporting nested environments.
     - [x] **Core Evaluator**: Implement the `symgo/evaluator` with the main `Eval` dispatch loop.
         - [x] Support basic AST nodes: `ast.BasicLit`, `ast.Ident`.
-        - [ ] Support basic AST nodes: `ast.AssignStmt`, `ast.ReturnStmt`.
+        - [x] Support basic AST nodes: `ast.AssignStmt`, `ast.ReturnStmt`.
     - [ ] **Import & Symbol Resolution**:
         - [ ] Handle `import` statements by creating placeholder package objects.
         - [ ] Implement lazy, on-demand package loading using `go-scan` when a symbol from an unloaded package is accessed (e.g., `pkg.Symbol`).

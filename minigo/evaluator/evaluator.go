@@ -512,33 +512,51 @@ func (e *Evaluator) inferGenericTypes(pos token.Pos, f *object.Function, args []
 
 	// 3. Iterate through function parameters and corresponding arguments
 	for i, paramField := range f.Parameters.List {
-		paramTypeIdent, ok := paramField.Type.(*ast.Ident)
-		if !ok {
-			// Parameter type is not a simple identifier (e.g., it's '[]T' or 'pkg.Type'), skip for now.
-			// A more advanced implementation would parse these expressions.
-			continue
-		}
-
-		// Check if the parameter's type is one of the generic type parameters
-		if _, isGeneric := typeParamNames[paramTypeIdent.Name]; isGeneric {
-			if i >= len(args) {
-				// Not enough arguments provided to infer this type.
-				return nil, e.newError(pos, "cannot infer type for generic parameter %s: not enough arguments", paramTypeIdent.Name)
-			}
-
-			argType := e.inferTypeOf(args[i])
-			if argType == nil || argType == object.NIL {
-				return nil, e.newError(pos, "cannot infer type for generic parameter %s from argument %d of type %s", paramTypeIdent.Name, i, args[i].Type())
-			}
-
-			// Check for conflicting inferences
-			if existing, ok := inferredTypes[paramTypeIdent.Name]; ok {
-				// A simple pointer comparison for types works for primitives. For complex types, we compare inspect strings.
-				if existing != argType && existing.Inspect() != argType.Inspect() {
-					return nil, e.newError(pos, "cannot infer type for %s: conflicting types %s and %s", paramTypeIdent.Name, existing.Inspect(), argType.Inspect())
+		// Handle simple generic type like 'T'
+		if paramTypeIdent, ok := paramField.Type.(*ast.Ident); ok {
+			// Check if the parameter's type is one of the generic type parameters
+			if _, isGeneric := typeParamNames[paramTypeIdent.Name]; isGeneric {
+				if i >= len(args) {
+					// Not enough arguments provided to infer this type.
+					return nil, e.newError(pos, "cannot infer type for generic parameter %s: not enough arguments", paramTypeIdent.Name)
 				}
-			} else {
-				inferredTypes[paramTypeIdent.Name] = argType
+
+				argType := e.inferTypeOf(args[i])
+				if argType == nil || argType == object.NIL {
+					return nil, e.newError(pos, "cannot infer type for generic parameter %s from argument %d of type %s", paramTypeIdent.Name, i, args[i].Type())
+				}
+
+				// Check for conflicting inferences
+				if existing, ok := inferredTypes[paramTypeIdent.Name]; ok {
+					// A simple pointer comparison for types works for primitives. For complex types, we compare inspect strings.
+					if existing != argType && existing.Inspect() != argType.Inspect() {
+						return nil, e.newError(pos, "cannot infer type for %s: conflicting types %s and %s", paramTypeIdent.Name, existing.Inspect(), argType.Inspect())
+					}
+				} else {
+					inferredTypes[paramTypeIdent.Name] = argType
+				}
+			}
+		} else if paramTypeArray, ok := paramField.Type.(*ast.ArrayType); ok {
+			// Handle slice of generic type like '[]T'
+			if eltIdent, ok := paramTypeArray.Elt.(*ast.Ident); ok {
+				if _, isGeneric := typeParamNames[eltIdent.Name]; isGeneric {
+					if i >= len(args) {
+						return nil, e.newError(pos, "cannot infer type for generic parameter %s: not enough arguments", eltIdent.Name)
+					}
+					arg := args[i]
+					argArray, ok := arg.(*object.Array)
+					if !ok {
+						// The argument passed for a []T parameter must be an array.
+						// We could also check for GoValue here in the future.
+						continue
+					}
+					// Infer the element type from the provided array argument.
+					// This relies on inferTypeOf, which can infer from the first element.
+					inferredElemType := e.inferTypeOf(argArray)
+					if arrType, ok := inferredElemType.(*object.ArrayType); ok {
+						inferredTypes[eltIdent.Name] = arrType.ElementType
+					}
+				}
 			}
 		}
 	}
@@ -2894,6 +2912,37 @@ func (e *Evaluator) Eval(node ast.Node, env *object.Environment, fscope *object.
 		}
 		return e.evalPrefixExpression(n, n.Op.String(), right)
 	case *ast.BinaryExpr:
+		// Handle logical AND and OR with short-circuiting.
+		switch n.Op {
+		case token.LAND:
+			left := e.Eval(n.X, env, fscope)
+			if isError(left) {
+				return left
+			}
+			if !e.isTruthy(left) {
+				return object.FALSE
+			}
+			right := e.Eval(n.Y, env, fscope)
+			if isError(right) {
+				return right
+			}
+			return e.nativeBoolToBooleanObject(e.isTruthy(right))
+		case token.LOR:
+			left := e.Eval(n.X, env, fscope)
+			if isError(left) {
+				return left
+			}
+			if e.isTruthy(left) {
+				return object.TRUE
+			}
+			right := e.Eval(n.Y, env, fscope)
+			if isError(right) {
+				return right
+			}
+			return e.nativeBoolToBooleanObject(e.isTruthy(right))
+		}
+
+		// Fallback to standard infix evaluation for other operators.
 		left := e.Eval(n.X, env, fscope)
 		if isError(left) {
 			return left

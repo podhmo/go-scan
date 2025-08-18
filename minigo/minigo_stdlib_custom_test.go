@@ -806,7 +806,7 @@ var val = ctx.Value(key)
 }
 
 func TestStdlib_slices_Sort(t *testing.T) {
-	t.Skip("Skipping slices.Sort test: String literal constant evaluation is fixed, but now fails on generics support (identifier not found: E).")
+	t.Skip("Skipping slices.Sort test: Type inference and logical operators are fixed, but the test now times out due to interpreter performance issues with the sorting algorithm.")
 	script := `
 package main
 import "slices"

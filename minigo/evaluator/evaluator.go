@@ -17,6 +17,15 @@ import (
 	"github.com/podhmo/go-scan/minigo/object"
 )
 
+var (
+	// Singleton type objects to avoid allocations in inferTypeOf
+	intType    = &object.Type{Name: "int"}
+	floatType  = &object.Type{Name: "float64"}
+	stringType = &object.Type{Name: "string"}
+	boolType   = &object.Type{Name: "bool"}
+	anyType    = &object.Type{Name: "any"}
+)
+
 // SpecialFormFunction is the signature for special form functions.
 type SpecialFormFunction func(e *Evaluator, fscope *object.FileScope, pos token.Pos, args []ast.Expr) object.Object
 
@@ -456,13 +465,13 @@ func New(cfg Config) *Evaluator {
 func (e *Evaluator) inferTypeOf(obj object.Object) object.Object {
 	switch o := obj.(type) {
 	case *object.Integer:
-		return &object.Type{Name: "int"}
+		return intType
 	case *object.Float:
-		return &object.Type{Name: "float64"}
+		return floatType
 	case *object.String:
-		return &object.Type{Name: "string"}
+		return stringType
 	case *object.Boolean:
-		return &object.Type{Name: "bool"}
+		return boolType
 	case *object.StructInstance:
 		// The type of a struct instance is its definition.
 		return o.Def
@@ -480,15 +489,14 @@ func (e *Evaluator) inferTypeOf(obj object.Object) object.Object {
 	case *object.Array:
 		// For a fully typed system, we would need to know the array's element type.
 		if len(o.Elements) == 0 {
-			// Cannot infer type from an empty slice.
-			// This is a known limitation in Go's type inference too.
-			// We could potentially return a special "any" type here if needed.
-			return nil
+			// Cannot infer type from an empty slice. Return `[]any` as a placeholder.
+			return &object.ArrayType{ElementType: anyType}
 		}
 		// Infer from the first element. Assumes a homogeneous slice.
 		elemType := e.inferTypeOf(o.Elements[0])
 		if elemType == nil {
-			return nil
+			// Fallback if element type can't be inferred.
+			return &object.ArrayType{ElementType: anyType}
 		}
 		// Return an ArrayType object that represents `[]<elemType>`
 		return &object.ArrayType{ElementType: elemType}
@@ -1372,14 +1380,22 @@ func (e *Evaluator) evalForStmt(fs *ast.ForStmt, env *object.Environment, fscope
 			}
 		}
 
-		bodyResult := e.Eval(fs.Body, loopEnv, fscope)
-		if isError(bodyResult) {
-			return bodyResult
+		// Instead of calling Eval on the whole block, which creates a new env,
+		// evaluate the statements within the existing loopEnv to prevent allocations on each iteration.
+		var bodyResult object.Object
+		for _, stmt := range fs.Body.List {
+			bodyResult = e.Eval(stmt, loopEnv, fscope)
+			if bodyResult != nil {
+				rt := bodyResult.Type()
+				if rt == object.BREAK_OBJ || rt == object.CONTINUE_OBJ || rt == object.ERROR_OBJ || rt == object.RETURN_VALUE_OBJ || rt == object.PANIC_OBJ {
+					break // Break from the inner statement loop to handle the control flow signal.
+				}
+			}
 		}
 
 		if bodyResult != nil {
 			if bodyResult.Type() == object.BREAK_OBJ {
-				break
+				break // Break from the outer for-loop.
 			}
 			if bodyResult.Type() == object.CONTINUE_OBJ {
 				if fs.Post != nil {
@@ -1389,6 +1405,10 @@ func (e *Evaluator) evalForStmt(fs *ast.ForStmt, env *object.Environment, fscope
 					}
 				}
 				continue
+			}
+			// Propagate errors, returns, and panics up the call stack.
+			if bodyResult.Type() == object.ERROR_OBJ || bodyResult.Type() == object.RETURN_VALUE_OBJ || bodyResult.Type() == object.PANIC_OBJ {
+				return bodyResult
 			}
 		}
 
@@ -4399,14 +4419,6 @@ func (e *Evaluator) findSymbolInPackage(pkg *object.Package, symbolName *ast.Ide
 
 	// 2. Check the registry for pre-registered symbols (values and types).
 	if symbol, ok := e.registry.Lookup(pkg.Path, symbolName.Name); ok {
-		// If the registered symbol is already a minigo object (e.g., a custom *object.Builtin),
-		// use it directly.
-		if obj, isObj := symbol.(object.Object); isObj {
-			pkg.Members[symbolName.Name] = obj
-			return obj
-		}
-
-		// Otherwise, wrap the native Go value.
 		var member object.Object
 		val := reflect.ValueOf(symbol)
 		if val.Kind() == reflect.Func {
@@ -4865,7 +4877,13 @@ func (e *Evaluator) evalIdent(n *ast.Ident, env *object.Environment, fscope *obj
 	// representation in our interpreter, but they shouldn't cause an "identifier
 	// not found" error when used in declarations like `var x int`.
 	switch n.Name {
-	case "int", "string", "bool", "uint", "uint64", "float64", "byte", "any", "comparable":
+	case "int", "int8", "int16", "int32", "int64":
+		return &object.Type{Name: n.Name}
+	case "uint", "uint8", "uint16", "uint32", "uint64", "uintptr":
+		return &object.Type{Name: n.Name}
+	case "float32", "float64":
+		return &object.Type{Name: n.Name}
+	case "string", "bool", "byte", "rune", "any", "comparable":
 		return &object.Type{Name: n.Name}
 	}
 

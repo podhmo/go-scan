@@ -21,12 +21,12 @@ func TestGenerate(t *testing.T) {
 	}{
 		{
 			name:       "generics",
-			pkgPath:    "examples/minigo/testpackages/generics",
+			pkgPath:    "./testdata/bindings/generics",
 			goldenFile: "generics.golden",
 		},
 		{
 			name:       "varsandtypes",
-			pkgPath:    "examples/minigo/testpackages/varsandtypes",
+			pkgPath:    "./testdata/bindings/varsandtypes",
 			goldenFile: "varsandtypes.golden",
 		},
 	}
@@ -45,7 +45,7 @@ func TestGenerate(t *testing.T) {
 			}
 			normalizedGenerated := strings.ReplaceAll(string(generated), "\r\n", "\n")
 
-			goldenPath := filepath.Join("testpackages", tc.goldenFile)
+			goldenPath := filepath.Join("testdata/bindings", tc.goldenFile)
 			if *update {
 				if err := os.MkdirAll(filepath.Dir(goldenPath), 0755); err != nil {
 					t.Fatalf("failed to create testdata dir: %v", err)

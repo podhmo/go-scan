@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"text/template"
 
 	goscan "github.com/podhmo/go-scan"
@@ -85,7 +86,7 @@ func runGenBindingsInternal(ctx context.Context, outputDir string, pkgPaths []st
 func generate(ctx context.Context, s *goscan.Scanner, outputDir, pkgPath string) error {
 	var pkgInfo *goscan.Package
 	var err error
-	if _, err = os.Stat(pkgPath); err == nil {
+	if strings.HasPrefix(pkgPath, "./") || strings.HasPrefix(pkgPath, "/") {
 		pkgInfo, err = s.ScanPackage(ctx, pkgPath)
 	} else {
 		pkgInfo, err = s.ScanPackageByImport(ctx, pkgPath)

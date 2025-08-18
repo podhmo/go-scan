@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/podhmo/go-scan/minigo"
+	stdslices "github.com/podhmo/go-scan/minigo/stdlib/slices"
 	"github.com/podhmo/go-scan/minigo/object"
 
 	"path/filepath"
@@ -295,7 +296,6 @@ var _ = sort.Float64s(f)
 }
 
 func TestStdlib_slices(t *testing.T) {
-	t.Skip("Skipping slices test due to unresolved issues with environment handling for generics (see docs/trouble-type-list-interface.md)")
 	script := `
 package main
 import "slices"
@@ -318,7 +318,7 @@ var r_cmp_gt = slices.Compare(s4, s1)
 		t.Fatalf("failed to create interpreter: %+v", err)
 	}
 
-	// The slices package is loaded from source, so no Install() call is needed.
+	stdslices.Install(interp)
 
 	if err := interp.LoadFile("test.mgo", []byte(script)); err != nil {
 		t.Fatalf("failed to load script: %+v", err)
@@ -806,7 +806,6 @@ var val = ctx.Value(key)
 }
 
 func TestStdlib_slices_Sort(t *testing.T) {
-	t.Skip("Skipping slices.Sort test: Type inference and logical operators are fixed, but the test now times out due to interpreter performance issues with the sorting algorithm.")
 	script := `
 package main
 import "slices"
@@ -818,7 +817,8 @@ var _ = slices.Sort(s)
 		t.Fatalf("failed to create interpreter: %+v", err)
 	}
 
-	// The slices package is loaded from source, so no Install() call is needed.
+	stdslices.Install(interp)
+
 	err = interp.LoadFile("test.mgo", []byte(script))
 	if err != nil {
 		t.Fatalf("expected script loading to succeed, but it failed: %v", err)

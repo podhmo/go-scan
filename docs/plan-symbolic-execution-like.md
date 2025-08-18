@@ -1,239 +1,80 @@
-# Plan: A Symbolic-Execution-like Engine for Go Code Analysis
+# Plan: A Symbolic-Execution-like Engine for Go (`net/http`)
 
-This document outlines the plan for creating a new library, `symgo`, which leverages concepts from symbolic execution to analyze Go source code. The primary goal is to interpret Go code that defines application behavior (like HTTP routes) and extract structured information without running the actual code or requiring manual annotations.
+This document outlines a revised plan for creating `symgo`, a library for symbolic code analysis, and a tool, `docgen`, that uses it to generate OpenAPI documentation from standard `net/http` applications.
 
-## 1. Goals
+This plan incorporates feedback to focus solely on `net/http` for the initial implementation and to establish a clear architectural separation between the generic engine (`symgo`) and the specific tool (`docgen`).
 
-*   **Primary Use-Case:** To analyze `net/http` or `go-chi` router definitions to automatically generate OpenAPI (or similar) documentation.
-*   **Symbolic Interpretation:** "Execute" Go code by interpreting its Abstract Syntax Tree (AST). Instead of operating on concrete values (e.g., `int 42`), the engine will operate on symbolic values (e.g., a representation of a string literal, a type definition).
-*   **No Magic Comments:** The system should derive information from the code itself, not from metadata in comments.
-*   **No Special Builders:** Users should not have to rewrite their code using a special DSL or builder pattern. The engine should analyze standard Go code.
-*   **Handle Code Structure:** The engine must be able to follow function calls, including those to helper functions defined in the same or different packages.
-*   **Leverage Existing Tools:**
-    *   Use `go-scan` for its efficient, on-demand AST loading capabilities.
-    *   Use `minigo`'s design as inspiration for package management and scope resolution, but without creating a hard dependency.
+## 1. Goals & Architecture
 
-## 2. Core Concepts
+*   **`symgo` (The Generic Library):** A reusable library that provides the core AST interpretation engine.
+    *   It will traverse the Go AST and manage symbolic state.
+    *   It will have no built-in knowledge of `net/http` or any other framework.
+    *   It will provide a mechanism for users to register "intrinsic handlers" for specific functions. This allows consumers to teach `symgo` how to handle framework-specific calls.
 
-The system will not be a true symbolic execution engine, which often involves complex SMT solvers. Instead, it will be an **AST Interpreter** focused on a specific domain (API definitions).
+*   **`examples/docgen` (The `net/http` Tool):** A standalone application that uses `symgo` to achieve a specific goal.
+    *   It will import `symgo`.
+    *   It will define and register intrinsic handlers for `net/http` functions like `http.HandleFunc` and `http.ListenAndServe`.
+    *   It will contain all logic for extracting API metadata (paths, handlers, request/response shapes) from `net/http` code.
+    *   It will be responsible for formatting the extracted metadata into an OpenAPI specification.
 
-*   **Symbolic Value:** A representation of a value at "runtime". It doesn't hold the concrete value but rather its type, and possibly its origin or literal value.
-    *   `SymbolicString{Literal: "/users/{userID}"}`
-    *   `SymbolicStruct{Type: "main.CreateUserRequest"}`
-    *   `SymbolicFunction{Name: "CreateUserHandler", AST: *ast.FuncDecl}`
-    *   `SymbolicChiRouter{...}`: A special symbolic value representing a `go-chi` router, which tracks registered routes.
+## 2. Phased Implementation Plan
 
-*   **Evaluation Context (Scope):** A data structure that acts as the interpreter's "memory." It maps variable identifiers (`*ast.Ident`) to their `SymbolicValue`. This context will be stacked to handle lexical scoping (e.g., entering a new function).
+This plan is broken down into distinct phases, from foundational work to application-specific features.
 
-*   **Intrinsic Functions:** The interpreter will have special knowledge of certain key functions (e.g., `chi.NewRouter`, `router.Get`, `json.NewDecoder`). When it encounters a call to an intrinsic function, it will not evaluate the function's real body. Instead, it will execute a custom "hook" that manipulates the interpreter's state. For example, encountering `router.Get(...)` will add a route to the `SymbolicChiRouter` value.
+### Phase 1: Foundational `symgo` Engine (The Generic Interpreter)
 
-## 3. Architecture
+*   **Task:** Build the core, framework-agnostic AST evaluation engine.
+*   **Deliverables:**
+    1.  `symgo/` directory with the initial code.
+    2.  `object.go`: Define the `Object` interface and basic symbolic types (`String`, `Integer`, etc.).
+    3.  `scope.go`: Implement the `Scope` for variable tracking.
+    4.  `evaluator.go`: Implement the main `Evaluator`. It will handle basic Go expressions and statements (`ast.AssignStmt`, `ast.Ident`, literals).
+    5.  `intrinsics.go`: Implement a registry for intrinsic function handlers (`map[string]IntrinsicFunc`). The `Evaluator` will consult this registry when it encounters a `CallExpr`. Add a public `RegisterIntrinsic` method.
+    6.  Basic tests for the evaluator's handling of generic language constructs.
 
-The system will be composed of several key components within the `symgo` package.
+### Phase 2: `docgen` Tool & Basic `net/http` Route Extraction
 
-1.  **The `symgo` Engine (`evaluator.go`):**
-    *   The core of the library. It will contain an `Evaluator` struct.
-    *   The `Evaluator` will hold the overall state, including the `go-scan` instance for loading packages.
-    *   It will have methods like `Eval(node ast.Node, scope *Scope)` which recursively walk the AST.
+*   **Task:** Create the `docgen` tool and use it to extract basic route information.
+*   **Deliverables:**
+    1.  `examples/docgen/` directory.
+    2.  `examples/docgen/main.go`: The main application.
+    3.  **Inside `main.go`:**
+        *   Instantiate the `symgo.Evaluator`.
+        *   Define a custom handler function for `net/http.HandleFunc`.
+        *   Register this handler with the evaluator: `evaluator.RegisterIntrinsic("net/http.HandleFunc", myHandleFuncHandler)`.
+        *   The `myHandleFuncHandler` will inspect the call's arguments, extract the path (a `SymbolicString`) and the handler (a `SymbolicFunction`), and store this pair in a custom struct.
+    4.  `examples/docgen/sampleapi/`: A new directory containing a simple `main.go` with a few `http.HandleFunc` calls. This will be the target for analysis.
+    5.  A test that runs the `docgen` tool on the `sampleapi` and asserts that the correct number of routes with the correct paths are extracted.
 
-2.  **State Management (`scope.go`):**
-    *   A `Scope` object will manage the mapping of variable names to symbolic values within a given block or function.
-    *   Scopes can be nested to correctly represent variable shadowing.
+### Phase 3: Deep Handler Analysis for API Schemas
 
-3.  **`go-scan` Integration (`loader.go`):**
-    *   A wrapper around `go-scan` to provide a simple interface for the `Evaluator`.
-    *   When the `Evaluator` encounters a call to a function in another package, it will use this component to request the AST for that function.
+*   **Task:** Analyze the body of each discovered HTTP handler function to find request and response types.
+*   **Deliverables (within `examples/docgen`):**
+    1.  A new analysis step that takes a `SymbolicFunction` (the handler).
+    2.  This step will walk the handler's AST (`*ast.BlockStmt`).
+    3.  It will look for specific patterns:
+        *   `json.NewDecoder(r.Body).Decode(&req)`: From this, it will resolve the type of the `req` variable to determine the request body schema.
+        *   `json.NewEncoder(w).Encode(resp)`: Similarly, it will resolve the type of `resp` for the response schema.
+    4.  The data structure holding the extracted API information will be updated to include these request/response types.
+    5.  Tests for this deep analysis logic.
 
-4.  **Intrinsic Function Definitions (`intrinsics.go`):**
-    *   A registry of known function signatures and their corresponding handler logic.
-    *   For example, `map["github.com/go-chi/chi/v5.Get"] = handleChiGet`.
-    *   The `handleChiGet` function would inspect the arguments of the `ast.CallExpr`, extract the path and handler, and update the symbolic router state.
+### Phase 4: Applied Enhancements (Handling Real-World Code)
 
-## 4. Phased Implementation Plan
+*   **Task:** Improve the engine's ability to understand more complex, but common, code patterns.
+*   **Deliverables:**
+    1.  **Helper Function Support:** Ensure the `symgo` engine's call stack and scope management correctly handle cases where `http.HandleFunc` is called from within a helper function. This should be a natural outcome of the core evaluator design, but it must be explicitly tested.
+    2.  **`fmt.Sprintf` and String Concatenation:**
+        *   In `symgo`, add a built-in intrinsic handler for `fmt.Sprintf`. This handler will be a "best-effort" implementation. It will evaluate the format string and replace format verbs (`%s`, `%d`) with generic placeholders like `{param1}`. The result will be a `SymbolicString`.
+        *   Enhance the `symgo` evaluator to handle the `+` operator for `SymbolicString` types.
+        *   Add tests in `examples/docgen` with a `sampleapi` that constructs its routes using `fmt.Sprintf` to verify this works.
 
-### Phase 1: Core AST Interpreter
-*   **Task:** Create the basic `Evaluator` and `Scope` structures.
-*   **Details:**
-    *   Implement evaluation for basic expression types: `ast.BasicLit` (strings, numbers), `ast.Ident`.
-    *   Implement evaluation for basic statements: `ast.AssignStmt` (`=` and `:=`).
-    *   The result of evaluating a node will be a `SymbolicValue`.
+### Phase 5: OpenAPI Generation and Finalization
 
-### Phase 2: Function Call Resolution & `go-scan` Integration
-*   **Task:** Enable the interpreter to follow function calls.
-*   **Details:**
-    *   When `Eval` encounters an `ast.CallExpr`, resolve the function being called.
-    *   If the function is in the current package, find its `ast.FuncDecl`.
-    *   If the function is in another package, use `go-scan` to load its AST.
-    *   Implement the logic to create a new `Scope` for the function call, map arguments to parameters, and evaluate the function's body.
-
-### Phase 3: Intrinsic Functions for `go-chi`
-*   **Task:** Specialize the engine for the `go-chi` use case.
-*   **Details:**
-    *   Define the `SymbolicChiRouter` value, which will contain a slice of `Route` structs (`{Method, Path, Handler}`).
-    *   Implement intrinsic handlers for:
-        *   `chi.NewRouter()`: Returns a new `SymbolicChiRouter` instance.
-        *   `router.Get()`, `router.Post()`, etc.: These handlers will extract the path string literal and the handler function identifier from the arguments. They will then add a new `Route` to the `SymbolicChiRouter`'s state.
-        *   `router.Mount()`, `router.Route()`: These will be handled by recursively evaluating the sub-router definitions within a new scope.
-
-### Phase 4: Handler Analysis
-*   **Task:** Analyze the handler functions themselves to extract request and response shapes.
-*   **Details:**
-    *   After identifying a route and its handler, the engine will perform a secondary, targeted analysis of the handler's AST.
-    *   It will look for specific patterns:
-        *   **Request Body:** A call like `json.NewDecoder(r.Body).Decode(&req)`. The engine will identify the type of the `req` variable and register it as the request body's schema.
-        *   **Response Body:** A call like `json.NewEncoder(w).Encode(resp)`. The engine will identify the type of the `resp` variable as the response schema.
-        *   **Path Parameters:** A call like `chi.URLParam(r, "userID")`. This confirms the usage of a path parameter.
-
-### Phase 5: Example Implementation (`examples/docgen`)
-*   **Task:** Build a working example that generates an OpenAPI document.
-*   **Details:**
-    *   Create a simple sample API using `go-chi` in a separate file (e.g., `examples/sampleapi/main.go`).
-    *   Create a program in `examples/docgen/main.go` that:
-        1.  Initializes the `symgo` `Evaluator`.
-        2.  Tells the evaluator to start at the `main` function of the sample API.
-        3.  Retrieves the final `SymbolicChiRouter` state after evaluation completes.
-        4.  Iterates through the collected routes.
-        5.  For each route, formats the information (path, method, request/response schemas) into an OpenAPI 3.0 JSON or YAML file and prints it to standard output.
-
-### Phase 6: Refinement and Documentation
-*   **Task:** Polish the library.
-*   **Details:**
-    *   Add comprehensive godoc comments to the `symgo` package.
-    *   Write a `README.md` for `symgo` explaining how to use it.
-    *   Improve error handling and diagnostics.
-
-## 5. Use-Case Walkthrough: `examples/docgen`
-
-**1. The Target Go Code (`examples/sampleapi/main.go`)**
-```go
-package main
-
-import (
-	"net/http"
-	"github.com/go-chi/chi/v5"
-)
-
-type CreateUserInput struct {
-	Name  string `json:"name"`
-	Email string `json:"email"`
-}
-
-type User struct {
-	ID int `json:"id"`
-	Name  string `json:"name"`
-	Email string `json:"email"`
-}
-
-func CreateUserHandler(w http.ResponseWriter, r *http.Request) {
-	var input CreateUserInput
-	// The engine will see this line to determine the request body shape.
-	json.NewDecoder(r.Body).Decode(&input)
-
-	user := User{ID: 1, Name: input.Name, Email: input.Email}
-	// The engine will see this line to determine the response body shape.
-	json.NewEncoder(w).Encode(user)
-}
-
-func main() {
-	r := chi.NewRouter()
-	r.Post("/users", CreateUserHandler)
-	http.ListenAndServe(":3000", r)
-}
-```
-
-**2. The Generator (`examples/docgen/main.go`)**
-```go
-package main
-
-import (
-    "fmt"
-    "github.com/your-repo/symgo" // Assuming this path
-)
-
-func main() {
-    // Point the evaluator to the target package and entrypoint function.
-    evaluator := symgo.NewEvaluator("github.com/your-repo/examples/sampleapi")
-    symbolicState := evaluator.Run("main") // Start at the 'main' function
-
-    // The evaluator returns the final state, which we can inspect.
-    openAPIDoc := generateOpenAPI(symbolicState)
-    fmt.Println(openAPIDoc)
-}
-
-// (generateOpenAPI would be a function that formats the symbolic state)
-```
-
-**3. Expected Symbolic Result (Internal to `symgo`)**
-
-After running, the `evaluator`'s state would contain a symbolic representation equivalent to:
-```
-{
-  "main.r": {
-    Type: "SymbolicChiRouter",
-    Routes: [
-      {
-        Method: "POST",
-        Path: "/users",
-        Handler: {
-          Name: "CreateUserHandler",
-          RequestSchema: { Type: "main.CreateUserInput" },
-          ResponseSchema: { Type: "main.User" }
-        }
-      }
-    ]
-  }
-}
-```
-
-**4. Final Output (Printed by `docgen`)**
-
-```yaml
-openapi: 3.0.0
-info:
-  title: Sample API
-  version: 1.0.0
-paths:
-  /users:
-    post:
-      summary: Creates a new user
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CreateUserInput'
-      responses:
-        '200':
-          description: The created user
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/User'
-components:
-  schemas:
-    CreateUserInput:
-      type: object
-      properties:
-        name:
-          type: string
-        email:
-          type: string
-    User:
-      type: object
-      properties:
-        id:
-          type: integer
-        name:
-          type: string
-        email:
-          type: string
-```
-
-## 6. Challenges & Considerations
-
-*   **Control Flow:**
-    *   **Conditionals (`if`):** For now, the engine will likely have to ignore conditional branches or require the user to analyze a specific, non-conditional setup function. True path-sensitive analysis is out of scope.
-    *   **Loops (`for`):** Loops that define routes are an advanced case. Initially, they will not be supported. The engine will focus on statically defined routes.
-*   **Complex Go Features:** Goroutines, channels, and interfaces will not be modeled. The interpreter will focus on a synchronous, single-threaded execution path.
-*   **Variable State:** Tracking the state of variables that are not structs or literals (e.g., a map modified in a loop) is complex. The initial focus will be on identifiable function calls and struct definitions.
-*   **Performance:** Heavy use of `go-scan` can be slow if many packages need to be parsed. Caching strategies may be necessary in the future.
-```
+*   **Task:** Convert the collected API metadata into a valid OpenAPI 3.0 document.
+*   **Deliverables (within `examples/docgen`):**
+    1.  A component that takes the final, structured API data.
+    2.  Logic to iterate through this data and build up an OpenAPI struct (using a library like `github.com/getkin/kin-openapi`).
+    3.  Code to marshal this struct into a YAML or JSON string and print it to standard output.
+    4.  A final end-to-end test that runs the entire analysis and compares the output against a golden OpenAPI file.
+    5.  Run `make format` and `make test` across the whole project.
+    6.  Submit the final, working solution.

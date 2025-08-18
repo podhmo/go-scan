@@ -114,3 +114,28 @@ This section provides concrete examples of the end-to-end analysis process.
     2.  The intrinsic is executed. It identifies the second argument (`200`) as the status code and the third argument (`users`) as the response body.
     3.  It resolves the symbolic type of `users` to `[]User` and generates the corresponding schema.
 *   **Final OpenAPI Snippet:** `get: { responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/User' } } } } } } }`
+
+## 5. Design Q&A Checklist
+
+This section summarizes the key design decisions clarified during the planning process.
+
+*   **Q: Is the goal of this task to implement the engine or to produce a design document?**
+    *   **A:** The goal is exclusively to produce this comprehensive design document. The implementation is a separate, future task.
+
+*   **Q: Which web framework is the initial target?**
+    *   **A:** The initial target is exclusively `net/http`. The engine (`symgo`) will be generic, but the first tool (`docgen`) will be `net/http`-specific.
+
+*   **Q: How should `symgo` (the engine) and `docgen` (the tool) be architected?**
+    *   **A:** They must be separate. `symgo` is a generic AST interpretation library. `docgen` is a specific application that imports `symgo` and contains all the `net/http` and OpenAPI-specific logic.
+
+*   **Q: Should an external library be used for OpenAPI struct definitions?**
+    *   **A:** No. To minimize dependencies, the necessary OpenAPI structs will be defined locally within the `docgen` tool.
+
+*   **Q: How will the engine handle application code not relevant to the API shape (e.g., logging, auth)?**
+    *   **A:** Through a strategy of "Selective Interpretation." Unknown function calls are treated as no-ops, and complex but irrelevant types (like `http.Request`) are stubbed out using `go-scan`'s `WithExternalTypeOverrides` feature.
+
+*   **Q: How will the engine trace calls through helper functions, including those in other packages?**
+    *   **A:** The engine will perform recursive evaluation. It will use `go-scan` to lazily load the AST for any called function and analyze its body in a new, correctly-scoped context, inspired by `minigo`'s design.
+
+*   **Q: How can the tool be adapted to project-specific coding patterns (e.g., custom parameter-fetching helpers)?**
+    *   **A:** Through "Extensible Pattern Matching." `docgen` will not have hardcoded patterns but will use a configurable registry of "Pattern Analyzers," allowing analysis rules to be defined as data or code.

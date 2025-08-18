@@ -44,14 +44,6 @@ When analysis requires entering an intra-module helper function, the engine will
 
 To avoid brittle, hardcoded analysis, `docgen` will use a configurable registry of "Pattern Analyzers." This allows analysis rules (e.g., how to find a query parameter) to be defined as data, making the tool adaptable to project-specific helper functions.
 
-### 3.4. Handling Interfaces and Higher-Order Functions
-
-To handle interfaces (like `io.Writer`) and higher-order functions (like `http.HandlerFunc`), the engine cannot know the concrete type at all times. The solution is configurable type binding.
-
-*   **Design:** The `symgo` evaluator will be launched with a "context" or "environment" object. This object will contain a map of interface types to the concrete symbolic types they should be treated as for that specific analysis run.
-*   **Example (Interface):** Before analyzing an `http` handler, `docgen` will configure the context: `context.Bind("io.Writer", symbolicResponseWriter)`. When the evaluator encounters a variable of type `io.Writer`, it will consult the context and know to treat it as a `ResponseWriter` object, allowing analysis to continue.
-*   **Example (Higher-Order Function):** For a call like `http.TimeoutHandler(myHandler, ...)`, `docgen` will have an intrinsic for `http.TimeoutHandler`. This intrinsic will know that the "real" handler to analyze is the first argument, and it will proceed with analyzing `myHandler`.
-
 ## 4. Detailed Design and Code-to-Spec Mapping
 
 (This section remains as previously defined, providing concrete examples.)
@@ -72,13 +64,18 @@ This section summarizes the key design decisions clarified during the planning p
 *   **Q: How will the engine handle code not relevant to the API shape?**
     *   **A:** Through a refined strategy: it evaluates intra-module code, ignores extra-module code (unless an intrinsic is provided), and uses stubs for complex types.
 
-*   **Q: How does the engine handle interfaces and higher-order functions?**
-    *   **A:** Through a configurable "context" injected at the start of analysis. This context binds interfaces to concrete symbolic types for the duration of the run, enabling targeted, accurate analysis without complex global type inference.
-
 *   **Q: How can the tool be adapted to project-specific coding patterns?**
     *   **A:** Through "Extensible Pattern Matching," a configurable registry of code patterns that `docgen` will search for.
 
-## 6. Incremental Implementation Tasks
+## 6. Handling Interfaces and Higher-Order Functions
+
+To handle interfaces (like `io.Writer`) and higher-order functions (like `http.HandlerFunc`), the engine cannot know the concrete type at all times. The solution is configurable type binding.
+
+*   **Design:** The `symgo` evaluator will be launched with a "context" or "environment" object. This object will contain a map of interface types to the concrete symbolic types they should be treated as for that specific analysis run.
+*   **Example (Interface):** Before analyzing an `http` handler, `docgen` will configure the context: `context.Bind("io.Writer", symbolicResponseWriter)`. When the evaluator encounters a variable of type `io.Writer`, it will consult the context and know to treat it as a `ResponseWriter` object, allowing analysis to continue.
+*   **Example (Higher-Order Function):** For a call like `http.TimeoutHandler(myHandler, ...)`, `docgen` will have an intrinsic for `http.TimeoutHandler`. This intrinsic will know that the "real" handler to analyze is the first argument, and it will proceed with analyzing `myHandler`.
+
+## 7. Incremental Implementation Tasks
 
 This section breaks down the project into a granular, actionable task list.
 

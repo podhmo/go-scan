@@ -11,13 +11,11 @@ This final version incorporates multiple rounds of feedback to provide a deep an
 
 ## 2. Phased Implementation Plan
 
-(Phases remain conceptually the same, but their implementation will be guided by the detailed task list in the final section.)
-
-1.  **Phase 1: Foundational `symgo` Engine.**
-2.  **Phase 2: `docgen` Tool & Basic `net/http` Route Extraction.**
-3.  **Phase 3: Deep Handler Analysis for API Schemas.**
-4.  **Phase 4: Applied Enhancements (Helper Functions, `fmt.Sprintf`).**
-5.  **Phase 5: OpenAPI Generation and Finalization.**
+1.  **Phase 1: Foundational `symgo` Engine.** Build the core, framework-agnostic AST evaluation engine. This includes the `Evaluator`, `Scope`, `Object` system, and a registry for "intrinsic" functions.
+2.  **Phase 2: `docgen` Tool & Basic `net/http` Route Extraction.** Create the `docgen` tool in `examples/docgen`. Implement and register a custom intrinsic handler for `net/http.HandleFunc` to extract basic route paths and handler functions from a sample API.
+3.  **Phase 3: Deep Handler Analysis for API Schemas.** Enhance `docgen` to analyze the body of handler functions. It will look for patterns like `json.Decode` and `json.Encode` to determine the request and response object types.
+4.  **Phase 4: Applied Enhancements.** Improve the `symgo` engine to handle more complex, real-world code. This includes ensuring helper functions are traced correctly and adding support for path construction via `fmt.Sprintf` and string concatenation.
+5.  **Phase 5: OpenAPI Generation and Finalization.** In `docgen`, convert the collected API metadata into a valid OpenAPI 3.1 YAML/JSON document. Add end-to-end tests, run `make format` and `make test`, and prepare for submission.
 
 ## 3. Core Engine Design Principles
 
@@ -25,7 +23,7 @@ This section details the strategies for handling the complexities of analyzing r
 
 ### 3.1. Evaluation Strategy: Intra-Module vs. Extra-Module
 
-To analyze real-world code without getting lost, the engine must differentiate between trusted, project-specific code and external dependencies. The evaluation strategy for a function call follows this priority order:
+The evaluation strategy for a function call follows this priority order:
 
 1.  **Registered Intrinsics (Highest Priority):** If a function call matches a registered intrinsic (e.g., `http.HandleFunc`), the intrinsic handler is executed.
 2.  **Intra-Module Calls (Recursive Evaluation):** If a function is **not** an intrinsic but is defined **within the current Go module**, the engine will default to trusting it and evaluate it recursively.

@@ -23,22 +23,24 @@ This final version incorporates multiple rounds of feedback to provide a deep an
 
 This section details the strategies for handling the complexities of analyzing real-world Go code.
 
-### 3.1. Selective Interpretation & Complexity Management
+### 3.1. Evaluation Strategy: Intra-Module vs. Extra-Module
 
-Real-world applications contain logic (logging, auth, metrics) not relevant to the API's shape. The engine must intelligently ignore this "noise."
+To analyze real-world code without getting lost, the engine must differentiate between trusted, project-specific code and external dependencies. The "override everything" approach is not practical. Instead, the evaluation strategy for a function call follows this priority order:
 
-*   **Strategy 1: Unknown Functions are No-ops:** By default, if the `symgo` evaluator encounters a function call that is **not** a registered intrinsic, it will treat the call as a no-op and continue analysis. This is the primary mechanism for ignoring irrelevant code like `log.Printf(...)` and is a core configurable behavior of the engine.
+1.  **Registered Intrinsics (Highest Priority):** If a function call matches a registered intrinsic (e.g., `http.HandleFunc`, or a special-cased `fmt.Sprintf`), the intrinsic handler is executed. This is the primary mechanism for teaching the engine about framework specifics.
 
-*   **Strategy 2: Stubbing Complex Types with Overrides:** Fully analyzing standard library types like `http.Request` is unnecessary and complex.
-    *   **`go-scan` Feature:** We will leverage `go-scan`'s `WithExternalTypeOverrides` feature.
-    *   **Implementation:** The `docgen` tool will provide `symgo` with a "synthetic" definition for types like `http.Request`. This stub will only expose the fields and methods we care about (e.g., `URL`, `Method`, `Body`), dramatically reducing the analysis scope.
+2.  **Intra-Module Calls (Recursive Evaluation):** If a function is **not** an intrinsic but is defined **within the current Go module**, the engine will default to trusting it. It will use `go-scan` to find its source and evaluate it recursively. This allows the analysis to trace through any and all user-defined helper functions.
+
+3.  **Extra-Module Calls (Symbolic Placeholder):** If a function is external (in the standard library or a third-party dependency) and is not a registered intrinsic, the engine will **not** attempt to evaluate it. Instead, it will return a symbolic placeholder (e.g., an `ExternalCall` object). This prevents the engine from parsing the entire Go standard library and vendor dependencies, which is critical for performance and stability.
+
+4.  **Stubbing Complex Types:** To interact with external types like `http.Request`, we will use `go-scan`'s `WithExternalTypeOverrides` feature to provide simplified "stub" definitions, rather than analyzing the real, complex struct. This is a targeted way to handle essential external types without evaluating their packages.
 
 ### 3.2. Recursive Evaluation of Helper Functions
 
-When analysis requires entering a helper function (e.g., a function that wraps `http.HandleFunc`), the engine will proceed as follows:
+When analysis requires entering an intra-module helper function, the engine will proceed as follows:
 
 1.  **Function Call Encountered:** The evaluator sees a `CallExpr` to a function it does not have an intrinsic for, e.g., `myApp.RegisterRoute(...)`.
-2.  **AST Loading (`go-scan`):** The engine uses `go-scan` to lazily find and parse the AST for `myApp.RegisterRoute`. `go-scan` automatically handles cross-package resolution within the same Go module. The use of `goscan.WithGoModuleResolver()` will allow resolution of stdlib packages as well.
+2.  **AST Loading (`go-scan`):** Because the function is within the current module, the engine uses `go-scan` to lazily find and parse its AST. The use of `goscan.WithGoModuleResolver()` will aid in resolving package paths.
 3.  **Scope Creation (`minigo` inspiration):** A new `Scope` is created for the `RegisterRoute` function call, inheriting from the caller's scope. This follows the classic interpreter lexical scoping model used in `minigo`.
 4.  **Argument Mapping:** The arguments from the `CallExpr` are evaluated and mapped to the parameter names in the new scope.
 5.  **Recursive Evaluation:** The evaluator is called recursively on the body of the `RegisterRoute` function. Inside this function, it will eventually encounter the `http.HandleFunc` call, which *is* an intrinsic, allowing `docgen` to capture the route.
@@ -132,10 +134,10 @@ This section summarizes the key design decisions clarified during the planning p
     *   **A:** No. To minimize dependencies, the necessary OpenAPI structs will be defined locally within the `docgen` tool.
 
 *   **Q: How will the engine handle application code not relevant to the API shape (e.g., logging, auth)?**
-    *   **A:** Through a strategy of "Selective Interpretation." Unknown function calls are treated as no-ops, and complex but irrelevant types (like `http.Request`) are stubbed out using `go-scan`'s `WithExternalTypeOverrides` feature.
+    *   **A:** Through a refined, multi-layered strategy. It prioritizes registered intrinsics, then recursively evaluates all calls within the same Go module, and treats calls to external dependencies as symbolic placeholders, effectively ignoring them. This provides a robust balance between deep analysis and practical performance.
 
 *   **Q: How will the engine trace calls through helper functions, including those in other packages?**
-    *   **A:** The engine will perform recursive evaluation. It will use `go-scan` to lazily load the AST for any called function and analyze its body in a new, correctly-scoped context, inspired by `minigo`'s design.
+    *   **A:** The engine will perform recursive evaluation for any function within the same Go module. It will use `go-scan` to lazily load the AST for any called function and analyze its body in a new, correctly-scoped context, inspired by `minigo`'s design.
 
 *   **Q: How can the tool be adapted to project-specific coding patterns (e.g., custom parameter-fetching helpers)?**
     *   **A:** Through "Extensible Pattern Matching." `docgen` will not have hardcoded patterns but will use a configurable registry of "Pattern Analyzers," allowing analysis rules to be defined as data or code.

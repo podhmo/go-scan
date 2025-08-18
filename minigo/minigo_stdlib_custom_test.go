@@ -295,7 +295,6 @@ var _ = sort.Float64s(f)
 }
 
 func TestStdlib_slices(t *testing.T) {
-	t.Skip("Skipping slices test due to unresolved issues with environment handling for generics (see docs/trouble-type-list-interface.md)")
 	script := `
 package main
 import "slices"
@@ -806,7 +805,6 @@ var val = ctx.Value(key)
 }
 
 func TestStdlib_slices_Sort(t *testing.T) {
-	t.Skip("Skipping slices.Sort test: String literal constant evaluation is fixed, but now fails on generics support (identifier not found: E).")
 	script := `
 package main
 import "slices"

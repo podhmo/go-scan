@@ -17,15 +17,6 @@ import (
 	"github.com/podhmo/go-scan/minigo/object"
 )
 
-var (
-	// Singleton type objects to avoid allocations in inferTypeOf
-	intType    = &object.Type{Name: "int"}
-	floatType  = &object.Type{Name: "float64"}
-	stringType = &object.Type{Name: "string"}
-	boolType   = &object.Type{Name: "bool"}
-	anyType    = &object.Type{Name: "any"}
-)
-
 // SpecialFormFunction is the signature for special form functions.
 type SpecialFormFunction func(e *Evaluator, fscope *object.FileScope, pos token.Pos, args []ast.Expr) object.Object
 
@@ -465,13 +456,13 @@ func New(cfg Config) *Evaluator {
 func (e *Evaluator) inferTypeOf(obj object.Object) object.Object {
 	switch o := obj.(type) {
 	case *object.Integer:
-		return intType
+		return &object.Type{Name: "int"}
 	case *object.Float:
-		return floatType
+		return &object.Type{Name: "float64"}
 	case *object.String:
-		return stringType
+		return &object.Type{Name: "string"}
 	case *object.Boolean:
-		return boolType
+		return &object.Type{Name: "bool"}
 	case *object.StructInstance:
 		// The type of a struct instance is its definition.
 		return o.Def
@@ -489,14 +480,15 @@ func (e *Evaluator) inferTypeOf(obj object.Object) object.Object {
 	case *object.Array:
 		// For a fully typed system, we would need to know the array's element type.
 		if len(o.Elements) == 0 {
-			// Cannot infer type from an empty slice. Return `[]any` as a placeholder.
-			return &object.ArrayType{ElementType: anyType}
+			// Cannot infer type from an empty slice.
+			// This is a known limitation in Go's type inference too.
+			// We could potentially return a special "any" type here if needed.
+			return nil
 		}
 		// Infer from the first element. Assumes a homogeneous slice.
 		elemType := e.inferTypeOf(o.Elements[0])
 		if elemType == nil {
-			// Fallback if element type can't be inferred.
-			return &object.ArrayType{ElementType: anyType}
+			return nil
 		}
 		// Return an ArrayType object that represents `[]<elemType>`
 		return &object.ArrayType{ElementType: elemType}

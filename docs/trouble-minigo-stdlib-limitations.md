@@ -183,9 +183,9 @@ These packages are likely to fail in new and informative ways, helping to reveal
 
 ### `container/list`
 
--   **Limitation**: Methods on returned objects do not work correctly for chained calls or modifications.
--   **Status**: **Incompatible (via FFI)**
--   **Analysis**: A test for `container/list` was created to test creating a new list (`list.New()`) and manipulating it with methods like `PushBack`, `PushFront`, and iterating with `Front()` and `Next()`. The test failed during evaluation. This is likely because the interpreter's support for methods on Go objects returned via FFI is not complete enough to handle the stateful modifications and chained method calls required to use this package effectively. The test has been skipped.
+-   **Limitation**: None observed for FFI usage.
+-   **Status**: **Highly Compatible (via FFI)**
+-   **Analysis**: A comprehensive test for `container/list` confirms that it is fully compatible with the FFI bridge. The test successfully creates a new list, adds elements using `PushBack` and `PushFront`, modifies the list with `InsertBefore` and `InsertAfter`, and iterates through the final list to verify its contents. This demonstrates that the interpreter's support for FFI method calls on stateful Go objects is robust.
 
 ### `crypto/md5` **(FIXED)**
 

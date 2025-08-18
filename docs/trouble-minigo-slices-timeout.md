@@ -48,7 +48,7 @@ When interpreting the `slices.Sort` algorithm, which contains nested `for` loops
 
 ### Secondary Bug: Incomplete Built-in Type List
 
-A secondary, unrelated bug was also discovered during the investigation. The `evalIdent` function, which recognizes built-in type names like `int`, was missing many numeric types (e.g., `int8`, `uintptr`). This caused a crash when the interpreter tried to parse the `cmp.Ordered` interface definition. This was fixed by adding the missing types to the list.
+A secondary, unrelated bug was also discovered during the investigation. The `evalIdent` function, which recognizes built-in type names like `int`, was missing many numeric types (e.g., `int8`, `uintptr`). This caused a crash when the interpreter tried to parse the `cmp.Ordered` interface. This was fixed by adding the missing types to the list.
 
 ## The Final Solution
 

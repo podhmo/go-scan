@@ -4,7 +4,7 @@ import (
 	"container/list"
 	"context"
 	"encoding/hex"
-	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -1082,7 +1082,6 @@ var hashStr = hex.EncodeToString(hash[:])
 // TestStdlib_EncodingJson_ErrorTypes verifies that exported error types from
 // the encoding/json package are correctly bound and can be used in type assertions.
 func TestStdlib_EncodingJson_ErrorTypes(t *testing.T) {
-	t.Skip("Skipping test for json error types: json.Unmarshal does not correctly return an UnmarshalTypeError within the interpreter, returning nil instead. Needs further investigation into the FFI bridge.")
 	script := `
 package main
 import "encoding/json"
@@ -1117,29 +1116,87 @@ var err = json.Unmarshal(data, &p)
 	if err := interp.LoadFile("test.mgo", []byte(script)); err != nil {
 		t.Fatalf("failed to load script: %+v", err)
 	}
+
+	// We expect Eval to fail because our type checking should generate an error.
+	_, err = interp.Eval(context.Background())
+	if err == nil {
+		t.Fatalf("expected evaluation to fail with a type error, but it succeeded")
+	}
+
+	// Check that the error message is what we expect.
+	expectedError := "json: cannot unmarshal string into Go value of type int"
+	if !strings.Contains(err.Error(), expectedError) {
+		t.Errorf("error message mismatch:\n- want to contain: %q\n- got: %q", expectedError, err.Error())
+	}
+}
+
+// TestStdlib_json_Unmarshal_ComplexCrossPackage verifies that json.Unmarshal can
+// handle nested structs where the nested struct comes from an imported package.
+func TestStdlib_json_Unmarshal_ComplexCrossPackage(t *testing.T) {
+	jsonData := `{"Name":"Engineering","Manager":{"Name":"Alice","Age":42}}`
+	script := `
+package main
+
+import (
+    "encoding/json"
+    "github.com/podhmo/go-scan/minigo/testdata/jsonstructs"
+)
+
+// Department struct embeds a struct from an imported package.
+type Department struct {
+    Name    string
+    Manager jsonstructs.Person
+}
+
+var d Department
+var data = []byte(jsonData)
+var err = json.Unmarshal(data, &d)
+`
+	interp, err := minigo.NewInterpreter()
+	if err != nil {
+		t.Fatalf("failed to create interpreter: %+v", err)
+	}
+	stdjson.Install(interp)
+
+	// Inject the jsonData variable into the interpreter's global environment
+	interp.GlobalEnvForTest().Set("jsonData", &object.String{Value: jsonData})
+
+	if err := interp.LoadFile("test.mgo", []byte(script)); err != nil {
+		t.Fatalf("failed to load script: %+v", err)
+	}
 	if _, err := interp.Eval(context.Background()); err != nil {
 		t.Fatalf("failed to evaluate script: %+v", err)
 	}
 
 	env := interp.GlobalEnvForTest()
-	errObj, ok := env.Get("err")
-	if !ok {
-		t.Fatalf("variable 'err' not found")
-	}
-	if errObj == object.NIL {
-		t.Fatalf("expected a non-nil error, but got nil")
+	if errObj, _ := env.Get("err"); errObj != object.NIL {
+		t.Fatalf("expected err to be nil, but got: %v", errObj.Inspect())
 	}
 
-	// Check if the error object from the script is a GoValue wrapping the expected Go error type.
-	goErr, ok := errObj.(*object.GoValue)
+	deptObj, ok := env.Get("d")
 	if !ok {
-		t.Fatalf("expected error to be a GoValue, but got %T", errObj)
+		t.Fatal("variable 'd' not found")
+	}
+	dept, ok := deptObj.(*object.StructInstance)
+	if !ok {
+		t.Fatalf("variable 'd' is not a struct instance, got %T", deptObj)
 	}
 
-	// This is the key check: can we assert the type of the Go error?
-	// This requires the '*json.UnmarshalTypeError' type to be known by the FFI.
-	// Since our generator now binds types, this should work.
-	if _, ok := goErr.Value.Interface().(*json.UnmarshalTypeError); !ok {
-		t.Errorf("expected error to be of type *json.UnmarshalTypeError, but got %T", goErr.Value.Interface())
+	// Check Department.Name
+	if name, _ := dept.Fields["Name"].(*object.String); name.Value != "Engineering" {
+		t.Errorf("expected Department.Name to be 'Engineering', got %q", name.Value)
+	}
+
+	// Check nested Manager struct
+	managerObj, ok := dept.Fields["Manager"].(*object.StructInstance)
+	if !ok {
+		t.Fatalf("Department.Manager is not a struct instance, got %T", dept.Fields["Manager"])
+	}
+
+	if name, _ := managerObj.Fields["Name"].(*object.String); name.Value != "Alice" {
+		t.Errorf("expected Manager.Name to be 'Alice', got %q", name.Value)
+	}
+	if age, _ := managerObj.Fields["Age"].(*object.Integer); age.Value != 42 {
+		t.Errorf("expected Manager.Age to be 42, got %d", age.Value)
 	}
 }

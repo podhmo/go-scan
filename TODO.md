@@ -121,7 +121,8 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [ ] Write comprehensive documentation for the API, supported language features, and usage examples.
 
 ### `minigo` FFI and Language Limitations (New Findings)
-- [ ] **Fix `json.Unmarshal` error propagation**: The FFI fails to correctly propagate `*json.UnmarshalTypeError` from `json.Unmarshal`, returning a `nil` value instead. This prevents scripts from handling JSON validation errors correctly.
+- [x] **Fix `json.Unmarshal` error propagation**: The FFI fails to correctly propagate `*json.UnmarshalTypeError` from `json.Unmarshal`, returning a `nil` value instead. This prevents scripts from handling JSON validation errors correctly.
+  - [x] **Verified complex struct support**: Added a test case to confirm that `Unmarshal` works correctly with nested, recursive, and cross-package struct definitions.
 - [x] **Improve method call support for stateful objects**: The FFI and evaluator have trouble with packages like `container/list` where methods (`PushBack`, `Next`) modify the internal state of a Go object in a way that is not correctly reflected back into the script environment. This prevents effective use of stateful, object-oriented packages.
 - [ ] **Support slice operator on Go-native arrays**: The interpreter does not support the slice operator (`[:]`) on `object.GoValue` types that wrap Go arrays (e.g., `[16]byte`). This was discovered when testing `crypto/md5` and blocks the use of functions that return native Go arrays.
 

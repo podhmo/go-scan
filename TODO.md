@@ -54,10 +54,11 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 
 ### Symbolic-Execution-like Engine (`symgo`) ([docs/plan-symbolic-execution-like.md](./docs/plan-symbolic-execution-like.md))
 - [ ] **M1: `symgo` Core Engine**:
-    - [ ] **Object System**: Define the `symgo/object` package with the `Object` interface and initial concrete types (`String`, `Function`, `Error`, `SymbolicPlaceholder`).
-    - [ ] **Scope Management**: Implement the `symgo/scope` package for lexical scoping, supporting nested environments.
-    - [ ] **Core Evaluator**: Implement the `symgo/evaluator` with the main `Eval` dispatch loop.
-        - [ ] Support basic AST nodes: `ast.BasicLit`, `ast.Ident`, `ast.AssignStmt`, `ast.ReturnStmt`.
+    - [x] **Object System**: Define the `symgo/object` package with the `Object` interface and initial concrete types (`String`, `Function`, `Error`, `SymbolicPlaceholder`).
+    - [x] **Scope Management**: Implement the `symgo/scope` package for lexical scoping, supporting nested environments.
+    - [x] **Core Evaluator**: Implement the `symgo/evaluator` with the main `Eval` dispatch loop.
+        - [x] Support basic AST nodes: `ast.BasicLit`, `ast.Ident`.
+        - [ ] Support basic AST nodes: `ast.AssignStmt`, `ast.ReturnStmt`.
     - [ ] **Import & Symbol Resolution**:
         - [ ] Handle `import` statements by creating placeholder package objects.
         - [ ] Implement lazy, on-demand package loading using `go-scan` when a symbol from an unloaded package is accessed (e.g., `pkg.Symbol`).

@@ -32,7 +32,7 @@ This is a new and powerful approach that involves loading the Go source code of 
 
 ### Strategy 2: FFI Binding Generation (Fallback Method)
 
-This was the original approach, which uses the `minigo-gen-bindings` tool to create a bridge between `minigo` and pre-compiled Go functions.
+This was the original approach, which uses the `minigo gen-bindings` tool to create a bridge between `minigo` and pre-compiled Go functions.
 
 - **Process**: The tool scans a compiled Go package and generates an `install.go` file that registers package-level functions and constants with the `minigo` interpreter's FFI registry.
 
@@ -51,7 +51,7 @@ Based on these findings, the following workflow is recommended when adding a new
 
 1.  **Attempt Direct Source Interpretation First**: This is the most robust and future-proof method. Create a test case that uses `LoadGoSourceAsPackage` to load the target package and execute a simple function.
 2.  **Implement Missing Language Features**: If the test fails, analyze the error to see if it's caused by a missing feature in the `minigo` evaluator (e.g., a specific AST node type is not handled). Prioritize implementing these features.
-3.  **Use FFI Binding as a Fallback**: If direct interpretation is not feasible (e.g., the package has CGO dependencies), use the `minigo-gen-bindings` tool to create bindings for a curated list of essential, non-generic, package-level functions.
+3.  **Use FFI Binding as a Fallback**: If direct interpretation is not feasible (e.g., the package has CGO dependencies), use the `minigo gen-bindings` tool to create bindings for a curated list of essential, non-generic, package-level functions.
 
 A detailed technical breakdown of the specific limitations encountered with the FFI binding approach is documented in **[`trouble-minigo-stdlib-limitations.md`](./trouble-minigo-stdlib-limitations.md)**.
 

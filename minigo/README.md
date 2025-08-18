@@ -24,7 +24,7 @@ The primary goal of `minigo` is to replace static configuration files like YAML 
 
 ### 1. FFI Bindings (Primary Method)
 
-The most reliable way to use standard library features is via the `minigo-gen-bindings` tool. This tool generates Go files that create a Foreign Function Interface (FFI) bridge between `minigo` and pre-compiled Go packages.
+The most reliable way to use standard library features is via the `minigo gen-bindings` command. This tool generates Go files that create a Foreign Function Interface (FFI) bridge between `minigo` and pre-compiled Go packages.
 
 -   **How it Works**: The tool scans a compiled package and generates `install.go` code that registers the package's functions with the `minigo` interpreter.
 

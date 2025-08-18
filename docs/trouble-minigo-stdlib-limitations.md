@@ -1,6 +1,6 @@
 # Minigo Standard Library FFI Limitations
 
-This document outlines the limitations discovered while attempting to generate bindings for and test several Go standard library packages with the `minigo` interpreter using the FFI binding generator (`minigo-gen-bindings`).
+This document outlines the limitations discovered while attempting to generate bindings for and test several Go standard library packages with the `minigo` interpreter using the FFI binding generator (`minigo gen-bindings`).
 
 **Note:** A new, preferred method of integrating stdlib packages via direct source interpretation has been developed. This method bypasses many of the limitations described below. See [`plan-minigo-stdlib-limitations.md`](./plan-minigo-stdlib-limitations.md) for details on the new strategy. This document is preserved to record the specific issues with the FFI-based approach.
 
@@ -12,7 +12,7 @@ The investigation revealed several fundamental limitations in the FFI bridge. Th
 
 2.  **Graceful Error Handling**: The FFI bridge now correctly handles Go functions that return an `error` value. Instead of halting, the interpreter wraps the non-nil `error` in an `object.GoValue`, allowing the `minigo` script to receive it and perform idiomatic error checking. This was verified with `time.Parse`.
 
-3.  **Binding Generator Fails on Generic Functions**: The binding generator (`minigo-gen-bindings`) does not support Go generics. When it encounters a generic function, it attempts to bind it without type instantiation, resulting in generated Go code that fails to compile.
+3.  **Binding Generator Fails on Generic Functions**: The binding generator (`minigo gen-bindings`) does not support Go generics. When it encounters a generic function, it attempts to bind it without type instantiation, resulting in generated Go code that fails to compile.
 
 4.  **Unsupported Type Conversions**: **(FIXED)** The FFI bridge and interpreter previously had limited support for type conversions. These issues have been resolved.
     -   ~~The `[]byte("string")` conversion is not implemented, failing with a `not a function: ARRAY_TYPE` error.~~ **(FIXED)**

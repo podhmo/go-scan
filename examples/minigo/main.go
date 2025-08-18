@@ -10,11 +10,6 @@ import (
 	"strings"
 
 	"github.com/podhmo/go-scan/minigo"
-
-	json_ "github.com/podhmo/go-scan/minigo/stdlib/encoding/json"
-	fmt_ "github.com/podhmo/go-scan/minigo/stdlib/fmt"
-	strconv_ "github.com/podhmo/go-scan/minigo/stdlib/strconv"
-	strings_ "github.com/podhmo/go-scan/minigo/stdlib/strings"
 )
 
 // newInterpreterWithStdlib is a helper to create an interpreter and register standard libs.
@@ -23,24 +18,27 @@ func newInterpreterWithStdlib() (*minigo.Interpreter, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Register some useful Go functions to be available in the script.
-	strings_.Install(interp)
-	fmt_.Install(interp)
-	json_.Install(interp)
-	strconv_.Install(interp)
 	return interp, nil
 }
 
 func main() {
 	ctx := context.Background()
 	if len(os.Args) > 1 {
-		runFile(ctx, os.Args[1])
-	} else {
-		// For runREPL, we now pass standard I/O streams.
-		if err := runREPL(os.Stdin, os.Stdout); err != nil {
-			slog.ErrorContext(ctx, "REPL error", "error", err)
-			os.Exit(1)
+		subcommand := os.Args[1]
+		switch subcommand {
+		case "gen-bindings":
+			runGenBindings(os.Args[2:])
+			return
+		default:
+			runFile(ctx, os.Args[1])
+			return
 		}
+	}
+
+	// For runREPL, we now pass standard I/O streams.
+	if err := runREPL(os.Stdin, os.Stdout, nil); err != nil {
+		slog.ErrorContext(ctx, "REPL error", "error", err)
+		os.Exit(1)
 	}
 }
 
@@ -79,13 +77,16 @@ func runFile(ctx context.Context, filename string) {
 }
 
 // runREPL now accepts an io.Reader and io.Writer for testability.
-func runREPL(in io.Reader, out io.Writer) error {
+func runREPL(in io.Reader, out io.Writer, interp *minigo.Interpreter) error {
 	fmt.Fprintln(out, "Welcome to the MiniGo REPL!")
 	fmt.Fprintln(out, "Type :help for more information.")
 
-	interp, err := newInterpreterWithStdlib()
-	if err != nil {
-		return fmt.Errorf("failed to create interpreter: %w", err)
+	var err error
+	if interp == nil {
+		interp, err = newInterpreterWithStdlib()
+		if err != nil {
+			return fmt.Errorf("failed to create interpreter: %w", err)
+		}
 	}
 
 	scanner := bufio.NewScanner(in)

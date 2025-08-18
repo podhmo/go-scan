@@ -5,21 +5,30 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/podhmo/go-scan/minigo"
+	fmt_ "github.com/podhmo/go-scan/minigo/stdlib/fmt"
+	strings_ "github.com/podhmo/go-scan/minigo/stdlib/strings"
 )
 
 func TestREPL(t *testing.T) {
 	// Helper function to run a single REPL test case.
-	runCase := func(t *testing.T, input string, setup func()) string {
+	runCase := func(t *testing.T, input string, setup func(interp *minigo.Interpreter)) string {
 		t.Helper()
-
-		if setup != nil {
-			setup()
-		}
 
 		r := strings.NewReader(input)
 		out := &bytes.Buffer{}
 
-		err := runREPL(r, out)
+		interp, err := newInterpreterWithStdlib()
+		if err != nil {
+			t.Fatalf("newInterpreterWithStdlib failed: %v", err)
+		}
+
+		if setup != nil {
+			setup(interp)
+		}
+
+		err = runREPL(r, out, interp)
 		if err != nil {
 			t.Fatalf("runREPL failed: %v", err)
 		}
@@ -39,7 +48,9 @@ func TestREPL(t *testing.T) {
 		// minigo's REPL prints the return value of the function, not its stdout side-effect.
 		// fmt.Println("hello") returns (6, nil).
 		input := `import "fmt"` + "\n" + `fmt.Println("hello")` + "\n:exit\n"
-		output := runCase(t, input, nil)
+		output := runCase(t, input, func(interp *minigo.Interpreter) {
+			fmt_.Install(interp)
+		})
 		// The output is the inspected version of the return values (int, error).
 		if !strings.Contains(output, "(6, nil)\n") {
 			t.Errorf("expected return value '(6, nil)\\n', got %q", output)
@@ -141,7 +152,9 @@ func shout(s string) string {
 		file.Close()
 
 		input := ":load " + filename + "\n" + `shout("hello")` + "\n:exit\n"
-		output := runCase(t, input, nil)
+		output := runCase(t, input, func(interp *minigo.Interpreter) {
+			strings_.Install(interp)
+		})
 
 		// The expected output is the inspected string, which for minigo is just the raw string value.
 		if !strings.Contains(output, "HELLO\n") {

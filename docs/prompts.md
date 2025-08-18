@@ -48,3 +48,39 @@ When all tasks defined in a `plan-*.md` document are completed, follow these ste
 
 3.  **Handling Incomplete Tasks**:
     *   If you were unable to complete all tasks in the `plan-*.md`, please add the remaining tasks as sub-tasks in `TODO.md`.
+
+---
+
+### Prompt for Finalizing and Refactoring TODO.md
+
+**Task:** Periodically refactor the `TODO.md` file to maintain readability and accurately reflect high-level project progress. This involves summarizing completed work and cleaning up the task lists.
+
+**Trigger:** This process should be initiated when the `## To Be Implemented` section becomes cluttered with numerous completed items, making it difficult to see what work is still pending.
+
+**Refactoring Guidelines:**
+
+1.  **Identify Completed Sections:** Locate any feature sections under `## To Be Implemented` where all sub-tasks are marked as complete (`[x]`).
+
+2.  **Migrate and Summarize:** Move these completed sections into the `## Implemented` section. When migrating, transform the detailed checklist into a concise summary based on the following rules:
+    *   **For Feature Additions:** Describe the new feature that was implemented. The goal is to capture the "what" and "why" of the change, preserving the description of the feature itself.
+    *   **For Bug Fixes & Miscellaneous Tasks:** Group related fixes or smaller tasks into a single, summarized bullet point.
+    *   **Preserve Key Information:** In all summaries, you **must** preserve:
+        *   Any links to `docs/plan-*.md` or other documentation that explain the decision-making process.
+        *   Clear descriptions of major decisions made.
+
+3.  **Clean Up Pending Tasks:** Ensure the `## To Be Implemented` section is left in a clean state, containing only actionable tasks that are genuinely incomplete.
+
+**Example Transformation:**
+
+*   **Before (in `To Be Implemented`):**
+    ```markdown
+    ### `minigo` FFI and Language Limitations ([docs/trouble-minigo-stdlib-limitations.md](./docs/trouble-minigo-stdlib-limitations.md))
+    - [x] **Implement Method Calls on Go Objects**: ...
+    - [x] **Graceful Error Handling for Go Functions**: ...
+    - [x] **Fix FFI method call return handling**: ...
+    ```
+
+*   **After (in `Implemented`):**
+    ```markdown
+    - Resolved numerous FFI and language limitations to improve stdlib compatibility, including method calls on Go objects and graceful error handling. See ([docs/trouble-minigo-stdlib-limitations.md](./docs/trouble-minigo-stdlib-limitations.md)) for details.
+    ```

@@ -25,10 +25,10 @@ This section details the strategies for handling the complexities of analyzing r
 
 ### 3.1. Evaluation Strategy: Intra-Module vs. Extra-Module
 
-The evaluation strategy for a function call follows this priority order:
+To analyze real-world code without getting lost, the engine must differentiate between trusted, project-specific code and external dependencies. The evaluation strategy for a function call follows this priority order:
 
 1.  **Registered Intrinsics (Highest Priority):** If a function call matches a registered intrinsic (e.g., `http.HandleFunc`), the intrinsic handler is executed.
-2.  **Intra-Module Calls (Recursive Evaluation):** If a function is not an intrinsic but is defined within the current Go module, the engine will default to trusting it and evaluate it recursively.
+2.  **Intra-Module Calls (Recursive Evaluation):** If a function is **not** an intrinsic but is defined **within the current Go module**, the engine will default to trusting it and evaluate it recursively.
 3.  **Extra-Module Calls (Symbolic Placeholder):** If a function is external (stdlib, third-party) and not an intrinsic, the engine will not evaluate it. It will return a symbolic placeholder. This is critical for performance.
 4.  **Stubbing Complex Types:** To interact with essential external types like `http.Request`, we will use `go-scan`'s `WithExternalTypeOverrides` feature to provide simplified "stub" definitions.
 
@@ -46,7 +46,7 @@ To avoid brittle, hardcoded analysis, `docgen` will use a configurable registry 
 
 ## 4. Detailed Design and Code-to-Spec Mapping
 
-(This section remains as previously defined, providing concrete examples.)
+(This section provides concrete examples of the end-to-end analysis process.)
 
 ## 5. Design Q&A Checklist
 

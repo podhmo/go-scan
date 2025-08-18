@@ -1,3 +1,6 @@
+> [!NOTE]
+> This feature has been implemented.
+
 # Plan: Generating Minigo Bindings for Go Libraries
 
 This document outlines a strategy for deeply integrating existing Go libraries with the minigo interpreter. The primary goal is to allow minigo scripts to seamlessly import and use functions and variables from standard or third-party Go packages, such as `strings`, `bytes`, or even more complex ones like `golang.org/x/sync/errgroup`.

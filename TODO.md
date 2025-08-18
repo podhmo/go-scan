@@ -51,3 +51,38 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] **Support slice operator on Go-native arrays**: The interpreter does not support the slice operator (`[:]`) on `object.GoValue` types that wrap Go arrays (e.g., `[16]byte`). This was discovered when testing `crypto/md5` and blocks the use of functions that return native Go arrays.
 - [x] **Improve generic type inference for composite types**: The type inference engine fails to infer type parameters when they are part of a composite type in a function argument (e.g., inferring `E` from a parameter of type `[]E`). This was discovered when testing `slices.Sort` and currently blocks its use via source interpretation.
 - [x] **Improve interpreter performance for complex algorithms**: `slices.Sort` fails to complete within the test timeout, indicating severe performance bottlenecks when interpreting complex code like sorting algorithms.
+
+### Symbolic-Execution-like Engine ([docs/plan-symbolic-execution-like.md](./docs/plan-symbolic-execution-like.md))
+- [ ] **M1: `symgo` Core Engine**:
+    - [ ] `symgo/object`: Define `Object` interface and initial types (`String`, `Function`, `Error`).
+    - [ ] `symgo/scope`: Implement `Scope` struct with `Get`/`Set` and support for enclosing scopes.
+    - [ ] `symgo/evaluator`: Implement `Evaluator` struct and `Eval` method dispatcher.
+    - [ ] `symgo/evaluator`: Implement evaluation for `ast.BasicLit`, `ast.Ident`.
+    - [ ] `symgo/evaluator`: Implement evaluation for `ast.AssignStmt`, `ast.ReturnStmt`.
+    - [ ] `symgo/goscan`: Integrate `go-scan` for package loading.
+    - [ ] `symgo/evaluator`: Implement function call evaluation for intra-module functions (recursive `Eval`).
+    - [ ] `symgo/intrinsics`: Implement registry for intrinsic functions.
+    - [ ] `symgo/engine`: Implement logic to handle extra-module calls as symbolic placeholders.
+- [ ] **M2: `docgen` Tool & Basic `net/http` Analysis**:
+    - [ ] `examples/docgen/main.go`: Create skeleton application.
+    - [ ] `examples/docgen/openapi`: Define local structs for a minimal OpenAPI 3.1 spec.
+    - [ ] `examples/docgen/sampleapi`: Create a simple `net/http` server to act as the analysis target.
+    - [ ] `examples/docgen/analyzer`: Implement the main analysis orchestrator.
+    - [ ] `examples/docgen/analyzer`: Define and register an intrinsic for `http.HandleFunc` that extracts path and handler function.
+    - [ ] `examples/docgen/analyzer`: Implement analysis of handler function's AST to find `switch r.Method` statements.
+    - [ ] `examples/docgen/analyzer`: Implement extraction of godoc comments from handler `FuncDecl` for `description`.
+    - [ ] **Test:** Write an integration test that runs the analyzer on `sampleapi` and confirms routes and descriptions are extracted.
+- [ ] **M3: Schema and Parameter Analysis**:
+    - [ ] `examples/docgen/analyzer`: Implement pattern matching for `json.NewDecoder(...).Decode(&var)`.
+    - [ ] `examples/docgen/analyzer`: Implement logic to resolve the `var` type and its struct fields/tags.
+    - [ ] `examples/docgen/analyzer`: Implement pattern matching for `json.NewEncoder(...).Encode(var)`.
+    - [ ] `examples/docgen/analyzer`: Implement logic to resolve the response `var` type.
+    - [ ] `examples/docgen/patterns`: Implement the configurable `CallPattern` registry for query parameters.
+    - [ ] **Test:** Enhance integration test to verify request/response schemas and parameters are correctly identified.
+- [ ] **M4: Finalization**:
+    - [ ] `examples/docgen/generator`: Implement the logic to convert the collected metadata into the local OpenAPI structs.
+    - [ ] `examples/docgen/generator`: Implement YAML/JSON marshaling to print the final spec.
+    - [ ] Add support for `fmt.Sprintf` in `symgo` as a built-in intrinsic.
+    - [ ] Write final end-to-end test comparing output to a golden file.
+    - [ ] Write `README.md` for `symgo` and `examples/docgen`.
+    - [ ] Run `make format` and `make test` for the entire repository.

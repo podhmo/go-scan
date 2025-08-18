@@ -1,3 +1,6 @@
+> [!NOTE]
+> This feature has been implemented.
+
 # Plan: Standard Library Support Strategies
 
 This document outlines the strategies and findings related to integrating Go's standard library with `minigo`.

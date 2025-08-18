@@ -1444,6 +1444,8 @@ func (e *Evaluator) evalForRangeStmt(rs *ast.RangeStmt, env *object.Environment,
 		return e.evalRangeString(rs, iterable, env, fscope)
 	case *object.Map:
 		return e.evalRangeMap(rs, iterable, env, fscope)
+	case *object.Integer:
+		return e.evalRangeInteger(rs, iterable, env, fscope)
 	case *object.GoValue:
 		return e.evalRangeGoValue(rs, iterable, env, fscope)
 	case *object.Function:
@@ -1513,6 +1515,40 @@ func (e *Evaluator) evalRangeFunction(rs *ast.RangeStmt, fn *object.Function, en
 		return loopErr
 	}
 
+	return object.NIL
+}
+
+func (e *Evaluator) evalRangeInteger(rs *ast.RangeStmt, num *object.Integer, env *object.Environment, fscope *object.FileScope) object.Object {
+	if rs.Value != nil {
+		return e.newError(rs.Pos(), "range over integer does not support a second loop variable")
+	}
+
+	for i := int64(0); i < num.Value; i++ {
+		loopEnv := object.NewEnclosedEnvironment(env)
+		if rs.Key != nil {
+			keyIdent, ok := rs.Key.(*ast.Ident)
+			if !ok {
+				return e.newError(rs.Key.Pos(), "range key must be an identifier")
+			}
+			if keyIdent.Name != "_" {
+				loopEnv.Set(keyIdent.Name, &object.Integer{Value: i})
+			}
+		}
+
+		result := e.Eval(rs.Body, loopEnv, fscope)
+		if result != nil {
+			rt := result.Type()
+			if rt == object.BREAK_OBJ {
+				break
+			}
+			if rt == object.CONTINUE_OBJ {
+				continue
+			}
+			if rt == object.ERROR_OBJ || rt == object.RETURN_VALUE_OBJ {
+				return result
+			}
+		}
+	}
 	return object.NIL
 }
 

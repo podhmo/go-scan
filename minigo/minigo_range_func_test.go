@@ -195,6 +195,20 @@ var result = func() {
 `,
 			expected: []any{int64(0), int64(1), int64(2), int64(3), int64(4)},
 		},
+		{
+			name: "range over integer",
+			input: `
+package main
+var result = func() {
+	var r = []int{}
+	for i := range 10 {
+		r = append(r, i)
+	}
+	return r
+}()
+`,
+			expected: []any{int64(0), int64(1), int64(2), int64(3), int64(4), int64(5), int64(6), int64(7), int64(8), int64(9)},
+		},
 	}
 
 	for _, tt := range tests {

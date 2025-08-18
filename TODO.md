@@ -23,7 +23,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     - **In-Memory File Overlay**: Allows providing file content in memory, essential for testing and tools that modify code before scanning.
     - **Debuggability**: Provides `--inspect` and `--dry-run` modes for easier debugging and testing of code generators.
 - **`minigo` Script Engine**: A nearly complete, embeddable script engine that interprets a large subset of Go.
-    - **Core Interpreter**: The engine is fully implemented, supporting expressions, variables (`var`, `const`, `iota`), assignments, and all major control flow statements (`if`, `for`, `switch`, `break`, `continue`).
+    - **Core Interpreter**: The engine is fully implemented, supporting expressions, variables (`var`, `const`, `iota`), assignments, and all major control flow statements (`if`, `for`, `switch`, `break`, `continue`). It also supports `for...range` over integers (e.g., `for i := range 10`).
     - **Functions and Data Structures**: Supports user-defined functions, rich error reporting with stack traces, and composite types including structs, slices, and maps.
     - **Advanced Language Features**: Includes full support for pointers (`&`, `*`), method definitions on structs, interface definitions and dynamic dispatch, struct embedding, and basic generics. The interpreter's `for` loops now correctly create per-iteration variables, preventing common closure-related bugs and aligning with modern Go semantics.
     - **Go Interoperability**: Provides a robust bridge to Go, allowing scripts to call Go functions, access Go variables, and unmarshal script results back into Go structs via `Result.As()`. Lazy, on-demand loading of imported Go packages is also supported.

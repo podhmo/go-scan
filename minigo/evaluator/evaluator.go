@@ -478,6 +478,9 @@ func (e *Evaluator) inferTypeOf(obj object.Object) object.Object {
 		}
 		return &object.PointerType{ElementType: elemType}
 	case *object.Array:
+		if o.SliceType != nil {
+			return o.SliceType
+		}
 		// For a fully typed system, we would need to know the array's element type.
 		if len(o.Elements) == 0 {
 			// Cannot infer type from an empty slice.
@@ -492,6 +495,23 @@ func (e *Evaluator) inferTypeOf(obj object.Object) object.Object {
 		}
 		// Return an ArrayType object that represents `[]<elemType>`
 		return &object.ArrayType{ElementType: elemType}
+	case *object.Map:
+		if o.MapType != nil {
+			return o.MapType
+		}
+		if len(o.Pairs) == 0 {
+			return nil
+		}
+		var keyType, valType object.Object
+		for _, pair := range o.Pairs {
+			keyType = e.inferTypeOf(pair.Key)
+			valType = e.inferTypeOf(pair.Value)
+			break // Infer from the first pair
+		}
+		if keyType == nil || valType == nil {
+			return nil
+		}
+		return &object.MapType{KeyType: keyType, ValueType: valType}
 	default:
 		// Fallback for types we can't infer simply.
 		return nil
@@ -555,6 +575,40 @@ func (e *Evaluator) inferGenericTypes(pos token.Pos, f *object.Function, args []
 					inferredElemType := e.inferTypeOf(argArray)
 					if arrType, ok := inferredElemType.(*object.ArrayType); ok {
 						inferredTypes[eltIdent.Name] = arrType.ElementType
+					}
+				}
+			}
+		} else if paramTypeMap, ok := paramField.Type.(*ast.MapType); ok {
+			// Handle map of generic types like 'map[K]V'
+			keyIdent, keyIsIdent := paramTypeMap.Key.(*ast.Ident)
+			valIdent, valIsIdent := paramTypeMap.Value.(*ast.Ident)
+
+			keyIsGeneric := false
+			if keyIsIdent {
+				_, keyIsGeneric = typeParamNames[keyIdent.Name]
+			}
+			valIsGeneric := false
+			if valIsIdent {
+				_, valIsGeneric = typeParamNames[valIdent.Name]
+			}
+
+			if (keyIsIdent && keyIsGeneric) || (valIsIdent && valIsGeneric) {
+				if i >= len(args) {
+					return nil, e.newError(pos, "cannot infer type for generic map: not enough arguments")
+				}
+				arg := args[i]
+				argMap, ok := arg.(*object.Map)
+				if !ok {
+					continue
+				}
+
+				inferredMapType := e.inferTypeOf(argMap)
+				if mapType, ok := inferredMapType.(*object.MapType); ok {
+					if keyIsIdent && keyIsGeneric {
+						inferredTypes[keyIdent.Name] = mapType.KeyType
+					}
+					if valIsIdent && valIsGeneric {
+						inferredTypes[valIdent.Name] = mapType.ValueType
 					}
 				}
 			}
@@ -4769,10 +4823,10 @@ func (e *Evaluator) evalCompositeLit(n *ast.CompositeLit, env *object.Environmen
 		// Create a new slice with capacity equal to length to mimic Go's behavior for literals.
 		finalElements := make([]object.Object, len(elements))
 		copy(finalElements, elements)
-		return &object.Array{Elements: finalElements}
+		return &object.Array{SliceType: def, Elements: finalElements}
 
 	case *object.MapType:
-		return e.evalMapLiteral(n, env, fscope)
+		return e.evalMapLiteral(n, def, env, fscope)
 
 	default:
 		return e.newError(n.Pos(), "cannot create composite literal for type %s", resolvedType.Type())
@@ -4901,7 +4955,7 @@ func (e *Evaluator) evalStructLiteral(n *ast.CompositeLit, def *object.StructDef
 	return instance
 }
 
-func (e *Evaluator) evalMapLiteral(n *ast.CompositeLit, env *object.Environment, fscope *object.FileScope) object.Object {
+func (e *Evaluator) evalMapLiteral(n *ast.CompositeLit, def *object.MapType, env *object.Environment, fscope *object.FileScope) object.Object {
 	pairs := make(map[object.HashKey]object.MapPair)
 
 	for _, elt := range n.Elts {
@@ -4929,7 +4983,7 @@ func (e *Evaluator) evalMapLiteral(n *ast.CompositeLit, env *object.Environment,
 		pairs[hashed] = object.MapPair{Key: key, Value: value}
 	}
 
-	return &object.Map{Pairs: pairs}
+	return &object.Map{MapType: def, Pairs: pairs}
 }
 
 func (e *Evaluator) resolvePackage(ident *ast.Ident, path string) *object.Package {

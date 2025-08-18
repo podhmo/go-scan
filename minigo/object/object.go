@@ -567,7 +567,8 @@ func (pt *PointerType) Inspect() string {
 
 // Array represents an array data structure.
 type Array struct {
-	Elements []Object
+	SliceType *ArrayType // The type of the slice, e.g., []int. Can be nil if not specified.
+	Elements  []Object
 }
 
 // Type returns the type of the Array object.
@@ -599,7 +600,8 @@ type MapPair struct {
 
 // Map represents a map data structure.
 type Map struct {
-	Pairs map[HashKey]MapPair
+	MapType *MapType // The type of the map, e.g., map[string]int. Can be nil.
+	Pairs   map[HashKey]MapPair
 }
 
 // Type returns the type of the Map object.

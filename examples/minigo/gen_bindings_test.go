@@ -21,12 +21,12 @@ func TestGenerate(t *testing.T) {
 	}{
 		{
 			name:       "generics",
-			pkgPath:    "github.com/podhmo/go-scan/examples/minigo-gen-bindings/testdata/generics",
+			pkgPath:    "./testdata/generics",
 			goldenFile: "generics.golden",
 		},
 		{
 			name:       "varsandtypes",
-			pkgPath:    "github.com/podhmo/go-scan/examples/minigo-gen-bindings/testdata/varsandtypes",
+			pkgPath:    "./testdata/varsandtypes",
 			goldenFile: "varsandtypes.golden",
 		},
 	}
@@ -34,8 +34,8 @@ func TestGenerate(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			tmpdir := t.TempDir()
-			if err := run(context.Background(), tmpdir, []string{tc.pkgPath}); err != nil {
-				t.Fatalf("run() failed unexpectedly: %+v", err)
+			if err := runGenBindingsInternal(context.Background(), tmpdir, []string{tc.pkgPath}); err != nil {
+				t.Fatalf("runGenBindingsInternal() failed unexpectedly: %+v", err)
 			}
 
 			generatedFile := filepath.Join(tmpdir, tc.pkgPath, "install.go")

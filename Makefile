@@ -32,7 +32,7 @@ STDLIB_PKGS= \
 
 gen-stdlib:
 	rm -rf minigo/stdlib/* # clean first
-	go run ./examples/minigo-gen-bindings --output minigo/stdlib $(STDLIB_PKGS)
+	(cd examples/minigo && go run . gen-bindings --output ../../minigo/stdlib $(STDLIB_PKGS))
 
 test:
 	go test ./...

@@ -1523,10 +1523,16 @@ func TestForRangeStatements(t *testing.T) {
 			`,
 			int64(1),
 		},
-		// Error case: ranging over integer
+		// Empty array
 		{
-			`for i := range 123 {}`,
-			"range operator not supported for INTEGER",
+			`
+			sum := 1;
+			for _, v := range []int{} {
+				sum = 100;
+			}
+			sum
+			`,
+			int64(1),
 		},
 	}
 

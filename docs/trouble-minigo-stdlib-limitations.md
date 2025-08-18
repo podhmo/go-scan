@@ -127,11 +127,11 @@ The investigation revealed several fundamental limitations in the FFI bridge. Th
 ### `encoding/json`
 
 -   **Limitation (Direct Source Interpretation)**: Identifier not found during evaluation.
--   **Status**: **Highly Compatible (via FFI)**
--   **Analysis**:
-    -   **`json.Marshal`**: An attempt to test `json.Marshal` using direct source interpretation failed with the error `identifier not found: encodeStatePool`. However, FFI-based bindings are fully supported and tested for various struct types.
-    -   **`json.Unmarshal`**: **(FIXED)** Previously, the FFI bridge did not correctly propagate type errors (like `*json.UnmarshalTypeError`) from `Unmarshal`, returning `nil` instead. This has been fixed by adding a manual type-checking layer to the FFI copy-back logic. The interpreter now correctly identifies and returns an error when, for example, a JSON string is unmarshaled into an `int` field. This was verified with `TestStdlib_EncodingJson_ErrorTypes`.
--   **Conclusion**: `encoding/json` is incompatible with direct source interpretation but is now highly compatible and robust when used via FFI bindings.
+-   **Limitation (FFI)**: None observed for basic marshalling.
+-   **Status**: **Partially Compatible (via FFI)**
+-   **Analysis**: An attempt to test `json.Marshal` using direct source interpretation failed with the error `identifier not found: encodeStatePool`, likely due to the interpreter's inability to handle complex package-level variable initialization. However, switching to the FFI-based bindings was successful for a basic `json.Marshal` test on a simple struct.
+-   **Conclusion**: `encoding/json` is incompatible with direct source interpretation. Basic marshalling works via FFI, but the package's full functionality (especially `Unmarshal` into arbitrary structs) is likely limited due to the interpreter's incomplete reflection support.
+
 ---
 
 ## Fundamental Design Limitations
@@ -202,3 +202,14 @@ These packages are likely to fail in new and informative ways, helping to reveal
 -   **`flag`**: Would test interaction with OS arguments and reflection-based struct population.
 -   **`sync`**: Would confirm the expected limitation that the single-threaded `minigo` interpreter cannot support Go's concurrency model.
 
+### Incorrect Error Value from `json.Unmarshal`
+
+-   **Limitation**: When `encoding/json.Unmarshal` is called via the FFI with data that should produce a specific error (e.g., `*json.UnmarshalTypeError`), the interpreter receives a `nil` error value instead of the expected error object.
+-   **Impact**: This prevents scripts from correctly detecting and handling specific JSON parsing errors. While the FFI bridge correctly handles functions that return `(value, error)`, its handling of functions that return a single `error` value appears to be flawed in this specific case.
+-   **Example (`minigo/minigo_stdlib_custom_test.go`)**:
+    ```go
+    // This script should produce an UnmarshalTypeError, but `err` is nil.
+    var data = []byte(`{"X":1,"Y":"not-a-number"}`)
+    var p Point
+    var err = json.Unmarshal(data, &p)
+    ```

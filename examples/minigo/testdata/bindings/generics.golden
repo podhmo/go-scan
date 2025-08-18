@@ -11,6 +11,5 @@ import (
 func Install(interp *minigo.Interpreter) {
 	interp.Register("github.com/podhmo/go-scan/examples/minigo/testdata/bindings/generics", map[string]any{
 		"ExportedConstant": generics.ExportedConstant,
-		"ExportedFunction": generics.ExportedFunction,
 	})
 }

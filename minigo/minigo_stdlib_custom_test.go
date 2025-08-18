@@ -1026,31 +1026,30 @@ func main() {
 	}
 }
 
-// TestStdlib_CryptoMD5 tests the `crypto/md5` package.
+// TestStdlib_CryptoMD5 tests the `crypto/md5` package, specifically that
+// the slice operator `[:]` works on Go-native array types (like [16]byte
+// from md5.Sum) returned via FFI.
 func TestStdlib_CryptoMD5(t *testing.T) {
-	t.Skip("Skipping crypto/md5 test: Fails because the slice operator `[:]` is not supported on Go-native array types (like [16]byte from md5.Sum) returned via FFI.")
 	script := `
 package main
 import (
 	"crypto/md5"
 	"encoding/hex"
 )
-var data = []byte("hello")
-var hash = md5.Sum(data)
-var hashStr = hex.EncodeToString(hash[:])
+
+var hashStr string
+
+func main() {
+	var data = []byte("hello")
+	var hash = md5.Sum(data)
+	hashStr = hex.EncodeToString(hash[:])
+}
 `
 	interp, err := minigo.NewInterpreter()
 	if err != nil {
 		t.Fatalf("failed to create interpreter: %+v", err)
 	}
 	stdcryptomd5.Install(interp)
-	// We need encoding/hex, but it's not generated. Let's add it.
-	// For now, let's assume it exists and see what happens.
-	// stdhex.Install(interp) // This would be ideal.
-	// Since it doesn't exist, this test will fail, but it's a good
-	// illustration of the dependency issue.
-
-	// Let's try to add encoding/hex manually for this test.
 	interp.Register("encoding/hex", map[string]any{
 		"EncodeToString": hex.EncodeToString,
 	})

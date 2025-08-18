@@ -3022,6 +3022,58 @@ func (e *Evaluator) evalSliceExpr(node *ast.SliceExpr, env *object.Environment, 
 
 		return &object.String{Value: l.Value[low:high]}
 
+	case *object.GoValue:
+		v := l.Value
+		switch v.Kind() {
+		case reflect.Array, reflect.Slice:
+			// Slicing an array requires it to be addressable. If it's not,
+			// we create a new addressable array and copy the data.
+			if v.Kind() == reflect.Array && !v.CanAddr() {
+				newVal := reflect.New(v.Type()).Elem()
+				reflect.Copy(newVal, v)
+				v = newVal
+			}
+
+			capacity := int64(v.Cap())
+			length := int64(v.Len())
+
+			var err object.Object
+			var low, high, max int64
+
+			low, err = evalIndex(node.Low, 0)
+			if err != nil {
+				return err
+			}
+
+			high, err = evalIndex(node.High, length)
+			if err != nil {
+				return err
+			}
+
+			if node.Slice3 {
+				max, err = evalIndex(node.Max, capacity)
+				if err != nil {
+					return err
+				}
+			} else {
+				max = -1 // Use -1 to indicate not set, similar to reflect.Value.Slice3
+			}
+
+			// Basic bounds check
+			if low < 0 || high < low || high > length {
+				return e.newError(node.Pos(), "slice bounds out of range: low=%d, high=%d, len=%d", low, high, length)
+			}
+			if node.Slice3 {
+				if max < high {
+					return e.newError(node.Pos(), "slice bounds out of range: max < high")
+				}
+				return &object.GoValue{Value: v.Slice3(int(low), int(high), int(max))}
+			}
+			return &object.GoValue{Value: v.Slice(int(low), int(high))}
+		default:
+			return e.newError(node.Pos(), "slice operator not supported for GO_VALUE of kind %s", v.Kind())
+		}
+
 	default:
 		return e.newError(node.Pos(), "slice operator not supported for %s", left.Type())
 	}

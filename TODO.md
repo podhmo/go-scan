@@ -51,3 +51,54 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] **Support slice operator on Go-native arrays**: The interpreter does not support the slice operator (`[:]`) on `object.GoValue` types that wrap Go arrays (e.g., `[16]byte`). This was discovered when testing `crypto/md5` and blocks the use of functions that return native Go arrays.
 - [x] **Improve generic type inference for composite types**: The type inference engine fails to infer type parameters when they are part of a composite type in a function argument (e.g., inferring `E` from a parameter of type `[]E`). This was discovered when testing `slices.Sort` and currently blocks its use via source interpretation.
 - [x] **Improve interpreter performance for complex algorithms**: `slices.Sort` fails to complete within the test timeout, indicating severe performance bottlenecks when interpreting complex code like sorting algorithms.
+
+### Symbolic-Execution-like Engine (`symgo`) ([docs/plan-symbolic-execution-like.md](./docs/plan-symbolic-execution-like.md))
+- [ ] **M1: `symgo` Core Engine**:
+    - [ ] **Object System**: Define the `symgo/object` package with the `Object` interface and initial concrete types (`String`, `Function`, `Error`, `SymbolicPlaceholder`).
+    - [ ] **Scope Management**: Implement the `symgo/scope` package for lexical scoping, supporting nested environments.
+    - [ ] **Core Evaluator**: Implement the `symgo/evaluator` with the main `Eval` dispatch loop.
+        - [ ] Support basic AST nodes: `ast.BasicLit`, `ast.Ident`, `ast.AssignStmt`, `ast.ReturnStmt`.
+    - [ ] **Import & Symbol Resolution**:
+        - [ ] Handle `import` statements by creating placeholder package objects.
+        - [ ] Implement lazy, on-demand package loading using `go-scan` when a symbol from an unloaded package is accessed (e.g., `pkg.Symbol`).
+        - [ ] Integrate the resolved symbol information into the `symgo` scope.
+        - [ ] (Note: The lazy-loading mechanism from the `minigo` implementation can be used as a reference.)
+    - [ ] **Function Evaluation Strategy**:
+        - [ ] Implement recursive evaluation for intra-module function calls.
+        - [ ] Implement an intrinsic function registry (`symgo/intrinsics`).
+        - [ ] Return `SymbolicPlaceholder` objects for calls to extra-module functions that are not intrinsics.
+- [ ] **M2: `docgen` Tool & Basic `net/http` Analysis**:
+    - [ ] **Project Setup**:
+        - [ ] Create the `examples/docgen` CLI application skeleton.
+        - [ ] Define local structs for a minimal OpenAPI 3.1 model (`examples/docgen/openapi`).
+        - [ ] Create a sample `net/http` API to use as the analysis target (`examples/docgen/sampleapi`).
+    - [ ] **Core Analyzer**:
+        - [ ] Implement the main analysis orchestrator that uses the `symgo` engine.
+        - [ ] Implement an intrinsic for `http.HandleFunc` to extract route paths and handler functions.
+        - [ ] Use `go-scan`'s `WithExternalTypeOverrides` to provide stubs for complex stdlib types like `http.Request`.
+    - [ ] **Handler Analysis**:
+        - [ ] Analyze handler function ASTs to find HTTP methods (e.g., from `switch r.Method`).
+        - [ ] Extract `operationId` from the function name and `description` from godoc comments.
+    - [ ] **Testing**: Write an integration test to verify basic route and description extraction from the sample API.
+- [ ] **M3: Schema and Parameter Analysis**:
+    - [ ] **Request/Response Body Analysis**:
+        - [ ] Implement pattern matching to detect calls like `json.NewDecoder(...).Decode(&req)`.
+        - [ ] Use the `symgo` scope to resolve the type of the `req` variable and analyze its struct definition to build a request schema.
+        - [ ] Implement similar pattern matching for response-writing functions (e.g., `json.NewEncoder(...).Encode(resp)`).
+    - [ ] **Query Parameter Analysis**:
+        - [ ] Implement the extensible `CallPattern` registry (`examples/docgen/patterns`).
+        - [ ] Use the pattern registry to find query parameter usage (e.g., `r.URL.Query().Get("limit")` or helpers).
+    - [ ] **Interface/Higher-Order Function Handling**:
+        - [ ] Implement context-based type binding in `symgo` to handle interfaces like `io.Writer`.
+        - [ ] Add intrinsics for common `net/http` higher-order functions like `http.TimeoutHandler` to trace into the actual handler.
+    - [ ] **Testing**: Enhance the integration test to verify that request/response schemas and query parameters are correctly extracted.
+- [ ] **M4: Finalization**:
+    - [ ] **OpenAPI Generation**:
+        - [ ] Implement the generator component to convert the collected API metadata into the OpenAPI 3.1 model.
+        - [ ] Implement YAML/JSON marshaling to print the final specification to standard output.
+    - [ ] **Engine Enhancements**:
+        - [ ] Add a built-in intrinsic for `fmt.Sprintf` to handle dynamic path segment construction.
+    - [ ] **Documentation & Testing**:
+        - [ ] Write `README.md` files for both the `symgo` library and the `docgen` tool.
+        - [ ] Write a final end-to-end test that compares the generated OpenAPI spec against a "golden" file.
+        - [ ] Ensure `make format` and `make test` pass for the entire repository before submission.

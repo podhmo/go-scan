@@ -3887,7 +3887,7 @@ func (e *Evaluator) findSymbolInPackageInfo(pkgInfo *goscan.Package, symbolName 
 	return nil, false
 }
 
-func (e *Evaluator) updateMiniGoStructFromNative(ctx *object.BuiltinContext, src map[string]any, dst *object.StructInstance, visited map[uintptr]object.Object, fscope *object.FileScope) object.Object {
+func (e *Evaluator) updateMiniGoStructFromNative(ctx *object.BuiltinContext, src map[string]any, dst *object.StructInstance, visited map[uintptr]object.Object) object.Object {
 	// Use pointer address of the destination struct to detect cycles.
 	dstPtr := reflect.ValueOf(dst).Pointer()
 	if _, ok := visited[dstPtr]; ok {
@@ -3895,6 +3895,7 @@ func (e *Evaluator) updateMiniGoStructFromNative(ctx *object.BuiltinContext, src
 	}
 	visited[dstPtr] = dst
 
+	// This map is useful if the minigo struct uses `json` tags.
 	jsonToFieldName := make(map[string]string)
 	for fieldName, tag := range dst.Def.FieldTags {
 		tagName := strings.Split(tag, ",")[0]
@@ -3906,7 +3907,19 @@ func (e *Evaluator) updateMiniGoStructFromNative(ctx *object.BuiltinContext, src
 	for jsonKey, nativeValue := range src {
 		fieldName, ok := jsonToFieldName[jsonKey]
 		if !ok {
-			fieldName = jsonKey
+			// If no tag, default to matching the field name directly (case-insensitive).
+			// This is a simplification; Go's json is case-sensitive but we are flexible.
+			found := false
+			for fldName := range dst.Def.FieldTags {
+				if strings.EqualFold(fldName, jsonKey) {
+					fieldName = fldName
+					found = true
+					break
+				}
+			}
+			if !found {
+				fieldName = jsonKey
+			}
 		}
 
 		var astField *ast.Field
@@ -3928,7 +3941,7 @@ func (e *Evaluator) updateMiniGoStructFromNative(ctx *object.BuiltinContext, src
 		// Resolve the expected type of the minigo struct field.
 		// We must use the FFI call-site environment (ctx.Env) and scope (fscope)
 		// to ensure that imported package types can be resolved correctly.
-		expectedTypeObj := e.resolveType(e.Eval(astField.Type, ctx.Env, fscope), ctx.Env, fscope)
+		expectedTypeObj := e.resolveType(e.Eval(astField.Type, ctx.Env, ctx.FScope), ctx.Env, ctx.FScope)
 		if isError(expectedTypeObj) {
 			return expectedTypeObj
 		}
@@ -3937,66 +3950,81 @@ func (e *Evaluator) updateMiniGoStructFromNative(ctx *object.BuiltinContext, src
 		if nativeValue == nil {
 			newFieldValue = object.NIL
 		} else {
-			nativeType := reflect.TypeOf(nativeValue).Kind()
-
-			switch t := expectedTypeObj.(type) {
-			case *object.Type:
-				switch t.Name {
-				case "int", "int64", "int32", "int16", "int8":
-					if nativeType != reflect.Float64 { // JSON numbers are float64
-						return ctx.NewError(astField.Pos(), "json: cannot unmarshal %s into Go value of type int", nativeType)
-					}
-					newFieldValue = &object.Integer{Value: int64(nativeValue.(float64))}
-				case "string":
-					if nativeType != reflect.String {
-						return ctx.NewError(astField.Pos(), "json: cannot unmarshal %s into Go value of type string", nativeType)
-					}
-					newFieldValue = &object.String{Value: nativeValue.(string)}
-				case "bool":
-					if nativeType != reflect.Bool {
-						return ctx.NewError(astField.Pos(), "json: cannot unmarshal %s into Go value of type bool", nativeType)
-					}
-					newFieldValue = e.nativeBoolToBooleanObject(nativeValue.(bool))
-				default:
-					newFieldValue = e.nativeToValue(reflect.ValueOf(nativeValue))
-				}
-			case *object.StructDefinition:
-				nestedMap, isMap := nativeValue.(map[string]any)
-				if !isMap {
-					return ctx.NewError(astField.Pos(), "json: cannot unmarshal %s into Go value of type %s", nativeType, t.Name.Name)
-				}
-				nestedInstance, ok := dst.Fields[fieldName].(*object.StructInstance)
-				if !ok {
-					nestedInstance = e.getZeroValueForResolvedType(t).(*object.StructInstance)
-				}
-				if err := e.updateMiniGoStructFromNative(ctx, nestedMap, nestedInstance, visited, fscope); err != nil {
-					return err
-				}
-				newFieldValue = nestedInstance
-			case *object.PointerType:
-				if nestedStructDef, ok := t.ElementType.(*object.StructDefinition); ok {
-					nestedMap, isMap := nativeValue.(map[string]any)
-					if !isMap {
-						return ctx.NewError(astField.Pos(), "json: cannot unmarshal %s into Go value of type *%s", nativeType, nestedStructDef.Name.Name)
-					}
-					// Create a new instance for the pointer to point to.
-					newInstance := e.getZeroValueForResolvedType(nestedStructDef).(*object.StructInstance)
-					if err := e.updateMiniGoStructFromNative(ctx, nestedMap, newInstance, visited, fscope); err != nil {
-						return err
-					}
-					var obj object.Object = newInstance
-					newFieldValue = &object.Pointer{Element: &obj}
-				} else {
-					newFieldValue = e.nativeToValue(reflect.ValueOf(nativeValue))
-				}
-			default:
-				// Fallback for other types (pointers, etc.)
-				newFieldValue = e.nativeToValue(reflect.ValueOf(nativeValue))
+			nativeType := reflect.TypeOf(nativeValue)
+			var err error
+			newFieldValue, err = e.convertNativeToMiniGo(nativeValue, nativeType, expectedTypeObj, ctx, visited)
+			if err != nil {
+				return ctx.NewError(astField.Pos(), "json: cannot unmarshal %s into Go value of type %s", nativeType.Kind(), expectedTypeObj.Inspect())
 			}
 		}
 		dst.Fields[fieldName] = newFieldValue
 	}
 	return nil
+}
+
+// convertNativeToMiniGo performs the type-checked conversion from a native Go value
+// (from json.Unmarshal) to a minigo object, based on the expected minigo type.
+func (e *Evaluator) convertNativeToMiniGo(
+	nativeValue any,
+	nativeType reflect.Type,
+	expectedType object.Object,
+	ctx *object.BuiltinContext,
+	visited map[uintptr]object.Object,
+) (object.Object, error) {
+
+	switch t := expectedType.(type) {
+	case *object.Type:
+		switch t.Name {
+		case "int", "int64", "int32", "int16", "int8":
+			if nativeType.Kind() != reflect.Float64 {
+				return nil, fmt.Errorf("type mismatch")
+			}
+			return &object.Integer{Value: int64(nativeValue.(float64))}, nil
+		case "string":
+			if nativeType.Kind() != reflect.String {
+				return nil, fmt.Errorf("type mismatch")
+			}
+			return &object.String{Value: nativeValue.(string)}, nil
+		case "bool":
+			if nativeType.Kind() != reflect.Bool {
+				return nil, fmt.Errorf("type mismatch")
+			}
+			return e.nativeBoolToBooleanObject(nativeValue.(bool)), nil
+		default:
+			// For other built-in types, do a simple conversion for now.
+			return e.nativeToValue(reflect.ValueOf(nativeValue)), nil
+		}
+	case *object.StructDefinition:
+		nestedMap, ok := nativeValue.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("type mismatch")
+		}
+		// The destination field might already have a struct instance, or it could be nil.
+		// We create a new one to be safe and populate it.
+		nestedInstance := &object.StructInstance{Def: t, Fields: make(map[string]object.Object)}
+		if err := e.updateMiniGoStructFromNative(ctx, nestedMap, nestedInstance, visited); err != nil {
+			return nil, fmt.Errorf("nested struct update failed")
+		}
+		return nestedInstance, nil
+	case *object.PointerType:
+		if nestedStructDef, ok := t.ElementType.(*object.StructDefinition); ok {
+			nestedMap, isMap := nativeValue.(map[string]any)
+			if !isMap {
+				return nil, fmt.Errorf("type mismatch")
+			}
+			newInstance := &object.StructInstance{Def: nestedStructDef, Fields: make(map[string]object.Object)}
+			if err := e.updateMiniGoStructFromNative(ctx, nestedMap, newInstance, visited); err != nil {
+				return nil, fmt.Errorf("nested pointer to-struct update failed")
+			}
+			var obj object.Object = newInstance
+			return &object.Pointer{Element: &obj}, nil
+		}
+		// Fallback for other pointer types
+		return e.nativeToValue(reflect.ValueOf(nativeValue)), nil
+	default:
+		// Fallback for other types (arrays, etc.)
+		return e.nativeToValue(reflect.ValueOf(nativeValue)), nil
+	}
 }
 
 // WrapGoFunction is a public method to wrap a native Go function into a minigo object.
@@ -4085,10 +4113,10 @@ func (e *Evaluator) WrapGoFunction(pos token.Pos, funcVal reflect.Value) object.
 				nativeValue := bridge.Dest.Elem().Interface()
 				targetObj := *bridge.Source.Element
 
-				// The var declaration should have initialized this to a zero struct instance.
 				if dst, ok := targetObj.(*object.StructInstance); ok {
 					if src, ok := nativeValue.(map[string]any); ok {
-						if errObj := e.updateMiniGoStructFromNative(ctx, src, dst, make(map[uintptr]object.Object), ctx.FScope); errObj != nil {
+						if errObj := e.updateMiniGoStructFromNative(ctx, src, dst, make(map[uintptr]object.Object)); errObj != nil {
+							// The error from updateMiniGoStructFromNative is already an *object.Error
 							return errObj
 						}
 					}

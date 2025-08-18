@@ -58,11 +58,15 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     - [ ] **Scope Management**: Implement the `symgo/scope` package for lexical scoping, supporting nested environments.
     - [ ] **Core Evaluator**: Implement the `symgo/evaluator` with the main `Eval` dispatch loop.
         - [ ] Support basic AST nodes: `ast.BasicLit`, `ast.Ident`, `ast.AssignStmt`, `ast.ReturnStmt`.
+    - [ ] **Import & Symbol Resolution**:
+        - [ ] Handle `import` statements by creating placeholder package objects.
+        - [ ] Implement lazy, on-demand package loading using `go-scan` when a symbol from an unloaded package is accessed (e.g., `pkg.Symbol`).
+        - [ ] Integrate the resolved symbol information into the `symgo` scope.
+        - [ ] (Note: The lazy-loading mechanism from the `minigo` implementation can be used as a reference.)
     - [ ] **Function Evaluation Strategy**:
         - [ ] Implement recursive evaluation for intra-module function calls.
         - [ ] Implement an intrinsic function registry (`symgo/intrinsics`).
         - [ ] Return `SymbolicPlaceholder` objects for calls to extra-module functions that are not intrinsics.
-    - [ ] **Package Loading**: Integrate `go-scan` for on-demand package parsing.
 - [ ] **M2: `docgen` Tool & Basic `net/http` Analysis**:
     - [ ] **Project Setup**:
         - [ ] Create the `examples/docgen` CLI application skeleton.

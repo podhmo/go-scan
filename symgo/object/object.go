@@ -35,6 +35,8 @@ type Object interface {
 	// TypeInfo returns the underlying go-scan type information, if available.
 	// This is the bridge between the symbolic world and the static type world.
 	TypeInfo() *goscan.TypeInfo
+	// SetTypeInfo sets the underlying go-scan type information.
+	SetTypeInfo(*goscan.TypeInfo)
 }
 
 // BaseObject provides a default implementation for the TypeInfo method.
@@ -45,6 +47,11 @@ type BaseObject struct {
 // TypeInfo returns the stored type information.
 func (b *BaseObject) TypeInfo() *goscan.TypeInfo {
 	return b.ResolvedTypeInfo
+}
+
+// SetTypeInfo sets the stored type information.
+func (b *BaseObject) SetTypeInfo(ti *goscan.TypeInfo) {
+	b.ResolvedTypeInfo = ti
 }
 
 // --- String Object ---

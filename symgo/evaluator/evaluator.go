@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"go/ast"
 	"go/token"
+	"log/slog"
+	"os"
 	"path"
 	"strconv"
 
@@ -17,13 +19,18 @@ import (
 type Evaluator struct {
 	scanner    *goscan.Scanner
 	intrinsics *intrinsics.Registry
+	logger     *slog.Logger
 }
 
 // New creates a new Evaluator.
-func New(scanner *goscan.Scanner) *Evaluator {
+func New(scanner *goscan.Scanner, logger *slog.Logger) *Evaluator {
+	if logger == nil {
+		logger = slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	}
 	return &Evaluator{
 		scanner:    scanner,
 		intrinsics: intrinsics.New(),
+		logger:     logger,
 	}
 }
 
@@ -128,11 +135,13 @@ func (e *Evaluator) evalImportSpec(spec ast.Spec, env *object.Environment) objec
 }
 
 func (e *Evaluator) evalSelectorExpr(n *ast.SelectorExpr, env *object.Environment) object.Object {
+	e.logger.Debug("evalSelectorExpr", "selector", n.Sel.Name)
 	// Evaluate the left-hand side of the selector (e.g., `http` in `http.HandleFunc`).
 	left := e.Eval(n.X, env)
 	if isError(left) {
 		return left
 	}
+	e.logger.Debug("evalSelectorExpr: evaluated left", "type", left.Type(), "value", left.Inspect())
 
 	// Check if the left-hand side is a package.
 	pkg, ok := left.(*object.Package)
@@ -287,6 +296,7 @@ func (e *Evaluator) evalAssignStmt(n *ast.AssignStmt, env *object.Environment) o
 	}
 
 	// Set the value in the scope.
+	e.logger.Debug("evalAssignStmt: setting var", "name", ident.Name, "type", val.Type())
 	return env.Set(ident.Name, val)
 }
 
@@ -306,8 +316,10 @@ func (e *Evaluator) evalBasicLit(n *ast.BasicLit) object.Object {
 
 func (e *Evaluator) evalIdent(n *ast.Ident, env *object.Environment) object.Object {
 	if val, ok := env.Get(n.Name); ok {
+		e.logger.Debug("evalIdent: found in env", "name", n.Name, "type", val.Type())
 		return val
 	}
+	e.logger.Debug("evalIdent: not found in env", "name", n.Name)
 	return newError("identifier not found: %s", n.Name)
 }
 
@@ -355,6 +367,7 @@ func (e *Evaluator) evalExpressions(exps []ast.Expr, env *object.Environment) []
 }
 
 func (e *Evaluator) applyFunction(fn object.Object, args []object.Object) object.Object {
+	e.logger.Debug("applyFunction", "type", fn.Type(), "value", fn.Inspect())
 	switch fn := fn.(type) {
 	case *object.Function:
 		// This is a user-defined function.

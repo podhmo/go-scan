@@ -17,6 +17,7 @@ const (
 	RETURN_VALUE_OBJ ObjectType = "RETURN_VALUE"
 	PACKAGE_OBJ      ObjectType = "PACKAGE"
 	INTRINSIC_OBJ    ObjectType = "INTRINSIC"
+	SERVE_MUX_OBJ    ObjectType = "SERVE_MUX"
 )
 
 // Object is the interface that all value types in our symbolic engine will implement.
@@ -48,6 +49,7 @@ type Function struct {
 	Parameters *ast.FieldList
 	Body       *ast.BlockStmt
 	Env        *Environment
+	Decl       *ast.FuncDecl // The original declaration, for metadata like godoc.
 }
 
 // Type returns the type of the Function object.
@@ -71,6 +73,17 @@ func (i *Intrinsic) Type() ObjectType { return INTRINSIC_OBJ }
 
 // Inspect returns a string representation of the intrinsic function.
 func (i *Intrinsic) Inspect() string { return "intrinsic function" }
+
+// --- ServeMux Object ---
+
+// ServeMux represents a net/http.ServeMux object.
+type ServeMux struct{}
+
+// Type returns the type of the ServeMux object.
+func (s *ServeMux) Type() ObjectType { return SERVE_MUX_OBJ }
+
+// Inspect returns a string representation of the ServeMux.
+func (s *ServeMux) Inspect() string { return "ServeMux" }
 
 // --- Package Object ---
 

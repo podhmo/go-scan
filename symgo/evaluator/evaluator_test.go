@@ -17,7 +17,7 @@ func TestEval_StringLiteral(t *testing.T) {
 		t.Fatalf("parser.ParseExpr() failed: %v", err)
 	}
 
-	eval := New(nil) // No scanner needed for this test
+	eval := New(nil, nil) // No scanner needed for this test
 	env := object.NewEnvironment()
 	obj := eval.Eval(expr, env)
 
@@ -38,7 +38,7 @@ func TestEval_Identifier(t *testing.T) {
 		t.Fatalf("parser.ParseExpr() failed: %v", err)
 	}
 
-	eval := New(nil)
+	eval := New(nil, nil)
 	env := object.NewEnvironment()
 	expectedObj := &object.String{Value: "i am myVar"}
 	env.Set("myVar", expectedObj)
@@ -57,7 +57,7 @@ func TestEval_IdentifierNotFound(t *testing.T) {
 		t.Fatalf("parser.ParseExpr() failed: %v", err)
 	}
 
-	eval := New(nil)
+	eval := New(nil, nil)
 	env := object.NewEnvironment()
 	obj := eval.Eval(expr, env)
 
@@ -84,7 +84,7 @@ func TestEval_AssignStmt(t *testing.T) {
 	// Extract the assignment statement from the AST
 	stmt := file.Decls[0].(*ast.FuncDecl).Body.List[0]
 
-	eval := New(nil)
+	eval := New(nil, nil)
 	env := object.NewEnvironment()
 	env.Set("x", &object.String{Value: "initial"}) // Pre-declare the variable
 
@@ -117,7 +117,7 @@ func TestEval_ReturnStmt(t *testing.T) {
 	// We evaluate the whole function body
 	block := file.Decls[0].(*ast.FuncDecl).Body
 
-	eval := New(nil)
+	eval := New(nil, nil)
 	env := object.NewEnvironment()
 	obj := eval.Eval(block, env)
 
@@ -145,7 +145,7 @@ func TestEval_UnsupportedNode(t *testing.T) {
 		Value: &ast.Ident{Name: "int"},
 	}
 
-	eval := New(nil)
+	eval := New(nil, nil)
 	env := object.NewEnvironment()
 	obj := eval.Eval(node, env)
 
@@ -165,7 +165,7 @@ func TestEval_IfStmt(t *testing.T) {
 	input := `if true { x = "inside" }`
 	stmt := parseStmt(t, input)
 
-	eval := New(nil)
+	eval := New(nil, nil)
 	env := object.NewEnvironment()
 	env.Set("x", &object.String{Value: "outside"}) // Pre-declare
 	eval.Eval(stmt, env)
@@ -182,7 +182,7 @@ func TestEval_ForStmt(t *testing.T) {
 	input := `for i := 0; i < 10; i++ { y = "in-loop" }`
 	stmt := parseStmt(t, input)
 
-	eval := New(nil)
+	eval := New(nil, nil)
 	env := object.NewEnvironment()
 	env.Set("y", &object.String{Value: "outside"}) // Pre-declare
 	eval.Eval(stmt, env)
@@ -208,7 +208,7 @@ default:
 `
 	stmt := parseStmt(t, input)
 
-	eval := New(nil)
+	eval := New(nil, nil)
 	env := object.NewEnvironment()
 	// Pre-declare so we can check them.
 	env.Set("x", &object.String{Value: "outside"})

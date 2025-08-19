@@ -16,10 +16,14 @@ type Info struct {
 
 // PathItem describes the operations available on a single path.
 type PathItem struct {
-	Get    *Operation `json:"get,omitempty"`
-	Post   *Operation `json:"post,omitempty"`
-	Put    *Operation `json:"put,omitempty"`
-	Delete *Operation `json:"delete,omitempty"`
+	Get     *Operation `json:"get,omitempty"`
+	Post    *Operation `json:"post,omitempty"`
+	Put     *Operation `json:"put,omitempty"`
+	Delete  *Operation `json:"delete,omitempty"`
+	Patch   *Operation `json:"patch,omitempty"`
+	Head    *Operation `json:"head,omitempty"`
+	Options *Operation `json:"options,omitempty"`
+	Trace   *Operation `json:"trace,omitempty"`
 }
 
 // Operation describes a single API operation on a path.

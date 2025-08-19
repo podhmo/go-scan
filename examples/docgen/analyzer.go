@@ -3,24 +3,30 @@ package main
 import (
 	"context"
 	"fmt"
-	"go/ast"
-	"go/token"
-	"strconv"
+	"strings"
 
-	"github.com/podhmo/go-scan/examples/docgen/openapi"
 	goscan "github.com/podhmo/go-scan"
+	"github.com/podhmo/go-scan/examples/docgen/openapi"
+	"github.com/podhmo/go-scan/symgo"
 )
 
 // Analyzer analyzes Go code and generates an OpenAPI specification.
 type Analyzer struct {
-	Scanner *goscan.Scanner
-	OpenAPI *openapi.OpenAPI
+	Scanner     *goscan.Scanner
+	interpreter *symgo.Interpreter
+	OpenAPI     *openapi.OpenAPI
 }
 
 // NewAnalyzer creates a new Analyzer.
 func NewAnalyzer(s *goscan.Scanner) (*Analyzer, error) {
-	return &Analyzer{
-		Scanner: s,
+	interp, err := symgo.NewInterpreter(s, s.Logger)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create symgo interpreter: %w", err)
+	}
+
+	a := &Analyzer{
+		Scanner:     s,
+		interpreter: interp,
 		OpenAPI: &openapi.OpenAPI{
 			OpenAPI: "3.1.0",
 			Info: openapi.Info{
@@ -29,92 +35,122 @@ func NewAnalyzer(s *goscan.Scanner) (*Analyzer, error) {
 			},
 			Paths: make(map[string]*openapi.PathItem),
 		},
-	}, nil
+	}
+
+	// Register intrinsics.
+	interp.RegisterIntrinsic("net/http.NewServeMux", a.handleNewServeMux)
+	interp.RegisterIntrinsic("(*net/http.ServeMux).HandleFunc", a.analyzeHandleFunc)
+
+	return a, nil
 }
 
-// Analyze analyzes the package at the given import path.
-func (a *Analyzer) Analyze(ctx context.Context, importPath string) error {
+func (a *Analyzer) handleNewServeMux(interp *symgo.Interpreter, args []symgo.Object) symgo.Object {
+	return &symgo.ServeMux{}
+}
+
+// Analyze analyzes the package starting from a specific entrypoint function.
+func (a *Analyzer) Analyze(ctx context.Context, importPath string, entrypoint string) error {
 	pkg, err := a.Scanner.ScanPackageByImport(ctx, importPath)
 	if err != nil {
 		return fmt.Errorf("failed to load sample API package: %w", err)
 	}
 
-	// Create a map of function names to their declarations for easy lookup.
-	funcDecls := make(map[string]*ast.FuncDecl)
+	// Find the entrypoint function declaration in the scanned package.
+	var entrypointFunc *goscan.FunctionInfo
 	for _, f := range pkg.Functions {
-		funcDecls[f.Name] = f.AstDecl
+		if f.Name == entrypoint {
+			entrypointFunc = f
+			break
+		}
+	}
+	if entrypointFunc == nil || entrypointFunc.AstDecl.Body == nil {
+		return fmt.Errorf("entrypoint function %q not found or has no body", entrypoint)
 	}
 
-	// Find the RegisterHandlers function.
-	registerHandlersDecl, ok := funcDecls["RegisterHandlers"]
+	// Find the AST file that contains the entrypoint function.
+	entrypointFile, ok := pkg.AstFiles[entrypointFunc.FilePath]
 	if !ok {
-		return fmt.Errorf("RegisterHandlers function not found in package %s", importPath)
+		return fmt.Errorf("could not find AST file %q for entrypoint", entrypointFunc.FilePath)
 	}
 
-	// Walk the AST of RegisterHandlers to find calls to http.HandleFunc.
-	ast.Inspect(registerHandlersDecl, func(n ast.Node) bool {
-		callExpr, ok := n.(*ast.CallExpr)
-		if !ok {
-			return true // Continue traversal
-		}
+	// The core analysis is now driven by the symgo interpreter.
+	// First, evaluate the entire file of the entrypoint. This will populate the
+	// interpreter's environment with imports and top-level declarations.
+	if _, err := a.interpreter.Eval(ctx, entrypointFile); err != nil {
+		fmt.Printf("info: error during file-level symgo eval: %v\n", err)
+	}
 
-		// Check if this is a call to http.HandleFunc
-		selector, ok := callExpr.Fun.(*ast.SelectorExpr)
-		if !ok {
-			return true
-		}
-		xIdent, ok := selector.X.(*ast.Ident)
-		if !ok {
-			return true
-		}
-		if xIdent.Name == "http" && selector.Sel.Name == "HandleFunc" {
-			a.analyzeHandleFuncCall(callExpr, funcDecls)
-		}
-
-		return true
-	})
+	// Then, start evaluation from the body of the entrypoint function.
+	if _, err := a.interpreter.Eval(ctx, entrypointFunc.AstDecl.Body); err != nil {
+		// In a real application, this would use a proper logger.
+		fmt.Printf("info: error during body-level symgo eval: %v\n", err)
+	}
 
 	return nil
 }
 
-func (a *Analyzer) analyzeHandleFuncCall(callExpr *ast.CallExpr, funcDecls map[string]*ast.FuncDecl) {
-	if len(callExpr.Args) != 2 {
-		return // Not a valid HandleFunc call
+// analyzeHandleFunc is the intrinsic for (*http.ServeMux).HandleFunc.
+func (a *Analyzer) analyzeHandleFunc(interp *symgo.Interpreter, args []symgo.Object) symgo.Object {
+	// Expects 2 args for HandleFunc: pattern, handler
+	if len(args) != 2 {
+		return nil
 	}
 
-	// Extract path from the first argument.
-	pathLit, ok := callExpr.Args[0].(*ast.BasicLit)
-	if !ok || pathLit.Kind != token.STRING {
-		return
-	}
-	path, err := strconv.Unquote(pathLit.Value)
-	if err != nil {
-		return
-	}
-
-	// Extract handler name from the second argument.
-	handlerIdent, ok := callExpr.Args[1].(*ast.Ident)
+	// Arg 0 is the pattern string
+	patternObj, ok := args[0].(*symgo.String)
 	if !ok {
-		return
+		return nil
 	}
-	handlerName := handlerIdent.Name
 
-	// Look up the handler's function declaration.
-	handlerDecl, ok := funcDecls[handlerName]
+	// Arg 1 is the handler function
+	handlerObj, ok := args[1].(*symgo.Function)
 	if !ok {
-		return
+		return nil
 	}
 
-	// Create the OpenAPI operation.
+	pattern := patternObj.Value
+	method, path, _ := strings.Cut(pattern, " ")
+	if path == "" {
+		path = method
+		method = "GET"
+	}
+	method = strings.ToUpper(method)
+
+	handlerDecl := handlerObj.Decl
+	if handlerDecl == nil {
+		return nil
+	}
+
 	op := &openapi.Operation{
-		OperationID: handlerName,
+		OperationID: handlerDecl.Name.Name,
 	}
 	if handlerDecl.Doc != nil {
-		op.Description = handlerDecl.Doc.Text()
+		op.Description = strings.TrimSpace(handlerDecl.Doc.Text())
 	}
 
-	// For now, assume GET.
-	a.OpenAPI.Paths[path] = &openapi.PathItem{
-		Get: op,
+	if a.OpenAPI.Paths[path] == nil {
+		a.OpenAPI.Paths[path] = &openapi.PathItem{}
 	}
+	pathItem := a.OpenAPI.Paths[path]
+
+	switch method {
+	case "GET":
+		pathItem.Get = op
+	case "POST":
+		pathItem.Post = op
+	case "PUT":
+		pathItem.Put = op
+	case "DELETE":
+		pathItem.Delete = op
+	case "PATCH":
+		pathItem.Patch = op
+	case "HEAD":
+		pathItem.Head = op
+	case "OPTIONS":
+		pathItem.Options = op
+	case "TRACE":
+		pathItem.Trace = op
+	}
+
+	return nil
 }

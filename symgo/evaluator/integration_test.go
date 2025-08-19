@@ -4,11 +4,12 @@ import (
 	"path/filepath"
 	"testing"
 
+	"go/parser"
+
 	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/scantest"
 	"github.com/podhmo/go-scan/symgo/evaluator"
 	"github.com/podhmo/go-scan/symgo/object"
-	"go/parser"
 )
 
 func TestEval_ImportAndSelector(t *testing.T) {
@@ -24,7 +25,7 @@ func main() {
 }
 `
 	files := map[string]string{
-		"go.mod": "module mymodule",
+		"go.mod":  "module mymodule",
 		"main.go": source,
 	}
 

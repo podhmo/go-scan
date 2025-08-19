@@ -46,27 +46,35 @@ func main() {
 		eval := New(internalScanner, s.Logger)
 
 		var inspectedType object.Object
-		eval.RegisterIntrinsic("main.inspect_type", func(args ...object.Object) object.Object {
-			if len(args) > 0 {
-				inspectedType = args[0]
-			}
-			return nil
-		})
-
 		env := object.NewEnvironment()
 		for _, file := range pkg.AstFiles {
 			eval.Eval(file, env, pkg)
 		}
 
-		mainFunc := findFunc(t, pkg, "main")
-		if mainFunc == nil {
-			return fmt.Errorf("main function not found")
+		intrinsic := &object.Intrinsic{
+			Fn: func(args ...object.Object) object.Object {
+				if len(args) > 0 {
+					inspectedType = args[0]
+				}
+				return nil
+			},
+		}
+		env.Set("inspect_type", intrinsic)
+
+		mainFuncObj, ok := env.Get("main")
+		if !ok {
+			return fmt.Errorf("main function not found in environment")
+		}
+		mainFunc, ok := mainFuncObj.(*object.Function)
+		if !ok {
+			return fmt.Errorf("main is not an object.Function, got %T", mainFuncObj)
 		}
 
-		eval.Eval(mainFunc.Body, env, pkg)
+		// We use applyFunction directly to simulate a call to main()
+		eval.applyFunction(mainFunc, []object.Object{}, pkg)
 
 		if inspectedType == nil {
-			return fmt.Errorf("intrinsic was not called")
+			t.Fatal("intrinsic was not called")
 		}
 		typeInfo := inspectedType.TypeInfo()
 		if typeInfo == nil {

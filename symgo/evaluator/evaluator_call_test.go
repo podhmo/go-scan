@@ -63,12 +63,16 @@ func main() { add(1, 2) }
 		eval.Eval(file, env, pkg)
 	}
 
-	mainFunc := findFunc(t, pkg, "main")
-	if mainFunc == nil {
-		t.Fatal("main function not found")
+	mainFuncObj, ok := env.Get("main")
+	if !ok {
+		t.Fatal("main function not found in environment")
+	}
+	mainFunc, ok := mainFuncObj.(*object.Function)
+	if !ok {
+		t.Fatalf("main is not an object.Function, got %T", mainFuncObj)
 	}
 
-	eval.Eval(mainFunc.Body, env, pkg)
+	eval.applyFunction(mainFunc, []object.Object{}, pkg)
 }
 
 func TestEvalCallExprOnIntrinsic(t *testing.T) {
@@ -98,9 +102,6 @@ func main() { fmt.Println("hello") }
 	}
 	eval := New(internalScanner, s.Logger)
 	env := object.NewEnvironment()
-	for _, file := range pkg.AstFiles {
-		eval.Eval(file, env, pkg)
-	}
 
 	var got string
 	eval.RegisterIntrinsic("fmt.Println", func(args ...object.Object) object.Object {
@@ -112,11 +113,19 @@ func main() { fmt.Println("hello") }
 		return &object.SymbolicPlaceholder{}
 	})
 
-	mainFunc := findFunc(t, pkg, "main")
-	if mainFunc == nil {
-		t.Fatal("main function not found")
+	for _, file := range pkg.AstFiles {
+		eval.Eval(file, env, pkg)
 	}
-	eval.Eval(mainFunc.Body, env, pkg)
+
+	mainFuncObj, ok := env.Get("main")
+	if !ok {
+		t.Fatal("main function not found in environment")
+	}
+	mainFunc, ok := mainFuncObj.(*object.Function)
+	if !ok {
+		t.Fatalf("main is not an object.Function, got %T", mainFuncObj)
+	}
+	eval.applyFunction(mainFunc, []object.Object{}, pkg)
 
 	if want := "hello"; got != want {
 		t.Errorf("intrinsic not called correctly, want %q, got %q", want, got)
@@ -159,8 +168,8 @@ func main() {
 
 	var gotPattern string
 	eval.RegisterIntrinsic("(*net/http.ServeMux).HandleFunc", func(args ...object.Object) object.Object {
-		if len(args) > 1 {
-			if s, ok := args[1].(*object.String); ok {
+		if len(args) > 0 {
+			if s, ok := args[0].(*object.String); ok {
 				gotPattern = s.Value
 			}
 		}
@@ -171,12 +180,16 @@ func main() {
 		eval.Eval(file, env, pkg)
 	}
 
-	mainFunc := findFunc(t, pkg, "main")
-	if mainFunc == nil {
-		t.Fatal("main function not found")
+	mainFuncObj, ok := env.Get("main")
+	if !ok {
+		t.Fatal("main function not found in environment")
+	}
+	mainFunc, ok := mainFuncObj.(*object.Function)
+	if !ok {
+		t.Fatalf("main is not an object.Function, got %T", mainFuncObj)
 	}
 
-	eval.Eval(mainFunc.Body, env, pkg)
+	eval.applyFunction(mainFunc, []object.Object{}, pkg)
 
 	if want := "/"; gotPattern != want {
 		t.Errorf("HandleFunc pattern wrong, want %q, got %q", want, gotPattern)

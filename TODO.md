@@ -65,10 +65,10 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
         - [x] Implement lazy, on-demand package loading using `go-scan` when a symbol from an unloaded package is accessed (e.g., `pkg.Symbol`).
         - [x] Integrate the resolved symbol information into the `symgo` scope.
         - [x] (Note: The lazy-loading mechanism from the `minigo` implementation can be used as a reference.)
-    - [ ] **Function Evaluation Strategy**:
-        - [ ] Implement recursive evaluation for intra-module function calls.
-        - [ ] Implement an intrinsic function registry (`symgo/intrinsics`).
-        - [ ] Return `SymbolicPlaceholder` objects for calls to extra-module functions that are not intrinsics.
+    - [x] **Function Evaluation Strategy**:
+        - [x] Implement recursive evaluation for intra-module function calls.
+        - [x] Implement an intrinsic function registry (`symgo/intrinsics`).
+        - [x] Return `SymbolicPlaceholder` objects for calls to extra-module functions that are not intrinsics.
 - [ ] **M2: `docgen` Tool & Basic `net/http` Analysis**:
     - [ ] **Project Setup**:
         - [ ] Create the `examples/docgen` CLI application skeleton.

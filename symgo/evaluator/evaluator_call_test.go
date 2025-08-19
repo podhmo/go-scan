@@ -225,8 +225,6 @@ func main() {
 	})
 
 	t.Run("method chaining", func(t *testing.T) {
-		t.Skip("not implemented yet")
-
 		files := map[string]string{
 			"go.mod": "module example.com/me",
 			"main.go": `
@@ -252,14 +250,17 @@ func main() {
 			if err != nil {
 				return err
 			}
-			eval := New(internalScanner, s.Logger)
+			handler := slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})
+			logger := slog.New(handler)
+			eval := New(internalScanner, logger)
 			env := object.NewEnvironment()
 
-			eval.RegisterIntrinsic("main.NewGreeter", func(args ...object.Object) object.Object {
+			greeterTypeName := fmt.Sprintf("%s.Greeter", pkg.ImportPath)
+			eval.RegisterIntrinsic(fmt.Sprintf("%s.NewGreeter", pkg.ImportPath), func(args ...object.Object) object.Object {
 				name := args[0].(*object.String).Value
-				return &object.Instance{TypeName: "*main.Greeter", State: map[string]object.Object{"name": &object.String{Value: name}}}
+				return &object.Instance{TypeName: fmt.Sprintf("*%s", greeterTypeName), State: map[string]object.Object{"name": &object.String{Value: name}}}
 			})
-			eval.RegisterIntrinsic("(*main.Greeter).WithName", func(args ...object.Object) object.Object {
+			eval.RegisterIntrinsic(fmt.Sprintf("(*%s).WithName", greeterTypeName), func(args ...object.Object) object.Object {
 				g := args[0].(*object.Instance)
 				name := args[1].(*object.String).Value
 				if g.State == nil {
@@ -268,7 +269,7 @@ func main() {
 				g.State["name"] = &object.String{Value: name}
 				return g
 			})
-			eval.RegisterIntrinsic("(*main.Greeter).Greet", func(args ...object.Object) object.Object {
+			eval.RegisterIntrinsic(fmt.Sprintf("(*%s).Greet", greeterTypeName), func(args ...object.Object) object.Object {
 				greetCalled = true
 				g := args[0].(*object.Instance)
 				name, _ := g.State["name"].(*object.String)

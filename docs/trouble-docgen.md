@@ -55,10 +55,3 @@ My primary miscalculation was underestimating the complexity of the `symgo` eval
 
 The core issue is that my tests (and the `docgen` analyzer) are not correctly simulating a *call* to the function being analyzed. They are trying to evaluate its body as a standalone block, causing the environment and function resolution to fail.
 
-### Remaining Tasks
-1.  **Fix the `symgo` Evaluator:** The immediate next step is to fix the `symgo` evaluator's tests. This will likely involve refactoring the tests (`TestTypeInfoPropagation`, `TestEvalCallExprOnInstanceMethod`, etc.) to correctly simulate function calls. Instead of just calling `eval.Eval(mainFunc.Body, ...)`, the tests need to set up the environment and then evaluate a `*ast.CallExpr` that calls the target function. This will force the evaluator to use its `applyFunction` logic, which correctly handles environments.
-2.  **Pass `symgo` Tests:** Run the `symgo/evaluator` tests until they all pass, confirming that the `TypeInfo` propagation works as intended.
-3.  **Re-run `docgen` Test:** Once the `symgo` engine is verified, re-run the `docgen` test. It is expected to pass, as the underlying engine will be fixed.
-4.  **Cleanup:** Remove any temporary test code and logging statements.
-5.  **Update `TODO.md`:** Mark the "Request/Response Body Analysis" tasks as complete.
-6.  **Submit:** Submit the final, working solution.

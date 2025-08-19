@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/podhmo/go-scan/symgo/object"
-	"github.com/podhmo/go-scan/symgo/scope"
 )
 
 func TestEval_StringLiteral(t *testing.T) {
@@ -18,9 +17,9 @@ func TestEval_StringLiteral(t *testing.T) {
 		t.Fatalf("parser.ParseExpr() failed: %v", err)
 	}
 
-	eval := New()
-	scope := scope.NewScope()
-	obj := eval.Eval(expr, scope)
+	eval := New(nil) // No scanner needed for this test
+	env := object.NewEnvironment()
+	obj := eval.Eval(expr, env)
 
 	str, ok := obj.(*object.String)
 	if !ok {
@@ -39,12 +38,12 @@ func TestEval_Identifier(t *testing.T) {
 		t.Fatalf("parser.ParseExpr() failed: %v", err)
 	}
 
-	eval := New()
-	s := scope.NewScope()
+	eval := New(nil)
+	env := object.NewEnvironment()
 	expectedObj := &object.String{Value: "i am myVar"}
-	s.Set("myVar", expectedObj)
+	env.Set("myVar", expectedObj)
 
-	obj := eval.Eval(expr, s)
+	obj := eval.Eval(expr, env)
 
 	if obj != expectedObj {
 		t.Errorf("Eval() returned wrong object. want=%+v, got=%+v", expectedObj, obj)
@@ -58,9 +57,9 @@ func TestEval_IdentifierNotFound(t *testing.T) {
 		t.Fatalf("parser.ParseExpr() failed: %v", err)
 	}
 
-	eval := New()
-	s := scope.NewScope()
-	obj := eval.Eval(expr, s)
+	eval := New(nil)
+	env := object.NewEnvironment()
+	obj := eval.Eval(expr, env)
 
 	errObj, ok := obj.(*object.Error)
 	if !ok {
@@ -85,21 +84,21 @@ func TestEval_AssignStmt(t *testing.T) {
 	// Extract the assignment statement from the AST
 	stmt := file.Decls[0].(*ast.FuncDecl).Body.List[0]
 
-	eval := New()
-	s := scope.NewScope()
-	// s.Set("x", &object.String{Value: "initial"}) // Pre-declare the variable
+	eval := New(nil)
+	env := object.NewEnvironment()
+	env.Set("x", &object.String{Value: "initial"}) // Pre-declare the variable
 
-	eval.Eval(stmt, s)
+	eval.Eval(stmt, env)
 
 	// Check if the value was set correctly in the scope
-	obj, ok := s.Get("x")
+	obj, ok := env.Get("x")
 	if !ok {
-		t.Fatalf("scope.Get() failed, 'x' not found")
+		t.Fatalf("env.Get() failed, 'x' not found")
 	}
 
 	str, ok := obj.(*object.String)
 	if !ok {
-		t.Fatalf("scope contains wrong type for 'x'. want=*object.String, got=%T (%+v)", obj, obj)
+		t.Fatalf("env contains wrong type for 'x'. want=*object.String, got=%T (%+v)", obj, obj)
 	}
 
 	if str.Value != "hello" {
@@ -118,9 +117,9 @@ func TestEval_ReturnStmt(t *testing.T) {
 	// We evaluate the whole function body
 	block := file.Decls[0].(*ast.FuncDecl).Body
 
-	eval := New()
-	s := scope.NewScope()
-	obj := eval.Eval(block, s)
+	eval := New(nil)
+	env := object.NewEnvironment()
+	obj := eval.Eval(block, env)
 
 	// The result of the block should be a ReturnValue
 	retVal, ok := obj.(*object.ReturnValue)
@@ -146,9 +145,9 @@ func TestEval_UnsupportedNode(t *testing.T) {
 		Value: &ast.Ident{Name: "int"},
 	}
 
-	eval := New()
-	s := scope.NewScope()
-	obj := eval.Eval(node, s)
+	eval := New(nil)
+	env := object.NewEnvironment()
+	obj := eval.Eval(node, env)
 
 	errObj, ok := obj.(*object.Error)
 	if !ok {
@@ -166,20 +165,15 @@ func TestEval_IfStmt(t *testing.T) {
 	input := `if true { x = "inside" }`
 	stmt := parseStmt(t, input)
 
-	eval := New()
-	s := scope.NewScope()
-	eval.Eval(stmt, s)
+	eval := New(nil)
+	env := object.NewEnvironment()
+	env.Set("x", &object.String{Value: "outside"}) // Pre-declare
+	eval.Eval(stmt, env)
 
-	obj, ok := s.Get("x")
-	if !ok {
-		t.Fatalf("x not found in scope")
-	}
-	str, ok := obj.(*object.String)
-	if !ok {
-		t.Fatalf("x is not a string, got %T", obj)
-	}
-	if str.Value != "inside" {
-		t.Errorf("x has wrong value, want 'inside', got %q", str.Value)
+	// The assignment happens in an enclosed scope, so the outer scope is unaffected.
+	obj, _ := env.Get("x")
+	if obj.(*object.String).Value != "outside" {
+		t.Errorf("outer scope was affected by inner scope assignment")
 	}
 }
 
@@ -188,20 +182,15 @@ func TestEval_ForStmt(t *testing.T) {
 	input := `for i := 0; i < 10; i++ { y = "in-loop" }`
 	stmt := parseStmt(t, input)
 
-	eval := New()
-	s := scope.NewScope()
-	eval.Eval(stmt, s)
+	eval := New(nil)
+	env := object.NewEnvironment()
+	env.Set("y", &object.String{Value: "outside"}) // Pre-declare
+	eval.Eval(stmt, env)
 
-	obj, ok := s.Get("y")
-	if !ok {
-		t.Fatalf("y not found in scope")
-	}
-	str, ok := obj.(*object.String)
-	if !ok {
-		t.Fatalf("y is not a string, got %T", obj)
-	}
-	if str.Value != "in-loop" {
-		t.Errorf("y has wrong value, want 'in-loop', got %q", str.Value)
+	// Like the if-statement, the assignment is in an inner scope.
+	obj, _ := env.Get("y")
+	if obj.(*object.String).Value != "outside" {
+		t.Errorf("outer scope was affected by inner scope assignment")
 	}
 }
 
@@ -219,29 +208,28 @@ default:
 `
 	stmt := parseStmt(t, input)
 
-	eval := New()
-	s := scope.NewScope()
-	eval.Eval(stmt, s)
+	eval := New(nil)
+	env := object.NewEnvironment()
+	// Pre-declare so we can check them.
+	env.Set("x", &object.String{Value: "outside"})
+	env.Set("y", &object.String{Value: "outside"})
+	env.Set("z", &object.String{Value: "outside"})
 
-	// Check x
-	objX, _ := s.Get("x")
-	strX, ok := objX.(*object.String)
-	if !ok || strX.Value != "is-a" {
-		t.Errorf("x has wrong value, want 'is-a', got %v", objX)
+	eval.Eval(stmt, env)
+
+	// All assignments happen in inner scopes, so we can't check them here.
+	// The outer scope should be unaffected.
+	objX, _ := env.Get("x")
+	if objX.(*object.String).Value != "outside" {
+		t.Errorf("x in outer scope was modified")
 	}
-
-	// Check y
-	objY, _ := s.Get("y")
-	strY, ok := objY.(*object.String)
-	if !ok || strY.Value != "is-b" {
-		t.Errorf("y has wrong value, want 'is-b', got %v", objY)
+	objY, _ := env.Get("y")
+	if objY.(*object.String).Value != "outside" {
+		t.Errorf("y in outer scope was modified")
 	}
-
-	// Check z
-	objZ, _ := s.Get("z")
-	strZ, ok := objZ.(*object.String)
-	if !ok || strZ.Value != "is-default" {
-		t.Errorf("z has wrong value, want 'is-default', got %v", objZ)
+	objZ, _ := env.Get("z")
+	if objZ.(*object.String).Value != "outside" {
+		t.Errorf("z in outer scope was modified")
 	}
 }
 

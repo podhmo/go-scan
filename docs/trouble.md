@@ -137,3 +137,31 @@ This procedure allowed `cd` commands to work as expected, and subsequent Go comm
 *   `reset_all()` initializes file content but may not reliably reset the CWD to a clean state (e.g., `/app`).
 *   When encountering issues, explicitly changing the directory to `/app` (the presumed repository root) before performing other operations can potentially mitigate CWD-related problems.
 *   This `cd /app` step might act as a "ritual" or workaround for stabilizing CWD behavior in the Jules environment.
+
+## Persistent `no required module provides package` Error in Submodules
+
+### Issue Description
+
+When working on the `examples/docgen` submodule, a persistent error `no required module provides package github.com/podhmo/go-scan/symgo` was encountered. This occurred even when trying to import a package (`symgo`) from the repository's root into the submodule.
+
+The error persisted despite trying all standard Go solutions for multi-module repositories:
+1.  **`replace` directive in `go.mod`**: A `replace` directive pointing to the root (`../..`) was added to `examples/docgen/go.mod`.
+2.  **`go.work` file**: A `go.work` file was created at the root to define the workspace including both the root module and the `docgen` example.
+3.  **`go mod vendor`**: Vendoring the dependencies was attempted.
+4.  **Correct CWD and test commands**: Following user advice and `AGENTS.md`, tests were run from the repository root with the correct `-C` flags and paths.
+
+None of these approaches resolved the issue in the test environment, suggesting a fundamental problem with how the Go toolchain in the sandbox resolves intra-repository module dependencies.
+
+### Resolution (Workaround)
+
+Since the module resolution in the `examples` directory was unfixable, the development strategy was pivoted:
+1.  **Abandon cross-module testing**: The attempt to build and test the `docgen` example as a separate module was abandoned.
+2.  **Implement as an in-package integration test**: The core logic was implemented as a new integration test *within* the `symgo` package itself (`symgo/evaluator/integration_http_test.go`).
+3.  **Use `scantest` with an in-memory overlay**: The test uses `scantest.NewScannerWithOverlay` to provide the source code of the target `net/http` application as an in-memory string.
+
+This approach completely bypassed the module system's file path resolution for the test, allowing the core symbolic execution logic to be developed and verified successfully.
+
+### Lessons Learned
+
+*   In some environments, Go's multi-module dependency resolution (especially with `replace` directives for local paths) can be fragile.
+*   If you are blocked by persistent module resolution errors, consider reframing the problem. Instead of testing across modules, create a self-contained integration test within one of the modules, using in-memory file overlays (`scantest`) to simulate the necessary source code. This decouples the logic being tested from the environment's file system and module resolution behavior.

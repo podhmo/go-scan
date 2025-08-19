@@ -3,9 +3,10 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"log"
 	"os"
+
+	goscan "github.com/podhmo/go-scan"
 )
 
 func main() {
@@ -17,21 +18,22 @@ func main() {
 func run() error {
 	const sampleAPIPath = "github.com/podhmo/go-scan/examples/docgen/sampleapi"
 
-	analyzer, err := NewAnalyzer()
+	s, err := goscan.New()
 	if err != nil {
-		return fmt.Errorf("failed to create analyzer: %w", err)
+		return err
+	}
+
+	analyzer, err := NewAnalyzer(s)
+	if err != nil {
+		return err
 	}
 
 	ctx := context.Background()
 	if err := analyzer.Analyze(ctx, sampleAPIPath); err != nil {
-		return fmt.Errorf("failed to analyze package: %w", err)
+		return err
 	}
 
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
-	if err := enc.Encode(analyzer.OpenAPI); err != nil {
-		return fmt.Errorf("failed to encode openapi spec: %w", err)
-	}
-
-	return nil
+	return enc.Encode(analyzer.OpenAPI)
 }

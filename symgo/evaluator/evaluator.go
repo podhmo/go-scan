@@ -97,7 +97,7 @@ func (e *Evaluator) Eval(node ast.Node, env *object.Environment, pkg *scanner.Pa
 	case *ast.UnaryExpr:
 		return e.evalUnaryExpr(n, env, pkg)
 	case *ast.BinaryExpr:
-		return &object.SymbolicPlaceholder{Reason: "binary expression"}
+		return e.evalBinaryExpr(n, env, pkg)
 	case *ast.CompositeLit:
 		return e.evalCompositeLit(n, env, pkg)
 	}
@@ -144,6 +144,28 @@ func (e *Evaluator) evalCompositeLit(node *ast.CompositeLit, env *object.Environ
 		TypeName:   typeName,
 		BaseObject: object.BaseObject{ResolvedTypeInfo: resolvedType},
 	}
+}
+
+func (e *Evaluator) evalBinaryExpr(node *ast.BinaryExpr, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
+	left := e.Eval(node.X, env, pkg)
+	if isError(left) {
+		return left
+	}
+	right := e.Eval(node.Y, env, pkg)
+	if isError(right) {
+		return right
+	}
+
+	// Handle string concatenation
+	if node.Op == token.ADD {
+		if left.Type() == object.STRING_OBJ && right.Type() == object.STRING_OBJ {
+			leftVal := left.(*object.String).Value
+			rightVal := right.(*object.String).Value
+			return &object.String{Value: leftVal + rightVal}
+		}
+	}
+
+	return &object.SymbolicPlaceholder{Reason: "binary expression"}
 }
 
 func (e *Evaluator) evalUnaryExpr(node *ast.UnaryExpr, env *object.Environment, pkg *scanner.PackageInfo) object.Object {

@@ -75,13 +75,13 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
         - [x] Define local structs for a minimal OpenAPI 3.1 model (`examples/docgen/openapi`).
         - [x] Create a sample `net/http` API to use as the analysis target (`examples/docgen/sampleapi`).
     - [x] **Core Analyzer**:
-        - [x] Implement the main analysis orchestrator that uses the `symgo` engine.
-        - [x] Implement an intrinsic for `http.HandleFunc` to extract route paths and handler functions.
+        - [x] Implement the main analysis orchestrator that uses `go-scan` and manual AST traversal.
+        - [x] Implement logic to find calls to `http.HandleFunc` to extract route paths and handler functions.
         - [ ] Use `go-scan`'s `WithExternalTypeOverrides` to provide stubs for complex stdlib types like `http.Request`.
     - [x] **Handler Analysis**:
         - [ ] Analyze handler function ASTs to find HTTP methods (e.g., from `switch r.Method`).
         - [x] Extract `operationId` from the function name and `description` from godoc comments.
-    - [x] **Testing**: Write an integration test to verify basic route and description extraction from the sample API. (Note: Implemented as an in-package test in `symgo/evaluator` due to environmental issues.)
+    - [x] **Testing**: Write an integration test to verify basic route and description extraction from the sample API.
 - [ ] **M3: Schema and Parameter Analysis**:
     - [ ] **Request/Response Body Analysis**:
         - [ ] Implement pattern matching to detect calls like `json.NewDecoder(...).Decode(&req)`.

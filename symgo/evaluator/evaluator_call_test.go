@@ -298,8 +298,6 @@ func main() {
 	})
 
 	t.Run("nested function calls", func(t *testing.T) {
-		t.Skip("not implemented yet")
-
 		files := map[string]string{
 			"go.mod": "module example.com/me",
 			"main.go": `
@@ -323,7 +321,7 @@ func main() {
 			eval := New(internalScanner, s.Logger)
 			env := object.NewEnvironment()
 
-			eval.RegisterIntrinsic("main.add", func(args ...object.Object) object.Object {
+			eval.RegisterIntrinsic(fmt.Sprintf("%s.add", pkg.ImportPath), func(args ...object.Object) object.Object {
 				callCount++
 				a := args[0].(*object.Integer).Value
 				b := args[1].(*object.Integer).Value

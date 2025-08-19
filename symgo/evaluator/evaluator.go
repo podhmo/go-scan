@@ -551,6 +551,17 @@ func (e *Evaluator) evalIdent(n *ast.Ident, env *object.Environment, pkg *scanne
 
 	if val, ok := env.Get(n.Name); ok {
 		e.logger.Debug("evalIdent: found in env", "name", n.Name, "type", val.Type())
+		if v, ok := val.(*object.Variable); ok {
+			// When an identifier is evaluated as an expression, we want its value,
+			// not the variable container itself.
+			value := v.Value
+			// However, the variable might have more precise type info than the value it contains.
+			// We should propagate this type info to the value before returning it.
+			if value.TypeInfo() == nil && v.TypeInfo() != nil {
+				value.SetTypeInfo(v.TypeInfo())
+			}
+			return value
+		}
 		return val
 	}
 

@@ -112,3 +112,4 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     - [x] Implement a public `Eval()` method to run the analysis.
     - [x] Re-export necessary types like `symgo.Object` and `symgo.Function` from the new package.
 - [x] **Refactor `docgen` to use `symgo.Interpreter`**: The `docgen` tool has been refactored to use the `symgo.Interpreter`, replacing the initial manual AST traversal. The `symgo` engine itself was enhanced to support this.
+- [x] **Resolve variable arguments in intrinsics**: Ensure that when a variable is passed to an intrinsic function, the function receives the variable's underlying value (`*object.String`, etc.) rather than the `*object.Variable` wrapper. This simplifies intrinsic implementation and aligns argument evaluation with return value evaluation.

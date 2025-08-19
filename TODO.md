@@ -106,5 +106,8 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
         - [ ] Ensure `make format` and `make test` pass for the entire repository before submission.
 
 ### `symgo` Engine Refinements
-- [ ] **Refactor `docgen` to use `symgo`**: The current `docgen` implementation uses manual AST traversal as a workaround. Refactor it to use the `symgo` engine as originally intended. ([docs/trouble-docgen-use-symgo.md](./docs/trouble-docgen-use-symgo.md))
-    - [ ] **Expose Public API for `symgo`**: Enhance the `symgo` evaluator to provide a public API for registering intrinsics and interacting with the evaluation process from external tools.
+- [ ] **Create `symgo` Facade Package**: Create a new package `symgo` (`symgo/symgo.go`) to act as a public facade for the engine's internal components. This will provide a stable, user-friendly API for external tools. ([docs/trouble-docgen-use-symgo.md](./docs/trouble-docgen-use-symgo.md))
+    - [ ] Expose a public `Evaluator` type with a clean constructor (`NewEvaluator`).
+    - [ ] Expose a public method for registering intrinsic functions (`RegisterIntrinsic`).
+    - [ ] Re-export or alias necessary types from `symgo/object` (e.g., `Object`, `Function`).
+- [ ] **Refactor `docgen` to use `symgo`**: Once the facade package is created, refactor the `docgen` tool to use the new `symgo` public API instead of manual AST traversal.

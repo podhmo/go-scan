@@ -12,6 +12,7 @@ type ObjectType string
 
 // Define the basic object types for the symbolic engine.
 const (
+	INTEGER_OBJ      ObjectType = "INTEGER"
 	STRING_OBJ       ObjectType = "STRING"
 	FUNCTION_OBJ     ObjectType = "FUNCTION"
 	ERROR_OBJ        ObjectType = "ERROR"
@@ -60,6 +61,20 @@ func (s *String) Type() ObjectType { return STRING_OBJ }
 // Inspect returns a string representation of the String's value.
 func (s *String) Inspect() string { return s.Value }
 
+// --- Integer Object ---
+
+// Integer represents an integer value.
+type Integer struct {
+	BaseObject
+	Value int64
+}
+
+// Type returns the type of the Integer object.
+func (i *Integer) Type() ObjectType { return INTEGER_OBJ }
+
+// Inspect returns a string representation of the Integer's value.
+func (i *Integer) Inspect() string { return fmt.Sprintf("%d", i.Value) }
+
 // --- Function Object ---
 
 // Function represents a user-defined function in the code being analyzed.
@@ -102,7 +117,8 @@ func (i *Intrinsic) Inspect() string { return "intrinsic function" }
 // so that method calls on them can be resolved.
 type Instance struct {
 	BaseObject
-	TypeName string // e.g., "net/http.ServeMux"
+	TypeName string            // e.g., "net/http.ServeMux"
+	State    map[string]Object // for mock or intrinsic state
 }
 
 // Type returns the type of the Instance object.

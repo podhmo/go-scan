@@ -1,14 +1,17 @@
 package evaluator
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"go/ast"
+	"go/printer"
 	"go/token"
 	"log/slog"
 	"os"
 	"path"
 	"strconv"
+	"strings"
 
 	"github.com/podhmo/go-scan/scanner"
 	"github.com/podhmo/go-scan/symgo/intrinsics"
@@ -20,6 +23,12 @@ type Evaluator struct {
 	scanner    *scanner.Scanner
 	intrinsics *intrinsics.Registry
 	logger     *slog.Logger
+	callStack  []*callFrame
+}
+
+type callFrame struct {
+	Name string
+	Pos  token.Pos
 }
 
 // New creates a new Evaluator.
@@ -458,7 +467,7 @@ func (e *Evaluator) evalBasicLit(n *ast.BasicLit) object.Object {
 		if err != nil {
 			return newError("could not parse %q as integer", n.Value)
 		}
-		return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("integer literal %d", i)}
+		return &object.Integer{Value: i}
 	case token.STRING:
 		s, err := strconv.Unquote(n.Value)
 		if err != nil {
@@ -506,6 +515,30 @@ func isError(obj object.Object) bool {
 }
 
 func (e *Evaluator) evalCallExpr(n *ast.CallExpr, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
+	// Logging for call tracing
+	var name string
+	if pkg != nil && pkg.Fset != nil {
+		var buf bytes.Buffer
+		if err := printer.Fprint(&buf, pkg.Fset, n.Fun); err == nil {
+			name = buf.String()
+		}
+	}
+	if name == "" {
+		name = "unknown" // fallback
+	}
+
+	frame := &callFrame{Name: name, Pos: n.Pos()}
+	e.callStack = append(e.callStack, frame)
+	defer func() {
+		e.callStack = e.callStack[:len(e.callStack)-1]
+	}()
+
+	var stackNames []string
+	for _, f := range e.callStack {
+		stackNames = append(stackNames, f.Name)
+	}
+	e.logger.Log(context.Background(), slog.LevelDebug, "call", "stack", strings.Join(stackNames, " -> "))
+
 	// 1. Evaluate the function itself (e.g., the identifier or selector).
 	function := e.Eval(n.Fun, env, pkg)
 	if isError(function) {

@@ -106,9 +106,9 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
         - [ ] Ensure `make format` and `make test` pass for the entire repository before submission.
 
 ### `symgo` Engine Refinements
-- [ ] **Create `symgo.Interpreter` Facade**: Create a new `symgo` package with an `Interpreter` type, modeled after `minigo.Interpreter`, to provide a clean public API for the engine. ([docs/trouble-docgen-use-symgo.md](./docs/trouble-docgen-use-symgo.md))
-    - [ ] Implement a `NewInterpreter()` constructor that properly initializes the internal scanner and evaluator.
-    - [ ] Implement a public `RegisterIntrinsic()` method on the interpreter.
-    - [ ] Implement a public `Eval()` method to run the analysis.
-    - [ ] Re-export necessary types like `symgo.Object` and `symgo.Function` from the new package.
+- [x] **Create `symgo.Interpreter` Facade**: Create a new `symgo` package with an `Interpreter` type, modeled after `minigo.Interpreter`, to provide a clean public API for the engine. ([docs/trouble-docgen-use-symgo.md](./docs/trouble-docgen-use-symgo.md))
+    - [x] Implement a `NewInterpreter()` constructor that properly initializes the internal scanner and evaluator.
+    - [x] Implement a public `RegisterIntrinsic()` method on the interpreter.
+    - [x] Implement a public `Eval()` method to run the analysis.
+    - [x] Re-export necessary types like `symgo.Object` and `symgo.Function` from the new package.
 - [ ] **Refactor `docgen` to use `symgo.Interpreter`**: Once the `Interpreter` facade is available, refactor the `docgen` tool to use it instead of manual AST traversal.

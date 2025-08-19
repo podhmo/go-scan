@@ -58,12 +58,8 @@ func main() {
 	// For this test, we can pass the top-level scanner, and the evaluator can use its internal scanner.
 	// Let's assume the evaluator needs access to the raw `scanner.Scanner`.
 	// The top-level `goscan.Scanner` doesn't expose it.
-	// This suggests a design issue. For now, let's create a raw scanner for the test.
-	rawScanner, err := s.ScannerForSymgo()
-	if err != nil {
-		t.Fatalf("s.ScannerForSymgo() failed: %v", err)
-	}
-	eval := evaluator.New(rawScanner)
+	// The evaluator now uses the public goscan.Scanner directly.
+	eval := evaluator.New(s)
 	env := object.NewEnvironment()
 
 	// 5. Evaluate the entire file to handle imports

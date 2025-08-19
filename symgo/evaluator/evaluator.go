@@ -8,23 +8,33 @@ import (
 	"path"
 	"strconv"
 
-	"github.com/podhmo/go-scan/scanner"
+	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/symgo/intrinsics"
 	"github.com/podhmo/go-scan/symgo/object"
 )
 
 // Evaluator is the main object that evaluates the AST.
 type Evaluator struct {
-	scanner    *scanner.Scanner
+	scanner    *goscan.Scanner
 	intrinsics *intrinsics.Registry
 }
 
 // New creates a new Evaluator.
-func New(scanner *scanner.Scanner) *Evaluator {
+func New(scanner *goscan.Scanner) *Evaluator {
 	return &Evaluator{
 		scanner:    scanner,
 		intrinsics: intrinsics.New(),
 	}
+}
+
+// RegisterIntrinsic registers a built-in function.
+func (e *Evaluator) RegisterIntrinsic(key string, fn intrinsics.IntrinsicFunc) {
+	e.intrinsics.Register(key, fn)
+}
+
+// GetIntrinsic retrieves a built-in function for testing.
+func (e *Evaluator) GetIntrinsic(key string) (intrinsics.IntrinsicFunc, bool) {
+	return e.intrinsics.Get(key)
 }
 
 // Eval is the main dispatch loop for the evaluator.
@@ -144,7 +154,13 @@ func (e *Evaluator) evalSelectorExpr(n *ast.SelectorExpr, env *object.Environmen
 		// Populate the package's environment with its exported symbols.
 		for _, f := range pkgInfo.Functions {
 			if ast.IsExported(f.Name) {
-				pkg.Env.Set(f.Name, &object.SymbolicPlaceholder{Reason: fmt.Sprintf("external func %s.%s", pkg.Name, f.Name)})
+				// Check if there is a registered intrinsic for this function.
+				key := pkgInfo.ImportPath + "." + f.Name
+				if intrinsicFn, ok := e.intrinsics.Get(key); ok {
+					pkg.Env.Set(f.Name, &object.Intrinsic{Fn: intrinsicFn})
+				} else {
+					pkg.Env.Set(f.Name, &object.SymbolicPlaceholder{Reason: fmt.Sprintf("external func %s.%s", pkg.Name, f.Name)})
+				}
 			}
 		}
 		for _, v := range pkgInfo.Variables {
@@ -354,7 +370,7 @@ func (e *Evaluator) applyFunction(fn object.Object, args []object.Object) object
 
 	case *object.Intrinsic:
 		// This is a built-in function.
-		return fn.Fn(nil, args...) // TODO: Pass a real env if intrinsics need it.
+		return fn.Fn(args...)
 
 	case *object.SymbolicPlaceholder:
 		// Calling an external or unknown function results in a symbolic value.

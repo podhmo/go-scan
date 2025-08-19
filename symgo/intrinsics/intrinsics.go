@@ -3,8 +3,7 @@ package intrinsics
 import "github.com/podhmo/go-scan/symgo/object"
 
 // IntrinsicFunc is the type for a function that can be registered as an intrinsic.
-// It receives the evaluator's environment and the arguments to the function call.
-type IntrinsicFunc func(env *object.Environment, args ...object.Object) object.Object
+type IntrinsicFunc func(args ...object.Object) object.Object
 
 // Registry holds the registered intrinsic functions.
 type Registry struct {

@@ -114,12 +114,7 @@ func main() {
 	if err != nil {
 		t.Fatalf("scan.New() failed: %v", err)
 	}
-	internalScanner, err := s.ScannerForSymgo()
-	if err != nil {
-		t.Fatalf("s.ScannerForSymgo() failed: %v", err)
-	}
-
-	eval := New(internalScanner)
+	eval := New(s)
 	env := object.NewEnvironment()
 	eval.Eval(astFile, env)
 
@@ -148,7 +143,7 @@ func main() {
 	eval := New(nil)
 
 	// Register a custom intrinsic function.
-	eval.intrinsics.Register("my_intrinsic", func(env *object.Environment, args ...object.Object) object.Object {
+	eval.RegisterIntrinsic("my_intrinsic", func(args ...object.Object) object.Object {
 		if len(args) != 1 {
 			return &object.Error{Message: "wrong number of arguments"}
 		}
@@ -165,7 +160,10 @@ func main() {
 	// Manually add the intrinsic to the environment for the test.
 	// In a real scenario, this would be handled by resolving `my_intrinsic`
 	// to its registered object.
-	intrinsicFn, _ := eval.intrinsics.Get("my_intrinsic")
+	intrinsicFn, ok := eval.GetIntrinsic("my_intrinsic")
+	if !ok {
+		t.Fatal("could not get intrinsic for test setup")
+	}
 	env.Set("my_intrinsic", &object.Intrinsic{Fn: intrinsicFn})
 
 	mainFuncObj, _ := env.Get("main")

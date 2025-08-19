@@ -61,3 +61,17 @@ AST の構造も、オブジェクトの生成も正しいとすると、問題�
 *   **修正**: `TestEvalCallExprOnInstanceMethod` テスト内のイントリンシックの実装を修正し、`args[1]` からパスパターンを取得するように変更しました。この修正により、テストは正常に成功しました。
 
 *   **結論**: `symgo` エンジンは、インスタンスメソッド呼び出しを正しくハンドリングできていました。この一件は、複雑なシステムをデバッグする際に、テストコード自体の正当性を疑うことの重要性を示す良い教訓となりました。`docgen` の開発をブロックしていた問題は、このテストの修正によって完全に解決されました。
+
+# (New Section) New Skipped Tests for Method Call Patterns
+
+As part of an effort to improve the robustness of the `symgo` evaluator, a new suite of tests has been added in `evaluator/evaluator_call_test.go`. These tests cover more complex and comprehensive scenarios for function and method calls, including:
+
+*   Method calls on struct literals (e.g., `MyStruct{}.Do()`).
+*   Method chaining (e.g., `NewDecoder(r).Decode(&v)`).
+*   Nested function calls (e.g., `add(add(1, 2), 3)`).
+
+## Current Status: Skipped
+
+These new tests are currently marked as skipped (`t.Skip()`) because the `symgo` evaluator does not yet fully support these patterns. The tests have been added to the codebase to serve as a clear specification for the required future work and to enable test-driven development for these features.
+
+The primary goal is to un-skip these tests one by one as the evaluator's capabilities are enhanced. This provides a clear roadmap for improving `symgo`'s ability to analyze real-world Go code.

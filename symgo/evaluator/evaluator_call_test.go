@@ -3,6 +3,8 @@ package evaluator
 import (
 	"context"
 	"fmt"
+	"log/slog"
+	"os"
 	"testing"
 
 	goscan "github.com/podhmo/go-scan"
@@ -173,8 +175,6 @@ func main() {
 
 func TestEvalCallExpr_VariousPatterns(t *testing.T) {
 	t.Run("method call on a struct literal", func(t *testing.T) {
-		t.Skip("not implemented yet")
-
 		files := map[string]string{
 			"go.mod": "module example.com/me",
 			"main.go": `
@@ -195,10 +195,13 @@ func main() {
 			if err != nil {
 				return err
 			}
-			eval := New(internalScanner, s.Logger)
+			handler := slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})
+			logger := slog.New(handler)
+			eval := New(internalScanner, logger)
 			env := object.NewEnvironment()
 
-			eval.RegisterIntrinsic("(S).Do", func(args ...object.Object) object.Object {
+			key := fmt.Sprintf("(%s.S).Do", pkg.ImportPath)
+			eval.RegisterIntrinsic(key, func(args ...object.Object) object.Object {
 				doCalled = true
 				return nil
 			})

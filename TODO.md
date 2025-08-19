@@ -104,3 +104,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
         - [ ] Write `README.md` files for both the `symgo` library and the `docgen` tool.
         - [ ] Write a final end-to-end test that compares the generated OpenAPI spec against a "golden" file.
         - [ ] Ensure `make format` and `make test` pass for the entire repository before submission.
+
+### `symgo` Engine Refinements
+- [ ] **Refactor `docgen` to use `symgo`**: The current `docgen` implementation uses manual AST traversal as a workaround. Refactor it to use the `symgo` engine as originally intended. ([docs/trouble-docgen-use-symgo.md](./docs/trouble-docgen-use-symgo.md))
+    - [ ] **Expose Public API for `symgo`**: Enhance the `symgo` evaluator to provide a public API for registering intrinsics and interacting with the evaluation process from external tools.

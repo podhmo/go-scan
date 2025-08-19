@@ -95,3 +95,19 @@ func (i *Interpreter) PushIntrinsics(intrinsics map[string]IntrinsicFunc) {
 func (i *Interpreter) PopIntrinsics() {
 	i.eval.PopIntrinsics()
 }
+
+// FindObject looks up an object in the interpreter's global environment.
+func (i *Interpreter) FindObject(name string) (Object, bool) {
+	return i.globalEnv.Get(name)
+}
+
+// Apply is a wrapper around the internal evaluator's applyFunction.
+// It is intended for advanced use cases like docgen where direct function invocation is needed.
+func (i *Interpreter) Apply(fn Object, args []Object, pkg *scanner.PackageInfo) (Object, error) {
+	// This is a simplified wrapper. A real implementation might need more context.
+	result := i.eval.Apply(fn, args, pkg)
+	if err, ok := result.(*Error); ok {
+		return nil, fmt.Errorf("%s", err.Message)
+	}
+	return result, nil
+}

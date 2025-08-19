@@ -63,7 +63,7 @@ func (f *Function) Inspect() string {
 // Intrinsic represents a built-in function that is implemented in Go.
 type Intrinsic struct {
 	// The Go function that implements the intrinsic's behavior.
-	Fn func(env *Environment, args ...Object) Object
+	Fn func(args ...Object) Object
 }
 
 // Type returns the type of the Intrinsic object.

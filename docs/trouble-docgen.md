@@ -1,57 +1,50 @@
-# Trouble Report: `symgo` TypeInfo Propagation Issue in `docgen`
+# `symgo` エンジンのデバッグと `docgen` 実装のブロック解除
 
-## Goal
-The objective is to implement request/response body analysis for the `docgen` tool. This involves using the `symgo` symbolic execution engine to analyze the body of HTTP handler functions, detect calls to `json.Decode` and `json.Encode`, and generate OpenAPI schemas based on the types of the variables used in those calls.
+`docgen` の M3 タスク（スキーマとパラメータの解析）を進めるにあたり、`symgo` シンボリック実行エンジンの根本的なバグ修正が必要となりました。このセクションでは、そのデバッグプロセスと、後任者への引き継ぎ事項を記録します。
 
-## Approach Taken
-The initial approach of using a simple AST visitor was abandoned based on user feedback to stick with the `symgo` engine. The chosen path involves enhancing `symgo` to understand Go types from `go-scan` during its evaluation.
+### 目標
 
-The implementation involved several major refactoring steps:
-1.  **Modified `symgo/object`**: The `object.Object` interface was extended with a `TypeInfo() *scanner.TypeInfo` method. A `BaseObject` struct was added to provide a default implementation and a field (`ResolvedTypeInfo`) to store the type information. New object types like `Variable` and `Pointer` were also introduced.
-2.  **Exposed `scanner` Utilities**: Key functions from the internal `scanner` package, `TypeInfoFromExpr` and `BuildImportLookup`, were made public on the `goscan.Scanner` so they could be accessed by the `symgo` evaluator.
-3.  **Enhanced `symgo/evaluator`**:
-    *   The `Eval` function signature was changed from `Eval(node, env)` to `Eval(node, env, pkg *scanner.PackageInfo)` to provide the necessary package context for type resolution.
-    *   Logic was added to `evalGenDecl` to handle `var` declarations. This logic uses the new scanner utilities to resolve the `scanner.TypeInfo` of a declared variable.
-    *   The resolved `TypeInfo` is stored on the `object.Variable` that is created and placed in the environment.
-    *   Logic was added to `evalUnaryExpr` to handle the `&` operator. When it creates a `*object.Pointer`, it retrieves the `TypeInfo` from the variable being pointed to and attaches it to the pointer object.
-    *   Logic was added to `evalSelectorExpr` to handle field access on a `*object.Variable`, allowing the evaluator to trace expressions like `r.Body`.
-4.  **Refactored `docgen`**:
-    *   `analyzer.go` was updated to use a temporary, scoped intrinsic registry (`PushIntrinsics`/`PopIntrinsics`) on the main interpreter instance rather than creating a new interpreter for each handler.
-    *   The intrinsics for `json.Decode` and `json.Encode` were implemented to receive the `symgo` objects, call the `TypeInfo()` method, and then generate a schema.
+`symgo` が `net/http` ハンドラ内のメソッド呼び出し（例: `json.Decode`, `json.Encode`）を正しく解析できるように修正し、`docgen` がリクエスト/レスポンスのスキーマを生成できるようにする。
 
-## The Problem: A Contradiction in State
+### 実施したこと（進捗）
 
-Despite extensive refactoring and debugging, the implementation is failing. The test fails because the generated OpenAPI specification does not contain the request or response body schemas.
+前任者の作業（このファイルの古いバージョン）を引き継ぎ、`symgo` のテストが失敗する問題から調査を開始しました。
 
-The core of the problem is a contradiction between the state I can observe in the evaluator and the state received by the intrinsic function.
+1.  **テスト基盤のアーキテクチャ修正**:
+    *   **問題**: `symgo` の既存テストは、関数の `*ast.BlockStmt`（ボディ部分）を直接 `Eval` に渡していました。これは、関数の引数やレシーバがセットアップされるスコープをバイパスするため、実際の関数呼び出しをシミュレートできていませんでした。
+    *   **修正**: 全てのテストをリファクタリングし、まず `*object.Function` を環境から取得し、`applyFunction` メソッド（実際の関数呼び出しロジック）を呼び出すパターンに統一しました。これにより、テストの信頼性が大幅に向上しました。
 
-**What the logs confirm:**
-1.  When the evaluator processes `var user User` in a handler, the `evalGenDecl` function successfully resolves the type and logs: `evalGenDecl: resolved type for var","var":"user","type":"User"`. This confirms the `*scanner.TypeInfo` for `User` is found.
-2.  When the evaluator processes `&user`, the `evalUnaryExpr` function is called. It evaluates `user`, which correctly returns the `*object.Variable` created in the previous step. The log confirms that it successfully retrieves the `TypeInfo` from this variable and attaches it to the new `*object.Pointer`: `evalUnaryExpr: attaching type to pointer","type":"User"`.
-3.  The `json.Decode` intrinsic function *is* called. This is confirmed by a `DECODE INTRINSIC CALLED` log message.
+2.  **パッケージレベル関数のイントリンシック解決**:
+    *   信頼できるようになったテストを実行した結果、`fmt.Println` のようなインポートされたパッケージの関数が、テスト用に登録したイントリンシック（モック）に正しく解決されないバグが明らかになりました。
+    *   `evalSelectorExpr`（`a.b`のような式を評価する部分）のロジックを修正し、パッケージ、インスタンス、変数を正しく型でスイッチして処理するようにしました。これにより、パッケージレベルの関数呼び出しは正しくイントリンシックに解決されるようになりました。
 
-**The Contradiction:**
-Inside the `Decode` intrinsic, the very first thing I do is check the `TypeInfo` on the `*object.Pointer` argument. **It is always `nil`**.
+3.  **`docgen` 分析ロジックのリファクタリング**:
+    *   `symgo` のテストで確立した `applyFunction` パターンを `docgen` の分析ロジックにも適用しました。これにより、`docgen` は HTTP ハンドラをより正確にシミュレート実行できるようになり、アーキテクチャが健全化されました。
 
-This is where I am stuck. The evaluator appears to be correctly setting the `ResolvedTypeInfo` field on the pointer object it creates. The `applyFunction` logic passes the arguments to the intrinsic. But when the intrinsic receives the argument, the `ResolvedTypeInfo` field is `nil`.
+### 未解決の問題（後任者への引き継ぎ）
 
-I have tried adding extensive logging at every step of the process. The data seems to be correct right up until the point it crosses the boundary into the intrinsic function. I am missing a fundamental concept about how the `symgo` evaluator passes arguments or manages object state.
+上記の改善にもかかわらず、`symgo` には依然として致命的なバグが残っており、`docgen` のタスク完了を阻んでいます。
 
----
-## Update: 2025-08-19
+*   **根本原因**: **インスタンスメソッド呼び出しのイントリンシックが解決できない**
+    *   `TestEvalCallExprOnInstanceMethod` テストが依然として失敗します。これは `mux.HandleFunc(...)` のような、シンボリックなインスタンス (`mux`) に対するメソッド呼び出しをテストするものです。
+    *   このバグにより、`docgen` も `decoder.Decode(...)` や `encoder.Encode(...)` のようなメソッド呼び出しを捕捉できず、リクエスト/レスポンスのスキーマを生成できません。
 
-Based on user feedback, I pivoted to writing an isolated test case for the `symgo` engine to debug the `TypeInfo` propagation issue directly.
+### 重要な調査の経緯（後任者向け）
 
-### What I Did
-1.  **Created an Isolated Test:** I created `symgo/evaluator/integration_test.go` with a single test, `TestTypeInfoPropagation`, designed to check if a `TypeInfo` attached to a variable is correctly passed to an intrinsic function.
-2.  **Fixed Test Infrastructure:** The existing `symgo` tests were broken by my previous changes. I spent considerable time fixing compilation errors and test setup issues, primarily related to incorrect package imports and incorrect use of the `scantest` test harness. This involved refactoring all `symgo` tests to correctly use temporary directories and `goscan.New(goscan.WithWorkDir(...))`.
-3.  **Attempted to Fix the Evaluator:** I identified that the evaluator was not handling calls to non-packaged, global-scope functions (like the `inspect_type` intrinsic in my test). I attempted to fix this by modifying `evalIdent` to check the intrinsic registry.
+このバグの調査において、後任者が同じ轍を踏まないように、特に重要だった点を共有します。
 
-### Accident Encountered
-The tests still fail. The `TestTypeInfoPropagation` test fails with the message `intrinsic was not called`. This indicates that my fix to `evalIdent` was insufficient and the evaluator is still not resolving the function call correctly. Other tests for `symgo` also fail for similar reasons related to incorrect evaluation flow within function bodies.
+*   **オブジェクトのキャプチャは成功している**:
+    *   `mux := http.NewServeMux()` のような代入文の評価後、環境内に `mux` が `*object.Instance` として正しく格納されていることは、診断テストを追加して確認済みです。したがって、問題はオブジェクトの生成や代入処理にはありません。
 
-### Miscalculation
-My primary miscalculation was underestimating the complexity of the `symgo` evaluator and the importance of its execution model. My approach of simply evaluating a function's body (`*ast.BlockStmt`) in a new environment was flawed. I now understand that this bypasses the evaluator's own function application logic (`applyFunction`), which is responsible for correctly setting up the function's scope, including parameters.
+*   **AST の構造は想定通りだった**:
+    *   メソッド呼び出しの AST (`*ast.SelectorExpr`) の構造が特殊で、自分の想定と異なっているのではないか、という仮説を立てました。
+    *   これを検証するため、ユーザーからのアドバイスに従い、テストを一時的に修正して `go/printer` を使い `mux.HandleFunc` の AST ノードを文字列としてダンプしました。
+    *   結果、ダンプされた文字列は `mux.HandleFunc` であり、AST の構造（`X` が `mux`、`Sel` が `HandleFunc`）は完全に想定通りであることが確認できました。**これにより、AST の解釈ミスという可能性を完全に排除できました。** この切り分けは非常に重要でした。
 
-The core issue is that my tests (and the `docgen` analyzer) are not correctly simulating a *call* to the function being analyzed. They are trying to evaluate its body as a standalone block, causing the environment and function resolution to fail.
+### 次のステップへの推奨事項
 
+AST の構造も、オブジェクトの生成も正しいとすると、問題は `evalSelectorExpr` が `*object.Instance` を受け取った際の、**状態（特にイントリンシックレジストリ）の参照、あるいは環境（スコープ）の管理**といった、より繊細な部分にある可能性が極めて高いです。
+
+後任の方は、`evalSelectorExpr` が `case *object.Instance:` に入る際の `e.intrinsics.Get(key)` の呼び出しがなぜ `false` を返すのか、あるいはその前の `e.Eval(n.X, ...)` が本当に期待通りのオブジェクトを返しているのか（関数呼び出しのネストした環境下で）、さらにデバッグを進める必要があります。
+
+このドキュメントが、問題解決の一助となることを願っています。

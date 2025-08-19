@@ -98,8 +98,52 @@ func (e *Evaluator) Eval(node ast.Node, env *object.Environment, pkg *scanner.Pa
 		return e.evalUnaryExpr(n, env, pkg)
 	case *ast.BinaryExpr:
 		return &object.SymbolicPlaceholder{Reason: "binary expression"}
+	case *ast.CompositeLit:
+		return e.evalCompositeLit(n, env, pkg)
 	}
 	return newError("evaluation not implemented for %T", node)
+}
+
+func (e *Evaluator) evalCompositeLit(node *ast.CompositeLit, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
+	if pkg == nil || pkg.Fset == nil {
+		return newError("package info or fset is missing, cannot resolve types for composite literal")
+	}
+
+	// Build an import lookup specific to the file containing the literal.
+	file := pkg.Fset.File(node.Pos())
+	if file == nil {
+		return newError("could not find file for node position")
+	}
+	astFile, ok := pkg.AstFiles[file.Name()]
+	if !ok {
+		return newError("could not find ast.File for path: %s", file.Name())
+	}
+	importLookup := e.scanner.BuildImportLookup(astFile)
+
+	// Resolve the type of the literal.
+	typeInfo := e.scanner.TypeInfoFromExpr(context.Background(), node.Type, nil, pkg, importLookup)
+	if typeInfo == nil {
+		// For convenience, try to render the type expression for a better error message.
+		var typeNameBuf bytes.Buffer
+		printer.Fprint(&typeNameBuf, pkg.Fset, node.Type)
+		return newError("could not resolve type for composite literal: %s", typeNameBuf.String())
+	}
+
+	// For types defined in the current package, FullImportPath might be empty.
+	// In that case, we use the package's own import path to create a fully qualified name.
+	pkgPath := typeInfo.FullImportPath
+	if pkgPath == "" {
+		pkgPath = pkg.ImportPath
+	}
+	typeName := fmt.Sprintf("%s.%s", pkgPath, typeInfo.Name)
+
+	resolvedType, _ := typeInfo.Resolve(context.Background())
+
+	// Create a symbolic instance of this type.
+	return &object.Instance{
+		TypeName:   typeName,
+		BaseObject: object.BaseObject{ResolvedTypeInfo: resolvedType},
+	}
 }
 
 func (e *Evaluator) evalUnaryExpr(node *ast.UnaryExpr, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
@@ -292,11 +336,27 @@ func (e *Evaluator) evalSelectorExpr(n *ast.SelectorExpr, env *object.Environmen
 		return symbol
 
 	case *object.Instance:
-		key := fmt.Sprintf("(*%s).%s", val.TypeName, n.Sel.Name)
+		// Check for value receiver: (T).Method
+		key := fmt.Sprintf("(%s).%s", val.TypeName, n.Sel.Name)
 		if intrinsicFn, ok := e.intrinsics.Get(key); ok {
-			return &object.Intrinsic{Fn: intrinsicFn}
+			// The first argument to a method call intrinsic is the receiver itself.
+			self := val
+			fn := func(args ...object.Object) object.Object {
+				return intrinsicFn(append([]object.Object{self}, args...)...)
+			}
+			return &object.Intrinsic{Fn: fn}
 		}
-		return newError("undefined method: %s", n.Sel.Name)
+		// Check for pointer receiver: (*T).Method
+		key = fmt.Sprintf("(*%s).%s", val.TypeName, n.Sel.Name)
+		if intrinsicFn, ok := e.intrinsics.Get(key); ok {
+			// The first argument to a method call intrinsic is the receiver itself.
+			self := val
+			fn := func(args ...object.Object) object.Object {
+				return intrinsicFn(append([]object.Object{self}, args...)...)
+			}
+			return &object.Intrinsic{Fn: fn}
+		}
+		return newError("undefined method: %s on %s", n.Sel.Name, val.TypeName)
 
 	case *object.Variable:
 		// The selector might be a method on the variable's value, or a field on its struct type.

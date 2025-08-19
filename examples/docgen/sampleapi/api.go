@@ -20,10 +20,24 @@ func listUsers(w http.ResponseWriter, r *http.Request) {
 		{ID: 2, Name: "Bob"},
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(users)
+	_ = json.NewEncoder(w).Encode(users)
 }
 
-// RegisterHandlers registers all the handlers for this sample API.
-func RegisterHandlers() {
-	http.HandleFunc("/users", listUsers)
+// createUser handles the POST /users endpoint.
+// It creates a new user.
+func createUser(w http.ResponseWriter, r *http.Request) {
+	var user User
+	_ = json.NewDecoder(r.Body).Decode(&user) // simplified for example
+	user.ID = 3                               // dummy ID
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(user)
+}
+
+// NewServeMux creates a new http.ServeMux and registers all the handlers.
+func NewServeMux() *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /users", listUsers)
+	mux.HandleFunc("POST /users", createUser)
+	return mux
 }

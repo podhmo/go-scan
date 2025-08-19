@@ -47,7 +47,7 @@ To avoid brittle, hardcoded analysis, `docgen` will use a configurable registry 
 A full symbolic execution of all control flow paths is computationally expensive and often unnecessary for static analysis tools like `docgen`. `symgo` will adopt a pragmatic, heuristic-based approach.
 
 *   **Conditional Statements (`if`, `switch`):**
-    The primary goal is not to prove a single path is taken, but to discover what *could* happen in any branch. Instead of complex state forking and path constraint analysis, the engine will favor a simpler traversal model. For example, when analyzing an `http.HandlerFunc` that uses a `switch r.Method` block, the analyzer will simply inspect the AST of each `case` block sequentially to collect the patterns for `GET`, `POST`, etc. This approach gathers all potential behaviors without the overhead of simulating a true execution fork.
+    The primary goal is not to prove a single path is taken, but to discover what *could* happen in any branch. Instead of complex state forking and path constraint analysis, the engine will favor a simpler traversal model. For example, while the engine *can* inspect the AST of `case` blocks in a `switch` statement to find patterns, the `docgen` tool will primarily rely on the explicit method information provided by modern Go 1.22+ `net/http` patterns (e.g., `mux.HandleFunc("GET /path", ...)`), which is more direct and efficient. This heuristic-based traversal of control flow remains a powerful tool for analyzing other aspects of the handler, such as error handling paths or conditional logic.
 
 *   **Loops (`for`):**
     Loops present a halting problem and cannot be analyzed to completion in the general case. The engine will use a **bounded analysis** strategy:
@@ -82,32 +82,32 @@ type User struct {
 	Name string `json:"name"`
 }
 
-// UserHandler handles requests for the /users endpoint.
-// It supports GET to list users and POST to create a new user.
-func UserHandler(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodGet:
-		// GET /users?limit=10
-		_ = r.URL.Query().Get("limit") // Parameter extraction
+// listUsers handles GET /users requests.
+func listUsers(w http.ResponseWriter, r *http.Request) {
+	// GET /users?limit=10
+	_ = r.URL.Query().Get("limit") // Parameter extraction
 
-		// Response
-		users := []User{{ID: 1, Name: "Alice"}}
-		json.NewEncoder(w).Encode(users)
+	// Response
+	users := []User{{ID: 1, Name: "Alice"}}
+	json.NewEncoder(w).Encode(users)
+}
 
-	case http.MethodPost:
-		// Request Body
-		var req CreateUserRequest
-		json.NewDecoder(r.Body).Decode(&req)
+// createUser handles POST /users requests.
+func createUser(w http.ResponseWriter, r *http.Request) {
+	// Request Body
+	var req CreateUserRequest
+	json.NewDecoder(r.Body).Decode(&req)
 
-		// Response
-		user := User{ID: 2, Name: req.Name}
-		json.NewEncoder(w).Encode(user)
-	}
+	// Response
+	user := User{ID: 2, Name: req.Name}
+	json.NewEncoder(w).Encode(user)
 }
 
 func main() {
-	http.HandleFunc("/users", UserHandler)
-	http.ListenAndServe(":8080", nil)
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /users", listUsers)
+	mux.HandleFunc("POST /users", createUser)
+	http.ListenAndServe(":8080", mux)
 }
 ```
 
@@ -115,21 +115,22 @@ func main() {
 
 #### 4.1. Path, Method, and Operation
 
-*   **Go Code:** `http.HandleFunc("/users", myapp.UserHandler)`
+*   **Go Code (Go 1.22+):** `mux.HandleFunc("GET /users", myapp.listUsers)`
 *   **Extraction Logic:**
-    1.  `docgen` registers an intrinsic for `http.HandleFunc`.
-    2.  `symgo` executes the intrinsic, extracting the path `/users` and the symbolic function for `myapp.UserHandler`.
-    3.  `docgen` analyzes the `UserHandler`'s AST, looking for `switch r.Method` blocks to find the handled HTTP methods (GET, POST).
-*   **Final OpenAPI Snippet:** `paths: { /users: { get: ..., post: ... } }`
+    1.  `docgen` registers an intrinsic for `(*http.ServeMux).HandleFunc`.
+    2.  The engine encounters a call to `http.NewServeMux()` and, via another intrinsic, returns a special `symgo.ServeMux` object.
+    3.  When `mux.HandleFunc` is called on this object, `symgo` executes the registered intrinsic.
+    4.  The intrinsic parses the method (`GET`) and path (`/users`) from the first argument. It extracts the symbolic function for `myapp.listUsers` from the second argument. This avoids the need to inspect handler bodies for `switch` statements.
+*   **Final OpenAPI Snippet:** `paths: { /users: { get: ... } }`
 
 #### 4.2. Description and OperationID
 
-*   **Go Code:** `// UserHandler handles user requests. \n func UserHandler(...)`
+*   **Go Code:** `// listUsers handles GET /users requests. \n func listUsers(...)`
 *   **Extraction Logic:**
-    1.  The `OperationID` is derived from the function name (`UserHandler_GET`).
-    2.  The `Description` is extracted from the `Doc` field of the function's `*ast.FuncDecl`.
+    1.  The `OperationID` is derived directly from the handler function's name (`listUsers`).
+    2.  The `Description` is extracted from the `Doc` field of the handler's `*ast.FuncDecl`.
     3.  **`go-scan` Note:** This relies on `go-scan` providing the full AST node with its documentation.
-*   **Final OpenAPI Snippet:** `get: { operationId: UserHandler_GET, description: "UserHandler handles user requests." }`
+*   **Final OpenAPI Snippet:** `get: { operationId: listUsers, description: "listUsers handles GET /users requests." }`
 
 #### 4.3. Request Body
 

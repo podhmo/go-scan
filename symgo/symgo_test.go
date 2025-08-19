@@ -15,7 +15,7 @@ import (
 
 func TestNewInterpreter(t *testing.T) {
 	t.Run("nil scanner", func(t *testing.T) {
-		_, err := symgo.NewInterpreter(nil)
+		_, err := symgo.NewInterpreter(nil, nil)
 		if err == nil {
 			t.Error("expected an error for nil scanner, but got nil")
 		}
@@ -32,7 +32,7 @@ func TestNewInterpreter(t *testing.T) {
 			t.Fatalf("goscan.New() failed: %+v", err)
 		}
 
-		interp, err := symgo.NewInterpreter(s)
+		interp, err := symgo.NewInterpreter(s, nil)
 		if err != nil {
 			t.Errorf("NewInterpreter() failed: %+v", err)
 		}
@@ -61,7 +61,7 @@ func main() {
 		t.Fatalf("goscan.New() failed: %+v", err)
 	}
 
-	interp, err := symgo.NewInterpreter(s)
+	interp, err := symgo.NewInterpreter(s, nil)
 	if err != nil {
 		t.Fatalf("NewInterpreter() failed: %+v", err)
 	}
@@ -116,7 +116,7 @@ func main() {
 		t.Fatalf("goscan.New() failed: %+v", err)
 	}
 
-	interp, err := symgo.NewInterpreter(s)
+	interp, err := symgo.NewInterpreter(s, nil)
 	if err != nil {
 		t.Fatalf("NewInterpreter() failed: %+v", err)
 	}

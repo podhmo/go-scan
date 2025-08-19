@@ -63,7 +63,7 @@ func myFunc(s string) string {
 		t.Run(tt.name, func(t *testing.T) {
 			astFile := parse(t, tt.input)
 
-			eval := New(nil)
+			eval := New(nil, nil)
 			env := object.NewEnvironment()
 			eval.Eval(astFile, env)
 
@@ -114,7 +114,7 @@ func main() {
 	if err != nil {
 		t.Fatalf("scan.New() failed: %v", err)
 	}
-	eval := New(s)
+	eval := New(s, nil)
 	env := object.NewEnvironment()
 	eval.Eval(astFile, env)
 
@@ -140,7 +140,7 @@ func main() {
 `
 	astFile := parse(t, input)
 
-	eval := New(nil)
+	eval := New(nil, nil)
 
 	// Register a custom intrinsic function.
 	eval.RegisterIntrinsic("my_intrinsic", func(args ...object.Object) object.Object {

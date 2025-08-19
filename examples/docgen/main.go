@@ -3,22 +3,27 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"log"
+	"log/slog"
 	"os"
 
 	goscan "github.com/podhmo/go-scan"
 )
 
 func main() {
-	if err := run(); err != nil {
-		log.Fatalf("!! %+v", err)
+	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	if err := run(logger); err != nil {
+		logger.Error("docgen failed", "error", err)
+		os.Exit(1)
 	}
 }
 
-func run() error {
+func run(logger *slog.Logger) error {
 	const sampleAPIPath = "github.com/podhmo/go-scan/examples/docgen/sampleapi"
 
-	s, err := goscan.New()
+	s, err := goscan.New(
+		goscan.WithGoModuleResolver(),
+		goscan.WithLogger(logger),
+	)
 	if err != nil {
 		return err
 	}
@@ -29,7 +34,7 @@ func run() error {
 	}
 
 	ctx := context.Background()
-	if err := analyzer.Analyze(ctx, sampleAPIPath); err != nil {
+	if err := analyzer.Analyze(ctx, sampleAPIPath, "NewServeMux"); err != nil {
 		return err
 	}
 

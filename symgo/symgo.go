@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"go/ast"
+	"log/slog"
 
 	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/symgo/evaluator"
@@ -14,6 +15,8 @@ import (
 type Object = object.Object
 type Function = object.Function
 type Error = object.Error
+type Instance = object.Instance
+type String = object.String
 
 // IntrinsicFunc defines the signature for a custom function handler.
 type IntrinsicFunc func(eval *Interpreter, args []Object) Object
@@ -27,12 +30,12 @@ type Interpreter struct {
 
 // NewInterpreter creates a new symgo interpreter.
 // It requires a pre-configured go-scan.Scanner instance.
-func NewInterpreter(scanner *goscan.Scanner) (*Interpreter, error) {
+func NewInterpreter(scanner *goscan.Scanner, logger *slog.Logger) (*Interpreter, error) {
 	if scanner == nil {
 		return nil, fmt.Errorf("scanner cannot be nil")
 	}
 
-	eval := evaluator.New(scanner)
+	eval := evaluator.New(scanner, logger)
 
 	i := &Interpreter{
 		scanner:   scanner,

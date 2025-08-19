@@ -1,68 +1,70 @@
-# `symgo` エンジンのデバッグと `docgen` 実装のブロック解除
+# Debugging the `symgo` Engine and Unblocking `docgen` Implementation
 
-`docgen` の M3 タスク（スキーマとパラメータの解析）を進めるにあたり、`symgo` シンボリック実行エンジンの根本的なバグ修正が必要となりました。このセクションでは、そのデバッグプロセスと、後任者への引き継ぎ事項を記録します。
+While working on the M3 task for `docgen` (parsing schemas and parameters), it became necessary to perform fundamental bug fixes on the `symgo` symbolic execution engine. This section documents the debugging process and handoff to the next developer.
 
-### 目標
+### Objective
 
-`symgo` が `net/http` ハンドラ内のメソッド呼び出し（例: `json.Decode`, `json.Encode`）を正しく解析できるように修正し、`docgen` がリクエスト/レスポンスのスキーマを生成できるようにする。
+To fix `symgo` so that it can correctly parse method calls within `net/http` handlers (e.g., `json.Decode`, `json.Encode`), enabling `docgen` to generate request/response schemas.
 
-### 実施したこと（進捗）
+### What Was Done (Progress)
 
-前任者の作業（このファイルの古いバージョン）を引き継ぎ、`symgo` のテストが失敗する問題から調査を開始しました。
+Picking up from the previous developer's work (the older version of this file), the investigation began with a failing `symgo` test.
 
-1.  **テスト基盤のアーキテクチャ修正**:
-    *   **問題**: `symgo` の既存テストは、関数の `*ast.BlockStmt`（ボディ部分）を直接 `Eval` に渡していました。これは、関数の引数やレシーバがセットアップされるスコープをバイパスするため、実際の関数呼び出しをシミュレートできていませんでした。
-    *   **修正**: 全てのテストをリファクタリングし、まず `*object.Function` を環境から取得し、`applyFunction` メソッド（実際の関数呼び出しロジック）を呼び出すパターンに統一しました。これにより、テストの信頼性が大幅に向上しました。
+1.  **Test Infrastructure Architecture Fix**:
+    *   **Problem**: Existing `symgo` tests were directly passing a function's `*ast.BlockStmt` (the body) to `Eval`. This bypassed the scope where function arguments and receivers are set up, failing to simulate a real function call.
+    *   **Fix**: All tests were refactored to first retrieve an `*object.Function` from the environment and then call the `applyFunction` method (the actual function call logic). This significantly improved the reliability of the tests.
 
-2.  **パッケージレベル関数のイントリンシック解決**:
-    *   信頼できるようになったテストを実行した結果、`fmt.Println` のようなインポートされたパッケージの関数が、テスト用に登録したイントリンシック（モック）に正しく解決されないバグが明らかになりました。
-    *   `evalSelectorExpr`（`a.b`のような式を評価する部分）のロジックを修正し、パッケージ、インスタンス、変数を正しく型でスイッチして処理するようにしました。これにより、パッケージレベルの関数呼び出しは正しくイントリンシックに解決されるようになりました。
+2.  **Intrinsic Resolution for Package-Level Functions**:
+    *   After running the newly reliable tests, a bug became apparent where functions from imported packages, like `fmt.Println`, were not correctly resolving to the intrinsics (mocks) registered for the test.
+    *   The logic in `evalSelectorExpr` (which evaluates expressions like `a.b`) was corrected to properly switch on the type of the object (package, instance, variable). This ensured that package-level function calls are now correctly resolved to their intrinsics.
 
-3.  **`docgen` 分析ロジックのリファクタリング**:
-    *   `symgo` のテストで確立した `applyFunction` パターンを `docgen` の分析ロジックにも適用しました。これにより、`docgen` は HTTP ハンドラをより正確にシミュレート実行できるようになり、アーキテクチャが健全化されました。
+3.  **Refactoring `docgen` Analysis Logic**:
+    *   The `applyFunction` pattern established in the `symgo` tests was also applied to the `docgen` analysis logic. This allows `docgen` to simulate HTTP handlers more accurately, leading to a healthier architecture.
 
-### 未解決の問題（後任者への引き継ぎ）
+### Unresolved Issues (Handoff to the Next Developer)
 
-上記の改善にもかかわらず、`symgo` には依然として致命的なバグが残っており、`docgen` のタスク完了を阻んでいます。
+Despite the improvements above, a critical bug remains in `symgo`, blocking the completion of the `docgen` task.
 
-*   **根本原因**: **インスタンスメソッド呼び出しのイントリンシックが解決できない**
-    *   `TestEvalCallExprOnInstanceMethod` テストが依然として失敗します。これは `mux.HandleFunc(...)` のような、シンボリックなインスタンス (`mux`) に対するメソッド呼び出しをテストするものです。
-    *   このバグにより、`docgen` も `decoder.Decode(...)` や `encoder.Encode(...)` のようなメソッド呼び出しを捕捉できず、リクエスト/レスポンスのスキーマを生成できません。
+*   **Root Cause: Intrinsic for instance method calls cannot be resolved.**
+    *   The `TestEvalCallExprOnInstanceMethod` test still fails. This test is for method calls on a symbolic instance (`mux`), such as `mux.HandleFunc(...)`.
+    *   Because of this bug, `docgen` is also unable to capture method calls like `decoder.Decode(...)` or `encoder.Encode(...)`, preventing it from generating request/response schemas.
 
-### 重要な調査の経緯（後任者向け）
+### Important Investigation History (For the Next Developer)
 
-このバグの調査において、後任者が同じ轍を踏まないように、特に重要だった点を共有します。
+To prevent the next developer from repeating the same steps, here are some particularly important findings from the investigation of this bug.
 
-*   **オブジェクトのキャプチャは成功している**:
-    *   `mux := http.NewServeMux()` のような代入文の評価後、環境内に `mux` が `*object.Instance` として正しく格納されていることは、診断テストを追加して確認済みです。したがって、問題はオブジェクトの生成や代入処理にはありません。
+*   **Object capture is successful**:
+    *   It has been confirmed by adding diagnostic tests that after evaluating an assignment statement like `mux := http.NewServeMux()`, the `mux` variable is correctly stored in the environment as an `*object.Instance`. Therefore, the problem is not in the object creation or assignment process.
 
-*   **AST の構造は想定通りだった**:
-    *   メソッド呼び出しの AST (`*ast.SelectorExpr`) の構造が特殊で、自分の想定と異なっているのではないか、という仮説を立てました。
-    *   これを検証するため、ユーザーからのアドバイスに従い、テストを一時的に修正して `go/printer` を使い `mux.HandleFunc` の AST ノードを文字列としてダンプしました。
-    *   結果、ダンプされた文字列は `mux.HandleFunc` であり、AST の構造（`X` が `mux`、`Sel` が `HandleFunc`）は完全に想定通りであることが確認できました。**これにより、AST の解釈ミスという可能性を完全に排除できました。** この切り分けは非常に重要でした。
+*   **AST structure was as expected**:
+    *   A hypothesis was formed that the AST structure of a method call (`*ast.SelectorExpr`) might be special and different from my assumption.
+    *   To verify this, following user advice, the test was temporarily modified to use `go/printer` to dump the AST node for `mux.HandleFunc` as a string.
+    *   The result was that the dumped string was `mux.HandleFunc`, confirming that the AST structure (`X` being `mux`, `Sel` being `HandleFunc`) was completely as expected. **This allowed me to completely rule out the possibility of an AST interpretation error.** This was a very important step in narrowing down the problem.
 
-### 次のステップへの推奨事項
+### Recommendations for Next Steps
 
-AST の構造も、オブジェクトの生成も正しいとすると、問題は `evalSelectorExpr` が `*object.Instance` を受け取った際の、**状態（特にイントリンシックレジストリ）の参照、あるいは環境（スコープ）の管理**といった、より繊細な部分にある可能性が極めて高いです。
+Given that both the AST structure and object creation are correct, it is highly likely that the problem lies in a more subtle area, such as **state reference (especially the intrinsic registry) or environment (scope) management** when `evalSelectorExpr` receives an `*object.Instance`.
 
-後任の方は、`evalSelectorExpr` が `case *object.Instance:` に入る際の `e.intrinsics.Get(key)` の呼び出しがなぜ `false` を返すのか、あるいはその前の `e.Eval(n.X, ...)` が本当に期待通りのオブジェクトを返しているのか（関数呼び出しのネストした環境下で）、さらにデバッグを進める必要があります。
+The next developer should focus on further debugging why the call to `e.intrinsics.Get(key)` returns `false` when `evalSelectorExpr` enters the `case *object.Instance:` block, or whether `e.Eval(n.X, ...)` is truly returning the expected object (within the nested environment of a function call).
 
-このドキュメントが、問題解決の一助となることを願っています。
+I hope this document will be of some help in resolving the issue.
 
-### 解決編：根本原因の特定
+### Resolution: Identifying the Root Cause
 
-更なる調査の結果、`symgo` エンジン自体にはバグが**存在しない**ことが判明しました。問題の根本原因は、`TestEvalCallExprOnInstanceMethod` テストケースの実装そのものにありました。
+As a result of further investigation, it was discovered that there was **no bug** in the `symgo` engine itself. The root cause of the problem was in the implementation of the `TestEvalCallExprOnInstanceMethod` test case.
 
-*   **問題点**: テストに記述された `HandleFunc` メソッドのイントリンシック（モック）が、受け取る引数を誤って解釈していました。
-    *   インスタンスメソッド (`instance.Method()`) のイントリンシックが受け取る引数リストの最初の要素 (`args[0]`) は、レシーバインスタンス (`instance`) 自身です。
-    *   しかし、テストでは `args[0]` を `HandleFunc` の第一引数（パスパターン文字列）であると期待してチェックしていました。
-    *   実際には、パスパターンは `args[1]` に存在するため、テストは常に失敗し、`gotPattern` 変数が空のままになっていました。
+*   **The Problem**: The intrinsic (mock) for the `HandleFunc` method written in the test was misinterpreting the arguments it received.
+    *   The first element (`args[0]`) of the argument list received by an instance method (`instance.Method()`) intrinsic is the receiver instance (`instance`) itself.
+    *   However, the test was expecting `args[0]` to be the first argument of `HandleFunc` (the path pattern string).
+    *   In reality, the path pattern was in `args[1]`, so the test was always failing, leaving the `gotPattern` variable empty.
 
-*   **修正**: `TestEvalCallExprOnInstanceMethod` テスト内のイントリンシックの実装を修正し、`args[1]` からパスパターンを取得するように変更しました。この修正により、テストは正常に成功しました。
+*   **The Fix**: The implementation of the intrinsic within the `TestEvalCallExprOnInstanceMethod` test was corrected to retrieve the path pattern from `args[1]`. With this fix, the test passed successfully.
 
-*   **結論**: `symgo` エンジンは、インスタンスメソッド呼び出しを正しくハンドリングできていました。この一件は、複雑なシステムをデバッグする際に、テストコード自体の正当性を疑うことの重要性を示す良い教訓となりました。`docgen` の開発をブロックしていた問題は、このテストの修正によって完全に解決されました。
+*   **Conclusion**: The `symgo` engine was correctly handling instance method calls. This incident served as a good lesson on the importance of questioning the correctness of the test code itself when debugging a complex system. The issue blocking `docgen` development was completely resolved by this test fix.
 
-# (New Section) New Skipped Tests for Method Call Patterns
+---
+
+# New Skipped Tests for Method Call Patterns
 
 As part of an effort to improve the robustness of the `symgo` evaluator, a new suite of tests has been added in `evaluator/evaluator_call_test.go`. These tests cover more complex and comprehensive scenarios for function and method calls, including:
 

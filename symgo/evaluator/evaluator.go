@@ -480,6 +480,15 @@ func (e *Evaluator) evalBasicLit(n *ast.BasicLit) object.Object {
 }
 
 func (e *Evaluator) evalIdent(n *ast.Ident, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
+	// Check for intrinsic first to allow overriding package-local functions for testing.
+	if pkg != nil {
+		key := pkg.ImportPath + "." + n.Name
+		if intrinsicFn, ok := e.intrinsics.Get(key); ok {
+			e.logger.Debug("evalIdent: found intrinsic, overriding", "key", key)
+			return &object.Intrinsic{Fn: intrinsicFn}
+		}
+	}
+
 	if val, ok := env.Get(n.Name); ok {
 		e.logger.Debug("evalIdent: found in env", "name", n.Name, "type", val.Type())
 		return val
@@ -487,15 +496,6 @@ func (e *Evaluator) evalIdent(n *ast.Ident, env *object.Environment, pkg *scanne
 
 	if n.Name == "nil" {
 		return &object.Nil{}
-	}
-
-	// If not in env, check if it's a registered intrinsic for the current package.
-	if pkg != nil {
-		key := pkg.ImportPath + "." + n.Name
-		if intrinsicFn, ok := e.intrinsics.Get(key); ok {
-			e.logger.Debug("evalIdent: found intrinsic", "key", key)
-			return &object.Intrinsic{Fn: intrinsicFn}
-		}
 	}
 
 	e.logger.Debug("evalIdent: not found in env or intrinsics", "name", n.Name)

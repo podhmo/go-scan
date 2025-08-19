@@ -59,7 +59,7 @@ func main() {
 	// Let's assume the evaluator needs access to the raw `scanner.Scanner`.
 	// The top-level `goscan.Scanner` doesn't expose it.
 	// The evaluator now uses the public goscan.Scanner directly.
-	eval := evaluator.New(s)
+	eval := evaluator.New(s, nil)
 	env := object.NewEnvironment()
 
 	// 5. Evaluate the entire file to handle imports

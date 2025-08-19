@@ -2,19 +2,25 @@ package main
 
 import (
 	"context"
+	"log/slog"
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
-	"github.com/podhmo/go-scan/examples/docgen/openapi"
 	goscan "github.com/podhmo/go-scan"
+	"github.com/podhmo/go-scan/examples/docgen/openapi"
 )
 
 func TestDocgen(t *testing.T) {
 	const sampleAPIPath = "github.com/podhmo/go-scan/examples/docgen/sampleapi"
 
 	// Setup
-	s, err := goscan.New()
+	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	s, err := goscan.New(
+		goscan.WithGoModuleResolver(),
+		goscan.WithLogger(logger),
+	)
 	if err != nil {
 		t.Fatalf("failed to create scanner: %v", err)
 	}
@@ -25,7 +31,7 @@ func TestDocgen(t *testing.T) {
 
 	// Run analysis
 	ctx := context.Background()
-	if err := analyzer.Analyze(ctx, sampleAPIPath); err != nil {
+	if err := analyzer.Analyze(ctx, sampleAPIPath, "NewServeMux"); err != nil {
 		t.Fatalf("failed to analyze package: %+v", err)
 	}
 
@@ -42,16 +48,24 @@ func TestDocgen(t *testing.T) {
 					OperationID: "listUsers",
 					Description: "listUsers handles the GET /users endpoint.\nIt returns a list of all users.",
 				},
+				Post: &openapi.Operation{
+					OperationID: "createUser",
+					Description: "createUser handles the POST /users endpoint.\nIt creates a new user.",
+				},
 			},
 		},
 	}
 
-	// Normalize description before comparison
+	// Normalize descriptions before comparison
 	got := analyzer.OpenAPI
-	if got.Paths["/users"] != nil && got.Paths["/users"].Get != nil {
-		got.Paths["/users"].Get.Description = strings.TrimSpace(got.Paths["/users"].Get.Description)
+	if got.Paths["/users"] != nil {
+		if got.Paths["/users"].Get != nil {
+			got.Paths["/users"].Get.Description = strings.TrimSpace(got.Paths["/users"].Get.Description)
+		}
+		if got.Paths["/users"].Post != nil {
+			got.Paths["/users"].Post.Description = strings.TrimSpace(got.Paths["/users"].Post.Description)
+		}
 	}
-
 
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("OpenAPI spec mismatch (-want +got):\n%s", diff)

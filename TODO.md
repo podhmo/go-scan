@@ -69,19 +69,19 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
         - [x] Implement recursive evaluation for intra-module function calls.
         - [x] Implement an intrinsic function registry (`symgo/intrinsics`).
         - [x] Return `SymbolicPlaceholder` objects for calls to extra-module functions that are not intrinsics.
-- [-] **M2: `docgen` Tool & Basic `net/http` Analysis**:
+- [x] **M2: `docgen` Tool & Basic `net/http` Analysis**:
     - [x] **Project Setup**:
         - [x] Create the `examples/docgen` CLI application skeleton.
         - [x] Define local structs for a minimal OpenAPI 3.1 model (`examples/docgen/openapi`).
         - [x] Create a sample `net/http` API to use as the analysis target (`examples/docgen/sampleapi`).
     - [x] **Core Analyzer**:
-        - [x] Implement the main analysis orchestrator that uses `go-scan` and manual AST traversal.
-        - [x] Implement logic to find calls to `http.HandleFunc` to extract route paths and handler functions.
+        - [x] Implement the main analysis orchestrator that uses `go-scan` and the `symgo` interpreter.
+        - [x] Implement logic to find calls to `(*http.ServeMux).HandleFunc` to extract route paths and handler functions, targeting modern Go 1.22+ patterns.
         - [ ] Use `go-scan`'s `WithExternalTypeOverrides` to provide stubs for complex stdlib types like `http.Request`.
     - [x] **Handler Analysis**:
-        - [ ] Analyze handler function ASTs to find HTTP methods (e.g., from `switch r.Method`).
+        - [x] Analyze handler function patterns to find HTTP methods (now done via parsing the `HandleFunc` pattern string, e.g., "GET /path").
         - [x] Extract `operationId` from the function name and `description` from godoc comments.
-    - [x] **Testing**: Write an integration test to verify basic route and description extraction from the sample API.
+    - [x] **Testing**: Write an integration test to verify basic route, method, and description extraction from the sample API.
 - [ ] **M3: Schema and Parameter Analysis**:
     - [ ] **Request/Response Body Analysis**:
         - [ ] Implement pattern matching to detect calls like `json.NewDecoder(...).Decode(&req)`.
@@ -111,4 +111,4 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     - [x] Implement a public `RegisterIntrinsic()` method on the interpreter.
     - [x] Implement a public `Eval()` method to run the analysis.
     - [x] Re-export necessary types like `symgo.Object` and `symgo.Function` from the new package.
-- [ ] **Refactor `docgen` to use `symgo.Interpreter`**: Once the `Interpreter` facade is available, refactor the `docgen` tool to use it instead of manual AST traversal.
+- [x] **Refactor `docgen` to use `symgo.Interpreter`**: The `docgen` tool has been refactored to use the `symgo.Interpreter`, replacing the initial manual AST traversal. The `symgo` engine itself was enhanced to support this.

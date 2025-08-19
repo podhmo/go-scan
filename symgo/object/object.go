@@ -17,6 +17,7 @@ const (
 	RETURN_VALUE_OBJ ObjectType = "RETURN_VALUE"
 	PACKAGE_OBJ      ObjectType = "PACKAGE"
 	INTRINSIC_OBJ    ObjectType = "INTRINSIC"
+	INSTANCE_OBJ     ObjectType = "INSTANCE"
 )
 
 // Object is the interface that all value types in our symbolic engine will implement.
@@ -48,6 +49,7 @@ type Function struct {
 	Parameters *ast.FieldList
 	Body       *ast.BlockStmt
 	Env        *Environment
+	Decl       *ast.FuncDecl // The original declaration, for metadata like godoc.
 }
 
 // Type returns the type of the Function object.
@@ -71,6 +73,21 @@ func (i *Intrinsic) Type() ObjectType { return INTRINSIC_OBJ }
 
 // Inspect returns a string representation of the intrinsic function.
 func (i *Intrinsic) Inspect() string { return "intrinsic function" }
+
+// --- Instance Object ---
+
+// Instance represents a symbolic instance of a particular type.
+// It's used to track objects returned by intrinsics (like constructors)
+// so that method calls on them can be resolved.
+type Instance struct {
+	TypeName string // e.g., "net/http.ServeMux"
+}
+
+// Type returns the type of the Instance object.
+func (i *Instance) Type() ObjectType { return INSTANCE_OBJ }
+
+// Inspect returns a string representation of the Instance.
+func (i *Instance) Inspect() string { return fmt.Sprintf("instance<%s>", i.TypeName) }
 
 // --- Package Object ---
 

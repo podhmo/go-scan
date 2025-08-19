@@ -74,14 +74,14 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
         - [x] Create the `examples/docgen` CLI application skeleton.
         - [x] Define local structs for a minimal OpenAPI 3.1 model (`examples/docgen/openapi`).
         - [x] Create a sample `net/http` API to use as the analysis target (`examples/docgen/sampleapi`).
-    - [ ] **Core Analyzer**:
-        - [ ] Implement the main analysis orchestrator that uses the `symgo` engine.
-        - [ ] Implement an intrinsic for `http.HandleFunc` to extract route paths and handler functions.
+    - [x] **Core Analyzer**:
+        - [x] Implement the main analysis orchestrator that uses `go-scan` and manual AST traversal.
+        - [x] Implement logic to find calls to `http.HandleFunc` to extract route paths and handler functions.
         - [ ] Use `go-scan`'s `WithExternalTypeOverrides` to provide stubs for complex stdlib types like `http.Request`.
-    - [ ] **Handler Analysis**:
+    - [x] **Handler Analysis**:
         - [ ] Analyze handler function ASTs to find HTTP methods (e.g., from `switch r.Method`).
-        - [ ] Extract `operationId` from the function name and `description` from godoc comments.
-    - [ ] **Testing**: Write an integration test to verify basic route and description extraction from the sample API.
+        - [x] Extract `operationId` from the function name and `description` from godoc comments.
+    - [x] **Testing**: Write an integration test to verify basic route and description extraction from the sample API.
 - [ ] **M3: Schema and Parameter Analysis**:
     - [ ] **Request/Response Body Analysis**:
         - [ ] Implement pattern matching to detect calls like `json.NewDecoder(...).Decode(&req)`.
@@ -104,3 +104,11 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
         - [ ] Write `README.md` files for both the `symgo` library and the `docgen` tool.
         - [ ] Write a final end-to-end test that compares the generated OpenAPI spec against a "golden" file.
         - [ ] Ensure `make format` and `make test` pass for the entire repository before submission.
+
+### `symgo` Engine Refinements
+- [ ] **Create `symgo.Interpreter` Facade**: Create a new `symgo` package with an `Interpreter` type, modeled after `minigo.Interpreter`, to provide a clean public API for the engine. ([docs/trouble-docgen-use-symgo.md](./docs/trouble-docgen-use-symgo.md))
+    - [ ] Implement a `NewInterpreter()` constructor that properly initializes the internal scanner and evaluator.
+    - [ ] Implement a public `RegisterIntrinsic()` method on the interpreter.
+    - [ ] Implement a public `Eval()` method to run the analysis.
+    - [ ] Re-export necessary types like `symgo.Object` and `symgo.Function` from the new package.
+- [ ] **Refactor `docgen` to use `symgo.Interpreter`**: Once the `Interpreter` facade is available, refactor the `docgen` tool to use it instead of manual AST traversal.

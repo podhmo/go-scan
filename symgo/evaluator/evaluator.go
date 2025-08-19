@@ -290,6 +290,21 @@ func (e *Evaluator) evalSelectorExpr(n *ast.SelectorExpr, env *object.Environmen
 		return newError("undefined method: %s", n.Sel.Name)
 
 	case *object.Variable:
+		// The selector might be a method on the variable's value, or a field on its struct type.
+		// We need to check both. Let's check for method calls on instances first.
+		if instance, ok := val.Value.(*object.Instance); ok {
+			key := fmt.Sprintf("(*%s).%s", instance.TypeName, n.Sel.Name)
+			if intrinsicFn, ok := e.intrinsics.Get(key); ok {
+				// The first argument to a method call intrinsic is the receiver itself.
+				self := val.Value
+				fn := func(args ...object.Object) object.Object {
+					return intrinsicFn(append([]object.Object{self}, args...)...)
+				}
+				return &object.Intrinsic{Fn: fn}
+			}
+		}
+
+		// If it's not a method on an instance, check for struct field access.
 		typeInfo := val.TypeInfo()
 		if typeInfo != nil && typeInfo.Struct != nil {
 			for _, field := range typeInfo.Struct.Fields {
@@ -302,7 +317,7 @@ func (e *Evaluator) evalSelectorExpr(n *ast.SelectorExpr, env *object.Environmen
 				}
 			}
 		}
-		return newError("undefined field: %s", n.Sel.Name)
+		return newError("undefined field or method: %s on %s", n.Sel.Name, val.Inspect())
 
 	default:
 		return newError("expected a package, instance, or variable on the left side of selector, but got %s", left.Type())
@@ -370,7 +385,7 @@ func (e *Evaluator) evalBlockStatement(block *ast.BlockStmt, env *object.Environ
 }
 
 func (e *Evaluator) evalReturnStmt(n *ast.ReturnStmt, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
-	if len(n.Results) != 1 {
+	if len(n.Results) > 1 {
 		// For now, we only support single return values.
 		return newError("unsupported return statement: expected 1 result")
 	}
@@ -402,16 +417,37 @@ func (e *Evaluator) evalAssignStmt(n *ast.AssignStmt, env *object.Environment, p
 
 	if n.Tok == token.DEFINE {
 		// This is `:=`, so we are declaring and assigning.
-		// In our simplified model, we don't differentiate much, just set it.
-		return env.Set(ident.Name, val)
+		// We wrap the value in a Variable object to be consistent with `var` declarations.
+		v := &object.Variable{
+			Name:  ident.Name,
+			Value: val,
+			BaseObject: object.BaseObject{
+				ResolvedTypeInfo: val.TypeInfo(), // Carry over type info from the value
+			},
+		}
+		e.logger.Debug("evalAssignStmt: defining var", "name", ident.Name, "type", val.Type())
+		return env.Set(ident.Name, v)
 	}
 
 	// This is `=`, so the variable must already exist.
-	if _, ok := env.Get(ident.Name); !ok {
+	// We need to find the variable and update its value.
+	obj, ok := env.Get(ident.Name)
+	if !ok {
 		return newError("cannot assign to undeclared identifier: %s", ident.Name)
 	}
 
-	e.logger.Debug("evalAssignStmt: setting var", "name", ident.Name, "type", val.Type())
+	if v, ok := obj.(*object.Variable); ok {
+		v.Value = val
+		// Also update the type info if the new value provides a more specific type.
+		if val.TypeInfo() != nil {
+			v.ResolvedTypeInfo = val.TypeInfo()
+		}
+		e.logger.Debug("evalAssignStmt: updating var", "name", ident.Name, "type", val.Type())
+		return v
+	}
+
+	// Fallback for non-variable assignments, though our model should primarily use variables.
+	e.logger.Debug("evalAssignStmt: setting non-var", "name", ident.Name, "type", val.Type())
 	return env.Set(ident.Name, val)
 }
 
@@ -438,6 +474,10 @@ func (e *Evaluator) evalIdent(n *ast.Ident, env *object.Environment, pkg *scanne
 	if val, ok := env.Get(n.Name); ok {
 		e.logger.Debug("evalIdent: found in env", "name", n.Name, "type", val.Type())
 		return val
+	}
+
+	if n.Name == "nil" {
+		return &object.Nil{}
 	}
 
 	// If not in env, check if it's a registered intrinsic for the current package.

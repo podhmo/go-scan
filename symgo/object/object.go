@@ -22,6 +22,7 @@ const (
 	INSTANCE_OBJ     ObjectType = "INSTANCE"
 	VARIABLE_OBJ     ObjectType = "VARIABLE"
 	POINTER_OBJ      ObjectType = "POINTER"
+	NIL_OBJ          ObjectType = "NIL"
 )
 
 // Object is the interface that all value types in our symbolic engine will implement.
@@ -208,6 +209,19 @@ func (p *Pointer) Type() ObjectType { return POINTER_OBJ }
 func (p *Pointer) Inspect() string {
 	return fmt.Sprintf("&%s", p.Value.Inspect())
 }
+
+// --- Nil Object ---
+
+// Nil represents the nil value.
+type Nil struct {
+	BaseObject
+}
+
+// Type returns the type of the Nil object.
+func (n *Nil) Type() ObjectType { return NIL_OBJ }
+
+// Inspect returns a string representation of nil.
+func (n *Nil) Inspect() string { return "nil" }
 
 // --- Environment ---
 

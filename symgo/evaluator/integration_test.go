@@ -1,87 +1,99 @@
-package evaluator_test
+package evaluator
 
 import (
-	"path/filepath"
+	"context"
+	"fmt"
 	"testing"
 
-	"go/parser"
-
-	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/scantest"
-	"github.com/podhmo/go-scan/symgo/evaluator"
 	"github.com/podhmo/go-scan/symgo/object"
+	goscan "github.com/podhmo/go-scan"
 )
 
-func TestEval_ImportAndSelector(t *testing.T) {
+func TestTypeInfoPropagation(t *testing.T) {
 	source := `
 package main
-import (
-	"fmt"
-	"strings"
-)
+
+type User struct {
+	ID   int
+	Name string
+}
+
+func inspect_type(u *User) {
+}
+
 func main() {
-	_ = strings.ToUpper("hello")
-	_ = fmt.Println("world")
+	var user User
+	inspect_type(&user)
 }
 `
-	files := map[string]string{
-		"go.mod":  "module mymodule",
+	dir, cleanup := scantest.WriteFiles(t, map[string]string{
+		"go.mod":  "module example.com/me",
 		"main.go": source,
-	}
-
-	// 1. Setup a temporary directory with source files
-	dir, cleanup := scantest.WriteFiles(t, files)
+	})
 	defer cleanup()
 
-	// 2. Create a new go-scan Scanner targeting the temp directory
-	s, err := goscan.New(goscan.WithWorkDir(dir), goscan.WithGoModuleResolver())
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
+		if len(pkgs) != 1 {
+			return fmt.Errorf("expected 1 package, got %d", len(pkgs))
+		}
+		pkg := pkgs[0]
+
+		internalScanner, err := s.ScannerForSymgo()
+		if err != nil {
+			return fmt.Errorf("s.ScannerForSymgo failed: %w", err)
+		}
+		eval := New(internalScanner, s.Logger)
+
+		var inspectedType object.Object
+		env := object.NewEnvironment()
+		for _, file := range pkg.AstFiles {
+			eval.Eval(file, env, pkg)
+		}
+
+		intrinsic := &object.Intrinsic{
+			Fn: func(args ...object.Object) object.Object {
+				if len(args) > 0 {
+					inspectedType = args[0]
+				}
+				return nil
+			},
+		}
+		env.Set("inspect_type", intrinsic)
+
+		mainFuncObj, ok := env.Get("main")
+		if !ok {
+			return fmt.Errorf("main function not found in environment")
+		}
+		mainFunc, ok := mainFuncObj.(*object.Function)
+		if !ok {
+			return fmt.Errorf("main is not an object.Function, got %T", mainFuncObj)
+		}
+
+		// We use applyFunction directly to simulate a call to main()
+		eval.applyFunction(mainFunc, []object.Object{}, pkg)
+
+		if inspectedType == nil {
+			t.Fatal("intrinsic was not called")
+		}
+		typeInfo := inspectedType.TypeInfo()
+		if typeInfo == nil {
+			return fmt.Errorf("TypeInfo() on the received object is nil")
+		}
+		if typeInfo.Name != "User" {
+			return fmt.Errorf("expected type name to be 'User', but got %q", typeInfo.Name)
+		}
+		if typeInfo.Struct == nil {
+			return fmt.Errorf("expected type to have struct info, but it was nil")
+		}
+		if len(typeInfo.Struct.Fields) != 2 {
+			return fmt.Errorf("expected struct to have 2 fields, but got %d", len(typeInfo.Struct.Fields))
+		}
+		return nil
+	}
+
+	_, err := scantest.Run(t, dir, []string{"."}, action)
 	if err != nil {
-		t.Fatalf("goscan.New() failed: %v", err)
-	}
-
-	// 3. Scan and parse the file
-	pkgs, err := s.Scan(filepath.Join(dir, "main.go"))
-	if err != nil {
-		t.Fatalf("Scan() failed: %v", err)
-	}
-	if len(pkgs) != 1 {
-		t.Fatalf("expected 1 package, got %d", len(pkgs))
-	}
-	mainFileAST := pkgs[0].AstFiles[filepath.Join(dir, "main.go")]
-	if mainFileAST == nil {
-		t.Fatalf("main.go not found in scanned package")
-	}
-
-	// 4. Create evaluator and environment
-	// We need to create a new scanner configured for the symgo evaluator's needs.
-	// The symgo evaluator needs access to the internal scanner.
-	// For this test, we can pass the top-level scanner, and the evaluator can use its internal scanner.
-	// Let's assume the evaluator needs access to the raw `scanner.Scanner`.
-	// The top-level `goscan.Scanner` doesn't expose it.
-	// The evaluator now uses the public goscan.Scanner directly.
-	eval := evaluator.New(s, nil)
-	env := object.NewEnvironment()
-
-	// 5. Evaluate the entire file to handle imports
-	eval.Eval(mainFileAST, env)
-
-	// 6. Find the expression `strings.ToUpper` and evaluate it.
-	node, err := parser.ParseExpr(`strings.ToUpper`)
-	if err != nil {
-		t.Fatalf("parser.ParseExpr failed: %v", err)
-	}
-	obj := eval.Eval(node, env)
-	if _, ok := obj.(*object.SymbolicPlaceholder); !ok {
-		t.Errorf("Expected a SymbolicPlaceholder for strings.ToUpper, but got %T (%+v)", obj, obj)
-	}
-
-	// 7. Test another symbol from a different imported package
-	node, err = parser.ParseExpr(`fmt.Println`)
-	if err != nil {
-		t.Fatalf("parser.ParseExpr failed: %v", err)
-	}
-	obj = eval.Eval(node, env)
-	if _, ok := obj.(*object.SymbolicPlaceholder); !ok {
-		t.Errorf("Expected a SymbolicPlaceholder for fmt.Println, but got %T (%+v)", obj, obj)
+		t.Fatal(err)
 	}
 }

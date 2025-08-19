@@ -1,7 +1,6 @@
 package symgo_test
 
 import (
-	"context"
 	"go/parser"
 	"path/filepath"
 	"testing"
@@ -32,7 +31,11 @@ func TestNewInterpreter(t *testing.T) {
 			t.Fatalf("goscan.New() failed: %+v", err)
 		}
 
-		interp, err := symgo.NewInterpreter(s, nil)
+		internalScanner, err := s.ScannerForSymgo()
+		if err != nil {
+			t.Fatalf("s.ScannerForSymgo() failed: %+v", err)
+		}
+		interp, err := symgo.NewInterpreter(internalScanner, nil)
 		if err != nil {
 			t.Errorf("NewInterpreter() failed: %+v", err)
 		}
@@ -61,31 +64,35 @@ func main() {
 		t.Fatalf("goscan.New() failed: %+v", err)
 	}
 
-	interp, err := symgo.NewInterpreter(s, nil)
+	pkgs, err := s.Scan(".")
+	if err != nil {
+		t.Fatalf("s.Scan() failed: %+v", err)
+	}
+	pkg := pkgs[0]
+
+	internalScanner, err := s.ScannerForSymgo()
+	if err != nil {
+		t.Fatalf("s.ScannerForSymgo() failed: %+v", err)
+	}
+	interp, err := symgo.NewInterpreter(internalScanner, nil)
 	if err != nil {
 		t.Fatalf("NewInterpreter() failed: %+v", err)
 	}
 
+	// We need to evaluate the file first to process imports.
+	_, err = interp.Eval(pkg.AstFiles[filepath.Join(dir, "main.go")], pkg)
+	if err != nil {
+		t.Fatalf("interp.Eval(file) failed: %+v", err)
+	}
+
 	// Evaluate an expression that uses an imported package.
-	// The interpreter should lazy-load the package and return a symbolic placeholder.
 	node, err := parser.ParseExpr(`fmt.Println`)
 	if err != nil {
 		t.Fatalf("parser.ParseExpr() failed: %+v", err)
 	}
 
-	// We need to evaluate the file first to process imports.
-	mainGoPath := filepath.Join(dir, "main.go")
-	fileAst, err := parser.ParseFile(s.Fset(), mainGoPath, source, parser.ParseComments)
-	if err != nil {
-		t.Fatalf("parser.ParseFile() failed: %+v", err)
-	}
-	_, err = interp.Eval(context.Background(), fileAst)
-	if err != nil {
-		t.Fatalf("interp.Eval(file) failed: %+v", err)
-	}
-
 	// Now evaluate the expression
-	result, err := interp.Eval(context.Background(), node)
+	result, err := interp.Eval(node, pkg)
 	if err != nil {
 		t.Fatalf("interp.Eval(expr) failed: %+v", err)
 	}
@@ -115,18 +122,33 @@ func main() {
 	if err != nil {
 		t.Fatalf("goscan.New() failed: %+v", err)
 	}
+	pkgs, err := s.Scan(".")
+	if err != nil {
+		t.Fatalf("s.Scan() failed: %+v", err)
+	}
+	pkg := pkgs[0]
 
-	interp, err := symgo.NewInterpreter(s, nil)
+	internalScanner, err := s.ScannerForSymgo()
+	if err != nil {
+		t.Fatalf("s.ScannerForSymgo() failed: %+v", err)
+	}
+	interp, err := symgo.NewInterpreter(internalScanner, nil)
 	if err != nil {
 		t.Fatalf("NewInterpreter() failed: %+v", err)
 	}
 
 	// Simplified intrinsic handler
 	expectedResult := &object.String{Value: "Intrinsic was called!"}
-	handler := func(eval *symgo.Interpreter, args []symgo.Object) symgo.Object {
+	handler := func(interp *symgo.Interpreter, args []object.Object) object.Object {
 		return expectedResult
 	}
 	interp.RegisterIntrinsic("fmt.Println", handler)
+
+	// We need to evaluate the file first to process imports.
+	_, err = interp.Eval(pkg.AstFiles[filepath.Join(dir, "main.go")], pkg)
+	if err != nil {
+		t.Fatalf("interp.Eval(file) failed: %+v", err)
+	}
 
 	// Evaluate an expression that calls the intrinsic
 	node, err := parser.ParseExpr(`fmt.Println("hello")`)
@@ -134,19 +156,8 @@ func main() {
 		t.Fatalf("parser.ParseExpr() failed: %+v", err)
 	}
 
-	// We need to evaluate the file first to process imports.
-	mainGoPath := filepath.Join(dir, "main.go")
-	fileAst, err := parser.ParseFile(s.Fset(), mainGoPath, source, parser.ParseComments)
-	if err != nil {
-		t.Fatalf("parser.ParseFile() failed: %+v", err)
-	}
-	_, err = interp.Eval(context.Background(), fileAst)
-	if err != nil {
-		t.Fatalf("interp.Eval(file) failed: %+v", err)
-	}
-
 	// Now evaluate the call expression
-	result, err := interp.Eval(context.Background(), node)
+	result, err := interp.Eval(node, pkg)
 	if err != nil {
 		t.Fatalf("interp.Eval(expr) failed: %+v", err)
 	}

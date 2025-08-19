@@ -1,184 +1,359 @@
 package evaluator
 
 import (
-	"go/ast"
-	"go/parser"
-	"go/token"
+	"context"
+	"fmt"
+	"log/slog"
+	"os"
 	"testing"
 
-	scan "github.com/podhmo/go-scan"
+	goscan "github.com/podhmo/go-scan"
+	"github.com/podhmo/go-scan/scantest"
 	"github.com/podhmo/go-scan/symgo/object"
 )
 
-// parse is a helper to quickly get an AST from a string of code.
-func parse(t *testing.T, code string) *ast.File {
-	t.Helper()
-	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, "main.go", code, parser.ParseComments)
-	if err != nil {
-		t.Fatalf("failed to parse code: %v", err)
-	}
-	return f
-}
-
-func TestEval_FunctionCall(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    string
-		expected string // Expected Inspect() output of the final expression
-	}{
-		{
-			name: "simple identity function",
-			input: `
+func TestEvalCallExprOnFunction_WithScantest(t *testing.T) {
+	files := map[string]string{
+		"go.mod":  "module example.com/me",
+		"main.go": `
 package main
-
-func identity(s string) string {
-	return s
-}
-
-func main() {
-	return identity("hello")
-}
+func add(a, b int) int { return a + b }
+func main() { add(1, 2) }
 `,
-			expected: "hello",
-		},
-		{
-			name: "recursive call",
-			input: `
-package main
-
-func main() {
-	return myFunc("foo")
-}
-
-func myFunc(s string) string {
-	return s
-}
-`,
-			expected: "foo",
-		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			astFile := parse(t, tt.input)
+	dir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
 
-			eval := New(nil, nil)
-			env := object.NewEnvironment()
-			eval.Eval(astFile, env)
-
-			mainFuncObj, ok := env.Get("main")
-			if !ok {
-				t.Fatal("main function not found in environment")
-			}
-			mainFunc, ok := mainFuncObj.(*object.Function)
-			if !ok {
-				t.Fatalf("main is not a function, got %T", mainFuncObj)
-			}
-
-			returnStmt, ok := mainFunc.Body.List[0].(*ast.ReturnStmt)
-			if !ok {
-				t.Fatalf("first statement in main is not a return, got %T", mainFunc.Body.List[0])
-			}
-			callExpr, ok := returnStmt.Results[0].(*ast.CallExpr)
-			if !ok {
-				t.Fatalf("return is not a call expression, got %T", returnStmt.Results[0])
-			}
-			result := eval.Eval(callExpr, mainFunc.Env)
-
-			str, ok := result.(*object.String)
-			if !ok {
-				t.Errorf("result is not a String, got %T (%s)", result, result.Inspect())
-				return
-			}
-			if str.Value != tt.expected {
-				t.Errorf("result.Value = %q, want %q", str.Value, tt.expected)
-			}
-		})
-	}
-}
-
-func TestEval_SymbolicFunctionCall(t *testing.T) {
-	input := `
-package main
-
-import "fmt"
-
-func main() {
-	return fmt.Sprintf("hello %s", "world")
-}
-`
-	astFile := parse(t, input)
-
-	s, err := scan.New(scan.WithGoModuleResolver())
-	if err != nil {
-		t.Fatalf("scan.New() failed: %v", err)
-	}
-	eval := New(s, nil)
-	env := object.NewEnvironment()
-	eval.Eval(astFile, env)
-
-	mainFuncObj, _ := env.Get("main")
-	mainFunc := mainFuncObj.(*object.Function)
-
-	returnStmt := mainFunc.Body.List[0].(*ast.ReturnStmt)
-	callExpr := returnStmt.Results[0].(*ast.CallExpr)
-	result := eval.Eval(callExpr, mainFunc.Env)
-
-	if _, ok := result.(*object.SymbolicPlaceholder); !ok {
-		t.Errorf("expected SymbolicPlaceholder, got %T (%s)", result, result.Inspect())
-	}
-}
-
-func TestEval_IntrinsicFunctionCall(t *testing.T) {
-	input := `
-package main
-
-func main() {
-	return my_intrinsic("wow")
-}
-`
-	astFile := parse(t, input)
-
-	eval := New(nil, nil)
-
-	// Register a custom intrinsic function.
-	eval.RegisterIntrinsic("my_intrinsic", func(args ...object.Object) object.Object {
-		if len(args) != 1 {
-			return &object.Error{Message: "wrong number of arguments"}
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
+		if len(pkgs) != 1 {
+			return fmt.Errorf("expected 1 package, but got %d", len(pkgs))
 		}
-		s, ok := args[0].(*object.String)
+		pkg := pkgs[0]
+
+		internalScanner, err := s.ScannerForSymgo()
+		if err != nil {
+			return fmt.Errorf("ScannerForSymgo() failed: %w", err)
+		}
+		eval := New(internalScanner, s.Logger)
+		env := object.NewEnvironment()
+		for _, file := range pkg.AstFiles {
+			eval.Eval(file, env, pkg)
+		}
+
+		mainFuncObj, ok := env.Get("main")
 		if !ok {
-			return &object.Error{Message: "argument must be a string"}
+			return fmt.Errorf("main function not found in environment")
 		}
-		return &object.String{Value: "intrinsic says: " + s.Value}
+		mainFunc, ok := mainFuncObj.(*object.Function)
+		if !ok {
+			return fmt.Errorf("main is not an object.Function, got %T", mainFuncObj)
+		}
+
+		eval.applyFunction(mainFunc, []object.Object{}, pkg)
+		return nil
+	}
+
+	if _, err := scantest.Run(t, dir, []string{"."}, action); err != nil {
+		t.Fatalf("scantest.Run() failed: %v", err)
+	}
+}
+
+func TestEvalCallExprOnIntrinsic_WithScantest(t *testing.T) {
+	files := map[string]string{
+		"go.mod":  "module example.com/me",
+		"main.go": `
+package main
+import "fmt"
+func main() { fmt.Println("hello") }
+`,
+	}
+	dir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	var got string
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
+		pkg := pkgs[0]
+		internalScanner, err := s.ScannerForSymgo()
+		if err != nil {
+			return err
+		}
+		eval := New(internalScanner, s.Logger)
+		env := object.NewEnvironment()
+
+		eval.RegisterIntrinsic("fmt.Println", func(args ...object.Object) object.Object {
+			if len(args) > 0 {
+				if s, ok := args[0].(*object.String); ok {
+					got = s.Value
+				}
+			}
+			return &object.SymbolicPlaceholder{}
+		})
+
+		for _, file := range pkg.AstFiles {
+			eval.Eval(file, env, pkg)
+		}
+
+		mainFuncObj, _ := env.Get("main")
+		mainFunc := mainFuncObj.(*object.Function)
+		eval.applyFunction(mainFunc, []object.Object{}, pkg)
+
+		return nil
+	}
+
+	if _, err := scantest.Run(t, dir, []string{"."}, action); err != nil {
+		t.Fatalf("scantest.Run() failed: %v", err)
+	}
+
+	if want := "hello"; got != want {
+		t.Errorf("intrinsic not called correctly, want %q, got %q", want, got)
+	}
+}
+
+func TestEvalCallExprOnInstanceMethod_WithScantest(t *testing.T) {
+	files := map[string]string{
+		"go.mod":  "module example.com/me",
+		"main.go": `
+package main
+import "net/http"
+func main() {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", nil)
+}`,
+	}
+	dir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	var gotPattern string
+	handleFuncCalled := false
+
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
+		pkg := pkgs[0]
+		internalScanner, err := s.ScannerForSymgo()
+		if err != nil {
+			return err
+		}
+		eval := New(internalScanner, s.Logger)
+		env := object.NewEnvironment()
+
+		const serveMuxTypeName = "net/http.ServeMux"
+		eval.RegisterIntrinsic("net/http.NewServeMux", func(args ...object.Object) object.Object {
+			return &object.Instance{TypeName: serveMuxTypeName}
+		})
+
+		eval.RegisterIntrinsic(fmt.Sprintf("(*%s).HandleFunc", serveMuxTypeName), func(args ...object.Object) object.Object {
+			handleFuncCalled = true
+			if len(args) > 1 { // self, pattern, handler
+				if s, ok := args[1].(*object.String); ok {
+					gotPattern = s.Value
+				}
+			}
+			return nil
+		})
+
+		for _, file := range pkg.AstFiles {
+			eval.Eval(file, env, pkg)
+		}
+
+		mainFuncObj, _ := env.Get("main")
+		mainFunc := mainFuncObj.(*object.Function)
+		eval.applyFunction(mainFunc, []object.Object{}, pkg)
+		return nil
+	}
+
+	if _, err := scantest.Run(t, dir, []string{"."}, action); err != nil {
+		t.Fatalf("scantest.Run() failed: %v", err)
+	}
+
+	if !handleFuncCalled {
+		t.Fatal("HandleFunc intrinsic was not called")
+	}
+	if want := "/"; gotPattern != want {
+		t.Errorf("HandleFunc pattern wrong, want %q, got %q", want, gotPattern)
+	}
+}
+
+func TestEvalCallExpr_VariousPatterns(t *testing.T) {
+	t.Run("method call on a struct literal", func(t *testing.T) {
+		files := map[string]string{
+			"go.mod": "module example.com/me",
+			"main.go": `
+package main
+type S struct{}
+func (s S) Do() {}
+func main() {
+	S{}.Do()
+}`,
+		}
+		dir, cleanup := scantest.WriteFiles(t, files)
+		defer cleanup()
+
+		var doCalled bool
+		action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
+			pkg := pkgs[0]
+			internalScanner, err := s.ScannerForSymgo()
+			if err != nil {
+				return err
+			}
+			handler := slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})
+			logger := slog.New(handler)
+			eval := New(internalScanner, logger)
+			env := object.NewEnvironment()
+
+			key := fmt.Sprintf("(%s.S).Do", pkg.ImportPath)
+			eval.RegisterIntrinsic(key, func(args ...object.Object) object.Object {
+				doCalled = true
+				return nil
+			})
+
+			for _, file := range pkg.AstFiles {
+				eval.Eval(file, env, pkg)
+			}
+
+			mainFuncObj, _ := env.Get("main")
+			mainFunc := mainFuncObj.(*object.Function)
+			eval.applyFunction(mainFunc, []object.Object{}, pkg)
+			return nil
+		}
+
+		if _, err := scantest.Run(t, dir, []string{"."}, action); err != nil {
+			t.Fatalf("scantest.Run() failed: %v", err)
+		}
+		if !doCalled {
+			t.Error("Do method was not called")
+		}
 	})
 
-	env := object.NewEnvironment()
-	eval.Eval(astFile, env)
+	t.Run("method chaining", func(t *testing.T) {
+		files := map[string]string{
+			"go.mod": "module example.com/me",
+			"main.go": `
+package main
+import "fmt"
+type Greeter struct { name string }
+func NewGreeter(name string) *Greeter { return &Greeter{name: name} }
+func (g *Greeter) Greet() string { return "Hello, " + g.name }
+func (g *Greeter) WithName(name string) *Greeter { g.name = name; return g }
+func main() {
+	v := NewGreeter("world").WithName("gopher").Greet()
+	fmt.Println(v)
+}`,
+		}
+		dir, cleanup := scantest.WriteFiles(t, files)
+		defer cleanup()
 
-	// Manually add the intrinsic to the environment for the test.
-	// In a real scenario, this would be handled by resolving `my_intrinsic`
-	// to its registered object.
-	intrinsicFn, ok := eval.GetIntrinsic("my_intrinsic")
-	if !ok {
-		t.Fatal("could not get intrinsic for test setup")
-	}
-	env.Set("my_intrinsic", &object.Intrinsic{Fn: intrinsicFn})
+		var greetCalled bool
+		var finalName string
+		action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
+			pkg := pkgs[0]
+			internalScanner, err := s.ScannerForSymgo()
+			if err != nil {
+				return err
+			}
+			handler := slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})
+			logger := slog.New(handler)
+			eval := New(internalScanner, logger)
+			env := object.NewEnvironment()
 
-	mainFuncObj, _ := env.Get("main")
-	mainFunc := mainFuncObj.(*object.Function)
-	returnStmt := mainFunc.Body.List[0].(*ast.ReturnStmt)
-	callExpr := returnStmt.Results[0].(*ast.CallExpr)
+			greeterTypeName := fmt.Sprintf("%s.Greeter", pkg.ImportPath)
+			eval.RegisterIntrinsic(fmt.Sprintf("%s.NewGreeter", pkg.ImportPath), func(args ...object.Object) object.Object {
+				name := args[0].(*object.String).Value
+				return &object.Instance{TypeName: fmt.Sprintf("*%s", greeterTypeName), State: map[string]object.Object{"name": &object.String{Value: name}}}
+			})
+			eval.RegisterIntrinsic(fmt.Sprintf("(*%s).WithName", greeterTypeName), func(args ...object.Object) object.Object {
+				g := args[0].(*object.Instance)
+				name := args[1].(*object.String).Value
+				if g.State == nil {
+					g.State = make(map[string]object.Object)
+				}
+				g.State["name"] = &object.String{Value: name}
+				return g
+			})
+			eval.RegisterIntrinsic(fmt.Sprintf("(*%s).Greet", greeterTypeName), func(args ...object.Object) object.Object {
+				greetCalled = true
+				g := args[0].(*object.Instance)
+				name, _ := g.State["name"].(*object.String)
+				finalName = name.Value
+				return &object.String{Value: "Hello, " + finalName}
+			})
+			eval.RegisterIntrinsic("fmt.Println", func(args ...object.Object) object.Object {
+				return nil
+			})
 
-	result := eval.Eval(callExpr, env) // Evaluate in the top-level env where intrinsic is registered
+			for _, file := range pkg.AstFiles {
+				eval.Eval(file, env, pkg)
+			}
 
-	str, ok := result.(*object.String)
-	if !ok {
-		t.Fatalf("result is not a String, got %T (%s)", result, result.Inspect())
-	}
-	expected := "intrinsic says: wow"
-	if str.Value != expected {
-		t.Errorf("result.Value = %q, want %q", str.Value, expected)
-	}
+			mainFuncObj, _ := env.Get("main")
+			mainFunc := mainFuncObj.(*object.Function)
+			eval.applyFunction(mainFunc, []object.Object{}, pkg)
+			return nil
+		}
+
+		if _, err := scantest.Run(t, dir, []string{"."}, action); err != nil {
+			t.Fatalf("scantest.Run() failed: %v", err)
+		}
+		if !greetCalled {
+			t.Error("Greet method was not called")
+		}
+		if want := "gopher"; finalName != want {
+			t.Errorf("final name is wrong, want %q, got %q", want, finalName)
+		}
+	})
+
+	t.Run("nested function calls", func(t *testing.T) {
+		files := map[string]string{
+			"go.mod": "module example.com/me",
+			"main.go": `
+package main
+func add(a, b int) int { return a + b }
+func main() {
+	add(add(1, 2), 3)
+}`,
+		}
+		dir, cleanup := scantest.WriteFiles(t, files)
+		defer cleanup()
+
+		var callCount int
+		var lastResult int
+		action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
+			pkg := pkgs[0]
+			internalScanner, err := s.ScannerForSymgo()
+			if err != nil {
+				return err
+			}
+			eval := New(internalScanner, s.Logger)
+			env := object.NewEnvironment()
+
+			eval.RegisterIntrinsic(fmt.Sprintf("%s.add", pkg.ImportPath), func(args ...object.Object) object.Object {
+				callCount++
+				a := args[0].(*object.Integer).Value
+				b := args[1].(*object.Integer).Value
+				result := int(a + b)
+				if callCount == 2 {
+					lastResult = result
+				}
+				return &object.Integer{Value: int64(result)}
+			})
+
+			for _, file := range pkg.AstFiles {
+				eval.Eval(file, env, pkg)
+			}
+
+			mainFuncObj, _ := env.Get("main")
+			mainFunc := mainFuncObj.(*object.Function)
+			eval.applyFunction(mainFunc, []object.Object{}, pkg)
+			return nil
+		}
+
+		if _, err := scantest.Run(t, dir, []string{"."}, action); err != nil {
+			t.Fatalf("scantest.Run() failed: %v", err)
+		}
+		if callCount != 2 {
+			t.Errorf("expected add to be called 2 times, but got %d", callCount)
+		}
+		if want := 6; lastResult != want {
+			t.Errorf("final result is wrong, want %d, got %d", want, lastResult)
+		}
+	})
 }

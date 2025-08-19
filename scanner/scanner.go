@@ -308,7 +308,7 @@ func (s *Scanner) scanGoFiles(ctx context.Context, filePaths []string, pkgDirPat
 	for i, fileAst := range parsedFiles {
 		filePath := info.Files[i]
 		info.AstFiles[filePath] = fileAst
-		importLookup := s.buildImportLookup(fileAst)
+			importLookup := s.BuildImportLookup(fileAst)
 
 		for _, decl := range fileAst.Decls {
 			switch d := decl.(type) {
@@ -357,7 +357,8 @@ func (s *Scanner) resolveEnums(pkgInfo *PackageInfo) {
 	}
 }
 
-func (s *Scanner) buildImportLookup(file *ast.File) map[string]string {
+// BuildImportLookup creates a map of local import names to their full package paths.
+func (s *Scanner) BuildImportLookup(file *ast.File) map[string]string {
 	importLookup := make(map[string]string)
 	for _, i := range file.Imports {
 		path := strings.Trim(i.Path.Value, `"`)
@@ -387,7 +388,7 @@ func (s *Scanner) parseGenDecl(ctx context.Context, decl *ast.GenDecl, info *Pac
 			if vs, ok := spec.(*ast.ValueSpec); ok {
 				var currentSpecType *FieldType
 				if vs.Type != nil {
-					currentSpecType = s.parseTypeExpr(ctx, vs.Type, nil, info, importLookup)
+					currentSpecType = s.TypeInfoFromExpr(ctx, vs.Type, nil, info, importLookup)
 					lastConstType = currentSpecType
 				} else {
 					currentSpecType = lastConstType
@@ -432,7 +433,7 @@ func (s *Scanner) parseGenDecl(ctx context.Context, decl *ast.GenDecl, info *Pac
 			if vs, ok := spec.(*ast.ValueSpec); ok {
 				var varType *FieldType
 				if vs.Type != nil {
-					varType = s.parseTypeExpr(ctx, vs.Type, nil, info, importLookup)
+					varType = s.TypeInfoFromExpr(ctx, vs.Type, nil, info, importLookup)
 				}
 
 				for _, name := range vs.Names {
@@ -642,7 +643,7 @@ func (s *Scanner) parseTypeSpec(ctx context.Context, sp *ast.TypeSpec, info *Pac
 		typeInfo.Func = s.parseFuncType(ctx, t, typeInfo.TypeParams, info, importLookup)
 	default:
 		typeInfo.Kind = AliasKind
-		typeInfo.Underlying = s.parseTypeExpr(ctx, sp.Type, typeInfo.TypeParams, info, importLookup)
+		typeInfo.Underlying = s.TypeInfoFromExpr(ctx, sp.Type, typeInfo.TypeParams, info, importLookup)
 	}
 	return typeInfo
 }
@@ -655,7 +656,7 @@ func (s *Scanner) parseTypeParamList(ctx context.Context, typeParamFields []*ast
 	for _, typeParamField := range typeParamFields {
 		var constraintFieldType *FieldType
 		if constraintExpr := typeParamField.Type; constraintExpr != nil {
-			constraintFieldType = s.parseTypeExpr(ctx, constraintExpr, nil, info, importLookup)
+			constraintFieldType = s.TypeInfoFromExpr(ctx, constraintExpr, nil, info, importLookup)
 			if constraintFieldType != nil {
 				constraintFieldType.IsConstraint = true
 			}
@@ -690,7 +691,7 @@ func (s *Scanner) parseInterfaceType(ctx context.Context, it *ast.InterfaceType,
 			methodInfo.Results = parsedFuncDetails.Results
 			interfaceInfo.Methods = append(interfaceInfo.Methods, methodInfo)
 		} else {
-			embeddedType := s.parseTypeExpr(ctx, field.Type, currentTypeParams, info, importLookup)
+			embeddedType := s.TypeInfoFromExpr(ctx, field.Type, currentTypeParams, info, importLookup)
 			interfaceInfo.Methods = append(interfaceInfo.Methods, &MethodInfo{
 				Name:    fmt.Sprintf("embedded_%s", embeddedType.String()),
 				Results: []*FieldInfo{{Type: embeddedType}},
@@ -703,7 +704,7 @@ func (s *Scanner) parseInterfaceType(ctx context.Context, it *ast.InterfaceType,
 func (s *Scanner) parseStructType(ctx context.Context, st *ast.StructType, currentTypeParams []*TypeParamInfo, info *PackageInfo, importLookup map[string]string) *StructInfo {
 	structInfo := &StructInfo{}
 	for _, field := range st.Fields.List {
-		fieldType := s.parseTypeExpr(ctx, field.Type, currentTypeParams, info, importLookup)
+		fieldType := s.TypeInfoFromExpr(ctx, field.Type, currentTypeParams, info, importLookup)
 		var tag string
 		if field.Tag != nil {
 			tag = strings.Trim(field.Tag.Value, "`")
@@ -755,7 +756,7 @@ func (s *Scanner) parseFuncDecl(ctx context.Context, f *ast.FuncDecl, absFilePat
 		}
 
 		var receiverBaseTypeParams []*TypeParamInfo
-		parsedRecvFieldType := s.parseTypeExpr(ctx, recvField.Type, funcOwnTypeParams, pkgInfo, importLookup)
+		parsedRecvFieldType := s.TypeInfoFromExpr(ctx, recvField.Type, funcOwnTypeParams, pkgInfo, importLookup)
 
 		if parsedRecvFieldType != nil {
 			baseRecvTypeName := parsedRecvFieldType.Name
@@ -770,7 +771,7 @@ func (s *Scanner) parseFuncDecl(ctx context.Context, f *ast.FuncDecl, absFilePat
 				for _, ti := range pkgInfo.Types {
 					if ti.Name == baseRecvTypeName {
 						receiverBaseTypeParams = ti.TypeParams
-						parsedRecvFieldType = s.parseTypeExpr(ctx, recvField.Type, receiverBaseTypeParams, pkgInfo, importLookup)
+						parsedRecvFieldType = s.TypeInfoFromExpr(ctx, recvField.Type, receiverBaseTypeParams, pkgInfo, importLookup)
 						break
 					}
 				}
@@ -811,7 +812,7 @@ func (s *Scanner) parseFuncType(ctx context.Context, ft *ast.FuncType, currentTy
 func (s *Scanner) parseFieldList(ctx context.Context, fields []*ast.Field, currentTypeParams []*TypeParamInfo, info *PackageInfo, importLookup map[string]string) []*FieldInfo {
 	var result []*FieldInfo
 	for _, field := range fields {
-		fieldType := s.parseTypeExpr(ctx, field.Type, currentTypeParams, info, importLookup)
+		fieldType := s.TypeInfoFromExpr(ctx, field.Type, currentTypeParams, info, importLookup)
 		if len(field.Names) > 0 {
 			for _, name := range field.Names {
 				result = append(result, &FieldInfo{Name: name.Name, Type: fieldType, Doc: commentText(field.Doc)})
@@ -823,7 +824,10 @@ func (s *Scanner) parseFieldList(ctx context.Context, fields []*ast.Field, curre
 	return result
 }
 
-func (s *Scanner) parseTypeExpr(ctx context.Context, expr ast.Expr, currentTypeParams []*TypeParamInfo, info *PackageInfo, importLookup map[string]string) *FieldType {
+// TypeInfoFromExpr resolves an AST expression that represents a type into a FieldType.
+// This is the core type-parsing logic, exposed for tools that need to resolve
+// type information dynamically.
+func (s *Scanner) TypeInfoFromExpr(ctx context.Context, expr ast.Expr, currentTypeParams []*TypeParamInfo, info *PackageInfo, importLookup map[string]string) *FieldType {
 	ft := &FieldType{Resolver: s.resolver}
 	switch t := expr.(type) {
 	case *ast.Ident:
@@ -857,7 +861,7 @@ func (s *Scanner) parseTypeExpr(ctx context.Context, expr ast.Expr, currentTypeP
 			}
 		}
 	case *ast.StarExpr:
-		elemType := s.parseTypeExpr(ctx, t.X, currentTypeParams, info, importLookup)
+		elemType := s.TypeInfoFromExpr(ctx, t.X, currentTypeParams, info, importLookup)
 		return &FieldType{
 			Resolver:           s.resolver,
 			Name:               elemType.Name,
@@ -897,32 +901,32 @@ func (s *Scanner) parseTypeExpr(ctx context.Context, expr ast.Expr, currentTypeP
 		ft.FullImportPath = pkgImportPath
 		ft.Name = t.Sel.Name
 	case *ast.IndexExpr:
-		genericType := s.parseTypeExpr(ctx, t.X, currentTypeParams, info, importLookup)
-		typeArg := s.parseTypeExpr(ctx, t.Index, currentTypeParams, info, importLookup)
+		genericType := s.TypeInfoFromExpr(ctx, t.X, currentTypeParams, info, importLookup)
+		typeArg := s.TypeInfoFromExpr(ctx, t.Index, currentTypeParams, info, importLookup)
 		genericType.TypeArgs = append(genericType.TypeArgs, typeArg)
 		return genericType
 	case *ast.IndexListExpr:
-		genericType := s.parseTypeExpr(ctx, t.X, currentTypeParams, info, importLookup)
+		genericType := s.TypeInfoFromExpr(ctx, t.X, currentTypeParams, info, importLookup)
 		for _, indexExpr := range t.Indices {
-			typeArg := s.parseTypeExpr(ctx, indexExpr, currentTypeParams, info, importLookup)
+			typeArg := s.TypeInfoFromExpr(ctx, indexExpr, currentTypeParams, info, importLookup)
 			genericType.TypeArgs = append(genericType.TypeArgs, typeArg)
 		}
 		return genericType
 	case *ast.ArrayType:
 		ft.IsSlice = true
 		ft.Name = "slice"
-		ft.Elem = s.parseTypeExpr(ctx, t.Elt, currentTypeParams, info, importLookup)
+		ft.Elem = s.TypeInfoFromExpr(ctx, t.Elt, currentTypeParams, info, importLookup)
 	case *ast.MapType:
 		ft.IsMap = true
 		ft.Name = "map"
-		ft.MapKey = s.parseTypeExpr(ctx, t.Key, currentTypeParams, info, importLookup)
-		ft.Elem = s.parseTypeExpr(ctx, t.Value, currentTypeParams, info, importLookup)
+		ft.MapKey = s.TypeInfoFromExpr(ctx, t.Key, currentTypeParams, info, importLookup)
+		ft.Elem = s.TypeInfoFromExpr(ctx, t.Value, currentTypeParams, info, importLookup)
 	case *ast.InterfaceType:
 		ft.Name = "interface{}"
 	case *ast.Ellipsis:
 		ft.IsSlice = true
 		ft.Name = "slice"
-		ft.Elem = s.parseTypeExpr(ctx, t.Elt, currentTypeParams, info, importLookup)
+		ft.Elem = s.TypeInfoFromExpr(ctx, t.Elt, currentTypeParams, info, importLookup)
 	default:
 		ft.Name = fmt.Sprintf("unhandled_type_%T", t)
 	}

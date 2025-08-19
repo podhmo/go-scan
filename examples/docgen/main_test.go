@@ -36,6 +36,14 @@ func TestDocgen(t *testing.T) {
 	}
 
 	// Verification
+	userSchema := &openapi.Schema{
+		Type: "object",
+		Properties: map[string]*openapi.Schema{
+			"id":   {Type: "integer", Format: "int32"},
+			"name": {Type: "string"},
+		},
+	}
+
 	want := &openapi.OpenAPI{
 		OpenAPI: "3.1.0",
 		Info: openapi.Info{
@@ -47,10 +55,41 @@ func TestDocgen(t *testing.T) {
 				Get: &openapi.Operation{
 					OperationID: "listUsers",
 					Description: "listUsers handles the GET /users endpoint.\nIt returns a list of all users.",
+					Responses: map[string]*openapi.Response{
+						"200": {
+							Description: "OK",
+							Content: map[string]openapi.MediaType{
+								"application/json": {
+									Schema: &openapi.Schema{
+										Type:  "array",
+										Items: userSchema,
+									},
+								},
+							},
+						},
+					},
 				},
 				Post: &openapi.Operation{
 					OperationID: "createUser",
 					Description: "createUser handles the POST /users endpoint.\nIt creates a new user.",
+					RequestBody: &openapi.RequestBody{
+						Required: true,
+						Content: map[string]openapi.MediaType{
+							"application/json": {
+								Schema: userSchema,
+							},
+						},
+					},
+					Responses: map[string]*openapi.Response{
+						"200": {
+							Description: "OK",
+							Content: map[string]openapi.MediaType{
+								"application/json": {
+									Schema: userSchema,
+								},
+							},
+						},
+					},
 				},
 			},
 		},

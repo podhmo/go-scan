@@ -60,11 +60,11 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
         - [x] Support basic AST nodes: `ast.BasicLit`, `ast.Ident`.
         - [x] Support basic AST nodes: `ast.AssignStmt`, `ast.ReturnStmt`.
         - [x] Support basic control flow: `if`, `for`, `switch` (heuristic-based).
-    - [ ] **Import & Symbol Resolution**:
-        - [ ] Handle `import` statements by creating placeholder package objects.
-        - [ ] Implement lazy, on-demand package loading using `go-scan` when a symbol from an unloaded package is accessed (e.g., `pkg.Symbol`).
-        - [ ] Integrate the resolved symbol information into the `symgo` scope.
-        - [ ] (Note: The lazy-loading mechanism from the `minigo` implementation can be used as a reference.)
+    - [x] **Import & Symbol Resolution**:
+        - [x] Handle `import` statements by creating placeholder package objects.
+        - [x] Implement lazy, on-demand package loading using `go-scan` when a symbol from an unloaded package is accessed (e.g., `pkg.Symbol`).
+        - [x] Integrate the resolved symbol information into the `symgo` scope.
+        - [x] (Note: The lazy-loading mechanism from the `minigo` implementation can be used as a reference.)
     - [ ] **Function Evaluation Strategy**:
         - [ ] Implement recursive evaluation for intra-module function calls.
         - [ ] Implement an intrinsic function registry (`symgo/intrinsics`).

@@ -28,7 +28,37 @@ type PathItem struct {
 
 // Operation describes a single API operation on a path.
 type Operation struct {
-	Summary     string `json:"summary,omitempty"`
-	Description string `json:"description,omitempty"`
-	OperationID string `json:"operationId,omitempty"`
+	Summary     string               `json:"summary,omitempty"`
+	Description string               `json:"description,omitempty"`
+	OperationID string               `json:"operationId,omitempty"`
+	RequestBody *RequestBody         `json:"requestBody,omitempty"`
+	Responses   map[string]*Response `json:"responses,omitempty"`
+}
+
+// RequestBody describes a single request body.
+type RequestBody struct {
+	Description string               `json:"description,omitempty"`
+	Content     map[string]MediaType `json:"content"`
+	Required    bool                 `json:"required,omitempty"`
+}
+
+// Response describes a single response from an API Operation.
+type Response struct {
+	Description string               `json:"description"`
+	Content     map[string]MediaType `json:"content,omitempty"`
+}
+
+// MediaType provides schema and examples for the media type.
+type MediaType struct {
+	Schema *Schema `json:"schema,omitempty"`
+}
+
+// Schema defines the schema for a type.
+type Schema struct {
+	Type        string             `json:"type,omitempty"`
+	Description string             `json:"description,omitempty"`
+	Properties  map[string]*Schema `json:"properties,omitempty"`
+	Items       *Schema            `json:"items,omitempty"`
+	Format      string             `json:"format,omitempty"` // e.g., "int32", "int64"
+	Ref         string             `json:"$ref,omitempty"`
 }

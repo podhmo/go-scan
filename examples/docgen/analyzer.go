@@ -19,7 +19,11 @@ type Analyzer struct {
 
 // NewAnalyzer creates a new Analyzer.
 func NewAnalyzer(s *goscan.Scanner) (*Analyzer, error) {
-	interp, err := symgo.NewInterpreter(s, s.Logger)
+	internalScanner, err := s.ScannerForSymgo()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get internal scanner: %w", err)
+	}
+	interp, err := symgo.NewInterpreter(internalScanner, s.Logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create symgo interpreter: %w", err)
 	}
@@ -76,12 +80,12 @@ func (a *Analyzer) Analyze(ctx context.Context, importPath string, entrypoint st
 	// The core analysis is now driven by the symgo interpreter.
 	// First, evaluate the entire file of the entrypoint. This will populate the
 	// interpreter's environment with imports and top-level declarations.
-	if _, err := a.interpreter.Eval(ctx, entrypointFile); err != nil {
+	if _, err := a.interpreter.Eval(entrypointFile, pkg); err != nil {
 		fmt.Printf("info: error during file-level symgo eval: %v\n", err)
 	}
 
 	// Then, start evaluation from the body of the entrypoint function.
-	if _, err := a.interpreter.Eval(ctx, entrypointFunc.AstDecl.Body); err != nil {
+	if _, err := a.interpreter.Eval(entrypointFunc.AstDecl.Body, pkg); err != nil {
 		// In a real application, this would use a proper logger.
 		fmt.Printf("info: error during body-level symgo eval: %v\n", err)
 	}
@@ -128,6 +132,11 @@ func (a *Analyzer) analyzeHandleFunc(interp *symgo.Interpreter, args []symgo.Obj
 		op.Description = strings.TrimSpace(handlerDecl.Doc.Text())
 	}
 
+	// Analyze the handler body for request/response schemas
+	if handlerDecl.Body != nil {
+		a.analyzeHandlerBody(handlerObj, op)
+	}
+
 	if a.OpenAPI.Paths[path] == nil {
 		a.OpenAPI.Paths[path] = &openapi.PathItem{}
 	}
@@ -153,4 +162,117 @@ func (a *Analyzer) analyzeHandleFunc(interp *symgo.Interpreter, args []symgo.Obj
 	}
 
 	return nil
+}
+
+// analyzeHandlerBody analyzes the body of an HTTP handler function to find
+// request and response schemas.
+func (a *Analyzer) analyzeHandlerBody(handler *symgo.Function, op *openapi.Operation) {
+	pkg, err := a.Scanner.ScanPackageByPos(context.Background(), handler.Decl.Pos())
+	if err != nil {
+		fmt.Printf("warn: failed to get package for handler %q: %v\n", handler.Name.Name, err)
+		return
+	}
+
+	// Create a new environment for the handler's execution, enclosing the function's definition environment.
+	handlerEnv := symgo.NewEnclosedEnvironment(handler.Env)
+
+	file := pkg.Fset.File(handler.Decl.Pos())
+	if file == nil {
+		fmt.Printf("warn: could not find file for handler %q\n", handler.Name.Name)
+		return
+	}
+	astFile, ok := pkg.AstFiles[file.Name()]
+	if !ok {
+		fmt.Printf("warn: could not find AST file for handler %q\n", handler.Name.Name)
+		return
+	}
+	importLookup := a.Scanner.BuildImportLookup(astFile)
+
+	// Populate the environment with the function's parameters.
+	if handler.Decl.Type.Params != nil {
+		for _, field := range handler.Decl.Type.Params.List {
+			fieldType := a.Scanner.TypeInfoFromExpr(context.Background(), field.Type, nil, pkg, importLookup)
+			typeInfo, _ := fieldType.Resolve(context.Background())
+			for _, name := range field.Names {
+				handlerEnv.Set(name.Name, &symgo.Variable{
+					Name: name.Name,
+					BaseObject: symgo.BaseObject{
+						ResolvedTypeInfo: typeInfo,
+					},
+					Value: &symgo.SymbolicPlaceholder{Reason: "function parameter"},
+				})
+			}
+		}
+	}
+
+	// Push a new scope for temporary intrinsics for this handler.
+	intrinsics := a.buildJSONIntrinsics(op)
+	a.interpreter.PushIntrinsics(intrinsics)
+	defer a.interpreter.PopIntrinsics() // Ensure we clean up the scope.
+
+	// Evaluate the handler's body in the new, parameter-populated environment.
+	a.interpreter.EvalWithEnv(handler.Decl.Body, handlerEnv, pkg)
+}
+
+// buildJSONIntrinsics creates the map of intrinsic handlers for JSON analysis.
+func (a *Analyzer) buildJSONIntrinsics(op *openapi.Operation) map[string]symgo.IntrinsicFunc {
+	intrinsics := make(map[string]symgo.IntrinsicFunc)
+
+	// Hook for json.NewDecoder(r.Body) -> *json.Decoder
+	intrinsics["encoding/json.NewDecoder"] = func(i *symgo.Interpreter, args []symgo.Object) symgo.Object {
+		return &symgo.Instance{TypeName: "encoding/json.Decoder"}
+	}
+
+	// Hook for (*json.Decoder).Decode(&v)
+	intrinsics["(*encoding/json.Decoder).Decode"] = func(i *symgo.Interpreter, args []symgo.Object) symgo.Object {
+		if len(args) != 2 {
+			return &symgo.SymbolicPlaceholder{Reason: "decode error"}
+		}
+		ptr, ok := args[1].(*symgo.Pointer)
+		if !ok {
+			return &symgo.SymbolicPlaceholder{Reason: "decode error"}
+		}
+		typeInfo := ptr.TypeInfo()
+		if typeInfo != nil {
+			schema := buildSchemaForType(context.Background(), typeInfo, make(map[string]*openapi.Schema))
+			if schema != nil {
+				op.RequestBody = &openapi.RequestBody{
+					Content:  map[string]openapi.MediaType{"application/json": {Schema: schema}},
+					Required: true,
+				}
+			}
+		}
+		return &symgo.SymbolicPlaceholder{Reason: "result of json.Decode"}
+	}
+
+	// Hook for json.NewEncoder(w) -> *json.Encoder
+	intrinsics["encoding/json.NewEncoder"] = func(i *symgo.Interpreter, args []symgo.Object) symgo.Object {
+		return &symgo.Instance{TypeName: "encoding/json.Encoder"}
+	}
+
+	// Hook for (*json.Encoder).Encode(v)
+	intrinsics["(*encoding/json.Encoder).Encode"] = func(i *symgo.Interpreter, args []symgo.Object) symgo.Object {
+		if len(args) != 2 {
+			return &symgo.SymbolicPlaceholder{Reason: "encode error"}
+		}
+		typeInfo := args[1].TypeInfo()
+		if typeInfo != nil {
+			fmt.Printf("ENCODE: found type %s\n", typeInfo.Name)
+			schema := buildSchemaForType(context.Background(), typeInfo, make(map[string]*openapi.Schema))
+			if schema != nil {
+				if op.Responses == nil {
+					op.Responses = make(map[string]*openapi.Response)
+				}
+				op.Responses["200"] = &openapi.Response{
+					Description: "OK",
+					Content:     map[string]openapi.MediaType{"application/json": {Schema: schema}},
+				}
+			}
+		} else {
+			fmt.Println("ENCODE: typeInfo is nil")
+		}
+		return &symgo.SymbolicPlaceholder{Reason: "result of json.Encode"}
+	}
+
+	return intrinsics
 }

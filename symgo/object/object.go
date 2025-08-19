@@ -3,6 +3,8 @@ package object
 import (
 	"fmt"
 	"go/ast"
+
+	goscan "github.com/podhmo/go-scan"
 )
 
 // ObjectType is a string representation of an object's type.
@@ -18,6 +20,8 @@ const (
 	PACKAGE_OBJ      ObjectType = "PACKAGE"
 	INTRINSIC_OBJ    ObjectType = "INTRINSIC"
 	INSTANCE_OBJ     ObjectType = "INSTANCE"
+	VARIABLE_OBJ     ObjectType = "VARIABLE"
+	POINTER_OBJ      ObjectType = "POINTER"
 )
 
 // Object is the interface that all value types in our symbolic engine will implement.
@@ -26,12 +30,26 @@ type Object interface {
 	Type() ObjectType
 	// Inspect returns a string representation of the object's value.
 	Inspect() string
+	// TypeInfo returns the underlying go-scan type information, if available.
+	// This is the bridge between the symbolic world and the static type world.
+	TypeInfo() *goscan.TypeInfo
+}
+
+// BaseObject provides a default implementation for the TypeInfo method.
+type BaseObject struct {
+	ResolvedTypeInfo *goscan.TypeInfo
+}
+
+// TypeInfo returns the stored type information.
+func (b *BaseObject) TypeInfo() *goscan.TypeInfo {
+	return b.ResolvedTypeInfo
 }
 
 // --- String Object ---
 
 // String represents a string value.
 type String struct {
+	BaseObject
 	Value string
 }
 
@@ -45,6 +63,7 @@ func (s *String) Inspect() string { return s.Value }
 
 // Function represents a user-defined function in the code being analyzed.
 type Function struct {
+	BaseObject
 	Name       *ast.Ident
 	Parameters *ast.FieldList
 	Body       *ast.BlockStmt
@@ -64,6 +83,7 @@ func (f *Function) Inspect() string {
 
 // Intrinsic represents a built-in function that is implemented in Go.
 type Intrinsic struct {
+	BaseObject
 	// The Go function that implements the intrinsic's behavior.
 	Fn func(args ...Object) Object
 }
@@ -80,6 +100,7 @@ func (i *Intrinsic) Inspect() string { return "intrinsic function" }
 // It's used to track objects returned by intrinsics (like constructors)
 // so that method calls on them can be resolved.
 type Instance struct {
+	BaseObject
 	TypeName string // e.g., "net/http.ServeMux"
 }
 
@@ -93,6 +114,7 @@ func (i *Instance) Inspect() string { return fmt.Sprintf("instance<%s>", i.TypeN
 
 // Package represents an imported Go package.
 type Package struct {
+	BaseObject
 	Name string
 	Path string
 	Env  *Environment // The environment containing all package-level declarations.
@@ -110,6 +132,7 @@ func (p *Package) Inspect() string {
 
 // Error represents an error that occurred during symbolic evaluation.
 type Error struct {
+	BaseObject
 	Message string
 }
 
@@ -124,6 +147,7 @@ func (e *Error) Inspect() string { return "Error: " + e.Message }
 // SymbolicPlaceholder represents a value that cannot be determined at analysis time.
 // This is a key component of the symbolic execution engine.
 type SymbolicPlaceholder struct {
+	BaseObject
 	// Reason describes why this value is symbolic (e.g., "external function call", "complex expression").
 	Reason string
 }
@@ -141,6 +165,7 @@ func (sp *SymbolicPlaceholder) Inspect() string {
 // ReturnValue represents the value being returned from a function.
 // It wraps another Object.
 type ReturnValue struct {
+	BaseObject
 	Value Object
 }
 
@@ -149,6 +174,40 @@ func (rv *ReturnValue) Type() ObjectType { return RETURN_VALUE_OBJ }
 
 // Inspect returns a string representation of the wrapped value.
 func (rv *ReturnValue) Inspect() string { return rv.Value.Inspect() }
+
+// --- Variable Object ---
+
+// Variable represents a declared variable in the environment.
+// It holds a value and its resolved type information.
+type Variable struct {
+	BaseObject
+	Name  string
+	Value Object
+}
+
+// Type returns the type of the Variable object.
+func (v *Variable) Type() ObjectType { return VARIABLE_OBJ }
+
+// Inspect returns a string representation of the variable's value.
+func (v *Variable) Inspect() string {
+	return v.Value.Inspect()
+}
+
+// --- Pointer Object ---
+
+// Pointer represents a pointer to another object.
+type Pointer struct {
+	BaseObject
+	Value Object
+}
+
+// Type returns the type of the Pointer object.
+func (p *Pointer) Type() ObjectType { return POINTER_OBJ }
+
+// Inspect returns a string representation of the pointer.
+func (p *Pointer) Inspect() string {
+	return fmt.Sprintf("&%s", p.Value.Inspect())
+}
 
 // --- Environment ---
 

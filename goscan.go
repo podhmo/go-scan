@@ -78,6 +78,30 @@ func (s *Scanner) Fset() *token.FileSet {
 	return s.fset
 }
 
+// BuildImportLookup creates a map of local import names to their full package paths for a given file.
+func (s *Scanner) BuildImportLookup(file *ast.File) map[string]string {
+	return s.scanner.BuildImportLookup(file)
+}
+
+// TypeInfoFromExpr resolves an AST expression that represents a type into a FieldType.
+func (s *Scanner) TypeInfoFromExpr(ctx context.Context, expr ast.Expr, currentTypeParams []*scanner.TypeParamInfo, info *scanner.PackageInfo, importLookup map[string]string) *scanner.FieldType {
+	return s.scanner.TypeInfoFromExpr(ctx, expr, currentTypeParams, info, importLookup)
+}
+
+// ScanPackageByPos finds and scans the package containing the given token.Pos.
+func (s *Scanner) ScanPackageByPos(ctx context.Context, pos token.Pos) (*scanner.PackageInfo, error) {
+	if !pos.IsValid() {
+		return nil, fmt.Errorf("invalid position")
+	}
+	file := s.fset.File(pos)
+	if file == nil {
+		return nil, fmt.Errorf("no file found for position")
+	}
+
+	pkgDir := filepath.Dir(file.Name())
+	return s.ScanPackage(ctx, pkgDir)
+}
+
 // ScannerForSymgo is a temporary helper for tests to access the internal scanner.
 // TODO: Refactor evaluator to use the top-level goscan.Scanner instead.
 func (s *Scanner) ScannerForSymgo() (*scanner.Scanner, error) {

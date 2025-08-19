@@ -1,12 +1,11 @@
 package symgo
 
 import (
-	"context"
 	"fmt"
 	"go/ast"
 	"log/slog"
 
-	goscan "github.com/podhmo/go-scan"
+	"github.com/podhmo/go-scan/scanner"
 	"github.com/podhmo/go-scan/symgo/evaluator"
 	"github.com/podhmo/go-scan/symgo/object"
 )
@@ -17,20 +16,28 @@ type Function = object.Function
 type Error = object.Error
 type Instance = object.Instance
 type String = object.String
+type Pointer = object.Pointer
+type Variable = object.Variable
+type SymbolicPlaceholder = object.SymbolicPlaceholder
+type BaseObject = object.BaseObject
+type Environment = object.Environment
+
+// NewEnclosedEnvironment creates a new environment that is enclosed by an outer one.
+var NewEnclosedEnvironment = object.NewEnclosedEnvironment
 
 // IntrinsicFunc defines the signature for a custom function handler.
 type IntrinsicFunc func(eval *Interpreter, args []Object) Object
 
 // Interpreter is the main public entry point for the symgo engine.
 type Interpreter struct {
-	scanner   *goscan.Scanner
+	scanner   *scanner.Scanner
 	eval      *evaluator.Evaluator
 	globalEnv *object.Environment
 }
 
 // NewInterpreter creates a new symgo interpreter.
 // It requires a pre-configured go-scan.Scanner instance.
-func NewInterpreter(scanner *goscan.Scanner, logger *slog.Logger) (*Interpreter, error) {
+func NewInterpreter(scanner *scanner.Scanner, logger *slog.Logger) (*Interpreter, error) {
 	if scanner == nil {
 		return nil, fmt.Errorf("scanner cannot be nil")
 	}
@@ -46,8 +53,18 @@ func NewInterpreter(scanner *goscan.Scanner, logger *slog.Logger) (*Interpreter,
 }
 
 // Eval evaluates a given AST node in the interpreter's persistent environment.
-func (i *Interpreter) Eval(ctx context.Context, node ast.Node) (Object, error) {
-	result := i.eval.Eval(node, i.globalEnv)
+// It requires the PackageInfo of the file containing the node to resolve types correctly.
+func (i *Interpreter) Eval(node ast.Node, pkg *scanner.PackageInfo) (Object, error) {
+	result := i.eval.Eval(node, i.globalEnv, pkg)
+	if err, ok := result.(*Error); ok {
+		return nil, fmt.Errorf("%s", err.Message)
+	}
+	return result, nil
+}
+
+// EvalWithEnv evaluates a node using a specific environment instead of the global one.
+func (i *Interpreter) EvalWithEnv(node ast.Node, env *Environment, pkg *scanner.PackageInfo) (Object, error) {
+	result := i.eval.Eval(node, env, pkg)
 	if err, ok := result.(*Error); ok {
 		return nil, fmt.Errorf("%s", err.Message)
 	}
@@ -64,4 +81,17 @@ func (i *Interpreter) RegisterIntrinsic(key string, handler IntrinsicFunc) {
 		return handler(i, args)
 	}
 	i.eval.RegisterIntrinsic(key, wrappedHandler)
+}
+
+// PushIntrinsics creates a new temporary scope and registers a set of intrinsics on it.
+func (i *Interpreter) PushIntrinsics(intrinsics map[string]IntrinsicFunc) {
+	i.eval.PushIntrinsics()
+	for key, handler := range intrinsics {
+		i.RegisterIntrinsic(key, handler)
+	}
+}
+
+// PopIntrinsics removes the top-most intrinsic scope.
+func (i *Interpreter) PopIntrinsics() {
+	i.eval.PopIntrinsics()
 }

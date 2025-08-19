@@ -10,20 +10,20 @@ import (
 	"path"
 	"strconv"
 
-	goscan "github.com/podhmo/go-scan"
+	"github.com/podhmo/go-scan/scanner"
 	"github.com/podhmo/go-scan/symgo/intrinsics"
 	"github.com/podhmo/go-scan/symgo/object"
 )
 
 // Evaluator is the main object that evaluates the AST.
 type Evaluator struct {
-	scanner    *goscan.Scanner
+	scanner    *scanner.Scanner
 	intrinsics *intrinsics.Registry
 	logger     *slog.Logger
 }
 
 // New creates a new Evaluator.
-func New(scanner *goscan.Scanner, logger *slog.Logger) *Evaluator {
+func New(scanner *scanner.Scanner, logger *slog.Logger) *Evaluator {
 	if logger == nil {
 		logger = slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	}
@@ -44,38 +44,129 @@ func (e *Evaluator) GetIntrinsic(key string) (intrinsics.IntrinsicFunc, bool) {
 	return e.intrinsics.Get(key)
 }
 
+// PushIntrinsics creates a new temporary scope for intrinsics.
+func (e *Evaluator) PushIntrinsics() {
+	e.intrinsics.Push()
+}
+
+// PopIntrinsics removes the top-most temporary scope for intrinsics.
+func (e *Evaluator) PopIntrinsics() {
+	e.intrinsics.Pop()
+}
+
 // Eval is the main dispatch loop for the evaluator.
-func (e *Evaluator) Eval(node ast.Node, env *object.Environment) object.Object {
+func (e *Evaluator) Eval(node ast.Node, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
 	switch n := node.(type) {
 	case *ast.File:
-		return e.evalFile(n, env)
+		return e.evalFile(n, env, pkg)
 	case *ast.SelectorExpr:
-		return e.evalSelectorExpr(n, env)
+		return e.evalSelectorExpr(n, env, pkg)
 	case *ast.BasicLit:
 		return e.evalBasicLit(n)
 	case *ast.Ident:
 		return e.evalIdent(n, env)
 	case *ast.AssignStmt:
-		return e.evalAssignStmt(n, env)
+		return e.evalAssignStmt(n, env, pkg)
 	case *ast.BlockStmt:
-		return e.evalBlockStatement(n, env)
+		return e.evalBlockStatement(n, env, pkg)
 	case *ast.ReturnStmt:
-		return e.evalReturnStmt(n, env)
+		return e.evalReturnStmt(n, env, pkg)
 	case *ast.IfStmt:
-		return e.evalIfStmt(n, env)
+		return e.evalIfStmt(n, env, pkg)
 	case *ast.ForStmt:
-		return e.evalForStmt(n, env)
+		return e.evalForStmt(n, env, pkg)
 	case *ast.SwitchStmt:
-		return e.evalSwitchStmt(n, env)
+		return e.evalSwitchStmt(n, env, pkg)
 	case *ast.CallExpr:
-		return e.evalCallExpr(n, env)
+		return e.evalCallExpr(n, env, pkg)
 	case *ast.ExprStmt:
-		return e.Eval(n.X, env)
+		return e.Eval(n.X, env, pkg)
+	case *ast.DeclStmt:
+		return e.Eval(n.Decl, env, pkg)
+	case *ast.GenDecl:
+		return e.evalGenDecl(n, env, pkg)
+	case *ast.UnaryExpr:
+		return e.evalUnaryExpr(n, env, pkg)
 	}
 	return newError("evaluation not implemented for %T", node)
 }
 
-func (e *Evaluator) evalFile(file *ast.File, env *object.Environment) object.Object {
+func (e *Evaluator) evalUnaryExpr(node *ast.UnaryExpr, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
+	switch node.Op {
+	case token.AND:
+		val := e.Eval(node.X, env, pkg)
+		if isError(val) {
+			return val
+		}
+		// The pointer object should carry the type information of the value it points to.
+		ptr := &object.Pointer{Value: val}
+		typeInfo := val.TypeInfo()
+		if typeInfo != nil {
+			e.logger.Debug("evalUnaryExpr: attaching type to pointer", "type", typeInfo.Name)
+		} else {
+			e.logger.Debug("evalUnaryExpr: type info for pointer value is nil")
+		}
+		ptr.ResolvedTypeInfo = typeInfo
+		return ptr
+	}
+	return newError("unknown unary operator: %s", node.Op)
+}
+
+func (e *Evaluator) evalGenDecl(node *ast.GenDecl, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
+	if node.Tok != token.VAR {
+		return nil // We only care about var declarations for now.
+	}
+
+	// Find the AST file that contains the current declaration node.
+	if pkg == nil || pkg.Fset == nil {
+		return newError("package info or fset is missing, cannot resolve types")
+	}
+	file := pkg.Fset.File(node.Pos())
+	if file == nil {
+		return newError("could not find file for node position")
+	}
+	astFile, ok := pkg.AstFiles[file.Name()]
+	if !ok {
+		return newError("could not find ast.File for path: %s", file.Name())
+	}
+	importLookup := e.scanner.BuildImportLookup(astFile)
+
+	for _, spec := range node.Specs {
+		valSpec, ok := spec.(*ast.ValueSpec)
+		if !ok {
+			continue
+		}
+
+		var resolvedTypeInfo *scanner.TypeInfo
+		if valSpec.Type != nil {
+			fieldType := e.scanner.TypeInfoFromExpr(context.Background(), valSpec.Type, nil, pkg, importLookup)
+			if fieldType != nil {
+				// We resolve the type to get the full definition.
+				// The error is ignored for now, as it might be a type from an un-scanned package.
+				resolvedTypeInfo, _ = fieldType.Resolve(context.Background())
+			}
+		}
+
+		for _, name := range valSpec.Names {
+			if resolvedTypeInfo != nil {
+				e.logger.Debug("evalGenDecl: resolved type for var", "var", name.Name, "type", resolvedTypeInfo.Name)
+			} else {
+				e.logger.Debug("evalGenDecl: could not resolve type for var", "var", name.Name)
+			}
+			v := &object.Variable{
+				Name: name.Name,
+				BaseObject: object.BaseObject{
+					ResolvedTypeInfo: resolvedTypeInfo,
+				},
+				Value: &object.SymbolicPlaceholder{Reason: "uninitialized variable"},
+			}
+			env.Set(name.Name, v)
+		}
+	}
+	return nil
+}
+
+func (e *Evaluator) evalFile(file *ast.File, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
 	// Top-level declarations
 	// First, handle all imports to populate the environment with package placeholders.
 	for _, decl := range file.Decls {
@@ -137,10 +228,10 @@ func (e *Evaluator) evalImportSpec(spec ast.Spec, env *object.Environment) objec
 	return nil
 }
 
-func (e *Evaluator) evalSelectorExpr(n *ast.SelectorExpr, env *object.Environment) object.Object {
+func (e *Evaluator) evalSelectorExpr(n *ast.SelectorExpr, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
 	e.logger.Debug("evalSelectorExpr", "selector", n.Sel.Name)
 	// Evaluate the left-hand side of the selector (e.g., `http` in `http.HandleFunc`).
-	left := e.Eval(n.X, env)
+	left := e.Eval(n.X, env, pkg)
 	if isError(left) {
 		return left
 	}
@@ -158,21 +249,39 @@ func (e *Evaluator) evalSelectorExpr(n *ast.SelectorExpr, env *object.Environmen
 		}
 	}
 
+	// Handle field access on a variable with a known type.
+	if variable, ok := left.(*object.Variable); ok {
+		typeInfo := variable.TypeInfo()
+		if typeInfo != nil && typeInfo.Struct != nil {
+			for _, field := range typeInfo.Struct.Fields {
+				if field.Name == n.Sel.Name {
+					// Found the field. Return a new placeholder representing this field access.
+					// The new placeholder carries the type of the field.
+					fieldTypeInfo, _ := field.Type.Resolve(context.Background())
+					return &object.SymbolicPlaceholder{
+						BaseObject: object.BaseObject{ResolvedTypeInfo: fieldTypeInfo},
+						Reason:     fmt.Sprintf("field access %s.%s", variable.Name, field.Name),
+					}
+				}
+			}
+		}
+	}
+
 	// Check if the left-hand side is a package.
-	pkg, ok := left.(*object.Package)
+	leftPkg, ok := left.(*object.Package)
 	if !ok {
-		return newError("expected a package or an instance on the left side of selector, but got %s", left.Type())
+		return newError("expected a package, instance, or variable on the left side of selector, but got %s", left.Type())
 	}
 
 	// LAZY LOADING: If the package's environment is empty, it's a placeholder.
 	// We need to load its symbols using the scanner.
-	if pkg.Env.IsEmpty() {
+	if leftPkg.Env.IsEmpty() {
 		if e.scanner == nil {
-			return newError("scanner is not available, cannot load package %q", pkg.Path)
+			return newError("scanner is not available, cannot load package %q", leftPkg.Path)
 		}
-		pkgInfo, err := e.scanner.ScanPackageByImport(context.Background(), pkg.Path)
+		pkgInfo, err := e.scanner.ScanPackageByImport(context.Background(), leftPkg.Path)
 		if err != nil {
-			return newError("could not scan package %q: %v", pkg.Path, err)
+			return newError("could not scan package %q: %v", leftPkg.Path, err)
 		}
 
 		// Populate the package's environment with its exported symbols.
@@ -181,33 +290,33 @@ func (e *Evaluator) evalSelectorExpr(n *ast.SelectorExpr, env *object.Environmen
 				// Check if there is a registered intrinsic for this function.
 				key := pkgInfo.ImportPath + "." + f.Name
 				if intrinsicFn, ok := e.intrinsics.Get(key); ok {
-					pkg.Env.Set(f.Name, &object.Intrinsic{Fn: intrinsicFn})
+					leftPkg.Env.Set(f.Name, &object.Intrinsic{Fn: intrinsicFn})
 				} else {
-					pkg.Env.Set(f.Name, &object.SymbolicPlaceholder{Reason: fmt.Sprintf("external func %s.%s", pkg.Name, f.Name)})
+					leftPkg.Env.Set(f.Name, &object.SymbolicPlaceholder{Reason: fmt.Sprintf("external func %s.%s", leftPkg.Name, f.Name)})
 				}
 			}
 		}
 		for _, v := range pkgInfo.Variables {
 			if v.IsExported {
-				pkg.Env.Set(v.Name, &object.SymbolicPlaceholder{Reason: fmt.Sprintf("external var %s.%s", pkg.Name, v.Name)})
+				leftPkg.Env.Set(v.Name, &object.SymbolicPlaceholder{Reason: fmt.Sprintf("external var %s.%s", leftPkg.Name, v.Name)})
 			}
 		}
 		for _, c := range pkgInfo.Constants {
 			if c.IsExported {
-				pkg.Env.Set(c.Name, &object.SymbolicPlaceholder{Reason: fmt.Sprintf("external const %s.%s", pkg.Name, c.Name)})
+				leftPkg.Env.Set(c.Name, &object.SymbolicPlaceholder{Reason: fmt.Sprintf("external const %s.%s", leftPkg.Name, c.Name)})
 			}
 		}
 		for _, t := range pkgInfo.Types {
 			if ast.IsExported(t.Name) {
-				pkg.Env.Set(t.Name, &object.SymbolicPlaceholder{Reason: fmt.Sprintf("external type %s.%s", pkg.Name, t.Name)})
+				leftPkg.Env.Set(t.Name, &object.SymbolicPlaceholder{Reason: fmt.Sprintf("external type %s.%s", leftPkg.Name, t.Name)})
 			}
 		}
 	}
 
 	// Now that the package is loaded, look up the symbol.
-	symbol, ok := pkg.Env.Get(n.Sel.Name)
+	symbol, ok := leftPkg.Env.Get(n.Sel.Name)
 	if !ok {
-		return newError("undefined symbol: %s.%s", pkg.Name, n.Sel.Name)
+		return newError("undefined symbol: %s.%s", leftPkg.Name, n.Sel.Name)
 	}
 
 	return symbol
@@ -215,7 +324,7 @@ func (e *Evaluator) evalSelectorExpr(n *ast.SelectorExpr, env *object.Environmen
 
 // evalSwitchStmt evaluates a switch statement. It traverses all case clauses
 // to discover patterns that could occur in any branch.
-func (e *Evaluator) evalSwitchStmt(n *ast.SwitchStmt, env *object.Environment) object.Object {
+func (e *Evaluator) evalSwitchStmt(n *ast.SwitchStmt, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
 	// The result of a switch statement is the result of the last evaluated statement
 	// in the taken branch. Since we evaluate all branches, we'll just return the
 	// result of the last statement in the last case block for now.
@@ -226,7 +335,7 @@ func (e *Evaluator) evalSwitchStmt(n *ast.SwitchStmt, env *object.Environment) o
 				// Each case block gets its own scope
 				caseEnv := object.NewEnclosedEnvironment(env)
 				for _, stmt := range caseClause.Body {
-					result = e.Eval(stmt, caseEnv)
+					result = e.Eval(stmt, caseEnv, pkg)
 					// We don't break early on return/error here because we want
 					// to analyze all branches. A more sophisticated implementation
 					// might collect results from all branches.
@@ -240,27 +349,27 @@ func (e *Evaluator) evalSwitchStmt(n *ast.SwitchStmt, env *object.Environment) o
 // evalForStmt evaluates a for statement. Following the "bounded analysis" principle,
 // it evaluates the loop body exactly once to find patterns within it.
 // It ignores the loop's condition, initializer, and post-iteration statement.
-func (e *Evaluator) evalForStmt(n *ast.ForStmt, env *object.Environment) object.Object {
+func (e *Evaluator) evalForStmt(n *ast.ForStmt, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
 	// The body of the for loop has its own scope.
 	bodyEnv := object.NewEnclosedEnvironment(env)
-	return e.Eval(n.Body, bodyEnv)
+	return e.Eval(n.Body, bodyEnv, pkg)
 }
 
 // evalIfStmt evaluates an if statement. Following our heuristic-based approach,
 // it evaluates the body to see what *could* happen, without complex path forking.
 // For simplicity, it currently ignores the condition and the else block.
-func (e *Evaluator) evalIfStmt(n *ast.IfStmt, env *object.Environment) object.Object {
+func (e *Evaluator) evalIfStmt(n *ast.IfStmt, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
 	// The body of the if statement has its own scope.
 	bodyEnv := object.NewEnclosedEnvironment(env)
-	return e.Eval(n.Body, bodyEnv)
+	return e.Eval(n.Body, bodyEnv, pkg)
 }
 
-func (e *Evaluator) evalBlockStatement(block *ast.BlockStmt, env *object.Environment) object.Object {
+func (e *Evaluator) evalBlockStatement(block *ast.BlockStmt, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
 	var result object.Object
 	blockEnv := object.NewEnclosedEnvironment(env)
 
 	for _, stmt := range block.List {
-		result = e.Eval(stmt, blockEnv)
+		result = e.Eval(stmt, blockEnv, pkg)
 
 		if result != nil {
 			rt := result.Type()
@@ -273,19 +382,19 @@ func (e *Evaluator) evalBlockStatement(block *ast.BlockStmt, env *object.Environ
 	return result
 }
 
-func (e *Evaluator) evalReturnStmt(n *ast.ReturnStmt, env *object.Environment) object.Object {
+func (e *Evaluator) evalReturnStmt(n *ast.ReturnStmt, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
 	if len(n.Results) != 1 {
 		// For now, we only support single return values.
 		return newError("unsupported return statement: expected 1 result")
 	}
-	val := e.Eval(n.Results[0], env)
+	val := e.Eval(n.Results[0], env, pkg)
 	if isError(val) {
 		return val
 	}
 	return &object.ReturnValue{Value: val}
 }
 
-func (e *Evaluator) evalAssignStmt(n *ast.AssignStmt, env *object.Environment) object.Object {
+func (e *Evaluator) evalAssignStmt(n *ast.AssignStmt, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
 	// For now, we only support simple assignment like `x = ...`
 	if len(n.Lhs) != 1 || len(n.Rhs) != 1 {
 		return newError("unsupported assignment: expected 1 expression on each side")
@@ -297,8 +406,13 @@ func (e *Evaluator) evalAssignStmt(n *ast.AssignStmt, env *object.Environment) o
 		return newError("unsupported assignment target: expected an identifier")
 	}
 
+	// If assigning to the blank identifier, just evaluate the RHS and discard.
+	if ident.Name == "_" {
+		return e.Eval(n.Rhs[0], env, pkg)
+	}
+
 	// Evaluate the right-hand side.
-	val := e.Eval(n.Rhs[0], env)
+	val := e.Eval(n.Rhs[0], env, pkg)
 	if isError(val) {
 		return val
 	}
@@ -350,28 +464,28 @@ func isError(obj object.Object) bool {
 	return false
 }
 
-func (e *Evaluator) evalCallExpr(n *ast.CallExpr, env *object.Environment) object.Object {
+func (e *Evaluator) evalCallExpr(n *ast.CallExpr, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
 	// 1. Evaluate the function itself (e.g., the identifier or selector).
-	function := e.Eval(n.Fun, env)
+	function := e.Eval(n.Fun, env, pkg)
 	if isError(function) {
 		return function
 	}
 
 	// 2. Evaluate the arguments.
-	args := e.evalExpressions(n.Args, env)
+	args := e.evalExpressions(n.Args, env, pkg)
 	if len(args) == 1 && isError(args[0]) {
 		return args[0]
 	}
 
 	// 3. Apply the function.
-	return e.applyFunction(function, args)
+	return e.applyFunction(function, args, pkg)
 }
 
-func (e *Evaluator) evalExpressions(exps []ast.Expr, env *object.Environment) []object.Object {
+func (e *Evaluator) evalExpressions(exps []ast.Expr, env *object.Environment, pkg *scanner.PackageInfo) []object.Object {
 	var result []object.Object
 
 	for _, exp := range exps {
-		evaluated := e.Eval(exp, env)
+		evaluated := e.Eval(exp, env, pkg)
 		if isError(evaluated) {
 			return []object.Object{evaluated}
 		}
@@ -381,7 +495,7 @@ func (e *Evaluator) evalExpressions(exps []ast.Expr, env *object.Environment) []
 	return result
 }
 
-func (e *Evaluator) applyFunction(fn object.Object, args []object.Object) object.Object {
+func (e *Evaluator) applyFunction(fn object.Object, args []object.Object, pkg *scanner.PackageInfo) object.Object {
 	e.logger.Debug("applyFunction", "type", fn.Type(), "value", fn.Inspect())
 	switch fn := fn.(type) {
 	case *object.Function:
@@ -389,7 +503,7 @@ func (e *Evaluator) applyFunction(fn object.Object, args []object.Object) object
 		// Create a new environment for the function call, enclosed by the function's definition environment.
 		extendedEnv := e.extendFunctionEnv(fn, args)
 		// Evaluate the function's body in the new environment.
-		evaluated := e.Eval(fn.Body, extendedEnv)
+		evaluated := e.Eval(fn.Body, extendedEnv, pkg)
 		// Unwrap the return value.
 		if returnValue, ok := evaluated.(*object.ReturnValue); ok {
 			return returnValue.Value

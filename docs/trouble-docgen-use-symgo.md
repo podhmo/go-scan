@@ -10,17 +10,62 @@ The initial error message, `no required module provides package .../symgo`, was 
 
 The correct path forward is to create a new "facade" package at `symgo/symgo.go`. This package would provide a clean, public API for external tools like `docgen`, hiding the internal complexity of the evaluator and its sub-packages.
 
-## Required Features for a `symgo` Facade Package
+## Proposal: A `symgo.Interpreter` Facade
 
-To be usable by external tools, the new `symgo` package should expose the following:
+The correct path forward is to create a new "facade" package at `symgo/symgo.go`. This package would provide a clean, public API for external tools like `docgen`, hiding the internal complexity of the evaluator.
 
-1.  **A Public `Evaluator` Type**: An exported struct or interface that wraps the internal `symgo/evaluator.Evaluator`.
-2.  **A Public Constructor**: A `NewEvaluator(scanner *goscan.Scanner)` function that handles the setup, including bridging the `*goscan.Scanner` and the internal `*scanner.Scanner`.
-3.  **Public `Eval` Method**: A method on the public `Evaluator` to start the evaluation of a given AST node (e.g., `Eval(ctx context.Context, node ast.Node)`).
-4.  **Public Intrinsic Registration**: A method like `RegisterIntrinsic(fn types.Object, handlerFunc MyIntrinsicFunc)` to allow external tools to register custom handlers for functions.
-5.  **Exported Supporting Types**:
-    *   The `MyIntrinsicFunc` callback signature must be defined with exported types (e.g., `func(eval *Evaluator, args []Object) Object`).
-    *   Core types from `symgo/object` should be re-exported or aliased for convenience, such as `Object`, `Function`, `Error`, `String`, and `Void`.
+Inspired by `minigo/minigo.go`, this new package should introduce a central `Interpreter` type.
+
+```go
+// In new file symgo/interpreter.go (or symgo.go)
+
+package symgo
+
+import (
+    "context"
+    "go/ast"
+    "go/types"
+
+    goscan "github.com/podhmo/go-scan"
+    "github.com/podhmo/go-scan/symgo/evaluator"
+    "github.com/podhmo/go-scan/symgo/object"
+)
+
+// Re-export core object types for convenience.
+type Object = object.Object
+type Function = object.Function
+type Error = object.Error
+
+// IntrinsicFunc defines the signature for a custom function handler.
+type IntrinsicFunc func(eval *Interpreter, args []Object) Object
+
+// Interpreter is the main public entry point for the symgo engine.
+type Interpreter struct {
+    scanner *goscan.Scanner
+    eval    *evaluator.Evaluator
+    // ... other internal fields
+}
+
+// NewInterpreter creates a new symgo interpreter.
+func NewInterpreter(scanner *goscan.Scanner) (*Interpreter, error) {
+    // ... handles creation of internal evaluator, etc.
+}
+
+// Eval evaluates a given AST node in a new, empty environment.
+func (i *Interpreter) Eval(ctx context.Context, node ast.Node) (Object, error) {
+    // ... handles environment setup and calls the internal evaluator
+}
+
+// RegisterIntrinsic registers a custom handler for a given function object.
+func (i *Interpreter) RegisterIntrinsic(target *types.Func, handler IntrinsicFunc) {
+    // ... registers the handler with the internal intrinsics registry.
+}
+```
+
+This `Interpreter` would solve the key problems:
+1.  **Abstraction**: It hides the internal `evaluator` and `scanner` complexities.
+2.  **Clean API**: It provides clear, public methods like `NewInterpreter`, `Eval`, and `RegisterIntrinsic`.
+3.  **Type Safety**: It defines an exported `IntrinsicFunc` type with other exported types (`Interpreter`, `Object`), making it possible for external packages to implement handlers correctly.
 
 ## Original Problems Encountered (Symptoms of the Root Cause)
 

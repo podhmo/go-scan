@@ -19,7 +19,7 @@ func TestEval_StringLiteral(t *testing.T) {
 
 	eval := New(nil, nil) // No scanner needed for this test
 	env := object.NewEnvironment()
-	obj := eval.Eval(expr, env)
+	obj := eval.Eval(expr, env, nil)
 
 	str, ok := obj.(*object.String)
 	if !ok {
@@ -43,7 +43,7 @@ func TestEval_Identifier(t *testing.T) {
 	expectedObj := &object.String{Value: "i am myVar"}
 	env.Set("myVar", expectedObj)
 
-	obj := eval.Eval(expr, env)
+	obj := eval.Eval(expr, env, nil)
 
 	if obj != expectedObj {
 		t.Errorf("Eval() returned wrong object. want=%+v, got=%+v", expectedObj, obj)
@@ -59,7 +59,7 @@ func TestEval_IdentifierNotFound(t *testing.T) {
 
 	eval := New(nil, nil)
 	env := object.NewEnvironment()
-	obj := eval.Eval(expr, env)
+	obj := eval.Eval(expr, env, nil)
 
 	errObj, ok := obj.(*object.Error)
 	if !ok {
@@ -88,7 +88,7 @@ func TestEval_AssignStmt(t *testing.T) {
 	env := object.NewEnvironment()
 	env.Set("x", &object.String{Value: "initial"}) // Pre-declare the variable
 
-	eval.Eval(stmt, env)
+	eval.Eval(stmt, env, nil)
 
 	// Check if the value was set correctly in the scope
 	obj, ok := env.Get("x")
@@ -119,7 +119,7 @@ func TestEval_ReturnStmt(t *testing.T) {
 
 	eval := New(nil, nil)
 	env := object.NewEnvironment()
-	obj := eval.Eval(block, env)
+	obj := eval.Eval(block, env, nil)
 
 	// The result of the block should be a ReturnValue
 	retVal, ok := obj.(*object.ReturnValue)
@@ -147,7 +147,7 @@ func TestEval_UnsupportedNode(t *testing.T) {
 
 	eval := New(nil, nil)
 	env := object.NewEnvironment()
-	obj := eval.Eval(node, env)
+	obj := eval.Eval(node, env, nil)
 
 	errObj, ok := obj.(*object.Error)
 	if !ok {
@@ -168,7 +168,7 @@ func TestEval_IfStmt(t *testing.T) {
 	eval := New(nil, nil)
 	env := object.NewEnvironment()
 	env.Set("x", &object.String{Value: "outside"}) // Pre-declare
-	eval.Eval(stmt, env)
+	eval.Eval(stmt, env, nil)
 
 	// The assignment happens in an enclosed scope, so the outer scope is unaffected.
 	obj, _ := env.Get("x")
@@ -185,7 +185,7 @@ func TestEval_ForStmt(t *testing.T) {
 	eval := New(nil, nil)
 	env := object.NewEnvironment()
 	env.Set("y", &object.String{Value: "outside"}) // Pre-declare
-	eval.Eval(stmt, env)
+	eval.Eval(stmt, env, nil)
 
 	// Like the if-statement, the assignment is in an inner scope.
 	obj, _ := env.Get("y")
@@ -215,7 +215,7 @@ default:
 	env.Set("y", &object.String{Value: "outside"})
 	env.Set("z", &object.String{Value: "outside"})
 
-	eval.Eval(stmt, env)
+	eval.Eval(stmt, env, nil)
 
 	// All assignments happen in inner scopes, so we can't check them here.
 	// The outer scope should be unaffected.

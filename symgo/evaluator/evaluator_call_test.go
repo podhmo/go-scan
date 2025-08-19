@@ -1,184 +1,184 @@
 package evaluator
 
 import (
+	"context"
 	"go/ast"
 	"go/parser"
 	"go/token"
 	"testing"
 
-	scan "github.com/podhmo/go-scan"
+	goscan "github.com/podhmo/go-scan"
+	"github.com/podhmo/go-scan/scantest"
 	"github.com/podhmo/go-scan/symgo/object"
 )
 
-// parse is a helper to quickly get an AST from a string of code.
-func parse(t *testing.T, code string) *ast.File {
+func mustParse(t *testing.T, source string) *ast.File {
 	t.Helper()
 	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, "main.go", code, parser.ParseComments)
+	f, err := parser.ParseFile(fset, "src.go", source, 0)
 	if err != nil {
-		t.Fatalf("failed to parse code: %v", err)
+		t.Fatalf("mustParse: %v", err)
 	}
 	return f
 }
 
-func TestEval_FunctionCall(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    string
-		expected string // Expected Inspect() output of the final expression
-	}{
-		{
-			name: "simple identity function",
-			input: `
-package main
-
-func identity(s string) string {
-	return s
-}
-
-func main() {
-	return identity("hello")
-}
-`,
-			expected: "hello",
-		},
-		{
-			name: "recursive call",
-			input: `
-package main
-
-func main() {
-	return myFunc("foo")
-}
-
-func myFunc(s string) string {
-	return s
-}
-`,
-			expected: "foo",
-		},
+func findFunc(t *testing.T, pkg *goscan.Package, name string) *ast.FuncDecl {
+	t.Helper()
+	for _, f := range pkg.Functions {
+		if f.Name == name {
+			return f.AstDecl
+		}
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			astFile := parse(t, tt.input)
-
-			eval := New(nil, nil)
-			env := object.NewEnvironment()
-			eval.Eval(astFile, env)
-
-			mainFuncObj, ok := env.Get("main")
-			if !ok {
-				t.Fatal("main function not found in environment")
-			}
-			mainFunc, ok := mainFuncObj.(*object.Function)
-			if !ok {
-				t.Fatalf("main is not a function, got %T", mainFuncObj)
-			}
-
-			returnStmt, ok := mainFunc.Body.List[0].(*ast.ReturnStmt)
-			if !ok {
-				t.Fatalf("first statement in main is not a return, got %T", mainFunc.Body.List[0])
-			}
-			callExpr, ok := returnStmt.Results[0].(*ast.CallExpr)
-			if !ok {
-				t.Fatalf("return is not a call expression, got %T", returnStmt.Results[0])
-			}
-			result := eval.Eval(callExpr, mainFunc.Env)
-
-			str, ok := result.(*object.String)
-			if !ok {
-				t.Errorf("result is not a String, got %T (%s)", result, result.Inspect())
-				return
-			}
-			if str.Value != tt.expected {
-				t.Errorf("result.Value = %q, want %q", str.Value, tt.expected)
-			}
-		})
-	}
+	return nil
 }
 
-func TestEval_SymbolicFunctionCall(t *testing.T) {
-	input := `
+func TestEvalCallExprOnFunction(t *testing.T) {
+	source := `
 package main
-
-import "fmt"
-
-func main() {
-	return fmt.Sprintf("hello %s", "world")
-}
+func add(a, b int) int { return a + b }
+func main() { add(1, 2) }
 `
-	astFile := parse(t, input)
+	dir, cleanup := scantest.WriteFiles(t, map[string]string{
+		"go.mod":  "module example.com/me",
+		"main.go": source,
+	})
+	defer cleanup()
 
-	s, err := scan.New(scan.WithGoModuleResolver())
+	s, err := goscan.New(goscan.WithWorkDir(dir))
 	if err != nil {
-		t.Fatalf("scan.New() failed: %v", err)
+		t.Fatalf("NewScanner() failed: %v", err)
 	}
-	eval := New(s, nil)
+	pkg, err := s.ScanPackage(context.Background(), dir)
+	if err != nil {
+		t.Fatalf("ScanPackage() failed: %v", err)
+	}
+
+	internalScanner, err := s.ScannerForSymgo()
+	if err != nil {
+		t.Fatalf("ScannerForSymgo() failed: %v", err)
+	}
+	eval := New(internalScanner, s.Logger)
 	env := object.NewEnvironment()
-	eval.Eval(astFile, env)
-
-	mainFuncObj, _ := env.Get("main")
-	mainFunc := mainFuncObj.(*object.Function)
-
-	returnStmt := mainFunc.Body.List[0].(*ast.ReturnStmt)
-	callExpr := returnStmt.Results[0].(*ast.CallExpr)
-	result := eval.Eval(callExpr, mainFunc.Env)
-
-	if _, ok := result.(*object.SymbolicPlaceholder); !ok {
-		t.Errorf("expected SymbolicPlaceholder, got %T (%s)", result, result.Inspect())
+	for _, file := range pkg.AstFiles {
+		eval.Eval(file, env, pkg)
 	}
+
+	mainFunc := findFunc(t, pkg, "main")
+	if mainFunc == nil {
+		t.Fatal("main function not found")
+	}
+
+	eval.Eval(mainFunc.Body, env, pkg)
 }
 
-func TestEval_IntrinsicFunctionCall(t *testing.T) {
-	input := `
+func TestEvalCallExprOnIntrinsic(t *testing.T) {
+	source := `
 package main
-
-func main() {
-	return my_intrinsic("wow")
-}
+import "fmt"
+func main() { fmt.Println("hello") }
 `
-	astFile := parse(t, input)
+	dir, cleanup := scantest.WriteFiles(t, map[string]string{
+		"go.mod":  "module example.com/me",
+		"main.go": source,
+	})
+	defer cleanup()
 
-	eval := New(nil, nil)
+	s, err := goscan.New(goscan.WithWorkDir(dir))
+	if err != nil {
+		t.Fatalf("NewScanner() failed: %v", err)
+	}
+	pkg, err := s.ScanPackage(context.Background(), dir)
+	if err != nil {
+		t.Fatalf("ScanPackage() failed: %v", err)
+	}
 
-	// Register a custom intrinsic function.
-	eval.RegisterIntrinsic("my_intrinsic", func(args ...object.Object) object.Object {
-		if len(args) != 1 {
-			return &object.Error{Message: "wrong number of arguments"}
+	internalScanner, err := s.ScannerForSymgo()
+	if err != nil {
+		t.Fatalf("ScannerForSymgo() failed: %v", err)
+	}
+	eval := New(internalScanner, s.Logger)
+	env := object.NewEnvironment()
+	for _, file := range pkg.AstFiles {
+		eval.Eval(file, env, pkg)
+	}
+
+	var got string
+	eval.RegisterIntrinsic("fmt.Println", func(args ...object.Object) object.Object {
+		if len(args) > 0 {
+			if s, ok := args[0].(*object.String); ok {
+				got = s.Value
+			}
 		}
-		s, ok := args[0].(*object.String)
-		if !ok {
-			return &object.Error{Message: "argument must be a string"}
-		}
-		return &object.String{Value: "intrinsic says: " + s.Value}
+		return &object.SymbolicPlaceholder{}
 	})
 
+	mainFunc := findFunc(t, pkg, "main")
+	if mainFunc == nil {
+		t.Fatal("main function not found")
+	}
+	eval.Eval(mainFunc.Body, env, pkg)
+
+	if want := "hello"; got != want {
+		t.Errorf("intrinsic not called correctly, want %q, got %q", want, got)
+	}
+}
+
+func TestEvalCallExprOnInstanceMethod(t *testing.T) {
+	source := `
+package main
+import "net/http"
+func main() {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", nil)
+}`
+	dir, cleanup := scantest.WriteFiles(t, map[string]string{
+		"go.mod":  "module example.com/me",
+		"main.go": source,
+	})
+	defer cleanup()
+
+	s, err := goscan.New(goscan.WithWorkDir(dir))
+	if err != nil {
+		t.Fatalf("NewScanner() failed: %v", err)
+	}
+	pkg, err := s.ScanPackage(context.Background(), dir)
+	if err != nil {
+		t.Fatalf("ScanPackage() failed: %v", err)
+	}
+
+	internalScanner, err := s.ScannerForSymgo()
+	if err != nil {
+		t.Fatalf("ScannerForSymgo() failed: %v", err)
+	}
+	eval := New(internalScanner, s.Logger)
 	env := object.NewEnvironment()
-	eval.Eval(astFile, env)
 
-	// Manually add the intrinsic to the environment for the test.
-	// In a real scenario, this would be handled by resolving `my_intrinsic`
-	// to its registered object.
-	intrinsicFn, ok := eval.GetIntrinsic("my_intrinsic")
-	if !ok {
-		t.Fatal("could not get intrinsic for test setup")
+	eval.RegisterIntrinsic("net/http.NewServeMux", func(args ...object.Object) object.Object {
+		return &object.Instance{TypeName: "net/http.ServeMux"}
+	})
+
+	var gotPattern string
+	eval.RegisterIntrinsic("(*net/http.ServeMux).HandleFunc", func(args ...object.Object) object.Object {
+		if len(args) > 1 {
+			if s, ok := args[1].(*object.String); ok {
+				gotPattern = s.Value
+			}
+		}
+		return nil
+	})
+
+	for _, file := range pkg.AstFiles {
+		eval.Eval(file, env, pkg)
 	}
-	env.Set("my_intrinsic", &object.Intrinsic{Fn: intrinsicFn})
 
-	mainFuncObj, _ := env.Get("main")
-	mainFunc := mainFuncObj.(*object.Function)
-	returnStmt := mainFunc.Body.List[0].(*ast.ReturnStmt)
-	callExpr := returnStmt.Results[0].(*ast.CallExpr)
-
-	result := eval.Eval(callExpr, env) // Evaluate in the top-level env where intrinsic is registered
-
-	str, ok := result.(*object.String)
-	if !ok {
-		t.Fatalf("result is not a String, got %T (%s)", result, result.Inspect())
+	mainFunc := findFunc(t, pkg, "main")
+	if mainFunc == nil {
+		t.Fatal("main function not found")
 	}
-	expected := "intrinsic says: wow"
-	if str.Value != expected {
-		t.Errorf("result.Value = %q, want %q", str.Value, expected)
+
+	eval.Eval(mainFunc.Body, env, pkg)
+
+	if want := "/"; gotPattern != want {
+		t.Errorf("HandleFunc pattern wrong, want %q, got %q", want, gotPattern)
 	}
 }

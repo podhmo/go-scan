@@ -36,3 +36,29 @@ Inside the `Decode` intrinsic, the very first thing I do is check the `TypeInfo`
 This is where I am stuck. The evaluator appears to be correctly setting the `ResolvedTypeInfo` field on the pointer object it creates. The `applyFunction` logic passes the arguments to the intrinsic. But when the intrinsic receives the argument, the `ResolvedTypeInfo` field is `nil`.
 
 I have tried adding extensive logging at every step of the process. The data seems to be correct right up until the point it crosses the boundary into the intrinsic function. I am missing a fundamental concept about how the `symgo` evaluator passes arguments or manages object state.
+
+---
+## Update: 2025-08-19
+
+Based on user feedback, I pivoted to writing an isolated test case for the `symgo` engine to debug the `TypeInfo` propagation issue directly.
+
+### What I Did
+1.  **Created an Isolated Test:** I created `symgo/evaluator/integration_test.go` with a single test, `TestTypeInfoPropagation`, designed to check if a `TypeInfo` attached to a variable is correctly passed to an intrinsic function.
+2.  **Fixed Test Infrastructure:** The existing `symgo` tests were broken by my previous changes. I spent considerable time fixing compilation errors and test setup issues, primarily related to incorrect package imports and incorrect use of the `scantest` test harness. This involved refactoring all `symgo` tests to correctly use temporary directories and `goscan.New(goscan.WithWorkDir(...))`.
+3.  **Attempted to Fix the Evaluator:** I identified that the evaluator was not handling calls to non-packaged, global-scope functions (like the `inspect_type` intrinsic in my test). I attempted to fix this by modifying `evalIdent` to check the intrinsic registry.
+
+### Accident Encountered
+The tests still fail. The `TestTypeInfoPropagation` test fails with the message `intrinsic was not called`. This indicates that my fix to `evalIdent` was insufficient and the evaluator is still not resolving the function call correctly. Other tests for `symgo` also fail for similar reasons related to incorrect evaluation flow within function bodies.
+
+### Miscalculation
+My primary miscalculation was underestimating the complexity of the `symgo` evaluator and the importance of its execution model. My approach of simply evaluating a function's body (`*ast.BlockStmt`) in a new environment was flawed. I now understand that this bypasses the evaluator's own function application logic (`applyFunction`), which is responsible for correctly setting up the function's scope, including parameters.
+
+The core issue is that my tests (and the `docgen` analyzer) are not correctly simulating a *call* to the function being analyzed. They are trying to evaluate its body as a standalone block, causing the environment and function resolution to fail.
+
+### Remaining Tasks
+1.  **Fix the `symgo` Evaluator:** The immediate next step is to fix the `symgo` evaluator's tests. This will likely involve refactoring the tests (`TestTypeInfoPropagation`, `TestEvalCallExprOnInstanceMethod`, etc.) to correctly simulate function calls. Instead of just calling `eval.Eval(mainFunc.Body, ...)`, the tests need to set up the environment and then evaluate a `*ast.CallExpr` that calls the target function. This will force the evaluator to use its `applyFunction` logic, which correctly handles environments.
+2.  **Pass `symgo` Tests:** Run the `symgo/evaluator` tests until they all pass, confirming that the `TypeInfo` propagation works as intended.
+3.  **Re-run `docgen` Test:** Once the `symgo` engine is verified, re-run the `docgen` test. It is expected to pass, as the underlying engine will be fixed.
+4.  **Cleanup:** Remove any temporary test code and logging statements.
+5.  **Update `TODO.md`:** Mark the "Request/Response Body Analysis" tasks as complete.
+6.  **Submit:** Submit the final, working solution.

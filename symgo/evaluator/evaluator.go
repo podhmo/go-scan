@@ -64,7 +64,7 @@ func (e *Evaluator) Eval(node ast.Node, env *object.Environment, pkg *scanner.Pa
 	case *ast.BasicLit:
 		return e.evalBasicLit(n)
 	case *ast.Ident:
-		return e.evalIdent(n, env)
+		return e.evalIdent(n, env, pkg)
 	case *ast.AssignStmt:
 		return e.evalAssignStmt(n, env, pkg)
 	case *ast.BlockStmt:
@@ -87,6 +87,8 @@ func (e *Evaluator) Eval(node ast.Node, env *object.Environment, pkg *scanner.Pa
 		return e.evalGenDecl(n, env, pkg)
 	case *ast.UnaryExpr:
 		return e.evalUnaryExpr(n, env, pkg)
+	case *ast.BinaryExpr:
+		return &object.SymbolicPlaceholder{Reason: "binary expression"}
 	}
 	return newError("evaluation not implemented for %T", node)
 }
@@ -176,6 +178,8 @@ func (e *Evaluator) evalFile(file *ast.File, env *object.Environment, pkg *scann
 				for _, spec := range d.Specs {
 					e.evalImportSpec(spec, env)
 				}
+			} else if d.Tok == token.VAR {
+				e.evalGenDecl(d, env, pkg)
 			}
 		case *ast.FuncDecl:
 			// Register the function in the environment so it can be called later.
@@ -395,60 +399,74 @@ func (e *Evaluator) evalReturnStmt(n *ast.ReturnStmt, env *object.Environment, p
 }
 
 func (e *Evaluator) evalAssignStmt(n *ast.AssignStmt, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
-	// For now, we only support simple assignment like `x = ...`
 	if len(n.Lhs) != 1 || len(n.Rhs) != 1 {
 		return newError("unsupported assignment: expected 1 expression on each side")
 	}
 
-	// We only support assigning to an identifier.
 	ident, ok := n.Lhs[0].(*ast.Ident)
 	if !ok {
 		return newError("unsupported assignment target: expected an identifier")
 	}
 
-	// If assigning to the blank identifier, just evaluate the RHS and discard.
 	if ident.Name == "_" {
 		return e.Eval(n.Rhs[0], env, pkg)
 	}
 
-	// Evaluate the right-hand side.
 	val := e.Eval(n.Rhs[0], env, pkg)
 	if isError(val) {
 		return val
 	}
 
-	// We only support `=` for now, not `:=`.
-	// This means the variable must already exist in the scope.
-	if _, ok := env.Get(ident.Name); !ok {
-		// TODO: This check might be too restrictive. For now, we allow setting new variables.
-		// return newError("cannot assign to undeclared identifier: %s", ident.Name)
+	if n.Tok == token.DEFINE {
+		// This is `:=`, so we are declaring and assigning.
+		// In our simplified model, we don't differentiate much, just set it.
+		return env.Set(ident.Name, val)
 	}
 
-	// Set the value in the scope.
+	// This is `=`, so the variable must already exist.
+	if _, ok := env.Get(ident.Name); !ok {
+		return newError("cannot assign to undeclared identifier: %s", ident.Name)
+	}
+
 	e.logger.Debug("evalAssignStmt: setting var", "name", ident.Name, "type", val.Type())
 	return env.Set(ident.Name, val)
 }
 
 func (e *Evaluator) evalBasicLit(n *ast.BasicLit) object.Object {
 	switch n.Kind {
+	case token.INT:
+		i, err := strconv.ParseInt(n.Value, 0, 64)
+		if err != nil {
+			return newError("could not parse %q as integer", n.Value)
+		}
+		return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("integer literal %d", i)}
 	case token.STRING:
 		s, err := strconv.Unquote(n.Value)
 		if err != nil {
 			return newError("could not unquote string %q", n.Value)
 		}
 		return &object.String{Value: s}
-	// TODO: Add support for INT, FLOAT, etc. later.
 	default:
 		return newError("unsupported literal type: %s", n.Kind)
 	}
 }
 
-func (e *Evaluator) evalIdent(n *ast.Ident, env *object.Environment) object.Object {
+func (e *Evaluator) evalIdent(n *ast.Ident, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
 	if val, ok := env.Get(n.Name); ok {
 		e.logger.Debug("evalIdent: found in env", "name", n.Name, "type", val.Type())
 		return val
 	}
-	e.logger.Debug("evalIdent: not found in env", "name", n.Name)
+
+	// If not in env, check if it's a registered intrinsic for the current package.
+	if pkg != nil {
+		key := pkg.ImportPath + "." + n.Name
+		if intrinsicFn, ok := e.intrinsics.Get(key); ok {
+			e.logger.Debug("evalIdent: found intrinsic", "key", key)
+			return &object.Intrinsic{Fn: intrinsicFn}
+		}
+	}
+
+	e.logger.Debug("evalIdent: not found in env or intrinsics", "name", n.Name)
 	return newError("identifier not found: %s", n.Name)
 }
 

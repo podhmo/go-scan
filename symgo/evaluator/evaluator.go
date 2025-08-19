@@ -173,7 +173,6 @@ func (e *Evaluator) evalSelectorExpr(n *ast.SelectorExpr, env *object.Environmen
 	return symbol
 }
 
-
 // evalSwitchStmt evaluates a switch statement. It traverses all case clauses
 // to discover patterns that could occur in any branch.
 func (e *Evaluator) evalSwitchStmt(n *ast.SwitchStmt, env *object.Environment) object.Object {

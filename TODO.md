@@ -53,7 +53,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] **Improve interpreter performance for complex algorithms**: `slices.Sort` fails to complete within the test timeout, indicating severe performance bottlenecks when interpreting complex code like sorting algorithms.
 
 ### Symbolic-Execution-like Engine (`symgo`) ([docs/plan-symbolic-execution-like.md](./docs/plan-symbolic-execution-like.md))
-- [ ] **M1: `symgo` Core Engine**:
+- [x] **M1: `symgo` Core Engine**:
     - [x] **Object System**: Define the `symgo/object` package with the `Object` interface and initial concrete types (`String`, `Function`, `Error`, `SymbolicPlaceholder`).
     - [x] **Scope Management**: Implement the `symgo/scope` package for lexical scoping, supporting nested environments.
     - [x] **Core Evaluator**: Implement the `symgo/evaluator` with the main `Eval` dispatch loop.
@@ -69,11 +69,11 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
         - [x] Implement recursive evaluation for intra-module function calls.
         - [x] Implement an intrinsic function registry (`symgo/intrinsics`).
         - [x] Return `SymbolicPlaceholder` objects for calls to extra-module functions that are not intrinsics.
-- [ ] **M2: `docgen` Tool & Basic `net/http` Analysis**:
-    - [ ] **Project Setup**:
-        - [ ] Create the `examples/docgen` CLI application skeleton.
-        - [ ] Define local structs for a minimal OpenAPI 3.1 model (`examples/docgen/openapi`).
-        - [ ] Create a sample `net/http` API to use as the analysis target (`examples/docgen/sampleapi`).
+- [-] **M2: `docgen` Tool & Basic `net/http` Analysis**:
+    - [x] **Project Setup**:
+        - [x] Create the `examples/docgen` CLI application skeleton.
+        - [x] Define local structs for a minimal OpenAPI 3.1 model (`examples/docgen/openapi`).
+        - [x] Create a sample `net/http` API to use as the analysis target (`examples/docgen/sampleapi`).
     - [ ] **Core Analyzer**:
         - [ ] Implement the main analysis orchestrator that uses the `symgo` engine.
         - [ ] Implement an intrinsic for `http.HandleFunc` to extract route paths and handler functions.

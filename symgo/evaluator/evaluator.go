@@ -9,17 +9,22 @@ import (
 	"strconv"
 
 	"github.com/podhmo/go-scan/scanner"
+	"github.com/podhmo/go-scan/symgo/intrinsics"
 	"github.com/podhmo/go-scan/symgo/object"
 )
 
 // Evaluator is the main object that evaluates the AST.
 type Evaluator struct {
-	scanner *scanner.Scanner
+	scanner    *scanner.Scanner
+	intrinsics *intrinsics.Registry
 }
 
 // New creates a new Evaluator.
 func New(scanner *scanner.Scanner) *Evaluator {
-	return &Evaluator{scanner: scanner}
+	return &Evaluator{
+		scanner:    scanner,
+		intrinsics: intrinsics.New(),
+	}
 }
 
 // Eval is the main dispatch loop for the evaluator.
@@ -45,52 +50,70 @@ func (e *Evaluator) Eval(node ast.Node, env *object.Environment) object.Object {
 		return e.evalForStmt(n, env)
 	case *ast.SwitchStmt:
 		return e.evalSwitchStmt(n, env)
+	case *ast.CallExpr:
+		return e.evalCallExpr(n, env)
 	}
 	return newError("evaluation not implemented for %T", node)
 }
 
 func (e *Evaluator) evalFile(file *ast.File, env *object.Environment) object.Object {
+	// Top-level declarations
 	// First, handle all imports to populate the environment with package placeholders.
 	for _, decl := range file.Decls {
-		genDecl, ok := decl.(*ast.GenDecl)
-		if !ok || genDecl.Tok != token.IMPORT {
-			continue
-		}
-
-		for _, spec := range genDecl.Specs {
-			importSpec, ok := spec.(*ast.ImportSpec)
-			if !ok {
-				continue
+		switch d := decl.(type) {
+		case *ast.GenDecl:
+			if d.Tok == token.IMPORT {
+				for _, spec := range d.Specs {
+					e.evalImportSpec(spec, env)
+				}
 			}
-
-			// The path is a string literal, so we need to unquote it.
-			importPath, err := strconv.Unquote(importSpec.Path.Value)
-			if err != nil {
-				return newError("invalid import path: %s", importSpec.Path.Value)
+		case *ast.FuncDecl:
+			// Register the function in the environment so it can be called later.
+			// The function body is not evaluated until the function is called.
+			fn := &object.Function{
+				Name:       d.Name,
+				Parameters: d.Type.Params,
+				Body:       d.Body,
+				Env:        env,
 			}
-
-			var pkgName string
-			if importSpec.Name != nil {
-				// Alias is used, e.g., `str "strings"`
-				pkgName = importSpec.Name.Name
-			} else {
-				// No alias, infer from path, e.g., `"path/filepath"` -> `filepath`
-				pkgName = path.Base(importPath)
-			}
-
-			// Create a placeholder package object. The actual package will be loaded lazily.
-			pkg := &object.Package{
-				Name: pkgName,
-				Path: importPath,
-				Env:  object.NewEnvironment(), // A new, empty env for the package symbols
-			}
-			env.Set(pkgName, pkg)
+			env.Set(d.Name.Name, fn)
 		}
 	}
 
 	// After processing imports, we could evaluate other top-level declarations (vars, funcs, etc.)
 	// For now, we'll just return nil as we are focused on setting up the environment.
 	// A more complete implementation would continue evaluation.
+	return nil
+}
+
+func (e *Evaluator) evalImportSpec(spec ast.Spec, env *object.Environment) object.Object {
+	importSpec, ok := spec.(*ast.ImportSpec)
+	if !ok {
+		return nil // Should not happen
+	}
+
+	// The path is a string literal, so we need to unquote it.
+	importPath, err := strconv.Unquote(importSpec.Path.Value)
+	if err != nil {
+		return newError("invalid import path: %s", importSpec.Path.Value)
+	}
+
+	var pkgName string
+	if importSpec.Name != nil {
+		// Alias is used, e.g., `str "strings"`
+		pkgName = importSpec.Name.Name
+	} else {
+		// No alias, infer from path, e.g., `"path/filepath"` -> `filepath`
+		pkgName = path.Base(importPath)
+	}
+
+	// Create a placeholder package object. The actual package will be loaded lazily.
+	pkg := &object.Package{
+		Name: pkgName,
+		Path: importPath,
+		Env:  object.NewEnvironment(), // A new, empty env for the package symbols
+	}
+	env.Set(pkgName, pkg)
 	return nil
 }
 
@@ -283,4 +306,80 @@ func isError(obj object.Object) bool {
 		return obj.Type() == object.ERROR_OBJ
 	}
 	return false
+}
+
+func (e *Evaluator) evalCallExpr(n *ast.CallExpr, env *object.Environment) object.Object {
+	// 1. Evaluate the function itself (e.g., the identifier or selector).
+	function := e.Eval(n.Fun, env)
+	if isError(function) {
+		return function
+	}
+
+	// 2. Evaluate the arguments.
+	args := e.evalExpressions(n.Args, env)
+	if len(args) == 1 && isError(args[0]) {
+		return args[0]
+	}
+
+	// 3. Apply the function.
+	return e.applyFunction(function, args)
+}
+
+func (e *Evaluator) evalExpressions(exps []ast.Expr, env *object.Environment) []object.Object {
+	var result []object.Object
+
+	for _, exp := range exps {
+		evaluated := e.Eval(exp, env)
+		if isError(evaluated) {
+			return []object.Object{evaluated}
+		}
+		result = append(result, evaluated)
+	}
+
+	return result
+}
+
+func (e *Evaluator) applyFunction(fn object.Object, args []object.Object) object.Object {
+	switch fn := fn.(type) {
+	case *object.Function:
+		// This is a user-defined function.
+		// Create a new environment for the function call, enclosed by the function's definition environment.
+		extendedEnv := e.extendFunctionEnv(fn, args)
+		// Evaluate the function's body in the new environment.
+		evaluated := e.Eval(fn.Body, extendedEnv)
+		// Unwrap the return value.
+		if returnValue, ok := evaluated.(*object.ReturnValue); ok {
+			return returnValue.Value
+		}
+		return evaluated
+
+	case *object.Intrinsic:
+		// This is a built-in function.
+		return fn.Fn(nil, args...) // TODO: Pass a real env if intrinsics need it.
+
+	case *object.SymbolicPlaceholder:
+		// Calling an external or unknown function results in a symbolic value.
+		return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("result of calling %s", fn.Inspect())}
+
+	default:
+		return newError("not a function: %s", fn.Type())
+	}
+}
+
+func (e *Evaluator) extendFunctionEnv(fn *object.Function, args []object.Object) *object.Environment {
+	// Create a new scope enclosed by the function's *definition* scope, not the *call site* scope.
+	// This ensures lexical scoping.
+	env := object.NewEnclosedEnvironment(fn.Env)
+
+	// Bind the arguments to the parameter names.
+	for i, param := range fn.Parameters.List {
+		if i < len(args) {
+			// Each parameter can have multiple names (e.g., `a, b int`).
+			for _, name := range param.Names {
+				env.Set(name.Name, args[i])
+			}
+		}
+	}
+
+	return env
 }

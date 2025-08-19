@@ -16,6 +16,7 @@ const (
 	SYMBOLIC_OBJ     ObjectType = "SYMBOLIC_PLACEHOLDER"
 	RETURN_VALUE_OBJ ObjectType = "RETURN_VALUE"
 	PACKAGE_OBJ      ObjectType = "PACKAGE"
+	INTRINSIC_OBJ    ObjectType = "INTRINSIC"
 )
 
 // Object is the interface that all value types in our symbolic engine will implement.
@@ -56,6 +57,20 @@ func (f *Function) Type() ObjectType { return FUNCTION_OBJ }
 func (f *Function) Inspect() string {
 	return fmt.Sprintf("func %s() { ... }", f.Name.String())
 }
+
+// --- Intrinsic Object ---
+
+// Intrinsic represents a built-in function that is implemented in Go.
+type Intrinsic struct {
+	// The Go function that implements the intrinsic's behavior.
+	Fn func(env *Environment, args ...Object) Object
+}
+
+// Type returns the type of the Intrinsic object.
+func (i *Intrinsic) Type() ObjectType { return INTRINSIC_OBJ }
+
+// Inspect returns a string representation of the intrinsic function.
+func (i *Intrinsic) Inspect() string { return "intrinsic function" }
 
 // --- Package Object ---
 

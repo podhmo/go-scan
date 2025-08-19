@@ -84,10 +84,20 @@ func (a *Analyzer) Analyze(ctx context.Context, importPath string, entrypoint st
 		fmt.Printf("info: error during file-level symgo eval: %v\n", err)
 	}
 
-	// Then, start evaluation from the body of the entrypoint function.
-	if _, err := a.interpreter.Eval(entrypointFunc.AstDecl.Body, pkg); err != nil {
+	// Get the function object from the environment.
+	entrypointObj, ok := a.interpreter.FindObject(entrypoint)
+	if !ok {
+		return fmt.Errorf("entrypoint function %q not found in interpreter environment", entrypoint)
+	}
+	entrypointFn, ok := entrypointObj.(*symgo.Function)
+	if !ok {
+		return fmt.Errorf("entrypoint %q is not a function", entrypoint)
+	}
+
+	// Then, call the entrypoint function.
+	if _, err := a.interpreter.Apply(entrypointFn, []symgo.Object{}, pkg); err != nil {
 		// In a real application, this would use a proper logger.
-		fmt.Printf("info: error during body-level symgo eval: %v\n", err)
+		fmt.Printf("info: error during entrypoint apply: %v\n", err)
 	}
 
 	return nil
@@ -173,34 +183,35 @@ func (a *Analyzer) analyzeHandlerBody(handler *symgo.Function, op *openapi.Opera
 		return
 	}
 
-	// Create a new environment for the handler's execution, enclosing the function's definition environment.
-	handlerEnv := symgo.NewEnclosedEnvironment(handler.Env)
-
-	file := pkg.Fset.File(handler.Decl.Pos())
-	if file == nil {
-		fmt.Printf("warn: could not find file for handler %q\n", handler.Name.Name)
-		return
-	}
-	astFile, ok := pkg.AstFiles[file.Name()]
-	if !ok {
-		fmt.Printf("warn: could not find AST file for handler %q\n", handler.Name.Name)
-		return
-	}
-	importLookup := a.Scanner.BuildImportLookup(astFile)
-
-	// Populate the environment with the function's parameters.
+	// Create symbolic arguments for the handler function (w, r).
+	var handlerArgs []symgo.Object
 	if handler.Decl.Type.Params != nil {
+		file := pkg.Fset.File(handler.Decl.Pos())
+		if file == nil {
+			fmt.Printf("warn: could not find file for handler %q\n", handler.Name.Name)
+			return
+		}
+		astFile, ok := pkg.AstFiles[file.Name()]
+		if !ok {
+			fmt.Printf("warn: could not find AST file for handler %q\n", handler.Name.Name)
+			return
+		}
+		importLookup := a.Scanner.BuildImportLookup(astFile)
+
 		for _, field := range handler.Decl.Type.Params.List {
 			fieldType := a.Scanner.TypeInfoFromExpr(context.Background(), field.Type, nil, pkg, importLookup)
 			typeInfo, _ := fieldType.Resolve(context.Background())
+
+			// For each parameter name (can be multiple like w1, w2 http.ResponseWriter), create a variable.
 			for _, name := range field.Names {
-				handlerEnv.Set(name.Name, &symgo.Variable{
+				arg := &symgo.Variable{
 					Name: name.Name,
 					BaseObject: symgo.BaseObject{
 						ResolvedTypeInfo: typeInfo,
 					},
 					Value: &symgo.SymbolicPlaceholder{Reason: "function parameter"},
-				})
+				}
+				handlerArgs = append(handlerArgs, arg)
 			}
 		}
 	}
@@ -210,8 +221,8 @@ func (a *Analyzer) analyzeHandlerBody(handler *symgo.Function, op *openapi.Opera
 	a.interpreter.PushIntrinsics(intrinsics)
 	defer a.interpreter.PopIntrinsics() // Ensure we clean up the scope.
 
-	// Evaluate the handler's body in the new, parameter-populated environment.
-	a.interpreter.EvalWithEnv(handler.Decl.Body, handlerEnv, pkg)
+	// Call the handler function with the created symbolic arguments.
+	a.interpreter.Apply(handler, handlerArgs, pkg)
 }
 
 // buildJSONIntrinsics creates the map of intrinsic handlers for JSON analysis.
@@ -255,6 +266,7 @@ func (a *Analyzer) buildJSONIntrinsics(op *openapi.Operation) map[string]symgo.I
 		if len(args) != 2 {
 			return &symgo.SymbolicPlaceholder{Reason: "encode error"}
 		}
+		fmt.Printf("ENCODE: arg[1] is %T\n", args[1])
 		typeInfo := args[1].TypeInfo()
 		if typeInfo != nil {
 			fmt.Printf("ENCODE: found type %s\n", typeInfo.Name)

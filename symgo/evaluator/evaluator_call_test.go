@@ -2,6 +2,7 @@ package evaluator
 
 import (
 	"context"
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -162,12 +163,13 @@ func main() {
 	eval := New(internalScanner, s.Logger)
 	env := object.NewEnvironment()
 
+	const serveMuxTypeName = "net/http.ServeMux"
 	eval.RegisterIntrinsic("net/http.NewServeMux", func(args ...object.Object) object.Object {
-		return &object.Instance{TypeName: "net/http.ServeMux"}
+		return &object.Instance{TypeName: serveMuxTypeName}
 	})
 
 	var gotPattern string
-	eval.RegisterIntrinsic("(*net/http.ServeMux).HandleFunc", func(args ...object.Object) object.Object {
+	eval.RegisterIntrinsic(fmt.Sprintf("(*%s).HandleFunc", serveMuxTypeName), func(args ...object.Object) object.Object {
 		if len(args) > 0 {
 			if s, ok := args[0].(*object.String); ok {
 				gotPattern = s.Value

@@ -45,7 +45,7 @@ func NewAnalyzer(s *goscan.Scanner) (*Analyzer, error) {
 }
 
 func (a *Analyzer) handleNewServeMux(interp *symgo.Interpreter, args []symgo.Object) symgo.Object {
-	return &symgo.ServeMux{}
+	return &symgo.Instance{TypeName: "net/http.ServeMux"}
 }
 
 // Analyze analyzes the package starting from a specific entrypoint function.

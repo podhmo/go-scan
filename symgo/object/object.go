@@ -17,7 +17,7 @@ const (
 	RETURN_VALUE_OBJ ObjectType = "RETURN_VALUE"
 	PACKAGE_OBJ      ObjectType = "PACKAGE"
 	INTRINSIC_OBJ    ObjectType = "INTRINSIC"
-	SERVE_MUX_OBJ    ObjectType = "SERVE_MUX"
+	INSTANCE_OBJ     ObjectType = "INSTANCE"
 )
 
 // Object is the interface that all value types in our symbolic engine will implement.
@@ -74,16 +74,20 @@ func (i *Intrinsic) Type() ObjectType { return INTRINSIC_OBJ }
 // Inspect returns a string representation of the intrinsic function.
 func (i *Intrinsic) Inspect() string { return "intrinsic function" }
 
-// --- ServeMux Object ---
+// --- Instance Object ---
 
-// ServeMux represents a net/http.ServeMux object.
-type ServeMux struct{}
+// Instance represents a symbolic instance of a particular type.
+// It's used to track objects returned by intrinsics (like constructors)
+// so that method calls on them can be resolved.
+type Instance struct {
+	TypeName string // e.g., "net/http.ServeMux"
+}
 
-// Type returns the type of the ServeMux object.
-func (s *ServeMux) Type() ObjectType { return SERVE_MUX_OBJ }
+// Type returns the type of the Instance object.
+func (i *Instance) Type() ObjectType { return INSTANCE_OBJ }
 
-// Inspect returns a string representation of the ServeMux.
-func (s *ServeMux) Inspect() string { return "ServeMux" }
+// Inspect returns a string representation of the Instance.
+func (i *Instance) Inspect() string { return fmt.Sprintf("instance<%s>", i.TypeName) }
 
 // --- Package Object ---
 

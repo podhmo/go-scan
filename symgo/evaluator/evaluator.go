@@ -69,6 +69,8 @@ func (e *Evaluator) Eval(node ast.Node, env *object.Environment) object.Object {
 		return e.evalSwitchStmt(n, env)
 	case *ast.CallExpr:
 		return e.evalCallExpr(n, env)
+	case *ast.ExprStmt:
+		return e.Eval(n.X, env)
 	}
 	return newError("evaluation not implemented for %T", node)
 }
@@ -92,6 +94,7 @@ func (e *Evaluator) evalFile(file *ast.File, env *object.Environment) object.Obj
 				Parameters: d.Type.Params,
 				Body:       d.Body,
 				Env:        env,
+				Decl:       d,
 			}
 			env.Set(d.Name.Name, fn)
 		}
@@ -143,10 +146,22 @@ func (e *Evaluator) evalSelectorExpr(n *ast.SelectorExpr, env *object.Environmen
 	}
 	e.logger.Debug("evalSelectorExpr: evaluated left", "type", left.Type(), "value", left.Inspect())
 
+	// Handle method calls on symbolic instances.
+	if inst, ok := left.(*object.Instance); ok {
+		// e.g., TypeName="net/http.ServeMux", Sel.Name="HandleFunc"
+		// constructs key "(*net/http.ServeMux).HandleFunc"
+		key := fmt.Sprintf("(*%s).%s", inst.TypeName, n.Sel.Name)
+		e.logger.Debug("evalSelectorExpr: looking for instance method intrinsic", "key", key)
+		if intrinsicFn, ok := e.intrinsics.Get(key); ok {
+			e.logger.Debug("evalSelectorExpr: found instance method intrinsic", "key", key)
+			return &object.Intrinsic{Fn: intrinsicFn}
+		}
+	}
+
 	// Check if the left-hand side is a package.
 	pkg, ok := left.(*object.Package)
 	if !ok {
-		return newError("expected a package on the left side of selector, but got %s", left.Type())
+		return newError("expected a package or an instance on the left side of selector, but got %s", left.Type())
 	}
 
 	// LAZY LOADING: If the package's environment is empty, it's a placeholder.

@@ -15,6 +15,8 @@ import (
 type Object = object.Object
 type Function = object.Function
 type Error = object.Error
+type Instance = object.Instance
+type String = object.String
 
 // IntrinsicFunc defines the signature for a custom function handler.
 type IntrinsicFunc func(eval *Interpreter, args []Object) Object

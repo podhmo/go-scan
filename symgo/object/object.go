@@ -10,11 +10,12 @@ type ObjectType string
 
 // Define the basic object types for the symbolic engine.
 const (
-	STRING_OBJ      ObjectType = "STRING"
-	FUNCTION_OBJ    ObjectType = "FUNCTION"
-	ERROR_OBJ       ObjectType = "ERROR"
-	SYMBOLIC_OBJ    ObjectType = "SYMBOLIC_PLACEHOLDER"
+	STRING_OBJ       ObjectType = "STRING"
+	FUNCTION_OBJ     ObjectType = "FUNCTION"
+	ERROR_OBJ        ObjectType = "ERROR"
+	SYMBOLIC_OBJ     ObjectType = "SYMBOLIC_PLACEHOLDER"
 	RETURN_VALUE_OBJ ObjectType = "RETURN_VALUE"
+	PACKAGE_OBJ      ObjectType = "PACKAGE"
 )
 
 // Object is the interface that all value types in our symbolic engine will implement.
@@ -45,7 +46,7 @@ type Function struct {
 	Name       *ast.Ident
 	Parameters *ast.FieldList
 	Body       *ast.BlockStmt
-	// TODO: Add Scope *scope.Scope when scope package is defined
+	Env        *Environment
 }
 
 // Type returns the type of the Function object.
@@ -54,6 +55,23 @@ func (f *Function) Type() ObjectType { return FUNCTION_OBJ }
 // Inspect returns a string representation of the function.
 func (f *Function) Inspect() string {
 	return fmt.Sprintf("func %s() { ... }", f.Name.String())
+}
+
+// --- Package Object ---
+
+// Package represents an imported Go package.
+type Package struct {
+	Name string
+	Path string
+	Env  *Environment // The environment containing all package-level declarations.
+}
+
+// Type returns the type of the Package object.
+func (p *Package) Type() ObjectType { return PACKAGE_OBJ }
+
+// Inspect returns a string representation of the package.
+func (p *Package) Inspect() string {
+	return fmt.Sprintf("package %s (%q)", p.Name, p.Path)
 }
 
 // --- Error Object ---
@@ -99,3 +117,44 @@ func (rv *ReturnValue) Type() ObjectType { return RETURN_VALUE_OBJ }
 
 // Inspect returns a string representation of the wrapped value.
 func (rv *ReturnValue) Inspect() string { return rv.Value.Inspect() }
+
+// --- Environment ---
+
+// Environment holds the bindings for variables and functions.
+type Environment struct {
+	store map[string]Object
+	outer *Environment
+}
+
+// NewEnvironment creates a new, top-level environment.
+func NewEnvironment() *Environment {
+	s := make(map[string]Object)
+	return &Environment{store: s, outer: nil}
+}
+
+// NewEnclosedEnvironment creates a new environment that is enclosed by an outer one.
+func NewEnclosedEnvironment(outer *Environment) *Environment {
+	env := NewEnvironment()
+	env.outer = outer
+	return env
+}
+
+// Get retrieves an object by name from the environment, checking outer scopes if necessary.
+func (e *Environment) Get(name string) (Object, bool) {
+	obj, ok := e.store[name]
+	if !ok && e.outer != nil {
+		obj, ok = e.outer.Get(name)
+	}
+	return obj, ok
+}
+
+// Set stores an object by name in the current environment.
+func (e *Environment) Set(name string, val Object) Object {
+	e.store[name] = val
+	return val
+}
+
+// IsEmpty checks if the environment has any local bindings.
+func (e *Environment) IsEmpty() bool {
+	return len(e.store) == 0
+}

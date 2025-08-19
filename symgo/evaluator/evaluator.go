@@ -97,7 +97,7 @@ func (e *Evaluator) Eval(node ast.Node, env *object.Environment, pkg *scanner.Pa
 	case *ast.UnaryExpr:
 		return e.evalUnaryExpr(n, env, pkg)
 	case *ast.BinaryExpr:
-		return &object.SymbolicPlaceholder{Reason: "binary expression"}
+		return e.evalBinaryExpr(n, env, pkg)
 	case *ast.CompositeLit:
 		return e.evalCompositeLit(n, env, pkg)
 	}
@@ -144,6 +144,28 @@ func (e *Evaluator) evalCompositeLit(node *ast.CompositeLit, env *object.Environ
 		TypeName:   typeName,
 		BaseObject: object.BaseObject{ResolvedTypeInfo: resolvedType},
 	}
+}
+
+func (e *Evaluator) evalBinaryExpr(node *ast.BinaryExpr, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
+	left := e.Eval(node.X, env, pkg)
+	if isError(left) {
+		return left
+	}
+	right := e.Eval(node.Y, env, pkg)
+	if isError(right) {
+		return right
+	}
+
+	// Handle string concatenation
+	if node.Op == token.ADD {
+		if left.Type() == object.STRING_OBJ && right.Type() == object.STRING_OBJ {
+			leftVal := left.(*object.String).Value
+			rightVal := right.(*object.String).Value
+			return &object.String{Value: leftVal + rightVal}
+		}
+	}
+
+	return &object.SymbolicPlaceholder{Reason: "binary expression"}
 }
 
 func (e *Evaluator) evalUnaryExpr(node *ast.UnaryExpr, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
@@ -551,6 +573,17 @@ func (e *Evaluator) evalIdent(n *ast.Ident, env *object.Environment, pkg *scanne
 
 	if val, ok := env.Get(n.Name); ok {
 		e.logger.Debug("evalIdent: found in env", "name", n.Name, "type", val.Type())
+		if v, ok := val.(*object.Variable); ok {
+			// When an identifier is evaluated as an expression, we want its value,
+			// not the variable container itself.
+			value := v.Value
+			// However, the variable might have more precise type info than the value it contains.
+			// We should propagate this type info to the value before returning it.
+			if value.TypeInfo() == nil && v.TypeInfo() != nil {
+				value.SetTypeInfo(v.TypeInfo())
+			}
+			return value
+		}
 		return val
 	}
 

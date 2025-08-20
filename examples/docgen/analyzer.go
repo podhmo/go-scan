@@ -204,6 +204,15 @@ func (a *Analyzer) analyzeHandlerBody(handler *symgo.Function, op *openapi.Opera
 
 			// For each parameter name (can be multiple like w1, w2 http.ResponseWriter), create a variable.
 			for _, name := range field.Names {
+				// DEBUG: Verify that the http.Request type is using our stub.
+				if typeInfo != nil && typeInfo.Name == "*http.Request" {
+					// The typeInfo is for the pointer. We need to resolve the element type to get the struct definition.
+					underlying, err := fieldType.Elem.Resolve(context.Background())
+					if err == nil && underlying != nil && underlying.Struct != nil {
+						fmt.Printf("DEBUG: Stub for http.Request is active. Found %d fields.\n", len(underlying.Struct.Fields))
+					}
+				}
+
 				arg := &symgo.Variable{
 					Name: name.Name,
 					BaseObject: symgo.BaseObject{

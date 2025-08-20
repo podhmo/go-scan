@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"flag"
 	"log/slog"
 	"os"
 
@@ -10,7 +11,16 @@ import (
 )
 
 func main() {
-	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	var debug bool
+	flag.BoolVar(&debug, "debug", false, "Enable debug logging for the analysis")
+	flag.Parse()
+
+	logLevel := slog.LevelInfo
+	if debug {
+		logLevel = slog.LevelDebug
+	}
+	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel}))
+
 	if err := run(logger); err != nil {
 		logger.Error("docgen failed", "error", err)
 		os.Exit(1)
@@ -31,7 +41,7 @@ func run(logger *slog.Logger) error {
 		return err
 	}
 
-	analyzer, err := NewAnalyzer(s)
+	analyzer, err := NewAnalyzer(s, logger)
 	if err != nil {
 		return err
 	}

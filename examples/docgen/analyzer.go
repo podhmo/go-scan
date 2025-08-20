@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	goscan "github.com/podhmo/go-scan"
@@ -16,15 +17,16 @@ type Analyzer struct {
 	Scanner     *goscan.Scanner
 	interpreter *symgo.Interpreter
 	OpenAPI     *openapi.OpenAPI
+	logger      *slog.Logger
 }
 
 // NewAnalyzer creates a new Analyzer.
-func NewAnalyzer(s *goscan.Scanner) (*Analyzer, error) {
+func NewAnalyzer(s *goscan.Scanner, logger *slog.Logger) (*Analyzer, error) {
 	internalScanner, err := s.ScannerForSymgo()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get internal scanner: %w", err)
 	}
-	interp, err := symgo.NewInterpreter(internalScanner, s.Logger)
+	interp, err := symgo.NewInterpreter(internalScanner, symgo.WithLogger(logger))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create symgo interpreter: %w", err)
 	}
@@ -32,6 +34,7 @@ func NewAnalyzer(s *goscan.Scanner) (*Analyzer, error) {
 	a := &Analyzer{
 		Scanner:     s,
 		interpreter: interp,
+		logger:      logger,
 		OpenAPI: &openapi.OpenAPI{
 			OpenAPI: "3.1.0",
 			Info: openapi.Info{

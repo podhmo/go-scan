@@ -237,7 +237,7 @@ func (a *Analyzer) buildHandlerIntrinsics(op *openapi.Operation) map[string]symg
 	for _, p := range patterns.GetDefaultPatterns() {
 		// Capture the pattern for the closure.
 		pattern := p
-		intrinsics[pattern.Key()] = func(i *symgo.Interpreter, args []symgo.Object) symgo.Object {
+		intrinsics[pattern.Key] = func(i *symgo.Interpreter, args []symgo.Object) symgo.Object {
 			// The `op` is captured from the outer scope here.
 			return pattern.Apply(i, args, op)
 		}

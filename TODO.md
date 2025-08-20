@@ -77,7 +77,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     - [x] **Core Analyzer**:
         - [x] Implement the main analysis orchestrator that uses `go-scan` and the `symgo` interpreter.
         - [x] Implement logic to find calls to `(*http.ServeMux).HandleFunc` to extract route paths and handler functions, targeting modern Go 1.22+ patterns.
-        - [ ] Use `go-scan`'s `WithExternalTypeOverrides` to provide stubs for complex stdlib types like `http.Request`.
+        - [x] Use `go-scan`'s `WithExternalTypeOverrides` to provide stubs for complex stdlib types like `http.Request`.
     - [x] **Handler Analysis**:
         - [x] Analyze handler function patterns to find HTTP methods (now done via parsing the `HandleFunc` pattern string, e.g., "GET /path").
         - [x] Extract `operationId` from the function name and `description` from godoc comments.

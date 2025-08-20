@@ -20,9 +20,12 @@ func main() {
 func run(logger *slog.Logger) error {
 	const sampleAPIPath = "github.com/podhmo/go-scan/examples/docgen/sampleapi"
 
+	overrides := createStubOverrides()
+
 	s, err := goscan.New(
 		goscan.WithGoModuleResolver(),
 		goscan.WithLogger(logger),
+		goscan.WithExternalTypeOverrides(overrides),
 	)
 	if err != nil {
 		return err

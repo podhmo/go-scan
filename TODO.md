@@ -52,7 +52,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] **Improve generic type inference for composite types**: The type inference engine fails to infer type parameters when they are part of a composite type in a function argument (e.g., inferring `E` from a parameter of type `[]E`). This was discovered when testing `slices.Sort` and currently blocks its use via source interpretation.
 - [x] **Improve interpreter performance for complex algorithms**: `slices.Sort` fails to complete within the test timeout, indicating severe performance bottlenecks when interpreting complex code like sorting algorithms.
 
-### Symbolic-Execution-like Engine (`symgo`) ([docs/plan-symbolic-execution-like.md](./docs/plan-symbolic-execution-like.md))
+### `docgen` and Symbolic-Execution-like Engine (`symgo`) ([docs/plan-symbolic-execution-like.md](./docs/plan-symbolic-execution-like.md))
 - [x] **M1: `symgo` Core Engine**:
     - [x] **Object System**: Define the `symgo/object` package with the `Object` interface and initial concrete types (`String`, `Function`, `Error`, `SymbolicPlaceholder`).
     - [x] **Scope Management**: Implement the `symgo/scope` package for lexical scoping, supporting nested environments.
@@ -116,3 +116,21 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] **Refactor `docgen` to use `symgo.Interpreter`**: The `docgen` tool has been refactored to use the `symgo.Interpreter`, replacing the initial manual AST traversal. The `symgo` engine itself was enhanced to support this.
 - [x] **Resolve variable arguments in intrinsics**: Ensure that when a variable is passed to an intrinsic function, the function receives the variable's underlying value (`*object.String`, etc.) rather than the `*object.Variable` wrapper. This simplifies intrinsic implementation and aligns argument evaluation with return value evaluation.
 - [x] **Support string concatenation**: Implemented support for the `+` operator for string types in binary expressions.
+
+### `symgo` and `docgen` Improvements
+
+> Note: `docgen` is intended to be a test pilot for `symgo`. When discovering missing features or bugs in `docgen`, the preferred workflow is to return to the `symgo` engine, break the problem down into a minimal test case, add that test, and then modify the `symgo` implementation until the test passes.
+
+A set of tasks to improve the `symgo` engine and the `docgen` tool based on the analysis in `docgen/ja/from-docgen.md`.
+
+- [ ] **Step 1: Error Reporting and Engine Stabilization**
+    - [ ] **Extend `object.Error`**: Add a `token.Pos` field to the `Error` struct in `symgo/object/object.go` to hold source code position.
+    - [ ] **Improve Error Messages**: Update the `symgo.Interpreter` to use the `token.Pos` to include file, line, and column information in error messages.
+    - [ ] **Implement `fmt.Sprintf` Intrinsic**: Add a `symgo` intrinsic to mimic the basic behavior of `fmt.Sprintf` for dynamic string construction.
+    - [ ] **Support `if-else`**: Modify `evalIfStmt` in `symgo/evaluator/evaluator.go` to correctly evaluate `else` blocks.
+- [ ] **Step 2: Debugging Features**
+    - [ ] **Implement Structured Logger**: Introduce an optional structured logger in the `symgo.Evaluator` to trace evaluation steps, including node info, position, and results.
+    - [ ] **Add Debug Flag to `docgen`**: Add a `--debug-analysis <functionName>` flag to `docgen` to enable the structured logger for a specific function.
+- [ ] **Step 3: User Extensibility**
+    - [ ] **Implement `minigo`-based Pattern Loader**: Create a loader in `docgen` that reads a `.minigo` script and parses a list of pattern definitions using `minigo.EvalString` and `minigo.Result.As`.
+    - [ ] **Integrate Pattern Loader with Analyzer**: Modify the `docgen.Analyzer` to dynamically register intrinsics based on the patterns loaded from the `.minigo` script at startup.

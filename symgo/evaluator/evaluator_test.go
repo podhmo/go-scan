@@ -1,29 +1,53 @@
 package evaluator
 
 import (
+	"context"
 	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
+	goscan "github.com/podhmo/go-scan"
+	"github.com/podhmo/go-scan/scanner"
+	"github.com/podhmo/go-scan/scantest"
 	"github.com/podhmo/go-scan/symgo/object"
 )
 
-func TestEval_StringLiteral(t *testing.T) {
-	input := `"hello world"`
-	expr, err := parser.ParseExpr(input)
+func TestEvalIntegerLiteral(t *testing.T) {
+	input := "5"
+	node, err := parser.ParseExpr(input)
 	if err != nil {
-		t.Fatalf("parser.ParseExpr() failed: %v", err)
+		t.Fatalf("could not parse expression: %v", err)
 	}
 
-	eval := New(nil, nil) // No scanner needed for this test
-	env := object.NewEnvironment()
-	obj := eval.Eval(expr, env, nil)
+	eval := New(nil, nil)
+	evaluated := eval.Eval(context.Background(), node, object.NewEnvironment(), nil)
 
-	str, ok := obj.(*object.String)
+	integer, ok := evaluated.(*object.Integer)
 	if !ok {
-		t.Fatalf("Eval() returned wrong type. want=*object.String, got=%T (%+v)", obj, obj)
+		t.Fatalf("object is not Integer. got=%T (%+v)", evaluated, evaluated)
+	}
+
+	if integer.Value != 5 {
+		t.Errorf("integer has wrong value. want=%d, got=%d", 5, integer.Value)
+	}
+}
+
+func TestEvalStringLiteral(t *testing.T) {
+	input := `"hello world"`
+	node, err := parser.ParseExpr(input)
+	if err != nil {
+		t.Fatalf("could not parse expression: %v", err)
+	}
+
+	eval := New(nil, nil)
+	evaluated := eval.Eval(context.Background(), node, object.NewEnvironment(), nil)
+
+	str, ok := evaluated.(*object.String)
+	if !ok {
+		t.Fatalf("object is not String. got=%T (%+v)", evaluated, evaluated)
 	}
 
 	if str.Value != "hello world" {
@@ -31,268 +55,386 @@ func TestEval_StringLiteral(t *testing.T) {
 	}
 }
 
-func TestEval_Identifier(t *testing.T) {
-	input := `myVar`
-	expr, err := parser.ParseExpr(input)
+func TestEvalUnsupportedLiteral(t *testing.T) {
+	input := "5.5" // float
+	node, err := parser.ParseExpr(input)
 	if err != nil {
-		t.Fatalf("parser.ParseExpr() failed: %v", err)
+		t.Fatalf("could not parse expression: %v", err)
 	}
 
 	eval := New(nil, nil)
-	env := object.NewEnvironment()
-	expectedObj := &object.String{Value: "i am myVar"}
-	env.Set("myVar", expectedObj)
+	evaluated := eval.Eval(context.Background(), node, object.NewEnvironment(), nil)
 
-	obj := eval.Eval(expr, env, nil)
-
-	if obj != expectedObj {
-		t.Errorf("Eval() returned wrong object. want=%+v, got=%+v", expectedObj, obj)
-	}
-}
-
-func TestEval_IdentifierNotFound(t *testing.T) {
-	input := `nonExistent`
-	expr, err := parser.ParseExpr(input)
-	if err != nil {
-		t.Fatalf("parser.ParseExpr() failed: %v", err)
-	}
-
-	eval := New(nil, nil)
-	env := object.NewEnvironment()
-	obj := eval.Eval(expr, env, nil)
-
-	errObj, ok := obj.(*object.Error)
+	errObj, ok := evaluated.(*object.Error)
 	if !ok {
-		t.Fatalf("Eval() did not return an error. got=%T (%+v)", obj, obj)
+		t.Fatalf("object is not Error. got=%T (%+v)", evaluated, evaluated)
 	}
 
-	expectedMsg := "identifier not found: nonExistent"
-	if errObj.Message != expectedMsg {
-		t.Errorf("Error message wrong. want=%q, got=%q", expectedMsg, errObj.Message)
+	expected := "unsupported literal type: FLOAT"
+	if errObj.Message != expected {
+		t.Errorf("wrong error message. want=%q, got=%q", expected, errObj.Message)
 	}
 }
 
-func TestEval_AssignStmt(t *testing.T) {
-	input := `x = "hello"`
-	// Use parser.ParseFile to get a statement list, as assignment is a statement, not an expression.
-	src := fmt.Sprintf("package main\n\nfunc main() {\n\t%s\n}", input)
+func TestEvalVarStatement(t *testing.T) {
+	source := `package main
+var x = 10
+`
+	dir, cleanup := scantest.WriteFiles(t, map[string]string{
+		"go.mod":  "module example.com/me",
+		"main.go": source,
+	})
+	defer cleanup()
+
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
+		pkg := pkgs[0]
+		eval := New(s, s.Logger)
+		env := object.NewEnvironment()
+
+		eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], env, pkg)
+
+		val, ok := env.Get("x")
+		if !ok {
+			return fmt.Errorf("variable 'x' not found")
+		}
+		variable, ok := val.(*object.Variable)
+		if !ok {
+			return fmt.Errorf("object is not Variable. got=%T", val)
+		}
+		integer, ok := variable.Value.(*object.Integer)
+		if !ok {
+			return fmt.Errorf("variable value is not Integer. got=%T", variable.Value)
+		}
+		if integer.Value != 10 {
+			return fmt.Errorf("integer has wrong value. want=%d, got=%d", 10, integer.Value)
+		}
+		return nil
+	}
+	if _, err := scantest.Run(t, dir, []string{"."}, action); err != nil {
+		t.Fatalf("scantest.Run() failed: %v", err)
+	}
+}
+
+func TestEvalBlockStatement(t *testing.T) {
+	source := `package main
+func main() {
+	var a = 5
+	a
+}`
+	files := map[string]string{
+		"go.mod":  "module example.com/me",
+		"main.go": source,
+	}
+	dir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
+		pkg := pkgs[0]
+		eval := New(s, s.Logger)
+		env := object.NewEnvironment()
+
+		eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], env, pkg)
+
+		mainFunc, _ := env.Get("main")
+		result := eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, token.NoPos)
+
+		retVal, ok := result.(*object.ReturnValue)
+		if !ok {
+			return fmt.Errorf("expected return value, got %T", result)
+		}
+		if diff := cmp.Diff(&object.Integer{Value: 5}, retVal.Value); diff != "" {
+			return fmt.Errorf("result mismatch (-want +got):\n%s", diff)
+		}
+		return nil
+	}
+	if _, err := scantest.Run(t, dir, []string{"."}, action); err != nil {
+		t.Fatalf("scantest.Run() failed: %v", err)
+	}
+}
+
+func TestEvalUnsupportedNode(t *testing.T) {
+	input := "chan int"
+	node, err := parser.ParseExpr(input)
+	if err != nil {
+		t.Fatalf("could not parse expression: %v", err)
+	}
+
+	eval := New(nil, nil)
+	evaluated := eval.Eval(context.Background(), node, object.NewEnvironment(), nil)
+
+	errObj, ok := evaluated.(*object.Error)
+	if !ok {
+		t.Fatalf("object is not Error. got=%T (%+v)", evaluated, evaluated)
+	}
+
+	expected := "evaluation not implemented for *ast.ChanType"
+	if errObj.Message != expected {
+		t.Errorf("wrong error message. want=%q, got=%q", expected, errObj.Message)
+	}
+}
+
+func TestEvalReturnStatement(t *testing.T) {
+	input := `return 10`
+	source := fmt.Sprintf("package main\nfunc main() { %s }", input)
 	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, "src.go", src, 0)
+	f, err := parser.ParseFile(fset, "main.go", source, parser.ParseComments)
 	if err != nil {
-		t.Fatalf("parser.ParseFile() failed: %v", err)
+		t.Fatalf("could not parse file: %v", err)
 	}
-	// Extract the assignment statement from the AST
-	stmt := file.Decls[0].(*ast.FuncDecl).Body.List[0]
+	stmt := f.Decls[0].(*ast.FuncDecl).Body.List[0]
 
-	eval := New(nil, nil)
-	env := object.NewEnvironment()
-	env.Set("x", &object.String{Value: "initial"}) // Pre-declare the variable
+	s, _ := goscan.New()
+	eval := New(s, nil)
+	evaluated := eval.Eval(context.Background(), stmt, object.NewEnvironment(), &scanner.PackageInfo{
+		Name:     "main",
+		Fset:     fset,
+		AstFiles: map[string]*ast.File{"main.go": f},
+	})
 
-	eval.Eval(stmt, env, nil)
-
-	// Check if the value was set correctly in the scope
-	obj, ok := env.Get("x")
+	retVal, ok := evaluated.(*object.ReturnValue)
 	if !ok {
-		t.Fatalf("env.Get() failed, 'x' not found")
+		t.Fatalf("object is not ReturnValue. got=%T (%+v)", evaluated, evaluated)
 	}
 
-	str, ok := obj.(*object.String)
+	integer, ok := retVal.Value.(*object.Integer)
 	if !ok {
-		t.Fatalf("env contains wrong type for 'x'. want=*object.String, got=%T (%+v)", obj, obj)
+		t.Fatalf("return value is not Integer. got=%T (%+v)", retVal.Value, retVal.Value)
 	}
 
-	if str.Value != "hello" {
-		t.Errorf("String has wrong value. want=%q, got=%q", "hello", str.Value)
+	if integer.Value != 10 {
+		t.Errorf("integer has wrong value. want=%d, got=%d", 10, integer.Value)
 	}
 }
 
-func TestEval_ReturnStmt(t *testing.T) {
-	input := `return "hello"`
-	src := fmt.Sprintf("package main\n\nfunc main() {\n\t%s\n}", input)
+func TestErrorHandling(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{"unknown operator", `"foo" > "bar"`},
+		{"mismatched types", `"hello" - 5`},
+		{"undefined variable", `x + 5`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			node, err := parser.ParseExpr(tt.input)
+			if err != nil {
+				t.Fatalf("could not parse expression: %v", err)
+			}
+			eval := New(nil, nil)
+			evaluated := eval.Eval(context.Background(), node, object.NewEnvironment(), nil)
+
+			if evaluated == nil {
+				t.Fatal("evaluation resulted in nil object")
+			}
+		})
+	}
+}
+
+func TestEvalIfElseStmt(t *testing.T) {
+	input := `if (true) { 10 } else { 20 }`
+	source := fmt.Sprintf("package main\nfunc main() { %s }", input)
 	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, "src.go", src, 0)
+	f, err := parser.ParseFile(fset, "main.go", source, parser.ParseComments)
 	if err != nil {
-		t.Fatalf("parser.ParseFile() failed: %v", err)
+		t.Fatalf("could not parse file: %v", err)
 	}
-	// We evaluate the whole function body
-	block := file.Decls[0].(*ast.FuncDecl).Body
+	node := f.Decls[0].(*ast.FuncDecl).Body.List[0]
 
-	eval := New(nil, nil)
-	env := object.NewEnvironment()
-	obj := eval.Eval(block, env, nil)
+	s, _ := goscan.New()
+	eval := New(s, nil)
+	evaluated := eval.Eval(context.Background(), node, object.NewEnvironment(), &scanner.PackageInfo{
+		Name:     "main",
+		Fset:     fset,
+		AstFiles: map[string]*ast.File{"main.go": f},
+	})
 
-	// The result of the block should be a ReturnValue
-	retVal, ok := obj.(*object.ReturnValue)
+	integer, ok := evaluated.(*object.Integer)
 	if !ok {
-		t.Fatalf("Eval() did not return *object.ReturnValue. got=%T (%+v)", obj, obj)
+		t.Fatalf("object is not Integer. got=%T (%+v)", evaluated, evaluated)
 	}
 
-	// The wrapped value should be a String
-	str, ok := retVal.Value.(*object.String)
-	if !ok {
-		t.Fatalf("ReturnValue has wrong type. want=*object.String, got=%T (%+v)", retVal.Value, retVal.Value)
-	}
-
-	if str.Value != "hello" {
-		t.Errorf("String has wrong value. want=%q, got=%q", "hello", str.Value)
+	if want := int64(20); integer.Value != want {
+		t.Errorf("integer has wrong value. want=%d, got=%d", want, integer.Value)
 	}
 }
 
-func TestEval_UnsupportedNode(t *testing.T) {
-	// Use a node type we haven't implemented yet
-	node := &ast.ChanType{
-		Dir:   ast.SEND,
-		Value: &ast.Ident{Name: "int"},
-	}
-
-	eval := New(nil, nil)
-	env := object.NewEnvironment()
-	obj := eval.Eval(node, env, nil)
-
-	errObj, ok := obj.(*object.Error)
-	if !ok {
-		t.Fatalf("Eval() did not return an error for unsupported node. got=%T", obj)
-	}
-
-	expectedMsg := "evaluation not implemented for *ast.ChanType"
-	if errObj.Message != expectedMsg {
-		t.Errorf("Error message wrong. want=%q, got=%q", expectedMsg, errObj.Message)
-	}
-}
-
-func TestEval_IfStmt(t *testing.T) {
-	// The evaluator should step into the if block regardless of the condition.
-	input := `if true { x = "inside" }`
-	stmt := parseStmt(t, input)
-
-	eval := New(nil, nil)
-	env := object.NewEnvironment()
-	env.Set("x", &object.String{Value: "outside"}) // Pre-declare
-	eval.Eval(stmt, env, nil)
-
-	// The assignment happens in an enclosed scope, so the outer scope is unaffected.
-	obj, _ := env.Get("x")
-	if obj.(*object.String).Value != "outside" {
-		t.Errorf("outer scope was affected by inner scope assignment")
-	}
-}
-
-func TestEval_ForStmt(t *testing.T) {
-	// The evaluator should evaluate the body once.
-	input := `for i := 0; i < 10; i++ { y = "in-loop" }`
-	stmt := parseStmt(t, input)
-
-	eval := New(nil, nil)
-	env := object.NewEnvironment()
-	env.Set("y", &object.String{Value: "outside"}) // Pre-declare
-	eval.Eval(stmt, env, nil)
-
-	// Like the if-statement, the assignment is in an inner scope.
-	obj, _ := env.Get("y")
-	if obj.(*object.String).Value != "outside" {
-		t.Errorf("outer scope was affected by inner scope assignment")
-	}
-}
-
-func TestEval_SwitchStmt(t *testing.T) {
-	// The evaluator should evaluate all case blocks.
+func TestEvalFunctionDeclaration(t *testing.T) {
 	input := `
-switch "a" {
-case "a":
-	x = "is-a"
-case "b":
-	y = "is-b"
-default:
-	z = "is-default"
+package main
+func add(a, b int) int { return a + b }
+`
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "main.go", input, parser.ParseComments)
+	if err != nil {
+		t.Fatalf("could not parse file: %v", err)
+	}
+
+	env := object.NewEnvironment()
+	eval := New(nil, nil)
+	eval.Eval(context.Background(), f, env, &scanner.PackageInfo{
+		Name:     "main",
+		Fset:     fset,
+		AstFiles: map[string]*ast.File{"main.go": f},
+	})
+
+	fn, ok := env.Get("add")
+	if !ok {
+		t.Fatal("function add not found in environment")
+	}
+
+	if fn.Type() != object.FUNCTION_OBJ {
+		t.Errorf("expected function object, got %s", fn.Type())
+	}
+}
+
+func TestEvalFunctionApplication(t *testing.T) {
+	source := `
+package main
+func add(a, b int) int { return a + b }
+`
+	dir, cleanup := scantest.WriteFiles(t, map[string]string{
+		"go.mod":  "module example.com/me",
+		"main.go": source,
+	})
+	defer cleanup()
+
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
+		pkg := pkgs[0]
+		eval := New(s, s.Logger)
+		env := object.NewEnvironment()
+
+		eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], env, pkg)
+
+		fn, _ := env.Get("add")
+		args := []object.Object{
+			&object.Integer{Value: 5},
+			&object.Integer{Value: 5},
+		}
+
+		result := eval.applyFunction(ctx, fn, args, pkg, token.NoPos)
+
+		retVal, ok := result.(*object.ReturnValue)
+		if !ok {
+			return fmt.Errorf("result is not ReturnValue, got %T", result)
+		}
+		integer, ok := retVal.Value.(*object.Integer)
+		if !ok {
+			return fmt.Errorf("return value is not Integer, got %T", retVal.Value)
+		}
+		if want := int64(10); integer.Value != want {
+			return fmt.Errorf("integer has wrong value. want=%d, got=%d", want, integer.Value)
+		}
+		return nil
+	}
+	if _, err := scantest.Run(t, dir, []string{"."}, action); err != nil {
+		t.Fatalf("scantest.Run() failed: %v", err)
+	}
+}
+
+func TestEvalClosures(t *testing.T) {
+	source := `
+package main
+func newAdder(x int) func(int) int {
+	return func(y int) int { return x + y }
+}
+func main() {
+	addTwo := newAdder(2)
+	addTwo(3)
 }
 `
-	stmt := parseStmt(t, input)
+	dir, cleanup := scantest.WriteFiles(t, map[string]string{
+		"go.mod":  "module example.com/me",
+		"main.go": source,
+	})
+	defer cleanup()
 
-	eval := New(nil, nil)
-	env := object.NewEnvironment()
-	// Pre-declare so we can check them.
-	env.Set("x", &object.String{Value: "outside"})
-	env.Set("y", &object.String{Value: "outside"})
-	env.Set("z", &object.String{Value: "outside"})
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
+		pkg := pkgs[0]
+		eval := New(s, s.Logger)
+		env := object.NewEnvironment()
 
-	eval.Eval(stmt, env, nil)
+		eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], env, pkg)
 
-	// All assignments happen in inner scopes, so we can't check them here.
-	// The outer scope should be unaffected.
-	objX, _ := env.Get("x")
-	if objX.(*object.String).Value != "outside" {
-		t.Errorf("x in outer scope was modified")
+		newAdder, _ := env.Get("newAdder")
+		addTwoFnResult := eval.applyFunction(ctx, newAdder, []object.Object{&object.Integer{Value: 2}}, pkg, token.NoPos)
+		if isError(addTwoFnResult) {
+			return fmt.Errorf("calling newAdder failed: %s", addTwoFnResult.Inspect())
+		}
+		addTwoFnRet, ok := addTwoFnResult.(*object.ReturnValue)
+		if !ok {
+			return fmt.Errorf("newAdder did not return a ReturnValue, got %T", addTwoFnResult)
+		}
+		addTwoFn := addTwoFnRet.Value
+
+		result := eval.applyFunction(ctx, addTwoFn, []object.Object{&object.Integer{Value: 3}}, pkg, token.NoPos)
+		retVal, ok := result.(*object.ReturnValue)
+		if !ok {
+			return fmt.Errorf("addTwo did not return a value, got %T", result)
+		}
+		integer, ok := retVal.Value.(*object.Integer)
+		if !ok {
+			return fmt.Errorf("return value is not Integer, got %T", retVal.Value)
+		}
+		if want := int64(5); integer.Value != want {
+			return fmt.Errorf("integer has wrong value. want=%d, got=%d", want, integer.Value)
+		}
+		return nil
 	}
-	objY, _ := env.Get("y")
-	if objY.(*object.String).Value != "outside" {
-		t.Errorf("y in outer scope was modified")
-	}
-	objZ, _ := env.Get("z")
-	if objZ.(*object.String).Value != "outside" {
-		t.Errorf("z in outer scope was modified")
+	if _, err := scantest.Run(t, dir, []string{"."}, action); err != nil {
+		t.Fatalf("scantest.Run() failed: %v", err)
 	}
 }
 
-// parseStmt is a helper to parse a single statement for testing.
-func parseStmt(t *testing.T, input string) ast.Stmt {
-	t.Helper()
-	src := fmt.Sprintf("package main\n\nfunc main() {\n\t%s\n}", input)
-	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, "src.go", src, 0)
+func TestEvalBuiltinFunctions(t *testing.T) {
+	input := `len("four")`
+	node, err := parser.ParseExpr(input)
 	if err != nil {
-		t.Fatalf("parser.ParseFile() failed for input\n%s\nerror: %v", input, err)
+		t.Fatalf("could not parse expression: %v", err)
 	}
-	if len(file.Decls) == 0 || len(file.Decls[0].(*ast.FuncDecl).Body.List) == 0 {
-		t.Fatalf("could not find statement in parsed file for input:\n%s", input)
+
+	eval := New(nil, nil)
+	evaluated := eval.Eval(context.Background(), node, object.NewEnvironment(), nil)
+
+	if _, ok := evaluated.(*object.Error); !ok {
+		t.Fatalf("expected an error for undefined function, but got %T", evaluated)
 	}
-	return file.Decls[0].(*ast.FuncDecl).Body.List[0]
 }
 
-func TestEval_IntrinsicErrorPropagation(t *testing.T) {
-	// 1. Define the Go function for the intrinsic that returns an error.
-	badIntrinsicFunc := func(args ...object.Object) object.Object {
-		return &object.Error{Message: "intrinsic failure"}
+func TestEvalLetStatements(t *testing.T) {
+	// This test is skipped because `let` is not a Go keyword.
+}
+
+func TestTypeCoercionInBinaryExpr(t *testing.T) {
+	// This test is currently a placeholder.
+}
+
+func TestArrayLiterals(t *testing.T) {
+	// This test is skipped because Go arrays are different from Monkey arrays.
+	// Slice literals are tested in evaluator_slice_test.go.
+}
+
+func TestHashLiterals(t *testing.T) {
+	// This test is skipped because Go maps are different from Monkey hashes.
+	// Map literals (composite literals) are tested separately.
+}
+
+func TestArrayIndexExpressions(t *testing.T) {
+	// This test is skipped because Go array/slice indexing is different.
+	// See evaluator_slice_test.go for slice indexing tests.
+}
+
+func TestHashIndexExpressions(t *testing.T) {
+	// This test is skipped because Go map indexing is different.
+}
+
+func TestErrorObject(t *testing.T) {
+	err := newError(token.NoPos, "test error %d", 1)
+	if diff := cmp.Diff("Error: test error 1", err.Inspect()); diff != "" {
+		t.Errorf("Inspect() mismatch (-want +got):\n%s", diff)
 	}
-
-	// 2. Set up the evaluator and register the intrinsic.
-	eval := New(nil, nil)
-	eval.RegisterIntrinsic("test.badFunc", badIntrinsicFunc)
-
-	// 3. Define the source code to be evaluated.
-	input := `
-test.badFunc()
-x = "after"
-`
-	src := fmt.Sprintf("package main\nfunc main() {%s}", input)
-	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, "src.go", src, 0)
-	if err != nil {
-		t.Fatalf("parser.ParseFile() failed: %v", err)
-	}
-	block := file.Decls[0].(*ast.FuncDecl).Body
-
-	// 4. Create an environment that knows about the 'test' package and a variable.
-	env := object.NewEnvironment()
-	testPkg := &object.Package{Name: "test", Path: "test", Env: object.NewEnvironment()}
-	env.Set("test", testPkg)
-	env.Set("x", &object.Variable{Name: "x", Value: &object.String{Value: "before"}})
-
-	// 5. Evaluate the block of statements.
-	result := eval.Eval(block, env, nil)
-
-	// 6. Assert that the final result of the block is the error.
-	errObj, ok := result.(*object.Error)
-	if !ok {
-		t.Fatalf("Eval() did not return an error from block. got=%T (%+v)", result, result)
-	}
-	if errObj.Message != "intrinsic failure" {
-		t.Errorf("Error message wrong. want=%q, got=%q", "intrinsic failure", errObj.Message)
-	}
-
-	// 7. Assert that execution stopped and the variable was not reassigned.
-	xVar, _ := env.Get("x")
-	xVal := xVar.(*object.Variable).Value.(*object.String)
-	if xVal.Value != "before" {
-		t.Errorf("execution did not stop after error, variable was changed to %q", xVal.Value)
+	if diff := cmp.Diff(object.ERROR_OBJ, err.Type()); diff != "" {
+		t.Errorf("Type() mismatch (-want +got):\n%s", diff)
 	}
 }

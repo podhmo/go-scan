@@ -150,6 +150,9 @@ type Package struct {
 	Name string
 	Path string
 	Env  *Environment // The environment containing all package-level declarations.
+
+	// ScannedInfo holds the detailed scan result for the package, loaded lazily.
+	ScannedInfo *scanner.PackageInfo
 }
 
 // Type returns the type of the Package object.
@@ -314,4 +317,17 @@ func (e *Environment) Set(name string, val Object) Object {
 // IsEmpty checks if the environment has any local bindings.
 func (e *Environment) IsEmpty() bool {
 	return len(e.store) == 0
+}
+
+// Walk iterates over all items in the environment and its outer scopes.
+// If the callback function returns false, the walk is stopped.
+func (e *Environment) Walk(fn func(name string, obj Object) bool) {
+	for name, obj := range e.store {
+		if !fn(name, obj) {
+			return
+		}
+	}
+	if e.outer != nil {
+		e.outer.Walk(fn)
+	}
 }

@@ -1,6 +1,7 @@
 package symgo
 
 import (
+	"context"
 	"fmt"
 	"go/ast"
 	"go/token"
@@ -8,6 +9,7 @@ import (
 	"log/slog"
 	"strings"
 
+	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/scanner"
 	"github.com/podhmo/go-scan/symgo/evaluator"
 	"github.com/podhmo/go-scan/symgo/object"
@@ -34,7 +36,7 @@ type IntrinsicFunc func(eval *Interpreter, args []Object) Object
 
 // Interpreter is the main public entry point for the symgo engine.
 type Interpreter struct {
-	scanner   *scanner.Scanner
+	scanner   *goscan.Scanner
 	eval      *evaluator.Evaluator
 	globalEnv *object.Environment
 	logger    *slog.Logger
@@ -51,13 +53,13 @@ func WithLogger(logger *slog.Logger) Option {
 }
 
 // Scanner returns the underlying go-scan Scanner instance.
-func (i *Interpreter) Scanner() *scanner.Scanner {
+func (i *Interpreter) Scanner() *goscan.Scanner {
 	return i.scanner
 }
 
 // NewInterpreter creates a new symgo interpreter.
 // It requires a pre-configured go-scan.Scanner instance.
-func NewInterpreter(scanner *scanner.Scanner, options ...Option) (*Interpreter, error) {
+func NewInterpreter(scanner *goscan.Scanner, options ...Option) (*Interpreter, error) {
 	if scanner == nil {
 		return nil, fmt.Errorf("scanner cannot be nil")
 	}
@@ -140,11 +142,11 @@ func (i *Interpreter) intrinsicSprintf(eval *Interpreter, args []Object) Object 
 
 // Eval evaluates a given AST node in the interpreter's persistent environment.
 // It requires the PackageInfo of the file containing the node to resolve types correctly.
-func (i *Interpreter) Eval(node ast.Node, pkg *scanner.PackageInfo) (Object, error) {
-	result := i.eval.Eval(node, i.globalEnv, pkg)
+func (i *Interpreter) Eval(ctx context.Context, node ast.Node, pkg *scanner.PackageInfo) (Object, error) {
+	result := i.eval.Eval(ctx, node, i.globalEnv, pkg)
 	if err, ok := result.(*Error); ok {
 		if err.Pos.IsValid() {
-			position := i.scanner.FileSet().Position(err.Pos)
+			position := i.scanner.Fset().Position(err.Pos)
 			return nil, fmt.Errorf("%s: %s", position, err.Message)
 		}
 		return nil, fmt.Errorf("%s", err.Message)
@@ -153,11 +155,11 @@ func (i *Interpreter) Eval(node ast.Node, pkg *scanner.PackageInfo) (Object, err
 }
 
 // EvalWithEnv evaluates a node using a specific environment instead of the global one.
-func (i *Interpreter) EvalWithEnv(node ast.Node, env *Environment, pkg *scanner.PackageInfo) (Object, error) {
-	result := i.eval.Eval(node, env, pkg)
+func (i *Interpreter) EvalWithEnv(ctx context.Context, node ast.Node, env *Environment, pkg *scanner.PackageInfo) (Object, error) {
+	result := i.eval.Eval(ctx, node, env, pkg)
 	if err, ok := result.(*Error); ok {
 		if err.Pos.IsValid() {
-			position := i.scanner.FileSet().Position(err.Pos)
+			position := i.scanner.Fset().Position(err.Pos)
 			return nil, fmt.Errorf("%s: %s", position, err.Message)
 		}
 		return nil, fmt.Errorf("%s", err.Message)
@@ -178,9 +180,9 @@ func (i *Interpreter) RegisterIntrinsic(key string, handler IntrinsicFunc) {
 }
 
 // PushIntrinsics creates a new temporary scope and registers a set of intrinsics on it.
-func (i *Interpreter) PushIntrinsics(intrinsics map[string]IntrinsicFunc) {
+func (i *Interpreter) PushIntrinsics(newIntrinsics map[string]IntrinsicFunc) {
 	i.eval.PushIntrinsics()
-	for key, handler := range intrinsics {
+	for key, handler := range newIntrinsics {
 		i.RegisterIntrinsic(key, handler)
 	}
 }
@@ -197,12 +199,12 @@ func (i *Interpreter) FindObject(name string) (Object, bool) {
 
 // Apply is a wrapper around the internal evaluator's applyFunction.
 // It is intended for advanced use cases like docgen where direct function invocation is needed.
-func (i *Interpreter) Apply(fn Object, args []Object, pkg *scanner.PackageInfo) (Object, error) {
+func (i *Interpreter) Apply(ctx context.Context, fn Object, args []Object, pkg *scanner.PackageInfo) (Object, error) {
 	// This is a simplified wrapper. A real implementation might need more context.
-	result := i.eval.Apply(fn, args, pkg)
+	result := i.eval.Apply(ctx, fn, args, pkg)
 	if err, ok := result.(*Error); ok {
 		if err.Pos.IsValid() {
-			position := i.scanner.FileSet().Position(err.Pos)
+			position := i.scanner.Fset().Position(err.Pos)
 			return nil, fmt.Errorf("%s: %s", position, err.Message)
 		}
 		return nil, fmt.Errorf("%s", err.Message)

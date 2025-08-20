@@ -121,6 +121,8 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 
 > Note: `docgen` is intended to be a test pilot for `symgo`. When discovering missing features or bugs in `docgen`, the preferred workflow is to return to the `symgo` engine, break the problem down into a minimal test case, add that test, and then modify the `symgo` implementation until the test passes.
 
+- [ ] **Fix `docgen` integration test**: The `examples/docgen/main_test.go` is currently skipped because it fails to generate a response schema for handlers that make calls on a bound interface (`http.ResponseWriter`). The `symgo` engine now correctly handles interface binding and multi-value assignments, but the test still fails, indicating a subtle bug in how the evaluator's side effects on the `openapi.Operation` object are propagated or observed. This needs further investigation.
+
 A set of tasks to improve the `symgo` engine and the `docgen` tool based on the analysis in `docgen/ja/from-docgen.md`.
 
 - [x] **Step 1: Error Reporting and Engine Stabilization**

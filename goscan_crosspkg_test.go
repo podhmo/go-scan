@@ -115,7 +115,7 @@ type C struct {
 
 	// Check the fields of C itself
 	expectedFields := []*scanner.FieldInfo{
-		{Name: "Name", Type: &scanner.FieldType{Name: "string", IsBuiltin: true}},
+		{Name: "Name", Type: &scanner.FieldType{Name: "string", IsBuiltin: true}, IsExported: true},
 	}
 	opts := []cmp.Option{
 		cmpopts.IgnoreFields(scanner.FieldType{}, "Resolver"),

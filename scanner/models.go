@@ -209,11 +209,12 @@ type StructInfo struct {
 
 // FieldInfo represents a single field in a struct or a parameter/result in a function.
 type FieldInfo struct {
-	Name     string
-	Doc      string
-	Type     *FieldType
-	Tag      string
-	Embedded bool
+	Name       string
+	Doc        string
+	Type       *FieldType
+	Tag        string
+	Embedded   bool
+	IsExported bool // True if the field is exported (starts with an uppercase letter).
 }
 
 // TagValue extracts the value associated with the given tagName from the struct tag.

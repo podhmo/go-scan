@@ -49,7 +49,7 @@ func main() {
 
 		// Evaluate all files to populate the environment
 		for _, file := range pkg.AstFiles {
-			_, err := interp.EvalWithEnv(file, env, pkg)
+			_, err := interp.EvalWithEnv(ctx, file, env, pkg)
 			if err != nil && !strings.Contains(err.Error(), "undefined_variable") {
 				// We expect an error, but only the one we're testing for.
 				return fmt.Errorf("initial eval of file %s failed unexpectedly: %w", file.Name.Name, err)
@@ -66,7 +66,7 @@ func main() {
 		}
 
 		// Apply the function to trigger the evaluation of its body
-		_, evalErr := interp.Apply(mainFunc, []symgo.Object{}, pkg)
+		_, evalErr := interp.Apply(ctx, mainFunc, []symgo.Object{}, pkg)
 		if evalErr == nil {
 			t.Fatal("expected an error, but got nil")
 		}
@@ -129,7 +129,7 @@ func main() {
 		})
 
 		for _, file := range pkg.AstFiles {
-			_, err := interp.EvalWithEnv(file, env, pkg)
+			_, err := interp.EvalWithEnv(ctx, file, env, pkg)
 			if err != nil {
 				return fmt.Errorf("initial eval of file %s failed: %w", file.Name.Name, err)
 			}
@@ -144,7 +144,7 @@ func main() {
 			return fmt.Errorf("main is not a *symgo.Function, but %T", mainFuncObj)
 		}
 
-		_, evalErr := interp.Apply(mainFunc, []symgo.Object{}, pkg)
+		_, evalErr := interp.Apply(ctx, mainFunc, []symgo.Object{}, pkg)
 		if evalErr != nil {
 			return fmt.Errorf("unexpected error during apply: %w", evalErr)
 		}
@@ -187,7 +187,7 @@ func run() string {
 		env := symgo.NewEnclosedEnvironment(nil)
 
 		for _, file := range pkg.AstFiles {
-			_, err := interp.EvalWithEnv(file, env, pkg)
+			_, err := interp.EvalWithEnv(ctx, file, env, pkg)
 			if err != nil {
 				return fmt.Errorf("initial eval of file %s failed: %w", file.Name.Name, err)
 			}
@@ -202,14 +202,18 @@ func run() string {
 			return fmt.Errorf("run is not a *symgo.Function, but %T", runFuncObj)
 		}
 
-		result, evalErr := interp.Apply(runFunc, []symgo.Object{}, pkg)
+		result, evalErr := interp.Apply(ctx, runFunc, []symgo.Object{}, pkg)
 		if evalErr != nil {
 			return fmt.Errorf("unexpected error during apply: %w", evalErr)
 		}
 
-		strVal, ok := result.(*object.String)
+		retVal, ok := result.(*object.ReturnValue)
 		if !ok {
-			return fmt.Errorf("expected result to be *object.String, but got %T", result)
+			return fmt.Errorf("expected result to be *object.ReturnValue, but got %T", result)
+		}
+		strVal, ok := retVal.Value.(*object.String)
+		if !ok {
+			return fmt.Errorf("expected result value to be *object.String, but got %T", retVal.Value)
 		}
 
 		expected := "hello world 42"

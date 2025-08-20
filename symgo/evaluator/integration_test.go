@@ -49,7 +49,7 @@ func main() {
 		var inspectedType object.Object
 		env := object.NewEnvironment()
 		for _, file := range pkg.AstFiles {
-			eval.Eval(file, env, pkg)
+			eval.Eval(ctx, file, env, pkg)
 		}
 
 		intrinsic := &object.Intrinsic{
@@ -72,7 +72,7 @@ func main() {
 		}
 
 		// We use applyFunction directly to simulate a call to main()
-		eval.applyFunction(mainFunc, []object.Object{}, pkg, token.NoPos)
+		eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, token.NoPos)
 
 		if inspectedType == nil {
 			t.Fatal("intrinsic was not called")

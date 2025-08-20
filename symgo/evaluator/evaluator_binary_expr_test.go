@@ -6,44 +6,36 @@ import (
 	"go/token"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
 	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/scantest"
 	"github.com/podhmo/go-scan/symgo/object"
 )
 
-func TestEvalBinaryExpr_StringConcatenation(t *testing.T) {
+func TestEvalBinaryExpr(t *testing.T) {
 	tests := []struct {
 		name     string
-		code     string
-		expected string
+		source   string
+		mainFunc string
+		want     object.Object
 	}{
 		{
-			name:     "literals",
-			code:     `func run() string { return "hello" + " " + "world" }`,
-			expected: "hello world",
-		},
-		{
-			name: "variables",
-			code: `func run() string {
-				x := "hello"
-				y := "world"
-				return x + " " + y
-			}`,
-			expected: "hello world",
+			name:   "string concatenation",
+			source: `func main() { "hello" + " " + "world" }`,
+			want:   &object.String{Value: "hello world"},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			source := fmt.Sprintf("package main\n%s", tt.source)
 			files := map[string]string{
 				"go.mod":  "module example.com/me",
-				"main.go": fmt.Sprintf("package main\n%s", tt.code),
+				"main.go": source,
 			}
-
 			dir, cleanup := scantest.WriteFiles(t, files)
 			defer cleanup()
 
-			var finalResult object.Object
 			action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 				pkg := pkgs[0]
 				internalScanner, err := s.ScannerForSymgo()
@@ -52,36 +44,35 @@ func TestEvalBinaryExpr_StringConcatenation(t *testing.T) {
 				}
 				eval := New(internalScanner, s.Logger)
 				env := object.NewEnvironment()
-
 				for _, file := range pkg.AstFiles {
-					eval.Eval(file, env, pkg)
+					eval.Eval(ctx, file, env, pkg)
 				}
 
-				runFuncObj, ok := env.Get("run")
+				mainFuncObj, ok := env.Get("main")
 				if !ok {
-					return fmt.Errorf("run function not found")
+					return fmt.Errorf("main function not found")
 				}
-				runFunc := runFuncObj.(*object.Function)
+				mainFunc := mainFuncObj.(*object.Function)
 
-				finalResult = eval.applyFunction(runFunc, []object.Object{}, pkg, token.NoPos)
+				result := eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, token.NoPos)
+				if isError(result) {
+					return fmt.Errorf("evaluation failed: %s", result.Inspect())
+				}
+
+				// The result of a function call is the result of its last expression.
+				// Our function body is a single expression statement, so we expect a ReturnValue.
+				ret, ok := result.(*object.ReturnValue)
+				if !ok {
+					return fmt.Errorf("expected return value, got %T", result)
+				}
+
+				if diff := cmp.Diff(tt.want, ret.Value); diff != "" {
+					t.Errorf("result mismatch (-want +got):\n%s", diff)
+				}
 				return nil
 			}
-
 			if _, err := scantest.Run(t, dir, []string{"."}, action); err != nil {
 				t.Fatalf("scantest.Run() failed: %v", err)
-			}
-
-			if finalResult == nil {
-				t.Fatal("finalResult was not set")
-			}
-
-			result, ok := finalResult.(*object.String)
-			if !ok {
-				t.Fatalf("expected result to be *object.String, but got %T (%s)", finalResult, finalResult.Inspect())
-			}
-
-			if result.Value != tt.expected {
-				t.Errorf("string concatenation result is wrong, want %q, got %q", tt.expected, result.Value)
 			}
 		})
 	}

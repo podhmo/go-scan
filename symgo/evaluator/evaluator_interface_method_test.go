@@ -11,7 +11,6 @@ import (
 )
 
 func TestEval_ExternalInterfaceMethodCall(t *testing.T) {
-	t.Skip("this test is failing because of go module resolution issues, which will be addressed in a future task")
 	files := map[string]string{
 		"go.mod": "module example.com/me",
 		"iface/iface.go": `
@@ -50,25 +49,20 @@ func main() {
 		})
 
 		for _, file := range pkg.AstFiles {
-			eval.Eval(file, env, pkg)
+			eval.Eval(ctx, file, env, pkg)
 		}
 
 		mainFuncObj, _ := env.Get("main")
 		mainFunc := mainFuncObj.(*object.Function)
-		result := eval.Apply(mainFunc, []object.Object{}, pkg)
+		result := eval.Apply(ctx, mainFunc, []object.Object{}, pkg)
 		if err, ok := result.(*object.Error); ok {
 			return fmt.Errorf("evaluation failed: %s", err.Message)
 		}
 		return nil
 	}
 
-	// Create a scanner with the module resolver, which is the key to fixing the issue.
-	s, err := goscan.New(goscan.WithGoModuleResolver())
-	if err != nil {
-		t.Fatalf("failed to create scanner: %v", err)
-	}
-
-	if _, err := scantest.Run(t, dir, []string{"."}, action, scantest.WithScanner(s), scantest.WithModuleRoot(dir)); err != nil {
+	// Let scantest.Run create and configure the scanner.
+	if _, err := scantest.Run(t, dir, []string{"."}, action, scantest.WithModuleRoot(dir)); err != nil {
 		t.Fatalf("scantest.Run() failed: %+v", err)
 	}
 
@@ -78,7 +72,6 @@ func main() {
 }
 
 func TestEval_InterfaceMethodCall(t *testing.T) {
-	t.Skip("this test is failing because of go module resolution issues, which will be addressed in a future task")
 	code := `
 package main
 
@@ -119,25 +112,20 @@ func main() {
 		})
 
 		for _, file := range pkg.AstFiles {
-			eval.Eval(file, env, pkg)
+			eval.Eval(ctx, file, env, pkg)
 		}
 
 		mainFuncObj, _ := env.Get("main")
 		mainFunc := mainFuncObj.(*object.Function)
-		result := eval.Apply(mainFunc, []object.Object{}, pkg)
+		result := eval.Apply(ctx, mainFunc, []object.Object{}, pkg)
 		if err, ok := result.(*object.Error); ok {
 			return fmt.Errorf("evaluation failed: %s", err.Message)
 		}
 		return nil
 	}
 
-	// This test does not need a custom scanner, but it DOES need the module root set correctly.
-	s, err := goscan.New(goscan.WithGoModuleResolver())
-	if err != nil {
-		t.Fatalf("failed to create scanner: %v", err)
-	}
-
-	if _, err := scantest.Run(t, dir, []string{"."}, action, scantest.WithScanner(s), scantest.WithModuleRoot(dir)); err != nil {
+	// Let scantest.Run create and configure the scanner.
+	if _, err := scantest.Run(t, dir, []string{"."}, action, scantest.WithModuleRoot(dir)); err != nil {
 		t.Fatalf("scantest.Run() failed: %+v", err)
 	}
 

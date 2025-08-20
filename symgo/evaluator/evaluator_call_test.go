@@ -39,7 +39,7 @@ func main() { add(1, 2) }
 		eval := New(internalScanner, s.Logger)
 		env := object.NewEnvironment()
 		for _, file := range pkg.AstFiles {
-			eval.Eval(file, env, pkg)
+			eval.Eval(ctx, file, env, pkg)
 		}
 
 		mainFuncObj, ok := env.Get("main")
@@ -51,7 +51,7 @@ func main() { add(1, 2) }
 			return fmt.Errorf("main is not an object.Function, got %T", mainFuncObj)
 		}
 
-		eval.applyFunction(mainFunc, []object.Object{}, pkg, token.NoPos)
+		eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, token.NoPos)
 		return nil
 	}
 
@@ -92,12 +92,12 @@ func main() { fmt.Println("hello") }
 		})
 
 		for _, file := range pkg.AstFiles {
-			eval.Eval(file, env, pkg)
+			eval.Eval(ctx, file, env, pkg)
 		}
 
 		mainFuncObj, _ := env.Get("main")
 		mainFunc := mainFuncObj.(*object.Function)
-		eval.applyFunction(mainFunc, []object.Object{}, pkg, token.NoPos)
+		eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, token.NoPos)
 
 		return nil
 	}
@@ -164,12 +164,12 @@ func main() {
 		})
 
 		for _, file := range pkg.AstFiles {
-			eval.Eval(file, env, pkg)
+			eval.Eval(ctx, file, env, pkg)
 		}
 
 		mainFuncObj, _ := env.Get("main")
 		mainFunc := mainFuncObj.(*object.Function)
-		eval.applyFunction(mainFunc, []object.Object{}, pkg, token.NoPos)
+		eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, token.NoPos)
 		return nil
 	}
 
@@ -219,12 +219,12 @@ func main() {
 			})
 
 			for _, file := range pkg.AstFiles {
-				eval.Eval(file, env, pkg)
+				eval.Eval(ctx, file, env, pkg)
 			}
 
 			mainFuncObj, _ := env.Get("main")
 			mainFunc := mainFuncObj.(*object.Function)
-			eval.applyFunction(mainFunc, []object.Object{}, pkg, token.NoPos)
+			eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, token.NoPos)
 			return nil
 		}
 
@@ -293,12 +293,12 @@ func main() {
 			})
 
 			for _, file := range pkg.AstFiles {
-				eval.Eval(file, env, pkg)
+				eval.Eval(ctx, file, env, pkg)
 			}
 
 			mainFuncObj, _ := env.Get("main")
 			mainFunc := mainFuncObj.(*object.Function)
-			eval.applyFunction(mainFunc, []object.Object{}, pkg, token.NoPos)
+			eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, token.NoPos)
 			return nil
 		}
 
@@ -349,12 +349,12 @@ func main() {
 			})
 
 			for _, file := range pkg.AstFiles {
-				eval.Eval(file, env, pkg)
+				eval.Eval(ctx, file, env, pkg)
 			}
 
 			mainFuncObj, _ := env.Get("main")
 			mainFunc := mainFuncObj.(*object.Function)
-			eval.applyFunction(mainFunc, []object.Object{}, pkg, token.NoPos)
+			eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, token.NoPos)
 			return nil
 		}
 

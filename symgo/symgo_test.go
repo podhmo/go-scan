@@ -1,6 +1,7 @@
 package symgo_test
 
 import (
+	"context"
 	"go/parser"
 	"path/filepath"
 	"testing"
@@ -80,7 +81,7 @@ func main() {
 	}
 
 	// We need to evaluate the file first to process imports.
-	_, err = interp.Eval(pkg.AstFiles[filepath.Join(dir, "main.go")], pkg)
+	_, err = interp.Eval(context.Background(), pkg.AstFiles[filepath.Join(dir, "main.go")], pkg)
 	if err != nil {
 		t.Fatalf("interp.Eval(file) failed: %+v", err)
 	}
@@ -92,7 +93,7 @@ func main() {
 	}
 
 	// Now evaluate the expression
-	result, err := interp.Eval(node, pkg)
+	result, err := interp.Eval(context.Background(), node, pkg)
 	if err != nil {
 		t.Fatalf("interp.Eval(expr) failed: %+v", err)
 	}
@@ -145,7 +146,7 @@ func main() {
 	interp.RegisterIntrinsic("fmt.Println", handler)
 
 	// We need to evaluate the file first to process imports.
-	_, err = interp.Eval(pkg.AstFiles[filepath.Join(dir, "main.go")], pkg)
+	_, err = interp.Eval(context.Background(), pkg.AstFiles[filepath.Join(dir, "main.go")], pkg)
 	if err != nil {
 		t.Fatalf("interp.Eval(file) failed: %+v", err)
 	}
@@ -157,7 +158,7 @@ func main() {
 	}
 
 	// Now evaluate the call expression
-	result, err := interp.Eval(node, pkg)
+	result, err := interp.Eval(context.Background(), node, pkg)
 	if err != nil {
 		t.Fatalf("interp.Eval(expr) failed: %+v", err)
 	}

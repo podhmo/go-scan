@@ -65,6 +65,27 @@ func (e *Evaluator) PopIntrinsics() {
 
 // Eval is the main dispatch loop for the evaluator.
 func (e *Evaluator) Eval(node ast.Node, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
+	if e.logger.Enabled(context.Background(), slog.LevelDebug) {
+		var buf bytes.Buffer
+		// The fset can be nil in some tests, so we need to be careful.
+		fset := e.scanner.FileSet()
+		if fset != nil && node != nil && node.Pos().IsValid() {
+			printer.Fprint(&buf, fset, node)
+		} else if node != nil {
+			// Fallback if no fileset is available
+			printer.Fprint(&buf, nil, node)
+		}
+
+		// Only log if there is a package and a valid position
+		if pkg != nil && pkg.Fset != nil && node != nil && node.Pos().IsValid() {
+			e.logger.Debug("evaluating node",
+				"type", fmt.Sprintf("%T", node),
+				"pos", pkg.Fset.Position(node.Pos()),
+				"source", buf.String(),
+			)
+		}
+	}
+
 	switch n := node.(type) {
 	case *ast.File:
 		return e.evalFile(n, env, pkg)

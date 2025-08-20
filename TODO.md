@@ -128,9 +128,9 @@ A set of tasks to improve the `symgo` engine and the `docgen` tool based on the 
     - [x] **Improve Error Messages**: Update the `symgo.Interpreter` to use the `token.Pos` to include file, line, and column information in error messages.
     - [x] **Implement `fmt.Sprintf` Intrinsic**: Add a `symgo` intrinsic to mimic the basic behavior of `fmt.Sprintf` for dynamic string construction.
     - [x] **Support `if-else`**: Modify `evalIfStmt` in `symgo/evaluator/evaluator.go` to correctly evaluate `else` blocks.
-- [ ] **Step 2: Debugging Features**
-    - [ ] **Implement Structured Logger**: Introduce an optional structured logger in the `symgo.Evaluator` to trace evaluation steps, including node info, position, and results.
-    - [ ] **Add Debug Flag to `docgen`**: Add a `--debug-analysis <functionName>` flag to `docgen` to enable the structured logger for a specific function.
+- [x] **Step 2: Debugging Features**
+    - [x] **Implement Structured Logger**: Introduce an optional structured logger in the `symgo.Evaluator` to trace evaluation steps, including node info, position, and results.
+    - [x] **Add Debug Flag to `docgen`**: Add a `--debug-analysis <functionName>` flag to `docgen` to enable the structured logger for a specific function.
 - [ ] **Step 3: User Extensibility**
     - [ ] **Implement `minigo`-based Pattern Loader**: Create a loader in `docgen` that reads a `.minigo` script and parses a list of pattern definitions using `minigo.EvalString` and `minigo.Result.As`.
     - [ ] **Integrate Pattern Loader with Analyzer**: Modify the `docgen.Analyzer` to dynamically register intrinsics based on the patterns loaded from the `.minigo` script at startup.

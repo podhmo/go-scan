@@ -41,7 +41,7 @@ func main() {
 		if err != nil {
 			return err
 		}
-		interp, err := symgo.NewInterpreter(internalScanner, s.Logger)
+		interp, err := symgo.NewInterpreter(internalScanner, symgo.WithLogger(s.Logger))
 		if err != nil {
 			return err
 		}
@@ -117,7 +117,7 @@ func main() {
 		if err != nil {
 			return err
 		}
-		interp, err := symgo.NewInterpreter(internalScanner, s.Logger)
+		interp, err := symgo.NewInterpreter(internalScanner, symgo.WithLogger(s.Logger))
 		if err != nil {
 			return err
 		}
@@ -180,7 +180,7 @@ func run() string {
 		if err != nil {
 			return err
 		}
-		interp, err := symgo.NewInterpreter(internalScanner, s.Logger)
+		interp, err := symgo.NewInterpreter(internalScanner, symgo.WithLogger(s.Logger))
 		if err != nil {
 			return err
 		}

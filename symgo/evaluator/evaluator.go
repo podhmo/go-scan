@@ -309,14 +309,57 @@ func (e *Evaluator) evalImportSpec(spec ast.Spec, env *object.Environment) objec
 
 func (e *Evaluator) evalSelectorExpr(n *ast.SelectorExpr, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
 	e.logger.Debug("evalSelectorExpr", "selector", n.Sel.Name)
-	// Evaluate the left-hand side of the selector (e.g., `http` in `http.HandleFunc`).
-	left := e.Eval(n.X, env, pkg)
+
+	// Special handling for identifiers on the LHS of a selector expression.
+	// We need the raw variable object, not its unwrapped value, to access type info for field/method resolution.
+	var left object.Object
+	if ident, ok := n.X.(*ast.Ident); ok {
+		if obj, found := env.Get(ident.Name); found {
+			left = obj
+		} else {
+			// It might be a package name that's not in the env yet, let the normal flow handle it.
+			left = e.Eval(n.X, env, pkg)
+		}
+	} else {
+		// Evaluate the left-hand side of the selector for non-identifier expressions.
+		left = e.Eval(n.X, env, pkg)
+	}
+
 	if isError(left) {
 		return left
 	}
 	e.logger.Debug("evalSelectorExpr: evaluated left", "type", left.Type(), "value", left.Inspect())
 
 	switch val := left.(type) {
+	case *object.SymbolicPlaceholder:
+		typeInfo := val.TypeInfo()
+		if typeInfo == nil {
+			return newError("cannot call method on symbolic placeholder with no type info")
+		}
+
+		// This logic is similar to Instance, but constructs the type name from TypeInfo
+		fullTypeName := fmt.Sprintf("%s.%s", typeInfo.PkgPath, typeInfo.Name)
+
+		// Check for pointer receiver: (*T).Method
+		key := fmt.Sprintf("(*%s).%s", fullTypeName, n.Sel.Name)
+		if intrinsicFn, ok := e.intrinsics.Get(key); ok {
+			self := val
+			fn := func(args ...object.Object) object.Object {
+				return intrinsicFn(append([]object.Object{self}, args...)...)
+			}
+			return &object.Intrinsic{Fn: fn}
+		}
+		// Check for value receiver: (T).Method
+		key = fmt.Sprintf("(%s).%s", fullTypeName, n.Sel.Name)
+		if intrinsicFn, ok := e.intrinsics.Get(key); ok {
+			self := val
+			fn := func(args ...object.Object) object.Object {
+				return intrinsicFn(append([]object.Object{self}, args...)...)
+			}
+			return &object.Intrinsic{Fn: fn}
+		}
+		return newError("undefined method: %s on symbolic type %s", n.Sel.Name, fullTypeName)
+
 	case *object.Package:
 		// Check for a direct intrinsic on the package first.
 		key := val.Path + "." + n.Sel.Name
@@ -381,13 +424,33 @@ func (e *Evaluator) evalSelectorExpr(n *ast.SelectorExpr, env *object.Environmen
 		return newError("undefined method: %s on %s", n.Sel.Name, val.TypeName)
 
 	case *object.Variable:
-		// The selector might be a method on the variable's value, or a field on its struct type.
-		// We need to check both. Let's check for method calls on instances first.
-		if instance, ok := val.Value.(*object.Instance); ok {
-			key := fmt.Sprintf("(*%s).%s", instance.TypeName, n.Sel.Name)
+		// The selector could be a method call on the variable's type (struct or interface)
+		// or a field access on a struct.
+
+		typeInfo := val.TypeInfo()
+		if typeInfo == nil {
+			return newError("cannot access field or method on variable with no type info: %s", val.Name)
+		}
+
+		// First, try to resolve as a method call on the variable's type.
+		// This handles both interface methods and struct methods.
+		if typeInfo.Kind == scanner.InterfaceKind || typeInfo.Kind == scanner.StructKind {
+			fullTypeName := fmt.Sprintf("%s.%s", typeInfo.PkgPath, typeInfo.Name)
+
+			// Check for pointer receiver method: (*T).MethodName
+			key := fmt.Sprintf("(*%s).%s", fullTypeName, n.Sel.Name)
 			if intrinsicFn, ok := e.intrinsics.Get(key); ok {
-				// The first argument to a method call intrinsic is the receiver itself.
-				self := val.Value
+				self := val
+				fn := func(args ...object.Object) object.Object {
+					return intrinsicFn(append([]object.Object{self}, args...)...)
+				}
+				return &object.Intrinsic{Fn: fn}
+			}
+
+			// Check for value receiver method: (T).MethodName
+			key = fmt.Sprintf("(%s).%s", fullTypeName, n.Sel.Name)
+			if intrinsicFn, ok := e.intrinsics.Get(key); ok {
+				self := val
 				fn := func(args ...object.Object) object.Object {
 					return intrinsicFn(append([]object.Object{self}, args...)...)
 				}
@@ -395,9 +458,8 @@ func (e *Evaluator) evalSelectorExpr(n *ast.SelectorExpr, env *object.Environmen
 			}
 		}
 
-		// If it's not a method on an instance, check for struct field access.
-		typeInfo := val.TypeInfo()
-		if typeInfo != nil && typeInfo.Struct != nil {
+		// If it's not a method, try to resolve as a struct field access.
+		if typeInfo.Struct != nil {
 			for _, field := range typeInfo.Struct.Fields {
 				if field.Name == n.Sel.Name {
 					fieldTypeInfo, _ := field.Type.Resolve(context.Background())
@@ -408,6 +470,19 @@ func (e *Evaluator) evalSelectorExpr(n *ast.SelectorExpr, env *object.Environmen
 				}
 			}
 		}
+
+		// Finally, check for methods on the underlying value if it's an instance.
+		if instance, ok := val.Value.(*object.Instance); ok {
+			key := fmt.Sprintf("(*%s).%s", instance.TypeName, n.Sel.Name)
+			if intrinsicFn, ok := e.intrinsics.Get(key); ok {
+				self := val.Value
+				fn := func(args ...object.Object) object.Object {
+					return intrinsicFn(append([]object.Object{self}, args...)...)
+				}
+				return &object.Intrinsic{Fn: fn}
+			}
+		}
+
 		return newError("undefined field or method: %s on %s", n.Sel.Name, val.Inspect())
 
 	default:

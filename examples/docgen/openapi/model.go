@@ -31,8 +31,18 @@ type Operation struct {
 	Summary     string               `json:"summary,omitempty"`
 	Description string               `json:"description,omitempty"`
 	OperationID string               `json:"operationId,omitempty"`
+	Parameters  []*Parameter         `json:"parameters,omitempty"`
 	RequestBody *RequestBody         `json:"requestBody,omitempty"`
 	Responses   map[string]*Response `json:"responses,omitempty"`
+}
+
+// Parameter describes a single operation parameter.
+type Parameter struct {
+	Name        string  `json:"name"`
+	In          string  `json:"in"` // "query", "header", "path", "cookie"
+	Description string  `json:"description,omitempty"`
+	Required    bool    `json:"required,omitempty"`
+	Schema      *Schema `json:"schema"`
 }
 
 // RequestBody describes a single request body.

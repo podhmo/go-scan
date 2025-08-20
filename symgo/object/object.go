@@ -3,6 +3,7 @@ package object
 import (
 	"fmt"
 	"go/ast"
+	"go/token"
 
 	"github.com/podhmo/go-scan/scanner"
 )
@@ -159,6 +160,7 @@ func (p *Package) Inspect() string {
 type Error struct {
 	BaseObject
 	Message string
+	Pos     token.Pos
 }
 
 // Type returns the type of the Error object.

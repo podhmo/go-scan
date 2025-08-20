@@ -3,6 +3,7 @@ package evaluator
 import (
 	"context"
 	"fmt"
+	"go/token"
 	"testing"
 
 	goscan "github.com/podhmo/go-scan"
@@ -62,7 +63,7 @@ func TestEvalBinaryExpr_StringConcatenation(t *testing.T) {
 				}
 				runFunc := runFuncObj.(*object.Function)
 
-				finalResult = eval.applyFunction(runFunc, []object.Object{}, pkg)
+				finalResult = eval.applyFunction(runFunc, []object.Object{}, pkg, token.NoPos)
 				return nil
 			}
 

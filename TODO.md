@@ -123,11 +123,11 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 
 A set of tasks to improve the `symgo` engine and the `docgen` tool based on the analysis in `docgen/ja/from-docgen.md`.
 
-- [ ] **Step 1: Error Reporting and Engine Stabilization**
-    - [ ] **Extend `object.Error`**: Add a `token.Pos` field to the `Error` struct in `symgo/object/object.go` to hold source code position.
-    - [ ] **Improve Error Messages**: Update the `symgo.Interpreter` to use the `token.Pos` to include file, line, and column information in error messages.
-    - [ ] **Implement `fmt.Sprintf` Intrinsic**: Add a `symgo` intrinsic to mimic the basic behavior of `fmt.Sprintf` for dynamic string construction.
-    - [ ] **Support `if-else`**: Modify `evalIfStmt` in `symgo/evaluator/evaluator.go` to correctly evaluate `else` blocks.
+- [x] **Step 1: Error Reporting and Engine Stabilization**
+    - [x] **Extend `object.Error`**: Add a `token.Pos` field to the `Error` struct in `symgo/object/object.go` to hold source code position.
+    - [x] **Improve Error Messages**: Update the `symgo.Interpreter` to use the `token.Pos` to include file, line, and column information in error messages.
+    - [x] **Implement `fmt.Sprintf` Intrinsic**: Add a `symgo` intrinsic to mimic the basic behavior of `fmt.Sprintf` for dynamic string construction.
+    - [x] **Support `if-else`**: Modify `evalIfStmt` in `symgo/evaluator/evaluator.go` to correctly evaluate `else` blocks.
 - [ ] **Step 2: Debugging Features**
     - [ ] **Implement Structured Logger**: Introduce an optional structured logger in the `symgo.Evaluator` to trace evaluation steps, including node info, position, and results.
     - [ ] **Add Debug Flag to `docgen`**: Add a `--debug-analysis <functionName>` flag to `docgen` to enable the structured logger for a specific function.

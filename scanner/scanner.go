@@ -33,6 +33,11 @@ type Scanner struct {
 	logger                *slog.Logger
 }
 
+// FileSet returns the underlying token.FileSet used by the scanner.
+func (s *Scanner) FileSet() *token.FileSet {
+	return s.fset
+}
+
 // New creates a new Scanner.
 func New(fset *token.FileSet, overrides ExternalTypeOverride, overlay Overlay, modulePath string, moduleRootDir string, resolver PackageResolver, inspect bool, logger *slog.Logger) (*Scanner, error) {
 	if fset == nil {

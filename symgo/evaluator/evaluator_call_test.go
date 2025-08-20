@@ -3,6 +3,7 @@ package evaluator
 import (
 	"context"
 	"fmt"
+	"go/token"
 	"log/slog"
 	"os"
 	"testing"
@@ -50,7 +51,7 @@ func main() { add(1, 2) }
 			return fmt.Errorf("main is not an object.Function, got %T", mainFuncObj)
 		}
 
-		eval.applyFunction(mainFunc, []object.Object{}, pkg)
+		eval.applyFunction(mainFunc, []object.Object{}, pkg, token.NoPos)
 		return nil
 	}
 
@@ -96,7 +97,7 @@ func main() { fmt.Println("hello") }
 
 		mainFuncObj, _ := env.Get("main")
 		mainFunc := mainFuncObj.(*object.Function)
-		eval.applyFunction(mainFunc, []object.Object{}, pkg)
+		eval.applyFunction(mainFunc, []object.Object{}, pkg, token.NoPos)
 
 		return nil
 	}
@@ -168,7 +169,7 @@ func main() {
 
 		mainFuncObj, _ := env.Get("main")
 		mainFunc := mainFuncObj.(*object.Function)
-		eval.applyFunction(mainFunc, []object.Object{}, pkg)
+		eval.applyFunction(mainFunc, []object.Object{}, pkg, token.NoPos)
 		return nil
 	}
 
@@ -223,7 +224,7 @@ func main() {
 
 			mainFuncObj, _ := env.Get("main")
 			mainFunc := mainFuncObj.(*object.Function)
-			eval.applyFunction(mainFunc, []object.Object{}, pkg)
+			eval.applyFunction(mainFunc, []object.Object{}, pkg, token.NoPos)
 			return nil
 		}
 
@@ -297,7 +298,7 @@ func main() {
 
 			mainFuncObj, _ := env.Get("main")
 			mainFunc := mainFuncObj.(*object.Function)
-			eval.applyFunction(mainFunc, []object.Object{}, pkg)
+			eval.applyFunction(mainFunc, []object.Object{}, pkg, token.NoPos)
 			return nil
 		}
 
@@ -353,7 +354,7 @@ func main() {
 
 			mainFuncObj, _ := env.Get("main")
 			mainFunc := mainFuncObj.(*object.Function)
-			eval.applyFunction(mainFunc, []object.Object{}, pkg)
+			eval.applyFunction(mainFunc, []object.Object{}, pkg, token.NoPos)
 			return nil
 		}
 

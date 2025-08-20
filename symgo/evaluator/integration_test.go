@@ -3,6 +3,7 @@ package evaluator
 import (
 	"context"
 	"fmt"
+	"go/token"
 	"testing"
 
 	goscan "github.com/podhmo/go-scan"
@@ -71,7 +72,7 @@ func main() {
 		}
 
 		// We use applyFunction directly to simulate a call to main()
-		eval.applyFunction(mainFunc, []object.Object{}, pkg)
+		eval.applyFunction(mainFunc, []object.Object{}, pkg, token.NoPos)
 
 		if inspectedType == nil {
 			t.Fatal("intrinsic was not called")

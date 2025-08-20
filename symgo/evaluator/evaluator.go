@@ -36,11 +36,65 @@ func New(scanner *scanner.Scanner, logger *slog.Logger) *Evaluator {
 	if logger == nil {
 		logger = slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	}
-	return &Evaluator{
+	e := &Evaluator{
 		scanner:    scanner,
 		intrinsics: intrinsics.New(),
 		logger:     logger,
 	}
+	e.RegisterIntrinsic("fmt.Sprintf", e.intrinsicSprintf)
+	return e
+}
+
+// intrinsicSprintf provides a basic implementation of fmt.Sprintf for the symbolic engine.
+// It handles simple verbs like %s, %d, and %v by replacing them with the Inspect()
+// representation of the corresponding argument.
+func (e *Evaluator) intrinsicSprintf(args ...object.Object) object.Object {
+	if len(args) == 0 {
+		return newError(token.NoPos, "Sprintf requires at least one argument")
+	}
+
+	format, ok := args[0].(*object.String)
+	if !ok {
+		// If the format string is symbolic, we can't proceed.
+		if _, isSymbolic := args[0].(*object.SymbolicPlaceholder); isSymbolic {
+			return &object.SymbolicPlaceholder{Reason: "fmt.Sprintf with symbolic format string"}
+		}
+		return newError(token.NoPos, "the first argument to Sprintf must be a string, got %s", args[0].Type())
+	}
+
+	// This is a very basic implementation for docgen's needs.
+	// It doesn't handle verb validation, width, precision, etc.
+	// It just replaces common verbs with the Inspect() value of the corresponding argument.
+	result := format.Value
+	argIndex := 1
+
+	// A simple loop to replace verbs. This is not a full-featured Sprintf parser.
+	for i := 0; i < len(result) && argIndex < len(args); i++ {
+		if result[i] == '%' {
+			if i+1 < len(result) {
+				verb := result[i+1]
+				// Handle simple, common verbs.
+				if verb == 's' || verb == 'd' || verb == 'v' {
+					arg := args[argIndex]
+					// For docgen, we just want a string representation. Inspect() is perfect.
+					// For %d, we could be more strict, but for symbolic analysis, a string is fine.
+					replacement := arg.Inspect()
+					if str, ok := arg.(*object.String); ok {
+						replacement = str.Value // Use raw string value if available
+					}
+
+					result = result[:i] + replacement + result[i+2:]
+					argIndex++
+					i += len(replacement) - 1 // Move index past the replacement
+				} else if verb == '%' {
+					// Skip over escaped percent signs '%%'
+					i++
+				}
+			}
+		}
+	}
+
+	return &object.String{Value: result}
 }
 
 // RegisterIntrinsic registers a built-in function.
@@ -101,21 +155,21 @@ func (e *Evaluator) Eval(node ast.Node, env *object.Environment, pkg *scanner.Pa
 	case *ast.CompositeLit:
 		return e.evalCompositeLit(n, env, pkg)
 	}
-	return newError("evaluation not implemented for %T", node)
+	return newError(node.Pos(), "evaluation not implemented for %T", node)
 }
 
 func (e *Evaluator) evalCompositeLit(node *ast.CompositeLit, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
 	if pkg == nil || pkg.Fset == nil {
-		return newError("package info or fset is missing, cannot resolve types for composite literal")
+		return newError(node.Pos(), "package info or fset is missing, cannot resolve types for composite literal")
 	}
 
 	file := pkg.Fset.File(node.Pos())
 	if file == nil {
-		return newError("could not find file for node position")
+		return newError(node.Pos(), "could not find file for node position")
 	}
 	astFile, ok := pkg.AstFiles[file.Name()]
 	if !ok {
-		return newError("could not find ast.File for path: %s", file.Name())
+		return newError(node.Pos(), "could not find ast.File for path: %s", file.Name())
 	}
 	importLookup := e.scanner.BuildImportLookup(astFile)
 
@@ -123,7 +177,7 @@ func (e *Evaluator) evalCompositeLit(node *ast.CompositeLit, env *object.Environ
 	if fieldType == nil {
 		var typeNameBuf bytes.Buffer
 		printer.Fprint(&typeNameBuf, pkg.Fset, node.Type)
-		return newError("could not resolve type for composite literal: %s", typeNameBuf.String())
+		return newError(node.Pos(), "could not resolve type for composite literal: %s", typeNameBuf.String())
 	}
 
 	// If it's a slice, create a specific Slice object that preserves the full slice type info.
@@ -186,7 +240,7 @@ func (e *Evaluator) evalUnaryExpr(node *ast.UnaryExpr, env *object.Environment, 
 		ptr.ResolvedTypeInfo = typeInfo
 		return ptr
 	}
-	return newError("unknown unary operator: %s", node.Op)
+	return newError(node.Pos(), "unknown unary operator: %s", node.Op)
 }
 
 func (e *Evaluator) evalGenDecl(node *ast.GenDecl, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
@@ -196,15 +250,15 @@ func (e *Evaluator) evalGenDecl(node *ast.GenDecl, env *object.Environment, pkg 
 
 	// Find the AST file that contains the current declaration node.
 	if pkg == nil || pkg.Fset == nil {
-		return newError("package info or fset is missing, cannot resolve types")
+		return newError(node.Pos(), "package info or fset is missing, cannot resolve types")
 	}
 	file := pkg.Fset.File(node.Pos())
 	if file == nil {
-		return newError("could not find file for node position")
+		return newError(node.Pos(), "could not find file for node position")
 	}
 	astFile, ok := pkg.AstFiles[file.Name()]
 	if !ok {
-		return newError("could not find ast.File for path: %s", file.Name())
+		return newError(node.Pos(), "could not find ast.File for path: %s", file.Name())
 	}
 	importLookup := e.scanner.BuildImportLookup(astFile)
 
@@ -285,7 +339,7 @@ func (e *Evaluator) evalImportSpec(spec ast.Spec, env *object.Environment) objec
 	// The path is a string literal, so we need to unquote it.
 	importPath, err := strconv.Unquote(importSpec.Path.Value)
 	if err != nil {
-		return newError("invalid import path: %s", importSpec.Path.Value)
+		return newError(importSpec.Pos(), "invalid import path: %s", importSpec.Path.Value)
 	}
 
 	var pkgName string
@@ -334,7 +388,7 @@ func (e *Evaluator) evalSelectorExpr(n *ast.SelectorExpr, env *object.Environmen
 	case *object.SymbolicPlaceholder:
 		typeInfo := val.TypeInfo()
 		if typeInfo == nil {
-			return newError("cannot call method on symbolic placeholder with no type info")
+			return newError(n.Pos(), "cannot call method on symbolic placeholder with no type info")
 		}
 
 		// This logic is similar to Instance, but constructs the type name from TypeInfo
@@ -358,7 +412,7 @@ func (e *Evaluator) evalSelectorExpr(n *ast.SelectorExpr, env *object.Environmen
 			}
 			return &object.Intrinsic{Fn: fn}
 		}
-		return newError("undefined method: %s on symbolic type %s", n.Sel.Name, fullTypeName)
+		return newError(n.Pos(), "undefined method: %s on symbolic type %s", n.Sel.Name, fullTypeName)
 
 	case *object.Package:
 		// Check for a direct intrinsic on the package first.
@@ -370,11 +424,11 @@ func (e *Evaluator) evalSelectorExpr(n *ast.SelectorExpr, env *object.Environmen
 		// If no direct intrinsic, proceed with lazy loading.
 		if val.Env.IsEmpty() {
 			if e.scanner == nil {
-				return newError("scanner is not available, cannot load package %q", val.Path)
+				return newError(n.Pos(), "scanner is not available, cannot load package %q", val.Path)
 			}
 			pkgInfo, err := e.scanner.ScanPackageByImport(context.Background(), val.Path)
 			if err != nil {
-				return newError("could not scan package %q: %v", val.Path, err)
+				return newError(n.Pos(), "could not scan package %q: %v", val.Path, err)
 			}
 
 			for _, f := range pkgInfo.Functions {
@@ -401,7 +455,7 @@ func (e *Evaluator) evalSelectorExpr(n *ast.SelectorExpr, env *object.Environmen
 			if intrinsicFn, ok := e.intrinsics.Get(key); ok {
 				return &object.Intrinsic{Fn: intrinsicFn}
 			}
-			return newError("undefined symbol: %s.%s", val.Name, n.Sel.Name)
+			return newError(n.Pos(), "undefined symbol: %s.%s", val.Name, n.Sel.Name)
 		}
 		return symbol
 
@@ -426,7 +480,7 @@ func (e *Evaluator) evalSelectorExpr(n *ast.SelectorExpr, env *object.Environmen
 			}
 			return &object.Intrinsic{Fn: fn}
 		}
-		return newError("undefined method: %s on %s", n.Sel.Name, val.TypeName)
+		return newError(n.Pos(), "undefined method: %s on %s", n.Sel.Name, val.TypeName)
 
 	case *object.Variable:
 		// The selector could be a method call on the variable's type (struct or interface)
@@ -434,7 +488,7 @@ func (e *Evaluator) evalSelectorExpr(n *ast.SelectorExpr, env *object.Environmen
 
 		typeInfo := val.TypeInfo()
 		if typeInfo == nil {
-			return newError("cannot access field or method on variable with no type info: %s", val.Name)
+			return newError(n.Pos(), "cannot access field or method on variable with no type info: %s", val.Name)
 		}
 
 		// First, try to resolve as a method call on the variable's type.
@@ -488,10 +542,10 @@ func (e *Evaluator) evalSelectorExpr(n *ast.SelectorExpr, env *object.Environmen
 			}
 		}
 
-		return newError("undefined field or method: %s on %s", n.Sel.Name, val.Inspect())
+		return newError(n.Pos(), "undefined field or method: %s on %s", n.Sel.Name, val.Inspect())
 
 	default:
-		return newError("expected a package, instance, or variable on the left side of selector, but got %s", left.Type())
+		return newError(n.Pos(), "expected a package, instance, or variable on the left side of selector, but got %s", left.Type())
 	}
 }
 
@@ -529,12 +583,22 @@ func (e *Evaluator) evalForStmt(n *ast.ForStmt, env *object.Environment, pkg *sc
 }
 
 // evalIfStmt evaluates an if statement. Following our heuristic-based approach,
-// it evaluates the body to see what *could* happen, without complex path forking.
-// For simplicity, it currently ignores the condition and the else block.
+// it evaluates both the `if` and `else` branches to discover all possible execution paths,
+// without complex path forking based on the condition.
 func (e *Evaluator) evalIfStmt(n *ast.IfStmt, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
 	// The body of the if statement has its own scope.
 	bodyEnv := object.NewEnclosedEnvironment(env)
-	return e.Eval(n.Body, bodyEnv, pkg)
+	result := e.Eval(n.Body, bodyEnv, pkg)
+
+	// Also evaluate the else block, if it exists, to find patterns within it.
+	// We don't try to evaluate the condition. For docgen, we want to know what
+	// *can* happen in any branch. The result of the last evaluated branch is returned.
+	if n.Else != nil {
+		elseEnv := object.NewEnclosedEnvironment(env)
+		result = e.Eval(n.Else, elseEnv, pkg)
+	}
+
+	return result
 }
 
 func (e *Evaluator) evalBlockStatement(block *ast.BlockStmt, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
@@ -558,7 +622,7 @@ func (e *Evaluator) evalBlockStatement(block *ast.BlockStmt, env *object.Environ
 func (e *Evaluator) evalReturnStmt(n *ast.ReturnStmt, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
 	if len(n.Results) > 1 {
 		// For now, we only support single return values.
-		return newError("unsupported return statement: expected 1 result")
+		return newError(n.Pos(), "unsupported return statement: expected 1 result")
 	}
 	val := e.Eval(n.Results[0], env, pkg)
 	if isError(val) {
@@ -598,7 +662,7 @@ func (e *Evaluator) evalAssignStmt(n *ast.AssignStmt, env *object.Environment, p
 	}
 
 	if len(n.Lhs) != 1 || len(n.Rhs) != 1 {
-		return newError("unsupported assignment: expected 1 expression on each side, or multi-value assignment")
+		return newError(n.Pos(), "unsupported assignment: expected 1 expression on each side, or multi-value assignment")
 	}
 
 	// Handle different types of assignment targets for the 1-to-1 case.
@@ -612,7 +676,7 @@ func (e *Evaluator) evalAssignStmt(n *ast.AssignStmt, env *object.Environment, p
 		// For `docgen`, we don't need to model the state change of a field assignment.
 		return nil
 	default:
-		return newError("unsupported assignment target: expected an identifier or selector, but got %T", lhs)
+		return newError(n.Pos(), "unsupported assignment target: expected an identifier or selector, but got %T", lhs)
 	}
 }
 
@@ -639,7 +703,7 @@ func (e *Evaluator) evalIdentAssignment(ident *ast.Ident, rhs ast.Expr, tok toke
 	// This is `=`, so the variable must already exist.
 	obj, ok := env.Get(ident.Name)
 	if !ok {
-		return newError("cannot assign to undeclared identifier: %s", ident.Name)
+		return newError(ident.Pos(), "cannot assign to undeclared identifier: %s", ident.Name)
 	}
 
 	if v, ok := obj.(*object.Variable); ok {
@@ -662,17 +726,17 @@ func (e *Evaluator) evalBasicLit(n *ast.BasicLit) object.Object {
 	case token.INT:
 		i, err := strconv.ParseInt(n.Value, 0, 64)
 		if err != nil {
-			return newError("could not parse %q as integer", n.Value)
+			return newError(n.Pos(), "could not parse %q as integer", n.Value)
 		}
 		return &object.Integer{Value: i}
 	case token.STRING:
 		s, err := strconv.Unquote(n.Value)
 		if err != nil {
-			return newError("could not unquote string %q", n.Value)
+			return newError(n.Pos(), "could not unquote string %q", n.Value)
 		}
 		return &object.String{Value: s}
 	default:
-		return newError("unsupported literal type: %s", n.Kind)
+		return newError(n.Pos(), "unsupported literal type: %s", n.Kind)
 	}
 }
 
@@ -707,12 +771,15 @@ func (e *Evaluator) evalIdent(n *ast.Ident, env *object.Environment, pkg *scanne
 	}
 
 	e.logger.Debug("evalIdent: not found in env or intrinsics", "name", n.Name)
-	return newError("identifier not found: %s", n.Name)
+	return newError(n.Pos(), "identifier not found: %s", n.Name)
 }
 
 // newError is a helper to create a new Error object.
-func newError(format string, args ...interface{}) *object.Error {
-	return &object.Error{Message: fmt.Sprintf(format, args...)}
+func newError(pos token.Pos, format string, args ...interface{}) *object.Error {
+	return &object.Error{
+		Message: fmt.Sprintf(format, args...),
+		Pos:     pos,
+	}
 }
 
 func isError(obj object.Object) bool {
@@ -760,7 +827,7 @@ func (e *Evaluator) evalCallExpr(n *ast.CallExpr, env *object.Environment, pkg *
 	}
 
 	// 3. Apply the function.
-	result := e.applyFunction(function, args, pkg)
+	result := e.applyFunction(function, args, pkg, n.Pos())
 	if isError(result) {
 		return result
 	}
@@ -782,10 +849,10 @@ func (e *Evaluator) evalExpressions(exps []ast.Expr, env *object.Environment, pk
 }
 
 func (e *Evaluator) Apply(fn object.Object, args []object.Object, pkg *scanner.PackageInfo) object.Object {
-	return e.applyFunction(fn, args, pkg)
+	return e.applyFunction(fn, args, pkg, token.NoPos) // No position info available here
 }
 
-func (e *Evaluator) applyFunction(fn object.Object, args []object.Object, pkg *scanner.PackageInfo) object.Object {
+func (e *Evaluator) applyFunction(fn object.Object, args []object.Object, pkg *scanner.PackageInfo, callPos token.Pos) object.Object {
 	e.logger.Debug("applyFunction", "type", fn.Type(), "value", fn.Inspect())
 	switch fn := fn.(type) {
 	case *object.Function:
@@ -809,7 +876,7 @@ func (e *Evaluator) applyFunction(fn object.Object, args []object.Object, pkg *s
 		return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("result of calling %s", fn.Inspect())}
 
 	default:
-		return newError("not a function: %s", fn.Type())
+		return newError(callPos, "not a function: %s", fn.Type())
 	}
 }
 

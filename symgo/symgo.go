@@ -63,6 +63,10 @@ func NewInterpreter(scanner *scanner.Scanner, logger *slog.Logger) (*Interpreter
 func (i *Interpreter) Eval(node ast.Node, pkg *scanner.PackageInfo) (Object, error) {
 	result := i.eval.Eval(node, i.globalEnv, pkg)
 	if err, ok := result.(*Error); ok {
+		if err.Pos.IsValid() {
+			position := i.scanner.FileSet().Position(err.Pos)
+			return nil, fmt.Errorf("%s: %s", position, err.Message)
+		}
 		return nil, fmt.Errorf("%s", err.Message)
 	}
 	return result, nil
@@ -72,6 +76,10 @@ func (i *Interpreter) Eval(node ast.Node, pkg *scanner.PackageInfo) (Object, err
 func (i *Interpreter) EvalWithEnv(node ast.Node, env *Environment, pkg *scanner.PackageInfo) (Object, error) {
 	result := i.eval.Eval(node, env, pkg)
 	if err, ok := result.(*Error); ok {
+		if err.Pos.IsValid() {
+			position := i.scanner.FileSet().Position(err.Pos)
+			return nil, fmt.Errorf("%s: %s", position, err.Message)
+		}
 		return nil, fmt.Errorf("%s", err.Message)
 	}
 	return result, nil
@@ -113,6 +121,10 @@ func (i *Interpreter) Apply(fn Object, args []Object, pkg *scanner.PackageInfo) 
 	// This is a simplified wrapper. A real implementation might need more context.
 	result := i.eval.Apply(fn, args, pkg)
 	if err, ok := result.(*Error); ok {
+		if err.Pos.IsValid() {
+			position := i.scanner.FileSet().Position(err.Pos)
+			return nil, fmt.Errorf("%s: %s", position, err.Message)
+		}
 		return nil, fmt.Errorf("%s", err.Message)
 	}
 	return result, nil

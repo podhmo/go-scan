@@ -63,11 +63,6 @@ func (e *Evaluator) PopIntrinsics() {
 	e.intrinsics.Pop()
 }
 
-// SetLogger updates the logger instance used by the evaluator.
-func (e *Evaluator) SetLogger(logger *slog.Logger) {
-	e.logger = logger
-}
-
 // Eval is the main dispatch loop for the evaluator.
 func (e *Evaluator) Eval(node ast.Node, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
 	if e.logger.Enabled(context.Background(), slog.LevelDebug) {

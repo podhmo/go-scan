@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
 	"strings"
 
 	goscan "github.com/podhmo/go-scan"
@@ -15,15 +14,14 @@ import (
 
 // Analyzer analyzes Go code and generates an OpenAPI specification.
 type Analyzer struct {
-	Scanner         *goscan.Scanner
-	interpreter     *symgo.Interpreter
-	OpenAPI         *openapi.OpenAPI
-	logger          *slog.Logger
-	debugTargetFunc string
+	Scanner     *goscan.Scanner
+	interpreter *symgo.Interpreter
+	OpenAPI     *openapi.OpenAPI
+	logger      *slog.Logger
 }
 
 // NewAnalyzer creates a new Analyzer.
-func NewAnalyzer(s *goscan.Scanner, logger *slog.Logger, debugTargetFunc string) (*Analyzer, error) {
+func NewAnalyzer(s *goscan.Scanner, logger *slog.Logger) (*Analyzer, error) {
 	internalScanner, err := s.ScannerForSymgo()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get internal scanner: %w", err)
@@ -34,10 +32,9 @@ func NewAnalyzer(s *goscan.Scanner, logger *slog.Logger, debugTargetFunc string)
 	}
 
 	a := &Analyzer{
-		Scanner:         s,
-		interpreter:     interp,
-		logger:          logger,
-		debugTargetFunc: debugTargetFunc,
+		Scanner:     s,
+		interpreter: interp,
+		logger:      logger,
 		OpenAPI: &openapi.OpenAPI{
 			OpenAPI: "3.1.0",
 			Info: openapi.Info{
@@ -187,14 +184,6 @@ func (a *Analyzer) analyzeHandleFunc(interp *symgo.Interpreter, args []symgo.Obj
 // analyzeHandlerBody analyzes the body of an HTTP handler function to find
 // request and response schemas.
 func (a *Analyzer) analyzeHandlerBody(handler *symgo.Function, op *openapi.Operation) {
-	// If a debug target is set, and it's this function, switch to a debug logger.
-	if a.debugTargetFunc != "" && handler.Name.Name == a.debugTargetFunc {
-		debugLogger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug}))
-		a.interpreter.SetLogger(debugLogger)
-		// Restore the original logger after the analysis of this function is complete.
-		defer a.interpreter.SetLogger(a.logger)
-	}
-
 	pkg, err := a.Scanner.ScanPackageByPos(context.Background(), handler.Decl.Pos())
 	if err != nil {
 		fmt.Printf("warn: failed to get package for handler %q: %v\n", handler.Name.Name, err)

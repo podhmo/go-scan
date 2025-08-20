@@ -645,7 +645,11 @@ func (e *Evaluator) evalCallExpr(n *ast.CallExpr, env *object.Environment, pkg *
 	}
 
 	// 3. Apply the function.
-	return e.applyFunction(function, args, pkg)
+	result := e.applyFunction(function, args, pkg)
+	if isError(result) {
+		return result
+	}
+	return result
 }
 
 func (e *Evaluator) evalExpressions(exps []ast.Expr, env *object.Environment, pkg *scanner.PackageInfo) []object.Object {

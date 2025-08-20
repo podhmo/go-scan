@@ -82,18 +82,18 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
         - [x] Analyze handler function patterns to find HTTP methods (now done via parsing the `HandleFunc` pattern string, e.g., "GET /path").
         - [x] Extract `operationId` from the function name and `description` from godoc comments.
     - [x] **Testing**: Write an integration test to verify basic route, method, and description extraction from the sample API.
-- [ ] **M3: Schema and Parameter Analysis**:
-    - [ ] **Request/Response Body Analysis**:
-        - [ ] Implement pattern matching to detect calls like `json.NewDecoder(...).Decode(&req)`.
-        - [ ] Use the `symgo` scope to resolve the type of the `req` variable and analyze its struct definition to build a request schema.
-        - [ ] Implement similar pattern matching for response-writing functions (e.g., `json.NewEncoder(...).Encode(resp)`).
-    - [ ] **Query Parameter Analysis**:
+- [-] **M3: Schema and Parameter Analysis**:
+    - [x] **Request/Response Body Analysis**:
+        - [x] Implement pattern matching to detect calls like `json.NewDecoder(...).Decode(&req)`.
+        - [x] Use the `symgo` scope to resolve the type of the `req` variable and analyze its struct definition to build a request schema.
+        - [x] Implement similar pattern matching for response-writing functions (e.g., `json.NewEncoder(...).Encode(resp)`).
+    - [-] **Query Parameter Analysis**:
+        - [x] Implement intrinsics to detect `r.URL.Query().Get("...")`.
         - [ ] Implement the extensible `CallPattern` registry (`examples/docgen/patterns`).
-        - [ ] Use the pattern registry to find query parameter usage (e.g., `r.URL.Query().Get("limit")` or helpers).
     - [ ] **Interface/Higher-Order Function Handling**:
         - [ ] Implement context-based type binding in `symgo` to handle interfaces like `io.Writer`.
         - [ ] Add intrinsics for common `net/http` higher-order functions like `http.TimeoutHandler` to trace into the actual handler.
-    - [ ] **Testing**: Enhance the integration test to verify that request/response schemas and query parameters are correctly extracted.
+    - [x] **Testing**: Enhance the integration test to verify that request/response schemas and query parameters are correctly extracted.
 - [ ] **M4: Finalization**:
     - [ ] **OpenAPI Generation**:
         - [ ] Implement the generator component to convert the collected API metadata into the OpenAPI 3.1 model.
@@ -106,6 +106,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
         - [ ] Ensure `make format` and `make test` pass for the entire repository before submission.
 
 ### `symgo` Engine Refinements
+- [ ] **Fix slice literal type inference regression**: The evaluator's `evalCompositeLit` incorrectly resolves the type of a slice literal (e.g., `[]User{}`) to its element type (`User`), losing the "slice-ness" of the value. This prevents `docgen` from generating correct response schemas for endpoints that return slices. See [docs/trouble-docgen.md](./docs/trouble-docgen.md) for details.
 - [x] **Create `symgo.Interpreter` Facade**: Create a new `symgo` package with an `Interpreter` type, modeled after `minigo.Interpreter`, to provide a clean public API for the engine. ([docs/trouble-docgen-use-symgo.md](./docs/trouble-docgen-use-symgo.md))
     - [x] Implement a `NewInterpreter()` constructor that properly initializes the internal scanner and evaluator.
     - [x] Implement a public `RegisterIntrinsic()` method on the interpreter.

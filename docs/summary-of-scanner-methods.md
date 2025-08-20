@@ -129,12 +129,13 @@ This section summarizes which scanner methods are used by the key commands and e
     *   **Methods Used**: `Walk`, `FindImportersAggressively`, `BuildReverseDependencyMap`. It relies entirely on the lightweight `ScanPackageImports` (called by `Walk`) to discover dependencies without parsing full source code.
 
 *   **`minigo`**:
-    *   **Summary**: A Go interpreter. It is a primary example of a **Group 2 (Heavyweight)** user. The interpreter needs full type information to evaluate code correctly.
-    *   **Methods Used**: `ScanPackageByImport` is the key method, called by the evaluator whenever it encounters an `import` statement. It needs the full `PackageInfo` to access the types, functions, and constants of the imported package.
+    *   **Summary**: A Go interpreter. It is a primary example of a **Group 2 (Heavyweight)** user.
+    *   **Methods Used**: `ScanPackageByImport` is the key method, called by the evaluator whenever it encounters an `import` statement.
+    *   **Special Requirements**: An interpreter needs more than just type definitions; it needs a *consistent view* of a package. To evaluate a function call (e.g., `sort.Ints`), it must also know about that function's own dependencies (e.g., the `sort` package's import of `slices`). This requires the scanner to provide a `PackageInfo` where the `AstFiles` map is complete, allowing the interpreter to look up the correct import scope for any function it evaluates. This is why it relies on the heavyweight scanning methods.
 
 *   **`symgo`**:
-    *   **Summary**: A symbolic execution engine. Like `minigo`, it is a **Group 2 (Heavyweight)** user. It needs to understand the precise structure of types and functions to perform its analysis.
-    *   **Methods Used**: Interestingly, `symgo` is architected to use the low-level `scanner.Scanner` directly. Its evaluator calls `ScanPackageByImport`, `BuildImportLookup`, and `TypeInfoFromExpr` to get the detailed information it needs. This demonstrates the same *need* for heavyweight analysis, even with a slightly different architecture.
+    *   **Summary**: A symbolic execution engine. Like `minigo`, it is a **Group 2 (Heavyweight)** user with similar special requirements.
+    *   **Methods Used**: Interestingly, `symgo` is architected to use the low-level `scanner.Scanner` directly. Its evaluator calls `ScanPackageByImport`, `BuildImportLookup`, and `TypeInfoFromExpr` to get the detailed information it needs. This demonstrates the same *need* for heavyweight analysis to ensure it has a consistent view of each package for resolving transitive dependencies during evaluation.
 
 *   **`examples/convert`**, **`examples/derivingjson`**, **`examples/derivingbind`**, **`examples/deriving-all`**:
     *   **Summary**: These are all code generation tools. They are canonical examples of **Group 2 (Heavyweight)** users.

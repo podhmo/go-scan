@@ -117,3 +117,29 @@ These methods perform a comprehensive parse of Go source files. They build a det
 *   **`TypeInfoFromExpr(ctx, ...)`**: A helper to parse an `ast.Expr` into a `FieldType`, useful for dynamic type analysis.
 *   **`ListExportedSymbols(ctx, pkgPath)`**: Scans a package and returns a simple list of its exported symbol names.
 *   **`FindSymbolInPackage(ctx, importPath, symbolName)`**: Scans files in a package one-by-one until a specific symbol is found. This can be more efficient than `ScanPackageByImport` if you only need one symbol from a large package.
+
+---
+
+## Usage by Package
+
+This section summarizes which scanner methods are used by the key commands and examples in this repository, illustrating the patterns described above.
+
+*   **`examples/deps-walk`**:
+    *   **Summary**: A dependency graph visualization tool. It is a classic example of a **Group 1 (Lightweight)** user.
+    *   **Methods Used**: `Walk`, `FindImportersAggressively`, `BuildReverseDependencyMap`. It relies entirely on the lightweight `ScanPackageImports` (called by `Walk`) to discover dependencies without parsing full source code.
+
+*   **`minigo`**:
+    *   **Summary**: A Go interpreter. It is a primary example of a **Group 2 (Heavyweight)** user. The interpreter needs full type information to evaluate code correctly.
+    *   **Methods Used**: `ScanPackageByImport` is the key method, called by the evaluator whenever it encounters an `import` statement. It needs the full `PackageInfo` to access the types, functions, and constants of the imported package.
+
+*   **`symgo`**:
+    *   **Summary**: A symbolic execution engine. Like `minigo`, it is a **Group 2 (Heavyweight)** user. It needs to understand the precise structure of types and functions to perform its analysis.
+    *   **Methods Used**: Interestingly, `symgo` is architected to use the low-level `scanner.Scanner` directly. Its evaluator calls `ScanPackageByImport`, `BuildImportLookup`, and `TypeInfoFromExpr` to get the detailed information it needs. This demonstrates the same *need* for heavyweight analysis, even with a slightly different architecture.
+
+*   **`examples/convert`**, **`examples/derivingjson`**, **`examples/derivingbind`**, **`examples/deriving-all`**:
+    *   **Summary**: These are all code generation tools. They are canonical examples of **Group 2 (Heavyweight)** users.
+    *   **Methods Used**: They follow a common pattern:
+        1.  Use `ScanPackageByImport` or `ScanFiles` to get an initial, complete `PackageInfo` of the target package.
+        2.  Iterate through the `Types` and `Fields` of the `PackageInfo`.
+        3.  Use `ResolveType` (often by calling `field.Type.Resolve()`) to get full details about field types, especially those from other packages.
+        4.  Call `ScanPackageByImport` recursively if they need to analyze an imported package (e.g., to check if a type implements a certain interface).

@@ -52,7 +52,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] **Improve generic type inference for composite types**: The type inference engine fails to infer type parameters when they are part of a composite type in a function argument (e.g., inferring `E` from a parameter of type `[]E`). This was discovered when testing `slices.Sort` and currently blocks its use via source interpretation.
 - [x] **Improve interpreter performance for complex algorithms**: `slices.Sort` fails to complete within the test timeout, indicating severe performance bottlenecks when interpreting complex code like sorting algorithms.
 
-### Symbolic-Execution-like Engine (`symgo`) ([docs/plan-symbolic-execution-like.md](./docs/plan-symbolic-execution-like.md))
+### `docgen` and Symbolic-Execution-like Engine (`symgo`) ([docs/plan-symbolic-execution-like.md](./docs/plan-symbolic-execution-like.md))
 - [x] **M1: `symgo` Core Engine**:
     - [x] **Object System**: Define the `symgo/object` package with the `Object` interface and initial concrete types (`String`, `Function`, `Error`, `SymbolicPlaceholder`).
     - [x] **Scope Management**: Implement the `symgo/scope` package for lexical scoping, supporting nested environments.

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"time"
 )
 
 // User represents a user in the system.
@@ -51,11 +52,23 @@ func createUser(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(user)
 }
 
+// slowHandler handles the GET /slow endpoint.
+// It's a slow handler to demonstrate timeouts.
+func slowHandler(w http.ResponseWriter, r *http.Request) {
+	time.Sleep(1 * time.Second)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte("finally"))
+}
+
 // NewServeMux creates a new http.ServeMux and registers all the handlers.
 func NewServeMux() *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /users", listUsers)
 	mux.HandleFunc("GET /user", getUser)
 	mux.HandleFunc("POST /users", createUser)
+
+	// Add a handler wrapped in a higher-order function.
+	slow := http.TimeoutHandler(http.HandlerFunc(slowHandler), 2*time.Second, "timeout")
+	mux.Handle("GET /slow", slow)
 	return mux
 }

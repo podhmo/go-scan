@@ -134,3 +134,10 @@ A set of tasks to improve the `symgo` engine and the `docgen` tool based on the 
 - [ ] **Step 3: User Extensibility**
     - [ ] **Implement `minigo`-based Pattern Loader**: Create a loader in `docgen` that reads a `.minigo` script and parses a list of pattern definitions using `minigo.EvalString` and `minigo.Result.As`.
     - [ ] **Integrate Pattern Loader with Analyzer**: Modify the `docgen.Analyzer` to dynamically register intrinsics based on the patterns loaded from the `.minigo` script at startup.
+
+### External Package Resolution Improvements
+- [ ] **Fix Module-Aware Resolution in Test Environments**: The `symgo` engine relies on a module-aware `go-scan` instance to resolve types from external packages (including the standard library like `net/http`). This resolution is failing in certain test environments, causing method calls on external interfaces to be missed.
+    - The tests in `symgo/evaluator/evaluator_interface_method_test.go` are skipped because of this.
+    - The main integration test in `examples/docgen/main_test.go` is also skipped because `symgo` fails to analyze `http.TimeoutHandler` correctly without proper type resolution.
+- [ ] **Improve External Package Support in `scantest`**: The `scantest` helper library currently does not use a module-aware scanner by default, making it difficult to test code that relies on types from external packages (including the standard library). The `scantest.Run` function should be updated to use `goscan.WithGoModuleResolver()` automatically, or the existing tests that need it should be updated to provide a properly configured scanner.
+- [ ] **Standardize Import Handling in `minigo` and `symgo`**: Both `minigo` and `symgo` have their own implementations for lazy-loading imported packages. These should be reviewed, compared, and potentially unified into a shared mechanism within `go-scan` to reduce code duplication and ensure consistent behavior.

@@ -24,6 +24,7 @@ func GetDefaultPatterns() []Pattern {
 	return []Pattern{
 		// net/http related
 		{Key: "(net/http.ResponseWriter).Header", Apply: handleHeader},
+		{Key: "(net/http.ResponseWriter).Write", Apply: handleResponseWriterWrite},
 		{Key: "(net/http.ResponseWriter).WriteHeader", Apply: handleWriteHeader},
 		{Key: "(net/http.Header).Set", Apply: handleHeaderSet},
 
@@ -42,6 +43,36 @@ func GetDefaultPatterns() []Pattern {
 // -----------------------------------------------------------------------------
 // Pattern Handler Implementations
 // -----------------------------------------------------------------------------
+
+func handleResponseWriterWrite(interp *symgo.Interpreter, args []symgo.Object, op *openapi.Operation) symgo.Object {
+	if op.Responses == nil {
+		op.Responses = make(map[string]*openapi.Response)
+	}
+
+	// If there's no response yet, assume 200 OK.
+	if _, exists := op.Responses["200"]; !exists {
+		op.Responses["200"] = &openapi.Response{
+			Description: "OK",
+		}
+	}
+
+	// If there's no content type, assume text/plain.
+	resp := op.Responses["200"]
+	if resp.Content == nil {
+		resp.Content = make(map[string]openapi.MediaType)
+	}
+
+	// Check if a content type is already set by ResponseWriter.Header().Set()
+	// For now, we just default to text/plain if no other content type is present.
+	if len(resp.Content) == 0 {
+		resp.Content["text/plain"] = openapi.MediaType{
+			Schema: &openapi.Schema{
+				Type: "string", // a raw write is likely just a string or raw bytes
+			},
+		}
+	}
+	return nil // We don't need to return a value, just modify the operation.
+}
 
 func handleHeader(interp *symgo.Interpreter, args []symgo.Object, op *openapi.Operation) symgo.Object {
 	return NewSymbolicInstance(interp, "net/http.Header")

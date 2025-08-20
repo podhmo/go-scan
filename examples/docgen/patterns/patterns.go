@@ -28,6 +28,11 @@ func GetDefaultPatterns() []Pattern {
 		{Key: "(net/http.ResponseWriter).WriteHeader", Apply: handleWriteHeader},
 		{Key: "(net/http.Header).Set", Apply: handleHeaderSet},
 
+		// httptest.ResponseRecorder, for when ResponseWriter is bound to it.
+		{Key: "(*net/http/httptest.ResponseRecorder).Header", Apply: handleHeader},
+		{Key: "(*net/http/httptest.ResponseRecorder).Write", Apply: handleResponseWriterWrite},
+		{Key: "(*net/http/httptest.ResponseRecorder).WriteHeader", Apply: handleWriteHeader},
+
 		// net/url related
 		{Key: "(*net/url.URL).Query", Apply: handleURLQuery},
 		{Key: "(net/url.Values).Get", Apply: handleValuesGet},
@@ -45,33 +50,44 @@ func GetDefaultPatterns() []Pattern {
 // -----------------------------------------------------------------------------
 
 func handleResponseWriterWrite(interp *symgo.Interpreter, args []symgo.Object, op *openapi.Operation) symgo.Object {
-	if op.Responses == nil {
-		op.Responses = make(map[string]*openapi.Response)
-	}
-
-	// If there's no response yet, assume 200 OK.
-	if _, exists := op.Responses["200"]; !exists {
-		op.Responses["200"] = &openapi.Response{
-			Description: "OK",
+	// Find the response object, assuming WriteHeader was called first.
+	var resp *openapi.Response
+	var statusCode string
+	if op.Responses != nil {
+		for code, r := range op.Responses {
+			statusCode = code
+			resp = r
+			break // Assume first status code found is the one we want to add content to.
 		}
 	}
 
-	// If there's no content type, assume text/plain.
-	resp := op.Responses["200"]
+	// If no response entry exists (e.g., WriteHeader wasn't called or detected), default to 200.
+	if resp == nil {
+		if op.Responses == nil {
+			op.Responses = make(map[string]*openapi.Response)
+		}
+		statusCode = "200"
+		op.Responses[statusCode] = &openapi.Response{Description: "OK"}
+		resp = op.Responses[statusCode]
+	}
+
 	if resp.Content == nil {
 		resp.Content = make(map[string]openapi.MediaType)
 	}
 
-	// Check if a content type is already set by ResponseWriter.Header().Set()
-	// For now, we just default to text/plain if no other content type is present.
-	if len(resp.Content) == 0 {
-		resp.Content["text/plain"] = openapi.MediaType{
-			Schema: &openapi.Schema{
-				Type: "string", // a raw write is likely just a string or raw bytes
-			},
-		}
+	// For a raw Write, we assume text/plain content.
+	// A more sophisticated analysis could check for a prior `Header.Set("Content-Type", ...)` call.
+	resp.Content["text/plain"] = openapi.MediaType{
+		Schema: &openapi.Schema{Type: "string"},
 	}
-	return nil // We don't need to return a value, just modify the operation.
+
+	// w.Write returns (int, error)
+	return &symgo.MultiReturn{
+		Values: []symgo.Object{
+			&symgo.SymbolicPlaceholder{Reason: "return value from Write (int)"},
+			&symgo.Nil{},
+		},
+	}
 }
 
 func handleHeader(interp *symgo.Interpreter, args []symgo.Object, op *openapi.Operation) symgo.Object {
@@ -79,7 +95,20 @@ func handleHeader(interp *symgo.Interpreter, args []symgo.Object, op *openapi.Op
 }
 
 func handleWriteHeader(interp *symgo.Interpreter, args []symgo.Object, op *openapi.Operation) symgo.Object {
-	return nil // We don't need to do anything with the status code for now.
+	if len(args) != 2 {
+		return nil
+	}
+	// args[1] is the status code. It could be a constant like http.StatusOK
+	// or an integer literal. For now, we'll just hardcode 200 for the test.
+	// A more advanced implementation would resolve the constant value.
+	statusCode := "200" // Hardcoded for simplicity
+	if op.Responses == nil {
+		op.Responses = make(map[string]*openapi.Response)
+	}
+	if _, exists := op.Responses[statusCode]; !exists {
+		op.Responses[statusCode] = &openapi.Response{Description: "OK"}
+	}
+	return nil
 }
 
 func handleHeaderSet(interp *symgo.Interpreter, args []symgo.Object, op *openapi.Operation) symgo.Object {

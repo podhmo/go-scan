@@ -25,6 +25,8 @@ type Pointer = object.Pointer
 type Variable = object.Variable
 type SymbolicPlaceholder = object.SymbolicPlaceholder
 type Slice = object.Slice
+type MultiReturn = object.MultiReturn
+type Nil = object.Nil
 type BaseObject = object.BaseObject
 type Environment = object.Environment
 

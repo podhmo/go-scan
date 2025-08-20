@@ -670,16 +670,36 @@ func (e *Evaluator) evalAssignStmt(ctx context.Context, n *ast.AssignStmt, env *
 			return rhsValue
 		}
 
-		for _, lhsExpr := range n.Lhs {
+		multiRet, ok := rhsValue.(*object.MultiReturn)
+		if !ok {
+			// If the RHS is not a multi-return object, we can't perform the assignment.
+			// Fallback to assigning placeholders.
+			for _, lhsExpr := range n.Lhs {
+				if ident, ok := lhsExpr.(*ast.Ident); ok {
+					if ident.Name == "_" {
+						continue
+					}
+					v := &object.Variable{
+						Name:  ident.Name,
+						Value: &object.SymbolicPlaceholder{Reason: "unhandled multi-value assignment"},
+					}
+					env.Set(ident.Name, v)
+				}
+			}
+			return nil
+		}
+
+		if len(multiRet.Values) != len(n.Lhs) {
+			return newError(n.Pos(), "assignment mismatch: %d variables but %d values", len(n.Lhs), len(multiRet.Values))
+		}
+
+		for i, lhsExpr := range n.Lhs {
 			if ident, ok := lhsExpr.(*ast.Ident); ok {
 				if ident.Name == "_" {
 					continue
 				}
-				v := &object.Variable{
-					Name:  ident.Name,
-					Value: &object.SymbolicPlaceholder{Reason: "multi-value assignment"},
-				}
-				env.Set(ident.Name, v)
+				val := multiRet.Values[i]
+				e.assignIdentifier(ident, val, n.Tok, env)
 			}
 		}
 		return nil
@@ -707,8 +727,33 @@ func (e *Evaluator) evalIdentAssignment(ctx context.Context, ident *ast.Ident, r
 	if isError(val) {
 		return val
 	}
+	return e.assignIdentifier(ident, val, tok, env)
+}
 
-	if tok == token.DEFINE {
+func (e *Evaluator) assignIdentifier(ident *ast.Ident, val object.Object, tok token.Token, env *object.Environment) object.Object {
+	if tok == token.DEFINE || tok == token.ASSIGN {
+		// For :=, we define a new variable.
+		// For =, we update an existing one.
+		// If the variable doesn't exist with =, we'll handle it below.
+		if tok == token.DEFINE {
+			v := &object.Variable{
+				Name:  ident.Name,
+				Value: val,
+				BaseObject: object.BaseObject{
+					ResolvedTypeInfo: val.TypeInfo(),
+				},
+			}
+			e.logger.Debug("evalAssignStmt: defining var", "name", ident.Name, "type", val.Type())
+			return env.Set(ident.Name, v)
+		}
+	}
+
+	// Handle plain assignment (=)
+	obj, ok := env.Get(ident.Name)
+	if !ok {
+		// This case can be hit in `x, _ = myFunc()` where `x` is a package-level var.
+		// `Get` won't find it if it's not in the current function's env stack.
+		// We'll define it here for simplicity. A more robust solution might search outer scopes more explicitly.
 		v := &object.Variable{
 			Name:  ident.Name,
 			Value: val,
@@ -716,13 +761,8 @@ func (e *Evaluator) evalIdentAssignment(ctx context.Context, ident *ast.Ident, r
 				ResolvedTypeInfo: val.TypeInfo(),
 			},
 		}
-		e.logger.Debug("evalAssignStmt: defining var", "name", ident.Name, "type", val.Type())
+		e.logger.Debug("evalAssignStmt: defining global-like var", "name", ident.Name, "type", val.Type())
 		return env.Set(ident.Name, v)
-	}
-
-	obj, ok := env.Get(ident.Name)
-	if !ok {
-		return newError(ident.Pos(), "cannot assign to undeclared identifier: %s", ident.Name)
 	}
 
 	if v, ok := obj.(*object.Variable); ok {
@@ -734,6 +774,7 @@ func (e *Evaluator) evalIdentAssignment(ctx context.Context, ident *ast.Ident, r
 		return v
 	}
 
+	// This case handles assignment to non-variable objects, like map keys, if they were supported.
 	e.logger.Debug("evalAssignStmt: setting non-var", "name", ident.Name, "type", val.Type())
 	return env.Set(ident.Name, val)
 }

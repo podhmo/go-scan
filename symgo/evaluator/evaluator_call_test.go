@@ -138,7 +138,18 @@ func main() {
 
 		const serveMuxTypeName = "net/http.ServeMux"
 		eval.RegisterIntrinsic("net/http.NewServeMux", func(args ...object.Object) object.Object {
-			return &object.Instance{TypeName: serveMuxTypeName}
+			// Create a fake TypeInfo for ServeMux. In unit tests, we can't easily
+			// scan external packages. This provides the minimum information needed
+			// by the evaluator to resolve method calls on the variable.
+			fakeServeMuxTypeInfo := &goscan.TypeInfo{
+				Name:    "ServeMux",
+				PkgPath: "net/http",
+				Kind:    goscan.StructKind,
+			}
+			return &object.Instance{
+				TypeName:   serveMuxTypeName,
+				BaseObject: object.BaseObject{ResolvedTypeInfo: fakeServeMuxTypeInfo},
+			}
 		})
 
 		eval.RegisterIntrinsic(fmt.Sprintf("(*%s).HandleFunc", serveMuxTypeName), func(args ...object.Object) object.Object {

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/examples/docgen/openapi"
 )
@@ -54,7 +55,11 @@ func TestDocgen(t *testing.T) {
 			"/users": {
 				Get: &openapi.Operation{
 					OperationID: "listUsers",
-					Description: "listUsers handles the GET /users endpoint.\nIt returns a list of all users.",
+					Description: "listUsers handles the GET /users endpoint.\nIt returns a list of all users.\nIt accepts 'limit' and 'offset' query parameters.",
+					Parameters: []*openapi.Parameter{
+						{Name: "limit", In: "query", Schema: &openapi.Schema{Type: "string"}},
+						{Name: "offset", In: "query", Schema: &openapi.Schema{Type: "string"}},
+					},
 					Responses: map[string]*openapi.Response{
 						"200": {
 							Description: "OK",
@@ -92,21 +97,46 @@ func TestDocgen(t *testing.T) {
 					},
 				},
 			},
+			"/user": {
+				Get: &openapi.Operation{
+					OperationID: "getUser",
+					Description: "getUser handles the GET /user endpoint.\nIt returns a single user by ID.",
+					Parameters: []*openapi.Parameter{
+						{Name: "id", In: "query", Schema: &openapi.Schema{Type: "string"}},
+					},
+					Responses: map[string]*openapi.Response{
+						"200": {
+							Description: "OK",
+							Content: map[string]openapi.MediaType{
+								"application/json": {
+									Schema: userSchema,
+								},
+							},
+						},
+					},
+				},
+			},
 		},
 	}
 
-	// Normalize descriptions before comparison
+	// Normalize descriptions and sort parameters before comparison
 	got := analyzer.OpenAPI
-	if got.Paths["/users"] != nil {
-		if got.Paths["/users"].Get != nil {
-			got.Paths["/users"].Get.Description = strings.TrimSpace(got.Paths["/users"].Get.Description)
+	for _, pathItem := range got.Paths {
+		if pathItem.Get != nil {
+			pathItem.Get.Description = strings.TrimSpace(pathItem.Get.Description)
 		}
-		if got.Paths["/users"].Post != nil {
-			got.Paths["/users"].Post.Description = strings.TrimSpace(got.Paths["/users"].Post.Description)
+		if pathItem.Post != nil {
+			pathItem.Post.Description = strings.TrimSpace(pathItem.Post.Description)
 		}
 	}
 
-	if diff := cmp.Diff(want, got); diff != "" {
+	opts := []cmp.Option{
+		cmpopts.SortSlices(func(a, b *openapi.Parameter) bool {
+			return a.Name < b.Name
+		}),
+	}
+
+	if diff := cmp.Diff(want, got, opts...); diff != "" {
 		t.Errorf("OpenAPI spec mismatch (-want +got):\n%s", diff)
 	}
 }

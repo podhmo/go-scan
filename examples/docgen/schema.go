@@ -15,6 +15,11 @@ func buildSchemaForType(ctx context.Context, typeInfo *scanner.TypeInfo, cache m
 		return &openapi.Schema{Type: "object", Description: "unknown type"}
 	}
 
+	// If the type is an alias to a slice, map, etc., we should analyze the underlying type.
+	if typeInfo.Underlying != nil {
+		return buildSchemaFromFieldType(ctx, typeInfo.Underlying, cache)
+	}
+
 	// Use a canonical name for caching to handle pointers vs. values.
 	canonicalName := fmt.Sprintf("%s.%s", typeInfo.PkgPath, typeInfo.Name)
 	if cached, ok := cache[canonicalName]; ok {

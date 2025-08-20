@@ -88,11 +88,7 @@ var x = 10
 
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
-		internalScanner, err := s.ScannerForSymgo()
-		if err != nil {
-			return err
-		}
-		eval := New(internalScanner, s.Logger)
+		eval := New(s, s.Logger)
 		env := object.NewEnvironment()
 
 		eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], env, pkg)
@@ -134,11 +130,7 @@ func main() {
 
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
-		internalScanner, err := s.ScannerForSymgo()
-		if err != nil {
-			return err
-		}
-		eval := New(internalScanner, s.Logger)
+		eval := New(s, s.Logger)
 		env := object.NewEnvironment()
 
 		eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], env, pkg)
@@ -192,8 +184,7 @@ func TestEvalReturnStatement(t *testing.T) {
 	stmt := f.Decls[0].(*ast.FuncDecl).Body.List[0]
 
 	s, _ := goscan.New()
-	internalScanner, _ := s.ScannerForSymgo()
-	eval := New(internalScanner, nil)
+	eval := New(s, nil)
 	evaluated := eval.Eval(context.Background(), stmt, object.NewEnvironment(), &scanner.PackageInfo{
 		Name:     "main",
 		Fset:     fset,
@@ -252,8 +243,7 @@ func TestEvalIfElseStmt(t *testing.T) {
 	node := f.Decls[0].(*ast.FuncDecl).Body.List[0]
 
 	s, _ := goscan.New()
-	internalScanner, _ := s.ScannerForSymgo()
-	eval := New(internalScanner, nil)
+	eval := New(s, nil)
 	evaluated := eval.Eval(context.Background(), node, object.NewEnvironment(), &scanner.PackageInfo{
 		Name:     "main",
 		Fset:     fset,
@@ -312,11 +302,7 @@ func add(a, b int) int { return a + b }
 
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
-		internalScanner, err := s.ScannerForSymgo()
-		if err != nil {
-			return err
-		}
-		eval := New(internalScanner, s.Logger)
+		eval := New(s, s.Logger)
 		env := object.NewEnvironment()
 
 		eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], env, pkg)
@@ -366,11 +352,7 @@ func main() {
 
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
-		internalScanner, err := s.ScannerForSymgo()
-		if err != nil {
-			return err
-		}
-		eval := New(internalScanner, s.Logger)
+		eval := New(s, s.Logger)
 		env := object.NewEnvironment()
 
 		eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], env, pkg)

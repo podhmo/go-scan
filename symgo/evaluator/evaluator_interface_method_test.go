@@ -35,11 +35,7 @@ func main() {
 	var writeCalled bool
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
-		internalScanner, err := s.ScannerForSymgo()
-		if err != nil {
-			return err
-		}
-		eval := New(internalScanner, s.Logger)
+		eval := New(s, s.Logger)
 		env := object.NewEnvironment()
 
 		key := "(example.com/me/iface.Writer).Write"
@@ -98,11 +94,7 @@ func main() {
 	var writeCalled bool
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
-		internalScanner, err := s.ScannerForSymgo()
-		if err != nil {
-			return err
-		}
-		eval := New(internalScanner, s.Logger)
+		eval := New(s, s.Logger)
 		env := object.NewEnvironment()
 
 		key := fmt.Sprintf("(%s.Writer).Write", pkg.ImportPath)

@@ -30,11 +30,7 @@ func main() {
 
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
-		internalScanner, err := s.ScannerForSymgo()
-		if err != nil {
-			return err
-		}
-		eval := New(internalScanner, s.Logger)
+		eval := New(s, s.Logger)
 		env := object.NewEnvironment()
 
 		for _, file := range pkg.AstFiles {
@@ -110,11 +106,7 @@ func main() {
 
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
-		internalScanner, err := s.ScannerForSymgo()
-		if err != nil {
-			return err
-		}
-		eval := New(internalScanner, s.Logger)
+		eval := New(s, s.Logger)
 		env := object.NewEnvironment()
 
 		for _, file := range pkg.AstFiles {

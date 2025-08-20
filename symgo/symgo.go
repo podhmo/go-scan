@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"strings"
 
+	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/scanner"
 	"github.com/podhmo/go-scan/symgo/evaluator"
 	"github.com/podhmo/go-scan/symgo/object"
@@ -35,7 +36,7 @@ type IntrinsicFunc func(eval *Interpreter, args []Object) Object
 
 // Interpreter is the main public entry point for the symgo engine.
 type Interpreter struct {
-	scanner   *scanner.Scanner
+	scanner   *goscan.Scanner
 	eval      *evaluator.Evaluator
 	globalEnv *object.Environment
 	logger    *slog.Logger
@@ -52,13 +53,13 @@ func WithLogger(logger *slog.Logger) Option {
 }
 
 // Scanner returns the underlying go-scan Scanner instance.
-func (i *Interpreter) Scanner() *scanner.Scanner {
+func (i *Interpreter) Scanner() *goscan.Scanner {
 	return i.scanner
 }
 
 // NewInterpreter creates a new symgo interpreter.
 // It requires a pre-configured go-scan.Scanner instance.
-func NewInterpreter(scanner *scanner.Scanner, options ...Option) (*Interpreter, error) {
+func NewInterpreter(scanner *goscan.Scanner, options ...Option) (*Interpreter, error) {
 	if scanner == nil {
 		return nil, fmt.Errorf("scanner cannot be nil")
 	}
@@ -145,7 +146,7 @@ func (i *Interpreter) Eval(ctx context.Context, node ast.Node, pkg *scanner.Pack
 	result := i.eval.Eval(ctx, node, i.globalEnv, pkg)
 	if err, ok := result.(*Error); ok {
 		if err.Pos.IsValid() {
-			position := i.scanner.FileSet().Position(err.Pos)
+			position := i.scanner.Fset().Position(err.Pos)
 			return nil, fmt.Errorf("%s: %s", position, err.Message)
 		}
 		return nil, fmt.Errorf("%s", err.Message)
@@ -158,7 +159,7 @@ func (i *Interpreter) EvalWithEnv(ctx context.Context, node ast.Node, env *Envir
 	result := i.eval.Eval(ctx, node, env, pkg)
 	if err, ok := result.(*Error); ok {
 		if err.Pos.IsValid() {
-			position := i.scanner.FileSet().Position(err.Pos)
+			position := i.scanner.Fset().Position(err.Pos)
 			return nil, fmt.Errorf("%s: %s", position, err.Message)
 		}
 		return nil, fmt.Errorf("%s", err.Message)
@@ -203,7 +204,7 @@ func (i *Interpreter) Apply(ctx context.Context, fn Object, args []Object, pkg *
 	result := i.eval.Apply(ctx, fn, args, pkg)
 	if err, ok := result.(*Error); ok {
 		if err.Pos.IsValid() {
-			position := i.scanner.FileSet().Position(err.Pos)
+			position := i.scanner.Fset().Position(err.Pos)
 			return nil, fmt.Errorf("%s: %s", position, err.Message)
 		}
 		return nil, fmt.Errorf("%s", err.Message)

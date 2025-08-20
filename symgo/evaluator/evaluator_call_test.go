@@ -32,11 +32,7 @@ func main() { add(1, 2) }
 		}
 		pkg := pkgs[0]
 
-		internalScanner, err := s.ScannerForSymgo()
-		if err != nil {
-			return fmt.Errorf("ScannerForSymgo() failed: %w", err)
-		}
-		eval := New(internalScanner, s.Logger)
+		eval := New(s, s.Logger)
 		env := object.NewEnvironment()
 		for _, file := range pkg.AstFiles {
 			eval.Eval(ctx, file, env, pkg)
@@ -75,11 +71,7 @@ func main() { fmt.Println("hello") }
 	var got string
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
-		internalScanner, err := s.ScannerForSymgo()
-		if err != nil {
-			return err
-		}
-		eval := New(internalScanner, s.Logger)
+		eval := New(s, s.Logger)
 		env := object.NewEnvironment()
 
 		eval.RegisterIntrinsic("fmt.Println", func(args ...object.Object) object.Object {
@@ -130,11 +122,7 @@ func main() {
 
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
-		internalScanner, err := s.ScannerForSymgo()
-		if err != nil {
-			return err
-		}
-		eval := New(internalScanner, s.Logger)
+		eval := New(s, s.Logger)
 		env := object.NewEnvironment()
 
 		const serveMuxTypeName = "net/http.ServeMux"
@@ -203,13 +191,9 @@ func main() {
 		var doCalled bool
 		action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 			pkg := pkgs[0]
-			internalScanner, err := s.ScannerForSymgo()
-			if err != nil {
-				return err
-			}
 			handler := slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})
 			logger := slog.New(handler)
-			eval := New(internalScanner, logger)
+			eval := New(s, logger)
 			env := object.NewEnvironment()
 
 			key := fmt.Sprintf("(%s.S).Do", pkg.ImportPath)
@@ -258,13 +242,9 @@ func main() {
 		var finalName string
 		action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 			pkg := pkgs[0]
-			internalScanner, err := s.ScannerForSymgo()
-			if err != nil {
-				return err
-			}
 			handler := slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})
 			logger := slog.New(handler)
-			eval := New(internalScanner, logger)
+			eval := New(s, logger)
 			env := object.NewEnvironment()
 
 			greeterTypeName := fmt.Sprintf("%s.Greeter", pkg.ImportPath)
@@ -330,11 +310,7 @@ func main() {
 		var lastResult int
 		action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 			pkg := pkgs[0]
-			internalScanner, err := s.ScannerForSymgo()
-			if err != nil {
-				return err
-			}
-			eval := New(internalScanner, s.Logger)
+			eval := New(s, s.Logger)
 			env := object.NewEnvironment()
 
 			eval.RegisterIntrinsic(fmt.Sprintf("%s.add", pkg.ImportPath), func(args ...object.Object) object.Object {

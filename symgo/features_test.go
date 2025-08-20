@@ -37,11 +37,7 @@ func main() {
 
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
-		internalScanner, err := s.ScannerForSymgo()
-		if err != nil {
-			return err
-		}
-		interp, err := symgo.NewInterpreter(internalScanner, symgo.WithLogger(s.Logger))
+		interp, err := symgo.NewInterpreter(s, symgo.WithLogger(s.Logger))
 		if err != nil {
 			return err
 		}
@@ -113,11 +109,7 @@ func main() {
 	var patternCalled bool
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
-		internalScanner, err := s.ScannerForSymgo()
-		if err != nil {
-			return err
-		}
-		interp, err := symgo.NewInterpreter(internalScanner, symgo.WithLogger(s.Logger))
+		interp, err := symgo.NewInterpreter(s, symgo.WithLogger(s.Logger))
 		if err != nil {
 			return err
 		}
@@ -176,11 +168,7 @@ func run() string {
 
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
-		internalScanner, err := s.ScannerForSymgo()
-		if err != nil {
-			return err
-		}
-		interp, err := symgo.NewInterpreter(internalScanner, symgo.WithLogger(s.Logger))
+		interp, err := symgo.NewInterpreter(s, symgo.WithLogger(s.Logger))
 		if err != nil {
 			return err
 		}

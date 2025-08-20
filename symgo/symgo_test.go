@@ -32,11 +32,7 @@ func TestNewInterpreter(t *testing.T) {
 			t.Fatalf("goscan.New() failed: %+v", err)
 		}
 
-		internalScanner, err := s.ScannerForSymgo()
-		if err != nil {
-			t.Fatalf("s.ScannerForSymgo() failed: %+v", err)
-		}
-		interp, err := symgo.NewInterpreter(internalScanner)
+		interp, err := symgo.NewInterpreter(s)
 		if err != nil {
 			t.Errorf("NewInterpreter() failed: %+v", err)
 		}
@@ -71,11 +67,7 @@ func main() {
 	}
 	pkg := pkgs[0]
 
-	internalScanner, err := s.ScannerForSymgo()
-	if err != nil {
-		t.Fatalf("s.ScannerForSymgo() failed: %+v", err)
-	}
-	interp, err := symgo.NewInterpreter(internalScanner)
+	interp, err := symgo.NewInterpreter(s)
 	if err != nil {
 		t.Fatalf("NewInterpreter() failed: %+v", err)
 	}
@@ -129,11 +121,7 @@ func main() {
 	}
 	pkg := pkgs[0]
 
-	internalScanner, err := s.ScannerForSymgo()
-	if err != nil {
-		t.Fatalf("s.ScannerForSymgo() failed: %+v", err)
-	}
-	interp, err := symgo.NewInterpreter(internalScanner)
+	interp, err := symgo.NewInterpreter(s)
 	if err != nil {
 		t.Fatalf("NewInterpreter() failed: %+v", err)
 	}

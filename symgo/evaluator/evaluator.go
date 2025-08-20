@@ -21,7 +21,7 @@ import (
 
 // Evaluator is the main object that evaluates the AST.
 type Evaluator struct {
-	scanner    *scanner.Scanner
+	scanner    *goscan.Scanner
 	intrinsics *intrinsics.Registry
 	logger     *slog.Logger
 	callStack  []*callFrame
@@ -33,7 +33,7 @@ type callFrame struct {
 }
 
 // New creates a new Evaluator.
-func New(scanner *scanner.Scanner, logger *slog.Logger) *Evaluator {
+func New(scanner *goscan.Scanner, logger *slog.Logger) *Evaluator {
 	if logger == nil {
 		logger = slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	}
@@ -68,7 +68,7 @@ func (e *Evaluator) PopIntrinsics() {
 func (e *Evaluator) Eval(ctx context.Context, node ast.Node, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
 	if e.logger.Enabled(ctx, slog.LevelDebug) {
 		var buf bytes.Buffer
-		fset := e.scanner.FileSet()
+		fset := e.scanner.Fset()
 		if fset != nil && node != nil && node.Pos().IsValid() {
 			printer.Fprint(&buf, fset, node)
 		} else if node != nil {
@@ -119,6 +119,8 @@ func (e *Evaluator) Eval(ctx context.Context, node ast.Node, env *object.Environ
 		return e.evalBinaryExpr(ctx, n, env, pkg)
 	case *ast.CompositeLit:
 		return e.evalCompositeLit(ctx, n, env, pkg)
+	case *ast.IndexExpr:
+		return e.evalIndexExpr(ctx, n, env, pkg)
 	case *ast.FuncLit:
 		return &object.Function{
 			Parameters: n.Type.Params,
@@ -127,6 +129,45 @@ func (e *Evaluator) Eval(ctx context.Context, node ast.Node, env *object.Environ
 		}
 	}
 	return newError(node.Pos(), "evaluation not implemented for %T", node)
+}
+
+func (e *Evaluator) evalIndexExpr(ctx context.Context, node *ast.IndexExpr, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
+	left := e.Eval(ctx, node.X, env, pkg)
+	if isError(left) {
+		return left
+	}
+
+	index := e.Eval(ctx, node.Index, env, pkg)
+	if isError(index) {
+		return index
+	}
+
+	var sliceFieldType *scanner.FieldType
+
+	switch l := left.(type) {
+	case *object.Slice:
+		sliceFieldType = l.FieldType
+	case *object.Variable:
+		if s, ok := l.Value.(*object.Slice); ok {
+			sliceFieldType = s.FieldType
+		} else if ti := l.TypeInfo(); ti != nil && ti.Underlying != nil && ti.Underlying.IsSlice {
+			sliceFieldType = ti.Underlying
+		}
+	case *object.SymbolicPlaceholder:
+		if ti := l.TypeInfo(); ti != nil && ti.Underlying != nil && ti.Underlying.IsSlice {
+			sliceFieldType = ti.Underlying
+		}
+	}
+
+	var elemType *scanner.TypeInfo
+	if sliceFieldType != nil && sliceFieldType.IsSlice && sliceFieldType.Elem != nil {
+		elemType, _ = sliceFieldType.Elem.Resolve(ctx)
+	}
+
+	return &object.SymbolicPlaceholder{
+		Reason:     "result of index expression",
+		BaseObject: object.BaseObject{ResolvedTypeInfo: elemType},
+	}
 }
 
 func (e *Evaluator) evalCompositeLit(ctx context.Context, node *ast.CompositeLit, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
@@ -842,7 +883,7 @@ func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, 
 	// FuncLit doesn't have a declaration, so it doesn't have a position to look up the file.
 	// We assume it's in the same file as the current package context.
 	// This is a simplification.
-	var importLookup goscan.ImportLookup
+	var importLookup map[string]string
 	if fn.Decl != nil {
 		file := pkg.Fset.File(fn.Decl.Pos())
 		if file == nil {

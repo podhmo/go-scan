@@ -40,11 +40,7 @@ func main() {
 		}
 		pkg := pkgs[0]
 
-		internalScanner, err := s.ScannerForSymgo()
-		if err != nil {
-			return fmt.Errorf("s.ScannerForSymgo failed: %w", err)
-		}
-		eval := New(internalScanner, s.Logger)
+		eval := New(s, s.Logger)
 
 		var inspectedType object.Object
 		env := object.NewEnvironment()

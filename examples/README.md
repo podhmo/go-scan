@@ -9,6 +9,7 @@ This directory contains example projects that demonstrate the capabilities and u
 - [convert](#convert)
 - [minigo](#minigo)
 - [deps-walk](#deps-walk)
+- [docgen](#docgen)
 
 ---
 
@@ -96,3 +97,19 @@ The `deps-walk` example is a command-line tool that visualizes the dependency gr
 - Can switch between traversing only in-module dependencies (default) and all dependencies (`--full` flag).
 
 This example demonstrates how the `go-scan` library can be used to build developer utilities for dependency analysis and visualization.
+
+---
+
+## docgen
+
+The `docgen` example is an experimental tool that generates OpenAPI 3.1 specifications from standard `net/http` applications.
+
+**Purpose**: To demonstrate how the `symgo` symbolic execution engine can be used to perform deep, static analysis of Go code to understand an API's structure without running it.
+
+**Key Features**:
+- Uses the `symgo` engine to symbolically execute the target application's code.
+- Intercepts calls to `net/http.HandleFunc` to discover API routes and their corresponding handler functions.
+- Analyzes the body of handler functions to infer request and response schemas by looking for patterns like `json.NewDecoder(...).Decode()`.
+- Aggregates the discovered information into a valid OpenAPI 3.1 JSON document.
+
+This example showcases how `symgo` and `go-scan` can be combined to build powerful static analysis tools for Go codebases.

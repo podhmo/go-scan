@@ -26,6 +26,7 @@ const (
 	POINTER_OBJ      ObjectType = "POINTER"
 	NIL_OBJ          ObjectType = "NIL"
 	SLICE_OBJ        ObjectType = "SLICE"
+	MULTI_RETURN_OBJ ObjectType = "MULTI_RETURN"
 )
 
 // Object is the interface that all value types in our symbolic engine will implement.
@@ -330,4 +331,22 @@ func (e *Environment) Walk(fn func(name string, obj Object) bool) {
 	if e.outer != nil {
 		e.outer.Walk(fn)
 	}
+}
+
+// --- MultiReturn Object ---
+
+// MultiReturn is a special object type to represent multiple return values from a function.
+// This is not a first-class object that a user can interact with, but an internal
+// mechanism for the evaluator.
+type MultiReturn struct {
+	BaseObject
+	Values []Object
+}
+
+// Type returns the type of the MultiReturn object.
+func (mr *MultiReturn) Type() ObjectType { return MULTI_RETURN_OBJ }
+
+// Inspect returns a string representation of the multi-return values.
+func (mr *MultiReturn) Inspect() string {
+	return "multi-return"
 }

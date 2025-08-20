@@ -3,6 +3,7 @@ package evaluator
 import (
 	"context"
 	"fmt"
+	"go/token"
 	"strings"
 	"testing"
 
@@ -42,13 +43,13 @@ func run() string {
 
 		eval.RegisterIntrinsic("strings.ToUpper", func(args ...object.Object) object.Object {
 			if len(args) == 0 {
-				return newError("ToUpper expects 1 argument")
+				return newError(token.NoPos, "ToUpper expects 1 argument")
 			}
 			s, ok := args[0].(*object.String)
 			if !ok {
 				// This will fail if my fix is not applied
 				t.Errorf("expected arg to be *object.String, but got %T", args[0])
-				return newError("argument to ToUpper must be a string, got %s", args[0].Type())
+				return newError(token.NoPos, "argument to ToUpper must be a string, got %s", args[0].Type())
 			}
 			return &object.String{Value: strings.ToUpper(s.Value)}
 		})
@@ -64,7 +65,7 @@ func run() string {
 		runFunc := runFuncObj.(*object.Function)
 
 		// applyFunction returns the result of the function call
-		finalResult = eval.applyFunction(runFunc, []object.Object{}, pkg)
+		finalResult = eval.applyFunction(runFunc, []object.Object{}, pkg, token.NoPos)
 
 		return nil
 	}
@@ -135,7 +136,7 @@ func main() {
 
 		mainFuncObj, _ := env.Get("main")
 		mainFunc := mainFuncObj.(*object.Function)
-		eval.applyFunction(mainFunc, []object.Object{}, pkg)
+		eval.applyFunction(mainFunc, []object.Object{}, pkg, token.NoPos)
 
 		return nil
 	}

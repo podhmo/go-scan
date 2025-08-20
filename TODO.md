@@ -119,6 +119,8 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 
 ### `symgo` and `docgen` Improvements
 
+> 元々docgenはsymgoのテストパイロット的なものなのです。機能の不足やバグを発見したらカジュアルにsymgo側に立ち返って問題を細分化しテストコードを追加しそのテストコードが通るまで実装を修正してください。
+
 A set of tasks to improve the `symgo` engine and the `docgen` tool based on the analysis in `docgen/ja/from-docgen.md`.
 
 - [ ] **Step 1: Error Reporting and Engine Stabilization**

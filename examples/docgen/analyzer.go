@@ -14,10 +14,11 @@ import (
 
 // Analyzer analyzes Go code and generates an OpenAPI specification.
 type Analyzer struct {
-	Scanner     *goscan.Scanner
-	interpreter *symgo.Interpreter
-	OpenAPI     *openapi.OpenAPI
-	logger      *slog.Logger
+	Scanner        *goscan.Scanner
+	interpreter    *symgo.Interpreter
+	OpenAPI        *openapi.OpenAPI
+	logger         *slog.Logger
+	operationStack []*openapi.Operation
 }
 
 // NewAnalyzer creates a new Analyzer.
@@ -51,6 +52,10 @@ func NewAnalyzer(s *goscan.Scanner, logger *slog.Logger) (*Analyzer, error) {
 	interp.RegisterIntrinsic("(*net/http.ServeMux).Handle", a.analyzeHandle)
 
 	return a, nil
+}
+
+func (a *Analyzer) OperationStack() []*openapi.Operation {
+	return a.operationStack
 }
 
 func (a *Analyzer) handleNewServeMux(interp *symgo.Interpreter, args []symgo.Object) symgo.Object {
@@ -265,6 +270,12 @@ func (a *Analyzer) analyzeHandleFunc(interp *symgo.Interpreter, args []symgo.Obj
 // analyzeHandlerBody analyzes the body of an HTTP handler function to find
 // request and response schemas.
 func (a *Analyzer) analyzeHandlerBody(handler *symgo.Function, op *openapi.Operation) {
+	// Push the current operation onto the stack for the duration of this analysis.
+	a.operationStack = append(a.operationStack, op)
+	defer func() {
+		a.operationStack = a.operationStack[:len(a.operationStack)-1]
+	}()
+
 	pkg, err := a.Scanner.ScanPackageByPos(context.Background(), handler.Decl.Pos())
 	if err != nil {
 		fmt.Printf("warn: failed to get package for handler %q: %v\n", handler.Name.Name, err)
@@ -312,7 +323,7 @@ func (a *Analyzer) analyzeHandlerBody(handler *symgo.Function, op *openapi.Opera
 	}
 
 	// Push a new scope for temporary intrinsics for this handler.
-	intrinsics := a.buildHandlerIntrinsics(op)
+	intrinsics := a.buildHandlerIntrinsics(a)
 	a.interpreter.PushIntrinsics(intrinsics)
 	defer a.interpreter.PopIntrinsics() // Ensure we clean up the scope.
 
@@ -322,15 +333,16 @@ func (a *Analyzer) analyzeHandlerBody(handler *symgo.Function, op *openapi.Opera
 
 // buildHandlerIntrinsics creates the map of intrinsic handlers for analyzing
 // a handler's body by using the extensible pattern registry.
-func (a *Analyzer) buildHandlerIntrinsics(op *openapi.Operation) map[string]symgo.IntrinsicFunc {
+func (a *Analyzer) buildHandlerIntrinsics(analyzer *Analyzer) map[string]symgo.IntrinsicFunc {
 	intrinsics := make(map[string]symgo.IntrinsicFunc)
 
 	for _, p := range patterns.GetDefaultPatterns() {
 		// Capture the pattern for the closure.
 		pattern := p
 		intrinsics[pattern.Key] = func(i *symgo.Interpreter, args []symgo.Object) symgo.Object {
-			// The `op` is captured from the outer scope here.
-			return pattern.Apply(i, args, op)
+			// The analyzer instance `a` is captured from the outer scope.
+			// The pattern's Apply function will use it to get the current operation.
+			return pattern.Apply(i, analyzer, args)
 		}
 	}
 

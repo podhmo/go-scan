@@ -208,7 +208,6 @@ func handleEncode(interp *symgo.Interpreter, a Analyzer, args []symgo.Object) sy
 	return &symgo.SymbolicPlaceholder{Reason: "result of json.Encode"}
 }
 
-
 // -----------------------------------------------------------------------------
 // Helper function for creating symbolic instances
 // -----------------------------------------------------------------------------

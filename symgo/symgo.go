@@ -19,6 +19,7 @@ type String = object.String
 type Pointer = object.Pointer
 type Variable = object.Variable
 type SymbolicPlaceholder = object.SymbolicPlaceholder
+type Slice = object.Slice
 type BaseObject = object.BaseObject
 type Environment = object.Environment
 
@@ -33,6 +34,11 @@ type Interpreter struct {
 	scanner   *scanner.Scanner
 	eval      *evaluator.Evaluator
 	globalEnv *object.Environment
+}
+
+// Scanner returns the underlying go-scan Scanner instance.
+func (i *Interpreter) Scanner() *scanner.Scanner {
+	return i.scanner
 }
 
 // NewInterpreter creates a new symgo interpreter.

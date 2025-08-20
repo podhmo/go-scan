@@ -716,10 +716,11 @@ func (s *Scanner) parseStructType(ctx context.Context, st *ast.StructType, curre
 		if len(field.Names) > 0 {
 			for _, name := range field.Names {
 				structInfo.Fields = append(structInfo.Fields, &FieldInfo{
-					Name: name.Name,
-					Doc:  doc,
-					Type: fieldType,
-					Tag:  tag,
+					Name:       name.Name,
+					Doc:        doc,
+					Type:       fieldType,
+					Tag:        tag,
+					IsExported: name.IsExported(),
 				})
 			}
 		} else {

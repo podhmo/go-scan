@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"go/ast"
 
-	goscan "github.com/podhmo/go-scan"
+	"github.com/podhmo/go-scan/scanner"
 )
 
 // ObjectType is a string representation of an object's type.
@@ -24,6 +24,7 @@ const (
 	VARIABLE_OBJ     ObjectType = "VARIABLE"
 	POINTER_OBJ      ObjectType = "POINTER"
 	NIL_OBJ          ObjectType = "NIL"
+	SLICE_OBJ        ObjectType = "SLICE"
 )
 
 // Object is the interface that all value types in our symbolic engine will implement.
@@ -34,23 +35,23 @@ type Object interface {
 	Inspect() string
 	// TypeInfo returns the underlying go-scan type information, if available.
 	// This is the bridge between the symbolic world and the static type world.
-	TypeInfo() *goscan.TypeInfo
+	TypeInfo() *scanner.TypeInfo
 	// SetTypeInfo sets the underlying go-scan type information.
-	SetTypeInfo(*goscan.TypeInfo)
+	SetTypeInfo(*scanner.TypeInfo)
 }
 
 // BaseObject provides a default implementation for the TypeInfo method.
 type BaseObject struct {
-	ResolvedTypeInfo *goscan.TypeInfo
+	ResolvedTypeInfo *scanner.TypeInfo
 }
 
 // TypeInfo returns the stored type information.
-func (b *BaseObject) TypeInfo() *goscan.TypeInfo {
+func (b *BaseObject) TypeInfo() *scanner.TypeInfo {
 	return b.ResolvedTypeInfo
 }
 
 // SetTypeInfo sets the stored type information.
-func (b *BaseObject) SetTypeInfo(ti *goscan.TypeInfo) {
+func (b *BaseObject) SetTypeInfo(ti *scanner.TypeInfo) {
 	b.ResolvedTypeInfo = ti
 }
 
@@ -245,6 +246,26 @@ func (n *Nil) Type() ObjectType { return NIL_OBJ }
 
 // Inspect returns a string representation of nil.
 func (n *Nil) Inspect() string { return "nil" }
+
+// --- Slice Object ---
+
+// Slice represents a slice literal. Its type is represented by a FieldType,
+// which captures the slice structure (e.g., []User).
+type Slice struct {
+	BaseObject
+	FieldType *scanner.FieldType
+}
+
+// Type returns the type of the Slice object.
+func (s *Slice) Type() ObjectType { return SLICE_OBJ }
+
+// Inspect returns a string representation of the slice type.
+func (s *Slice) Inspect() string {
+	if s.FieldType != nil {
+		return s.FieldType.String()
+	}
+	return "[]<unknown>"
+}
 
 // --- Environment ---
 

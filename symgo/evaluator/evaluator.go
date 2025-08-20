@@ -109,7 +109,6 @@ func (e *Evaluator) evalCompositeLit(node *ast.CompositeLit, env *object.Environ
 		return newError("package info or fset is missing, cannot resolve types for composite literal")
 	}
 
-	// Build an import lookup specific to the file containing the literal.
 	file := pkg.Fset.File(node.Pos())
 	if file == nil {
 		return newError("could not find file for node position")
@@ -120,28 +119,29 @@ func (e *Evaluator) evalCompositeLit(node *ast.CompositeLit, env *object.Environ
 	}
 	importLookup := e.scanner.BuildImportLookup(astFile)
 
-	// Resolve the type of the literal.
-	typeInfo := e.scanner.TypeInfoFromExpr(context.Background(), node.Type, nil, pkg, importLookup)
-	if typeInfo == nil {
-		// For convenience, try to render the type expression for a better error message.
+	fieldType := e.scanner.TypeInfoFromExpr(context.Background(), node.Type, nil, pkg, importLookup)
+	if fieldType == nil {
 		var typeNameBuf bytes.Buffer
 		printer.Fprint(&typeNameBuf, pkg.Fset, node.Type)
 		return newError("could not resolve type for composite literal: %s", typeNameBuf.String())
 	}
 
-	// For types defined in the current package, FullImportPath might be empty.
-	// In that case, we use the package's own import path to create a fully qualified name.
-	pkgPath := typeInfo.FullImportPath
-	if pkgPath == "" {
-		pkgPath = pkg.ImportPath
+	// If it's a slice, create a specific Slice object that preserves the full slice type info.
+	if fieldType.IsSlice {
+		return &object.Slice{FieldType: fieldType}
 	}
-	typeName := fmt.Sprintf("%s.%s", pkgPath, typeInfo.Name)
 
-	resolvedType, _ := typeInfo.Resolve(context.Background())
+	// For structs, resolve the type to its full definition.
+	resolvedType, _ := fieldType.Resolve(context.Background())
+	if resolvedType == nil {
+		return &object.SymbolicPlaceholder{
+			Reason: fmt.Sprintf("unresolved composite literal of type %s", fieldType.String()),
+		}
+	}
 
-	// Create a symbolic instance of this type.
+	// Create a symbolic instance of the struct type.
 	return &object.Instance{
-		TypeName:   typeName,
+		TypeName:   fmt.Sprintf("%s.%s", resolvedType.PkgPath, resolvedType.Name),
 		BaseObject: object.BaseObject{ResolvedTypeInfo: resolvedType},
 	}
 }

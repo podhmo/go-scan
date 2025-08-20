@@ -7,6 +7,7 @@ import (
 
 	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/examples/docgen/openapi"
+	"github.com/podhmo/go-scan/examples/docgen/patterns"
 	"github.com/podhmo/go-scan/symgo"
 )
 
@@ -49,39 +50,7 @@ func NewAnalyzer(s *goscan.Scanner) (*Analyzer, error) {
 }
 
 func (a *Analyzer) handleNewServeMux(interp *symgo.Interpreter, args []symgo.Object) symgo.Object {
-	return a.newSymbolicInstance(context.Background(), "net/http.ServeMux")
-}
-
-// newSymbolicInstance is a helper to create a symgo.Instance with its type information resolved.
-func (a *Analyzer) newSymbolicInstance(ctx context.Context, fqtn string) symgo.Object {
-	// e.g., fqtn = "net/http.ServeMux"
-	lastDot := strings.LastIndex(fqtn, ".")
-	if lastDot == -1 {
-		return &symgo.Error{Message: fmt.Sprintf("invalid fully-qualified type name: %s", fqtn)}
-	}
-	pkgPath := fqtn[:lastDot]
-	typeName := fqtn[lastDot+1:]
-
-	pkg, err := a.Scanner.ScanPackageByImport(ctx, pkgPath)
-	if err != nil {
-		return &symgo.Error{Message: fmt.Sprintf("could not load package %s: %v", pkgPath, err)}
-	}
-
-	var resolvedType *goscan.TypeInfo
-	for _, t := range pkg.Types {
-		if t.Name == typeName {
-			resolvedType = t
-			break
-		}
-	}
-	if resolvedType == nil {
-		return &symgo.Error{Message: fmt.Sprintf("could not find type %s in package %s", typeName, pkgPath)}
-	}
-
-	return &symgo.Instance{
-		TypeName:   fqtn,
-		BaseObject: symgo.BaseObject{ResolvedTypeInfo: resolvedType},
-	}
+	return patterns.NewSymbolicInstance(interp, "net/http.ServeMux")
 }
 
 // Analyze analyzes the package starting from a specific entrypoint function.
@@ -261,96 +230,17 @@ func (a *Analyzer) analyzeHandlerBody(handler *symgo.Function, op *openapi.Opera
 }
 
 // buildHandlerIntrinsics creates the map of intrinsic handlers for analyzing
-// a handler's body, covering JSON, query parameters, etc.
+// a handler's body by using the extensible pattern registry.
 func (a *Analyzer) buildHandlerIntrinsics(op *openapi.Operation) map[string]symgo.IntrinsicFunc {
 	intrinsics := make(map[string]symgo.IntrinsicFunc)
 
-	// -- JSON Body Analysis --
-	intrinsics["encoding/json.NewDecoder"] = func(i *symgo.Interpreter, args []symgo.Object) symgo.Object {
-		return a.newSymbolicInstance(context.Background(), "encoding/json.Decoder")
-	}
-	intrinsics["(*encoding/json.Decoder).Decode"] = func(i *symgo.Interpreter, args []symgo.Object) symgo.Object {
-		if len(args) != 2 {
-			return &symgo.SymbolicPlaceholder{Reason: "decode error"}
+	for _, p := range patterns.GetDefaultPatterns() {
+		// Capture the pattern for the closure.
+		pattern := p
+		intrinsics[pattern.Key] = func(i *symgo.Interpreter, args []symgo.Object) symgo.Object {
+			// The `op` is captured from the outer scope here.
+			return pattern.Apply(i, args, op)
 		}
-		ptr, ok := args[1].(*symgo.Pointer)
-		if !ok {
-			return &symgo.SymbolicPlaceholder{Reason: "decode error"}
-		}
-		typeInfo := ptr.TypeInfo()
-		if typeInfo != nil {
-			schema := buildSchemaForType(context.Background(), typeInfo, make(map[string]*openapi.Schema))
-			if schema != nil {
-				op.RequestBody = &openapi.RequestBody{
-					Content:  map[string]openapi.MediaType{"application/json": {Schema: schema}},
-					Required: true,
-				}
-			}
-		}
-		return &symgo.SymbolicPlaceholder{Reason: "result of json.Decode"}
-	}
-	intrinsics["encoding/json.NewEncoder"] = func(i *symgo.Interpreter, args []symgo.Object) symgo.Object {
-		return a.newSymbolicInstance(context.Background(), "encoding/json.Encoder")
-	}
-	intrinsics["(*encoding/json.Encoder).Encode"] = func(i *symgo.Interpreter, args []symgo.Object) symgo.Object {
-		if len(args) != 2 {
-			return &symgo.SymbolicPlaceholder{Reason: "encode error"}
-		}
-		typeInfo := args[1].TypeInfo()
-		if typeInfo != nil {
-			schema := buildSchemaForType(context.Background(), typeInfo, make(map[string]*openapi.Schema))
-			if schema != nil {
-				if op.Responses == nil {
-					op.Responses = make(map[string]*openapi.Response)
-				}
-				op.Responses["200"] = &openapi.Response{
-					Description: "OK",
-					Content:     map[string]openapi.MediaType{"application/json": {Schema: schema}},
-				}
-			}
-		}
-		return &symgo.SymbolicPlaceholder{Reason: "result of json.Encode"}
-	}
-
-	// -- Query Parameter Analysis --
-	intrinsics["(*net/url.URL).Query"] = func(i *symgo.Interpreter, args []symgo.Object) symgo.Object {
-		return a.newSymbolicInstance(context.Background(), "net/url.Values")
-	}
-	intrinsics["(net/url.Values).Get"] = func(i *symgo.Interpreter, args []symgo.Object) symgo.Object {
-		// This intrinsic is called for `Query().Get("param")`.
-		if len(args) != 2 {
-			return &symgo.SymbolicPlaceholder{Reason: "invalid Get call"}
-		}
-		paramNameObj, ok := args[1].(*symgo.String)
-		if !ok {
-			return &symgo.SymbolicPlaceholder{Reason: "parameter name is not a string literal"}
-		}
-		paramName := paramNameObj.Value
-
-		// Add the discovered parameter to the operation's parameters list.
-		op.Parameters = append(op.Parameters, &openapi.Parameter{
-			Name: paramName,
-			In:   "query",
-			Schema: &openapi.Schema{
-				Type: "string", // Default to string, could be enhanced later.
-			},
-		})
-
-		// The return value of `Get` is a string.
-		return &symgo.String{Value: ""} // The actual value doesn't matter for analysis.
-	}
-
-	// -- HTTP Header/Writer Analysis --
-	intrinsics["(net/http.ResponseWriter).Header"] = func(i *symgo.Interpreter, args []symgo.Object) symgo.Object {
-		return a.newSymbolicInstance(context.Background(), "net/http.Header")
-	}
-	intrinsics["(net/http.ResponseWriter).WriteHeader"] = func(i *symgo.Interpreter, args []symgo.Object) symgo.Object {
-		// We don't need to do anything with the status code for now.
-		return nil
-	}
-	intrinsics["(net/http.Header).Set"] = func(i *symgo.Interpreter, args []symgo.Object) symgo.Object {
-		// We don't need to track header values for now.
-		return nil
 	}
 
 	return intrinsics

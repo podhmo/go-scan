@@ -379,13 +379,18 @@ func (e *Evaluator) evalSelectorExpr(n *ast.SelectorExpr, env *object.Environmen
 
 			for _, f := range pkgInfo.Functions {
 				if ast.IsExported(f.Name) {
-					// Don't overwrite intrinsics that might have been found above.
 					if _, ok := val.Env.Get(f.Name); !ok {
 						val.Env.Set(f.Name, &object.SymbolicPlaceholder{Reason: fmt.Sprintf("external func %s.%s", val.Name, f.Name)})
 					}
 				}
 			}
-			// Simplified for brevity, would populate other symbols too.
+			for _, c := range pkgInfo.Constants {
+				if ast.IsExported(c.Name) {
+					if _, ok := val.Env.Get(c.Name); !ok {
+						val.Env.Set(c.Name, &object.SymbolicPlaceholder{Reason: fmt.Sprintf("external const %s.%s", val.Name, c.Name)})
+					}
+				}
+			}
 		}
 
 		// Now that the package is loaded (or was already loaded), look up the symbol.
@@ -563,27 +568,63 @@ func (e *Evaluator) evalReturnStmt(n *ast.ReturnStmt, env *object.Environment, p
 }
 
 func (e *Evaluator) evalAssignStmt(n *ast.AssignStmt, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
+	// Simplified heuristic for docgen: if we have multiple return values (e.g., `val, err := ...`),
+	// we create symbolic placeholders for each variable on the LHS.
+	// This is not a correct simulation of Go's assignment rules, but it's enough
+	// to prevent the analyzer from stopping on common patterns.
+	if len(n.Rhs) == 1 && len(n.Lhs) > 1 {
+		// Evaluate the RHS once.
+		rhsValue := e.Eval(n.Rhs[0], env, pkg)
+		if isError(rhsValue) {
+			return rhsValue
+		}
+
+		// Assign a symbolic placeholder to each identifier on the LHS.
+		for _, lhsExpr := range n.Lhs {
+			if ident, ok := lhsExpr.(*ast.Ident); ok {
+				if ident.Name == "_" {
+					continue
+				}
+				// We don't have type info here, but that's okay for now.
+				// The variables are just placeholders to satisfy the environment.
+				v := &object.Variable{
+					Name:  ident.Name,
+					Value: &object.SymbolicPlaceholder{Reason: "multi-value assignment"},
+				}
+				env.Set(ident.Name, v)
+			}
+		}
+		return nil // Continue evaluation.
+	}
+
 	if len(n.Lhs) != 1 || len(n.Rhs) != 1 {
-		return newError("unsupported assignment: expected 1 expression on each side")
+		return newError("unsupported assignment: expected 1 expression on each side, or multi-value assignment")
 	}
 
-	ident, ok := n.Lhs[0].(*ast.Ident)
-	if !ok {
-		return newError("unsupported assignment target: expected an identifier")
+	// Handle different types of assignment targets for the 1-to-1 case.
+	switch lhs := n.Lhs[0].(type) {
+	case *ast.Ident:
+		if lhs.Name == "_" {
+			return e.Eval(n.Rhs[0], env, pkg)
+		}
+		return e.evalIdentAssignment(lhs, n.Rhs[0], n.Tok, env, pkg)
+	case *ast.SelectorExpr:
+		// For `docgen`, we don't need to model the state change of a field assignment.
+		return nil
+	default:
+		return newError("unsupported assignment target: expected an identifier or selector, but got %T", lhs)
 	}
+}
 
-	if ident.Name == "_" {
-		return e.Eval(n.Rhs[0], env, pkg)
-	}
-
-	val := e.Eval(n.Rhs[0], env, pkg)
+// evalIdentAssignment handles assignment to a simple identifier (e.g., `x = 10` or `x := 10`).
+func (e *Evaluator) evalIdentAssignment(ident *ast.Ident, rhs ast.Expr, tok token.Token, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
+	val := e.Eval(rhs, env, pkg)
 	if isError(val) {
 		return val
 	}
 
-	if n.Tok == token.DEFINE {
+	if tok == token.DEFINE {
 		// This is `:=`, so we are declaring and assigning.
-		// We wrap the value in a Variable object to be consistent with `var` declarations.
 		v := &object.Variable{
 			Name:  ident.Name,
 			Value: val,
@@ -596,7 +637,6 @@ func (e *Evaluator) evalAssignStmt(n *ast.AssignStmt, env *object.Environment, p
 	}
 
 	// This is `=`, so the variable must already exist.
-	// We need to find the variable and update its value.
 	obj, ok := env.Get(ident.Name)
 	if !ok {
 		return newError("cannot assign to undeclared identifier: %s", ident.Name)
@@ -612,7 +652,7 @@ func (e *Evaluator) evalAssignStmt(n *ast.AssignStmt, env *object.Environment, p
 		return v
 	}
 
-	// Fallback for non-variable assignments, though our model should primarily use variables.
+	// Fallback for non-variable assignments.
 	e.logger.Debug("evalAssignStmt: setting non-var", "name", ident.Name, "type", val.Type())
 	return env.Set(ident.Name, val)
 }

@@ -116,6 +116,24 @@ func TestDocgen(t *testing.T) {
 					},
 				},
 			},
+			"/slow": {
+				Get: &openapi.Operation{
+					OperationID: "slowHandler",
+					Description: "slowHandler handles the GET /slow endpoint.\nIt's a slow handler to demonstrate timeouts.",
+					Responses: map[string]*openapi.Response{
+						"200": {
+							Description: "OK",
+							Content: map[string]openapi.MediaType{
+								"text/plain": {
+									Schema: &openapi.Schema{
+										Type: "string",
+									},
+								},
+							},
+						},
+					},
+				},
+			},
 		},
 	}
 

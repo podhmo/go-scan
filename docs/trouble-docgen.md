@@ -84,3 +84,43 @@ The exact point of failure in the propagation logic has not been identified, des
 
 - [ ] **Task 3: Re-enable Tests**
     -   Uncomment the response assertions in `examples/docgen/main_test.go` and verify that all tests pass.
+
+---
+
+## Part 3: `symgo` Fails to Resolve Methods on External Interfaces
+
+This section details an issue where the `symgo` evaluator correctly resolves method calls on locally-defined interfaces but fails for interfaces imported from external packages, such as `net/http.ResponseWriter`.
+
+### Symptom
+
+A new test case was added to `docgen` to analyze a handler wrapped in `http.TimeoutHandler`. This required the evaluator to resolve method calls on `http.ResponseWriter`, which is an interface.
+
+The analysis fails because the intrinsic for `(net/http.ResponseWriter).Write` is not triggered. This leads to a test failure where the response for the endpoint is `nil`.
+
+To isolate the issue, a minimal test case (`TestEval_InterfaceMethodCall`) was created in `symgo/evaluator`. This test uses a **locally-defined** interface:
+```go
+package main
+type Writer interface {
+	Write(p []byte) (n int, err error)
+}
+// ...
+```
+The evaluator **successfully** resolves `w.Write()` and calls the registered intrinsic for `(main.Writer).Write`.
+
+This proves that the core logic for handling method calls on interface-typed variables is working, but it fails specifically for external interfaces like `http.ResponseWriter`.
+
+### Root Cause Analysis
+
+The root cause is not yet fully understood, but the evidence points to a subtle difference in how `go-scan` resolves `TypeInfo` for local versus external packages, or how `symgo` interprets that `TypeInfo`.
+
+- The fix in `extendFunctionEnv` correctly creates a `*object.Variable` for function parameters, associating the argument value with the parameter's type.
+- Debugging logs show that when `evalSelectorExpr` evaluates `w.Write`, it correctly identifies the type of `w` as `net/http.ResponseWriter` and constructs the correct lookup key: `(net/http.ResponseWriter).Write`.
+- Despite the correct key being used, the intrinsic registered with that key in `docgen`'s `patterns.go` is not found or not called.
+
+The discrepancy between the passing `symgo` test (local interface) and the failing `docgen` test (external interface) is the primary clue. The problem likely lies in the details of the `*scanner.TypeInfo` object for `http.ResponseWriter` or in the intrinsic registration/lookup mechanism when dealing with types from packages outside the immediate scan target.
+
+### Proposed Tasks for Resolution
+
+- [ ] **Task 1: Deeper Inspection of `TypeInfo`**: Add debug logging to print the full `*scanner.TypeInfo` struct for both the local `Writer` interface and the external `http.ResponseWriter` interface to spot any structural differences that might affect method resolution.
+- [ ] **Task 2: Simplify `docgen` Test**: Temporarily modify the `docgen` test to use a local interface instead of `http.ResponseWriter` to confirm that the `docgen` setup works for local interfaces, further isolating the problem to external package handling.
+- [ ] **Task 3: Fix `symgo` or `docgen`**: Based on the findings, implement a fix. The fix might be in `symgo/evaluator`'s `evalSelectorExpr` if it handles external `TypeInfo` incorrectly, or in `docgen`'s `Analyzer` if it needs to prepare or register intrinsics for external types in a different way.

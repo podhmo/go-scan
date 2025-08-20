@@ -126,15 +126,21 @@ func (i *Intrinsic) Inspect() string { return "intrinsic function" }
 // so that method calls on them can be resolved.
 type Instance struct {
 	BaseObject
-	TypeName string            // e.g., "net/http.ServeMux"
-	State    map[string]Object // for mock or intrinsic state
+	TypeName   string            // e.g., "net/http.ServeMux"
+	State      map[string]Object // for mock or intrinsic state
+	Underlying Object            // To hold the object that this instance wraps (e.g., for interface implementations)
 }
 
 // Type returns the type of the Instance object.
 func (i *Instance) Type() ObjectType { return INSTANCE_OBJ }
 
 // Inspect returns a string representation of the Instance.
-func (i *Instance) Inspect() string { return fmt.Sprintf("instance<%s>", i.TypeName) }
+func (i *Instance) Inspect() string {
+	if i.Underlying != nil {
+		return fmt.Sprintf("instance<%s, underlying=%s>", i.TypeName, i.Underlying.Inspect())
+	}
+	return fmt.Sprintf("instance<%s>", i.TypeName)
+}
 
 // --- Package Object ---
 

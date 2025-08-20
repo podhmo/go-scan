@@ -14,7 +14,7 @@ import (
 
 func TestEvalCallExprOnFunction_WithScantest(t *testing.T) {
 	files := map[string]string{
-		"go.mod":  "module example.com/me",
+		"go.mod": "module example.com/me",
 		"main.go": `
 package main
 func add(a, b int) int { return a + b }
@@ -61,7 +61,7 @@ func main() { add(1, 2) }
 
 func TestEvalCallExprOnIntrinsic_WithScantest(t *testing.T) {
 	files := map[string]string{
-		"go.mod":  "module example.com/me",
+		"go.mod": "module example.com/me",
 		"main.go": `
 package main
 import "fmt"
@@ -112,7 +112,7 @@ func main() { fmt.Println("hello") }
 
 func TestEvalCallExprOnInstanceMethod_WithScantest(t *testing.T) {
 	files := map[string]string{
-		"go.mod":  "module example.com/me",
+		"go.mod": "module example.com/me",
 		"main.go": `
 package main
 import "net/http"

@@ -247,3 +247,52 @@ func parseStmt(t *testing.T, input string) ast.Stmt {
 	}
 	return file.Decls[0].(*ast.FuncDecl).Body.List[0]
 }
+
+func TestEval_IntrinsicErrorPropagation(t *testing.T) {
+	// 1. Define the Go function for the intrinsic that returns an error.
+	badIntrinsicFunc := func(args ...object.Object) object.Object {
+		return &object.Error{Message: "intrinsic failure"}
+	}
+
+	// 2. Set up the evaluator and register the intrinsic.
+	eval := New(nil, nil)
+	eval.RegisterIntrinsic("test.badFunc", badIntrinsicFunc)
+
+	// 3. Define the source code to be evaluated.
+	input := `
+test.badFunc()
+x = "after"
+`
+	src := fmt.Sprintf("package main\nfunc main() {%s}", input)
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "src.go", src, 0)
+	if err != nil {
+		t.Fatalf("parser.ParseFile() failed: %v", err)
+	}
+	block := file.Decls[0].(*ast.FuncDecl).Body
+
+	// 4. Create an environment that knows about the 'test' package and a variable.
+	env := object.NewEnvironment()
+	testPkg := &object.Package{Name: "test", Path: "test", Env: object.NewEnvironment()}
+	env.Set("test", testPkg)
+	env.Set("x", &object.Variable{Name: "x", Value: &object.String{Value: "before"}})
+
+	// 5. Evaluate the block of statements.
+	result := eval.Eval(block, env, nil)
+
+	// 6. Assert that the final result of the block is the error.
+	errObj, ok := result.(*object.Error)
+	if !ok {
+		t.Fatalf("Eval() did not return an error from block. got=%T (%+v)", result, result)
+	}
+	if errObj.Message != "intrinsic failure" {
+		t.Errorf("Error message wrong. want=%q, got=%q", "intrinsic failure", errObj.Message)
+	}
+
+	// 7. Assert that execution stopped and the variable was not reassigned.
+	xVar, _ := env.Get("x")
+	xVal := xVar.(*object.Variable).Value.(*object.String)
+	if xVal.Value != "before" {
+		t.Errorf("execution did not stop after error, variable was changed to %q", xVal.Value)
+	}
+}

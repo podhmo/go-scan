@@ -81,7 +81,8 @@ func (a *Analyzer) Analyze(ctx context.Context, importPath string, entrypoint st
 	// First, evaluate the entire file of the entrypoint. This will populate the
 	// interpreter's environment with imports and top-level declarations.
 	if _, err := a.interpreter.Eval(entrypointFile, pkg); err != nil {
-		fmt.Printf("info: error during file-level symgo eval: %v\n", err)
+		// This is the change: we now return the error instead of just printing it.
+		return fmt.Errorf("error during file-level symgo eval: %w", err)
 	}
 
 	// Get the function object from the environment.
@@ -96,8 +97,8 @@ func (a *Analyzer) Analyze(ctx context.Context, importPath string, entrypoint st
 
 	// Then, call the entrypoint function.
 	if _, err := a.interpreter.Apply(entrypointFn, []symgo.Object{}, pkg); err != nil {
-		// In a real application, this would use a proper logger.
-		fmt.Printf("info: error during entrypoint apply: %v\n", err)
+		// This is the change: we now return the error instead of just printing it.
+		return fmt.Errorf("error during entrypoint apply: %w", err)
 	}
 
 	return nil
@@ -105,21 +106,23 @@ func (a *Analyzer) Analyze(ctx context.Context, importPath string, entrypoint st
 
 // analyzeHandleFunc is the intrinsic for (*http.ServeMux).HandleFunc.
 func (a *Analyzer) analyzeHandleFunc(interp *symgo.Interpreter, args []symgo.Object) symgo.Object {
-	// Expects 2 args for HandleFunc: pattern, handler
-	if len(args) != 2 {
-		return nil
+	// Expects 3 args for HandleFunc: receiver, pattern, handler
+	if len(args) != 3 {
+		return &symgo.Error{Message: fmt.Sprintf("HandleFunc expects 3 arguments, but got %d", len(args))}
 	}
 
-	// Arg 0 is the pattern string
-	patternObj, ok := args[0].(*symgo.String)
+	// Arg 0 is the receiver, which we can ignore.
+	// Arg 1 is the pattern string.
+	patternObj, ok := args[1].(*symgo.String)
 	if !ok {
-		return nil
+		return &symgo.Error{Message: fmt.Sprintf("HandleFunc pattern argument must be a string, but got %T", args[1])}
 	}
 
-	// Arg 1 is the handler function
-	handlerObj, ok := args[1].(*symgo.Function)
+	// Arg 2 is the handler function.
+	handlerObj, ok := args[2].(*symgo.Function)
 	if !ok {
-		return nil
+		// It's possible the handler is not yet resolved, this is a limitation for now.
+		return &symgo.Error{Message: fmt.Sprintf("HandleFunc handler argument must be a function, but got %T", args[2])}
 	}
 
 	pattern := patternObj.Value

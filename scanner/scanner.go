@@ -308,7 +308,7 @@ func (s *Scanner) scanGoFiles(ctx context.Context, filePaths []string, pkgDirPat
 	for i, fileAst := range parsedFiles {
 		filePath := info.Files[i]
 		info.AstFiles[filePath] = fileAst
-			importLookup := s.BuildImportLookup(fileAst)
+		importLookup := s.BuildImportLookup(fileAst)
 
 		for _, decl := range fileAst.Decls {
 			switch d := decl.(type) {

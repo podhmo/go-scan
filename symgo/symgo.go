@@ -3,7 +3,9 @@ package symgo
 import (
 	"fmt"
 	"go/ast"
+	"go/token"
 	"log/slog"
+	"strings"
 
 	"github.com/podhmo/go-scan/scanner"
 	"github.com/podhmo/go-scan/symgo/evaluator"
@@ -55,7 +57,65 @@ func NewInterpreter(scanner *scanner.Scanner, logger *slog.Logger) (*Interpreter
 		eval:      eval,
 		globalEnv: object.NewEnvironment(),
 	}
+
+	// Register default intrinsics
+	i.RegisterIntrinsic("fmt.Sprintf", i.intrinsicSprintf)
+
 	return i, nil
+}
+
+// intrinsicSprintf provides a basic implementation of fmt.Sprintf for the symbolic engine.
+func (i *Interpreter) intrinsicSprintf(eval *Interpreter, args []Object) Object {
+	if len(args) == 0 {
+		return &Error{Message: "Sprintf requires at least one argument", Pos: token.NoPos}
+	}
+
+	format, ok := args[0].(*String)
+	if !ok {
+		if _, isSymbolic := args[0].(*SymbolicPlaceholder); isSymbolic {
+			return &SymbolicPlaceholder{Reason: "fmt.Sprintf with symbolic format string"}
+		}
+		return &Error{Message: fmt.Sprintf("the first argument to Sprintf must be a string, got %s", args[0].Type()), Pos: token.NoPos}
+	}
+
+	result := format.Value
+	argIndex := 1
+
+	var newStr strings.Builder
+	for i := 0; i < len(result); i++ {
+		if result[i] == '%' && i+1 < len(result) {
+			verb := result[i+1]
+			if verb == '%' {
+				newStr.WriteByte('%')
+				i++ // skip the second '%'
+				continue
+			}
+
+			if argIndex >= len(args) {
+				newStr.WriteByte('%')
+				newStr.WriteByte(verb)
+				i++
+				continue
+			}
+
+			if verb == 's' || verb == 'd' || verb == 'v' {
+				arg := args[argIndex]
+				replacement := arg.Inspect()
+				if str, ok := arg.(*String); ok {
+					replacement = str.Value
+				}
+				newStr.WriteString(replacement)
+				argIndex++
+				i++ // skip the verb
+			} else {
+				newStr.WriteByte('%')
+			}
+		} else {
+			newStr.WriteByte(result[i])
+		}
+	}
+
+	return &String{Value: newStr.String()}
 }
 
 // Eval evaluates a given AST node in the interpreter's persistent environment.

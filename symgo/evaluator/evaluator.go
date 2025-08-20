@@ -36,65 +36,11 @@ func New(scanner *scanner.Scanner, logger *slog.Logger) *Evaluator {
 	if logger == nil {
 		logger = slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	}
-	e := &Evaluator{
+	return &Evaluator{
 		scanner:    scanner,
 		intrinsics: intrinsics.New(),
 		logger:     logger,
 	}
-	e.RegisterIntrinsic("fmt.Sprintf", e.intrinsicSprintf)
-	return e
-}
-
-// intrinsicSprintf provides a basic implementation of fmt.Sprintf for the symbolic engine.
-// It handles simple verbs like %s, %d, and %v by replacing them with the Inspect()
-// representation of the corresponding argument.
-func (e *Evaluator) intrinsicSprintf(args ...object.Object) object.Object {
-	if len(args) == 0 {
-		return newError(token.NoPos, "Sprintf requires at least one argument")
-	}
-
-	format, ok := args[0].(*object.String)
-	if !ok {
-		// If the format string is symbolic, we can't proceed.
-		if _, isSymbolic := args[0].(*object.SymbolicPlaceholder); isSymbolic {
-			return &object.SymbolicPlaceholder{Reason: "fmt.Sprintf with symbolic format string"}
-		}
-		return newError(token.NoPos, "the first argument to Sprintf must be a string, got %s", args[0].Type())
-	}
-
-	// This is a very basic implementation for docgen's needs.
-	// It doesn't handle verb validation, width, precision, etc.
-	// It just replaces common verbs with the Inspect() value of the corresponding argument.
-	result := format.Value
-	argIndex := 1
-
-	// A simple loop to replace verbs. This is not a full-featured Sprintf parser.
-	for i := 0; i < len(result) && argIndex < len(args); i++ {
-		if result[i] == '%' {
-			if i+1 < len(result) {
-				verb := result[i+1]
-				// Handle simple, common verbs.
-				if verb == 's' || verb == 'd' || verb == 'v' {
-					arg := args[argIndex]
-					// For docgen, we just want a string representation. Inspect() is perfect.
-					// For %d, we could be more strict, but for symbolic analysis, a string is fine.
-					replacement := arg.Inspect()
-					if str, ok := arg.(*object.String); ok {
-						replacement = str.Value // Use raw string value if available
-					}
-
-					result = result[:i] + replacement + result[i+2:]
-					argIndex++
-					i += len(replacement) - 1 // Move index past the replacement
-				} else if verb == '%' {
-					// Skip over escaped percent signs '%%'
-					i++
-				}
-			}
-		}
-	}
-
-	return &object.String{Value: result}
 }
 
 // RegisterIntrinsic registers a built-in function.

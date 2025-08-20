@@ -825,7 +825,10 @@ func (e *Evaluator) applyFunction(fn object.Object, args []object.Object, pkg *s
 	case *object.Function:
 		// This is a user-defined function.
 		// Create a new environment for the function call, enclosed by the function's definition environment.
-		extendedEnv := e.extendFunctionEnv(fn, args)
+		extendedEnv, err := e.extendFunctionEnv(fn, args, pkg)
+		if err != nil {
+			return newError(fn.Decl.Pos(), "failed to extend function env: %v", err)
+		}
 		// Evaluate the function's body in the new environment.
 		evaluated := e.Eval(fn.Body, extendedEnv, pkg)
 		// Unwrap the return value.
@@ -847,20 +850,52 @@ func (e *Evaluator) applyFunction(fn object.Object, args []object.Object, pkg *s
 	}
 }
 
-func (e *Evaluator) extendFunctionEnv(fn *object.Function, args []object.Object) *object.Environment {
-	// Create a new scope enclosed by the function's *definition* scope, not the *call site* scope.
-	// This ensures lexical scoping.
+func (e *Evaluator) extendFunctionEnv(fn *object.Function, args []object.Object, pkg *scanner.PackageInfo) (*object.Environment, error) {
 	env := object.NewEnclosedEnvironment(fn.Env)
 
-	// Bind the arguments to the parameter names.
-	for i, param := range fn.Parameters.List {
-		if i < len(args) {
-			// Each parameter can have multiple names (e.g., `a, b int`).
-			for _, name := range param.Names {
-				env.Set(name.Name, args[i])
+	if fn.Parameters == nil {
+		return env, nil
+	}
+
+	// Find the AST file that contains the function declaration to build import lookup.
+	file := pkg.Fset.File(fn.Decl.Pos())
+	if file == nil {
+		return nil, fmt.Errorf("could not find file for function %q", fn.Name.Name)
+	}
+	astFile, ok := pkg.AstFiles[file.Name()]
+	if !ok {
+		return nil, fmt.Errorf("could not find AST file for path: %s", file.Name())
+	}
+	importLookup := e.scanner.BuildImportLookup(astFile)
+
+	paramIndex := 0
+	for _, field := range fn.Parameters.List {
+		if paramIndex >= len(args) {
+			break
+		}
+		arg := args[paramIndex]
+		paramIndex++
+
+		// Resolve the type of the parameter from its AST expression.
+		fieldType := e.scanner.TypeInfoFromExpr(context.Background(), field.Type, nil, pkg, importLookup)
+		if fieldType == nil {
+			continue // Could not resolve type, skip for now.
+		}
+		resolvedType, _ := fieldType.Resolve(context.Background()) // Error ignored for now.
+
+		// For each name in the parameter list (e.g., a, b int), create a variable.
+		for _, name := range field.Names {
+			if name.Name == "_" {
+				continue
 			}
+			v := &object.Variable{
+				Name:             name.Name,
+				Value:            arg,
+				BaseObject:       object.BaseObject{ResolvedTypeInfo: resolvedType},
+			}
+			env.Set(name.Name, v)
 		}
 	}
 
-	return env
+	return env, nil
 }

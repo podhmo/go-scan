@@ -49,6 +49,11 @@ func NewAnalyzer(s *goscan.Scanner, logger *slog.Logger) (*Analyzer, error) {
 	interp.RegisterIntrinsic("net/http.NewServeMux", a.handleNewServeMux)
 	interp.RegisterIntrinsic("(*net/http.ServeMux).HandleFunc", a.analyzeHandleFunc)
 
+	// Intrinsics for handling http.Handler interface wrappers
+	interp.RegisterIntrinsic("net/http.HandlerFunc", a.handleHandlerFunc)
+	interp.RegisterIntrinsic("net/http.TimeoutHandler", a.handleTimeoutHandler)
+	interp.RegisterIntrinsic("(*net/http.ServeMux).Handle", a.analyzeHandle)
+
 	return a, nil
 }
 
@@ -106,6 +111,86 @@ func (a *Analyzer) Analyze(ctx context.Context, importPath string, entrypoint st
 	}
 
 	return nil
+}
+
+func (a *Analyzer) handleHandlerFunc(interp *symgo.Interpreter, args []symgo.Object) symgo.Object {
+	if len(args) != 1 {
+		return &symgo.Error{Message: fmt.Sprintf("HandlerFunc expects 1 argument, but got %d", len(args))}
+	}
+	fn, ok := args[0].(*symgo.Function)
+	if !ok {
+		// It might be an instance wrapping a function, let's try to unwrap it.
+		unwrapped := a.unwrapHandler(args[0])
+		if unwrapped == nil {
+			return &symgo.Error{Message: fmt.Sprintf("HandlerFunc expects a function, but got %T", args[0])}
+		}
+		fn = unwrapped
+	}
+	return &symgo.Instance{
+		TypeName:   "net/http.Handler",
+		Underlying: fn,
+		BaseObject: symgo.BaseObject{ResolvedTypeInfo: fn.TypeInfo()},
+	}
+}
+
+func (a *Analyzer) handleTimeoutHandler(interp *symgo.Interpreter, args []symgo.Object) symgo.Object {
+	if len(args) != 3 {
+		return &symgo.Error{Message: fmt.Sprintf("TimeoutHandler expects 3 arguments, but got %d", len(args))}
+	}
+	// The first argument is the handler, which we care about.
+	// The other two are timeout and message, which we can ignore for doc generation.
+	handler, ok := args[0].(symgo.Object) // Should be an Instance, but we just pass it through
+	if !ok {
+		return &symgo.Error{Message: fmt.Sprintf("TimeoutHandler expects a handler, but got %T", args[0])}
+	}
+
+	// Wrap it in another instance to represent the handler returned by TimeoutHandler.
+	return &symgo.Instance{
+		TypeName:   "net/http.Handler",
+		Underlying: handler,
+		BaseObject: symgo.BaseObject{ResolvedTypeInfo: handler.TypeInfo()},
+	}
+}
+
+func (a *Analyzer) analyzeHandle(interp *symgo.Interpreter, args []symgo.Object) symgo.Object {
+	if len(args) != 3 {
+		return &symgo.Error{Message: fmt.Sprintf("Handle expects 3 arguments, but got %d", len(args))}
+	}
+
+	patternObj, ok := args[1].(*symgo.String)
+	if !ok {
+		return &symgo.Error{Message: fmt.Sprintf("Handle pattern argument must be a string, but got %T", args[1])}
+	}
+
+	// Unwrap the handler to find the root function.
+	handlerFunc := a.unwrapHandler(args[2])
+	if handlerFunc == nil {
+		// Return nil instead of error, as some handlers might be intentionally opaque.
+		a.logger.DebugContext(context.Background(), "could not unwrap handler", "arg", args[2].Inspect())
+		return nil
+	}
+
+	// Create a new argument slice for analyzeHandleFunc.
+	// The first arg (receiver) and second (pattern) are the same.
+	// The third is the unwrapped function.
+	newArgs := []symgo.Object{args[0], patternObj, handlerFunc}
+
+	return a.analyzeHandleFunc(interp, newArgs)
+}
+
+// unwrapHandler recursively unwraps http.Handler instances to find the underlying function.
+func (a *Analyzer) unwrapHandler(obj symgo.Object) *symgo.Function {
+	switch v := obj.(type) {
+	case *symgo.Function:
+		return v
+	case *symgo.Instance:
+		if v.Underlying != nil {
+			return a.unwrapHandler(v.Underlying)
+		}
+		return nil
+	default:
+		return nil
+	}
 }
 
 // analyzeHandleFunc is the intrinsic for (*http.ServeMux).HandleFunc.

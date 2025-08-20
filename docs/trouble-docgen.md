@@ -84,3 +84,56 @@ The exact point of failure in the propagation logic has not been identified, des
 
 - [ ] **Task 3: Re-enable Tests**
     -   Uncomment the response assertions in `examples/docgen/main_test.go` and verify that all tests pass.
+
+---
+
+## Part 3: `symgo` Fails to Resolve Methods on External Interfaces (In Progress)
+
+This section details an issue where the `symgo` evaluator correctly resolves method calls on locally-defined interfaces but fails for interfaces imported from external packages, such as `net/http.ResponseWriter`.
+
+### Symptom
+
+A new test case was added to `docgen` to analyze a handler wrapped in `http.TimeoutHandler`. This required the evaluator to resolve method calls on `http.ResponseWriter`, which is an interface. The analysis fails because the intrinsic for `(net/http.ResponseWriter).Write` is not triggered.
+
+To isolate the issue, two minimal test cases were created in `symgo/evaluator`:
+1.  `TestEval_InterfaceMethodCall`: Uses a locally-defined `Writer` interface.
+2.  `TestEval_ExternalInterfaceMethodCall`: Uses a `Writer` interface defined in a separate package within the test module.
+
+Initially, both tests failed.
+
+### Root Cause Analysis
+
+The investigation revealed two distinct bugs:
+
+1.  **Bug 1: Incorrect Parameter Handling (Fixed)**: The `symgo` evaluator's `extendFunctionEnv` function was not correctly creating `*object.Variable`s for function parameters. It was binding the raw argument value (e.g., `nil`) directly to the parameter name, causing the variable's type information (e.g., `Writer` interface) to be lost.
+    -   **Fix**: The `extendFunctionEnv` function was modified to resolve the parameter's type from the function declaration and create a proper `*object.Variable`, associating the type with the argument value.
+
+2.  **Bug 2: Missing Module Resolver in `scantest` (Identified)**: After fixing Bug 1, the `TestEval_ExternalInterfaceMethodCall` still failed with a `package directory ... is outside the module root` error. The root cause was discovered to be the `scantest.Run` helper function, which does not configure its `go-scan` scanner with `goscan.WithGoModuleResolver()` by default. This prevents it from finding and resolving types from any package other than the one being directly scanned.
+
+### Current Status & Next Steps
+
+The `symgo` evaluator itself is now believed to be correct. The remaining problem lies entirely within the test setup for both the `symgo` tests and the `docgen` integration test.
+
+- [ ] **Task 1: Fix `symgo` tests**:
+    -   Modify `TestEval_InterfaceMethodCall` to pass `scantest.WithModuleRoot(dir)` to `scantest.Run`.
+    -   Modify `TestEval_ExternalInterfaceMethodCall` to create a scanner with `goscan.WithGoModuleResolver()` and pass it to `scantest.Run` using `scantest.WithScanner()`, in addition to passing `scantest.WithModuleRoot(dir)`.
+
+- [ ] **Task 2: Verify `docgen` Test**: Once the `symgo` tests are passing, the `docgen` test should also pass without further changes, as its scanner is already correctly configured. Run the full `make test` suite to confirm.
+
+---
+
+## Part 4: `minigo` vs. `symgo` Import Handling Comparison
+
+To understand the `symgo` issue, an investigation was conducted into `minigo`'s import and package loading mechanism.
+
+### `minigo` Analysis
+
+-   **Scanner Configuration**: `minigo.NewInterpreter` *always* adds `goscan.WithGoModuleResolver()` when creating its internal `go-scan` scanner. This makes it robust for handling external packages by default.
+-   **Import Handling**: It uses a `FileScope` object to track `import` aliases for each file.
+-   **Lazy Loading**: When a symbol from an un-scanned package is accessed, `minigo`'s evaluator calls `scanner.FindSymbolInPackage()`. The module-aware scanner then locates and parses the required package on-demand. The results are cached in the `minigo.Interpreter`.
+
+### `symgo` Analysis
+
+-   **Scanner Configuration**: `symgo.NewInterpreter` relies on the *caller* to provide a correctly configured scanner. This provides flexibility but led to the issues in the `symgo` and `docgen` tests, where the test setup (`scantest`) did not provide a module-aware scanner by default.
+-   **Import Handling**: `symgo`'s evaluator uses a similar lazy-loading mechanism, calling `scanner.ScanPackageByImport()` when an external symbol is accessed.
+-   **Conclusion**: The core logic in `symgo` is sound, but it is more sensitive to the configuration of the scanner it is given. The failures were not in the evaluator's logic itself, but in the test harness's setup of the scanner.

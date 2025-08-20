@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"testing"
 
+	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/scantest"
 	"github.com/podhmo/go-scan/symgo/object"
-	goscan "github.com/podhmo/go-scan"
 )
 
 func TestTypeInfoPropagation(t *testing.T) {

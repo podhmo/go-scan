@@ -105,20 +105,22 @@ func (a *Analyzer) Analyze(ctx context.Context, importPath string, entrypoint st
 
 // analyzeHandleFunc is the intrinsic for (*http.ServeMux).HandleFunc.
 func (a *Analyzer) analyzeHandleFunc(interp *symgo.Interpreter, args []symgo.Object) symgo.Object {
-	// Expects 2 args for HandleFunc: pattern, handler
-	if len(args) != 2 {
+	// Expects 3 args for HandleFunc: receiver, pattern, handler
+	if len(args) != 3 {
 		return nil
 	}
 
-	// Arg 0 is the pattern string
-	patternObj, ok := args[0].(*symgo.String)
+	// Arg 0 is the receiver, which we can ignore.
+	// Arg 1 is the pattern string.
+	patternObj, ok := args[1].(*symgo.String)
 	if !ok {
 		return nil
 	}
 
-	// Arg 1 is the handler function
-	handlerObj, ok := args[1].(*symgo.Function)
+	// Arg 2 is the handler function.
+	handlerObj, ok := args[2].(*symgo.Function)
 	if !ok {
+		// It's possible the handler is not yet resolved, this is a limitation for now.
 		return nil
 	}
 
@@ -204,15 +206,6 @@ func (a *Analyzer) analyzeHandlerBody(handler *symgo.Function, op *openapi.Opera
 
 			// For each parameter name (can be multiple like w1, w2 http.ResponseWriter), create a variable.
 			for _, name := range field.Names {
-				// DEBUG: Verify that the http.Request type is using our stub.
-				if typeInfo != nil && typeInfo.Name == "*http.Request" {
-					// The typeInfo is for the pointer. We need to resolve the element type to get the struct definition.
-					underlying, err := fieldType.Elem.Resolve(context.Background())
-					if err == nil && underlying != nil && underlying.Struct != nil {
-						fmt.Printf("DEBUG: Stub for http.Request is active. Found %d fields.\n", len(underlying.Struct.Fields))
-					}
-				}
-
 				arg := &symgo.Variable{
 					Name: name.Name,
 					BaseObject: symgo.BaseObject{

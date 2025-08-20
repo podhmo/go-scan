@@ -170,6 +170,11 @@ func (i *Interpreter) PopIntrinsics() {
 	i.eval.PopIntrinsics()
 }
 
+// SetLogger updates the logger instance used by the interpreter and its evaluator.
+func (i *Interpreter) SetLogger(logger *slog.Logger) {
+	i.eval.SetLogger(logger)
+}
+
 // FindObject looks up an object in the interpreter's global environment.
 func (i *Interpreter) FindObject(name string) (Object, bool) {
 	return i.globalEnv.Get(name)

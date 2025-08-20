@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"flag"
 	"log/slog"
 	"os"
 
@@ -10,14 +11,20 @@ import (
 )
 
 func main() {
-	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	if err := run(logger); err != nil {
+	var debugFunc string
+	flag.StringVar(&debugFunc, "debug-analysis", "", "The name of the function to enable debug logging for")
+	flag.Parse()
+
+	logLevel := slog.LevelInfo
+	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel}))
+
+	if err := run(logger, debugFunc); err != nil {
 		logger.Error("docgen failed", "error", err)
 		os.Exit(1)
 	}
 }
 
-func run(logger *slog.Logger) error {
+func run(logger *slog.Logger, debugFunc string) error {
 	const sampleAPIPath = "github.com/podhmo/go-scan/examples/docgen/sampleapi"
 
 	overrides := createStubOverrides()
@@ -31,7 +38,7 @@ func run(logger *slog.Logger) error {
 		return err
 	}
 
-	analyzer, err := NewAnalyzer(s)
+	analyzer, err := NewAnalyzer(s, logger, debugFunc)
 	if err != nil {
 		return err
 	}

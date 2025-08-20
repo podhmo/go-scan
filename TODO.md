@@ -119,7 +119,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 
 ### `symgo` and `docgen` Improvements
 
-> 元々docgenはsymgoのテストパイロット的なものなのです。機能の不足やバグを発見したらカジュアルにsymgo側に立ち返って問題を細分化しテストコードを追加しそのテストコードが通るまで実装を修正してください。
+> Note: `docgen` is intended to be a test pilot for `symgo`. When discovering missing features or bugs in `docgen`, the preferred workflow is to return to the `symgo` engine, break the problem down into a minimal test case, add that test, and then modify the `symgo` implementation until the test passes.
 
 A set of tasks to improve the `symgo` engine and the `docgen` tool based on the analysis in `docgen/ja/from-docgen.md`.
 

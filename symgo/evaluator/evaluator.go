@@ -134,6 +134,10 @@ func (e *Evaluator) Eval(ctx context.Context, node ast.Node, env *object.Environ
 			Body:       n.Body,
 			Env:        env,
 		}
+	case *ast.ArrayType:
+		// For expressions like `[]byte("foo")`, the `[]byte` part is an ArrayType.
+		// We don't need to evaluate it to a concrete value, just prevent an "unimplemented" error.
+		return &object.SymbolicPlaceholder{Reason: "array type expression"}
 	}
 	return newError(node.Pos(), "evaluation not implemented for %T", node)
 }

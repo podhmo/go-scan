@@ -11,11 +11,17 @@ import (
 	"github.com/podhmo/go-scan/symgo"
 )
 
+// Analyzer is a subset of the docgen.Analyzer interface needed by patterns.
+// This avoids a circular dependency.
+type Analyzer interface {
+	OperationStack() []*openapi.Operation
+}
+
 // Pattern defines a mapping between a function call signature (the key)
 // and a handler function that performs analysis when that call is found.
 type Pattern struct {
-	Key  string
-	Apply func(interp *symgo.Interpreter, args []symgo.Object, op *openapi.Operation) symgo.Object
+	Key   string
+	Apply func(interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object
 }
 
 // GetDefaultPatterns returns a slice of all the default call patterns
@@ -49,7 +55,9 @@ func GetDefaultPatterns() []Pattern {
 // Pattern Handler Implementations
 // -----------------------------------------------------------------------------
 
-func handleResponseWriterWrite(interp *symgo.Interpreter, args []symgo.Object, op *openapi.Operation) symgo.Object {
+func handleResponseWriterWrite(interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object {
+	op := a.OperationStack()[len(a.OperationStack())-1]
+
 	// Find the response object, assuming WriteHeader was called first.
 	var resp *openapi.Response
 	var statusCode string
@@ -90,11 +98,12 @@ func handleResponseWriterWrite(interp *symgo.Interpreter, args []symgo.Object, o
 	}
 }
 
-func handleHeader(interp *symgo.Interpreter, args []symgo.Object, op *openapi.Operation) symgo.Object {
+func handleHeader(interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object {
 	return NewSymbolicInstance(interp, "net/http.Header")
 }
 
-func handleWriteHeader(interp *symgo.Interpreter, args []symgo.Object, op *openapi.Operation) symgo.Object {
+func handleWriteHeader(interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object {
+	op := a.OperationStack()[len(a.OperationStack())-1]
 	if len(args) != 2 {
 		return nil
 	}
@@ -111,15 +120,16 @@ func handleWriteHeader(interp *symgo.Interpreter, args []symgo.Object, op *opena
 	return nil
 }
 
-func handleHeaderSet(interp *symgo.Interpreter, args []symgo.Object, op *openapi.Operation) symgo.Object {
+func handleHeaderSet(interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object {
 	return nil // We don't need to track header values for now.
 }
 
-func handleURLQuery(interp *symgo.Interpreter, args []symgo.Object, op *openapi.Operation) symgo.Object {
+func handleURLQuery(interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object {
 	return NewSymbolicInstance(interp, "net/url.Values")
 }
 
-func handleValuesGet(interp *symgo.Interpreter, args []symgo.Object, op *openapi.Operation) symgo.Object {
+func handleValuesGet(interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object {
+	op := a.OperationStack()[len(a.OperationStack())-1]
 	if len(args) != 2 {
 		return &symgo.SymbolicPlaceholder{Reason: "invalid Get call"}
 	}
@@ -138,11 +148,12 @@ func handleValuesGet(interp *symgo.Interpreter, args []symgo.Object, op *openapi
 	return &symgo.String{Value: ""} // The actual value doesn't matter for analysis.
 }
 
-func handleNewDecoder(interp *symgo.Interpreter, args []symgo.Object, op *openapi.Operation) symgo.Object {
+func handleNewDecoder(interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object {
 	return NewSymbolicInstance(interp, "encoding/json.Decoder")
 }
 
-func handleDecode(interp *symgo.Interpreter, args []symgo.Object, op *openapi.Operation) symgo.Object {
+func handleDecode(interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object {
+	op := a.OperationStack()[len(a.OperationStack())-1]
 	if len(args) != 2 {
 		return &symgo.SymbolicPlaceholder{Reason: "decode error: wrong arg count"}
 	}
@@ -163,11 +174,12 @@ func handleDecode(interp *symgo.Interpreter, args []symgo.Object, op *openapi.Op
 	return &symgo.SymbolicPlaceholder{Reason: "result of json.Decode"}
 }
 
-func handleNewEncoder(interp *symgo.Interpreter, args []symgo.Object, op *openapi.Operation) symgo.Object {
+func handleNewEncoder(interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object {
 	return NewSymbolicInstance(interp, "encoding/json.Encoder")
 }
 
-func handleEncode(interp *symgo.Interpreter, args []symgo.Object, op *openapi.Operation) symgo.Object {
+func handleEncode(interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object {
+	op := a.OperationStack()[len(a.OperationStack())-1]
 	if len(args) != 2 {
 		return &symgo.SymbolicPlaceholder{Reason: "encode error: wrong arg count"}
 	}

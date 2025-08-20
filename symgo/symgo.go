@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"go/ast"
 	"go/token"
+	"io"
 	"log/slog"
 	"strings"
 
@@ -36,6 +37,17 @@ type Interpreter struct {
 	scanner   *scanner.Scanner
 	eval      *evaluator.Evaluator
 	globalEnv *object.Environment
+	logger    *slog.Logger
+}
+
+// Option is a functional option for configuring the Interpreter.
+type Option func(*Interpreter)
+
+// WithLogger sets the logger for the interpreter.
+func WithLogger(logger *slog.Logger) Option {
+	return func(i *Interpreter) {
+		i.logger = logger
+	}
 }
 
 // Scanner returns the underlying go-scan Scanner instance.
@@ -45,18 +57,26 @@ func (i *Interpreter) Scanner() *scanner.Scanner {
 
 // NewInterpreter creates a new symgo interpreter.
 // It requires a pre-configured go-scan.Scanner instance.
-func NewInterpreter(scanner *scanner.Scanner, logger *slog.Logger) (*Interpreter, error) {
+func NewInterpreter(scanner *scanner.Scanner, options ...Option) (*Interpreter, error) {
 	if scanner == nil {
 		return nil, fmt.Errorf("scanner cannot be nil")
 	}
 
-	eval := evaluator.New(scanner, logger)
-
 	i := &Interpreter{
 		scanner:   scanner,
-		eval:      eval,
 		globalEnv: object.NewEnvironment(),
 	}
+
+	for _, opt := range options {
+		opt(i)
+	}
+
+	// Set a default logger if one wasn't provided.
+	if i.logger == nil {
+		i.logger = slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError}))
+	}
+
+	i.eval = evaluator.New(scanner, i.logger)
 
 	// Register default intrinsics
 	i.RegisterIntrinsic("fmt.Sprintf", i.intrinsicSprintf)

@@ -28,7 +28,7 @@ func NewAnalyzer(s *goscan.Scanner, logger *slog.Logger, debugTargetFunc string)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get internal scanner: %w", err)
 	}
-	interp, err := symgo.NewInterpreter(internalScanner, logger)
+	interp, err := symgo.NewInterpreter(internalScanner, symgo.WithLogger(logger))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create symgo interpreter: %w", err)
 	}

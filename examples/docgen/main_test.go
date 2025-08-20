@@ -25,7 +25,7 @@ func TestDocgen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create scanner: %v", err)
 	}
-	analyzer, err := NewAnalyzer(s, logger, "")
+	analyzer, err := NewAnalyzer(s, logger, "") // This was already correct, but I'm checking it again.
 	if err != nil {
 		t.Fatalf("failed to create analyzer: %v", err)
 	}

@@ -304,6 +304,13 @@ func (a *Analyzer) analyzeHandlerBody(handler *symgo.Function, op *openapi.Opera
 		}
 	}
 
+	// Bind the http.ResponseWriter interface to a concrete type for analysis.
+	// This allows us to track calls to methods like WriteHeader and Write.
+	if err := a.interpreter.BindInterface("net/http.ResponseWriter", "*net/http/httptest.ResponseRecorder"); err != nil {
+		// This binding is critical, so we log a warning if it fails.
+		a.logger.Warn("failed to bind ResponseWriter interface, response analysis will be incomplete", "error", err)
+	}
+
 	// Push a new scope for temporary intrinsics for this handler.
 	intrinsics := a.buildHandlerIntrinsics(op)
 	a.interpreter.PushIntrinsics(intrinsics)

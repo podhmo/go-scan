@@ -22,11 +22,7 @@ type Analyzer struct {
 
 // NewAnalyzer creates a new Analyzer.
 func NewAnalyzer(s *goscan.Scanner, logger *slog.Logger) (*Analyzer, error) {
-	internalScanner, err := s.ScannerForSymgo()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get internal scanner: %w", err)
-	}
-	interp, err := symgo.NewInterpreter(internalScanner, symgo.WithLogger(logger))
+	interp, err := symgo.NewInterpreter(s, symgo.WithLogger(logger))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create symgo interpreter: %w", err)
 	}
@@ -89,7 +85,7 @@ func (a *Analyzer) Analyze(ctx context.Context, importPath string, entrypoint st
 	// The core analysis is now driven by the symgo interpreter.
 	// First, evaluate the entire file of the entrypoint. This will populate the
 	// interpreter's environment with imports and top-level declarations.
-	if _, err := a.interpreter.Eval(entrypointFile, pkg); err != nil {
+	if _, err := a.interpreter.Eval(ctx, entrypointFile, pkg); err != nil {
 		// This is the change: we now return the error instead of just printing it.
 		return fmt.Errorf("error during file-level symgo eval: %w", err)
 	}
@@ -105,7 +101,7 @@ func (a *Analyzer) Analyze(ctx context.Context, importPath string, entrypoint st
 	}
 
 	// Then, call the entrypoint function.
-	if _, err := a.interpreter.Apply(entrypointFn, []symgo.Object{}, pkg); err != nil {
+	if _, err := a.interpreter.Apply(ctx, entrypointFn, []symgo.Object{}, pkg); err != nil {
 		// This is the change: we now return the error instead of just printing it.
 		return fmt.Errorf("error during entrypoint apply: %w", err)
 	}
@@ -314,7 +310,7 @@ func (a *Analyzer) analyzeHandlerBody(handler *symgo.Function, op *openapi.Opera
 	defer a.interpreter.PopIntrinsics() // Ensure we clean up the scope.
 
 	// Call the handler function with the created symbolic arguments.
-	a.interpreter.Apply(handler, handlerArgs, pkg)
+	a.interpreter.Apply(context.Background(), handler, handlerArgs, pkg)
 }
 
 // buildHandlerIntrinsics creates the map of intrinsic handlers for analyzing

@@ -563,27 +563,65 @@ func (e *Evaluator) evalReturnStmt(n *ast.ReturnStmt, env *object.Environment, p
 }
 
 func (e *Evaluator) evalAssignStmt(n *ast.AssignStmt, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
-	if len(n.Lhs) != 1 || len(n.Rhs) != 1 {
-		return newError("unsupported assignment: expected 1 expression on each side")
+	// Simplified handling for multiple assignment, e.g., `val, err := ...` or `val, _ := ...`
+	// We only consider the first non-underscore identifier on the LHS.
+	if len(n.Lhs) > 1 {
+		if len(n.Rhs) != 1 {
+			// This doesn't handle function calls with multiple return values properly yet.
+			// For now, we assume a single expression on the RHS and proceed.
+			return nil
+		}
+		val := e.Eval(n.Rhs[0], env, pkg)
+		if isError(val) {
+			return val
+		}
+
+		for _, lhsExpr := range n.Lhs {
+			if ident, ok := lhsExpr.(*ast.Ident); ok {
+				if ident.Name == "_" {
+					continue
+				}
+				// Assign the entire RHS result to the first non-`_` variable.
+				// This is a major simplification but works for our purposes.
+				return e.handleIdentifierAssignment(ident, val, n.Tok, env, pkg)
+			}
+		}
+		return nil // All LHS were `_`
 	}
 
-	ident, ok := n.Lhs[0].(*ast.Ident)
-	if !ok {
-		return newError("unsupported assignment target: expected an identifier")
+	// Handle single assignment
+	if len(n.Lhs) == 1 && len(n.Rhs) == 1 {
+		rhsVal := e.Eval(n.Rhs[0], env, pkg)
+		if isError(rhsVal) {
+			return rhsVal
+		}
+
+		switch lhs := n.Lhs[0].(type) {
+		case *ast.Ident:
+			if lhs.Name == "_" {
+				return rhsVal // Evaluate for side effects
+			}
+			return e.handleIdentifierAssignment(lhs, rhsVal, n.Tok, env, pkg)
+		case *ast.SelectorExpr:
+			// For field assignment like `s.Field = ...`, we don't track state.
+			// We evaluate both sides to ensure analysis continues and intrinsics are triggered,
+			// but we don't store the result of the assignment.
+			e.Eval(lhs, env, pkg)
+			e.Eval(n.Rhs[0], env, pkg)
+			return nil
+		default:
+			return newError("unsupported assignment target: %T", n.Lhs[0])
+		}
 	}
 
-	if ident.Name == "_" {
-		return e.Eval(n.Rhs[0], env, pkg)
-	}
+	return newError("unsupported assignment: Lhs=%d, Rhs=%d", len(n.Lhs), len(n.Rhs))
+}
 
-	val := e.Eval(n.Rhs[0], env, pkg)
-	if isError(val) {
-		return val
-	}
-
-	if n.Tok == token.DEFINE {
+// handleIdentifierAssignment encapsulates the logic for assigning a value to an identifier.
+// The value `val` is pre-evaluated.
+func (e *Evaluator) handleIdentifierAssignment(ident *ast.Ident, val object.Object, tok token.Token, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
+	if tok == token.DEFINE {
 		// This is `:=`, so we are declaring and assigning.
-		// We wrap the value in a Variable object to be consistent with `var` declarations.
 		v := &object.Variable{
 			Name:  ident.Name,
 			Value: val,
@@ -596,7 +634,6 @@ func (e *Evaluator) evalAssignStmt(n *ast.AssignStmt, env *object.Environment, p
 	}
 
 	// This is `=`, so the variable must already exist.
-	// We need to find the variable and update its value.
 	obj, ok := env.Get(ident.Name)
 	if !ok {
 		return newError("cannot assign to undeclared identifier: %s", ident.Name)
@@ -612,7 +649,7 @@ func (e *Evaluator) evalAssignStmt(n *ast.AssignStmt, env *object.Environment, p
 		return v
 	}
 
-	// Fallback for non-variable assignments, though our model should primarily use variables.
+	// Fallback for non-variable assignments.
 	e.logger.Debug("evalAssignStmt: setting non-var", "name", ident.Name, "type", val.Type())
 	return env.Set(ident.Name, val)
 }
@@ -652,9 +689,11 @@ func (e *Evaluator) evalIdent(n *ast.Ident, env *object.Environment, pkg *scanne
 			// When an identifier is evaluated as an expression, we want its value,
 			// not the variable container itself.
 			value := v.Value
-			// However, the variable might have more precise type info than the value it contains.
-			// We should propagate this type info to the value before returning it.
-			if value.TypeInfo() == nil && v.TypeInfo() != nil {
+			// However, the variable might have more precise type info than the value it contains
+			// (e.g. `var v MyInterface = MyStruct{}`). The variable's declared type is often
+			// the source of truth, so we propagate it to the underlying value.
+			// This was the source of the regression where `var user User` lost its type.
+			if v.TypeInfo() != nil {
 				value.SetTypeInfo(v.TypeInfo())
 			}
 			return value

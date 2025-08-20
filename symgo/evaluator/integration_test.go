@@ -97,3 +97,89 @@ func main() {
 		t.Fatal(err)
 	}
 }
+
+func TestRegression_CreateUser_AnalysisStops(t *testing.T) {
+	source := `
+package main
+
+type User struct {
+	ID   int
+	Name string
+}
+
+// mock external functions
+func decode(v any) {}
+func encode(v any) {}
+
+func createUser() {
+	var user User
+	decode(&user)
+	user.ID = 3
+	encode(user)
+}
+`
+	dir, cleanup := scantest.WriteFiles(t, map[string]string{
+		"go.mod":  "module example.com/me",
+		"main.go": source,
+	})
+	defer cleanup()
+
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
+		if len(pkgs) != 1 {
+			return fmt.Errorf("expected 1 package, got %d", len(pkgs))
+		}
+		pkg := pkgs[0]
+
+		internalScanner, err := s.ScannerForSymgo()
+		if err != nil {
+			return fmt.Errorf("s.ScannerForSymgo failed: %w", err)
+		}
+		eval := New(internalScanner, s.Logger)
+
+		var encodeCalled bool
+		env := object.NewEnvironment()
+		for _, file := range pkg.AstFiles {
+			eval.Eval(file, env, pkg)
+		}
+
+		// Setup mock intrinsics
+		env.Set("decode", &object.Intrinsic{
+			Fn: func(args ...object.Object) object.Object { return nil },
+		})
+		env.Set("encode", &object.Intrinsic{
+			Fn: func(args ...object.Object) object.Object {
+				encodeCalled = true
+				if len(args) == 1 {
+					arg := args[0]
+					if arg.TypeInfo() == nil {
+						t.Error("TypeInfo() on the object passed to encode() is nil")
+					} else if arg.TypeInfo().Name != "User" {
+						t.Errorf("expected arg to be User, got %s", arg.TypeInfo().Name)
+					}
+				}
+				return nil
+			},
+		})
+
+		mainFuncObj, ok := env.Get("createUser")
+		if !ok {
+			return fmt.Errorf("createUser function not found in environment")
+		}
+		mainFunc, ok := mainFuncObj.(*object.Function)
+		if !ok {
+			return fmt.Errorf("createUser is not an object.Function, got %T", mainFuncObj)
+		}
+
+		eval.applyFunction(mainFunc, []object.Object{}, pkg)
+
+		if !encodeCalled {
+			t.Error("expected encode() to be called, but it was not")
+		}
+		return nil
+	}
+
+	_, err := scantest.Run(t, dir, []string{"."}, action)
+	if err != nil {
+		t.Fatal(err)
+	}
+}

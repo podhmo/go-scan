@@ -14,7 +14,7 @@ import (
 // Pattern defines a mapping between a function call signature (the key)
 // and a handler function that performs analysis when that call is found.
 type Pattern struct {
-	Key  string
+	Key   string
 	Apply func(interp *symgo.Interpreter, args []symgo.Object, op *openapi.Operation) symgo.Object
 }
 
@@ -36,7 +36,17 @@ func GetDefaultPatterns() []Pattern {
 		{Key: "(*encoding/json.Decoder).Decode", Apply: handleDecode},
 		{Key: "encoding/json.NewEncoder", Apply: handleNewEncoder},
 		{Key: "(*encoding/json.Encoder).Encode", Apply: handleEncode},
+
+		// strconv related
+		{Key: "strconv.Atoi", Apply: handleAtoi},
 	}
+}
+
+func handleAtoi(interp *symgo.Interpreter, args []symgo.Object, op *openapi.Operation) symgo.Object {
+	// We don't need the actual integer value, just to know that it's an integer.
+	// Returning a placeholder allows analysis to continue. We could potentially
+	// return a typed placeholder for an integer if more advanced analysis was needed.
+	return &symgo.SymbolicPlaceholder{Reason: "result of strconv.Atoi"}
 }
 
 // -----------------------------------------------------------------------------
@@ -135,7 +145,6 @@ func handleEncode(interp *symgo.Interpreter, args []symgo.Object, op *openapi.Op
 
 	return &symgo.SymbolicPlaceholder{Reason: "result of json.Encode"}
 }
-
 
 // -----------------------------------------------------------------------------
 // Helper function for creating symbolic instances

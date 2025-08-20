@@ -82,7 +82,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
         - [x] Analyze handler function patterns to find HTTP methods (now done via parsing the `HandleFunc` pattern string, e.g., "GET /path").
         - [x] Extract `operationId` from the function name and `description` from godoc comments.
     - [x] **Testing**: Write an integration test to verify basic route, method, and description extraction from the sample API.
-- [-] **M3: Schema and Parameter Analysis**:
+- [x] **M3: Schema and Parameter Analysis**:
     - [x] **Request/Response Body Analysis**:
         - [x] Implement pattern matching to detect calls like `json.NewDecoder(...).Decode(&req)`.
         - [x] Use the `symgo` scope to resolve the type of the `req` variable and analyze its struct definition to build a request schema.
@@ -90,9 +90,9 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     - [x] **Query Parameter Analysis**:
         - [x] Implement intrinsics to detect `r.URL.Query().Get("...")`.
         - [x] Implement the extensible `CallPattern` registry (`examples/docgen/patterns`).
-    - [ ] **Interface/Higher-Order Function Handling**:
-        - [ ] Implement context-based type binding in `symgo` to handle interfaces like `io.Writer`.
-        - [ ] Add intrinsics for common `net/http` higher-order functions like `http.TimeoutHandler` to trace into the actual handler.
+    - [x] **Interface/Higher-Order Function Handling**:
+        - [x] Implement context-based type binding in `symgo` to handle interfaces like `io.Writer`.
+        - [x] Add intrinsics for common `net/http` higher-order functions like `http.TimeoutHandler` to trace into the actual handler.
     - [x] **Testing**: Enhance the integration test to verify that request/response schemas and query parameters are correctly extracted.
 - [ ] **M4: Finalization**:
     - [ ] **OpenAPI Generation**:

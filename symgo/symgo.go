@@ -36,10 +36,11 @@ type IntrinsicFunc func(eval *Interpreter, args []Object) Object
 
 // Interpreter is the main public entry point for the symgo engine.
 type Interpreter struct {
-	scanner   *goscan.Scanner
-	eval      *evaluator.Evaluator
-	globalEnv *object.Environment
-	logger    *slog.Logger
+	scanner           *goscan.Scanner
+	eval              *evaluator.Evaluator
+	globalEnv         *object.Environment
+	logger            *slog.Logger
+	interfaceBindings map[string]*goscan.TypeInfo
 }
 
 // Option is a functional option for configuring the Interpreter.
@@ -65,8 +66,9 @@ func NewInterpreter(scanner *goscan.Scanner, options ...Option) (*Interpreter, e
 	}
 
 	i := &Interpreter{
-		scanner:   scanner,
-		globalEnv: object.NewEnvironment(),
+		scanner:           scanner,
+		globalEnv:         object.NewEnvironment(),
+		interfaceBindings: make(map[string]*goscan.TypeInfo),
 	}
 
 	for _, opt := range options {
@@ -84,6 +86,101 @@ func NewInterpreter(scanner *goscan.Scanner, options ...Option) (*Interpreter, e
 	i.RegisterIntrinsic("fmt.Sprintf", i.intrinsicSprintf)
 
 	return i, nil
+}
+
+// BindInterface instructs the interpreter to treat a given interface type as a
+// specific concrete type during analysis.
+// The interface name is the fully qualified name (e.g., "io.Writer").
+// The concrete type name can be a pointer or non-pointer type name (e.g., "*bytes.Buffer").
+func (i *Interpreter) BindInterface(ifaceTypeName string, concreteTypeName string) error {
+	isPointer := strings.HasPrefix(concreteTypeName, "*")
+	if isPointer {
+		concreteTypeName = strings.TrimPrefix(concreteTypeName, "*")
+	}
+
+	pkgPath, typeName := splitQualifiedName(concreteTypeName)
+	if pkgPath == "" {
+		return fmt.Errorf("concrete type name must be fully qualified (e.g., 'bytes.Buffer'), got %s", concreteTypeName)
+	}
+
+	pkg, err := i.scanner.ScanPackageByImport(context.Background(), pkgPath)
+	if err != nil {
+		return fmt.Errorf("could not scan package %q for concrete type: %w", pkgPath, err)
+	}
+
+	var foundType *goscan.TypeInfo
+	for _, t := range pkg.Types {
+		if t.Name == typeName {
+			foundType = t
+			break
+		}
+	}
+
+	if foundType == nil {
+		return fmt.Errorf("concrete type %q not found in package %q", typeName, pkgPath)
+	}
+
+	// The binding in the evaluator needs the fully qualified name.
+	i.eval.BindInterface(ifaceTypeName, foundType)
+	return nil
+}
+
+// NewSymbolic creates a new symbolic variable with a given type.
+// This is a helper for setting up analysis entrypoints.
+func (i *Interpreter) NewSymbolic(name string, typeName string) (Object, error) {
+	pkgPath, simpleTypeName := splitQualifiedName(typeName)
+	if pkgPath == "" {
+		return nil, fmt.Errorf("type name must be fully qualified (e.g., 'io.Writer'), got %s", typeName)
+	}
+
+	pkg, err := i.scanner.ScanPackageByImport(context.Background(), pkgPath)
+	if err != nil {
+		return nil, fmt.Errorf("could not scan package %q for symbolic var type: %w", pkgPath, err)
+	}
+
+	var foundType *goscan.TypeInfo
+	for _, t := range pkg.Types {
+		if t.Name == simpleTypeName {
+			foundType = t
+			break
+		}
+	}
+	if foundType == nil {
+		return nil, fmt.Errorf("type %q not found in package %q", simpleTypeName, pkgPath)
+	}
+
+	return &Variable{
+		Name: name,
+		BaseObject: BaseObject{
+			ResolvedTypeInfo: foundType,
+		},
+		Value: &SymbolicPlaceholder{Reason: "function parameter"},
+	}, nil
+}
+
+// splitQualifiedName splits a name like "pkg/path.Name" into "pkg/path" and "Name".
+func splitQualifiedName(name string) (pkgPath, typeName string) {
+	// To handle both "io.Writer" and "github.com/user/repo/pkg.Type",
+	// we find the last dot.
+	lastDot := strings.LastIndex(name, ".")
+	if lastDot == -1 {
+		return "", name // Should not happen for qualified names.
+	}
+
+	// Now we need to determine if the part before the dot is the package path.
+	// A simple heuristic: if it contains a '/', it's a full path.
+	// If not, it's a simple package name like 'io' or 'bytes'.
+	// This heuristic isn't perfect but works for stdlib and typical repos.
+	pkgCandidate := name[:lastDot]
+	typeName = name[lastDot+1:]
+
+	// In the context of go-scan, the package path is what's used in the import statement.
+	// For "bytes.Buffer", the import path is "bytes".
+	// For "mypackage.MyType" in the current module, it might be "mymodule/mypackage".
+	// The scanner handles resolving this. We just need to provide the parts.
+	// The logic in BindInterface and NewSymbolic which calls scanner.ScanPackageByImport
+	// with the pkgCandidate works correctly for both "bytes" and "github.com/foo/bar".
+	return pkgCandidate, typeName
 }
 
 // intrinsicSprintf provides a basic implementation of fmt.Sprintf for the symbolic engine.

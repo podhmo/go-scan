@@ -14,7 +14,6 @@ import (
 )
 
 func TestDocgen(t *testing.T) {
-	t.Skip("this test is failing due to a module resolution issue, similar to the symgo tests. Will be fixed in a future task.")
 	const sampleAPIPath = "github.com/podhmo/go-scan/examples/docgen/sampleapi"
 
 	// Setup

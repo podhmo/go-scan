@@ -21,10 +21,11 @@ import (
 
 // Evaluator is the main object that evaluates the AST.
 type Evaluator struct {
-	scanner    *goscan.Scanner
-	intrinsics *intrinsics.Registry
-	logger     *slog.Logger
-	callStack  []*callFrame
+	scanner           *goscan.Scanner
+	intrinsics        *intrinsics.Registry
+	logger            *slog.Logger
+	callStack         []*callFrame
+	interfaceBindings map[string]*goscan.TypeInfo
 }
 
 type callFrame struct {
@@ -38,10 +39,16 @@ func New(scanner *goscan.Scanner, logger *slog.Logger) *Evaluator {
 		logger = slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	}
 	return &Evaluator{
-		scanner:    scanner,
-		intrinsics: intrinsics.New(),
-		logger:     logger,
+		scanner:           scanner,
+		intrinsics:        intrinsics.New(),
+		logger:            logger,
+		interfaceBindings: make(map[string]*goscan.TypeInfo),
 	}
+}
+
+// BindInterface registers a concrete type for an interface.
+func (e *Evaluator) BindInterface(ifaceTypeName string, concreteType *goscan.TypeInfo) {
+	e.interfaceBindings[ifaceTypeName] = concreteType
 }
 
 // RegisterIntrinsic registers a built-in function.
@@ -508,6 +515,13 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 		}
 
 		if typeInfo.Kind == scanner.InterfaceKind {
+			// Check for interface binding override
+			qualifiedIfaceName := fmt.Sprintf("%s.%s", typeInfo.PkgPath, typeInfo.Name)
+			if boundType, ok := e.interfaceBindings[qualifiedIfaceName]; ok {
+				e.logger.Debug("evalSelectorExpr: found interface binding", "interface", qualifiedIfaceName, "concrete", boundType.Name)
+				typeInfo = boundType
+			}
+
 			resolutionPkg := pkg
 			if typeInfo.PkgPath != "" && typeInfo.PkgPath != pkg.ImportPath {
 				if foreignPkgObj, ok := e.findPackageByPath(env, typeInfo.PkgPath); ok {

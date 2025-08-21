@@ -29,6 +29,8 @@ const (
 	PathParameter PatternType = "path"
 	// QueryParameter indicates the pattern should extract a query parameter.
 	QueryParameter PatternType = "query"
+	// HeaderParameter indicates the pattern should extract a header parameter.
+	HeaderParameter PatternType = "header"
 )
 
 // PatternConfig defines a user-configurable pattern for docgen analysis.

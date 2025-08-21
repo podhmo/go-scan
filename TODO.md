@@ -79,6 +79,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     - [x] Add `additionalProperties` to the `openapi.Schema` model to allow for `map` type schemas.
     - [x] Add a `defaultResponse` pattern to `docgen` to allow defining responses with arbitrary status codes from a `minigo` config.
     - **Note**: The bug preventing custom patterns from being applied in intra-module setups has been resolved by ensuring the `symgo` interpreter's environment is correctly populated with package imports before evaluation.
+- [x] **Fix `docgen` test for `$ref` and renaming**: Resolved a test failure in `TestDocgen_refAndRename` that was caused by an incorrect import path in the test data and an empty golden file. See [docs/trouble-docgen-openapi.md](./docs/trouble-docgen-openapi.md) for the original problem description.
 
 A set of tasks to improve the `symgo` engine and the `docgen` tool based on the analysis in `docgen/ja/from-docgen.md`.
 

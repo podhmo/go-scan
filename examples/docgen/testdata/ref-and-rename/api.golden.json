@@ -1,0 +1,33 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Sample API",
+    "version": "0.0.1"
+  },
+  "paths": {
+    "/admin/items": {
+      "get": {
+        "description": "ListItems collides in name with the function in the other 'handlers' package.\nThe analyzer should generate a unique operationId for it.",
+        "operationId": "admin_handlers_ListItems"
+      }
+    },
+    "/items": {
+      "get": {
+        "description": "ListItems returns a list of shared.Payload.\nThe schema for shared.Payload should be a $ref.",
+        "operationId": "ref-and-rename_pkg1_ListItems"
+      }
+    },
+    "/items/{id}": {
+      "get": {
+        "description": "GetItem returns a single shared.Payload.\nThe schema for shared.Payload should also be a $ref, pointing to the same component.",
+        "operationId": "ref-and-rename_pkg1_GetItem"
+      }
+    },
+    "/pkg2/items": {
+      "get": {
+        "description": "ListItems has the same name as a handler in pkg1, but it's in a different package.\nIt should have a unique operationId.",
+        "operationId": "ref-and-rename_pkg2_ListItems"
+      }
+    }
+  }
+}

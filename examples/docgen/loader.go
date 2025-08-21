@@ -63,7 +63,7 @@ func convertConfigsToPatterns(configs []patterns.PatternConfig, logger *slog.Log
 		switch c.Type {
 		case patterns.RequestBody, patterns.ResponseBody:
 			// valid
-		case patterns.PathParameter, patterns.QueryParameter:
+		case patterns.PathParameter, patterns.QueryParameter, patterns.HeaderParameter:
 			if c.Name == "" {
 				return nil, fmt.Errorf("pattern %d: 'Name' is required for type %q", i, c.Type)
 			}
@@ -78,9 +78,7 @@ func convertConfigsToPatterns(configs []patterns.PatternConfig, logger *slog.Log
 			result[i].Apply = patterns.HandleCustomRequestBody(c.ArgIndex)
 		case patterns.ResponseBody:
 			result[i].Apply = patterns.HandleCustomResponseBody(c.ArgIndex)
-		case patterns.PathParameter:
-			result[i].Apply = patterns.HandleCustomParameter(string(c.Type), c.Name, c.Description, c.ArgIndex)
-		case patterns.QueryParameter:
+		case patterns.PathParameter, patterns.QueryParameter, patterns.HeaderParameter:
 			result[i].Apply = patterns.HandleCustomParameter(string(c.Type), c.Name, c.Description, c.ArgIndex)
 		default:
 			// This case should be unreachable due to the validation above

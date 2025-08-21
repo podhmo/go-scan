@@ -1,0 +1,15 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Sample API",
+    "version": "0.0.1"
+  },
+  "paths": {
+    "/resources/{resourceId}": {
+      "get": {
+        "description": "Handler that uses all parameter types.",
+        "operationId": "GetResource"
+      }
+    }
+  }
+}

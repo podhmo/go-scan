@@ -276,7 +276,9 @@ func (i *Interpreter) Eval(ctx context.Context, node ast.Node, pkg *scanner.Pack
 				}
 				path := strings.Trim(imp.Path.Value, `"`)
 				// We set it on the global environment, which is shared across Eval calls for this interpreter.
-				i.globalEnv.Set(name, &object.Package{Path: path, ScannedInfo: pkg, Env: object.NewEnvironment()})
+				// Set ScannedInfo to nil to force on-demand loading when the package is accessed.
+				// This prevents polluting the cache with the wrong package info.
+				i.globalEnv.Set(name, &object.Package{Path: path, ScannedInfo: nil, Env: object.NewEnvironment()})
 			}
 		}
 	}

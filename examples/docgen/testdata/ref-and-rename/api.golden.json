@@ -8,27 +8,114 @@
     "/admin/items": {
       "get": {
         "description": "ListItems collides in name with the function in the other 'handlers' package.\nThe analyzer should generate a unique operationId for it.",
-        "operationId": "admin_handlers_ListItems"
+        "operationId": "admin_handlers_ListItems",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/admin_handlers_Payload"
+                  }
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/items": {
       "get": {
         "description": "ListItems returns a list of shared.Payload.\nThe schema for shared.Payload should be a $ref.",
-        "operationId": "ref-and-rename_pkg1_ListItems"
+        "operationId": "ref-and-rename_pkg1_ListItems",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ref-and-rename_shared_Payload"
+                  }
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/items/{id}": {
       "get": {
         "description": "GetItem returns a single shared.Payload.\nThe schema for shared.Payload should also be a $ref, pointing to the same component.",
-        "operationId": "ref-and-rename_pkg1_GetItem"
+        "operationId": "ref-and-rename_pkg1_GetItem",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ref-and-rename_shared_Payload"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/pkg2/items": {
       "get": {
         "description": "ListItems has the same name as a handler in pkg1, but it's in a different package.\nIt should have a unique operationId.",
-        "operationId": "ref-and-rename_pkg2_ListItems"
+        "operationId": "ref-and-rename_pkg2_ListItems",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ref-and-rename_pkg2_Payload"
+                  }
+                }
+              }
+            }
+          }
+        }
       }
     }
   },
-  "components": {}
+  "components": {
+    "schemas": {
+      "admin_handlers_Payload": {
+        "type": "object",
+        "properties": {
+          "adminId": {
+            "type": "string"
+          }
+        }
+      },
+      "ref-and-rename_pkg2_Payload": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "string"
+          }
+        }
+      },
+      "ref-and-rename_shared_Payload": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
 }

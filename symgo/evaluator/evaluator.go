@@ -1025,11 +1025,35 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 	e.logger.Debug("applyFunction", "type", fn.Type(), "value", fn.Inspect())
 	switch fn := fn.(type) {
 	case *object.Function:
-		extendedEnv, err := e.extendFunctionEnv(ctx, fn, args, pkg)
+		// When applying a function, the evaluation context switches to that function's
+		// package. We must pass fn.Package to both extendFunctionEnv and Eval.
+		extendedEnv, err := e.extendFunctionEnv(ctx, fn, args)
 		if err != nil {
 			return newError(fn.Decl.Pos(), "failed to extend function env: %v", err)
 		}
-		evaluated := e.Eval(ctx, fn.Body, extendedEnv, pkg)
+
+		// Populate the new environment with the imports from the function's source file.
+		if fn.Package != nil && fn.Decl != nil {
+			file := fn.Package.Fset.File(fn.Decl.Pos())
+			if file != nil {
+				if astFile, ok := fn.Package.AstFiles[file.Name()]; ok {
+					for _, imp := range astFile.Imports {
+						var name string
+						if imp.Name != nil {
+							name = imp.Name.Name
+						} else {
+							parts := strings.Split(strings.Trim(imp.Path.Value, `"`), "/")
+							name = parts[len(parts)-1]
+						}
+						path := strings.Trim(imp.Path.Value, `"`)
+						// Set ScannedInfo to nil to force on-demand loading.
+						extendedEnv.Set(name, &object.Package{Path: path, ScannedInfo: nil, Env: object.NewEnvironment()})
+					}
+				}
+			}
+		}
+
+		evaluated := e.Eval(ctx, fn.Body, extendedEnv, fn.Package)
 		if isError(evaluated) {
 			return evaluated
 		}
@@ -1097,40 +1121,34 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 	}
 }
 
-func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, args []object.Object, pkg *scanner.PackageInfo) (*object.Environment, error) {
+func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, args []object.Object) (*object.Environment, error) {
+	// The new environment should be enclosed by the function's own package environment,
+	// not the caller's environment.
 	env := object.NewEnclosedEnvironment(fn.Env)
 
 	if fn.Parameters == nil {
 		return env, nil
 	}
 
-	// FuncLit doesn't have a declaration, so it doesn't have a position to look up the file.
-	// We assume it's in the same file as the current package context.
-	// This is a simplification.
-	var importLookup map[string]string
-	lookupPkg := fn.Package
-	if lookupPkg == nil {
-		// Fallback for functions that might not have it set (e.g. from older tests)
-		lookupPkg = pkg
+	if fn.Package == nil || fn.Package.Fset == nil {
+		// Cannot resolve parameter types without package info.
+		// This can happen for func literals or in some test setups.
+		// We'll proceed but types will be less precise.
+		e.logger.Warn("extendFunctionEnv: function has no package info; cannot resolve param types")
+		return env, nil
 	}
 
+	var importLookup map[string]string
 	if fn.Decl != nil {
-		file := lookupPkg.Fset.File(fn.Decl.Pos())
-		if file == nil {
-			funcName := "anonymous"
-			if fn.Name != nil {
-				funcName = fn.Name.Name
+		file := fn.Package.Fset.File(fn.Decl.Pos())
+		if file != nil {
+			if astFile, ok := fn.Package.AstFiles[file.Name()]; ok {
+				importLookup = e.scanner.BuildImportLookup(astFile)
 			}
-			return nil, fmt.Errorf("could not find file for function %q", funcName)
 		}
-		astFile, ok := lookupPkg.AstFiles[file.Name()]
-		if !ok {
-			return nil, fmt.Errorf("could not find AST file for path: %s", file.Name())
-		}
-		importLookup = e.scanner.BuildImportLookup(astFile)
-	} else if len(lookupPkg.AstFiles) > 0 {
+	} else if len(fn.Package.AstFiles) > 0 {
 		// HACK: For FuncLit, just grab the first file's imports.
-		for _, astFile := range lookupPkg.AstFiles {
+		for _, astFile := range fn.Package.AstFiles {
 			importLookup = e.scanner.BuildImportLookup(astFile)
 			break
 		}
@@ -1144,7 +1162,8 @@ func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, 
 		arg := args[paramIndex]
 		paramIndex++
 
-		fieldType := e.scanner.TypeInfoFromExpr(ctx, field.Type, nil, lookupPkg, importLookup)
+		// Resolve the parameter's type using the function's own package context.
+		fieldType := e.scanner.TypeInfoFromExpr(ctx, field.Type, nil, fn.Package, importLookup)
 		if fieldType == nil {
 			continue
 		}

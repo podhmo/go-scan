@@ -893,7 +893,7 @@ func (s *Scanner) TypeInfoFromExpr(ctx context.Context, expr ast.Expr, currentTy
 			PkgName:            elemType.PkgName,
 			TypeArgs:           elemType.TypeArgs,
 			IsResolvedByConfig: elemType.IsResolvedByConfig, // Propagate from element
-			CurrentPkg:         info,                         // Ensure current package context is passed
+			CurrentPkg:         info,                        // Ensure current package context is passed
 		}
 	case *ast.SelectorExpr:
 		pkgIdent, ok := t.X.(*ast.Ident)

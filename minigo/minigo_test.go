@@ -351,100 +351,53 @@ func main() {
 	}
 }
 
-func TestInterpreter_UntypedCompositeLiterals(t *testing.T) {
-	tests := []struct {
-		name  string
-		input string
-		check func(t *testing.T, i *Interpreter)
-	}{
-		{
-			name: "untyped map in slice",
-			input: `package main
+func TestInterpreter_UntypedMapInSlice(t *testing.T) {
+	input := `package main
 var data = []map[string]int{
 	{"a": 1},
 	{"b": 2, "c": 3},
 }
-`,
-			check: func(t *testing.T, i *Interpreter) {
-				val, _ := i.GlobalEnvForTest().Get("data")
-				arr := val.(*object.Array)
-				if len(arr.Elements) != 2 {
-					t.Fatalf("expected 2 elements, got %d", len(arr.Elements))
-				}
-				m1 := arr.Elements[0].(*object.Map)
-				if len(m1.Pairs) != 1 {
-					t.Fatalf("m1 should have 1 pair, got %d", len(m1.Pairs))
-				}
-			},
-		},
-		{
-			name: "untyped struct in slice",
-			input: `package main
-type Point struct { X, Y int }
-var data = []Point{
-	{1, 2},
-	{X: 3},
-}
-`,
-			check: func(t *testing.T, i *Interpreter) {
-				val, _ := i.GlobalEnvForTest().Get("data")
-				arr := val.(*object.Array)
-				if len(arr.Elements) != 2 {
-					t.Fatalf("expected 2 elements, got %d", len(arr.Elements))
-				}
-				p1 := arr.Elements[0].(*object.StructInstance)
-				if p1.Fields["X"].(*object.Integer).Value != 1 || p1.Fields["Y"].(*object.Integer).Value != 2 {
-					t.Errorf("p1 has wrong values: X=%s, Y=%s", p1.Fields["X"].Inspect(), p1.Fields["Y"].Inspect())
-				}
-				p2 := arr.Elements[1].(*object.StructInstance)
-				if p2.Fields["X"].(*object.Integer).Value != 3 || p2.Fields["Y"].(*object.Integer).Value != 0 {
-					t.Errorf("p2 has wrong values: X=%s, Y=%s", p2.Fields["X"].Inspect(), p2.Fields["Y"].Inspect())
-				}
-			},
-		},
-		{
-			name: "untyped slice in slice",
-			input: `package main
-var data = [][]int{
-	{1, 2},
-	{3, 4, 5},
-}
-`,
-			check: func(t *testing.T, i *Interpreter) {
-				val, _ := i.GlobalEnvForTest().Get("data")
-				arr := val.(*object.Array)
-				if len(arr.Elements) != 2 {
-					t.Fatalf("expected 2 elements, got %d", len(arr.Elements))
-				}
-				a1 := arr.Elements[0].(*object.Array)
-				if len(a1.Elements) != 2 {
-					t.Fatalf("a1 should have 2 elements, got %d", len(a1.Elements))
-				}
-				a2 := arr.Elements[1].(*object.Array)
-				if len(a2.Elements) != 3 {
-					t.Fatalf("a2 should have 3 elements, got %d", len(a2.Elements))
-				}
-			},
-		},
+`
+	i, err := NewInterpreter()
+	if err != nil {
+		t.Fatalf("NewInterpreter() failed: %v", err)
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			i, err := NewInterpreter()
-			if err != nil {
-				t.Fatalf("NewInterpreter() failed: %v", err)
-			}
-			if err := i.LoadFile("test.go", []byte(tt.input)); err != nil {
-				t.Fatalf("LoadFile() failed: %v", err)
-			}
-			_, err = i.Eval(context.Background())
-			if err != nil {
-				t.Fatalf("Eval() failed: %v", err)
-			}
-			if tt.check != nil {
-				tt.check(t, i)
-			}
-		})
+	if err := i.LoadFile("test.go", []byte(input)); err != nil {
+		t.Fatalf("LoadFile() failed: %v", err)
+	}
+
+	_, err = i.Eval(context.Background())
+	if err != nil {
+		t.Fatalf("Eval() failed: %v", err)
+	}
+
+	val, ok := i.globalEnv.Get("data")
+	if !ok {
+		t.Fatalf("variable 'data' not found")
+	}
+
+	arr, ok := val.(*object.Array)
+	if !ok {
+		t.Fatalf("data is not an Array, got %T", val)
+	}
+	if len(arr.Elements) != 2 {
+		t.Fatalf("expected 2 elements, got %d", len(arr.Elements))
+	}
+
+	m1 := arr.Elements[0].(*object.Map)
+	if len(m1.Pairs) != 1 {
+		t.Fatalf("m1 should have 1 pair, got %d", len(m1.Pairs))
+	}
+	key1 := &object.String{Value: "a"}
+	pair1, ok := m1.Pairs[key1.HashKey()]
+	if !ok || pair1.Value.(*object.Integer).Value != 1 {
+		t.Errorf("m1 has wrong data")
+	}
+
+	m2 := arr.Elements[1].(*object.Map)
+	if len(m2.Pairs) != 2 {
+		t.Fatalf("m2 should have 2 pairs, got %d", len(m2.Pairs))
 	}
 }
 

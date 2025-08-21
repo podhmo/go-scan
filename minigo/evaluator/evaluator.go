@@ -4937,91 +4937,40 @@ func (e *Evaluator) checkImplements(pos token.Pos, concrete object.Object, iface
 func (e *Evaluator) evalStructLiteral(n *ast.CompositeLit, def *object.StructDefinition, env *object.Environment, fscope *object.FileScope) object.Object {
 	instance := &object.StructInstance{Def: def, Fields: make(map[string]object.Object)}
 
-	// Initialize all fields to their zero value first.
+	// Initialize all fields to their zero value (nil) first.
+	// This ensures that even uninitialized fields exist in the Fields map.
 	for _, field := range def.Fields {
 		for _, name := range field.Names {
-			zeroVal := e.getZeroValueForType(field.Type, env, fscope)
-			if isError(zeroVal) {
-				return zeroVal // Propagate the error
-			}
-			instance.Fields[name.Name] = zeroVal
+			instance.Fields[name.Name] = object.NIL
 		}
 	}
 
-	// Determine if we are using positional or keyed fields.
-	isPositional := len(n.Elts) > 0 && n.Elts[0] != nil && reflect.TypeOf(n.Elts[0]) != reflect.TypeOf(&ast.KeyValueExpr{})
-
-	if isPositional {
-		elementIndex := 0
-		for _, field := range def.Fields {
-			for _, name := range field.Names {
-				if elementIndex >= len(n.Elts) {
-					// No more values to assign, the rest of the fields will keep their zero value.
-					return instance
-				}
-				elt := n.Elts[elementIndex]
-				if _, ok := elt.(*ast.KeyValueExpr); ok {
-					return e.newError(elt.Pos(), "mixture of keyed and non-keyed fields in struct literal")
-				}
-
-				fieldType := e.Eval(field.Type, env, fscope)
-				if isError(fieldType) {
-					return fieldType
-				}
-				value := e.evalExpressionWithHint(elt, fieldType, env, fscope)
-				if isError(value) {
-					return value
-				}
-				instance.Fields[name.Name] = value
-				elementIndex++
+	for _, elt := range n.Elts {
+		switch node := elt.(type) {
+		case *ast.KeyValueExpr:
+			key, ok := node.Key.(*ast.Ident)
+			if !ok {
+				return e.newError(node.Key.Pos(), "field name is not an identifier")
 			}
-		}
-		if elementIndex < len(n.Elts) {
-			return e.newError(n.Elts[elementIndex].Pos(), "too many values in struct literal")
-		}
-	} else {
-		// Handle keyed fields: MyStruct{X: 1, Y: 2} or shorthand MyStruct{X}
-		for _, elt := range n.Elts {
-			switch node := elt.(type) {
-			case *ast.KeyValueExpr:
-				key, ok := node.Key.(*ast.Ident)
-				if !ok {
-					return e.newError(node.Key.Pos(), "field name is not an identifier")
-				}
-				value := e.Eval(node.Value, env, fscope)
-				if isError(value) {
-					return value
-				}
-				instance.Fields[key.Name] = value
-			case *ast.Ident:
-				// This handles shorthand struct literals, e.g., `MyStruct{Field}`
-				// which is equivalent to `MyStruct{Field: Field}`.
-				fieldName := node.Name
-				value := e.Eval(node, env, fscope) // Evaluate the identifier in the current env
-				if isError(value) {
-					return value
-				}
-				instance.Fields[fieldName] = value
-			default:
-				if len(n.Elts) > 0 { // Only error if there are elements
-					return e.newError(elt.Pos(), "mixture of keyed and non-keyed fields in struct literal or unsupported element type: %T", elt)
-				}
+			value := e.Eval(node.Value, env, fscope)
+			if isError(value) {
+				return value
 			}
+			instance.Fields[key.Name] = value
+		case *ast.Ident:
+			// This handles shorthand struct literals, e.g., `MyStruct{Field}`
+			// which is equivalent to `MyStruct{Field: Field}`.
+			fieldName := node.Name
+			value := e.Eval(node, env, fscope) // Evaluate the identifier in the current env
+			if isError(value) {
+				return value
+			}
+			instance.Fields[fieldName] = value
+		default:
+			return e.newError(elt.Pos(), "unsupported literal element in struct literal: %T", elt)
 		}
 	}
 	return instance
-}
-
-// evalExpressionWithHint is a helper to evaluate a single expression, providing a type hint
-// for untyped composite literals.
-func (e *Evaluator) evalExpressionWithHint(exp ast.Expr, expectedType object.Object, env *object.Environment, fscope *object.FileScope) object.Object {
-	if compLit, ok := exp.(*ast.CompositeLit); ok && compLit.Type == nil {
-		if expectedType == nil {
-			return e.newError(compLit.Pos(), "untyped composite literal in context where type cannot be inferred")
-		}
-		return e.evalCompositeLitWithType(compLit, expectedType, env, fscope)
-	}
-	return e.Eval(exp, env, fscope)
 }
 
 func (e *Evaluator) evalMapLiteral(n *ast.CompositeLit, def *object.MapType, env *object.Environment, fscope *object.FileScope) object.Object {

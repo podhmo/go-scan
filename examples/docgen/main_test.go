@@ -410,3 +410,76 @@ func TestDocgen_newFeatures(t *testing.T) {
 		t.Errorf("OpenAPI spec mismatch for new features (-want +got):\n%s\n\nGot:\n%s", diff, gotJSON)
 	}
 }
+
+func TestDocgen_refAndRename(t *testing.T) {
+	// This test verifies that:
+	// 1. Reused structs result in a single schema in #/components/schemas with $ref used everywhere else.
+	// 2. Structs with the same name in different packages are treated as distinct schemas.
+	// 3. Handlers with the same name in different packages get unique operation IDs.
+	const apiPath = "ref-and-rename/api" // The module name + package dir to analyze
+	moduleDir := "testdata/ref-and-rename"
+	goldenFile := filepath.Join(moduleDir, "api.golden.json") // Golden file inside the test module
+
+	logger := slog.New(slog.NewJSONHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelInfo}))
+
+	// Create a scanner configured to find the new module.
+	s, err := goscan.New(
+		goscan.WithWorkDir(moduleDir), // Point scanner to the module directory
+		goscan.WithGoModuleResolver(),
+		goscan.WithLogger(logger),
+	)
+	if err != nil {
+		t.Fatalf("failed to create scanner: %v", err)
+	}
+
+	analyzer, err := NewAnalyzer(s, logger)
+	if err != nil {
+		t.Fatalf("failed to create analyzer: %v", err)
+	}
+
+	// Analyze the package. The entrypoint is the main function.
+	ctx := context.Background()
+	if err := analyzer.Analyze(ctx, apiPath, "NewServeMux"); err != nil {
+		t.Fatalf("failed to analyze package: %+v", err)
+	}
+	apiSpec := analyzer.OpenAPI
+
+	// Marshal the result to JSON.
+	var got bytes.Buffer
+	enc := json.NewEncoder(&got)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(apiSpec); err != nil {
+		t.Fatalf("failed to marshal OpenAPI spec to json: %v", err)
+	}
+
+	// Compare with the golden file.
+	if *update {
+		if err := os.WriteFile(goldenFile, got.Bytes(), 0644); err != nil {
+			t.Fatalf("failed to write golden file %s: %v", goldenFile, err)
+		}
+		t.Logf("golden file updated: %s", goldenFile)
+		return
+	}
+
+	want, err := os.ReadFile(goldenFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			t.Fatalf("golden file not found: %s. Run with -update to create it.", goldenFile)
+		}
+		t.Fatalf("failed to read golden file %s: %v", goldenFile, err)
+	}
+
+	// Normalize JSON to avoid cosmetic diffs
+	var wantNormalized, gotNormalized any
+	if err := json.Unmarshal(want, &wantNormalized); err != nil {
+		t.Fatalf("failed to unmarshal want JSON: %v", err)
+	}
+	if err := json.Unmarshal(got.Bytes(), &gotNormalized); err != nil {
+		t.Fatalf("failed to unmarshal got JSON: %v", err)
+	}
+
+	if diff := cmp.Diff(wantNormalized, gotNormalized); diff != "" {
+		gotJSON, _ := json.MarshalIndent(gotNormalized, "", "  ")
+		t.Errorf("OpenAPI spec mismatch (-want +got):\n%s\n\nGot:\n%s", diff, gotJSON)
+	}
+}

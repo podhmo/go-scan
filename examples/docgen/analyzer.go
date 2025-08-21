@@ -45,6 +45,9 @@ func NewAnalyzer(s *goscan.Scanner, logger *slog.Logger, options ...any) (*Analy
 				Version: "0.0.1",
 			},
 			Paths: make(map[string]*openapi.PathItem),
+			Components: &openapi.Components{
+				Schemas: make(map[string]*openapi.Schema),
+			},
 		},
 	}
 
@@ -88,6 +91,10 @@ func NewAnalyzer(s *goscan.Scanner, logger *slog.Logger, options ...any) (*Analy
 
 func (a *Analyzer) OperationStack() []*openapi.Operation {
 	return a.operationStack
+}
+
+func (a *Analyzer) GetOpenAPI() *openapi.OpenAPI {
+	return a.OpenAPI
 }
 
 func (a *Analyzer) handleNewServeMux(interp *symgo.Interpreter, args []symgo.Object) symgo.Object {
@@ -260,8 +267,18 @@ func (a *Analyzer) analyzeHandleFunc(interp *symgo.Interpreter, args []symgo.Obj
 		return nil
 	}
 
+	// Generate a unique operation ID based on package and function name.
+	pkgPath := handlerObj.Package.ImportPath
+	pkgPathForID := strings.ReplaceAll(pkgPath, "/", "_")
+	pkgPathForID = strings.ReplaceAll(pkgPathForID, ".", "_")
+	parts := strings.Split(pkgPathForID, "_")
+	if len(parts) > 2 {
+		pkgPathForID = strings.Join(parts[len(parts)-2:], "_")
+	}
+	operationID := fmt.Sprintf("%s_%s", pkgPathForID, handlerDecl.Name.Name)
+
 	op := &openapi.Operation{
-		OperationID: handlerDecl.Name.Name,
+		OperationID: operationID,
 	}
 	if handlerDecl.Doc != nil {
 		op.Description = strings.TrimSpace(handlerDecl.Doc.Text())

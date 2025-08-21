@@ -28,44 +28,38 @@ The cause is not yet known, but here are the current theories:
 
 Further investigation is needed. The next step is to examine the `openapi.Operation` struct and to trace the `op` object's pointer address at various points in the execution to see if it ever changes unexpectedly.
 
-# Trouble: Custom Intrinsics for Intra-Module Helpers Not Firing
+# [RESOLVED] Trouble: Custom Intrinsics for Intra-Module Helpers Not Firing
 
 ## Summary
-This document details the investigation into a bug where custom patterns (intrinsics) for helper functions are not being triggered when the helper function resides in a different package within the same Go module being analyzed. This results in an incomplete OpenAPI specification, missing responses, parameters, etc.
+This section documents a resolved bug where custom patterns (intrinsics) for helper functions were not being triggered when the helper function resided in a different package within the same Go module.
 
-## Context
-The goal is to implement two new features in `docgen`:
-1.  Support for `map[string]any` in response schemas.
-2.  A new `defaultResponse` custom pattern to define responses with specific status codes (e.g., for standard error formats).
+## Initial State & Problem
+The investigation began with the `TestDocgen_newFeatures` test failing. The test was designed to verify that `docgen` could analyze handlers in a `main` package that called helper functions (e.g., `helpers.RenderJSON`) in a `helpers` sub-package. The custom intrinsics tied to these helper functions were not being called, resulting in an incomplete OpenAPI specification.
 
-To test this, a new test case (`new-features`) was created. This test defines API handlers in a `main` package and helper functions (e.g., `RenderJSON`, `RenderError`) in a `helpers` sub-package. A `patterns.go` file defines intrinsics to be applied to these helper functions.
+The investigation was complicated by the fact that the test case itself was broken and missing its source files. After reconstructing the test case based on this document, the bug was successfully reproduced.
 
-## Current Problem
-The `TestDocgen_newFeatures` test fails. The generated OpenAPI output correctly identifies the handlers and their descriptions, but it is completely missing the `responses` and `parameters` sections. This indicates that the custom intrinsics for `new-features/helpers.RenderJSON` and `new-features/helpers.RenderError` are never being called during the symbolic execution of the handlers.
+## Root Cause Analysis
+After extensive debugging, the root cause was identified in the `symgo` interpreter.
 
-## Hypothesis & Investigation
-The initial hypothesis was that the key used for the intrinsic was incorrect.
-- **Attempt 1:** Used `main.RenderJSON`. This was incorrect as `symgo` needs a fully-qualified path.
-- **Attempt 2:** Moved helpers to a sub-package `helpers` and used the key `new-features/helpers.RenderJSON`. This matches the structure of other working tests and appears to be the correct key format that `symgo`'s `evalSelectorExpr` should resolve.
+The `docgen` analyzer works by evaluating isolated function bodies (`ast.BlockStmt`) for each HTTP handler. However, when `symgo.Interpreter.Eval` was called with a `BlockStmt`, it created a new, empty evaluation environment. This environment was not populated with the import declarations from the file that contained the handler.
 
-Despite this, the test still fails in the same way. The `symgo` evaluation logic appears to be correct on paper: `evalSelectorExpr` should identify the package path and function name, create the key, and look it up in the currently scoped intrinsics registry.
+As a result, when the evaluator encountered a call to `helpers.RenderJSON`, it could not resolve the `helpers` identifier to its full import path (`new-features/helpers`). This caused the intrinsic lookup to fail, as the key (`new-features/helpers.RenderJSON`) could not be constructed.
 
-The current leading theory is that there is a subtle issue in how `symgo` resolves packages or looks up intrinsics when dealing with intra-module dependencies that are not the standard library. The analyzer seems to be successfully loading the custom patterns, but the evaluator is failing to match a call site (`helpers.RenderJSON`) to the registered intrinsic.
+## Solution
+The bug was fixed by modifying `symgo.Interpreter.Eval`. Before evaluation starts, the interpreter's global environment is now pre-populated with the import declarations from the package containing the code to be analyzed. This ensures that even when an isolated code block is evaluated, the evaluator has the necessary context to resolve imported packages and successfully look up the associated intrinsics.
 
-## Next Steps
-To isolate the problem from the complexity of the `docgen` analyzer, the next step is to create a minimal test directly within the `symgo` package. This test will:
-1.  Programmatically create a `symgo.Interpreter`.
-2.  Use `scantest` to define a small, in-memory Go module with `main` and `helpers` packages.
-3.  Register a custom intrinsic for a function in the `helpers` package.
-4.  Symbolically execute a function in `main` that calls the helper.
-5.  Assert whether the intrinsic was triggered.
+This fix was implemented and verified, and all related tests now pass.
 
-This will confirm if the bug is in `symgo`'s core evaluation logic or in the `docgen` setup.
+# Future Improvements: Debuggability
 
-**Update:** The `symgo`-level test described above was created and **passed**. This confirms the core evaluation logic is sound. The issue is specific to the `docgen` analyzer's usage of `symgo`.
+During the investigation of the intra-module intrinsic bug, it became clear that debugging the symbolic execution process is difficult. It was hard to prove whether a specific AST node was being visited by the evaluator without adding temporary logging statements.
 
-Further experiments were conducted:
--   Isolating the failing handler (`/settings`) did not make it pass. This disproves the theory of state corruption between handler analyses.
--   Simplifying a complex, nested map literal in a failing handler to a simple `map[string]string` also did not make it pass. This disproves the theory of unsupported syntax causing the evaluator to silently fail.
+As a future improvement, `symgo` could be enhanced with a built-in tracing or visiting mechanism. For example, a `Tracer` interface could be passed to the `Interpreter`:
 
-The root cause remains unknown, but it is highly specific to the `docgen` analyzer's state management when evaluating handlers. The final state of the code is being submitted with the failing test case to allow for external review.
+```go
+type Tracer interface {
+    Visit(node ast.Node)
+}
+```
+
+The `Evaluator` would then call `tracer.Visit(node)` for every node it evaluates. A test or a debug mode in a tool like `docgen` could provide a tracer implementation that records all visited nodes. This would allow a developer to easily compare the set of all nodes in an AST (`ast.Inspect`) with the set of nodes the evaluator actually visited, quickly identifying any missed branches or skipped nodes. This would have significantly accelerated the debugging process for the issue described above.

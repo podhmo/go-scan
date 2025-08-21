@@ -8,8 +8,10 @@ import (
 	"go/parser"
 	"go/token"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"golang.org/x/sync/errgroup"
 )
@@ -31,6 +33,7 @@ type Scanner struct {
 	moduleRootDir         string
 	inspect               bool
 	logger                *slog.Logger
+	mu                    sync.Mutex
 }
 
 // FileSet returns the underlying token.FileSet used by the scanner.
@@ -219,17 +222,29 @@ func (s *Scanner) scanGoFiles(ctx context.Context, filePaths []string, pkgDirPat
 	for _, filePath := range filePaths {
 		fp := filePath // create a new variable for the closure
 		g.Go(func() error {
-			var content any
+			var content []byte
+			var err error
 			if s.Overlay != nil {
-				relPath, err := filepath.Rel(s.moduleRootDir, fp)
-				if err == nil {
-					if overlayContent, ok := s.Overlay[relPath]; ok {
-						content = overlayContent
-					}
+				relPath, _ := filepath.Rel(s.moduleRootDir, fp)
+				if overlayContent, ok := s.Overlay[relPath]; ok {
+					content = overlayContent
 				}
 			}
 
+			if content == nil {
+				content, err = os.ReadFile(fp)
+				if err != nil {
+					// Send error to the channel and exit goroutine
+					results <- fileParseResult{filePath: fp, err: fmt.Errorf("reading file: %w", err)}
+					return nil
+				}
+			}
+
+			// Lock the mutex to ensure that parser.ParseFile, which modifies the shared
+			// token.FileSet, is not called concurrently.
+			s.mu.Lock()
 			fileAst, err := parser.ParseFile(s.fset, fp, content, parser.ParseComments)
+			s.mu.Unlock()
 
 			select {
 			case results <- fileParseResult{filePath: fp, fileAst: fileAst, err: err}:
@@ -834,7 +849,7 @@ func (s *Scanner) parseFieldList(ctx context.Context, fields []*ast.Field, curre
 // This is the core type-parsing logic, exposed for tools that need to resolve
 // type information dynamically.
 func (s *Scanner) TypeInfoFromExpr(ctx context.Context, expr ast.Expr, currentTypeParams []*TypeParamInfo, info *PackageInfo, importLookup map[string]string) *FieldType {
-	ft := &FieldType{Resolver: s.resolver}
+	ft := &FieldType{Resolver: s.resolver, CurrentPkg: info}
 	switch t := expr.(type) {
 	case *ast.Ident:
 		ft.Name = t.Name
@@ -878,6 +893,7 @@ func (s *Scanner) TypeInfoFromExpr(ctx context.Context, expr ast.Expr, currentTy
 			PkgName:            elemType.PkgName,
 			TypeArgs:           elemType.TypeArgs,
 			IsResolvedByConfig: elemType.IsResolvedByConfig, // Propagate from element
+			CurrentPkg:         info,                         // Ensure current package context is passed
 		}
 	case *ast.SelectorExpr:
 		pkgIdent, ok := t.X.(*ast.Ident)

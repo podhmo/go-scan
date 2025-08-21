@@ -501,3 +501,73 @@ func TestScanWithOverlay(t *testing.T) {
 		t.Error("Field names in User struct from overlay are incorrect")
 	}
 }
+
+func TestResolve_NonExistentLocalType(t *testing.T) {
+	fset := token.NewFileSet()
+	testDir := "/tmp/test"
+	modulePath := "example.com/test"
+	fileName := "main.go"
+	filePath := filepath.Join(testDir, fileName)
+
+	// Source code where 'MyStruct' refers to 'NonExistentType', which is not defined.
+	overlayContent := []byte(`
+package main
+
+type CorrectType struct {
+	Value int
+}
+
+type MyStruct struct {
+	Field1 CorrectType
+	Field2 NonExistentType
+}
+`)
+
+	overlay := Overlay{
+		fileName: overlayContent,
+	}
+
+	// Create a scanner with the overlay.
+	s, err := New(fset, nil, overlay, modulePath, testDir, &MockResolver{}, false, nil)
+	if err != nil {
+		t.Fatalf("scanner.New with overlay failed: %v", err)
+	}
+
+	// Scan the virtual file.
+	pkgInfo, err := s.ScanFiles(context.Background(), []string{filePath}, testDir)
+	if err != nil {
+		t.Fatalf("ScanFiles with overlay failed: %v", err)
+	}
+
+	// Get the 'MyStruct' TypeInfo.
+	myStructType := pkgInfo.Lookup("MyStruct")
+	if myStructType == nil {
+		t.Fatal("Type 'MyStruct' not found")
+	}
+
+	// Find the field that has the non-existent type.
+	var fieldWithTypo *FieldInfo
+	for _, field := range myStructType.Struct.Fields {
+		if field.Name == "Field2" {
+			fieldWithTypo = field
+			break
+		}
+	}
+	if fieldWithTypo == nil {
+		t.Fatal("Field 'Field2' not found in 'MyStruct'")
+	}
+
+	// Attempt to resolve the type.
+	_, err = s.ResolveType(context.Background(), fieldWithTypo.Type)
+
+	// Assert that an error was returned.
+	if err == nil {
+		t.Fatal("Expected an error when resolving a non-existent local type, but got nil")
+	}
+
+	// Assert that the error message is descriptive.
+	expectedErrorMsg := `could not resolve type "NonExistentType" in package "example.com/test"`
+	if err.Error() != expectedErrorMsg {
+		t.Errorf("Expected error message %q, got %q", expectedErrorMsg, err.Error())
+	}
+}

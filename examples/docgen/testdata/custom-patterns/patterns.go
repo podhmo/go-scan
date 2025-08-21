@@ -1,4 +1,4 @@
-//go:build ignore
+//go:build minigo
 
 package main
 

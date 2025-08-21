@@ -16,12 +16,12 @@ Instead of a simple data format like JSON or YAML, or a custom `.minigo` script,
 -   **Expressiveness**: Users can use Go's syntax, including variables and helper functions, to construct their patterns, reducing boilerplate.
 -   **Simplicity**: Users do not need to learn a new scripting language; they can use the language they are already familiar with.
 
-The configuration file will have a build tag `//go:build ignore` at the top to prevent it from being included in a normal build of the user's project. The `minigo` interpreter will execute this file to extract the configuration.
+The configuration file should have a build tag `//go:build minigo` at the top. This prevents the file from being included in a normal build of the user's project while clearly indicating its purpose for `go-scan` tools. The `minigo` interpreter will execute this file to extract the configuration.
 
-### Example Configuration (`patterns.go`)
+### Example Configuration (`docgen.go`)
 
 ```go
-//go:build ignore
+//go:build minigo
 
 // This is a configuration file for docgen.
 package main
@@ -105,6 +105,45 @@ A comprehensive integration test will be added to `examples/docgen/main_test.go`
 2.  A new test case will run `docgen` against this sample API, using the `--patterns` flag.
 3.  The test will compare the generated OpenAPI output against a golden file to ensure the custom patterns were correctly applied and the request/response bodies were properly identified.
 
-## 4. Conclusion
+## 4. Future Directions
+
+The current implementation uses `minigo` to evaluate a configuration file that returns a data structure (a slice of maps). The analysis logic itself (the `Apply` function in the `Pattern` struct) still resides in compiled Go code within `docgen`.
+
+A powerful future enhancement would be to allow the analysis logic itself to be defined in the `minigo` script. This would look something like this:
+
+```go
+// future-docgen.go
+//go:build minigo
+
+package main
+
+// Define a pattern for a custom response function.
+var Patterns = []map[string]any{
+    {
+        "Key": "github.com/my-org/my-app/utils.SendCustom",
+
+        // Instead of a "Type", provide a minigo function.
+        "Apply": func(interp, analyzer, args) {
+            // This code would be executed by minigo within symgo.
+            op := analyzer.OperationStack()[0]
+
+            // Script would need access to symgo's object model
+            // and openapi struct definitions to manipulate the spec.
+            schema := interp.BuildSchemaForType(args[2])
+            op.Responses["200"].Content["application/json"].Schema = schema
+        },
+    },
+}
+```
+
+### Challenges
+
+To achieve this, several enhancements to the `symgo` and `minigo` bridge would be required:
+-   **Function Passing**: A mechanism to pass a `minigo` function (`*object.Function`) into `symgo` and have `symgo` call it as an intrinsic.
+-   **FFI for `symgo`**: The `minigo` script would need access to the `symgo.Analyzer` instance and the `openapi` data structures. This would require a deeper foreign function interface (FFI) to expose parts of the `symgo` and `docgen` internals to the script environment.
+
+This would represent a significant step towards a fully scriptable analysis engine, offering the ultimate level of flexibility.
+
+## 5. Conclusion
 
 This approach provides a powerful and flexible way for users to extend `docgen`'s analysis capabilities. By using Go files for configuration, it maintains a high degree of usability and leverages the existing Go ecosystem for tooling support, aligning well with the overall philosophy of the `go-scan` project.

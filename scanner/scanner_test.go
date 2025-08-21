@@ -503,6 +503,14 @@ func TestScanWithOverlay(t *testing.T) {
 }
 
 func TestResolve_NonExistentLocalType(t *testing.T) {
+	// This test is written as a pure unit test, manually constructing the PackageInfo
+	// and FieldType structs. This is done to directly test the Resolve method's logic
+	// for handling local types, while bypassing the ScanFiles function.
+	// NOTE: There appears to be a deeper issue within ScanFiles that causes a panic
+	// when it processes certain files (e.g., from an overlay), which is outside the
+	// scope of fixing the Resolve method's error reporting. This test ensures the
+	// Resolve logic is correct and verified independently of the scanner's file parsing.
+
 	// 1. Manually create a PackageInfo to simulate a scanned package.
 	pkgInfo := &PackageInfo{
 		Name:       "main",
@@ -521,7 +529,6 @@ func TestResolve_NonExistentLocalType(t *testing.T) {
 	}
 
 	// 3. Attempt to resolve the type.
-	// No scanner is needed here as we are unit-testing the Resolve method directly.
 	_, err := fieldTypeToTest.Resolve(context.Background())
 
 	// 4. Assert that an error was returned.

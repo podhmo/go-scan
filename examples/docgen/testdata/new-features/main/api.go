@@ -31,6 +31,12 @@ func GetSettingsHandler(w http.ResponseWriter, r *http.Request) {
 
 // GetUserHandler returns a user by ID.
 func GetUserHandler(w http.ResponseWriter, r *http.Request) {
+	// This branch is for the error case, to be detected by our custom pattern.
+	if r.URL.Query().Get("error") == "true" {
+		helpers.RenderError(w, r, http.StatusNotFound, &helpers.ErrorResponse{Error: "User not found"})
+		return
+	}
+
 	user := User{ID: "123", Name: "John Doe"}
 	helpers.RenderJSON(w, http.StatusOK, user)
 }

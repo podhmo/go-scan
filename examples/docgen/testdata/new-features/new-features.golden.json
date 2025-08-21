@@ -37,6 +37,16 @@
                 }
               }
             }
+          },
+          "default": {
+            "description": "Default error response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/new-features_helpers_ErrorResponse"
+                }
+              }
+            }
           }
         }
       }
@@ -44,6 +54,14 @@
   },
   "components": {
     "schemas": {
+      "new-features_helpers_ErrorResponse": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string"
+          }
+        }
+      },
       "new-features_main_Settings": {
         "type": "object",
         "properties": {

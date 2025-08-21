@@ -61,9 +61,9 @@ func convertConfigsToPatterns(configs []patterns.PatternConfig, logger *slog.Log
 
 		// Validate the pattern type string and required fields.
 		switch c.Type {
-		case patterns.RequestBody, patterns.ResponseBody:
+		case patterns.RequestBody, patterns.ResponseBody, patterns.DefaultResponse:
 			// valid
-		case patterns.DefaultResponse:
+		case patterns.CustomResponse:
 			if c.StatusCode == "" {
 				return nil, fmt.Errorf("pattern %d: 'StatusCode' is required for type %q", i, c.Type)
 			}
@@ -82,8 +82,10 @@ func convertConfigsToPatterns(configs []patterns.PatternConfig, logger *slog.Log
 			result[i].Apply = patterns.HandleCustomRequestBody(c.ArgIndex)
 		case patterns.ResponseBody:
 			result[i].Apply = patterns.HandleCustomResponseBody(c.ArgIndex)
+		case patterns.CustomResponse:
+			result[i].Apply = patterns.HandleCustomResponse(c.StatusCode, c.ArgIndex)
 		case patterns.DefaultResponse:
-			result[i].Apply = patterns.HandleDefaultResponse(c.StatusCode, c.ArgIndex)
+			result[i].Apply = patterns.HandleDefaultResponse(c.ArgIndex)
 		case patterns.PathParameter, patterns.QueryParameter, patterns.HeaderParameter:
 			result[i].Apply = patterns.HandleCustomParameter(string(c.Type), c.Name, c.Description, c.ArgIndex)
 		default:

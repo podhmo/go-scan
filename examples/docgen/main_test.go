@@ -256,29 +256,25 @@ func TestDocgen_fullParameters(t *testing.T) {
 
 func TestDocgen_newFeatures(t *testing.T) {
 	// This test verifies the new features: map support and default error responses.
-	const apiPath = "." // Use "." to scan the current module.
-	goldenFile := "testdata/new-features/new-features.golden.json"
-
-	// Setup: Change directory to the testdata so the module can be resolved.
-	wd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("could not get working directory: %v", err)
-	}
-	if err := os.Chdir("testdata/new-features"); err != nil {
-		t.Fatalf("could not change directory: %v", err)
-	}
-	defer os.Chdir(wd)
+	// It is configured to run from the 'examples/docgen' directory and use
+	// goscan.WithWorkDir to point to the test module, mirroring the setup
+	// in the passing symgo_intramodule_test.go.
+	const apiPath = "new-features/main" // The module name to analyze
+	moduleDir := "testdata/new-features"
+	patternsFile := filepath.Join(moduleDir, "patterns.go")
+	goldenFile := filepath.Join(moduleDir, "new-features.golden.json")
 
 	logger := slog.New(slog.NewJSONHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
 	// Load custom patterns from the config file.
-	customPatterns, err := LoadPatternsFromConfig("patterns.go", logger)
+	customPatterns, err := LoadPatternsFromConfig(patternsFile, logger)
 	if err != nil {
 		t.Fatalf("failed to load custom patterns: %v", err)
 	}
 
 	// Create a scanner configured to find the new module.
 	s, err := goscan.New(
+		goscan.WithWorkDir(moduleDir), // Point scanner to the module directory
 		goscan.WithGoModuleResolver(),
 		goscan.WithLogger(logger),
 	)
@@ -308,7 +304,7 @@ func TestDocgen_newFeatures(t *testing.T) {
 	}
 
 	// Compare with the golden file.
-	goldenPath := filepath.Join(wd, goldenFile)
+	goldenPath := goldenFile
 	if *update {
 		if err := os.WriteFile(goldenPath, got.Bytes(), 0644); err != nil {
 			t.Fatalf("failed to write golden file %s: %v", goldenPath, err)

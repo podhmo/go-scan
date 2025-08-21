@@ -375,6 +375,86 @@ replace example.com/prefixmod => ./local/prefixmod
 // TODO: Add tests for getReplaceDirectives specifically if complex parsing logic needs unit testing.
 // For now, its behavior is indirectly tested via TestFindPackageDirWithReplace.
 
+func TestPathToImport(t *testing.T) {
+	// 1. Setup parent module structure
+	parentDir, err := os.MkdirTemp("", "parent-module-*")
+	if err != nil {
+		t.Fatalf("Failed to create parent temp dir: %v", err)
+	}
+	defer os.RemoveAll(parentDir)
+
+	if err := os.WriteFile(filepath.Join(parentDir, "go.mod"), []byte("module example.com/parent\n"), 0644); err != nil {
+		t.Fatalf("Failed to write parent go.mod: %v", err)
+	}
+	dependencyDir := filepath.Join(parentDir, "dependency")
+	if err := os.Mkdir(dependencyDir, 0755); err != nil {
+		t.Fatalf("Failed to create dependency dir: %v", err)
+	}
+
+	// 2. Setup sub-module structure inside parent
+	subDir := filepath.Join(parentDir, "sub")
+	if err := os.Mkdir(subDir, 0755); err != nil {
+		t.Fatalf("Failed to create sub dir: %v", err)
+	}
+	subGoModContent := `
+module example.com/parent/sub
+go 1.16
+replace example.com/parent => ../
+`
+	if err := os.WriteFile(filepath.Join(subDir, "go.mod"), []byte(subGoModContent), 0644); err != nil {
+		t.Fatalf("Failed to write sub go.mod: %v", err)
+	}
+	subPackageDir := filepath.Join(subDir, "pkg")
+	if err := os.Mkdir(subPackageDir, 0755); err != nil {
+		t.Fatalf("Failed to create sub package dir: %v", err)
+	}
+
+	// 3. Create locator for the sub-module
+	l, err := New(subDir)
+	if err != nil {
+		t.Fatalf("New() failed in sub-directory: %v", err)
+	}
+
+	testCases := []struct {
+		name        string
+		absPath     string
+		expected    string
+		expectErr   bool
+	}{
+		{
+			name:     "path inside sub-module",
+			absPath:  subPackageDir,
+			expected: "example.com/parent/sub/pkg",
+		},
+		{
+			name:     "path in parent module via replace",
+			absPath:  dependencyDir,
+			expected: "example.com/parent/dependency",
+		},
+		{
+			name: "path outside of any known module",
+			absPath: func() string {
+				otherDir, _ := os.MkdirTemp("", "other-*")
+				t.Cleanup(func() { os.RemoveAll(otherDir) })
+				return otherDir
+			}(),
+			expectErr: true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := l.PathToImport(tc.absPath)
+			if (err != nil) != tc.expectErr {
+				t.Fatalf("PathToImport() error = %v, wantErr %v", err, tc.expectErr)
+			}
+			if !tc.expectErr && got != tc.expected {
+				t.Errorf("PathToImport() got = %v, want %v", got, tc.expected)
+			}
+		})
+	}
+}
+
 func TestFindPackageDirWithReplaceParent(t *testing.T) {
 	// This test simulates a common scenario in development where a tool (sub-module)
 	// wants to use the development version of its dependency (the parent module).

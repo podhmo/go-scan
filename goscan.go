@@ -429,8 +429,20 @@ func (s *Scanner) ScanPackage(ctx context.Context, pkgPath string) (*scanner.Pac
 			importPath = filepath.Base(absPkgPath) // Fallback
 		} else if modulePath == "" { // Locator initialized but no go.mod?
 			return nil, fmt.Errorf("module path is empty, but ScanPackage called for %s. Locator issue or not in module?", absPkgPath)
-		} else { // Inside a module context, but pkgPath is outside moduleRoot
-			return nil, fmt.Errorf("package directory %s is outside the module root %s, cannot determine canonical import path", absPkgPath, moduleRoot)
+		}
+		// The original `else` block here was too restrictive. It prevented scanning
+		// packages resolved via a `replace` directive that points outside the main
+		// module's root directory. The locator is responsible for finding the correct
+		// directory for an import path, and `go-scan` should trust that result.
+		// A new mechanism is needed to get the import path for a directory that
+		// might be outside the module root, but we should not fail here.
+		// For now, we'll try to find the import path via the locator again.
+		if importPath == "" {
+			var err error
+			importPath, err = s.locator.PathToImport(absPkgPath)
+			if err != nil {
+				return nil, fmt.Errorf("could not determine import path for directory %s: %w", absPkgPath, err)
+			}
 		}
 	}
 
@@ -661,9 +673,12 @@ func (s *Scanner) ScanFiles(ctx context.Context, filePaths []string) (*scanner.P
 	var importPath string
 
 	if modulePath != "" && moduleRoot != "" { // Only attempt module-based import path if module context is valid
-		if !strings.HasPrefix(pkgDirAbs, moduleRoot) {
-			return nil, fmt.Errorf("package directory %s is outside the module root %s, cannot determine module-relative import path", pkgDirAbs, moduleRoot)
-		}
+		// if !strings.HasPrefix(pkgDirAbs, moduleRoot) {
+		// 	// This check is too strict for modules that use `replace` directives
+		// 	// to point to a parent directory. The locator has already resolved the
+		// 	// import path to this directory, so we should trust it.
+		// 	return nil, fmt.Errorf("package directory %s is outside the module root %s, cannot determine module-relative import path", pkgDirAbs, moduleRoot)
+		// }
 		relPath, err := filepath.Rel(moduleRoot, pkgDirAbs)
 		if err != nil {
 			return nil, fmt.Errorf("could not determine relative path for %s from module root %s: %w", pkgDirAbs, moduleRoot, err)

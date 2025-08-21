@@ -29,5 +29,6 @@
         "operationId": "ref-and-rename_pkg2_ListItems"
       }
     }
-  }
+  },
+  "components": {}
 }

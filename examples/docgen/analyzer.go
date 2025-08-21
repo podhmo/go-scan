@@ -45,6 +45,9 @@ func NewAnalyzer(s *goscan.Scanner, logger *slog.Logger, options ...any) (*Analy
 				Version: "0.0.1",
 			},
 			Paths: make(map[string]*openapi.PathItem),
+			Components: &openapi.Components{
+				Schemas: make(map[string]*openapi.Schema),
+			},
 		},
 	}
 

@@ -17,6 +17,16 @@ type Analyzer interface {
 	OperationStack() []*openapi.Operation
 }
 
+// PatternType defines the type of analysis to perform for a custom pattern.
+type PatternType string
+
+const (
+	// RequestBody indicates the pattern should analyze a function argument as a request body.
+	RequestBody PatternType = "requestBody"
+	// ResponseBody indicates the pattern should analyze a function argument as a response body.
+	ResponseBody PatternType = "responseBody"
+)
+
 // PatternConfig defines a user-configurable pattern for docgen analysis.
 // It maps a function call to a specific analysis type.
 type PatternConfig struct {
@@ -26,8 +36,7 @@ type PatternConfig struct {
 	Key string
 
 	// Type specifies the kind of analysis to perform.
-	// Supported values: "requestBody", "responseBody".
-	Type string
+	Type PatternType
 
 	// ArgIndex is the 0-based index of the function argument to analyze.
 	// For "requestBody", this is the argument that will be decoded into.

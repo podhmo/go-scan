@@ -62,17 +62,32 @@ func convertMapsToPatternConfigs(mapConfigs []map[string]any) ([]patterns.Patter
 		if !ok {
 			return nil, fmt.Errorf("pattern %d: 'Key' must be a string", i)
 		}
-		typ, ok := m["Type"].(string)
+		typStr, ok := m["Type"].(string)
 		if !ok {
-			return nil, fmt.Errorf("pattern %d: 'Type' must be a string", i)
+			// This also handles the case where minigo passes the enum value directly.
+			// The underlying type of the enum is string, so we can cast it.
+			typ, ok := m["Type"].(patterns.PatternType)
+			if !ok {
+				return nil, fmt.Errorf("pattern %d: 'Type' must be a string or patterns.PatternType", i)
+			}
+			typStr = string(typ)
 		}
 		argIndex, ok := m["ArgIndex"].(int64) // minigo unmarshals numbers as int64
 		if !ok {
 			return nil, fmt.Errorf("pattern %d: 'ArgIndex' must be an integer", i)
 		}
+
+		// Validate the pattern type string.
+		switch patterns.PatternType(typStr) {
+		case patterns.RequestBody, patterns.ResponseBody:
+			// valid
+		default:
+			return nil, fmt.Errorf("pattern %d: unknown 'Type' value %q", i, typStr)
+		}
+
 		configs[i] = patterns.PatternConfig{
 			Key:      key,
-			Type:     typ,
+			Type:     patterns.PatternType(typStr),
 			ArgIndex: int(argIndex),
 		}
 	}
@@ -88,11 +103,12 @@ func convertConfigsToPatterns(configs []patterns.PatternConfig, logger *slog.Log
 		result[i].Key = c.Key
 
 		switch c.Type {
-		case "requestBody":
+		case patterns.RequestBody:
 			result[i].Apply = patterns.HandleCustomRequestBody(c.ArgIndex)
-		case "responseBody":
+		case patterns.ResponseBody:
 			result[i].Apply = patterns.HandleCustomResponseBody(c.ArgIndex)
 		default:
+			// This case should be unreachable due to validation in convertMapsToPatternConfigs
 			return nil, fmt.Errorf("unknown pattern type %q for key %q", c.Type, c.Key)
 		}
 		logger.Debug("loaded custom pattern", "key", c.Key, "type", c.Type, "argIndex", c.ArgIndex)

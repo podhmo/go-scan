@@ -416,10 +416,10 @@ replace example.com/parent => ../
 	}
 
 	testCases := []struct {
-		name        string
-		absPath     string
-		expected    string
-		expectErr   bool
+		name      string
+		absPath   string
+		expected  string
+		expectErr bool
 	}{
 		{
 			name:     "path inside sub-module",

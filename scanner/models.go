@@ -53,6 +53,7 @@ type PackageInfo struct {
 	Name       string
 	Path       string
 	ImportPath string // Added: Canonical import path of the package
+	ModulePath string // The go module path this package belongs to.
 	Files      []string
 	Types      []*TypeInfo
 	Constants  []*ConstantInfo

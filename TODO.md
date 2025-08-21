@@ -71,6 +71,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 
 - [x] **Fix `docgen` integration test**: The `examples/docgen/main_test.go` was previously skipped because it failed to generate a response schema for handlers that make calls on a bound interface (`http.ResponseWriter`). This was caused by two issues: 1) a state propagation problem where side effects on the `openapi.Operation` object were lost, and 2) an evaluator bug where `[]byte` type conversions were not handled, preventing intrinsics from being called. Both issues have been resolved.
 - [ ] **Extend Custom Patterns**: Extend the `minigo`-based pattern system to support configuring path and query parameter extraction, similar to how `requestBody` and `responseBody` are handled now.
+- [x] **Implement full intra-module recursive evaluation**: Enhanced the `symgo` evaluator to distinguish between intra-module and extra-module function calls, recursively evaluating the former as specified in the design plan.
 
 A set of tasks to improve the `symgo` engine and the `docgen` tool based on the analysis in `docgen/ja/from-docgen.md`.
 
@@ -91,4 +92,3 @@ A set of tasks to improve the `symgo` engine and the `docgen` tool based on the 
 ### External Package Resolution Improvements
 - [x] **Fix Module-Aware Resolution in Test Environments**: The `symgo` engine relies on a module-aware `go-scan` instance to resolve types from external packages (including the standard library like `net/http`). This resolution was failing in test environments, causing method calls on external interfaces to be missed. This has been resolved by refactoring the `symgo` evaluator to use the top-level `goscan.Scanner`, ensuring it has the correct module context.
 - [x] **Improve External Package Support in `scantest`**: The `scantest` helper library currently does not use a module-aware scanner by default, making it difficult to test code that relies on types from external packages (including the standard library). The `scantest.Run` function should be updated to use `goscan.WithGoModuleResolver()` automatically, or the existing tests that need it should be updated to provide a properly configured scanner.
-- [ ] **Standardize Import Handling in `minigo` and `symgo`**: Both `minigo` and `symgo` have their own implementations for lazy-loading imported packages. These should be reviewed, compared, and potentially unified into a shared mechanism within `go-scan` to reduce code duplication and ensure consistent behavior.

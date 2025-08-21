@@ -13,4 +13,11 @@ var Patterns = []patterns.PatternConfig{
 		Type:     patterns.ResponseBody,
 		ArgIndex: 2, // The 3rd argument `data any` is what we want to analyze.
 	},
+	{
+		Key:         "main.GetPetID",
+		Type:        patterns.PathParameter,
+		Name:        "petID",
+		Description: "ID of the pet to fetch",
+		ArgIndex:    0, // The *http.Request argument
+	},
 }

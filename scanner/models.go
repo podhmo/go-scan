@@ -70,7 +70,9 @@ func (p *PackageInfo) Lookup(name string) *TypeInfo {
 	p.lookupOnce.Do(func() {
 		p.lookup = make(map[string]*TypeInfo, len(p.Types))
 		for _, t := range p.Types {
-			p.lookup[t.Name] = t
+			if t != nil {
+				p.lookup[t.Name] = t
+			}
 		}
 	})
 	return p.lookup[name]
@@ -256,6 +258,7 @@ type FieldType struct {
 	Resolver       PackageResolver `json:"-"` // For lazy-loading the type definition.
 	FullImportPath string          `json:"-"` // Full import path of the type, e.g., "example.com/project/models".
 	TypeName       string          `json:"-"` // The name of the type within its package, e.g., "User".
+	currentPkg     *PackageInfo    `json:"-"` // Reference to the package where this type is used.
 }
 
 // Resolve finds and returns the full definition of the type.
@@ -375,8 +378,23 @@ func (ft *FieldType) Resolve(ctx context.Context) (*TypeInfo, error) {
 		return nil, fmt.Errorf("type %q cannot be resolved: no resolver available", ft.Name)
 	}
 	if ft.FullImportPath == "" {
-		// This is likely a type from the same package, which is already resolved.
-		return nil, nil
+		// This is a type from the same package.
+		if ft.currentPkg == nil {
+			// This can happen if a FieldType is constructed manually without setting the package context.
+			return nil, fmt.Errorf("cannot resolve local type %q: current package context is missing", ft.TypeName)
+		}
+		// Look up the type in the current package's type map.
+		typeInfo := ft.currentPkg.Lookup(ft.TypeName)
+		if typeInfo == nil {
+			if ft.IsBuiltin || ft.IsTypeParam {
+				return nil, nil // Not an error for built-ins or type params
+			}
+			// The type was not found in the current package. This is the error we want.
+			return nil, fmt.Errorf("could not resolve type %q in package %q", ft.TypeName, ft.currentPkg.ImportPath)
+		}
+		// Type was found locally.
+		ft.Definition = typeInfo
+		return typeInfo, nil
 	}
 
 	// Extract logger, inspect flag, and current resolution path from context.

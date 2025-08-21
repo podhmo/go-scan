@@ -501,3 +501,37 @@ func TestScanWithOverlay(t *testing.T) {
 		t.Error("Field names in User struct from overlay are incorrect")
 	}
 }
+
+func TestResolve_NonExistentLocalType(t *testing.T) {
+	// 1. Manually create a PackageInfo to simulate a scanned package.
+	pkgInfo := &PackageInfo{
+		Name:       "main",
+		ImportPath: "example.com/test",
+		Types: []*TypeInfo{
+			{Name: "CorrectType", Kind: StructKind},
+		},
+	}
+
+	// 2. Create a FieldType that refers to a type that does NOT exist in the package.
+	fieldTypeToTest := &FieldType{
+		Name:       "NonExistentType",
+		TypeName:   "NonExistentType",
+		currentPkg: pkgInfo,           // Set the package context directly.
+		Resolver:   &MockResolver{}, // Add a dummy resolver to pass the initial nil check.
+	}
+
+	// 3. Attempt to resolve the type.
+	// No scanner is needed here as we are unit-testing the Resolve method directly.
+	_, err := fieldTypeToTest.Resolve(context.Background())
+
+	// 4. Assert that an error was returned.
+	if err == nil {
+		t.Fatal("Expected an error when resolving a non-existent local type, but got nil")
+	}
+
+	// 5. Assert that the error message is descriptive.
+	expectedErrorMsg := `could not resolve type "NonExistentType" in package "example.com/test"`
+	if err.Error() != expectedErrorMsg {
+		t.Errorf("Expected error message %q, got %q", expectedErrorMsg, err.Error())
+	}
+}

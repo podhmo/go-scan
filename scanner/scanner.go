@@ -834,7 +834,7 @@ func (s *Scanner) parseFieldList(ctx context.Context, fields []*ast.Field, curre
 // This is the core type-parsing logic, exposed for tools that need to resolve
 // type information dynamically.
 func (s *Scanner) TypeInfoFromExpr(ctx context.Context, expr ast.Expr, currentTypeParams []*TypeParamInfo, info *PackageInfo, importLookup map[string]string) *FieldType {
-	ft := &FieldType{Resolver: s.resolver}
+	ft := &FieldType{Resolver: s.resolver, currentPkg: info}
 	switch t := expr.(type) {
 	case *ast.Ident:
 		ft.Name = t.Name
@@ -878,6 +878,7 @@ func (s *Scanner) TypeInfoFromExpr(ctx context.Context, expr ast.Expr, currentTy
 			PkgName:            elemType.PkgName,
 			TypeArgs:           elemType.TypeArgs,
 			IsResolvedByConfig: elemType.IsResolvedByConfig, // Propagate from element
+			currentPkg:         info,                         // Ensure current package context is passed
 		}
 	case *ast.SelectorExpr:
 		pkgIdent, ok := t.X.(*ast.Ident)

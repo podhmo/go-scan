@@ -133,7 +133,10 @@ func Run(t *testing.T, dir string, patterns []string, action ActionFunc, opts ..
 			return nil, fmt.Errorf("creating go.mod overlay: %w", err)
 		}
 
-		options := []scan.ScannerOption{scan.WithWorkDir(workDir)}
+		options := []scan.ScannerOption{
+			scan.WithWorkDir(workDir),
+			scan.WithGoModuleResolver(), // Automatically enable module resolution.
+		}
 		if overlay != nil {
 			options = append(options, scan.WithOverlay(overlay))
 		}

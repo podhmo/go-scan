@@ -78,6 +78,11 @@ func (s *Scanner) Fset() *token.FileSet {
 	return s.fset
 }
 
+// Locator returns the underlying locator instance.
+func (s *Scanner) Locator() *locator.Locator {
+	return s.locator
+}
+
 // BuildImportLookup creates a map of local import names to their full package paths for a given file.
 func (s *Scanner) BuildImportLookup(file *ast.File) map[string]string {
 	return s.scanner.BuildImportLookup(file)

@@ -63,6 +63,39 @@ func (e *Evaluator) GetIntrinsic(key string) (intrinsics.IntrinsicFunc, bool) {
 	return e.intrinsics.Get(key)
 }
 
+// populateEnvWithImports adds package objects for all imports in a given package
+// to the specified environment. This is crucial for resolving identifiers when
+// the evaluator steps into a function in a different package.
+func (e *Evaluator) populateEnvWithImports(env *object.Environment, pkg *scanner.PackageInfo) {
+	if pkg == nil {
+		return
+	}
+
+	// This makes a simplifying assumption that all files in the package share
+	// the same import namespace. We use the first file as a representative.
+	var representativeFile *ast.File
+	for _, f := range pkg.AstFiles {
+		representativeFile = f
+		break
+	}
+
+	if representativeFile != nil {
+		for _, imp := range representativeFile.Imports {
+			var name string
+			if imp.Name != nil {
+				name = imp.Name.Name
+			} else {
+				parts := strings.Split(strings.Trim(imp.Path.Value, `"`), "/")
+				name = parts[len(parts)-1]
+			}
+			path := strings.Trim(imp.Path.Value, `"`)
+			e.logger.Debug("populating import", "name", name, "path", path)
+			// We set it on the function's environment, not the global one.
+			env.Set(name, &object.Package{Path: path, ScannedInfo: nil, Env: object.NewEnvironment()})
+		}
+	}
+}
+
 // PushIntrinsics creates a new temporary scope for intrinsics.
 func (e *Evaluator) PushIntrinsics() {
 	e.intrinsics.Push()
@@ -1025,11 +1058,24 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 	e.logger.Debug("applyFunction", "type", fn.Type(), "value", fn.Inspect())
 	switch fn := fn.(type) {
 	case *object.Function:
-		extendedEnv, err := e.extendFunctionEnv(ctx, fn, args, pkg)
+		// When applying a function, the package context must switch to the function's package.
+		targetPkg := fn.Package
+		if targetPkg == nil {
+			// Fallback to the caller's package if the function's package is not set.
+			// This might happen in older tests or simple single-file scenarios.
+			targetPkg = pkg
+		}
+
+		extendedEnv, err := e.extendFunctionEnv(ctx, fn, args, targetPkg)
 		if err != nil {
 			return newError(fn.Decl.Pos(), "failed to extend function env: %v", err)
 		}
-		evaluated := e.Eval(ctx, fn.Body, extendedEnv, pkg)
+
+		// When we cross a package boundary to evaluate a function, we need to
+		// populate the new environment with the imports of that new package.
+		e.populateEnvWithImports(extendedEnv, targetPkg)
+
+		evaluated := e.Eval(ctx, fn.Body, extendedEnv, targetPkg)
 		if isError(evaluated) {
 			return evaluated
 		}

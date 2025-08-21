@@ -1,0 +1,113 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Sample API",
+    "version": "0.0.1"
+  },
+  "paths": {
+    "/profile": {
+      "get": {
+        "summary": "GetProfile",
+        "description": "GetProfile returns a user profile, which is a map.\nIt conditionally adds a field to test if the analyzer picks it up as an optional field.",
+        "operationId": "GetProfile",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "email": {
+                      "type": "string"
+                    },
+                    "id": {
+                      "type": "integer",
+                      "format": "int32"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "role": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/settings": {
+      "get": {
+        "summary": "GetSettings",
+        "description": "GetSettings returns a map of settings.\nThis tests the `map[string]any` response type.",
+        "operationId": "GetSettings",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/users": {
+      "get": {
+        "summary": "GetUser",
+        "description": "GetUser returns a user or an error.\nIt uses a helper that our custom `defaultResponse` pattern will detect.",
+        "operationId": "GetUser",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "integer",
+                      "format": "int32"
+                    },
+                    "name": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Response for status code 404",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "unsupported type kind",
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

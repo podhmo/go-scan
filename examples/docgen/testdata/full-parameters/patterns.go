@@ -11,7 +11,7 @@ var Patterns = []patterns.PatternConfig{
 		Type:        patterns.QueryParameter,
 		Name:        "filter", // This is hardcoded for this example
 		Description: "A filter for the resource list.",
-		ArgIndex:    1,        // The 'key' argument
+		ArgIndex:    1, // The 'key' argument
 	},
 	{
 		Key:         "full-parameters.GetHeader",

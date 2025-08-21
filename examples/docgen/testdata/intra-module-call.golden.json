@@ -1,0 +1,15 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Sample API",
+    "version": "0.0.1"
+  },
+  "paths": {
+    "/user": {
+      "get": {
+        "description": "GetUserHandler handles requests to get a user.\nIt calls a helper function from another package in the same module.",
+        "operationId": "GetUserHandler"
+      }
+    }
+  }
+}

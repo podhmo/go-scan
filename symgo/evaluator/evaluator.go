@@ -133,6 +133,7 @@ func (e *Evaluator) Eval(ctx context.Context, node ast.Node, env *object.Environ
 			Parameters: n.Type.Params,
 			Body:       n.Body,
 			Env:        env,
+			Package:    pkg,
 		}
 	case *ast.ArrayType:
 		// For expressions like `[]byte("foo")`, the `[]byte` part is an ArrayType.
@@ -365,6 +366,7 @@ func (e *Evaluator) evalFile(ctx context.Context, file *ast.File, env *object.En
 				Body:       d.Body,
 				Env:        env,
 				Decl:       d,
+				Package:    pkg,
 			}
 			env.Set(d.Name.Name, fn)
 		}
@@ -475,31 +477,62 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 			}
 			val.ScannedInfo = pkgInfo
 		}
-		if val.Env.IsEmpty() {
+		// If the symbol is already in the package's environment, return it.
+		if symbol, ok := val.Env.Get(n.Sel.Name); ok {
+			return symbol
+		}
+
+		// Resolve the symbol on-demand. Check if it's an intra-module call.
+		isSameModule := pkg != nil && pkg.ModulePath != "" && strings.HasPrefix(val.ScannedInfo.ImportPath, pkg.ModulePath)
+
+		if isSameModule {
+			// This is a call to a package within the same module.
+			// Attempt to resolve it to a real, evaluatable function.
 			for _, f := range val.ScannedInfo.Functions {
-				if ast.IsExported(f.Name) {
-					if _, ok := val.Env.Get(f.Name); !ok {
-						val.Env.Set(f.Name, &object.SymbolicPlaceholder{Reason: fmt.Sprintf("external func %s.%s", val.Name, f.Name)})
+				if f.Name == n.Sel.Name {
+					if !ast.IsExported(f.Name) {
+						continue // Cannot access unexported functions.
 					}
-				}
-			}
-			for _, c := range val.ScannedInfo.Constants {
-				if ast.IsExported(c.Name) {
-					if _, ok := val.Env.Get(c.Name); !ok {
-						val.Env.Set(c.Name, &object.SymbolicPlaceholder{Reason: fmt.Sprintf("external const %s.%s", val.Name, c.Name)})
+					// Create a real Function object that can be recursively evaluated.
+					fn := &object.Function{
+						Name:       f.AstDecl.Name,
+						Parameters: f.AstDecl.Type.Params,
+						Body:       f.AstDecl.Body,
+						Env:        val.Env, // Use the target package's environment.
+						Decl:       f.AstDecl,
+						Package:    val.ScannedInfo,
 					}
+					val.Env.Set(n.Sel.Name, fn) // Cache in the package's env for subsequent calls.
+					return fn
 				}
 			}
 		}
-		symbol, ok := val.Env.Get(n.Sel.Name)
-		if !ok {
-			key := val.Path + "." + n.Sel.Name
-			if intrinsicFn, ok := e.intrinsics.Get(key); ok {
-				return &object.Intrinsic{Fn: intrinsicFn}
+
+		// If it's an extra-module call, or not a resolvable function, treat it as a placeholder.
+		// This is the default behavior for external dependencies.
+		var placeholder object.Object
+		// Check if the symbol is a function to enrich the placeholder.
+		var funcInfo *scanner.FunctionInfo
+		for _, f := range val.ScannedInfo.Functions {
+			if f.Name == n.Sel.Name {
+				funcInfo = f
+				break
 			}
-			return newError(n.Pos(), "undefined symbol: %s.%s", val.Name, n.Sel.Name)
 		}
-		return symbol
+
+		if funcInfo != nil {
+			placeholder = &object.SymbolicPlaceholder{
+				Reason:         fmt.Sprintf("external func %s.%s", val.Name, n.Sel.Name),
+				UnderlyingFunc: funcInfo,
+				Package:        val.ScannedInfo,
+			}
+		} else {
+			// Not a function, so it's likely a var or const. Create a generic placeholder.
+			placeholder = &object.SymbolicPlaceholder{Reason: fmt.Sprintf("external symbol %s.%s", val.Name, n.Sel.Name)}
+		}
+
+		val.Env.Set(n.Sel.Name, placeholder)
+		return placeholder
 
 	case *object.Instance:
 		key := fmt.Sprintf("(%s).%s", val.TypeName, n.Sel.Name)
@@ -610,6 +643,30 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 			}
 		}
 
+		// Handle method calls on symbolic interfaces
+		if typeInfo.Interface != nil {
+			for _, method := range typeInfo.Interface.Methods {
+				if method.Name == n.Sel.Name {
+					// The result of calling a method on a symbolic interface is another symbolic value.
+					// We determine the type of this new value from the method's return type.
+					var resultTypeInfo *scanner.TypeInfo
+					if len(method.Results) > 0 {
+						// Simplified: use the first return value.
+						resultType, _ := method.Results[0].Type.Resolve(context.Background())
+						if resultType == nil && method.Results[0].Type.IsBuiltin {
+							resultType = &scanner.TypeInfo{Name: method.Results[0].Type.Name}
+						}
+						resultTypeInfo = resultType
+					}
+
+					return &object.SymbolicPlaceholder{
+						Reason:     fmt.Sprintf("result of method call %s.%s", typeInfo.Name, method.Name),
+						BaseObject: object.BaseObject{ResolvedTypeInfo: resultTypeInfo},
+					}
+				}
+			}
+		}
+
 		return newError(n.Pos(), "undefined field or method: %s on %s", n.Sel.Name, val.Inspect())
 
 	default:
@@ -712,6 +769,11 @@ func (e *Evaluator) evalReturnStmt(ctx context.Context, n *ast.ReturnStmt, env *
 	}
 	val := e.Eval(ctx, n.Results[0], env, pkg)
 	if isError(val) {
+		return val
+	}
+	// If the evaluated result is already a ReturnValue (from a nested function call),
+	// just pass it up. Otherwise, wrap the result in a new ReturnValue.
+	if _, ok := val.(*object.ReturnValue); ok {
 		return val
 	}
 	return &object.ReturnValue{Value: val}
@@ -975,6 +1037,54 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 		return fn.Fn(args...)
 
 	case *object.SymbolicPlaceholder:
+		if fn.UnderlyingFunc != nil && fn.Package != nil {
+			// This placeholder represents an external function. We can determine its return type.
+			if fn.UnderlyingFunc.AstDecl.Type.Results != nil && len(fn.UnderlyingFunc.AstDecl.Type.Results.List) > 0 {
+				// We need a valid context for resolution, but creating one here is tricky.
+				// For now, we'll use a background context.
+				var importLookup map[string]string
+				if fn.UnderlyingFunc.AstDecl != nil {
+					file := fn.Package.Fset.File(fn.UnderlyingFunc.AstDecl.Pos())
+					if file != nil {
+						if astFile, ok := fn.Package.AstFiles[file.Name()]; ok {
+							importLookup = e.scanner.BuildImportLookup(astFile)
+						}
+					}
+				}
+
+				// We need to resolve the FieldType to a TypeInfo.
+				// To do that, we need the original AST expression for the type.
+				resultASTExpr := fn.UnderlyingFunc.AstDecl.Type.Results.List[0].Type
+				fieldType := e.scanner.TypeInfoFromExpr(context.Background(), resultASTExpr, nil, fn.Package, importLookup)
+				resolvedType, _ := fieldType.Resolve(context.Background())
+
+				if resolvedType == nil && fieldType.IsBuiltin {
+					if fieldType.Name == "error" {
+						stringFieldType := &scanner.FieldType{Name: "string", IsBuiltin: true}
+						errorMethod := &scanner.MethodInfo{
+							Name:    "Error",
+							Results: []*scanner.FieldInfo{{Type: stringFieldType}},
+						}
+						resolvedType = &scanner.TypeInfo{
+							Name:      "error",
+							Kind:      scanner.InterfaceKind,
+							Interface: &scanner.InterfaceInfo{Methods: []*scanner.MethodInfo{errorMethod}},
+						}
+					} else {
+						resolvedType = &scanner.TypeInfo{
+							Name:    fieldType.Name,
+							PkgPath: "", // Built-in types have no package path.
+							Kind:    scanner.InterfaceKind,
+						}
+					}
+				}
+
+				return &object.SymbolicPlaceholder{
+					Reason:     fmt.Sprintf("result of external call to %s", fn.UnderlyingFunc.Name),
+					BaseObject: object.BaseObject{ResolvedTypeInfo: resolvedType},
+				}
+			}
+		}
 		return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("result of calling %s", fn.Inspect())}
 
 	default:
@@ -993,8 +1103,14 @@ func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, 
 	// We assume it's in the same file as the current package context.
 	// This is a simplification.
 	var importLookup map[string]string
+	lookupPkg := fn.Package
+	if lookupPkg == nil {
+		// Fallback for functions that might not have it set (e.g. from older tests)
+		lookupPkg = pkg
+	}
+
 	if fn.Decl != nil {
-		file := pkg.Fset.File(fn.Decl.Pos())
+		file := lookupPkg.Fset.File(fn.Decl.Pos())
 		if file == nil {
 			funcName := "anonymous"
 			if fn.Name != nil {
@@ -1002,14 +1118,14 @@ func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, 
 			}
 			return nil, fmt.Errorf("could not find file for function %q", funcName)
 		}
-		astFile, ok := pkg.AstFiles[file.Name()]
+		astFile, ok := lookupPkg.AstFiles[file.Name()]
 		if !ok {
 			return nil, fmt.Errorf("could not find AST file for path: %s", file.Name())
 		}
 		importLookup = e.scanner.BuildImportLookup(astFile)
-	} else if len(pkg.AstFiles) > 0 {
+	} else if len(lookupPkg.AstFiles) > 0 {
 		// HACK: For FuncLit, just grab the first file's imports.
-		for _, astFile := range pkg.AstFiles {
+		for _, astFile := range lookupPkg.AstFiles {
 			importLookup = e.scanner.BuildImportLookup(astFile)
 			break
 		}
@@ -1023,7 +1139,7 @@ func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, 
 		arg := args[paramIndex]
 		paramIndex++
 
-		fieldType := e.scanner.TypeInfoFromExpr(ctx, field.Type, nil, pkg, importLookup)
+		fieldType := e.scanner.TypeInfoFromExpr(ctx, field.Type, nil, lookupPkg, importLookup)
 		if fieldType == nil {
 			continue
 		}

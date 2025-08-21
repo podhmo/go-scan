@@ -118,6 +118,7 @@ type C struct {
 		{Name: "Name", Type: &scanner.FieldType{Name: "string", IsBuiltin: true}, IsExported: true},
 	}
 	opts := []cmp.Option{
+		cmpopts.IgnoreUnexported(scanner.FieldType{}),
 		cmpopts.IgnoreFields(scanner.FieldType{}, "Resolver"),
 	}
 	if diff := cmp.Diff(expectedFields, resolvedFieldC.Struct.Fields, opts...); diff != "" {

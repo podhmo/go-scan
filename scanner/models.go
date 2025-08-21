@@ -377,7 +377,8 @@ func (ft *FieldType) Resolve(ctx context.Context) (*TypeInfo, error) {
 	if ft.Resolver == nil {
 		return nil, fmt.Errorf("type %q cannot be resolved: no resolver available", ft.Name)
 	}
-	if ft.FullImportPath == "" {
+	// Check for local types (they have no PkgName) before attempting cross-package resolution.
+	if ft.PkgName == "" {
 		// This is a type from the same package.
 		if ft.currentPkg == nil {
 			// This can happen if a FieldType is constructed manually without setting the package context.
@@ -386,8 +387,11 @@ func (ft *FieldType) Resolve(ctx context.Context) (*TypeInfo, error) {
 		// Look up the type in the current package's type map.
 		typeInfo := ft.currentPkg.Lookup(ft.TypeName)
 		if typeInfo == nil {
+			// Built-in types (like 'string') and type parameters (like 'T' in generics)
+			// are parsed as local types with no PkgName, but they don't have a TypeInfo definition.
+			// They are not an error.
 			if ft.IsBuiltin || ft.IsTypeParam {
-				return nil, nil // Not an error for built-ins or type params
+				return nil, nil
 			}
 			// The type was not found in the current package. This is the error we want.
 			return nil, fmt.Errorf("could not resolve type %q in package %q", ft.TypeName, ft.currentPkg.ImportPath)

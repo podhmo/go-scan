@@ -4,17 +4,17 @@ import (
 	"net/http"
 
 	admin_handlers "ref-and-rename/admin/handlers"
+	"ref-and-rename/pkg1"
 	"ref-and-rename/pkg2"
-	user_handlers "ref-and-rename/actions"
 )
 
 func NewServeMux() *http.ServeMux {
 	mux := http.NewServeMux()
 
 	// This handler uses the 'shared.Payload' struct.
-	mux.HandleFunc("GET /items", user_handlers.ListItems)
+	mux.HandleFunc("GET /items", pkg1.ListItems)
 	// This handler also uses the 'shared.Payload' struct.
-	mux.HandleFunc("GET /items/{id}", user_handlers.GetItem)
+	mux.HandleFunc("GET /items/{id}", pkg1.GetItem)
 
 	// This handler is from a different package but with the same package name 'handlers'.
 	// It should have a unique operationId.

@@ -10,6 +10,9 @@ import (
 	"log/slog"
 	"path/filepath"
 	"strings"
+	"sync"
+
+	"golang.org/x/sync/errgroup"
 )
 
 // fileParseResult holds the result of parsing a single Go source file.
@@ -29,6 +32,7 @@ type Scanner struct {
 	moduleRootDir         string
 	inspect               bool
 	logger                *slog.Logger
+	mu                    sync.Mutex
 }
 
 // FileSet returns the underlying token.FileSet used by the scanner.
@@ -210,27 +214,54 @@ func (s *Scanner) scanGoFiles(ctx context.Context, filePaths []string, pkgDirPat
 		AstFiles:   make(map[string]*ast.File),
 	}
 
-	// Stage 1 & 2: Sequential Parsing and Collecting
-	parsedFileResults := make([]fileParseResult, 0, len(filePaths))
+	// Stage 1: Parallel Parsing
+	results := make(chan fileParseResult, len(filePaths))
+	g, ctx := errgroup.WithContext(ctx)
+
 	for _, filePath := range filePaths {
-		var content any
-		if s.Overlay != nil {
-			relPath, err := filepath.Rel(s.moduleRootDir, filePath)
-			if err == nil {
-				if overlayContent, ok := s.Overlay[relPath]; ok {
-					content = overlayContent
+		fp := filePath // create a new variable for the closure
+		g.Go(func() error {
+			var content any
+			if s.Overlay != nil {
+				relPath, err := filepath.Rel(s.moduleRootDir, fp)
+				if err == nil {
+					if overlayContent, ok := s.Overlay[relPath]; ok {
+						content = overlayContent
+					}
 				}
 			}
-		}
 
-		fileAst, err := parser.ParseFile(s.fset, filePath, content, parser.ParseComments)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse file %s: %w", filePath, err)
+			// Lock the mutex to ensure that parser.ParseFile, which modifies the shared
+			// token.FileSet, is not called concurrently.
+			s.mu.Lock()
+			fileAst, err := parser.ParseFile(s.fset, fp, content, parser.ParseComments)
+			s.mu.Unlock()
+
+			select {
+			case results <- fileParseResult{filePath: fp, fileAst: fileAst, err: err}:
+				return nil
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		})
+	}
+
+	if err := g.Wait(); err != nil {
+		close(results)
+		return nil, err
+	}
+	close(results)
+
+	// Stage 2: Collect Results
+	parsedFileResults := make([]fileParseResult, 0, len(filePaths))
+	for result := range results {
+		if result.err != nil {
+			return nil, fmt.Errorf("failed to parse file %s: %w", result.filePath, result.err)
 		}
-		if fileAst.Name == nil {
+		if result.fileAst.Name == nil {
 			continue // Skip files with no package name
 		}
-		parsedFileResults = append(parsedFileResults, fileParseResult{filePath: filePath, fileAst: fileAst, err: nil})
+		parsedFileResults = append(parsedFileResults, result)
 	}
 
 	// Stage 3: Sequential Processing
@@ -809,7 +840,7 @@ func (s *Scanner) parseFieldList(ctx context.Context, fields []*ast.Field, curre
 // This is the core type-parsing logic, exposed for tools that need to resolve
 // type information dynamically.
 func (s *Scanner) TypeInfoFromExpr(ctx context.Context, expr ast.Expr, currentTypeParams []*TypeParamInfo, info *PackageInfo, importLookup map[string]string) *FieldType {
-	ft := &FieldType{Resolver: s.resolver, currentPkg: info}
+	ft := &FieldType{Resolver: s.resolver}
 	switch t := expr.(type) {
 	case *ast.Ident:
 		ft.Name = t.Name
@@ -853,7 +884,6 @@ func (s *Scanner) TypeInfoFromExpr(ctx context.Context, expr ast.Expr, currentTy
 			PkgName:            elemType.PkgName,
 			TypeArgs:           elemType.TypeArgs,
 			IsResolvedByConfig: elemType.IsResolvedByConfig, // Propagate from element
-			currentPkg:         info,                         // Ensure current package context is passed
 		}
 	case *ast.SelectorExpr:
 		pkgIdent, ok := t.X.(*ast.Ident)

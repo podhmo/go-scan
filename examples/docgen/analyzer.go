@@ -239,7 +239,7 @@ func (a *Analyzer) analyzeHandleFunc(interp *symgo.Interpreter, args []symgo.Obj
 
 	// Analyze the handler body for request/response schemas
 	if handlerDecl.Body != nil {
-		a.analyzeHandlerBody(handlerObj, op)
+		op = a.analyzeHandlerBody(handlerObj, op)
 	}
 
 	if a.OpenAPI.Paths[path] == nil {
@@ -271,17 +271,21 @@ func (a *Analyzer) analyzeHandleFunc(interp *symgo.Interpreter, args []symgo.Obj
 
 // analyzeHandlerBody analyzes the body of an HTTP handler function to find
 // request and response schemas.
-func (a *Analyzer) analyzeHandlerBody(handler *symgo.Function, op *openapi.Operation) {
+func (a *Analyzer) analyzeHandlerBody(handler *symgo.Function, op *openapi.Operation) *openapi.Operation {
+	// Capture stack size before we modify it.
+	originalStackSize := len(a.operationStack)
+	defer func() {
+		// Always restore the stack to its original size.
+		a.operationStack = a.operationStack[:originalStackSize]
+	}()
+
 	// Push the current operation onto the stack for the duration of this analysis.
 	a.operationStack = append(a.operationStack, op)
-	defer func() {
-		a.operationStack = a.operationStack[:len(a.operationStack)-1]
-	}()
 
 	pkg, err := a.Scanner.ScanPackageByPos(context.Background(), handler.Decl.Pos())
 	if err != nil {
 		fmt.Printf("warn: failed to get package for handler %q: %v\n", handler.Name.Name, err)
-		return
+		return op // Return original op on error
 	}
 
 	// Create symbolic arguments for the handler function (w, r).
@@ -290,12 +294,12 @@ func (a *Analyzer) analyzeHandlerBody(handler *symgo.Function, op *openapi.Opera
 		file := pkg.Fset.File(handler.Decl.Pos())
 		if file == nil {
 			fmt.Printf("warn: could not find file for handler %q\n", handler.Name.Name)
-			return
+			return op // Return original op on error
 		}
 		astFile, ok := pkg.AstFiles[file.Name()]
 		if !ok {
 			fmt.Printf("warn: could not find AST file for handler %q\n", handler.Name.Name)
-			return
+			return op // Return original op on error
 		}
 		importLookup := a.Scanner.BuildImportLookup(astFile)
 
@@ -331,6 +335,12 @@ func (a *Analyzer) analyzeHandlerBody(handler *symgo.Function, op *openapi.Opera
 
 	// Call the handler function with the created symbolic arguments.
 	a.interpreter.Apply(context.Background(), handler, handlerArgs, pkg)
+
+	// After Apply, the operation on the top of the stack is the one that has been modified.
+	// We retrieve it before the defer pops it.
+	finalOp := a.operationStack[len(a.operationStack)-1]
+
+	return finalOp
 }
 
 // buildHandlerIntrinsics creates the map of intrinsic handlers for analyzing

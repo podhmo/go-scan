@@ -5,6 +5,12 @@
     "version": "0.0.1"
   },
   "paths": {
+    "/pets/{petID}": {
+      "get": {
+        "description": "GetPet is a handler that uses a custom helper to get a path parameter.",
+        "operationId": "GetPet"
+      }
+    },
     "/users/{id}": {
       "get": {
         "description": "GetUser handles retrieving a user.",

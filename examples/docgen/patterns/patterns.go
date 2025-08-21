@@ -25,6 +25,12 @@ const (
 	RequestBody PatternType = "requestBody"
 	// ResponseBody indicates the pattern should analyze a function argument as a response body.
 	ResponseBody PatternType = "responseBody"
+	// PathParameter indicates the pattern should extract a path parameter.
+	PathParameter PatternType = "path"
+	// QueryParameter indicates the pattern should extract a query parameter.
+	QueryParameter PatternType = "query"
+	// HeaderParameter indicates the pattern should extract a header parameter.
+	HeaderParameter PatternType = "header"
 )
 
 // PatternConfig defines a user-configurable pattern for docgen analysis.
@@ -41,7 +47,17 @@ type PatternConfig struct {
 	// ArgIndex is the 0-based index of the function argument to analyze.
 	// For "requestBody", this is the argument that will be decoded into.
 	// For "responseBody", this is the argument that will be encoded from.
+	// For "path" or "query", this is the argument holding the parameter's value.
 	ArgIndex int
+
+	// Name is the name of the parameter.
+	// Required for "path" and "query" types.
+	// e.g., "userID"
+	Name string
+
+	// Description is the OpenAPI description for the parameter.
+	// Optional for "path" and "query" types.
+	Description string
 }
 
 // Pattern defines a mapping between a function call signature (the key)
@@ -114,6 +130,47 @@ func HandleCustomResponseBody(argIndex int) func(interp *symgo.Interpreter, a An
 
 		// The return value of the custom function is not known, so we return a placeholder.
 		return &symgo.SymbolicPlaceholder{Reason: "result of custom response body function"}
+	}
+}
+
+// HandleCustomParameter returns a pattern handler that extracts a parameter (path or query)
+// from a function argument.
+func HandleCustomParameter(in, name, description string, argIndex int) func(interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object {
+	return func(interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object {
+		op := a.OperationStack()[len(a.OperationStack())-1]
+		if len(args) <= argIndex {
+			return &symgo.SymbolicPlaceholder{Reason: fmt.Sprintf("custom %s parameter pattern: not enough args (want %d, got %d)", in, argIndex+1, len(args))}
+		}
+
+		arg := args[argIndex]
+		var schema *openapi.Schema
+
+		// Correctly determine the schema from the argument's type information.
+		typeInfo := arg.TypeInfo()
+		if typeInfo != nil && typeInfo.Underlying != nil {
+			// For parameters, we typically care about the underlying type.
+			schema = buildSchemaFromFieldType(context.Background(), typeInfo.Underlying, make(map[string]*openapi.Schema))
+		}
+
+		// If we couldn't determine a specific type (e.g., for interface{} or unresolved types), default to string.
+		if schema == nil {
+			schema = &openapi.Schema{Type: "string"}
+		}
+
+		param := &openapi.Parameter{
+			Name:        name,
+			In:          in,
+			Description: description,
+			Schema:      schema,
+		}
+		if in == "path" {
+			param.Required = true
+		}
+
+		op.Parameters = append(op.Parameters, param)
+
+		// The return value of the custom function is not known, so we return a placeholder.
+		return &symgo.SymbolicPlaceholder{Reason: fmt.Sprintf("result of custom %s parameter function", in)}
 	}
 }
 

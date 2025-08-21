@@ -59,10 +59,14 @@ func convertConfigsToPatterns(configs []patterns.PatternConfig, logger *slog.Log
 	for i, config := range configs {
 		c := config // capture loop variable
 
-		// Validate the pattern type string.
+		// Validate the pattern type string and required fields.
 		switch c.Type {
 		case patterns.RequestBody, patterns.ResponseBody:
 			// valid
+		case patterns.PathParameter, patterns.QueryParameter, patterns.HeaderParameter:
+			if c.Name == "" {
+				return nil, fmt.Errorf("pattern %d: 'Name' is required for type %q", i, c.Type)
+			}
 		default:
 			return nil, fmt.Errorf("pattern %d: unknown 'Type' value %q for key %q", i, c.Type, c.Key)
 		}
@@ -74,6 +78,8 @@ func convertConfigsToPatterns(configs []patterns.PatternConfig, logger *slog.Log
 			result[i].Apply = patterns.HandleCustomRequestBody(c.ArgIndex)
 		case patterns.ResponseBody:
 			result[i].Apply = patterns.HandleCustomResponseBody(c.ArgIndex)
+		case patterns.PathParameter, patterns.QueryParameter, patterns.HeaderParameter:
+			result[i].Apply = patterns.HandleCustomParameter(string(c.Type), c.Name, c.Description, c.ArgIndex)
 		default:
 			// This case should be unreachable due to the validation above
 			logger.Warn("unreachable: unknown pattern type", "type", c.Type, "key", c.Key)

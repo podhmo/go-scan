@@ -1,0 +1,54 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Sample API",
+    "version": "0.0.1"
+  },
+  "paths": {
+    "/resources/{resourceId}": {
+      "get": {
+        "description": "Handler that uses all parameter types.",
+        "operationId": "GetResource",
+        "parameters": [
+          {
+            "name": "resourceId",
+            "in": "path",
+            "description": "The ID of the resource.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "filter",
+            "in": "query",
+            "description": "A filter for the resource list.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-Request-ID",
+            "in": "header",
+            "description": "A unique ID for the request.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

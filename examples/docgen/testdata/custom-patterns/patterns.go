@@ -2,20 +2,15 @@
 
 package main
 
-// Define the pattern type constants directly in the minigo script
-// to avoid the complex cross-module import issues during testing.
-var (
-	RequestBody  = "requestBody"
-	ResponseBody = "responseBody"
-)
+import "github.com/podhmo/go-scan/examples/docgen/patterns"
 
 // Patterns defines the custom patterns for this test case.
-// It returns a slice of maps, which is a format minigo can handle robustly.
-var Patterns = []map[string]any{
+// It now returns a slice of `patterns.PatternConfig` structs directly,
+// which is possible due to the fix in go-scan's module resolution.
+var Patterns = []patterns.PatternConfig{
 	{
-		"Key": "custom-patterns.SendJSON",
-		// Use the locally defined constant.
-		"Type":     ResponseBody,
-		"ArgIndex": 2, // The 3rd argument `data any` is what we want to analyze.
+		Key:      "custom-patterns.SendJSON",
+		Type:     patterns.ResponseBody,
+		ArgIndex: 2, // The 3rd argument `data any` is what we want to analyze.
 	},
 }

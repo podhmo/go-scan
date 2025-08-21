@@ -10,8 +10,6 @@ import (
 	"log/slog"
 	"path/filepath"
 	"strings"
-
-	"golang.org/x/sync/errgroup"
 )
 
 // fileParseResult holds the result of parsing a single Go source file.
@@ -212,50 +210,27 @@ func (s *Scanner) scanGoFiles(ctx context.Context, filePaths []string, pkgDirPat
 		AstFiles:   make(map[string]*ast.File),
 	}
 
-	// Stage 1: Parallel Parsing
-	results := make(chan fileParseResult, len(filePaths))
-	g, ctx := errgroup.WithContext(ctx)
-
+	// Stage 1 & 2: Sequential Parsing and Collecting
+	parsedFileResults := make([]fileParseResult, 0, len(filePaths))
 	for _, filePath := range filePaths {
-		fp := filePath // create a new variable for the closure
-		g.Go(func() error {
-			var content any
-			if s.Overlay != nil {
-				relPath, err := filepath.Rel(s.moduleRootDir, fp)
-				if err == nil {
-					if overlayContent, ok := s.Overlay[relPath]; ok {
-						content = overlayContent
-					}
+		var content any
+		if s.Overlay != nil {
+			relPath, err := filepath.Rel(s.moduleRootDir, filePath)
+			if err == nil {
+				if overlayContent, ok := s.Overlay[relPath]; ok {
+					content = overlayContent
 				}
 			}
-
-			fileAst, err := parser.ParseFile(s.fset, fp, content, parser.ParseComments)
-
-			select {
-			case results <- fileParseResult{filePath: fp, fileAst: fileAst, err: err}:
-				return nil
-			case <-ctx.Done():
-				return ctx.Err()
-			}
-		})
-	}
-
-	if err := g.Wait(); err != nil {
-		close(results)
-		return nil, err
-	}
-	close(results)
-
-	// Stage 2: Collect Results
-	parsedFileResults := make([]fileParseResult, 0, len(filePaths))
-	for result := range results {
-		if result.err != nil {
-			return nil, fmt.Errorf("failed to parse file %s: %w", result.filePath, result.err)
 		}
-		if result.fileAst.Name == nil {
+
+		fileAst, err := parser.ParseFile(s.fset, filePath, content, parser.ParseComments)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse file %s: %w", filePath, err)
+		}
+		if fileAst.Name == nil {
 			continue // Skip files with no package name
 		}
-		parsedFileResults = append(parsedFileResults, result)
+		parsedFileResults = append(parsedFileResults, fileParseResult{filePath: filePath, fileAst: fileAst, err: nil})
 	}
 
 	// Stage 3: Sequential Processing

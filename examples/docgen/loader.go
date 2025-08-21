@@ -10,44 +10,48 @@ import (
 )
 
 // LoadPatternsFromConfig loads custom analysis patterns from a Go configuration file.
+// It is a wrapper around LoadPatternsFromSource.
 func LoadPatternsFromConfig(filePath string, logger *slog.Logger) ([]patterns.Pattern, error) {
-	// Step 1: Read the user's configuration file.
 	configSource, err := os.ReadFile(filePath)
 	if err != nil {
 		return nil, fmt.Errorf("could not read patterns config file %q: %w", filePath, err)
 	}
+	return LoadPatternsFromSource(configSource, logger)
+}
 
-	// Step 2: Set up the minigo interpreter.
+// LoadPatternsFromSource loads custom analysis patterns from a Go configuration source.
+func LoadPatternsFromSource(source []byte, logger *slog.Logger) ([]patterns.Pattern, error) {
+	// Step 1: Set up the minigo interpreter.
 	interp, err := minigo.NewInterpreter()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create minigo interpreter: %w", err)
 	}
 
-	// Step 3: Evaluate the script.
-	if _, err := interp.EvalString(string(configSource)); err != nil {
-		return nil, fmt.Errorf("failed to evaluate patterns config file %q: %w", filePath, err)
+	// Step 2: Evaluate the script.
+	if _, err := interp.EvalString(string(source)); err != nil {
+		return nil, fmt.Errorf("failed to evaluate patterns config source: %w", err)
 	}
 
-	// Step 4: Extract the 'Patterns' variable from the global environment.
+	// Step 3: Extract the 'Patterns' variable from the global environment.
 	patternsObj, ok := interp.GlobalEnvForTest().Get("Patterns")
 	if !ok {
-		return nil, fmt.Errorf("could not find 'Patterns' variable in config file %q", filePath)
+		return nil, fmt.Errorf("could not find 'Patterns' variable in config source")
 	}
 
-	// Step 5: Unmarshal the minigo object into a Go slice of maps.
+	// Step 4: Unmarshal the minigo object into a Go slice of maps.
 	var mapConfigs []map[string]any
 	result := minigo.Result{Value: patternsObj}
 	if err := result.As(&mapConfigs); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal 'Patterns' variable from config: %w", err)
 	}
 
-	// Step 6: Manually convert the maps to PatternConfig structs.
+	// Step 5: Manually convert the maps to PatternConfig structs.
 	configs, err := convertMapsToPatternConfigs(mapConfigs)
 	if err != nil {
 		return nil, fmt.Errorf("error in pattern config structure: %w", err)
 	}
 
-	// Step 7: Convert the data-only configs into executable patterns.
+	// Step 6: Convert the data-only configs into executable patterns.
 	return convertConfigsToPatterns(configs, logger)
 }
 

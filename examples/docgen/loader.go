@@ -68,9 +68,8 @@ func convertConfigsToPatterns(configs []patterns.PatternConfig, logger *slog.Log
 				return nil, fmt.Errorf("pattern %d: 'StatusCode' is required for type %q", i, c.Type)
 			}
 		case patterns.PathParameter, patterns.QueryParameter, patterns.HeaderParameter:
-			if c.Name == "" {
-				return nil, fmt.Errorf("pattern %d: 'Name' is required for type %q", i, c.Type)
-			}
+			// We can't easily validate that NameArgIndex and ArgIndex are set
+			// because 0 is a valid value. The runtime will handle incorrect indices.
 		default:
 			return nil, fmt.Errorf("pattern %d: unknown 'Type' value %q for key %q", i, c.Type, c.Key)
 		}
@@ -87,7 +86,7 @@ func convertConfigsToPatterns(configs []patterns.PatternConfig, logger *slog.Log
 		case patterns.DefaultResponse:
 			result[i].Apply = patterns.HandleDefaultResponse(c.ArgIndex)
 		case patterns.PathParameter, patterns.QueryParameter, patterns.HeaderParameter:
-			result[i].Apply = patterns.HandleCustomParameter(string(c.Type), c.Name, c.Description, c.ArgIndex)
+			result[i].Apply = patterns.HandleCustomParameter(string(c.Type), c.Description, c.NameArgIndex, c.ArgIndex)
 		default:
 			// This case should be unreachable due to the validation above
 			logger.Warn("unreachable: unknown pattern type", "type", c.Type, "key", c.Key)

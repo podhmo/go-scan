@@ -60,14 +60,13 @@ type PatternConfig struct {
 	// e.g., "400", "500"
 	StatusCode string
 
-	// Name is the name of the parameter.
-	// Required for "path" and "query" types.
-	// e.g., "userID"
-	Name string
-
 	// Description is the OpenAPI description for the parameter.
 	// Optional for "path" and "query" types.
 	Description string
+
+	// NameArgIndex is the 0-based index of the argument containing the parameter's name.
+	// Used for parameter patterns (`path`, `query`, `header`).
+	NameArgIndex int
 }
 
 // Pattern defines a mapping between a function call signature (the key)
@@ -118,7 +117,6 @@ func HandleCustomResponse(statusCode string, argIndex int) func(interp *symgo.In
 		arg := args[argIndex]
 		var schema *openapi.Schema
 
-		// This logic is similar to HandleCustomResponseBody
 		if slice, ok := arg.(*symgo.Slice); ok {
 			schema = buildSchemaFromFieldType(context.Background(), a, slice.FieldType, make(map[string]*openapi.Schema))
 		} else {
@@ -132,14 +130,11 @@ func HandleCustomResponse(statusCode string, argIndex int) func(interp *symgo.In
 			if op.Responses == nil {
 				op.Responses = make(map[string]*openapi.Response)
 			}
-			// Unlike HandleCustomResponseBody, we use the specified status code.
 			op.Responses[statusCode] = &openapi.Response{
-				Description: fmt.Sprintf("Response for status code %s", statusCode), // A generic description
+				Description: fmt.Sprintf("Response for status code %s", statusCode),
 				Content:     map[string]openapi.MediaType{"application/json": {Schema: schema}},
 			}
 		}
-
-		// The return value of the custom function is not known, so we return a placeholder.
 		return &symgo.SymbolicPlaceholder{Reason: "result of custom response function"}
 	}
 }
@@ -156,7 +151,6 @@ func HandleDefaultResponse(argIndex int) func(interp *symgo.Interpreter, a Analy
 		arg := args[argIndex]
 		var schema *openapi.Schema
 
-		// This logic is similar to HandleCustomResponseBody
 		if slice, ok := arg.(*symgo.Slice); ok {
 			schema = buildSchemaFromFieldType(context.Background(), a, slice.FieldType, make(map[string]*openapi.Schema))
 		} else {
@@ -175,8 +169,6 @@ func HandleDefaultResponse(argIndex int) func(interp *symgo.Interpreter, a Analy
 				Content:     map[string]openapi.MediaType{"application/json": {Schema: schema}},
 			}
 		}
-
-		// The return value of the custom function is not known, so we return a placeholder.
 		return &symgo.SymbolicPlaceholder{Reason: "result of default response function"}
 	}
 }
@@ -219,31 +211,38 @@ func HandleCustomResponseBody(argIndex int) func(interp *symgo.Interpreter, a An
 }
 
 // HandleCustomParameter returns a pattern handler that extracts a parameter (path or query)
-// from a function argument.
-func HandleCustomParameter(in, name, description string, argIndex int) func(interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object {
+// from a function argument. The parameter's name is extracted dynamically from an argument.
+func HandleCustomParameter(in, description string, nameArgIndex, valueArgIndex int) func(interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object {
 	return func(interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object {
 		op := a.OperationStack()[len(a.OperationStack())-1]
-		if len(args) <= argIndex {
-			return &symgo.SymbolicPlaceholder{Reason: fmt.Sprintf("custom %s parameter pattern: not enough args (want %d, got %d)", in, argIndex+1, len(args))}
+		if len(args) <= nameArgIndex {
+			return &symgo.SymbolicPlaceholder{Reason: fmt.Sprintf("custom %s parameter pattern: not enough args for name (want %d, got %d)", in, nameArgIndex+1, len(args))}
+		}
+		if len(args) <= valueArgIndex {
+			return &symgo.SymbolicPlaceholder{Reason: fmt.Sprintf("custom %s parameter pattern: not enough args for value (want %d, got %d)", in, valueArgIndex+1, len(args))}
 		}
 
-		arg := args[argIndex]
-		var schema *openapi.Schema
+		// Extract the parameter name from the specified argument.
+		nameObj, ok := args[nameArgIndex].(*symgo.String)
+		if !ok {
+			// If the name is not a string literal, we can't determine it statically.
+			return &symgo.SymbolicPlaceholder{Reason: fmt.Sprintf("custom %s parameter pattern: name argument at index %d is not a string literal", in, nameArgIndex)}
+		}
+		paramName := nameObj.Value
 
-		// Correctly determine the schema from the argument's type information.
+		// Extract the schema from the value argument's type.
+		arg := args[valueArgIndex]
+		var schema *openapi.Schema
 		typeInfo := arg.TypeInfo()
 		if typeInfo != nil && typeInfo.Underlying != nil {
-			// For parameters, we typically care about the underlying type.
 			schema = buildSchemaFromFieldType(context.Background(), a, typeInfo.Underlying, make(map[string]*openapi.Schema))
 		}
-
-		// If we couldn't determine a specific type (e.g., for interface{} or unresolved types), default to string.
 		if schema == nil {
 			schema = &openapi.Schema{Type: "string"}
 		}
 
 		param := &openapi.Parameter{
-			Name:        name,
+			Name:        paramName,
 			In:          in,
 			Description: description,
 			Schema:      schema,

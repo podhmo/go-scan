@@ -43,9 +43,9 @@ The `patterns.PatternConfig` struct has the following fields:
   - For methods: `"<module-path>/<package-name>.<receiver>.<method-name>"`
     - Example: `"myapp/models.(*User).GetProfile"`
 - `Type` (PatternType): **Required.** The type of analysis to perform. See the "Pattern Types" section below for all available options.
-- `ArgIndex` (int): **Required.** The 0-based index of the function argument to analyze.
+- `ArgIndex` (int): **Required.** The 0-based index of the function argument to analyze. For parameter types, this refers to the argument holding the parameter's **value**.
+- `NameArgIndex` (int): Required for parameter types. The 0-based index of the argument holding the parameter's **name**.
 - `StatusCode` (string): Required for `CustomResponse`. The HTTP status code for the response.
-- `Name` (string): Required for parameter types (`path`, `query`, `header`). The name of the parameter.
 - `Description` (string): Optional description for parameters.
 
 ## Pattern Types
@@ -68,7 +68,7 @@ Your code has a helper `helpers.RenderJSON(w, r, myData)`.
 {
     Key:      "myapp/helpers.RenderJSON",
     Type:     patterns.ResponseBody,
-    ArgIndex: 2, // The `v any` argument
+    ArgIndex: 2, // The `myData` argument
 }
 ```
 
@@ -101,14 +101,14 @@ Treats a function argument as the `default` response body. This is useful for de
 - **`ArgIndex`**: The index of the argument containing the error data structure.
 
 **Example:**
-Your code has a helper `helpers.RenderError(w, r, err)`.
+Your code has a helper `helpers.RenderDefaultError(w, r, err)`.
 
 ```go
 // patterns.go
 {
-    Key:      "myapp/helpers.RenderError",
+    Key:      "myapp/helpers.RenderDefaultError",
     Type:     patterns.DefaultResponse,
-    ArgIndex: 2, // The `err error` argument
+    ArgIndex: 2, // The `err` argument
 }
 ```
 
@@ -138,30 +138,23 @@ Your code has a helper `helpers.RenderBadRequest(w, r, validationError)`.
 
 ### `path`, `query`, `header`
 
-Extracts a parameter from a function call. This is useful when your handlers don't take `*http.Request` directly but instead get values extracted by a framework or helper.
+Extracts a parameter from a function call where the parameter's name is passed as an argument. This is useful when you have generic helper functions for extracting data from a request.
 
 - **`Type`**: `patterns.PathParameter`, `patterns.QueryParameter`, or `patterns.HeaderParameter`.
-- **`Name`**: **Required.** The name of the parameter (e.g., `"userID"`).
-- **`ArgIndex`**: The index of the argument holding the parameter's value. Its type will be used for the schema.
+- **`NameArgIndex`**: **Required.** The index of the argument containing the parameter's **name** (must be a string literal).
+- **`ArgIndex`**: **Required.** The index of the argument containing the parameter's **value**. The schema will be inferred from this argument's type. For helpers that *return* the value, this can often be pointed to an argument like `*http.Request` and the schema will default to a string.
 - **`Description`**: An optional description for the parameter.
 
 **Example:**
-Your code has helpers like `framework.GetPathValue(r, "id")` or `framework.GetQueryParam(r, "sort")`.
+Your code has a helper `framework.GetQuery(r, "sort") string`.
 
 ```go
 // patterns.go
 {
-    Key:         "myapp/framework.GetPathValue",
-    Type:        patterns.PathParameter,
-    Name:        "id", // This assumes the name is fixed or can be inferred differently.
-                      // A more advanced pattern might extract the name from another argument.
-    ArgIndex:    1,   // The argument holding the value of the path parameter.
-    Description: "The unique identifier for the resource.",
-},
-{
-    Key:      "myapp/framework.GetQueryParam",
-    Type:     patterns.QueryParameter,
-    Name:     "sort",
-    ArgIndex: 1,
+    Key:          "myapp/framework.GetQuery",
+    Type:         patterns.QueryParameter,
+    NameArgIndex: 1, // The "sort" argument
+    ArgIndex:     0, // The `*http.Request` argument, schema will default to string
 }
 ```
+This single pattern will now work for all calls to `GetQuery`, extracting the parameter name from the second argument of each call.

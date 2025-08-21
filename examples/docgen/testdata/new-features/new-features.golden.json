@@ -1,33 +1,24 @@
 {
+  "openapi": "3.1.0",
   "info": {
     "title": "Sample API",
     "version": "0.0.1"
   },
-  "openapi": "3.1.0",
   "paths": {
     "/settings": {
       "get": {
         "description": "GetSettingsHandler returns the current application settings.\nThis handler is designed to test map[string]any support.",
-        "operationId": "GetSettingsHandler",
+        "operationId": "new-features_main_GetSettingsHandler",
         "responses": {
           "200": {
+            "description": "OK",
             "content": {
               "application/json": {
                 "schema": {
-                  "properties": {
-                    "options": {
-                      "additionalProperties": {
-                        "description": "unsupported basic type: any",
-                        "type": "string"
-                      },
-                      "type": "object"
-                    }
-                  },
-                  "type": "object"
+                  "$ref": "#/components/schemas/new-features_main_Settings"
                 }
               }
-            },
-            "description": "OK"
+            }
           }
         }
       }
@@ -35,25 +26,44 @@
     "/users/{id}": {
       "get": {
         "description": "GetUserHandler returns a user by ID.",
-        "operationId": "GetUserHandler",
+        "operationId": "new-features_main_GetUserHandler",
         "responses": {
           "200": {
+            "description": "OK",
             "content": {
               "application/json": {
                 "schema": {
-                  "properties": {
-                    "id": {
-                      "type": "string"
-                    },
-                    "name": {
-                      "type": "string"
-                    }
-                  },
-                  "type": "object"
+                  "$ref": "#/components/schemas/new-features_main_User"
                 }
               }
-            },
-            "description": "OK"
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "new-features_main_Settings": {
+        "type": "object",
+        "properties": {
+          "options": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string",
+              "description": "unsupported basic type: any"
+            }
+          }
+        }
+      },
+      "new-features_main_User": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
           }
         }
       }

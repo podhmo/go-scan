@@ -8,7 +8,7 @@ paths:
             description: |-
                 slowHandler handles the GET /slow endpoint.
                 It's a slow handler to demonstrate timeouts.
-            operationId: slowHandler
+            operationId: docgen_sampleapi_slowHandler
             responses:
                 "200":
                     description: OK
@@ -21,7 +21,7 @@ paths:
             description: |-
                 getUser handles the GET /user endpoint.
                 It returns a single user by ID.
-            operationId: getUser
+            operationId: docgen_sampleapi_getUser
             parameters:
                 - name: id
                   in: query
@@ -33,20 +33,14 @@ paths:
                     content:
                         application/json:
                             schema:
-                                type: object
-                                properties:
-                                    id:
-                                        type: integer
-                                        format: int32
-                                    name:
-                                        type: string
+                                $ref: '#/components/schemas/docgen_sampleapi_User'
     /users:
         get:
             description: |-
                 listUsers handles the GET /users endpoint.
                 It returns a list of all users.
                 It accepts 'limit' and 'offset' query parameters.
-            operationId: listUsers
+            operationId: docgen_sampleapi_listUsers
             parameters:
                 - name: limit
                   in: query
@@ -64,29 +58,17 @@ paths:
                             schema:
                                 type: array
                                 items:
-                                    type: object
-                                    properties:
-                                        id:
-                                            type: integer
-                                            format: int32
-                                        name:
-                                            type: string
+                                    $ref: '#/components/schemas/docgen_sampleapi_User'
         post:
             description: |-
                 createUser handles the POST /users endpoint.
                 It creates a new user.
-            operationId: createUser
+            operationId: docgen_sampleapi_createUser
             requestBody:
                 content:
                     application/json:
                         schema:
-                            type: object
-                            properties:
-                                id:
-                                    type: integer
-                                    format: int32
-                                name:
-                                    type: string
+                            $ref: '#/components/schemas/docgen_sampleapi_User'
                 required: true
             responses:
                 "200":
@@ -94,10 +76,14 @@ paths:
                     content:
                         application/json:
                             schema:
-                                type: object
-                                properties:
-                                    id:
-                                        type: integer
-                                        format: int32
-                                    name:
-                                        type: string
+                                $ref: '#/components/schemas/docgen_sampleapi_User'
+components:
+    schemas:
+        docgen_sampleapi_User:
+            type: object
+            properties:
+                id:
+                    type: integer
+                    format: int32
+                name:
+                    type: string

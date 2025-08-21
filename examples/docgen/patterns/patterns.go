@@ -15,6 +15,7 @@ import (
 // This avoids a circular dependency.
 type Analyzer interface {
 	OperationStack() []*openapi.Operation
+	GetOpenAPI() *openapi.OpenAPI
 }
 
 // PatternType defines the type of analysis to perform for a custom pattern.
@@ -90,7 +91,7 @@ func HandleCustomRequestBody(argIndex int) func(interp *symgo.Interpreter, a Ana
 
 		typeInfo := ptr.TypeInfo()
 		if typeInfo != nil {
-			schema := BuildSchemaForType(context.Background(), typeInfo, make(map[string]*openapi.Schema))
+			schema := BuildSchemaForType(context.Background(), a, typeInfo, make(map[string]*openapi.Schema))
 			if schema != nil {
 				op.RequestBody = &openapi.RequestBody{
 					Content:  map[string]openapi.MediaType{"application/json": {Schema: schema}},
@@ -117,11 +118,11 @@ func HandleDefaultResponse(statusCode string, argIndex int) func(interp *symgo.I
 
 		// This logic is similar to HandleCustomResponseBody
 		if slice, ok := arg.(*symgo.Slice); ok {
-			schema = buildSchemaFromFieldType(context.Background(), slice.FieldType, make(map[string]*openapi.Schema))
+			schema = buildSchemaFromFieldType(context.Background(), a, slice.FieldType, make(map[string]*openapi.Schema))
 		} else {
 			typeInfo := arg.TypeInfo()
 			if typeInfo != nil {
-				schema = BuildSchemaForType(context.Background(), typeInfo, make(map[string]*openapi.Schema))
+				schema = BuildSchemaForType(context.Background(), a, typeInfo, make(map[string]*openapi.Schema))
 			}
 		}
 
@@ -154,11 +155,11 @@ func HandleCustomResponseBody(argIndex int) func(interp *symgo.Interpreter, a An
 		var schema *openapi.Schema
 
 		if slice, ok := arg.(*symgo.Slice); ok {
-			schema = buildSchemaFromFieldType(context.Background(), slice.FieldType, make(map[string]*openapi.Schema))
+			schema = buildSchemaFromFieldType(context.Background(), a, slice.FieldType, make(map[string]*openapi.Schema))
 		} else {
 			typeInfo := arg.TypeInfo()
 			if typeInfo != nil {
-				schema = BuildSchemaForType(context.Background(), typeInfo, make(map[string]*openapi.Schema))
+				schema = BuildSchemaForType(context.Background(), a, typeInfo, make(map[string]*openapi.Schema))
 			}
 		}
 
@@ -194,7 +195,7 @@ func HandleCustomParameter(in, name, description string, argIndex int) func(inte
 		typeInfo := arg.TypeInfo()
 		if typeInfo != nil && typeInfo.Underlying != nil {
 			// For parameters, we typically care about the underlying type.
-			schema = buildSchemaFromFieldType(context.Background(), typeInfo.Underlying, make(map[string]*openapi.Schema))
+			schema = buildSchemaFromFieldType(context.Background(), a, typeInfo.Underlying, make(map[string]*openapi.Schema))
 		}
 
 		// If we couldn't determine a specific type (e.g., for interface{} or unresolved types), default to string.
@@ -358,7 +359,7 @@ func handleDecode(interp *symgo.Interpreter, a Analyzer, args []symgo.Object) sy
 	}
 	typeInfo := ptr.TypeInfo()
 	if typeInfo != nil {
-		schema := BuildSchemaForType(context.Background(), typeInfo, make(map[string]*openapi.Schema))
+		schema := BuildSchemaForType(context.Background(), a, typeInfo, make(map[string]*openapi.Schema))
 		if schema != nil {
 			op.RequestBody = &openapi.RequestBody{
 				Content:  map[string]openapi.MediaType{"application/json": {Schema: schema}},
@@ -382,11 +383,11 @@ func handleEncode(interp *symgo.Interpreter, a Analyzer, args []symgo.Object) sy
 	var schema *openapi.Schema
 
 	if slice, ok := arg.(*symgo.Slice); ok {
-		schema = buildSchemaFromFieldType(context.Background(), slice.FieldType, make(map[string]*openapi.Schema))
+		schema = buildSchemaFromFieldType(context.Background(), a, slice.FieldType, make(map[string]*openapi.Schema))
 	} else {
 		typeInfo := arg.TypeInfo()
 		if typeInfo != nil {
-			schema = BuildSchemaForType(context.Background(), typeInfo, make(map[string]*openapi.Schema))
+			schema = BuildSchemaForType(context.Background(), a, typeInfo, make(map[string]*openapi.Schema))
 		}
 	}
 
@@ -443,26 +444,59 @@ func NewSymbolicInstance(interp *symgo.Interpreter, fqtn string) symgo.Object {
 // -----------------------------------------------------------------------------
 
 // BuildSchemaForType generates an OpenAPI schema for a given Go type.
-func BuildSchemaForType(ctx context.Context, typeInfo *scanner.TypeInfo, cache map[string]*openapi.Schema) *openapi.Schema {
+// If the type is a struct, it ensures the full schema is defined in the
+// components section and returns a $ref schema.
+func BuildSchemaForType(ctx context.Context, a Analyzer, typeInfo *scanner.TypeInfo, cache map[string]*openapi.Schema) *openapi.Schema {
 	if typeInfo == nil {
 		return &openapi.Schema{Type: "object", Description: "unknown type"}
 	}
 	if typeInfo.Underlying != nil {
-		return buildSchemaFromFieldType(ctx, typeInfo.Underlying, cache)
-	}
-	canonicalName := fmt.Sprintf("%s.%s", typeInfo.PkgPath, typeInfo.Name)
-	if cached, ok := cache[canonicalName]; ok {
-		return cached
+		return buildSchemaFromFieldType(ctx, a, typeInfo.Underlying, cache)
 	}
 	if typeInfo.Kind != scanner.StructKind || typeInfo.Struct == nil {
-		return &openapi.Schema{Type: "object", Description: "unsupported type kind"}
+		// Not a struct, or not a struct we can analyze.
+		// Fallback to building the schema directly without creating a component.
+		return buildSchemaFromFieldType(ctx, a, &scanner.FieldType{Definition: typeInfo}, cache)
 	}
 
+	// It's a struct. We will register it as a component.
+	doc := a.GetOpenAPI()
+	if doc.Components == nil {
+		doc.Components = &openapi.Components{}
+	}
+	if doc.Components.Schemas == nil {
+		doc.Components.Schemas = make(map[string]*openapi.Schema)
+	}
+
+	// Generate a unique name for the schema component.
+	// e.g., "github.com/podhmo/go-scan/examples/docgen/sampleapi.User" -> "docgen_sampleapi_User"
+	// This is a simplification; a robust implementation would handle non-alphanumeric characters better.
+	pkgPathForName := strings.ReplaceAll(typeInfo.PkgPath, "/", "_")
+	pkgPathForName = strings.ReplaceAll(pkgPathForName, ".", "_")
+	// take the last 2 parts of the package path
+	parts := strings.Split(pkgPathForName, "_")
+	if len(parts) > 2 {
+		pkgPathForName = strings.Join(parts[len(parts)-2:], "_")
+	}
+	schemaName := fmt.Sprintf("%s_%s", pkgPathForName, typeInfo.Name)
+
+	// If the schema is already being defined (recursion), return a ref.
+	if _, inProgress := cache[schemaName]; inProgress {
+		return &openapi.Schema{Ref: "#/components/schemas/" + schemaName}
+	}
+	// If the schema is already fully defined, return a ref.
+	if _, exists := doc.Components.Schemas[schemaName]; exists {
+		return &openapi.Schema{Ref: "#/components/schemas/" + schemaName}
+	}
+
+	// Mark this schema as "in progress" to handle recursion.
+	cache[schemaName] = nil
+
+	// Build the full schema.
 	schema := &openapi.Schema{
 		Type:       "object",
 		Properties: make(map[string]*openapi.Schema),
 	}
-	cache[canonicalName] = schema
 
 	for _, field := range typeInfo.Struct.Fields {
 		if !field.IsExported {
@@ -475,12 +509,18 @@ func BuildSchemaForType(ctx context.Context, typeInfo *scanner.TypeInfo, cache m
 		if jsonName == "" {
 			jsonName = field.Name
 		}
-		schema.Properties[jsonName] = buildSchemaFromFieldType(ctx, field.Type, cache)
+		schema.Properties[jsonName] = buildSchemaFromFieldType(ctx, a, field.Type, cache)
 	}
-	return schema
+
+	// Add the complete schema to the components and remove from progress cache.
+	doc.Components.Schemas[schemaName] = schema
+	delete(cache, schemaName)
+
+	// Return a reference to the newly created component.
+	return &openapi.Schema{Ref: "#/components/schemas/" + schemaName}
 }
 
-func buildSchemaFromFieldType(ctx context.Context, ft *scanner.FieldType, cache map[string]*openapi.Schema) *openapi.Schema {
+func buildSchemaFromFieldType(ctx context.Context, a Analyzer, ft *scanner.FieldType, cache map[string]*openapi.Schema) *openapi.Schema {
 	if ft == nil {
 		return nil
 	}
@@ -489,14 +529,14 @@ func buildSchemaFromFieldType(ctx context.Context, ft *scanner.FieldType, cache 
 		// might check ft.MapKey to ensure it's a string type.
 		return &openapi.Schema{
 			Type:                 "object",
-			AdditionalProperties: buildSchemaFromFieldType(ctx, ft.Elem, cache),
+			AdditionalProperties: buildSchemaFromFieldType(ctx, a, ft.Elem, cache),
 		}
 	}
 	if ft.IsSlice {
-		return &openapi.Schema{Type: "array", Items: buildSchemaFromFieldType(ctx, ft.Elem, cache)}
+		return &openapi.Schema{Type: "array", Items: buildSchemaFromFieldType(ctx, a, ft.Elem, cache)}
 	}
 	if ft.IsPointer {
-		return buildSchemaFromFieldType(ctx, ft.Elem, cache)
+		return buildSchemaFromFieldType(ctx, a, ft.Elem, cache)
 	}
 	if ft.IsBuiltin {
 		return buildSchemaFromBasic(ft.Name)
@@ -506,7 +546,7 @@ func buildSchemaFromFieldType(ctx context.Context, ft *scanner.FieldType, cache 
 		fmt.Printf("warn: could not resolve type %q: %v\n", ft.Name, err)
 		return &openapi.Schema{Type: "object", Description: "unresolved type"}
 	}
-	return BuildSchemaForType(ctx, typeInfo, cache)
+	return BuildSchemaForType(ctx, a, typeInfo, cache)
 }
 
 func buildSchemaFromBasic(typeName string) *openapi.Schema {

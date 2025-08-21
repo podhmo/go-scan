@@ -8,32 +8,39 @@
     "/pets/{petID}": {
       "get": {
         "description": "GetPet is a handler that uses a custom helper to get a path parameter.",
-        "operationId": "GetPet"
+        "operationId": "custom-patterns_GetPet"
       }
     },
     "/users/{id}": {
       "get": {
         "description": "GetUser handles retrieving a user.",
-        "operationId": "GetUser",
+        "operationId": "custom-patterns_GetUser",
         "responses": {
           "200": {
             "description": "OK",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "id": {
-                      "type": "integer",
-                      "format": "int32"
-                    },
-                    "name": {
-                      "type": "string"
-                    }
-                  }
+                  "$ref": "#/components/schemas/custom-patterns_User"
                 }
               }
             }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "custom-patterns_User": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "name": {
+            "type": "string"
           }
         }
       }

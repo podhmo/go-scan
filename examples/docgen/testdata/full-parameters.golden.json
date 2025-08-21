@@ -8,7 +8,7 @@
     "/resources/{resourceId}": {
       "get": {
         "description": "Handler that uses all parameter types.",
-        "operationId": "GetResource",
+        "operationId": "full-parameters_GetResource",
         "parameters": [
           {
             "name": "resourceId",

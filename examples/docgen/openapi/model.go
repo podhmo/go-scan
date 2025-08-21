@@ -3,9 +3,15 @@ package openapi
 
 // OpenAPI is the root document object of the OpenAPI specification.
 type OpenAPI struct {
-	OpenAPI string               `json:"openapi" yaml:"openapi"`
-	Info    Info                 `json:"info" yaml:"info"`
-	Paths   map[string]*PathItem `json:"paths,omitempty" yaml:"paths,omitempty"`
+	OpenAPI    string               `json:"openapi" yaml:"openapi"`
+	Info       Info                 `json:"info" yaml:"info"`
+	Paths      map[string]*PathItem `json:"paths,omitempty" yaml:"paths,omitempty"`
+	Components *Components          `json:"components,omitempty" yaml:"components,omitempty"`
+}
+
+// Components holds a set of reusable objects for different aspects of the OAS.
+type Components struct {
+	Schemas map[string]*Schema `json:"schemas,omitempty" yaml:"schemas,omitempty"`
 }
 
 // Info provides metadata about the API.

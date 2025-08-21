@@ -258,21 +258,31 @@ func unmarshal(src object.Object, dst reflect.Value) error {
 			dst.SetUint(uint64(s.Value))
 		case reflect.Float32, reflect.Float64:
 			dst.SetFloat(float64(s.Value))
+		case reflect.Interface:
+			dst.Set(reflect.ValueOf(s.Value))
 		default:
 			return fmt.Errorf("cannot unmarshal integer into %s", dst.Type())
 		}
 		return nil
 	case *object.String:
-		if dst.Kind() != reflect.String {
+		switch dst.Kind() {
+		case reflect.String:
+			dst.SetString(s.Value)
+		case reflect.Interface:
+			dst.Set(reflect.ValueOf(s.Value))
+		default:
 			return fmt.Errorf("cannot unmarshal string into %s", dst.Type())
 		}
-		dst.SetString(s.Value)
 		return nil
 	case *object.Boolean:
-		if dst.Kind() != reflect.Bool {
+		switch dst.Kind() {
+		case reflect.Bool:
+			dst.SetBool(s.Value)
+		case reflect.Interface:
+			dst.Set(reflect.ValueOf(s.Value))
+		default:
 			return fmt.Errorf("cannot unmarshal boolean into %s", dst.Type())
 		}
-		dst.SetBool(s.Value)
 		return nil
 	case *object.GoValue:
 		if !s.Value.Type().AssignableTo(dst.Type()) {

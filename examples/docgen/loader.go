@@ -109,6 +109,7 @@ func convertConfigsToPatterns(configs []patterns.PatternConfig, logger *slog.Log
 			result[i].Apply = patterns.HandleCustomResponseBody(c.ArgIndex)
 		default:
 			// This case should be unreachable due to validation in convertMapsToPatternConfigs
+			logger.Warn("unreachable: unknown pattern type", "type", c.Type, "key", c.Key)
 			return nil, fmt.Errorf("unknown pattern type %q for key %q", c.Type, c.Key)
 		}
 		logger.Debug("loaded custom pattern", "key", c.Key, "type", c.Type, "argIndex", c.ArgIndex)

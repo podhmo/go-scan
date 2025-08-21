@@ -70,6 +70,11 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 
 > Note: `docgen` is intended to be a test pilot for `symgo`. When discovering missing features or bugs in `docgen`, the preferred workflow is to return to the `symgo` engine, break the problem down into a minimal test case, add that test, and then modify the `symgo` implementation until the test passes.
 
+- [x] **Enhanced Custom Patterns for `docgen`**:
+  - [x] Implemented a true `defaultResponse` pattern for defining OpenAPI default responses.
+  - [x] Renamed the old `defaultResponse` pattern to `customResponse` for clarity.
+  - [x] Enhanced parameter patterns (`path`, `query`, `header`) to dynamically infer the parameter name from a function argument, making the patterns more reusable.
+  - [x] Added comprehensive documentation for all custom pattern types.
 - [x] **Fix `docgen` integration test**: The `examples/docgen/main_test.go` was previously skipped because it failed to generate a response schema for handlers that make calls on a bound interface (`http.ResponseWriter`). This was caused by two issues: 1) a state propagation problem where side effects on the `openapi.Operation` object were lost, and 2) an evaluator bug where `[]byte` type conversions were not handled, preventing intrinsics from being called. Both issues have been resolved.
     - [x] Re-fixed the state propagation issue by ensuring the modified `openapi.Operation` object is correctly returned from the handler body analysis.
 - [x] **Extend Custom Patterns**: Extend the `minigo`-based pattern system to support configuring path, query, and header parameter extraction, similar to how `requestBody` and `responseBody` are handled now.

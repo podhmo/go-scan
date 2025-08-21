@@ -351,6 +351,56 @@ func main() {
 	}
 }
 
+func TestInterpreter_UntypedMapInSlice(t *testing.T) {
+	input := `package main
+var data = []map[string]int{
+	{"a": 1},
+	{"b": 2, "c": 3},
+}
+`
+	i, err := NewInterpreter()
+	if err != nil {
+		t.Fatalf("NewInterpreter() failed: %v", err)
+	}
+
+	if err := i.LoadFile("test.go", []byte(input)); err != nil {
+		t.Fatalf("LoadFile() failed: %v", err)
+	}
+
+	_, err = i.Eval(context.Background())
+	if err != nil {
+		t.Fatalf("Eval() failed: %v", err)
+	}
+
+	val, ok := i.globalEnv.Get("data")
+	if !ok {
+		t.Fatalf("variable 'data' not found")
+	}
+
+	arr, ok := val.(*object.Array)
+	if !ok {
+		t.Fatalf("data is not an Array, got %T", val)
+	}
+	if len(arr.Elements) != 2 {
+		t.Fatalf("expected 2 elements, got %d", len(arr.Elements))
+	}
+
+	m1 := arr.Elements[0].(*object.Map)
+	if len(m1.Pairs) != 1 {
+		t.Fatalf("m1 should have 1 pair, got %d", len(m1.Pairs))
+	}
+	key1 := &object.String{Value: "a"}
+	pair1, ok := m1.Pairs[key1.HashKey()]
+	if !ok || pair1.Value.(*object.Integer).Value != 1 {
+		t.Errorf("m1 has wrong data")
+	}
+
+	m2 := arr.Elements[1].(*object.Map)
+	if len(m2.Pairs) != 2 {
+		t.Fatalf("m2 should have 2 pairs, got %d", len(m2.Pairs))
+	}
+}
+
 func TestInterpreter_PointerReceiverMethodCall(t *testing.T) {
 	input := `package main
 

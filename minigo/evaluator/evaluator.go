@@ -1889,12 +1889,23 @@ func (e *Evaluator) evalSwitchStmt(ss *ast.SwitchStmt, env *object.Environment, 
 	return object.NIL
 }
 
-func (e *Evaluator) evalExpressions(exps []ast.Expr, env *object.Environment, fscope *object.FileScope) []object.Object {
+func (e *Evaluator) evalExpressions(exps []ast.Expr, env *object.Environment, fscope *object.FileScope, expectedElementType object.Object) []object.Object {
 	result := make([]object.Object, len(exps))
 
 	for i, exp := range exps {
-		evaluated := e.Eval(exp, env, fscope)
+		var evaluated object.Object
+		if compLit, ok := exp.(*ast.CompositeLit); ok && compLit.Type == nil {
+			if expectedElementType == nil {
+				evaluated = e.newError(compLit.Pos(), "untyped composite literal in context where type cannot be inferred")
+			} else {
+				evaluated = e.evalCompositeLitWithType(compLit, expectedElementType, env, fscope)
+			}
+		} else {
+			evaluated = e.Eval(exp, env, fscope)
+		}
+
 		if isError(evaluated) {
+			// Return a slice containing just the error to stop further processing.
 			return []object.Object{evaluated}
 		}
 		result[i] = evaluated
@@ -2400,7 +2411,7 @@ func (e *Evaluator) executeDeferredCall(deferred *object.DeferredCall, fscope *o
 		return
 	}
 
-	args := e.evalExpressions(deferred.Call.Args, deferred.Env, fscope)
+	args := e.evalExpressions(deferred.Call.Args, deferred.Env, fscope, nil)
 	if len(args) == 1 && isError(args[0]) {
 		// TODO: Handle errors in deferred call arguments.
 		return
@@ -2862,7 +2873,7 @@ func (e *Evaluator) Eval(node ast.Node, env *object.Environment, fscope *object.
 			if len(n.Results) > 0 {
 				// Case: return x, y
 				// Evaluate the expressions and assign them to the named return variables.
-				values := e.evalExpressions(n.Results, env, fscope)
+				values := e.evalExpressions(n.Results, env, fscope, nil)
 				if len(values) == 1 && isError(values[0]) {
 					return values[0]
 				}
@@ -2902,7 +2913,7 @@ func (e *Evaluator) Eval(node ast.Node, env *object.Environment, fscope *object.
 			}
 			return &object.ReturnValue{Value: val}
 		}
-		results := e.evalExpressions(n.Results, env, fscope)
+		results := e.evalExpressions(n.Results, env, fscope, nil)
 		if len(results) > 0 && isError(results[0]) {
 			return results[0]
 		}
@@ -2944,7 +2955,7 @@ func (e *Evaluator) Eval(node ast.Node, env *object.Environment, fscope *object.
 		if isError(left) {
 			return left
 		}
-		indices := e.evalExpressions(n.Indices, env, fscope)
+		indices := e.evalExpressions(n.Indices, env, fscope, nil)
 		if len(indices) == 1 && isError(indices[0]) {
 			return indices[0]
 		}
@@ -2991,7 +3002,7 @@ func (e *Evaluator) Eval(node ast.Node, env *object.Environment, fscope *object.
 		// Check if the "function" is actually a type, indicating a type conversion.
 		switch function.(type) {
 		case *object.Type, *object.ArrayType:
-			args := e.evalExpressions(n.Args, env, fscope)
+			args := e.evalExpressions(n.Args, env, fscope, nil)
 			if len(args) == 1 && isError(args[0]) {
 				return args[0]
 			}
@@ -3012,7 +3023,7 @@ func (e *Evaluator) Eval(node ast.Node, env *object.Environment, fscope *object.
 			}
 
 			// Evaluate all but the last argument normally.
-			args = e.evalExpressions(n.Args[:len(n.Args)-1], env, fscope)
+			args = e.evalExpressions(n.Args[:len(n.Args)-1], env, fscope, nil)
 			if len(args) > 0 && isError(args[len(args)-1]) {
 				return args[len(args)-1]
 			}
@@ -3033,7 +3044,7 @@ func (e *Evaluator) Eval(node ast.Node, env *object.Environment, fscope *object.
 			}
 		} else {
 			// Regular function call.
-			args = e.evalExpressions(n.Args, env, fscope)
+			args = e.evalExpressions(n.Args, env, fscope, nil)
 			if len(args) > 0 && isError(args[len(args)-1]) {
 				return args[len(args)-1]
 			}
@@ -4777,13 +4788,20 @@ func (e *Evaluator) evalGoValueSelectorExpr(node ast.Node, goVal *object.GoValue
 }
 
 func (e *Evaluator) evalCompositeLit(n *ast.CompositeLit, env *object.Environment, fscope *object.FileScope) object.Object {
+	if n.Type == nil {
+		return e.newError(n.Pos(), "untyped composite literal in context where type cannot be inferred")
+	}
 	// First, evaluate the type expression itself. This could be an identifier (MyStruct),
 	// a selector (pkg.MyStruct), an index expression (MyGeneric[int]), or a type literal ([]int).
 	typeObj := e.Eval(n.Type, env, fscope)
 	if isError(typeObj) {
 		return typeObj
 	}
+	return e.evalCompositeLitWithType(n, typeObj, env, fscope)
+}
 
+// evalCompositeLitWithType evaluates a composite literal against a given, already-evaluated type object.
+func (e *Evaluator) evalCompositeLitWithType(n *ast.CompositeLit, typeObj object.Object, env *object.Environment, fscope *object.FileScope) object.Object {
 	// Now, resolve the evaluated type object. This handles non-generic aliases.
 	// For generic types, `typeObj` will already be the instantiated type object
 	// (e.g., a StructDefinition or an ArrayType from `instantiateTypeAlias`).
@@ -4816,7 +4834,7 @@ func (e *Evaluator) evalCompositeLit(n *ast.CompositeLit, env *object.Environmen
 		return instanceObj
 
 	case *object.ArrayType:
-		elements := e.evalExpressions(n.Elts, env, fscope)
+		elements := e.evalExpressions(n.Elts, env, fscope, def.ElementType)
 		if len(elements) == 1 && isError(elements[0]) {
 			return elements[0]
 		}

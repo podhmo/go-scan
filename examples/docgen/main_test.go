@@ -11,9 +11,13 @@ import (
 	"path/filepath"
 	"testing"
 
+	"go/ast"
+	"go/token"
+
 	"github.com/google/go-cmp/cmp"
 	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/examples/docgen/openapi"
+	"github.com/podhmo/go-scan/symgo"
 	"gopkg.in/yaml.v3"
 )
 
@@ -31,7 +35,7 @@ func TestDocgen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create scanner: %v", err)
 	}
-	analyzer, err := NewAnalyzer(s, logger)
+	analyzer, err := NewAnalyzer(s, logger) // no options needed for the default test
 	if err != nil {
 		t.Fatalf("failed to create analyzer: %v", err)
 	}
@@ -133,7 +137,11 @@ func TestDocgen_withCustomPatterns(t *testing.T) {
 	}
 
 	// Create an analyzer with the custom patterns.
-	analyzer, err := NewAnalyzer(s, logger, customPatterns...)
+	var opts []any
+	for _, p := range customPatterns {
+		opts = append(opts, p)
+	}
+	analyzer, err := NewAnalyzer(s, logger, opts...)
 	if err != nil {
 		t.Fatalf("failed to create analyzer: %v", err)
 	}
@@ -178,6 +186,22 @@ func TestDocgen_withCustomPatterns(t *testing.T) {
 }
 
 func TestDocgen_fullParameters(t *testing.T) {
+	// recordingTracer is a simple implementation of symgo.Tracer that records the
+	// positions of the AST nodes it visits.
+	type recordingTracer struct {
+		visitedNodePositions map[token.Pos]bool
+	}
+
+	tracer := &recordingTracer{visitedNodePositions: make(map[token.Pos]bool)}
+
+	visit := func(node ast.Node) {
+		if node == nil {
+			return
+		}
+		tracer.visitedNodePositions[node.Pos()] = true
+	}
+
+
 	// This test is based on the scenario described in `docs/trouble-docgen.md`.
 	// It verifies that path, query, and header parameters defined via custom
 	// patterns are correctly included in the final OpenAPI specification.
@@ -211,8 +235,13 @@ func TestDocgen_fullParameters(t *testing.T) {
 		t.Fatalf("failed to create scanner: %v", err)
 	}
 
-	// Create an analyzer with the custom patterns.
-	analyzer, err := NewAnalyzer(s, logger, customPatterns...)
+	// Create an analyzer with the custom patterns and a tracer.
+	var opts []any
+	for _, p := range customPatterns {
+		opts = append(opts, p)
+	}
+	opts = append(opts, WithTracer(symgo.TracerFunc(visit)))
+	analyzer, err := NewAnalyzer(s, logger, opts...)
 	if err != nil {
 		t.Fatalf("failed to create analyzer: %v", err)
 	}
@@ -223,6 +252,48 @@ func TestDocgen_fullParameters(t *testing.T) {
 		t.Fatalf("failed to analyze package: %+v", err)
 	}
 	apiSpec := analyzer.OpenAPI
+
+	// Assert that the tracer visited all nodes in the target handler.
+	// This confirms the symbolic execution engine is not skipping parts of the function.
+	scannedPkg, err := s.ScanPackageByImport(ctx, apiPath)
+	if err != nil {
+		t.Fatalf("Could not re-scan package to find handler AST: %v", err)
+	}
+	var handlerFunc *goscan.FunctionInfo
+	for _, f := range scannedPkg.Functions {
+		if f.Name == "GetResource" {
+			handlerFunc = f
+			break
+		}
+	}
+	if handlerFunc == nil {
+		t.Fatalf("Could not find handler function 'GetResource' to verify tracer")
+	}
+
+	// Find a specific node we expect the tracer to have visited.
+	var targetNode ast.Node
+	ast.Inspect(handlerFunc.AstDecl, func(n ast.Node) bool {
+		if targetNode != nil {
+			return false // already found
+		}
+		if call, ok := n.(*ast.CallExpr); ok {
+			if sel, ok := call.Fun.(*ast.Ident); ok {
+				if sel.Name == "GetPathValue" {
+					targetNode = call
+					return false
+				}
+			}
+		}
+		return true
+	})
+
+	if targetNode == nil {
+		t.Fatalf("Could not find the target GetPathValue call in the AST")
+	}
+
+	if !tracer.visitedNodePositions[targetNode.Pos()] {
+		t.Errorf("Tracer did not visit the target GetPathValue call expression")
+	}
 
 	// Marshal the result to JSON.
 	var got bytes.Buffer
@@ -283,7 +354,11 @@ func TestDocgen_newFeatures(t *testing.T) {
 	}
 
 	// Create an analyzer with the custom patterns.
-	analyzer, err := NewAnalyzer(s, logger, customPatterns...)
+	var opts []any
+	for _, p := range customPatterns {
+		opts = append(opts, p)
+	}
+	analyzer, err := NewAnalyzer(s, logger, opts...)
 	if err != nil {
 		t.Fatalf("failed to create analyzer: %v", err)
 	}

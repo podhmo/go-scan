@@ -18,22 +18,26 @@ type Analyzer struct {
 	interpreter    *symgo.Interpreter
 	OpenAPI        *openapi.OpenAPI
 	logger         *slog.Logger
+	tracer         symgo.Tracer // Optional tracer
 	operationStack []*openapi.Operation
 	customPatterns []patterns.Pattern
 }
 
-// NewAnalyzer creates a new Analyzer.
-func NewAnalyzer(s *goscan.Scanner, logger *slog.Logger, customPatterns ...patterns.Pattern) (*Analyzer, error) {
-	interp, err := symgo.NewInterpreter(s, symgo.WithLogger(logger))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create symgo interpreter: %w", err)
-	}
+// Option is a functional option for configuring the Analyzer.
+type Option func(*Analyzer)
 
+// WithTracer sets a tracer on the analyzer to instrument the symbolic execution.
+func WithTracer(tracer symgo.Tracer) Option {
+	return func(a *Analyzer) {
+		a.tracer = tracer
+	}
+}
+
+// NewAnalyzer creates a new Analyzer.
+func NewAnalyzer(s *goscan.Scanner, logger *slog.Logger, options ...any) (*Analyzer, error) {
 	a := &Analyzer{
-		Scanner:        s,
-		interpreter:    interp,
-		logger:         logger,
-		customPatterns: customPatterns,
+		Scanner: s,
+		logger:  logger,
 		OpenAPI: &openapi.OpenAPI{
 			OpenAPI: "3.1.0",
 			Info: openapi.Info{
@@ -43,6 +47,32 @@ func NewAnalyzer(s *goscan.Scanner, logger *slog.Logger, customPatterns ...patte
 			Paths: make(map[string]*openapi.PathItem),
 		},
 	}
+
+	// Process options
+	for _, opt := range options {
+		switch v := opt.(type) {
+		case Option:
+			v(a)
+		case patterns.Pattern:
+			a.customPatterns = append(a.customPatterns, v)
+		default:
+			// For backward compatibility, assume it's a pattern.
+			if p, ok := opt.(patterns.Pattern); ok {
+				a.customPatterns = append(a.customPatterns, p)
+			}
+		}
+	}
+
+	interpOpts := []symgo.Option{symgo.WithLogger(logger)}
+	if a.tracer != nil {
+		interpOpts = append(interpOpts, symgo.WithTracer(a.tracer))
+	}
+
+	interp, err := symgo.NewInterpreter(s, interpOpts...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create symgo interpreter: %w", err)
+	}
+	a.interpreter = interp
 
 	// Register intrinsics.
 	interp.RegisterIntrinsic("net/http.NewServeMux", a.handleNewServeMux)

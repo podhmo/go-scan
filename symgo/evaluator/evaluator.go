@@ -24,6 +24,7 @@ type Evaluator struct {
 	scanner           *goscan.Scanner
 	intrinsics        *intrinsics.Registry
 	logger            *slog.Logger
+	tracer            object.Tracer // Tracer for debugging evaluation flow.
 	callStack         []*callFrame
 	interfaceBindings map[string]*goscan.TypeInfo
 }
@@ -34,7 +35,7 @@ type callFrame struct {
 }
 
 // New creates a new Evaluator.
-func New(scanner *goscan.Scanner, logger *slog.Logger) *Evaluator {
+func New(scanner *goscan.Scanner, logger *slog.Logger, tracer object.Tracer) *Evaluator {
 	if logger == nil {
 		logger = slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	}
@@ -42,6 +43,7 @@ func New(scanner *goscan.Scanner, logger *slog.Logger) *Evaluator {
 		scanner:           scanner,
 		intrinsics:        intrinsics.New(),
 		logger:            logger,
+		tracer:            tracer,
 		interfaceBindings: make(map[string]*goscan.TypeInfo),
 	}
 }
@@ -73,6 +75,9 @@ func (e *Evaluator) PopIntrinsics() {
 
 // Eval is the main dispatch loop for the evaluator.
 func (e *Evaluator) Eval(ctx context.Context, node ast.Node, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
+	if e.tracer != nil {
+		e.tracer.Visit(node)
+	}
 	if e.logger.Enabled(ctx, slog.LevelDebug) {
 		var buf bytes.Buffer
 		fset := e.scanner.Fset()

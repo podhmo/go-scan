@@ -355,3 +355,20 @@ func (mr *MultiReturn) Type() ObjectType { return MULTI_RETURN_OBJ }
 func (mr *MultiReturn) Inspect() string {
 	return "multi-return"
 }
+
+// --- Tracer Interface ---
+
+// Tracer is an interface for instrumenting the symbolic execution process.
+// An implementation can be passed to the interpreter to track which AST nodes
+// are being evaluated.
+type Tracer interface {
+	Visit(node ast.Node)
+}
+
+// TracerFunc is an adapter to allow the use of ordinary functions as Tracers.
+type TracerFunc func(node ast.Node)
+
+// Visit calls f(node).
+func (f TracerFunc) Visit(node ast.Node) {
+	f(node)
+}

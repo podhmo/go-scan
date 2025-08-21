@@ -92,6 +92,7 @@ A set of tasks to improve the `symgo` engine and the `docgen` tool based on the 
 - [x] **Step 2: Debugging Features**
     - [x] **Implement Structured Logger**: Introduce an optional structured logger in the `symgo.Evaluator` to trace evaluation steps, including node info, position, and results.
     - [x] **Add Debug Flag to `docgen`**: Add a `--debug-analysis <functionName>` flag to `docgen` to enable the structured logger for a specific function.
+    - [x] **Add Tracer for Debuggability**: Implement a `Tracer` interface in `symgo` to allow instrumenting the evaluation process, as suggested in `docs/trouble-docgen.md`.
 - [x] **Step 3: User Extensibility**
     - [x] **Implement `minigo`-based Pattern Loader**: Create a loader in `docgen` that reads a Go script (`.go` file with a build-ignore tag) and parses a list of pattern definitions. This allows users to define custom analysis patterns without recompiling `docgen`. The loader uses `minigo` to evaluate the script, which returns a slice of maps defining the patterns.
     - [x] **Integrate Pattern Loader with Analyzer**: Modify the `docgen.Analyzer` to accept custom patterns via a `--patterns` command-line flag and dynamically register them as `symgo` intrinsics at startup.

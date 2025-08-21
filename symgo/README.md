@@ -14,6 +14,49 @@ This is particularly useful for static analysis tools that need to understand pr
 
 - **Intrinsics**: `symgo` allows you to register "intrinsic" functions. These are special Go functions that the symbolic engine can call when it encounters a call to a specific function in the source code (e.g., `http.HandleFunc`). The intrinsic can then inspect the symbolic arguments and record information about the call.
 
+## Debuggability
+
+The `symgo` interpreter includes a tracing mechanism to help debug the symbolic execution flow. By providing a `Tracer` implementation, you can monitor which AST nodes are being visited by the evaluator.
+
+### Usage
+
+1.  Define a type that implements the `symgo.Tracer` interface:
+
+    ```go
+    import "go/ast"
+
+    type MyTracer struct {
+        // ... any state you need
+    }
+
+    func (t *MyTracer) Visit(node ast.Node) {
+        // Your logic here, e.g., log the node type or position
+        // fmt.Printf("Visiting node: %T at %s\n", node, node.Pos())
+    }
+    ```
+
+2.  When creating the interpreter, pass your tracer using the `WithTracer` option:
+
+    ```go
+    import "github.com/podhmo/go-scan/symgo"
+
+    tracer := &MyTracer{}
+    interpreter, err := symgo.NewInterpreter(scanner, symgo.WithTracer(tracer))
+    // ...
+    ```
+
+    Alternatively, you can use the `symgo.TracerFunc` adapter for simple, function-based tracers:
+
+    ```go
+    var visitedNodes []ast.Node
+    tracer := symgo.TracerFunc(func(node ast.Node) {
+        visitedNodes = append(visitedNodes, node)
+    })
+    interpreter, err := symgo.NewInterpreter(scanner, symgo.WithTracer(tracer))
+    ```
+
+This allows you to gain insight into the evaluator's behavior, which is invaluable for debugging custom intrinsics or understanding why a particular code path is or isn't being taken.
+
 ## Basic Usage
 
 Here is a simplified example of how to use the `symgo` interpreter to analyze a small piece of Go code.

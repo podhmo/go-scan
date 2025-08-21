@@ -40,7 +40,7 @@ func main() {
 		}
 		pkg := pkgs[0]
 
-		eval := New(s, s.Logger)
+		eval := New(s, s.Logger, nil)
 
 		var inspectedType object.Object
 		env := object.NewEnvironment()

@@ -55,7 +55,11 @@ func run(logger *slog.Logger, format string, patternsFile string) error {
 		return err
 	}
 
-	analyzer, err := NewAnalyzer(s, logger, customPatterns...)
+	var opts []any
+	for _, p := range customPatterns {
+		opts = append(opts, p)
+	}
+	analyzer, err := NewAnalyzer(s, logger, opts...)
 	if err != nil {
 		return err
 	}

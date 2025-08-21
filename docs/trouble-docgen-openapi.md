@@ -46,3 +46,21 @@ The issue was resolved by addressing two separate problems in the test setup.
 2.  **Empty Golden File**: After fixing the import path, the test failed with a new error: `failed to unmarshal want JSON: unexpected end of JSON input`. This was because the golden file for the test, `api.golden.json`, was present but completely empty. The test was attempting to parse the empty file as JSON, leading to the error.
 
 The final solution was to run the test suite with the `-update` flag (`go -C ./examples/docgen test ./... -update`). This correctly generated the OpenAPI specification and populated the `api.golden.json` file. Subsequent test runs without the `-update` flag then passed successfully.
+
+---
+
+## Follow-up Problem: Empty `components` Schema
+
+**Context:** After fixing the initial test setup issues, the `TestDocgen_refAndRename` test was passing. However, it was passing for the wrong reason. The generated OpenAPI specification had an empty `components` section, and the golden file also had an empty `components` section, so the test produced no diff.
+
+**The Real Problem:** The underlying issue, as noted in `TODO.md`, was that the `symgo` engine was failing to resolve types from other packages within the same Go module when running in a test environment. This prevented `docgen` from generating schemas for these types.
+
+**Root Cause:**
+1.  **Interpreter Cache Pollution:** The `symgo.Interpreter` was incorrectly caching `ScannedInfo` for imported packages, associating them with the caller's package information. This prevented correct on-demand loading of the imported packages.
+2.  **Incorrect Evaluator Context:** The `symgo.Evaluator`'s `applyFunction` logic did not propagate the correct package context (`scanner.PackageInfo`) when recursively evaluating a function from another package. It was using the caller's package context instead of the callee's.
+
+**Resolution:**
+1.  Modified `symgo.Interpreter` to set `ScannedInfo` to `nil` for imported packages, forcing the evaluator to load them on-demand with the correct context.
+2.  Modified `symgo.Evaluator`'s `applyFunction` to use the function's own package info (`fn.Package`) when calling `Eval` on the function body. Also ensured that the new environment for the function call is populated with the correct imports from the callee's source file.
+3.  Updated the test `TestDocgen_refAndRename` to first assert that the `components` section is not empty, confirming the bug.
+4.  After applying the fixes, the golden file `api.golden.json` was updated with the now correctly generated `components` schemas.

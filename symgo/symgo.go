@@ -29,6 +29,8 @@ type MultiReturn = object.MultiReturn
 type Nil = object.Nil
 type BaseObject = object.BaseObject
 type Environment = object.Environment
+type Tracer = object.Tracer
+type TracerFunc = object.TracerFunc
 
 // NewEnclosedEnvironment creates a new environment that is enclosed by an outer one.
 var NewEnclosedEnvironment = object.NewEnclosedEnvironment
@@ -42,6 +44,7 @@ type Interpreter struct {
 	eval              *evaluator.Evaluator
 	globalEnv         *object.Environment
 	logger            *slog.Logger
+	tracer            object.Tracer
 	interfaceBindings map[string]*goscan.TypeInfo
 }
 
@@ -52,6 +55,13 @@ type Option func(*Interpreter)
 func WithLogger(logger *slog.Logger) Option {
 	return func(i *Interpreter) {
 		i.logger = logger
+	}
+}
+
+// WithTracer sets the tracer for the interpreter.
+func WithTracer(tracer object.Tracer) Option {
+	return func(i *Interpreter) {
+		i.tracer = tracer
 	}
 }
 
@@ -82,7 +92,7 @@ func NewInterpreter(scanner *goscan.Scanner, options ...Option) (*Interpreter, e
 		i.logger = slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError}))
 	}
 
-	i.eval = evaluator.New(scanner, i.logger)
+	i.eval = evaluator.New(scanner, i.logger, i.tracer)
 
 	// Register default intrinsics
 	i.RegisterIntrinsic("fmt.Sprintf", i.intrinsicSprintf)

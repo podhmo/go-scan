@@ -7,10 +7,10 @@ replace github.com/podhmo/go-scan => ../../
 require (
 	github.com/google/go-cmp v0.7.0
 	github.com/podhmo/go-scan v0.0.0-00010101000000-000000000000
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
 	golang.org/x/mod v0.26.0 // indirect
 	golang.org/x/sync v0.16.0 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 )

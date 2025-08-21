@@ -1,78 +1,53 @@
-# A Summary of Go-Scan's Scanner Methods
+# A Guide to Go-Scan's Package Loading APIs
 
-This document provides a guide to using the `go-scan` scanner, focusing on its methods, use cases, and how to handle common scenarios like external dependencies.
+This document provides a guide to using the `go-scan` library, focusing on its different layers for package discovery and parsing. Understanding these layers helps in choosing the right tool for the job.
 
-## Architectural Overview: `goscan.Scanner` vs. `scanner.Scanner`
+## Architectural Overview: Three Layers of Scanning
 
-The `go-scan` library is composed of two main scanning components:
+The `go-scan` library is composed of three main components for package loading and analysis:
 
-1.  **`scanner.Scanner` (Low-Level)**: This is the core parsing engine located in the `scanner` package. Its primary job is to take a specific list of Go source files and parse them into a detailed `scanner.PackageInfo` struct. It does not know how to find files or resolve import paths on its own; it simply parses what it is given.
+1.  **`scanner.Scanner` (Low-Level Engine)**: This is the core parsing engine located in the `scanner` package. Its primary job is to take a specific list of Go source files and parse them into a detailed `scanner.PackageInfo` struct. It does not know how to find files or resolve import paths on its own; it simply parses what it is given.
 
-2.  **`goscan.Scanner` (High-Level Facade)**: This is the main, user-facing API located in the root `goscan` package. It acts as a facade, wrapping the low-level `scanner.Scanner` and combining it with a `locator.Locator`. This high-level scanner manages state (like visited files), caching, and provides a rich set of methods for both discovering and parsing packages.
+2.  **`goscan.Scanner` (High-Level Facade)**: This is a powerful, user-facing API in the root `goscan` package. It acts as a facade, wrapping the low-level `scanner.Scanner` and combining it with a `locator.Locator`. This high-level scanner manages state (like visited files), caching, and provides a rich set of methods for both discovering and parsing packages. It is the most flexible and powerful tool for complex analysis tasks.
 
-**Recommendation:** Users should almost always use the high-level `goscan.Scanner`. It provides the necessary orchestration to handle real-world codebases with complex dependencies.
+3.  **`resolver.Resolver` (Simple, Cached Loader)**: This is the simplest, highest-level API for package loading. It wraps a `goscan.Scanner` and provides a single method, `Resolve()`, which handles on-demand, concurrent, cached loading of packages.
+
+**Recommendation:**
+*   For applications that need a simple way to load and cache full package information by import path, use the **`resolver.Resolver`**. This is the recommended entry point for most common use cases.
+*   For advanced use cases requiring fine-grained control over dependency walking, partial scans, or aggressive discovery strategies, use the **`goscan.Scanner`**.
+*   The **`scanner.Scanner`** should rarely be used directly.
 
 ---
 
-## Handling Dependencies
+## The `resolver.Resolver` API
 
-A key feature of `go-scan` is its ability to navigate and parse package dependencies.
+The `resolver` is the easiest way to get started. It abstracts away all the complexity of scanning and caching.
 
-### External Modules
-By default, the scanner only looks for source files within the main module. To make it aware of packages from your Go module cache (`GOMODCACHE`) or `GOROOT`, you must configure it during initialization.
-
-**How to use:** Provide the `goscan.WithGoModuleResolver()` option when creating the scanner. This configures the underlying `locator` to search in standard Go environment locations for external dependencies.
+**How to use:** Create a `goscan.Scanner`, then use it to initialize the `resolver.Resolver`.
 
 ```go
-// This scanner can now resolve import paths like "fmt" or "rsc.io/quote".
-s, err := goscan.New(
-    goscan.WithGoModuleResolver(),
-)
+// 1. Create a standard go-scan Scanner, enabling the module resolver.
+scanner, err := goscan.New(goscan.WithGoModuleResolver())
 if err != nil {
-    // handle error
+    log.Fatalf("failed to create scanner: %+v", err)
 }
 
-// This call will succeed because the resolver can find the "fmt" package in GOROOT.
-pkgInfo, err := s.ScanPackageByImport(context.Background(), "fmt")
+// 2. Create a new Resolver from the scanner.
+r := resolver.New(scanner)
+
+// 3. Use the resolver to load package info.
+// The first call will scan the "fmt" package.
+fmtPkg, err := r.Resolve(context.Background(), "fmt")
+
+// The second call for the same package will hit the cache.
+fmtPkgFromCache, err := r.Resolve(context.Background(), "fmt")
 ```
-
-### Delayed (Lazy) Loading of Imports
-Sometimes, you need to explore a project's dependency graph without incurring the cost of fully parsing every single file. For example, you might just want to build a dependency tree diagram.
-
-The `go-scan` library supports this "delayed loading" pattern by separating dependency discovery from full parsing. You can first discover all the import paths using lightweight methods, and then decide which packages to fully parse later.
-
-**How to use:** Use methods from the "Discovery & Dependency Analysis" group, such as `goscan.Scanner.Walk`, which only scans import statements.
-
-```go
-// The visitor will receive a lightweight PackageImports object for each dependency.
-err := s.Walk(ctx, "github.com/your/module/pkg/a", &MyVisitor{})
-
-// Inside the visitor, you can decide whether to perform a full scan.
-func (v *MyVisitor) Visit(pkg *goscan.PackageImports) ([]string, error) {
-    fmt.Println("Discovered package:", pkg.ImportPath)
-
-    // Maybe we only care about fully parsing packages with a certain name.
-    if strings.Contains(pkg.ImportPath, "important") {
-        // Now we trigger a full, heavyweight parse for just this one package.
-        fullInfo, err := v.scanner.ScanPackageByImport(context.Background(), pkg.ImportPath)
-        // ... do something with fullInfo ...
-    }
-
-    // Return the imports to continue the walk.
-    return pkg.Imports, nil
-}
-```
-
-### Manual Overrides for External Types
-For types that cannot be parsed (e.g., those defined in C files and exposed via CGo, or complex types you wish to mock), you can provide a manual definition.
-
-**How to use:** Use the `goscan.WithExternalTypeOverrides()` option.
 
 ---
 
-## Method Groups
+## The `goscan.Scanner` API Method Groups
 
-The methods on `goscan.Scanner` can be divided into two main groups, based on their use case and performance profile.
+For more advanced tasks, you can use the methods on `goscan.Scanner` directly. They can be divided into two main groups.
 
 ### Group 1: Discovery & Dependency Analysis (Lightweight)
 
@@ -97,26 +72,17 @@ These methods perform a comprehensive parse of Go source files. They build a det
 **Use Cases:**
 *   Code generation.
 *   Static analysis tools and linters.
-*   Interpreters and symbolic execution engines (like `minigo` and `symgo`).
+*   Interpreters and symbolic execution engines.
 
 **Methods:**
-*   **`ScanPackageByImport(ctx, importPath)`**: The main workhorse for this group. It takes an import path, uses the locator to find the package's directory, and performs a full parse on its files. Results are cached for efficiency.
-    ```go
-    // Get full details for the "net/http" package.
-    pkg, err := scanner.ScanPackageByImport(ctx, "net/http")
-    if err == nil {
-        for _, t := range pkg.Types {
-            fmt.Println("Found type:", t.Name)
-        }
-    }
-    ```
+*   **`ScanPackageByImport(ctx, importPath)`**: The main workhorse for this group. It takes an import path, uses the locator to find the package's directory, and performs a full parse on its files. Results are cached for efficiency. **Note:** For most applications, using `resolver.Resolve()` is a simpler way to access this functionality.
 *   **`ScanFiles(ctx, filePaths)`**: Performs a full parse on a specific list of files. All files must belong to the same package. This is useful for tools that operate on a subset of files.
 *   **`ScanPackage(ctx, pkgPath)`**: Similar to `ScanPackageByImport`, but takes a file system directory path instead of an import path.
 *   **`FindSymbolDefinitionLocation(ctx, symbolFullName)`**: Finds the exact file path where a symbol (e.g., `"fmt.Println"`) is defined. This may trigger a full scan of the package if it hasn't been scanned already.
 *   **`ResolveType(ctx, fieldType)`**: A lower-level utility that resolves a `FieldType` into a `TypeInfo`, performing recursive resolution if necessary. This is used after an initial scan to dig deeper into type structures.
 *   **`TypeInfoFromExpr(ctx, ...)`**: A helper to parse an `ast.Expr` into a `FieldType`, useful for dynamic type analysis.
 *   **`ListExportedSymbols(ctx, pkgPath)`**: Scans a package and returns a simple list of its exported symbol names.
-*   **`FindSymbolInPackage(ctx, importPath, symbolName)`**: Scans files in a package one-by-one until a specific symbol is found. This can be more efficient than `ScanPackageByImport` if you only need one symbol from a large package.
+*   **`FindSymbolInPackage(ctx, importPath, symbolName)`**: Scans files in a package one-by-one until a specific symbol is found. This can be more efficient than `ScanPackageByImport` if you only need one symbol from a large package, but it is a more complex API. The `resolver.Resolver` provides a simpler, unified loading pattern.
 
 ---
 
@@ -128,14 +94,9 @@ This section summarizes which scanner methods are used by the key commands and e
     *   **Summary**: A dependency graph visualization tool. It is a classic example of a **Group 1 (Lightweight)** user.
     *   **Methods Used**: `Walk`, `FindImportersAggressively`, `BuildReverseDependencyMap`. It relies entirely on the lightweight `ScanPackageImports` (called by `Walk`) to discover dependencies without parsing full source code.
 
-*   **`minigo`**:
-    *   **Summary**: A Go interpreter. It is a primary example of a **Group 2 (Heavyweight)** user.
-    *   **Methods Used**: `ScanPackageByImport` is the key method, called by the evaluator whenever it encounters an `import` statement.
-    *   **Special Requirements**: An interpreter needs more than just type definitions; it needs a *consistent view* of a package. To evaluate a function call (e.g., `sort.Ints`), it must also know about that function's own dependencies (e.g., the `sort` package's import of `slices`). This requires the scanner to provide a `PackageInfo` where the `AstFiles` map is complete, allowing the interpreter to look up the correct import scope for any function it evaluates. This is why it relies on the heavyweight scanning methods.
-
-*   **`symgo`**:
-    *   **Summary**: A symbolic execution engine. Like `minigo`, it is a **Group 2 (Heavyweight)** user with similar special requirements.
-    *   **Methods Used**: Interestingly, `symgo` is architected to use the low-level `scanner.Scanner` directly. Its evaluator calls `ScanPackageByImport`, `BuildImportLookup`, and `TypeInfoFromExpr` to get the detailed information it needs. This demonstrates the same *need* for heavyweight analysis to ensure it has a consistent view of each package for resolving transitive dependencies during evaluation.
+*   **`minigo` & `symgo`**:
+    *   **Summary**: A Go interpreter and a symbolic execution engine. They are primary examples of **Group 2 (Heavyweight)** users.
+    *   **Architecture**: Both engines now use the new **`resolver.Resolver`** to handle on-demand, lazy loading of imported packages. When their respective evaluators encounter an import, they use `resolver.Resolve()` to get the complete `PackageInfo`. This unified approach simplifies the code and ensures consistent behavior. The resolver, in turn, uses the heavyweight `ScanPackageByImport` method under the hood to perform the actual scanning and caching. This architecture provides the engines with a consistent, complete view of each package needed for resolving transitive dependencies during evaluation.
 
 *   **`examples/convert`**, **`examples/derivingjson`**, **`examples/derivingbind`**, **`examples/deriving-all`**:
     *   **Summary**: These are all code generation tools. They are canonical examples of **Group 2 (Heavyweight)** users.

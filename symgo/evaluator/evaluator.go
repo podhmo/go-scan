@@ -618,35 +618,71 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 }
 
 func (e *Evaluator) evalSwitchStmt(ctx context.Context, n *ast.SwitchStmt, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
-	var result object.Object
+	// In symbolic execution, we explore all branches of a switch statement.
+	switchEnv := env
+	if n.Init != nil {
+		switchEnv = object.NewEnclosedEnvironment(env)
+		if initResult := e.Eval(ctx, n.Init, switchEnv, pkg); isError(initResult) {
+			return initResult
+		}
+	}
+
 	if n.Body != nil {
 		for _, c := range n.Body.List {
 			if caseClause, ok := c.(*ast.CaseClause); ok {
-				caseEnv := object.NewEnclosedEnvironment(env)
+				// We don't evaluate the case conditions, just execute the body.
+				caseEnv := object.NewEnclosedEnvironment(switchEnv)
 				for _, stmt := range caseClause.Body {
-					result = e.Eval(ctx, stmt, caseEnv, pkg)
+					e.Eval(ctx, stmt, caseEnv, pkg)
 				}
 			}
 		}
 	}
-	return result
+
+	// The result of a switch statement is not a value.
+	return &object.SymbolicPlaceholder{Reason: "switch statement"}
 }
 
 func (e *Evaluator) evalForStmt(ctx context.Context, n *ast.ForStmt, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
-	bodyEnv := object.NewEnclosedEnvironment(env)
-	return e.Eval(ctx, n.Body, bodyEnv, pkg)
+	// For symbolic execution, we unroll the loop once.
+	// A more sophisticated engine might unroll N times or use summaries.
+	forEnv := object.NewEnclosedEnvironment(env)
+
+	if n.Init != nil {
+		if initResult := e.Eval(ctx, n.Init, forEnv, pkg); isError(initResult) {
+			return initResult
+		}
+	}
+
+	// We don't check the condition, just execute the body once.
+	e.Eval(ctx, n.Body, object.NewEnclosedEnvironment(forEnv), pkg)
+
+	// The result of a for statement is not a value.
+	return &object.SymbolicPlaceholder{Reason: "for loop"}
 }
 
 func (e *Evaluator) evalIfStmt(ctx context.Context, n *ast.IfStmt, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
-	bodyEnv := object.NewEnclosedEnvironment(env)
-	result := e.Eval(ctx, n.Body, bodyEnv, pkg)
-
-	if n.Else != nil {
-		elseEnv := object.NewEnclosedEnvironment(env)
-		result = e.Eval(ctx, n.Else, elseEnv, pkg)
+	// In symbolic execution, we don't evaluate the condition. We explore both paths.
+	// We evaluate the Init statement in a new scope.
+	ifStmtEnv := env
+	if n.Init != nil {
+		ifStmtEnv = object.NewEnclosedEnvironment(env)
+		if initResult := e.Eval(ctx, n.Init, ifStmtEnv, pkg); isError(initResult) {
+			return initResult
+		}
 	}
 
-	return result
+	// Evaluate the main body.
+	e.Eval(ctx, n.Body, object.NewEnclosedEnvironment(ifStmtEnv), pkg)
+
+	// Evaluate the else block if it exists.
+	if n.Else != nil {
+		e.Eval(ctx, n.Else, object.NewEnclosedEnvironment(ifStmtEnv), pkg)
+	}
+
+	// The result of an if statement is not a value, so we return a placeholder.
+	// A more advanced engine might return a union of possible return values from the branches.
+	return &object.SymbolicPlaceholder{Reason: "if/else statement"}
 }
 
 func (e *Evaluator) evalBlockStatement(ctx context.Context, block *ast.BlockStmt, env *object.Environment, pkg *scanner.PackageInfo) object.Object {

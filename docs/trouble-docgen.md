@@ -63,3 +63,51 @@ type Tracer interface {
 ```
 
 The `Evaluator` would then call `tracer.Visit(node)` for every node it evaluates. A test or a debug mode in a tool like `docgen` could provide a tracer implementation that records all visited nodes. This would allow a developer to easily compare the set of all nodes in an AST (`ast.Inspect`) with the set of nodes the evaluator actually visited, quickly identifying any missed branches or skipped nodes. This would have significantly accelerated the debugging process for the issue described above.
+
+# [Implemented] Proving the `Tracer`'s Utility
+
+To validate the effectiveness of the newly implemented `Tracer`, we intentionally recreated a bug similar to the one that motivated its creation.
+
+## The Bug
+We modified the `symgo` evaluator's `evalIfStmt` function to deliberately *skip* the `else` block of an `if-else` statement.
+
+```go
+// In symgo/evaluator/evaluator.go
+func (e *Evaluator) evalIfStmt(...) object.Object {
+    // ...
+    // Evaluate the main body.
+    e.Eval(ctx, n.Body, ...)
+
+    // Intentionally commented out to create the bug:
+    // if n.Else != nil {
+    // 	e.Eval(ctx, n.Else, ...)
+    // }
+    // ...
+}
+```
+
+## The Test Case
+We created a new test case (`TestDocgen_withIntentionalBug`) that analyzes a simple handler containing an `if-else` statement:
+
+```go
+// in examples/docgen/testdata/if-else-bug/api.go
+func GetWithIf(w http.ResponseWriter, r *http.Request) {
+	if r.Method == "POST" {
+		w.WriteHeader(http.StatusCreated)
+	} else {
+		w.WriteHeader(http.StatusOK) // This is in the 'else' block
+	}
+}
+```
+
+## The Verification
+The test was configured to use a `recordingTracer` that logs the position of every AST node visited by the evaluator. The test logic performs the following steps:
+1.  Analyzes the code with the `Analyzer` (which contains the buggy `symgo` engine).
+2.  Finds the AST for the `w.WriteHeader(http.StatusOK)` expression, which is inside the `else` block.
+3.  Checks if the tracer's log of visited node positions contains the position of our target expression.
+
+**With the bug present**, the test confirmed that the tracer **did not** visit the node inside the `else` block, successfully identifying the part of the code that was being skipped by the evaluator.
+
+**After fixing the bug** (by uncommenting the `else` block evaluation), the exact same test was run again. This time, the test confirmed that the tracer **did** visit the node, and the test passed.
+
+This exercise demonstrates that the `Tracer` is a powerful and effective tool for diagnosing issues where the symbolic execution engine might be incorrectly skipping branches or nodes, just as hypothesized.

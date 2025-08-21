@@ -47,12 +47,9 @@ func run(logger *slog.Logger, format string, patternsFile string) error {
 		return err
 	}
 
-	overrides := createStubOverrides()
-
 	s, err := goscan.New(
 		goscan.WithGoModuleResolver(),
 		goscan.WithLogger(logger),
-		goscan.WithExternalTypeOverrides(overrides),
 	)
 	if err != nil {
 		return err

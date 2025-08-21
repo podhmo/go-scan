@@ -26,7 +26,6 @@ func TestExtraModuleCall(t *testing.T) {
 		t.Fatalf("New failed: %v", err)
 	}
 
-
 	interp, err := symgo.NewInterpreter(scanner)
 	if err != nil {
 		t.Fatalf("NewInterpreter failed: %v", err)

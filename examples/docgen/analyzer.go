@@ -379,6 +379,9 @@ func (a *Analyzer) buildHandlerIntrinsics() map[string]symgo.IntrinsicFunc {
 				patterns.AnalyzeResponseHeader(op, arg)
 			case "queryParameter":
 				patterns.AnalyzeQueryParameter(op, arg)
+			case "placeholder":
+				// This pattern exists only to prevent an "undefined method" error
+				// during symbolic execution. We don't need to do anything with it.
 			default:
 				a.logger.Warn("unknown pattern type", "type", pattern.Type, "key", pattern.Key)
 			}

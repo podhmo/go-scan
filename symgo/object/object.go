@@ -279,6 +279,21 @@ func (s *Slice) Inspect() string {
 	return "[]<unknown>"
 }
 
+// TypeInfo constructs a synthetic TypeInfo for the anonymous slice type.
+// This is crucial because anonymous types like `[]User` don't have a named
+// TypeInfo definition to resolve, but we still need to represent their structure.
+func (s *Slice) TypeInfo() *scanner.TypeInfo {
+	if s.ResolvedTypeInfo != nil {
+		return s.ResolvedTypeInfo
+	}
+	// Construct a synthetic TypeInfo on the fly for the anonymous slice.
+	// We treat it like an alias to a slice type.
+	return &scanner.TypeInfo{
+		Kind:       scanner.AliasKind,
+		Underlying: s.FieldType,
+	}
+}
+
 // --- Environment ---
 
 // Environment holds the bindings for variables and functions.

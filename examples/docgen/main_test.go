@@ -24,7 +24,7 @@ func TestDocgen(t *testing.T) {
 
 	// Setup: Run the analysis once and reuse the result for all sub-tests.
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	// Load custom patterns for the test
+
 	patterns, err := LoadPatterns("patterns.go")
 	if err != nil {
 		t.Fatalf("failed to load patterns.go: %v", err)

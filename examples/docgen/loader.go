@@ -35,7 +35,6 @@ func LoadPatterns(filepath string) ([]Pattern, error) {
 	}
 
 	// Now, evaluate an expression to retrieve the variable's value.
-	// We use EvalLine as it's suitable for single expressions.
 	obj, err := interp.EvalLine(context.Background(), "Patterns")
 	if err != nil {
 		return nil, fmt.Errorf("failed to retrieve Patterns variable from %q: %w", filepath, err)

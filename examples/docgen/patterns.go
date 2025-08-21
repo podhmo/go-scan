@@ -33,4 +33,11 @@ var Patterns = []any{
 		"type":     "responseHeader",
 		"argIndex": 1,
 	},
+	// Add a placeholder for Header.Set to prevent "undefined method" errors
+	// during analysis, which would halt execution of the handler block.
+	map[string]any{
+		"key":      "(*net/http.Header).Set",
+		"type":     "placeholder",
+		"argIndex": 0, // not used
+	},
 }

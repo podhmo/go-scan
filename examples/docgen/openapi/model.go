@@ -65,10 +65,11 @@ type MediaType struct {
 
 // Schema defines the schema for a type.
 type Schema struct {
-	Type        string             `json:"type,omitempty" yaml:"type,omitempty"`
-	Description string             `json:"description,omitempty" yaml:"description,omitempty"`
-	Properties  map[string]*Schema `json:"properties,omitempty" yaml:"properties,omitempty"`
-	Items       *Schema            `json:"items,omitempty" yaml:"items,omitempty"`
-	Format      string             `json:"format,omitempty" yaml:"format,omitempty"` // e.g., "int32", "int64"
-	Ref         string             `json:"$ref,omitempty" yaml:"$ref,omitempty"`
+	Type                 string             `json:"type,omitempty" yaml:"type,omitempty"`
+	Description          string             `json:"description,omitempty" yaml:"description,omitempty"`
+	Properties           map[string]*Schema `json:"properties,omitempty" yaml:"properties,omitempty"`
+	Items                *Schema            `json:"items,omitempty" yaml:"items,omitempty"`
+	AdditionalProperties *Schema            `json:"additionalProperties,omitempty" yaml:"additionalProperties,omitempty"`
+	Format               string             `json:"format,omitempty" yaml:"format,omitempty"` // e.g., "int32", "int64"
+	Ref                  string             `json:"$ref,omitempty" yaml:"$ref,omitempty"`
 }

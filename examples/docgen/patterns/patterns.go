@@ -25,6 +25,8 @@ const (
 	RequestBody PatternType = "requestBody"
 	// ResponseBody indicates the pattern should analyze a function argument as a response body.
 	ResponseBody PatternType = "responseBody"
+	// DefaultResponse indicates the pattern should analyze a function argument as a response body with a specific status code.
+	DefaultResponse PatternType = "defaultResponse"
 	// PathParameter indicates the pattern should extract a path parameter.
 	PathParameter PatternType = "path"
 	// QueryParameter indicates the pattern should extract a query parameter.
@@ -49,6 +51,11 @@ type PatternConfig struct {
 	// For "responseBody", this is the argument that will be encoded from.
 	// For "path" or "query", this is the argument holding the parameter's value.
 	ArgIndex int
+
+	// StatusCode is the HTTP status code for the response.
+	// Required for "defaultResponse" type.
+	// e.g., "400", "500"
+	StatusCode string
 
 	// Name is the name of the parameter.
 	// Required for "path" and "query" types.
@@ -93,6 +100,44 @@ func HandleCustomRequestBody(argIndex int) func(interp *symgo.Interpreter, a Ana
 		}
 		// The return value of the custom function is not known, so we return a placeholder.
 		return &symgo.SymbolicPlaceholder{Reason: "result of custom request body function"}
+	}
+}
+
+// HandleDefaultResponse returns a pattern handler that treats a specific argument
+// as a response body for a given status code.
+func HandleDefaultResponse(statusCode string, argIndex int) func(interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object {
+	return func(interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object {
+		op := a.OperationStack()[len(a.OperationStack())-1]
+		if len(args) <= argIndex {
+			return &symgo.SymbolicPlaceholder{Reason: fmt.Sprintf("default response pattern: not enough args (want %d, got %d)", argIndex+1, len(args))}
+		}
+
+		arg := args[argIndex]
+		var schema *openapi.Schema
+
+		// This logic is similar to HandleCustomResponseBody
+		if slice, ok := arg.(*symgo.Slice); ok {
+			schema = buildSchemaFromFieldType(context.Background(), slice.FieldType, make(map[string]*openapi.Schema))
+		} else {
+			typeInfo := arg.TypeInfo()
+			if typeInfo != nil {
+				schema = BuildSchemaForType(context.Background(), typeInfo, make(map[string]*openapi.Schema))
+			}
+		}
+
+		if schema != nil {
+			if op.Responses == nil {
+				op.Responses = make(map[string]*openapi.Response)
+			}
+			// Unlike HandleCustomResponseBody, we use the specified status code.
+			op.Responses[statusCode] = &openapi.Response{
+				Description: fmt.Sprintf("Response for status code %s", statusCode), // A generic description
+				Content:     map[string]openapi.MediaType{"application/json": {Schema: schema}},
+			}
+		}
+
+		// The return value of the custom function is not known, so we return a placeholder.
+		return &symgo.SymbolicPlaceholder{Reason: "result of default response function"}
 	}
 }
 
@@ -438,6 +483,14 @@ func BuildSchemaForType(ctx context.Context, typeInfo *scanner.TypeInfo, cache m
 func buildSchemaFromFieldType(ctx context.Context, ft *scanner.FieldType, cache map[string]*openapi.Schema) *openapi.Schema {
 	if ft == nil {
 		return nil
+	}
+	if ft.IsMap {
+		// In OpenAPI 3.0, map keys must be strings. A more robust implementation
+		// might check ft.MapKey to ensure it's a string type.
+		return &openapi.Schema{
+			Type:                 "object",
+			AdditionalProperties: buildSchemaFromFieldType(ctx, ft.Elem, cache),
+		}
 	}
 	if ft.IsSlice {
 		return &openapi.Schema{Type: "array", Items: buildSchemaFromFieldType(ctx, ft.Elem, cache)}

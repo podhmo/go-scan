@@ -75,6 +75,10 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] **Extend Custom Patterns**: Extend the `minigo`-based pattern system to support configuring path, query, and header parameter extraction, similar to how `requestBody` and `responseBody` are handled now.
     - [x] **Investigate and fix parameter loss**: The custom parameter handlers are being called, but the extracted parameters are not appearing in the final OpenAPI spec. The modifications to the `openapi.Operation` object are being lost.
 - [x] **Implement full intra-module recursive evaluation**: Enhanced the `symgo` evaluator to distinguish between intra-module and extra-module function calls, recursively evaluating the former as specified in the design plan.
+- [-] **Add `defaultResponse` and `map` type support**:
+    - [x] Add `additionalProperties` to the `openapi.Schema` model to allow for `map` type schemas.
+    - [x] Add a `defaultResponse` pattern to `docgen` to allow defining responses with arbitrary status codes from a `minigo` config.
+    - **Note**: This feature is partially complete. A bug in the `docgen` analyzer prevents the custom patterns from being applied correctly in all situations. See `docs/trouble-docgen.md` for details.
 
 A set of tasks to improve the `symgo` engine and the `docgen` tool based on the analysis in `docgen/ja/from-docgen.md`.
 

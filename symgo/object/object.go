@@ -188,6 +188,10 @@ type SymbolicPlaceholder struct {
 	BaseObject
 	// Reason describes why this value is symbolic (e.g., "external function call", "complex expression").
 	Reason string
+	// If the placeholder is for a function, this holds its signature.
+	UnderlyingFunc *scanner.FunctionInfo
+	// The package context for the UnderlyingFunc.
+	Package *scanner.PackageInfo
 }
 
 // Type returns the type of the SymbolicPlaceholder object.

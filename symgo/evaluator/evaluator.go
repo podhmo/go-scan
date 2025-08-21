@@ -510,8 +510,27 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 
 		// If it's an extra-module call, or not a resolvable function, treat it as a placeholder.
 		// This is the default behavior for external dependencies.
-		// A more advanced implementation could check for variables and constants here as well.
-		placeholder := &object.SymbolicPlaceholder{Reason: fmt.Sprintf("external symbol %s.%s", val.Name, n.Sel.Name)}
+		var placeholder object.Object
+		// Check if the symbol is a function to enrich the placeholder.
+		var funcInfo *scanner.FunctionInfo
+		for _, f := range val.ScannedInfo.Functions {
+			if f.Name == n.Sel.Name {
+				funcInfo = f
+				break
+			}
+		}
+
+		if funcInfo != nil {
+			placeholder = &object.SymbolicPlaceholder{
+				Reason:         fmt.Sprintf("external func %s.%s", val.Name, n.Sel.Name),
+				UnderlyingFunc: funcInfo,
+				Package:        val.ScannedInfo,
+			}
+		} else {
+			// Not a function, so it's likely a var or const. Create a generic placeholder.
+			placeholder = &object.SymbolicPlaceholder{Reason: fmt.Sprintf("external symbol %s.%s", val.Name, n.Sel.Name)}
+		}
+
 		val.Env.Set(n.Sel.Name, placeholder)
 		return placeholder
 
@@ -621,6 +640,30 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 					return intrinsicFn(append([]object.Object{self}, args...)...)
 				}
 				return &object.Intrinsic{Fn: fn}
+			}
+		}
+
+		// Handle method calls on symbolic interfaces
+		if typeInfo.Interface != nil {
+			for _, method := range typeInfo.Interface.Methods {
+				if method.Name == n.Sel.Name {
+					// The result of calling a method on a symbolic interface is another symbolic value.
+					// We determine the type of this new value from the method's return type.
+					var resultTypeInfo *scanner.TypeInfo
+					if len(method.Results) > 0 {
+						// Simplified: use the first return value.
+						resultType, _ := method.Results[0].Type.Resolve(context.Background())
+						if resultType == nil && method.Results[0].Type.IsBuiltin {
+							resultType = &scanner.TypeInfo{Name: method.Results[0].Type.Name}
+						}
+						resultTypeInfo = resultType
+					}
+
+					return &object.SymbolicPlaceholder{
+						Reason:     fmt.Sprintf("result of method call %s.%s", typeInfo.Name, method.Name),
+						BaseObject: object.BaseObject{ResolvedTypeInfo: resultTypeInfo},
+					}
+				}
 			}
 		}
 
@@ -994,6 +1037,54 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 		return fn.Fn(args...)
 
 	case *object.SymbolicPlaceholder:
+		if fn.UnderlyingFunc != nil && fn.Package != nil {
+			// This placeholder represents an external function. We can determine its return type.
+			if fn.UnderlyingFunc.AstDecl.Type.Results != nil && len(fn.UnderlyingFunc.AstDecl.Type.Results.List) > 0 {
+				// We need a valid context for resolution, but creating one here is tricky.
+				// For now, we'll use a background context.
+				var importLookup map[string]string
+				if fn.UnderlyingFunc.AstDecl != nil {
+					file := fn.Package.Fset.File(fn.UnderlyingFunc.AstDecl.Pos())
+					if file != nil {
+						if astFile, ok := fn.Package.AstFiles[file.Name()]; ok {
+							importLookup = e.scanner.BuildImportLookup(astFile)
+						}
+					}
+				}
+
+				// We need to resolve the FieldType to a TypeInfo.
+				// To do that, we need the original AST expression for the type.
+				resultASTExpr := fn.UnderlyingFunc.AstDecl.Type.Results.List[0].Type
+				fieldType := e.scanner.TypeInfoFromExpr(context.Background(), resultASTExpr, nil, fn.Package, importLookup)
+				resolvedType, _ := fieldType.Resolve(context.Background())
+
+				if resolvedType == nil && fieldType.IsBuiltin {
+					if fieldType.Name == "error" {
+						stringFieldType := &scanner.FieldType{Name: "string", IsBuiltin: true}
+						errorMethod := &scanner.MethodInfo{
+							Name:    "Error",
+							Results: []*scanner.FieldInfo{{Type: stringFieldType}},
+						}
+						resolvedType = &scanner.TypeInfo{
+							Name:      "error",
+							Kind:      scanner.InterfaceKind,
+							Interface: &scanner.InterfaceInfo{Methods: []*scanner.MethodInfo{errorMethod}},
+						}
+					} else {
+						resolvedType = &scanner.TypeInfo{
+							Name:    fieldType.Name,
+							PkgPath: "", // Built-in types have no package path.
+							Kind:    scanner.InterfaceKind,
+						}
+					}
+				}
+
+				return &object.SymbolicPlaceholder{
+					Reason:     fmt.Sprintf("result of external call to %s", fn.UnderlyingFunc.Name),
+					BaseObject: object.BaseObject{ResolvedTypeInfo: resolvedType},
+				}
+			}
+		}
 		return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("result of calling %s", fn.Inspect())}
 
 	default:

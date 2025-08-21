@@ -211,6 +211,7 @@ func (s *Scanner) scanGoFiles(ctx context.Context, filePaths []string, pkgDirPat
 	info := &PackageInfo{
 		Path:       pkgDirPath,
 		ImportPath: canonicalImportPath,
+		ModulePath: s.modulePath,
 		Fset:       s.fset,
 		AstFiles:   make(map[string]*ast.File),
 	}

@@ -95,6 +95,7 @@ type Function struct {
 	Body       *ast.BlockStmt
 	Env        *Environment
 	Decl       *ast.FuncDecl // The original declaration, for metadata like godoc.
+	Package    *scanner.PackageInfo
 }
 
 // Type returns the type of the Function object.

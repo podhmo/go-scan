@@ -445,13 +445,17 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 		key := fmt.Sprintf("(*%s).%s", fullTypeName, n.Sel.Name)
 		if intrinsicFn, ok := e.intrinsics.Get(key); ok {
 			self := val
-			fn := func(args ...object.Object) object.Object { return intrinsicFn(append([]object.Object{self}, args...)...) }
+			fn := func(args ...object.Object) object.Object {
+				return intrinsicFn(append([]object.Object{self}, args...)...)
+			}
 			return &object.Intrinsic{Fn: fn}
 		}
 		key = fmt.Sprintf("(%s).%s", fullTypeName, n.Sel.Name)
 		if intrinsicFn, ok := e.intrinsics.Get(key); ok {
 			self := val
-			fn := func(args ...object.Object) object.Object { return intrinsicFn(append([]object.Object{self}, args...)...) }
+			fn := func(args ...object.Object) object.Object {
+				return intrinsicFn(append([]object.Object{self}, args...)...)
+			}
 			return &object.Intrinsic{Fn: fn}
 		}
 		return newError(n.Pos(), "undefined method: %s on symbolic type %s", n.Sel.Name, fullTypeName)
@@ -501,13 +505,17 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 		key := fmt.Sprintf("(%s).%s", val.TypeName, n.Sel.Name)
 		if intrinsicFn, ok := e.intrinsics.Get(key); ok {
 			self := val
-			fn := func(args ...object.Object) object.Object { return intrinsicFn(append([]object.Object{self}, args...)...) }
+			fn := func(args ...object.Object) object.Object {
+				return intrinsicFn(append([]object.Object{self}, args...)...)
+			}
 			return &object.Intrinsic{Fn: fn}
 		}
 		key = fmt.Sprintf("(*%s).%s", val.TypeName, n.Sel.Name)
 		if intrinsicFn, ok := e.intrinsics.Get(key); ok {
 			self := val
-			fn := func(args ...object.Object) object.Object { return intrinsicFn(append([]object.Object{self}, args...)...) }
+			fn := func(args ...object.Object) object.Object {
+				return intrinsicFn(append([]object.Object{self}, args...)...)
+			}
 			return &object.Intrinsic{Fn: fn}
 		}
 		return newError(n.Pos(), "undefined method: %s on %s", n.Sel.Name, val.TypeName)
@@ -564,13 +572,17 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 			key := fmt.Sprintf("(*%s).%s", fullTypeName, n.Sel.Name)
 			if intrinsicFn, ok := e.intrinsics.Get(key); ok {
 				self := val
-				fn := func(args ...object.Object) object.Object { return intrinsicFn(append([]object.Object{self}, args...)...) }
+				fn := func(args ...object.Object) object.Object {
+					return intrinsicFn(append([]object.Object{self}, args...)...)
+				}
 				return &object.Intrinsic{Fn: fn}
 			}
 			key = fmt.Sprintf("(%s).%s", fullTypeName, n.Sel.Name)
 			if intrinsicFn, ok := e.intrinsics.Get(key); ok {
 				self := val
-				fn := func(args ...object.Object) object.Object { return intrinsicFn(append([]object.Object{self}, args...)...) }
+				fn := func(args ...object.Object) object.Object {
+					return intrinsicFn(append([]object.Object{self}, args...)...)
+				}
 				return &object.Intrinsic{Fn: fn}
 			}
 		}
@@ -591,7 +603,9 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 			key := fmt.Sprintf("(*%s).%s", instance.TypeName, n.Sel.Name)
 			if intrinsicFn, ok := e.intrinsics.Get(key); ok {
 				self := val.Value
-				fn := func(args ...object.Object) object.Object { return intrinsicFn(append([]object.Object{self}, args...)...) }
+				fn := func(args ...object.Object) object.Object {
+					return intrinsicFn(append([]object.Object{self}, args...)...)
+				}
 				return &object.Intrinsic{Fn: fn}
 			}
 		}
@@ -984,9 +998,9 @@ func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, 
 				continue
 			}
 			v := &object.Variable{
-				Name:             name.Name,
-				Value:            arg,
-				BaseObject:       object.BaseObject{ResolvedTypeInfo: resolvedType},
+				Name:       name.Name,
+				Value:      arg,
+				BaseObject: object.BaseObject{ResolvedTypeInfo: resolvedType},
 			}
 			env.Set(name.Name, v)
 		}

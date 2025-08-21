@@ -81,9 +81,9 @@ A set of tasks to improve the `symgo` engine and the `docgen` tool based on the 
 - [x] **Step 2: Debugging Features**
     - [x] **Implement Structured Logger**: Introduce an optional structured logger in the `symgo.Evaluator` to trace evaluation steps, including node info, position, and results.
     - [x] **Add Debug Flag to `docgen`**: Add a `--debug-analysis <functionName>` flag to `docgen` to enable the structured logger for a specific function.
-- [ ] **Step 3: User Extensibility**
-    - [ ] **Implement `minigo`-based Pattern Loader**: Create a loader in `docgen` that reads a `.minigo` script and parses a list of pattern definitions using `minigo.EvalString` and `minigo.Result.As`.
-    - [ ] **Integrate Pattern Loader with Analyzer**: Modify the `docgen.Analyzer` to dynamically register intrinsics based on the patterns loaded from the `.minigo` script at startup.
+- [x] **Step 3: User Extensibility**
+    - [x] **Implement `minigo`-based Pattern Loader**: Create a loader in `docgen` that reads a Go script (`.go` file with a build-ignore tag) and parses a list of pattern definitions. This allows users to define custom analysis patterns without recompiling `docgen`. The loader uses `minigo` to evaluate the script, which returns a slice of maps defining the patterns.
+    - [x] **Integrate Pattern Loader with Analyzer**: Modify the `docgen.Analyzer` to accept custom patterns via a `--patterns` command-line flag and dynamically register them as `symgo` intrinsics at startup.
 
 ### External Package Resolution Improvements
 - [x] **Fix Module-Aware Resolution in Test Environments**: The `symgo` engine relies on a module-aware `go-scan` instance to resolve types from external packages (including the standard library like `net/http`). This resolution was failing in test environments, causing method calls on external interfaces to be missed. This has been resolved by refactoring the `symgo` evaluator to use the top-level `goscan.Scanner`, ensuring it has the correct module context.

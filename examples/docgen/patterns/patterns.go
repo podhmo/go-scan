@@ -17,11 +17,95 @@ type Analyzer interface {
 	OperationStack() []*openapi.Operation
 }
 
+// PatternConfig defines a user-configurable pattern for docgen analysis.
+// It maps a function call to a specific analysis type.
+type PatternConfig struct {
+	// Key is the fully-qualified function or method name to match.
+	// e.g., "github.com/my-org/my-app/utils.DecodeJSON"
+	// e.g., "(*net/http.Request).Context"
+	Key string
+
+	// Type specifies the kind of analysis to perform.
+	// Supported values: "requestBody", "responseBody".
+	Type string
+
+	// ArgIndex is the 0-based index of the function argument to analyze.
+	// For "requestBody", this is the argument that will be decoded into.
+	// For "responseBody", this is the argument that will be encoded from.
+	ArgIndex int
+}
+
 // Pattern defines a mapping between a function call signature (the key)
 // and a handler function that performs analysis when that call is found.
 type Pattern struct {
 	Key   string
 	Apply func(interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object
+}
+
+// HandleCustomRequestBody returns a pattern handler that treats a specific argument
+// as a request body, similar to `json.Decode`.
+func HandleCustomRequestBody(argIndex int) func(interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object {
+	return func(interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object {
+		op := a.OperationStack()[len(a.OperationStack())-1]
+		if len(args) <= argIndex {
+			return &symgo.SymbolicPlaceholder{Reason: fmt.Sprintf("custom requestBody pattern: not enough args (want %d, got %d)", argIndex+1, len(args))}
+		}
+
+		ptr, ok := args[argIndex].(*symgo.Pointer)
+		if !ok {
+			return &symgo.SymbolicPlaceholder{Reason: fmt.Sprintf("custom requestBody pattern: argument %d is not a pointer", argIndex)}
+		}
+
+		typeInfo := ptr.TypeInfo()
+		if typeInfo != nil {
+			schema := BuildSchemaForType(context.Background(), typeInfo, make(map[string]*openapi.Schema))
+			if schema != nil {
+				op.RequestBody = &openapi.RequestBody{
+					Content:  map[string]openapi.MediaType{"application/json": {Schema: schema}},
+					Required: true,
+				}
+			}
+		}
+		// The return value of the custom function is not known, so we return a placeholder.
+		return &symgo.SymbolicPlaceholder{Reason: "result of custom request body function"}
+	}
+}
+
+// HandleCustomResponseBody returns a pattern handler that treats a specific argument
+// as a response body, similar to `json.Encode`.
+func HandleCustomResponseBody(argIndex int) func(interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object {
+	return func(interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object {
+		op := a.OperationStack()[len(a.OperationStack())-1]
+		if len(args) <= argIndex {
+			return &symgo.SymbolicPlaceholder{Reason: fmt.Sprintf("custom responseBody pattern: not enough args (want %d, got %d)", argIndex+1, len(args))}
+		}
+
+		arg := args[argIndex]
+		var schema *openapi.Schema
+
+		if slice, ok := arg.(*symgo.Slice); ok {
+			schema = buildSchemaFromFieldType(context.Background(), slice.FieldType, make(map[string]*openapi.Schema))
+		} else {
+			typeInfo := arg.TypeInfo()
+			if typeInfo != nil {
+				schema = BuildSchemaForType(context.Background(), typeInfo, make(map[string]*openapi.Schema))
+			}
+		}
+
+		if schema != nil {
+			if op.Responses == nil {
+				op.Responses = make(map[string]*openapi.Response)
+			}
+			// Assume 200 OK if no status code has been set.
+			if _, ok := op.Responses["200"]; !ok {
+				op.Responses["200"] = &openapi.Response{Description: "OK"}
+			}
+			op.Responses["200"].Content = map[string]openapi.MediaType{"application/json": {Schema: schema}}
+		}
+
+		// The return value of the custom function is not known, so we return a placeholder.
+		return &symgo.SymbolicPlaceholder{Reason: "result of custom response body function"}
+	}
 }
 
 // GetDefaultPatterns returns a slice of all the default call patterns

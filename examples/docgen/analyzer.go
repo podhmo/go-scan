@@ -19,19 +19,21 @@ type Analyzer struct {
 	OpenAPI        *openapi.OpenAPI
 	logger         *slog.Logger
 	operationStack []*openapi.Operation
+	customPatterns []patterns.Pattern
 }
 
 // NewAnalyzer creates a new Analyzer.
-func NewAnalyzer(s *goscan.Scanner, logger *slog.Logger) (*Analyzer, error) {
+func NewAnalyzer(s *goscan.Scanner, logger *slog.Logger, customPatterns ...patterns.Pattern) (*Analyzer, error) {
 	interp, err := symgo.NewInterpreter(s, symgo.WithLogger(logger))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create symgo interpreter: %w", err)
 	}
 
 	a := &Analyzer{
-		Scanner:     s,
-		interpreter: interp,
-		logger:      logger,
+		Scanner:        s,
+		interpreter:    interp,
+		logger:         logger,
+		customPatterns: customPatterns,
 		OpenAPI: &openapi.OpenAPI{
 			OpenAPI: "3.1.0",
 			Info: openapi.Info{
@@ -336,7 +338,9 @@ func (a *Analyzer) analyzeHandlerBody(handler *symgo.Function, op *openapi.Opera
 func (a *Analyzer) buildHandlerIntrinsics(analyzer *Analyzer) map[string]symgo.IntrinsicFunc {
 	intrinsics := make(map[string]symgo.IntrinsicFunc)
 
-	for _, p := range patterns.GetDefaultPatterns() {
+	allPatterns := append(patterns.GetDefaultPatterns(), a.customPatterns...)
+
+	for _, p := range allPatterns {
 		// Capture the pattern for the closure.
 		pattern := p
 		intrinsics[pattern.Key] = func(i *symgo.Interpreter, args []symgo.Object) symgo.Object {

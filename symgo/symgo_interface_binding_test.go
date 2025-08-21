@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/podhmo/go-scan"
+	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/scantest"
 	"github.com/podhmo/go-scan/symgo"
 )

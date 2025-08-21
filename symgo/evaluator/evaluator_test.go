@@ -233,30 +233,34 @@ func TestErrorHandling(t *testing.T) {
 }
 
 func TestEvalIfElseStmt(t *testing.T) {
-	input := `if (true) { 10 } else { 20 }`
-	source := fmt.Sprintf("package main\nfunc main() { %s }", input)
+	input := `if x > 0 { 10 } else { 20 }` // use a symbolic condition
+	source := fmt.Sprintf("package main\nvar x int\nfunc main() { %s }", input)
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, "main.go", source, parser.ParseComments)
 	if err != nil {
 		t.Fatalf("could not parse file: %v", err)
 	}
-	node := f.Decls[0].(*ast.FuncDecl).Body.List[0]
+	node := f.Decls[1].(*ast.FuncDecl).Body.List[0] // decls[1] is main func
 
 	s, _ := goscan.New()
 	eval := New(s, nil)
-	evaluated := eval.Eval(context.Background(), node, object.NewEnvironment(), &scanner.PackageInfo{
+	env := object.NewEnvironment()
+	// put a symbolic 'x' in the environment
+	env.Set("x", &object.SymbolicPlaceholder{Reason: "variable x"})
+	evaluated := eval.Eval(context.Background(), node, env, &scanner.PackageInfo{
 		Name:     "main",
 		Fset:     fset,
 		AstFiles: map[string]*ast.File{"main.go": f},
 	})
 
-	integer, ok := evaluated.(*object.Integer)
+	placeholder, ok := evaluated.(*object.SymbolicPlaceholder)
 	if !ok {
-		t.Fatalf("object is not Integer. got=%T (%+v)", evaluated, evaluated)
+		t.Fatalf("object is not SymbolicPlaceholder. got=%T (%+v)", evaluated, evaluated)
 	}
 
-	if want := int64(20); integer.Value != want {
-		t.Errorf("integer has wrong value. want=%d, got=%d", want, integer.Value)
+	expectedReason := "if/else statement"
+	if placeholder.Reason != expectedReason {
+		t.Errorf("placeholder has wrong reason. want=%q, got=%q", expectedReason, placeholder.Reason)
 	}
 }
 

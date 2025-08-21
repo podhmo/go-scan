@@ -78,6 +78,8 @@ A set of tasks to improve the `symgo` engine and the `docgen` tool based on the 
     - [x] **Improve Error Messages**: Update the `symgo.Interpreter` to use the `token.Pos` to include file, line, and column information in error messages.
     - [x] **Implement `fmt.Sprintf` Intrinsic**: Add a `symgo` intrinsic to mimic the basic behavior of `fmt.Sprintf` for dynamic string construction.
     - [x] **Support `if-else`**: Modify `evalIfStmt` in `symgo/evaluator/evaluator.go` to correctly evaluate `else` blocks.
+    - [x] **Support `for` loop**: Modify `evalForStmt` in `symgo/evaluator/evaluator.go` to symbolically evaluate for loops (unroll once).
+    - [x] **Support `switch-case`**: Modify `evalSwitchStmt` in `symgo/evaluator/evaluator.go` to symbolically evaluate all branches of a switch statement.
 - [x] **Step 2: Debugging Features**
     - [x] **Implement Structured Logger**: Introduce an optional structured logger in the `symgo.Evaluator` to trace evaluation steps, including node info, position, and results.
     - [x] **Add Debug Flag to `docgen`**: Add a `--debug-analysis <functionName>` flag to `docgen` to enable the structured logger for a specific function.

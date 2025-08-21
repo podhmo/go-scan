@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	goscan "github.com/podhmo/go-scan"
+	"github.com/podhmo/go-scan/resolver"
 	"github.com/podhmo/go-scan/scantest"
 	"github.com/podhmo/go-scan/symgo/object"
 )
@@ -30,7 +31,8 @@ func main() {
 
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
-		eval := New(s, s.Logger)
+		r := resolver.New(s)
+		eval := New(r, s, s.Logger)
 		env := object.NewEnvironment()
 
 		for _, file := range pkg.AstFiles {
@@ -106,7 +108,8 @@ func main() {
 
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
-		eval := New(s, s.Logger)
+		r := resolver.New(s)
+		eval := New(r, s, s.Logger)
 		env := object.NewEnvironment()
 
 		for _, file := range pkg.AstFiles {

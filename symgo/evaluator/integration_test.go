@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	goscan "github.com/podhmo/go-scan"
+	"github.com/podhmo/go-scan/resolver"
 	"github.com/podhmo/go-scan/scantest"
 	"github.com/podhmo/go-scan/symgo/object"
 )
@@ -40,7 +41,8 @@ func main() {
 		}
 		pkg := pkgs[0]
 
-		eval := New(s, s.Logger)
+		r := resolver.New(s)
+		eval := New(r, s, s.Logger)
 
 		var inspectedType object.Object
 		env := object.NewEnvironment()

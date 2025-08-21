@@ -15,6 +15,7 @@ import (
 	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/minigo/ffibridge"
 	"github.com/podhmo/go-scan/minigo/object"
+	"github.com/podhmo/go-scan/resolver"
 )
 
 // SpecialFormFunction is the signature for special form functions.
@@ -402,6 +403,7 @@ var builtins = map[string]*object.Builtin{
 type Evaluator struct {
 	object.BuiltinContext
 	scanner          *goscan.Scanner
+	resolver         *resolver.Resolver
 	registry         *object.SymbolRegistry
 	specialForms     map[string]*SpecialForm
 	packages         map[string]*object.Package // Central package cache
@@ -414,6 +416,7 @@ type Evaluator struct {
 type Config struct {
 	Fset         *token.FileSet
 	Scanner      *goscan.Scanner
+	Resolver     *resolver.Resolver
 	Registry     *object.SymbolRegistry
 	SpecialForms map[string]*SpecialForm
 	Packages     map[string]*object.Package
@@ -426,6 +429,7 @@ type Config struct {
 func New(cfg Config) *Evaluator {
 	e := &Evaluator{
 		scanner:      cfg.Scanner,
+		resolver:     cfg.Resolver,
 		registry:     cfg.Registry,
 		specialForms: cfg.SpecialForms,
 		packages:     cfg.Packages,
@@ -4589,7 +4593,7 @@ func (e *Evaluator) findSymbolInPackage(pkg *object.Package, symbolName *ast.Ide
 	// 3. If the package's environment is empty, it means we haven't scanned it yet.
 	// This is the main entry point for on-demand, lazy loading of a package's source.
 	if pkg.Env.IsEmpty() {
-		cumulativePkgInfo, err := e.scanner.FindSymbolInPackage(context.Background(), pkg.Path, symbolName.Name)
+		cumulativePkgInfo, err := e.resolver.Resolve(context.Background(), pkg.Path)
 		if err != nil {
 			// Not found in any unscanned files either.
 			return e.newError(pos, "undefined: %s.%s (package scan failed: %v)", pkg.Name, symbolName.Name, err)

@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	goscan "github.com/podhmo/go-scan"
+	"github.com/podhmo/go-scan/resolver"
 	"github.com/podhmo/go-scan/scanner"
 	"github.com/podhmo/go-scan/symgo/intrinsics"
 	"github.com/podhmo/go-scan/symgo/object"
@@ -22,6 +23,7 @@ import (
 // Evaluator is the main object that evaluates the AST.
 type Evaluator struct {
 	scanner           *goscan.Scanner
+	resolver          *resolver.Resolver
 	intrinsics        *intrinsics.Registry
 	logger            *slog.Logger
 	callStack         []*callFrame
@@ -34,12 +36,13 @@ type callFrame struct {
 }
 
 // New creates a new Evaluator.
-func New(scanner *goscan.Scanner, logger *slog.Logger) *Evaluator {
+func New(resolver *resolver.Resolver, scanner *goscan.Scanner, logger *slog.Logger) *Evaluator {
 	if logger == nil {
 		logger = slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	}
 	return &Evaluator{
 		scanner:           scanner,
+		resolver:          resolver,
 		intrinsics:        intrinsics.New(),
 		logger:            logger,
 		interfaceBindings: make(map[string]*goscan.TypeInfo),
@@ -466,10 +469,10 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 			return &object.Intrinsic{Fn: intrinsicFn}
 		}
 		if val.ScannedInfo == nil {
-			if e.scanner == nil {
-				return newError(n.Pos(), "scanner is not available, cannot load package %q", val.Path)
+			if e.resolver == nil {
+				return newError(n.Pos(), "resolver is not available, cannot load package %q", val.Path)
 			}
-			pkgInfo, err := e.scanner.ScanPackageByImport(ctx, val.Path)
+			pkgInfo, err := e.resolver.Resolve(ctx, val.Path)
 			if err != nil {
 				return newError(n.Pos(), "could not scan package %q: %v", val.Path, err)
 			}
@@ -538,7 +541,7 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 			if typeInfo.PkgPath != "" && typeInfo.PkgPath != pkg.ImportPath {
 				if foreignPkgObj, ok := e.findPackageByPath(env, typeInfo.PkgPath); ok {
 					if foreignPkgObj.ScannedInfo == nil {
-						scanned, err := e.scanner.ScanPackageByImport(ctx, foreignPkgObj.Path)
+						scanned, err := e.resolver.Resolve(ctx, foreignPkgObj.Path)
 						if err != nil {
 							return newError(n.Pos(), "failed to scan dependent package %s: %v", foreignPkgObj.Path, err)
 						}
@@ -546,7 +549,7 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 					}
 					resolutionPkg = foreignPkgObj.ScannedInfo
 				} else {
-					scanned, err := e.scanner.ScanPackageByImport(ctx, typeInfo.PkgPath)
+					scanned, err := e.resolver.Resolve(ctx, typeInfo.PkgPath)
 					if err != nil {
 						return newError(n.Pos(), "failed to scan transitive dependency package %s: %v", typeInfo.PkgPath, err)
 					}

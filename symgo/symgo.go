@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	goscan "github.com/podhmo/go-scan"
+	"github.com/podhmo/go-scan/resolver"
 	"github.com/podhmo/go-scan/scanner"
 	"github.com/podhmo/go-scan/symgo/evaluator"
 	"github.com/podhmo/go-scan/symgo/object"
@@ -39,6 +40,7 @@ type IntrinsicFunc func(eval *Interpreter, args []Object) Object
 // Interpreter is the main public entry point for the symgo engine.
 type Interpreter struct {
 	scanner           *goscan.Scanner
+	resolver          *resolver.Resolver
 	eval              *evaluator.Evaluator
 	globalEnv         *object.Environment
 	logger            *slog.Logger
@@ -69,6 +71,7 @@ func NewInterpreter(scanner *goscan.Scanner, options ...Option) (*Interpreter, e
 
 	i := &Interpreter{
 		scanner:           scanner,
+		resolver:          resolver.New(scanner),
 		globalEnv:         object.NewEnvironment(),
 		interfaceBindings: make(map[string]*goscan.TypeInfo),
 	}
@@ -82,7 +85,7 @@ func NewInterpreter(scanner *goscan.Scanner, options ...Option) (*Interpreter, e
 		i.logger = slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError}))
 	}
 
-	i.eval = evaluator.New(scanner, i.logger)
+	i.eval = evaluator.New(i.resolver, i.scanner, i.logger)
 
 	// Register default intrinsics
 	i.RegisterIntrinsic("fmt.Sprintf", i.intrinsicSprintf)
@@ -105,7 +108,7 @@ func (i *Interpreter) BindInterface(ifaceTypeName string, concreteTypeName strin
 		return fmt.Errorf("concrete type name must be fully qualified (e.g., 'bytes.Buffer'), got %s", concreteTypeName)
 	}
 
-	pkg, err := i.scanner.ScanPackageByImport(context.Background(), pkgPath)
+	pkg, err := i.resolver.Resolve(context.Background(), pkgPath)
 	if err != nil {
 		return fmt.Errorf("could not scan package %q for concrete type: %w", pkgPath, err)
 	}
@@ -135,7 +138,7 @@ func (i *Interpreter) NewSymbolic(name string, typeName string) (Object, error) 
 		return nil, fmt.Errorf("type name must be fully qualified (e.g., 'io.Writer'), got %s", typeName)
 	}
 
-	pkg, err := i.scanner.ScanPackageByImport(context.Background(), pkgPath)
+	pkg, err := i.resolver.Resolve(context.Background(), pkgPath)
 	if err != nil {
 		return nil, fmt.Errorf("could not scan package %q for symbolic var type: %w", pkgPath, err)
 	}

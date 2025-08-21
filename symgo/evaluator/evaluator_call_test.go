@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	goscan "github.com/podhmo/go-scan"
+	"github.com/podhmo/go-scan/resolver"
 	"github.com/podhmo/go-scan/scantest"
 	"github.com/podhmo/go-scan/symgo/object"
 )
@@ -32,7 +33,8 @@ func main() { add(1, 2) }
 		}
 		pkg := pkgs[0]
 
-		eval := New(s, s.Logger)
+		r := resolver.New(s)
+		eval := New(r, s, s.Logger)
 		env := object.NewEnvironment()
 		for _, file := range pkg.AstFiles {
 			eval.Eval(ctx, file, env, pkg)
@@ -71,7 +73,8 @@ func main() { fmt.Println("hello") }
 	var got string
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
-		eval := New(s, s.Logger)
+		r := resolver.New(s)
+		eval := New(r, s, s.Logger)
 		env := object.NewEnvironment()
 
 		eval.RegisterIntrinsic("fmt.Println", func(args ...object.Object) object.Object {
@@ -122,7 +125,8 @@ func main() {
 
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
-		eval := New(s, s.Logger)
+		r := resolver.New(s)
+		eval := New(r, s, s.Logger)
 		env := object.NewEnvironment()
 
 		const serveMuxTypeName = "net/http.ServeMux"
@@ -193,7 +197,8 @@ func main() {
 			pkg := pkgs[0]
 			handler := slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})
 			logger := slog.New(handler)
-			eval := New(s, logger)
+			r := resolver.New(s)
+			eval := New(r, s, logger)
 			env := object.NewEnvironment()
 
 			key := fmt.Sprintf("(%s.S).Do", pkg.ImportPath)
@@ -244,7 +249,8 @@ func main() {
 			pkg := pkgs[0]
 			handler := slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})
 			logger := slog.New(handler)
-			eval := New(s, logger)
+			r := resolver.New(s)
+			eval := New(r, s, logger)
 			env := object.NewEnvironment()
 
 			greeterTypeName := fmt.Sprintf("%s.Greeter", pkg.ImportPath)
@@ -310,7 +316,8 @@ func main() {
 		var lastResult int
 		action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 			pkg := pkgs[0]
-			eval := New(s, s.Logger)
+			r := resolver.New(s)
+			eval := New(r, s, s.Logger)
 			env := object.NewEnvironment()
 
 			eval.RegisterIntrinsic(fmt.Sprintf("%s.add", pkg.ImportPath), func(args ...object.Object) object.Object {

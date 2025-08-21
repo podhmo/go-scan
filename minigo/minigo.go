@@ -14,6 +14,7 @@ import (
 	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/minigo/evaluator"
 	"github.com/podhmo/go-scan/minigo/object"
+	"github.com/podhmo/go-scan/resolver"
 )
 
 // Interpreter is the main entry point for the minigo language.
@@ -21,6 +22,7 @@ import (
 // and the root environment for script execution.
 type Interpreter struct {
 	scanner       *goscan.Scanner
+	resolver      *resolver.Resolver
 	Registry      *object.SymbolRegistry
 	eval          *evaluator.Evaluator
 	globalEnv     *object.Environment
@@ -111,10 +113,12 @@ func NewInterpreter(options ...Option) (*Interpreter, error) {
 		return nil, fmt.Errorf("initializing scanner: %w", err)
 	}
 	i.scanner = scanner
+	i.resolver = resolver.New(scanner)
 
 	i.eval = evaluator.New(evaluator.Config{
 		Fset:         i.scanner.Fset(),
 		Scanner:      i.scanner,
+		Resolver:     i.resolver,
 		Registry:     i.Registry,
 		SpecialForms: i.specialForms,
 		Packages:     i.packages,

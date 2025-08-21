@@ -532,6 +532,11 @@ func (i *Interpreter) Files() []*object.FileScope {
 	return i.files
 }
 
+// Packages returns the packages that have been loaded into the interpreter.
+func (i *Interpreter) Packages() map[string]*object.Package {
+	return i.packages
+}
+
 // GlobalEnvForTest returns the interpreter's global environment.
 // This method is intended for use in tests only.
 func (i *Interpreter) GlobalEnvForTest() *object.Environment {

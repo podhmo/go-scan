@@ -9,16 +9,19 @@ import (
 	"os"
 
 	goscan "github.com/podhmo/go-scan"
+	"github.com/podhmo/go-scan/examples/docgen/patterns"
 	"gopkg.in/yaml.v3"
 )
 
 func main() {
 	var (
-		debug  bool
-		format string
+		debug        bool
+		format       string
+		patternsFile string
 	)
 	flag.BoolVar(&debug, "debug", false, "Enable debug logging for the analysis")
 	flag.StringVar(&format, "format", "json", "Output format (json or yaml)")
+	flag.StringVar(&patternsFile, "patterns", "", "Path to a Go file with custom pattern configurations")
 	flag.Parse()
 
 	logLevel := slog.LevelInfo
@@ -27,14 +30,22 @@ func main() {
 	}
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel}))
 
-	if err := run(logger, format); err != nil {
+	if err := run(logger, format, patternsFile); err != nil {
 		logger.Error("docgen failed", "error", err)
 		os.Exit(1)
 	}
 }
 
-func run(logger *slog.Logger, format string) error {
-	const sampleAPIPath = "github.com/podhmo/go-scan/examples/docgen/sampleapi"
+func run(logger *slog.Logger, format string, patternsFile string) error {
+	if flag.NArg() == 0 {
+		return fmt.Errorf("required argument: <package-path>")
+	}
+	sampleAPIPath := flag.Arg(0)
+
+	customPatterns, err := loadCustomPatterns(patternsFile, logger)
+	if err != nil {
+		return err
+	}
 
 	overrides := createStubOverrides()
 
@@ -47,7 +58,7 @@ func run(logger *slog.Logger, format string) error {
 		return err
 	}
 
-	analyzer, err := NewAnalyzer(s, logger)
+	analyzer, err := NewAnalyzer(s, logger, customPatterns...)
 	if err != nil {
 		return err
 	}
@@ -68,4 +79,12 @@ func run(logger *slog.Logger, format string) error {
 	default:
 		return fmt.Errorf("unsupported format: %q", format)
 	}
+}
+
+func loadCustomPatterns(filePath string, logger *slog.Logger) ([]patterns.Pattern, error) {
+	if filePath == "" {
+		return nil, nil
+	}
+	logger.Info("loading custom patterns", "file", filePath)
+	return LoadPatternsFromConfig(filePath, logger)
 }

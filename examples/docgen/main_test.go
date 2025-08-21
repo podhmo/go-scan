@@ -24,12 +24,6 @@ func TestDocgen(t *testing.T) {
 
 	// Setup: Run the analysis once and reuse the result for all sub-tests.
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug}))
-
-	patterns, err := LoadPatterns("patterns.go")
-	if err != nil {
-		t.Fatalf("failed to load patterns.go: %v", err)
-	}
-
 	s, err := goscan.New(
 		goscan.WithGoModuleResolver(),
 		goscan.WithLogger(logger),
@@ -37,6 +31,11 @@ func TestDocgen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create scanner: %v", err)
 	}
+	patterns, err := LoadPatterns("patterns.go")
+	if err != nil {
+		t.Fatalf("failed to load patterns.go: %v", err)
+	}
+
 	analyzer, err := NewAnalyzer(s, logger, patterns)
 	if err != nil {
 		t.Fatalf("failed to create analyzer: %v", err)

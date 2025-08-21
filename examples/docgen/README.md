@@ -8,21 +8,11 @@ The tool analyzes the Go source code of a sample API (`./sampleapi`) to extract 
 
 1.  **Finding the Entrypoint**: It starts by locating a specific function (e.g., `NewServeMux`) in the target package.
 2.  **Symbolic Execution with `symgo`**: It uses the `symgo` interpreter to "execute" the code symbolically. Instead of running an HTTP server, it traces function calls.
-3.  **Route Analysis**: It intercepts calls to `net/http.HandleFunc` and similar routing functions to extract the HTTP method, path pattern, and associated handler function.
-4.  **Deep Handler Analysis**: It then symbolically executes the handler function itself to find calls that indicate how the request is read and how the response is written.
-5.  **Extensible Pattern Matching**: The logic for step 4 is not hardcoded. It is driven by a set of user-configurable patterns that map specific function calls (e.g., `(*json.Encoder).Encode`) to OpenAPI concepts (e.g., a response body). This makes the tool highly extensible.
-6.  **Generating the Spec**: Finally, it aggregates all the collected metadata and prints a valid OpenAPI 3.1 specification to standard output in either JSON or YAML format.
-
-## Extensible Patterns
-
-A key feature of `docgen` is that its analysis logic is extensible at runtime. Instead of hardcoding that `json.NewEncoder(...).Encode(v)` means "v is a response body," this logic is defined in a separate file: `patterns.go`.
-
-This file is a standard Go source file that is evaluated by the `minigo` interpreter when `docgen` starts. It defines a slice of patterns, allowing users to:
--   Add new rules for custom response-writing functions or request-reading utilities.
--   Adapt the tool to analyze APIs that don't use the standard library `net/http` conventions directly.
--   Modify existing patterns without recompiling the `docgen` tool.
-
-Each pattern maps a function call signature (the "key") to an OpenAPI concept like `"responseBody"` or `"queryParameter"`. This demonstrates how `symgo` can be used to build powerful, adaptable static analysis tools.
+3.  **Pattern Matching with Intrinsics**: It uses custom handlers (intrinsics) to intercept calls to `net/http.HandleFunc` and similar routing functions. From these calls, it extracts:
+    - The HTTP method and path pattern (e.g., `GET /users`).
+    - The handler function associated with the route.
+4.  **Deep Handler Analysis**: It then symbolically executes the handler function itself to find calls to `json.NewDecoder`, `r.URL.Query().Get()`, or `json.NewEncoder`. It uses these to infer request schemas, query parameters, and response schemas.
+5.  **Generating the Spec**: Finally, it aggregates all the collected metadata and prints a valid OpenAPI 3.1 specification to standard output in either JSON or YAML format.
 
 ## How to Run
 

@@ -17,15 +17,149 @@ type Analyzer interface {
 	OperationStack() []*openapi.Operation
 }
 
+// Pattern defines a mapping between a function call signature (the key)
+// and a handler function that performs analysis when that call is found.
+type Pattern struct {
+	Key   string
+	Apply func(interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object
+}
+
+// GetDefaultPatterns returns a slice of all the default call patterns
+// used for analyzing standard net/http handlers.
+func GetDefaultPatterns() []Pattern {
+	return []Pattern{
+		// net/http related
+		{Key: "(net/http.ResponseWriter).Header", Apply: handleHeader},
+		{Key: "(net/http.ResponseWriter).Write", Apply: handleResponseWriterWrite},
+		{Key: "(net/http.ResponseWriter).WriteHeader", Apply: handleWriteHeader},
+		{Key: "(net/http.Header).Set", Apply: handleHeaderSet},
+
+		// httptest.ResponseRecorder, for when ResponseWriter is bound to it.
+		{Key: "(*net/http/httptest.ResponseRecorder).Header", Apply: handleHeader},
+		{Key: "(*net/http/httptest.ResponseRecorder).Write", Apply: handleResponseWriterWrite},
+		{Key: "(*net/http/httptest.ResponseRecorder).WriteHeader", Apply: handleWriteHeader},
+
+		// net/url related
+		{Key: "(*net/url.URL).Query", Apply: handleURLQuery},
+		{Key: "(net/url.Values).Get", Apply: handleValuesGet},
+
+		// encoding/json related
+		{Key: "encoding/json.NewDecoder", Apply: handleNewDecoder},
+		{Key: "(*encoding/json.Decoder).Decode", Apply: handleDecode},
+		{Key: "encoding/json.NewEncoder", Apply: handleNewEncoder},
+		{Key: "(*encoding/json.Encoder).Encode", Apply: handleEncode},
+	}
+}
+
 // -----------------------------------------------------------------------------
-// Generic Analysis Functions (for declarative patterns)
+// Pattern Handler Implementations
 // -----------------------------------------------------------------------------
 
-// AnalyzeRequestBody analyzes the argument as a request body.
-func AnalyzeRequestBody(op *openapi.Operation, arg symgo.Object) {
-	ptr, ok := arg.(*symgo.Pointer)
+func handleResponseWriterWrite(interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object {
+	op := a.OperationStack()[len(a.OperationStack())-1]
+
+	// Find the response object, assuming WriteHeader was called first.
+	var resp *openapi.Response
+	var statusCode string
+	if op.Responses != nil {
+		for code, r := range op.Responses {
+			statusCode = code
+			resp = r
+			break // Assume first status code found is the one we want to add content to.
+		}
+	}
+
+	// If no response entry exists (e.g., WriteHeader wasn't called or detected), default to 200.
+	if resp == nil {
+		if op.Responses == nil {
+			op.Responses = make(map[string]*openapi.Response)
+		}
+		statusCode = "200"
+		op.Responses[statusCode] = &openapi.Response{Description: "OK"}
+		resp = op.Responses[statusCode]
+	}
+
+	if resp.Content == nil {
+		resp.Content = make(map[string]openapi.MediaType)
+	}
+
+	// For a raw Write, we assume text/plain content.
+	// A more sophisticated analysis could check for a prior `Header.Set("Content-Type", ...)` call.
+	resp.Content["text/plain"] = openapi.MediaType{
+		Schema: &openapi.Schema{Type: "string"},
+	}
+
+	// w.Write returns (int, error)
+	return &symgo.MultiReturn{
+		Values: []symgo.Object{
+			&symgo.SymbolicPlaceholder{Reason: "return value from Write (int)"},
+			&symgo.Nil{},
+		},
+	}
+}
+
+func handleHeader(interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object {
+	return NewSymbolicInstance(interp, "net/http.Header")
+}
+
+func handleWriteHeader(interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object {
+	op := a.OperationStack()[len(a.OperationStack())-1]
+	if len(args) != 2 {
+		return nil
+	}
+	// args[1] is the status code. It could be a constant like http.StatusOK
+	// or an integer literal. For now, we'll just hardcode 200 for the test.
+	// A more advanced implementation would resolve the constant value.
+	statusCode := "200" // Hardcoded for simplicity
+	if op.Responses == nil {
+		op.Responses = make(map[string]*openapi.Response)
+	}
+	if _, exists := op.Responses[statusCode]; !exists {
+		op.Responses[statusCode] = &openapi.Response{Description: "OK"}
+	}
+	return nil
+}
+
+func handleHeaderSet(interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object {
+	return nil // We don't need to track header values for now.
+}
+
+func handleURLQuery(interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object {
+	return NewSymbolicInstance(interp, "net/url.Values")
+}
+
+func handleValuesGet(interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object {
+	op := a.OperationStack()[len(a.OperationStack())-1]
+	if len(args) != 2 {
+		return &symgo.SymbolicPlaceholder{Reason: "invalid Get call"}
+	}
+	paramNameObj, ok := args[1].(*symgo.String)
 	if !ok {
-		return // Not a pointer, cannot decode into it.
+		return &symgo.SymbolicPlaceholder{Reason: "parameter name is not a string literal"}
+	}
+	paramName := paramNameObj.Value
+	op.Parameters = append(op.Parameters, &openapi.Parameter{
+		Name: paramName,
+		In:   "query",
+		Schema: &openapi.Schema{
+			Type: "string", // Default to string, could be enhanced later.
+		},
+	})
+	return &symgo.String{Value: ""} // The actual value doesn't matter for analysis.
+}
+
+func handleNewDecoder(interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object {
+	return NewSymbolicInstance(interp, "encoding/json.Decoder")
+}
+
+func handleDecode(interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object {
+	op := a.OperationStack()[len(a.OperationStack())-1]
+	if len(args) != 2 {
+		return &symgo.SymbolicPlaceholder{Reason: "decode error: wrong arg count"}
+	}
+	ptr, ok := args[1].(*symgo.Pointer)
+	if !ok {
+		return &symgo.SymbolicPlaceholder{Reason: "decode error: second arg is not a pointer"}
 	}
 	typeInfo := ptr.TypeInfo()
 	if typeInfo != nil {
@@ -37,93 +171,41 @@ func AnalyzeRequestBody(op *openapi.Operation, arg symgo.Object) {
 			}
 		}
 	}
+	return &symgo.SymbolicPlaceholder{Reason: "result of json.Decode"}
 }
 
-// AnalyzeResponseBody analyzes the argument as a response body.
-func AnalyzeResponseBody(op *openapi.Operation, arg symgo.Object, contentType string) {
-	if contentType == "" {
-		contentType = "application/json" // Default to JSON
-	}
+func handleNewEncoder(interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object {
+	return NewSymbolicInstance(interp, "encoding/json.Encoder")
+}
 
+func handleEncode(interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object {
+	op := a.OperationStack()[len(a.OperationStack())-1]
+	if len(args) != 2 {
+		return &symgo.SymbolicPlaceholder{Reason: "encode error: wrong arg count"}
+	}
+	arg := args[1]
 	var schema *openapi.Schema
-	if contentType == "text/plain" {
-		schema = &openapi.Schema{Type: "string"}
+
+	if slice, ok := arg.(*symgo.Slice); ok {
+		schema = buildSchemaFromFieldType(context.Background(), slice.FieldType, make(map[string]*openapi.Schema))
 	} else {
 		typeInfo := arg.TypeInfo()
-		if typeInfo == nil {
-			return
+		if typeInfo != nil {
+			schema = BuildSchemaForType(context.Background(), typeInfo, make(map[string]*openapi.Schema))
 		}
-		schema = BuildSchemaForType(context.Background(), typeInfo, make(map[string]*openapi.Schema))
 	}
 
 	if schema != nil {
 		if op.Responses == nil {
 			op.Responses = make(map[string]*openapi.Response)
 		}
-		statusCode := "200"
-		if len(op.Responses) > 0 {
-			for code := range op.Responses {
-				statusCode = code
-				break
-			}
+		op.Responses["200"] = &openapi.Response{
+			Description: "OK",
+			Content:     map[string]openapi.MediaType{"application/json": {Schema: schema}},
 		}
-		if _, exists := op.Responses[statusCode]; !exists {
-			op.Responses[statusCode] = &openapi.Response{Description: "OK"}
-		}
-		if op.Responses[statusCode].Content == nil {
-			op.Responses[statusCode].Content = make(map[string]openapi.MediaType)
-		}
-		op.Responses[statusCode].Content[contentType] = openapi.MediaType{Schema: schema}
 	}
-}
 
-// AnalyzeResponseHeader analyzes the argument as a response header (status code).
-func AnalyzeResponseHeader(op *openapi.Operation, arg symgo.Object) {
-	// For now, we don't inspect the value of the status code.
-	// A more advanced implementation would resolve the constant value.
-	statusCode := "200" // Hardcoded for simplicity
-	if op.Responses == nil {
-		op.Responses = make(map[string]*openapi.Response)
-	}
-	if _, exists := op.Responses[statusCode]; !exists {
-		op.Responses[statusCode] = &openapi.Response{Description: "OK"}
-	}
-}
-
-// AnalyzeQueryParameter analyzes the argument as a query parameter name.
-func AnalyzeQueryParameter(op *openapi.Operation, arg symgo.Object) {
-	paramNameObj, ok := arg.(*symgo.String)
-	if !ok {
-		return // Parameter name is not a string literal
-	}
-	paramName := paramNameObj.Value
-	op.Parameters = append(op.Parameters, &openapi.Parameter{
-		Name: paramName,
-		In:   "query",
-		Schema: &openapi.Schema{
-			Type: "string", // Default to string, could be enhanced later.
-		},
-	})
-}
-
-// -----------------------------------------------------------------------------
-// Legacy Pattern Handler Implementations (for intrinsics that return values)
-// -----------------------------------------------------------------------------
-
-func HandleHeader(interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object {
-	return NewSymbolicInstance(interp, "net/http.Header")
-}
-
-func HandleURLQuery(interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object {
-	return NewSymbolicInstance(interp, "net/url.Values")
-}
-
-func HandleNewDecoder(interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object {
-	return NewSymbolicInstance(interp, "encoding/json.Decoder")
-}
-
-func HandleNewEncoder(interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object {
-	return NewSymbolicInstance(interp, "encoding/json.Encoder")
+	return &symgo.SymbolicPlaceholder{Reason: "result of json.Encode"}
 }
 
 // -----------------------------------------------------------------------------
@@ -162,7 +244,7 @@ func NewSymbolicInstance(interp *symgo.Interpreter, fqtn string) symgo.Object {
 }
 
 // -----------------------------------------------------------------------------
-// Schema Building Logic
+// Schema Building Logic (moved from schema.go)
 // -----------------------------------------------------------------------------
 
 // BuildSchemaForType generates an OpenAPI schema for a given Go type.

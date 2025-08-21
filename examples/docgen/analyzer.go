@@ -8,7 +8,7 @@ import (
 
 	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/examples/docgen/openapi"
-	"github.com/podhmo/go-scan/examples/docgen/patterns"
+	"github.com/podhmo/go-scan/scanner"
 	"github.com/podhmo/go-scan/symgo"
 )
 
@@ -47,8 +47,6 @@ func NewAnalyzer(s *goscan.Scanner, logger *slog.Logger, customPatterns []Patter
 	// Register intrinsics.
 	interp.RegisterIntrinsic("net/http.NewServeMux", a.handleNewServeMux)
 	interp.RegisterIntrinsic("(*net/http.ServeMux).HandleFunc", a.analyzeHandleFunc)
-
-	// Intrinsics for handling http.Handler interface wrappers
 	interp.RegisterIntrinsic("net/http.HandlerFunc", a.handleHandlerFunc)
 	interp.RegisterIntrinsic("net/http.TimeoutHandler", a.handleTimeoutHandler)
 	interp.RegisterIntrinsic("(*net/http.ServeMux).Handle", a.analyzeHandle)
@@ -61,17 +59,15 @@ func (a *Analyzer) OperationStack() []*openapi.Operation {
 }
 
 func (a *Analyzer) handleNewServeMux(interp *symgo.Interpreter, args []symgo.Object) symgo.Object {
-	return patterns.NewSymbolicInstance(interp, "net/http.ServeMux")
+	return NewSymbolicInstance(interp, "net/http.ServeMux")
 }
 
-// Analyze analyzes the package starting from a specific entrypoint function.
 func (a *Analyzer) Analyze(ctx context.Context, importPath string, entrypoint string) error {
 	pkg, err := a.Scanner.ScanPackageByImport(ctx, importPath)
 	if err != nil {
 		return fmt.Errorf("failed to load sample API package: %w", err)
 	}
 
-	// Find the entrypoint function declaration in the scanned package.
 	var entrypointFunc *goscan.FunctionInfo
 	for _, f := range pkg.Functions {
 		if f.Name == entrypoint {
@@ -83,20 +79,15 @@ func (a *Analyzer) Analyze(ctx context.Context, importPath string, entrypoint st
 		return fmt.Errorf("entrypoint function %q not found or has no body", entrypoint)
 	}
 
-	// Find the AST file that contains the entrypoint function.
 	entrypointFile, ok := pkg.AstFiles[entrypointFunc.FilePath]
 	if !ok {
 		return fmt.Errorf("could not find AST file %q for entrypoint", entrypointFunc.FilePath)
 	}
 
-	// The core analysis is now driven by the symgo interpreter.
-	// First, evaluate the entire file of the entrypoint. This will populate the
-	// interpreter's environment with imports and top-level declarations.
 	if _, err := a.interpreter.Eval(ctx, entrypointFile, pkg); err != nil {
 		return fmt.Errorf("error during file-level symgo eval: %w", err)
 	}
 
-	// Get the function object from the environment.
 	entrypointObj, ok := a.interpreter.FindObject(entrypoint)
 	if !ok {
 		return fmt.Errorf("entrypoint function %q not found in interpreter environment", entrypoint)
@@ -106,7 +97,6 @@ func (a *Analyzer) Analyze(ctx context.Context, importPath string, entrypoint st
 		return fmt.Errorf("entrypoint %q is not a function", entrypoint)
 	}
 
-	// Then, call the entrypoint function.
 	if _, err := a.interpreter.Apply(ctx, entrypointFn, []symgo.Object{}, pkg); err != nil {
 		return fmt.Errorf("error during entrypoint apply: %w", err)
 	}
@@ -120,7 +110,6 @@ func (a *Analyzer) handleHandlerFunc(interp *symgo.Interpreter, args []symgo.Obj
 	}
 	fn, ok := args[0].(*symgo.Function)
 	if !ok {
-		// It might be an instance wrapping a function, let's try to unwrap it.
 		unwrapped := a.unwrapHandler(args[0])
 		if unwrapped == nil {
 			return &symgo.Error{Message: fmt.Sprintf("HandlerFunc expects a function, but got %T", args[0])}
@@ -138,14 +127,10 @@ func (a *Analyzer) handleTimeoutHandler(interp *symgo.Interpreter, args []symgo.
 	if len(args) != 3 {
 		return &symgo.Error{Message: fmt.Sprintf("TimeoutHandler expects 3 arguments, but got %d", len(args))}
 	}
-	// The first argument is the handler, which we care about.
-	// The other two are timeout and message, which we can ignore for doc generation.
-	handler, ok := args[0].(symgo.Object) // Should be an Instance, but we just pass it through
+	handler, ok := args[0].(symgo.Object)
 	if !ok {
 		return &symgo.Error{Message: fmt.Sprintf("TimeoutHandler expects a handler, but got %T", args[0])}
 	}
-
-	// Wrap it in another instance to represent the handler returned by TimeoutHandler.
 	return &symgo.Instance{
 		TypeName:   "net/http.Handler",
 		Underlying: handler,
@@ -157,29 +142,19 @@ func (a *Analyzer) analyzeHandle(interp *symgo.Interpreter, args []symgo.Object)
 	if len(args) != 3 {
 		return &symgo.Error{Message: fmt.Sprintf("Handle expects 3 arguments, but got %d", len(args))}
 	}
-
 	patternObj, ok := args[1].(*symgo.String)
 	if !ok {
 		return &symgo.Error{Message: fmt.Sprintf("Handle pattern argument must be a string, but got %T", args[1])}
 	}
-
-	// Unwrap the handler to find the root function.
 	handlerFunc := a.unwrapHandler(args[2])
 	if handlerFunc == nil {
-		// Return nil instead of error, as some handlers might be intentionally opaque.
 		a.logger.DebugContext(context.Background(), "could not unwrap handler", "arg", args[2].Inspect())
 		return nil
 	}
-
-	// Create a new argument slice for analyzeHandleFunc.
-	// The first arg (receiver) and second (pattern) are the same.
-	// The third is the unwrapped function.
 	newArgs := []symgo.Object{args[0], patternObj, handlerFunc}
-
 	return a.analyzeHandleFunc(interp, newArgs)
 }
 
-// unwrapHandler recursively unwraps http.Handler instances to find the underlying function.
 func (a *Analyzer) unwrapHandler(obj symgo.Object) *symgo.Function {
 	switch v := obj.(type) {
 	case *symgo.Function:
@@ -194,24 +169,16 @@ func (a *Analyzer) unwrapHandler(obj symgo.Object) *symgo.Function {
 	}
 }
 
-// analyzeHandleFunc is the intrinsic for (*http.ServeMux).HandleFunc.
 func (a *Analyzer) analyzeHandleFunc(interp *symgo.Interpreter, args []symgo.Object) symgo.Object {
-	// Expects 3 args for HandleFunc: receiver, pattern, handler
 	if len(args) != 3 {
 		return &symgo.Error{Message: fmt.Sprintf("HandleFunc expects 3 arguments, but got %d", len(args))}
 	}
-
-	// Arg 0 is the receiver, which we can ignore.
-	// Arg 1 is the pattern string.
 	patternObj, ok := args[1].(*symgo.String)
 	if !ok {
 		return &symgo.Error{Message: fmt.Sprintf("HandleFunc pattern argument must be a string, but got %T", args[1])}
 	}
-
-	// Arg 2 is the handler function.
 	handlerObj, ok := args[2].(*symgo.Function)
 	if !ok {
-		// It's possible the handler is not yet resolved, this is a limitation for now.
 		return &symgo.Error{Message: fmt.Sprintf("HandleFunc handler argument must be a function, but got %T", args[2])}
 	}
 
@@ -235,7 +202,6 @@ func (a *Analyzer) analyzeHandleFunc(interp *symgo.Interpreter, args []symgo.Obj
 		op.Description = strings.TrimSpace(handlerDecl.Doc.Text())
 	}
 
-	// Analyze the handler body for request/response schemas
 	if handlerDecl.Body != nil {
 		a.analyzeHandlerBody(handlerObj, op)
 	}
@@ -267,10 +233,7 @@ func (a *Analyzer) analyzeHandleFunc(interp *symgo.Interpreter, args []symgo.Obj
 	return nil
 }
 
-// analyzeHandlerBody analyzes the body of an HTTP handler function to find
-// request and response schemas.
 func (a *Analyzer) analyzeHandlerBody(handler *symgo.Function, op *openapi.Operation) {
-	// Push the current operation onto the stack for the duration of this analysis.
 	a.operationStack = append(a.operationStack, op)
 	defer func() {
 		a.operationStack = a.operationStack[:len(a.operationStack)-1]
@@ -282,7 +245,6 @@ func (a *Analyzer) analyzeHandlerBody(handler *symgo.Function, op *openapi.Opera
 		return
 	}
 
-	// Create symbolic arguments for the handler function (w, r).
 	var handlerArgs []symgo.Object
 	if handler.Decl.Type.Params != nil {
 		file := pkg.Fset.File(handler.Decl.Pos())
@@ -300,63 +262,48 @@ func (a *Analyzer) analyzeHandlerBody(handler *symgo.Function, op *openapi.Opera
 		for _, field := range handler.Decl.Type.Params.List {
 			fieldType := a.Scanner.TypeInfoFromExpr(context.Background(), field.Type, nil, pkg, importLookup)
 			typeInfo, _ := fieldType.Resolve(context.Background())
-
-			// For each parameter name (can be multiple like w1, w2 http.ResponseWriter), create a variable.
 			for _, name := range field.Names {
 				arg := &symgo.Variable{
-					Name: name.Name,
-					BaseObject: symgo.BaseObject{
-						ResolvedTypeInfo: typeInfo,
-					},
-					Value: &symgo.SymbolicPlaceholder{Reason: "function parameter"},
+					Name:       name.Name,
+					BaseObject: symgo.BaseObject{ResolvedTypeInfo: typeInfo},
+					Value:      &symgo.SymbolicPlaceholder{Reason: "function parameter"},
 				}
 				handlerArgs = append(handlerArgs, arg)
 			}
 		}
 	}
 
-	// Bind the http.ResponseWriter interface to a concrete type for analysis.
-	// This allows us to track calls to methods like WriteHeader and Write.
 	if err := a.interpreter.BindInterface("net/http.ResponseWriter", "*net/http/httptest.ResponseRecorder"); err != nil {
-		// This binding is critical, so we log a warning if it fails.
 		a.logger.Warn("failed to bind ResponseWriter interface, response analysis will be incomplete", "error", err)
 	}
 
-	// Push a new scope for temporary intrinsics for this handler.
 	intrinsics := a.buildHandlerIntrinsics()
 	a.interpreter.PushIntrinsics(intrinsics)
-	defer a.interpreter.PopIntrinsics() // Ensure we clean up the scope.
+	defer a.interpreter.PopIntrinsics()
 
-	// Call the handler function with the created symbolic arguments.
 	a.interpreter.Apply(context.Background(), handler, handlerArgs, pkg)
 }
 
-// buildHandlerIntrinsics creates the map of intrinsic handlers for analyzing
-// a handler's body by using the extensible pattern registry.
 func (a *Analyzer) buildHandlerIntrinsics() map[string]symgo.IntrinsicFunc {
 	intrinsics := make(map[string]symgo.IntrinsicFunc)
 
-	// Add default intrinsics that are not suitable for the declarative pattern system.
-	// These typically create and return new symbolic instances.
 	intrinsics["encoding/json.NewDecoder"] = func(i *symgo.Interpreter, args []symgo.Object) symgo.Object {
-		return patterns.HandleNewDecoder(i, a, args)
+		return HandleNewDecoder(i, a, args)
 	}
 	intrinsics["encoding/json.NewEncoder"] = func(i *symgo.Interpreter, args []symgo.Object) symgo.Object {
-		return patterns.HandleNewEncoder(i, a, args)
+		return HandleNewEncoder(i, a, args)
 	}
 	intrinsics["(*net/url.URL).Query"] = func(i *symgo.Interpreter, args []symgo.Object) symgo.Object {
-		return patterns.HandleURLQuery(i, a, args)
+		return HandleURLQuery(i, a, args)
 	}
 	intrinsics["(net/http.ResponseWriter).Header"] = func(i *symgo.Interpreter, args []symgo.Object) symgo.Object {
-		return patterns.HandleHeader(i, a, args)
+		return HandleHeader(i, a, args)
 	}
 	intrinsics["(*net/http/httptest.ResponseRecorder).Header"] = func(i *symgo.Interpreter, args []symgo.Object) symgo.Object {
-		return patterns.HandleHeader(i, a, args)
+		return HandleHeader(i, a, args)
 	}
 
-	// Add intrinsics from custom patterns loaded from the .go file.
 	for _, p := range a.customPatterns {
-		// Capture the pattern for the closure.
 		pattern := p
 		intrinsics[pattern.Key] = func(i *symgo.Interpreter, args []symgo.Object) symgo.Object {
 			if len(a.operationStack) == 0 {
@@ -372,26 +319,230 @@ func (a *Analyzer) buildHandlerIntrinsics() map[string]symgo.IntrinsicFunc {
 
 			switch pattern.Type {
 			case "requestBody":
-				patterns.AnalyzeRequestBody(op, arg)
+				AnalyzeRequestBody(op, arg)
 			case "responseBody":
-				patterns.AnalyzeResponseBody(op, arg, pattern.ContentType)
+				AnalyzeResponseBody(op, arg, pattern.ContentType)
 			case "responseHeader":
-				patterns.AnalyzeResponseHeader(op, arg)
+				AnalyzeResponseHeader(op, arg)
 			case "queryParameter":
-				patterns.AnalyzeQueryParameter(op, arg)
+				AnalyzeQueryParameter(op, arg)
 			case "placeholder":
-				// This pattern exists only to prevent an "undefined method" error
-				// during symbolic execution. We don't need to do anything with it.
 			default:
 				a.logger.Warn("unknown pattern type", "type", pattern.Type, "key", pattern.Key)
 			}
-
-			// Return a symbolic placeholder. The actual return value of the matched
-			// function doesn't usually matter for documentation generation, but the
-			// evaluator expects a non-nil object.
 			return &symgo.SymbolicPlaceholder{Reason: fmt.Sprintf("result of %s", pattern.Key)}
 		}
 	}
 
 	return intrinsics
+}
+
+// -----------------------------------------------------------------------------
+// Analysis Pattern Helpers
+// -----------------------------------------------------------------------------
+
+func AnalyzeRequestBody(op *openapi.Operation, arg symgo.Object) {
+	ptr, ok := arg.(*symgo.Pointer)
+	if !ok {
+		return
+	}
+	typeInfo := ptr.TypeInfo()
+	if typeInfo != nil {
+		schema := BuildSchemaForType(context.Background(), typeInfo, make(map[string]*openapi.Schema))
+		if schema != nil {
+			op.RequestBody = &openapi.RequestBody{
+				Content:  map[string]openapi.MediaType{"application/json": {Schema: schema}},
+				Required: true,
+			}
+		}
+	}
+}
+
+func AnalyzeResponseBody(op *openapi.Operation, arg symgo.Object, contentType string) {
+	if contentType == "" {
+		contentType = "application/json"
+	}
+
+	var schema *openapi.Schema
+	if contentType == "text/plain" {
+		schema = &openapi.Schema{Type: "string"}
+	} else {
+		typeInfo := arg.TypeInfo()
+		if typeInfo == nil {
+			return
+		}
+		schema = BuildSchemaForType(context.Background(), typeInfo, make(map[string]*openapi.Schema))
+	}
+
+	if schema != nil {
+		if op.Responses == nil {
+			op.Responses = make(map[string]*openapi.Response)
+		}
+		statusCode := "200"
+		if len(op.Responses) > 0 {
+			for code := range op.Responses {
+				statusCode = code
+				break
+			}
+		}
+		if _, exists := op.Responses[statusCode]; !exists {
+			op.Responses[statusCode] = &openapi.Response{Description: "OK"}
+		}
+		if op.Responses[statusCode].Content == nil {
+			op.Responses[statusCode].Content = make(map[string]openapi.MediaType)
+		}
+		op.Responses[statusCode].Content[contentType] = openapi.MediaType{Schema: schema}
+	}
+}
+
+func AnalyzeResponseHeader(op *openapi.Operation, arg symgo.Object) {
+	statusCode := "200"
+	if op.Responses == nil {
+		op.Responses = make(map[string]*openapi.Response)
+	}
+	if _, exists := op.Responses[statusCode]; !exists {
+		op.Responses[statusCode] = &openapi.Response{Description: "OK"}
+	}
+}
+
+func AnalyzeQueryParameter(op *openapi.Operation, arg symgo.Object) {
+	paramNameObj, ok := arg.(*symgo.String)
+	if !ok {
+		return
+	}
+	paramName := paramNameObj.Value
+	op.Parameters = append(op.Parameters, &openapi.Parameter{
+		Name:   paramName,
+		In:     "query",
+		Schema: &openapi.Schema{Type: "string"},
+	})
+}
+
+func HandleHeader(interp *symgo.Interpreter, a *Analyzer, args []symgo.Object) symgo.Object {
+	return NewSymbolicInstance(interp, "net/http.Header")
+}
+
+func HandleURLQuery(interp *symgo.Interpreter, a *Analyzer, args []symgo.Object) symgo.Object {
+	return NewSymbolicInstance(interp, "net/url.Values")
+}
+
+func HandleNewDecoder(interp *symgo.Interpreter, a *Analyzer, args []symgo.Object) symgo.Object {
+	return NewSymbolicInstance(interp, "encoding/json.Decoder")
+}
+
+func HandleNewEncoder(interp *symgo.Interpreter, a *Analyzer, args []symgo.Object) symgo.Object {
+	return NewSymbolicInstance(interp, "encoding/json.Encoder")
+}
+
+func NewSymbolicInstance(interp *symgo.Interpreter, fqtn string) symgo.Object {
+	lastDot := strings.LastIndex(fqtn, ".")
+	if lastDot == -1 {
+		return &symgo.Error{Message: fmt.Sprintf("invalid fully-qualified type name: %s", fqtn)}
+	}
+	pkgPath := fqtn[:lastDot]
+	typeName := fqtn[lastDot+1:]
+
+	pkg, err := interp.Scanner().ScanPackageByImport(context.Background(), pkgPath)
+	if err != nil {
+		return &symgo.Error{Message: fmt.Sprintf("could not load package %s: %v", pkgPath, err)}
+	}
+
+	var resolvedType *scanner.TypeInfo
+	for _, t := range pkg.Types {
+		if t.Name == typeName {
+			resolvedType = t
+			break
+		}
+	}
+	if resolvedType == nil {
+		return &symgo.Error{Message: fmt.Sprintf("could not find type %s in package %s", typeName, pkgPath)}
+	}
+
+	return &symgo.Instance{
+		TypeName:   fqtn,
+		BaseObject: symgo.BaseObject{ResolvedTypeInfo: resolvedType},
+	}
+}
+
+// -----------------------------------------------------------------------------
+// Schema Building Logic
+// -----------------------------------------------------------------------------
+
+func BuildSchemaForType(ctx context.Context, typeInfo *scanner.TypeInfo, cache map[string]*openapi.Schema) *openapi.Schema {
+	if typeInfo == nil {
+		return &openapi.Schema{Type: "object", Description: "unknown type"}
+	}
+	if typeInfo.Underlying != nil {
+		return buildSchemaFromFieldType(ctx, typeInfo.Underlying, cache)
+	}
+	canonicalName := fmt.Sprintf("%s.%s", typeInfo.PkgPath, typeInfo.Name)
+	if cached, ok := cache[canonicalName]; ok {
+		return cached
+	}
+	if typeInfo.Kind != scanner.StructKind || typeInfo.Struct == nil {
+		return &openapi.Schema{Type: "object", Description: "unsupported type kind"}
+	}
+
+	schema := &openapi.Schema{
+		Type:       "object",
+		Properties: make(map[string]*openapi.Schema),
+	}
+	cache[canonicalName] = schema
+
+	for _, field := range typeInfo.Struct.Fields {
+		if !field.IsExported {
+			continue
+		}
+		jsonName := field.TagValue("json")
+		if jsonName == "-" {
+			continue
+		}
+		if jsonName == "" {
+			jsonName = field.Name
+		}
+		schema.Properties[jsonName] = buildSchemaFromFieldType(ctx, field.Type, cache)
+	}
+	return schema
+}
+
+func buildSchemaFromFieldType(ctx context.Context, ft *scanner.FieldType, cache map[string]*openapi.Schema) *openapi.Schema {
+	if ft == nil {
+		return nil
+	}
+	if ft.IsSlice {
+		return &openapi.Schema{Type: "array", Items: buildSchemaFromFieldType(ctx, ft.Elem, cache)}
+	}
+	if ft.IsPointer {
+		return buildSchemaFromFieldType(ctx, ft.Elem, cache)
+	}
+	if ft.IsBuiltin {
+		return buildSchemaFromBasic(ft.Name)
+	}
+	typeInfo, err := ft.Resolve(ctx)
+	if err != nil {
+		fmt.Printf("warn: could not resolve type %q: %v\n", ft.Name, err)
+		return &openapi.Schema{Type: "object", Description: "unresolved type"}
+	}
+	return BuildSchemaForType(ctx, typeInfo, cache)
+}
+
+func buildSchemaFromBasic(typeName string) *openapi.Schema {
+	switch typeName {
+	case "string":
+		return &openapi.Schema{Type: "string"}
+	case "int", "int8", "int16", "int32":
+		return &openapi.Schema{Type: "integer", Format: "int32"}
+	case "int64":
+		return &openapi.Schema{Type: "integer", Format: "int64"}
+	case "uint", "uint8", "uint16", "uint32", "uint64", "uintptr":
+		return &openapi.Schema{Type: "integer", Format: "int64"}
+	case "bool":
+		return &openapi.Schema{Type: "boolean"}
+	case "float32":
+		return &openapi.Schema{Type: "number", Format: "float"}
+	case "float64":
+		return &openapi.Schema{Type: "number", Format: "double"}
+	default:
+		return &openapi.Schema{Type: "string", Description: fmt.Sprintf("unsupported basic type: %s", typeName)}
+	}
 }

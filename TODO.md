@@ -72,8 +72,8 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 
 - [x] **Fix `docgen` integration test**: The `examples/docgen/main_test.go` was previously skipped because it failed to generate a response schema for handlers that make calls on a bound interface (`http.ResponseWriter`). This was caused by two issues: 1) a state propagation problem where side effects on the `openapi.Operation` object were lost, and 2) an evaluator bug where `[]byte` type conversions were not handled, preventing intrinsics from being called. Both issues have been resolved.
     - [x] Re-fixed the state propagation issue by ensuring the modified `openapi.Operation` object is correctly returned from the handler body analysis.
-- [-] **Extend Custom Patterns**: Extend the `minigo`-based pattern system to support configuring path, query, and header parameter extraction, similar to how `requestBody` and `responseBody` are handled now.
-    - [ ] **Investigate and fix parameter loss**: The custom parameter handlers are being called, but the extracted parameters are not appearing in the final OpenAPI spec. The modifications to the `openapi.Operation` object are being lost.
+- [x] **Extend Custom Patterns**: Extend the `minigo`-based pattern system to support configuring path, query, and header parameter extraction, similar to how `requestBody` and `responseBody` are handled now.
+    - [x] **Investigate and fix parameter loss**: The custom parameter handlers are being called, but the extracted parameters are not appearing in the final OpenAPI spec. The modifications to the `openapi.Operation` object are being lost.
 - [x] **Implement full intra-module recursive evaluation**: Enhanced the `symgo` evaluator to distinguish between intra-module and extra-module function calls, recursively evaluating the former as specified in the design plan.
 
 A set of tasks to improve the `symgo` engine and the `docgen` tool based on the analysis in `docgen/ja/from-docgen.md`.

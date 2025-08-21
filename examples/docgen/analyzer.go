@@ -272,27 +272,15 @@ func (a *Analyzer) analyzeHandleFunc(interp *symgo.Interpreter, args []symgo.Obj
 // analyzeHandlerBody analyzes the body of an HTTP handler function to find
 // request and response schemas.
 func (a *Analyzer) analyzeHandlerBody(handler *symgo.Function, op *openapi.Operation) *openapi.Operation {
-	// Push the current operation onto the stack for the duration of this analysis.
-	a.operationStack = append(a.operationStack, op)
-	defer func() {
-		// The operation on the stack is the one that might have been modified.
-		// We pop it off, and the named return value `op` will be updated.
-		if len(a.operationStack) > 0 {
-			// No, this is incorrect. The 'op' is a parameter, not a named return value.
-			// The caller's 'op' won't be updated.
-			// The correct way is to pop, and then the function should return that value.
-			// Let's refactor this.
-		}
-	}()
-
-	// Refactored logic:
+	// Capture stack size before we modify it.
 	originalStackSize := len(a.operationStack)
 	defer func() {
-		// Ensure the stack is always restored to its original size.
-		if len(a.operationStack) > originalStackSize {
-			a.operationStack = a.operationStack[:originalStackSize]
-		}
+		// Always restore the stack to its original size.
+		a.operationStack = a.operationStack[:originalStackSize]
 	}()
+
+	// Push the current operation onto the stack for the duration of this analysis.
+	a.operationStack = append(a.operationStack, op)
 
 	pkg, err := a.Scanner.ScanPackageByPos(context.Background(), handler.Decl.Pos())
 	if err != nil {
@@ -349,13 +337,10 @@ func (a *Analyzer) analyzeHandlerBody(handler *symgo.Function, op *openapi.Opera
 	a.interpreter.Apply(context.Background(), handler, handlerArgs, pkg)
 
 	// After Apply, the operation on the top of the stack is the one that has been modified.
-	if len(a.operationStack) > originalStackSize {
-		// This is defensive. The stack should have exactly one more item.
-		finalOp := a.operationStack[len(a.operationStack)-1]
-		return finalOp
-	}
+	// We retrieve it before the defer pops it.
+	finalOp := a.operationStack[len(a.operationStack)-1]
 
-	return op // Return original if something went wrong
+	return finalOp
 }
 
 // buildHandlerIntrinsics creates the map of intrinsic handlers for analyzing

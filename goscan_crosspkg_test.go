@@ -118,8 +118,7 @@ type C struct {
 		{Name: "Name", Type: &scanner.FieldType{Name: "string", IsBuiltin: true}, IsExported: true},
 	}
 	opts := []cmp.Option{
-		cmpopts.IgnoreUnexported(scanner.FieldType{}),
-		cmpopts.IgnoreFields(scanner.FieldType{}, "Resolver"),
+		cmpopts.IgnoreFields(scanner.FieldType{}, "Resolver", "CurrentPkg"),
 	}
 	if diff := cmp.Diff(expectedFields, resolvedFieldC.Struct.Fields, opts...); diff != "" {
 		t.Errorf("field mismatch in type C (-want +got):\n%s", diff)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"path"
 	"reflect"
 	"regexp"
 	"strconv"
@@ -250,7 +251,12 @@ func resolveType(ctx context.Context, s *goscan.Scanner, info *model.ParsedInfo,
 		return nil, fmt.Errorf("could not resolve package path for identifier %q", pkgIdentifier)
 	}
 
-	resolvableType := &scanner.FieldType{Resolver: s, FullImportPath: pkgPath, TypeName: name}
+	pkgName := pkgIdentifier
+	if strings.Contains(pkgIdentifier, "/") {
+		pkgName = path.Base(pkgPath)
+	}
+
+	resolvableType := &scanner.FieldType{Resolver: s, FullImportPath: pkgPath, TypeName: name, PkgName: pkgName}
 	resolvedTypeInfo, err := s.ResolveType(ctx, resolvableType)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve type %q: %w", typeNameStr, err)

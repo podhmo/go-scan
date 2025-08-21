@@ -24,3 +24,9 @@ func RenderJSON(w http.ResponseWriter, status int, v any) {
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(v)
 }
+
+// RenderCustomError is a helper for testing the CustomResponse pattern.
+func RenderCustomError(w http.ResponseWriter, r *http.Request, err ErrorResponse) {
+	w.WriteHeader(http.StatusBadRequest) // 400
+	json.NewEncoder(w).Encode(err)
+}

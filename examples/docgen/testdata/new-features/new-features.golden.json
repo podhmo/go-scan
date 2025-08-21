@@ -50,6 +50,24 @@
           }
         }
       }
+    },
+    "/things": {
+      "post": {
+        "description": "CreateThingHandler is for testing custom status code responses.",
+        "operationId": "new-features_main_CreateThingHandler",
+        "responses": {
+          "400": {
+            "description": "Response for status code 400",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/new-features_helpers_ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {

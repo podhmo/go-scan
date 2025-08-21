@@ -234,6 +234,41 @@ func (r *Result) As(target any) error {
 	return unmarshal(r.Value, dstVal.Elem())
 }
 
+func unmarshalMapToStruct(src *object.Map, dst reflect.Value) error {
+	dstFields := make(map[string]reflect.Value)
+	dstType := dst.Type()
+	for i := 0; i < dst.NumField(); i++ {
+		field := dstType.Field(i)
+		if field.PkgPath != "" { // unexported
+			continue
+		}
+		// Use json tag if present, otherwise use field name
+		jsonTag := field.Tag.Get("json")
+		if jsonTag == "" {
+			jsonTag = field.Name
+		} else if jsonTag == "-" {
+			continue
+		}
+		// handle ",omitempty"
+		parts := strings.Split(jsonTag, ",")
+		dstFields[parts[0]] = dst.Field(i)
+	}
+
+	for _, pair := range src.Pairs {
+		keyStr, ok := pair.Key.(*object.String)
+		if !ok {
+			return fmt.Errorf("cannot use non-string key for struct unmarshaling: %s", pair.Key.Type())
+		}
+
+		if dstField, ok := dstFields[keyStr.Value]; ok {
+			if err := unmarshal(pair.Value, dstField); err != nil {
+				return fmt.Errorf("error in struct field %q: %w", keyStr.Value, err)
+			}
+		}
+	}
+	return nil
+}
+
 // unmarshal is a recursive helper function that populates a Go `reflect.Value` (dst)
 // from a minigo `object.Object` (src).
 func unmarshal(src object.Object, dst reflect.Value) error {
@@ -298,6 +333,9 @@ func unmarshal(src object.Object, dst reflect.Value) error {
 		dst.Set(newSlice)
 		return nil
 	case *object.Map:
+		if dst.Kind() == reflect.Struct {
+			return unmarshalMapToStruct(s, dst)
+		}
 		if dst.Kind() != reflect.Map {
 			return fmt.Errorf("cannot unmarshal map into non-map type %s", dst.Type())
 		}

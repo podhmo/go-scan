@@ -19,19 +19,21 @@ type Analyzer struct {
 	OpenAPI        *openapi.OpenAPI
 	logger         *slog.Logger
 	operationStack []*openapi.Operation
+	customPatterns []Pattern
 }
 
 // NewAnalyzer creates a new Analyzer.
-func NewAnalyzer(s *goscan.Scanner, logger *slog.Logger) (*Analyzer, error) {
+func NewAnalyzer(s *goscan.Scanner, logger *slog.Logger, customPatterns []Pattern) (*Analyzer, error) {
 	interp, err := symgo.NewInterpreter(s, symgo.WithLogger(logger))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create symgo interpreter: %w", err)
 	}
 
 	a := &Analyzer{
-		Scanner:     s,
-		interpreter: interp,
-		logger:      logger,
+		Scanner:        s,
+		interpreter:    interp,
+		logger:         logger,
+		customPatterns: customPatterns,
 		OpenAPI: &openapi.OpenAPI{
 			OpenAPI: "3.1.0",
 			Info: openapi.Info{
@@ -91,7 +93,6 @@ func (a *Analyzer) Analyze(ctx context.Context, importPath string, entrypoint st
 	// First, evaluate the entire file of the entrypoint. This will populate the
 	// interpreter's environment with imports and top-level declarations.
 	if _, err := a.interpreter.Eval(ctx, entrypointFile, pkg); err != nil {
-		// This is the change: we now return the error instead of just printing it.
 		return fmt.Errorf("error during file-level symgo eval: %w", err)
 	}
 
@@ -107,7 +108,6 @@ func (a *Analyzer) Analyze(ctx context.Context, importPath string, entrypoint st
 
 	// Then, call the entrypoint function.
 	if _, err := a.interpreter.Apply(ctx, entrypointFn, []symgo.Object{}, pkg); err != nil {
-		// This is the change: we now return the error instead of just printing it.
 		return fmt.Errorf("error during entrypoint apply: %w", err)
 	}
 
@@ -323,7 +323,7 @@ func (a *Analyzer) analyzeHandlerBody(handler *symgo.Function, op *openapi.Opera
 	}
 
 	// Push a new scope for temporary intrinsics for this handler.
-	intrinsics := a.buildHandlerIntrinsics(a)
+	intrinsics := a.buildHandlerIntrinsics()
 	a.interpreter.PushIntrinsics(intrinsics)
 	defer a.interpreter.PopIntrinsics() // Ensure we clean up the scope.
 
@@ -333,16 +333,60 @@ func (a *Analyzer) analyzeHandlerBody(handler *symgo.Function, op *openapi.Opera
 
 // buildHandlerIntrinsics creates the map of intrinsic handlers for analyzing
 // a handler's body by using the extensible pattern registry.
-func (a *Analyzer) buildHandlerIntrinsics(analyzer *Analyzer) map[string]symgo.IntrinsicFunc {
+func (a *Analyzer) buildHandlerIntrinsics() map[string]symgo.IntrinsicFunc {
 	intrinsics := make(map[string]symgo.IntrinsicFunc)
 
-	for _, p := range patterns.GetDefaultPatterns() {
+	// Add default intrinsics that are not suitable for the declarative pattern system.
+	// These typically create and return new symbolic instances.
+	intrinsics["encoding/json.NewDecoder"] = func(i *symgo.Interpreter, args []symgo.Object) symgo.Object {
+		return patterns.HandleNewDecoder(i, a, args)
+	}
+	intrinsics["encoding/json.NewEncoder"] = func(i *symgo.Interpreter, args []symgo.Object) symgo.Object {
+		return patterns.HandleNewEncoder(i, a, args)
+	}
+	intrinsics["(*net/url.URL).Query"] = func(i *symgo.Interpreter, args []symgo.Object) symgo.Object {
+		return patterns.HandleURLQuery(i, a, args)
+	}
+	intrinsics["(net/http.ResponseWriter).Header"] = func(i *symgo.Interpreter, args []symgo.Object) symgo.Object {
+		return patterns.HandleHeader(i, a, args)
+	}
+	intrinsics["(*net/http/httptest.ResponseRecorder).Header"] = func(i *symgo.Interpreter, args []symgo.Object) symgo.Object {
+		return patterns.HandleHeader(i, a, args)
+	}
+
+	// Add intrinsics from custom patterns loaded from the .go file.
+	for _, p := range a.customPatterns {
 		// Capture the pattern for the closure.
 		pattern := p
 		intrinsics[pattern.Key] = func(i *symgo.Interpreter, args []symgo.Object) symgo.Object {
-			// The analyzer instance `a` is captured from the outer scope.
-			// The pattern's Apply function will use it to get the current operation.
-			return pattern.Apply(i, analyzer, args)
+			if len(a.operationStack) == 0 {
+				a.logger.Warn("pattern called outside of handler analysis", "key", pattern.Key)
+				return nil
+			}
+			op := a.operationStack[len(a.operationStack)-1]
+
+			if len(args) <= pattern.ArgIndex {
+				return &symgo.Error{Message: fmt.Sprintf("not enough arguments for pattern %q (wants %d, got %d)", pattern.Key, pattern.ArgIndex+1, len(args))}
+			}
+			arg := args[pattern.ArgIndex]
+
+			switch pattern.Type {
+			case "requestBody":
+				patterns.AnalyzeRequestBody(op, arg)
+			case "responseBody":
+				patterns.AnalyzeResponseBody(op, arg, pattern.ContentType)
+			case "responseHeader":
+				patterns.AnalyzeResponseHeader(op, arg)
+			case "queryParameter":
+				patterns.AnalyzeQueryParameter(op, arg)
+			default:
+				a.logger.Warn("unknown pattern type", "type", pattern.Type, "key", pattern.Key)
+			}
+
+			// Return a symbolic placeholder. The actual return value of the matched
+			// function doesn't usually matter for documentation generation, but the
+			// evaluator expects a non-nil object.
+			return &symgo.SymbolicPlaceholder{Reason: fmt.Sprintf("result of %s", pattern.Key)}
 		}
 	}
 

@@ -14,11 +14,13 @@ import (
 
 func main() {
 	var (
-		debug  bool
-		format string
+		debug        bool
+		format       string
+		patternsPath string
 	)
 	flag.BoolVar(&debug, "debug", false, "Enable debug logging for the analysis")
 	flag.StringVar(&format, "format", "json", "Output format (json or yaml)")
+	flag.StringVar(&patternsPath, "patterns", "examples/docgen/patterns.go", "Path to the Go file containing analysis patterns")
 	flag.Parse()
 
 	logLevel := slog.LevelInfo
@@ -27,14 +29,24 @@ func main() {
 	}
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel}))
 
-	if err := run(logger, format); err != nil {
+	if err := run(logger, format, patternsPath); err != nil {
 		logger.Error("docgen failed", "error", err)
 		os.Exit(1)
 	}
 }
 
-func run(logger *slog.Logger, format string) error {
+func run(logger *slog.Logger, format string, patternsPath string) error {
 	const sampleAPIPath = "github.com/podhmo/go-scan/examples/docgen/sampleapi"
+
+	var customPatterns []Pattern
+	var err error
+	if patternsPath != "" {
+		customPatterns, err = LoadPatterns(patternsPath)
+		if err != nil {
+			return fmt.Errorf("failed to load custom patterns: %w", err)
+		}
+		logger.Info("loaded custom patterns", "count", len(customPatterns), "path", patternsPath)
+	}
 
 	overrides := createStubOverrides()
 
@@ -47,7 +59,7 @@ func run(logger *slog.Logger, format string) error {
 		return err
 	}
 
-	analyzer, err := NewAnalyzer(s, logger)
+	analyzer, err := NewAnalyzer(s, logger, customPatterns)
 	if err != nil {
 		return err
 	}

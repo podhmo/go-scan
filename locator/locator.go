@@ -485,6 +485,53 @@ func parseReplaceLine(line string) (ReplaceDirective, error) {
 	return dir, nil
 }
 
+// PathToImport converts an absolute directory path to its corresponding Go import path.
+// It considers the module's own path and any `replace` directives.
+func (l *Locator) PathToImport(absPath string) (string, error) {
+	absPath, err := filepath.Abs(absPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to get absolute path for %s: %w", absPath, err)
+	}
+
+	// 1. Check if it's inside the main module root.
+	if strings.HasPrefix(absPath, l.rootDir) {
+		relPath, err := filepath.Rel(l.rootDir, absPath)
+		if err != nil {
+			return "", fmt.Errorf("failed to get relative path for %s from root %s: %w", absPath, l.rootDir, err)
+		}
+		if relPath == "." {
+			return l.modulePath, nil
+		}
+		return filepath.ToSlash(filepath.Join(l.modulePath, relPath)), nil
+	}
+
+	// 2. Check if it's inside a replaced local directory.
+	for _, r := range l.replaces {
+		if !r.IsLocal {
+			continue
+		}
+		var replacedDirAbs string
+		if filepath.IsAbs(r.NewPath) {
+			replacedDirAbs = r.NewPath
+		} else {
+			replacedDirAbs = filepath.Join(l.rootDir, r.NewPath)
+		}
+
+		if strings.HasPrefix(absPath, replacedDirAbs) {
+			relPath, err := filepath.Rel(replacedDirAbs, absPath)
+			if err != nil {
+				return "", fmt.Errorf("failed to get relative path for %s from replaced dir %s: %w", absPath, replacedDirAbs, err)
+			}
+			if relPath == "." {
+				return r.OldPath, nil
+			}
+			return filepath.ToSlash(filepath.Join(r.OldPath, relPath)), nil
+		}
+	}
+
+	return "", fmt.Errorf("could not determine import path for directory %s", absPath)
+}
+
 // ResolvePkgPath converts a file path to a full Go package path.
 // If the path exists on the filesystem, it is treated as a file path and resolved.
 // If it does not exist, it's assumed to be a package path unless it has a relative

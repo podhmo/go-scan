@@ -2614,6 +2614,11 @@ func (e *Evaluator) evalTypeConversion(call *ast.CallExpr, typeObj object.Object
 	arg := args[0]
 
 	switch t := typeObj.(type) {
+	case *object.PointerType:
+		if arg == object.NIL {
+			return &object.TypedNil{TypeObject: t}
+		}
+		return e.newError(call.Pos(), "cannot convert non-nil value to pointer type %s", typeObj.Inspect())
 	case *object.ArrayType:
 		// Handle []byte("a string")
 		eltType, ok := t.ElementType.(*object.Type)
@@ -3001,7 +3006,7 @@ func (e *Evaluator) Eval(node ast.Node, env *object.Environment, fscope *object.
 
 		// Check if the "function" is actually a type, indicating a type conversion.
 		switch function.(type) {
-		case *object.Type, *object.ArrayType:
+		case *object.Type, *object.ArrayType, *object.PointerType:
 			args := e.evalExpressions(n.Args, env, fscope, nil)
 			if len(args) == 1 && isError(args[0]) {
 				return args[0]
@@ -4522,6 +4527,21 @@ func (e *Evaluator) evalSelectorExpr(n *ast.SelectorExpr, env *object.Environmen
 			return val
 		}
 		return e.newError(n.Pos(), "undefined field or method '%s' on struct '%s'", n.Sel.Name, l.Def.Name.Name)
+
+	case *object.TypedNil:
+		ptrType, ok := l.TypeObject.(*object.PointerType)
+		if !ok {
+			return e.newError(n.Pos(), "internal error: TypedNil does not contain a pointer type")
+		}
+		structDef, ok := ptrType.ElementType.(*object.StructDefinition)
+		if !ok {
+			return e.newError(n.Pos(), "cannot get method from nil pointer to non-struct type %s", ptrType.ElementType.Inspect())
+		}
+		method, ok := structDef.Methods[n.Sel.Name]
+		if !ok {
+			return e.newError(n.Pos(), "undefined method %s for type %s", n.Sel.Name, structDef.Name.Name)
+		}
+		return &object.GoMethodValue{Fn: method}
 
 	case *object.Pointer:
 		if l.Element == nil || *l.Element == nil {

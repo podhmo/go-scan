@@ -391,9 +391,11 @@ func listGoFiles(dirPath string, includeTests bool) ([]string, error) {
 // for the same import path.
 // The global symbol cache (s.symbolCache), if enabled, is updated with symbols from the newly parsed files.
 func (s *Scanner) ScanPackage(ctx context.Context, pkgPath string) (*scanner.PackageInfo, error) {
-	absPkgPath, err := filepath.Abs(pkgPath)
-	if err != nil {
-		return nil, fmt.Errorf("could not get absolute path for package path %s: %w", pkgPath, err)
+	var absPkgPath string
+	if filepath.IsAbs(pkgPath) {
+		absPkgPath = pkgPath
+	} else {
+		absPkgPath = filepath.Join(s.workDir, pkgPath)
 	}
 	info, err := os.Stat(absPkgPath)
 	if err != nil {

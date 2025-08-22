@@ -769,7 +769,9 @@ func TestScanFilesAndGetUnscanned(t *testing.T) {
 
 		// Now ScanPackage for the whole core package
 		// It should only parse item.go and empty.go as user.go is visited
-		pkgInfo, err := sTest.ScanPackage(context.Background(), "./testdata/scanfiles/core")
+		// Since sTest workDir is "./testdata/scanfiles", the path to the core package
+		// should be relative to that.
+		pkgInfo, err := sTest.ScanPackage(context.Background(), "./core")
 		if err != nil {
 			t.Fatalf("ScanPackage(core) failed: %v", err)
 		}
@@ -1206,7 +1208,8 @@ func TestScanner_ScanPackage_Generics(t *testing.T) {
 	// if go.mod is not present in testdata/generics.
 	// For this test, we are more interested in the structure parsing than cross-package resolution.
 
-	pkgInfo, err := s.ScanPackage(context.Background(), "./testdata/generics")
+	// The scanner's workDir is already "./testdata/generics", so we scan the current dir "."
+	pkgInfo, err := s.ScanPackage(context.Background(), ".")
 	if err != nil {
 		t.Fatalf("ScanPackage() for './testdata/generics' failed: %v", err)
 	}

@@ -3,14 +3,13 @@ package main
 import (
 	"context"
 	"fmt"
-	"log/slog"
-	"os"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
 	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/examples/docgen/patterns"
 	"github.com/podhmo/go-scan/minigo"
+	"github.com/podhmo/go-scan/minigo/object"
 	"github.com/podhmo/go-scan/scantest"
 )
 
@@ -19,13 +18,13 @@ func TestPatternKeyFromFunc_Integration(t *testing.T) {
 	// and method values when they are loaded from a minigo script.
 	// It uses scantest to create an in-memory Go module for the test.
 
-	moduleName := "github.com/podhmo/go-scan/examples/docgen/testdata/key-gen-test"
+	moduleName := "key-gen-test"
 
 	files := map[string]string{
 		"go.mod": fmt.Sprintf(`
 module %s
 go 1.21
-replace github.com/podhmo/go-scan => ../../../../
+replace github.com/podhmo/go-scan => ../../..
 `, moduleName),
 		"main.go": `
 package main
@@ -50,9 +49,10 @@ var Patterns = []patterns.PatternConfig{
 `,
 	}
 
-	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
-		logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	tmpdir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
 
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		// 1. Evaluate the package containing the patterns.go script.
 		// We pass "." to evaluate the package in the current module root.
 		interp, err := minigo.NewInterpreter(s)
@@ -68,15 +68,15 @@ var Patterns = []patterns.PatternConfig{
 		if !ok {
 			return fmt.Errorf("could not find 'Patterns' variable")
 		}
-		var configs []patterns.PatternConfig
-		result := minigo.Result{Value: patternsObj}
-		// We must unmarshal manually because `Fn` is an `any` holding a minigo object.
-		patternsArray, ok := patternsObj.(*minigo.Array)
+
+		patternsArray, ok := patternsObj.(*object.Array)
 		if !ok {
 			return fmt.Errorf("expected 'Patterns' to be an array, got %T", patternsObj)
 		}
+
+		var configs []patterns.PatternConfig
 		for _, item := range patternsArray.Elements {
-			structInstance, ok := item.(*minigo.StructInstance)
+			structInstance, ok := item.(*object.StructInstance)
 			if !ok {
 				continue
 			}
@@ -109,7 +109,7 @@ var Patterns = []patterns.PatternConfig{
 		return nil
 	}
 
-	if _, err := scantest.Run(t, ".", files, action); err != nil {
+	if _, err := scantest.Run(t, tmpdir, nil, action, scantest.WithModuleRoot(tmpdir)); err != nil {
 		t.Fatalf("scantest.Run() failed: %+v", err)
 	}
 }

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -59,7 +58,7 @@ func TestDocgen_WithFnPatterns_FullAnalysis(t *testing.T) {
 	patternsFile := filepath.Join(moduleDir, "patterns.go")
 	goldenFile := filepath.Join("testdata", "integration", "fn-patterns-full.golden.json")
 
-	logger := newTestLogger(io.Discard)
+	logger := newTestLogger(os.Stderr)
 
 	// Create a scanner configured to find the new module.
 	s, err := goscan.New(

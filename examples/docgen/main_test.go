@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"flag"
 	"io"
 	"os"
 	"path/filepath"
@@ -18,11 +17,6 @@ import (
 	"github.com/podhmo/go-scan/examples/docgen/openapi"
 	"github.com/podhmo/go-scan/symgo"
 	"gopkg.in/yaml.v3"
-)
-
-var (
-	update = flag.Bool("update", false, "update golden files")
-	debug  = flag.Bool("debug", false, "enable debug logging")
 )
 
 func TestDocgen(t *testing.T) {

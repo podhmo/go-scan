@@ -24,7 +24,7 @@ func main() {
 	flag.StringVar(&patternsFile, "patterns", "", "Path to a Go file with custom pattern configurations")
 	flag.Parse()
 
-	logLevel := slog.LevelInfo
+	logLevel := slog.LevelWarn
 	if debug {
 		logLevel = slog.LevelDebug
 	}

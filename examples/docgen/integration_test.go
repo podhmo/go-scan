@@ -46,6 +46,7 @@ func Hello() {}
 	// Action to be performed by scantest.Run
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		patternsFilePath := filepath.Join(dir, "patterns.go")
+		t.Logf("Attempting to load patterns from: %s", patternsFilePath) // DEBUG
 		logger := slog.Default()
 		_, err := LoadPatternsFromConfig(patternsFilePath, logger, s)
 		return err

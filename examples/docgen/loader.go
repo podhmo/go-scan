@@ -4,13 +4,14 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 
 	"github.com/podhmo/go-scan/examples/docgen/patterns"
 	"github.com/podhmo/go-scan/minigo"
+	"github.com/podhmo/go-scan/minigo/object"
 )
 
 // LoadPatternsFromConfig loads custom analysis patterns from a Go configuration file.
-// It is a wrapper around LoadPatternsFromSource.
 func LoadPatternsFromConfig(filePath string, logger *slog.Logger) ([]patterns.Pattern, error) {
 	configSource, err := os.ReadFile(filePath)
 	if err != nil {
@@ -19,62 +20,141 @@ func LoadPatternsFromConfig(filePath string, logger *slog.Logger) ([]patterns.Pa
 	return LoadPatternsFromSource(configSource, logger)
 }
 
+// computeKey generates the analyzer's internal string key from a minigo object.
+func computeKey(fn any) (string, error) {
+	switch f := fn.(type) {
+	case *object.GoSourceFunction:
+		return fmt.Sprintf("%s.%s", f.PkgPath, f.Func.Name), nil
+
+	case *object.GoMethod:
+		if f.Func.Receiver == nil {
+			return "", fmt.Errorf("GoMethod object is not a method (missing receiver)")
+		}
+		recvTypeName := f.Func.Receiver.Type.Name
+		pkgPath := f.Recv.PkgPath
+		var fullRecvName string
+		if strings.HasPrefix(recvTypeName, "*") {
+			typeName := strings.TrimPrefix(recvTypeName, "*")
+			fullRecvName = fmt.Sprintf("(*%s.%s)", pkgPath, typeName)
+		} else {
+			fullRecvName = fmt.Sprintf("(%s.%s)", pkgPath, recvTypeName)
+		}
+		return fmt.Sprintf("%s.%s", fullRecvName, f.Func.Name), nil
+
+	default:
+		return "", fmt.Errorf("unsupported function type for key computation: %T", fn)
+	}
+}
+
+// unmarshalPatternConfig manually unmarshals an *object.StructInstance into a patterns.PatternConfig.
+func unmarshalPatternConfig(structObj *object.StructInstance) (patterns.PatternConfig, error) {
+	var config patterns.PatternConfig
+
+	fnObj, ok := structObj.Fields["Fn"]
+	if !ok {
+		return config, fmt.Errorf("pattern struct is missing 'Fn' field")
+	}
+	config.Fn = fnObj
+
+	if typeObj, ok := structObj.Fields["Type"]; ok {
+		if s, ok := typeObj.(*object.String); ok {
+			config.Type = patterns.PatternType(s.Value)
+		}
+	}
+	if argIndexObj, ok := structObj.Fields["ArgIndex"]; ok {
+		if i, ok := argIndexObj.(*object.Integer); ok {
+			config.ArgIndex = int(i.Value)
+		}
+	}
+	if nameArgIndexObj, ok := structObj.Fields["NameArgIndex"]; ok {
+		if i, ok := nameArgIndexObj.(*object.Integer); ok {
+			config.NameArgIndex = int(i.Value)
+		}
+	}
+	if statusCodeObj, ok := structObj.Fields["StatusCode"]; ok {
+		if s, ok := statusCodeObj.(*object.String); ok {
+			config.StatusCode = s.Value
+		}
+	}
+	if descriptionObj, ok := structObj.Fields["Description"]; ok {
+		if s, ok := descriptionObj.(*object.String); ok {
+			config.Description = s.Value
+		}
+	}
+	if nameObj, ok := structObj.Fields["Name"]; ok {
+		if s, ok := nameObj.(*object.String); ok {
+			config.Name = s.Value
+		}
+	}
+	if methodNameObj, ok := structObj.Fields["MethodName"]; ok {
+		if s, ok := methodNameObj.(*object.String); ok {
+			config.MethodName = s.Value
+		}
+	}
+
+	return config, nil
+}
+
 // LoadPatternsFromSource loads custom analysis patterns from a Go configuration source.
 func LoadPatternsFromSource(source []byte, logger *slog.Logger) ([]patterns.Pattern, error) {
-	// Step 1: Set up the minigo interpreter.
-	// The fix in `go-scan`'s locator allows the interpreter to correctly
-	// resolve imports via `replace` directives.
 	interp, err := minigo.NewInterpreter()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create minigo interpreter: %w", err)
 	}
 
-	// Step 2: Evaluate the script.
 	if _, err := interp.EvalString(string(source)); err != nil {
 		return nil, fmt.Errorf("failed to evaluate patterns config source: %w", err)
 	}
 
-	// Step 3: Extract the 'Patterns' variable from the global environment.
 	patternsObj, ok := interp.GlobalEnvForTest().Get("Patterns")
 	if !ok {
 		return nil, fmt.Errorf("could not find 'Patterns' variable in config source")
 	}
 
-	// Step 4: Unmarshal the minigo object directly into a slice of PatternConfig structs.
-	// This is now possible because the script returns a typed slice instead of []map[string]any.
-	var configs []patterns.PatternConfig
-	result := minigo.Result{Value: patternsObj}
-	if err := result.As(&configs); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal 'Patterns' variable into []patterns.PatternConfig: %w", err)
+	slice, ok := patternsObj.(*object.Array)
+	if !ok {
+		return nil, fmt.Errorf("'Patterns' variable is not a slice, but %T", patternsObj)
 	}
 
-	// Step 5: Convert the data-only configs into executable patterns.
+	var configs []patterns.PatternConfig
+	for i, item := range slice.Elements {
+		structObj, ok := item.(*object.StructInstance)
+		if !ok {
+			return nil, fmt.Errorf("pattern item %d is not a struct, but %T", i, item)
+		}
+
+		config, err := unmarshalPatternConfig(structObj)
+		if err != nil {
+			return nil, fmt.Errorf("failed to unmarshal pattern item %d: %w", i, err)
+		}
+		configs = append(configs, config)
+	}
+
 	return convertConfigsToPatterns(configs, logger)
 }
 
-// convertConfigsToPatterns translates the user-defined pattern configurations
-// into the internal Pattern format with executable Apply functions.
 func convertConfigsToPatterns(configs []patterns.PatternConfig, logger *slog.Logger) ([]patterns.Pattern, error) {
 	result := make([]patterns.Pattern, len(configs))
 	for i, config := range configs {
-		c := config // capture loop variable
+		c := config
 
-		// Validate the pattern type string and required fields.
+		key, err := computeKey(c.Fn)
+		if err != nil {
+			return nil, fmt.Errorf("pattern %d: %w", i, err)
+		}
+
 		switch c.Type {
 		case patterns.RequestBody, patterns.ResponseBody, patterns.DefaultResponse:
-			// valid
 		case patterns.CustomResponse:
 			if c.StatusCode == "" {
 				return nil, fmt.Errorf("pattern %d: 'StatusCode' is required for type %q", i, c.Type)
 			}
 		case patterns.PathParameter, patterns.QueryParameter, patterns.HeaderParameter:
-			// We can't easily validate that NameArgIndex and ArgIndex are set
-			// because 0 is a valid value. The runtime will handle incorrect indices.
 		default:
-			return nil, fmt.Errorf("pattern %d: unknown 'Type' value %q for key %q", i, c.Type, c.Key)
+			return nil, fmt.Errorf("pattern %d: unknown 'Type' value %q for key %q", i, c.Type, key)
 		}
 
-		result[i].Key = c.Key
+		result[i].Key = key
 
 		switch c.Type {
 		case patterns.RequestBody:
@@ -86,13 +166,12 @@ func convertConfigsToPatterns(configs []patterns.PatternConfig, logger *slog.Log
 		case patterns.DefaultResponse:
 			result[i].Apply = patterns.HandleDefaultResponse(c.ArgIndex)
 		case patterns.PathParameter, patterns.QueryParameter, patterns.HeaderParameter:
-			result[i].Apply = patterns.HandleCustomParameter(string(c.Type), c.Description, c.NameArgIndex, c.ArgIndex)
+			result[i].Apply = patterns.HandleCustomParameter(string(c.Type), c.Description, c.Name, c.NameArgIndex, c.ArgIndex)
 		default:
-			// This case should be unreachable due to the validation above
-			logger.Warn("unreachable: unknown pattern type", "type", c.Type, "key", c.Key)
-			return nil, fmt.Errorf("unknown pattern type %q for key %q", c.Type, c.Key)
+			logger.Warn("unreachable: unknown pattern type", "type", c.Type, "key", key)
+			return nil, fmt.Errorf("unknown pattern type %q for key %q", c.Type, key)
 		}
-		logger.Debug("loaded custom pattern", "key", c.Key, "type", c.Type, "argIndex", c.ArgIndex)
+		logger.Debug("loaded custom pattern", "key", key, "type", c.Type, "argIndex", c.ArgIndex)
 	}
 	return result, nil
 }

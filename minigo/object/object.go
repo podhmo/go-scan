@@ -52,6 +52,9 @@ const (
 	PACKAGE_OBJ              ObjectType = "PACKAGE"
 	GO_VALUE_OBJ             ObjectType = "GO_VALUE"
 	GO_TYPE_OBJ              ObjectType = "GO_TYPE"
+	GO_METHOD_OBJ            ObjectType = "GO_METHOD"
+	GO_SOURCE_FUNCTION_OBJ   ObjectType = "GO_SOURCE_FUNCTION"
+	TYPED_NIL_OBJ            ObjectType = "TYPED_NIL"
 	ERROR_OBJ                ObjectType = "ERROR"
 	AST_NODE_OBJ             ObjectType = "AST_NODE"
 
@@ -68,12 +71,10 @@ const (
 
 // Hashable is an interface for objects that can be used as map keys.
 type Hashable interface {
-	// HashKey returns a unique key for the object, used for map lookups.
 	HashKey() HashKey
 }
 
 // HashKey is used as a key in the internal hash map for Map objects.
-// It's a combination of the object's type and its calculated hash value.
 type HashKey struct {
 	Type  ObjectType
 	Value uint64
@@ -82,134 +83,69 @@ type HashKey struct {
 // CallFrame represents a single frame in the call stack.
 type CallFrame struct {
 	Pos          token.Pos
-	Function     string // Name of the function for stack traces
+	Function     string
 	Fn           *Function
-	IsBuiltin    bool // Whether the function is a Go builtin or user-defined
+	IsBuiltin    bool
 	Defers       []*DeferredCall
-	NamedReturns *Environment // Environment for named return values
+	NamedReturns *Environment
 }
 
 // DeferredCall represents a deferred function call.
-// For this basic implementation, we just store the call expression and its environment.
 type DeferredCall struct {
 	Call *ast.CallExpr
 	Env  *Environment
 }
 
-// Format formats the call frame into a readable string.
-// fset is required to resolve the position to a file and line number.
 func (cf *CallFrame) Format(fset *token.FileSet) string {
 	position := fset.Position(cf.Pos)
 	funcName := cf.Function
 	if funcName == "" {
 		funcName = "<script>"
 	}
-
 	sourceLine, err := getSourceLine(position.Filename, position.Line)
 	formattedSourceLine := ""
 	if err == nil && sourceLine != "" {
 		formattedSourceLine = "\n\t\t" + sourceLine
 	}
-
 	return fmt.Sprintf("\t%s:%d:%d:\tin %s%s", position.Filename, position.Line, position.Column, funcName, formattedSourceLine)
 }
 
 // Object is the interface that all value types in our interpreter will implement.
 type Object interface {
-	// Type returns the type of the object.
 	Type() ObjectType
-	// Inspect returns a string representation of the object's value.
 	Inspect() string
 }
 
-// --- Integer Object ---
-
-// Integer represents an integer value.
-type Integer struct {
-	Value int64
-}
-
-// Type returns the type of the Integer object.
+type Integer struct{ Value int64 }
 func (i *Integer) Type() ObjectType { return INTEGER_OBJ }
+func (i *Integer) Inspect() string  { return fmt.Sprintf("%d", i.Value) }
+func (i *Integer) HashKey() HashKey { return HashKey{Type: i.Type(), Value: uint64(i.Value)} }
 
-// Inspect returns a string representation of the Integer's value.
-func (i *Integer) Inspect() string { return fmt.Sprintf("%d", i.Value) }
-
-// HashKey returns the hash key for an Integer.
-func (i *Integer) HashKey() HashKey {
-	return HashKey{Type: i.Type(), Value: uint64(i.Value)}
-}
-
-// --- Float Object ---
-
-// Float represents a floating-point number.
-type Float struct {
-	Value float64
-}
-
-// Type returns the type of the Float object.
+type Float struct{ Value float64 }
 func (f *Float) Type() ObjectType { return FLOAT_OBJ }
-
-// Inspect returns a string representation of the Float's value.
-func (f *Float) Inspect() string { return fmt.Sprintf("%g", f.Value) }
-
-// HashKey returns the hash key for a Float.
+func (f *Float) Inspect() string  { return fmt.Sprintf("%g", f.Value) }
 func (f *Float) HashKey() HashKey {
 	h := fnv.New64a()
-	fmt.Fprintf(h, "%f", f.Value) // Use a stable string representation for hashing
+	fmt.Fprintf(h, "%f", f.Value)
 	return HashKey{Type: f.Type(), Value: h.Sum64()}
 }
 
-// --- Complex Object ---
-
-// Complex represents a complex number.
-type Complex struct {
-	Real float64
-	Imag float64
-}
-
-// Type returns the type of the Complex object.
+type Complex struct{ Real, Imag float64 }
 func (c *Complex) Type() ObjectType { return COMPLEX_OBJ }
+func (c *Complex) Inspect() string  { return fmt.Sprintf("(%g+%gi)", c.Real, c.Imag) }
 
-// Inspect returns a string representation of the Complex's value.
-func (c *Complex) Inspect() string {
-	return fmt.Sprintf("(%g+%gi)", c.Real, c.Imag)
-}
-
-// --- String Object ---
-
-// String represents a string value.
-type String struct {
-	Value string
-}
-
-// Type returns the type of the String object.
+type String struct{ Value string }
 func (s *String) Type() ObjectType { return STRING_OBJ }
-
-// Inspect returns a string representation of the String's value.
-func (s *String) Inspect() string { return s.Value }
-
-// HashKey returns the hash key for a String.
+func (s *String) Inspect() string  { return s.Value }
 func (s *String) HashKey() HashKey {
 	h := fnv.New64a()
 	h.Write([]byte(s.Value))
 	return HashKey{Type: s.Type(), Value: h.Sum64()}
 }
 
-// --- Boolean Object ---
-
-// Boolean represents a boolean value.
-type Boolean struct {
-	Value bool
-}
-
-// Type returns the type of the Boolean object.
+type Boolean struct{ Value bool }
 func (b *Boolean) Type() ObjectType { return BOOLEAN_OBJ }
-
-// Inspect returns a string representation of the Boolean's value.
-func (b *Boolean) Inspect() string { return fmt.Sprintf("%t", b.Value) }
-
-// HashKey returns the hash key for a Boolean.
+func (b *Boolean) Inspect() string  { return fmt.Sprintf("%t", b.Value) }
 func (b *Boolean) HashKey() HashKey {
 	var value uint64
 	if b.Value {
@@ -218,81 +154,59 @@ func (b *Boolean) HashKey() HashKey {
 	return HashKey{Type: b.Type(), Value: value}
 }
 
-// --- Nil Object ---
-
-// Nil represents a nil value.
 type Nil struct{}
-
-// Type returns the type of the Nil object.
 func (n *Nil) Type() ObjectType { return NIL_OBJ }
+func (n *Nil) Inspect() string  { return "nil" }
 
-// Inspect returns a string representation of the Nil's value.
-func (n *Nil) Inspect() string { return "nil" }
+type TypedNil struct{ TypeInfo *scanner.TypeInfo }
+func (tn *TypedNil) Type() ObjectType { return TYPED_NIL_OBJ }
+func (tn *TypedNil) Inspect() string  { return fmt.Sprintf("nil (%s)", tn.TypeInfo.Name) }
 
-// --- Break Statement Object ---
+type GoMethod struct {
+	Recv *scanner.TypeInfo
+	Func *scanner.FunctionInfo
+}
+func (gm *GoMethod) Type() ObjectType { return GO_METHOD_OBJ }
+func (gm *GoMethod) Inspect() string {
+	return fmt.Sprintf("method %s.%s", gm.Recv.Name, gm.Func.Name)
+}
 
-// BreakStatement represents a break statement. It's a singleton.
+type GoSourceFunction struct {
+	Func    *scanner.FunctionInfo
+	PkgPath string
+	DefEnv  *Environment
+}
+func (gsf *GoSourceFunction) Type() ObjectType { return GO_SOURCE_FUNCTION_OBJ }
+func (gsf *GoSourceFunction) Inspect() string {
+	return fmt.Sprintf("go function %s", gsf.Func.Name)
+}
+
 type BreakStatement struct{}
-
-// Type returns the type of the BreakStatement object.
 func (bs *BreakStatement) Type() ObjectType { return BREAK_OBJ }
+func (bs *BreakStatement) Inspect() string  { return "break" }
 
-// Inspect returns a string representation of the BreakStatement.
-func (bs *BreakStatement) Inspect() string { return "break" }
-
-// --- Continue Statement Object ---
-
-// ContinueStatement represents a continue statement. It's a singleton.
 type ContinueStatement struct{}
-
-// Type returns the type of the ContinueStatement object.
 func (cs *ContinueStatement) Type() ObjectType { return CONTINUE_OBJ }
+func (cs *ContinueStatement) Inspect() string  { return "continue" }
 
-// Inspect returns a string representation of the ContinueStatement.
-func (cs *ContinueStatement) Inspect() string { return "continue" }
-
-// --- Return Value Object ---
-
-// ReturnValue represents the value being returned from a function.
-// It wraps another object to signal the "return" state.
-type ReturnValue struct {
-	Value Object
-}
-
-// Type returns the type of the ReturnValue object.
+type ReturnValue struct{ Value Object }
 func (rv *ReturnValue) Type() ObjectType { return RETURN_VALUE_OBJ }
+func (rv *ReturnValue) Inspect() string  { return rv.Value.Inspect() }
 
-// Inspect returns a string representation of the wrapped value.
-func (rv *ReturnValue) Inspect() string { return rv.Value.Inspect() }
-
-// --- Panic Object ---
-
-// Panic represents a panic signal. It wraps the value passed to panic().
-type Panic struct {
-	Value Object
-}
-
-// Type returns the type of the Panic object.
+type Panic struct{ Value Object }
 func (p *Panic) Type() ObjectType { return PANIC_OBJ }
+func (p *Panic) Inspect() string  { return p.Value.Inspect() }
 
-// Inspect returns a string representation of the wrapped value.
-func (p *Panic) Inspect() string { return p.Value.Inspect() }
-
-// --- Function Object ---
-
-// Function represents a user-defined function or method.
 type Function struct {
 	Name       *ast.Ident
-	Recv       *ast.FieldList // nil for regular functions
-	TypeParams *ast.FieldList // For generic functions
+	Recv       *ast.FieldList
+	TypeParams *ast.FieldList
 	Parameters *ast.FieldList
 	Results    *ast.FieldList
 	Body       *ast.BlockStmt
 	Env        *Environment
-	FScope     *FileScope // The file scope where the function was defined.
+	FScope     *FileScope
 }
-
-// IsVariadic returns true if the function is variadic.
 func (f *Function) IsVariadic() bool {
 	if f.Parameters == nil || len(f.Parameters.List) == 0 {
 		return false
@@ -301,19 +215,12 @@ func (f *Function) IsVariadic() bool {
 	_, ok := lastParam.Type.(*ast.Ellipsis)
 	return ok
 }
-
-// HasNamedReturns returns true if the function has named return values.
 func (f *Function) HasNamedReturns() bool {
 	return f.Results != nil && len(f.Results.List) > 0 && len(f.Results.List[0].Names) > 0
 }
-
-// Type returns the type of the Function object.
 func (f *Function) Type() ObjectType { return FUNCTION_OBJ }
-
-// Inspect returns a string representation of the function.
 func (f *Function) Inspect() string {
 	var out bytes.Buffer
-
 	params := []string{}
 	if f.Parameters != nil {
 		for _, p := range f.Parameters.List {
@@ -321,12 +228,9 @@ func (f *Function) Inspect() string {
 			for _, name := range p.Names {
 				paramStr = append(paramStr, name.String())
 			}
-			// This is a simplified representation; we don't show the type.
-			// A more advanced version might use format.Node.
 			params = append(params, strings.Join(paramStr, ", "))
 		}
 	}
-
 	out.WriteString("func")
 	if f.Name != nil {
 		out.WriteString(" ")
@@ -335,129 +239,60 @@ func (f *Function) Inspect() string {
 	out.WriteString("(")
 	out.WriteString(strings.Join(params, ", "))
 	out.WriteString(") { ... }")
-
 	return out.String()
 }
 
-// --- ArrayType Object ---
-
-// ArrayType represents the type of an array (or slice).
-type ArrayType struct {
-	ElementType Object // This is a type object, e.g., *Type, *StructDefinition
-}
-
-// Type returns the type of the ArrayType object.
+type ArrayType struct{ ElementType Object }
 func (at *ArrayType) Type() ObjectType { return ARRAY_TYPE_OBJ }
+func (at *ArrayType) Inspect() string  { return "[]" + at.ElementType.Inspect() }
 
-// Inspect returns a string representation of the array type.
-func (at *ArrayType) Inspect() string {
-	return "[]" + at.ElementType.Inspect()
-}
-
-// --- MapType Object ---
-
-// MapType represents the type of a map.
-type MapType struct {
-	KeyType   Object
-	ValueType Object
-}
-
-// Type returns the type of the MapType object.
+type MapType struct{ KeyType, ValueType Object }
 func (mt *MapType) Type() ObjectType { return MAP_TYPE_OBJ }
-
-// Inspect returns a string representation of the map type.
 func (mt *MapType) Inspect() string {
 	return fmt.Sprintf("map[%s]%s", mt.KeyType.Inspect(), mt.ValueType.Inspect())
 }
 
-// Copy creates a shallow copy of the struct instance.
-func (si *StructInstance) Copy() *StructInstance {
-	newFields := make(map[string]Object, len(si.Fields))
-	for k, v := range si.Fields {
-		// Note: This is a shallow copy of the field values.
-		newFields[k] = v
-	}
-	return &StructInstance{
-		Def:    si.Def,
-		Fields: newFields,
-	}
-}
-
-// --- Builtin Function Object ---
-
-// BuiltinContext provides the necessary context for a built-in function to execute.
-// It holds I/O streams and a helper function for creating errors, bundling all
-// dependencies needed by built-in functions.
 type BuiltinContext struct {
 	Stdin            io.Reader
 	Stdout           io.Writer
 	Stderr           io.Writer
 	Fset             *token.FileSet
-	Env              *Environment // The environment of the function call
-	FScope           *FileScope   // The file scope at the call site.
+	Env              *Environment
+	FScope           *FileScope
 	IsExecutingDefer func() bool
 	GetPanic         func() *Panic
 	ClearPanic       func()
 	NewError         func(pos token.Pos, format string, args ...interface{}) *Error
 }
-
-// BuiltinFunction is the signature for built-in functions.
-// It receives the execution context, the position of the call, and the evaluated arguments.
 type BuiltinFunction func(ctx *BuiltinContext, pos token.Pos, args ...Object) Object
-
-// Builtin represents a built-in function.
-type Builtin struct {
-	Fn BuiltinFunction
-}
-
-// Type returns the type of the Builtin object.
+type Builtin struct{ Fn BuiltinFunction }
 func (b *Builtin) Type() ObjectType { return BUILTIN_OBJ }
+func (b *Builtin) Inspect() string  { return "builtin function" }
 
-// Inspect returns a string representation of the built-in function.
-func (b *Builtin) Inspect() string { return "builtin function" }
-
-// --- Struct Definition Object ---
-
-// StructDefinition represents the definition of a struct type.
 type StructDefinition struct {
 	Name       *ast.Ident
-	TypeParams *ast.FieldList // For generic structs
+	TypeParams *ast.FieldList
 	Fields     []*ast.Field
 	Methods    map[string]*Function
-	FieldTags  map[string]string // Added to store parsed json tags, mapping field name to json tag name.
-	Env        *Environment      // The environment where the struct was defined.
+	GoMethods  map[string]*scanner.FunctionInfo
+	FieldTags  map[string]string
+	Env        *Environment
 }
-
-// Type returns the type of the StructDefinition object.
 func (sd *StructDefinition) Type() ObjectType { return STRUCT_DEFINITION_OBJ }
+func (sd *StructDefinition) Inspect() string  { return fmt.Sprintf("struct %s", sd.Name.String()) }
 
-// Inspect returns a string representation of the struct definition.
-func (sd *StructDefinition) Inspect() string {
-	return fmt.Sprintf("struct %s", sd.Name.String())
-}
-
-// --- Interface Definition Object ---
-
-// InterfaceDefinition represents the definition of an interface type.
 type InterfaceDefinition struct {
-	Name    *ast.Ident
-	Methods *ast.FieldList
-	// For interfaces with type lists, like `type Ordered interface { ~int | ~string }`
-	// This will store the expressions for `~int` and `string`.
+	Name     *ast.Ident
+	Methods  *ast.FieldList
 	TypeList []ast.Expr
 }
-
-// Type returns the type of the InterfaceDefinition object.
 func (id *InterfaceDefinition) Type() ObjectType { return INTERFACE_DEFINITION_OBJ }
-
-// Inspect returns a string representation of the interface definition.
 func (id *InterfaceDefinition) Inspect() string {
 	var out bytes.Buffer
 	methods := []string{}
 	if id.Methods != nil {
 		for _, method := range id.Methods.List {
 			if len(method.Names) > 0 {
-				// This is a simplified representation. A full one would need to format the type.
 				methods = append(methods, method.Names[0].Name+"()")
 			}
 		}
@@ -468,19 +303,11 @@ func (id *InterfaceDefinition) Inspect() string {
 	return out.String()
 }
 
-// --- Interface Instance Object ---
-
-// InterfaceInstance represents a value that is stored in a variable of an interface type.
-// It holds a reference to the interface definition and the concrete object that implements it.
 type InterfaceInstance struct {
 	Def   *InterfaceDefinition
 	Value Object
 }
-
-// Type returns the type of the InterfaceInstance object.
 func (ii *InterfaceInstance) Type() ObjectType { return INTERFACE_INSTANCE_OBJ }
-
-// Inspect returns a string representation of the underlying concrete value.
 func (ii *InterfaceInstance) Inspect() string {
 	if ii.Value == nil || ii.Value.Type() == NIL_OBJ {
 		return "nil"
@@ -488,251 +315,139 @@ func (ii *InterfaceInstance) Inspect() string {
 	return ii.Value.Inspect()
 }
 
-// --- Bound Method Object ---
-
-// BoundMethod represents a method that is bound to a specific receiver instance.
 type BoundMethod struct {
 	Fn       *Function
 	Receiver Object
 }
-
-// Type returns the type of the BoundMethod object.
 func (bm *BoundMethod) Type() ObjectType { return BOUND_METHOD_OBJ }
+func (bm *BoundMethod) Inspect() string  { return fmt.Sprintf("method %s()", bm.Fn.Name.String()) }
 
-// Inspect returns a string representation of the bound method.
-func (bm *BoundMethod) Inspect() string {
-	// Similar to Function.Inspect, but we could indicate it's a method.
-	return fmt.Sprintf("method %s()", bm.Fn.Name.String())
-}
-
-// --- Struct Instance Object ---
-
-// StructInstance represents an instance of a struct.
 type StructInstance struct {
 	Def      *StructDefinition
-	TypeArgs []Object // For instances of generic structs
+	TypeArgs []Object
 	Fields   map[string]Object
 }
-
-// Type returns the type of the StructInstance object.
 func (si *StructInstance) Type() ObjectType { return STRUCT_INSTANCE_OBJ }
-
-// Inspect returns a string representation of the struct instance.
 func (si *StructInstance) Inspect() string {
 	var out bytes.Buffer
 	fields := []string{}
 	for k, v := range si.Fields {
 		fields = append(fields, fmt.Sprintf("%s: %s", k, v.Inspect()))
 	}
-
 	out.WriteString(si.Def.Name.String())
 	out.WriteString("{")
 	out.WriteString(strings.Join(fields, ", "))
 	out.WriteString("}")
-
 	return out.String()
 }
-
-// --- Pointer Object ---
-
-// Pointer represents a pointer to another object.
-type Pointer struct {
-	Element *Object
+func (si *StructInstance) Copy() *StructInstance {
+	newFields := make(map[string]Object, len(si.Fields))
+	for k, v := range si.Fields {
+		newFields[k] = v
+	}
+	return &StructInstance{Def: si.Def, Fields: newFields}
 }
 
-// Type returns the type of the Pointer object.
+type Pointer struct{ Element *Object }
 func (p *Pointer) Type() ObjectType { return POINTER_OBJ }
+func (p *Pointer) Inspect() string  { return fmt.Sprintf("0x%x", p.Element) }
 
-// Inspect returns a string representation of the Pointer's value.
-func (p *Pointer) Inspect() string {
-	return fmt.Sprintf("0x%x", p.Element)
-}
-
-// --- PointerType Object ---
-
-// PointerType represents the type of a pointer.
-type PointerType struct {
-	ElementType Object // This is a type object, e.g., *StructDefinition
-}
-
-// Type returns the type of the PointerType object.
+type PointerType struct{ ElementType Object }
 func (pt *PointerType) Type() ObjectType { return POINTER_TYPE_OBJ }
+func (pt *PointerType) Inspect() string  { return "*" + pt.ElementType.Inspect() }
 
-// Inspect returns a string representation of the pointer type.
-func (pt *PointerType) Inspect() string {
-	return "*" + pt.ElementType.Inspect()
-}
-
-// --- Array Object ---
-
-// Array represents an array data structure.
 type Array struct {
-	SliceType *ArrayType // The type of the slice, e.g., []int. Can be nil if not specified.
+	SliceType *ArrayType
 	Elements  []Object
 }
-
-// Type returns the type of the Array object.
 func (a *Array) Type() ObjectType { return ARRAY_OBJ }
-
-// Inspect returns a string representation of the Array's elements.
 func (a *Array) Inspect() string {
 	var out bytes.Buffer
-
 	elements := []string{}
 	for _, e := range a.Elements {
 		elements = append(elements, e.Inspect())
 	}
-
 	out.WriteString("[")
 	out.WriteString(strings.Join(elements, " "))
 	out.WriteString("]")
-
 	return out.String()
 }
 
-// --- Map Object ---
-
-// MapPair represents a key-value pair in a Map object.
-type MapPair struct {
-	Key   Object
-	Value Object
-}
-
-// Map represents a map data structure.
+type MapPair struct{ Key, Value Object }
 type Map struct {
-	MapType *MapType // The type of the map, e.g., map[string]int. Can be nil.
+	MapType *MapType
 	Pairs   map[HashKey]MapPair
 }
-
-// Type returns the type of the Map object.
 func (m *Map) Type() ObjectType { return MAP_OBJ }
-
-// Inspect returns a string representation of the Map's pairs.
 func (m *Map) Inspect() string {
 	var out bytes.Buffer
-
 	pairs := []string{}
-	// Note: Iteration order over maps is not guaranteed.
 	for _, pair := range m.Pairs {
 		pairs = append(pairs, fmt.Sprintf("%s: %s", pair.Key.Inspect(), pair.Value.Inspect()))
 	}
-
 	out.WriteString("{")
 	out.WriteString(strings.Join(pairs, ", "))
 	out.WriteString("}")
-
 	return out.String()
 }
 
-// --- Tuple Object ---
-
-// Tuple represents a tuple of objects, used for multiple return values.
-type Tuple struct {
-	Elements []Object
-}
-
-// Type returns the type of the Tuple object.
+type Tuple struct{ Elements []Object }
 func (t *Tuple) Type() ObjectType { return TUPLE_OBJ }
-
-// Inspect returns a string representation of the Tuple's elements.
 func (t *Tuple) Inspect() string {
 	var out bytes.Buffer
-
 	elements := []string{}
 	for _, e := range t.Elements {
 		elements = append(elements, e.Inspect())
 	}
-
 	out.WriteString("(")
 	out.WriteString(strings.Join(elements, ", "))
 	out.WriteString(")")
-
 	return out.String()
 }
 
-// --- FileScope ---
-
-// FileScope holds the AST and file-specific import aliases for a single file.
 type FileScope struct {
 	AST        *ast.File
-	Aliases    map[string]string // alias -> import path
-	DotImports []string          // list of package paths for dot imports
+	Aliases    map[string]string
+	DotImports []string
 }
-
-// NewFileScope creates a new file scope.
 func NewFileScope(ast *ast.File) *FileScope {
-	return &FileScope{
-		AST:        ast,
-		Aliases:    make(map[string]string),
-		DotImports: make([]string, 0),
-	}
+	return &FileScope{AST: ast, Aliases: make(map[string]string), DotImports: make([]string, 0)}
 }
 
-// --- Package Object ---
-
-// Package represents an imported Go package.
 type Package struct {
 	Name    string
 	Path    string
 	Info    *scanner.PackageInfo
-	Env     *Environment // The environment containing all package-level declarations.
-	FScope  *FileScope   // The file scope for this package's source code.
+	Env     *Environment
+	FScope  *FileScope
 	Members map[string]Object
 }
-
-// Type returns the type of the Package object.
 func (p *Package) Type() ObjectType { return PACKAGE_OBJ }
+func (p *Package) Inspect() string  { return fmt.Sprintf("package %s (%q)", p.Name, p.Path) }
 
-// Inspect returns a string representation of the package.
-func (p *Package) Inspect() string {
-	return fmt.Sprintf("package %s (%q)", p.Name, p.Path)
-}
-
-// --- GoValue Object ---
-
-// GoValue wraps a native Go value (`reflect.Value`).
-// This allows Go variables and functions to be injected into the interpreter.
-type GoValue struct {
-	Value reflect.Value
-}
-
-// Type returns the type of the GoValue object.
+type GoValue struct{ Value reflect.Value }
 func (g *GoValue) Type() ObjectType { return GO_VALUE_OBJ }
-
-// Inspect returns a string representation of the wrapped Go value.
 func (g *GoValue) Inspect() string {
-	// Check if the value is valid to prevent panics with IsNil.
 	if !g.Value.IsValid() {
 		return "<invalid Go value>"
 	}
-	// Check for nil pointers to avoid panics on .Interface().
 	if g.Value.Kind() == reflect.Ptr && g.Value.IsNil() {
 		return "nil"
 	}
-	// For other types, Interface() is safe.
 	return fmt.Sprintf("%v", g.Value.Interface())
 }
 
-// --- Error Object ---
-
-// Error represents a runtime error. It contains a message and a call stack.
 type Error struct {
 	Pos       token.Pos
 	Message   string
 	CallStack []*CallFrame
-	fset      *token.FileSet // FileSet to resolve positions
+	fset      *token.FileSet
 }
-
-// Type returns the type of the Error object.
 func (e *Error) Type() ObjectType { return ERROR_OBJ }
-
-// Inspect returns a formatted string representation of the error, including the call stack.
 func (e *Error) Inspect() string {
 	var out bytes.Buffer
-
 	out.WriteString("runtime error: ")
 	out.WriteString(e.Message)
-
 	if e.fset != nil && e.Pos.IsValid() {
 		position := e.fset.Position(e.Pos)
 		sourceLine, err := getSourceLine(position.Filename, position.Line)
@@ -742,118 +457,55 @@ func (e *Error) Inspect() string {
 		}
 	}
 	out.WriteString("\n")
-
-	// Print the call stack in reverse order (most recent call first)
 	if e.fset != nil {
 		for i := len(e.CallStack) - 1; i >= 0; i-- {
 			out.WriteString(e.CallStack[i].Format(e.fset))
 			out.WriteString("\n")
 		}
 	}
-
 	return out.String()
 }
+func (e *Error) AttachFileSet(fset *token.FileSet) { e.fset = fset }
+func (e *Error) Error() string                      { return e.Message }
 
-// AttachFileSet attaches a FileSet to the error object, which is necessary
-// for formatting the call stack. This is done this way because the FileSet
-
-// is part of the evaluator, not the object system itself.
-func (e *Error) AttachFileSet(fset *token.FileSet) {
-	e.fset = fset
-}
-
-// Error makes it a valid Go error.
-func (e *Error) Error() string {
-	return e.Message
-}
-
-// --- AstNode Object ---
-
-// AstNode wraps a go/ast.Node. This is used to pass AST fragments
-// to special-form Go functions without the interpreter evaluating them.
-type AstNode struct {
-	Node ast.Node
-}
-
-// Type returns the type of the AstNode object.
+type AstNode struct{ Node ast.Node }
 func (an *AstNode) Type() ObjectType { return AST_NODE_OBJ }
+func (an *AstNode) Inspect() string  { return fmt.Sprintf("ast.Node[%T]", an.Node) }
 
-// Inspect returns a string representation of the AstNode.
-// For now, a simple representation is fine. A more advanced
-// version could use go/printer.
-func (an *AstNode) Inspect() string {
-	return fmt.Sprintf("ast.Node[%T]", an.Node)
-}
-
-// --- Type Object ---
-
-// Type represents a type identifier like `int` or `string`.
-type Type struct {
-	Name string
-}
-
-// Type returns the type of the Type object.
+type Type struct{ Name string }
 func (t *Type) Type() ObjectType { return TYPE_OBJ }
+func (t *Type) Inspect() string  { return t.Name }
 
-// Inspect returns a string representation of the Type's value.
-func (t *Type) Inspect() string { return t.Name }
-
-// GoType represents a native Go type that has been registered with the interpreter.
-type GoType struct {
-	GoType reflect.Type
-}
-
-// Type returns the type of the GoType object.
+type GoType struct{ GoType reflect.Type }
 func (gt *GoType) Type() ObjectType { return GO_TYPE_OBJ }
+func (gt *GoType) Inspect() string  { return gt.GoType.String() }
 
-// Inspect returns a string representation of the GoType's value.
-func (gt *GoType) Inspect() string { return gt.GoType.String() }
-
-// --- Type Alias Object ---
-
-// TypeAlias represents a type alias, including generic ones.
-// e.g., type MyInt int  or  type List[T] = []T
 type TypeAlias struct {
 	Name         *ast.Ident
 	TypeParams   *ast.FieldList
-	Underlying   ast.Expr // The type expression it aliases, e.g., `[]T`
+	Underlying   ast.Expr
 	Env          *Environment
-	ResolvedType Object // Cache for the resolved type object
+	ResolvedType Object
 }
-
-// Type returns the type of the TypeAlias object.
 func (ta *TypeAlias) Type() ObjectType { return TYPE_ALIAS_OBJ }
-
-// Inspect returns a string representation of the type alias.
 func (ta *TypeAlias) Inspect() string {
-	// A proper implementation would use go/printer, but this is fine for debugging.
 	var b strings.Builder
 	b.WriteString("type ")
 	b.WriteString(ta.Name.Name)
 	if ta.TypeParams != nil && len(ta.TypeParams.List) > 0 {
-		// Simplified representation of type parameters
 		b.WriteString("[...]")
 	}
-	b.WriteString(" = ...") // We don't have an easy way to print the underlying expr
+	b.WriteString(" = ...")
 	return b.String()
 }
 
-// --- InstantiatedType Object ---
-
-// InstantiatedType represents a generic type that has been given concrete type arguments.
-// For example, `MyStruct[int]`.
 type InstantiatedType struct {
-	GenericDef Object   // This will be a *StructDefinition or *Function
-	TypeArgs   []Object // The concrete types, e.g., [*Type{Name:"int"}]
+	GenericDef Object
+	TypeArgs   []Object
 }
-
-// Type returns the type of the InstantiatedType object.
 func (it *InstantiatedType) Type() ObjectType { return INSTANTIATED_TYPE_OBJ }
-
-// Inspect returns a string representation of the instantiated type.
 func (it *InstantiatedType) Inspect() string {
 	var out bytes.Buffer
-
 	switch def := it.GenericDef.(type) {
 	case *StructDefinition:
 		out.WriteString(def.Name.Name)
@@ -862,7 +514,6 @@ func (it *InstantiatedType) Inspect() string {
 	default:
 		out.WriteString("<generic>")
 	}
-
 	out.WriteString("[")
 	args := []string{}
 	for _, arg := range it.TypeArgs {
@@ -870,11 +521,9 @@ func (it *InstantiatedType) Inspect() string {
 	}
 	out.WriteString(strings.Join(args, ", "))
 	out.WriteString("]")
-
 	return out.String()
 }
 
-// getSourceLine reads a specific line from a file. It returns the line and any error encountered.
 func getSourceLine(filename string, lineNum int) (string, error) {
 	if filename == "" || lineNum <= 0 {
 		return "", nil
@@ -884,7 +533,6 @@ func getSourceLine(filename string, lineNum int) (string, error) {
 		return "", err
 	}
 	defer file.Close()
-
 	scanner := bufio.NewScanner(file)
 	currentLine := 1
 	for scanner.Scan() {
@@ -896,21 +544,14 @@ func getSourceLine(filename string, lineNum int) (string, error) {
 	if err := scanner.Err(); err != nil {
 		return "", err
 	}
-	return "", nil // Line not found is not considered an error here.
+	return "", nil
 }
 
-// --- FuncType Object ---
-
-// FuncType represents the type of a function, e.g., func(int) string.
 type FuncType struct {
-	Parameters []Object // Types of parameters
-	Results    []Object // Types of results
+	Parameters []Object
+	Results    []Object
 }
-
-// Type returns the type of the FuncType object.
 func (ft *FuncType) Type() ObjectType { return FUNC_TYPE_OBJ }
-
-// Inspect returns a string representation of the function type.
 func (ft *FuncType) Inspect() string {
 	var out bytes.Buffer
 	out.WriteString("func(")
@@ -920,7 +561,6 @@ func (ft *FuncType) Inspect() string {
 	}
 	out.WriteString(strings.Join(params, ", "))
 	out.WriteString(")")
-
 	if len(ft.Results) > 0 {
 		out.WriteString(" ")
 		if len(ft.Results) > 1 {
@@ -935,13 +575,9 @@ func (ft *FuncType) Inspect() string {
 			out.WriteString(")")
 		}
 	}
-
 	return out.String()
 }
 
-// --- Global Instances ---
-
-// Pre-create global instances for common values to save allocations.
 var (
 	TRUE     = &Boolean{Value: true}
 	FALSE    = &Boolean{Value: false}
@@ -950,26 +586,16 @@ var (
 	CONTINUE = &ContinueStatement{}
 )
 
-// --- Environment ---
-
-// SymbolRegistry holds registered Go symbols (functions, variables, types) that
-// can be imported by scripts.
 type SymbolRegistry struct {
 	packages map[string]map[string]any
 	types    map[string]map[string]reflect.Type
 }
-
-// NewSymbolRegistry creates a new, empty symbol registry.
 func NewSymbolRegistry() *SymbolRegistry {
 	return &SymbolRegistry{
 		packages: make(map[string]map[string]any),
 		types:    make(map[string]map[string]reflect.Type),
 	}
 }
-
-// Register adds a collection of symbols to a given package path.
-// If the package path already exists, the new symbols are merged with the existing ones.
-// It differentiates between regular symbols (vars, funcs) and type definitions.
 func (r *SymbolRegistry) Register(pkgPath string, symbols map[string]any) {
 	if _, ok := r.packages[pkgPath]; !ok {
 		r.packages[pkgPath] = make(map[string]any)
@@ -977,7 +603,6 @@ func (r *SymbolRegistry) Register(pkgPath string, symbols map[string]any) {
 	if _, ok := r.types[pkgPath]; !ok {
 		r.types[pkgPath] = make(map[string]reflect.Type)
 	}
-
 	for name, symbol := range symbols {
 		if t, ok := symbol.(reflect.Type); ok {
 			r.types[pkgPath][name] = t
@@ -986,8 +611,6 @@ func (r *SymbolRegistry) Register(pkgPath string, symbols map[string]any) {
 		}
 	}
 }
-
-// Lookup finds a symbol in the registry by its package path and name.
 func (r *SymbolRegistry) Lookup(pkgPath, name string) (any, bool) {
 	if pkg, ok := r.packages[pkgPath]; ok {
 		if symbol, ok := pkg[name]; ok {
@@ -996,8 +619,6 @@ func (r *SymbolRegistry) Lookup(pkgPath, name string) (any, bool) {
 	}
 	return nil, false
 }
-
-// LookupType finds a registered Go type by its package path and name.
 func (r *SymbolRegistry) LookupType(pkgPath, name string) (reflect.Type, bool) {
 	if pkg, ok := r.types[pkgPath]; ok {
 		if t, ok := pkg[name]; ok {
@@ -1006,14 +627,11 @@ func (r *SymbolRegistry) LookupType(pkgPath, name string) (reflect.Type, bool) {
 	}
 	return nil, false
 }
-
-// GetAllFor returns all registered symbols for a given package path.
 func (r *SymbolRegistry) GetAllFor(pkgPath string) (map[string]any, bool) {
 	pkg, ok := r.packages[pkgPath]
 	if !ok {
 		return nil, false
 	}
-	// Return a copy to prevent modification of the original map.
 	clone := make(map[string]any, len(pkg))
 	for k, v := range pkg {
 		clone[k] = v
@@ -1021,31 +639,23 @@ func (r *SymbolRegistry) GetAllFor(pkgPath string) (map[string]any, bool) {
 	return clone, true
 }
 
-// Environment holds the bindings for variables and functions.
 type Environment struct {
 	store             map[string]*Object
-	consts            map[string]Object // Constants are immutable, so they don't need to be pointers.
-	typeParamBindings map[string]Object // For resolving generic types like 'T'
+	consts            map[string]Object
+	typeParamBindings map[string]Object
 	outer             *Environment
 }
-
-// NewEnvironment creates a new, top-level environment.
 func NewEnvironment() *Environment {
 	s := make(map[string]*Object)
 	c := make(map[string]Object)
 	t := make(map[string]Object)
 	return &Environment{store: s, consts: c, typeParamBindings: t, outer: nil}
 }
-
-// NewEnclosedEnvironment creates a new environment that is enclosed by an outer one.
 func NewEnclosedEnvironment(outer *Environment) *Environment {
 	env := NewEnvironment()
 	env.outer = outer
 	return env
 }
-
-// Get retrieves an object by name from the environment, checking outer scopes if necessary.
-// It checks type params, then constants, then variables. It dereferences the pointer from the store.
 func (e *Environment) Get(name string) (Object, bool) {
 	if obj, ok := e.typeParamBindings[name]; ok {
 		return obj, true
@@ -1061,13 +671,9 @@ func (e *Environment) Get(name string) (Object, bool) {
 	}
 	return nil, false
 }
-
-// SetType stores a type parameter binding in the current environment.
 func (e *Environment) SetType(name string, val Object) {
 	e.typeParamBindings[name] = val
 }
-
-// GetAddress retrieves the memory address of a variable in the environment.
 func (e *Environment) GetAddress(name string) (*Object, bool) {
 	if objPtr, ok := e.store[name]; ok {
 		return objPtr, true
@@ -1077,8 +683,6 @@ func (e *Environment) GetAddress(name string) (*Object, bool) {
 	}
 	return nil, false
 }
-
-// GetConstant retrieves a constant by name, checking outer scopes.
 func (e *Environment) GetConstant(name string) (Object, bool) {
 	if obj, ok := e.consts[name]; ok {
 		return obj, true
@@ -1088,32 +692,20 @@ func (e *Environment) GetConstant(name string) (Object, bool) {
 	}
 	return nil, false
 }
-
-// Set stores an object by name in the current environment's scope.
-// It stores a pointer to the object.
 func (e *Environment) Set(name string, val Object) Object {
 	e.store[name] = &val
 	return val
 }
-
-// SetConstant stores an immutable binding.
 func (e *Environment) SetConstant(name string, val Object) Object {
 	e.consts[name] = val
 	return val
 }
-
-// Outer returns the enclosing environment.
 func (e *Environment) Outer() *Environment {
 	return e.outer
 }
-
-// IsEmpty checks if the environment has any local bindings (excluding outer).
 func (e *Environment) IsEmpty() bool {
 	return len(e.store) == 0 && len(e.consts) == 0 && len(e.typeParamBindings) == 0
 }
-
-// GetAll returns a map of all variables and constants defined in the current scope.
-// This is primarily for tools and special cases like building a package object from source.
 func (e *Environment) GetAll() map[string]Object {
 	all := make(map[string]Object)
 	for k, v := range e.store {
@@ -1124,28 +716,16 @@ func (e *Environment) GetAll() map[string]Object {
 	}
 	return all
 }
-
-// Assign updates the value of an existing variable. It searches up through
-// the enclosing environments. If the variable is found, it's updated and
-// the function returns true. If it's not found, or if it's a constant,
-// it returns false.
 func (e *Environment) Assign(name string, val Object) bool {
-	// Constants cannot be reassigned.
 	if _, ok := e.consts[name]; ok {
 		return false
 	}
-
-	// If the variable exists in the current scope's store, update it.
 	if objPtr, ok := e.store[name]; ok {
 		*objPtr = val
 		return true
 	}
-
-	// If not found locally, try assigning in the outer scope.
 	if e.outer != nil {
 		return e.outer.Assign(name, val)
 	}
-
-	// The variable was not found in any scope.
 	return false
 }

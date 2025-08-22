@@ -8,6 +8,7 @@ import (
 	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/examples/docgen/patterns"
 	"github.com/podhmo/go-scan/minigo"
+	"github.com/podhmo/go-scan/minigo/object"
 )
 
 // LoadPatternsFromConfig loads custom analysis patterns from a Go configuration file.
@@ -62,7 +63,7 @@ func convertConfigsToPatterns(configs []patterns.PatternConfig, logger *slog.Log
 
 		var key string
 		// If Fn is provided, derive the key from the function object.
-		if fn, ok := c.Fn.(*minigo.GoSourceFunction); ok && fn != nil {
+		if fn, ok := c.Fn.(*object.GoSourceFunction); ok && fn != nil {
 			key = fmt.Sprintf("%s.%s", fn.PkgPath, fn.Fn.Name)
 		} else {
 			key = c.Key

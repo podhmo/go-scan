@@ -70,10 +70,6 @@ type PatternConfig struct {
 	// e.g., "400", "500"
 	StatusCode string
 
-	// Description is the OpenAPI description for the parameter.
-	// Optional for "path" and "query" types.
-	Description string
-
 	// NameArgIndex is the 0-based index of the argument containing the parameter's name.
 	// Used for parameter patterns (`path`, `query`, `header`).
 	NameArgIndex int

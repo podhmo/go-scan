@@ -279,6 +279,13 @@ func unmarshal(src object.Object, dst reflect.Value) error {
 		}
 		dst.Set(s.Value)
 		return nil
+	case *object.GoSourceFunction:
+		// The target field must be of type `any` (interface{}) to accept the raw object.
+		if dst.Kind() != reflect.Interface {
+			return fmt.Errorf("cannot unmarshal GoSourceFunction into non-interface type %s", dst.Type())
+		}
+		dst.Set(reflect.ValueOf(s))
+		return nil
 	case *object.Array:
 		if dst.Kind() != reflect.Slice {
 			return fmt.Errorf("cannot unmarshal array into non-slice type %s", dst.Type())

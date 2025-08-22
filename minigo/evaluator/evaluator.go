@@ -2007,6 +2007,16 @@ func (e *Evaluator) applyFunction(call *ast.CallExpr, fn object.Object, args []o
 			Results:    astFunc.Type.Results,
 			Body:       astFunc.Body,
 			Env:        f.DefEnv, // Use the DEFINITION environment
+			FScope:     f.FScope, // Use the DEFINITION file scope
+		}
+		// This is also a generic function, so we must run the same type
+		// inference logic as for a regular *object.Function.
+		if function.TypeParams != nil && len(function.TypeParams.List) > 0 {
+			inferred, errObj := e.inferGenericTypes(call.Pos(), function, args)
+			if errObj != nil {
+				return errObj
+			}
+			typeArgs = inferred
 		}
 	case *object.Builtin:
 		var pos token.Pos
@@ -4168,6 +4178,7 @@ func (e *Evaluator) findSymbolInPackageInfo(pkgInfo *goscan.Package, symbolName 
 				Fn:      f,
 				PkgPath: pkgInfo.Path,
 				DefEnv:  pkgEnv,
+				FScope:  fscope,
 			}, true
 		}
 	}

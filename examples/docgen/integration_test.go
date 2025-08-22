@@ -1,8 +1,8 @@
 package main
 
 import (
+	"context"
 	"log/slog"
-	"path/filepath"
 	"testing"
 
 	goscan "github.com/podhmo/go-scan"
@@ -18,7 +18,8 @@ func TestDocgen_integrationWithSharedScanner(t *testing.T) {
 	files := map[string]string{
 		// Main module for the test.
 		// The `replace` directive is crucial. It allows the temporary module
-		// to find the main `go-scan` project code.
+		// to find the main `go-scan` project code. `scantest` will
+		// automatically convert the relative path to an absolute one.
 		"go.mod": "module my-test\n\ngo 1.24\n\nreplace github.com/podhmo/go-scan => ../../\n",
 
 		// The minigo script that will be loaded by docgen's loader.
@@ -44,17 +45,19 @@ func Hello() {}
 	dir, cleanup := scantest.WriteFiles(t, files)
 	defer cleanup()
 
-	// Manually create the scanner, pointing its workdir to the temp dir.
-	// This is the most direct way to ensure the scanner has the correct module context.
-	s, err := goscan.New(goscan.WithWorkDir(dir))
-	if err != nil {
-		t.Fatalf("failed to create scanner: %+v", err)
+	// Action to be performed by scantest.Run
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
+		// `scantest.Run` changes the CWD to the temporary directory `dir`,
+		// so a relative path to the patterns file is sufficient.
+		logger := slog.Default()
+		_, err := LoadPatternsFromConfig("patterns.go", logger, s)
+		return err
 	}
 
-	// Construct the full path to the patterns file and load it.
-	patternsFilePath := filepath.Join(dir, "patterns.go")
-	logger := slog.Default()
-	if _, err := LoadPatternsFromConfig(patternsFilePath, logger, s); err != nil {
-		t.Fatalf("LoadPatternsFromConfig failed: %+v", err)
+	// We don't need to specify patterns to scan initially, as the action
+	// itself is what we are testing. `scantest` will correctly configure the
+	// scanner `s` with the temporary directory `dir` as its root.
+	if _, err := scantest.Run(t, dir, nil, action); err != nil {
+		t.Fatalf("scantest.Run failed: %+v", err)
 	}
 }

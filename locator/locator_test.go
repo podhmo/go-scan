@@ -2,6 +2,7 @@ package locator
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -160,6 +161,27 @@ func TestFindPackageDir(t *testing.T) {
 		})
 	}
 }
+
+func newTestDir(t *testing.T, files map[string]string) (string, func()) {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "test-")
+	if err != nil {
+		t.Fatalf("MkdirTemp: %v", err)
+	}
+	cleanup := func() { os.RemoveAll(dir) }
+
+	for name, content := range files {
+		path := filepath.Join(dir, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			t.Fatalf("MkdirAll(%q): %v", filepath.Dir(path), err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+			t.Fatalf("WriteFile(%q): %v", path, err)
+		}
+	}
+	return dir, cleanup
+}
+
 
 // TestFindPackageDirWithReplace tests the FindPackageDir method with various replace directives.
 func TestFindPackageDirWithReplace(t *testing.T) {
@@ -516,6 +538,64 @@ replace example.com/parent => ../
 
 	if foundPathAbs != expectedPath {
 		t.Errorf("Expected path %q, got %q", expectedPath, foundPathAbs)
+	}
+}
+
+func TestFindPackageDir_withAbsoluteReplaceInOverlay(t *testing.T) {
+	// This test simulates the scenario from `scantest`, where a temporary
+	// module uses a `replace` directive with a relative path to the main project,
+	// and `scantest` creates an overlay for `go.mod` with an absolute path.
+	//
+	// /tmp/real-project/
+	//   go.mod (module github.com/main/project)
+	//   lib/
+	//     lib.go
+	// /tmp/test-module/
+	//   go.mod (module my-test)
+	//
+	// The test will try to resolve "github.com/main/project/lib" from within
+	// the "my-test" module context.
+
+	// 1. Setup the "real" project directory
+	realProjectDir, cleanup := newTestDir(t, map[string]string{
+		"go.mod":    "module github.com/main/project",
+		"lib/lib.go": "package lib",
+	})
+	defer cleanup()
+
+	// 2. Setup the temporary test module directory
+	testModuleDir, cleanup2 := newTestDir(t, map[string]string{
+		// This go.mod is what would be on disk.
+		"go.mod": "module my-test\n\nreplace github.com/main/project => ../real-project\n",
+	})
+	defer cleanup2()
+
+	// 3. Create the in-memory overlay, simulating what `scantest` does.
+	// It replaces the relative path with an absolute one.
+	absReplacedPath := realProjectDir
+	overlayContent := fmt.Sprintf("module my-test\n\nreplace github.com/main/project => %s\n", absReplacedPath)
+	overlay := scanner.Overlay{
+		"go.mod": []byte(overlayContent),
+	}
+
+	// 4. Create the locator, pointing it to the test module's directory
+	//    and providing the overlay.
+	l, err := New(testModuleDir, WithOverlay(overlay))
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	// 5. Attempt to find the package directory. This should succeed.
+	importPath := "github.com/main/project/lib"
+	wantDir := filepath.Join(realProjectDir, "lib")
+
+	gotDir, err := l.FindPackageDir(importPath)
+	if err != nil {
+		t.Fatalf("FindPackageDir(%q) returned error: %v", importPath, err)
+	}
+
+	if gotDir != wantDir {
+		t.Errorf("FindPackageDir(%q) = %v, want %v", importPath, gotDir, wantDir)
 	}
 }
 

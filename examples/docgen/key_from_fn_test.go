@@ -1,72 +1,152 @@
 package main
 
 import (
+	"context"
 	"io"
-	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
 	goscan "github.com/podhmo/go-scan"
+	"github.com/podhmo/go-scan/scantest"
 )
 
-func TestKeyFromFn(t *testing.T) {
-	moduleDir := "testdata/key-from-fn"
+const testGoMod = `
+module key-from-fn
 
-	// Setup: Change directory to the testdata so the module can be resolved.
-	wd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("could not get working directory: %v", err)
+go 1.21
+
+replace github.com/podhmo/go-scan => ../../..
+`
+
+const testFooGo = `
+package foo
+
+// Foo is a sample struct.
+type Foo struct{}
+
+// Bar is a sample method with a pointer receiver.
+func (f *Foo) Bar() {}
+
+// Qux is a sample method with a value receiver.
+func (f Foo) Qux() {}
+
+// Baz is a standalone function.
+func Baz() {}
+`
+
+const testPatternsGo = `
+//go:build minigo
+// +build minigo
+
+package main
+
+import (
+	"key-from-fn/foo"
+)
+
+// PatternConfig is a local stub for the real patterns.PatternConfig.
+type PatternConfig struct {
+	Name     string
+	Fn       any
+	Type     string
+	ArgIndex int
+}
+
+var (
+	// variables for testing instance methods
+	v = foo.Foo{}
+	p = &foo.Foo{}
+	n = new(foo.Foo)
+)
+
+var Patterns = []PatternConfig{
+	// Method from typed nil
+	{
+		Name: "pattern-for-method-from-nil",
+		Fn:   (*foo.Foo)(nil).Bar,
+		Type: "responseBody",
+	},
+	// Standalone function
+	{
+		Name: "pattern-for-function",
+		Fn:   foo.Baz,
+		Type: "responseBody",
+	},
+	// Method from value instance
+	{
+		Name: "pattern-for-method-from-value",
+		Fn:   v.Qux,
+		Type: "responseBody",
+	},
+	// Method from pointer to struct literal instance
+	{
+		Name: "pattern-for-method-from-pointer-literal",
+		Fn:   p.Bar,
+		Type: "responseBody",
+	},
+	// Method from new() instance
+	{
+		Name: "pattern-for-method-from-new",
+		Fn:   n.Bar,
+		Type: "responseBody",
+	},
+}
+`
+
+func TestKeyFromFnWithScantest(t *testing.T) {
+	files := map[string]string{
+		"go.mod":      testGoMod,
+		"foo/foo.go":  testFooGo,
+		"patterns.go": testPatternsGo,
 	}
-	if err := os.Chdir(moduleDir); err != nil {
-		t.Fatalf("could not change directory to %s: %v", moduleDir, err)
-	}
-	defer os.Chdir(wd)
 
-	// Create a scanner configured to find the new module.
-	logger := newTestLogger(io.Discard)
-	s, err := goscan.New(
-		goscan.WithGoModuleResolver(),
-		goscan.WithLogger(logger),
-	)
-	if err != nil {
-		t.Fatalf("failed to create scanner: %v", err)
-	}
+	// scantest.WriteFiles creates a temp directory with the specified file layout.
+	dir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
 
-	loadedPatterns, err := LoadPatternsFromConfig("patterns.go", logger, s)
-	if err != nil {
-		t.Fatalf("LoadPatternsFromConfig failed: %+v", err)
-	}
+	// The action function where the main test logic resides.
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
+		logger := newTestLogger(io.Discard)
 
-	expectedKeys := map[string]bool{
-		"key-from-fn/foo.(*Foo).Bar": true, // from nil, pointer literal, and new
-		"key-from-fn/foo.Foo.Qux":    true, // from value
-		"key-from-fn/foo.Baz":        true, // from standalone function
-	}
+		patternsPath := filepath.Join(dir, "patterns.go")
+		loadedPatterns, err := LoadPatternsFromConfig(patternsPath, logger, s)
+		if err != nil {
+			t.Fatalf("LoadPatternsFromConfig failed: %+v", err)
+		}
 
-	if len(loadedPatterns) != 5 {
-		t.Fatalf("expected 5 patterns, got %d", len(loadedPatterns))
-	}
+		expectedKeys := map[string]bool{
+			"key-from-fn/foo.(*Foo).Bar": true, // from nil, pointer literal, and new
+			"key-from-fn/foo.Foo.Qux":    true, // from value
+			"key-from-fn/foo.Baz":        true, // from standalone function
+		}
 
-	foundKeys := make(map[string]bool)
-	for _, p := range loadedPatterns {
-		foundKeys[p.Key] = true
-	}
+		if len(loadedPatterns) != 5 {
+			t.Fatalf("expected 5 patterns, got %d", len(loadedPatterns))
+		}
 
-	if diff := cmp.Diff(expectedKeys, foundKeys); diff != "" {
-		// The diff can be tricky because multiple patterns map to the same key.
-		// Let's do a more explicit check.
-		t.Logf("key mismatch (-want +got):\n%s", diff)
+		foundKeys := make(map[string]bool)
+		for _, p := range loadedPatterns {
+			foundKeys[p.Key] = true
+		}
 
-		// Manual check for clarity
-		for k := range expectedKeys {
-			if !foundKeys[k] {
-				t.Errorf("expected key %q was not found", k)
+		if diff := cmp.Diff(expectedKeys, foundKeys); diff != "" {
+			t.Errorf("key mismatch (-want +got):\n%s", diff)
+			for k := range expectedKeys {
+				if !foundKeys[k] {
+					t.Errorf("expected key %q was not found", k)
+				}
+			}
+			for k := range foundKeys {
+				if !expectedKeys[k] {
+					t.Errorf("found unexpected key %q", k)
+				}
 			}
 		}
-		for k := range foundKeys {
-			if !expectedKeys[k] {
-				t.Errorf("found unexpected key %q", k)
-			}
-		}
+		return nil // Return nil on success
+	}
+
+	if _, err := scantest.Run(t, dir, []string{"."}, action); err != nil {
+		t.Fatalf("scantest.Run failed: %v", err)
 	}
 }

@@ -6,50 +6,73 @@ This document outlines the series of failed attempts to refactor the `docgen` to
 
 The primary difficulty was handling method references on nil pointers, such as `var p *my.Type; ... { Fn: p.MyMethod }`. The `minigo` interpreter, by default, would evaluate `p` to a raw `object.NIL`, losing all type information. This made it impossible to resolve `MyMethod` from the typeless nil.
 
-## Attempt 1: The "Right Way" with Flawed Execution
+---
 
-My initial and conceptually correct plan was to modify the `minigo` interpreter to support "typed nils".
+## What to Avoid (Failed Approaches)
 
-- **Plan**:
-  1.  Introduce a `TypedNil` object in `minigo` to hold the `scanner.TypeInfo` of a nil pointer.
-  2.  Introduce a `GoMethod` object to represent a resolved method from a Go type.
-  3.  Augment `minigo`'s `StructDefinition` to include a map of `GoMethods` populated by `go-scan`.
-  4.  Update the `minigo` evaluator (`evalSelectorExpr`) to handle method calls on `TypedNil` objects by looking up the method in the struct's `GoMethods` map.
-  5.  Update the `docgen` loader to manually unmarshal the new complex objects from the `minigo` script result.
+1.  **The "Simple" Workaround**: Do not attempt to bypass interpreter modifications by creating a more explicit configuration in the `minigo` script (e.g., `{ Fn: (*my.Type)(nil), MethodName: "MyMethod" }`). This approach is fundamentally flawed because the `minigo` script runs in an isolated context and cannot resolve Go type identifiers like `my.Type` without the interpreter's help. This leads to "identifier not found" errors during the script's evaluation.
 
-- **Failures**: This plan failed repeatedly due to a cascade of implementation errors and a fundamental misunderstanding of the `minigo` object model and evaluator loop.
-    - I repeatedly confused `scanner.FunctionInfo` with other types like `ast.FuncDecl` or a non-existent `scanner.Function`.
-    - I made incorrect assumptions about which structs held which data (e.g., assuming `FunctionInfo` had a `PkgPath` when it didn't).
-    - My most significant error was in making `GoSourceFunction` (a representation of a Go function) callable. My initial attempt was to convert it on-the-fly to a `minigo` `*object.Function`, but this failed because it didn't correctly propagate the function's definition environment (`DefEnv`). This broke tests that relied on transitive imports, as the called function couldn't find symbols from its own package.
+2.  **Hacking `applyFunction`**: Do not try to make `GoSourceFunction` callable by converting it to a standard `*object.Function` on the fly within `applyFunction`. This approach fails because it does not correctly propagate the function's original definition environment (`DefEnv`). This breaks the ability to resolve other symbols (functions, variables) from the same package, causing "identifier not found" errors for transitive imports.
 
-This led to a frustrating loop of fixing one build error only to create a new, more subtle runtime error.
+## What is Necessary (The Correct Path)
 
-## Attempt 2: The "Simple" Workaround
+The only robust solution is to **modify the `minigo` interpreter** to make it aware of Go's type system in a deeper way.
 
-After getting stuck on the interpreter modifications, I pivoted to what I thought was a simpler workaround.
+1.  **Typed Representations**: The interpreter needs distinct internal objects to represent Go concepts:
+    *   `TypedNil`: For `nil` pointers that retain their type.
+    *   `GoMethod`: To represent a method that has been successfully resolved from a type.
+    *   `GoSourceFunction`: To represent a standalone Go function, crucially storing its **definition environment** and **package path**.
 
-- **Plan**:
-  1.  Avoid modifying `minigo` entirely.
-  2.  Change the `docgen` configuration to be more explicit, like:
-      ```go
-      {
-          Fn: (*my.Type)(nil), // A typed nil to get package/type info
-          MethodName: "MyMethod", // The method name as a string
-          //...
-      }
-      ```
-  3.  Update the `docgen` loader's `computeKey` function to use reflection on the `Fn`'s type and the `MethodName` string to construct the key.
+2.  **Rich `StructDefinition`**: When the interpreter learns about a Go struct (from `go-scan`), its internal representation (`StructDefinition`) must be augmented to store a map of its methods (`GoMethods`).
 
-- **Failure**: This failed because the `minigo` script itself couldn't resolve the identifiers. When the script `var p *my.Type` is evaluated, `minigo` doesn't automatically know about the Go types from the code being analyzed. The script runs in its own context. This approach was fundamentally flawed from the start.
+3.  **Correct Evaluation Logic**:
+    *   The evaluator must be taught to create `TypedNil` objects when it encounters typed nils from Go.
+    *   The selector logic (`evalSelectorExpr`) must be updated to handle method lookups on `TypedNil` objects.
+    *   The function application logic (`applyFunction`) must be updated to handle `GoSourceFunction` objects, using their stored `DefEnv` to correctly execute their body in the proper scope.
 
-## Conclusion and Path Forward
+---
 
-After multiple failures and a full repository reset, it is clear that **Attempt 1 was the correct path**. The complexity of the `minigo` interpreter cannot be bypassed with simple workarounds.
+## Recommended Incremental Task List
 
-The key to success lies in a careful and correct implementation of the interpreter modifications:
+This breaks down the correct approach into smaller, verifiable steps.
 
-1.  A `GoSourceFunction` object **must** be created to represent a Go function. It must store not only the `*scanner.FunctionInfo` but also the **package path** and, crucially, the **definition environment (`DefEnv`)** from the package it was defined in.
-2.  The `applyFunction` logic in the evaluator **must** be updated to handle `GoSourceFunction`. When it encounters one, it must use the `DefEnv` to execute the function's body, ensuring that package-level variables and other functions are in scope.
-3.  The `docgen` loader's `computeKey` function can then reliably use the `PkgPath` and `Func.Name` from the `GoSourceFunction` to generate the correct key for the analyzer.
+### Part 1: Enhance `minigo` Objects and Evaluation
 
-Any future attempts should restart from a clean slate and meticulously follow this corrected version of the initial plan. The core lesson is that the environment and context of execution are critical in an interpreter, and this information must be correctly plumbed through the object model.
+1.  **Task 1.1: Define New Objects**.
+    *   In `minigo/object/object.go`, add the definitions for `TypedNil`, `GoMethod`, and `GoSourceFunction`.
+    *   Add the `GoMethods map[string]*scanner.FunctionInfo` field to `StructDefinition`.
+    *   *Verification*: The code should compile.
+
+2.  **Task 1.2: Populate `StructDefinition.GoMethods`**.
+    *   In `minigo/evaluator/evaluator.go`, locate the `findSymbolInPackageInfo` function.
+    *   When a `goscan.StructKind` is processed, iterate through the `pkgInfo.Functions` and populate the `GoMethods` map on the new `object.StructDefinition`.
+    *   *Verification*: This is hard to test in isolation, but is a prerequisite for the next steps.
+
+3.  **Task 1.3: Implement `TypedNil` Creation**.
+    *   In `minigo/evaluator/evaluator.go`, modify the `nativeToValue` function.
+    *   In the `case reflect.Ptr, reflect.Interface:`, when `val.IsNil()` is true, add logic to resolve the `reflect.Type` to a `scanner.TypeInfo` and return a `*object.TypedNil`.
+    *   *Verification*: Create a new test case in `minigo` that injects a typed nil pointer and asserts that the resulting object is a `TypedNil` with the correct type information.
+
+4.  **Task 1.4: Implement Method Resolution on `TypedNil`**.
+    *   In `minigo/evaluator/evaluator.go`, add a `case *object.TypedNil:` to `evalSelectorExpr`.
+    *   This case should look up the selector in the `GoMethods` map of the struct definition corresponding to the `TypedNil`'s `TypeInfo`.
+    *   If found, it should return a new `*object.GoMethod`.
+    *   *Verification*: Create a new test case that evaluates a script like `var p *pkg.T; p.MyMethod` and asserts that the result is a `*object.GoMethod`.
+
+5.  **Task 1.5: Implement `GoSourceFunction` Creation and Execution**.
+    *   In `findSymbolInPackageInfo`, when a standalone function is found, return a `*object.GoSourceFunction`, populating it with the `*scanner.FunctionInfo`, the `pkgInfo.Path`, and the `pkgEnv`.
+    *   In `applyFunction`, add a `case *object.GoSourceFunction:`. This case should create a temporary `*object.Function` using the `AstDecl` from the `GoSourceFunction` and, critically, the `DefEnv` from the `GoSourceFunction`. Then, fall through to the existing `*object.Function` execution logic.
+    *   *Verification*: The existing `minigo` tests for transitive imports (`TestTransitiveImport`) should now pass.
+
+### Part 2: Update `docgen`
+
+6.  **Task 2.1: Update `PatternConfig` and Loader**.
+    *   Modify `examples/docgen/patterns/patterns.go` to use `Fn any` and `MethodName string`.
+    *   Modify `examples/docgen/loader.go`, implementing `computeKey` and the manual unmarshalling logic.
+    *   *Verification*: The `docgen` code should compile.
+
+7.  **Task 2.2: Update and Verify Test Cases**.
+    *   Update all three `patterns.go` files in the `examples/docgen/testdata` subdirectories to use the new `Fn` syntax.
+    *   Add the necessary `replace` directive to `examples/docgen/go.mod`.
+    *   Run `cd /app && make test`.
+    *   *Verification*: All tests, including the `docgen` tests, should now pass.

@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"go/ast"
 	"log/slog"
 	"path/filepath"
 
@@ -115,71 +114,10 @@ func patternKeyFromFunc(fn any) (string, error) {
 
 	case *object.GoMethodValue:
 		// Method value: "(*pkg/path.TypeName).MethodName"
-		method := f.Fn
-		if method.Recv == nil || len(method.Recv.List) == 0 {
-			return "", fmt.Errorf("method value %q has no receiver info", method.Name)
+		if f.ReceiverIsPointer {
+			return fmt.Sprintf("(*%s.%s).%s", f.ReceiverPkgPath, f.ReceiverTypeName, f.Fn.Name.Name), nil
 		}
-		recvField := method.Recv.List[0]
-
-		// The receiver type is stored in the method's definition environment.
-		// We need to extract its name and package path.
-		var recvTypeName string
-		var recvIsPointer bool
-		var recvTypeExpr ast.Expr
-
-		// The AST node for the receiver type, e.g., `*User` or `User`.
-		recvTypeNode := recvField.Type
-		if star, ok := recvTypeNode.(*ast.StarExpr); ok {
-			recvIsPointer = true
-			recvTypeExpr = star.X
-		} else {
-			recvTypeExpr = recvTypeNode
-		}
-
-		// The type name itself, e.g., `User`.
-		ident, ok := recvTypeExpr.(*ast.Ident)
-		if !ok {
-			return "", fmt.Errorf("unsupported receiver type expression: %T", recvTypeExpr)
-		}
-		recvTypeName = ident.Name
-
-		// Now, find the package path. This is the trickiest part.
-		// The method's `Env` is the environment where the struct was defined.
-		// We need to find the `object.Package` that corresponds to this environment.
-		// This requires a new mechanism or passing more context.
-		//
-		// HACK/TODO: For now, we assume the type is in the same package as the method declaration.
-		// This is often true but not always (e.g., methods on types from other packages).
-		// The `GoSourceFunction` has a `PkgPath`, but the `Function` object inside `GoMethodValue` does not.
-		// This part of the logic will be completed after enhancing the `minigo` object model
-		// to make the receiver's package path more accessible.
-		// For now, we will leave a placeholder. A proper implementation needs to be added.
-		// We'll simulate finding it for now to make progress.
-		var pkgPath string
-		if method.FScope != nil {
-			// This is a temporary and incorrect assumption.
-			// We are trying to find a package path from the file scope's aliases.
-			// This will not work reliably.
-			for _, path := range method.FScope.Aliases {
-				pkgPath = path // Just grab the first one we see.
-				break
-			}
-		}
-		if pkgPath == "" {
-			// As a last resort, maybe it's a dot import.
-			if method.FScope != nil && len(method.FScope.DotImports) > 0 {
-				pkgPath = method.FScope.DotImports[0]
-			}
-		}
-
-		if pkgPath == "" {
-			return "", fmt.Errorf("TODO: could not determine package path for receiver type %s", recvTypeName)
-		}
-
-		if recvIsPointer {
-			return fmt.Sprintf("(*%s.%s).%s", pkgPath, recvTypeName, method.Name.Name), nil
-		}
-		return fmt.Sprintf("(%s.%s).%s", pkgPath, recvTypeName, method.Name.Name), nil
+		return fmt.Sprintf("(%s.%s).%s", f.ReceiverPkgPath, f.ReceiverTypeName, f.Fn.Name.Name), nil
 
 	default:
 		return "", fmt.Errorf("unsupported type for Fn field: %T", fn)

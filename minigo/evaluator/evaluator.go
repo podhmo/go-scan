@@ -4138,6 +4138,7 @@ func (e *Evaluator) findSymbolInPackageInfo(pkgInfo *goscan.Package, symbolName 
 				// Convert scanner.TypeInfo to object.StructDefinition
 				def := &object.StructDefinition{
 					Name:    typeSpec.Name,
+					PkgPath: pkgInfo.Path,
 					Fields:  structType.Fields.List,
 					Methods: make(map[string]*object.Function), // Initialize methods map
 				}
@@ -4564,7 +4565,12 @@ func (e *Evaluator) evalSelectorExpr(n *ast.SelectorExpr, env *object.Environmen
 		if !ok {
 			return e.newError(n.Pos(), "undefined method %s for type %s", n.Sel.Name, structDef.Name.Name)
 		}
-		return &object.GoMethodValue{Fn: method}
+		return &object.GoMethodValue{
+			Fn:                method,
+			ReceiverPkgPath:   structDef.PkgPath,
+			ReceiverTypeName:  structDef.Name.Name,
+			ReceiverIsPointer: true, // TypedNil always represents a pointer type
+		}
 
 	case *object.Pointer:
 		if l.Element == nil || *l.Element == nil {

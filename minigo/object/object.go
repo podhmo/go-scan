@@ -424,6 +424,7 @@ func (b *Builtin) Inspect() string { return "builtin function" }
 // StructDefinition represents the definition of a struct type.
 type StructDefinition struct {
 	Name       *ast.Ident
+	PkgPath    string
 	TypeParams *ast.FieldList // For generic structs
 	Fields     []*ast.Field
 	Methods    map[string]*Function
@@ -737,7 +738,10 @@ func (tn *TypedNil) Inspect() string { return "nil" }
 // GoMethodValue represents a method looked up from a type, but not bound to an instance.
 // e.g., (*MyType).MyMethod
 type GoMethodValue struct {
-	Fn *Function
+	Fn                *Function
+	ReceiverPkgPath   string
+	ReceiverTypeName  string
+	ReceiverIsPointer bool
 }
 
 // Type returns the type of the GoMethodValue object.

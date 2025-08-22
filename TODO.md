@@ -45,7 +45,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 ### Type-Safe `docgen` Patterns ([docs/plan-docgen-minigo-fn-ref.md](./docs/plan-docgen-minigo-fn-ref.md))
 - [x] **Core Library Robustness**:
     - [x] **Enhance Module Resolution**: Fix the `go-scan` locator to correctly resolve packages in nested test modules with `replace` directives.
-    - [ ] **Implement Typed Nil Method Values**: Enhance the `minigo` interpreter to support resolving method values from typed `nil` pointers.
+    - [-] **Implement Typed Nil Method Values**: Enhance the `minigo` interpreter to support resolving method values from typed `nil` pointers. (Jules: Attempted implementation by modifying the object.Pointer struct and evaluator logic, but could not resolve a persistent `base of selector expression` error. The core feature remains non-functional.)
     - [ ] **Implement Environment-Aware Function Objects**: Enhance `minigo` to represent Go functions as objects that retain their definition environment (`DefEnv`).
 - [ ] **`docgen` Feature**:
     - [ ] **Refactor `docgen` Configuration**: Update `PatternConfig` to use a type-safe `Fn` field instead of a string `Key`.

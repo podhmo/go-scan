@@ -60,6 +60,26 @@ func main() {
 			skip:           true, // This is a known failing test
 			expectedOutput: "false\ntrue\n",
 		},
+		{
+			name: "typed nil method call",
+			script: `
+package main
+
+type S struct{}
+
+func (s *S) SayHello() {
+	println("hello from nil")
+}
+
+func main() {
+	var p *S = nil
+	_ = p.SayHello
+}
+`,
+			wantErr:        false,
+			skip:           false,
+			expectedOutput: "",
+		},
 	}
 
 	for _, tt := range cases {

@@ -537,7 +537,8 @@ func (si *StructInstance) Inspect() string {
 
 // Pointer represents a pointer to another object.
 type Pointer struct {
-	Element *Object
+	PointerType Object // This will hold the pointer's type, e.g., *PointerType
+	Element     *Object
 }
 
 // Type returns the type of the Pointer object.

@@ -337,7 +337,8 @@ var builtins = map[string]*object.Builtin{
 			}
 
 			var obj object.Object = instance
-			return &object.Pointer{Element: &obj}
+			ptrType := &object.PointerType{ElementType: def}
+			return &object.Pointer{PointerType: ptrType, Element: &obj}
 		},
 	},
 	"panic": {
@@ -752,19 +753,37 @@ func (e *Evaluator) evalDereferenceExpression(node ast.Node, right object.Object
 func (e *Evaluator) evalAddressOfExpression(node *ast.UnaryExpr, env *object.Environment, fscope *object.FileScope) object.Object {
 	switch operand := node.X.(type) {
 	case *ast.Ident:
-		addr, ok := env.GetAddress(operand.Name)
+		val, ok := env.Get(operand.Name)
 		if !ok {
 			return e.newError(node.Pos(), "cannot take the address of undeclared variable: %s", operand.Name)
 		}
-		return &object.Pointer{Element: addr}
+		addr, _ := env.GetAddress(operand.Name) // We already checked for existence with Get
+
+		var ptrType object.Object
+		valType := e.inferTypeOf(val)
+		if valType != nil && valType != object.NIL {
+			ptrType = &object.PointerType{ElementType: valType}
+		} else {
+			ptrType = nil // old behavior, untyped pointer
+		}
+		return &object.Pointer{PointerType: ptrType, Element: addr}
+
 	case *ast.CompositeLit:
 		// Evaluate the composite literal to create the object instance.
 		obj := e.evalCompositeLit(operand, env, fscope)
 		if isError(obj) {
 			return obj
 		}
+		// Infer the type of the created object.
+		objType := e.inferTypeOf(obj)
+		if objType == nil || objType == object.NIL {
+			return e.newError(node.Pos(), "cannot infer type for composite literal to create pointer")
+		}
+		ptrType := &object.PointerType{ElementType: objType}
+
 		// Return a pointer to the newly created object.
-		return &object.Pointer{Element: &obj}
+		var objVar object.Object = obj
+		return &object.Pointer{PointerType: ptrType, Element: &objVar}
 	default:
 		return e.newError(node.Pos(), "cannot take the address of %T", node.X)
 	}
@@ -3440,6 +3459,10 @@ func (e *Evaluator) evalGenDecl(n *ast.GenDecl, env *object.Environment, fscope 
 								}
 							}
 							val = instance
+						case *object.PointerType:
+							// This is a declaration of a pointer type, e.g., var p *S.
+							// The initial value is a typed nil.
+							val = &object.Pointer{PointerType: rt, Element: nil}
 						default:
 							val = object.NIL // Default to NIL for other types
 						}
@@ -4525,32 +4548,53 @@ func (e *Evaluator) evalSelectorExpr(n *ast.SelectorExpr, env *object.Environmen
 
 	case *object.Pointer:
 		if l.Element == nil || *l.Element == nil {
-			return e.newError(n.Pos(), "nil pointer dereference")
-		}
+			// Handle typed nil pointer for method calls
+			ptrType, ok := l.PointerType.(*object.PointerType)
+			if !ok {
+				return e.newError(n.Pos(), "nil pointer dereference (untyped nil)")
+			}
 
-		// Handle pointers to both minigo structs and Go values
-		switch elem := (*l.Element).(type) {
-		case *object.StructInstance:
-			// This is a pointer to a minigo-defined struct.
-			// 1. Look for a method. Pass the pointer `l` as the receiver.
-			if method := e.evalMethodCall(n, l, elem.Def); method != nil {
-				if err, isErr := method.(*object.Error); isErr {
-					return err
+			structDef, ok := ptrType.ElementType.(*object.StructDefinition)
+			if !ok {
+				// e.g. trying to call a method on `(*int)(nil)`
+				return e.newError(n.Pos(), "cannot call method on nil pointer to non-struct type %s", ptrType.ElementType.Inspect())
+			}
+
+			// Look for a method in the struct definition.
+			method, ok := structDef.Methods[n.Sel.Name]
+			if !ok {
+				// This is field access on a nil pointer, which is an error.
+				return e.newError(n.Pos(), "nil pointer dereference (accessing field %s)", n.Sel.Name)
+			}
+
+			// Method found. Bind it with a nil receiver.
+			// The receiver for the bound method is the pointer `l` itself.
+			return &object.BoundMethod{Fn: method, Receiver: l}
+		} else {
+			// Handle pointers to both minigo structs and Go values (non-nil case)
+			switch elem := (*l.Element).(type) {
+			case *object.StructInstance:
+				// This is a pointer to a minigo-defined struct.
+				// 1. Look for a method. Pass the pointer `l` as the receiver.
+				if method := e.evalMethodCall(n, l, elem.Def); method != nil {
+					if err, isErr := method.(*object.Error); isErr {
+						return err
+					}
+					return method
 				}
-				return method
-			}
-			// 2. If not a method, look for a field on the dereferenced struct.
-			if val, found := e.findFieldInStruct(elem, n.Sel.Name); found {
-				return val
-			}
-			return e.newError(n.Pos(), "undefined field or method '%s' on pointer to struct '%s'", n.Sel.Name, elem.Def.Name.Name)
+				// 2. If not a method, look for a field on the dereferenced struct.
+				if val, found := e.findFieldInStruct(elem, n.Sel.Name); found {
+					return val
+				}
+				return e.newError(n.Pos(), "undefined field or method '%s' on pointer to struct '%s'", n.Sel.Name, elem.Def.Name.Name)
 
-		case *object.GoValue:
-			// This is a pointer to a Go value. Delegate to the Go value selector logic.
-			return e.evalGoValueSelectorExpr(n, elem, n.Sel.Name)
+			case *object.GoValue:
+				// This is a pointer to a Go value. Delegate to the Go value selector logic.
+				return e.evalGoValueSelectorExpr(n, elem, n.Sel.Name)
 
-		default:
-			return e.newError(n.Pos(), "base of selector expression is not a pointer to a struct or Go value")
+			default:
+				return e.newError(n.Pos(), "base of selector expression is not a pointer to a struct or Go value")
+			}
 		}
 
 	case *object.GoValue:

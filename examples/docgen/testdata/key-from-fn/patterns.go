@@ -8,25 +8,49 @@ import (
 )
 
 // PatternConfig is a local stub for the real patterns.PatternConfig.
-// We only define the fields we need for this test.
 type PatternConfig struct {
 	Name     string
 	Fn       any
-	Type     string // Using string for simplicity in the stub
+	Type     string
 	ArgIndex int
 }
 
+var (
+	// variables for testing instance methods
+	v = foo.Foo{}
+	p = &foo.Foo{}
+	n = new(foo.Foo)
+)
+
 var Patterns = []PatternConfig{
+	// Method from typed nil
 	{
-		Name:     "pattern-for-method",
-		Fn:       (*foo.Foo)(nil).Bar,
-		Type:     "responseBody",
-		ArgIndex: 0,
+		Name: "pattern-for-method-from-nil",
+		Fn:   (*foo.Foo)(nil).Bar,
+		Type: "responseBody",
 	},
+	// Standalone function
 	{
-		Name:     "pattern-for-function",
-		Fn:       foo.Baz,
-		Type:     "responseBody",
-		ArgIndex: 0,
+		Name: "pattern-for-function",
+		Fn:   foo.Baz,
+		Type: "responseBody",
+	},
+	// Method from value instance
+	{
+		Name: "pattern-for-method-from-value",
+		Fn:   v.Qux,
+		Type: "responseBody",
+	},
+	// Method from pointer to struct literal instance
+	{
+		Name: "pattern-for-method-from-pointer-literal",
+		Fn:   p.Bar,
+		Type: "responseBody",
+	},
+	// Method from new() instance
+	{
+		Name: "pattern-for-method-from-new",
+		Fn:   n.Bar,
+		Type: "responseBody",
 	},
 }

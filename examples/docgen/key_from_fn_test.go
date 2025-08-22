@@ -32,21 +32,19 @@ func TestKeyFromFn(t *testing.T) {
 		t.Fatalf("failed to create scanner: %v", err)
 	}
 
-	// Load the patterns from the actual file.
-	// The unmarshaling will be into the real `patterns.PatternConfig`, not the stub.
-	// This works as long as the field names and types are compatible.
 	loadedPatterns, err := LoadPatternsFromConfig("patterns.go", logger, s)
 	if err != nil {
 		t.Fatalf("LoadPatternsFromConfig failed: %+v", err)
 	}
 
-	if len(loadedPatterns) != 2 {
-		t.Fatalf("expected 2 patterns, got %d", len(loadedPatterns))
+	expectedKeys := map[string]bool{
+		"key-from-fn/foo.(*Foo).Bar": true, // from nil, pointer literal, and new
+		"key-from-fn/foo.Foo.Qux":    true, // from value
+		"key-from-fn/foo.Baz":        true, // from standalone function
 	}
 
-	expectedKeys := map[string]bool{
-		"key-from-fn/foo.(*Foo).Bar": true,
-		"key-from-fn/foo.Baz":        true,
+	if len(loadedPatterns) != 5 {
+		t.Fatalf("expected 5 patterns, got %d", len(loadedPatterns))
 	}
 
 	foundKeys := make(map[string]bool)
@@ -55,6 +53,20 @@ func TestKeyFromFn(t *testing.T) {
 	}
 
 	if diff := cmp.Diff(expectedKeys, foundKeys); diff != "" {
-		t.Errorf("key mismatch (-want +got):\n%s", diff)
+		// The diff can be tricky because multiple patterns map to the same key.
+		// Let's do a more explicit check.
+		t.Logf("key mismatch (-want +got):\n%s", diff)
+
+		// Manual check for clarity
+		for k := range expectedKeys {
+			if !foundKeys[k] {
+				t.Errorf("expected key %q was not found", k)
+			}
+		}
+		for k := range foundKeys {
+			if !expectedKeys[k] {
+				t.Errorf("found unexpected key %q", k)
+			}
+		}
 	}
 }

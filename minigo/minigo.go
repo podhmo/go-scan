@@ -286,6 +286,12 @@ func unmarshal(src object.Object, dst reflect.Value) error {
 		}
 		dst.Set(reflect.ValueOf(s))
 		return nil
+	case *object.BoundMethod:
+		if dst.Kind() != reflect.Interface {
+			return fmt.Errorf("cannot unmarshal BoundMethod into non-interface type %s", dst.Type())
+		}
+		dst.Set(reflect.ValueOf(s))
+		return nil
 	case *object.GoMethodValue:
 		if dst.Kind() != reflect.Interface {
 			return fmt.Errorf("cannot unmarshal GoMethodValue into non-interface type %s", dst.Type())

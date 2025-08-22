@@ -41,7 +41,6 @@ const (
 // PatternConfig defines a user-configurable pattern for docgen analysis.
 // It maps a function call to a specific analysis type.
 type PatternConfig struct {
-	// Name is a short, descriptive name for the pattern.
 	Name string
 	// Description is a longer explanation of what the pattern does.
 	Description string

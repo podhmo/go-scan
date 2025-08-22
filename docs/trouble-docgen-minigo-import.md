@@ -98,3 +98,26 @@ A better test strategy would be:
 4.  Use `minigo.EvalString(patternsSource)` to evaluate the patterns script. Since the `api` package is now in memory, the import should resolve.
 
 This creates a hermetic test for the `minigo` evaluation and `docgen` loading logic without depending on the fragile nested module resolution via the filesystem.
+
+---
+
+## Post-Mortem and Final Solution (2025-08-22)
+
+The initial analysis was correct that the `minigo` interpreter was not using the correct module context. However, the initial proposed workaround (using in-memory files) was a temporary fix. The true, robust solution involved a deeper refactoring.
+
+### Root Cause Re-evaluation
+
+The fundamental problem was that the `minigo` interpreter created its own `go-scan.Scanner` instance, which was completely disconnected from the scanner instance used by the host tool (e.g., `docgen` or a test harness like `scantest`). This meant that even if the host's scanner was correctly configured for a nested module, the interpreter's scanner was not.
+
+### The Fix
+
+The fix was implemented in two main parts:
+
+1.  **Scanner Injection in `minigo`**: The `minigo.NewInterpreter` function was enhanced with a new option, `minigo.WithScanner(*goscan.Scanner)`. This allows the host application to create and configure a single `goscan.Scanner` and share it with the interpreter. When this option is used, the interpreter adopts the host's scanner context, including its working directory, module root, and `go.mod` overlay.
+
+2.  **Refactoring Host Tools**: Tools that use `minigo` were updated to use this new pattern.
+    -   The `docgen` loader (`loader.go`) was changed to accept a `*goscan.Scanner` and pass it to the interpreter.
+    -   The `docgen` command-line tool (`main.go`) was updated to create a scanner with a `WorkDir` set to the directory of the patterns file, ensuring correct resolution for user-provided scripts.
+    -   Tests, especially the new integration test, were written to use this scanner-sharing pattern, proving its effectiveness.
+
+This approach is more robust because it ensures a single source of truth for module and file resolution throughout the application and its embedded scripting components. The final working solution is detailed in `docs/summary-minigo-import-test.md`.

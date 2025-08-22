@@ -8,6 +8,7 @@ import (
 	"go/constant"
 	"go/token"
 	"io"
+	"path/filepath"
 	"reflect"
 	"strconv"
 	"strings"
@@ -2003,6 +2004,10 @@ func (e *Evaluator) applyFunction(call *ast.CallExpr, fn object.Object, args []o
 		e.BuiltinContext.Env = env
 		e.BuiltinContext.FScope = fscope
 		return f.Fn(&e.BuiltinContext, pos, args...)
+	case *object.GoSourceFunction:
+		return e.newError(call.Pos(), "Go source function %s is not directly callable", fn.Inspect())
+	case *object.GoMethodValue:
+		return e.newError(call.Pos(), "Go method value %s is not directly callable", fn.Inspect())
 	default:
 		return e.newError(call.Pos(), "not a function: %s", fn.Type())
 	}
@@ -2613,7 +2618,17 @@ func (e *Evaluator) evalTypeConversion(call *ast.CallExpr, typeObj object.Object
 	}
 	arg := args[0]
 
+	// Handle conversions of `nil` to a specific type, e.g., `(*MyType)(nil)`.
+	if _, ok := arg.(*object.Nil); ok {
+		// The result is a new Nil object that carries the type information.
+		return &object.Nil{Typed: typeObj}
+	}
+
 	switch t := typeObj.(type) {
+	case *object.PointerType:
+		// This case is primarily for `(*MyType)(nil)`, which is handled above.
+		// Other conversions to pointer types are not typically done this way.
+		return e.newError(call.Pos(), "cannot convert non-nil value to pointer type %s", t.Inspect())
 	case *object.ArrayType:
 		// Handle []byte("a string")
 		eltType, ok := t.ElementType.(*object.Type)
@@ -3051,7 +3066,8 @@ func (e *Evaluator) Eval(node ast.Node, env *object.Environment, fscope *object.
 		}
 		return e.applyFunction(n, function, args, env, fscope)
 	case *ast.SelectorExpr:
-		return e.evalSelectorExpr(n, env, fscope)
+		left := e.Eval(n.X, env, fscope)
+		return e.evalSelectorExpr(n, left, env, fscope)
 	case *ast.CompositeLit:
 		return e.evalCompositeLit(n, env, fscope)
 	case *ast.StarExpr:
@@ -4141,17 +4157,13 @@ func (e *Evaluator) findSymbolInPackageInfo(pkgInfo *goscan.Package, symbolName 
 	// Look in functions
 	for _, f := range pkgInfo.Functions {
 		if f.Name == symbolName {
-			if f.AstDecl == nil {
-				continue
-			}
-			return &object.Function{
-				Name:       f.AstDecl.Name,
-				TypeParams: f.AstDecl.Type.TypeParams,
-				Parameters: f.AstDecl.Type.Params,
-				Results:    f.AstDecl.Type.Results,
-				Body:       f.AstDecl.Body,
-				Env:        pkgEnv, // Functions defined in a package capture the package's environment.
-				FScope:     fscope, // Attach the package's filescope
+			// Instead of creating an interpreter-specific object.Function,
+			// create a GoSourceFunction that wraps the scanner's metadata
+			// and captures the definition environment.
+			return &object.GoSourceFunction{
+				FuncInfo: f,
+				PkgPath:  pkgInfo.Path,
+				DefEnv:   pkgEnv,
 			}, true
 		}
 	}
@@ -4457,8 +4469,7 @@ func (e *Evaluator) evalMethodCall(n *ast.SelectorExpr, receiver object.Object, 
 	return &object.BoundMethod{Fn: method, Receiver: instance.Copy()}
 }
 
-func (e *Evaluator) evalSelectorExpr(n *ast.SelectorExpr, env *object.Environment, fscope *object.FileScope) object.Object {
-	left := e.Eval(n.X, env, fscope)
+func (e *Evaluator) evalSelectorExpr(n *ast.SelectorExpr, left object.Object, env *object.Environment, fscope *object.FileScope) object.Object {
 	if isError(left) {
 		return left
 	}
@@ -4555,6 +4566,67 @@ func (e *Evaluator) evalSelectorExpr(n *ast.SelectorExpr, env *object.Environmen
 
 	case *object.GoValue:
 		return e.evalGoValueSelectorExpr(n, l, n.Sel.Name)
+
+	case *object.PointerType:
+		// This handles method expressions on a pointer type, e.g., (*MyType).MyMethod
+		elemType := l.ElementType
+		var typeInfo *goscan.TypeInfo
+		var err error
+
+		switch et := elemType.(type) {
+		case *object.StructDefinition:
+			if fscope == nil || fscope.AST == nil || fscope.AST.Name == nil {
+				return e.newError(n.Pos(), "cannot resolve struct method without file scope")
+			}
+		var pkg *goscan.PackageInfo
+		switch et := elemType.(type) {
+		case *object.StructDefinition:
+			if fscope == nil || fscope.AST == nil || fscope.AST.Name == nil {
+				return e.newError(n.Pos(), "cannot resolve struct method without file scope")
+			}
+			var scanErr error
+			pkg, scanErr = e.scanner.ScanFiles(context.Background(), []string{fscope.AST.Name.Name}, filepath.Dir(fscope.AST.Name.Name))
+			if scanErr != nil {
+				return e.newError(n.Pos(), "could not scan package for type %s: %v", et.Name.Name, scanErr)
+			}
+			typeInfo = pkg.Lookup(et.Name.Name)
+
+		case *object.GoType:
+			pkgPath := et.GoType.PkgPath()
+			if pkgPath == "" {
+				return e.newError(n.Pos(), "cannot get method from built-in or unnamed Go type: %s", et.GoType)
+			}
+			var scanErr error
+			pkg, scanErr = e.scanner.ScanPackageByImport(context.Background(), pkgPath)
+			if scanErr != nil {
+				return e.newError(n.Pos(), "could not scan package %s for type %s: %v", pkgPath, et.GoType.Name(), scanErr)
+			}
+			typeInfo = pkg.Lookup(et.GoType.Name())
+		default:
+			return e.newError(n.Pos(), "cannot get method from unsupported pointer element type: %s", elemType.Type())
+			}
+
+		if typeInfo == nil {
+			return e.newError(n.Pos(), "could not find type info for %s", elemType.Inspect())
+			}
+		// Methods are stored in the package's Functions list. We need to find them.
+		for _, f := range pkg.Functions {
+			if f.Receiver != nil && f.Receiver.Type.TypeName == typeInfo.Name && f.Name == n.Sel.Name {
+				return &object.GoMethodValue{ReceiverType: l, Method: f}
+			}
+			}
+		return e.newError(n.Pos(), "undefined method %s for type %s", n.Sel.Name, typeInfo.Name)
+	case *object.Nil:
+		if l.Typed == nil {
+			return e.newError(n.Pos(), "use of untyped nil")
+			}
+		// Re-dispatch to the appropriate handler based on the nil's type.
+		// This allows (*MyType)(nil).MyMethod to work.
+		if l.Typed == nil {
+			return e.newError(n.Pos(), "use of untyped nil")
+		}
+		return e.evalSelectorExpr(n, l.Typed, env, fscope)
+
 	default:
 		return e.newError(n.Pos(), "base of selector expression is not a package or struct")
 	}

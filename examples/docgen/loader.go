@@ -60,6 +60,20 @@ func convertConfigsToPatterns(configs []patterns.PatternConfig, logger *slog.Log
 	for i, config := range configs {
 		c := config // capture loop variable
 
+		var key string
+		// The `Fn` field from the config is an `any`, which minigo.Result.As()
+		// populates with the underlying object.Object.
+		switch fn := c.Fn.(type) {
+		case *minigo.GoSourceFunction:
+			key = fmt.Sprintf("%s.%s", fn.PkgPath, fn.FuncInfo.Name)
+		case *minigo.GoMethodValue:
+			// The key for a method is of the form "(*pkg.Type).Method"
+			recvType := fn.ReceiverType.Inspect() // e.g., "*github.com/foo/bar.MyType"
+			key = fmt.Sprintf("(%s).%s", recvType, fn.Method.Name)
+		default:
+			return nil, fmt.Errorf("pattern %d: 'Fn' field has unexpected type %T; expected function or method reference", i, c.Fn)
+		}
+
 		// Validate the pattern type string and required fields.
 		switch c.Type {
 		case patterns.RequestBody, patterns.ResponseBody, patterns.DefaultResponse:
@@ -72,10 +86,10 @@ func convertConfigsToPatterns(configs []patterns.PatternConfig, logger *slog.Log
 			// We can't easily validate that NameArgIndex and ArgIndex are set
 			// because 0 is a valid value. The runtime will handle incorrect indices.
 		default:
-			return nil, fmt.Errorf("pattern %d: unknown 'Type' value %q for key %q", i, c.Type, c.Key)
+			return nil, fmt.Errorf("pattern %d: unknown 'Type' value %q for key %q", i, c.Type, key)
 		}
 
-		result[i].Key = c.Key
+		result[i].Key = key
 
 		switch c.Type {
 		case patterns.RequestBody:
@@ -90,10 +104,10 @@ func convertConfigsToPatterns(configs []patterns.PatternConfig, logger *slog.Log
 			result[i].Apply = patterns.HandleCustomParameter(string(c.Type), c.Description, c.NameArgIndex, c.ArgIndex)
 		default:
 			// This case should be unreachable due to the validation above
-			logger.Warn("unreachable: unknown pattern type", "type", c.Type, "key", c.Key)
-			return nil, fmt.Errorf("unknown pattern type %q for key %q", c.Type, c.Key)
+			logger.Warn("unreachable: unknown pattern type", "type", c.Type, "key", key)
+			return nil, fmt.Errorf("unknown pattern type %q for key %q", c.Type, key)
 		}
-		logger.Debug("loaded custom pattern", "key", c.Key, "type", c.Type, "argIndex", c.ArgIndex)
+		logger.Debug("loaded custom pattern", "key", key, "type", c.Type, "argIndex", c.ArgIndex)
 	}
 	return result, nil
 }

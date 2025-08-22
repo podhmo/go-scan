@@ -16,6 +16,14 @@ import (
 	"github.com/podhmo/go-scan/minigo/object"
 )
 
+// GoSourceFunction is an alias for the internal object.GoSourceFunction.
+// It is exposed to allow external tools like docgen to inspect function references.
+type GoSourceFunction = object.GoSourceFunction
+
+// GoMethodValue is an alias for the internal object.GoMethodValue.
+// It is exposed to allow external tools like docgen to inspect method references.
+type GoMethodValue = object.GoMethodValue
+
 // Interpreter is the main entry point for the minigo language.
 // It holds the state of the interpreter, including the scanner for package resolution
 // and the root environment for script execution.

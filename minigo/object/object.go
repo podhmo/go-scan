@@ -52,6 +52,8 @@ const (
 	PACKAGE_OBJ              ObjectType = "PACKAGE"
 	GO_VALUE_OBJ             ObjectType = "GO_VALUE"
 	GO_TYPE_OBJ              ObjectType = "GO_TYPE"
+	GO_SOURCE_FUNCTION_OBJ   ObjectType = "GO_SOURCE_FUNCTION"
+	GO_METHOD_VALUE_OBJ      ObjectType = "GO_METHOD_VALUE"
 	ERROR_OBJ                ObjectType = "ERROR"
 	AST_NODE_OBJ             ObjectType = "AST_NODE"
 
@@ -220,14 +222,24 @@ func (b *Boolean) HashKey() HashKey {
 
 // --- Nil Object ---
 
-// Nil represents a nil value.
-type Nil struct{}
+// Nil represents a nil value. It can be typed (e.g., a nil pointer of a specific type)
+// or untyped (the default).
+type Nil struct {
+	// Typed holds the object representing the type of the nil value, e.g., *object.PointerType.
+	// If it's nil, this is an untyped nil.
+	Typed Object
+}
 
 // Type returns the type of the Nil object.
 func (n *Nil) Type() ObjectType { return NIL_OBJ }
 
 // Inspect returns a string representation of the Nil's value.
-func (n *Nil) Inspect() string { return "nil" }
+func (n *Nil) Inspect() string {
+	if n.Typed != nil {
+		return fmt.Sprintf("nil (%s)", n.Typed.Inspect())
+	}
+	return "nil"
+}
 
 // --- Break Statement Object ---
 
@@ -872,6 +884,42 @@ func (it *InstantiatedType) Inspect() string {
 	out.WriteString("]")
 
 	return out.String()
+}
+
+// --- GoSourceFunction Object ---
+
+// GoSourceFunction represents a Go function defined in source code, captured
+// by the scanner. It includes a reference to its definition environment.
+type GoSourceFunction struct {
+	FuncInfo *scanner.FunctionInfo
+	PkgPath  string
+	DefEnv   *Environment
+}
+
+// Type returns the type of the GoSourceFunction object.
+func (f *GoSourceFunction) Type() ObjectType { return GO_SOURCE_FUNCTION_OBJ }
+
+// Inspect returns a string representation of the Go source function.
+func (f *GoSourceFunction) Inspect() string {
+	return fmt.Sprintf("go func %s.%s", f.PkgPath, f.FuncInfo.Name)
+}
+
+// --- GoMethodValue Object ---
+
+// GoMethodValue represents a method that has been resolved from a type, but not
+// yet bound to a specific receiver instance. It's the result of an expression
+// like `(*MyType).MyMethod`.
+type GoMethodValue struct {
+	ReceiverType Object // The type of the receiver, e.g., *object.PointerType
+	Method       *scanner.FunctionInfo
+}
+
+// Type returns the type of the GoMethodValue object.
+func (m *GoMethodValue) Type() ObjectType { return GO_METHOD_VALUE_OBJ }
+
+// Inspect returns a string representation of the method value.
+func (m *GoMethodValue) Inspect() string {
+	return fmt.Sprintf("go method %s", m.Method.Name)
 }
 
 // getSourceLine reads a specific line from a file. It returns the line and any error encountered.

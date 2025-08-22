@@ -719,6 +719,8 @@ func (g *GoValue) Inspect() string {
 
 // TypedNil represents a nil value that still has type information.
 // For example, (*MyStruct)(nil).
+// A typed nil can be referenced as a value to extract its methods as functions.
+// These method values are not required to be executable. Field access on a typed nil is also not supported.
 type TypedNil struct {
 	TypeObject Object // The type of the nil value, e.g., *PointerType
 }

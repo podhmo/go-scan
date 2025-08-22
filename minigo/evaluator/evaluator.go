@@ -1995,6 +1995,29 @@ func (e *Evaluator) applyFunction(call *ast.CallExpr, fn object.Object, args []o
 		receiver = f.Receiver
 		// Generic methods on generic structs are handled by the receiver's type args,
 		// which are already bound in extendMethodEnv.
+	case *object.GoSourceFunction:
+		// Convert GoSourceFunction to a standard Function object for execution.
+		// The key is that we will use its DefEnv as the outer environment.
+		fInfo := f.Fn
+		astFunc := fInfo.AstDecl
+		function = &object.Function{
+			Name:       astFunc.Name,
+			TypeParams: astFunc.Type.TypeParams,
+			Parameters: astFunc.Type.Params,
+			Results:    astFunc.Type.Results,
+			Body:       astFunc.Body,
+			Env:        f.DefEnv, // Use the DEFINITION environment
+			FScope:     f.FScope, // Use the DEFINITION file scope
+		}
+		// This is also a generic function, so we must run the same type
+		// inference logic as for a regular *object.Function.
+		if function.TypeParams != nil && len(function.TypeParams.List) > 0 {
+			inferred, errObj := e.inferGenericTypes(call.Pos(), function, args)
+			if errObj != nil {
+				return errObj
+			}
+			typeArgs = inferred
+		}
 	case *object.Builtin:
 		var pos token.Pos
 		if call != nil {
@@ -4149,14 +4172,15 @@ func (e *Evaluator) findSymbolInPackageInfo(pkgInfo *goscan.Package, symbolName 
 			if f.AstDecl == nil {
 				continue
 			}
-			return &object.Function{
-				Name:       f.AstDecl.Name,
-				TypeParams: f.AstDecl.Type.TypeParams,
-				Parameters: f.AstDecl.Type.Params,
-				Results:    f.AstDecl.Type.Results,
-				Body:       f.AstDecl.Body,
-				Env:        pkgEnv, // Functions defined in a package capture the package's environment.
-				FScope:     fscope, // Attach the package's filescope
+			// When resolving a function from source, create a GoSourceFunction
+			// that captures the function's metadata and its definition environment.
+			return &object.GoSourceFunction{
+				Fn:         f,
+				PkgPath:    pkgInfo.Path,
+				DefEnv:     pkgEnv,
+				FScope:     fscope,
+				ModulePath: e.scanner.ModulePath(),
+				ModuleDir:  e.scanner.RootDir(),
 			}, true
 		}
 	}

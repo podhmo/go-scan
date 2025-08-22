@@ -54,6 +54,7 @@ const (
 	GO_TYPE_OBJ              ObjectType = "GO_TYPE"
 	TYPED_NIL_OBJ            ObjectType = "TYPED_NIL"
 	GO_METHOD_VALUE_OBJ      ObjectType = "GO_METHOD_VALUE"
+	GO_SOURCE_FUNCTION_OBJ   ObjectType = "GO_SOURCE_FUNCTION"
 	ERROR_OBJ                ObjectType = "ERROR"
 	AST_NODE_OBJ             ObjectType = "AST_NODE"
 
@@ -745,6 +746,29 @@ func (mv *GoMethodValue) Type() ObjectType { return GO_METHOD_VALUE_OBJ }
 // Inspect returns a string representation of the method value.
 func (mv *GoMethodValue) Inspect() string {
 	return fmt.Sprintf("method value %s()", mv.Fn.Name.String())
+}
+
+// --- GoSourceFunction Object ---
+
+// GoSourceFunction represents a function loaded from Go source code.
+// It's distinct from a user-defined function literal in the script.
+// Crucially, it carries the definition environment (DefEnv) of the package
+// it was defined in, allowing it to resolve other symbols from the same package.
+type GoSourceFunction struct {
+	Fn      *scanner.FunctionInfo
+	PkgPath string
+	DefEnv  *Environment
+	FScope  *FileScope // The unified file scope of the package where the function was defined.
+	ModulePath string     // The go module path this package belongs to.
+	ModuleDir  string     // The absolute path to the module's root directory
+}
+
+// Type returns the type of the GoSourceFunction object.
+func (f *GoSourceFunction) Type() ObjectType { return GO_SOURCE_FUNCTION_OBJ }
+
+// Inspect returns a string representation of the Go source function.
+func (f *GoSourceFunction) Inspect() string {
+	return fmt.Sprintf("go func %s.%s()", f.PkgPath, f.Fn.Name)
 }
 
 // --- Error Object ---

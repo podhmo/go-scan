@@ -1,8 +1,8 @@
 # Testing `minigo` Scripts with Local Go Imports
 
-When writing tests for tools that use the `minigo` interpreter, a common challenge arises when the `minigo` script itself needs to import Go packages from the test's local context. This is especially true when the test sets up its own Go module (e.g., in a temporary directory or a `testdata` directory) that is nested within the main project's module.
+When writing tests for tools that use the `minigo` interpreter, a common challenge arises when the `minigo` script itself needs to import Go packages from the test's local context. This is especially true when the test sets up its own Go module (e.g., in a `testdata` directory) that is nested within the main project's module.
 
-This document outlines the core problem and provides robust, validated solutions using the `scantest` testing library.
+This document outlines the core problem and provides a robust, validated solution using the `scantest` testing library.
 
 ## The Problem: Mismatched Module Contexts
 
@@ -12,172 +12,100 @@ The entire resolution process depends on the scanner being configured with the c
 
 This problem frequently occurs in tests where a temporary, nested module is created. The test runner's context is the main project, but the `minigo` script needs to be evaluated within the context of the temporary module.
 
-## The Solution: The `scantest` Library
+## The Solution: The `scantest` Library and External Test Data
 
-The `scantest` package is designed to solve this exact problem. Its primary helper, `scantest.Run`, automatically creates and configures a `go-scan.Scanner` with the correct context for your test files. It handles finding the module root and even automatically creates an in-memory "overlay" for `go.mod` files to correctly resolve relative `replace` paths to absolute ones, making tests portable and reliable.
+The recommended approach is to place your test modules in the `testdata` directory and use the `scantest` library to configure the scanner.
 
-The following examples demonstrate the recommended patterns for testing `minigo` scripts.
+- **External Files**: Keeping test data (like `go.mod` files, Go source, and `minigo` scripts) as actual files in `testdata` makes tests cleaner and easier to maintain than defining file content as strings inside the test.
+- **`scantest.Run`**: This helper function automatically creates and configures a `go-scan.Scanner` with the correct context for your test. It handles finding the module root and creating an in-memory "overlay" for `go.mod` files to correctly resolve relative `replace` paths to absolute ones, making tests portable and reliable.
 
-### Method 1: Basic Intra-Module Imports
+The following example from `examples/docgen/integration_test.go` demonstrates how to test a `minigo` script located in a nested module that needs to import packages from parent modules.
 
-This is the simplest case: a `minigo` script imports a Go package from within the same Go module.
+### The Test Scenario
 
-**Scenario:**
-- A temporary module `mytest` is created.
-- A Go package `mytest/helper` exists within it.
-- A `minigo` script `main.mgo` imports `mytest/helper`.
+- **File Structure**: A test-specific module is located at `examples/docgen/testdata/integration/fn-patterns/`.
+- **Imports**: A `minigo` script inside `fn-patterns` needs to import:
+    1. A local package from within `fn-patterns` (`.../api`).
+    2. A package from the parent `docgen` module (`.../docgen/patterns`).
+- **Resolution**: This is achieved with `replace` directives in the `fn-patterns/go.mod` file.
 
-**Implementation (`minigo/minigo_scantest_test.go`):**
+### Test Implementation
 
+The test code itself is very clean. It simply points to the test module's directory and lets `scantest.Run` handle the complex setup.
+
+**`examples/docgen/integration_test.go`:**
 ```go
-func TestMinigo_Scantest_BasicImport(t *testing.T) {
-	files := map[string]string{
-		"go.mod": "module mytest\n\ngo 1.24\n",
-		"helper/helper.go": `package helper
+func TestDocgen_WithFnPatterns(t *testing.T) {
+	// This test reproduces the scenario from docs/trouble-docgen-minigo-import.md.
+	// It verifies that docgen can load a minigo configuration script (`patterns.go`)
+	// from a nested Go module (`testdata/integration/fn-patterns`), and that this
+	// script can successfully import other packages.
 
-func Greet() string {
-	return "hello from helper"
-}`,
-		"main.mgo": `package main
-
-import "mytest/helper"
-
-var result = helper.Greet()
-`,
-	}
-
-	// 1. Create the temporary file structure.
-	dir, cleanup := scantest.WriteFiles(t, files)
-	defer cleanup()
+	// 1. Define the path to the nested module we want to test.
+	moduleDir := filepath.Join("testdata", "integration", "fn-patterns")
+	patternsFile := filepath.Join(moduleDir, "patterns.go")
 
 	// 2. Define the test logic in an action function.
-	action := func(ctx context.Context, s *scan.Scanner, pkgs []*scan.Package) error {
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		// `s` is the pre-configured scanner from scantest.Run.
-		interp, err := NewInterpreter(s)
-		if err != nil {
-			return err
-		}
+		logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
-		mainMgoPath := filepath.Join(dir, "main.mgo")
-		source, err := os.ReadFile(mainMgoPath)
-		if err != nil {
-			return err
-		}
-
-		if err := interp.LoadFile("main.mgo", source); err != nil {
-			return err
-		}
-
-		if _, err := interp.Eval(ctx); err != nil {
-			return err
-		}
-
-		// 3. Assert the result.
-		val, ok := interp.globalEnv.Get("result")
-		if !ok {
-			return fmt.Errorf("variable 'result' not found")
-		}
-		got, ok := val.(*object.String)
-		if !ok {
-			return fmt.Errorf("result is not a string, got=%s", val.Type())
-		}
-		want := "hello from helper"
-		if diff := cmp.Diff(want, got.Value); diff != "" {
-			return fmt.Errorf("result mismatch (-want +got):\n%s", diff)
-		}
-		return nil
+		// 3. Call the docgen loader, which uses the scanner.
+		_, err := LoadPatternsFromConfig(patternsFile, logger, s)
+		return err // If err is nil, the import was successful.
 	}
 
-	// 4. Execute the test. scantest.Run handles the scanner setup.
-	// It correctly identifies `dir` as the module root.
-	if _, err := scantest.Run(t, dir, nil, action); err != nil {
-		t.Fatalf("scantest.Run() failed: %+v", err)
+	// 4. Use scantest.Run to drive the test.
+	// It's crucial to set the module root to `moduleDir` so the scanner
+	// finds the correct `go.mod` and correctly resolves the `replace` directives.
+	if _, err := scantest.Run(t, moduleDir, nil, action, scantest.WithModuleRoot(moduleDir)); err != nil {
+		t.Fatalf("scantest.Run() failed, indicating a failure in loading patterns: %+v", err)
 	}
 }
 ```
 
-### Method 2: Nested Module Imports with `replace`
+### Test Data Setup
 
-This is the most complex, and most important, scenario. A `minigo` script in a nested module needs to import a package from a parent module.
+The key to making this work is the correct setup of the files in `testdata/integration/`.
 
-**Scenario:**
-- A root module `my-root` contains a package `rootpkg`.
-- A nested module `my-nested-module` exists in a subdirectory.
-- The nested module's `go.mod` uses `replace my-root => ../` to find the parent.
-- A `minigo` script in the nested module imports `my-root/rootpkg`.
+**`testdata/integration/fn-patterns/go.mod`:**
+The `replace` directives are the most critical part. The relative paths must correctly point from this file to the directories of the modules being replaced.
 
-**Implementation (`minigo/minigo_scantest_test.go`):**
+```
+module github.com/podhmo/go-scan/examples/docgen/testdata/fn-patterns
 
+go 1.24
+
+// Path from fn-patterns -> docgen is 3 levels up.
+replace github.com/podhmo/go-scan/examples/docgen => ../../../
+
+// Path from fn-patterns -> go-scan root is 5 levels up.
+replace github.com/podhmo/go-scan => ../../../../../
+```
+
+**`testdata/integration/fn-patterns/patterns.go`:**
+This `minigo` script can now successfully import from both the `docgen` module and its own local `api` package.
 ```go
-func TestMinigo_Scantest_NestedModuleImportWithReplace(t *testing.T) {
-	files := map[string]string{
-		"go.mod": "module my-root\n\ngo 1.24\n",
-		"rootpkg/root.go": `package rootpkg
-func GetVersion() string {
-	return "v1.0.0"
-}`,
-		"nested/go.mod": "module my-nested-module\n\ngo 1.24\n\nreplace my-root => ../\n",
-		"nested/main.mgo": `package main
-import "my-root/rootpkg"
-var result = rootpkg.GetVersion()
-`,
-	}
+package patterns
 
-	dir, cleanup := scantest.WriteFiles(t, files)
-	defer cleanup()
+import (
+	"github.com/podhmo/go-scan/examples/docgen/patterns"
+	"github.com/podhmo/go-scan/examples/docgen/testdata/fn-patterns/api"
+)
 
-	nestedDir := filepath.Join(dir, "nested")
-
-	action := func(ctx context.Context, s *scan.Scanner, pkgs []*scan.Package) error {
-		interp, err := NewInterpreter(s)
-		if err != nil {
-			return err
-		}
-		mainMgoPath := filepath.Join(nestedDir, "main.mgo")
-		source, err := os.ReadFile(mainMgoPath)
-		if err != nil {
-			return err
-		}
-		if err := interp.LoadFile("main.mgo", source); err != nil {
-			return err
-		}
-		if _, err := interp.Eval(ctx); err != nil {
-			return err
-		}
-
-		val, ok := interp.globalEnv.Get("result")
-		if !ok {
-			return fmt.Errorf("variable 'result' not found")
-		}
-		got, ok := val.(*object.String)
-		if !ok {
-			return fmt.Errorf("result is not a string, got=%s", val.Type())
-		}
-		want := "v1.0.0"
-		if diff := cmp.Diff(want, got.Value); diff != "" {
-			return fmt.Errorf("result mismatch (-want +got):\n%s", diff)
-		}
-		return nil
-	}
-
-	// The key to this test is configuring scantest.Run correctly.
-	// The first argument (`nestedDir`) tells Run to treat the nested directory as the
-	// primary context for the test.
-	// `scantest.WithModuleRoot(nestedDir)` explicitly tells the scanner to
-	// use `nestedDir` as its starting point to find `nested/go.mod`. This ensures
-	// the relative `replace` directive is resolved correctly.
-	if _, err := scantest.Run(t, nestedDir, nil, action, scantest.WithModuleRoot(nestedDir)); err != nil {
-		t.Fatalf("scantest.Run() failed: %+v", err)
-	}
+var Patterns = []patterns.PatternConfig{
+	{
+		Key:      "github.com/podhmo/go-scan/examples/docgen/testdata/fn-patterns/api.GetFoo",
+		Type:     patterns.RequestBody,
+		ArgIndex: 1,
+	},
 }
 ```
 
 ## Common Errors and Troubleshooting
 
-- **Error:** `undefined: my-package.MyType (package scan failed: could not find package directory ...)`
-  - **Cause:** This is the classic symptom of a misconfigured scanner. The `minigo` interpreter's internal scanner does not have the correct module context and cannot find the import path.
-  - **Solution:** Ensure you are using `scantest.Run` as shown in the examples. If you are testing a nested module, you **must** use `scantest.WithModuleRoot()` to point the scanner to the correct subdirectory. Verify that your `go.mod` files and `replace` directives are correct.
-
-- **Error:** `could not read config file: open my-config.go: no such file or directory`
-  - **Cause:** The path to the script/config file being loaded is incorrect. This often happens when the test context is not correctly managed.
-  - **Solution:** Always construct a full, absolute path to the file you want to load, for example by using `filepath.Join(dir, "my-script.mgo")`, where `dir` is the path returned by `scantest.WriteFiles`.
+- **Error:** `could not find package directory ...`
+  - **Cause:** This almost always means the `go-scan.Scanner` has the wrong module context. The most common reasons are:
+      1. Not using `scantest.WithModuleRoot()` to point to the correct nested module directory.
+      2. The relative paths in your `replace` directives are wrong. Carefully count the `../` segments needed to get from your `go.mod` file to the root of the module you are replacing.
+  - **Solution:** Use the working example above as a template. Double-check your `replace` paths. Add debug logging to see which directory the scanner is using as its `WorkDir`.

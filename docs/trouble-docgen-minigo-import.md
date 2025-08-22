@@ -100,3 +100,19 @@ A better test strategy would be:
 4.  Use `minigo.EvalString(patternsSource)` to evaluate the patterns script. Since the `api` package is now in memory, the import should resolve.
 
 This creates a hermetic test for the `minigo` evaluation and `docgen` loading logic without depending on the fragile nested module resolution via the filesystem.
+
+---
+
+## Follow-up Verification (2024-08)
+
+A follow-up investigation was conducted to reproduce the original scenario using a full integration test, rather than a hermetic one. The goal was to confirm that the `go-scan` locator and `scantest` library correctly handle the nested module `replace` scenario in a real-world context.
+
+An integration test was added in `examples/docgen/integration_test.go` (`TestDocgen_WithFnPatterns`). The process revealed several key insights:
+
+1.  **Feature Status**: The original `minigo` script (`patterns.go`) attempted to use a function reference (`api.GetFoo`) as a map key. The current implementation of `docgen`'s loader expects a string literal. The test script had to be updated to provide the fully-qualified function name as a string to match the existing functionality. This confirmed that the feature to use function references as keys (tracked in `TODO.md`) is not yet complete.
+
+2.  **`replace` Path Complexity**: The test setup involved a nested module at `testdata/integration/fn-patterns/`. Getting the relative paths in the `replace` directives correct was crucial and required careful verification. The final, working `go.mod` for the nested module needed to replace both the `docgen` module and the root `go-scan` module with the correct number of `../` segments.
+
+3.  **Test Data Separation**: Initially, the test was written with file contents defined inline using `scantest.WriteFiles`. It was later refactored to use external files in the `testdata/integration` directory. This improved the test's clarity by separating the test logic from the test data.
+
+Ultimately, the test was made to pass, confirming that the core module resolution mechanism is robust and correctly handles nested modules with multiple `replace` directives when configured properly.

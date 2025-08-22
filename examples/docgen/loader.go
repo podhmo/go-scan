@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"go/ast"
 	"log/slog"
 	"os"
 	"path"
@@ -81,6 +82,35 @@ func convertConfigsToPatterns(configs []patterns.PatternConfig, logger *slog.Log
 				}
 			}
 			key = fmt.Sprintf("%s.%s", pkgPath, fn.Fn.Name)
+		} else if mv, ok := c.Fn.(*object.GoMethodValue); ok && mv != nil {
+			// Handle method references like (*MyType)(nil).MyMethod
+			def := mv.RecvDef
+			pkgPath := def.PkgPath
+			if def.ModuleDir != "" && def.ModulePath != "" {
+				if strings.HasPrefix(pkgPath, def.ModuleDir) {
+					relPath, err := filepath.Rel(def.ModuleDir, pkgPath)
+					if err == nil {
+						pkgPath = path.Join(def.ModulePath, relPath)
+					}
+				}
+			}
+
+			// Determine if the receiver is a pointer or a value.
+			// The Fn.Recv field holds the AST for the receiver declaration in the method.
+			recvString := ""
+			if mv.Fn.Recv != nil && len(mv.Fn.Recv.List) > 0 {
+				recvField := mv.Fn.Recv.List[0]
+				if _, isStar := recvField.Type.(*ast.StarExpr); isStar {
+					recvString = fmt.Sprintf("(*%s)", def.Name.Name)
+				} else {
+					recvString = def.Name.Name
+				}
+			} else {
+				// Fallback, should not happen for valid methods.
+				recvString = def.Name.Name
+			}
+
+			key = fmt.Sprintf("%s.%s.%s", pkgPath, recvString, mv.Fn.Name.Name)
 		} else {
 			key = c.Key
 		}

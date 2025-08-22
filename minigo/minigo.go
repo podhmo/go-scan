@@ -286,6 +286,12 @@ func unmarshal(src object.Object, dst reflect.Value) error {
 		}
 		dst.Set(reflect.ValueOf(s))
 		return nil
+	case *object.GoMethodValue:
+		if dst.Kind() != reflect.Interface {
+			return fmt.Errorf("cannot unmarshal GoMethodValue into non-interface type %s", dst.Type())
+		}
+		dst.Set(reflect.ValueOf(s))
+		return nil
 	case *object.Array:
 		if dst.Kind() != reflect.Slice {
 			return fmt.Errorf("cannot unmarshal array into non-slice type %s", dst.Type())

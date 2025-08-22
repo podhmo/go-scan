@@ -158,3 +158,135 @@ Your code has a helper `framework.GetQuery(r, "sort") string`.
 }
 ```
 This single pattern will now work for all calls to `GetQuery`, extracting the parameter name from the second argument of each call.
+
+---
+
+## Testing Custom Patterns
+
+When developing custom patterns, it's essential to have a reliable testing strategy. The `go-scan` repository provides the `scantest` package, a testing library designed to create isolated, in-memory tests for tools built on `go-scan`, including `docgen`. This approach avoids the complexities of file paths and module resolution that can arise when running tests that span multiple `go.mod` files.
+
+### Example: Verifying Key Generation
+
+A common requirement is to verify that `docgen` correctly generates the internal matching key from a type-safe `Fn` reference in your `patterns.go` file. The following example demonstrates how to write such a test using `scantest`.
+
+**1. Test File Setup**
+
+First, create a test file (e.g., `docgen_test.go`) and define the source code for your test module as string constants. This includes a `go.mod` file, the Go source for the types you want to reference, and the `patterns.go` script itself.
+
+```go
+// my_test.go
+package main // assuming this is in the docgen package
+
+import (
+	"context"
+	"path/filepath"
+	"testing"
+
+	"github.com/google/go-cmp/cmp"
+	goscan "github.com/podhmo/go-scan"
+	"github.com/podhmo/go-scan/scantest"
+)
+
+const testGoMod = `
+module my-test-module
+
+go 1.21
+
+// The replace directive is crucial for allowing the test module
+// to find the main go-scan module's packages. The path must be
+// relative to the *project root*, not the test file.
+replace github.com/podhmo/go-scan => ".."
+`
+
+const testFooGo = `
+package foo
+
+type Foo struct{}
+func (f *Foo) Bar() {} // Pointer receiver
+func (f Foo) Qux() {}   // Value receiver
+func Baz() {}           // Standalone function
+`
+
+const testPatternsGo = `
+//go:build minigo
+package main
+import "my-test-module/foo"
+
+// A stub for the real PatternConfig
+type PatternConfig struct {
+	Fn   any
+	Type string
+}
+
+var (
+	v = foo.Foo{}
+	p = &foo.Foo{}
+)
+
+var Patterns = []PatternConfig{
+	{Fn: (*foo.Foo)(nil).Bar},
+	{Fn: foo.Baz},
+	{Fn: v.Qux},
+	{Fn: p.Bar},
+}
+`
+```
+*Note: The path in the `replace` directive (`".."`) should be adjusted based on the location of your test file relative to the project root.*
+
+**2. The Test Function**
+
+Next, write the test function using `scantest.WriteFiles` and `scantest.Run`.
+
+```go
+// my_test.go (continued)
+
+func TestKeyGeneration(t *testing.T) {
+	files := map[string]string{
+		"go.mod":      testGoMod,
+		"foo/foo.go":  testFooGo,
+		"patterns.go": testPatternsGo,
+	}
+
+	// scantest.WriteFiles creates a temporary directory with the file layout.
+	dir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	// The action function contains the core test logic.
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
+		logger := newTestLogger(io.Discard) // assuming newTestLogger is available
+
+		// Use the loader from docgen to process the patterns file.
+		// Note: The path must be absolute, constructed from the temp dir.
+		patternsPath := filepath.Join(dir, "patterns.go")
+		loadedPatterns, err := LoadPatternsFromConfig(patternsPath, logger, s)
+		if err != nil {
+			t.Fatalf("LoadPatternsFromConfig failed: %+v", err)
+		}
+
+		// Verify the generated keys.
+		expectedKeys := map[string]bool{
+			"my-test-module/foo.(*Foo).Bar": true,
+			"my-test-module/foo.Foo.Qux":   true,
+			"my-test-module/foo.Baz":       true,
+		}
+
+		foundKeys := make(map[string]bool)
+		for _, p := range loadedPatterns {
+			foundKeys[p.Key] = true
+		}
+
+		if diff := cmp.Diff(expectedKeys, foundKeys); diff != "" {
+			t.Errorf("key mismatch (-want +got):\n%s", diff)
+		}
+		return nil
+	}
+
+	// scantest.Run handles the scanner setup and execution.
+	// Scanning "." tells it to process the entire temporary directory.
+	if _, err := scantest.Run(t, dir, []string{"."}, action); err != nil {
+		t.Fatalf("scantest.Run failed: %v", err)
+	}
+}
+```
+
+This approach provides a hermetic, reliable way to test `docgen`'s `minigo`-based features without interfering with the main project's build system or file structure.

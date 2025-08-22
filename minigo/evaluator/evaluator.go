@@ -4131,9 +4131,42 @@ func (e *Evaluator) findSymbolInPackageInfo(pkgInfo *goscan.Package, symbolName 
 
 				// Convert scanner.TypeInfo to object.StructDefinition
 				def := &object.StructDefinition{
-					Name:    typeSpec.Name,
-					Fields:  structType.Fields.List,
-					Methods: make(map[string]*object.Function), // Initialize methods map
+					Name:       typeSpec.Name,
+					Fields:     structType.Fields.List,
+					Methods:    make(map[string]*object.Function),
+					PkgPath:    pkgInfo.Path,
+					ModulePath: e.scanner.ModulePath(),
+					ModuleDir:  e.scanner.RootDir(),
+					Env:        pkgEnv, // Associate with the package's environment
+				}
+
+				// Proactively find and attach all methods for this struct from the same package info.
+				for _, f := range pkgInfo.Functions {
+					if f.Receiver != nil {
+						// It's a method.
+						var recvTypeName string
+						recvType := f.Receiver.Type
+						if recvType.IsPointer && recvType.Elem != nil {
+							recvTypeName = recvType.Elem.Name
+						} else {
+							recvTypeName = recvType.Name
+						}
+
+						if recvTypeName == def.Name.Name {
+							// This method belongs to our struct. Attach it.
+							methodFn := &object.Function{
+								Name:       f.AstDecl.Name,
+								Recv:       f.AstDecl.Recv,
+								TypeParams: f.AstDecl.Type.TypeParams,
+								Parameters: f.AstDecl.Type.Params,
+								Results:    f.AstDecl.Type.Results,
+								Body:       f.AstDecl.Body,
+								Env:        pkgEnv, // The package's environment
+								FScope:     fscope,
+							}
+							def.Methods[f.Name] = methodFn
+						}
+					}
 				}
 				return def, true
 
@@ -4565,7 +4598,7 @@ func (e *Evaluator) evalSelectorExpr(n *ast.SelectorExpr, env *object.Environmen
 		if !ok {
 			return e.newError(n.Pos(), "undefined method %s for type %s", n.Sel.Name, structDef.Name.Name)
 		}
-		return &object.GoMethodValue{Fn: method}
+		return &object.GoMethodValue{Fn: method, RecvDef: structDef}
 
 	case *object.Pointer:
 		if l.Element == nil || *l.Element == nil {

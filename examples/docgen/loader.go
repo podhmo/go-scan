@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"go/ast"
 	"log/slog"
 	"os"
 	"path"
@@ -81,6 +82,25 @@ func convertConfigsToPatterns(configs []patterns.PatternConfig, logger *slog.Log
 				}
 			}
 			key = fmt.Sprintf("%s.%s", pkgPath, fn.Fn.Name)
+		} else if mv, ok := c.Fn.(*object.GoMethodValue); ok && mv != nil {
+			// Handle method references like (*MyType)(nil).MyMethod
+			key = buildKeyForMethod(mv.Fn, mv.RecvDef)
+		} else if bm, ok := c.Fn.(*object.BoundMethod); ok && bm != nil {
+			// Handle method references on an instance, e.g., var v MyType; v.MyMethod
+			var def *object.StructDefinition
+			switch recv := bm.Receiver.(type) {
+			case *object.StructInstance:
+				def = recv.Def
+			case *object.Pointer:
+				if inst, ok := (*recv.Element).(*object.StructInstance); ok {
+					def = inst.Def
+				}
+			}
+
+			if def == nil {
+				return nil, fmt.Errorf("could not determine struct definition from bound method receiver: %T", bm.Receiver)
+			}
+			key = buildKeyForMethod(bm.Fn, def)
 		} else {
 			key = c.Key
 		}
@@ -125,4 +145,34 @@ func convertConfigsToPatterns(configs []patterns.PatternConfig, logger *slog.Log
 		logger.Debug("loaded custom pattern", "key", key, "type", c.Type, "argIndex", c.ArgIndex)
 	}
 	return result, nil
+}
+
+// buildKeyForMethod constructs the fully qualified key for a method.
+func buildKeyForMethod(fn *object.Function, def *object.StructDefinition) string {
+	pkgPath := def.PkgPath
+	if def.ModuleDir != "" && def.ModulePath != "" {
+		if strings.HasPrefix(pkgPath, def.ModuleDir) {
+			relPath, err := filepath.Rel(def.ModuleDir, pkgPath)
+			if err == nil {
+				pkgPath = path.Join(def.ModulePath, relPath)
+			}
+		}
+	}
+
+	// Determine if the receiver is a pointer or a value from the method's AST.
+	recvString := getReceiverString(fn, def)
+	return fmt.Sprintf("%s.%s.%s", pkgPath, recvString, fn.Name.Name)
+}
+
+// getReceiverString formats the receiver part of the key, e.g., "(*MyType)" or "MyType".
+func getReceiverString(fn *object.Function, def *object.StructDefinition) string {
+	if fn.Recv != nil && len(fn.Recv.List) > 0 {
+		recvField := fn.Recv.List[0]
+		if _, isStar := recvField.Type.(*ast.StarExpr); isStar {
+			return fmt.Sprintf("(*%s)", def.Name.Name)
+		}
+		return def.Name.Name
+	}
+	// Fallback, should not happen for valid methods.
+	return def.Name.Name
 }

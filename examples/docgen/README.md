@@ -8,10 +8,8 @@ The tool analyzes the Go source code of a sample API (`./sampleapi`) to extract 
 
 1.  **Finding the Entrypoint**: It starts by locating a specific function (e.g., `NewServeMux`) in the target package.
 2.  **Symbolic Execution with `symgo`**: It uses the `symgo` interpreter to "execute" the code symbolically. Instead of running an HTTP server, it traces function calls.
-3.  **Pattern Matching with Intrinsics**: It uses custom handlers (intrinsics) to intercept calls to `net/http.HandleFunc` and similar routing functions. From these calls, it extracts:
-    - The HTTP method and path pattern (e.g., `GET /users`).
-    - The handler function associated with the route.
-4.  **Deep Handler Analysis**: It then symbolically executes the handler function itself to find calls to `json.NewDecoder`, `r.URL.Query().Get()`, or `json.NewEncoder`. It uses these to infer request schemas, query parameters, and response schemas.
+3.  **Pattern Matching**: It uses built-in handlers (intrinsics) to recognize standard library functions like `net/http.HandleFunc`. For non-standard frameworks or helper functions, it can load custom analysis patterns from a user-provided file.
+4.  **Deep Handler Analysis**: It then symbolically executes the handler function itself to find calls to `json.NewDecoder`, `r.URL.Query().Get()`, or custom helper functions defined in the patterns file. It uses these to infer request schemas, query parameters, and response schemas.
 5.  **Generating the Spec**: Finally, it aggregates all the collected metadata and prints a valid OpenAPI 3.1 specification to standard output in either JSON or YAML format.
 
 ## How to Run
@@ -30,87 +28,66 @@ cd ../..
 ### Usage
 
 ```sh
-go run ./examples/docgen [flags]
+go run ./examples/docgen [flags] [package_path] [entrypoint_symbol]
 ```
+
+**Arguments:**
+- `package_path`: The import path of the package to analyze (e.g., `github.com/podhmo/go-scan/examples/docgen/sampleapi`).
+- `entrypoint_symbol`: The name of the function or variable to start analysis from (e.g., `NewServeMux`).
 
 **Flags:**
 - `-format <string>`: The output format. Can be `json` (default) or `yaml`.
+- `-patterns <string>`: The path to a Go file containing custom analysis patterns.
 - `-debug`: Enable debug logging for the analysis.
 
 ### Examples
 
 **Generate JSON output (default):**
 ```sh
-go run ./examples/docgen > openapi.json
+go run ./examples/docgen github.com/podhmo/go-scan/examples/docgen/sampleapi NewServeMux > openapi.json
 ```
 
 **Generate YAML output:**
 ```sh
-go run ./examples/docgen -format=yaml > openapi.yaml
+go run ./examples/docgen -format=yaml github.com/podhmo/go-scan/examples/docgen/sampleapi NewServeMux > openapi.yaml
 ```
 
-## Sample Output (`-format=yaml`)
+## Customizing Analysis with Patterns
 
-```yaml
-openapi: 3.1.0
-info:
-    title: Sample API
-    version: 0.0.1
-paths:
-    /users:
-        get:
-            description: |
-                listUsers handles the GET /users endpoint.
-                It returns a list of all users.
-            operationId: listUsers
-            parameters:
-                - name: limit
-                  in: query
-                  schema:
-                    type: string
-            responses:
-                "200":
-                    description: OK
-                    content:
-                        application/json:
-                            schema:
-                                type: array
-                                items:
-                                    type: object
-                                    properties:
-                                        id:
-                                            type: integer
-                                            format: int32
-                                        name:
-                                            type: string
-        post:
-            description: |
-                createUser handles the POST /users endpoint.
-                It creates a new user.
-            operationId: createUser
-            requestBody:
-                content:
-                    application/json:
-                        schema:
-                            type: object
-                            properties:
-                                id:
-                                    type: integer
-                                    format: int32
-                                name:
-                                    type: string
-                required: true
-            responses:
-                "200":
-                    description: OK
-                    content:
-                        application/json:
-                            schema:
-                                type: object
-                                properties:
-                                    id:
-                                        type: integer
-                                        format: int32
-                                    name:
-                                        type: string
+For real-world applications that use custom helper functions for rendering responses or parsing requests, you can provide `docgen` with a patterns file. This file is a Go script interpreted by `minigo`.
+
+A key feature is the ability to define patterns in a **type-safe** way using the `Fn` field, which avoids brittle, string-based keys.
+
+**Example `patterns.go`:**
+```go
+//go:build minigo
+package main
+
+import (
+    "myapp/helpers"
+    "myapp/models"
+    "github.com/podhmo/go-scan/examples/docgen/patterns"
+)
+
+var Patterns = []patterns.PatternConfig{
+    // A pattern for a function reference
+    {
+        Fn: helpers.RenderJSON,
+        Type: patterns.ResponseBody,
+        ArgIndex: 2,
+    },
+    // A pattern for a method reference
+    {
+        Fn: (*models.User)(nil).Update,
+        Type: patterns.RequestBody,
+        ArgIndex: 0,
+    },
+}
 ```
+
+You would then run `docgen` with the `--patterns` flag:
+```sh
+go run ./examples/docgen --patterns=./patterns.go myapp/api main
+```
+
+For more details on creating pattern files and all available pattern types, see [../../docs/summary-docgen-customize-by-minigo.md](../../docs/summary-docgen-customize-by-minigo.md).

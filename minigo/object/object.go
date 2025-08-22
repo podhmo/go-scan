@@ -429,6 +429,11 @@ type StructDefinition struct {
 	Methods    map[string]*Function
 	FieldTags  map[string]string // Added to store parsed json tags, mapping field name to json tag name.
 	Env        *Environment      // The environment where the struct was defined.
+
+	// Package context, crucial for resolving symbols and generating correct keys.
+	PkgPath    string
+	ModulePath string
+	ModuleDir  string
 }
 
 // Type returns the type of the StructDefinition object.
@@ -735,9 +740,12 @@ func (tn *TypedNil) Inspect() string { return "nil" }
 // --- GoMethodValue Object ---
 
 // GoMethodValue represents a method looked up from a type, but not bound to an instance.
-// e.g., (*MyType).MyMethod
+// e.g., (*MyType).MyMethod. It contains the necessary context to generate a fully qualified key.
 type GoMethodValue struct {
 	Fn *Function
+	// RecvDef holds the definition of the struct type from which this method was looked up.
+	// This is crucial for getting package and module context.
+	RecvDef *StructDefinition
 }
 
 // Type returns the type of the GoMethodValue object.
@@ -745,7 +753,13 @@ func (mv *GoMethodValue) Type() ObjectType { return GO_METHOD_VALUE_OBJ }
 
 // Inspect returns a string representation of the method value.
 func (mv *GoMethodValue) Inspect() string {
-	return fmt.Sprintf("method value %s()", mv.Fn.Name.String())
+	var recvName string
+	if mv.RecvDef != nil && mv.RecvDef.Name != nil {
+		recvName = mv.RecvDef.Name.Name
+	} else {
+		recvName = "<unknown>"
+	}
+	return fmt.Sprintf("method value (*%s).%s()", recvName, mv.Fn.Name.String())
 }
 
 // --- GoSourceFunction Object ---
@@ -755,10 +769,10 @@ func (mv *GoMethodValue) Inspect() string {
 // Crucially, it carries the definition environment (DefEnv) of the package
 // it was defined in, allowing it to resolve other symbols from the same package.
 type GoSourceFunction struct {
-	Fn      *scanner.FunctionInfo
-	PkgPath string
-	DefEnv  *Environment
-	FScope  *FileScope // The unified file scope of the package where the function was defined.
+	Fn         *scanner.FunctionInfo
+	PkgPath    string
+	DefEnv     *Environment
+	FScope     *FileScope // The unified file scope of the package where the function was defined.
 	ModulePath string     // The go module path this package belongs to.
 	ModuleDir  string     // The absolute path to the module's root directory
 }

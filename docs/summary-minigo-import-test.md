@@ -28,11 +28,11 @@ The problem arises because:
 3. By default, this interpreter creates its own `go-scan` scanner instance. This scanner inherits the primary module context (`github.com/me/my-tool`), and its `WorkDir` will be the CWD of the test runner.
 4. When the interpreter evaluates `config.go` and sees an import, its internal scanner tries to resolve it. It will likely fail because its module context is incorrect for the temporary file structure. It knows nothing about the nested `my-config` module or its `replace` directives.
 
-## The Solution: Sharing the Scanner
+## The Solution: Passing a Configured Scanner
 
 The key to solving this is to ensure the `minigo` interpreter uses a `go-scan.Scanner` that is correctly configured for the test's module context, rather than the host tool's context.
 
-The `minigo.Interpreter` now provides the `minigo.WithScanner()` option for this purpose. The host tool (or the test harness) can create and configure a scanner and then pass it to the interpreter.
+The `minigo.NewInterpreter` function now **requires** a `*goscan.Scanner` as its first argument. This makes the dependency explicit and forces the caller to provide a correctly configured scanner. The old `minigo.WithScanner()` option has been removed.
 
 ### Method 1: Using the `scantest` Helper (Recommended)
 
@@ -123,7 +123,7 @@ func TestDocgen_withCustomPatterns(t *testing.T) {
 
 - **Error:** `undefined: my-package.MyType (package scan failed: could not find package directory ...)`
   - **Cause:** The `minigo` interpreter's internal scanner does not have the correct module context. It cannot find the import path.
-  - **Solution:** Ensure you are using one of the two methods above. Either let `scantest` provide the correctly configured scanner, or create one manually using `goscan.WithWorkDir()` pointed at your test module's root. Make sure this scanner is then passed to the `minigo` interpreter via `minigo.WithScanner()`. If your test module needs to access packages from your main project, ensure you have a `replace` directive with a relative path in your test module's `go.mod`.
+  - **Solution:** Ensure you are using one of the two methods above. Either let `scantest` provide the correctly configured scanner, or create one manually using `goscan.WithWorkDir()` pointed at your test module's root. Make sure this scanner is then passed directly to `minigo.NewInterpreter()`. If your test module needs to access packages from your main project, ensure you have a `replace` directive with a relative path in your test module's `go.mod`.
 
 - **Error:** `could not read config file: open my-config.go: no such file or directory`
   - **Cause:** The path to the script/config file is incorrect. This often happens when `os.Chdir` is not used or when running in a temporary directory.

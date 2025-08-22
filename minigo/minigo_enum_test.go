@@ -5,7 +5,6 @@ import (
 	"strings"
 	"testing"
 
-	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/minigo/object"
 )
 
@@ -57,13 +56,11 @@ var result = enum.Undefined
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Create interpreter with Go module resolution enabled
-			interp, err := NewInterpreter(WithScannerOptions(goscan.WithGoModuleResolver()))
-			if err != nil {
-				t.Fatalf("NewInterpreter() failed: %v", err)
-			}
+			interp := newTestInterpreter(t)
+			var err error
 
 			// The main test logic
-			if err := interp.LoadFile("test.mgo", []byte(tt.script)); err != nil {
+			if err = interp.LoadFile("test.mgo", []byte(tt.script)); err != nil {
 				t.Fatalf("LoadFile() failed: %v", err)
 			}
 			_, err = interp.Eval(context.Background())

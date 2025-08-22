@@ -4,7 +4,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/podhmo/go-scan/minigo"
 	"github.com/podhmo/go-scan/minigo/object"
 	stdstrings "github.com/podhmo/go-scan/minigo/stdlib/strings"
 )
@@ -43,15 +42,13 @@ var r_join = strings.Join(list, "-")
 var csv = "a,b,c"
 var r_split = strings.Split(csv, ",")
 `
-	interp, err := minigo.NewInterpreter()
-	if err != nil {
-		t.Fatalf("failed to create interpreter: %+v", err)
-	}
+	interp := newTestInterpreter(t)
 	stdstrings.Install(interp)
 
 	if err := interp.LoadFile("test.mgo", []byte(script)); err != nil {
 		t.Fatalf("failed to load script: %+v", err)
 	}
+	var err error
 	_, err = interp.Eval(context.Background())
 	if err != nil {
 		t.Fatalf("failed to evaluate script: %+v", err)

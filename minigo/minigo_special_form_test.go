@@ -5,16 +5,12 @@ import (
 	"go/token"
 	"testing"
 
-	"github.com/podhmo/go-scan/minigo"
 	"github.com/podhmo/go-scan/minigo/evaluator"
 	"github.com/podhmo/go-scan/minigo/object"
 )
 
 func TestSpecialForm(t *testing.T) {
-	interp, err := minigo.NewInterpreter()
-	if err != nil {
-		t.Fatalf("failed to create interpreter: %v", err)
-	}
+	interp := newTestInterpreter(t)
 
 	var receivedNode ast.Node
 	interp.RegisterSpecial("assert_ast", func(eval *evaluator.Evaluator, fscope *object.FileScope, pos token.Pos, args []ast.Expr) object.Object {
@@ -30,6 +26,7 @@ package main
 func main() {
 	assert_ast(1 + 2)
 }`
+	var err error
 	err = interp.LoadFile("test.go", []byte(source))
 	if err != nil {
 		t.Fatalf("failed to load file: %v", err)
@@ -50,10 +47,7 @@ func main() {
 }
 
 func TestSpecialForm_Vs_RegularFunction(t *testing.T) {
-	interp, err := minigo.NewInterpreter()
-	if err != nil {
-		t.Fatalf("failed to create interpreter: %v", err)
-	}
+	interp := newTestInterpreter(t)
 
 	// Register a special form
 	interp.RegisterSpecial("is_ast", func(eval *evaluator.Evaluator, fscope *object.FileScope, pos token.Pos, args []ast.Expr) object.Object {
@@ -87,6 +81,7 @@ func main() {
 	special_result = is_ast(x)
 	regular_result = is_obj(x)
 }`
+	var err error
 	err = interp.LoadFile("test.go", []byte(source))
 	if err != nil {
 		t.Fatalf("failed to load file: %v", err)
@@ -116,15 +111,13 @@ func main() {
 }
 
 func TestSpecialForm_NotFound(t *testing.T) {
-	interp, err := minigo.NewInterpreter()
-	if err != nil {
-		t.Fatalf("failed to create interpreter: %v", err)
-	}
+	interp := newTestInterpreter(t)
 	source := `
 package main
 func main() {
 	non_existent_special_form(1)
 }`
+	var err error
 	err = interp.LoadFile("test.go", []byte(source))
 	if err != nil {
 		t.Fatalf("failed to load file: %v", err)
@@ -145,10 +138,7 @@ func contains(s, substr string) bool {
 	return len(s) >= len(expectedErr) && s[:len(expectedErr)] == substr
 }
 func TestSpecialForm_ArgumentPassing(t *testing.T) {
-	interp, err := minigo.NewInterpreter()
-	if err != nil {
-		t.Fatalf("failed to create interpreter: %v", err)
-	}
+	interp := newTestInterpreter(t)
 
 	var receivedArgs []ast.Expr
 	interp.RegisterSpecial("capture_args", func(eval *evaluator.Evaluator, fscope *object.FileScope, pos token.Pos, args []ast.Expr) object.Object {
@@ -162,6 +152,7 @@ func main() {
 	y := 1
 	capture_args(y, 2 + 3, "hello")
 }`
+	var err error
 	err = interp.LoadFile("test.go", []byte(source))
 	if err != nil {
 		t.Fatalf("failed to load file: %v", err)

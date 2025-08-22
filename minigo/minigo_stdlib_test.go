@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
-	"github.com/podhmo/go-scan/minigo"
 	"github.com/podhmo/go-scan/minigo/object"
 	stdjson "github.com/podhmo/go-scan/minigo/stdlib/encoding/json"
 	stdfmt "github.com/podhmo/go-scan/minigo/stdlib/fmt"
@@ -26,10 +25,7 @@ var data, err1 = json.Marshal(p1)
 var p2 Point
 var err2 = json.Unmarshal(data, &p2)
 `
-	interp, err := minigo.NewInterpreter()
-	if err != nil {
-		t.Fatalf("failed to create interpreter: %+v", err)
-	}
+	interp := newTestInterpreter(t)
 	stdjson.Install(interp)
 
 	if err := interp.LoadFile("test.mgo", []byte(script)); err != nil {
@@ -132,10 +128,7 @@ func TestStdlib_json_with_tags(t *testing.T) {
 		"var p1 = Point{X: 10, Y: 0, Z: 30}\n" +
 		"var data, err = json.Marshal(p1)\n"
 
-	interp, err := minigo.NewInterpreter()
-	if err != nil {
-		t.Fatalf("failed to create interpreter: %+v", err)
-	}
+	interp := newTestInterpreter(t)
 	stdjson.Install(interp)
 
 	if err := interp.LoadFile("test.mgo", []byte(script)); err != nil {
@@ -191,10 +184,7 @@ var r_atoi_ng, err_ng = strconv.Atoi("abc")
 var r_fb_t = strconv.FormatBool(true)
 var r_fb_f = strconv.FormatBool(false)
 `
-	interp, err := minigo.NewInterpreter()
-	if err != nil {
-		t.Fatalf("failed to create interpreter: %+v", err)
-	}
+	interp := newTestInterpreter(t)
 	stdstrconv.Install(interp)
 	if err := interp.LoadFile("test.mgo", []byte(script)); err != nil {
 		t.Fatalf("failed to load script: %+v", err)
@@ -293,10 +283,7 @@ var upper = strings.ToUpper(trimmed)
 var message = fmt.Sprintf("Message: %s", upper)
 `
 
-	interp, err := minigo.NewInterpreter()
-	if err != nil {
-		t.Fatalf("failed to create interpreter: %+v", err)
-	}
+	interp := newTestInterpreter(t)
 
 	// Install the generated bindings
 	stdstrings.Install(interp)
@@ -342,10 +329,7 @@ type Outer struct {
 var result Outer
 var err = json.Unmarshal(data, &result)
 `
-	interp, err := minigo.NewInterpreter()
-	if err != nil {
-		t.Fatalf("failed to create interpreter: %+v", err)
-	}
+	interp := newTestInterpreter(t)
 	stdjson.Install(interp)
 
 	// Inject the data variable
@@ -399,10 +383,7 @@ type Employee struct {
 var result Employee
 var err = json.Unmarshal(data, &result)
 `
-	interp, err := minigo.NewInterpreter()
-	if err != nil {
-		t.Fatalf("failed to create interpreter: %+v", err)
-	}
+	interp := newTestInterpreter(t)
 	stdjson.Install(interp)
 
 	// Inject the data variable
@@ -461,10 +442,7 @@ import "github.com/podhmo/go-scan/minigo/testdata/jsonstructs"
 var result jsonstructs.Person
 var err = json.Unmarshal(data, &result)
 `
-	interp, err := minigo.NewInterpreter()
-	if err != nil {
-		t.Fatalf("failed to create interpreter: %+v", err)
-	}
+	interp := newTestInterpreter(t)
 	stdjson.Install(interp)
 
 	// Inject the data variable

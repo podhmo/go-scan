@@ -69,12 +69,9 @@ func main() {
 			}
 
 			var outbuf strings.Builder
-			interp, err := minigo.NewInterpreter(minigo.WithStdout(&outbuf))
-			if err != nil {
-				t.Fatalf("NewInterpreter() error = %v", err)
-			}
+			interp := newTestInterpreter(t, minigo.WithStdout(&outbuf))
 
-			err = interp.LoadFile("test.mgo", []byte(tt.script))
+			err := interp.LoadFile("test.mgo", []byte(tt.script))
 			if err != nil {
 				t.Fatalf("LoadFile() unexpected error = %v", err)
 			}

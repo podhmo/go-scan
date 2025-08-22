@@ -20,10 +20,7 @@ func TestGoInterop_AstNodeArgument(t *testing.T) {
 		return fmt.Sprintf("%T", node)
 	}
 
-	interp, err := NewInterpreter()
-	if err != nil {
-		t.Fatalf("NewInterpreter() failed: %v", err)
-	}
+	interp := newTestInterpreter(t)
 
 	// Register the Go function directly into the global environment for the test.
 	// This bypasses the need for package/import resolution and lets us focus on the interop call.
@@ -66,6 +63,7 @@ func main() {
 		t.Fatalf("LoadFile() failed: %v", err)
 	}
 
+	var err error
 	_, err = interp.Eval(context.Background())
 	if err != nil {
 		t.Fatalf("Eval() returned an error: %v", err)
@@ -276,10 +274,7 @@ var result = func() int {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			interpreter, err := NewInterpreter()
-			if err != nil {
-				t.Fatalf("NewInterpreter() failed: %v", err)
-			}
+			interpreter := newTestInterpreter(t)
 
 			for name, value := range tt.globals {
 				interpreter.globalEnv.Set(name, &object.GoValue{Value: reflect.ValueOf(value)})
@@ -288,6 +283,7 @@ var result = func() int {
 			if err := interpreter.LoadFile("test.mgo", []byte(tt.script)); err != nil {
 				t.Fatalf("LoadFile() failed: %v", err)
 			}
+			var err error
 			_, err = interpreter.Eval(context.Background())
 
 			if err != nil {

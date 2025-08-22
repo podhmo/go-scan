@@ -28,14 +28,11 @@ func main() {
 }
 `
 	var out bytes.Buffer
-	m, err := minigo.NewInterpreter(
+	m := newTestInterpreter(t,
 		minigo.WithStdout(&out),
 	)
-	if err != nil {
-		t.Fatalf("NewInterpreter failed: %+v", err)
-	}
 
-	_, err = m.EvalString(source)
+	_, err := m.EvalString(source)
 	if err != nil {
 		t.Fatalf("EvalString failed: %+v", err)
 	}

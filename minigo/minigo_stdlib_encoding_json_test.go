@@ -5,7 +5,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/podhmo/go-scan/minigo"
 	"github.com/podhmo/go-scan/minigo/object"
 	stdjson "github.com/podhmo/go-scan/minigo/stdlib/encoding/json"
 )
@@ -24,10 +23,7 @@ type Person struct {
 var result Person
 var err = json.Unmarshal(data, &result)
 `
-	interp, err := minigo.NewInterpreter()
-	if err != nil {
-		t.Fatalf("failed to create interpreter: %+v", err)
-	}
+	interp := newTestInterpreter(t)
 	stdjson.Install(interp)
 
 	// Inject the data variable into the interpreter's global environment
@@ -45,6 +41,7 @@ var err = json.Unmarshal(data, &result)
 
 	// The evaluation itself should return the type error from our logic.
 	// We check the error from Eval, as a runtime error should halt execution.
+	var err error
 	_, err = interp.Eval(context.Background())
 	if err == nil {
 		t.Fatalf("expected evaluation to fail with a type error, but it did not")
@@ -73,10 +70,7 @@ type Data struct {
 var d Data
 var err = json.Unmarshal(data, &d)
 `
-		interp, err := minigo.NewInterpreter()
-		if err != nil {
-			t.Fatalf("failed to create interpreter: %+v", err)
-		}
+		interp := newTestInterpreter(t)
 		stdjson.Install(interp)
 
 		dataBytes := []byte(jsonData)
@@ -90,6 +84,7 @@ var err = json.Unmarshal(data, &d)
 			t.Fatalf("failed to load script: %+v", err)
 		}
 
+		var err error
 		_, err = interp.Eval(context.Background())
 		if err == nil {
 			t.Fatalf("expected evaluation to fail with a type error, but it did not")

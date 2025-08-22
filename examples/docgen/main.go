@@ -42,15 +42,15 @@ func run(logger *slog.Logger, format string, patternsFile string) error {
 	}
 	sampleAPIPath := flag.Arg(0)
 
-	customPatterns, err := loadCustomPatterns(patternsFile, logger)
-	if err != nil {
-		return err
-	}
-
 	s, err := goscan.New(
 		goscan.WithGoModuleResolver(),
 		goscan.WithLogger(logger),
 	)
+	if err != nil {
+		return err
+	}
+
+	customPatterns, err := loadCustomPatterns(patternsFile, logger, s)
 	if err != nil {
 		return err
 	}
@@ -82,10 +82,10 @@ func run(logger *slog.Logger, format string, patternsFile string) error {
 	}
 }
 
-func loadCustomPatterns(filePath string, logger *slog.Logger) ([]patterns.Pattern, error) {
+func loadCustomPatterns(filePath string, logger *slog.Logger, scanner *goscan.Scanner) ([]patterns.Pattern, error) {
 	if filePath == "" {
 		return nil, nil
 	}
 	logger.Info("loading custom patterns", "file", filePath)
-	return LoadPatternsFromConfig(filePath, logger)
+	return LoadPatternsFromConfig(filePath, logger, scanner)
 }

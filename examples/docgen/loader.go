@@ -5,26 +5,27 @@ import (
 	"log/slog"
 	"os"
 
+	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/examples/docgen/patterns"
 	"github.com/podhmo/go-scan/minigo"
 )
 
 // LoadPatternsFromConfig loads custom analysis patterns from a Go configuration file.
 // It is a wrapper around LoadPatternsFromSource.
-func LoadPatternsFromConfig(filePath string, logger *slog.Logger) ([]patterns.Pattern, error) {
+func LoadPatternsFromConfig(filePath string, logger *slog.Logger, scanner *goscan.Scanner) ([]patterns.Pattern, error) {
 	configSource, err := os.ReadFile(filePath)
 	if err != nil {
 		return nil, fmt.Errorf("could not read patterns config file %q: %w", filePath, err)
 	}
-	return LoadPatternsFromSource(configSource, logger)
+	return LoadPatternsFromSource(configSource, logger, scanner)
 }
 
 // LoadPatternsFromSource loads custom analysis patterns from a Go configuration source.
-func LoadPatternsFromSource(source []byte, logger *slog.Logger) ([]patterns.Pattern, error) {
+func LoadPatternsFromSource(source []byte, logger *slog.Logger, scanner *goscan.Scanner) ([]patterns.Pattern, error) {
 	// Step 1: Set up the minigo interpreter.
 	// The fix in `go-scan`'s locator allows the interpreter to correctly
 	// resolve imports via `replace` directives.
-	interp, err := minigo.NewInterpreter()
+	interp, err := minigo.NewInterpreter(scanner)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create minigo interpreter: %w", err)
 	}

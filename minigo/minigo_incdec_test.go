@@ -84,10 +84,7 @@ func main() {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			i, err := NewInterpreter()
-			if err != nil {
-				t.Fatalf("NewInterpreter() failed: %v", err)
-			}
+			i := newTestInterpreter(t)
 
 			if tt.setup != nil {
 				tt.setup(i)

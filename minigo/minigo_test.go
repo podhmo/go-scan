@@ -7,28 +7,37 @@ import (
 	"strings"
 	"testing"
 
+	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/minigo/object"
 )
 
-func TestNewInterpreter(t *testing.T) {
-	_, err := NewInterpreter()
+func newTestInterpreter(t *testing.T, opts ...Option) *Interpreter {
+	t.Helper()
+	s, err := goscan.New(goscan.WithGoModuleResolver())
+	if err != nil {
+		t.Fatalf("failed to create scanner: %v", err)
+	}
+	interp, err := NewInterpreter(s, opts...)
 	if err != nil {
 		t.Fatalf("NewInterpreter() failed: %v", err)
 	}
+	return interp
+}
+
+func TestNewInterpreter(t *testing.T) {
+	newTestInterpreter(t)
 }
 
 func TestInterpreterEval_SimpleExpression(t *testing.T) {
 	input := `package main
 var x = 1 + 2`
-	i, err := NewInterpreter()
-	if err != nil {
-		t.Fatalf("NewInterpreter() failed: %v", err)
-	}
+	i := newTestInterpreter(t)
 
 	if err := i.LoadFile("test.go", []byte(input)); err != nil {
 		t.Fatalf("LoadFile() failed: %v", err)
 	}
 
+	var err error
 	_, err = i.Eval(context.Background())
 	if err != nil {
 		t.Fatalf("Eval() failed: %v", err)
@@ -55,10 +64,7 @@ import "fmt"
 
 var x = fmt.Println
 `
-	i, err := NewInterpreter()
-	if err != nil {
-		t.Fatalf("NewInterpreter() failed: %v", err)
-	}
+	i := newTestInterpreter(t)
 
 	// Register the "fmt" package with the Println function
 	i.Register("fmt", map[string]any{
@@ -69,6 +75,7 @@ var x = fmt.Println
 		t.Fatalf("LoadFile() failed: %v", err)
 	}
 
+	var err error
 	_, err = i.Eval(context.Background())
 	if err != nil {
 		t.Fatalf("Eval() failed: %v", err)
@@ -95,10 +102,7 @@ import f "strings"
 var resultB = f.StringsFunc()
 `
 
-	i, err := NewInterpreter()
-	if err != nil {
-		t.Fatalf("NewInterpreter() failed: %v", err)
-	}
+	i := newTestInterpreter(t)
 
 	// Register mock functions that return unique strings
 	i.Register("fmt", map[string]any{
@@ -117,6 +121,7 @@ var resultB = f.StringsFunc()
 	}
 
 	// Evaluate the loaded files
+	var err error
 	_, err = i.Eval(context.Background())
 	if err != nil {
 		t.Fatalf("Eval() failed: %v", err)
@@ -159,10 +164,7 @@ import "sharedlib"
 var valB = sharedlib.Get()
 `
 
-	i, err := NewInterpreter()
-	if err != nil {
-		t.Fatalf("NewInterpreter() failed: %v", err)
-	}
+	i := newTestInterpreter(t)
 
 	// Register a mock package
 	i.Register("sharedlib", map[string]any{
@@ -178,6 +180,7 @@ var valB = sharedlib.Get()
 	}
 
 	// Evaluate
+	var err error
 	_, err = i.Eval(context.Background())
 	if err != nil {
 		t.Fatalf("Eval() failed: %v", err)
@@ -224,19 +227,17 @@ var _ = println("Hello,", name)
 	var stdout, stderr bytes.Buffer
 
 	// Create a new interpreter with custom I/O
-	i, err := NewInterpreter(
+	i := newTestInterpreter(t,
 		WithStdin(stdin),
 		WithStdout(&stdout),
 		WithStderr(&stderr),
 	)
-	if err != nil {
-		t.Fatalf("NewInterpreter() failed: %v", err)
-	}
 
 	if err := i.LoadFile("test.go", []byte(inputScript)); err != nil {
 		t.Fatalf("LoadFile() failed: %v", err)
 	}
 
+	var err error
 	_, err = i.Eval(context.Background())
 	if err != nil {
 		t.Fatalf("Eval() failed: %v\nStderr: %s", err, stderr.String())
@@ -316,10 +317,7 @@ func main() {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var stdout bytes.Buffer
-			i, err := NewInterpreter(WithStdout(&stdout))
-			if err != nil {
-				t.Fatalf("NewInterpreter() failed: %v", err)
-			}
+			i := newTestInterpreter(t, WithStdout(&stdout))
 
 			i.Register("fmt", map[string]any{
 				"Print": func(s string) {
@@ -341,8 +339,7 @@ func main() {
 				t.Fatalf("FindFunction('main') failed: %v", err)
 			}
 
-			_, err = i.Execute(context.Background(), mainFunc, nil, fscope)
-			if err != nil {
+			if _, err := i.Execute(context.Background(), mainFunc, nil, fscope); err != nil {
 				t.Fatalf("Execute() failed: %v", err)
 			}
 
@@ -358,15 +355,13 @@ var data = []map[string]int{
 	{"b": 2, "c": 3},
 }
 `
-	i, err := NewInterpreter()
-	if err != nil {
-		t.Fatalf("NewInterpreter() failed: %v", err)
-	}
+	i := newTestInterpreter(t)
 
 	if err := i.LoadFile("test.go", []byte(input)); err != nil {
 		t.Fatalf("LoadFile() failed: %v", err)
 	}
 
+	var err error
 	_, err = i.Eval(context.Background())
 	if err != nil {
 		t.Fatalf("Eval() failed: %v", err)
@@ -421,15 +416,13 @@ var p = &c
 var _ = p.Inc()
 var val = p.Get()
 `
-	i, err := NewInterpreter()
-	if err != nil {
-		t.Fatalf("NewInterpreter() failed: %v", err)
-	}
+	i := newTestInterpreter(t)
 
 	if err := i.LoadFile("test.go", []byte(input)); err != nil {
 		t.Fatalf("LoadFile() failed: %v", err)
 	}
 
+	var err error
 	_, err = i.Eval(context.Background())
 	if err != nil {
 		t.Fatalf("Eval() failed: %v", err)
@@ -454,15 +447,13 @@ func TestInterpreterEval_TypeConversions(t *testing.T) {
 var bs = []byte("hello")
 var s = string([]byte{119, 111, 114, 108, 100}) // "world"
 `
-	i, err := NewInterpreter()
-	if err != nil {
-		t.Fatalf("NewInterpreter() failed: %v", err)
-	}
+	i := newTestInterpreter(t)
 
 	if err := i.LoadFile("test.go", []byte(input)); err != nil {
 		t.Fatalf("LoadFile() failed: %v", err)
 	}
 
+	var err error
 	_, err = i.Eval(context.Background())
 	if err != nil {
 		t.Fatalf("Eval() failed: %v", err)
@@ -510,15 +501,13 @@ func TestInterpreterEval_ByteType(t *testing.T) {
 var b byte = 65
 var bs []byte = []byte{66, 67, 68}
 `
-	i, err := NewInterpreter()
-	if err != nil {
-		t.Fatalf("NewInterpreter() failed: %v", err)
-	}
+	i := newTestInterpreter(t)
 
 	if err := i.LoadFile("test.go", []byte(input)); err != nil {
 		t.Fatalf("LoadFile() failed: %v", err)
 	}
 
+	var err error
 	_, err = i.Eval(context.Background())
 	if err != nil {
 		t.Fatalf("Eval() failed: %v", err)
@@ -570,10 +559,7 @@ func getX() int {
 	return 42
 }
 `
-		i, err := NewInterpreter()
-		if err != nil {
-			t.Fatalf("NewInterpreter() failed: %v", err)
-		}
+		i := newTestInterpreter(t)
 
 		if err := i.LoadFile("test.go", []byte(input)); err != nil {
 			t.Fatalf("LoadFile() failed: %v", err)
@@ -581,6 +567,7 @@ func getX() int {
 
 		// With the old single-pass evaluator, this would fail.
 		// The goal is to make this pass.
+		var err error
 		_, err = i.Eval(context.Background())
 		if err != nil {
 			t.Fatalf("Eval() failed unexpectedly: %v", err)
@@ -685,10 +672,7 @@ func main() {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			i, err := NewInterpreter()
-			if err != nil {
-				t.Fatalf("NewInterpreter() failed: %v", err)
-			}
+			i := newTestInterpreter(t)
 			if err := i.LoadFile("test.go", []byte(tt.input)); err != nil {
 				t.Fatalf("LoadFile() failed: %v", err)
 			}
@@ -726,15 +710,13 @@ func TestEvalLine(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("state persistence", func(t *testing.T) {
-		i, err := NewInterpreter()
-		if err != nil {
-			t.Fatalf("NewInterpreter() failed: %v", err)
-		}
+		i := newTestInterpreter(t)
 		i.Register("strings", map[string]any{
 			"ToUpper": strings.ToUpper,
 		})
 
 		// 1. Define a variable
+		var err error
 		_, err = i.EvalLine(ctx, "x := 10")
 		if err != nil {
 			t.Fatalf("EvalLine 1 failed: %v", err)
@@ -766,12 +748,10 @@ func TestEvalLine(t *testing.T) {
 	})
 
 	t.Run("error handling", func(t *testing.T) {
-		i, err := NewInterpreter()
-		if err != nil {
-			t.Fatalf("NewInterpreter() failed: %v", err)
-		}
+		i := newTestInterpreter(t)
 
 		// Syntax error
+		var err error
 		_, err = i.EvalLine(ctx, "x :=")
 		if err == nil {
 			t.Error("Expected a syntax error, but got nil")
@@ -807,15 +787,13 @@ var f4 = 2 != 1
 var f5 = 2 <= 1
 var f6 = 2 >= 3
 `
-	i, err := NewInterpreter()
-	if err != nil {
-		t.Fatalf("NewInterpreter() failed: %v", err)
-	}
+	i := newTestInterpreter(t)
 
 	if err := i.LoadFile("test.go", []byte(input)); err != nil {
 		t.Fatalf("LoadFile() failed: %v", err)
 	}
 
+	var err error
 	_, err = i.Eval(context.Background())
 	if err != nil {
 		t.Fatalf("Eval() failed: %v", err)

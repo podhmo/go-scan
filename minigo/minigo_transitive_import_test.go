@@ -19,16 +19,13 @@ func main() {
 `
 	r := &strings.Reader{}
 	var outbuf, errbuf strings.Builder
-	interpreter, err := minigo.NewInterpreter(
+	interpreter := newTestInterpreter(t,
 		minigo.WithStdin(r),
 		minigo.WithStdout(&outbuf),
 		minigo.WithStderr(&errbuf),
 	)
-	if err != nil {
-		t.Fatal(err)
-	}
 
-	_, err = interpreter.EvalString(script)
+	_, err := interpreter.EvalString(script)
 	if err != nil {
 		t.Fatalf("eval failed: %v\nstderr:\n%s", err, errbuf.String())
 	}
@@ -61,16 +58,13 @@ func main() {
 `
 	r := &strings.Reader{}
 	var outbuf, errbuf strings.Builder
-	interpreter, err := minigo.NewInterpreter(
+	interpreter := newTestInterpreter(t,
 		minigo.WithStdin(r),
 		minigo.WithStdout(&outbuf),
 		minigo.WithStderr(&errbuf),
 	)
-	if err != nil {
-		t.Fatal(err)
-	}
 
-	_, err = interpreter.EvalString(script)
+	_, err := interpreter.EvalString(script)
 	if err != nil {
 		t.Fatalf("eval failed: %v\nstderr:\n%s", err, errbuf.String())
 	}

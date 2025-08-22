@@ -28,7 +28,13 @@ type Runner struct {
 
 // NewRunner creates a new interpreter runner.
 func NewRunner(scannerOpts ...goscan.ScannerOption) (*Runner, error) {
-	interp, err := minigo.NewInterpreter(minigo.WithScannerOptions(scannerOpts...))
+	// Pass scanner options to create a scanner.
+	scanner, err := goscan.New(scannerOpts...)
+	if err != nil {
+		return nil, fmt.Errorf("creating scanner: %w", err)
+	}
+	// Pass the scanner to the interpreter.
+	interp, err := minigo.NewInterpreter(scanner)
 	if err != nil {
 		return nil, fmt.Errorf("creating minigo interpreter: %w", err)
 	}

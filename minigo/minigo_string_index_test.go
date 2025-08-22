@@ -17,12 +17,9 @@ var s = "hello"
 var c = s[1] // 'e'
 `
 		var out, errOut strings.Builder
-		interp, err := minigo.NewInterpreter(minigo.WithStdout(&out), minigo.WithStderr(&errOut))
-		if err != nil {
-			t.Fatalf("failed to create interpreter: %+v", err)
-		}
+		interp := newTestInterpreter(t, minigo.WithStdout(&out), minigo.WithStderr(&errOut))
 
-		_, err = interp.EvalString(script)
+		_, err := interp.EvalString(script)
 		if err != nil {
 			t.Fatalf("eval failed: %v\nstderr:\n%s", err, errOut.String())
 		}
@@ -52,12 +49,9 @@ var s = "hello"
 var c = s[10]
 `
 		var out, errOut strings.Builder
-		interp, err := minigo.NewInterpreter(minigo.WithStdout(&out), minigo.WithStderr(&errOut))
-		if err != nil {
-			t.Fatalf("failed to create interpreter: %+v", err)
-		}
+		interp := newTestInterpreter(t, minigo.WithStdout(&out), minigo.WithStderr(&errOut))
 
-		_, err = interp.EvalString(script)
+		_, err := interp.EvalString(script)
 		if err == nil {
 			t.Fatal("expected an error for out-of-bounds access, but got none")
 		}

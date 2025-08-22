@@ -181,10 +181,7 @@ var result = shared.Container{
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			interpreter, err := NewInterpreter()
-			if err != nil {
-				t.Fatalf("NewInterpreter() failed: %v", err)
-			}
+			interpreter := newTestInterpreter(t)
 
 			// For simple expression tests, wrap them in a full program.
 			// For tests that are already full programs, use them as is.

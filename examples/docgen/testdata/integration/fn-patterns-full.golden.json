@@ -1,14 +1,14 @@
 {
-  "openapi": "3.0.0",
+  "openapi": "3.1.0",
   "info": {
-    "title": "API Documentation",
-    "version": "1.0.0"
+    "title": "Sample API",
+    "version": "0.0.1"
   },
   "paths": {
     "/users": {
       "get": {
-        "summary": "listUsers",
-        "operationId": "listUsers",
+        "description": "listUsers is a simple http handler that uses our custom response helper.\nThe docgen tool should be able to identify that `helpers.RespondJSON`\nis being called and use the custom pattern to generate the OpenAPI response.",
+        "operationId": "my-test-module_listUsers",
         "responses": {
           "200": {
             "description": "OK",
@@ -17,7 +17,7 @@
                 "schema": {
                   "type": "array",
                   "items": {
-                    "$ref": "#/components/schemas/main_User"
+                    "$ref": "#/components/schemas/my-test-module_User"
                   }
                 }
               }
@@ -29,7 +29,7 @@
   },
   "components": {
     "schemas": {
-      "main_User": {
+      "my-test-module_User": {
         "type": "object",
         "properties": {
           "name": {

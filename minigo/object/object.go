@@ -759,6 +759,8 @@ type GoSourceFunction struct {
 	PkgPath string
 	DefEnv  *Environment
 	FScope  *FileScope // The unified file scope of the package where the function was defined.
+	ModulePath string     // The go module path this package belongs to.
+	ModuleDir  string     // The absolute path to the module's root directory
 }
 
 // Type returns the type of the GoSourceFunction object.

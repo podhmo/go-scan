@@ -5,7 +5,6 @@ import (
 	"math"
 	"testing"
 
-	"github.com/podhmo/go-scan/minigo"
 	"github.com/podhmo/go-scan/minigo/object"
 	stdstrconv "github.com/podhmo/go-scan/minigo/stdlib/strconv"
 )
@@ -29,15 +28,13 @@ var _, err_bad_int = strconv.Atoi("abc")
 var _, err_bad_float = strconv.ParseFloat("xyz", 64)
 var _, err_bad_bool = strconv.ParseBool("nope")
 `
-	interp, err := minigo.NewInterpreter()
-	if err != nil {
-		t.Fatalf("failed to create interpreter: %+v", err)
-	}
+	interp := newTestInterpreter(t)
 	stdstrconv.Install(interp)
 
 	if err := interp.LoadFile("test.mgo", []byte(script)); err != nil {
 		t.Fatalf("failed to load script: %+v", err)
 	}
+	var err error
 	_, err = interp.Eval(context.Background())
 	if err != nil {
 		t.Fatalf("failed to evaluate script: %+v", err)

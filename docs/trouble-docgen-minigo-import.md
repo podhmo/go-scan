@@ -44,12 +44,14 @@ The core of the issue lies in the interaction between three different Go modules
 
 - **`main_test.go`** (in `docgen` module) runs a test, `TestDocgen_withFnPatterns`.
 - This test calls `docgen`'s `LoadPatternsFromConfig` function.
-- `LoadPatternsFromConfig` creates a `minigo` interpreter. Crucially, it's configured to use the `fn-patterns` directory as its working directory:
+- `LoadPatternsFromConfig` creates a `goscan.Scanner` configured to use the `fn-patterns` directory as its working directory. This scanner is then passed to the `minigo` interpreter.
   ```go
   // in main_test.go
   moduleDir := "testdata/fn-patterns"
-  minigoOpts := minigo.WithScannerOptions(goscan.WithWorkDir(moduleDir))
-  customPatterns, err := LoadPatternsFromConfig(patternsFile, logger, minigoOpts)
+  scanner, err := goscan.New(goscan.WithWorkDir(moduleDir))
+  // ...
+  interp, err := minigo.NewInterpreter(scanner)
+  // ...
   ```
 - The `minigo` interpreter then evaluates **`fn-patterns/patterns.go`**.
 - **`fn-patterns/patterns.go`** tries to import the `api` package:
@@ -83,13 +85,13 @@ This strongly suggests that the `go-scan/locator` component, when invoked by a `
 3.  **Isolating the Test**: Moving the test logic to a separate `*_test.go` file had no effect.
 4.  **Verifying `minigo` Standalone**: The `minigo` interpreter's own test suite passes flawlessly, including tests for `replace` directives. This confirms the issue is not with `minigo` in isolation, but with its use in this specific nested test context.
 
-## Conclusion & Hypothesis
+## Resolution
 
-The issue is not a simple misconfiguration but likely a deeper limitation or bug in the `go-scan` package locator when used in a complex, multi-module `go test` environment. The locator seems unable to fully detach from the primary test process's module context.
+This issue has been **resolved**. The root cause was not in the locator itself, but in how the `minigo.Interpreter` was constructed. Previously, the interpreter created its own internal `goscan.Scanner`, which did not correctly inherit the working directory context provided by the test.
 
-**Recommended Next Steps:**
+The fix involved changing the `minigo.NewInterpreter` signature to **require** a pre-configured `*goscan.Scanner`. This ensures that the caller is responsible for creating and configuring the scanner with the correct working directory, and the interpreter then uses that scanner instance. This change makes the dependency explicit and resolves the context-switching problem.
 
-The most direct way to solve this is to fix the underlying issue in the `go-scan` locator. However, a pragmatic workaround for testing the `docgen` feature is to **avoid file-based module resolution entirely**.
+The code snippet in the "Problematic Structure" section has been updated to reflect the new, correct usage.
 
 A better test strategy would be:
 1.  In `main_test.go`, read the contents of `api.go` and `patterns.go` into strings.

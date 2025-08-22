@@ -3,8 +3,6 @@ package minigo_test
 import (
 	"context"
 	"testing"
-
-	"github.com/podhmo/go-scan/minigo"
 )
 
 func TestEmptyLiteralInference(t *testing.T) {
@@ -37,12 +35,9 @@ func main() {
 
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
-			interp, err := minigo.NewInterpreter()
-			if err != nil {
-				t.Fatalf("NewInterpreter() error = %v", err)
-			}
+			interp := newTestInterpreter(t)
 
-			err = interp.LoadFile("test.mgo", []byte(tt.script))
+			err := interp.LoadFile("test.mgo", []byte(tt.script))
 			if err != nil {
 				t.Fatalf("LoadFile() unexpected error = %v", err)
 			}

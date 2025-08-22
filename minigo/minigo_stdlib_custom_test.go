@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/podhmo/go-scan/minigo"
 	"github.com/podhmo/go-scan/minigo/object"
 
 	"path/filepath"
@@ -42,10 +41,7 @@ var layout = "2006-01-02"
 // Check for a parse error, as we cannot call methods on the returned time object.
 var _, err = time.Parse(layout, "not-a-valid-date")
 `
-	interp, err := minigo.NewInterpreter()
-	if err != nil {
-		t.Fatalf("failed to create interpreter: %+v", err)
-	}
+	interp := newTestInterpreter(t)
 	stdtime.Install(interp)
 
 	if err := interp.LoadFile("test.mgo", []byte(script)); err != nil {
@@ -88,10 +84,7 @@ func main() (any, any) {
 	return time.Parse(layout, "2024-07-26T10:30:00Z")
 }
 `
-	interp, err := minigo.NewInterpreter()
-	if err != nil {
-		t.Fatalf("failed to create interpreter: %+v", err)
-	}
+	interp := newTestInterpreter(t)
 	stdtime.Install(interp)
 
 	if err := interp.LoadFile("test.mgo", []byte(script)); err != nil {
@@ -142,10 +135,7 @@ var r_compare_eq = bytes.Compare(a, b)
 var r_compare_gt = bytes.Compare(a, c)
 var r_compare_lt = bytes.Compare(c, a)
 `
-	interp, err := minigo.NewInterpreter()
-	if err != nil {
-		t.Fatalf("failed to create interpreter: %+v", err)
-	}
+	interp := newTestInterpreter(t)
 	stdbytes.Install(interp)
 
 	if err := interp.LoadFile("test.mgo", []byte(script)); err != nil {
@@ -183,10 +173,7 @@ var r1 = sort.IntsAreSorted(s1)
 var s2 = []int{3, 1, 4, 1, 5, 9}
 var r2 = sort.IntsAreSorted(s2)
 `
-	interp, err := minigo.NewInterpreter()
-	if err != nil {
-		t.Fatalf("failed to create interpreter: %+v", err)
-	}
+	interp := newTestInterpreter(t)
 
 	stdsort.Install(interp)
 
@@ -229,10 +216,7 @@ var _ = sort.Ints(s)
 var f = []float64{3.3, 1.1, 4.4, 2.2}
 var _ = sort.Float64s(f)
 `
-	interp, err := minigo.NewInterpreter()
-	if err != nil {
-		t.Fatalf("failed to create interpreter: %+v", err)
-	}
+	interp := newTestInterpreter(t)
 
 	// Use the pre-generated FFI bindings as a fallback.
 	stdsort.Install(interp)
@@ -312,10 +296,7 @@ var r_cmp_eq = slices.Compare(s1, s3)
 var r_cmp_lt = slices.Compare(s1, s4)
 var r_cmp_gt = slices.Compare(s4, s1)
 `
-	interp, err := minigo.NewInterpreter()
-	if err != nil {
-		t.Fatalf("failed to create interpreter: %+v", err)
-	}
+	interp := newTestInterpreter(t)
 
 	// The slices package is loaded from source, so no Install() call is needed.
 
@@ -375,10 +356,7 @@ import "regexp"
 var re, err1 = regexp.Compile("p([a-z]+)ch")
 var matched = re.MatchString("peach")
 `
-	interp, err := minigo.NewInterpreter()
-	if err != nil {
-		t.Fatalf("failed to create interpreter: %+v", err)
-	}
+	interp := newTestInterpreter(t)
 	stdregexp.Install(interp)
 
 	if err := interp.LoadFile("test.mgo", []byte(script)); err != nil {
@@ -415,10 +393,7 @@ var buf = bytes.NewBuffer(nil)
 var err2 = tpl.Execute(buf, data)
 var result = buf.String()
 `
-	interp, err := minigo.NewInterpreter()
-	if err != nil {
-		t.Fatalf("failed to create interpreter: %+v", err)
-	}
+	interp := newTestInterpreter(t)
 
 	stdtemplate.Install(interp)
 	stdbytes.Install(interp) // Need bytes.Buffer
@@ -464,10 +439,7 @@ var src = rand.NewSource(1)
 var r = rand.New(src)
 var n = r.Intn(100)
 `
-	interp, err := minigo.NewInterpreter()
-	if err != nil {
-		t.Fatalf("failed to create interpreter: %+v", err)
-	}
+	interp := newTestInterpreter(t)
 	stdmathrand.Install(interp)
 
 	if err := interp.LoadFile("test.mgo", []byte(script)); err != nil {
@@ -505,10 +477,7 @@ import "path/filepath"
 var joined = filepath.Join("a", "b", "c")
 var base = filepath.Base(joined)
 `
-	interp, err := minigo.NewInterpreter()
-	if err != nil {
-		t.Fatalf("failed to create interpreter: %+v", err)
-	}
+	interp := newTestInterpreter(t)
 
 	stdpathfilepath.Install(interp)
 
@@ -562,10 +531,7 @@ package main
 import "errors"
 var err = errors.New("a new error")
 `
-	interp, err := minigo.NewInterpreter()
-	if err != nil {
-		t.Fatalf("failed to create interpreter: %+v", err)
-	}
+	interp := newTestInterpreter(t)
 
 	stderrors.Install(interp)
 
@@ -614,10 +580,7 @@ var p = Point{X: 1, Y: 2}
 var data, err = json.Marshal(p)
 var result = string(data)
 `
-	interp, err := minigo.NewInterpreter()
-	if err != nil {
-		t.Fatalf("failed to create interpreter: %+v", err)
-	}
+	interp := newTestInterpreter(t)
 
 	stdjson.Install(interp)
 
@@ -673,15 +636,13 @@ for scanner.Scan() {
 
 var err = scanner.Err()
 `
-	interp, err := minigo.NewInterpreter()
-	if err != nil {
-		t.Fatalf("failed to create interpreter: %+v", err)
-	}
+	interp := newTestInterpreter(t)
 
 	stdbufio.Install(interp)
 	stdstrings.Install(interp)
 
 	// We expect this to fail during LoadFile
+	var err error
 	err = interp.LoadFile("test.mgo", []byte(script))
 	if err == nil {
 		t.Fatalf("expected script parsing to fail, but it succeeded")
@@ -716,10 +677,7 @@ func main() {
 	}
 }
 `
-	interp, err := minigo.NewInterpreter()
-	if err != nil {
-		t.Fatalf("failed to create interpreter: %+v", err)
-	}
+	interp := newTestInterpreter(t)
 
 	// Install the necessary FFI bindings.
 	stdtextscanner.Install(interp)
@@ -772,10 +730,7 @@ var bg = context.Background()
 var ctx = context.WithValue(bg, key, "my-value")
 var val = ctx.Value(key)
 `
-	interp, err := minigo.NewInterpreter()
-	if err != nil {
-		t.Fatalf("failed to create interpreter: %+v", err)
-	}
+	interp := newTestInterpreter(t)
 
 	// Install the necessary FFI bindings.
 	stdcontext.Install(interp)
@@ -811,12 +766,10 @@ import "slices"
 var s = []int{3, 1, 2}
 var _ = slices.Sort(s)
 `
-	interp, err := minigo.NewInterpreter()
-	if err != nil {
-		t.Fatalf("failed to create interpreter: %+v", err)
-	}
+	interp := newTestInterpreter(t)
 
 	// The slices package is loaded from source, so no Install() call is needed.
+	var err error
 	err = interp.LoadFile("test.mgo", []byte(script))
 	if err != nil {
 		t.Fatalf("expected script loading to succeed, but it failed: %v", err)
@@ -865,10 +818,7 @@ var year = t.Year()
 var month = t.Month()
 var day = t.Day()
 `
-	interp, err := minigo.NewInterpreter()
-	if err != nil {
-		t.Fatalf("failed to create interpreter: %+v", err)
-	}
+	interp := newTestInterpreter(t)
 	stdtime.Install(interp)
 
 	if err := interp.LoadFile("test.mgo", []byte(script)); err != nil {
@@ -904,10 +854,7 @@ var joined = path.Join("a", "b", "c")
 var base = path.Base(joined)
 var ext = path.Ext("/a/b/c.txt")
 `
-	interp, err := minigo.NewInterpreter()
-	if err != nil {
-		t.Fatalf("failed to create interpreter: %+v", err)
-	}
+	interp := newTestInterpreter(t)
 	stdpath.Install(interp)
 
 	if err := interp.LoadFile("test.mgo", []byte(script)); err != nil {
@@ -947,10 +894,7 @@ func main() {
 	}
 }
 `
-	interp, err := minigo.NewInterpreter()
-	if err != nil {
-		t.Fatalf("failed to create interpreter: %+v", err)
-	}
+	interp := newTestInterpreter(t)
 	stdcontainerlist.Install(interp)
 
 	if err := interp.LoadFile("test.mgo", []byte(script)); err != nil {
@@ -1043,10 +987,7 @@ func main() {
 	hashStr = hex.EncodeToString(hash[:])
 }
 `
-	interp, err := minigo.NewInterpreter()
-	if err != nil {
-		t.Fatalf("failed to create interpreter: %+v", err)
-	}
+	interp := newTestInterpreter(t)
 	stdcryptomd5.Install(interp)
 	interp.Register("encoding/hex", map[string]any{
 		"EncodeToString": hex.EncodeToString,
@@ -1095,10 +1036,7 @@ var err = json.Unmarshal(data, &p)
 // We can't do a direct type assertion in minigo yet, but we can
 // return the error to the Go test and check its type there.
 `
-	interp, err := minigo.NewInterpreter()
-	if err != nil {
-		t.Fatalf("failed to create interpreter: %+v", err)
-	}
+	interp := newTestInterpreter(t)
 	stdjson.Install(interp)
 
 	// Inject the data variable from the Go side to avoid issues with
@@ -1115,6 +1053,7 @@ var err = json.Unmarshal(data, &p)
 	}
 
 	// We expect Eval to fail because our type checking should generate an error.
+	var err error
 	_, err = interp.Eval(context.Background())
 	if err == nil {
 		t.Fatalf("expected evaluation to fail with a type error, but it succeeded")
@@ -1149,10 +1088,7 @@ var d Department
 var data = []byte(jsonData)
 var err = json.Unmarshal(data, &d)
 `
-	interp, err := minigo.NewInterpreter()
-	if err != nil {
-		t.Fatalf("failed to create interpreter: %+v", err)
-	}
+	interp := newTestInterpreter(t)
 	stdjson.Install(interp)
 
 	// Inject the jsonData variable into the interpreter's global environment

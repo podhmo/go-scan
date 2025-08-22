@@ -172,10 +172,7 @@ var result = "ok"
 	}
 
 	runTest := func(t *testing.T, tt testCase) {
-		interpreter, err := NewInterpreter()
-		if err != nil {
-			t.Fatalf("NewInterpreter() failed: %v", err)
-		}
+		interpreter := newTestInterpreter(t)
 
 		if tt.setup != nil {
 			tt.setup(interpreter)
@@ -184,6 +181,7 @@ var result = "ok"
 		if err := interpreter.LoadFile("test.mgo", []byte(tt.script)); err != nil {
 			t.Fatalf("LoadFile() failed: %v", err)
 		}
+		var err error
 		_, err = interpreter.Eval(context.Background())
 
 		if tt.expectErr {
@@ -260,7 +258,7 @@ var result = "ok"
 			}
 		}
 
-		interpreter, _ := NewInterpreter()
+		interpreter := newTestInterpreter(t)
 		tt.setup(interpreter)
 		if err := interpreter.LoadFile("test.mgo", []byte(tt.script)); err != nil {
 			t.Fatalf("LoadFile() failed: %v", err)
@@ -293,7 +291,7 @@ var result = "ok"
 			}
 		}
 
-		interpreter, _ := NewInterpreter()
+		interpreter := newTestInterpreter(t)
 		tt.setup(interpreter)
 		if err := interpreter.LoadFile("test.mgo", []byte(tt.script)); err != nil {
 			t.Fatalf("LoadFile() failed: %v", err)
@@ -326,7 +324,7 @@ var result = "ok"
 			}
 		}
 
-		interpreter, _ := NewInterpreter()
+		interpreter := newTestInterpreter(t)
 		tt.setup(interpreter)
 		if err := interpreter.LoadFile("test.mgo", []byte(tt.script)); err != nil {
 			t.Fatalf("LoadFile() failed: %v", err)
@@ -368,10 +366,7 @@ var resultA = ToUpper("hello")`
 		scriptB := `package main
 var resultB = ToUpper("world") // This should fail
 `
-		interpreter, err := NewInterpreter()
-		if err != nil {
-			t.Fatalf("NewInterpreter() failed: %v", err)
-		}
+		interpreter := newTestInterpreter(t)
 		interpreter.Register("strings", map[string]any{"ToUpper": strings.ToUpper})
 
 		if err := interpreter.LoadFile("a.mgo", []byte(scriptA)); err != nil {
@@ -381,6 +376,7 @@ var resultB = ToUpper("world") // This should fail
 			t.Fatalf("LoadFile(b.mgo) failed: %v", err)
 		}
 
+		var err error
 		_, err = interpreter.Eval(context.Background())
 		if err == nil {
 			t.Fatal("expected an error but got none")
@@ -409,10 +405,7 @@ var greeting = ToUpper("hello")`
 		scriptB := `package main
 var result = greeting
 `
-		interpreter, err := NewInterpreter()
-		if err != nil {
-			t.Fatalf("NewInterpreter() failed: %v", err)
-		}
+		interpreter := newTestInterpreter(t)
 		interpreter.Register("strings", map[string]any{"ToUpper": strings.ToUpper})
 
 		if err := interpreter.LoadFile("a.mgo", []byte(scriptA)); err != nil {
@@ -422,6 +415,7 @@ var result = greeting
 			t.Fatalf("LoadFile(b.mgo) failed: %v", err)
 		}
 
+		var err error
 		_, err = interpreter.Eval(context.Background())
 		if err != nil {
 			t.Fatalf("Eval() returned an unexpected error: %v", err)

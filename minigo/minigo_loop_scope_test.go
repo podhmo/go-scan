@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
-	"github.com/podhmo/go-scan/minigo"
 	stdstrconv "github.com/podhmo/go-scan/minigo/stdlib/strconv"
 	stdstrings "github.com/podhmo/go-scan/minigo/stdlib/strings"
 )
@@ -21,10 +20,7 @@ type loopTestcase struct {
 }
 
 func (tt *loopTestcase) run(t *testing.T) {
-	interp, err := minigo.NewInterpreter()
-	if err != nil {
-		t.Fatalf("failed to create interpreter: %+v", err)
-	}
+	interp := newTestInterpreter(t)
 
 	for _, pkg := range tt.imports {
 		switch pkg {
@@ -57,6 +53,7 @@ func (tt *loopTestcase) run(t *testing.T) {
 		t.Fatalf("failed to load script: %+v\n-- script --\n%s", err, script)
 	}
 
+	var err error
 	_, err = interp.Eval(context.Background())
 	if err != nil {
 		t.Fatalf("failed to evaluate script: %+v\n-- script --\n%s", err, script)

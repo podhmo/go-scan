@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 
+	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/minigo"
 	json_ "github.com/podhmo/go-scan/minigo/stdlib/encoding/json"
 	fmt_ "github.com/podhmo/go-scan/minigo/stdlib/fmt"
@@ -18,7 +19,11 @@ import (
 
 // newInterpreterWithStdlib is a helper to create an interpreter and register standard libs.
 func newInterpreterWithStdlib() (*minigo.Interpreter, error) {
-	interp, err := minigo.NewInterpreter()
+	s, err := goscan.New(goscan.WithGoModuleResolver())
+	if err != nil {
+		return nil, err
+	}
+	interp, err := minigo.NewInterpreter(s)
 	if err != nil {
 		return nil, err
 	}

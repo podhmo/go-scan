@@ -4,7 +4,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/podhmo/go-scan/minigo"
 	"github.com/podhmo/go-scan/minigo/object"
 	stdbytes "github.com/podhmo/go-scan/minigo/stdlib/bytes"
 )
@@ -39,15 +38,13 @@ var spaced = "  \t hello \n  "
 var r_trim_space = string(bytes.TrimSpace([]byte(spaced)))
 
 `
-	interp, err := minigo.NewInterpreter()
-	if err != nil {
-		t.Fatalf("failed to create interpreter: %+v", err)
-	}
+	interp := newTestInterpreter(t)
 	stdbytes.Install(interp)
 
 	if err := interp.LoadFile("test.mgo", []byte(script)); err != nil {
 		t.Fatalf("failed to load script: %+v", err)
 	}
+	var err error
 	_, err = interp.Eval(context.Background())
 	if err != nil {
 		t.Fatalf("failed to evaluate script: %+v", err)

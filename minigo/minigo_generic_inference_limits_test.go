@@ -5,7 +5,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/podhmo/go-scan/minigo"
 	"github.com/podhmo/go-scan/minigo/object"
 )
 
@@ -40,12 +39,9 @@ var result = identity(nil)
 				t.Skip("Skipping test for known limitation of type inference.")
 			}
 
-			interp, err := minigo.NewInterpreter()
-			if err != nil {
-				t.Fatalf("NewInterpreter() error = %v", err)
-			}
+			interp := newTestInterpreter(t)
 
-			err = interp.LoadFile("test.mgo", []byte(tt.script))
+			err := interp.LoadFile("test.mgo", []byte(tt.script))
 			if err != nil {
 				if tt.wantErr && tt.wantErrorMsg != "" {
 					if strings.Contains(err.Error(), tt.wantErrorMsg) {

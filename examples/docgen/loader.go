@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 
+	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/examples/docgen/patterns"
 	"github.com/podhmo/go-scan/minigo"
 )
@@ -24,7 +25,11 @@ func LoadPatternsFromSource(source []byte, logger *slog.Logger) ([]patterns.Patt
 	// Step 1: Set up the minigo interpreter.
 	// The fix in `go-scan`'s locator allows the interpreter to correctly
 	// resolve imports via `replace` directives.
-	interp, err := minigo.NewInterpreter()
+	s, err := goscan.New(goscan.WithGoModuleResolver())
+	if err != nil {
+		return nil, fmt.Errorf("failed to create scanner: %w", err)
+	}
+	interp, err := minigo.NewInterpreter(s)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create minigo interpreter: %w", err)
 	}

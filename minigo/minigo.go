@@ -32,8 +32,6 @@ type Interpreter struct {
 	stdin  io.Reader
 	stdout io.Writer
 	stderr io.Writer
-
-	scannerOptions []goscan.ScannerOption
 }
 
 // Option is a functional option for configuring the Interpreter.
@@ -60,13 +58,6 @@ func WithStderr(w io.Writer) Option {
 	}
 }
 
-// WithScannerOptions provides a way to configure the underlying goscan.Scanner.
-func WithScannerOptions(opts ...goscan.ScannerOption) Option {
-	return func(i *Interpreter) {
-		i.scannerOptions = append(i.scannerOptions, opts...)
-	}
-}
-
 // WithGlobals allows injecting Go variables into the script's global scope.
 // The map key is the variable name in the script.
 // The value can be any Go variable, which will be made available via reflection.
@@ -80,8 +71,8 @@ func WithGlobals(globals map[string]any) Option {
 
 // New creates a new interpreter instance with default I/O streams.
 // It panics if initialization fails.
-func New(r io.Reader, stdout, stderr io.Writer) *Interpreter {
-	i, err := NewInterpreter(WithStdin(r), WithStdout(stdout), WithStderr(stderr))
+func New(scanner *goscan.Scanner, r io.Reader, stdout, stderr io.Writer) *Interpreter {
+	i, err := NewInterpreter(scanner, WithStdin(r), WithStdout(stdout), WithStderr(stderr))
 	if err != nil {
 		panic(err) // Should not happen with default options
 	}
@@ -89,8 +80,9 @@ func New(r io.Reader, stdout, stderr io.Writer) *Interpreter {
 }
 
 // NewInterpreter creates a new interpreter instance, configured with options.
-func NewInterpreter(options ...Option) (*Interpreter, error) {
+func NewInterpreter(scanner *goscan.Scanner, options ...Option) (*Interpreter, error) {
 	i := &Interpreter{
+		scanner:      scanner,
 		Registry:     object.NewSymbolRegistry(),
 		globalEnv:    object.NewEnvironment(),
 		specialForms: make(map[string]*evaluator.SpecialForm),
@@ -104,13 +96,6 @@ func NewInterpreter(options ...Option) (*Interpreter, error) {
 	for _, opt := range options {
 		opt(i)
 	}
-
-	i.scannerOptions = append(i.scannerOptions, goscan.WithGoModuleResolver())
-	scanner, err := goscan.New(i.scannerOptions...)
-	if err != nil {
-		return nil, fmt.Errorf("initializing scanner: %w", err)
-	}
-	i.scanner = scanner
 
 	i.eval = evaluator.New(evaluator.Config{
 		Fset:         i.scanner.Fset(),

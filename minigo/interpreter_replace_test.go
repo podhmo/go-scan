@@ -52,10 +52,7 @@ var Result = lib.Message
 	defer os.Chdir(wd)
 
 	// 4. Set up the interpreter and evaluate the script.
-	interp, err := minigo.NewInterpreter()
-	if err != nil {
-		t.Fatalf("NewInterpreter() failed: %+v", err)
-	}
+	interp := newTestInterpreter(t)
 
 	scriptContent := files["parent/child/main.go"]
 	_, err = interp.EvalString(scriptContent)

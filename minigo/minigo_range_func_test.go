@@ -213,10 +213,7 @@ var result = func() {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			interp, err := NewInterpreter()
-			if err != nil {
-				t.Fatalf("NewInterpreter() failed: %v", err)
-			}
+			interp := newTestInterpreter(t)
 			interp.GlobalEnvForTest().Set("panic", &object.Builtin{
 				Fn: func(ctx *object.BuiltinContext, pos token.Pos, args ...object.Object) object.Object {
 					if len(args) != 1 {
@@ -233,6 +230,7 @@ var result = func() {
 			if err := interp.LoadFile("test.mgo", []byte(tt.input)); err != nil {
 				t.Fatalf("LoadFile() failed: %v", err)
 			}
+			var err error
 			_, err = interp.Eval(context.Background())
 
 			if tt.wantErrorMsg != "" {

@@ -111,16 +111,13 @@ func main() {
 			}
 			r := &strings.Reader{}
 			var outbuf, errbuf strings.Builder
-			interpreter, err := minigo.NewInterpreter(
+			interpreter := newTestInterpreter(t,
 				minigo.WithStdin(r),
 				minigo.WithStdout(&outbuf),
 				minigo.WithStderr(&errbuf),
 			)
-			if err != nil {
-				t.Fatal(err)
-			}
 
-			err = interpreter.LoadGoSourceAsPackage("slices", string(src))
+			err := interpreter.LoadGoSourceAsPackage("slices", string(src))
 			if err != nil {
 				t.Fatal(err)
 			}

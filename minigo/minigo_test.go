@@ -348,6 +348,36 @@ func main() {
 	}
 }
 
+func TestInterpreter_TypedNilMethodValue(t *testing.T) {
+	input := `package main
+type MyStruct struct {}
+func (s *MyStruct) MyMethod() {}
+
+var method = (*MyStruct)(nil).MyMethod
+`
+	i := newTestInterpreter(t)
+
+	if err := i.LoadFile("test.go", []byte(input)); err != nil {
+		t.Fatalf("LoadFile() failed: %v", err)
+	}
+
+	var err error
+	_, err = i.Eval(context.Background())
+	if err != nil {
+		t.Fatalf("Eval() failed: %v", err)
+	}
+
+	val, ok := i.globalEnv.Get("method")
+	if !ok {
+		t.Fatalf("variable 'method' not found in environment")
+	}
+
+	_, ok = val.(*object.GoMethodValue)
+	if !ok {
+		t.Fatalf("method is not GoMethodValue. got=%T (%+v)", val, val)
+	}
+}
+
 func TestInterpreter_UntypedMapInSlice(t *testing.T) {
 	input := `package main
 var data = []map[string]int{

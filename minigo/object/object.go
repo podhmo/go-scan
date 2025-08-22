@@ -52,6 +52,8 @@ const (
 	PACKAGE_OBJ              ObjectType = "PACKAGE"
 	GO_VALUE_OBJ             ObjectType = "GO_VALUE"
 	GO_TYPE_OBJ              ObjectType = "GO_TYPE"
+	TYPED_NIL_OBJ            ObjectType = "TYPED_NIL"
+	GO_METHOD_VALUE_OBJ      ObjectType = "GO_METHOD_VALUE"
 	ERROR_OBJ                ObjectType = "ERROR"
 	AST_NODE_OBJ             ObjectType = "AST_NODE"
 
@@ -711,6 +713,36 @@ func (g *GoValue) Inspect() string {
 	}
 	// For other types, Interface() is safe.
 	return fmt.Sprintf("%v", g.Value.Interface())
+}
+
+// --- TypedNil Object ---
+
+// TypedNil represents a nil value that still has type information.
+// For example, (*MyStruct)(nil).
+type TypedNil struct {
+	TypeObject Object // The type of the nil value, e.g., *PointerType
+}
+
+// Type returns the type of the TypedNil object.
+func (tn *TypedNil) Type() ObjectType { return TYPED_NIL_OBJ }
+
+// Inspect returns a string representation of the TypedNil's value.
+func (tn *TypedNil) Inspect() string { return "nil" }
+
+// --- GoMethodValue Object ---
+
+// GoMethodValue represents a method looked up from a type, but not bound to an instance.
+// e.g., (*MyType).MyMethod
+type GoMethodValue struct {
+	Fn *Function
+}
+
+// Type returns the type of the GoMethodValue object.
+func (mv *GoMethodValue) Type() ObjectType { return GO_METHOD_VALUE_OBJ }
+
+// Inspect returns a string representation of the method value.
+func (mv *GoMethodValue) Inspect() string {
+	return fmt.Sprintf("method value %s()", mv.Fn.Name.String())
 }
 
 // --- Error Object ---

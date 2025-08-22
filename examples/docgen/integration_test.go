@@ -15,14 +15,6 @@ import (
 	"github.com/podhmo/go-scan/scantest"
 )
 
-func newTestLogger(w io.Writer) *slog.Logger {
-	level := slog.LevelWarn
-	if *debug {
-		level = slog.LevelDebug
-	}
-	return slog.New(slog.NewJSONHandler(w, &slog.HandlerOptions{Level: level}))
-}
-
 func TestDocgen_WithFnPatterns(t *testing.T) {
 	// This test reproduces the scenario from docs/trouble-docgen-minigo-import.md.
 	// It verifies that docgen can load a minigo configuration script (`patterns.go`)

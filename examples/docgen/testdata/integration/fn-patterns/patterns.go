@@ -2,7 +2,6 @@ package patterns
 
 import (
 	"github.com/podhmo/go-scan/examples/docgen/patterns"
-	"github.com/podhmo/go-scan/examples/docgen/testdata/fn-patterns/api"
 )
 
 var Patterns = []patterns.PatternConfig{

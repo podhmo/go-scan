@@ -9,10 +9,10 @@ import (
 // Patterns defines the custom patterns for the docgen tool.
 var Patterns = []patterns.PatternConfig{
 	{
-		Name: "CustomJSONResponse",
+		Name:        "CustomJSONResponse",
 		Description: "Handles custom JSON responses.",
-		Fn: helpers.RespondJSON,
-		Type: patterns.ResponseBody,
-		ArgIndex: 1,
+		Fn:          helpers.RespondJSON,
+		Type:        patterns.ResponseBody,
+		ArgIndex:    1,
 	},
 }

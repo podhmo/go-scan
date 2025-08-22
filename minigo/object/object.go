@@ -758,6 +758,7 @@ type GoSourceFunction struct {
 	Fn      *scanner.FunctionInfo
 	PkgPath string
 	DefEnv  *Environment
+	FScope  *FileScope // The unified file scope of the package where the function was defined.
 }
 
 // Type returns the type of the GoSourceFunction object.

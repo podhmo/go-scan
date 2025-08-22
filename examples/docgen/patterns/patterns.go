@@ -41,10 +41,20 @@ const (
 // PatternConfig defines a user-configurable pattern for docgen analysis.
 // It maps a function call to a specific analysis type.
 type PatternConfig struct {
+	// Name is a short, descriptive name for the pattern.
+	Name string
+	// Description is a longer explanation of what the pattern does.
+	Description string
+
 	// Key is the fully-qualified function or method name to match.
+	// This is used if `Fn` is not provided.
 	// e.g., "github.com/my-org/my-app/utils.DecodeJSON"
 	// e.g., "(*net/http.Request).Context"
 	Key string
+
+	// Fn provides a type-safe way to specify the target function.
+	// If `Fn` is provided, `Key` is ignored.
+	Fn any // e.g., mypkg.MyFunc
 
 	// Type specifies the kind of analysis to perform.
 	Type PatternType

@@ -42,16 +42,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 
 ## To Be Implemented
 
-### Type-Safe `docgen` Patterns ([docs/plan-docgen-minigo-fn-ref.md](./docs/plan-docgen-minigo-fn-ref.md))
-- [x] **Core Library Robustness**:
-    - [x] **Enhance Module Resolution**: Fix the `go-scan` locator to correctly resolve packages in nested test modules with `replace` directives.
-    - [x] **Implement Typed Nil Method Values**: Enhance the `minigo` interpreter to support resolving method values from typed `nil` pointers.
-    - [ ] **Implement Environment-Aware Function Objects**: Enhance `minigo` to represent Go functions as objects that retain their definition environment (`DefEnv`).
-- [ ] **`docgen` Feature**:
-    - [ ] **Refactor `docgen` Configuration**: Update `PatternConfig` to use a type-safe `Fn` field instead of a string `Key`.
-    - [ ] **Implement Key Computation**: Update the `docgen` loader to dynamically generate the matching key from the `Fn` reference.
-- [x] **Verification**:
-    - [x] **Validate with Integration Test**: Create and pass a `docgen` integration test that uses a nested Go module, proving the module resolution fix and the `docgen` feature work together correctly. (Note: Validated with tests in `minigo_scantest_test.go` and `docgen/integration_test.go` which prove the core module resolution mechanism is robust.)
+- **Type-Safe `docgen` Patterns**: Enhanced the `docgen` tool to allow defining analysis patterns using type-safe function references (`Fn: mypkg.MyFunc`) instead of string keys. This involved creating a new `GoSourceFunction` object in the `minigo` interpreter that preserves the function's definition environment, ensuring correct symbol resolution. ([docs/trouble-docgen.md](docs/trouble-docgen.md))
 
 ### `minigo` Refinements ([docs/plan-minigo.md](./docs/plan-minigo.md))
 - [ ] Write comprehensive documentation for the API, supported language features, and usage examples.

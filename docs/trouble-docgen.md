@@ -1,113 +1,71 @@
-# Trouble: `op.Parameters` are lost during analysis (In Progress)
+# Trouble Report: Type-Safe Docgen Patterns Implementation
 
-## Summary
-This document details an ongoing investigation into a subtle bug where OpenAPI parameters are not being correctly added to the final specification, even though the analysis logic appears to be correct.
+This document outlines the state of the "Type-Safe docgen Patterns" task, which is currently in a work-in-progress state. The core feature has been implemented and a new integration test for it passes, but it has introduced regressions in the existing `minigo` test suite.
 
-## Context
-The goal is to extend the `docgen` custom pattern system to support path, query, and header parameters. The work so far includes:
-1.  Fixing a major state propagation bug where the `*openapi.Operation` object was not being returned correctly from `analyzeHandlerBody`.
-2.  Adding support for a `HeaderParameter` pattern type.
-3.  Creating a new test case (`full-parameters`) to exercise the new functionality.
-4.  Correcting the intrinsic keys used in the test case to ensure the custom pattern handlers are called.
+## Summary of Changes
 
-## Current Problem
-A very strange bug is occurring. Debug logging has confirmed the following:
-- The correct intrinsic handler (`patterns.HandleCustomParameter`) is being called when the analyzer finds a helper function like `GetQueryParam()`.
-- Inside this handler, a new `openapi.Parameter` object is created.
-- This new parameter is appended to the `Parameters` slice of the current `openapi.Operation` object (`op.Parameters = append(op.Parameters, param)`).
-- Logging confirms that the length of the `op.Parameters` slice increases after the `append` call.
-- The `*openapi.Operation` object is correctly returned up the call stack.
+The goal of this task was to allow users of the `docgen` tool to define analysis patterns using a type-safe function reference (`Fn: mypkg.MyFunc`) instead of a fragile, string-based key.
 
-Despite all of this, the final generated `openapi.json` file is **missing the `parameters` section entirely**. The modifications to the slice are being lost somewhere between the end of the intrinsic's execution and the final JSON serialization.
+This was accomplished through the following changes:
 
-## Hypothesis
-The cause is not yet known, but here are the current theories:
-1.  **Slice `append` semantics**: There might be a subtle issue with how `append` is used. If `append` reallocates the underlying array of the `Parameters` slice, it returns a new slice header. If this new slice header is not correctly assigned back, the change will be lost. However, the code `op.Parameters = append(...)` seems to be correct.
-2.  **Hidden object copy**: There may be a copy of the `openapi.Operation` object being made somewhere that is not obvious from the code. If the intrinsics are modifying a copy, the original object would remain unchanged. This seems unlikely given that the object is passed by pointer and managed on a stack.
-3.  **JSON marshaling issue**: It's possible the `json.Marshal` step is ignoring the `Parameters` field for some reason (e.g., a `json:"-"` tag). A quick check of the `openapi.Operation` struct should confirm or deny this.
+1.  **`minigo` Interpreter Enhancement (`minigo/object/object.go`, `minigo/evaluator/evaluator.go`):**
+    *   A new `object.GoSourceFunction` type was created. This object represents a Go function loaded from source code and, crucially, stores a reference to the environment (`DefEnv`) in which it was defined.
+    *   The evaluator was updated to use this new object. When a `GoSourceFunction` is called from a script, the evaluator now uses the stored `DefEnv` to resolve other symbols (variables, functions, etc.) from the original package. This is the key mechanism that allows the type-safe `Fn` pattern to work.
+    *   The package loading logic was also improved to correctly process global `var` declarations, in addition to `const` and `func`.
 
-Further investigation is needed. The next step is to examine the `openapi.Operation` struct and to trace the `op` object's pointer address at various points in the execution to see if it ever changes unexpectedly.
+2.  **`docgen` Refactoring (`examples/docgen/patterns/patterns.go`, `examples/docgen/loader.go`):**
+    *   The `patterns.PatternConfig` struct was updated to include a new `Fn any` field.
+    *   The pattern loader (`loader.go`) was updated to inspect this `Fn` field. If it contains a `*minigo.GoSourceFunction`, it dynamically constructs the fully-qualified key (e.g., `path/to/pkg.MyFunc`) that the analyzer uses for matching.
 
-# [RESOLVED] Trouble: Custom Intrinsics for Intra-Module Helpers Not Firing
+3.  **New Integration Test (`examples/docgen/integration_test.go`):**
+    *   A new end-to-end test, `TestDocgen_WithFnPatterns_FullAnalysis`, was added.
+    *   This test includes a new test module (`testdata/integration/fn-patterns-full`) with a sample API, a helper function, and a `patterns.go` config that uses the new `Fn` field.
+    *   It verifies that the `docgen` tool can correctly analyze the API using the type-safe pattern and produce the expected OpenAPI JSON output, which is validated against a golden file.
+    *   **This new test passes.**
 
-## Summary
-This section documents a resolved bug where custom patterns (intrinsics) for helper functions were not being triggered when the helper function resided in a different package within the same Go module.
+## Current Problem: `minigo` Regressions
 
-## Initial State & Problem
-The investigation began with the `TestDocgen_newFeatures` test failing. The test was designed to verify that `docgen` could analyze handlers in a `main` package that called helper functions (e.g., `helpers.RenderJSON`) in a `helpers` sub-package. The custom intrinsics tied to these helper functions were not being called, resulting in an incomplete OpenAPI specification.
+While the new functionality works as expected, the changes to the `minigo` evaluator have caused several existing `minigo` tests to fail.
 
-The investigation was complicated by the fact that the test case itself was broken and missing its source files. After reconstructing the test case based on this document, the bug was successfully reproduced.
+### Failing Test Output
 
-## Root Cause Analysis
-After extensive debugging, the root cause was identified in the `symgo` interpreter.
+```
+--- FAIL: TestStdlib_slices (0.01s)
+    minigo_stdlib_custom_test.go:307: failed to evaluate script: runtime error: wrong number of type arguments. got=0, want=2
+		test.mgo:5:10:
+--- FAIL: TestStdlib_slices_Sort (0.01s)
+    minigo_stdlib_custom_test.go:780: failed to evaluate script: runtime error: wrong number of type arguments. got=0, want=2
+		test.mgo:5:9:
+--- FAIL: TestTransitiveImport (0.00s)
+    minigo_transitive_import_test.go:30: eval failed: runtime error: identifier not found: pkgb
+		/app/minigo/testdata/pkga/pkga.go:6:22:
+			return "A says: " + pkgb.FuncB()
+		main.go:7:10:	in FuncA
+		:0:0:	in main
 
-The `docgen` analyzer works by evaluating isolated function bodies (`ast.BlockStmt`) for each HTTP handler. However, when `symgo.Interpreter.Eval` was called with a `BlockStmt`, it created a new, empty evaluation environment. This environment was not populated with the import declarations from the file that contained the handler.
-
-As a result, when the evaluator encountered a call to `helpers.RenderJSON`, it could not resolve the `helpers` identifier to its full import path (`new-features/helpers`). This caused the intrinsic lookup to fail, as the key (`new-features/helpers.RenderJSON`) could not be constructed.
-
-## Solution
-The bug was fixed by modifying `symgo.Interpreter.Eval`. Before evaluation starts, the interpreter's global environment is now pre-populated with the import declarations from the package containing the code to be analyzed. This ensures that even when an isolated code block is evaluated, the evaluator has the necessary context to resolve imported packages and successfully look up the associated intrinsics.
-
-This fix was implemented and verified, and all related tests now pass.
-
-# Future Improvements: Debuggability
-
-During the investigation of the intra-module intrinsic bug, it became clear that debugging the symbolic execution process is difficult. It was hard to prove whether a specific AST node was being visited by the evaluator without adding temporary logging statements.
-
-As a future improvement, `symgo` could be enhanced with a built-in tracing or visiting mechanism. For example, a `Tracer` interface could be passed to the `Interpreter`:
-
-```go
-type Tracer interface {
-    Visit(node ast.Node)
-}
+        stderr:
+--- FAIL: TestTransitiveImportMultiFilePackage (0.01s)
+    minigo_transitive_import_test.go:69: eval failed: runtime error: identifier not found: pkgf
+		/app/minigo/testdata/pkge/pkge1.go:6:23:
+			return "E1 says: " + pkgf.FuncF()
+		/app/minigo/testdata/pkge/pkge2.go:4:23:	in FuncE1
+			return "E2 says: " + FuncE1()
+		main.go:7:10:	in FuncE2
+		:0:0:	in main
 ```
 
-The `Evaluator` would then call `tracer.Visit(node)` for every node it evaluates. A test or a debug mode in a tool like `docgen` could provide a tracer implementation that records all visited nodes. This would allow a developer to easily compare the set of all nodes in an AST (`ast.Inspect`) with the set of nodes the evaluator actually visited, quickly identifying any missed branches or skipped nodes. This would have significantly accelerated the debugging process for the issue described above.
+### Analysis of Failures
 
-# [Implemented] Proving the `Tracer`'s Utility
+1.  **`TestStdlib_slices` & `TestStdlib_slices_Sort`**: The error `wrong number of type arguments. got=0, want=2` strongly suggests that the changes made to support generic functions in the evaluator have broken the type inference for the standard library's generic `slices.Sort` function. The evaluator is failing to automatically infer the type arguments for the slice being sorted.
 
-To validate the effectiveness of the newly implemented `Tracer`, we intentionally recreated a bug similar to the one that motivated its creation.
+2.  **`TestTransitiveImport` & `TestTransitiveImportMultiFilePackage`**: The error `identifier not found: pkgb` (and `pkgf`) indicates a problem with symbol resolution across packages. The changes to how imported functions are handled (`GoSourceFunction` and `DefEnv`) seem to have interfered with the ability to resolve symbols from a package that is imported transitively (i.e., a dependency of a dependency).
 
-## The Bug
-We modified the `symgo` evaluator's `evalIfStmt` function to deliberately *skip* the `else` block of an `if-else` statement.
+## Next Steps
 
-```go
-// In symgo/evaluator/evaluator.go
-func (e *Evaluator) evalIfStmt(...) object.Object {
-    // ...
-    // Evaluate the main body.
-    e.Eval(ctx, n.Body, ...)
+The immediate next step for the next agent is to fix these regressions in the `minigo` package. The core logic for the type-safe patterns is sound, but it cannot be merged until the `minigo` test suite is fully passing.
 
-    // Intentionally commented out to create the bug:
-    // if n.Else != nil {
-    // 	e.Eval(ctx, n.Else, ...)
-    // }
-    // ...
-}
-```
-
-## The Test Case
-We created a new test case (`TestDocgen_withIntentionalBug`) that analyzes a simple handler containing an `if-else` statement:
-
-```go
-// in examples/docgen/testdata/if-else-bug/api.go
-func GetWithIf(w http.ResponseWriter, r *http.Request) {
-	if r.Method == "POST" {
-		w.WriteHeader(http.StatusCreated)
-	} else {
-		w.WriteHeader(http.StatusOK) // This is in the 'else' block
-	}
-}
-```
-
-## The Verification
-The test was configured to use a `recordingTracer` that logs the position of every AST node visited by the evaluator. The test logic performs the following steps:
-1.  Analyzes the code with the `Analyzer` (which contains the buggy `symgo` engine).
-2.  Finds the AST for the `w.WriteHeader(http.StatusOK)` expression, which is inside the `else` block.
-3.  Checks if the tracer's log of visited node positions contains the position of our target expression.
-
-**With the bug present**, the test confirmed that the tracer **did not** visit the node inside the `else` block, successfully identifying the part of the code that was being skipped by the evaluator.
-
-**After fixing the bug** (by uncommenting the `else` block evaluation), the exact same test was run again. This time, the test confirmed that the tracer **did** visit the node, and the test passed.
-
-This exercise demonstrates that the `Tracer` is a powerful and effective tool for diagnosing issues where the symbolic execution engine might be incorrectly skipping branches or nodes, just as hypothesized.
+**Recommended approach:**
+1.  Focus on the failing tests in `minigo_stdlib_custom_test.go` and `minigo_transitive_import_test.go`.
+2.  Debug the `minigo/evaluator/evaluator.go` file to understand why the type inference and symbol resolution are failing in these specific cases.
+3.  Modify the evaluator to fix the regressions while ensuring that the new test, `TestDocgen_WithFnPatterns_FullAnalysis`, continues to pass.
+4.  Run `cd /app && go test ./...` to confirm that all tests are passing.

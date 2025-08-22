@@ -43,14 +43,15 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 ## To Be Implemented
 
 ### Type-Safe `docgen` Patterns ([docs/plan-docgen-minigo-fn-ref.md](./docs/plan-docgen-minigo-fn-ref.md))
-- [ ] **`minigo` Object**: Define the `GoSourceFunction` struct in `minigo/object/object.go`.
-- [ ] **`minigo` Evaluator**: Update `findSymbolInPackage` and `evalSelectorExpr` in `minigo/evaluator/evaluator.go` to create `GoSourceFunction` objects with the correct `DefEnv`.
-- [ ] **`minigo` Evaluator**: Update `applyFunction` in `minigo/evaluator/evaluator.go` to correctly use the `DefEnv` when executing a `GoSourceFunction`.
-- [ ] **`minigo` Test**: Add a unit test to verify that a `GoSourceFunction` can correctly resolve symbols from its own package via its `DefEnv`.
-- [ ] **`docgen` Struct**: Update `PatternConfig` in `examples/docgen/patterns/patterns.go` to use the `Fn any` field.
-- [ ] **`docgen` Loader**: Update `convertConfigsToPatterns` in `examples/docgen/loader.go` to compute the key from the `GoSourceFunction` object.
-- [ ] **`docgen` Test**: Implement the new programmatic testing strategy in `examples/docgen/main_test.go`.
-- [ ] **Submit**: Once all tests pass, submit the completed feature.
+- [ ] **Core Library Robustness**:
+    - [ ] **Enhance Module Resolution**: Fix the `go-scan` locator to correctly resolve packages in nested test modules with `replace` directives.
+    - [ ] **Implement Typed Nil Method Values**: Enhance the `minigo` interpreter to support resolving method values from typed `nil` pointers.
+    - [ ] **Implement Environment-Aware Function Objects**: Enhance `minigo` to represent Go functions as objects that retain their definition environment (`DefEnv`).
+- [ ] **`docgen` Feature**:
+    - [ ] **Refactor `docgen` Configuration**: Update `PatternConfig` to use a type-safe `Fn` field instead of a string `Key`.
+    - [ ] **Implement Key Computation**: Update the `docgen` loader to dynamically generate the matching key from the `Fn` reference.
+- [ ] **Verification**:
+    - [ ] **Validate with Integration Test**: Create and pass a `docgen` integration test that uses a nested Go module, proving the module resolution fix and the `docgen` feature work together correctly.
 
 ### `minigo` Refinements ([docs/plan-minigo.md](./docs/plan-minigo.md))
 - [ ] Write comprehensive documentation for the API, supported language features, and usage examples.

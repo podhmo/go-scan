@@ -1,95 +1,75 @@
-# Plan: Implementing Type-Safe Function References in `docgen`
+# Plan: Implementing Type-Safe `docgen` Patterns via a Robust Library
 
 ## 1. Objective
 
-The primary goal of this task is to refactor the `docgen` tool's custom pattern configuration to be type-safe and developer-friendly. The current method relies on string-based keys to identify target functions and methods (e.g., `Key: "my/pkg.MyFunc"`), which is fragile and error-prone.
+The primary goal is to refactor `docgen`'s custom pattern configuration to be type-safe and developer-friendly. This will be achieved by replacing string-based keys (e.g., `Key: "my/pkg.MyFunc"`) with direct function references (e.g., `Fn: mypkg.MyFunc`) in the `minigo` configuration script.
 
-This will be replaced by a mechanism that allows developers to use direct function and method references in the `minigo` configuration script (e.g., `Fn: mypkg.MyFunc`).
+A core principle of this task is to **enhance the robustness of the underlying `go-scan` and `minigo` libraries**. The goal is not to find test-specific workarounds but to improve the libraries so they can correctly handle complex, real-world Go module structures, such as the nested modules often used in testing environments.
 
-## 2. Investigation & Analysis
+## 2. Investigation & Analysis: The Root Cause
 
-A thorough investigation, including analysis of previous failed attempts, has been conducted to understand the core challenges.
+Previous attempts to implement this feature were blocked by a critical issue: the `minigo` interpreter, powered by `go-scan`, failed to resolve package imports within a nested Go module set up for testing. The error `undefined: api.API` occurred because the scanner could not find a package within its own module context when run via an external `go test` command.
 
-### 2.1. The `minigo` Interpreter Context
+This is not a testing anomaly but a fundamental limitation in the library's module resolution logic. The correct path forward is to fix this root cause.
 
-The `minigo` script that defines the patterns runs in its own isolated context. It does not automatically have knowledge of the Go types or functions from the user's code that is being analyzed. A simple approach, such as passing a string for a method name alongside a typed `nil` value, fails because the interpreter cannot resolve the type identifier in the first place. Therefore, the interpreter itself must be enhanced to bridge this context gap.
+### 2.1. The `minigo` Interpreter's Role
 
-### 2.2. The "Typed Nil" Problem for Method References
+The interpreter must be enhanced to correctly represent Go functions and methods as first-class objects. This involves:
 
-A key requirement is to support method references, such as `Fn: (*MyType)(nil).MyMethod`. To achieve this, the `minigo` interpreter must be able to handle expressions on `nil` pointers without losing their type information. The standard `nil` value in Go is untyped, but for this to work, we need a "typed nil".
+-   **Typed Nil Pointers**: To support method references like `(*MyType)(nil).MyMethod`, the interpreter must be able to handle `nil` pointers that retain their type information.
+-   **Definition Environment (`DefEnv`)**: To ensure that functions can be symbolically executed correctly, any object representing a Go function must carry a reference to the environment of the package in which it was defined. This `DefEnv` is essential for resolving other symbols (functions, variables) from the same package during the function's analysis.
 
-The solution requires modifying the `minigo` evaluator to recognize when a selector expression (e.g., `.MyMethod`) is being applied to a `nil` pointer that has a known Go type. Instead of producing a nil-pointer-dereference error, the evaluator must look up the method on the type itself and return a new object representing that method value.
+## 3. Revised Implementation Plan
 
-### 2.3. The Crucial Role of the Definition Environment (`DefEnv`)
+This plan prioritizes fixing the core library issues to support the `docgen` feature naturally.
 
-The most critical insight from past attempts is the importance of a function's execution environment. When a Go function from source is represented as an object within the `minigo` interpreter, it is not enough to simply store a reference to its AST. It **must** also store a reference to the environment of the package in which it was defined (`DefEnv`).
+### 3.1. Core Library Enhancement: Robust Module Resolution
 
-When `symgo` (the symbolic execution engine) later "calls" this function, it must do so within that function's original `DefEnv`. If this context is lost, the function's body will be unable to resolve any other functions, variables, or types from its own package, leading to cascading "identifier not found" errors. Prior attempts failed precisely because this `DefEnv` was not correctly captured and propagated.
+This is the most critical task. The goal is to make the library's behavior match the standard Go toolchain's.
 
-## 3. Detailed Implementation Plan
+-   **Component**: `go-scan` and `locator` packages.
+-   **Action**: Investigate and fix the module resolution logic. The system must be able to correctly locate packages when a scan is initiated from a parent module (`go test` at root) but operates within a nested submodule that uses `replace` directives (e.g., in `testdata`). This will eliminate the test-blocking errors.
 
-The implementation will proceed by first enhancing `minigo` and then updating `docgen` to use the new capabilities.
+### 3.2. Core Library Enhancement: `minigo` Interpreter
 
-### 3.1. Enhance `minigo` to Represent Go Source Functions
+-   **`minigo` Object Model (`minigo/object/object.go`)**:
+    -   Implement a `GoSourceFunction` object to represent a Go function. This object must store the function's metadata (`*scanner.FunctionInfo`), its full package path, and its definition environment (`DefEnv`).
+    -   Implement a `GoMethodValue` object to represent a method resolved from a type.
 
-A new, context-aware object will be introduced to represent a Go function.
+-   **`minigo` Evaluator (`minigo/evaluator/evaluator.go`)**:
+    -   Update the evaluator's selector logic (`evalSelectorExpr`) to handle method references on typed `nil` pointers, creating `GoMethodValue` objects.
+    -   Update the symbol resolution logic (`findSymbolInPackage`) to create `GoSourceFunction` objects, ensuring the `DefEnv` is captured.
+    -   Update the function application logic (`applyFunction`) to use the `DefEnv` when evaluating a `GoSourceFunction`, ensuring correct symbol resolution within the function body.
 
-- **File**: `minigo/object/object.go`
-- **Action**:
-    1.  Define a new object type: `GoSourceFunction`.
-    2.  This struct must encapsulate all necessary context:
-        ```go
-        type GoSourceFunction struct {
-            PkgPath string                 // The full package path, e.g., "github.com/my/pkg/api"
-            Func    *scanner.FunctionInfo  // Metadata from go-scan (AST, name, etc.)
-            DefEnv  *object.Environment    // CRITICAL: The environment of the package where the function was defined.
-        }
-        ```
-    3.  Implement the `object.Object` interface (`Type()` and `Inspect()` methods) for `GoSourceFunction`.
+### 3.3. `docgen` Feature Implementation
 
-### 3.2. Enhance the `minigo` Evaluator
+With a robust library backend, the `docgen` changes become straightforward.
 
-The evaluator must be taught how to create and handle the new `GoSourceFunction` objects.
+-   **`docgen` Configuration (`examples/docgen/patterns/patterns.go`)**:
+    -   Refactor `PatternConfig` to remove the string `Key` and add the `Fn any` field.
 
-- **File**: `minigo/evaluator/evaluator.go`
-- **Actions**:
-    1.  **Symbol Resolution**: Modify the `findSymbolInPackage` function. When it resolves a function from a `goscan.PackageInfo`, it must create and return a `*object.GoSourceFunction`, ensuring it correctly captures and stores the package's environment (`pkg.Env`) in the `DefEnv` field.
-    2.  **Method Resolution**: Update the selector logic in `evalSelectorExpr`. When it resolves a method on a typed `nil` pointer, it should also create and return a `GoSourceFunction` representing that method, again ensuring the `DefEnv` of the receiver type's package is captured.
-    3.  **Function Application**: Modify `applyFunction`. Add a `case` to handle `*object.GoSourceFunction`. When this type is called, the evaluator must use the captured `fn.DefEnv` as the base environment for evaluating the function's body. This is the key to fixing the symbol resolution issue.
+-   **`docgen` Loader (`examples/docgen/loader.go`)**:
+    -   Update `convertConfigsToPatterns` to process the `Fn` field. It will inspect the `GoSourceFunction` or `GoMethodValue` object received from `minigo` and use its properties (package path, name) to dynamically construct the internal matching key.
 
-### 3.3. Update `docgen` Pattern Loading
+## 4. Revised Testing Strategy
 
-The `docgen` tool will be updated to leverage the new, richer objects from `minigo`.
+The testing strategy is to **validate the library's robustness** by making the original, file-based test case work correctly. We will *not* use workarounds like programmatic injection.
 
-- **File**: `examples/docgen/patterns/patterns.go`
-- **Action**:
-    -   Modify the `PatternConfig` struct. Remove the string `Key` field and replace it with `Fn any`.
+-   **`docgen` Integration Test (`examples/docgen/main_test.go`)**:
+    -   Create an integration test that uses a file-based, nested Go module in `testdata`. This test will have its own `go.mod` with a `replace` directive.
+    -   This test will fail initially due to the module resolution bug.
+    -   The test will be used to validate the fix in the `go-scan`/`locator` packages. Once the core library is fixed, this test should pass without any special configuration, proving the solution is robust.
 
-- **File**: `examples/docgen/loader.go`
-- **Action**:
-    -   Modify the `convertConfigsToPatterns` function. It will now receive `PatternConfig` structs where `Fn` holds a `*object.GoSourceFunction`.
-    -   Compute the internal matching `Key` required by `symgo` by reliably combining the `PkgPath` and `Func.Name` from the received `GoSourceFunction` object. This eliminates the need for reflection hacks like `runtime.FuncForPC`.
+## 5. High-Level Task List
 
-## 4. Testing Strategy
+-   **Core Library Robustness**:
+    -   [ ] **Enhance Module Resolution**: Fix the `go-scan` locator to correctly resolve packages in nested test modules with `replace` directives.
+    -   [ ] **Implement Typed Nil Method Values**: Enhance the `minigo` interpreter to support resolving method values from typed `nil` pointers.
+    -   [ ] **Implement Environment-Aware Function Objects**: Enhance `minigo` to represent Go functions as objects that retain their definition environment (`DefEnv`).
 
-Previous attempts were blocked by module resolution issues in file-based tests. The new strategy will use a more hermetic, programmatic approach to avoid these environmental problems.
+-   **`docgen` Feature**:
+    -   [ ] **Refactor `docgen` Configuration**: Update `PatternConfig` to use a type-safe `Fn` field instead of a string `Key`.
+    -   [ ] **Implement Key Computation**: Update the `docgen` loader to dynamically generate the matching key from the `Fn` reference.
 
-- **File**: `examples/docgen/main_test.go`
-- **Action**:
-    1.  Create a new test function (`TestDocgen_WithFnPatterns_Programmatic`).
-    2.  Define required API types and functions (e.g., `type api.User`, `func api.SendJSON(...)`) as local helper types/funcs inside the test file itself.
-    3.  Construct the `minigo` pattern script as a multi-line string within the test.
-    4.  Use the `minigo.WithGlobals` interpreter option to inject the helper functions and types from the test directly into the `minigo` script's global scope. This completely bypasses all filesystem and Go module resolution issues.
-    5.  Execute the `docgen` analysis using this interpreter.
-    6.  Verify the generated OpenAPI output against a golden file.
-
-## 5. Task List
-
-1.  **`minigo` Object**: Define the `GoSourceFunction` struct in `minigo/object/object.go`.
-2.  **`minigo` Evaluator**: Update `findSymbolInPackage` and `evalSelectorExpr` in `minigo/evaluator/evaluator.go` to create `GoSourceFunction` objects with the correct `DefEnv`.
-3.  **`minigo` Evaluator**: Update `applyFunction` in `minigo/evaluator/evaluator.go` to correctly use the `DefEnv` when executing a `GoSourceFunction`.
-4.  **`minigo` Test**: Add a unit test to verify that a `GoSourceFunction` can correctly resolve symbols from its own package via its `DefEnv`.
-5.  **`docgen` Struct**: Update `PatternConfig` in `examples/docgen/patterns/patterns.go` to use the `Fn any` field.
-6.  **`docgen` Loader**: Update `convertConfigsToPatterns` in `examples/docgen/loader.go` to compute the key from the `GoSourceFunction` object.
-7.  **`docgen` Test**: Implement the new programmatic testing strategy in `examples/docgen/main_test.go`.
-8.  **Submit**: Once all tests pass, submit the completed feature.
+-   **Verification**:
+    -   [ ] **Validate with Integration Test**: Create and pass a `docgen` integration test that uses a nested Go module, proving the module resolution fix and the `docgen` feature work together correctly.

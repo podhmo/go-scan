@@ -26,16 +26,19 @@ var (
 	debug  = flag.Bool("debug", false, "enable debug logging")
 )
 
+func newTestLogger(w io.Writer) *slog.Logger {
+	level := slog.LevelWarn
+	if *debug {
+		level = slog.LevelDebug
+	}
+	return slog.New(slog.NewJSONHandler(w, &slog.HandlerOptions{Level: level}))
+}
+
 func TestDocgen(t *testing.T) {
 	const sampleAPIPath = "github.com/podhmo/go-scan/examples/docgen/sampleapi"
 
-	logLevel := slog.LevelWarn
-	if *debug {
-		logLevel = slog.LevelDebug
-	}
-
 	// Setup: Run the analysis once and reuse the result for all sub-tests.
-	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel}))
+	logger := newTestLogger(os.Stderr)
 	s, err := goscan.New(
 		goscan.WithGoModuleResolver(),
 		goscan.WithLogger(logger),
@@ -126,11 +129,7 @@ func TestDocgen_withCustomPatterns(t *testing.T) {
 	}
 	defer os.Chdir(wd)
 
-	logLevel := slog.LevelWarn
-	if *debug {
-		logLevel = slog.LevelDebug
-	}
-	logger := slog.New(slog.NewJSONHandler(io.Discard, &slog.HandlerOptions{Level: logLevel}))
+	logger := newTestLogger(io.Discard)
 
 	// Load custom patterns from the config file.
 	// Note: The path is relative to the new CWD.
@@ -228,11 +227,7 @@ func TestDocgen_fullParameters(t *testing.T) {
 	}
 	defer os.Chdir(wd)
 
-	logLevel := slog.LevelWarn
-	if *debug {
-		logLevel = slog.LevelDebug
-	}
-	logger := slog.New(slog.NewJSONHandler(io.Discard, &slog.HandlerOptions{Level: logLevel}))
+	logger := newTestLogger(io.Discard)
 
 	// Create a scanner configured to find the new module.
 	s, err := goscan.New(
@@ -348,11 +343,7 @@ func TestDocgen_newFeatures(t *testing.T) {
 	patternsFile := filepath.Join(moduleDir, "patterns.go")
 	goldenFile := filepath.Join(moduleDir, "new-features.golden.json")
 
-	logLevel := slog.LevelWarn
-	if *debug {
-		logLevel = slog.LevelDebug
-	}
-	logger := slog.New(slog.NewJSONHandler(io.Discard, &slog.HandlerOptions{Level: logLevel}))
+	logger := newTestLogger(io.Discard)
 
 	// Create a scanner configured to find the new module.
 	s, err := goscan.New(
@@ -436,11 +427,7 @@ func TestDocgen_refAndRename(t *testing.T) {
 	moduleDir := "testdata/ref-and-rename"
 	goldenFile := filepath.Join(moduleDir, "api.golden.json") // Golden file inside the test module
 
-	logLevel := slog.LevelWarn
-	if *debug {
-		logLevel = slog.LevelDebug
-	}
-	logger := slog.New(slog.NewJSONHandler(io.Discard, &slog.HandlerOptions{Level: logLevel}))
+	logger := newTestLogger(io.Discard)
 
 	// Create a scanner configured to find the new module.
 	s, err := goscan.New(

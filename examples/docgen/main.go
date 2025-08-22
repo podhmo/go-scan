@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 
 	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/examples/docgen/patterns"
@@ -87,5 +88,15 @@ func loadCustomPatterns(filePath string, logger *slog.Logger) ([]patterns.Patter
 		return nil, nil
 	}
 	logger.Info("loading custom patterns", "file", filePath)
-	return LoadPatternsFromConfig(filePath, logger)
+
+	// A separate scanner is created for the patterns file, configured to
+	// work from the directory containing the patterns file. This allows
+	// the pattern file to import other packages relative to its own module.
+	patternsDir := filepath.Dir(filePath)
+	s, err := goscan.New(goscan.WithWorkDir(patternsDir))
+	if err != nil {
+		return nil, fmt.Errorf("creating scanner for patterns: %w", err)
+	}
+
+	return LoadPatternsFromConfig(filePath, logger, s)
 }

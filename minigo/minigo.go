@@ -60,7 +60,17 @@ func WithStderr(w io.Writer) Option {
 	}
 }
 
+// WithScanner provides a pre-configured scanner to the interpreter.
+// If this is used, the interpreter will not create its own scanner and
+// any options passed via WithScannerOptions will be ignored.
+func WithScanner(s *goscan.Scanner) Option {
+	return func(i *Interpreter) {
+		i.scanner = s
+	}
+}
+
 // WithScannerOptions provides a way to configure the underlying goscan.Scanner.
+// This option is ignored if WithScanner is also used.
 func WithScannerOptions(opts ...goscan.ScannerOption) Option {
 	return func(i *Interpreter) {
 		i.scannerOptions = append(i.scannerOptions, opts...)
@@ -105,12 +115,15 @@ func NewInterpreter(options ...Option) (*Interpreter, error) {
 		opt(i)
 	}
 
-	i.scannerOptions = append(i.scannerOptions, goscan.WithGoModuleResolver())
-	scanner, err := goscan.New(i.scannerOptions...)
-	if err != nil {
-		return nil, fmt.Errorf("initializing scanner: %w", err)
+	// If a scanner was not provided via WithScanner, create a new one.
+	if i.scanner == nil {
+		i.scannerOptions = append(i.scannerOptions, goscan.WithGoModuleResolver())
+		scanner, err := goscan.New(i.scannerOptions...)
+		if err != nil {
+			return nil, fmt.Errorf("initializing scanner: %w", err)
+		}
+		i.scanner = scanner
 	}
-	i.scanner = scanner
 
 	i.eval = evaluator.New(evaluator.Config{
 		Fset:         i.scanner.Fset(),

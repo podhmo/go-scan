@@ -120,13 +120,6 @@ func TestDocgen_withCustomPatterns(t *testing.T) {
 
 	logger := slog.New(slog.NewJSONHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
-	// Load custom patterns from the config file.
-	// Note: The path is relative to the new CWD.
-	customPatterns, err := LoadPatternsFromConfig("patterns.go", logger)
-	if err != nil {
-		t.Fatalf("failed to load custom patterns: %v", err)
-	}
-
 	// Create a scanner configured to find the new module.
 	s, err := goscan.New(
 		goscan.WithGoModuleResolver(),
@@ -134,6 +127,13 @@ func TestDocgen_withCustomPatterns(t *testing.T) {
 	)
 	if err != nil {
 		t.Fatalf("failed to create scanner: %v", err)
+	}
+
+	// Load custom patterns from the config file, passing the scanner.
+	// Note: The path is relative to the new CWD.
+	customPatterns, err := LoadPatternsFromConfig("patterns.go", logger, s)
+	if err != nil {
+		t.Fatalf("failed to load custom patterns: %v", err)
 	}
 
 	// Create an analyzer with the custom patterns.
@@ -220,12 +220,6 @@ func TestDocgen_fullParameters(t *testing.T) {
 
 	logger := slog.New(slog.NewJSONHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
-	// Load custom patterns from the config file.
-	customPatterns, err := LoadPatternsFromConfig("patterns.go", logger)
-	if err != nil {
-		t.Fatalf("failed to load custom patterns: %v", err)
-	}
-
 	// Create a scanner configured to find the new module.
 	s, err := goscan.New(
 		goscan.WithGoModuleResolver(),
@@ -233,6 +227,12 @@ func TestDocgen_fullParameters(t *testing.T) {
 	)
 	if err != nil {
 		t.Fatalf("failed to create scanner: %v", err)
+	}
+
+	// Load custom patterns from the config file.
+	customPatterns, err := LoadPatternsFromConfig("patterns.go", logger, s)
+	if err != nil {
+		t.Fatalf("failed to load custom patterns: %v", err)
 	}
 
 	// Create an analyzer with the custom patterns and a tracer.
@@ -337,12 +337,6 @@ func TestDocgen_newFeatures(t *testing.T) {
 
 	logger := slog.New(slog.NewJSONHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
-	// Load custom patterns from the config file.
-	customPatterns, err := LoadPatternsFromConfig(patternsFile, logger)
-	if err != nil {
-		t.Fatalf("failed to load custom patterns: %v", err)
-	}
-
 	// Create a scanner configured to find the new module.
 	s, err := goscan.New(
 		goscan.WithWorkDir(moduleDir), // Point scanner to the module directory
@@ -351,6 +345,12 @@ func TestDocgen_newFeatures(t *testing.T) {
 	)
 	if err != nil {
 		t.Fatalf("failed to create scanner: %v", err)
+	}
+
+	// Load custom patterns from the config file.
+	customPatterns, err := LoadPatternsFromConfig(patternsFile, logger, s)
+	if err != nil {
+		t.Fatalf("failed to load custom patterns: %v", err)
 	}
 
 	// Create an analyzer with the custom patterns.

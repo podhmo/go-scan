@@ -36,7 +36,6 @@ func main() {
 	f(s)
 }`,
 			wantErr: false,
-			skip:    true, // This is the known failing test
 		},
 		{
 			name: "typed nil interface",
@@ -57,17 +56,12 @@ func main() {
 }
 `,
 			wantErr:        false,
-			skip:           true, // This is a known failing test
 			expectedOutput: "false\ntrue\n",
 		},
 	}
 
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
-			if tt.skip {
-				t.Skip("skipping known failing test for nil behavior")
-			}
-
 			var outbuf strings.Builder
 			interp, err := minigo.NewInterpreter(minigo.WithStdout(&outbuf))
 			if err != nil {

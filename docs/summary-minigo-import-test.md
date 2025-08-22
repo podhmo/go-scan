@@ -109,3 +109,83 @@ var Patterns = []patterns.PatternConfig{
       1. Not using `scantest.WithModuleRoot()` to point to the correct nested module directory.
       2. The relative paths in your `replace` directives are wrong. Carefully count the `../` segments needed to get from your `go.mod` file to the root of the module you are replacing.
   - **Solution:** Use the working example above as a template. Double-check your `replace` paths. Add debug logging to see which directory the scanner is using as its `WorkDir`.
+
+---
+
+## Alternative: Self-Contained Tests with In-Memory Files
+
+For smaller, more focused unit tests, creating physical files in `testdata` can be cumbersome. The `scantest` package offers another powerful function, `scantest.WriteFiles`, which allows you to define a complete, isolated test module as a set of in-memory strings.
+
+This approach is ideal for testing specific features of a tool without needing any external file dependencies.
+
+### Example: Verifying `docgen` Key Generation
+
+This example shows how to test `docgen`'s ability to create a matching key from a type-safe `Fn` reference.
+
+**1. Define Test Module as String Constants**
+
+Instead of creating physical files, define their content inside your test file.
+
+```go
+// in my_test.go
+package main
+
+const testGoMod = `
+module my-test-module
+
+go 1.21
+
+// The replace directive is crucial. The path should be relative to where
+// the temporary test directory will be created inside the project.
+replace github.com/podhmo/go-scan => "../../../"
+`
+
+const testFooGo = `
+package foo
+type Foo struct{}
+func (f *Foo) Bar() {}
+`
+
+const testPatternsGo = `
+//go:build minigo
+package main
+import "my-test-module/foo"
+// ... (rest of patterns.go) ...
+`
+```
+
+**2. Use `scantest.WriteFiles` and `scantest.Run`**
+
+The test function orchestrates the setup and execution.
+
+```go
+// in my_test.go
+func TestKeyFromFnWithScantest(t *testing.T) {
+	files := map[string]string{
+		"go.mod":      testGoMod,
+		"foo/foo.go":  testFooGo,
+		"patterns.go": testPatternsGo,
+	}
+
+	// 1. `scantest.WriteFiles` creates a temp directory with the file layout.
+	dir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	// 2. The action function contains the core test logic.
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
+		// `s` is a scanner pre-configured by scantest.Run to use the temp dir.
+		// ... your test logic here ...
+		// e.g., call your tool's main logic with the scanner
+		return nil
+	}
+
+	// 3. `scantest.Run` handles the setup and execution.
+	// It finds the go.mod in `dir`, processes the replace directive,
+	// and provides a correctly configured scanner to the action.
+	if _, err := scantest.Run(t, dir, []string{"."}, action); err != nil {
+		t.Fatalf("scantest.Run failed: %v", err)
+	}
+}
+```
+
+This method combines the robustness of `replace` directives with the convenience of self-contained, in-memory test definitions, making it a highly effective way to test tools built with `go-scan`.

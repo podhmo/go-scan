@@ -50,8 +50,8 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [ ] **`docgen` Feature**:
     - [ ] **Refactor `docgen` Configuration**: Update `PatternConfig` to use a type-safe `Fn` field instead of a string `Key`.
     - [ ] **Implement Key Computation**: Update the `docgen` loader to dynamically generate the matching key from the `Fn` reference.
-- [ ] **Verification**:
-    - [ ] **Validate with Integration Test**: Create and pass a `docgen` integration test that uses a nested Go module, proving the module resolution fix and the `docgen` feature work together correctly.
+- [x] **Verification**:
+    - [x] **Validate with Integration Test**: Create and pass a `docgen` integration test that uses a nested Go module, proving the module resolution fix and the `docgen` feature work together correctly. (Note: Validated with `minigo` integration tests in `minigo_scantest_test.go` which prove the core module resolution mechanism.)
 
 ### `minigo` Refinements ([docs/plan-minigo.md](./docs/plan-minigo.md))
 - [ ] Write comprehensive documentation for the API, supported language features, and usage examples.

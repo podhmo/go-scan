@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"go/ast"
 	"go/constant"
-	"go/token" // Added
+	"go/token"
 	"log/slog"
-	"reflect" // Added for reflect.StructTag
-	"strings" // Added for strings.Builder and strings.Fields
+	"reflect"
+	"strings"
 	"sync"
 )
 
@@ -54,6 +54,7 @@ type PackageInfo struct {
 	Path       string
 	ImportPath string // Added: Canonical import path of the package
 	ModulePath string // The go module path this package belongs to.
+	ModuleDir  string // The absolute path to the module's root directory
 	Files      []string
 	Types      []*TypeInfo
 	Constants  []*ConstantInfo

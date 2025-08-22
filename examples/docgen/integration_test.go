@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log/slog"
+	"path/filepath"
 	"testing"
 
 	goscan "github.com/podhmo/go-scan"
@@ -47,10 +48,11 @@ func Hello() {}
 
 	// Action to be performed by scantest.Run
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
-		// `scantest.Run` changes the CWD to the temporary directory `dir`,
-		// so a relative path to the patterns file is sufficient.
+		// The test is not guaranteed to run with the temporary directory as its CWD.
+		// We must construct an absolute path to the patterns file.
+		patternsFilePath := filepath.Join(dir, "patterns.go")
 		logger := slog.Default()
-		_, err := LoadPatternsFromConfig("patterns.go", logger, s)
+		_, err := LoadPatternsFromConfig(patternsFilePath, logger, s)
 		return err
 	}
 

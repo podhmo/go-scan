@@ -56,15 +56,18 @@ func TestDocgen_integrationWithSharedScanner(t *testing.T) {
 package patterns
 import "github.com/podhmo/go-scan/examples/docgen/patterns"
 // ... use patterns package ...
+var Patterns = []patterns.PatternConfig{
+	{Key: "dummy", Type: patterns.RequestBody},
+}
 `,
 	}
 	dir, cleanup := scantest.WriteFiles(t, files)
 	defer cleanup()
 
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
-		// `s` is the scanner configured by scantest.Run.
-		// `scantest` also changes the CWD to `dir`, so relative paths work.
-		_, err := LoadPatternsFromConfig("patterns.go", slog.Default(), s)
+		// `scantest.Run` does NOT change the CWD. We must construct an absolute path.
+		patternsFilePath := filepath.Join(dir, "patterns.go")
+		_, err := LoadPatternsFromConfig(patternsFilePath, slog.Default(), s)
 		return err
 	}
 

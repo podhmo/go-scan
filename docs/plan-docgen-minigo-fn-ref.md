@@ -63,8 +63,8 @@ The testing strategy is to **validate the library's robustness** by making the o
 ## 5. High-Level Task List
 
 -   **Core Library Robustness**:
-    -   [ ] **Enhance Module Resolution**: Fix the `go-scan` locator to correctly resolve packages in nested test modules with `replace` directives.
-    -   [ ] **Implement Typed Nil Method Values**: Enhance the `minigo` interpreter to support resolving method values from typed `nil` pointers.
+    -   [x] **Enhance Module Resolution**: Fix the `go-scan` locator to correctly resolve packages in nested test modules with `replace` directives.
+    -   [x] **Implement Typed Nil Method Values**: Enhance the `minigo` interpreter to support resolving method values from typed `nil` pointers.
     -   [ ] **Implement Environment-Aware Function Objects**: Enhance `minigo` to represent Go functions as objects that retain their definition environment (`DefEnv`).
 
 -   **`docgen` Feature**:

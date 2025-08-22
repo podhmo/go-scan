@@ -28,28 +28,28 @@ cd ../..
 ### Usage
 
 ```sh
-go run ./examples/docgen [flags] [package_path] [entrypoint_symbol]
+go run ./examples/docgen [flags] [package_path]
 ```
 
 **Arguments:**
 - `package_path`: The import path of the package to analyze (e.g., `github.com/podhmo/go-scan/examples/docgen/sampleapi`).
-- `entrypoint_symbol`: The name of the function or variable to start analysis from (e.g., `NewServeMux`).
 
 **Flags:**
 - `-format <string>`: The output format. Can be `json` (default) or `yaml`.
 - `-patterns <string>`: The path to a Go file containing custom analysis patterns.
+- `-entrypoint <string>`: The name of the function or variable to start analysis from (default: `NewServeMux`).
 - `-debug`: Enable debug logging for the analysis.
 
 ### Examples
 
-**Generate JSON output (default):**
+**Generate JSON output (default entrypoint):**
 ```sh
-go run ./examples/docgen github.com/podhmo/go-scan/examples/docgen/sampleapi NewServeMux > openapi.json
+go run ./examples/docgen github.com/podhmo/go-scan/examples/docgen/sampleapi > openapi.json
 ```
 
-**Generate YAML output:**
+**Generate YAML output with a specific entrypoint:**
 ```sh
-go run ./examples/docgen -format=yaml github.com/podhmo/go-scan/examples/docgen/sampleapi NewServeMux > openapi.yaml
+go run ./examples/docgen -format=yaml -entrypoint=NewServeMux github.com/podhmo/go-scan/examples/docgen/sampleapi > openapi.yaml
 ```
 
 ## Customizing Analysis with Patterns

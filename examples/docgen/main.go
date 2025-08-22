@@ -18,10 +18,12 @@ func main() {
 		debug        bool
 		format       string
 		patternsFile string
+		entrypoint   string
 	)
 	flag.BoolVar(&debug, "debug", false, "Enable debug logging for the analysis")
 	flag.StringVar(&format, "format", "json", "Output format (json or yaml)")
 	flag.StringVar(&patternsFile, "patterns", "", "Path to a Go file with custom pattern configurations")
+	flag.StringVar(&entrypoint, "entrypoint", "NewServeMux", "The entrypoint function name")
 	flag.Parse()
 
 	logLevel := slog.LevelInfo
@@ -30,13 +32,13 @@ func main() {
 	}
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel}))
 
-	if err := run(logger, format, patternsFile); err != nil {
+	if err := run(logger, format, patternsFile, entrypoint); err != nil {
 		logger.Error("docgen failed", "error", err)
 		os.Exit(1)
 	}
 }
 
-func run(logger *slog.Logger, format string, patternsFile string) error {
+func run(logger *slog.Logger, format string, patternsFile string, entrypoint string) error {
 	if flag.NArg() == 0 {
 		return fmt.Errorf("required argument: <package-path>")
 	}
@@ -65,7 +67,7 @@ func run(logger *slog.Logger, format string, patternsFile string) error {
 	}
 
 	ctx := context.Background()
-	if err := analyzer.Analyze(ctx, sampleAPIPath, "NewServeMux"); err != nil {
+	if err := analyzer.Analyze(ctx, sampleAPIPath, entrypoint); err != nil {
 		return err
 	}
 

@@ -79,6 +79,7 @@ func NewAnalyzer(s *goscan.Scanner, logger *slog.Logger, options ...any) (*Analy
 
 	// Register intrinsics.
 	interp.RegisterIntrinsic("net/http.NewServeMux", a.handleNewServeMux)
+	interp.RegisterIntrinsic("net/http.HandleFunc", a.analyzeTopLevelHandleFunc)
 	interp.RegisterIntrinsic("(*net/http.ServeMux).HandleFunc", a.analyzeHandleFunc)
 
 	// Intrinsics for handling http.Handler interface wrappers
@@ -99,6 +100,16 @@ func (a *Analyzer) GetOpenAPI() *openapi.OpenAPI {
 
 func (a *Analyzer) handleNewServeMux(interp *symgo.Interpreter, args []symgo.Object) symgo.Object {
 	return patterns.NewSymbolicInstance(interp, "net/http.ServeMux")
+}
+
+func (a *Analyzer) analyzeTopLevelHandleFunc(interp *symgo.Interpreter, args []symgo.Object) symgo.Object {
+	// Expects 2 args for http.HandleFunc: pattern, handler
+	if len(args) != 2 {
+		return &symgo.Error{Message: fmt.Sprintf("http.HandleFunc expects 2 arguments, but got %d", len(args))}
+	}
+	// Prepend a nil receiver to match the signature of the existing analyzeHandleFunc
+	newArgs := append([]symgo.Object{&symgo.Nil{}}, args...)
+	return a.analyzeHandleFunc(interp, newArgs)
 }
 
 // Analyze analyzes the package starting from a specific entrypoint function.

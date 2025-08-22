@@ -4175,10 +4175,12 @@ func (e *Evaluator) findSymbolInPackageInfo(pkgInfo *goscan.Package, symbolName 
 			// When resolving a function from source, create a GoSourceFunction
 			// that captures the function's metadata and its definition environment.
 			return &object.GoSourceFunction{
-				Fn:      f,
-				PkgPath: pkgInfo.Path,
-				DefEnv:  pkgEnv,
-				FScope:  fscope,
+				Fn:         f,
+				PkgPath:    pkgInfo.Path,
+				DefEnv:     pkgEnv,
+				FScope:     fscope,
+				ModulePath: e.scanner.ModulePath(),
+				ModuleDir:  e.scanner.RootDir(),
 			}, true
 		}
 	}

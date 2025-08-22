@@ -1,11 +1,13 @@
 package minigo_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/minigo"
-	"github.com/podhmo/go-scan/minigo/minigotest"
+	"github.com/podhmo/go-scan/minigo/object"
 	"github.com/podhmo/go-scan/scanner"
 )
 
@@ -17,50 +19,73 @@ import "my/api"
 
 var V = (*api.API)(nil).ServeHTTP
 `
-	pkg := &minigotest.Package{
-		Name: "main",
-		Files: map[string]string{
-			"main.go": source,
-		},
-	}
-
-	// Run the test in an isolated environment with a custom module.
-	r := minigotest.NewRunner()
-	if err := r.AddModule(
-		"my",
-		"api",
-		`
+	apiSource := `
 package api
 import "net/http"
 type API struct {}
 func (a *API) ServeHTTP(w http.ResponseWriter, r *http.Request) {}
-`,
-	); err != nil {
-		t.Fatalf("failed to add module: %+v", err)
+`
+
+	// Create a scanner with an in-memory overlay for the 'my/api' module.
+	// We need to simulate a realistic module structure.
+	// Let's assume the module root is '/src' and our module is 'my'.
+	// The file would be at '/src/my/api/api.go'.
+	// go-scan needs a valid go.mod to resolve modules.
+	tmpdir := t.TempDir()
+
+	overlay := scanner.Overlay{
+		"go.mod":    []byte("module my"),
+		"api/api.go": []byte(apiSource),
 	}
 
-	// Execute the script and get the global variable V.
-	result, err := r.Run(pkg)
+	s, err := goscan.New(
+		goscan.WithWorkDir(tmpdir),
+		goscan.WithOverlay(overlay),
+		goscan.WithGoModuleResolver(),
+	)
 	if err != nil {
+		t.Fatalf("failed to create scanner: %+v", err)
+	}
+
+	// Create an interpreter with our custom scanner.
+	i, err := minigo.NewInterpreter(s)
+	if err != nil {
+		t.Fatalf("failed to create interpreter: %+v", err)
+	}
+
+	// Register necessary stdlib types for the test to pass.
+	// The parser needs to know about http.ResponseWriter and http.Request.
+	// We can do this by pre-registering them.
+	i.Register("net/http", map[string]any{
+		"ResponseWriter": nil, // The value doesn't matter, just the type registration.
+		"Request":        nil,
+	})
+
+	// Load the main source file.
+	if err := i.LoadFile("main.go", []byte(source)); err != nil {
+		t.Fatalf("failed to load main.go: %+v", err)
+	}
+
+	// Evaluate the loaded files.
+	if _, err := i.Eval(context.Background()); err != nil {
 		t.Fatalf("minigo execution failed: %+v", err)
 	}
-	v, ok := result.Get("V")
+
+	// Get the global variable V from the interpreter's environment.
+	v, ok := i.GlobalEnvForTest().Get("V")
 	if !ok {
 		t.Fatalf("variable V not found in the result")
 	}
 
 	// Assert that the result is a GoMethodValue with the correct properties.
-	got, ok := v.(*minigo.GoMethodValue)
+	got, ok := v.(*object.GoMethodValue)
 	if !ok {
-		t.Fatalf("expected V to be a *minigo.GoMethodValue, but got %T", v)
+		t.Fatalf("expected V to be a *object.GoMethodValue, but got %T", v)
 	}
 
 	// The receiver type should be a pointer to the API struct.
-	// We can check this by inspecting its string representation.
-	// Note: The pkg path might be a temporary path from scantest.
-	// We only check the suffix.
-	wantReceiverSuffix := "*my/api.API"
-	if diff := cmp.Diff(wantReceiverSuffix, got.ReceiverType.Inspect()); diff != "" {
+	wantReceiverInspect := "*my/api.API"
+	if diff := cmp.Diff(wantReceiverInspect, got.ReceiverType.Inspect()); diff != "" {
 		t.Errorf("ReceiverType mismatch (-want +got):\n%s", diff)
 	}
 
@@ -70,13 +95,13 @@ func (a *API) ServeHTTP(w http.ResponseWriter, r *http.Request) {}
 	}
 
 	// Check the method's type signature.
-	if len(got.Method.Signature.Params) != 2 {
-		t.Errorf("expected 2 params, but got %d", len(got.Method.Signature.Params))
+	if len(got.Method.Parameters) != 2 {
+		t.Errorf("expected 2 params, but got %d", len(got.Method.Parameters))
 	}
-	if want, got := "net/http.ResponseWriter", formatFieldType(got.Method.Signature.Params[0]); got != want {
+	if want, got := "net/http.ResponseWriter", formatFieldType(got.Method.Parameters[0].Type); got != want {
 		t.Errorf("param 0 type mismatch: want %q, got %q", want, got)
 	}
-	if want, got := "*net/http.Request", formatFieldType(got.Method.Signature.Params[1]); got != want {
+	if want, got := "*net/http.Request", formatFieldType(got.Method.Parameters[1].Type); got != want {
 		t.Errorf("param 1 type mismatch: want %q, got %q", want, got)
 	}
 }
@@ -86,8 +111,8 @@ func formatFieldType(ft *scanner.FieldType) string {
 	if ft.IsPointer {
 		return "*" + formatFieldType(ft.Elem)
 	}
-	if ft.PkgPath != "" {
-		return ft.PkgPath + "." + ft.Name
+	if ft.FullImportPath != "" {
+		return ft.FullImportPath + "." + ft.Name
 	}
 	return ft.Name
 }

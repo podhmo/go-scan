@@ -8,7 +8,6 @@ import (
 	"go/constant"
 	"go/token"
 	"io"
-	"path/filepath"
 	"reflect"
 	"strconv"
 	"strings"
@@ -16,6 +15,7 @@ import (
 	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/minigo/ffibridge"
 	"github.com/podhmo/go-scan/minigo/object"
+	"github.com/podhmo/go-scan/scanner"
 )
 
 // SpecialFormFunction is the signature for special form functions.
@@ -2005,9 +2005,49 @@ func (e *Evaluator) applyFunction(call *ast.CallExpr, fn object.Object, args []o
 		e.BuiltinContext.FScope = fscope
 		return f.Fn(&e.BuiltinContext, pos, args...)
 	case *object.GoSourceFunction:
-		return e.newError(call.Pos(), "Go source function %s is not directly callable", fn.Inspect())
+		// Convert GoSourceFunction to a standard Function and apply it.
+		decl := f.FuncInfo.AstDecl
+		newFn := &object.Function{
+			Name:       decl.Name,
+			Recv:       decl.Recv,
+			TypeParams: decl.Type.TypeParams,
+			Parameters: decl.Type.Params,
+			Results:    decl.Type.Results,
+			Body:       decl.Body,
+			Env:        f.DefEnv, // The environment where the function was defined.
+			FScope:     f.FScope, // Use the filescope from where the function was defined.
+		}
+		// The fscope from the definition is now attached to the function object.
+		// The call-site fscope is still passed for context but will be overridden
+		// by the function's own FScope during evaluation.
+		return e.applyFunction(call, newFn, args, env, fscope)
+
 	case *object.GoMethodValue:
-		return e.newError(call.Pos(), "Go method value %s is not directly callable", fn.Inspect())
+		// Convert GoMethodValue to a standard Function and apply it.
+		// This requires binding the receiver.
+		decl := f.Method.AstDecl
+		newFn := &object.Function{
+			Name:       decl.Name,
+			Recv:       decl.Recv,
+			TypeParams: decl.Type.TypeParams,
+			Parameters: decl.Type.Params,
+			Results:    decl.Type.Results,
+			Body:       decl.Body,
+			Env:        env, // The method is called in the current environment
+		}
+
+		// The receiver is the object on which the method is called.
+		// This is a complex part of the implementation.
+		// For now, we assume the receiver is the first argument.
+		// This is a simplification and will likely need to be revised.
+		if len(args) == 0 {
+			return e.newError(call.Pos(), "method call requires a receiver as the first argument")
+		}
+		receiver := args[0]
+		remainingArgs := args[1:]
+
+		boundMethod := &object.BoundMethod{Fn: newFn, Receiver: receiver}
+		return e.applyFunction(call, boundMethod, remainingArgs, env, fscope)
 	default:
 		return e.newError(call.Pos(), "not a function: %s", fn.Type())
 	}
@@ -4570,22 +4610,17 @@ func (e *Evaluator) evalSelectorExpr(n *ast.SelectorExpr, left object.Object, en
 	case *object.PointerType:
 		// This handles method expressions on a pointer type, e.g., (*MyType).MyMethod
 		elemType := l.ElementType
-		var typeInfo *goscan.TypeInfo
-		var err error
+		var typeInfo *scanner.TypeInfo
+		var pkg *scanner.PackageInfo
+		var scanErr error
 
 		switch et := elemType.(type) {
 		case *object.StructDefinition:
-			if fscope == nil || fscope.AST == nil || fscope.AST.Name == nil {
-				return e.newError(n.Pos(), "cannot resolve struct method without file scope")
+			if fscope == nil || fscope.Filename == "" {
+				return e.newError(n.Pos(), "cannot resolve struct method without file scope or filename")
 			}
-		var pkg *goscan.PackageInfo
-		switch et := elemType.(type) {
-		case *object.StructDefinition:
-			if fscope == nil || fscope.AST == nil || fscope.AST.Name == nil {
-				return e.newError(n.Pos(), "cannot resolve struct method without file scope")
-			}
-			var scanErr error
-			pkg, scanErr = e.scanner.ScanFiles(context.Background(), []string{fscope.AST.Name.Name}, filepath.Dir(fscope.AST.Name.Name))
+			// We need to scan the file where the struct is defined to get its package info.
+			pkg, scanErr = e.scanner.ScanFiles(context.Background(), []string{fscope.Filename})
 			if scanErr != nil {
 				return e.newError(n.Pos(), "could not scan package for type %s: %v", et.Name.Name, scanErr)
 			}
@@ -4596,7 +4631,6 @@ func (e *Evaluator) evalSelectorExpr(n *ast.SelectorExpr, left object.Object, en
 			if pkgPath == "" {
 				return e.newError(n.Pos(), "cannot get method from built-in or unnamed Go type: %s", et.GoType)
 			}
-			var scanErr error
 			pkg, scanErr = e.scanner.ScanPackageByImport(context.Background(), pkgPath)
 			if scanErr != nil {
 				return e.newError(n.Pos(), "could not scan package %s for type %s: %v", pkgPath, et.GoType.Name(), scanErr)
@@ -4604,17 +4638,17 @@ func (e *Evaluator) evalSelectorExpr(n *ast.SelectorExpr, left object.Object, en
 			typeInfo = pkg.Lookup(et.GoType.Name())
 		default:
 			return e.newError(n.Pos(), "cannot get method from unsupported pointer element type: %s", elemType.Type())
-			}
+		}
 
 		if typeInfo == nil {
 			return e.newError(n.Pos(), "could not find type info for %s", elemType.Inspect())
-			}
+		}
 		// Methods are stored in the package's Functions list. We need to find them.
 		for _, f := range pkg.Functions {
 			if f.Receiver != nil && f.Receiver.Type.TypeName == typeInfo.Name && f.Name == n.Sel.Name {
 				return &object.GoMethodValue{ReceiverType: l, Method: f}
 			}
-			}
+		}
 		return e.newError(n.Pos(), "undefined method %s for type %s", n.Sel.Name, typeInfo.Name)
 	case *object.Nil:
 		if l.Typed == nil {
@@ -4673,12 +4707,14 @@ func (e *Evaluator) findSymbolInPackage(pkg *object.Package, symbolName *ast.Ide
 		// Create a new, unified FileScope for the entire package from all its files.
 		if cumulativePkgInfo != nil && len(cumulativePkgInfo.AstFiles) > 0 {
 			var representativeAST *ast.File
-			for _, astFile := range cumulativePkgInfo.AstFiles {
+			var representativeFilename string
+			for filename, astFile := range cumulativePkgInfo.AstFiles {
 				if representativeAST == nil {
 					representativeAST = astFile
+					representativeFilename = filename
 				}
 			}
-			unifiedFScope := object.NewFileScope(representativeAST)
+			unifiedFScope := object.NewFileScope(representativeAST, representativeFilename)
 			for _, astFile := range cumulativePkgInfo.AstFiles {
 				for _, importSpec := range astFile.Imports {
 					path, err := strconv.Unquote(importSpec.Path.Value)

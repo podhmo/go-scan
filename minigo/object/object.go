@@ -667,14 +667,16 @@ func (t *Tuple) Inspect() string {
 // FileScope holds the AST and file-specific import aliases for a single file.
 type FileScope struct {
 	AST        *ast.File
+	Filename   string
 	Aliases    map[string]string // alias -> import path
 	DotImports []string          // list of package paths for dot imports
 }
 
 // NewFileScope creates a new file scope.
-func NewFileScope(ast *ast.File) *FileScope {
+func NewFileScope(ast *ast.File, filename string) *FileScope {
 	return &FileScope{
 		AST:        ast,
+		Filename:   filename,
 		Aliases:    make(map[string]string),
 		DotImports: make([]string, 0),
 	}
@@ -894,6 +896,7 @@ type GoSourceFunction struct {
 	FuncInfo *scanner.FunctionInfo
 	PkgPath  string
 	DefEnv   *Environment
+	FScope   *FileScope
 }
 
 // Type returns the type of the GoSourceFunction object.

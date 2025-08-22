@@ -57,7 +57,7 @@ func testEval(t *testing.T, input string) object.Object {
 		t.Fatalf("failed to create scanner: %v", err)
 	}
 	// For single-file tests, we create a dummy file scope.
-	fscope := object.NewFileScope(file)
+	fscope := object.NewFileScope(file, tmpfile.Name())
 	packages := make(map[string]*object.Package)
 	eval := New(Config{
 		Fset:     fset,
@@ -494,7 +494,7 @@ func testEvalWithEvaluator(t *testing.T, eval *Evaluator, input string) object.O
 		return nil
 	}
 
-	fscope := object.NewFileScope(file)
+	fscope := object.NewFileScope(file, tmpfile.Name())
 	env := object.NewEnvironment()
 
 	evaluated := eval.Eval(mainFunc.Body, env, fscope)
@@ -811,7 +811,7 @@ func testEvalFile(t *testing.T, input string) object.Object {
 		t.Fatalf("failed to create scanner: %v", err)
 	}
 	env := object.NewEnvironment()
-	fscope := object.NewFileScope(file)
+	fscope := object.NewFileScope(file, "test.go")
 	packages := make(map[string]*object.Package)
 	eval := New(Config{
 		Fset:     fset,

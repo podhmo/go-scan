@@ -148,7 +148,7 @@ func (i *Interpreter) LoadGoSourceAsPackage(pkgName, source string) error {
 	}
 
 	pkgObj.Env = object.NewEnclosedEnvironment(i.globalEnv)
-	fileScope := object.NewFileScope(node)
+	fileScope := object.NewFileScope(node, pkgName+".go")
 
 	// Manually process imports to populate the file scope for the evaluator.
 	for _, importSpec := range node.Imports {
@@ -199,7 +199,7 @@ func (i *Interpreter) EvalString(source string) (object.Object, error) {
 		return nil, fmt.Errorf("parsing script: %w", err)
 	}
 
-	fileScope := object.NewFileScope(node)
+	fileScope := object.NewFileScope(node, "main.go")
 	result := i.eval.Eval(node, i.globalEnv, fileScope)
 	if err, ok := result.(*object.Error); ok {
 		return nil, fmt.Errorf("%s", err.Inspect())
@@ -368,7 +368,7 @@ func (i *Interpreter) LoadFile(filename string, source []byte) error {
 	if err != nil {
 		return fmt.Errorf("parsing script %q: %w", filename, err)
 	}
-	fileScope := object.NewFileScope(node)
+	fileScope := object.NewFileScope(node, filename)
 	i.files = append(i.files, fileScope)
 	return nil
 }
@@ -440,7 +440,7 @@ func (i *Interpreter) EvalLine(ctx context.Context, line string) (object.Object,
 		if err != nil {
 			return nil, fmt.Errorf("initializing repl scope: %w", err)
 		}
-		i.replFileScope = object.NewFileScope(node)
+		i.replFileScope = object.NewFileScope(node, "REPL")
 	}
 	srcAsDecl := "package REPL\n" + line
 	node, err := parser.ParseFile(i.scanner.Fset(), "REPL", srcAsDecl, parser.ParseComments)
@@ -496,7 +496,7 @@ func (i *Interpreter) EvalFileInREPL(ctx context.Context, filename string) error
 		if err != nil {
 			return fmt.Errorf("initializing repl scope: %w", err)
 		}
-		i.replFileScope = object.NewFileScope(node)
+		i.replFileScope = object.NewFileScope(node, "REPL")
 	}
 
 	source, err := os.ReadFile(filename)

@@ -20,12 +20,19 @@ func TestPatternKeyFromFunc_Integration(t *testing.T) {
 
 	moduleName := "key-gen-test"
 
+	// Get the absolute path to the module root to create a robust replace directive.
+	s, err := goscan.New()
+	if err != nil {
+		t.Fatalf("could not create scanner to find module root: %v", err)
+	}
+	rootDir := s.RootDir()
+
 	files := map[string]string{
 		"go.mod": fmt.Sprintf(`
 module %s
 go 1.21
-replace github.com/podhmo/go-scan => ../../..
-`, moduleName),
+replace github.com/podhmo/go-scan => %s
+`, moduleName, rootDir),
 		"main.go": `
 package main
 

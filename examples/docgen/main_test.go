@@ -116,233 +116,542 @@ func TestDocgen(t *testing.T) {
 }
 
 func TestDocgen_withCustomPatterns(t *testing.T) {
-	// Note: This test runs docgen on a package that is a separate Go module
-	// located in testdata/custom-patterns.
-	moduleDir := "testdata/custom-patterns"
-	patternsFile := filepath.Join(moduleDir, "patterns.go")
-	goldenFile := filepath.Join("testdata", "custom-patterns.golden.json")
-	apiPath := "custom-patterns"
+	const (
+		gomod = `
+module custom-patterns
 
-	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
-		logger := newTestLogger(io.Discard)
+go 1.21
 
-		customPatterns, err := LoadPatternsFromConfig(patternsFile, logger, s)
-		if err != nil {
-			return fmt.Errorf("failed to load custom patterns: %w", err)
-		}
+replace github.com/podhmo/go-scan => ../../../../
+`
+		apiGo = `
+package main
 
-		var opts []any
-		for _, p := range customPatterns {
-			opts = append(opts, p)
-		}
-		analyzer, err := NewAnalyzer(s, logger, opts...)
-		if err != nil {
-			return fmt.Errorf("failed to create analyzer: %w", err)
-		}
+import (
+	"encoding/json"
+	"net/http"
+)
 
-		if err := analyzer.Analyze(ctx, apiPath, "main"); err != nil {
-			return fmt.Errorf("failed to analyze package: %+v", err)
-		}
-		apiSpec := analyzer.OpenAPI
+// User represents a user in the system.
+type User struct {
+	ID   int    `json:"id"`
+	Name string `json:"name"`
+}
 
-		var got bytes.Buffer
-		enc := json.NewEncoder(&got)
-		enc.SetIndent("", "  ")
-		if err := enc.Encode(apiSpec); err != nil {
-			return fmt.Errorf("failed to marshal OpenAPI spec to json: %w", err)
-		}
+// SendJSON is a custom helper to send a JSON response.
+func SendJSON(w http.ResponseWriter, code int, data any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	json.NewEncoder(w).Encode(data)
+}
 
-		if *update {
-			if err := os.WriteFile(goldenFile, got.Bytes(), 0644); err != nil {
-				return fmt.Errorf("failed to write golden file %s: %w", goldenFile, err)
+// GetUser handles retrieving a user.
+func GetUser(w http.ResponseWriter, r *http.Request) {
+	user := User{ID: 1, Name: "John Doe"}
+	SendJSON(w, http.StatusOK, user)
+}
+
+func main() {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /users/{id}", GetUser)
+	mux.HandleFunc("GET /pets/{petID}", GetPet)
+	http.ListenAndServe(":8080", mux)
+}
+
+// GetPet is a handler that uses a custom helper to get a path parameter.
+func GetPet(w http.ResponseWriter, r *http.Request) {
+	_ = GetPetID(r) // The important part for the analyzer
+	w.Write([]byte("ok"))
+}
+
+// GetPetID is a custom helper function to extract a path parameter.
+func GetPetID(r *http.Request) string {
+	// In a real app, this would parse the URL.
+	return "pet-id"
+}
+`
+		patternsGo = `
+//go:build minigo
+
+package main
+
+import "github.com/podhmo/go-scan/examples/docgen/patterns"
+
+// Patterns defines the custom patterns for this test case.
+// It now uses the 'Fn' field for type-safe references.
+var Patterns = []patterns.PatternConfig{
+	{
+		Fn:       SendJSON,
+		Type:     patterns.ResponseBody,
+		ArgIndex: 2, // The 3rd argument `data any` is what we want to analyze.
+	},
+	{
+		// Note: The 'Name' field is no longer part of the key, but a separate field
+		// used by the HandleCustomParameter logic.
+		Fn:          GetPetID,
+		Type:        patterns.PathParameter,
+		Name:        "petID",
+		Description: "ID of the pet to fetch",
+		ArgIndex:    0, // The *http.Request argument
+	},
+}
+`
+	)
+
+	scantest.Run(t, scantest.TestCase{
+		Gomod: gomod,
+		Files: map[string]string{
+			"api.go":      apiGo,
+			"patterns.go": patternsGo,
+		},
+		Action: func(t *testing.T, s *scantest.Scanner) {
+			logger := newTestLogger(io.Discard)
+			goldenFile := filepath.Join("testdata", "custom-patterns.golden.json")
+			apiPath := "custom-patterns"      // module name
+			patternsPath := "patterns.go" // path relative to temp module root
+
+			customPatterns, err := LoadPatternsFromConfig(patternsPath, logger, s)
+			if err != nil {
+				t.Fatalf("failed to load custom patterns: %v", err)
 			}
-			t.Logf("golden file updated: %s", goldenFile)
-			return nil
-		}
-		want, err := os.ReadFile(goldenFile)
-		if err != nil {
-			return fmt.Errorf("failed to read golden file %s: %w", goldenFile, err)
-		}
-		if diff := cmp.Diff(string(want), got.String()); diff != "" {
-			return fmt.Errorf("OpenAPI spec mismatch for custom patterns (-want +got):\n%s", diff)
-		}
-		return nil
-	}
 
-	if _, err := scantest.Run(t, moduleDir, nil, action, scantest.WithModuleRoot(moduleDir)); err != nil {
-		t.Fatalf("scantest.Run() failed: %+v", err)
-	}
+			var opts []any
+			for _, p := range customPatterns {
+				opts = append(opts, p)
+			}
+			analyzer, err := NewAnalyzer(s, logger, opts...)
+			if err != nil {
+				t.Fatalf("failed to create analyzer: %v", err)
+			}
+
+			if err := analyzer.Analyze(context.Background(), apiPath, "main"); err != nil {
+				t.Fatalf("failed to analyze package: %+v", err)
+			}
+			apiSpec := analyzer.OpenAPI
+
+			var got bytes.Buffer
+			enc := json.NewEncoder(&got)
+			enc.SetIndent("", "  ")
+			if err := enc.Encode(apiSpec); err != nil {
+				t.Fatalf("failed to marshal OpenAPI spec to json: %v", err)
+			}
+
+			if *update {
+				if err := os.WriteFile(goldenFile, got.Bytes(), 0644); err != nil {
+					t.Fatalf("failed to write golden file %s: %v", goldenFile, err)
+				}
+				t.Logf("golden file updated: %s", goldenFile)
+				return
+			}
+			want, err := os.ReadFile(goldenFile)
+			if err != nil {
+				t.Fatalf("failed to read golden file %s: %v", goldenFile, err)
+			}
+			if diff := cmp.Diff(string(want), got.String()); diff != "" {
+				t.Errorf("OpenAPI spec mismatch for custom patterns (-want +got):\n%s", diff)
+			}
+		},
+	})
 }
 
 func TestDocgen_fullParameters(t *testing.T) {
-	moduleDir := "testdata/full-parameters"
-	patternsFile := filepath.Join(moduleDir, "patterns.go")
-	goldenFile := filepath.Join("testdata", "full-parameters.golden.json")
-	apiPath := "full-parameters" // module name
+	const (
+		gomod = `
+module full-parameters
 
-	type recordingTracer struct {
-		visitedNodePositions map[token.Pos]bool
-	}
-	tracer := &recordingTracer{visitedNodePositions: make(map[token.Pos]bool)}
-	visit := func(node ast.Node) {
-		if node != nil {
-			tracer.visitedNodePositions[node.Pos()] = true
-		}
-	}
+go 1.21
 
-	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
-		logger := newTestLogger(io.Discard)
+replace github.com/podhmo/go-scan => ../../../../
+`
+		apiGo = `
+package main
 
-		customPatterns, err := LoadPatternsFromConfig(patternsFile, logger, s)
-		if err != nil {
-			return fmt.Errorf("failed to load custom patterns: %w", err)
-		}
+import (
+	"net/http"
+)
 
-		var opts []any
-		for _, p := range customPatterns {
-			opts = append(opts, p)
-		}
-		opts = append(opts, WithTracer(symgo.TracerFunc(visit)))
-		analyzer, err := NewAnalyzer(s, logger, opts...)
-		if err != nil {
-			return fmt.Errorf("failed to create analyzer: %w", err)
-		}
+// Helper functions to be recognized by custom patterns.
+func GetQueryParam(r *http.Request, key string) string {
+	return r.URL.Query().Get(key)
+}
 
-		if err := analyzer.Analyze(ctx, apiPath, "main"); err != nil {
-			return fmt.Errorf("failed to analyze package: %+v", err)
-		}
-		apiSpec := analyzer.OpenAPI
+func GetHeader(r *http.Request, key string) string {
+	return r.Header.Get(key)
+}
 
-		// Assert that the tracer visited all nodes in the target handler.
-		scannedPkg, err := s.ScanPackage(ctx, moduleDir)
-		if err != nil {
-			return fmt.Errorf("could not re-scan package to find handler AST: %w", err)
-		}
-		var handlerFunc *goscan.FunctionInfo
-		for _, f := range scannedPkg.Functions {
-			if f.Name == "GetResource" {
-				handlerFunc = f
-				break
+func GetPathValue(r *http.Request, key string) string {
+	// In a real app, this would parse the URL path.
+	// For analysis, the implementation doesn't matter.
+	return "some-value"
+}
+
+// Handler that uses all parameter types.
+func GetResource(w http.ResponseWriter, r *http.Request) {
+	// These calls will be detected by the custom patterns.
+	_ = GetPathValue(r, "resourceId")
+	_ = GetQueryParam(r, "filter")
+	_ = GetHeader(r, "X-Request-ID")
+
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("ok"))
+}
+
+func main() {
+	mux := http.NewServeMux()
+	// Note: The path parameter name in the route must match the one in the pattern.
+	mux.HandleFunc("GET /resources/{resourceId}", GetResource)
+	http.ListenAndServe(":8080", mux)
+}
+`
+		patternsGo = `
+//go:build minigo
+
+package main
+
+import (
+	"github.com/podhmo/go-scan/examples/docgen/patterns"
+)
+
+// Patterns defines the custom patterns for this test case.
+// This version uses dynamic name inference.
+var Patterns = []patterns.PatternConfig{
+	{
+		Fn:           GetQueryParam,
+		Type:         patterns.QueryParameter,
+		NameArgIndex: 1, // The 'key' argument
+		ArgIndex:     0, // Dummy value, schema will default to string
+		Description:  "A filter for the resource list.",
+	},
+	{
+		Fn:           GetHeader,
+		Type:         patterns.HeaderParameter,
+		NameArgIndex: 1,
+		ArgIndex:     0,
+		Description:  "A unique ID for the request.",
+	},
+	{
+		Fn:           GetPathValue,
+		Type:         patterns.PathParameter,
+		NameArgIndex: 1,
+		ArgIndex:     0,
+		Description:  "The ID of the resource.",
+	},
+}
+`
+	)
+	scantest.Run(t, scantest.TestCase{
+		Gomod: gomod,
+		Files: map[string]string{
+			"api.go":      apiGo,
+			"patterns.go": patternsGo,
+		},
+		Action: func(t *testing.T, s *scantest.Scanner) {
+			logger := newTestLogger(io.Discard)
+			goldenFile := filepath.Join("testdata", "full-parameters.golden.json")
+			apiPath := "full-parameters"      // module name
+			patternsPath := "patterns.go" // path relative to temp module root
+
+			type recordingTracer struct {
+				visitedNodePositions map[token.Pos]bool
 			}
-		}
-		if handlerFunc == nil {
-			return fmt.Errorf("could not find handler function 'GetResource' to verify tracer")
-		}
-		var targetNode ast.Node
-		ast.Inspect(handlerFunc.AstDecl, func(n ast.Node) bool {
-			if targetNode != nil {
-				return false
-			}
-			if call, ok := n.(*ast.CallExpr); ok {
-				if sel, ok := call.Fun.(*ast.Ident); ok && sel.Name == "GetPathValue" {
-					targetNode = call
-					return false
+			tracer := &recordingTracer{visitedNodePositions: make(map[token.Pos]bool)}
+			visit := func(node ast.Node) {
+				if node != nil {
+					tracer.visitedNodePositions[node.Pos()] = true
 				}
 			}
-			return true
-		})
-		if targetNode == nil {
-			return fmt.Errorf("could not find the target GetPathValue call in the AST")
-		}
-		if !tracer.visitedNodePositions[targetNode.Pos()] {
-			return fmt.Errorf("tracer did not visit the target GetPathValue call expression")
-		}
 
-		var got bytes.Buffer
-		enc := json.NewEncoder(&got)
-		enc.SetIndent("", "  ")
-		if err := enc.Encode(apiSpec); err != nil {
-			return fmt.Errorf("failed to marshal OpenAPI spec to json: %w", err)
-		}
-
-		if *update {
-			if err := os.WriteFile(goldenFile, got.Bytes(), 0644); err != nil {
-				return fmt.Errorf("failed to write golden file %s: %w", goldenFile, err)
+			customPatterns, err := LoadPatternsFromConfig(patternsPath, logger, s)
+			if err != nil {
+				t.Fatalf("failed to load custom patterns: %v", err)
 			}
-			t.Logf("golden file updated: %s", goldenFile)
-			return nil
-		}
-		want, err := os.ReadFile(goldenFile)
-		if err != nil {
-			return fmt.Errorf("failed to read golden file %s: %w", goldenFile, err)
-		}
-		if diff := cmp.Diff(string(want), got.String()); diff != "" {
-			return fmt.Errorf("OpenAPI spec mismatch for full parameters (-want +got):\n%s", diff)
-		}
-		return nil
-	}
 
-	if _, err := scantest.Run(t, moduleDir, nil, action, scantest.WithModuleRoot(moduleDir)); err != nil {
-		t.Fatalf("scantest.Run() failed: %+v", err)
-	}
+			var opts []any
+			for _, p := range customPatterns {
+				opts = append(opts, p)
+			}
+			opts = append(opts, WithTracer(symgo.TracerFunc(visit)))
+			analyzer, err := NewAnalyzer(s, logger, opts...)
+			if err != nil {
+				t.Fatalf("failed to create analyzer: %v", err)
+			}
+
+			if err := analyzer.Analyze(context.Background(), apiPath, "main"); err != nil {
+				t.Fatalf("failed to analyze package: %+v", err)
+			}
+			apiSpec := analyzer.OpenAPI
+
+			// Assert that the tracer visited all nodes in the target handler.
+			scannedPkg, err := s.ScanPackage(context.Background(), ".")
+			if err != nil {
+				t.Fatalf("could not re-scan package to find handler AST: %v", err)
+			}
+			var handlerFunc *goscan.FunctionInfo
+			for _, f := range scannedPkg.Functions {
+				if f.Name == "GetResource" {
+					handlerFunc = f
+					break
+				}
+			}
+			if handlerFunc == nil {
+				t.Fatalf("could not find handler function 'GetResource' to verify tracer")
+			}
+			var targetNode ast.Node
+			ast.Inspect(handlerFunc.AstDecl, func(n ast.Node) bool {
+				if targetNode != nil {
+					return false
+				}
+				if call, ok := n.(*ast.CallExpr); ok {
+					if sel, ok := call.Fun.(*ast.Ident); ok && sel.Name == "GetPathValue" {
+						targetNode = call
+						return false
+					}
+				}
+				return true
+			})
+			if targetNode == nil {
+				t.Fatalf("could not find the target GetPathValue call in the AST")
+			}
+			if !tracer.visitedNodePositions[targetNode.Pos()] {
+				t.Fatalf("tracer did not visit the target GetPathValue call expression")
+			}
+
+			var got bytes.Buffer
+			enc := json.NewEncoder(&got)
+			enc.SetIndent("", "  ")
+			if err := enc.Encode(apiSpec); err != nil {
+				t.Fatalf("failed to marshal OpenAPI spec to json: %v", err)
+			}
+
+			if *update {
+				if err := os.WriteFile(goldenFile, got.Bytes(), 0644); err != nil {
+					t.Fatalf("failed to write golden file %s: %v", goldenFile, err)
+				}
+				t.Logf("golden file updated: %s", goldenFile)
+				return
+			}
+			want, err := os.ReadFile(goldenFile)
+			if err != nil {
+				t.Fatalf("failed to read golden file %s: %v", goldenFile, err)
+			}
+			if diff := cmp.Diff(string(want), got.String()); diff != "" {
+				t.Errorf("OpenAPI spec mismatch for full parameters (-want +got):\n%s", diff)
+			}
+		},
+	})
 }
 
 func TestDocgen_newFeatures(t *testing.T) {
-	moduleDir := "testdata/new-features"
-	patternsFile := filepath.Join(moduleDir, "patterns.go")
-	goldenFile := filepath.Join(moduleDir, "new-features.golden.json")
-	apiPath := "new-features/main"
+	const (
+		gomod = `
+module new-features
 
-	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
-		logger := newTestLogger(io.Discard)
+go 1.21
 
-		customPatterns, err := LoadPatternsFromConfig(patternsFile, logger, s)
-		if err != nil {
-			return fmt.Errorf("failed to load custom patterns: %w", err)
-		}
+replace github.com/podhmo/go-scan => ../../../../
+`
+		helpersGo = `
+package helpers
 
-		var opts []any
-		for _, p := range customPatterns {
-			opts = append(opts, p)
-		}
-		analyzer, err := NewAnalyzer(s, logger, opts...)
-		if err != nil {
-			return fmt.Errorf("failed to create analyzer: %w", err)
-		}
+import (
+	"encoding/json"
+	"net/http"
+)
 
-		if err := analyzer.Analyze(ctx, apiPath, "main"); err != nil {
-			return fmt.Errorf("failed to analyze package: %+v", err)
-		}
-		apiSpec := analyzer.OpenAPI
+// ErrorResponse is a generic error response structure.
+type ErrorResponse struct {
+	Error string `json:"error"`
+}
 
-		var got bytes.Buffer
-		enc := json.NewEncoder(&got)
-		enc.SetIndent("", "  ")
-		if err := enc.Encode(apiSpec); err != nil {
-			return fmt.Errorf("failed to marshal OpenAPI spec to json: %w", err)
-		}
+// RenderError is a helper to write a JSON error response with a specific status code.
+// Our custom pattern will target this function.
+func RenderError(w http.ResponseWriter, r *http.Request, status int, err error) {
+	w.WriteHeader(status)
+	response := ErrorResponse{Error: err.Error()}
+	json.NewEncoder(w).Encode(response)
+}
 
-		if *update {
-			if err := os.WriteFile(goldenFile, got.Bytes(), 0644); err != nil {
-				return fmt.Errorf("failed to write golden file %s: %w", goldenFile, err)
+// RenderJSON is a generic helper to write a JSON response.
+// We will use this to test map and other struct responses.
+func RenderJSON(w http.ResponseWriter, status int, v any) {
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(v)
+}
+
+// RenderCustomError is a helper for testing the CustomResponse pattern.
+func RenderCustomError(w http.ResponseWriter, r *http.Request, err ErrorResponse) {
+	w.WriteHeader(http.StatusBadRequest) // 400
+	json.NewEncoder(w).Encode(err)
+}
+`
+		apiGo = `
+package main
+
+import (
+	"net/http"
+	"new-features/helpers" // Use the correct module path
+)
+
+// User represents a user in the system.
+type User struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// Settings represents some configuration settings.
+type Settings struct {
+	Options map[string]any `json:"options"`
+}
+
+// GetSettingsHandler returns the current application settings.
+// This handler is designed to test map[string]any support.
+func GetSettingsHandler(w http.ResponseWriter, r *http.Request) {
+	settings := Settings{
+		Options: map[string]any{
+			"feature_a": true,
+			"retries":   3,
+			"theme":     "dark",
+		},
+	}
+	helpers.RenderJSON(w, http.StatusOK, settings)
+}
+
+// GetUserHandler returns a user by ID.
+func GetUserHandler(w http.ResponseWriter, r *http.Request) {
+	// This branch is for the error case, to be detected by our custom pattern.
+	if r.URL.Query().Get("error") == "true" {
+		helpers.RenderError(w, r, http.StatusNotFound, &helpers.ErrorResponse{Error: "User not found"})
+		return
+	}
+
+	user := User{ID: "123", Name: "John Doe"}
+	helpers.RenderJSON(w, http.StatusOK, user)
+}
+
+// CreateThingHandler is for testing custom status code responses.
+func CreateThingHandler(w http.ResponseWriter, r *http.Request) {
+	// some validation logic...
+	if r.URL.Query().Get("fail") == "true" {
+		helpers.RenderCustomError(w, r, helpers.ErrorResponse{Error: "Invalid input"})
+		return
+	}
+	// Happy path not implemented for this example
+}
+
+// main is the entrypoint for the application.
+// docgen will start its analysis from here.
+func main() {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /settings", GetSettingsHandler)
+	mux.HandleFunc("GET /users/{id}", GetUserHandler) // Path parameter just for show
+	mux.HandleFunc("POST /things", CreateThingHandler)
+	http.ListenAndServe(":8080", mux)
+}
+`
+		patternsGo = `
+//go:build minigo
+// +build minigo
+
+package main
+
+import (
+	"new-features/helpers"
+
+	"github.com/podhmo/go-scan/examples/docgen/patterns"
+)
+
+// Patterns defines a list of custom patterns for the docgen tool.
+var Patterns = []patterns.PatternConfig{
+	{
+		Fn:       helpers.RenderError,
+		Type:     patterns.DefaultResponse,
+		ArgIndex: 3, // err error
+	},
+	{
+		Fn:         helpers.RenderCustomError,
+		Type:       patterns.CustomResponse,
+		StatusCode: "400",
+		ArgIndex:   2, // err helpers.ErrorResponse
+	},
+	{
+		Fn:       helpers.RenderJSON,
+		Type:     patterns.ResponseBody,
+		ArgIndex: 2, // The `v any` argument
+	},
+}
+`
+	)
+
+	scantest.Run(t, scantest.TestCase{
+		Gomod: gomod,
+		Files: map[string]string{
+			"helpers/helpers.go": helpersGo,
+			"main/api.go":        apiGo,
+			"patterns.go":        patternsGo,
+		},
+		WorkDir: "main", // Set the working directory to the 'main' package folder
+		Action: func(t *testing.T, s *scantest.Scanner) {
+			logger := newTestLogger(io.Discard)
+			// The golden file path is relative to the original test file location.
+			goldenFile := filepath.Join("../testdata/new-features", "new-features.golden.json")
+			apiPath := "new-features/main" // module name + package dir
+			// Patterns file is now at the root of the temp module, but our WorkDir is 'main',
+			// so we need to go up one level.
+			patternsPath := "../patterns.go"
+
+			customPatterns, err := LoadPatternsFromConfig(patternsPath, logger, s)
+			if err != nil {
+				t.Fatalf("failed to load custom patterns: %v", err)
 			}
-			t.Logf("golden file updated: %s", goldenFile)
-			return nil
-		}
 
-		want, err := os.ReadFile(goldenFile)
-		if err != nil {
-			return fmt.Errorf("failed to read golden file %s: %w", goldenFile, err)
-		}
+			var opts []any
+			for _, p := range customPatterns {
+				opts = append(opts, p)
+			}
+			analyzer, err := NewAnalyzer(s, logger, opts...)
+			if err != nil {
+				t.Fatalf("failed to create analyzer: %v", err)
+			}
 
-		var wantNormalized, gotNormalized any
-		if err := json.Unmarshal(want, &wantNormalized); err != nil {
-			return fmt.Errorf("failed to unmarshal want JSON: %w", err)
-		}
-		if err := json.Unmarshal(got.Bytes(), &gotNormalized); err != nil {
-			return fmt.Errorf("failed to unmarshal got JSON: %w", err)
-		}
+			if err := analyzer.Analyze(context.Background(), apiPath, "main"); err != nil {
+				t.Fatalf("failed to analyze package: %+v", err)
+			}
+			apiSpec := analyzer.OpenAPI
 
-		if diff := cmp.Diff(wantNormalized, gotNormalized); diff != "" {
-			gotJSON, _ := json.MarshalIndent(gotNormalized, "", "  ")
-			return fmt.Errorf("OpenAPI spec mismatch for new features (-want +got):\n%s\n\nGot:\n%s", diff, gotJSON)
-		}
-		return nil
-	}
+			var got bytes.Buffer
+			enc := json.NewEncoder(&got)
+			enc.SetIndent("", "  ")
+			if err := enc.Encode(apiSpec); err != nil {
+				t.Fatalf("failed to marshal OpenAPI spec to json: %v", err)
+			}
 
-	if _, err := scantest.Run(t, moduleDir, nil, action, scantest.WithModuleRoot(moduleDir)); err != nil {
-		t.Fatalf("scantest.Run() failed: %+v", err)
-	}
+			if *update {
+				if err := os.WriteFile(goldenFile, got.Bytes(), 0644); err != nil {
+					t.Fatalf("failed to write golden file %s: %v", goldenFile, err)
+				}
+				t.Logf("golden file updated: %s", goldenFile)
+				return
+			}
+
+			want, err := os.ReadFile(goldenFile)
+			if err != nil {
+				t.Fatalf("failed to read golden file %s: %v", goldenFile, err)
+			}
+
+			var wantNormalized, gotNormalized any
+			if err := json.Unmarshal(want, &wantNormalized); err != nil {
+				t.Fatalf("failed to unmarshal want JSON: %v", err)
+			}
+			if err := json.Unmarshal(got.Bytes(), &gotNormalized); err != nil {
+				t.Fatalf("failed to unmarshal got JSON: %v", err)
+			}
+
+			if diff := cmp.Diff(wantNormalized, gotNormalized); diff != "" {
+				gotJSON, _ := json.MarshalIndent(gotNormalized, "", "  ")
+				t.Errorf("OpenAPI spec mismatch for new features (-want +got):\n%s\n\nGot:\n%s", diff, gotJSON)
+			}
+		},
+	})
 }
 
 func TestDocgen_refAndRename(t *testing.T) {

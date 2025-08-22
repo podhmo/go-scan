@@ -2,13 +2,7 @@
 package patterns
 
 import (
-	"context"
-	"fmt"
-	"strings"
-
 	"github.com/podhmo/go-scan/examples/docgen/openapi"
-	"github.com/podhmo/go-scan/scanner"
-	"github.com/podhmo/go-scan/symgo"
 )
 
 // Analyzer is a subset of the docgen.Analyzer interface needed by patterns.
@@ -33,12 +27,12 @@ const (
 
 // PatternConfig defines a user-configurable pattern for docgen analysis.
 type PatternConfig struct {
-	Key           string
-	Type          PatternType
-	ArgIndex      int
-	StatusCode    string
-	Description   string
-	NameArgIndex  int
+	Key          string
+	Type         PatternType
+	ArgIndex     int
+	StatusCode   string
+	Description  string
+	NameArgIndex int
 	// A dummy field to make this struct different from the one in the main package
 	// This helps verify that the correct type is being resolved.
 	IsTestPattern bool

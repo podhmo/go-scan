@@ -199,6 +199,71 @@ func (i *Interpreter) EvalString(source string) (object.Object, error) {
 	return result, nil
 }
 
+// EvalPackage evaluates all files in a given package directory.
+// It populates the interpreter's global environment with the declarations from the package.
+func (i *Interpreter) EvalPackage(dir string) error {
+	// Use ScanPackage which is designed to take a directory path.
+	pkg, err := i.scanner.ScanPackage(context.Background(), dir)
+	if err != nil {
+		return fmt.Errorf("failed to scan package at %q: %w", dir, err)
+	}
+	if pkg == nil {
+		// ScanPackage can return nil, nil if no parseable files are found.
+		return fmt.Errorf("no Go package found in %q", dir)
+	}
+
+	var decls []object.DeclWithScope
+	var unifiedFScope *object.FileScope
+
+	if len(pkg.AstFiles) > 0 {
+		// Create a single unified scope for the entire package.
+		// Use the first file's AST as a representative placeholder.
+		var firstFile *ast.File
+		for _, f := range pkg.AstFiles {
+			firstFile = f
+			break
+		}
+		unifiedFScope = object.NewFileScope(firstFile)
+
+		// Populate the unified scope with imports from ALL files in the package.
+		for _, f := range pkg.AstFiles {
+			for _, imp := range f.Imports {
+				path, err := strconv.Unquote(imp.Path.Value)
+				if err != nil {
+					continue // Should be handled by Go parser
+				}
+				var alias string
+				if imp.Name != nil {
+					alias = imp.Name.Name
+				} else {
+					parts := strings.Split(path, "/")
+					alias = parts[len(parts)-1]
+				}
+
+				if alias == "." {
+					unifiedFScope.DotImports = append(unifiedFScope.DotImports, path)
+				} else {
+					unifiedFScope.Aliases[alias] = path
+				}
+			}
+		}
+
+		// Associate all declarations from all files with the single unified scope.
+		for _, f := range pkg.AstFiles {
+			for _, decl := range f.Decls {
+				decls = append(decls, object.DeclWithScope{Decl: decl, Scope: unifiedFScope})
+			}
+		}
+	}
+
+	if result := i.eval.EvalToplevel(decls, i.globalEnv); result != nil {
+		if err, ok := result.(*object.Error); ok {
+			return err
+		}
+	}
+	return nil
+}
+
 // Result holds the outcome of a script execution.
 type Result struct {
 	Value object.Object

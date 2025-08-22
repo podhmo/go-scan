@@ -41,10 +41,10 @@ const (
 // PatternConfig defines a user-configurable pattern for docgen analysis.
 // It maps a function call to a specific analysis type.
 type PatternConfig struct {
-	// Key is the fully-qualified function or method name to match.
-	// e.g., "github.com/my-org/my-app/utils.DecodeJSON"
-	// e.g., "(*net/http.Request).Context"
-	Key string
+	// Fn is a direct reference to the function or method to be matched.
+	// This will be resolved by the minigo interpreter.
+	// e.g., mypkg.MyFunc or (*mypkg.MyType).MyMethod
+	Fn any
 
 	// Type specifies the kind of analysis to perform.
 	Type PatternType

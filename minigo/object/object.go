@@ -52,6 +52,7 @@ const (
 	PACKAGE_OBJ              ObjectType = "PACKAGE"
 	GO_VALUE_OBJ             ObjectType = "GO_VALUE"
 	GO_TYPE_OBJ              ObjectType = "GO_TYPE"
+	GO_SOURCE_FUNCTION_OBJ   ObjectType = "GO_SOURCE_FUNCTION"
 	TYPED_NIL_OBJ            ObjectType = "TYPED_NIL"
 	GO_METHOD_VALUE_OBJ      ObjectType = "GO_METHOD_VALUE"
 	ERROR_OBJ                ObjectType = "ERROR"
@@ -745,6 +746,26 @@ func (mv *GoMethodValue) Type() ObjectType { return GO_METHOD_VALUE_OBJ }
 // Inspect returns a string representation of the method value.
 func (mv *GoMethodValue) Inspect() string {
 	return fmt.Sprintf("method value %s()", mv.Fn.Name.String())
+}
+
+// --- GoSourceFunction Object ---
+
+// GoSourceFunction represents a function that is defined in Go source code,
+// as opposed to a user-defined function in a minigo script. It holds a
+// reference to the function's metadata from the scanner and its definition environment.
+type GoSourceFunction struct {
+	Info    *scanner.FunctionInfo
+	PkgPath string
+	DefEnv  *Environment
+	FScope  *FileScope // The unified file scope for the package where the function was defined.
+}
+
+// Type returns the type of the GoSourceFunction object.
+func (f *GoSourceFunction) Type() ObjectType { return GO_SOURCE_FUNCTION_OBJ }
+
+// Inspect returns a string representation of the Go source function.
+func (f *GoSourceFunction) Inspect() string {
+	return fmt.Sprintf("go func %s()", f.Info.Name)
 }
 
 // --- Error Object ---

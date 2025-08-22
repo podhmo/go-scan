@@ -1969,6 +1969,35 @@ func (e *Evaluator) applyFunction(call *ast.CallExpr, fn object.Object, args []o
 	var receiver object.Object // For bound methods
 
 	switch f := fn.(type) {
+	case *object.GoSourceFunction:
+		if f.Info.AstDecl == nil {
+			return e.newError(call.Pos(), "cannot call Go source function with no AST declaration")
+		}
+		// Convert GoSourceFunction to a standard Function object for execution,
+		// but crucially, use its definition environment and file scope.
+		tempFunc := &object.Function{
+			Name:       f.Info.AstDecl.Name,
+			TypeParams: f.Info.AstDecl.Type.TypeParams,
+			Parameters: f.Info.AstDecl.Type.Params,
+			Results:    f.Info.AstDecl.Type.Results,
+			Body:       f.Info.AstDecl.Body,
+			Env:        f.DefEnv,
+			FScope:     f.FScope,
+		}
+
+		// Handle generic function type inference, mirroring the logic in the *object.Function case.
+		if tempFunc.TypeParams != nil && len(tempFunc.TypeParams.List) > 0 {
+			// It's a generic function. Try to infer type arguments from value arguments.
+			inferred, errObj := e.inferGenericTypes(call.Pos(), tempFunc, args)
+			if errObj != nil {
+				return errObj
+			}
+			function = tempFunc
+			typeArgs = inferred
+		} else {
+			// It's a regular, non-generic function.
+			function = tempFunc
+		}
 	case *object.Function:
 		// Check if this is a generic function being called without instantiation.
 		if f.TypeParams != nil && len(f.TypeParams.List) > 0 {
@@ -4146,17 +4175,11 @@ func (e *Evaluator) findSymbolInPackageInfo(pkgInfo *goscan.Package, symbolName 
 	// Look in functions
 	for _, f := range pkgInfo.Functions {
 		if f.Name == symbolName {
-			if f.AstDecl == nil {
-				continue
-			}
-			return &object.Function{
-				Name:       f.AstDecl.Name,
-				TypeParams: f.AstDecl.Type.TypeParams,
-				Parameters: f.AstDecl.Type.Params,
-				Results:    f.AstDecl.Type.Results,
-				Body:       f.AstDecl.Body,
-				Env:        pkgEnv, // Functions defined in a package capture the package's environment.
-				FScope:     fscope, // Attach the package's filescope
+			return &object.GoSourceFunction{
+				Info:    f,
+				PkgPath: pkgInfo.Path,
+				DefEnv:  pkgEnv,
+				FScope:  fscope,
 			}, true
 		}
 	}

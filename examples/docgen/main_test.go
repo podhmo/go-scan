@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -17,6 +18,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/examples/docgen/openapi"
+	"github.com/podhmo/go-scan/scantest"
 	"github.com/podhmo/go-scan/symgo"
 	"gopkg.in/yaml.v3"
 )
@@ -196,225 +198,173 @@ func TestDocgen_withCustomPatterns(t *testing.T) {
 }
 
 func TestDocgen_fullParameters(t *testing.T) {
-	// recordingTracer is a simple implementation of symgo.Tracer that records the
-	// positions of the AST nodes it visits.
+	moduleDir := "testdata/full-parameters"
+	patternsFile := filepath.Join(moduleDir, "patterns.go")
+	goldenFile := filepath.Join("testdata", "full-parameters.golden.json")
+	apiPath := "full-parameters" // module name
+
 	type recordingTracer struct {
 		visitedNodePositions map[token.Pos]bool
 	}
-
 	tracer := &recordingTracer{visitedNodePositions: make(map[token.Pos]bool)}
-
 	visit := func(node ast.Node) {
-		if node == nil {
-			return
-		}
-		tracer.visitedNodePositions[node.Pos()] = true
-	}
-
-	// This test is based on the scenario described in `docs/trouble-docgen.md`.
-	// It verifies that path, query, and header parameters defined via custom
-	// patterns are correctly included in the final OpenAPI specification.
-	const apiPath = "full-parameters"
-	goldenFile := "testdata/full-parameters.golden.json"
-
-	// Setup: Change directory to the testdata so the module can be resolved.
-	wd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("could not get working directory: %v", err)
-	}
-	if err := os.Chdir("testdata/full-parameters"); err != nil {
-		t.Fatalf("could not change directory: %v", err)
-	}
-	defer os.Chdir(wd)
-
-	logger := newTestLogger(io.Discard)
-
-	// Create a scanner configured to find the new module.
-	s, err := goscan.New(
-		goscan.WithGoModuleResolver(),
-		goscan.WithLogger(logger),
-	)
-	if err != nil {
-		t.Fatalf("failed to create scanner: %v", err)
-	}
-	// Load custom patterns from the config file.
-	customPatterns, err := LoadPatternsFromConfig("patterns.go", logger, s)
-	if err != nil {
-		t.Fatalf("failed to load custom patterns: %v", err)
-	}
-
-	// Create an analyzer with the custom patterns and a tracer.
-	var opts []any
-	for _, p := range customPatterns {
-		opts = append(opts, p)
-	}
-	opts = append(opts, WithTracer(symgo.TracerFunc(visit)))
-	analyzer, err := NewAnalyzer(s, logger, opts...)
-	if err != nil {
-		t.Fatalf("failed to create analyzer: %v", err)
-	}
-
-	// Analyze the package. The entrypoint is the main function.
-	ctx := context.Background()
-	if err := analyzer.Analyze(ctx, apiPath, "main"); err != nil {
-		t.Fatalf("failed to analyze package: %+v", err)
-	}
-	apiSpec := analyzer.OpenAPI
-
-	// Assert that the tracer visited all nodes in the target handler.
-	// This confirms the symbolic execution engine is not skipping parts of the function.
-	scannedPkg, err := s.ScanPackageByImport(ctx, apiPath)
-	if err != nil {
-		t.Fatalf("Could not re-scan package to find handler AST: %v", err)
-	}
-	var handlerFunc *goscan.FunctionInfo
-	for _, f := range scannedPkg.Functions {
-		if f.Name == "GetResource" {
-			handlerFunc = f
-			break
+		if node != nil {
+			tracer.visitedNodePositions[node.Pos()] = true
 		}
 	}
-	if handlerFunc == nil {
-		t.Fatalf("Could not find handler function 'GetResource' to verify tracer")
-	}
 
-	// Find a specific node we expect the tracer to have visited.
-	var targetNode ast.Node
-	ast.Inspect(handlerFunc.AstDecl, func(n ast.Node) bool {
-		if targetNode != nil {
-			return false // already found
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
+		logger := newTestLogger(io.Discard)
+
+		customPatterns, err := LoadPatternsFromConfig(patternsFile, logger, s)
+		if err != nil {
+			return fmt.Errorf("failed to load custom patterns: %w", err)
 		}
-		if call, ok := n.(*ast.CallExpr); ok {
-			if sel, ok := call.Fun.(*ast.Ident); ok {
-				if sel.Name == "GetPathValue" {
+
+		var opts []any
+		for _, p := range customPatterns {
+			opts = append(opts, p)
+		}
+		opts = append(opts, WithTracer(symgo.TracerFunc(visit)))
+		analyzer, err := NewAnalyzer(s, logger, opts...)
+		if err != nil {
+			return fmt.Errorf("failed to create analyzer: %w", err)
+		}
+
+		if err := analyzer.Analyze(ctx, apiPath, "main"); err != nil {
+			return fmt.Errorf("failed to analyze package: %+v", err)
+		}
+		apiSpec := analyzer.OpenAPI
+
+		// Assert that the tracer visited all nodes in the target handler.
+		scannedPkg, err := s.ScanPackage(ctx, moduleDir)
+		if err != nil {
+			return fmt.Errorf("could not re-scan package to find handler AST: %w", err)
+		}
+		var handlerFunc *goscan.FunctionInfo
+		for _, f := range scannedPkg.Functions {
+			if f.Name == "GetResource" {
+				handlerFunc = f
+				break
+			}
+		}
+		if handlerFunc == nil {
+			return fmt.Errorf("could not find handler function 'GetResource' to verify tracer")
+		}
+		var targetNode ast.Node
+		ast.Inspect(handlerFunc.AstDecl, func(n ast.Node) bool {
+			if targetNode != nil {
+				return false
+			}
+			if call, ok := n.(*ast.CallExpr); ok {
+				if sel, ok := call.Fun.(*ast.Ident); ok && sel.Name == "GetPathValue" {
 					targetNode = call
 					return false
 				}
 			}
+			return true
+		})
+		if targetNode == nil {
+			return fmt.Errorf("could not find the target GetPathValue call in the AST")
 		}
-		return true
-	})
-
-	if targetNode == nil {
-		t.Fatalf("Could not find the target GetPathValue call in the AST")
-	}
-
-	if !tracer.visitedNodePositions[targetNode.Pos()] {
-		t.Errorf("Tracer did not visit the target GetPathValue call expression")
-	}
-
-	// Marshal the result to JSON.
-	var got bytes.Buffer
-	enc := json.NewEncoder(&got)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(apiSpec); err != nil {
-		t.Fatalf("failed to marshal OpenAPI spec to json: %v", err)
-	}
-
-	// Compare with the golden file.
-	goldenPath := filepath.Join(wd, goldenFile)
-	if *update {
-		if err := os.WriteFile(goldenPath, got.Bytes(), 0644); err != nil {
-			t.Fatalf("failed to write golden file %s: %v", goldenPath, err)
+		if !tracer.visitedNodePositions[targetNode.Pos()] {
+			return fmt.Errorf("tracer did not visit the target GetPathValue call expression")
 		}
-		t.Logf("golden file updated: %s", goldenPath)
-	}
 
-	want, err := os.ReadFile(goldenPath)
-	if err != nil {
-		if os.IsNotExist(err) && !*update {
-			t.Fatalf("golden file not found: %s. Run with -update to create it.", goldenPath)
+		var got bytes.Buffer
+		enc := json.NewEncoder(&got)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(apiSpec); err != nil {
+			return fmt.Errorf("failed to marshal OpenAPI spec to json: %w", err)
 		}
-		t.Fatalf("failed to read golden file %s: %v", goldenPath, err)
+
+		if *update {
+			if err := os.WriteFile(goldenFile, got.Bytes(), 0644); err != nil {
+				return fmt.Errorf("failed to write golden file %s: %w", goldenFile, err)
+			}
+			t.Logf("golden file updated: %s", goldenFile)
+			return nil
+		}
+		want, err := os.ReadFile(goldenFile)
+		if err != nil {
+			return fmt.Errorf("failed to read golden file %s: %w", goldenFile, err)
+		}
+		if diff := cmp.Diff(string(want), got.String()); diff != "" {
+			return fmt.Errorf("OpenAPI spec mismatch for full parameters (-want +got):\n%s", diff)
+		}
+		return nil
 	}
 
-	if diff := cmp.Diff(string(want), got.String()); diff != "" {
-		t.Errorf("OpenAPI spec mismatch for full parameters (-want +got):\n%s", diff)
+	if _, err := scantest.Run(t, moduleDir, nil, action, scantest.WithModuleRoot(moduleDir)); err != nil {
+		t.Fatalf("scantest.Run() failed: %+v", err)
 	}
 }
 
 func TestDocgen_newFeatures(t *testing.T) {
-	// This test verifies the new features: map support and default error responses.
-	// It is configured to run from the 'examples/docgen' directory and use
-	// goscan.WithWorkDir to point to the test module, mirroring the setup
-	// in the passing symgo_intramodule_test.go.
-	const apiPath = "new-features/main" // The module name to analyze
 	moduleDir := "testdata/new-features"
 	patternsFile := filepath.Join(moduleDir, "patterns.go")
 	goldenFile := filepath.Join(moduleDir, "new-features.golden.json")
+	apiPath := "new-features/main"
 
-	logger := newTestLogger(io.Discard)
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
+		logger := newTestLogger(io.Discard)
 
-	// Create a scanner configured to find the new module.
-	s, err := goscan.New(
-		goscan.WithWorkDir(moduleDir), // Point scanner to the module directory
-		goscan.WithGoModuleResolver(),
-		goscan.WithLogger(logger),
-	)
-	if err != nil {
-		t.Fatalf("failed to create scanner: %v", err)
-	}
-	// Load custom patterns from the config file.
-	customPatterns, err := LoadPatternsFromConfig(patternsFile, logger, s)
-	if err != nil {
-		t.Fatalf("failed to load custom patterns: %v", err)
-	}
-
-	// Create an analyzer with the custom patterns.
-	var opts []any
-	for _, p := range customPatterns {
-		opts = append(opts, p)
-	}
-	analyzer, err := NewAnalyzer(s, logger, opts...)
-	if err != nil {
-		t.Fatalf("failed to create analyzer: %v", err)
-	}
-
-	// Analyze the package. The entrypoint is the main function.
-	ctx := context.Background()
-	if err := analyzer.Analyze(ctx, apiPath, "main"); err != nil {
-		t.Fatalf("failed to analyze package: %+v", err)
-	}
-	apiSpec := analyzer.OpenAPI
-
-	// Marshal the result to JSON.
-	var got bytes.Buffer
-	enc := json.NewEncoder(&got)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(apiSpec); err != nil {
-		t.Fatalf("failed to marshal OpenAPI spec to json: %v", err)
-	}
-
-	// Compare with the golden file.
-	goldenPath := goldenFile
-	if *update {
-		if err := os.WriteFile(goldenPath, got.Bytes(), 0644); err != nil {
-			t.Fatalf("failed to write golden file %s: %v", goldenPath, err)
+		customPatterns, err := LoadPatternsFromConfig(patternsFile, logger, s)
+		if err != nil {
+			return fmt.Errorf("failed to load custom patterns: %w", err)
 		}
-		t.Logf("golden file updated: %s", goldenPath)
-	}
 
-	want, err := os.ReadFile(goldenPath)
-	if err != nil {
-		if os.IsNotExist(err) && !*update {
-			t.Fatalf("golden file not found: %s. Run with -update to create it.", goldenPath)
+		var opts []any
+		for _, p := range customPatterns {
+			opts = append(opts, p)
 		}
-		t.Fatalf("failed to read golden file %s: %v", goldenPath, err)
+		analyzer, err := NewAnalyzer(s, logger, opts...)
+		if err != nil {
+			return fmt.Errorf("failed to create analyzer: %w", err)
+		}
+
+		if err := analyzer.Analyze(ctx, apiPath, "main"); err != nil {
+			return fmt.Errorf("failed to analyze package: %+v", err)
+		}
+		apiSpec := analyzer.OpenAPI
+
+		var got bytes.Buffer
+		enc := json.NewEncoder(&got)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(apiSpec); err != nil {
+			return fmt.Errorf("failed to marshal OpenAPI spec to json: %w", err)
+		}
+
+		if *update {
+			if err := os.WriteFile(goldenFile, got.Bytes(), 0644); err != nil {
+				return fmt.Errorf("failed to write golden file %s: %w", goldenFile, err)
+			}
+			t.Logf("golden file updated: %s", goldenFile)
+			return nil
+		}
+
+		want, err := os.ReadFile(goldenFile)
+		if err != nil {
+			return fmt.Errorf("failed to read golden file %s: %w", goldenFile, err)
+		}
+
+		var wantNormalized, gotNormalized any
+		if err := json.Unmarshal(want, &wantNormalized); err != nil {
+			return fmt.Errorf("failed to unmarshal want JSON: %w", err)
+		}
+		if err := json.Unmarshal(got.Bytes(), &gotNormalized); err != nil {
+			return fmt.Errorf("failed to unmarshal got JSON: %w", err)
+		}
+
+		if diff := cmp.Diff(wantNormalized, gotNormalized); diff != "" {
+			gotJSON, _ := json.MarshalIndent(gotNormalized, "", "  ")
+			return fmt.Errorf("OpenAPI spec mismatch for new features (-want +got):\n%s\n\nGot:\n%s", diff, gotJSON)
+		}
+		return nil
 	}
 
-	// Normalize JSON by unmarshalling and marshalling again to avoid cosmetic diffs
-	var wantNormalized, gotNormalized any
-	if err := json.Unmarshal(want, &wantNormalized); err != nil {
-		t.Fatalf("failed to unmarshal want JSON: %v", err)
-	}
-	if err := json.Unmarshal(got.Bytes(), &gotNormalized); err != nil {
-		t.Fatalf("failed to unmarshal got JSON: %v", err)
-	}
-
-	if diff := cmp.Diff(wantNormalized, gotNormalized); diff != "" {
-		// For better debugging, marshal the 'got' object back to indented JSON string
-		gotJSON, _ := json.MarshalIndent(gotNormalized, "", "  ")
-		t.Errorf("OpenAPI spec mismatch for new features (-want +got):\n%s\n\nGot:\n%s", diff, gotJSON)
+	if _, err := scantest.Run(t, moduleDir, nil, action, scantest.WithModuleRoot(moduleDir)); err != nil {
+		t.Fatalf("scantest.Run() failed: %+v", err)
 	}
 }
 

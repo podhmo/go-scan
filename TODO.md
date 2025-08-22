@@ -39,19 +39,9 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     - Implemented support for interpreting the `slices` and `errors` packages from source by adding language features like 3-index slicing, variadic functions, and support for struct literals with scoped variables.
 - **`docgen` and Symbolic-Execution-like Engine (`symgo`)**: A symbolic execution engine (`symgo`) and a demonstration tool (`docgen`) that uses it to generate OpenAPI 3.1 specifications from `net/http` server code. The engine can trace function calls, resolve types, and evaluate handler logic to infer routes, methods, parameters, and request/response schemas. The `docgen` tool includes a golden-file test suite and can output in both JSON and YAML. ([docs/plan-symbolic-execution-like.md](./docs/plan-symbolic-execution-like.md))
     - Removed manual stubs for standard library types (`net/http`, `io`, etc.) from the `docgen` example, as `go-scan`'s improved module-aware resolution now handles them automatically.
+- **Type-Safe `docgen` Patterns**: Refactored `docgen` to support type-safe function references (`Fn: mypkg.MyFunc`) in its configuration scripts, replacing string-based keys. This involved enhancing the `minigo` interpreter to correctly represent Go functions as objects with access to their definition environment, ensuring that transitive dependencies within packages are resolved correctly during analysis. The `docgen` tests were also refactored to use the `scantest` library for more robust and maintainable testing of code in nested Go modules.
 
 ## To Be Implemented
-
-### Type-Safe `docgen` Patterns ([docs/plan-docgen-minigo-fn-ref.md](./docs/plan-docgen-minigo-fn-ref.md))
-- [x] **Core Library Robustness**:
-    - [x] **Enhance Module Resolution**: Fix the `go-scan` locator to correctly resolve packages in nested test modules with `replace` directives.
-    - [x] **Implement Typed Nil Method Values**: Enhance the `minigo` interpreter to support resolving method values from typed `nil` pointers.
-    - [ ] **Implement Environment-Aware Function Objects**: Enhance `minigo` to represent Go functions as objects that retain their definition environment (`DefEnv`).
-- [ ] **`docgen` Feature**:
-    - [ ] **Refactor `docgen` Configuration**: Update `PatternConfig` to use a type-safe `Fn` field instead of a string `Key`.
-    - [ ] **Implement Key Computation**: Update the `docgen` loader to dynamically generate the matching key from the `Fn` reference.
-- [x] **Verification**:
-    - [x] **Validate with Integration Test**: Create and pass a `docgen` integration test that uses a nested Go module, proving the module resolution fix and the `docgen` feature work together correctly. (Note: Validated with tests in `minigo_scantest_test.go` and `docgen/integration_test.go` which prove the core module resolution mechanism is robust.)
 
 ### `minigo` Refinements ([docs/plan-minigo.md](./docs/plan-minigo.md))
 - [ ] Write comprehensive documentation for the API, supported language features, and usage examples.

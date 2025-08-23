@@ -398,3 +398,97 @@ func listGoFilesForWalker(dirPath string, includeTests bool) ([]string, error) {
 	}
 	return files, nil
 }
+
+// Scan traverses packages based on filesystem patterns.
+// It is a lightweight alternative to `goscan.Scanner.Scan`, parsing only package
+// and import declarations.
+//
+// It supports the `...` wildcard to scan all subdirectories.
+// Non-wildcard patterns are treated as single import paths to be scanned.
+func (w *ModuleWalker) Scan(patterns ...string) ([]*scanner.PackageImports, error) {
+	pkgsMap := make(map[string]*scanner.PackageImports) // Use map to handle duplicates
+	ctx := context.Background()
+
+	for _, pattern := range patterns {
+		if strings.Contains(pattern, "...") {
+			// Handle wildcard pattern
+			baseDir := strings.TrimSuffix(pattern, "...")
+			baseDir = strings.TrimSuffix(baseDir, "/")
+
+			absBasePath := baseDir
+			if !filepath.IsAbs(baseDir) {
+				absBasePath = filepath.Join(w.workDir, baseDir)
+			}
+
+			walkErr := filepath.WalkDir(absBasePath, func(path string, d fs.DirEntry, err error) error {
+				if err != nil {
+					return err
+				}
+				if !d.IsDir() {
+					return nil
+				}
+				// Check if the directory contains any .go files.
+				ok, err := hasGoFiles(path)
+				if err != nil {
+					slog.DebugContext(ctx, "cannot check for go files, skipping", "path", path, "error", err)
+					return nil
+				}
+
+				if ok {
+					importPath, err := w.locator.PathToImport(path)
+					if err != nil {
+						slog.WarnContext(ctx, "could not resolve import path, skipping", "path", path, "error", err)
+						return nil
+					}
+
+					pkg, err := w.ScanPackageImports(ctx, importPath)
+					if err != nil {
+						slog.WarnContext(ctx, "failed to scan package imports during wildcard walk", "path", path, "error", err)
+						return nil
+					}
+					if pkg != nil && pkg.ImportPath != "" {
+						pkgsMap[pkg.ImportPath] = pkg
+					}
+				}
+				return nil
+			})
+
+			if walkErr != nil {
+				return nil, fmt.Errorf("error walking directory for pattern %q: %w", pattern, walkErr)
+			}
+		} else {
+			// Handle single import path (not a file path)
+			pkg, err := w.ScanPackageImports(ctx, pattern)
+			if err != nil {
+				return nil, fmt.Errorf("failed to scan imports for package %q: %w", pattern, err)
+			}
+			if pkg != nil && pkg.ImportPath != "" {
+				pkgsMap[pkg.ImportPath] = pkg
+			}
+		}
+	}
+
+	// Convert map to slice
+	pkgs := make([]*scanner.PackageImports, 0, len(pkgsMap))
+	for _, pkg := range pkgsMap {
+		pkgs = append(pkgs, pkg)
+	}
+	// Sort for deterministic output
+	sort.Slice(pkgs, func(i, j int) bool {
+		return pkgs[i].ImportPath < pkgs[j].ImportPath
+	})
+	return pkgs, nil
+}
+
+func hasGoFiles(dirPath string) (bool, error) {
+	entries, err := os.ReadDir(dirPath)
+	if err != nil {
+		return false, err
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".go") {
+			return true, nil
+		}
+	}
+	return false, nil
+}

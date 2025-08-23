@@ -17,7 +17,7 @@ The primary goal is to build a static analysis tool with the following capabilit
     - Provide an `-all` flag to scan every package in the module.
     - Include an option `--include-tests` to consider usage within test files (`_test.go`). By default, test usage will be ignored.
     - **Multi-Workspace Support**: Provide an option to scan all Go modules found under a given directory (e.g., a repository root). This allows considering usage in sub-projects (like those in `examples/`) as valid uses for code in the main module.
-- **Detailed Reporting**: For each orphan found, report its name and location (file and line number). For functions that *are* used, track where they are used (e.g., "used in package `bar` by function `Baz`").
+- **Detailed Reporting**: By default, the tool will only report orphan functions and their locations. With a verbose flag (`-v`), it will also report all usage locations for non-orphan functions.
 - **Exclusion Mechanism**: Allow developers to mark functions/methods with a special comment (e.g., `//go:scan:ignore`) to prevent them from being reported as orphans. This is useful for functions intended for use via reflection, `cgo`, or other non-standard mechanisms.
 
 ## 2. Technical Approach
@@ -37,7 +37,7 @@ The prohibition on `go/packages` and `go/types` in this repository's `AGENTS.md`
 ### Step 1: Foundational Scaffolding
 
 - **Create a new command**: Add a new directory under `examples/`, let's call it `find-orphans`.
-- **CLI Parsing**: Use the standard `flag` package to parse command-line arguments: the target package path, the `-all` flag, and the `--include-tests` flag.
+- **CLI Parsing**: Use the standard `flag` package to parse command-line arguments: the target package path, the `-all` flag, the `--include-tests` flag, and the `-v` (verbose) flag.
 - **Initial Setup**: The `main` function will initialize the `go-scan.Scanner` and the `symgo.Interpreter`. It will respect the `--include-tests` flag when walking the module.
 
 ### Step 2: Collect All Function and Method Definitions

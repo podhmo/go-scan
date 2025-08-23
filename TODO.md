@@ -63,5 +63,10 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     - [ ] Enhance the usage-tracking intrinsic to mark concrete methods as "used" when an interface method is called. (Note: This is partially implemented but blocked by a deeper issue in the `symgo` interpreter, which doesn't seem to trigger the necessary intrinsic for interface method calls.)
 - [x] **`find-orphans`: Reporting and Final Touches**
     - [x] Implement formatted output for both default (orphans only) and verbose modes. (Note: Added JSON output via `-json` flag.)
+
+### `symgo` Interpreter Limitations
+- [ ] **Interface Method Call Tracing**: The interpreter does not currently trigger the default intrinsic for method calls on interface types. This prevents tools like `find-orphans` from correctly analyzing code that relies on interfaces. See [docs/trouble-find-orphans.md](./docs/trouble-find-orphans.md) for details.
+
+### Future Enhancements
 - [ ] **`ModuleWalker`: Wildcard Support**: Add support for the `...` wildcard in import path patterns, similar to the `go` command, to make package discovery more intuitive.
 - [ ] **`scantest`: Path to Import Path Conversion**: Enhance `scantest.Run` with an option or helper to automatically convert filesystem path patterns (like `.`) into their corresponding Go import path patterns, simplifying test setup for tools that consume import paths.

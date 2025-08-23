@@ -50,3 +50,24 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 ### `minigo` FFI and Language Limitations
 - [-] **Fix empty slice type inference**: Type inference for empty slice literals is weak and defaults to `[]any`. This causes legitimate generic functions (like `slices.Sort`) to fail type checks when they shouldn't. The interpreter should ideally preserve the declared type (e.g., `[]int`) even if the literal is empty. (Note: This is fixed for empty slice and map literals.)
 - [ ] **Fix typed nil handling**: The interpreter does not correctly handle typed `nil` values for slices and interfaces, causing incorrect behavior in type inference and equality checks.
+
+### Find Orphan Functions and Methods ([docs/plan-find-orphans.md](./docs/plan-find-orphans.md))
+- [ ] **Phase 1: Project Scaffolding & Basic Scanning**
+    - [ ] Create directory `examples/find-orphans` and `main.go`.
+    - [ ] Set up CLI flag parsing for `-all`, `--include-tests`, `--workspace-root`, and `-v`.
+    - [ ] Implement scanner setup to manage single or multiple modules (`--workspace-root`).
+    - [ ] Implement logic to walk target packages and collect all function/method declarations.
+- [ ] **Phase 2: Core Usage Analysis with `symgo`**
+    - [ ] **(Prerequisite)** Modify `symgo` to support a "catch-all" intrinsic for tracking all function calls.
+        - [ ] Add a mechanism to register a default handler in the interpreter.
+        - [ ] Update `evalCallExpr` to invoke the handler.
+    - [ ] In `find-orphans`, set up the `symgo.Interpreter`.
+    - [ ] Implement the usage-tracking intrinsic to populate a `usageMap`.
+    - [ ] Implement the main analysis loop to symbolically execute all functions.
+- [ ] **Phase 3: Advanced Usage Analysis (Interfaces)**
+    - [ ] Implement a mapping from interfaces to their concrete implementing types.
+    - [ ] Enhance the usage-tracking intrinsic to mark concrete methods as "used" when an interface method is called.
+- [ ] **Phase 4: Reporting and Final Touches**
+    - [ ] Implement the final analysis to compare all declarations against the `usageMap`.
+    - [ ] Implement support for the `//go:scan:ignore` annotation.
+    - [ ] Implement formatted output for both default (orphans only) and verbose modes.

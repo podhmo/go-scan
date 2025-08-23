@@ -28,6 +28,7 @@ type Evaluator struct {
 	tracer            object.Tracer // Tracer for debugging evaluation flow.
 	callStack         []*callFrame
 	interfaceBindings map[string]*goscan.TypeInfo
+	defaultIntrinsic  intrinsics.IntrinsicFunc
 }
 
 type callFrame struct {
@@ -62,6 +63,11 @@ func (e *Evaluator) RegisterIntrinsic(key string, fn intrinsics.IntrinsicFunc) {
 // GetIntrinsic retrieves a built-in function for testing.
 func (e *Evaluator) GetIntrinsic(key string) (intrinsics.IntrinsicFunc, bool) {
 	return e.intrinsics.Get(key)
+}
+
+// RegisterDefaultIntrinsic registers a default function to be called for any function call.
+func (e *Evaluator) RegisterDefaultIntrinsic(fn intrinsics.IntrinsicFunc) {
+	e.defaultIntrinsic = fn
 }
 
 // PushIntrinsics creates a new temporary scope for intrinsics.
@@ -1032,6 +1038,13 @@ func (e *Evaluator) evalCallExpr(ctx context.Context, n *ast.CallExpr, env *obje
 	args := e.evalExpressions(ctx, n.Args, env, pkg)
 	if len(args) == 1 && isError(args[0]) {
 		return args[0]
+	}
+
+	if e.defaultIntrinsic != nil {
+		// The default intrinsic is a "catch-all" handler that can be used for logging,
+		// dependency tracking, etc. It receives the function object itself as the first
+		// argument, followed by the regular arguments.
+		e.defaultIntrinsic(append([]object.Object{function}, args...)...)
 	}
 
 	result := e.applyFunction(ctx, function, args, pkg, n.Pos())

@@ -1,7 +1,6 @@
 package goscan
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/podhmo/go-scan/scanner"
@@ -11,22 +10,14 @@ import (
 // It requires the PackageInfo to look up methods of the structCandidate.
 func Implements(structCandidate *scanner.TypeInfo, interfaceDef *scanner.TypeInfo, pkgInfo *scanner.PackageInfo) bool {
 	if structCandidate == nil || structCandidate.Kind != StructKind {
-		fmt.Println("DEBUG: Implements: structCandidate is nil or not a struct")
 		return false // Candidate must be a struct
 	}
 	if interfaceDef == nil || interfaceDef.Kind != InterfaceKind || interfaceDef.Interface == nil {
-		fmt.Println("DEBUG: Implements: interfaceDef is nil or not an interface")
 		return false // Interface definition must be a valid interface
 	}
 	if pkgInfo == nil {
-		fmt.Println("DEBUG: Implements: pkgInfo is nil")
 		return false // Package context is needed to find struct methods
 	}
-
-	fmt.Printf("DEBUG: Implements check: struct_name=%s, struct_kind=%v, struct_pkg=%s, interface_name=%s, interface_kind=%v, interface_file=%s\n",
-		structCandidate.Name, structCandidate.Kind, pkgInfo.ImportPath,
-		interfaceDef.Name, interfaceDef.Kind, interfaceDef.FilePath,
-	)
 
 	// Collect methods of the structCandidate from pkgInfo.Functions
 	// This is a simplified way; a more robust way might involve caching methods on TypeInfo.
@@ -85,51 +76,37 @@ func Implements(structCandidate *scanner.TypeInfo, interfaceDef *scanner.TypeInf
 // This is a simplified comparison focusing on type names and counts.
 // It does not handle complex type equivalences (e.g., type aliases across packages without full resolution).
 func compareSignatures(interfaceMethod *scanner.MethodInfo, structMethod *scanner.FunctionInfo) bool {
-	fmt.Printf("DEBUG: compareSignatures for method: interface_method_name=%s, struct_method_name=%s\n", interfaceMethod.Name, structMethod.Name)
 	// Compare parameters
 	if len(interfaceMethod.Parameters) != len(structMethod.Parameters) {
-		fmt.Printf("DEBUG: Param count mismatch: interface=%d vs struct=%d for method %s\n", len(interfaceMethod.Parameters), len(structMethod.Parameters), interfaceMethod.Name)
 		return false
 	}
 	for i, intParam := range interfaceMethod.Parameters {
 		strParam := structMethod.Parameters[i]
-		fmt.Printf("DEBUG: Comparing param %d for method %s: interface_param_type=%s, struct_param_type=%s\n", i, interfaceMethod.Name, intParam.Type.String(), strParam.Type.String())
 		if !compareFieldTypes(intParam.Type, strParam.Type) {
-			fmt.Printf("DEBUG: Param type mismatch at index %d for method %s: interface_type=%s vs struct_type=%s\n", i, interfaceMethod.Name, intParam.Type.String(), strParam.Type.String())
 			return false
 		}
 	}
 
 	// Compare results
 	if len(interfaceMethod.Results) != len(structMethod.Results) {
-		fmt.Printf("DEBUG: Result count mismatch: interface=%d vs struct=%d for method %s\n", len(interfaceMethod.Results), len(structMethod.Results), interfaceMethod.Name)
 		return false
 	}
 	for i, intResult := range interfaceMethod.Results {
 		strResult := structMethod.Results[i]
-		fmt.Printf("DEBUG: Comparing result %d for method %s: interface_result_type=%s, struct_result_type=%s\n", i, interfaceMethod.Name, intResult.Type.String(), strResult.Type.String())
 		if !compareFieldTypes(intResult.Type, strResult.Type) {
-			fmt.Printf("DEBUG: Result type mismatch at index %d for method %s: interface_type=%s vs struct_type=%s\n", i, interfaceMethod.Name, intResult.Type.String(), strResult.Type.String())
 			return false
 		}
 	}
-	fmt.Printf("DEBUG: Signatures match for method %s\n", interfaceMethod.Name)
 	return true
 }
 
 // compareFieldTypes compares two FieldType instances.
 // This is a simplified comparison. A robust solution needs full type resolution.
 func compareFieldTypes(type1 *scanner.FieldType, type2 *scanner.FieldType) bool {
-	fmt.Printf("DEBUG: compareFieldTypes: type1_name=%s, type1_pkg=%s, type1_full_import=%s, type1_is_pointer=%t, type1_is_slice=%t, type1_is_map=%t -- type2_name=%s, type2_pkg=%s, type2_full_import=%s, type2_is_pointer=%t, type2_is_slice=%t, type2_is_map=%t\n",
-		type1.Name, type1.PkgName, type1.FullImportPath, type1.IsPointer, type1.IsSlice, type1.IsMap,
-		type2.Name, type2.PkgName, type2.FullImportPath, type2.IsPointer, type2.IsSlice, type2.IsMap,
-	)
 	if type1 == nil && type2 == nil {
-		fmt.Println("DEBUG: compareFieldTypes: both nil, returning true")
 		return true
 	}
 	if type1 == nil || type2 == nil {
-		fmt.Printf("DEBUG: compareFieldTypes: one nil, returning false (type1_is_nil=%t, type2_is_nil=%t)\n", type1 == nil, type2 == nil)
 		return false
 	}
 

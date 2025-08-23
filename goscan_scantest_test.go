@@ -91,3 +91,44 @@ type NotAnImplementer struct{}
 		t.Fatalf("scantest.Run() failed: %v", err)
 	}
 }
+
+func TestRunWithFileSystemPatterns(t *testing.T) {
+	files := map[string]string{
+		"go.mod": `
+module example.com/fs_test
+go 1.22.4
+`,
+		"main.go":    `package main`,
+		"pkg/a/a.go": `package a`,
+		"pkg/b/b.go": `package b`,
+	}
+
+	dir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
+		if len(pkgs) != 3 {
+			return fmt.Errorf("expected 3 packages, but got %d", len(pkgs))
+		}
+
+		gotPkgs := make([]string, len(pkgs))
+		for i, p := range pkgs {
+			gotPkgs[i] = p.ImportPath
+		}
+		sort.Strings(gotPkgs)
+
+		wantPkgs := []string{
+			"example.com/fs_test",
+			"example.com/fs_test/pkg/a",
+			"example.com/fs_test/pkg/b",
+		}
+		if diff := cmp.Diff(wantPkgs, gotPkgs); diff != "" {
+			return fmt.Errorf("mismatch (-want +got):\n%s", diff)
+		}
+		return nil
+	}
+
+	if _, err := scantest.Run(t, dir, []string{"./..."}, action); err != nil {
+		t.Fatalf("scantest.Run() failed: %v", err)
+	}
+}

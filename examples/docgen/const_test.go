@@ -6,8 +6,8 @@ import (
 	"os"
 	"testing"
 
-	goscan "github.com/podhmo/go-scan"
 	"github.com/google/go-cmp/cmp"
+	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/examples/docgen/openapi"
 )
 

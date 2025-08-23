@@ -69,6 +69,7 @@ func IgnoredFunc() {}
 		"(example.com/find-orphans-test/greeter.*Greeter).UnusedMethod",
 		"example.com/find-orphans-test/greeter.UnusedFunc",
 	}
+	sort.Strings(expectedOrphans)
 
 	var foundOrphans []string
 	lines := strings.Split(strings.TrimSpace(output), "\n")

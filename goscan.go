@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"go/ast"
 	"go/token"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -48,9 +49,9 @@ const (
 // Scanner instances are stateful regarding which files have been visited (parsed).
 type Scanner struct {
 	*Config
-	packageCache        map[string]*Package // Cache for PackageInfo from ScanPackage/ScanPackageByImport, key is import path
-	visitedFiles        map[string]struct{} // Set of visited (parsed) file absolute paths for this Scanner instance.
-	mu                  sync.RWMutex
+	packageCache          map[string]*Package // Cache for PackageInfo from ScanPackage/ScanPackageByImport, key is import path
+	visitedFiles          map[string]struct{} // Set of visited (parsed) file absolute paths for this Scanner instance.
+	mu                    sync.RWMutex
 	CachePath             string
 	symbolCache           *symbolCache // Symbol cache (persisted across Scanner instances if path is reused)
 	ExternalTypeOverrides scanner.ExternalTypeOverride
@@ -128,40 +129,96 @@ func (s *Scanner) LookupOverride(qualifiedName string) (*scanner.TypeInfo, bool)
 // Each pattern can be a directory path or a file path relative to the scanner's workDir.
 // It returns a list of scanned packages.
 func (s *Scanner) Scan(patterns ...string) ([]*Package, error) {
-	var pkgs []*Package
-	ctx := context.Background() // Or accept a context as an argument
+	pkgsMap := make(map[string]*Package) // Use map to handle duplicates
+	ctx := context.Background()
 
-	// This logic is simplified. A real implementation would group files by package.
 	for _, pattern := range patterns {
-		absPath := pattern
-		if !filepath.IsAbs(pattern) {
-			absPath = filepath.Join(s.workDir, pattern)
-		}
+		if strings.Contains(pattern, "...") {
+			// Handle wildcard pattern
+			baseDir := strings.TrimSuffix(pattern, "...")
+			baseDir = strings.TrimSuffix(baseDir, "/")
 
-		info, err := os.Stat(absPath)
-		if err != nil {
-			// For now, we assume patterns are file paths. Import path resolution could be added here.
-			return nil, fmt.Errorf("could not stat pattern %q (resolved to %q): %w", pattern, absPath, err)
-		}
+			absBasePath := baseDir
+			if !filepath.IsAbs(baseDir) {
+				absBasePath = filepath.Join(s.workDir, baseDir)
+			}
 
-		if info.IsDir() {
-			pkg, err := s.ScanPackage(ctx, absPath)
-			if err != nil {
-				return nil, fmt.Errorf("failed to scan package in directory %q: %w", absPath, err)
+			walkErr := filepath.WalkDir(absBasePath, func(path string, d fs.DirEntry, err error) error {
+				if err != nil {
+					return err
+				}
+				if !d.IsDir() {
+					return nil
+				}
+				// Check if the directory contains any .go files.
+				entries, err := os.ReadDir(path)
+				if err != nil {
+					// Log and continue. Don't let permission errors stop the whole walk.
+					slog.DebugContext(ctx, "cannot read directory during walk, skipping", "path", path, "error", err)
+					return nil
+				}
+				hasGoFiles := false
+				for _, entry := range entries {
+					if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".go") {
+						hasGoFiles = true
+						break
+					}
+				}
+
+				if hasGoFiles {
+					pkg, err := s.ScanPackage(ctx, path)
+					if err != nil {
+						// Log error but continue walking
+						slog.WarnContext(ctx, "failed to scan package during wildcard walk", "path", path, "error", err)
+						return nil
+					}
+					if pkg != nil && pkg.ImportPath != "" {
+						pkgsMap[pkg.ImportPath] = pkg
+					}
+				}
+				return nil
+			})
+
+			if walkErr != nil {
+				return nil, fmt.Errorf("error walking directory for pattern %q: %w", pattern, walkErr)
 			}
-			pkgs = append(pkgs, pkg)
-		} else { // Is a file
-			// ScanFiles expects all files to be in the same package.
-			// This simplified loop doesn't handle that grouping.
-			pkg, err := s.ScanFiles(ctx, []string{absPath})
-			if err != nil {
-				return nil, fmt.Errorf("failed to scan file %q: %w", absPath, err)
+		} else {
+			// Handle single file or directory pattern (legacy behavior)
+			absPath := pattern
+			if !filepath.IsAbs(pattern) {
+				absPath = filepath.Join(s.workDir, pattern)
 			}
-			// TODO: This might add the same package multiple times if files are from the same package.
-			// Needs deduplication logic.
-			pkgs = append(pkgs, pkg)
+
+			info, err := os.Stat(absPath)
+			if err != nil {
+				return nil, fmt.Errorf("could not stat pattern %q (resolved to %q): %w", pattern, absPath, err)
+			}
+
+			var pkg *Package
+			if info.IsDir() {
+				pkg, err = s.ScanPackage(ctx, absPath)
+			} else {
+				pkg, err = s.ScanFiles(ctx, []string{absPath})
+			}
+
+			if err != nil {
+				return nil, fmt.Errorf("failed to scan path %q: %w", absPath, err)
+			}
+			if pkg != nil && pkg.ImportPath != "" {
+				pkgsMap[pkg.ImportPath] = pkg
+			}
 		}
 	}
+
+	// Convert map to slice
+	pkgs := make([]*Package, 0, len(pkgsMap))
+	for _, pkg := range pkgsMap {
+		pkgs = append(pkgs, pkg)
+	}
+	// Sort for deterministic output
+	sort.Slice(pkgs, func(i, j int) bool {
+		return pkgs[i].ImportPath < pkgs[j].ImportPath
+	})
 	return pkgs, nil
 }
 
@@ -510,7 +567,6 @@ func (s *Scanner) ScanPackage(ctx context.Context, pkgPath string) (*scanner.Pac
 
 	return currentCallPkgInfo, nil
 }
-
 
 // resolveFilePath attempts to resolve a given path string (rawPath) into an absolute file path.
 func (s *Scanner) resolveFilePath(rawPath string) (string, error) {
@@ -1071,7 +1127,6 @@ func (s *Scanner) ListExportedSymbols(ctx context.Context, pkgPath string) ([]st
 	return exportedSymbols, nil
 }
 
-
 // FindSymbolDefinitionLocation attempts to find the absolute file path where a given symbol is defined.
 // The `symbolFullName` should be in the format "package/import/path.SymbolName".
 //
@@ -1269,4 +1324,3 @@ func (s *Scanner) FindSymbolInPackage(ctx context.Context, importPath string, sy
 
 	return nil, fmt.Errorf("symbol %q not found in package %q", symbolName, importPath)
 }
-

@@ -330,13 +330,20 @@ func (w *ModuleWalker) BuildReverseDependencyMap(ctx context.Context) (map[strin
 	return reverseDeps, nil
 }
 
-// Walk performs a dependency graph traversal starting from a root import path.
+// Walk performs a dependency graph traversal starting from a set of root packages
+// identified by the input patterns.
 // It uses the efficient ScanPackageImports method to fetch dependencies at each step.
 // The provided Visitor's Visit method is called for each discovered package,
 // allowing the caller to inspect the package and control which of its dependencies
 // are followed next.
-func (w *ModuleWalker) Walk(ctx context.Context, rootImportPath string, visitor Visitor) error {
-	queue := []string{rootImportPath}
+// Patterns can include the `...` wildcard to specify all packages under a directory.
+func (w *ModuleWalker) Walk(ctx context.Context, visitor Visitor, patterns ...string) error {
+	initialQueue, err := w.resolvePatternsToImportPaths(ctx, patterns)
+	if err != nil {
+		return fmt.Errorf("could not resolve initial patterns for walk: %w", err)
+	}
+
+	queue := initialQueue
 	visited := make(map[string]struct{})
 
 	for len(queue) > 0 {
@@ -367,6 +374,76 @@ func (w *ModuleWalker) Walk(ctx context.Context, rootImportPath string, visitor 
 		}
 	}
 	return nil
+}
+
+// resolvePatternsToImportPaths resolves filesystem patterns (including `...` wildcards)
+// into a list of unique, sorted Go import paths.
+func (w *ModuleWalker) resolvePatternsToImportPaths(ctx context.Context, patterns []string) ([]string, error) {
+	rootPaths := make(map[string]struct{})
+
+	for _, pattern := range patterns {
+		if strings.Contains(pattern, "...") {
+			baseDir := strings.TrimSuffix(pattern, "...")
+			baseDir = strings.TrimSuffix(baseDir, "/")
+
+			absBasePath := baseDir
+			if !filepath.IsAbs(baseDir) {
+				absBasePath = filepath.Join(w.workDir, baseDir)
+			}
+
+			walkErr := filepath.WalkDir(absBasePath, func(path string, d fs.DirEntry, err error) error {
+				if err != nil {
+					return err
+				}
+				if !d.IsDir() {
+					return nil
+				}
+				// Check if the directory contains any .go files.
+				ok, err := hasGoFiles(path)
+				if err != nil {
+					slog.DebugContext(ctx, "cannot check for go files, skipping", "path", path, "error", err)
+					return nil
+				}
+
+				if ok {
+					importPath, err := w.locator.PathToImport(path)
+					if err != nil {
+						slog.WarnContext(ctx, "could not resolve import path, skipping", "path", path, "error", err)
+						return nil
+					}
+					rootPaths[importPath] = struct{}{}
+				}
+				return nil
+			})
+			if walkErr != nil {
+				return nil, fmt.Errorf("error walking for pattern %q: %w", pattern, walkErr)
+			}
+		} else {
+			// Assume non-wildcard patterns are literal import paths.
+			rootPaths[pattern] = struct{}{}
+		}
+	}
+
+	// Convert map to slice for the queue
+	pathList := make([]string, 0, len(rootPaths))
+	for path := range rootPaths {
+		pathList = append(pathList, path)
+	}
+	sort.Strings(pathList) // Sort for deterministic walk start
+	return pathList, nil
+}
+
+func hasGoFiles(dirPath string) (bool, error) {
+	entries, err := os.ReadDir(dirPath)
+	if err != nil {
+		return false, err
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".go") {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // listGoFilesForWalker lists all .go files in a directory.

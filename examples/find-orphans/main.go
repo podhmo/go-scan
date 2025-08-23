@@ -12,7 +12,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/podhmo/go-scan"
+	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/scanner"
 	"github.com/podhmo/go-scan/symgo"
 	"github.com/podhmo/go-scan/symgo/object"
@@ -71,10 +71,8 @@ type analyzer struct {
 
 func (a *analyzer) analyze(ctx context.Context, asJSON bool, startPatterns []string) error {
 	log.Printf("discovering packages from: %v", startPatterns)
-	for _, pattern := range startPatterns {
-		if err := a.s.Walker.Walk(ctx, pattern, a); err != nil {
-			return fmt.Errorf("failed to walk packages from %q: %w", pattern, err)
-		}
+	if err := a.s.Walker.Walk(ctx, a, startPatterns...); err != nil {
+		return fmt.Errorf("failed to walk packages: %w", err)
 	}
 	log.Printf("analyzing %d packages", len(a.packages))
 

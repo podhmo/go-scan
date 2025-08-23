@@ -16,6 +16,7 @@ The primary goal is to build a static analysis tool with the following capabilit
     - Allow users to target a specific package.
     - Provide an `-all` flag to scan every package in the module.
     - Include an option `--include-tests` to consider usage within test files (`_test.go`). By default, test usage will be ignored.
+    - **Multi-Workspace Support**: Provide an option to scan all Go modules found under a given directory (e.g., a repository root). This allows considering usage in sub-projects (like those in `examples/`) as valid uses for code in the main module.
 - **Detailed Reporting**: For each orphan found, report its name and location (file and line number). For functions that *are* used, track where they are used (e.g., "used in package `bar` by function `Baz`").
 - **Exclusion Mechanism**: Allow developers to mark functions/methods with a special comment (e.g., `//go:scan:ignore`) to prevent them from being reported as orphans. This is useful for functions intended for use via reflection, `cgo`, or other non-standard mechanisms.
 
@@ -86,3 +87,27 @@ To validate this plan, we can simulate the process on the `go-scan` codebase its
     - **Mitigation**: This will be developed carefully with extensive unit tests. The `symgo` test suite will be used as a reference for how to manipulate the interpreter and its scope.
 
 This plan provides a clear path forward. The use of `symgo` is ambitious but necessary to meet all the requirements correctly. The implementation will proceed step-by-step, starting with the basic scaffolding and progressively adding the more complex analysis features.
+
+## 5. Analysis of `symgo` and Missing Features
+
+While `symgo` is a powerful foundation, its current implementation has several gaps that must be addressed to build the "find-orphans" tool. This analysis is based on a review of the `symgo/evaluator/evaluator.go` and related files.
+
+### 1. Lack of a "Catch-All" Intrinsic Hook
+
+- **Observation**: The evaluator's intrinsic mechanism is key-based, requiring an exact match for a fully qualified function name (e.g., `"fmt.Println"`). There is no way to register a default or "wildcard" handler that fires for every function call.
+- **Impact**: We cannot easily track all function calls to build our usage map.
+- **Required Change**: The `evalCallExpr` function in the evaluator needs to be modified. After checking for a specific intrinsic key, it should be updated to check for and invoke a registered "default" intrinsic if one exists. This default handler would receive the function object being called, allowing the tool to log every usage it encounters.
+
+### 2. No Automatic Interface Implementation Discovery
+
+- **Observation**: `symgo` can recognize calls on interface methods but treats the result as a generic symbolic placeholder. It does not attempt to find all the concrete types in the module that satisfy the interface. The existing `BindInterface` feature is for manual overrides, not automatic discovery.
+- **Impact**: A call to an interface method (e.g., `io.Writer.Write`) will not be counted as a use of the `Write` method on the concrete types that implement it (e.g., `bytes.Buffer.Write`).
+- **Required Change**: This logic must be built as part of the "find-orphans" tool itself. The tool will need to:
+    1. Pre-emptively scan all types in the target workspace(s) and build a map of interfaces to their concrete implementing types.
+    2. The usage-tracking intrinsic, when it intercepts a call on an interface method, will use this map to identify all relevant concrete methods and mark them as "used".
+
+### 3. Single-Module Architecture
+
+- **Observation**: The `symgo.Interpreter` is tied to a single `go-scan.Scanner` instance, which is designed to operate on a single Go module (defined by one `go.mod`).
+- **Impact**: The tool cannot natively look for usages across different modules, such as a main project and its examples in a sub-directory.
+- **Required Change**: This requires a significant architectural enhancement, likely starting at the `go-scan` level. The "find-orphans" tool will need to orchestrate multiple `Scanner` instances. A potential long-term solution involves creating a "workspace" or "multi-scanner" concept that can manage multiple modules and present a unified view to the `symgo` interpreter. For the initial implementation, the tool may need to manage a list of scanners and query them all.

@@ -6,16 +6,14 @@ import (
 	"io"
 	"log"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/podhmo/go-scan/scantest"
 )
 
 func TestFindOrphans(t *testing.T) {
-	tmpDir := t.TempDir()
-
 	files := map[string]string{
 		"go.mod": "module example.com/find-orphans-test\ngo 1.21\n",
 		"main.go": `
@@ -39,24 +37,16 @@ func UnusedFunc() {}
 func IgnoredFunc() {}
 `,
 	}
-
-	for path, content := range files {
-		fullPath := filepath.Join(tmpDir, path)
-		if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
-			t.Fatalf("failed to create directory: %v", err)
-		}
-		if err := os.WriteFile(fullPath, []byte(content), 0644); err != nil {
-			t.Fatalf("failed to write file: %v", err)
-		}
-	}
+	dir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
 
 	oldStdout := os.Stdout
 	r, w, _ := os.Pipe()
 	os.Stdout = w
 	log.SetOutput(io.Discard)
 
-	ctx := context.Background()
-	err := run(ctx, true, false, tmpDir, false)
+	startPatterns := []string{"example.com/find-orphans-test"}
+	err := run(context.Background(), true, false, dir, false, startPatterns)
 	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}
@@ -78,13 +68,12 @@ func IgnoredFunc() {}
 	var foundOrphans []string
 	lines := strings.Split(strings.TrimSpace(output), "\n")
 	for _, line := range lines {
-		if strings.HasPrefix(line, "example.com") {
+		if strings.HasPrefix(line, "example.com") || strings.HasPrefix(line, "(example.com") {
 			foundOrphans = append(foundOrphans, line)
 		}
 	}
 
 	if diff := cmp.Diff(expectedOrphans, foundOrphans); diff != "" {
-		t.Errorf("find-orphans mismatch (-want +got):\n%s", diff)
-		t.Logf("Full output:\n%s", output)
+		t.Errorf("find-orphans mismatch (-want +got):\n%s\nFull output:\n%s", diff, output)
 	}
 }

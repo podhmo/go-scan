@@ -25,54 +25,60 @@ func main() {
 	)
 	flag.Parse()
 
-	if err := run(context.Background(), *all, *includeTests, *workspace, *verbose); err != nil {
+	startPatterns := flag.Args()
+	if len(startPatterns) == 0 {
+		startPatterns = []string{"./..."}
+	}
+
+	if err := run(context.Background(), *all, *includeTests, *workspace, *verbose, startPatterns); err != nil {
 		log.Fatalf("!! %+v", err)
 	}
 }
 
-func run(ctx context.Context, all bool, includeTests bool, workspace string, verbose bool) error {
+func run(ctx context.Context, all bool, includeTests bool, workspace string, verbose bool, startPatterns []string) error {
 	var scannerOpts []goscan.ScannerOption
 	scannerOpts = append(scannerOpts, goscan.WithIncludeTests(includeTests))
+	scannerOpts = append(scannerOpts, goscan.WithGoModuleResolver()) // Important for resolving modules
 	if verbose {
 		log.SetFlags(log.Lshortfile)
 	} else {
 		log.SetFlags(0)
 	}
 
+	if workspace != "" {
+		scannerOpts = append(scannerOpts, goscan.WithWorkDir(workspace))
+	}
 	s, err := goscan.New(scannerOpts...)
 	if err != nil {
 		return fmt.Errorf("failed to create scanner: %w", err)
 	}
 
-	var startPatterns []string
-	if flag.NArg() > 0 {
-		startPatterns = flag.Args()
-	} else if workspace != "" {
-		startPatterns = []string{workspace}
-	} else {
-		startPatterns = []string{"."}
-	}
-
-	log.Printf("discovering packages from: %v", startPatterns)
-	visitor := &collectorVisitor{
+	a := &analyzer{
 		s:        s,
 		packages: make(map[string]*scanner.PackageInfo),
 	}
+	return a.analyze(ctx, startPatterns)
+}
+
+type analyzer struct {
+	s        *goscan.Scanner
+	packages map[string]*scanner.PackageInfo
+	mu       sync.Mutex
+}
+
+func (a *analyzer) analyze(ctx context.Context, startPatterns []string) error {
+	log.Printf("discovering packages from: %v", startPatterns)
 	for _, pattern := range startPatterns {
-		if err := s.Walker.Walk(ctx, pattern, visitor); err != nil {
+		if err := a.s.Walker.Walk(ctx, pattern, a); err != nil {
 			return fmt.Errorf("failed to walk packages from %q: %w", pattern, err)
 		}
 	}
-	log.Printf("discovered %d packages", len(visitor.packages))
+	log.Printf("analyzing %d packages", len(a.packages))
 
-	interfaceMap := buildInterfaceMap(visitor.packages)
+	interfaceMap := buildInterfaceMap(a.packages)
 	log.Printf("built interface map with %d interfaces", len(interfaceMap))
 
-	innerScanner, err := s.ScannerForSymgo()
-	if err != nil {
-		return fmt.Errorf("failed to get inner scanner: %w", err)
-	}
-	interp, err := symgo.NewInterpreter(innerScanner)
+	interp, err := symgo.NewInterpreter(a.s)
 	if err != nil {
 		return fmt.Errorf("failed to create interpreter: %w", err)
 	}
@@ -90,7 +96,7 @@ func run(ctx context.Context, all bool, includeTests bool, workspace string, ver
 			if fn.Package != nil && fn.Name != nil {
 				if fn.Decl.Recv != nil && len(fn.Decl.Recv.List) > 0 {
 					var buf bytes.Buffer
-					printer.Fprint(&buf, s.Fset(), fn.Decl.Recv.List[0].Type)
+					printer.Fprint(&buf, a.s.Fset(), fn.Decl.Recv.List[0].Type)
 					fullName = fmt.Sprintf("(%s.%s).%s", fn.Package.ImportPath, buf.String(), fn.Name.Name)
 					usageMap[fullName] = true
 
@@ -116,7 +122,7 @@ func run(ctx context.Context, all bool, includeTests bool, workspace string, ver
 						if implementers, ok := interfaceMap[ifaceName]; ok {
 							for _, impl := range implementers {
 								methodName := fn.UnderlyingFunc.Name
-								implPkg := visitor.packages[impl.PkgPath]
+								implPkg := a.packages[impl.PkgPath]
 								if implPkg != nil {
 									for _, m := range implPkg.Functions {
 										if m.Name == methodName && m.Receiver != nil {
@@ -135,50 +141,60 @@ func run(ctx context.Context, all bool, includeTests bool, workspace string, ver
 	})
 
 	log.Printf("running symbolic execution from entry points")
-	var entryPoints []*object.Function
-	for _, pkg := range visitor.packages {
-		if pkg.Name == "main" {
-			for _, fnInfo := range pkg.Functions {
-				if fnInfo.Name == "main" && fnInfo.Receiver == nil {
-					fileAst, ok := pkg.AstFiles[fnInfo.FilePath]
-					if !ok {
-						log.Printf("could not find ast file for %s", fnInfo.FilePath)
-						continue
-					}
-					if _, err := interp.Eval(ctx, fileAst, pkg); err != nil {
-						log.Printf("could not load package %s: %v", pkg.ImportPath, err)
-						continue
-					}
+	// First, find all potential entry points.
+	var mainEntryPoint *object.Function
+	var libraryEntryPoints []*object.Function
 
-					mainFuncObj, ok := interp.FindObject(fnInfo.Name)
-					if !ok {
-						log.Printf("could not find main function in package %s", pkg.ImportPath)
-						continue
-					}
-					mainFunc, ok := mainFuncObj.(*object.Function)
-					if !ok {
-						log.Printf("main is not a function in package %s", pkg.ImportPath)
-						continue
-					}
-					entryPoints = append(entryPoints, mainFunc)
-				}
+	for _, pkg := range a.packages {
+		// Load all files in the package to define all symbols in the interpreter's env
+		for _, fileAst := range pkg.AstFiles {
+			if _, err := interp.Eval(ctx, fileAst, pkg); err != nil {
+				log.Printf("could not load package %s: %v", pkg.ImportPath, err)
+				break // if one file fails, probably best to skip the whole pkg
+			}
+		}
+
+		for _, fnInfo := range pkg.Functions {
+			funcObj, ok := interp.FindObject(fnInfo.Name)
+			if !ok {
+				log.Printf("could not find function object for %s in package %s", fnInfo.Name, pkg.ImportPath)
+				continue
+			}
+			fn, ok := funcObj.(*object.Function)
+			if !ok {
+				log.Printf("%s is not a function in package %s", fnInfo.Name, pkg.ImportPath)
+				continue
+			}
+
+			if pkg.Name == "main" && fnInfo.Name == "main" && fnInfo.Receiver == nil {
+				mainEntryPoint = fn
+			} else if fnInfo.AstDecl.Name.IsExported() && fnInfo.Receiver == nil {
+				libraryEntryPoints = append(libraryEntryPoints, fn)
 			}
 		}
 	}
 
-	if len(entryPoints) == 0 {
-		log.Printf("no main entry point found, analysis may be incomplete")
+	// Decide which entry points to use.
+	var entryPoints []*object.Function
+	if mainEntryPoint != nil {
+		entryPoints = []*object.Function{mainEntryPoint}
+		log.Printf("found main entry point, running in application mode")
+	} else {
+		entryPoints = libraryEntryPoints
+		log.Printf("no main entry point found, running in library mode with %d exported functions as entry points", len(entryPoints))
 	}
 
 	for _, ep := range entryPoints {
-		log.Printf("analyzing from entry point: %s.%s", ep.Package.ImportPath, ep.Name.Name)
+		epName := getFullName(ep.Package, &scanner.FunctionInfo{Name: ep.Name.Name})
+		usageMap[epName] = true
+		log.Printf("analyzing from entry point: %s", epName)
 		interp.Apply(ctx, ep, []object.Object{}, ep.Package)
 	}
 	log.Printf("symbolic execution complete")
 
 	fmt.Println("\n-- Orphans --")
 	count := 0
-	for _, pkg := range visitor.packages {
+	for _, pkg := range a.packages {
 		for _, decl := range pkg.Functions {
 			name := getFullName(pkg, decl)
 			if _, used := usageMap[name]; !used {
@@ -190,7 +206,7 @@ func run(ctx context.Context, all bool, includeTests bool, workspace string, ver
 					}
 				}
 
-				pos := s.Fset().Position(decl.AstDecl.Pos())
+				pos := a.s.Fset().Position(decl.AstDecl.Pos())
 				fmt.Printf("%s\n  %s\n", name, pos)
 				count++
 			}
@@ -205,30 +221,36 @@ func run(ctx context.Context, all bool, includeTests bool, workspace string, ver
 	return nil
 }
 
-type collectorVisitor struct {
-	s        *goscan.Scanner
-	packages map[string]*scanner.PackageInfo
-	mu       sync.Mutex
-}
-
-func (v *collectorVisitor) Visit(pkg *goscan.PackageImports) ([]string, error) {
-	v.mu.Lock()
-	defer v.mu.Unlock()
-	if _, exists := v.packages[pkg.ImportPath]; exists {
+func (a *analyzer) Visit(pkg *goscan.PackageImports) ([]string, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if _, exists := a.packages[pkg.ImportPath]; exists {
 		return nil, nil
 	}
-	fullPkg, err := v.s.ScanPackageByImport(context.Background(), pkg.ImportPath)
+	if pkg.ImportPath == "C" {
+		return nil, nil
+	}
+	fullPkg, err := a.s.ScanPackageByImport(context.Background(), pkg.ImportPath)
 	if err != nil {
 		log.Printf("warning: could not scan package %s: %v", pkg.ImportPath, err)
-		return nil, nil
+		return nil, nil // Continue even if a package fails to scan
 	}
-	v.packages[pkg.ImportPath] = fullPkg
-	return pkg.Imports, nil
+	a.packages[pkg.ImportPath] = fullPkg
+
+	// Filter out stdlib and C pseudo-packages to avoid trying to scan them.
+	var importsToFollow []string
+	for _, imp := range pkg.Imports {
+		if strings.Contains(imp, ".") {
+			importsToFollow = append(importsToFollow, imp)
+		}
+	}
+	return importsToFollow, nil
 }
 
 func getFullName(pkg *scanner.PackageInfo, fn *scanner.FunctionInfo) string {
 	if fn.Receiver != nil {
 		recvTypeStr := fn.Receiver.Type.String()
+		recvTypeStr = strings.TrimPrefix(recvTypeStr, "*") // remove pointer
 		return fmt.Sprintf("(%s.%s).%s", pkg.ImportPath, recvTypeStr, fn.Name)
 	}
 	return fmt.Sprintf("%s.%s", pkg.ImportPath, fn.Name)

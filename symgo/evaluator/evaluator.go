@@ -924,6 +924,20 @@ func (e *Evaluator) evalIdentAssignment(ctx context.Context, ident *ast.Ident, r
 	if isError(val) {
 		return val
 	}
+
+	// If the value is a return value from a function call, unwrap it.
+	if ret, ok := val.(*object.ReturnValue); ok {
+		val = ret.Value
+	}
+
+	// Log the type info of the value being assigned.
+	typeInfo := val.TypeInfo()
+	typeName := "<nil>"
+	if typeInfo != nil {
+		typeName = typeInfo.Name
+	}
+	e.logger.Debug("evalIdentAssignment: assigning value", "var", ident.Name, "value_type", val.Type(), "value_typeinfo", typeName)
+
 	return e.assignIdentifier(ident, val, tok, env)
 }
 

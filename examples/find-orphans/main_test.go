@@ -3,9 +3,11 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"log"
 	"os"
+	"sort"
 	"strings"
 	"testing"
 
@@ -46,10 +48,13 @@ func IgnoredFunc() {}
 	log.SetOutput(io.Discard)
 
 	startPatterns := []string{"example.com/find-orphans-test"}
-	err := run(context.Background(), true, false, dir, false, startPatterns)
+	// Set verbose to false, and asJSON to false
+	log.SetOutput(w)
+	err := run(context.Background(), true, false, dir, false, false, startPatterns)
 	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}
+	log.SetOutput(io.Discard) // Discard logs after run
 
 	w.Close()
 	os.Stdout = oldStdout
@@ -61,7 +66,7 @@ func IgnoredFunc() {}
 
 	expectedOrphans := []string{
 		"example.com/find-orphans-test.unused_main_func",
-		"(example.com/find-orphans-test/greeter.Greeter).UnusedMethod",
+		"(example.com/find-orphans-test/greeter.*Greeter).UnusedMethod",
 		"example.com/find-orphans-test/greeter.UnusedFunc",
 	}
 
@@ -72,8 +77,84 @@ func IgnoredFunc() {}
 			foundOrphans = append(foundOrphans, line)
 		}
 	}
+	sort.Strings(expectedOrphans)
+	sort.Strings(foundOrphans)
 
 	if diff := cmp.Diff(expectedOrphans, foundOrphans); diff != "" {
 		t.Errorf("find-orphans mismatch (-want +got):\n%s\nFull output:\n%s", diff, output)
+	}
+}
+
+func TestFindOrphans_json(t *testing.T) {
+	files := map[string]string{
+		"go.mod": "module example.com/find-orphans-test\ngo 1.21\n",
+		"main.go": `
+package main
+import "example.com/find-orphans-test/greeter"
+func main() {
+    g := greeter.New("hello")
+    g.SayHello()
+}
+func unused_main_func() {}
+`,
+		"greeter/greeter.go": `
+package greeter
+import "fmt"
+type Greeter struct { name string }
+func New(name string) *Greeter { return &Greeter{name: name} }
+func (g *Greeter) SayHello() { fmt.Println(g.name) }
+func (g *Greeter) UnusedMethod() {}
+func UnusedFunc() {}
+`,
+	}
+	dir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	// Redirect stdout to capture the output
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	startPatterns := []string{"example.com/find-orphans-test"}
+	// Run with asJSON=true
+	err := run(context.Background(), true, false, dir, false, true, startPatterns)
+	if err != nil {
+		t.Fatalf("run() failed: %v", err)
+	}
+
+	w.Close()
+	os.Stdout = oldStdout
+
+	var buf bytes.Buffer
+	io.Copy(&buf, r)
+	output := buf.String()
+
+	// The output should be a JSON array. We unmarshal it and check the contents.
+	type Orphan struct {
+		Name     string `json:"name"`
+		Position string `json:"position"`
+		Package  string `json:"package"`
+	}
+	var foundOrphans []Orphan
+	if err := json.Unmarshal(buf.Bytes(), &foundOrphans); err != nil {
+		t.Fatalf("failed to unmarshal JSON output: %v\nOutput was:\n%s", err, output)
+	}
+
+	expectedOrphanNames := []string{
+		"example.com/find-orphans-test.unused_main_func",
+		"(example.com/find-orphans-test/greeter.*Greeter).UnusedMethod",
+		"example.com/find-orphans-test/greeter.UnusedFunc",
+	}
+
+	var foundOrphanNames []string
+	for _, o := range foundOrphans {
+		foundOrphanNames = append(foundOrphanNames, o.Name)
+	}
+
+	sort.Strings(expectedOrphanNames)
+	sort.Strings(foundOrphanNames)
+
+	if diff := cmp.Diff(expectedOrphanNames, foundOrphanNames); diff != "" {
+		t.Errorf("find-orphans JSON mismatch (-want +got):\n%s", diff)
 	}
 }

@@ -101,3 +101,49 @@ Here is a list of features and capabilities that would likely be needed to apply
 *   **Path Parameter Discovery:** As noted in the `go-chi` analysis, the current `net/http` analyzer does not parse path parameters (e.g., `/users/{userID}`). This functionality is essential for any modern web framework and would need to be a core part of the intrinsics written for frameworks like `chi` or `echo`.
 *   **Type Inference for Parameters:** The default pattern for query parameters (`r.URL.Query().Get("id")`) correctly identifies the parameter `id` but defaults its schema type to `string`. It does not trace the usage of the resulting variable to infer a more precise type (e.g., if it's passed to `strconv.Atoi`, it's an `integer`). This is a complex but valuable potential enhancement.
 *   **Global Configuration:** Beyond OpenAPI metadata, a real-world tool would benefit from a global configuration file to define custom patterns, type mappings (e.g., how to represent `time.Time`), and other behaviors without needing to recompile the tool.
+
+## 3. Maturity of the `symgo` Library
+
+This section addresses the maturity of the `symgo` engine by answering specific questions about its capabilities and limitations.
+
+**Question: Are there any Go syntax constructs that `symgo` does not support?**
+
+Yes. `symgo` implements a significant portion of Go's syntax, but it is not exhaustive. The primary focus is on code structures relevant to static analysis of API definitions. Notable unsupported constructs include:
+
+*   **Concurrency:** `go` statements, channels (`chan`), and `select` statements are not supported.
+*   **`defer` Statements:** The `defer` keyword is not implemented.
+*   **`range` Keyword:** The `for...range` loop construct is not specifically handled. The generic `for` loop handler will traverse the body once, but it won't correctly handle the assignment of keys and values from the range expression.
+*   **Pointer Dereferencing:** The `evalUnaryExpr` only handles the address-of operator (`&`). It does not handle dereferencing (`*`), which is a significantly more complex operation in symbolic execution.
+*   **Advanced Control Flow:** `fallthrough` in switch cases, `goto`, and other labeled statements are not supported.
+*   **Variadic Arguments:** There is no specific handling for variadic arguments (`...`).
+
+**Question: If unsupported syntax is encountered, does the evaluation stop?**
+
+No, the entire analysis does not stop. When the evaluator encounters a node type it does not recognize (e.g., a `go` statement), it returns an `error` object. This error propagates up the evaluation stack for the *current function being analyzed*, effectively stopping the analysis of that function body. However, the overall `docgen` process will continue with other functions. This is a robust design that prevents one unsupported feature from halting the entire analysis.
+
+---
+
+**Question: Can `symgo` handle a function's return value being passed directly as an argument to a pattern-tracked function?**
+
+Yes, this is handled gracefully. The evaluator first evaluates the arguments to a function call before executing the function's intrinsic.
+
+*   **Scenario:** `patternTarget(anotherFunc())`
+*   **Evaluation Flow:** `symgo` will first evaluate `anotherFunc()`.
+    *   **If `anotherFunc` returns a concrete type** (e.g., `string`, `int`, or a struct), `symgo` will recursively evaluate it (if it's in the same module), determine the return value (e.g., an `object.String`), and pass that concrete object to the `patternTarget` intrinsic. The pattern handler can then inspect the value.
+    *   **If `anotherFunc` returns an interface,** `symgo` will determine the return type from the function's signature and create a `SymbolicPlaceholder` object that is tagged with the interface type information. The pattern handler receives this placeholder and can identify the type, though not the underlying concrete value.
+
+**Question: If a literal is passed as an argument to a function and then returned, is that information propagated?**
+
+Yes. For example, if you have `myWrapper("foo")` and `myWrapper` is defined as `func(s string) string { return s }`, `symgo` will evaluate the call to `myWrapper`, see that it returns the `object.String{Value: "foo"}`, and this object will be the result of the expression. This works as expected.
+
+---
+
+**Question: Can `symgo` recognize the value of a global or cross-package constant when used as an argument?**
+
+This is a key limitation in the current implementation.
+
+*   **Scenario:** `GetQuery(r, mypkg.MyConstant)`
+*   **Current Behavior:** When `symgo` evaluates `mypkg.MyConstant`, its `evalSelectorExpr` logic attempts to resolve the symbol. However, it currently only searches for **functions** within the external package. It does not look for constants (`const`) or variables (`var`).
+*   **Result:** The expression `mypkg.MyConstant` resolves to a generic `SymbolicPlaceholder` with no value attached. The pattern handler for `GetQuery` would not be able to extract the constant's string value.
+
+The underlying `go-scan` library *does* collect information about constants and variables, so the data is available. The `symgo` evaluator would need to be enhanced to look up these symbols in addition to functions.

@@ -154,7 +154,7 @@ func run(ctx context.Context, startPkgs []string, hops int, ignore string, hide 
 
 		doForwardSearch := func() error {
 			visitor.packageHops[startPkg] = 0
-			return s.Walk(ctx, startPkg, visitor)
+			return s.Walker.Walk(ctx, startPkg, visitor)
 		}
 
 		doReverseSearch := func() error {
@@ -172,7 +172,7 @@ func run(ctx context.Context, startPkgs []string, hops int, ignore string, hide 
 						continue
 					}
 
-					importers, err := s.FindImportersAggressively(ctx, currentPkg)
+					importers, err := s.Walker.FindImportersAggressively(ctx, currentPkg)
 					if err != nil {
 						return fmt.Errorf("aggressive search for importers of %s failed: %w", currentPkg, err)
 					}
@@ -189,7 +189,7 @@ func run(ctx context.Context, startPkgs []string, hops int, ignore string, hide 
 			}
 
 			// Default search using pre-built map
-			revDepMap, err := s.BuildReverseDependencyMap(ctx)
+			revDepMap, err := s.Walker.BuildReverseDependencyMap(ctx)
 			if err != nil {
 				return fmt.Errorf("could not build reverse dependency map: %w", err)
 			}

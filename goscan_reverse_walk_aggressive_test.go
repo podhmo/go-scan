@@ -104,7 +104,7 @@ func TestFindImportersAggressively(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			importers, err := s.FindImportersAggressively(context.Background(), tt.targetPackage)
+			importers, err := s.Walker.FindImportersAggressively(context.Background(), tt.targetPackage)
 			if err != nil {
 				t.Fatalf("FindImportersAggressively() failed: %v", err)
 			}

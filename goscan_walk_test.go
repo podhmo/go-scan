@@ -14,7 +14,7 @@ func TestScanPackageImports(t *testing.T) {
 		t.Fatalf("New() failed: %v", err)
 	}
 
-	pkg, err := s.ScanPackageImports(context.Background(), "github.com/podhmo/go-scan/testdata/walk/a")
+	pkg, err := s.Walker.ScanPackageImports(context.Background(), "github.com/podhmo/go-scan/testdata/walk/a")
 	if err != nil {
 		t.Fatalf("ScanPackageImports failed: %v", err)
 	}
@@ -50,7 +50,7 @@ func TestWalk(t *testing.T) {
 	}
 
 	visitor := &collectingVisitor{}
-	err = s.Walk(context.Background(), "github.com/podhmo/go-scan/testdata/walk/a", visitor)
+	err = s.Walker.Walk(context.Background(), "github.com/podhmo/go-scan/testdata/walk/a", visitor)
 	if err != nil {
 		t.Fatalf("Walk() failed: %v", err)
 	}

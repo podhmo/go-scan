@@ -115,6 +115,80 @@ var x = 10
 	}
 }
 
+func TestDefaultIntrinsic_InterfaceMethodCall(t *testing.T) {
+	source := `
+package main
+
+type Writer interface {
+	Write(p []byte) (n int, err error)
+}
+
+func Do(w Writer) {
+	w.Write(nil)
+}
+
+func main() {
+	Do(nil)
+}
+`
+	files := map[string]string{
+		"go.mod":  "module example.com/me",
+		"main.go": source,
+	}
+
+	dir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	var calledPlaceholder *object.SymbolicPlaceholder
+
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
+		pkg := pkgs[0]
+		eval := New(s, s.Logger, nil)
+
+		eval.RegisterDefaultIntrinsic(func(args ...object.Object) object.Object {
+			if len(args) == 0 {
+				return nil
+			}
+			if p, ok := args[0].(*object.SymbolicPlaceholder); ok {
+				if p.UnderlyingMethod != nil {
+					calledPlaceholder = p
+				}
+			}
+			return nil
+		})
+
+		env := object.NewEnvironment()
+		for _, file := range pkg.AstFiles {
+			eval.Eval(ctx, file, env, pkg)
+		}
+
+		mainFuncObj, _ := env.Get("main")
+		mainFunc := mainFuncObj.(*object.Function)
+		result := eval.Apply(ctx, mainFunc, []object.Object{}, pkg)
+		if err, ok := result.(*object.Error); ok {
+			return fmt.Errorf("evaluation failed: %s", err.Message)
+		}
+		return nil
+	}
+
+	if _, err := scantest.Run(t, dir, []string{"."}, action, scantest.WithModuleRoot(dir)); err != nil {
+		t.Fatalf("scantest.Run() failed: %+v", err)
+	}
+
+	if calledPlaceholder == nil {
+		t.Fatalf("default intrinsic was not called with a symbolic placeholder for the interface method")
+	}
+	if calledPlaceholder.UnderlyingMethod.Name != "Write" {
+		t.Errorf("expected placeholder for method 'Write', but got '%s'", calledPlaceholder.UnderlyingMethod.Name)
+	}
+	if calledPlaceholder.Receiver == nil {
+		t.Errorf("expected placeholder to have a receiver, but it was nil")
+	}
+	if _, ok := calledPlaceholder.Receiver.(*object.Variable); !ok {
+		t.Errorf("expected receiver to be a variable, but got %T", calledPlaceholder.Receiver)
+	}
+}
+
 func TestEvalBlockStatement(t *testing.T) {
 	source := `package main
 func main() {

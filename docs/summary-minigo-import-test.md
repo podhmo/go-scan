@@ -189,3 +189,77 @@ func TestKeyFromFnWithScantest(t *testing.T) {
 ```
 
 This method combines the robustness of `replace` directives with the convenience of self-contained, in-memory test definitions, making it a highly effective way to test tools built with `go-scan`.
+
+---
+
+## Addendum: Testing `symgo` with `scantest`
+
+The patterns described above apply equally well to testing the `symgo` symbolic execution engine, which is built on top of `go-scan`. The key is to ensure the `symgo.Interpreter` receives a `goscan.Scanner` that is correctly configured for the test's module context.
+
+The `scantest.Run` function is the ideal way to achieve this.
+
+### Example: Testing a Method Call in `symgo`
+
+This example from `symgo/evaluator/evaluator_test.go` shows how to test that the evaluator can correctly identify and dispatch a method call on a struct.
+
+**`symgo/evaluator/evaluator_test.go`:**
+```go
+func TestEvalCallExpr_MethodCallOnStruct(t *testing.T) {
+	source := `
+package main
+
+type Greeter struct {}
+func (g *Greeter) Greet() string { return "hello" }
+
+func main() {
+	g := &Greeter{}
+	g.Greet()
+}
+`
+	// 1. Define the test module's file layout.
+	dir, cleanup := scantest.WriteFiles(t, map[string]string{
+		"go.mod":  "module example.com/me",
+		"main.go": source,
+	})
+	defer cleanup()
+
+	var greetCalled bool
+
+	// 2. Define the test logic in an action function.
+	// scantest.Run will provide a correctly configured scanner.
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
+		pkg := pkgs[0]
+		eval := New(s, s.Logger, nil) // Create the evaluator with the test scanner.
+
+		// 3. Set up test-specific behavior, like an intrinsic to track a method call.
+		eval.RegisterIntrinsic("(*example.com/me.Greeter).Greet", func(args ...object.Object) object.Object {
+			greetCalled = true
+			return &object.String{Value: "intrinsic hello"}
+		})
+
+		// 4. Run the evaluation logic.
+		env := object.NewEnvironment()
+		eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], env, pkg) // Evaluate file to define symbols.
+		mainFunc, _ := env.Get("main")
+		eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, token.NoPos) // Execute main.
+
+		// 5. Assert the outcome.
+		if !greetCalled {
+			return fmt.Errorf("Greet method was not called")
+		}
+		return nil
+	}
+
+	// 6. Use scantest.Run to drive the test.
+	// It automatically finds the go.mod in `dir` and configures the scanner.
+	if _, err := scantest.Run(t, dir, []string{"."}, action); err != nil {
+		t.Fatalf("scantest.Run() failed: %v", err)
+	}
+}
+```
+
+### Key Takeaways for `symgo` Testing
+
+- **Isolate Failures**: Creating small, focused tests like this for the `symgo` evaluator is critical for debugging. When a complex tool like `find-orphans` fails, these small tests can prove whether the underlying engine or the tool's usage of it is the problem.
+- **Use Intrinsics for Mocks**: The intrinsic system is the perfect mechanism for mocking functions and methods to verify that they were called during symbolic execution.
+- **`scantest` is Essential**: For any test involving cross-package resolution or method calls (which requires the scanner to find type definitions), using `scantest.Run` to create a temporary module on the filesystem is the most reliable approach.

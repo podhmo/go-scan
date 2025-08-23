@@ -68,7 +68,6 @@ func IgnoredFunc() {}
 		"example.com/find-orphans-test.unused_main_func",
 		"(example.com/find-orphans-test/greeter.*Greeter).UnusedMethod",
 		"example.com/find-orphans-test/greeter.UnusedFunc",
-		"example.com/find-orphans-test.unused_main_func",
 	}
 	sort.Strings(expectedOrphans)
 

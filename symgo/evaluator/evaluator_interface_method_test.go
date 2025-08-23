@@ -125,3 +125,81 @@ func main() {
 		t.Errorf("intrinsic for (main.Writer).Write was not called")
 	}
 }
+
+func TestEval_InterfaceMethodCall_OnConcreteType(t *testing.T) {
+	code := `
+package main
+
+type Speaker interface {
+	Speak() string
+}
+
+type Dog struct {}
+func (d *Dog) Speak() string { return "woof" }
+
+func main() {
+	var s Speaker
+	s = &Dog{}
+	s.Speak()
+}
+`
+	files := map[string]string{
+		"go.mod":  "module example.com/me",
+		"main.go": code,
+	}
+
+	dir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	var placeholderCalled bool
+	var concreteFuncCalled bool
+
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
+		pkg := pkgs[0]
+		eval := New(s, s.Logger, nil)
+		env := object.NewEnvironment()
+
+		eval.RegisterDefaultIntrinsic(func(args ...object.Object) object.Object {
+			if len(args) == 0 {
+				return nil
+			}
+			fnObj := args[0]
+			switch fn := fnObj.(type) {
+			case *object.SymbolicPlaceholder:
+				if fn.UnderlyingMethod != nil && fn.UnderlyingMethod.Name == "Speak" {
+					placeholderCalled = true
+				}
+			case *object.Function:
+				// We want to ensure the concrete method is NOT called directly by the intrinsic system
+				// when the variable's static type is an interface.
+				if fn.Name.Name == "Speak" {
+					concreteFuncCalled = true
+				}
+			}
+			return nil
+		})
+
+		for _, file := range pkg.AstFiles {
+			eval.Eval(ctx, file, env, pkg)
+		}
+
+		mainFuncObj, _ := env.Get("main")
+		mainFunc := mainFuncObj.(*object.Function)
+		result := eval.Apply(ctx, mainFunc, []object.Object{}, pkg)
+		if err, ok := result.(*object.Error); ok {
+			return fmt.Errorf("evaluation failed: %s", err.Message)
+		}
+		return nil
+	}
+
+	if _, err := scantest.Run(t, dir, []string{"."}, action, scantest.WithModuleRoot(dir)); err != nil {
+		t.Fatalf("scantest.Run() failed: %+v", err)
+	}
+
+	if !placeholderCalled {
+		t.Errorf("expected SymbolicPlaceholder to be created for interface call on concrete type, but it was not")
+	}
+	if concreteFuncCalled {
+		t.Errorf("expected interface call to NOT resolve to concrete function in intrinsic, but it did")
+	}
+}

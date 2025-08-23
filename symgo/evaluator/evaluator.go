@@ -971,8 +971,14 @@ func (e *Evaluator) assignIdentifier(ident *ast.Ident, val object.Object, tok to
 
 	if v, ok := obj.(*object.Variable); ok {
 		v.Value = val
+		// If the variable's static type is an interface, we want to preserve that type
+		// information, even when assigning a concrete type. This ensures that subsequent
+		// method calls on the variable are treated as interface calls.
 		if val.TypeInfo() != nil {
-			v.ResolvedTypeInfo = val.TypeInfo()
+			originalType := v.TypeInfo()
+			if originalType == nil || originalType.Kind != scanner.InterfaceKind {
+				v.ResolvedTypeInfo = val.TypeInfo()
+			}
 		}
 		e.logger.Debug("evalAssignStmt: updating var", "name", ident.Name, "type", val.Type())
 		return v

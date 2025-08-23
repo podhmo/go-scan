@@ -48,8 +48,8 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [ ] Write comprehensive documentation for the API, supported language features, and usage examples.
 
 ### `minigo` FFI and Language Limitations
-- [-] **Fix empty slice type inference**: Type inference for empty slice literals is weak and defaults to `[]any`. This causes legitimate generic functions (like `slices.Sort`) to fail type checks when they shouldn't. The interpreter should ideally preserve the declared type (e.g., `[]int`) even if the literal is empty. (Note: This is fixed for empty slice and map literals.)
-- [ ] **Fix typed nil handling**: The interpreter does not correctly handle typed `nil` values for slices and interfaces, causing incorrect behavior in type inference and equality checks.
+- [x] **Fix empty slice type inference**: Type inference for empty slice literals is weak and defaults to `[]any`. This causes legitimate generic functions (like `slices.Sort`) to fail type checks when they shouldn't. The interpreter should ideally preserve the declared type (e.g., `[]int`) even if the literal is empty. (Note: This is fixed for empty slice and map literals.)
+- [x] **Fix typed nil handling**: The interpreter does not correctly handle typed `nil` values for slices and interfaces, causing incorrect behavior in type inference and equality checks.
 
 ### Find Orphan Functions and Methods ([docs/plan-find-orphans.md](./docs/plan-find-orphans.md))
 - [ ] **Phase 1: Project Scaffolding & Basic Scanning**

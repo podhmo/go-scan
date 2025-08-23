@@ -147,3 +147,49 @@ This is a key limitation in the current implementation.
 *   **Result:** The expression `mypkg.MyConstant` resolves to a generic `SymbolicPlaceholder` with no value attached. The pattern handler for `GetQuery` would not be able to extract the constant's string value.
 
 The underlying `go-scan` library *does* collect information about constants and variables, so the data is available. The `symgo` evaluator would need to be enhanced to look up these symbols in addition to functions.
+
+## 4. Advanced Configuration: Treating External Packages as Internal
+
+**Question: Is it possible to treat some external packages as if they were internal to the module, forcing `symgo` to analyze their code recursively?**
+
+This is an excellent question that addresses a key architectural decision. As noted earlier, `symgo`'s evaluation depth is strictly tied to Go module boundaries. This is a deliberate choice for performance, but it can be limiting when an application relies heavily on a shared library in a separate Go module.
+
+While it is not possible with the current implementation, a feature could be introduced to support this.
+
+### Proposed Solution
+
+A new configuration option could be added to `symgo.Interpreter` to override the default behavior for a specified list of packages.
+
+1.  **Introduce a New Option:**
+    A new option, for example `WithForcedIntraModulePackages([]string)`, would be added to `symgo.NewInterpreter`. This option would accept a list of package import path prefixes.
+
+2.  **Modify Evaluator Logic:**
+    The core change would be in `symgo`'s evaluator. The logic that decides whether to evaluate a function recursively or treat it as a symbolic placeholder would be updated:
+
+    ```go
+    // Current logic in pseudocode
+    isSameModule := strings.HasPrefix(targetPackage.ImportPath, currentModule.Path)
+    if isSameModule {
+        EvaluateRecursively(target)
+    } else {
+        ReturnSymbolicPlaceholder(target)
+    }
+
+    // Proposed new logic in pseudocode
+    isSameModule := strings.HasPrefix(targetPackage.ImportPath, currentModule.Path)
+    isForcedIntraModule := forcedPackagesList.Contains(targetPackage.ImportPath)
+    if isSameModule || isForcedIntraModule {
+        EvaluateRecursively(target)
+    } else {
+        ReturnSymbolicPlaceholder(target)
+    }
+    ```
+
+### Implementation Impact
+
+*   **`symgo`:** The changes would be concentrated here. It requires adding the new configuration option and updating the evaluator's decision-making logic as described above.
+*   **`go-scan` & `locator`:** These underlying libraries are likely already capable of supporting this feature. Their responsibility is to find and parse the source code for a given import path. As long as the target package exists in the Go module cache (`GOPATH/pkg/mod`), the existing `GoModuleResolver` should be able to locate and provide its source files to `symgo` upon request. No significant changes should be needed in these components.
+
+### Use Case
+
+This feature would be extremely valuable for organizations that maintain internal, shared libraries for common tasks (e.g., a package with standardized JSON response helpers). Instead of writing dozens of intrinsics or patterns for every helper function in the shared library, a developer could simply tell `symgo` to treat `github.com/my-org/my-common-library` as an internal package. `symgo` would then automatically trace function calls into that library, providing a much deeper and more accurate analysis with minimal configuration.

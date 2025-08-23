@@ -208,13 +208,13 @@ Yes. For example, if you have `myWrapper("foo")` and `myWrapper` is defined as `
 
 **Question: Can `symgo` recognize the value of a global or cross-package constant when used as an argument?**
 
-This is a key limitation in the current implementation.
+Yes, this is now supported.
 
 *   **Scenario:** `GetQuery(r, mypkg.MyConstant)`
-*   **Current Behavior:** When `symgo` evaluates `mypkg.MyConstant`, its `evalSelectorExpr` logic attempts to resolve the symbol. However, it currently only searches for **functions** within the external package. It does not look for constants (`const`) or variables (`var`).
-*   **Result:** The expression `mypkg.MyConstant` resolves to a generic `SymbolicPlaceholder` with no value attached. The pattern handler for `GetQuery` would not be able to extract the constant's string value.
+*   **New Behavior:** When `symgo` evaluates `mypkg.MyConstant`, its `evalSelectorExpr` logic now resolves the symbol by looking for functions, constants, and variables in the external package.
+*   **Result:** The expression `mypkg.MyConstant` resolves to a concrete `object.String` (or `object.Integer`, etc.) containing the constant's value. A pattern handler for `GetQuery` can now inspect this object and use its value, for example, to name a parameter in the generated OpenAPI specification.
 
-The underlying `go-scan` library *does* collect information about constants and variables, so the data is available. The `symgo` evaluator would need to be enhanced to look up these symbols in addition to functions.
+This was enabled by enhancing the `symgo` evaluator to use the constant and variable information already collected by the underlying `go-scan` library.
 
 ## 4. Advanced Configuration: Treating External Packages as Internal
 

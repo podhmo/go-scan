@@ -81,7 +81,6 @@ func IgnoredFunc() {}
 	sort.Strings(expectedOrphans)
 	sort.Strings(foundOrphans)
 
-	sort.Strings(foundOrphans)
 	if diff := cmp.Diff(expectedOrphans, foundOrphans); diff != "" {
 		t.Errorf("find-orphans mismatch (-want +got):\n%s\nFull output:\n%s", diff, output)
 	}

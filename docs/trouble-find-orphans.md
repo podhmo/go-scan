@@ -1,34 +1,64 @@
-# `symgo` Interpreter Issue: Failure to Trace Interface Method Calls
+# Trouble Analysis: `find-orphans` and Interface Method Calls
 
-## Context
+This document details the investigation into a bug in the `find-orphans` tool related to tracking the usage of interface methods, and outlines a proposed path forward.
 
-The `find-orphans` tool relies on the `symgo` symbolic execution engine to trace all function and method calls within a program to determine which code is actually used.
+## 1. The Core Problem
 
-A key feature is the ability to understand that when a method is called on an interface variable, all concrete implementations of that method should be considered "used".
+The `find-orphans` tool needs to determine if a concrete method (e.g., `(*Dog).Speak`) is used. A key challenge is when such a method is called polymorphically through an interface variable (e.g., `var s Speaker = &Dog{}; s.Speak()`).
 
-## The Problem
+The analysis requires two key pieces of information:
+1.  That a method of the `Speaker` interface was called.
+2.  The set of possible concrete types that the `Speaker` variable could hold at the call site.
 
-The `find-orphans` tool fails to detect usage for methods that are called exclusively through an interface.
+## 2. Investigation Summary
 
-The expected behavior is as follows:
-1.  The `symgo` interpreter encounters a method call on an interface variable (e.g., `iface.DoSomething()`).
-2.  Since the concrete type is unknown at that point, the interpreter should treat this as a call to an unresolved function.
-3.  This should trigger the "default intrinsic" function registered by the `find-orphans` tool.
-4.  The intrinsic receives a `*symgo.object.SymbolicPlaceholder` object representing the interface call.
-5.  The tool's logic then inspects this placeholder, identifies the interface and method, finds all concrete types in the codebase that implement this interface, and marks the corresponding method on each of those types as "used".
+The investigation revealed a limitation in the `symgo` symbolic execution engine.
 
-However, based on extensive logging and debugging, **Step 3 is not happening**. The default intrinsic is never triggered when an interface method is called. The `symgo` interpreter appears to silently bypass these calls, providing no hook for the `find-orphans` tool to perform its analysis.
+-   **Original Behavior:** When `symgo` could determine the concrete type of an interface variable (e.g., it knew `s` held a `*Dog`), it would resolve the method call `s.Speak()` directly to a concrete call to `(*Dog).Speak()`. This was precise, but it completely hid the polymorphic nature of the call from downstream tools like `find-orphans`. The tool never knew that `Speaker.Speak()` was involved.
 
-## Example Failing Test Case
+-   **Attempted Fix:** A fix was implemented in `symgo` to force it to prioritize the variable's static type. This ensured that a call on an interface variable always generated a generic `SymbolicPlaceholder`. While this correctly signaled that a polymorphic call occurred, it went too far in the other direction: it discarded the known concrete type information, losing precision.
 
-A test case was created to isolate this issue (`TestFindOrphans_interface`, now removed to keep the test suite green). It defined a simple scenario:
+This led to the realization that a more sophisticated approach is needed.
 
-- An interface `I` with a method `Used()`.
-- A struct `S` with two methods: `Used()` and `Unused()`. `S` implements `I`.
-- A `main` function that creates an instance of `S`, assigns it to a variable of type `I`, and calls `i.Used()`.
+## 3. Proposed Future Solution
 
-The `find-orphans` tool incorrectly reported both `S.Used` and `S.Unused` as orphans, because the call to `i.Used()` was never traced by the interpreter.
+The ideal solution is to enhance `symgo` to provide richer information to its consumer tools.
 
-## Conclusion
+### 3.1. Enhance `SymbolicPlaceholder`
 
-This is a fundamental limitation in the current `symgo` interpreter. The `find-orphans` tool's logic for handling interface implementations is in place, but it is unreachable until `symgo` is enhanced to correctly delegate interface method calls to the registered intrinsic function.
+The `object.SymbolicPlaceholder` generated for an interface method call should be enhanced. It should contain not just the interface method that was called, but also the set of *possible concrete types* that the interface variable could hold at that point in the execution.
+
+For example:
+```go
+// object/object.go
+type SymbolicPlaceholder struct {
+    // ... existing fields ...
+    PossibleConcreteTypes []*scanner.TypeInfo // NEW FIELD
+}
+```
+
+### 3.2. Enhance `symgo`'s Analysis
+
+The `symgo` evaluator needs to be enhanced to track these possible concrete types.
+
+-   When a variable is assigned a value (e.g., `s = &Dog{}`), the evaluator should record that `*Dog` is a possible type for `s`.
+-   Crucially, as pointed out during the investigation, the evaluator must handle control flow. If a variable can be assigned different concrete types in different branches, `symgo` should be able to determine that the set of possible types includes all candidates from all reachable paths.
+    ```go
+    var s Speaker
+    if someCondition {
+        s = &Dog{}
+    } else {
+        s = &Cat{}
+    }
+    s.Speak() // At this point, PossibleConcreteTypes should be {*Dog, *Cat}
+    ```
+
+### 3.3. Update `find-orphans`
+
+With this richer `SymbolicPlaceholder`, the `find-orphans` tool can be made much smarter. Its intrinsic would:
+1.  Receive a `SymbolicPlaceholder` for `Speaker.Speak()`.
+2.  Inspect the new `PossibleConcreteTypes` field.
+3.  **If the set is not empty:** Iterate through the concrete types (`*Dog`, `*Cat`) and mark only their `Speak` methods as used. This provides a highly precise analysis.
+4.  **If the set is empty** (because `symgo` could not determine any concrete types): Fall back to the original, imprecise strategy of marking all implementations of `Speaker` in the entire codebase as used.
+
+This approach provides the best of both worlds: precision when possible, and a safe fallback when not. This is the recommended path forward to fully resolve the issue.

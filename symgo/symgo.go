@@ -319,6 +319,14 @@ func (i *Interpreter) RegisterIntrinsic(key string, handler IntrinsicFunc) {
 	i.eval.RegisterIntrinsic(key, wrappedHandler)
 }
 
+// RegisterDefaultIntrinsic registers a default function to be called for any function call.
+func (i *Interpreter) RegisterDefaultIntrinsic(handler IntrinsicFunc) {
+	wrappedHandler := func(args ...object.Object) object.Object {
+		return handler(i, args)
+	}
+	i.eval.RegisterDefaultIntrinsic(wrappedHandler)
+}
+
 // PushIntrinsics creates a new temporary scope and registers a set of intrinsics on it.
 func (i *Interpreter) PushIntrinsics(newIntrinsics map[string]IntrinsicFunc) {
 	i.eval.PushIntrinsics()

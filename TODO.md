@@ -53,8 +53,8 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 
 ### Find Orphan Functions and Methods ([docs/plan-find-orphans.md](./docs/plan-find-orphans.md))
 - [ ] **Phase 1: Project Scaffolding & Basic Scanning**
-    - [ ] Create directory `examples/find-orphans` and `main.go`.
-    - [ ] Set up CLI flag parsing for `-all`, `--include-tests`, `--workspace-root`, and `-v`.
+    - [x] Create directory `examples/find-orphans` and `main.go`.
+    - [x] Set up CLI flag parsing for `-all`, `--include-tests`, `--workspace-root`, and `-v`.
     - [ ] Implement scanner setup to manage single or multiple modules (`--workspace-root`).
     - [ ] Implement logic to walk target packages and collect all function/method declarations.
 - [ ] **Phase 2: Core Usage Analysis with `symgo`**

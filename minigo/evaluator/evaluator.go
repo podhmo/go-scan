@@ -256,7 +256,7 @@ var builtins = map[string]*object.Builtin{
 			var elements []object.Object
 			if arr, ok := args[0].(*object.Array); ok {
 				elements = arr.Elements
-			} else if args[0] == object.NIL {
+			} else if args[0] == object.NIL || args[0].Type() == object.TYPED_NIL_OBJ {
 				elements = []object.Object{}
 			} else {
 				return ctx.NewError(pos, "argument to `append` must be array or nil, got %s", args[0].Type())
@@ -455,6 +455,8 @@ func New(cfg Config) *Evaluator {
 // inferTypeOf infers the object.Object representing the type of a given value object.
 func (e *Evaluator) inferTypeOf(obj object.Object) object.Object {
 	switch o := obj.(type) {
+	case *object.TypedNil:
+		return o.TypeObject
 	case *object.Integer:
 		return &object.Type{Name: "int"}
 	case *object.Float:
@@ -564,17 +566,19 @@ func (e *Evaluator) inferGenericTypes(pos token.Pos, f *object.Function, args []
 						return nil, e.newError(pos, "cannot infer type for generic parameter %s: not enough arguments", eltIdent.Name)
 					}
 					arg := args[i]
-					argArray, ok := arg.(*object.Array)
-					if !ok {
-						// The argument passed for a []T parameter must be an array.
-						// We could also check for GoValue here in the future.
-						continue
+					var inferredElemType object.Object
+					if tn, ok := arg.(*object.TypedNil); ok {
+						if at, ok := tn.TypeObject.(*object.ArrayType); ok {
+							inferredElemType = at.ElementType
+						}
+					} else if arr, ok := arg.(*object.Array); ok {
+						if arrType, ok := e.inferTypeOf(arr).(*object.ArrayType); ok {
+							inferredElemType = arrType.ElementType
+						}
 					}
-					// Infer the element type from the provided array argument.
-					// This relies on inferTypeOf, which can infer from the first element.
-					inferredElemType := e.inferTypeOf(argArray)
-					if arrType, ok := inferredElemType.(*object.ArrayType); ok {
-						inferredTypes[eltIdent.Name] = arrType.ElementType
+
+					if inferredElemType != nil {
+						inferredTypes[eltIdent.Name] = inferredElemType
 					}
 				}
 			}
@@ -597,18 +601,47 @@ func (e *Evaluator) inferGenericTypes(pos token.Pos, f *object.Function, args []
 					return nil, e.newError(pos, "cannot infer type for generic map: not enough arguments")
 				}
 				arg := args[i]
-				argMap, ok := arg.(*object.Map)
-				if !ok {
-					continue
+				var inferredMapType *object.MapType
+				if tn, ok := arg.(*object.TypedNil); ok {
+					if mt, ok := tn.TypeObject.(*object.MapType); ok {
+						inferredMapType = mt
+					}
+				} else if argMap, ok := arg.(*object.Map); ok {
+					if mt, ok := e.inferTypeOf(argMap).(*object.MapType); ok {
+						inferredMapType = mt
+					}
 				}
 
-				inferredMapType := e.inferTypeOf(argMap)
-				if mapType, ok := inferredMapType.(*object.MapType); ok {
+				if mapType := inferredMapType; mapType != nil {
 					if keyIsIdent && keyIsGeneric {
 						inferredTypes[keyIdent.Name] = mapType.KeyType
 					}
 					if valIsIdent && valIsGeneric {
 						inferredTypes[valIdent.Name] = mapType.ValueType
+					}
+				}
+			}
+		} else if paramTypeStar, ok := paramField.Type.(*ast.StarExpr); ok {
+			// Handle pointer to generic type like '*T'
+			if eltIdent, ok := paramTypeStar.X.(*ast.Ident); ok {
+				if _, isGeneric := typeParamNames[eltIdent.Name]; isGeneric {
+					if i >= len(args) {
+						return nil, e.newError(pos, "cannot infer type for generic parameter %s: not enough arguments", eltIdent.Name)
+					}
+					arg := args[i]
+					var inferredElemType object.Object
+					if tn, ok := arg.(*object.TypedNil); ok {
+						if pt, ok := tn.TypeObject.(*object.PointerType); ok {
+							inferredElemType = pt.ElementType
+						}
+					} else if ptr, ok := arg.(*object.Pointer); ok {
+						if pt, ok := e.inferTypeOf(ptr).(*object.PointerType); ok {
+							inferredElemType = pt.ElementType
+						}
+					}
+
+					if inferredElemType != nil {
+						inferredTypes[eltIdent.Name] = inferredElemType
 					}
 				}
 			}
@@ -1331,8 +1364,23 @@ func (e *Evaluator) evalInfixExpression(node ast.Node, operator string, left, ri
 		return e.evalMixedBoolInfixExpression(node, operator, left, right)
 
 	case operator == "==":
+		// Handle nil comparisons first.
+		isLeftNil := left.Type() == object.NIL_OBJ || left.Type() == object.TYPED_NIL_OBJ
+		isRightNil := right.Type() == object.NIL_OBJ || right.Type() == object.TYPED_NIL_OBJ
+		if isLeftNil || isRightNil {
+			// If either is nil, they are equal only if both are nil.
+			return e.nativeBoolToBooleanObject(isLeftNil == isRightNil)
+		}
+		// Fallback to pointer comparison for reference types.
+		// Note: The cases above handle value types like integers and strings.
 		return e.nativeBoolToBooleanObject(left == right)
 	case operator == "!=":
+		isLeftNil := left.Type() == object.NIL_OBJ || left.Type() == object.TYPED_NIL_OBJ
+		isRightNil := right.Type() == object.NIL_OBJ || right.Type() == object.TYPED_NIL_OBJ
+		if isLeftNil || isRightNil {
+			// If either is nil, they are not equal if one is nil and the other isn't.
+			return e.nativeBoolToBooleanObject(isLeftNil != isRightNil)
+		}
 		return e.nativeBoolToBooleanObject(left != right)
 	case left.Type() != right.Type():
 		return e.newError(node.Pos(), "type mismatch: %s %s %s", left.Type(), operator, right.Type())
@@ -1352,7 +1400,7 @@ func (e *Evaluator) isTruthy(obj object.Object) bool {
 		}
 		// If it's a GoValue but not a bool, consider it truthy if it's not nil/zero.
 		return o.Value.IsValid() && !o.Value.IsZero()
-	case *object.Nil:
+	case *object.Nil, *object.TypedNil:
 		return false
 	default:
 		// Any other object type (Integer, String, etc.) is considered truthy.
@@ -1942,8 +1990,8 @@ func (e *Evaluator) getZeroValueForResolvedType(typeObj object.Object) object.Ob
 			return &object.Float{Value: 0.0}
 		}
 	}
-	// For any other type (pointers, interfaces, arrays, maps, etc.), the zero value is nil.
-	return object.NIL
+	// For any other type (pointers, interfaces, arrays, maps, etc.), the zero value is a typed nil.
+	return &object.TypedNil{TypeObject: typeObj}
 }
 
 func (e *Evaluator) getZeroValueForType(typeExpr ast.Expr, env *object.Environment, fscope *object.FileScope) object.Object {
@@ -3469,7 +3517,8 @@ func (e *Evaluator) evalGenDecl(n *ast.GenDecl, env *object.Environment, fscope 
 							}
 							val = instance
 						default:
-							val = object.NIL // Default to NIL for other types
+							// For other types (slices, maps, pointers, interfaces), the zero value is a typed nil.
+							val = &object.TypedNil{TypeObject: resolvedType}
 						}
 					} else {
 						val = object.NIL

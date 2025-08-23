@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"go/printer"
 	"log"
+	"strings"
 	"sync"
 
 	"github.com/podhmo/go-scan"
@@ -67,7 +68,11 @@ func run(ctx context.Context, all bool, includeTests bool, workspace string, ver
 	interfaceMap := buildInterfaceMap(visitor.packages)
 	log.Printf("built interface map with %d interfaces", len(interfaceMap))
 
-	interp, err := symgo.NewInterpreter(s)
+	innerScanner, err := s.ScannerForSymgo()
+	if err != nil {
+		return fmt.Errorf("failed to get inner scanner: %w", err)
+	}
+	interp, err := symgo.NewInterpreter(innerScanner)
 	if err != nil {
 		return fmt.Errorf("failed to create interpreter: %w", err)
 	}
@@ -89,7 +94,6 @@ func run(ctx context.Context, all bool, includeTests bool, workspace string, ver
 					fullName = fmt.Sprintf("(%s.%s).%s", fn.Package.ImportPath, buf.String(), fn.Name.Name)
 					usageMap[fullName] = true
 
-					// also mark the function on the value receiver as used, if it exists
 					if recvTypeStr := buf.String(); len(recvTypeStr) > 0 && recvTypeStr[0] == '*' {
 						valueRecvName := fmt.Sprintf("(%s.%s).%s", fn.Package.ImportPath, recvTypeStr[1:], fn.Name.Name)
 						usageMap[valueRecvName] = true
@@ -105,7 +109,6 @@ func run(ctx context.Context, all bool, includeTests bool, workspace string, ver
 				fullName = getFullName(fn.Package, fn.UnderlyingFunc)
 				usageMap[fullName] = true
 
-				// Handle interface method calls
 				if fn.UnderlyingFunc.Receiver != nil {
 					receiverTypeInfo := fn.UnderlyingFunc.Receiver.Type.Definition
 					if receiverTypeInfo != nil && receiverTypeInfo.Kind == scanner.InterfaceKind {
@@ -117,7 +120,6 @@ func run(ctx context.Context, all bool, includeTests bool, workspace string, ver
 								if implPkg != nil {
 									for _, m := range implPkg.Functions {
 										if m.Name == methodName && m.Receiver != nil {
-											// This is a simplified check. A real one would check signatures.
 											implMethodName := getFullName(implPkg, m)
 											usageMap[implMethodName] = true
 										}
@@ -132,17 +134,45 @@ func run(ctx context.Context, all bool, includeTests bool, workspace string, ver
 		return nil
 	})
 
-	log.Printf("running symbolic execution")
+	log.Printf("running symbolic execution from entry points")
+	var entryPoints []*object.Function
 	for _, pkg := range visitor.packages {
-		for _, decl := range pkg.Functions {
-			if decl.AstDecl.Body == nil {
-				continue
-			}
-			_, err := interp.Eval(ctx, decl.AstDecl, pkg)
-			if err != nil {
-				// log.Printf("error evaluating %s: %v", getFullName(pkg, decl), err)
+		if pkg.Name == "main" {
+			for _, fnInfo := range pkg.Functions {
+				if fnInfo.Name == "main" && fnInfo.Receiver == nil {
+					fileAst, ok := pkg.AstFiles[fnInfo.FilePath]
+					if !ok {
+						log.Printf("could not find ast file for %s", fnInfo.FilePath)
+						continue
+					}
+					if _, err := interp.Eval(ctx, fileAst, pkg); err != nil {
+						log.Printf("could not load package %s: %v", pkg.ImportPath, err)
+						continue
+					}
+
+					mainFuncObj, ok := interp.FindObject(fnInfo.Name)
+					if !ok {
+						log.Printf("could not find main function in package %s", pkg.ImportPath)
+						continue
+					}
+					mainFunc, ok := mainFuncObj.(*object.Function)
+					if !ok {
+						log.Printf("main is not a function in package %s", pkg.ImportPath)
+						continue
+					}
+					entryPoints = append(entryPoints, mainFunc)
+				}
 			}
 		}
+	}
+
+	if len(entryPoints) == 0 {
+		log.Printf("no main entry point found, analysis may be incomplete")
+	}
+
+	for _, ep := range entryPoints {
+		log.Printf("analyzing from entry point: %s.%s", ep.Package.ImportPath, ep.Name.Name)
+		interp.Apply(ctx, ep, []object.Object{}, ep.Package)
 	}
 	log.Printf("symbolic execution complete")
 
@@ -152,10 +182,19 @@ func run(ctx context.Context, all bool, includeTests bool, workspace string, ver
 		for _, decl := range pkg.Functions {
 			name := getFullName(pkg, decl)
 			if _, used := usageMap[name]; !used {
+				if decl.AstDecl.Doc != nil {
+					for _, comment := range decl.AstDecl.Doc.List {
+						if strings.Contains(comment.Text, "//go:scan:ignore") {
+							goto nextDecl
+						}
+					}
+				}
+
 				pos := s.Fset().Position(decl.AstDecl.Pos())
 				fmt.Printf("%s\n  %s\n", name, pos)
 				count++
 			}
+		nextDecl:
 		}
 	}
 
@@ -189,7 +228,6 @@ func (v *collectorVisitor) Visit(pkg *goscan.PackageImports) ([]string, error) {
 
 func getFullName(pkg *scanner.PackageInfo, fn *scanner.FunctionInfo) string {
 	if fn.Receiver != nil {
-		// Use the String() method on FieldType which is designed for this.
 		recvTypeStr := fn.Receiver.Type.String()
 		return fmt.Sprintf("(%s.%s).%s", pkg.ImportPath, recvTypeStr, fn.Name)
 	}
@@ -202,7 +240,6 @@ func buildInterfaceMap(packages map[string]*scanner.PackageInfo) map[string][]*s
 	var allStructs []*scanner.TypeInfo
 	packageOfStruct := make(map[*scanner.TypeInfo]*scanner.PackageInfo)
 
-	// Collect all interfaces and structs from all packages
 	for _, pkg := range packages {
 		for _, t := range pkg.Types {
 			if t.Kind == scanner.InterfaceKind {
@@ -214,7 +251,6 @@ func buildInterfaceMap(packages map[string]*scanner.PackageInfo) map[string][]*s
 		}
 	}
 
-	// Check for implementations
 	for _, iface := range allInterfaces {
 		ifaceName := fmt.Sprintf("%s.%s", iface.PkgPath, iface.Name)
 		var implementers []*scanner.TypeInfo

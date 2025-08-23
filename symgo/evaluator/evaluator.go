@@ -728,21 +728,14 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 		if typeInfo.Interface != nil {
 			for _, method := range typeInfo.Interface.Methods {
 				if method.Name == n.Sel.Name {
-					// The result of calling a method on a symbolic interface is another symbolic value.
-					// We determine the type of this new value from the method's return type.
-					var resultTypeInfo *scanner.TypeInfo
-					if len(method.Results) > 0 {
-						// Simplified: use the first return value.
-						resultType, _ := method.Results[0].Type.Resolve(context.Background())
-						if resultType == nil && method.Results[0].Type.IsBuiltin {
-							resultType = &scanner.TypeInfo{Name: method.Results[0].Type.Name}
-						}
-						resultTypeInfo = resultType
-					}
-
+					// This is an unresolved interface method call.
+					// We return a placeholder representing the *function itself*, not its result.
+					// This allows the default intrinsic to inspect it.
 					return &object.SymbolicPlaceholder{
-						Reason:     fmt.Sprintf("result of method call %s.%s", typeInfo.Name, method.Name),
-						BaseObject: object.BaseObject{ResolvedTypeInfo: resultTypeInfo},
+						Reason:           fmt.Sprintf("interface method call %s.%s", typeInfo.Name, method.Name),
+						Receiver:         val,
+						UnderlyingMethod: method,
+						BaseObject:       object.BaseObject{ResolvedTypeInfo: typeInfo},
 					}
 				}
 			}
@@ -1163,11 +1156,27 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 		return fn.Fn(args...)
 
 	case *object.SymbolicPlaceholder:
+		// Case 1: The placeholder represents an unresolved interface method call.
+		if fn.UnderlyingMethod != nil {
+			method := fn.UnderlyingMethod
+			var resultTypeInfo *scanner.TypeInfo
+			if len(method.Results) > 0 {
+				// Simplified: use the first return value.
+				resultType, _ := method.Results[0].Type.Resolve(context.Background())
+				if resultType == nil && method.Results[0].Type.IsBuiltin {
+					resultType = &scanner.TypeInfo{Name: method.Results[0].Type.Name}
+				}
+				resultTypeInfo = resultType
+			}
+			return &object.SymbolicPlaceholder{
+				Reason:     fmt.Sprintf("result of interface method call %s", method.Name),
+				BaseObject: object.BaseObject{ResolvedTypeInfo: resultTypeInfo},
+			}
+		}
+
+		// Case 2: The placeholder represents an external function call.
 		if fn.UnderlyingFunc != nil && fn.Package != nil {
-			// This placeholder represents an external function. We can determine its return type.
 			if fn.UnderlyingFunc.AstDecl.Type.Results != nil && len(fn.UnderlyingFunc.AstDecl.Type.Results.List) > 0 {
-				// We need a valid context for resolution, but creating one here is tricky.
-				// For now, we'll use a background context.
 				var importLookup map[string]string
 				if fn.UnderlyingFunc.AstDecl != nil {
 					file := fn.Package.Fset.File(fn.UnderlyingFunc.AstDecl.Pos())
@@ -1178,8 +1187,6 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 					}
 				}
 
-				// We need to resolve the FieldType to a TypeInfo.
-				// To do that, we need the original AST expression for the type.
 				resultASTExpr := fn.UnderlyingFunc.AstDecl.Type.Results.List[0].Type
 				fieldType := e.scanner.TypeInfoFromExpr(context.Background(), resultASTExpr, nil, fn.Package, importLookup)
 				resolvedType, _ := fieldType.Resolve(context.Background())
@@ -1211,6 +1218,8 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 				}
 			}
 		}
+
+		// Case 3: Generic placeholder.
 		return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("result of calling %s", fn.Inspect())}
 
 	default:

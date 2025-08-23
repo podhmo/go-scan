@@ -215,6 +215,10 @@ type SymbolicPlaceholder struct {
 	UnderlyingFunc *scanner.FunctionInfo
 	// The package context for the UnderlyingFunc.
 	Package *scanner.PackageInfo
+	// If the placeholder is for an interface method call, this holds the receiver.
+	Receiver Object
+	// If the placeholder is for an interface method call, this holds the method info.
+	UnderlyingMethod *scanner.MethodInfo
 }
 
 // Type returns the type of the SymbolicPlaceholder object.

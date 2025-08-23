@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"go/ast"
+	"go/constant"
 	"go/printer"
 	"go/token"
 	"log/slog"
@@ -516,6 +517,42 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 		// If it's an extra-module call, or not a resolvable function, treat it as a placeholder.
 		// This is the default behavior for external dependencies.
 		var placeholder object.Object
+
+		// First, check if the symbol is a known constant.
+		for _, c := range val.ScannedInfo.Constants {
+			if c.Name == n.Sel.Name {
+				if !c.IsExported {
+					continue // Cannot access unexported constants.
+				}
+
+				var constObj object.Object
+				switch c.ConstVal.Kind() {
+				case constant.String:
+					constObj = &object.String{Value: constant.StringVal(c.ConstVal)}
+				case constant.Int:
+					val, ok := constant.Int64Val(c.ConstVal)
+					if !ok {
+						return newError(n.Pos(), "could not convert constant %s to int64", c.Name)
+					}
+					constObj = &object.Integer{Value: val}
+				case constant.Bool:
+					if constant.BoolVal(c.ConstVal) {
+						constObj = object.TRUE
+					} else {
+						constObj = object.FALSE
+					}
+				default:
+					// Other constant types (float, complex, etc.) are not yet supported.
+					// Fall through to create a placeholder.
+				}
+
+				if constObj != nil {
+					val.Env.Set(n.Sel.Name, constObj) // Cache the resolved constant.
+					return constObj
+				}
+			}
+		}
+
 		// Check if the symbol is a function to enrich the placeholder.
 		var funcInfo *scanner.FunctionInfo
 		for _, f := range val.ScannedInfo.Functions {
@@ -532,7 +569,8 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 				Package:        val.ScannedInfo,
 			}
 		} else {
-			// Not a function, so it's likely a var or const. Create a generic placeholder.
+			// Not a function or a resolvable constant, so it's likely a var or unsupported const.
+			// Create a generic placeholder.
 			placeholder = &object.SymbolicPlaceholder{Reason: fmt.Sprintf("external symbol %s.%s", val.Name, n.Sel.Name)}
 		}
 

@@ -1,68 +1,64 @@
 # Trouble Analysis: `find-orphans` and Interface Method Calls
 
-This document details the investigation and resolution of a bug in the `find-orphans` tool related to tracking the usage of interface methods.
+This document details the investigation into a bug in the `find-orphans` tool related to tracking the usage of interface methods, and outlines a proposed path forward.
 
-## 1. Initial Problem
+## 1. The Core Problem
 
-The `find-orphans` tool was not correctly identifying that a concrete method was "used" when it was called via an interface variable.
+The `find-orphans` tool needs to determine if a concrete method (e.g., `(*Dog).Speak`) is used. A key challenge is when such a method is called polymorphically through an interface variable (e.g., `var s Speaker = &Dog{}; s.Speak()`).
 
-A test case was created with the following structure:
-- An interface `Speaker` with a method `Speak()`.
-- Two structs, `Dog` and `Cat`, that both implement `Speaker`.
-- A `main` function that creates a `Dog` instance, assigns it to a `Speaker` variable, and calls the `Speak()` method.
+The analysis requires two key pieces of information:
+1.  That a method of the `Speaker` interface was called.
+2.  The set of possible concrete types that the `Speaker` variable could hold at the call site.
 
-**Expected Behavior:** The tool should recognize that `Speaker.Speak()` was called. The analysis should then mark both `Dog.Speak()` and `Cat.Speak()` as "used".
+## 2. Investigation Summary
 
-**Actual Behavior:** The tool marked `Dog.Speak()` as used, but incorrectly flagged `Cat.Speak()` as an orphan.
+The investigation revealed a limitation in the `symgo` symbolic execution engine.
 
-## 2. Investigation and Root Cause in `symgo`
+-   **Original Behavior:** When `symgo` could determine the concrete type of an interface variable (e.g., it knew `s` held a `*Dog`), it would resolve the method call `s.Speak()` directly to a concrete call to `(*Dog).Speak()`. This was precise, but it completely hid the polymorphic nature of the call from downstream tools like `find-orphans`. The tool never knew that `Speaker.Speak()` was involved.
 
-The investigation revealed that the `symgo` symbolic execution engine was too aggressively resolving method calls.
+-   **Attempted Fix:** A fix was implemented in `symgo` to force it to prioritize the variable's static type. This ensured that a call on an interface variable always generated a generic `SymbolicPlaceholder`. While this correctly signaled that a polymorphic call occurred, it went too far in the other direction: it discarded the known concrete type information, losing precision.
 
-1.  When analyzing `var s Speaker = &Dog{}`, `symgo` correctly identified the static type of `s` as `Speaker`.
-2.  However, upon assignment, it overwrote this static type information with the concrete type `*Dog`.
-3.  Therefore, when it encountered the call `s.Speak()`, it resolved it directly to a concrete method call on `(*Dog).Speak()`.
-4.  This meant the `find-orphans` tool's intrinsic was only ever notified of a concrete call. It never received a generic, polymorphic `SymbolicPlaceholder` for `Speaker.Speak()`, which is the trigger it needs to find all other implementations.
+This led to the realization that a more sophisticated approach is needed.
 
-## 3. Solution Part 1: Fixing `symgo` (Complete)
+## 3. Proposed Future Solution
 
-The behavior of `symgo` was corrected. A call on a variable statically typed as an interface should be treated as a polymorphic call.
+The ideal solution is to enhance `symgo` to provide richer information to its consumer tools.
 
-The fix was implemented in `symgo/evaluator/evaluator.go`, in the `assignIdentifier` function. The logic was changed to preserve the static type of a variable if it is an interface.
+### 3.1. Enhance `SymbolicPlaceholder`
 
-**Fixed logic:**
+The `object.SymbolicPlaceholder` generated for an interface method call should be enhanced. It should contain not just the interface method that was called, but also the set of *possible concrete types* that the interface variable could hold at that point in the execution.
+
+For example:
 ```go
-// Preserves the interface type if it was declared as such
-if val.TypeInfo() != nil {
-    originalType := v.TypeInfo()
-    if originalType == nil || originalType.Kind != scanner.InterfaceKind {
-        v.ResolvedTypeInfo = val.TypeInfo()
+// object/object.go
+type SymbolicPlaceholder struct {
+    // ... existing fields ...
+    PossibleConcreteTypes []*scanner.TypeInfo // NEW FIELD
+}
+```
+
+### 3.2. Enhance `symgo`'s Analysis
+
+The `symgo` evaluator needs to be enhanced to track these possible concrete types.
+
+-   When a variable is assigned a value (e.g., `s = &Dog{}`), the evaluator should record that `*Dog` is a possible type for `s`.
+-   Crucially, as pointed out during the investigation, the evaluator must handle control flow. If a variable can be assigned different concrete types in different branches, `symgo` should be able to determine that the set of possible types includes all candidates from all reachable paths.
+    ```go
+    var s Speaker
+    if someCondition {
+        s = &Dog{}
+    } else {
+        s = &Cat{}
     }
-}
-```
-This fix has been implemented, tested with a new test case (`TestEval_InterfaceMethodCall_OnConcreteType`), and is considered complete.
+    s.Speak() // At this point, PossibleConcreteTypes should be {*Dog, *Cat}
+    ```
 
-## 4. Remaining Issue in `find-orphans`
+### 3.3. Update `find-orphans`
 
-After fixing `symgo`, the `find-orphans` test still fails. With `symgo` now correctly generating a `SymbolicPlaceholder`, the handler in `find-orphans` fails to process it correctly, marking *all* implementations (`Dog.Speak` and `Cat.Speak`) as orphans.
+With this richer `SymbolicPlaceholder`, the `find-orphans` tool can be made much smarter. Its intrinsic would:
+1.  Receive a `SymbolicPlaceholder` for `Speaker.Speak()`.
+2.  Inspect the new `PossibleConcreteTypes` field.
+3.  **If the set is not empty:** Iterate through the concrete types (`*Dog`, `*Cat`) and mark only their `Speak` methods as used. This provides a highly precise analysis.
+4.  **If the set is empty** (because `symgo` could not determine any concrete types): Fall back to the original, imprecise strategy of marking all implementations of `Speaker` in the entire codebase as used.
 
-This indicates a latent bug in the `SymbolicPlaceholder` handler in `examples/find-orphans/main.go`.
-
-The bug is almost certainly in this line:
-```go
-// from the loop inside the SymbolicPlaceholder intrinsic
-if m.Name == methodName && m.Receiver != nil && m.Receiver.Type.Definition == impl {
-    // ... mark as used ...
-}
-```
-The pointer comparison `m.Receiver.Type.Definition == impl` is likely failing because the two `*scanner.TypeInfo` pointers, despite representing the same type, are not the same instance in memory.
-
-**Next Step:**
-The remaining task is to fix this comparison. It should be changed to a more robust check, for example by comparing the names of the types:
-```go
-// Proposed fix
-if m.Name == methodName && m.Receiver != nil && m.Receiver.Type.Definition != nil && m.Receiver.Type.Definition.Name == impl.Name {
-    // ...
-}
-```
-Applying this change should resolve the final part of the issue. The combination of the `symgo` fix and this `find-orphans` fix is required for the feature to work correctly.
+This approach provides the best of both worlds: precision when possible, and a safe fallback when not. This is the recommended path forward to fully resolve the issue.

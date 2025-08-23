@@ -17,7 +17,7 @@ The primary goal is to build a static analysis tool with the following capabilit
     - Provide an `-all` flag to scan every package in the module.
     - Include an option `--include-tests` to consider usage within test files (`_test.go`). By default, test usage will be ignored.
     - **Multi-Workspace Support**: Provide an option to scan all Go modules found under a given directory (e.g., a repository root). This allows considering usage in sub-projects (like those in `examples/`) as valid uses for code in the main module.
-- **Detailed Reporting**: By default, the tool will only report orphan functions and their locations. With a verbose flag (`-v`), it will also report all usage locations for non-orphan functions.
+- **Detailed Reporting**: By default, the tool will only report orphan functions and their locations. When the verbose flag (`-v`) is enabled, the tool will also report on non-orphan functions, listing each used function followed by a detailed list of every location (e.g., package and function name) where it is called or referenced.
 - **Exclusion Mechanism**: Allow developers to mark functions/methods with a special comment (e.g., `//go:scan:ignore`) to prevent them from being reported as orphans. This is useful for functions intended for use via reflection, `cgo`, or other non-standard mechanisms.
 
 ## 2. Technical Approach
@@ -111,3 +111,44 @@ While `symgo` is a powerful foundation, its current implementation has several g
 - **Observation**: The `symgo.Interpreter` is tied to a single `go-scan.Scanner` instance, which is designed to operate on a single Go module (defined by one `go.mod`).
 - **Impact**: The tool cannot natively look for usages across different modules, such as a main project and its examples in a sub-directory.
 - **Required Change**: This requires a significant architectural enhancement, likely starting at the `go-scan` level. The "find-orphans" tool will need to orchestrate multiple `Scanner` instances. A potential long-term solution involves creating a "workspace" or "multi-scanner" concept that can manage multiple modules and present a unified view to the `symgo` interpreter. For the initial implementation, the tool may need to manage a list of scanners and query them all.
+
+## 6. Implementation Task List
+
+This section breaks down the work required to implement the `find-orphans` tool in `examples/find-orphans`.
+
+### Phase 1: Project Scaffolding & Basic Scanning
+- [ ] Create directory `examples/find-orphans` and `main.go`.
+- [ ] Set up CLI flag parsing using the standard `flag` package for:
+    - [ ] `-all` (bool)
+    - [ ] `--include-tests` (bool)
+    - [ ] `--workspace-root` (string)
+    - [ ] `-v` (bool, for verbose output)
+- [ ] Implement initial `go-scan.Scanner` setup, potentially managing multiple scanners for multi-workspace support.
+- [ ] Implement logic to walk the target directory/module and find all Go packages, respecting the CLI flags.
+- [ ] Implement logic to scan all found packages and collect a master list of all function and method declarations (`allDeclarations`).
+
+### Phase 2: Core Usage Analysis with `symgo`
+- [ ] **(Prerequisite)** Modify `symgo` to support a "catch-all" intrinsic.
+    - [ ] Add a mechanism to `symgo.Interpreter` or `symgo.evaluator.Evaluator` to register a default handler.
+    - [ ] Update `evalCallExpr` to invoke this default handler for any call that doesn't match a specific intrinsic.
+- [ ] In `find-orphans`, set up the `symgo.Interpreter`.
+- [ ] Implement the usage-tracking intrinsic.
+    - [ ] It should receive the called function object.
+    - [ ] It should resolve the function's fully qualified name.
+    - [ ] It should record the usage in a global `usageMap` (Key: FQN, Value: List of caller locations).
+- [ ] Implement the main analysis loop: iterate through all functions in `allDeclarations` and execute them with `symgo.Interpreter.Apply()`.
+
+### Phase 3: Advanced Usage Analysis (Interfaces)
+- [ ] Implement the interface-to-concrete-type mapping.
+    - [ ] Create a data structure to map interface FQNs to a list of their implementing concrete types.
+    - [ ] Populate this map by iterating through all scanned types and checking their method sets against all scanned interfaces.
+- [ ] Enhance the usage-tracking intrinsic to handle interface method calls.
+    - [ ] When an interface method call is detected, use the map to find all corresponding concrete methods.
+    - [ ] Mark each concrete method as "used" in the `usageMap`.
+
+### Phase 4: Reporting and Final Touches
+- [ ] Implement the final result analysis logic (compare `allDeclarations` with `usageMap`).
+- [ ] Implement the check for the `//go:scan:ignore` annotation before reporting an orphan.
+- [ ] Implement the final output formatting logic.
+    - [ ] Default mode: Print only the list of orphans.
+    - [ ] Verbose (`-v`) mode: For non-orphans, print the function name followed by the detailed list of locations where it was used.

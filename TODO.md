@@ -52,22 +52,22 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] **Fix typed nil handling**: The interpreter does not correctly handle typed `nil` values for slices and interfaces, causing incorrect behavior in type inference and equality checks.
 
 ### Find Orphan Functions and Methods ([docs/plan-find-orphans.md](./docs/plan-find-orphans.md))
-- [ ] **Phase 1: Project Scaffolding & Basic Scanning**
+- [-] **Phase 1: Project Scaffolding & Basic Scanning**
     - [x] Create directory `examples/find-orphans` and `main.go`.
     - [x] Set up CLI flag parsing for `-all`, `--include-tests`, `--workspace-root`, and `-v`.
-    - [ ] Implement scanner setup to manage single or multiple modules (`--workspace-root`).
-    - [ ] Implement logic to walk target packages and collect all function/method declarations.
-- [ ] **Phase 2: Core Usage Analysis with `symgo`**
-    - [ ] **(Prerequisite)** Modify `symgo` to support a "catch-all" intrinsic for tracking all function calls.
-        - [ ] Add a mechanism to register a default handler in the interpreter.
-        - [ ] Update `evalCallExpr` to invoke the handler.
-    - [ ] In `find-orphans`, set up the `symgo.Interpreter`.
-    - [ ] Implement the usage-tracking intrinsic to populate a `usageMap`.
-    - [ ] Implement the main analysis loop to symbolically execute all functions.
+    - [x] Implement scanner setup to manage single or multiple modules (`--workspace-root`).
+    - [x] Implement logic to walk target packages and collect all function/method declarations.
+- [x] **Phase 2: Core Usage Analysis with `symgo`**
+    - [x] **(Prerequisite)** Modify `symgo` to support a "catch-all" intrinsic for tracking all function calls.
+        - [x] Add a mechanism to register a default handler in the interpreter.
+        - [x] Update `evalCallExpr` to invoke the handler.
+    - [x] In `find-orphans`, set up the `symgo.Interpreter`.
+    - [x] Implement the usage-tracking intrinsic to populate a `usageMap`.
+    - [x] Implement the main analysis loop to symbolically execute all functions.
 - [ ] **Phase 3: Advanced Usage Analysis (Interfaces)**
     - [ ] Implement a mapping from interfaces to their concrete implementing types.
     - [ ] Enhance the usage-tracking intrinsic to mark concrete methods as "used" when an interface method is called.
-- [ ] **Phase 4: Reporting and Final Touches**
-    - [ ] Implement the final analysis to compare all declarations against the `usageMap`.
+- [-] **Phase 4: Reporting and Final Touches**
+    - [x] Implement the final analysis to compare all declarations against the `usageMap`.
     - [ ] Implement support for the `//go:scan:ignore` annotation.
     - [ ] Implement formatted output for both default (orphans only) and verbose modes.

@@ -32,8 +32,17 @@ type Evaluator struct {
 }
 
 type callFrame struct {
-	Name string
+	Func *object.Function // The function being executed in this frame.
 	Pos  token.Pos
+}
+
+// CurrentFunc returns the function at the top of the call stack.
+func (e *Evaluator) CurrentFunc() *object.Function {
+	if len(e.callStack) == 0 {
+		return nil
+	}
+	// The top of the stack is the last element.
+	return e.callStack[len(e.callStack)-1].Func
 }
 
 // New creates a new Evaluator.
@@ -455,24 +464,7 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 		if typeInfo == nil {
 			return newError(n.Pos(), "cannot call method on symbolic placeholder with no type info")
 		}
-		fullTypeName := fmt.Sprintf("%s.%s", typeInfo.PkgPath, typeInfo.Name)
-		key := fmt.Sprintf("(*%s).%s", fullTypeName, n.Sel.Name)
-		if intrinsicFn, ok := e.intrinsics.Get(key); ok {
-			self := val
-			fn := func(args ...object.Object) object.Object {
-				return intrinsicFn(append([]object.Object{self}, args...)...)
-			}
-			return &object.Intrinsic{Fn: fn}
-		}
-		key = fmt.Sprintf("(%s).%s", fullTypeName, n.Sel.Name)
-		if intrinsicFn, ok := e.intrinsics.Get(key); ok {
-			self := val
-			fn := func(args ...object.Object) object.Object {
-				return intrinsicFn(append([]object.Object{self}, args...)...)
-			}
-			return &object.Intrinsic{Fn: fn}
-		}
-		return newError(n.Pos(), "undefined method: %s on symbolic type %s", n.Sel.Name, fullTypeName)
+		return e.evalMethodCall(ctx, n, env, pkg, typeInfo, val)
 
 	case *object.Package:
 		key := val.Path + "." + n.Sel.Name
@@ -584,23 +576,11 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 		return placeholder
 
 	case *object.Instance:
-		key := fmt.Sprintf("(%s).%s", val.TypeName, n.Sel.Name)
-		if intrinsicFn, ok := e.intrinsics.Get(key); ok {
-			self := val
-			fn := func(args ...object.Object) object.Object {
-				return intrinsicFn(append([]object.Object{self}, args...)...)
-			}
-			return &object.Intrinsic{Fn: fn}
+		typeInfo := val.TypeInfo()
+		if typeInfo == nil {
+			return newError(n.Pos(), "cannot call method on instance with no type info: %s", val.TypeName)
 		}
-		key = fmt.Sprintf("(*%s).%s", val.TypeName, n.Sel.Name)
-		if intrinsicFn, ok := e.intrinsics.Get(key); ok {
-			self := val
-			fn := func(args ...object.Object) object.Object {
-				return intrinsicFn(append([]object.Object{self}, args...)...)
-			}
-			return &object.Intrinsic{Fn: fn}
-		}
-		return newError(n.Pos(), "undefined method: %s on %s", n.Sel.Name, val.TypeName)
+		return e.evalMethodCall(ctx, n, env, pkg, typeInfo, val)
 
 	case *object.Variable:
 		typeInfo := val.TypeInfo()
@@ -650,23 +630,10 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 		}
 
 		if typeInfo.Kind == scanner.InterfaceKind || typeInfo.Kind == scanner.StructKind {
-			fullTypeName := fmt.Sprintf("%s.%s", typeInfo.PkgPath, typeInfo.Name)
-			key := fmt.Sprintf("(*%s).%s", fullTypeName, n.Sel.Name)
-			if intrinsicFn, ok := e.intrinsics.Get(key); ok {
-				self := val
-				fn := func(args ...object.Object) object.Object {
-					return intrinsicFn(append([]object.Object{self}, args...)...)
-				}
-				return &object.Intrinsic{Fn: fn}
-			}
-			key = fmt.Sprintf("(%s).%s", fullTypeName, n.Sel.Name)
-			if intrinsicFn, ok := e.intrinsics.Get(key); ok {
-				self := val
-				fn := func(args ...object.Object) object.Object {
-					return intrinsicFn(append([]object.Object{self}, args...)...)
-				}
-				return &object.Intrinsic{Fn: fn}
-			}
+			// Method calls are handled by evalMethodCall.
+			// The receiver object `val` is passed, which can be an *object.Variable
+			// or an *object.Instance.
+			return e.evalMethodCall(ctx, n, env, pkg, typeInfo, val)
 		}
 
 		if typeInfo.Struct != nil {
@@ -676,41 +643,6 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 					return &object.SymbolicPlaceholder{
 						BaseObject: object.BaseObject{ResolvedTypeInfo: fieldTypeInfo},
 						Reason:     fmt.Sprintf("field access %s.%s", val.Name, field.Name),
-					}
-				}
-			}
-		}
-
-		if instance, ok := val.Value.(*object.Instance); ok {
-			key := fmt.Sprintf("(*%s).%s", instance.TypeName, n.Sel.Name)
-			if intrinsicFn, ok := e.intrinsics.Get(key); ok {
-				self := val.Value
-				fn := func(args ...object.Object) object.Object {
-					return intrinsicFn(append([]object.Object{self}, args...)...)
-				}
-				return &object.Intrinsic{Fn: fn}
-			}
-		}
-
-		// Handle method calls on symbolic interfaces
-		if typeInfo.Interface != nil {
-			for _, method := range typeInfo.Interface.Methods {
-				if method.Name == n.Sel.Name {
-					// The result of calling a method on a symbolic interface is another symbolic value.
-					// We determine the type of this new value from the method's return type.
-					var resultTypeInfo *scanner.TypeInfo
-					if len(method.Results) > 0 {
-						// Simplified: use the first return value.
-						resultType, _ := method.Results[0].Type.Resolve(context.Background())
-						if resultType == nil && method.Results[0].Type.IsBuiltin {
-							resultType = &scanner.TypeInfo{Name: method.Results[0].Type.Name}
-						}
-						resultTypeInfo = resultType
-					}
-
-					return &object.SymbolicPlaceholder{
-						Reason:     fmt.Sprintf("result of method call %s.%s", typeInfo.Name, method.Name),
-						BaseObject: object.BaseObject{ResolvedTypeInfo: resultTypeInfo},
 					}
 				}
 			}
@@ -892,6 +824,12 @@ func (e *Evaluator) evalIdentAssignment(ctx context.Context, ident *ast.Ident, r
 	if isError(val) {
 		return val
 	}
+
+	// Unwrap return values from function calls
+	if retVal, ok := val.(*object.ReturnValue); ok {
+		val = retVal.Value
+	}
+
 	return e.assignIdentifier(ident, val, tok, env)
 }
 
@@ -904,9 +842,9 @@ func (e *Evaluator) assignIdentifier(ident *ast.Ident, val object.Object, tok to
 			v := &object.Variable{
 				Name:  ident.Name,
 				Value: val,
-				BaseObject: object.BaseObject{
-					ResolvedTypeInfo: val.TypeInfo(),
-				},
+			}
+			if typeInfo := val.TypeInfo(); typeInfo != nil {
+				v.ResolvedTypeInfo = typeInfo
 			}
 			e.logger.Debug("evalAssignStmt: defining var", "name", ident.Name, "type", val.Type())
 			return env.Set(ident.Name, v)
@@ -922,9 +860,9 @@ func (e *Evaluator) assignIdentifier(ident *ast.Ident, val object.Object, tok to
 		v := &object.Variable{
 			Name:  ident.Name,
 			Value: val,
-			BaseObject: object.BaseObject{
-				ResolvedTypeInfo: val.TypeInfo(),
-			},
+		}
+		if typeInfo := val.TypeInfo(); typeInfo != nil {
+			v.ResolvedTypeInfo = typeInfo
 		}
 		e.logger.Debug("evalAssignStmt: defining global-like var", "name", ident.Name, "type", val.Type())
 		return env.Set(ident.Name, v)
@@ -1007,32 +945,32 @@ func isError(obj object.Object) bool {
 }
 
 func (e *Evaluator) evalCallExpr(ctx context.Context, n *ast.CallExpr, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
-	var name string
-	if pkg != nil && pkg.Fset != nil {
-		var buf bytes.Buffer
-		if err := printer.Fprint(&buf, pkg.Fset, n.Fun); err == nil {
-			name = buf.String()
-		}
-	}
-	if name == "" {
-		name = "unknown"
+	function := e.Eval(ctx, n.Fun, env, pkg)
+	if isError(function) {
+		return function
 	}
 
-	frame := &callFrame{Name: name, Pos: n.Pos()}
+	// This is where the call stack is managed.
+	// We push the frame before applying the function.
+	frame := &callFrame{Pos: n.Pos()}
+	if fn, ok := function.(*object.Function); ok {
+		frame.Func = fn
+	}
 	e.callStack = append(e.callStack, frame)
 	defer func() {
 		e.callStack = e.callStack[:len(e.callStack)-1]
 	}()
 
-	var stackNames []string
-	for _, f := range e.callStack {
-		stackNames = append(stackNames, f.Name)
-	}
-	e.logger.Log(ctx, slog.LevelDebug, "call", "stack", strings.Join(stackNames, " -> "))
-
-	function := e.Eval(ctx, n.Fun, env, pkg)
-	if isError(function) {
-		return function
+	if e.logger.Enabled(ctx, slog.LevelDebug) {
+		var stackNames []string
+		for _, f := range e.callStack {
+			if f.Func != nil {
+				stackNames = append(stackNames, f.Func.Name.Name)
+			} else {
+				stackNames = append(stackNames, "<anonymous>")
+			}
+		}
+		e.logger.Log(ctx, slog.LevelDebug, "call", "stack", strings.Join(stackNames, " -> "))
 	}
 
 	args := e.evalExpressions(ctx, n.Args, env, pkg)
@@ -1170,6 +1108,94 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 	default:
 		return newError(callPos, "not a function: %s", fn.Type())
 	}
+}
+
+func (e *Evaluator) evalMethodCall(ctx context.Context, n *ast.SelectorExpr, env *object.Environment, pkg *scanner.PackageInfo, typeInfo *scanner.TypeInfo, receiver object.Object) object.Object {
+	methodName := n.Sel.Name
+	fullTypeName := fmt.Sprintf("%s.%s", typeInfo.PkgPath, typeInfo.Name)
+
+	// Check for intrinsics first
+	key := fmt.Sprintf("(%s).%s", fullTypeName, methodName)
+	if intrinsicFn, ok := e.intrinsics.Get(key); ok {
+		fn := func(args ...object.Object) object.Object {
+			return intrinsicFn(append([]object.Object{receiver}, args...)...)
+		}
+		return &object.Intrinsic{Fn: fn}
+	}
+	key = fmt.Sprintf("(*%s).%s", fullTypeName, methodName)
+	if intrinsicFn, ok := e.intrinsics.Get(key); ok {
+		fn := func(args ...object.Object) object.Object {
+			return intrinsicFn(append([]object.Object{receiver}, args...)...)
+		}
+		return &object.Intrinsic{Fn: fn}
+	}
+
+	// Handle method calls on symbolic interfaces
+	if typeInfo.Interface != nil {
+		for _, method := range typeInfo.Interface.Methods {
+			if method.Name == methodName {
+				var resultTypeInfo *scanner.TypeInfo
+				if len(method.Results) > 0 {
+					resultType, _ := method.Results[0].Type.Resolve(context.Background())
+					if resultType == nil && method.Results[0].Type.IsBuiltin {
+						resultType = &scanner.TypeInfo{Name: method.Results[0].Type.Name}
+					}
+					resultTypeInfo = resultType
+				}
+				return &object.SymbolicPlaceholder{
+					Reason:     fmt.Sprintf("result of interface method call %s.%s", typeInfo.Name, method.Name),
+					BaseObject: object.BaseObject{ResolvedTypeInfo: resultTypeInfo},
+				}
+			}
+		}
+	}
+
+	// Find the method in the defining package
+	methodPkg := pkg
+	if typeInfo.PkgPath != pkg.ImportPath {
+		scannedPkg, err := e.scanner.ScanPackageByImport(ctx, typeInfo.PkgPath)
+		if err != nil {
+			return newError(n.Pos(), "could not scan package %q to find method %s: %v", typeInfo.PkgPath, methodName, err)
+		}
+		methodPkg = scannedPkg
+	}
+
+	for _, f := range methodPkg.Functions {
+		if f.Name == methodName && f.Receiver != nil {
+			// This is a potential match. We need to check if the receiver type matches.
+			// This is a simplified check. A full check would handle pointers vs. non-pointers, etc.
+			if f.Receiver.Type.TypeName == typeInfo.Name {
+				fn := &object.Function{
+					Name:       f.AstDecl.Name,
+					Parameters: f.AstDecl.Type.Params,
+					Body:       f.AstDecl.Body,
+					Env:        env, // Use the current environment
+					Decl:       f.AstDecl,
+					Package:    methodPkg,
+				}
+				// Bind the receiver to the function's environment
+				boundFn := func(args ...object.Object) object.Object {
+					extendedEnv, err := e.extendFunctionEnv(ctx, fn, args)
+					if err != nil {
+						return newError(fn.Decl.Pos(), "failed to extend function env for method call: %v", err)
+					}
+					// Set the receiver ("self") in the environment
+					if f.Receiver.Name != "" {
+						recvName := f.Receiver.Name
+						extendedEnv.Set(recvName, receiver)
+					}
+					evaluated := e.Eval(ctx, fn.Body, extendedEnv, fn.Package)
+					if ret, ok := evaluated.(*object.ReturnValue); ok {
+						return ret
+					}
+					return &object.ReturnValue{Value: evaluated}
+				}
+				return &object.Intrinsic{Fn: boundFn}
+			}
+		}
+	}
+
+	return newError(n.Pos(), "undefined method: %s on %s", methodName, fullTypeName)
 }
 
 func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, args []object.Object) (*object.Environment, error) {

@@ -1163,8 +1163,13 @@ func (e *Evaluator) evalMethodCall(ctx context.Context, n *ast.SelectorExpr, env
 	for _, f := range methodPkg.Functions {
 		if f.Name == methodName && f.Receiver != nil {
 			// This is a potential match. We need to check if the receiver type matches.
-			// This is a simplified check. A full check would handle pointers vs. non-pointers, etc.
-			if f.Receiver.Type.TypeName == typeInfo.Name {
+			receiverIsPointer := f.Receiver.Type.IsPointer
+			underlyingTypeName := f.Receiver.Type.Name
+			if receiverIsPointer && f.Receiver.Type.Elem != nil {
+				underlyingTypeName = f.Receiver.Type.Elem.Name
+			}
+
+			if underlyingTypeName == typeInfo.Name {
 				fn := &object.Function{
 					Name:       f.AstDecl.Name,
 					Parameters: f.AstDecl.Type.Params,

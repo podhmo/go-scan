@@ -294,11 +294,6 @@ func (i *Interpreter) Eval(ctx context.Context, node ast.Node, pkg *scanner.Pack
 	return result, nil
 }
 
-// CurrentFunc returns the function at the top of the call stack during evaluation.
-func (i *Interpreter) CurrentFunc() *object.Function {
-	return i.eval.CurrentFunc()
-}
-
 // EvalWithEnv evaluates a node using a specific environment instead of the global one.
 func (i *Interpreter) EvalWithEnv(ctx context.Context, node ast.Node, env *Environment, pkg *scanner.PackageInfo) (Object, error) {
 	result := i.eval.Eval(ctx, node, env, pkg)

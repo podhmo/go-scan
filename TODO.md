@@ -51,8 +51,14 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] **Fix empty slice type inference**: Type inference for empty slice literals is weak and defaults to `[]any`. This causes legitimate generic functions (like `slices.Sort`) to fail type checks when they shouldn't. The interpreter should ideally preserve the declared type (e.g., `[]int`) even if the literal is empty. (Note: This is fixed for empty slice and map literals.)
 - [x] **Fix typed nil handling**: The interpreter does not correctly handle typed `nil` values for slices and interfaces, causing incorrect behavior in type inference and equality checks.
 
+### `symgo` Evaluator Enhancements ([docs/trouble-find-orphans.md](./docs/trouble-find-orphans.md))
+- [ ] **Reliable Method Dispatch**: Implement robust logic in `evalMethodCall` to handle method calls on concrete struct types, including pointer vs. non-pointer receivers.
+- [ ] **Correct Type Propagation**: Ensure type information is correctly propagated through variable assignments and function returns.
+- [ ] **Robust Environment Management**: Fix environment and scope handling during function application to ensure nested calls correctly trigger intrinsics.
+- [ ] **Tracing and Debuggability**: Enhance the tracing mechanism to provide a more detailed view of the symbolic execution flow.
+
 ### Find Orphan Functions and Methods ([docs/plan-find-orphans.md](./docs/plan-find-orphans.md))
-- [-] **Phase 1: Project Scaffolding & Basic Scanning**
+- [-] **(Blocked by `symgo` bugs)** **Phase 1: Project Scaffolding & Basic Scanning**
     - [x] Create directory `examples/find-orphans` and `main.go`.
     - [x] Set up CLI flag parsing for `-all`, `--include-tests`, `--workspace-root`, and `-v`.
     - [x] Implement scanner setup to manage single or multiple modules (`--workspace-root`).

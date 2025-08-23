@@ -1,15 +1,12 @@
 package goscan
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"go/ast"
 	"go/token"
-	"io/fs"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -54,8 +51,6 @@ type Scanner struct {
 	locator             *locator.Locator
 	scanner             *scanner.Scanner
 	packageCache        map[string]*Package // Cache for PackageInfo from ScanPackage/ScanPackageByImport, key is import path
-	packageImportsCache map[string]*scanner.PackageImports
-	reverseDepCache     map[string][]string // Cache for the reverse dependency map
 	visitedFiles        map[string]struct{} // Set of visited (parsed) file absolute paths for this Scanner instance.
 	mu                  sync.RWMutex
 	fset                *token.FileSet
@@ -265,7 +260,6 @@ func WithExternalTypeOverrides(overrides scanner.ExternalTypeOverride) ScannerOp
 func New(options ...ScannerOption) (*Scanner, error) {
 	s := &Scanner{
 		packageCache:          make(map[string]*Package),
-		packageImportsCache:   make(map[string]*scanner.PackageImports),
 		visitedFiles:          make(map[string]struct{}),
 		fset:                  token.NewFileSet(),
 		ExternalTypeOverrides: make(scanner.ExternalTypeOverride),
@@ -516,56 +510,6 @@ func (s *Scanner) ScanPackage(ctx context.Context, pkgPath string) (*scanner.Pac
 	s.mu.Unlock()
 
 	return currentCallPkgInfo, nil
-}
-
-// ScanPackageImports scans a single Go package identified by its import path,
-// parsing only the package clause and import declarations for efficiency.
-// It returns a lightweight PackageImports struct containing the package name
-// and a list of its direct dependencies.
-// Results are cached in memory for the lifetime of the Scanner instance.
-func (s *Scanner) ScanPackageImports(ctx context.Context, importPath string) (*scanner.PackageImports, error) {
-	s.mu.RLock()
-	cachedPkg, found := s.packageImportsCache[importPath]
-	s.mu.RUnlock()
-	if found {
-		slog.DebugContext(ctx, "ScanPackageImports CACHE HIT", slog.String("importPath", importPath))
-		return cachedPkg, nil
-	}
-	slog.DebugContext(ctx, "ScanPackageImports CACHE MISS", slog.String("importPath", importPath))
-
-	pkgDirAbs, err := s.locator.FindPackageDir(importPath)
-	if err != nil {
-		return nil, fmt.Errorf("could not find directory for import path %s: %w", importPath, err)
-	}
-
-	allGoFilesInPkg, err := listGoFiles(pkgDirAbs, s.IncludeTests)
-	if err != nil {
-		return nil, fmt.Errorf("ScanPackageImports: failed to list go files in %s: %w", pkgDirAbs, err)
-	}
-
-	if len(allGoFilesInPkg) == 0 {
-		// If a directory for an import path exists but has no .go files, cache an empty PackageImports.
-		pkgInfo := &scanner.PackageImports{
-			ImportPath: importPath,
-			Name:       filepath.Base(pkgDirAbs), // Best guess for name
-			Imports:    []string{},
-		}
-		s.mu.Lock()
-		s.packageImportsCache[importPath] = pkgInfo
-		s.mu.Unlock()
-		return pkgInfo, nil
-	}
-
-	pkgImports, err := s.scanner.ScanPackageImports(ctx, allGoFilesInPkg, pkgDirAbs, importPath)
-	if err != nil {
-		return nil, fmt.Errorf("ScanPackageImports: scanning imports for %s failed: %w", importPath, err)
-	}
-
-	s.mu.Lock()
-	s.packageImportsCache[importPath] = pkgImports
-	s.mu.Unlock()
-
-	return pkgImports, nil
 }
 
 // resolveFilePath attempts to resolve a given path string (rawPath) into an absolute file path.
@@ -1127,173 +1071,6 @@ func (s *Scanner) ListExportedSymbols(ctx context.Context, pkgPath string) ([]st
 	return exportedSymbols, nil
 }
 
-// FindImporters scans the entire module to find packages that import the targetImportPath.
-// It performs an efficient, imports-only scan of all potential package directories in the module.
-// The result is a list of packages that have a direct dependency on the target.
-func (s *Scanner) FindImporters(ctx context.Context, targetImportPath string) ([]*PackageImports, error) {
-	s.mu.RLock()
-	rootDir := s.locator.RootDir()
-	modulePath := s.locator.ModulePath()
-	s.mu.RUnlock()
-
-	if rootDir == "" {
-		return nil, fmt.Errorf("module root directory not found, cannot perform reverse dependency search")
-	}
-
-	var importers []*PackageImports
-
-	err := filepath.WalkDir(rootDir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-
-		if !d.IsDir() {
-			return nil
-		}
-
-		// Skip hidden directories and vendor
-		if d.Name() == "vendor" || (len(d.Name()) > 1 && d.Name()[0] == '.') {
-			return filepath.SkipDir
-		}
-
-		// path is a directory. Let's see if it's a package.
-		// We can check for .go files inside it.
-		goFiles, err := listGoFiles(path, s.IncludeTests) // listGoFiles is an existing helper in goscan.go
-		if err != nil {
-			slog.WarnContext(ctx, "could not list go files in directory, skipping", slog.String("path", path), slog.Any("error", err))
-			return nil // continue walking
-		}
-
-		if len(goFiles) == 0 {
-			return nil // Not a package, continue
-		}
-
-		// We have a package. Determine its import path.
-		relPath, err := filepath.Rel(rootDir, path)
-		if err != nil {
-			slog.WarnContext(ctx, "could not determine relative path for package, skipping", slog.String("path", path), slog.Any("error", err))
-			return nil // Continue walking
-		}
-
-		currentPkgImportPath := filepath.ToSlash(filepath.Join(modulePath, relPath))
-		if relPath == "." {
-			currentPkgImportPath = modulePath
-		}
-
-		// Now we can use the existing efficient scanner method.
-		pkgImports, err := s.ScanPackageImports(ctx, currentPkgImportPath)
-		if err != nil {
-			slog.WarnContext(ctx, "failed to scan package imports, skipping", "importPath", currentPkgImportPath, "error", err)
-			return nil // continue
-		}
-
-		// Check if it imports our target
-		for _, imp := range pkgImports.Imports {
-			if imp == targetImportPath {
-				importers = append(importers, pkgImports)
-				break // Found it, no need to check other imports
-			}
-		}
-		return nil
-	})
-
-	if err != nil {
-		return nil, fmt.Errorf("error walking module directory for importers: %w", err)
-	}
-
-	// Sort for deterministic output
-	sort.Slice(importers, func(i, j int) bool {
-		return importers[i].ImportPath < importers[j].ImportPath
-	})
-
-	return importers, nil
-}
-
-// FindImportersAggressively scans the module using `git grep` to quickly find files
-// that likely import the targetImportPath, then confirms them. This can be much
-// faster than walking the entire directory structure in large repositories.
-// A git repository is required.
-func (s *Scanner) FindImportersAggressively(ctx context.Context, targetImportPath string) ([]*PackageImports, error) {
-	s.mu.RLock()
-	rootDir := s.locator.RootDir()
-	modulePath := s.locator.ModulePath()
-	s.mu.RUnlock()
-
-	if rootDir == "" {
-		return nil, fmt.Errorf("module root directory not found, cannot perform aggressive reverse dependency search")
-	}
-
-	// Pattern to find import statements. We just look for the quoted import path.
-	// This is a broad but effective pattern for `git grep`, as the results are
-	// verified by a proper Go parser anyway. This correctly handles both
-	// `import "..."` and `import ( ... "..." ... )` forms.
-	pattern := fmt.Sprintf(`"%s"`, targetImportPath)
-
-	cmd := exec.CommandContext(ctx, "git", "grep", "-l", "-F", pattern, "--", "*.go")
-	cmd.Dir = rootDir
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	slog.DebugContext(ctx, "executing git grep", slog.String("dir", cmd.Dir), slog.Any("args", cmd.Args))
-
-	if err := cmd.Run(); err != nil {
-		// git grep exits with 1 if no matches are found, which is not an error for us.
-		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
-			// No files found, return empty list.
-			return nil, nil
-		}
-		return nil, fmt.Errorf("git grep failed: %w\n%s", err, stderr.String())
-	}
-
-	potentialFiles := strings.Split(strings.TrimSpace(stdout.String()), "\n")
-	if len(potentialFiles) == 0 || (len(potentialFiles) == 1 && potentialFiles[0] == "") {
-		return nil, nil // No matches
-	}
-
-	// Group files by directory (package)
-	packagesToScan := make(map[string]struct{})
-	for _, fileRelPath := range potentialFiles {
-		if fileRelPath == "" {
-			continue
-		}
-		dir := filepath.Dir(fileRelPath)
-		packagesToScan[dir] = struct{}{}
-	}
-
-	var importers []*PackageImports
-	for relDir := range packagesToScan {
-		var currentPkgImportPath string
-		if relDir == "." {
-			currentPkgImportPath = modulePath
-		} else {
-			currentPkgImportPath = filepath.ToSlash(filepath.Join(modulePath, relDir))
-		}
-
-		// Now we can use the existing efficient scanner method to confirm.
-		pkgImports, err := s.ScanPackageImports(ctx, currentPkgImportPath)
-		if err != nil {
-			slog.WarnContext(ctx, "failed to scan potential importer package, skipping", "importPath", currentPkgImportPath, "error", err)
-			continue
-		}
-
-		// Check if it really imports our target
-		for _, imp := range pkgImports.Imports {
-			if imp == targetImportPath {
-				importers = append(importers, pkgImports)
-				break
-			}
-		}
-	}
-
-	// Sort for deterministic output
-	sort.Slice(importers, func(i, j int) bool {
-		return importers[i].ImportPath < importers[j].ImportPath
-	})
-
-	return importers, nil
-}
-
 // FindSymbolDefinitionLocation attempts to find the absolute file path where a given symbol is defined.
 // The `symbolFullName` should be in the format "package/import/path.SymbolName".
 //
@@ -1492,115 +1269,3 @@ func (s *Scanner) FindSymbolInPackage(ctx context.Context, importPath string, sy
 	return nil, fmt.Errorf("symbol %q not found in package %q", symbolName, importPath)
 }
 
-// BuildReverseDependencyMap scans the entire module to build a map of reverse dependencies.
-// The key of the map is an import path, and the value is a list of packages that import it.
-// The result is cached within the scanner instance.
-func (s *Scanner) BuildReverseDependencyMap(ctx context.Context) (map[string][]string, error) {
-	s.mu.RLock()
-	if s.reverseDepCache != nil {
-		s.mu.RUnlock()
-		return s.reverseDepCache, nil
-	}
-	s.mu.RUnlock()
-
-	rootDir := s.locator.RootDir()
-	modulePath := s.locator.ModulePath()
-
-	if rootDir == "" {
-		return nil, fmt.Errorf("module root directory not found, cannot build reverse dependency map")
-	}
-
-	reverseDeps := make(map[string][]string)
-
-	err := filepath.WalkDir(rootDir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if !d.IsDir() {
-			return nil
-		}
-		if d.Name() == "vendor" || (len(d.Name()) > 1 && d.Name()[0] == '.') {
-			return filepath.SkipDir
-		}
-		goFiles, err := listGoFiles(path, s.IncludeTests)
-		if err != nil {
-			slog.WarnContext(ctx, "could not list go files in directory, skipping", "path", path, "error", err)
-			return nil
-		}
-		if len(goFiles) == 0 {
-			return nil
-		}
-		relPath, err := filepath.Rel(rootDir, path)
-		if err != nil {
-			slog.WarnContext(ctx, "could not determine relative path for package, skipping", "path", path, "error", err)
-			return nil
-		}
-		currentPkgImportPath := filepath.ToSlash(filepath.Join(modulePath, relPath))
-		if relPath == "." {
-			currentPkgImportPath = modulePath
-		}
-		pkgImports, err := s.ScanPackageImports(ctx, currentPkgImportPath)
-		if err != nil {
-			slog.WarnContext(ctx, "failed to scan package imports, skipping", "importPath", currentPkgImportPath, "error", err)
-			return nil
-		}
-		for _, imp := range pkgImports.Imports {
-			reverseDeps[imp] = append(reverseDeps[imp], currentPkgImportPath)
-		}
-		return nil
-	})
-
-	if err != nil {
-		return nil, fmt.Errorf("error walking module directory for reverse dependency map: %w", err)
-	}
-
-	// Sort for deterministic output
-	for _, importers := range reverseDeps {
-		sort.Strings(importers)
-	}
-
-	s.mu.Lock()
-	s.reverseDepCache = reverseDeps
-	s.mu.Unlock()
-
-	return reverseDeps, nil
-}
-
-// Walk performs a dependency graph traversal starting from a root import path.
-// It uses the efficient ScanPackageImports method to fetch dependencies at each step.
-// The provided Visitor's Visit method is called for each discovered package,
-// allowing the caller to inspect the package and control which of its dependencies
-// are followed next.
-func (s *Scanner) Walk(ctx context.Context, rootImportPath string, visitor Visitor) error {
-	queue := []string{rootImportPath}
-	visited := make(map[string]struct{})
-
-	for len(queue) > 0 {
-		currentImportPath := queue[0]
-		queue = queue[1:]
-
-		if _, ok := visited[currentImportPath]; ok {
-			continue
-		}
-		visited[currentImportPath] = struct{}{}
-
-		pkgImports, err := s.ScanPackageImports(ctx, currentImportPath)
-		if err != nil {
-			// For a visualization tool, it might be better to log and continue.
-			// However, for a generic utility, failing fast is safer.
-			return fmt.Errorf("error scanning imports for %s: %w", currentImportPath, err)
-		}
-
-		importsToFollow, err := visitor.Visit(pkgImports)
-		if err != nil {
-			return fmt.Errorf("visitor failed for package %s: %w", currentImportPath, err)
-		}
-
-		for _, imp := range importsToFollow {
-			if _, ok := visited[imp]; !ok {
-				queue = append(queue, imp)
-			}
-		}
-	}
-	return nil
-}

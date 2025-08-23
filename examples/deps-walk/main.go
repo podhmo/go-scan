@@ -100,18 +100,16 @@ func main() {
 func run(ctx context.Context, startPkgs []string, hops int, ignore string, hide string, output string, format string, granularity string, full bool, short bool, direction string, aggressive bool, test bool, dryRun bool, inspect bool, logger *slog.Logger) error {
 	var finalOutput bytes.Buffer
 
-	var scannerOpts []goscan.ScannerOption
+	var walkerOpts []goscan.ModuleWalkerOption
 	if full {
-		scannerOpts = append(scannerOpts, goscan.WithGoModuleResolver())
+		walkerOpts = append(walkerOpts, goscan.WithModuleWalkerGoModuleResolver())
 	}
-	scannerOpts = append(scannerOpts, goscan.WithIncludeTests(test))
-	scannerOpts = append(scannerOpts, goscan.WithDryRun(dryRun))
-	scannerOpts = append(scannerOpts, goscan.WithInspect(inspect))
-	scannerOpts = append(scannerOpts, goscan.WithLogger(logger))
+	walkerOpts = append(walkerOpts, goscan.WithModuleWalkerIncludeTests(test))
+	walkerOpts = append(walkerOpts, goscan.WithModuleWalkerLogger(logger))
 
-	s, err := goscan.New(scannerOpts...)
+	s, err := goscan.NewModuleWalker(walkerOpts...)
 	if err != nil {
-		return fmt.Errorf("failed to create scanner: %w", err)
+		return fmt.Errorf("failed to create module walker: %w", err)
 	}
 
 	for i, startPkg := range startPkgs {
@@ -277,7 +275,7 @@ func run(ctx context.Context, startPkgs []string, hops int, ignore string, hide 
 
 type graphVisitor struct {
 	startPkg            string
-	s                   *goscan.Scanner
+	s                   *goscan.ModuleWalker
 	hops                int
 	full                bool
 	short               bool

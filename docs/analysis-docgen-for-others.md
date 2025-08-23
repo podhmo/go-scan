@@ -70,6 +70,74 @@ The same logic applies directly to **`echo`**, which has a similar API (`echo.Ne
 
 **Summary:** Supporting a new framework is a matter of writing a new set of `intrinsics` that mirror the framework's routing API. The core `symgo` engine is ready to support this.
 
+### Proposed Directory Structure for Multi-Framework Support
+
+To evolve `docgen` from an example into a robust tool that supports multiple frameworks, its directory structure should be refactored. Here are two potential approaches.
+
+#### Proposal A: The "Natural" Monolithic Approach
+
+This approach involves a single, primary `docgen` tool that contains the logic for all supported frameworks within different sub-packages.
+
+**Structure:**
+```
+docgen/
+├── cmd/docgen/
+│   └── main.go        # CLI driver with a `-framework` flag
+├── framework/
+│   ├── chi/
+│   │   └── chi.go     # go-chi intrinsics
+│   ├── echo/
+│   │   └── echo.go    # echo intrinsics
+│   └── http/
+│       └── http.go    # net/http intrinsics
+├── go.mod             # Depends on chi, echo, etc.
+└── ...
+```
+
+**How It Works:**
+The main CLI tool would accept a flag (e.g., `-framework chi`) to select the target framework. Based on this flag, it would dynamically register the appropriate set of intrinsics from the corresponding package under the `framework/` directory.
+
+*   **Pros:**
+    *   Relatively simple to set up and understand.
+    *   Adding a new framework is straightforward: just add a new sub-package.
+    *   Users only need to install and learn a single binary.
+
+*   **Cons:**
+    *   The main `docgen` tool's `go.mod` file becomes bloated. It must list `go-chi`, `echo`, and every other supported framework as a direct dependency. This increases the binary size and dependency tree for all users, even those who only need to analyze one type of application.
+
+#### Proposal B: The "Dependency-Minimized" Adapter Approach
+
+This is a more advanced and architecturally robust approach that prioritizes dependency isolation. It refactors `docgen` into a core library and provides small, framework-specific wrapper binaries.
+
+**Structure:**
+```
+/
+├── docgen-core/          # New core library, no framework dependencies
+│   ├── analyzer.go
+│   ├── openapi/
+│   └── go.mod
+└── cmd/
+    ├── docgen-http/
+    │   ├── main.go       # Imports docgen-core, adds http intrinsics
+    │   └── go.mod        # Depends on docgen-core
+    └── docgen-chi/
+        ├── main.go       # Imports docgen-core, adds chi intrinsics
+        └── go.mod        # Depends on docgen-core AND go-chi
+```
+
+**How It Works:**
+The `docgen` logic is extracted into a `docgen-core` library that contains no framework-specific code. Then, for each supported framework, a separate "adapter" binary is created in the `cmd/` directory. Each adapter has its own `go.mod` file and only depends on `docgen-core` and the specific framework library it supports.
+
+*   **Pros:**
+    *   **Perfect Dependency Isolation:** Users only download the dependencies for the framework they are using. The core library remains clean.
+    *   **Scalable and Maintainable:** This is a very clean architecture that scales well to many frameworks without creating a complex, monolithic tool. It aligns with the Go philosophy of composing small, focused tools.
+
+*   **Cons:**
+    *   **Multiple Binaries:** Users need to know which binary to install and run (e.g., `go install .../docgen-chi`). This is a minor usability trade-off.
+    *   **More Boilerplate:** Requires a separate `main.go` and `go.mod` for each supported framework.
+
+For a serious, open-source tool, **Proposal B** is the recommended path.
+
 ## 2. Potential Missing Features in a Real-World Application
 
 Here is a list of features and capabilities that would likely be needed to apply this tool to a large, complex, real-world web application.

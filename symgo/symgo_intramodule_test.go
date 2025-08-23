@@ -2,27 +2,13 @@ package symgo_test
 
 import (
 	"context"
-	"go/ast"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/symgo"
 	"github.com/podhmo/go-scan/symgo/object"
 )
-
-// FindFile is a test helper to find a specific AST file in a scanned package.
-func FindFile(t *testing.T, pkg *goscan.Package, filename string) *ast.File {
-	t.Helper()
-	for path, f := range pkg.AstFiles {
-		if strings.HasSuffix(path, filename) {
-			return f
-		}
-	}
-	t.Fatalf("file %q not found in package %q", filename, pkg.Name)
-	return nil
-}
 
 func TestIntraModuleCall(t *testing.T) {
 	// This test simulates a call to a function in another package within the same module.

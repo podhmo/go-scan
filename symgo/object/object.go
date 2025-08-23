@@ -14,6 +14,7 @@ type ObjectType string
 // Define the basic object types for the symbolic engine.
 const (
 	INTEGER_OBJ      ObjectType = "INTEGER"
+	BOOLEAN_OBJ      ObjectType = "BOOLEAN"
 	STRING_OBJ       ObjectType = "STRING"
 	FUNCTION_OBJ     ObjectType = "FUNCTION"
 	ERROR_OBJ        ObjectType = "ERROR"
@@ -84,6 +85,27 @@ func (i *Integer) Type() ObjectType { return INTEGER_OBJ }
 
 // Inspect returns a string representation of the Integer's value.
 func (i *Integer) Inspect() string { return fmt.Sprintf("%d", i.Value) }
+
+// --- Boolean Object ---
+
+// Boolean represents a boolean value.
+type Boolean struct {
+	BaseObject
+	Value bool
+}
+
+// Type returns the type of the Boolean object.
+func (b *Boolean) Type() ObjectType { return BOOLEAN_OBJ }
+
+// Inspect returns a string representation of the Boolean's value.
+func (b *Boolean) Inspect() string { return fmt.Sprintf("%t", b.Value) }
+
+var (
+	// TRUE is the singleton true value.
+	TRUE = &Boolean{Value: true}
+	// FALSE is the singleton false value.
+	FALSE = &Boolean{Value: false}
+)
 
 // --- Function Object ---
 

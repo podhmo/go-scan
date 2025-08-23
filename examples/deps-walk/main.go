@@ -154,7 +154,7 @@ func run(ctx context.Context, startPkgs []string, hops int, ignore string, hide 
 
 		doForwardSearch := func() error {
 			visitor.packageHops[startPkg] = 0
-			return s.Walker.Walk(ctx, startPkg, visitor)
+			return s.Walker.Walk(ctx, visitor, startPkg)
 		}
 
 		doReverseSearch := func() error {

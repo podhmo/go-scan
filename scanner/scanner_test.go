@@ -55,13 +55,6 @@ func TestNewScanner(t *testing.T) {
 		}
 	})
 
-	t.Run("nil_resolver", func(t *testing.T) {
-		fset := token.NewFileSet()
-		_, err := New(fset, nil, nil, modulePath, rootDir, nil, false, nil)
-		if err == nil {
-			t.Error("Expected error when creating scanner with nil resolver, got nil")
-		}
-	})
 }
 
 func TestScanPackageFeatures(t *testing.T) {

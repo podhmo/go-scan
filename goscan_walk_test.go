@@ -9,9 +9,9 @@ import (
 )
 
 func TestScanPackageImports(t *testing.T) {
-	s, err := NewModuleWalker(WithModuleWalkerWorkDir("./testdata/walk"))
+	s, err := New(WithWorkDir("./testdata/walk"))
 	if err != nil {
-		t.Fatalf("NewModuleWalker() failed: %v", err)
+		t.Fatalf("New() failed: %v", err)
 	}
 
 	pkg, err := s.ScanPackageImports(context.Background(), "github.com/podhmo/go-scan/testdata/walk/a")
@@ -44,9 +44,9 @@ func (v *collectingVisitor) Visit(pkg *PackageImports) (importsToFollow []string
 }
 
 func TestWalk(t *testing.T) {
-	s, err := NewModuleWalker(WithModuleWalkerWorkDir("./testdata/walk"))
+	s, err := New(WithWorkDir("./testdata/walk"))
 	if err != nil {
-		t.Fatalf("NewModuleWalker() failed: %v", err)
+		t.Fatalf("New() failed: %v", err)
 	}
 
 	visitor := &collectingVisitor{}

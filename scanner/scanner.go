@@ -55,6 +55,10 @@ func New(fset *token.FileSet, overrides ExternalTypeOverride, overlay Overlay, m
 	if modulePath == "" || moduleRootDir == "" {
 		return nil, fmt.Errorf("modulePath and moduleRootDir must be provided")
 	}
+	if resolver == nil {
+		return nil, fmt.Errorf("resolver cannot be nil")
+	}
+
 	return &Scanner{
 		fset:                  fset,
 		ExternalTypeOverrides: overrides,

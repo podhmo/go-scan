@@ -56,9 +56,9 @@ func TestFindImportersAggressively(t *testing.T) {
 		t.Fatalf("git commit failed: %v", err)
 	}
 
-	s, err := NewModuleWalker(WithModuleWalkerWorkDir(testDir))
+	s, err := New(WithWorkDir(testDir))
 	if err != nil {
-		t.Fatalf("NewModuleWalker() failed: %v", err)
+		t.Fatalf("New() failed: %v", err)
 	}
 
 	tests := []struct {

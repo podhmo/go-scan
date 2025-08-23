@@ -9,9 +9,9 @@ import (
 )
 
 func TestFindImporters(t *testing.T) {
-	s, err := New(WithWorkDir("./testdata/walk"))
+	s, err := NewModuleWalker(WithModuleWalkerWorkDir("./testdata/walk"))
 	if err != nil {
-		t.Fatalf("New() failed: %v", err)
+		t.Fatalf("NewModuleWalker() failed: %v", err)
 	}
 
 	tests := []struct {

@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"sort"
 	"strings"
 	"testing"
 
@@ -60,10 +61,11 @@ func IgnoredFunc() {}
 	output := buf.String()
 
 	expectedOrphans := []string{
-		"example.com/find-orphans-test.unused_main_func",
 		"(example.com/find-orphans-test/greeter.Greeter).UnusedMethod",
 		"example.com/find-orphans-test/greeter.UnusedFunc",
+		"example.com/find-orphans-test.unused_main_func",
 	}
+	sort.Strings(expectedOrphans)
 
 	var foundOrphans []string
 	lines := strings.Split(strings.TrimSpace(output), "\n")
@@ -73,6 +75,7 @@ func IgnoredFunc() {}
 		}
 	}
 
+	sort.Strings(foundOrphans)
 	if diff := cmp.Diff(expectedOrphans, foundOrphans); diff != "" {
 		t.Errorf("find-orphans mismatch (-want +got):\n%s\nFull output:\n%s", diff, output)
 	}

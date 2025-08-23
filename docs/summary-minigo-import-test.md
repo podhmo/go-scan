@@ -263,3 +263,49 @@ func main() {
 - **Isolate Failures**: Creating small, focused tests like this for the `symgo` evaluator is critical for debugging. When a complex tool like `find-orphans` fails, these small tests can prove whether the underlying engine or the tool's usage of it is the problem.
 - **Use Intrinsics for Mocks**: The intrinsic system is the perfect mechanism for mocking functions and methods to verify that they were called during symbolic execution.
 - **`scantest` is Essential**: For any test involving cross-package resolution or method calls (which requires the scanner to find type definitions), using `scantest.Run` to create a temporary module on the filesystem is the most reliable approach.
+
+---
+
+## Important Distinction: Filesystem Paths vs. Import Paths
+
+A common source of confusion when testing is the difference between the paths used by the Go toolchain and the paths expected by the `go-scan` APIs.
+
+- **Filesystem Paths (`.`, `./...`, `/tmp/...`)**: These are used by `scantest.Run`'s `patterns` argument. The `scantest` harness resolves these relative to the temporary directory it creates. The underlying `goscan.Scanner.Scan` method also operates on these resolved filesystem paths.
+
+- **Go Import Paths (`example.com/me`, `example.com/me/foo`, etc.)**: These are used by the higher-level APIs like `goscan.ModuleWalker.Walk`. This walker resolves these import paths to filesystem directories using the `locator`, which is configured with the module's `WorkDir`.
+
+**The key takeaway for testing is:**
+
+If your tool's logic (like `find-orphans`) uses the `ModuleWalker`, your test **must** pass it a valid **Go import path pattern**. Your test setup must ensure the `goscan.Scanner` is configured with the correct `WorkDir` (e.g., the temporary test directory) so that the walker can resolve these import paths correctly.
+
+**Incorrect Test Logic:**
+```go
+// Fails because `dir` is a filesystem path, but the tool's logic expects an import path.
+err := mytool.Run(ctx, s, dir)
+```
+
+**Correct Test Logic:**
+```go
+// in main_test.go
+dir, cleanup := scantest.WriteFiles(t, map[string]string{"go.mod": "module example.com/me"})
+defer cleanup()
+
+// The tool expects an import path pattern.
+startPatterns := []string{"example.com/me/..."}
+
+// The tool's `run` function must correctly set up the scanner.
+err := mytool.Run(ctx, dir, startPatterns) // Pass `dir` as workspace, but pattern as import path.
+
+// in mytool/run.go
+func Run(ctx, workspace string, patterns []string) error {
+    // This configuration is essential for the test to work.
+    opts := []goscan.ScannerOption{
+        goscan.WithWorkDir(workspace),
+        goscan.WithGoModuleResolver(),
+    }
+    s, _ := goscan.New(opts...)
+    // ... now the walker can resolve the import path patterns ...
+    return s.Walker.Walk(ctx, patterns[0], someVisitor)
+}
+```
+This separation is crucial for writing correct and robust tests for tools built on `go-scan`.

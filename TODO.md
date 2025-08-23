@@ -45,7 +45,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     - **Reliable Method Dispatch**: Implemented robust logic to handle method calls on concrete struct types, including pointer vs. non-pointer receivers.
     - **Correct Type Propagation**: Ensured type information is correctly propagated through variable assignments and function returns.
     - **Robust Environment Management**: Fixed environment and scope handling during function application to ensure nested calls correctly trigger intrinsics.
-- **Find Orphan Functions and Methods**: A new tool `examples/find-orphans` that uses the improved `symgo` engine to perform whole-program analysis and identify unused functions and methods. It supports multi-module workspaces and `//go:scan:ignore` annotations.
+- **Find Orphan Functions and Methods**: A new tool `examples/find-orphans` that uses the improved `symgo` engine to perform whole-program analysis and identify unused functions and methods. It supports multi-module workspaces and `//go:scan:ignore` annotations. It intelligently detects whether to run in "application mode" (starting from `main.main`) or "library mode" (starting from all exported functions).
 
 ## To Be Implemented
 
@@ -56,12 +56,12 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] **Fix empty slice type inference**: Type inference for empty slice literals is weak and defaults to `[]any`. This causes legitimate generic functions (like `slices.Sort`) to fail type checks when they shouldn't. The interpreter should ideally preserve the declared type (e.g., `[]int`) even if the literal is empty. (Note: This is fixed for empty slice and map literals.)
 - [x] **Fix typed nil handling**: The interpreter does not correctly handle typed `nil` values for slices and interfaces, causing incorrect behavior in type inference and equality checks.
 
-### `symgo` Evaluator Enhancements
-- [ ] **Tracing and Debuggability**: Enhance the tracing mechanism to provide a more detailed view of the symbolic execution flow.
-
-### Find Orphan Functions and Methods ([docs/plan-find-orphans.md](./docs/plan-find-orphans.md))
-- [ ] **Phase 3: Advanced Usage Analysis (Interfaces)**
+### Future Enhancements
+- [ ] **`symgo`: Tracing and Debuggability**: Enhance the tracing mechanism to provide a more detailed view of the symbolic execution flow.
+- [ ] **`find-orphans`: Advanced Usage Analysis (Interfaces)**
     - [ ] Implement a mapping from interfaces to their concrete implementing types.
     - [ ] Enhance the usage-tracking intrinsic to mark concrete methods as "used" when an interface method is called.
-- [ ] **Phase 4: Reporting and Final Touches**
+- [ ] **`find-orphans`: Reporting and Final Touches**
     - [ ] Implement formatted output for both default (orphans only) and verbose modes.
+- [ ] **`ModuleWalker`: Wildcard Support**: Add support for the `...` wildcard in import path patterns, similar to the `go` command, to make package discovery more intuitive.
+- [ ] **`scantest`: Path to Import Path Conversion**: Enhance `scantest.Run` with an option or helper to automatically convert filesystem path patterns (like `.`) into their corresponding Go import path patterns, simplifying test setup for tools that consume import paths.

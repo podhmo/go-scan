@@ -3,10 +3,12 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"go/printer"
 	"log"
+	"os"
 	"strings"
 	"sync"
 
@@ -22,6 +24,7 @@ func main() {
 		includeTests = flag.Bool("include-tests", false, "include usage within test files")
 		workspace    = flag.String("workspace-root", "", "scan all Go modules found under a given directory")
 		verbose      = flag.Bool("v", false, "enable verbose output")
+		asJSON       = flag.Bool("json", false, "output orphans in JSON format")
 	)
 	flag.Parse()
 
@@ -30,12 +33,12 @@ func main() {
 		startPatterns = []string{"./..."}
 	}
 
-	if err := run(context.Background(), *all, *includeTests, *workspace, *verbose, startPatterns); err != nil {
+	if err := run(context.Background(), *all, *includeTests, *workspace, *verbose, *asJSON, startPatterns); err != nil {
 		log.Fatalf("!! %+v", err)
 	}
 }
 
-func run(ctx context.Context, all bool, includeTests bool, workspace string, verbose bool, startPatterns []string) error {
+func run(ctx context.Context, all bool, includeTests bool, workspace string, verbose bool, asJSON bool, startPatterns []string) error {
 	var scannerOpts []goscan.ScannerOption
 	scannerOpts = append(scannerOpts, goscan.WithIncludeTests(includeTests))
 	scannerOpts = append(scannerOpts, goscan.WithGoModuleResolver()) // Important for resolving modules
@@ -57,7 +60,7 @@ func run(ctx context.Context, all bool, includeTests bool, workspace string, ver
 		s:        s,
 		packages: make(map[string]*scanner.PackageInfo),
 	}
-	return a.analyze(ctx, startPatterns)
+	return a.analyze(ctx, asJSON, startPatterns)
 }
 
 type analyzer struct {
@@ -66,7 +69,7 @@ type analyzer struct {
 	mu       sync.Mutex
 }
 
-func (a *analyzer) analyze(ctx context.Context, startPatterns []string) error {
+func (a *analyzer) analyze(ctx context.Context, asJSON bool, startPatterns []string) error {
 	log.Printf("discovering packages from: %v", startPatterns)
 	if err := a.s.Walker.Walk(ctx, a, startPatterns...); err != nil {
 		return fmt.Errorf("failed to walk packages: %w", err)
@@ -110,23 +113,35 @@ func (a *analyzer) analyze(ctx context.Context, startPatterns []string) error {
 			}
 		case *object.SymbolicPlaceholder:
 			if fn.UnderlyingFunc != nil && fn.Package != nil {
-				fullName = getFullName(fn.Package, fn.UnderlyingFunc)
-				usageMap[fullName] = true
-
+				// This case handles calls to unresolved functions, often interface methods.
+				// We don't mark the interface method itself as used, but rather its concrete implementations.
 				if fn.UnderlyingFunc.Receiver != nil {
 					receiverTypeInfo := fn.UnderlyingFunc.Receiver.Type.Definition
 					if receiverTypeInfo != nil && receiverTypeInfo.Kind == scanner.InterfaceKind {
 						ifaceName := fmt.Sprintf("%s.%s", receiverTypeInfo.PkgPath, receiverTypeInfo.Name)
 						if implementers, ok := interfaceMap[ifaceName]; ok {
-							for _, impl := range implementers {
+							for _, impl := range implementers { // impl is *scanner.TypeInfo
 								methodName := fn.UnderlyingFunc.Name
-								implPkg := a.packages[impl.PkgPath]
-								if implPkg != nil {
-									for _, m := range implPkg.Functions {
-										if m.Name == methodName && m.Receiver != nil {
-											implMethodName := getFullName(implPkg, m)
-											usageMap[implMethodName] = true
+								implPkg, ok := a.packages[impl.PkgPath]
+								if !ok {
+									continue
+								}
+								// Find the concrete method on the implementing type
+								for _, m := range implPkg.Functions { // m is *scanner.FunctionInfo
+									if m.Name == methodName && m.Receiver != nil && m.Receiver.Type.Definition == impl {
+										// Found the method. Mark it as used.
+										// We use the same name generation as for concrete function calls to ensure consistency.
+										var buf bytes.Buffer
+										printer.Fprint(&buf, a.s.Fset(), m.AstDecl.Recv.List[0].Type)
+										methodFullName := fmt.Sprintf("(%s.%s).%s", implPkg.ImportPath, buf.String(), m.Name)
+										usageMap[methodFullName] = true
+
+										// Also mark the value-receiver form if the concrete method has a pointer receiver
+										if recvTypeStr := buf.String(); len(recvTypeStr) > 0 && recvTypeStr[0] == '*' {
+											valueRecvName := fmt.Sprintf("(%s.%s).%s", implPkg.ImportPath, recvTypeStr[1:], m.Name)
+											usageMap[valueRecvName] = true
 										}
+										break
 									}
 								}
 							}
@@ -183,19 +198,37 @@ func (a *analyzer) analyze(ctx context.Context, startPatterns []string) error {
 	}
 
 	for _, ep := range entryPoints {
-		epName := getFullName(ep.Package, &scanner.FunctionInfo{Name: ep.Name.Name})
+		epName := getFullName(a.s, ep.Package, &scanner.FunctionInfo{Name: ep.Name.Name, AstDecl: ep.Decl})
 		usageMap[epName] = true
 		log.Printf("analyzing from entry point: %s", epName)
 		interp.Apply(ctx, ep, []object.Object{}, ep.Package)
 	}
 	log.Printf("symbolic execution complete")
 
-	fmt.Println("\n-- Orphans --")
-	count := 0
+	type Orphan struct {
+		Name     string `json:"name"`
+		Position string `json:"position"`
+		Package  string `json:"package"`
+	}
+	var orphans []Orphan
+
 	for _, pkg := range a.packages {
 		for _, decl := range pkg.Functions {
-			name := getFullName(pkg, decl)
+			name := getFullName(a.s, pkg, decl)
 			if _, used := usageMap[name]; !used {
+				// If a method is on a pointer receiver, a call to it might have been marked
+				// against the value receiver type. Let's check for that possibility.
+				if decl.Receiver != nil {
+					var buf bytes.Buffer
+					printer.Fprint(&buf, a.s.Fset(), decl.AstDecl.Recv.List[0].Type)
+					if recvTypeStr := buf.String(); len(recvTypeStr) > 0 && recvTypeStr[0] == '*' {
+						valueRecvName := fmt.Sprintf("(%s.%s).%s", pkg.ImportPath, recvTypeStr[1:], decl.Name)
+						if _, usedValue := usageMap[valueRecvName]; usedValue {
+							continue // It was used, just via the value type.
+						}
+					}
+				}
+
 				if decl.AstDecl.Doc != nil {
 					for _, comment := range decl.AstDecl.Doc.List {
 						if strings.Contains(comment.Text, "//go:scan:ignore") {
@@ -203,17 +236,32 @@ func (a *analyzer) analyze(ctx context.Context, startPatterns []string) error {
 						}
 					}
 				}
-
 				pos := a.s.Fset().Position(decl.AstDecl.Pos())
-				fmt.Printf("%s\n  %s\n", name, pos)
-				count++
+				orphans = append(orphans, Orphan{
+					Name:     name,
+					Position: pos.String(),
+					Package:  pkg.ImportPath,
+				})
 			}
 		nextDecl:
 		}
 	}
 
-	if count == 0 {
-		fmt.Println("No orphans found.")
+	if asJSON {
+		encoder := json.NewEncoder(os.Stdout)
+		encoder.SetIndent("", "  ")
+		if err := encoder.Encode(orphans); err != nil {
+			return fmt.Errorf("failed to encode orphans to JSON: %w", err)
+		}
+	} else {
+		if len(orphans) == 0 {
+			fmt.Println("No orphans found.")
+			return nil
+		}
+		fmt.Println("\n-- Orphans --")
+		for _, o := range orphans {
+			fmt.Printf("%s\n  %s\n", o.Name, o.Position)
+		}
 	}
 
 	return nil
@@ -245,11 +293,22 @@ func (a *analyzer) Visit(pkg *goscan.PackageImports) ([]string, error) {
 	return importsToFollow, nil
 }
 
-func getFullName(pkg *scanner.PackageInfo, fn *scanner.FunctionInfo) string {
+func getFullName(s *goscan.Scanner, pkg *scanner.PackageInfo, fn *scanner.FunctionInfo) string {
 	if fn.Receiver != nil {
-		recvTypeStr := fn.Receiver.Type.String()
-		recvTypeStr = strings.TrimPrefix(recvTypeStr, "*") // remove pointer
-		return fmt.Sprintf("(%s.%s).%s", pkg.ImportPath, recvTypeStr, fn.Name)
+		var buf bytes.Buffer
+		// fn.AstDecl can be nil for functions without bodies (like in interfaces)
+		// or for entry points where we create a synthetic FunctionInfo.
+		if fn.AstDecl == nil || fn.AstDecl.Recv == nil || len(fn.AstDecl.Recv.List) == 0 {
+			// Fallback for safety, using the less precise type string.
+			// This is important for analyzing entry points that are just names.
+			return fmt.Sprintf("(%s.%s).%s", pkg.ImportPath, fn.Receiver.Type.String(), fn.Name)
+		}
+		printer.Fprint(&buf, s.Fset(), fn.AstDecl.Recv.List[0].Type)
+		return fmt.Sprintf("(%s.%s).%s", pkg.ImportPath, buf.String(), fn.Name)
+	}
+	// Handle special case for main entry point where fn is synthetic
+	if fn.Name == "main" && fn.AstDecl == nil {
+		return fmt.Sprintf("%s.main", pkg.ImportPath)
 	}
 	return fmt.Sprintf("%s.%s", pkg.ImportPath, fn.Name)
 }

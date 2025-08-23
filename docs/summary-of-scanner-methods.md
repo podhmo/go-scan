@@ -2,15 +2,17 @@
 
 This document provides a guide to using the `go-scan` scanner, focusing on its methods, use cases, and how to handle common scenarios like external dependencies.
 
-## Architectural Overview: `goscan.Scanner` vs. `scanner.Scanner`
+## Architectural Overview: `goscan.Scanner`, `goscan.ModuleWalker`, and `scanner.Scanner`
 
-The `go-scan` library is composed of two main scanning components:
+The `go-scan` library is composed of three main scanning components, separated by their responsibility:
 
 1.  **`scanner.Scanner` (Low-Level)**: This is the core parsing engine located in the `scanner` package. Its primary job is to take a specific list of Go source files and parse them into a detailed `scanner.PackageInfo` struct. It does not know how to find files or resolve import paths on its own; it simply parses what it is given.
 
-2.  **`goscan.Scanner` (High-Level Facade)**: This is the main, user-facing API located in the root `goscan` package. It acts as a facade, wrapping the low-level `scanner.Scanner` and combining it with a `locator.Locator`. This high-level scanner manages state (like visited files), caching, and provides a rich set of methods for both discovering and parsing packages.
+2.  **`goscan.ModuleWalker` (High-Level, Lightweight)**: This component, found in the `goscan` package, is responsible for dependency analysis. It performs "lightweight" scans that only parse package and import declarations, making it very fast for tasks like building dependency graphs or finding all importers of a package.
 
-**Recommendation:** Users should almost always use the high-level `goscan.Scanner`. It provides the necessary orchestration to handle real-world codebases with complex dependencies.
+3.  **`goscan.Scanner` (High-Level, Heavyweight)**: This is the main facade for "heavyweight" parsing. It wraps the low-level `scanner.Scanner` and combines it with a `locator.Locator` to perform full parsing of packages into detailed `scanner.PackageInfo` objects, including types, functions, and constants. It also contains a `ModuleWalker` instance (`scanner.Walker`) to provide access to the lightweight scanning methods.
+
+**Recommendation:** For dependency analysis, use the `goscan.Scanner.Walker` field. For detailed code analysis, use the methods directly on `goscan.Scanner`.
 
 ---
 
@@ -41,11 +43,12 @@ Sometimes, you need to explore a project's dependency graph without incurring th
 
 The `go-scan` library supports this "delayed loading" pattern by separating dependency discovery from full parsing. You can first discover all the import paths using lightweight methods, and then decide which packages to fully parse later.
 
-**How to use:** Use methods from the "Discovery & Dependency Analysis" group, such as `goscan.Scanner.Walk`, which only scans import statements.
+**How to use:** Use methods on the `goscan.Scanner.Walker` field, such as `Walk()`, which only scans import statements.
 
 ```go
 // The visitor will receive a lightweight PackageImports object for each dependency.
-err := s.Walk(ctx, "github.com/your/module/pkg/a", &MyVisitor{})
+// Note the call is now s.Walker.Walk(...)
+err := s.Walker.Walk(ctx, "github.com/your/module/pkg/a", &MyVisitor{})
 
 // Inside the visitor, you can decide whether to perform a full scan.
 func (v *MyVisitor) Visit(pkg *goscan.PackageImports) ([]string, error) {
@@ -54,6 +57,7 @@ func (v *MyVisitor) Visit(pkg *goscan.PackageImports) ([]string, error) {
     // Maybe we only care about fully parsing packages with a certain name.
     if strings.Contains(pkg.ImportPath, "important") {
         // Now we trigger a full, heavyweight parse for just this one package.
+        // The heavyweight scanner is available on the visitor if you pass it in.
         fullInfo, err := v.scanner.ScanPackageByImport(context.Background(), pkg.ImportPath)
         // ... do something with fullInfo ...
     }
@@ -72,11 +76,11 @@ For types that cannot be parsed (e.g., those defined in C files and exposed via 
 
 ## Method Groups
 
-The methods on `goscan.Scanner` can be divided into two main groups, based on their use case and performance profile.
+The available methods can be divided into two main groups, based on which high-level component they belong to.
 
-### Group 1: Discovery & Dependency Analysis (Lightweight)
+### Group 1: Discovery & Dependency Analysis (on `goscan.ModuleWalker`)
 
-These methods are optimized for speed and are used to understand the relationships *between* packages. They typically work by parsing only the `import` statements in source files, avoiding the cost of parsing function bodies and type definitions. They are ideal for building dependency graphs, finding package importers, etc.
+These methods are optimized for speed and are used to understand the relationships *between* packages. They are located on the `goscan.ModuleWalker` struct, which is accessed via the `Walker` field of a `goscan.Scanner`. They typically work by parsing only the `import` statements in source files, avoiding the cost of parsing function bodies and type definitions.
 
 **Use Cases:**
 *   Creating dependency visualization tools (like `examples/deps-walk`).
@@ -84,15 +88,15 @@ These methods are optimized for speed and are used to understand the relationshi
 *   Building dependency trees for analysis.
 
 **Methods:**
-*   **`ScanPackageImports(ctx, importPath)`**: The fundamental lightweight method. It scans a package and returns only its name and a list of imported package paths.
-*   **`Walk(ctx, rootImportPath, visitor)`**: Performs a dependency graph traversal starting from a root package. It uses `ScanPackageImports` at each step and calls a user-provided `Visitor` to process each discovered package.
-*   **`FindImporters(ctx, targetImportPath)`**: Scans the entire module to find all packages that directly import the `targetImportPath`.
-*   **`FindImportersAggressively(ctx, targetImportPath)`**: A faster version of `FindImporters` that uses `git grep` to quickly identify potential importers before verifying them. Requires `git` to be installed.
-*   **`BuildReverseDependencyMap(ctx)`**: Scans the entire module once to build a complete map where keys are import paths and values are lists of packages that import them.
+*   **`Walker.ScanPackageImports(ctx, importPath)`**: The fundamental lightweight method. It scans a package and returns only its name and a list of imported package paths.
+*   **`Walker.Walk(ctx, rootImportPath, visitor)`**: Performs a dependency graph traversal starting from a root package. It uses `ScanPackageImports` at each step and calls a user-provided `Visitor` to process each discovered package.
+*   **`Walker.FindImporters(ctx, targetImportPath)`**: Scans the entire module to find all packages that directly import the `targetImportPath`.
+*   **`Walker.FindImportersAggressively(ctx, targetImportPath)`**: A faster version of `FindImporters` that uses `git grep` to quickly identify potential importers before verifying them. Requires `git` to be installed.
+*   **`Walker.BuildReverseDependencyMap(ctx)`**: Scans the entire module once to build a complete map where keys are import paths and values are lists of packages that import them.
 
-### Group 2: Full Parsing & Code Analysis (Heavyweight)
+### Group 2: Full Parsing & Code Analysis (on `goscan.Scanner`)
 
-These methods perform a comprehensive parse of Go source files. They build a detailed `PackageInfo` object that includes all top-level declarations: types (structs, interfaces, aliases), functions, methods, constants, and variables. This is necessary for any tool that needs to understand the actual code within a package.
+These methods, located directly on the `goscan.Scanner` struct, perform a comprehensive parse of Go source files. They build a detailed `PackageInfo` object that includes all top-level declarations: types (structs, interfaces, aliases), functions, methods, constants, and variables. This is necessary for any tool that needs to understand the actual code within a package.
 
 **Use Cases:**
 *   Code generation.
@@ -126,7 +130,7 @@ This section summarizes which scanner methods are used by the key commands and e
 
 *   **`examples/deps-walk`**:
     *   **Summary**: A dependency graph visualization tool. It is a classic example of a **Group 1 (Lightweight)** user.
-    *   **Methods Used**: `Walk`, `FindImportersAggressively`, `BuildReverseDependencyMap`. It relies entirely on the lightweight `ScanPackageImports` (called by `Walk`) to discover dependencies without parsing full source code.
+    *   **Methods Used**: `Walker.Walk`, `Walker.FindImportersAggressively`, `Walker.BuildReverseDependencyMap`. It relies entirely on the lightweight methods on `ModuleWalker` to discover dependencies without parsing full source code.
 
 *   **`minigo`**:
     *   **Summary**: A Go interpreter. It is a primary example of a **Group 2 (Heavyweight)** user.

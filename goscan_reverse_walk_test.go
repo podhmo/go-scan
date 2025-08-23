@@ -57,7 +57,7 @@ func TestFindImporters(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			importers, err := s.FindImporters(context.Background(), tt.targetPackage)
+			importers, err := s.Walker.FindImporters(context.Background(), tt.targetPackage)
 			if err != nil {
 				t.Fatalf("FindImporters() failed: %v", err)
 			}

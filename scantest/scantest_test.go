@@ -151,6 +151,41 @@ func TestRun_ModifyFile(t *testing.T) {
 	}
 }
 
+func TestRun_WithImportPathPattern(t *testing.T) {
+	t.Skip("scantest.Run does not currently support import path patterns, only file system paths.")
+	dir, cleanup := WriteFiles(t, map[string]string{
+		"go.mod": "module example.com/me\n",
+		"main.go": `
+package main
+import "example.com/me/foo"
+func main() { foo.Do() }
+`,
+		"foo/foo.go": "package foo; func Do() {}",
+	})
+	defer cleanup()
+
+	var pkgsFound []*scan.Package
+
+	action := func(ctx context.Context, s *scan.Scanner, pkgs []*scan.Package) error {
+		pkgsFound = pkgs
+		return nil
+	}
+
+	// This is the key part of the test. We are passing an import path pattern,
+	// not a file system pattern like ".". The scantest.Run function needs to
+	// be able to resolve this.
+	_, err := Run(t, dir, []string{"example.com/me/..."}, action, WithModuleRoot(dir))
+	if err != nil {
+		// We expect this to fail if scantest.Run doesn't support import paths.
+		// The goal is to see *how* it fails.
+		t.Logf("scantest.Run failed as expected (or unexpectedly): %v", err)
+	}
+
+	if len(pkgsFound) != 2 {
+		t.Errorf("expected to find 2 packages, but got %d", len(pkgsFound))
+	}
+}
+
 func TestRun_WithReplaceDirective(t *testing.T) {
 	// Create a temporary directory structure that requires a `replace` directive.
 	// root/

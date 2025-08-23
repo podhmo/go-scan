@@ -41,3 +41,82 @@ To make `find-orphans` and other complex tools viable, the `symgo` evaluator nee
 -   **Tracing and Debuggability**: The `--inspect` flag or a similar mechanism should be extended to provide a detailed trace of the symbolic execution flow, including which functions are called, what their arguments are, and what values are returned. This would have made debugging this issue significantly easier.
 
 Until these issues are addressed, building tools that rely on deep call graph analysis (like `find-orphans`) with `symgo` will be unreliable.
+
+## Post-Mortem: Lessons Learned from Testing
+
+After fixing the core `symgo` evaluation bugs, the `find-orphans` test still failed, but for entirely different reasons related to the test setup itself. This section documents those issues and their solutions.
+
+### Problem 1: Filesystem Paths vs. Import Paths
+
+The most persistent issue was a failure to correctly resolve packages within the temporary test module created by `scantest.WriteFiles`. The test consistently failed with an error like:
+
+`could not find directory for import path ./...`
+
+Or when an import path was used:
+
+`could not find directory for import path example.com/find-orphans-test/...`
+
+**Root Cause:** A fundamental misunderstanding of how the `go-scan` APIs work.
+-   The `go-scan` **`ModuleWalker`** operates on **Go import paths** (e.g., `"example.com/me/foo"`). It uses its internal `locator` to resolve these to filesystem directories.
+-   The `go test` command and filesystem functions operate on **filesystem paths** (e.g., `"."`, `"./..."`, `"/tmp/..."`).
+
+My mistake was passing filesystem patterns like `.` or `./...` to the `find-orphans` logic, which expected import paths.
+
+**Solution:**
+1.  **Configure the Scanner Correctly**: When testing a tool that needs to resolve a temporary module, the `goscan.Scanner` must be initialized with two key options:
+    -   `goscan.WithWorkDir(tempDir)`: This tells the scanner's internal `locator` that `tempDir` is the root of a module, allowing it to find the `go.mod` file.
+    -   `goscan.WithGoModuleResolver()`: This enables the locator to understand `go.mod` files and resolve dependencies.
+2.  **Use the Right Path Type**: The test must pass the correct **import path pattern** to the logic being tested.
+
+**Correct Test Implementation (`examples/find-orphans/main_test.go`):**
+```go
+func TestFindOrphans(t *testing.T) {
+	// 1. Create a temporary module on the filesystem.
+	dir, cleanup := scantest.WriteFiles(t, files) // files contains go.mod with "module example.com/find-orphans-test"
+	defer cleanup()
+
+	// 2. Define the starting pattern using the Go import path.
+	startPatterns := []string{"example.com/find-orphans-test/..."}
+
+	// 3. Call the main logic, passing the temp directory as the workspace
+	//    and the import path pattern as the starting point.
+	err := run(
+		context.Background(),
+		true,    // all
+		false,   // includeTests
+		dir,     // workspace
+		false,   // verbose
+		startPatterns,
+	)
+	if err != nil {
+		t.Fatalf("run() failed: %v", err)
+	}
+    // ... assertions ...
+}
+```
+
+**Correct `run` function setup (`examples/find-orphans/main.go`):**
+```go
+func run(ctx context.Context, ..., workspace string, ..., startPatterns []string) error {
+    var scannerOpts []goscan.ScannerOption
+    // ...
+    if workspace != "" {
+        // This is the crucial link.
+        scannerOpts = append(scannerOpts, goscan.WithWorkDir(workspace))
+    }
+    // This is also crucial for module resolution.
+    scannerOpts = append(scannerOpts, goscan.WithGoModuleResolver())
+
+    s, err := goscan.New(scannerOpts...)
+    // ...
+    // The walker will now correctly resolve the import paths in startPatterns
+    // relative to the workspace's go.mod.
+    return a.analyze(ctx, startPatterns)
+}
+```
+
+### Problem 2: `...` Wildcard Support
+
+The `go` command-line tool has built-in support for the `...` wildcard to specify all packages within a path. The `go-scan` library does **not** have this built-in support. The `ModuleWalker` expects a list of concrete import paths to walk.
+
+**Solution:** The `find-orphans` tool was enhanced to expand `...` patterns manually. It performs a preliminary walk of the module to collect all package paths and then analyzes the collected list. This makes the tool's command-line interface behave as users would expect.

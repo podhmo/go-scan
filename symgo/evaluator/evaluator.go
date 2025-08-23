@@ -669,6 +669,38 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 			}
 		}
 
+		// Check for a method call on the type.
+		// This requires getting the package info where the type is defined.
+		if typeInfo.PkgPath != "" {
+			methodPkg, err := e.scanner.ScanPackageByImport(ctx, typeInfo.PkgPath)
+			if err == nil {
+				for _, fn := range methodPkg.Functions {
+					if fn.Receiver == nil {
+						continue
+					}
+					// fn.Receiver.Type is a FieldType. We need to get its base name.
+					recvTypeName := fn.Receiver.Type.TypeName
+					if recvTypeName == "" {
+						recvTypeName = fn.Receiver.Type.Name
+					}
+
+					// Compare the method's receiver type name with the variable's type name.
+					if fn.Name == n.Sel.Name && recvTypeName == typeInfo.Name {
+						// Found the method. Create a function object with the receiver set.
+						return &object.Function{
+							Name:       fn.AstDecl.Name,
+							Parameters: fn.AstDecl.Type.Params,
+							Body:       fn.AstDecl.Body,
+							Env:        env, // The environment at the call site.
+							Decl:       fn.AstDecl,
+							Package:    methodPkg,
+							Receiver:   val, // Set the receiver object.
+						}
+					}
+				}
+			}
+		}
+
 		if typeInfo.Struct != nil {
 			for _, field := range typeInfo.Struct.Fields {
 				if field.Name == n.Sel.Name {
@@ -892,6 +924,20 @@ func (e *Evaluator) evalIdentAssignment(ctx context.Context, ident *ast.Ident, r
 	if isError(val) {
 		return val
 	}
+
+	// If the value is a return value from a function call, unwrap it.
+	if ret, ok := val.(*object.ReturnValue); ok {
+		val = ret.Value
+	}
+
+	// Log the type info of the value being assigned.
+	typeInfo := val.TypeInfo()
+	typeName := "<nil>"
+	if typeInfo != nil {
+		typeName = typeInfo.Name
+	}
+	e.logger.Debug("evalIdentAssignment: assigning value", "var", ident.Name, "value_type", val.Type(), "value_typeinfo", typeName)
+
 	return e.assignIdentifier(ident, val, tok, env)
 }
 
@@ -1176,6 +1222,18 @@ func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, 
 	// The new environment should be enclosed by the function's own package environment,
 	// not the caller's environment.
 	env := object.NewEnclosedEnvironment(fn.Env)
+
+	// If this is a method call, bind the receiver to its name in the new env.
+	if fn.Receiver != nil && fn.Decl != nil && fn.Decl.Recv != nil && len(fn.Decl.Recv.List) > 0 {
+		// The receiver field list should have exactly one entry for a method.
+		// That entry might have multiple names, but we'll use the first.
+		if len(fn.Decl.Recv.List[0].Names) > 0 {
+			receiverName := fn.Decl.Recv.List[0].Names[0].Name
+			if receiverName != "" && receiverName != "_" {
+				env.Set(receiverName, fn.Receiver)
+			}
+		}
+	}
 
 	if fn.Parameters == nil {
 		return env, nil

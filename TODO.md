@@ -25,7 +25,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - **`minigo` Script Engine**: A nearly complete, embeddable script engine that interprets a large subset of Go.
     - **Core Interpreter**: The engine is fully implemented, supporting expressions, variables (`var`, `const`, `iota`), assignments, and all major control flow statements (`if`, `for`, `switch`, `break`, `continue`). It also supports `for...range` over integers (e.g., `for i := range 10`).
     - **Functions and Data Structures**: Supports user-defined functions, rich error reporting with stack traces, and composite types including structs, slices, and maps.
-    - **Advanced Language Features**: Includes full support for pointers (`&`, `*`), method definitions on structs, interface definitions and dynamic dispatch, struct embedding, and basic generics. The interpreter's `for` loops now correctly create per-iteration variables, preventing common closure-related bugs and aligning with modern Go semantics.
+    - **Advanced Language Features**: Includes full support for pointers (`&`, `*`), method definitions on structs, interface definitions and dynamic dispatch, struct embedding, and basic generics. The interpreter's `for` loops now correctly create per-iteration variables, preventing common closure-related bugs, and aligning with modern Go semantics.
     - **Go Interoperability**: Provides a robust bridge to Go, allowing scripts to call Go functions, access Go variables, and unmarshal script results back into Go structs via `Result.As()`. Lazy, on-demand loading of imported Go packages is also supported.
 - **Final API for `convert` Tool**: A new IDE-native method for configuring the `convert` tool using a `define` package. This allows for type-safe, statically valid Go code for defining conversion rules, improving the developer experience over the previous annotation-based system.
 - **Parallel go-scan**: Implemented concurrent parsing and made the core scanner thread-safe.
@@ -41,6 +41,11 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     - Removed manual stubs for standard library types (`net/http`, `io`, etc.) from the `docgen` example, as `go-scan`'s improved module-aware resolution now handles them automatically.
 - **Type-Safe `docgen` Patterns**: Enhanced the `docgen` tool to allow defining analysis patterns using type-safe function and method references (`Fn: mypkg.MyFunc`, `Fn: (*mypkg.MyType)(nil).MyMethod`, `Fn: myInstance.MyMethod`) instead of string keys. This involved creating `GoSourceFunction` and `GoMethodValue` objects in the `minigo` interpreter, and handling `BoundMethod` objects, to preserve the necessary definition context and ensure correct symbol and method resolution from various expression forms. ([docs/plan-docgen-minigo-fn-ref.md](./docs/plan-docgen-minigo-fn-ref.md))
 - **Scanner Refactoring**: Refactored the main `goscan.Scanner` to separate responsibilities. Lightweight dependency analysis methods (e.g., `Walk`, `FindImporters`) have been moved to a new `goscan.ModuleWalker` struct, while heavyweight parsing methods remain on `goscan.Scanner`. This clarifies the API and improves separation of concerns.
+- **`symgo` Evaluator Enhancements**: The symbolic execution engine's evaluator has been significantly improved, resolving critical bugs that previously blocked call-graph analysis tools.
+    - **Reliable Method Dispatch**: Implemented robust logic to handle method calls on concrete struct types, including pointer vs. non-pointer receivers.
+    - **Correct Type Propagation**: Ensured type information is correctly propagated through variable assignments and function returns.
+    - **Robust Environment Management**: Fixed environment and scope handling during function application to ensure nested calls correctly trigger intrinsics.
+- **Find Orphan Functions and Methods**: A new tool `examples/find-orphans` that uses the improved `symgo` engine to perform whole-program analysis and identify unused functions and methods. It supports multi-module workspaces and `//go:scan:ignore` annotations. It intelligently detects whether to run in "application mode" (starting from `main.main`) or "library mode" (starting from all exported functions).
 
 ## To Be Implemented
 
@@ -51,29 +56,12 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] **Fix empty slice type inference**: Type inference for empty slice literals is weak and defaults to `[]any`. This causes legitimate generic functions (like `slices.Sort`) to fail type checks when they shouldn't. The interpreter should ideally preserve the declared type (e.g., `[]int`) even if the literal is empty. (Note: This is fixed for empty slice and map literals.)
 - [x] **Fix typed nil handling**: The interpreter does not correctly handle typed `nil` values for slices and interfaces, causing incorrect behavior in type inference and equality checks.
 
-### `symgo` Evaluator Enhancements ([docs/trouble-find-orphans.md](./docs/trouble-find-orphans.md))
-- [ ] **Reliable Method Dispatch**: Implement robust logic in `evalMethodCall` to handle method calls on concrete struct types, including pointer vs. non-pointer receivers.
-- [ ] **Correct Type Propagation**: Ensure type information is correctly propagated through variable assignments and function returns.
-- [ ] **Robust Environment Management**: Fix environment and scope handling during function application to ensure nested calls correctly trigger intrinsics.
-- [ ] **Tracing and Debuggability**: Enhance the tracing mechanism to provide a more detailed view of the symbolic execution flow.
-
-### Find Orphan Functions and Methods ([docs/plan-find-orphans.md](./docs/plan-find-orphans.md))
-- [-] **(Blocked by `symgo` bugs)** **Phase 1: Project Scaffolding & Basic Scanning**
-    - [x] Create directory `examples/find-orphans` and `main.go`.
-    - [x] Set up CLI flag parsing for `-all`, `--include-tests`, `--workspace-root`, and `-v`.
-    - [x] Implement scanner setup to manage single or multiple modules (`--workspace-root`).
-    - [x] Implement logic to walk target packages and collect all function/method declarations.
-- [x] **Phase 2: Core Usage Analysis with `symgo`**
-    - [x] **(Prerequisite)** Modify `symgo` to support a "catch-all" intrinsic for tracking all function calls.
-        - [x] Add a mechanism to register a default handler in the interpreter.
-        - [x] Update `evalCallExpr` to invoke the handler.
-    - [x] In `find-orphans`, set up the `symgo.Interpreter`.
-    - [x] Implement the usage-tracking intrinsic to populate a `usageMap`.
-    - [x] Implement the main analysis loop to symbolically execute all functions.
-- [ ] **Phase 3: Advanced Usage Analysis (Interfaces)**
+### Future Enhancements
+- [ ] **`symgo`: Tracing and Debuggability**: Enhance the tracing mechanism to provide a more detailed view of the symbolic execution flow.
+- [ ] **`find-orphans`: Advanced Usage Analysis (Interfaces)**
     - [ ] Implement a mapping from interfaces to their concrete implementing types.
     - [ ] Enhance the usage-tracking intrinsic to mark concrete methods as "used" when an interface method is called.
-- [-] **Phase 4: Reporting and Final Touches**
-    - [x] Implement the final analysis to compare all declarations against the `usageMap`.
-    - [ ] Implement support for the `//go:scan:ignore` annotation.
+- [ ] **`find-orphans`: Reporting and Final Touches**
     - [ ] Implement formatted output for both default (orphans only) and verbose modes.
+- [ ] **`ModuleWalker`: Wildcard Support**: Add support for the `...` wildcard in import path patterns, similar to the `go` command, to make package discovery more intuitive.
+- [ ] **`scantest`: Path to Import Path Conversion**: Enhance `scantest.Run` with an option or helper to automatically convert filesystem path patterns (like `.`) into their corresponding Go import path patterns, simplifying test setup for tools that consume import paths.

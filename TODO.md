@@ -58,10 +58,10 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 
 ### Future Enhancements
 - [ ] **`symgo`: Tracing and Debuggability**: Enhance the tracing mechanism to provide a more detailed view of the symbolic execution flow.
-- [ ] **`find-orphans`: Advanced Usage Analysis (Interfaces)**
-    - [ ] Implement a mapping from interfaces to their concrete implementing types.
-    - [ ] Enhance the usage-tracking intrinsic to mark concrete methods as "used" when an interface method is called.
-- [ ] **`find-orphans`: Reporting and Final Touches**
-    - [ ] Implement formatted output for both default (orphans only) and verbose modes.
+- [-] **`find-orphans`: Advanced Usage Analysis (Interfaces)**
+    - [x] Implement a mapping from interfaces to their concrete implementing types.
+    - [ ] Enhance the usage-tracking intrinsic to mark concrete methods as "used" when an interface method is called. (Note: This is partially implemented but blocked by a deeper issue in the `symgo` interpreter, which doesn't seem to trigger the necessary intrinsic for interface method calls.)
+- [x] **`find-orphans`: Reporting and Final Touches**
+    - [x] Implement formatted output for both default (orphans only) and verbose modes. (Note: Added JSON output via `-json` flag.)
 - [ ] **`ModuleWalker`: Wildcard Support**: Add support for the `...` wildcard in import path patterns, similar to the `go` command, to make package discovery more intuitive.
 - [ ] **`scantest`: Path to Import Path Conversion**: Enhance `scantest.Run` with an option or helper to automatically convert filesystem path patterns (like `.`) into their corresponding Go import path patterns, simplifying test setup for tools that consume import paths.

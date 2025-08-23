@@ -442,3 +442,63 @@ func TestErrorObject(t *testing.T) {
 		t.Errorf("Type() mismatch (-want +got):\n%s", diff)
 	}
 }
+
+func TestDefaultIntrinsic(t *testing.T) {
+	source := `
+package main
+func add(a, b int) int { return a + b }
+func main() {
+	add(1, 2)
+}
+`
+	dir, cleanup := scantest.WriteFiles(t, map[string]string{
+		"go.mod":  "module example.com/me",
+		"main.go": source,
+	})
+	defer cleanup()
+
+	var calledFunctions []object.Object
+
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
+		pkg := pkgs[0]
+		eval := New(s, s.Logger, nil)
+
+		// Register the default intrinsic to track function calls
+		eval.RegisterDefaultIntrinsic(func(args ...object.Object) object.Object {
+			if len(args) > 0 {
+				calledFunctions = append(calledFunctions, args[0]) // first arg is the function object
+			}
+			return nil
+		})
+
+		env := object.NewEnvironment()
+		eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], env, pkg)
+
+		mainFunc, ok := env.Get("main")
+		if !ok {
+			return fmt.Errorf("function 'main' not found")
+		}
+
+		// Execute main, which should trigger the call to 'add'
+		eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, token.NoPos)
+
+		if len(calledFunctions) != 1 {
+			return fmt.Errorf("expected 1 function call to be tracked, got %d", len(calledFunctions))
+		}
+
+		fn, ok := calledFunctions[0].(*object.Function)
+		if !ok {
+			return fmt.Errorf("tracked object is not a function, got %T", calledFunctions[0])
+		}
+
+		if fn.Name.Name != "add" {
+			return fmt.Errorf("expected tracked function to be 'add', but got '%s'", fn.Name.Name)
+		}
+
+		return nil
+	}
+
+	if _, err := scantest.Run(t, dir, []string{"."}, action); err != nil {
+		t.Fatalf("scantest.Run() failed: %v", err)
+	}
+}

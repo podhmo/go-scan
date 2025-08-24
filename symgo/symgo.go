@@ -46,6 +46,7 @@ type Interpreter struct {
 	logger            *slog.Logger
 	tracer            object.Tracer
 	interfaceBindings map[string]*goscan.TypeInfo
+	extraPackages     []string
 }
 
 // Option is a functional option for configuring the Interpreter.
@@ -62,6 +63,13 @@ func WithLogger(logger *slog.Logger) Option {
 func WithTracer(tracer object.Tracer) Option {
 	return func(i *Interpreter) {
 		i.tracer = tracer
+	}
+}
+
+// WithExtraPackages sets a list of external packages that should be treated as internal.
+func WithExtraPackages(pkgs []string) Option {
+	return func(i *Interpreter) {
+		i.extraPackages = pkgs
 	}
 }
 
@@ -92,7 +100,7 @@ func NewInterpreter(scanner *goscan.Scanner, options ...Option) (*Interpreter, e
 		i.logger = slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError}))
 	}
 
-	i.eval = evaluator.New(scanner, i.logger, i.tracer)
+	i.eval = evaluator.New(scanner, i.logger, i.tracer, i.extraPackages)
 
 	// Register default intrinsics
 	i.RegisterIntrinsic("fmt.Sprintf", i.intrinsicSprintf)

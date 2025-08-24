@@ -22,7 +22,7 @@ func TestEvalIntegerLiteral(t *testing.T) {
 		t.Fatalf("could not parse expression: %v", err)
 	}
 
-	eval := New(nil, nil, nil)
+	eval := New(nil, nil, nil, nil)
 	evaluated := eval.Eval(context.Background(), node, object.NewEnvironment(), nil)
 
 	integer, ok := evaluated.(*object.Integer)
@@ -42,7 +42,7 @@ func TestEvalStringLiteral(t *testing.T) {
 		t.Fatalf("could not parse expression: %v", err)
 	}
 
-	eval := New(nil, nil, nil)
+	eval := New(nil, nil, nil, nil)
 	evaluated := eval.Eval(context.Background(), node, object.NewEnvironment(), nil)
 
 	str, ok := evaluated.(*object.String)
@@ -62,7 +62,7 @@ func TestEvalUnsupportedLiteral(t *testing.T) {
 		t.Fatalf("could not parse expression: %v", err)
 	}
 
-	eval := New(nil, nil, nil)
+	eval := New(nil, nil, nil, nil)
 	evaluated := eval.Eval(context.Background(), node, object.NewEnvironment(), nil)
 
 	errObj, ok := evaluated.(*object.Error)
@@ -88,7 +88,7 @@ var x = 10
 
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
-		eval := New(s, s.Logger, nil)
+		eval := New(s, s.Logger, nil, nil)
 		env := object.NewEnvironment()
 
 		eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], env, pkg)
@@ -143,7 +143,7 @@ func main() {
 
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
-		eval := New(s, s.Logger, nil)
+		eval := New(s, s.Logger, nil, nil)
 
 		eval.RegisterDefaultIntrinsic(func(args ...object.Object) object.Object {
 			if len(args) == 0 {
@@ -204,7 +204,7 @@ func main() {
 
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
-		eval := New(s, s.Logger, nil)
+		eval := New(s, s.Logger, nil, nil)
 		env := object.NewEnvironment()
 
 		eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], env, pkg)
@@ -233,7 +233,7 @@ func TestEvalUnsupportedNode(t *testing.T) {
 		t.Fatalf("could not parse expression: %v", err)
 	}
 
-	eval := New(nil, nil, nil)
+	eval := New(nil, nil, nil, nil)
 	evaluated := eval.Eval(context.Background(), node, object.NewEnvironment(), nil)
 
 	errObj, ok := evaluated.(*object.Error)
@@ -258,7 +258,7 @@ func TestEvalReturnStatement(t *testing.T) {
 	stmt := f.Decls[0].(*ast.FuncDecl).Body.List[0]
 
 	s, _ := goscan.New()
-	eval := New(s, nil, nil)
+	eval := New(s, nil, nil, nil)
 	evaluated := eval.Eval(context.Background(), stmt, object.NewEnvironment(), &scanner.PackageInfo{
 		Name:     "main",
 		Fset:     fset,
@@ -296,7 +296,7 @@ func TestErrorHandling(t *testing.T) {
 			if err != nil {
 				t.Fatalf("could not parse expression: %v", err)
 			}
-			eval := New(nil, nil, nil)
+			eval := New(nil, nil, nil, nil)
 			evaluated := eval.Eval(context.Background(), node, object.NewEnvironment(), nil)
 
 			if evaluated == nil {
@@ -317,7 +317,7 @@ func TestEvalIfElseStmt(t *testing.T) {
 	node := f.Decls[1].(*ast.FuncDecl).Body.List[0] // decls[1] is main func
 
 	s, _ := goscan.New()
-	eval := New(s, nil, nil)
+	eval := New(s, nil, nil, nil)
 	env := object.NewEnvironment()
 	// put a symbolic 'x' in the environment
 	env.Set("x", &object.SymbolicPlaceholder{Reason: "variable x"})
@@ -350,7 +350,7 @@ func add(a, b int) int { return a + b }
 	}
 
 	env := object.NewEnvironment()
-	eval := New(nil, nil, nil)
+	eval := New(nil, nil, nil, nil)
 	eval.Eval(context.Background(), f, env, &scanner.PackageInfo{
 		Name:     "main",
 		Fset:     fset,
@@ -380,7 +380,7 @@ func add(a, b int) int { return a + b }
 
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
-		eval := New(s, s.Logger, nil)
+		eval := New(s, s.Logger, nil, nil)
 		env := object.NewEnvironment()
 
 		eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], env, pkg)
@@ -430,7 +430,7 @@ func main() {
 
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
-		eval := New(s, s.Logger, nil)
+		eval := New(s, s.Logger, nil, nil)
 		env := object.NewEnvironment()
 
 		eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], env, pkg)
@@ -472,7 +472,7 @@ func TestEvalBuiltinFunctions(t *testing.T) {
 		t.Fatalf("could not parse expression: %v", err)
 	}
 
-	eval := New(nil, nil, nil)
+	eval := New(nil, nil, nil, nil)
 	evaluated := eval.Eval(context.Background(), node, object.NewEnvironment(), nil)
 
 	if _, ok := evaluated.(*object.Error); !ok {
@@ -535,7 +535,7 @@ func main() {
 
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
-		eval := New(s, s.Logger, nil)
+		eval := New(s, s.Logger, nil, nil)
 
 		// Register the default intrinsic to track function calls
 		eval.RegisterDefaultIntrinsic(func(args ...object.Object) object.Object {

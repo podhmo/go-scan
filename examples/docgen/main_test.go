@@ -31,7 +31,7 @@ func TestDocgen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create scanner: %v", err)
 	}
-	analyzer, err := NewAnalyzer(s, logger) // no options needed for the default test
+	analyzer, err := NewAnalyzer(s, logger, nil) // no options needed for the default test
 	if err != nil {
 		t.Fatalf("failed to create analyzer: %v", err)
 	}
@@ -136,7 +136,7 @@ func TestDocgen_withCustomPatterns(t *testing.T) {
 	for _, p := range customPatterns {
 		opts = append(opts, p)
 	}
-	analyzer, err := NewAnalyzer(s, logger, opts...)
+	analyzer, err := NewAnalyzer(s, logger, nil, opts...)
 	if err != nil {
 		t.Fatalf("failed to create analyzer: %v", err)
 	}
@@ -234,7 +234,7 @@ func TestDocgen_fullParameters(t *testing.T) {
 		opts = append(opts, p)
 	}
 	opts = append(opts, WithTracer(symgo.TracerFunc(visit)))
-	analyzer, err := NewAnalyzer(s, logger, opts...)
+	analyzer, err := NewAnalyzer(s, logger, nil, opts...)
 	if err != nil {
 		t.Fatalf("failed to create analyzer: %v", err)
 	}
@@ -350,7 +350,7 @@ func TestDocgen_newFeatures(t *testing.T) {
 	for _, p := range customPatterns {
 		opts = append(opts, p)
 	}
-	analyzer, err := NewAnalyzer(s, logger, opts...)
+	analyzer, err := NewAnalyzer(s, logger, nil, opts...)
 	if err != nil {
 		t.Fatalf("failed to create analyzer: %v", err)
 	}
@@ -424,7 +424,7 @@ func TestDocgen_refAndRename(t *testing.T) {
 		t.Fatalf("failed to create scanner: %v", err)
 	}
 
-	analyzer, err := NewAnalyzer(s, logger)
+	analyzer, err := NewAnalyzer(s, logger, nil)
 	if err != nil {
 		t.Fatalf("failed to create analyzer: %v", err)
 	}

@@ -117,11 +117,9 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool, startPatterns []str
 				methodName := fn.UnderlyingMethod.Name
 				var implementerTypes []*scanner.FieldType
 
-				// --- Precise analysis using tracked concrete types ---
-				if len(fn.PossibleConcreteTypes) > 0 {
-					implementerTypes = fn.PossibleConcreteTypes
-					// --- Fallback to imprecise analysis ---
-				} else if fn.Receiver != nil {
+				// Always use the interface map for a conservative analysis.
+				// This ensures that if an interface method is used, all possible implementations are considered "used".
+				if fn.Receiver != nil {
 					receiverTypeInfo := fn.Receiver.TypeInfo()
 					if receiverTypeInfo != nil && receiverTypeInfo.Kind == scanner.InterfaceKind {
 						ifaceName := fmt.Sprintf("%s.%s", receiverTypeInfo.PkgPath, receiverTypeInfo.Name)
@@ -194,7 +192,12 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool, startPatterns []str
 
 	for _, ep := range entryPoints {
 		epName := getFullName(a.s, ep.Package, &scanner.FunctionInfo{Name: ep.Name.Name, AstDecl: ep.Decl})
-		usageMap[epName] = true
+		// In application mode, main is the only entry point we mark as used by default.
+		// In library mode, we don't mark any entry points as used by default.
+		// They are only "used" if called by another entry point.
+		if mainEntryPoint != nil {
+			usageMap[epName] = true
+		}
 		log.Printf("analyzing from entry point: %s", epName)
 		interp.Apply(ctx, ep, []object.Object{}, ep.Package)
 	}

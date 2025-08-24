@@ -152,3 +152,25 @@ This section breaks down the work required to implement the `find-orphans` tool 
 - [ ] Implement the final output formatting logic.
     - [ ] Default mode: Print only the list of orphans.
     - [ ] Verbose (`-v`) mode: For non-orphans, print the function name followed by the detailed list of locations where it was used.
+
+## 7. Future Enhancement: Multi-Module Workspace Analysis
+
+### Goal
+
+To allow `find-orphans` to analyze a "workspace" containing multiple Go modules (e.g., a main project and sub-projects in `examples/`) as a single unit. This means a function in one module will be considered "used" if it's called by code from another module within the same workspace.
+
+### Proposed CLI
+
+The `--workspace-root` flag will enable this mode. When provided, the tool will:
+
+1.  Find all `go.mod` files under the workspace root.
+2.  Include all packages from all discovered modules in the analysis.
+
+### Technical Approach
+
+The current `goscan.Scanner` is designed to work with a single `go.mod` file. To support multiple modules, a simple management layer will be introduced.
+
+1.  **Module-Specific Scanners**: For each `go.mod` found, a dedicated `goscan.Scanner` instance will be created.
+2.  **Package Lookups**: When `symgo` needs to analyze a package, this new management layer will direct the request to the correct `Scanner` responsible for that module. This allows `symgo` to see the source code of packages from any module in the workspace.
+
+This approach focuses only on resolving calls between user-written code in the workspace and does not need to handle complex dependency conflicts between external libraries.

@@ -192,7 +192,12 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool, startPatterns []str
 
 	for _, ep := range entryPoints {
 		epName := getFullName(a.s, ep.Package, &scanner.FunctionInfo{Name: ep.Name.Name, AstDecl: ep.Decl})
-		usageMap[epName] = true
+		// In application mode, main is the only entry point we mark as used by default.
+		// In library mode, we don't mark any entry points as used by default.
+		// They are only "used" if called by another entry point.
+		if mainEntryPoint != nil {
+			usageMap[epName] = true
+		}
 		log.Printf("analyzing from entry point: %s", epName)
 		interp.Apply(ctx, ep, []object.Object{}, ep.Package)
 	}

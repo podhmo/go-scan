@@ -121,6 +121,8 @@ func unusedInternalFunc() {}
 	output := buf.String()
 
 	expectedOrphans := []string{
+		"example.com/find-orphans-test/lib.ExportedFunc",
+		"example.com/find-orphans-test/lib.UnusedExportedFunc",
 		"example.com/find-orphans-test/lib.unusedInternalFunc",
 	}
 	sort.Strings(expectedOrphans)

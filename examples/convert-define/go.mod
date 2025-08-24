@@ -12,7 +12,7 @@ require (
 )
 
 require (
-	golang.org/x/mod v0.26.0 // indirect
+	golang.org/x/mod v0.27.0 // indirect
 	golang.org/x/sync v0.16.0 // indirect
 )
 

@@ -2,9 +2,7 @@ package symgo_test
 
 import (
 	"context"
-	"go/ast"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	goscan "github.com/podhmo/go-scan"
@@ -112,7 +110,7 @@ func runAnalysis(t *testing.T, ctx context.Context, interp *symgo.Interpreter, m
 		t.Fatalf("ScanPackageByImport failed: %v", err)
 	}
 
-	mainFile := findFile(t, pkg, "main.go")
+	mainFile := FindFile(t, pkg, "main.go")
 
 	_, err = interp.Eval(ctx, mainFile, pkg)
 	if err != nil {

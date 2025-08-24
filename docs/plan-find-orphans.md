@@ -106,11 +106,14 @@ While `symgo` is a powerful foundation, its current implementation has several g
     1. Pre-emptively scan all types in the target workspace(s) and build a map of interfaces to their concrete implementing types.
     2. The usage-tracking intrinsic, when it intercepts a call on an interface method, will use this map to identify all relevant concrete methods and mark them as "used".
 
-### 3. Single-Module Architecture
+### 3. Single-Module Architecture (Resolved)
 
-- **Observation**: The `symgo.Interpreter` is tied to a single `go-scan.Scanner` instance, which is designed to operate on a single Go module (defined by one `go.mod`).
-- **Impact**: The tool cannot natively look for usages across different modules, such as a main project and its examples in a sub-directory.
-- **Required Change**: This requires a significant architectural enhancement, likely starting at the `go-scan` level. The "find-orphans" tool will need to orchestrate multiple `Scanner` instances. A potential long-term solution involves creating a "workspace" or "multi-scanner" concept that can manage multiple modules and present a unified view to the `symgo` interpreter. For the initial implementation, the tool may need to manage a list of scanners and query them all.
+- **Observation**: The `symgo.Interpreter` was tied to a single `go-scan.Scanner` instance, which was designed to operate on a single Go module.
+- **Impact**: The tool could not natively look for usages across different modules.
+- **Resolution**: This limitation has been resolved by making the `goscan.Scanner` itself workspace-aware.
+    - A new `WithModuleDirs` option allows the `Scanner` to be initialized with multiple module roots.
+    - The `Scanner` now manages a list of `locator.Locator` instances, one for each module.
+    - Its `ScanPackageByImport` method was enhanced to automatically use the correct module's locator when resolving a package, thus providing a unified view to the `symgo` interpreter without requiring changes to `symgo` itself.
 
 ## 6. Implementation Task List
 
@@ -153,24 +156,65 @@ This section breaks down the work required to implement the `find-orphans` tool 
     - [ ] Default mode: Print only the list of orphans.
     - [ ] Verbose (`-v`) mode: For non-orphans, print the function name followed by the detailed list of locations where it was used.
 
-## 7. Future Enhancement: Multi-Module Workspace Analysis
+## 7. Implemented Feature: Multi-Module Workspace Analysis
+
+The `find-orphans` tool now supports analyzing a "workspace" containing multiple Go modules as a single, unified project.
+
+### Feature Details
+
+- **Usage**: The `--workspace-root` flag enables this mode. When provided, the tool scans the given directory for all `go.mod` files to identify the modules in the workspace.
+- **Analysis Scope**: All packages from all discovered modules are included in the analysis. A function in one module is correctly considered "used" if it is called by code from any other module within the same workspace.
+
+### Technical Implementation
+
+Instead of creating a separate management layer or multiple `Scanner` instances, the core `goscan.Scanner` was made workspace-aware.
+
+1.  **Workspace-Aware Scanner**: The `goscan.Scanner` can be initialized with a list of module directories via a new `WithModuleDirs` option. When this option is used, the scanner creates and manages a `locator.Locator` for each module.
+2.  **Unified Package Resolution**: The `Scanner.ScanPackageByImport` method was enhanced to be workspace-aware. When asked to resolve a package, it first determines which module the package belongs to and uses the corresponding `locator`. This allows it to seamlessly find and parse packages from any module in the workspace. Standard library packages are also handled correctly.
+3.  **Package Discovery**: The `find-orphans` tool's analysis logic was updated. In workspace mode, it constructs absolute path patterns for each module (e.g., `/path/to/moduleA/...`, `/path/to/moduleB/...`) and passes this combined list to the `ModuleWalker`. This ensures that the initial discovery phase finds all packages across all modules in a single walk.
+
+## 8. Future Enhancement: Automatic `go.work` Detection
+
+To provide a more idiomatic and precise way to define a workspace, the `--workspace-root` flag could be enhanced to automatically detect and use a `go.work` file.
 
 ### Goal
 
-To allow `find-orphans` to analyze a "workspace" containing multiple Go modules (e.g., a main project and sub-projects in `examples/`) as a single unit. This means a function in one module will be considered "used" if it's called by code from another module within the same workspace.
+If a `go.work` file is present in the directory specified by `--workspace-root`, use it as the source of truth for which modules to include in the analysis. If it's not present, maintain the current behavior of scanning all subdirectories for modules.
 
 ### Proposed CLI
 
-The `--workspace-root` flag will enable this mode. When provided, the tool will:
+No new flags are needed. The behavior of the existing `--workspace-root` flag would be updated.
 
-1.  Find all `go.mod` files under the workspace root.
-2.  Include all packages from all discovered modules in the analysis.
+- `find-orphans --workspace-root /path/to/project`
+  - The tool checks for `/path/to/project/go.work`.
+  - **If found**: It parses `go.work` and uses the modules from the `use` directives.
+  - **If not found**: It recursively scans `/path/to/project` for all `go.mod` files, as it does now.
 
 ### Technical Approach
 
-The current `goscan.Scanner` is designed to work with a single `go.mod` file. To support multiple modules, a simple management layer will be introduced.
+1.  **Check for `go.work`**: When the `--workspace-root` flag is used, the first step is to check for the existence of a `go.work` file in that directory.
 
-1.  **Module-Specific Scanners**: For each `go.mod` found, a dedicated `goscan.Scanner` instance will be created.
-2.  **Package Lookups**: When `symgo` needs to analyze a package, this new management layer will direct the request to the correct `Scanner` responsible for that module. This allows `symgo` to see the source code of packages from any module in the workspace.
+2.  **`go.work` Parsing Logic**:
+    - If `go.work` exists, a parser will be used to read it. The standard library's `golang.org/x/mod/workfile` package is the ideal candidate.
+    - The parser will extract the relative paths from all `use` directives.
 
-This approach focuses only on resolving calls between user-written code in the workspace and does not need to handle complex dependency conflicts between external libraries.
+3.  **Module Path Resolution**:
+    - The paths in the `use` directives are relative to the directory of the `go.work` file (the workspace root).
+    - The tool will resolve these relative paths to absolute directory paths.
+
+4.  **Integration with Scanner**:
+    - This list of absolute module paths will be passed to the `goscan.WithModuleDirs` option, just as it is in the current implementation. The rest of the analysis flow remains unchanged.
+
+5.  **Fallback**:
+    - If no `go.work` file is found at the workspace root, the logic falls back to the existing `discoverModules` function, which walks the entire directory tree to find all `go.mod` files.
+
+### Example Flow
+
+1.  A `go.work` file exists at `/path/to/project/go.work`.
+2.  User runs: `find-orphans --workspace-root /path/to/project`
+3.  The tool finds `go.work`, parses it, and gets a list of module directories like `./module-a`, `./libs/module-b`.
+4.  It resolves these to absolute paths.
+5.  It calls `goscan.New(goscan.WithModuleDirs(...)`.
+6.  The analysis proceeds.
+
+If the `go.work` file did *not* exist, step 3 would be skipped, and the tool would instead call `discoverModules("/path/to/project")` to find all modules, and then proceed.

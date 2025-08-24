@@ -63,15 +63,15 @@ With this richer `SymbolicPlaceholder`, the `find-orphans` tool can be made much
 
 This approach provides the best of both worlds: precision when possible, and a safe fallback when not. This is the recommended path forward to fully resolve the issue.
 
-## 4. Progress Update
+## 4. Resolution
 
-An attempt was made to implement the proposed solution. The following changes were implemented:
+The proposed solution has been successfully implemented. The final fix required addressing a subtle bug in the symbolic evaluator's environment handling.
 
--   **`object.Variable` Update**: The `LastConcreteType` field was replaced with `PossibleConcreteTypes map[string]*scanner.TypeInfo` to track a set of types.
--   **Core Scanner Overlay Fix**: The `goscan.Scanner` and the internal `scanner.Scanner` were modified to be overlay-aware, allowing in-memory files to be used correctly in tests by checking for overlay files before accessing the filesystem.
--   **Copy-on-Write for Assignments**: The `symgo` evaluator's assignment logic (`assignIdentifier`) was updated to implement a copy-on-write semantic. When a variable from an outer scope is assigned to within a new scope (e.g., inside an `if` branch), it creates a new, shadowed variable in the local scope instead of modifying the outer variable directly.
--   **Control-Flow Merging**: The `evalIfStmt` logic was enhanced to merge the state of these shadowed variables back into the parent scope's variable after the branches have been evaluated. This is handled by a new `mergeBranchEnvs` function.
+### Implementation Details
+The following changes were made to the `symgo` evaluator:
+1.  **`object.Variable` Update**: The `LastConcreteType` field was replaced with `PossibleConcreteTypes map[string]*scanner.TypeInfo` to track a set of possible concrete types.
+2.  **Copy-on-Write Assignments**: The `assignIdentifier` function was modified to implement a copy-on-write strategy. When an assignment (`=`) occurs in a new scope (like an `if` or `else` block) to a variable from an outer scope, the evaluator now creates a new, shadowed variable in the current scope instead of modifying the outer variable directly. This is crucial for isolating the state changes within each control-flow branch.
+3.  **Control-Flow Merging**: The `evalIfStmt` function was enhanced. After evaluating the `if` and `else` branches (which now have their own shadowed variables), a new `mergeBranchEnvs` function is called. This function inspects the *local* variables in each branch environment and merges their `PossibleConcreteTypes` back into the original variable in the parent environment.
+4.  **Correct Scope Evaluation**: The root cause of the bug was identified and fixed. The `evalBlockStatement` function was incorrectly creating an additional nested scope. This caused the shadowed variables created by the copy-on-write logic to be discarded before they could be merged. The fix was to remove the unnecessary scope creation, ensuring that assignments within a block modify the environment that the `if/else` logic expects.
 
-### Remaining Issue
-
-Despite these changes, the implementation is not yet correct. A test case (`TestInterfaceTypeFlow`) was added to verify this exact scenario, but it currently fails. The test shows that the `PossibleConcreteTypes` map for the interface variable remains empty after the `if/else` block, indicating that the type information from the branches is not being successfully merged and propagated back to the caller. The root cause of this failure is still under investigation.
+With these changes, the evaluator can now correctly track all possible concrete types assigned to an interface variable across different `if/else` branches, significantly improving the precision of tools like `find-orphans`. A new test case, `TestInterfaceTypeFlow`, was added to verify this behavior.

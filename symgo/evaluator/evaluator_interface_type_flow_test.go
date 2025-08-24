@@ -1,13 +1,11 @@
 package evaluator_test
 
 import (
-	"bytes"
 	"context"
 	"fmt"
-	"go/ast"
-	"go/printer"
+	"os"
+	"path/filepath"
 	"sort"
-	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -47,25 +45,24 @@ func main() {
 	s.Speak()
 }
 `
+	// Create a self-contained module in a temporary directory for the test.
+	tempDir := t.TempDir()
+	goModContent := "module main"
+	err := os.WriteFile(filepath.Join(tempDir, "go.mod"), []byte(goModContent), 0644)
+	if err != nil {
+		t.Fatalf("failed to write go.mod: %v", err)
+	}
+
 	overlay := scanner.Overlay{
 		"main.go": []byte(source),
 	}
-	var trace strings.Builder
-	s, err := goscan.New(goscan.WithOverlay(overlay))
+
+	s, err := goscan.New(goscan.WithWorkDir(tempDir), goscan.WithOverlay(overlay))
 	if err != nil {
 		t.Fatalf("goscan.New() failed: %v", err)
 	}
 
-	tracer := symgo.TracerFunc(func(node ast.Node) {
-		if node == nil {
-			return
-		}
-		var buf bytes.Buffer
-		printer.Fprint(&buf, s.Fset(), node)
-		fmt.Fprintf(&trace, "visiting: %T, source: %q\n", node, buf.String())
-	})
-
-	interp, err := symgo.NewInterpreter(s, symgo.WithTracer(tracer))
+	interp, err := symgo.NewInterpreter(s)
 	if err != nil {
 		t.Fatalf("symgo.NewInterpreter() failed: %v", err)
 	}
@@ -120,12 +117,10 @@ func main() {
 	}
 
 	if capturedPlaceholder == nil {
-		t.Log(trace.String())
 		t.Fatal("The symbolic placeholder for s.Speak() was not captured")
 	}
 
 	if len(capturedPlaceholder.PossibleConcreteTypes) != 2 {
-		t.Log(trace.String())
 		t.Fatalf("Should have found 2 possible concrete types, but got %d", len(capturedPlaceholder.PossibleConcreteTypes))
 	}
 

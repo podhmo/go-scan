@@ -857,39 +857,32 @@ func (e *Evaluator) mergeBranchEnvs(parentEnv, ifEnv, elseEnv *object.Environmen
 		// Find the original variable in the parent scope.
 		parentObj, ok := parentEnv.Get(name)
 		if !ok {
-			continue // Variable was defined inside a branch, so it doesn't exist in the parent scope.
+			continue
 		}
 		parentVar, ok := parentObj.(*object.Variable)
 		if !ok {
-			continue // The parent object is not a variable, so we can't merge into it.
+			continue
 		}
 
 		// Get the variable from each branch, if it exists.
 		ifObj, _ := ifEnv.GetLocal(name)
 		elseObj, elseExists := elseEnv.GetLocal(name)
 
-		// If the variable wasn't modified in the 'else' branch, we assume it retains
-		// its state from before the 'if' statement. We need to merge the 'if' changes
-		// with the original state.
 		if !elseExists && elseEnv != nil {
 			elseObj = parentVar
 		}
 
-		// Create a new map for the merged types to avoid aliasing issues.
 		mergedTypes := make(map[string]*scanner.TypeInfo)
-		// Start with the types the parent variable had before the branches.
 		for key, t := range parentVar.PossibleConcreteTypes {
 			mergedTypes[key] = t
 		}
 
-		// Merge types from the 'if' branch.
 		if ifVar, ok := ifObj.(*object.Variable); ok {
 			for key, t := range ifVar.PossibleConcreteTypes {
 				mergedTypes[key] = t
 			}
 		}
 
-		// Merge types from the 'else' branch.
 		if elseVar, ok := elseObj.(*object.Variable); ok {
 			for key, t := range elseVar.PossibleConcreteTypes {
 				mergedTypes[key] = t
@@ -901,10 +894,11 @@ func (e *Evaluator) mergeBranchEnvs(parentEnv, ifEnv, elseEnv *object.Environmen
 
 func (e *Evaluator) evalBlockStatement(ctx context.Context, block *ast.BlockStmt, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
 	var result object.Object
-	blockEnv := object.NewEnclosedEnvironment(env)
 
+	// A block statement does not create a new scope in the same way a function call does.
+	// It executes in the environment provided to it (e.g., the one created by `evalIfStmt`).
 	for _, stmt := range block.List {
-		result = e.Eval(ctx, stmt, blockEnv, pkg)
+		result = e.Eval(ctx, stmt, env, pkg)
 
 		if result != nil {
 			rt := result.Type()

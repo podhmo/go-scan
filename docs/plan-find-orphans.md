@@ -152,3 +152,26 @@ This section breaks down the work required to implement the `find-orphans` tool 
 - [ ] Implement the final output formatting logic.
     - [ ] Default mode: Print only the list of orphans.
     - [ ] Verbose (`-v`) mode: For non-orphans, print the function name followed by the detailed list of locations where it was used.
+
+## 7. Future Enhancement: Multi-Module Workspace Analysis
+
+### Goal
+
+To extend the definition of "in-module" to encompass a "workspace" of multiple Go modules. In many repositories, related projects (such as examples or sub-tools) live in subdirectories with their own `go.mod` files. The `find-orphans` tool should be able to analyze this entire workspace as a single unit, meaning a function in one module is considered "used" if it is called by code from another module within the same workspace.
+
+### Proposed CLI
+
+The existing `--workspace-root` flag will be used to enable this mode. When a user provides a path (e.g., `--workspace-root=.`), the tool will perform the following actions:
+
+1.  **Discover Modules**: Recursively search for all `go.mod` files within the specified directory.
+2.  **Unified Analysis**: Treat all packages belonging to the discovered modules as a single, combined codebase for the orphan analysis.
+
+### Technical Approach
+
+This requires moving from a single-scanner to a multi-scanner architecture.
+
+1.  **Multi-Scanner Orchestration**: The `analyzer` in `find-orphans` will be refactored to initialize and manage a collection of `goscan.Scanner` instances, one for each discovered module.
+2.  **Unified Package View for `symgo`**: The `symgo.Interpreter` is currently tied to a single scanner. To handle a workspace, we will need to provide it with a unified view of all packages from all scanners. This will likely involve creating a facade or a "meta-scanner" that can resolve package information by querying the appropriate module-specific scanner.
+3.  **Cross-Module Analysis**: The core analysis logic—collecting all function declarations, building the interface implementation map, and identifying entry points—must be updated to operate on the aggregated set of packages from all modules in the workspace. The dependency walker will also need to be able to traverse from a package in one module to a dependency in another module within the same workspace.
+
+This enhancement will significantly increase the utility of `find-orphans` for complex, multi-module repositories.

@@ -4,56 +4,25 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io/fs"
+	i_fs "io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
-	"sync"
 	"testing"
+	"time"
 
 	scan "github.com/podhmo/go-scan"
+	"github.com/podhmo/go-scan/fs"
 	"github.com/podhmo/go-scan/scanner"
 )
 
-// memoryFileWriter is an in-memory implementation of scan.FileWriter for testing.
-type memoryFileWriter struct {
-	mu      sync.Mutex
-	Outputs map[string][]byte
-	BaseDir string // The root directory for test files.
-}
-
-// WriteFile captures the output in memory instead of writing to disk.
-func (w *memoryFileWriter) WriteFile(ctx context.Context, path string, data []byte, perm fs.FileMode) error {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	if w.Outputs == nil {
-		w.Outputs = make(map[string][]byte)
-	}
-
-	relPath, err := filepath.Rel(w.BaseDir, path)
-	if err != nil {
-		// If the path is not relative to BaseDir, use the original path.
-		// This might happen for unexpected write locations.
-		relPath = path
-	}
-
-	w.Outputs[relPath] = data
-	return nil
-}
-
 // ActionFunc is a function that performs a check or an action based on scan results.
-// For actions with side effects, it should use go-scan's top-level functions
-// (e.g., goscan.WriteFile) to allow the test harness to capture the results.
 type ActionFunc func(ctx context.Context, s *scan.Scanner, pkgs []*scan.Package) error
 
 // Result holds the outcome of a Run that has side effects.
 type Result struct {
-	// Outputs contains the content of newly created files written during the action.
-	// The key is the file path, and the value is the content.
-	Outputs map[string][]byte
-	// Modified contains the content of existing files that were modified during the action.
-	// The key is the file path, and the value is the new content.
+	Outputs  map[string][]byte
 	Modified map[string][]byte
 }
 
@@ -66,7 +35,6 @@ type runConfig struct {
 }
 
 // WithModuleRoot explicitly sets the module root directory for the test run.
-// If this option is not used, the search behavior for `go.mod` is described in the `Run` function's documentation.
 func WithModuleRoot(path string) RunOption {
 	return func(c *runConfig) {
 		c.moduleRoot = path
@@ -74,7 +42,6 @@ func WithModuleRoot(path string) RunOption {
 }
 
 // WithScanner provides a pre-configured scanner to the Run function.
-// If this is provided, the Run function will not create its own scanner.
 func WithScanner(s *scan.Scanner) RunOption {
 	return func(c *runConfig) {
 		c.scanner = s
@@ -82,15 +49,6 @@ func WithScanner(s *scan.Scanner) RunOption {
 }
 
 // Run sets up and executes a test scenario.
-// It returns a Result object if the action had side effects captured by the harness.
-//
-// By default, `Run` determines the module root for the scanner by performing a two-phase search for `go.mod`:
-//  1. It first searches from the temporary test directory (`dir`) upwards to the filesystem root.
-//     This is useful if the test's file layout (created via `WriteFiles`) constitutes a self-contained module.
-//  2. If not found, it searches from the current working directory (`os.Getwd()`) upwards.
-//     This allows the scanner to resolve dependencies against the actual project's `go.mod` file.
-//
-// This default behavior can be overridden by using the `WithModuleRoot()` option to specify an explicit path.
 func Run(t *testing.T, dir string, patterns []string, action ActionFunc, opts ...RunOption) (*Result, error) {
 	t.Helper()
 
@@ -99,7 +57,6 @@ func Run(t *testing.T, dir string, patterns []string, action ActionFunc, opts ..
 		opt(cfg)
 	}
 
-	// Capture initial state of the directory
 	initialFiles, err := readFilesInDir(dir)
 	if err != nil {
 		return nil, fmt.Errorf("scantest: failed to read initial files: %w", err)
@@ -107,10 +64,8 @@ func Run(t *testing.T, dir string, patterns []string, action ActionFunc, opts ..
 
 	workDir := cfg.moduleRoot
 	if workDir == "" {
-		// Phase 1: Search up from the temp test directory.
 		foundRoot, err := findModuleRoot(dir)
 		if err != nil {
-			// Phase 2: If not found, search up from the current working directory.
 			cwd, err_cwd := os.Getwd()
 			if err_cwd != nil {
 				return nil, fmt.Errorf("scantest: could not get current working directory: %w", err_cwd)
@@ -127,18 +82,18 @@ func Run(t *testing.T, dir string, patterns []string, action ActionFunc, opts ..
 	if cfg.scanner != nil {
 		s = cfg.scanner
 	} else {
-		// Automatically handle go.mod replace directives with relative paths.
 		overlay, err := createGoModOverlay(workDir)
 		if err != nil {
 			return nil, fmt.Errorf("creating go.mod overlay: %w", err)
 		}
 
+		fs := newOverlayFS(overlay)
+
 		options := []scan.ScannerOption{
 			scan.WithWorkDir(workDir),
-			scan.WithGoModuleResolver(), // Automatically enable module resolution.
-		}
-		if overlay != nil {
-			options = append(options, scan.WithOverlay(overlay))
+			scan.WithGoModuleResolver(),
+			scan.WithFS(fs),
+			scan.WithOverlay(overlay),
 		}
 
 		s, err = scan.New(options...)
@@ -147,33 +102,16 @@ func Run(t *testing.T, dir string, patterns []string, action ActionFunc, opts ..
 		}
 	}
 
-	// Adjust patterns to be relative to the temp `dir` if they are not absolute.
-	// The scanner's workDir is the module root, so we need to provide paths that
-	// can be resolved from there. The easiest way is to make them absolute.
-	absPatterns := make([]string, len(patterns))
-	for i, p := range patterns {
-		if filepath.IsAbs(p) {
-			absPatterns[i] = p
-		} else {
-			absPatterns[i] = filepath.Join(dir, p)
-		}
-	}
-
-	pkgs, err := s.Scan(absPatterns...)
+	pkgs, err := s.Scan(patterns...)
 	if err != nil {
-		return nil, fmt.Errorf("scan: %w", err)
+		return nil, fmt.Errorf("initial scan: %w", err)
 	}
 
-	// The memoryFileWriter is still useful for tools that expect the context writer,
-	// but the primary source of truth for file changes will be the directory snapshot.
-	writer := &memoryFileWriter{BaseDir: dir}
-	ctx := context.WithValue(context.Background(), scan.FileWriterKey, writer)
-
+	ctx := context.Background()
 	if err := action(ctx, s, pkgs); err != nil {
 		return nil, fmt.Errorf("action: %w", err)
 	}
 
-	// Capture final state and compare
 	finalFiles, err := readFilesInDir(dir)
 	if err != nil {
 		return nil, fmt.Errorf("scantest: failed to read final files: %w", err)
@@ -188,31 +126,16 @@ func Run(t *testing.T, dir string, patterns []string, action ActionFunc, opts ..
 	for path, finalContent := range finalFiles {
 		initialContent, ok := initialFiles[path]
 		if !ok {
-			// New file
 			result.Outputs[path] = finalContent
 			hasChanges = true
 		} else if !bytes.Equal(initialContent, finalContent) {
-			// Modified file
 			result.Modified[path] = finalContent
 			hasChanges = true
 		}
 	}
-
-	// Also account for files created via the in-memory writer that might not be
-	// reflected in the final directory scan if the action func doesn't write to disk.
-	for path, content := range writer.Outputs {
-		if _, existsInFinal := finalFiles[path]; !existsInFinal {
-			if _, existsInInitial := initialFiles[path]; !existsInInitial {
-				result.Outputs[path] = content
-				hasChanges = true
-			}
-		}
-	}
-
 	if !hasChanges {
 		return nil, nil
 	}
-
 	return result, nil
 }
 
@@ -230,14 +153,12 @@ func WriteFiles(t *testing.T, files map[string]string) (string, func()) {
 			t.Fatalf("WriteFile(%q): %v", path, err)
 		}
 	}
-	return dir, func() { /* t.TempDir handles cleanup */ }
+	return dir, func() {}
 }
 
-// readFilesInDir walks the given directory and reads all files, returning a map
-// where keys are file paths relative to the root, and values are their content.
 func readFilesInDir(root string) (map[string][]byte, error) {
 	files := make(map[string][]byte)
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+	err := filepath.WalkDir(root, func(path string, d i_fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -260,8 +181,6 @@ func readFilesInDir(root string) (map[string][]byte, error) {
 	return files, nil
 }
 
-// findModuleRoot searches for a go.mod file starting from startDir and walking
-// up the directory tree. It returns the directory containing the go.mod file.
 func findModuleRoot(startDir string) (string, error) {
 	dir := startDir
 	for {
@@ -269,36 +188,19 @@ func findModuleRoot(startDir string) (string, error) {
 		if _, err := os.Stat(goModPath); err == nil {
 			return dir, nil
 		}
-
 		parent := filepath.Dir(dir)
-		if parent == dir { // Reached the root directory
+		if parent == dir {
 			return "", fmt.Errorf("go.mod not found in or above %s", startDir)
 		}
 		dir = parent
 	}
 }
 
-// RunCommand executes a command in the specified directory and fails the test if it fails.
-func RunCommand(t *testing.T, dir string, name string, arg ...string) {
-	t.Helper()
-	cmd := exec.Command(name, arg...)
-	cmd.Dir = dir
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("command %q failed in %s: %v\noutput:\n%s", strings.Join(append([]string{name}, arg...), " "), dir, err, string(output))
-	}
-}
-
-// createGoModOverlay reads the go.mod file in the given directory,
-// and if it contains `replace` directives with relative file paths,
-// it creates an in-memory overlay with those paths converted to absolute paths.
-// This is necessary because the `go-scan` tool resolves paths relative
-// to the module root, and in tests, the temp directory is not the CWD.
 func createGoModOverlay(dir string) (scanner.Overlay, error) {
 	goModPath := filepath.Join(dir, "go.mod")
 	_, err := os.Stat(goModPath)
 	if os.IsNotExist(err) {
-		return nil, nil // No go.mod, no overlay needed.
+		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("stat go.mod: %w", err)
@@ -326,8 +228,6 @@ func createGoModOverlay(dir string) (scanner.Overlay, error) {
 
 		if isReplaceLine || inReplaceBlock {
 			parts := strings.Fields(trimmedLine)
-			// A valid replace line looks like: "replace module/path => ../local/path"
-			// or inside a block: "module/path => ../local/path"
 			arrowIndex := -1
 			for i, p := range parts {
 				if p == "=>" {
@@ -339,14 +239,11 @@ func createGoModOverlay(dir string) (scanner.Overlay, error) {
 			if arrowIndex != -1 && arrowIndex < len(parts)-1 {
 				pathPart := parts[len(parts)-1]
 				if strings.HasPrefix(pathPart, "./") || strings.HasPrefix(pathPart, "../") {
-					// This is a relative path, resolve it against `dir`
 					absPath, err := filepath.Abs(filepath.Join(dir, pathPart))
 					if err != nil {
 						return nil, fmt.Errorf("could not make path absolute for %q: %w", pathPart, err)
 					}
-					// Reconstruct the line with the absolute path
 					parts[len(parts)-1] = absPath
-					// Get the original line's indentation
 					indent := ""
 					if len(line) > len(trimmedLine) {
 						indent = line[:strings.Index(line, trimmedLine)]
@@ -360,11 +257,127 @@ func createGoModOverlay(dir string) (scanner.Overlay, error) {
 	}
 
 	if !modified {
-		return nil, nil // No changes, no overlay needed.
+		return nil, nil
 	}
 
 	overlay := scanner.Overlay{
-		"go.mod": []byte(strings.Join(newLines, "\n")),
+		goModPath: []byte(strings.Join(newLines, "\n")),
 	}
 	return overlay, nil
 }
+
+type overlayFS struct {
+	overlay scanner.Overlay
+	realFS  fs.FS
+}
+
+func newOverlayFS(overlay scanner.Overlay) fs.FS {
+	return &overlayFS{
+		overlay: overlay,
+		realFS:  fs.NewOSFS(),
+	}
+}
+
+func (f *overlayFS) ReadFile(name string) ([]byte, error) {
+	absName, err := filepath.Abs(name)
+	if err != nil {
+		return nil, err
+	}
+	if content, ok := f.overlay[absName]; ok {
+		return content, nil
+	}
+	return f.realFS.ReadFile(name)
+}
+
+func (f *overlayFS) Stat(name string) (i_fs.FileInfo, error) {
+	absName, err := filepath.Abs(name)
+	if err != nil {
+		return nil, err
+	}
+	if content, ok := f.overlay[absName]; ok {
+		return &fakeFileInfo{
+			name:    filepath.Base(name),
+			size:    int64(len(content)),
+			modTime: time.Now(),
+		}, nil
+	}
+	return f.realFS.Stat(name)
+}
+
+func (f *overlayFS) ReadDir(name string) ([]i_fs.DirEntry, error) {
+	realEntries, err := f.realFS.ReadDir(name)
+	if err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+
+	merged := make(map[string]i_fs.DirEntry)
+	for _, entry := range realEntries {
+		merged[entry.Name()] = entry
+	}
+
+	absName, err := filepath.Abs(name)
+	if err != nil {
+		return nil, err
+	}
+
+	for overlayPath, content := range f.overlay {
+		if filepath.Dir(overlayPath) == absName {
+			entryName := filepath.Base(overlayPath)
+			if _, exists := merged[entryName]; !exists {
+				merged[entryName] = i_fs.FileInfoToDirEntry(&fakeFileInfo{
+					name:    entryName,
+					size:    int64(len(content)),
+					modTime: time.Now(),
+				})
+			}
+		}
+	}
+
+	result := make([]i_fs.DirEntry, 0, len(merged))
+	for _, entry := range merged {
+		result = append(result, entry)
+	}
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].Name() < result[j].Name()
+	})
+	return result, nil
+}
+
+func (f *overlayFS) WalkDir(root string, fn i_fs.WalkDirFunc) error {
+	entries, err := f.ReadDir(root)
+	if err != nil {
+		return fn(root, nil, err)
+	}
+
+	for _, entry := range entries {
+		path := filepath.Join(root, entry.Name())
+		err := fn(path, entry, nil)
+		if err != nil {
+			if entry.IsDir() && err == filepath.SkipDir {
+				continue
+			}
+			return err
+		}
+		if entry.IsDir() {
+			err := f.WalkDir(path, fn)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+type fakeFileInfo struct {
+	name    string
+	size    int64
+	mode    i_fs.FileMode
+	modTime time.Time
+}
+
+func (fi *fakeFileInfo) Name() string       { return fi.name }
+func (fi *fakeFileInfo) Size() int64        { return fi.size }
+func (fi *fakeFileInfo) Mode() i_fs.FileMode  { return fi.mode }
+func (fi *fakeFileInfo) ModTime() time.Time { return fi.modTime }
+func (fi *fakeFileInfo) IsDir() bool        { return false }
+func (fi *fakeFileInfo) Sys() any           { return nil }

@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/podhmo/go-scan/fs"
 	"github.com/podhmo/go-scan/scanner"
 	"golang.org/x/mod/module"
 )
@@ -30,6 +31,7 @@ type Locator struct {
 	rootDir    string
 	replaces   []ReplaceDirective
 	overlay    scanner.Overlay
+	FS         fs.FS
 
 	// Options for advanced resolution
 	UseGoModuleResolver bool
@@ -53,6 +55,14 @@ func WithOverlay(overlay scanner.Overlay) Option {
 	}
 }
 
+// WithFS sets the filesystem implementation for the locator.
+// If not provided, it defaults to the OS filesystem.
+func WithFS(fs fs.FS) Option {
+	return func(l *Locator) {
+		l.FS = fs
+	}
+}
+
 // WithGoModuleResolver enables resolving packages from GOROOT and the module cache.
 func WithGoModuleResolver() Option {
 	return func(l *Locator) {
@@ -69,13 +79,16 @@ func New(startPath string, options ...Option) (*Locator, error) {
 	for _, opt := range options {
 		opt(l)
 	}
+	if l.FS == nil {
+		l.FS = fs.NewOSFS()
+	}
 
 	absPath, err := filepath.Abs(startPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get absolute path for %s: %w", startPath, err)
 	}
 
-	rootDir, err := findModuleRoot(absPath)
+	rootDir, err := l.findModuleRoot(absPath)
 	if err != nil {
 		// If resolver is enabled, not finding a go.mod is not a fatal error
 		// as we might be resolving stdlib packages.
@@ -90,7 +103,10 @@ func New(startPath string, options ...Option) (*Locator, error) {
 
 	var goModContent []byte
 	if l.overlay != nil {
-		if content, ok := l.overlay["go.mod"]; ok {
+		goModFilePathAbs := filepath.Join(l.rootDir, "go.mod")
+		if content, ok := l.overlay[goModFilePathAbs]; ok {
+			goModContent = content
+		} else if content, ok := l.overlay["go.mod"]; ok { // Fallback for older tests using relative key
 			goModContent = content
 		}
 	}
@@ -98,7 +114,7 @@ func New(startPath string, options ...Option) (*Locator, error) {
 	if goModContent == nil && l.rootDir != "" {
 		goModFilePath := filepath.Join(l.rootDir, "go.mod")
 		// It's okay if go.mod doesn't exist, especially if UseGoModuleResolver is true
-		if content, readErr := os.ReadFile(goModFilePath); readErr == nil {
+		if content, readErr := l.FS.ReadFile(goModFilePath); readErr == nil {
 			goModContent = content
 		}
 	}
@@ -169,7 +185,7 @@ func (l *Locator) FindPackageDir(importPath string) (string, error) {
 				if err != nil {
 					continue
 				}
-				if stat, statErr := os.Stat(absLocalCandidatePath); statErr == nil && stat.IsDir() {
+				if stat, statErr := l.FS.Stat(absLocalCandidatePath); statErr == nil && stat.IsDir() {
 					return absLocalCandidatePath, nil
 				}
 			} else {
@@ -177,17 +193,10 @@ func (l *Locator) FindPackageDir(importPath string) (string, error) {
 				if remainingPath != "" {
 					newImportPath = r.NewPath + "/" + remainingPath
 				}
-				// If the replaced path points to a different module, this simple locator cannot find it
-				// unless that different module's path is passed to a *new* Locator instance for that module.
-				// For the current request, we can't resolve it if it's truly external.
-				// We will let it fall through, and it will likely fail unless another rule matches,
-				// or the original importPath itself matches the current module (which it wouldn't if a replace rule was hit).
-				// This implies that module-to-module replaces that point to *other* modules are not fully supported by this iteration.
-				// Let's try to resolve it within the current module context.
 				if l.modulePath != "" && strings.HasPrefix(newImportPath, l.modulePath) {
 					relPath := strings.TrimPrefix(newImportPath, l.modulePath)
 					candidatePath := filepath.Join(l.rootDir, relPath)
-					if stat, err := os.Stat(candidatePath); err == nil && stat.IsDir() {
+					if stat, err := l.FS.Stat(candidatePath); err == nil && stat.IsDir() {
 						return candidatePath, nil
 					}
 				}
@@ -199,37 +208,32 @@ func (l *Locator) FindPackageDir(importPath string) (string, error) {
 	if l.modulePath != "" && strings.HasPrefix(importPath, l.modulePath) {
 		relPath := strings.TrimPrefix(importPath, l.modulePath)
 		candidatePath := filepath.Join(l.rootDir, relPath)
-		if stat, err := os.Stat(candidatePath); err == nil && stat.IsDir() {
+		if stat, err := l.FS.Stat(candidatePath); err == nil && stat.IsDir() {
 			return candidatePath, nil
 		}
 	}
 
 	// 3. If resolver is enabled, try GOROOT and GOMODCACHE
 	if l.UseGoModuleResolver {
-		// Try standard library in GOROOT
 		if l.goRoot != "" {
 			candidatePath := filepath.Join(l.goRoot, "src", importPath)
-			if stat, err := os.Stat(candidatePath); err == nil && stat.IsDir() {
+			if stat, err := l.FS.Stat(candidatePath); err == nil && stat.IsDir() {
 				return candidatePath, nil
 			}
 		}
 
-		// Try external modules in GOMODCACHE
 		if l.goModCache != "" {
 			for mod, ver := range l.requires {
 				if strings.HasPrefix(importPath, mod) {
-					// Path in cache is ${GOMODCACHE}/${module}@${version}/${subpath}
-					// Module paths with uppercase letters are encoded.
 					escapedMod, err := module.EscapePath(mod)
 					if err != nil {
-						// Should not happen for valid module paths
 						continue
 					}
 					baseDir := filepath.Join(l.goModCache, escapedMod+"@"+ver)
 					remainingPath := strings.TrimPrefix(importPath, mod)
 					candidatePath := filepath.Join(baseDir, remainingPath)
 
-					if stat, err := os.Stat(candidatePath); err == nil && stat.IsDir() {
+					if stat, err := l.FS.Stat(candidatePath); err == nil && stat.IsDir() {
 						return candidatePath, nil
 					}
 				}
@@ -237,7 +241,6 @@ func (l *Locator) FindPackageDir(importPath string) (string, error) {
 		}
 	}
 
-	// If no resolution method succeeded, return an error.
 	if l.modulePath != "" {
 		return "", fmt.Errorf("import path %q could not be resolved. Current module is %q (root: %s)", importPath, l.modulePath, l.rootDir)
 	}
@@ -245,11 +248,11 @@ func (l *Locator) FindPackageDir(importPath string) (string, error) {
 }
 
 // findModuleRoot searches for any go.mod starting from a given directory and moving upwards.
-func findModuleRoot(dir string) (string, error) {
+func (l *Locator) findModuleRoot(dir string) (string, error) {
 	currentDir := dir
 	for {
 		goModPath := filepath.Join(currentDir, "go.mod")
-		if _, err := os.Stat(goModPath); err == nil {
+		if _, err := l.FS.Stat(goModPath); err == nil {
 			return currentDir, nil
 		}
 
@@ -287,7 +290,7 @@ func getModulePathFromBytes(content []byte) (string, error) {
 // getReplaceDirectivesFromBytes reads replace directives from go.mod content.
 func getReplaceDirectivesFromBytes(content []byte) ([]ReplaceDirective, error) {
 	if len(content) == 0 {
-		return nil, nil // No directives in empty file
+		return nil, nil
 	}
 	var directives []ReplaceDirective
 	scanner := bufio.NewScanner(bytes.NewReader(content))
@@ -296,11 +299,11 @@ func getReplaceDirectivesFromBytes(content []byte) ([]ReplaceDirective, error) {
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 
-		if strings.HasPrefix(line, "//") { // Skip comments
+		if strings.HasPrefix(line, "//") {
 			continue
 		}
 
-		if line == "" { // Skip empty lines
+		if line == "" {
 			continue
 		}
 
@@ -309,12 +312,9 @@ func getReplaceDirectivesFromBytes(content []byte) ([]ReplaceDirective, error) {
 				inReplaceBlock = true
 				line = strings.TrimSpace(strings.TrimPrefix(line, "replace"))
 				line = strings.TrimSpace(strings.TrimPrefix(line, "("))
-				// Process first line if it's not just "replace ("
 				if line != "" {
 					directive, err := parseReplaceLine(line)
 					if err != nil {
-						// TODO: Log or handle individual line parsing errors more gracefully
-						// For now, skip malformed lines.
 						fmt.Fprintf(os.Stderr, "warning: skipping malformed replace directive line: %q in go.mod: %v\n", line, err)
 						continue
 					}
@@ -322,31 +322,26 @@ func getReplaceDirectivesFromBytes(content []byte) ([]ReplaceDirective, error) {
 				}
 				continue
 			} else {
-				// Single line replace
-				contentParts := strings.Fields(line) // line is "replace old [v] => new [v]"
-				if len(contentParts) < 1 {           // Should not happen if HasPrefix("replace") is true and line is trimmed
+				contentParts := strings.Fields(line)
+				if len(contentParts) < 1 {
 					continue
 				}
-				directiveLine := strings.Join(contentParts[1:], " ") // "old [v] => new [v]"
+				directiveLine := strings.Join(contentParts[1:], " ")
 
-				// parseReplaceLine will check for "=>"
 				directive, err := parseReplaceLine(directiveLine)
 				if err != nil {
-					// Log the original line for better context if parsing fails
 					fmt.Fprintf(os.Stderr, "warning: skipping malformed single-line replace directive content: %q (from line: %q) in go.mod: %v\n", directiveLine, line, err)
 					continue
 				}
 				directives = append(directives, directive)
-				// No need for 'continue' here as it's the end of the 'if strings.HasPrefix(line, "replace")' block's else path
 			}
-		} else if inReplaceBlock { // Ensure this is 'else if' or structure appropriately
+		} else if inReplaceBlock {
 			if line == ")" {
 				inReplaceBlock = false
 				continue
 			}
 			directive, err := parseReplaceLine(line)
 			if err != nil {
-				// fmt.Fprintf(os.Stderr, "warning: skipping malformed replace directive line: %q in go.mod: %v\n", line, err)
 				continue
 			}
 			directives = append(directives, directive)
@@ -392,13 +387,11 @@ func getRequireDirectivesFromBytes(content []byte) (map[string]string, error) {
 		if strings.HasPrefix(line, "require") {
 			if strings.Contains(line, "(") {
 				inRequireBlock = true
-				// Potentially a require statement on the same line as `require (`
 				line = strings.TrimSpace(strings.TrimPrefix(line, "require"))
 				line = strings.TrimSpace(strings.TrimPrefix(line, "("))
 			} else {
-				// Single line require
 				parts := strings.Fields(line)
-				if len(parts) == 3 { // require <path> <version>
+				if len(parts) == 3 {
 					requires[parts[1]] = parts[2]
 				}
 				continue
@@ -411,11 +404,9 @@ func getRequireDirectivesFromBytes(content []byte) (map[string]string, error) {
 				continue
 			}
 			parts := strings.Fields(line)
-			if len(parts) >= 2 { // <path> <version>
-				// Handle potential // indirect comments
+			if len(parts) >= 2 {
 				version := parts[1]
 				if len(parts) > 2 && parts[2] == "//" {
-					// it's indirect, but we still record it
 				}
 				requires[parts[0]] = version
 			}
@@ -430,11 +421,6 @@ func getRequireDirectivesFromBytes(content []byte) (map[string]string, error) {
 }
 
 // parseReplaceLine parses a single line of a replace directive.
-// Example inputs:
-// "old.module/path => new.module/path v1.2.3"
-// "old.module/path v0.0.0 => new.module/path v1.2.3"
-// "old.module/path => ./local/path"
-// "old.module/path v1.0.0 => ./local/path"
 func parseReplaceLine(line string) (ReplaceDirective, error) {
 	parts := strings.Fields(line)
 	arrowIndex := -1
@@ -463,9 +449,6 @@ func parseReplaceLine(line string) (ReplaceDirective, error) {
 		dir.IsLocal = true
 		dir.NewPath = newPathOrModule
 		if len(newParts) > 1 {
-			// This case should ideally not happen for local paths as per go.mod spec,
-			// but we'll capture it if present.
-			// The go command itself might error on such go.mod.
 			return ReplaceDirective{}, fmt.Errorf("local replacement path %q should not have a version: %q", dir.NewPath, line)
 		}
 	} else {
@@ -474,10 +457,6 @@ func parseReplaceLine(line string) (ReplaceDirective, error) {
 		if len(newParts) > 1 {
 			dir.NewVersion = newParts[1]
 		} else {
-			// If it's not local and no version is specified, it's an error according to go.mod replace spec
-			// unless it's a wildcard replacement (oldpath => newpath vX.Y.Z),
-			// but our parsing targets specific versions or local paths.
-			// For "oldmodule => newmodule", a version is required for newmodule.
 			return ReplaceDirective{}, fmt.Errorf("non-local replacement path %q requires a version: %q", dir.NewPath, line)
 		}
 	}
@@ -486,14 +465,12 @@ func parseReplaceLine(line string) (ReplaceDirective, error) {
 }
 
 // PathToImport converts an absolute directory path to its corresponding Go import path.
-// It considers the module's own path and any `replace` directives.
 func (l *Locator) PathToImport(absPath string) (string, error) {
 	absPath, err := filepath.Abs(absPath)
 	if err != nil {
 		return "", fmt.Errorf("failed to get absolute path for %s: %w", absPath, err)
 	}
 
-	// 1. Check if it's inside the main module root.
 	if strings.HasPrefix(absPath, l.rootDir) {
 		relPath, err := filepath.Rel(l.rootDir, absPath)
 		if err != nil {
@@ -505,7 +482,6 @@ func (l *Locator) PathToImport(absPath string) (string, error) {
 		return filepath.ToSlash(filepath.Join(l.modulePath, relPath)), nil
 	}
 
-	// 2. Check if it's inside a replaced local directory.
 	for _, r := range l.replaces {
 		if !r.IsLocal {
 			continue
@@ -533,9 +509,6 @@ func (l *Locator) PathToImport(absPath string) (string, error) {
 }
 
 // ResolvePkgPath converts a file path to a full Go package path.
-// If the path exists on the filesystem, it is treated as a file path and resolved.
-// If it does not exist, it's assumed to be a package path unless it has a relative
-// path prefix (like `./`), in which case it's an error.
 func ResolvePkgPath(ctx context.Context, path string) (string, error) {
 	isFilePathLike := strings.HasPrefix(path, ".") || filepath.IsAbs(path)
 
@@ -543,17 +516,13 @@ func ResolvePkgPath(ctx context.Context, path string) (string, error) {
 	if err != nil {
 		if os.IsNotExist(err) {
 			if isFilePathLike {
-				// It looks like a file path but doesn't exist. This is an error.
 				return "", fmt.Errorf("path %q does not exist: %w", path, err)
 			}
-			// It doesn't look like a file path and doesn't exist. Assume it's a package path.
 			return path, nil
 		}
-		// Other stat error.
 		return "", fmt.Errorf("error checking path %q: %w", path, err)
 	}
 
-	// Path exists, so it's a file/dir path.
 	absPath, err := filepath.Abs(path)
 	if err != nil {
 		return "", fmt.Errorf("could not get absolute path for %q: %w", path, err)
@@ -564,9 +533,8 @@ func ResolvePkgPath(ctx context.Context, path string) (string, error) {
 		searchDir = filepath.Dir(absPath)
 	}
 
-	modRoot, err := findModuleRoot(searchDir)
+	modRoot, err := findModuleRootStandalone(searchDir)
 	if err != nil {
-		// Re-wrap the error for more context.
 		return "", fmt.Errorf("could not find go.mod for path %q: %w", path, err)
 	}
 	goModPath := filepath.Join(modRoot, "go.mod")
@@ -581,7 +549,6 @@ func ResolvePkgPath(ctx context.Context, path string) (string, error) {
 		return "", fmt.Errorf("could not parse module path from %s: %w", goModPath, err)
 	}
 
-	// Use searchDir to get the relative path for the package, not the file.
 	relPath, err := filepath.Rel(modRoot, searchDir)
 	if err != nil {
 		return "", fmt.Errorf("could not determine relative path of %s from %s: %w", searchDir, modRoot, err)
@@ -592,4 +559,21 @@ func ResolvePkgPath(ctx context.Context, path string) (string, error) {
 		return modulePath, nil
 	}
 	return modulePath + "/" + pkgPath, nil
+}
+
+// findModuleRootStandalone is a version of findModuleRoot that uses the os package directly.
+func findModuleRootStandalone(dir string) (string, error) {
+	currentDir := dir
+	for {
+		goModPath := filepath.Join(currentDir, "go.mod")
+		if _, err := os.Stat(goModPath); err == nil {
+			return currentDir, nil
+		}
+
+		parentDir := filepath.Dir(currentDir)
+		if parentDir == currentDir {
+			return "", fmt.Errorf("go.mod not found in or above %s", dir)
+		}
+		currentDir = parentDir
+	}
 }

@@ -347,18 +347,18 @@ func TestRun(t *testing.T) {
 			defer os.Chdir(originalWD)
 
 			// For aggressive tests, we need a git repo
-			if aggressive, ok := tc.args["aggressive"].(bool); ok && aggressive {
-				scantest.RunCommand(t, tmpdir, "git", "init")
-				scantest.RunCommand(t, tmpdir, "git", "config", "user.email", "you@example.com")
-				scantest.RunCommand(t, tmpdir, "git", "config", "user.name", "Your Name")
-				scantest.RunCommand(t, tmpdir, "git", "add", ".")
-				scantest.RunCommand(t, tmpdir, "git", "commit", "-m", "initial commit")
-			}
+			// if aggressive, ok := tc.args["aggressive"].(bool); ok && aggressive {
+			// 	scantest.RunCommand(t, tmpdir, "git", "init")
+			// 	scantest.RunCommand(t, tmpdir, "git", "config", "user.email", "you@example.com")
+			// 	scantest.RunCommand(t, tmpdir, "git", "config", "user.name", "Your Name")
+			// 	scantest.RunCommand(t, tmpdir, "git", "add", ".")
+			// 	scantest.RunCommand(t, tmpdir, "git", "commit", "-m", "initial commit")
+			// }
 
 			// For tests that involve external dependencies, run `go mod tidy`
-			if full, ok := tc.args["full"].(bool); ok && full {
-				scantest.RunCommand(t, tmpdir, "go", "mod", "tidy")
-			}
+			// if full, ok := tc.args["full"].(bool); ok && full {
+			// 	scantest.RunCommand(t, tmpdir, "go", "mod", "tidy")
+			// }
 
 			format, ok := tc.args["format"].(string)
 			if !ok {

@@ -64,5 +64,5 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] **`find-orphans`: Advanced Usage Analysis (Interfaces)**: The `symgo` engine and `find-orphans` tool have been enhanced to allow for more precise analysis of interface method calls. The engine now correctly tracks the set of possible concrete types for an interface variable, even across control-flow branches.
 - [x] **`find-orphans`: Reporting and Final Touches**
     - [x] Implement formatted output for both default (orphans only) and verbose modes. (Note: Added JSON output via `-json` flag.)
-- [ ] **`ModuleWalker`: Wildcard Support**: Add support for the `...` wildcard in import path patterns, similar to the `go` command, to make package discovery more intuitive.
+- [x] **`ModuleWalker`: Wildcard Support**: Add support for the `...` wildcard in import path patterns, similar to the `go` command, to make package discovery more intuitive.
 - [ ] **`scantest`: Path to Import Path Conversion**: Enhance `scantest.Run` with an option or helper to automatically convert filesystem path patterns (like `.`) into their corresponding Go import path patterns, simplifying test setup for tools that consume import paths.

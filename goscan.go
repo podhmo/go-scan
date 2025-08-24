@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"go/ast"
 	"go/token"
-	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -13,11 +12,12 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/podhmo/go-scan/fs"
 	"github.com/podhmo/go-scan/locator"
 	"github.com/podhmo/go-scan/scanner"
 )
 
-// Package is an alias for scanner.PackageInfo, representing all the extracted information from a single package.
+// Package is an alias for scanner.PackageInfo.
 type Package = scanner.PackageInfo
 
 // TypeInfo is an alias for scanner.TypeInfo.
@@ -35,29 +35,32 @@ type PackageImports = scanner.PackageImports
 // Visitor is an alias for scanner.Visitor.
 type Visitor = scanner.Visitor
 
+// VisitorFunc is a helper type that implements the Visitor interface with a function.
+type VisitorFunc func(*PackageImports) ([]string, error)
+
+// Visit calls the underlying function.
+func (f VisitorFunc) Visit(p *PackageImports) ([]string, error) {
+	return f(p)
+}
+
 // Re-export scanner kinds for convenience.
 const (
 	StructKind    = scanner.StructKind
 	AliasKind     = scanner.AliasKind
 	FuncKind      = scanner.FuncKind
-	InterfaceKind = scanner.InterfaceKind // Ensure InterfaceKind is available
+	InterfaceKind = scanner.InterfaceKind
 )
 
 // Scanner is the main entry point for the type scanning library.
-// It combines a locator for finding packages, a scanner for parsing them,
-// and caches for improving performance over multiple calls.
-// Scanner instances are stateful regarding which files have been visited (parsed).
 type Scanner struct {
 	*Config
-	packageCache          map[string]*Package // Cache for PackageInfo from ScanPackage/ScanPackageByImport, key is import path
-	visitedFiles          map[string]struct{} // Set of visited (parsed) file absolute paths for this Scanner instance.
+	packageCache          map[string]*Package
+	visitedFiles          map[string]struct{}
 	mu                    sync.RWMutex
 	CachePath             string
-	symbolCache           *symbolCache // Symbol cache (persisted across Scanner instances if path is reused)
+	symbolCache           *symbolCache
 	ExternalTypeOverrides scanner.ExternalTypeOverride
-
-	// Walker is responsible for lightweight, dependency-focused scanning operations.
-	Walker *ModuleWalker
+	Walker                *ModuleWalker
 }
 
 // Fset returns the FileSet associated with the scanner.
@@ -89,13 +92,11 @@ func (s *Scanner) ScanPackageByPos(ctx context.Context, pos token.Pos) (*scanner
 	if file == nil {
 		return nil, fmt.Errorf("no file found for position")
 	}
-
 	pkgDir := filepath.Dir(file.Name())
 	return s.ScanPackage(ctx, pkgDir)
 }
 
 // ScannerForSymgo is a temporary helper for tests to access the internal scanner.
-// TODO: Refactor evaluator to use the top-level goscan.Scanner instead.
 func (s *Scanner) ScannerForSymgo() (*scanner.Scanner, error) {
 	return s.scanner, nil
 }
@@ -125,101 +126,42 @@ func (s *Scanner) LookupOverride(qualifiedName string) (*scanner.TypeInfo, bool)
 	return ti, ok
 }
 
-// Scan scans Go packages based on the provided patterns.
-// Each pattern can be a directory path or a file path relative to the scanner's workDir.
-// It returns a list of scanned packages.
+// Scan traverses the dependency graph starting from the packages matched by the
+// given patterns, and returns a list of all discovered packages.
 func (s *Scanner) Scan(patterns ...string) ([]*Package, error) {
-	pkgsMap := make(map[string]*Package) // Use map to handle duplicates
 	ctx := context.Background()
+	if s.Logger != nil {
+		// slog.Logger is passed through context, no need to create a new one here.
+	}
 
-	for _, pattern := range patterns {
-		if strings.Contains(pattern, "...") {
-			// Handle wildcard pattern
-			baseDir := strings.TrimSuffix(pattern, "...")
-			baseDir = strings.TrimSuffix(baseDir, "/")
+	var packages []*Package
+	seen := make(map[string]struct{})
 
-			absBasePath := baseDir
-			if !filepath.IsAbs(baseDir) {
-				absBasePath = filepath.Join(s.workDir, baseDir)
-			}
-
-			walkErr := filepath.WalkDir(absBasePath, func(path string, d fs.DirEntry, err error) error {
-				if err != nil {
-					return err
-				}
-				if !d.IsDir() {
-					return nil
-				}
-				// Check if the directory contains any .go files.
-				entries, err := os.ReadDir(path)
-				if err != nil {
-					// Log and continue. Don't let permission errors stop the whole walk.
-					slog.DebugContext(ctx, "cannot read directory during walk, skipping", "path", path, "error", err)
-					return nil
-				}
-				hasGoFiles := false
-				for _, entry := range entries {
-					if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".go") {
-						hasGoFiles = true
-						break
-					}
-				}
-
-				if hasGoFiles {
-					pkg, err := s.ScanPackage(ctx, path)
-					if err != nil {
-						// Log error but continue walking
-						slog.WarnContext(ctx, "failed to scan package during wildcard walk", "path", path, "error", err)
-						return nil
-					}
-					if pkg != nil && pkg.ImportPath != "" {
-						pkgsMap[pkg.ImportPath] = pkg
-					}
-				}
-				return nil
-			})
-
-			if walkErr != nil {
-				return nil, fmt.Errorf("error walking directory for pattern %q: %w", pattern, walkErr)
-			}
-		} else {
-			// Handle single file or directory pattern (legacy behavior)
-			absPath := pattern
-			if !filepath.IsAbs(pattern) {
-				absPath = filepath.Join(s.workDir, pattern)
-			}
-
-			info, err := os.Stat(absPath)
-			if err != nil {
-				return nil, fmt.Errorf("could not stat pattern %q (resolved to %q): %w", pattern, absPath, err)
-			}
-
-			var pkg *Package
-			if info.IsDir() {
-				pkg, err = s.ScanPackage(ctx, absPath)
-			} else {
-				pkg, err = s.ScanFiles(ctx, []string{absPath})
-			}
-
-			if err != nil {
-				return nil, fmt.Errorf("failed to scan path %q: %w", absPath, err)
-			}
-			if pkg != nil && pkg.ImportPath != "" {
-				pkgsMap[pkg.ImportPath] = pkg
-			}
+	visitor := VisitorFunc(func(pkgImports *PackageImports) ([]string, error) {
+		if _, ok := seen[pkgImports.ImportPath]; ok {
+			return nil, nil
 		}
+		seen[pkgImports.ImportPath] = struct{}{}
+
+		pkg, err := s.ScanPackageByImport(ctx, pkgImports.ImportPath)
+		if err != nil {
+			slog.WarnContext(ctx, "failed to scan package during walk", "importPath", pkgImports.ImportPath, "error", err)
+			return pkgImports.Imports, nil
+		}
+		if pkg != nil {
+			packages = append(packages, pkg)
+		}
+		return pkgImports.Imports, nil
+	})
+
+	if err := s.Walker.Walk(ctx, visitor, patterns...); err != nil {
+		return nil, fmt.Errorf("scan failed during package walk: %w", err)
 	}
 
-	// Convert map to slice
-	pkgs := make([]*Package, 0, len(pkgsMap))
-	for _, pkg := range pkgsMap {
-		pkgs = append(pkgs, pkg)
-	}
-	// Sort for deterministic output
-	sort.Slice(pkgs, func(i, j int) bool {
-		return pkgs[i].ImportPath < pkgs[j].ImportPath
+	sort.Slice(packages, func(i, j int) bool {
+		return packages[i].ImportPath < packages[j].ImportPath
 	})
-	return pkgs, nil
+	return packages, nil
 }
 
 // ScannerOption is a function that configures a Scanner.
@@ -233,6 +175,14 @@ func WithWorkDir(path string) ScannerOption {
 			return fmt.Errorf("getting absolute path for workdir %q: %w", path, err)
 		}
 		s.workDir = absPath
+		return nil
+	}
+}
+
+// WithFS sets the filesystem implementation for the scanner and its components.
+func WithFS(fs fs.FS) ScannerOption {
+	return func(s *Scanner) error {
+		s.FS = fs
 		return nil
 	}
 }
@@ -303,8 +253,7 @@ func WithExternalTypeOverrides(overrides scanner.ExternalTypeOverride) ScannerOp
 	}
 }
 
-// New creates a new Scanner. It finds the module root starting from the given path.
-// It also initializes an empty set of visited files for this scanner instance.
+// New creates a new Scanner.
 func New(options ...ScannerOption) (*Scanner, error) {
 	cfg := &Config{
 		fset:    token.NewFileSet(),
@@ -316,16 +265,19 @@ func New(options ...ScannerOption) (*Scanner, error) {
 		packageCache:          make(map[string]*Package),
 		visitedFiles:          make(map[string]struct{}),
 		ExternalTypeOverrides: make(scanner.ExternalTypeOverride),
-		Walker: &ModuleWalker{
-			Config:              cfg,
-			packageImportsCache: make(map[string]*scanner.PackageImports),
-		},
+	}
+	s.Walker = &ModuleWalker{
+		Config:              cfg,
+		packageImportsCache: make(map[string]*scanner.PackageImports),
 	}
 
 	for _, option := range options {
 		if err := option(s); err != nil {
 			return nil, err
 		}
+	}
+	if s.FS == nil {
+		s.FS = fs.NewOSFS()
 	}
 
 	if s.workDir == "" {
@@ -336,7 +288,10 @@ func New(options ...ScannerOption) (*Scanner, error) {
 		s.workDir = cwd
 	}
 
-	locatorOpts := []locator.Option{locator.WithOverlay(s.overlay)}
+	locatorOpts := []locator.Option{
+		locator.WithOverlay(s.overlay),
+		locator.WithFS(s.FS),
+	}
 	if s.useGoModuleResolver {
 		locatorOpts = append(locatorOpts, locator.WithGoModuleResolver())
 	}
@@ -357,12 +312,6 @@ func New(options ...ScannerOption) (*Scanner, error) {
 }
 
 // ResolvePath converts a file path to a full Go package path.
-// If the path exists on the filesystem, it is treated as a file path and resolved against
-// the module's go.mod file. If it does not exist, it is assumed to be a package path
-// and is returned as-is, unless it has a relative path prefix (like `./`), in which
-// case an error is returned.
-//
-// This function is a facade for `locator.ResolvePkgPath`.
 func ResolvePath(ctx context.Context, path string) (string, error) {
 	return locator.ResolvePkgPath(ctx, path)
 }
@@ -382,70 +331,24 @@ func (s *Scanner) SetExternalTypeOverrides(ctx context.Context, overrides scanne
 }
 
 // ResolveType starts the type resolution process for a given field type.
-// It's the public entry point for resolving types. It prepares the context
-// with necessary loggers and flags for the entire resolution chain.
 func (s *Scanner) ResolveType(ctx context.Context, fieldType *scanner.FieldType) (*scanner.TypeInfo, error) {
 	if s.scanner == nil {
 		return nil, fmt.Errorf("internal scanner is not initialized")
 	}
-
-	// Prepare the context for the entire resolution chain starting from this call.
 	if s.Logger != nil {
 		ctx = context.WithValue(ctx, scanner.LoggerKey, s.Logger)
 	}
 	ctx = context.WithValue(ctx, scanner.InspectKey, s.Inspect)
-
-	// This delegates to the internal scanner's ResolveType, which now handles
-	// the creation of the initial resolution path.
 	return s.scanner.ResolveType(ctx, fieldType)
 }
 
-// listGoFiles lists all .go files in a directory.
-// If includeTests is false, it excludes _test.go files.
-// It returns a list of absolute file paths.
-func listGoFiles(dirPath string, includeTests bool) ([]string, error) {
-	var files []string
-	entries, err := os.ReadDir(dirPath)
-	if err != nil {
-		return nil, fmt.Errorf("listGoFiles: failed to read dir %s: %w", dirPath, err)
-	}
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		name := entry.Name()
-		if !strings.HasSuffix(name, ".go") {
-			continue
-		}
-		if !includeTests && strings.HasSuffix(name, "_test.go") {
-			continue
-		}
-
-		absPath, err := filepath.Abs(filepath.Join(dirPath, name))
-		if err != nil {
-			return nil, fmt.Errorf("listGoFiles: could not get absolute path for %s: %w", name, err)
-		}
-		files = append(files, absPath)
-	}
-	return files, nil
-}
-
-// ScanPackage scans a single package at a given directory path (absolute or relative to CWD).
-// It parses all .go files (excluding _test.go) in that directory that have not yet been
-// visited (parsed) by this Scanner instance.
-// The returned PackageInfo contains information derived ONLY from the files parsed in THIS specific call.
-// If no unvisited files are found in the package, the returned PackageInfo will be minimal
-// (e.g., Path and ImportPath set, but no types/functions unless a previous cached version for the entire package is returned).
-// The result of this call (representing the newly parsed files, or a prior cached full result if no new files were parsed and cache existed)
-// is stored in an in-memory package cache (s.packageCache) for subsequent calls to ScanPackage or ScanPackageByImport
-// for the same import path.
-// The global symbol cache (s.symbolCache), if enabled, is updated with symbols from the newly parsed files.
+// ScanPackage scans a single package at a given directory path.
 func (s *Scanner) ScanPackage(ctx context.Context, pkgPath string) (*scanner.PackageInfo, error) {
 	absPkgPath, err := filepath.Abs(pkgPath)
 	if err != nil {
 		return nil, fmt.Errorf("could not get absolute path for package path %s: %w", pkgPath, err)
 	}
-	info, err := os.Stat(absPkgPath)
+	info, err := s.FS.Stat(absPkgPath)
 	if err != nil {
 		return nil, fmt.Errorf("could not stat path %s: %w", absPkgPath, err)
 	}
@@ -453,50 +356,18 @@ func (s *Scanner) ScanPackage(ctx context.Context, pkgPath string) (*scanner.Pac
 		return nil, fmt.Errorf("path %s is not a directory", absPkgPath)
 	}
 
-	moduleRoot := s.locator.RootDir()
-	modulePath := s.locator.ModulePath()
 	var importPath string
-
-	if modulePath != "" && moduleRoot != "" && strings.HasPrefix(absPkgPath, moduleRoot) {
-		relPath, rErr := filepath.Rel(moduleRoot, absPkgPath)
-		if rErr != nil {
-			return nil, fmt.Errorf("could not determine relative path for %s from module root %s: %w", absPkgPath, moduleRoot, rErr)
-		}
-		if relPath == "." || relPath == "" {
-			importPath = modulePath
-		} else {
-			importPath = filepath.ToSlash(filepath.Join(modulePath, relPath))
+	if s.locator != nil {
+		var err error
+		importPath, err = s.locator.PathToImport(absPkgPath)
+		if err != nil {
+			return nil, fmt.Errorf("could not determine import path for directory %s: %w", absPkgPath, err)
 		}
 	} else {
-		// Try to determine import path for standard library packages or other non-module paths
-		// This part might be complex and require go list or similar logic for full accuracy.
-		// For now, if not in module, we might not be able to form a canonical import path.
-		// However, ScanPackage is often called with a direct path, so importPath might be less critical
-		// than for ScanPackageByImport. Let's use the directory name as a fallback package name.
-		// If a robust import path is needed for out-of-module packages, this needs enhancement.
-		if modulePath == "" && moduleRoot == "" { // Likely not in a module context
-			slog.WarnContext(ctx, "ScanPackage called for path likely outside a Go module, import path may be inaccurate.", slog.String("path", absPkgPath))
-			importPath = filepath.Base(absPkgPath) // Fallback
-		} else if modulePath == "" { // Locator initialized but no go.mod?
-			return nil, fmt.Errorf("module path is empty, but ScanPackage called for %s. Locator issue or not in module?", absPkgPath)
-		}
-		// The original `else` block here was too restrictive. It prevented scanning
-		// packages resolved via a `replace` directive that points outside the main
-		// module's root directory. The locator is responsible for finding the correct
-		// directory for an import path, and `go-scan` should trust that result.
-		// A new mechanism is needed to get the import path for a directory that
-		// might be outside the module root, but we should not fail here.
-		// For now, we'll try to find the import path via the locator again.
-		if importPath == "" {
-			var err error
-			importPath, err = s.locator.PathToImport(absPkgPath)
-			if err != nil {
-				return nil, fmt.Errorf("could not determine import path for directory %s: %w", absPkgPath, err)
-			}
-		}
+		importPath = filepath.Base(absPkgPath)
 	}
 
-	allFilesInDir, err := listGoFiles(absPkgPath, s.IncludeTests)
+	allFilesInDir, err := s.Walker.listGoFiles(absPkgPath)
 	if err != nil {
 		return nil, fmt.Errorf("ScanPackage: could not list go files in %s: %w", absPkgPath, err)
 	}
@@ -518,85 +389,64 @@ func (s *Scanner) ScanPackage(ctx context.Context, pkgPath string) (*scanner.Pac
 		}
 		if currentCallPkgInfo != nil {
 			s.mu.Lock()
-			for _, fp := range currentCallPkgInfo.Files { // Files actually parsed in this call
+			for _, fp := range currentCallPkgInfo.Files {
 				s.visitedFiles[fp] = struct{}{}
 			}
 			s.mu.Unlock()
-			currentCallPkgInfo.ImportPath = importPath // Set import path for this call's result
-			currentCallPkgInfo.Path = absPkgPath       // Ensure path is set
+			currentCallPkgInfo.ImportPath = importPath
+			currentCallPkgInfo.Path = absPkgPath
 			s.updateSymbolCacheWithPackageInfo(ctx, importPath, currentCallPkgInfo)
 		}
 	}
 
-	// Update the main package cache with the cumulative information for this importPath.
-	// This requires merging if a previous entry existed. For now, replace.
-	// A more robust strategy might involve storing all PackageInfo from each scan call and merging on demand.
-	// For now, the cache will store the result of the latest ScanPackage or ScanPackageByImport call.
-	// If no new files were parsed, currentCallPkgInfo will be nil.
-	// We should ensure a PackageInfo object is always cached if the package itself is valid (even if empty of new symbols).
-	if currentCallPkgInfo == nil { // No new files parsed
+	if currentCallPkgInfo == nil {
 		s.mu.RLock()
 		existingCachedInfo, found := s.packageCache[importPath]
 		s.mu.RUnlock()
 		if found {
-			return existingCachedInfo, nil // Return existing full cache if nothing new parsed
+			return existingCachedInfo, nil
 		}
-		// If no cache and no new files, create a minimal PackageInfo
 		currentCallPkgInfo = &scanner.PackageInfo{
 			Path:       absPkgPath,
 			ImportPath: importPath,
-			Name:       filepath.Base(absPkgPath), // Best guess for name
+			Name:       filepath.Base(absPkgPath),
 			Fset:       s.fset,
-			Files:      []string{}, // No files parsed in *this call*
+			Files:      []string{},
 		}
 	}
-
-	// Ensure the PackageInfo reflects all known files in the directory for its Files list if it's a full ScanPackage result
-	// This is tricky without merging. The current `currentCallPkgInfo.Files` only has *newly* parsed files.
-	// For ScanPackage, the expectation is often a view of the whole package.
-	// Let's adjust: if currentCallPkgInfo was non-nil (new files parsed), its .Files is correct for *this scan*.
-	// If we are to cache a "full" view, we'd need to merge or reconstruct.
-	// Given "no merge" for ScanFiles, let's keep ScanPackage simple: its return and cache reflect *this call's parsed files*.
-	// This means s.packageCache might hold partial info if ScanPackage is called after ScanFiles visited some.
-	// This seems to align with the "no merge" philosophy more consistently.
-	// The `Files` field of PackageInfo will list files parsed in *this specific call*.
-
 	s.mu.Lock()
-	s.packageCache[importPath] = currentCallPkgInfo // Cache the result of this specific call
+	s.packageCache[importPath] = currentCallPkgInfo
 	s.mu.Unlock()
 
 	return currentCallPkgInfo, nil
 }
 
-// resolveFilePath attempts to resolve a given path string (rawPath) into an absolute file path.
+// resolveFilePath attempts to resolve a given path string into an absolute file path.
 func (s *Scanner) resolveFilePath(rawPath string) (string, error) {
 	checkFile := func(p string) (string, bool) {
 		absP, err := filepath.Abs(p)
 		if err != nil {
 			return "", false
 		}
-		info, err := os.Stat(absP)
-		if err == nil && !info.IsDir() && strings.HasSuffix(strings.ToLower(absP), ".go") { // Check .go case-insensitively for robustness
+		info, err := s.FS.Stat(absP)
+		if err == nil && !info.IsDir() && strings.HasSuffix(strings.ToLower(absP), ".go") {
 			return absP, true
 		}
 		return "", false
 	}
 
-	// Try as absolute or CWD-relative path first
 	if absPath, ok := checkFile(rawPath); ok {
 		return absPath, nil
 	}
 
-	// Try as module-qualified path
 	if s.locator != nil {
 		modulePath := s.locator.ModulePath()
 		moduleRoot := s.locator.RootDir()
 		if modulePath != "" && moduleRoot != "" && strings.HasPrefix(rawPath, modulePath) {
 			prefixToTrim := modulePath
-			// Ensure we are trimming "modulePath/" not just "modulePath" if there's more path
 			if !strings.HasSuffix(modulePath, "/") && len(rawPath) > len(modulePath) && rawPath[len(modulePath)] == '/' {
 				prefixToTrim += "/"
-			} else if rawPath == modulePath { // rawPath is just the module path, not a file in it
+			} else if rawPath == modulePath {
 				return "", fmt.Errorf("path %q is a module path, not a file path within the module", rawPath)
 			}
 
@@ -613,28 +463,6 @@ func (s *Scanner) resolveFilePath(rawPath string) (string, error) {
 }
 
 // ScanFiles scans a specified set of Go files.
-//
-// File paths in the `filePaths` argument can be provided in three forms:
-//  1. Absolute path (e.g., "/path/to/your/project/pkg/file.go").
-//  2. Path relative to the current working directory (CWD) (e.g., "pkg/file.go").
-//  3. Module-qualified path (e.g., "github.com/your/module/pkg/file.go"), which is resolved
-//     using the Scanner's associated module information (from go.mod).
-//
-// All provided file paths, after resolution, must belong to the same directory,
-// effectively meaning they must be part of the same Go package.
-//
-// This function only parses files that have not been previously visited (parsed)
-// by this specific Scanner instance (tracked in `s.visitedFiles`).
-//
-// The returned `scanner.PackageInfo` contains information derived *only* from the
-// files that were newly parsed in *this specific call*. If all specified files
-// were already visited, the `PackageInfo.Files` list (and consequently Types, Functions, etc.)
-// will be empty, though `Path` and `ImportPath` will be set according to the files' package.
-//
-// Results from `ScanFiles` are *not* stored in the main package cache (`s.packageCache`)
-// because they represent partial package information. However, the global symbol
-// cache (`s.symbolCache`), if enabled, *is* updated with symbols from the newly parsed files.
-// Files parsed by this function are marked as visited in `s.visitedFiles`.
 func (s *Scanner) ScanFiles(ctx context.Context, filePaths []string) (*scanner.PackageInfo, error) {
 	if len(filePaths) == 0 {
 		return nil, fmt.Errorf("no file paths provided to ScanFiles")
@@ -644,11 +472,9 @@ func (s *Scanner) ScanFiles(ctx context.Context, filePaths []string) (*scanner.P
 	}
 	moduleRoot := s.locator.RootDir()
 	modulePath := s.locator.ModulePath()
-	if modulePath == "" && moduleRoot == "" { // Heuristic: not in a module context at all
-		// Allow scanning if files are absolute paths and locator isn't strictly needed for path resolution itself
-		// but import path calculation will be severely limited.
+	if modulePath == "" && moduleRoot == "" {
 		slog.WarnContext(ctx, "ScanFiles called likely outside a Go module context. Import path resolution will be affected.")
-	} else if modulePath == "" || moduleRoot == "" { // Inconsistent module info
+	} else if modulePath == "" || moduleRoot == "" {
 		return nil, fmt.Errorf("module path or root is empty, ensure a go.mod file exists and is discoverable by the scanner's locator")
 	}
 
@@ -672,13 +498,7 @@ func (s *Scanner) ScanFiles(ctx context.Context, filePaths []string) (*scanner.P
 	pkgDirAbs := firstFileDir
 	var importPath string
 
-	if modulePath != "" && moduleRoot != "" { // Only attempt module-based import path if module context is valid
-		// if !strings.HasPrefix(pkgDirAbs, moduleRoot) {
-		// 	// This check is too strict for modules that use `replace` directives
-		// 	// to point to a parent directory. The locator has already resolved the
-		// 	// import path to this directory, so we should trust it.
-		// 	return nil, fmt.Errorf("package directory %s is outside the module root %s, cannot determine module-relative import path", pkgDirAbs, moduleRoot)
-		// }
+	if modulePath != "" && moduleRoot != "" {
 		relPath, err := filepath.Rel(moduleRoot, pkgDirAbs)
 		if err != nil {
 			return nil, fmt.Errorf("could not determine relative path for %s from module root %s: %w", pkgDirAbs, moduleRoot, err)
@@ -688,9 +508,7 @@ func (s *Scanner) ScanFiles(ctx context.Context, filePaths []string) (*scanner.P
 		} else {
 			importPath = filepath.ToSlash(filepath.Join(modulePath, relPath))
 		}
-	} else { // Fallback if not in a clear module context (e.g. scanning /usr/local/go/src/fmt)
-		// This part needs careful consideration for how to represent non-module packages.
-		// For now, use the directory path as a pseudo-import path.
+	} else {
 		importPath = filepath.ToSlash(pkgDirAbs)
 		slog.WarnContext(ctx, "Creating pseudo import path for package", slog.String("import_path", importPath), slog.String("package_dir", pkgDirAbs))
 	}
@@ -704,72 +522,53 @@ func (s *Scanner) ScanFiles(ctx context.Context, filePaths []string) (*scanner.P
 	}
 	s.mu.RUnlock()
 
-	if len(filesToParse) == 0 { // All specified files already visited
-		// Return an empty PackageInfo but with correct Path/ImportPath
+	if len(filesToParse) == 0 {
 		return &scanner.PackageInfo{
 			Path:       pkgDirAbs,
 			ImportPath: importPath,
-			Name:       "", // Name would require parsing or looking up a cached full PackageInfo
+			Name:       "",
 			Fset:       s.fset,
-			Files:      []string{}, // No files *newly* parsed
+			Files:      []string{},
 		}, nil
 	}
 
-	pkgInfo, err := s.scanner.ScanFiles(ctx, filesToParse, pkgDirAbs) // Scan only unvisited files
+	pkgInfo, err := s.scanner.ScanFiles(ctx, filesToParse, pkgDirAbs)
 	if err != nil {
 		return nil, fmt.Errorf("failed to scan files in %s (import path %s): %w", pkgDirAbs, importPath, err)
 	}
 
 	if pkgInfo != nil {
-		pkgInfo.ImportPath = importPath // Set the calculated import path
-		pkgInfo.Path = pkgDirAbs        // Ensure directory path is also set
+		pkgInfo.ImportPath = importPath
+		pkgInfo.Path = pkgDirAbs
 		s.mu.Lock()
-		for _, fp := range pkgInfo.Files { // Mark newly parsed files as visited
+		for _, fp := range pkgInfo.Files {
 			s.visitedFiles[fp] = struct{}{}
 		}
 		s.mu.Unlock()
-		// Results from ScanFiles (which are partial by design based on unvisited files)
-		// are NOT cached in s.packageCache. Only symbol cache is updated.
 		s.updateSymbolCacheWithPackageInfo(ctx, importPath, pkgInfo)
 	}
 	return pkgInfo, nil
 }
 
-// UnscannedGoFiles returns a list of absolute paths to .go files
-// (and optionally _test.go files) within the specified package that have not
-// yet been visited (parsed) by this Scanner instance.
-//
-// The `packagePathOrImportPath` argument can be:
-//  1. An absolute directory path to the package.
-//  2. A directory path relative to the current working directory (CWD).
-//  3. A Go import path (e.g., "github.com/your/module/pkg"), which will be resolved
-//     to a directory using the Scanner's locator.
-//
-// This method lists all relevant .go files in the identified package directory
-// and filters out those already present in the Scanner's `visitedFiles` set.
-// It is useful for discovering which files in a package still need to be processed
-// if performing iterative scanning.
+// UnscannedGoFiles returns a list of absolute paths to unscanned .go files.
 func (s *Scanner) UnscannedGoFiles(packagePathOrImportPath string) ([]string, error) {
-	if s.locator == nil && !(filepath.IsAbs(packagePathOrImportPath) && isDir(packagePathOrImportPath)) {
-		// If locator is nil, we can only proceed if packagePathOrImportPath is an absolute directory path.
+	if s.locator == nil && !(filepath.IsAbs(packagePathOrImportPath) && isDir(s, packagePathOrImportPath)) {
 		return nil, fmt.Errorf("scanner locator is not initialized, and path is not an absolute directory to a package")
 	}
 
 	var pkgDirAbs string
 	var err error
 
-	// Try as a direct file system path first (absolute or CWD-relative directory)
 	pathAsDir, err := filepath.Abs(packagePathOrImportPath)
 	if err == nil {
-		info, statErr := os.Stat(pathAsDir)
+		info, statErr := s.FS.Stat(pathAsDir)
 		if statErr == nil && info.IsDir() {
 			pkgDirAbs = pathAsDir
 		}
 	}
 
-	// If not resolved as a direct directory path, try as an import path via locator (if locator exists)
 	if pkgDirAbs == "" {
-		if s.locator == nil { // Guard again, as locator might be nil
+		if s.locator == nil {
 			return nil, fmt.Errorf("cannot resolve %q as import path: locator not available", packagePathOrImportPath)
 		}
 		pkgDirAbs, err = s.locator.FindPackageDir(packagePathOrImportPath)
@@ -778,7 +577,7 @@ func (s *Scanner) UnscannedGoFiles(packagePathOrImportPath string) ([]string, er
 		}
 	}
 
-	allGoFilesInDir, err := listGoFiles(pkgDirAbs, s.IncludeTests) // listGoFiles returns absolute paths
+	allGoFilesInDir, err := s.Walker.listGoFiles(pkgDirAbs)
 	if err != nil {
 		return nil, fmt.Errorf("UnscannedGoFiles: could not list go files in %s: %w", pkgDirAbs, err)
 	}
@@ -794,8 +593,8 @@ func (s *Scanner) UnscannedGoFiles(packagePathOrImportPath string) ([]string, er
 	return unscannedFiles, nil
 }
 
-func isDir(path string) bool {
-	info, err := os.Stat(path)
+func isDir(s *Scanner, path string) bool {
+	info, err := s.FS.Stat(path)
 	if err != nil {
 		return false
 	}
@@ -803,24 +602,6 @@ func isDir(path string) bool {
 }
 
 // ScanPackageByImport scans a single Go package identified by its import path.
-//
-// This function resolves the import path to a directory using the Scanner's locator.
-// It then attempts to parse all .go files (excluding _test.go files) in that directory
-// that have not yet been visited by this Scanner instance (`s.visitedFiles`).
-// The selection of files to parse may also be influenced by the state of the
-// symbol cache (`s.symbolCache`), if enabled, to avoid re-parsing unchanged files
-// for which symbol information is already cached and deemed valid.
-//
-// The returned `scanner.PackageInfo` contains information derived from the files
-// parsed or processed in *this specific call*.
-//
-// The result of this call is stored in an in-memory package cache (`s.packageCache`)
-// and is intended to represent the Scanner's current understanding of the package,
-// which might be based on a full parse of unvisited files or a combination of
-// cached data and newly parsed information.
-// The global symbol cache (`s.symbolCache`), if enabled, is updated with symbols
-// from any newly parsed files. Files parsed by this function are marked as visited
-// in `s.visitedFiles`.
 func (s *Scanner) ScanPackageByImport(ctx context.Context, importPath string) (*scanner.PackageInfo, error) {
 	s.mu.RLock()
 	cachedPkg, found := s.packageCache[importPath]
@@ -837,14 +618,13 @@ func (s *Scanner) ScanPackageByImport(ctx context.Context, importPath string) (*
 	}
 	slog.DebugContext(ctx, "ScanPackageByImport resolved import path", slog.String("importPath", importPath), slog.String("pkgDirAbs", pkgDirAbs))
 
-	allGoFilesInPkg, err := listGoFiles(pkgDirAbs, s.IncludeTests) // Gets absolute paths
+	allGoFilesInPkg, err := s.Walker.listGoFiles(pkgDirAbs)
 	if err != nil {
 		return nil, fmt.Errorf("ScanPackageByImport: failed to list go files in %s: %w", pkgDirAbs, err)
 	}
 	slog.DebugContext(ctx, "ScanPackageByImport found .go files", slog.Int("count", len(allGoFilesInPkg)), slog.String("pkgDirAbs", pkgDirAbs), slog.Any("files", allGoFilesInPkg))
 
 	if len(allGoFilesInPkg) == 0 {
-		// If a directory for an import path exists but has no .go files, cache an empty PackageInfo.
 		slog.DebugContext(ctx, "ScanPackageByImport found no .go files. Caching empty PackageInfo.", slog.String("pkgDirAbs", pkgDirAbs))
 		pkgInfo := &scanner.PackageInfo{Path: pkgDirAbs, ImportPath: importPath, Name: "", Fset: s.fset, Files: []string{}, Types: []*scanner.TypeInfo{}}
 		s.mu.Lock()
@@ -854,7 +634,7 @@ func (s *Scanner) ScanPackageByImport(ctx context.Context, importPath string) (*
 	}
 
 	var filesToParseThisCall []string
-	symCache, _ := s.getOrCreateSymbolCache(ctx) // Error getting cache is not fatal here
+	symCache, _ := s.getOrCreateSymbolCache(ctx)
 	slog.DebugContext(ctx, "ScanPackageByImport symbol cache status", slog.String("importPath", importPath), slog.Bool("enabled", symCache != nil && symCache.isEnabled()))
 
 	filesConsideredBySymCache := make(map[string]struct{})
@@ -863,7 +643,6 @@ func (s *Scanner) ScanPackageByImport(ctx context.Context, importPath string) (*
 		newDiskFiles, existingDiskFiles, errSym := symCache.getFilesToScan(ctx, pkgDirAbs)
 		if errSym != nil {
 			slog.WarnContext(ctx, "getFilesToScan failed. Will scan all unvisited files in the package.", slog.String("import_path", importPath), slog.String("package_dir", pkgDirAbs), slog.Any("error", errSym))
-			// Fallback: scan all files in the package that this Scanner instance hasn't visited.
 			s.mu.RLock()
 			for _, f := range allGoFilesInPkg {
 				if _, visited := s.visitedFiles[f]; !visited {
@@ -872,16 +651,13 @@ func (s *Scanner) ScanPackageByImport(ctx context.Context, importPath string) (*
 			}
 			s.mu.RUnlock()
 		} else {
-			// Add files symCache identified as new/changed
 			for _, f := range newDiskFiles {
 				filesToParseThisCall = append(filesToParseThisCall, f)
 				filesConsideredBySymCache[f] = struct{}{}
 			}
-			// For files symCache says are existing (potentially unchanged),
-			// only parse if this Scanner instance hasn't visited them yet.
 			s.mu.RLock()
 			for _, f := range existingDiskFiles {
-				filesConsideredBySymCache[f] = struct{}{} // Mark as considered
+				filesConsideredBySymCache[f] = struct{}{}
 				if _, visited := s.visitedFiles[f]; !visited {
 					filesToParseThisCall = append(filesToParseThisCall, f)
 				}
@@ -890,7 +666,6 @@ func (s *Scanner) ScanPackageByImport(ctx context.Context, importPath string) (*
 		}
 	}
 
-	// Add any file in the directory not mentioned by symCache (e.g. untracked) if unvisited by this Scanner instance
 	s.mu.RLock()
 	for _, f := range allGoFilesInPkg {
 		if _, considered := filesConsideredBySymCache[f]; !considered {
@@ -901,7 +676,6 @@ func (s *Scanner) ScanPackageByImport(ctx context.Context, importPath string) (*
 	}
 	s.mu.RUnlock()
 
-	// Deduplicate filesToParseThisCall (abs paths, so simple map is fine)
 	uniqueFilesToParse := make(map[string]struct{})
 	var dedupedFilesToParse []string
 	for _, f := range filesToParseThisCall {
@@ -914,7 +688,6 @@ func (s *Scanner) ScanPackageByImport(ctx context.Context, importPath string) (*
 
 	var currentCallPkgInfo *scanner.PackageInfo
 	if len(filesToParseThisCall) > 0 {
-		// Heuristic to check if it's a standard library package.
 		isStdLib := !strings.Contains(importPath, ".")
 
 		if isStdLib {
@@ -928,51 +701,32 @@ func (s *Scanner) ScanPackageByImport(ctx context.Context, importPath string) (*
 		}
 
 		if currentCallPkgInfo != nil {
-			// For non-std-lib packages, ScanFiles already calculates the import path.
-			// For std-lib, ScanFilesWithKnownImportPath sets it.
-			// We can still enforce it here to be safe, or trust the scanner.
-			// Let's ensure it's what we expect.
 			currentCallPkgInfo.ImportPath = importPath
-			currentCallPkgInfo.Path = pkgDirAbs // Ensure path
+			currentCallPkgInfo.Path = pkgDirAbs
 			s.mu.Lock()
-			for _, fp := range currentCallPkgInfo.Files { // Mark newly parsed files as visited by this instance
+			for _, fp := range currentCallPkgInfo.Files {
 				s.visitedFiles[fp] = struct{}{}
 			}
 			s.mu.Unlock()
-			s.updateSymbolCacheWithPackageInfo(ctx, importPath, currentCallPkgInfo) // Update global symbol cache
+			s.updateSymbolCacheWithPackageInfo(ctx, importPath, currentCallPkgInfo)
 		}
 	}
 
-	// If no new files were parsed in this call, but the package is not empty,
-	// it means all files were either already visited or symcache deemed them unchanged & visited.
-	// We should return a PackageInfo that reflects the package structure.
 	if currentCallPkgInfo == nil {
 		currentCallPkgInfo = &scanner.PackageInfo{
 			Path:       pkgDirAbs,
 			ImportPath: importPath,
-			Name:       "", // Name might be derivable if any file was ever parsed for this package
+			Name:       "",
 			Fset:       s.fset,
-			Files:      []string{}, // No files *newly* parsed in this call.
+			Files:      []string{},
 		}
-		// Attempt to set a name if possible from a previously (partially) cached PackageInfo
-		// This is a bit of a workaround for not merging.
 		s.mu.RLock()
 		if prevInfo, ok := s.packageCache[importPath]; ok && prevInfo.Name != "" {
 			currentCallPkgInfo.Name = prevInfo.Name
-		} else if len(allGoFilesInPkg) > 0 { // Try to get from any already visited file if no cache
-			// This is complex; for now, leave Name blank if not easily found.
+		} else if len(allGoFilesInPkg) > 0 {
 		}
 		s.mu.RUnlock()
 	}
-
-	// The PackageInfo cached by ScanPackageByImport should represent the state of the package
-	// as understood by this call (i.e., including all files parsed up to this point for this package).
-	// Since "no merge" is a principle, the cache stores the result of *this specific call*.
-	// If this call parsed new files, currentCallPkgInfo has them. If not, it's minimal.
-	// This means the packageCache might not always have the "fullest" possible PackageInfo
-	// if ScanFiles was used to visit parts of the package before this.
-	// This is a known trade-off of the "no merge" + "instance-visited" design.
-
 	s.mu.Lock()
 	s.packageCache[importPath] = currentCallPkgInfo
 	s.mu.Unlock()
@@ -1021,8 +775,6 @@ func (s *Scanner) getOrCreateSymbolCache(ctx context.Context) (*symbolCache, err
 }
 
 // updateSymbolCacheWithPackageInfo updates the symbol cache with information from a given PackageInfo.
-// The pkgInfo provided should typically represent the symbols parsed from a specific set of files
-// in the context of the given importPath.
 func (s *Scanner) updateSymbolCacheWithPackageInfo(ctx context.Context, importPath string, pkgInfo *scanner.PackageInfo) {
 	if s.CachePath == "" || pkgInfo == nil || len(pkgInfo.Files) == 0 {
 		return
@@ -1039,8 +791,7 @@ func (s *Scanner) updateSymbolCacheWithPackageInfo(ctx context.Context, importPa
 	symbolsByFile := make(map[string][]string)
 	addSymbol := func(symbolName, absFilePath string) {
 		if symbolName != "" && absFilePath != "" {
-			// Ensure absFilePath is truly absolute for consistency
-			absFilePath, _ = filepath.Abs(absFilePath) // error unlikely if path came from system
+			absFilePath, _ = filepath.Abs(absFilePath)
 			key := importPath + "." + symbolName
 			if err := symCache.setSymbol(key, absFilePath); err != nil {
 				slog.ErrorContext(ctx, "Error setting cache for symbol", slog.String("symbol_key", key), slog.Any("error", err))
@@ -1059,9 +810,9 @@ func (s *Scanner) updateSymbolCacheWithPackageInfo(ctx context.Context, importPa
 		addSymbol(constInfo.Name, constInfo.FilePath)
 	}
 
-	for _, absFilePath := range pkgInfo.Files { // These are files that were actually parsed for pkgInfo
-		absFilePath, _ = filepath.Abs(absFilePath) // Ensure absolute
-		if _, err := os.Stat(absFilePath); os.IsNotExist(err) {
+	for _, absFilePath := range pkgInfo.Files {
+		absFilePath, _ = filepath.Abs(absFilePath)
+		if _, err := s.FS.Stat(absFilePath); os.IsNotExist(err) {
 			slog.WarnContext(ctx, "File from pkgInfo.Files not found, skipping for fileMetadata update", slog.String("file", absFilePath))
 			continue
 		}
@@ -1092,8 +843,7 @@ func (s *Scanner) SaveSymbolCache(ctx context.Context) error {
 	return nil
 }
 
-// ListExportedSymbols scans a package by its import path and returns a list of all
-// its exported top-level symbol names (functions, types, and constants).
+// ListExportedSymbols scans a package by its import path and returns a list of all its exported symbols.
 func (s *Scanner) ListExportedSymbols(ctx context.Context, pkgPath string) ([]string, error) {
 	pkgInfo, err := s.ScanPackageByImport(ctx, pkgPath)
 	if err != nil {
@@ -1103,7 +853,6 @@ func (s *Scanner) ListExportedSymbols(ctx context.Context, pkgPath string) ([]st
 	var exportedSymbols []string
 
 	for _, f := range pkgInfo.Functions {
-		// We only care about top-level functions, not methods on types.
 		if f.Receiver == nil && f.AstDecl != nil && f.AstDecl.Name != nil && f.AstDecl.Name.IsExported() {
 			exportedSymbols = append(exportedSymbols, f.Name)
 		}
@@ -1128,12 +877,6 @@ func (s *Scanner) ListExportedSymbols(ctx context.Context, pkgPath string) ([]st
 }
 
 // FindSymbolDefinitionLocation attempts to find the absolute file path where a given symbol is defined.
-// The `symbolFullName` should be in the format "package/import/path.SymbolName".
-//
-// It first checks the persistent symbol cache (if enabled and loaded).
-// If not found in the cache, it triggers a scan of the relevant package
-// (using `ScanPackageByImport`) to populate caches and then re-checks.
-// Finally, it inspects the `PackageInfo` obtained from the scan.
 func (s *Scanner) FindSymbolDefinitionLocation(ctx context.Context, symbolFullName string) (string, error) {
 	lastDot := strings.LastIndex(symbolFullName, ".")
 	if lastDot == -1 || lastDot == 0 || lastDot == len(symbolFullName)-1 {
@@ -1154,18 +897,16 @@ func (s *Scanner) FindSymbolDefinitionLocation(ctx context.Context, symbolFullNa
 			}
 		}
 	}
-	// If symbol not found in cache, try to scan the package.
-	pkgInfo, err := s.ScanPackageByImport(ctx, importPath) // This will parse unvisited files and update caches
+	pkgInfo, err := s.ScanPackageByImport(ctx, importPath)
 	if err != nil {
 		return "", fmt.Errorf("scan for package %s (for symbol %s) failed: %w", importPath, symbolName, err)
 	}
 
-	// After scan, check cache again (if enabled)
 	if s.CachePath != "" {
 		if s.symbolCache != nil && s.symbolCache.isEnabled() {
-			filePath, found := s.symbolCache.get(cacheKey) // Get does not need context
+			filePath, found := s.symbolCache.get(cacheKey)
 			if found {
-				if _, statErr := os.Stat(filePath); statErr == nil {
+				if _, statErr := s.FS.Stat(filePath); statErr == nil {
 					return filePath, nil
 				}
 				slog.WarnContext(ctx, "Symbol found in cache after scan, but file does not exist.", slog.String("symbol", symbolFullName), slog.String("path", filePath))
@@ -1173,8 +914,6 @@ func (s *Scanner) FindSymbolDefinitionLocation(ctx context.Context, symbolFullNa
 		}
 	}
 
-	// If still not found via cache, check the pkgInfo returned by the ScanPackageByImport call.
-	// This pkgInfo contains symbols from files *parsed in that specific call*.
 	if pkgInfo != nil {
 		targetFilePath := ""
 		for _, t := range pkgInfo.Types {
@@ -1201,7 +940,7 @@ func (s *Scanner) FindSymbolDefinitionLocation(ctx context.Context, symbolFullNa
 		}
 
 		if targetFilePath != "" {
-			if _, statErr := os.Stat(targetFilePath); statErr == nil {
+			if _, statErr := s.FS.Stat(targetFilePath); statErr == nil {
 				return targetFilePath, nil
 			}
 			return "", fmt.Errorf("symbol %s found in package %s at %s by scan, but file does not exist", symbolName, importPath, targetFilePath)
@@ -1212,20 +951,15 @@ func (s *Scanner) FindSymbolDefinitionLocation(ctx context.Context, symbolFullNa
 }
 
 // FindSymbolInPackage searches for a specific symbol within a package by scanning its files one by one.
-// It only scans files that have not yet been visited by this scanner instance.
-// If the symbol is found, it returns a cumulative PackageInfo of all files scanned in the package up to that point
-// and marks the file as visited. If the symbol is not found after checking all unscanned files, it returns an error.
 func (s *Scanner) FindSymbolInPackage(ctx context.Context, importPath string, symbolName string) (*scanner.PackageInfo, error) {
 	unscannedFiles, err := s.UnscannedGoFiles(importPath)
 	if err != nil {
 		return nil, fmt.Errorf("could not get unscanned files for package %s: %w", importPath, err)
 	}
 
-	// Heuristic to check if it's a standard library package.
 	isStdLib := !strings.Contains(importPath, ".")
 	var pkgDirAbs string
 	if isStdLib {
-		// We need the absolute path for ScanFilesWithKnownImportPath
 		pkgDirAbs, err = s.locator.FindPackageDir(importPath)
 		if err != nil {
 			return nil, fmt.Errorf("could not find directory for stdlib import path %s: %w", importPath, err)
@@ -1239,10 +973,6 @@ func (s *Scanner) FindSymbolInPackage(ctx context.Context, importPath string, sy
 		var scanErr error
 
 		if isStdLib {
-			// For stdlib packages, we need to bypass the public `ScanFiles` because it cannot
-			// calculate the import path for paths outside the module root.
-			// We call the internal scanner directly and then manually perform the necessary updates
-			// that the public `ScanFiles` would have done (updating visited files and symbol cache).
 			pkgInfo, scanErr = s.scanner.ScanFilesWithKnownImportPath(ctx, []string{fileToScan}, pkgDirAbs, importPath)
 			if scanErr == nil && pkgInfo != nil {
 				s.mu.Lock()
@@ -1253,12 +983,10 @@ func (s *Scanner) FindSymbolInPackage(ctx context.Context, importPath string, sy
 				s.updateSymbolCacheWithPackageInfo(ctx, importPath, pkgInfo)
 			}
 		} else {
-			// For in-module packages, the public `ScanFiles` method works correctly.
 			pkgInfo, scanErr = s.ScanFiles(ctx, []string{fileToScan})
 		}
 
 		if scanErr != nil {
-			// Log the error but continue trying other files. A single file might have syntax errors.
 			slog.WarnContext(ctx, "failed to scan file while searching for symbol", "file", fileToScan, "symbol", symbolName, "error", scanErr)
 			continue
 		}
@@ -1266,17 +994,12 @@ func (s *Scanner) FindSymbolInPackage(ctx context.Context, importPath string, sy
 		if pkgInfo == nil {
 			continue
 		}
-
-		// Merge the just-scanned info into a cumulative PackageInfo for this package.
 		if cumulativePkgInfo == nil {
 			cumulativePkgInfo = pkgInfo
 		} else {
-			// This is a simplified merge. A more robust implementation would handle conflicts.
 			cumulativePkgInfo.Types = append(cumulativePkgInfo.Types, pkgInfo.Types...)
 			cumulativePkgInfo.Functions = append(cumulativePkgInfo.Functions, pkgInfo.Functions...)
 			cumulativePkgInfo.Constants = append(cumulativePkgInfo.Constants, pkgInfo.Constants...)
-
-			// Merge AstFiles and Files lists
 			if cumulativePkgInfo.AstFiles == nil {
 				cumulativePkgInfo.AstFiles = make(map[string]*ast.File)
 			}
@@ -1285,8 +1008,6 @@ func (s *Scanner) FindSymbolInPackage(ctx context.Context, importPath string, sy
 					cumulativePkgInfo.AstFiles[path] = ast
 				}
 			}
-
-			// Avoid duplicating file paths
 			existingFiles := make(map[string]struct{}, len(cumulativePkgInfo.Files))
 			for _, f := range cumulativePkgInfo.Files {
 				existingFiles[f] = struct{}{}
@@ -1304,21 +1025,19 @@ func (s *Scanner) FindSymbolInPackage(ctx context.Context, importPath string, sy
 	if cumulativePkgInfo == nil {
 		return nil, fmt.Errorf("no unscanned files found and symbol %q not in cache for package %q", symbolName, importPath)
 	}
-
-	// Now, check for the symbol in the fully cumulative package info.
 	for _, t := range cumulativePkgInfo.Types {
 		if t.Name == symbolName {
-			return cumulativePkgInfo, nil // Found it
+			return cumulativePkgInfo, nil
 		}
 	}
 	for _, f := range cumulativePkgInfo.Functions {
 		if f.Name == symbolName {
-			return cumulativePkgInfo, nil // Found it
+			return cumulativePkgInfo, nil
 		}
 	}
 	for _, c := range cumulativePkgInfo.Constants {
 		if c.Name == symbolName {
-			return cumulativePkgInfo, nil // Found it
+			return cumulativePkgInfo, nil
 		}
 	}
 

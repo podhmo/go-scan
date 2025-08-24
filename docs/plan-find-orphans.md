@@ -172,3 +172,38 @@ Instead of creating a separate management layer or multiple `Scanner` instances,
 1.  **Workspace-Aware Scanner**: The `goscan.Scanner` can be initialized with a list of module directories via a new `WithModuleDirs` option. When this option is used, the scanner creates and manages a `locator.Locator` for each module.
 2.  **Unified Package Resolution**: The `Scanner.ScanPackageByImport` method was enhanced to be workspace-aware. When asked to resolve a package, it first determines which module the package belongs to and uses the corresponding `locator`. This allows it to seamlessly find and parse packages from any module in the workspace. Standard library packages are also handled correctly.
 3.  **Package Discovery**: The `find-orphans` tool's analysis logic was updated. In workspace mode, it constructs absolute path patterns for each module (e.g., `/path/to/moduleA/...`, `/path/to/moduleB/...`) and passes this combined list to the `ModuleWalker`. This ensures that the initial discovery phase finds all packages across all modules in a single walk.
+
+## 8. Future Enhancement: Go Workspace (`go.work`) Support
+
+To further improve multi-module analysis, the tool could be enhanced to natively understand Go workspace files (`go.work`). This would provide a more idiomatic and precise way to define the analysis scope compared to the current `--workspace-root` directory walk.
+
+### Goal
+
+Allow the `find-orphans` tool to use a `go.work` file as the source of truth for which modules should be included in the analysis.
+
+### Proposed CLI
+
+A new flag, `--go-work <path/to/go.work>`, would be introduced. If this flag is provided, it takes precedence over `--workspace-root`. The tool would parse the `go.work` file and only include modules specified in the `use` directives.
+
+### Technical Approach
+
+1.  **`go.work` Parser**:
+    - A parser for the `go.work` file format would be needed. The format is simple (similar to `go.mod`), so it could be parsed with a regular expression or a more robust custom parser. The standard library's `golang.org/x/mod/workfile` package is the ideal candidate for this, as it's the official parser.
+    - The parser would need to extract the relative paths from all `use` directives.
+
+2.  **Module Path Resolution**:
+    - The paths in `go.work`'s `use` directives are relative to the directory containing the `go.work` file.
+    - The tool would need to resolve these relative paths into absolute directory paths.
+
+3.  **Integration with `goscan.Scanner`**:
+    - Once the absolute paths to all modules in the `use` directives are collected, this list of paths can be passed directly to the existing `goscan.WithModuleDirs` option when creating the `goscan.Scanner`.
+    - The rest of the analysis would proceed as it does for the current `--workspace-root` implementation, as the underlying mechanism is the same.
+
+### Example Flow
+
+1.  User runs: `find-orphans --go-work /path/to/my/project/go.work`
+2.  The tool parses `/path/to/my/project/go.work`.
+3.  It finds `use ( ./module-a )` and `use ( ./libs/module-b )`.
+4.  It resolves these to `/path/to/my/project/module-a` and `/path/to/my/project/libs/module-b`.
+5.  It calls `goscan.New(goscan.WithModuleDirs([]string{"/path/to/my/project/module-a", "/path/to/my/project/libs/module-b"}))`.
+6.  The analysis continues as normal.

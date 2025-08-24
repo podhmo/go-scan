@@ -37,15 +37,19 @@ type Object interface {
 	// Inspect returns a string representation of the object's value.
 	Inspect() string
 	// TypeInfo returns the underlying go-scan type information, if available.
-	// This is the bridge between the symbolic world and the static type world.
 	TypeInfo() *scanner.TypeInfo
 	// SetTypeInfo sets the underlying go-scan type information.
 	SetTypeInfo(*scanner.TypeInfo)
+	// FieldType returns the field type information for the object.
+	FieldType() *scanner.FieldType
+	// SetFieldType sets the field type information for the object.
+	SetFieldType(*scanner.FieldType)
 }
 
-// BaseObject provides a default implementation for the TypeInfo method.
+// BaseObject provides a default implementation for the TypeInfo and FieldType methods.
 type BaseObject struct {
 	ResolvedTypeInfo *scanner.TypeInfo
+	ResolvedFieldType *scanner.FieldType
 }
 
 // TypeInfo returns the stored type information.
@@ -56,6 +60,16 @@ func (b *BaseObject) TypeInfo() *scanner.TypeInfo {
 // SetTypeInfo sets the stored type information.
 func (b *BaseObject) SetTypeInfo(ti *scanner.TypeInfo) {
 	b.ResolvedTypeInfo = ti
+}
+
+// FieldType returns the stored field type information.
+func (b *BaseObject) FieldType() *scanner.FieldType {
+	return b.ResolvedFieldType
+}
+
+// SetFieldType sets the stored field type information.
+func (b *BaseObject) SetFieldType(ft *scanner.FieldType) {
+	b.ResolvedFieldType = ft
 }
 
 // --- String Object ---
@@ -219,9 +233,9 @@ type SymbolicPlaceholder struct {
 	Receiver Object
 	// If the placeholder is for an interface method call, this holds the method info.
 	UnderlyingMethod *scanner.MethodInfo
-	// For interface method calls, this holds the set of possible concrete types
+	// For interface method calls, this holds the set of possible concrete field types
 	// that the receiver variable could hold.
-	PossibleConcreteTypes []*scanner.TypeInfo
+	PossibleConcreteTypes []*scanner.FieldType
 }
 
 // Type returns the type of the SymbolicPlaceholder object.
@@ -255,10 +269,9 @@ type Variable struct {
 	BaseObject
 	Name  string
 	Value Object
-	// LastConcreteType tracks the type of the last concrete value assigned to this variable.
-	// This is a simplification to help resolve interface method calls without full
-	// control-flow analysis.
-	LastConcreteType *scanner.TypeInfo
+	// PossibleConcreteTypes tracks the set of concrete field types that have been
+	// assigned to this variable. This is used for precise analysis of interface method calls.
+	PossibleConcreteTypes map[*scanner.FieldType]struct{}
 }
 
 // Type returns the type of the Variable object.
@@ -304,7 +317,7 @@ func (n *Nil) Inspect() string { return "nil" }
 // which captures the slice structure (e.g., []User).
 type Slice struct {
 	BaseObject
-	FieldType *scanner.FieldType
+	SliceFieldType *scanner.FieldType
 }
 
 // Type returns the type of the Slice object.
@@ -312,8 +325,8 @@ func (s *Slice) Type() ObjectType { return SLICE_OBJ }
 
 // Inspect returns a string representation of the slice type.
 func (s *Slice) Inspect() string {
-	if s.FieldType != nil {
-		return s.FieldType.String()
+	if s.SliceFieldType != nil {
+		return s.SliceFieldType.String()
 	}
 	return "[]<unknown>"
 }
@@ -369,6 +382,16 @@ func (e *Environment) Walk(fn func(name string, obj Object) bool) {
 	}
 	if e.outer != nil {
 		e.outer.Walk(fn)
+	}
+}
+
+// WalkLocal iterates over all items in the local scope of the environment only.
+// If the callback function returns false, the walk is stopped.
+func (e *Environment) WalkLocal(fn func(name string, obj Object) bool) {
+	for name, obj := range e.store {
+		if !fn(name, obj) {
+			return
+		}
 	}
 }
 

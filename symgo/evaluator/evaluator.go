@@ -170,10 +170,10 @@ func (e *Evaluator) evalIndexExpr(ctx context.Context, node *ast.IndexExpr, env 
 
 	switch l := left.(type) {
 	case *object.Slice:
-		sliceFieldType = l.FieldType
+		sliceFieldType = l.SliceFieldType
 	case *object.Variable:
 		if s, ok := l.Value.(*object.Slice); ok {
-			sliceFieldType = s.FieldType
+			sliceFieldType = s.SliceFieldType
 		} else if ti := l.TypeInfo(); ti != nil && ti.Underlying != nil && ti.Underlying.IsSlice {
 			sliceFieldType = ti.Underlying
 		}
@@ -217,20 +217,28 @@ func (e *Evaluator) evalCompositeLit(ctx context.Context, node *ast.CompositeLit
 	}
 
 	if fieldType.IsSlice {
-		return &object.Slice{FieldType: fieldType}
+		sliceObj := &object.Slice{SliceFieldType: fieldType}
+		sliceObj.SetFieldType(fieldType)
+		return sliceObj
 	}
 
 	resolvedType, _ := fieldType.Resolve(ctx)
 	if resolvedType == nil {
-		return &object.SymbolicPlaceholder{
+		placeholder := &object.SymbolicPlaceholder{
 			Reason: fmt.Sprintf("unresolved composite literal of type %s", fieldType.String()),
 		}
+		placeholder.SetFieldType(fieldType)
+		return placeholder
 	}
 
-	return &object.Instance{
-		TypeName:   fmt.Sprintf("%s.%s", resolvedType.PkgPath, resolvedType.Name),
-		BaseObject: object.BaseObject{ResolvedTypeInfo: resolvedType},
+	instance := &object.Instance{
+		TypeName: fmt.Sprintf("%s.%s", resolvedType.PkgPath, resolvedType.Name),
+		BaseObject: object.BaseObject{
+			ResolvedTypeInfo: resolvedType,
+		},
 	}
+	instance.SetFieldType(fieldType)
+	return instance
 }
 
 func (e *Evaluator) evalBinaryExpr(ctx context.Context, node *ast.BinaryExpr, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
@@ -289,13 +297,16 @@ func (e *Evaluator) evalUnaryExpr(ctx context.Context, node *ast.UnaryExpr, env 
 			return val
 		}
 		ptr := &object.Pointer{Value: val}
-		typeInfo := val.TypeInfo()
-		if typeInfo != nil {
-			e.logger.Debug("evalUnaryExpr: attaching type to pointer", "type", typeInfo.Name)
-		} else {
-			e.logger.Debug("evalUnaryExpr: type info for pointer value is nil")
+
+		// Create a new FieldType for the pointer.
+		if originalFieldType := val.FieldType(); originalFieldType != nil {
+			pointerFieldType := &scanner.FieldType{
+				IsPointer: true,
+				Elem:      originalFieldType,
+			}
+			ptr.SetFieldType(pointerFieldType)
 		}
-		ptr.ResolvedTypeInfo = typeInfo
+		ptr.SetTypeInfo(val.TypeInfo())
 		return ptr
 	}
 	return newError(node.Pos(), "unknown unary operator: %s", node.Op)
@@ -325,12 +336,9 @@ func (e *Evaluator) evalGenDecl(ctx context.Context, node *ast.GenDecl, env *obj
 			continue
 		}
 
-		var resolvedTypeInfo *scanner.TypeInfo
+		var staticFieldType *scanner.FieldType
 		if valSpec.Type != nil {
-			fieldType := e.scanner.TypeInfoFromExpr(ctx, valSpec.Type, nil, pkg, importLookup)
-			if fieldType != nil {
-				resolvedTypeInfo, _ = fieldType.Resolve(ctx)
-			}
+			staticFieldType = e.scanner.TypeInfoFromExpr(ctx, valSpec.Type, nil, pkg, importLookup)
 		}
 
 		for i, name := range valSpec.Names {
@@ -342,17 +350,18 @@ func (e *Evaluator) evalGenDecl(ctx context.Context, node *ast.GenDecl, env *obj
 				}
 			}
 
-			if resolvedTypeInfo != nil {
-				e.logger.Debug("evalGenDecl: resolved type for var", "var", name.Name, "type", resolvedTypeInfo.Name)
-			} else {
-				e.logger.Debug("evalGenDecl: could not resolve type for var", "var", name.Name)
+			var resolvedTypeInfo *scanner.TypeInfo
+			if staticFieldType != nil {
+				resolvedTypeInfo, _ = staticFieldType.Resolve(ctx)
 			}
+
 			v := &object.Variable{
-				Name: name.Name,
-				BaseObject: object.BaseObject{
-					ResolvedTypeInfo: resolvedTypeInfo,
-				},
+				Name:  name.Name,
 				Value: val,
+				BaseObject: object.BaseObject{
+					ResolvedTypeInfo:  resolvedTypeInfo,
+					ResolvedFieldType: staticFieldType,
+				},
 			}
 			env.Set(name.Name, v)
 		}
@@ -738,9 +747,13 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 						BaseObject:       object.BaseObject{ResolvedTypeInfo: typeInfo},
 					}
 
-					// If we have tracked a concrete type for the variable, add it to the placeholder.
-					if val.LastConcreteType != nil {
-						placeholder.PossibleConcreteTypes = []*scanner.TypeInfo{val.LastConcreteType}
+					// If we have tracked concrete types for the variable, add them to the placeholder.
+					if len(val.PossibleConcreteTypes) > 0 {
+						types := make([]*scanner.FieldType, 0, len(val.PossibleConcreteTypes))
+						for t := range val.PossibleConcreteTypes {
+							types = append(types, t)
+						}
+						placeholder.PossibleConcreteTypes = types
 					}
 
 					return placeholder
@@ -756,7 +769,6 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 }
 
 func (e *Evaluator) evalSwitchStmt(ctx context.Context, n *ast.SwitchStmt, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
-	// In symbolic execution, we explore all branches of a switch statement.
 	switchEnv := env
 	if n.Init != nil {
 		switchEnv = object.NewEnclosedEnvironment(env)
@@ -766,9 +778,11 @@ func (e *Evaluator) evalSwitchStmt(ctx context.Context, n *ast.SwitchStmt, env *
 	}
 
 	if n.Body != nil {
+		// In this new model, we don't need to merge environments.
+		// We just evaluate all branches in their own scope. The assignment logic
+		// will handle updating the parent interface variable.
 		for _, c := range n.Body.List {
 			if caseClause, ok := c.(*ast.CaseClause); ok {
-				// We don't evaluate the case conditions, just execute the body.
 				caseEnv := object.NewEnclosedEnvironment(switchEnv)
 				for _, stmt := range caseClause.Body {
 					e.Eval(ctx, stmt, caseEnv, pkg)
@@ -777,7 +791,6 @@ func (e *Evaluator) evalSwitchStmt(ctx context.Context, n *ast.SwitchStmt, env *
 		}
 	}
 
-	// The result of a switch statement is not a value.
 	return &object.SymbolicPlaceholder{Reason: "switch statement"}
 }
 
@@ -800,8 +813,6 @@ func (e *Evaluator) evalForStmt(ctx context.Context, n *ast.ForStmt, env *object
 }
 
 func (e *Evaluator) evalIfStmt(ctx context.Context, n *ast.IfStmt, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
-	// In symbolic execution, we don't evaluate the condition. We explore both paths.
-	// We evaluate the Init statement in a new scope.
 	ifStmtEnv := env
 	if n.Init != nil {
 		ifStmtEnv = object.NewEnclosedEnvironment(env)
@@ -810,25 +821,25 @@ func (e *Evaluator) evalIfStmt(ctx context.Context, n *ast.IfStmt, env *object.E
 		}
 	}
 
-	// Evaluate the main body.
-	e.Eval(ctx, n.Body, object.NewEnclosedEnvironment(ifStmtEnv), pkg)
+	// Evaluate both branches. Each gets its own enclosed environment.
+	// The new assignment logic handles updating parent scopes correctly.
+	thenEnv := object.NewEnclosedEnvironment(ifStmtEnv)
+	e.Eval(ctx, n.Body, thenEnv, pkg)
 
-	// Evaluate the else block if it exists.
 	if n.Else != nil {
-		e.Eval(ctx, n.Else, object.NewEnclosedEnvironment(ifStmtEnv), pkg)
+		elseEnv := object.NewEnclosedEnvironment(ifStmtEnv)
+		e.Eval(ctx, n.Else, elseEnv, pkg)
 	}
 
-	// The result of an if statement is not a value, so we return a placeholder.
-	// A more advanced engine might return a union of possible return values from the branches.
 	return &object.SymbolicPlaceholder{Reason: "if/else statement"}
 }
 
 func (e *Evaluator) evalBlockStatement(ctx context.Context, block *ast.BlockStmt, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
 	var result object.Object
-	blockEnv := object.NewEnclosedEnvironment(env)
-
+	// The caller is responsible for creating a new scope if one is needed.
+	// We evaluate the statements in the provided environment.
 	for _, stmt := range block.List {
-		result = e.Eval(ctx, stmt, blockEnv, pkg)
+		result = e.Eval(ctx, stmt, env, pkg)
 
 		if result != nil {
 			rt := result.Type()
@@ -896,7 +907,8 @@ func (e *Evaluator) evalAssignStmt(ctx context.Context, n *ast.AssignStmt, env *
 					continue
 				}
 				val := multiRet.Values[i]
-				e.assignIdentifier(ident, val, n.Tok, env)
+				// When assigning from a multi-value return, the token is always ASSIGN, not DEFINE.
+				e.assignIdentifier(ident, val, token.ASSIGN, env)
 			}
 		}
 		return nil
@@ -942,58 +954,65 @@ func (e *Evaluator) evalIdentAssignment(ctx context.Context, ident *ast.Ident, r
 }
 
 func (e *Evaluator) assignIdentifier(ident *ast.Ident, val object.Object, tok token.Token, env *object.Environment) object.Object {
-	// For `:=`, we define a new variable.
+	// For `:=`, we always define a new variable in the current scope.
 	if tok == token.DEFINE {
+		possibleTypes := make(map[*scanner.FieldType]struct{})
+		if ft := val.FieldType(); ft != nil {
+			possibleTypes[ft] = struct{}{}
+		}
 		v := &object.Variable{
-			Name:             ident.Name,
-			Value:            val,
-			LastConcreteType: val.TypeInfo(), // Track the initial concrete type.
+			Name:                  ident.Name,
+			Value:                 val,
+			PossibleConcreteTypes: possibleTypes,
 			BaseObject: object.BaseObject{
-				ResolvedTypeInfo: val.TypeInfo(),
+				ResolvedTypeInfo:  val.TypeInfo(),
+				ResolvedFieldType: val.FieldType(),
 			},
 		}
-		e.logger.Debug("evalAssignStmt: defining var", "name", ident.Name, "type", val.Type())
+		e.logger.Debug("evalAssignStmt: defining var", "name", ident.Name)
 		return env.Set(ident.Name, v)
 	}
 
-	// For `=`, we update an existing variable.
+	// For `=`, find the variable and update it in-place.
 	obj, ok := env.Get(ident.Name)
 	if !ok {
-		// This case can be hit in `x, _ = myFunc()` where `x` is a package-level var.
-		// `Get` won't find it if it's not in the current function's env stack.
-		// We'll define it here for simplicity. A more robust solution might search outer scopes more explicitly.
-		v := &object.Variable{
-			Name:             ident.Name,
-			Value:            val,
-			LastConcreteType: val.TypeInfo(),
-			BaseObject: object.BaseObject{
-				ResolvedTypeInfo: val.TypeInfo(),
-			},
-		}
-		e.logger.Debug("evalAssignStmt: defining global-like var", "name", ident.Name, "type", val.Type())
-		return env.Set(ident.Name, v)
+		// This can happen for package-level variables not yet evaluated.
+		// We define it in the current scope as a fallback.
+		return e.assignIdentifier(ident, val, token.DEFINE, env)
 	}
 
-	if v, ok := obj.(*object.Variable); ok {
-		v.Value = val
-		v.LastConcreteType = val.TypeInfo() // Update the concrete type on every assignment.
-
-		// If the variable's static type is an interface, we want to preserve that type
-		// information, even when assigning a concrete type. This ensures that subsequent
-		// method calls on the variable are treated as interface calls.
-		if val.TypeInfo() != nil {
-			originalType := v.TypeInfo()
-			if originalType == nil || originalType.Kind != scanner.InterfaceKind {
-				v.ResolvedTypeInfo = val.TypeInfo()
-			}
-		}
-		e.logger.Debug("evalAssignStmt: updating var", "name", ident.Name, "type", val.Type())
-		return v
+	v, ok := obj.(*object.Variable)
+	if !ok {
+		// Not a variable, just overwrite it in the environment.
+		return env.Set(ident.Name, val)
 	}
 
-	// This case handles assignment to non-variable objects, like map keys, if they were supported.
-	e.logger.Debug("evalAssignStmt: setting non-var", "name", ident.Name, "type", val.Type())
-	return env.Set(ident.Name, val)
+	v.Value = val
+	newFieldType := val.FieldType()
+
+	// Check if the variable is an interface.
+	staticType := v.FieldType()
+	isInterface := staticType != nil && staticType.Definition != nil && staticType.Definition.Kind == scanner.InterfaceKind
+
+	if isInterface {
+		// For interfaces, we ADD the new concrete type to the set.
+		if v.PossibleConcreteTypes == nil {
+			v.PossibleConcreteTypes = make(map[*scanner.FieldType]struct{})
+		}
+		if newFieldType != nil {
+			v.PossibleConcreteTypes[newFieldType] = struct{}{}
+			e.logger.Debug("evalAssignStmt: adding concrete type to interface var", "name", ident.Name, "new_type", newFieldType.String())
+		}
+	} else {
+		// For concrete types, we REPLACE the set.
+		v.PossibleConcreteTypes = make(map[*scanner.FieldType]struct{})
+		if newFieldType != nil {
+			v.PossibleConcreteTypes[newFieldType] = struct{}{}
+		}
+		e.logger.Debug("evalAssignStmt: replacing concrete type for var", "name", ident.Name)
+	}
+
+	return v
 }
 
 func (e *Evaluator) evalBasicLit(n *ast.BasicLit) object.Object {

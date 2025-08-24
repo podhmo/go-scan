@@ -219,6 +219,9 @@ type SymbolicPlaceholder struct {
 	Receiver Object
 	// If the placeholder is for an interface method call, this holds the method info.
 	UnderlyingMethod *scanner.MethodInfo
+	// For interface method calls, this holds the set of possible concrete types
+	// that the receiver variable could hold.
+	PossibleConcreteTypes []*scanner.TypeInfo
 }
 
 // Type returns the type of the SymbolicPlaceholder object.
@@ -252,6 +255,10 @@ type Variable struct {
 	BaseObject
 	Name  string
 	Value Object
+	// LastConcreteType tracks the type of the last concrete value assigned to this variable.
+	// This is a simplification to help resolve interface method calls without full
+	// control-flow analysis.
+	LastConcreteType *scanner.TypeInfo
 }
 
 // Type returns the type of the Variable object.

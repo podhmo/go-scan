@@ -203,3 +203,103 @@ func main() {
 		t.Errorf("expected interface call to NOT resolve to concrete function in intrinsic, but it did")
 	}
 }
+
+func TestEval_InterfaceMethodCall_AcrossControlFlow(t *testing.T) {
+	code := `
+package main
+
+var someCondition bool // This will be symbolic
+
+type Speaker interface {
+	Speak() string
+}
+
+type Dog struct{}
+func (d *Dog) Speak() string { return "woof" }
+
+type Cat struct{}
+func (c *Cat) Speak() string { return "meow" }
+
+func main() {
+	var s Speaker
+	if someCondition {
+		s = &Dog{}
+	} else {
+		s = &Cat{}
+	}
+	s.Speak()
+}
+`
+	files := map[string]string{
+		"go.mod":  "module example.com/me",
+		"main.go": code,
+	}
+
+	dir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	var speakPlaceholder *object.SymbolicPlaceholder
+
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
+		pkg := pkgs[0]
+		eval := New(s, s.Logger, nil)
+		env := object.NewEnvironment()
+
+		eval.RegisterDefaultIntrinsic(func(args ...object.Object) object.Object {
+			if len(args) == 0 {
+				return nil
+			}
+			if p, ok := args[0].(*object.SymbolicPlaceholder); ok {
+				if p.UnderlyingMethod != nil && p.UnderlyingMethod.Name == "Speak" {
+					speakPlaceholder = p
+				}
+			}
+			return nil
+		})
+
+		for _, file := range pkg.AstFiles {
+			eval.Eval(ctx, file, env, pkg)
+		}
+
+		mainFuncObj, _ := env.Get("main")
+		mainFunc := mainFuncObj.(*object.Function)
+		result := eval.Apply(ctx, mainFunc, []object.Object{}, pkg)
+		if err, ok := result.(*object.Error); ok {
+			return fmt.Errorf("evaluation failed: %s", err.Message)
+		}
+		return nil
+	}
+
+	if _, err := scantest.Run(t, dir, []string{"."}, action, scantest.WithModuleRoot(dir)); err != nil {
+		t.Fatalf("scantest.Run() failed: %+v", err)
+	}
+
+	if speakPlaceholder == nil {
+		t.Fatalf("SymbolicPlaceholder for Speak method was not captured")
+	}
+
+	if len(speakPlaceholder.PossibleConcreteTypes) != 2 {
+		t.Errorf("expected 2 possible concrete types, but got %d", len(speakPlaceholder.PossibleConcreteTypes))
+		for i, ft := range speakPlaceholder.PossibleConcreteTypes {
+			t.Logf("  type %d: %s", i, ft.String())
+		}
+	}
+
+	foundTypes := make(map[string]bool)
+	for _, ft := range speakPlaceholder.PossibleConcreteTypes {
+		var name string
+		if ft.IsPointer {
+			name = fmt.Sprintf("%s.*%s", ft.Elem.FullImportPath, ft.Elem.TypeName)
+		} else {
+			name = fmt.Sprintf("%s.%s", ft.FullImportPath, ft.TypeName)
+		}
+		foundTypes[name] = true
+	}
+
+	if !foundTypes["example.com/me.*Dog"] {
+		t.Errorf("did not find *Dog in possible concrete types")
+	}
+	if !foundTypes["example.com/me.*Cat"] {
+		t.Errorf("did not find *Cat in possible concrete types")
+	}
+}

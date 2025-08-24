@@ -731,12 +731,19 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 					// This is an unresolved interface method call.
 					// We return a placeholder representing the *function itself*, not its result.
 					// This allows the default intrinsic to inspect it.
-					return &object.SymbolicPlaceholder{
+					placeholder := &object.SymbolicPlaceholder{
 						Reason:           fmt.Sprintf("interface method call %s.%s", typeInfo.Name, method.Name),
 						Receiver:         val,
 						UnderlyingMethod: method,
 						BaseObject:       object.BaseObject{ResolvedTypeInfo: typeInfo},
 					}
+
+					// If we have tracked a concrete type for the variable, add it to the placeholder.
+					if val.LastConcreteType != nil {
+						placeholder.PossibleConcreteTypes = []*scanner.TypeInfo{val.LastConcreteType}
+					}
+
+					return placeholder
 				}
 			}
 		}
@@ -935,32 +942,30 @@ func (e *Evaluator) evalIdentAssignment(ctx context.Context, ident *ast.Ident, r
 }
 
 func (e *Evaluator) assignIdentifier(ident *ast.Ident, val object.Object, tok token.Token, env *object.Environment) object.Object {
-	if tok == token.DEFINE || tok == token.ASSIGN {
-		// For :=, we define a new variable.
-		// For =, we update an existing one.
-		// If the variable doesn't exist with =, we'll handle it below.
-		if tok == token.DEFINE {
-			v := &object.Variable{
-				Name:  ident.Name,
-				Value: val,
-				BaseObject: object.BaseObject{
-					ResolvedTypeInfo: val.TypeInfo(),
-				},
-			}
-			e.logger.Debug("evalAssignStmt: defining var", "name", ident.Name, "type", val.Type())
-			return env.Set(ident.Name, v)
+	// For `:=`, we define a new variable.
+	if tok == token.DEFINE {
+		v := &object.Variable{
+			Name:             ident.Name,
+			Value:            val,
+			LastConcreteType: val.TypeInfo(), // Track the initial concrete type.
+			BaseObject: object.BaseObject{
+				ResolvedTypeInfo: val.TypeInfo(),
+			},
 		}
+		e.logger.Debug("evalAssignStmt: defining var", "name", ident.Name, "type", val.Type())
+		return env.Set(ident.Name, v)
 	}
 
-	// Handle plain assignment (=)
+	// For `=`, we update an existing variable.
 	obj, ok := env.Get(ident.Name)
 	if !ok {
 		// This case can be hit in `x, _ = myFunc()` where `x` is a package-level var.
 		// `Get` won't find it if it's not in the current function's env stack.
 		// We'll define it here for simplicity. A more robust solution might search outer scopes more explicitly.
 		v := &object.Variable{
-			Name:  ident.Name,
-			Value: val,
+			Name:             ident.Name,
+			Value:            val,
+			LastConcreteType: val.TypeInfo(),
 			BaseObject: object.BaseObject{
 				ResolvedTypeInfo: val.TypeInfo(),
 			},
@@ -971,6 +976,8 @@ func (e *Evaluator) assignIdentifier(ident *ast.Ident, val object.Object, tok to
 
 	if v, ok := obj.(*object.Variable); ok {
 		v.Value = val
+		v.LastConcreteType = val.TypeInfo() // Update the concrete type on every assignment.
+
 		// If the variable's static type is an interface, we want to preserve that type
 		// information, even when assigning a concrete type. This ensures that subsequent
 		// method calls on the variable are treated as interface calls.

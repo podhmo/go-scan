@@ -112,42 +112,34 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool, startPatterns []str
 				}
 			}
 		case *object.SymbolicPlaceholder:
-			if fn.UnderlyingFunc != nil && fn.Package != nil {
-				// This case handles calls to unresolved functions, often interface methods.
-				// We don't mark the interface method itself as used, but rather its concrete implementations.
-				if fn.UnderlyingFunc.Receiver != nil {
-					receiverTypeInfo := fn.UnderlyingFunc.Receiver.Type.Definition
+			// Handle interface method calls
+			if fn.UnderlyingMethod != nil {
+				methodName := fn.UnderlyingMethod.Name
+				var implementers []*scanner.TypeInfo
+
+				// --- Precise analysis using tracked concrete types ---
+				if len(fn.PossibleConcreteTypes) > 0 {
+					implementers = fn.PossibleConcreteTypes
+					// --- Fallback to imprecise analysis ---
+				} else if fn.Receiver != nil {
+					receiverTypeInfo := fn.Receiver.TypeInfo()
 					if receiverTypeInfo != nil && receiverTypeInfo.Kind == scanner.InterfaceKind {
 						ifaceName := fmt.Sprintf("%s.%s", receiverTypeInfo.PkgPath, receiverTypeInfo.Name)
-						if implementers, ok := interfaceMap[ifaceName]; ok {
-							for _, impl := range implementers { // impl is *scanner.TypeInfo
-								methodName := fn.UnderlyingFunc.Name
-								implPkg, ok := a.packages[impl.PkgPath]
-								if !ok {
-									continue
-								}
-								// Find the concrete method on the implementing type
-								for _, m := range implPkg.Functions { // m is *scanner.FunctionInfo
-									if m.Name == methodName && m.Receiver != nil && m.Receiver.Type.Definition == impl {
-										// Found the method. Mark it as used.
-										// We use the same name generation as for concrete function calls to ensure consistency.
-										var buf bytes.Buffer
-										printer.Fprint(&buf, a.s.Fset(), m.AstDecl.Recv.List[0].Type)
-										methodFullName := fmt.Sprintf("(%s.%s).%s", implPkg.ImportPath, buf.String(), m.Name)
-										usageMap[methodFullName] = true
-
-										// Also mark the value-receiver form if the concrete method has a pointer receiver
-										if recvTypeStr := buf.String(); len(recvTypeStr) > 0 && recvTypeStr[0] == '*' {
-											valueRecvName := fmt.Sprintf("(%s.%s).%s", implPkg.ImportPath, recvTypeStr[1:], m.Name)
-											usageMap[valueRecvName] = true
-										}
-										break
-									}
-								}
-							}
+						if allImplementers, ok := interfaceMap[ifaceName]; ok {
+							implementers = allImplementers
 						}
 					}
 				}
+
+				for _, impl := range implementers {
+					a.markMethodAsUsed(usageMap, impl, methodName)
+				}
+			}
+
+			// Handle regular function calls (non-methods)
+			if fn.UnderlyingFunc != nil && fn.Package != nil && fn.UnderlyingFunc.Receiver == nil {
+				fullName := fmt.Sprintf("%s.%s", fn.Package.ImportPath, fn.UnderlyingFunc.Name)
+				usageMap[fullName] = true
 			}
 		}
 		return nil
@@ -265,6 +257,36 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool, startPatterns []str
 	}
 
 	return nil
+}
+
+func (a *analyzer) markMethodAsUsed(usageMap map[string]bool, impl *scanner.TypeInfo, methodName string) {
+	implPkg, ok := a.packages[impl.PkgPath]
+	if !ok {
+		return
+	}
+	// Find the concrete method on the implementing type
+	for _, m := range implPkg.Functions { // m is *scanner.FunctionInfo
+		if m.Name == methodName && m.Receiver != nil {
+			// Check if the receiver of the method `m` matches the type `impl`.
+			// m.Receiver.Type.Definition might not be populated, so we compare names.
+			// A more robust check might be needed if there are types with the same name in different files.
+			if m.Receiver.Type.Name == impl.Name || (m.Receiver.Type.IsPointer && m.Receiver.Type.Elem.Name == impl.Name) {
+				// Found the method. Mark it as used.
+				// We use the same name generation as for concrete function calls to ensure consistency.
+				var buf bytes.Buffer
+				printer.Fprint(&buf, a.s.Fset(), m.AstDecl.Recv.List[0].Type)
+				methodFullName := fmt.Sprintf("(%s.%s).%s", implPkg.ImportPath, buf.String(), m.Name)
+				usageMap[methodFullName] = true
+
+				// Also mark the value-receiver form if the concrete method has a pointer receiver
+				if recvTypeStr := buf.String(); len(recvTypeStr) > 0 && recvTypeStr[0] == '*' {
+					valueRecvName := fmt.Sprintf("(%s.%s).%s", implPkg.ImportPath, recvTypeStr[1:], m.Name)
+					usageMap[valueRecvName] = true
+				}
+				break
+			}
+		}
+	}
 }
 
 func (a *analyzer) Visit(pkg *goscan.PackageImports) ([]string, error) {

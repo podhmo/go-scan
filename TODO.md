@@ -61,7 +61,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 
 ### Future Enhancements
 - [ ] **`symgo`: Tracing and Debuggability**: Enhance the tracing mechanism to provide a more detailed view of the symbolic execution flow.
-- [ ] **`find-orphans`: Advanced Usage Analysis (Interfaces)**: The `symgo` engine and `find-orphans` tool need to be enhanced to allow for more precise analysis of interface method calls. The proposed solution involves enriching `symgo`'s `SymbolicPlaceholder` to include the set of possible concrete types an interface variable might hold. See [docs/trouble-find-orphans.md](./docs/trouble-find-orphans.md) for a detailed analysis and plan.
+- [-] **`find-orphans`: Advanced Usage Analysis (Interfaces)**: The `symgo` engine and `find-orphans` tool need to be enhanced to allow for more precise analysis of interface method calls. The proposed solution involves enriching `symgo`'s `SymbolicPlaceholder` to include the set of possible concrete types an interface variable might hold. See [docs/trouble-find-orphans.md](./docs/trouble-find-orphans.md) for a detailed analysis and plan. (Note: Partially implemented by tracking the last assigned concrete type. Does not yet handle merging types across control-flow branches.)
 - [x] **`find-orphans`: Reporting and Final Touches**
     - [x] Implement formatted output for both default (orphans only) and verbose modes. (Note: Added JSON output via `-json` flag.)
 - [ ] **`ModuleWalker`: Wildcard Support**: Add support for the `...` wildcard in import path patterns, similar to the `go` command, to make package discovery more intuitive.

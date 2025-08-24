@@ -105,9 +105,22 @@ func Run(t *testing.T, dir string, patterns []string, action ActionFunc, opts ..
 		return nil, fmt.Errorf("scantest: failed to read initial files: %w", err)
 	}
 
-	workDir := dir // Always use the temp dir as the primary work dir for the scanner
-	if cfg.moduleRoot != "" {
-		workDir = cfg.moduleRoot // But allow overriding it for specific tests
+	workDir := cfg.moduleRoot
+	if workDir == "" {
+		// Phase 1: Search up from the temp test directory.
+		foundRoot, err := findModuleRoot(dir)
+		if err != nil {
+			// Phase 2: If not found, search up from the current working directory.
+			cwd, err_cwd := os.Getwd()
+			if err_cwd != nil {
+				return nil, fmt.Errorf("scantest: could not get current working directory: %w", err_cwd)
+			}
+			foundRoot, err = findModuleRoot(cwd)
+			if err != nil {
+				return nil, fmt.Errorf("scantest: failed to find go.mod root from temp dir (%s) or cwd (%s)", dir, cwd)
+			}
+		}
+		workDir = foundRoot
 	}
 
 	var s *scan.Scanner
@@ -134,8 +147,19 @@ func Run(t *testing.T, dir string, patterns []string, action ActionFunc, opts ..
 		}
 	}
 
-	// The scanner's workDir is now the temp `dir`, so we can pass relative patterns directly.
-	pkgs, err := s.Scan(patterns...)
+	// Distinguish between file paths (starting with ".") and import paths.
+	processedPatterns := make([]string, len(patterns))
+	for i, p := range patterns {
+		if strings.HasPrefix(p, ".") {
+			// It's a file path, make it absolute from the temp dir.
+			processedPatterns[i] = filepath.Join(dir, p)
+		} else {
+			// It's an import path, pass it through as is.
+			processedPatterns[i] = p
+		}
+	}
+
+	pkgs, err := s.Scan(processedPatterns...)
 	if err != nil {
 		return nil, fmt.Errorf("scan: %w", err)
 	}

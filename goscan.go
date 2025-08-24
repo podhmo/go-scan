@@ -135,12 +135,19 @@ func (s *Scanner) Scan(patterns ...string) ([]*Package, error) {
 	for _, pattern := range patterns {
 		if strings.Contains(pattern, "...") {
 			// Handle wildcard pattern
-			baseDir := strings.TrimSuffix(pattern, "...")
-			baseDir = strings.TrimSuffix(baseDir, "/")
+			basePath := strings.TrimSuffix(pattern, "/...")
+			var absBasePath string
 
-			absBasePath := baseDir
-			if !filepath.IsAbs(baseDir) {
-				absBasePath = filepath.Join(s.workDir, baseDir)
+			if filepath.IsAbs(basePath) {
+				absBasePath = basePath
+			} else if strings.HasPrefix(basePath, ".") {
+				absBasePath = filepath.Join(s.workDir, basePath)
+			} else {
+				var err error
+				absBasePath, err = s.locator.FindPackageDir(basePath)
+				if err != nil {
+					return nil, fmt.Errorf("could not find directory for import path pattern %q: %w", pattern, err)
+				}
 			}
 
 			walkErr := filepath.WalkDir(absBasePath, func(path string, d fs.DirEntry, err error) error {

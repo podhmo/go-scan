@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
 	scan "github.com/podhmo/go-scan"
 )
 
@@ -152,7 +154,6 @@ func TestRun_ModifyFile(t *testing.T) {
 }
 
 func TestRun_WithImportPathPattern(t *testing.T) {
-	t.Skip("scantest.Run does not currently support import path patterns, only file system paths.")
 	dir, cleanup := WriteFiles(t, map[string]string{
 		"go.mod": "module example.com/me\n",
 		"main.go": `
@@ -176,13 +177,24 @@ func main() { foo.Do() }
 	// be able to resolve this.
 	_, err := Run(t, dir, []string{"example.com/me/..."}, action, WithModuleRoot(dir))
 	if err != nil {
-		// We expect this to fail if scantest.Run doesn't support import paths.
-		// The goal is to see *how* it fails.
-		t.Logf("scantest.Run failed as expected (or unexpectedly): %v", err)
+		t.Fatalf("scantest.Run() failed: %v", err)
 	}
 
 	if len(pkgsFound) != 2 {
-		t.Errorf("expected to find 2 packages, but got %d", len(pkgsFound))
+		t.Fatalf("expected to find 2 packages, but got %d", len(pkgsFound))
+	}
+
+	// Add assertions to check if the correct packages were found.
+	// This requires importing "github.com/google/go-cmp/cmp" and "sort"
+	gotPaths := make([]string, len(pkgsFound))
+	for i, p := range pkgsFound {
+		gotPaths[i] = p.ImportPath
+	}
+	sort.Strings(gotPaths)
+
+	wantPaths := []string{"example.com/me", "example.com/me/foo"}
+	if diff := cmp.Diff(wantPaths, gotPaths); diff != "" {
+		t.Errorf("found packages mismatch (-want +got):\n%s", diff)
 	}
 }
 

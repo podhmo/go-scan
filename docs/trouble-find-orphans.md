@@ -63,15 +63,37 @@ With this richer `SymbolicPlaceholder`, the `find-orphans` tool can be made much
 
 This approach provides the best of both worlds: precision when possible, and a safe fallback when not. This is the recommended path forward to fully resolve the issue.
 
-## 4. Resolution
+## 4. Troubleshooting Log and Current Status
 
-The proposed solution has been successfully implemented. The final fix required addressing a subtle bug in the symbolic evaluator's environment handling.
+An attempt was made to implement the proposed solution. This log details the steps taken, the issues encountered, and the current (unresolved) state.
 
-### Implementation Details
-The following changes were made to the `symgo` evaluator:
-1.  **`object.Variable` Update**: The `LastConcreteType` field was replaced with `PossibleConcreteTypes map[string]*scanner.TypeInfo` to track a set of possible concrete types.
-2.  **Copy-on-Write Assignments**: The `assignIdentifier` function was modified to implement a copy-on-write strategy. When an assignment (`=`) occurs in a new scope (like an `if` or `else` block) to a variable from an outer scope, the evaluator now creates a new, shadowed variable in the current scope instead of modifying the outer variable directly. This is crucial for isolating the state changes within each control-flow branch.
-3.  **Control-Flow Merging**: The `evalIfStmt` function was enhanced. After evaluating the `if` and `else` branches (which now have their own shadowed variables), a new `mergeBranchEnvs` function is called. This function inspects the *local* variables in each branch environment and merges their `PossibleConcreteTypes` back into the original variable in the parent environment.
-4.  **Correct Scope Evaluation**: The root cause of the bug was identified and fixed. The `evalBlockStatement` function was incorrectly creating an additional nested scope. This caused the shadowed variables created by the copy-on-write logic to be discarded before they could be merged. The fix was to remove the unnecessary scope creation, ensuring that assignments within a block modify the environment that the `if/else` logic expects.
+### 4.1. Initial Implementation
+The initial implementation focused on two main changes:
+1.  **`object.Variable` Update**: The `LastConcreteType` field was replaced with `PossibleConcreteTypes map[string]*scanner.TypeInfo` to track a set of types.
+2.  **Control-Flow Merging**: A copy-on-write strategy for assignments and a merge mechanism in `evalIfStmt` were implemented. The idea was that assignments within `if/else` branches would create shadowed variables in a local scope, and `evalIfStmt` would merge the `PossibleConcreteTypes` from these shadowed variables back into the parent variable after the branches were executed.
 
-With these changes, the evaluator can now correctly track all possible concrete types assigned to an interface variable across different `if/else` branches, significantly improving the precision of tools like `find-orphans`. A new test case, `TestInterfaceTypeFlow`, was added to verify this behavior.
+### 4.2. Test-Driven Debugging Cycle
+A test case, `TestInterfaceTypeFlow`, was created to verify this functionality. This test immediately failed, leading to a long and difficult debugging cycle.
+
+**Problem 1: Test Setup and `go-scan` API**
+-   **Initial Issue**: The test failed because the `go-scan` library's `Scan` method performs an `os.Stat` check before consulting the in-memory file overlay. This made testing with purely in-memory files impossible.
+-   **Solution**: The core `goscan.Scanner` and internal `scanner.Scanner` were modified to be overlay-aware, checking for file existence in the overlay before falling back to the filesystem. This was a necessary prerequisite for testing.
+-   **Further Test Issues**: A cascade of test setup errors occurred, including `testify` dependency violations (per `AGENTS.md`), `go.mod` resolution problems, and Go test package compilation errors (`flag redefined`, `import cycle`). These were eventually resolved by using a temporary directory with a real `go.mod` file for testing and carefully managing test package declarations.
+
+**Problem 2: The Core Evaluator Bug**
+After fixing the test setup, the test still failed. The `PossibleConcreteTypes` map was empty.
+-   **Hypothesis 1**: The merge logic in `evalIfStmt` was flawed.
+-   **Investigation 1**: Using detailed logging (as suggested by the user), it was discovered that the `mergeBranchEnvs` function was not finding any variables to merge.
+-   **Root Cause Discovered**: The `evalBlockStatement` function was creating an unnecessary, extra-nested scope. This caused the shadowed variables created in the `if/else` blocks to be created in a grand-child scope, which was discarded before the `mergeBranchEnvs` function could inspect them.
+-   **Fix 1**: The extra scope creation in `evalBlockStatement` was removed.
+
+**Problem 3: Regressions and a New Bug**
+-   **New Failure**: After fixing the scope issue, the new test (`TestInterfaceTypeFlow`) passed! However, running the full test suite (`make test`) revealed that this fix had caused numerous regressions in other tests.
+-   **Root Cause 2**: The regressions were caused by a change to `evalIdent` to not unwrap `object.Variable` types. This was done to pass type metadata around, but broke existing tests that expected raw values.
+-   **Attempted Fix 2**: A new strategy was devised: `evalIdent` would be reverted to its original unwrapping behavior. Instead, `evalSelectorExpr` and `evalIdentAssignment` would be made smarter, fetching the raw `*object.Variable` from the environment when needed, instead of its evaluated value.
+
+### 4.3. Current Unresolved State: Infinite Recursion / Duplicate Case
+-   **Current Blocker**: The implementation of "Attempted Fix 2" has proven extremely difficult. It led to a `fatal error: stack overflow` due to an infinite recursion in `evalSelectorExpr`.
+-   My attempts to fix the recursion resulted in a `duplicate case *object.Variable in type switch` compiler error. I have been unable to resolve this final compiler error after multiple attempts, indicating a fundamental misunderstanding of the required evaluator logic.
+
+**Conclusion**: The feature is partially implemented but **not functional**. The core logic in `evaluator.go` is in a broken state, and the `TestInterfaceTypeFlow` test fails. The work is being submitted in this state for review, as I have exhausted my current debugging capabilities.

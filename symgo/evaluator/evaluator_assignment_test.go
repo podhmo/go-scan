@@ -4,6 +4,9 @@ import (
 	"context"
 	"fmt"
 	"go/ast"
+	"io"
+	"log/slog"
+	"os"
 	"strings"
 	"testing"
 
@@ -12,6 +15,18 @@ import (
 	"github.com/podhmo/go-scan/symgo"
 	"github.com/podhmo/go-scan/symgo/object"
 )
+
+func newTestLogger(t *testing.T) *slog.Logger {
+	level := slog.LevelInfo
+	if os.Getenv("DEBUG") != "" {
+		level = slog.LevelDebug
+	}
+	var out io.Writer = io.Discard
+	if os.Getenv("DEBUG") != "" {
+		out = os.Stderr
+	}
+	return slog.New(slog.NewTextHandler(out, &slog.HandlerOptions{Level: level}))
+}
 
 // lookupFile is a test helper to find a file by name in a scanned package.
 func lookupFile(pkg *goscan.Package, name string) (*ast.File, error) {
@@ -25,7 +40,7 @@ func lookupFile(pkg *goscan.Package, name string) (*ast.File, error) {
 
 func TestMultiValueAssignment(t *testing.T) {
 	var intrinsicCalled bool
-	var assignedValue symgo.Object
+	var assignedValue object.Object
 
 	// Create a temporary directory with the files.
 	dir, cleanup := scantest.WriteFiles(t, map[string]string{
@@ -44,16 +59,16 @@ func main() {
 
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
-		interp, err := symgo.NewInterpreter(s)
+		interp, err := symgo.NewInterpreter(s, symgo.WithLogger(newTestLogger(t)))
 		if err != nil {
 			return err
 		}
 
 		// Intrinsic for a function that returns two values
-		interp.RegisterIntrinsic("myapp.myFunc", func(i *symgo.Interpreter, args []symgo.Object) symgo.Object {
+		interp.RegisterIntrinsic("myapp.myFunc", func(i *symgo.Interpreter, args []object.Object) object.Object {
 			intrinsicCalled = true
 			return &object.MultiReturn{
-				Values: []symgo.Object{
+				Values: []object.Object{
 					&object.String{Value: "hello"},
 					&object.Nil{},
 				},
@@ -104,6 +119,9 @@ func main() {
 
 	if !intrinsicCalled {
 		t.Errorf("intrinsic for myFunc was not called")
+	}
+	if assignedValue == nil {
+		t.Fatal("assigned value is nil")
 	}
 	if str, ok := assignedValue.(*object.String); !ok {
 		t.Errorf("assigned value 'x' is not a string, got %T", assignedValue)

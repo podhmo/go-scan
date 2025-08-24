@@ -1,8 +1,11 @@
 package evaluator_test
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -62,7 +65,14 @@ func main() {
 		t.Fatalf("goscan.New() failed: %v", err)
 	}
 
-	interp, err := symgo.NewInterpreter(s)
+	logBuf := new(bytes.Buffer)
+	var out io.Writer = logBuf
+	if os.Getenv("DEBUG") != "" {
+		out = os.Stderr
+	}
+	logger := slog.New(slog.NewTextHandler(out, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	interp, err := symgo.NewInterpreter(s, symgo.WithLogger(logger))
 	if err != nil {
 		t.Fatalf("symgo.NewInterpreter() failed: %v", err)
 	}
@@ -117,10 +127,12 @@ func main() {
 	}
 
 	if capturedPlaceholder == nil {
+		t.Log(logBuf.String())
 		t.Fatal("The symbolic placeholder for s.Speak() was not captured")
 	}
 
 	if len(capturedPlaceholder.PossibleConcreteTypes) != 2 {
+		t.Log(logBuf.String())
 		t.Fatalf("Should have found 2 possible concrete types, but got %d", len(capturedPlaceholder.PossibleConcreteTypes))
 	}
 

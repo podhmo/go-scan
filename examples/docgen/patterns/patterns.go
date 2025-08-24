@@ -123,7 +123,7 @@ func HandleCustomResponse(statusCode string, argIndex int) func(interp *symgo.In
 		var schema *openapi.Schema
 
 		if slice, ok := arg.(*symgo.Slice); ok {
-			schema = buildSchemaFromFieldType(context.Background(), a, slice.FieldType, make(map[string]*openapi.Schema))
+			schema = buildSchemaFromFieldType(context.Background(), a, slice.SliceFieldType, make(map[string]*openapi.Schema))
 		} else {
 			typeInfo := arg.TypeInfo()
 			if typeInfo != nil {
@@ -157,7 +157,7 @@ func HandleDefaultResponse(argIndex int) func(interp *symgo.Interpreter, a Analy
 		var schema *openapi.Schema
 
 		if slice, ok := arg.(*symgo.Slice); ok {
-			schema = buildSchemaFromFieldType(context.Background(), a, slice.FieldType, make(map[string]*openapi.Schema))
+			schema = buildSchemaFromFieldType(context.Background(), a, slice.SliceFieldType, make(map[string]*openapi.Schema))
 		} else {
 			typeInfo := arg.TypeInfo()
 			if typeInfo != nil {
@@ -191,7 +191,7 @@ func HandleCustomResponseBody(argIndex int) func(interp *symgo.Interpreter, a An
 		var schema *openapi.Schema
 
 		if slice, ok := arg.(*symgo.Slice); ok {
-			schema = buildSchemaFromFieldType(context.Background(), a, slice.FieldType, make(map[string]*openapi.Schema))
+			schema = buildSchemaFromFieldType(context.Background(), a, slice.SliceFieldType, make(map[string]*openapi.Schema))
 		} else {
 			typeInfo := arg.TypeInfo()
 			if typeInfo != nil {
@@ -426,7 +426,7 @@ func handleEncode(interp *symgo.Interpreter, a Analyzer, args []symgo.Object) sy
 	var schema *openapi.Schema
 
 	if slice, ok := arg.(*symgo.Slice); ok {
-		schema = buildSchemaFromFieldType(context.Background(), a, slice.FieldType, make(map[string]*openapi.Schema))
+		schema = buildSchemaFromFieldType(context.Background(), a, slice.SliceFieldType, make(map[string]*openapi.Schema))
 	} else {
 		typeInfo := arg.TypeInfo()
 		if typeInfo != nil {

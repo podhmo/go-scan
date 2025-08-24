@@ -173,37 +173,48 @@ Instead of creating a separate management layer or multiple `Scanner` instances,
 2.  **Unified Package Resolution**: The `Scanner.ScanPackageByImport` method was enhanced to be workspace-aware. When asked to resolve a package, it first determines which module the package belongs to and uses the corresponding `locator`. This allows it to seamlessly find and parse packages from any module in the workspace. Standard library packages are also handled correctly.
 3.  **Package Discovery**: The `find-orphans` tool's analysis logic was updated. In workspace mode, it constructs absolute path patterns for each module (e.g., `/path/to/moduleA/...`, `/path/to/moduleB/...`) and passes this combined list to the `ModuleWalker`. This ensures that the initial discovery phase finds all packages across all modules in a single walk.
 
-## 8. Future Enhancement: Go Workspace (`go.work`) Support
+## 8. Future Enhancement: Automatic `go.work` Detection
 
-To further improve multi-module analysis, the tool could be enhanced to natively understand Go workspace files (`go.work`). This would provide a more idiomatic and precise way to define the analysis scope compared to the current `--workspace-root` directory walk.
+To provide a more idiomatic and precise way to define a workspace, the `--workspace-root` flag could be enhanced to automatically detect and use a `go.work` file.
 
 ### Goal
 
-Allow the `find-orphans` tool to use a `go.work` file as the source of truth for which modules should be included in the analysis.
+If a `go.work` file is present in the directory specified by `--workspace-root`, use it as the source of truth for which modules to include in the analysis. If it's not present, maintain the current behavior of scanning all subdirectories for modules.
 
 ### Proposed CLI
 
-A new flag, `--go-work <path/to/go.work>`, would be introduced. If this flag is provided, it takes precedence over `--workspace-root`. The tool would parse the `go.work` file and only include modules specified in the `use` directives.
+No new flags are needed. The behavior of the existing `--workspace-root` flag would be updated.
+
+- `find-orphans --workspace-root /path/to/project`
+  - The tool checks for `/path/to/project/go.work`.
+  - **If found**: It parses `go.work` and uses the modules from the `use` directives.
+  - **If not found**: It recursively scans `/path/to/project` for all `go.mod` files, as it does now.
 
 ### Technical Approach
 
-1.  **`go.work` Parser**:
-    - A parser for the `go.work` file format would be needed. The format is simple (similar to `go.mod`), so it could be parsed with a regular expression or a more robust custom parser. The standard library's `golang.org/x/mod/workfile` package is the ideal candidate for this, as it's the official parser.
-    - The parser would need to extract the relative paths from all `use` directives.
+1.  **Check for `go.work`**: When the `--workspace-root` flag is used, the first step is to check for the existence of a `go.work` file in that directory.
 
-2.  **Module Path Resolution**:
-    - The paths in `go.work`'s `use` directives are relative to the directory containing the `go.work` file.
-    - The tool would need to resolve these relative paths into absolute directory paths.
+2.  **`go.work` Parsing Logic**:
+    - If `go.work` exists, a parser will be used to read it. The standard library's `golang.org/x/mod/workfile` package is the ideal candidate.
+    - The parser will extract the relative paths from all `use` directives.
 
-3.  **Integration with `goscan.Scanner`**:
-    - Once the absolute paths to all modules in the `use` directives are collected, this list of paths can be passed directly to the existing `goscan.WithModuleDirs` option when creating the `goscan.Scanner`.
-    - The rest of the analysis would proceed as it does for the current `--workspace-root` implementation, as the underlying mechanism is the same.
+3.  **Module Path Resolution**:
+    - The paths in the `use` directives are relative to the directory of the `go.work` file (the workspace root).
+    - The tool will resolve these relative paths to absolute directory paths.
+
+4.  **Integration with Scanner**:
+    - This list of absolute module paths will be passed to the `goscan.WithModuleDirs` option, just as it is in the current implementation. The rest of the analysis flow remains unchanged.
+
+5.  **Fallback**:
+    - If no `go.work` file is found at the workspace root, the logic falls back to the existing `discoverModules` function, which walks the entire directory tree to find all `go.mod` files.
 
 ### Example Flow
 
-1.  User runs: `find-orphans --go-work /path/to/my/project/go.work`
-2.  The tool parses `/path/to/my/project/go.work`.
-3.  It finds `use ( ./module-a )` and `use ( ./libs/module-b )`.
-4.  It resolves these to `/path/to/my/project/module-a` and `/path/to/my/project/libs/module-b`.
-5.  It calls `goscan.New(goscan.WithModuleDirs([]string{"/path/to/my/project/module-a", "/path/to/my/project/libs/module-b"}))`.
-6.  The analysis continues as normal.
+1.  A `go.work` file exists at `/path/to/project/go.work`.
+2.  User runs: `find-orphans --workspace-root /path/to/project`
+3.  The tool finds `go.work`, parses it, and gets a list of module directories like `./module-a`, `./libs/module-b`.
+4.  It resolves these to absolute paths.
+5.  It calls `goscan.New(goscan.WithModuleDirs(...)`.
+6.  The analysis proceeds.
+
+If the `go.work` file did *not* exist, step 3 would be skipped, and the tool would instead call `discoverModules("/path/to/project")` to find all modules, and then proceed.

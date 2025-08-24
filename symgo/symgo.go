@@ -48,6 +48,11 @@ type Interpreter struct {
 	interfaceBindings map[string]*goscan.TypeInfo
 }
 
+// GlobalEnv returns the interpreter's top-level environment.
+func (i *Interpreter) GlobalEnv() *object.Environment {
+	return i.globalEnv
+}
+
 // Option is a functional option for configuring the Interpreter.
 type Option func(*Interpreter)
 

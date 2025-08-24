@@ -255,10 +255,10 @@ type Variable struct {
 	BaseObject
 	Name  string
 	Value Object
-	// LastConcreteType tracks the type of the last concrete value assigned to this variable.
-	// This is a simplification to help resolve interface method calls without full
-	// control-flow analysis.
-	LastConcreteType *scanner.TypeInfo
+	// PossibleConcreteTypes tracks the set of possible concrete types that have been
+	// assigned to this variable. This is used to resolve interface method calls
+	// across different control-flow paths. The key is the fully qualified type name.
+	PossibleConcreteTypes map[string]*scanner.TypeInfo
 }
 
 // Type returns the type of the Variable object.
@@ -348,6 +348,12 @@ func (e *Environment) Get(name string) (Object, bool) {
 	return obj, ok
 }
 
+// GetLocal retrieves an object by name from the local environment only.
+func (e *Environment) GetLocal(name string) (Object, bool) {
+	obj, ok := e.store[name]
+	return obj, ok
+}
+
 // Set stores an object by name in the current environment.
 func (e *Environment) Set(name string, val Object) Object {
 	e.store[name] = val
@@ -369,6 +375,13 @@ func (e *Environment) Walk(fn func(name string, obj Object) bool) {
 	}
 	if e.outer != nil {
 		e.outer.Walk(fn)
+	}
+}
+
+// WalkLocal iterates over items in the local environment only.
+func (e *Environment) WalkLocal(fn func(name string, obj Object)) {
+	for name, obj := range e.store {
+		fn(name, obj)
 	}
 }
 

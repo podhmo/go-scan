@@ -62,3 +62,16 @@ With this richer `SymbolicPlaceholder`, the `find-orphans` tool can be made much
 4.  **If the set is empty** (because `symgo` could not determine any concrete types): Fall back to the original, imprecise strategy of marking all implementations of `Speaker` in the entire codebase as used.
 
 This approach provides the best of both worlds: precision when possible, and a safe fallback when not. This is the recommended path forward to fully resolve the issue.
+
+## 4. Progress Update
+
+An attempt was made to implement the proposed solution. The following changes were implemented:
+
+-   **`object.Variable` Update**: The `LastConcreteType` field was replaced with `PossibleConcreteTypes map[string]*scanner.TypeInfo` to track a set of types.
+-   **Core Scanner Overlay Fix**: The `goscan.Scanner` and the internal `scanner.Scanner` were modified to be overlay-aware, allowing in-memory files to be used correctly in tests by checking for overlay files before accessing the filesystem.
+-   **Copy-on-Write for Assignments**: The `symgo` evaluator's assignment logic (`assignIdentifier`) was updated to implement a copy-on-write semantic. When a variable from an outer scope is assigned to within a new scope (e.g., inside an `if` branch), it creates a new, shadowed variable in the local scope instead of modifying the outer variable directly.
+-   **Control-Flow Merging**: The `evalIfStmt` logic was enhanced to merge the state of these shadowed variables back into the parent scope's variable after the branches have been evaluated. This is handled by a new `mergeBranchEnvs` function.
+
+### Remaining Issue
+
+Despite these changes, the implementation is not yet correct. A test case (`TestInterfaceTypeFlow`) was added to verify this exact scenario, but it currently fails. The test shows that the `PossibleConcreteTypes` map for the interface variable remains empty after the `if/else` block, indicating that the type information from the branches is not being successfully merged and propagated back to the caller. The root cause of this failure is still under investigation.

@@ -738,9 +738,13 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 						BaseObject:       object.BaseObject{ResolvedTypeInfo: typeInfo},
 					}
 
-					// If we have tracked a concrete type for the variable, add it to the placeholder.
-					if val.LastConcreteType != nil {
-						placeholder.PossibleConcreteTypes = []*scanner.TypeInfo{val.LastConcreteType}
+					// If we have tracked concrete types for the variable, add them to the placeholder.
+					if len(val.PossibleConcreteTypes) > 0 {
+						types := make([]*scanner.TypeInfo, 0, len(val.PossibleConcreteTypes))
+						for _, t := range val.PossibleConcreteTypes {
+							types = append(types, t)
+						}
+						placeholder.PossibleConcreteTypes = types
 					}
 
 					return placeholder
@@ -810,17 +814,89 @@ func (e *Evaluator) evalIfStmt(ctx context.Context, n *ast.IfStmt, env *object.E
 		}
 	}
 
-	// Evaluate the main body.
-	e.Eval(ctx, n.Body, object.NewEnclosedEnvironment(ifStmtEnv), pkg)
+	// Evaluate the main body in its own enclosed environment.
+	ifEnv := object.NewEnclosedEnvironment(ifStmtEnv)
+	e.Eval(ctx, n.Body, ifEnv, pkg)
 
-	// Evaluate the else block if it exists.
+	// Evaluate the else block if it exists, also in its own environment.
+	var elseEnv *object.Environment
 	if n.Else != nil {
-		e.Eval(ctx, n.Else, object.NewEnclosedEnvironment(ifStmtEnv), pkg)
+		elseEnv = object.NewEnclosedEnvironment(ifStmtEnv)
+		e.Eval(ctx, n.Else, elseEnv, pkg)
 	}
 
+	// After exploring both branches, merge the possible types of any variables
+	// that were modified back into the parent environment.
+	e.mergeBranchEnvs(ifStmtEnv, ifEnv, elseEnv)
+
 	// The result of an if statement is not a value, so we return a placeholder.
-	// A more advanced engine might return a union of possible return values from the branches.
 	return &object.SymbolicPlaceholder{Reason: "if/else statement"}
+}
+
+// mergeBranchEnvs merges the state of variables from two branch environments
+// (e.g., from an if/else) back into a parent environment.
+func (e *Evaluator) mergeBranchEnvs(parentEnv, ifEnv, elseEnv *object.Environment) {
+	// Collect all variable names from both branches to avoid iterating twice.
+	varNames := make(map[string]bool)
+	if ifEnv != nil {
+		ifEnv.WalkLocal(func(name string, obj object.Object) {
+			if _, ok := obj.(*object.Variable); ok {
+				varNames[name] = true
+			}
+		})
+	}
+	if elseEnv != nil {
+		elseEnv.WalkLocal(func(name string, obj object.Object) {
+			if _, ok := obj.(*object.Variable); ok {
+				varNames[name] = true
+			}
+		})
+	}
+
+	for name := range varNames {
+		// Find the original variable in the parent scope.
+		parentObj, ok := parentEnv.Get(name)
+		if !ok {
+			continue // Variable was defined inside a branch, so it doesn't exist in the parent scope.
+		}
+		parentVar, ok := parentObj.(*object.Variable)
+		if !ok {
+			continue // The parent object is not a variable, so we can't merge into it.
+		}
+
+		// Get the variable from each branch, if it exists.
+		ifObj, _ := ifEnv.GetLocal(name)
+		elseObj, elseExists := elseEnv.GetLocal(name)
+
+		// If the variable wasn't modified in the 'else' branch, we assume it retains
+		// its state from before the 'if' statement. We need to merge the 'if' changes
+		// with the original state.
+		if !elseExists && elseEnv != nil {
+			elseObj = parentVar
+		}
+
+		// Create a new map for the merged types to avoid aliasing issues.
+		mergedTypes := make(map[string]*scanner.TypeInfo)
+		// Start with the types the parent variable had before the branches.
+		for key, t := range parentVar.PossibleConcreteTypes {
+			mergedTypes[key] = t
+		}
+
+		// Merge types from the 'if' branch.
+		if ifVar, ok := ifObj.(*object.Variable); ok {
+			for key, t := range ifVar.PossibleConcreteTypes {
+				mergedTypes[key] = t
+			}
+		}
+
+		// Merge types from the 'else' branch.
+		if elseVar, ok := elseObj.(*object.Variable); ok {
+			for key, t := range elseVar.PossibleConcreteTypes {
+				mergedTypes[key] = t
+			}
+		}
+		parentVar.PossibleConcreteTypes = mergedTypes
+	}
 }
 
 func (e *Evaluator) evalBlockStatement(ctx context.Context, block *ast.BlockStmt, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
@@ -942,57 +1018,64 @@ func (e *Evaluator) evalIdentAssignment(ctx context.Context, ident *ast.Ident, r
 }
 
 func (e *Evaluator) assignIdentifier(ident *ast.Ident, val object.Object, tok token.Token, env *object.Environment) object.Object {
-	// For `:=`, we define a new variable.
+	// Determine the set of possible concrete types from the value being assigned.
+	newPossibleTypes := make(map[string]*scanner.TypeInfo)
+	if assignedVar, ok := val.(*object.Variable); ok {
+		for k, v := range assignedVar.PossibleConcreteTypes {
+			newPossibleTypes[k] = v
+		}
+	} else if concreteType := val.TypeInfo(); concreteType != nil {
+		key := fmt.Sprintf("%s.%s", concreteType.PkgPath, concreteType.Name)
+		newPossibleTypes[key] = concreteType
+	}
+
+	// For `:=`, we always define a new variable in the current environment.
 	if tok == token.DEFINE {
 		v := &object.Variable{
-			Name:             ident.Name,
-			Value:            val,
-			LastConcreteType: val.TypeInfo(), // Track the initial concrete type.
-			BaseObject: object.BaseObject{
-				ResolvedTypeInfo: val.TypeInfo(),
-			},
+			Name:                  ident.Name,
+			Value:                 val,
+			PossibleConcreteTypes: newPossibleTypes,
+			BaseObject:            object.BaseObject{ResolvedTypeInfo: val.TypeInfo()},
 		}
-		e.logger.Debug("evalAssignStmt: defining var", "name", ident.Name, "type", val.Type())
+		e.logger.Debug("evalAssignStmt: defining var", "name", ident.Name)
 		return env.Set(ident.Name, v)
 	}
 
-	// For `=`, we update an existing variable.
-	obj, ok := env.Get(ident.Name)
-	if !ok {
-		// This case can be hit in `x, _ = myFunc()` where `x` is a package-level var.
-		// `Get` won't find it if it's not in the current function's env stack.
-		// We'll define it here for simplicity. A more robust solution might search outer scopes more explicitly.
-		v := &object.Variable{
-			Name:             ident.Name,
-			Value:            val,
-			LastConcreteType: val.TypeInfo(),
-			BaseObject: object.BaseObject{
-				ResolvedTypeInfo: val.TypeInfo(),
-			},
+	// For `=`, we implement copy-on-write.
+	// If the variable is not in the local scope, we create a new (shadowing)
+	// variable in the local scope to avoid modifying the outer scope directly.
+	if _, inCurrentScope := env.GetLocal(ident.Name); !inCurrentScope {
+		if outerObj, ok := env.Get(ident.Name); ok {
+			// It exists in an outer scope, so create a copy in the current scope.
+			newVar := &object.Variable{
+				Name:                  ident.Name,
+				Value:                 val,
+				PossibleConcreteTypes: newPossibleTypes,
+			}
+			// Preserve the static type info from the original variable.
+			if outerVar, ok := outerObj.(*object.Variable); ok {
+				newVar.ResolvedTypeInfo = outerVar.TypeInfo()
+			}
+			e.logger.Debug("evalAssignStmt: creating shadowing var for copy-on-write", "name", ident.Name)
+			return env.Set(ident.Name, newVar)
 		}
-		e.logger.Debug("evalAssignStmt: defining global-like var", "name", ident.Name, "type", val.Type())
-		return env.Set(ident.Name, v)
 	}
 
+	// The variable is in the current scope, so we can modify it directly.
+	obj, _ := env.Get(ident.Name)
 	if v, ok := obj.(*object.Variable); ok {
 		v.Value = val
-		v.LastConcreteType = val.TypeInfo() // Update the concrete type on every assignment.
-
-		// If the variable's static type is an interface, we want to preserve that type
-		// information, even when assigning a concrete type. This ensures that subsequent
-		// method calls on the variable are treated as interface calls.
+		v.PossibleConcreteTypes = newPossibleTypes // Reset types on direct assignment
 		if val.TypeInfo() != nil {
-			originalType := v.TypeInfo()
-			if originalType == nil || originalType.Kind != scanner.InterfaceKind {
+			if v.TypeInfo() == nil || v.TypeInfo().Kind != scanner.InterfaceKind {
 				v.ResolvedTypeInfo = val.TypeInfo()
 			}
 		}
-		e.logger.Debug("evalAssignStmt: updating var", "name", ident.Name, "type", val.Type())
+		e.logger.Debug("evalAssignStmt: updating var in local scope", "name", ident.Name)
 		return v
 	}
 
-	// This case handles assignment to non-variable objects, like map keys, if they were supported.
-	e.logger.Debug("evalAssignStmt: setting non-var", "name", ident.Name, "type", val.Type())
+	// Fallback for non-variable objects or cases where Get failed unexpectedly after check.
 	return env.Set(ident.Name, val)
 }
 
@@ -1026,18 +1109,24 @@ func (e *Evaluator) evalIdent(ctx context.Context, n *ast.Ident, env *object.Env
 
 	if val, ok := env.Get(n.Name); ok {
 		e.logger.Debug("evalIdent: found in env", "name", n.Name, "type", val.Type())
+		// Return the variable object itself, not just its value.
+		// This allows the caller to access metadata like PossibleConcreteTypes.
 		if v, ok := val.(*object.Variable); ok {
-			value := v.Value
-			if value.TypeInfo() == nil && v.TypeInfo() != nil {
-				value.SetTypeInfo(v.TypeInfo())
+			// Ensure the inner value has type info if the var does.
+			if v.Value.TypeInfo() == nil && v.TypeInfo() != nil {
+				v.Value.SetTypeInfo(v.TypeInfo())
 			}
-			return value
 		}
 		return val
 	}
 
-	if n.Name == "nil" {
+	switch n.Name {
+	case "nil":
 		return &object.Nil{}
+	case "true":
+		return object.TRUE
+	case "false":
+		return object.FALSE
 	}
 
 	e.logger.Debug("evalIdent: not found in env or intrinsics", "name", n.Name)
@@ -1127,6 +1216,9 @@ func (e *Evaluator) Apply(ctx context.Context, fn object.Object, args []object.O
 func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []object.Object, pkg *scanner.PackageInfo, callPos token.Pos) object.Object {
 	e.logger.Debug("applyFunction", "type", fn.Type(), "value", fn.Inspect())
 	switch fn := fn.(type) {
+	case *object.Variable:
+		// If the function is wrapped in a variable, unwrap it and apply the underlying value.
+		return e.applyFunction(ctx, fn.Value, args, pkg, callPos)
 	case *object.Function:
 		// When applying a function, the evaluation context switches to that function's
 		// package. We must pass fn.Package to both extendFunctionEnv and Eval.

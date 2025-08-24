@@ -191,14 +191,25 @@ func (s *Scanner) Scan(patterns ...string) ([]*Package, error) {
 
 			info, err := os.Stat(absPath)
 			if err != nil {
-				return nil, fmt.Errorf("could not stat pattern %q (resolved to %q): %w", pattern, absPath, err)
+				// If stat fails, check if the pattern exists in the overlay.
+				// This allows `Scan("path/to/file.go")` to work with overlays.
+				if _, ok := s.overlay[pattern]; ok {
+					info = nil // Ensure info is nil so we treat it as a file scan
+					err = nil  // Clear the error
+				} else if _, ok := s.overlay[absPath]; ok {
+					info = nil
+					err = nil
+				} else {
+					return nil, fmt.Errorf("could not stat pattern %q (resolved to %q): %w", pattern, absPath, err)
+				}
 			}
 
 			var pkg *Package
-			if info.IsDir() {
-				pkg, err = s.ScanPackage(ctx, absPath)
+			// If info is nil, it's an overlay file. If !info.IsDir(), it's a file on disk.
+			if info == nil || !info.IsDir() {
+				pkg, err = s.ScanFiles(ctx, []string{pattern}) // Use original pattern for ScanFiles
 			} else {
-				pkg, err = s.ScanFiles(ctx, []string{absPath})
+				pkg, err = s.ScanPackage(ctx, absPath)
 			}
 
 			if err != nil {
@@ -570,33 +581,47 @@ func (s *Scanner) ScanPackage(ctx context.Context, pkgPath string) (*scanner.Pac
 
 // resolveFilePath attempts to resolve a given path string (rawPath) into an absolute file path.
 func (s *Scanner) resolveFilePath(rawPath string) (string, error) {
+	// 1. Check overlay first for a direct match.
+	// This allows tests to provide simple paths like "main.go".
+	if _, ok := s.overlay[rawPath]; ok {
+		// If found in overlay, construct an absolute path to satisfy the interface,
+		// even though it doesn't exist on disk. The underlying loader will use the overlay content.
+		return filepath.Join(s.workDir, rawPath), nil
+	}
+
 	checkFile := func(p string) (string, bool) {
+		// Also check overlay for the absolute path version.
+		if _, ok := s.overlay[p]; ok {
+			return p, true
+		}
 		absP, err := filepath.Abs(p)
 		if err != nil {
 			return "", false
 		}
+		if _, ok := s.overlay[absP]; ok {
+			return absP, true
+		}
 		info, err := os.Stat(absP)
-		if err == nil && !info.IsDir() && strings.HasSuffix(strings.ToLower(absP), ".go") { // Check .go case-insensitively for robustness
+		if err == nil && !info.IsDir() && strings.HasSuffix(strings.ToLower(absP), ".go") {
 			return absP, true
 		}
 		return "", false
 	}
 
-	// Try as absolute or CWD-relative path first
+	// 2. Try as absolute or CWD-relative path.
 	if absPath, ok := checkFile(rawPath); ok {
 		return absPath, nil
 	}
 
-	// Try as module-qualified path
+	// 3. Try as module-qualified path.
 	if s.locator != nil {
 		modulePath := s.locator.ModulePath()
 		moduleRoot := s.locator.RootDir()
 		if modulePath != "" && moduleRoot != "" && strings.HasPrefix(rawPath, modulePath) {
 			prefixToTrim := modulePath
-			// Ensure we are trimming "modulePath/" not just "modulePath" if there's more path
 			if !strings.HasSuffix(modulePath, "/") && len(rawPath) > len(modulePath) && rawPath[len(modulePath)] == '/' {
 				prefixToTrim += "/"
-			} else if rawPath == modulePath { // rawPath is just the module path, not a file in it
+			} else if rawPath == modulePath {
 				return "", fmt.Errorf("path %q is a module path, not a file path within the module", rawPath)
 			}
 
@@ -609,7 +634,7 @@ func (s *Scanner) resolveFilePath(rawPath string) (string, error) {
 			}
 		}
 	}
-	return "", fmt.Errorf("could not resolve path %q to an existing .go file", rawPath)
+	return "", fmt.Errorf("could not resolve path %q to an existing .go file or overlay entry", rawPath)
 }
 
 // ScanFiles scans a specified set of Go files.

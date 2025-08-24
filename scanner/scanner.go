@@ -226,17 +226,27 @@ func (s *Scanner) scanGoFiles(ctx context.Context, filePaths []string, pkgDirPat
 		g.Go(func() error {
 			var content []byte
 			var err error
+			var foundInOverlay bool
 			if s.Overlay != nil {
-				relPath, _ := filepath.Rel(s.moduleRootDir, fp)
-				if overlayContent, ok := s.Overlay[relPath]; ok {
+				// Check for overlay using both absolute and relative paths to be robust.
+				// The key is often the simple path used in the test setup, e.g., "main.go".
+				if overlayContent, ok := s.Overlay[fp]; ok {
 					content = overlayContent
+					foundInOverlay = true
+				} else {
+					// The top-level scanner might have resolved a relative path to absolute.
+					// Let's check the basename as well.
+					baseName := filepath.Base(fp)
+					if overlayContent, ok := s.Overlay[baseName]; ok {
+						content = overlayContent
+						foundInOverlay = true
+					}
 				}
 			}
 
-			if content == nil {
+			if !foundInOverlay {
 				content, err = os.ReadFile(fp)
 				if err != nil {
-					// Send error to the channel and exit goroutine
 					results <- fileParseResult{filePath: fp, err: fmt.Errorf("reading file: %w", err)}
 					return nil
 				}

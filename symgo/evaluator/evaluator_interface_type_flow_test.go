@@ -10,12 +10,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
 	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/scanner"
 	"github.com/podhmo/go-scan/symgo"
 	"github.com/podhmo/go-scan/symgo/object"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func TestInterfaceTypeFlow(t *testing.T) {
@@ -53,7 +52,9 @@ func main() {
 	}
 	var trace strings.Builder
 	s, err := goscan.New(goscan.WithOverlay(overlay))
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatalf("goscan.New() failed: %v", err)
+	}
 
 	tracer := symgo.TracerFunc(func(node ast.Node) {
 		if node == nil {
@@ -65,7 +66,9 @@ func main() {
 	})
 
 	interp, err := symgo.NewInterpreter(s, symgo.WithTracer(tracer))
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatalf("symgo.NewInterpreter() failed: %v", err)
+	}
 
 	var capturedPlaceholder *object.SymbolicPlaceholder
 	interp.RegisterDefaultIntrinsic(func(i *symgo.Interpreter, args []object.Object) object.Object {
@@ -80,34 +83,51 @@ func main() {
 		return nil
 	})
 
-	// Scan the package from the overlay
 	pkgs, err := s.Scan("main.go")
-	require.NoError(t, err)
-	require.Len(t, pkgs, 1, "expected to scan one package")
+	if err != nil {
+		t.Fatalf("s.Scan() failed: %v", err)
+	}
+	if len(pkgs) != 1 {
+		t.Fatalf("expected to scan one package, but got %d", len(pkgs))
+	}
 	pkg := pkgs[0]
 
-	// Load the package's AST into the interpreter's environment
-	// The key in AstFiles is the absolute path.
-	require.NotEmpty(t, pkg.Files, "package should have at least one file")
+	if len(pkg.Files) == 0 {
+		t.Fatal("package should have at least one file")
+	}
 	filePath := pkg.Files[0]
 	astFile, ok := pkg.AstFiles[filePath]
-	require.True(t, ok, "ast file not found for path: %s", filePath)
+	if !ok {
+		t.Fatalf("ast file not found for path: %s", filePath)
+	}
 	_, err = interp.Eval(ctx, astFile, pkg)
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatalf("interp.Eval() failed: %v", err)
+	}
 
 	mainObj, ok := interp.GlobalEnv().Get("main")
-	require.True(t, ok, "main function not found in global environment")
+	if !ok {
+		t.Fatal("main function not found in global environment")
+	}
 	mainFn, ok := mainObj.(*object.Function)
-	require.True(t, ok, "main is not an object.Function")
+	if !ok {
+		t.Fatal("main is not an object.Function")
+	}
 
 	_, err = interp.Apply(ctx, mainFn, nil, mainFn.Package)
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatalf("interp.Apply() failed: %v", err)
+	}
 
-	require.NotNil(t, capturedPlaceholder, "The symbolic placeholder for s.Speak() was not captured")
-	t.Log(trace.String())
-	require.NotNil(t, capturedPlaceholder, "The symbolic placeholder for s.Speak() was not captured")
+	if capturedPlaceholder == nil {
+		t.Log(trace.String())
+		t.Fatal("The symbolic placeholder for s.Speak() was not captured")
+	}
 
-	require.Len(t, capturedPlaceholder.PossibleConcreteTypes, 2, "Should have found 2 possible concrete types")
+	if len(capturedPlaceholder.PossibleConcreteTypes) != 2 {
+		t.Log(trace.String())
+		t.Fatalf("Should have found 2 possible concrete types, but got %d", len(capturedPlaceholder.PossibleConcreteTypes))
+	}
 
 	typeNames := make([]string, len(capturedPlaceholder.PossibleConcreteTypes))
 	for i, ti := range capturedPlaceholder.PossibleConcreteTypes {
@@ -115,6 +135,8 @@ func main() {
 	}
 	sort.Strings(typeNames)
 
-	assert.Equal(t, "main.Cat", typeNames[0], "Expected Cat type")
-	assert.Equal(t, "main.Dog", typeNames[1], "Expected Dog type")
+	expected := []string{"main.Cat", "main.Dog"}
+	if diff := cmp.Diff(expected, typeNames); diff != "" {
+		t.Errorf("mismatch (-want +got):\n%s", diff)
+	}
 }

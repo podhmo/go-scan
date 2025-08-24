@@ -778,17 +778,17 @@ func (e *Evaluator) evalSwitchStmt(ctx context.Context, n *ast.SwitchStmt, env *
 	}
 
 	if n.Body != nil {
-		var branchEnvs []*object.Environment
+		// In this new model, we don't need to merge environments.
+		// We just evaluate all branches in their own scope. The assignment logic
+		// will handle updating the parent interface variable.
 		for _, c := range n.Body.List {
 			if caseClause, ok := c.(*ast.CaseClause); ok {
 				caseEnv := object.NewEnclosedEnvironment(switchEnv)
 				for _, stmt := range caseClause.Body {
 					e.Eval(ctx, stmt, caseEnv, pkg)
 				}
-				branchEnvs = append(branchEnvs, caseEnv)
 			}
 		}
-		e.mergeEnvironments(switchEnv, branchEnvs...)
 	}
 
 	return &object.SymbolicPlaceholder{Reason: "switch statement"}
@@ -821,19 +821,15 @@ func (e *Evaluator) evalIfStmt(ctx context.Context, n *ast.IfStmt, env *object.E
 		}
 	}
 
-	// Create environments for each branch.
+	// Evaluate both branches. Each gets its own enclosed environment.
+	// The new assignment logic handles updating parent scopes correctly.
 	thenEnv := object.NewEnclosedEnvironment(ifStmtEnv)
-	var elseEnv *object.Environment
-
-	// Evaluate the branches.
 	e.Eval(ctx, n.Body, thenEnv, pkg)
+
 	if n.Else != nil {
-		elseEnv = object.NewEnclosedEnvironment(ifStmtEnv)
+		elseEnv := object.NewEnclosedEnvironment(ifStmtEnv)
 		e.Eval(ctx, n.Else, elseEnv, pkg)
 	}
-
-	// Merge the results back into the parent environment.
-	e.mergeEnvironments(ifStmtEnv, thenEnv, elseEnv)
 
 	return &object.SymbolicPlaceholder{Reason: "if/else statement"}
 }
@@ -958,14 +954,12 @@ func (e *Evaluator) evalIdentAssignment(ctx context.Context, ident *ast.Ident, r
 }
 
 func (e *Evaluator) assignIdentifier(ident *ast.Ident, val object.Object, tok token.Token, env *object.Environment) object.Object {
-	// Create a new set of possible types containing only the field type of the new value.
-	possibleTypes := make(map[*scanner.FieldType]struct{})
-	if fieldType := val.FieldType(); fieldType != nil {
-		possibleTypes[fieldType] = struct{}{}
-	}
-
-	// For `:=`, we define a new variable in the current scope.
+	// For `:=`, we always define a new variable in the current scope.
 	if tok == token.DEFINE {
+		possibleTypes := make(map[*scanner.FieldType]struct{})
+		if ft := val.FieldType(); ft != nil {
+			possibleTypes[ft] = struct{}{}
+		}
 		v := &object.Variable{
 			Name:                  ident.Name,
 			Value:                 val,
@@ -975,53 +969,50 @@ func (e *Evaluator) assignIdentifier(ident *ast.Ident, val object.Object, tok to
 				ResolvedFieldType: val.FieldType(),
 			},
 		}
-		e.logger.Debug("evalAssignStmt: defining var", "name", ident.Name, "type", val.Type())
+		e.logger.Debug("evalAssignStmt: defining var", "name", ident.Name)
 		return env.Set(ident.Name, v)
 	}
 
-	// For `=`, we need to find where the variable lives.
-	obj, foundEnv, ok := env.GetWithScope(ident.Name)
+	// For `=`, find the variable and update it in-place.
+	obj, ok := env.Get(ident.Name)
 	if !ok {
-		// This can happen with package-level variables not yet evaluated. Define it in the current scope.
-		v := &object.Variable{
-			Name:                  ident.Name,
-			Value:                 val,
-			PossibleConcreteTypes: possibleTypes,
-			BaseObject: object.BaseObject{
-				ResolvedTypeInfo:  val.TypeInfo(),
-				ResolvedFieldType: val.FieldType(),
-			},
-		}
-		e.logger.Debug("evalAssignStmt: defining global-like var", "name", ident.Name)
-		return env.Set(ident.Name, v)
+		// This can happen for package-level variables not yet evaluated.
+		// We define it in the current scope as a fallback.
+		return e.assignIdentifier(ident, val, token.DEFINE, env)
 	}
 
-	// If the var is in the current scope, update it in-place.
-	if foundEnv == env {
-		if v, ok := obj.(*object.Variable); ok {
-			v.Value = val
-			v.PossibleConcreteTypes = possibleTypes
-			e.logger.Debug("evalAssignStmt: updating var in-place", "name", ident.Name)
-			return v
-		}
+	v, ok := obj.(*object.Variable)
+	if !ok {
+		// Not a variable, just overwrite it in the environment.
+		return env.Set(ident.Name, val)
 	}
 
-	// If the var is in an outer scope, create a new "shadow" variable in the current scope.
-	newVar := &object.Variable{
-		Name:                  ident.Name,
-		Value:                 val,
-		PossibleConcreteTypes: possibleTypes,
-	}
-	// Preserve the original static type information from the shadowed variable.
-	if ov, ok := obj.(*object.Variable); ok {
-		newVar.SetTypeInfo(ov.TypeInfo())
-		newVar.SetFieldType(ov.FieldType())
+	v.Value = val
+	newFieldType := val.FieldType()
+
+	// Check if the variable is an interface.
+	staticType := v.FieldType()
+	isInterface := staticType != nil && staticType.Definition != nil && staticType.Definition.Kind == scanner.InterfaceKind
+
+	if isInterface {
+		// For interfaces, we ADD the new concrete type to the set.
+		if v.PossibleConcreteTypes == nil {
+			v.PossibleConcreteTypes = make(map[*scanner.FieldType]struct{})
+		}
+		if newFieldType != nil {
+			v.PossibleConcreteTypes[newFieldType] = struct{}{}
+			e.logger.Debug("evalAssignStmt: adding concrete type to interface var", "name", ident.Name, "new_type", newFieldType.String())
+		}
 	} else {
-		newVar.SetTypeInfo(val.TypeInfo())
-		newVar.SetFieldType(val.FieldType())
+		// For concrete types, we REPLACE the set.
+		v.PossibleConcreteTypes = make(map[*scanner.FieldType]struct{})
+		if newFieldType != nil {
+			v.PossibleConcreteTypes[newFieldType] = struct{}{}
+		}
+		e.logger.Debug("evalAssignStmt: replacing concrete type for var", "name", ident.Name)
 	}
-	e.logger.Debug("evalAssignStmt: creating shadow var", "name", ident.Name)
-	return env.Set(ident.Name, newVar)
+
+	return v
 }
 
 func (e *Evaluator) evalBasicLit(n *ast.BasicLit) object.Object {
@@ -1342,59 +1333,4 @@ func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, 
 	}
 
 	return env, nil
-}
-
-func (e *Evaluator) mergeEnvironments(parent *object.Environment, branches ...*object.Environment) {
-	// A map to hold all unique variables modified across all branches, and their collected types.
-	varsToMerge := make(map[string]map[*scanner.FieldType]struct{})
-
-	for _, branch := range branches {
-		if branch == nil {
-			continue
-		}
-		branch.WalkLocal(func(name string, obj object.Object) bool {
-			v, ok := obj.(*object.Variable)
-			if !ok {
-				return true // Only interested in variables.
-			}
-
-			if _, exists := varsToMerge[name]; !exists {
-				varsToMerge[name] = make(map[*scanner.FieldType]struct{})
-			}
-
-			// Collect all possible types from this variable in this branch.
-			for t := range v.PossibleConcreteTypes {
-				varsToMerge[name][t] = struct{}{}
-			}
-			return true
-		})
-	}
-
-	// Now, update the parent environment with the merged types.
-	for name, mergedTypes := range varsToMerge {
-		if len(mergedTypes) == 0 {
-			continue
-		}
-
-		parentObj, ok := parent.Get(name)
-		if !ok {
-			// This can happen if a variable was defined inside the branches (`:=`).
-			// For simplicity, we don't propagate new variables up to the parent scope.
-			continue
-		}
-
-		parentVar, ok := parentObj.(*object.Variable)
-		if !ok {
-			continue
-		}
-
-		// Merge with any types that might have already existed on the parent variable
-		// before the branching logic was executed.
-		if parentVar.PossibleConcreteTypes == nil {
-			parentVar.PossibleConcreteTypes = make(map[*scanner.FieldType]struct{})
-		}
-		for t := range mergedTypes {
-			parentVar.PossibleConcreteTypes[t] = struct{}{}
-		}
-	}
 }

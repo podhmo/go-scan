@@ -361,30 +361,6 @@ func (e *Environment) Get(name string) (Object, bool) {
 	return obj, ok
 }
 
-// GetLocal retrieves an object by name from the local environment only.
-func (e *Environment) GetLocal(name string) (Object, bool) {
-	obj, ok := e.store[name]
-	return obj, ok
-}
-
-// GetWithScope retrieves an object by name, returning the object, the environment
-// where it was found, and a boolean indicating success.
-func (e *Environment) GetWithScope(name string) (Object, *Environment, bool) {
-	obj, ok := e.store[name]
-	if ok {
-		return obj, e, true
-	}
-	if e.outer != nil {
-		return e.outer.GetWithScope(name)
-	}
-	return nil, nil, false
-}
-
-// IsGlobal returns true if the environment is a top-level (package) scope.
-func (e *Environment) IsGlobal() bool {
-	return e.outer == nil
-}
-
 // Set stores an object by name in the current environment.
 func (e *Environment) Set(name string, val Object) Object {
 	e.store[name] = val

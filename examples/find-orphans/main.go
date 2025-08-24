@@ -115,24 +115,27 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool, startPatterns []str
 			// Handle interface method calls
 			if fn.UnderlyingMethod != nil {
 				methodName := fn.UnderlyingMethod.Name
-				var implementers []*scanner.TypeInfo
+				var implementerTypes []*scanner.FieldType
 
 				// --- Precise analysis using tracked concrete types ---
 				if len(fn.PossibleConcreteTypes) > 0 {
-					implementers = fn.PossibleConcreteTypes
+					implementerTypes = fn.PossibleConcreteTypes
 					// --- Fallback to imprecise analysis ---
 				} else if fn.Receiver != nil {
 					receiverTypeInfo := fn.Receiver.TypeInfo()
 					if receiverTypeInfo != nil && receiverTypeInfo.Kind == scanner.InterfaceKind {
 						ifaceName := fmt.Sprintf("%s.%s", receiverTypeInfo.PkgPath, receiverTypeInfo.Name)
 						if allImplementers, ok := interfaceMap[ifaceName]; ok {
-							implementers = allImplementers
+							// Convert TypeInfo to FieldType for consistency
+							for _, ti := range allImplementers {
+								implementerTypes = append(implementerTypes, &scanner.FieldType{Definition: ti})
+							}
 						}
 					}
 				}
 
-				for _, impl := range implementers {
-					a.markMethodAsUsed(usageMap, impl, methodName)
+				for _, implFt := range implementerTypes {
+					a.markMethodAsUsed(ctx, usageMap, implFt, methodName)
 				}
 			}
 
@@ -259,20 +262,23 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool, startPatterns []str
 	return nil
 }
 
-func (a *analyzer) markMethodAsUsed(usageMap map[string]bool, impl *scanner.TypeInfo, methodName string) {
-	implPkg, ok := a.packages[impl.PkgPath]
+func (a *analyzer) markMethodAsUsed(ctx context.Context, usageMap map[string]bool, implFt *scanner.FieldType, methodName string) {
+	typeInfo, err := implFt.Resolve(ctx)
+	if err != nil || typeInfo == nil {
+		return // Cannot resolve the type, so cannot mark its methods.
+	}
+
+	implPkg, ok := a.packages[typeInfo.PkgPath]
 	if !ok {
 		return
 	}
+
 	// Find the concrete method on the implementing type
 	for _, m := range implPkg.Functions { // m is *scanner.FunctionInfo
 		if m.Name == methodName && m.Receiver != nil {
-			// Check if the receiver of the method `m` matches the type `impl`.
-			// m.Receiver.Type.Definition might not be populated, so we compare names.
-			// A more robust check might be needed if there are types with the same name in different files.
-			if m.Receiver.Type.Name == impl.Name || (m.Receiver.Type.IsPointer && m.Receiver.Type.Elem.Name == impl.Name) {
+			// Check if the receiver of the method `m` matches the type `typeInfo`.
+			if m.Receiver.Type.Name == typeInfo.Name || (m.Receiver.Type.IsPointer && m.Receiver.Type.Elem.Name == typeInfo.Name) {
 				// Found the method. Mark it as used.
-				// We use the same name generation as for concrete function calls to ensure consistency.
 				var buf bytes.Buffer
 				printer.Fprint(&buf, a.s.Fset(), m.AstDecl.Recv.List[0].Type)
 				methodFullName := fmt.Sprintf("(%s.%s).%s", implPkg.ImportPath, buf.String(), m.Name)

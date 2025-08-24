@@ -1,64 +1,52 @@
-# Trouble Analysis: `find-orphans` and Interface Method Calls
+# Solution Summary: `find-orphans` and Interface Method Calls
 
-This document details the investigation into a bug in the `find-orphans` tool related to tracking the usage of interface methods, and outlines a proposed path forward.
+This document details the investigation and final solution for a bug in the `find-orphans` tool related to tracking the usage of interface methods across control-flow branches.
 
 ## 1. The Core Problem
 
-The `find-orphans` tool needs to determine if a concrete method (e.g., `(*Dog).Speak`) is used. A key challenge is when such a method is called polymorphically through an interface variable (e.g., `var s Speaker = &Dog{}; s.Speak()`).
-
-The analysis requires two key pieces of information:
-1.  That a method of the `Speaker` interface was called.
-2.  The set of possible concrete types that the `Speaker` variable could hold at the call site.
-
-## 2. Investigation Summary
-
-The investigation revealed a limitation in the `symgo` symbolic execution engine.
-
--   **Original Behavior:** When `symgo` could determine the concrete type of an interface variable (e.g., it knew `s` held a `*Dog`), it would resolve the method call `s.Speak()` directly to a concrete call to `(*Dog).Speak()`. This was precise, but it completely hid the polymorphic nature of the call from downstream tools like `find-orphans`. The tool never knew that `Speaker.Speak()` was involved.
-
--   **Attempted Fix:** A fix was implemented in `symgo` to force it to prioritize the variable's static type. This ensured that a call on an interface variable always generated a generic `SymbolicPlaceholder`. While this correctly signaled that a polymorphic call occurred, it went too far in the other direction: it discarded the known concrete type information, losing precision.
-
-This led to the realization that a more sophisticated approach is needed.
-
-## 3. Proposed Future Solution
-
-The ideal solution is to enhance `symgo` to provide richer information to its consumer tools.
-
-### 3.1. Enhance `SymbolicPlaceholder`
-
-The `object.SymbolicPlaceholder` generated for an interface method call should be enhanced. It should contain not just the interface method that was called, but also the set of *possible concrete types* that the interface variable could hold at that point in the execution.
+The `find-orphans` tool needs to determine if a concrete method (e.g., `(*Dog).Speak`) is used. A key challenge is when such a method is called polymorphically through an interface variable, especially when the concrete type of that variable can change depending on control flow.
 
 For example:
 ```go
-// object/object.go
-type SymbolicPlaceholder struct {
-    // ... existing fields ...
-    PossibleConcreteTypes []*scanner.TypeInfo // NEW FIELD
+var s Speaker
+if someCondition {
+    s = &Dog{}
+} else {
+    s = &Cat{}
 }
+s.Speak() // How to know this could be Dog.Speak OR Cat.Speak?
 ```
 
-### 3.2. Enhance `symgo`'s Analysis
+The analysis requires two key pieces of information:
+1.  That a method of the `Speaker` interface was called.
+2.  The complete set of possible concrete types that the `Speaker` variable could hold at the call site.
 
-The `symgo` evaluator needs to be enhanced to track these possible concrete types.
+## 2. Investigation Summary
 
--   When a variable is assigned a value (e.g., `s = &Dog{}`), the evaluator should record that `*Dog` is a possible type for `s`.
--   Crucially, as pointed out during the investigation, the evaluator must handle control flow. If a variable can be assigned different concrete types in different branches, `symgo` should be able to determine that the set of possible types includes all candidates from all reachable paths.
-    ```go
-    var s Speaker
-    if someCondition {
-        s = &Dog{}
-    } else {
-        s = &Cat{}
-    }
-    s.Speak() // At this point, PossibleConcreteTypes should be {*Dog, *Cat}
-    ```
+The investigation revealed a limitation in how the `symgo` symbolic execution engine handled variable state across different execution paths. Initial attempts to solve this by creating "shadow" variables in each branch proved overly complex and broke other use cases, such as updating package-level variables from within functions.
 
-### 3.3. Update `find-orphans`
+## 3. Implemented Solution: Type-Directed Assignment
 
-With this richer `SymbolicPlaceholder`, the `find-orphans` tool can be made much smarter. Its intrinsic would:
-1.  Receive a `SymbolicPlaceholder` for `Speaker.Speak()`.
-2.  Inspect the new `PossibleConcreteTypes` field.
-3.  **If the set is not empty:** Iterate through the concrete types (`*Dog`, `*Cat`) and mark only their `Speak` methods as used. This provides a highly precise analysis.
-4.  **If the set is empty** (because `symgo` could not determine any concrete types): Fall back to the original, imprecise strategy of marking all implementations of `Speaker` in the entire codebase as used.
+The final solution is a more elegant model that makes the behavior of an assignment (`=`) dependent on the static type of the variable being assigned to.
 
-This approach provides the best of both worlds: precision when possible, and a safe fallback when not. This is the recommended path forward to fully resolve the issue.
+### 3.1. Core Principles
+
+1.  **Default to In-Place Updates**: The standard behavior for an assignment (`=`) is to find the variable in its lexical scope and modify it directly. This aligns with Go's semantics and correctly handles most cases, including updates to global variables.
+
+2.  **Special Behavior for Interfaces**: When the variable being assigned to is statically known to be an **interface type**, the logic for tracking possible concrete types changes from "replace" to "append".
+
+### 3.2. How It Works
+
+-   When the evaluator encounters an assignment to an interface variable (e.g., `s = &Dog{}`), it finds the original `s` variable and **adds** the concrete type of the right-hand side (`*Dog`) to a set of `PossibleConcreteTypes` stored on the variable.
+-   If another assignment happens in a different branch (e.g., `s = &Cat{}`), it again finds the *same* original `s` and **adds** the new type to the set.
+-   By the end of the `if/else` block, the `s` variable's `PossibleConcreteTypes` set correctly contains both `{*Dog, *Cat}`.
+-   When `s.Speak()` is called, the `SymbolicPlaceholder` for the call is populated with this complete set of possible types.
+
+### 3.3. `find-orphans` Tool Update
+
+The `find-orphans` tool was updated to consume this richer information. Its intrinsic now:
+1.  Receives a `SymbolicPlaceholder` for `Speaker.Speak()`.
+2.  Inspects the `PossibleConcreteTypes` field.
+3.  Iterates through the concrete types (`*Dog`, `*Cat`) and marks only their `Speak` methods as used.
+
+This solution is both precise and robust, correctly handling control flow without breaking standard assignment semantics in other parts of the evaluator. It also correctly uses `*scanner.FieldType` to preserve pointer information.

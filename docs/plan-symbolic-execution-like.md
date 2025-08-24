@@ -56,6 +56,27 @@ A full symbolic execution of all control flow paths is computationally expensive
 
 This strategy balances the need to inspect code within control flow structures with the practical limitations of static analysis, ensuring the engine remains fast and fit for its purpose of pattern extraction.
 
+### 3.5. Assignment and Scope Interaction
+
+A key challenge in symbolic execution is managing variable state across different scopes and control-flow paths. `symgo` adopts a specific, pragmatic model for the standard assignment operator (`=`).
+
+-   **The Conflict**: A simple model presents a conflict. For analyzing control-flow branches (e.g., `if/else`), it's ideal to create "shadow" copies of variables in each branch's scope to isolate their states for later merging. However, for standard function calls that modify package-level variables, Go's semantics demand that the original variable is modified in its defining scope (an in-place update).
+
+-   **The Solution: Type-Directed Assignment**: `symgo` resolves this conflict by making the assignment behavior dependent on the static type of the variable being assigned to.
+    1.  **Default Behavior (In-Place Update)**: By default, an assignment `v = ...` finds the lexical scope where `v` was defined and modifies the variable in-place. This correctly handles the majority of cases, including updates to package-level variables from within functions.
+    2.  **Interface Behavior (Additive Update)**: If the static type of `v` is an interface, the behavior changes. Instead of replacing state, the evaluator **adds** the concrete type of the value being assigned to a running set of "possible concrete types" on the original interface variable.
+
+-   **Example**:
+    ```go
+    var s Speaker // s.PossibleTypes = {}
+    if c {
+        s = &Dog{} // Finds original s, ADDs *Dog type. s.PossibleTypes is now {*Dog}
+    } else {
+        s = &Cat{} // Finds original s, ADDs *Cat type. s.PossibleTypes is now {*Dog, *Cat}
+    }
+    ```
+This model allows `symgo` to correctly aggregate type information across branches for tools like `find-orphans` without needing complex environment-merging logic and without breaking the standard Go semantics for variable assignment in other contexts.
+
 ## 4. Detailed Design and Code-to-Spec Mapping
 
 This section provides concrete examples of the end-to-end analysis process.

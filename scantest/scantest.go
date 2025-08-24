@@ -147,19 +147,19 @@ func Run(t *testing.T, dir string, patterns []string, action ActionFunc, opts ..
 		}
 	}
 
-	// Adjust patterns to be relative to the temp `dir` if they are not absolute.
-	// The scanner's workDir is the module root, so we need to provide paths that
-	// can be resolved from there. The easiest way is to make them absolute.
-	absPatterns := make([]string, len(patterns))
+	// Distinguish between file paths (starting with ".") and import paths.
+	processedPatterns := make([]string, len(patterns))
 	for i, p := range patterns {
-		if filepath.IsAbs(p) {
-			absPatterns[i] = p
+		if strings.HasPrefix(p, ".") {
+			// It's a file path, make it absolute from the temp dir.
+			processedPatterns[i] = filepath.Join(dir, p)
 		} else {
-			absPatterns[i] = filepath.Join(dir, p)
+			// It's an import path, pass it through as is.
+			processedPatterns[i] = p
 		}
 	}
 
-	pkgs, err := s.Scan(absPatterns...)
+	pkgs, err := s.Scan(processedPatterns...)
 	if err != nil {
 		return nil, fmt.Errorf("scan: %w", err)
 	}

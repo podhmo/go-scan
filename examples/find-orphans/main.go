@@ -117,11 +117,9 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool, startPatterns []str
 				methodName := fn.UnderlyingMethod.Name
 				var implementerTypes []*scanner.FieldType
 
-				// --- Precise analysis using tracked concrete types ---
-				if len(fn.PossibleConcreteTypes) > 0 {
-					implementerTypes = fn.PossibleConcreteTypes
-					// --- Fallback to imprecise analysis ---
-				} else if fn.Receiver != nil {
+				// Always use the interface map for a conservative analysis.
+				// This ensures that if an interface method is used, all possible implementations are considered "used".
+				if fn.Receiver != nil {
 					receiverTypeInfo := fn.Receiver.TypeInfo()
 					if receiverTypeInfo != nil && receiverTypeInfo.Kind == scanner.InterfaceKind {
 						ifaceName := fmt.Sprintf("%s.%s", receiverTypeInfo.PkgPath, receiverTypeInfo.Name)

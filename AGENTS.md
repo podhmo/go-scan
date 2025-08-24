@@ -53,6 +53,7 @@ make test
 # 制約事項
 
 - 禁止。`go/packages`や`go/types` はimportがeagerになってしまうので使わないこと。
+- 禁止。 `go list` の利用も禁止します。
 - 禁止。go buildで作成したバイナリはコミットしないこと。
 - 禁止。デバッグ用に一時的に作成したファイルはコミットしないこと。
 - 禁止。 github.com/stretchr/testify は使わないこと

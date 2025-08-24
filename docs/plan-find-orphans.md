@@ -195,7 +195,7 @@ No new flags are needed. The behavior of the existing `--workspace-root` flag wo
 1.  **Check for `go.work`**: When the `--workspace-root` flag is used, the first step is to check for the existence of a `go.work` file in that directory.
 
 2.  **`go.work` Parsing Logic**:
-    - If `go.work` exists, a parser will be used to read it. The standard library's `golang.org/x/mod/workfile` package is the ideal candidate.
+    - If `go.work` exists, a parser will be used to read it. The standard library's `golang.org/x/mod/modfile` package is the ideal candidate.
     - The parser will extract the relative paths from all `use` directives.
 
 3.  **Module Path Resolution**:

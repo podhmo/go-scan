@@ -198,6 +198,37 @@ func main() { foo.Do() }
 	}
 }
 
+func TestRun_WithSpecificDirectoryPattern(t *testing.T) {
+	dir, cleanup := WriteFiles(t, map[string]string{
+		"go.mod":     "module example.com/me\n",
+		"main.go":    `package main`,
+		"pkg/a/a.go": `package a`,
+		"pkg/b/b.go": `package b`,
+	})
+	defer cleanup()
+
+	var pkgsFound []*scan.Package
+	action := func(ctx context.Context, s *scan.Scanner, pkgs []*scan.Package) error {
+		pkgsFound = pkgs
+		return nil
+	}
+
+	_, err := Run(t, dir, []string{"./pkg/a"}, action, WithModuleRoot(dir))
+	if err != nil {
+		t.Fatalf("scantest.Run() failed: %v", err)
+	}
+
+	if len(pkgsFound) != 1 {
+		t.Fatalf("expected to find 1 package, but got %d", len(pkgsFound))
+	}
+
+	gotPath := pkgsFound[0].ImportPath
+	wantPath := "example.com/me/pkg/a"
+	if gotPath != wantPath {
+		t.Errorf("found package mismatch: want %q, got %q", wantPath, gotPath)
+	}
+}
+
 func TestRun_WithReplaceDirective(t *testing.T) {
 	// Create a temporary directory structure that requires a `replace` directive.
 	// root/

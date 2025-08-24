@@ -29,6 +29,7 @@ type Evaluator struct {
 	callStack         []*callFrame
 	interfaceBindings map[string]*goscan.TypeInfo
 	defaultIntrinsic  intrinsics.IntrinsicFunc
+	extraPackages     []string
 }
 
 type callFrame struct {
@@ -37,7 +38,7 @@ type callFrame struct {
 }
 
 // New creates a new Evaluator.
-func New(scanner *goscan.Scanner, logger *slog.Logger, tracer object.Tracer) *Evaluator {
+func New(scanner *goscan.Scanner, logger *slog.Logger, tracer object.Tracer, extraPackages []string) *Evaluator {
 	if logger == nil {
 		logger = slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	}
@@ -47,6 +48,7 @@ func New(scanner *goscan.Scanner, logger *slog.Logger, tracer object.Tracer) *Ev
 		logger:            logger,
 		tracer:            tracer,
 		interfaceBindings: make(map[string]*goscan.TypeInfo),
+		extraPackages:     extraPackages,
 	}
 }
 
@@ -503,11 +505,11 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 			return symbol
 		}
 
-		// Resolve the symbol on-demand. Check if it's an intra-module call.
-		isSameModule := pkg != nil && pkg.ModulePath != "" && strings.HasPrefix(val.ScannedInfo.ImportPath, pkg.ModulePath)
+		// Resolve the symbol on-demand. Check if it's a package we should scan from source.
+		isScannable := e.isScannablePackage(val.ScannedInfo, pkg)
 
-		if isSameModule {
-			// This is a call to a package within the same module.
+		if isScannable {
+			// This is a call to a package within the same module or an included extra package.
 			// Attempt to resolve it to a real, evaluatable function.
 			for _, f := range val.ScannedInfo.Functions {
 				if f.Name == n.Sel.Name {
@@ -1257,6 +1259,29 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 	default:
 		return newError(callPos, "not a function: %s", fn.Type())
 	}
+}
+
+// isScannablePackage determines if a package should be deeply analyzed (scanned from source).
+// This is true if the package is part of the main module being analyzed, or if it has been
+// explicitly included via the `extraPackages` configuration.
+func (e *Evaluator) isScannablePackage(targetPkg, currentPkg *scanner.PackageInfo) bool {
+	if targetPkg == nil {
+		return false
+	}
+
+	// Check if it's part of the same module as the current package.
+	if currentPkg != nil && currentPkg.ModulePath != "" && strings.HasPrefix(targetPkg.ImportPath, currentPkg.ModulePath) {
+		return true
+	}
+
+	// Check if the package path matches any of the extra packages to be scanned.
+	for _, extraPkg := range e.extraPackages {
+		if strings.HasPrefix(targetPkg.ImportPath, extraPkg) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, args []object.Object) (*object.Environment, error) {

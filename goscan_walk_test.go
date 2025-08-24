@@ -70,6 +70,34 @@ func TestWalk(t *testing.T) {
 	}
 }
 
+func TestWalk_Wildcard_ImportPath(t *testing.T) {
+	s, err := New(WithWorkDir("./testdata/walk"))
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+
+	visitor := &collectingVisitor{}
+	// Use a wildcard pattern with a full import path.
+	err = s.Walker.Walk(context.Background(), visitor, "github.com/podhmo/go-scan/testdata/walk/...")
+	if err != nil {
+		t.Fatalf("Walk() with import path wildcard failed: %v", err)
+	}
+
+	expectedVisited := []string{
+		"github.com/podhmo/go-scan/testdata/walk/a",
+		"github.com/podhmo/go-scan/testdata/walk/b",
+		"github.com/podhmo/go-scan/testdata/walk/c",
+		"github.com/podhmo/go-scan/testdata/walk/d",
+	}
+
+	sort.Strings(visitor.visited)
+	sort.Strings(expectedVisited)
+
+	if diff := cmp.Diff(expectedVisited, visitor.visited); diff != "" {
+		t.Errorf("mismatch visited packages (-want +got):\n%s", diff)
+	}
+}
+
 func TestWalk_Wildcard(t *testing.T) {
 	s, err := New(WithWorkDir("./testdata/walk"))
 	if err != nil {

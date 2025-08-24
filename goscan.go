@@ -43,6 +43,108 @@ const (
 	InterfaceKind = scanner.InterfaceKind // Ensure InterfaceKind is available
 )
 
+// resolveWildcardPattern resolves a single pattern, which may contain the "..." wildcard,
+// into a list of absolute import paths. It handles both filesystem paths (e.g., "./...")
+// and import path patterns (e.g., "example.com/mymodule/...").
+func resolveWildcardPattern(ctx context.Context, pattern string, loc *locator.Locator, workDir string) ([]string, error) {
+	if !strings.Contains(pattern, "...") {
+		// Not a wildcard pattern, return as is. The caller can decide if it's a dir or import path.
+		return []string{pattern}, nil
+	}
+
+	basePattern := strings.TrimSuffix(pattern, "/...")
+
+	var baseDir string
+	var err error
+
+	// Determine the absolute directory to start walking from.
+	if filepath.IsAbs(basePattern) {
+		baseDir = basePattern
+	} else if strings.HasPrefix(basePattern, ".") {
+		// Relative filesystem path
+		baseDir = filepath.Join(workDir, basePattern)
+	} else {
+		// Import path-based pattern
+		baseDir, err = loc.FindPackageDir(basePattern)
+		if err != nil {
+			return nil, fmt.Errorf("could not find directory for import path pattern %q: %w", pattern, err)
+		}
+	}
+
+	importPaths := make(map[string]struct{})
+
+	walkErr := filepath.WalkDir(baseDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() {
+			return nil
+		}
+		if d.Name() == "vendor" || (len(d.Name()) > 1 && d.Name()[0] == '.') {
+			return filepath.SkipDir
+		}
+
+		// Check if the directory contains any .go files.
+		ok, err := hasGoFiles(path)
+		if err != nil {
+			slog.DebugContext(ctx, "cannot check for go files, skipping", "path", path, "error", err)
+			return nil // Don't let one bad dir stop the whole walk
+		}
+
+		if ok {
+			importPath, err := loc.PathToImport(path)
+			if err != nil {
+				// This can happen for directories that are not part of the current module,
+				// e.g., nested testdata. It's safe to just skip them.
+				slog.DebugContext(ctx, "could not resolve import path for directory, skipping", "path", path, "error", err)
+				return nil
+			}
+			importPaths[importPath] = struct{}{}
+		}
+		return nil
+	})
+
+	if walkErr != nil {
+		// An error during WalkDir is more serious, e.g., permissions.
+		return nil, fmt.Errorf("error walking directory for pattern %q: %w", pattern, walkErr)
+	}
+
+	// Add the base package itself if it's a package and the pattern was exactly "..." or "./..."
+	// or if the basePattern itself is a package.
+	isBasePkg, err := hasGoFiles(baseDir)
+	if err == nil && isBasePkg {
+		importPath, err := loc.PathToImport(baseDir)
+		if err == nil {
+			importPaths[importPath] = struct{}{}
+		}
+	}
+
+	result := make([]string, 0, len(importPaths))
+	for p := range importPaths {
+		result = append(result, p)
+	}
+	sort.Strings(result)
+
+	return result, nil
+}
+
+func hasGoFiles(dirPath string) (bool, error) {
+	entries, err := os.ReadDir(dirPath)
+	if err != nil {
+		// A non-existent directory isn't an error, it just doesn't have Go files.
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".go") {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // Scanner is the main entry point for the type scanning library.
 // It combines a locator for finding packages, a scanner for parsing them,
 // and caches for improving performance over multiple calls.
@@ -190,103 +292,86 @@ func (s *Scanner) LookupOverride(qualifiedName string) (*scanner.TypeInfo, bool)
 }
 
 // Scan scans Go packages based on the provided patterns.
-// Each pattern can be a directory path or a file path relative to the scanner's workDir.
-// It returns a list of scanned packages.
+// Patterns can be import paths, relative file paths, or contain the "..." wildcard.
+// It resolves all patterns to a list of packages and scans them fully, including ASTs.
 func (s *Scanner) Scan(patterns ...string) ([]*Package, error) {
-	pkgsMap := make(map[string]*Package) // Use map to handle duplicates
+	pkgsMap := make(map[string]*Package)
 	ctx := context.Background()
 
+	allImportPaths := make(map[string]struct{})
+
+	// 1. Resolve all patterns into a flat list of import paths.
 	for _, pattern := range patterns {
-		if strings.Contains(pattern, "...") {
-			// Handle wildcard pattern
-			basePath := strings.TrimSuffix(pattern, "/...")
-			var absBasePath string
-
-			if filepath.IsAbs(basePath) {
-				absBasePath = basePath
-			} else if strings.HasPrefix(basePath, ".") {
-				absBasePath = filepath.Join(s.workDir, basePath)
-			} else {
-				var err error
-				absBasePath, err = s.locator.FindPackageDir(basePath)
-				if err != nil {
-					return nil, fmt.Errorf("could not find directory for import path pattern %q: %w", pattern, err)
-				}
-			}
-
-			walkErr := filepath.WalkDir(absBasePath, func(path string, d fs.DirEntry, err error) error {
-				if err != nil {
-					return err
-				}
-				if !d.IsDir() {
-					return nil
-				}
-				// Check if the directory contains any .go files.
-				entries, err := os.ReadDir(path)
-				if err != nil {
-					// Log and continue. Don't let permission errors stop the whole walk.
-					slog.DebugContext(ctx, "cannot read directory during walk, skipping", "path", path, "error", err)
-					return nil
-				}
-				hasGoFiles := false
-				for _, entry := range entries {
-					if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".go") {
-						hasGoFiles = true
-						break
-					}
-				}
-
-				if hasGoFiles {
-					pkg, err := s.ScanPackage(ctx, path)
-					if err != nil {
-						// Log error but continue walking
-						slog.WarnContext(ctx, "failed to scan package during wildcard walk", "path", path, "error", err)
-						return nil
-					}
-					if pkg != nil && pkg.ImportPath != "" {
-						pkgsMap[pkg.ImportPath] = pkg
-					}
-				}
-				return nil
-			})
-
-			if walkErr != nil {
-				return nil, fmt.Errorf("error walking directory for pattern %q: %w", pattern, walkErr)
-			}
+		loc := s.Locator()
+		resolved, err := resolveWildcardPattern(ctx, pattern, loc, s.workDir)
+		if err != nil {
+			slog.DebugContext(ctx, "wildcard resolution failed, treating as single pattern", "pattern", pattern, "error",err)
+			allImportPaths[pattern] = struct{}{}
 		} else {
-			// Handle single file or directory pattern (legacy behavior)
-			absPath := pattern
-			if !filepath.IsAbs(pattern) {
-				absPath = filepath.Join(s.workDir, pattern)
-			}
-
-			info, err := os.Stat(absPath)
-			if err != nil {
-				return nil, fmt.Errorf("could not stat pattern %q (resolved to %q): %w", pattern, absPath, err)
-			}
-
-			var pkg *Package
-			if info.IsDir() {
-				pkg, err = s.ScanPackage(ctx, absPath)
-			} else {
-				pkg, err = s.ScanFiles(ctx, []string{absPath})
-			}
-
-			if err != nil {
-				return nil, fmt.Errorf("failed to scan path %q: %w", absPath, err)
-			}
-			if pkg != nil && pkg.ImportPath != "" {
-				pkgsMap[pkg.ImportPath] = pkg
+			for _, p := range resolved {
+				allImportPaths[p] = struct{}{}
 			}
 		}
 	}
 
-	// Convert map to slice
+	// 2. Scan all unique packages.
+	for importPath := range allImportPaths {
+		// Use ScanPackageByImport as it's the most robust way to scan a package
+		// by its import path and handles caching. The key is that for tools like
+		// symgo that need the AST, the first scan must populate it. Subsequent
+		// scans can rely on the cache.
+		pkg, err := s.ScanPackageByImport(ctx, importPath)
+		if err != nil {
+			// If scanning by import path fails, it might be a non-package path (e.g., a single file).
+			// We try to handle this gracefully.
+			absPath := importPath
+			if !filepath.IsAbs(importPath) {
+				absPath = filepath.Join(s.workDir, importPath)
+			}
+			info, statErr := os.Stat(absPath)
+			if statErr != nil {
+				slog.WarnContext(ctx, "could not scan pattern", "pattern", importPath, "scan_error", err, "stat_error", statErr)
+				continue
+			}
+
+			var scanErr error
+			if info.IsDir() {
+				// This case is unlikely if ScanPackageByImport failed, but we handle it.
+				pkg, scanErr = s.ScanPackage(ctx, absPath)
+			} else {
+				pkg, scanErr = s.ScanFiles(ctx, []string{absPath})
+			}
+
+			if scanErr != nil {
+				slog.WarnContext(ctx, "failed to scan path after fallback", "path", absPath, "error", scanErr)
+				continue
+			}
+		}
+
+		if pkg != nil && pkg.ImportPath != "" {
+			// Ensure the package in the map has the full ASTs if needed.
+			// If the returned package from cache doesn't have ASTs, rescan forcefully.
+			// A simple check is to see if AstFiles is populated.
+			if len(pkg.Files) > 0 && len(pkg.AstFiles) == 0 {
+				slog.DebugContext(ctx, "package from cache is missing ASTs, rescanning", "importPath", pkg.ImportPath)
+				// To force a rescan, we can't just call ScanPackageByImport again due to the cache.
+				// We must use a lower-level method.
+				var err error
+				pkg, err = s.ScanPackage(ctx, pkg.Path) // ScanPackage should re-populate from files.
+				if err != nil {
+					slog.WarnContext(ctx, "failed to rescan package for ASTs", "importPath", pkg.ImportPath, "error", err)
+					continue
+				}
+			}
+			pkgsMap[pkg.ImportPath] = pkg
+		}
+	}
+
+	// 3. Convert map to slice and sort.
 	pkgs := make([]*Package, 0, len(pkgsMap))
 	for _, pkg := range pkgsMap {
 		pkgs = append(pkgs, pkg)
 	}
-	// Sort for deterministic output
 	sort.Slice(pkgs, func(i, j int) bool {
 		return pkgs[i].ImportPath < pkgs[j].ImportPath
 	})

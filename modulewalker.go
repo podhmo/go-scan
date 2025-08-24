@@ -376,74 +376,34 @@ func (w *ModuleWalker) Walk(ctx context.Context, visitor Visitor, patterns ...st
 	return nil
 }
 
-// resolvePatternsToImportPaths resolves filesystem patterns (including `...` wildcards)
+// resolvePatternsToImportPaths resolves user-provided patterns (which can include `...` wildcards)
 // into a list of unique, sorted Go import paths.
 func (w *ModuleWalker) resolvePatternsToImportPaths(ctx context.Context, patterns []string) ([]string, error) {
 	rootPaths := make(map[string]struct{})
 
 	for _, pattern := range patterns {
-		if strings.Contains(pattern, "...") {
-			baseDir := strings.TrimSuffix(pattern, "...")
-			baseDir = strings.TrimSuffix(baseDir, "/")
-
-			absBasePath := baseDir
-			if !filepath.IsAbs(baseDir) {
-				absBasePath = filepath.Join(w.workDir, baseDir)
-			}
-
-			walkErr := filepath.WalkDir(absBasePath, func(path string, d fs.DirEntry, err error) error {
-				if err != nil {
-					return err
-				}
-				if !d.IsDir() {
-					return nil
-				}
-				// Check if the directory contains any .go files.
-				ok, err := hasGoFiles(path)
-				if err != nil {
-					slog.DebugContext(ctx, "cannot check for go files, skipping", "path", path, "error", err)
-					return nil
-				}
-
-				if ok {
-					importPath, err := w.locator.PathToImport(path)
-					if err != nil {
-						slog.WarnContext(ctx, "could not resolve import path, skipping", "path", path, "error", err)
-						return nil
-					}
-					rootPaths[importPath] = struct{}{}
-				}
-				return nil
-			})
-			if walkErr != nil {
-				return nil, fmt.Errorf("error walking for pattern %q: %w", pattern, walkErr)
-			}
-		} else {
-			// Assume non-wildcard patterns are literal import paths.
+		// Here we assume the primary locator is sufficient. For multi-module workspaces,
+		// this might need adjustment if patterns are meant to span modules.
+		resolved, err := resolveWildcardPattern(ctx, pattern, w.locator, w.workDir)
+		if err != nil {
+			// If wildcard resolution fails, it might be a single, non-wildcard path.
+			// Add the original pattern and let the caller handle potential errors.
+			slog.DebugContext(ctx, "wildcard resolution failed, treating as single pattern", "pattern", pattern, "error", err)
 			rootPaths[pattern] = struct{}{}
+		} else {
+			for _, p := range resolved {
+				rootPaths[p] = struct{}{}
+			}
 		}
 	}
 
-	// Convert map to slice for the queue
+	// Convert map to slice and sort for deterministic start
 	pathList := make([]string, 0, len(rootPaths))
 	for path := range rootPaths {
 		pathList = append(pathList, path)
 	}
-	sort.Strings(pathList) // Sort for deterministic walk start
+	sort.Strings(pathList)
 	return pathList, nil
-}
-
-func hasGoFiles(dirPath string) (bool, error) {
-	entries, err := os.ReadDir(dirPath)
-	if err != nil {
-		return false, err
-	}
-	for _, entry := range entries {
-		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".go") {
-			return true, nil
-		}
-	}
-	return false, nil
 }
 
 // listGoFilesForWalker lists all .go files in a directory.

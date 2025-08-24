@@ -61,11 +61,14 @@ func main() {
 		t.Fatalf("goscan.New() failed: %+v", err)
 	}
 
-	pkgs, err := s.Scan(".")
+	// Use ScanPackage to directly scan the test directory, ensuring ASTs are loaded.
+	pkg, err := s.ScanPackage(context.Background(), dir)
 	if err != nil {
-		t.Fatalf("s.Scan() failed: %+v", err)
+		t.Fatalf("s.ScanPackage() failed: %+v", err)
 	}
-	pkg := pkgs[0]
+	if pkg == nil || len(pkg.AstFiles) == 0 {
+		t.Fatalf("s.ScanPackage() did not populate AstFiles")
+	}
 
 	interp, err := symgo.NewInterpreter(s)
 	if err != nil {
@@ -115,11 +118,15 @@ func main() {
 	if err != nil {
 		t.Fatalf("goscan.New() failed: %+v", err)
 	}
-	pkgs, err := s.Scan(".")
+
+	// Use ScanPackage to directly scan the test directory, ensuring ASTs are loaded.
+	pkg, err := s.ScanPackage(context.Background(), dir)
 	if err != nil {
-		t.Fatalf("s.Scan() failed: %+v", err)
+		t.Fatalf("s.ScanPackage() failed: %+v", err)
 	}
-	pkg := pkgs[0]
+	if pkg == nil || len(pkg.AstFiles) == 0 {
+		t.Fatalf("s.ScanPackage() did not populate AstFiles")
+	}
 
 	interp, err := symgo.NewInterpreter(s)
 	if err != nil {

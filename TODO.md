@@ -13,7 +13,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 ## Implemented
 
 - **Core Scanning Engine**: A robust, AST-based engine for parsing Go code. It supports lazy, on-demand, cross-package type resolution, and correctly handles complex scenarios like recursive types and generic type definitions. It can extract detailed information about all major Go constructs, including structs, functions, interfaces, and constants.
-- **Dependency Analysis**: Includes the `deps-walk` command-line tool for visualizing dependency graphs (in DOT or Mermaid format) and a powerful underlying library for programmatic graph traversal, including forward and reverse dependency analysis.
+- **Dependency Analysis**: Includes the `deps-walk` command-line tool for visualizing dependency graphs (in DOT or Mermaid format) and a powerful underlying library for programmatic graph traversal, including forward and reverse dependency analysis. Wildcard (`...`) patterns are supported in both `Scan` and `Walk` functions, correctly resolving both filesystem and import path patterns.
 - **Code Generation Framework**:
     - **`convert` Tool**: A feature-rich tool for generating type-safe conversion functions, driven by annotations (`@derivingconvert`), struct tags (`convert:"..."`), and global rules (`// convert:rule`). Supports nested types, custom functions, and comprehensive error collection.
     - **`derivingjson` & `derivingbind`**: Tools for generating JSON marshaling/unmarshaling and request binding logic.
@@ -71,5 +71,4 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     - [x] **Unified `symgo` View**: Create a facade or "meta-scanner" to provide `symgo.Interpreter` with a unified view of packages across all modules in the workspace. This may involve changes to `symgo` itself.
     - [x] **Update Analysis Logic**: Ensure the main analysis loop correctly collects declarations, builds maps, and identifies entry points from the aggregated set of all packages.
     - [x] **Add Tests**: Create a comprehensive test case with a multi-module project to validate that cross-module function calls are correctly tracked and orphans are identified accurately across the entire workspace.
-- [ ] **`ModuleWalker`: Wildcard Support**: Add support for the `...` wildcard in import path patterns, similar to the `go` command, to make package discovery more intuitive.
 - [x] **`scantest`: Path to Import Path Conversion**: Enhance `scantest.Run` with an option or helper to automatically convert filesystem path patterns (like `.`) into their corresponding Go import path patterns, simplifying test setup for tools that consume import paths.

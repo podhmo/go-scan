@@ -10,6 +10,7 @@ import (
 	"log"
 	"os"
 	"strings"
+	"path/filepath"
 	"sync"
 
 	goscan "github.com/podhmo/go-scan"
@@ -38,6 +39,28 @@ func main() {
 	}
 }
 
+// discoverModules finds all directories containing a go.mod file under the root.
+func discoverModules(root string) ([]string, error) {
+	var modules []string
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		// Skip vendor directories and hidden directories at any level.
+		if d.IsDir() && (d.Name() == "vendor" || (len(d.Name()) > 1 && d.Name()[0] == '.')) {
+			return filepath.SkipDir
+		}
+		if d.Name() == "go.mod" {
+			modules = append(modules, filepath.Dir(path))
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to walk workspace root %s: %w", root, err)
+	}
+	return modules, nil
+}
+
 func run(ctx context.Context, all bool, includeTests bool, workspace string, verbose bool, asJSON bool, startPatterns []string) error {
 	var scannerOpts []goscan.ScannerOption
 	scannerOpts = append(scannerOpts, goscan.WithIncludeTests(includeTests))
@@ -48,10 +71,28 @@ func run(ctx context.Context, all bool, includeTests bool, workspace string, ver
 		log.SetFlags(0)
 	}
 
+	var s *goscan.Scanner
+	var err error
+
 	if workspace != "" {
-		scannerOpts = append(scannerOpts, goscan.WithWorkDir(workspace))
+		moduleDirs, err := discoverModules(workspace)
+		if err != nil {
+			return err
+		}
+		if len(moduleDirs) == 0 {
+			return fmt.Errorf("no go.mod files found in workspace root %s", workspace)
+		}
+		log.Printf("found %d modules in workspace: %v", len(moduleDirs), moduleDirs)
+		scannerOpts = append(scannerOpts, goscan.WithModuleDirs(moduleDirs))
+		s, err = goscan.New(scannerOpts...)
+	} else {
+		// For single module mode, we need to specify the workdir.
+		// The startPatterns are often relative (e.g., ./...), so we need a base.
+		// If no patterns are given, it defaults to "./...", so CWD is a safe bet.
+		scannerOpts = append(scannerOpts, goscan.WithWorkDir("."))
+		s, err = goscan.New(scannerOpts...)
 	}
-	s, err := goscan.New(scannerOpts...)
+
 	if err != nil {
 		return fmt.Errorf("failed to create scanner: %w", err)
 	}
@@ -70,8 +111,27 @@ type analyzer struct {
 }
 
 func (a *analyzer) analyze(ctx context.Context, asJSON bool, startPatterns []string) error {
-	log.Printf("discovering packages from: %v", startPatterns)
-	if err := a.s.Walker.Walk(ctx, a, startPatterns...); err != nil {
+	var patternsToWalk []string
+	if a.s.IsWorkspace() {
+		roots := a.s.ModuleRoots()
+		log.Printf("discovering packages from workspace roots: %v", roots)
+		for _, root := range roots {
+			for _, pattern := range startPatterns {
+				// a bit of a hack to check for relative patterns like './...'
+				if strings.HasPrefix(pattern, ".") {
+					patternsToWalk = append(patternsToWalk, filepath.Join(root, pattern))
+				} else {
+					// assume it's a full import path pattern
+					patternsToWalk = append(patternsToWalk, pattern)
+				}
+			}
+		}
+	} else {
+		patternsToWalk = startPatterns
+	}
+
+	log.Printf("walking with patterns: %v", patternsToWalk)
+	if err := a.s.Walker.Walk(ctx, a, patternsToWalk...); err != nil {
 		return fmt.Errorf("failed to walk packages: %w", err)
 	}
 	log.Printf("analyzing %d packages", len(a.packages))

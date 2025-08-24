@@ -64,11 +64,11 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] **`find-orphans`: Advanced Usage Analysis (Interfaces)**: The `symgo` engine and `find-orphans` tool have been enhanced to allow for more precise analysis of interface method calls. The engine now correctly tracks the set of possible concrete types for an interface variable, even across control-flow branches.
 - [x] **`find-orphans`: Reporting and Final Touches**
     - [x] Implement formatted output for both default (orphans only) and verbose modes. (Note: Added JSON output via `-json` flag.)
-- [ ] **`find-orphans`: Multi-Module Workspace Support**: Allow `find-orphans` to treat multiple Go modules within a single repository as a unified "workspace".
-    - [ ] **Discovery**: Implement logic in `find-orphans` to discover all `go.mod` files under the directory specified by the `--workspace-root` flag.
-    - [ ] **Multi-Scanner Architecture**: Refactor the `analyzer` to manage a list of `*goscan.Scanner` instances, one for each discovered module.
-    - [ ] **Unified `symgo` View**: Create a facade or "meta-scanner" to provide `symgo.Interpreter` with a unified view of packages across all modules in the workspace. This may involve changes to `symgo` itself.
-    - [ ] **Update Analysis Logic**: Ensure the main analysis loop correctly collects declarations, builds maps, and identifies entry points from the aggregated set of all packages.
-    - [ ] **Add Tests**: Create a comprehensive test case with a multi-module project to validate that cross-module function calls are correctly tracked and orphans are identified accurately across the entire workspace.
+- [x] **`find-orphans`: Multi-Module Workspace Support**: Allow `find-orphans` to treat multiple Go modules within a single repository as a unified "workspace".
+    - [x] **Discovery**: Implement logic in `find-orphans` to discover all `go.mod` files under the directory specified by the `--workspace-root` flag.
+    - [x] **Multi-Scanner Architecture**: Refactor the `analyzer` to manage a list of `*goscan.Scanner` instances, one for each discovered module.
+    - [x] **Unified `symgo` View**: Create a facade or "meta-scanner" to provide `symgo.Interpreter` with a unified view of packages across all modules in the workspace. This may involve changes to `symgo` itself.
+    - [x] **Update Analysis Logic**: Ensure the main analysis loop correctly collects declarations, builds maps, and identifies entry points from the aggregated set of all packages.
+    - [x] **Add Tests**: Create a comprehensive test case with a multi-module project to validate that cross-module function calls are correctly tracked and orphans are identified accurately across the entire workspace.
 - [ ] **`ModuleWalker`: Wildcard Support**: Add support for the `...` wildcard in import path patterns, similar to the `go` command, to make package discovery more intuitive.
 - [ ] **`scantest`: Path to Import Path Conversion**: Enhance `scantest.Run` with an option or helper to automatically convert filesystem path patterns (like `.`) into their corresponding Go import path patterns, simplifying test setup for tools that consume import paths.

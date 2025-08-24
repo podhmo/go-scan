@@ -58,6 +58,11 @@ type Scanner struct {
 
 	// Walker is responsible for lightweight, dependency-focused scanning operations.
 	Walker *ModuleWalker
+
+	// For multi-module workspace support
+	isWorkspace bool
+	locators    []*locator.Locator
+	moduleDirs  []string // temporary holder for module directories
 }
 
 // Fset returns the FileSet associated with the scanner.
@@ -65,9 +70,68 @@ func (s *Scanner) Fset() *token.FileSet {
 	return s.fset
 }
 
-// Locator returns the underlying locator instance.
+// Locator returns the primary locator instance. In workspace mode, this is the
+// locator for the first module, which might not be appropriate for all operations.
+// Use `locatorForImportPath` for path-specific lookups in workspace mode.
 func (s *Scanner) Locator() *locator.Locator {
+	if s.isWorkspace && len(s.locators) > 0 {
+		return s.locators[0]
+	}
 	return s.locator
+}
+
+// IsWorkspace returns true if the scanner is configured for multi-module mode.
+func (s *Scanner) IsWorkspace() bool {
+	return s.isWorkspace
+}
+
+// ModuleRoots returns the root directories of all modules in the workspace.
+func (s *Scanner) ModuleRoots() []string {
+	if !s.isWorkspace {
+		if s.locator != nil {
+			return []string{s.locator.RootDir()}
+		}
+		return nil
+	}
+	roots := make([]string, len(s.locators))
+	for i, loc := range s.locators {
+		roots[i] = loc.RootDir()
+	}
+	return roots
+}
+
+// locatorForImportPath finds the correct locator for a given import path in workspace mode.
+func (s *Scanner) locatorForImportPath(importPath string) (*locator.Locator, error) {
+	if !s.isWorkspace {
+		return s.locator, nil
+	}
+
+	var bestMatch *locator.Locator
+	var bestMatchLen int
+
+	for _, loc := range s.locators {
+		modulePath := loc.ModulePath()
+		// Check for exact match or if the import path is a sub-package of the module.
+		if importPath == modulePath || strings.HasPrefix(importPath, modulePath+"/") {
+			if len(modulePath) > bestMatchLen {
+				bestMatch = loc
+				bestMatchLen = len(modulePath)
+			}
+		}
+	}
+
+	if bestMatch != nil {
+		return bestMatch, nil
+	}
+
+	// Fallback for standard library packages: any locator can find them.
+	if !strings.Contains(importPath, ".") {
+		if len(s.locators) > 0 {
+			return s.locators[0], nil
+		}
+	}
+
+	return nil, fmt.Errorf("could not find a module responsible for import path %q in workspace", importPath)
 }
 
 // BuildImportLookup creates a map of local import names to their full package paths for a given file.
@@ -277,6 +341,18 @@ func WithGoModuleResolver() ScannerOption {
 	}
 }
 
+// WithModuleDirs configures the scanner to operate in workspace mode over a set of modules.
+// It stores the directories, and the actual locator initialization happens in `New`.
+func WithModuleDirs(moduleDirs []string) ScannerOption {
+	return func(s *Scanner) error {
+		if len(moduleDirs) > 0 {
+			s.isWorkspace = true
+			s.moduleDirs = moduleDirs
+		}
+		return nil
+	}
+}
+
 // WithOverlay provides in-memory file content to the scanner.
 func WithOverlay(overlay scanner.Overlay) ScannerOption {
 	return func(s *Scanner) error {
@@ -328,26 +404,46 @@ func New(options ...ScannerOption) (*Scanner, error) {
 		}
 	}
 
-	if s.workDir == "" {
-		cwd, err := os.Getwd()
-		if err != nil {
-			return nil, fmt.Errorf("getwd: %w", err)
-		}
-		s.workDir = cwd
-	}
-
 	locatorOpts := []locator.Option{locator.WithOverlay(s.overlay)}
 	if s.useGoModuleResolver {
 		locatorOpts = append(locatorOpts, locator.WithGoModuleResolver())
 	}
 
-	loc, err := locator.New(s.workDir, locatorOpts...)
-	if err != nil {
-		return nil, fmt.Errorf("failed to initialize locator: %w", err)
+	if s.isWorkspace {
+		if len(s.moduleDirs) == 0 {
+			return nil, fmt.Errorf("scanner is in workspace mode but no module directories were provided")
+		}
+		s.locators = make([]*locator.Locator, len(s.moduleDirs))
+		for i, dir := range s.moduleDirs {
+			loc, err := locator.New(dir, locatorOpts...)
+			if err != nil {
+				return nil, fmt.Errorf("workspace mode: failed to create locator for module %q: %w", dir, err)
+			}
+			s.locators[i] = loc
+		}
+		// Set the primary locator to the first one.
+		s.locator = s.locators[0]
+		s.workDir = s.locator.RootDir() // Set workDir to the first module's root.
+	} else {
+		if s.workDir == "" {
+			cwd, err := os.Getwd()
+			if err != nil {
+				return nil, fmt.Errorf("getwd: %w", err)
+			}
+			s.workDir = cwd
+		}
+		loc, err := locator.New(s.workDir, locatorOpts...)
+		if err != nil {
+			return nil, fmt.Errorf("failed to initialize locator: %w", err)
+		}
+		s.locator = loc
 	}
-	s.locator = loc
 
-	initialScanner, err := scanner.New(s.fset, s.ExternalTypeOverrides, s.overlay, loc.ModulePath(), loc.RootDir(), s, s.Inspect, s.Logger)
+	// The internal scanner needs a module path and root dir to initialize.
+	// In workspace mode, we use the primary (first) locator's info.
+	// This is a slight simplification, but the internal scanner's primary role
+	// is parsing, and type resolution logic will use the full workspace-aware Scanner.
+	initialScanner, err := scanner.New(s.fset, s.ExternalTypeOverrides, s.overlay, s.locator.ModulePath(), s.locator.RootDir(), s, s.Inspect, s.Logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create internal scanner: %w", err)
 	}
@@ -831,11 +927,16 @@ func (s *Scanner) ScanPackageByImport(ctx context.Context, importPath string) (*
 	}
 	slog.DebugContext(ctx, "ScanPackageByImport CACHE MISS", slog.String("importPath", importPath))
 
-	pkgDirAbs, err := s.locator.FindPackageDir(importPath)
+	loc, err := s.locatorForImportPath(importPath)
+	if err != nil {
+		return nil, fmt.Errorf("ScanPackageByImport: %w", err)
+	}
+
+	pkgDirAbs, err := loc.FindPackageDir(importPath)
 	if err != nil {
 		return nil, fmt.Errorf("could not find directory for import path %s: %w", importPath, err)
 	}
-	slog.DebugContext(ctx, "ScanPackageByImport resolved import path", slog.String("importPath", importPath), slog.String("pkgDirAbs", pkgDirAbs))
+	slog.DebugContext(ctx, "ScanPackageByImport resolved import path", slog.String("importPath", importPath), slog.String("pkgDirAbs", pkgDirAbs), slog.String("module", loc.ModulePath()))
 
 	allGoFilesInPkg, err := listGoFiles(pkgDirAbs, s.IncludeTests) // Gets absolute paths
 	if err != nil {

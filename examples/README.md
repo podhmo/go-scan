@@ -10,6 +10,7 @@ This directory contains example projects that demonstrate the capabilities and u
 - [minigo](#minigo)
 - [deps-walk](#deps-walk)
 - [docgen](#docgen)
+- [find-orphans](#find-orphans)
 
 ---
 
@@ -113,3 +114,18 @@ The `docgen` example is an experimental tool that generates OpenAPI 3.1 specific
 - Aggregates the discovered information into a valid OpenAPI 3.1 JSON document.
 
 This example showcases how `symgo` and `go-scan` can be combined to build powerful static analysis tools for Go codebases.
+
+---
+
+## find-orphans
+
+The `find-orphans` example is a static analysis tool that finds unused ("orphan") functions in a Go project.
+
+**Purpose**: To identify dead code by performing a call graph analysis starting from known entry points. This helps developers clean up their codebase by removing functions and methods that are no longer referenced.
+
+**Key Features**:
+- Uses `go-scan`'s `Walker` API to discover all packages in a module or workspace.
+- Employs the `symgo` symbolic execution engine to trace all possible execution paths from entry points.
+- Automatically detects entry points: it uses `main.main` for binaries or all exported functions for libraries.
+- Reports any function or method that is never reached during the symbolic execution as an "orphan".
+- Serves as a test pilot for `symgo`'s dead-code analysis capabilities.

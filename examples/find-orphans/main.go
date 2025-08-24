@@ -7,7 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"go/printer"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -35,14 +35,16 @@ func main() {
 		startPatterns = []string{"./..."}
 	}
 
-	if err := run(context.Background(), *all, *includeTests, *workspace, *verbose, *asJSON, startPatterns); err != nil {
-		log.Fatalf("!! %+v", err)
+	ctx := context.Background()
+	if err := run(ctx, *all, *includeTests, *workspace, *verbose, *asJSON, startPatterns); err != nil {
+		slog.ErrorContext(ctx, "toplevel", "error", err)
+		os.Exit(1)
 	}
 }
 
 // discoverModules finds all Go modules under the given root directory.
 // It prioritizes a go.work file if it exists, otherwise it scans for go.mod files.
-func discoverModules(root string) ([]string, error) {
+func discoverModules(ctx context.Context, root string) ([]string, error) {
 	workFilePath := filepath.Join(root, "go.work")
 
 	// Check if go.work exists
@@ -63,7 +65,7 @@ func discoverModules(root string) ([]string, error) {
 			modulePath := filepath.Join(root, use.Path)
 			modules = append(modules, modulePath)
 		}
-		log.Printf("discovered modules from go.work: %v", modules)
+		slog.DebugContext(ctx, "discovered modules from go.work", "modules", modules)
 		return modules, nil
 	} else if !os.IsNotExist(err) {
 		// Another error occurred with os.Stat, which is unexpected.
@@ -71,7 +73,7 @@ func discoverModules(root string) ([]string, error) {
 	}
 
 	// go.work does not exist, fall back to scanning for go.mod files.
-	log.Printf("no go.work file found, falling back to go.mod scan in %s", root)
+	slog.DebugContext(ctx, "no go.work file found, falling back to go.mod scan", "root", root)
 	var modules []string
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
@@ -92,27 +94,33 @@ func discoverModules(root string) ([]string, error) {
 }
 
 func run(ctx context.Context, all bool, includeTests bool, workspace string, verbose bool, asJSON bool, startPatterns []string) error {
+	logLevel := new(slog.LevelVar)
+	if !verbose {
+		logLevel.Set(slog.LevelInfo)
+	}
+	opts := &slog.HandlerOptions{
+		AddSource: verbose,
+		Level:     logLevel,
+	}
+	logger := slog.New(slog.NewTextHandler(os.Stderr, opts))
+	slog.SetDefault(logger)
+
 	var scannerOpts []goscan.ScannerOption
 	scannerOpts = append(scannerOpts, goscan.WithIncludeTests(includeTests))
 	scannerOpts = append(scannerOpts, goscan.WithGoModuleResolver()) // Important for resolving modules
-	if verbose {
-		log.SetFlags(log.Lshortfile)
-	} else {
-		log.SetFlags(0)
-	}
 
 	var s *goscan.Scanner
 	var err error
 
 	if workspace != "" {
-		moduleDirs, err := discoverModules(workspace)
+		moduleDirs, err := discoverModules(ctx, workspace)
 		if err != nil {
 			return err
 		}
 		if len(moduleDirs) == 0 {
 			return fmt.Errorf("no go.mod files found in workspace root %s", workspace)
 		}
-		log.Printf("found %d modules in workspace: %v", len(moduleDirs), moduleDirs)
+		slog.DebugContext(ctx, "found modules in workspace", "count", len(moduleDirs), "modules", moduleDirs)
 		scannerOpts = append(scannerOpts, goscan.WithModuleDirs(moduleDirs))
 		s, err = goscan.New(scannerOpts...)
 	} else {
@@ -138,13 +146,15 @@ type analyzer struct {
 	s        *goscan.Scanner
 	packages map[string]*scanner.PackageInfo
 	mu       sync.Mutex
+	ctx      context.Context
 }
 
 func (a *analyzer) analyze(ctx context.Context, asJSON bool, startPatterns []string) error {
+	a.ctx = ctx
 	var patternsToWalk []string
 	if a.s.IsWorkspace() {
 		roots := a.s.ModuleRoots()
-		log.Printf("discovering packages from workspace roots: %v", roots)
+		slog.DebugContext(ctx, "discovering packages from workspace roots", "roots", roots)
 		for _, root := range roots {
 			for _, pattern := range startPatterns {
 				// a bit of a hack to check for relative patterns like './...'
@@ -160,14 +170,14 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool, startPatterns []str
 		patternsToWalk = startPatterns
 	}
 
-	log.Printf("walking with patterns: %v", patternsToWalk)
+	slog.DebugContext(ctx, "walking with patterns", "patterns", patternsToWalk)
 	if err := a.s.Walker.Walk(ctx, a, patternsToWalk...); err != nil {
 		return fmt.Errorf("failed to walk packages: %w", err)
 	}
-	log.Printf("analyzing %d packages", len(a.packages))
+	slog.InfoContext(ctx, "analysis phase", "packages", len(a.packages))
 
 	interfaceMap := buildInterfaceMap(a.packages)
-	log.Printf("built interface map with %d interfaces", len(interfaceMap))
+	slog.DebugContext(ctx, "built interface map", "interfaces", len(interfaceMap))
 
 	interp, err := symgo.NewInterpreter(a.s)
 	if err != nil {
@@ -236,7 +246,7 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool, startPatterns []str
 		return nil
 	})
 
-	log.Printf("running symbolic execution from entry points")
+	slog.DebugContext(ctx, "running symbolic execution from entry points")
 	// First, find all potential entry points.
 	var mainEntryPoint *object.Function
 	var libraryEntryPoints []*object.Function
@@ -245,7 +255,7 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool, startPatterns []str
 		// Load all files in the package to define all symbols in the interpreter's env
 		for _, fileAst := range pkg.AstFiles {
 			if _, err := interp.Eval(ctx, fileAst, pkg); err != nil {
-				log.Printf("could not load package %s: %v", pkg.ImportPath, err)
+				slog.WarnContext(ctx, "could not load package", "package", pkg.ImportPath, "error", err)
 				break // if one file fails, probably best to skip the whole pkg
 			}
 		}
@@ -253,12 +263,12 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool, startPatterns []str
 		for _, fnInfo := range pkg.Functions {
 			funcObj, ok := interp.FindObject(fnInfo.Name)
 			if !ok {
-				log.Printf("could not find function object for %s in package %s", fnInfo.Name, pkg.ImportPath)
+				slog.DebugContext(ctx, "could not find function object in interpreter", "function", fnInfo.Name, "package", pkg.ImportPath)
 				continue
 			}
 			fn, ok := funcObj.(*object.Function)
 			if !ok {
-				log.Printf("%s is not a function in package %s", fnInfo.Name, pkg.ImportPath)
+				slog.DebugContext(ctx, "object is not a function", "name", fnInfo.Name, "package", pkg.ImportPath)
 				continue
 			}
 
@@ -274,10 +284,10 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool, startPatterns []str
 	var entryPoints []*object.Function
 	if mainEntryPoint != nil {
 		entryPoints = []*object.Function{mainEntryPoint}
-		log.Printf("found main entry point, running in application mode")
+		slog.InfoContext(ctx, "found main entry point, running in application mode")
 	} else {
 		entryPoints = libraryEntryPoints
-		log.Printf("no main entry point found, running in library mode with %d exported functions as entry points", len(entryPoints))
+		slog.InfoContext(ctx, "no main entry point found, running in library mode", "entrypoints", len(entryPoints))
 	}
 
 	for _, ep := range entryPoints {
@@ -288,10 +298,10 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool, startPatterns []str
 		if mainEntryPoint != nil {
 			usageMap[epName] = true
 		}
-		log.Printf("analyzing from entry point: %s", epName)
+		slog.DebugContext(ctx, "analyzing from entry point", "entrypoint", epName)
 		interp.Apply(ctx, ep, []object.Object{}, ep.Package)
 	}
-	log.Printf("symbolic execution complete")
+	slog.InfoContext(ctx, "symbolic execution complete")
 
 	type Orphan struct {
 		Name     string `json:"name"`
@@ -397,9 +407,9 @@ func (a *analyzer) Visit(pkg *goscan.PackageImports) ([]string, error) {
 	if pkg.ImportPath == "C" {
 		return nil, nil
 	}
-	fullPkg, err := a.s.ScanPackageByImport(context.Background(), pkg.ImportPath)
+	fullPkg, err := a.s.ScanPackageByImport(a.ctx, pkg.ImportPath)
 	if err != nil {
-		log.Printf("warning: could not scan package %s: %v", pkg.ImportPath, err)
+		slog.WarnContext(a.ctx, "could not scan package", "package", pkg.ImportPath, "error", err)
 		return nil, nil // Continue even if a package fails to scan
 	}
 	a.packages[pkg.ImportPath] = fullPkg

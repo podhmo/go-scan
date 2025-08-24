@@ -48,7 +48,7 @@ type Object interface {
 
 // BaseObject provides a default implementation for the TypeInfo and FieldType methods.
 type BaseObject struct {
-	ResolvedTypeInfo  *scanner.TypeInfo
+	ResolvedTypeInfo *scanner.TypeInfo
 	ResolvedFieldType *scanner.FieldType
 }
 

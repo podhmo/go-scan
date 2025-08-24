@@ -135,25 +135,12 @@ func (s *Scanner) Scan(patterns ...string) ([]*Package, error) {
 	for _, pattern := range patterns {
 		if strings.Contains(pattern, "...") {
 			// Handle wildcard pattern
-			baseImportPath := strings.TrimSuffix(pattern, "/...")
-			var absBasePath string
-			var err error
+			baseDir := strings.TrimSuffix(pattern, "...")
+			baseDir = strings.TrimSuffix(baseDir, "/")
 
-			// Heuristic: If it looks like a file path, treat it as such. Otherwise, resolve as import path.
-			isFilePath := filepath.IsAbs(pattern) || strings.HasPrefix(pattern, "./") || strings.HasPrefix(pattern, "../")
-			if isFilePath {
-				baseDir := strings.TrimSuffix(pattern, "...")
-				baseDir = strings.TrimSuffix(baseDir, "/")
-				if !filepath.IsAbs(baseDir) {
-					absBasePath = filepath.Join(s.workDir, baseDir)
-				} else {
-					absBasePath = baseDir
-				}
-			} else {
-				absBasePath, err = s.locator.FindPackageDir(baseImportPath)
-				if err != nil {
-					return nil, fmt.Errorf("could not find directory for import path pattern %q: %w", pattern, err)
-				}
+			absBasePath := baseDir
+			if !filepath.IsAbs(baseDir) {
+				absBasePath = filepath.Join(s.workDir, baseDir)
 			}
 
 			walkErr := filepath.WalkDir(absBasePath, func(path string, d fs.DirEntry, err error) error {

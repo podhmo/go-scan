@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
 	scan "github.com/podhmo/go-scan"
 )
 
@@ -151,8 +153,7 @@ func TestRun_ModifyFile(t *testing.T) {
 	}
 }
 
-func TestRun_WithImportPathPattern(t *testing.T) {
-	t.Skip("scantest.Run does not currently support import path patterns, only file system paths.")
+func TestRun_AsGoImportPaths_FilesystemPattern(t *testing.T) {
 	dir, cleanup := WriteFiles(t, map[string]string{
 		"go.mod": "module example.com/me\n",
 		"main.go": `
@@ -165,24 +166,63 @@ func main() { foo.Do() }
 	defer cleanup()
 
 	var pkgsFound []*scan.Package
-
 	action := func(ctx context.Context, s *scan.Scanner, pkgs []*scan.Package) error {
 		pkgsFound = pkgs
 		return nil
 	}
 
-	// This is the key part of the test. We are passing an import path pattern,
-	// not a file system pattern like ".". The scantest.Run function needs to
-	// be able to resolve this.
-	_, err := Run(t, dir, []string{"example.com/me/..."}, action, WithModuleRoot(dir))
+	// Use a filesystem pattern that should be converted.
+	_, err := Run(t, dir, []string{"./..."}, action, AsGoImportPaths())
 	if err != nil {
-		// We expect this to fail if scantest.Run doesn't support import paths.
-		// The goal is to see *how* it fails.
-		t.Logf("scantest.Run failed as expected (or unexpectedly): %v", err)
+		t.Fatalf("scantest.Run() failed: %v", err)
 	}
 
 	if len(pkgsFound) != 2 {
-		t.Errorf("expected to find 2 packages, but got %d", len(pkgsFound))
+		t.Fatalf("expected to find 2 packages, but got %d", len(pkgsFound))
+	}
+
+	gotNames := []string{pkgsFound[0].ImportPath, pkgsFound[1].ImportPath}
+	sort.Strings(gotNames)
+	wantNames := []string{"example.com/me", "example.com/me/foo"}
+
+	if diff := cmp.Diff(wantNames, gotNames); diff != "" {
+		t.Errorf("found packages mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestRun_AsGoImportPaths_ImportPathPattern(t *testing.T) {
+	dir, cleanup := WriteFiles(t, map[string]string{
+		"go.mod": "module example.com/me\n",
+		"main.go": `
+package main
+import "example.com/me/foo"
+func main() { foo.Do() }
+`,
+		"foo/foo.go": "package foo; func Do() {}",
+	})
+	defer cleanup()
+
+	var pkgsFound []*scan.Package
+	action := func(ctx context.Context, s *scan.Scanner, pkgs []*scan.Package) error {
+		pkgsFound = pkgs
+		return nil
+	}
+
+	// Pass an import path pattern directly.
+	_, err := Run(t, dir, []string{"example.com/me/..."}, action, AsGoImportPaths())
+	if err != nil {
+		t.Fatalf("scantest.Run() failed: %v", err)
+	}
+
+	if len(pkgsFound) != 2 {
+		t.Fatalf("expected to find 2 packages, but got %d", len(pkgsFound))
+	}
+	gotNames := []string{pkgsFound[0].ImportPath, pkgsFound[1].ImportPath}
+	sort.Strings(gotNames)
+	wantNames := []string{"example.com/me", "example.com/me/foo"}
+
+	if diff := cmp.Diff(wantNames, gotNames); diff != "" {
+		t.Errorf("found packages mismatch (-want +got):\n%s", diff)
 	}
 }
 

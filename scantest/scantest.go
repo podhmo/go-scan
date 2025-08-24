@@ -61,8 +61,9 @@ type Result struct {
 type RunOption func(*runConfig)
 
 type runConfig struct {
-	moduleRoot string
-	scanner    *scan.Scanner
+	moduleRoot      string
+	scanner         *scan.Scanner
+	convertPatterns bool
 }
 
 // WithModuleRoot explicitly sets the module root directory for the test run.
@@ -78,6 +79,16 @@ func WithModuleRoot(path string) RunOption {
 func WithScanner(s *scan.Scanner) RunOption {
 	return func(c *runConfig) {
 		c.scanner = s
+	}
+}
+
+// AsGoImportPaths is a RunOption that tells Run to interpret the patterns
+// as filesystem paths (e.g. ".", "./...") or import paths (e.g. "example.com/...")
+// and resolve them to fully-qualified Go import paths before scanning.
+// This is useful for testing tools that expect import paths.
+func AsGoImportPaths() RunOption {
+	return func(c *runConfig) {
+		c.convertPatterns = true
 	}
 }
 
@@ -147,19 +158,30 @@ func Run(t *testing.T, dir string, patterns []string, action ActionFunc, opts ..
 		}
 	}
 
-	// Adjust patterns to be relative to the temp `dir` if they are not absolute.
-	// The scanner's workDir is the module root, so we need to provide paths that
-	// can be resolved from there. The easiest way is to make them absolute.
-	absPatterns := make([]string, len(patterns))
-	for i, p := range patterns {
-		if filepath.IsAbs(p) {
-			absPatterns[i] = p
-		} else {
-			absPatterns[i] = filepath.Join(dir, p)
+	var scanPatterns []string
+	if cfg.convertPatterns {
+		var err error
+		scanPatterns, err = convertPatternsToImportPaths(workDir, dir, patterns)
+		if err != nil {
+			return nil, fmt.Errorf("scantest: failed to convert patterns to import paths: %w", err)
 		}
+	} else {
+		// Default behavior: treat patterns as file paths.
+		// Adjust patterns to be relative to the temp `dir` if they are not absolute.
+		// The scanner's workDir is the module root, so we need to provide paths that
+		// can be resolved from there. The easiest way is to make them absolute.
+		absPatterns := make([]string, len(patterns))
+		for i, p := range patterns {
+			if filepath.IsAbs(p) {
+				absPatterns[i] = p
+			} else {
+				absPatterns[i] = filepath.Join(dir, p)
+			}
+		}
+		scanPatterns = absPatterns
 	}
 
-	pkgs, err := s.Scan(absPatterns...)
+	pkgs, err := s.Scan(scanPatterns...)
 	if err != nil {
 		return nil, fmt.Errorf("scan: %w", err)
 	}
@@ -367,4 +389,77 @@ func createGoModOverlay(dir string) (scanner.Overlay, error) {
 		"go.mod": []byte(strings.Join(newLines, "\n")),
 	}
 	return overlay, nil
+}
+
+// convertPatternsToImportPaths converts filesystem-like patterns (e.g., ".", "./...")
+// into fully-qualified Go import paths. It also leaves existing import paths untouched.
+func convertPatternsToImportPaths(moduleRoot, scanDir string, patterns []string) ([]string, error) {
+	modulePath, err := getModulePath(filepath.Join(moduleRoot, "go.mod"))
+	if err != nil {
+		return nil, fmt.Errorf("could not get module path from %s: %w", moduleRoot, err)
+	}
+
+	var importPaths []string
+	for _, p := range patterns {
+		// Heuristic: if it contains a dot but not at the start, it's likely an import path.
+		isFilePath := strings.HasPrefix(p, "./") || strings.HasPrefix(p, "../") || p == "." || !strings.Contains(p, "/")
+
+		if !isFilePath && strings.Contains(p, ".") {
+			// Assume it's already an import path.
+			importPaths = append(importPaths, p)
+			continue
+		}
+
+		// It's a file path, so we need to construct the import path.
+		absScanPath, err := filepath.Abs(filepath.Join(scanDir, p))
+		if err != nil {
+			return nil, fmt.Errorf("could not get absolute path for %q in %q: %w", p, scanDir, err)
+		}
+
+		relPath, err := filepath.Rel(moduleRoot, absScanPath)
+		if err != nil {
+			return nil, fmt.Errorf("path %q is not in module root %q: %w", absScanPath, moduleRoot, err)
+		}
+		relPath = filepath.ToSlash(relPath)
+
+		var finalPath string
+		if relPath == "." || relPath == "" {
+			finalPath = modulePath
+		} else {
+			finalPath = modulePath + "/" + relPath
+		}
+
+		if strings.HasSuffix(p, "/...") {
+			if !strings.HasSuffix(finalPath, "/...") {
+				finalPath += "/..."
+			}
+		}
+		finalPath = strings.ReplaceAll(finalPath, "//...", "/...")
+
+		importPaths = append(importPaths, finalPath)
+	}
+
+	return importPaths, nil
+}
+
+// getModulePath reads a go.mod file and extracts the module path.
+func getModulePath(goModPath string) (string, error) {
+	content, err := os.ReadFile(goModPath)
+	if err != nil {
+		return "", fmt.Errorf("could not read go.mod file at %s: %w", goModPath, err)
+	}
+
+	lines := strings.Split(string(content), "\n")
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "module") {
+			parts := strings.Fields(trimmed)
+			if len(parts) >= 2 {
+				return parts[1], nil
+			}
+			return "", fmt.Errorf("invalid module line in go.mod: %q", line)
+		}
+	}
+
+	return "", fmt.Errorf("no module line found in %s", goModPath)
 }

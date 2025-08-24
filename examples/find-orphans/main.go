@@ -9,14 +9,15 @@ import (
 	"go/printer"
 	"log"
 	"os"
-	"strings"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/scanner"
 	"github.com/podhmo/go-scan/symgo"
 	"github.com/podhmo/go-scan/symgo/object"
+	"golang.org/x/mod/modfile"
 )
 
 func main() {
@@ -39,14 +40,43 @@ func main() {
 	}
 }
 
-// discoverModules finds all directories containing a go.mod file under the root.
+// discoverModules finds all Go modules under the given root directory.
+// It prioritizes a go.work file if it exists, otherwise it scans for go.mod files.
 func discoverModules(root string) ([]string, error) {
+	workFilePath := filepath.Join(root, "go.work")
+
+	// Check if go.work exists
+	if _, err := os.Stat(workFilePath); err == nil {
+		// go.work exists, so parse it
+		data, err := os.ReadFile(workFilePath)
+		if err != nil {
+			return nil, fmt.Errorf("could not read go.work file at %s: %w", workFilePath, err)
+		}
+		wf, err := modfile.ParseWork(workFilePath, data, nil)
+		if err != nil {
+			return nil, fmt.Errorf("could not parse go.work file: %w", err)
+		}
+
+		var modules []string
+		for _, use := range wf.Use {
+			// The path in go.work is relative to the root of the go.work file.
+			modulePath := filepath.Join(root, use.Path)
+			modules = append(modules, modulePath)
+		}
+		log.Printf("discovered modules from go.work: %v", modules)
+		return modules, nil
+	} else if !os.IsNotExist(err) {
+		// Another error occurred with os.Stat, which is unexpected.
+		return nil, fmt.Errorf("failed to stat go.work file at %s: %w", workFilePath, err)
+	}
+
+	// go.work does not exist, fall back to scanning for go.mod files.
+	log.Printf("no go.work file found, falling back to go.mod scan in %s", root)
 	var modules []string
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		// Skip vendor directories and hidden directories at any level.
 		if d.IsDir() && (d.Name() == "vendor" || (len(d.Name()) > 1 && d.Name()[0] == '.')) {
 			return filepath.SkipDir
 		}

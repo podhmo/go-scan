@@ -88,9 +88,80 @@ func IgnoredFunc() {}
 	}
 }
 
+func TestFindOrphans_multiModuleWorkspace_withGoWork(t *testing.T) {
+	files := map[string]string{
+		"workspace/go.work": `
+go 1.21
+use (
+	./modulea
+	./moduleb
+)
+`,
+		"workspace/modulea/go.mod": "module example.com/modulea\ngo 1.21\nreplace example.com/moduleb => ../moduleb\nrequire golang.org/x/mod v0.27.0\n",
+		"workspace/modulea/main.go": `
+package main
+import "example.com/moduleb/lib"
+func main() {
+    lib.UsedFunc()
+}
+`,
+		"workspace/moduleb/go.mod": "module example.com/moduleb\ngo 1.21\n",
+		"workspace/moduleb/lib/lib.go": `
+package lib
+import "fmt"
+func UsedFunc() {
+    fmt.Println("used")
+}
+func UnusedFunc() {
+    fmt.Println("unused")
+}
+`,
+	}
+	dir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	log.SetOutput(io.Discard)
+
+	workspaceRoot := filepath.Join(dir, "workspace")
+	startPatterns := []string{"./..."}
+	// Set verbose to false, and asJSON to false
+	err := run(context.Background(), true, false, workspaceRoot, false, false, startPatterns)
+	if err != nil {
+		t.Fatalf("run() failed: %v", err)
+	}
+
+	w.Close()
+	os.Stdout = oldStdout
+
+	var buf bytes.Buffer
+	io.Copy(&buf, r)
+	output := buf.String()
+
+	expectedOrphans := []string{
+		"example.com/moduleb/lib.UnusedFunc",
+	}
+	sort.Strings(expectedOrphans)
+
+	var foundOrphans []string
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	for _, line := range lines {
+		if strings.HasPrefix(line, "example.com") {
+			foundOrphans = append(foundOrphans, line)
+		}
+	}
+	sort.Strings(foundOrphans)
+
+	if diff := cmp.Diff(expectedOrphans, foundOrphans); diff != "" {
+		t.Errorf("find-orphans mismatch (-want +got):\n%s\nFull output:\n%s", diff, output)
+	}
+}
+
 func TestFindOrphans_multiModuleWorkspace(t *testing.T) {
 	files := map[string]string{
-		"workspace/modulea/go.mod": "module example.com/modulea\ngo 1.21\nreplace example.com/moduleb => ../moduleb\n",
+		"workspace/modulea/go.mod": "module example.com/modulea\ngo 1.21\nreplace example.com/moduleb => ../moduleb\nrequire golang.org/x/mod v0.27.0\n",
 		"workspace/modulea/main.go": `
 package main
 import "example.com/moduleb/lib"

@@ -9,11 +9,11 @@ require (
 	github.com/podhmo/go-scan v0.0.0
 	github.com/podhmo/go-scan/examples/derivingbind v0.0.0
 	github.com/podhmo/go-scan/examples/derivingjson v0.0.0
-	golang.org/x/tools v0.34.0
+	golang.org/x/tools v0.35.0
 )
 
 require (
-	golang.org/x/mod v0.26.0 // indirect
+	golang.org/x/mod v0.27.0 // indirect
 	golang.org/x/sync v0.16.0 // indirect
 )
 

@@ -13,6 +13,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 ## Implemented
 
 - **Core Scanning Engine**: A robust, AST-based engine for parsing Go code. It supports lazy, on-demand, cross-package type resolution, and correctly handles complex scenarios like recursive types and generic type definitions. It can extract detailed information about all major Go constructs, including structs, functions, interfaces, and constants.
+    - **Test Package Handling**: The scanner now correctly handles directories containing both a standard package (`pkg`) and its external test package (`pkg_test`) when the `include-tests` option is enabled, preventing "mismatched package names" errors.
 - **Dependency Analysis**: Includes the `deps-walk` command-line tool for visualizing dependency graphs (in DOT or Mermaid format) and a powerful underlying library for programmatic graph traversal, including forward and reverse dependency analysis.
 - **Code Generation Framework**:
     - **`convert` Tool**: A feature-rich tool for generating type-safe conversion functions, driven by annotations (`@derivingconvert`), struct tags (`convert:"..."`), and global rules (`// convert:rule`). Supports nested types, custom functions, and comprehensive error collection.

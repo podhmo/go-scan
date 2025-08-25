@@ -597,6 +597,20 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool) error {
 					}
 				}
 
+				// Exclude test functions if we are including test files in the scan.
+				// They are entry points for the test runner, but only in _test.go files.
+				if a.s.Config.IncludeTests {
+					pos := a.s.Fset().Position(decl.AstDecl.Pos())
+					if strings.HasSuffix(pos.Filename, "_test.go") {
+						if strings.HasPrefix(decl.Name, "Test") ||
+							strings.HasPrefix(decl.Name, "Benchmark") ||
+							strings.HasPrefix(decl.Name, "Example") ||
+							strings.HasPrefix(decl.Name, "Fuzz") {
+							continue
+						}
+					}
+				}
+
 				if decl.AstDecl.Doc != nil {
 					for _, comment := range decl.AstDecl.Doc.List {
 						if strings.Contains(comment.Text, "//go:scan:ignore") {

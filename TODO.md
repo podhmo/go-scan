@@ -59,9 +59,6 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 
 ## To Be Implemented
 
-### `find-orphans` Bug Fixes
-- [ ] **Usage tracking includes external packages**: The default intrinsic in `find-orphans` adds all called functions to the "used" map, including those from external packages. The logic must be fixed to only track usage of functions defined within the target workspace.
-
 ### `minigo` Refinements ([docs/plan-minigo.md](./docs/plan-minigo.md))
 - [ ] Write comprehensive documentation for the API, supported language features, and usage examples.
 
@@ -69,9 +66,9 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] **Fix empty slice type inference**: Type inference for empty slice literals is weak and defaults to `[]any`. This causes legitimate generic functions (like `slices.Sort`) to fail type checks when they shouldn't. The interpreter should ideally preserve the declared type (e.g., `[]int`) even if the literal is empty. (Note: This is fixed for empty slice and map literals.)
 - [x] **Fix typed nil handling**: The interpreter does not correctly handle typed `nil` values for slices and interfaces, causing incorrect behavior in type inference and equality checks.
 
-- **`symgo`: `defer` and `go` statement Tracing**: The `symgo` interpreter now traces `CallExpr` nodes inside `*ast.DeferStmt` and `*ast.GoStmt`, preventing false positives in tools like `find-orphans`.
 
 ### `symgo` Interpreter Limitations
+- [x] **`symgo`: `defer` and `go` statement Tracing**: The `symgo` interpreter now traces `CallExpr` nodes inside `*ast.DeferStmt` and `*ast.GoStmt`, preventing false positives in tools like `find-orphans`.
 - [ ] **`for...range` statements**: The interpreter does not handle `*ast.RangeStmt`. A function call in the range expression (e.g., `for _ := range getItems()`) will not be traced.
 - [ ] **Pointer Dereferencing**: The interpreter does not handle `*ast.UnaryExpr` with `Op: token.MUL`. This prevents tracing method calls on pointer types (e.g., `(*p).MyMethod()`).
 - [ ] **Slice Expressions**: The interpreter does not handle `*ast.SliceExpr`. Function calls used as index expressions are not traced.
@@ -91,4 +88,9 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     - [x] **Update Analysis Logic**: Ensure the main analysis loop correctly collects declarations, builds maps, and identifies entry points from the aggregated set of all packages.
     - [x] **Add Tests**: Create a comprehensive test case with a multi-module project to validate that cross-module function calls are correctly tracked and orphans are identified accurately across the entire workspace.
 - [x] **`ModuleWalker`: Wildcard Support**: Added support for the `...` wildcard in both file path and import path patterns to tools like `find-orphans`, making package discovery more intuitive.
-- [x] **`scantest`: Path to Import Path Conversion**: Enhance `scantest.Run` with an option or helper to automatically convert filesystem path patterns (like `.`) into their corresponding Go import path patterns, simplifying test setup for tools that consume import paths.
+- [x] **`scantest`: Path to Import Path Conversion**: Enhance `scantest.Run` with an option or helper to automatically convert filesystem path patterns (like `.`) into their corresponding Go import path patterns,
+- [ ] simplifying test setup for tools that consume import paths.
+
+
+### `find-orphans` Bug Fixes
+- [ ] **Usage tracking includes external packages**: The default intrinsic in `find-orphans` adds all called functions to the "used" map, including those from external packages. The logic must be fixed to only track usage of functions defined within the target workspace.

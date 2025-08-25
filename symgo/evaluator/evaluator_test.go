@@ -115,6 +115,122 @@ var x = 10
 	}
 }
 
+func TestEval_GoStmt(t *testing.T) {
+	source := `
+package main
+func goFunc() {}
+func main() {
+	go goFunc()
+}
+`
+	dir, cleanup := scantest.WriteFiles(t, map[string]string{
+		"go.mod":  "module example.com/me",
+		"main.go": source,
+	})
+	defer cleanup()
+
+	var calledFunctions []object.Object
+
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
+		pkg := pkgs[0]
+		eval := New(s, s.Logger, nil, nil)
+
+		eval.RegisterDefaultIntrinsic(func(args ...object.Object) object.Object {
+			if len(args) > 0 {
+				calledFunctions = append(calledFunctions, args[0])
+			}
+			return nil
+		})
+
+		env := object.NewEnvironment()
+		eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], env, pkg)
+
+		mainFunc, ok := env.Get("main")
+		if !ok {
+			return fmt.Errorf("function 'main' not found")
+		}
+
+		eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, token.NoPos)
+
+		if len(calledFunctions) == 0 {
+			return fmt.Errorf("go function call was not tracked")
+		}
+
+		fn, ok := calledFunctions[0].(*object.Function)
+		if !ok {
+			return fmt.Errorf("tracked object is not a function, got %T", calledFunctions[0])
+		}
+
+		if fn.Name.Name != "goFunc" {
+			return fmt.Errorf("expected tracked function to be 'goFunc', but got '%s'", fn.Name.Name)
+		}
+
+		return nil
+	}
+
+	if _, err := scantest.Run(t, context.Background(), dir, []string{"."}, action); err != nil {
+		t.Fatalf("scantest.Run() failed: %v", err)
+	}
+}
+
+func TestEval_DeferStmt(t *testing.T) {
+	source := `
+package main
+func deferredFunc() {}
+func main() {
+	defer deferredFunc()
+}
+`
+	dir, cleanup := scantest.WriteFiles(t, map[string]string{
+		"go.mod":  "module example.com/me",
+		"main.go": source,
+	})
+	defer cleanup()
+
+	var calledFunctions []object.Object
+
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
+		pkg := pkgs[0]
+		eval := New(s, s.Logger, nil, nil)
+
+		eval.RegisterDefaultIntrinsic(func(args ...object.Object) object.Object {
+			if len(args) > 0 {
+				calledFunctions = append(calledFunctions, args[0])
+			}
+			return nil
+		})
+
+		env := object.NewEnvironment()
+		eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], env, pkg)
+
+		mainFunc, ok := env.Get("main")
+		if !ok {
+			return fmt.Errorf("function 'main' not found")
+		}
+
+		eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, token.NoPos)
+
+		if len(calledFunctions) == 0 {
+			return fmt.Errorf("deferred function call was not tracked")
+		}
+
+		fn, ok := calledFunctions[0].(*object.Function)
+		if !ok {
+			return fmt.Errorf("tracked object is not a function, got %T", calledFunctions[0])
+		}
+
+		if fn.Name.Name != "deferredFunc" {
+			return fmt.Errorf("expected tracked function to be 'deferredFunc', but got '%s'", fn.Name.Name)
+		}
+
+		return nil
+	}
+
+	if _, err := scantest.Run(t, context.Background(), dir, []string{"."}, action); err != nil {
+		t.Fatalf("scantest.Run() failed: %v", err)
+	}
+}
+
 func TestDefaultIntrinsic_InterfaceMethodCall(t *testing.T) {
 	source := `
 package main

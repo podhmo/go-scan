@@ -69,8 +69,9 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] **Fix empty slice type inference**: Type inference for empty slice literals is weak and defaults to `[]any`. This causes legitimate generic functions (like `slices.Sort`) to fail type checks when they shouldn't. The interpreter should ideally preserve the declared type (e.g., `[]int`) even if the literal is empty. (Note: This is fixed for empty slice and map literals.)
 - [x] **Fix typed nil handling**: The interpreter does not correctly handle typed `nil` values for slices and interfaces, causing incorrect behavior in type inference and equality checks.
 
+- **`symgo`: `defer` and `go` statement Tracing**: The `symgo` interpreter now traces `CallExpr` nodes inside `*ast.DeferStmt` and `*ast.GoStmt`, preventing false positives in tools like `find-orphans`.
+
 ### `symgo` Interpreter Limitations
-- [ ] **`defer` and `go` statements**: The interpreter does not trace `CallExpr` nodes inside `*ast.DeferStmt` and `*ast.GoStmt`. This can lead to false positives in tools like `find-orphans`.
 - [ ] **`for...range` statements**: The interpreter does not handle `*ast.RangeStmt`. A function call in the range expression (e.g., `for _ := range getItems()`) will not be traced.
 - [ ] **Pointer Dereferencing**: The interpreter does not handle `*ast.UnaryExpr` with `Op: token.MUL`. This prevents tracing method calls on pointer types (e.g., `(*p).MyMethod()`).
 - [ ] **Slice Expressions**: The interpreter does not handle `*ast.SliceExpr`. Function calls used as index expressions are not traced.

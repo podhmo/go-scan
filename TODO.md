@@ -90,7 +90,3 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] **`ModuleWalker`: Wildcard Support**: Added support for the `...` wildcard in both file path and import path patterns to tools like `find-orphans`, making package discovery more intuitive.
 - [x] **`scantest`: Path to Import Path Conversion**: Enhance `scantest.Run` with an option or helper to automatically convert filesystem path patterns (like `.`) into their corresponding Go import path patterns,
 - [ ] simplifying test setup for tools that consume import paths.
-
-
-### `find-orphans` Bug Fixes
-- [ ] **Usage tracking includes external packages**: The default intrinsic in `find-orphans` adds all called functions to the "used" map, including those from external packages. The logic must be fixed to only track usage of functions defined within the target workspace.

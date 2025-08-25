@@ -133,6 +133,7 @@ type Function struct {
 	Decl       *ast.FuncDecl // The original declaration, for metadata like godoc.
 	Package    *scanner.PackageInfo
 	Receiver   Object // The receiver for a method call ("self" or "this").
+	Def        *scanner.FunctionInfo
 }
 
 // Type returns the type of the Function object.

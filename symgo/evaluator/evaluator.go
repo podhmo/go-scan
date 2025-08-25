@@ -218,6 +218,20 @@ func (e *Evaluator) evalCompositeLit(ctx context.Context, node *ast.CompositeLit
 		return newError(node.Pos(), "could not resolve type for composite literal: %s", typeNameBuf.String())
 	}
 
+	// IMPORTANT: Evaluate all field/element values within the literal.
+	// This is crucial for detecting function calls inside initializers.
+	for _, elt := range node.Elts {
+		switch v := elt.(type) {
+		case *ast.KeyValueExpr:
+			// This handles struct literals: { Key: Value }
+			// We only need to evaluate the value part to trace calls.
+			e.Eval(ctx, v.Value, env, pkg)
+		default:
+			// This handles slice/array literals: { Value1, Value2 }
+			e.Eval(ctx, v, env, pkg)
+		}
+	}
+
 	if fieldType.IsSlice {
 		sliceObj := &object.Slice{SliceFieldType: fieldType}
 		sliceObj.SetFieldType(fieldType)
@@ -383,6 +397,13 @@ func (e *Evaluator) evalFile(ctx context.Context, file *ast.File, env *object.En
 				e.evalGenDecl(ctx, d, env, pkg)
 			}
 		case *ast.FuncDecl:
+			var funcInfo *scanner.FunctionInfo
+			for _, f := range pkg.Functions {
+				if f.AstDecl == d {
+					funcInfo = f
+					break
+				}
+			}
 			fn := &object.Function{
 				Name:       d.Name,
 				Parameters: d.Type.Params,
@@ -390,6 +411,7 @@ func (e *Evaluator) evalFile(ctx context.Context, file *ast.File, env *object.En
 				Env:        env,
 				Decl:       d,
 				Package:    pkg,
+				Def:        funcInfo,
 			}
 			env.Set(d.Name.Name, fn)
 		}
@@ -524,6 +546,7 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 						Env:        val.Env, // Use the target package's environment.
 						Decl:       f.AstDecl,
 						Package:    val.ScannedInfo,
+						Def:        f,
 					}
 					val.Env.Set(n.Sel.Name, fn) // Cache in the package's env for subsequent calls.
 					return fn
@@ -680,36 +703,12 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 			}
 		}
 
-		// Check for a method call on the type.
-		// This requires getting the package info where the type is defined.
-		if typeInfo.PkgPath != "" {
-			methodPkg, err := e.scanner.ScanPackageByImport(ctx, typeInfo.PkgPath)
-			if err == nil {
-				for _, fn := range methodPkg.Functions {
-					if fn.Receiver == nil {
-						continue
-					}
-					// fn.Receiver.Type is a FieldType. We need to get its base name.
-					recvTypeName := fn.Receiver.Type.TypeName
-					if recvTypeName == "" {
-						recvTypeName = fn.Receiver.Type.Name
-					}
-
-					// Compare the method's receiver type name with the variable's type name.
-					if fn.Name == n.Sel.Name && recvTypeName == typeInfo.Name {
-						// Found the method. Create a function object with the receiver set.
-						return &object.Function{
-							Name:       fn.AstDecl.Name,
-							Parameters: fn.AstDecl.Type.Params,
-							Body:       fn.AstDecl.Body,
-							Env:        env, // The environment at the call site.
-							Decl:       fn.AstDecl,
-							Package:    methodPkg,
-							Receiver:   val, // Set the receiver object.
-						}
-					}
-				}
-			}
+		// Check for a method call on the type, including embedded structs.
+		if method, err := e.findMethodOnType(ctx, typeInfo, n.Sel.Name, env, val); err == nil && method != nil {
+			return method
+		} else if err != nil {
+			// Log the error for debugging, but don't fail the evaluation.
+			e.logger.Warn("error trying to find method", "method", n.Sel.Name, "type", typeInfo.Name, "error", err)
 		}
 
 		if typeInfo.Struct != nil {
@@ -1358,4 +1357,124 @@ func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, 
 	}
 
 	return env, nil
+}
+
+// findMethodOnType recursively finds a method on a type or its embedded types.
+// It returns a callable Function object if found.
+func (e *Evaluator) findMethodOnType(ctx context.Context, typeInfo *scanner.TypeInfo, methodName string, env *object.Environment, receiver object.Object) (*object.Function, error) {
+	if typeInfo == nil {
+		return nil, nil // Cannot find method without type info
+	}
+
+	// Use a map to track visited types and prevent infinite recursion.
+	visited := make(map[string]bool)
+	return e.findMethodRecursive(ctx, typeInfo, methodName, env, receiver, visited)
+}
+
+func (e *Evaluator) findMethodRecursive(ctx context.Context, typeInfo *scanner.TypeInfo, methodName string, env *object.Environment, receiver object.Object, visited map[string]bool) (*object.Function, error) {
+	if typeInfo == nil {
+		return nil, nil
+	}
+
+	// Create a unique key for the type to track visited nodes.
+	typeKey := fmt.Sprintf("%s.%s", typeInfo.PkgPath, typeInfo.Name)
+	if visited[typeKey] {
+		return nil, nil // Cycle detected
+	}
+	visited[typeKey] = true
+
+	// 1. Search for a direct method on the current type.
+	if method, err := e.findDirectMethodOnType(ctx, typeInfo, methodName, env, receiver); err != nil || method != nil {
+		return method, err
+	}
+
+	// 2. If not found, search in embedded structs.
+	if typeInfo.Struct != nil {
+		for _, field := range typeInfo.Struct.Fields {
+			if field.Embedded {
+				embeddedTypeInfo, _ := field.Type.Resolve(ctx)
+				if embeddedTypeInfo != nil {
+					// Recursive call, passing the original receiver.
+					if foundFn, err := e.findMethodRecursive(ctx, embeddedTypeInfo, methodName, env, receiver, visited); err != nil || foundFn != nil {
+						return foundFn, err
+					}
+				}
+			}
+		}
+	}
+
+	return nil, nil // Not found
+}
+
+func (e *Evaluator) findDirectMethodOnType(ctx context.Context, typeInfo *scanner.TypeInfo, methodName string, env *object.Environment, receiver object.Object) (*object.Function, error) {
+	if typeInfo == nil || typeInfo.PkgPath == "" {
+		return nil, nil
+	}
+
+	methodPkg, err := e.scanner.ScanPackageByImport(ctx, typeInfo.PkgPath)
+	if err != nil {
+		// This can happen for built-in types like 'error', which is fine.
+		if strings.Contains(err.Error(), "cannot find package") {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("could not scan package %q: %w", typeInfo.PkgPath, err)
+	}
+
+	for _, fn := range methodPkg.Functions {
+		if fn.Receiver == nil || fn.Name != methodName {
+			continue
+		}
+
+		// fn.Receiver.Type is a FieldType. We need to get its base name.
+		recvTypeName := fn.Receiver.Type.TypeName
+		if recvTypeName == "" {
+			recvTypeName = fn.Receiver.Type.Name
+		}
+
+		// The type name from the scanner might be `T` or `*T`.
+		// The receiver type name from the function decl will be `T` or `*T`.
+		// Let's compare base names.
+		baseRecvTypeName := strings.TrimPrefix(recvTypeName, "*")
+		baseTypeName := strings.TrimPrefix(typeInfo.Name, "*")
+
+		if baseRecvTypeName == baseTypeName {
+			// This is a potential match. Now check pointer compatibility.
+			// If method has pointer receiver, variable must be a pointer.
+			// If method has value receiver, variable can be value or pointer.
+			isMethodPtrRecv := strings.HasPrefix(recvTypeName, "*")
+
+			var isVarPointer bool
+			if v, ok := receiver.(*object.Variable); ok {
+				// Check the variable's type, not the value's, as value might be nil.
+				if v.FieldType() != nil {
+					isVarPointer = v.FieldType().IsPointer
+				} else if v.TypeInfo() != nil {
+					// Fallback for less precise type info
+					isVarPointer = strings.HasPrefix(v.TypeInfo().Name, "*")
+				}
+			} else if _, ok := receiver.(*object.Pointer); ok {
+				isVarPointer = true
+			} else if i, ok := receiver.(*object.Instance); ok {
+				// An instance from a constructor like `NewFoo()` is usually a pointer.
+				isVarPointer = strings.HasPrefix(i.TypeName, "*")
+			}
+
+			if isMethodPtrRecv && !isVarPointer {
+				continue // Cannot call pointer method on non-pointer
+			}
+
+			return &object.Function{
+				Name:       fn.AstDecl.Name,
+				Parameters: fn.AstDecl.Type.Params,
+				Body:       fn.AstDecl.Body,
+				Env:        env,
+				Decl:       fn.AstDecl,
+				Package:    methodPkg,
+				Receiver:   receiver,
+				Def:        fn,
+			}, nil
+		}
+	}
+
+	return nil, nil // Not found
 }

@@ -67,18 +67,37 @@ My immediate next steps are:
 
 ---
 
-## 6. Remaining Challenges & High-Level Plan
+## 7. Reboot: A Simplified Implementation Plan
 
-Based on the analysis of the test failures, the path to completion requires solving three core challenges.
+After discussion, it became clear that the initial refactoring was overly complex. The core requirements can be met with a much simpler approach that modifies only the `find-orphans` tool and does not require changes to the core `goscan` library.
 
-1.  **Challenge: Inconsistent Directory Exclusion**
-    *   **Problem:** The logic for skipping directories like `testdata` is applied inconsistently. It's present in some directory walks (e.g., `discoverModules`) but absent in the main pattern resolver (`resolvePatternsToImportPaths`). This leads to unexpected behavior where `testdata` is sometimes included in the analysis.
-    *   **Goal:** Centralize and make the exclusion logic configurable and consistent across all directory-walking operations in the library. This will likely involve adding a configuration option to `ModuleWalker` that can be set by client code like `find-orphans`.
+This new plan is simpler, more direct, and avoids the risks of a large-scale refactoring.
 
-2.  **Challenge: Non-Workspace-Aware Path Resolution**
-    *   **Problem:** The current mechanism for converting a file path to a Go import path (`locator.PathToImport`) only works for a single module. In a multi-module workspace, it fails to resolve paths for any module other than the "primary" one. This is the root cause of the multi-module test failures.
-    *   **Goal:** Implement a workspace-aware path resolution mechanism. This function should live at the `Scanner` level, which has access to all modules in the workspace, and it should iterate through them to find the correct module for any given file path.
+### The Simplified Approach
 
-3.  **Challenge: Ambiguous File Path Pattern Handling**
-    *   **Problem:** The logic for handling file path patterns without a wildcard (e.g., `.` or `..`) is brittle. It incorrectly assumes such a path points to a single package and tries to convert it directly to an import path. This fails when the path points to a directory containing multiple packages or modules (like a workspace root).
-    *   **Goal:** Refactor the pattern resolver (`resolvePatternsToImportPaths`) to robustly handle all file path patterns. When a file path pattern is encountered, it should be walked to discover all constituent Go packages within that directory, similar to how wildcard patterns (`...`) are handled.
+1.  **Keep Core Library Unchanged:** The `goscan` and `modulewalker` libraries will not be changed. The dependency analysis will continue to traverse the entire dependency graph.
+2.  **Handle All Logic in `find-orphans`:** All new logic will be contained within `examples/find-orphans/main.go`.
+3.  **Pre-computation of Target Packages:** Before the analysis begins, resolve all user-provided command-line patterns (including relative paths like `.` or `../...`) into a definitive set of target import paths.
+4.  **Post-Analysis Filtering:** After the full analysis (including all dependencies) is complete, filter the final list of orphans to only include those that belong to the pre-computed set of target packages.
+5.  **Configurable Exclusion at the Tool-Level:** Directory exclusions (`testdata`, etc.) will be handled by a command-line flag in `find-orphans`. This exclusion logic will only be used during the initial pattern resolution step.
+
+### New Task List
+
+This plan translates into the following, more manageable tasks:
+
+1.  **Revert Core Library Changes:** Use `git restore` to undo all changes to `goscan.go` and `modulewalker.go`.
+2.  **Update `find-orphans/main.go`:**
+    *   Add a new `--exclude-dirs` command-line flag.
+    *   At the beginning of the `run` function, create a helper function to resolve the initial command-line patterns into a set of target package import paths. This helper will:
+        *   Handle file path patterns (`.`, `..`, `./...`).
+        *   Walk directories for wildcard patterns.
+        *   Use the `--exclude-dirs` flag to skip specified directories during the walk.
+        *   Store the resulting set of import paths.
+    *   Perform the dependency walk and symbolic execution as before, analyzing all transitive dependencies.
+    *   In the final reporting loop, add a condition to check if an orphan's package is in the set of target packages before printing it.
+3.  **Update Tests:**
+    *   Modify `examples/find-orphans/main_test.go` to align with this new, simpler logic. The tests will need to check that the final output is correctly filtered.
+4.  **Verify and Submit:**
+    *   Run `make format` and `make test` until all tests pass.
+    *   Update `TODO.md` to reflect the work done.
+    *   Submit the final changes.

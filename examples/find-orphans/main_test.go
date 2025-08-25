@@ -217,6 +217,69 @@ func UnusedFunc() {}
 	}
 }
 
+// TestFindOrphans_WithExternalDeps verifies that the tool does not crash or error
+// when encountering modules that have third-party dependencies. The walker should
+// not attempt to scan these external packages.
+func TestFindOrphans_WithExternalDeps(t *testing.T) {
+	files := map[string]string{
+		"workspace/modulea/go.mod": `
+module example.com/modulea
+go 1.21
+require gopkg.in/yaml.v3 v3.0.1
+`,
+		"workspace/modulea/main.go": `
+package main
+import "gopkg.in/yaml.v3"
+// This program uses an external dependency. The tool should not try to scan it.
+func main() {
+    var data interface{}
+    yaml.Unmarshal([]byte("foo: bar"), &data)
+}
+func MyUnusedFunc() {}
+`,
+	}
+	dir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	log.SetOutput(io.Discard)
+
+	workspaceRoot := filepath.Join(dir, "workspace")
+
+	// Target the package with the external dependency.
+	startPatterns := []string{"./..."}
+
+	// Change CWD to workspace root to make running easier
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get wd: %v", err)
+	}
+	if err := os.Chdir(workspaceRoot); err != nil {
+		t.Fatalf("failed to change wd: %v", err)
+	}
+	defer os.Chdir(oldWd)
+
+	// The key is that this should not error out.
+	err = run(context.Background(), true, false, ".", false, false, startPatterns, []string{"testdata"})
+	if err != nil {
+		t.Fatalf("run() failed with an unexpected error: %v", err)
+	}
+
+	w.Close()
+	os.Stdout = oldStdout
+
+	var buf bytes.Buffer
+	io.Copy(&buf, r)
+	output := buf.String()
+
+	// Check that the orphan is still found correctly.
+	if !strings.Contains(output, "MyUnusedFunc") {
+		t.Errorf("did not find the expected orphan 'MyUnusedFunc'")
+	}
+}
+
 func TestFindOrphans_multiModuleWorkspace_relative(t *testing.T) {
 	files := map[string]string{
 		"workspace/modulea/go.mod": "module example.com/modulea\ngo 1.21\nreplace example.com/moduleb => ../moduleb\n",

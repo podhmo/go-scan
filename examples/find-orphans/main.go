@@ -631,10 +631,11 @@ func (a *analyzer) Visit(pkg *goscan.PackageImports) ([]string, error) {
 	}
 	a.packages[pkg.ImportPath] = fullPkg
 
-	// Filter out stdlib and C pseudo-packages to avoid trying to scan them.
+	// Only follow imports that are part of the original scan scope.
+	// This prevents the walker from traversing into third-party dependencies.
 	var importsToFollow []string
 	for _, imp := range pkg.Imports {
-		if strings.Contains(imp, ".") {
+		if _, ok := a.scanPackages[imp]; ok {
 			importsToFollow = append(importsToFollow, imp)
 		}
 	}

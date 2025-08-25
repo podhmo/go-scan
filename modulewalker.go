@@ -406,62 +406,78 @@ func (w *ModuleWalker) resolvePatternsToImportPaths(ctx context.Context, pattern
 			continue
 		}
 
-		// Handle all file path patterns (e.g., ".", "..", "./...") and import path patterns with wildcards
-
-		// Handle wildcard patterns
 		basePath := strings.TrimSuffix(pattern, "/...")
-		var walkRoot string
-		var err error
 
+		var searchRoots []string
 		if isFilePathPattern {
-			walkRoot, err = filepath.Abs(basePath)
-			if err != nil {
-				slog.WarnContext(ctx, "could not get absolute path for wildcard pattern, skipping", "pattern", pattern, "error", err)
-				continue
+			if filepath.IsAbs(basePath) {
+				searchRoots = []string{basePath}
+			} else {
+				// For relative paths in a workspace, resolve against every module root.
+				roots := w.goscanner.ModuleRoots()
+				if len(roots) == 0 {
+					// Fallback to CWD if no roots are found (e.g. not in a module)
+					absPath, err := filepath.Abs(basePath)
+					if err != nil {
+						slog.WarnContext(ctx, "could not get absolute path for pattern, skipping", "pattern", pattern, "error", err)
+						continue
+					}
+					searchRoots = []string{absPath}
+				} else {
+					for _, r := range w.goscanner.ModuleRoots() {
+						searchRoots = append(searchRoots, filepath.Clean(filepath.Join(r, basePath)))
+					}
+				}
 			}
 		} else {
-			// For import path patterns, we need to find the directory corresponding to the base import path.
-			// The primary locator is sufficient here, as import paths are not ambiguous.
-			walkRoot, err = w.locator.FindPackageDir(basePath)
+			// For import path patterns, find the single directory.
+			dir, err := w.locator.FindPackageDir(basePath)
 			if err != nil {
 				slog.WarnContext(ctx, "could not find package dir for import wildcard, skipping", "pattern", pattern, "error", err)
 				continue
 			}
+			searchRoots = []string{dir}
 		}
 
-		walkErr := filepath.WalkDir(walkRoot, func(path string, d fs.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
-			if d.IsDir() {
-				dirName := d.Name()
-				if _, ok := excludeMap[dirName]; ok {
-					return filepath.SkipDir
-				}
-				if len(dirName) > 1 && dirName[0] == '.' {
-					return filepath.SkipDir
-				}
-			} else {
-				return nil // Don't process files, only directories
-			}
-
-			ok, err := hasGoFiles(path)
-			if err != nil {
-				slog.DebugContext(ctx, "cannot check for go files, skipping", "path", path, "error", err)
-				return nil
-			}
-			if ok {
-				importPath, err := w.goscanner.PathToImport(path)
+		for _, walkRoot := range searchRoots {
+			walkErr := filepath.WalkDir(walkRoot, func(path string, d fs.DirEntry, err error) error {
 				if err != nil {
-					slog.WarnContext(ctx, "could not resolve import path, skipping", "path", path, "error", err)
+					return err
+				}
+				if d.IsDir() {
+					dirName := d.Name()
+					if _, ok := excludeMap[dirName]; ok {
+						return filepath.SkipDir
+					}
+					if len(dirName) > 1 && dirName[0] == '.' {
+						return filepath.SkipDir
+					}
+				} else {
+					return nil // Don't process files, only directories
+				}
+
+				ok, err := hasGoFiles(path)
+				if err != nil {
+					slog.DebugContext(ctx, "cannot check for go files, skipping", "path", path, "error", err)
 					return nil
 				}
-				rootPaths[importPath] = struct{}{}
+				if ok {
+					importPath, err := w.goscanner.PathToImport(path)
+					if err != nil {
+						// This can happen if we walk into a directory that contains go files
+						// but isn't part of a known module (e.g., a nested, unrelated module).
+						// It's safe to just skip it.
+						slog.DebugContext(ctx, "could not resolve import path, skipping", "path", path, "error", err)
+						return nil
+					}
+					rootPaths[importPath] = struct{}{}
+				}
+				return nil
+			})
+			if walkErr != nil {
+				slog.WarnContext(ctx, "error during directory walk, some packages may have been missed", "pattern", pattern, "root", walkRoot, "error", walkErr)
+				// Continue to next search root, don't let one bad root stop everything.
 			}
-			return nil
-		})
-		if walkErr != nil {
-			return nil, fmt.Errorf("error walking for pattern %q (resolved root: %q): %w", pattern, walkRoot, walkErr)
 		}
 	}
 

@@ -47,6 +47,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     - **Robust Environment Management**: Fixed environment and scope handling during function application to ensure nested calls correctly trigger intrinsics.
 - **`symgo`: Cross-Module Source Scanning**: Added an option (`--include-pkg` in `docgen`) to allow the `symgo` engine to treat specified external packages as if they were internal, enabling deep, source-level analysis of their functions.
 - **Find Orphan Functions and Methods**: A new tool `examples/find-orphans` that uses the improved `symgo` engine to perform whole-program analysis and identify unused functions and methods. It supports multi-module workspaces and `//go:scan:ignore` annotations. It intelligently detects whether to run in "application mode" (starting from `main.main`) or "library mode" (starting from all exported functions).
+    - **Refined Workspace Support**: Fixed a critical bug in multi-module workspace analysis where relative path patterns (e.g., `./...`) would not correctly resolve across all modules, leading to missed orphans. The tool now correctly scans all modules in the workspace.
 
 ## To Be Implemented
 

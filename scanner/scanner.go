@@ -159,27 +159,11 @@ func (s *Scanner) ScanPackageImports(ctx context.Context, filePaths []string, pk
 		}
 		// If there are multiple non-main packages, or only main and no other, it's an error
 		if dominantPackageName == "" {
-			// Let's try to find a single non-test package name.
-			var basePackageNames []string
-			packageSet := make(map[string]bool)
+			var names []string
 			for name := range packageNames {
-				baseName := strings.TrimSuffix(name, "_test")
-				if !packageSet[baseName] {
-					packageSet[baseName] = true
-					basePackageNames = append(basePackageNames, baseName)
-				}
+				names = append(names, name)
 			}
-
-			// If all package names boil down to a single base name (e.g., "foo", "foo_test"), it's valid.
-			if len(basePackageNames) == 1 {
-				dominantPackageName = basePackageNames[0]
-			} else {
-				var names []string
-				for name := range packageNames {
-					names = append(names, name)
-				}
-				return nil, fmt.Errorf("mismatched package names: %v in directory %s", names, pkgDirPath)
-			}
+			return nil, fmt.Errorf("mismatched package names: %v in directory %s", names, pkgDirPath)
 		}
 	} else if len(packageNames) == 1 {
 		for name := range packageNames {
@@ -305,31 +289,29 @@ func (s *Scanner) scanGoFiles(ctx context.Context, filePaths []string, pkgDirPat
 			parsedFiles = append(parsedFiles, result.fileAst)
 			filePathsForDominantPkg = append(filePathsForDominantPkg, result.filePath)
 		} else if currentPackageName != dominantPackageName {
-			baseDominant := strings.TrimSuffix(dominantPackageName, "_test")
-			baseCurrent := strings.TrimSuffix(currentPackageName, "_test")
-
+			// Mismatch detected. Apply heuristic for `go test` main package issue.
 			if dominantPackageName == "main" && currentPackageName != "main" {
 				// The real package is `currentPackageName`. Discard previous `main` files.
 				dominantPackageName = currentPackageName
-				var newParsedFiles []*ast.File
-				var newFilePaths []string
-				// Note: we don't need to re-filter parsedFiles because they were all `main` anyway.
+
+				newParsedFiles := []*ast.File{}
+				newFilePaths := []string{}
+				for i, astFile := range parsedFiles {
+					if astFile.Name.Name == dominantPackageName {
+						newParsedFiles = append(newParsedFiles, astFile)
+						newFilePaths = append(newFilePaths, filePathsForDominantPkg[i])
+					}
+				}
 				parsedFiles = newParsedFiles
 				filePathsForDominantPkg = newFilePaths
+
+				// Add the current file
 				parsedFiles = append(parsedFiles, result.fileAst)
 				filePathsForDominantPkg = append(filePathsForDominantPkg, result.filePath)
+
 			} else if dominantPackageName != "main" && currentPackageName == "main" {
 				// The real package is `dominantPackageName`. Ignore the `main` file.
 				continue
-			} else if baseDominant == baseCurrent {
-				// This is `pkg` and `pkg_test`, which is allowed.
-				// If the test package was found first, make the non-test package dominant.
-				if strings.HasSuffix(dominantPackageName, "_test") && !strings.HasSuffix(currentPackageName, "_test") {
-					dominantPackageName = currentPackageName
-				}
-				// Add the file to the list.
-				parsedFiles = append(parsedFiles, result.fileAst)
-				filePathsForDominantPkg = append(filePathsForDominantPkg, result.filePath)
 			} else {
 				// Two different non-main packages. This is a real error.
 				return nil, fmt.Errorf("mismatched package names: %s and %s in directory %s", dominantPackageName, currentPackageName, pkgDirPath)

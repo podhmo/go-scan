@@ -55,8 +55,12 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     - **Scoped Analysis**: The tool's analysis can now be strictly scoped to a user-defined set of target packages. Orphans from upstream dependencies are no longer reported unless those dependencies are explicitly included in the input patterns. This is controlled by resolving file path patterns (`./...`) and import path patterns (`example.com/...`) into a canonical set of target packages. Directory traversal can be fine-tuned with the `--exclude-dirs` flag (e.g., to ignore `testdata`).
 - **`find-orphans`: Robust Path Handling**: The tool now correctly handles relative paths for the `--workspace-root` flag and resolves target path patterns (`./...`) relative to the specified workspace root, not the current working directory. This allows for more intuitive and predictable behavior when running the tool from subdirectories.
 - **`symgo`: Embedded Method Resolution**: The symbolic execution engine can now correctly resolve and trace method calls on embedded structs, enabling more accurate call-graph analysis for tools like `find-orphans`.
+- **`symgo`: Type Switch Support**: The symbolic execution engine now correctly handles `ast.TypeSwitchStmt` nodes, allowing it to analyze code that uses type switches (`switch v := i.(type)`). It correctly scopes the typed variable (`v`) within each case block.
 
 ## To Be Implemented
+
+### `find-orphans` Bug Fixes
+- [ ] **Usage tracking includes external packages**: The default intrinsic in `find-orphans` adds all called functions to the "used" map, including those from external packages. The logic must be fixed to only track usage of functions defined within the target workspace.
 
 ### `minigo` Refinements ([docs/plan-minigo.md](./docs/plan-minigo.md))
 - [ ] Write comprehensive documentation for the API, supported language features, and usage examples.
@@ -66,6 +70,11 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] **Fix typed nil handling**: The interpreter does not correctly handle typed `nil` values for slices and interfaces, causing incorrect behavior in type inference and equality checks.
 
 ### `symgo` Interpreter Limitations
+- [ ] **`defer` and `go` statements**: The interpreter does not trace `CallExpr` nodes inside `*ast.DeferStmt` and `*ast.GoStmt`. This can lead to false positives in tools like `find-orphans`.
+- [ ] **`for...range` statements**: The interpreter does not handle `*ast.RangeStmt`. A function call in the range expression (e.g., `for _ := range getItems()`) will not be traced.
+- [ ] **Pointer Dereferencing**: The interpreter does not handle `*ast.UnaryExpr` with `Op: token.MUL`. This prevents tracing method calls on pointer types (e.g., `(*p).MyMethod()`).
+- [ ] **Slice Expressions**: The interpreter does not handle `*ast.SliceExpr`. Function calls used as index expressions are not traced.
+- [ ] **`select` statements**: The interpreter does not handle `*ast.SelectStmt`. Function calls within channel communications are not traced.
 - [x] **Interface Method Call Tracing**: The interpreter did not previously trigger the default intrinsic for method calls on interface types. This prevented tools like `find-orphans` from correctly analyzing code that relies on interfaces. See [docs/trouble-find-orphans.md](./docs/trouble-find-orphans.md) for details. (Note: This is now fixed. The interpreter correctly creates a placeholder for interface method calls, which can be inspected by a default intrinsic.)
 
 ### Future Enhancements

@@ -49,10 +49,10 @@ func IgnoredFunc() {}
 	os.Stdout = w
 	log.SetOutput(io.Discard)
 
-	startPatterns := []string{"example.com/find-orphans-test"}
+	startPatterns := []string{"example.com/find-orphans-test/..."}
 	// Set verbose to false, and asJSON to false
 	log.SetOutput(w)
-	err := run(context.Background(), true, false, dir, false, false, startPatterns)
+	err := run(context.Background(), true, false, dir, false, false, startPatterns, []string{"testdata", "vendor"})
 	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}
@@ -85,6 +85,104 @@ func IgnoredFunc() {}
 
 	if diff := cmp.Diff(expectedOrphans, foundOrphans); diff != "" {
 		t.Errorf("find-orphans mismatch (-want +got):\n%s\nFull output:\n%s", diff, output)
+	}
+}
+
+func TestFindOrphans_Filtering(t *testing.T) {
+	// This test ensures that if we only target one package, we don't see orphans
+	// from its dependencies.
+	files := map[string]string{
+		"go.mod": "module example.com/filter-test\ngo 1.21\n",
+		"main.go": `
+package main
+import "example.com/filter-test/dep"
+func main() {
+    dep.Used()
+}
+`,
+		"dep/dep.go": `
+package dep
+func Used() {}
+func Unused() {}
+`,
+	}
+	dir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	log.SetOutput(io.Discard)
+
+	// We only target the main package, NOT the dependency.
+	startPatterns := []string{"example.com/filter-test"}
+	err := run(context.Background(), true, false, dir, false, false, startPatterns, []string{"vendor"})
+	if err != nil {
+		t.Fatalf("run() failed: %v", err)
+	}
+
+	w.Close()
+	os.Stdout = oldStdout
+
+	var buf bytes.Buffer
+	io.Copy(&buf, r)
+	output := buf.String()
+
+	// The orphan from "dep" should NOT be listed.
+	if strings.Contains(output, "Unused") {
+		t.Errorf("expected no orphans from non-targeted package 'dep', but found some.\nOutput:\n%s", output)
+	}
+	if !strings.Contains(output, "No orphans found") {
+		t.Errorf("expected 'No orphans found' message, but got:\n%s", output)
+	}
+}
+
+func TestFindOrphans_ExcludeDirs(t *testing.T) {
+	files := map[string]string{
+		"go.mod": "module example.com/exclude-test\ngo 1.21\n",
+		"main.go": `
+package main
+func main() {}
+`,
+		"testdata/data.go": `
+package testdata
+func UnusedInTestdata() {}
+`,
+	}
+	dir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	log.SetOutput(io.Discard)
+
+	// Change working directory for relative path testing
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get wd: %v", err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("failed to change wd: %v", err)
+	}
+	defer os.Chdir(oldWd)
+
+	startPatterns := []string{"./..."}
+	// We explicitly EXCLUDE "testdata"
+	err = run(context.Background(), true, false, ".", false, false, startPatterns, []string{"testdata"})
+	if err != nil {
+		t.Fatalf("run() failed: %v", err)
+	}
+
+	w.Close()
+	os.Stdout = oldStdout
+
+	var buf bytes.Buffer
+	io.Copy(&buf, r)
+	output := buf.String()
+
+	if strings.Contains(output, "UnusedInTestdata") {
+		t.Errorf("found orphan in excluded directory 'testdata'.\nOutput:\n%s", output)
 	}
 }
 
@@ -127,8 +225,19 @@ func UnusedFunc() {
 
 	workspaceRoot := filepath.Join(dir, "workspace")
 	startPatterns := []string{"./..."}
+
+	// Change working directory to the workspace root for the test
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get wd: %v", err)
+	}
+	if err := os.Chdir(workspaceRoot); err != nil {
+		t.Fatalf("failed to change wd: %v", err)
+	}
+	defer os.Chdir(oldWd)
+
 	// Set verbose to false, and asJSON to false
-	err := run(context.Background(), true, false, workspaceRoot, false, false, startPatterns)
+	err = run(context.Background(), true, false, workspaceRoot, false, false, startPatterns, []string{"testdata", "vendor"})
 	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}
@@ -191,7 +300,18 @@ func UnusedFunc() {
 
 	workspaceRoot := filepath.Join(dir, "workspace")
 	startPatterns := []string{"./..."}
-	err := run(context.Background(), true, false, workspaceRoot, false, false, startPatterns)
+
+	// Change working directory to the workspace root for the test
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get wd: %v", err)
+	}
+	if err := os.Chdir(workspaceRoot); err != nil {
+		t.Fatalf("failed to change wd: %v", err)
+	}
+	defer os.Chdir(oldWd)
+
+	err = run(context.Background(), true, false, workspaceRoot, false, false, startPatterns, []string{"testdata", "vendor"})
 	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}
@@ -244,7 +364,7 @@ func unusedInternalFunc() {}
 	log.SetOutput(io.Discard)
 
 	startPatterns := []string{"example.com/find-orphans-test/lib"}
-	err := run(context.Background(), true, false, dir, false, false, startPatterns)
+	err := run(context.Background(), true, false, dir, false, false, startPatterns, []string{"testdata", "vendor"})
 	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}
@@ -307,9 +427,9 @@ func UnusedFunc() {}
 	r, w, _ := os.Pipe()
 	os.Stdout = w
 
-	startPatterns := []string{"example.com/find-orphans-test"}
+	startPatterns := []string{"example.com/find-orphans-test/..."}
 	// Run with asJSON=true
-	err := run(context.Background(), true, false, dir, false, true, startPatterns)
+	err := run(context.Background(), true, false, dir, false, true, startPatterns, []string{"testdata", "vendor"})
 	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}
@@ -385,8 +505,8 @@ func (c *Cat) UnusedMethod() {}
 	os.Stdout = w
 	log.SetOutput(io.Discard)
 
-	startPatterns := []string{"example.com/find-orphans-test"}
-	err := run(context.Background(), true, false, dir, false, false, startPatterns)
+	startPatterns := []string{"example.com/find-orphans-test/..."}
+	err := run(context.Background(), true, false, dir, false, false, startPatterns, []string{"testdata", "vendor"})
 	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}

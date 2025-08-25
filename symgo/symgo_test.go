@@ -61,7 +61,7 @@ func main() {
 		t.Fatalf("goscan.New() failed: %+v", err)
 	}
 
-	pkgs, err := s.Scan(".")
+	pkgs, err := s.Scan(context.Background(), ".")
 	if err != nil {
 		t.Fatalf("s.Scan() failed: %+v", err)
 	}
@@ -115,7 +115,7 @@ func main() {
 	if err != nil {
 		t.Fatalf("goscan.New() failed: %+v", err)
 	}
-	pkgs, err := s.Scan(".")
+	pkgs, err := s.Scan(context.Background(), ".")
 	if err != nil {
 		t.Fatalf("s.Scan() failed: %+v", err)
 	}

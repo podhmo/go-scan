@@ -1,6 +1,7 @@
 package goscan_test
 
 import (
+	"context"
 	"sort"
 	"testing"
 
@@ -26,7 +27,7 @@ func TestScan_Wildcard(t *testing.T) {
 		t.Fatalf("New() failed: %v", err)
 	}
 
-	pkgs, err := s.Scan("./...")
+	pkgs, err := s.Scan(context.Background(), "./...")
 	if err != nil {
 		t.Fatalf("Scan(\"./...\") failed: %v", err)
 	}

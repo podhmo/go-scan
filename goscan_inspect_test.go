@@ -77,7 +77,7 @@ type Group struct { // No annotation
 	patterns := []string{"models"}
 
 	// 5. Run the test using the pre-configured scanner
-	result, err := scantest.Run(t, dir, patterns, action, scantest.WithScanner(s))
+	result, err := scantest.Run(t, context.Background(), dir, patterns, action, scantest.WithScanner(s))
 	if err != nil {
 		t.Fatalf("scantest.Run() failed: %v", err)
 	}
@@ -154,7 +154,7 @@ type TypeB struct {
 	}
 
 	// Scan the main package first.
-	pkgs, err := s.Scan(dir + "/pkg1")
+	pkgs, err := s.Scan(context.Background(), dir+"/pkg1")
 	if err != nil {
 		t.Fatalf("s.Scan() failed: %v", err)
 	}

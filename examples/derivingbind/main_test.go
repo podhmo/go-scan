@@ -98,7 +98,7 @@ func (s *Input) Bind(req *http.Request, pathVar func(string) string) error {
 				return outputDir.SaveGoFile(ctx, goFile, "models_deriving.go")
 			}
 
-			result, err := scantest.Run(t, tmpdir, []string{"."}, action)
+			result, err := scantest.Run(t, context.Background(), tmpdir, []string{"."}, action)
 			if err != nil {
 				t.Fatalf("scantest.Run failed: %+v", err)
 			}

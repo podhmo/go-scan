@@ -51,7 +51,7 @@ func main() { add(1, 2) }
 		return nil
 	}
 
-	if _, err := scantest.Run(t, dir, []string{"."}, action); err != nil {
+	if _, err := scantest.Run(t, context.Background(), dir, []string{"."}, action); err != nil {
 		t.Fatalf("scantest.Run() failed: %v", err)
 	}
 }
@@ -94,7 +94,7 @@ func main() { fmt.Println("hello") }
 		return nil
 	}
 
-	if _, err := scantest.Run(t, dir, []string{"."}, action); err != nil {
+	if _, err := scantest.Run(t, context.Background(), dir, []string{"."}, action); err != nil {
 		t.Fatalf("scantest.Run() failed: %v", err)
 	}
 
@@ -161,7 +161,7 @@ func main() {
 		return nil
 	}
 
-	if _, err := scantest.Run(t, dir, []string{"."}, action); err != nil {
+	if _, err := scantest.Run(t, context.Background(), dir, []string{"."}, action); err != nil {
 		t.Fatalf("scantest.Run() failed: %v", err)
 	}
 
@@ -212,7 +212,7 @@ func main() {
 			return nil
 		}
 
-		if _, err := scantest.Run(t, dir, []string{"."}, action); err != nil {
+		if _, err := scantest.Run(t, context.Background(), dir, []string{"."}, action); err != nil {
 			t.Fatalf("scantest.Run() failed: %v", err)
 		}
 		if !doCalled {
@@ -282,7 +282,7 @@ func main() {
 			return nil
 		}
 
-		if _, err := scantest.Run(t, dir, []string{"."}, action); err != nil {
+		if _, err := scantest.Run(t, context.Background(), dir, []string{"."}, action); err != nil {
 			t.Fatalf("scantest.Run() failed: %v", err)
 		}
 		if !greetCalled {
@@ -334,7 +334,7 @@ func main() {
 			return nil
 		}
 
-		if _, err := scantest.Run(t, dir, []string{"."}, action); err != nil {
+		if _, err := scantest.Run(t, context.Background(), dir, []string{"."}, action); err != nil {
 			t.Fatalf("scantest.Run() failed: %v", err)
 		}
 		if callCount != 2 {

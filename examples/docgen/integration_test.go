@@ -45,7 +45,7 @@ func TestDocgen_WithFnPatterns(t *testing.T) {
 	// finds the correct `go.mod` and resolves the `replace` directive.
 	// The first argument to Run is also the module dir, as that's the
 	// context for this test run.
-	if _, err := scantest.Run(t, moduleDir, nil, action, scantest.WithModuleRoot(moduleDir)); err != nil {
+	if _, err := scantest.Run(t, context.Background(), moduleDir, nil, action, scantest.WithModuleRoot(moduleDir)); err != nil {
 		t.Fatalf("scantest.Run() failed, indicating a failure in loading patterns: %+v", err)
 	}
 }

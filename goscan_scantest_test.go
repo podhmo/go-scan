@@ -87,7 +87,7 @@ type NotAnImplementer struct{}
 		return nil
 	}
 
-	if _, err := scantest.Run(t, dir, []string{"."}, action); err != nil {
+	if _, err := scantest.Run(t, context.Background(), dir, []string{"."}, action); err != nil {
 		t.Fatalf("scantest.Run() failed: %v", err)
 	}
 }
@@ -128,7 +128,7 @@ go 1.22.4
 		return nil
 	}
 
-	if _, err := scantest.Run(t, dir, []string{"./..."}, action); err != nil {
+	if _, err := scantest.Run(t, context.Background(), dir, []string{"./..."}, action); err != nil {
 		t.Fatalf("scantest.Run() failed: %v", err)
 	}
 }

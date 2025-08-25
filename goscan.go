@@ -192,9 +192,8 @@ func (s *Scanner) LookupOverride(qualifiedName string) (*scanner.TypeInfo, bool)
 // Scan scans Go packages based on the provided patterns.
 // Each pattern can be a directory path or a file path relative to the scanner's workDir.
 // It returns a list of scanned packages.
-func (s *Scanner) Scan(patterns ...string) ([]*Package, error) {
+func (s *Scanner) Scan(ctx context.Context, patterns ...string) ([]*Package, error) {
 	pkgsMap := make(map[string]*Package) // Use map to handle duplicates
-	ctx := context.Background()
 
 	for _, pattern := range patterns {
 		if strings.Contains(pattern, "...") {

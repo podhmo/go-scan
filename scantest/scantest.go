@@ -91,8 +91,12 @@ func WithScanner(s *scan.Scanner) RunOption {
 //     This allows the scanner to resolve dependencies against the actual project's `go.mod` file.
 //
 // This default behavior can be overridden by using the `WithModuleRoot()` option to specify an explicit path.
-func Run(t *testing.T, dir string, patterns []string, action ActionFunc, opts ...RunOption) (*Result, error) {
+func Run(t *testing.T, ctx context.Context, dir string, patterns []string, action ActionFunc, opts ...RunOption) (*Result, error) {
 	t.Helper()
+
+	if ctx == nil {
+		ctx = context.Background()
+	}
 
 	cfg := &runConfig{}
 	for _, opt := range opts {
@@ -166,7 +170,7 @@ func Run(t *testing.T, dir string, patterns []string, action ActionFunc, opts ..
 		}
 	}
 
-	pkgs, err := s.Scan(processedPatterns...)
+	pkgs, err := s.Scan(ctx, processedPatterns...)
 	if err != nil {
 		return nil, fmt.Errorf("scan: %w", err)
 	}
@@ -174,9 +178,9 @@ func Run(t *testing.T, dir string, patterns []string, action ActionFunc, opts ..
 	// The memoryFileWriter is still useful for tools that expect the context writer,
 	// but the primary source of truth for file changes will be the directory snapshot.
 	writer := &memoryFileWriter{BaseDir: dir}
-	ctx := context.WithValue(context.Background(), scan.FileWriterKey, writer)
+	actionCtx := context.WithValue(ctx, scan.FileWriterKey, writer)
 
-	if err := action(ctx, s, pkgs); err != nil {
+	if err := action(actionCtx, s, pkgs); err != nil {
 		return nil, fmt.Errorf("action: %w", err)
 	}
 

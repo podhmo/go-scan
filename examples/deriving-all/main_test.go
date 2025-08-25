@@ -158,7 +158,7 @@ type User struct {
 			}
 
 			// Execution: Run the test
-			result, err := scantest.Run(t, dir, []string{"."}, action)
+			result, err := scantest.Run(t, context.Background(), dir, []string{"."}, action)
 			if err != nil {
 				t.Fatalf("scantest.Run failed: %v", err)
 			}

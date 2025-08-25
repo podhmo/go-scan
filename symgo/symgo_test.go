@@ -155,3 +155,76 @@ func main() {
 		t.Errorf("result mismatch (-want +got):\n%s", diff)
 	}
 }
+
+func TestBlockStatement_executesAllStatements(t *testing.T) {
+	// This test checks for a specific bug where a function call used as a statement
+	// would return a ReturnValue object, causing evalBlockStatement to terminate
+	// prematurely and skip subsequent statements.
+	source := `
+package main
+
+func log(msg string) string {
+	// This function returns a value, which is key to reproducing the bug.
+	return msg
+}
+
+func main() {
+	log("call 1")
+	log("call 2")
+	log("call 3")
+}
+`
+	dir, cleanup := scantest.WriteFiles(t, map[string]string{
+		"go.mod":  "module mymodule",
+		"main.go": source,
+	})
+	defer cleanup()
+
+	s, err := goscan.New(goscan.WithWorkDir(dir), goscan.WithGoModuleResolver())
+	if err != nil {
+		t.Fatalf("goscan.New() failed: %+v", err)
+	}
+
+	pkgs, err := s.Scan(context.Background(), ".")
+	if err != nil {
+		t.Fatalf("s.Scan() failed: %+v", err)
+	}
+	pkg := pkgs[0]
+
+	interp, err := symgo.NewInterpreter(s)
+	if err != nil {
+		t.Fatalf("NewInterpreter() failed: %+v", err)
+	}
+
+	var callLog []string
+	// The key for the intrinsic is the fully qualified package path + function name.
+	// For package main in a module named "mymodule", the path is "mymodule".
+	interp.RegisterIntrinsic("mymodule.log", func(i *symgo.Interpreter, args []object.Object) object.Object {
+		if len(args) > 0 {
+			if str, ok := args[0].(*object.String); ok {
+				callLog = append(callLog, str.Value)
+			}
+		}
+		// Return a string, which will get wrapped in a ReturnValue
+		return &object.String{Value: "dummy return"}
+	})
+
+	// Evaluate the file to load symbols
+	_, err = interp.Eval(context.Background(), pkg.AstFiles[filepath.Join(dir, "main.go")], pkg)
+	if err != nil {
+		t.Fatalf("interp.Eval(file) failed: %+v", err)
+	}
+
+	// Find and apply the main function
+	mainFn, ok := interp.FindObject("main")
+	if !ok {
+		t.Fatal("could not find main function")
+	}
+	interp.Apply(context.Background(), mainFn, nil, pkg)
+
+	// Verify that all log calls were made
+	expected := []string{"call 1", "call 2", "call 3"}
+	if diff := cmp.Diff(expected, callLog); diff != "" {
+		t.Errorf("call log mismatch (-want +got):\n%s", diff)
+	}
+}

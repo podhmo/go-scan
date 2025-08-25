@@ -124,6 +124,8 @@ func (e *Evaluator) Eval(ctx context.Context, node ast.Node, env *object.Environ
 		return e.evalIfStmt(ctx, n, env, pkg)
 	case *ast.ForStmt:
 		return e.evalForStmt(ctx, n, env, pkg)
+	case *ast.RangeStmt:
+		return e.evalRangeStmt(ctx, n, env, pkg)
 	case *ast.SwitchStmt:
 		return e.evalSwitchStmt(ctx, n, env, pkg)
 	case *ast.TypeSwitchStmt:
@@ -974,6 +976,39 @@ func (e *Evaluator) evalForStmt(ctx context.Context, n *ast.ForStmt, env *object
 
 	// The result of a for statement is not a value.
 	return &object.SymbolicPlaceholder{Reason: "for loop"}
+}
+
+func (e *Evaluator) evalRangeStmt(ctx context.Context, n *ast.RangeStmt, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
+	// For symbolic execution, the most important part is to evaluate the expression
+	// being ranged over, as it might contain function calls we need to trace.
+	e.Eval(ctx, n.X, env, pkg)
+
+	// We symbolically execute the body once.
+	rangeEnv := object.NewEnclosedEnvironment(env)
+
+	// Create placeholder variables for the key and value in the loop's scope.
+	if n.Key != nil {
+		if ident, ok := n.Key.(*ast.Ident); ok && ident.Name != "_" {
+			keyVar := &object.Variable{
+				Name:  ident.Name,
+				Value: &object.SymbolicPlaceholder{Reason: "range loop key"},
+			}
+			rangeEnv.Set(ident.Name, keyVar)
+		}
+	}
+	if n.Value != nil {
+		if ident, ok := n.Value.(*ast.Ident); ok && ident.Name != "_" {
+			valueVar := &object.Variable{
+				Name:  ident.Name,
+				Value: &object.SymbolicPlaceholder{Reason: "range loop value"},
+			}
+			rangeEnv.Set(ident.Name, valueVar)
+		}
+	}
+
+	e.Eval(ctx, n.Body, rangeEnv, pkg)
+
+	return &object.SymbolicPlaceholder{Reason: "for-range loop"}
 }
 
 func (e *Evaluator) evalIfStmt(ctx context.Context, n *ast.IfStmt, env *object.Environment, pkg *scanner.PackageInfo) object.Object {

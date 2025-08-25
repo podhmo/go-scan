@@ -55,6 +55,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     - **Scoped Analysis**: The tool's analysis can now be strictly scoped to a user-defined set of target packages. Orphans from upstream dependencies are no longer reported unless those dependencies are explicitly included in the input patterns. This is controlled by resolving file path patterns (`./...`) and import path patterns (`example.com/...`) into a canonical set of target packages. Directory traversal can be fine-tuned with the `--exclude-dirs` flag (e.g., to ignore `testdata`).
 - **`find-orphans`: Robust Path Handling**: The tool now correctly handles relative paths for the `--workspace-root` flag and resolves target path patterns (`./...`) relative to the specified workspace root, not the current working directory. This allows for more intuitive and predictable behavior when running the tool from subdirectories.
 - **`symgo`: Embedded Method Resolution**: The symbolic execution engine can now correctly resolve and trace method calls on embedded structs, enabling more accurate call-graph analysis for tools like `find-orphans`.
+- **`symgo`: Type Switch Support**: The symbolic execution engine now correctly handles `ast.TypeSwitchStmt` nodes, allowing it to analyze code that uses type switches (`switch v := i.(type)`). It correctly scopes the typed variable (`v`) within each case block.
 
 ## To Be Implemented
 

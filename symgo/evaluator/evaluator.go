@@ -126,6 +126,8 @@ func (e *Evaluator) Eval(ctx context.Context, node ast.Node, env *object.Environ
 		return e.evalForStmt(ctx, n, env, pkg)
 	case *ast.SwitchStmt:
 		return e.evalSwitchStmt(ctx, n, env, pkg)
+	case *ast.TypeSwitchStmt:
+		return e.evalTypeSwitchStmt(ctx, n, env, pkg)
 	case *ast.CallExpr:
 		return e.evalCallExpr(ctx, n, env, pkg)
 	case *ast.ExprStmt:
@@ -814,6 +816,103 @@ func (e *Evaluator) evalSwitchStmt(ctx context.Context, n *ast.SwitchStmt, env *
 	}
 
 	return &object.SymbolicPlaceholder{Reason: "switch statement"}
+}
+
+func (e *Evaluator) evalTypeSwitchStmt(ctx context.Context, n *ast.TypeSwitchStmt, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
+	switchEnv := env
+	if n.Init != nil {
+		switchEnv = object.NewEnclosedEnvironment(env)
+		if initResult := e.Eval(ctx, n.Init, switchEnv, pkg); isError(initResult) {
+			return initResult
+		}
+	}
+
+	assignStmt, ok := n.Assign.(*ast.AssignStmt)
+	if !ok {
+		return newError(n.Pos(), "expected AssignStmt in TypeSwitchStmt, got %T", n.Assign)
+	}
+	if len(assignStmt.Lhs) != 1 || len(assignStmt.Rhs) != 1 {
+		return newError(n.Pos(), "expected one variable and one value in type switch assignment")
+	}
+	ident, ok := assignStmt.Lhs[0].(*ast.Ident)
+	if !ok {
+		return newError(n.Pos(), "expected identifier on LHS of type switch assignment")
+	}
+	varName := ident.Name
+
+	typeAssert, ok := assignStmt.Rhs[0].(*ast.TypeAssertExpr)
+	if !ok {
+		return newError(n.Pos(), "expected TypeAssertExpr on RHS of type switch assignment")
+	}
+	originalObj := e.Eval(ctx, typeAssert.X, switchEnv, pkg)
+	if isError(originalObj) {
+		return originalObj
+	}
+
+	if n.Body != nil {
+		file := pkg.Fset.File(n.Pos())
+		if file == nil {
+			return newError(n.Pos(), "could not find file for node position")
+		}
+		astFile, ok := pkg.AstFiles[file.Name()]
+		if !ok {
+			return newError(n.Pos(), "could not find ast.File for path: %s", file.Name())
+		}
+		importLookup := e.scanner.BuildImportLookup(astFile)
+
+		for _, c := range n.Body.List {
+			caseClause, ok := c.(*ast.CaseClause)
+			if !ok {
+				continue
+			}
+			caseEnv := object.NewEnclosedEnvironment(switchEnv)
+
+			if caseClause.List == nil { // default case
+				v := &object.Variable{
+					Name:  varName,
+					Value: originalObj,
+					BaseObject: object.BaseObject{
+						ResolvedTypeInfo:  originalObj.TypeInfo(),
+						ResolvedFieldType: originalObj.FieldType(),
+					},
+				}
+				caseEnv.Set(varName, v)
+			} else {
+				typeExpr := caseClause.List[0]
+				fieldType := e.scanner.TypeInfoFromExpr(ctx, typeExpr, nil, pkg, importLookup)
+				if fieldType == nil {
+					if id, ok := typeExpr.(*ast.Ident); ok {
+						fieldType = &scanner.FieldType{Name: id.Name, IsBuiltin: true}
+					} else {
+						return newError(typeExpr.Pos(), "could not resolve type for case clause")
+					}
+				}
+
+				resolvedType, _ := fieldType.Resolve(ctx)
+				val := &object.SymbolicPlaceholder{
+					Reason:     fmt.Sprintf("type switch case variable %s", fieldType.String()),
+					BaseObject: object.BaseObject{ResolvedTypeInfo: resolvedType, ResolvedFieldType: fieldType},
+				}
+				v := &object.Variable{
+					Name:  varName,
+					Value: val,
+					BaseObject: object.BaseObject{
+						ResolvedTypeInfo:  resolvedType,
+						ResolvedFieldType: fieldType,
+					},
+				}
+				caseEnv.Set(varName, v)
+			}
+
+			for _, stmt := range caseClause.Body {
+				if res := e.Eval(ctx, stmt, caseEnv, pkg); isError(res) {
+					e.logger.Warn("error evaluating statement in type switch case", "error", res.Inspect())
+				}
+			}
+		}
+	}
+
+	return &object.SymbolicPlaceholder{Reason: "type switch statement"}
 }
 
 func (e *Evaluator) evalForStmt(ctx context.Context, n *ast.ForStmt, env *object.Environment, pkg *scanner.PackageInfo) object.Object {

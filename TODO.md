@@ -71,8 +71,8 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] **`symgo`: `defer` and `go` statement Tracing**: The `symgo` interpreter now traces `CallExpr` nodes inside `*ast.DeferStmt` and `*ast.GoStmt`, preventing false positives in tools like `find-orphans`.
 - [x] **`for...range` statements**: The interpreter now handles `*ast.RangeStmt`. A function call in the range expression (e.g., `for _ := range getItems()`) will be traced.
 - [x] **Pointer Dereferencing**: The interpreter now handles `*ast.StarExpr` for dereferencing. This was previously incorrectly identified as a missing feature for `*ast.UnaryExpr` with `Op: token.MUL`. This change enables tracing method calls on pointer types (e.g., `(*p).MyMethod()`).
-- [ ] **Slice Expressions**: The interpreter does not handle `*ast.SliceExpr`. Function calls used as index expressions are not traced.
-- [ ] **`select` statements**: The interpreter does not handle `*ast.SelectStmt`. Function calls within channel communications are not traced.
+- [x] **Slice Expressions**: The interpreter does not handle `*ast.SliceExpr`. Function calls used as index expressions are not traced.
+- [x] **`select` statements**: The interpreter does not handle `*ast.SelectStmt`. Function calls within channel communications are not traced.
 - [x] **Interface Method Call Tracing**: The interpreter did not previously trigger the default intrinsic for method calls on interface types. This prevented tools like `find-orphans` from correctly analyzing code that relies on interfaces. See [docs/trouble-find-orphans.md](./docs/trouble-find-orphans.md) for details. (Note: This is now fixed. The interpreter correctly creates a placeholder for interface method calls, which can be inspected by a default intrinsic.)
 
 ### Future Enhancements

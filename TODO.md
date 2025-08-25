@@ -13,6 +13,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 ## Implemented
 
 - **Core Scanning Engine**: A robust, AST-based engine for parsing Go code. It supports lazy, on-demand, cross-package type resolution, and correctly handles complex scenarios like recursive types and generic type definitions. It can extract detailed information about all major Go constructs, including structs, functions, interfaces, and constants.
+    - **Test Package Handling**: The scanner now correctly handles directories containing both a standard package (`pkg`) and its external test package (`pkg_test`) when the `include-tests` option is enabled, preventing "mismatched package names" errors.
 - **Dependency Analysis**: Includes the `deps-walk` command-line tool for visualizing dependency graphs (in DOT or Mermaid format) and a powerful underlying library for programmatic graph traversal, including forward and reverse dependency analysis.
 - **Code Generation Framework**:
     - **`convert` Tool**: A feature-rich tool for generating type-safe conversion functions, driven by annotations (`@derivingconvert`), struct tags (`convert:"..."`), and global rules (`// convert:rule`). Supports nested types, custom functions, and comprehensive error collection.
@@ -46,6 +47,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     - **Correct Type Propagation**: Ensured type information is correctly propagated through variable assignments and function returns.
     - **Robust Environment Management**: Fixed environment and scope handling during function application to ensure nested calls correctly trigger intrinsics.
     - **Naked Return Handling**: Fixed a panic that occurred when the result of a function with a naked `return` (and thus a `nil` return value for pointer/interface types) was assigned to a new variable.
+    - **External Package Path Resolution**: Fixed a bug where scanning a package from the Go module cache would incorrectly use a relative filesystem path as its import path, causing method resolution on external types to fail.
 - **`symgo`: Cross-Module Source Scanning**: Added an option (`--include-pkg` in `docgen`) to allow the `symgo` engine to treat specified external packages as if they were internal, enabling deep, source-level analysis of their functions.
 - **Find Orphan Functions and Methods**: A new tool `examples/find-orphans` that uses the improved `symgo` engine to perform whole-program analysis and identify unused functions and methods. It supports multi-module workspaces and `//go:scan:ignore` annotations. It intelligently detects whether to run in "application mode" (starting from `main.main`) or "library mode" (starting from all exported functions).
     - **Result Filtering**: The tool now automatically excludes `main.main` and `init` functions from the list of orphans, as they are fundamental entry points.

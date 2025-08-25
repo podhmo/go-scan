@@ -141,7 +141,6 @@ func run(ctx context.Context, all bool, includeTests bool, workspace string, ver
 	var resolutionDir string
 
 	locatorOpts := []locator.Option{locator.WithGoModuleResolver()}
-
 	if workspace != "" {
 		var err error
 		absWorkspace, err := filepath.Abs(workspace)
@@ -178,6 +177,9 @@ func run(ctx context.Context, all bool, includeTests bool, workspace string, ver
 			return fmt.Errorf("single module mode: failed to create locator for %q: %w", resolutionDir, err)
 		}
 		locators = append(locators, loc)
+	}
+	for _, loc := range locators {
+		slog.InfoContext(ctx, "* scan module", "module", loc.ModulePath())
 	}
 
 	// Resolve the target packages for reporting.
@@ -464,6 +466,8 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool) error {
 	var libraryEntryPoints []*object.Function
 
 	for _, pkg := range a.packages {
+		slog.InfoContext(ctx, "** scan package", "package", pkg.ImportPath)
+
 		// Load all files in the package to define all symbols in the interpreter's env
 		for _, fileAst := range pkg.AstFiles {
 			if _, err := interp.Eval(ctx, fileAst, pkg); err != nil {

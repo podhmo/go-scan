@@ -60,9 +60,10 @@ type Scanner struct {
 	Walker *ModuleWalker
 
 	// For multi-module workspace support
-	isWorkspace bool
-	locators    []*locator.Locator
-	moduleDirs  []string // temporary holder for module directories
+	isWorkspace       bool
+	locators          []*locator.Locator
+	moduleDirs        []string // temporary holder for module directories
+	walkerExcludeDirs []string // temporary holder for walker exclude dirs
 }
 
 // Fset returns the FileSet associated with the scanner.
@@ -385,6 +386,14 @@ func WithExternalTypeOverrides(overrides scanner.ExternalTypeOverride) ScannerOp
 	}
 }
 
+// WithWalkerExcludeDirs sets the directories to be excluded by the ModuleWalker.
+func WithWalkerExcludeDirs(dirs []string) ScannerOption {
+	return func(s *Scanner) error {
+		s.walkerExcludeDirs = dirs
+		return nil
+	}
+}
+
 // New creates a new Scanner. It finds the module root starting from the given path.
 // It also initializes an empty set of visited files for this scanner instance.
 func New(options ...ScannerOption) (*Scanner, error) {
@@ -398,10 +407,7 @@ func New(options ...ScannerOption) (*Scanner, error) {
 		packageCache:          make(map[string]*Package),
 		visitedFiles:          make(map[string]struct{}),
 		ExternalTypeOverrides: make(scanner.ExternalTypeOverride),
-		Walker: &ModuleWalker{
-			Config:              cfg,
-			packageImportsCache: make(map[string]*scanner.PackageImports),
-		},
+		// Walker is initialized below after all options are processed.
 	}
 
 	for _, option := range options {
@@ -445,6 +451,14 @@ func New(options ...ScannerOption) (*Scanner, error) {
 		s.locator = loc
 	}
 
+	// Initialize the walker
+	s.Walker = &ModuleWalker{
+		Config:              cfg,
+		goscanner:           s,
+		packageImportsCache: make(map[string]*scanner.PackageImports),
+		ExcludeDirs:         s.walkerExcludeDirs,
+	}
+
 	// The internal scanner needs a module path and root dir to initialize.
 	// In workspace mode, we use the primary (first) locator's info.
 	// This is a slight simplification, but the internal scanner's primary role
@@ -456,6 +470,43 @@ func New(options ...ScannerOption) (*Scanner, error) {
 	s.scanner = initialScanner
 
 	return s, nil
+}
+
+// PathToImport converts a file system path to a Go import path.
+// In workspace mode, it tries all modules to find the correct one.
+func (s *Scanner) PathToImport(filePath string) (string, error) {
+	if !s.isWorkspace {
+		if s.locator == nil {
+			return "", fmt.Errorf("scanner has no locator")
+		}
+		return s.locator.PathToImport(filePath)
+	}
+
+	// In workspace mode, we need to find which module the path belongs to.
+	// The best match is the one with the longest module root path that is a prefix of the filePath.
+	var bestMatch *locator.Locator
+	var maxLen int
+	absFilePath, err := filepath.Abs(filePath)
+	if err != nil {
+		return "", fmt.Errorf("could not get absolute path for %q: %w", filePath, err)
+	}
+
+	for _, loc := range s.locators {
+		rootDir := loc.RootDir()
+		slog.DebugContext(context.Background(), "PathToImport: checking path against module root", "path", absFilePath, "module_root", rootDir)
+		if strings.HasPrefix(absFilePath, rootDir) {
+			if len(rootDir) > maxLen {
+				maxLen = len(rootDir)
+				bestMatch = loc
+			}
+		}
+	}
+
+	if bestMatch != nil {
+		return bestMatch.PathToImport(filePath)
+	}
+
+	return "", fmt.Errorf("path %q does not belong to any module in the workspace", filePath)
 }
 
 // ResolvePath converts a file path to a full Go package path.

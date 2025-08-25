@@ -25,6 +25,7 @@ func main() {
 		all          = flag.Bool("all", false, "scan every package in the module")
 		includeTests = flag.Bool("include-tests", false, "include usage within test files")
 		workspace    = flag.String("workspace-root", "", "scan all Go modules found under a given directory")
+		excludeDirs  = flag.String("exclude-dirs", "vendor,testdata", "comma-separated list of directory names to exclude from scans")
 		verbose      = flag.Bool("v", false, "enable verbose output")
 		asJSON       = flag.Bool("json", false, "output orphans in JSON format")
 	)
@@ -36,7 +37,8 @@ func main() {
 	}
 
 	ctx := context.Background()
-	if err := run(ctx, *all, *includeTests, *workspace, *verbose, *asJSON, startPatterns); err != nil {
+	exclude := strings.Split(*excludeDirs, ",")
+	if err := run(ctx, *all, *includeTests, *workspace, *verbose, *asJSON, startPatterns, exclude); err != nil {
 		slog.ErrorContext(ctx, "toplevel", "error", err)
 		os.Exit(1)
 	}
@@ -44,8 +46,12 @@ func main() {
 
 // discoverModules finds all Go modules under the given root directory.
 // It prioritizes a go.work file if it exists, otherwise it scans for go.mod files.
-func discoverModules(ctx context.Context, root string) ([]string, error) {
+func discoverModules(ctx context.Context, root string, exclude []string) ([]string, error) {
 	workFilePath := filepath.Join(root, "go.work")
+	excludeMap := make(map[string]struct{}, len(exclude))
+	for _, dir := range exclude {
+		excludeMap[dir] = struct{}{}
+	}
 
 	// Check if go.work exists
 	if _, err := os.Stat(workFilePath); err == nil {
@@ -79,8 +85,14 @@ func discoverModules(ctx context.Context, root string) ([]string, error) {
 		if err != nil {
 			return err
 		}
-		if d.IsDir() && (d.Name() == "vendor" || (len(d.Name()) > 1 && d.Name()[0] == '.')) {
-			return filepath.SkipDir
+		if d.IsDir() {
+			dirName := d.Name()
+			if _, ok := excludeMap[dirName]; ok {
+				return filepath.SkipDir
+			}
+			if len(dirName) > 1 && dirName[0] == '.' {
+				return filepath.SkipDir
+			}
 		}
 		if d.Name() == "go.mod" {
 			modules = append(modules, filepath.Dir(path))
@@ -93,7 +105,7 @@ func discoverModules(ctx context.Context, root string) ([]string, error) {
 	return modules, nil
 }
 
-func run(ctx context.Context, all bool, includeTests bool, workspace string, verbose bool, asJSON bool, startPatterns []string) error {
+func run(ctx context.Context, all bool, includeTests bool, workspace string, verbose bool, asJSON bool, startPatterns []string, exclude []string) error {
 	logLevel := new(slog.LevelVar)
 	if !verbose {
 		logLevel.Set(slog.LevelInfo)
@@ -108,12 +120,13 @@ func run(ctx context.Context, all bool, includeTests bool, workspace string, ver
 	var scannerOpts []goscan.ScannerOption
 	scannerOpts = append(scannerOpts, goscan.WithIncludeTests(includeTests))
 	scannerOpts = append(scannerOpts, goscan.WithGoModuleResolver()) // Important for resolving modules
+	scannerOpts = append(scannerOpts, goscan.WithWalkerExcludeDirs(exclude))
 
 	var s *goscan.Scanner
 	var err error
 
 	if workspace != "" {
-		moduleDirs, err := discoverModules(ctx, workspace)
+		moduleDirs, err := discoverModules(ctx, workspace, exclude)
 		if err != nil {
 			return err
 		}
@@ -143,38 +156,35 @@ func run(ctx context.Context, all bool, includeTests bool, workspace string, ver
 }
 
 type analyzer struct {
-	s        *goscan.Scanner
-	packages map[string]*scanner.PackageInfo
-	mu       sync.Mutex
-	ctx      context.Context
+	s              *goscan.Scanner
+	packages       map[string]*scanner.PackageInfo
+	targetPackages map[string]struct{} // The set of packages to report orphans from
+	mu             sync.Mutex
+	ctx            context.Context
 }
 
 func (a *analyzer) analyze(ctx context.Context, asJSON bool, startPatterns []string) error {
 	a.ctx = ctx
-	var patternsToWalk []string
-	if a.s.IsWorkspace() {
-		roots := a.s.ModuleRoots()
-		slog.DebugContext(ctx, "discovering packages from workspace roots", "roots", roots)
-		for _, root := range roots {
-			for _, pattern := range startPatterns {
-				// a bit of a hack to check for relative patterns like './...'
-				if strings.HasPrefix(pattern, ".") {
-					patternsToWalk = append(patternsToWalk, filepath.Join(root, pattern))
-				} else {
-					// assume it's a full import path pattern
-					patternsToWalk = append(patternsToWalk, pattern)
-				}
-			}
-		}
-	} else {
-		patternsToWalk = startPatterns
-	}
 
-	slog.DebugContext(ctx, "walking with patterns", "patterns", patternsToWalk)
-	if err := a.s.Walker.Walk(ctx, a, patternsToWalk...); err != nil {
+	// 1. Resolve user-provided patterns to a set of initial package import paths.
+	// This will be our "target" set for reporting orphans.
+	targetPackagePaths, err := a.s.Walker.ResolvePatternsToImportPaths(ctx, startPatterns)
+	if err != nil {
+		return fmt.Errorf("failed to resolve start patterns: %w", err)
+	}
+	a.targetPackages = make(map[string]struct{}, len(targetPackagePaths))
+	for _, path := range targetPackagePaths {
+		a.targetPackages[path] = struct{}{}
+	}
+	slog.DebugContext(ctx, "resolved target packages", "patterns", startPatterns, "resolved", targetPackagePaths)
+
+	// 2. Walk the dependency graph starting from the same patterns.
+	// The walker will correctly handle resolving these patterns to find all transitive dependencies.
+	slog.DebugContext(ctx, "walking dependency graph", "patterns", startPatterns)
+	if err := a.s.Walker.Walk(ctx, a, startPatterns...); err != nil {
 		return fmt.Errorf("failed to walk packages: %w", err)
 	}
-	slog.InfoContext(ctx, "analysis phase", "packages", len(a.packages))
+	slog.InfoContext(ctx, "analysis phase", "packages", len(a.packages), "targets", len(a.targetPackages))
 
 	interfaceMap := buildInterfaceMap(a.packages)
 	slog.DebugContext(ctx, "built interface map", "interfaces", len(interfaceMap))
@@ -311,6 +321,11 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool, startPatterns []str
 	var orphans []Orphan
 
 	for _, pkg := range a.packages {
+		// Only report orphans for the packages the user explicitly asked for.
+		if _, ok := a.targetPackages[pkg.ImportPath]; !ok {
+			continue
+		}
+
 		for _, decl := range pkg.Functions {
 			name := getFullName(a.s, pkg, decl)
 			if _, used := usageMap[name]; !used {

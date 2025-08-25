@@ -38,9 +38,11 @@ type Config struct {
 // without parsing the full details of type and function bodies.
 type ModuleWalker struct {
 	*Config
+	goscanner           *Scanner
 	packageImportsCache map[string]*scanner.PackageImports
 	reverseDepCache     map[string][]string
 	mu                  sync.RWMutex
+	ExcludeDirs         []string
 }
 
 // ScanPackageImports scans a single Go package identified by its import path,
@@ -97,65 +99,60 @@ func (w *ModuleWalker) ScanPackageImports(ctx context.Context, importPath string
 // It performs an efficient, imports-only scan of all potential package directories in the module.
 // The result is a list of packages that have a direct dependency on the target.
 func (w *ModuleWalker) FindImporters(ctx context.Context, targetImportPath string) ([]*PackageImports, error) {
-	rootDir := w.locator.RootDir()
-	modulePath := w.locator.ModulePath()
-
+	rootDir := w.goscanner.RootDir()
 	if rootDir == "" {
 		return nil, fmt.Errorf("module root directory not found, cannot perform reverse dependency search")
 	}
 
 	var importers []*PackageImports
+	excludeMap := make(map[string]struct{}, len(w.ExcludeDirs))
+	for _, dir := range w.ExcludeDirs {
+		excludeMap[dir] = struct{}{}
+	}
+	// always exclude vendor and hidden directories
+	excludeMap["vendor"] = struct{}{}
 
 	err := filepath.WalkDir(rootDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-
 		if !d.IsDir() {
 			return nil
 		}
 
-		// Skip hidden directories and vendor
-		if d.Name() == "vendor" || (len(d.Name()) > 1 && d.Name()[0] == '.') {
+		dirName := d.Name()
+		if _, ok := excludeMap[dirName]; ok {
+			return filepath.SkipDir
+		}
+		if len(dirName) > 1 && dirName[0] == '.' {
 			return filepath.SkipDir
 		}
 
-		// path is a directory. Let's see if it's a package.
-		// We can check for .go files inside it.
-		goFiles, err := listGoFilesForWalker(path, w.IncludeTests) // listGoFiles is an existing helper in goscan.go
+		goFiles, err := listGoFilesForWalker(path, w.IncludeTests)
 		if err != nil {
 			slog.WarnContext(ctx, "could not list go files in directory, skipping", slog.String("path", path), slog.Any("error", err))
 			return nil // continue walking
 		}
-
 		if len(goFiles) == 0 {
 			return nil // Not a package, continue
 		}
 
-		// We have a package. Determine its import path.
-		relPath, err := filepath.Rel(rootDir, path)
+		currentPkgImportPath, err := w.goscanner.PathToImport(path)
 		if err != nil {
-			slog.WarnContext(ctx, "could not determine relative path for package, skipping", slog.String("path", path), slog.Any("error", err))
+			slog.WarnContext(ctx, "could not determine import path for package, skipping", slog.String("path", path), slog.Any("error", err))
 			return nil // Continue walking
 		}
 
-		currentPkgImportPath := filepath.ToSlash(filepath.Join(modulePath, relPath))
-		if relPath == "." {
-			currentPkgImportPath = modulePath
-		}
-
-		// Now we can use the existing efficient scanner method.
 		pkgImports, err := w.ScanPackageImports(ctx, currentPkgImportPath)
 		if err != nil {
 			slog.WarnContext(ctx, "failed to scan package imports, skipping", "importPath", currentPkgImportPath, "error", err)
 			return nil // continue
 		}
 
-		// Check if it imports our target
 		for _, imp := range pkgImports.Imports {
 			if imp == targetImportPath {
 				importers = append(importers, pkgImports)
-				break // Found it, no need to check other imports
+				break
 			}
 		}
 		return nil
@@ -267,14 +264,17 @@ func (w *ModuleWalker) BuildReverseDependencyMap(ctx context.Context) (map[strin
 	}
 	w.mu.RUnlock()
 
-	rootDir := w.locator.RootDir()
-	modulePath := w.locator.ModulePath()
-
+	rootDir := w.goscanner.RootDir()
 	if rootDir == "" {
 		return nil, fmt.Errorf("module root directory not found, cannot build reverse dependency map")
 	}
 
 	reverseDeps := make(map[string][]string)
+	excludeMap := make(map[string]struct{}, len(w.ExcludeDirs))
+	for _, dir := range w.ExcludeDirs {
+		excludeMap[dir] = struct{}{}
+	}
+	excludeMap["vendor"] = struct{}{}
 
 	err := filepath.WalkDir(rootDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -283,9 +283,14 @@ func (w *ModuleWalker) BuildReverseDependencyMap(ctx context.Context) (map[strin
 		if !d.IsDir() {
 			return nil
 		}
-		if d.Name() == "vendor" || (len(d.Name()) > 1 && d.Name()[0] == '.') {
+		dirName := d.Name()
+		if _, ok := excludeMap[dirName]; ok {
 			return filepath.SkipDir
 		}
+		if len(dirName) > 1 && dirName[0] == '.' {
+			return filepath.SkipDir
+		}
+
 		goFiles, err := listGoFilesForWalker(path, w.IncludeTests)
 		if err != nil {
 			slog.WarnContext(ctx, "could not list go files in directory, skipping", "path", path, "error", err)
@@ -294,15 +299,13 @@ func (w *ModuleWalker) BuildReverseDependencyMap(ctx context.Context) (map[strin
 		if len(goFiles) == 0 {
 			return nil
 		}
-		relPath, err := filepath.Rel(rootDir, path)
+
+		currentPkgImportPath, err := w.goscanner.PathToImport(path)
 		if err != nil {
-			slog.WarnContext(ctx, "could not determine relative path for package, skipping", "path", path, "error", err)
+			slog.WarnContext(ctx, "could not determine import path for package, skipping", "path", path, "error", err)
 			return nil
 		}
-		currentPkgImportPath := filepath.ToSlash(filepath.Join(modulePath, relPath))
-		if relPath == "." {
-			currentPkgImportPath = modulePath
-		}
+
 		pkgImports, err := w.ScanPackageImports(ctx, currentPkgImportPath)
 		if err != nil {
 			slog.WarnContext(ctx, "failed to scan package imports, skipping", "importPath", currentPkgImportPath, "error", err)
@@ -338,7 +341,7 @@ func (w *ModuleWalker) BuildReverseDependencyMap(ctx context.Context) (map[strin
 // are followed next.
 // Patterns can include the `...` wildcard to specify all packages under a directory.
 func (w *ModuleWalker) Walk(ctx context.Context, visitor Visitor, patterns ...string) error {
-	initialQueue, err := w.resolvePatternsToImportPaths(ctx, patterns)
+	initialQueue, err := w.ResolvePatternsToImportPaths(ctx, patterns)
 	if err != nil {
 		return fmt.Errorf("could not resolve initial patterns for walk: %w", err)
 	}
@@ -376,51 +379,89 @@ func (w *ModuleWalker) Walk(ctx context.Context, visitor Visitor, patterns ...st
 	return nil
 }
 
+// ResolvePatternsToImportPaths resolves filesystem patterns (including `...` wildcards)
+// into a list of unique, sorted Go import paths. This is a public wrapper for
+// the internal resolvePatternsToImportPaths method.
+func (w *ModuleWalker) ResolvePatternsToImportPaths(ctx context.Context, patterns []string) ([]string, error) {
+	return w.resolvePatternsToImportPaths(ctx, patterns)
+}
+
 // resolvePatternsToImportPaths resolves filesystem patterns (including `...` wildcards)
 // into a list of unique, sorted Go import paths.
 func (w *ModuleWalker) resolvePatternsToImportPaths(ctx context.Context, patterns []string) ([]string, error) {
 	rootPaths := make(map[string]struct{})
+	excludeMap := make(map[string]struct{}, len(w.ExcludeDirs))
+	for _, dir := range w.ExcludeDirs {
+		excludeMap[dir] = struct{}{}
+	}
+	excludeMap["vendor"] = struct{}{}
 
 	for _, pattern := range patterns {
-		if strings.Contains(pattern, "...") {
-			baseDir := strings.TrimSuffix(pattern, "...")
-			baseDir = strings.TrimSuffix(baseDir, "/")
+		isFilePathPattern := strings.HasPrefix(pattern, ".") || filepath.IsAbs(pattern)
 
-			absBasePath := baseDir
-			if !filepath.IsAbs(baseDir) {
-				absBasePath = filepath.Join(w.workDir, baseDir)
-			}
+		// Handle non-wildcard patterns that are not file paths
+		if !strings.Contains(pattern, "...") && !isFilePathPattern {
+			// Assume it's a literal import path
+			rootPaths[pattern] = struct{}{}
+			continue
+		}
 
-			walkErr := filepath.WalkDir(absBasePath, func(path string, d fs.DirEntry, err error) error {
-				if err != nil {
-					return err
-				}
-				if !d.IsDir() {
-					return nil
-				}
-				// Check if the directory contains any .go files.
-				ok, err := hasGoFiles(path)
-				if err != nil {
-					slog.DebugContext(ctx, "cannot check for go files, skipping", "path", path, "error", err)
-					return nil
-				}
+		// Handle all file path patterns (e.g., ".", "..", "./...") and import path patterns with wildcards
 
-				if ok {
-					importPath, err := w.locator.PathToImport(path)
-					if err != nil {
-						slog.WarnContext(ctx, "could not resolve import path, skipping", "path", path, "error", err)
-						return nil
-					}
-					rootPaths[importPath] = struct{}{}
-				}
-				return nil
-			})
-			if walkErr != nil {
-				return nil, fmt.Errorf("error walking for pattern %q: %w", pattern, walkErr)
+		// Handle wildcard patterns
+		basePath := strings.TrimSuffix(pattern, "/...")
+		var walkRoot string
+		var err error
+
+		if isFilePathPattern {
+			walkRoot, err = filepath.Abs(basePath)
+			if err != nil {
+				slog.WarnContext(ctx, "could not get absolute path for wildcard pattern, skipping", "pattern", pattern, "error", err)
+				continue
 			}
 		} else {
-			// Assume non-wildcard patterns are literal import paths.
-			rootPaths[pattern] = struct{}{}
+			// For import path patterns, we need to find the directory corresponding to the base import path.
+			// The primary locator is sufficient here, as import paths are not ambiguous.
+			walkRoot, err = w.locator.FindPackageDir(basePath)
+			if err != nil {
+				slog.WarnContext(ctx, "could not find package dir for import wildcard, skipping", "pattern", pattern, "error", err)
+				continue
+			}
+		}
+
+		walkErr := filepath.WalkDir(walkRoot, func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if d.IsDir() {
+				dirName := d.Name()
+				if _, ok := excludeMap[dirName]; ok {
+					return filepath.SkipDir
+				}
+				if len(dirName) > 1 && dirName[0] == '.' {
+					return filepath.SkipDir
+				}
+			} else {
+				return nil // Don't process files, only directories
+			}
+
+			ok, err := hasGoFiles(path)
+			if err != nil {
+				slog.DebugContext(ctx, "cannot check for go files, skipping", "path", path, "error", err)
+				return nil
+			}
+			if ok {
+				importPath, err := w.goscanner.PathToImport(path)
+				if err != nil {
+					slog.WarnContext(ctx, "could not resolve import path, skipping", "path", path, "error", err)
+					return nil
+				}
+				rootPaths[importPath] = struct{}{}
+			}
+			return nil
+		})
+		if walkErr != nil {
+			return nil, fmt.Errorf("error walking for pattern %q (resolved root: %q): %w", pattern, walkRoot, walkErr)
 		}
 	}
 

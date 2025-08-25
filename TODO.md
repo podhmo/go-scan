@@ -60,6 +60,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] **Fix typed nil handling**: The interpreter does not correctly handle typed `nil` values for slices and interfaces, causing incorrect behavior in type inference and equality checks.
 
 ### `symgo` Interpreter Limitations
+- [ ] **Method Resolution for Embedded Structs**: The interpreter does not correctly resolve methods inherited from embedded structs. For example, if `type A struct { B }` and `B` has a method `M`, a call `a.M()` on a variable `a` of type `A` is not correctly traced. An attempt was made to fix this by recursively searching for the method in embedded fields, but this led to significant regressions in other tests, particularly those involving interface method calls and field access. The complexity of the `evalSelectorExpr` function and the evaluator's object model proved difficult to modify correctly without deeper insights.
 - [x] **Interface Method Call Tracing**: The interpreter did not previously trigger the default intrinsic for method calls on interface types. This prevented tools like `find-orphans` from correctly analyzing code that relies on interfaces. See [docs/trouble-find-orphans.md](./docs/trouble-find-orphans.md) for details. (Note: This is now fixed. The interpreter correctly creates a placeholder for interface method calls, which can be inspected by a default intrinsic.)
 
 ### Future Enhancements

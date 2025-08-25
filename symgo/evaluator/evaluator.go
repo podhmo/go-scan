@@ -460,6 +460,11 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 	}
 	e.logger.Debug("evalSelectorExpr: evaluated left", "type", left.Type(), "value", left.Inspect())
 
+	// Dereference pointer if necessary. This is important for method calls on pointer receivers.
+	if ptr, ok := left.(*object.Pointer); ok {
+		left = ptr.Value
+	}
+
 	switch val := left.(type) {
 	case *object.SymbolicPlaceholder:
 		typeInfo := val.TypeInfo()
@@ -595,6 +600,7 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 		return placeholder
 
 	case *object.Instance:
+		// Check for intrinsics first, to allow overriding.
 		key := fmt.Sprintf("(%s).%s", val.TypeName, n.Sel.Name)
 		if intrinsicFn, ok := e.intrinsics.Get(key); ok {
 			self := val
@@ -611,7 +617,38 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 			}
 			return &object.Intrinsic{Fn: fn}
 		}
-		return newError(n.Pos(), "undefined method: %s on %s", n.Sel.Name, val.TypeName)
+
+		// If no intrinsic is found, try to find the method or field on the type.
+		typeInfo := val.TypeInfo()
+		if typeInfo != nil {
+			// Search for a method, including on embedded structs.
+			method, methodPkg, _ := e.findMethodInType(ctx, typeInfo, n.Sel.Name)
+			if method != nil {
+				return &object.Function{
+					Name:       method.AstDecl.Name,
+					Parameters: method.AstDecl.Type.Params,
+					Body:       method.AstDecl.Body,
+					Env:        env,
+					Decl:       method.AstDecl,
+					Package:    methodPkg,
+					Receiver:   val, // The instance is the receiver
+				}
+			}
+
+			// Search for a field. Note: This does not yet search embedded structs.
+			if typeInfo.Struct != nil {
+				for _, field := range typeInfo.Struct.Fields {
+					if field.Name == n.Sel.Name {
+						fieldTypeInfo, _ := field.Type.Resolve(ctx)
+						return &object.SymbolicPlaceholder{
+							BaseObject: object.BaseObject{ResolvedTypeInfo: fieldTypeInfo},
+							Reason:     fmt.Sprintf("field access %s.%s", typeInfo.Name, field.Name),
+						}
+					}
+				}
+			}
+		}
+		return newError(n.Pos(), "undefined method or field: %s on %s", n.Sel.Name, val.TypeName)
 
 	case *object.Variable:
 		typeInfo := val.TypeInfo()
@@ -680,35 +717,19 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 			}
 		}
 
-		// Check for a method call on the type.
-		// This requires getting the package info where the type is defined.
-		if typeInfo.PkgPath != "" {
-			methodPkg, err := e.scanner.ScanPackageByImport(ctx, typeInfo.PkgPath)
-			if err == nil {
-				for _, fn := range methodPkg.Functions {
-					if fn.Receiver == nil {
-						continue
-					}
-					// fn.Receiver.Type is a FieldType. We need to get its base name.
-					recvTypeName := fn.Receiver.Type.TypeName
-					if recvTypeName == "" {
-						recvTypeName = fn.Receiver.Type.Name
-					}
-
-					// Compare the method's receiver type name with the variable's type name.
-					if fn.Name == n.Sel.Name && recvTypeName == typeInfo.Name {
-						// Found the method. Create a function object with the receiver set.
-						return &object.Function{
-							Name:       fn.AstDecl.Name,
-							Parameters: fn.AstDecl.Type.Params,
-							Body:       fn.AstDecl.Body,
-							Env:        env, // The environment at the call site.
-							Decl:       fn.AstDecl,
-							Package:    methodPkg,
-							Receiver:   val, // Set the receiver object.
-						}
-					}
-				}
+		// Check for a method call on the type, including embedded structs.
+		method, methodPkg, _ := e.findMethodInType(ctx, typeInfo, n.Sel.Name)
+		if method != nil {
+			// Found the method. Create a function object with the receiver set.
+			// The receiver is the *value* of the variable, not the variable itself.
+			return &object.Function{
+				Name:       method.AstDecl.Name,
+				Parameters: method.AstDecl.Type.Params,
+				Body:       method.AstDecl.Body,
+				Env:        env, // The environment at the call site.
+				Decl:       method.AstDecl,
+				Package:    methodPkg,
+				Receiver:   val.Value, // Set the receiver to the variable's value.
 			}
 		}
 
@@ -1358,4 +1379,55 @@ func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, 
 	}
 
 	return env, nil
+}
+
+// findMethodInType recursively searches for a method in a type and its embedded structs.
+// It returns the method's FunctionInfo, its PackageInfo, and the TypeInfo of the actual receiver.
+func (e *Evaluator) findMethodInType(ctx context.Context, typeInfo *scanner.TypeInfo, methodName string) (*scanner.FunctionInfo, *scanner.PackageInfo, *scanner.TypeInfo) {
+	if typeInfo == nil || typeInfo.PkgPath == "" {
+		return nil, nil, nil
+	}
+
+	methodPkg, err := e.scanner.ScanPackageByImport(ctx, typeInfo.PkgPath)
+	if err != nil {
+		// Can't scan the package, so we can't find methods.
+		return nil, nil, nil
+	}
+
+	// First, search for the method directly on the current type.
+	for _, fn := range methodPkg.Functions {
+		if fn.Receiver == nil || fn.Name != methodName {
+			continue
+		}
+
+		// fn.Receiver.Type is a FieldType. We need to get its base name.
+		recvTypeName := fn.Receiver.Type.TypeName
+		if recvTypeName == "" {
+			recvTypeName = strings.TrimPrefix(fn.Receiver.Type.Name, "*")
+		}
+
+		if recvTypeName == typeInfo.Name {
+			return fn, methodPkg, typeInfo // Found it.
+		}
+	}
+
+	// If not found, search in embedded fields.
+	if typeInfo.Struct != nil {
+		for _, field := range typeInfo.Struct.Fields {
+			if !field.Embedded {
+				continue
+			}
+			// This is an embedded field. Resolve its type.
+			embeddedFieldType, err := field.Type.Resolve(ctx)
+			if err != nil || embeddedFieldType == nil {
+				continue
+			}
+			// Recurse.
+			if foundMethod, foundPkg, foundRecv := e.findMethodInType(ctx, embeddedFieldType, methodName); foundMethod != nil {
+				return foundMethod, foundPkg, foundRecv // Found in embedded struct.
+			}
+		}
+	}
+
+	return nil, nil, nil // Not found.
 }

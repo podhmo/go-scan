@@ -405,22 +405,24 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool) error {
 	interfaceMap := buildInterfaceMap(a.packages)
 	slog.DebugContext(ctx, "built interface map", "interfaces", len(interfaceMap))
 
-	interp, err := symgo.NewInterpreter(a.s)
+	interp, err := symgo.NewInterpreter(a.s, symgo.WithLogger(slog.Default()))
 	if err != nil {
 		return fmt.Errorf("failed to create interpreter: %w", err)
 	}
 
 	usageMap := make(map[string]bool)
-	interp.RegisterDefaultIntrinsic(func(i *symgo.Interpreter, args []object.Object) object.Object {
-		if len(args) == 0 {
-			return nil
-		}
-		fnObj := args[0]
-		var fullName string
 
-		switch fn := fnObj.(type) {
+	// markUsage is a helper function to mark a function/method as used.
+	// It's designed to be called on any object, and it will figure out if it's a function.
+	markUsage := func(obj object.Object) {
+		var fullName string
+		switch fn := obj.(type) {
 		case *object.Function:
 			if fn.Package != nil && fn.Name != nil {
+				if _, isScannable := a.scanPackages[fn.Package.ImportPath]; !isScannable {
+					return // Don't track usage for functions outside the scan scope.
+				}
+
 				if fn.Decl.Recv != nil && len(fn.Decl.Recv.List) > 0 {
 					var buf bytes.Buffer
 					printer.Fprint(&buf, a.s.Fset(), fn.Decl.Recv.List[0].Type)
@@ -431,43 +433,51 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool) error {
 						valueRecvName := fmt.Sprintf("(%s.%s).%s", fn.Package.ImportPath, recvTypeStr[1:], fn.Name.Name)
 						usageMap[valueRecvName] = true
 					}
-
 				} else {
 					fullName = fmt.Sprintf("%s.%s", fn.Package.ImportPath, fn.Name.Name)
 					usageMap[fullName] = true
 				}
 			}
 		case *object.SymbolicPlaceholder:
-			// Handle interface method calls
+			// For symbolic placeholders, we also check if they belong to a scanned package.
+			if fn.Package != nil {
+				if _, isScannable := a.scanPackages[fn.Package.ImportPath]; !isScannable {
+					return
+				}
+			}
+
 			if fn.UnderlyingMethod != nil {
 				methodName := fn.UnderlyingMethod.Name
 				var implementerTypes []*scanner.FieldType
-
-				// Always use the interface map for a conservative analysis.
-				// This ensures that if an interface method is used, all possible implementations are considered "used".
 				if fn.Receiver != nil {
 					receiverTypeInfo := fn.Receiver.TypeInfo()
 					if receiverTypeInfo != nil && receiverTypeInfo.Kind == scanner.InterfaceKind {
 						ifaceName := fmt.Sprintf("%s.%s", receiverTypeInfo.PkgPath, receiverTypeInfo.Name)
 						if allImplementers, ok := interfaceMap[ifaceName]; ok {
-							// Convert TypeInfo to FieldType for consistency
 							for _, ti := range allImplementers {
 								implementerTypes = append(implementerTypes, &scanner.FieldType{Definition: ti})
 							}
 						}
 					}
 				}
-
 				for _, implFt := range implementerTypes {
 					a.markMethodAsUsed(ctx, usageMap, implFt, methodName)
 				}
 			}
-
-			// Handle regular function calls (non-methods)
 			if fn.UnderlyingFunc != nil && fn.Package != nil && fn.UnderlyingFunc.Receiver == nil {
 				fullName := fmt.Sprintf("%s.%s", fn.Package.ImportPath, fn.UnderlyingFunc.Name)
 				usageMap[fullName] = true
 			}
+		}
+	}
+
+	interp.RegisterDefaultIntrinsic(func(i *symgo.Interpreter, args []object.Object) object.Object {
+		// The intrinsic is triggered for every function call.
+		// We need to mark the function being called (args[0]) as used.
+		// We also need to check if any of the arguments themselves are function
+		// values being passed along, and mark them as used too.
+		for _, arg := range args {
+			markUsage(arg)
 		}
 		return nil
 	})

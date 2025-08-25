@@ -140,6 +140,8 @@ func (e *Evaluator) Eval(ctx context.Context, node ast.Node, env *object.Environ
 		return e.Eval(ctx, n.Decl, env, pkg)
 	case *ast.GenDecl:
 		return e.evalGenDecl(ctx, n, env, pkg)
+	case *ast.StarExpr:
+		return e.evalStarExpr(ctx, n, env, pkg)
 	case *ast.UnaryExpr:
 		return e.evalUnaryExpr(ctx, n, env, pkg)
 	case *ast.BinaryExpr:
@@ -148,6 +150,8 @@ func (e *Evaluator) Eval(ctx context.Context, node ast.Node, env *object.Environ
 		return e.evalCompositeLit(ctx, n, env, pkg)
 	case *ast.IndexExpr:
 		return e.evalIndexExpr(ctx, n, env, pkg)
+	case *ast.ParenExpr:
+		return e.Eval(ctx, n.X, env, pkg)
 	case *ast.FuncLit:
 		return &object.Function{
 			Parameters: n.Type.Params,
@@ -332,6 +336,41 @@ func (e *Evaluator) evalUnaryExpr(ctx context.Context, node *ast.UnaryExpr, env 
 		return ptr
 	}
 	return newError(node.Pos(), "unknown unary operator: %s", node.Op)
+}
+
+func (e *Evaluator) evalStarExpr(ctx context.Context, node *ast.StarExpr, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
+	val := e.Eval(ctx, node.X, env, pkg)
+	if isError(val) {
+		return val
+	}
+
+	// First, unwrap any variable to get to the underlying value.
+	if v, ok := val.(*object.Variable); ok {
+		val = v.Value
+	}
+
+	if ptr, ok := val.(*object.Pointer); ok {
+		// The value of a pointer is the object it points to.
+		return ptr.Value
+	}
+
+	// If we have a symbolic placeholder that represents a pointer type,
+	// dereferencing it should result in a new placeholder representing the element type.
+	if sp, ok := val.(*object.SymbolicPlaceholder); ok {
+		if ft := sp.FieldType(); ft != nil && ft.IsPointer {
+			newPlaceholder := &object.SymbolicPlaceholder{
+				Reason: fmt.Sprintf("dereferenced from %s", sp.Reason),
+			}
+			if ft.Elem != nil {
+				resolvedElem, _ := ft.Elem.Resolve(ctx)
+				newPlaceholder.SetFieldType(ft.Elem)
+				newPlaceholder.SetTypeInfo(resolvedElem)
+			}
+			return newPlaceholder
+		}
+	}
+
+	return newError(node.Pos(), "invalid indirect of %s (type %T)", val.Inspect(), val)
 }
 
 func (e *Evaluator) evalGenDecl(ctx context.Context, node *ast.GenDecl, env *object.Environment, pkg *scanner.PackageInfo) object.Object {

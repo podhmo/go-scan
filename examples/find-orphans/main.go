@@ -64,7 +64,7 @@ func (f *stringSliceFlag) Set(value string) error {
 
 // discoverModules finds all Go modules under the given root directory.
 // It prioritizes a go.work file if it exists, otherwise it scans for go.mod files.
-func discoverModules(ctx context.Context, root string) ([]string, error) {
+func discoverModules(ctx context.Context, root string, excludeDirs []string) ([]string, error) {
 	workFilePath := filepath.Join(root, "go.work")
 
 	// Check if go.work exists
@@ -94,13 +94,23 @@ func discoverModules(ctx context.Context, root string) ([]string, error) {
 
 	// go.work does not exist, fall back to scanning for go.mod files.
 	slog.DebugContext(ctx, "no go.work file found, falling back to go.mod scan", "root", root)
+
+	excludeMap := make(map[string]bool)
+	for _, dir := range excludeDirs {
+		excludeMap[dir] = true
+	}
+	// Also add default exclusions
+	excludeMap["vendor"] = true
+
 	var modules []string
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if d.IsDir() && (d.Name() == "vendor" || (len(d.Name()) > 1 && d.Name()[0] == '.')) {
-			return filepath.SkipDir
+		if d.IsDir() {
+			if excludeMap[d.Name()] || (d.Name() != "." && strings.HasPrefix(d.Name(), ".")) {
+				return filepath.SkipDir
+			}
 		}
 		if d.Name() == "go.mod" {
 			modules = append(modules, filepath.Dir(path))
@@ -141,7 +151,7 @@ func run(ctx context.Context, all bool, includeTests bool, workspace string, ver
 		workspace = absWorkspace
 		resolutionDir = workspace
 
-		moduleDirs, err = discoverModules(ctx, workspace)
+		moduleDirs, err = discoverModules(ctx, workspace, excludeDirs)
 		if err != nil {
 			return err
 		}

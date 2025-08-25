@@ -88,6 +88,66 @@ func IgnoredFunc() {}
 	}
 }
 
+func TestFindOrphans_multiModuleWorkspace_withExcludes(t *testing.T) {
+	files := map[string]string{
+		"workspace/modulea/go.mod": "module example.com/modulea\ngo 1.21\n",
+		"workspace/modulea/main.go": `
+package main
+func main() {
+    // This module has no dependencies and no orphans.
+}
+`,
+		// This module is in a directory that we will exclude.
+		"workspace/testdata/moduleb/go.mod": "module example.com/moduleb\ngo 1.21\n",
+		"workspace/testdata/moduleb/lib/lib.go": `
+package lib
+func UnusedFuncInExcludedModule() {}
+`,
+	}
+	dir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	log.SetOutput(io.Discard)
+
+	workspaceRoot := filepath.Join(dir, "workspace")
+	startPatterns := []string{"./..."}
+
+	// Change working directory to the workspace root for the test
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get wd: %v", err)
+	}
+	if err := os.Chdir(workspaceRoot); err != nil {
+		t.Fatalf("failed to change wd: %v", err)
+	}
+	defer os.Chdir(oldWd)
+
+	// We explicitly exclude the "testdata" directory where moduleb resides.
+	err = run(context.Background(), true, false, ".", false, false, startPatterns, []string{"testdata"})
+	if err != nil {
+		t.Fatalf("run() failed: %v", err)
+	}
+
+	w.Close()
+	os.Stdout = oldStdout
+
+	var buf bytes.Buffer
+	io.Copy(&buf, r)
+	output := buf.String()
+
+	// The orphan from the excluded module should not be found.
+	if strings.Contains(output, "UnusedFuncInExcludedModule") {
+		t.Errorf("found an orphan in an excluded module, but it should have been ignored")
+	}
+
+	if !strings.Contains(output, "No orphans found") {
+		t.Errorf("expected 'No orphans found' message, but got:\n%s", output)
+	}
+}
+
 func TestFindOrphans_multiModuleWorkspace_relative(t *testing.T) {
 	files := map[string]string{
 		"workspace/modulea/go.mod": "module example.com/modulea\ngo 1.21\nreplace example.com/moduleb => ../moduleb\n",

@@ -218,6 +218,20 @@ func (e *Evaluator) evalCompositeLit(ctx context.Context, node *ast.CompositeLit
 		return newError(node.Pos(), "could not resolve type for composite literal: %s", typeNameBuf.String())
 	}
 
+	// IMPORTANT: Evaluate all field/element values within the literal.
+	// This is crucial for detecting function calls inside initializers.
+	for _, elt := range node.Elts {
+		switch v := elt.(type) {
+		case *ast.KeyValueExpr:
+			// This handles struct literals: { Key: Value }
+			// We only need to evaluate the value part to trace calls.
+			e.Eval(ctx, v.Value, env, pkg)
+		default:
+			// This handles slice/array literals: { Value1, Value2 }
+			e.Eval(ctx, v, env, pkg)
+		}
+	}
+
 	if fieldType.IsSlice {
 		sliceObj := &object.Slice{SliceFieldType: fieldType}
 		sliceObj.SetFieldType(fieldType)

@@ -14,6 +14,7 @@ import (
 	"sync"
 
 	goscan "github.com/podhmo/go-scan"
+	"github.com/podhmo/go-scan/locator"
 	"github.com/podhmo/go-scan/scanner"
 	"github.com/podhmo/go-scan/symgo"
 	"github.com/podhmo/go-scan/symgo/object"
@@ -27,8 +28,15 @@ func main() {
 		workspace    = flag.String("workspace-root", "", "scan all Go modules found under a given directory")
 		verbose      = flag.Bool("v", false, "enable verbose output")
 		asJSON       = flag.Bool("json", false, "output orphans in JSON format")
+		excludeDirs  stringSliceFlag
 	)
+	flag.Var(&excludeDirs, "exclude-dirs", "comma-separated list of directories to exclude (e.g. testdata,vendor)")
 	flag.Parse()
+
+	// Set default exclude directories
+	if len(excludeDirs) == 0 {
+		excludeDirs = []string{"testdata", "vendor"}
+	}
 
 	startPatterns := flag.Args()
 	if len(startPatterns) == 0 {
@@ -36,10 +44,22 @@ func main() {
 	}
 
 	ctx := context.Background()
-	if err := run(ctx, *all, *includeTests, *workspace, *verbose, *asJSON, startPatterns); err != nil {
+	if err := run(ctx, *all, *includeTests, *workspace, *verbose, *asJSON, startPatterns, excludeDirs); err != nil {
 		slog.ErrorContext(ctx, "toplevel", "error", err)
 		os.Exit(1)
 	}
+}
+
+// stringSliceFlag is a custom flag type for handling comma-separated strings
+type stringSliceFlag []string
+
+func (f *stringSliceFlag) String() string {
+	return strings.Join(*f, ",")
+}
+
+func (f *stringSliceFlag) Set(value string) error {
+	*f = strings.Split(value, ",")
+	return nil
 }
 
 // discoverModules finds all Go modules under the given root directory.
@@ -93,7 +113,7 @@ func discoverModules(ctx context.Context, root string) ([]string, error) {
 	return modules, nil
 }
 
-func run(ctx context.Context, all bool, includeTests bool, workspace string, verbose bool, asJSON bool, startPatterns []string) error {
+func run(ctx context.Context, all bool, includeTests bool, workspace string, verbose bool, asJSON bool, startPatterns []string, excludeDirs []string) error {
 	logLevel := new(slog.LevelVar)
 	if !verbose {
 		logLevel.Set(slog.LevelInfo)
@@ -105,70 +125,238 @@ func run(ctx context.Context, all bool, includeTests bool, workspace string, ver
 	logger := slog.New(slog.NewTextHandler(os.Stderr, opts))
 	slog.SetDefault(logger)
 
-	var scannerOpts []goscan.ScannerOption
-	scannerOpts = append(scannerOpts, goscan.WithIncludeTests(includeTests))
-	scannerOpts = append(scannerOpts, goscan.WithGoModuleResolver()) // Important for resolving modules
+	// Create locators first, as they are needed to resolve target packages.
+	var locators []*locator.Locator
+	var moduleDirs []string
+	var workDir string
 
-	var s *goscan.Scanner
-	var err error
+	locatorOpts := []locator.Option{locator.WithGoModuleResolver()}
 
 	if workspace != "" {
-		moduleDirs, err := discoverModules(ctx, workspace)
+		var err error
+		moduleDirs, err = discoverModules(ctx, workspace)
 		if err != nil {
 			return err
 		}
 		if len(moduleDirs) == 0 {
 			return fmt.Errorf("no go.mod files found in workspace root %s", workspace)
 		}
-		slog.DebugContext(ctx, "found modules in workspace", "count", len(moduleDirs), "modules", moduleDirs)
-		scannerOpts = append(scannerOpts, goscan.WithModuleDirs(moduleDirs))
-		s, err = goscan.New(scannerOpts...)
+		slog.DebugContext(ctx, "creating locators for workspace", "count", len(moduleDirs), "modules", moduleDirs)
+		for _, dir := range moduleDirs {
+			loc, err := locator.New(dir, locatorOpts...)
+			if err != nil {
+				return fmt.Errorf("workspace mode: failed to create locator for module %q: %w", dir, err)
+			}
+			locators = append(locators, loc)
+		}
 	} else {
-		// For single module mode, we need to specify the workdir.
-		// The startPatterns are often relative (e.g., ./...), so we need a base.
-		// If no patterns are given, it defaults to "./...", so CWD is a safe bet.
-		scannerOpts = append(scannerOpts, goscan.WithWorkDir("."))
-		s, err = goscan.New(scannerOpts...)
+		var err error
+		workDir, err = os.Getwd()
+		if err != nil {
+			return fmt.Errorf("failed to get current working directory: %w", err)
+		}
+		loc, err := locator.New(workDir, locatorOpts...)
+		if err != nil {
+			return fmt.Errorf("single module mode: failed to create locator for %q: %w", workDir, err)
+		}
+		locators = append(locators, loc)
 	}
 
+	targetPackages, err := resolveTargetPackages(ctx, locators, startPatterns, excludeDirs)
+	if err != nil {
+		return fmt.Errorf("could not resolve target packages: %w", err)
+	}
+	slog.DebugContext(ctx, "resolved target packages", "count", len(targetPackages), "packages", keys(targetPackages))
+
+	// Now create the main scanner
+	var scannerOpts []goscan.ScannerOption
+	scannerOpts = append(scannerOpts, goscan.WithIncludeTests(includeTests))
+	scannerOpts = append(scannerOpts, goscan.WithGoModuleResolver())
+
+	if workspace != "" {
+		scannerOpts = append(scannerOpts, goscan.WithModuleDirs(moduleDirs))
+	} else {
+		scannerOpts = append(scannerOpts, goscan.WithWorkDir(workDir))
+	}
+
+	s, err := goscan.New(scannerOpts...)
 	if err != nil {
 		return fmt.Errorf("failed to create scanner: %w", err)
 	}
 
 	a := &analyzer{
-		s:        s,
-		packages: make(map[string]*scanner.PackageInfo),
+		s:              s,
+		packages:       make(map[string]*scanner.PackageInfo),
+		targetPackages: targetPackages,
 	}
-	return a.analyze(ctx, asJSON, startPatterns)
+	return a.analyze(ctx, asJSON)
+}
+
+// resolveTargetPackages converts user-provided patterns (including file paths and import paths)
+// into a definitive set of Go import paths.
+func resolveTargetPackages(ctx context.Context, locators []*locator.Locator, patterns []string, excludeDirs []string) (map[string]bool, error) {
+	targetPackages := make(map[string]bool)
+	excludeMap := make(map[string]bool)
+	for _, dir := range excludeDirs {
+		excludeMap[dir] = true
+	}
+
+	workDir, err := os.Getwd()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get current working directory: %w", err)
+	}
+
+	for _, pattern := range patterns {
+		isRecursive := strings.HasSuffix(pattern, "/...")
+		cleanPattern := strings.TrimSuffix(pattern, "/...")
+
+		// Determine if it's a file path or import path pattern
+		isFilePathPattern := strings.HasPrefix(pattern, ".") || filepath.IsAbs(pattern)
+
+		if isFilePathPattern {
+			// It's a file path pattern, e.g., '.', './...', '../..'.
+			root := filepath.Clean(filepath.Join(workDir, cleanPattern))
+
+			err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+				if err != nil {
+					return err
+				}
+
+				if d.IsDir() {
+					if excludeMap[d.Name()] || (d.Name() != "." && strings.HasPrefix(d.Name(), ".")) {
+						return filepath.SkipDir
+					}
+					if !isRecursive && path != root {
+						return filepath.SkipDir
+					}
+				}
+
+				if !d.IsDir() && !strings.HasSuffix(d.Name(), ".go") {
+					return nil
+				}
+				if d.IsDir() && !isRecursive && path != root {
+					return filepath.SkipDir
+				}
+
+				dirPath := path
+				if !d.IsDir() {
+					dirPath = filepath.Dir(path)
+				}
+
+				// Check if the directory contains any .go files at all.
+				// This avoids adding non-package directories to the target set.
+				goFiles, err := os.ReadDir(dirPath)
+				if err != nil {
+					return nil // Ignore dirs we can't read
+				}
+				hasGo := false
+				for _, f := range goFiles {
+					if !f.IsDir() && strings.HasSuffix(f.Name(), ".go") {
+						hasGo = true
+						break
+					}
+				}
+				if !hasGo {
+					return nil
+				}
+
+				importPath, err := pathToImport(locators, dirPath)
+				if err != nil {
+					slog.DebugContext(ctx, "could not convert path to import, skipping", "path", dirPath, "error", err)
+					return nil
+				}
+
+				if _, exists := targetPackages[importPath]; !exists {
+					targetPackages[importPath] = true
+				}
+				return nil
+			})
+			if err != nil {
+				return nil, fmt.Errorf("failed to walk directory for file path pattern %s: %w", pattern, err)
+			}
+		} else {
+			// It's an import path pattern, e.g., 'example.com/foo/...'
+			if !isRecursive {
+				targetPackages[cleanPattern] = true
+				continue
+			}
+
+			// This is a recursive import path. We need to find its directory and walk it.
+			var rootDir string
+			var found bool
+			for _, loc := range locators {
+				dir, err := loc.FindPackageDir(cleanPattern)
+				if err == nil {
+					rootDir = dir
+					found = true
+					break
+				}
+			}
+			if !found {
+				return nil, fmt.Errorf("could not find package directory for import path pattern: %s", pattern)
+			}
+
+			err := filepath.WalkDir(rootDir, func(path string, d os.DirEntry, err error) error {
+				if err != nil {
+					return err
+				}
+				if d.IsDir() {
+					if excludeMap[d.Name()] || (d.Name() != "." && strings.HasPrefix(d.Name(), ".")) {
+						return filepath.SkipDir
+					}
+				}
+				if !d.IsDir() {
+					return nil
+				}
+				importPath, err := pathToImport(locators, path)
+				if err != nil {
+					return nil // Skip dirs that can't be resolved
+				}
+				targetPackages[importPath] = true
+				return nil
+			})
+			if err != nil {
+				return nil, fmt.Errorf("failed to walk directory for import path pattern %s: %w", pattern, err)
+			}
+		}
+	}
+	return targetPackages, nil
+}
+
+// pathToImport tries to convert a file path to an import path using a list of locators.
+// This is necessary in workspace mode where a path could belong to any of the modules.
+func pathToImport(locators []*locator.Locator, path string) (string, error) {
+	for _, loc := range locators {
+		importPath, err := loc.PathToImport(path)
+		if err == nil {
+			return importPath, nil
+		}
+	}
+	return "", fmt.Errorf("path %q does not belong to any known module", path)
+}
+
+func keys[K comparable, V any](m map[K]V) []K {
+	out := make([]K, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
 }
 
 type analyzer struct {
-	s        *goscan.Scanner
-	packages map[string]*scanner.PackageInfo
-	mu       sync.Mutex
-	ctx      context.Context
+	s              *goscan.Scanner
+	packages       map[string]*scanner.PackageInfo
+	targetPackages map[string]bool
+	mu             sync.Mutex
+	ctx            context.Context
 }
 
-func (a *analyzer) analyze(ctx context.Context, asJSON bool, startPatterns []string) error {
+func (a *analyzer) analyze(ctx context.Context, asJSON bool) error {
 	a.ctx = ctx
-	var patternsToWalk []string
-	if a.s.IsWorkspace() {
-		roots := a.s.ModuleRoots()
-		slog.DebugContext(ctx, "discovering packages from workspace roots", "roots", roots)
-		for _, root := range roots {
-			for _, pattern := range startPatterns {
-				// a bit of a hack to check for relative patterns like './...'
-				if strings.HasPrefix(pattern, ".") {
-					patternsToWalk = append(patternsToWalk, filepath.Join(root, pattern))
-				} else {
-					// assume it's a full import path pattern
-					patternsToWalk = append(patternsToWalk, pattern)
-				}
-			}
-		}
-	} else {
-		patternsToWalk = startPatterns
-	}
+
+	// Walk all dependencies, starting from the target packages.
+	// The walker expects import path patterns, which is what resolveTargetPackages produces.
+	patternsToWalk := keys(a.targetPackages)
 
 	slog.DebugContext(ctx, "walking with patterns", "patterns", patternsToWalk)
 	if err := a.s.Walker.Walk(ctx, a, patternsToWalk...); err != nil {
@@ -311,6 +499,11 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool, startPatterns []str
 	var orphans []Orphan
 
 	for _, pkg := range a.packages {
+		// Only report orphans from the packages the user explicitly asked to scan.
+		if _, isTarget := a.targetPackages[pkg.ImportPath]; !isTarget {
+			continue
+		}
+
 		for _, decl := range pkg.Functions {
 			name := getFullName(a.s, pkg, decl)
 			if _, used := usageMap[name]; !used {

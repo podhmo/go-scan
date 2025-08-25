@@ -47,6 +47,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     - **Robust Environment Management**: Fixed environment and scope handling during function application to ensure nested calls correctly trigger intrinsics.
 - **`symgo`: Cross-Module Source Scanning**: Added an option (`--include-pkg` in `docgen`) to allow the `symgo` engine to treat specified external packages as if they were internal, enabling deep, source-level analysis of their functions.
 - **Find Orphan Functions and Methods**: A new tool `examples/find-orphans` that uses the improved `symgo` engine to perform whole-program analysis and identify unused functions and methods. It supports multi-module workspaces and `//go:scan:ignore` annotations. It intelligently detects whether to run in "application mode" (starting from `main.main`) or "library mode" (starting from all exported functions).
+    - **Scoped Analysis**: The tool's analysis can now be strictly scoped to a user-defined set of target packages. Orphans from upstream dependencies are no longer reported unless those dependencies are explicitly included in the input patterns. This is controlled by resolving file path patterns (`./...`) and import path patterns (`example.com/...`) into a canonical set of target packages. Directory traversal can be fine-tuned with the `--exclude-dirs` flag (e.g., to ignore `testdata`).
 
 ## To Be Implemented
 
@@ -72,5 +73,5 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     - [x] **Unified `symgo` View**: Create a facade or "meta-scanner" to provide `symgo.Interpreter` with a unified view of packages across all modules in the workspace. This may involve changes to `symgo` itself.
     - [x] **Update Analysis Logic**: Ensure the main analysis loop correctly collects declarations, builds maps, and identifies entry points from the aggregated set of all packages.
     - [x] **Add Tests**: Create a comprehensive test case with a multi-module project to validate that cross-module function calls are correctly tracked and orphans are identified accurately across the entire workspace.
-- [ ] **`ModuleWalker`: Wildcard Support**: Add support for the `...` wildcard in import path patterns, similar to the `go` command, to make package discovery more intuitive.
+- [x] **`ModuleWalker`: Wildcard Support**: Added support for the `...` wildcard in both file path and import path patterns to tools like `find-orphans`, making package discovery more intuitive.
 - [x] **`scantest`: Path to Import Path Conversion**: Enhance `scantest.Run` with an option or helper to automatically convert filesystem path patterns (like `.`) into their corresponding Go import path patterns, simplifying test setup for tools that consume import paths.

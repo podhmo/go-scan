@@ -88,6 +88,135 @@ func IgnoredFunc() {}
 	}
 }
 
+func TestFindOrphans_methodWithSwitch(t *testing.T) {
+	files := map[string]string{
+		"go.mod": "module example.com/switch-test\ngo 1.21\n",
+		"lib/lib.go": `
+package lib
+
+type ComplexType struct{}
+
+// ExportedMethodWithSwitch is an entry point.
+// Its body contains a switch statement.
+func (c *ComplexType) ExportedMethodWithSwitch(input int) {
+    switch input {
+    case 1:
+        c.unexportedMethodInSwitch()
+    default:
+        // do nothing
+    }
+}
+
+// This should be marked as used.
+func (c *ComplexType) unexportedMethodInSwitch() {}
+
+// This is a real orphan.
+func anotherUnusedFunc() {}
+`,
+	}
+	dir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	log.SetOutput(io.Discard)
+
+	startPatterns := []string{"example.com/switch-test/lib"}
+	err := run(context.Background(), true, false, dir, false, false, "lib", startPatterns, []string{"testdata", "vendor"})
+	if err != nil {
+		t.Fatalf("run() failed: %v", err)
+	}
+
+	w.Close()
+	os.Stdout = oldStdout
+
+	var buf bytes.Buffer
+	io.Copy(&buf, r)
+	output := buf.String()
+
+	expectedOrphans := []string{
+		"example.com/switch-test/lib.anotherUnusedFunc",
+	}
+	sort.Strings(expectedOrphans)
+
+	var foundOrphans []string
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	for _, line := range lines {
+		if strings.HasPrefix(line, "example.com") {
+			foundOrphans = append(foundOrphans, line)
+		}
+	}
+	sort.Strings(foundOrphans)
+
+	if diff := cmp.Diff(expectedOrphans, foundOrphans); diff != "" {
+		t.Errorf("find-orphans mismatch (-want +got):\n%s\nFull output:\n%s", diff, output)
+	}
+}
+
+func TestFindOrphans_intraPackageMethodCall(t *testing.T) {
+	files := map[string]string{
+		"go.mod": "module example.com/intra-pkg-methods\ngo 1.21\n",
+		"lib/lib.go": `
+package lib
+
+type MyType struct{}
+
+// ExportedMethod is an entry point for library analysis.
+// It calls an unexported method.
+func (t *MyType) ExportedMethod() {
+    t.unexportedMethod()
+}
+
+// unexportedMethod should be considered "used" because it's called
+// by an exported method.
+func (t *MyType) unexportedMethod() {}
+
+// trulyUnusedFunc is not called by anyone and should be an orphan.
+func trulyUnusedFunc() {}
+`,
+	}
+	dir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	log.SetOutput(io.Discard)
+
+	startPatterns := []string{"example.com/intra-pkg-methods/lib"}
+	err := run(context.Background(), true, false, dir, false, false, "lib", startPatterns, []string{"testdata", "vendor"})
+	if err != nil {
+		t.Fatalf("run() failed: %v", err)
+	}
+
+	w.Close()
+	os.Stdout = oldStdout
+
+	var buf bytes.Buffer
+	io.Copy(&buf, r)
+	output := buf.String()
+
+	expectedOrphans := []string{
+		"example.com/intra-pkg-methods/lib.trulyUnusedFunc",
+	}
+	sort.Strings(expectedOrphans)
+
+	var foundOrphans []string
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	for _, line := range lines {
+		if strings.HasPrefix(line, "example.com") {
+			foundOrphans = append(foundOrphans, line)
+		}
+	}
+	sort.Strings(foundOrphans)
+
+	// Before the fix, this will fail because unexportedMethod will also be listed.
+	if diff := cmp.Diff(expectedOrphans, foundOrphans); diff != "" {
+		t.Errorf("find-orphans mismatch (-want +got):\n%s\nFull output:\n%s", diff, output)
+	}
+}
+
 func TestFindOrphans_multiModuleWorkspace_withExcludes(t *testing.T) {
 	files := map[string]string{
 		"workspace/modulea/go.mod": "module example.com/modulea\ngo 1.21\n",

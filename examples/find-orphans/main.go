@@ -512,7 +512,8 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool) error {
 
 			if pkg.Name == "main" && fnInfo.Name == "main" && fnInfo.Receiver == nil {
 				mainEntryPoint = fn
-			} else if fnInfo.AstDecl.Name.IsExported() && fnInfo.Receiver == nil {
+			} else if fnInfo.AstDecl.Name.IsExported() {
+				// Any exported function or method is a potential entry point for a library.
 				libraryEntryPoints = append(libraryEntryPoints, fn)
 			}
 		}
@@ -552,7 +553,12 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool) error {
 	for _, ep := range entryPoints {
 		epName := getFullName(a.s, ep.Package, &scanner.FunctionInfo{Name: ep.Name.Name, AstDecl: ep.Decl})
 		slog.DebugContext(ctx, "analyzing from entry point", "entrypoint", epName)
-		interp.Apply(ctx, ep, []object.Object{}, ep.Package)
+		result := interp.Apply(ctx, ep, []object.Object{}, ep.Package)
+		if result != nil {
+			if err, ok := result.(*object.Error); ok {
+				slog.WarnContext(ctx, "analysis error on entry point", "entrypoint", epName, "error", err.Inspect())
+			}
+		}
 	}
 	slog.InfoContext(ctx, "symbolic execution complete")
 

@@ -1,24 +1,33 @@
 {
   "config": {
     "direction": "bidi",
-    "hops": 1,
+    "hops": 3,
     "startPkg": "github.com/podhmo/go-scan"
   },
   "dependencies": {
     "github.com/podhmo/go-scan": [
       "github.com/podhmo/go-scan/locator",
       "github.com/podhmo/go-scan/scanner"
+    ],
+    "github.com/podhmo/go-scan/locator": [
+      "github.com/podhmo/go-scan/scanner"
     ]
   },
   "reverseDependencies": {
     "github.com/podhmo/go-scan/examples/convert": [
-      "github.com/podhmo/go-scan"
+      "github.com/podhmo/go-scan",
+      "github.com/podhmo/go-scan/examples/convert/generator",
+      "github.com/podhmo/go-scan/examples/convert/parser"
     ],
     "github.com/podhmo/go-scan/examples/convert-define": [
-      "github.com/podhmo/go-scan"
+      "github.com/podhmo/go-scan",
+      "github.com/podhmo/go-scan/examples/convert-define/internal",
+      "github.com/podhmo/go-scan/examples/convert/generator"
     ],
     "github.com/podhmo/go-scan/examples/convert-define/internal": [
-      "github.com/podhmo/go-scan"
+      "github.com/podhmo/go-scan",
+      "github.com/podhmo/go-scan/minigo",
+      "github.com/podhmo/go-scan/minigo/evaluator"
     ],
     "github.com/podhmo/go-scan/examples/convert/generator": [
       "github.com/podhmo/go-scan"
@@ -30,40 +39,142 @@
       "github.com/podhmo/go-scan"
     ],
     "github.com/podhmo/go-scan/examples/deriving-all": [
-      "github.com/podhmo/go-scan"
+      "github.com/podhmo/go-scan",
+      "github.com/podhmo/go-scan/examples/derivingbind/gen",
+      "github.com/podhmo/go-scan/examples/derivingjson/gen"
     ],
     "github.com/podhmo/go-scan/examples/derivingbind": [
-      "github.com/podhmo/go-scan"
+      "github.com/podhmo/go-scan",
+      "github.com/podhmo/go-scan/examples/derivingbind/gen"
     ],
     "github.com/podhmo/go-scan/examples/derivingbind/gen": [
       "github.com/podhmo/go-scan"
     ],
     "github.com/podhmo/go-scan/examples/derivingjson": [
-      "github.com/podhmo/go-scan"
+      "github.com/podhmo/go-scan",
+      "github.com/podhmo/go-scan/examples/derivingjson/gen"
     ],
     "github.com/podhmo/go-scan/examples/derivingjson/gen": [
       "github.com/podhmo/go-scan"
     ],
     "github.com/podhmo/go-scan/examples/docgen": [
-      "github.com/podhmo/go-scan"
+      "github.com/podhmo/go-scan",
+      "github.com/podhmo/go-scan/examples/docgen/patterns",
+      "github.com/podhmo/go-scan/minigo",
+      "github.com/podhmo/go-scan/symgo"
+    ],
+    "github.com/podhmo/go-scan/examples/docgen/patterns": [
+      "github.com/podhmo/go-scan/symgo"
+    ],
+    "github.com/podhmo/go-scan/examples/docgen/testdata/const-resolution": [
+      "github.com/podhmo/go-scan/examples/docgen/patterns"
+    ],
+    "github.com/podhmo/go-scan/examples/docgen/testdata/custom-patterns": [
+      "github.com/podhmo/go-scan/examples/docgen/patterns"
+    ],
+    "github.com/podhmo/go-scan/examples/docgen/testdata/full-parameters": [
+      "github.com/podhmo/go-scan/examples/docgen/patterns"
+    ],
+    "github.com/podhmo/go-scan/examples/docgen/testdata/integration/fn-patterns": [
+      "github.com/podhmo/go-scan/examples/docgen/patterns"
+    ],
+    "github.com/podhmo/go-scan/examples/docgen/testdata/integration/fn-patterns-full": [
+      "github.com/podhmo/go-scan/examples/docgen/patterns"
+    ],
+    "github.com/podhmo/go-scan/examples/docgen/testdata/new-features": [
+      "github.com/podhmo/go-scan/examples/docgen/patterns"
     ],
     "github.com/podhmo/go-scan/examples/find-orphans": [
-      "github.com/podhmo/go-scan"
+      "github.com/podhmo/go-scan",
+      "github.com/podhmo/go-scan/symgo"
     ],
     "github.com/podhmo/go-scan/examples/minigo": [
-      "github.com/podhmo/go-scan"
+      "github.com/podhmo/go-scan",
+      "github.com/podhmo/go-scan/minigo",
+      "github.com/podhmo/go-scan/minigo/stdlib/encoding/json",
+      "github.com/podhmo/go-scan/minigo/stdlib/fmt",
+      "github.com/podhmo/go-scan/minigo/stdlib/strconv",
+      "github.com/podhmo/go-scan/minigo/stdlib/strings"
     ],
     "github.com/podhmo/go-scan/minigo": [
-      "github.com/podhmo/go-scan"
+      "github.com/podhmo/go-scan",
+      "github.com/podhmo/go-scan/minigo/evaluator"
     ],
     "github.com/podhmo/go-scan/minigo/evaluator": [
       "github.com/podhmo/go-scan"
+    ],
+    "github.com/podhmo/go-scan/minigo/stdlib/bufio": [
+      "github.com/podhmo/go-scan/minigo"
+    ],
+    "github.com/podhmo/go-scan/minigo/stdlib/bytes": [
+      "github.com/podhmo/go-scan/minigo"
+    ],
+    "github.com/podhmo/go-scan/minigo/stdlib/container/list": [
+      "github.com/podhmo/go-scan/minigo"
+    ],
+    "github.com/podhmo/go-scan/minigo/stdlib/context": [
+      "github.com/podhmo/go-scan/minigo"
+    ],
+    "github.com/podhmo/go-scan/minigo/stdlib/crypto/md5": [
+      "github.com/podhmo/go-scan/minigo"
+    ],
+    "github.com/podhmo/go-scan/minigo/stdlib/encoding/json": [
+      "github.com/podhmo/go-scan/minigo"
+    ],
+    "github.com/podhmo/go-scan/minigo/stdlib/errors": [
+      "github.com/podhmo/go-scan/minigo"
+    ],
+    "github.com/podhmo/go-scan/minigo/stdlib/fmt": [
+      "github.com/podhmo/go-scan/minigo"
+    ],
+    "github.com/podhmo/go-scan/minigo/stdlib/io": [
+      "github.com/podhmo/go-scan/minigo"
+    ],
+    "github.com/podhmo/go-scan/minigo/stdlib/math/rand": [
+      "github.com/podhmo/go-scan/minigo"
+    ],
+    "github.com/podhmo/go-scan/minigo/stdlib/net/http": [
+      "github.com/podhmo/go-scan/minigo"
+    ],
+    "github.com/podhmo/go-scan/minigo/stdlib/net/url": [
+      "github.com/podhmo/go-scan/minigo"
+    ],
+    "github.com/podhmo/go-scan/minigo/stdlib/os": [
+      "github.com/podhmo/go-scan/minigo"
+    ],
+    "github.com/podhmo/go-scan/minigo/stdlib/path": [
+      "github.com/podhmo/go-scan/minigo"
+    ],
+    "github.com/podhmo/go-scan/minigo/stdlib/path/filepath": [
+      "github.com/podhmo/go-scan/minigo"
+    ],
+    "github.com/podhmo/go-scan/minigo/stdlib/regexp": [
+      "github.com/podhmo/go-scan/minigo"
+    ],
+    "github.com/podhmo/go-scan/minigo/stdlib/sort": [
+      "github.com/podhmo/go-scan/minigo"
+    ],
+    "github.com/podhmo/go-scan/minigo/stdlib/strconv": [
+      "github.com/podhmo/go-scan/minigo"
+    ],
+    "github.com/podhmo/go-scan/minigo/stdlib/strings": [
+      "github.com/podhmo/go-scan/minigo"
+    ],
+    "github.com/podhmo/go-scan/minigo/stdlib/text/scanner": [
+      "github.com/podhmo/go-scan/minigo"
+    ],
+    "github.com/podhmo/go-scan/minigo/stdlib/text/template": [
+      "github.com/podhmo/go-scan/minigo"
+    ],
+    "github.com/podhmo/go-scan/minigo/stdlib/time": [
+      "github.com/podhmo/go-scan/minigo"
     ],
     "github.com/podhmo/go-scan/scantest": [
       "github.com/podhmo/go-scan"
     ],
     "github.com/podhmo/go-scan/symgo": [
-      "github.com/podhmo/go-scan"
+      "github.com/podhmo/go-scan",
+      "github.com/podhmo/go-scan/symgo/evaluator"
     ],
     "github.com/podhmo/go-scan/symgo/evaluator": [
       "github.com/podhmo/go-scan"

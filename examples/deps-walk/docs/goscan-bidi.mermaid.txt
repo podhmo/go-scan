@@ -15,37 +15,117 @@ graph LR
     id10["examples/derivingjson"]
     id11["examples/derivingjson/gen"]
     id12["examples/docgen"]
-    id13["examples/find-orphans"]
-    id14["examples/minigo"]
-    id15["locator"]
-    id16["minigo"]
-    id17["minigo/evaluator"]
-    id18["scanner"]
-    id19["scantest"]
-    id20["symgo"]
-    id21["symgo/evaluator"]
+    id13["examples/docgen/patterns"]
+    id14["examples/docgen/testdata/const-resolution"]
+    id15["examples/docgen/testdata/custom-patterns"]
+    id16["examples/docgen/testdata/full-parameters"]
+    id17["examples/docgen/testdata/integration/fn-patterns"]
+    id18["examples/docgen/testdata/integration/fn-patterns-full"]
+    id19["examples/docgen/testdata/new-features"]
+    id20["examples/find-orphans"]
+    id21["examples/minigo"]
+    id22["locator"]
+    id23["minigo"]
+    id24["minigo/evaluator"]
+    id25["minigo/stdlib/bufio"]
+    id26["minigo/stdlib/bytes"]
+    id27["minigo/stdlib/container/list"]
+    id28["minigo/stdlib/context"]
+    id29["minigo/stdlib/crypto/md5"]
+    id30["minigo/stdlib/encoding/json"]
+    id31["minigo/stdlib/errors"]
+    id32["minigo/stdlib/fmt"]
+    id33["minigo/stdlib/io"]
+    id34["minigo/stdlib/math/rand"]
+    id35["minigo/stdlib/net/http"]
+    id36["minigo/stdlib/net/url"]
+    id37["minigo/stdlib/os"]
+    id38["minigo/stdlib/path"]
+    id39["minigo/stdlib/path/filepath"]
+    id40["minigo/stdlib/regexp"]
+    id41["minigo/stdlib/sort"]
+    id42["minigo/stdlib/strconv"]
+    id43["minigo/stdlib/strings"]
+    id44["minigo/stdlib/text/scanner"]
+    id45["minigo/stdlib/text/template"]
+    id46["minigo/stdlib/time"]
+    id47["scanner"]
+    id48["scantest"]
+    id49["symgo"]
+    id50["symgo/evaluator"]
 
-    id0 --> id15
-    id0 --> id18
+    id0 --> id22
+    id0 --> id47
+    id22 --> id47
     id1 -.-> id0
+    id1 -.-> id4
+    id1 -.-> id5
     id2 -.-> id0
+    id2 -.-> id3
+    id2 -.-> id4
     id3 -.-> id0
+    id3 -.-> id23
+    id3 -.-> id24
     id4 -.-> id0
     id5 -.-> id0
     id6 -.-> id0
     id7 -.-> id0
+    id7 -.-> id9
+    id7 -.-> id11
     id8 -.-> id0
+    id8 -.-> id9
     id9 -.-> id0
     id10 -.-> id0
+    id10 -.-> id11
     id11 -.-> id0
     id12 -.-> id0
-    id13 -.-> id0
-    id14 -.-> id0
-    id16 -.-> id0
-    id17 -.-> id0
-    id19 -.-> id0
+    id12 -.-> id13
+    id12 -.-> id23
+    id12 -.-> id49
+    id13 -.-> id49
+    id14 -.-> id13
+    id15 -.-> id13
+    id16 -.-> id13
+    id17 -.-> id13
+    id18 -.-> id13
+    id19 -.-> id13
     id20 -.-> id0
+    id20 -.-> id49
     id21 -.-> id0
+    id21 -.-> id23
+    id21 -.-> id30
+    id21 -.-> id32
+    id21 -.-> id42
+    id21 -.-> id43
+    id23 -.-> id0
+    id23 -.-> id24
+    id24 -.-> id0
+    id25 -.-> id23
+    id26 -.-> id23
+    id27 -.-> id23
+    id28 -.-> id23
+    id29 -.-> id23
+    id30 -.-> id23
+    id31 -.-> id23
+    id32 -.-> id23
+    id33 -.-> id23
+    id34 -.-> id23
+    id35 -.-> id23
+    id36 -.-> id23
+    id37 -.-> id23
+    id38 -.-> id23
+    id39 -.-> id23
+    id40 -.-> id23
+    id41 -.-> id23
+    id42 -.-> id23
+    id43 -.-> id23
+    id44 -.-> id23
+    id45 -.-> id23
+    id46 -.-> id23
+    id48 -.-> id0
+    id49 -.-> id0
+    id49 -.-> id50
+    id50 -.-> id0
   end
 
     style id0 fill:#add8e6,stroke:#333,stroke-width:2px

@@ -128,12 +128,19 @@ func run(ctx context.Context, all bool, includeTests bool, workspace string, ver
 	// Create locators first, as they are needed to resolve target packages.
 	var locators []*locator.Locator
 	var moduleDirs []string
-	var workDir string
+	var resolutionDir string
 
 	locatorOpts := []locator.Option{locator.WithGoModuleResolver()}
 
 	if workspace != "" {
 		var err error
+		absWorkspace, err := filepath.Abs(workspace)
+		if err != nil {
+			return fmt.Errorf("could not get absolute path for workspace root %q: %w", workspace, err)
+		}
+		workspace = absWorkspace
+		resolutionDir = workspace
+
 		moduleDirs, err = discoverModules(ctx, workspace)
 		if err != nil {
 			return err
@@ -151,18 +158,19 @@ func run(ctx context.Context, all bool, includeTests bool, workspace string, ver
 		}
 	} else {
 		var err error
-		workDir, err = os.Getwd()
+		cwd, err := os.Getwd()
 		if err != nil {
 			return fmt.Errorf("failed to get current working directory: %w", err)
 		}
-		loc, err := locator.New(workDir, locatorOpts...)
+		resolutionDir = cwd
+		loc, err := locator.New(resolutionDir, locatorOpts...)
 		if err != nil {
-			return fmt.Errorf("single module mode: failed to create locator for %q: %w", workDir, err)
+			return fmt.Errorf("single module mode: failed to create locator for %q: %w", resolutionDir, err)
 		}
 		locators = append(locators, loc)
 	}
 
-	targetPackages, err := resolveTargetPackages(ctx, locators, startPatterns, excludeDirs)
+	targetPackages, err := resolveTargetPackages(ctx, locators, startPatterns, excludeDirs, resolutionDir)
 	if err != nil {
 		return fmt.Errorf("could not resolve target packages: %w", err)
 	}
@@ -176,7 +184,8 @@ func run(ctx context.Context, all bool, includeTests bool, workspace string, ver
 	if workspace != "" {
 		scannerOpts = append(scannerOpts, goscan.WithModuleDirs(moduleDirs))
 	} else {
-		scannerOpts = append(scannerOpts, goscan.WithWorkDir(workDir))
+		// In single-module mode, the resolutionDir is the workDir.
+		scannerOpts = append(scannerOpts, goscan.WithWorkDir(resolutionDir))
 	}
 
 	s, err := goscan.New(scannerOpts...)
@@ -193,17 +202,12 @@ func run(ctx context.Context, all bool, includeTests bool, workspace string, ver
 }
 
 // resolveTargetPackages converts user-provided patterns (including file paths and import paths)
-// into a definitive set of Go import paths.
-func resolveTargetPackages(ctx context.Context, locators []*locator.Locator, patterns []string, excludeDirs []string) (map[string]bool, error) {
+// into a definitive set of Go import paths. It resolves file path patterns relative to rootDir.
+func resolveTargetPackages(ctx context.Context, locators []*locator.Locator, patterns []string, excludeDirs []string, rootDir string) (map[string]bool, error) {
 	targetPackages := make(map[string]bool)
 	excludeMap := make(map[string]bool)
 	for _, dir := range excludeDirs {
 		excludeMap[dir] = true
-	}
-
-	workDir, err := os.Getwd()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get current working directory: %w", err)
 	}
 
 	for _, pattern := range patterns {
@@ -215,7 +219,7 @@ func resolveTargetPackages(ctx context.Context, locators []*locator.Locator, pat
 
 		if isFilePathPattern {
 			// It's a file path pattern, e.g., '.', './...', '../..'.
-			root := filepath.Clean(filepath.Join(workDir, cleanPattern))
+			root := filepath.Clean(filepath.Join(rootDir, cleanPattern))
 
 			err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 				if err != nil {

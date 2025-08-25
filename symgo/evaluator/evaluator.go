@@ -132,6 +132,10 @@ func (e *Evaluator) Eval(ctx context.Context, node ast.Node, env *object.Environ
 		return e.evalCallExpr(ctx, n, env, pkg)
 	case *ast.ExprStmt:
 		return e.Eval(ctx, n.X, env, pkg)
+	case *ast.DeferStmt:
+		return e.Eval(ctx, n.Call, env, pkg)
+	case *ast.GoStmt:
+		return e.Eval(ctx, n.Call, env, pkg)
 	case *ast.DeclStmt:
 		return e.Eval(ctx, n.Decl, env, pkg)
 	case *ast.GenDecl:

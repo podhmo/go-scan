@@ -1206,6 +1206,15 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 		if isError(evaluated) {
 			return evaluated
 		}
+
+		// If 'evaluated' is a Go nil, it's from a naked return.
+		// We must wrap it in an object.Object type to prevent panics.
+		// For now, we'll use object.Nil, as the most common case for naked
+		// returns in Go is for pointer/interface/slice types where nil is the zero value.
+		if evaluated == nil {
+			evaluated = &object.Nil{}
+		}
+
 		if ret, ok := evaluated.(*object.ReturnValue); ok {
 			return ret
 		}

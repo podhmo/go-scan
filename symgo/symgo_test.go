@@ -228,3 +228,70 @@ func main() {
 		t.Errorf("call log mismatch (-want +got):\n%s", diff)
 	}
 }
+
+func TestNakedReturn_AssignedToVar(t *testing.T) {
+	source := `
+package main
+
+// This function has a named return type but a naked return.
+// It should return the zero value for the type, which is nil for a pointer.
+func myFunc() *int {
+	return
+}
+
+func main() {
+	// The assignment to x is what might trigger the panic.
+	x := myFunc()
+	_ = x // use x to prevent compiler error
+}
+`
+	dir, cleanup := scantest.WriteFiles(t, map[string]string{
+		"go.mod":  "module mymodule",
+		"main.go": source,
+	})
+	defer cleanup()
+
+	s, err := goscan.New(goscan.WithWorkDir(dir), goscan.WithGoModuleResolver())
+	if err != nil {
+		t.Fatalf("goscan.New() failed: %+v", err)
+	}
+
+	pkgs, err := s.Scan(context.Background(), ".")
+	if err != nil {
+		t.Fatalf("s.Scan() failed: %+v", err)
+	}
+	pkg := pkgs[0]
+
+	interp, err := symgo.NewInterpreter(s)
+	if err != nil {
+		t.Fatalf("NewInterpreter() failed: %+v", err)
+	}
+
+	// We need a default intrinsic to prevent "not a function" errors
+	// for unresolved functions if any.
+	interp.RegisterDefaultIntrinsic(func(i *symgo.Interpreter, args []object.Object) object.Object {
+		return &object.SymbolicPlaceholder{Reason: "default intrinsic"}
+	})
+
+	// Evaluate the file to load symbols
+	_, err = interp.Eval(context.Background(), pkg.AstFiles[filepath.Join(dir, "main.go")], pkg)
+	if err != nil {
+		t.Fatalf("interp.Eval(file) failed: %+v", err)
+	}
+
+	// Find and apply the main function
+	mainFn, ok := interp.FindObject("main")
+	if !ok {
+		t.Fatal("could not find main function")
+	}
+
+	// This call should not panic.
+	_, err = interp.Apply(context.Background(), mainFn, nil, pkg)
+	if err != nil {
+		t.Errorf("Apply() failed: %+v", err)
+	}
+
+	// Optional: Check if the variable 'x' exists in the environment and its value is nil
+	// This part is more complex as we need to get the final environment.
+	// For now, just ensuring it doesn't panic is enough.
+}

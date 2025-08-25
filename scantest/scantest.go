@@ -147,14 +147,21 @@ func Run(t *testing.T, dir string, patterns []string, action ActionFunc, opts ..
 		}
 	}
 
-	// Distinguish between file paths (starting with ".") and import paths.
+	// Distinguish between file paths and import paths.
 	processedPatterns := make([]string, len(patterns))
 	for i, p := range patterns {
-		if strings.HasPrefix(p, ".") {
-			// It's a file path, make it absolute from the temp dir.
-			processedPatterns[i] = filepath.Join(dir, p)
+		// Check if the pattern corresponds to an existing file/dir in the test directory.
+		// This is more robust than just checking for a "." prefix.
+		candidatePath := p
+		if !filepath.IsAbs(p) {
+			candidatePath = filepath.Join(dir, p)
+		}
+
+		if _, err := os.Stat(candidatePath); err == nil {
+			// It's a file path, use the absolute path.
+			processedPatterns[i] = candidatePath
 		} else {
-			// It's an import path, pass it through as is.
+			// It's (presumably) an import path, pass it through as is.
 			processedPatterns[i] = p
 		}
 	}

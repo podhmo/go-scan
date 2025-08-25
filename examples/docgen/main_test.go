@@ -98,6 +98,56 @@ func TestDocgen(t *testing.T) {
 	}
 }
 
+func TestDocgen_withRelativePath(t *testing.T) {
+	// This test verifies that docgen can be run with a relative path argument.
+	const relativeSampleAPIPath = "./sampleapi"
+
+	logger := newTestLogger(os.Stderr)
+	s, err := goscan.New(
+		goscan.WithGoModuleResolver(),
+		goscan.WithLogger(logger),
+	)
+	if err != nil {
+		t.Fatalf("failed to create scanner: %v", err)
+	}
+
+	// Resolve the relative path to an import path for the analyzer.
+	// This mimics what the main function now does.
+	ctx := context.Background()
+	importPath, err := goscan.ResolvePath(ctx, relativeSampleAPIPath)
+	if err != nil {
+		t.Fatalf("failed to resolve relative path %q: %v", relativeSampleAPIPath, err)
+	}
+
+	analyzer, err := NewAnalyzer(s, logger, nil)
+	if err != nil {
+		t.Fatalf("failed to create analyzer: %v", err)
+	}
+
+	if err := analyzer.Analyze(ctx, importPath, "NewServeMux"); err != nil {
+		t.Fatalf("failed to analyze package: %+v", err)
+	}
+	apiSpec := analyzer.OpenAPI
+
+	// Marshal to JSON and compare with the golden file.
+	var got bytes.Buffer
+	enc := json.NewEncoder(&got)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(apiSpec); err != nil {
+		t.Fatalf("failed to marshal OpenAPI spec to json: %v", err)
+	}
+
+	goldenPath := filepath.Join("testdata", "golden.json")
+	want, err := os.ReadFile(goldenPath)
+	if err != nil {
+		t.Fatalf("failed to read golden file %s: %v", goldenPath, err)
+	}
+
+	if diff := cmp.Diff(string(want), got.String()); diff != "" {
+		t.Errorf("OpenAPI spec mismatch for relative path test (-want +got):\n%s", diff)
+	}
+}
+
 func TestDocgen_withCustomPatterns(t *testing.T) {
 	// Note: This test runs docgen on a package that is a separate Go module
 	// located in testdata/custom-patterns.

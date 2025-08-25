@@ -229,6 +229,51 @@ func TestRun_WithSpecificDirectoryPattern(t *testing.T) {
 	}
 }
 
+func TestRun_ResolvesRelativePathToImportPath(t *testing.T) {
+	// This test confirms that scantest.Run can take a relative file path,
+	// resolve it to a full Go import path, and scan the correct package.
+	// This is the core functionality requested in the TODO.md item.
+	dir, cleanup := WriteFiles(t, map[string]string{
+		"go.mod": "module example.com/project",
+		"api/api.go": `package api
+type Request struct {}
+`,
+		"main.go": `package main`,
+	})
+	defer cleanup()
+
+	var foundPkg *scan.Package
+	action := func(ctx context.Context, s *scan.Scanner, pkgs []*scan.Package) error {
+		if len(pkgs) != 1 {
+			return fmt.Errorf("expected 1 package, got %d", len(pkgs))
+		}
+		foundPkg = pkgs[0]
+		return nil
+	}
+
+	// Use a relative path to a specific package directory.
+	_, err := Run(t, dir, []string{"./api"}, action)
+	if err != nil {
+		t.Fatalf("scantest.Run() with relative path failed: %v", err)
+	}
+
+	if foundPkg == nil {
+		t.Fatal("action was not run or did not find a package")
+	}
+
+	// The key assertion: the relative path "./api" should be resolved
+	// to the full import path "example.com/project/api".
+	wantImportPath := "example.com/project/api"
+	if foundPkg.ImportPath != wantImportPath {
+		t.Errorf("expected import path %q, but got %q", wantImportPath, foundPkg.ImportPath)
+	}
+
+	// Also check that the correct type was scanned.
+	if typ := foundPkg.Lookup("Request"); typ == nil {
+		t.Error("did not find 'Request' type in scanned package")
+	}
+}
+
 func TestRun_WithReplaceDirective(t *testing.T) {
 	// Create a temporary directory structure that requires a `replace` directive.
 	// root/

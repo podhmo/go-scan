@@ -510,6 +510,14 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 			}
 			return &object.Intrinsic{Fn: fn}
 		}
+
+		// Fallback to searching for the method on the instance's type.
+		if typeInfo := val.TypeInfo(); typeInfo != nil {
+			if method, err := e.findMethodOnType(ctx, typeInfo, n.Sel.Name, env, val); err == nil && method != nil {
+				return method
+			}
+		}
+
 		return newError(n.Pos(), "undefined method: %s on symbolic type %s", n.Sel.Name, fullTypeName)
 
 	case *object.Package:

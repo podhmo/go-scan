@@ -1022,9 +1022,11 @@ func (s *Scanner) ScanPackageByImport(ctx context.Context, importPath string) (*
 	var currentCallPkgInfo *scanner.PackageInfo
 	if len(filesToParseThisCall) > 0 {
 		// Heuristic to check if it's a standard library package.
-		isStdLib := !strings.Contains(importPath, ".")
+		// Determine if the package is outside the main module (e.g., in GOROOT or GOMODCACHE).
+		// If so, we must use ScanFilesWithKnownImportPath to prevent incorrect import path derivation.
+		isExternalModule := !strings.HasPrefix(pkgDirAbs, s.RootDir())
 
-		if isStdLib {
+		if isExternalModule {
 			currentCallPkgInfo, err = s.scanner.ScanFilesWithKnownImportPath(ctx, filesToParseThisCall, pkgDirAbs, importPath)
 		} else {
 			currentCallPkgInfo, err = s.scanner.ScanFiles(ctx, filesToParseThisCall, pkgDirAbs)

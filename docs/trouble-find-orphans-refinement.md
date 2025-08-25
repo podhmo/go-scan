@@ -67,35 +67,18 @@ My immediate next steps are:
 
 ---
 
-## 6. Actionable Plan to Completion
+## 6. Remaining Challenges & High-Level Plan
 
-Based on the final refactoring strategy, here is a concrete, sequential task list to fix the issues and complete the task.
+Based on the analysis of the test failures, the path to completion requires solving three core challenges.
 
-1.  **Refactor `goscan.go`:**
-    *   Add a new `ScannerOption`: `WithWalkerExcludeDirs([]string)`.
-    *   Add a temporary field `walkerExcludeDirs []string` to the `Scanner` struct to hold the value from the option.
-    *   Add a new public method `PathToImport(filePath string) (string, error)` to the `Scanner` struct. This method must be workspace-aware, iterating through all configured modules (`s.locators`) to find the one that contains the `filePath`.
-    *   In the `New` function, update the initialization of `ModuleWalker` to pass a reference to the parent `Scanner` and the `walkerExcludeDirs`.
+1.  **Challenge: Inconsistent Directory Exclusion**
+    *   **Problem:** The logic for skipping directories like `testdata` is applied inconsistently. It's present in some directory walks (e.g., `discoverModules`) but absent in the main pattern resolver (`resolvePatternsToImportPaths`). This leads to unexpected behavior where `testdata` is sometimes included in the analysis.
+    *   **Goal:** Centralize and make the exclusion logic configurable and consistent across all directory-walking operations in the library. This will likely involve adding a configuration option to `ModuleWalker` that can be set by client code like `find-orphans`.
 
-2.  **Refactor `modulewalker.go`:**
-    *   Add an `ExcludeDirs []string` field to the `ModuleWalker` struct.
-    *   Add a `goscanner *Scanner` field to hold the reference to the parent scanner.
-    *   In all functions that walk directories (`FindImporters`, `BuildReverseDependencyMap`, `resolvePatternsToImportPaths`), use the `ExcludeDirs` slice to skip unwanted directories.
-    *   In `resolvePatternsToImportPaths`, replace all calls to `w.locator.PathToImport` with calls to the new workspace-aware `w.goscanner.PathToImport`.
-    *   Fix the logic in `resolvePatternsToImportPaths` to correctly handle non-wildcard file path patterns (like `.` or `..`) by walking them to discover packages, similar to how wildcard patterns are handled.
+2.  **Challenge: Non-Workspace-Aware Path Resolution**
+    *   **Problem:** The current mechanism for converting a file path to a Go import path (`locator.PathToImport`) only works for a single module. In a multi-module workspace, it fails to resolve paths for any module other than the "primary" one. This is the root cause of the multi-module test failures.
+    *   **Goal:** Implement a workspace-aware path resolution mechanism. This function should live at the `Scanner` level, which has access to all modules in the workspace, and it should iterate through them to find the correct module for any given file path.
 
-3.  **Update `examples/find-orphans/main.go`:**
-    *   Add a new command-line flag: `--exclude-dirs`, which defaults to `"vendor,testdata"`.
-    *   In the `run` function, parse this flag and pass the resulting slice to the `goscan.WithWalkerExcludeDirs` option when creating the new scanner.
-    *   Update the `discoverModules` helper function to also use this exclude list, ensuring module discovery and package walking have consistent exclusion rules.
-
-4.  **Update `examples/find-orphans/main_test.go`:**
-    *   Update all calls to the `run` function in the tests to pass the new `exclude` parameter. A default value of `[]string{"vendor", "testdata"}` should be used to match the command's new default behavior.
-
-5.  **Test and Verify:**
-    *   Run `make format` to ensure all code is correctly formatted.
-    *   Run `make test` and debug any remaining issues until all tests pass. This includes the `TestWalk_Wildcard` test from the core library and all tests for `find-orphans`.
-
-6.  **Finalize:**
-    *   Once all tests pass, update the main `TODO.md` to reflect the completion of the `find-orphans` refinement task.
-    *   Submit the final, working code with a comprehensive commit message detailing the refactoring.
+3.  **Challenge: Ambiguous File Path Pattern Handling**
+    *   **Problem:** The logic for handling file path patterns without a wildcard (e.g., `.` or `..`) is brittle. It incorrectly assumes such a path points to a single package and tries to convert it directly to an import path. This fails when the path points to a directory containing multiple packages or modules (like a workspace root).
+    *   **Goal:** Refactor the pattern resolver (`resolvePatternsToImportPaths`) to robustly handle all file path patterns. When a file path pattern is encountered, it should be walked to discover all constituent Go packages within that directory, similar to how wildcard patterns (`...`) are handled.

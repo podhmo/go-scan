@@ -890,3 +890,69 @@ func SomeFunc() {}
 		t.Errorf("expected error about no main entry point, but got: %v", err)
 	}
 }
+
+func TestFindOrphans_excludeMainAndInit(t *testing.T) {
+	files := map[string]string{
+		"go.mod": "module example.com/exclude-main-init\ngo 1.21\n",
+		"main.go": `
+package main
+func main() {
+    // This is the main entry point.
+}
+func init() {
+    // This is an init function.
+}
+func unused_in_main() {}
+`,
+	}
+	dir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	log.SetOutput(io.Discard)
+
+	startPatterns := []string{"./..."}
+	err := run(context.Background(), true, false, dir, false, false, "auto", startPatterns, []string{"testdata", "vendor"})
+	if err != nil {
+		t.Fatalf("run() failed: %v", err)
+	}
+
+	w.Close()
+	os.Stdout = oldStdout
+
+	var buf bytes.Buffer
+	io.Copy(&buf, r)
+	output := buf.String()
+
+	// "main" and "init" should be excluded from the orphans list.
+	if strings.Contains(output, " main") {
+		t.Errorf("found main function as an orphan, but it should be excluded")
+	}
+	if strings.Contains(output, " init") {
+		t.Errorf("found init function as an orphan, but it should be excluded")
+	}
+	if !strings.Contains(output, "unused_in_main") {
+		t.Errorf("did not find unused_in_main as an orphan")
+	}
+
+	// Verify the exact orphan list
+	expectedOrphans := []string{
+		"example.com/exclude-main-init.unused_in_main",
+	}
+	sort.Strings(expectedOrphans)
+
+	var foundOrphans []string
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	for _, line := range lines {
+		if strings.HasPrefix(line, "example.com") {
+			foundOrphans = append(foundOrphans, line)
+		}
+	}
+	sort.Strings(foundOrphans)
+
+	if diff := cmp.Diff(expectedOrphans, foundOrphans); diff != "" {
+		t.Errorf("find-orphans mismatch (-want +got):\n%s\nFull output:\n%s", diff, output)
+	}
+}

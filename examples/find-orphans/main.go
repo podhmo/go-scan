@@ -575,6 +575,17 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool) error {
 					}
 				}
 
+				// Always exclude init functions and main.main from the orphan list.
+				// These are entry points by definition.
+				if decl.Receiver == nil {
+					if decl.Name == "init" {
+						continue
+					}
+					if pkg.Name == "main" && decl.Name == "main" {
+						continue
+					}
+				}
+
 				if decl.AstDecl.Doc != nil {
 					for _, comment := range decl.AstDecl.Doc.List {
 						if strings.Contains(comment.Text, "//go:scan:ignore") {

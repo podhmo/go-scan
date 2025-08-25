@@ -77,6 +77,20 @@ A key challenge in symbolic execution is managing variable state across differen
     ```
 This model allows `symgo` to correctly aggregate type information across branches for tools like `find-orphans` without needing complex environment-merging logic and without breaking the standard Go semantics for variable assignment in other contexts.
 
+### 3.6. Method Resolution for Embedded Structs
+
+To accurately model Go's behavior and support common design patterns, the engine must correctly handle method calls on embedded structs (method promotion).
+
+-   **The Challenge**: Given a call `myVar.DoSomething()`, where the type of `myVar` is a struct that embeds another type, the `DoSomething` method might be defined on the embedded type, not directly on `myVar`'s type.
+
+-   **The Solution: Recursive Method Search**: When resolving a method call on a struct type, the `symgo` evaluator performs a depth-first search:
+    1.  It first checks for methods defined directly on the struct's type.
+    2.  If no direct method is found, it iterates through the struct's fields in the order they are defined.
+    3.  For any field that is an **embedded type**, it recursively invokes the method search on that embedded type.
+    4.  The search terminates as soon as the first matching method is found, mimicking Go's method promotion rules. A cycle detection mechanism is included to prevent infinite loops with recursive embedding patterns.
+
+This ensures that tools like `find-orphans` can correctly trace call graphs even when they involve methods promoted from embedded types.
+
 ## 4. Detailed Design and Code-to-Spec Mapping
 
 This section provides concrete examples of the end-to-end analysis process.

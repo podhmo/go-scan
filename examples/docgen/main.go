@@ -56,7 +56,11 @@ func run(logger *slog.Logger, format string, patternsFile string, entrypoint str
 	if flag.NArg() == 0 {
 		return fmt.Errorf("required argument: <package-path>")
 	}
-	sampleAPIPath := flag.Arg(0)
+	ctx := context.Background()
+	sampleAPIPath, err := goscan.ResolvePath(ctx, flag.Arg(0))
+	if err != nil {
+		return fmt.Errorf("failed to resolve package path: %w", err)
+	}
 
 	s, err := goscan.New(
 		goscan.WithGoModuleResolver(),
@@ -80,7 +84,6 @@ func run(logger *slog.Logger, format string, patternsFile string, entrypoint str
 		return err
 	}
 
-	ctx := context.Background()
 	if err := analyzer.Analyze(ctx, sampleAPIPath, entrypoint); err != nil {
 		return err
 	}

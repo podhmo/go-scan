@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"go/printer"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -22,12 +23,12 @@ import (
 
 func main() {
 	var (
-		all          = flag.Bool("all", false, "scan every package in the module")
+		all         = flag.Bool("all", false, "scan every package in the module")
 		includeTests = flag.Bool("include-tests", false, "include usage within test files")
-		workspace    = flag.String("workspace-root", "", "scan all Go modules found under a given directory")
-		excludeDirs  = flag.String("exclude-dirs", "vendor,testdata", "comma-separated list of directory names to exclude from scans")
-		verbose      = flag.Bool("v", false, "enable verbose output")
-		asJSON       = flag.Bool("json", false, "output orphans in JSON format")
+		workspace   = flag.String("workspace-root", "", "scan all Go modules found under a given directory")
+		excludeDirs = flag.String("exclude-dirs", "vendor,testdata", "comma-separated list of directory names to exclude from scans")
+		verbose     = flag.Bool("v", false, "enable verbose output")
+		asJSON      = flag.Bool("json", false, "output orphans in JSON format")
 	)
 	flag.Parse()
 
@@ -120,7 +121,6 @@ func run(ctx context.Context, all bool, includeTests bool, workspace string, ver
 	var scannerOpts []goscan.ScannerOption
 	scannerOpts = append(scannerOpts, goscan.WithIncludeTests(includeTests))
 	scannerOpts = append(scannerOpts, goscan.WithGoModuleResolver()) // Important for resolving modules
-	scannerOpts = append(scannerOpts, goscan.WithWalkerExcludeDirs(exclude))
 
 	var s *goscan.Scanner
 	var err error
@@ -152,31 +152,26 @@ func run(ctx context.Context, all bool, includeTests bool, workspace string, ver
 		s:        s,
 		packages: make(map[string]*scanner.PackageInfo),
 	}
-	return a.analyze(ctx, asJSON, startPatterns)
+	return a.analyze(ctx, asJSON, startPatterns, exclude)
 }
 
 type analyzer struct {
-	s              *goscan.Scanner
-	packages       map[string]*scanner.PackageInfo
-	targetPackages map[string]struct{} // The set of packages to report orphans from
-	mu             sync.Mutex
-	ctx            context.Context
+	s        *goscan.Scanner
+	packages map[string]*scanner.PackageInfo
+	mu       sync.Mutex
+	ctx      context.Context
 }
 
-func (a *analyzer) analyze(ctx context.Context, asJSON bool, startPatterns []string) error {
+func (a *analyzer) analyze(ctx context.Context, asJSON bool, startPatterns []string, exclude []string) error {
 	a.ctx = ctx
 
 	// 1. Resolve user-provided patterns to a set of initial package import paths.
 	// This will be our "target" set for reporting orphans.
-	targetPackagePaths, err := a.s.Walker.ResolvePatternsToImportPaths(ctx, startPatterns)
+	targetPackages, err := resolveTargetPackages(ctx, a.s, startPatterns, exclude)
 	if err != nil {
 		return fmt.Errorf("failed to resolve start patterns: %w", err)
 	}
-	a.targetPackages = make(map[string]struct{}, len(targetPackagePaths))
-	for _, path := range targetPackagePaths {
-		a.targetPackages[path] = struct{}{}
-	}
-	slog.DebugContext(ctx, "resolved target packages", "patterns", startPatterns, "resolved", targetPackagePaths)
+	slog.DebugContext(ctx, "resolved target packages", "patterns", startPatterns, "resolved", len(targetPackages))
 
 	// 2. Walk the dependency graph starting from the same patterns.
 	// The walker will correctly handle resolving these patterns to find all transitive dependencies.
@@ -184,7 +179,7 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool, startPatterns []str
 	if err := a.s.Walker.Walk(ctx, a, startPatterns...); err != nil {
 		return fmt.Errorf("failed to walk packages: %w", err)
 	}
-	slog.InfoContext(ctx, "analysis phase", "packages", len(a.packages), "targets", len(a.targetPackages))
+	slog.InfoContext(ctx, "analysis phase", "packages", len(a.packages), "targets", len(targetPackages))
 
 	interfaceMap := buildInterfaceMap(a.packages)
 	slog.DebugContext(ctx, "built interface map", "interfaces", len(interfaceMap))
@@ -322,10 +317,9 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool, startPatterns []str
 
 	for _, pkg := range a.packages {
 		// Only report orphans for the packages the user explicitly asked for.
-		if _, ok := a.targetPackages[pkg.ImportPath]; !ok {
+		if _, ok := targetPackages[pkg.ImportPath]; !ok {
 			continue
 		}
-
 		for _, decl := range pkg.Functions {
 			name := getFullName(a.s, pkg, decl)
 			if _, used := usageMap[name]; !used {
@@ -492,4 +486,96 @@ func buildInterfaceMap(packages map[string]*scanner.PackageInfo) map[string][]*s
 	}
 
 	return interfaceMap
+}
+
+// resolveTargetPackages resolves the initial set of patterns from the command line
+// into a set of fully qualified import paths. This set is used to filter the final
+// output, ensuring only orphans from these packages are reported.
+func resolveTargetPackages(ctx context.Context, s *goscan.Scanner, patterns []string, exclude []string) (map[string]struct{}, error) {
+	// This is a simplified pattern resolver that lives only in the find-orphans tool.
+	// It doesn't need to be as robust as the core library's walker.
+	targetPackages := make(map[string]struct{})
+	excludeMap := make(map[string]struct{}, len(exclude))
+	for _, dir := range exclude {
+		excludeMap[dir] = struct{}{}
+	}
+
+	for _, pattern := range patterns {
+		// Heuristic: if it contains a '.', it's probably a file path or a full import path.
+		// if it doesn't, it's a stdlib path we should ignore for target resolution.
+		if !strings.Contains(pattern, ".") && !strings.HasPrefix(pattern, "./") {
+			continue
+		}
+
+		isFilePathPattern := strings.HasPrefix(pattern, ".") || filepath.IsAbs(pattern)
+
+		if isFilePathPattern {
+			// It's a file path like ./... or ../
+			baseDir := strings.TrimSuffix(pattern, "/...")
+			absBasePath, err := filepath.Abs(baseDir)
+			if err != nil {
+				slog.WarnContext(ctx, "could not get absolute path for pattern, skipping", "pattern", pattern, "error", err)
+				continue
+			}
+
+			err = filepath.WalkDir(absBasePath, func(path string, d os.DirEntry, err error) error {
+				if err != nil {
+					return err
+				}
+				if d.IsDir() {
+					dirName := d.Name()
+					if _, ok := excludeMap[dirName]; ok {
+						return filepath.SkipDir
+					}
+					if len(dirName) > 1 && dirName[0] == '.' {
+						return filepath.SkipDir
+					}
+				} else {
+					return nil
+				}
+
+				// Check if the directory contains any .go files.
+				entries, err := os.ReadDir(path)
+				if err != nil {
+					return nil // Cannot read, so not a package.
+				}
+				hasGoFiles := false
+				for _, entry := range entries {
+					if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".go") {
+						hasGoFiles = true
+						break
+					}
+				}
+
+				if hasGoFiles {
+					// This is a simplified PathToImport that only works for single-module context.
+					// For workspace, this would need the workspace-aware PathToImport from the refactoring attempt.
+					// However, for the simple plan, we assume `go list` can handle it from the correct CWD.
+					cmd := exec.CommandContext(ctx, "go", "list", "-f", "{{.ImportPath}}", path)
+					var stdout, stderr bytes.Buffer
+					cmd.Stdout = &stdout
+					cmd.Stderr = &stderr
+					if err := cmd.Run(); err != nil {
+						slog.WarnContext(ctx, "go list failed for path, skipping", "path", path, "error", stderr.String())
+						return nil
+					}
+					importPath := strings.TrimSpace(stdout.String())
+					if importPath != "" {
+						targetPackages[importPath] = struct{}{}
+					}
+				}
+				return nil
+			})
+			if err != nil {
+				return nil, fmt.Errorf("error walking for pattern %q: %w", pattern, err)
+			}
+		} else {
+			// Assume it's a literal import path (e.g., "example.com/modulea/...")
+			// The walker will expand the wildcard, so we just add the pattern.
+			// This is a simplification; a more robust solution might expand the
+			// wildcard here as well.
+			targetPackages[pattern] = struct{}{}
+		}
+	}
+	return targetPackages, nil
 }

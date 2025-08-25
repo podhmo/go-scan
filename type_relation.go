@@ -75,7 +75,7 @@ func Implements(structCandidate *scanner.TypeInfo, interfaceDef *scanner.TypeInf
 // compareSignatures compares the parameters and results of two methods.
 // This is a simplified comparison focusing on type names and counts.
 // It does not handle complex type equivalences (e.g., type aliases across packages without full resolution).
-func compareSignatures(interfaceMethod *scanner.MethodInfo, structMethod *scanner.FunctionInfo) bool {
+func compareSignatures(interfaceMethod *scanner.FunctionInfo, structMethod *scanner.FunctionInfo) bool {
 	// Compare parameters
 	if len(interfaceMethod.Parameters) != len(structMethod.Parameters) {
 		return false

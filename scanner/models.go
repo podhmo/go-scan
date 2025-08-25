@@ -195,20 +195,13 @@ func (ti *TypeInfo) searchAnnotation(name string) (value string, ok bool) {
 
 // InterfaceInfo represents an interface type.
 type InterfaceInfo struct {
-	Methods []*MethodInfo
-}
-
-// MethodInfo represents a single method in an interface.
-type MethodInfo struct {
-	Name       string
-	Parameters []*FieldInfo
-	Results    []*FieldInfo
-	// We might need position or AST node info later if generating code that needs to refer back to the source.
+	Methods []*FunctionInfo
 }
 
 // StructInfo represents a struct type.
 type StructInfo struct {
-	Fields []*FieldInfo
+	Fields          []*FieldInfo
+	PromotedMethods map[string]*FunctionInfo `json:"-"` // Methods promoted from embedded fields.
 }
 
 // FieldInfo represents a single field in a struct or a parameter/result in a function.
@@ -500,6 +493,7 @@ type FunctionInfo struct {
 	Results    []*FieldInfo     `json:"results,omitempty"`
 	IsVariadic bool             `json:"isVariadic,omitempty"`
 	AstDecl    *ast.FuncDecl    `json:"-"` // Avoid cyclic JSON.
+	Package    *PackageInfo     `json:"-"`
 }
 
 // SetResolver is a test helper to overwrite the internal resolver.

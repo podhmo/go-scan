@@ -1561,7 +1561,7 @@ func findField(sinfo *scanner.StructInfo, name string) *scanner.FieldInfo {
 }
 
 // Helper to find a method in an interface.
-func findMethod(iinfo *scanner.InterfaceInfo, name string) *scanner.MethodInfo {
+func findMethod(iinfo *scanner.InterfaceInfo, name string) *scanner.FunctionInfo {
 	if iinfo == nil {
 		return nil
 	}

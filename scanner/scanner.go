@@ -350,6 +350,8 @@ func (s *Scanner) scanGoFiles(ctx context.Context, filePaths []string, pkgDirPat
 	s.evaluateAllConstants(ctx, info)
 
 	s.resolveEnums(info)
+	s.resolvePromotedMethods(ctx, info)
+
 	return info, nil
 }
 
@@ -377,6 +379,84 @@ func (s *Scanner) resolveEnums(pkgInfo *PackageInfo) {
 		typeInfo.EnumMembers = append(typeInfo.EnumMembers, c)
 		typeInfo.IsEnum = true
 	}
+}
+
+func (s *Scanner) resolvePromotedMethods(ctx context.Context, pkg *PackageInfo) {
+	for _, typeInfo := range pkg.Types {
+		if typeInfo.Kind == StructKind && typeInfo.Struct != nil {
+			allMethods := s.getAllMethods(ctx, typeInfo, make(map[string]bool))
+
+			// Subtract direct methods to get only promoted methods
+			directMethods := s.getDirectMethods(typeInfo)
+			for name := range directMethods {
+				delete(allMethods, name)
+			}
+			typeInfo.Struct.PromotedMethods = allMethods
+		}
+	}
+}
+
+// getAllMethods recursively collects all methods for a type, including from embedded structs.
+func (s *Scanner) getAllMethods(ctx context.Context, typeInfo *TypeInfo, visited map[string]bool) map[string]*FunctionInfo {
+	if typeInfo == nil {
+		return nil
+	}
+	typeIdentifier := typeInfo.PkgPath + "." + typeInfo.Name
+	if visited[typeIdentifier] {
+		return nil // Cycle detected
+	}
+	visited[typeIdentifier] = true
+	defer func() { delete(visited, typeIdentifier) }()
+
+	methods := s.getDirectMethods(typeInfo)
+
+	if typeInfo.Struct != nil {
+		for _, field := range typeInfo.Struct.Fields {
+			if !field.Embedded {
+				continue
+			}
+			embeddedType, err := field.Type.Resolve(ctx)
+			if err != nil || embeddedType == nil {
+				continue
+			}
+			promoted := s.getAllMethods(ctx, embeddedType, visited)
+			for name, method := range promoted {
+				if _, exists := methods[name]; !exists {
+					methods[name] = method
+				}
+			}
+		}
+	}
+
+	return methods
+}
+
+// getDirectMethods returns a map of methods defined directly on a type.
+func (s *Scanner) getDirectMethods(typeInfo *TypeInfo) map[string]*FunctionInfo {
+	methods := make(map[string]*FunctionInfo)
+	if typeInfo == nil {
+		return methods
+	}
+
+	// The resolver is the key to finding the package info for the type.
+	pkg, err := s.resolver.ScanPackageByImport(context.Background(), typeInfo.PkgPath)
+	if err != nil {
+		// Cannot resolve the package, so cannot find methods.
+		return methods
+	}
+
+	for _, f := range pkg.Functions {
+		if f.Receiver != nil {
+			recvTypeName := f.Receiver.Type.TypeName
+			if recvTypeName == "" {
+				recvTypeName = strings.TrimPrefix(f.Receiver.Type.Name, "*")
+			}
+			if recvTypeName == typeInfo.Name {
+				methods[f.Name] = f
+			}
+		}
+	}
+	return methods
 }
 
 // BuildImportLookup creates a map of local import names to their full package paths.
@@ -695,10 +775,10 @@ func (s *Scanner) parseTypeParamList(ctx context.Context, typeParamFields []*ast
 
 func (s *Scanner) parseInterfaceType(ctx context.Context, it *ast.InterfaceType, currentTypeParams []*TypeParamInfo, info *PackageInfo, importLookup map[string]string) *InterfaceInfo {
 	if it.Methods == nil || len(it.Methods.List) == 0 {
-		return &InterfaceInfo{Methods: []*MethodInfo{}}
+		return &InterfaceInfo{Methods: []*FunctionInfo{}}
 	}
 	interfaceInfo := &InterfaceInfo{
-		Methods: make([]*MethodInfo, 0, len(it.Methods.List)),
+		Methods: make([]*FunctionInfo, 0, len(it.Methods.List)),
 	}
 	for _, field := range it.Methods.List {
 		if len(field.Names) > 0 {
@@ -707,17 +787,12 @@ func (s *Scanner) parseInterfaceType(ctx context.Context, it *ast.InterfaceType,
 			if !ok {
 				continue
 			}
-			methodInfo := &MethodInfo{Name: methodName}
-			parsedFuncDetails := s.parseFuncType(ctx, funcType, currentTypeParams, info, importLookup)
-			methodInfo.Parameters = parsedFuncDetails.Parameters
-			methodInfo.Results = parsedFuncDetails.Results
+			methodInfo := s.parseFuncType(ctx, funcType, currentTypeParams, info, importLookup)
+			methodInfo.Name = methodName
 			interfaceInfo.Methods = append(interfaceInfo.Methods, methodInfo)
 		} else {
-			embeddedType := s.TypeInfoFromExpr(ctx, field.Type, currentTypeParams, info, importLookup)
-			interfaceInfo.Methods = append(interfaceInfo.Methods, &MethodInfo{
-				Name:    fmt.Sprintf("embedded_%s", embeddedType.String()),
-				Results: []*FieldInfo{{Type: embeddedType}},
-			})
+			// embedded interface
+			// TODO: handle this properly by resolving the embedded type and copying its methods.
 		}
 	}
 	return interfaceInfo
@@ -770,6 +845,7 @@ func (s *Scanner) parseFuncDecl(ctx context.Context, f *ast.FuncDecl, absFilePat
 	funcInfo.Doc = commentText(f.Doc)
 	funcInfo.AstDecl = f
 	funcInfo.TypeParams = funcOwnTypeParams
+	funcInfo.Package = pkgInfo
 
 	if f.Recv != nil && len(f.Recv.List) > 0 {
 		recvField := f.Recv.List[0]

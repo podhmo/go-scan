@@ -77,7 +77,7 @@ type Group struct { // No annotation
 	patterns := []string{"models"}
 
 	// 5. Run the test using the pre-configured scanner
-	result, err := scantest.Run(t, nil, dir, patterns, action, scantest.WithScanner(s))
+	result, err := scantest.Run(t, context.Background(), dir, patterns, action, scantest.WithScanner(s))
 	if err != nil {
 		t.Fatalf("scantest.Run() failed: %v", err)
 	}

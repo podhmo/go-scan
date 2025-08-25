@@ -41,7 +41,7 @@ func TargetFunc(writer io.Writer) {
 	}
 
 	// Run the test using the scantest harness.
-	_, err = scantest.Run(t, nil, dir, []string{"."}, func(ctx context.Context, scanner *goscan.Scanner, pkgs []*goscan.Package) error {
+	_, err = scantest.Run(t, context.Background(), dir, []string{"."}, func(ctx context.Context, scanner *goscan.Scanner, pkgs []*goscan.Package) error {
 		// Setup: Create a symgo interpreter using the scanner from the outer scope.
 		interp, err := symgo.NewInterpreter(s)
 		if err != nil {

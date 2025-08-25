@@ -72,7 +72,7 @@ var result = helper.Greet()
 	// We use scantest.Run to get the properly configured scanner.
 	// We don't need to specify patterns for scantest itself, as minigo will trigger the scanning.
 	// The module root will be correctly identified as `dir`.
-	if _, err := scantest.Run(t, nil, dir, nil, action); err != nil {
+	if _, err := scantest.Run(t, context.Background(), dir, nil, action); err != nil {
 		t.Fatalf("scantest.Run() failed: %+v", err)
 	}
 }
@@ -136,7 +136,7 @@ var result = rootpkg.GetVersion()
 	// Here, we explicitly tell scantest.Run to use the `nestedDir` as the module root
 	// for the scanner it creates. This ensures the scanner finds `nested/go.mod`
 	// and correctly interprets the relative `replace` directive.
-	if _, err := scantest.Run(t, nil, nestedDir, nil, action, scantest.WithModuleRoot(nestedDir)); err != nil {
+	if _, err := scantest.Run(t, context.Background(), nestedDir, nil, action, scantest.WithModuleRoot(nestedDir)); err != nil {
 		t.Fatalf("scantest.Run() failed: %+v", err)
 	}
 }

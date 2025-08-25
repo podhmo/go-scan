@@ -160,7 +160,7 @@ func (s *Event) UnmarshalJSON(data []byte) error {
 				return outputDir.SaveGoFile(ctx, goFile, "models_deriving.go")
 			}
 
-			result, err := scantest.Run(t, nil, tmpdir, []string{"."}, action)
+			result, err := scantest.Run(t, context.Background(), tmpdir, []string{"."}, action)
 			if err != nil {
 				t.Fatalf("scantest.Run failed: %+v", err)
 			}

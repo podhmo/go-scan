@@ -81,7 +81,7 @@ type Task struct {
 
 	// We scan the 'main' package. The resolver inside the scanner (configured by scantest)
 	// will handle finding and scanning the 'models' package on-demand.
-	if _, err := scantest.Run(t, nil, dir, []string{"./main"}, action); err != nil {
+	if _, err := scantest.Run(t, context.Background(), dir, []string{"./main"}, action); err != nil {
 		t.Fatalf("scantest.Run() failed: %v", err)
 	}
 }

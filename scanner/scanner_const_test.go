@@ -229,7 +229,7 @@ const SpecialChars = "hello\x00world\n\t\""
 			}
 
 			// 4. Run the scan and action
-			_, err := scantest.Run(t, nil, dir, []string{"./" + pkgName}, action)
+			_, err := scantest.Run(t, context.Background(), dir, []string{"./" + pkgName}, action)
 			if err != nil {
 				if !tt.wantErr {
 					t.Fatalf("scantest.Run() failed: %v", err)

@@ -88,6 +88,126 @@ func IgnoredFunc() {}
 	}
 }
 
+func TestFindOrphans_Comprehensive(t *testing.T) {
+	// This is a comprehensive test that covers several tricky cases identified
+	// during debugging, ensuring they are all handled correctly.
+	files := map[string]string{
+		"go.mod": "module example.com/comprehensive-test\ngo 1.21\n",
+		"main.go": `
+package main
+
+import (
+	"example.com/comprehensive-test/internal"
+	"strings"
+)
+
+// A function that takes another function as an argument.
+func wrapper(f func(string) string) {
+	f("hello")
+}
+
+func main() {
+	// 1. Nested call: internal.CalledInArg() is called inside another call.
+	// It should be marked as used.
+	wrapper(internal.CalledInArg())
+
+	// 2. Method value: internal.UsedAsValue is passed as an argument.
+	// It should be marked as used.
+	u := &internal.User{}
+	wrapper(u.UsedAsValue)
+
+	// 3. Method chain (internal): InternalChain -> UsedInChain.
+	// All parts of the chain should be marked as used.
+	b := internal.NewBuilder()
+	b.InternalChain().UsedInChain()
+
+	// 4. Method chain (external): GetExternal returns a strings.Builder.
+	// GetExternal should be marked as used, but WriteString should be ignored.
+	b.GetExternal().WriteString("foo")
+
+	// 5. External function as value: strings.ToUpper is passed as an argument.
+	// It should be ignored and not affect the analysis.
+	wrapper(strings.ToUpper)
+}
+`,
+		"internal/internal.go": `
+package internal
+
+import "strings"
+
+func CalledInArg() func(string) string {
+	return func(s string) string { return s }
+}
+
+type User struct{}
+
+func (u *User) UsedAsValue(s string) string { return s }
+func (u *User) OrphanMethod(s string) string { return s }
+
+type Builder struct{}
+
+func NewBuilder() *Builder { return &Builder{} }
+func (b *Builder) InternalChain() *ChainLink { return &ChainLink{} }
+func (b *Builder) GetExternal() *strings.Builder { return &strings.Builder{} }
+
+type ChainLink struct{}
+
+func (c *ChainLink) UsedInChain() {}
+func (c *ChainLink) OrphanInChain() {}
+
+func OrphanFunc() {}
+`,
+	}
+	dir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	log.SetOutput(io.Discard)
+
+	startPatterns := []string{"./..."}
+	err := run(context.Background(), true, false, dir, false, false, "auto", startPatterns, []string{"testdata", "vendor"})
+	if err != nil {
+		t.Fatalf("run() failed: %v", err)
+	}
+
+	w.Close()
+	os.Stdout = oldStdout
+
+	var buf bytes.Buffer
+	io.Copy(&buf, r)
+	output := buf.String()
+
+	t.Logf("Full output:\n%s", output)
+
+	// Check for things that should NOT be orphans
+	notOrphans := []string{
+		"CalledInArg",
+		"UsedAsValue",
+		"InternalChain",
+		"UsedInChain",
+		"GetExternal",
+	}
+	for _, s := range notOrphans {
+		if strings.Contains(output, s) {
+			t.Errorf("%s was incorrectly reported as an orphan", s)
+		}
+	}
+
+	// Check for things that SHOULD be orphans
+	orphans := []string{
+		"OrphanMethod",
+		"OrphanInChain",
+		"OrphanFunc",
+	}
+	for _, s := range orphans {
+		if !strings.Contains(output, s) {
+			t.Errorf("expected orphan %s was not found in the output", s)
+		}
+	}
+}
+
 func TestFindOrphans_multiModuleWorkspace_withExcludes(t *testing.T) {
 	files := map[string]string{
 		"workspace/modulea/go.mod": "module example.com/modulea\ngo 1.21\n",

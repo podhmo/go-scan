@@ -477,6 +477,11 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 		left = e.Eval(ctx, n.X, env, pkg)
 	}
 
+	// Unwrap the result if it's a return value from a previous call in a chain.
+	if ret, ok := left.(*object.ReturnValue); ok {
+		left = ret.Value
+	}
+
 	if isError(left) {
 		return left
 	}
@@ -634,6 +639,14 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 			}
 			return &object.Intrinsic{Fn: fn}
 		}
+
+		// Fallback to searching for the method on the instance's type.
+		if typeInfo := val.TypeInfo(); typeInfo != nil {
+			if method, err := e.findMethodOnType(ctx, typeInfo, n.Sel.Name, env, val); err == nil && method != nil {
+				return method
+			}
+		}
+
 		return newError(n.Pos(), "undefined method: %s on %s", n.Sel.Name, val.TypeName)
 
 	case *object.Variable:
@@ -843,9 +856,14 @@ func (e *Evaluator) evalBlockStatement(ctx context.Context, block *ast.BlockStmt
 		result = e.Eval(ctx, stmt, env, pkg)
 
 		if result != nil {
-			rt := result.Type()
-			if rt == object.RETURN_VALUE_OBJ || rt == object.ERROR_OBJ {
-				return result
+			// Only terminate the block if we hit an actual return statement.
+			// A ReturnValue from a regular function call used as a statement (in an ExprStmt)
+			// should not stop the evaluation of the rest of the block.
+			if _, isReturnStmt := stmt.(*ast.ReturnStmt); isReturnStmt {
+				rt := result.Type()
+				if rt == object.RETURN_VALUE_OBJ || rt == object.ERROR_OBJ {
+					return result
+				}
 			}
 		}
 	}

@@ -512,7 +512,8 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool) error {
 
 			if pkg.Name == "main" && fnInfo.Name == "main" && fnInfo.Receiver == nil {
 				mainEntryPoint = fn
-			} else if fnInfo.AstDecl.Name.IsExported() && fnInfo.Receiver == nil {
+			} else if fnInfo.AstDecl.Name.IsExported() {
+				// Any exported function or method is a potential entry point for a library.
 				libraryEntryPoints = append(libraryEntryPoints, fn)
 			}
 		}

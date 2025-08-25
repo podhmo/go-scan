@@ -85,19 +85,19 @@ This new plan is simpler, more direct, and avoids the risks of a large-scale ref
 
 This plan translates into the following, more manageable tasks:
 
-1.  **Revert Core Library Changes:** Use `git restore` to undo all changes to `goscan.go` and `modulewalker.go`.
-2.  **Update `find-orphans/main.go`:**
-    *   Add a new `--exclude-dirs` command-line flag.
-    *   At the beginning of the `run` function, create a helper function to resolve the initial command-line patterns into a set of target package import paths. This helper will:
-        *   Handle file path patterns (`.`, `..`, `./...`).
-        *   Walk directories for wildcard patterns.
-        *   Use the `--exclude-dirs` flag to skip specified directories during the walk.
-        *   Store the resulting set of import paths.
-    *   Perform the dependency walk and symbolic execution as before, analyzing all transitive dependencies.
-    *   In the final reporting loop, add a condition to check if an orphan's package is in the set of target packages before printing it.
-3.  **Update Tests:**
-    *   Modify `examples/find-orphans/main_test.go` to align with this new, simpler logic. The tests will need to check that the final output is correctly filtered.
-4.  **Verify and Submit:**
-    *   Run `make format` and `make test` until all tests pass.
-    *   Update `TODO.md` to reflect the work done.
-    *   Submit the final changes.
+- [x] **Revert Core Library Changes:** Use `git restore` to undo all changes to `goscan.go` and `modulewalker.go`. (Note: This was skipped as per user instruction, but the goal of not changing the core library was achieved).
+- [x] **Update `find-orphans/main.go`:**
+    - [x] Add a new `--exclude-dirs` command-line flag.
+    - [x] At the beginning of the `run` function, create a helper function to resolve the initial command-line patterns into a set of target package import paths. This helper will:
+        - [x] Handle file path patterns (`.`, `..`, `./...`).
+        - [x] Walk directories for wildcard patterns.
+        - [x] Use the `--exclude-dirs` flag to skip specified directories during the walk.
+        - [x] Store the resulting set of import paths.
+    - [x] Perform the dependency walk and symbolic execution as before, analyzing all transitive dependencies.
+    - [x] In the final reporting loop, add a condition to check if an orphan's package is in the set of target packages before printing it.
+- [x] **Update Tests:**
+    - [x] Modify `examples/find-orphans/main_test.go` to align with this new, simpler logic. The tests will need to check that the final output is correctly filtered.
+- [x] **Verify and Submit:**
+    - [x] Run `make format` and `make test` until all tests pass.
+    - [x] Update `TODO.md` to reflect the work done.
+    - [x] Submit the final changes.

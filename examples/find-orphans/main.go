@@ -28,10 +28,20 @@ func main() {
 		workspace    = flag.String("workspace-root", "", "scan all Go modules found under a given directory")
 		verbose      = flag.Bool("v", false, "enable verbose output")
 		asJSON       = flag.Bool("json", false, "output orphans in JSON format")
+		mode         = flag.String("mode", "auto", "analysis mode: auto, app, or lib")
 		excludeDirs  stringSliceFlag
 	)
 	flag.Var(&excludeDirs, "exclude-dirs", "comma-separated list of directories to exclude (e.g. testdata,vendor)")
 	flag.Parse()
+
+	// Validate mode
+	switch *mode {
+	case "auto", "app", "lib":
+		// valid
+	default:
+		slog.Error("invalid mode specified", "mode", *mode)
+		os.Exit(1)
+	}
 
 	// Set default exclude directories
 	if len(excludeDirs) == 0 {
@@ -44,7 +54,7 @@ func main() {
 	}
 
 	ctx := context.Background()
-	if err := run(ctx, *all, *includeTests, *workspace, *verbose, *asJSON, startPatterns, excludeDirs); err != nil {
+	if err := run(ctx, *all, *includeTests, *workspace, *verbose, *asJSON, *mode, startPatterns, excludeDirs); err != nil {
 		slog.ErrorContext(ctx, "toplevel", "error", err)
 		os.Exit(1)
 	}
@@ -113,7 +123,7 @@ func discoverModules(ctx context.Context, root string) ([]string, error) {
 	return modules, nil
 }
 
-func run(ctx context.Context, all bool, includeTests bool, workspace string, verbose bool, asJSON bool, startPatterns []string, excludeDirs []string) error {
+func run(ctx context.Context, all bool, includeTests bool, workspace string, verbose bool, asJSON bool, mode string, startPatterns []string, excludeDirs []string) error {
 	logLevel := new(slog.LevelVar)
 	if !verbose {
 		logLevel.Set(slog.LevelInfo)
@@ -188,6 +198,7 @@ func run(ctx context.Context, all bool, includeTests bool, workspace string, ver
 		s:              s,
 		packages:       make(map[string]*scanner.PackageInfo),
 		targetPackages: targetPackages,
+		mode:           mode,
 	}
 	return a.analyze(ctx, asJSON)
 }
@@ -347,6 +358,7 @@ type analyzer struct {
 	s              *goscan.Scanner
 	packages       map[string]*scanner.PackageInfo
 	targetPackages map[string]bool
+	mode           string
 	mu             sync.Mutex
 	ctx            context.Context
 }
@@ -468,24 +480,39 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool) error {
 		}
 	}
 
-	// Decide which entry points to use.
+	// Decide which entry points to use based on the selected mode.
 	var entryPoints []*object.Function
-	if mainEntryPoint != nil {
+	switch a.mode {
+	case "app":
+		if mainEntryPoint == nil {
+			return fmt.Errorf("application mode specified, but no main entry point was found")
+		}
 		entryPoints = []*object.Function{mainEntryPoint}
-		slog.InfoContext(ctx, "found main entry point, running in application mode")
-	} else {
+		slog.InfoContext(ctx, "running in forced application mode")
+	case "lib":
 		entryPoints = libraryEntryPoints
-		slog.InfoContext(ctx, "no main entry point found, running in library mode", "entrypoints", len(entryPoints))
+		slog.InfoContext(ctx, "running in forced library mode", "entrypoints", len(entryPoints))
+	case "auto":
+		fallthrough
+	default: // auto
+		if mainEntryPoint != nil {
+			entryPoints = []*object.Function{mainEntryPoint}
+			slog.InfoContext(ctx, "found main entry point, running in application mode")
+		} else {
+			entryPoints = libraryEntryPoints
+			slog.InfoContext(ctx, "no main entry point found, running in library mode", "entrypoints", len(entryPoints))
+		}
 	}
 
+	// Mark all entry points as "used" to begin with.
 	for _, ep := range entryPoints {
 		epName := getFullName(a.s, ep.Package, &scanner.FunctionInfo{Name: ep.Name.Name, AstDecl: ep.Decl})
-		// In application mode, main is the only entry point we mark as used by default.
-		// In library mode, we don't mark any entry points as used by default.
-		// They are only "used" if called by another entry point.
-		if mainEntryPoint != nil {
-			usageMap[epName] = true
-		}
+		usageMap[epName] = true
+	}
+
+	// Run symbolic execution from each entry point to find what they use.
+	for _, ep := range entryPoints {
+		epName := getFullName(a.s, ep.Package, &scanner.FunctionInfo{Name: ep.Name.Name, AstDecl: ep.Decl})
 		slog.DebugContext(ctx, "analyzing from entry point", "entrypoint", epName)
 		interp.Apply(ctx, ep, []object.Object{}, ep.Package)
 	}

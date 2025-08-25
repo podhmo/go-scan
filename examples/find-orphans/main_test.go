@@ -52,7 +52,7 @@ func IgnoredFunc() {}
 	startPatterns := []string{"example.com/find-orphans-test/..."}
 	// Set verbose to false, and asJSON to false
 	log.SetOutput(w)
-	err := run(context.Background(), true, false, dir, false, false, startPatterns, []string{"testdata", "vendor"})
+	err := run(context.Background(), true, false, dir, false, false, "auto", startPatterns, []string{"testdata", "vendor"})
 	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}
@@ -116,7 +116,7 @@ func Unused() {}
 
 	// We only target the main package, NOT the dependency.
 	startPatterns := []string{"example.com/filter-test"}
-	err := run(context.Background(), true, false, dir, false, false, startPatterns, []string{"vendor"})
+	err := run(context.Background(), true, false, dir, false, false, "auto", startPatterns, []string{"vendor"})
 	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}
@@ -169,7 +169,7 @@ func UnusedInTestdata() {}
 
 	startPatterns := []string{"./..."}
 	// We explicitly EXCLUDE "testdata"
-	err = run(context.Background(), true, false, ".", false, false, startPatterns, []string{"testdata"})
+	err = run(context.Background(), true, false, ".", false, false, "auto", startPatterns, []string{"testdata"})
 	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}
@@ -237,7 +237,7 @@ func UnusedFunc() {
 	defer os.Chdir(oldWd)
 
 	// Set verbose to false, and asJSON to false
-	err = run(context.Background(), true, false, workspaceRoot, false, false, startPatterns, []string{"testdata", "vendor"})
+	err = run(context.Background(), true, false, workspaceRoot, false, false, "auto", startPatterns, []string{"testdata", "vendor"})
 	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}
@@ -311,7 +311,7 @@ func UnusedFunc() {
 	}
 	defer os.Chdir(oldWd)
 
-	err = run(context.Background(), true, false, workspaceRoot, false, false, startPatterns, []string{"testdata", "vendor"})
+	err = run(context.Background(), true, false, workspaceRoot, false, false, "auto", startPatterns, []string{"testdata", "vendor"})
 	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}
@@ -364,7 +364,7 @@ func unusedInternalFunc() {}
 	log.SetOutput(io.Discard)
 
 	startPatterns := []string{"example.com/find-orphans-test/lib"}
-	err := run(context.Background(), true, false, dir, false, false, startPatterns, []string{"testdata", "vendor"})
+	err := run(context.Background(), true, false, dir, false, false, "auto", startPatterns, []string{"testdata", "vendor"})
 	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}
@@ -376,9 +376,9 @@ func unusedInternalFunc() {}
 	io.Copy(&buf, r)
 	output := buf.String()
 
+	// In library mode, exported functions are entry points and thus not orphans.
+	// Only unexported, unused functions should be reported.
 	expectedOrphans := []string{
-		"example.com/find-orphans-test/lib.ExportedFunc",
-		"example.com/find-orphans-test/lib.UnusedExportedFunc",
 		"example.com/find-orphans-test/lib.unusedInternalFunc",
 	}
 	sort.Strings(expectedOrphans)
@@ -429,7 +429,7 @@ func UnusedFunc() {}
 
 	startPatterns := []string{"example.com/find-orphans-test/..."}
 	// Run with asJSON=true
-	err := run(context.Background(), true, false, dir, false, true, startPatterns, []string{"testdata", "vendor"})
+	err := run(context.Background(), true, false, dir, false, true, "auto", startPatterns, []string{"testdata", "vendor"})
 	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}
@@ -506,7 +506,7 @@ func (c *Cat) UnusedMethod() {}
 	log.SetOutput(io.Discard)
 
 	startPatterns := []string{"example.com/find-orphans-test/..."}
-	err := run(context.Background(), true, false, dir, false, false, startPatterns, []string{"testdata", "vendor"})
+	err := run(context.Background(), true, false, dir, false, false, "auto", startPatterns, []string{"testdata", "vendor"})
 	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}
@@ -535,5 +535,91 @@ func (c *Cat) UnusedMethod() {}
 
 	if diff := cmp.Diff(expectedOrphans, foundOrphans); diff != "" {
 		t.Errorf("find-orphans mismatch (-want +got):\n%s\nFull output:\n%s", diff, output)
+	}
+}
+
+func TestFindOrphans_modeLib(t *testing.T) {
+	// This test ensures that even if a main.main entry point exists,
+	// using --mode=lib forces library mode, treating all exported functions
+	// as entry points and thus not reporting them as orphans.
+	files := map[string]string{
+		"go.mod": "module example.com/mode-lib-test\ngo 1.21\n",
+		"main.go": `
+package main
+func main() {}
+// This function would be an orphan in app mode, but should NOT be in lib mode.
+func ExportedAndUnused() {}
+`,
+	}
+	dir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	log.SetOutput(io.Discard)
+
+	startPatterns := []string{"./..."}
+
+	// Change CWD to test running from the module root
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get wd: %v", err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("failed to change wd: %v", err)
+	}
+	defer os.Chdir(oldWd)
+
+	// Force library mode
+	err = run(context.Background(), true, false, "", false, false, "lib", startPatterns, nil)
+	if err != nil {
+		t.Fatalf("run() failed: %v", err)
+	}
+
+	w.Close()
+	os.Stdout = oldStdout
+
+	var buf bytes.Buffer
+	io.Copy(&buf, r)
+	output := buf.String()
+
+	// ExportedAndUnused should NOT be in the output because in library mode,
+	// all exported funcs are considered entry points.
+	if strings.Contains(output, "ExportedAndUnused") {
+		t.Errorf("found ExportedAndUnused as an orphan, but it should be treated as a valid entry point in library mode")
+	}
+}
+
+func TestFindOrphans_modeApp_noMain(t *testing.T) {
+	// This test ensures that using --mode=app fails if no main.main is found.
+	files := map[string]string{
+		"go.mod": "module example.com/mode-app-fail\ngo 1.21\n",
+		"lib.go": `package lib
+func SomeFunc() {}
+`,
+	}
+	dir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+	log.SetOutput(io.Discard)
+
+	startPatterns := []string{"./..."}
+
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get wd: %v", err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("failed to change wd: %v", err)
+	}
+	defer os.Chdir(oldWd)
+
+	// Force application mode, expecting an error
+	err = run(context.Background(), true, false, "", false, false, "app", startPatterns, nil)
+	if err == nil {
+		t.Fatalf("run() should have failed in app mode with no main function, but it did not")
+	}
+	if !strings.Contains(err.Error(), "no main entry point was found") {
+		t.Errorf("expected error about no main entry point, but got: %v", err)
 	}
 }

@@ -130,6 +130,8 @@ func (e *Evaluator) Eval(ctx context.Context, node ast.Node, env *object.Environ
 		return e.evalSwitchStmt(ctx, n, env, pkg)
 	case *ast.TypeSwitchStmt:
 		return e.evalTypeSwitchStmt(ctx, n, env, pkg)
+	case *ast.SelectStmt:
+		return e.evalSelectStmt(ctx, n, env, pkg)
 	case *ast.CallExpr:
 		return e.evalCallExpr(ctx, n, env, pkg)
 	case *ast.ExprStmt:
@@ -152,6 +154,8 @@ func (e *Evaluator) Eval(ctx context.Context, node ast.Node, env *object.Environ
 		return e.evalCompositeLit(ctx, n, env, pkg)
 	case *ast.IndexExpr:
 		return e.evalIndexExpr(ctx, n, env, pkg)
+	case *ast.SliceExpr:
+		return e.evalSliceExpr(ctx, n, env, pkg)
 	case *ast.ParenExpr:
 		return e.Eval(ctx, n.X, env, pkg)
 	case *ast.FuncLit:
@@ -206,6 +210,44 @@ func (e *Evaluator) evalIndexExpr(ctx context.Context, node *ast.IndexExpr, env 
 		Reason:     "result of index expression",
 		BaseObject: object.BaseObject{ResolvedTypeInfo: elemType},
 	}
+}
+
+func (e *Evaluator) evalSliceExpr(ctx context.Context, node *ast.SliceExpr, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
+	// Evaluate the expression being sliced to trace any calls within it.
+	left := e.Eval(ctx, node.X, env, pkg)
+	if isError(left) {
+		return left
+	}
+
+	// Evaluate index expressions to trace calls.
+	if node.Low != nil {
+		if low := e.Eval(ctx, node.Low, env, pkg); isError(low) {
+			return low
+		}
+	}
+	if node.High != nil {
+		if high := e.Eval(ctx, node.High, env, pkg); isError(high) {
+			return high
+		}
+	}
+	if node.Max != nil {
+		if max := e.Eval(ctx, node.Max, env, pkg); isError(max) {
+			return max
+		}
+	}
+
+	// The result of a slice expression is another slice (or array), which we represent
+	// with a placeholder that carries the original type information.
+	placeholder := &object.SymbolicPlaceholder{
+		Reason: "result of slice expression",
+	}
+	if left.TypeInfo() != nil {
+		placeholder.SetTypeInfo(left.TypeInfo())
+	}
+	if left.FieldType() != nil {
+		placeholder.SetFieldType(left.FieldType())
+	}
+	return placeholder
 }
 
 func (e *Evaluator) evalCompositeLit(ctx context.Context, node *ast.CompositeLit, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
@@ -336,6 +378,10 @@ func (e *Evaluator) evalUnaryExpr(ctx context.Context, node *ast.UnaryExpr, env 
 		}
 		ptr.SetTypeInfo(val.TypeInfo())
 		return ptr
+	case token.ARROW: // <-
+		// For a channel receive `<-ch`, we just need to evaluate `ch` itself
+		// to trace any function calls that produce the channel.
+		return e.Eval(ctx, node.X, env, pkg)
 	}
 	return newError(node.Pos(), "unknown unary operator: %s", node.Op)
 }
@@ -861,6 +907,34 @@ func (e *Evaluator) evalSwitchStmt(ctx context.Context, n *ast.SwitchStmt, env *
 	}
 
 	return &object.SymbolicPlaceholder{Reason: "switch statement"}
+}
+
+func (e *Evaluator) evalSelectStmt(ctx context.Context, n *ast.SelectStmt, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
+	if n.Body == nil {
+		return &object.SymbolicPlaceholder{Reason: "empty select statement"}
+	}
+	// Symbolically execute all cases.
+	for _, c := range n.Body.List {
+		if caseClause, ok := c.(*ast.CommClause); ok {
+			caseEnv := object.NewEnclosedEnvironment(env)
+
+			// Evaluate the communication expression (e.g., the channel operation).
+			if caseClause.Comm != nil {
+				if res := e.Eval(ctx, caseClause.Comm, caseEnv, pkg); isError(res) {
+					e.logger.Warn("error evaluating select case communication", "error", res.Inspect())
+				}
+			}
+
+			// Evaluate the body of the case.
+			for _, stmt := range caseClause.Body {
+				if res := e.Eval(ctx, stmt, caseEnv, pkg); isError(res) {
+					e.logger.Warn("error evaluating statement in select case", "error", res.Inspect())
+				}
+			}
+		}
+	}
+
+	return &object.SymbolicPlaceholder{Reason: "select statement"}
 }
 
 func (e *Evaluator) evalTypeSwitchStmt(ctx context.Context, n *ast.TypeSwitchStmt, env *object.Environment, pkg *scanner.PackageInfo) object.Object {

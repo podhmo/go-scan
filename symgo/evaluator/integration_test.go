@@ -89,7 +89,7 @@ func main() {
 		return nil
 	}
 
-	_, err := scantest.Run(t, dir, []string{"."}, action)
+	_, err := scantest.Run(t, nil, dir, []string{"."}, action)
 	if err != nil {
 		t.Fatal(err)
 	}

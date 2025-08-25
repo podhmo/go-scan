@@ -57,7 +57,7 @@ func TestRun_PureCheck(t *testing.T) {
 		return nil
 	}
 
-	result, err := Run(t, dir, []string{"."}, action, WithModuleRoot(dir))
+	result, err := Run(t, nil, dir, []string{"."}, action, WithModuleRoot(dir))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +82,7 @@ func TestRun_GenerateFile(t *testing.T) {
 		return pd.SaveGoFile(ctx, gf, "main_gen.go")
 	}
 
-	result, err := Run(t, dir, []string{"."}, generateAction, WithModuleRoot(dir))
+	result, err := Run(t, nil, dir, []string{"."}, generateAction, WithModuleRoot(dir))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +126,7 @@ func TestRun_ModifyFile(t *testing.T) {
 		return nil
 	}
 
-	result, err := Run(t, dir, []string{"."}, modifyAction, WithModuleRoot(dir))
+	result, err := Run(t, nil, dir, []string{"."}, modifyAction, WithModuleRoot(dir))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,7 +175,7 @@ func main() { foo.Do() }
 	// This is the key part of the test. We are passing an import path pattern,
 	// not a file system pattern like ".". The scantest.Run function needs to
 	// be able to resolve this.
-	_, err := Run(t, dir, []string{"example.com/me/..."}, action, WithModuleRoot(dir))
+	_, err := Run(t, nil, dir, []string{"example.com/me/..."}, action, WithModuleRoot(dir))
 	if err != nil {
 		t.Fatalf("scantest.Run() failed: %v", err)
 	}
@@ -213,7 +213,7 @@ func TestRun_WithSpecificDirectoryPattern(t *testing.T) {
 		return nil
 	}
 
-	_, err := Run(t, dir, []string{"./pkg/a"}, action, WithModuleRoot(dir))
+	_, err := Run(t, nil, dir, []string{"./pkg/a"}, action, WithModuleRoot(dir))
 	if err != nil {
 		t.Fatalf("scantest.Run() failed: %v", err)
 	}
@@ -252,7 +252,7 @@ type Request struct {}
 	}
 
 	// Use a relative path to a specific package directory.
-	_, err := Run(t, dir, []string{"./api"}, action)
+	_, err := Run(t, nil, dir, []string{"./api"}, action)
 	if err != nil {
 		t.Fatalf("scantest.Run() with relative path failed: %v", err)
 	}
@@ -362,7 +362,7 @@ type Model struct {
 	}
 
 	// Run the test on the project directory
-	_, err := Run(t, projectDir, []string{"."}, action)
+	_, err := Run(t, nil, projectDir, []string{"."}, action)
 	if err != nil {
 		t.Fatalf("Run failed: %v", err)
 	}

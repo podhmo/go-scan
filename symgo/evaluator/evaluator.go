@@ -84,15 +84,6 @@ func (e *Evaluator) PopIntrinsics() {
 
 // Eval is the main dispatch loop for the evaluator.
 func (e *Evaluator) Eval(ctx context.Context, node ast.Node, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
-	if e.logger.Enabled(ctx, slog.LevelDebug) {
-		if pkg != nil && pkg.Fset != nil && node != nil && node.Pos().IsValid() {
-			var buf bytes.Buffer
-			printer.Fprint(&buf, pkg.Fset, node)
-			e.logger.Debug("evaluating node", "node", fmt.Sprintf("%T", node), "source", buf.String(), "pos", pkg.Fset.Position(node.Pos()))
-		} else {
-			e.logger.Debug("evaluating node", "node", fmt.Sprintf("%T", node))
-		}
-	}
 	if e.tracer != nil {
 		e.tracer.Visit(node)
 	}
@@ -852,14 +843,9 @@ func (e *Evaluator) evalBlockStatement(ctx context.Context, block *ast.BlockStmt
 		result = e.Eval(ctx, stmt, env, pkg)
 
 		if result != nil {
-			// Only terminate the block if we hit an actual return statement.
-			// A ReturnValue from a regular function call used as a statement (in an ExprStmt)
-			// should not stop the evaluation of the rest of the block.
-			if _, isReturnStmt := stmt.(*ast.ReturnStmt); isReturnStmt {
-				rt := result.Type()
-				if rt == object.RETURN_VALUE_OBJ || rt == object.ERROR_OBJ {
-					return result
-				}
+			rt := result.Type()
+			if rt == object.RETURN_VALUE_OBJ || rt == object.ERROR_OBJ {
+				return result
 			}
 		}
 	}
@@ -1162,15 +1148,6 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 	e.logger.Debug("applyFunction", "type", fn.Type(), "value", fn.Inspect())
 	switch fn := fn.(type) {
 	case *object.Function:
-		// Before executing the function's body, check if there's a registered intrinsic
-		// that should be called instead. This allows for overriding function behavior.
-		if fn.Package != nil && fn.Def != nil {
-			key := fmt.Sprintf("%s.%s", fn.Package.ImportPath, fn.Def.Name)
-			if intrinsicFn, ok := e.intrinsics.Get(key); ok {
-				return intrinsicFn(args...)
-			}
-		}
-
 		// When applying a function, the evaluation context switches to that function's
 		// package. We must pass fn.Package to both extendFunctionEnv and Eval.
 		extendedEnv, err := e.extendFunctionEnv(ctx, fn, args)

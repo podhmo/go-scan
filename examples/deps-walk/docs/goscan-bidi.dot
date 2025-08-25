@@ -1,0 +1,48 @@
+digraph dependencies {
+  rankdir="LR";
+  node [shape=box, style="rounded,filled", fillcolor=lightgrey];
+  "github.com/podhmo/go-scan" [label="", shape=box, style="rounded,filled", fillcolor=lightblue];
+  "github.com/podhmo/go-scan/examples/convert" [label="examples/convert"];
+  "github.com/podhmo/go-scan/examples/convert-define" [label="examples/convert-define"];
+  "github.com/podhmo/go-scan/examples/convert-define/internal" [label="examples/convert-define/internal"];
+  "github.com/podhmo/go-scan/examples/convert/generator" [label="examples/convert/generator"];
+  "github.com/podhmo/go-scan/examples/convert/parser" [label="examples/convert/parser"];
+  "github.com/podhmo/go-scan/examples/deps-walk" [label="examples/deps-walk"];
+  "github.com/podhmo/go-scan/examples/deriving-all" [label="examples/deriving-all"];
+  "github.com/podhmo/go-scan/examples/derivingbind" [label="examples/derivingbind"];
+  "github.com/podhmo/go-scan/examples/derivingbind/gen" [label="examples/derivingbind/gen"];
+  "github.com/podhmo/go-scan/examples/derivingjson" [label="examples/derivingjson"];
+  "github.com/podhmo/go-scan/examples/derivingjson/gen" [label="examples/derivingjson/gen"];
+  "github.com/podhmo/go-scan/examples/docgen" [label="examples/docgen"];
+  "github.com/podhmo/go-scan/examples/find-orphans" [label="examples/find-orphans"];
+  "github.com/podhmo/go-scan/examples/minigo" [label="examples/minigo"];
+  "github.com/podhmo/go-scan/locator" [label="locator"];
+  "github.com/podhmo/go-scan/minigo" [label="minigo"];
+  "github.com/podhmo/go-scan/minigo/evaluator" [label="minigo/evaluator"];
+  "github.com/podhmo/go-scan/scanner" [label="scanner"];
+  "github.com/podhmo/go-scan/scantest" [label="scantest"];
+  "github.com/podhmo/go-scan/symgo" [label="symgo"];
+  "github.com/podhmo/go-scan/symgo/evaluator" [label="symgo/evaluator"];
+
+  "github.com/podhmo/go-scan" -> "github.com/podhmo/go-scan/locator";
+  "github.com/podhmo/go-scan" -> "github.com/podhmo/go-scan/scanner";
+  "github.com/podhmo/go-scan" -> "github.com/podhmo/go-scan/examples/convert" [dir=back, style=dashed];
+  "github.com/podhmo/go-scan" -> "github.com/podhmo/go-scan/examples/convert-define" [dir=back, style=dashed];
+  "github.com/podhmo/go-scan" -> "github.com/podhmo/go-scan/examples/convert-define/internal" [dir=back, style=dashed];
+  "github.com/podhmo/go-scan" -> "github.com/podhmo/go-scan/examples/convert/generator" [dir=back, style=dashed];
+  "github.com/podhmo/go-scan" -> "github.com/podhmo/go-scan/examples/convert/parser" [dir=back, style=dashed];
+  "github.com/podhmo/go-scan" -> "github.com/podhmo/go-scan/examples/deps-walk" [dir=back, style=dashed];
+  "github.com/podhmo/go-scan" -> "github.com/podhmo/go-scan/examples/deriving-all" [dir=back, style=dashed];
+  "github.com/podhmo/go-scan" -> "github.com/podhmo/go-scan/examples/derivingbind" [dir=back, style=dashed];
+  "github.com/podhmo/go-scan" -> "github.com/podhmo/go-scan/examples/derivingbind/gen" [dir=back, style=dashed];
+  "github.com/podhmo/go-scan" -> "github.com/podhmo/go-scan/examples/derivingjson" [dir=back, style=dashed];
+  "github.com/podhmo/go-scan" -> "github.com/podhmo/go-scan/examples/derivingjson/gen" [dir=back, style=dashed];
+  "github.com/podhmo/go-scan" -> "github.com/podhmo/go-scan/examples/docgen" [dir=back, style=dashed];
+  "github.com/podhmo/go-scan" -> "github.com/podhmo/go-scan/examples/find-orphans" [dir=back, style=dashed];
+  "github.com/podhmo/go-scan" -> "github.com/podhmo/go-scan/examples/minigo" [dir=back, style=dashed];
+  "github.com/podhmo/go-scan" -> "github.com/podhmo/go-scan/minigo" [dir=back, style=dashed];
+  "github.com/podhmo/go-scan" -> "github.com/podhmo/go-scan/minigo/evaluator" [dir=back, style=dashed];
+  "github.com/podhmo/go-scan" -> "github.com/podhmo/go-scan/scantest" [dir=back, style=dashed];
+  "github.com/podhmo/go-scan" -> "github.com/podhmo/go-scan/symgo" [dir=back, style=dashed];
+  "github.com/podhmo/go-scan" -> "github.com/podhmo/go-scan/symgo/evaluator" [dir=back, style=dashed];
+}

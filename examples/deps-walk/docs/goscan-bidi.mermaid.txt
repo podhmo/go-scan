@@ -1,0 +1,51 @@
+graph LR
+
+  subgraph module [github.com/podhmo/go-scan]
+
+    id0[""]
+    id1["examples/convert"]
+    id2["examples/convert-define"]
+    id3["examples/convert-define/internal"]
+    id4["examples/convert/generator"]
+    id5["examples/convert/parser"]
+    id6["examples/deps-walk"]
+    id7["examples/deriving-all"]
+    id8["examples/derivingbind"]
+    id9["examples/derivingbind/gen"]
+    id10["examples/derivingjson"]
+    id11["examples/derivingjson/gen"]
+    id12["examples/docgen"]
+    id13["examples/find-orphans"]
+    id14["examples/minigo"]
+    id15["locator"]
+    id16["minigo"]
+    id17["minigo/evaluator"]
+    id18["scanner"]
+    id19["scantest"]
+    id20["symgo"]
+    id21["symgo/evaluator"]
+
+    id0 --> id15
+    id0 --> id18
+    id1 -.-> id0
+    id2 -.-> id0
+    id3 -.-> id0
+    id4 -.-> id0
+    id5 -.-> id0
+    id6 -.-> id0
+    id7 -.-> id0
+    id8 -.-> id0
+    id9 -.-> id0
+    id10 -.-> id0
+    id11 -.-> id0
+    id12 -.-> id0
+    id13 -.-> id0
+    id14 -.-> id0
+    id16 -.-> id0
+    id17 -.-> id0
+    id19 -.-> id0
+    id20 -.-> id0
+    id21 -.-> id0
+  end
+
+    style id0 fill:#add8e6,stroke:#333,stroke-width:2px

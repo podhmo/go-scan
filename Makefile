@@ -49,6 +49,7 @@ test-e2e:
 	make -C examples/convert e2e
 	make -C examples/convert-define e2e
 	make -C examples/deriving-all e2e
+	make -C examples/docgen e2e
 
 clean:
 	go clean -cache -testcache # General Go clean

@@ -126,7 +126,7 @@ func UnusedFuncInExcludedModule() {}
 	defer os.Chdir(oldWd)
 
 	// We explicitly exclude the "testdata" directory where moduleb resides.
-	err = run(context.Background(), true, false, ".", false, false, startPatterns, []string{"testdata"})
+	err = run(context.Background(), true, false, ".", false, false, "auto", startPatterns, []string{"testdata"})
 	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}
@@ -196,7 +196,7 @@ func UnusedFunc() {}
 	defer os.Chdir(oldWd)
 
 	// workspaceRoot is ".", startPatterns is the specific import path.
-	err = run(context.Background(), true, false, ".", false, false, startPatterns, []string{"testdata"})
+	err = run(context.Background(), true, false, ".", false, false, "auto", startPatterns, []string{"testdata"})
 	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}
@@ -262,7 +262,7 @@ func MyUnusedFunc() {}
 	defer os.Chdir(oldWd)
 
 	// The key is that this should not error out.
-	err = run(context.Background(), true, false, ".", false, false, startPatterns, []string{"testdata"})
+	err = run(context.Background(), true, false, ".", false, false, "auto", startPatterns, []string{"testdata"})
 	if err != nil {
 		t.Fatalf("run() failed with an unexpected error: %v", err)
 	}
@@ -324,7 +324,7 @@ func UnusedFunc() {
 	defer os.Chdir(oldWd)
 
 	// Use a relative path for the workspace root
-	err = run(context.Background(), true, false, "..", false, false, startPatterns, []string{"testdata", "vendor"})
+	err = run(context.Background(), true, false, "..", false, false, "auto", startPatterns, []string{"testdata", "vendor"})
 	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}

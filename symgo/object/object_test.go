@@ -15,8 +15,8 @@ func TestString_Type(t *testing.T) {
 
 func TestString_Inspect(t *testing.T) {
 	s := &String{Value: "hello world"}
-	if s.Inspect() != "hello world" {
-		t.Errorf("s.Inspect() wrong. want=%q, got=%q", "hello world", s.Inspect())
+	if s.Inspect() != `"hello world"` {
+		t.Errorf(`s.Inspect() wrong. want=%q, got=%q`, `"hello world"`, s.Inspect())
 	}
 }
 

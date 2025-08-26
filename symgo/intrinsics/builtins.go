@@ -15,7 +15,13 @@ func BuiltinPanic(args ...object.Object) object.Object {
 	}
 	// In symbolic execution, we treat panic as an error that stops execution.
 	// The message of the panic is wrapped in an Error object.
+	var msg string
+	if str, ok := args[0].(*object.String); ok {
+		msg = str.Value
+	} else {
+		msg = args[0].Inspect()
+	}
 	return &object.Error{
-		Message: fmt.Sprintf("panic: %s", args[0].Inspect()),
+		Message: fmt.Sprintf("panic: %s", msg),
 	}
 }

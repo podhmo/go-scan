@@ -137,7 +137,14 @@ func (e *Evaluator) Eval(ctx context.Context, node ast.Node, env *object.Environ
 	case *ast.CallExpr:
 		return e.evalCallExpr(ctx, n, env, pkg)
 	case *ast.ExprStmt:
-		return e.Eval(ctx, n.X, env, pkg)
+		result := e.Eval(ctx, n.X, env, pkg)
+		// If the expression is a function call that returns a value, we don't want
+		// that return value to be mistaken for a `return` statement from the current block.
+		// So we unwrap it.
+		if ret, ok := result.(*object.ReturnValue); ok {
+			return ret.Value
+		}
+		return result
 	case *ast.DeferStmt:
 		return e.Eval(ctx, n.Call, env, pkg)
 	case *ast.GoStmt:
@@ -312,6 +319,7 @@ func (e *Evaluator) evalCompositeLit(ctx context.Context, node *ast.CompositeLit
 		return e.newError(node.Pos(), "could not resolve type for composite literal: %s", typeNameBuf.String())
 	}
 
+	elements := make([]object.Object, 0, len(node.Elts))
 	// IMPORTANT: Evaluate all field/element values within the literal.
 	// This is crucial for detecting function calls inside initializers.
 	for _, elt := range node.Elts {
@@ -320,7 +328,8 @@ func (e *Evaluator) evalCompositeLit(ctx context.Context, node *ast.CompositeLit
 			// This handles struct literals: { Key: Value }
 			// and map literals: { Key: Value }
 			// We always need to evaluate the value part to trace calls.
-			e.Eval(ctx, v.Value, env, pkg)
+			value := e.Eval(ctx, v.Value, env, pkg)
+			elements = append(elements, value) // For now, just track values for structs too.
 			// For maps, keys can also be expressions with function calls.
 			// For structs, keys are just identifiers, so evaluating them is harmless
 			// if we check the type first.
@@ -329,7 +338,8 @@ func (e *Evaluator) evalCompositeLit(ctx context.Context, node *ast.CompositeLit
 			}
 		default:
 			// This handles slice/array literals: { Value1, Value2 }
-			e.Eval(ctx, v, env, pkg)
+			element := e.Eval(ctx, v, env, pkg)
+			elements = append(elements, element)
 		}
 	}
 
@@ -340,7 +350,10 @@ func (e *Evaluator) evalCompositeLit(ctx context.Context, node *ast.CompositeLit
 	}
 
 	if fieldType.IsSlice {
-		sliceObj := &object.Slice{SliceFieldType: fieldType}
+		sliceObj := &object.Slice{
+			SliceFieldType: fieldType,
+			Elements:       elements,
+		}
 		sliceObj.SetFieldType(fieldType)
 		return sliceObj
 	}
@@ -1642,6 +1655,18 @@ func (e *Evaluator) evalCallExpr(ctx context.Context, n *ast.CallExpr, env *obje
 		return args[0]
 	}
 
+	// If the call includes `...`, the last argument is a slice to be expanded.
+	// We wrap it in a special Variadic object to signal this to `applyFunction`.
+	if n.Ellipsis.IsValid() {
+		if len(args) == 0 {
+			return e.newError(n.Ellipsis, "invalid use of ... with no arguments")
+		}
+		lastArg := args[len(args)-1]
+		// The argument should be a slice, but we don't check it here.
+		// `extendFunctionEnv` will handle the type logic.
+		args[len(args)-1] = &object.Variadic{Value: lastArg}
+	}
+
 	if e.defaultIntrinsic != nil {
 		// The default intrinsic is a "catch-all" handler that can be used for logging,
 		// dependency tracking, etc. It receives the function object itself as the first
@@ -1919,31 +1944,87 @@ func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, 
 		}
 	}
 
-	paramIndex := 0
-	for _, field := range fn.Parameters.List {
-		if paramIndex >= len(args) {
-			break
-		}
-		arg := args[paramIndex]
-		paramIndex++
+	params := fn.Parameters.List
+	argIndex := 0
 
-		// Resolve the parameter's type using the function's own package context.
-		fieldType := e.scanner.TypeInfoFromExpr(ctx, field.Type, nil, fn.Package, importLookup)
-		if fieldType == nil {
-			continue
+	for _, field := range params {
+		paramType := field.Type
+		isVariadic := false
+		if ellipsis, ok := paramType.(*ast.Ellipsis); ok {
+			isVariadic = true
+			paramType = ellipsis.Elt
 		}
-		resolvedType, _ := fieldType.Resolve(ctx)
 
+		if isVariadic {
+			var variadicSlice object.Object
+
+			// Case 1: The call is of the form `myFunc(slice...)`.
+			// The argument will be a single `*object.Variadic` wrapper.
+			if argIndex < len(args) && args[argIndex] != nil {
+				if v, ok := args[argIndex].(*object.Variadic); ok {
+					variadicSlice = v.Value
+					argIndex++ // Consume the single variadic argument.
+				}
+			}
+
+			// Case 2: The call is `myFunc(1, 2, 3)`.
+			// Collect all remaining arguments into a slice.
+			if variadicSlice == nil {
+				variadicArgs := args[argIndex:]
+				argIndex = len(args) // Consume all remaining arguments.
+
+				sliceElemFieldType := e.scanner.TypeInfoFromExpr(ctx, paramType, nil, fn.Package, importLookup)
+				sliceFieldType := &scanner.FieldType{
+					IsSlice: true,
+					Elem:    sliceElemFieldType,
+				}
+				sliceObj := &object.Slice{
+					Elements:       variadicArgs,
+					SliceFieldType: sliceFieldType,
+				}
+				sliceObj.SetFieldType(sliceFieldType)
+				variadicSlice = sliceObj
+			}
+
+			// Bind the final slice to the variadic parameter name.
+			if len(field.Names) > 0 {
+				name := field.Names[0] // Variadic param is always the last, single identifier.
+				if name.Name != "_" {
+					fieldType := e.scanner.TypeInfoFromExpr(ctx, paramType, nil, fn.Package, importLookup)
+					resolvedType, _ := fieldType.Resolve(ctx)
+					v := &object.Variable{
+						Name:       name.Name,
+						Value:      variadicSlice,
+						BaseObject: object.BaseObject{ResolvedTypeInfo: resolvedType},
+					}
+					env.Set(name.Name, v)
+				}
+			}
+			break // A variadic parameter must be the final parameter.
+		}
+
+		// This is a regular, non-variadic parameter.
 		for _, name := range field.Names {
-			if name.Name == "_" {
+			if argIndex >= len(args) {
+				break
+			}
+			arg := args[argIndex]
+
+			fieldType := e.scanner.TypeInfoFromExpr(ctx, field.Type, nil, fn.Package, importLookup)
+			if fieldType == nil {
 				continue
 			}
-			v := &object.Variable{
-				Name:       name.Name,
-				Value:      arg,
-				BaseObject: object.BaseObject{ResolvedTypeInfo: resolvedType},
+			resolvedType, _ := fieldType.Resolve(ctx)
+
+			if name.Name != "_" {
+				v := &object.Variable{
+					Name:       name.Name,
+					Value:      arg,
+					BaseObject: object.BaseObject{ResolvedTypeInfo: resolvedType},
+				}
+				env.Set(name.Name, v)
 			}
-			env.Set(name.Name, v)
+			argIndex++
 		}
 	}
 

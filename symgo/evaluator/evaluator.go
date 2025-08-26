@@ -324,16 +324,16 @@ func (e *Evaluator) evalBinaryExpr(ctx context.Context, node *ast.BinaryExpr, en
 	}
 
 	if left.Type() == object.INTEGER_OBJ && right.Type() == object.INTEGER_OBJ {
-		return e.evalIntegerInfixExpression(node.Op, left, right)
+		return e.evalIntegerInfixExpression(node.Pos(), node.Op, left, right)
 	}
 	if left.Type() == object.STRING_OBJ && right.Type() == object.STRING_OBJ {
-		return e.evalStringInfixExpression(node.Op, left, right)
+		return e.evalStringInfixExpression(node.Pos(), node.Op, left, right)
 	}
 
 	return &object.SymbolicPlaceholder{Reason: "binary expression"}
 }
 
-func (e *Evaluator) evalIntegerInfixExpression(op token.Token, left, right object.Object) object.Object {
+func (e *Evaluator) evalIntegerInfixExpression(pos token.Pos, op token.Token, left, right object.Object) object.Object {
 	leftVal := left.(*object.Integer).Value
 	rightVal := right.(*object.Integer).Value
 
@@ -347,16 +347,16 @@ func (e *Evaluator) evalIntegerInfixExpression(op token.Token, left, right objec
 	case token.QUO:
 		return &object.Integer{Value: leftVal / rightVal}
 	default:
-		return e.newError(token.NoPos, "unknown integer operator: %s", op)
+		return e.newError(pos, "unknown integer operator: %s", op)
 	}
 }
 
-func (e *Evaluator) evalStringInfixExpression(op token.Token, left, right object.Object) object.Object {
+func (e *Evaluator) evalStringInfixExpression(pos token.Pos, op token.Token, left, right object.Object) object.Object {
 	leftVal := left.(*object.String).Value
 	rightVal := right.(*object.String).Value
 
 	if op != token.ADD {
-		return e.newError(token.NoPos, "unknown string operator: %s", op)
+		return e.newError(pos, "unknown string operator: %s", op)
 	}
 	return &object.String{Value: leftVal + rightVal}
 }

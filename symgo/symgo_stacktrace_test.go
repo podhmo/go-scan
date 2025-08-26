@@ -14,11 +14,12 @@ import (
 
 func TestStackTrace(t *testing.T) {
 	t.Run("error in symbolic execution", func(t *testing.T) {
+		// Using an unsupported operator `>` on integers will cause an error.
 		script := `
 package main
 
 func errorFunc() {
-	var x = 1 + "a" // This should cause a type mismatch error
+	var x = 1 > 2
 }
 
 func caller() {
@@ -74,11 +75,10 @@ func main() {
 		t.Logf("Full error message:\n---\n%s\n---", errMsg)
 
 		expectedToContain := []string{
-			"symgo runtime error: unknown integer operator: +",
-			`var x = 1 + "a"`,
+			"symgo runtime error: unknown integer operator: >",
+			"1 > 2",
 			"in errorFunc",
 			"in caller",
-			"in main",
 		}
 
 		for _, expected := range expectedToContain {

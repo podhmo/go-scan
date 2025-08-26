@@ -254,6 +254,7 @@ func (e *Error) Inspect() string {
 	out.WriteString("symgo runtime error: ")
 	out.WriteString(e.Message)
 
+	// Print the source line of the error itself
 	if e.fset != nil && e.Pos.IsValid() {
 		position := e.fset.Position(e.Pos)
 		sourceLine, err := getSourceLine(position.Filename, position.Line)
@@ -262,6 +263,7 @@ func (e *Error) Inspect() string {
 			out.WriteString("\n\t\t" + sourceLine)
 		}
 	}
+
 	out.WriteString("\n")
 
 	// Print the call stack in reverse order (most recent call first)

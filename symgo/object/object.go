@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"go/ast"
 	"go/token"
+	"strings"
 
 	"github.com/podhmo/go-scan/scanner"
 )
@@ -205,18 +206,39 @@ func (p *Package) Inspect() string {
 
 // --- Error Object ---
 
+// FrameInfo holds information about a single call frame for error reporting.
+type FrameInfo struct {
+	Name string
+	Pos  string // Store as string to avoid dependency on token.Pos
+}
+
 // Error represents an error that occurred during symbolic evaluation.
 type Error struct {
 	BaseObject
-	Message string
-	Pos     token.Pos
+	Message   string
+	Pos       token.Pos
+	CallStack []FrameInfo
 }
 
 // Type returns the type of the Error object.
 func (e *Error) Type() ObjectType { return ERROR_OBJ }
 
 // Inspect returns a string representation of the error.
-func (e *Error) Inspect() string { return "Error: " + e.Message }
+func (e *Error) Inspect() string {
+	if len(e.CallStack) > 0 {
+		var b strings.Builder
+		b.WriteString("Error: ")
+		b.WriteString(e.Message)
+		b.WriteString("\nCall Stack:\n")
+		// Print in reverse order to show the most recent call first
+		for i := len(e.CallStack) - 1; i >= 0; i-- {
+			frame := e.CallStack[i]
+			b.WriteString(fmt.Sprintf("\t%s at %s\n", frame.Name, frame.Pos))
+		}
+		return b.String()
+	}
+	return "Error: " + e.Message
+}
 
 // --- SymbolicPlaceholder Object ---
 

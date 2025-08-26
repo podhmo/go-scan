@@ -121,6 +121,53 @@ var x = 10
 	}
 }
 
+func TestEval_EmptyStmt(t *testing.T) {
+	source := `
+package main
+func main() {
+	; // This is an empty statement
+}
+`
+	dir, cleanup := scantest.WriteFiles(t, map[string]string{
+		"go.mod":  "module example.com/me",
+		"main.go": source,
+	})
+	defer cleanup()
+
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
+		pkg := pkgs[0]
+		eval := New(s, s.Logger, nil, nil)
+
+		env := object.NewEnvironment()
+		eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], env, pkg)
+
+		mainFunc, ok := env.Get("main")
+		if !ok {
+			return fmt.Errorf("function 'main' not found")
+		}
+
+		result := eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, token.NoPos)
+
+		// The result of main is the result of its last statement. An empty statement
+		// should result in something innocuous, not an error.
+		if err, ok := result.(*object.Error); ok {
+			return fmt.Errorf("evaluation failed unexpectedly: %s", err.Message)
+		}
+		if ret, ok := result.(*object.ReturnValue); ok {
+			if err, ok := ret.Value.(*object.Error); ok {
+				return fmt.Errorf("evaluation failed unexpectedly: %s", err.Message)
+			}
+		}
+
+		// Success is not returning an error.
+		return nil
+	}
+
+	if _, err := scantest.Run(t, context.Background(), dir, []string{"."}, action); err != nil {
+		t.Fatalf("scantest.Run() failed: %v", err)
+	}
+}
+
 func TestEvalBooleanLiteral(t *testing.T) {
 	tests := []struct {
 		input    string

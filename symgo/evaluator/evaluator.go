@@ -880,8 +880,21 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 
 		return e.newError(n.Pos(), "undefined field or method: %s on %s", n.Sel.Name, val.Inspect())
 
+	case *object.Pointer:
+		// A method can be called on a pointer. We need to find the method on its underlying type.
+		underlying := val.Value
+		typeInfo := underlying.TypeInfo()
+		if typeInfo == nil {
+			return e.newError(n.Pos(), "cannot call method on pointer to value with no type info")
+		}
+		// Pass the pointer object itself as the receiver, as pointer-ness is checked there.
+		if method, err := e.findMethodOnType(ctx, typeInfo, n.Sel.Name, env, val); err == nil && method != nil {
+			return method
+		}
+		return e.newError(n.Pos(), "undefined method: %s on %s", n.Sel.Name, val.Inspect())
+
 	default:
-		return e.newError(n.Pos(), "expected a package, instance, or variable on the left side of selector, but got %s", left.Type())
+		return e.newError(n.Pos(), "expected a package, instance, variable, or pointer on the left side of selector, but got %s", left.Type())
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"go/ast"
 	"sync"
 
 	goscan "github.com/podhmo/go-scan"
@@ -390,6 +391,58 @@ type analyzer struct {
 	ctx            context.Context
 }
 
+func (a *analyzer) createSymbolicReceiver(ctx context.Context, fn *symgo.Function) (symgo.Object, error) {
+	if fn.Decl == nil || fn.Decl.Recv == nil || len(fn.Decl.Recv.List) == 0 {
+		return nil, fmt.Errorf("function is not a method or has no receiver")
+	}
+
+	recvField := fn.Decl.Recv.List[0]
+	var typeName string
+	var isPointer bool
+
+	// Determine the type name from the AST expression
+	switch t := recvField.Type.(type) {
+	case *ast.StarExpr:
+		isPointer = true
+		if ident, ok := t.X.(*ast.Ident); ok {
+			typeName = ident.Name
+		}
+	case *ast.Ident:
+		typeName = t.Name
+	}
+	if typeName == "" {
+		return nil, fmt.Errorf("could not determine receiver type name")
+	}
+
+	// Find the scanner.TypeInfo for the receiver
+	var receiverTypeInfo *scanner.TypeInfo
+	for _, t := range fn.Package.Types {
+		if t.Name == typeName {
+			receiverTypeInfo = t
+			break
+		}
+	}
+	if receiverTypeInfo == nil {
+		return nil, fmt.Errorf("could not find type info for receiver %s in package %s", typeName, fn.Package.ImportPath)
+	}
+
+	// Create a symbolic instance of the receiver
+	instance := &symgo.Instance{
+		TypeName: fmt.Sprintf("%s.%s", receiverTypeInfo.PkgPath, receiverTypeInfo.Name),
+		BaseObject: symgo.BaseObject{
+			ResolvedTypeInfo: receiverTypeInfo,
+		},
+	}
+
+	// If the receiver type is a pointer, wrap the instance in a pointer object.
+	// The logic in `findDirectMethodOnType` relies on this to match pointer receivers.
+	if isPointer {
+		return &symgo.Pointer{Value: instance}, nil
+	}
+
+	return instance, nil
+}
+
 func (a *analyzer) analyze(ctx context.Context, asJSON bool) error {
 	a.ctx = ctx
 
@@ -545,7 +598,11 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool) error {
 
 	// Mark all entry points as "used" to begin with.
 	for _, ep := range entryPoints {
-		epName := getFullName(a.s, ep.Package, &scanner.FunctionInfo{Name: ep.Name.Name, AstDecl: ep.Decl})
+		if ep.Def == nil {
+			// This might happen for synthetic functions, though we don't expect it for entry points.
+			continue
+		}
+		epName := getFullName(a.s, ep.Package, ep.Def)
 		usageMap[epName] = true
 	}
 
@@ -553,7 +610,22 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool) error {
 	for _, ep := range entryPoints {
 		epName := getFullName(a.s, ep.Package, &scanner.FunctionInfo{Name: ep.Name.Name, AstDecl: ep.Decl})
 		slog.DebugContext(ctx, "analyzing from entry point", "entrypoint", epName)
-		interp.Apply(ctx, ep, []object.Object{}, ep.Package)
+
+		var args []symgo.Object
+		if ep.Decl != nil && ep.Decl.Recv != nil {
+			// This is a method. We need to create a symbolic receiver for it.
+			receiver, err := a.createSymbolicReceiver(ctx, ep)
+			if err != nil {
+				slog.WarnContext(ctx, "could not create symbolic receiver", "method", epName, "error", err)
+				continue
+			}
+			// In the symgo evaluator, the receiver is passed as the first argument
+			// to the function's `Apply` method, but the `extendFunctionEnv` logic
+			// actually uses the `fn.Receiver` field. So we must set it here.
+			ep.Receiver = receiver
+		}
+
+		interp.Apply(ctx, ep, args, ep.Package)
 	}
 	slog.InfoContext(ctx, "symbolic execution complete")
 

@@ -88,6 +88,59 @@ func IgnoredFunc() {}
 	}
 }
 
+func TestFindOrphans_methodEntryPoint(t *testing.T) {
+	// This is a regression test for the main issue.
+	// In library mode, an exported method is an entry point. The analyzer
+	// must correctly create a symbolic receiver for it, so that subsequent
+	// method calls on that receiver can be traced.
+	files := map[string]string{
+		"go.mod": "module example.com/method-entrypoint\ngo 1.21\n",
+		"lib/lib.go": `
+package lib
+
+type Service struct{}
+
+// Start is the entry point. It calls another method on the same struct.
+func (s *Service) Start() {
+	s.internalStart()
+}
+
+// internalStart should be marked as "used".
+func (s *Service) internalStart() {}
+`,
+	}
+	dir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	log.SetOutput(io.Discard)
+
+	startPatterns := []string{"./..."}
+	// Force library mode. This makes (*Service).Start an entry point.
+	err := run(context.Background(), true, false, dir, false, false, "lib", startPatterns, nil)
+	if err != nil {
+		t.Fatalf("run() failed: %v", err)
+	}
+
+	w.Close()
+	os.Stdout = oldStdout
+
+	var buf bytes.Buffer
+	io.Copy(&buf, r)
+	output := buf.String()
+
+	// Before the fix, internalStart would be reported as an orphan because
+	// the symbolic receiver 's' was not correctly instantiated.
+	if strings.Contains(output, "internalStart") {
+		t.Errorf("internalStart was reported as an orphan, but it should be considered used")
+	}
+	if !strings.Contains(output, "No orphans found") {
+		t.Errorf("expected 'No orphans found' message, but got:\n%s", output)
+	}
+}
+
 func TestFindOrphans_intraPackageMethodCall(t *testing.T) {
 	files := map[string]string{
 		"go.mod": "module example.com/intra-pkg-methods\ngo 1.21\n",

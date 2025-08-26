@@ -318,12 +318,25 @@ func (e *Evaluator) evalCompositeLit(ctx context.Context, node *ast.CompositeLit
 		switch v := elt.(type) {
 		case *ast.KeyValueExpr:
 			// This handles struct literals: { Key: Value }
-			// We only need to evaluate the value part to trace calls.
+			// and map literals: { Key: Value }
+			// We always need to evaluate the value part to trace calls.
 			e.Eval(ctx, v.Value, env, pkg)
+			// For maps, keys can also be expressions with function calls.
+			// For structs, keys are just identifiers, so evaluating them is harmless
+			// if we check the type first.
+			if fieldType.IsMap {
+				e.Eval(ctx, v.Key, env, pkg)
+			}
 		default:
 			// This handles slice/array literals: { Value1, Value2 }
 			e.Eval(ctx, v, env, pkg)
 		}
+	}
+
+	if fieldType.IsMap {
+		mapObj := &object.Map{MapFieldType: fieldType}
+		mapObj.SetFieldType(fieldType)
+		return mapObj
 	}
 
 	if fieldType.IsSlice {
@@ -1438,6 +1451,12 @@ func (e *Evaluator) evalBasicLit(n *ast.BasicLit) object.Object {
 			return e.newError(n.Pos(), "could not unquote string %q", n.Value)
 		}
 		return &object.String{Value: s}
+	case token.FLOAT:
+		f, err := strconv.ParseFloat(n.Value, 64)
+		if err != nil {
+			return e.newError(n.Pos(), "could not parse %q as float", n.Value)
+		}
+		return &object.Float{Value: f}
 	default:
 		return e.newError(n.Pos(), "unsupported literal type: %s", n.Kind)
 	}

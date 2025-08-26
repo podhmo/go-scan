@@ -169,6 +169,8 @@ func (e *Evaluator) Eval(ctx context.Context, node ast.Node, env *object.Environ
 		return e.Eval(ctx, n.X, env, pkg)
 	case *ast.IncDecStmt:
 		return e.evalIncDecStmt(ctx, n, env, pkg)
+	case *ast.EmptyStmt:
+		return nil // Empty statements do nothing.
 	case *ast.FuncLit:
 		return &object.Function{
 			Parameters: n.Type.Params,

@@ -88,7 +88,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     - [ ] `*ast.InterfaceType`
     - [ ] `*ast.MapType`
     - [ ] `*ast.StructType`
-    - [ ] `*ast.EmptyStmt`
+    - [x] `*ast.EmptyStmt`
     - [x] `*ast.IncDecStmt`
     - [ ] `*ast.LabeledStmt`
     - [ ] `*ast.SendStmt`

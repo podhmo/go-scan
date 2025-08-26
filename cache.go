@@ -392,9 +392,13 @@ func (sc *symbolCache) getFilesToScan(ctx context.Context, packageDirPath string
 	}
 
 	for _, entry := range dirEntries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") || strings.HasSuffix(entry.Name(), "_test.go") {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") {
 			continue
 		}
+		// NOTE: We do not filter `_test.go` here. The cache should be a neutral
+		// reflection of all .go files. The decision to include/exclude tests
+		// belongs to the primary file-listing function (`listGoFiles`) that
+		// receives the `includeTests` configuration.
 		absPath := filepath.Join(packageDirPath, entry.Name())
 		relPath, err := sc.makeRelative(absPath) // Converts to path relative to sc.rootDir
 		if err != nil {

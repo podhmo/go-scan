@@ -31,6 +31,7 @@ const (
 	POINTER_OBJ      ObjectType = "POINTER"
 	NIL_OBJ          ObjectType = "NIL"
 	SLICE_OBJ        ObjectType = "SLICE"
+	MAP_OBJ          ObjectType = "MAP"
 	MULTI_RETURN_OBJ ObjectType = "MULTI_RETURN"
 	BREAK_OBJ        ObjectType = "BREAK"
 	CONTINUE_OBJ     ObjectType = "CONTINUE"
@@ -389,6 +390,26 @@ func (s *Slice) Inspect() string {
 		return s.SliceFieldType.String()
 	}
 	return "[]<unknown>"
+}
+
+// --- Map Object ---
+
+// Map represents a map literal. Its type is represented by a FieldType,
+// which captures the map structure (e.g., map[string]int).
+type Map struct {
+	BaseObject
+	MapFieldType *scanner.FieldType
+}
+
+// Type returns the type of the Map object.
+func (m *Map) Type() ObjectType { return MAP_OBJ }
+
+// Inspect returns a string representation of the map type.
+func (m *Map) Inspect() string {
+	if m.MapFieldType != nil {
+		return m.MapFieldType.String()
+	}
+	return "map[<unknown>]<unknown>"
 }
 
 // --- Environment ---

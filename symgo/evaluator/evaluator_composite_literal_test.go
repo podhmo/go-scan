@@ -132,3 +132,88 @@ func getFunctionSignature(fn *object.Function) string {
 	}
 	return fn.Name.Name
 }
+
+func TestEval_FunctionInMapLiteral(t *testing.T) {
+	files := map[string]string{
+		"go.mod": "module example.com/m",
+		"main.go": `
+package main
+
+func f() {}
+
+func g(fn func()) func() {
+	return fn
+}
+
+func h() string {
+	return "key2"
+}
+
+func main() {
+	_ = map[string]func(){
+		"key1":  f,
+		h(): g(f),
+	}
+}
+`,
+	}
+
+	dir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	usedFunctions := make(map[string]bool)
+
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
+		mainPkg := pkgs[0]
+		eval := New(s, s.Logger, nil, nil)
+
+		eval.RegisterDefaultIntrinsic(func(args ...object.Object) object.Object {
+			if len(args) == 0 {
+				return nil
+			}
+			if fn, ok := args[0].(*object.Function); ok {
+				sig := getFunctionSignature(fn)
+				usedFunctions[sig] = true
+			}
+			for _, arg := range args[1:] {
+				if fn, ok := arg.(*object.Function); ok {
+					sig := getFunctionSignature(fn)
+					usedFunctions[sig] = true
+				}
+			}
+			return &object.SymbolicPlaceholder{Reason: "intrinsic call"}
+		})
+
+		env := object.NewEnvironment()
+		for _, file := range mainPkg.AstFiles {
+			eval.Eval(ctx, file, env, mainPkg)
+		}
+
+		mainFuncObj, ok := env.Get("main")
+		if !ok {
+			return fmt.Errorf("main function not found in environment")
+		}
+		mainFunc := mainFuncObj.(*object.Function)
+
+		eval.Apply(ctx, mainFunc, []object.Object{}, mainPkg)
+		return nil
+	}
+
+	if _, err := scantest.Run(t, context.Background(), dir, []string{"."}, action); err != nil {
+		t.Fatalf("scantest.Run() failed: %v", err)
+	}
+
+	t.Logf("Used functions in map literal test: %v", usedFunctions)
+
+	expected := []string{
+		"example.com/m.f",
+		"example.com/m.g",
+		"example.com/m.h",
+	}
+
+	for _, sig := range expected {
+		if _, ok := usedFunctions[sig]; !ok {
+			t.Errorf("expected function '%s' to be marked as used, but it was not", sig)
+		}
+	}
+}

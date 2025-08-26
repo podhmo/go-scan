@@ -1129,27 +1129,25 @@ func (e *Evaluator) evalIfStmt(ctx context.Context, n *ast.IfStmt, env *object.E
 	// The new assignment logic handles updating parent scopes correctly.
 	thenEnv := object.NewEnclosedEnvironment(ifStmtEnv)
 	thenResult := e.Eval(ctx, n.Body, thenEnv, pkg)
-	if thenResult != nil {
-		rt := thenResult.Type()
-		if rt == object.RETURN_VALUE_OBJ || rt == object.ERROR_OBJ || rt == object.BREAK_OBJ || rt == object.CONTINUE_OBJ {
-			// Simplification: If the 'then' branch terminates flow, we propagate the signal
-			// and do not evaluate the 'else' branch. This is an acceptable trade-off
-			// for making control flow analysis more accurate.
+
+	var elseResult object.Object
+	if n.Else != nil {
+		elseEnv := object.NewEnclosedEnvironment(ifStmtEnv)
+		elseResult = e.Eval(ctx, n.Else, elseEnv, pkg)
+	}
+
+	// If both branches terminate with the same type of control flow, propagate it.
+	// This is a simplification. A more robust implementation might track multiple
+	// possible return states.
+	if thenResult != nil && elseResult != nil && thenResult.Type() == elseResult.Type() {
+		switch thenResult.Type() {
+		case object.BREAK_OBJ, object.CONTINUE_OBJ, object.RETURN_VALUE_OBJ, object.ERROR_OBJ:
 			return thenResult
 		}
 	}
 
-	if n.Else != nil {
-		elseEnv := object.NewEnclosedEnvironment(ifStmtEnv)
-		elseResult := e.Eval(ctx, n.Else, elseEnv, pkg)
-		if elseResult != nil {
-			rt := elseResult.Type()
-			if rt == object.RETURN_VALUE_OBJ || rt == object.ERROR_OBJ || rt == object.BREAK_OBJ || rt == object.CONTINUE_OBJ {
-				return elseResult
-			}
-		}
-	}
-
+	// If only one branch terminates, or they terminate differently, the overall
+	// execution path can continue, so we return a placeholder.
 	return &object.SymbolicPlaceholder{Reason: "if/else statement"}
 }
 

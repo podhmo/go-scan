@@ -1112,7 +1112,7 @@ func (e *Evaluator) evalBranchStmt(n *ast.BranchStmt) object.Object {
 	case token.CONTINUE:
 		return object.CONTINUE
 	default:
-		return newError(n.Pos(), "unsupported branch statement: %s", n.Tok)
+		return e.newError(n.Pos(), "unsupported branch statement: %s", n.Tok)
 	}
 }
 

@@ -44,7 +44,7 @@ func TestError_Type(t *testing.T) {
 
 func TestError_Inspect(t *testing.T) {
 	e := &Error{Message: "file not found"}
-	expected := "Error: file not found"
+	expected := "symgo runtime error: file not found\n"
 	if e.Inspect() != expected {
 		t.Errorf("e.Inspect() wrong. want=%q, got=%q", expected, e.Inspect())
 	}

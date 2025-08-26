@@ -162,6 +162,8 @@ func (e *Evaluator) Eval(ctx context.Context, node ast.Node, env *object.Environ
 		return e.Eval(ctx, n.X, env, pkg)
 	case *ast.IncDecStmt:
 		return e.evalIncDecStmt(ctx, n, env, pkg)
+	case *ast.TypeAssertExpr:
+		return e.evalTypeAssertExpr(ctx, n, env, pkg)
 	case *ast.FuncLit:
 		return &object.Function{
 			Parameters: n.Type.Params,
@@ -211,6 +213,55 @@ func (e *Evaluator) evalIncDecStmt(ctx context.Context, n *ast.IncDecStmt, env *
 	// If v.Value is not an Integer (e.g., a SymbolicPlaceholder), we do nothing, as requested.
 
 	return nil // IncDec is a statement, so it doesn't return a value.
+}
+
+func (e *Evaluator) evalTypeAssertExpr(ctx context.Context, n *ast.TypeAssertExpr, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
+	// First, evaluate the expression on which the type assertion is performed.
+	// This ensures we trace any function calls that produce the value.
+	val := e.Eval(ctx, n.X, env, pkg)
+	if isError(val) {
+		return val
+	}
+
+	// Now, resolve the type that is being asserted.
+	if pkg == nil || pkg.Fset == nil {
+		return e.newError(n.Pos(), "package info or fset is missing, cannot resolve types for type assertion")
+	}
+	file := pkg.Fset.File(n.Pos())
+	if file == nil {
+		return e.newError(n.Pos(), "could not find file for node position")
+	}
+	astFile, ok := pkg.AstFiles[file.Name()]
+	if !ok {
+		return e.newError(n.Pos(), "could not find ast.File for path: %s", file.Name())
+	}
+	importLookup := e.scanner.BuildImportLookup(astFile)
+
+	assertedFieldType := e.scanner.TypeInfoFromExpr(ctx, n.Type, nil, pkg, importLookup)
+	if assertedFieldType == nil {
+		var typeNameBuf bytes.Buffer
+		printer.Fprint(&typeNameBuf, pkg.Fset, n.Type)
+		return e.newError(n.Pos(), "could not resolve type for type assertion: %s", typeNameBuf.String())
+	}
+	resolvedType, _ := assertedFieldType.Resolve(ctx)
+
+	// Create a symbolic placeholder for the result of the assertion.
+	// This placeholder now carries the asserted type information.
+	result := &object.SymbolicPlaceholder{
+		Reason: fmt.Sprintf("result of type assertion to %s", assertedFieldType.String()),
+		BaseObject: object.BaseObject{
+			ResolvedTypeInfo:  resolvedType,
+			ResolvedFieldType: assertedFieldType,
+		},
+	}
+
+	// The AST parent of a TypeAssertExpr is often an AssignStmt.
+	// That statement will determine if this was a single-value or comma-ok assertion.
+	// We return a special object to let the assignment handler know what happened.
+	return &object.TypeAssertResult{
+		Value: result,
+		Ok:    &object.Boolean{Value: true}, // Symbolically, we assume the assertion succeeds.
+	}
 }
 
 func (e *Evaluator) evalIndexExpr(ctx context.Context, node *ast.IndexExpr, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
@@ -1253,6 +1304,22 @@ func (e *Evaluator) evalAssignStmt(ctx context.Context, n *ast.AssignStmt, env *
 			return rhsValue
 		}
 
+		// Handle comma-ok type assertion
+		if assertResult, ok := rhsValue.(*object.TypeAssertResult); ok {
+			if len(n.Lhs) != 2 {
+				return e.newError(n.Pos(), "assignment mismatch: type assertion with 2 values on RHS but %d variables on LHS", len(n.Lhs))
+			}
+			// Assign the value
+			if ident, ok := n.Lhs[0].(*ast.Ident); ok && ident.Name != "_" {
+				e.assignIdentifier(ident, assertResult.Value, n.Tok, env)
+			}
+			// Assign the 'ok' boolean
+			if ident, ok := n.Lhs[1].(*ast.Ident); ok && ident.Name != "_" {
+				e.assignIdentifier(ident, assertResult.Ok, n.Tok, env)
+			}
+			return nil
+		}
+
 		// The result of a function call might be wrapped in a ReturnValue.
 		if ret, ok := rhsValue.(*object.ReturnValue); ok {
 			rhsValue = ret.Value
@@ -1293,17 +1360,27 @@ func (e *Evaluator) evalAssignStmt(ctx context.Context, n *ast.AssignStmt, env *
 
 	// Handle single assignment: x = y or x := y
 	if len(n.Lhs) == 1 && len(n.Rhs) == 1 {
+		val := e.Eval(ctx, n.Rhs[0], env, pkg)
+		if isError(val) {
+			return val
+		}
+
+		// Handle single-value type assertion
+		if assertResult, ok := val.(*object.TypeAssertResult); ok {
+			val = assertResult.Value
+		}
+
 		switch lhs := n.Lhs[0].(type) {
 		case *ast.Ident:
 			if lhs.Name == "_" {
-				// Evaluate RHS for side-effects even if assigned to blank identifier.
-				return e.Eval(ctx, n.Rhs[0], env, pkg)
+				// We already evaluated the RHS, so just return
+				return nil
 			}
-			return e.evalIdentAssignment(ctx, lhs, n.Rhs[0], n.Tok, env, pkg)
+			// Re-use evalIdentAssignment logic by wrapping the already-evaluated value
+			return e.evalIdentAssignmentFromValue(lhs, val, n.Tok, env)
 		case *ast.SelectorExpr:
-			// For now, we don't model state changes on fields, but we evaluate the RHS
+			// For now, we don't model state changes on fields, but we evaluated the RHS
 			// to trace any function calls.
-			e.Eval(ctx, n.Rhs[0], env, pkg)
 			return nil
 		default:
 			return e.newError(n.Pos(), "unsupported assignment target: expected an identifier or selector, but got %T", lhs)
@@ -1346,7 +1423,10 @@ func (e *Evaluator) evalIdentAssignment(ctx context.Context, ident *ast.Ident, r
 	if isError(val) {
 		return val
 	}
+	return e.evalIdentAssignmentFromValue(ident, val, tok, env)
+}
 
+func (e *Evaluator) evalIdentAssignmentFromValue(ident *ast.Ident, val object.Object, tok token.Token, env *object.Environment) object.Object {
 	// If the value is a return value from a function call, unwrap it.
 	if ret, ok := val.(*object.ReturnValue); ok {
 		val = ret.Value

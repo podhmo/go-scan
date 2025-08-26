@@ -33,9 +33,10 @@ const (
 	NIL_OBJ          ObjectType = "NIL"
 	SLICE_OBJ        ObjectType = "SLICE"
 	MAP_OBJ          ObjectType = "MAP"
-	MULTI_RETURN_OBJ ObjectType = "MULTI_RETURN"
-	BREAK_OBJ        ObjectType = "BREAK"
-	CONTINUE_OBJ     ObjectType = "CONTINUE"
+	MULTI_RETURN_OBJ   ObjectType = "MULTI_RETURN"
+	TYPE_ASSERT_RESULT ObjectType = "TYPE_ASSERT_RESULT"
+	BREAK_OBJ          ObjectType = "BREAK"
+	CONTINUE_OBJ       ObjectType = "CONTINUE"
 )
 
 // Object is the interface that all value types in our symbolic engine will implement.
@@ -523,6 +524,25 @@ func (mr *MultiReturn) Type() ObjectType { return MULTI_RETURN_OBJ }
 // Inspect returns a string representation of the multi-return values.
 func (mr *MultiReturn) Inspect() string {
 	return "multi-return"
+}
+
+// --- TypeAssertResult Object ---
+
+// TypeAssertResult is a special object type to represent the result of a type assertion.
+// This is not a first-class object that a user can interact with, but an internal
+// mechanism for the evaluator to communicate with the assignment statement handler.
+type TypeAssertResult struct {
+	BaseObject
+	Value Object // The value after assertion
+	Ok    Object // The boolean result for comma-ok assertions
+}
+
+// Type returns the type of the TypeAssertResult object.
+func (tar *TypeAssertResult) Type() ObjectType { return TYPE_ASSERT_RESULT }
+
+// Inspect returns a string representation of the type assertion result.
+func (tar *TypeAssertResult) Inspect() string {
+	return "type-assert-result"
 }
 
 // --- Break Object ---

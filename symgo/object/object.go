@@ -37,6 +37,7 @@ const (
 	MULTI_RETURN_OBJ ObjectType = "MULTI_RETURN"
 	BREAK_OBJ        ObjectType = "BREAK"
 	CONTINUE_OBJ     ObjectType = "CONTINUE"
+	VARIADIC_OBJ     ObjectType = "VARIADIC"
 )
 
 // Object is the interface that all value types in our symbolic engine will implement.
@@ -93,7 +94,7 @@ type String struct {
 func (s *String) Type() ObjectType { return STRING_OBJ }
 
 // Inspect returns a string representation of the String's value.
-func (s *String) Inspect() string { return s.Value }
+func (s *String) Inspect() string { return fmt.Sprintf("%q", s.Value) }
 
 // --- Integer Object ---
 
@@ -408,6 +409,7 @@ func (n *Nil) Inspect() string { return "nil" }
 // which captures the slice structure (e.g., []User).
 type Slice struct {
 	BaseObject
+	Elements       []Object
 	SliceFieldType *scanner.FieldType
 }
 
@@ -416,10 +418,15 @@ func (s *Slice) Type() ObjectType { return SLICE_OBJ }
 
 // Inspect returns a string representation of the slice type.
 func (s *Slice) Inspect() string {
-	if s.SliceFieldType != nil {
-		return s.SliceFieldType.String()
+	var out bytes.Buffer
+	elements := []string{}
+	for _, e := range s.Elements {
+		elements = append(elements, e.Inspect())
 	}
-	return "[]<unknown>"
+	out.WriteString("[")
+	out.WriteString(strings.Join(elements, ", "))
+	out.WriteString("]")
+	return out.String()
 }
 
 // --- Map Object ---
@@ -565,6 +572,25 @@ func (c *Continue) Type() ObjectType { return CONTINUE_OBJ }
 
 // Inspect returns a string representation of the continue statement.
 func (c *Continue) Inspect() string { return "continue" }
+
+// --- Variadic Object ---
+
+// Variadic represents a variadic argument expansion (e.g., `slice...`).
+type Variadic struct {
+	BaseObject
+	Value Object // The slice being expanded
+}
+
+// Type returns the type of the Variadic object.
+func (v *Variadic) Type() ObjectType { return VARIADIC_OBJ }
+
+// Inspect returns a string representation of the variadic expansion.
+func (v *Variadic) Inspect() string {
+	if v.Value != nil {
+		return fmt.Sprintf("...%s", v.Value.Inspect())
+	}
+	return "..."
+}
 
 var (
 	// BREAK is the singleton break value.

@@ -83,7 +83,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [ ] **Channels**: The interpreter has limited support for channel operations (e.g., in `select` statements) but does not have a concrete channel object type, limiting analysis of channel-based logic.
 - [ ] **Other AST Nodes**: The following `ast.Node` types are not yet handled by the main evaluation loop:
     - [ ] `*ast.ChanType`
-    - [ ] `*ast.Ellipsis`
+    - [x] `*ast.Ellipsis` (Note: Implemented for variadic arguments in function calls and definitions.)
     - [ ] `*ast.FuncType`
     - [ ] `*ast.InterfaceType`
     - [ ] `*ast.MapType`

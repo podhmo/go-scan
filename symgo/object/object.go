@@ -421,8 +421,24 @@ func (e *Environment) Get(name string) (Object, bool) {
 	return obj, ok
 }
 
-// Set stores an object by name in the current environment.
+// Set stores an object by name in the environment, walking up to outer scopes
+// to find where the variable is defined.
 func (e *Environment) Set(name string, val Object) Object {
+	if _, ok := e.store[name]; ok {
+		e.store[name] = val
+		return val
+	}
+	if e.outer != nil {
+		return e.outer.Set(name, val)
+	}
+	// If not found anywhere, define it in the current (innermost) scope.
+	e.store[name] = val
+	return val
+}
+
+// SetLocal stores an object by name in the local (current) environment only.
+// This is used for `:=` declarations.
+func (e *Environment) SetLocal(name string, val Object) Object {
 	e.store[name] = val
 	return val
 }

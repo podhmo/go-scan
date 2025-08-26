@@ -86,6 +86,134 @@ func main() {
 	}
 }
 
+func TestBuiltin_Panic(t *testing.T) {
+	files := map[string]string{
+		"go.mod": "module example.com/me",
+		"main.go": `package main
+
+func main() {
+	panic("test message")
+}`,
+	}
+
+	dir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
+		pkg := pkgs[0]
+		interp, err := symgo.NewInterpreter(s, symgo.WithLogger(s.Logger))
+		if err != nil {
+			return err
+		}
+		env := symgo.NewEnclosedEnvironment(nil)
+
+		for _, file := range pkg.AstFiles {
+			_, err := interp.EvalWithEnv(ctx, file, env, pkg)
+			if err != nil {
+				return err
+			}
+		}
+
+		mainFuncObj, ok := env.Get("main")
+		if !ok {
+			return fmt.Errorf("main function not found")
+		}
+
+		_, evalErr := interp.Apply(ctx, mainFuncObj, []symgo.Object{}, pkg)
+		if evalErr == nil {
+			return fmt.Errorf("expected a panic error, but got nil")
+		}
+
+		expectedMsg := "panic: test message"
+		if !strings.Contains(evalErr.Error(), expectedMsg) {
+			return fmt.Errorf("error message mismatch\nwant_substr: %q\ngot:         %q", expectedMsg, evalErr.Error())
+		}
+		return nil
+	}
+
+	if _, err := scantest.Run(t, context.Background(), dir, []string{"."}, action); err != nil {
+		t.Fatalf("scantest.Run() failed: %v", err)
+	}
+}
+
+func TestMultiValueAssignment(t *testing.T) {
+	files := map[string]string{
+		"go.mod": "module example.com/me",
+		"main.go": `package main
+
+func twoReturns() (int, string) {
+	return 42, "hello"
+}
+
+func main() {
+	x, y := twoReturns()
+	_ = x
+	_ = y
+}`,
+	}
+
+	dir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
+		pkg := pkgs[0]
+		interp, err := symgo.NewInterpreter(s, symgo.WithLogger(s.Logger))
+		if err != nil {
+			return err
+		}
+		env := symgo.NewEnclosedEnvironment(nil)
+
+		for _, file := range pkg.AstFiles {
+			_, err := interp.EvalWithEnv(ctx, file, env, pkg)
+			if err != nil {
+				return err
+			}
+		}
+
+		// First, test that calling the function directly returns a MultiReturn
+		twoReturnsFn, ok := env.Get("twoReturns")
+		if !ok {
+			return fmt.Errorf("twoReturns function not found")
+		}
+
+		result, applyErr := interp.Apply(ctx, twoReturnsFn, []symgo.Object{}, pkg)
+		if applyErr != nil {
+			return fmt.Errorf("Apply(twoReturns) failed: %w", applyErr)
+		}
+
+		retVal, ok := result.(*object.ReturnValue)
+		if !ok {
+			return fmt.Errorf("expected ReturnValue, got %T", result)
+		}
+		multiRet, ok := retVal.Value.(*object.MultiReturn)
+		if !ok {
+			return fmt.Errorf("expected inner value to be MultiReturn, got %T", retVal.Value)
+		}
+		if len(multiRet.Values) != 2 {
+			return fmt.Errorf("expected 2 return values, got %d", len(multiRet.Values))
+		}
+
+		// Now, test the assignment by running main
+		mainFuncObj, ok := env.Get("main")
+		if !ok {
+			return fmt.Errorf("main function not found")
+		}
+
+		// Since variables are created in a nested environment, we can't easily access them.
+		// The main test here is that the Apply call doesn't return an "assignment mismatch" error.
+		_, mainApplyErr := interp.Apply(ctx, mainFuncObj, []symgo.Object{}, pkg)
+		if mainApplyErr != nil {
+			return fmt.Errorf("Apply(main) failed unexpectedly: %w", mainApplyErr)
+		}
+
+		return nil
+	}
+
+	if _, err := scantest.Run(t, context.Background(), dir, []string{"."}, action); err != nil {
+		t.Fatalf("scantest.Run() failed: %v", err)
+	}
+}
+
 func TestFeature_IfElseEvaluation(t *testing.T) {
 	files := map[string]string{
 		"go.mod": "module example.com/me",

@@ -1171,39 +1171,49 @@ func (e *Evaluator) evalBlockStatement(ctx context.Context, block *ast.BlockStmt
 
 func (e *Evaluator) evalReturnStmt(ctx context.Context, n *ast.ReturnStmt, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
 	if len(n.Results) == 0 {
-		return nil // naked return
+		return &object.ReturnValue{Value: &object.Nil{}} // naked return
 	}
-	if len(n.Results) > 1 {
-		return e.newError(n.Pos(), "unsupported return statement: expected 1 result")
+
+	if len(n.Results) == 1 {
+		val := e.Eval(ctx, n.Results[0], env, pkg)
+		if isError(val) {
+			return val
+		}
+		if _, ok := val.(*object.ReturnValue); ok {
+			return val
+		}
+		return &object.ReturnValue{Value: val}
 	}
-	val := e.Eval(ctx, n.Results[0], env, pkg)
-	if isError(val) {
-		return val
+
+	// Handle multiple return values
+	vals := e.evalExpressions(ctx, n.Results, env, pkg)
+	if len(vals) == 1 && isError(vals[0]) {
+		return vals[0] // Error occurred during expression evaluation
 	}
-	// If the evaluated result is already a ReturnValue (from a nested function call),
-	// just pass it up. Otherwise, wrap the result in a new ReturnValue.
-	if _, ok := val.(*object.ReturnValue); ok {
-		return val
-	}
-	return &object.ReturnValue{Value: val}
+
+	return &object.ReturnValue{Value: &object.MultiReturn{Values: vals}}
 }
 
 func (e *Evaluator) evalAssignStmt(ctx context.Context, n *ast.AssignStmt, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
+	// Handle multi-value assignment, e.g., x, y := f() or x, y = f()
 	if len(n.Rhs) == 1 && len(n.Lhs) > 1 {
 		rhsValue := e.Eval(ctx, n.Rhs[0], env, pkg)
 		if isError(rhsValue) {
 			return rhsValue
 		}
 
+		// The result of a function call might be wrapped in a ReturnValue.
+		if ret, ok := rhsValue.(*object.ReturnValue); ok {
+			rhsValue = ret.Value
+		}
+
 		multiRet, ok := rhsValue.(*object.MultiReturn)
 		if !ok {
-			// If the RHS is not a multi-return object, we can't perform the assignment.
-			// Fallback to assigning placeholders.
+			// This can happen if a function that is supposed to return multiple values
+			// is not correctly modeled. We fall back to assigning placeholders.
+			e.logWithContext(ctx, slog.LevelWarn, "expected multi-return value on RHS of assignment", "got_type", rhsValue.Type())
 			for _, lhsExpr := range n.Lhs {
-				if ident, ok := lhsExpr.(*ast.Ident); ok {
-					if ident.Name == "_" {
-						continue
-					}
+				if ident, ok := lhsExpr.(*ast.Ident); ok && ident.Name != "_" {
 					v := &object.Variable{
 						Name:  ident.Name,
 						Value: &object.SymbolicPlaceholder{Reason: "unhandled multi-value assignment"},
@@ -1224,28 +1234,60 @@ func (e *Evaluator) evalAssignStmt(ctx context.Context, n *ast.AssignStmt, env *
 					continue
 				}
 				val := multiRet.Values[i]
-				// When assigning from a multi-value return, the token is always ASSIGN, not DEFINE.
-				e.assignIdentifier(ident, val, token.ASSIGN, env)
+				e.assignIdentifier(ident, val, n.Tok, env) // Use the statement's token (:= or =)
 			}
 		}
 		return nil
 	}
 
-	if len(n.Lhs) != 1 || len(n.Rhs) != 1 {
-		return e.newError(n.Pos(), "unsupported assignment: expected 1 expression on each side, or multi-value assignment")
+	// Handle single assignment: x = y or x := y
+	if len(n.Lhs) == 1 && len(n.Rhs) == 1 {
+		switch lhs := n.Lhs[0].(type) {
+		case *ast.Ident:
+			if lhs.Name == "_" {
+				// Evaluate RHS for side-effects even if assigned to blank identifier.
+				return e.Eval(ctx, n.Rhs[0], env, pkg)
+			}
+			return e.evalIdentAssignment(ctx, lhs, n.Rhs[0], n.Tok, env, pkg)
+		case *ast.SelectorExpr:
+			// For now, we don't model state changes on fields, but we evaluate the RHS
+			// to trace any function calls.
+			e.Eval(ctx, n.Rhs[0], env, pkg)
+			return nil
+		default:
+			return e.newError(n.Pos(), "unsupported assignment target: expected an identifier or selector, but got %T", lhs)
+		}
 	}
 
-	switch lhs := n.Lhs[0].(type) {
-	case *ast.Ident:
-		if lhs.Name == "_" {
-			return e.Eval(ctx, n.Rhs[0], env, pkg)
+	// Handle parallel assignment: x, y = y, x
+	if len(n.Lhs) == len(n.Rhs) {
+		// First, evaluate all RHS expressions before any assignments are made.
+		// This is crucial for correctness in cases like `x, y = y, x`.
+		rhsValues := make([]object.Object, len(n.Rhs))
+		for i, rhsExpr := range n.Rhs {
+			val := e.Eval(ctx, rhsExpr, env, pkg)
+			if isError(val) {
+				return val
+			}
+			rhsValues[i] = val
 		}
-		return e.evalIdentAssignment(ctx, lhs, n.Rhs[0], n.Tok, env, pkg)
-	case *ast.SelectorExpr:
+
+		// Now, perform the assignments.
+		for i, lhsExpr := range n.Lhs {
+			if ident, ok := lhsExpr.(*ast.Ident); ok {
+				if ident.Name == "_" {
+					continue
+				}
+				e.assignIdentifier(ident, rhsValues[i], n.Tok, env)
+			} else {
+				// Handle other LHS types like selectors if needed in the future.
+				e.logWithContext(ctx, slog.LevelWarn, "unsupported LHS in parallel assignment", "type", fmt.Sprintf("%T", lhsExpr))
+			}
+		}
 		return nil
-	default:
-		return e.newError(n.Pos(), "unsupported assignment target: expected an identifier or selector, but got %T", lhs)
 	}
+
+	return e.newError(n.Pos(), "unsupported assignment statement")
 }
 
 func (e *Evaluator) evalIdentAssignment(ctx context.Context, ident *ast.Ident, rhs ast.Expr, tok token.Token, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
@@ -1273,43 +1315,54 @@ func (e *Evaluator) evalIdentAssignment(ctx context.Context, ident *ast.Ident, r
 func (e *Evaluator) assignIdentifier(ident *ast.Ident, val object.Object, tok token.Token, env *object.Environment) object.Object {
 	// For `:=`, we always define a new variable in the current scope.
 	if tok == token.DEFINE {
-		possibleTypes := make(map[*scanner.FieldType]struct{})
-		if ft := val.FieldType(); ft != nil {
-			possibleTypes[ft] = struct{}{}
-		}
+		// In Go, `:=` can redeclare a variable if it's in a different scope,
+		// but in our symbolic engine, we'll simplify and just overwrite in the local scope.
+		// A more complex implementation would handle shadowing more precisely.
 		v := &object.Variable{
-			Name:                  ident.Name,
-			Value:                 val,
-			PossibleConcreteTypes: possibleTypes,
+			Name:  ident.Name,
+			Value: val,
 			BaseObject: object.BaseObject{
 				ResolvedTypeInfo:  val.TypeInfo(),
 				ResolvedFieldType: val.FieldType(),
 			},
 		}
+		if val.FieldType() != nil {
+			if resolved, _ := val.FieldType().Resolve(context.Background()); resolved != nil && resolved.Kind == scanner.InterfaceKind {
+				v.PossibleConcreteTypes = make(map[*scanner.FieldType]struct{})
+				if ft := val.FieldType(); ft != nil {
+					v.PossibleConcreteTypes[ft] = struct{}{}
+				}
+			}
+		}
 		e.logger.Debug("evalAssignStmt: defining var", "name", ident.Name)
-		return env.Set(ident.Name, v)
+		return env.SetLocal(ident.Name, v) // Use SetLocal for :=
 	}
 
 	// For `=`, find the variable and update it in-place.
 	obj, ok := env.Get(ident.Name)
 	if !ok {
-		// This can happen for package-level variables not yet evaluated.
-		// We define it in the current scope as a fallback.
+		// This can happen for package-level variables not yet evaluated,
+		// or if the code is invalid Go. We define it in the current scope as a fallback.
 		return e.assignIdentifier(ident, val, token.DEFINE, env)
 	}
 
 	v, ok := obj.(*object.Variable)
 	if !ok {
 		// Not a variable, just overwrite it in the environment.
+		e.logger.Debug("evalAssignStmt: overwriting non-variable in env", "name", ident.Name)
 		return env.Set(ident.Name, val)
 	}
 
 	v.Value = val
 	newFieldType := val.FieldType()
 
-	// Check if the variable is an interface.
-	staticType := v.FieldType()
-	isInterface := staticType != nil && staticType.Definition != nil && staticType.Definition.Kind == scanner.InterfaceKind
+	// Check if the variable was originally typed as an interface.
+	var isInterface bool
+	if v.FieldType() != nil {
+		if staticType, _ := v.FieldType().Resolve(context.Background()); staticType != nil {
+			isInterface = staticType.Kind == scanner.InterfaceKind
+		}
+	}
 
 	if isInterface {
 		// For interfaces, we ADD the new concrete type to the set.
@@ -1321,12 +1374,13 @@ func (e *Evaluator) assignIdentifier(ident *ast.Ident, val object.Object, tok to
 			e.logger.Debug("evalAssignStmt: adding concrete type to interface var", "name", ident.Name, "new_type", newFieldType.String())
 		}
 	} else {
-		// For concrete types, we REPLACE the set.
+		// For concrete types, we can still track the type for robustness,
+		// but we don't need to accumulate them.
 		v.PossibleConcreteTypes = make(map[*scanner.FieldType]struct{})
 		if newFieldType != nil {
 			v.PossibleConcreteTypes[newFieldType] = struct{}{}
 		}
-		e.logger.Debug("evalAssignStmt: replacing concrete type for var", "name", ident.Name)
+		e.logger.Debug("evalAssignStmt: setting concrete type for var", "name", ident.Name)
 	}
 
 	return v
@@ -1372,8 +1426,12 @@ func (e *Evaluator) evalIdent(ctx context.Context, n *ast.Ident, env *object.Env
 		return val
 	}
 
-	if n.Name == "nil" {
-		return &object.Nil{}
+	// Fallback to universe scope for built-in values and functions.
+	if val, ok := universe.GetValue(n.Name); ok {
+		return val
+	}
+	if fn, ok := universe.GetFunction(n.Name); ok {
+		return &object.Intrinsic{Fn: fn}
 	}
 
 	e.logger.Debug("evalIdent: not found in env or intrinsics", "name", n.Name)
@@ -1539,18 +1597,17 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 			return evaluated
 		}
 
-		// If 'evaluated' is a Go nil, it's from a naked return.
-		// We must wrap it in an object.Object type to prevent panics.
-		// For now, we'll use object.Nil, as the most common case for naked
-		// returns in Go is for pointer/interface/slice types where nil is the zero value.
-		if evaluated == nil {
-			evaluated = &object.Nil{}
+		evaluatedValue := evaluated
+		if ret, ok := evaluated.(*object.ReturnValue); ok {
+			evaluatedValue = ret.Value
 		}
 
-		if ret, ok := evaluated.(*object.ReturnValue); ok {
-			return ret
+		// If the evaluated result is a Go nil (from a naked return), wrap it.
+		if evaluatedValue == nil {
+			return &object.ReturnValue{Value: &object.Nil{}}
 		}
-		return &object.ReturnValue{Value: evaluated}
+
+		return &object.ReturnValue{Value: evaluatedValue}
 
 	case *object.Intrinsic:
 		return fn.Fn(args...)
@@ -1559,64 +1616,101 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 		// Case 1: The placeholder represents an unresolved interface method call.
 		if fn.UnderlyingMethod != nil {
 			method := fn.UnderlyingMethod
-			var resultTypeInfo *scanner.TypeInfo
-			if len(method.Results) > 0 {
-				// Simplified: use the first return value.
-				resultType, _ := method.Results[0].Type.Resolve(context.Background())
-				if resultType == nil && method.Results[0].Type.IsBuiltin {
-					resultType = &scanner.TypeInfo{Name: method.Results[0].Type.Name}
+			if len(method.Results) <= 1 {
+				var resultTypeInfo *scanner.TypeInfo
+				if len(method.Results) == 1 {
+					resultType, _ := method.Results[0].Type.Resolve(context.Background())
+					if resultType == nil && method.Results[0].Type.IsBuiltin {
+						resultType = &scanner.TypeInfo{Name: method.Results[0].Type.Name}
+					}
+					resultTypeInfo = resultType
 				}
-				resultTypeInfo = resultType
-			}
-			return &object.SymbolicPlaceholder{
-				Reason:     fmt.Sprintf("result of interface method call %s", method.Name),
-				BaseObject: object.BaseObject{ResolvedTypeInfo: resultTypeInfo},
+				return &object.SymbolicPlaceholder{
+					Reason:     fmt.Sprintf("result of interface method call %s", method.Name),
+					BaseObject: object.BaseObject{ResolvedTypeInfo: resultTypeInfo},
+				}
+			} else {
+				// Multiple return values from interface method
+				results := make([]object.Object, len(method.Results))
+				for i, res := range method.Results {
+					resultType, _ := res.Type.Resolve(context.Background())
+					results[i] = &object.SymbolicPlaceholder{
+						Reason:     fmt.Sprintf("result %d of interface method call %s", i, method.Name),
+						BaseObject: object.BaseObject{ResolvedTypeInfo: resultType},
+					}
+				}
+				return &object.MultiReturn{Values: results}
 			}
 		}
 
 		// Case 2: The placeholder represents an external function call.
 		if fn.UnderlyingFunc != nil && fn.Package != nil {
-			if fn.UnderlyingFunc.AstDecl.Type.Results != nil && len(fn.UnderlyingFunc.AstDecl.Type.Results.List) > 0 {
-				var importLookup map[string]string
-				if fn.UnderlyingFunc.AstDecl != nil {
-					file := fn.Package.Fset.File(fn.UnderlyingFunc.AstDecl.Pos())
-					if file != nil {
-						if astFile, ok := fn.Package.AstFiles[file.Name()]; ok {
-							importLookup = e.scanner.BuildImportLookup(astFile)
-						}
-					}
-				}
+			results := fn.UnderlyingFunc.AstDecl.Type.Results
+			if results == nil || len(results.List) == 0 {
+				return &object.SymbolicPlaceholder{Reason: "result of external call with no return value"}
+			}
 
-				resultASTExpr := fn.UnderlyingFunc.AstDecl.Type.Results.List[0].Type
+			var importLookup map[string]string
+			if file := fn.Package.Fset.File(fn.UnderlyingFunc.AstDecl.Pos()); file != nil {
+				if astFile, ok := fn.Package.AstFiles[file.Name()]; ok {
+					importLookup = e.scanner.BuildImportLookup(astFile)
+				}
+			}
+
+			if len(results.List) == 1 {
+				// Single return value
+				resultASTExpr := results.List[0].Type
 				fieldType := e.scanner.TypeInfoFromExpr(context.Background(), resultASTExpr, nil, fn.Package, importLookup)
 				resolvedType, _ := fieldType.Resolve(context.Background())
 
-				if resolvedType == nil && fieldType.IsBuiltin {
-					if fieldType.Name == "error" {
-						stringFieldType := &scanner.FieldType{Name: "string", IsBuiltin: true}
-						errorMethod := &scanner.MethodInfo{
-							Name:    "Error",
-							Results: []*scanner.FieldInfo{{Type: stringFieldType}},
-						}
-						resolvedType = &scanner.TypeInfo{
-							Name:      "error",
-							Kind:      scanner.InterfaceKind,
-							Interface: &scanner.InterfaceInfo{Methods: []*scanner.MethodInfo{errorMethod}},
-						}
-					} else {
-						resolvedType = &scanner.TypeInfo{
-							Name:    fieldType.Name,
-							PkgPath: "", // Built-in types have no package path.
-							Kind:    scanner.InterfaceKind,
-						}
+				if resolvedType == nil && fieldType.IsBuiltin && fieldType.Name == "error" {
+					stringFieldType := &scanner.FieldType{Name: "string", IsBuiltin: true}
+					errorMethod := &scanner.MethodInfo{
+						Name:    "Error",
+						Results: []*scanner.FieldInfo{{Type: stringFieldType}},
+					}
+					resolvedType = &scanner.TypeInfo{
+						Name:      "error",
+						Kind:      scanner.InterfaceKind,
+						Interface: &scanner.InterfaceInfo{Methods: []*scanner.MethodInfo{errorMethod}},
 					}
 				}
 
 				return &object.SymbolicPlaceholder{
 					Reason:     fmt.Sprintf("result of external call to %s", fn.UnderlyingFunc.Name),
-					BaseObject: object.BaseObject{ResolvedTypeInfo: resolvedType},
+					BaseObject: object.BaseObject{ResolvedTypeInfo: resolvedType, ResolvedFieldType: fieldType},
 				}
 			}
+
+			// Multiple return values
+			returnValues := make([]object.Object, 0, len(results.List))
+			for i, field := range results.List {
+				fieldType := e.scanner.TypeInfoFromExpr(context.Background(), field.Type, nil, fn.Package, importLookup)
+				resolvedType, _ := fieldType.Resolve(context.Background())
+
+				if resolvedType == nil && fieldType.IsBuiltin && fieldType.Name == "error" {
+					stringFieldType := &scanner.FieldType{Name: "string", IsBuiltin: true}
+					errorMethod := &scanner.MethodInfo{
+						Name:    "Error",
+						Results: []*scanner.FieldInfo{{Type: stringFieldType}},
+					}
+					resolvedType = &scanner.TypeInfo{
+						Name:      "error",
+						Kind:      scanner.InterfaceKind,
+						Interface: &scanner.InterfaceInfo{Methods: []*scanner.MethodInfo{errorMethod}},
+					}
+				}
+
+				placeholder := &object.SymbolicPlaceholder{
+					Reason: fmt.Sprintf("result %d of external call to %s", i, fn.UnderlyingFunc.Name),
+					BaseObject: object.BaseObject{
+						ResolvedTypeInfo:  resolvedType,
+						ResolvedFieldType: fieldType,
+					},
+				}
+				returnValues = append(returnValues, placeholder)
+			}
+			return &object.MultiReturn{Values: returnValues}
 		}
 
 		// Case 3: Generic placeholder.

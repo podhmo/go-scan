@@ -39,7 +39,7 @@ func main() {
 			pkg := pkgs[0]
 			e := New(s, nil, nil, nil)
 
-			e.RegisterIntrinsic("main.assertType", func(args ...object.Object) object.Object {
+			e.RegisterIntrinsic("assertType", func(args ...object.Object) object.Object {
 				if len(args) > 0 {
 					assertedValue = args[0]
 				}
@@ -103,7 +103,7 @@ func main() {
 			pkg := pkgs[0]
 			e := New(s, nil, nil, nil)
 
-			e.RegisterIntrinsic("main.assertType", func(args ...object.Object) object.Object {
+			e.RegisterIntrinsic("assertType", func(args ...object.Object) object.Object {
 				if len(args) > 1 {
 					assertedS = args[0]
 					assertedOK = args[1]

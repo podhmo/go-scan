@@ -1543,14 +1543,22 @@ func (e *Evaluator) evalBasicLit(n *ast.BasicLit) object.Object {
 }
 
 func (e *Evaluator) evalIdent(ctx context.Context, n *ast.Ident, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
+	// Check for intrinsic overrides first. This allows tests to replace functions.
 	if pkg != nil {
+		// Prefer qualified path: "path/to/pkg.MyFunc"
 		key := pkg.ImportPath + "." + n.Name
 		if intrinsicFn, ok := e.intrinsics.Get(key); ok {
-			e.logger.Debug("evalIdent: found intrinsic, overriding", "key", key)
+			e.logger.Debug("evalIdent: found qualified intrinsic, overriding", "key", key)
 			return &object.Intrinsic{Fn: intrinsicFn}
 		}
 	}
+	// Fallback to unqualified name: "MyFunc"
+	if intrinsicFn, ok := e.intrinsics.Get(n.Name); ok {
+		e.logger.Debug("evalIdent: found unqualified intrinsic, overriding", "key", n.Name)
+		return &object.Intrinsic{Fn: intrinsicFn}
+	}
 
+	// If no intrinsic override, check the environment for a declared variable or function.
 	if val, ok := env.Get(n.Name); ok {
 		e.logger.Debug("evalIdent: found in env", "name", n.Name, "type", val.Type())
 		if v, ok := val.(*object.Variable); ok {
@@ -1563,7 +1571,7 @@ func (e *Evaluator) evalIdent(ctx context.Context, n *ast.Ident, env *object.Env
 		return val
 	}
 
-	// Fallback to universe scope for built-in values and functions.
+	// Finally, check the universe scope for built-in values (nil, true, false) and functions (len, cap, etc.).
 	if val, ok := universe.GetValue(n.Name); ok {
 		return val
 	}

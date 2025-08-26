@@ -545,15 +545,43 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool) error {
 
 	// Mark all entry points as "used" to begin with.
 	for _, ep := range entryPoints {
-		epName := getFullName(a.s, ep.Package, &scanner.FunctionInfo{Name: ep.Name.Name, AstDecl: ep.Decl})
+		if ep.Def == nil {
+			slog.WarnContext(ctx, "entry point function has no definition info", "name", ep.Name)
+			continue
+		}
+		epName := getFullName(a.s, ep.Package, ep.Def)
 		usageMap[epName] = true
 	}
 
 	// Run symbolic execution from each entry point to find what they use.
 	for _, ep := range entryPoints {
-		epName := getFullName(a.s, ep.Package, &scanner.FunctionInfo{Name: ep.Name.Name, AstDecl: ep.Decl})
+		if ep.Def != nil && ep.Def.Receiver != nil && ep.Receiver == nil {
+			receiverFieldType := ep.Def.Receiver.Type
+			receiverTypeInfo, err := receiverFieldType.Resolve(ctx)
+			if err != nil {
+				slog.WarnContext(ctx, "could not resolve receiver type for entry point", "entrypoint", ep.Def.Name, "error", err)
+				continue
+			}
+			if receiverTypeInfo != nil {
+				ep.Receiver = &object.SymbolicPlaceholder{
+					Reason: "symbolic receiver for library entry point",
+					BaseObject: object.BaseObject{
+						ResolvedTypeInfo:  receiverTypeInfo,
+						ResolvedFieldType: receiverFieldType,
+					},
+				}
+			}
+		}
+
+		if ep.Def == nil {
+			// Should have been caught above, but as a safeguard.
+			continue
+		}
+		epName := getFullName(a.s, ep.Package, ep.Def)
 		slog.DebugContext(ctx, "analyzing from entry point", "entrypoint", epName)
-		interp.Apply(ctx, ep, []object.Object{}, ep.Package)
+		if _, err := interp.Apply(ctx, ep, []object.Object{}, ep.Package); err != nil {
+			slog.WarnContext(ctx, "error during symbolic execution of entry point", "entrypoint", epName, "error", err)
+		}
 	}
 	slog.InfoContext(ctx, "symbolic execution complete")
 

@@ -88,6 +88,39 @@ func IgnoredFunc() {}
 	}
 }
 
+func TestFindOrphans_Realistic(t *testing.T) {
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	log.SetOutput(io.Discard)
+
+	// This test runs on the real filesystem, not an in-memory one,
+	// to more closely replicate the user's reported issue.
+	startPatterns := []string{"./testdata/repro-bug"}
+
+	err := run(context.Background(), true, false, "", true, false, "lib", startPatterns, []string{"vendor"})
+	if err != nil {
+		t.Fatalf("run() failed: %v", err)
+	}
+
+	w.Close()
+	os.Stdout = oldStdout
+
+	var buf bytes.Buffer
+	io.Copy(&buf, r)
+	output := buf.String()
+
+	// The bug is that unexportedMethod is reported as an orphan.
+	// A correct run should find no orphans, because ExportedMethod is an entry point
+	// that uses unexportedMethod, and ExportedUnusedFunc is also an entry point.
+	if strings.Contains(output, "unexportedMethod") {
+		t.Errorf("unexportedMethod was incorrectly reported as an orphan:\n%s", output)
+	}
+	if !strings.Contains(output, "No orphans found") {
+		t.Errorf("expected 'No orphans found', but got:\n%s", output)
+	}
+}
+
 func TestFindOrphans_intraPackageMethodCall(t *testing.T) {
 	files := map[string]string{
 		"go.mod": "module example.com/intra-pkg-methods\ngo 1.21\n",

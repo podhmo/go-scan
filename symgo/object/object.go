@@ -29,6 +29,8 @@ const (
 	NIL_OBJ          ObjectType = "NIL"
 	SLICE_OBJ        ObjectType = "SLICE"
 	MULTI_RETURN_OBJ ObjectType = "MULTI_RETURN"
+	BREAK_OBJ        ObjectType = "BREAK"
+	CONTINUE_OBJ     ObjectType = "CONTINUE"
 )
 
 // Object is the interface that all value types in our symbolic engine will implement.
@@ -435,6 +437,39 @@ func (mr *MultiReturn) Type() ObjectType { return MULTI_RETURN_OBJ }
 func (mr *MultiReturn) Inspect() string {
 	return "multi-return"
 }
+
+// --- Break Object ---
+
+// Break represents a break statement.
+type Break struct {
+	BaseObject
+}
+
+// Type returns the type of the Break object.
+func (b *Break) Type() ObjectType { return BREAK_OBJ }
+
+// Inspect returns a string representation of the break statement.
+func (b *Break) Inspect() string { return "break" }
+
+// --- Continue Object ---
+
+// Continue represents a continue statement.
+type Continue struct {
+	BaseObject
+}
+
+// Type returns the type of the Continue object.
+func (c *Continue) Type() ObjectType { return CONTINUE_OBJ }
+
+// Inspect returns a string representation of the continue statement.
+func (c *Continue) Inspect() string { return "continue" }
+
+var (
+	// BREAK is the singleton break value.
+	BREAK = &Break{}
+	// CONTINUE is the singleton continue value.
+	CONTINUE = &Continue{}
+)
 
 // --- Tracer Interface ---
 

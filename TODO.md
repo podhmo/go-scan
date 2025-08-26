@@ -69,11 +69,17 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 
 ### `symgo` Interpreter Limitations
 - [x] **`symgo`: `defer` and `go` statement Tracing**: The `symgo` interpreter now traces `CallExpr` nodes inside `*ast.DeferStmt` and `*ast.GoStmt`, preventing false positives in tools like `find-orphans`.
+- [x] **Branch statements (`break`, `continue`)**: The interpreter now handles `*ast.BranchStmt`, allowing it to correctly model control flow in loops.
 - [x] **`for...range` statements**: The interpreter now handles `*ast.RangeStmt`. A function call in the range expression (e.g., `for _ := range getItems()`) will be traced.
 - [x] **Pointer Dereferencing**: The interpreter now handles `*ast.StarExpr` for dereferencing. This was previously incorrectly identified as a missing feature for `*ast.UnaryExpr` with `Op: token.MUL`. This change enables tracing method calls on pointer types (e.g., `(*p).MyMethod()`).
 - [x] **Slice Expressions**: The interpreter does not handle `*ast.SliceExpr`. Function calls used as index expressions are not traced.
 - [x] **`select` statements**: The interpreter does not handle `*ast.SelectStmt`. Function calls within channel communications are not traced.
 - [x] **Interface Method Call Tracing**: The interpreter did not previously trigger the default intrinsic for method calls on interface types. This prevented tools like `find-orphans` from correctly analyzing code that relies on interfaces. See [docs/trouble-find-orphans.md](./docs/trouble-find-orphans.md) for details. (Note: This is now fixed. The interpreter correctly creates a placeholder for interface method calls, which can be inspected by a default intrinsic.)
+- [ ] **Numeric Types**: The interpreter only handles `integer` literals and does not support `float` or `complex` types.
+- [ ] **Map Literals**: The interpreter does not have concrete support for map literals; they are treated as symbolic placeholders.
+- [ ] **Generics**: The interpreter does not support generic functions or types.
+- [ ] **Channels**: The interpreter has limited support for channel operations (e.g., in `select` statements) but does not have a concrete channel object type, limiting analysis of channel-based logic.
+- [ ] **`panic` statements**: The interpreter does not trace `panic` statements.
 
 ### Future Enhancements
 - [ ] **`symgo`: Tracing and Debuggability**: Enhance the tracing mechanism to provide a more detailed view of the symbolic execution flow.

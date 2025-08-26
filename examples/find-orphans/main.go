@@ -514,45 +514,65 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool) error {
 				mainEntryPoint = fn
 			} else if fnInfo.AstDecl.Name.IsExported() {
 				// Any exported function or method is a potential entry point for a library.
-				libraryEntryPoints = append(libraryEntryPoints, fn)
+				// However, we must exclude functions that look like tests, as they are not
+				// typical library entry points.
+				isTestLike := strings.HasPrefix(fnInfo.Name, "Test") ||
+					strings.HasPrefix(fnInfo.Name, "Benchmark") ||
+					strings.HasPrefix(fnInfo.Name, "Example") ||
+					strings.HasPrefix(fnInfo.Name, "Fuzz")
+
+				if !isTestLike {
+					libraryEntryPoints = append(libraryEntryPoints, fn)
+				}
 			}
 		}
 	}
 
-	// Decide which entry points to use based on the selected mode.
-	var entryPoints []*object.Function
+	// Decide which entry points to use based on the selected mode, and apply
+	// initial usage marks.
+	var analysisFns []*object.Function
+	isAppMode := false
+
 	switch a.mode {
 	case "app":
 		if mainEntryPoint == nil {
 			return fmt.Errorf("application mode specified, but no main entry point was found")
 		}
-		entryPoints = []*object.Function{mainEntryPoint}
+		analysisFns = []*object.Function{mainEntryPoint}
+		isAppMode = true
 		slog.InfoContext(ctx, "running in forced application mode")
 	case "lib":
-		entryPoints = libraryEntryPoints
-		slog.InfoContext(ctx, "running in forced library mode", "entrypoints", len(entryPoints))
+		analysisFns = libraryEntryPoints
+		isAppMode = false // Explicitly false for library mode
+		slog.InfoContext(ctx, "running in forced library mode", "analysis_functions", len(analysisFns))
 	case "auto":
 		fallthrough
 	default: // auto
 		if mainEntryPoint != nil {
-			entryPoints = []*object.Function{mainEntryPoint}
+			analysisFns = []*object.Function{mainEntryPoint}
+			isAppMode = true
 			slog.InfoContext(ctx, "found main entry point, running in application mode")
 		} else {
-			entryPoints = libraryEntryPoints
-			slog.InfoContext(ctx, "no main entry point found, running in library mode", "entrypoints", len(entryPoints))
+			analysisFns = libraryEntryPoints
+			isAppMode = false
+			slog.InfoContext(ctx, "no main entry point found, running in library mode", "analysis_functions", len(analysisFns))
 		}
 	}
 
-	// Mark all entry points as "used" to begin with.
-	for _, ep := range entryPoints {
-		epName := getFullName(a.s, ep.Package, &scanner.FunctionInfo{Name: ep.Name.Name, AstDecl: ep.Decl})
-		usageMap[epName] = true
+	// In application mode, the entry point is always considered used.
+	// In library mode, we don't mark anything initially. A function is only "used"
+	// if it's actually called by another function in the analysis set.
+	if isAppMode {
+		for _, ep := range analysisFns {
+			epName := getFullName(a.s, ep.Package, &scanner.FunctionInfo{Name: ep.Name.Name, AstDecl: ep.Decl})
+			usageMap[epName] = true
+		}
 	}
 
-	// Run symbolic execution from each entry point to find what they use.
-	for _, ep := range entryPoints {
+	// Run symbolic execution from each analysis function to find what they use.
+	for _, ep := range analysisFns {
 		epName := getFullName(a.s, ep.Package, &scanner.FunctionInfo{Name: ep.Name.Name, AstDecl: ep.Decl})
-		slog.DebugContext(ctx, "analyzing from entry point", "entrypoint", epName)
+		slog.DebugContext(ctx, "analyzing from function", "function", epName)
 		interp.Apply(ctx, ep, []object.Object{}, ep.Package)
 	}
 	slog.InfoContext(ctx, "symbolic execution complete")
@@ -597,18 +617,22 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool) error {
 					}
 				}
 
-				// Exclude test functions if we are including test files in the scan.
-				// They are entry points for the test runner, but only in _test.go files.
-				if a.s.Config.IncludeTests {
-					pos := a.s.Fset().Position(decl.AstDecl.Pos())
-					if strings.HasSuffix(pos.Filename, "_test.go") {
-						if strings.HasPrefix(decl.Name, "Test") ||
-							strings.HasPrefix(decl.Name, "Benchmark") ||
-							strings.HasPrefix(decl.Name, "Example") ||
-							strings.HasPrefix(decl.Name, "Fuzz") {
-							continue
-						}
-					}
+				// Exclude actual test functions, which are entry points for the test runner.
+				// A function is considered a test entry point if it has a test-like name
+				// AND resides in a _test.go file. A function with a test-like name in a
+				// regular .go file is just a regular function.
+				pos := a.s.Fset().Position(decl.AstDecl.Pos())
+				isTestFile := strings.HasSuffix(pos.Filename, "_test.go")
+				isTestFunc := strings.HasPrefix(decl.Name, "Test") ||
+					strings.HasPrefix(decl.Name, "Benchmark") ||
+					strings.HasPrefix(decl.Name, "Example") ||
+					strings.HasPrefix(decl.Name, "Fuzz")
+
+				// If `a.s.Config.IncludeTests` is false, `isTestFile` will always be false
+				// because no _test.go files are scanned, so this check works correctly
+				// in both cases.
+				if isTestFunc && isTestFile {
+					continue
 				}
 
 				if decl.AstDecl.Doc != nil {
@@ -618,10 +642,9 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool) error {
 						}
 					}
 				}
-				pos := a.s.Fset().Position(decl.AstDecl.Pos())
 				orphans = append(orphans, Orphan{
 					Name:     name,
-					Position: pos.String(),
+					Position: pos.String(), // pos is already defined above
 					Package:  pkg.ImportPath,
 				})
 			}

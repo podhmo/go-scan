@@ -1750,13 +1750,29 @@ func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, 
 	env := object.NewEnclosedEnvironment(fn.Env)
 
 	// If this is a method call, bind the receiver to its name in the new env.
-	if fn.Receiver != nil && fn.Decl != nil && fn.Decl.Recv != nil && len(fn.Decl.Recv.List) > 0 {
-		// The receiver field list should have exactly one entry for a method.
-		// That entry might have multiple names, but we'll use the first.
-		if len(fn.Decl.Recv.List[0].Names) > 0 {
-			receiverName := fn.Decl.Recv.List[0].Names[0].Name
+	if fn.Decl != nil && fn.Decl.Recv != nil && len(fn.Decl.Recv.List) > 0 {
+		recvField := fn.Decl.Recv.List[0]
+		if len(recvField.Names) > 0 {
+			receiverName := recvField.Names[0].Name
 			if receiverName != "" && receiverName != "_" {
-				env.Set(receiverName, fn.Receiver)
+				receiverToBind := fn.Receiver
+				if receiverToBind == nil {
+					// This happens when analysis starts from a method entry point
+					// without a concrete receiver instance. We create a symbolic one.
+					var importLookup map[string]string
+					if file := fn.Package.Fset.File(fn.Decl.Pos()); file != nil {
+						if astFile, ok := fn.Package.AstFiles[file.Name()]; ok {
+							importLookup = e.scanner.BuildImportLookup(astFile)
+						}
+					}
+					fieldType := e.scanner.TypeInfoFromExpr(ctx, recvField.Type, nil, fn.Package, importLookup)
+					resolvedType, _ := fieldType.Resolve(ctx)
+					receiverToBind = &object.SymbolicPlaceholder{
+						Reason:     "symbolic receiver for entry point method",
+						BaseObject: object.BaseObject{ResolvedTypeInfo: resolvedType, ResolvedFieldType: fieldType},
+					}
+				}
+				env.Set(receiverName, receiverToBind)
 			}
 		}
 	}

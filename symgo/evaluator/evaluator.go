@@ -374,14 +374,62 @@ func (e *Evaluator) evalBinaryExpr(ctx context.Context, node *ast.BinaryExpr, en
 		return right
 	}
 
-	if left.Type() == object.INTEGER_OBJ && right.Type() == object.INTEGER_OBJ {
+	lType := left.Type()
+	rType := right.Type()
+
+	switch {
+	case lType == object.INTEGER_OBJ && rType == object.INTEGER_OBJ:
 		return e.evalIntegerInfixExpression(node.Pos(), node.Op, left, right)
-	}
-	if left.Type() == object.STRING_OBJ && right.Type() == object.STRING_OBJ {
+	case lType == object.STRING_OBJ && rType == object.STRING_OBJ:
 		return e.evalStringInfixExpression(node.Pos(), node.Op, left, right)
+	case lType == object.COMPLEX_OBJ || rType == object.COMPLEX_OBJ:
+		return e.evalComplexInfixExpression(node.Pos(), node.Op, left, right)
+	case lType == object.FLOAT_OBJ || rType == object.FLOAT_OBJ:
+		// For now, treat float operations as complex to simplify.
+		// A more complete implementation would have a separate float path.
+		return e.evalComplexInfixExpression(node.Pos(), node.Op, left, right)
+	default:
+		return &object.SymbolicPlaceholder{Reason: "binary expression"}
+	}
+}
+
+func (e *Evaluator) evalComplexInfixExpression(pos token.Pos, op token.Token, left, right object.Object) object.Object {
+	var lval, rval complex128
+
+	switch l := left.(type) {
+	case *object.Complex:
+		lval = l.Value
+	case *object.Float:
+		lval = complex(l.Value, 0)
+	case *object.Integer:
+		lval = complex(float64(l.Value), 0)
+	default:
+		return e.newError(pos, "invalid left operand for complex expression: %s", left.Type())
 	}
 
-	return &object.SymbolicPlaceholder{Reason: "binary expression"}
+	switch r := right.(type) {
+	case *object.Complex:
+		rval = r.Value
+	case *object.Float:
+		rval = complex(r.Value, 0)
+	case *object.Integer:
+		rval = complex(float64(r.Value), 0)
+	default:
+		return e.newError(pos, "invalid right operand for complex expression: %s", right.Type())
+	}
+
+	switch op {
+	case token.ADD:
+		return &object.Complex{Value: lval + rval}
+	case token.SUB:
+		return &object.Complex{Value: lval - rval}
+	case token.MUL:
+		return &object.Complex{Value: lval * rval}
+	case token.QUO:
+		return &object.Complex{Value: lval / rval}
+	default:
+		return e.newError(pos, "unknown complex operator: %s", op)
+	}
 }
 
 func (e *Evaluator) evalIntegerInfixExpression(pos token.Pos, op token.Token, left, right object.Object) object.Object {
@@ -1457,6 +1505,15 @@ func (e *Evaluator) evalBasicLit(n *ast.BasicLit) object.Object {
 			return e.newError(n.Pos(), "could not parse %q as float", n.Value)
 		}
 		return &object.Float{Value: f}
+	case token.IMAG:
+		// The value is like "123i", "0.5i", etc.
+		// We need to parse the numeric part.
+		imagStr := strings.TrimSuffix(n.Value, "i")
+		f, err := strconv.ParseFloat(imagStr, 64)
+		if err != nil {
+			return e.newError(n.Pos(), "could not parse %q as imaginary", n.Value)
+		}
+		return &object.Complex{Value: complex(0, f)}
 	default:
 		return e.newError(n.Pos(), "unsupported literal type: %s", n.Kind)
 	}

@@ -19,6 +19,7 @@ type ObjectType string
 const (
 	INTEGER_OBJ      ObjectType = "INTEGER"
 	FLOAT_OBJ        ObjectType = "FLOAT"
+	COMPLEX_OBJ      ObjectType = "COMPLEX"
 	BOOLEAN_OBJ      ObjectType = "BOOLEAN"
 	STRING_OBJ       ObjectType = "STRING"
 	FUNCTION_OBJ     ObjectType = "FUNCTION"
@@ -121,6 +122,20 @@ func (f *Float) Type() ObjectType { return FLOAT_OBJ }
 
 // Inspect returns a string representation of the Float's value.
 func (f *Float) Inspect() string { return fmt.Sprintf("%f", f.Value) }
+
+// --- Complex Object ---
+
+// Complex represents a complex number value.
+type Complex struct {
+	BaseObject
+	Value complex128
+}
+
+// Type returns the type of the Complex object.
+func (c *Complex) Type() ObjectType { return COMPLEX_OBJ }
+
+// Inspect returns a string representation of the Complex's value.
+func (c *Complex) Inspect() string { return fmt.Sprintf("%v", c.Value) }
 
 // --- Boolean Object ---
 

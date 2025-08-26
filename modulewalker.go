@@ -456,11 +456,8 @@ func listGoFilesForWalker(dirPath string, includeTests bool) ([]string, error) {
 		return nil, fmt.Errorf("listGoFiles: failed to read dir %s: %w", dirPath, err)
 	}
 	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
 		name := entry.Name()
-		if !strings.HasSuffix(name, ".go") {
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") {
 			continue
 		}
 		if !includeTests && strings.HasSuffix(name, "_test.go") {

@@ -606,7 +606,7 @@ func TestFindOrphans_WithIncludeTests(t *testing.T) {
 package main
 func main() {}
 `,
-		"not_a_test.go": `
+		"app.go": `
 package main
 // This function has a "Test" prefix but is not in a _test.go file,
 // so it should always be considered an orphan if unused.
@@ -631,7 +631,7 @@ func unusedInTest() {}
 		os.Stdout = w
 		log.SetOutput(io.Discard)
 
-		err := run(context.Background(), true, true, dir, false, false, "auto", []string{"./..."}, nil)
+		err := run(context.Background(), true, true, dir, true, false, "auto", []string{"./..."}, nil)
 		if err != nil {
 			t.Fatalf("run() failed: %v", err)
 		}
@@ -662,7 +662,7 @@ func unusedInTest() {}
 		os.Stdout = w
 		log.SetOutput(io.Discard)
 
-		err := run(context.Background(), true, false, dir, false, false, "auto", []string{"./..."}, nil)
+		err := run(context.Background(), true, false, dir, true, false, "auto", []string{"./..."}, nil)
 		if err != nil {
 			t.Fatalf("run() failed: %v", err)
 		}

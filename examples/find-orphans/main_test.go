@@ -96,15 +96,12 @@ package lib
 
 type MyType struct{}
 
-// In library mode, analysis starts from all exported functions.
-// ExportedMethod is an analysis start point, but it is never called by another
-// function, so it should be reported as an orphan.
+// [NEW LOGIC] In library mode, ExportedMethod is an entry point and NOT an orphan.
 func (t *MyType) ExportedMethod() {
     t.unexportedMethod()
 }
 
-// unexportedMethod is called by ExportedMethod. Since the analysis traces
-// from ExportedMethod, unexportedMethod will be marked as "used" and is NOT an orphan.
+// unexportedMethod is called by ExportedMethod, so it is used and NOT an orphan.
 func (t *MyType) unexportedMethod() {}
 
 // trulyUnusedFunc is not called by anyone and should be an orphan.
@@ -133,7 +130,6 @@ func trulyUnusedFunc() {}
 	output := buf.String()
 
 	expectedOrphans := []string{
-		"(example.com/intra-pkg-methods/lib.*MyType).ExportedMethod",
 		"example.com/intra-pkg-methods/lib.trulyUnusedFunc",
 	}
 	sort.Strings(expectedOrphans)
@@ -793,17 +789,12 @@ func unusedInternalFunc() {}
 	io.Copy(&buf, r)
 	output := buf.String()
 
-	// With the new library mode logic, exported functions are NOT entry points.
-	// They are only considered "used" if called by another function.
-	// - ExportedFunc is not called by anything.
-	// - internalFunc is called by ExportedFunc.
-	// - UnusedExportedFunc is not called by anything.
-	// - unusedInternalFunc is not called by anything.
-	// Since we start the analysis from both ExportedFunc and UnusedExportedFunc,
-	// internalFunc will be marked as used. The other three will be orphans.
+	// [NEW LOGIC] In library mode, exported functions are entry points and considered "used".
+	// - ExportedFunc is an entry point, so it is used.
+	// - internalFunc is called by ExportedFunc, so it is used.
+	// - UnusedExportedFunc is an entry point, so it is used.
+	// - unusedInternalFunc is not called by anything, so it is an orphan.
 	expectedOrphans := []string{
-		"example.com/find-orphans-test/lib.ExportedFunc",
-		"example.com/find-orphans-test/lib.UnusedExportedFunc",
 		"example.com/find-orphans-test/lib.unusedInternalFunc",
 	}
 	sort.Strings(expectedOrphans)
@@ -965,14 +956,13 @@ func (c *Cat) UnusedMethod() {}
 
 func TestFindOrphans_modeLib(t *testing.T) {
 	// This test ensures that even if a main.main entry point exists,
-	// using --mode=lib forces library mode. In library mode, exported functions
-	// are not automatically considered "used".
+	// using --mode=lib forces library mode.
 	files := map[string]string{
 		"go.mod": "module example.com/mode-lib-test\ngo 1.21\n",
 		"main.go": `
 package main
 func main() {}
-// This function is exported but unused, so it should be an orphan in lib mode.
+// [NEW LOGIC] This function is exported, so it's an entry point and NOT an orphan in lib mode.
 func ExportedAndUnused() {}
 `,
 	}
@@ -1009,10 +999,13 @@ func ExportedAndUnused() {}
 	io.Copy(&buf, r)
 	output := buf.String()
 
-	// With the new library mode logic, ExportedAndUnused IS an orphan because
-	// nothing calls it.
-	if !strings.Contains(output, "ExportedAndUnused") {
-		t.Errorf("did not find ExportedAndUnused as an orphan, but it should have been reported in library mode")
+	// [NEW LOGIC] In library mode, ExportedAndUnused is an entry point, so it is NOT an orphan.
+	// The output should contain "No orphans found".
+	if strings.Contains(output, "ExportedAndUnused") {
+		t.Errorf("found ExportedAndUnused as an orphan, but it should not have been reported in library mode")
+	}
+	if !strings.Contains(output, "No orphans found") {
+		t.Errorf("expected 'No orphans found' message, but got:\n%s", output)
 	}
 }
 

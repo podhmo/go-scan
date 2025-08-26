@@ -486,6 +486,7 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool) error {
 	// First, find all potential entry points.
 	var mainEntryPoint *object.Function
 	var libraryEntryPoints []*object.Function
+	libraryEntryPointInfos := make(map[*object.Function]*scanner.FunctionInfo)
 
 	for _, pkg := range a.packages {
 		slog.InfoContext(ctx, "** scan package", "package", pkg.ImportPath)
@@ -514,6 +515,7 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool) error {
 				mainEntryPoint = fn
 			} else if fnInfo.AstDecl.Name.IsExported() {
 				libraryEntryPoints = append(libraryEntryPoints, fn)
+				libraryEntryPointInfos[fn] = fnInfo
 			}
 		}
 	}
@@ -521,7 +523,6 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool) error {
 	// Decide which entry points to use based on the selected mode, and apply
 	// initial usage marks.
 	var analysisFns []*object.Function
-	isAppMode := false
 
 	switch a.mode {
 	case "app":
@@ -529,34 +530,34 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool) error {
 			return fmt.Errorf("application mode specified, but no main entry point was found")
 		}
 		analysisFns = []*object.Function{mainEntryPoint}
-		isAppMode = true
 		slog.InfoContext(ctx, "running in forced application mode")
 	case "lib":
 		analysisFns = libraryEntryPoints
-		isAppMode = false // Explicitly false for library mode
 		slog.InfoContext(ctx, "running in forced library mode", "analysis_functions", len(analysisFns))
 	case "auto":
 		fallthrough
 	default: // auto
 		if mainEntryPoint != nil {
 			analysisFns = []*object.Function{mainEntryPoint}
-			isAppMode = true
 			slog.InfoContext(ctx, "found main entry point, running in application mode")
 		} else {
 			analysisFns = libraryEntryPoints
-			isAppMode = false
 			slog.InfoContext(ctx, "no main entry point found, running in library mode", "analysis_functions", len(analysisFns))
 		}
 	}
 
-	// In application mode, the entry point is always considered used.
-	// In library mode, we don't mark anything initially. A function is only "used"
-	// if it's actually called by another function in the analysis set.
-	if isAppMode {
-		for _, ep := range analysisFns {
-			epName := getFullName(a.s, ep.Package, &scanner.FunctionInfo{Name: ep.Name.Name, AstDecl: ep.Decl})
-			usageMap[epName] = true
+	// All functions in analysisFns are considered entry points and thus "used" by definition.
+	for _, ep := range analysisFns {
+		var fnInfo *scanner.FunctionInfo
+		// In library mode, we need the original FunctionInfo to get full receiver details for methods.
+		// For app mode, the entry point is main.main, which has no receiver, so a synthetic FunctionInfo is fine.
+		if info, ok := libraryEntryPointInfos[ep]; ok {
+			fnInfo = info
+		} else {
+			fnInfo = &scanner.FunctionInfo{Name: ep.Name.Name, AstDecl: ep.Decl}
 		}
+		epName := getFullName(a.s, ep.Package, fnInfo)
+		usageMap[epName] = true
 	}
 
 	// Run symbolic execution from each analysis function to find what they use.

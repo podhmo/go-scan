@@ -9,9 +9,9 @@ import (
 	"go/printer"
 	"log/slog"
 	"os"
+	"go/ast"
 	"path/filepath"
 	"strings"
-	"go/ast"
 	"sync"
 
 	goscan "github.com/podhmo/go-scan"
@@ -608,21 +608,33 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool) error {
 
 	// Run symbolic execution from each entry point to find what they use.
 	for _, ep := range entryPoints {
-		epName := getFullName(a.s, ep.Package, &scanner.FunctionInfo{Name: ep.Name.Name, AstDecl: ep.Decl})
+		epName := getFullName(a.s, ep.Package, ep.Def)
 		slog.DebugContext(ctx, "analyzing from entry point", "entrypoint", epName)
 
 		var args []symgo.Object
-		if ep.Decl != nil && ep.Decl.Recv != nil {
-			// This is a method. We need to create a symbolic receiver for it.
-			receiver, err := a.createSymbolicReceiver(ctx, ep)
-			if err != nil {
-				slog.WarnContext(ctx, "could not create symbolic receiver", "method", epName, "error", err)
-				continue
+		if ep.Def != nil {
+			// If it's a method, create a symbolic receiver.
+			if ep.Def.Receiver != nil {
+				receiver, err := a.createSymbolicReceiver(ctx, ep)
+				if err != nil {
+					slog.WarnContext(ctx, "could not create symbolic receiver", "method", epName, "error", err)
+					continue
+				}
+				ep.Receiver = receiver
 			}
-			// In the symgo evaluator, the receiver is passed as the first argument
-			// to the function's `Apply` method, but the `extendFunctionEnv` logic
-			// actually uses the `fn.Receiver` field. So we must set it here.
-			ep.Receiver = receiver
+
+			// Create symbolic placeholders for all function arguments.
+			if ep.Decl != nil && ep.Decl.Type != nil && ep.Decl.Type.Params != nil {
+				for _, param := range ep.Decl.Type.Params.List {
+					// Each parameter might have multiple names (e.g., n, m int).
+					// We create one placeholder per name. If no names are given,
+					// we don't create a placeholder.
+					for _, name := range param.Names {
+						placeholder := &symgo.SymbolicPlaceholder{Reason: fmt.Sprintf("argument %s to entry point %s", name.Name, epName)}
+						args = append(args, placeholder)
+					}
+				}
+			}
 		}
 
 		interp.Apply(ctx, ep, args, ep.Package)

@@ -569,3 +569,10 @@ func getSourceLine(filename string, lineNum int) (string, error) {
 func (e *Error) AttachFileSet(fset *token.FileSet) {
 	e.fset = fset
 }
+
+// --- Global Instances ---
+
+// Pre-create global instances for common values to save allocations.
+var (
+	NIL = &Nil{}
+)

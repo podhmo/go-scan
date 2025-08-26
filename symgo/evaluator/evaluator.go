@@ -1171,7 +1171,7 @@ func (e *Evaluator) evalBlockStatement(ctx context.Context, block *ast.BlockStmt
 
 func (e *Evaluator) evalReturnStmt(ctx context.Context, n *ast.ReturnStmt, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
 	if len(n.Results) == 0 {
-		return &object.ReturnValue{Value: &object.Nil{}} // naked return
+		return &object.ReturnValue{Value: object.NIL} // naked return
 	}
 
 	if len(n.Results) == 1 {
@@ -1604,7 +1604,7 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 
 		// If the evaluated result is a Go nil (from a naked return), wrap it.
 		if evaluatedValue == nil {
-			return &object.ReturnValue{Value: &object.Nil{}}
+			return &object.ReturnValue{Value: object.NIL}
 		}
 
 		return &object.ReturnValue{Value: evaluatedValue}

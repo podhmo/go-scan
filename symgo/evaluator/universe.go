@@ -26,7 +26,7 @@ func init() {
 	funcs.Register("panic", intrinsics.BuiltinPanic)
 
 	vals := make(map[string]object.Object)
-	vals["nil"] = &object.Nil{}
+	vals["nil"] = object.NIL
 	vals["true"] = object.TRUE
 	vals["false"] = object.FALSE
 

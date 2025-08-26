@@ -160,6 +160,8 @@ func (e *Evaluator) Eval(ctx context.Context, node ast.Node, env *object.Environ
 		return e.evalSliceExpr(ctx, n, env, pkg)
 	case *ast.ParenExpr:
 		return e.Eval(ctx, n.X, env, pkg)
+	case *ast.IncDecStmt:
+		return e.evalIncDecStmt(ctx, n, env, pkg)
 	case *ast.FuncLit:
 		return &object.Function{
 			Parameters: n.Type.Params,
@@ -173,6 +175,42 @@ func (e *Evaluator) Eval(ctx context.Context, node ast.Node, env *object.Environ
 		return &object.SymbolicPlaceholder{Reason: "array type expression"}
 	}
 	return e.newError(node.Pos(), "evaluation not implemented for %T", node)
+}
+
+func (e *Evaluator) evalIncDecStmt(ctx context.Context, n *ast.IncDecStmt, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
+	ident, ok := n.X.(*ast.Ident)
+	if !ok {
+		// For now, we only support identifiers. If we support selectors later, we'll need more logic.
+		// For anything else (like a selector on a symbolic value), we do nothing and don't error.
+		return nil
+	}
+
+	// Get the variable object from the environment. Do not get its value yet.
+	obj, ok := env.Get(ident.Name)
+	if !ok {
+		// This is a semantic error in the Go code being analyzed (undefined variable). Return an error.
+		return e.newError(ident.Pos(), "identifier not found: %s", ident.Name)
+	}
+
+	v, ok := obj.(*object.Variable)
+	if !ok {
+		// This is also a semantic error (e.g. `myFunc++`).
+		return e.newError(ident.Pos(), "cannot ++/-- a non-variable identifier: %s", ident.Name)
+	}
+
+	// Now we have the variable. Check its value.
+	if intVal, ok := v.Value.(*object.Integer); ok {
+		// The value is a concrete integer, so we can modify it.
+		switch n.Tok {
+		case token.INC:
+			intVal.Value++
+		case token.DEC:
+			intVal.Value--
+		}
+	}
+	// If v.Value is not an Integer (e.g., a SymbolicPlaceholder), we do nothing, as requested.
+
+	return nil // IncDec is a statement, so it doesn't return a value.
 }
 
 func (e *Evaluator) evalIndexExpr(ctx context.Context, node *ast.IndexExpr, env *object.Environment, pkg *scanner.PackageInfo) object.Object {

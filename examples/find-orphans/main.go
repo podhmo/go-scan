@@ -513,17 +513,7 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool) error {
 			if pkg.Name == "main" && fnInfo.Name == "main" && fnInfo.Receiver == nil {
 				mainEntryPoint = fn
 			} else if fnInfo.AstDecl.Name.IsExported() {
-				// Any exported function or method is a potential entry point for a library.
-				// However, we must exclude functions that look like tests, as they are not
-				// typical library entry points.
-				isTestLike := strings.HasPrefix(fnInfo.Name, "Test") ||
-					strings.HasPrefix(fnInfo.Name, "Benchmark") ||
-					strings.HasPrefix(fnInfo.Name, "Example") ||
-					strings.HasPrefix(fnInfo.Name, "Fuzz")
-
-				if !isTestLike {
-					libraryEntryPoints = append(libraryEntryPoints, fn)
-				}
+				libraryEntryPoints = append(libraryEntryPoints, fn)
 			}
 		}
 	}

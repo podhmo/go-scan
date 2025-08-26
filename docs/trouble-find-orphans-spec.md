@@ -15,16 +15,6 @@ The following has been completed:
     -   The tool's error handling strategy (log and continue).
     -   A link to the `symgo` engine's specification document.
 
-2.  **Logic Implementation in `main.go`**:
-    -   The logic for handling analysis modes (`app` vs. `lib`) was refactored to support the new library mode behavior. Specifically, exported functions are no longer pre-emptively marked as "used" in library mode.
-    -   The logic for collecting library mode analysis functions was updated to exclude test-like function names (e.g., `TestXxx`), preventing them from being considered public API entry points.
-    -   The final orphan filtering logic was improved to robustly identify and exclude real test functions (functions with test-like names *in* `_test.go` files) without causing build errors.
-
-3.  **Test Case Updates in `main_test.go`**:
-    -   Tests related to library mode (`TestFindOrphans_libraryMode`, `TestFindOrphans_modeLib`) were updated to reflect the new specification where exported functions can be orphans.
-    -   Comments throughout the test file were updated to align with the new specification.
-    -   The assertions in `TestFindOrphans_WithIncludeTests` were re-enabled to expose the underlying bug.
-
 ## Remaining Issues & Failing Tests
 
 Despite the changes, two key tests continue to fail, pointing to a deeper issue in the symbolic execution engine's call-graph tracing.

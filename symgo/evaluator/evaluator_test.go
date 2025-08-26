@@ -3,11 +3,13 @@ package evaluator
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/printer"
 	"go/token"
+	"log/slog"
 	"strings"
 	"testing"
 
@@ -25,7 +27,8 @@ func TestEvalIntegerLiteral(t *testing.T) {
 		t.Fatalf("could not parse expression: %v", err)
 	}
 
-	eval := New(nil, nil, nil, nil)
+	s, _ := goscan.New()
+	eval := New(s, nil, nil, nil)
 	evaluated := eval.Eval(context.Background(), node, object.NewEnvironment(), nil)
 
 	integer, ok := evaluated.(*object.Integer)
@@ -115,6 +118,84 @@ var x = 10
 	}
 	if _, err := scantest.Run(t, context.Background(), dir, []string{"."}, action); err != nil {
 		t.Fatalf("scantest.Run() failed: %v", err)
+	}
+}
+
+func TestLogWithContext(t *testing.T) {
+	source := `
+package main
+
+func Do() {
+	var ch chan int
+	select {
+	case <-ch:
+		// This function call will cause an error during evaluation,
+		// which should trigger a warning inside evalSelectStmt.
+		undefinedFunc()
+	}
+}
+`
+	files := map[string]string{
+		"go.mod":  "module example.com/me",
+		"main.go": source,
+	}
+
+	dir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
+		// Use a custom logger to capture output.
+		// The scanner's logger is passed to the evaluator.
+		s.Logger = logger
+
+		pkg := pkgs[0]
+		eval := New(s, s.Logger, nil, nil)
+
+		env := object.NewEnvironment()
+		for _, file := range pkg.AstFiles {
+			eval.Eval(ctx, file, env, pkg)
+		}
+
+		doFuncObj, _ := env.Get("Do")
+		doFunc := doFuncObj.(*object.Function)
+		// We don't care about the result, just that the logger was called.
+		eval.Apply(ctx, doFunc, []object.Object{}, pkg)
+		return nil
+	}
+
+	if _, err := scantest.Run(t, context.Background(), dir, []string{"."}, action, scantest.WithModuleRoot(dir)); err != nil {
+		t.Fatalf("scantest.Run() failed: %+v", err)
+	}
+
+	t.Logf("captured log: %s", logBuf.String())
+
+	var logged map[string]any
+	if err := json.Unmarshal(logBuf.Bytes(), &logged); err != nil {
+		t.Fatalf("failed to unmarshal log output: %v", err)
+	}
+
+	// Check that the level is WARN
+	if level, ok := logged["level"]; !ok || level != "WARN" {
+		t.Errorf("expected log level to be WARN, but got %v", level)
+	}
+
+	// Check for context from the call stack
+	if _, ok := logged["in_func"]; !ok {
+		t.Error("expected log to have 'in_func' key, but it was missing")
+	}
+	if inFunc, ok := logged["in_func"].(string); !ok || inFunc != "undefinedFunc" {
+		t.Errorf("expected in_func to be 'undefinedFunc', but got %q", inFunc)
+	}
+
+	if _, ok := logged["in_func_pos"]; !ok {
+		t.Error("expected log to have 'in_func_pos' key, but it was missing")
+	}
+	// The call is at line 10, column 3 in the source string
+	if pos, ok := logged["in_func_pos"].(string); !ok || !strings.HasSuffix(pos, "main.go:10:3") {
+		t.Errorf("expected in_func_pos to end with 'main.go:10:3', but got %q", pos)
 	}
 }
 
@@ -710,7 +791,8 @@ func TestEvalBuiltinFunctions(t *testing.T) {
 		t.Fatalf("could not parse expression: %v", err)
 	}
 
-	eval := New(nil, nil, nil, nil)
+	s, _ := goscan.New()
+	eval := New(s, nil, nil, nil)
 	evaluated := eval.Eval(context.Background(), node, object.NewEnvironment(), nil)
 
 	if _, ok := evaluated.(*object.Error); !ok {
@@ -746,7 +828,7 @@ func TestHashIndexExpressions(t *testing.T) {
 }
 
 func TestErrorObject(t *testing.T) {
-	err := newError(token.NoPos, "test error %d", 1)
+	err := &object.Error{Message: "test error 1"}
 	if diff := cmp.Diff("Error: test error 1", err.Inspect()); diff != "" {
 		t.Errorf("Inspect() mismatch (-want +got):\n%s", diff)
 	}

@@ -61,24 +61,24 @@ func TestEvalStringLiteral(t *testing.T) {
 	}
 }
 
-func TestEvalUnsupportedLiteral(t *testing.T) {
-	input := "5.5" // float
+func TestEvalFloatLiteral(t *testing.T) {
+	input := "5.5"
 	node, err := parser.ParseExpr(input)
 	if err != nil {
 		t.Fatalf("could not parse expression: %v", err)
 	}
 
-	eval := New(nil, nil, nil, nil)
+	s, _ := goscan.New()
+	eval := New(s, nil, nil, nil)
 	evaluated := eval.Eval(context.Background(), node, object.NewEnvironment(), nil)
 
-	errObj, ok := evaluated.(*object.Error)
+	floatObj, ok := evaluated.(*object.Float)
 	if !ok {
-		t.Fatalf("object is not Error. got=%T (%+v)", evaluated, evaluated)
+		t.Fatalf("object is not Float. got=%T (%+v)", evaluated, evaluated)
 	}
 
-	expected := "unsupported literal type: FLOAT"
-	if errObj.Message != expected {
-		t.Errorf("wrong error message. want=%q, got=%q", expected, errObj.Message)
+	if floatObj.Value != 5.5 {
+		t.Errorf("float has wrong value. want=%f, got=%f", 5.5, floatObj.Value)
 	}
 }
 
@@ -118,6 +118,37 @@ var x = 10
 	}
 	if _, err := scantest.Run(t, context.Background(), dir, []string{"."}, action); err != nil {
 		t.Fatalf("scantest.Run() failed: %v", err)
+	}
+}
+
+func TestEvalBooleanLiteral(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected bool
+	}{
+		{"true", true},
+		{"false", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			node, err := parser.ParseExpr(tt.input)
+			if err != nil {
+				t.Fatalf("could not parse expression: %v", err)
+			}
+
+			eval := New(nil, nil, nil, nil)
+			evaluated := eval.Eval(context.Background(), node, object.NewEnvironment(), nil)
+
+			boolean, ok := evaluated.(*object.Boolean)
+			if !ok {
+				t.Fatalf("object is not Boolean. got=%T (%+v)", evaluated, evaluated)
+			}
+
+			if boolean.Value != tt.expected {
+				t.Errorf("boolean has wrong value. want=%t, got=%t", tt.expected, boolean.Value)
+			}
+		})
 	}
 }
 

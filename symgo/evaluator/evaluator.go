@@ -1451,6 +1451,12 @@ func (e *Evaluator) evalBasicLit(n *ast.BasicLit) object.Object {
 			return e.newError(n.Pos(), "could not unquote string %q", n.Value)
 		}
 		return &object.String{Value: s}
+	case token.FLOAT:
+		f, err := strconv.ParseFloat(n.Value, 64)
+		if err != nil {
+			return e.newError(n.Pos(), "could not parse %q as float", n.Value)
+		}
+		return &object.Float{Value: f}
 	default:
 		return e.newError(n.Pos(), "unsupported literal type: %s", n.Kind)
 	}

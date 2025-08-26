@@ -122,6 +122,8 @@ func (e *Evaluator) Eval(ctx context.Context, node ast.Node, env *object.Environ
 		return e.evalReturnStmt(ctx, n, env, pkg)
 	case *ast.IfStmt:
 		return e.evalIfStmt(ctx, n, env, pkg)
+	case *ast.BranchStmt:
+		return e.evalBranchStmt(n)
 	case *ast.ForStmt:
 		return e.evalForStmt(ctx, n, env, pkg)
 	case *ast.RangeStmt:
@@ -1046,7 +1048,16 @@ func (e *Evaluator) evalForStmt(ctx context.Context, n *ast.ForStmt, env *object
 	}
 
 	// We don't check the condition, just execute the body once.
-	e.Eval(ctx, n.Body, object.NewEnclosedEnvironment(forEnv), pkg)
+	result := e.Eval(ctx, n.Body, object.NewEnclosedEnvironment(forEnv), pkg)
+	if result != nil {
+		switch result.Type() {
+		case object.BREAK_OBJ, object.CONTINUE_OBJ:
+			// Absorb the break/continue signal, loop terminates symbolically.
+			return &object.SymbolicPlaceholder{Reason: "for loop"}
+		case object.ERROR_OBJ:
+			return result // Propagate errors.
+		}
+	}
 
 	// The result of a for statement is not a value.
 	return &object.SymbolicPlaceholder{Reason: "for loop"}
@@ -1080,9 +1091,29 @@ func (e *Evaluator) evalRangeStmt(ctx context.Context, n *ast.RangeStmt, env *ob
 		}
 	}
 
-	e.Eval(ctx, n.Body, rangeEnv, pkg)
+	result := e.Eval(ctx, n.Body, rangeEnv, pkg)
+	if result != nil {
+		switch result.Type() {
+		case object.BREAK_OBJ, object.CONTINUE_OBJ:
+			// Absorb the break/continue signal, loop terminates symbolically.
+			return &object.SymbolicPlaceholder{Reason: "for-range loop"}
+		case object.ERROR_OBJ:
+			return result // Propagate errors.
+		}
+	}
 
 	return &object.SymbolicPlaceholder{Reason: "for-range loop"}
+}
+
+func (e *Evaluator) evalBranchStmt(n *ast.BranchStmt) object.Object {
+	switch n.Tok {
+	case token.BREAK:
+		return object.BREAK
+	case token.CONTINUE:
+		return object.CONTINUE
+	default:
+		return newError(n.Pos(), "unsupported branch statement: %s", n.Tok)
+	}
 }
 
 func (e *Evaluator) evalIfStmt(ctx context.Context, n *ast.IfStmt, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
@@ -1097,11 +1128,26 @@ func (e *Evaluator) evalIfStmt(ctx context.Context, n *ast.IfStmt, env *object.E
 	// Evaluate both branches. Each gets its own enclosed environment.
 	// The new assignment logic handles updating parent scopes correctly.
 	thenEnv := object.NewEnclosedEnvironment(ifStmtEnv)
-	e.Eval(ctx, n.Body, thenEnv, pkg)
+	thenResult := e.Eval(ctx, n.Body, thenEnv, pkg)
+	if thenResult != nil {
+		rt := thenResult.Type()
+		if rt == object.RETURN_VALUE_OBJ || rt == object.ERROR_OBJ || rt == object.BREAK_OBJ || rt == object.CONTINUE_OBJ {
+			// Simplification: If the 'then' branch terminates flow, we propagate the signal
+			// and do not evaluate the 'else' branch. This is an acceptable trade-off
+			// for making control flow analysis more accurate.
+			return thenResult
+		}
+	}
 
 	if n.Else != nil {
 		elseEnv := object.NewEnclosedEnvironment(ifStmtEnv)
-		e.Eval(ctx, n.Else, elseEnv, pkg)
+		elseResult := e.Eval(ctx, n.Else, elseEnv, pkg)
+		if elseResult != nil {
+			rt := elseResult.Type()
+			if rt == object.RETURN_VALUE_OBJ || rt == object.ERROR_OBJ || rt == object.BREAK_OBJ || rt == object.CONTINUE_OBJ {
+				return elseResult
+			}
+		}
 	}
 
 	return &object.SymbolicPlaceholder{Reason: "if/else statement"}
@@ -1115,14 +1161,9 @@ func (e *Evaluator) evalBlockStatement(ctx context.Context, block *ast.BlockStmt
 		result = e.Eval(ctx, stmt, env, pkg)
 
 		if result != nil {
-			// Only terminate the block if we hit an actual return statement.
-			// A ReturnValue from a regular function call used as a statement (in an ExprStmt)
-			// should not stop the evaluation of the rest of the block.
-			if _, isReturnStmt := stmt.(*ast.ReturnStmt); isReturnStmt {
-				rt := result.Type()
-				if rt == object.RETURN_VALUE_OBJ || rt == object.ERROR_OBJ {
-					return result
-				}
+			rt := result.Type()
+			if rt == object.RETURN_VALUE_OBJ || rt == object.ERROR_OBJ || rt == object.BREAK_OBJ || rt == object.CONTINUE_OBJ {
+				return result
 			}
 		}
 	}

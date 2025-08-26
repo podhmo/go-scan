@@ -1,11 +1,14 @@
 package evaluator
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"go/ast"
 	"go/parser"
+	"go/printer"
 	"go/token"
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -417,6 +420,133 @@ func TestErrorHandling(t *testing.T) {
 
 			if evaluated == nil {
 				t.Fatal("evaluation resulted in nil object")
+			}
+		})
+	}
+}
+
+func TestBranchStmt(t *testing.T) {
+	tests := []struct {
+		name           string
+		input          string
+		expectedVisits []string
+	}{
+		{
+			name: "for loop with continue",
+			input: `
+package main
+func main() {
+	var y int
+	for i := 0; i < 10; i++ {
+		if i == 1 {
+			y = 2 // should be visited
+			continue
+		}
+		y = 3 // should not be visited in the first iteration
+	}
+}
+`,
+			expectedVisits: []string{
+				"y = 2",
+				"continue",
+				// Note: The loop body is only evaluated once symbolically.
+				// The `y = 3` is not reached in that single iteration due to `continue`.
+			},
+		},
+		{
+			name: "for loop with break",
+			input: `
+package main
+func main() {
+	var y int
+	for i := 0; i < 10; i++ {
+		if i == 0 {
+			y = 2 // should be visited
+			break
+		}
+		y = 3 // should not be visited
+	}
+	y = 4 // should be visited
+}
+`,
+			expectedVisits: []string{
+				"y = 2",
+				"break",
+				"y = 4",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir, cleanup := scantest.WriteFiles(t, map[string]string{
+				"go.mod":  "module example.com/main",
+				"main.go": tt.input,
+			})
+			defer cleanup()
+
+			var visitedNodes []string
+			tracer := object.TracerFunc(func(node ast.Node) {
+				if node == nil {
+					return
+				}
+				switch node.(type) {
+				case *ast.AssignStmt, *ast.BranchStmt:
+					var buf bytes.Buffer
+					printer.Fprint(&buf, token.NewFileSet(), node)
+					visitedNodes = append(visitedNodes, buf.String())
+				}
+			})
+
+			action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
+				pkg := pkgs[0]
+				e := New(s, s.Logger, tracer, nil)
+				env := object.NewEnvironment()
+				for _, file := range pkg.AstFiles {
+					e.Eval(ctx, file, env, pkg)
+				}
+				mainFunc, ok := env.Get("main")
+				if !ok {
+					return fmt.Errorf("main function not found")
+				}
+				result := e.Apply(ctx, mainFunc, []object.Object{}, pkg)
+				if _, ok := result.(*object.Error); ok {
+					return fmt.Errorf("evaluation failed: %v", result.Inspect())
+				}
+
+				// Assertions now happen inside the action
+				for _, expected := range tt.expectedVisits {
+					found := false
+					for _, visited := range visitedNodes {
+						if strings.Contains(visited, expected) {
+							found = true
+							break
+						}
+					}
+					if !found {
+						return fmt.Errorf("expected to visit node containing %q, but it was not visited.\nVisited nodes:\n%s", expected, strings.Join(visitedNodes, "\n"))
+					}
+				}
+
+				if tt.name == "for loop with continue" {
+					for _, visited := range visitedNodes {
+						if strings.Contains(visited, "y = 3") {
+							return fmt.Errorf("did not expect to visit node containing 'y = 3', but it was visited")
+						}
+					}
+				}
+				if tt.name == "for loop with break" {
+					for _, visited := range visitedNodes {
+						if strings.Contains(visited, "y = 3") {
+							return fmt.Errorf("did not expect to visit node containing 'y = 3', but it was visited")
+						}
+					}
+				}
+				return nil
+			}
+
+			if _, err := scantest.Run(t, context.Background(), dir, []string{"."}, action); err != nil {
+				t.Fatalf("scantest.Run() failed: %v", err)
 			}
 		})
 	}

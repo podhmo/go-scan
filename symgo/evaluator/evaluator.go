@@ -1171,7 +1171,7 @@ func (e *Evaluator) evalBlockStatement(ctx context.Context, block *ast.BlockStmt
 
 func (e *Evaluator) evalReturnStmt(ctx context.Context, n *ast.ReturnStmt, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
 	if len(n.Results) == 0 {
-		return &object.ReturnValue{Value: nil} // naked return
+		return &object.ReturnValue{Value: &object.Nil{}} // naked return
 	}
 
 	if len(n.Results) == 1 {

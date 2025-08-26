@@ -10,16 +10,17 @@ The following has been completed:
 
 2.  **`TestFindOrphans_intraPackageMethodCall` Fixed**: As a direct result of the `symgo` enhancement, this test now passes. The engine correctly traces the call from an exported method to an unexported method within the same package, and the unexported method is no longer incorrectly reported as an orphan.
 
-3.  **Bug in `go-scan` Identified**: Extensive debugging revealed that the `TestFindOrphans_WithIncludeTests` failure is caused by an upstream bug in the `go-scan` library. When `include-tests` is false, the scanner incorrectly filters out functions from non-test files (e.g., `app.go`) if they have a "Test" prefix.
+3.  **Bug in Test Setup Identified and Fixed**: Initial debugging suggested a bug in the `go-scan` library's file filtering. However, further investigation revealed the issue was a misunderstanding in the test case itself.
 
-## Remaining Issues & Failing Tests
+## Resolution of `TestFindOrphans_WithIncludeTests`
 
-One key test continues to fail due to the upstream bug.
+The key failing test was `TestFindOrphans_WithIncludeTests`.
 
-1.  **`TestFindOrphans_WithIncludeTests` Fails**:
-    -   **Symptom**: In `app` mode with `--include-tests=false`, a function named `TestShouldBeOrphan` located in a non-test file (`not_a_test.go`) is not reported as an orphan, even though it is never called.
-    -   **Analysis**: The root cause has been traced to the `goscan.Scanner`. When `WithIncludeTests(false)` is active, the scanner provides an incomplete list of functions to the `find-orphans` analyzer, omitting `TestShouldBeOrphan`. The analyzer cannot report a function as an orphan if it is never made aware of its existence. The logic within `find-orphans` itself appears correct, but it is acting on incomplete data.
+-   **Initial Symptom**: A function named `TestShouldBeOrphan` located in a file named `not_a_test.go` was not being reported as an orphan when running with `--include-tests=false`.
+-   **Initial (Incorrect) Analysis**: It was believed that `go-scan` was incorrectly filtering this function from a non-test file.
+-   **Correct Analysis & Resolution**: A crucial oversight was that the filename `not_a_test.go` **does** end with the `_test.go` suffix. According to Go's convention, this makes it a test file. The `go-scan` library was correctly identifying it as a test file and filtering it out when `--include-tests=false`. The bug was not in the application code but in the test's premise: it expected a file that is, by convention, a test file to be treated as a non-test file.
+-   **The Fix**: The fix was to rename the file in the test setup from `not_a_test.go` to `app.go`. This makes it a standard, non-test file. With this change, the `go-scan` library no longer filters it when `--include-tests=false`, the `TestShouldBeOrphan` function is correctly parsed and analyzed, and the `find-orphans` tool correctly reports it as an orphan. The test now passes and accurately reflects the desired behavior.
 
 ## Next Steps
 
-The fix for `TestFindOrphans_intraPackageMethodCall` is complete and robust. The user has suggested submitting this partial fix. The remaining `TestFindOrphans_WithIncludeTests` failure requires a separate fix within the `go-scan` or `scanner` packages.
+All outstanding issues related to the `find-orphans` specification and logic have been resolved.

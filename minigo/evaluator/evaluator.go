@@ -1937,6 +1937,72 @@ func (e *Evaluator) evalSwitchStmt(ss *ast.SwitchStmt, env *object.Environment, 
 	return object.NIL
 }
 
+func (e *Evaluator) evalTypeAssertExpr(n *ast.TypeAssertExpr, env *object.Environment, fscope *object.FileScope) object.Object {
+	// 1. Evaluate the expression x in x.(T)
+	x := e.Eval(n.X, env, fscope)
+	if isError(x) {
+		return x
+	}
+
+	// 2. Evaluate the type T in x.(T)
+	targetTypeObj := e.Eval(n.Type, env, fscope)
+	if isError(targetTypeObj) {
+		return targetTypeObj
+	}
+	resolvedTargetType := e.resolveType(targetTypeObj, env, fscope)
+	if isError(resolvedTargetType) {
+		return resolvedTargetType
+	}
+
+	// 3. Check if x is actually an interface
+	iface, ok := x.(*object.InterfaceInstance)
+	if !ok {
+		// Go spec: "the expression x must be of interface type".
+		return e.newError(n.Pos(), "invalid type assertion: %s is not an interface value", x.Inspect())
+	}
+
+	// 4. Check if the interface is nil
+	if iface.Value == nil || iface.Value.Type() == object.NIL_OBJ {
+		// A type assertion on a nil interface always fails.
+		zeroVal := e.getZeroValueForResolvedType(resolvedTargetType, fscope)
+		return &object.Tuple{Elements: []object.Object{zeroVal, object.FALSE}}
+	}
+
+	// 5. Compare the concrete type with the target type
+	concreteVal := iface.Value
+
+	// Handle assertion to an interface type, e.g., x.(io.Writer)
+	if targetIface, ok := resolvedTargetType.(*object.InterfaceDefinition); ok {
+		// Check if the concrete value implements the target interface.
+		err := e.checkImplements(n.Pos(), concreteVal, targetIface)
+		if err != nil {
+			// It doesn't implement the interface.
+			zeroVal := e.getZeroValueForResolvedType(resolvedTargetType, fscope)
+			return &object.Tuple{Elements: []object.Object{zeroVal, object.FALSE}}
+		}
+		// It implements the interface. The result is a new interface value
+		// of the target interface type, holding the original concrete value.
+		newIface := &object.InterfaceInstance{Def: targetIface, Value: concreteVal}
+		return &object.Tuple{Elements: []object.Object{newIface, object.TRUE}}
+	}
+
+	// Handle assertion to a concrete type
+	concreteType := e.inferTypeOf(concreteVal)
+	resolvedConcreteType := e.resolveType(concreteType, env, fscope)
+	if isError(resolvedConcreteType) {
+		return resolvedConcreteType
+	}
+
+	if resolvedConcreteType.Inspect() == resolvedTargetType.Inspect() {
+		// Type assertion successful.
+		return &object.Tuple{Elements: []object.Object{concreteVal, object.TRUE}}
+	}
+
+	// Type assertion failed.
+	zeroVal := e.getZeroValueForResolvedType(resolvedTargetType, fscope)
+	return &object.Tuple{Elements: []object.Object{zeroVal, object.FALSE}}
+}
+
 func (e *Evaluator) evalExpressions(exps []ast.Expr, env *object.Environment, fscope *object.FileScope, expectedElementType object.Object) []object.Object {
 	result := make([]object.Object, len(exps))
 
@@ -1963,18 +2029,29 @@ func (e *Evaluator) evalExpressions(exps []ast.Expr, env *object.Environment, fs
 }
 
 // getZeroValueForResolvedType creates a zero-value object for a given resolved type object.
-func (e *Evaluator) getZeroValueForResolvedType(typeObj object.Object) object.Object {
+func (e *Evaluator) getZeroValueForResolvedType(typeObj object.Object, fscope *object.FileScope) object.Object {
+	if typeObj == nil {
+		// Handle cases where a type could not be resolved. Return a generic nil.
+		return object.NIL
+	}
 	switch rt := typeObj.(type) {
 	case *object.GoType:
 		ptr := reflect.New(rt.GoType)
 		return &object.GoValue{Value: ptr.Elem()}
 	case *object.StructDefinition:
 		instance := &object.StructInstance{Def: rt, Fields: make(map[string]object.Object)}
+		// The fscope for resolving field types should be the one where the struct is defined.
+		// However, we don't store this on the StructDefinition currently. Passing the call-site
+		// fscope is the best we can do for now.
+		fieldFScope := fscope
+		if rt.FScope != nil {
+			fieldFScope = rt.FScope
+		}
 		for _, field := range rt.Fields {
+			// Use the struct's definition environment to resolve field types.
+			zeroVal := e.getZeroValueForType(field.Type, rt.Env, fieldFScope)
 			for _, name := range field.Names {
-				// Initialize fields to NIL. The recursive creation was causing stack overflows.
-				// NIL is the correct zero value for any reference or struct type in the interpreter.
-				instance.Fields[name.Name] = object.NIL
+				instance.Fields[name.Name] = zeroVal
 			}
 		}
 		return instance
@@ -2008,7 +2085,7 @@ func (e *Evaluator) getZeroValueForType(typeExpr ast.Expr, env *object.Environme
 	}
 
 	// Finally, create the zero value based on the resolved type.
-	return e.getZeroValueForResolvedType(resolvedType)
+	return e.getZeroValueForResolvedType(resolvedType, fscope)
 }
 
 func (e *Evaluator) applyFunction(call *ast.CallExpr, fn object.Object, args []object.Object, env *object.Environment, fscope *object.FileScope) object.Object {
@@ -3229,9 +3306,29 @@ func (e *Evaluator) Eval(node ast.Node, env *object.Environment, fscope *object.
 			Name:    nil, // Anonymous
 			Fields:  n.Fields.List,
 			Methods: make(map[string]*object.Function),
+			Env:     env,
+			FScope:  fscope,
 		}
+	case *ast.InterfaceType:
+		def := &object.InterfaceDefinition{
+			Name:     nil, // Anonymous
+			Methods:  &ast.FieldList{},
+			TypeList: make([]ast.Expr, 0),
+		}
+		if n.Methods != nil {
+			for _, field := range n.Methods.List {
+				if len(field.Names) > 0 {
+					def.Methods.List = append(def.Methods.List, field)
+				} else {
+					def.TypeList = append(def.TypeList, e.flattenTypeUnion(field.Type)...)
+				}
+			}
+		}
+		return def
 	case *ast.SliceExpr:
 		return e.evalSliceExpr(n, env, fscope)
+	case *ast.TypeAssertExpr:
+		return e.evalTypeAssertExpr(n, env, fscope)
 	}
 
 	return e.newError(node.Pos(), "evaluation not implemented for %T", node)
@@ -3375,6 +3472,38 @@ func (e *Evaluator) evalSliceExpr(node *ast.SliceExpr, env *object.Environment, 
 	}
 }
 
+// unwrapTypeAssertion handles the special case of a type assertion in a single-value context.
+// It returns the final value to be assigned and an error/panic if the assertion fails.
+// If the expression is not a type assertion, it returns the original value and nil.
+func (e *Evaluator) unwrapTypeAssertion(rhsExpr ast.Expr, rhsVal object.Object) (object.Object, object.Object) {
+	if _, isTypeAssert := rhsExpr.(*ast.TypeAssertExpr); isTypeAssert {
+		tuple, ok := rhsVal.(*object.Tuple)
+		if !ok {
+			return nil, e.newError(rhsExpr.Pos(), "internal error: type assertion did not return a tuple")
+		}
+
+		assertedVal := tuple.Elements[0]
+		okVal, ok := tuple.Elements[1].(*object.Boolean)
+		if !ok {
+			return nil, e.newError(rhsExpr.Pos(), "internal error: type assertion did not return a boolean `ok` value")
+		}
+
+		if !okVal.Value {
+			// This is the single-value assertion, so it must panic.
+			return nil, &object.Panic{Value: &object.String{Value: "interface conversion: type assertion failed"}}
+		}
+		return assertedVal, nil // Return the unwrapped value and no error
+	}
+
+	// If it's not a type assertion, check for other multi-value errors
+	if _, ok := rhsVal.(*object.Tuple); ok {
+		return nil, e.newError(rhsExpr.Pos(), "multi-value function call in single-value context")
+	}
+
+	// Not a type assertion and not a tuple, return original value
+	return rhsVal, nil
+}
+
 func (e *Evaluator) evalGenDecl(n *ast.GenDecl, env *object.Environment, fscope *object.FileScope) object.Object {
 	var lastVal object.Object
 	switch n.Tok {
@@ -3416,7 +3545,7 @@ func (e *Evaluator) evalGenDecl(n *ast.GenDecl, env *object.Environment, fscope 
 		for iotaValue, spec := range n.Specs {
 			valueSpec := spec.(*ast.ValueSpec)
 
-			// Handle multi-return assignment: var a, b = f()
+			// Handle multi-return assignment: var a, b = f() or var a, b = x.(T)
 			if n.Tok == token.VAR && len(valueSpec.Names) > 1 && len(valueSpec.Values) == 1 {
 				val := e.Eval(valueSpec.Values[0], env, fscope)
 				if isError(val) {
@@ -3448,44 +3577,24 @@ func (e *Evaluator) evalGenDecl(n *ast.GenDecl, env *object.Environment, fscope 
 			}
 
 			for i, name := range valueSpec.Names {
-				// Handle explicit type declarations, especially for interfaces.
-				if valueSpec.Type != nil {
-					typeObj := e.Eval(valueSpec.Type, env, fscope)
-					if isError(typeObj) {
-						return typeObj
-					}
-
-					if ifaceDef, ok := typeObj.(*object.InterfaceDefinition); ok {
-						var concreteVal object.Object
-						if len(valueSpec.Values) > i {
-							// Case: var w Writer = myStruct
-							concreteVal = e.Eval(valueSpec.Values[i], env, fscope)
-							if isError(concreteVal) {
-								return concreteVal
-							}
-							// A nil value can be assigned to an interface without checks.
-							if concreteVal.Type() != object.NIL_OBJ {
-								if errObj := e.checkImplements(valueSpec.Pos(), concreteVal, ifaceDef); errObj != nil {
-									return errObj
-								}
-							}
-						} else {
-							// Case: var w Writer (no initial value)
-							concreteVal = object.NIL
-						}
-						// Wrap the concrete value in an InterfaceInstance to track its interface type.
-						env.Set(name.Name, &object.InterfaceInstance{Def: ifaceDef, Value: concreteVal})
-						continue // Move to the next name in the spec (e.g., var a, b, c Writer)
-					}
-				}
-
-				// Fallback to existing logic for non-interface types or untyped vars.
 				var val object.Object
 				if len(valueSpec.Values) > i {
 					// Create a temporary environment for iota evaluation.
 					iotaEnv := object.NewEnclosedEnvironment(env)
 					iotaEnv.SetConstant("iota", &object.Integer{Value: int64(iotaValue)})
-					val = e.Eval(valueSpec.Values[i], iotaEnv, fscope)
+
+					rhsVal := e.Eval(valueSpec.Values[i], iotaEnv, fscope)
+					if isError(rhsVal) {
+						return rhsVal
+					}
+
+					// Handle single-value type assertion: var x = i.(T)
+					finalVal, err := e.unwrapTypeAssertion(valueSpec.Values[i], rhsVal)
+					if err != nil {
+						return err
+					}
+					val = finalVal
+
 				} else if n.Tok == token.VAR {
 					// Handle `var x T` (no initial value)
 					if valueSpec.Type != nil {
@@ -3493,32 +3602,18 @@ func (e *Evaluator) evalGenDecl(n *ast.GenDecl, env *object.Environment, fscope 
 						if isError(typeObj) {
 							return typeObj
 						}
-						resolvedType := e.resolveType(typeObj, env, fscope)
-						if isError(resolvedType) {
-							return resolvedType
-						}
 
-						switch rt := resolvedType.(type) {
-						case *object.GoType:
-							// The type is a registered Go type. Instantiate its zero value.
-							// We create a pointer to a new value, then get the element it points to.
-							// This ensures the resulting reflect.Value is addressable, which is crucial
-							// for calling pointer-receiver methods on it later.
-							ptr := reflect.New(rt.GoType)
-							val = &object.GoValue{Value: ptr.Elem()}
-						case *object.StructDefinition:
-							// It's a minigo-defined struct, so initialize a zero-valued instance.
-							instance := &object.StructInstance{Def: rt, Fields: make(map[string]object.Object)}
-							for _, field := range rt.Fields {
-								zeroVal := e.getZeroValueForType(field.Type, env, fscope)
-								for _, name := range field.Names {
-									instance.Fields[name.Name] = zeroVal
-								}
+						// This is where interface variables get their type.
+						if ifaceDef, ok := typeObj.(*object.InterfaceDefinition); ok {
+							// The value of an uninitialized interface var is a nil concrete value,
+							// wrapped in an InterfaceInstance to preserve the interface type.
+							val = &object.InterfaceInstance{Def: ifaceDef, Value: object.NIL}
+						} else {
+							resolvedType := e.resolveType(typeObj, env, fscope)
+							if isError(resolvedType) {
+								return resolvedType
 							}
-							val = instance
-						default:
-							// For other types (slices, maps, pointers, interfaces), the zero value is a typed nil.
-							val = &object.TypedNil{TypeObject: resolvedType}
+							val = e.getZeroValueForResolvedType(resolvedType, fscope)
 						}
 					} else {
 						val = object.NIL
@@ -3536,6 +3631,19 @@ func (e *Evaluator) evalGenDecl(n *ast.GenDecl, env *object.Environment, fscope 
 				} else { // token.VAR
 					if fn, ok := val.(*object.Function); ok {
 						fn.Name = name
+					}
+
+					// Handle typed interface assignment: var w Writer = myWriter
+					if valueSpec.Type != nil {
+						typeObj := e.Eval(valueSpec.Type, env, fscope)
+						if ifaceDef, ok := typeObj.(*object.InterfaceDefinition); ok {
+							if val.Type() != object.NIL_OBJ {
+								if errObj := e.checkImplements(valueSpec.Pos(), val, ifaceDef); errObj != nil {
+									return errObj
+								}
+							}
+							val = &object.InterfaceInstance{Def: ifaceDef, Value: val}
+						}
 					}
 					env.Set(name.Name, val)
 				}
@@ -3585,6 +3693,7 @@ func (e *Evaluator) evalGenDecl(n *ast.GenDecl, env *object.Environment, fscope 
 						Methods:    make(map[string]*object.Function),
 						FieldTags:  fieldTags,
 						Env:        env,
+						FScope:     fscope,
 					}
 					env.Set(typeSpec.Name.Name, def)
 
@@ -3832,25 +3941,25 @@ func (e *Evaluator) evalDestructuringAssign(n *ast.AssignStmt, env *object.Envir
 }
 
 func (e *Evaluator) evalSingleAssign(n *ast.AssignStmt, env *object.Environment, fscope *object.FileScope) object.Object {
-	val := e.Eval(n.Rhs[0], env, fscope)
-	if isError(val) {
-		return val
+	rhsVal := e.Eval(n.Rhs[0], env, fscope)
+	if isError(rhsVal) {
+		return rhsVal
 	}
 
-	// Unwrap return value from function calls
-	if ret, ok := val.(*object.ReturnValue); ok {
-		val = ret.Value
+	if ret, ok := rhsVal.(*object.ReturnValue); ok {
+		rhsVal = ret.Value
 	}
 
-	// Calling a multi-return function in a single-value context is an error.
-	if _, ok := val.(*object.Tuple); ok {
-		return e.newError(n.Rhs[0].Pos(), "multi-value function call in single-value context")
+	finalVal, err := e.unwrapTypeAssertion(n.Rhs[0], rhsVal)
+	if err != nil {
+		return err
 	}
 
+	// Now perform the assignment with the final, processed value
 	lhs := n.Lhs[0]
 	switch n.Tok {
 	case token.ASSIGN: // =
-		return e.assignValue(lhs, val, env, fscope)
+		return e.assignValue(lhs, finalVal, env, fscope)
 	case token.DEFINE: // :=
 		ident, ok := lhs.(*ast.Ident)
 		if !ok {
@@ -3859,11 +3968,11 @@ func (e *Evaluator) evalSingleAssign(n *ast.AssignStmt, env *object.Environment,
 		if ident.Name == "_" {
 			return nil // Assignment to blank identifier does nothing.
 		}
-		if fn, ok := val.(*object.Function); ok {
+		if fn, ok := finalVal.(*object.Function); ok {
 			fn.Name = ident
 		}
-		env.Set(ident.Name, val)
-		return val
+		env.Set(ident.Name, finalVal)
+		return finalVal
 	default:
 		return e.newError(n.Pos(), "unsupported assignment token: %s", n.Tok)
 	}
@@ -5000,6 +5109,16 @@ func (e *Evaluator) checkImplements(pos token.Pos, concrete object.Object, iface
 			}
 			return nil
 		}
+	case *object.InterfaceInstance:
+		// If the concrete type is another interface, check the value it holds.
+		if c.Value == nil || c.Value.Type() == object.NIL_OBJ {
+			// A nil concrete value cannot satisfy a non-empty interface.
+			if len(iface.Methods.List) > 0 {
+				return e.newError(pos, "nil interface cannot implement non-empty interface %s", iface.Name.Name)
+			}
+			return nil
+		}
+		return e.checkImplements(pos, c.Value, iface) // Recurse on the inner value
 	default:
 		// Any other type cannot have methods.
 		if len(iface.Methods.List) > 0 {

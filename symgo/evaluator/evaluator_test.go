@@ -829,7 +829,7 @@ func TestHashIndexExpressions(t *testing.T) {
 
 func TestErrorObject(t *testing.T) {
 	err := &object.Error{Message: "test error 1"}
-	if diff := cmp.Diff("Error: test error 1", err.Inspect()); diff != "" {
+	if diff := cmp.Diff("symgo runtime error: test error 1\n", err.Inspect()); diff != "" {
 		t.Errorf("Inspect() mismatch (-want +got):\n%s", diff)
 	}
 	if diff := cmp.Diff(object.ERROR_OBJ, err.Type()); diff != "" {

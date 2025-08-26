@@ -1,9 +1,12 @@
 package object
 
 import (
+	"bufio"
+	"bytes"
 	"fmt"
 	"go/ast"
 	"go/token"
+	"os"
 	"strings"
 
 	"github.com/podhmo/go-scan/scanner"
@@ -208,10 +211,28 @@ func (p *Package) Inspect() string {
 
 // --- Error Object ---
 
-// FrameInfo holds information about a single call frame for error reporting.
-type FrameInfo struct {
-	Name string
-	Pos  string // Store as string to avoid dependency on token.Pos
+// CallFrame represents a single frame in the call stack.
+type CallFrame struct {
+	Pos      token.Pos
+	Function string // Name of the function for stack traces
+}
+
+// Format formats the call frame into a readable string.
+// fset is required to resolve the position to a file and line number.
+func (cf *CallFrame) Format(fset *token.FileSet) string {
+	position := fset.Position(cf.Pos)
+	funcName := cf.Function
+	if funcName == "" {
+		funcName = "<script>"
+	}
+
+	sourceLine, err := getSourceLine(position.Filename, position.Line)
+	formattedSourceLine := ""
+	if err == nil && sourceLine != "" {
+		formattedSourceLine = "\n\t\t" + sourceLine
+	}
+
+	return fmt.Sprintf("\t%s:%d:%d:\tin %s%s", position.Filename, position.Line, position.Column, funcName, formattedSourceLine)
 }
 
 // Error represents an error that occurred during symbolic evaluation.
@@ -219,27 +240,39 @@ type Error struct {
 	BaseObject
 	Message   string
 	Pos       token.Pos
-	CallStack []FrameInfo
+	CallStack []*CallFrame
+	fset      *token.FileSet // FileSet to resolve positions
 }
 
 // Type returns the type of the Error object.
 func (e *Error) Type() ObjectType { return ERROR_OBJ }
 
-// Inspect returns a string representation of the error.
+// Inspect returns a formatted string representation of the error, including the call stack.
 func (e *Error) Inspect() string {
-	if len(e.CallStack) > 0 {
-		var b strings.Builder
-		b.WriteString("Error: ")
-		b.WriteString(e.Message)
-		b.WriteString("\nCall Stack:\n")
-		// Print in reverse order to show the most recent call first
-		for i := len(e.CallStack) - 1; i >= 0; i-- {
-			frame := e.CallStack[i]
-			b.WriteString(fmt.Sprintf("\t%s at %s\n", frame.Name, frame.Pos))
+	var out bytes.Buffer
+
+	out.WriteString("symgo runtime error: ")
+	out.WriteString(e.Message)
+
+	if e.fset != nil && e.Pos.IsValid() {
+		position := e.fset.Position(e.Pos)
+		sourceLine, err := getSourceLine(position.Filename, position.Line)
+		out.WriteString(fmt.Sprintf("\n\t%s:%d:%d:", position.Filename, position.Line, position.Column))
+		if err == nil && sourceLine != "" {
+			out.WriteString("\n\t\t" + sourceLine)
 		}
-		return b.String()
 	}
-	return "Error: " + e.Message
+	out.WriteString("\n")
+
+	// Print the call stack in reverse order (most recent call first)
+	if e.fset != nil {
+		for i := len(e.CallStack) - 1; i >= 0; i-- {
+			out.WriteString(e.CallStack[i].Format(e.fset))
+			out.WriteString("\n")
+		}
+	}
+
+	return out.String()
 }
 
 // --- SymbolicPlaceholder Object ---
@@ -486,4 +519,35 @@ type TracerFunc func(node ast.Node)
 // Visit calls f(node).
 func (f TracerFunc) Visit(node ast.Node) {
 	f(node)
+}
+
+// getSourceLine reads a specific line from a file. It returns the line and any error encountered.
+func getSourceLine(filename string, lineNum int) (string, error) {
+	if filename == "" || lineNum <= 0 {
+		return "", nil
+	}
+	file, err := os.Open(filename)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	currentLine := 1
+	for scanner.Scan() {
+		if currentLine == lineNum {
+			return strings.TrimSpace(scanner.Text()), nil
+		}
+		currentLine++
+	}
+	if err := scanner.Err(); err != nil {
+		return "", err
+	}
+	return "", nil // Line not found is not considered an error here.
+}
+
+// AttachFileSet attaches a FileSet to the error object, which is necessary
+// for formatting the call stack.
+func (e *Error) AttachFileSet(fset *token.FileSet) {
+	e.fset = fset
 }

@@ -2,6 +2,7 @@ package symgo
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"go/ast"
 	"go/token"
@@ -293,11 +294,7 @@ func (i *Interpreter) Eval(ctx context.Context, node ast.Node, pkg *scanner.Pack
 
 	result := i.eval.Eval(ctx, node, i.globalEnv, pkg)
 	if err, ok := result.(*Error); ok {
-		if err.Pos.IsValid() {
-			position := i.scanner.Fset().Position(err.Pos)
-			return nil, fmt.Errorf("%s: %s", position, err.Message)
-		}
-		return nil, fmt.Errorf("%s", err.Message)
+		return nil, errors.New(err.Inspect())
 	}
 	return result, nil
 }
@@ -306,11 +303,7 @@ func (i *Interpreter) Eval(ctx context.Context, node ast.Node, pkg *scanner.Pack
 func (i *Interpreter) EvalWithEnv(ctx context.Context, node ast.Node, env *Environment, pkg *scanner.PackageInfo) (Object, error) {
 	result := i.eval.Eval(ctx, node, env, pkg)
 	if err, ok := result.(*Error); ok {
-		if err.Pos.IsValid() {
-			position := i.scanner.Fset().Position(err.Pos)
-			return nil, fmt.Errorf("%s: %s", position, err.Message)
-		}
-		return nil, fmt.Errorf("%s", err.Message)
+		return nil, errors.New(err.Inspect())
 	}
 	return result, nil
 }
@@ -359,11 +352,7 @@ func (i *Interpreter) Apply(ctx context.Context, fn Object, args []Object, pkg *
 	// This is a simplified wrapper. A real implementation might need more context.
 	result := i.eval.Apply(ctx, fn, args, pkg)
 	if err, ok := result.(*Error); ok {
-		if err.Pos.IsValid() {
-			position := i.scanner.Fset().Position(err.Pos)
-			return nil, fmt.Errorf("%s: %s", position, err.Message)
-		}
-		return nil, fmt.Errorf("%s", err.Message)
+		return nil, errors.New(err.Inspect())
 	}
 	return result, nil
 }

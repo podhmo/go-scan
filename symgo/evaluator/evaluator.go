@@ -33,8 +33,8 @@ type Evaluator struct {
 }
 
 type callFrame struct {
-	Name string
-	Pos  token.Pos
+	Function string
+	Pos      token.Pos
 }
 
 // New creates a new Evaluator.
@@ -1392,9 +1392,13 @@ func (e *Evaluator) logWithContext(ctx context.Context, level slog.Level, msg st
 			if len(err.CallStack) > 0 {
 				// The most recent frame is at the end of the slice.
 				frame := err.CallStack[len(err.CallStack)-1]
+				posStr := ""
+				if e.scanner != nil && e.scanner.Fset() != nil {
+					posStr = e.scanner.Fset().Position(frame.Pos).String()
+				}
 				contextArgs := []any{
-					slog.String("in_func", frame.Name),
-					slog.String("in_func_pos", frame.Pos),
+					slog.String("in_func", frame.Function),
+					slog.String("in_func_pos", posStr),
 				}
 				// Prepend context args so they appear first in the log.
 				args = append(contextArgs, args...)
@@ -1407,22 +1411,22 @@ func (e *Evaluator) logWithContext(ctx context.Context, level slog.Level, msg st
 }
 
 func (e *Evaluator) newError(pos token.Pos, format string, args ...interface{}) *object.Error {
-	frames := make([]object.FrameInfo, len(e.callStack))
+	frames := make([]*object.CallFrame, len(e.callStack))
 	for i, frame := range e.callStack {
-		var posStr string
-		if frame.Pos.IsValid() {
-			posStr = e.scanner.Fset().Position(frame.Pos).String()
-		}
-		frames[i] = object.FrameInfo{
-			Name: frame.Name,
-			Pos:  posStr,
+		frames[i] = &object.CallFrame{
+			Function: frame.Function,
+			Pos:      frame.Pos,
 		}
 	}
-	return &object.Error{
+	err := &object.Error{
 		Message:   fmt.Sprintf(format, args...),
 		Pos:       pos,
 		CallStack: frames,
 	}
+	if e.scanner != nil {
+		err.AttachFileSet(e.scanner.Fset())
+	}
+	return err
 }
 
 func isError(obj object.Object) bool {
@@ -1444,7 +1448,7 @@ func (e *Evaluator) evalCallExpr(ctx context.Context, n *ast.CallExpr, env *obje
 		name = "unknown"
 	}
 
-	frame := &callFrame{Name: name, Pos: n.Pos()}
+	frame := &callFrame{Function: name, Pos: n.Pos()}
 	e.callStack = append(e.callStack, frame)
 	defer func() {
 		e.callStack = e.callStack[:len(e.callStack)-1]
@@ -1452,7 +1456,7 @@ func (e *Evaluator) evalCallExpr(ctx context.Context, n *ast.CallExpr, env *obje
 
 	var stackNames []string
 	for _, f := range e.callStack {
-		stackNames = append(stackNames, f.Name)
+		stackNames = append(stackNames, f.Function)
 	}
 	e.logger.Log(ctx, slog.LevelDebug, "call", "stack", strings.Join(stackNames, " -> "))
 

@@ -81,6 +81,18 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [ ] **Map Literals**: The interpreter does not have concrete support for map literals; they are treated as symbolic placeholders.
 - [ ] **Generics**: The interpreter does not support generic functions or types.
 - [ ] **Channels**: The interpreter has limited support for channel operations (e.g., in `select` statements) but does not have a concrete channel object type, limiting analysis of channel-based logic.
+- [ ] **Other AST Nodes**: The following `ast.Node` types are not yet handled by the main evaluation loop:
+    - [ ] `*ast.ChanType`
+    - [ ] `*ast.Ellipsis`
+    - [ ] `*ast.FuncType`
+    - [ ] `*ast.InterfaceType`
+    - [ ] `*ast.MapType`
+    - [ ] `*ast.StructType`
+    - [ ] `*ast.EmptyStmt`
+    - [x] `*ast.IncDecStmt`
+    - [ ] `*ast.LabeledStmt`
+    - [ ] `*ast.SendStmt`
+    - [ ] `*ast.TypeAssertExpr` (partially handled in type switches)
 - [x] **`panic` and other builtins**: The interpreter now recognizes `panic`, `nil`, `true`, and `false`.
 - [x] **Multi-value returns and assignments**: The interpreter now supports functions that return multiple values and assignments of the form `x, y := f()` and `x, y = f()`.
 

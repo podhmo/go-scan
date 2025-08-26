@@ -160,6 +160,8 @@ func (e *Evaluator) Eval(ctx context.Context, node ast.Node, env *object.Environ
 		return e.evalSliceExpr(ctx, n, env, pkg)
 	case *ast.ParenExpr:
 		return e.Eval(ctx, n.X, env, pkg)
+	case *ast.IncDecStmt:
+		return e.evalIncDecStmt(ctx, n, env, pkg)
 	case *ast.FuncLit:
 		return &object.Function{
 			Parameters: n.Type.Params,
@@ -173,6 +175,54 @@ func (e *Evaluator) Eval(ctx context.Context, node ast.Node, env *object.Environ
 		return &object.SymbolicPlaceholder{Reason: "array type expression"}
 	}
 	return e.newError(node.Pos(), "evaluation not implemented for %T", node)
+}
+
+func (e *Evaluator) evalIncDecStmt(ctx context.Context, n *ast.IncDecStmt, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
+	ident, ok := n.X.(*ast.Ident)
+	if !ok {
+		// We could potentially support selector expressions here in the future, e.g., `s.Count++`.
+		return e.newError(n.Pos(), "unsupported expression for ++/--: expected an identifier, got %T", n.X)
+	}
+
+	obj, ok := env.Get(ident.Name)
+	if !ok {
+		return e.newError(ident.Pos(), "identifier not found: %s", ident.Name)
+	}
+
+	// The object in the environment might be the variable itself, or it might be the value.
+	// We need to find the *variable* to update it.
+	v, ok := obj.(*object.Variable)
+	if !ok {
+		// If the identifier points to a value (e.g., from a function return), we can't increment it.
+		// Let's try to find the variable in the environment that holds this value. This is a bit of a hack.
+		found := false
+		env.Walk(func(name string, val object.Object) bool {
+			if variable, isVar := val.(*object.Variable); isVar && variable.Value == obj {
+				v = variable
+				found = true
+				return false // stop walking
+			}
+			return true
+		})
+		if !found {
+			return e.newError(ident.Pos(), "cannot ++/-- a non-variable identifier: %s", ident.Name)
+		}
+	}
+
+	val := v.Value
+	if intVal, ok := val.(*object.Integer); ok {
+		switch n.Tok {
+		case token.INC:
+			intVal.Value++
+		case token.DEC:
+			intVal.Value--
+		default:
+			return e.newError(n.Pos(), "unsupported token for IncDecStmt: %s", n.Tok)
+		}
+		return nil // Statements don't return a value.
+	}
+
+	return e.newError(n.Pos(), "cannot ++/-- non-integer type, got %s", val.Type())
 }
 
 func (e *Evaluator) evalIndexExpr(ctx context.Context, node *ast.IndexExpr, env *object.Environment, pkg *scanner.PackageInfo) object.Object {

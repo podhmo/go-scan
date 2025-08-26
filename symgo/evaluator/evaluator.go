@@ -170,7 +170,7 @@ func (e *Evaluator) Eval(ctx context.Context, node ast.Node, env *object.Environ
 		// We don't need to evaluate it to a concrete value, just prevent an "unimplemented" error.
 		return &object.SymbolicPlaceholder{Reason: "array type expression"}
 	}
-	return newError(node.Pos(), "evaluation not implemented for %T", node)
+	return e.newError(node.Pos(), "evaluation not implemented for %T", node)
 }
 
 func (e *Evaluator) evalIndexExpr(ctx context.Context, node *ast.IndexExpr, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
@@ -252,16 +252,16 @@ func (e *Evaluator) evalSliceExpr(ctx context.Context, node *ast.SliceExpr, env 
 
 func (e *Evaluator) evalCompositeLit(ctx context.Context, node *ast.CompositeLit, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
 	if pkg == nil || pkg.Fset == nil {
-		return newError(node.Pos(), "package info or fset is missing, cannot resolve types for composite literal")
+		return e.newError(node.Pos(), "package info or fset is missing, cannot resolve types for composite literal")
 	}
 
 	file := pkg.Fset.File(node.Pos())
 	if file == nil {
-		return newError(node.Pos(), "could not find file for node position")
+		return e.newError(node.Pos(), "could not find file for node position")
 	}
 	astFile, ok := pkg.AstFiles[file.Name()]
 	if !ok {
-		return newError(node.Pos(), "could not find ast.File for path: %s", file.Name())
+		return e.newError(node.Pos(), "could not find ast.File for path: %s", file.Name())
 	}
 	importLookup := e.scanner.BuildImportLookup(astFile)
 
@@ -269,7 +269,7 @@ func (e *Evaluator) evalCompositeLit(ctx context.Context, node *ast.CompositeLit
 	if fieldType == nil {
 		var typeNameBuf bytes.Buffer
 		printer.Fprint(&typeNameBuf, pkg.Fset, node.Type)
-		return newError(node.Pos(), "could not resolve type for composite literal: %s", typeNameBuf.String())
+		return e.newError(node.Pos(), "could not resolve type for composite literal: %s", typeNameBuf.String())
 	}
 
 	// IMPORTANT: Evaluate all field/element values within the literal.
@@ -345,7 +345,7 @@ func (e *Evaluator) evalIntegerInfixExpression(op token.Token, left, right objec
 	case token.QUO:
 		return &object.Integer{Value: leftVal / rightVal}
 	default:
-		return newError(token.NoPos, "unknown integer operator: %s", op)
+		return e.newError(token.NoPos, "unknown integer operator: %s", op)
 	}
 }
 
@@ -354,7 +354,7 @@ func (e *Evaluator) evalStringInfixExpression(op token.Token, left, right object
 	rightVal := right.(*object.String).Value
 
 	if op != token.ADD {
-		return newError(token.NoPos, "unknown string operator: %s", op)
+		return e.newError(token.NoPos, "unknown string operator: %s", op)
 	}
 	return &object.String{Value: leftVal + rightVal}
 }
@@ -383,7 +383,7 @@ func (e *Evaluator) evalUnaryExpr(ctx context.Context, node *ast.UnaryExpr, env 
 		// to trace any function calls that produce the channel.
 		return e.Eval(ctx, node.X, env, pkg)
 	}
-	return newError(node.Pos(), "unknown unary operator: %s", node.Op)
+	return e.newError(node.Pos(), "unknown unary operator: %s", node.Op)
 }
 
 func (e *Evaluator) evalStarExpr(ctx context.Context, node *ast.StarExpr, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
@@ -418,7 +418,7 @@ func (e *Evaluator) evalStarExpr(ctx context.Context, node *ast.StarExpr, env *o
 		}
 	}
 
-	return newError(node.Pos(), "invalid indirect of %s (type %T)", val.Inspect(), val)
+	return e.newError(node.Pos(), "invalid indirect of %s (type %T)", val.Inspect(), val)
 }
 
 func (e *Evaluator) evalGenDecl(ctx context.Context, node *ast.GenDecl, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
@@ -427,15 +427,15 @@ func (e *Evaluator) evalGenDecl(ctx context.Context, node *ast.GenDecl, env *obj
 	}
 
 	if pkg == nil || pkg.Fset == nil {
-		return newError(node.Pos(), "package info or fset is missing, cannot resolve types")
+		return e.newError(node.Pos(), "package info or fset is missing, cannot resolve types")
 	}
 	file := pkg.Fset.File(node.Pos())
 	if file == nil {
-		return newError(node.Pos(), "could not find file for node position")
+		return e.newError(node.Pos(), "could not find file for node position")
 	}
 	astFile, ok := pkg.AstFiles[file.Name()]
 	if !ok {
-		return newError(node.Pos(), "could not find ast.File for path: %s", file.Name())
+		return e.newError(node.Pos(), "could not find ast.File for path: %s", file.Name())
 	}
 	importLookup := e.scanner.BuildImportLookup(astFile)
 
@@ -520,7 +520,7 @@ func (e *Evaluator) evalImportSpec(spec ast.Spec, env *object.Environment) objec
 
 	importPath, err := strconv.Unquote(importSpec.Path.Value)
 	if err != nil {
-		return newError(importSpec.Pos(), "invalid import path: %s", importSpec.Path.Value)
+		return e.newError(importSpec.Pos(), "invalid import path: %s", importSpec.Path.Value)
 	}
 
 	var pkgName string
@@ -584,7 +584,7 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 	case *object.SymbolicPlaceholder:
 		typeInfo := val.TypeInfo()
 		if typeInfo == nil {
-			return newError(n.Pos(), "cannot call method on symbolic placeholder with no type info")
+			return e.newError(n.Pos(), "cannot call method on symbolic placeholder with no type info")
 		}
 		fullTypeName := fmt.Sprintf("%s.%s", typeInfo.PkgPath, typeInfo.Name)
 		key := fmt.Sprintf("(*%s).%s", fullTypeName, n.Sel.Name)
@@ -611,7 +611,7 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 			}
 		}
 
-		return newError(n.Pos(), "undefined method: %s on symbolic type %s", n.Sel.Name, fullTypeName)
+		return e.newError(n.Pos(), "undefined method: %s on symbolic type %s", n.Sel.Name, fullTypeName)
 
 	case *object.Package:
 		key := val.Path + "." + n.Sel.Name
@@ -620,11 +620,11 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 		}
 		if val.ScannedInfo == nil {
 			if e.scanner == nil {
-				return newError(n.Pos(), "scanner is not available, cannot load package %q", val.Path)
+				return e.newError(n.Pos(), "scanner is not available, cannot load package %q", val.Path)
 			}
 			pkgInfo, err := e.scanner.ScanPackageByImport(ctx, val.Path)
 			if err != nil {
-				return newError(n.Pos(), "could not scan package %q: %v", val.Path, err)
+				return e.newError(n.Pos(), "could not scan package %q: %v", val.Path, err)
 			}
 			val.ScannedInfo = pkgInfo
 		}
@@ -678,7 +678,7 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 				case constant.Int:
 					val, ok := constant.Int64Val(c.ConstVal)
 					if !ok {
-						return newError(n.Pos(), "could not convert constant %s to int64", c.Name)
+						return e.newError(n.Pos(), "could not convert constant %s to int64", c.Name)
 					}
 					constObj = &object.Integer{Value: val}
 				case constant.Bool:
@@ -748,12 +748,12 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 			}
 		}
 
-		return newError(n.Pos(), "undefined method: %s on %s", n.Sel.Name, val.TypeName)
+		return e.newError(n.Pos(), "undefined method: %s on %s", n.Sel.Name, val.TypeName)
 
 	case *object.Variable:
 		typeInfo := val.TypeInfo()
 		if typeInfo == nil {
-			return newError(n.Pos(), "cannot access field or method on variable with no type info: %s", val.Name)
+			return e.newError(n.Pos(), "cannot access field or method on variable with no type info: %s", val.Name)
 		}
 
 		if typeInfo.Kind == scanner.InterfaceKind {
@@ -770,7 +770,7 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 					if foreignPkgObj.ScannedInfo == nil {
 						scanned, err := e.scanner.ScanPackageByImport(ctx, foreignPkgObj.Path)
 						if err != nil {
-							return newError(n.Pos(), "failed to scan dependent package %s: %v", foreignPkgObj.Path, err)
+							return e.newError(n.Pos(), "failed to scan dependent package %s: %v", foreignPkgObj.Path, err)
 						}
 						foreignPkgObj.ScannedInfo = scanned
 					}
@@ -778,7 +778,7 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 				} else {
 					scanned, err := e.scanner.ScanPackageByImport(ctx, typeInfo.PkgPath)
 					if err != nil {
-						return newError(n.Pos(), "failed to scan transitive dependency package %s: %v", typeInfo.PkgPath, err)
+						return e.newError(n.Pos(), "failed to scan transitive dependency package %s: %v", typeInfo.PkgPath, err)
 					}
 					resolutionPkg = scanned
 				}
@@ -822,7 +822,7 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 			return method
 		} else if err != nil {
 			// Log the error for debugging, but don't fail the evaluation.
-			e.logger.Warn("error trying to find method", "method", n.Sel.Name, "type", typeInfo.Name, "error", err)
+			e.logWithContext(ctx, slog.LevelWarn, "error trying to find method", "method", n.Sel.Name, "type", typeInfo.Name, "error", err)
 		}
 
 		if typeInfo.Struct != nil {
@@ -876,10 +876,10 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 			}
 		}
 
-		return newError(n.Pos(), "undefined field or method: %s on %s", n.Sel.Name, val.Inspect())
+		return e.newError(n.Pos(), "undefined field or method: %s on %s", n.Sel.Name, val.Inspect())
 
 	default:
-		return newError(n.Pos(), "expected a package, instance, or variable on the left side of selector, but got %s", left.Type())
+		return e.newError(n.Pos(), "expected a package, instance, or variable on the left side of selector, but got %s", left.Type())
 	}
 }
 
@@ -921,14 +921,14 @@ func (e *Evaluator) evalSelectStmt(ctx context.Context, n *ast.SelectStmt, env *
 			// Evaluate the communication expression (e.g., the channel operation).
 			if caseClause.Comm != nil {
 				if res := e.Eval(ctx, caseClause.Comm, caseEnv, pkg); isError(res) {
-					e.logger.Warn("error evaluating select case communication", "error", res.Inspect())
+					e.logWithContext(ctx, slog.LevelWarn, "error evaluating select case communication", "error", res)
 				}
 			}
 
 			// Evaluate the body of the case.
 			for _, stmt := range caseClause.Body {
 				if res := e.Eval(ctx, stmt, caseEnv, pkg); isError(res) {
-					e.logger.Warn("error evaluating statement in select case", "error", res.Inspect())
+					e.logWithContext(ctx, slog.LevelWarn, "error evaluating statement in select case", "error", res)
 				}
 			}
 		}
@@ -948,20 +948,20 @@ func (e *Evaluator) evalTypeSwitchStmt(ctx context.Context, n *ast.TypeSwitchStm
 
 	assignStmt, ok := n.Assign.(*ast.AssignStmt)
 	if !ok {
-		return newError(n.Pos(), "expected AssignStmt in TypeSwitchStmt, got %T", n.Assign)
+		return e.newError(n.Pos(), "expected AssignStmt in TypeSwitchStmt, got %T", n.Assign)
 	}
 	if len(assignStmt.Lhs) != 1 || len(assignStmt.Rhs) != 1 {
-		return newError(n.Pos(), "expected one variable and one value in type switch assignment")
+		return e.newError(n.Pos(), "expected one variable and one value in type switch assignment")
 	}
 	ident, ok := assignStmt.Lhs[0].(*ast.Ident)
 	if !ok {
-		return newError(n.Pos(), "expected identifier on LHS of type switch assignment")
+		return e.newError(n.Pos(), "expected identifier on LHS of type switch assignment")
 	}
 	varName := ident.Name
 
 	typeAssert, ok := assignStmt.Rhs[0].(*ast.TypeAssertExpr)
 	if !ok {
-		return newError(n.Pos(), "expected TypeAssertExpr on RHS of type switch assignment")
+		return e.newError(n.Pos(), "expected TypeAssertExpr on RHS of type switch assignment")
 	}
 	originalObj := e.Eval(ctx, typeAssert.X, switchEnv, pkg)
 	if isError(originalObj) {
@@ -971,11 +971,11 @@ func (e *Evaluator) evalTypeSwitchStmt(ctx context.Context, n *ast.TypeSwitchStm
 	if n.Body != nil {
 		file := pkg.Fset.File(n.Pos())
 		if file == nil {
-			return newError(n.Pos(), "could not find file for node position")
+			return e.newError(n.Pos(), "could not find file for node position")
 		}
 		astFile, ok := pkg.AstFiles[file.Name()]
 		if !ok {
-			return newError(n.Pos(), "could not find ast.File for path: %s", file.Name())
+			return e.newError(n.Pos(), "could not find ast.File for path: %s", file.Name())
 		}
 		importLookup := e.scanner.BuildImportLookup(astFile)
 
@@ -1003,7 +1003,7 @@ func (e *Evaluator) evalTypeSwitchStmt(ctx context.Context, n *ast.TypeSwitchStm
 					if id, ok := typeExpr.(*ast.Ident); ok {
 						fieldType = &scanner.FieldType{Name: id.Name, IsBuiltin: true}
 					} else {
-						return newError(typeExpr.Pos(), "could not resolve type for case clause")
+						return e.newError(typeExpr.Pos(), "could not resolve type for case clause")
 					}
 				}
 
@@ -1025,7 +1025,7 @@ func (e *Evaluator) evalTypeSwitchStmt(ctx context.Context, n *ast.TypeSwitchStm
 
 			for _, stmt := range caseClause.Body {
 				if res := e.Eval(ctx, stmt, caseEnv, pkg); isError(res) {
-					e.logger.Warn("error evaluating statement in type switch case", "error", res.Inspect())
+					e.logWithContext(ctx, slog.LevelWarn, "error evaluating statement in type switch case", "error", res)
 				}
 			}
 		}
@@ -1135,7 +1135,7 @@ func (e *Evaluator) evalReturnStmt(ctx context.Context, n *ast.ReturnStmt, env *
 		return nil // naked return
 	}
 	if len(n.Results) > 1 {
-		return newError(n.Pos(), "unsupported return statement: expected 1 result")
+		return e.newError(n.Pos(), "unsupported return statement: expected 1 result")
 	}
 	val := e.Eval(ctx, n.Results[0], env, pkg)
 	if isError(val) {
@@ -1176,7 +1176,7 @@ func (e *Evaluator) evalAssignStmt(ctx context.Context, n *ast.AssignStmt, env *
 		}
 
 		if len(multiRet.Values) != len(n.Lhs) {
-			return newError(n.Pos(), "assignment mismatch: %d variables but %d values", len(n.Lhs), len(multiRet.Values))
+			return e.newError(n.Pos(), "assignment mismatch: %d variables but %d values", len(n.Lhs), len(multiRet.Values))
 		}
 
 		for i, lhsExpr := range n.Lhs {
@@ -1193,7 +1193,7 @@ func (e *Evaluator) evalAssignStmt(ctx context.Context, n *ast.AssignStmt, env *
 	}
 
 	if len(n.Lhs) != 1 || len(n.Rhs) != 1 {
-		return newError(n.Pos(), "unsupported assignment: expected 1 expression on each side, or multi-value assignment")
+		return e.newError(n.Pos(), "unsupported assignment: expected 1 expression on each side, or multi-value assignment")
 	}
 
 	switch lhs := n.Lhs[0].(type) {
@@ -1205,7 +1205,7 @@ func (e *Evaluator) evalAssignStmt(ctx context.Context, n *ast.AssignStmt, env *
 	case *ast.SelectorExpr:
 		return nil
 	default:
-		return newError(n.Pos(), "unsupported assignment target: expected an identifier or selector, but got %T", lhs)
+		return e.newError(n.Pos(), "unsupported assignment target: expected an identifier or selector, but got %T", lhs)
 	}
 }
 
@@ -1298,17 +1298,17 @@ func (e *Evaluator) evalBasicLit(n *ast.BasicLit) object.Object {
 	case token.INT:
 		i, err := strconv.ParseInt(n.Value, 0, 64)
 		if err != nil {
-			return newError(n.Pos(), "could not parse %q as integer", n.Value)
+			return e.newError(n.Pos(), "could not parse %q as integer", n.Value)
 		}
 		return &object.Integer{Value: i}
 	case token.STRING:
 		s, err := strconv.Unquote(n.Value)
 		if err != nil {
-			return newError(n.Pos(), "could not unquote string %q", n.Value)
+			return e.newError(n.Pos(), "could not unquote string %q", n.Value)
 		}
 		return &object.String{Value: s}
 	default:
-		return newError(n.Pos(), "unsupported literal type: %s", n.Kind)
+		return e.newError(n.Pos(), "unsupported literal type: %s", n.Kind)
 	}
 }
 
@@ -1338,13 +1338,51 @@ func (e *Evaluator) evalIdent(ctx context.Context, n *ast.Ident, env *object.Env
 	}
 
 	e.logger.Debug("evalIdent: not found in env or intrinsics", "name", n.Name)
-	return newError(n.Pos(), "identifier not found: %s", n.Name)
+	return e.newError(n.Pos(), "identifier not found: %s", n.Name)
 }
 
-func newError(pos token.Pos, format string, args ...interface{}) *object.Error {
+// logWithContext logs a message, adding call stack information if an error object is provided.
+func (e *Evaluator) logWithContext(ctx context.Context, level slog.Level, msg string, args ...any) {
+	if !e.logger.Enabled(ctx, level) {
+		return
+	}
+
+	// Look for an error object in the arguments to extract call stack info.
+	for _, arg := range args {
+		if err, ok := arg.(*object.Error); ok {
+			if len(err.CallStack) > 0 {
+				// The most recent frame is at the end of the slice.
+				frame := err.CallStack[len(err.CallStack)-1]
+				contextArgs := []any{
+					slog.String("in_func", frame.Name),
+					slog.String("in_func_pos", frame.Pos),
+				}
+				// Prepend context args so they appear first in the log.
+				args = append(contextArgs, args...)
+				break // Found an error, don't need to look for more.
+			}
+		}
+	}
+
+	e.logger.Log(ctx, level, msg, args...)
+}
+
+func (e *Evaluator) newError(pos token.Pos, format string, args ...interface{}) *object.Error {
+	frames := make([]object.FrameInfo, len(e.callStack))
+	for i, frame := range e.callStack {
+		var posStr string
+		if frame.Pos.IsValid() {
+			posStr = e.scanner.Fset().Position(frame.Pos).String()
+		}
+		frames[i] = object.FrameInfo{
+			Name: frame.Name,
+			Pos:  posStr,
+		}
+	}
 	return &object.Error{
-		Message: fmt.Sprintf(format, args...),
-		Pos:     pos,
+		Message:   fmt.Sprintf(format, args...),
+		Pos:       pos,
+		CallStack: frames,
 	}
 }
 
@@ -1429,7 +1467,7 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 		// package. We must pass fn.Package to both extendFunctionEnv and Eval.
 		extendedEnv, err := e.extendFunctionEnv(ctx, fn, args)
 		if err != nil {
-			return newError(fn.Decl.Pos(), "failed to extend function env: %v", err)
+			return e.newError(fn.Decl.Pos(), "failed to extend function env: %v", err)
 		}
 
 		// Populate the new environment with the imports from the function's source file.
@@ -1542,7 +1580,7 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 		return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("result of calling %s", fn.Inspect())}
 
 	default:
-		return newError(callPos, "not a function: %s", fn.Type())
+		return e.newError(callPos, "not a function: %s", fn.Type())
 	}
 }
 
@@ -1594,7 +1632,7 @@ func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, 
 		// Cannot resolve parameter types without package info.
 		// This can happen for func literals or in some test setups.
 		// We'll proceed but types will be less precise.
-		e.logger.Warn("extendFunctionEnv: function has no package info; cannot resolve param types")
+		e.logWithContext(ctx, slog.LevelWarn, "extendFunctionEnv: function has no package info; cannot resolve param types")
 		return env, nil
 	}
 

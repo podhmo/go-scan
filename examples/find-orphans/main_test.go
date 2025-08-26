@@ -96,14 +96,15 @@ package lib
 
 type MyType struct{}
 
-// ExportedMethod is an entry point for library analysis.
-// It calls an unexported method.
+// In library mode, analysis starts from all exported functions.
+// ExportedMethod is an analysis start point, but it is never called by another
+// function, so it should be reported as an orphan.
 func (t *MyType) ExportedMethod() {
     t.unexportedMethod()
 }
 
-// unexportedMethod should be considered "used" because it's called
-// by an exported method.
+// unexportedMethod is called by ExportedMethod. Since the analysis traces
+// from ExportedMethod, unexportedMethod will be marked as "used" and is NOT an orphan.
 func (t *MyType) unexportedMethod() {}
 
 // trulyUnusedFunc is not called by anyone and should be an orphan.
@@ -132,6 +133,7 @@ func trulyUnusedFunc() {}
 	output := buf.String()
 
 	expectedOrphans := []string{
+		"(example.com/intra-pkg-methods/lib.*MyType).ExportedMethod",
 		"example.com/intra-pkg-methods/lib.trulyUnusedFunc",
 	}
 	sort.Strings(expectedOrphans)
@@ -139,13 +141,12 @@ func trulyUnusedFunc() {}
 	var foundOrphans []string
 	lines := strings.Split(strings.TrimSpace(output), "\n")
 	for _, line := range lines {
-		if strings.HasPrefix(line, "example.com") {
+		if strings.HasPrefix(line, "example.com") || strings.HasPrefix(line, "(") {
 			foundOrphans = append(foundOrphans, line)
 		}
 	}
 	sort.Strings(foundOrphans)
 
-	// Before the fix, this will fail because unexportedMethod will also be listed.
 	if diff := cmp.Diff(expectedOrphans, foundOrphans); diff != "" {
 		t.Errorf("find-orphans mismatch (-want +got):\n%s\nFull output:\n%s", diff, output)
 	}
@@ -605,7 +606,7 @@ func TestFindOrphans_WithIncludeTests(t *testing.T) {
 package main
 func main() {}
 `,
-		"not_a_test.go": `
+		"app.go": `
 package main
 // This function has a "Test" prefix but is not in a _test.go file,
 // so it should always be considered an orphan if unused.
@@ -630,7 +631,7 @@ func unusedInTest() {}
 		os.Stdout = w
 		log.SetOutput(io.Discard)
 
-		err := run(context.Background(), true, true, dir, false, false, "auto", []string{"./..."}, nil)
+		err := run(context.Background(), true, true, dir, true, false, "auto", []string{"./..."}, nil)
 		if err != nil {
 			t.Fatalf("run() failed: %v", err)
 		}
@@ -649,10 +650,9 @@ func unusedInTest() {}
 		if !strings.Contains(output, "unusedInTest") {
 			t.Errorf("unusedInTest was not reported as an orphan, but it should be")
 		}
-		// This assertion currently fails due to what seems to be a bug in the analyzer.
-		// if !strings.Contains(output, "TestShouldBeOrphan") {
-		// 	t.Errorf("TestShouldBeOrphan in non-test file was not reported as an orphan, but it should be")
-		// }
+		if !strings.Contains(output, "TestShouldBeOrphan") {
+			t.Errorf("TestShouldBeOrphan in non-test file was not reported as an orphan, but it should be")
+		}
 	})
 
 	// --- Case 2: --include-tests=false (default) ---
@@ -662,7 +662,7 @@ func unusedInTest() {}
 		os.Stdout = w
 		log.SetOutput(io.Discard)
 
-		err := run(context.Background(), true, false, dir, false, false, "auto", []string{"./..."}, nil)
+		err := run(context.Background(), true, false, dir, true, false, "auto", []string{"./..."}, nil)
 		if err != nil {
 			t.Fatalf("run() failed: %v", err)
 		}
@@ -679,10 +679,9 @@ func unusedInTest() {}
 		if strings.Contains(output, "unusedInTest") {
 			t.Errorf("found orphan from test file even when --include-tests=false")
 		}
-		// This assertion also fails due to the same bug.
-		// if !strings.Contains(output, "TestShouldBeOrphan") {
-		// 	t.Errorf("TestShouldBeOrphan in non-test file was not reported as an orphan, but it should be")
-		// }
+		if !strings.Contains(output, "TestShouldBeOrphan") {
+			t.Errorf("TestShouldBeOrphan in non-test file was not reported as an orphan, but it should be")
+		}
 	})
 }
 
@@ -794,9 +793,17 @@ func unusedInternalFunc() {}
 	io.Copy(&buf, r)
 	output := buf.String()
 
-	// In library mode, exported functions are entry points and thus not orphans.
-	// Only unexported, unused functions should be reported.
+	// With the new library mode logic, exported functions are NOT entry points.
+	// They are only considered "used" if called by another function.
+	// - ExportedFunc is not called by anything.
+	// - internalFunc is called by ExportedFunc.
+	// - UnusedExportedFunc is not called by anything.
+	// - unusedInternalFunc is not called by anything.
+	// Since we start the analysis from both ExportedFunc and UnusedExportedFunc,
+	// internalFunc will be marked as used. The other three will be orphans.
 	expectedOrphans := []string{
+		"example.com/find-orphans-test/lib.ExportedFunc",
+		"example.com/find-orphans-test/lib.UnusedExportedFunc",
 		"example.com/find-orphans-test/lib.unusedInternalFunc",
 	}
 	sort.Strings(expectedOrphans)
@@ -958,14 +965,14 @@ func (c *Cat) UnusedMethod() {}
 
 func TestFindOrphans_modeLib(t *testing.T) {
 	// This test ensures that even if a main.main entry point exists,
-	// using --mode=lib forces library mode, treating all exported functions
-	// as entry points and thus not reporting them as orphans.
+	// using --mode=lib forces library mode. In library mode, exported functions
+	// are not automatically considered "used".
 	files := map[string]string{
 		"go.mod": "module example.com/mode-lib-test\ngo 1.21\n",
 		"main.go": `
 package main
 func main() {}
-// This function would be an orphan in app mode, but should NOT be in lib mode.
+// This function is exported but unused, so it should be an orphan in lib mode.
 func ExportedAndUnused() {}
 `,
 	}
@@ -1002,10 +1009,10 @@ func ExportedAndUnused() {}
 	io.Copy(&buf, r)
 	output := buf.String()
 
-	// ExportedAndUnused should NOT be in the output because in library mode,
-	// all exported funcs are considered entry points.
-	if strings.Contains(output, "ExportedAndUnused") {
-		t.Errorf("found ExportedAndUnused as an orphan, but it should be treated as a valid entry point in library mode")
+	// With the new library mode logic, ExportedAndUnused IS an orphan because
+	// nothing calls it.
+	if !strings.Contains(output, "ExportedAndUnused") {
+		t.Errorf("did not find ExportedAndUnused as an orphan, but it should have been reported in library mode")
 	}
 }
 

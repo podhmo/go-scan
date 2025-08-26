@@ -55,7 +55,7 @@ func main() {
 			return &object.MultiReturn{
 				Values: []symgo.Object{
 					&object.String{Value: "hello"},
-					&object.Nil{},
+					object.NIL,
 				},
 			}
 		})

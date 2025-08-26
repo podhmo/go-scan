@@ -180,49 +180,37 @@ func (e *Evaluator) Eval(ctx context.Context, node ast.Node, env *object.Environ
 func (e *Evaluator) evalIncDecStmt(ctx context.Context, n *ast.IncDecStmt, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
 	ident, ok := n.X.(*ast.Ident)
 	if !ok {
-		// We could potentially support selector expressions here in the future, e.g., `s.Count++`.
-		return e.newError(n.Pos(), "unsupported expression for ++/--: expected an identifier, got %T", n.X)
+		// For now, we only support identifiers. If we support selectors later, we'll need more logic.
+		// For anything else (like a selector on a symbolic value), we do nothing and don't error.
+		return nil
 	}
 
+	// Get the variable object from the environment. Do not get its value yet.
 	obj, ok := env.Get(ident.Name)
 	if !ok {
+		// This is a semantic error in the Go code being analyzed (undefined variable). Return an error.
 		return e.newError(ident.Pos(), "identifier not found: %s", ident.Name)
 	}
 
-	// The object in the environment might be the variable itself, or it might be the value.
-	// We need to find the *variable* to update it.
 	v, ok := obj.(*object.Variable)
 	if !ok {
-		// If the identifier points to a value (e.g., from a function return), we can't increment it.
-		// Let's try to find the variable in the environment that holds this value. This is a bit of a hack.
-		found := false
-		env.Walk(func(name string, val object.Object) bool {
-			if variable, isVar := val.(*object.Variable); isVar && variable.Value == obj {
-				v = variable
-				found = true
-				return false // stop walking
-			}
-			return true
-		})
-		if !found {
-			return e.newError(ident.Pos(), "cannot ++/-- a non-variable identifier: %s", ident.Name)
-		}
+		// This is also a semantic error (e.g. `myFunc++`).
+		return e.newError(ident.Pos(), "cannot ++/-- a non-variable identifier: %s", ident.Name)
 	}
 
-	val := v.Value
-	if intVal, ok := val.(*object.Integer); ok {
+	// Now we have the variable. Check its value.
+	if intVal, ok := v.Value.(*object.Integer); ok {
+		// The value is a concrete integer, so we can modify it.
 		switch n.Tok {
 		case token.INC:
 			intVal.Value++
 		case token.DEC:
 			intVal.Value--
-		default:
-			return e.newError(n.Pos(), "unsupported token for IncDecStmt: %s", n.Tok)
 		}
-		return nil // Statements don't return a value.
 	}
+	// If v.Value is not an Integer (e.g., a SymbolicPlaceholder), we do nothing, as requested.
 
-	return e.newError(n.Pos(), "cannot ++/-- non-integer type, got %s", val.Type())
+	return nil // IncDec is a statement, so it doesn't return a value.
 }
 
 func (e *Evaluator) evalIndexExpr(ctx context.Context, node *ast.IndexExpr, env *object.Environment, pkg *scanner.PackageInfo) object.Object {

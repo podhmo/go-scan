@@ -94,3 +94,54 @@ func main() {
 		})
 	}
 }
+
+func TestEvalIncDecStmt_Symbolic(t *testing.T) {
+	input := `
+package main
+
+func getSymbolic() int {
+	return 0 // This will be treated as symbolic in the test
+}
+
+func main() {
+	x := getSymbolic()
+	x++
+	// no return, we just want to ensure it doesn't panic
+}
+`
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "main.go", input, parser.ParseComments)
+	if err != nil {
+		t.Fatalf("failed to parse input: %v", err)
+	}
+
+	var mainFunc *ast.FuncDecl
+	for _, decl := range file.Decls {
+		if fn, ok := decl.(*ast.FuncDecl); ok && fn.Name.Name == "main" {
+			mainFunc = fn
+			break
+		}
+	}
+	if mainFunc == nil {
+		t.Fatal("main function not found")
+	}
+
+	evaluator := New(nil, nil, nil, nil)
+	env := object.NewEnvironment()
+
+	// Pre-populate the environment with a symbolic value for `getSymbolic`
+	env.Set("getSymbolic", &object.Intrinsic{
+		Fn: func(args ...object.Object) object.Object {
+			// This needs to return a ReturnValue containing the placeholder
+			// to simulate a function call result.
+			return &object.ReturnValue{Value: &object.SymbolicPlaceholder{Reason: "symbolic integer"}}
+		},
+	})
+
+	// The important part is that this does not panic or return an error.
+	result := evaluator.Eval(context.Background(), mainFunc.Body, env, nil)
+
+	if result != nil && result.Type() == object.ERROR_OBJ {
+		t.Errorf("expected no error, but got %v", result.(*object.Error).Message)
+	}
+}

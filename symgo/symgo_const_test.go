@@ -3,6 +3,7 @@ package symgo_test
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	goscan "github.com/podhmo/go-scan"
@@ -51,8 +52,11 @@ const MyConstant = "hello from another module"
 		t.Fatalf("New scanner failed: %v", err)
 	}
 
-	// 2. Create the symgo interpreter.
-	interp, err := symgo.NewInterpreter(scanner)
+	// 2. Create the symgo interpreter with a policy to scan both modules.
+	policy := func(importPath string) bool {
+		return strings.HasPrefix(importPath, "example.com/main") || strings.HasPrefix(importPath, "example.com/helper")
+	}
+	interp, err := symgo.NewInterpreter(scanner, symgo.WithScanPolicy(policy))
 	if err != nil {
 		t.Fatalf("NewInterpreter failed: %v", err)
 	}

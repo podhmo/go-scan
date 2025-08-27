@@ -39,6 +39,9 @@ var NewEnclosedEnvironment = object.NewEnclosedEnvironment
 // IntrinsicFunc defines the signature for a custom function handler.
 type IntrinsicFunc func(eval *Interpreter, args []Object) Object
 
+// ScanPolicyFunc is a function that determines whether a package should be scanned from source.
+type ScanPolicyFunc = object.ScanPolicyFunc
+
 // Interpreter is the main public entry point for the symgo engine.
 type Interpreter struct {
 	scanner           *goscan.Scanner
@@ -47,7 +50,7 @@ type Interpreter struct {
 	logger            *slog.Logger
 	tracer            object.Tracer
 	interfaceBindings map[string]*goscan.TypeInfo
-	extraPackages     []string
+	scanPolicy        object.ScanPolicyFunc
 }
 
 // Option is a functional option for configuring the Interpreter.
@@ -67,10 +70,10 @@ func WithTracer(tracer object.Tracer) Option {
 	}
 }
 
-// WithExtraPackages sets a list of external packages that should be treated as internal.
-func WithExtraPackages(pkgs []string) Option {
+// WithScanPolicy sets a custom policy function to determine which packages to scan from source.
+func WithScanPolicy(policy object.ScanPolicyFunc) Option {
 	return func(i *Interpreter) {
-		i.extraPackages = pkgs
+		i.scanPolicy = policy
 	}
 }
 
@@ -101,7 +104,32 @@ func NewInterpreter(scanner *goscan.Scanner, options ...Option) (*Interpreter, e
 		i.logger = slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError}))
 	}
 
-	i.eval = evaluator.New(scanner, i.logger, i.tracer, i.extraPackages)
+	// Set a default scan policy if none was provided.
+	// The default policy is to only scan packages within the main module(s).
+	if i.scanPolicy == nil {
+		modules := i.scanner.Modules()
+		if len(modules) > 0 {
+			modulePaths := make([]string, len(modules))
+			for i, m := range modules {
+				modulePaths[i] = m.Path
+			}
+			i.scanPolicy = func(importPath string) bool {
+				for _, modulePath := range modulePaths {
+					if strings.HasPrefix(importPath, modulePath) {
+						return true
+					}
+				}
+				return false
+			}
+		} else {
+			// Fallback if module path is not available: scan nothing extra.
+			i.scanPolicy = func(importPath string) bool {
+				return false
+			}
+		}
+	}
+
+	i.eval = evaluator.New(scanner, i.logger, i.tracer, i.scanPolicy)
 
 	// Register default intrinsics
 	i.RegisterIntrinsic("fmt.Sprintf", i.intrinsicSprintf)

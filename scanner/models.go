@@ -526,3 +526,9 @@ type Visitor interface {
 	// slice stops the traversal from that node.
 	Visit(pkg *PackageImports) (importsToFollow []string, err error)
 }
+
+// ModuleInfo holds information about a single Go module in a workspace.
+type ModuleInfo struct {
+	Path string // The module path (e.g., "github.com/podhmo/go-scan").
+	Dir  string // The absolute path to the module's root directory.
+}

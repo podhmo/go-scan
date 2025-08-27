@@ -405,7 +405,16 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool) error {
 	interfaceMap := buildInterfaceMap(a.packages)
 	slog.DebugContext(ctx, "built interface map", "interfaces", len(interfaceMap))
 
-	interp, err := symgo.NewInterpreter(a.s, symgo.WithLogger(slog.Default()))
+	scanPolicy := func(importPath string) bool {
+		_, ok := a.scanPackages[importPath]
+		return ok
+	}
+
+	interp, err := symgo.NewInterpreter(
+		a.s,
+		symgo.WithLogger(slog.Default()),
+		symgo.WithScanPolicy(scanPolicy),
+	)
 	if err != nil {
 		return fmt.Errorf("failed to create interpreter: %w", err)
 	}

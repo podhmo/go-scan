@@ -52,3 +52,19 @@ This overly permissive policy caused `symgo` to abandon its use of intrinsics (w
 **Solution:** The correct fix was to make the `docgen` scan policy *stricter*. It should only scan the user's own code. The standard library functions (`http.ListenAndServe`, `http.HandleFunc`, etc.) should **not** be scanned, forcing `symgo` to rely on the registered intrinsics, which is the intended design for `docgen`. I also had to add a new intrinsic for `http.ListenAndServe` to prevent the evaluator from trying to step into it at all.
 
 **Lesson:** When dealing with a symbolic execution engine, "more scanning" is not always better. The engine's stability can rely on a careful balance between deep scanning of user code and using intrinsics or placeholders for external dependencies (especially the standard library). A regression might be caused by a policy that is too permissive, not too restrictive. Always consider the intended design of the tool using the engine.
+
+### Obstacle 4: Inconsistent Policy Enforcement & Evaluator Halting
+
+**Problem:** After the initial `ScanPolicyFunc` was implemented, tools like `find-orphans` were still exhibiting overly aggressive scanning behavior, and in some cases, the analysis would halt with an error. The policy was being correctly applied for resolving top-level functions from external packages, but it was not being respected in all code paths.
+
+**Analysis:** A deep dive into the `symgo/evaluator` revealed that the root cause was not a single bug, but a combination of two related issues:
+1.  **Inconsistent Policy Checks:** While the policy was checked when resolving a package-level function (e.g., `pkg.MyFunc()`), it was *not* checked during method resolution (e.g., `myVar.MyMethod()`). Helper functions like `findMethodOnType` would unconditionally try to scan the package of the receiver's type, bypassing the policy.
+2.  **Evaluator Brittleness:** When the policy *did* work correctly (preventing a scan), the evaluator didn't handle the consequences gracefully. For example, if `pkg.NewThing()` returned a type from a non-scanned package, the resulting symbolic variable would have no `TypeInfo`. A subsequent call like `myThing.DoSomething()` would cause the evaluator to panic with a "cannot access field or method on variable with no type info" error, halting the entire analysis. A robust tool should treat this as an unknown and simply continue.
+
+**Solution:** The problem was solved with a two-part fix in `symgo/evaluator/evaluator.go`:
+1.  **Fixing Brittleness (Primary Fix):** The evaluator was modified to no longer error when a method is called on a variable with no `TypeInfo`. Instead of halting, it now logs a debug message and returns a generic symbolic placeholder. This allows the analysis to continue gracefully, treating the unknown method call as an opaque operation, which is the correct behavior for out-of-scope code.
+2.  **Adding Missing Policy Checks (Defense-in-Depth):** Although the primary fix resolved the halting issue, the inconsistent policy checks were also fixed for correctness and efficiency. The policy check was added to `findDirectMethodOnType` and other internal functions to prevent them from attempting to scan packages that the policy disallows.
+
+This layered approach ensures that the evaluator is both efficient (by not attempting disallowed scans) and robust (by not halting when it encounters the inevitable consequences of adhering to the policy).
+
+**Lesson:** A security or policy mechanism is only as strong as its most permissive code path. It's crucial to ensure that policies are checked at *all* relevant boundaries. Furthermore, when a policy correctly blocks an action, the calling code must be robust enough to handle the resulting lack of information, rather than crashing.

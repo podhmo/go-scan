@@ -226,6 +226,7 @@ func run(ctx context.Context, all bool, includeTests bool, workspace string, ver
 
 	a := &analyzer{
 		s:              s,
+		locators:       locators,
 		packages:       make(map[string]*scanner.PackageInfo),
 		targetPackages: targetPackages,
 		mode:           mode,
@@ -382,6 +383,7 @@ func keys[K comparable, V any](m map[K]V) []K {
 
 type analyzer struct {
 	s              *goscan.Scanner
+	locators       []*locator.Locator
 	packages       map[string]*scanner.PackageInfo
 	targetPackages map[string]bool
 	mode           string
@@ -405,7 +407,30 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool) error {
 	interfaceMap := buildInterfaceMap(a.packages)
 	slog.DebugContext(ctx, "built interface map", "interfaces", len(interfaceMap))
 
-	interp, err := symgo.NewInterpreter(a.s, symgo.WithLogger(slog.Default()))
+	// Define the scope check function to bound the symbolic execution.
+	modulePaths := make(map[string]struct{}, len(a.locators))
+	for _, loc := range a.locators {
+		modulePaths[loc.ModulePath()] = struct{}{}
+	}
+	scopeCheck := func(importPath string) bool {
+		// Heuristic for stdlib: if the first part of the path has no dot, it's probably stdlib.
+		parts := strings.Split(importPath, "/")
+		if len(parts) > 0 && !strings.Contains(parts[0], ".") {
+			return false
+		}
+		// Check if the import path belongs to any of the workspace modules.
+		for modPath := range modulePaths {
+			if importPath == modPath || strings.HasPrefix(importPath, modPath+"/") {
+				return true
+			}
+		}
+		return false
+	}
+
+	interp, err := symgo.NewInterpreter(a.s,
+		symgo.WithLogger(slog.Default()),
+		symgo.WithScopeCheck(scopeCheck),
+	)
 	if err != nil {
 		return fmt.Errorf("failed to create interpreter: %w", err)
 	}

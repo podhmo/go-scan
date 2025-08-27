@@ -20,9 +20,65 @@ import (
 	"github.com/podhmo/go-scan/symgo/object"
 )
 
+// ScannerInterface defines the subset of *goscan.Scanner methods used by the evaluator.
+// This allows for wrapping the scanner to intercept certain operations.
+type ScannerInterface interface {
+	Fset() *token.FileSet
+	BuildImportLookup(file *ast.File) map[string]string
+	TypeInfoFromExpr(ctx context.Context, expr ast.Expr, currentTypeParams []*scanner.TypeParamInfo, pkg *scanner.PackageInfo, importLookup map[string]string) *scanner.FieldType
+	ScanPackageByImport(ctx context.Context, importPath string) (*scanner.PackageInfo, error)
+}
+
+// boundedResolver implements scanner.PackageResolver and enforces a workspace boundary.
+type boundedResolver struct {
+	scanner    *goscan.Scanner
+	scopeCheck func(string) bool
+	logger     *slog.Logger
+}
+
+// ScanPackageByImport checks if the importPath is within the scope before scanning.
+func (r *boundedResolver) ScanPackageByImport(ctx context.Context, importPath string) (*scanner.PackageInfo, error) {
+	if r.scopeCheck != nil {
+		if !r.scopeCheck(importPath) {
+			r.logger.DebugContext(ctx, "symgo: blocked scan of external package", "importPath", importPath)
+			// Return a minimal, empty package info to prevent a full scan.
+			return &scanner.PackageInfo{
+				Name:       path.Base(importPath),
+				ImportPath: importPath,
+				AstFiles:   make(map[string]*ast.File),
+			}, nil
+		}
+	}
+	// Scannable, or no scope check provided.
+	return r.scanner.ScanPackageByImport(ctx, importPath)
+}
+
+// ScannableScanner is a wrapper around goscan.Scanner that ensures
+// that types resolved during evaluation respect the workspace boundary.
+type ScannableScanner struct {
+	*goscan.Scanner
+	ScopeCheck func(string) bool
+	Logger     *slog.Logger
+}
+
+// TypeInfoFromExpr delegates to the embedded scanner but then overrides the resolver
+// in the returned FieldType with a boundedResolver.
+func (s *ScannableScanner) TypeInfoFromExpr(ctx context.Context, expr ast.Expr, currentTypeParams []*scanner.TypeParamInfo, pkg *scanner.PackageInfo, importLookup map[string]string) *scanner.FieldType {
+	ft := s.Scanner.TypeInfoFromExpr(ctx, expr, currentTypeParams, pkg, importLookup)
+	if ft != nil {
+		// Override the default resolver with our bounded one.
+		ft.Resolver = &boundedResolver{
+			scanner:    s.Scanner,
+			scopeCheck: s.ScopeCheck,
+			logger:     s.Logger,
+		}
+	}
+	return ft
+}
+
 // Evaluator is the main object that evaluates the AST.
 type Evaluator struct {
-	scanner           *goscan.Scanner
+	scanner           ScannerInterface
 	intrinsics        *intrinsics.Registry
 	logger            *slog.Logger
 	tracer            object.Tracer // Tracer for debugging evaluation flow.
@@ -38,7 +94,7 @@ type callFrame struct {
 }
 
 // New creates a new Evaluator.
-func New(scanner *goscan.Scanner, logger *slog.Logger, tracer object.Tracer, extraPackages []string) *Evaluator {
+func New(scanner ScannerInterface, logger *slog.Logger, tracer object.Tracer, extraPackages []string) *Evaluator {
 	if logger == nil {
 		logger = slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	}

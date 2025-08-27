@@ -88,6 +88,81 @@ func IgnoredFunc() {}
 	}
 }
 
+func TestFindOrphans_resolveStdlibType(t *testing.T) {
+	files := map[string]string{
+		"go.mod": "module example.com/resolve-stdlib\ngo 1.21\n",
+		"main.go": `
+package main
+import "encoding/json"
+type Container struct {
+    // This field requires resolving a type from the standard library.
+    // The bug was that this would cause find-orphans to scan the Go installation's
+    // source directory, which is outside the tool's intended scope.
+    Encoder *json.Encoder
+}
+func main() {
+    _ = &Container{} // Use the container so it's not an orphan.
+}
+// This function is the actual orphan we expect to find.
+func UnusedFunc() {}
+`,
+	}
+	dir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	log.SetOutput(io.Discard)
+	defer func() {
+		os.Stdout = oldStdout
+		log.SetOutput(os.Stderr)
+	}()
+
+	startPatterns := []string{"./..."}
+
+	// Change CWD to test running from the module root
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get wd: %v", err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("failed to change wd: %v", err)
+	}
+	defer os.Chdir(oldWd)
+
+	// The key part of this test is that run() should complete without panicking.
+	// The new scope-checking mechanism should prevent the scanner from
+	// attempting to scan the host Go installation's src directory.
+	err = run(context.Background(), true, false, "", false, false, "auto", startPatterns, nil)
+	if err != nil {
+		t.Fatalf("run() failed unexpectedly: %v", err)
+	}
+
+	w.Close()
+
+	var buf bytes.Buffer
+	io.Copy(&buf, r)
+	output := buf.String()
+
+	// Verify that the correct orphan is still found.
+	if !strings.Contains(output, "UnusedFunc") {
+		t.Errorf("did not find expected orphan 'UnusedFunc', output was:\n%s", output)
+	}
+
+	// Verify that no other orphans were found.
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	foundOrphanCount := 0
+	for _, line := range lines {
+		if strings.HasPrefix(line, "example.com") {
+			foundOrphanCount++
+		}
+	}
+	if foundOrphanCount != 1 {
+		t.Errorf("expected to find exactly 1 orphan, but found %d.\nOutput:\n%s", foundOrphanCount, output)
+	}
+}
+
 func TestFindOrphans_intraPackageMethodCall(t *testing.T) {
 	files := map[string]string{
 		"go.mod": "module example.com/intra-pkg-methods\ngo 1.21\n",

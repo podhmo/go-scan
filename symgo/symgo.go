@@ -48,6 +48,7 @@ type Interpreter struct {
 	tracer            object.Tracer
 	interfaceBindings map[string]*goscan.TypeInfo
 	extraPackages     []string
+	scopeCheck        func(string) bool
 }
 
 // Option is a functional option for configuring the Interpreter.
@@ -71,6 +72,14 @@ func WithTracer(tracer object.Tracer) Option {
 func WithExtraPackages(pkgs []string) Option {
 	return func(i *Interpreter) {
 		i.extraPackages = pkgs
+	}
+}
+
+// WithScopeCheck provides a function that determines if a given import path should be
+// considered within the analysis scope for deep scanning.
+func WithScopeCheck(fn func(string) bool) Option {
+	return func(i *Interpreter) {
+		i.scopeCheck = fn
 	}
 }
 
@@ -101,7 +110,16 @@ func NewInterpreter(scanner *goscan.Scanner, options ...Option) (*Interpreter, e
 		i.logger = slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError}))
 	}
 
-	i.eval = evaluator.New(scanner, i.logger, i.tracer, i.extraPackages)
+	var evalScanner evaluator.ScannerInterface = scanner
+	if i.scopeCheck != nil {
+		evalScanner = &evaluator.ScannableScanner{
+			Scanner:    scanner,
+			ScopeCheck: i.scopeCheck,
+			Logger:     i.logger,
+		}
+	}
+
+	i.eval = evaluator.New(evalScanner, i.logger, i.tracer, i.extraPackages)
 
 	// Register default intrinsics
 	i.RegisterIntrinsic("fmt.Sprintf", i.intrinsicSprintf)

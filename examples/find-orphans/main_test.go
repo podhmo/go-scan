@@ -88,6 +88,54 @@ func IgnoredFunc() {}
 	}
 }
 
+func TestFindOrphans_WithStdlibTypeResolution(t *testing.T) {
+	// This test verifies that the scanner does not panic when symgo tries to
+	// resolve a type from the standard library. The ScopedResolver should
+	// prevent the scanner from trying to scan the stdlib source.
+	files := map[string]string{
+		"go.mod": "module example.com/stdlib-resolve\ngo 1.21\n",
+		"main.go": `
+package main
+import "encoding/json"
+// This function is unused. During analysis, symgo will try to resolve its
+// return type, `*json.Encoder`. Without the ScopedResolver, this would
+// trigger a scan of the `encoding/json` package in the Go SDK.
+func unusedFuncReturnsStdlibType() *json.Encoder {
+    return nil
+}
+func main() {
+	// empty main
+}`,
+	},
+	dir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	defer func() { os.Stdout = oldStdout }()
+	log.SetOutput(io.Discard)
+	defer log.SetOutput(os.Stderr)
+
+	startPatterns := []string{"./..."}
+	// The key part of this test is that run() should complete without panicking.
+	err := run(context.Background(), true, false, dir, false, false, "auto", startPatterns, nil)
+	if err != nil {
+		t.Fatalf("run() failed unexpectedly: %v", err)
+	}
+	w.Close()
+
+	var buf bytes.Buffer
+	io.Copy(&buf, r)
+	output := buf.String()
+
+	// We expect to find our unused function.
+	expectedOrphan := "example.com/stdlib-resolve.unusedFuncReturnsStdlibType"
+	if !strings.Contains(output, expectedOrphan) {
+		t.Errorf("expected to find orphan %q, but it was not in the output.\nFull output:\n%s", expectedOrphan, output)
+	}
+}
+
 func TestFindOrphans_intraPackageMethodCall(t *testing.T) {
 	files := map[string]string{
 		"go.mod": "module example.com/intra-pkg-methods\ngo 1.21\n",

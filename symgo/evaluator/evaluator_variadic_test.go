@@ -40,7 +40,7 @@ func main() {
 
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
-		e := New(s, s.Logger, nil, nil)
+		e := New(s, s.Logger, nil, nil, nil)
 
 		e.RegisterDefaultIntrinsic(func(args ...object.Object) object.Object {
 			fnObj := args[0]

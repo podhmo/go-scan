@@ -25,11 +25,12 @@ type Evaluator struct {
 	scanner           *goscan.Scanner
 	intrinsics        *intrinsics.Registry
 	logger            *slog.Logger
-	tracer            object.Tracer // Tracer for debugging evaluation flow.
-	callStack         []*callFrame
-	interfaceBindings map[string]*goscan.TypeInfo
-	defaultIntrinsic  intrinsics.IntrinsicFunc
-	extraPackages     []string
+	tracer              object.Tracer // Tracer for debugging evaluation flow.
+	callStack           []*callFrame
+	interfaceBindings   map[string]*goscan.TypeInfo
+	defaultIntrinsic    intrinsics.IntrinsicFunc
+	extraPackages       []string
+	shallowScanPackages []string
 }
 
 type callFrame struct {
@@ -38,17 +39,18 @@ type callFrame struct {
 }
 
 // New creates a new Evaluator.
-func New(scanner *goscan.Scanner, logger *slog.Logger, tracer object.Tracer, extraPackages []string) *Evaluator {
+func New(scanner *goscan.Scanner, logger *slog.Logger, tracer object.Tracer, extraPackages []string, shallowScanPackages []string) *Evaluator {
 	if logger == nil {
 		logger = slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	}
 	return &Evaluator{
-		scanner:           scanner,
-		intrinsics:        intrinsics.New(),
-		logger:            logger,
-		tracer:            tracer,
-		interfaceBindings: make(map[string]*goscan.TypeInfo),
-		extraPackages:     extraPackages,
+		scanner:             scanner,
+		intrinsics:          intrinsics.New(),
+		logger:              logger,
+		tracer:              tracer,
+		interfaceBindings:   make(map[string]*goscan.TypeInfo),
+		extraPackages:       extraPackages,
+		shallowScanPackages: shallowScanPackages,
 	}
 }
 
@@ -254,7 +256,7 @@ func (e *Evaluator) evalIndexExpr(ctx context.Context, node *ast.IndexExpr, env 
 
 	var elemType *scanner.TypeInfo
 	if sliceFieldType != nil && sliceFieldType.IsSlice && sliceFieldType.Elem != nil {
-		if e.shouldScanPackage(sliceFieldType.Elem.FullImportPath, pkg) {
+		if e.getScanPolicy(sliceFieldType.Elem.FullImportPath, pkg) != ScanNone {
 			elemType, _ = sliceFieldType.Elem.Resolve(ctx)
 		}
 	}
@@ -365,7 +367,7 @@ func (e *Evaluator) evalCompositeLit(ctx context.Context, node *ast.CompositeLit
 	}
 
 	var resolvedType *scanner.TypeInfo
-	if e.shouldScanPackage(fieldType.FullImportPath, pkg) {
+	if e.getScanPolicy(fieldType.FullImportPath, pkg) != ScanNone {
 		resolvedType, _ = fieldType.Resolve(ctx)
 	}
 	if resolvedType == nil {
@@ -534,7 +536,7 @@ func (e *Evaluator) evalStarExpr(ctx context.Context, node *ast.StarExpr, env *o
 			}
 			if ft.Elem != nil {
 				var resolvedElem *scanner.TypeInfo
-				if e.shouldScanPackage(ft.Elem.FullImportPath, pkg) {
+				if e.getScanPolicy(ft.Elem.FullImportPath, pkg) != ScanNone {
 					resolvedElem, _ = ft.Elem.Resolve(ctx)
 				}
 				newPlaceholder.SetFieldType(ft.Elem)
@@ -587,7 +589,7 @@ func (e *Evaluator) evalGenDecl(ctx context.Context, node *ast.GenDecl, env *obj
 
 			var resolvedTypeInfo *scanner.TypeInfo
 			if staticFieldType != nil {
-				if e.shouldScanPackage(staticFieldType.FullImportPath, pkg) {
+				if e.getScanPolicy(staticFieldType.FullImportPath, pkg) != ScanNone {
 					resolvedTypeInfo, _ = staticFieldType.Resolve(ctx)
 				}
 			}
@@ -749,7 +751,7 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 			for _, field := range typeInfo.Struct.Fields {
 				if field.Name == n.Sel.Name {
 					var fieldTypeInfo *scanner.TypeInfo
-					if e.shouldScanPackage(field.Type.FullImportPath, pkg) {
+					if e.getScanPolicy(field.Type.FullImportPath, pkg) != ScanNone {
 						fieldTypeInfo, _ = field.Type.Resolve(ctx)
 					}
 					return &object.SymbolicPlaceholder{
@@ -782,18 +784,19 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 			return symbol
 		}
 
-		// Resolve the symbol on-demand. Check if it's a package we should scan from source.
-		isScannable := e.isScannablePackage(val.ScannedInfo, pkg)
+		// Resolve the symbol on-demand based on the scan policy.
+		scanPolicy := e.getScanPolicy(val.ScannedInfo.ImportPath, pkg)
+		var placeholder object.Object
 
-		if isScannable {
-			// This is a call to a package within the same module or an included extra package.
-			// Attempt to resolve it to a real, evaluatable function.
+		switch scanPolicy {
+		case ScanDeep:
+			// Deep scan: This is a call to a package within the same module or an included extra package.
+			// Attempt to resolve it to a real, evaluatable function with a body.
 			for _, f := range val.ScannedInfo.Functions {
 				if f.Name == n.Sel.Name {
 					if !ast.IsExported(f.Name) {
 						continue // Cannot access unexported functions.
 					}
-					// Create a real Function object that can be recursively evaluated.
 					fn := &object.Function{
 						Name:       f.AstDecl.Name,
 						Parameters: f.AstDecl.Type.Params,
@@ -803,15 +806,17 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 						Package:    val.ScannedInfo,
 						Def:        f,
 					}
-					val.Env.Set(n.Sel.Name, fn) // Cache in the package's env for subsequent calls.
+					val.Env.Set(n.Sel.Name, fn) // Cache in the package's env.
 					return fn
 				}
 			}
-		}
+			// Fallthrough to create a placeholder if function not found, even in a deep-scan package.
 
-		// If it's an extra-module call, or not a resolvable function, treat it as a placeholder.
-		// This is the default behavior for external dependencies.
-		var placeholder object.Object
+		case ScanShallow, ScanNone:
+			// Shallow or no scan: Treat the function as a placeholder. The key difference is
+			// whether we can enrich the placeholder with signature info.
+			// For both policies, we avoid creating a function object with a body.
+		}
 
 		// First, check if the symbol is a known constant.
 		for _, c := range val.ScannedInfo.Constants {
@@ -983,7 +988,7 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 			for _, field := range typeInfo.Struct.Fields {
 				if field.Name == n.Sel.Name {
 					var fieldTypeInfo *scanner.TypeInfo
-					if e.shouldScanPackage(field.Type.FullImportPath, pkg) {
+					if e.getScanPolicy(field.Type.FullImportPath, pkg) != ScanNone {
 						fieldTypeInfo, _ = field.Type.Resolve(ctx)
 					}
 					return &object.SymbolicPlaceholder{
@@ -1165,7 +1170,7 @@ func (e *Evaluator) evalTypeSwitchStmt(ctx context.Context, n *ast.TypeSwitchStm
 				}
 
 				var resolvedType *scanner.TypeInfo
-				if e.shouldScanPackage(fieldType.FullImportPath, pkg) {
+				if e.getScanPolicy(fieldType.FullImportPath, pkg) != ScanNone {
 					resolvedType, _ = fieldType.Resolve(ctx)
 				}
 				val := &object.SymbolicPlaceholder{
@@ -1226,7 +1231,7 @@ func (e *Evaluator) evalTypeAssertExpr(ctx context.Context, n *ast.TypeAssertExp
 		return e.newError(n.Pos(), "could not resolve type for type assertion: %s", typeNameBuf.String())
 	}
 	var resolvedType *scanner.TypeInfo
-	if e.shouldScanPackage(fieldType.FullImportPath, pkg) {
+	if e.getScanPolicy(fieldType.FullImportPath, pkg) != ScanNone {
 		resolvedType, _ = fieldType.Resolve(ctx)
 	}
 
@@ -1592,7 +1597,7 @@ func (e *Evaluator) assignIdentifier(ctx context.Context, ident *ast.Ident, val 
 		}
 		if val.FieldType() != nil {
 			var resolved *scanner.TypeInfo
-			if e.shouldScanPackage(val.FieldType().FullImportPath, pkg) {
+			if e.getScanPolicy(val.FieldType().FullImportPath, pkg) != ScanNone {
 				resolved, _ = val.FieldType().Resolve(ctx)
 			}
 			if resolved != nil && resolved.Kind == scanner.InterfaceKind {
@@ -1628,7 +1633,7 @@ func (e *Evaluator) assignIdentifier(ctx context.Context, ident *ast.Ident, val 
 	var isInterface bool
 	if v.FieldType() != nil {
 		var staticType *scanner.TypeInfo
-		if e.shouldScanPackage(v.FieldType().FullImportPath, pkg) {
+		if e.getScanPolicy(v.FieldType().FullImportPath, pkg) != ScanNone {
 			staticType, _ = v.FieldType().Resolve(ctx)
 		}
 		if staticType != nil {
@@ -2027,7 +2032,7 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 				var resultTypeInfo *scanner.TypeInfo
 				if len(method.Results) == 1 {
 					var resultType *scanner.TypeInfo
-					if e.shouldScanPackage(method.Results[0].Type.FullImportPath, pkg) {
+					if e.getScanPolicy(method.Results[0].Type.FullImportPath, pkg) != ScanNone {
 						resultType, _ = method.Results[0].Type.Resolve(ctx)
 					}
 					if resultType == nil && method.Results[0].Type.IsBuiltin {
@@ -2044,7 +2049,7 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 				results := make([]object.Object, len(method.Results))
 				for i, res := range method.Results {
 					var resultType *scanner.TypeInfo
-					if e.shouldScanPackage(res.Type.FullImportPath, pkg) {
+					if e.getScanPolicy(res.Type.FullImportPath, pkg) != ScanNone {
 						resultType, _ = res.Type.Resolve(ctx)
 					}
 					results[i] = &object.SymbolicPlaceholder{
@@ -2075,7 +2080,7 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 				resultASTExpr := results.List[0].Type
 				fieldType := e.scanner.TypeInfoFromExpr(context.Background(), resultASTExpr, nil, fn.Package, importLookup)
 				var resolvedType *scanner.TypeInfo
-				if e.shouldScanPackage(fieldType.FullImportPath, fn.Package) {
+				if e.getScanPolicy(fieldType.FullImportPath, fn.Package) != ScanNone {
 					resolvedType, _ = fieldType.Resolve(ctx)
 				}
 
@@ -2103,7 +2108,7 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 			for i, field := range results.List {
 				fieldType := e.scanner.TypeInfoFromExpr(context.Background(), field.Type, nil, fn.Package, importLookup)
 				var resolvedType *scanner.TypeInfo
-				if e.shouldScanPackage(fieldType.FullImportPath, fn.Package) {
+				if e.getScanPolicy(fieldType.FullImportPath, fn.Package) != ScanNone {
 					resolvedType, _ = fieldType.Resolve(ctx)
 				}
 
@@ -2140,36 +2145,40 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 	}
 }
 
-// isScannablePackage determines if a package should be deeply analyzed (scanned from source).
-// This is true if the package is part of the main module being analyzed, or if it has been
-// explicitly included via the `extraPackages` configuration.
-func (e *Evaluator) isScannablePackage(targetPkg, currentPkg *scanner.PackageInfo) bool {
-	if targetPkg == nil {
-		return false
-	}
-	return e.shouldScanPackage(targetPkg.ImportPath, currentPkg)
-}
+// ScanPolicy defines the evaluation strategy for a package.
+type ScanPolicy int
 
-// shouldScanPackage determines if a package, identified by its import path, should be deeply analyzed.
-func (e *Evaluator) shouldScanPackage(targetImportPath string, currentPkg *scanner.PackageInfo) bool {
-	if targetImportPath == "" {
-		// Built-in types or types within the current package (without an explicit import path) are always considered scannable.
-		return true
-	}
+const (
+	// ScanNone indicates that the package should not be scanned at all, and its types are opaque.
+	ScanNone ScanPolicy = iota
+	// ScanShallow indicates that the package should be scanned for signatures, but function bodies should not be evaluated.
+	ScanShallow
+	// ScanDeep indicates that the package should be fully scanned and its function bodies evaluated.
+	ScanDeep
+)
 
-	// Check if it's part of the same module as the current package.
+// getScanPolicy determines the scanning and evaluation strategy for a given package.
+func (e *Evaluator) getScanPolicy(targetImportPath string, currentPkg *scanner.PackageInfo) ScanPolicy {
+	// Deep scan for the current module.
 	if currentPkg != nil && currentPkg.ModulePath != "" && strings.HasPrefix(targetImportPath, currentPkg.ModulePath) {
-		return true
+		return ScanDeep
 	}
 
-	// Check if the package path matches any of the extra packages to be scanned.
+	// Deep scan for packages explicitly marked as extra.
 	for _, extraPkg := range e.extraPackages {
 		if strings.HasPrefix(targetImportPath, extraPkg) {
-			return true
+			return ScanDeep
 		}
 	}
 
-	return false
+	// Shallow scan for packages marked for signature-only scanning.
+	for _, shallowPkg := range e.shallowScanPackages {
+		if strings.HasPrefix(targetImportPath, shallowPkg) {
+			return ScanShallow
+		}
+	}
+
+	return ScanNone
 }
 
 func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, args []object.Object) (*object.Environment, error) {
@@ -2195,7 +2204,7 @@ func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, 
 					}
 					fieldType := e.scanner.TypeInfoFromExpr(ctx, recvField.Type, nil, fn.Package, importLookup)
 					var resolvedType *scanner.TypeInfo
-					if e.shouldScanPackage(fieldType.FullImportPath, fn.Package) {
+					if e.getScanPolicy(fieldType.FullImportPath, fn.Package) != ScanNone {
 						resolvedType, _ = fieldType.Resolve(ctx)
 					}
 					receiverToBind = &object.SymbolicPlaceholder{
@@ -2284,7 +2293,7 @@ func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, 
 				if name.Name != "_" {
 					fieldType := e.scanner.TypeInfoFromExpr(ctx, paramType, nil, fn.Package, importLookup)
 					var resolvedType *scanner.TypeInfo
-					if e.shouldScanPackage(fieldType.FullImportPath, fn.Package) {
+					if e.getScanPolicy(fieldType.FullImportPath, fn.Package) != ScanNone {
 						resolvedType, _ = fieldType.Resolve(ctx)
 					}
 					v := &object.Variable{
@@ -2310,7 +2319,7 @@ func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, 
 				continue
 			}
 			var resolvedType *scanner.TypeInfo
-			if e.shouldScanPackage(fieldType.FullImportPath, fn.Package) {
+			if e.getScanPolicy(fieldType.FullImportPath, fn.Package) != ScanNone {
 				resolvedType, _ = fieldType.Resolve(ctx)
 			}
 
@@ -2363,7 +2372,7 @@ func (e *Evaluator) findMethodRecursive(ctx context.Context, typeInfo *scanner.T
 		for _, field := range typeInfo.Struct.Fields {
 			if field.Embedded {
 				var embeddedTypeInfo *scanner.TypeInfo
-				if e.shouldScanPackage(field.Type.FullImportPath, field.Type.CurrentPkg) {
+				if e.getScanPolicy(field.Type.FullImportPath, field.Type.CurrentPkg) != ScanNone {
 					embeddedTypeInfo, _ = field.Type.Resolve(ctx)
 				}
 				if embeddedTypeInfo != nil {

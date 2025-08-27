@@ -45,9 +45,10 @@ type Interpreter struct {
 	eval              *evaluator.Evaluator
 	globalEnv         *object.Environment
 	logger            *slog.Logger
-	tracer            object.Tracer
-	interfaceBindings map[string]*goscan.TypeInfo
-	extraPackages     []string
+	tracer              object.Tracer
+	interfaceBindings   map[string]*goscan.TypeInfo
+	extraPackages       []string
+	shallowScanPackages []string
 }
 
 // Option is a functional option for configuring the Interpreter.
@@ -67,10 +68,17 @@ func WithTracer(tracer object.Tracer) Option {
 	}
 }
 
-// WithExtraPackages sets a list of external packages that should be treated as internal.
+// WithExtraPackages sets a list of external packages that should be scanned and evaluated deeply.
 func WithExtraPackages(pkgs []string) Option {
 	return func(i *Interpreter) {
 		i.extraPackages = pkgs
+	}
+}
+
+// WithShallowScanPackages sets a list of external packages for which only signatures should be scanned.
+func WithShallowScanPackages(pkgs []string) Option {
+	return func(i *Interpreter) {
+		i.shallowScanPackages = pkgs
 	}
 }
 
@@ -101,7 +109,7 @@ func NewInterpreter(scanner *goscan.Scanner, options ...Option) (*Interpreter, e
 		i.logger = slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError}))
 	}
 
-	i.eval = evaluator.New(scanner, i.logger, i.tracer, i.extraPackages)
+	i.eval = evaluator.New(scanner, i.logger, i.tracer, i.extraPackages, i.shallowScanPackages)
 
 	// Register default intrinsics
 	i.RegisterIntrinsic("fmt.Sprintf", i.intrinsicSprintf)

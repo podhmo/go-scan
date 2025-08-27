@@ -37,7 +37,9 @@ func main() {
 	flag.StringVar(&format, "format", "json", "Output format (json or yaml)")
 	flag.StringVar(&patternsFile, "patterns", "", "Path to a Go file with custom pattern configurations")
 	flag.StringVar(&entrypoint, "entrypoint", "NewServeMux", "The entrypoint function name")
-	flag.Var(&extraPkgs, "include-pkg", "Specify an external package to treat as internal (can be used multiple times)")
+	var shallowPkgs stringSlice
+	flag.Var(&extraPkgs, "include-pkg", "Specify an external package to scan deeply (can be used multiple times)")
+	flag.Var(&shallowPkgs, "shallow-pkg", "Specify an external package to scan for signatures only (can be used multiple times)")
 	flag.Parse()
 
 	logLevel := slog.LevelInfo
@@ -46,13 +48,13 @@ func main() {
 	}
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel}))
 
-	if err := run(logger, format, patternsFile, entrypoint, extraPkgs); err != nil {
+	if err := run(logger, format, patternsFile, entrypoint, extraPkgs, shallowPkgs); err != nil {
 		logger.Error("docgen failed", "error", err)
 		os.Exit(1)
 	}
 }
 
-func run(logger *slog.Logger, format string, patternsFile string, entrypoint string, extraPkgs []string) error {
+func run(logger *slog.Logger, format string, patternsFile string, entrypoint string, extraPkgs []string, shallowPkgs []string) error {
 	if flag.NArg() == 0 {
 		return fmt.Errorf("required argument: <package-path>")
 	}
@@ -79,7 +81,7 @@ func run(logger *slog.Logger, format string, patternsFile string, entrypoint str
 	for _, p := range customPatterns {
 		opts = append(opts, p)
 	}
-	analyzer, err := NewAnalyzer(s, logger, extraPkgs, opts...)
+	analyzer, err := NewAnalyzer(s, logger, extraPkgs, shallowPkgs, opts...)
 	if err != nil {
 		return err
 	}

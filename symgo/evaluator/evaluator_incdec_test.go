@@ -74,7 +74,7 @@ func main() {
 				t.Fatal("main function not found")
 			}
 
-			evaluator := New(nil, nil, nil, nil)
+			evaluator := New(nil, nil, nil, nil, nil)
 			env := object.NewEnvironment()
 			result := evaluator.Eval(context.Background(), mainFunc.Body, env, nil)
 
@@ -126,7 +126,7 @@ func main() {
 		t.Fatal("main function not found")
 	}
 
-	evaluator := New(nil, nil, nil, nil)
+	evaluator := New(nil, nil, nil, nil, nil)
 	env := object.NewEnvironment()
 
 	// Pre-populate the environment with a symbolic value for `getSymbolic`

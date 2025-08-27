@@ -34,7 +34,7 @@ func WithTracer(tracer symgo.Tracer) Option {
 }
 
 // NewAnalyzer creates a new Analyzer.
-func NewAnalyzer(s *goscan.Scanner, logger *slog.Logger, extraPkgs []string, options ...any) (*Analyzer, error) {
+func NewAnalyzer(s *goscan.Scanner, logger *slog.Logger, extraPkgs []string, shallowScanPackages []string, options ...any) (*Analyzer, error) {
 	a := &Analyzer{
 		Scanner: s,
 		logger:  logger,
@@ -69,6 +69,7 @@ func NewAnalyzer(s *goscan.Scanner, logger *slog.Logger, extraPkgs []string, opt
 	interpOpts := []symgo.Option{
 		symgo.WithLogger(logger),
 		symgo.WithExtraPackages(extraPkgs),
+		symgo.WithShallowScanPackages(shallowScanPackages),
 	}
 	if a.tracer != nil {
 		interpOpts = append(interpOpts, symgo.WithTracer(a.tracer))

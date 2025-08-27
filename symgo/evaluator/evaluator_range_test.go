@@ -40,7 +40,7 @@ func main() {
 		}
 		pkg := pkgs[0]
 
-		eval := New(s, s.Logger, nil, nil)
+		eval := New(s, s.Logger, nil, nil, nil)
 		env := object.NewEnvironment()
 
 		// Register an intrinsic to track when getItems is called

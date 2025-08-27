@@ -31,7 +31,7 @@ func TestDocgen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create scanner: %v", err)
 	}
-	analyzer, err := NewAnalyzer(s, logger, nil)
+	analyzer, err := NewAnalyzer(s, logger, nil, []string{"net/http", "net/url", "encoding/json"})
 	if err != nil {
 		t.Fatalf("failed to create analyzer: %v", err)
 	}
@@ -119,7 +119,7 @@ func TestDocgen_withRelativePath(t *testing.T) {
 		t.Fatalf("failed to resolve relative path %q: %v", relativeSampleAPIPath, err)
 	}
 
-	analyzer, err := NewAnalyzer(s, logger, nil)
+	analyzer, err := NewAnalyzer(s, logger, nil, []string{"net/http", "net/url", "encoding/json"})
 	if err != nil {
 		t.Fatalf("failed to create analyzer: %v", err)
 	}
@@ -186,7 +186,7 @@ func TestDocgen_withCustomPatterns(t *testing.T) {
 	for _, p := range customPatterns {
 		opts = append(opts, p)
 	}
-	analyzer, err := NewAnalyzer(s, logger, nil, opts...)
+	analyzer, err := NewAnalyzer(s, logger, nil, []string{"net/http", "net/url", "encoding/json"}, opts...)
 	if err != nil {
 		t.Fatalf("failed to create analyzer: %v", err)
 	}
@@ -284,7 +284,7 @@ func TestDocgen_fullParameters(t *testing.T) {
 		opts = append(opts, p)
 	}
 	opts = append(opts, WithTracer(symgo.TracerFunc(visit)))
-	analyzer, err := NewAnalyzer(s, logger, nil, opts...)
+	analyzer, err := NewAnalyzer(s, logger, nil, nil, opts...)
 	if err != nil {
 		t.Fatalf("failed to create analyzer: %v", err)
 	}
@@ -400,7 +400,7 @@ func TestDocgen_newFeatures(t *testing.T) {
 	for _, p := range customPatterns {
 		opts = append(opts, p)
 	}
-	analyzer, err := NewAnalyzer(s, logger, nil, opts...)
+	analyzer, err := NewAnalyzer(s, logger, nil, nil, opts...)
 	if err != nil {
 		t.Fatalf("failed to create analyzer: %v", err)
 	}
@@ -474,7 +474,7 @@ func TestDocgen_refAndRename(t *testing.T) {
 		t.Fatalf("failed to create scanner: %v", err)
 	}
 
-	analyzer, err := NewAnalyzer(s, logger, nil)
+	analyzer, err := NewAnalyzer(s, logger, nil, []string{"net/http", "net/url", "encoding/json"})
 	if err != nil {
 		t.Fatalf("failed to create analyzer: %v", err)
 	}

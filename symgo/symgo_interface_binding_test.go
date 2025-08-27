@@ -42,8 +42,8 @@ func TargetFunc(writer io.Writer) {
 
 	// Run the test using the scantest harness.
 	_, err = scantest.Run(t, context.Background(), dir, []string{"."}, func(ctx context.Context, scanner *goscan.Scanner, pkgs []*goscan.Package) error {
-		// Setup: Create a symgo interpreter using the scanner from the outer scope.
-		interp, err := symgo.NewInterpreter(s, symgo.WithScanPolicy(func(importPath string) bool { return true }))
+		// Setup: Create a symgo interpreter. The default policy should allow stdlib.
+		interp, err := symgo.NewInterpreter(s)
 		if err != nil {
 			return fmt.Errorf("failed to create interpreter: %w", err)
 		}

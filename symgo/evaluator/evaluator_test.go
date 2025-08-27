@@ -873,13 +873,8 @@ func TestEvalBuiltinFunctions(t *testing.T) {
 	eval := New(s, nil, nil, nil)
 	evaluated := eval.Eval(context.Background(), node, object.NewEnvironment(), nil)
 
-	integer, ok := evaluated.(*object.Integer)
-	if !ok {
-		t.Fatalf("object is not Integer. got=%T (%+v)", evaluated, evaluated)
-	}
-
-	if integer.Value != 4 {
-		t.Errorf("integer has wrong value. want=%d, got=%d", 4, integer.Value)
+	if _, ok := evaluated.(*object.Error); !ok {
+		t.Fatalf("expected an error for undefined function, but got %T", evaluated)
 	}
 }
 

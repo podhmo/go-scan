@@ -1021,28 +1021,27 @@ func (s *Scanner) ScanPackageByImport(ctx context.Context, importPath string) (*
 
 	var currentCallPkgInfo *scanner.PackageInfo
 	if len(filesToParseThisCall) > 0 {
-		// Heuristic to check if it's a standard library package.
-		// Determine if the package is outside the main module (e.g., in GOROOT or GOMODCACHE).
-		// If so, we must use ScanFilesWithKnownImportPath to prevent incorrect import path derivation.
-		isExternalModule := !strings.HasPrefix(pkgDirAbs, s.RootDir())
+		// Determine the module context for the package being scanned. This is crucial
+		// because the internal scanner needs the correct module root and path to
+		// correctly create the PackageInfo, especially for external modules.
+		modulePath := loc.ModulePath()
+		moduleRootDir := loc.RootDir()
 
-		if isExternalModule {
-			currentCallPkgInfo, err = s.scanner.ScanFilesWithKnownImportPath(ctx, filesToParseThisCall, pkgDirAbs, importPath)
-		} else {
-			currentCallPkgInfo, err = s.scanner.ScanFiles(ctx, filesToParseThisCall, pkgDirAbs)
-		}
+		// The internal scanner's `ScanFiles` method is fundamentally tied to its own
+		// configured module context, making it unsuitable for scanning external packages directly.
+		// `ScanFilesWithKnownImportPath` is the correct method as it allows us to
+		// provide the correct context for the package being scanned.
+		currentCallPkgInfo, err = s.scanner.ScanFilesWithKnownImportPath(ctx, filesToParseThisCall, pkgDirAbs, importPath, modulePath, moduleRootDir)
 
 		if err != nil {
 			return nil, fmt.Errorf("ScanPackageByImport: scanning files for %s failed: %w", importPath, err)
 		}
 
 		if currentCallPkgInfo != nil {
-			// For non-std-lib packages, ScanFiles already calculates the import path.
-			// For std-lib, ScanFilesWithKnownImportPath sets it.
-			// We can still enforce it here to be safe, or trust the scanner.
-			// Let's ensure it's what we expect.
+			// The import path and package path are already set correctly by ScanFilesWithKnownImportPath,
+			// but we ensure the top-level import path is what was requested.
 			currentCallPkgInfo.ImportPath = importPath
-			currentCallPkgInfo.Path = pkgDirAbs // Ensure path
+			currentCallPkgInfo.Path = pkgDirAbs
 			s.mu.Lock()
 			for _, fp := range currentCallPkgInfo.Files { // Mark newly parsed files as visited by this instance
 				s.visitedFiles[fp] = struct{}{}
@@ -1330,15 +1329,16 @@ func (s *Scanner) FindSymbolInPackage(ctx context.Context, importPath string, sy
 		return nil, fmt.Errorf("could not get unscanned files for package %s: %w", importPath, err)
 	}
 
-	// Heuristic to check if it's a standard library package.
-	isStdLib := !strings.Contains(importPath, ".")
-	var pkgDirAbs string
-	if isStdLib {
-		// We need the absolute path for ScanFilesWithKnownImportPath
-		pkgDirAbs, err = s.locator.FindPackageDir(importPath)
-		if err != nil {
-			return nil, fmt.Errorf("could not find directory for stdlib import path %s: %w", importPath, err)
-		}
+	loc, err := s.locatorForImportPath(importPath)
+	if err != nil {
+		return nil, fmt.Errorf("FindSymbolInPackage: could not get locator for %q: %w", importPath, err)
+	}
+	modulePath := loc.ModulePath()
+	moduleRootDir := loc.RootDir()
+
+	pkgDirAbs, err := loc.FindPackageDir(importPath)
+	if err != nil {
+		return nil, fmt.Errorf("FindSymbolInPackage: could not find package dir for %q: %w", importPath, err)
 	}
 
 	var cumulativePkgInfo *scanner.PackageInfo
@@ -1347,23 +1347,15 @@ func (s *Scanner) FindSymbolInPackage(ctx context.Context, importPath string, sy
 		var pkgInfo *scanner.PackageInfo
 		var scanErr error
 
-		if isStdLib {
-			// For stdlib packages, we need to bypass the public `ScanFiles` because it cannot
-			// calculate the import path for paths outside the module root.
-			// We call the internal scanner directly and then manually perform the necessary updates
-			// that the public `ScanFiles` would have done (updating visited files and symbol cache).
-			pkgInfo, scanErr = s.scanner.ScanFilesWithKnownImportPath(ctx, []string{fileToScan}, pkgDirAbs, importPath)
-			if scanErr == nil && pkgInfo != nil {
-				s.mu.Lock()
-				for _, fp := range pkgInfo.Files {
-					s.visitedFiles[fp] = struct{}{}
-				}
-				s.mu.Unlock()
-				s.updateSymbolCacheWithPackageInfo(ctx, importPath, pkgInfo)
+		// Always use ScanFilesWithKnownImportPath and pass the correct module context.
+		pkgInfo, scanErr = s.scanner.ScanFilesWithKnownImportPath(ctx, []string{fileToScan}, pkgDirAbs, importPath, modulePath, moduleRootDir)
+		if scanErr == nil && pkgInfo != nil {
+			s.mu.Lock()
+			for _, fp := range pkgInfo.Files {
+				s.visitedFiles[fp] = struct{}{}
 			}
-		} else {
-			// For in-module packages, the public `ScanFiles` method works correctly.
-			pkgInfo, scanErr = s.ScanFiles(ctx, []string{fileToScan})
+			s.mu.Unlock()
+			s.updateSymbolCacheWithPackageInfo(ctx, importPath, pkgInfo)
 		}
 
 		if scanErr != nil {

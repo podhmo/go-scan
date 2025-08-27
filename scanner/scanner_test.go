@@ -230,7 +230,7 @@ func TestScanFiles(t *testing.T) {
 	t.Run("scan_with_known_import_path", func(t *testing.T) {
 		filePath := filepath.Join(testdataDir, "features.go")
 		canonicalPath := "my/canonical/path"
-		pkgInfo, err := s.ScanFilesWithKnownImportPath(context.Background(), []string{filePath}, testdataDir, canonicalPath)
+		pkgInfo, err := s.ScanFilesWithKnownImportPath(context.Background(), []string{filePath}, testdataDir, canonicalPath, s.modulePath, s.moduleRootDir)
 		if err != nil {
 			t.Fatalf("ScanFilesWithKnownImportPath failed: %v", err)
 		}

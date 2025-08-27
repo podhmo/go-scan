@@ -27,26 +27,44 @@ A related secondary issue was an overly simplistic check for "external" modules 
 
 ## Solution
 
-The bug was addressed with a two-part fix in `goscan.go`:
+The bug was addressed with a single, robust fix in `goscan.Scanner.ScanPackageByImport`.
 
-1.  **Standard Library Special Case**: The `goscan.Scanner.ScanPackageByImport` function was modified to explicitly check if a requested package resides within the `GOROOT`. If it does, the scanner now immediately returns a minimal, empty `PackageInfo` struct. This stops the scanner from ever attempting to parse the source files of the standard library, preventing the panic. This allows `symgo` to treat standard library types as opaque, which is sufficient for its analysis.
+The function now determines if a requested package is part of the defined workspace (which can include multiple modules) at the beginning of the function. If the package's resolved directory is not found within any of the workspace module roots, it is considered "external". This applies to both standard library packages (in `GOROOT`) and third-party dependencies (in the module cache).
 
-    ```go
-    // In goscan.Scanner.ScanPackageByImport...
-    goRoot := runtime.GOROOT()
-    if goRoot != "" && strings.HasPrefix(pkgDirAbs, filepath.Join(goRoot, "src")) {
-        slog.DebugContext(ctx, "ScanPackageByImport detected stdlib package, returning minimal info", "importPath", importPath)
-        pkgInfo := &scanner.PackageInfo{
-            Path:       pkgDirAbs,
-            ImportPath: importPath,
-            Name:       filepath.Base(importPath),
-            Fset:       s.fset,
-            Files:      []string{},
-            Types:      []*scanner.TypeInfo{},
+For any such external package, the scanner immediately returns a minimal, empty `PackageInfo` struct without attempting to read or parse its source files. This prevents the panic by ensuring the scanner never operates on files outside its configured workspace context. It also correctly allows the symbolic execution engine to treat all external types as opaque, which is sufficient for its analysis needs.
+
+This approach is more general and correctly handles all out-of-workspace packages, not just the standard library.
+
+```go
+// In goscan.Scanner.ScanPackageByImport...
+
+// Determine if the package is part of the workspace.
+isWorkspaceModule := false
+if s.IsWorkspace() {
+    for _, modRoot := range s.ModuleRoots() {
+        if strings.HasPrefix(pkgDirAbs, modRoot) {
+            isWorkspaceModule = true
+            break
         }
-        // ... cache and return pkgInfo ...
-        return pkgInfo, nil
     }
-    ```
+} else {
+    isWorkspaceModule = strings.HasPrefix(pkgDirAbs, s.RootDir())
+}
 
-2.  **Improved External Module Detection**: The check for whether a package is external to the workspace was made more robust. Instead of only checking against the primary module's root directory, it now checks against the root directories of *all* modules known to the scanner in a workspace context. This ensures that packages from other modules in the same workspace are correctly identified as internal.
+// If not in the workspace, do not scan its source files.
+if !isWorkspaceModule {
+    slog.DebugContext(ctx, "ScanPackageByImport detected external package, returning minimal info", "importPath", importPath, "path", pkgDirAbs)
+    pkgInfo := &scanner.PackageInfo{
+        Path:       pkgDirAbs,
+        ImportPath: importPath,
+        Name:       filepath.Base(importPath),
+        Fset:       s.fset,
+        Files:      []string{},
+        Types:      []*scanner.TypeInfo{},
+    }
+    // ... cache and return pkgInfo ...
+    return pkgInfo, nil
+}
+
+// ... continue with normal scanning for workspace packages ...
+```

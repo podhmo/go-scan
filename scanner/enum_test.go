@@ -96,7 +96,7 @@ func TestEnumScanning_LazyLoaded(t *testing.T) {
 			}
 
 			// The scanner needs to know the canonical import path for the package it's scanning
-			pkg, err := s.ScanFilesWithKnownImportPath(ctx, files, pkgDir, importPath)
+			pkg, err := s.ScanFilesWithKnownImportPath(ctx, files, pkgDir, importPath, s.modulePath, s.moduleRootDir)
 			if err == nil && pkg != nil {
 				pkgCache[importPath] = pkg
 			}

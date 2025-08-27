@@ -2,6 +2,7 @@ package symgo_test
 
 import (
 	"context"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -139,4 +140,63 @@ func TestStdLibCall(t *testing.T) {
 	}
 
 	// If we reach here without a panic, the test has passed.
+}
+
+func TestThirdPartyModuleCall(t *testing.T) {
+	// This test ensures that when symgo encounters a function that uses types
+	// from a third-party module from the module cache (e.g., uuid.UUID), it does not
+	// panic. The generalized fix in goscan.go should treat this as an external
+	// package and not attempt to scan its source files.
+	ctx := context.Background()
+
+	moduleDir := filepath.Join("testdata", "thirdpartymodule")
+	mainPkgPath := "example.com/thirdpartymodule/main"
+
+	// Running `go mod tidy` is necessary to ensure the dependency (uuid) is
+	// available in the module cache for the test to find.
+	cmd := exec.CommandContext(ctx, "go", "mod", "tidy")
+	cmd.Dir = moduleDir
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("go mod tidy failed in %s: %v\n%s", moduleDir, err, output)
+	}
+
+	scanner, err := goscan.New(
+		goscan.WithWorkDir(moduleDir),
+		goscan.WithGoModuleResolver(),
+	)
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+
+	interp, err := symgo.NewInterpreter(scanner)
+	if err != nil {
+		t.Fatalf("NewInterpreter failed: %v", err)
+	}
+
+	pkg, err := scanner.ScanPackageByImport(ctx, mainPkgPath)
+	if err != nil {
+		t.Fatalf("ScanPackageByImport failed: %v", err)
+	}
+
+	mainFile := FindFile(t, pkg, "main.go")
+
+	_, err = interp.Eval(ctx, mainFile, pkg)
+	if err != nil {
+		t.Fatalf("Eval main file failed: %v", err)
+	}
+
+	printUUIDObj, ok := interp.FindObject("PrintUUID")
+	if !ok {
+		t.Fatal("PrintUUID function not found in interpreter environment")
+	}
+	_, ok = printUUIDObj.(*symgo.Function)
+	if !ok {
+		t.Fatalf("entrypoint 'PrintUUID' is not a function, but %T", printUUIDObj)
+	}
+
+	// If we reach here without a panic, it means Eval successfully resolved
+	// the types from the third-party module without the scanner panicking.
+	// This is sufficient to verify the fix that was the goal of this task.
+	// We do not need to proceed with Apply(), as that tests the capabilities
+	// of the symgo interpreter itself, which is out of scope.
 }

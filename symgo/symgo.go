@@ -41,7 +41,7 @@ type IntrinsicFunc func(eval *Interpreter, args []Object) Object
 
 // Interpreter is the main public entry point for the symgo engine.
 type Interpreter struct {
-	scanner           *goscan.Scanner
+	scanner           evaluator.Scanner
 	eval              *evaluator.Evaluator
 	globalEnv         *object.Environment
 	logger            *slog.Logger
@@ -74,14 +74,14 @@ func WithExtraPackages(pkgs []string) Option {
 	}
 }
 
-// Scanner returns the underlying go-scan Scanner instance.
-func (i *Interpreter) Scanner() *goscan.Scanner {
+// Scanner returns the underlying scanner instance.
+func (i *Interpreter) Scanner() evaluator.Scanner {
 	return i.scanner
 }
 
 // NewInterpreter creates a new symgo interpreter.
-// It requires a pre-configured go-scan.Scanner instance.
-func NewInterpreter(scanner *goscan.Scanner, options ...Option) (*Interpreter, error) {
+// It requires a scanner that implements the evaluator.Scanner interface.
+func NewInterpreter(scanner evaluator.Scanner, options ...Option) (*Interpreter, error) {
 	if scanner == nil {
 		return nil, fmt.Errorf("scanner cannot be nil")
 	}

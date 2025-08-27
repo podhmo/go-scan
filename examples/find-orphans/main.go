@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"go/ast"
 	"go/printer"
+	"go/token"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -211,7 +213,6 @@ func run(ctx context.Context, all bool, includeTests bool, workspace string, ver
 	var scannerOpts []goscan.ScannerOption
 	scannerOpts = append(scannerOpts, goscan.WithIncludeTests(includeTests))
 	scannerOpts = append(scannerOpts, goscan.WithGoModuleResolver())
-	scannerOpts = append(scannerOpts, goscan.WithAllowedPackages(scanPackages)) // This is the fix
 
 	if workspace != "" {
 		scannerOpts = append(scannerOpts, goscan.WithModuleDirs(moduleDirs))
@@ -381,6 +382,40 @@ func keys[K comparable, V any](m map[K]V) []K {
 	return out
 }
 
+// ScopedScanner is a wrapper around a goscan.Scanner that enforces a package scope.
+// It implements the evaluator.Scanner interface, allowing it to be passed to the
+// symgo interpreter while controlling which packages can be fully scanned.
+type ScopedScanner struct {
+	scanner         *goscan.Scanner // The real, underlying scanner
+	allowedPackages map[string]bool   // The set of packages we are allowed to scan
+}
+
+func (s *ScopedScanner) Fset() *token.FileSet {
+	return s.scanner.Fset()
+}
+
+func (s *ScopedScanner) BuildImportLookup(file *ast.File) map[string]string {
+	return s.scanner.BuildImportLookup(file)
+}
+
+func (s *ScopedScanner) TypeInfoFromExpr(ctx context.Context, expr ast.Expr, currentTypeParams []*scanner.TypeParamInfo, info *scanner.PackageInfo, importLookup map[string]string) *scanner.FieldType {
+	return s.scanner.TypeInfoFromExpr(ctx, expr, currentTypeParams, info, importLookup)
+}
+
+func (s *ScopedScanner) ScanPackageByImport(ctx context.Context, importPath string) (*scanner.PackageInfo, error) {
+	if _, ok := s.allowedPackages[importPath]; !ok {
+		slog.DebugContext(ctx, "ScanPackageByImport blocked by scope", "import_path", importPath)
+		// Package is not in the allowed list. Return a minimal, empty package info.
+		return &scanner.PackageInfo{
+			ImportPath: importPath,
+			Name:       filepath.Base(importPath),
+			Fset:       s.scanner.Fset(),
+		}, nil
+	}
+	// If the package is allowed, delegate to the real scanner.
+	return s.scanner.ScanPackageByImport(ctx, importPath)
+}
+
 type analyzer struct {
 	s              *goscan.Scanner
 	packages       map[string]*scanner.PackageInfo
@@ -406,7 +441,12 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool) error {
 	interfaceMap := buildInterfaceMap(a.packages)
 	slog.DebugContext(ctx, "built interface map", "interfaces", len(interfaceMap))
 
-	interp, err := symgo.NewInterpreter(a.s, symgo.WithLogger(slog.Default()))
+	// Create a scoped scanner to prevent symgo from scanning outside the workspace.
+	scopedScanner := &ScopedScanner{
+		scanner:         a.s,
+		allowedPackages: a.scanPackages,
+	}
+	interp, err := symgo.NewInterpreter(scopedScanner, symgo.WithLogger(slog.Default()))
 	if err != nil {
 		return fmt.Errorf("failed to create interpreter: %w", err)
 	}

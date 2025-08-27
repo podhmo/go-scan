@@ -20,9 +20,17 @@ import (
 	"github.com/podhmo/go-scan/symgo/object"
 )
 
+// Scanner defines the interface for the dependency scanner used by the evaluator.
+type Scanner interface {
+	Fset() *token.FileSet
+	BuildImportLookup(file *ast.File) map[string]string
+	TypeInfoFromExpr(ctx context.Context, expr ast.Expr, currentTypeParams []*scanner.TypeParamInfo, info *scanner.PackageInfo, importLookup map[string]string) *scanner.FieldType
+	ScanPackageByImport(ctx context.Context, importPath string) (*scanner.PackageInfo, error)
+}
+
 // Evaluator is the main object that evaluates the AST.
 type Evaluator struct {
-	scanner           *goscan.Scanner
+	scanner           Scanner
 	intrinsics        *intrinsics.Registry
 	logger            *slog.Logger
 	tracer            object.Tracer // Tracer for debugging evaluation flow.
@@ -38,7 +46,7 @@ type callFrame struct {
 }
 
 // New creates a new Evaluator.
-func New(scanner *goscan.Scanner, logger *slog.Logger, tracer object.Tracer, extraPackages []string) *Evaluator {
+func New(scanner Scanner, logger *slog.Logger, tracer object.Tracer, extraPackages []string) *Evaluator {
 	if logger == nil {
 		logger = slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	}

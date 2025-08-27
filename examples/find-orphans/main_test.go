@@ -121,8 +121,8 @@ func thisIsAnOrphan() {}
 	defer os.Chdir(oldWd)
 
 	// The key to this test is that with the fix, this run should complete
-	// without error, because the scanner will be configured to not scan
-	// the "fmt" package even when it resolves it as a dependency.
+	// without error, because the ScopedScanner will prevent the scanner
+	// from analyzing the "fmt" package.
 	err = run(context.Background(), true, false, ".", false, false, "auto", startPatterns, nil)
 	if err != nil {
 		t.Fatalf("run() failed unexpectedly: %v", err)

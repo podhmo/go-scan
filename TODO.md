@@ -97,6 +97,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] **Multi-value returns and assignments**: The interpreter now supports functions that return multiple values and assignments of the form `x, y := f()` and `x, y = f()`.
 
 ### Future Enhancements
+- [ ] **`find-orphans`: Performance Tuning**: Investigated memory usage of the `find-orphans` tool. Profiling revealed that the high memory consumption is due to the need to load ASTs for all packages in a workspace for the whole-program analysis. An initial refactoring to remove the tool's internal package cache did not yield improvements, as the underlying `go-scan` library still holds the data in memory. A significant reduction in memory would likely require architectural changes to `go-scan` itself, such as not storing full ASTs. See `docs/analysis-profiling.md` for the full analysis.
 - [x] **`symgo`: Tracing and Debuggability**: Enhance the tracing mechanism to provide a more detailed view of the symbolic execution flow.
     - [x] **Contextual Logging**: Warning logs emitted during evaluation now include the function call site (name and position) where the warning occurred. This is achieved by capturing the call stack within the returned error object.
     - [x] **Source in Stack Traces**: Errors returned by the symbolic evaluator now include a full stack trace, complete with the source code line that caused the error, similar to `minigo`.

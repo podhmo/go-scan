@@ -92,7 +92,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     - [x] `*ast.IncDecStmt`
     - [ ] `*ast.LabeledStmt`
     - [ ] `*ast.SendStmt`
-    - [x] `*ast.TypeAssertExpr` (Note: Now handles both single-value and two-value assertions.)
+    - [ ] `*ast.TypeAssertExpr` (partially handled in type switches)
 - [x] **`panic` and other builtins**: The interpreter now recognizes `panic`, `nil`, `true`, and `false`.
 - [x] **Multi-value returns and assignments**: The interpreter now supports functions that return multiple values and assignments of the form `x, y := f()` and `x, y = f()`.
 

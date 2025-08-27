@@ -8,83 +8,19 @@
     "/slow": {
       "get": {
         "description": "slowHandler handles the GET /slow endpoint.\nIt's a slow handler to demonstrate timeouts.",
-        "operationId": "docgen_sampleapi_slowHandler",
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "text/plain": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          }
-        }
+        "operationId": "docgen_sampleapi_slowHandler"
       }
     },
     "/user": {
       "get": {
         "description": "getUser handles the GET /user endpoint.\nIt returns a single user by ID.",
-        "operationId": "docgen_sampleapi_getUser",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "query",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/docgen_sampleapi_User"
-                }
-              }
-            }
-          }
-        }
+        "operationId": "docgen_sampleapi_getUser"
       }
     },
     "/users": {
       "get": {
         "description": "listUsers handles the GET /users endpoint.\nIt returns a list of all users.\nIt accepts 'limit' and 'offset' query parameters.",
-        "operationId": "docgen_sampleapi_listUsers",
-        "parameters": [
-          {
-            "name": "limit",
-            "in": "query",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "offset",
-            "in": "query",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/docgen_sampleapi_User"
-                  }
-                }
-              }
-            }
-          }
-        }
+        "operationId": "docgen_sampleapi_listUsers"
       },
       "post": {
         "description": "createUser handles the POST /users endpoint.\nIt creates a new user.",

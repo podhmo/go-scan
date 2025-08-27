@@ -19,52 +19,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-func TestDebugNetHttp(t *testing.T) {
-	logger := newTestLogger(os.Stderr)
-	s, err := goscan.New(
-		goscan.WithGoModuleResolver(),
-		goscan.WithLogger(logger),
-	)
-	if err != nil {
-		t.Fatalf("failed to create scanner: %v", err)
-	}
-
-	pkgInfo, err := s.ScanPackageByImport(context.Background(), "net/http")
-	if err != nil {
-		t.Fatalf("failed to scan net/http: %v", err)
-	}
-
-	// Print out the info to debug
-	t.Logf("Package: %s", pkgInfo.ImportPath)
-	requestType := pkgInfo.Lookup("Request")
-	if requestType != nil {
-		t.Logf("Type: Request, Kind: %d", requestType.Kind)
-	}
-
-	for _, f := range pkgInfo.Functions {
-		if f.Receiver != nil {
-			baseRecvName := f.Receiver.Type.TypeName
-			if f.Receiver.Type.IsPointer && f.Receiver.Type.Elem != nil {
-				baseRecvName = f.Receiver.Type.Elem.TypeName
-			}
-			if baseRecvName == "Request" {
-				t.Logf("  Method on Request: %s, Receiver: %s", f.Name, f.Receiver.Type.String())
-			}
-		}
-	}
-
-	rwType := pkgInfo.Lookup("ResponseWriter")
-	if rwType != nil {
-		t.Logf("Type: ResponseWriter, Kind: %d", rwType.Kind)
-		if rwType.Interface != nil {
-			for _, m := range rwType.Interface.Methods {
-				t.Logf("  Interface Method on ResponseWriter: %s", m.Name)
-			}
-		}
-	}
-	t.Fail() // Force output
-}
-
 func TestDocgen(t *testing.T) {
 	const sampleAPIPath = "github.com/podhmo/go-scan/examples/docgen/sampleapi"
 
@@ -77,7 +31,7 @@ func TestDocgen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create scanner: %v", err)
 	}
-	analyzer, err := NewAnalyzer(s, logger, nil) // no options needed for the default test
+	analyzer, err := NewAnalyzer(s, logger, nil)
 	if err != nil {
 		t.Fatalf("failed to create analyzer: %v", err)
 	}
@@ -520,7 +474,7 @@ func TestDocgen_refAndRename(t *testing.T) {
 		t.Fatalf("failed to create scanner: %v", err)
 	}
 
-	analyzer, err := NewAnalyzer(s, logger, []string{"net/http"})
+	analyzer, err := NewAnalyzer(s, logger, nil)
 	if err != nil {
 		t.Fatalf("failed to create analyzer: %v", err)
 	}

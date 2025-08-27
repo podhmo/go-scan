@@ -1983,27 +1983,34 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 		}
 
 		// We found the method signature. Now, create placeholders for its return values.
-		// This logic is duplicated from the *object.SymbolicPlaceholder case.
 		if len(method.Results) <= 1 {
 			var resultTypeInfo *scanner.TypeInfo
+			var resultFieldType *scanner.FieldType
 			if len(method.Results) == 1 {
+				resultFieldType = method.Results[0].Type
 				// We don't need to do a full Resolve here, just create a placeholder
 				// with the FieldType information.
-				resultTypeInfo = &scanner.TypeInfo{Name: method.Results[0].Type.Name, PkgPath: method.Results[0].Type.FullImportPath}
+				if resultFieldType != nil {
+					resultTypeInfo = &scanner.TypeInfo{Name: resultFieldType.Name, PkgPath: resultFieldType.FullImportPath}
+				}
 			}
 			return &object.SymbolicPlaceholder{
 				Reason:     fmt.Sprintf("result of deferred method call %s", method.Name),
-				BaseObject: object.BaseObject{ResolvedTypeInfo: resultTypeInfo, ResolvedFieldType: method.Results[0].Type},
+				BaseObject: object.BaseObject{ResolvedTypeInfo: resultTypeInfo, ResolvedFieldType: resultFieldType},
 			}
 		}
 
 		// Multiple return values
 		results := make([]object.Object, len(method.Results))
 		for i, res := range method.Results {
-			resultTypeInfo := &scanner.TypeInfo{Name: res.Type.Name, PkgPath: res.Type.FullImportPath}
+			resultFieldType := res.Type
+			var resultTypeInfo *scanner.TypeInfo
+			if resultFieldType != nil {
+				resultTypeInfo = &scanner.TypeInfo{Name: resultFieldType.Name, PkgPath: resultFieldType.FullImportPath}
+			}
 			results[i] = &object.SymbolicPlaceholder{
 				Reason:     fmt.Sprintf("result %d of deferred method call %s", i, method.Name),
-				BaseObject: object.BaseObject{ResolvedTypeInfo: resultTypeInfo, ResolvedFieldType: res.Type},
+				BaseObject: object.BaseObject{ResolvedTypeInfo: resultTypeInfo, ResolvedFieldType: resultFieldType},
 			}
 		}
 		return &object.MultiReturn{Values: results}

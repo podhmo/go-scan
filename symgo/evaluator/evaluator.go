@@ -1304,11 +1304,15 @@ func (e *Evaluator) evalBlockStatement(ctx context.Context, block *ast.BlockStmt
 	for _, stmt := range block.List {
 		result = e.Eval(ctx, stmt, env, pkg)
 
-		if result != nil {
-			rt := result.Type()
-			if rt == object.RETURN_VALUE_OBJ || rt == object.ERROR_OBJ || rt == object.BREAK_OBJ || rt == object.CONTINUE_OBJ {
-				return result
-			}
+		// It's possible for a statement (like a declaration) to evaluate to a nil object.
+		// We must check for this before calling .Type() to avoid a panic.
+		if result == nil {
+			continue
+		}
+
+		rt := result.Type()
+		if rt == object.RETURN_VALUE_OBJ || rt == object.ERROR_OBJ || rt == object.BREAK_OBJ || rt == object.CONTINUE_OBJ {
+			return result
 		}
 	}
 

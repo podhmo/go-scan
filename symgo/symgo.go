@@ -149,6 +149,19 @@ func (i *Interpreter) BindInterface(ifaceTypeName string, concreteTypeName strin
 // NewSymbolic creates a new symbolic variable with a given type.
 // This is a helper for setting up analysis entrypoints.
 func (i *Interpreter) NewSymbolic(name string, typeName string) (Object, error) {
+	// First, check if there's a manual override for this type.
+	// This is the preferred way to handle external types without scanning.
+	if ti, ok := i.scanner.LookupOverride(typeName); ok {
+		return &Variable{
+			Name: name,
+			BaseObject: BaseObject{
+				ResolvedTypeInfo: ti,
+			},
+			Value: &SymbolicPlaceholder{Reason: "function parameter"},
+		}, nil
+	}
+
+	// If no override, fall back to scanning the package.
 	pkgPath, simpleTypeName := splitQualifiedName(typeName)
 	if pkgPath == "" {
 		return nil, fmt.Errorf("type name must be fully qualified (e.g., 'io.Writer'), got %s", typeName)

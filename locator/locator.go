@@ -147,6 +147,11 @@ func (l *Locator) ModulePath() string {
 	return l.modulePath
 }
 
+// Replaces returns the replace directives from go.mod.
+func (l *Locator) Replaces() []ReplaceDirective {
+	return l.replaces
+}
+
 // FindPackageDir converts an import path to a physical directory path.
 func (l *Locator) FindPackageDir(importPath string) (string, error) {
 	// 1. Check replace directives

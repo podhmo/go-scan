@@ -115,4 +115,4 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [ ] simplifying test setup for tools that consume import paths.
 
 ### `go-scan` Core Improvements
-- [x] **Standard Library Scanning**: Prevent the scanner from parsing standard library source files during type resolution, which caused panics. It now returns minimal package info, treating stdlib types as opaque.
+- [x] **External Package Scanning**: Prevent `symgo` from scanning external/stdlib packages by returning minimal package info, forcing it to use placeholders as intended.

@@ -1,39 +1,44 @@
-# Troubleshooting: `find-orphans` Scans External Packages
+# Troubleshooting: `symgo` Triggers Scan of External Packages
 
-This document details a bug where the `find-orphans` tool, and by extension the `go-scan` library, would attempt to scan the source code of packages outside the main workspace, including the Go standard library. This would lead to panics or incorrect behavior.
+This document details an issue where tools built on `go-scan`'s symbolic execution engine (`symgo`), such as `find-orphans`, would unintentionally trigger a source-code scan of packages outside the main workspace. This includes both the Go standard library and third-party modules from the module cache, and would often lead to panics.
 
 ## Symptom
 
-When running a tool built on `go-scan`'s symbolic execution engine (`symgo`), such as `find-orphans`, a panic could occur. The stack trace would originate from the `scanner.scanGoFiles` function, and the file paths involved would point to locations within the Go installation's `GOROOT` (e.g., `/usr/local/go/src/encoding/json`) or the Go module cache.
-
-A log message might show the scanner attempting to process a package using its absolute file path instead of its import path:
+When running an analysis, a panic could occur. The stack trace would originate from the `scanner.scanGoFiles` function, and the file paths involved would point to locations within `GOROOT` or the Go module cache.
 
 ```
-level=INFO source=.../scanner.go:228 msg="## scan go files" package=/opt/homebrew/Cellar/go/1.24.3/libexec/src/encoding/json size=8
 panic: /opt/homebrew/Cellar/go/1.24.3/libexec/src/encoding/json
+
+goroutine 1 [running]:
+github.com/podhmo/go-scan/scanner.(*Scanner).scanGoFiles(...)
+...
+github.com/podhmo/go-scan/scanner.(*FieldType).Resolve(...)
+...
+github.com/podhmo/go-scan/symgo/evaluator.(*Evaluator).evalGenDecl(...)
+...
+main.run(...)
 ```
 
 ## Root Cause Analysis
 
-The issue stemmed from a chain of events triggered during symbolic execution:
+The behavior, while seeming like a scanner bug, was actually triggered by the `symgo` engine's design and its interaction with the scanner.
 
-1.  **Type Resolution**: The `symgo` engine would encounter a type from an external package (e.g., `json.Encoder` from `encoding/json`). To understand this type, it would try to resolve its definition.
-2.  **Scanner Invocation**: This resolution request was passed to the main `goscan.Scanner` instance via the `FieldType.Resolve` method. The scanner was asked to get information about the `encoding/json` package.
-3.  **Package Location**: The `goscan.Scanner` uses its `locator` to find the directory for the requested import path. The locator correctly found the source code for `encoding/json` inside the system's `GOROOT`.
-4.  **Incorrect Context**: The core of the problem was that `go-scan` used a single internal `scanner.Scanner` instance that was initialized with the *user's main module* context (its root directory and module path).
-5.  **The Panic**: When this internal scanner was then asked to parse the Go files found in `GOROOT`, it was operating outside its configured environment. This mismatch in file paths versus the expected module root led to incorrect behavior and ultimately the panic.
+1.  **Symbolic Execution**: During analysis, `symgo` would encounter an expression involving a type from an external package (e.g., a variable of type `json.Encoder`).
+2.  **Type Resolution Trigger**: To understand the type, `symgo` would call the `Resolve()` method on the `scanner.FieldType` representing `json.Encoder`. This happened deep within the evaluator, for example when processing a general declaration (`evalGenDecl`).
+3.  **Unintentional Scanner Invocation**: The `FieldType.Resolve` method is designed to provide a full type definition by scanning the source package if necessary. It would therefore invoke the main `goscan.Scanner` instance, asking it to scan the external package (`encoding/json`).
+4.  **Incorrect Context**: The `goscan.Scanner` would correctly locate the external package's source files in `GOROOT` or the module cache. However, the internal `scanner.Scanner` instance it used for parsing was configured only with the *user's main module* context. Trying to parse files from `GOROOT` using the main module's root directory led to a context mismatch and a panic.
 
-A related secondary issue was an overly simplistic check for "external" modules (`isExternalModule := !strings.HasPrefix(pkgDirAbs, s.RootDir())`). This check did not correctly handle multi-module workspaces or modules using `replace` directives, causing workspace-local packages to sometimes be treated as external.
+The core issue was a philosophical one: `symgo` was not intended to perform deep analysis of external packages. The desired behavior was for it to treat such types as opaque placeholders. However, by calling `Resolve()`, it was unintentionally asking the scanner to do a deep, source-level scan, which the scanner was not configured to handle for out-of-workspace packages.
 
 ## Solution
 
-The bug was addressed with a single, robust fix in `goscan.Scanner.ScanPackageByImport`.
+The fix was to align the scanner's behavior with `symgo`'s intended design. The `goscan.Scanner.ScanPackageByImport` function was modified to act as a guard, preventing `symgo`'s resolution requests from ever reaching the file-parsing logic for external packages.
 
-The function now determines if a requested package is part of the defined workspace (which can include multiple modules) at the beginning of the function. If the package's resolved directory is not found within any of the workspace module roots, it is considered "external". This applies to both standard library packages (in `GOROOT`) and third-party dependencies (in the module cache).
+1.  **Workspace Check**: The function now begins by checking if the requested package's directory is located within any of the defined workspace modules.
+2.  **Block External Scans**: If the package is determined to be external (i.e., not in any workspace module), the function immediately returns a minimal, empty `scanner.PackageInfo` struct.
+3.  **Force Placeholder Behavior**: By returning an empty package, the scanner signals to `symgo` that no type definitions are available. `symgo` then correctly falls back to treating the external type as an opaque, symbolic placeholder, which was the original intent.
 
-For any such external package, the scanner immediately returns a minimal, empty `PackageInfo` struct without attempting to read or parse its source files. This prevents the panic by ensuring the scanner never operates on files outside its configured workspace context. It also correctly allows the symbolic execution engine to treat all external types as opaque, which is sufficient for its analysis needs.
-
-This approach is more general and correctly handles all out-of-workspace packages, not just the standard library.
+This change prevents the panic and aligns the library's behavior with its design goals, without requiring complex changes to the `symgo` engine itself.
 
 ```go
 // In goscan.Scanner.ScanPackageByImport...
@@ -51,20 +56,15 @@ if s.IsWorkspace() {
     isWorkspaceModule = strings.HasPrefix(pkgDirAbs, s.RootDir())
 }
 
-// If not in the workspace, do not scan its source files.
+// If not in the workspace, do not scan its source files. Return minimal info.
 if !isWorkspaceModule {
     slog.DebugContext(ctx, "ScanPackageByImport detected external package, returning minimal info", "importPath", importPath, "path", pkgDirAbs)
     pkgInfo := &scanner.PackageInfo{
-        Path:       pkgDirAbs,
-        ImportPath: importPath,
-        Name:       filepath.Base(importPath),
-        Fset:       s.fset,
-        Files:      []string{},
-        Types:      []*scanner.TypeInfo{},
+        // ... minimal fields ...
     }
     // ... cache and return pkgInfo ...
     return pkgInfo, nil
 }
 
-// ... continue with normal scanning for workspace packages ...
+// ... continue with normal scanning ONLY for workspace packages ...
 ```

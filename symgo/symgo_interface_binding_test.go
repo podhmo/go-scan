@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	goscan "github.com/podhmo/go-scan"
+	"github.com/podhmo/go-scan/scanner"
 	"github.com/podhmo/go-scan/scantest"
 	"github.com/podhmo/go-scan/symgo"
 )
@@ -23,7 +24,12 @@ import "io"
 // TargetFunc is the function we will analyze.
 func TargetFunc(writer io.Writer) {
 	writer.WriteString("hello")
-}`,
+}
+// MyBuffer is a local type that implements io.Writer.
+type MyBuffer struct {}
+func (b *MyBuffer) Write(p []byte) (n int, err error) { return len(p), nil }
+func (b *MyBuffer) WriteString(s string) (n int, err error) { return len(s), nil }
+`,
 	}
 
 	// Create a temporary directory with the files.
@@ -31,10 +37,24 @@ func TargetFunc(writer io.Writer) {
 	defer cleanup()
 
 	// Create a scanner configured to use the temporary directory as its root
-	// and to resolve stdlib packages.
+	// and to resolve stdlib packages. We also provide a manual override for
+	// io.Writer to prevent the scanner from needing to parse the "io" package,
+	// which is now blocked by our fix.
 	s, err := goscan.New(
 		goscan.WithWorkDir(dir),
 		goscan.WithGoModuleResolver(),
+		goscan.WithExternalTypeOverrides(scanner.ExternalTypeOverride{
+			"io.Writer": &scanner.TypeInfo{
+				Name:    "Writer",
+				PkgPath: "io",
+				Kind:    scanner.InterfaceKind,
+				Interface: &scanner.InterfaceInfo{
+					Methods: []*scanner.MethodInfo{
+						{Name: "WriteString"}, // Just need the method name for this test
+					},
+				},
+			},
+		}),
 	)
 	if err != nil {
 		t.Fatalf("failed to create scanner: %v", err)
@@ -48,13 +68,13 @@ func TargetFunc(writer io.Writer) {
 			return fmt.Errorf("failed to create interpreter: %w", err)
 		}
 
-		// Action: Bind the interface `io.Writer` to the concrete type `*bytes.Buffer`.
-		if err := interp.BindInterface("io.Writer", "*bytes.Buffer"); err != nil {
+		// Action: Bind the interface `io.Writer` to our local concrete type `*myapp.MyBuffer`.
+		if err := interp.BindInterface("io.Writer", "*myapp.MyBuffer"); err != nil {
 			return fmt.Errorf("failed to bind interface: %w", err)
 		}
 
 		// Action: Register an intrinsic for the method on the concrete type.
-		interp.RegisterIntrinsic("(*bytes.Buffer).WriteString", func(i *symgo.Interpreter, args []symgo.Object) symgo.Object {
+		interp.RegisterIntrinsic("(*myapp.MyBuffer).WriteString", func(i *symgo.Interpreter, args []symgo.Object) symgo.Object {
 			intrinsicCalled = true
 			return nil
 		})

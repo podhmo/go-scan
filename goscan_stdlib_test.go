@@ -30,12 +30,10 @@ func TestScanStdlib_SucceedsWithoutOverride(t *testing.T) {
 		t.Errorf("expected package name to be 'time', but got %q", pkg.Name)
 	}
 
-	// Check if a well-known type from the time package was found.
-	timeType := pkg.Lookup("Time")
-	if timeType == nil {
-		t.Fatal("could not find type 'Time' in scanned 'time' package")
-	}
-	if timeType.Kind != StructKind {
-		t.Errorf("expected 'time.Time' to be a struct, but was %v", timeType.Kind)
+	// With the new "block scan" fix, external packages (including stdlib) are
+	// intentionally not scanned for their contents. We expect to get a minimal
+	// PackageInfo object, but it should not contain any types.
+	if len(pkg.Types) > 0 {
+		t.Errorf("expected no types in minimally scanned 'time' package, but got %d", len(pkg.Types))
 	}
 }

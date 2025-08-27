@@ -102,15 +102,15 @@ func (s *Scanner) ScanFiles(ctx context.Context, filePaths []string, pkgDirPath 
 		importPath = importPath[:len(importPath)-2]
 	}
 
-	return s.scanGoFiles(ctx, filePaths, pkgDirPath, importPath, s.modulePath, s.moduleRootDir)
+	return s.scanGoFiles(ctx, filePaths, pkgDirPath, importPath)
 }
 
 // ScanFilesWithKnownImportPath parses files with a predefined import path.
-func (s *Scanner) ScanFilesWithKnownImportPath(ctx context.Context, filePaths []string, pkgDirPath string, canonicalImportPath string, modulePath string, moduleDir string) (*PackageInfo, error) {
+func (s *Scanner) ScanFilesWithKnownImportPath(ctx context.Context, filePaths []string, pkgDirPath string, canonicalImportPath string) (*PackageInfo, error) {
 	if len(filePaths) == 0 {
 		return nil, fmt.Errorf("no files provided to scan for package at %s", pkgDirPath)
 	}
-	return s.scanGoFiles(ctx, filePaths, pkgDirPath, canonicalImportPath, modulePath, moduleDir)
+	return s.scanGoFiles(ctx, filePaths, pkgDirPath, canonicalImportPath)
 }
 
 // ScanPackageImports parses only the import declarations from a set of Go files.
@@ -223,12 +223,12 @@ func (s *Scanner) ScanPackageImports(ctx context.Context, filePaths []string, pk
 	return info, nil
 }
 
-func (s *Scanner) scanGoFiles(ctx context.Context, filePaths []string, pkgDirPath string, canonicalImportPath string, modulePath string, moduleDir string) (*PackageInfo, error) {
+func (s *Scanner) scanGoFiles(ctx context.Context, filePaths []string, pkgDirPath string, canonicalImportPath string) (*PackageInfo, error) {
 	info := &PackageInfo{
 		Path:       pkgDirPath,
 		ImportPath: canonicalImportPath,
-		ModulePath: modulePath,
-		ModuleDir:  moduleDir,
+		ModulePath: s.modulePath,
+		ModuleDir:  s.moduleRootDir,
 		Fset:       s.fset,
 		AstFiles:   make(map[string]*ast.File),
 	}

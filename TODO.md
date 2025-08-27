@@ -113,3 +113,6 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] **`ModuleWalker`: Wildcard Support**: Added support for the `...` wildcard in both file path and import path patterns to tools like `find-orphans`, making package discovery more intuitive.
 - [x] **`scantest`: Path to Import Path Conversion**: Enhance `scantest.Run` with an option or helper to automatically convert filesystem path patterns (like `.`) into their corresponding Go import path patterns,
 - [ ] simplifying test setup for tools that consume import paths.
+
+### `go-scan` Core Improvements
+- [x] **Standard Library Scanning**: Prevent the scanner from parsing standard library source files during type resolution, which caused panics. It now returns minimal package info, treating stdlib types as opaque.

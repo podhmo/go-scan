@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	goscan "github.com/podhmo/go-scan"
+	goscanner "github.com/podhmo/go-scan/scanner"
 	"github.com/podhmo/go-scan/symgo"
 	"github.com/podhmo/go-scan/symgo/object"
 )
@@ -67,4 +68,75 @@ func TestExtraModuleCall(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected return value to be a *symgo.SymbolicPlaceholder, but got %T: %v", retVal.Value, retVal.Value.Inspect())
 	}
+}
+
+func TestStdLibCall(t *testing.T) {
+	// This test ensures that when symgo encounters a function that uses types
+	// from the standard library (e.g., io.Writer, json.Encoder), it does not
+	// panic by trying to scan the stdlib source files. The fix in goscan.go
+	// should prevent the scanner from attempting to parse GOROOT.
+	ctx := context.Background()
+
+	moduleDir := filepath.Join("testdata", "stdlibmodule")
+	mainPkgPath := "example.com/stdlibmodule/main"
+
+	scanner, err := goscan.New(
+		goscan.WithWorkDir(moduleDir),
+		goscan.WithGoModuleResolver(),
+	)
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+
+	interp, err := symgo.NewInterpreter(scanner)
+	if err != nil {
+		t.Fatalf("NewInterpreter failed: %v", err)
+	}
+
+	pkg, err := scanner.ScanPackageByImport(ctx, mainPkgPath)
+	if err != nil {
+		t.Fatalf("ScanPackageByImport failed: %v", err)
+	}
+
+	mainFile := FindFile(t, pkg, "main.go")
+
+	// Evaluating the file will parse all the declarations, including
+	// GetEncoder, which has stdlib types in its signature. This is where
+	// the type resolution happens.
+	_, err = interp.Eval(ctx, mainFile, pkg)
+	if err != nil {
+		t.Fatalf("Eval main file failed: %v", err)
+	}
+
+	// Find the target function to analyze.
+	getEncoderObj, ok := interp.FindObject("GetEncoder")
+	if !ok {
+		t.Fatal("GetEncoder function not found in interpreter environment")
+	}
+	getEncoderFunc, ok := getEncoderObj.(*symgo.Function)
+	if !ok {
+		t.Fatalf("entrypoint 'GetEncoder' is not a function, but %T", getEncoderObj)
+	}
+
+	// Create a symbolic placeholder for the io.Writer argument.
+	arg := &object.SymbolicPlaceholder{
+		Reason: "io.Writer for test",
+	}
+	// To represent the type of the placeholder, we create a FieldType description.
+	// The interpreter uses this information if it needs to resolve the type.
+	arg.SetFieldType(&goscanner.FieldType{
+		PkgName:        "io",
+		TypeName:       "Writer",
+		FullImportPath: "io",
+		Resolver:       scanner, // Provide the scanner instance as the resolver.
+	})
+
+	// Apply the function. This is the step that would have panicked before the fix.
+	// We don't need to inspect the result, just ensure it doesn't panic.
+	_, err = interp.Apply(ctx, getEncoderFunc, []object.Object{arg}, pkg)
+	if err != nil {
+		t.Fatalf("Apply GetEncoder function failed: %v", err)
+	}
+
+	// If we reach here without a panic, the test has passed.
 }

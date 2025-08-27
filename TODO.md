@@ -59,6 +59,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - **`symgo`: Embedded Method Resolution**: The symbolic execution engine can now correctly resolve and trace method calls on embedded structs, enabling more accurate call-graph analysis for tools like `find-orphans`.
 - **`symgo`: Type Switch Support**: The symbolic execution engine now correctly handles `ast.TypeSwitchStmt` nodes, allowing it to analyze code that uses type switches (`switch v := i.(type)`). It correctly scopes the typed variable (`v`) within each case block.
 - **`symgo`: Efficient & Configurable Scanning Policy**: The symbolic execution engine no longer scans packages outside the workspace by default, significantly improving performance and scalability. It now uses a `ScanPolicyFunc` to provide fine-grained, dynamic control over which packages are scanned from source versus being treated as symbolic placeholders. This replaces the older, less flexible `WithExtraPackages` mechanism.
+    - **Robustness Fix**: The evaluator is now more robust when dealing with types from non-scanned modules (as dictated by the policy). It no longer errors when encountering method calls on variables with unresolved types, instead treating them as symbolic, which prevents analysis from halting unexpectedly.
 
 ## To Be Implemented
 

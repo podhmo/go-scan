@@ -860,7 +860,11 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 	case *object.Variable:
 		typeInfo := val.TypeInfo()
 		if typeInfo == nil {
-			return e.newError(n.Pos(), "cannot access field or method on variable with no type info: %s", val.Name)
+			// This can happen if the variable's type comes from a module that
+			// the scan policy disallowed from being scanned. Instead of erroring,
+			// we treat the method call as symbolic and continue.
+			e.logger.DebugContext(ctx, "variable has no type info, treating method call as symbolic", "variable", val.Name, "method", n.Sel.Name)
+			return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("method call on variable %q with untyped symbolic value", val.Name)}
 		}
 
 		if typeInfo.Kind == scanner.InterfaceKind {

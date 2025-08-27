@@ -211,6 +211,7 @@ func run(ctx context.Context, all bool, includeTests bool, workspace string, ver
 	var scannerOpts []goscan.ScannerOption
 	scannerOpts = append(scannerOpts, goscan.WithIncludeTests(includeTests))
 	scannerOpts = append(scannerOpts, goscan.WithGoModuleResolver())
+	scannerOpts = append(scannerOpts, goscan.WithAllowedPackages(scanPackages)) // This is the fix
 
 	if workspace != "" {
 		scannerOpts = append(scannerOpts, goscan.WithModuleDirs(moduleDirs))

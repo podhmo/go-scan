@@ -88,6 +88,64 @@ func IgnoredFunc() {}
 	}
 }
 
+func TestFindOrphans_DoesNotScanStdlib(t *testing.T) {
+	files := map[string]string{
+		"go.mod": "module example.com/stdlib-test\ngo 1.21\n",
+		"main.go": `
+package main
+import "fmt"
+func main() {
+    fmt.Println("hello world")
+}
+func thisIsAnOrphan() {}
+`,
+	}
+	dir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	log.SetOutput(io.Discard)
+
+	startPatterns := []string{"./..."}
+
+	// Change CWD to the test directory
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get wd: %v", err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("failed to change wd: %v", err)
+	}
+	defer os.Chdir(oldWd)
+
+	// The key to this test is that with the fix, this run should complete
+	// without error, because the scanner will be configured to not scan
+	// the "fmt" package even when it resolves it as a dependency.
+	err = run(context.Background(), true, false, ".", false, false, "auto", startPatterns, nil)
+	if err != nil {
+		t.Fatalf("run() failed unexpectedly: %v", err)
+	}
+
+	w.Close()
+	os.Stdout = oldStdout
+	log.SetOutput(os.Stderr)
+
+	var buf bytes.Buffer
+	io.Copy(&buf, r)
+	output := buf.String()
+
+	expectedOrphan := "example.com/stdlib-test.thisIsAnOrphan"
+	if !strings.Contains(output, expectedOrphan) {
+		t.Errorf("expected to find orphan %q, but it was not in the output.\nOutput:\n%s", expectedOrphan, output)
+	}
+
+	if strings.Contains(output, "fmt") {
+		t.Errorf("output contains 'fmt', suggesting the stdlib was scanned or reported on, which is incorrect.\nOutput:\n%s", output)
+	}
+}
+
 func TestFindOrphans_intraPackageMethodCall(t *testing.T) {
 	files := map[string]string{
 		"go.mod": "module example.com/intra-pkg-methods\ngo 1.21\n",

@@ -307,6 +307,16 @@ func WithWorkDir(path string) ScannerOption {
 	}
 }
 
+// WithAllowedPackages sets a whitelist of packages that are allowed to be scanned.
+// If this option is used, any import path not in the provided map will be skipped
+// during scanning, and an empty PackageInfo will be returned instead.
+func WithAllowedPackages(packages map[string]bool) ScannerOption {
+	return func(s *Scanner) error {
+		s.allowedPackages = packages
+		return nil
+	}
+}
+
 // WithDryRun enables or disables dry-run mode.
 func WithDryRun(dryRun bool) ScannerOption {
 	return func(s *Scanner) error {
@@ -924,6 +934,25 @@ func isDir(path string) bool {
 // from any newly parsed files. Files parsed by this function are marked as visited
 // in `s.visitedFiles`.
 func (s *Scanner) ScanPackageByImport(ctx context.Context, importPath string) (*scanner.PackageInfo, error) {
+	// If an allowlist is configured, check if the package is in it.
+	if s.Config.allowedPackages != nil {
+		if _, ok := s.Config.allowedPackages[importPath]; !ok {
+			slog.DebugContext(ctx, "ScanPackageByImport blocked by scope", "import_path", importPath)
+			// Package is not in the allowed list. To prevent scanning out-of-scope
+			// dependencies (like the Go standard library), we return a minimal,
+			// empty package info. We also cache this empty result.
+			pkgInfo := &scanner.PackageInfo{
+				ImportPath: importPath,
+				Name:       filepath.Base(importPath), // Best guess for name
+				Fset:       s.fset,
+			}
+			s.mu.Lock()
+			s.packageCache[importPath] = pkgInfo
+			s.mu.Unlock()
+			return pkgInfo, nil
+		}
+	}
+
 	s.mu.RLock()
 	cachedPkg, found := s.packageCache[importPath]
 	s.mu.RUnlock()

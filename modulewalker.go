@@ -31,6 +31,7 @@ type Config struct {
 	Inspect             bool
 	Logger              *slog.Logger
 	overlay             scanner.Overlay
+	allowedPackages     map[string]bool
 }
 
 // ModuleWalker is responsible for lightweight, dependency-focused scanning operations.

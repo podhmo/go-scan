@@ -90,23 +90,25 @@ func IgnoredFunc() {}
 
 func TestFindOrphans_WithStdlibTypeResolution(t *testing.T) {
 	// This test verifies that the scanner does not panic when symgo tries to
-	// resolve a type from the standard library. The ScopedResolver should
+	// resolve a type from the standard library. The WithScanScope option should
 	// prevent the scanner from trying to scan the stdlib source.
 	files := map[string]string{
 		"go.mod": "module example.com/stdlib-resolve\ngo 1.21\n",
 		"main.go": `
 package main
 import "encoding/json"
+
 // This function is unused. During analysis, symgo will try to resolve its
-// return type, `*json.Encoder`. Without the ScopedResolver, this would
-// trigger a scan of the `encoding/json` package in the Go SDK.
+// return type, *json.Encoder. Without the scope limit, this would
+// trigger a scan of the encoding/json package in the Go SDK.
 func unusedFuncReturnsStdlibType() *json.Encoder {
     return nil
 }
+
 func main() {
 	// empty main
 }`,
-	},
+	}
 	dir, cleanup := scantest.WriteFiles(t, files)
 	defer cleanup()
 

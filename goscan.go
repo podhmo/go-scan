@@ -385,6 +385,15 @@ func WithExternalTypeOverrides(overrides scanner.ExternalTypeOverride) ScannerOp
 	}
 }
 
+// WithScanScope limits the scanner to only scan packages within the provided set of import paths.
+// If an out-of-scope package is requested, a minimal placeholder is returned instead of scanning.
+func WithScanScope(scope map[string]bool) ScannerOption {
+	return func(s *Scanner) error {
+		s.Config.ScanScope = scope
+		return nil
+	}
+}
+
 // New creates a new Scanner. It finds the module root starting from the given path.
 // It also initializes an empty set of visited files for this scanner instance.
 func New(options ...ScannerOption) (*Scanner, error) {
@@ -924,6 +933,21 @@ func isDir(path string) bool {
 // from any newly parsed files. Files parsed by this function are marked as visited
 // in `s.visitedFiles`.
 func (s *Scanner) ScanPackageByImport(ctx context.Context, importPath string) (*scanner.PackageInfo, error) {
+	// If a scan scope is defined, check if the package is within it.
+	if s.Config.ScanScope != nil {
+		if _, inScope := s.Config.ScanScope[importPath]; !inScope {
+			if s.Logger != nil {
+				s.Logger.DebugContext(ctx, "skipping scan of out-of-scope package", "package", importPath)
+			}
+			// Return a placeholder package. This prevents deep scanning of stdlib or third-party code.
+			return &scanner.PackageInfo{
+				ImportPath: importPath,
+				Name:       filepath.Base(importPath),
+				Fset:       s.fset,
+			}, nil
+		}
+	}
+
 	s.mu.RLock()
 	cachedPkg, found := s.packageCache[importPath]
 	s.mu.RUnlock()

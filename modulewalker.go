@@ -31,6 +31,7 @@ type Config struct {
 	Inspect             bool
 	Logger              *slog.Logger
 	overlay             scanner.Overlay
+	ScanScope           map[string]bool // If set, scanning is limited to these import paths.
 }
 
 // ModuleWalker is responsible for lightweight, dependency-focused scanning operations.

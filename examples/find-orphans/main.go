@@ -211,6 +211,7 @@ func run(ctx context.Context, all bool, includeTests bool, workspace string, ver
 	var scannerOpts []goscan.ScannerOption
 	scannerOpts = append(scannerOpts, goscan.WithIncludeTests(includeTests))
 	scannerOpts = append(scannerOpts, goscan.WithGoModuleResolver())
+	scannerOpts = append(scannerOpts, goscan.WithScanScope(scanPackages))
 
 	if workspace != "" {
 		scannerOpts = append(scannerOpts, goscan.WithModuleDirs(moduleDirs))
@@ -390,34 +391,6 @@ type analyzer struct {
 	ctx            context.Context
 }
 
-// ScopedResolver is a wrapper around a PackageResolver that restricts scanning
-// to a predefined set of packages.
-type ScopedResolver struct {
-	resolver     scanner.PackageResolver
-	scanPackages map[string]bool
-	logger       *slog.Logger
-}
-
-// ScanPackageByImport implements the scanner.PackageResolver interface.
-// It checks if the requested importPath is within the allowed scope (scanPackages).
-// If not, it returns a minimal, empty PackageInfo to prevent symgo from scanning
-// out-of-scope dependencies like the standard library.
-func (r *ScopedResolver) ScanPackageByImport(ctx context.Context, importPath string) (*scanner.PackageInfo, error) {
-	if _, ok := r.scanPackages[importPath]; !ok {
-		// This package is not in our analysis scope. Return a placeholder
-		// to prevent the interpreter from scanning it.
-		r.logger.DebugContext(ctx, "skipping scan of out-of-scope package", "package", importPath)
-		return &scanner.PackageInfo{
-			ImportPath: importPath,
-			Name:       filepath.Base(importPath), // Best guess for name
-			// Note: Fset is nil, which is okay because this placeholder should not
-			// be used for any operations that require a valid FileSet.
-		}, nil
-	}
-	// If the package is in scope, delegate to the real resolver.
-	return r.resolver.ScanPackageByImport(ctx, importPath)
-}
-
 func (a *analyzer) analyze(ctx context.Context, asJSON bool) error {
 	a.ctx = ctx
 
@@ -433,14 +406,7 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool) error {
 	interfaceMap := buildInterfaceMap(a.packages)
 	slog.DebugContext(ctx, "built interface map", "interfaces", len(interfaceMap))
 
-	// Wrap the main scanner in our ScopedResolver to prevent symgo from scanning
-	// packages outside the workspace (e.g., the standard library).
-	scopedResolver := &ScopedResolver{
-		resolver:     a.s,
-		scanPackages: a.scanPackages,
-		logger:       slog.Default(),
-	}
-	interp, err := symgo.NewInterpreter(scopedResolver, symgo.WithLogger(slog.Default()))
+	interp, err := symgo.NewInterpreter(a.s, symgo.WithLogger(slog.Default()))
 	if err != nil {
 		return fmt.Errorf("failed to create interpreter: %w", err)
 	}

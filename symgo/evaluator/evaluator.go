@@ -737,13 +737,23 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 			return &object.Intrinsic{Fn: intrinsicFn}
 		}
 
-		// Optimization: avoid scanning packages that are not part of the analysis scope.
-		if !e.isScannableImportPath(val.Path, pkg) {
+		isWorkspace := e.scanner.IsWorkspacePackage(val.Path)
+		isExtra := false
+		for _, extraPkg := range e.extraPackages {
+			if strings.HasPrefix(val.Path, extraPkg) {
+				isExtra = true
+				break
+			}
+		}
+
+		// Optimization: avoid scanning and interpreting packages that are not interesting.
+		if !isWorkspace && !isExtra {
 			placeholder := &object.SymbolicPlaceholder{Reason: fmt.Sprintf("unscanned external symbol %s.%s", val.Path, n.Sel.Name)}
 			val.Env.Set(n.Sel.Name, placeholder)
 			return placeholder
 		}
 
+		// Since it's a workspace or extra package, scan it to resolve the symbol.
 		if val.ScannedInfo == nil {
 			if e.scanner == nil {
 				return e.newError(n.Pos(), "scanner is not available, cannot load package %q", val.Path)
@@ -759,44 +769,32 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 			return symbol
 		}
 
-		// Resolve the symbol on-demand. Check if it's a package we should scan from source.
-		isScannable := e.isScannablePackage(val.ScannedInfo, pkg)
-
-		if isScannable {
-			// This is a call to a package within the same module or an included extra package.
-			// Attempt to resolve it to a real, evaluatable function.
-			for _, f := range val.ScannedInfo.Functions {
-				if f.Name == n.Sel.Name {
-					if !ast.IsExported(f.Name) {
-						continue // Cannot access unexported functions.
-					}
-					// Create a real Function object that can be recursively evaluated.
-					fn := &object.Function{
-						Name:       f.AstDecl.Name,
-						Parameters: f.AstDecl.Type.Params,
-						Body:       f.AstDecl.Body,
-						Env:        val.Env, // Use the target package's environment.
-						Decl:       f.AstDecl,
-						Package:    val.ScannedInfo,
-						Def:        f,
-					}
-					val.Env.Set(n.Sel.Name, fn) // Cache in the package's env for subsequent calls.
-					return fn
+		// Attempt to resolve as a function.
+		for _, f := range val.ScannedInfo.Functions {
+			if f.Name == n.Sel.Name {
+				if !ast.IsExported(f.Name) {
+					continue
 				}
+				fn := &object.Function{
+					Name:       f.AstDecl.Name,
+					Parameters: f.AstDecl.Type.Params,
+					Body:       f.AstDecl.Body,
+					Env:        val.Env,
+					Decl:       f.AstDecl,
+					Package:    val.ScannedInfo,
+					Def:        f,
+				}
+				val.Env.Set(n.Sel.Name, fn)
+				return fn
 			}
 		}
 
-		// If it's an extra-module call, or not a resolvable function, treat it as a placeholder.
-		// This is the default behavior for external dependencies.
-		var placeholder object.Object
-
-		// First, check if the symbol is a known constant.
+		// Attempt to resolve as a constant.
 		for _, c := range val.ScannedInfo.Constants {
 			if c.Name == n.Sel.Name {
 				if !c.IsExported {
-					continue // Cannot access unexported constants.
+					continue
 				}
-
 				var constObj object.Object
 				switch c.ConstVal.Kind() {
 				case constant.String:
@@ -808,44 +806,18 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 					}
 					constObj = &object.Integer{Value: val}
 				case constant.Bool:
-					if constant.BoolVal(c.ConstVal) {
-						constObj = object.TRUE
-					} else {
-						constObj = object.FALSE
-					}
-				default:
-					// Other constant types (float, complex, etc.) are not yet supported.
-					// Fall through to create a placeholder.
+					constObj = object.GetBool(constant.BoolVal(c.ConstVal))
 				}
-
 				if constObj != nil {
-					val.Env.Set(n.Sel.Name, constObj) // Cache the resolved constant.
+					val.Env.Set(n.Sel.Name, constObj)
 					return constObj
 				}
 			}
 		}
 
-		// Check if the symbol is a function to enrich the placeholder.
-		var funcInfo *scanner.FunctionInfo
-		for _, f := range val.ScannedInfo.Functions {
-			if f.Name == n.Sel.Name {
-				funcInfo = f
-				break
-			}
-		}
-
-		if funcInfo != nil {
-			placeholder = &object.SymbolicPlaceholder{
-				Reason:         fmt.Sprintf("external func %s.%s", val.Name, n.Sel.Name),
-				UnderlyingFunc: funcInfo,
-				Package:        val.ScannedInfo,
-			}
-		} else {
-			// Not a function or a resolvable constant, so it's likely a var or unsupported const.
-			// Create a generic placeholder.
-			placeholder = &object.SymbolicPlaceholder{Reason: fmt.Sprintf("external symbol %s.%s", val.Name, n.Sel.Name)}
-		}
-
+		// Not a function or a resolvable constant, so it's likely a var or unsupported type.
+		// Create a generic placeholder for this unresolved workspace symbol.
+		placeholder := &object.SymbolicPlaceholder{Reason: fmt.Sprintf("unresolved workspace symbol %s.%s", val.Path, n.Sel.Name)}
 		val.Env.Set(n.Sel.Name, placeholder)
 		return placeholder
 
@@ -877,8 +849,18 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 		return e.newError(n.Pos(), "undefined method: %s on %s", n.Sel.Name, val.TypeName)
 
 	case *object.Variable:
+		// If the variable's value is a symbolic placeholder, a method call on it
+		// should result in another symbolic placeholder, not an error.
+		// This handles chains like `err.Error()` where `err` is from an external package.
+		if placeholder, ok := val.Value.(*object.SymbolicPlaceholder); ok {
+			return &object.SymbolicPlaceholder{
+				Reason: fmt.Sprintf("result of calling method %s on symbolic value %s", n.Sel.Name, placeholder.Reason),
+			}
+		}
+
 		typeInfo := val.TypeInfo()
 		if typeInfo == nil {
+			// If we are here, the value is not a placeholder, so we need type info to proceed.
 			return e.newError(n.Pos(), "cannot access field or method on variable with no type info: %s", val.Name)
 		}
 
@@ -1973,25 +1955,6 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 	default:
 		return e.newError(callPos, "not a function: %s", fn.Type())
 	}
-}
-
-// isScannableImportPath determines if a package should be deeply analyzed by checking its import path.
-// This is true if the package is part of the main module being analyzed, or if it has been
-// explicitly included via the `extraPackages` configuration.
-func (e *Evaluator) isScannableImportPath(targetImportPath string, currentPkg *scanner.PackageInfo) bool {
-	// Check if the package path matches any of the extra packages to be scanned.
-	for _, extraPkg := range e.extraPackages {
-		if strings.HasPrefix(targetImportPath, extraPkg) {
-			return true
-		}
-	}
-
-	// Check if it's part of the same module as the current package.
-	if currentPkg != nil && currentPkg.ModulePath != "" && strings.HasPrefix(targetImportPath, currentPkg.ModulePath) {
-		return true
-	}
-
-	return false
 }
 
 // isScannablePackage determines if a package should be deeply analyzed (scanned from source).

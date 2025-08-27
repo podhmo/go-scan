@@ -159,6 +159,14 @@ var (
 	FALSE = &Boolean{Value: false}
 )
 
+// GetBool returns the singleton TRUE or FALSE object.
+func GetBool(val bool) *Boolean {
+	if val {
+		return TRUE
+	}
+	return FALSE
+}
+
 // --- Function Object ---
 
 // Function represents a user-defined function in the code being analyzed.

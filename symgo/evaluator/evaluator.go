@@ -740,6 +740,14 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 			if e.scanner == nil {
 				return e.newError(n.Pos(), "scanner is not available, cannot load package %q", val.Path)
 			}
+			if !e.isScannablePackage(val.Path, pkg) {
+				placeholder := &object.SymbolicPlaceholder{
+					Reason:  fmt.Sprintf("external symbol %s.%s", val.Name, n.Sel.Name),
+					Package: nil,
+				}
+				val.Env.Set(n.Sel.Name, placeholder)
+				return placeholder
+			}
 			pkgInfo, err := e.scanner.ScanPackageByImport(ctx, val.Path)
 			if err != nil {
 				return e.newError(n.Pos(), "could not scan package %q: %v", val.Path, err)
@@ -752,7 +760,7 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 		}
 
 		// Resolve the symbol on-demand. Check if it's a package we should scan from source.
-		isScannable := e.isScannablePackage(val.ScannedInfo, pkg)
+		isScannable := e.isScannablePackage(val.Path, pkg)
 
 		if isScannable {
 			// This is a call to a package within the same module or an included extra package.
@@ -1970,19 +1978,14 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 // isScannablePackage determines if a package should be deeply analyzed (scanned from source).
 // This is true if the package is part of the main module being analyzed, or if it has been
 // explicitly included via the `extraPackages` configuration.
-func (e *Evaluator) isScannablePackage(targetPkg, currentPkg *scanner.PackageInfo) bool {
-	if targetPkg == nil {
-		return false
-	}
-
-	// Check if it's part of the same module as the current package.
-	if currentPkg != nil && currentPkg.ModulePath != "" && strings.HasPrefix(targetPkg.ImportPath, currentPkg.ModulePath) {
+func (e *Evaluator) isScannablePackage(targetImportPath string, currentPkg *scanner.PackageInfo) bool {
+	if e.scanner.IsWorkspacePackage(targetImportPath) {
 		return true
 	}
 
 	// Check if the package path matches any of the extra packages to be scanned.
 	for _, extraPkg := range e.extraPackages {
-		if strings.HasPrefix(targetPkg.ImportPath, extraPkg) {
+		if strings.HasPrefix(targetImportPath, extraPkg) {
 			return true
 		}
 	}

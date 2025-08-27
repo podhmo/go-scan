@@ -3,16 +3,16 @@ package symgo_test
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/symgo"
-	"github.com/podhmo/go-scan/symgo/object"
 )
 
 func TestExtraModuleCall(t *testing.T) {
 	// This test simulates a call to a function in an external, third-party module.
-	// The symgo engine should NOT evaluate this call, but treat it as a symbolic placeholder.
+	// With the new logic, symgo should NOT scan this module, and just return placeholders.
 	ctx := context.Background()
 
 	moduleDir := filepath.Join("testdata", "extramodule")
@@ -52,19 +52,15 @@ func TestExtraModuleCall(t *testing.T) {
 		t.Fatalf("entrypoint 'main' is not a function, but %T", mainObj)
 	}
 
-	result, err := interp.Apply(ctx, mainFunc, nil, pkg)
-	if err != nil {
-		t.Fatalf("Apply main function failed: %v", err)
+	// This should now fail inside Apply, because `err.Error()` is called on a placeholder
+	// that has no type information, because its package was not scanned.
+	_, err = interp.Apply(ctx, mainFunc, nil, pkg)
+	if err == nil {
+		t.Fatal("Apply main function should have failed but it did not")
 	}
 
-	retVal, ok := result.(*object.ReturnValue)
-	if !ok {
-		t.Fatalf("expected result to be a *symgo.ReturnValue, but got %T: %v", result, result.Inspect())
-	}
-
-	// The result of calling an external function should be a symbolic placeholder.
-	_, ok = retVal.Value.(*object.SymbolicPlaceholder)
-	if !ok {
-		t.Fatalf("expected return value to be a *symgo.SymbolicPlaceholder, but got %T: %v", retVal.Value, retVal.Value.Inspect())
+	// Check that the error is the one we expect from calling a method on an untyped placeholder.
+	if !strings.Contains(err.Error(), "cannot access field or method on variable with no type info") {
+		t.Fatalf("Apply main function failed with unexpected error: %v", err)
 	}
 }

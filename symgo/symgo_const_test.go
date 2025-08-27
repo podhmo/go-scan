@@ -43,6 +43,7 @@ const MyConstant = "hello from another module"
 	mainModuleDir := filepath.Join(tmpdir, "main")
 
 	// 1. Create a scanner configured for the main module.
+	// By default, it does not scan other modules like 'helper'.
 	scanner, err := goscan.New(
 		goscan.WithWorkDir(mainModuleDir),
 		goscan.WithGoModuleResolver(),
@@ -64,7 +65,7 @@ const MyConstant = "hello from another module"
 	}
 
 	// 4. Eval the main file to populate the interpreter's environment.
-	mainFile := FindFile(t, mainPkg, "main.go") // Using helper from another test
+	mainFile := FindFile(t, mainPkg, "main.go")
 	_, err = interp.Eval(ctx, mainFile, mainPkg)
 	if err != nil {
 		t.Fatalf("Eval main file failed: %v", err)
@@ -92,13 +93,10 @@ const MyConstant = "hello from another module"
 		t.Fatalf("expected result to be a *object.ReturnValue, but got %T", result)
 	}
 
-	str, ok := retVal.Value.(*object.String)
+	// The 'helper' module is not part of the workspace, so symgo should not scan it.
+	// Therefore, the constant should resolve to a symbolic placeholder, not its concrete value.
+	_, ok = retVal.Value.(*object.SymbolicPlaceholder)
 	if !ok {
-		t.Fatalf("expected return value to be *object.String, but got %T", retVal.Value)
-	}
-
-	expected := "hello from another module"
-	if str.Value != expected {
-		t.Errorf("expected result to be %q, but got %q", expected, str.Value)
+		t.Fatalf("expected return value to be *object.SymbolicPlaceholder, but got %T: %v", retVal.Value, retVal.Value.Inspect())
 	}
 }

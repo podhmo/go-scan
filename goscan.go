@@ -85,6 +85,26 @@ func (s *Scanner) IsWorkspace() bool {
 	return s.isWorkspace
 }
 
+// IsWorkspacePackage checks if a given import path belongs to any of the modules
+// configured in the scanner's workspace.
+func (s *Scanner) IsWorkspacePackage(importPath string) bool {
+	if !s.isWorkspace {
+		if s.locator != nil {
+			modulePath := s.locator.ModulePath()
+			return importPath == modulePath || strings.HasPrefix(importPath, modulePath+"/")
+		}
+		return false
+	}
+
+	for _, loc := range s.locators {
+		modulePath := loc.ModulePath()
+		if importPath == modulePath || strings.HasPrefix(importPath, modulePath+"/") {
+			return true
+		}
+	}
+	return false
+}
+
 // ModuleRoots returns the root directories of all modules in the workspace.
 func (s *Scanner) ModuleRoots() []string {
 	if !s.isWorkspace {

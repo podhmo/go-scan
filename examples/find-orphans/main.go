@@ -11,7 +11,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"runtime/pprof"
 	"sync"
 
 	goscan "github.com/podhmo/go-scan"
@@ -30,26 +29,10 @@ func main() {
 		verbose      = flag.Bool("v", false, "enable verbose output")
 		asJSON       = flag.Bool("json", false, "output orphans in JSON format")
 		mode         = flag.String("mode", "auto", "analysis mode: auto, app, or lib")
-		cpuprofile   = flag.String("cpuprofile", "", "write cpu profile to `file`")
-		memprofile   = flag.String("memprofile", "", "write memory profile to `file`")
 		excludeDirs  stringSliceFlag
 	)
 	flag.Var(&excludeDirs, "exclude-dirs", "comma-separated list of directories to exclude (e.g. testdata,vendor)")
 	flag.Parse()
-
-	if *cpuprofile != "" {
-		f, err := os.Create(*cpuprofile)
-		if err != nil {
-			slog.Error("could not create CPU profile", "error", err)
-			os.Exit(1)
-		}
-		defer f.Close() // error handling omitted for example
-		if err := pprof.StartCPUProfile(f); err != nil {
-			slog.Error("could not start CPU profile", "error", err)
-			os.Exit(1)
-		}
-		defer pprof.StopCPUProfile()
-	}
 
 	// Validate mode
 	switch *mode {
@@ -74,20 +57,6 @@ func main() {
 	if err := run(ctx, *all, *includeTests, *workspace, *verbose, *asJSON, *mode, startPatterns, excludeDirs); err != nil {
 		slog.ErrorContext(ctx, "toplevel", "error", err)
 		os.Exit(1)
-	}
-
-	if *memprofile != "" {
-		f, err := os.Create(*memprofile)
-		if err != nil {
-			slog.Error("could not create memory profile", "error", err)
-			os.Exit(1)
-		}
-		defer f.Close() // error handling omitted for example
-		// runtime.GC() // get up-to-date statistics
-		if err := pprof.WriteHeapProfile(f); err != nil {
-			slog.Error("could not write memory profile", "error", err)
-			os.Exit(1)
-		}
 	}
 }
 
@@ -257,6 +226,7 @@ func run(ctx context.Context, all bool, includeTests bool, workspace string, ver
 
 	a := &analyzer{
 		s:              s,
+		packages:       make(map[string]*scanner.PackageInfo),
 		targetPackages: targetPackages,
 		mode:           mode,
 		scanPackages:   scanPackages,
@@ -411,36 +381,28 @@ func keys[K comparable, V any](m map[K]V) []K {
 }
 
 type analyzer struct {
-	s          *goscan.Scanner
+	s              *goscan.Scanner
+	packages       map[string]*scanner.PackageInfo
 	targetPackages map[string]bool
 	mode           string
-	// scanPackages holds all packages within the user-specified directory/module scope.
-	scanPackages map[string]bool
-	// reachablePackages holds all packages that are reachable from the initial entry points.
-	// This is populated by the dependency walk.
-	reachablePackages map[string]bool
-	mu                sync.Mutex
-	ctx               context.Context
+	scanPackages   map[string]bool
+	mu             sync.Mutex
+	ctx            context.Context
 }
 
 func (a *analyzer) analyze(ctx context.Context, asJSON bool) error {
 	a.ctx = ctx
-	a.reachablePackages = make(map[string]bool)
 
-	// Walk all dependencies, starting from the scan packages, to find all potential usages.
-	// The `Visit` method will populate `a.reachablePackages`.
+	// Walk all dependencies, starting from the scan packages to find all potential usages.
 	patternsToWalk := keys(a.scanPackages)
 
 	slog.DebugContext(ctx, "walking with patterns", "patterns", patternsToWalk)
 	if err := a.s.Walker.Walk(ctx, a, patternsToWalk...); err != nil {
 		return fmt.Errorf("failed to walk packages: %w", err)
 	}
-	slog.InfoContext(ctx, "analysis phase", "packages", len(a.reachablePackages))
+	slog.InfoContext(ctx, "analysis phase", "packages", len(a.packages))
 
-	interfaceMap, err := buildInterfaceMap(ctx, a.s, a.reachablePackages)
-	if err != nil {
-		return fmt.Errorf("could not build interface map: %w", err)
-	}
+	interfaceMap := buildInterfaceMap(a.packages)
 	slog.DebugContext(ctx, "built interface map", "interfaces", len(interfaceMap))
 
 	interp, err := symgo.NewInterpreter(a.s, symgo.WithLogger(slog.Default()))
@@ -521,17 +483,11 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool) error {
 	})
 
 	slog.DebugContext(ctx, "running symbolic execution from entry points")
-	// First, find all potential entry points by scanning reachable packages.
+	// First, find all potential entry points.
 	var mainEntryPoint *object.Function
 	var libraryEntryPoints []*object.Function
 
-	for pkgPath := range a.reachablePackages {
-		pkg, err := a.s.ScanPackageByImport(ctx, pkgPath)
-		if err != nil {
-			slog.WarnContext(ctx, "could not scan package while finding entry points", "package", pkgPath, "error", err)
-			continue
-		}
-
+	for _, pkg := range a.packages {
 		slog.InfoContext(ctx, "** scan package", "package", pkg.ImportPath)
 
 		// Load all files in the package to define all symbols in the interpreter's env
@@ -618,10 +574,9 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool) error {
 	}
 	var orphans []Orphan
 
-	for pkgPath := range a.targetPackages {
-		pkg, err := a.s.ScanPackageByImport(ctx, pkgPath)
-		if err != nil {
-			slog.WarnContext(ctx, "could not scan package while reporting orphans", "package", pkgPath, "error", err)
+	for _, pkg := range a.packages {
+		// Only report orphans from the packages the user explicitly asked to scan.
+		if _, isTarget := a.targetPackages[pkg.ImportPath]; !isTarget {
 			continue
 		}
 
@@ -713,10 +668,8 @@ func (a *analyzer) markMethodAsUsed(ctx context.Context, usageMap map[string]boo
 		return // Cannot resolve the type, so cannot mark its methods.
 	}
 
-	// Since we don't have a pre-built map, we need to scan the package containing the type.
-	implPkg, err := a.s.ScanPackageByImport(ctx, typeInfo.PkgPath)
-	if err != nil {
-		slog.WarnContext(ctx, "could not scan package for method usage marking", "package", typeInfo.PkgPath, "error", err)
+	implPkg, ok := a.packages[typeInfo.PkgPath]
+	if !ok {
 		return
 	}
 
@@ -745,17 +698,18 @@ func (a *analyzer) markMethodAsUsed(ctx context.Context, usageMap map[string]boo
 func (a *analyzer) Visit(pkg *goscan.PackageImports) ([]string, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-
-	// If it's not a package we are supposed to scan, or we've already seen it, stop.
-	if _, ok := a.scanPackages[pkg.ImportPath]; !ok {
+	if _, exists := a.packages[pkg.ImportPath]; exists {
 		return nil, nil
 	}
-	if _, exists := a.reachablePackages[pkg.ImportPath]; exists {
+	if pkg.ImportPath == "C" {
 		return nil, nil
 	}
-
-	// Mark this package as reachable.
-	a.reachablePackages[pkg.ImportPath] = true
+	fullPkg, err := a.s.ScanPackageByImport(a.ctx, pkg.ImportPath)
+	if err != nil {
+		slog.WarnContext(a.ctx, "could not scan package", "package", pkg.ImportPath, "error", err)
+		return nil, nil // Continue even if a package fails to scan
+	}
+	a.packages[pkg.ImportPath] = fullPkg
 
 	// Only follow imports that are part of the original scan scope.
 	// This prevents the walker from traversing into third-party dependencies.
@@ -788,18 +742,13 @@ func getFullName(s *goscan.Scanner, pkg *scanner.PackageInfo, fn *scanner.Functi
 	return fmt.Sprintf("%s.%s", pkg.ImportPath, fn.Name)
 }
 
-func buildInterfaceMap(ctx context.Context, s *goscan.Scanner, reachablePackages map[string]bool) (map[string][]*scanner.TypeInfo, error) {
+func buildInterfaceMap(packages map[string]*scanner.PackageInfo) map[string][]*scanner.TypeInfo {
 	interfaceMap := make(map[string][]*scanner.TypeInfo)
 	var allInterfaces []*scanner.TypeInfo
 	var allStructs []*scanner.TypeInfo
 	packageOfStruct := make(map[*scanner.TypeInfo]*scanner.PackageInfo)
 
-	for pkgPath := range reachablePackages {
-		pkg, err := s.ScanPackageByImport(ctx, pkgPath)
-		if err != nil {
-			slog.WarnContext(ctx, "could not scan package while building interface map", "package", pkgPath, "error", err)
-			continue // Skip packages that fail to scan
-		}
+	for _, pkg := range packages {
 		for _, t := range pkg.Types {
 			if t.Kind == scanner.InterfaceKind {
 				allInterfaces = append(allInterfaces, t)
@@ -816,8 +765,6 @@ func buildInterfaceMap(ctx context.Context, s *goscan.Scanner, reachablePackages
 
 		for _, strct := range allStructs {
 			pkgInfo := packageOfStruct[strct]
-			// The goscan.Implements function needs access to the method sets of types,
-			// which requires the scanner.
 			if goscan.Implements(strct, iface, pkgInfo) {
 				implementers = append(implementers, strct)
 			}
@@ -827,5 +774,5 @@ func buildInterfaceMap(ctx context.Context, s *goscan.Scanner, reachablePackages
 		}
 	}
 
-	return interfaceMap, nil
+	return interfaceMap
 }

@@ -19,6 +19,7 @@ import (
 	"github.com/podhmo/go-scan/locator"
 	"github.com/podhmo/go-scan/scanner"
 	"github.com/podhmo/go-scan/symgo"
+	"github.com/podhmo/go-scan/symgo/evaluator"
 	"github.com/podhmo/go-scan/symgo/object"
 	"golang.org/x/mod/modfile"
 )
@@ -150,6 +151,7 @@ func run(ctx context.Context, all bool, includeTests bool, workspace string, ver
 	// Create locators first, as they are needed to resolve target packages.
 	var locators []*locator.Locator
 	var moduleDirs []string
+	var modulePaths []string
 	var resolutionDir string
 
 	locatorOpts := []locator.Option{locator.WithGoModuleResolver()}
@@ -192,6 +194,7 @@ func run(ctx context.Context, all bool, includeTests bool, workspace string, ver
 	}
 	for _, loc := range locators {
 		slog.InfoContext(ctx, "* scan module", "module", loc.ModulePath())
+		modulePaths = append(modulePaths, loc.ModulePath())
 	}
 
 	// Resolve the target packages for reporting.
@@ -232,6 +235,7 @@ func run(ctx context.Context, all bool, includeTests bool, workspace string, ver
 		targetPackages: targetPackages,
 		mode:           mode,
 		scanPackages:   scanPackages,
+		modulePaths:    modulePaths,
 	}
 	return a.analyze(ctx, asJSON)
 }
@@ -382,12 +386,23 @@ func keys[K comparable, V any](m map[K]V) []K {
 	return out
 }
 
+type analyzer struct {
+	s              *goscan.Scanner
+	packages       map[string]*scanner.PackageInfo
+	targetPackages map[string]bool
+	mode           string
+	scanPackages   map[string]bool
+	modulePaths    []string
+	mu             sync.Mutex
+	ctx            context.Context
+}
+
 // ScopedScanner is a wrapper around a goscan.Scanner that enforces a package scope.
 // It implements the evaluator.Scanner interface, allowing it to be passed to the
 // symgo interpreter while controlling which packages can be fully scanned.
 type ScopedScanner struct {
-	scanner         *goscan.Scanner // The real, underlying scanner
-	allowedPackages map[string]bool   // The set of packages we are allowed to scan
+	scanner     evaluator.Scanner
+	modulePaths []string
 }
 
 func (s *ScopedScanner) Fset() *token.FileSet {
@@ -403,27 +418,27 @@ func (s *ScopedScanner) TypeInfoFromExpr(ctx context.Context, expr ast.Expr, cur
 }
 
 func (s *ScopedScanner) ScanPackageByImport(ctx context.Context, importPath string) (*scanner.PackageInfo, error) {
-	if _, ok := s.allowedPackages[importPath]; !ok {
-		slog.DebugContext(ctx, "ScanPackageByImport blocked by scope", "import_path", importPath)
-		// Package is not in the allowed list. Return a minimal, empty package info.
+	isWorkspacePackage := false
+	for _, modPath := range s.modulePaths {
+		// Check if the import path is the module itself or a subpackage.
+		if importPath == modPath || strings.HasPrefix(importPath, modPath+"/") {
+			isWorkspacePackage = true
+			break
+		}
+	}
+
+	if !isWorkspacePackage {
+		slog.DebugContext(ctx, "ScanPackageByImport blocked by scope (out of workspace)", "import_path", importPath)
+		// Package is not in the workspace. Return a minimal, empty package info.
 		return &scanner.PackageInfo{
 			ImportPath: importPath,
 			Name:       filepath.Base(importPath),
 			Fset:       s.scanner.Fset(),
 		}, nil
 	}
-	// If the package is allowed, delegate to the real scanner.
-	return s.scanner.ScanPackageByImport(ctx, importPath)
-}
 
-type analyzer struct {
-	s              *goscan.Scanner
-	packages       map[string]*scanner.PackageInfo
-	targetPackages map[string]bool
-	mode           string
-	scanPackages   map[string]bool
-	mu             sync.Mutex
-	ctx            context.Context
+	// If the package is in the workspace, delegate to the real scanner.
+	return s.scanner.ScanPackageByImport(ctx, importPath)
 }
 
 func (a *analyzer) analyze(ctx context.Context, asJSON bool) error {
@@ -443,8 +458,8 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool) error {
 
 	// Create a scoped scanner to prevent symgo from scanning outside the workspace.
 	scopedScanner := &ScopedScanner{
-		scanner:         a.s,
-		allowedPackages: a.scanPackages,
+		scanner:     a.s,
+		modulePaths: a.modulePaths,
 	}
 	interp, err := symgo.NewInterpreter(scopedScanner, symgo.WithLogger(slog.Default()))
 	if err != nil {

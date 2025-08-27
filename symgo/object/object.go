@@ -38,6 +38,7 @@ const (
 	BREAK_OBJ        ObjectType = "BREAK"
 	CONTINUE_OBJ     ObjectType = "CONTINUE"
 	VARIADIC_OBJ     ObjectType = "VARIADIC"
+	UNRESOLVED_METHOD_OBJ ObjectType = "UNRESOLVED_METHOD"
 )
 
 // Object is the interface that all value types in our symbolic engine will implement.
@@ -598,6 +599,24 @@ var (
 	// CONTINUE is the singleton continue value.
 	CONTINUE = &Continue{}
 )
+
+// --- UnresolvedMethodCall Object ---
+
+// UnresolvedMethodCall represents a method call on a type that has not been fully resolved.
+// It acts as a placeholder that can be gracefully handled by the evaluator.
+type UnresolvedMethodCall struct {
+	BaseObject
+	Receiver   Object
+	MethodName string
+}
+
+// Type returns the type of the UnresolvedMethodCall object.
+func (um *UnresolvedMethodCall) Type() ObjectType { return UNRESOLVED_METHOD_OBJ }
+
+// Inspect returns a string representation of the unresolved method call.
+func (um *UnresolvedMethodCall) Inspect() string {
+	return fmt.Sprintf("<unresolved method call: %s.%s>", um.Receiver.Inspect(), um.MethodName)
+}
 
 // --- Tracer Interface ---
 

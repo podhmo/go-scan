@@ -6,6 +6,7 @@ import (
 	"go/ast"
 	"go/constant"
 	"go/token"
+	"go/types"
 	"log/slog"
 	"reflect"
 	"strings"
@@ -60,9 +61,9 @@ type PackageInfo struct {
 	Constants  []*ConstantInfo
 	Variables  []*VariableInfo
 	Functions  []*FunctionInfo
-	Fset       *token.FileSet       // Added: Fileset for position information
-	AstFiles   map[string]*ast.File // Added: Parsed AST for each file
-
+	Fset       *token.FileSet         // Added: Fileset for position information
+	AstFiles   map[string]*ast.File   // Added: Parsed AST for each file
+	TypesPkg   *types.Package         `json:"-"` // Underlying go/types package for advanced analysis
 	lookupOnce sync.Once
 	lookup     map[string]*TypeInfo
 }

@@ -254,7 +254,9 @@ func (e *Evaluator) evalIndexExpr(ctx context.Context, node *ast.IndexExpr, env 
 
 	var elemType *scanner.TypeInfo
 	if sliceFieldType != nil && sliceFieldType.IsSlice && sliceFieldType.Elem != nil {
-		elemType, _ = sliceFieldType.Elem.Resolve(ctx)
+		if e.shouldScanPackage(sliceFieldType.Elem.FullImportPath, pkg) {
+			elemType, _ = sliceFieldType.Elem.Resolve(ctx)
+		}
 	}
 
 	return &object.SymbolicPlaceholder{
@@ -362,10 +364,13 @@ func (e *Evaluator) evalCompositeLit(ctx context.Context, node *ast.CompositeLit
 		return sliceObj
 	}
 
-	resolvedType, _ := fieldType.Resolve(ctx)
+	var resolvedType *scanner.TypeInfo
+	if e.shouldScanPackage(fieldType.FullImportPath, pkg) {
+		resolvedType, _ = fieldType.Resolve(ctx)
+	}
 	if resolvedType == nil {
 		placeholder := &object.SymbolicPlaceholder{
-			Reason: fmt.Sprintf("unresolved composite literal of type %s", fieldType.String()),
+			Reason: fmt.Sprintf("deferred or unresolved composite literal of type %s", fieldType.String()),
 		}
 		placeholder.SetFieldType(fieldType)
 		return placeholder
@@ -528,7 +533,10 @@ func (e *Evaluator) evalStarExpr(ctx context.Context, node *ast.StarExpr, env *o
 				Reason: fmt.Sprintf("dereferenced from %s", sp.Reason),
 			}
 			if ft.Elem != nil {
-				resolvedElem, _ := ft.Elem.Resolve(ctx)
+				var resolvedElem *scanner.TypeInfo
+				if e.shouldScanPackage(ft.Elem.FullImportPath, pkg) {
+					resolvedElem, _ = ft.Elem.Resolve(ctx)
+				}
 				newPlaceholder.SetFieldType(ft.Elem)
 				newPlaceholder.SetTypeInfo(resolvedElem)
 			}
@@ -579,7 +587,9 @@ func (e *Evaluator) evalGenDecl(ctx context.Context, node *ast.GenDecl, env *obj
 
 			var resolvedTypeInfo *scanner.TypeInfo
 			if staticFieldType != nil {
-				resolvedTypeInfo, _ = staticFieldType.Resolve(ctx)
+				if e.shouldScanPackage(staticFieldType.FullImportPath, pkg) {
+					resolvedTypeInfo, _ = staticFieldType.Resolve(ctx)
+				}
 			}
 
 			v := &object.Variable{
@@ -702,7 +712,12 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 	case *object.SymbolicPlaceholder:
 		typeInfo := val.TypeInfo()
 		if typeInfo == nil {
-			return e.newError(n.Pos(), "cannot call method on symbolic placeholder with no type info")
+			// This is a placeholder for a deferred type. Any method call on it
+			// results in a placeholder for the method itself.
+			return &object.UnresolvedMethodCall{
+				MethodName: n.Sel.Name,
+				Receiver:   val,
+			}
 		}
 		fullTypeName := fmt.Sprintf("%s.%s", typeInfo.PkgPath, typeInfo.Name)
 		key := fmt.Sprintf("(*%s).%s", fullTypeName, n.Sel.Name)
@@ -729,7 +744,23 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 			}
 		}
 
-		return e.newError(n.Pos(), "undefined method: %s on symbolic type %s", n.Sel.Name, fullTypeName)
+		// Check for a field on the type.
+		if typeInfo.Struct != nil {
+			for _, field := range typeInfo.Struct.Fields {
+				if field.Name == n.Sel.Name {
+					var fieldTypeInfo *scanner.TypeInfo
+					if e.shouldScanPackage(field.Type.FullImportPath, pkg) {
+						fieldTypeInfo, _ = field.Type.Resolve(ctx)
+					}
+					return &object.SymbolicPlaceholder{
+						BaseObject: object.BaseObject{ResolvedTypeInfo: fieldTypeInfo, ResolvedFieldType: field.Type},
+						Reason:     fmt.Sprintf("field access %s.%s", val.Reason, field.Name),
+					}
+				}
+			}
+		}
+
+		return e.newError(n.Pos(), "undefined method or field: %s on symbolic type %s", n.Sel.Name, fullTypeName)
 
 	case *object.Package:
 		key := val.Path + "." + n.Sel.Name
@@ -871,7 +902,12 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 	case *object.Variable:
 		typeInfo := val.TypeInfo()
 		if typeInfo == nil {
-			return e.newError(n.Pos(), "cannot access field or method on variable with no type info: %s", val.Name)
+			// If the variable has no resolved type info, it's from a package we are not scanning.
+			// Any method call on it results in a placeholder for the method itself.
+			return &object.UnresolvedMethodCall{
+				MethodName: n.Sel.Name,
+				Receiver:   val,
+			}
 		}
 
 		if typeInfo.Kind == scanner.InterfaceKind {
@@ -946,9 +982,12 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 		if typeInfo.Struct != nil {
 			for _, field := range typeInfo.Struct.Fields {
 				if field.Name == n.Sel.Name {
-					fieldTypeInfo, _ := field.Type.Resolve(ctx)
+					var fieldTypeInfo *scanner.TypeInfo
+					if e.shouldScanPackage(field.Type.FullImportPath, pkg) {
+						fieldTypeInfo, _ = field.Type.Resolve(ctx)
+					}
 					return &object.SymbolicPlaceholder{
-						BaseObject: object.BaseObject{ResolvedTypeInfo: fieldTypeInfo},
+						BaseObject: object.BaseObject{ResolvedTypeInfo: fieldTypeInfo, ResolvedFieldType: field.Type},
 						Reason:     fmt.Sprintf("field access %s.%s", val.Name, field.Name),
 					}
 				}
@@ -1125,7 +1164,10 @@ func (e *Evaluator) evalTypeSwitchStmt(ctx context.Context, n *ast.TypeSwitchStm
 					}
 				}
 
-				resolvedType, _ := fieldType.Resolve(ctx)
+				var resolvedType *scanner.TypeInfo
+				if e.shouldScanPackage(fieldType.FullImportPath, pkg) {
+					resolvedType, _ = fieldType.Resolve(ctx)
+				}
 				val := &object.SymbolicPlaceholder{
 					Reason:     fmt.Sprintf("type switch case variable %s", fieldType.String()),
 					BaseObject: object.BaseObject{ResolvedTypeInfo: resolvedType, ResolvedFieldType: fieldType},
@@ -1183,7 +1225,10 @@ func (e *Evaluator) evalTypeAssertExpr(ctx context.Context, n *ast.TypeAssertExp
 		printer.Fprint(&typeNameBuf, pkg.Fset, n.Type)
 		return e.newError(n.Pos(), "could not resolve type for type assertion: %s", typeNameBuf.String())
 	}
-	resolvedType, _ := fieldType.Resolve(ctx)
+	var resolvedType *scanner.TypeInfo
+	if e.shouldScanPackage(fieldType.FullImportPath, pkg) {
+		resolvedType, _ = fieldType.Resolve(ctx)
+	}
 
 	// In the single-value form, the result is just a value of the asserted type.
 	// We create a symbolic placeholder for it.
@@ -1405,12 +1450,12 @@ func (e *Evaluator) evalAssignStmt(ctx context.Context, n *ast.AssignStmt, env *
 			// Assign the placeholders to the LHS variables.
 			if ident, ok := n.Lhs[0].(*ast.Ident); ok {
 				if ident.Name != "_" {
-					e.assignIdentifier(ident, valuePlaceholder, n.Tok, env)
+					e.assignIdentifier(ctx, ident, valuePlaceholder, n.Tok, env, pkg)
 				}
 			}
 			if ident, ok := n.Lhs[1].(*ast.Ident); ok {
 				if ident.Name != "_" {
-					e.assignIdentifier(ident, okPlaceholder, n.Tok, env)
+					e.assignIdentifier(ctx, ident, okPlaceholder, n.Tok, env, pkg)
 				}
 			}
 			return nil
@@ -1453,7 +1498,7 @@ func (e *Evaluator) evalAssignStmt(ctx context.Context, n *ast.AssignStmt, env *
 					continue
 				}
 				val := multiRet.Values[i]
-				e.assignIdentifier(ident, val, n.Tok, env) // Use the statement's token (:= or =)
+				e.assignIdentifier(ctx, ident, val, n.Tok, env, pkg) // Use the statement's token (:= or =)
 			}
 		}
 		return nil
@@ -1497,7 +1542,7 @@ func (e *Evaluator) evalAssignStmt(ctx context.Context, n *ast.AssignStmt, env *
 				if ident.Name == "_" {
 					continue
 				}
-				e.assignIdentifier(ident, rhsValues[i], n.Tok, env)
+				e.assignIdentifier(ctx, ident, rhsValues[i], n.Tok, env, pkg)
 			} else {
 				// Handle other LHS types like selectors if needed in the future.
 				e.logWithContext(ctx, slog.LevelWarn, "unsupported LHS in parallel assignment", "type", fmt.Sprintf("%T", lhsExpr))
@@ -1528,10 +1573,10 @@ func (e *Evaluator) evalIdentAssignment(ctx context.Context, ident *ast.Ident, r
 	}
 	e.logger.Debug("evalIdentAssignment: assigning value", "var", ident.Name, "value_type", val.Type(), "value_typeinfo", typeName)
 
-	return e.assignIdentifier(ident, val, tok, env)
+	return e.assignIdentifier(ctx, ident, val, tok, env, pkg)
 }
 
-func (e *Evaluator) assignIdentifier(ident *ast.Ident, val object.Object, tok token.Token, env *object.Environment) object.Object {
+func (e *Evaluator) assignIdentifier(ctx context.Context, ident *ast.Ident, val object.Object, tok token.Token, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
 	// For `:=`, we always define a new variable in the current scope.
 	if tok == token.DEFINE {
 		// In Go, `:=` can redeclare a variable if it's in a different scope,
@@ -1546,7 +1591,11 @@ func (e *Evaluator) assignIdentifier(ident *ast.Ident, val object.Object, tok to
 			},
 		}
 		if val.FieldType() != nil {
-			if resolved, _ := val.FieldType().Resolve(context.Background()); resolved != nil && resolved.Kind == scanner.InterfaceKind {
+			var resolved *scanner.TypeInfo
+			if e.shouldScanPackage(val.FieldType().FullImportPath, pkg) {
+				resolved, _ = val.FieldType().Resolve(ctx)
+			}
+			if resolved != nil && resolved.Kind == scanner.InterfaceKind {
 				v.PossibleConcreteTypes = make(map[*scanner.FieldType]struct{})
 				if ft := val.FieldType(); ft != nil {
 					v.PossibleConcreteTypes[ft] = struct{}{}
@@ -1562,7 +1611,7 @@ func (e *Evaluator) assignIdentifier(ident *ast.Ident, val object.Object, tok to
 	if !ok {
 		// This can happen for package-level variables not yet evaluated,
 		// or if the code is invalid Go. We define it in the current scope as a fallback.
-		return e.assignIdentifier(ident, val, token.DEFINE, env)
+		return e.assignIdentifier(ctx, ident, val, token.DEFINE, env, pkg)
 	}
 
 	v, ok := obj.(*object.Variable)
@@ -1578,7 +1627,11 @@ func (e *Evaluator) assignIdentifier(ident *ast.Ident, val object.Object, tok to
 	// Check if the variable was originally typed as an interface.
 	var isInterface bool
 	if v.FieldType() != nil {
-		if staticType, _ := v.FieldType().Resolve(context.Background()); staticType != nil {
+		var staticType *scanner.TypeInfo
+		if e.shouldScanPackage(v.FieldType().FullImportPath, pkg) {
+			staticType, _ = v.FieldType().Resolve(ctx)
+		}
+		if staticType != nil {
 			isInterface = staticType.Kind == scanner.InterfaceKind
 		}
 	}
@@ -1857,15 +1910,119 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 
 	case *object.Intrinsic:
 		return fn.Fn(args...)
+	case *object.UnresolvedMethodCall:
+		// This is a method call on a type from a package that has not been scanned yet.
+		// We need to perform a "just-in-time" scan to find the method's signature
+		// and return the correct number of placeholder values.
+		recv := fn.Receiver
+		if recv == nil {
+			return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("result of calling unresolved method %s with no receiver", fn.MethodName)}
+		}
 
+		fieldType := recv.FieldType()
+		if fieldType == nil {
+			return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("result of calling unresolved method %s on receiver with no type info", fn.MethodName)}
+		}
+
+		pkgPath := fieldType.FullImportPath
+		typeName := fieldType.TypeName
+		if pkgPath == "" || typeName == "" {
+			return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("result of calling unresolved method %s on type with incomplete path info", fn.MethodName)}
+		}
+
+		// Use the evaluator's scanner to get the package info. This will trigger a scan
+		// if the package is not already in the scanner's cache.
+		pkgInfo, err := e.scanner.ScanPackageByImport(ctx, pkgPath)
+		if err != nil {
+			e.logWithContext(ctx, slog.LevelWarn, "failed to scan package for unresolved method", "method", fn.MethodName, "type", typeName, "pkg", pkgPath, "error", err)
+			return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("result of calling unresolved method %s (package scan failed)", fn.MethodName)}
+		}
+
+		typeInfo := pkgInfo.Lookup(typeName)
+		if typeInfo == nil {
+			e.logWithContext(ctx, slog.LevelWarn, "could not find type in scanned package", "method", fn.MethodName, "type", typeName, "pkg", pkgPath)
+			return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("result of calling unresolved method %s (type not found)", fn.MethodName)}
+		}
+
+		var method *scanner.MethodInfo
+		if typeInfo.Interface != nil {
+			for _, m := range typeInfo.Interface.Methods {
+				if m.Name == fn.MethodName {
+					method = m
+					break
+				}
+			}
+		}
+		if method == nil {
+			// If it's not on an interface, check if it's a method on a struct.
+			// Methods are top-level functions with a receiver.
+			for _, f := range pkgInfo.Functions {
+				if f.Name == fn.MethodName && f.Receiver != nil {
+					// Check if the receiver type matches the type we're looking for.
+					// This needs to handle both value (T) and pointer (*T) receivers.
+					recvFieldType := f.Receiver.Type
+					baseRecvName := recvFieldType.TypeName
+					if recvFieldType.IsPointer && recvFieldType.Elem != nil {
+						baseRecvName = recvFieldType.Elem.TypeName
+					}
+					if baseRecvName == typeInfo.Name {
+						method = &scanner.MethodInfo{
+							Name:       f.Name,
+							Parameters: f.Parameters,
+							Results:    f.Results,
+						}
+						break
+					}
+				}
+			}
+		}
+
+		if method == nil {
+			e.logWithContext(ctx, slog.LevelWarn, "could not find method on type", "method", fn.MethodName, "type", typeName, "pkg", pkgPath)
+			return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("result of calling unresolved method %s (method not found)", fn.MethodName)}
+		}
+
+		// We found the method signature. Now, create placeholders for its return values.
+		// This logic is duplicated from the *object.SymbolicPlaceholder case.
+		if len(method.Results) <= 1 {
+			var resultTypeInfo *scanner.TypeInfo
+			if len(method.Results) == 1 {
+				// We don't need to do a full Resolve here, just create a placeholder
+				// with the FieldType information.
+				resultTypeInfo = &scanner.TypeInfo{Name: method.Results[0].Type.Name, PkgPath: method.Results[0].Type.FullImportPath}
+			}
+			return &object.SymbolicPlaceholder{
+				Reason:     fmt.Sprintf("result of deferred method call %s", method.Name),
+				BaseObject: object.BaseObject{ResolvedTypeInfo: resultTypeInfo, ResolvedFieldType: method.Results[0].Type},
+			}
+		}
+
+		// Multiple return values
+		results := make([]object.Object, len(method.Results))
+		for i, res := range method.Results {
+			resultTypeInfo := &scanner.TypeInfo{Name: res.Type.Name, PkgPath: res.Type.FullImportPath}
+			results[i] = &object.SymbolicPlaceholder{
+				Reason:     fmt.Sprintf("result %d of deferred method call %s", i, method.Name),
+				BaseObject: object.BaseObject{ResolvedTypeInfo: resultTypeInfo, ResolvedFieldType: res.Type},
+			}
+		}
+		return &object.MultiReturn{Values: results}
 	case *object.SymbolicPlaceholder:
-		// Case 1: The placeholder represents an unresolved interface method call.
+		// Case 1: The placeholder represents a deferred method call.
+		if fn.Receiver != nil {
+			return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("result of calling deferred method on %s", fn.Receiver.Inspect())}
+		}
+
+		// Case 2: The placeholder represents an unresolved interface method call.
 		if fn.UnderlyingMethod != nil {
 			method := fn.UnderlyingMethod
 			if len(method.Results) <= 1 {
 				var resultTypeInfo *scanner.TypeInfo
 				if len(method.Results) == 1 {
-					resultType, _ := method.Results[0].Type.Resolve(context.Background())
+					var resultType *scanner.TypeInfo
+					if e.shouldScanPackage(method.Results[0].Type.FullImportPath, pkg) {
+						resultType, _ = method.Results[0].Type.Resolve(ctx)
+					}
 					if resultType == nil && method.Results[0].Type.IsBuiltin {
 						resultType = &scanner.TypeInfo{Name: method.Results[0].Type.Name}
 					}
@@ -1879,7 +2036,10 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 				// Multiple return values from interface method
 				results := make([]object.Object, len(method.Results))
 				for i, res := range method.Results {
-					resultType, _ := res.Type.Resolve(context.Background())
+					var resultType *scanner.TypeInfo
+					if e.shouldScanPackage(res.Type.FullImportPath, pkg) {
+						resultType, _ = res.Type.Resolve(ctx)
+					}
 					results[i] = &object.SymbolicPlaceholder{
 						Reason:     fmt.Sprintf("result %d of interface method call %s", i, method.Name),
 						BaseObject: object.BaseObject{ResolvedTypeInfo: resultType},
@@ -1889,7 +2049,7 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 			}
 		}
 
-		// Case 2: The placeholder represents an external function call.
+		// Case 3: The placeholder represents an external function call.
 		if fn.UnderlyingFunc != nil && fn.Package != nil {
 			results := fn.UnderlyingFunc.AstDecl.Type.Results
 			if results == nil || len(results.List) == 0 {
@@ -1907,7 +2067,10 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 				// Single return value
 				resultASTExpr := results.List[0].Type
 				fieldType := e.scanner.TypeInfoFromExpr(context.Background(), resultASTExpr, nil, fn.Package, importLookup)
-				resolvedType, _ := fieldType.Resolve(context.Background())
+				var resolvedType *scanner.TypeInfo
+				if e.shouldScanPackage(fieldType.FullImportPath, fn.Package) {
+					resolvedType, _ = fieldType.Resolve(ctx)
+				}
 
 				if resolvedType == nil && fieldType.IsBuiltin && fieldType.Name == "error" {
 					stringFieldType := &scanner.FieldType{Name: "string", IsBuiltin: true}
@@ -1932,7 +2095,10 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 			returnValues := make([]object.Object, 0, len(results.List))
 			for i, field := range results.List {
 				fieldType := e.scanner.TypeInfoFromExpr(context.Background(), field.Type, nil, fn.Package, importLookup)
-				resolvedType, _ := fieldType.Resolve(context.Background())
+				var resolvedType *scanner.TypeInfo
+				if e.shouldScanPackage(fieldType.FullImportPath, fn.Package) {
+					resolvedType, _ = fieldType.Resolve(ctx)
+				}
 
 				if resolvedType == nil && fieldType.IsBuiltin && fieldType.Name == "error" {
 					stringFieldType := &scanner.FieldType{Name: "string", IsBuiltin: true}
@@ -1959,7 +2125,7 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 			return &object.MultiReturn{Values: returnValues}
 		}
 
-		// Case 3: Generic placeholder.
+		// Case 4: Generic placeholder.
 		return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("result of calling %s", fn.Inspect())}
 
 	default:
@@ -1974,15 +2140,24 @@ func (e *Evaluator) isScannablePackage(targetPkg, currentPkg *scanner.PackageInf
 	if targetPkg == nil {
 		return false
 	}
+	return e.shouldScanPackage(targetPkg.ImportPath, currentPkg)
+}
+
+// shouldScanPackage determines if a package, identified by its import path, should be deeply analyzed.
+func (e *Evaluator) shouldScanPackage(targetImportPath string, currentPkg *scanner.PackageInfo) bool {
+	if targetImportPath == "" {
+		// Built-in types or types within the current package (without an explicit import path) are always considered scannable.
+		return true
+	}
 
 	// Check if it's part of the same module as the current package.
-	if currentPkg != nil && currentPkg.ModulePath != "" && strings.HasPrefix(targetPkg.ImportPath, currentPkg.ModulePath) {
+	if currentPkg != nil && currentPkg.ModulePath != "" && strings.HasPrefix(targetImportPath, currentPkg.ModulePath) {
 		return true
 	}
 
 	// Check if the package path matches any of the extra packages to be scanned.
 	for _, extraPkg := range e.extraPackages {
-		if strings.HasPrefix(targetPkg.ImportPath, extraPkg) {
+		if strings.HasPrefix(targetImportPath, extraPkg) {
 			return true
 		}
 	}
@@ -2012,7 +2187,10 @@ func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, 
 						}
 					}
 					fieldType := e.scanner.TypeInfoFromExpr(ctx, recvField.Type, nil, fn.Package, importLookup)
-					resolvedType, _ := fieldType.Resolve(ctx)
+					var resolvedType *scanner.TypeInfo
+					if e.shouldScanPackage(fieldType.FullImportPath, fn.Package) {
+						resolvedType, _ = fieldType.Resolve(ctx)
+					}
 					receiverToBind = &object.SymbolicPlaceholder{
 						Reason:     "symbolic receiver for entry point method",
 						BaseObject: object.BaseObject{ResolvedTypeInfo: resolvedType, ResolvedFieldType: fieldType},
@@ -2098,7 +2276,10 @@ func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, 
 				name := field.Names[0] // Variadic param is always the last, single identifier.
 				if name.Name != "_" {
 					fieldType := e.scanner.TypeInfoFromExpr(ctx, paramType, nil, fn.Package, importLookup)
-					resolvedType, _ := fieldType.Resolve(ctx)
+					var resolvedType *scanner.TypeInfo
+					if e.shouldScanPackage(fieldType.FullImportPath, fn.Package) {
+						resolvedType, _ = fieldType.Resolve(ctx)
+					}
 					v := &object.Variable{
 						Name:       name.Name,
 						Value:      variadicSlice,
@@ -2121,7 +2302,10 @@ func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, 
 			if fieldType == nil {
 				continue
 			}
-			resolvedType, _ := fieldType.Resolve(ctx)
+			var resolvedType *scanner.TypeInfo
+			if e.shouldScanPackage(fieldType.FullImportPath, fn.Package) {
+				resolvedType, _ = fieldType.Resolve(ctx)
+			}
 
 			if name.Name != "_" {
 				v := &object.Variable{
@@ -2171,7 +2355,10 @@ func (e *Evaluator) findMethodRecursive(ctx context.Context, typeInfo *scanner.T
 	if typeInfo.Struct != nil {
 		for _, field := range typeInfo.Struct.Fields {
 			if field.Embedded {
-				embeddedTypeInfo, _ := field.Type.Resolve(ctx)
+				var embeddedTypeInfo *scanner.TypeInfo
+				if e.shouldScanPackage(field.Type.FullImportPath, field.Type.CurrentPkg) {
+					embeddedTypeInfo, _ = field.Type.Resolve(ctx)
+				}
 				if embeddedTypeInfo != nil {
 					// Recursive call, passing the original receiver.
 					if foundFn, err := e.findMethodRecursive(ctx, embeddedTypeInfo, methodName, env, receiver, visited); err != nil || foundFn != nil {

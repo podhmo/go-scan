@@ -85,6 +85,39 @@ func (s *Scanner) IsWorkspace() bool {
 	return s.isWorkspace
 }
 
+// IsScannablePackage determines if a package should be deeply analyzed (scanned from source).
+// This is true if the package is part of the main module being analyzed (or any module
+// in the workspace), or if it has been explicitly included via the `WithExtraPackages` option.
+func (s *Scanner) IsScannablePackage(importPath string) bool {
+	// Check extra packages first.
+	for _, extraPkg := range s.extraPackages {
+		if strings.HasPrefix(importPath, extraPkg) {
+			return true
+		}
+	}
+
+	// In workspace mode, check if the import path belongs to any of the modules.
+	if s.isWorkspace {
+		for _, loc := range s.locators {
+			modulePath := loc.ModulePath()
+			if modulePath != "" && (importPath == modulePath || strings.HasPrefix(importPath, modulePath+"/")) {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Single module mode
+	if s.locator != nil {
+		modulePath := s.locator.ModulePath()
+		if modulePath != "" {
+			return importPath == modulePath || strings.HasPrefix(importPath, modulePath+"/")
+		}
+	}
+
+	return false
+}
+
 // ModuleRoots returns the root directories of all modules in the workspace.
 func (s *Scanner) ModuleRoots() []string {
 	if !s.isWorkspace {
@@ -368,6 +401,15 @@ func WithOverlay(overlay scanner.Overlay) ScannerOption {
 		for k, v := range overlay {
 			s.overlay[k] = v
 		}
+		return nil
+	}
+}
+
+// WithExtraPackages sets a list of external packages that should be treated as internal,
+// allowing them to be deeply scanned from source.
+func WithExtraPackages(pkgs []string) ScannerOption {
+	return func(s *Scanner) error {
+		s.extraPackages = append(s.extraPackages, pkgs...)
 		return nil
 	}
 }

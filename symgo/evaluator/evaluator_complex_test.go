@@ -85,7 +85,7 @@ func TestEvalComplex(t *testing.T) {
 
 			action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 				pkg := pkgs[0]
-				eval := New(s, s.Logger, nil, nil)
+				eval := New(s, s.Logger, nil)
 				env := object.NewEnvironment()
 				for _, file := range pkg.AstFiles {
 					eval.Eval(ctx, file, env, pkg)

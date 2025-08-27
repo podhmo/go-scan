@@ -65,6 +65,7 @@ func run(logger *slog.Logger, format string, patternsFile string, entrypoint str
 	s, err := goscan.New(
 		goscan.WithGoModuleResolver(),
 		goscan.WithLogger(logger),
+		goscan.WithExtraPackages(extraPkgs),
 	)
 	if err != nil {
 		return err
@@ -79,7 +80,7 @@ func run(logger *slog.Logger, format string, patternsFile string, entrypoint str
 	for _, p := range customPatterns {
 		opts = append(opts, p)
 	}
-	analyzer, err := NewAnalyzer(s, logger, extraPkgs, opts...)
+	analyzer, err := NewAnalyzer(s, logger, opts...)
 	if err != nil {
 		return err
 	}

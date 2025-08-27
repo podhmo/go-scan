@@ -33,7 +33,7 @@ func main() {
 
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
-		eval := New(s, s.Logger, nil, nil)
+		eval := New(s, s.Logger, nil)
 		env := object.NewEnvironment()
 
 		// We just need to evaluate the file to trigger the composite literal evaluation.
@@ -69,7 +69,7 @@ func main() {
 
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
-		eval := New(s, s.Logger, nil, nil)
+		eval := New(s, s.Logger, nil)
 		env := object.NewEnvironment()
 
 		for _, file := range pkg.AstFiles {
@@ -109,7 +109,7 @@ func main() {
 
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
-		eval := New(s, s.Logger, nil, nil)
+		eval := New(s, s.Logger, nil)
 		env := object.NewEnvironment()
 
 		for _, file := range pkg.AstFiles {
@@ -152,7 +152,7 @@ func main() {
 
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
-		eval := New(s, s.Logger, nil, nil)
+		eval := New(s, s.Logger, nil)
 		env := object.NewEnvironment()
 
 		for _, file := range pkg.AstFiles {

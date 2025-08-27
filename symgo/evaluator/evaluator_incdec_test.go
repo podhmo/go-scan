@@ -7,6 +7,7 @@ import (
 	"go/token"
 	"testing"
 
+	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/symgo/object"
 )
 
@@ -74,7 +75,8 @@ func main() {
 				t.Fatal("main function not found")
 			}
 
-			evaluator := New(nil, nil, nil, nil)
+			s, _ := goscan.New()
+			evaluator := New(s, nil, nil)
 			env := object.NewEnvironment()
 			result := evaluator.Eval(context.Background(), mainFunc.Body, env, nil)
 
@@ -126,7 +128,8 @@ func main() {
 		t.Fatal("main function not found")
 	}
 
-	evaluator := New(nil, nil, nil, nil)
+	s, _ := goscan.New()
+	evaluator := New(s, nil, nil)
 	env := object.NewEnvironment()
 
 	// Pre-populate the environment with a symbolic value for `getSymbolic`

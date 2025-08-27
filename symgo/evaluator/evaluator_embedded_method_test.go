@@ -49,7 +49,7 @@ func main() {
 			return fmt.Errorf("expected main package, but got %s", mainPkg.Name)
 		}
 
-		eval := New(s, s.Logger, nil, nil)
+		eval := New(s, s.Logger, nil)
 
 		// This default intrinsic will be called for every function call.
 		// We use it to record what was called.

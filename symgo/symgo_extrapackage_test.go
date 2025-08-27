@@ -54,9 +54,12 @@ func Greet(name string) string {
 	mainPkgPath := "example.com/app"
 	ctx := context.Background()
 
-	t.Run("default behavior: external calls are symbolic", func(t *testing.T) {
+	t.Run("in workspace: cross-module calls are evaluated", func(t *testing.T) {
+		// In a workspace setup (via go.work), the scanner should be able to
+		// resolve and evaluate symbols from other modules in the workspace by default.
+		helperModuleDir := filepath.Join(dir, "helper")
 		scanner, err := goscan.New(
-			goscan.WithWorkDir(mainModuleDir),
+			goscan.WithModuleDirs([]string{mainModuleDir, helperModuleDir}),
 			goscan.WithGoModuleResolver(),
 		)
 		if err != nil {
@@ -66,28 +69,6 @@ func Greet(name string) string {
 		interp, err := symgo.NewInterpreter(scanner)
 		if err != nil {
 			t.Fatalf("NewInterpreter failed: %v", err)
-		}
-
-		result := runAnalysis(t, ctx, interp, mainPkgPath)
-
-		_, ok := result.(*object.SymbolicPlaceholder)
-		if !ok {
-			t.Fatalf("expected return value to be a *symgo.SymbolicPlaceholder, but got %T: %v", result, result.Inspect())
-		}
-	})
-
-	t.Run("with extra package: external calls are evaluated", func(t *testing.T) {
-		scanner, err := goscan.New(
-			goscan.WithWorkDir(mainModuleDir),
-			goscan.WithGoModuleResolver(),
-		)
-		if err != nil {
-			t.Fatalf("New scanner failed: %v", err)
-		}
-
-		interp, err := symgo.NewInterpreter(scanner, symgo.WithExtraPackages([]string{"example.com/helper"}))
-		if err != nil {
-			t.Fatalf("NewInterpreter with extra packages failed: %v", err)
 		}
 
 		result := runAnalysis(t, ctx, interp, mainPkgPath)

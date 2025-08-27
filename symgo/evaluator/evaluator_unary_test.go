@@ -35,7 +35,7 @@ func main() {
 
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
-		eval := New(s, s.Logger, nil, nil)
+		eval := New(s, s.Logger, nil)
 
 		eval.RegisterDefaultIntrinsic(func(args ...object.Object) object.Object {
 			if len(args) > 0 {

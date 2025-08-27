@@ -91,7 +91,7 @@ func main() {
 
 			action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 				mainPkg := pkgs[0]
-				eval := New(s, s.Logger, nil, nil)
+				eval := New(s, s.Logger, nil)
 
 				// 1. Evaluate the file to populate the top-level declarations (like `main` func).
 				env := object.NewEnvironment()

@@ -29,7 +29,6 @@ type Evaluator struct {
 	callStack         []*callFrame
 	interfaceBindings map[string]*goscan.TypeInfo
 	defaultIntrinsic  intrinsics.IntrinsicFunc
-	extraPackages     []string
 }
 
 type callFrame struct {
@@ -38,7 +37,7 @@ type callFrame struct {
 }
 
 // New creates a new Evaluator.
-func New(scanner *goscan.Scanner, logger *slog.Logger, tracer object.Tracer, extraPackages []string) *Evaluator {
+func New(scanner *goscan.Scanner, logger *slog.Logger, tracer object.Tracer) *Evaluator {
 	if logger == nil {
 		logger = slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	}
@@ -48,7 +47,6 @@ func New(scanner *goscan.Scanner, logger *slog.Logger, tracer object.Tracer, ext
 		logger:            logger,
 		tracer:            tracer,
 		interfaceBindings: make(map[string]*goscan.TypeInfo),
-		extraPackages:     extraPackages,
 	}
 }
 
@@ -752,7 +750,7 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 		}
 
 		// Resolve the symbol on-demand. Check if it's a package we should scan from source.
-		isScannable := e.isScannablePackage(val.ScannedInfo, pkg)
+		isScannable := e.scanner.IsScannablePackage(val.ScannedInfo.ImportPath)
 
 		if isScannable {
 			// This is a call to a package within the same module or an included extra package.
@@ -1965,29 +1963,6 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 	default:
 		return e.newError(callPos, "not a function: %s", fn.Type())
 	}
-}
-
-// isScannablePackage determines if a package should be deeply analyzed (scanned from source).
-// This is true if the package is part of the main module being analyzed, or if it has been
-// explicitly included via the `extraPackages` configuration.
-func (e *Evaluator) isScannablePackage(targetPkg, currentPkg *scanner.PackageInfo) bool {
-	if targetPkg == nil {
-		return false
-	}
-
-	// Check if it's part of the same module as the current package.
-	if currentPkg != nil && currentPkg.ModulePath != "" && strings.HasPrefix(targetPkg.ImportPath, currentPkg.ModulePath) {
-		return true
-	}
-
-	// Check if the package path matches any of the extra packages to be scanned.
-	for _, extraPkg := range e.extraPackages {
-		if strings.HasPrefix(targetPkg.ImportPath, extraPkg) {
-			return true
-		}
-	}
-
-	return false
 }
 
 func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, args []object.Object) (*object.Environment, error) {

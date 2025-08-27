@@ -70,6 +70,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 
 
 ### `symgo` Interpreter Limitations
+- [x] **Interest-Based Scanning**: The `symgo` evaluator now uses a more precise `IsScannablePackage` method on the `go-scan.Scanner` to determine whether a package is part of the user's workspace. This prevents the engine from deeply scanning the source code of external dependencies (like the standard library or third-party modules) unless they are explicitly included, significantly improving performance on projects with large dependency trees. This change also correctly handles multi-module workspaces.
 - [x] **`symgo`: `defer` and `go` statement Tracing**: The `symgo` interpreter now traces `CallExpr` nodes inside `*ast.DeferStmt` and `*ast.GoStmt`, preventing false positives in tools like `find-orphans`.
 - [x] **Branch statements (`break`, `continue`)**: The interpreter now handles `*ast.BranchStmt`, allowing it to correctly model control flow in loops.
 - [x] **`for...range` statements**: The interpreter now handles `*ast.RangeStmt`. A function call in the range expression (e.g., `for _ := range getItems()`) will be traced.

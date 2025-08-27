@@ -211,7 +211,15 @@ func run(ctx context.Context, all bool, includeTests bool, workspace string, ver
 	var scannerOpts []goscan.ScannerOption
 	scannerOpts = append(scannerOpts, goscan.WithIncludeTests(includeTests))
 	scannerOpts = append(scannerOpts, goscan.WithGoModuleResolver())
-	scannerOpts = append(scannerOpts, goscan.WithScanScope(scanPackages))
+
+	// Define a package load hook to prevent scanning outside the workspace.
+	// The `scanPackages` map contains all packages that are part of the modules
+	// being analyzed. We allow scanning only those.
+	packageLoadHook := func(importPath string) bool {
+		_, ok := scanPackages[importPath]
+		return ok
+	}
+	scannerOpts = append(scannerOpts, goscan.WithPackageLoadHook(packageLoadHook))
 
 	if workspace != "" {
 		scannerOpts = append(scannerOpts, goscan.WithModuleDirs(moduleDirs))

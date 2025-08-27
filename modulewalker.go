@@ -18,6 +18,9 @@ import (
 	"github.com/podhmo/go-scan/scanner"
 )
 
+// PackageLoadHook is a function that determines whether a package should be loaded.
+type PackageLoadHook func(importPath string) bool
+
 // Config holds shared configuration and state for both Scanner and ModuleWalker.
 // It is intended to be embedded in both structs.
 type Config struct {
@@ -31,7 +34,7 @@ type Config struct {
 	Inspect             bool
 	Logger              *slog.Logger
 	overlay             scanner.Overlay
-	ScanScope           map[string]bool // If set, scanning is limited to these import paths.
+	PackageLoadHook     PackageLoadHook // If set, this func is called before loading a package.
 }
 
 // ModuleWalker is responsible for lightweight, dependency-focused scanning operations.

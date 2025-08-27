@@ -385,11 +385,11 @@ func WithExternalTypeOverrides(overrides scanner.ExternalTypeOverride) ScannerOp
 	}
 }
 
-// WithScanScope limits the scanner to only scan packages within the provided set of import paths.
-// If an out-of-scope package is requested, a minimal placeholder is returned instead of scanning.
-func WithScanScope(scope map[string]bool) ScannerOption {
+// WithPackageLoadHook sets a hook that is called before a package is scanned.
+// If the hook returns false, the package is not scanned and a placeholder is returned.
+func WithPackageLoadHook(hook PackageLoadHook) ScannerOption {
 	return func(s *Scanner) error {
-		s.Config.ScanScope = scope
+		s.Config.PackageLoadHook = hook
 		return nil
 	}
 }
@@ -933,11 +933,11 @@ func isDir(path string) bool {
 // from any newly parsed files. Files parsed by this function are marked as visited
 // in `s.visitedFiles`.
 func (s *Scanner) ScanPackageByImport(ctx context.Context, importPath string) (*scanner.PackageInfo, error) {
-	// If a scan scope is defined, check if the package is within it.
-	if s.Config.ScanScope != nil {
-		if _, inScope := s.Config.ScanScope[importPath]; !inScope {
+	// If a load hook is defined, check if we should proceed.
+	if s.Config.PackageLoadHook != nil {
+		if !s.Config.PackageLoadHook(importPath) {
 			if s.Logger != nil {
-				s.Logger.DebugContext(ctx, "skipping scan of out-of-scope package", "package", importPath)
+				s.Logger.DebugContext(ctx, "skipping scan of package due to load hook", "package", importPath)
 			}
 			// Return a placeholder package. This prevents deep scanning of stdlib or third-party code.
 			return &scanner.PackageInfo{

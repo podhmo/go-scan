@@ -14,6 +14,35 @@ This is particularly useful for static analysis tools that need to understand pr
 
 - **Intrinsics**: `symgo` allows you to register "intrinsic" functions. These are special Go functions that the symbolic engine can call when it encounters a call to a specific function in the source code (e.g., `http.HandleFunc`). The intrinsic can then inspect the symbolic arguments and record information about the call.
 
+- **Scanning Policy**: By default, `symgo` will only perform deep, source-level analysis for packages that are part of the current Go workspace (i.e., the main module and any other modules included via `go.work`). Calls to functions in external packages (like the standard library or third-party dependencies) are treated as symbolic placeholders, which is highly efficient. You can customize this behavior by providing a `ScanPolicyFunc` using the `WithScanPolicy` option. This function determines whether a given package should be scanned from source.
+
+  For example, to allow `symgo` to scan both the current module and the standard library, you could provide the following policy:
+
+  ```go
+  import (
+      "strings"
+      "github.com/podhmo/go-scan/symgo"
+  )
+
+  policy := func(importPath string) bool {
+      // Check if it's in the current module (replicates default behavior).
+      isWorkspacePkg := false
+      for _, m := range scanner.Modules() {
+          if strings.HasPrefix(importPath, m.Path) {
+              isWorkspacePkg = true
+              break
+          }
+      }
+
+      // Also allow scanning standard library packages (heuristic: no dots in path).
+      isStdLib := !strings.Contains(importPath, ".")
+
+      return isWorkspacePkg || isStdLib
+  }
+
+  interpreter, err := symgo.NewInterpreter(scanner, symgo.WithScanPolicy(policy))
+  ```
+
 ## Debuggability
 
 The `symgo` interpreter includes a tracing mechanism to help debug the symbolic execution flow. By providing a `Tracer` implementation, you can monitor which AST nodes are being visited by the evaluator.

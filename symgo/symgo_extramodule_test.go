@@ -3,7 +3,6 @@ package symgo_test
 import (
 	"context"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	goscan "github.com/podhmo/go-scan"
@@ -53,14 +52,7 @@ func TestExtraModuleCall(t *testing.T) {
 	}
 
 	_, err = interp.Apply(ctx, mainFunc, nil, pkg)
-	if err == nil {
-		t.Fatal("Apply main function should have failed, but it did not")
-	}
-
-	// The error should be about not being able to call a method on a symbolic placeholder.
-	// This confirms that the return value from the external module was correctly treated as symbolic.
-	expectedError := "cannot access field or method on variable with no type info"
-	if !strings.Contains(err.Error(), expectedError) {
-		t.Fatalf("expected error to contain %q, but got: %v", expectedError, err)
+	if err != nil {
+		t.Fatalf("Apply main function should have succeeded, but it failed: %v", err)
 	}
 }

@@ -24,6 +24,8 @@ var universe *universeScope
 func init() {
 	funcs := intrinsics.New()
 	funcs.Register("panic", intrinsics.BuiltinPanic)
+	funcs.Register("len", intrinsics.BuiltinLen)
+	funcs.Register("copy", intrinsics.BuiltinCopy)
 
 	vals := make(map[string]object.Object)
 	vals["nil"] = object.NIL

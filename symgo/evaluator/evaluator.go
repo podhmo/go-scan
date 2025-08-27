@@ -29,7 +29,7 @@ type Evaluator struct {
 	callStack         []*callFrame
 	interfaceBindings map[string]*goscan.TypeInfo
 	defaultIntrinsic  intrinsics.IntrinsicFunc
-	scanPolicy        object.ScanPolicyFunc
+	scanPolicy        scanner.ScanPolicyFunc
 }
 
 type callFrame struct {
@@ -38,7 +38,7 @@ type callFrame struct {
 }
 
 // New creates a new Evaluator.
-func New(scanner *goscan.Scanner, logger *slog.Logger, tracer object.Tracer, scanPolicy object.ScanPolicyFunc) *Evaluator {
+func New(scanner *goscan.Scanner, logger *slog.Logger, tracer object.Tracer, scanPolicy scanner.ScanPolicyFunc) *Evaluator {
 	if logger == nil {
 		logger = slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	}
@@ -934,6 +934,15 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 		} else if err != nil {
 			// Log the error for debugging, but don't fail the evaluation.
 			e.logWithContext(ctx, slog.LevelWarn, "error trying to find method", "method", n.Sel.Name, "type", typeInfo.Name, "error", err)
+		} else {
+			// If findMethodOnType returns no method and no error, it could be because
+			// the package was not scanned due to policy. Instead of erroring out,
+			// we return a symbolic placeholder for the method call itself. This allows
+			// the default intrinsic to inspect it and the analysis to continue.
+			return &object.SymbolicPlaceholder{
+				Reason:   fmt.Sprintf("unresolved method call %s.%s", typeInfo.Name, n.Sel.Name),
+				Receiver: val,
+			}
 		}
 
 		if typeInfo.Struct != nil {

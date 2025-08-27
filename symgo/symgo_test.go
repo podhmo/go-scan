@@ -67,7 +67,10 @@ func main() {
 	}
 	pkg := pkgs[0]
 
-	interp, err := symgo.NewInterpreter(s)
+	// Create an interpreter with a policy that denies scanning 'fmt'.
+	interp, err := symgo.NewInterpreter(s, symgo.WithScanPolicy(func(importPath string) bool {
+		return importPath != "fmt"
+	}))
 	if err != nil {
 		t.Fatalf("NewInterpreter() failed: %+v", err)
 	}

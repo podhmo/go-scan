@@ -608,9 +608,6 @@ type Tracer interface {
 	Visit(node ast.Node)
 }
 
-// ScanPolicyFunc is a function that determines whether a package should be scanned from source.
-type ScanPolicyFunc func(importPath string) bool
-
 // TracerFunc is an adapter to allow the use of ordinary functions as Tracers.
 type TracerFunc func(node ast.Node)
 

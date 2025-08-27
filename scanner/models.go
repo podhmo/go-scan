@@ -517,6 +517,9 @@ type PackageImports struct {
 	FileImports map[string][]string // file path -> import paths
 }
 
+// ScanPolicyFunc is a function that determines whether a package should be scanned from source.
+type ScanPolicyFunc func(importPath string) bool
+
 // Visitor defines the interface for operations to be performed at each node
 // during a dependency graph walk.
 type Visitor interface {

@@ -40,7 +40,7 @@ var NewEnclosedEnvironment = object.NewEnclosedEnvironment
 type IntrinsicFunc func(eval *Interpreter, args []Object) Object
 
 // ScanPolicyFunc is a function that determines whether a package should be scanned from source.
-type ScanPolicyFunc = object.ScanPolicyFunc
+type ScanPolicyFunc = scanner.ScanPolicyFunc
 
 // Interpreter is the main public entry point for the symgo engine.
 type Interpreter struct {
@@ -50,7 +50,7 @@ type Interpreter struct {
 	logger            *slog.Logger
 	tracer            object.Tracer
 	interfaceBindings map[string]*goscan.TypeInfo
-	scanPolicy        object.ScanPolicyFunc
+	scanPolicy        scanner.ScanPolicyFunc
 }
 
 // Option is a functional option for configuring the Interpreter.
@@ -71,7 +71,7 @@ func WithTracer(tracer object.Tracer) Option {
 }
 
 // WithScanPolicy sets a custom policy function to determine which packages to scan from source.
-func WithScanPolicy(policy object.ScanPolicyFunc) Option {
+func WithScanPolicy(policy scanner.ScanPolicyFunc) Option {
 	return func(i *Interpreter) {
 		i.scanPolicy = policy
 	}
@@ -105,7 +105,7 @@ func NewInterpreter(scanner *goscan.Scanner, options ...Option) (*Interpreter, e
 	}
 
 	// Set a default scan policy if none was provided.
-	// The default policy is to only scan packages within the main module(s).
+	// The default policy is to only scan packages within the main module(s), plus the standard library.
 	if i.scanPolicy == nil {
 		modules := i.scanner.Modules()
 		if len(modules) > 0 {
@@ -114,6 +114,11 @@ func NewInterpreter(scanner *goscan.Scanner, options ...Option) (*Interpreter, e
 				modulePaths[i] = m.Path
 			}
 			i.scanPolicy = func(importPath string) bool {
+				// Allow standard library packages.
+				if !strings.Contains(importPath, ".") {
+					return true
+				}
+				// Allow packages within the workspace modules.
 				for _, modulePath := range modulePaths {
 					if strings.HasPrefix(importPath, modulePath) {
 						return true
@@ -122,9 +127,9 @@ func NewInterpreter(scanner *goscan.Scanner, options ...Option) (*Interpreter, e
 				return false
 			}
 		} else {
-			// Fallback if module path is not available: scan nothing extra.
+			// Fallback if module path is not available: scan only stdlib.
 			i.scanPolicy = func(importPath string) bool {
-				return false
+				return !strings.Contains(importPath, ".")
 			}
 		}
 	}

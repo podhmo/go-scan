@@ -63,6 +63,7 @@ type Scanner struct {
 	isWorkspace bool
 	locators    []*locator.Locator
 	moduleDirs  []string // temporary holder for module directories
+	scanPolicy  scanner.ScanPolicyFunc
 }
 
 // Fset returns the FileSet associated with the scanner.
@@ -385,6 +386,14 @@ func WithOverlay(overlay scanner.Overlay) ScannerOption {
 		for k, v := range overlay {
 			s.overlay[k] = v
 		}
+		return nil
+	}
+}
+
+// WithScanPolicy sets a function that determines which packages are allowed to be scanned.
+func WithScanPolicy(policy scanner.ScanPolicyFunc) ScannerOption {
+	return func(s *Scanner) error {
+		s.scanPolicy = policy
 		return nil
 	}
 }
@@ -941,6 +950,18 @@ func isDir(path string) bool {
 // from any newly parsed files. Files parsed by this function are marked as visited
 // in `s.visitedFiles`.
 func (s *Scanner) ScanPackageByImport(ctx context.Context, importPath string) (*scanner.PackageInfo, error) {
+	// Policy check: if a policy is defined and denies access, return a minimal package info.
+	if s.scanPolicy != nil && !s.scanPolicy(importPath) {
+		slog.DebugContext(ctx, "ScanPackageByImport policy denied", slog.String("importPath", importPath))
+		// Return a minimal, non-cached package info to signify it's an external, unscanned package.
+		return &scanner.PackageInfo{
+			Name:       filepath.Base(importPath),
+			ImportPath: importPath,
+			Path:       "", // Path is unknown since we didn't resolve it.
+			Fset:       s.fset,
+		}, nil
+	}
+
 	s.mu.RLock()
 	cachedPkg, found := s.packageCache[importPath]
 	s.mu.RUnlock()

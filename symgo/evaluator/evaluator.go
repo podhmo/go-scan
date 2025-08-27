@@ -167,6 +167,8 @@ func (e *Evaluator) Eval(ctx context.Context, node ast.Node, env *object.Environ
 		return e.evalSliceExpr(ctx, n, env, pkg)
 	case *ast.ParenExpr:
 		return e.Eval(ctx, n.X, env, pkg)
+	case *ast.TypeAssertExpr:
+		return e.evalTypeAssertExpr(ctx, n, env, pkg)
 	case *ast.IncDecStmt:
 		return e.evalIncDecStmt(ctx, n, env, pkg)
 	case *ast.EmptyStmt:
@@ -1150,6 +1152,47 @@ func (e *Evaluator) evalTypeSwitchStmt(ctx context.Context, n *ast.TypeSwitchStm
 	return &object.SymbolicPlaceholder{Reason: "type switch statement"}
 }
 
+func (e *Evaluator) evalTypeAssertExpr(ctx context.Context, n *ast.TypeAssertExpr, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
+	// This function handles the single-value form: v := x.(T)
+	// The multi-value form (v, ok := x.(T)) is handled specially in evalAssignStmt.
+
+	// First, evaluate the expression whose type is being asserted (x).
+	// This is important to trace any function calls that produce the value.
+	val := e.Eval(ctx, n.X, env, pkg)
+	if isError(val) {
+		return val
+	}
+
+	// Next, resolve the asserted type (T).
+	if pkg == nil || pkg.Fset == nil {
+		return e.newError(n.Pos(), "package info or fset is missing, cannot resolve types for type assertion")
+	}
+	file := pkg.Fset.File(n.Pos())
+	if file == nil {
+		return e.newError(n.Pos(), "could not find file for node position")
+	}
+	astFile, ok := pkg.AstFiles[file.Name()]
+	if !ok {
+		return e.newError(n.Pos(), "could not find ast.File for path: %s", file.Name())
+	}
+	importLookup := e.scanner.BuildImportLookup(astFile)
+
+	fieldType := e.scanner.TypeInfoFromExpr(ctx, n.Type, nil, pkg, importLookup)
+	if fieldType == nil {
+		var typeNameBuf bytes.Buffer
+		printer.Fprint(&typeNameBuf, pkg.Fset, n.Type)
+		return e.newError(n.Pos(), "could not resolve type for type assertion: %s", typeNameBuf.String())
+	}
+	resolvedType, _ := fieldType.Resolve(ctx)
+
+	// In the single-value form, the result is just a value of the asserted type.
+	// We create a symbolic placeholder for it.
+	return &object.SymbolicPlaceholder{
+		Reason:     fmt.Sprintf("value from type assertion to %s", fieldType.String()),
+		BaseObject: object.BaseObject{ResolvedTypeInfo: resolvedType, ResolvedFieldType: fieldType},
+	}
+}
+
 func (e *Evaluator) evalForStmt(ctx context.Context, n *ast.ForStmt, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
 	// For symbolic execution, we unroll the loop once.
 	// A more sophisticated engine might unroll N times or use summaries.
@@ -1311,6 +1354,68 @@ func (e *Evaluator) evalReturnStmt(ctx context.Context, n *ast.ReturnStmt, env *
 func (e *Evaluator) evalAssignStmt(ctx context.Context, n *ast.AssignStmt, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
 	// Handle multi-value assignment, e.g., x, y := f() or x, y = f()
 	if len(n.Rhs) == 1 && len(n.Lhs) > 1 {
+		// Special case for two-value type assertions: v, ok := x.(T)
+		if typeAssert, ok := n.Rhs[0].(*ast.TypeAssertExpr); ok {
+			if len(n.Lhs) != 2 {
+				return e.newError(n.Pos(), "type assertion with 2 values on RHS must have 2 variables on LHS, got %d", len(n.Lhs))
+			}
+
+			// Evaluate the source expression to trace calls
+			e.Eval(ctx, typeAssert.X, env, pkg)
+
+			// Resolve the asserted type (T).
+			if pkg == nil || pkg.Fset == nil {
+				return e.newError(n.Pos(), "package info or fset is missing, cannot resolve types for type assertion")
+			}
+			file := pkg.Fset.File(n.Pos())
+			if file == nil {
+				return e.newError(n.Pos(), "could not find file for node position")
+			}
+			astFile, ok := pkg.AstFiles[file.Name()]
+			if !ok {
+				return e.newError(n.Pos(), "could not find ast.File for path: %s", file.Name())
+			}
+			importLookup := e.scanner.BuildImportLookup(astFile)
+
+			fieldType := e.scanner.TypeInfoFromExpr(ctx, typeAssert.Type, nil, pkg, importLookup)
+			if fieldType == nil {
+				var typeNameBuf bytes.Buffer
+				printer.Fprint(&typeNameBuf, pkg.Fset, typeAssert.Type)
+				return e.newError(typeAssert.Pos(), "could not resolve type for type assertion: %s", typeNameBuf.String())
+			}
+			resolvedType, _ := fieldType.Resolve(ctx)
+
+			// Create placeholders for the two return values.
+			valuePlaceholder := &object.SymbolicPlaceholder{
+				Reason:     fmt.Sprintf("value from type assertion to %s", fieldType.String()),
+				BaseObject: object.BaseObject{ResolvedTypeInfo: resolvedType, ResolvedFieldType: fieldType},
+			}
+
+			okPlaceholder := &object.SymbolicPlaceholder{
+				Reason: "ok from type assertion",
+				BaseObject: object.BaseObject{
+					ResolvedTypeInfo: nil, // Built-in types do not have a TypeInfo struct.
+					ResolvedFieldType: &scanner.FieldType{
+						Name:      "bool",
+						IsBuiltin: true,
+					},
+				},
+			}
+
+			// Assign the placeholders to the LHS variables.
+			if ident, ok := n.Lhs[0].(*ast.Ident); ok {
+				if ident.Name != "_" {
+					e.assignIdentifier(ident, valuePlaceholder, n.Tok, env)
+				}
+			}
+			if ident, ok := n.Lhs[1].(*ast.Ident); ok {
+				if ident.Name != "_" {
+					e.assignIdentifier(ident, okPlaceholder, n.Tok, env)
+				}
+			}
+			return nil
+		}
+
 		rhsValue := e.Eval(ctx, n.Rhs[0], env, pkg)
 		if isError(rhsValue) {
 			return rhsValue

@@ -69,6 +69,9 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] **Fix typed nil handling**: The interpreter does not correctly handle typed `nil` values for slices and interfaces, causing incorrect behavior in type inference and equality checks.
 
 
+### `symgo` Interpreter Enhancements
+- [x] **Avoid scanning non-interesting packages**: The interpreter unnecessarily scanned every imported package, even if it wasn't a target for deep analysis. This has been changed to only scan packages that are part of the current module or explicitly included via configuration, returning generic placeholders for all other external symbols. This improves performance on codebases with many dependencies.
+
 ### `symgo` Interpreter Limitations
 - [x] **`symgo`: `defer` and `go` statement Tracing**: The `symgo` interpreter now traces `CallExpr` nodes inside `*ast.DeferStmt` and `*ast.GoStmt`, preventing false positives in tools like `find-orphans`.
 - [x] **Branch statements (`break`, `continue`)**: The interpreter now handles `*ast.BranchStmt`, allowing it to correctly model control flow in loops.

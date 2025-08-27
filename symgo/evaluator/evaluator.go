@@ -736,6 +736,14 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 		if intrinsicFn, ok := e.intrinsics.Get(key); ok {
 			return &object.Intrinsic{Fn: intrinsicFn}
 		}
+
+		// Optimization: avoid scanning packages that are not part of the analysis scope.
+		if !e.isScannableImportPath(val.Path, pkg) {
+			placeholder := &object.SymbolicPlaceholder{Reason: fmt.Sprintf("unscanned external symbol %s.%s", val.Path, n.Sel.Name)}
+			val.Env.Set(n.Sel.Name, placeholder)
+			return placeholder
+		}
+
 		if val.ScannedInfo == nil {
 			if e.scanner == nil {
 				return e.newError(n.Pos(), "scanner is not available, cannot load package %q", val.Path)
@@ -1965,6 +1973,25 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 	default:
 		return e.newError(callPos, "not a function: %s", fn.Type())
 	}
+}
+
+// isScannableImportPath determines if a package should be deeply analyzed by checking its import path.
+// This is true if the package is part of the main module being analyzed, or if it has been
+// explicitly included via the `extraPackages` configuration.
+func (e *Evaluator) isScannableImportPath(targetImportPath string, currentPkg *scanner.PackageInfo) bool {
+	// Check if the package path matches any of the extra packages to be scanned.
+	for _, extraPkg := range e.extraPackages {
+		if strings.HasPrefix(targetImportPath, extraPkg) {
+			return true
+		}
+	}
+
+	// Check if it's part of the same module as the current package.
+	if currentPkg != nil && currentPkg.ModulePath != "" && strings.HasPrefix(targetImportPath, currentPkg.ModulePath) {
+		return true
+	}
+
+	return false
 }
 
 // isScannablePackage determines if a package should be deeply analyzed (scanned from source).

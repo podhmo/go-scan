@@ -66,7 +66,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] **Issue #1: Foundational `go-scan` Changes**: Update `scanner.TypeInfo` with an `Unresolved` flag and modify `Resolve()` to set it for out-of-policy packages.
 - [x] **Issue #2: Refactor `evalGenDecl` and Validate**: Update variable declaration logic for unresolved types and validate with unit and tooling tests.
 - [x] **Issue #3: Refactor `evalCompositeLit` and Validate**: Update composite literal evaluation for unresolved types and validate with unit and tooling tests.
-- [ ] **Issue #4: Refactor `evalStarExpr` & `evalIndexExpr` and Validate**: Update pointer/indexing logic for unresolved types and validate with unit and tooling tests.
+- [x] **Issue #4: Refactor `evalStarExpr` & `evalIndexExpr` and Validate**: Update pointer/indexing logic for unresolved types and validate with unit and tooling tests.
 - [ ] **Issue #5: Refactor Type Assertion Logic and Validate**: Update `evalTypeSwitchStmt` and `evalTypeAssertExpr` for unresolved types and validate with unit and tooling tests.
 - [ ] **Issue #6: Refactor `assignIdentifier` and Validate**: Update variable assignment logic for unresolved interfaces and validate with unit and tooling tests.
 - [ ] **Issue #7: Refactor `applyFunction` and Validate**: Update function return value handling for unresolved types and validate with unit and tooling tests.

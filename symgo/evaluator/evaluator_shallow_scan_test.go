@@ -94,6 +94,206 @@ var sentinel int
 	}
 }
 
+func TestEvaluator_ShallowScan_TypeSwitch(t *testing.T) {
+	code := `
+package main
+import "foreign/lib"
+
+func Sentinel() {}
+
+var result any // Package-level variable to store the result from the case
+
+func MyFunction(v any) {
+	switch x := v.(type) {
+	case lib.ForeignType:
+		result = x // Assign to package-level var
+	default:
+		// Do nothing
+	}
+	Sentinel()
+}
+`
+	files := map[string]string{
+		"go.mod":             "module example.com/me",
+		"main.go":            code,
+		"foreign/lib/lib.go": "package lib; type ForeignType struct{}",
+	}
+
+	dir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	var sentinelReached bool
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
+		policy := func(path string) bool {
+			// Disallow scanning the "foreign" package.
+			return !strings.HasPrefix(path, "foreign/")
+		}
+
+		evaluator := New(s, nil, nil, policy)
+		evaluator.RegisterIntrinsic("example.com/me.Sentinel", func(args ...object.Object) object.Object {
+			sentinelReached = true
+			return nil
+		})
+
+		mainPkg := findPackage(t, pkgs, "example.com/me")
+		env := object.NewEnvironment()
+
+		// Evaluate the package to populate top-level decls.
+		for _, file := range mainPkg.AstFiles {
+			if res := evaluator.Eval(ctx, file, env, mainPkg); res != nil && res.Type() == object.ERROR_OBJ {
+				return fmt.Errorf("initial Eval failed: %s", res.Inspect())
+			}
+		}
+
+		fn := findFunc(t, mainPkg, "MyFunction")
+		fn.Env = env
+
+		// The argument can be anything, as we're testing the type switch itself.
+		// We provide a value that will match the 'lib.ForeignType' case.
+		arg := &object.SymbolicPlaceholder{Reason: "test argument"}
+		argFieldType := &scanner.FieldType{
+			PkgName:        "lib",
+			TypeName:       "ForeignType",
+			FullImportPath: "foreign/lib",
+		}
+		arg.SetFieldType(argFieldType)
+		// To make the switch work, we need to simulate a type match.
+		// In a real scenario, the evaluator would track possible types.
+		// For this test, we can cheat a bit by making the input argument's value
+		// have the type we want to test.
+		// However, the current evaluator logic for type switches is simple and doesn't
+		// actually check the type of `v`. It just evaluates all case bodies.
+		// So a generic placeholder is fine.
+
+		result := evaluator.Apply(ctx, fn, []object.Object{arg}, mainPkg)
+		if err, ok := result.(*object.Error); ok {
+			return fmt.Errorf("Apply() returned an error: %s", err.Inspect())
+		}
+
+		if !sentinelReached {
+			return fmt.Errorf("sentinel was not reached")
+		}
+
+		// Check the type of the 'result' variable.
+		resultVar, ok := env.Get("result")
+		if !ok {
+			return fmt.Errorf("variable 'result' not found")
+		}
+		v, ok := resultVar.(*object.Variable)
+		if !ok {
+			return fmt.Errorf("object 'result' is not a variable, but %T", v)
+		}
+		placeholder, ok := v.Value.(*object.SymbolicPlaceholder)
+		if !ok {
+			return fmt.Errorf("expected value of 'result' to be a SymbolicPlaceholder, got %T (%s)", v.Value, v.Value.Inspect())
+		}
+
+		wantUnresolvedType := &scanner.TypeInfo{
+			PkgPath:    "foreign/lib",
+			Name:       "ForeignType",
+			Unresolved: true,
+		}
+		if diff := cmp.Diff(wantUnresolvedType, placeholder.TypeInfo()); diff != "" {
+			t.Errorf("result placeholder TypeInfo mismatch (-want +got):\n%s", diff)
+		}
+
+		return nil
+	}
+
+	if _, err := scantest.Run(t, context.Background(), dir, []string{"."}, action); err != nil {
+		t.Fatalf("scantest.Run() failed: %v", err)
+	}
+}
+
+func TestEvaluator_ShallowScan_TypeAssert(t *testing.T) {
+	code := `
+package main
+import "foreign/lib"
+
+func Sentinel() {}
+
+// This variable will hold the result of the type assertion.
+var result lib.ForeignType
+
+func MyFunction(v any) {
+	result = v.(lib.ForeignType)
+	Sentinel()
+}
+`
+	files := map[string]string{
+		"go.mod":             "module example.com/me",
+		"main.go":            code,
+		"foreign/lib/lib.go": "package lib; type ForeignType struct{}",
+	}
+
+	dir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	var sentinelReached bool
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
+		policy := func(path string) bool {
+			return !strings.HasPrefix(path, "foreign/")
+		}
+
+		evaluator := New(s, nil, nil, policy)
+		evaluator.RegisterIntrinsic("example.com/me.Sentinel", func(args ...object.Object) object.Object {
+			sentinelReached = true
+			return nil
+		})
+
+		mainPkg := findPackage(t, pkgs, "example.com/me")
+		env := object.NewEnvironment()
+
+		for _, file := range mainPkg.AstFiles {
+			if res := evaluator.Eval(ctx, file, env, mainPkg); res != nil && res.Type() == object.ERROR_OBJ {
+				return fmt.Errorf("initial Eval failed: %s", res.Inspect())
+			}
+		}
+
+		fn := findFunc(t, mainPkg, "MyFunction")
+		fn.Env = env
+
+		arg := &object.SymbolicPlaceholder{Reason: "test argument"}
+		result := evaluator.Apply(ctx, fn, []object.Object{arg}, mainPkg)
+		if err, ok := result.(*object.Error); ok {
+			return fmt.Errorf("Apply() returned an error: %s", err.Inspect())
+		}
+
+		if !sentinelReached {
+			return fmt.Errorf("sentinel was not reached, evaluation may have stopped prematurely")
+		}
+
+		// Also check the type of the result variable.
+		resultVar, ok := env.Get("result")
+		if !ok {
+			return fmt.Errorf("variable 'result' not found")
+		}
+		v, ok := resultVar.(*object.Variable)
+		if !ok {
+			return fmt.Errorf("object 'result' is not a variable, but %T", v)
+		}
+		placeholder, ok := v.Value.(*object.SymbolicPlaceholder)
+		if !ok {
+			return fmt.Errorf("expected value of 'result' to be a SymbolicPlaceholder, got %T", v.Value)
+		}
+
+		wantUnresolvedType := &scanner.TypeInfo{
+			PkgPath:    "foreign/lib",
+			Name:       "ForeignType",
+			Unresolved: true,
+		}
+		if diff := cmp.Diff(wantUnresolvedType, placeholder.TypeInfo()); diff != "" {
+			t.Errorf("result placeholder TypeInfo mismatch (-want +got):\n%s", diff)
+		}
+
+		return nil
+	}
+
+	if _, err := scantest.Run(t, context.Background(), dir, []string{"."}, action); err != nil {
+		t.Fatalf("scantest.Run() failed: %v", err)
+	}
+}
+
 func TestShallowScan_CompositeLit_WithUnresolvedType(t *testing.T) {
 	code := `
 package main
@@ -211,8 +411,8 @@ func MyFunction(p *extpkg.ExternalType, s []extpkg.ExternalType) {
 }
 `
 	files := map[string]string{
-		"go.mod":          "module example.com/me",
-		"mypkg/code.go":   mypkg_code,
+		"go.mod":         "module example.com/me",
+		"mypkg/code.go":  mypkg_code,
 		"extpkg/code.go": "package extpkg; type ExternalType struct{}",
 	}
 

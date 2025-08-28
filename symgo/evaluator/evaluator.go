@@ -1151,7 +1151,13 @@ func (e *Evaluator) evalTypeSwitchStmt(ctx context.Context, n *ast.TypeSwitchStm
 					}
 				}
 
-				resolvedType, _ := fieldType.Resolve(ctx)
+				var resolvedType *scanner.TypeInfo
+				if fieldType.FullImportPath != "" && e.scanPolicy != nil && !e.scanPolicy(fieldType.FullImportPath) {
+					resolvedType = scanner.NewUnresolvedTypeInfo(fieldType.FullImportPath, fieldType.TypeName)
+				} else {
+					resolvedType, _ = fieldType.Resolve(ctx)
+				}
+
 				val := &object.SymbolicPlaceholder{
 					Reason:     fmt.Sprintf("type switch case variable %s", fieldType.String()),
 					BaseObject: object.BaseObject{ResolvedTypeInfo: resolvedType, ResolvedFieldType: fieldType},
@@ -1209,7 +1215,12 @@ func (e *Evaluator) evalTypeAssertExpr(ctx context.Context, n *ast.TypeAssertExp
 		printer.Fprint(&typeNameBuf, pkg.Fset, n.Type)
 		return e.newError(n.Pos(), "could not resolve type for type assertion: %s", typeNameBuf.String())
 	}
-	resolvedType, _ := fieldType.Resolve(ctx)
+	var resolvedType *scanner.TypeInfo
+	if fieldType.FullImportPath != "" && e.scanPolicy != nil && !e.scanPolicy(fieldType.FullImportPath) {
+		resolvedType = scanner.NewUnresolvedTypeInfo(fieldType.FullImportPath, fieldType.TypeName)
+	} else {
+		resolvedType, _ = fieldType.Resolve(ctx)
+	}
 
 	// In the single-value form, the result is just a value of the asserted type.
 	// We create a symbolic placeholder for it.

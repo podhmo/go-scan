@@ -114,10 +114,10 @@ type TypeInfo struct {
 	EnumMembers []*ConstantInfo `json:"enumMembers,omitempty"` // List of constants belonging to this enum type
 
 	// --- Fields for inspect mode ---
-	Inspect           bool            `json:"-"` // Flag to enable inspection logging
-	Logger            *slog.Logger    `json:"-"` // Logger for inspection
-	Fset              *token.FileSet  `json:"-"` // Fileset for position information
-	ResolutionContext context.Context `json:"-"` // Context for resolving nested types
+	Inspect           bool            `json:"-"`                    // Flag to enable inspection logging
+	Logger            *slog.Logger    `json:"-"`                    // Logger for inspection
+	Fset              *token.FileSet  `json:"-"`                    // Fileset for position information
+	ResolutionContext context.Context `json:"-"`                    // Context for resolving nested types
 	Unresolved        bool            `json:"unresolved,omitempty"` // True if the type is from a package that was not scanned.
 }
 

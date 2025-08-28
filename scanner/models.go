@@ -118,6 +118,7 @@ type TypeInfo struct {
 	Logger            *slog.Logger    `json:"-"` // Logger for inspection
 	Fset              *token.FileSet  `json:"-"` // Fileset for position information
 	ResolutionContext context.Context `json:"-"` // Context for resolving nested types
+	Unresolved        bool            `json:"unresolved,omitempty"` // True if the type is from a package that was not scanned.
 }
 
 // Annotation extracts the value of a specific annotation from the TypeInfo's Doc string.
@@ -432,6 +433,17 @@ func (ft *FieldType) Resolve(ctx context.Context) (*TypeInfo, error) {
 	pkgInfo, err := ft.Resolver.ScanPackageByImport(ctx, ft.FullImportPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to scan package %q for type %q: %w", ft.FullImportPath, ft.TypeName, err)
+	}
+
+	// If the package was skipped by policy, pkgInfo will be nil but err will also be nil.
+	if pkgInfo == nil {
+		// This indicates the package was intentionally not scanned.
+		// Return a placeholder TypeInfo marked as unresolved.
+		return &TypeInfo{
+			Name:       ft.TypeName,
+			PkgPath:    ft.FullImportPath,
+			Unresolved: true,
+		}, nil
 	}
 
 	typeInfo := pkgInfo.Lookup(ft.TypeName)

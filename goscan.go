@@ -15,6 +15,7 @@ import (
 
 	"github.com/podhmo/go-scan/locator"
 	"github.com/podhmo/go-scan/scanner"
+	"github.com/podhmo/go-scan/symgo/object"
 )
 
 // Package is an alias for scanner.PackageInfo, representing all the extracted information from a single package.
@@ -941,6 +942,14 @@ func isDir(path string) bool {
 // from any newly parsed files. Files parsed by this function are marked as visited
 // in `s.visitedFiles`.
 func (s *Scanner) ScanPackageByImport(ctx context.Context, importPath string) (*scanner.PackageInfo, error) {
+	// Check the scan policy from the context. This is the hook for symgo to control scanning.
+	if policy, ok := ctx.Value(object.ScanPolicyCtxKey).(object.ScanPolicyFunc); ok && policy != nil {
+		if !policy(importPath) {
+			slog.DebugContext(ctx, "ScanPackageByImport SKIPPED by policy", slog.String("importPath", importPath))
+			return nil, nil // Return nil, nil to indicate the package should be treated as "unresolved".
+		}
+	}
+
 	s.mu.RLock()
 	cachedPkg, found := s.packageCache[importPath]
 	s.mu.RUnlock()

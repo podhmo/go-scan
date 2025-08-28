@@ -611,6 +611,12 @@ type Tracer interface {
 // ScanPolicyFunc is a function that determines whether a package should be scanned from source.
 type ScanPolicyFunc func(importPath string) bool
 
+// A private key type to prevent collisions in context
+type scanPolicyKey struct{}
+
+// ScanPolicyCtxKey is the key for the ScanPolicyFunc in a context.Context.
+var ScanPolicyCtxKey = scanPolicyKey{}
+
 // TracerFunc is an adapter to allow the use of ordinary functions as Tracers.
 type TracerFunc func(node ast.Node)
 

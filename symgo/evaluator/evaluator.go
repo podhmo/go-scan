@@ -20,6 +20,9 @@ import (
 	"github.com/podhmo/go-scan/symgo/object"
 )
 
+// MaxCallStackDepth is the maximum depth of the call stack to prevent excessive recursion.
+const MaxCallStackDepth = 4096
+
 // Evaluator is the main object that evaluates the AST.
 type Evaluator struct {
 	scanner           *goscan.Scanner
@@ -35,6 +38,11 @@ type Evaluator struct {
 type callFrame struct {
 	Function string
 	Pos      token.Pos
+	Signature string
+}
+
+func (f *callFrame) String() string {
+	return f.Signature
 }
 
 // New creates a new Evaluator.
@@ -1830,6 +1838,11 @@ func (e *Evaluator) evalCallExpr(ctx context.Context, n *ast.CallExpr, env *obje
 		name = "unknown"
 	}
 
+	if len(e.callStack) >= MaxCallStackDepth {
+		e.logger.Warn("call stack depth exceeded, aborting recursion", "function", name)
+		return &object.SymbolicPlaceholder{Reason: "max call stack depth exceeded"}
+	}
+
 	frame := &callFrame{Function: name, Pos: n.Pos()}
 	e.callStack = append(e.callStack, frame)
 	defer func() {
@@ -1898,6 +1911,40 @@ func (e *Evaluator) Apply(ctx context.Context, fn object.Object, args []object.O
 
 func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []object.Object, pkg *scanner.PackageInfo, callPos token.Pos) object.Object {
 	e.logger.Debug("applyFunction", "type", fn.Type(), "value", fn.Inspect())
+
+	// Create a signature for the current call.
+	var currentSignature string
+	if f, ok := fn.(*object.Function); ok {
+		var b strings.Builder
+		if f.Name != nil {
+			b.WriteString(f.Name.Name)
+		} else {
+			b.WriteString("<closure>")
+		}
+		b.WriteString("(")
+		for i, arg := range args {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteString(arg.Inspect())
+		}
+		b.WriteString(")")
+		currentSignature = b.String()
+
+		// Check for recursion
+		for _, frame := range e.callStack {
+			if frame.Signature == currentSignature {
+				e.logger.Warn("infinite recursion detected, aborting", "function", f.Name.Name)
+				return &object.SymbolicPlaceholder{Reason: "infinite recursion detected"}
+			}
+		}
+	}
+
+	// Update the current call frame with the signature.
+	if len(e.callStack) > 0 {
+		e.callStack[len(e.callStack)-1].Signature = currentSignature
+	}
+
 	switch fn := fn.(type) {
 	case *object.Function:
 		// When applying a function, the evaluation context switches to that function's

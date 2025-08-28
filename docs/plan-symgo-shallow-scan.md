@@ -125,10 +125,9 @@ This is conceptually similar to the placeholder `TypeInfo` approach but provides
 
 ## 7. Implementation Task List (Issue-Based)
 
-Below is a proposed set of tasks, structured like GitHub issues, for implementing the shallow scan feature. This approach is based on the `UnresolvedTypeInfo` alternative for its type safety.
+Below is a proposed set of tasks, structured like individual GitHub issues, for implementing the shallow scan feature. This approach is based on the `UnresolvedTypeInfo` alternative for its type safety and clarity. The tasks are ordered to build upon each other.
 
 ---
-
 ### **Issue #1: Foundational `go-scan` Changes for Shallow Types**
 
 *   **Goal:** Update the core `go-scan` package to support the concept of an unresolved type.
@@ -139,46 +138,71 @@ Below is a proposed set of tasks, structured like GitHub issues, for implementin
     4.  Implement the logic in `Resolve()`: if the scan policy for a package returns `false`, it should create and return an `*UnresolvedTypeInfo`; otherwise, it should return a `*TypeInfo` as it does currently.
 
 ---
-
-### **Issue #2: Refactor Evaluator for `SymbolicType` Compatibility**
-
-*   **Goal:** Adapt the `symgo` evaluator to work with the new `SymbolicType` interface, handling both resolved and unresolved types gracefully.
-*   **Tasks:**
-    1.  Perform a targeted refactoring of the **8 key resolution points** identified in Section 2 (`evalGenDecl`, `evalCompositeLit`, etc.).
-    2.  In each location, update variables and function parameters from `*scanner.TypeInfo` to the `SymbolicType` interface.
-    3.  Use type switches (`switch t := symbolicType.(type)`) to differentiate logic:
-        *   `case *scanner.TypeInfo`: Maintain the existing logic for fully resolved types.
-        *   `case *scanner.UnresolvedTypeInfo`: Implement new logic to handle unresolved types, typically by creating or propagating `object.SymbolicPlaceholder` instances.
+### **Issue #2: Refactor `evalGenDecl`**
+*   **Goal:** Update variable declaration logic to handle unresolved types.
+*   **Depends On:** Issue #1
+*   **Task:** Modify `evalGenDecl` to use `SymbolicType`. When a variable is created, its static type information should be stored as a `SymbolicType`, correctly handling both `*TypeInfo` and `*UnresolvedTypeInfo` results from `Resolve()`.
 
 ---
-
-### **Issue #3: Implement Symbolic Method and Function Call Handling**
-
-*   **Goal:** Enable the evaluator to correctly trace method and function calls on unresolved types without analyzing their source code.
-*   **Tasks:**
-    1.  Modify `findMethodOnType` to operate on the `SymbolicType` interface. If the receiver is an `UnresolvedTypeInfo`, the method lookup should consult its list of method signatures.
-    2.  If a method is found on an `UnresolvedTypeInfo`, `findMethodOnType` should return a "fake" `object.Function`. This object will not have a body but will store the method's signature (parameters and return types).
-    3.  Update `applyFunction` to handle these fake functions. When called, a fake function will inspect the stored signature and return the correct number of `SymbolicPlaceholder` objects, each representing a return value.
+### **Issue #3: Refactor `evalCompositeLit`**
+*   **Goal:** Update composite literal evaluation to handle unresolved types.
+*   **Depends On:** Issue #1
+*   **Task:** Modify `evalCompositeLit`. When `Resolve()` returns an `*UnresolvedTypeInfo`, the function should create a `SymbolicPlaceholder` instead of an `object.Instance`, tagging the placeholder with the unresolved type information.
 
 ---
-
-### **Issue #4: Create a Comprehensive Test Suite for Shallow Scanning**
-
-*   **Goal:** Verify the correctness of the shallow scanning mechanism and ensure it does not introduce regressions.
+### **Issue #4: Refactor `evalStarExpr` and `evalIndexExpr`**
+*   **Goal:** Ensure pointer-dereferencing and indexing operations correctly propagate unresolved types.
+*   **Depends On:** Issue #1
 *   **Tasks:**
-    1.  Create a new test file: `symgo/evaluator/evaluator_shallow_scan_test.go`.
-    2.  **Split tests into two main categories:**
-        *   **Deep Scan Tests:** These tests will use a permissive scan policy (or the default). They will reuse existing test patterns to confirm that analysis of fully visible code remains correct after the refactoring.
-        *   **Shallow Scan Tests:** These tests will configure a *restrictive* scan policy to exclude a mock dependency. They will assert that:
-            *   Calling methods on types from the excluded dependency does not crash.
-            *   The return values from these calls are correctly modeled as the right number of symbolic placeholders.
-            *   Chained method calls on unresolved types are handled correctly.
+    1.  In `evalStarExpr`, when dereferencing a pointer to an unresolved type, the resulting placeholder must be tagged with the unresolved element type.
+    2.  In `evalIndexExpr`, when indexing a slice of an unresolved type, the resulting placeholder must be tagged with the unresolved element type.
 
 ---
+### **Issue #5: Refactor `evalTypeSwitchStmt` and `evalTypeAssertExpr`**
+*   **Goal:** Update type assertion logic to handle unresolved types.
+*   **Depends On:** Issue #1
+*   **Task:** In both `evalTypeSwitchStmt` and `evalTypeAssertExpr`, when a type case or assertion involves an unresolved type, the new variable (`v` in `v := i.(T)`) must be correctly created and tagged with the `UnresolvedTypeInfo`.
 
-### **Issue #5: Validate and Harden Tooling (`docgen` & `find-orphans`)**
+---
+### **Issue #6: Refactor `assignIdentifier`**
+*   **Goal:** Update variable assignment logic to correctly handle unresolved interface types.
+*   **Depends On:** Issue #1
+*   **Task:** Modify `assignIdentifier`. The check to see if a variable is an interface must now correctly handle cases where `Resolve()` returns an `UnresolvedTypeInfo` that represents an interface.
 
-*   **Goal:** Ensure that high-level tools continue to function correctly and can benefit from the new shallow scanning capabilities.
+---
+### **Issue #7: Refactor `applyFunction`**
+*   **Goal:** Ensure that return values from external functions are correctly typed, even if unresolved.
+*   **Depends On:** Issue #1
+*   **Task:** Modify `applyFunction`. When creating placeholders for return values of an external function or interface method, it must use the `SymbolicType` returned by `Resolve()` to tag each placeholder, correctly handling both `*TypeInfo` and `*UnresolvedTypeInfo`.
+
+---
+### **Issue #8: Refactor `findMethodOnType`**
+*   **Goal:** Enable method lookup on unresolved embedded types.
+*   **Depends On:** Issue #1
+*   **Task:** Modify `findMethodOnType` to handle `UnresolvedTypeInfo`. When recursively searching through embedded fields, if an embedded field resolves to an `UnresolvedTypeInfo`, the search should continue using the information available on that unresolved type (e.g., a list of method names).
+
+---
+### **Issue #9: Implement Symbolic Method Call Logic**
+*   **Goal:** Enable the evaluator to trace method calls on unresolved types.
+*   **Depends On:** Issues #1-8
 *   **Tasks:**
-    1.  **`docgen`:** Review its scan policy configuration to ensure it explicitly includes `net/http`. Run the full `docgen` test suite to verify that its golden file outputs are unchanged by the underlying refactoring.
-    2.  **`find-orphans`:** Create a specific integration test for `find-orphans`. In this test, a function's only usage is through a method call on a type from an out-of-policy package. Assert that `find-orphans` correctly marks the target function as "used" and does not report it as an orphan, proving that symbolic calls are tracked correctly.
+    1.  Enhance `findMethodOnType` to return a "fake" `object.Function` when a method is found on an `UnresolvedTypeInfo`. This fake function stores the method's signature.
+    2.  Update `applyFunction` to handle these fake functions. When called, a fake function should return the correct number of `SymbolicPlaceholder` objects based on its stored signature.
+
+---
+### **Issue #10: Create Test Suite for Shallow Scanning**
+*   **Goal:** Verify the correctness of the shallow scanning mechanism.
+*   **Depends On:** Issues #1-9
+*   **Tasks:**
+    1.  Create `symgo/evaluator/evaluator_shallow_scan_test.go`.
+    2.  **Split tests:**
+        *   **Deep Scan Tests:** Confirm no regressions in existing functionality with a permissive scan policy.
+        *   **Shallow Scan Tests:** Use a restrictive policy to assert that operations on out-of-policy types are handled symbolically and do not crash. Verify chained method calls.
+
+---
+### **Issue #11: Validate and Harden Tooling (`docgen` & `find-orphans`)**
+*   **Goal:** Ensure high-level tools are not broken and can leverage the new capabilities.
+*   **Depends On:** Issues #1-10
+*   **Tasks:**
+    1.  **`docgen`:** Confirm its scan policy is correct and run its test suite to ensure golden files are unchanged.
+    2.  **`find-orphans`:** Add an integration test where a function is only used via a method on an out-of-policy type, and assert it is not reported as an orphan.

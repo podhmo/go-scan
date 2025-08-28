@@ -60,9 +60,10 @@ type Scanner struct {
 	Walker *ModuleWalker
 
 	// For multi-module workspace support
-	isWorkspace bool
-	locators    []*locator.Locator
-	moduleDirs  []string // temporary holder for module directories
+	isWorkspace              bool
+	locators                 []*locator.Locator
+	moduleDirs               []string // temporary holder for module directories
+	declarationsOnlyPackages map[string]bool
 }
 
 // Fset returns the FileSet associated with the scanner.
@@ -402,6 +403,28 @@ func WithExternalTypeOverrides(overrides scanner.ExternalTypeOverride) ScannerOp
 	}
 }
 
+// WithDeclarationsOnlyPackages sets packages that should be scanned for declarations only.
+func WithDeclarationsOnlyPackages(importPaths []string) ScannerOption {
+	return func(s *Scanner) error {
+		if s.scanner != nil {
+			if s.scanner.DeclarationsOnlyPackages == nil {
+				s.scanner.DeclarationsOnlyPackages = make(map[string]bool)
+			}
+			for _, p := range importPaths {
+				s.scanner.DeclarationsOnlyPackages[p] = true
+			}
+		}
+		// Also store it on the goscan.Scanner for initialization phase
+		if s.declarationsOnlyPackages == nil {
+			s.declarationsOnlyPackages = make(map[string]bool)
+		}
+		for _, p := range importPaths {
+			s.declarationsOnlyPackages[p] = true
+		}
+		return nil
+	}
+}
+
 // New creates a new Scanner. It finds the module root starting from the given path.
 // It also initializes an empty set of visited files for this scanner instance.
 func New(options ...ScannerOption) (*Scanner, error) {
@@ -469,6 +492,10 @@ func New(options ...ScannerOption) (*Scanner, error) {
 	initialScanner, err := scanner.New(s.fset, s.ExternalTypeOverrides, s.overlay, s.locator.ModulePath(), s.locator.RootDir(), s, s.Inspect, s.Logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create internal scanner: %w", err)
+	}
+	// Propagate declarations-only packages to the internal scanner
+	if s.declarationsOnlyPackages != nil {
+		initialScanner.DeclarationsOnlyPackages = s.declarationsOnlyPackages
 	}
 	s.scanner = initialScanner
 

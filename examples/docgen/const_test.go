@@ -48,7 +48,7 @@ func TestDocgen_withConstantResolution(t *testing.T) {
 	for _, p := range customPatterns {
 		opts = append(opts, p)
 	}
-	analyzer, err := NewAnalyzer(s, logger, nil, opts...)
+	analyzer, err := NewAnalyzer(s, logger, opts...)
 	if err != nil {
 		t.Fatalf("failed to create analyzer: %v", err)
 	}

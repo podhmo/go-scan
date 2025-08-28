@@ -760,6 +760,12 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 			if method, err := e.findMethodOnType(ctx, typeInfo, n.Sel.Name, env, val); err == nil && method != nil {
 				return method
 			}
+			if typeInfo.Unresolved {
+				return &object.SymbolicPlaceholder{
+					Reason:   fmt.Sprintf("symbolic method call %s on unresolved symbolic type %s", n.Sel.Name, typeInfo.Name),
+					Receiver: val,
+				}
+			}
 		}
 
 		return e.newError(n.Pos(), "undefined method: %s on symbolic type %s", n.Sel.Name, fullTypeName)
@@ -969,6 +975,35 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 		} else if err != nil {
 			// Log the error for debugging, but don't fail the evaluation.
 			e.logWithContext(ctx, slog.LevelWarn, "error trying to find method", "method", n.Sel.Name, "type", typeInfo.Name, "error", err)
+		}
+
+		// If the type is unresolved, and we couldn't find a concrete method,
+		// it's a method call on a shallow-scanned type. Treat it as a symbolic call.
+		if typeInfo != nil && typeInfo.Unresolved {
+			e.logger.DebugContext(ctx, "treating method call as symbolic on unresolved type", "variable", val.Name, "method", n.Sel.Name)
+			// This placeholder represents the *function itself*.
+			// `applyFunction` will handle its invocation and return a result placeholder.
+			return &object.SymbolicPlaceholder{
+				Reason:   fmt.Sprintf("symbolic method call %s on unresolved type %s", n.Sel.Name, typeInfo.Name),
+				Receiver: val,
+			}
+		}
+
+		// If we didn't find a method, check if it could be on an unresolved embedded type.
+		if typeInfo != nil && typeInfo.Struct != nil {
+			for _, field := range typeInfo.Struct.Fields {
+				if field.Embedded {
+					if field.Type.FullImportPath != "" && e.scanPolicy != nil && !e.scanPolicy(field.Type.FullImportPath) {
+						// This is an embedded type from an out-of-policy package.
+						// We can assume the method call is valid and treat it symbolically.
+						e.logger.DebugContext(ctx, "treating method call as symbolic on embedded unresolved type", "method", n.Sel.Name)
+						return &object.SymbolicPlaceholder{
+							Reason:   fmt.Sprintf("symbolic method call %s on embedded unresolved type", n.Sel.Name),
+							Receiver: val,
+						}
+					}
+				}
+			}
 		}
 
 		if typeInfo.Struct != nil {
@@ -2241,6 +2276,12 @@ func (e *Evaluator) findMethodRecursive(ctx context.Context, typeInfo *scanner.T
 
 func (e *Evaluator) findDirectMethodOnType(ctx context.Context, typeInfo *scanner.TypeInfo, methodName string, env *object.Environment, receiver object.Object) (*object.Function, error) {
 	if typeInfo == nil || typeInfo.PkgPath == "" {
+		return nil, nil
+	}
+
+	// Respect the scan policy. Do not attempt to scan for methods in packages
+	// that are outside the defined policy.
+	if e.scanPolicy != nil && !e.scanPolicy(typeInfo.PkgPath) {
 		return nil, nil
 	}
 

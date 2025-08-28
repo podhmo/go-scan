@@ -243,23 +243,33 @@ func (e *Evaluator) evalIndexExpr(ctx context.Context, node *ast.IndexExpr, env 
 	case *object.Variable:
 		if s, ok := l.Value.(*object.Slice); ok {
 			sliceFieldType = s.SliceFieldType
+		} else if ft := l.FieldType(); ft != nil && ft.IsSlice {
+			sliceFieldType = ft
 		} else if ti := l.TypeInfo(); ti != nil && ti.Underlying != nil && ti.Underlying.IsSlice {
 			sliceFieldType = ti.Underlying
 		}
 	case *object.SymbolicPlaceholder:
-		if ti := l.TypeInfo(); ti != nil && ti.Underlying != nil && ti.Underlying.IsSlice {
+		if ft := l.FieldType(); ft != nil && ft.IsSlice {
+			sliceFieldType = ft
+		} else if ti := l.TypeInfo(); ti != nil && ti.Underlying != nil && ti.Underlying.IsSlice {
 			sliceFieldType = ti.Underlying
 		}
 	}
 
 	var elemType *scanner.TypeInfo
+	var elemFieldType *scanner.FieldType
 	if sliceFieldType != nil && sliceFieldType.IsSlice && sliceFieldType.Elem != nil {
-		elemType, _ = sliceFieldType.Elem.Resolve(ctx)
+		elemFieldType = sliceFieldType.Elem
+		if elemFieldType.FullImportPath != "" && e.scanPolicy != nil && !e.scanPolicy(elemFieldType.FullImportPath) {
+			elemType = scanner.NewUnresolvedTypeInfo(elemFieldType.FullImportPath, elemFieldType.TypeName)
+		} else {
+			elemType, _ = elemFieldType.Resolve(ctx)
+		}
 	}
 
 	return &object.SymbolicPlaceholder{
 		Reason:     "result of index expression",
-		BaseObject: object.BaseObject{ResolvedTypeInfo: elemType},
+		BaseObject: object.BaseObject{ResolvedTypeInfo: elemType, ResolvedFieldType: elemFieldType},
 	}
 }
 
@@ -538,8 +548,14 @@ func (e *Evaluator) evalStarExpr(ctx context.Context, node *ast.StarExpr, env *o
 				Reason: fmt.Sprintf("dereferenced from %s", sp.Reason),
 			}
 			if ft.Elem != nil {
-				resolvedElem, _ := ft.Elem.Resolve(ctx)
-				newPlaceholder.SetFieldType(ft.Elem)
+				var resolvedElem *scanner.TypeInfo
+				elemFieldType := ft.Elem
+				if elemFieldType.FullImportPath != "" && e.scanPolicy != nil && !e.scanPolicy(elemFieldType.FullImportPath) {
+					resolvedElem = scanner.NewUnresolvedTypeInfo(elemFieldType.FullImportPath, elemFieldType.TypeName)
+				} else {
+					resolvedElem, _ = elemFieldType.Resolve(ctx)
+				}
+				newPlaceholder.SetFieldType(elemFieldType)
 				newPlaceholder.SetTypeInfo(resolvedElem)
 			}
 			return newPlaceholder

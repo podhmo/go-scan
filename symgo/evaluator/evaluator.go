@@ -771,27 +771,17 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 		}
 
 		// If the symbol is already in the package's environment, return it.
-		// This happens if the package was already scanned and the symbol resolved.
 		if symbol, ok := val.Env.Get(n.Sel.Name); ok {
 			return symbol
 		}
 
-		// Policy check: decide whether to scan this package from source.
-		if !e.scanPolicy(val.Path) {
-			// Policy says NO. Don't scan, just return a placeholder.
-			placeholder := &object.SymbolicPlaceholder{Reason: fmt.Sprintf("external symbol %s.%s", val.Path, n.Sel.Name)}
-			val.Env.Set(n.Sel.Name, placeholder) // Cache for subsequent lookups.
-			return placeholder
-		}
-
-		// Policy says YES. Proceed with scanning.
+		// We need package info regardless of the policy to find the symbol.
 		if val.ScannedInfo == nil {
 			if e.scanner == nil {
 				return e.newError(n.Pos(), "scanner is not available, cannot load package %q", val.Path)
 			}
 			pkgInfo, err := e.scanner.ScanPackageByImport(ctx, val.Path)
 			if err != nil {
-				// If scanning fails, we can still treat it as an external symbol.
 				e.logWithContext(ctx, slog.LevelWarn, "could not scan package, treating as external", "package", val.Path, "error", err)
 				placeholder := &object.SymbolicPlaceholder{Reason: fmt.Sprintf("unscannable symbol %s.%s", val.Path, n.Sel.Name)}
 				val.Env.Set(n.Sel.Name, placeholder)
@@ -800,25 +790,37 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 			val.ScannedInfo = pkgInfo
 		}
 
-		// This is a call to a package within the workspace.
-		// Attempt to resolve it to a real, evaluatable function.
+		// Try to find the symbol as a function.
 		for _, f := range val.ScannedInfo.Functions {
 			if f.Name == n.Sel.Name {
 				if !ast.IsExported(f.Name) {
-					continue // Cannot access unexported functions.
+					continue
 				}
-				// Create a real Function object that can be recursively evaluated.
-				fn := &object.Function{
-					Name:       f.AstDecl.Name,
-					Parameters: f.AstDecl.Type.Params,
-					Body:       f.AstDecl.Body,
-					Env:        val.Env, // Use the target package's environment.
-					Decl:       f.AstDecl,
-					Package:    val.ScannedInfo,
-					Def:        f,
+
+				// Now, apply the policy.
+				if e.scanPolicy(val.Path) {
+					// Policy says YES. Create a full Function object that can be evaluated.
+					fn := &object.Function{
+						Name:       f.AstDecl.Name,
+						Parameters: f.AstDecl.Type.Params,
+						Body:       f.AstDecl.Body,
+						Env:        val.Env,
+						Decl:       f.AstDecl,
+						Package:    val.ScannedInfo,
+						Def:        f,
+					}
+					val.Env.Set(n.Sel.Name, fn)
+					return fn
+				} else {
+					// Policy says NO. Create a placeholder with just the signature info.
+					placeholder := &object.SymbolicPlaceholder{
+						Reason:         fmt.Sprintf("external function %s.%s", val.Path, n.Sel.Name),
+						UnderlyingFunc: f,
+						Package:        val.ScannedInfo,
+					}
+					val.Env.Set(n.Sel.Name, placeholder)
+					return placeholder
 				}
-				val.Env.Set(n.Sel.Name, fn) // Cache in the package's env for subsequent calls.
-				return fn
 			}
 		}
 
@@ -1956,8 +1958,14 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 			if len(results.List) == 1 {
 				// Single return value
 				resultASTExpr := results.List[0].Type
-				fieldType := e.scanner.TypeInfoFromExpr(context.Background(), resultASTExpr, nil, fn.Package, importLookup)
-				resolvedType, _ := fieldType.Resolve(context.Background())
+				fieldType := e.scanner.TypeInfoFromExpr(ctx, resultASTExpr, nil, fn.Package, importLookup)
+
+				var resolvedType *scanner.TypeInfo
+				if fieldType.FullImportPath != "" && e.scanPolicy != nil && !e.scanPolicy(fieldType.FullImportPath) {
+					resolvedType = scanner.NewUnresolvedTypeInfo(fieldType.FullImportPath, fieldType.TypeName)
+				} else {
+					resolvedType, _ = fieldType.Resolve(ctx)
+				}
 
 				if resolvedType == nil && fieldType.IsBuiltin && fieldType.Name == "error" {
 					stringFieldType := &scanner.FieldType{Name: "string", IsBuiltin: true}
@@ -1981,8 +1989,14 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 			// Multiple return values
 			returnValues := make([]object.Object, 0, len(results.List))
 			for i, field := range results.List {
-				fieldType := e.scanner.TypeInfoFromExpr(context.Background(), field.Type, nil, fn.Package, importLookup)
-				resolvedType, _ := fieldType.Resolve(context.Background())
+				fieldType := e.scanner.TypeInfoFromExpr(ctx, field.Type, nil, fn.Package, importLookup)
+
+				var resolvedType *scanner.TypeInfo
+				if fieldType.FullImportPath != "" && e.scanPolicy != nil && !e.scanPolicy(fieldType.FullImportPath) {
+					resolvedType = scanner.NewUnresolvedTypeInfo(fieldType.FullImportPath, fieldType.TypeName)
+				} else {
+					resolvedType, _ = fieldType.Resolve(ctx)
+				}
 
 				if resolvedType == nil && fieldType.IsBuiltin && fieldType.Name == "error" {
 					stringFieldType := &scanner.FieldType{Name: "string", IsBuiltin: true}

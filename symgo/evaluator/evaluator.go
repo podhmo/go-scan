@@ -20,6 +20,9 @@ import (
 	"github.com/podhmo/go-scan/symgo/object"
 )
 
+// MaxCallStackDepth is the maximum depth of the call stack to prevent infinite recursion.
+const MaxCallStackDepth = 256
+
 // Evaluator is the main object that evaluates the AST.
 type Evaluator struct {
 	scanner           *goscan.Scanner
@@ -1828,6 +1831,11 @@ func (e *Evaluator) evalCallExpr(ctx context.Context, n *ast.CallExpr, env *obje
 	}
 	if name == "" {
 		name = "unknown"
+	}
+
+	if len(e.callStack) >= MaxCallStackDepth {
+		e.logger.Warn("call stack depth exceeded, aborting recursion", "function", name)
+		return &object.SymbolicPlaceholder{Reason: "max call stack depth exceeded"}
 	}
 
 	frame := &callFrame{Function: name, Pos: n.Pos()}

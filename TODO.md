@@ -67,7 +67,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 
 
 ### `symgo` Interpreter Limitations
-- [x] **Infinite Recursion**: The interpreter now prevents infinite recursion by tracking the call stack depth and aborting if it exceeds a predefined limit.
+- [x] **Infinite Recursion**: The interpreter now prevents infinite recursion by tracking the call stack and detecting duplicate function calls with the same arguments.
 - [x] **`symgo`: `defer` and `go` statement Tracing**: The `symgo` interpreter now traces `CallExpr` nodes inside `*ast.DeferStmt` and `*ast.GoStmt`, preventing false positives in tools like `find-orphans`.
 - [x] **Branch statements (`break`, `continue`)**: The interpreter now handles `*ast.BranchStmt`, allowing it to correctly model control flow in loops.
 - [x] **`for...range` statements**: The interpreter now handles `*ast.RangeStmt`. A function call in the range expression (e.g., `for _ := range getItems()`) will be traced.

@@ -60,44 +60,81 @@ The test strategy remains the same, but the focus of the new tests will be on th
 
 ## 6. Implementation Task List (Issue-Based)
 
-This section provides a concrete, step-by-step task list for implementing the shallow scan feature using the `Unresolved` flag approach.
+Below is a proposed set of tasks, structured like individual GitHub issues, for implementing the shallow scan feature. This task list uses the simpler **`Unresolved` flag** strategy and breaks down the work into granular, actionable steps.
 
 ---
-### **Issue #1: Modify `go-scan` to Support Unresolved `TypeInfo`**
-
-*   **Goal:** Update the core `go-scan` package to mark types from out-of-policy packages.
+### **Issue #1: Foundational `go-scan` Changes**
+*   **Goal:** Update the core `scanner.TypeInfo` struct and `Resolve()` method to support marking types as unresolved.
 *   **Tasks:**
     1.  In `scanner/models.go`, add the field `Unresolved bool` to the `scanner.TypeInfo` struct.
-    2.  Modify `scanner.FieldType.Resolve()`. If the `ScanPolicyFunc` returns `false`, it should now return a `*scanner.TypeInfo` instance with `Unresolved: true`, ensuring `Name` and `PkgPath` are populated.
+    2.  Modify `scanner.FieldType.Resolve()`. When the `ScanPolicyFunc` returns `false` for a package, it should return a `*scanner.TypeInfo` instance where `Unresolved` is set to `true`, and essential fields like `Name` and `PkgPath` are populated.
 
 ---
-### **Issue #2: Refactor the 8 Evaluator Resolution Points**
-
-*   **Goal:** Adapt the `symgo` evaluator to check the `Unresolved` flag and handle these types gracefully.
-*   **Task:** Perform a targeted refactoring of the **8 key resolution points** identified in Section 2. At each location, after calling `Resolve()`, add a check: `if typeInfo != nil && typeInfo.Unresolved`. If the flag is true, implement the logic to handle the unresolved type, which typically involves creating or propagating an `object.SymbolicPlaceholder`.
+### **Issue #2: Refactor `evalGenDecl`**
+*   **Goal:** Update variable declaration logic to handle unresolved types.
+*   **Depends On:** Issue #1
+*   **Task:** In `evalGenDecl`, after resolving a variable's type, check if `typeInfo.Unresolved` is `true`. If so, ensure the `object.Variable` is created correctly with this unresolved type information without causing errors.
 
 ---
-### **Issue #3: Implement Symbolic Method Call Handling**
+### **Issue #3: Refactor `evalCompositeLit`**
+*   **Goal:** Update composite literal evaluation to handle unresolved types.
+*   **Depends On:** Issue #1
+*   **Task:** In `evalCompositeLit`, after resolving the literal's type, check if `typeInfo.Unresolved` is `true`. If so, the function must return an `object.SymbolicPlaceholder` (tagged with the unresolved `TypeInfo`) instead of attempting to create an `object.Instance`.
 
+---
+### **Issue #4: Refactor `evalStarExpr` and `evalIndexExpr`**
+*   **Goal:** Ensure pointer-dereferencing and indexing operations correctly propagate unresolved types.
+*   **Depends On:** Issue #1
+*   **Tasks:**
+    1.  In `evalStarExpr`, when dereferencing a pointer, if the pointer's element type is unresolved (`elemType.Unresolved == true`), ensure the resulting placeholder is correctly tagged with this unresolved type.
+    2.  In `evalIndexExpr`, if a slice's element type is unresolved, ensure the placeholder for the indexed element is correctly tagged with this unresolved type.
+
+---
+### **Issue #5: Refactor `evalTypeSwitchStmt` and `evalTypeAssertExpr`**
+*   **Goal:** Update type assertion logic to handle unresolved types.
+*   **Depends On:** Issue #1
+*   **Task:** In both `evalTypeSwitchStmt` and `evalTypeAssertExpr`, when resolving the type `T` in an expression like `v := i.(T)`, check if the resulting `typeInfo.Unresolved` is `true`. If so, ensure the variable `v` is correctly created as a symbolic placeholder tagged with the unresolved `TypeInfo`.
+
+---
+### **Issue #6: Refactor `assignIdentifier`**
+*   **Goal:** Update variable assignment logic to correctly handle unresolved interface types.
+*   **Depends On:** Issue #1
+*   **Task:** In `assignIdentifier`, the logic that checks if a variable is an interface must be updated. It should correctly identify a type as an interface even if its `typeInfo.Unresolved` flag is `true` (e.g., by checking a `Kind` field that is populated even for unresolved types).
+
+---
+### **Issue #7: Refactor `applyFunction`**
+*   **Goal:** Ensure that return values from external or interface functions are correctly typed, even if unresolved.
+*   **Depends On:** Issue #1
+*   **Task:** In `applyFunction`, when creating placeholders for the return values of a function, check if the resolved return `typeInfo.Unresolved` is `true`. If so, ensure the resulting `SymbolicPlaceholder` is correctly tagged with that unresolved `TypeInfo`.
+
+---
+### **Issue #8: Refactor `findMethodOnType`**
+*   **Goal:** Enable method lookup on unresolved embedded types.
+*   **Depends On:** Issue #1
+*   **Task:** In `findMethodOnType`, when recursively searching through embedded fields, if an embedded field resolves to a `typeInfo` with `Unresolved: true`, the logic should gracefully stop the recursive search for that branch instead of causing an error.
+
+---
+### **Issue #9: Implement Symbolic Method Call Logic**
 *   **Goal:** Enable the evaluator to trace method calls on unresolved types.
+*   **Depends On:** Issues #1-8
 *   **Tasks:**
-    1.  Modify `findMethodOnType`. If the receiver's `TypeInfo` has `Unresolved: true`, the function should not attempt a real method lookup. Instead, it should immediately return a "fake" `object.Function` that stores the method name.
-    2.  Update `applyFunction` to handle these fake functions. When called, it should return a single `SymbolicPlaceholder` to represent the unknown result(s) of the symbolic call.
+    1.  Modify `findMethodOnType` (or a related function). If the receiver's `TypeInfo` has `Unresolved: true`, it should immediately return a "fake" `object.Function`.
+    2.  This fake function will store the method name. Update `applyFunction` to handle it by returning a single `SymbolicPlaceholder` to represent the unknown result(s) of the symbolic call.
 
 ---
-### **Issue #4: Create a Comprehensive Test Suite**
-
-*   **Goal:** Verify the correctness of the new `Unresolved` flag logic and ensure no regressions.
+### **Issue #10: Create Test Suite for Shallow Scanning**
+*   **Goal:** Verify the correctness of the `Unresolved` flag logic and ensure it does not introduce regressions.
+*   **Depends On:** Issues #1-9
 *   **Tasks:**
-    1.  Create a new test file: `symgo/evaluator/evaluator_shallow_scan_test.go`.
-    2.  **Split tests into two main categories:**
-        *   **Deep Scan Tests:** Confirm that analysis of fully visible code is still correct (`Unresolved` flag is `false`).
-        *   **Shallow Scan Tests:** Use a restrictive scan policy to force the `Unresolved` flag to be set. Assert that calling methods on types with `Unresolved: true` does not crash and returns a placeholder.
+    1.  Create `symgo/evaluator/evaluator_shallow_scan_test.go`.
+    2.  **Split tests:**
+        *   **Deep Scan Tests:** Confirm that the `Unresolved` flag is `false` for all normally resolved types and that no existing behavior is broken.
+        *   **Shallow Scan Tests:** Use a restrictive scan policy. For each of the 8 refactored locations, write a targeted test to assert that an `Unresolved: true` type is handled correctly and results in a symbolic placeholder.
 
 ---
-### **Issue #5: Validate and Harden Tooling (`docgen` & `find-orphans`)**
-
-*   **Goal:** Ensure that high-level tools continue to function correctly.
+### **Issue #11: Validate and Harden Tooling (`docgen` & `find-orphans`)**
+*   **Goal:** Ensure high-level tools are not broken and can leverage the new capabilities.
+*   **Depends On:** Issues #1-10
 *   **Tasks:**
     1.  **`docgen`:** Confirm its scan policy is correct and run its test suite to ensure golden files are unchanged.
-    2.  **`find-orphans`:** Create an integration test where a function is used via a method on an unresolved type. Assert that `find-orphans` can successfully trace this symbolic call and does not report the function as an orphan.
+    2.  **`find-orphans`:** Add an integration test where a function is only used via a method on an unresolved type, and assert it is not reported as an orphan.

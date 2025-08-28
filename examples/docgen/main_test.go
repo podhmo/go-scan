@@ -186,7 +186,7 @@ func TestDocgen_withCustomPatterns(t *testing.T) {
 	for _, p := range customPatterns {
 		opts = append(opts, p)
 	}
-	analyzer, err := NewAnalyzer(s, logger, opts...)
+	analyzer, err := NewAnalyzer(s, logger, nil, opts...)
 	if err != nil {
 		t.Fatalf("failed to create analyzer: %v", err)
 	}
@@ -284,7 +284,7 @@ func TestDocgen_fullParameters(t *testing.T) {
 		opts = append(opts, p)
 	}
 	opts = append(opts, WithTracer(symgo.TracerFunc(visit)))
-	analyzer, err := NewAnalyzer(s, logger, opts...)
+	analyzer, err := NewAnalyzer(s, logger, nil, opts...)
 	if err != nil {
 		t.Fatalf("failed to create analyzer: %v", err)
 	}
@@ -400,7 +400,7 @@ func TestDocgen_newFeatures(t *testing.T) {
 	for _, p := range customPatterns {
 		opts = append(opts, p)
 	}
-	analyzer, err := NewAnalyzer(s, logger, opts...)
+	analyzer, err := NewAnalyzer(s, logger, nil, opts...)
 	if err != nil {
 		t.Fatalf("failed to create analyzer: %v", err)
 	}

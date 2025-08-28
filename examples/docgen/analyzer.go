@@ -34,7 +34,7 @@ func WithTracer(tracer symgo.Tracer) Option {
 }
 
 // NewAnalyzer creates a new Analyzer.
-func NewAnalyzer(s *goscan.Scanner, logger *slog.Logger, options ...any) (*Analyzer, error) {
+func NewAnalyzer(s *goscan.Scanner, logger *slog.Logger, extraPkgs []string, options ...any) (*Analyzer, error) {
 	a := &Analyzer{
 		Scanner: s,
 		logger:  logger,
@@ -66,13 +66,28 @@ func NewAnalyzer(s *goscan.Scanner, logger *slog.Logger, options ...any) (*Analy
 		}
 	}
 
-	// The symgo interpreter will use the default scan policy, which is to
-	// only scan packages within the current workspace. Packages like 'net/http'
-	// will have their declarations scanned (because of WithDeclarationsOnlyPackages
-	// passed to the goscan.Scanner), but their function bodies will be empty.
-	// Symgo's intrinsics will handle the logic for these functions.
+	// The scan policy determines which packages are deeply analyzed from source.
+	// By default, symgo will analyze packages in the current workspace.
+	// We also add any extra packages requested by the user via `-include-pkg`.
+	scanPolicy := func(importPath string) bool {
+		// Check if it's in one of the workspace modules (replicates symgo's default policy).
+		for _, m := range s.Modules() {
+			if strings.HasPrefix(importPath, m.Path) {
+				return true
+			}
+		}
+		// Check against any explicitly included packages.
+		for _, extra := range extraPkgs {
+			if strings.HasPrefix(importPath, extra) {
+				return true
+			}
+		}
+		return false
+	}
+
 	interpOpts := []symgo.Option{
 		symgo.WithLogger(logger),
+		symgo.WithScanPolicy(scanPolicy),
 	}
 	if a.tracer != nil {
 		interpOpts = append(interpOpts, symgo.WithTracer(a.tracer))

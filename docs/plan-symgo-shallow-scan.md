@@ -123,40 +123,62 @@ This approach would handle chained method calls (`a.b().c()`) effectively.
 
 This is conceptually similar to the placeholder `TypeInfo` approach but provides greater type safety at the cost of broader changes to function signatures within the evaluator. This trade-off is worth considering during implementation.
 
-## 7. Implementation Task List
+## 7. Implementation Task List (Issue-Based)
 
-This section provides a concrete, step-by-step task list for implementing the shallow scan feature. It is based on the `UnresolvedTypeInfo` alternative, which is the recommended approach for its type safety and clarity.
+Below is a proposed set of tasks, structured like GitHub issues, for implementing the shallow scan feature. This approach is based on the `UnresolvedTypeInfo` alternative for its type safety.
 
-1.  **Define `UnresolvedTypeInfo` and `SymbolicType` Interface in `go-scan`:**
-    *   In the `scanner` package, define the new `UnresolvedTypeInfo` struct.
-    *   Define a new interface, `SymbolicType`, that is implemented by both `*scanner.TypeInfo` and `*scanner.UnresolvedTypeInfo`. This interface should provide common methods like `PackagePath() string`, `TypeName() string`, and `Kind() scanner.Kind`.
-    *   Modify `scanner.FieldType.Resolve()`:
-        *   Change its return signature from `(*TypeInfo, error)` to `(SymbolicType, error)`.
-        *   If the scan policy returns `true`, it resolves and returns a `*TypeInfo` as before.
-        *   If the scan policy returns `false`, it creates and returns an `*UnresolvedTypeInfo`.
+---
 
-2.  **Refactor `symgo` Evaluator to Use `SymbolicType`:**
-    *   Go through the 8 key locations identified in Section 2.
-    *   Update function signatures and variables that previously held a `*scanner.TypeInfo` to now hold the `SymbolicType` interface.
-    *   Use type switches (`switch t := symbolicType.(type)`) to handle the two concrete types:
-        *   `case *scanner.TypeInfo`: The existing logic for fully resolved types.
-        *   `case *scanner.UnresolvedTypeInfo`: New logic to handle symbolic/unresolved types (e.g., creating placeholders).
+### **Issue #1: Foundational `go-scan` Changes for Shallow Types**
 
-3.  **Implement Fake Method Calls:**
-    *   In `evaluator.findMethodOnType`, modify it to search for methods on the `SymbolicType`.
-    *   If the type is an `UnresolvedTypeInfo`, the method lookup will check a list of method signatures (this may require a preliminary, lightweight scan to populate).
-    *   If a match is found, return a "fake" `object.Function`. This function object, when evaluated by `applyFunction`, will not have a body but will know the method's signature.
+*   **Goal:** Update the core `go-scan` package to support the concept of an unresolved type.
+*   **Tasks:**
+    1.  In the `scanner` package, define a new `UnresolvedTypeInfo` struct. It should contain basic information like `Name`, `PkgPath`, and potentially a list of method signatures.
+    2.  Define a `SymbolicType` interface implemented by both `*scanner.TypeInfo` and the new `*scanner.UnresolvedTypeInfo`. The interface should expose common methods like `PackagePath()`, `TypeName()`, and `Kind()`.
+    3.  Change the return signature of `scanner.FieldType.Resolve()` from `(*TypeInfo, error)` to `(SymbolicType, error)`.
+    4.  Implement the logic in `Resolve()`: if the scan policy for a package returns `false`, it should create and return an `*UnresolvedTypeInfo`; otherwise, it should return a `*TypeInfo` as it does currently.
 
-4.  **Implement Fake Function Application:**
-    *   In `evaluator.applyFunction`, add logic to handle the fake `object.Function` from the previous step.
-    *   When a fake function is applied, it should inspect its stored method signature and return the appropriate number of `SymbolicPlaceholder` objects, each tagged with the corresponding unresolved return type.
+---
 
-5.  **Create Shallow Scan Test Suite:**
-    *   Create the new test file `symgo/evaluator/evaluator_shallow_scan_test.go`.
-    *   Write tests that configure a `ScanPolicyFunc` to exclude a dependency.
-    *   Assert that calling a method on an object from the excluded dependency returns a symbolic placeholder.
-    *   Assert that multi-value returns are handled correctly.
+### **Issue #2: Refactor Evaluator for `SymbolicType` Compatibility**
 
-6.  **Verify Tooling (`docgen`, `find-orphans`):**
-    *   Run the `docgen` test suite to ensure its golden files are not broken by the refactoring. Confirm its scan policy is correctly configured to include `net/http`.
-    *   Add a test case to `find-orphans` where a function is only called via a method on an out-of-policy type, and assert that it is *not* reported as an orphan. This validates that the symbolic method call is being correctly tracked.
+*   **Goal:** Adapt the `symgo` evaluator to work with the new `SymbolicType` interface, handling both resolved and unresolved types gracefully.
+*   **Tasks:**
+    1.  Perform a targeted refactoring of the **8 key resolution points** identified in Section 2 (`evalGenDecl`, `evalCompositeLit`, etc.).
+    2.  In each location, update variables and function parameters from `*scanner.TypeInfo` to the `SymbolicType` interface.
+    3.  Use type switches (`switch t := symbolicType.(type)`) to differentiate logic:
+        *   `case *scanner.TypeInfo`: Maintain the existing logic for fully resolved types.
+        *   `case *scanner.UnresolvedTypeInfo`: Implement new logic to handle unresolved types, typically by creating or propagating `object.SymbolicPlaceholder` instances.
+
+---
+
+### **Issue #3: Implement Symbolic Method and Function Call Handling**
+
+*   **Goal:** Enable the evaluator to correctly trace method and function calls on unresolved types without analyzing their source code.
+*   **Tasks:**
+    1.  Modify `findMethodOnType` to operate on the `SymbolicType` interface. If the receiver is an `UnresolvedTypeInfo`, the method lookup should consult its list of method signatures.
+    2.  If a method is found on an `UnresolvedTypeInfo`, `findMethodOnType` should return a "fake" `object.Function`. This object will not have a body but will store the method's signature (parameters and return types).
+    3.  Update `applyFunction` to handle these fake functions. When called, a fake function will inspect the stored signature and return the correct number of `SymbolicPlaceholder` objects, each representing a return value.
+
+---
+
+### **Issue #4: Create a Comprehensive Test Suite for Shallow Scanning**
+
+*   **Goal:** Verify the correctness of the shallow scanning mechanism and ensure it does not introduce regressions.
+*   **Tasks:**
+    1.  Create a new test file: `symgo/evaluator/evaluator_shallow_scan_test.go`.
+    2.  **Split tests into two main categories:**
+        *   **Deep Scan Tests:** These tests will use a permissive scan policy (or the default). They will reuse existing test patterns to confirm that analysis of fully visible code remains correct after the refactoring.
+        *   **Shallow Scan Tests:** These tests will configure a *restrictive* scan policy to exclude a mock dependency. They will assert that:
+            *   Calling methods on types from the excluded dependency does not crash.
+            *   The return values from these calls are correctly modeled as the right number of symbolic placeholders.
+            *   Chained method calls on unresolved types are handled correctly.
+
+---
+
+### **Issue #5: Validate and Harden Tooling (`docgen` & `find-orphans`)**
+
+*   **Goal:** Ensure that high-level tools continue to function correctly and can benefit from the new shallow scanning capabilities.
+*   **Tasks:**
+    1.  **`docgen`:** Review its scan policy configuration to ensure it explicitly includes `net/http`. Run the full `docgen` test suite to verify that its golden file outputs are unchanged by the underlying refactoring.
+    2.  **`find-orphans`:** Create a specific integration test for `find-orphans`. In this test, a function's only usage is through a method call on a type from an out-of-policy package. Assert that `find-orphans` correctly marks the target function as "used" and does not report it as an orphan, proving that symbolic calls are tracked correctly.

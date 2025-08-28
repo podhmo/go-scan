@@ -91,6 +91,75 @@ var sentinel int
 	}
 }
 
+func TestShallowScan_MethodCall_OnUnresolvedType(t *testing.T) {
+	code := `
+package main
+import "example.com/me/foreign/lib"
+
+func DoCall() {
+	var x lib.ForeignType
+	x.DoSomething() // This method call should be symbolic and not cause an error.
+	Sentinel()
+}
+
+func Sentinel() {}
+`
+	files := map[string]string{
+		"go.mod": "module example.com/me",
+		"main.go": code,
+		"foreign/lib/lib.go": `
+package lib
+type ForeignType struct{}
+func (f ForeignType) DoSomething() {}
+`,
+	}
+
+	dir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	var sentinelReached bool
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
+		policy := func(path string) bool {
+			return !strings.HasPrefix(path, "example.com/me/foreign/")
+		}
+
+		evaluator := New(s, nil, nil, policy)
+		evaluator.RegisterIntrinsic("example.com/me.Sentinel", func(args ...object.Object) object.Object {
+			sentinelReached = true
+			return nil
+		})
+
+		mainPkg := findPackage(t, pkgs, "example.com/me")
+		env := object.NewEnvironment()
+
+		// Evaluate package-level declarations first
+		for _, file := range mainPkg.AstFiles {
+			if res := evaluator.Eval(ctx, file, env, mainPkg); res != nil && res.Type() == object.ERROR_OBJ {
+				return fmt.Errorf("initial Eval failed: %s", res.Inspect())
+			}
+		}
+
+		// Now, call the function that performs the calls.
+		fn := findFunc(t, mainPkg, "DoCall")
+		fn.Env = env
+
+		result := evaluator.Apply(ctx, fn, nil, mainPkg)
+		if result != nil && result.Type() == object.ERROR_OBJ {
+			return fmt.Errorf("Apply() returned an error: %s", result.Inspect())
+		}
+
+		if !sentinelReached {
+			return fmt.Errorf("sentinel was not reached, evaluation may have stopped prematurely")
+		}
+
+		return nil
+	}
+
+	if _, err := scantest.Run(t, context.Background(), dir, []string{"./..."}, action); err != nil {
+		t.Fatalf("scantest.Run() failed: %v", err)
+	}
+}
+
 func TestShallowScan_ApplyFunction_WithUnresolvedReturn(t *testing.T) {
 	code := `
 package main
@@ -692,25 +761,14 @@ func (f ForeignType) ForeignMethod() {}
 		fn.Env = env
 
 		result := evaluator.Apply(ctx, fn, nil, mainPkg)
-		if result == nil {
-			t.Fatalf("expected Apply() to return an error, but it was nil")
+		if result != nil && result.Type() == object.ERROR_OBJ {
+			t.Fatalf("Apply() returned an error, but it should have succeeded symbolically: %s", result.Inspect())
 		}
 
-		// The error from the failed method call should propagate up directly.
-		err, ok := result.(*object.Error)
-		if !ok {
-			t.Fatalf("expected Apply() to return an object.Error, but got %T (%s)", result, result.Inspect())
-		}
-
-		// The error should indicate that the method was not found on the struct type.
-		if !strings.Contains(err.Message, "undefined field or method: ForeignMethod") {
-			t.Errorf("expected 'undefined field or method' error, but got: %s", err.Message)
-		}
-
-		// Since the method call fails and returns an error, the Sentinel() function
-		// in the test code should NOT be reached.
-		if sentinelReached {
-			t.Errorf("sentinel was reached, but evaluation should have stopped after the error")
+		// Since the method call is now handled symbolically, the Sentinel() function
+		// in the test code SHOULD be reached.
+		if !sentinelReached {
+			t.Errorf("sentinel was not reached, evaluation may have stopped prematurely")
 		}
 
 		return nil

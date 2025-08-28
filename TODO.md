@@ -71,7 +71,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] **Issue #6: Refactor `assignIdentifier` and Validate**: Update variable assignment logic for unresolved interfaces and validate with unit and tooling tests.
 - [x] **Issue #7: Refactor `applyFunction` and Validate**: Update function return value handling for unresolved types and validate with unit and tooling tests.
 - [x] **Issue #8: Refactor `findMethodOnType` and Validate**: Update method lookup for unresolved embedded types and validate with unit and tooling tests.
-- [ ] **Issue #9: Implement Symbolic Method Call Logic and Validate**: Implement and validate tracing of method calls on unresolved types.
+- [x] **Issue #9: Implement Symbolic Method Call Logic and Validate**: Implement and validate tracing of method calls on unresolved types.
 - [ ] **Issue #10: Final `find-orphans` Integration Test**: Write a specific integration test to prove `find-orphans` benefits from the symbolic call tracing.
 
 ### `minigo` Refinements ([docs/plan-minigo.md](./docs/plan-minigo.md))

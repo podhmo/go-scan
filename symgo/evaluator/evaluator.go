@@ -1849,11 +1849,20 @@ func (e *Evaluator) evalCallExpr(ctx context.Context, n *ast.CallExpr, env *obje
 		e.callStack = e.callStack[:len(e.callStack)-1]
 	}()
 
-	var stackNames []string
-	for _, f := range e.callStack {
-		stackNames = append(stackNames, f.Function)
+	if e.logger.Enabled(ctx, slog.LevelDebug) {
+		stackAttrs := make([]any, 0, len(e.callStack))
+		for i, frame := range e.callStack {
+			posStr := ""
+			if e.scanner != nil && e.scanner.Fset() != nil && frame.Pos.IsValid() {
+				posStr = e.scanner.Fset().Position(frame.Pos).String()
+			}
+			stackAttrs = append(stackAttrs, slog.Group(fmt.Sprintf("%d", i),
+				slog.String("func", frame.Function),
+				slog.String("pos", posStr),
+			))
+		}
+		e.logger.Log(ctx, slog.LevelDebug, "call", slog.Group("stack", stackAttrs...))
 	}
-	e.logger.Log(ctx, slog.LevelDebug, "call", "stack", strings.Join(stackNames, " -> "))
 
 	function := e.Eval(ctx, n.Fun, env, pkg)
 	if isError(function) {

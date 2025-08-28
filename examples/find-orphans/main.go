@@ -135,7 +135,9 @@ func discoverModules(ctx context.Context, root string, excludeDirs []string) ([]
 
 func run(ctx context.Context, all bool, includeTests bool, workspace string, verbose bool, asJSON bool, mode string, startPatterns []string, excludeDirs []string) error {
 	logLevel := new(slog.LevelVar)
-	if !verbose {
+	if verbose {
+		logLevel.Set(slog.LevelDebug)
+	} else {
 		logLevel.Set(slog.LevelInfo)
 	}
 	opts := &slog.HandlerOptions{

@@ -31,7 +31,7 @@ func TestDocgen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create scanner: %v", err)
 	}
-	analyzer, err := NewAnalyzer(s, logger, nil) // no options needed for the default test
+	analyzer, err := NewAnalyzer(s, logger, []string{"net/http"})
 	if err != nil {
 		t.Fatalf("failed to create analyzer: %v", err)
 	}
@@ -119,7 +119,7 @@ func TestDocgen_withRelativePath(t *testing.T) {
 		t.Fatalf("failed to resolve relative path %q: %v", relativeSampleAPIPath, err)
 	}
 
-	analyzer, err := NewAnalyzer(s, logger, nil)
+	analyzer, err := NewAnalyzer(s, logger, []string{"net/http"})
 	if err != nil {
 		t.Fatalf("failed to create analyzer: %v", err)
 	}

@@ -79,6 +79,20 @@ func run(logger *slog.Logger, format string, patternsFile string, entrypoint str
 	for _, p := range customPatterns {
 		opts = append(opts, p)
 	}
+
+	// Add net/http by default for docgen, as it's the primary target.
+	// Avoid duplicates if the user already provided it.
+	httpIsIncluded := false
+	for _, pkg := range extraPkgs {
+		if pkg == "net/http" {
+			httpIsIncluded = true
+			break
+		}
+	}
+	if !httpIsIncluded {
+		extraPkgs = append(extraPkgs, "net/http")
+	}
+
 	analyzer, err := NewAnalyzer(s, logger, extraPkgs, opts...)
 	if err != nil {
 		return err

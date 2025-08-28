@@ -58,6 +58,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - **`find-orphans`: Robust Path Handling**: The tool now correctly handles relative paths for the `--workspace-root` flag and resolves target path patterns (`./...`) relative to the specified workspace root, not the current working directory. This allows for more intuitive and predictable behavior when running the tool from subdirectories.
 - **`symgo`: Embedded Method Resolution**: The symbolic execution engine can now correctly resolve and trace method calls on embedded structs, enabling more accurate call-graph analysis for tools like `find-orphans`.
 - **`symgo`: Type Switch Support**: The symbolic execution engine now correctly handles `ast.TypeSwitchStmt` nodes, allowing it to analyze code that uses type switches (`switch v := i.(type)`). It correctly scopes the typed variable (`v`) within each case block.
+- **`symgo`: Efficient & Configurable Scanning Policy**: The symbolic execution engine no longer scans packages outside the workspace by default, significantly improving performance and scalability. It now uses a `ScanPolicyFunc` to provide fine-grained, dynamic control over which packages are scanned from source versus being treated as symbolic placeholders. This replaces the older, less flexible `WithExtraPackages` mechanism.
 
 ## To Be Implemented
 

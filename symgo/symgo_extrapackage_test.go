@@ -3,6 +3,7 @@ package symgo_test
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	goscan "github.com/podhmo/go-scan"
@@ -85,7 +86,12 @@ func Greet(name string) string {
 			t.Fatalf("New scanner failed: %v", err)
 		}
 
-		interp, err := symgo.NewInterpreter(scanner, symgo.WithExtraPackages([]string{"example.com/helper"}))
+		policy := func(importPath string) bool {
+			// The default policy would only scan example.com/app.
+			// We extend it to also scan example.com/helper for this test.
+			return strings.HasPrefix(importPath, "example.com/app") || strings.HasPrefix(importPath, "example.com/helper")
+		}
+		interp, err := symgo.NewInterpreter(scanner, symgo.WithScanPolicy(policy))
 		if err != nil {
 			t.Fatalf("NewInterpreter with extra packages failed: %v", err)
 		}

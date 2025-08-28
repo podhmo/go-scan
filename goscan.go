@@ -100,6 +100,23 @@ func (s *Scanner) ModuleRoots() []string {
 	return roots
 }
 
+// Modules returns information about all modules in the workspace.
+func (s *Scanner) Modules() []*scanner.ModuleInfo {
+	if !s.isWorkspace {
+		if s.locator != nil {
+			return []*scanner.ModuleInfo{
+				{Path: s.locator.ModulePath(), Dir: s.locator.RootDir()},
+			}
+		}
+		return nil
+	}
+	modules := make([]*scanner.ModuleInfo, len(s.locators))
+	for i, loc := range s.locators {
+		modules[i] = &scanner.ModuleInfo{Path: loc.ModulePath(), Dir: loc.RootDir()}
+	}
+	return modules
+}
+
 // locatorForImportPath finds the correct locator for a given import path in workspace mode.
 func (s *Scanner) locatorForImportPath(importPath string) (*locator.Locator, error) {
 	if !s.isWorkspace {

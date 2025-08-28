@@ -29,7 +29,7 @@ type Evaluator struct {
 	callStack         []*callFrame
 	interfaceBindings map[string]*goscan.TypeInfo
 	defaultIntrinsic  intrinsics.IntrinsicFunc
-	extraPackages     []string
+	scanPolicy        object.ScanPolicyFunc
 }
 
 type callFrame struct {
@@ -38,7 +38,7 @@ type callFrame struct {
 }
 
 // New creates a new Evaluator.
-func New(scanner *goscan.Scanner, logger *slog.Logger, tracer object.Tracer, extraPackages []string) *Evaluator {
+func New(scanner *goscan.Scanner, logger *slog.Logger, tracer object.Tracer, scanPolicy object.ScanPolicyFunc) *Evaluator {
 	if logger == nil {
 		logger = slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	}
@@ -48,7 +48,7 @@ func New(scanner *goscan.Scanner, logger *slog.Logger, tracer object.Tracer, ext
 		logger:            logger,
 		tracer:            tracer,
 		interfaceBindings: make(map[string]*goscan.TypeInfo),
-		extraPackages:     extraPackages,
+		scanPolicy:        scanPolicy,
 	}
 }
 
@@ -736,53 +736,60 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 		if intrinsicFn, ok := e.intrinsics.Get(key); ok {
 			return &object.Intrinsic{Fn: intrinsicFn}
 		}
+
+		// If the symbol is already in the package's environment, return it.
+		// This happens if the package was already scanned and the symbol resolved.
+		if symbol, ok := val.Env.Get(n.Sel.Name); ok {
+			return symbol
+		}
+
+		// Policy check: decide whether to scan this package from source.
+		if !e.scanPolicy(val.Path) {
+			// Policy says NO. Don't scan, just return a placeholder.
+			placeholder := &object.SymbolicPlaceholder{Reason: fmt.Sprintf("external symbol %s.%s", val.Path, n.Sel.Name)}
+			val.Env.Set(n.Sel.Name, placeholder) // Cache for subsequent lookups.
+			return placeholder
+		}
+
+		// Policy says YES. Proceed with scanning.
 		if val.ScannedInfo == nil {
 			if e.scanner == nil {
 				return e.newError(n.Pos(), "scanner is not available, cannot load package %q", val.Path)
 			}
 			pkgInfo, err := e.scanner.ScanPackageByImport(ctx, val.Path)
 			if err != nil {
-				return e.newError(n.Pos(), "could not scan package %q: %v", val.Path, err)
+				// If scanning fails, we can still treat it as an external symbol.
+				e.logWithContext(ctx, slog.LevelWarn, "could not scan package, treating as external", "package", val.Path, "error", err)
+				placeholder := &object.SymbolicPlaceholder{Reason: fmt.Sprintf("unscannable symbol %s.%s", val.Path, n.Sel.Name)}
+				val.Env.Set(n.Sel.Name, placeholder)
+				return placeholder
 			}
 			val.ScannedInfo = pkgInfo
 		}
-		// If the symbol is already in the package's environment, return it.
-		if symbol, ok := val.Env.Get(n.Sel.Name); ok {
-			return symbol
-		}
 
-		// Resolve the symbol on-demand. Check if it's a package we should scan from source.
-		isScannable := e.isScannablePackage(val.ScannedInfo, pkg)
-
-		if isScannable {
-			// This is a call to a package within the same module or an included extra package.
-			// Attempt to resolve it to a real, evaluatable function.
-			for _, f := range val.ScannedInfo.Functions {
-				if f.Name == n.Sel.Name {
-					if !ast.IsExported(f.Name) {
-						continue // Cannot access unexported functions.
-					}
-					// Create a real Function object that can be recursively evaluated.
-					fn := &object.Function{
-						Name:       f.AstDecl.Name,
-						Parameters: f.AstDecl.Type.Params,
-						Body:       f.AstDecl.Body,
-						Env:        val.Env, // Use the target package's environment.
-						Decl:       f.AstDecl,
-						Package:    val.ScannedInfo,
-						Def:        f,
-					}
-					val.Env.Set(n.Sel.Name, fn) // Cache in the package's env for subsequent calls.
-					return fn
+		// This is a call to a package within the workspace.
+		// Attempt to resolve it to a real, evaluatable function.
+		for _, f := range val.ScannedInfo.Functions {
+			if f.Name == n.Sel.Name {
+				if !ast.IsExported(f.Name) {
+					continue // Cannot access unexported functions.
 				}
+				// Create a real Function object that can be recursively evaluated.
+				fn := &object.Function{
+					Name:       f.AstDecl.Name,
+					Parameters: f.AstDecl.Type.Params,
+					Body:       f.AstDecl.Body,
+					Env:        val.Env, // Use the target package's environment.
+					Decl:       f.AstDecl,
+					Package:    val.ScannedInfo,
+					Def:        f,
+				}
+				val.Env.Set(n.Sel.Name, fn) // Cache in the package's env for subsequent calls.
+				return fn
 			}
 		}
 
-		// If it's an extra-module call, or not a resolvable function, treat it as a placeholder.
-		// This is the default behavior for external dependencies.
-		var placeholder object.Object
-
-		// First, check if the symbol is a known constant.
+		// If it's not a function, check for constants.
 		for _, c := range val.ScannedInfo.Constants {
 			if c.Name == n.Sel.Name {
 				if !c.IsExported {
@@ -817,27 +824,9 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 			}
 		}
 
-		// Check if the symbol is a function to enrich the placeholder.
-		var funcInfo *scanner.FunctionInfo
-		for _, f := range val.ScannedInfo.Functions {
-			if f.Name == n.Sel.Name {
-				funcInfo = f
-				break
-			}
-		}
-
-		if funcInfo != nil {
-			placeholder = &object.SymbolicPlaceholder{
-				Reason:         fmt.Sprintf("external func %s.%s", val.Name, n.Sel.Name),
-				UnderlyingFunc: funcInfo,
-				Package:        val.ScannedInfo,
-			}
-		} else {
-			// Not a function or a resolvable constant, so it's likely a var or unsupported const.
-			// Create a generic placeholder.
-			placeholder = &object.SymbolicPlaceholder{Reason: fmt.Sprintf("external symbol %s.%s", val.Name, n.Sel.Name)}
-		}
-
+		// If it's not a function or a known constant, it's probably a variable.
+		// Create a generic placeholder for it.
+		placeholder := &object.SymbolicPlaceholder{Reason: fmt.Sprintf("workspace symbol %s.%s", val.Path, n.Sel.Name)}
 		val.Env.Set(n.Sel.Name, placeholder)
 		return placeholder
 
@@ -871,7 +860,11 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 	case *object.Variable:
 		typeInfo := val.TypeInfo()
 		if typeInfo == nil {
-			return e.newError(n.Pos(), "cannot access field or method on variable with no type info: %s", val.Name)
+			// This can happen if the variable's type comes from a module that
+			// the scan policy disallowed from being scanned. Instead of erroring,
+			// we treat the method call as symbolic and continue.
+			e.logger.DebugContext(ctx, "variable has no type info, treating method call as symbolic", "variable", val.Name, "method", n.Sel.Name)
+			return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("method call on variable %q with untyped symbolic value", val.Name)}
 		}
 
 		if typeInfo.Kind == scanner.InterfaceKind {
@@ -1315,11 +1308,15 @@ func (e *Evaluator) evalBlockStatement(ctx context.Context, block *ast.BlockStmt
 	for _, stmt := range block.List {
 		result = e.Eval(ctx, stmt, env, pkg)
 
-		if result != nil {
-			rt := result.Type()
-			if rt == object.RETURN_VALUE_OBJ || rt == object.ERROR_OBJ || rt == object.BREAK_OBJ || rt == object.CONTINUE_OBJ {
-				return result
-			}
+		// It's possible for a statement (like a declaration) to evaluate to a nil object.
+		// We must check for this before calling .Type() to avoid a panic.
+		if result == nil {
+			continue
+		}
+
+		rt := result.Type()
+		if rt == object.RETURN_VALUE_OBJ || rt == object.ERROR_OBJ || rt == object.BREAK_OBJ || rt == object.CONTINUE_OBJ {
+			return result
 		}
 	}
 
@@ -1965,29 +1962,6 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 	default:
 		return e.newError(callPos, "not a function: %s", fn.Type())
 	}
-}
-
-// isScannablePackage determines if a package should be deeply analyzed (scanned from source).
-// This is true if the package is part of the main module being analyzed, or if it has been
-// explicitly included via the `extraPackages` configuration.
-func (e *Evaluator) isScannablePackage(targetPkg, currentPkg *scanner.PackageInfo) bool {
-	if targetPkg == nil {
-		return false
-	}
-
-	// Check if it's part of the same module as the current package.
-	if currentPkg != nil && currentPkg.ModulePath != "" && strings.HasPrefix(targetPkg.ImportPath, currentPkg.ModulePath) {
-		return true
-	}
-
-	// Check if the package path matches any of the extra packages to be scanned.
-	for _, extraPkg := range e.extraPackages {
-		if strings.HasPrefix(targetPkg.ImportPath, extraPkg) {
-			return true
-		}
-	}
-
-	return false
 }
 
 func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, args []object.Object) (*object.Environment, error) {

@@ -66,9 +66,30 @@ func NewAnalyzer(s *goscan.Scanner, logger *slog.Logger, extraPkgs []string, opt
 		}
 	}
 
+	// The scan policy determines which packages are deeply analyzed.
+	// By default, symgo will analyze packages in the current workspace.
+	// For docgen, we only need to add any extra packages requested by the user.
+	// We do NOT want to scan the standard library (like net/http), as those
+	// functions are handled by intrinsics.
+	scanPolicy := func(importPath string) bool {
+		// Check if it's in one of the workspace modules (replicates symgo's default policy).
+		for _, m := range s.Modules() {
+			if strings.HasPrefix(importPath, m.Path) {
+				return true
+			}
+		}
+		// Check against any explicitly included packages.
+		for _, extra := range extraPkgs {
+			if strings.HasPrefix(importPath, extra) {
+				return true
+			}
+		}
+		return false
+	}
+
 	interpOpts := []symgo.Option{
 		symgo.WithLogger(logger),
-		symgo.WithExtraPackages(extraPkgs),
+		symgo.WithScanPolicy(scanPolicy),
 	}
 	if a.tracer != nil {
 		interpOpts = append(interpOpts, symgo.WithTracer(a.tracer))
@@ -84,6 +105,7 @@ func NewAnalyzer(s *goscan.Scanner, logger *slog.Logger, extraPkgs []string, opt
 	interp.RegisterIntrinsic("net/http.NewServeMux", a.handleNewServeMux)
 	interp.RegisterIntrinsic("net/http.HandleFunc", a.analyzeTopLevelHandleFunc)
 	interp.RegisterIntrinsic("(*net/http.ServeMux).HandleFunc", a.analyzeHandleFunc)
+	interp.RegisterIntrinsic("net/http.ListenAndServe", func(i *symgo.Interpreter, args []symgo.Object) symgo.Object { return nil })
 
 	// Intrinsics for handling http.Handler interface wrappers
 	interp.RegisterIntrinsic("net/http.HandlerFunc", a.handleHandlerFunc)

@@ -381,18 +381,6 @@ func (e *Evaluator) evalCompositeLit(ctx context.Context, node *ast.CompositeLit
 		return placeholder
 	}
 
-	// The original logic checked for unresolved types *after* resolution, which was too late.
-	// The policy check is now done above. This part handles the case where resolution
-	// succeeds but the type is still marked as unresolved (which shouldn't happen with
-	// the new logic, but is safe to keep).
-	if resolvedType.Unresolved {
-		placeholder := &object.SymbolicPlaceholder{
-			Reason: fmt.Sprintf("unresolved composite literal of type %s", fieldType.String()),
-		}
-		placeholder.SetFieldType(fieldType)
-		return placeholder
-	}
-
 	instance := &object.Instance{
 		TypeName: fmt.Sprintf("%s.%s", resolvedType.PkgPath, resolvedType.Name),
 		BaseObject: object.BaseObject{

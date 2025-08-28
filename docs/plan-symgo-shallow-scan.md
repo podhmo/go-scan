@@ -59,7 +59,7 @@ The existing test suite validates the "deep scan" path where all types are acces
 
 -   **Test Splitting**:
     -   **Deep Scan (Existing Tests)**: All tests where the scan policy allows access to all packages will be preserved. They ensure the evaluator works correctly when full type information is available.
-    -   **Shallow Scan (New Tests)**: A new test file (`symgo/evaluator/evaluator_shallow_scan_test.go`) will be created. These tests will use a `ScanPolicyFunc` that explicitly *denies* access to specific dependency packages.
+    -   **Shallow Scan (New Tests)**: A new test file (`symgo/evaluator/evaluator_shallow_scan_test.go`) will be created. These tests will use a `ScanPolicyFunc` that explicitly *denies` access to specific dependency packages.
 
 -   **New Test Assertions**: The new tests will assert that:
     -   Operations involving out-of-policy types do not cause the evaluator to crash.
@@ -83,3 +83,42 @@ The existing test suite validates the "deep scan" path where all types are acces
 -   **Requirement**: The evaluator must correctly handle functions returning multiple values, even if the function itself is in an unscanned package.
 -   **Impact Assessment**: The logic in `applyFunction` already iterates through the results of a function signature. The shallow scan enhancement will ensure that when `Resolve()` is called on each return type, it provides a placeholder `TypeInfo`. `applyFunction` will then create a corresponding number of `SymbolicPlaceholder` objects, each tagged with the correct placeholder type.
 -   **Feasibility**: High. This extends the existing multi-value return logic to work seamlessly with placeholder types.
+
+## 6. Alternative Approach: A Dedicated `UnresolvedTypeInfo` Type
+
+An alternative to using a "placeholder" `goscan.TypeInfo` is to introduce a new, dedicated type, for example, `scanner.UnresolvedTypeInfo`.
+
+`goscan.TypeInfo` is an existing, complex struct with many fields (like `StructInfo`, `InterfaceInfo`, `Methods`, etc.) that are relevant only after a full source code scan. Using a placeholder `TypeInfo` means these fields would be `nil`, requiring checks throughout the evaluator.
+
+A dedicated `UnresolvedTypeInfo` could be much simpler:
+
+```go
+type UnresolvedTypeInfo struct {
+    Name    string
+    PkgPath string
+    // Potentially a list of known method signatures
+    Methods []*MethodInfo
+}
+```
+
+### Pros and Cons
+
+*   **Pro: Type Safety and Clarity.** This approach is more explicit. The type system itself would distinguish between a fully resolved type and a symbolic one. This avoids nullable fields and reduces the chance of errors where code accidentally tries to access, for example, the fields of a placeholder struct.
+*   **Con: Broader Code Impact.** The evaluator's functions would need to be updated to handle two different types. This might lead to code duplication or the need for a new common interface that both `TypeInfo` and `UnresolvedTypeInfo` would implement, so they can be passed to the same functions. For example:
+    ```go
+    type SymbolicType interface {
+        TypeName() string
+        PackagePath() string
+        GetMethod(name string) *MethodInfo
+    }
+    ```
+
+### Handling Chained Method Calls
+
+This approach would handle chained method calls (`a.b().c()`) effectively.
+1.  Assume `a.b()` returns an object of an external, unscanned type.
+2.  The symbolic placeholder object for this result would hold an `UnresolvedTypeInfo`.
+3.  When `.c()` is called on this placeholder, the evaluator would look for a method named "c" in the `UnresolvedTypeInfo`'s `Methods` list.
+4.  If found, it would return a new symbolic placeholder representing the result of the call to `c`, using the return types specified in the method signature.
+
+This is conceptually similar to the placeholder `TypeInfo` approach but provides greater type safety at the cost of broader changes to function signatures within the evaluator. This trade-off is worth considering during implementation.

@@ -4,6 +4,26 @@ import (
 	"testing"
 )
 
+func TestNewUnresolvedTypeInfo(t *testing.T) {
+	pkgPath := "example.com/foo"
+	name := "Bar"
+
+	ti := NewUnresolvedTypeInfo(pkgPath, name)
+
+	if ti == nil {
+		t.Fatal("NewUnresolvedTypeInfo returned nil")
+	}
+	if ti.PkgPath != pkgPath {
+		t.Errorf("got PkgPath %q, want %q", ti.PkgPath, pkgPath)
+	}
+	if ti.Name != name {
+		t.Errorf("got Name %q, want %q", ti.Name, name)
+	}
+	if !ti.Unresolved {
+		t.Error("got Unresolved = false, want true")
+	}
+}
+
 func TestTypeInfo_Annotation(t *testing.T) {
 	tests := []struct {
 		name      string

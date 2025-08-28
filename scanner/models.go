@@ -118,6 +118,18 @@ type TypeInfo struct {
 	Logger            *slog.Logger    `json:"-"` // Logger for inspection
 	Fset              *token.FileSet  `json:"-"` // Fileset for position information
 	ResolutionContext context.Context `json:"-"` // Context for resolving nested types
+	Unresolved        bool            `json:"unresolved,omitempty"` // True if the type is from a package that was not scanned.
+}
+
+// NewUnresolvedTypeInfo creates a new TypeInfo placeholder for a type that is
+// intentionally not being scanned or resolved. This is used by higher-level
+// tools like symgo to represent types from packages outside a defined scan policy.
+func NewUnresolvedTypeInfo(pkgPath, name string) *TypeInfo {
+	return &TypeInfo{
+		PkgPath:    pkgPath,
+		Name:       name,
+		Unresolved: true,
+	}
 }
 
 // Annotation extracts the value of a specific annotation from the TypeInfo's Doc string.

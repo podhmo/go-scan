@@ -48,12 +48,18 @@ An alternative, more type-safe approach was considered: creating a new `Unresolv
 Below is a proposed set of tasks, structured like individual GitHub issues, for implementing the shallow scan feature. The list is ordered to be implemented from top to bottom. It integrates unit testing and regression testing for high-level tools into each refactoring step to immediately identify the source of any potential issues.
 
 ---
-### **Issue #1: Foundational `go-scan` Changes**
-*   **Goal:** Update the core `scanner.TypeInfo` struct and `Resolve()` method to support marking types as unresolved.
-*   **Tasks:**
-    1.  In `scanner/models.go`, add the field `Unresolved bool` to the `scanner.TypeInfo` struct.
-    2.  Modify `scanner.FieldType.Resolve()`. When the `ScanPolicyFunc` returns `false`, it should return a `*scanner.TypeInfo` instance where `Unresolved` is set to `true`, and essential fields like `Name` and `PkgPath` are populated.
-    3.  Write a unit test for `Resolve()` to verify this new behavior.
+### **Issue #1: Foundational `go-scan` Changes (Completed)**
+*   **Goal:** Provide a mechanism within `go-scan` to represent a type that is intentionally not being resolved from source.
+*   **Final Design & Rationale:**
+    *   The core `go-scan` library remains **policy-agnostic**. It has no knowledge of `symgo`'s `ScanPolicyFunc`.
+    *   The responsibility of deciding *whether* to resolve a type lies entirely with the caller (e.g., the `symgo` evaluator).
+    *   To support this, two changes were made to the `scanner` package:
+        1.  A new field, `Unresolved bool`, was added to `scanner.TypeInfo`. The zero-value (`false`) correctly indicates that a type created by the scanner from source is "resolved".
+        2.  A new helper function, `scanner.NewUnresolvedTypeInfo(pkgPath, name string) *TypeInfo`, was added. This provides a safe and explicit way for callers (`symgo`) to create a placeholder `TypeInfo` for a type that is being skipped by a policy. `symgo` will use this function when its `ScanPolicyFunc` returns `false` for a given import path, instead of calling `fieldType.Resolve()`.
+*   **Completed Tasks:**
+    1.  Added `Unresolved bool` field to `scanner/models.go`.
+    2.  Added `NewUnresolvedTypeInfo()` constructor to `scanner/models.go`.
+    3.  Added a unit test for the new constructor in `scanner/models_test.go`.
 
 ---
 ### **Issue #2: Refactor `evalGenDecl` and Validate**

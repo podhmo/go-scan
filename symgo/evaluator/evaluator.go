@@ -1616,11 +1616,20 @@ func (e *Evaluator) assignIdentifier(ident *ast.Ident, val object.Object, tok to
 	v.Value = val
 	newFieldType := val.FieldType()
 
-	// Check if the variable was originally typed as an interface.
+	// Check if the variable was originally typed as an interface,
+	// or if it's an unresolved type (which we'll treat as a potential interface).
 	var isInterface bool
-	if v.FieldType() != nil {
-		if staticType, _ := v.FieldType().Resolve(context.Background()); staticType != nil {
-			isInterface = staticType.Kind == scanner.InterfaceKind
+	if staticType := v.TypeInfo(); staticType != nil {
+		if staticType.Unresolved {
+			// If the type is unresolved, we can't know for sure if it's an
+			// interface. To be safe and avoid losing data, we assume it is
+			// and accumulate possible concrete types.
+			isInterface = true
+		} else if v.FieldType() != nil {
+			// If the type is resolved, we can check its kind directly.
+			if resolved, _ := v.FieldType().Resolve(context.Background()); resolved != nil {
+				isInterface = resolved.Kind == scanner.InterfaceKind
+			}
 		}
 	}
 

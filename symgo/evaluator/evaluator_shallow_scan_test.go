@@ -94,6 +94,130 @@ var sentinel int
 	}
 }
 
+func TestShallowScan_AssignIdentifier_WithUnresolvedInterface(t *testing.T) {
+	code := `
+package main
+import "foreign/lib"
+
+// i's type is an interface from an unscanned package.
+var i lib.ForeignInterface
+
+func DoAssign() {
+	// Assign two different concrete types to the same interface variable.
+	c1 := lib.ConcreteType1{}
+	i = c1
+
+	c2 := lib.ConcreteType2{}
+	i = c2
+
+	Sentinel()
+}
+
+func Sentinel() {}
+`
+	files := map[string]string{
+		"go.mod": "module example.com/me",
+		"main.go": code,
+		"foreign/lib/lib.go": `
+package lib
+type ForeignInterface interface { Do() }
+
+type ConcreteType1 struct{}
+func (c ConcreteType1) Do() {}
+
+type ConcreteType2 struct{}
+func (c ConcreteType2) Do() {}
+`,
+	}
+
+	dir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	var sentinelReached bool
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
+		policy := func(path string) bool {
+			return !strings.HasPrefix(path, "foreign/")
+		}
+
+		evaluator := New(s, nil, nil, policy)
+		evaluator.RegisterIntrinsic("example.com/me.Sentinel", func(args ...object.Object) object.Object {
+			sentinelReached = true
+			return nil
+		})
+
+		mainPkg := findPackage(t, pkgs, "example.com/me")
+		env := object.NewEnvironment()
+
+		// Evaluate package-level declarations first
+		for _, file := range mainPkg.AstFiles {
+			if res := evaluator.Eval(ctx, file, env, mainPkg); res != nil && res.Type() == object.ERROR_OBJ {
+				return fmt.Errorf("initial Eval failed: %s", res.Inspect())
+			}
+		}
+
+		// Verify the initial state of the interface variable 'i'
+		iObj, ok := env.Get("i")
+		if !ok {
+			return fmt.Errorf("initial variable 'i' not found")
+		}
+		iVar, ok := iObj.(*object.Variable)
+		if !ok {
+			return fmt.Errorf("initial object 'i' is not a variable, but %T", iObj)
+		}
+		if iVar.TypeInfo() == nil || !iVar.TypeInfo().Unresolved {
+			t.Errorf("initial variable 'i' should have an unresolved TypeInfo, but got: %v", iVar.TypeInfo())
+		}
+
+		// Now, call the function that performs the assignment.
+		fn := findFunc(t, mainPkg, "DoAssign")
+		fn.Env = env
+
+		if result := evaluator.Apply(ctx, fn, nil, mainPkg); result != nil && result.Type() == object.ERROR_OBJ {
+			return fmt.Errorf("Apply() returned an error: %s", result.Inspect())
+		}
+
+		if !sentinelReached {
+			return fmt.Errorf("sentinel was not reached, evaluation may have stopped prematurely")
+		}
+
+		// After assignment, check the state of 'i' again.
+		iObj, ok = env.Get("i")
+		if !ok {
+			return fmt.Errorf("variable 'i' not found after assignment")
+		}
+		iVar, ok = iObj.(*object.Variable)
+		if !ok {
+			return fmt.Errorf("object 'i' is not a variable after assignment, but %T", iObj)
+		}
+
+		// The core of the test: check if BOTH concrete types were tracked.
+		if len(iVar.PossibleConcreteTypes) != 2 {
+			return fmt.Errorf("expected 2 possible concrete types, but got %d", len(iVar.PossibleConcreteTypes))
+		}
+
+		foundNames := make(map[string]bool)
+		for ft := range iVar.PossibleConcreteTypes {
+			if ft.FullImportPath != "foreign/lib" {
+				t.Errorf("unexpected pkg path for concrete type: %q", ft.FullImportPath)
+			}
+			foundNames[ft.TypeName] = true
+		}
+
+		if !foundNames["ConcreteType1"] {
+			t.Error("did not find ConcreteType1 in possible types")
+		}
+		if !foundNames["ConcreteType2"] {
+			t.Error("did not find ConcreteType2 in possible types")
+		}
+
+		return nil
+	}
+
+	if _, err := scantest.Run(t, context.Background(), dir, []string{"."}, action); err != nil {
+		t.Fatalf("scantest.Run() failed: %v", err)
+	}
+}
+
 func TestEvaluator_ShallowScan_TypeSwitch(t *testing.T) {
 	code := `
 package main

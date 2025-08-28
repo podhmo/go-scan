@@ -60,16 +60,6 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - **`symgo`: Type Switch Support**: The symbolic execution engine now correctly handles `ast.TypeSwitchStmt` nodes, allowing it to analyze code that uses type switches (`switch v := i.(type)`). It correctly scopes the typed variable (`v`) within each case block.
 - **`symgo`: Efficient & Configurable Scanning Policy**: The symbolic execution engine no longer scans packages outside the workspace by default, significantly improving performance and scalability. It now uses a `ScanPolicyFunc` to provide fine-grained, dynamic control over which packages are scanned from source versus being treated as symbolic placeholders. This replaces the older, less flexible `WithExtraPackages` mechanism.
 - **`symgo`: Shallow Scanning**: The `symgo` evaluator is now more robust and performant when dealing with types from packages outside the defined scan policy. It can now create symbolic placeholders for unresolved types, allowing analysis to continue without crashing and enabling symbolic tracing of method calls on these types. This significantly improves the accuracy of tools like `find-orphans` when analyzing code with external dependencies. ([docs/plan-symgo-shallow-scan.md](./docs/plan-symgo-shallow-scan.md))
-    - [x] **Issue #1: Foundational `go-scan` Changes**: Update `scanner.TypeInfo` with an `Unresolved` flag and modify `Resolve()` to set it for out-of-policy packages.
-    - [x] **Issue #2: Refactor `evalGenDecl` and Validate**: Update variable declaration logic for unresolved types and validate with unit and tooling tests.
-    - [x] **Issue #3: Refactor `evalCompositeLit` and Validate**: Update composite literal evaluation for unresolved types and validate with unit and tooling tests.
-    - [x] **Issue #4: Refactor `evalStarExpr` & `evalIndexExpr` and Validate**: Update pointer/indexing logic for unresolved types and validate with unit and tooling tests.
-    - [x] **Issue #5: Refactor Type Assertion Logic and Validate**: Update `evalTypeSwitchStmt` and `evalTypeAssertExpr` for unresolved types and validate with unit and tooling tests.
-    - [x] **Issue #6: Refactor `assignIdentifier` and Validate**: Update variable assignment logic for unresolved interfaces and validate with unit and tooling tests.
-    - [x] **Issue #7: Refactor `applyFunction` and Validate**: Update function return value handling for unresolved types and validate with unit and tooling tests.
-    - [x] **Issue #8: Refactor `findMethodOnType` and Validate**: Update method lookup for unresolved embedded types and validate with unit and tooling tests.
-    - [x] **Issue #9: Implement Symbolic Method Call Logic and Validate**: Implement and validate tracing of method calls on unresolved types.
-    - [x] **Issue #10: Final `find-orphans` Integration Test**: Write a specific integration test to prove `find-orphans` benefits from the symbolic call tracing.
 
 ## To Be Implemented
 

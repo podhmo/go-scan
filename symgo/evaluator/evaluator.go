@@ -1383,6 +1383,9 @@ func (e *Evaluator) evalIfStmt(ctx context.Context, n *ast.IfStmt, env *object.E
 }
 
 func (e *Evaluator) evalBlockStatement(ctx context.Context, block *ast.BlockStmt, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
+	if block == nil {
+		return nil // Function has no body, which is valid for declarations-only scanning.
+	}
 	var result object.Object
 	// The caller is responsible for creating a new scope if one is needed.
 	// We evaluate the statements in the provided environment.

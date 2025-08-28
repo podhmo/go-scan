@@ -43,6 +43,37 @@ This is particularly useful for static analysis tools that need to understand pr
   interpreter, err := symgo.NewInterpreter(scanner, symgo.WithScanPolicy(policy))
   ```
 
+## Interaction with `go-scan` Options
+
+`symgo`'s behavior is heavily influenced by the underlying `go-scan.Scanner` it is given. One particularly important option is `goscan.WithDeclarationsOnlyPackages`.
+
+### Declarations-Only Scanning
+
+For performance and stability, especially when analyzing code that depends on large packages like `net/http`, you may not want `symgo` to evaluate the entire implementation of that package. However, you still need its type definitions and function signatures to be available.
+
+You can achieve this by configuring the `goscan.Scanner` with `WithDeclarationsOnlyPackages`. For any package specified with this option, `go-scan` will parse all top-level declarations but will then discard the function bodies before `symgo` sees the AST.
+
+When `symgo` encounters a call to a function from such a package, it will see that the function has no body (`Body: nil`). The evaluator handles this gracefully, treating the function as a no-op and returning a symbolic placeholder for its result. This allows analysis to continue without getting lost in the complexity of external code, while still having access to all necessary type information.
+
+**Example:**
+
+```go
+// In your tool's setup code:
+import "github.com/podhmo/go-scan"
+
+// Configure the main scanner
+goScanner, err := goscan.New(
+    // ... other options
+    goscan.WithDeclarationsOnlyPackages([]string{"net/http", "database/sql"}),
+)
+
+// Now, create the symgo interpreter with this scanner.
+// symgo will automatically respect the declarations-only setting.
+interpreter, err := symgo.NewInterpreter(goScanner)
+```
+
+This approach is the recommended way to handle large, well-known dependencies that you don't need to analyze deeply.
+
 ## Debuggability
 
 The `symgo` interpreter includes a tracing mechanism to help debug the symbolic execution flow. By providing a `Tracer` implementation, you can monitor which AST nodes are being visited by the evaluator.

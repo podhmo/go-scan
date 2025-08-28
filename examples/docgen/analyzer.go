@@ -66,11 +66,9 @@ func NewAnalyzer(s *goscan.Scanner, logger *slog.Logger, extraPkgs []string, opt
 		}
 	}
 
-	// The scan policy determines which packages are deeply analyzed.
+	// The scan policy determines which packages are deeply analyzed from source.
 	// By default, symgo will analyze packages in the current workspace.
-	// For docgen, we only need to add any extra packages requested by the user.
-	// We do NOT want to scan the standard library (like net/http), as those
-	// functions are handled by intrinsics.
+	// We also add any extra packages requested by the user via `-include-pkg`.
 	scanPolicy := func(importPath string) bool {
 		// Check if it's in one of the workspace modules (replicates symgo's default policy).
 		for _, m := range s.Modules() {

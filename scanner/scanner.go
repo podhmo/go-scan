@@ -25,15 +25,16 @@ type fileParseResult struct {
 
 // Scanner parses Go source files within a package.
 type Scanner struct {
-	fset                  *token.FileSet
-	resolver              PackageResolver
-	ExternalTypeOverrides ExternalTypeOverride
-	Overlay               Overlay
-	modulePath            string
-	moduleRootDir         string
-	inspect               bool
-	logger                *slog.Logger
-	mu                    sync.Mutex
+	fset                     *token.FileSet
+	resolver                 PackageResolver
+	ExternalTypeOverrides    ExternalTypeOverride
+	Overlay                  Overlay
+	DeclarationsOnlyPackages map[string]bool // New field
+	modulePath               string
+	moduleRootDir            string
+	inspect                  bool
+	logger                   *slog.Logger
+	mu                       sync.Mutex
 }
 
 // FileSet returns the underlying token.FileSet used by the scanner.
@@ -60,14 +61,15 @@ func New(fset *token.FileSet, overrides ExternalTypeOverride, overlay Overlay, m
 	}
 
 	return &Scanner{
-		fset:                  fset,
-		ExternalTypeOverrides: overrides,
-		Overlay:               overlay,
-		modulePath:            modulePath,
-		moduleRootDir:         moduleRootDir,
-		resolver:              resolver,
-		inspect:               inspect,
-		logger:                logger,
+		fset:                     fset,
+		ExternalTypeOverrides:    overrides,
+		Overlay:                  overlay,
+		DeclarationsOnlyPackages: make(map[string]bool), // Initialize
+		modulePath:               modulePath,
+		moduleRootDir:            moduleRootDir,
+		resolver:                 resolver,
+		inspect:                  inspect,
+		logger:                   logger,
 	}, nil
 }
 
@@ -345,8 +347,19 @@ func (s *Scanner) scanGoFiles(ctx context.Context, filePaths []string, pkgDirPat
 	info.Files = filePathsForDominantPkg
 
 	// Second pass: Process declarations from the final list of valid ASTs
+	isDeclarationsOnly := s.DeclarationsOnlyPackages[canonicalImportPath]
 	for i, fileAst := range parsedFiles {
 		filePath := info.Files[i]
+
+		// If this package is marked for declarations-only scanning, nil out all function bodies.
+		if isDeclarationsOnly {
+			for _, decl := range fileAst.Decls {
+				if f, ok := decl.(*ast.FuncDecl); ok {
+					f.Body = nil
+				}
+			}
+		}
+
 		info.AstFiles[filePath] = fileAst
 		importLookup := s.BuildImportLookup(fileAst)
 

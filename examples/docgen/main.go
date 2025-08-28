@@ -62,9 +62,13 @@ func run(logger *slog.Logger, format string, patternsFile string, entrypoint str
 		return fmt.Errorf("failed to resolve package path: %w", err)
 	}
 
+	// For docgen, we need the type information from net/http, but we don't
+	// want to symbolically execute the function bodies. We use the
+	// WithDeclarationsOnlyPackages option to achieve this.
 	s, err := goscan.New(
 		goscan.WithGoModuleResolver(),
 		goscan.WithLogger(logger),
+		goscan.WithDeclarationsOnlyPackages([]string{"net/http"}),
 	)
 	if err != nil {
 		return err
@@ -78,19 +82,6 @@ func run(logger *slog.Logger, format string, patternsFile string, entrypoint str
 	var opts []any
 	for _, p := range customPatterns {
 		opts = append(opts, p)
-	}
-
-	// Add net/http by default for docgen, as it's the primary target.
-	// Avoid duplicates if the user already provided it.
-	httpIsIncluded := false
-	for _, pkg := range extraPkgs {
-		if pkg == "net/http" {
-			httpIsIncluded = true
-			break
-		}
-	}
-	if !httpIsIncluded {
-		extraPkgs = append(extraPkgs, "net/http")
 	}
 
 	analyzer, err := NewAnalyzer(s, logger, extraPkgs, opts...)

@@ -88,6 +88,135 @@ func IgnoredFunc() {}
 	}
 }
 
+func TestFindOrphans_ShallowScan_SymbolicMethodCall(t *testing.T) {
+	// This is the integration test for "Shallow Scanning in symgo" (Issue #10).
+	// It verifies that a function is NOT considered an orphan if its only "usage"
+	// is being passed as an argument to a function on an "unresolved" type.
+	files := map[string]string{
+		// Use a go.work file to explicitly define the workspace. This is the
+		// most robust way to ensure the scanner can resolve cross-module imports.
+		"workspace/go.work": `
+go 1.21
+use (
+    ./mainmodule
+    ./externalmodule
+)
+`,
+		// Module 1: The module we are analyzing.
+		// NOTE: We add the require/replace directive back in. Even with go.work,
+		// it seems the test environment's scanner setup relies on this.
+		"workspace/mainmodule/go.mod": "module example.com/mainmodule\ngo 1.21\nrequire example.com/externalmodule v0.0.0\nreplace example.com/externalmodule => ../externalmodule\n",
+		"workspace/mainmodule/main.go": `
+package main
+
+import "example.com/externalmodule/client"
+
+func main() {
+    c := client.New()
+    // Pass the function to be used as a callback.
+    // symgo's symbolic execution should trace this call, see that
+    // ` + "`CallbackFromExternal`" + ` is passed as an argument, and mark it as "used".
+    c.TriggerCallback(CallbackFromExternal)
+}
+
+// This function is ONLY "used" by being passed to the external module.
+// Without correct symbolic tracing, it would be incorrectly marked as an orphan.
+func CallbackFromExternal() {}
+
+// This function is genuinely unused and SHOULD be reported as an orphan.
+func UnusedInMain() {}
+`,
+		// Module 2: The external dependency. We will not target this for analysis.
+		// It does NOT have a dependency back on the main module.
+		"workspace/externalmodule/go.mod": "module example.com/externalmodule\ngo 1.21\n",
+		"workspace/externalmodule/client/client.go": `
+package client
+
+type Client struct{}
+
+func New() *Client { return &Client{} }
+
+// The callback is a generic function parameter. symgo does not need to
+// know the source code of this function to know that the argument passed
+// to it is "used".
+func (c *Client) TriggerCallback(callback func()) {
+    callback()
+}
+`,
+	}
+
+	dir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	log.SetOutput(io.Discard)
+
+	workspaceRoot := filepath.Join(dir, "workspace")
+
+	// We are ONLY targeting mainmodule for orphan analysis.
+	// `externalmodule` will be scanned to build the call graph, but its
+	// packages are not "targets" for reporting. This simulates a scenario
+	// where the dependency is external and its source might not be available,
+	// forcing symgo to rely on shallow scanning.
+	startPatterns := []string{"example.com/mainmodule/..."}
+
+	// Change CWD to workspace root to make running easier
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get wd: %v", err)
+	}
+	if err := os.Chdir(workspaceRoot); err != nil {
+		t.Fatalf("failed to change wd: %v", err)
+	}
+	defer os.Chdir(oldWd)
+
+	// Note: We no longer need a 'replace' directive in go.mod because the
+	// go.work file handles module resolution within the workspace.
+	err = run(context.Background(), true, false, ".", false, false, "auto", startPatterns, []string{"testdata"})
+	if err != nil {
+		t.Fatalf("run() failed: %v", err)
+	}
+
+	w.Close()
+	os.Stdout = oldStdout
+
+	var buf bytes.Buffer
+	io.Copy(&buf, r)
+	output := buf.String()
+
+	// ASSERT: The genuinely unused function IS reported as an orphan.
+	if !strings.Contains(output, "UnusedInMain") {
+		t.Errorf("expected 'UnusedInMain' to be reported as an orphan, but it was not.\nOutput:\n%s", output)
+	}
+
+	// ASSERT: The callback function is NOT reported as an orphan, because passing
+	// it as an argument to the symbolic function should have marked it as used.
+	if strings.Contains(output, "CallbackFromExternal") {
+		t.Errorf("'CallbackFromExternal' was reported as an orphan, but it should be considered used.\nOutput:\n%s", output)
+	}
+
+	// Verify the exact orphan list
+	expectedOrphans := []string{
+		"example.com/mainmodule.UnusedInMain",
+	}
+	sort.Strings(expectedOrphans)
+
+	var foundOrphans []string
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	for _, line := range lines {
+		if strings.HasPrefix(line, "example.com") {
+			foundOrphans = append(foundOrphans, line)
+		}
+	}
+	sort.Strings(foundOrphans)
+
+	if diff := cmp.Diff(expectedOrphans, foundOrphans); diff != "" {
+		t.Errorf("find-orphans mismatch (-want +got):\n%s", diff)
+	}
+}
+
 func TestFindOrphans_intraPackageMethodCall(t *testing.T) {
 	files := map[string]string{
 		"go.mod": "module example.com/intra-pkg-methods\ngo 1.21\n",

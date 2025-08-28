@@ -121,6 +121,17 @@ type TypeInfo struct {
 	Unresolved        bool            `json:"unresolved,omitempty"` // True if the type is from a package that was not scanned.
 }
 
+// NewUnresolvedTypeInfo creates a new TypeInfo placeholder for a type that is
+// intentionally not being scanned or resolved. This is used by higher-level
+// tools like symgo to represent types from packages outside a defined scan policy.
+func NewUnresolvedTypeInfo(pkgPath, name string) *TypeInfo {
+	return &TypeInfo{
+		PkgPath:    pkgPath,
+		Name:       name,
+		Unresolved: true,
+	}
+}
+
 // Annotation extracts the value of a specific annotation from the TypeInfo's Doc string.
 // Annotations are expected to be in the format "@<name>[:<value>]" or "@<name> <value>".
 // If inspect mode is enabled, it logs the checking process.

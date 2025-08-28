@@ -136,10 +136,19 @@ Below is a proposed set of tasks, structured like individual GitHub issues, for 
     3.  **Verify:** The test must pass.
 
 ---
-### **Issue #10: Final Integration Testing and Tooling Validation**
-*   **Goal:** Ensure the complete feature is robust and doesn't break high-level tools.
+### **Issue #10: Final Regression Testing**
+*   **Goal:** Ensure the refactoring has not broken existing "deep scan" functionality.
 *   **Depends On:** Issues #1-9
-*   **Tasks:**
-    1.  **Deep Scan Regression:** Write a final test using a permissive policy to ensure no existing logic was broken.
-    2.  **Tooling Validation (`docgen`):** Confirm `docgen`'s scan policy is correct and run its entire test suite to ensure no golden files have changed.
-    3.  **Tooling Validation (`find-orphans`):** Create an integration test where a function's only usage is via a method call on an unresolved type. Assert that `find-orphans` correctly marks the function as "used".
+*   **Task:** Write a final test in the new test suite that uses a permissive policy and runs through a complex scenario involving multiple resolution points. This ensures that no new logic has broken the standard "deep scan" path where all types are resolved.
+
+---
+### **Issue #11: Validate `docgen` Tooling**
+*   **Goal:** Ensure the `docgen` tool continues to function correctly after the evaluator refactoring.
+*   **Depends On:** Issues #1-10
+*   **Task:** Review the `docgen` tool's configuration to ensure its `ScanPolicyFunc` is correctly configured to *include* `net/http` and other necessary standard library packages. Run the full `docgen` test suite to verify that its golden file outputs are unchanged.
+
+---
+### **Issue #12: Validate `find-orphans` Tooling**
+*   **Goal:** Ensure the `find-orphans` tool can correctly trace symbolic calls through unresolved types.
+*   **Depends On:** Issues #1-10
+*   **Task:** Create a specific integration test for `find-orphans`. The test should have a function whose only usage is through a method call on an unresolved type (i.e., a type from an out-of-policy package). Assert that `find-orphans` correctly marks the target function as "used" and does not report it as an orphan.

@@ -16,7 +16,7 @@ import (
 func TestShallowScan_VarDecl_WithUnresolvedType(t *testing.T) {
 	code := `
 package main
-import "foreign/lib"
+import "example.com/me/foreign/lib"
 
 // This variable's type is from a package disallowed by the scan policy.
 var x lib.ForeignType
@@ -35,16 +35,13 @@ var sentinel int
 
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		policy := func(path string) bool {
-			return !strings.HasPrefix(path, "foreign/")
+			return !strings.HasPrefix(path, "example.com/me/foreign/")
 		}
 
 		evaluator := New(s, nil, nil, policy)
 		env := object.NewEnvironment()
 
-		if len(pkgs) != 1 {
-			return fmt.Errorf("expected 1 package, got %d", len(pkgs))
-		}
-		pkg := pkgs[0]
+		pkg := findPackage(t, pkgs, "example.com/me")
 		if len(pkg.AstFiles) == 0 {
 			return fmt.Errorf("no ast files found in package")
 		}
@@ -74,7 +71,7 @@ var sentinel int
 			t.Errorf("expected TypeInfo.Unresolved to be true, but it was false")
 		}
 		want := &scanner.TypeInfo{
-			PkgPath:    "foreign/lib",
+			PkgPath:    "example.com/me/foreign/lib",
 			Name:       "ForeignType",
 			Unresolved: true,
 		}
@@ -89,7 +86,126 @@ var sentinel int
 		return nil
 	}
 
-	if _, err := scantest.Run(t, context.Background(), dir, []string{"."}, action); err != nil {
+	if _, err := scantest.Run(t, context.Background(), dir, []string{"./..."}, action); err != nil {
+		t.Fatalf("scantest.Run() failed: %v", err)
+	}
+}
+
+func TestShallowScan_ApplyFunction_WithUnresolvedReturn(t *testing.T) {
+	code := `
+package main
+import "example.com/me/foreign/lib"
+
+var one lib.ForeignType
+var two lib.ForeignType
+var err error
+
+func DoCalls() {
+	one = lib.GetOne()
+	two, err = lib.GetTwo()
+	Sentinel()
+}
+
+func Sentinel() {}
+`
+	files := map[string]string{
+		"go.mod": "module example.com/me",
+		"main.go": code,
+		"foreign/lib/lib.go": `
+package lib
+type ForeignType struct{}
+func GetOne() ForeignType { return ForeignType{} }
+func GetTwo() (ForeignType, error) { return ForeignType{}, nil }
+`,
+	}
+
+	dir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	var sentinelReached bool
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
+		policy := func(path string) bool {
+			return !strings.HasPrefix(path, "example.com/me/foreign/")
+		}
+
+		evaluator := New(s, nil, nil, policy)
+		evaluator.RegisterIntrinsic("example.com/me.Sentinel", func(args ...object.Object) object.Object {
+			sentinelReached = true
+			return nil
+		})
+
+		mainPkg := findPackage(t, pkgs, "example.com/me")
+		env := object.NewEnvironment()
+
+		// Evaluate package-level declarations first
+		for _, file := range mainPkg.AstFiles {
+			if res := evaluator.Eval(ctx, file, env, mainPkg); res != nil && res.Type() == object.ERROR_OBJ {
+				return fmt.Errorf("initial Eval failed: %s", res.Inspect())
+			}
+		}
+
+		// Now, call the function that performs the calls.
+		fn := findFunc(t, mainPkg, "DoCalls")
+		fn.Env = env
+
+		if result := evaluator.Apply(ctx, fn, nil, mainPkg); result != nil && result.Type() == object.ERROR_OBJ {
+			return fmt.Errorf("Apply() returned an error: %s", result.Inspect())
+		}
+
+		if !sentinelReached {
+			return fmt.Errorf("sentinel was not reached, evaluation may have stopped prematurely")
+		}
+
+		// --- Assertions ---
+		wantUnresolvedType := &scanner.TypeInfo{
+			PkgPath:    "example.com/me/foreign/lib",
+			Name:       "ForeignType",
+			Unresolved: true,
+		}
+
+		// Check the variable from the single-return function
+		oneVar, ok := env.Get("one")
+		if !ok {
+			return fmt.Errorf("variable 'one' not found")
+		}
+		onePlaceholder, ok := oneVar.(*object.Variable).Value.(*object.SymbolicPlaceholder)
+		if !ok {
+			return fmt.Errorf("expected value of 'one' to be SymbolicPlaceholder, got %T", oneVar.(*object.Variable).Value)
+		}
+		if diff := cmp.Diff(wantUnresolvedType, onePlaceholder.TypeInfo()); diff != "" {
+			t.Errorf("'one' placeholder TypeInfo mismatch (-want +got):\n%s", diff)
+		}
+
+		// Check the variable from the multi-return function
+		twoVar, ok := env.Get("two")
+		if !ok {
+			return fmt.Errorf("variable 'two' not found")
+		}
+		twoPlaceholder, ok := twoVar.(*object.Variable).Value.(*object.SymbolicPlaceholder)
+		if !ok {
+			return fmt.Errorf("expected value of 'two' to be SymbolicPlaceholder, got %T", twoVar.(*object.Variable).Value)
+		}
+		if diff := cmp.Diff(wantUnresolvedType, twoPlaceholder.TypeInfo()); diff != "" {
+			t.Errorf("'two' placeholder TypeInfo mismatch (-want +got):\n%s", diff)
+		}
+
+		// Check the error variable from the multi-return function
+		errVar, ok := env.Get("err")
+		if !ok {
+			return fmt.Errorf("variable 'err' not found")
+		}
+		errPlaceholder, ok := errVar.(*object.Variable).Value.(*object.SymbolicPlaceholder)
+		if !ok {
+			return fmt.Errorf("expected value of 'err' to be SymbolicPlaceholder, got %T", errVar.(*object.Variable).Value)
+		}
+		if errPlaceholder.TypeInfo() == nil || errPlaceholder.TypeInfo().Name != "error" {
+			t.Errorf("expected 'err' placeholder to have 'error' type info, but got %v", errPlaceholder.TypeInfo())
+		}
+
+		return nil
+	}
+
+	if _, err := scantest.Run(t, context.Background(), dir, []string{"./..."}, action); err != nil {
 		t.Fatalf("scantest.Run() failed: %v", err)
 	}
 }
@@ -97,7 +213,7 @@ var sentinel int
 func TestShallowScan_AssignIdentifier_WithUnresolvedInterface(t *testing.T) {
 	code := `
 package main
-import "foreign/lib"
+import "example.com/me/foreign/lib"
 
 // i's type is an interface from an unscanned package.
 var i lib.ForeignInterface
@@ -136,7 +252,7 @@ func (c ConcreteType2) Do() {}
 	var sentinelReached bool
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		policy := func(path string) bool {
-			return !strings.HasPrefix(path, "foreign/")
+			return !strings.HasPrefix(path, "example.com/me/foreign/")
 		}
 
 		evaluator := New(s, nil, nil, policy)
@@ -197,7 +313,7 @@ func (c ConcreteType2) Do() {}
 
 		foundNames := make(map[string]bool)
 		for ft := range iVar.PossibleConcreteTypes {
-			if ft.FullImportPath != "foreign/lib" {
+			if ft.FullImportPath != "example.com/me/foreign/lib" {
 				t.Errorf("unexpected pkg path for concrete type: %q", ft.FullImportPath)
 			}
 			foundNames[ft.TypeName] = true
@@ -213,7 +329,7 @@ func (c ConcreteType2) Do() {}
 		return nil
 	}
 
-	if _, err := scantest.Run(t, context.Background(), dir, []string{"."}, action); err != nil {
+	if _, err := scantest.Run(t, context.Background(), dir, []string{"./..."}, action); err != nil {
 		t.Fatalf("scantest.Run() failed: %v", err)
 	}
 }
@@ -221,7 +337,7 @@ func (c ConcreteType2) Do() {}
 func TestEvaluator_ShallowScan_TypeSwitch(t *testing.T) {
 	code := `
 package main
-import "foreign/lib"
+import "example.com/me/foreign/lib"
 
 func Sentinel() {}
 
@@ -250,7 +366,7 @@ func MyFunction(v any) {
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		policy := func(path string) bool {
 			// Disallow scanning the "foreign" package.
-			return !strings.HasPrefix(path, "foreign/")
+			return !strings.HasPrefix(path, "example.com/me/foreign/")
 		}
 
 		evaluator := New(s, nil, nil, policy)
@@ -278,7 +394,7 @@ func MyFunction(v any) {
 		argFieldType := &scanner.FieldType{
 			PkgName:        "lib",
 			TypeName:       "ForeignType",
-			FullImportPath: "foreign/lib",
+			FullImportPath: "example.com/me/foreign/lib",
 		}
 		arg.SetFieldType(argFieldType)
 		// To make the switch work, we need to simulate a type match.
@@ -313,7 +429,7 @@ func MyFunction(v any) {
 		}
 
 		wantUnresolvedType := &scanner.TypeInfo{
-			PkgPath:    "foreign/lib",
+			PkgPath:    "example.com/me/foreign/lib",
 			Name:       "ForeignType",
 			Unresolved: true,
 		}
@@ -324,7 +440,7 @@ func MyFunction(v any) {
 		return nil
 	}
 
-	if _, err := scantest.Run(t, context.Background(), dir, []string{"."}, action); err != nil {
+	if _, err := scantest.Run(t, context.Background(), dir, []string{"./..."}, action); err != nil {
 		t.Fatalf("scantest.Run() failed: %v", err)
 	}
 }
@@ -332,7 +448,7 @@ func MyFunction(v any) {
 func TestEvaluator_ShallowScan_TypeAssert(t *testing.T) {
 	code := `
 package main
-import "foreign/lib"
+import "example.com/me/foreign/lib"
 
 func Sentinel() {}
 
@@ -356,7 +472,7 @@ func MyFunction(v any) {
 	var sentinelReached bool
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		policy := func(path string) bool {
-			return !strings.HasPrefix(path, "foreign/")
+			return !strings.HasPrefix(path, "example.com/me/foreign/")
 		}
 
 		evaluator := New(s, nil, nil, policy)
@@ -402,7 +518,7 @@ func MyFunction(v any) {
 		}
 
 		wantUnresolvedType := &scanner.TypeInfo{
-			PkgPath:    "foreign/lib",
+			PkgPath:    "example.com/me/foreign/lib",
 			Name:       "ForeignType",
 			Unresolved: true,
 		}
@@ -413,7 +529,7 @@ func MyFunction(v any) {
 		return nil
 	}
 
-	if _, err := scantest.Run(t, context.Background(), dir, []string{"."}, action); err != nil {
+	if _, err := scantest.Run(t, context.Background(), dir, []string{"./..."}, action); err != nil {
 		t.Fatalf("scantest.Run() failed: %v", err)
 	}
 }
@@ -421,7 +537,7 @@ func MyFunction(v any) {
 func TestShallowScan_CompositeLit_WithUnresolvedType(t *testing.T) {
 	code := `
 package main
-import "foreign/lib"
+import "example.com/me/foreign/lib"
 
 // This variable is initialized with a composite literal of an unresolved type.
 var x = lib.ForeignType{}
@@ -440,13 +556,13 @@ var sentinel int
 
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		policy := func(path string) bool {
-			return !strings.HasPrefix(path, "foreign/")
+			return !strings.HasPrefix(path, "example.com/me/foreign/")
 		}
 
 		evaluator := New(s, nil, nil, policy)
 		env := object.NewEnvironment()
 
-		pkg := pkgs[0]
+		pkg := findPackage(t, pkgs, "example.com/me")
 		for _, file := range pkg.AstFiles {
 			evaluator.Eval(ctx, file, env, pkg)
 		}
@@ -468,7 +584,7 @@ var sentinel int
 		if fieldType == nil {
 			return fmt.Errorf("placeholder has no FieldType")
 		}
-		if diff := cmp.Diff("foreign/lib", fieldType.FullImportPath); diff != "" {
+		if diff := cmp.Diff("example.com/me/foreign/lib", fieldType.FullImportPath); diff != "" {
 			return fmt.Errorf("FieldType.FullImportPath mismatch (-want +got):\n%s", diff)
 		}
 		if diff := cmp.Diff("ForeignType", fieldType.TypeName); diff != "" {
@@ -482,7 +598,7 @@ var sentinel int
 		return nil
 	}
 
-	if _, err := scantest.Run(t, context.Background(), dir, []string{"."}, action); err != nil {
+	if _, err := scantest.Run(t, context.Background(), dir, []string{"./..."}, action); err != nil {
 		t.Fatalf("scantest.Run() failed: %v", err)
 	}
 }

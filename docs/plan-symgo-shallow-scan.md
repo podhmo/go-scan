@@ -45,7 +45,7 @@ An alternative, more type-safe approach was considered: creating a new `Unresolv
 
 ## 5. Implementation Task List (Issue-Based, TDD-Style)
 
-Below is a proposed set of tasks, structured like individual GitHub issues, for implementing the shallow scan feature. The list is ordered to be implemented from top to bottom. It integrates unit testing and regression testing for high-level tools into each refactoring step to immediately identify the source of any potential issues.
+Below is a proposed set of tasks, structured like individual GitHub issues, for implementing the shallow scan feature. The list is ordered to be implemented from top to bottom. It integrates unit testing and regression testing for high-level tools into each refactoring step to immediately identify the source of any potential issues. **A critical requirement for each unit test is to verify that evaluation continues successfully *after* encountering an out-of-policy type; this is typically done by checking for a "sentinel" variable or operation that occurs after the shallow-scanned expression.**
 
 ---
 ### **Issue #1: Foundational `go-scan` Changes (Completed)**

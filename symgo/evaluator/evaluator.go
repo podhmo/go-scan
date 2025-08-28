@@ -362,8 +362,18 @@ func (e *Evaluator) evalCompositeLit(ctx context.Context, node *ast.CompositeLit
 		return sliceObj
 	}
 
+	// Policy check before resolving.
+	if fieldType.FullImportPath != "" && e.scanPolicy != nil && !e.scanPolicy(fieldType.FullImportPath) {
+		placeholder := &object.SymbolicPlaceholder{
+			Reason: fmt.Sprintf("unresolved composite literal of type %s", fieldType.String()),
+		}
+		placeholder.SetFieldType(fieldType)
+		return placeholder
+	}
+
 	resolvedType, _ := fieldType.Resolve(ctx)
 	if resolvedType == nil {
+		// This can happen for built-in types or if resolution fails for other reasons.
 		placeholder := &object.SymbolicPlaceholder{
 			Reason: fmt.Sprintf("unresolved composite literal of type %s", fieldType.String()),
 		}
@@ -579,7 +589,14 @@ func (e *Evaluator) evalGenDecl(ctx context.Context, node *ast.GenDecl, env *obj
 
 			var resolvedTypeInfo *scanner.TypeInfo
 			if staticFieldType != nil {
-				resolvedTypeInfo, _ = staticFieldType.Resolve(ctx)
+				// Shallow-scan policy check
+				if staticFieldType.FullImportPath != "" && e.scanPolicy != nil && !e.scanPolicy(staticFieldType.FullImportPath) {
+					// Policy says NO. Create a placeholder unresolved type.
+					resolvedTypeInfo = scanner.NewUnresolvedTypeInfo(staticFieldType.FullImportPath, staticFieldType.TypeName)
+				} else {
+					// Policy says YES (or no policy exists). Resolve normally.
+					resolvedTypeInfo, _ = staticFieldType.Resolve(ctx)
+				}
 			}
 
 			v := &object.Variable{

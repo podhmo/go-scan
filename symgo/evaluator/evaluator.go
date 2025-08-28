@@ -2212,8 +2212,21 @@ func (e *Evaluator) findMethodRecursive(ctx context.Context, typeInfo *scanner.T
 	if typeInfo.Struct != nil {
 		for _, field := range typeInfo.Struct.Fields {
 			if field.Embedded {
-				embeddedTypeInfo, _ := field.Type.Resolve(ctx)
+				var embeddedTypeInfo *scanner.TypeInfo
+				if field.Type.FullImportPath != "" && e.scanPolicy != nil && !e.scanPolicy(field.Type.FullImportPath) {
+					embeddedTypeInfo = scanner.NewUnresolvedTypeInfo(field.Type.FullImportPath, field.Type.TypeName)
+				} else {
+					embeddedTypeInfo, _ = field.Type.Resolve(ctx)
+				}
+
 				if embeddedTypeInfo != nil {
+					// If the embedded type is from a package outside the scan policy, it will be marked
+					// as Unresolved. We should not attempt to find methods on it, as we don't have
+					// the source code.
+					if embeddedTypeInfo.Unresolved {
+						continue
+					}
+
 					// Recursive call, passing the original receiver.
 					if foundFn, err := e.findMethodRecursive(ctx, embeddedTypeInfo, methodName, env, receiver, visited); err != nil || foundFn != nil {
 						return foundFn, err

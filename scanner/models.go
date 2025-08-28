@@ -435,17 +435,6 @@ func (ft *FieldType) Resolve(ctx context.Context) (*TypeInfo, error) {
 		return nil, fmt.Errorf("failed to scan package %q for type %q: %w", ft.FullImportPath, ft.TypeName, err)
 	}
 
-	// If the package was skipped by policy, pkgInfo will be nil but err will also be nil.
-	if pkgInfo == nil {
-		// This indicates the package was intentionally not scanned.
-		// Return a placeholder TypeInfo marked as unresolved.
-		return &TypeInfo{
-			Name:       ft.TypeName,
-			PkgPath:    ft.FullImportPath,
-			Unresolved: true,
-		}, nil
-	}
-
 	typeInfo := pkgInfo.Lookup(ft.TypeName)
 	if typeInfo == nil {
 		return nil, fmt.Errorf("type %q not found in package %q", ft.TypeName, ft.FullImportPath)

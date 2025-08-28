@@ -297,49 +297,6 @@ func TestFieldType_Resolve(t *testing.T) {
 	}
 }
 
-func TestFieldType_Resolve_UnresolvedByPolicy(t *testing.T) {
-	// Setup a mock resolver that simulates a policy skip by returning (nil, nil)
-	resolver := &MockResolver{
-		ScanPackageByImportFunc: func(ctx context.Context, importPath string) (*PackageInfo, error) {
-			return nil, nil // Simulate policy skip
-		},
-	}
-
-	ft := &FieldType{
-		Name:           "http.Request",
-		PkgName:        "http",
-		Resolver:       resolver,
-		FullImportPath: "net/http",
-		TypeName:       "Request",
-	}
-
-	// Create a scanner to use its ResolveType method
-	s, err := New(token.NewFileSet(), nil, nil, "example.com/test", "/tmp", resolver, false, nil)
-	if err != nil {
-		t.Fatalf("scanner.New failed: %v", err)
-	}
-
-	// Call Resolve, expecting an unresolved TypeInfo, not an error
-	def, err := s.ResolveType(context.Background(), ft)
-	if err != nil {
-		t.Fatalf("ResolveType() returned an unexpected error: %v", err)
-	}
-	if def == nil {
-		t.Fatal("ResolveType() returned nil, expected an unresolved TypeInfo")
-	}
-
-	// Verify the returned TypeInfo is correctly marked as unresolved
-	if !def.Unresolved {
-		t.Error("Expected def.Unresolved to be true")
-	}
-	if def.Name != "Request" {
-		t.Errorf("Expected unresolved type name to be 'Request', got %q", def.Name)
-	}
-	if def.PkgPath != "net/http" {
-		t.Errorf("Expected unresolved type pkg path to be 'net/http', got %q", def.PkgPath)
-	}
-}
-
 func TestResolve_DirectRecursion(t *testing.T) {
 	fset := token.NewFileSet()
 	testDir := filepath.Join("..", "testdata", "recursion", "direct")

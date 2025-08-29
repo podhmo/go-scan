@@ -121,6 +121,72 @@ var x = 10
 	}
 }
 
+func TestEval_DeferStmt_WithFuncLit(t *testing.T) {
+	source := `
+package main
+func deferredFunc() {}
+func main() {
+	defer func() {
+		deferredFunc()
+	}()
+}
+`
+	dir, cleanup := scantest.WriteFiles(t, map[string]string{
+		"go.mod":  "module example.com/me",
+		"main.go": source,
+	})
+	defer cleanup()
+
+	var calledFunctions []string
+
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
+		pkg := pkgs[0]
+		eval := New(s, s.Logger, nil, nil)
+
+		eval.RegisterDefaultIntrinsic(func(args ...object.Object) object.Object {
+			if len(args) > 0 {
+				if fn, ok := args[0].(*object.Function); ok {
+					if fn.Name != nil {
+						calledFunctions = append(calledFunctions, fn.Name.Name)
+					}
+				}
+			}
+			return nil
+		})
+
+		env := object.NewEnvironment()
+		eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], env, pkg)
+
+		mainFunc, ok := env.Get("main")
+		if !ok {
+			return fmt.Errorf("function 'main' not found")
+		}
+
+		eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, token.NoPos)
+
+		if len(calledFunctions) == 0 {
+			return fmt.Errorf("deferred function call was not tracked")
+		}
+
+		found := false
+		for _, name := range calledFunctions {
+			if name == "deferredFunc" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("expected tracked function to be 'deferredFunc', but it was not found in %v", calledFunctions)
+		}
+
+		return nil
+	}
+
+	if _, err := scantest.Run(t, context.Background(), dir, []string{"."}, action); err != nil {
+		t.Fatalf("scantest.Run() failed: %v", err)
+	}
+}
+
 func TestEval_EmptyStmt(t *testing.T) {
 	source := `
 package main

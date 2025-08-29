@@ -345,3 +345,105 @@ func main() {
 		}
 	})
 }
+
+func TestEvalCallExpr_IntraPackageCall(t *testing.T) {
+	// This test reproduces the scenario where a function (main) calls another
+	// function (bootstrap) in the same package. The bootstrap function has more
+	// complex statements like defer and multi-value assignment to better
+	// reproduce the user's issue.
+	files := map[string]string{
+		"go.mod": "module example.com/me",
+		"lib/lib.go": `
+package lib
+
+func DoSomething() {}
+func Cleanup() {}
+func GetPair() (int, error) { return 1, nil }
+`,
+		"main.go": `
+package main
+import "example.com/me/lib"
+
+func bootstrap() {
+	defer lib.Cleanup()
+	_, err := lib.GetPair()
+	if err != nil {
+		return
+	}
+	lib.DoSomething()
+}
+
+func main() {
+	bootstrap()
+}`,
+	}
+	dir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	var doSomethingCalled bool
+	var cleanupCalled bool
+
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
+		mainPkg := pkgs[0]
+		if mainPkg.Name != "main" {
+			for _, p := range pkgs {
+				if p.Name == "main" {
+					mainPkg = p
+					break
+				}
+			}
+		}
+
+		eval := New(s, s.Logger, nil, nil)
+		env := object.NewEnvironment()
+
+		// Register intrinsics to track calls
+		eval.RegisterIntrinsic("example.com/me/lib.DoSomething", func(args ...object.Object) object.Object {
+			doSomethingCalled = true
+			return nil
+		})
+		eval.RegisterIntrinsic("example.com/me/lib.Cleanup", func(args ...object.Object) object.Object {
+			cleanupCalled = true
+			return nil
+		})
+		eval.RegisterIntrinsic("example.com/me/lib.GetPair", func(args ...object.Object) object.Object {
+			// Simulate multi-value return
+			return &object.MultiReturn{Values: []object.Object{
+				&object.Integer{Value: 1},
+				object.NIL,
+			}}
+		})
+
+		// Evaluate all files in the main package to populate the environment.
+		for _, file := range mainPkg.AstFiles {
+			eval.Eval(ctx, file, env, mainPkg)
+		}
+
+		// Find the main function to start execution.
+		mainFuncObj, ok := env.Get("main")
+		if !ok {
+			return fmt.Errorf("main function not found")
+		}
+		mainFunc, ok := mainFuncObj.(*object.Function)
+		if !ok {
+			return fmt.Errorf("main is not a function, but %T", mainFuncObj)
+		}
+
+		// Apply the main function, which should trigger the chain of calls.
+		// We are not checking the error here because this test is DESIGNED to fail
+		// and we want to see the error log from find-orphans itself.
+		eval.applyFunction(ctx, mainFunc, []object.Object{}, mainPkg, token.NoPos)
+		return nil
+	}
+
+	if _, err := scantest.Run(t, context.Background(), dir, []string{"./..."}, action); err != nil {
+		t.Fatalf("scantest.Run() failed: %v", err)
+	}
+
+	if !cleanupCalled {
+		t.Error("expected lib.Cleanup to be called, but it was not")
+	}
+	if !doSomethingCalled {
+		t.Error("expected lib.DoSomething to be called, but it was not")
+	}
+}

@@ -637,7 +637,10 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool) error {
 			}
 		}
 
-		interp.Apply(ctx, ep, args, ep.Package)
+		if _, err := interp.Apply(ctx, ep, args, ep.Package); err != nil {
+			slog.ErrorContext(ctx, "symbolic execution failed for entry point", "function", epName, "error", err)
+			// We continue to the next entry point even if one fails.
+		}
 	}
 	slog.InfoContext(ctx, "symbolic execution complete")
 

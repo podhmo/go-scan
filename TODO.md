@@ -84,6 +84,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [ ] **Generics**: The interpreter does not support generic functions or types.
 - [ ] **Channels**: The interpreter has limited support for channel operations (e.g., in `select` statements) but does not have a concrete channel object type, limiting analysis of channel-based logic.
 - [x] **Stateful Type Tracking for Variables**: The `symgo` evaluator now correctly propagates type information (including pointer-ness) for variables during assignments and declarations. This allows for accurate method resolution on variables holding concrete types, pointer types, and interfaces, fixing several state-tracking-related bugs.
+- [x] **LHS of Assignments**: The interpreter now evaluates expressions on the left-hand side of field assignments (e.g., in `foo.bar = baz`), ensuring that function calls or type assertions within `foo` are correctly traced.
 - [ ] **Other AST Nodes**: The following `ast.Node` types are not yet handled by the main evaluation loop:
     - [ ] `*ast.ChanType`
     - [x] `*ast.Ellipsis` (Note: Implemented for variadic arguments in function calls and definitions.)

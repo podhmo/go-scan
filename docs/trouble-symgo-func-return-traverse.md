@@ -108,3 +108,21 @@ For the next developer, the following steps are recommended:
 3.  **Verify the `defaultIntrinsic`:** The intrinsic itself is a closure that captures the `analyzer` and its `usageMap`. While it seems unlikely to be the issue, it's worth verifying that the `analyzer.usageMap` being modified inside the intrinsic is the same instance that is used for the final report.
 
 This issue highlights a weakness in the symbolic evaluator's ability to handle closures and returned functions, and resolving it will significantly improve the accuracy of `find-orphans`.
+
+---
+
+## Resolution
+
+The investigation revealed that the root cause was not in the evaluation logic for function calls (`applyFunction`) or function literals (`scanFunctionLiteral`) itself, but in the way the `symgo` evaluator managed package-level environments.
+
+The key issue was that a package's environment (containing all its top-level function and variable declarations) was not being populated correctly or at the right time. When the `GetHandler` function was resolved, its definition was associated with an empty environment for its package (`service`). Consequently, when the closure was created within `GetHandler`, it captured this empty environment. Later, when the closure was executed, it was unable to find `usedByReturnedFunc` within its captured (and empty) environment chain, leading to the `identifier not found` error observed during testing.
+
+The previous developers' attempts at "eager scanning" failed because even though they were correctly forcing an evaluation of the closure's body, they were doing so with the same incomplete environment, so the identifier resolution still failed.
+
+The solution involved two main changes:
+
+1.  **On-Demand Package Environment Population**: A new function, `ensurePackageEnvPopulated`, was added to the evaluator. This function is responsible for populating a package's `object.Package.Env` with all of its top-level declarations (as either full `object.Function` objects or `object.SymbolicPlaceholder` objects, depending on the `scanPolicy`).
+
+2.  **Triggering Population in `evalSelectorExpr`**: The `evalSelectorExpr` function was modified. Now, whenever it resolves a selector on a package (e.g., `service.GetHandler`), it first ensures the package has been scanned from source (if it hasn't been already) and then calls `ensurePackageEnvPopulated`. This guarantees that by the time a function like `GetHandler` is retrieved for execution, its definition is linked to a fully populated environment for its containing package.
+
+With these changes, the closure created by `GetHandler` correctly captures the complete environment of the `service` package. When the closure is later executed, it can successfully resolve `usedByReturnedFunc` within that captured environment, allowing the `defaultIntrinsic` to be called and the usage to be correctly tracked by `find-orphans`.

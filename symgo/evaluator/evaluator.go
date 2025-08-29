@@ -638,15 +638,38 @@ func (e *Evaluator) evalGenDecl(ctx context.Context, node *ast.GenDecl, env *obj
 }
 
 func (e *Evaluator) evalFile(ctx context.Context, file *ast.File, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
+	// Find the dedicated environment for the package being evaluated.
+	// This makes the evaluator robust even if the caller passes a global 'env'.
+	var targetEnv *object.Environment
+	var pkgObj *object.Package
+	env.Walk(func(name string, obj object.Object) bool {
+		if p, ok := obj.(*object.Package); ok {
+			if p.Path == pkg.ImportPath {
+				pkgObj = p
+				return false // stop walking
+			}
+		}
+		return true
+	})
+
+	if pkgObj != nil {
+		targetEnv = pkgObj.Env
+	} else {
+		// Fallback to the provided env if no specific package object is found.
+		// This might happen for the main package in some setups.
+		targetEnv = env
+	}
+
 	for _, decl := range file.Decls {
 		switch d := decl.(type) {
 		case *ast.GenDecl:
 			if d.Tok == token.IMPORT {
 				for _, spec := range d.Specs {
+					// Imports should always go into the top-level env of the file.
 					e.evalImportSpec(spec, env)
 				}
 			} else if d.Tok == token.VAR {
-				e.evalGenDecl(ctx, d, env, pkg)
+				e.evalGenDecl(ctx, d, targetEnv, pkg)
 			}
 		case *ast.FuncDecl:
 			var funcInfo *scanner.FunctionInfo
@@ -660,12 +683,12 @@ func (e *Evaluator) evalFile(ctx context.Context, file *ast.File, env *object.En
 				Name:       d.Name,
 				Parameters: d.Type.Params,
 				Body:       d.Body,
-				Env:        env,
+				Env:        targetEnv, // Use the package's own environment
 				Decl:       d,
 				Package:    pkg,
 				Def:        funcInfo,
 			}
-			env.Set(d.Name.Name, fn)
+			targetEnv.Set(d.Name.Name, fn) // Set in the package's own environment
 		}
 	}
 	return nil
@@ -713,6 +736,55 @@ func (e *Evaluator) findPackageByPath(env *object.Environment, pkgPath string) (
 		return foundPkg, true
 	}
 	return nil, false
+}
+
+func (e *Evaluator) ensurePackageEnvPopulated(ctx context.Context, pkgObj *object.Package) {
+	if pkgObj.ScannedInfo == nil {
+		return // Not scanned yet.
+	}
+	// Check if already populated.
+	if len(pkgObj.ScannedInfo.Functions) > 0 {
+		if _, ok := pkgObj.Env.Get(pkgObj.ScannedInfo.Functions[0].Name); ok {
+			return
+		}
+	} else {
+		return // No functions to populate.
+	}
+
+	pkgInfo := pkgObj.ScannedInfo
+	env := pkgObj.Env
+	e.logger.DebugContext(ctx, "populating package environment", "package", pkgInfo.ImportPath)
+
+	// Determine if the package is within the scan policy.
+	shouldScan := e.scanPolicy == nil || e.scanPolicy(pkgInfo.ImportPath)
+
+	for _, f := range pkgInfo.Functions {
+		if _, ok := env.Get(f.Name); ok {
+			continue // Already exists.
+		}
+
+		var fnObject object.Object
+		if shouldScan {
+			// Policy allows full scanning: create a full, evaluatable function object.
+			fnObject = &object.Function{
+				Name:       f.AstDecl.Name,
+				Parameters: f.AstDecl.Type.Params,
+				Body:       f.AstDecl.Body,
+				Env:        env,
+				Decl:       f.AstDecl,
+				Package:    pkgInfo,
+				Def:        f,
+			}
+		} else {
+			// Policy disallows scanning: create a symbolic placeholder.
+			fnObject = &object.SymbolicPlaceholder{
+				Reason:         fmt.Sprintf("external function %s.%s", pkgInfo.ImportPath, f.Name),
+				UnderlyingFunc: f,
+				Package:        pkgInfo,
+			}
+		}
+		env.SetLocal(f.Name, fnObject)
+	}
 }
 
 func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
@@ -779,6 +851,25 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 		return e.newError(n.Pos(), "undefined method: %s on symbolic type %s", n.Sel.Name, fullTypeName)
 
 	case *object.Package:
+		if val.ScannedInfo == nil {
+			if e.scanner == nil {
+				return e.newError(n.Pos(), "scanner is not available, cannot load package %q", val.Path)
+			}
+			pkgInfo, err := e.scanner.ScanPackageByImport(ctx, val.Path)
+			if err != nil {
+				e.logWithContext(ctx, slog.LevelWarn, "could not scan package, treating as external", "package", val.Path, "error", err)
+				placeholder := &object.SymbolicPlaceholder{Reason: fmt.Sprintf("unscannable symbol %s.%s", val.Path, n.Sel.Name)}
+				val.Env.Set(n.Sel.Name, placeholder)
+				return placeholder
+			}
+			val.ScannedInfo = pkgInfo
+		}
+
+		// When we encounter a package selector, we must ensure its environment
+		// is populated with all its top-level declarations. This is crucial
+		// for closures to capture their environment correctly.
+		e.ensurePackageEnvPopulated(ctx, val)
+
 		key := val.Path + "." + n.Sel.Name
 		if intrinsicFn, ok := e.intrinsics.Get(key); ok {
 			return &object.Intrinsic{Fn: intrinsicFn}

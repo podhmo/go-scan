@@ -1230,6 +1230,88 @@ func SomeFunc() {}
 	}
 }
 
+func TestFindOrphans_libraryMode_withInitAndMain(t *testing.T) {
+	files := map[string]string{
+		"go.mod": "module example.com/lib-with-main\ngo 1.21\n",
+		"main.go": `
+package main
+
+func main() {
+    usedByMain()
+}
+
+func init() {
+    usedByInit()
+}
+
+func usedByMain() {}
+func usedByInit() {}
+
+func UnusedExported() {}
+func unusedInternal() {}
+`,
+	}
+	dir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	log.SetOutput(io.Discard)
+
+	startPatterns := []string{"./..."}
+
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get wd: %v", err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("failed to change wd: %v", err)
+	}
+	defer os.Chdir(oldWd)
+
+	// Force library mode.
+	// The test is to ensure that even in lib mode, main() and init() are
+	// used as entry points for analysis.
+	err = run(context.Background(), true, false, "", false, false, "lib", startPatterns, nil)
+	if err != nil {
+		t.Fatalf("run() failed: %v", err)
+	}
+
+	w.Close()
+	os.Stdout = oldStdout
+
+	var buf bytes.Buffer
+	io.Copy(&buf, r)
+	output := buf.String()
+
+	if strings.Contains(output, "usedByMain") {
+		t.Errorf("usedByMain was reported as an orphan, but it is used by main()")
+	}
+	if strings.Contains(output, "usedByInit") {
+		t.Errorf("usedByInit was reported as an orphan, but it is used by init()")
+	}
+
+	expectedOrphans := []string{
+		"example.com/lib-with-main.UnusedExported",
+		"example.com/lib-with-main.unusedInternal",
+	}
+	sort.Strings(expectedOrphans)
+
+	var foundOrphans []string
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	for _, line := range lines {
+		if strings.HasPrefix(line, "example.com") {
+			foundOrphans = append(foundOrphans, line)
+		}
+	}
+	sort.Strings(foundOrphans)
+
+	if diff := cmp.Diff(expectedOrphans, foundOrphans); diff != "" {
+		t.Errorf("find-orphans mismatch (-want +got):\n%s\nFull output:\n%s", diff, output)
+	}
+}
+
 func TestFindOrphans_excludeMainAndInit(t *testing.T) {
 	files := map[string]string{
 		"go.mod": "module example.com/exclude-main-init\ngo 1.21\n",

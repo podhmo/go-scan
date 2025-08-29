@@ -105,7 +105,7 @@ func DoCall() {
 func Sentinel() {}
 `
 	files := map[string]string{
-		"go.mod": "module example.com/me",
+		"go.mod":  "module example.com/me",
 		"main.go": code,
 		"foreign/lib/lib.go": `
 package lib
@@ -178,7 +178,7 @@ func DoCalls() {
 func Sentinel() {}
 `
 	files := map[string]string{
-		"go.mod": "module example.com/me",
+		"go.mod":  "module example.com/me",
 		"main.go": code,
 		"foreign/lib/lib.go": `
 package lib
@@ -301,7 +301,7 @@ func DoAssign() {
 func Sentinel() {}
 `
 	files := map[string]string{
-		"go.mod": "module example.com/me",
+		"go.mod":  "module example.com/me",
 		"main.go": code,
 		"foreign/lib/lib.go": `
 package lib
@@ -722,7 +722,7 @@ func DoCall() {
 func Sentinel() {}
 `
 	files := map[string]string{
-		"go.mod": "module example.com/me",
+		"go.mod":  "module example.com/me",
 		"main.go": code,
 		"foreign/lib/lib.go": `
 package lib

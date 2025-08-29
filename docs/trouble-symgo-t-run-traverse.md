@@ -116,3 +116,4 @@ The failure of the combined approach indicates a fundamental misunderstanding of
 - There might be an issue with how environments are being created or enclosed.
 
 Further, deeper debugging of the `symgo` evaluator is required. One would need to trace the entire evaluation of the `t.Run` call, from the `evalIdent` of `t`, through the `evalSelectorExpr`, and into the `applyFunction` call, to see exactly where the analysis chain is breaking.
+

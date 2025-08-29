@@ -367,3 +367,74 @@ type Model struct {
 		t.Fatalf("Run failed: %v", err)
 	}
 }
+
+func TestPatternsFromPaths(t *testing.T) {
+	dir, cleanup := WriteFiles(t, map[string]string{
+		"go.mod":     "module example.com/me",
+		"main.go":    `package main`,
+		"pkg/a/a.go": `package a`,
+		"pkg/b/b.go": `package b`,
+	})
+	defer cleanup()
+
+	tests := []struct {
+		name         string
+		patterns     []string
+		baseDir      string
+		moduleRoot   string
+		wantPatterns []string
+		wantErr      bool
+	}{
+		{
+			name:         "root wildcard",
+			patterns:     []string{"./..."},
+			baseDir:      dir,
+			moduleRoot:   dir,
+			wantPatterns: []string{"example.com/me/..."},
+		},
+		{
+			name:         "root specific",
+			patterns:     []string{"."},
+			baseDir:      dir,
+			moduleRoot:   dir,
+			wantPatterns: []string{"example.com/me"},
+		},
+		{
+			name:         "subdirectory specific",
+			patterns:     []string{"./pkg/a"},
+			baseDir:      dir,
+			moduleRoot:   dir,
+			wantPatterns: []string{"example.com/me/pkg/a"},
+		},
+		{
+			name:         "subdirectory wildcard",
+			patterns:     []string{"./pkg/b/..."},
+			baseDir:      dir,
+			moduleRoot:   dir,
+			wantPatterns: []string{"example.com/me/pkg/b/..."},
+		},
+		{
+			name: "multiple patterns",
+			patterns: []string{
+				".",
+				"./pkg/a",
+			},
+			baseDir:      dir,
+			moduleRoot:   dir,
+			wantPatterns: []string{"example.com/me", "example.com/me/pkg/a"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := PatternsFromPaths(tt.patterns, tt.baseDir, tt.moduleRoot)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("PatternsFromPaths() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if diff := cmp.Diff(tt.wantPatterns, got); diff != "" {
+				t.Errorf("PatternsFromPaths() mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}

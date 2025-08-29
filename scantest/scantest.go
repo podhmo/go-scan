@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -14,6 +15,7 @@ import (
 
 	scan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/scanner"
+	"golang.org/x/mod/modfile"
 )
 
 // memoryFileWriter is an in-memory implementation of scan.FileWriter for testing.
@@ -378,4 +380,67 @@ func createGoModOverlay(dir string) (scanner.Overlay, error) {
 		"go.mod": []byte(strings.Join(newLines, "\n")),
 	}
 	return overlay, nil
+}
+
+// readModulePath parses a go.mod file and returns the module's path.
+func readModulePath(goModPath string) (string, error) {
+	content, err := os.ReadFile(goModPath)
+	if err != nil {
+		return "", fmt.Errorf("reading go.mod: %w", err)
+	}
+	f, err := modfile.Parse(goModPath, content, nil)
+	if err != nil {
+		return "", fmt.Errorf("parsing go.mod: %w", err)
+	}
+	if f.Module == nil {
+		return "", fmt.Errorf("no module directive in go.mod")
+	}
+	return f.Module.Mod.Path, nil
+}
+
+// PatternsFromPaths converts file system path patterns (e.g., "./...") into their
+// corresponding Go import path patterns. It automatically resolves the module's
+// base import path from the `go.mod` file found in `moduleRoot`.
+//
+// For example, if `moduleRoot` contains a `go.mod` with `module example.com/mymodule`,
+// calling this function with `patterns = ["./..."]` and `baseDir = moduleRoot`
+// would return `["example.com/mymodule/..."]`.
+func PatternsFromPaths(patterns []string, baseDir string, moduleRoot string) ([]string, error) {
+	modulePath, err := readModulePath(filepath.Join(moduleRoot, "go.mod"))
+	if err != nil {
+		return nil, fmt.Errorf("scantest: could not get module path: %w", err)
+	}
+
+	results := make([]string, len(patterns))
+	for i, p := range patterns {
+		// Clean the pattern to handle things like "./" vs "."
+		cleanPattern := strings.TrimSuffix(p, "/")
+		isWildcard := strings.HasSuffix(cleanPattern, "/...")
+		cleanPattern = strings.TrimSuffix(cleanPattern, "/...")
+
+		targetDir := cleanPattern
+		if !filepath.IsAbs(targetDir) {
+			targetDir = filepath.Join(baseDir, targetDir)
+		}
+
+		relPath, err := filepath.Rel(moduleRoot, targetDir)
+		if err != nil {
+			return nil, fmt.Errorf("scantest: failed to get relative path for %q: %w", targetDir, err)
+		}
+
+		// Convert to slash-separated path for Go imports
+		relPath = filepath.ToSlash(relPath)
+
+		importPath := modulePath
+		if relPath != "." {
+			importPath = path.Join(modulePath, relPath)
+		}
+
+		if isWildcard {
+			// path.Join cleans the path, so "..." needs to be re-appended.
+			importPath = path.Join(importPath, "...")
+		}
+		results[i] = importPath
+	}
+	return results, nil
 }

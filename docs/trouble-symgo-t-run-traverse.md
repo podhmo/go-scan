@@ -116,3 +116,35 @@ The failure of the combined approach indicates a fundamental misunderstanding of
 - There might be an issue with how environments are being created or enclosed.
 
 Further, deeper debugging of the `symgo` evaluator is required. One would need to trace the entire evaluation of the `t.Run` call, from the `evalIdent` of `t`, through the `evalSelectorExpr`, and into the `applyFunction` call, to see exactly where the analysis chain is breaking.
+
+## Follow-up Issue (Unresolved): Nested Function Calls as Arguments
+
+A follow-up issue was reported where a function call nested inside another function call's argument list was not being detected by `find-orphans`.
+
+### Problem Description
+
+Consider the following code structure:
+
+```go
+// Simplified example
+h = apitestlib.PackMiddleware(h, apitest.PackComponents(
+    db.Db,
+    apitest.FixedClock(fakeNow, "2023-02-02"),
+))
+```
+
+In this scenario, the call to `apitest.FixedClock` is reportedly not being detected, causing `find-orphans` to flag it as unused.
+
+### Analysis
+
+The `symgo` evaluation flow for this expression should be:
+1.  The evaluator starts processing the `PackMiddleware` call.
+2.  To resolve the arguments for `PackMiddleware`, it must first evaluate the inner call to `PackComponents`.
+3.  To resolve the arguments for `PackComponents`, it must evaluate the call to `FixedClock`.
+4.  This evaluation of the `FixedClock` call expression should trigger the `defaultIntrinsic` used by `find-orphans` to mark the function as "used".
+
+This is distinct from the original `t.Run` issue. The `t.Run` issue involved a *function literal* being passed as an argument, whose body was not being scanned. This new issue involves a standard *function call* whose result is passed as an argument. The existing evaluation logic is expected to handle this case.
+
+### Status
+
+**Unresolved.** The reason for the failure is currently unknown. The analysis of the evaluator's logic suggests the call should be detected. Without a minimal, reproducible test case, it is difficult to debug the subtle interaction that is causing this failure. This issue is documented here for future investigation.

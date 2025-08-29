@@ -69,23 +69,39 @@ To resolve this issue, the `symgo/evaluator` needs to be modified to ensure that
 
 This issue is reproduced in the test case located at `symgo/integration_test/global_var_state_test.go` and will be used to verify a future fix.
 
-## Failed Attempts (2025-08-29)
+## Failed Attempts and Analysis (2025-08-29)
 
-An attempt was made to fix this issue by ensuring that the `object.Variable` for `instance` correctly received and stored the type information from the value returned by `NewMyType()`. The hypothesis was that the `Variable` object itself was losing the type, which prevented `evalSelectorExpr` from resolving the method `DoSomething`.
+A significant attempt was made to fix this issue by ensuring that the `object.Variable` for `instance` correctly received and stored the type information from the value returned by `NewMyType()`. The primary hypothesis was that the `Variable` object itself was losing the type, which prevented `evalSelectorExpr` from resolving the method `DoSomething`.
 
-The following changes were implemented in `symgo/evaluator/evaluator.go`:
+### The Attempted Fix
 
-1.  **Modified `evalGenDecl`**: The logic for `var` declarations was changed to prioritize the type information (`TypeInfo` and `FieldType`) from the evaluated right-hand side value over any statically declared type on the left-hand side. This was intended to handle `var instance = NewMyType()` correctly.
+A three-part fix was implemented in `symgo/evaluator/evaluator.go`:
 
-2.  **Modified `assignIdentifier`**: The logic for `=` assignments was updated. After setting `v.Value = val`, the `TypeInfo` and `FieldType` of the `Variable` object (`v`) were also explicitly updated from the new value (`val`). This was to ensure that subsequent assignments to a variable would also update its type.
+1.  **Modified `evalGenDecl`**: The logic for `var` declarations was changed to prioritize the type information (`TypeInfo` and `FieldType`) from the evaluated right-hand side (RHS) value over any statically declared type on the left-hand side. The goal was for `var instance = NewMyType()` to create a `Variable` for `instance` that inherited the type of the `*object.Pointer` returned by the RHS.
 
-3.  **Cleaned up `evalIdent`**: A seemingly incorrect piece of logic that copied `TypeInfo` from a `Variable` back to its `Value` was removed, as it appeared to be a partial fix that could cause incorrect type propagation.
+2.  **Modified `assignIdentifier`**: The logic for standard `=` assignments was updated. After `v.Value = val`, the code was modified to also execute `v.SetTypeInfo(val.TypeInfo())` and `v.SetFieldType(val.FieldType())`. This was to ensure that re-assigning a variable would also update its type.
 
-Despite these three logically sound changes, the test case at `symgo/integration_test/global_var_state_test.go` continued to fail with the same error: the `DoSomething` method call was not detected.
+3.  **Cleaned up `evalIdent`**: A block of code was removed from `evalIdent` that copied `TypeInfo` from a `Variable` back to its `Value`. This logic seemed to be a patch for the very problem being fixed, and its removal was intended to prevent incorrect type propagation.
 
-This persistent failure suggests a more subtle issue, likely related to one of the following:
--   A misunderstanding of how `go-scan` represents pointer types vs. value types within `scanner.TypeInfo` and `scanner.FieldType`.
--   An incorrect assumption about how `evalSelectorExpr` uses this type information to dispatch method calls.
--   A flaw in the `findMethodOnType` logic when checking for pointer receiver compatibility against the type information stored in the `object.Variable`.
+### Analysis of Failure
 
-Further debugging, possibly with enhanced logging in the `evalSelectorExpr` and `findMethodOnType` functions, is required to pinpoint the exact point of failure in the type resolution process.
+Despite these logically sound changes, the test case continued to fail. The method call `instance.DoSomething()` was still not being resolved. This indicates a more subtle issue in the evaluator's logic or the underlying type system.
+
+My logical trace of the execution was as follows:
+1.  `evalGenDecl` evaluates `NewMyType()`, which results in an `*object.Pointer`. My changes ensure the `FieldType` of this pointer (which correctly indicates `IsPointer: true`) and its `TypeInfo` are copied to the new `*object.Variable` for `instance`.
+2.  Later, `evalSelectorExpr` for `instance.DoSomething` correctly retrieves the `*object.Variable` from the environment.
+3.  The `switch` statement enters the `case *object.Variable:`.
+4.  It calls `findMethodOnType`, passing the `TypeInfo` from the variable.
+5.  Inside `findMethodOnType`, the pointer compatibility check `if isMethodPtrRecv && !isVarPointer` should pass. `isMethodPtrRecv` is true for `DoSomething`, and `isVarPointer` should also be true because it is derived from the `Variable`'s `FieldType`, which was correctly set in step 1.
+
+The continued failure implies that one of these steps is not behaving as expected. The "actual values" at runtime must be different from my trace. For example, `v.FieldType().IsPointer` might be unexpectedly false, or the `TypeInfo` passed to `findMethodOnType` might be `nil` or incorrect in a way that causes the base type name comparison to fail.
+
+## Possible Subtasks for Resolution
+
+This problem is difficult to debug without a step-through debugger. To move forward, it can be broken down into the following subtasks:
+
+1.  **Subtask 1: Enhanced Logging**: Add fine-grained logging inside `evalSelectorExpr` (in the `*object.Variable` case) and `findMethodOnType`. The logs should print the exact `TypeInfo.Name`, the full `FieldType` struct, and the results of pointer-ness checks (`isMethodPtrRecv`, `isVarPointer`) for both the variable being accessed and the method being considered. This would definitively reveal the mismatch.
+
+2.  **Subtask 2: Pointer Type Representation Review**: Conduct a dedicated review of how pointer types are handled across `symgo` and `go-scan`. A key question: should an `*object.Pointer` have its own unique `TypeInfo` that represents a pointer type, instead of borrowing the `TypeInfo` of the element it points to? This might require changes in `evalUnaryExpr` (for the `&` operator) to create or fetch a `TypeInfo` for `*T` when it sees a `T`.
+
+3.  **Subtask 3: Isolate `findMethodOnType`**: Write a new, focused unit test specifically for the `findMethodOnType` function. This test should manually construct `object.Variable`, `scanner.TypeInfo`, and `scanner.FieldType` objects to test the pointer compatibility logic in complete isolation from the rest of the evaluator. This would confirm whether the method matching logic itself is flawed.

@@ -179,7 +179,11 @@ func (f *Function) Type() ObjectType { return FUNCTION_OBJ }
 
 // Inspect returns a string representation of the function.
 func (f *Function) Inspect() string {
-	return fmt.Sprintf("func %s() { ... }", f.Name.String())
+	name := "<nil>"
+	if f.Name != nil {
+		name = f.Name.String()
+	}
+	return fmt.Sprintf("func %s() { ... }", name)
 }
 
 // --- Intrinsic Object ---

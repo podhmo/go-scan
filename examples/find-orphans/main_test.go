@@ -88,6 +88,133 @@ func IgnoredFunc() {}
 	}
 }
 
+func TestFindOrphans_GlobalVarInitialization_LibraryMode(t *testing.T) {
+	files := map[string]string{
+		"go.mod": "module example.com/global-var-lib\ngo 1.21\n",
+		"importer/importer.go": `
+package importer
+import "example.com/global-var-lib/lib"
+// This global var initialization should mark lib.UsedInVar as used.
+var _ = lib.UsedInVar()
+`,
+		"lib/lib.go": `
+package lib
+// This function should be considered "used" because it's called from another package's var init.
+func UsedInVar() int { return 42 }
+// This function is exported but not used by anything. It should be an orphan.
+func UnusedExportedFunc() {}
+`,
+	}
+	dir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	log.SetOutput(io.Discard)
+
+	startPatterns := []string{"./..."}
+	// Run in "auto" mode. Since there is no main.main, it will fall back to library mode.
+	err := run(context.Background(), true, false, dir, false, false, "auto", startPatterns, []string{"testdata", "vendor"})
+	if err != nil {
+		t.Fatalf("run() failed: %v", err)
+	}
+
+	w.Close()
+	os.Stdout = oldStdout
+
+	var buf bytes.Buffer
+	io.Copy(&buf, r)
+	output := buf.String()
+
+	if strings.Contains(output, "UsedInVar") {
+		t.Errorf("UsedInVar was reported as an orphan, but it is used in a global variable initialization")
+	}
+	if !strings.Contains(output, "UnusedExportedFunc") {
+		t.Errorf("UnusedExportedFunc was not reported as an orphan, but it should be")
+	}
+
+	expectedOrphans := []string{
+		"example.com/global-var-lib/lib.UnusedExportedFunc",
+	}
+	sort.Strings(expectedOrphans)
+
+	var foundOrphans []string
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	for _, line := range lines {
+		if strings.HasPrefix(line, "example.com") {
+			foundOrphans = append(foundOrphans, line)
+		}
+	}
+	sort.Strings(foundOrphans)
+
+	if diff := cmp.Diff(expectedOrphans, foundOrphans); diff != "" {
+		t.Errorf("find-orphans mismatch (-want +got):\n%s\nFull output:\n%s", diff, output)
+	}
+}
+
+func TestFindOrphans_GlobalVarInitialization(t *testing.T) {
+	files := map[string]string{
+		"go.mod": "module example.com/global-var-init\ngo 1.21\n",
+		"main.go": `
+package main
+import "example.com/global-var-init/other"
+var _ = other.UsedInVar() // This function should be marked as used.
+func main() {}
+`,
+		"other/other.go": `
+package other
+func UsedInVar() int { return 42 }
+func UnusedFunc() {}
+`,
+	}
+	dir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	log.SetOutput(io.Discard)
+
+	startPatterns := []string{"./..."}
+	err := run(context.Background(), true, false, dir, false, false, "auto", startPatterns, []string{"testdata", "vendor"})
+	if err != nil {
+		t.Fatalf("run() failed: %v", err)
+	}
+
+	w.Close()
+	os.Stdout = oldStdout
+
+	var buf bytes.Buffer
+	io.Copy(&buf, r)
+	output := buf.String()
+
+	if strings.Contains(output, "UsedInVar") {
+		t.Errorf("UsedInVar was reported as an orphan, but it is used in a global variable initialization")
+	}
+	if !strings.Contains(output, "UnusedFunc") {
+		t.Errorf("UnusedFunc was not reported as an orphan, but it should be")
+	}
+
+	expectedOrphans := []string{
+		"example.com/global-var-init/other.UnusedFunc",
+	}
+	sort.Strings(expectedOrphans)
+
+	var foundOrphans []string
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	for _, line := range lines {
+		if strings.HasPrefix(line, "example.com") {
+			foundOrphans = append(foundOrphans, line)
+		}
+	}
+	sort.Strings(foundOrphans)
+
+	if diff := cmp.Diff(expectedOrphans, foundOrphans); diff != "" {
+		t.Errorf("find-orphans mismatch (-want +got):\n%s\nFull output:\n%s", diff, output)
+	}
+}
+
 func TestFindOrphans_MultiMain(t *testing.T) {
 	files := map[string]string{
 		"workspace/go.work": `

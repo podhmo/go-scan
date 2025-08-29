@@ -2130,7 +2130,7 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 		}
 
 		// Populate the new environment with the imports from the function's source file.
-		if fn.Package != nil && fn.Package.Fset != nil && fn.Decl != nil {
+		if fn.Package != nil && fn.Decl != nil {
 			file := fn.Package.Fset.File(fn.Decl.Pos())
 			if file != nil {
 				if astFile, ok := fn.Package.AstFiles[file.Name()]; ok {

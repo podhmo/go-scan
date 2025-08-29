@@ -86,6 +86,113 @@ func main() {
 	}
 }
 
+func TestSymgo_ReturnedFunctionClosure(t *testing.T) {
+	files := map[string]string{
+		"go.mod": "module example.com/func-return\n\ngo 1.21\n",
+		"main.go": `
+package main
+import "example.com/func-return/service"
+func main() {
+    handler := service.GetHandler()
+    handler()
+}`,
+		"service/service.go": `
+package service
+
+// GetHandler returns a function that uses an internal helper.
+func GetHandler() func() {
+    return func() {
+        // This call is not being detected by the analyzer.
+        usedByReturnedFunc()
+    }
+}
+
+// This function should NOT be an orphan.
+func usedByReturnedFunc() {}
+`,
+	}
+
+	dir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	called := make(map[string]bool)
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
+		var mainPkg *goscan.Package
+		for _, p := range pkgs {
+			if p.Name == "main" {
+				mainPkg = p
+				break
+			}
+		}
+		if mainPkg == nil {
+			return fmt.Errorf("main package not found in scanned packages")
+		}
+
+		interp, err := symgo.NewInterpreter(s, symgo.WithLogger(s.Logger))
+		if err != nil {
+			return err
+		}
+
+		// defaultIntrinsic is the key to tracking usage.
+		interp.RegisterDefaultIntrinsic(func(i *symgo.Interpreter, args []symgo.Object) symgo.Object {
+			if len(args) == 0 {
+				return nil
+			}
+			var key string
+			switch fn := args[0].(type) {
+			case *symgo.Function:
+				if fn.Def != nil && fn.Package != nil {
+					key = fmt.Sprintf("%s.%s", fn.Package.ImportPath, fn.Def.Name)
+				}
+			case *symgo.SymbolicPlaceholder:
+				if fn.UnderlyingFunc != nil && fn.Package != nil {
+					key = fmt.Sprintf("%s.%s", fn.Package.ImportPath, fn.UnderlyingFunc.Name)
+				}
+			}
+			if key != "" {
+				called[key] = true
+			}
+			return nil
+		})
+
+		// This is the more realistic execution flow.
+		// 1. Create a top-level environment.
+		topEnv := symgo.NewEnclosedEnvironment(nil)
+
+		// 2. Evaluate the main package's files. This will process its imports
+		//    and define the 'main' function.
+		for _, file := range mainPkg.AstFiles {
+			if _, err := interp.EvalWithEnv(ctx, file, topEnv, mainPkg); err != nil {
+				return fmt.Errorf("evaluating main.go failed: %w", err)
+			}
+		}
+
+		// 3. Find the main function object in the environment.
+		mainFuncObj, ok := topEnv.Get("main")
+		if !ok {
+			return fmt.Errorf("main function not found")
+		}
+
+		// 4. Apply the main function. The interpreter will handle resolving
+		//    and loading other packages (like 'service') on demand.
+		_, applyErr := interp.Apply(ctx, mainFuncObj, nil, mainPkg)
+		if applyErr != nil {
+			return fmt.Errorf("Apply(main) failed: %w", applyErr)
+		}
+
+		// The core of the test: was the nested function call detected?
+		if !called["example.com/func-return/service.usedByReturnedFunc"] {
+			t.Errorf("expected usedByReturnedFunc to be called, but it was not")
+		}
+
+		return nil
+	}
+
+	if _, err := scantest.Run(t, context.Background(), dir, []string{"./..."}, action); err != nil {
+		t.Fatalf("scantest.Run() failed: %v", err)
+	}
+}
+
 func TestBuiltin_Panic(t *testing.T) {
 	files := map[string]string{
 		"go.mod": "module example.com/me",

@@ -237,6 +237,9 @@ func (e *Evaluator) evalIndexExpr(ctx context.Context, node *ast.IndexExpr, env 
 	if isError(left) {
 		return left
 	}
+	if v, ok := left.(*object.Variable); ok {
+		left = v.Value
+	}
 
 	index := e.Eval(ctx, node.Index, env, pkg)
 	if isError(index) {
@@ -286,6 +289,9 @@ func (e *Evaluator) evalSliceExpr(ctx context.Context, node *ast.SliceExpr, env 
 	left := e.Eval(ctx, node.X, env, pkg)
 	if isError(left) {
 		return left
+	}
+	if v, ok := left.(*object.Variable); ok {
+		left = v.Value
 	}
 
 	// Evaluate index expressions to trace calls.
@@ -419,6 +425,13 @@ func (e *Evaluator) evalBinaryExpr(ctx context.Context, node *ast.BinaryExpr, en
 		return right
 	}
 
+	if v, ok := left.(*object.Variable); ok {
+		left = v.Value
+	}
+	if v, ok := right.(*object.Variable); ok {
+		right = v.Value
+	}
+
 	lType := left.Type()
 	rType := right.Type()
 
@@ -506,12 +519,22 @@ func (e *Evaluator) evalStringInfixExpression(pos token.Pos, op token.Token, lef
 }
 
 func (e *Evaluator) evalUnaryExpr(ctx context.Context, node *ast.UnaryExpr, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
+	right := e.Eval(ctx, node.X, env, pkg)
+	if isError(right) {
+		return right
+	}
+
+	// For the & (address-of) operator, we want to operate on the variable itself.
+	// For other operators, we need to unwrap the variable to get its value.
+	if node.Op != token.AND {
+		if v, ok := right.(*object.Variable); ok {
+			right = v.Value
+		}
+	}
+
 	switch node.Op {
 	case token.AND:
-		val := e.Eval(ctx, node.X, env, pkg)
-		if isError(val) {
-			return val
-		}
+		val := right // This is the object we're taking the address of.
 		ptr := &object.Pointer{Value: val}
 
 		// Create a new FieldType for the pointer.
@@ -527,7 +550,7 @@ func (e *Evaluator) evalUnaryExpr(ctx context.Context, node *ast.UnaryExpr, env 
 	case token.ARROW: // <-
 		// For a channel receive `<-ch`, we just need to evaluate `ch` itself
 		// to trace any function calls that produce the channel.
-		return e.Eval(ctx, node.X, env, pkg)
+		return right
 	}
 	return e.newError(node.Pos(), "unknown unary operator: %s", node.Op)
 }
@@ -538,7 +561,8 @@ func (e *Evaluator) evalStarExpr(ctx context.Context, node *ast.StarExpr, env *o
 		return val
 	}
 
-	// First, unwrap any variable to get to the underlying value.
+	// We are dereferencing a pointer. If the operand is a variable, we must
+	// first get its value, which should be the pointer.
 	if v, ok := val.(*object.Variable); ok {
 		val = v.Value
 	}
@@ -609,6 +633,11 @@ func (e *Evaluator) evalGenDecl(ctx context.Context, node *ast.GenDecl, env *obj
 				if isError(val) {
 					return val
 				}
+				// If the value is the result of a function call, we must unwrap the
+				// ReturnValue object to get the actual value.
+				if ret, ok := val.(*object.ReturnValue); ok {
+					val = ret.Value
+				}
 			}
 
 			var resolvedTypeInfo *scanner.TypeInfo
@@ -623,12 +652,23 @@ func (e *Evaluator) evalGenDecl(ctx context.Context, node *ast.GenDecl, env *obj
 				}
 			}
 
+			// If the value being assigned has more precise type information (e.g., from a function return),
+			// prioritize it over the statically declared type. This is key for stateful type tracking.
+			finalFieldType := staticFieldType
+			if val.FieldType() != nil {
+				finalFieldType = val.FieldType()
+			}
+			finalTypeInfo := resolvedTypeInfo
+			if val.TypeInfo() != nil {
+				finalTypeInfo = val.TypeInfo()
+			}
+
 			v := &object.Variable{
 				Name:  name.Name,
 				Value: val,
 				BaseObject: object.BaseObject{
-					ResolvedTypeInfo:  resolvedTypeInfo,
-					ResolvedFieldType: staticFieldType,
+					ResolvedTypeInfo:  finalTypeInfo,
+					ResolvedFieldType: finalFieldType,
 				},
 			}
 			env.Set(name.Name, v)
@@ -790,16 +830,7 @@ func (e *Evaluator) ensurePackageEnvPopulated(ctx context.Context, pkgObj *objec
 func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
 	e.logger.Debug("evalSelectorExpr", "selector", n.Sel.Name)
 
-	var left object.Object
-	if ident, ok := n.X.(*ast.Ident); ok {
-		if obj, found := env.Get(ident.Name); found {
-			left = obj
-		} else {
-			left = e.Eval(ctx, n.X, env, pkg)
-		}
-	} else {
-		left = e.Eval(ctx, n.X, env, pkg)
-	}
+	left := e.Eval(ctx, n.X, env, pkg)
 
 	// Unwrap the result if it's a return value from a previous call in a chain.
 	if ret, ok := left.(*object.ReturnValue); ok {
@@ -1330,6 +1361,9 @@ func (e *Evaluator) evalTypeAssertExpr(ctx context.Context, n *ast.TypeAssertExp
 	if isError(val) {
 		return val
 	}
+	if v, ok := val.(*object.Variable); ok {
+		val = v.Value
+	}
 
 	// Next, resolve the asserted type (T).
 	if pkg == nil || pkg.Fset == nil {
@@ -1511,11 +1545,21 @@ func (e *Evaluator) evalReturnStmt(ctx context.Context, n *ast.ReturnStmt, env *
 		return &object.ReturnValue{Value: object.NIL} // naked return
 	}
 
-	if len(n.Results) == 1 {
-		val := e.Eval(ctx, n.Results[0], env, pkg)
-		if isError(val) {
-			return val
+	results := e.evalExpressions(ctx, n.Results, env, pkg)
+	if len(results) == 1 && isError(results[0]) {
+		return results[0]
+	}
+
+	// After evaluation, unwrap any variables to get their values for the return.
+	for i, val := range results {
+		if v, ok := val.(*object.Variable); ok {
+			results[i] = v.Value
 		}
+	}
+
+	if len(results) == 1 {
+		val := results[0]
+		// The result might already be a ReturnValue from a nested call.
 		if _, ok := val.(*object.ReturnValue); ok {
 			return val
 		}
@@ -1523,12 +1567,7 @@ func (e *Evaluator) evalReturnStmt(ctx context.Context, n *ast.ReturnStmt, env *
 	}
 
 	// Handle multiple return values
-	vals := e.evalExpressions(ctx, n.Results, env, pkg)
-	if len(vals) == 1 && isError(vals[0]) {
-		return vals[0] // Error occurred during expression evaluation
-	}
-
-	return &object.ReturnValue{Value: &object.MultiReturn{Values: vals}}
+	return &object.ReturnValue{Value: &object.MultiReturn{Values: results}}
 }
 
 func (e *Evaluator) evalAssignStmt(ctx context.Context, n *ast.AssignStmt, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
@@ -1753,6 +1792,10 @@ func (e *Evaluator) assignIdentifier(ident *ast.Ident, val object.Object, tok to
 	}
 
 	v.Value = val
+	// When re-assigning a variable, we must also update its type information
+	// to reflect the new value. This is crucial for stateful analysis.
+	v.SetTypeInfo(val.TypeInfo())
+	v.SetFieldType(val.FieldType())
 	newFieldType := val.FieldType()
 
 	// Check if the variable was originally typed as an interface,
@@ -1839,13 +1882,9 @@ func (e *Evaluator) evalIdent(ctx context.Context, n *ast.Ident, env *object.Env
 
 	if val, ok := env.Get(n.Name); ok {
 		e.logger.Debug("evalIdent: found in env", "name", n.Name, "type", val.Type())
-		if v, ok := val.(*object.Variable); ok {
-			value := v.Value
-			if value.TypeInfo() == nil && v.TypeInfo() != nil {
-				value.SetTypeInfo(v.TypeInfo())
-			}
-			return value
-		}
+		// When an identifier resolves, we return the object from the environment directly.
+		// If it's a variable, we return the *object.Variable itself, not its value.
+		// Callers are responsible for unwrapping it if they need the value.
 		return val
 	}
 
@@ -1958,6 +1997,9 @@ func (e *Evaluator) evalCallExpr(ctx context.Context, n *ast.CallExpr, env *obje
 	function := e.Eval(ctx, n.Fun, env, pkg)
 	if isError(function) {
 		return function
+	}
+	if v, ok := function.(*object.Variable); ok {
+		function = v.Value
 	}
 
 	args := e.evalExpressions(ctx, n.Args, env, pkg)

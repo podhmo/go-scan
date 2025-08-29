@@ -1,14 +1,14 @@
-# State Tracking Issue in `symgo`: Global Variables and Method Calls
+# [RESOLVED] State Tracking Issue in `symgo`: Global Variables and Method Calls
 
 ## Overview
 
-The `symgo` symbolic execution engine currently has an issue with tracking type information across state changes, specifically when the result of a function call is assigned to a global variable and methods are subsequently called on that variable.
+The `symgo` symbolic execution engine previously had an issue with tracking type information across state changes, specifically when the result of a function call is assigned to a global variable and methods are subsequently called on that variable. This issue has been resolved.
 
-This can cause tools like `find-orphans` to incorrectly report methods as "orphans," as well as the factory functions that create the objects on which those methods are called.
+This could cause tools like `find-orphans` to incorrectly report methods as "orphans," as well as the factory functions that create the objects on which those methods are called.
 
 ## Problem Details
 
-The root cause lies in how the `symgo` evaluator handles the evaluation of variables.
+The root cause lay in how the `symgo` evaluator handled the evaluation of variables.
 
 1.  **Function Call and Variable Assignment**:
     Given the following code:
@@ -16,92 +16,49 @@ The root cause lies in how the `symgo` evaluator handles the evaluation of varia
     // a.go
     var instance = factory.New() // New() returns *MyType
     ```
-    `symgo` correctly evaluates the call to `factory.New()` and marks `New()` itself as "used."
+    `symgo` correctly evaluated the call to `factory.New()` and marked `New()` itself as "used."
 
 2.  **Loss of Type Information**:
-    The `*MyType` object returned by `New()` is assigned to the global variable `instance`. At this point, the `symgo` `Variable` object does not fully retain the detailed type information (`*MyType` in this case) from the value it was assigned (`*object.Instance`).
+    The `*MyType` object returned by `New()` was assigned to the global variable `instance`. At this point, the `symgo` `Variable` object did not fully retain the detailed type information (`*MyType` in this case) from the value it was assigned (`*object.Instance`).
 
 3.  **Failed Method Call Resolution**:
-    The problem becomes apparent when the `instance` variable is used later in another function (e.g., `init()`).
+    The problem became apparent when the `instance` variable was used later in another function (e.g., `init()`).
     ```go
     // a.go
     func init() {
         instance.DoSomething()
     }
     ```
-    When `symgo` evaluates `instance.DoSomething()`, it evaluates the `instance` identifier, but in the process, the precise type information (`*MyType`) that the variable should have is lost. Therefore, it cannot find the method named `DoSomething`.
+    When `symgo` evaluated `instance.DoSomething()`, it evaluated the `instance` identifier, but in the process, the precise type information (`*MyType`) that the variable should have was lost. Therefore, it could not find the method named `DoSomething`.
 
-As a result, the `(*MyType).DoSomething` method is considered "unused." Furthermore, a tool like `find-orphans` may see that none of the methods of the object returned by `New()` are ever used, and may ultimately conclude that the `New()` function itself is also an orphan.
+As a result, the `(*MyType).DoSomething` method was considered "unused."
 
-## Example of Affected Code
+## Resolution (2025-08-29)
 
-The following code provides a minimal example that reproduces this issue.
+The issue was deeper than initially thought and required a significant refactoring of the evaluator's architecture. The fix was multi-faceted and addressed an underlying inconsistency in how variables were treated.
 
-```go
-package main
+### Part 1: Architectural Refactoring
 
-type MyType struct {}
+The core of the problem was an inconsistency in how identifiers were evaluated.
+- `evalSelectorExpr` (for `instance.DoSomething`) had special logic to fetch the `*object.Variable` for `instance` directly from the environment.
+- However, this only worked for variables in the current scope. For variables in outer scopes, `evalSelectorExpr` would fall back to the generic `e.Eval`, which would call `evalIdent`.
+- The `evalIdent` function was designed to return the *value* of a variable (`v.Value`), not the `*object.Variable` container itself.
 
-// This factory function returns *MyType
-func NewMyType() *MyType {
-	return &MyType{}
-}
+This meant that `evalSelectorExpr`'s special logic for handling `*object.Variable` was bypassed for any variable not in the immediate scope, causing the type information stored on the variable to be lost.
 
-// This method is called in init(), but symgo fails to trace it.
-func (t *MyType) DoSomething() {}
+The fix was to make the evaluator's behavior consistent:
+1.  **`evalIdent` Changed**: The `evalIdent` function was modified to *always* return the raw object from the environment. For a variable, this is the `*object.Variable` itself.
+2.  **Evaluator Functions Updated**: All functions in the evaluator that consume expression results (e.g., `evalBinaryExpr`, `evalCallExpr`, `evalReturnStmt`) were updated to handle receiving a `*object.Variable`. They now "unwrap" the variable to get its `Value` before proceeding.
+3.  **`evalSelectorExpr` Simplified**: With the above change, the special-case logic in `evalSelectorExpr` was no longer needed and was removed. It now consistently calls `e.Eval` and receives the `*object.Variable`.
 
-// A global variable holds the result of the factory function.
-var instance = NewMyType()
+### Part 2: Fixing Type Propagation
 
-func init() {
-	// Because the type info for 'instance' is lost, this method call is not resolved.
-	instance.DoSomething()
-}
+The architectural refactoring exposed the final bug. When a variable was initialized from a function call, the evaluator was not correctly unwrapping the result.
 
-func main() {}
-```
+- `e.Eval` on a `CallExpr` returns an `*object.ReturnValue`.
+- In `evalGenDecl` (for `var instance = New()`), the code was assigning the `*object.ReturnValue` directly as the `Value` of the new `*object.Variable`.
+- A `ReturnValue` object has no type information, so the `Variable` was not inheriting the type from the actual result of the function call (an `*object.Pointer`).
 
-When analyzing this code with `find-orphans`, both `NewMyType` and `(*MyType).DoSomething` are likely to be reported as orphans.
+The final fix was to add logic in `evalGenDecl` to check for and unwrap the `*object.ReturnValue` before assigning the value and propagating its type information to the new variable.
 
-## Future Action
-
-To resolve this issue, the `symgo/evaluator` needs to be modified to ensure that `object.Variable` correctly retains and propagates the type information of the values assigned to it. This requires careful changes to the core of the engine.
-
-This issue is reproduced in the test case located at `symgo/integration_test/global_var_state_test.go` and will be used to verify a future fix.
-
-## Failed Attempts and Analysis (2025-08-29)
-
-A significant attempt was made to fix this issue by ensuring that the `object.Variable` for `instance` correctly received and stored the type information from the value returned by `NewMyType()`. The primary hypothesis was that the `Variable` object itself was losing the type, which prevented `evalSelectorExpr` from resolving the method `DoSomething`.
-
-### The Attempted Fix
-
-A three-part fix was implemented in `symgo/evaluator/evaluator.go`:
-
-1.  **Modified `evalGenDecl`**: The logic for `var` declarations was changed to prioritize the type information (`TypeInfo` and `FieldType`) from the evaluated right-hand side (RHS) value over any statically declared type on the left-hand side. The goal was for `var instance = NewMyType()` to create a `Variable` for `instance` that inherited the type of the `*object.Pointer` returned by the RHS.
-
-2.  **Modified `assignIdentifier`**: The logic for standard `=` assignments was updated. After `v.Value = val`, the code was modified to also execute `v.SetTypeInfo(val.TypeInfo())` and `v.SetFieldType(val.FieldType())`. This was to ensure that re-assigning a variable would also update its type.
-
-3.  **Cleaned up `evalIdent`**: A block of code was removed from `evalIdent` that copied `TypeInfo` from a `Variable` back to its `Value`. This logic seemed to be a patch for the very problem being fixed, and its removal was intended to prevent incorrect type propagation.
-
-### Analysis of Failure
-
-Despite these logically sound changes, the test case continued to fail. The method call `instance.DoSomething()` was still not being resolved. This indicates a more subtle issue in the evaluator's logic or the underlying type system.
-
-My logical trace of the execution was as follows:
-1.  `evalGenDecl` evaluates `NewMyType()`, which results in an `*object.Pointer`. My changes ensure the `FieldType` of this pointer (which correctly indicates `IsPointer: true`) and its `TypeInfo` are copied to the new `*object.Variable` for `instance`.
-2.  Later, `evalSelectorExpr` for `instance.DoSomething` correctly retrieves the `*object.Variable` from the environment.
-3.  The `switch` statement enters the `case *object.Variable:`.
-4.  It calls `findMethodOnType`, passing the `TypeInfo` from the variable.
-5.  Inside `findMethodOnType`, the pointer compatibility check `if isMethodPtrRecv && !isVarPointer` should pass. `isMethodPtrRecv` is true for `DoSomething`, and `isVarPointer` should also be true because it is derived from the `Variable`'s `FieldType`, which was correctly set in step 1.
-
-The continued failure implies that one of these steps is not behaving as expected. The "actual values" at runtime must be different from my trace. For example, `v.FieldType().IsPointer` might be unexpectedly false, or the `TypeInfo` passed to `findMethodOnType` might be `nil` or incorrect in a way that causes the base type name comparison to fail.
-
-## Possible Subtasks for Resolution
-
-This problem is difficult to debug without a step-through debugger. To move forward, it can be broken down into the following subtasks:
-
-1.  **Subtask 1: Enhanced Logging**: Add fine-grained logging inside `evalSelectorExpr` (in the `*object.Variable` case) and `findMethodOnType`. The logs should print the exact `TypeInfo.Name`, the full `FieldType` struct, and the results of pointer-ness checks (`isMethodPtrRecv`, `isVarPointer`) for both the variable being accessed and the method being considered. This would definitively reveal the mismatch.
-
-2.  **Subtask 2: Pointer Type Representation Review**: Conduct a dedicated review of how pointer types are handled across `symgo` and `go-scan`. A key question: should an `*object.Pointer` have its own unique `TypeInfo` that represents a pointer type, instead of borrowing the `TypeInfo` of the element it points to? This might require changes in `evalUnaryExpr` (for the `&` operator) to create or fetch a `TypeInfo` for `*T` when it sees a `T`.
-
-3.  **Subtask 3: Isolate `findMethodOnType`**: Write a new, focused unit test specifically for the `findMethodOnType` function. This test should manually construct `object.Variable`, `scanner.TypeInfo`, and `scanner.FieldType` objects to test the pointer compatibility logic in complete isolation from the rest of the evaluator. This would confirm whether the method matching logic itself is flawed.
+With these changes, the `Variable` for `instance` correctly stores the `FieldType` indicating it's a pointer and the `TypeInfo` for `MyType`, allowing `findMethodOnType` to successfully resolve the `DoSomething` method call. The test case in `symgo/integration_test/global_var_state_test.go` now passes.

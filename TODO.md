@@ -83,8 +83,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] **Function Literals as Return Values**: The interpreter now correctly traces calls inside closures that are returned from other functions by ensuring that package-level environments are correctly populated and captured.
 - [ ] **Generics**: The interpreter does not support generic functions or types.
 - [ ] **Channels**: The interpreter has limited support for channel operations (e.g., in `select` statements) but does not have a concrete channel object type, limiting analysis of channel-based logic.
-- [ ] **Stateful Type Tracking for Variables**: The interpreter struggles to track type information for variables that store the results of function calls. If a function `New()` returns a `*MyType`, and this is stored in a global variable `instance`, the interpreter may fail to resolve method calls like `instance.DoSomething()` later on. See [docs/trouble-symgo-state-tracking.md](./docs/trouble-symgo-state-tracking.md) for details.
-    - **Note (2025-08-29)**: This is a complex issue. A detailed analysis of a failed attempt and a proposed breakdown into subtasks has been added to the `docs/trouble-symgo-state-tracking.md` document.
+- [x] **Stateful Type Tracking for Variables**: The interpreter can now track type information for variables that store the results of function calls. If a function `New()` returns a `*MyType`, and this is stored in a global variable `instance`, the interpreter can now correctly resolve method calls like `instance.DoSomething()` later on. This was a complex fix involving a refactoring of how the evaluator handles variable identifiers.
 - [ ] **Other AST Nodes**: The following `ast.Node` types are not yet handled by the main evaluation loop:
     - [ ] `*ast.ChanType`
     - [x] `*ast.Ellipsis` (Note: Implemented for variadic arguments in function calls and definitions.)

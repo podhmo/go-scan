@@ -2323,7 +2323,7 @@ func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, 
 						BaseObject: object.BaseObject{ResolvedTypeInfo: resolvedType, ResolvedFieldType: fieldType},
 					}
 				}
-				env.Set(receiverName, receiverToBind)
+				env.SetLocal(receiverName, receiverToBind)
 			}
 		}
 	}
@@ -2434,7 +2434,8 @@ func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, 
 					Value:      arg,
 					BaseObject: object.BaseObject{ResolvedTypeInfo: resolvedType},
 				}
-				env.Set(name.Name, v)
+				// Use SetLocal to define the parameter in the function's own scope.
+				env.SetLocal(name.Name, v)
 			}
 			argIndex++
 		}

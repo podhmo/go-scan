@@ -524,9 +524,15 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool) error {
 				continue
 			}
 
-			if pkg.Name == "main" && fnInfo.Name == "main" && fnInfo.Receiver == nil {
+			isMain := pkg.Name == "main" && fnInfo.Name == "main" && fnInfo.Receiver == nil
+			isInit := fnInfo.Name == "init" && fnInfo.Receiver == nil
+			isExported := fnInfo.AstDecl.Name.IsExported()
+
+			if isMain {
 				mainEntryPoint = fn
-			} else if fnInfo.AstDecl.Name.IsExported() {
+			}
+
+			if isExported || isInit {
 				libraryEntryPoints = append(libraryEntryPoints, fn)
 			}
 		}
@@ -547,6 +553,10 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool) error {
 		slog.InfoContext(ctx, "running in forced application mode")
 	case "lib":
 		analysisFns = libraryEntryPoints
+		if mainEntryPoint != nil {
+			// Add main if it exists. It won't be in libraryEntryPoints because it's not exported.
+			analysisFns = append(analysisFns, mainEntryPoint)
+		}
 		isAppMode = false // Explicitly false for library mode
 		slog.InfoContext(ctx, "running in forced library mode", "analysis_functions", len(analysisFns))
 	case "auto":

@@ -490,9 +490,28 @@ func (e *Evaluator) evalIntegerInfixExpression(pos token.Pos, op token.Token, le
 		return &object.Integer{Value: leftVal * rightVal}
 	case token.QUO:
 		return &object.Integer{Value: leftVal / rightVal}
+	case token.EQL: // ==
+		return nativeBoolToBooleanObject(leftVal == rightVal)
+	case token.NEQ: // !=
+		return nativeBoolToBooleanObject(leftVal != rightVal)
+	case token.LSS: // <
+		return nativeBoolToBooleanObject(leftVal < rightVal)
+	case token.LEQ: // <=
+		return nativeBoolToBooleanObject(leftVal <= rightVal)
+	case token.GTR: // >
+		return nativeBoolToBooleanObject(leftVal > rightVal)
+	case token.GEQ: // >=
+		return nativeBoolToBooleanObject(leftVal >= rightVal)
 	default:
 		return e.newError(pos, "unknown integer operator: %s", op)
 	}
+}
+
+func nativeBoolToBooleanObject(input bool) *object.Boolean {
+	if input {
+		return object.TRUE
+	}
+	return object.FALSE
 }
 
 func (e *Evaluator) evalStringInfixExpression(pos token.Pos, op token.Token, left, right object.Object) object.Object {
@@ -1485,29 +1504,30 @@ func (e *Evaluator) evalIfStmt(ctx context.Context, n *ast.IfStmt, env *object.E
 		}
 	}
 
-	// Evaluate both branches. Each gets its own enclosed environment.
-	// The new assignment logic handles updating parent scopes correctly.
-	thenEnv := object.NewEnclosedEnvironment(ifStmtEnv)
-	thenResult := e.Eval(ctx, n.Body, thenEnv, pkg)
-
-	var elseResult object.Object
-	if n.Else != nil {
-		elseEnv := object.NewEnclosedEnvironment(ifStmtEnv)
-		elseResult = e.Eval(ctx, n.Else, elseEnv, pkg)
-	}
-
-	// If both branches terminate with the same type of control flow, propagate it.
-	// This is a simplification. A more robust implementation might track multiple
-	// possible return states.
-	if thenResult != nil && elseResult != nil && thenResult.Type() == elseResult.Type() {
-		switch thenResult.Type() {
-		case object.BREAK_OBJ, object.CONTINUE_OBJ, object.RETURN_VALUE_OBJ, object.ERROR_OBJ:
-			return thenResult
+	// Also evaluate the condition to trace any function calls within it.
+	if n.Cond != nil {
+		if condResult := e.Eval(ctx, n.Cond, ifStmtEnv, pkg); isError(condResult) {
+			// If the condition errors, we can't proceed.
+			return condResult
 		}
 	}
 
-	// If only one branch terminates, or they terminate differently, the overall
-	// execution path can continue, so we return a placeholder.
+	// Evaluate both branches. Each gets its own enclosed environment.
+	// The new assignment logic handles updating parent scopes correctly.
+	thenEnv := object.NewEnclosedEnvironment(ifStmtEnv)
+	e.Eval(ctx, n.Body, thenEnv, pkg)
+
+	if n.Else != nil {
+		elseEnv := object.NewEnclosedEnvironment(ifStmtEnv)
+		e.Eval(ctx, n.Else, elseEnv, pkg)
+	}
+
+	// We don't try to determine if one or both branches terminate.
+	// We symbolically execute both and then allow execution to continue
+	// after the if statement. This allows path-insensitive tools like docgen
+	// to see all possible calls.
+	// A more sophisticated, path-sensitive analysis would require a different
+	// approach.
 	return &object.SymbolicPlaceholder{Reason: "if/else statement"}
 }
 

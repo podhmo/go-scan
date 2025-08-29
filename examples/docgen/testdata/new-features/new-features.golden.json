@@ -27,59 +27,35 @@
       "post": {
         "description": "CreateThingHandler is for testing custom status code responses.",
         "operationId": "new-features_main_CreateThingHandler",
-        "responses": {
-          "400": {
-            "description": "Response for status code 400",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/new-features_helpers_ErrorResponse"
-                }
-              }
+        "parameters": [
+          {
+            "name": "fail",
+            "in": "query",
+            "schema": {
+              "type": "string"
             }
           }
-        }
+        ]
       }
     },
     "/users/{id}": {
       "get": {
         "description": "GetUserHandler returns a user by ID.",
         "operationId": "new-features_main_GetUserHandler",
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/new-features_main_User"
-                }
-              }
-            }
-          },
-          "default": {
-            "description": "Default error response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/new-features_helpers_ErrorResponse"
-                }
-              }
+        "parameters": [
+          {
+            "name": "error",
+            "in": "query",
+            "schema": {
+              "type": "string"
             }
           }
-        }
+        ]
       }
     }
   },
   "components": {
     "schemas": {
-      "new-features_helpers_ErrorResponse": {
-        "type": "object",
-        "properties": {
-          "error": {
-            "type": "string"
-          }
-        }
-      },
       "new-features_main_Settings": {
         "type": "object",
         "properties": {
@@ -89,17 +65,6 @@
               "type": "string",
               "description": "unsupported basic type: any"
             }
-          }
-        }
-      },
-      "new-features_main_User": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "name": {
-            "type": "string"
           }
         }
       }

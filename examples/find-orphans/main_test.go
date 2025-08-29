@@ -88,6 +88,58 @@ func IgnoredFunc() {}
 	}
 }
 
+func TestFindOrphans_SubtestUsage(t *testing.T) {
+	files := map[string]string{
+		"go.mod": "module example.com/subtest-usage\ngo 1.21\n",
+		"lib/lib.go": `
+package lib
+// This function should NOT be an orphan because it's used by a subtest.
+func usedOnlyBySubtest() {}
+`,
+		"lib/lib_test.go": `
+package lib
+import "testing"
+func TestSomething(t *testing.T) {
+    t.Run("subtest", func(t *testing.T) {
+        usedOnlyBySubtest()
+    })
+}
+`,
+	}
+	dir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	log.SetOutput(io.Discard)
+
+	startPatterns := []string{"example.com/subtest-usage/lib"}
+	// We need --include-tests=true for this to work at all.
+	// We use "lib" mode to ensure that TestSomething is treated as an entry point.
+	err := run(context.Background(), true, true, dir, false, false, "lib", startPatterns, []string{"testdata", "vendor"})
+	if err != nil {
+		t.Fatalf("run() failed: %v", err)
+	}
+
+	w.Close()
+	os.Stdout = oldStdout
+
+	var buf bytes.Buffer
+	io.Copy(&buf, r)
+	output := buf.String()
+
+	// ASSERT: The function used in the subtest should NOT be an orphan.
+	if strings.Contains(output, "usedOnlyBySubtest") {
+		t.Errorf("usedOnlyBySubtest was incorrectly reported as an orphan.\nOutput:\n%s", output)
+	}
+
+	// ASSERT: The output should indicate no orphans were found.
+	if !strings.Contains(output, "No orphans found") {
+		t.Errorf("expected 'No orphans found' message, but got:\n%s", output)
+	}
+}
+
 func TestFindOrphans_ShallowScan_SymbolicMethodCall(t *testing.T) {
 	// This is the integration test for "Shallow Scanning in symgo" (Issue #10).
 	// It verifies that a function is NOT considered an orphan if its only "usage"

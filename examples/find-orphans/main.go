@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"go/ast"
 	"go/printer"
 	"log/slog"
 	"os"
@@ -232,6 +233,7 @@ func run(ctx context.Context, all bool, includeTests bool, workspace string, ver
 		targetPackages: targetPackages,
 		mode:           mode,
 		scanPackages:   scanPackages,
+		includeTests:   includeTests,
 	}
 	return a.analyze(ctx, asJSON)
 }
@@ -388,6 +390,7 @@ type analyzer struct {
 	targetPackages map[string]bool
 	mode           string
 	scanPackages   map[string]bool
+	includeTests   bool
 	mu             sync.Mutex
 	ctx            context.Context
 }
@@ -571,10 +574,60 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool) error {
 	}
 
 	// Run symbolic execution from each analysis function to find what they use.
+	var testingT_FieldType *scanner.FieldType // Cache for performance
+
 	for _, ep := range analysisFns {
 		epName := getFullName(a.s, ep.Package, &scanner.FunctionInfo{Name: ep.Name.Name, AstDecl: ep.Decl})
 		slog.DebugContext(ctx, "analyzing from function", "function", epName)
-		interp.Apply(ctx, ep, []object.Object{}, ep.Package)
+
+		args := []object.Object{}
+		// If the entry point is a test function, provide a symbolic *testing.T.
+		// We only do this for library mode entry points, as main.main is not a test.
+		if !isAppMode && a.includeTests && isTestFunction(ep.Def) {
+			// Lazily load the type info for *testing.T once.
+			if testingT_FieldType == nil {
+				testingPkg, err := a.s.ScanPackageByImport(ctx, "testing")
+				if err != nil {
+					slog.WarnContext(ctx, "could not scan 'testing' package, cannot create symbolic *testing.T", "error", err)
+				} else {
+					var testingT_TypeInfo *scanner.TypeInfo
+					for _, t := range testingPkg.Types {
+						if t.Name == "T" {
+							testingT_TypeInfo = t
+							break
+						}
+					}
+
+					if testingT_TypeInfo != nil {
+						// This FieldType represents a `*testing.T`.
+						testingT_FieldType = &scanner.FieldType{
+							IsPointer: true,
+							Elem: &scanner.FieldType{
+								Definition:     testingT_TypeInfo,
+								Name:           "T",
+								TypeName:       "T",
+								FullImportPath: "testing",
+							},
+						}
+						// The ResolvedTypeInfo for the pointer itself is the same as the element's info.
+						testingT_FieldType.Definition = testingT_TypeInfo
+					}
+				}
+			}
+
+			if testingT_FieldType != nil {
+				symbolicT := &object.SymbolicPlaceholder{
+					Reason: "symbolic *testing.T",
+					BaseObject: object.BaseObject{
+						ResolvedTypeInfo:  testingT_FieldType.Definition,
+						ResolvedFieldType: testingT_FieldType,
+					},
+				}
+				args = append(args, symbolicT)
+			}
+		}
+
+		interp.Apply(ctx, ep, args, ep.Package)
 	}
 	slog.InfoContext(ctx, "symbolic execution complete")
 
@@ -786,4 +839,30 @@ func buildInterfaceMap(packages map[string]*scanner.PackageInfo) map[string][]*s
 	}
 
 	return interfaceMap
+}
+
+// isTestFunction checks if a function is a standard Go test function.
+func isTestFunction(def *scanner.FunctionInfo) bool {
+	if def == nil || !strings.HasPrefix(def.Name, "Test") {
+		return false
+	}
+	if def.AstDecl == nil || def.AstDecl.Type == nil || def.AstDecl.Type.Params == nil || len(def.AstDecl.Type.Params.List) != 1 {
+		return false
+	}
+	param := def.AstDecl.Type.Params.List[0]
+	star, ok := param.Type.(*ast.StarExpr)
+	if !ok {
+		return false
+	}
+	sel, ok := star.X.(*ast.SelectorExpr)
+	if !ok {
+		return false
+	}
+	ident, ok := sel.X.(*ast.Ident)
+	if !ok {
+		return false
+	}
+	// We don't need to check the import path alias here, as go/parser resolves
+	// the identifier to the original package name (`testing`).
+	return ident.Name == "testing" && sel.Sel.Name == "T"
 }

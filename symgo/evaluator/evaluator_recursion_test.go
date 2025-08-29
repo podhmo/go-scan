@@ -2,10 +2,10 @@ package evaluator_test
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
-	"fmt"
 
 	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/scantest"
@@ -55,7 +55,7 @@ func main() {
 `
 
 		files := map[string]string{
-			"go.mod": "module myapp",
+			"go.mod":  "module myapp",
 			"main.go": code,
 		}
 		dir, cleanup := scantest.WriteFiles(t, files)

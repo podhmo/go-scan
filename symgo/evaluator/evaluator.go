@@ -36,8 +36,8 @@ type Evaluator struct {
 }
 
 type callFrame struct {
-	Function string
-	Pos      token.Pos
+	Function  string
+	Pos       token.Pos
 	Signature string
 }
 
@@ -1886,6 +1886,16 @@ func (e *Evaluator) evalCallExpr(ctx context.Context, n *ast.CallExpr, env *obje
 		args[len(args)-1] = &object.Variadic{Value: lastArg}
 	}
 
+	// After evaluating arguments, check if any of them are function literals.
+	// If so, we need to "scan" inside them to find usages. This must be done
+	// before the default intrinsic is called, so the usage map is populated
+	// before the parent function call is even registered.
+	for _, arg := range args {
+		if fn, ok := arg.(*object.Function); ok {
+			e.scanFunctionLiteral(ctx, fn)
+		}
+	}
+
 	if e.defaultIntrinsic != nil {
 		// The default intrinsic is a "catch-all" handler that can be used for logging,
 		// dependency tracking, etc. It receives the function object itself as the first
@@ -1898,6 +1908,71 @@ func (e *Evaluator) evalCallExpr(ctx context.Context, n *ast.CallExpr, env *obje
 		return result
 	}
 	return result
+}
+
+// scanFunctionLiteral evaluates the body of a function literal in a new, symbolic
+// environment. This is used to find function calls inside anonymous functions that are
+// passed as arguments, without needing to fully execute the function they are passed to.
+func (e *Evaluator) scanFunctionLiteral(ctx context.Context, fn *object.Function) {
+	if fn.Body == nil || fn.Package == nil {
+		return // Nothing to scan.
+	}
+
+	e.logger.DebugContext(ctx, "scanning function literal to find usages", "pos", fn.Package.Fset.Position(fn.Body.Pos()))
+
+	// Create a new environment for the function literal's execution.
+	// It's enclosed by the environment where the literal was defined.
+	fnEnv := object.NewEnclosedEnvironment(fn.Env)
+
+	// Populate the environment with symbolic placeholders for the function's parameters.
+	if fn.Parameters != nil {
+		var importLookup map[string]string
+		// A FuncLit doesn't have a specific *ast.File, but its body has a position.
+		// We can use this position to find the containing file and its imports.
+		file := fn.Package.Fset.File(fn.Body.Pos())
+		if file != nil {
+			if astFile, ok := fn.Package.AstFiles[file.Name()]; ok {
+				importLookup = e.scanner.BuildImportLookup(astFile)
+			}
+		}
+		// Fallback if we couldn't get a specific import lookup.
+		if importLookup == nil && len(fn.Package.AstFiles) > 0 {
+			for _, astFile := range fn.Package.AstFiles {
+				importLookup = e.scanner.BuildImportLookup(astFile)
+				break
+			}
+		}
+
+		for _, field := range fn.Parameters.List {
+			fieldType := e.scanner.TypeInfoFromExpr(ctx, field.Type, nil, fn.Package, importLookup)
+			var resolvedType *scanner.TypeInfo
+			if fieldType != nil {
+				resolvedType, _ = fieldType.Resolve(ctx)
+			}
+
+			placeholder := &object.SymbolicPlaceholder{
+				Reason: "symbolic parameter for function literal scan",
+				BaseObject: object.BaseObject{
+					ResolvedTypeInfo:  resolvedType,
+					ResolvedFieldType: fieldType,
+				},
+			}
+
+			for _, name := range field.Names {
+				if name.Name != "_" {
+					// Bind the placeholder to a new variable in the function's environment.
+					v := &object.Variable{Name: name.Name, Value: placeholder}
+					v.SetFieldType(fieldType)
+					v.SetTypeInfo(resolvedType)
+					fnEnv.Set(name.Name, v)
+				}
+			}
+		}
+	}
+
+	// Now evaluate the body. The result is ignored; we only care about the side effects
+	// (i.e., triggering the defaultIntrinsic on calls within the body).
+	e.Eval(ctx, fn.Body, fnEnv, fn.Package)
 }
 
 func (e *Evaluator) evalExpressions(ctx context.Context, exps []ast.Expr, env *object.Environment, pkg *scanner.PackageInfo) []object.Object {

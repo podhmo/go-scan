@@ -105,3 +105,37 @@ This problem is difficult to debug without a step-through debugger. To move forw
 2.  **Subtask 2: Pointer Type Representation Review**: Conduct a dedicated review of how pointer types are handled across `symgo` and `go-scan`. A key question: should an `*object.Pointer` have its own unique `TypeInfo` that represents a pointer type, instead of borrowing the `TypeInfo` of the element it points to? This might require changes in `evalUnaryExpr` (for the `&` operator) to create or fetch a `TypeInfo` for `*T` when it sees a `T`.
 
 3.  **Subtask 3: Isolate `findMethodOnType`**: Write a new, focused unit test specifically for the `findMethodOnType` function. This test should manually construct `object.Variable`, `scanner.TypeInfo`, and `scanner.FieldType` objects to test the pointer compatibility logic in complete isolation from the rest of the evaluator. This would confirm whether the method matching logic itself is flawed.
+
+### Analysis of Regressions (2025-08-29)
+
+The initial fix, which involved propagating type information in `evalGenDecl`, successfully resolved `TestStateTracking_GlobalVarWithMethodCall`. However, it introduced two regressions in the test suite, revealing subtle issues in other parts of the evaluator.
+
+#### 1. `TestFindOrphans_intraPackageMethodCall` Failure
+
+*   **Test Purpose**: This test checks if the `find-orphans` tool can correctly identify that an *unexported* method is "used" when it's called by an *exported* method within the same package.
+*   **Failure Output**:
+    ```
+    --- FAIL: TestFindOrphans_intraPackageMethodCall (0.02s)
+        main_test.go:557: find-orphans mismatch (-want +got):
+              []string{
+                "(example.com/intra-pkg-methods/lib.*MyType).ExportedMethod",
+            + 	"(example.com/intra-pkg-methods/lib.*MyType).unexportedMethod",
+                "example.com/intra-pkg-methods/lib.trulyUnusedFunc",
+              }
+    ```
+    The test expects `unexportedMethod` *not* to be in the list of orphans. The `+` indicates that the change caused it to be incorrectly reported as an orphan.
+*   **Cause Analysis**: This failure means the symbolic execution engine failed to trace the call from `ExportedMethod` to `unexportedMethod`. The change in `evalGenDecl` likely caused the receiver variable for `ExportedMethod` to have incorrect or incomplete type information, preventing the subsequent method call from being resolved correctly.
+
+#### 2. `TestEval_StarExpr_PointerDeref` Failure
+
+*   **Test Purpose**: This test checks if method calls on a dereferenced pointer work correctly (e.g., `p := &T{}; (*p).Method()`).
+*   **Failure Output**:
+    ```
+    --- FAIL: TestEval_StarExpr_PointerDeref (0.01s)
+        evaluator_unary_test.go:86: scantest.Run() failed: action: evaluation failed unexpectedly: undefined method: MyMethod on example.com/me.MyType
+    ```
+*   **Cause Analysis**: The error `undefined method: MyMethod on example.com/me.MyType` strongly suggests that the method dispatch is being attempted on the value type `MyType` instead of the pointer type `*MyType`. This happens because `evalStarExpr` evaluates `*p` and returns the underlying `object.Instance`, effectively losing the "pointer-ness" context that was held by the `*object.Pointer` wrapper. The `findDirectMethodOnType` logic then fails because it sees a non-pointer receiver and a method that likely has a pointer receiver.
+
+#### Conclusion
+
+The `evalGenDecl` modification is a step in the right direction for simple variable declarations but is incomplete. It exposes latent problems in how method calls are resolved on receivers obtained through intra-package calls and pointer dereferencing. The core issue seems to be that the context of "pointer-ness" and other type metadata is lost when evaluating certain expressions. A more holistic fix is required.

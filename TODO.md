@@ -98,6 +98,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] **`panic` and other builtins**: The interpreter now recognizes `panic`, `nil`, `true`, and `false`.
 - [x] **Multi-value returns and assignments**: The interpreter now supports functions that return multiple values and assignments of the form `x, y := f()` and `x, y = f()`.
 - [x] **`symgo`: Correctly scope function parameters**: Fixed a bug where function parameters and receivers were incorrectly set in the package scope instead of the function's local scope, causing "identifier not found" errors in nested blocks.
+- [x] **Block Statements**: The interpreter now correctly handles nested block statements `{...}` within function bodies, creating a new lexical scope and correctly tracing function calls inside them.
 
 ### Future Enhancements
 - [x] **`symgo`: Tracing and Debuggability**: Enhance the tracing mechanism to provide a more detailed view of the symbolic execution flow.

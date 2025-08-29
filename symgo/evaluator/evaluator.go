@@ -1489,7 +1489,13 @@ func (e *Evaluator) evalBlockStatement(ctx context.Context, block *ast.BlockStmt
 	// The caller is responsible for creating a new scope if one is needed.
 	// We evaluate the statements in the provided environment.
 	for _, stmt := range block.List {
-		result = e.Eval(ctx, stmt, env, pkg)
+		// If a statement is itself a block, it introduces a new lexical scope.
+		if innerBlock, ok := stmt.(*ast.BlockStmt); ok {
+			blockEnv := object.NewEnclosedEnvironment(env)
+			result = e.evalBlockStatement(ctx, innerBlock, blockEnv, pkg)
+		} else {
+			result = e.Eval(ctx, stmt, env, pkg)
+		}
 
 		// It's possible for a statement (like a declaration) to evaluate to a nil object.
 		// We must check for this before calling .Type() to avoid a panic.

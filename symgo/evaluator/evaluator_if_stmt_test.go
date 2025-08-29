@@ -84,3 +84,79 @@ func main() {
 		t.Errorf("mismatch (-want +got):\n%s", diff)
 	}
 }
+
+func TestEvaluator_IfStmt_ResultIsNil(t *testing.T) {
+	source := `
+package main
+
+func main() {
+	x := 10
+	if x > 5 {
+		// This if statement is the last statement in the function.
+		// Its result should not propagate up as the function's return value.
+	}
+}
+`
+	// setup
+	ctx := context.Background()
+	files := map[string]string{
+		"go.mod":  "module a.b/c",
+		"main.go": source,
+	}
+	dir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	// run
+	var finalResult object.Object
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
+		interp, err := symgo.NewInterpreter(s)
+		if err != nil {
+			return err
+		}
+
+		mainPkg := pkgs[0]
+		var mainFuncInfo *goscan.FunctionInfo
+		for _, f := range mainPkg.Functions {
+			if f.Name == "main" {
+				mainFuncInfo = f
+				break
+			}
+		}
+		if mainFuncInfo == nil {
+			t.Fatal("main function not found")
+		}
+
+		mainFunc := &object.Function{
+			Name:       mainFuncInfo.AstDecl.Name,
+			Parameters: mainFuncInfo.AstDecl.Type.Params,
+			Body:       mainFuncInfo.AstDecl.Body,
+			Env:        object.NewEnvironment(), // A fresh env for the function
+			Decl:       mainFuncInfo.AstDecl,
+			Package:    mainPkg,
+			Def:        mainFuncInfo,
+		}
+
+		// The call to Apply() starts the analysis from main.
+		result, err := interp.Apply(ctx, mainFunc, nil, mainPkg)
+		if err != nil {
+			return err
+		}
+		finalResult = result
+		return nil
+	}
+
+	_, err := scantest.Run(t, ctx, dir, []string{"."}, action)
+	if err != nil {
+		t.Fatalf("run failed: %+v", err)
+	}
+
+	// The result of a function that doesn't explicitly return should be NIL.
+	// The bug is that `evalIfStmt` returns a placeholder, which then becomes
+	// the return value of the whole function call.
+	if unwrapped, ok := finalResult.(*object.ReturnValue); ok {
+		finalResult = unwrapped.Value
+	}
+	if finalResult != object.NIL {
+		t.Errorf("expected result to be NIL, but got %s (%T)", finalResult.Inspect(), finalResult)
+	}
+}

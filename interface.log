@@ -1,0 +1,82 @@
+=== RUN   TestFindOrphans_interface
+time=2025-08-29T21:04:16.721Z level=DEBUG source=/app/examples/find-orphans/main.go:107 msg="no go.work file found, falling back to go.mod scan" root=/tmp/TestFindOrphans_interface4150111644/001
+time=2025-08-29T21:04:16.721Z level=DEBUG source=/app/examples/find-orphans/main.go:173 msg="creating locators for workspace" count=1 modules=[/tmp/TestFindOrphans_interface4150111644/001]
+time=2025-08-29T21:04:16.727Z level=INFO source=/app/examples/find-orphans/main.go:195 msg="* scan module" module=example.com/find-orphans-test
+time=2025-08-29T21:04:16.727Z level=DEBUG source=/app/examples/find-orphans/main.go:203 msg="resolved target packages for reporting" count=2 packages="[example.com/find-orphans-test example.com/find-orphans-test/speaker]"
+time=2025-08-29T21:04:16.727Z level=DEBUG source=/app/examples/find-orphans/main.go:211 msg="resolved scan packages for analysis" count=2 packages="[example.com/find-orphans-test example.com/find-orphans-test/speaker]"
+time=2025-08-29T21:04:16.733Z level=DEBUG source=/app/examples/find-orphans/main.go:404 msg="walking with patterns" patterns="[example.com/find-orphans-test/speaker example.com/find-orphans-test]"
+time=2025-08-29T21:04:16.733Z level=DEBUG source=/app/modulewalker.go:59 msg="ScanPackageImports CACHE MISS" importPath=example.com/find-orphans-test
+time=2025-08-29T21:04:16.733Z level=DEBUG source=/app/goscan.go:978 msg="ScanPackageByImport CACHE MISS" importPath=example.com/find-orphans-test
+time=2025-08-29T21:04:16.733Z level=DEBUG source=/app/goscan.go:989 msg="ScanPackageByImport resolved import path" importPath=example.com/find-orphans-test pkgDirAbs=/tmp/TestFindOrphans_interface4150111644/001 module=example.com/find-orphans-test
+time=2025-08-29T21:04:16.733Z level=DEBUG source=/app/goscan.go:995 msg="ScanPackageByImport found .go files" count=1 pkgDirAbs=/tmp/TestFindOrphans_interface4150111644/001 files=[/tmp/TestFindOrphans_interface4150111644/001/main.go]
+time=2025-08-29T21:04:16.733Z level=DEBUG source=/app/goscan.go:1009 msg="ScanPackageByImport symbol cache status" importPath=example.com/find-orphans-test enabled=false
+time=2025-08-29T21:04:16.733Z level=DEBUG source=/app/modulewalker.go:59 msg="ScanPackageImports CACHE MISS" importPath=example.com/find-orphans-test/speaker
+time=2025-08-29T21:04:16.734Z level=DEBUG source=/app/goscan.go:978 msg="ScanPackageByImport CACHE MISS" importPath=example.com/find-orphans-test/speaker
+time=2025-08-29T21:04:16.734Z level=DEBUG source=/app/goscan.go:989 msg="ScanPackageByImport resolved import path" importPath=example.com/find-orphans-test/speaker pkgDirAbs=/tmp/TestFindOrphans_interface4150111644/001/speaker module=example.com/find-orphans-test
+time=2025-08-29T21:04:16.734Z level=DEBUG source=/app/goscan.go:995 msg="ScanPackageByImport found .go files" count=1 pkgDirAbs=/tmp/TestFindOrphans_interface4150111644/001/speaker files=[/tmp/TestFindOrphans_interface4150111644/001/speaker/speaker.go]
+time=2025-08-29T21:04:16.734Z level=DEBUG source=/app/goscan.go:1009 msg="ScanPackageByImport symbol cache status" importPath=example.com/find-orphans-test/speaker enabled=false
+time=2025-08-29T21:04:16.734Z level=INFO source=/app/examples/find-orphans/main.go:408 msg="analysis phase" packages=2
+time=2025-08-29T21:04:16.734Z level=DEBUG source=/app/examples/find-orphans/main.go:411 msg="built interface map" interfaces=1
+time=2025-08-29T21:04:16.734Z level=DEBUG source=/app/examples/find-orphans/main.go:499 msg="running symbolic execution from entry points"
+time=2025-08-29T21:04:16.734Z level=INFO source=/app/examples/find-orphans/main.go:505 msg="** scan package" package=example.com/find-orphans-test/speaker
+time=2025-08-29T21:04:16.734Z level=DEBUG source=/app/symgo/evaluator/evaluator.go:108 msg="evaluating node" type=*ast.File pos=/tmp/TestFindOrphans_interface4150111644/001/speaker/speaker.go:2:1 source="package speaker\n\nimport \"fmt\"\n\ntype Speaker interface {\n\tSpeak()\n}\ntype Dog struct{}\n\nfunc (d *Dog) Speak()\t\t{ fmt.Println(\"woof\") }\nfunc (d *Dog) UnusedMethod()\t{}\n\ntype Cat struct{}\n\nfunc (c *Cat) Speak()\t\t{ fmt.Println(\"meow\") }\nfunc (c *Cat) UnusedMethod()\t{}\n"
+time=2025-08-29T21:04:16.734Z level=INFO source=/app/examples/find-orphans/main.go:505 msg="** scan package" package=example.com/find-orphans-test
+time=2025-08-29T21:04:16.734Z level=DEBUG source=/app/symgo/evaluator/evaluator.go:108 msg="evaluating node" type=*ast.File pos=/tmp/TestFindOrphans_interface4150111644/001/main.go:2:1 source="package main\n\nimport \"example.com/find-orphans-test/speaker\"\n\nfunc main() {\n\tvar s speaker.Speaker\n\ts = &speaker.Dog{}\n\ts.Speak()\n}\n"
+time=2025-08-29T21:04:16.734Z level=INFO source=/app/examples/find-orphans/main.go:568 msg="found main entry point(s), running in application mode" count=1
+time=2025-08-29T21:04:16.734Z level=DEBUG source=/app/examples/find-orphans/main.go:591 msg="analyzing from function" function=example.com/find-orphans-test.main
+time=2025-08-29T21:04:16.734Z level=DEBUG source=/app/symgo/evaluator/evaluator.go:2106 msg=applyFunction type=FUNCTION value="func main() { ... }"
+time=2025-08-29T21:04:16.734Z level=DEBUG source=/app/symgo/evaluator/evaluator.go:108 msg="evaluating node" type=*ast.BlockStmt pos=/tmp/TestFindOrphans_interface4150111644/001/main.go:4:13 source="{\n\tvar s speaker.Speaker\n\ts = &speaker.Dog{}\n\ts.Speak()\n}"
+time=2025-08-29T21:04:16.734Z level=DEBUG source=/app/symgo/evaluator/evaluator.go:108 msg="evaluating node" type=*ast.DeclStmt pos=/tmp/TestFindOrphans_interface4150111644/001/main.go:5:5 source="var s speaker.Speaker"
+time=2025-08-29T21:04:16.734Z level=DEBUG source=/app/symgo/evaluator/evaluator.go:108 msg="evaluating node" type=*ast.GenDecl pos=/tmp/TestFindOrphans_interface4150111644/001/main.go:5:5 source="var s speaker.Speaker"
+time=2025-08-29T21:04:16.734Z level=DEBUG source=/app/goscan.go:975 msg="ScanPackageByImport CACHE HIT" importPath=example.com/find-orphans-test/speaker types=3
+time=2025-08-29T21:04:16.734Z level=DEBUG source=/app/symgo/evaluator/evaluator.go:108 msg="evaluating node" type=*ast.AssignStmt pos=/tmp/TestFindOrphans_interface4150111644/001/main.go:6:5 source="s = &speaker.Dog{}"
+time=2025-08-29T21:04:16.734Z level=DEBUG source=/app/symgo/evaluator/evaluator.go:108 msg="evaluating node" type=*ast.UnaryExpr pos=/tmp/TestFindOrphans_interface4150111644/001/main.go:6:9 source=&speaker.Dog{}
+time=2025-08-29T21:04:16.734Z level=DEBUG source=/app/symgo/evaluator/evaluator.go:108 msg="evaluating node" type=*ast.CompositeLit pos=/tmp/TestFindOrphans_interface4150111644/001/main.go:6:10 source=speaker.Dog{}
+time=2025-08-29T21:04:16.734Z level=DEBUG source=/app/goscan.go:975 msg="ScanPackageByImport CACHE HIT" importPath=example.com/find-orphans-test/speaker types=3
+time=2025-08-29T21:04:16.734Z level=DEBUG source=/app/symgo/evaluator/evaluator.go:1749 msg="evalIdentAssignment: assigning value" var=s value_type=POINTER value_typeinfo=Dog
+time=2025-08-29T21:04:16.734Z level=DEBUG source=/app/symgo/evaluator/evaluator.go:1809 msg="evalAssignStmt: tracking concrete type for var" name=s new_type=*
+time=2025-08-29T21:04:16.734Z level=DEBUG source=/app/symgo/evaluator/evaluator.go:108 msg="evaluating node" type=*ast.ExprStmt pos=/tmp/TestFindOrphans_interface4150111644/001/main.go:7:5 source=s.Speak()
+time=2025-08-29T21:04:16.735Z level=DEBUG source=/app/symgo/evaluator/evaluator.go:108 msg="evaluating node" type=*ast.CallExpr pos=/tmp/TestFindOrphans_interface4150111644/001/main.go:7:5 source=s.Speak()
+time=2025-08-29T21:04:16.735Z level=DEBUG source=/app/symgo/evaluator/evaluator.go:1973 msg=call stack.0.func=s.Speak stack.0.pos=/tmp/TestFindOrphans_interface4150111644/001/main.go:7:5
+time=2025-08-29T21:04:16.735Z level=DEBUG source=/app/symgo/evaluator/evaluator.go:108 msg="evaluating node" type=*ast.SelectorExpr pos=/tmp/TestFindOrphans_interface4150111644/001/main.go:7:5 source=s.Speak
+time=2025-08-29T21:04:16.735Z level=DEBUG source=/app/symgo/evaluator/evaluator.go:812 msg=evalSelectorExpr selector=Speak
+time=2025-08-29T21:04:16.735Z level=DEBUG source=/app/symgo/evaluator/evaluator.go:833 msg="evalSelectorExpr: evaluated left" type=VARIABLE value=&instance<example.com/find-orphans-test/speaker.Dog>
+time=2025-08-29T21:04:16.735Z level=DEBUG source=/app/symgo/evaluator/evaluator.go:1909 msg="evalSelectorExpr: case *object.Variable" var.name=s var.value.type=POINTER var.typeinfo.name=Dog var.fieldtype=* selector=Speak
+time=2025-08-29T21:04:16.735Z level=DEBUG source=/app/goscan.go:975 msg="ScanPackageByImport CACHE HIT" importPath=example.com/find-orphans-test/speaker types=3
+time=2025-08-29T21:04:16.735Z level=DEBUG source=/app/symgo/evaluator/evaluator.go:1909 msg="findDirectMethodOnType: checking method" type=Dog method=Speak isMethodPtrRecv=true isVarPointer=true
+time=2025-08-29T21:04:16.735Z level=DEBUG source=/app/symgo/evaluator/evaluator.go:2106 msg=applyFunction type=FUNCTION value="func Speak() { ... }"
+time=2025-08-29T21:04:16.735Z level=DEBUG source=/app/symgo/evaluator/evaluator.go:108 msg="evaluating node" type=*ast.BlockStmt pos=/tmp/TestFindOrphans_interface4150111644/001/speaker/speaker.go:8:23 source="{\n\tfmt.Println(\"woof\")\n}"
+time=2025-08-29T21:04:16.735Z level=DEBUG source=/app/symgo/evaluator/evaluator.go:108 msg="evaluating node" type=*ast.ExprStmt pos=/tmp/TestFindOrphans_interface4150111644/001/speaker/speaker.go:8:25 source="fmt.Println(\"woof\")"
+time=2025-08-29T21:04:16.735Z level=DEBUG source=/app/symgo/evaluator/evaluator.go:108 msg="evaluating node" type=*ast.CallExpr pos=/tmp/TestFindOrphans_interface4150111644/001/speaker/speaker.go:8:25 source="fmt.Println(\"woof\")"
+time=2025-08-29T21:04:16.735Z level=DEBUG source=/app/symgo/evaluator/evaluator.go:1973 msg=call stack.0.func=s.Speak stack.0.pos=/tmp/TestFindOrphans_interface4150111644/001/main.go:7:5 stack.1.func=fmt.Println stack.1.pos=/tmp/TestFindOrphans_interface4150111644/001/speaker/speaker.go:8:25
+time=2025-08-29T21:04:16.735Z level=DEBUG source=/app/symgo/evaluator/evaluator.go:108 msg="evaluating node" type=*ast.SelectorExpr pos=/tmp/TestFindOrphans_interface4150111644/001/speaker/speaker.go:8:25 source=fmt.Println
+time=2025-08-29T21:04:16.735Z level=DEBUG source=/app/symgo/evaluator/evaluator.go:812 msg=evalSelectorExpr selector=Println
+time=2025-08-29T21:04:16.735Z level=DEBUG source=/app/symgo/evaluator/evaluator.go:833 msg="evalSelectorExpr: evaluated left" type=PACKAGE value="package  (\"fmt\")"
+time=2025-08-29T21:04:16.735Z level=DEBUG source=/app/goscan.go:978 msg="ScanPackageByImport CACHE MISS" importPath=fmt
+time=2025-08-29T21:04:16.735Z level=DEBUG source=/app/goscan.go:989 msg="ScanPackageByImport resolved import path" importPath=fmt pkgDirAbs=/usr/local/go/src/fmt module=example.com/find-orphans-test
+time=2025-08-29T21:04:16.735Z level=DEBUG source=/app/goscan.go:995 msg="ScanPackageByImport found .go files" count=5 pkgDirAbs=/usr/local/go/src/fmt files="[/usr/local/go/src/fmt/doc.go /usr/local/go/src/fmt/errors.go /usr/local/go/src/fmt/format.go /usr/local/go/src/fmt/print.go /usr/local/go/src/fmt/scan.go]"
+time=2025-08-29T21:04:16.735Z level=DEBUG source=/app/goscan.go:1009 msg="ScanPackageByImport symbol cache status" importPath=fmt enabled=false
+time=2025-08-29T21:04:16.742Z level=DEBUG source=/app/symgo/evaluator/evaluator.go:777 msg="populating package environment" package=fmt
+time=2025-08-29T21:04:16.742Z level=DEBUG source=/app/symgo/evaluator/evaluator.go:108 msg="evaluating node" type=*ast.BasicLit pos=/tmp/TestFindOrphans_interface4150111644/001/speaker/speaker.go:8:37 source="\"woof\""
+time=2025-08-29T21:04:16.742Z level=DEBUG source=/app/symgo/evaluator/evaluator.go:2106 msg=applyFunction type=SYMBOLIC_PLACEHOLDER value="<Symbolic: external function fmt.Println>"
+time=2025-08-29T21:04:16.742Z level=INFO source=/app/examples/find-orphans/main.go:642 msg="symbolic execution complete"
+    main_test.go:1368: find-orphans mismatch (-want +got):
+          []string{
+        + 	"(example.com/find-orphans-test/speaker.*Cat).Speak",
+		"(example.com/find-orphans-test/speaker.*Cat).UnusedMethod",
+		"(example.com/find-orphans-test/speaker.*Dog).UnusedMethod",
+          }
+
+        Full output:
+
+        -- Orphans --
+        (example.com/find-orphans-test/speaker.*Dog).UnusedMethod
+          /tmp/TestFindOrphans_interface4150111644/001/speaker/speaker.go:9:1
+        (example.com/find-orphans-test/speaker.*Cat).Speak
+          /tmp/TestFindOrphans_interface4150111644/001/speaker/speaker.go:11:1
+        (example.com/find-orphans-test/speaker.*Cat).UnusedMethod
+          /tmp/TestFindOrphans_interface4150111644/001/speaker/speaker.go:12:1
+--- FAIL: TestFindOrphans_interface (0.02s)
+FAIL
+FAIL	github.com/podhmo/go-scan/examples/find-orphans	0.029s
+FAIL

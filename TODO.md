@@ -84,6 +84,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [ ] **Generics**: The interpreter does not support generic functions or types.
 - [ ] **Channels**: The interpreter has limited support for channel operations (e.g., in `select` statements) but does not have a concrete channel object type, limiting analysis of channel-based logic.
 - [ ] **Stateful Type Tracking for Variables**: The interpreter struggles to track type information for variables that store the results of function calls. If a function `New()` returns a `*MyType`, and this is stored in a global variable `instance`, the interpreter may fail to resolve method calls like `instance.DoSomething()` later on. See [docs/trouble-symgo-state-tracking.md](./docs/trouble-symgo-state-tracking.md) for details.
+    - **Note (2025-08-29)**: An attempt to fix this by propagating type information from the RHS of an assignment to the `object.Variable` in `evalGenDecl` and `assignIdentifier` was unsuccessful. The test `symgo/integration_test/global_var_state_test.go` continues to fail. The root cause is more subtle than anticipated and requires a deeper understanding of the type resolution logic in `evalSelectorExpr` and `findMethodOnType`.
 - [ ] **Other AST Nodes**: The following `ast.Node` types are not yet handled by the main evaluation loop:
     - [ ] `*ast.ChanType`
     - [x] `*ast.Ellipsis` (Note: Implemented for variadic arguments in function calls and definitions.)

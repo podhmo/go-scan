@@ -2109,7 +2109,11 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 		// Check for recursion
 		for _, frame := range e.callStack {
 			if frame.Signature == currentSignature {
-				e.logger.Warn("infinite recursion detected, aborting", "function", f.Name.Name)
+				name := "<anonymous>"
+				if f.Name != nil {
+					name = f.Name.Name
+				}
+				e.logger.Warn("infinite recursion detected, aborting", "function", name)
 				return &object.SymbolicPlaceholder{Reason: "infinite recursion detected"}
 			}
 		}

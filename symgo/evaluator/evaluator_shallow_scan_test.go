@@ -492,7 +492,14 @@ func MyFunction(v any) {
 		if !ok {
 			return fmt.Errorf("object 'result' is not a variable, but %T", v)
 		}
-		placeholder, ok := v.Value.(*object.SymbolicPlaceholder)
+		// The value of the package-level 'result' variable is the case-local 'x' variable.
+		// We need to unwrap it to get to the placeholder.
+		interimValue := v.Value
+		if innerVar, ok := interimValue.(*object.Variable); ok {
+			interimValue = innerVar.Value
+		}
+
+		placeholder, ok := interimValue.(*object.SymbolicPlaceholder)
 		if !ok {
 			return fmt.Errorf("expected value of 'result' to be a SymbolicPlaceholder, got %T (%s)", v.Value, v.Value.Inspect())
 		}

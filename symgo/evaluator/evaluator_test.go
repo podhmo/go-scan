@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/scanner"
 	"github.com/podhmo/go-scan/scantest"
@@ -560,7 +561,15 @@ func main() {
 		if !ok {
 			return fmt.Errorf("expected return value, got %T", result)
 		}
-		if diff := cmp.Diff(&object.Integer{Value: 5}, retVal.Value); diff != "" {
+
+		// The last statement is `a`, which evaluates to a *object.Variable.
+		// The block statement returns the result of the last statement.
+		expectedVar := &object.Variable{
+			Name:  "a",
+			Value: &object.Integer{Value: 5},
+		}
+		// We don't care about the type info on the variable for this test.
+		if diff := cmp.Diff(expectedVar, retVal.Value, cmp.AllowUnexported(object.Variable{}), cmpopts.IgnoreFields(object.Variable{}, "BaseObject", "PossibleConcreteTypes")); diff != "" {
 			return fmt.Errorf("result mismatch (-want +got):\n%s", diff)
 		}
 		return nil

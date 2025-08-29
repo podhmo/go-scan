@@ -1734,6 +1734,11 @@ func (e *Evaluator) evalIdentAssignment(ctx context.Context, ident *ast.Ident, r
 		return val
 	}
 
+	// If the RHS evaluates to a variable, we want to assign its value, not the variable itself.
+	if v, ok := val.(*object.Variable); ok {
+		val = v.Value
+	}
+
 	// If the value is a return value from a function call, unwrap it.
 	if ret, ok := val.(*object.ReturnValue); ok {
 		val = ret.Value
@@ -1791,29 +1796,25 @@ func (e *Evaluator) assignIdentifier(ident *ast.Ident, val object.Object, tok to
 		return env.Set(ident.Name, val)
 	}
 
+	// Check if the variable's static type is an interface. We must do this
+	// *before* updating the variable's type to match the new concrete value.
+	var isInterface bool
+	if staticType := v.TypeInfo(); staticType != nil {
+		if staticType.Unresolved {
+			isInterface = true
+		} else if v.FieldType() != nil {
+			if resolved, _ := v.FieldType().Resolve(context.Background()); resolved != nil {
+				isInterface = resolved.Kind == scanner.InterfaceKind
+			}
+		}
+	}
+
 	v.Value = val
 	// When re-assigning a variable, we must also update its type information
 	// to reflect the new value. This is crucial for stateful analysis.
 	v.SetTypeInfo(val.TypeInfo())
 	v.SetFieldType(val.FieldType())
 	newFieldType := val.FieldType()
-
-	// Check if the variable was originally typed as an interface,
-	// or if it's an unresolved type (which we'll treat as a potential interface).
-	var isInterface bool
-	if staticType := v.TypeInfo(); staticType != nil {
-		if staticType.Unresolved {
-			// If the type is unresolved, we can't know for sure if it's an
-			// interface. To be safe and avoid losing data, we assume it is
-			// and accumulate possible concrete types.
-			isInterface = true
-		} else if v.FieldType() != nil {
-			// If the type is resolved, we can check its kind directly.
-			if resolved, _ := v.FieldType().Resolve(context.Background()); resolved != nil {
-				isInterface = resolved.Kind == scanner.InterfaceKind
-			}
-		}
-	}
 
 	if isInterface {
 		// For interfaces, we ADD the new concrete type to the set.
@@ -2115,6 +2116,11 @@ func (e *Evaluator) evalExpressions(ctx context.Context, exps []ast.Expr, env *o
 		evaluated := e.Eval(ctx, exp, env, pkg)
 		if isError(evaluated) {
 			return []object.Object{evaluated}
+		}
+		// If an argument expression evaluates to a variable, we pass the variable's
+		// value to the function, not the variable itself.
+		if v, ok := evaluated.(*object.Variable); ok {
+			evaluated = v.Value
 		}
 		result = append(result, evaluated)
 	}

@@ -545,7 +545,16 @@ func (e *Evaluator) evalStarExpr(ctx context.Context, node *ast.StarExpr, env *o
 
 	if ptr, ok := val.(*object.Pointer); ok {
 		// The value of a pointer is the object it points to.
-		return ptr.Value
+		// However, to preserve the "pointer-ness" for method calls on
+		// dereferenced pointers (e.g., `(*p).MyMethod()`), we wrap the
+		// result in a temporary variable that holds the original pointer's type.
+		v := &object.Variable{
+			Name:  "<deref>",
+			Value: ptr.Value,
+		}
+		v.SetTypeInfo(ptr.TypeInfo())
+		v.SetFieldType(ptr.FieldType())
+		return v
 	}
 
 	// If we have a symbolic placeholder that represents a pointer type,
@@ -632,14 +641,25 @@ func (e *Evaluator) evalGenDecl(ctx context.Context, node *ast.GenDecl, env *obj
 				Name:  name.Name,
 				Value: val,
 			}
-			// Propagate the type from the value to the variable.
-			v.SetTypeInfo(val.TypeInfo())
+			// The dynamic type from the RHS value is often more precise than the
+			// static type from the declaration, especially regarding pointers.
+			// We prioritize the dynamic type's FieldType.
 			v.SetFieldType(val.FieldType())
+			v.SetTypeInfo(val.TypeInfo())
 
-			// If the variable was declared with a static type, it should take precedence.
+			// If a static type was declared, we can use it to enrich the info,
+			// but we should be careful not to overwrite the more precise FieldType
+			// we just set. For example, in `var r io.Reader = new(bytes.Buffer)`,
+			// the static type is an interface, but the dynamic type `*bytes.Buffer`
+			// is what we need for method resolution.
 			if staticFieldType != nil {
-				v.SetFieldType(staticFieldType)
-				v.SetTypeInfo(resolvedTypeInfo)
+				// If the dynamic type had no info, use the static type.
+				if v.FieldType() == nil {
+					v.SetFieldType(staticFieldType)
+				}
+				if v.TypeInfo() == nil {
+					v.SetTypeInfo(resolvedTypeInfo)
+				}
 			}
 			env.Set(name.Name, v)
 		}
@@ -2564,19 +2584,25 @@ func (e *Evaluator) findDirectMethodOnType(ctx context.Context, typeInfo *scanne
 			isMethodPtrRecv := fn.Receiver.Type.IsPointer
 
 			var isVarPointer bool
-			if v, ok := receiver.(*object.Variable); ok {
+			switch r := receiver.(type) {
+			case *object.Variable:
 				// Check the variable's type, not the value's, as value might be nil.
-				if v.FieldType() != nil {
-					isVarPointer = v.FieldType().IsPointer
-				} else if v.TypeInfo() != nil {
+				if r.FieldType() != nil {
+					isVarPointer = r.FieldType().IsPointer
+				} else if r.TypeInfo() != nil {
 					// Fallback for less precise type info
-					isVarPointer = strings.HasPrefix(v.TypeInfo().Name, "*")
+					isVarPointer = strings.HasPrefix(r.TypeInfo().Name, "*")
 				}
-			} else if _, ok := receiver.(*object.Pointer); ok {
+			case *object.Pointer:
 				isVarPointer = true
-			} else if i, ok := receiver.(*object.Instance); ok {
+			case *object.Instance:
 				// An instance from a constructor like `NewFoo()` is usually a pointer.
-				isVarPointer = strings.HasPrefix(i.TypeName, "*")
+				isVarPointer = strings.HasPrefix(r.TypeName, "*")
+			case *object.SymbolicPlaceholder:
+				// A symbolic placeholder can also represent a pointer.
+				if r.FieldType() != nil {
+					isVarPointer = r.FieldType().IsPointer
+				}
 			}
 
 			if isMethodPtrRecv && !isVarPointer {

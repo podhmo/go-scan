@@ -83,7 +83,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] **Function Literals as Return Values**: The interpreter now correctly traces calls inside closures that are returned from other functions by ensuring that package-level environments are correctly populated and captured.
 - [ ] **Generics**: The interpreter does not support generic functions or types.
 - [ ] **Channels**: The interpreter has limited support for channel operations (e.g., in `select` statements) but does not have a concrete channel object type, limiting analysis of channel-based logic.
-- [-] **Stateful Type Tracking for Variables**: Partially implemented. A fix for simple variable declarations was added, but it causes regressions in pointer-dereferencing and intra-package method calls. See [docs/trouble-symgo-state-tracking.md](./docs/trouble-symgo-state-tracking.md) for a detailed analysis of the regressions.
+- [x] **Stateful Type Tracking for Variables**: The `symgo` evaluator now correctly propagates type information (including pointer-ness) for variables during assignments and declarations. This allows for accurate method resolution on variables holding concrete types, pointer types, and interfaces, fixing several state-tracking-related bugs.
 - [ ] **Other AST Nodes**: The following `ast.Node` types are not yet handled by the main evaluation loop:
     - [ ] `*ast.ChanType`
     - [x] `*ast.Ellipsis` (Note: Implemented for variadic arguments in function calls and definitions.)

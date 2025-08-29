@@ -1,0 +1,6 @@
+=== RUN   TestEval_StarExpr_PointerDeref
+    evaluator_unary_test.go:86: scantest.Run() failed: action: evaluation failed unexpectedly: undefined method: MyMethod on example.com/me.MyType
+--- FAIL: TestEval_StarExpr_PointerDeref (0.01s)
+FAIL
+FAIL	github.com/podhmo/go-scan/symgo/evaluator	0.013s
+FAIL

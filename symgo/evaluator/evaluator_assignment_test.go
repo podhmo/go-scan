@@ -111,3 +111,71 @@ func main() {
 		t.Errorf("assigned value is wrong, want 'hello', got %q", str.Value)
 	}
 }
+
+func TestAssignmentToFieldOfTypeAssertion(t *testing.T) {
+	// This test verifies that a complex assignment like `v.(*S).X = 10` is
+	// correctly evaluated. The fix involves ensuring that the LHS of the
+	// assignment is evaluated, tracing any calls within it.
+	var checkCalled bool
+
+	dir, cleanup := scantest.WriteFiles(t, map[string]string{
+		"go.mod": "module myapp\ngo 1.22",
+		"main.go": `
+package main
+
+type S struct { X int }
+
+func check(v any) {}
+
+func main() {
+	var v any = &S{X: 0}
+	v.(*S).X = 10
+	check(v)
+}`,
+	})
+	defer cleanup()
+
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
+		pkg := pkgs[0]
+		interp, err := symgo.NewInterpreter(s, symgo.WithLogger(s.Logger))
+		if err != nil {
+			return err
+		}
+
+		// This intrinsic will be called at the end of main. We can inspect the
+		// state of 'v' when it's called.
+		interp.RegisterIntrinsic("myapp.check", func(i *symgo.Interpreter, args []symgo.Object) symgo.Object {
+			checkCalled = true
+			return nil
+		})
+
+		mainFile, err := lookupFile(pkg, "main.go")
+		if err != nil {
+			return err
+		}
+
+		if _, err := interp.Eval(ctx, mainFile, pkg); err != nil {
+			return fmt.Errorf("initial eval failed: %w", err)
+		}
+
+		mainFn, ok := interp.FindObject("main")
+		if !ok {
+			return fmt.Errorf("main func not found")
+		}
+
+		// Run main(). With the fix, this should no longer error out.
+		_, err = interp.Apply(ctx, mainFn, nil, pkg)
+		if err != nil {
+			return fmt.Errorf("Apply failed unexpectedly: %w", err)
+		}
+		return nil
+	}
+
+	if _, err := scantest.Run(t, context.Background(), dir, []string{"."}, action); err != nil {
+		t.Fatalf("scantest.Run failed: %v", err)
+	}
+
+	if !checkCalled {
+		t.Fatalf("the check() function was not called, indicating evaluation did not complete")
+	}
+}

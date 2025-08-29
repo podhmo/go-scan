@@ -1685,8 +1685,10 @@ func (e *Evaluator) evalAssignStmt(ctx context.Context, n *ast.AssignStmt, env *
 			}
 			return e.evalIdentAssignment(ctx, lhs, n.Rhs[0], n.Tok, env, pkg)
 		case *ast.SelectorExpr:
-			// For now, we don't model state changes on fields, but we evaluate the RHS
-			// to trace any function calls.
+			// This is an assignment to a field, like `foo.Bar = 1`.
+			// We need to evaluate the `foo` part (lhs.X) to trace any calls within it.
+			e.Eval(ctx, lhs.X, env, pkg)
+			// Then evaluate the RHS.
 			e.Eval(ctx, n.Rhs[0], env, pkg)
 			return nil
 		default:

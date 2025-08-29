@@ -1528,7 +1528,7 @@ func (e *Evaluator) evalIfStmt(ctx context.Context, n *ast.IfStmt, env *object.E
 	// to see all possible calls.
 	// A more sophisticated, path-sensitive analysis would require a different
 	// approach.
-	return &object.SymbolicPlaceholder{Reason: "if/else statement"}
+	return nil
 }
 
 func (e *Evaluator) evalBlockStatement(ctx context.Context, block *ast.BlockStmt, env *object.Environment, pkg *scanner.PackageInfo) object.Object {

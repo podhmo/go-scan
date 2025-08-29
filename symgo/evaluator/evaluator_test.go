@@ -790,14 +790,8 @@ func TestEvalIfElseStmt(t *testing.T) {
 		AstFiles: map[string]*ast.File{"main.go": f},
 	})
 
-	placeholder, ok := evaluated.(*object.SymbolicPlaceholder)
-	if !ok {
-		t.Fatalf("object is not SymbolicPlaceholder. got=%T (%+v)", evaluated, evaluated)
-	}
-
-	expectedReason := "if/else statement"
-	if placeholder.Reason != expectedReason {
-		t.Errorf("placeholder has wrong reason. want=%q, got=%q", expectedReason, placeholder.Reason)
+	if evaluated != nil {
+		t.Fatalf("expected result of if statement to be nil, but got %T (%+v)", evaluated, evaluated)
 	}
 }
 

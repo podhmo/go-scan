@@ -86,7 +86,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] **Stateful Type Tracking for Variables**: The `symgo` evaluator now correctly propagates type information (including pointer-ness) for variables during assignments and declarations. This allows for accurate method resolution on variables holding concrete types, pointer types, and interfaces, fixing several state-tracking-related bugs.
 - [x] **LHS of Assignments**: The interpreter now evaluates expressions on the left-hand side of field assignments (e.g., in `foo.bar = baz`), ensuring that function calls or type assertions within `foo` are correctly traced.
 - [ ] **Other AST Nodes**: The following `ast.Node` types are not yet handled by the main evaluation loop:
-    - [x] `*ast.IfStmt` (Note: The interpreter now correctly evaluates the `Cond` expression, in addition to the `Init` statement and `Body`/`Else` blocks.)
+    - [x] `*ast.IfStmt` (Note: The interpreter now correctly evaluates the `Cond` expression, in addition to the `Init` statement and `Body`/`Else` blocks. A follow-up fix ensures that evaluation correctly continues after the `if` statement, resolving a regression in `docgen`.)
     - [ ] `*ast.ChanType`
     - [x] `*ast.Ellipsis` (Note: Implemented for variadic arguments in function calls and definitions.)
     - [ ] `*ast.FuncType`

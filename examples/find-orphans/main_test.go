@@ -88,6 +88,104 @@ func IgnoredFunc() {}
 	}
 }
 
+func TestFindOrphans_MultiMain(t *testing.T) {
+	files := map[string]string{
+		"workspace/go.work": `
+go 1.21
+use (
+	./cmda
+	./cmdb
+)
+`,
+		"workspace/cmda/go.mod": "module example.com/cmda\ngo 1.21\nreplace example.com/cmdb => ../cmdb\n",
+		"workspace/cmda/main.go": `
+package main
+func main() {
+    usedByCmdA()
+}
+func usedByCmdA() {}
+func unusedInA() {}
+`,
+		"workspace/cmdb/go.mod": "module example.com/cmdb\ngo 1.21\nreplace example.com/cmda => ../cmda\n",
+		"workspace/cmdb/main.go": `
+package main
+func main() {
+    usedByCmdB()
+}
+func usedByCmdB() {}
+func unusedInB() {}
+`,
+	}
+	dir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	log.SetOutput(io.Discard)
+
+	workspaceRoot := filepath.Join(dir, "workspace")
+	startPatterns := []string{"./..."}
+
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get wd: %v", err)
+	}
+	if err := os.Chdir(workspaceRoot); err != nil {
+		t.Fatalf("failed to change wd: %v", err)
+	}
+	defer os.Chdir(oldWd)
+
+	// Run in auto mode. It should detect both main packages.
+	err = run(context.Background(), true, false, ".", false, false, "auto", startPatterns, []string{"testdata", "vendor"})
+	if err != nil {
+		t.Fatalf("run() failed: %v", err)
+	}
+
+	w.Close()
+	os.Stdout = oldStdout
+
+	var buf bytes.Buffer
+	io.Copy(&buf, r)
+	output := buf.String()
+
+	// ASSERT: Neither of the used functions should be orphans.
+	if strings.Contains(output, "usedByCmdA") {
+		t.Errorf("usedByCmdA was reported as an orphan, but it is used by cmda/main.go")
+	}
+	if strings.Contains(output, "usedByCmdB") {
+		t.Errorf("usedByCmdB was reported as an orphan, but it is used by cmdb/main.go")
+	}
+
+	// ASSERT: Both unused functions SHOULD be orphans.
+	if !strings.Contains(output, "unusedInA") {
+		t.Errorf("unusedInA was not reported as an orphan")
+	}
+	if !strings.Contains(output, "unusedInB") {
+		t.Errorf("unusedInB was not reported as an orphan")
+	}
+
+	// ASSERT: Check the exact list of orphans.
+	expectedOrphans := []string{
+		"example.com/cmda.unusedInA",
+		"example.com/cmdb.unusedInB",
+	}
+	sort.Strings(expectedOrphans)
+
+	var foundOrphans []string
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	for _, line := range lines {
+		if strings.HasPrefix(line, "example.com") {
+			foundOrphans = append(foundOrphans, line)
+		}
+	}
+	sort.Strings(foundOrphans)
+
+	if diff := cmp.Diff(expectedOrphans, foundOrphans); diff != "" {
+		t.Errorf("find-orphans mismatch (-want +got):\n%s\nFull output:\n%s", diff, output)
+	}
+}
+
 func TestFindOrphans_SubtestUsage(t *testing.T) {
 	files := map[string]string{
 		"go.mod": "module example.com/subtest-usage\ngo 1.21\n",

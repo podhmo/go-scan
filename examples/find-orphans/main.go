@@ -498,7 +498,7 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool) error {
 
 	slog.DebugContext(ctx, "running symbolic execution from entry points")
 	// First, find all potential entry points.
-	var mainEntryPoint *object.Function
+	var mainEntryPoints []*object.Function
 	var libraryEntryPoints []*object.Function
 
 	for _, pkg := range a.packages {
@@ -529,7 +529,7 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool) error {
 			isExported := fnInfo.AstDecl.Name.IsExported()
 
 			if isMain {
-				mainEntryPoint = fn
+				mainEntryPoints = append(mainEntryPoints, fn)
 			}
 
 			if isExported || isInit {
@@ -545,27 +545,27 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool) error {
 
 	switch a.mode {
 	case "app":
-		if mainEntryPoint == nil {
+		if len(mainEntryPoints) == 0 {
 			return fmt.Errorf("application mode specified, but no main entry point was found")
 		}
-		analysisFns = []*object.Function{mainEntryPoint}
+		analysisFns = mainEntryPoints
 		isAppMode = true
-		slog.InfoContext(ctx, "running in forced application mode")
+		slog.InfoContext(ctx, "running in forced application mode", "entry_points", len(mainEntryPoints))
 	case "lib":
 		analysisFns = libraryEntryPoints
-		if mainEntryPoint != nil {
-			// Add main if it exists. It won't be in libraryEntryPoints because it's not exported.
-			analysisFns = append(analysisFns, mainEntryPoint)
+		if len(mainEntryPoints) > 0 {
+			// Add main functions if they exist. They won't be in libraryEntryPoints because they're not exported.
+			analysisFns = append(analysisFns, mainEntryPoints...)
 		}
 		isAppMode = false // Explicitly false for library mode
 		slog.InfoContext(ctx, "running in forced library mode", "analysis_functions", len(analysisFns))
 	case "auto":
 		fallthrough
 	default: // auto
-		if mainEntryPoint != nil {
-			analysisFns = []*object.Function{mainEntryPoint}
+		if len(mainEntryPoints) > 0 {
+			analysisFns = mainEntryPoints
 			isAppMode = true
-			slog.InfoContext(ctx, "found main entry point, running in application mode")
+			slog.InfoContext(ctx, "found main entry point(s), running in application mode", "count", len(mainEntryPoints))
 		} else {
 			analysisFns = libraryEntryPoints
 			isAppMode = false

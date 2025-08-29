@@ -609,6 +609,11 @@ func (e *Evaluator) evalGenDecl(ctx context.Context, node *ast.GenDecl, env *obj
 				if isError(val) {
 					return val
 				}
+				// The result of an expression (like a function call) might be wrapped in a ReturnValue.
+				// We must unwrap it to get the actual value before creating the variable.
+				if ret, ok := val.(*object.ReturnValue); ok {
+					val = ret.Value
+				}
 			}
 
 			var resolvedTypeInfo *scanner.TypeInfo
@@ -626,10 +631,15 @@ func (e *Evaluator) evalGenDecl(ctx context.Context, node *ast.GenDecl, env *obj
 			v := &object.Variable{
 				Name:  name.Name,
 				Value: val,
-				BaseObject: object.BaseObject{
-					ResolvedTypeInfo:  resolvedTypeInfo,
-					ResolvedFieldType: staticFieldType,
-				},
+			}
+			// Propagate the type from the value to the variable.
+			v.SetTypeInfo(val.TypeInfo())
+			v.SetFieldType(val.FieldType())
+
+			// If the variable was declared with a static type, it should take precedence.
+			if staticFieldType != nil {
+				v.SetFieldType(staticFieldType)
+				v.SetTypeInfo(resolvedTypeInfo)
 			}
 			env.Set(name.Name, v)
 		}
@@ -2551,7 +2561,7 @@ func (e *Evaluator) findDirectMethodOnType(ctx context.Context, typeInfo *scanne
 			// This is a potential match. Now check pointer compatibility.
 			// If method has pointer receiver, variable must be a pointer.
 			// If method has value receiver, variable can be value or pointer.
-			isMethodPtrRecv := strings.HasPrefix(recvTypeName, "*")
+			isMethodPtrRecv := fn.Receiver.Type.IsPointer
 
 			var isVarPointer bool
 			if v, ok := receiver.(*object.Variable); ok {

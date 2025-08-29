@@ -2202,7 +2202,7 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 		}
 
 		// Case 2: The placeholder represents an external function call.
-		if fn.UnderlyingFunc != nil && fn.Package != nil {
+		if fn.UnderlyingFunc != nil && fn.UnderlyingFunc.AstDecl != nil && fn.Package != nil {
 			results := fn.UnderlyingFunc.AstDecl.Type.Results
 			if results == nil || len(results.List) == 0 {
 				return &object.SymbolicPlaceholder{Reason: "result of external call with no return value"}

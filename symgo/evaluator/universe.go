@@ -32,6 +32,23 @@ var universe *universeScope
 func init() {
 	funcs := intrinsics.New()
 	funcs.Register("panic", intrinsics.BuiltinPanic)
+	funcs.Register("make", intrinsics.BuiltinMake)
+	funcs.Register("append", intrinsics.BuiltinAppend)
+	funcs.Register("len", intrinsics.BuiltinLen)
+	funcs.Register("cap", intrinsics.BuiltinCap)
+	funcs.Register("new", intrinsics.BuiltinNew)
+	funcs.Register("copy", intrinsics.BuiltinCopy)
+	funcs.Register("delete", intrinsics.BuiltinDelete)
+	funcs.Register("close", intrinsics.BuiltinClose)
+	funcs.Register("clear", intrinsics.BuiltinClear)
+	funcs.Register("complex", intrinsics.BuiltinComplex)
+	funcs.Register("real", intrinsics.BuiltinReal)
+	funcs.Register("imag", intrinsics.BuiltinImag)
+	funcs.Register("max", intrinsics.BuiltinMax)
+	funcs.Register("min", intrinsics.BuiltinMin)
+	funcs.Register("print", intrinsics.BuiltinPrint)
+	funcs.Register("println", intrinsics.BuiltinPrintln)
+	funcs.Register("recover", intrinsics.BuiltinRecover)
 
 	vals := make(map[string]object.Object)
 	vals["nil"] = object.NIL

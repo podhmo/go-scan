@@ -5,7 +5,10 @@ import (
 	"fmt"
 	"go/token"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/podhmo/go-scan/scantest"
 )
 
 // MockResolver is a mock implementation of PackageResolver for tests.
@@ -358,7 +361,6 @@ func TestResolve_DirectRecursion(t *testing.T) {
 	// The most important part of this test is that the Resolve call returns without a stack overflow.
 	// If we reach here, the test is largely successful.
 }
-
 
 // This is a regression test for the bug where the dominant package name logic
 // was too lenient and would silently drop files from a `main` package.

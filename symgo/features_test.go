@@ -86,6 +86,77 @@ func main() {
 	}
 }
 
+func TestFeature_CharLiteral(t *testing.T) {
+	files := map[string]string{
+		"go.mod": "module example.com/me",
+		"main.go": `package main
+
+func getChar() rune {
+	return 'a'
+}
+
+func main() {
+	_ = getChar()
+}`,
+	}
+
+	dir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	var capturedValue object.Object
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
+		pkg := pkgs[0]
+		interp, err := symgo.NewInterpreter(s, symgo.WithLogger(s.Logger))
+		if err != nil {
+			return err
+		}
+		env := symgo.NewEnclosedEnvironment(nil)
+
+		for _, file := range pkg.AstFiles {
+			_, err := interp.EvalWithEnv(ctx, file, env, pkg)
+			if err != nil {
+				return err
+			}
+		}
+
+		getCharFn, ok := env.Get("getChar")
+		if !ok {
+			return fmt.Errorf("getChar function not found")
+		}
+
+		result, applyErr := interp.Apply(ctx, getCharFn, []symgo.Object{}, pkg)
+		if applyErr != nil {
+			return fmt.Errorf("Apply(getChar) failed: %w", applyErr)
+		}
+
+		retVal, ok := result.(*object.ReturnValue)
+		if !ok {
+			return fmt.Errorf("expected ReturnValue, got %T", result)
+		}
+		capturedValue = retVal.Value
+
+		return nil
+	}
+
+	if _, err := scantest.Run(t, context.Background(), dir, []string{"."}, action); err != nil {
+		t.Fatalf("scantest.Run() failed: %v", err)
+	}
+
+	if capturedValue == nil {
+		t.Fatalf("did not capture any value")
+	}
+
+	intVal, ok := capturedValue.(*object.Integer)
+	if !ok {
+		t.Fatalf("expected captured value to be *object.Integer, but got %T", capturedValue)
+	}
+
+	expected := int64(97) // 'a'
+	if intVal.Value != expected {
+		t.Errorf("char literal value is wrong\nwant: %d\ngot:  %d", expected, intVal.Value)
+	}
+}
+
 func TestSymgo_ReturnedFunctionClosure(t *testing.T) {
 	files := map[string]string{
 		"go.mod": "module example.com/func-return\n\ngo 1.21\n",

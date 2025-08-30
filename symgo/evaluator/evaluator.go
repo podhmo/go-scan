@@ -1989,6 +1989,18 @@ func (e *Evaluator) evalBasicLit(n *ast.BasicLit) object.Object {
 			return e.newError(n.Pos(), "could not unquote string %q", n.Value)
 		}
 		return &object.String{Value: s}
+	case token.CHAR:
+		s, err := strconv.Unquote(n.Value)
+		if err != nil {
+			return e.newError(n.Pos(), "could not unquote char %q", n.Value)
+		}
+		// A char literal unquotes to a string containing the single character.
+		// We take the first (and only) rune from that string.
+		if len(s) == 0 {
+			return e.newError(n.Pos(), "invalid empty char literal %q", n.Value)
+		}
+		runes := []rune(s)
+		return &object.Integer{Value: int64(runes[0])}
 	case token.FLOAT:
 		f, err := strconv.ParseFloat(n.Value, 64)
 		if err != nil {

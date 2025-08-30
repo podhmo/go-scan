@@ -756,17 +756,34 @@ func (e *Evaluator) evalImportSpec(spec ast.Spec, env *object.Environment) objec
 
 	var pkgName string
 	if importSpec.Name != nil {
+		// This is a renamed import, e.g., `import i "io"`. The name is `i`.
 		pkgName = importSpec.Name.Name
 	} else {
-		pkgName = path.Base(importPath)
+		// For a standard import, we must find the package's actual declared name
+		// by scanning it, as it can differ from the last element of the import path.
+		// e.g., `import "github.com/mattn/go-isatty"` has package name `isatty`.
+		// e.g., `import "gopkg.in/yaml.v2"` has package name `yaml`.
+		pkgInfo, err := e.scanner.ScanPackageByImport(context.Background(), importPath)
+		if err != nil {
+			// This can happen for CGo packages ("C") or other special cases.
+			// In these situations, falling back to the path-based heuristic is
+			// the most robust option.
+			e.logWithContext(context.Background(), slog.LevelDebug, "could not scan imported package to find its name, falling back to heuristic", "path", importPath, "error", err)
+			pkgName = path.Base(importPath)
+		} else {
+			pkgName = pkgInfo.Name // Use the authoritative name from the `package <name>` declaration.
+		}
 	}
 
-	pkg := &object.Package{
-		Name: pkgName,
-		Path: importPath,
-		Env:  object.NewEnvironment(),
+	// The key in the environment MUST match the name used in the code.
+	if _, ok := env.Get(pkgName); !ok {
+		pkg := &object.Package{
+			Name: pkgName,
+			Path: importPath,
+			Env:  object.NewEnvironment(),
+		}
+		env.Set(pkgName, pkg)
 	}
-	env.Set(pkgName, pkg)
 	return nil
 }
 

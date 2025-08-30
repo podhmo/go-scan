@@ -961,9 +961,22 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 					Receiver: val,
 				}
 			}
+
+			// If it's not a method, check if it's a field on a struct.
+			if typeInfo.Struct != nil {
+				for _, field := range typeInfo.Struct.Fields {
+					if field.Name == n.Sel.Name {
+						fieldTypeInfo, _ := field.Type.Resolve(ctx)
+						return &object.SymbolicPlaceholder{
+							BaseObject: object.BaseObject{ResolvedTypeInfo: fieldTypeInfo, ResolvedFieldType: field.Type},
+							Reason:     fmt.Sprintf("field access on symbolic value %s.%s", val.Reason, field.Name),
+						}
+					}
+				}
+			}
 		}
 
-		return e.newError(n.Pos(), "undefined method: %s on symbolic type %s", n.Sel.Name, fullTypeName)
+		return e.newError(n.Pos(), "undefined method or field: %s on symbolic type %s", n.Sel.Name, fullTypeName)
 
 	case *object.Package:
 		if val.ScannedInfo == nil {

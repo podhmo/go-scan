@@ -8,6 +8,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"go/parser"
+	"go/token"
+	"path"
 	"runtime"
 	"strings"
 
@@ -483,6 +486,65 @@ func parseReplaceLine(line string) (ReplaceDirective, error) {
 	}
 
 	return dir, nil
+}
+
+// listGoFiles lists all .go files in a directory.
+// It excludes _test.go files.
+// It returns a list of absolute file paths.
+func listGoFiles(dirPath string) ([]string, error) {
+	var files []string
+	entries, err := os.ReadDir(dirPath)
+	if err != nil {
+		return nil, fmt.Errorf("listGoFiles: failed to read dir %s: %w", dirPath, err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+
+		absPath, err := filepath.Abs(filepath.Join(dirPath, name))
+		if err != nil {
+			return nil, fmt.Errorf("listGoFiles: could not get absolute path for %s: %w", name, err)
+		}
+		files = append(files, absPath)
+	}
+	return files, nil
+}
+
+// ResolvePackageName finds the actual package name (from the 'package' declaration)
+// for a given import path.
+func (l *Locator) ResolvePackageName(importPath string) (string, error) {
+	pkgDir, err := l.FindPackageDir(importPath)
+	if err != nil {
+		return "", fmt.Errorf("could not find directory for import path %q: %w", importPath, err)
+	}
+
+	goFiles, err := listGoFiles(pkgDir)
+	if err != nil {
+		return "", fmt.Errorf("could not list go files for import path %q in dir %s: %w", importPath, pkgDir, err)
+	}
+	if len(goFiles) == 0 {
+		// A directory with no .go files is not a package, but this can happen for
+		// parent paths of modules. Return the base of the import path as a fallback.
+		return path.Base(importPath), nil
+	}
+
+	// Parse just the package clause of the first file. This is fast.
+	// We assume all files in the directory have the same package name.
+	fset := token.NewFileSet()
+	fileAst, err := parser.ParseFile(fset, goFiles[0], nil, parser.PackageClauseOnly)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse package clause for %s: %w", goFiles[0], err)
+	}
+
+	if fileAst.Name == nil {
+		return "", fmt.Errorf("could not determine package name for %s", goFiles[0])
+	}
+	return fileAst.Name.Name, nil
 }
 
 // PathToImport converts an absolute directory path to its corresponding Go import path.

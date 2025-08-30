@@ -758,7 +758,20 @@ func (e *Evaluator) evalImportSpec(spec ast.Spec, env *object.Environment) objec
 	if importSpec.Name != nil {
 		pkgName = importSpec.Name.Name
 	} else {
-		pkgName = path.Base(importPath)
+		var err error
+		// Use the locator to find the real package name from its source files.
+		if e.scanner == nil || e.scanner.Locator() == nil {
+			// This should not happen in normal operation, but as a fallback...
+			pkgName = path.Base(importPath)
+		} else {
+			pkgName, err = e.scanner.Locator().ResolvePackageName(importPath)
+			if err != nil {
+				// This can happen for packages that don't exist or have issues.
+				// Fallback to the old heuristic and log a warning.
+				e.logger.Warn("could not resolve package name, falling back to path base", "importPath", importPath, "error", err)
+				pkgName = path.Base(importPath)
+			}
+		}
 	}
 
 	pkg := &object.Package{
@@ -864,7 +877,14 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 	case *object.SymbolicPlaceholder:
 		typeInfo := val.TypeInfo()
 		if typeInfo == nil {
-			return e.newError(n.Pos(), "cannot call method on symbolic placeholder with no type info")
+			// If we have no type info, we can't look up a method.
+			// The most robust thing to do is to assume the call is valid
+			// and return another placeholder representing the function itself.
+			// `applyFunction` will then handle the "call" to this placeholder.
+			return &object.SymbolicPlaceholder{
+				Reason:   fmt.Sprintf("symbolic method call %s on untyped symbolic value", n.Sel.Name),
+				Receiver: val,
+			}
 		}
 		fullTypeName := fmt.Sprintf("%s.%s", typeInfo.PkgPath, typeInfo.Name)
 		key := fmt.Sprintf("(*%s).%s", fullTypeName, n.Sel.Name)

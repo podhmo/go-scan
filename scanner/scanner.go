@@ -977,7 +977,32 @@ func (s *Scanner) TypeInfoFromExpr(ctx context.Context, expr ast.Expr, currentTy
 		ft.MapKey = s.TypeInfoFromExpr(ctx, t.Key, currentTypeParams, info, importLookup)
 		ft.Elem = s.TypeInfoFromExpr(ctx, t.Value, currentTypeParams, info, importLookup)
 	case *ast.InterfaceType:
-		ft.Name = "interface{}"
+		// Parse the anonymous interface to get its structure.
+		interfaceInfo := s.parseInterfaceType(ctx, t, currentTypeParams, info, importLookup)
+		// Create a synthetic TypeInfo to hold this structure.
+		// This TypeInfo is "anonymous" (has no name).
+		anonymousTypeInfo := &TypeInfo{
+			Name:      "", // Anonymous
+			Kind:      InterfaceKind,
+			Interface: interfaceInfo,
+			PkgPath:   info.ImportPath, // Belongs to the package where it's defined.
+		}
+		// The FieldType's Definition points to our synthetic TypeInfo.
+		ft.Definition = anonymousTypeInfo
+		ft.Name = "interface{...}" // A more descriptive name for debugging.
+		return ft
+	case *ast.StructType:
+		// This case was missing. Handle anonymous structs similarly.
+		structInfo := s.parseStructType(ctx, t, currentTypeParams, info, importLookup)
+		anonymousTypeInfo := &TypeInfo{
+			Name:    "", // Anonymous
+			Kind:    StructKind,
+			Struct:  structInfo,
+			PkgPath: info.ImportPath,
+		}
+		ft.Definition = anonymousTypeInfo
+		ft.Name = "struct{...}"
+		return ft
 	case *ast.Ellipsis:
 		ft.IsSlice = true
 		ft.Name = "slice"

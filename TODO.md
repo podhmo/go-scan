@@ -88,15 +88,16 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [ ] **Channels**: The interpreter has limited support for channel operations (e.g., in `select` statements) but does not have a concrete channel object type, limiting analysis of channel-based logic.
 - [x] **Stateful Type Tracking for Variables**: The `symgo` evaluator now correctly propagates type information (including pointer-ness) for variables during assignments and declarations. This allows for accurate method resolution on variables holding concrete types, pointer types, and interfaces, fixing several state-tracking-related bugs.
 - [x] **LHS of Assignments**: The interpreter now evaluates expressions on the left-hand side of field assignments (e.g., in `foo.bar = baz`), ensuring that function calls or type assertions within `foo` are correctly traced.
+- [x] **Anonymous Types**: The scanner now correctly parses anonymous `interface` and `struct` types in expressions (such as function parameters), preserving their structural definitions for the `symgo` interpreter.
 - [ ] **Other AST Nodes**: The following `ast.Node` types are not yet handled by the main evaluation loop:
     - [x] **Intra-package unexported constant/variable resolution**: The interpreter now correctly resolves unexported package-level constants and variables that are referenced from within a function in the same package by pre-loading them into the environment.
     - [x] `*ast.IfStmt` (Note: The interpreter now correctly evaluates the `Cond` expression, in addition to the `Init` statement and `Body`/`Else` blocks. A follow-up fix ensures that evaluation correctly continues after the `if` statement, resolving a regression in `docgen`.)
     - [ ] `*ast.ChanType`
     - [x] `*ast.Ellipsis` (Note: Implemented for variadic arguments in function calls and definitions.)
     - [ ] `*ast.FuncType`
-    - [ ] `*ast.InterfaceType`
+    - [x] `*ast.InterfaceType`
     - [ ] `*ast.MapType`
-    - [ ] `*ast.StructType`
+    - [x] `*ast.StructType`
     - [x] `*ast.EmptyStmt`
     - [x] `*ast.IncDecStmt`
     - [ ] `*ast.LabeledStmt`

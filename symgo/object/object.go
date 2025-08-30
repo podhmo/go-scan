@@ -285,6 +285,12 @@ func (e *Error) Type() ObjectType { return ERROR_OBJ }
 
 // Inspect returns a formatted string representation of the error, including the call stack.
 func (e *Error) Inspect() string {
+	return e.Error()
+}
+
+// Error returns a formatted string representation of the error, including the call stack,
+// satisfying the Go `error` interface.
+func (e *Error) Error() string {
 	var out bytes.Buffer
 
 	out.WriteString("symgo runtime error: ")

@@ -524,15 +524,25 @@ func (e *Evaluator) evalStringInfixExpression(pos token.Pos, op token.Token, lef
 }
 
 func (e *Evaluator) evalUnaryExpr(ctx context.Context, node *ast.UnaryExpr, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
+	right := e.Eval(ctx, node.X, env, pkg)
+	if isError(right) {
+		return right
+	}
+
 	switch node.Op {
+	case token.NOT:
+		return e.evalBangOperatorExpression(right)
+	case token.SUB, token.ADD, token.XOR:
+		return e.evalNumericUnaryExpression(node.Op, right)
 	case token.AND:
+		// This is the address-of operator, not a typical unary op on a value.
+		// It needs to be handled specially as it operates on identifiers/expressions, not resolved objects.
+		// Re-evaluating node.X might be redundant but safer.
 		val := e.Eval(ctx, node.X, env, pkg)
 		if isError(val) {
 			return val
 		}
 		ptr := &object.Pointer{Value: val}
-
-		// Create a new FieldType for the pointer.
 		if originalFieldType := val.FieldType(); originalFieldType != nil {
 			pointerFieldType := &scanner.FieldType{
 				IsPointer: true,
@@ -546,8 +556,46 @@ func (e *Evaluator) evalUnaryExpr(ctx context.Context, node *ast.UnaryExpr, env 
 		// For a channel receive `<-ch`, we just need to evaluate `ch` itself
 		// to trace any function calls that produce the channel.
 		return e.Eval(ctx, node.X, env, pkg)
+	default:
+		return e.newError(node.Pos(), "unknown unary operator: %s", node.Op)
 	}
-	return e.newError(node.Pos(), "unknown unary operator: %s", node.Op)
+}
+
+func (e *Evaluator) evalBangOperatorExpression(right object.Object) object.Object {
+	switch right {
+	case object.TRUE:
+		return object.FALSE
+	case object.FALSE:
+		return object.TRUE
+	case object.NIL:
+		return object.TRUE
+	default:
+		// In Go, `!` is only for booleans. For symbolic execution,
+		// we might encounter other types. We'll treat them as "truthy"
+		// (so !non-boolean is false), which is a common scripty behavior,
+		// but a more rigorous implementation might error here.
+		return object.FALSE
+	}
+}
+
+func (e *Evaluator) evalNumericUnaryExpression(op token.Token, right object.Object) object.Object {
+	if right.Type() != object.INTEGER_OBJ {
+		// Allow unary minus on floats and complex numbers later if needed.
+		return e.newError(token.NoPos, "unary operator %s not supported for type %s", op, right.Type())
+	}
+	value := right.(*object.Integer).Value
+
+	switch op {
+	case token.SUB:
+		return &object.Integer{Value: -value}
+	case token.ADD:
+		return &object.Integer{Value: value} // Unary plus is a no-op.
+	case token.XOR:
+		return &object.Integer{Value: ^value} // Bitwise NOT.
+	default:
+		// This case should be unreachable due to the switch in evalUnaryExpr.
+		return e.newError(token.NoPos, "unhandled numeric unary operator: %s", op)
+	}
 }
 
 func (e *Evaluator) evalStarExpr(ctx context.Context, node *ast.StarExpr, env *object.Environment, pkg *scanner.PackageInfo) object.Object {

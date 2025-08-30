@@ -250,32 +250,91 @@ func (e *Evaluator) findDirectMethodOnType(ctx context.Context, typeInfo *scanne
 }
 ```
 
-#### 2.1.7. Simplify `evalSelectorExpr`
+## 3. Respecting the Scan Policy
 
-Remove the now-redundant logic from `case *object.Variable:` as it is handled by the improved `findDirectMethodOnType`.
+A critical aspect of the fix is to correctly handle packages that are outside the defined `scanPolicy`. For these packages, the evaluator should not have access to internal details like unexported constants.
+
+The `getOrLoadPackage` function will still use `ScanPackageByImport` to get package metadata (like the correct package name), but the subsequent population of the environment must respect the policy.
+
+### Step 3.1: Modify `ensurePackageEnvPopulated`
+
+The `ensurePackageEnvPopulated` function in `symgo/evaluator/evaluator.go` must be modified to check the `scanPolicy` before adding unexported symbols to a package's environment.
 
 ```go
-// symgo/evaluator/evaluator.go `evalSelectorExpr`
+// symgo/evaluator/evaluator.go
 
-	case *object.Variable:
-		typeInfo := val.TypeInfo()
-		if typeInfo == nil {
-			e.logger.DebugContext(ctx, "variable has no type info, treating method call as symbolic", "variable", val.Name, "method", n.Sel.Name)
-			return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("method call on variable %q with untyped symbolic value", val.Name)}
+func (e *Evaluator) ensurePackageEnvPopulated(ctx context.Context, pkgObj *object.Package) {
+	if pkgObj.ScannedInfo == nil {
+		return // Not scanned yet.
+	}
+	pkgInfo := pkgObj.ScannedInfo
+	env := pkgObj.Env
+
+	shouldScan := e.scanPolicy == nil || e.scanPolicy(pkgInfo.ImportPath)
+
+	if !e.initializedPkgs[pkgInfo.ImportPath] {
+		e.logger.DebugContext(ctx, "populating package-level constants", "package", pkgInfo.ImportPath)
+		for _, c := range pkgInfo.Constants {
+			// If the package is out-of-policy, only load exported constants.
+			if !shouldScan && !c.IsExported {
+				continue
+			}
+			constObj := e.convertGoConstant(c.ConstVal, token.NoPos)
+			if isError(constObj) {
+				e.logger.Warn("could not convert constant to object", "const", c.Name, "error", constObj)
+				continue
+			}
+			env.Set(c.Name, constObj)
+		}
+		e.initializedPkgs[pkgInfo.ImportPath] = true
+	}
+
+	if len(pkgInfo.Functions) > 0 {
+		if _, ok := env.Get(pkgInfo.Functions[0].Name); ok {
+			return
+		}
+	} else if len(pkgInfo.Constants) == 0 {
+		return
+	}
+
+	e.logger.DebugContext(ctx, "populating package environment", "package", pkgInfo.ImportPath)
+
+	for _, f := range pkgInfo.Functions {
+		if _, ok := env.Get(f.Name); ok {
+			continue
+		}
+		
+		// If the package is out-of-policy, only create objects for exported functions.
+		if !shouldScan && !f.IsExported {
+			continue
 		}
 
-		if typeInfo.Kind == scanner.InterfaceKind {
-			qualifiedIfaceName := fmt.Sprintf("%s.%s", typeInfo.PkgPath, typeInfo.Name)
-			if boundType, ok := e.interfaceBindings[qualifiedIfaceName]; ok {
-				e.logger.Debug("evalSelectorExpr: found interface binding", "interface", qualifiedIfaceName, "concrete", boundType.Name)
-				typeInfo = boundType
+		var fnObject object.Object
+		if shouldScan {
+			fnObject = &object.Function{
+				Name:       f.AstDecl.Name,
+				Parameters: f.AstDecl.Type.Params,
+				Body:       f.AstDecl.Body,
+				Env:        env,
+				Decl:       f.AstDecl,
+				Package:    pkgInfo,
+				Def:        f,
+			}
+		} else {
+			// For out-of-policy packages, exported functions become placeholders.
+			fnObject = &object.SymbolicPlaceholder{
+				Reason:         fmt.Sprintf("external function %s.%s", pkgInfo.ImportPath, f.Name),
+				UnderlyingFunc: f,
+				Package:        pkgInfo,
 			}
 		}
-// ... rest of the function ...
-```
-The block for `resolutionPkg := pkg` and `findPackageByPath` inside this case should be removed.
+		env.SetLocal(f.Name, fnObject)
+	}
+}
 
-### Step 2.2: Add Test Cases to `symgo/symgo_unexported_const_test.go`
+```
+
+### Step 3.2: Add Test Cases to `symgo/symgo_unexported_const_test.go`
 
 The following two test cases should be appended to this file to verify the fix and prevent regressions.
 

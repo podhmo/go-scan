@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
 	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/scanner"
 	"github.com/podhmo/go-scan/scantest"
@@ -107,8 +108,8 @@ func GetUnexportedConstant() string {
 	}
 
 	expected := "hello from unexported"
-	if str.Value != expected {
-		t.Errorf("expected result to be %q, but got %q", expected, str.Value)
+	if diff := cmp.Diff(expected, str.Value); diff != "" {
+		t.Errorf("unexpected result (-want +got):\n%s", diff)
 	}
 }
 
@@ -197,8 +198,8 @@ func FuncB() string {
 		t.Fatalf("expected return value to be *object.String, but got %T", retVal.Value)
 	}
 	expected := "hello from private"
-	if str.Value != expected {
-		t.Errorf("expected result to be %q, but got %q", expected, str.Value)
+	if diff := cmp.Diff(expected, str.Value); diff != "" {
+		t.Errorf("unexpected result (-want +got):\n%s", diff)
 	}
 }
 
@@ -277,7 +278,7 @@ func (c *Client) GetValue() string {
 		t.Fatalf("expected return value to be *object.String, but got %T", retVal.Value)
 	}
 	expected := "unexported-secret-key"
-	if str.Value != expected {
-		t.Errorf("expected result to be %q, but got %q", expected, str.Value)
+	if diff := cmp.Diff(expected, str.Value); diff != "" {
+		t.Errorf("unexpected result (-want +got):\n%s", diff)
 	}
 }

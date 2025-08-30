@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
 	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/scanner"
 	"github.com/podhmo/go-scan/scantest"
@@ -84,8 +85,8 @@ func AnonymousStruct(p struct {
 			if inspectedMethod == nil {
 				t.Fatal("did not capture an interface method call, UnderlyingMethod was nil")
 			}
-			if inspectedMethod.Name != "Hex" {
-				t.Errorf("expected to capture method 'Hex', but got '%s'", inspectedMethod.Name)
+			if diff := cmp.Diff("Hex", inspectedMethod.Name); diff != "" {
+				t.Errorf("unexpected method name (-want +got):\n%s", diff)
 			}
 		})
 

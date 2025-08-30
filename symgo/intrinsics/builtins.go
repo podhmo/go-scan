@@ -25,3 +25,143 @@ func BuiltinPanic(args ...object.Object) object.Object {
 		Message: fmt.Sprintf("panic: %s", msg),
 	}
 }
+
+// BuiltinMake is the intrinsic function for the built-in `make`.
+func BuiltinMake(args ...object.Object) object.Object {
+	if len(args) < 1 {
+		return &object.Error{
+			Message: fmt.Sprintf("wrong number of arguments. got=%d, want=at least 1", len(args)),
+		}
+	}
+	// In symbolic execution, we just acknowledge the call and return a placeholder.
+	// We don't need to simulate the actual allocation.
+	// The type information is in args[0], but for now, we just return a generic placeholder.
+	return &object.SymbolicPlaceholder{Reason: "make(...) call"}
+}
+
+// BuiltinAppend is the intrinsic function for the built-in `append`.
+func BuiltinAppend(args ...object.Object) object.Object {
+	if len(args) < 1 {
+		return &object.Error{Message: "wrong number of arguments: append needs at least 1"}
+	}
+	// In symbolic execution, we just acknowledge the call and return a placeholder.
+	return &object.SymbolicPlaceholder{Reason: "append(...) call"}
+}
+
+// BuiltinLen is the intrinsic function for the built-in `len`.
+func BuiltinLen(args ...object.Object) object.Object {
+	if len(args) != 1 {
+		return &object.Error{Message: "wrong number of arguments: len expects 1"}
+	}
+	return &object.SymbolicPlaceholder{Reason: "len(...) call"}
+}
+
+// BuiltinCap is the intrinsic function for the built-in `cap`.
+func BuiltinCap(args ...object.Object) object.Object {
+	if len(args) != 1 {
+		return &object.Error{Message: "wrong number of arguments: cap expects 1"}
+	}
+	return &object.SymbolicPlaceholder{Reason: "cap(...) call"}
+}
+
+// BuiltinNew is the intrinsic function for the built-in `new`.
+func BuiltinNew(args ...object.Object) object.Object {
+	if len(args) != 1 {
+		return &object.Error{Message: "wrong number of arguments: new expects 1"}
+	}
+	return &object.SymbolicPlaceholder{Reason: "new(...) call"}
+}
+
+// BuiltinCopy is the intrinsic function for the built-in `copy`.
+func BuiltinCopy(args ...object.Object) object.Object {
+	if len(args) != 2 {
+		return &object.Error{Message: "wrong number of arguments: copy expects 2"}
+	}
+	return &object.SymbolicPlaceholder{Reason: "copy(...) call"} // Returns int
+}
+
+// BuiltinDelete is the intrinsic function for the built-in `delete`.
+func BuiltinDelete(args ...object.Object) object.Object {
+	if len(args) != 2 {
+		return &object.Error{Message: "wrong number of arguments: delete expects 2"}
+	}
+	return object.NIL // delete does not return a value
+}
+
+// BuiltinClose is the intrinsic function for the built-in `close`.
+func BuiltinClose(args ...object.Object) object.Object {
+	if len(args) != 1 {
+		return &object.Error{Message: "wrong number of arguments: close expects 1"}
+	}
+	return object.NIL // close does not return a value
+}
+
+// BuiltinClear is the intrinsic function for the built-in `clear`.
+func BuiltinClear(args ...object.Object) object.Object {
+	if len(args) != 1 {
+		return &object.Error{Message: "wrong number of arguments: clear expects 1"}
+	}
+	return object.NIL // clear does not return a value
+}
+
+// BuiltinComplex is the intrinsic function for the built-in `complex`.
+func BuiltinComplex(args ...object.Object) object.Object {
+	if len(args) != 2 {
+		return &object.Error{Message: "wrong number of arguments: complex expects 2"}
+	}
+	return &object.SymbolicPlaceholder{Reason: "complex(...) call"}
+}
+
+// BuiltinReal is the intrinsic function for the built-in `real`.
+func BuiltinReal(args ...object.Object) object.Object {
+	if len(args) != 1 {
+		return &object.Error{Message: "wrong number of arguments: real expects 1"}
+	}
+	return &object.SymbolicPlaceholder{Reason: "real(...) call"}
+}
+
+// BuiltinImag is the intrinsic function for the built-in `imag`.
+func BuiltinImag(args ...object.Object) object.Object {
+	if len(args) != 1 {
+		return &object.Error{Message: "wrong number of arguments: imag expects 1"}
+	}
+	return &object.SymbolicPlaceholder{Reason: "imag(...) call"}
+}
+
+// BuiltinMax is the intrinsic function for the built-in `max`.
+func BuiltinMax(args ...object.Object) object.Object {
+	if len(args) == 0 {
+		return &object.Error{Message: "wrong number of arguments: max expects at least 1"}
+	}
+	return &object.SymbolicPlaceholder{Reason: "max(...) call"}
+}
+
+// BuiltinMin is the intrinsic function for the built-in `min`.
+func BuiltinMin(args ...object.Object) object.Object {
+	if len(args) == 0 {
+		return &object.Error{Message: "wrong number of arguments: min expects at least 1"}
+	}
+	return &object.SymbolicPlaceholder{Reason: "min(...) call"}
+}
+
+// BuiltinPrint is the intrinsic function for the built-in `print`.
+func BuiltinPrint(args ...object.Object) object.Object {
+	// In symbolic execution, we can ignore this.
+	return object.NIL
+}
+
+// BuiltinPrintln is the intrinsic function for the built-in `println`.
+func BuiltinPrintln(args ...object.Object) object.Object {
+	// In symbolic execution, we can ignore this.
+	return object.NIL
+}
+
+// BuiltinRecover is the intrinsic function for the built-in `recover`.
+func BuiltinRecover(args ...object.Object) object.Object {
+	if len(args) != 0 {
+		return &object.Error{Message: "wrong number of arguments: recover expects 0"}
+	}
+	// recover() returns nil if the goroutine is not panicking.
+	// For symbolic execution, assuming it's not panicking is a safe default.
+	return object.NIL
+}

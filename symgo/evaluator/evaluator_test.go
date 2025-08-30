@@ -265,6 +265,229 @@ func TestEvalBooleanLiteral(t *testing.T) {
 	}
 }
 
+func testEval(t *testing.T, input string) object.Object {
+	t.Helper()
+	node, err := parser.ParseExpr(input)
+	if err != nil {
+		// try parsing as a statement
+		source := fmt.Sprintf("package main\nfunc main() { %s }", input)
+		fset := token.NewFileSet()
+		f, err := parser.ParseFile(fset, "main.go", source, parser.ParseComments)
+		if err != nil {
+			t.Fatalf("could not parse input as expression or statement: %v", err)
+		}
+		if len(f.Decls) == 0 || f.Decls[0].(*ast.FuncDecl).Body == nil || len(f.Decls[0].(*ast.FuncDecl).Body.List) == 0 {
+			t.Fatalf("no statements found in parsed source")
+		}
+		s, _ := goscan.New()
+		eval := New(s, nil, nil, nil)
+		return eval.Eval(context.Background(), f.Decls[0].(*ast.FuncDecl).Body.List[0], object.NewEnvironment(), nil)
+	}
+
+	s, _ := goscan.New()
+	eval := New(s, nil, nil, nil)
+	return eval.Eval(context.Background(), node, object.NewEnvironment(), nil)
+}
+
+func testIntegerObject(t *testing.T, obj object.Object, expected int64) bool {
+	result, ok := obj.(*object.Integer)
+	if !ok {
+		t.Errorf("object is not Integer. got=%T (%+v)", obj, obj)
+		return false
+	}
+	if result.Value != expected {
+		t.Errorf("object has wrong value. got=%d, want=%d",
+			result.Value, expected)
+		return false
+	}
+	return true
+}
+
+func TestEvalBuiltinFunctions(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected interface{}
+	}{
+		{
+			name:     "panic",
+			input:    `panic("test panic")`,
+			expected: "panic: test panic",
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			evaluated := testEval(t, tt.input)
+			switch expected := tt.expected.(type) {
+			case int:
+				testIntegerObject(t, evaluated, int64(expected))
+			case string:
+				errObj, ok := evaluated.(*object.Error)
+				if !ok {
+					t.Errorf("object is not Error. got=%T (%+v)", evaluated, evaluated)
+					return
+				}
+				if errObj.Message != expected {
+					t.Errorf("wrong error message. expected=%q, got=%q",
+						expected, errObj.Message)
+				}
+			}
+		})
+	}
+}
+
+func TestEvalBuiltinFunctionsPlaceholders(t *testing.T) {
+	tests := []struct {
+		name     string
+		source   string
+		expected any
+	}{
+		{
+			name:     "make",
+			source:   "package main\nfunc main() { make([]int, 0, 8) }",
+			expected: &object.SymbolicPlaceholder{},
+		},
+		{
+			name:     "len-string",
+			source:   `package main; func main() { len("four") }`,
+			expected: &object.SymbolicPlaceholder{},
+		},
+		{
+			name:     "len-slice",
+			source:   `package main; func main() { len([]int{1, 2, 3}) }`,
+			expected: &object.SymbolicPlaceholder{},
+		},
+		{
+			name:     "cap-slice",
+			source:   `package main; func main() { cap([]int{1, 2, 3}) }`,
+			expected: &object.SymbolicPlaceholder{},
+		},
+		{
+			name:     "append",
+			source:   `package main; func main() { append([]int{1}, 2) }`,
+			expected: &object.SymbolicPlaceholder{},
+		},
+		{
+			name:     "new",
+			source:   `package main; func main() { new(int) }`,
+			expected: &object.SymbolicPlaceholder{},
+		},
+		{
+			name:     "copy",
+			source:   `package main; func main() { copy([]int{1}, []int{2}) }`,
+			expected: &object.SymbolicPlaceholder{},
+		},
+		{
+			name:     "delete",
+			source:   `package main; func main() { delete(map[string]int{}, "k") }`,
+			expected: object.NIL,
+		},
+		{
+			name:     "clear",
+			source:   `package main; func main() { clear([]int{1}) }`,
+			expected: object.NIL,
+		},
+		{
+			name:     "complex",
+			source:   `package main; func main() { complex(1.0, 2.0) }`,
+			expected: &object.SymbolicPlaceholder{},
+		},
+		{
+			name:     "real",
+			source:   `package main; func main() { real(1+2i) }`,
+			expected: &object.SymbolicPlaceholder{},
+		},
+		{
+			name:     "imag",
+			source:   `package main; func main() { imag(1+2i) }`,
+			expected: &object.SymbolicPlaceholder{},
+		},
+		{
+			name:     "max",
+			source:   `package main; func main() { max(1, 2) }`,
+			expected: &object.SymbolicPlaceholder{},
+		},
+		{
+			name:     "min",
+			source:   `package main; func main() { min(1, 2) }`,
+			expected: &object.SymbolicPlaceholder{},
+		},
+		{
+			name:     "print",
+			source:   `package main; func main() { print("hello") }`,
+			expected: object.NIL,
+		},
+		{
+			name:     "println",
+			source:   `package main; func main() { println("hello") }`,
+			expected: object.NIL,
+		},
+		{
+			name:     "recover",
+			source:   `package main; func main() { recover() }`,
+			expected: object.NIL,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			dir, cleanup := scantest.WriteFiles(t, map[string]string{
+				"go.mod":  "module example.com/me",
+				"main.go": tt.source,
+			})
+			defer cleanup()
+
+			action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
+				pkg := pkgs[0]
+				eval := New(s, s.Logger, nil, nil)
+				env := object.NewEnvironment()
+				eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], env, pkg)
+				mainFunc, ok := env.Get("main")
+				if !ok {
+					return fmt.Errorf("function 'main' not found")
+				}
+				evaluated := eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, token.NoPos)
+
+				// most builtins return a value, which gets wrapped in a ReturnValue
+				if ret, ok := evaluated.(*object.ReturnValue); ok {
+					evaluated = ret.Value
+				}
+
+				switch expected := tt.expected.(type) {
+				case *object.SymbolicPlaceholder:
+					_, ok := evaluated.(*object.SymbolicPlaceholder)
+					if !ok {
+						t.Errorf("object is not SymbolicPlaceholder. got=%T (%+v)", evaluated, evaluated)
+					}
+				case object.Object:
+					if evaluated != expected {
+						t.Errorf("object has wrong value. got=%#v, want=%#v", evaluated, expected)
+					}
+				case string:
+					errObj, ok := evaluated.(*object.Error)
+					if !ok {
+						t.Errorf("object is not Error. got=%T (%+v)", evaluated, evaluated)
+						return nil
+					}
+					if errObj.Message != expected {
+						t.Errorf("wrong error message. expected=%q, got=%q",
+							expected, errObj.Message)
+					}
+				}
+				return nil
+			}
+
+			if _, err := scantest.Run(t, context.Background(), dir, []string{"."}, action); err != nil {
+				t.Fatalf("scantest.Run() failed: %v", err)
+			}
+		})
+	}
+}
+
 func TestLogWithContext(t *testing.T) {
 	source := `
 package main
@@ -919,22 +1142,6 @@ func main() {
 	}
 	if _, err := scantest.Run(t, context.Background(), dir, []string{"."}, action); err != nil {
 		t.Fatalf("scantest.Run() failed: %v", err)
-	}
-}
-
-func TestEvalBuiltinFunctions(t *testing.T) {
-	input := `len("four")`
-	node, err := parser.ParseExpr(input)
-	if err != nil {
-		t.Fatalf("could not parse expression: %v", err)
-	}
-
-	s, _ := goscan.New()
-	eval := New(s, nil, nil, nil)
-	evaluated := eval.Eval(context.Background(), node, object.NewEnvironment(), nil)
-
-	if _, ok := evaluated.(*object.Error); !ok {
-		t.Fatalf("expected an error for undefined function, but got %T", evaluated)
 	}
 }
 

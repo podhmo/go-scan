@@ -1006,21 +1006,19 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 				}
 			}
 
-			// If it's not a method, check if it's a field on a struct.
+			// If it's not a method, check if it's a field on the struct (including embedded).
 			if typeInfo.Struct != nil {
-				for _, field := range typeInfo.Struct.Fields {
-					if field.Name == n.Sel.Name {
-						fieldTypeInfo, _ := field.Type.Resolve(ctx)
-						return &object.SymbolicPlaceholder{
-							BaseObject: object.BaseObject{ResolvedTypeInfo: fieldTypeInfo, ResolvedFieldType: field.Type},
-							Reason:     fmt.Sprintf("field access on symbolic value %s.%s", val.Reason, field.Name),
-						}
+				if field, err := e.findFieldOnType(ctx, typeInfo, n.Sel.Name); err == nil && field != nil {
+					fieldTypeInfo, _ := field.Type.Resolve(ctx)
+					return &object.SymbolicPlaceholder{
+						BaseObject: object.BaseObject{ResolvedTypeInfo: fieldTypeInfo, ResolvedFieldType: field.Type},
+						Reason:     fmt.Sprintf("field access on symbolic value %s.%s", val.Reason, field.Name),
 					}
 				}
 			}
 		}
 
-		return e.newError(n.Pos(), "undefined method or field: %s on symbolic type %s", n.Sel.Name, fullTypeName)
+		return e.newError(n.Pos(), "undefined method or field: %s on symbolic type %s", n.Sel.Name, val.Inspect())
 
 	case *object.Package:
 		if val.ScannedInfo == nil {
@@ -1277,14 +1275,13 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 			}
 		}
 
-		if typeInfo.Struct != nil {
-			for _, field := range typeInfo.Struct.Fields {
-				if field.Name == n.Sel.Name {
-					fieldTypeInfo, _ := field.Type.Resolve(ctx)
-					return &object.SymbolicPlaceholder{
-						BaseObject: object.BaseObject{ResolvedTypeInfo: fieldTypeInfo},
-						Reason:     fmt.Sprintf("field access %s.%s", val.Name, field.Name),
-					}
+		// If it's not a method, check if it's a field on the struct (including embedded).
+		if typeInfo != nil && typeInfo.Struct != nil {
+			if field, err := e.findFieldOnType(ctx, typeInfo, n.Sel.Name); err == nil && field != nil {
+				fieldTypeInfo, _ := field.Type.Resolve(ctx)
+				return &object.SymbolicPlaceholder{
+					BaseObject: object.BaseObject{ResolvedTypeInfo: fieldTypeInfo, ResolvedFieldType: field.Type},
+					Reason:     fmt.Sprintf("field access %s.%s", val.Name, field.Name),
 				}
 			}
 		}
@@ -2705,6 +2702,60 @@ func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, 
 	}
 
 	return env, nil
+}
+
+// findFieldOnType recursively finds a field on a type or its embedded types.
+func (e *Evaluator) findFieldOnType(ctx context.Context, typeInfo *scanner.TypeInfo, fieldName string) (*scanner.FieldInfo, error) {
+	if typeInfo == nil {
+		return nil, nil // Cannot find field without type info
+	}
+
+	visited := make(map[string]bool)
+	return e.findFieldRecursive(ctx, typeInfo, fieldName, visited)
+}
+
+func (e *Evaluator) findFieldRecursive(ctx context.Context, typeInfo *scanner.TypeInfo, fieldName string, visited map[string]bool) (*scanner.FieldInfo, error) {
+	if typeInfo == nil || typeInfo.Struct == nil {
+		return nil, nil
+	}
+
+	typeKey := fmt.Sprintf("%s.%s", typeInfo.PkgPath, typeInfo.Name)
+	if visited[typeKey] {
+		return nil, nil // Cycle detected
+	}
+	visited[typeKey] = true
+
+	// 1. Search for a direct field on the current type.
+	for _, field := range typeInfo.Struct.Fields {
+		if !field.Embedded && field.Name == fieldName {
+			return field, nil
+		}
+	}
+
+	// 2. If not found, search in embedded structs.
+	for _, field := range typeInfo.Struct.Fields {
+		if field.Embedded {
+			// If the embedded field itself has the name we're looking for (promoted field)
+			if field.Name == fieldName {
+				return field, nil
+			}
+
+			var embeddedTypeInfo *scanner.TypeInfo
+			if field.Type.FullImportPath != "" && e.scanPolicy != nil && !e.scanPolicy(field.Type.FullImportPath) {
+				embeddedTypeInfo = scanner.NewUnresolvedTypeInfo(field.Type.FullImportPath, field.Type.TypeName)
+			} else {
+				embeddedTypeInfo, _ = field.Type.Resolve(ctx)
+			}
+
+			if embeddedTypeInfo != nil {
+				if foundField, err := e.findFieldRecursive(ctx, embeddedTypeInfo, fieldName, visited); err != nil || foundField != nil {
+					return foundField, err
+				}
+			}
+		}
+	}
+
+	return nil, nil // Not found
 }
 
 // findMethodOnType recursively finds a method on a type or its embedded types.

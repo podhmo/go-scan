@@ -2067,14 +2067,8 @@ func (e *Evaluator) evalIdent(ctx context.Context, n *ast.Ident, env *object.Env
 	}
 
 	// Fallback to universe scope for built-in values, types, and functions.
-	if val, ok := universe.GetValue(n.Name); ok {
-		return val
-	}
-	if typ, ok := universe.GetType(n.Name); ok {
-		return typ
-	}
-	if fn, ok := universe.GetFunction(n.Name); ok {
-		return &object.Intrinsic{Fn: fn}
+	if obj, ok := universe.Get(n.Name); ok {
+		return obj
 	}
 
 	e.logger.Debug("evalIdent: not found in env or intrinsics", "name", n.Name)

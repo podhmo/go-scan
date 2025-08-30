@@ -2617,40 +2617,39 @@ func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, 
 		for _, name := range field.Names {
 			var arg object.Object
 			if argIndex >= len(args) {
-				// Not enough arguments were provided. This can happen when starting
-				// analysis from an entry point function. We create a symbolic
-				// placeholder for the missing argument.
-				fieldType := e.scanner.TypeInfoFromExpr(ctx, field.Type, nil, fn.Package, importLookup)
-				var resolvedType *scanner.TypeInfo
-				if fieldType != nil {
-					// We don't care about the error here; if resolution fails, resolvedType will be nil.
-					resolvedType, _ = fieldType.Resolve(ctx)
-				}
-
-				arg = &object.SymbolicPlaceholder{
-					Reason: "symbolic parameter for entry point function",
-					BaseObject: object.BaseObject{
-						ResolvedTypeInfo:  resolvedType,
-						ResolvedFieldType: fieldType,
-					},
-				}
+				// No argument provided, create a generic symbolic one.
+				arg = &object.SymbolicPlaceholder{Reason: "symbolic parameter for entry point"}
 			} else {
 				arg = args[argIndex]
 			}
 
 			if name.Name != "_" {
-				// The static type comes from the function signature.
-				staticFieldType := e.scanner.TypeInfoFromExpr(ctx, field.Type, nil, fn.Package, importLookup)
-				staticTypeInfo, _ := staticFieldType.Resolve(ctx)
-
 				v := &object.Variable{
 					Name:  name.Name,
 					Value: arg,
-					BaseObject: object.BaseObject{
-						ResolvedTypeInfo:  staticTypeInfo,
-						ResolvedFieldType: staticFieldType,
-					},
 				}
+
+				// Prioritize the dynamic type from the provided argument.
+				v.SetFieldType(arg.FieldType())
+				v.SetTypeInfo(arg.TypeInfo())
+
+				// Get the static type from the function signature to enrich the variable if needed.
+				staticFieldType := e.scanner.TypeInfoFromExpr(ctx, field.Type, nil, fn.Package, importLookup)
+				if staticFieldType != nil {
+					if v.FieldType() == nil {
+						v.SetFieldType(staticFieldType)
+					}
+					if v.TypeInfo() == nil {
+						var staticTypeInfo *scanner.TypeInfo
+						if staticFieldType.FullImportPath != "" && e.scanPolicy != nil && !e.scanPolicy(staticFieldType.FullImportPath) {
+							staticTypeInfo = scanner.NewUnresolvedTypeInfo(staticFieldType.FullImportPath, staticFieldType.TypeName)
+						} else {
+							staticTypeInfo, _ = staticFieldType.Resolve(ctx)
+						}
+						v.SetTypeInfo(staticTypeInfo)
+					}
+				}
+
 				env.SetLocal(name.Name, v)
 			}
 			argIndex++

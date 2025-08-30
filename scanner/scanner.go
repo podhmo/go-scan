@@ -310,37 +310,19 @@ func (s *Scanner) scanGoFiles(ctx context.Context, filePaths []string, pkgDirPat
 			baseDominant := strings.TrimSuffix(dominantPackageName, "_test")
 			baseCurrent := strings.TrimSuffix(currentPackageName, "_test")
 
-			if dominantPackageName == "main" && currentPackageName != "main" {
-				// The real package is `currentPackageName`. Discard previous `main` files.
-				dominantPackageName = currentPackageName
-				var newParsedFiles []*ast.File
-				var newFilePaths []string
-				// Note: we don't need to re-filter parsedFiles because they were all `main` anyway.
-				parsedFiles = newParsedFiles
-				filePathsForDominantPkg = newFilePaths
-				parsedFiles = append(parsedFiles, result.fileAst)
-				filePathsForDominantPkg = append(filePathsForDominantPkg, result.filePath)
-			} else if dominantPackageName != "main" && currentPackageName == "main" {
-				// The real package is `dominantPackageName`. Ignore the `main` file.
-				continue
-			} else if baseDominant == baseCurrent {
-				// This is `pkg` and `pkg_test`, which is allowed.
-				// If the test package was found first, make the non-test package dominant.
-				if strings.HasSuffix(dominantPackageName, "_test") && !strings.HasSuffix(currentPackageName, "_test") {
-					dominantPackageName = currentPackageName
-				}
-				// Add the file to the list.
-				parsedFiles = append(parsedFiles, result.fileAst)
-				filePathsForDominantPkg = append(filePathsForDominantPkg, result.filePath)
-			} else {
-				// Two different non-main packages. This is a real error.
+			if baseDominant != baseCurrent {
 				return nil, fmt.Errorf("mismatched package names: %s and %s in directory %s", dominantPackageName, currentPackageName, pkgDirPath)
 			}
-		} else {
-			// Package names match, just add the file.
-			parsedFiles = append(parsedFiles, result.fileAst)
-			filePathsForDominantPkg = append(filePathsForDominantPkg, result.filePath)
+
+			// This is `pkg` and `pkg_test`, which is allowed.
+			// If the test package was found first, make the non-test package dominant.
+			if strings.HasSuffix(dominantPackageName, "_test") && !strings.HasSuffix(currentPackageName, "_test") {
+				dominantPackageName = currentPackageName
+			}
 		}
+		// Add the file to the list to be processed.
+		parsedFiles = append(parsedFiles, result.fileAst)
+		filePathsForDominantPkg = append(filePathsForDominantPkg, result.filePath)
 	}
 
 	info.Name = dominantPackageName

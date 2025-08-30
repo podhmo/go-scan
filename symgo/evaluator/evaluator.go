@@ -32,6 +32,7 @@ type Evaluator struct {
 	interfaceBindings map[string]*goscan.TypeInfo
 	defaultIntrinsic  intrinsics.IntrinsicFunc
 	scanPolicy        object.ScanPolicyFunc
+	initializedPkgs   map[string]bool // To track packages whose constants are loaded
 }
 
 type callFrame struct {
@@ -56,6 +57,7 @@ func New(scanner *goscan.Scanner, logger *slog.Logger, tracer object.Tracer, sca
 		tracer:            tracer,
 		interfaceBindings: make(map[string]*goscan.TypeInfo),
 		scanPolicy:        scanPolicy,
+		initializedPkgs:   make(map[string]bool),
 	}
 }
 
@@ -756,11 +758,28 @@ func (e *Evaluator) evalFile(ctx context.Context, file *ast.File, env *object.En
 		targetEnv = env
 	}
 
+	// Populate package-level constants once per package.
+	// This is more robust than evaluating const decls from the AST, as the scanner
+	// has already resolved the values in the correct order.
+	if !e.initializedPkgs[pkg.ImportPath] {
+		e.logger.DebugContext(ctx, "populating package-level constants", "package", pkg.ImportPath)
+		for _, c := range pkg.Constants {
+			// No need to check for exported here, we are in the same package.
+			constObj := e.convertGoConstant(c.ConstVal, file.Pos())
+			if isError(constObj) {
+				e.logger.Warn("could not convert constant to object", "const", c.Name, "error", constObj)
+				continue
+			}
+			targetEnv.Set(c.Name, constObj)
+		}
+		e.initializedPkgs[pkg.ImportPath] = true
+	}
+
 	for _, decl := range file.Decls {
 		switch d := decl.(type) {
 		case *ast.GenDecl:
 			// Import declarations are handled lazily by evalSelectorExpr when a package is first used.
-			// We only need to handle variable declarations here.
+			// We only need to handle variable declarations here. Constants are pre-loaded above.
 			if d.Tok == token.VAR {
 				e.evalGenDecl(ctx, d, targetEnv, pkg)
 			}
@@ -785,6 +804,33 @@ func (e *Evaluator) evalFile(ctx context.Context, file *ast.File, env *object.En
 		}
 	}
 	return nil
+}
+
+// convertGoConstant converts a go/constant.Value to a symgo/object.Object.
+func (e *Evaluator) convertGoConstant(val constant.Value, pos token.Pos) object.Object {
+	switch val.Kind() {
+	case constant.String:
+		return &object.String{Value: constant.StringVal(val)}
+	case constant.Int:
+		i, ok := constant.Int64Val(val)
+		if !ok {
+			// This might be a large integer that doesn't fit in int64.
+			// For symbolic execution, this is an acceptable limitation for now.
+			return e.newError(pos, "could not convert constant to int64: %s", val.String())
+		}
+		return &object.Integer{Value: i}
+	case constant.Bool:
+		return nativeBoolToBooleanObject(constant.BoolVal(val))
+	case constant.Float:
+		f, _ := constant.Float64Val(val)
+		return &object.Float{Value: f}
+	case constant.Complex:
+		r, _ := constant.Float64Val(constant.Real(val))
+		i, _ := constant.Float64Val(constant.Imag(val))
+		return &object.Complex{Value: complex(r, i)}
+	default:
+		return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("unsupported constant kind: %s", val.Kind())}
+	}
 }
 
 func (e *Evaluator) findPackageByPath(env *object.Environment, pkgPath string) (*object.Package, bool) {

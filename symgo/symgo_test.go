@@ -309,3 +309,115 @@ func main() {
 	// This part is more complex as we need to get the final environment.
 	// For now, just ensuring it doesn't panic is enough.
 }
+
+func TestEntryPoint_WithMissingArguments(t *testing.T) {
+	source := `
+package main
+
+type MyInterface interface {
+	DoSomething() string
+}
+
+func MyFunction(p MyInterface) {
+	if p == nil {
+		return
+	}
+	_ = p.DoSomething()
+}
+`
+	dir, cleanup := scantest.WriteFiles(t, map[string]string{
+		"go.mod":  "module mymodule",
+		"main.go": source,
+	})
+	defer cleanup()
+
+	s, err := goscan.New(goscan.WithWorkDir(dir), goscan.WithGoModuleResolver())
+	if err != nil {
+		t.Fatalf("goscan.New() failed: %+v", err)
+	}
+
+	pkgs, err := s.Scan(context.Background(), ".")
+	if err != nil {
+		t.Fatalf("s.Scan() failed: %+v", err)
+	}
+	pkg := pkgs[0]
+
+	interp, err := symgo.NewInterpreter(s)
+	if err != nil {
+		t.Fatalf("NewInterpreter() failed: %+v", err)
+	}
+
+	// Evaluate the file to load symbols
+	_, err = interp.Eval(context.Background(), pkg.AstFiles[filepath.Join(dir, "main.go")], pkg)
+	if err != nil {
+		t.Fatalf("interp.Eval(file) failed: %+v", err)
+	}
+
+	// Find the entry point function
+	mainFn, ok := interp.FindObject("MyFunction")
+	if !ok {
+		t.Fatal("could not find MyFunction function")
+	}
+
+	// Apply the function without providing arguments.
+	// This should NOT fail with "identifier not found: p".
+	// Before the fix, it will fail. After the fix, it should pass.
+	_, err = interp.Apply(context.Background(), mainFn, []symgo.Object{}, pkg)
+	if err != nil {
+		t.Errorf("Apply() failed with unexpected error: %+v", err)
+	}
+}
+
+func TestEntryPoint_Variadic_WithMissingArguments(t *testing.T) {
+	source := `
+package main
+
+func MyVariadicFunc(a, b int, c ...string) {
+	_ = a
+	_ = b
+	_ = c
+}
+`
+	dir, cleanup := scantest.WriteFiles(t, map[string]string{
+		"go.mod":  "module mymodule",
+		"main.go": source,
+	})
+	defer cleanup()
+
+	s, err := goscan.New(goscan.WithWorkDir(dir), goscan.WithGoModuleResolver())
+	if err != nil {
+		t.Fatalf("goscan.New() failed: %+v", err)
+	}
+
+	pkgs, err := s.Scan(context.Background(), ".")
+	if err != nil {
+		t.Fatalf("s.Scan() failed: %+v", err)
+	}
+	pkg := pkgs[0]
+
+	interp, err := symgo.NewInterpreter(s)
+	if err != nil {
+		t.Fatalf("NewInterpreter() failed: %+v", err)
+	}
+
+	_, err = interp.Eval(context.Background(), pkg.AstFiles[filepath.Join(dir, "main.go")], pkg)
+	if err != nil {
+		t.Fatalf("interp.Eval(file) failed: %+v", err)
+	}
+
+	mainFn, ok := interp.FindObject("MyVariadicFunc")
+	if !ok {
+		t.Fatal("could not find MyVariadicFunc function")
+	}
+
+	// Call the function with only one argument. The function has two regular
+	// parameters before the variadic one. This should cause a panic with the
+	// buggy implementation.
+	_, err = interp.Apply(context.Background(), mainFn, []symgo.Object{
+		&object.Integer{Value: 1},
+	}, pkg)
+
+	if err != nil {
+		t.Errorf("Apply() failed with unexpected error: %+v", err)
+	}
+}

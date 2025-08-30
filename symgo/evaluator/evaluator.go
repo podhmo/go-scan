@@ -2493,6 +2493,19 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 	}
 }
 
+// resolveTypeWithPolicy is a helper to resolve a FieldType to a TypeInfo while respecting the scan policy.
+func (e *Evaluator) resolveTypeWithPolicy(ctx context.Context, fieldType *scanner.FieldType) *scanner.TypeInfo {
+	if fieldType == nil {
+		return nil
+	}
+	if fieldType.FullImportPath != "" && e.scanPolicy != nil && !e.scanPolicy(fieldType.FullImportPath) {
+		return scanner.NewUnresolvedTypeInfo(fieldType.FullImportPath, fieldType.TypeName)
+	}
+	// Policy allows scanning, or it's a local/built-in type.
+	resolvedType, _ := fieldType.Resolve(ctx)
+	return resolvedType
+}
+
 func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, args []object.Object) (*object.Environment, error) {
 	// The new environment should be enclosed by the function's own package environment,
 	// not the caller's environment.
@@ -2515,7 +2528,7 @@ func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, 
 						}
 					}
 					fieldType := e.scanner.TypeInfoFromExpr(ctx, recvField.Type, nil, fn.Package, importLookup)
-					resolvedType, _ := fieldType.Resolve(ctx)
+					resolvedType := e.resolveTypeWithPolicy(ctx, fieldType)
 					receiverToBind = &object.SymbolicPlaceholder{
 						Reason:     "symbolic receiver for entry point method",
 						BaseObject: object.BaseObject{ResolvedTypeInfo: resolvedType, ResolvedFieldType: fieldType},
@@ -2580,7 +2593,13 @@ func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, 
 			// Case 2: The call is `myFunc(1, 2, 3)`.
 			// Collect all remaining arguments into a slice.
 			if variadicSlice == nil {
-				variadicArgs := args[argIndex:]
+				// This check is crucial to prevent a panic if argIndex > len(args).
+				// This can happen if missing regular arguments were supplied before the
+				// variadic one.
+				var variadicArgs []object.Object
+				if argIndex < len(args) {
+					variadicArgs = args[argIndex:]
+				}
 				argIndex = len(args) // Consume all remaining arguments.
 
 				sliceElemFieldType := e.scanner.TypeInfoFromExpr(ctx, paramType, nil, fn.Package, importLookup)
@@ -2601,11 +2620,11 @@ func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, 
 				name := field.Names[0] // Variadic param is always the last, single identifier.
 				if name.Name != "_" {
 					fieldType := e.scanner.TypeInfoFromExpr(ctx, paramType, nil, fn.Package, importLookup)
-					resolvedType, _ := fieldType.Resolve(ctx)
+					resolvedType := e.resolveTypeWithPolicy(ctx, fieldType)
 					v := &object.Variable{
 						Name:       name.Name,
 						Value:      variadicSlice,
-						BaseObject: object.BaseObject{ResolvedTypeInfo: resolvedType},
+						BaseObject: object.BaseObject{ResolvedTypeInfo: resolvedType, ResolvedFieldType: fieldType},
 					}
 					env.Set(name.Name, v)
 				}
@@ -2615,27 +2634,40 @@ func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, 
 
 		// This is a regular, non-variadic parameter.
 		for _, name := range field.Names {
-			if argIndex >= len(args) {
-				break
+			var arg object.Object
+			if argIndex < len(args) {
+				// Argument was provided. Consume it.
+				arg = args[argIndex]
+				argIndex++ // IMPORTANT: Only increment when an arg is consumed.
+			} else {
+				// No more arguments left. Create a symbolic one.
+				arg = &object.SymbolicPlaceholder{Reason: "symbolic parameter for entry point"}
 			}
-			arg := args[argIndex]
-
-			fieldType := e.scanner.TypeInfoFromExpr(ctx, field.Type, nil, fn.Package, importLookup)
-			if fieldType == nil {
-				continue
-			}
-			resolvedType, _ := fieldType.Resolve(ctx)
 
 			if name.Name != "_" {
 				v := &object.Variable{
-					Name:       name.Name,
-					Value:      arg,
-					BaseObject: object.BaseObject{ResolvedTypeInfo: resolvedType},
+					Name:  name.Name,
+					Value: arg,
 				}
-				// Use SetLocal to define the parameter in the function's own scope.
+
+				// Prioritize the dynamic type from the provided argument.
+				v.SetFieldType(arg.FieldType())
+				v.SetTypeInfo(arg.TypeInfo())
+
+				// Get the static type from the function signature to enrich the variable if needed.
+				staticFieldType := e.scanner.TypeInfoFromExpr(ctx, field.Type, nil, fn.Package, importLookup)
+				if staticFieldType != nil {
+					if v.FieldType() == nil {
+						v.SetFieldType(staticFieldType)
+					}
+					if v.TypeInfo() == nil {
+						staticTypeInfo := e.resolveTypeWithPolicy(ctx, staticFieldType)
+						v.SetTypeInfo(staticTypeInfo)
+					}
+				}
+
 				env.SetLocal(name.Name, v)
 			}
-			argIndex++
 		}
 	}
 

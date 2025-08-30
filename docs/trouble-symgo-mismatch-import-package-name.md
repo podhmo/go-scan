@@ -34,4 +34,15 @@ The investigation revealed a deeper architectural issue between `symgo` (the dyn
 
 This creates a deadlock: `symgo` needs to resolve types to evaluate code, but the type resolver (`go-scan`) doesn't have the necessary package name information that `symgo` has already discovered. The scan policy (in-policy vs. out-of-policy) does not affect this outcome, as the failure occurs at the static type resolution phase, before the policy is applied during symbolic execution.
 
+### Attempted Workaround: Augmented Import Lookup
+
+A workaround was attempted to bridge this gap. The idea was to augment the static `importLookup` map before passing it to `scanner.TypeInfoFromExpr`. A new helper function, `augmentImportLookup`, was added to the evaluator. This function would:
+1.  Copy the static `importLookup` map.
+2.  Walk the `symgo` environment and find all `object.Package` instances.
+3.  For each package, it would add a new entry to the lookup map: `lookup[<correct package name>] = <import path>`.
+
+This augmented map was then used in `evalGenDecl`, `evalCompositeLit`, etc. The hypothesis was that this would provide `TypeInfoFromExpr` with the information it was missing (e.g., a mapping for `"yaml"` -> `"gopkg.in/yaml.v2"`).
+
+**This attempt also failed.** The tests continued to fail with the same "no type info" error. The root cause appears to be the same: the `importLookup` is still not being correctly applied or accessed at the point where `TypeInfoFromExpr` needs it, indicating a fundamental disconnect between the static analysis capabilities of `go-scan` and the dynamic environment of `symgo`.
+
 Resolving this would likely require a more significant architectural change to how `go-scan` and `symgo` share package metadata. The current implementation has been submitted to document the problem and the findings.

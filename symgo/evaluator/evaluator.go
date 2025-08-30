@@ -319,6 +319,27 @@ func (e *Evaluator) evalSliceExpr(ctx context.Context, node *ast.SliceExpr, env 
 	return placeholder
 }
 
+func (e *Evaluator) augmentImportLookup(base map[string]string, env *object.Environment) map[string]string {
+	// Create a new map to avoid modifying the base map which might be cached.
+	augmented := make(map[string]string)
+	for k, v := range base {
+		augmented[k] = v
+	}
+
+	// Walk the environment to find all package objects and add them to the lookup.
+	env.Walk(func(name string, obj object.Object) bool {
+		if pkgObj, ok := obj.(*object.Package); ok {
+			// Don't overwrite existing entries from explicit aliases.
+			if _, exists := augmented[name]; !exists {
+				augmented[name] = pkgObj.Path
+			}
+		}
+		return true
+	})
+
+	return augmented
+}
+
 func (e *Evaluator) evalCompositeLit(ctx context.Context, node *ast.CompositeLit, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
 	if pkg == nil || pkg.Fset == nil {
 		return e.newError(node.Pos(), "package info or fset is missing, cannot resolve types for composite literal")
@@ -332,7 +353,8 @@ func (e *Evaluator) evalCompositeLit(ctx context.Context, node *ast.CompositeLit
 	if !ok {
 		return e.newError(node.Pos(), "could not find ast.File for path: %s", file.Name())
 	}
-	importLookup := e.scanner.BuildImportLookup(astFile)
+	baseImportLookup := e.scanner.BuildImportLookup(astFile)
+	importLookup := e.augmentImportLookup(baseImportLookup, env)
 
 	fieldType := e.scanner.TypeInfoFromExpr(ctx, node.Type, nil, pkg, importLookup)
 	if fieldType == nil {
@@ -617,7 +639,8 @@ func (e *Evaluator) evalGenDecl(ctx context.Context, node *ast.GenDecl, env *obj
 	if !ok {
 		return e.newError(node.Pos(), "could not find ast.File for path: %s", file.Name())
 	}
-	importLookup := e.scanner.BuildImportLookup(astFile)
+	baseImportLookup := e.scanner.BuildImportLookup(astFile)
+	importLookup := e.augmentImportLookup(baseImportLookup, env)
 
 	for _, spec := range node.Specs {
 		valSpec, ok := spec.(*ast.ValueSpec)
@@ -1330,7 +1353,8 @@ func (e *Evaluator) evalTypeSwitchStmt(ctx context.Context, n *ast.TypeSwitchStm
 		if !ok {
 			return e.newError(n.Pos(), "could not find ast.File for path: %s", file.Name())
 		}
-		importLookup := e.scanner.BuildImportLookup(astFile)
+		baseImportLookup := e.scanner.BuildImportLookup(astFile)
+		importLookup := e.augmentImportLookup(baseImportLookup, switchEnv)
 
 		for _, c := range n.Body.List {
 			caseClause, ok := c.(*ast.CaseClause)
@@ -1416,7 +1440,8 @@ func (e *Evaluator) evalTypeAssertExpr(ctx context.Context, n *ast.TypeAssertExp
 	if !ok {
 		return e.newError(n.Pos(), "could not find ast.File for path: %s", file.Name())
 	}
-	importLookup := e.scanner.BuildImportLookup(astFile)
+	baseImportLookup := e.scanner.BuildImportLookup(astFile)
+	importLookup := e.augmentImportLookup(baseImportLookup, env)
 
 	fieldType := e.scanner.TypeInfoFromExpr(ctx, n.Type, nil, pkg, importLookup)
 	if fieldType == nil {

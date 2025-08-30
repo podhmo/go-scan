@@ -109,3 +109,104 @@ func GetUnexportedConstant() string {
 		t.Errorf("expected result to be %q, but got %q", expected, str.Value)
 	}
 }
+
+func TestSymgo_UnexportedConstantResolution_NestedCall(t *testing.T) {
+	ctx := context.Background()
+
+	tmpdir, cleanup := scantest.WriteFiles(t, map[string]string{
+		"loglib/go.mod": `
+module example.com/loglib
+go 1.21
+replace example.com/driver => ../driver
+`,
+		"loglib/context.go": `
+package loglib
+import "example.com/driver"
+// FuncA is a function that calls a function in another package.
+func FuncA() string {
+	return driver.FuncB()
+}
+`,
+		"driver/go.mod": `
+module example.com/driver
+go 1.21
+`,
+		"driver/db.go": `
+package driver
+
+// privateConst is an unexported constant.
+const privateConst = "hello from private"
+
+// FuncB returns the value of the unexported constant.
+func FuncB() string {
+	return privateConst
+}
+`,
+	})
+	defer cleanup()
+
+	loglibModuleDir := filepath.Join(tmpdir, "loglib")
+
+	goscanner, err := goscan.New(
+		goscan.WithWorkDir(loglibModuleDir),
+		goscan.WithGoModuleResolver(),
+	)
+	if err != nil {
+		t.Fatalf("New scanner failed: %v", err)
+	}
+
+	policy := func(importPath string) bool {
+		return strings.HasPrefix(importPath, "example.com/loglib") || strings.HasPrefix(importPath, "example.com/driver")
+	}
+	interp, err := symgo.NewInterpreter(goscanner, symgo.WithScanPolicy(policy))
+	if err != nil {
+		t.Fatalf("NewInterpreter failed: %v", err)
+	}
+
+	// 1. Scan the entry package.
+	loglibPkg, err := goscanner.ScanPackage(ctx, loglibModuleDir)
+	if err != nil {
+		t.Fatalf("ScanPackage failed: %v", err)
+	}
+
+	// 2. Evaluate the entrypoint file to populate the interpreter's environment
+	// with the function definition of `FuncA`. This is a realistic setup.
+	loglibFile := findFile(t, loglibPkg, "context.go")
+	if _, err := interp.Eval(ctx, loglibFile, loglibPkg); err != nil {
+		t.Fatalf("Eval loglib file failed: %v", err)
+	}
+
+	entrypointObj, ok := interp.FindObject("FuncA")
+	if !ok {
+		t.Fatal("FuncA function not found in interpreter environment")
+	}
+	entrypointFunc, ok := entrypointObj.(*symgo.Function)
+	if !ok {
+		t.Fatalf("entrypoint 'FuncA' is not a function, but %T", entrypointObj)
+	}
+
+	// 3. Apply the function, which triggers the nested call.
+	// This is where the bug should manifest. The call to `driver.FuncB` should
+	// fail to resolve `privateConst` because the driver package's constants
+	// were not loaded when its environment was created.
+	result, err := interp.Apply(ctx, entrypointFunc, nil, loglibPkg)
+	if err != nil {
+		t.Fatalf("Apply FuncA function failed: %v", err)
+	}
+
+	// 4. Assert the result.
+	retVal, ok := result.(*object.ReturnValue)
+	if !ok {
+		t.Fatalf("expected result to be a *object.ReturnValue, but got %T", result)
+	}
+
+	str, ok := retVal.Value.(*object.String)
+	if !ok {
+		t.Fatalf("expected return value to be *object.String, but got %T", retVal.Value)
+	}
+
+	expected := "hello from private"
+	if str.Value != expected {
+		t.Errorf("expected result to be %q, but got %q", expected, str.Value)
+	}
+}

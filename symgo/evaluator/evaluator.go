@@ -2305,6 +2305,23 @@ func (e *Evaluator) Apply(ctx context.Context, fn object.Object, args []object.O
 func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []object.Object, pkg *scanner.PackageInfo, callPos token.Pos) object.Object {
 	e.logger.Debug("applyFunction", "type", fn.Type(), "value", fn.Inspect())
 
+	if f, ok := fn.(*object.Function); ok {
+		if f.Package != nil {
+			// When applying a function from another package, its environment (f.Env)
+			// is correctly scoped, but it might not have been fully populated with
+			// package-level constants and variables yet. We trigger that population here.
+			// This is a bit of a hack. We create a temporary Package object
+			// to pass to ensurePackageEnvPopulated, which holds all the logic.
+			// This works because f.Env is the actual environment that needs populating.
+			tempPkgObj := &object.Package{
+				Path:        f.Package.ImportPath,
+				ScannedInfo: f.Package,
+				Env:         f.Env,
+			}
+			e.ensurePackageEnvPopulated(ctx, tempPkgObj)
+		}
+	}
+
 	// Create a signature for the current call.
 	var currentSignature string
 	if f, ok := fn.(*object.Function); ok {

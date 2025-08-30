@@ -35,7 +35,19 @@
               "type": "string"
             }
           }
-        ]
+        ],
+        "responses": {
+          "400": {
+            "description": "Response for status code 400",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/new-features_helpers_ErrorResponse"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/users/{id}": {
@@ -50,12 +62,42 @@
               "type": "string"
             }
           }
-        ]
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/new-features_main_User"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Default error response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/new-features_helpers_ErrorResponse"
+                }
+              }
+            }
+          }
+        }
       }
     }
   },
   "components": {
     "schemas": {
+      "new-features_helpers_ErrorResponse": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string"
+          }
+        }
+      },
       "new-features_main_Settings": {
         "type": "object",
         "properties": {
@@ -65,6 +107,17 @@
               "type": "string",
               "description": "unsupported basic type: any"
             }
+          }
+        }
+      },
+      "new-features_main_User": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
           }
         }
       }

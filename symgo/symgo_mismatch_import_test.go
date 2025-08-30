@@ -13,19 +13,13 @@ import (
 	"github.com/podhmo/go-scan/symgo/object"
 )
 
-const mismatchTestGoMod = `
-module example.com/myapp
-go 1.21
-require gopkg.in/yaml.v2 v2.4.0
-`
-
 func TestMismatchImportPackageName_InPolicy(t *testing.T) {
 	source := `
 package main
 
 import (
 	"fmt"
-	"gopkg.in/yaml.v2"
+	"example.com/myapp/libs/pkg.v2"
 )
 
 type S struct {
@@ -34,16 +28,22 @@ type S struct {
 
 func main() {
 	s := S{Name: "foo"}
-	b, err := yaml.Marshal(s)
+	b, err := pkg.Marshal(s)
 	if err != nil {
 		panic(err)
 	}
 	fmt.Println(string(b), err)
 }
 `
+	libSource := `
+package pkg
+func Marshal(v any) ([]byte, error) { return nil, nil }
+func Unmarshal(data []byte, v any) error { return nil }
+`
 	tmpdir, cleanup := scantest.WriteFiles(t, map[string]string{
-		"go.mod":  mismatchTestGoMod,
-		"main.go": source,
+		"go.mod":                "module example.com/myapp\ngo 1.21",
+		"main.go":               source,
+		"libs/pkg.v2/lib.go": libSource,
 	})
 	defer cleanup()
 
@@ -60,18 +60,18 @@ func main() {
 		t.Fatalf("NewInterpreter failed: %v", err)
 	}
 
-	// For this test, we mock the behavior of yaml.Marshal
-	interp.RegisterIntrinsic("gopkg.in/yaml.v2.Marshal", func(i *symgo.Interpreter, args []symgo.Object) symgo.Object {
+	// For this test, we mock the behavior of pkg.Marshal
+	interp.RegisterIntrinsic("example.com/myapp/libs/pkg.v2.Marshal", func(i *symgo.Interpreter, args []symgo.Object) symgo.Object {
 		// Return a multi-return with a placeholder for the bytes and a nil for the error.
-		bytesPlaceholder := &symgo.SymbolicPlaceholder{Reason: "result of yaml.Marshal"}
+		bytesPlaceholder := &symgo.SymbolicPlaceholder{Reason: "result of pkg.Marshal"}
 		return &symgo.MultiReturn{Values: []symgo.Object{bytesPlaceholder, object.NIL}}
 	})
 
 	var got []string
 	interp.RegisterIntrinsic("fmt.Println", func(i *symgo.Interpreter, args []symgo.Object) symgo.Object {
 		if len(args) > 0 {
-			if sp, ok := args[0].(*symgo.SymbolicPlaceholder); ok && sp.Reason == "result of conversion to built-in type string" {
-				got = append(got, "<string conversion of symbolic bytes>")
+			if sp, ok := args[0].(*symgo.SymbolicPlaceholder); ok {
+				got = append(got, sp.Reason)
 			}
 		}
 		return nil
@@ -99,7 +99,7 @@ func main() {
 	}
 
 	want := []string{
-		"<string conversion of symbolic bytes>",
+		"result of conversion to built-in type string",
 	}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("mismatch (-want +got):\n%s", diff)
@@ -111,21 +111,27 @@ func TestMismatchImportPackageName_OutOfPolicy(t *testing.T) {
 package main
 
 import (
-	"gopkg.in/yaml.v2"
+	"example.com/myapp/libs/pkg.v2"
 )
 
 func main() {
-	// This call should be traced as a placeholder because yaml is out of policy.
-	yaml.Unmarshal(nil, nil)
+	// This call should be traced as a placeholder because pkg is out of policy.
+	pkg.Unmarshal(nil, nil)
 
 	// This is an undefined identifier. Because the package 'main' is in-policy,
 	// this should still raise an "identifier not found" error.
 	xyz.DoSomething()
 }
 `
+	libSource := `
+package pkg
+func Marshal(v any) ([]byte, error) { return nil, nil }
+func Unmarshal(data []byte, v any) error { return nil }
+`
 	tmpdir, cleanup := scantest.WriteFiles(t, map[string]string{
-		"go.mod":  mismatchTestGoMod,
-		"main.go": source,
+		"go.mod":             "module example.com/myapp\ngo 1.21",
+		"main.go":            source,
+		"libs/pkg.v2/lib.go": libSource,
 	})
 	defer cleanup()
 
@@ -138,7 +144,7 @@ func main() {
 	}
 
 	policy := func(importPath string) bool {
-		return !strings.HasPrefix(importPath, "gopkg.in/yaml.v2")
+		return !strings.HasPrefix(importPath, "example.com/myapp/libs/pkg.v2")
 	}
 	interp, err := symgo.NewInterpreter(scanner, symgo.WithScanPolicy(policy))
 	if err != nil {

@@ -1924,20 +1924,13 @@ func (e *Evaluator) evalIdent(ctx context.Context, n *ast.Ident, env *object.Env
 		}
 	}
 
-	// Fallback to universe scope for built-in values and functions.
+	// Fallback to universe scope for built-in values, types, and functions.
 	if val, ok := universe.GetValue(n.Name); ok {
 		return val
 	}
-
-	// Check for built-in types
-	switch n.Name {
-	case "string", "int", "int8", "int16", "int32", "int64",
-		"uint", "uint8", "uint16", "uint32", "uint64", "uintptr",
-		"float32", "float64", "complex64", "complex128",
-		"bool", "byte", "rune", "error":
-		return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("built-in type %s", n.Name)}
+	if typ, ok := universe.GetType(n.Name); ok {
+		return typ
 	}
-
 	if fn, ok := universe.GetFunction(n.Name); ok {
 		return &object.Intrinsic{Fn: fn}
 	}

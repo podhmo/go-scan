@@ -368,6 +368,64 @@ func MyFunction(p MyInterface) {
 	}
 }
 
+func TestEntryPoint_VariadicInterface(t *testing.T) {
+	source := `
+package main
+
+import "log"
+
+// This function signature is similar to a logger func.
+func MyLogf(f string, args ...interface{}) {
+	if f == "" {
+		log.Println("f is empty")
+	}
+	_ = args
+}
+`
+	dir, cleanup := scantest.WriteFiles(t, map[string]string{
+		"go.mod":  "module mymodule",
+		"main.go": source,
+	})
+	defer cleanup()
+
+	s, err := goscan.New(goscan.WithWorkDir(dir), goscan.WithGoModuleResolver())
+	if err != nil {
+		t.Fatalf("goscan.New() failed: %+v", err)
+	}
+
+	pkgs, err := s.Scan(context.Background(), ".")
+	if err != nil {
+		t.Fatalf("s.Scan() failed: %+v", err)
+	}
+	pkg := pkgs[0]
+
+	interp, err := symgo.NewInterpreter(s)
+	if err != nil {
+		t.Fatalf("NewInterpreter() failed: %+v", err)
+	}
+
+	_, err = interp.Eval(context.Background(), pkg.AstFiles[filepath.Join(dir, "main.go")], pkg)
+	if err != nil {
+		t.Fatalf("interp.Eval(file) failed: %+v", err)
+	}
+
+	mainFn, ok := interp.FindObject("MyLogf")
+	if !ok {
+		t.Fatal("could not find MyLogf function")
+	}
+
+	// Call the function with one concrete argument and no variadic arguments.
+	// This ensures the logic correctly handles creating an empty slice for
+	// the `...interface{}` parameter.
+	_, err = interp.Apply(context.Background(), mainFn, []symgo.Object{
+		&object.String{Value: "hello"},
+	}, pkg)
+
+	if err != nil {
+		t.Errorf("Apply() failed with unexpected error: %+v", err)
+	}
+}
+
 func TestEntryPoint_Variadic_WithMissingArguments(t *testing.T) {
 	source := `
 package main

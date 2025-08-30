@@ -519,10 +519,16 @@ func (e *Evaluator) evalStringInfixExpression(pos token.Pos, op token.Token, lef
 	leftVal := left.(*object.String).Value
 	rightVal := right.(*object.String).Value
 
-	if op != token.ADD {
+	switch op {
+	case token.ADD:
+		return &object.String{Value: leftVal + rightVal}
+	case token.EQL:
+		return nativeBoolToBooleanObject(leftVal == rightVal)
+	case token.NEQ:
+		return nativeBoolToBooleanObject(leftVal != rightVal)
+	default:
 		return e.newError(pos, "unknown string operator: %s", op)
 	}
-	return &object.String{Value: leftVal + rightVal}
 }
 
 func (e *Evaluator) evalUnaryExpr(ctx context.Context, node *ast.UnaryExpr, env *object.Environment, pkg *scanner.PackageInfo) object.Object {

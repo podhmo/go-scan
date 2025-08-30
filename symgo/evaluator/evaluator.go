@@ -390,7 +390,7 @@ func (e *Evaluator) evalCompositeLit(ctx context.Context, node *ast.CompositeLit
 		return placeholder
 	}
 
-	resolvedType := e.resolveTypeWithPolicy(ctx, fieldType)
+	resolvedType, _ := fieldType.Resolve(ctx)
 	if resolvedType == nil {
 		// This can happen for built-in types or if resolution fails for other reasons.
 		placeholder := &object.SymbolicPlaceholder{
@@ -966,7 +966,7 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 			if typeInfo.Struct != nil {
 				for _, field := range typeInfo.Struct.Fields {
 					if field.Name == n.Sel.Name {
-						fieldTypeInfo := e.resolveTypeWithPolicy(ctx, field.Type)
+						fieldTypeInfo, _ := field.Type.Resolve(ctx)
 						return &object.SymbolicPlaceholder{
 							BaseObject: object.BaseObject{ResolvedTypeInfo: fieldTypeInfo, ResolvedFieldType: field.Type},
 							Reason:     fmt.Sprintf("field access on symbolic value %s.%s", val.Reason, field.Name),
@@ -1236,7 +1236,7 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 		if typeInfo.Struct != nil {
 			for _, field := range typeInfo.Struct.Fields {
 				if field.Name == n.Sel.Name {
-					fieldTypeInfo := e.resolveTypeWithPolicy(ctx, field.Type)
+					fieldTypeInfo, _ := field.Type.Resolve(ctx)
 					return &object.SymbolicPlaceholder{
 						BaseObject: object.BaseObject{ResolvedTypeInfo: fieldTypeInfo},
 						Reason:     fmt.Sprintf("field access %s.%s", val.Name, field.Name),
@@ -1698,7 +1698,7 @@ func (e *Evaluator) evalAssignStmt(ctx context.Context, n *ast.AssignStmt, env *
 				printer.Fprint(&typeNameBuf, pkg.Fset, typeAssert.Type)
 				return e.newError(typeAssert.Pos(), "could not resolve type for type assertion: %s", typeNameBuf.String())
 			}
-			resolvedType := e.resolveTypeWithPolicy(ctx, fieldType)
+			resolvedType, _ := fieldType.Resolve(ctx)
 
 			// Create placeholders for the two return values.
 			valuePlaceholder := &object.SymbolicPlaceholder{
@@ -2231,7 +2231,7 @@ func (e *Evaluator) scanFunctionLiteral(ctx context.Context, fn *object.Function
 			fieldType := e.scanner.TypeInfoFromExpr(ctx, field.Type, nil, fn.Package, importLookup)
 			var resolvedType *scanner.TypeInfo
 			if fieldType != nil {
-				resolvedType = e.resolveTypeWithPolicy(ctx, fieldType)
+				resolvedType, _ = fieldType.Resolve(ctx)
 			}
 
 			placeholder := &object.SymbolicPlaceholder{
@@ -2493,19 +2493,6 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 	}
 }
 
-// resolveTypeWithPolicy is a helper to resolve a FieldType to a TypeInfo while respecting the scan policy.
-func (e *Evaluator) resolveTypeWithPolicy(ctx context.Context, fieldType *scanner.FieldType) *scanner.TypeInfo {
-	if fieldType == nil {
-		return nil
-	}
-	if fieldType.FullImportPath != "" && e.scanPolicy != nil && !e.scanPolicy(fieldType.FullImportPath) {
-		return scanner.NewUnresolvedTypeInfo(fieldType.FullImportPath, fieldType.TypeName)
-	}
-	// Policy allows scanning, or it's a local/built-in type.
-	resolvedType, _ := fieldType.Resolve(ctx)
-	return resolvedType
-}
-
 func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, args []object.Object) (*object.Environment, error) {
 	// The new environment should be enclosed by the function's own package environment,
 	// not the caller's environment.
@@ -2528,7 +2515,7 @@ func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, 
 						}
 					}
 					fieldType := e.scanner.TypeInfoFromExpr(ctx, recvField.Type, nil, fn.Package, importLookup)
-					resolvedType := e.resolveTypeWithPolicy(ctx, fieldType)
+					resolvedType, _ := fieldType.Resolve(ctx)
 					receiverToBind = &object.SymbolicPlaceholder{
 						Reason:     "symbolic receiver for entry point method",
 						BaseObject: object.BaseObject{ResolvedTypeInfo: resolvedType, ResolvedFieldType: fieldType},
@@ -2614,11 +2601,11 @@ func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, 
 				name := field.Names[0] // Variadic param is always the last, single identifier.
 				if name.Name != "_" {
 					fieldType := e.scanner.TypeInfoFromExpr(ctx, paramType, nil, fn.Package, importLookup)
-					resolvedType := e.resolveTypeWithPolicy(ctx, fieldType)
+					resolvedType, _ := fieldType.Resolve(ctx)
 					v := &object.Variable{
 						Name:       name.Name,
 						Value:      variadicSlice,
-						BaseObject: object.BaseObject{ResolvedTypeInfo: resolvedType, ResolvedFieldType: fieldType},
+						BaseObject: object.BaseObject{ResolvedTypeInfo: resolvedType},
 					}
 					env.Set(name.Name, v)
 				}
@@ -2628,36 +2615,24 @@ func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, 
 
 		// This is a regular, non-variadic parameter.
 		for _, name := range field.Names {
-			var arg object.Object
 			if argIndex >= len(args) {
-				// No argument provided, create a generic symbolic one.
-				arg = &object.SymbolicPlaceholder{Reason: "symbolic parameter for entry point"}
-			} else {
-				arg = args[argIndex]
+				break
 			}
+			arg := args[argIndex]
+
+			fieldType := e.scanner.TypeInfoFromExpr(ctx, field.Type, nil, fn.Package, importLookup)
+			if fieldType == nil {
+				continue
+			}
+			resolvedType, _ := fieldType.Resolve(ctx)
 
 			if name.Name != "_" {
 				v := &object.Variable{
-					Name:  name.Name,
-					Value: arg,
+					Name:       name.Name,
+					Value:      arg,
+					BaseObject: object.BaseObject{ResolvedTypeInfo: resolvedType},
 				}
-
-				// Prioritize the dynamic type from the provided argument.
-				v.SetFieldType(arg.FieldType())
-				v.SetTypeInfo(arg.TypeInfo())
-
-				// Get the static type from the function signature to enrich the variable if needed.
-				staticFieldType := e.scanner.TypeInfoFromExpr(ctx, field.Type, nil, fn.Package, importLookup)
-				if staticFieldType != nil {
-					if v.FieldType() == nil {
-						v.SetFieldType(staticFieldType)
-					}
-					if v.TypeInfo() == nil {
-						staticTypeInfo := e.resolveTypeWithPolicy(ctx, staticFieldType)
-						v.SetTypeInfo(staticTypeInfo)
-					}
-				}
-
+				// Use SetLocal to define the parameter in the function's own scope.
 				env.SetLocal(name.Name, v)
 			}
 			argIndex++

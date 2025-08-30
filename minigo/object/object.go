@@ -434,6 +434,7 @@ type StructDefinition struct {
 	PkgPath    string
 	ModulePath string
 	ModuleDir  string
+	FScope     *FileScope // The file scope where the struct was defined.
 }
 
 // Type returns the type of the StructDefinition object.

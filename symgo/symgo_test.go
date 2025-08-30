@@ -6,13 +6,14 @@ import (
 	"path/filepath"
 	"testing"
 
+	"go/ast"
+	"strings"
+
 	"github.com/google/go-cmp/cmp"
 	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/scantest"
 	"github.com/podhmo/go-scan/symgo"
 	"github.com/podhmo/go-scan/symgo/object"
-	"go/ast"
-	"strings"
 )
 
 // common test helper for this package

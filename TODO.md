@@ -82,6 +82,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] **`select` statements**: The interpreter does not handle `*ast.SelectStmt`. Function calls within channel communications are not traced.
 - [x] **Interface Method Call Tracing**: The interpreter did not previously trigger the default intrinsic for method calls on interface types. This prevented tools like `find-orphans` from correctly analyzing code that relies on interfaces. See [docs/trouble-find-orphans.md](./docs/trouble-find-orphans.md) for details. (Note: This is now fixed. The interpreter correctly creates a placeholder for interface method calls, which can be inspected by a default intrinsic.)
 - [x] **Numeric Types**: The interpreter now handles `integer`, `float`, and `complex` literals and arithmetic.
+- [x] **Character Literals**: The interpreter now handles `char` and `rune` literals (e.g., `'a'`, `'\n'`).
 - [x] **Unary Operators**: The interpreter now handles the primary unary operators: logical not (`!`), negation (`-`), unary plus (`+`), and bitwise complement (`^`).
 - [x] **Map Literals**: The interpreter does not have concrete support for map literals; they are treated as symbolic placeholders. (Note: Now symbolically evaluated, tracing calls in keys and values.)
 - [x] **Function Literals as Arguments**: The interpreter now scans the bodies of function literals passed as arguments to other functions, allowing it to trace calls within them (e.g., `t.Run(..., func() { ... })`).

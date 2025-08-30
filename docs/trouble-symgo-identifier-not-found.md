@@ -1,4 +1,35 @@
-# Plan to Fix Unexported Symbol Resolution in `symgo`
+# Plan to Fix Unexported Symbol Resolution in `symgo` - RESOLVED
+
+**Status: ✅ RESOLVED** - Issue #679 has been fixed through implementation of centralized package management.
+
+## Summary
+
+The issue with unexported symbol resolution in `symgo` has been successfully resolved by implementing a centralized package management system. The solution ensures that unexported package-level constants and variables are properly accessible through nested, cross-package calls while respecting scan policy boundaries.
+
+## Implementation Details
+
+The following changes were implemented:
+
+1. **Added `pkgCache` to `Evaluator` struct**: Centralized package object storage
+2. **Implemented `getOrLoadPackage` method**: Single source of truth for package object creation and caching  
+3. **Refactored `evalIdent`**: Now uses centralized package management for consistent package resolution
+4. **Refactored `findDirectMethodOnType`**: Uses cached package environments and removes flawed pointer-receiver logic
+5. **Updated `ensurePackageEnvPopulated`**: Now respects scan policy for both constants and functions
+6. **Removed `findPackageByPath`**: Obsolete function replaced by centralized approach
+7. **Added comprehensive test cases**: Tests for both nested function calls and nested method calls
+
+## Test Results
+
+✅ All test cases pass:
+- `TestSymgo_UnexportedConstantResolution` - Original test case
+- `TestSymgo_UnexportedConstantResolution_NestedCall` - Cross-package function calls
+- `TestSymgo_UnexportedConstantResolution_NestedMethodCall` - Cross-package method calls
+
+The implementation properly handles unexported symbols while maintaining security through scan policy enforcement.
+
+---
+
+# Original Plan Documentation (for reference)
 
 ## 1. Summary of the Problem
 

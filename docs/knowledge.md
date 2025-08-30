@@ -1,5 +1,42 @@
 # Knowledge Base
 
+## symgo: Centralized Package Management Solution
+
+### Problem
+The `symgo` symbolic execution engine failed to resolve unexported package-level constants and variables when accessed through nested, cross-package calls. This occurred because package environments (`object.Environment`) were not consistently and fully populated before function evaluation.
+
+### Root Causes
+1. **Inconsistent Package Object Management**: `*object.Package` instances were created ad-hoc in different parts of the evaluator, leading to fragmented views of package symbols
+2. **Incorrect Environment in Method Resolution**: Methods were assigned caller's environment instead of the package where they were defined
+3. **Flawed Package Name Resolution**: Logic for resolving package names without explicit aliases was based on flawed heuristics
+
+### Solution: Centralized Package Cache
+Implemented a centralized `pkgCache` map in the `Evaluator` struct to ensure single, canonical `*object.Package` instances are created and populated throughout evaluation.
+
+#### Key Changes:
+1. Added `pkgCache` field to `Evaluator` struct
+2. Created `getOrLoadPackage()` method as single source of truth for package objects
+3. Refactored `evalIdent()` to use centralized package management
+4. Updated `findDirectMethodOnType()` to use cached package environments
+5. Modified `ensurePackageEnvPopulated()` to respect scan policy for security
+6. Removed obsolete `findPackageByPath()` function
+
+#### Benefits:
+- Consistent package environment population
+- Proper resolution of unexported symbols in cross-package scenarios
+- Respect for scan policy boundaries
+- Elimination of duplicate package scanning
+
+### Implementation Notes
+- Functions use `isExported()` helper to check visibility (names starting with uppercase)
+- Constants use the existing `IsExported` field in `ConstantInfo`
+- Out-of-policy packages only expose exported symbols to maintain security boundaries
+- Package caching prevents redundant scanning and improves performance
+
+This solution was implemented in response to issue #679 and is covered by comprehensive test cases including nested function calls and method calls across package boundaries.
+
+---
+
 ## Testing Go Modules with Nested `go.mod` Files
 
 When a subdirectory within a Go module contains its own `go.mod` file, it effectively becomes a nested or sub-module. This is sometimes done intentionally, for example, to conduct acceptance tests where the sub-module mimics an independent consumer of the parent module's packages, or to manage a distinct set of dependencies for a specific part of the project (like examples or tools).

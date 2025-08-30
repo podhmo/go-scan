@@ -2493,6 +2493,19 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 	}
 }
 
+// resolveTypeWithPolicy is a helper to resolve a FieldType to a TypeInfo while respecting the scan policy.
+func (e *Evaluator) resolveTypeWithPolicy(ctx context.Context, fieldType *scanner.FieldType) *scanner.TypeInfo {
+	if fieldType == nil {
+		return nil
+	}
+	if fieldType.FullImportPath != "" && e.scanPolicy != nil && !e.scanPolicy(fieldType.FullImportPath) {
+		return scanner.NewUnresolvedTypeInfo(fieldType.FullImportPath, fieldType.TypeName)
+	}
+	// Policy allows scanning, or it's a local/built-in type.
+	resolvedType, _ := fieldType.Resolve(ctx)
+	return resolvedType
+}
+
 func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, args []object.Object) (*object.Environment, error) {
 	// The new environment should be enclosed by the function's own package environment,
 	// not the caller's environment.
@@ -2515,7 +2528,7 @@ func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, 
 						}
 					}
 					fieldType := e.scanner.TypeInfoFromExpr(ctx, recvField.Type, nil, fn.Package, importLookup)
-					resolvedType, _ := fieldType.Resolve(ctx)
+					resolvedType := e.resolveTypeWithPolicy(ctx, fieldType)
 					receiverToBind = &object.SymbolicPlaceholder{
 						Reason:     "symbolic receiver for entry point method",
 						BaseObject: object.BaseObject{ResolvedTypeInfo: resolvedType, ResolvedFieldType: fieldType},
@@ -2601,11 +2614,11 @@ func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, 
 				name := field.Names[0] // Variadic param is always the last, single identifier.
 				if name.Name != "_" {
 					fieldType := e.scanner.TypeInfoFromExpr(ctx, paramType, nil, fn.Package, importLookup)
-					resolvedType, _ := fieldType.Resolve(ctx)
+					resolvedType := e.resolveTypeWithPolicy(ctx, fieldType)
 					v := &object.Variable{
 						Name:       name.Name,
 						Value:      variadicSlice,
-						BaseObject: object.BaseObject{ResolvedTypeInfo: resolvedType},
+						BaseObject: object.BaseObject{ResolvedTypeInfo: resolvedType, ResolvedFieldType: fieldType},
 					}
 					env.Set(name.Name, v)
 				}
@@ -2640,12 +2653,7 @@ func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, 
 						v.SetFieldType(staticFieldType)
 					}
 					if v.TypeInfo() == nil {
-						var staticTypeInfo *scanner.TypeInfo
-						if staticFieldType.FullImportPath != "" && e.scanPolicy != nil && !e.scanPolicy(staticFieldType.FullImportPath) {
-							staticTypeInfo = scanner.NewUnresolvedTypeInfo(staticFieldType.FullImportPath, staticFieldType.TypeName)
-						} else {
-							staticTypeInfo, _ = staticFieldType.Resolve(ctx)
-						}
+						staticTypeInfo := e.resolveTypeWithPolicy(ctx, staticFieldType)
 						v.SetTypeInfo(staticTypeInfo)
 					}
 				}

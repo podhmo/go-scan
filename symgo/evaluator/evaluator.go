@@ -319,27 +319,6 @@ func (e *Evaluator) evalSliceExpr(ctx context.Context, node *ast.SliceExpr, env 
 	return placeholder
 }
 
-func (e *Evaluator) augmentImportLookup(base map[string]string, env *object.Environment) map[string]string {
-	// Create a new map to avoid modifying the base map which might be cached.
-	augmented := make(map[string]string)
-	for k, v := range base {
-		augmented[k] = v
-	}
-
-	// Walk the environment to find all package objects and add them to the lookup.
-	env.Walk(func(name string, obj object.Object) bool {
-		if pkgObj, ok := obj.(*object.Package); ok {
-			// Don't overwrite existing entries from explicit aliases.
-			if _, exists := augmented[name]; !exists {
-				augmented[name] = pkgObj.Path
-			}
-		}
-		return true
-	})
-
-	return augmented
-}
-
 func (e *Evaluator) evalCompositeLit(ctx context.Context, node *ast.CompositeLit, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
 	if pkg == nil || pkg.Fset == nil {
 		return e.newError(node.Pos(), "package info or fset is missing, cannot resolve types for composite literal")
@@ -353,8 +332,7 @@ func (e *Evaluator) evalCompositeLit(ctx context.Context, node *ast.CompositeLit
 	if !ok {
 		return e.newError(node.Pos(), "could not find ast.File for path: %s", file.Name())
 	}
-	baseImportLookup := e.scanner.BuildImportLookup(astFile)
-	importLookup := e.augmentImportLookup(baseImportLookup, env)
+	importLookup := e.scanner.BuildImportLookup(astFile)
 
 	fieldType := e.scanner.TypeInfoFromExpr(ctx, node.Type, nil, pkg, importLookup)
 	if fieldType == nil {
@@ -639,8 +617,7 @@ func (e *Evaluator) evalGenDecl(ctx context.Context, node *ast.GenDecl, env *obj
 	if !ok {
 		return e.newError(node.Pos(), "could not find ast.File for path: %s", file.Name())
 	}
-	baseImportLookup := e.scanner.BuildImportLookup(astFile)
-	importLookup := e.augmentImportLookup(baseImportLookup, env)
+	importLookup := e.scanner.BuildImportLookup(astFile)
 
 	for _, spec := range node.Specs {
 		valSpec, ok := spec.(*ast.ValueSpec)
@@ -649,8 +626,14 @@ func (e *Evaluator) evalGenDecl(ctx context.Context, node *ast.GenDecl, env *obj
 		}
 
 		var staticFieldType *scanner.FieldType
+		var valFromEval object.Object
 		if valSpec.Type != nil {
 			staticFieldType = e.scanner.TypeInfoFromExpr(ctx, valSpec.Type, nil, pkg, importLookup)
+			if staticFieldType == nil {
+				// The static resolver failed. This can happen with mismatched package names.
+				// Fall back to dynamically evaluating the type expression itself.
+				valFromEval = e.Eval(ctx, valSpec.Type, env, pkg)
+			}
 		}
 
 		for i, name := range valSpec.Names {
@@ -683,24 +666,32 @@ func (e *Evaluator) evalGenDecl(ctx context.Context, node *ast.GenDecl, env *obj
 				Name:  name.Name,
 				Value: val,
 			}
-			// The dynamic type from the RHS value is often more precise than the
-			// static type from the declaration, especially regarding pointers.
-			// We prioritize the dynamic type's FieldType.
-			v.SetFieldType(val.FieldType())
-			v.SetTypeInfo(val.TypeInfo())
 
-			// If a static type was declared, we can use it to enrich the info,
-			// but we should be careful not to overwrite the more precise FieldType
-			// we just set. For example, in `var r io.Reader = new(bytes.Buffer)`,
-			// the static type is an interface, but the dynamic type `*bytes.Buffer`
-			// is what we need for method resolution.
-			if staticFieldType != nil {
-				// If the dynamic type had no info, use the static type.
-				if v.FieldType() == nil {
-					v.SetFieldType(staticFieldType)
-				}
-				if v.TypeInfo() == nil {
-					v.SetTypeInfo(resolvedTypeInfo)
+			if valFromEval != nil {
+				// The static type resolution failed, but we dynamically evaluated the
+				// type expression to a placeholder. Use that as the type info.
+				v.SetTypeInfo(valFromEval.TypeInfo())
+				v.SetFieldType(valFromEval.FieldType())
+			} else {
+				// The dynamic type from the RHS value is often more precise than the
+				// static type from the declaration, especially regarding pointers.
+				// We prioritize the dynamic type's FieldType.
+				v.SetFieldType(val.FieldType())
+				v.SetTypeInfo(val.TypeInfo())
+
+				// If a static type was declared, we can use it to enrich the info,
+				// but we should be careful not to overwrite the more precise FieldType
+				// we just set. For example, in `var r io.Reader = new(bytes.Buffer)`,
+				// the static type is an interface, but the dynamic type `*bytes.Buffer`
+				// is what we need for method resolution.
+				if staticFieldType != nil {
+					// If the dynamic type had no info, use the static type.
+					if v.FieldType() == nil {
+						v.SetFieldType(staticFieldType)
+					}
+					if v.TypeInfo() == nil {
+						v.SetTypeInfo(resolvedTypeInfo)
+					}
 				}
 			}
 			env.Set(name.Name, v)
@@ -738,7 +729,7 @@ func (e *Evaluator) evalFile(ctx context.Context, file *ast.File, env *object.En
 			if d.Tok == token.IMPORT {
 				for _, spec := range d.Specs {
 					// Imports should always go into the top-level env of the file.
-					e.evalImportSpec(ctx, spec, env)
+					e.evalImportSpec(spec, env)
 				}
 			} else if d.Tok == token.VAR {
 				e.evalGenDecl(ctx, d, targetEnv, pkg)
@@ -766,7 +757,7 @@ func (e *Evaluator) evalFile(ctx context.Context, file *ast.File, env *object.En
 	return nil
 }
 
-func (e *Evaluator) evalImportSpec(ctx context.Context, spec ast.Spec, env *object.Environment) object.Object {
+func (e *Evaluator) evalImportSpec(spec ast.Spec, env *object.Environment) object.Object {
 	importSpec, ok := spec.(*ast.ImportSpec)
 	if !ok {
 		return nil
@@ -778,40 +769,29 @@ func (e *Evaluator) evalImportSpec(ctx context.Context, spec ast.Spec, env *obje
 	}
 
 	var pkgName string
-	var pkgInfo *scanner.PackageInfo // To store scanned info
-
 	if importSpec.Name != nil {
 		pkgName = importSpec.Name.Name
 	} else {
-		// To get the correct package name for an unaliased import, we must parse
-		// the package's files. While this seems to contradict a lazy-loading
-		// approach, it's necessary because the package name is required to correctly
-		// build the environment for the type checker and evaluator. go-scan's
-		// caching ensures this parse only happens once per package path.
-		scannedPkg, err := e.scanner.ScanPackageByImport(ctx, importPath)
-		if err != nil {
-			// If scanning fails (e.g., package not found), we fall back to the old
-			// logic and log a warning. This maintains robustness.
-			e.logWithContext(ctx, slog.LevelWarn, "could not scan import to determine package name, falling back to path-based name", "path", importPath, "error", err)
-			pkgName = path.Base(importPath)
-		} else {
-			pkgName = scannedPkg.Name
-			pkgInfo = scannedPkg // Cache the result to avoid re-scanning later.
+		// Guess the package name from the import path.
+		// A common convention is to use gopkg.in/pkg.vN, where the package name is pkg.
+		base := path.Base(importPath)
+		if strings.Contains(base, ".v") {
+			if vIdx := strings.LastIndex(base, ".v"); vIdx > 0 {
+				versionStr := base[vIdx+2:]
+				if _, err := strconv.Atoi(versionStr); err == nil {
+					pkgName = base[:vIdx]
+				}
+			}
 		}
-	}
-
-	// Avoid overwriting an existing package object if the same import is processed multiple times.
-	if existing, ok := env.Get(pkgName); ok {
-		if p, ok := existing.(*object.Package); ok && p.Path == importPath {
-			return nil // Already processed.
+		if pkgName == "" {
+			pkgName = base
 		}
 	}
 
 	pkg := &object.Package{
-		Name:        pkgName,
-		Path:        importPath,
-		Env:         object.NewEnvironment(),
-		ScannedInfo: pkgInfo, // Pre-populate if we already scanned it.
+		Name: pkgName,
+		Path: importPath,
+		Env:  object.NewEnvironment(),
 	}
 	env.Set(pkgName, pkg)
 	return nil
@@ -911,7 +891,10 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 	case *object.SymbolicPlaceholder:
 		typeInfo := val.TypeInfo()
 		if typeInfo == nil {
-			return e.newError(n.Pos(), "cannot call method on symbolic placeholder with no type info")
+			// This placeholder might represent an unresolved package identifier (like `yaml`
+			// in `yaml.Node`). The selection on it (`.Node`) creates a new, more specific
+			// symbolic value. We return a new placeholder to allow analysis to continue.
+			return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("selection %q on placeholder with no type", n.Sel.Name)}
 		}
 		fullTypeName := fmt.Sprintf("%s.%s", typeInfo.PkgPath, typeInfo.Name)
 		key := fmt.Sprintf("(*%s).%s", fullTypeName, n.Sel.Name)
@@ -974,6 +957,24 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 		// If the symbol is already in the package's environment, return it.
 		if symbol, ok := val.Env.Get(n.Sel.Name); ok {
 			return symbol
+		}
+
+		// Try to find the symbol as a Type.
+		if val.ScannedInfo != nil {
+			for _, t := range val.ScannedInfo.Types {
+				if t.Name == n.Sel.Name {
+					// Found the type. Return a placeholder that represents this type.
+					// This is crucial for var declarations like `var v mypkg.MyType`.
+					placeholder := &object.SymbolicPlaceholder{
+						Reason: fmt.Sprintf("type reference to %s.%s", val.Path, t.Name),
+						BaseObject: object.BaseObject{
+							ResolvedTypeInfo: t,
+						},
+					}
+					val.Env.Set(n.Sel.Name, placeholder) // Cache for future lookups
+					return placeholder
+				}
+			}
 		}
 
 		// We need package info regardless of the policy to find the symbol.
@@ -1353,8 +1354,7 @@ func (e *Evaluator) evalTypeSwitchStmt(ctx context.Context, n *ast.TypeSwitchStm
 		if !ok {
 			return e.newError(n.Pos(), "could not find ast.File for path: %s", file.Name())
 		}
-		baseImportLookup := e.scanner.BuildImportLookup(astFile)
-		importLookup := e.augmentImportLookup(baseImportLookup, switchEnv)
+		importLookup := e.scanner.BuildImportLookup(astFile)
 
 		for _, c := range n.Body.List {
 			caseClause, ok := c.(*ast.CaseClause)
@@ -1440,8 +1440,7 @@ func (e *Evaluator) evalTypeAssertExpr(ctx context.Context, n *ast.TypeAssertExp
 	if !ok {
 		return e.newError(n.Pos(), "could not find ast.File for path: %s", file.Name())
 	}
-	baseImportLookup := e.scanner.BuildImportLookup(astFile)
-	importLookup := e.augmentImportLookup(baseImportLookup, env)
+	importLookup := e.scanner.BuildImportLookup(astFile)
 
 	fieldType := e.scanner.TypeInfoFromExpr(ctx, n.Type, nil, pkg, importLookup)
 	if fieldType == nil {
@@ -1964,8 +1963,12 @@ func (e *Evaluator) evalIdent(ctx context.Context, n *ast.Ident, env *object.Env
 		return &object.Intrinsic{Fn: fn}
 	}
 
-	e.logger.Debug("evalIdent: not found in env or intrinsics", "name", n.Name)
-	return e.newError(n.Pos(), "identifier not found: %s", n.Name)
+	e.logger.Debug("evalIdent: not found in env or intrinsics, creating placeholder", "name", n.Name)
+	// When an identifier is not found, do not error out. Instead, create a
+	// symbolic placeholder. This allows evaluation to continue for code that
+	// might be referencing a package by a name that go-scan's static analysis
+	// cannot resolve (e.g., mismatched package names).
+	return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("undefined identifier: %s", n.Name)}
 }
 
 // logWithContext logs a message, adding call stack information if an error object is provided.
@@ -2246,8 +2249,16 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 			if file != nil {
 				if astFile, ok := fn.Package.AstFiles[file.Name()]; ok {
 					for _, imp := range astFile.Imports {
-						// This logic is now centralized in evalImportSpec.
-						e.evalImportSpec(ctx, imp, extendedEnv)
+						var name string
+						if imp.Name != nil {
+							name = imp.Name.Name
+						} else {
+							parts := strings.Split(strings.Trim(imp.Path.Value, `"`), "/")
+							name = parts[len(parts)-1]
+						}
+						path := strings.Trim(imp.Path.Value, `"`)
+						// Set ScannedInfo to nil to force on-demand loading.
+						extendedEnv.Set(name, &object.Package{Path: path, ScannedInfo: nil, Env: object.NewEnvironment()})
 					}
 				}
 			}
@@ -2387,7 +2398,15 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 		}
 
 		// Case 3: Generic placeholder.
-		return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("result of calling %s", fn.Inspect())}
+		// This can be a call to a method on an unresolved type (shallow scan),
+		// or a type conversion like []byte("...").
+		// In these cases, we want to continue symbolically.
+		if strings.HasPrefix(fn.Reason, "symbolic method call") || fn.Reason == "array type expression" {
+			return &object.SymbolicPlaceholder{Reason: "result of " + fn.Reason}
+		}
+
+		// However, if it's a truly undefined identifier, it's an error.
+		return e.newError(callPos, "not a function: %s", fn.Inspect())
 
 	default:
 		return e.newError(callPos, "not a function: %s", fn.Type())

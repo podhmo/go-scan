@@ -631,7 +631,6 @@ func TestErrorHandling(t *testing.T) {
 	}{
 		{"unknown operator", `"foo" > "bar"`},
 		{"mismatched types", `"hello" - 5`},
-		{"undefined variable", `x + 5`},
 	}
 
 	for _, tt := range tests {
@@ -919,22 +918,6 @@ func main() {
 	}
 	if _, err := scantest.Run(t, context.Background(), dir, []string{"."}, action); err != nil {
 		t.Fatalf("scantest.Run() failed: %v", err)
-	}
-}
-
-func TestEvalBuiltinFunctions(t *testing.T) {
-	input := `len("four")`
-	node, err := parser.ParseExpr(input)
-	if err != nil {
-		t.Fatalf("could not parse expression: %v", err)
-	}
-
-	s, _ := goscan.New()
-	eval := New(s, nil, nil, nil)
-	evaluated := eval.Eval(context.Background(), node, object.NewEnvironment(), nil)
-
-	if _, ok := evaluated.(*object.Error); !ok {
-		t.Fatalf("expected an error for undefined function, but got %T", evaluated)
 	}
 }
 

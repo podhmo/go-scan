@@ -860,17 +860,36 @@ func (e *Evaluator) ensurePackageEnvPopulated(ctx context.Context, pkgObj *objec
 	if pkgObj.ScannedInfo == nil {
 		return // Not scanned yet.
 	}
-	// Check if already populated.
-	if len(pkgObj.ScannedInfo.Functions) > 0 {
-		if _, ok := pkgObj.Env.Get(pkgObj.ScannedInfo.Functions[0].Name); ok {
-			return
-		}
-	} else {
-		return // No functions to populate.
-	}
-
 	pkgInfo := pkgObj.ScannedInfo
 	env := pkgObj.Env
+
+	// Populate package-level constants once per package.
+	// This is crucial for resolving unexported constants when a function from this
+	// package is called from another package.
+	if !e.initializedPkgs[pkgInfo.ImportPath] {
+		e.logger.DebugContext(ctx, "populating package-level constants", "package", pkgInfo.ImportPath)
+		for _, c := range pkgInfo.Constants {
+			// All constants, including unexported, are loaded into the package's env.
+			constObj := e.convertGoConstant(c.ConstVal, token.NoPos)
+			if isError(constObj) {
+				e.logger.Warn("could not convert constant to object", "const", c.Name, "error", constObj)
+				continue
+			}
+			env.Set(c.Name, constObj)
+		}
+		e.initializedPkgs[pkgInfo.ImportPath] = true
+	}
+
+	// Check if functions are already populated to avoid redundant work.
+	if len(pkgInfo.Functions) > 0 {
+		if _, ok := env.Get(pkgInfo.Functions[0].Name); ok {
+			return
+		}
+	} else if len(pkgInfo.Constants) == 0 {
+		// No functions and no constants to populate, so we're done.
+		return
+	}
+
 	e.logger.DebugContext(ctx, "populating package environment", "package", pkgInfo.ImportPath)
 
 	// Determine if the package is within the scan policy.

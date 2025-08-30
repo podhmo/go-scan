@@ -70,8 +70,8 @@ func main() {
 	var got []string
 	interp.RegisterIntrinsic("fmt.Println", func(i *symgo.Interpreter, args []symgo.Object) symgo.Object {
 		if len(args) > 0 {
-			if sp, ok := args[0].(*symgo.SymbolicPlaceholder); ok && sp.Reason == "result of conversion to built-in type string" {
-				got = append(got, "<string conversion of symbolic bytes>")
+			if sp, ok := args[0].(*symgo.SymbolicPlaceholder); ok {
+				got = append(got, sp.Reason)
 			}
 		}
 		return nil
@@ -99,7 +99,7 @@ func main() {
 	}
 
 	want := []string{
-		"<string conversion of symbolic bytes>",
+		"result of conversion to built-in type string",
 	}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("mismatch (-want +got):\n%s", diff)

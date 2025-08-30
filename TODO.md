@@ -69,6 +69,8 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 
 
 ### `symgo` Interpreter Limitations
+- [x] **Mismatching Import Path and Package Name**: The interpreter now correctly handles packages where the import path's final segment does not match the package name (e.g., `gopkg.in/yaml.v2` is package `yaml`) by lazily scanning packages to determine their real name. It also now correctly handles built-in type identifiers (`string`, `int`, etc.). ([docs/trouble-symgo-mismatch-import-package-name.md](./docs/trouble-symgo-mismatch-import-package-name.md))
+- [x] **Resilience to Undefined Identifiers**: When analyzing code outside the scan policy, the interpreter now creates a symbolic placeholder for undefined identifiers instead of erroring, allowing analysis to continue. ([docs/trouble-symgo-mismatch-import-package-name.md](./docs/trouble-symgo-mismatch-import-package-name.md))
 - [x] **Infinite Recursion**: The interpreter now prevents infinite recursion by tracking the call stack and detecting duplicate function calls with the same arguments.
 - [x] **`symgo`: `defer` and `go` statement Tracing**: The `symgo` interpreter now traces `CallExpr` nodes inside `*ast.DeferStmt` and `*ast.GoStmt`, preventing false positives in tools like `find-orphans`.
 - [x] **Branch statements (`break`, `continue`)**: The interpreter now handles `*ast.BranchStmt`, allowing it to correctly model control flow in loops.

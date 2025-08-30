@@ -116,7 +116,7 @@ func runAnalysis(t *testing.T, ctx context.Context, interp *symgo.Interpreter, m
 		t.Fatalf("ScanPackageByImport failed: %v", err)
 	}
 
-	mainFile := FindFile(t, pkg, "main.go")
+	mainFile := findFile(t, pkg, "main.go")
 
 	_, err = interp.Eval(ctx, mainFile, pkg)
 	if err != nil {

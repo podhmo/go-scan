@@ -289,37 +289,8 @@ func (i *Interpreter) intrinsicSprintf(eval *Interpreter, args []Object) Object 
 // Eval evaluates a given AST node in the interpreter's persistent environment.
 // It requires the PackageInfo of the file containing the node to resolve types correctly.
 func (i *Interpreter) Eval(ctx context.Context, node ast.Node, pkg *scanner.PackageInfo) (Object, error) {
-	// When evaluating a node that is not a full file (e.g., a function body),
-	// the evaluator doesn't have the file-level context to know which imports
-	// are available. To solve this, we pre-populate the environment with the
-	// imports from the package that contains the node.
-	if pkg != nil {
-		// This makes a simplifying assumption that all files in the package share
-		// the same import namespace. We use the first file as a representative.
-		var representativeFile *ast.File
-		for _, f := range pkg.AstFiles {
-			representativeFile = f
-			break
-		}
-
-		if representativeFile != nil {
-			for _, imp := range representativeFile.Imports {
-				var name string
-				if imp.Name != nil {
-					name = imp.Name.Name
-				} else {
-					parts := strings.Split(strings.Trim(imp.Path.Value, `"`), "/")
-					name = parts[len(parts)-1]
-				}
-				path := strings.Trim(imp.Path.Value, `"`)
-				// We set it on the global environment, which is shared across Eval calls for this interpreter.
-				// Set ScannedInfo to nil to force on-demand loading when the package is accessed.
-				// This prevents polluting the cache with the wrong package info.
-				i.globalEnv.Set(name, &object.Package{Path: path, ScannedInfo: nil, Env: object.NewEnvironment()})
-			}
-		}
-	}
-
+	// The evaluator now handles import resolution lazily.
+	// We no longer need to pre-populate the environment here.
 	result := i.eval.Eval(ctx, node, i.globalEnv, pkg)
 	if err, ok := result.(*Error); ok {
 		return nil, errors.New(err.Inspect())

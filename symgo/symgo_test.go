@@ -11,7 +11,21 @@ import (
 	"github.com/podhmo/go-scan/scantest"
 	"github.com/podhmo/go-scan/symgo"
 	"github.com/podhmo/go-scan/symgo/object"
+	"go/ast"
+	"strings"
 )
+
+// common test helper for this package
+func findFile(t *testing.T, pkg *goscan.Package, filename string) *ast.File {
+	t.Helper()
+	for path, f := range pkg.AstFiles {
+		if strings.HasSuffix(path, filename) {
+			return f
+		}
+	}
+	t.Fatalf("file %q not found in package %q", filename, pkg.Name)
+	return nil
+}
 
 func TestNewInterpreter(t *testing.T) {
 	t.Run("nil scanner", func(t *testing.T) {

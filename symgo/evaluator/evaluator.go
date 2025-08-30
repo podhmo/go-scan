@@ -784,11 +784,6 @@ func (e *Evaluator) evalFile(ctx context.Context, file *ast.File, env *object.En
 				e.evalGenDecl(ctx, d, targetEnv, pkg)
 			}
 		case *ast.FuncDecl:
-			// Avoid re-defining functions if they are already in the environment.
-			if _, ok := targetEnv.Get(d.Name.Name); ok {
-				continue
-			}
-
 			var funcInfo *scanner.FunctionInfo
 			for _, f := range pkg.Functions {
 				if f.AstDecl == d {

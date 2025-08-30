@@ -10,7 +10,6 @@ import (
 	"go/token"
 	"log/slog"
 	"os"
-	"path"
 	"strconv"
 	"strings"
 
@@ -712,12 +711,9 @@ func (e *Evaluator) evalFile(ctx context.Context, file *ast.File, env *object.En
 	for _, decl := range file.Decls {
 		switch d := decl.(type) {
 		case *ast.GenDecl:
-			if d.Tok == token.IMPORT {
-				for _, spec := range d.Specs {
-					// Imports should always go into the top-level env of the file.
-					e.evalImportSpec(spec, env)
-				}
-			} else if d.Tok == token.VAR {
+			// Import declarations are handled lazily by evalSelectorExpr when a package is first used.
+			// We only need to handle variable declarations here.
+			if d.Tok == token.VAR {
 				e.evalGenDecl(ctx, d, targetEnv, pkg)
 			}
 		case *ast.FuncDecl:
@@ -740,33 +736,6 @@ func (e *Evaluator) evalFile(ctx context.Context, file *ast.File, env *object.En
 			targetEnv.Set(d.Name.Name, fn) // Set in the package's own environment
 		}
 	}
-	return nil
-}
-
-func (e *Evaluator) evalImportSpec(spec ast.Spec, env *object.Environment) object.Object {
-	importSpec, ok := spec.(*ast.ImportSpec)
-	if !ok {
-		return nil
-	}
-
-	importPath, err := strconv.Unquote(importSpec.Path.Value)
-	if err != nil {
-		return e.newError(importSpec.Pos(), "invalid import path: %s", importSpec.Path.Value)
-	}
-
-	var pkgName string
-	if importSpec.Name != nil {
-		pkgName = importSpec.Name.Name
-	} else {
-		pkgName = path.Base(importPath)
-	}
-
-	pkg := &object.Package{
-		Name: pkgName,
-		Path: importPath,
-		Env:  object.NewEnvironment(),
-	}
-	env.Set(pkgName, pkg)
 	return nil
 }
 
@@ -864,7 +833,10 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 	case *object.SymbolicPlaceholder:
 		typeInfo := val.TypeInfo()
 		if typeInfo == nil {
-			return e.newError(n.Pos(), "cannot call method on symbolic placeholder with no type info")
+			// If we are calling a method on a placeholder that has no type info (e.g., from an
+			// undefined identifier in an out-of-policy package), we can't resolve the method.
+			// Instead of erroring, we return another placeholder representing the result of the call.
+			return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("result of call to method %q on typeless placeholder", n.Sel.Name)}
 		}
 		fullTypeName := fmt.Sprintf("%s.%s", typeInfo.PkgPath, typeInfo.Name)
 		key := fmt.Sprintf("(*%s).%s", fullTypeName, n.Sel.Name)
@@ -1907,15 +1879,78 @@ func (e *Evaluator) evalIdent(ctx context.Context, n *ast.Ident, env *object.Env
 		return val
 	}
 
+	// If the identifier is not in the environment, it might be a package name.
+	// We need to check the imports of the current file.
+	if pkg != nil && pkg.Fset != nil {
+		file := pkg.Fset.File(n.Pos())
+		if file != nil {
+			if astFile, ok := pkg.AstFiles[file.Name()]; ok {
+				for _, imp := range astFile.Imports {
+					importPath, _ := strconv.Unquote(imp.Path.Value)
+
+					// Case 1: The import has an alias.
+					if imp.Name != nil {
+						if n.Name == imp.Name.Name {
+							pkgObj := &object.Package{Name: n.Name, Path: importPath, Env: object.NewEnvironment()}
+							env.Set(n.Name, pkgObj)
+							return pkgObj
+						}
+						continue // Alias doesn't match, move to next import.
+					}
+
+					// Case 2: No alias. The identifier might be the package's actual name.
+					// We have to scan the package to find out its real name.
+					// This is expensive, but go-scan caches the result, so it only happens once per package.
+					importedPkgInfo, err := e.scanner.ScanPackageByImport(ctx, importPath)
+					if err != nil {
+						// If we can't scan it, we can't resolve it. Continue checking other imports.
+						e.logWithContext(ctx, slog.LevelDebug, "could not scan potential package for ident", "ident", n.Name, "path", importPath, "error", err)
+						continue
+					}
+
+					if n.Name == importedPkgInfo.Name {
+						// The identifier matches the scanned package's name. Create the object.
+						pkgObj := &object.Package{
+							Name:        importedPkgInfo.Name,
+							Path:        importPath,
+							Env:         object.NewEnvironment(),
+							ScannedInfo: importedPkgInfo, // Pre-populate with the info we just got.
+						}
+						env.Set(n.Name, pkgObj)
+						return pkgObj
+					}
+				}
+			}
+		}
+	}
+
 	// Fallback to universe scope for built-in values and functions.
 	if val, ok := universe.GetValue(n.Name); ok {
 		return val
 	}
+
+	// Check for built-in types
+	switch n.Name {
+	case "string", "int", "int8", "int16", "int32", "int64",
+		"uint", "uint8", "uint16", "uint32", "uint64", "uintptr",
+		"float32", "float64", "complex64", "complex128",
+		"bool", "byte", "rune", "error":
+		return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("built-in type %s", n.Name)}
+	}
+
 	if fn, ok := universe.GetFunction(n.Name); ok {
 		return &object.Intrinsic{Fn: fn}
 	}
 
 	e.logger.Debug("evalIdent: not found in env or intrinsics", "name", n.Name)
+
+	// If we are in a package that is outside the scan policy,
+	// treat the undefined identifier as a symbolic placeholder instead of an error.
+	if pkg != nil && e.scanPolicy != nil && !e.scanPolicy(pkg.ImportPath) {
+		e.logger.DebugContext(ctx, "treating undefined identifier as symbolic in out-of-policy package", "ident", n.Name, "package", pkg.ImportPath)
+		return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("undefined identifier %s in out-of-policy package", n.Name)}
+	}
+
 	return e.newError(n.Pos(), "identifier not found: %s", n.Name)
 }
 
@@ -2345,7 +2380,12 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 			return &object.MultiReturn{Values: returnValues}
 		}
 
-		// Case 3: Generic placeholder.
+		// Case 3: A placeholder representing a built-in type, used in a conversion.
+		if strings.HasPrefix(fn.Reason, "built-in type") {
+			return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("result of conversion to %s", fn.Reason)}
+		}
+
+		// Case 4: Generic placeholder.
 		return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("result of calling %s", fn.Inspect())}
 
 	default:

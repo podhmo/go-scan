@@ -35,7 +35,7 @@ func TestExtraModuleCall(t *testing.T) {
 		t.Fatalf("ScanPackageByImport failed: %v", err)
 	}
 
-	mainFile := FindFile(t, pkg, "main.go")
+	mainFile := findFile(t, pkg, "main.go")
 
 	_, err = interp.Eval(ctx, mainFile, pkg)
 	if err != nil {

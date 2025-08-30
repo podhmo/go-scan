@@ -68,7 +68,7 @@ const MyConstant = "hello from another module"
 	}
 
 	// 4. Eval the main file to populate the interpreter's environment.
-	mainFile := FindFile(t, mainPkg, "main.go") // Using helper from another test
+	mainFile := findFile(t, mainPkg, "main.go") // Using helper from another test
 	_, err = interp.Eval(ctx, mainFile, mainPkg)
 	if err != nil {
 		t.Fatalf("Eval main file failed: %v", err)

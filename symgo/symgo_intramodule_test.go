@@ -41,7 +41,7 @@ func TestIntraModuleCall(t *testing.T) {
 	}
 
 	// Find the main file and eval it to populate the env
-	mainFile := FindFile(t, pkg, "main.go")
+	mainFile := findFile(t, pkg, "main.go")
 
 	_, err = interp.Eval(ctx, mainFile, pkg)
 	if err != nil {

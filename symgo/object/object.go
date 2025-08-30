@@ -498,6 +498,11 @@ func (e *Environment) Set(name string, val Object) Object {
 	return val
 }
 
+// Delete removes an object by name from the local (current) environment only.
+func (e *Environment) Delete(name string) {
+	delete(e.store, name)
+}
+
 // SetLocal stores an object by name in the local (current) environment only.
 // This is used for `:=` declarations.
 func (e *Environment) SetLocal(name string, val Object) Object {

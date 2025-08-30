@@ -9,3 +9,5 @@ require (
 	golang.org/x/mod v0.27.0
 	golang.org/x/sync v0.16.0
 )
+
+require github.com/podhmo/noerror v0.3.1 // indirect

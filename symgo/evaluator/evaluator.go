@@ -715,7 +715,7 @@ func (e *Evaluator) evalFile(ctx context.Context, file *ast.File, env *object.En
 			if d.Tok == token.IMPORT {
 				for _, spec := range d.Specs {
 					// Imports should always go into the top-level env of the file.
-					e.evalImportSpec(spec, env)
+					e.evalImportSpec(ctx, spec, env)
 				}
 			} else if d.Tok == token.VAR {
 				e.evalGenDecl(ctx, d, targetEnv, pkg)
@@ -743,7 +743,7 @@ func (e *Evaluator) evalFile(ctx context.Context, file *ast.File, env *object.En
 	return nil
 }
 
-func (e *Evaluator) evalImportSpec(spec ast.Spec, env *object.Environment) object.Object {
+func (e *Evaluator) evalImportSpec(ctx context.Context, spec ast.Spec, env *object.Environment) object.Object {
 	importSpec, ok := spec.(*ast.ImportSpec)
 	if !ok {
 		return nil
@@ -755,16 +755,40 @@ func (e *Evaluator) evalImportSpec(spec ast.Spec, env *object.Environment) objec
 	}
 
 	var pkgName string
+	var pkgInfo *scanner.PackageInfo // To store scanned info
+
 	if importSpec.Name != nil {
 		pkgName = importSpec.Name.Name
 	} else {
-		pkgName = path.Base(importPath)
+		// To get the correct package name for an unaliased import, we must parse
+		// the package's files. While this seems to contradict a lazy-loading
+		// approach, it's necessary because the package name is required to correctly
+		// build the environment for the type checker and evaluator. go-scan's
+		// caching ensures this parse only happens once per package path.
+		scannedPkg, err := e.scanner.ScanPackageByImport(ctx, importPath)
+		if err != nil {
+			// If scanning fails (e.g., package not found), we fall back to the old
+			// logic and log a warning. This maintains robustness.
+			e.logWithContext(ctx, slog.LevelWarn, "could not scan import to determine package name, falling back to path-based name", "path", importPath, "error", err)
+			pkgName = path.Base(importPath)
+		} else {
+			pkgName = scannedPkg.Name
+			pkgInfo = scannedPkg // Cache the result to avoid re-scanning later.
+		}
+	}
+
+	// Avoid overwriting an existing package object if the same import is processed multiple times.
+	if existing, ok := env.Get(pkgName); ok {
+		if p, ok := existing.(*object.Package); ok && p.Path == importPath {
+			return nil // Already processed.
+		}
 	}
 
 	pkg := &object.Package{
-		Name: pkgName,
-		Path: importPath,
-		Env:  object.NewEnvironment(),
+		Name:        pkgName,
+		Path:        importPath,
+		Env:         object.NewEnvironment(),
+		ScannedInfo: pkgInfo, // Pre-populate if we already scanned it.
 	}
 	env.Set(pkgName, pkg)
 	return nil
@@ -2197,16 +2221,8 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 			if file != nil {
 				if astFile, ok := fn.Package.AstFiles[file.Name()]; ok {
 					for _, imp := range astFile.Imports {
-						var name string
-						if imp.Name != nil {
-							name = imp.Name.Name
-						} else {
-							parts := strings.Split(strings.Trim(imp.Path.Value, `"`), "/")
-							name = parts[len(parts)-1]
-						}
-						path := strings.Trim(imp.Path.Value, `"`)
-						// Set ScannedInfo to nil to force on-demand loading.
-						extendedEnv.Set(name, &object.Package{Path: path, ScannedInfo: nil, Env: object.NewEnvironment()})
+						// This logic is now centralized in evalImportSpec.
+						e.evalImportSpec(ctx, imp, extendedEnv)
 					}
 				}
 			}

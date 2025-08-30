@@ -490,6 +490,16 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool) error {
 		// We need to mark the function being called (args[0]) as used.
 		// We also need to check if any of the arguments themselves are function
 		// values being passed along, and mark them as used too.
+
+		// Performance optimization: If the function being called is a built-in intrinsic
+		// (like `len`, `append`, etc.), we don't need to track its usage. This avoids
+		// a significant overhead from processing these very common function calls.
+		if len(args) > 0 {
+			if _, ok := args[0].(*object.Intrinsic); ok {
+				return nil
+			}
+		}
+
 		for _, arg := range args {
 			markUsage(arg)
 		}

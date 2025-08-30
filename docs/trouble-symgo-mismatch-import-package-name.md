@@ -1,6 +1,6 @@
 # Problem: `symgo` Fails on Imports Where Package Name Mismatches Path
 
-**Status: Resolved**
+**Status: Partially Resolved**
 
 ## Summary
 
@@ -8,16 +8,21 @@ The `symgo` symbolic execution engine had a flawed mechanism for resolving the p
 
 Additionally, when `symgo` operated on code outside its scan policy, it would error on undefined identifiers, halting analysis. The desired behavior was to create a symbolic placeholder to allow analysis to continue.
 
-## Resolution
+## Resolution (Partial)
 
-The issue was resolved through a series of fixes to the `symgo` evaluator:
+The issue was partially resolved through a series of fixes to the `symgo` evaluator:
 
-1.  **Lazy, Correct Import Resolution**: The old, incorrect import handling logic was removed from `symgo/symgo.go`. The `evalIdent` function in the evaluator was enhanced to handle package resolution lazily. When it encounters an unresolved identifier, it now checks the file's imports. For imports without an alias, it performs a trial scan of the package (`go-scan` caches the result) to determine its *actual* package name. It then creates the package object with the correct name, allowing subsequent selections (e.g., `yaml.Marshal`) to succeed.
+1.  **Lazy, Correct Import Resolution**: The old, incorrect import handling logic was removed. The `evalIdent` function in the evaluator was enhanced to handle package resolution lazily by scanning packages on-demand to determine their *actual* package name.
+2.  **Resilience for Out-of-Policy Code**: The `evalIdent` function was modified to return a `SymbolicPlaceholder` instead of an error when an undefined identifier is found in an out-of-policy package. `evalSelectorExpr` was also updated to handle method calls on these new typeless placeholders.
 
-2.  **Resilience for Out-of-Policy Code**: The `evalIdent` function was modified. If an identifier is not found, it now checks if the containing package is within the `ScanPolicy`. If the package is out-of-policy, `evalIdent` returns a `*object.SymbolicPlaceholder` instead of an error.
+These changes make the `symgo` engine more robust. However, testing revealed follow-on issues that remain unresolved.
 
-3.  **Resilience for Typeless Placeholders**: A follow-on fix was made to `evalSelectorExpr`. If a method is called on a symbolic placeholder that has no type information (which is the case for placeholders created for undefined identifiers), it no longer errors. Instead, it returns another placeholder representing the result of the symbolic call.
+---
 
-4.  **Built-in Type Resolution**: A bug discovered during testing, where built-in type identifiers like `string` were not found, was fixed. `evalIdent` was updated to recognize a list of Go's built-in types and return a placeholder, allowing type conversions like `string(b)` to be evaluated symbolically.
+## Unresolved Issues and Next Steps
 
-These changes together make the `symgo` engine more robust and accurate in handling complex import schemes and analyzing code with incomplete dependency information. The fixes were verified with a new test suite in `symgo_mismatch_import_test.go`.
+1.  **Fix Built-in Type Resolution**:
+    *   **Problem**: The tests revealed that after fixing the `yaml` import, the evaluation fails on a built-in type conversion: `string(b)`. The evaluator reports `identifier not found: string`.
+    *   **Task**: Enhance `evalIdent` to correctly resolve built-in types (`string`, `int`, `bool`, etc.), likely by checking against a universe of built-in type names.
+
+2.  **Finalize Test Assertions**: The tests in `symgo_mismatch_import_test.go` should be cleaned up and their assertions finalized once the built-in type resolution bug is fixed. The dependency on `gopkg.in/yaml.v2` was removed from the main `go.mod` to avoid leaving unused test dependencies, but the test file itself still contains the logic that requires it. This test should be finalized.

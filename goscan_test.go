@@ -1664,3 +1664,39 @@ type NotAnImplementer struct{}
 		t.Errorf("Expected implementers %v, got %v", expectedImplementers, implementerNames)
 	}
 }
+
+func TestScanner_ResolvePackageName(t *testing.T) {
+	ctx := context.Background()
+	files := map[string]string{
+		"go.mod":        "module example.com/me\n",
+		"pkgfoo/foo.go": "package pkgbar\n\nfunc Foo() {}", // path is pkgfoo, name is pkgbar
+	}
+	dir, cleanup := writeTestFiles(t, files)
+	defer cleanup()
+
+	s, err := New(WithWorkDir(dir))
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+
+	// First call - should parse the file
+	name, err := s.ResolvePackageName(ctx, "example.com/me/pkgfoo")
+	if err != nil {
+		t.Fatalf("first call to ResolvePackageName failed: %v", err)
+	}
+	if name != "pkgbar" {
+		t.Errorf("first call: expected package name 'pkgbar', but got %q", name)
+	}
+
+	// To test the cache, we can't easily inspect the map without making it public.
+	// However, we can call it again and ensure it still works. This implicitly
+	// tests that the cache, if hit, returns the correct value.
+	// We could also check performance, but that's flaky. This is sufficient.
+	name, err = s.ResolvePackageName(ctx, "example.com/me/pkgfoo")
+	if err != nil {
+		t.Fatalf("second call to ResolvePackageName failed: %v", err)
+	}
+	if name != "pkgbar" {
+		t.Errorf("second call: expected package name 'pkgbar', but got %q", name)
+	}
+}

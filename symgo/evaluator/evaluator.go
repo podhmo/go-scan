@@ -6,13 +6,11 @@ import (
 	"fmt"
 	"go/ast"
 	"go/constant"
-	"go/parser"
 	"go/printer"
 	"go/token"
 	"log/slog"
 	"os"
 	"path"
-	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -762,51 +760,14 @@ func (e *Evaluator) evalImportSpec(spec ast.Spec, env *object.Environment) objec
 		pkgName = importSpec.Name.Name
 	} else {
 		// For a standard import, we must find the package's actual declared name.
-		// This is because the declared name can differ from the last element of the import path.
-		shouldScanDeeply := e.scanPolicy == nil || e.scanPolicy(importPath)
-		var pkgInfo *scanner.PackageInfo
-		var err error
-
-		if shouldScanDeeply {
-			// If the package is within our scan policy, we can afford to do a full scan
-			// to get the most accurate info.
-			pkgInfo, err = e.scanner.ScanPackageByImport(context.Background(), importPath)
-		} else {
-			// If it's an external package, we do NOT want to do a full scan.
-			// Instead, we use a lightweight method to find the package directory
-			// and parse only the package clause from one .go file.
-			var pkgDir string
-			pkgDir, err = e.scanner.Locator().FindPackageDir(importPath)
-			if err == nil {
-				var files []os.DirEntry
-				files, err = os.ReadDir(pkgDir)
-				if err == nil {
-					var goFile string
-					for _, file := range files {
-						if !file.IsDir() && strings.HasSuffix(file.Name(), ".go") && !strings.HasSuffix(file.Name(), "_test.go") {
-							goFile = file.Name()
-							break
-						}
-					}
-					if goFile != "" {
-						var f *ast.File
-						f, err = parser.ParseFile(token.NewFileSet(), filepath.Join(pkgDir, goFile), nil, parser.PackageClauseOnly)
-						if err == nil {
-							pkgInfo = &scanner.PackageInfo{Name: f.Name.Name, ImportPath: importPath}
-						}
-					} else {
-						err = fmt.Errorf("no .go files found in %s", pkgDir)
-					}
-				}
-			}
-		}
-
+		name, err := e.scanner.ResolvePackageName(context.Background(), importPath)
 		if err != nil {
-			// If any step failed, fall back to the old, fragile heuristic.
-			e.logWithContext(context.Background(), slog.LevelDebug, "could not determine package name, falling back to heuristic", "path", importPath, "error", err)
+			// If resolving the name fails (e.g., for 'C' pseudo-package),
+			// fall back to the old heuristic.
+			e.logWithContext(context.Background(), slog.LevelDebug, "could not resolve package name, falling back to heuristic", "path", importPath, "error", err)
 			pkgName = path.Base(importPath)
 		} else {
-			pkgName = pkgInfo.Name // Use the authoritative name.
+			pkgName = name
 		}
 	}
 

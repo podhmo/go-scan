@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"go/ast"
+	"go/parser"
 	"go/token"
 	"io/fs"
 	"log/slog"
@@ -51,6 +52,8 @@ type Scanner struct {
 	*Config
 	packageCache          map[string]*Package // Cache for PackageInfo from ScanPackage/ScanPackageByImport, key is import path
 	visitedFiles          map[string]struct{} // Set of visited (parsed) file absolute paths for this Scanner instance.
+	nameCache             map[string]string   // Cache for resolved package names, key is import path.
+	nameCacheMu           sync.Mutex
 	mu                    sync.RWMutex
 	CachePath             string
 	symbolCache           *symbolCache // Symbol cache (persisted across Scanner instances if path is reused)
@@ -64,6 +67,56 @@ type Scanner struct {
 	locators                 []*locator.Locator
 	moduleDirs               []string // temporary holder for module directories
 	declarationsOnlyPackages map[string]bool
+}
+
+// ResolvePackageName finds the declared package name for a given import path.
+// It uses a lightweight method that parses only the package clause of a single
+// file in the package directory and caches the result for performance.
+func (s *Scanner) ResolvePackageName(ctx context.Context, importPath string) (string, error) {
+	s.nameCacheMu.Lock()
+	if name, ok := s.nameCache[importPath]; ok {
+		s.nameCacheMu.Unlock()
+		return name, nil
+	}
+	s.nameCacheMu.Unlock()
+
+	loc, err := s.locatorForImportPath(importPath)
+	if err != nil {
+		return "", fmt.Errorf("ResolvePackageName: %w", err)
+	}
+
+	pkgDir, err := loc.FindPackageDir(importPath)
+	if err != nil {
+		return "", fmt.Errorf("could not find directory for package %q: %w", importPath, err)
+	}
+
+	files, err := os.ReadDir(pkgDir)
+	if err != nil {
+		return "", fmt.Errorf("could not read directory %q: %w", pkgDir, err)
+	}
+
+	for _, file := range files {
+		// Find the first non-test Go file to parse for the package declaration.
+		if !file.IsDir() && strings.HasSuffix(file.Name(), ".go") && !strings.HasSuffix(file.Name(), "_test.go") {
+			filePath := filepath.Join(pkgDir, file.Name())
+			// The fset can be new here, as we only need the AST, not position info relative to other files.
+			f, err := parser.ParseFile(token.NewFileSet(), filePath, nil, parser.PackageClauseOnly)
+			if err != nil {
+				// Skip files that can't be parsed (e.g., due to build tags). Try the next one.
+				slog.DebugContext(ctx, "skipping unparsable file while resolving package name", "file", filePath, "error", err)
+				continue
+			}
+			if f.Name != nil {
+				name := f.Name.Name
+				s.nameCacheMu.Lock()
+				s.nameCache[importPath] = name
+				s.nameCacheMu.Unlock()
+				return name, nil
+			}
+		}
+	}
+
+	return "", fmt.Errorf("no parsable .go files found in %q to determine package name", pkgDir)
 }
 
 // Fset returns the FileSet associated with the scanner.
@@ -437,6 +490,7 @@ func New(options ...ScannerOption) (*Scanner, error) {
 		Config:                cfg,
 		packageCache:          make(map[string]*Package),
 		visitedFiles:          make(map[string]struct{}),
+		nameCache:             make(map[string]string),
 		ExternalTypeOverrides: make(scanner.ExternalTypeOverride),
 		Walker: &ModuleWalker{
 			Config:              cfg,

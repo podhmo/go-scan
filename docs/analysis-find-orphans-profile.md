@@ -1,50 +1,37 @@
 # Performance Analysis of `find-orphans` Command
 
-This document outlines the investigation into a performance degradation observed in the `find-orphans` command after a specific commit that added support for more Go built-in functions to the symbolic execution engine.
+This document outlines the investigation into a performance degradation observed in the `find-orphans` command. After an initial fix proved insufficient, a data-driven approach using CPU profiling was employed to identify and resolve the true bottleneck.
 
 ## 1. The Problem
 
-A significant performance slowdown was noticed in the `find-orphans` command. The command's purpose is to identify unused (orphaned) functions within a Go project by performing a symbolic execution trace starting from known entry points (e.g., `main.main`, `init`, exported functions).
-
-The performance issue was linked to a commit that introduced placeholder implementations for a wide range of Go's standard built-in functions, such as `len`, `append`, `make`, `new`, `cap`, etc.
+A significant performance slowdown was noticed in the `find-orphans` command, with execution time increasing from a few seconds to tens of seconds. The issue was correlated with a commit that introduced placeholder implementations for Go's standard built-in functions (`len`, `append`, `make`, etc.) into the `symgo` symbolic execution engine.
 
 ## 2. Investigation and Root Cause Analysis
 
-The investigation involved analyzing the interaction between the `find-orphans` command's logic and the `symgo` symbolic execution engine.
+### Initial Hypothesis (Incorrect)
 
-1.  **`find-orphans` Usage Tracking:** The command works by registering a "default intrinsic" function with the `symgo` interpreter. This default intrinsic acts as a global hook, being triggered for **every function call** encountered during the symbolic execution. Its job is to add the called function to a `usageMap`, thereby marking it as "used".
+The initial hypothesis was that the performance overhead was caused by a global hook (`defaultIntrinsic`) in `find-orphans` being *executed* for every built-in function call. A fix was implemented to skip the hook's logic for built-ins. However, user feedback confirmed this only yielded a minor (approx. 10%) improvement, indicating it was not the root cause.
 
-2.  **The Role of the New Built-ins:** Before the problematic commit, calls to built-in functions like `len()` were not resolved by the `symgo` interpreter and were effectively ignored. The commit changed this by making the interpreter aware of these built-ins, resolving them to special `object.Intrinsic` objects.
+### Profiling and Data-Driven Analysis (Correct)
 
-3.  **Identifying the Bottleneck:** The performance degradation occurred because the `find-orphans`'s generic usage-tracking hook (`defaultIntrinsic`) was now being executed for every single call to common built-ins like `len`, `append`, and `make` throughout the entire analyzed codebase. The logic inside this hook (which involves type assertions, lookups, and string formatting to generate a full function name) is non-trivial. Executing it for thousands of these common calls created a significant and unnecessary overhead, as the tool's goal is to track user-defined functions, not Go's built-ins.
+To find the real bottleneck, the application was profiled using Go's `pprof` tool. The CPU profile revealed that a majority of the execution time was being spent in the Go runtime's memory management and garbage collection functions (`runtime.mallocgc`, `runtime.memclrNoHeapPointers`, etc.).
+
+This pointed to a high rate of memory allocation churn. Further analysis of the profile's call graph traced these allocations back to a hot path in the symbolic execution engine: `symgo/evaluator.(*Evaluator).evalIdent`.
+
+The true root cause was identified:
+1.  The `evalIdent` function is called for every identifier encountered in the code being analyzed.
+2.  When it encountered an identifier for a built-in function (e.g., `len`), it would look it up in the `universe` scope.
+3.  Upon finding the built-in, it would **allocate a new `object.Intrinsic` struct on the heap** to wrap the function pointer.
+4.  This allocation occurred for **every single call** to a built-in function, creating thousands of short-lived objects and overwhelming the garbage collector.
+
+The initial fix was insufficient because it only prevented the *use* of the created object, not the expensive allocation itself.
 
 ## 3. The Solution
 
-The solution was to make the `defaultIntrinsic` hook in `find-orphans` more intelligent. The goal was to prevent it from running its expensive tracking logic for built-in functions.
+The correct, data-driven solution was to eliminate the heap allocations from the `evalIdent` hot path. This was achieved with a "flyweight" pattern, by pre-allocating and caching the `object.Intrinsic` wrappers at program startup.
 
-The fix, implemented in `examples/find-orphans/main.go`, was to add a check at the very beginning of the default intrinsic's body:
+1.  **Modified `symgo/evaluator/universe.go`**: The global `universe` scope was refactored. Instead of storing raw function pointers, it now pre-allocates and stores the complete `*object.Intrinsic` objects for all built-in functions in a single map upon initialization.
 
-```go
-interp.RegisterDefaultIntrinsic(func(i *symgo.Interpreter, args []object.Object) object.Object {
-    // ... (omitted comments)
+2.  **Modified `symgo/evaluator/evaluator.go`**: The `evalIdent` function was updated to fetch the pre-allocated object directly from the `universe`'s cache. This turns thousands of heap allocations into simple, fast map lookups.
 
-    // Performance optimization: If the function being called is a built-in intrinsic
-    // (like `len`, `append`, etc.), we don't need to track its usage. This avoids
-    // a significant overhead from processing these very common function calls.
-    if len(args) > 0 {
-        if _, ok := args[0].(*object.Intrinsic); ok {
-            return nil
-        }
-    }
-
-    // Original usage tracking logic...
-    for _, arg := range args {
-        markUsage(arg)
-    }
-    return nil
-})
-```
-
-This change leverages the fact that the `symgo` engine represents built-in functions as `*object.Intrinsic` and user-defined functions as `*object.Function`. By checking if the called object (the first element in `args`) is an `*object.Intrinsic`, we can effectively and cheaply filter out all built-in calls, restoring the command's performance without affecting its correctness.
-
-The change was verified by running the project's full test suite (`make test`), which passed successfully.
+This change successfully addressed the root cause of the performance issue. A timed run of the `find-orphans` command after the fix showed the execution time returning to the sub-second range, confirming the effectiveness of the solution.

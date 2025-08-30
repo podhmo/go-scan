@@ -1,10 +1,10 @@
-# Plan to Fix Unexported Symbol Resolution in `symgo`
+# Analysis and Fix for Unexported Symbol Resolution in `symgo`
 
 ## 1. Summary of the Problem
 
-The `symgo` symbolic execution engine fails to resolve unexported package-level constants and variables when they are accessed through a nested, cross-package call. This occurs because the package environment (`object.Environment`) for the called function is not consistently and fully populated before the function's body is evaluated.
+The `symgo` symbolic execution engine failed to resolve unexported package-level constants and variables when they were accessed through a nested, cross-package call. This occurred because the package environment (`object.Environment`) for the called function was not consistently and fully populated before the function's body was evaluated.
 
-The root causes identified are:
+The root causes identified were:
 1.  **Inconsistent Package Object Management**: `*object.Package` instances, which hold the environment, were being created ad-hoc in different parts of the evaluator, leading to a fragmented and incomplete view of a package's symbols.
 2.  **Incorrect Environment in Method Resolution**: The `findDirectMethodOnType` function was incorrectly assigning the caller's environment to method objects instead of the environment of the package where the method was defined.
 3.  **Flawed Pointer-Receiver Logic**: The logic for resolving pointer-receiver methods on addressable value types was too strict, failing to find valid methods.
@@ -12,13 +12,13 @@ The root causes identified are:
 
 ## 2. The Solution: Centralized Package Management
 
-To fix this robustly, the management of package objects within the `symgo.Evaluator` will be refactored to use a central cache. This ensures that for any given import path, a single, canonical `*object.Package` instance is created, populated, and used throughout the evaluation.
+To fix this robustly, the management of package objects within the `symgo.Evaluator` was refactored to use a central cache. This ensures that for any given import path, a single, canonical `*object.Package` instance is created, populated, and used throughout the evaluation.
 
 ### Step 2.1: Modify `symgo/evaluator/evaluator.go`
 
 #### 2.1.1. Update `Evaluator` Struct
 
-Add a `pkgCache` map to the `Evaluator` struct to store canonical package objects.
+A `pkgCache` map was added to the `Evaluator` struct to store canonical package objects.
 
 ```go
 // symgo/evaluator/evaluator.go
@@ -40,7 +40,7 @@ type Evaluator struct {
 
 #### 2.1.2. Initialize `pkgCache` in `New`
 
-Initialize the new map in the `New` function.
+The new map was initialized in the `New` function.
 
 ```go
 // symgo/evaluator/evaluator.go
@@ -65,7 +65,7 @@ func New(scanner *goscan.Scanner, logger *slog.Logger, tracer object.Tracer, sca
 
 #### 2.1.3. Add the `getOrLoadPackage` Helper Method
 
-Add a new method to `Evaluator` that centralizes the creation and caching of package objects. This function will be the single source of truth for `*object.Package`.
+A new method was added to `Evaluator` that centralizes the creation and caching of package objects. This function is now the single source of truth for `*object.Package`.
 
 ```go
 // symgo/evaluator/evaluator.go
@@ -106,11 +106,11 @@ func (e *Evaluator) getOrLoadPackage(ctx context.Context, path string) (*object.
 
 #### 2.1.4. Remove `findPackageByPath`
 
-This function is now redundant and should be removed completely.
+The `findPackageByPath` function became redundant and was removed completely.
 
 #### 2.1.5. Refactor `evalIdent`
 
-Update `evalIdent` to use the robust import resolution logic from the original implementation, but adapted to use the new `getOrLoadPackage` helper. This correctly handles package name aliases and cases where the package name differs from the import path.
+`evalIdent` was updated to use the robust import resolution logic from the original implementation, adapted to use the new `getOrLoadPackage` helper. This correctly handles package name aliases and cases where the package name differs from the import path.
 
 ```go
 // symgo/evaluator/evaluator.go
@@ -196,7 +196,7 @@ func (e *Evaluator) evalIdent(ctx context.Context, n *ast.Ident, env *object.Env
 
 #### 2.1.6. Refactor `findDirectMethodOnType`
 
-Update `findDirectMethodOnType` to use `getOrLoadPackage` and remove the incorrect pointer-receiver check.
+`findDirectMethodOnType` was updated to use `getOrLoadPackage` and the incorrect pointer-receiver check was removed.
 
 ```go
 // symgo/evaluator/evaluator.go
@@ -252,13 +252,13 @@ func (e *Evaluator) findDirectMethodOnType(ctx context.Context, typeInfo *scanne
 
 ## 3. Respecting the Scan Policy
 
-A critical aspect of the fix is to correctly handle packages that are outside the defined `scanPolicy`. For these packages, the evaluator should not have access to internal details like unexported constants.
+A critical aspect of the fix was to correctly handle packages that are outside the defined `scanPolicy`. For these packages, the evaluator should not have access to internal details like unexported constants.
 
-The `getOrLoadPackage` function will still use `ScanPackageByImport` to get package metadata (like the correct package name), but the subsequent population of the environment must respect the policy.
+The `getOrLoadPackage` function still uses `ScanPackageByImport` to get package metadata (like the correct package name), but the subsequent population of the environment respects the policy.
 
 ### Step 3.1: Modify `ensurePackageEnvPopulated`
 
-The `ensurePackageEnvPopulated` function in `symgo/evaluator/evaluator.go` must be modified to check the `scanPolicy` before adding unexported symbols to a package's environment.
+The `ensurePackageEnvPopulated` function in `symgo/evaluator/evaluator.go` was modified to check the `scanPolicy` before adding unexported symbols to a package's environment.
 
 ```go
 // symgo/evaluator/evaluator.go
@@ -305,7 +305,7 @@ func (e *Evaluator) ensurePackageEnvPopulated(ctx context.Context, pkgObj *objec
 		}
 		
 		// If the package is out-of-policy, only create objects for exported functions.
-		if !shouldScan && !f.IsExported {
+		if !shouldScan && !ast.IsExported(f.Name) {
 			continue
 		}
 
@@ -336,7 +336,7 @@ func (e *Evaluator) ensurePackageEnvPopulated(ctx context.Context, pkgObj *objec
 
 ### Step 3.2: Add Test Cases to `symgo/symgo_unexported_const_test.go`
 
-The following two test cases should be appended to this file to verify the fix and prevent regressions.
+Two test cases were appended to this file to verify the fix and prevent regressions.
 
 ```go
 // Test case for nested function call

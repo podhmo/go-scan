@@ -163,14 +163,11 @@ func FuncB() string {
 		t.Fatalf("NewInterpreter failed: %v", err)
 	}
 
-	// 1. Scan the entry package.
 	loglibPkg, err := goscanner.ScanPackage(ctx, loglibModuleDir)
 	if err != nil {
 		t.Fatalf("ScanPackage failed: %v", err)
 	}
 
-	// 2. Evaluate the entrypoint file to populate the interpreter's environment
-	// with the function definition of `FuncA`. This is a realistic setup.
 	loglibFile := findFile(t, loglibPkg, "context.go")
 	if _, err := interp.Eval(ctx, loglibFile, loglibPkg); err != nil {
 		t.Fatalf("Eval loglib file failed: %v", err)
@@ -185,16 +182,11 @@ func FuncB() string {
 		t.Fatalf("entrypoint 'FuncA' is not a function, but %T", entrypointObj)
 	}
 
-	// 3. Apply the function, which triggers the nested call.
-	// This is where the bug should manifest. The call to `driver.FuncB` should
-	// fail to resolve `privateConst` because the driver package's constants
-	// were not loaded when its environment was created.
 	result, err := interp.Apply(ctx, entrypointFunc, nil, loglibPkg)
 	if err != nil {
 		t.Fatalf("Apply FuncA function failed: %v", err)
 	}
 
-	// 4. Assert the result.
 	retVal, ok := result.(*object.ReturnValue)
 	if !ok {
 		t.Fatalf("expected result to be a *object.ReturnValue, but got %T", result)
@@ -206,6 +198,99 @@ func FuncB() string {
 	}
 
 	expected := "hello from private"
+	if str.Value != expected {
+		t.Errorf("expected result to be %q, but got %q", expected, str.Value)
+	}
+}
+
+func TestSymgo_UnexportedConstantResolution_NestedMethodCall(t *testing.T) {
+	ctx := context.Background()
+
+	tmpdir, cleanup := scantest.WriteFiles(t, map[string]string{
+		"main/go.mod": `
+module example.com/main
+go 1.21
+replace example.com/remotedb => ../remotedb
+`,
+		"main/main.go": `
+package main
+import "example.com/remotedb"
+func DoWork() string {
+	var client remotedb.Client
+	return client.GetValue()
+}
+`,
+		"remotedb/go.mod": `
+module example.com/remotedb
+go 1.21
+`,
+		"remotedb/db.go": `
+package remotedb
+
+const secretKey = "unexported-secret-key"
+
+type Client struct{}
+
+func (c *Client) GetValue() string {
+	return secretKey
+}
+`,
+	})
+	defer cleanup()
+
+	mainModuleDir := filepath.Join(tmpdir, "main")
+
+	goscanner, err := goscan.New(
+		goscan.WithWorkDir(mainModuleDir),
+		goscan.WithGoModuleResolver(),
+	)
+	if err != nil {
+		t.Fatalf("New scanner failed: %v", err)
+	}
+
+	policy := func(importPath string) bool {
+		return strings.HasPrefix(importPath, "example.com/main") || strings.HasPrefix(importPath, "example.com/remotedb")
+	}
+	interp, err := symgo.NewInterpreter(goscanner, symgo.WithScanPolicy(policy))
+	if err != nil {
+		t.Fatalf("NewInterpreter failed: %v", err)
+	}
+
+	mainPkg, err := goscanner.ScanPackage(ctx, mainModuleDir)
+	if err != nil {
+		t.Fatalf("ScanPackage failed: %v", err)
+	}
+
+	mainFile := findFile(t, mainPkg, "main.go")
+	if _, err := interp.Eval(ctx, mainFile, mainPkg); err != nil {
+		t.Fatalf("Eval main file failed: %v", err)
+	}
+
+	entrypointObj, ok := interp.FindObject("DoWork")
+	if !ok {
+		t.Fatal("DoWork function not found in interpreter environment")
+	}
+	entrypointFunc, ok := entrypointObj.(*symgo.Function)
+	if !ok {
+		t.Fatalf("entrypoint 'DoWork' is not a function, but %T", entrypointObj)
+	}
+
+	result, err := interp.Apply(ctx, entrypointFunc, nil, mainPkg)
+	if err != nil {
+		t.Fatalf("Apply DoWork function failed: %v", err)
+	}
+
+	retVal, ok := result.(*object.ReturnValue)
+	if !ok {
+		t.Fatalf("expected result to be a *object.ReturnValue, but got %T", result)
+	}
+
+	str, ok := retVal.Value.(*object.String)
+	if !ok {
+		t.Fatalf("expected return value to be *object.String, but got %T", retVal.Value)
+	}
+
+	expected := "unexported-secret-key"
 	if str.Value != expected {
 		t.Errorf("expected result to be %q, but got %q", expected, str.Value)
 	}

@@ -33,6 +33,7 @@ type Evaluator struct {
 	defaultIntrinsic  intrinsics.IntrinsicFunc
 	scanPolicy        object.ScanPolicyFunc
 	initializedPkgs   map[string]bool // To track packages whose constants are loaded
+	pkgCache          map[string]*object.Package
 }
 
 type callFrame struct {
@@ -58,7 +59,30 @@ func New(scanner *goscan.Scanner, logger *slog.Logger, tracer object.Tracer, sca
 		interfaceBindings: make(map[string]*goscan.TypeInfo),
 		scanPolicy:        scanPolicy,
 		initializedPkgs:   make(map[string]bool),
+		pkgCache:          make(map[string]*object.Package),
 	}
+}
+
+func (e *Evaluator) getOrLoadPackage(ctx context.Context, path string) (*object.Package, error) {
+	if pkg, ok := e.pkgCache[path]; ok {
+		return pkg, nil
+	}
+
+	scannedPkg, err := e.scanner.ScanPackageByImport(ctx, path)
+	if err != nil {
+		return nil, fmt.Errorf("could not scan package %q for getOrLoadPackage: %w", path, err)
+	}
+
+	pkgObj := &object.Package{
+		Name:        scannedPkg.Name,
+		Path:        scannedPkg.ImportPath,
+		Env:         object.NewEnvironment(),
+		ScannedInfo: scannedPkg,
+	}
+
+	e.ensurePackageEnvPopulated(ctx, pkgObj)
+	e.pkgCache[path] = pkgObj
+	return pkgObj, nil
 }
 
 // BindInterface registers a concrete type for an interface.
@@ -2305,23 +2329,6 @@ func (e *Evaluator) Apply(ctx context.Context, fn object.Object, args []object.O
 func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []object.Object, pkg *scanner.PackageInfo, callPos token.Pos) object.Object {
 	e.logger.Debug("applyFunction", "type", fn.Type(), "value", fn.Inspect())
 
-	if f, ok := fn.(*object.Function); ok {
-		if f.Package != nil {
-			// When applying a function from another package, its environment (f.Env)
-			// is correctly scoped, but it might not have been fully populated with
-			// package-level constants and variables yet. We trigger that population here.
-			// This is a bit of a hack. We create a temporary Package object
-			// to pass to ensurePackageEnvPopulated, which holds all the logic.
-			// This works because f.Env is the actual environment that needs populating.
-			tempPkgObj := &object.Package{
-				Path:        f.Package.ImportPath,
-				ScannedInfo: f.Package,
-				Env:         f.Env,
-			}
-			e.ensurePackageEnvPopulated(ctx, tempPkgObj)
-		}
-	}
-
 	// Create a signature for the current call.
 	var currentSignature string
 	if f, ok := fn.(*object.Function); ok {
@@ -2787,14 +2794,15 @@ func (e *Evaluator) findDirectMethodOnType(ctx context.Context, typeInfo *scanne
 		return nil, nil
 	}
 
-	methodPkg, err := e.scanner.ScanPackageByImport(ctx, typeInfo.PkgPath)
+	pkgObj, err := e.getOrLoadPackage(ctx, typeInfo.PkgPath)
 	if err != nil {
 		// This can happen for built-in types like 'error', which is fine.
 		if strings.Contains(err.Error(), "cannot find package") {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("could not scan package %q: %w", typeInfo.PkgPath, err)
+		return nil, fmt.Errorf("could not get or load package %q: %w", typeInfo.PkgPath, err)
 	}
+	methodPkg := pkgObj.ScannedInfo
 
 	for _, fn := range methodPkg.Functions {
 		if fn.Receiver == nil || fn.Name != methodName {
@@ -2815,41 +2823,17 @@ func (e *Evaluator) findDirectMethodOnType(ctx context.Context, typeInfo *scanne
 
 		if baseRecvTypeName == baseTypeName {
 			// This is a potential match. Now check pointer compatibility.
-			// If method has pointer receiver, variable must be a pointer.
-			// If method has value receiver, variable can be value or pointer.
-			isMethodPtrRecv := fn.Receiver.Type.IsPointer
-
-			var isVarPointer bool
-			switch r := receiver.(type) {
-			case *object.Variable:
-				// Check the variable's type, not the value's, as value might be nil.
-				if r.FieldType() != nil {
-					isVarPointer = r.FieldType().IsPointer
-				} else if r.TypeInfo() != nil {
-					// Fallback for less precise type info
-					isVarPointer = strings.HasPrefix(r.TypeInfo().Name, "*")
-				}
-			case *object.Pointer:
-				isVarPointer = true
-			case *object.Instance:
-				// An instance from a constructor like `NewFoo()` is usually a pointer.
-				isVarPointer = strings.HasPrefix(r.TypeName, "*")
-			case *object.SymbolicPlaceholder:
-				// A symbolic placeholder can also represent a pointer.
-				if r.FieldType() != nil {
-					isVarPointer = r.FieldType().IsPointer
-				}
-			}
-
-			if isMethodPtrRecv && !isVarPointer {
-				continue // Cannot call pointer method on non-pointer
-			}
-
+			// This is a potential match.
+			// If a method has a pointer receiver, Go can automatically reference
+			// an addressable value. Since our symbolic analysis deals with variables
+			// (e.g. `var client mypkg.Client`) which are addressable, we don't need
+			// to perform a strict check on whether the variable is a pointer vs. a value.
+			// We can proceed to resolve the method.
 			return &object.Function{
 				Name:       fn.AstDecl.Name,
 				Parameters: fn.AstDecl.Type.Params,
 				Body:       fn.AstDecl.Body,
-				Env:        env,
+				Env:        pkgObj.Env, // Use the canonical environment from the cached package object.
 				Decl:       fn.AstDecl,
 				Package:    methodPkg,
 				Receiver:   receiver,

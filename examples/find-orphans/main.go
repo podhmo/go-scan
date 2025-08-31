@@ -410,15 +410,11 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool) error {
 	interfaceMap := buildInterfaceMap(a.packages)
 	slog.DebugContext(ctx, "built interface map", "interfaces", len(interfaceMap))
 
-	scanPolicy := func(importPath string) bool {
-		_, ok := a.scanPackages[importPath]
-		return ok
-	}
-
+	scanPatterns := keys(a.scanPackages)
 	interp, err := symgo.NewInterpreter(
 		a.s,
 		symgo.WithLogger(slog.Default()),
-		symgo.WithScanPolicy(scanPolicy),
+		symgo.WithPrimaryAnalysisScope(scanPatterns...),
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create interpreter: %w", err)

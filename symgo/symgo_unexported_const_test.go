@@ -3,7 +3,6 @@ package symgo_test
 import (
 	"context"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	goscan "github.com/podhmo/go-scan"
@@ -56,10 +55,7 @@ func GetUnexportedConstant() string {
 	}
 
 	// 2. Create the symgo interpreter with a policy to scan both modules.
-	policy := func(importPath string) bool {
-		return strings.HasPrefix(importPath, "example.com/main") || strings.HasPrefix(importPath, "example.com/helper")
-	}
-	interp, err := symgo.NewInterpreter(scanner, symgo.WithScanPolicy(policy))
+	interp, err := symgo.NewInterpreter(scanner, symgo.WithPrimaryAnalysisScope("example.com/main/...", "example.com/helper/..."))
 	if err != nil {
 		t.Fatalf("NewInterpreter failed: %v", err)
 	}
@@ -147,10 +143,7 @@ func FuncB() string {
 	if err != nil {
 		t.Fatalf("New scanner failed: %v", err)
 	}
-	policy := func(importPath string) bool {
-		return strings.HasPrefix(importPath, "example.com/loglib") || strings.HasPrefix(importPath, "example.com/driver")
-	}
-	interp, err := symgo.NewInterpreter(goscanner, symgo.WithScanPolicy(policy))
+	interp, err := symgo.NewInterpreter(goscanner, symgo.WithPrimaryAnalysisScope("example.com/loglib/...", "example.com/driver/..."))
 	if err != nil {
 		t.Fatalf("NewInterpreter failed: %v", err)
 	}
@@ -227,10 +220,7 @@ func (c *Client) GetValue() string {
 	if err != nil {
 		t.Fatalf("New scanner failed: %v", err)
 	}
-	policy := func(importPath string) bool {
-		return strings.HasPrefix(importPath, "example.com/main") || strings.HasPrefix(importPath, "example.com/remotedb")
-	}
-	interp, err := symgo.NewInterpreter(goscanner, symgo.WithScanPolicy(policy))
+	interp, err := symgo.NewInterpreter(goscanner, symgo.WithPrimaryAnalysisScope("example.com/main/...", "example.com/remotedb/..."))
 	if err != nil {
 		t.Fatalf("NewInterpreter failed: %v", err)
 	}

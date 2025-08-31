@@ -527,6 +527,20 @@ func (s *Scanner) SetExternalTypeOverrides(ctx context.Context, overrides scanne
 	s.scanner = newInternalScanner
 }
 
+// AddDeclarationsOnlyPackages adds packages to the list of packages that should be scanned for declarations only.
+func (s *Scanner) AddDeclarationsOnlyPackages(importPaths []string) {
+	if s.scanner == nil {
+		// This should not happen if called after New()
+		return
+	}
+	if s.scanner.DeclarationsOnlyPackages == nil {
+		s.scanner.DeclarationsOnlyPackages = make(map[string]bool)
+	}
+	for _, p := range importPaths {
+		s.scanner.DeclarationsOnlyPackages[p] = true
+	}
+}
+
 // ResolveType starts the type resolution process for a given field type.
 // It's the public entry point for resolving types. It prepares the context
 // with necessary loggers and flags for the entire resolution chain.

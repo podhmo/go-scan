@@ -2267,6 +2267,13 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 
 	switch fn := fn.(type) {
 	case *object.Function:
+		// Check the scan policy before executing the body.
+		if fn.Package != nil && !e.resolver.ScanPolicy(fn.Package.ImportPath) {
+			// If the package is not in the primary analysis scope, treat the call
+			// as symbolic, just like an external function call.
+			return e.createSymbolicResultForFunc(ctx, fn)
+		}
+
 		// When applying a function, the evaluation context switches to that function's
 		// package. We must pass fn.Package to both extendFunctionEnv and Eval.
 		extendedEnv, err := e.extendFunctionEnv(ctx, fn, args)
@@ -2602,4 +2609,52 @@ func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, 
 	}
 
 	return env, nil
+}
+
+// createSymbolicResultForFunc creates a symbolic result for a function call
+// that is not being deeply executed due to scan policy.
+func (e *Evaluator) createSymbolicResultForFunc(ctx context.Context, fn *object.Function) object.Object {
+	if fn.Decl == nil || fn.Decl.Type == nil || fn.Package == nil {
+		return &object.SymbolicPlaceholder{Reason: "result of external call with incomplete info"}
+	}
+
+	results := fn.Decl.Type.Results
+	if results == nil || len(results.List) == 0 {
+		return &object.SymbolicPlaceholder{Reason: "result of external call with no return value"}
+	}
+
+	var importLookup map[string]string
+	if file := fn.Package.Fset.File(fn.Decl.Pos()); file != nil {
+		if astFile, ok := fn.Package.AstFiles[file.Name()]; ok {
+			importLookup = e.scanner.BuildImportLookup(astFile)
+		}
+	}
+
+	if len(results.List) == 1 {
+		resultASTExpr := results.List[0].Type
+		fieldType := e.scanner.TypeInfoFromExpr(ctx, resultASTExpr, nil, fn.Package, importLookup)
+		resolvedType := e.resolver.ResolveType(ctx, fieldType)
+		return &object.ReturnValue{
+			Value: &object.SymbolicPlaceholder{
+				Reason:     fmt.Sprintf("result of out-of-policy call to %s", fn.Name.Name),
+				BaseObject: object.BaseObject{ResolvedTypeInfo: resolvedType, ResolvedFieldType: fieldType},
+			},
+		}
+	}
+
+	// Multiple return values
+	returnValues := make([]object.Object, 0, len(results.List))
+	for i, field := range results.List {
+		fieldType := e.scanner.TypeInfoFromExpr(ctx, field.Type, nil, fn.Package, importLookup)
+		resolvedType := e.resolver.ResolveType(ctx, fieldType)
+		placeholder := &object.SymbolicPlaceholder{
+			Reason: fmt.Sprintf("result %d of out-of-policy call to %s", i, fn.Name.Name),
+			BaseObject: object.BaseObject{
+				ResolvedTypeInfo:  resolvedType,
+				ResolvedFieldType: fieldType,
+			},
+		}
+		returnValues = append(returnValues, placeholder)
+	}
+	return &object.ReturnValue{Value: &object.MultiReturn{Values: returnValues}}
 }

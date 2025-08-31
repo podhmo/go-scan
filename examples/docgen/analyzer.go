@@ -66,28 +66,22 @@ func NewAnalyzer(s *goscan.Scanner, logger *slog.Logger, extraPkgs []string, opt
 		}
 	}
 
-	// The scan policy determines which packages are deeply analyzed from source.
-	// By default, symgo will analyze packages in the current workspace.
-	// We also add any extra packages requested by the user via `-include-pkg`.
-	scanPolicy := func(importPath string) bool {
-		// Check if it's in one of the workspace modules (replicates symgo's default policy).
-		for _, m := range s.Modules() {
-			if strings.HasPrefix(importPath, m.Path) {
-				return true
-			}
-		}
-		// Check against any explicitly included packages.
-		for _, extra := range extraPkgs {
-			if strings.HasPrefix(importPath, extra) {
-				return true
-			}
-		}
-		return false
+	// Define the analysis scopes.
+	// Primary scope includes the workspace modules and any extra packages specified via -include-pkg.
+	primaryScope := make([]string, 0, len(s.Modules())+len(extraPkgs))
+	for _, m := range s.Modules() {
+		// Use a wildcard to include all sub-packages of the main modules.
+		primaryScope = append(primaryScope, m.Path+"/...")
 	}
+	primaryScope = append(primaryScope, extraPkgs...)
+
+	// Symbolic scope includes net/http, as we need its type definitions but not its function bodies.
+	symbolicScope := []string{"net/http"}
 
 	interpOpts := []symgo.Option{
 		symgo.WithLogger(logger),
-		symgo.WithScanPolicy(scanPolicy),
+		symgo.WithPrimaryAnalysisScope(primaryScope...),
+		symgo.WithSymbolicDependencyScope(symbolicScope...),
 	}
 	if a.tracer != nil {
 		interpOpts = append(interpOpts, symgo.WithTracer(a.tracer))

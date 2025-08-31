@@ -44,13 +44,15 @@ type ScanPolicyFunc = object.ScanPolicyFunc
 
 // Interpreter is the main public entry point for the symgo engine.
 type Interpreter struct {
-	scanner           *goscan.Scanner
-	eval              *evaluator.Evaluator
-	globalEnv         *object.Environment
-	logger            *slog.Logger
-	tracer            object.Tracer
-	interfaceBindings map[string]*goscan.TypeInfo
-	scanPolicy        object.ScanPolicyFunc
+	scanner                    *goscan.Scanner
+	eval                       *evaluator.Evaluator
+	globalEnv                  *object.Environment
+	logger                     *slog.Logger
+	tracer                     object.Tracer
+	interfaceBindings          map[string]*goscan.TypeInfo
+	scanPolicy                 object.ScanPolicyFunc // This will be built from primary scope
+	primaryAnalysisPatterns    []string
+	symbolicDependencyPatterns []string
 }
 
 // Option is a functional option for configuring the Interpreter.
@@ -70,7 +72,26 @@ func WithTracer(tracer object.Tracer) Option {
 	}
 }
 
+// WithPrimaryAnalysisScope sets the package patterns for deep, symbolic execution.
+// Patterns can include wildcards (e.g., "example.com/mymodule/...").
+func WithPrimaryAnalysisScope(patterns ...string) Option {
+	return func(i *Interpreter) {
+		i.primaryAnalysisPatterns = append(i.primaryAnalysisPatterns, patterns...)
+	}
+}
+
+// WithSymbolicDependencyScope sets the package patterns for declarations-only parsing.
+// These packages are needed for type resolution but their function bodies will not be executed.
+// Patterns can include wildcards (e.g., "net/http", "github.com/some/lib/...").
+func WithSymbolicDependencyScope(patterns ...string) Option {
+	return func(i *Interpreter) {
+		i.symbolicDependencyPatterns = append(i.symbolicDependencyPatterns, patterns...)
+	}
+}
+
 // WithScanPolicy sets a custom policy function to determine which packages to scan from source.
+//
+// DEPRECATED: Use WithPrimaryAnalysisScope instead. This option may be removed in the future.
 func WithScanPolicy(policy object.ScanPolicyFunc) Option {
 	return func(i *Interpreter) {
 		i.scanPolicy = policy
@@ -104,9 +125,24 @@ func NewInterpreter(scanner *goscan.Scanner, options ...Option) (*Interpreter, e
 		i.logger = slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError}))
 	}
 
-	// Set a default scan policy if none was provided.
-	// The default policy is to only scan packages within the main module(s).
-	if i.scanPolicy == nil {
+	// Configure the underlying scanner with the symbolic dependency scope.
+	if len(i.symbolicDependencyPatterns) > 0 {
+		i.scanner.AddDeclarationsOnlyPackages(i.symbolicDependencyPatterns)
+	}
+
+	// Configure the scan policy based on the primary analysis scope.
+	if len(i.primaryAnalysisPatterns) > 0 {
+		i.scanPolicy = func(importPath string) bool {
+			for _, pattern := range i.primaryAnalysisPatterns {
+				if matches(pattern, importPath) {
+					return true
+				}
+			}
+			return false
+		}
+	} else if i.scanPolicy == nil {
+		// Fallback to default policy (main module) if no primary scope or explicit policy is set.
+		// This maintains backward compatibility.
 		modules := i.scanner.Modules()
 		if len(modules) > 0 {
 			modulePaths := make([]string, len(modules))
@@ -135,6 +171,16 @@ func NewInterpreter(scanner *goscan.Scanner, options ...Option) (*Interpreter, e
 	i.RegisterIntrinsic("fmt.Sprintf", i.intrinsicSprintf)
 
 	return i, nil
+}
+
+// matches checks if a given path matches a pattern.
+// The pattern can end with "..." to match any sub-path.
+func matches(pattern, path string) bool {
+	if strings.HasSuffix(pattern, "/...") {
+		base := strings.TrimSuffix(pattern, "/...")
+		return path == base || strings.HasPrefix(path, base+"/")
+	}
+	return path == pattern
 }
 
 // BindInterface instructs the interpreter to treat a given interface type as a

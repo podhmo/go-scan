@@ -93,10 +93,13 @@ type CallFrame struct {
 }
 
 // DeferredCall represents a deferred function call.
-// For this basic implementation, we just store the call expression and its environment.
+// It stores the evaluated function and arguments from the time the defer
+// statement was executed, along with the environment at the defer site.
 type DeferredCall struct {
-	Call *ast.CallExpr
+	Fn   Object   // The function object (*Function, *BoundMethod, etc.)
+	Args []Object // The evaluated arguments.
 	Env  *Environment
+	Pos  token.Pos // The position of the defer statement for error reporting.
 }
 
 // Format formats the call frame into a readable string.

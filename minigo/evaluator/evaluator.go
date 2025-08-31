@@ -1956,7 +1956,8 @@ func (e *Evaluator) evalExpressions(exps []ast.Expr, env *object.Environment, fs
 			// Return a slice containing just the error to stop further processing.
 			return []object.Object{evaluated}
 		}
-		result[i] = evaluated
+		// When a function call is used as an argument, its return value needs to be unwrapped.
+		result[i] = e.unwrapReturnValue(evaluated)
 	}
 
 	return result
@@ -2474,56 +2475,49 @@ func (e *Evaluator) extendFunctionEnv(env *object.Environment, fn *object.Functi
 }
 
 func (e *Evaluator) executeDeferredCall(deferred *object.DeferredCall, fscope *object.FileScope) {
-	// A deferred call is a simplified function application.
-	// It doesn't return a value and cannot have its own defers.
-	fnObj := e.Eval(deferred.Call.Fun, deferred.Env, fscope)
-	if isError(fnObj) {
-		// TODO: How to handle errors in deferred calls?
-		return
-	}
-
-	args := e.evalExpressions(deferred.Call.Args, deferred.Env, fscope, nil)
-	if len(args) == 1 && isError(args[0]) {
-		// TODO: Handle errors in deferred call arguments.
-		return
-	}
-
-	// Set the deferred execution flag.
 	e.isExecutingDefer = true
-	defer func() { e.isExecutingDefer = false }() // Ensure it's always reset.
+	defer func() { e.isExecutingDefer = false }()
 
-	switch f := fnObj.(type) {
+	var evaluated object.Object
+
+	switch fn := deferred.Fn.(type) {
 	case *object.Function:
-		// A deferred function literal runs in the environment it was defined in.
-		// We evaluate the statements in its body directly in that environment,
-		// without creating a new block scope. This allows the deferred function
-		// to modify variables in the parent function's scope (like named returns).
-		for _, stmt := range f.Body.List {
-			evaluated := e.Eval(stmt, deferred.Env, fscope)
-			// We should probably handle errors and return signals here,
-			// but for now, we'll ignore them as `defer` behavior with `return` is complex.
-			if p, isPanic := evaluated.(*object.Panic); isPanic {
-				// A new panic inside a defer replaces the currently recovering one.
-				e.currentPanic = p
-				return // Stop executing this deferred function.
-			}
-			if isError(evaluated) {
-				// TODO: How to handle errors in deferred calls?
-				return
-			}
+		// A deferred function call creates its own scope, enclosed by the function's definition environment.
+		extendedEnv := object.NewEnclosedEnvironment(fn.Env)
+		e.extendFunctionEnv(extendedEnv, fn, deferred.Args, nil) // typeArgs are nil for defers for now.
+
+		// Use the function's own file scope for evaluation.
+		evalFScope := fscope
+		if fn.FScope != nil {
+			evalFScope = fn.FScope
 		}
+		evaluated = e.Eval(fn.Body, extendedEnv, evalFScope)
+
 	case *object.BoundMethod:
-		// A deferred method call also runs in its captured environment.
-		// We need to bind the arguments, though.
-		extendedEnv := e.extendMethodEnv(f, args)
-		e.Eval(f.Fn.Body, extendedEnv, fscope)
+		extendedEnv := e.extendMethodEnv(fn, deferred.Args)
+		evalFScope := fscope
+		if fn.Fn.FScope != nil {
+			evalFScope = fn.Fn.FScope
+		}
+		evaluated = e.Eval(fn.Fn.Body, extendedEnv, evalFScope)
+
 	case *object.Builtin:
-		// Execute builtin directly. Its return value is discarded.
-		f.Fn(&e.BuiltinContext, deferred.Call.Pos(), args...)
+		// Builtins run in the context of the *defer statement's* environment.
+		e.BuiltinContext.Env = deferred.Env
+		e.BuiltinContext.FScope = fscope
+		evaluated = fn.Fn(&e.BuiltinContext, deferred.Pos, deferred.Args...)
+
 	default:
-		// Error: trying to defer a non-function.
+		// This should have been caught when the defer was created, but as a safeguard:
+		e.currentPanic = &object.Panic{Value: e.newError(deferred.Pos, "not a function: %s", deferred.Fn.Type())}
 		return
 	}
+
+	// If the deferred function itself panics, it replaces the current panic.
+	if p, isPanic := evaluated.(*object.Panic); isPanic {
+		e.currentPanic = p
+	}
+	// Other return values (return, break, continue, error) are ignored in a deferred call.
 }
 
 func (e *Evaluator) unwrapReturnValue(obj object.Object) object.Object {
@@ -2928,15 +2922,29 @@ func (e *Evaluator) Eval(node ast.Node, env *object.Environment, fscope *object.
 		if len(e.callStack) == 0 {
 			return e.newError(n.Pos(), "defer is not allowed outside of a function")
 		}
-		// The call expression and its environment are stored.
-		deferred := &object.DeferredCall{
-			Call: n.Call,
-			Env:  env,
+
+		// Evaluate the function to be deferred.
+		fn := e.Eval(n.Call.Fun, env, fscope)
+		if isError(fn) {
+			return fn
 		}
-		// Append to the defer stack. We will execute in reverse order.
+
+		// Evaluate the arguments at the time of the defer statement.
+		args := e.evalExpressions(n.Call.Args, env, fscope, nil)
+		if len(args) > 0 && isError(args[len(args)-1]) {
+			return args[len(args)-1]
+		}
+
+		deferred := &object.DeferredCall{
+			Fn:   fn,
+			Args: args,
+			Env:  env,
+			Pos:  n.Pos(),
+		}
+
 		currentFrame := e.callStack[len(e.callStack)-1]
 		currentFrame.Defers = append(currentFrame.Defers, deferred)
-		return nil // defer statement itself evaluates to nothing.
+		return nil
 	case *ast.ReturnStmt:
 		// Check if we are in a function with named returns.
 		var currentFrame *object.CallFrame

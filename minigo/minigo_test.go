@@ -855,3 +855,259 @@ var f6 = 2 >= 3
 		})
 	}
 }
+
+func TestDefer(t *testing.T) {
+	source := `
+package main
+
+func main() {
+	println("start")
+	defer println("deferred 1")
+	defer println("deferred 2")
+	println("end")
+}
+`
+	var stdout, stderr bytes.Buffer
+	i := newTestInterpreter(t, WithStdout(&stdout), WithStderr(&stderr))
+
+	if err := i.LoadFile("main.go", []byte(source)); err != nil {
+		t.Fatalf("LoadFile() failed: %+v", err)
+	}
+
+	_, err := i.Eval(context.Background())
+	if err != nil {
+		t.Fatalf("Eval() failed: %+v", err)
+	}
+
+	want := "start\nend\ndeferred 2\ndeferred 1\n"
+	if got := stdout.String(); got != want {
+		t.Errorf("stdout\n got: %q\nwant: %q", got, want)
+	}
+}
+
+func TestDeferPanicRecover(t *testing.T) {
+	source := `
+package main
+
+func main() {
+	defer func() {
+		if r := recover(); r != nil {
+			println("recovered:", r)
+		}
+	}()
+	panic("oh no")
+}
+`
+	var stdout, stderr bytes.Buffer
+	i := newTestInterpreter(t, WithStdout(&stdout), WithStderr(&stderr))
+
+	if err := i.LoadFile("main.go", []byte(source)); err != nil {
+		t.Fatalf("LoadFile() failed: %+v", err)
+	}
+
+	_, err := i.Eval(context.Background())
+	// A panic that is recovered should not return an error from Eval.
+	if err != nil {
+		t.Fatalf("Eval() failed: %+v", err)
+	}
+
+	want := "recovered: oh no\n"
+	if got := stdout.String(); got != want {
+		t.Errorf("stdout\n got: %q\nwant: %q", got, want)
+	}
+}
+
+func TestRecoverWithoutPanic(t *testing.T) {
+	source := `
+package main
+
+func main() {
+	r1 := recover()
+	println("r1:", r1)
+	defer func() {
+		r2 := recover()
+		println("r2:", r2)
+	}()
+	println("ok")
+}
+`
+	var stdout, stderr bytes.Buffer
+	i := newTestInterpreter(t, WithStdout(&stdout), WithStderr(&stderr))
+
+	if err := i.LoadFile("main.go", []byte(source)); err != nil {
+		t.Fatalf("LoadFile() failed: %+v", err)
+	}
+
+	_, err := i.Eval(context.Background())
+	if err != nil {
+		t.Fatalf("Eval() failed: %+v", err)
+	}
+
+	want := "r1: nil\nok\nr2: nil\n"
+	if got := stdout.String(); got != want {
+		t.Errorf("stdout\n got: %q\nwant: %q", got, want)
+	}
+}
+
+func TestPanicWithoutRecover(t *testing.T) {
+	source := `
+package main
+func main() {
+	panic("unrecovered")
+}
+`
+	var stdout, stderr bytes.Buffer
+	i := newTestInterpreter(t, WithStdout(&stdout), WithStderr(&stderr))
+
+	if err := i.LoadFile("main.go", []byte(source)); err != nil {
+		t.Fatalf("LoadFile() failed: %+v", err)
+	}
+	_, err := i.Eval(context.Background())
+	if err == nil {
+		t.Fatal("Eval() should have failed, but it didn't")
+	}
+
+	// The error from Eval() should wrap a minigo.PanicError
+	if !strings.Contains(err.Error(), "unrecovered") {
+		t.Fatalf("expected a panic error containing 'unrecovered', but got %T: %v", err, err)
+	}
+}
+
+func TestDeferWithNamedReturn(t *testing.T) {
+	source := `
+package main
+
+func test() (i int) {
+	i = 1
+	defer func() {
+		i = 2
+	}()
+	return 3
+}
+
+func main() {
+	println(test())
+}
+`
+	var stdout, stderr bytes.Buffer
+	i := newTestInterpreter(t, WithStdout(&stdout), WithStderr(&stderr))
+
+	if err := i.LoadFile("main.go", []byte(source)); err != nil {
+		t.Fatalf("LoadFile() failed: %+v", err)
+	}
+	_, err := i.Eval(context.Background())
+	if err != nil {
+		t.Fatalf("Eval() failed: %+v", err)
+	}
+
+	want := "2\n"
+	if got := stdout.String(); got != want {
+		t.Errorf("stdout\n got: %q\nwant: %q", got, want)
+	}
+}
+
+func TestDeferWithBareReturn(t *testing.T) {
+	source := `
+package main
+
+func test() (i int) {
+	i = 1
+	defer func() {
+		i = 2
+	}()
+	return
+}
+
+func main() {
+	println(test())
+}
+`
+	var stdout, stderr bytes.Buffer
+	i := newTestInterpreter(t, WithStdout(&stdout), WithStderr(&stderr))
+
+	if err := i.LoadFile("main.go", []byte(source)); err != nil {
+		t.Fatalf("LoadFile() failed: %+v", err)
+	}
+	_, err := i.Eval(context.Background())
+	if err != nil {
+		t.Fatalf("Eval() failed: %+v", err)
+	}
+	want := "2\n"
+	if got := stdout.String(); got != want {
+		t.Errorf("stdout\n got: %q\nwant: %q", got, want)
+	}
+}
+
+// This test verifies that a panic inside a deferred call replaces an existing panic.
+func TestPanicInDefer(t *testing.T) {
+	source := `
+package main
+
+func main() {
+    defer func() {
+        if r := recover(); r != nil {
+            println("recovered in main:", r)
+        }
+    }()
+    f()
+}
+
+func f() {
+    defer func() {
+        panic("panic in defer")
+    }()
+    panic("original panic")
+}
+`
+	var stdout, stderr bytes.Buffer
+	i := newTestInterpreter(t, WithStdout(&stdout), WithStderr(&stderr))
+
+	if err := i.LoadFile("main.go", []byte(source)); err != nil {
+		t.Fatalf("LoadFile() failed: %+v", err)
+	}
+
+	_, err := i.Eval(context.Background())
+	if err != nil {
+		t.Fatalf("Eval() failed: %+v", err)
+	}
+
+	// The `recover` in `main` should catch the *second* panic.
+	want := "recovered in main: panic in defer\n"
+	if got := stdout.String(); got != want {
+		t.Errorf("stdout\n got: %q\nwant: %q", got, want)
+	}
+}
+
+// This test verifies that arguments to a deferred call are evaluated when the defer statement is executed, not when the call is executed.
+func TestDeferArgumentEvaluation(t *testing.T) {
+	source := `
+package main
+
+func printArg(s string) {
+	println(s)
+}
+
+func main() {
+	s := "hello"
+	defer printArg(s)
+	s = "world"
+}
+`
+	var stdout, stderr bytes.Buffer
+	i := newTestInterpreter(t, WithStdout(&stdout), WithStderr(&stderr))
+
+	if err := i.LoadFile("main.go", []byte(source)); err != nil {
+		t.Fatalf("LoadFile() failed: %+v", err)
+	}
+
+	_, err := i.Eval(context.Background())
+	if err != nil {
+		t.Fatalf("Eval() failed: %+v", err)
+	}
+
+	// The argument "hello" should be captured at the time of the defer statement.
+	want := "hello\n"
+	if got := stdout.String(); got != want {
+		t.Errorf("stdout\n got: %q\nwant: %q", got, want)
+	}
+}

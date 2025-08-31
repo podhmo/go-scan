@@ -321,6 +321,16 @@ func (i *Interpreter) EvalString(source string) (object.Object, error) {
 	return result, nil
 }
 
+// PanicError is a special error type that represents an unrecovered panic from the script.
+type PanicError struct {
+	Value object.Object
+}
+
+// Error implements the error interface.
+func (e *PanicError) Error() string {
+	return fmt.Sprintf("panic: %s", e.Value.Inspect())
+}
+
 // Result holds the outcome of a script execution.
 type Result struct {
 	Value object.Object
@@ -588,8 +598,12 @@ func (i *Interpreter) FindFunction(name string) (*object.Function, *object.FileS
 // Execute runs a given function with the provided arguments using the interpreter's persistent evaluator.
 func (i *Interpreter) Execute(ctx context.Context, fn *object.Function, args []object.Object, fscope *object.FileScope) (*Result, error) {
 	result := i.eval.ApplyFunction(nil, fn, args, fscope)
-	if err, ok := result.(*object.Error); ok {
-		return nil, fmt.Errorf("%s", err.Inspect())
+	switch res := result.(type) {
+	case *object.Error:
+		return nil, fmt.Errorf("%s", res.Inspect())
+	case *object.Panic:
+		// An unrecovered panic becomes a Go error at the interpreter boundary.
+		return nil, &PanicError{Value: res.Value}
 	}
 	return &Result{Value: result}, nil
 }

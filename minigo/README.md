@@ -131,12 +131,12 @@ func GetConfig() {
 - **Structs**: Field access, assignment, and struct literals (keyed and unkeyed).
 - **Interfaces**: Interface definitions and dynamic dispatch are supported.
 - **Generics**: Basic support for generic functions and types.
-- **Built-ins**: `len`, `cap`, `append`, `make`, `new`, `panic`.
+- **Built-ins**: `len`, `cap`, `append`, `make`, `new`, `panic`, and `recover`.
 - **Imports**: `import` statements for standard library packages (via FFI or source) and other in-memory scripts.
+- **Error Handling**: `defer`, `panic`, and `recover` for structured error handling and resource management.
 
 #### Not Supported
 - **Concurrency**: `go` statements, `chan` types, and `select` statements. `minigo` is a single-threaded interpreter.
-- **`defer`, `recover`**: The `defer` and `recover` keywords are not implemented.
 - **Unsafe Operations**: The `unsafe` package is not supported.
 
 ## Go Interoperability

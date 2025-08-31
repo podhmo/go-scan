@@ -2,7 +2,9 @@ package evaluator
 
 import (
 	"context"
+	"fmt"
 
+	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/scanner"
 	"github.com/podhmo/go-scan/symgo/object"
 )
@@ -15,21 +17,35 @@ import (
 // the caller can guarantee the safety of the operation.
 type Resolver struct {
 	ScanPolicy object.ScanPolicyFunc
+	scanner    *goscan.Scanner
 }
 
 // NewResolver creates a new Resolver.
-func NewResolver(policy object.ScanPolicyFunc) *Resolver {
+func NewResolver(policy object.ScanPolicyFunc, scanner *goscan.Scanner) *Resolver {
 	if policy == nil {
 		policy = func(pkgPath string) bool { return true }
 	}
 	return &Resolver{
 		ScanPolicy: policy,
+		scanner:    scanner,
 	}
 }
 
 // ResolveType is a helper to resolve a FieldType to a TypeInfo while respecting the scan policy.
 func (r *Resolver) ResolveType(ctx context.Context, fieldType *scanner.FieldType) *scanner.TypeInfo {
-	return r.resolveType(ctx, fieldType, true)
+	if fieldType == nil {
+		return nil
+	}
+
+	// Policy check is performed here.
+	if fieldType.FullImportPath != "" && !r.ScanPolicy(fieldType.FullImportPath) {
+		// Policy says NO. Create a placeholder for the unresolved type.
+		return scanner.NewUnresolvedTypeInfo(fieldType.FullImportPath, fieldType.TypeName)
+	}
+
+	// Policy allows scanning, or it's a local/built-in type.
+	resolvedType, _ := fieldType.Resolve(ctx)
+	return resolvedType
 }
 
 // resolveTypeWithoutPolicyCheck resolves a FieldType to a TypeInfo without enforcing the scan policy.
@@ -37,7 +53,13 @@ func (r *Resolver) ResolveType(ctx context.Context, fieldType *scanner.FieldType
 // performed the necessary policy checks or when analyzing types that are known
 // to be safe to resolve.
 func (r *Resolver) resolveTypeWithoutPolicyCheck(ctx context.Context, fieldType *scanner.FieldType) *scanner.TypeInfo {
-	return r.resolveType(ctx, fieldType, false)
+	if fieldType == nil {
+		return nil
+	}
+
+	// Policy check is intentionally skipped.
+	resolvedType, _ := fieldType.Resolve(ctx)
+	return resolvedType
 }
 
 // ResolveFunction creates a function object or a symbolic placeholder based on the scan policy.
@@ -101,20 +123,16 @@ func (r *Resolver) ResolveSymbolicField(ctx context.Context, field *scanner.Fiel
 	}
 }
 
-// resolveType is the internal implementation for resolving a FieldType to a TypeInfo.
-// It respects the scan policy only if shouldScan is true.
-func (r *Resolver) resolveType(ctx context.Context, fieldType *scanner.FieldType, shouldScan bool) *scanner.TypeInfo {
-	if fieldType == nil {
-		return nil
-	}
 
-	// Only perform policy check if requested.
-	if shouldScan && fieldType.FullImportPath != "" && !r.ScanPolicy(fieldType.FullImportPath) {
-		// Policy says NO. Create a placeholder for the unresolved type.
-		return scanner.NewUnresolvedTypeInfo(fieldType.FullImportPath, fieldType.TypeName)
+// ResolvePackage is a helper to get package info while respecting the scan policy.
+func (r *Resolver) ResolvePackage(ctx context.Context, path string) (*scanner.PackageInfo, error) {
+	if !r.ScanPolicy(path) {
+		return nil, fmt.Errorf("package %q is excluded by scan policy", path)
 	}
+	return r.resolvePackageWithoutPolicyCheck(ctx, path)
+}
 
-	// Policy allows scanning, or it's a local/built-in type, or scanning was skipped.
-	resolvedType, _ := fieldType.Resolve(ctx)
-	return resolvedType
+// resolvePackageWithoutPolicyCheck resolves a package without enforcing the scan policy.
+func (r *Resolver) resolvePackageWithoutPolicyCheck(ctx context.Context, path string) (*scanner.PackageInfo, error) {
+	return r.scanner.ScanPackageByImport(ctx, path)
 }

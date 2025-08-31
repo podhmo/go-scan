@@ -60,7 +60,7 @@ func New(scanner *goscan.Scanner, logger *slog.Logger, tracer object.Tracer, sca
 		logger:            logger,
 		tracer:            tracer,
 		interfaceBindings: make(map[string]*goscan.TypeInfo),
-		resolver:          NewResolver(scanPolicy),
+		resolver:          NewResolver(scanPolicy, scanner),
 		initializedPkgs:   make(map[string]bool),
 		pkgCache:          make(map[string]*object.Package),
 	}
@@ -812,7 +812,7 @@ func (e *Evaluator) getOrLoadPackage(ctx context.Context, path string) (*object.
 		return pkg, nil
 	}
 
-	scannedPkg, err := e.scanner.ScanPackageByImport(ctx, path)
+	scannedPkg, err := e.resolver.resolvePackageWithoutPolicyCheck(ctx, path)
 	if err != nil {
 		// Even if scanning fails, we create a placeholder package object to cache the failure
 		// and avoid re-scanning. The ScannedInfo will be nil.
@@ -889,6 +889,12 @@ func (e *Evaluator) ensurePackageEnvPopulated(ctx context.Context, pkgObj *objec
 		fnObject := e.resolver.ResolveFunction(pkgObj, f)
 		env.SetLocal(f.Name, fnObject)
 	}
+}
+
+func (e *Evaluator) createUnscannableSymbolPlaceholder(val *object.Package, selName string) object.Object {
+	placeholder := &object.SymbolicPlaceholder{Reason: fmt.Sprintf("unscannable symbol %s.%s", val.Path, selName)}
+	val.Env.Set(selName, placeholder)
+	return placeholder
 }
 
 func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
@@ -969,12 +975,10 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 			if e.scanner == nil {
 				return e.newError(n.Pos(), "scanner is not available, cannot load package %q", val.Path)
 			}
-			pkgInfo, err := e.scanner.ScanPackageByImport(ctx, val.Path)
+			pkgInfo, err := e.resolver.resolvePackageWithoutPolicyCheck(ctx, val.Path)
 			if err != nil {
 				e.logWithContext(ctx, slog.LevelWarn, "could not scan package, treating as external", "package", val.Path, "error", err)
-				placeholder := &object.SymbolicPlaceholder{Reason: fmt.Sprintf("unscannable symbol %s.%s", val.Path, n.Sel.Name)}
-				val.Env.Set(n.Sel.Name, placeholder)
-				return placeholder
+				return e.createUnscannableSymbolPlaceholder(val, n.Sel.Name)
 			}
 			val.ScannedInfo = pkgInfo
 		}
@@ -999,12 +1003,10 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 			if e.scanner == nil {
 				return e.newError(n.Pos(), "scanner is not available, cannot load package %q", val.Path)
 			}
-			pkgInfo, err := e.scanner.ScanPackageByImport(ctx, val.Path)
+			pkgInfo, err := e.resolver.resolvePackageWithoutPolicyCheck(ctx, val.Path)
 			if err != nil {
 				e.logWithContext(ctx, slog.LevelWarn, "could not scan package, treating as external", "package", val.Path, "error", err)
-				placeholder := &object.SymbolicPlaceholder{Reason: fmt.Sprintf("unscannable symbol %s.%s", val.Path, n.Sel.Name)}
-				val.Env.Set(n.Sel.Name, placeholder)
-				return placeholder
+				return e.createUnscannableSymbolPlaceholder(val, n.Sel.Name)
 			}
 			val.ScannedInfo = pkgInfo
 		}
@@ -1113,7 +1115,7 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 			if typeInfo.PkgPath != "" && typeInfo.PkgPath != pkg.ImportPath {
 				if foreignPkgObj, err := e.getOrLoadPackage(ctx, typeInfo.PkgPath); err == nil && foreignPkgObj != nil {
 					if foreignPkgObj.ScannedInfo == nil {
-						scanned, err := e.scanner.ScanPackageByImport(ctx, foreignPkgObj.Path)
+						scanned, err := e.resolver.resolvePackageWithoutPolicyCheck(ctx, foreignPkgObj.Path)
 						if err != nil {
 							return e.newError(n.Pos(), "failed to scan dependent package %s: %v", foreignPkgObj.Path, err)
 						}
@@ -1121,7 +1123,7 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 					}
 					resolutionPkg = foreignPkgObj.ScannedInfo
 				} else {
-					scanned, err := e.scanner.ScanPackageByImport(ctx, typeInfo.PkgPath)
+					scanned, err := e.resolver.resolvePackageWithoutPolicyCheck(ctx, typeInfo.PkgPath)
 					if err != nil {
 						return e.newError(n.Pos(), "failed to scan transitive dependency package %s: %v", typeInfo.PkgPath, err)
 					}
@@ -1814,7 +1816,7 @@ func (e *Evaluator) assignIdentifier(ctx context.Context, ident *ast.Ident, val 
 			},
 		}
 		if val.FieldType() != nil {
-			if resolved := e.resolver.resolveTypeWithoutPolicyCheck(ctx, val.FieldType()); resolved != nil && resolved.Kind == scanner.InterfaceKind {
+			if resolved := e.resolver.ResolveType(ctx, val.FieldType()); resolved != nil && resolved.Kind == scanner.InterfaceKind {
 				v.PossibleConcreteTypes = make(map[*scanner.FieldType]struct{})
 				if ft := val.FieldType(); ft != nil {
 					v.PossibleConcreteTypes[ft] = struct{}{}
@@ -2601,4 +2603,3 @@ func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, 
 
 	return env, nil
 }
-

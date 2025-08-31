@@ -60,7 +60,7 @@ func New(scanner *goscan.Scanner, logger *slog.Logger, tracer object.Tracer, sca
 		logger:            logger,
 		tracer:            tracer,
 		interfaceBindings: make(map[string]*goscan.TypeInfo),
-		resolver:          NewResolver(scanPolicy, scanner),
+		resolver:          NewResolver(scanPolicy, scanner, logger),
 		initializedPkgs:   make(map[string]bool),
 		pkgCache:          make(map[string]*object.Package),
 	}

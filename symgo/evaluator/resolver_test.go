@@ -1,6 +1,8 @@
 package evaluator
 
 import (
+	"io"
+	"log/slog"
 	"testing"
 
 	"github.com/podhmo/go-scan"
@@ -103,7 +105,8 @@ type Price struct {
 		t.Fatal("Price field not found")
 	}
 
-	resolver := NewResolver(scanPolicy, s)
+	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
+	resolver := NewResolver(scanPolicy, s, logger)
 
 	t.Run("ResolveType with policy (allowed)", func(t *testing.T) {
 		result := resolver.ResolveType(ctx, userFieldType)
@@ -138,6 +141,63 @@ type Price struct {
 		}
 		if result.Unresolved {
 			t.Error("should not be unresolved when policy is skipped")
+		}
+	})
+}
+
+func TestResolver_withError(t *testing.T) {
+	ctx := t.Context()
+
+	// Use scantest to set up a file with an import that cannot be resolved.
+	dir, cleanup := scantest.WriteFiles(t, map[string]string{
+		"go.mod": "module example.com/myapp\n",
+		"main.go": `
+package main
+import "example.com/nonexistent"
+type Request struct {
+	Thing nonexistent.Thing
+}`,
+	})
+	defer cleanup()
+
+	s, err := goscan.New(
+		goscan.WithWorkDir(dir),
+		goscan.WithGoModuleResolver(),
+	)
+	if err != nil {
+		t.Fatalf("goscan.New() failed: %v", err)
+	}
+
+	// Scanning itself won't fail, but type resolution will.
+	pkgs, err := s.Scan(ctx, ".")
+	if err != nil {
+		t.Fatalf("s.Scan() failed: %v", err)
+	}
+	mainPkg := pkgs[0]
+	reqType := mainPkg.Types[0]
+	thingFieldType := reqType.Struct.Fields[0].Type
+
+	// Create a resolver with a permissive policy.
+	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
+	resolver := NewResolver(func(pkgPath string) bool { return true }, s, logger)
+
+	t.Run("ResolveType with resolution error returns placeholder", func(t *testing.T) {
+		result := resolver.ResolveType(ctx, thingFieldType)
+		if result == nil {
+			t.Fatal("expected a placeholder for resolution error, but got nil")
+		}
+		if !result.Unresolved {
+			t.Error("expected placeholder to be unresolved")
+		}
+	})
+
+	t.Run("resolveTypeWithoutPolicyCheck with resolution error returns placeholder", func(t *testing.T) {
+		result := resolver.resolveTypeWithoutPolicyCheck(ctx, thingFieldType)
+		if result == nil {
+			t.Fatal("expected a placeholder for resolution error, but got nil")
+		}
+		if !result.Unresolved {
+			t.Error("expected placeholder to be unresolved")
 		}
 	})
 }

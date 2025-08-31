@@ -202,6 +202,10 @@ func (e *Evaluator) Eval(ctx context.Context, node ast.Node, env *object.Environ
 		// For expressions like `[]byte("foo")`, the `[]byte` part is an ArrayType.
 		// We don't need to evaluate it to a concrete value, just prevent an "unimplemented" error.
 		return &object.SymbolicPlaceholder{Reason: "array type expression"}
+	case *ast.MapType:
+		// Similar to ArrayType, when a map type itself is used as an expression (e.g., in a conversion),
+		// we just need to acknowledge it without producing a concrete value.
+		return &object.SymbolicPlaceholder{Reason: "map type expression"}
 	}
 	return e.newError(node.Pos(), "evaluation not implemented for %T", node)
 }

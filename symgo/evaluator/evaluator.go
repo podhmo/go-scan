@@ -30,7 +30,7 @@ type Evaluator struct {
 	tracer            object.Tracer // Tracer for debugging evaluation flow.
 	callStack         []*callFrame
 	interfaceBindings map[string]*goscan.TypeInfo
-	policyResolver    *PolicyResolver
+	resolver          *Resolver
 	defaultIntrinsic  intrinsics.IntrinsicFunc
 	scanPolicy        object.ScanPolicyFunc
 	initializedPkgs   map[string]bool // To track packages whose constants are loaded
@@ -58,7 +58,7 @@ func New(scanner *goscan.Scanner, logger *slog.Logger, tracer object.Tracer, sca
 		logger:            logger,
 		tracer:            tracer,
 		interfaceBindings: make(map[string]*goscan.TypeInfo),
-		policyResolver:    NewPolicyResolver(scanPolicy),
+		resolver:          NewResolver(scanPolicy),
 		scanPolicy:        scanPolicy,
 		initializedPkgs:   make(map[string]bool),
 		pkgCache:          make(map[string]*object.Package),
@@ -273,7 +273,7 @@ func (e *Evaluator) evalIndexExpr(ctx context.Context, node *ast.IndexExpr, env 
 	var elemFieldType *scanner.FieldType
 	if sliceFieldType != nil && sliceFieldType.IsSlice && sliceFieldType.Elem != nil {
 		elemFieldType = sliceFieldType.Elem
-		elemType = e.policyResolver.ResolveType(ctx, elemFieldType)
+		elemType = e.resolver.ResolveType(ctx, elemFieldType)
 	}
 
 	return &object.SymbolicPlaceholder{
@@ -390,7 +390,7 @@ func (e *Evaluator) evalCompositeLit(ctx context.Context, node *ast.CompositeLit
 		return placeholder
 	}
 
-	resolvedType := e.policyResolver.ResolveType(ctx, fieldType)
+	resolvedType := e.resolver.ResolveType(ctx, fieldType)
 	if resolvedType == nil {
 		// This can happen for built-in types or if resolution fails for other reasons.
 		placeholder := &object.SymbolicPlaceholder{
@@ -640,7 +640,7 @@ func (e *Evaluator) evalStarExpr(ctx context.Context, node *ast.StarExpr, env *o
 			}
 			if ft.Elem != nil {
 				elemFieldType := ft.Elem
-				resolvedElem := e.policyResolver.ResolveType(ctx, elemFieldType)
+				resolvedElem := e.resolver.ResolveType(ctx, elemFieldType)
 				newPlaceholder.SetFieldType(elemFieldType)
 				newPlaceholder.SetTypeInfo(resolvedElem)
 			}
@@ -696,7 +696,7 @@ func (e *Evaluator) evalGenDecl(ctx context.Context, node *ast.GenDecl, env *obj
 
 			var resolvedTypeInfo *scanner.TypeInfo
 			if staticFieldType != nil {
-				resolvedTypeInfo = e.policyResolver.ResolveType(ctx, staticFieldType)
+				resolvedTypeInfo = e.resolver.ResolveType(ctx, staticFieldType)
 			}
 
 			v := &object.Variable{
@@ -995,7 +995,7 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 			// If it's not a method, check if it's a field on the struct (including embedded).
 			if typeInfo.Struct != nil {
 				if field, err := e.findFieldOnType(ctx, typeInfo, n.Sel.Name); err == nil && field != nil {
-					fieldTypeInfo := e.policyResolver.ResolveType(ctx, field.Type)
+					fieldTypeInfo := e.resolver.ResolveType(ctx, field.Type)
 					return &object.SymbolicPlaceholder{
 						BaseObject: object.BaseObject{ResolvedTypeInfo: fieldTypeInfo, ResolvedFieldType: field.Type},
 						Reason:     fmt.Sprintf("field access on symbolic value %s.%s", val.Reason, field.Name),
@@ -1264,7 +1264,7 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 		// If it's not a method, check if it's a field on the struct (including embedded).
 		if typeInfo != nil && typeInfo.Struct != nil {
 			if field, err := e.findFieldOnType(ctx, typeInfo, n.Sel.Name); err == nil && field != nil {
-				fieldTypeInfo := e.policyResolver.ResolveType(ctx, field.Type)
+				fieldTypeInfo := e.resolver.ResolveType(ctx, field.Type)
 				return &object.SymbolicPlaceholder{
 					BaseObject: object.BaseObject{ResolvedTypeInfo: fieldTypeInfo, ResolvedFieldType: field.Type},
 					Reason:     fmt.Sprintf("field access %s.%s", val.Name, field.Name),
@@ -1442,7 +1442,7 @@ func (e *Evaluator) evalTypeSwitchStmt(ctx context.Context, n *ast.TypeSwitchStm
 					}
 				}
 
-				resolvedType := e.policyResolver.ResolveType(ctx, fieldType)
+				resolvedType := e.resolver.ResolveType(ctx, fieldType)
 
 				val := &object.SymbolicPlaceholder{
 					Reason:     fmt.Sprintf("type switch case variable %s", fieldType.String()),
@@ -1501,7 +1501,7 @@ func (e *Evaluator) evalTypeAssertExpr(ctx context.Context, n *ast.TypeAssertExp
 		printer.Fprint(&typeNameBuf, pkg.Fset, n.Type)
 		return e.newError(n.Pos(), "could not resolve type for type assertion: %s", typeNameBuf.String())
 	}
-	resolvedType := e.policyResolver.ResolveType(ctx, fieldType)
+	resolvedType := e.resolver.ResolveType(ctx, fieldType)
 
 	// In the single-value form, the result is just a value of the asserted type.
 	// We create a symbolic placeholder for it.
@@ -1715,7 +1715,7 @@ func (e *Evaluator) evalAssignStmt(ctx context.Context, n *ast.AssignStmt, env *
 				printer.Fprint(&typeNameBuf, pkg.Fset, typeAssert.Type)
 				return e.newError(typeAssert.Pos(), "could not resolve type for type assertion: %s", typeNameBuf.String())
 			}
-			resolvedType := e.policyResolver.ResolveType(ctx, fieldType)
+			resolvedType := e.resolver.ResolveType(ctx, fieldType)
 
 			// Create placeholders for the two return values.
 			valuePlaceholder := &object.SymbolicPlaceholder{
@@ -2243,7 +2243,7 @@ func (e *Evaluator) scanFunctionLiteral(ctx context.Context, fn *object.Function
 			fieldType := e.scanner.TypeInfoFromExpr(ctx, field.Type, nil, fn.Package, importLookup)
 			var resolvedType *scanner.TypeInfo
 			if fieldType != nil {
-				resolvedType = e.policyResolver.ResolveType(ctx, fieldType)
+				resolvedType = e.resolver.ResolveType(ctx, fieldType)
 			}
 
 			placeholder := &object.SymbolicPlaceholder{
@@ -2386,7 +2386,7 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 			if len(method.Results) <= 1 {
 				var resultTypeInfo *scanner.TypeInfo
 				if len(method.Results) == 1 {
-					resultType := e.policyResolver.ResolveType(context.Background(), method.Results[0].Type)
+					resultType := e.resolver.ResolveType(context.Background(), method.Results[0].Type)
 					if resultType == nil && method.Results[0].Type.IsBuiltin {
 						resultType = &scanner.TypeInfo{Name: method.Results[0].Type.Name}
 					}
@@ -2400,7 +2400,7 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 				// Multiple return values from interface method
 				results := make([]object.Object, len(method.Results))
 				for i, res := range method.Results {
-					resultType := e.policyResolver.ResolveType(context.Background(), res.Type)
+					resultType := e.resolver.ResolveType(context.Background(), res.Type)
 					results[i] = &object.SymbolicPlaceholder{
 						Reason:     fmt.Sprintf("result %d of interface method call %s", i, method.Name),
 						BaseObject: object.BaseObject{ResolvedTypeInfo: resultType},
@@ -2429,7 +2429,7 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 				resultASTExpr := results.List[0].Type
 				fieldType := e.scanner.TypeInfoFromExpr(ctx, resultASTExpr, nil, fn.Package, importLookup)
 
-				resolvedType := e.policyResolver.ResolveType(ctx, fieldType)
+				resolvedType := e.resolver.ResolveType(ctx, fieldType)
 
 				if resolvedType == nil && fieldType.IsBuiltin && fieldType.Name == "error" {
 					stringFieldType := &scanner.FieldType{Name: "string", IsBuiltin: true}

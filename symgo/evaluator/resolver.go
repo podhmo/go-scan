@@ -7,20 +7,20 @@ import (
 	"github.com/podhmo/go-scan/symgo/object"
 )
 
-// PolicyResolver handles decisions about whether to scan or resolve types.
-type PolicyResolver struct {
+// Resolver handles decisions about whether to scan or resolve types.
+type Resolver struct {
 	scanPolicy object.ScanPolicyFunc
 }
 
-// NewPolicyResolver creates a new PolicyResolver.
-func NewPolicyResolver(policy object.ScanPolicyFunc) *PolicyResolver {
-	return &PolicyResolver{
+// NewResolver creates a new Resolver.
+func NewResolver(policy object.ScanPolicyFunc) *Resolver {
+	return &Resolver{
 		scanPolicy: policy,
 	}
 }
 
 // ResolveType is a helper to resolve a FieldType to a TypeInfo while respecting the scan policy.
-func (pc *PolicyResolver) ResolveType(ctx context.Context, fieldType *scanner.FieldType) *scanner.TypeInfo {
+func (pc *Resolver) ResolveType(ctx context.Context, fieldType *scanner.FieldType) *scanner.TypeInfo {
 	if fieldType == nil {
 		return nil
 	}

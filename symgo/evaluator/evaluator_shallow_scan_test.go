@@ -74,6 +74,7 @@ var sentinel int
 			PkgPath:    "example.com/me/foreign/lib",
 			Name:       "ForeignType",
 			Unresolved: true,
+			Kind:       scanner.UnknownKind,
 		}
 		if diff := cmp.Diff(want, typeInfo); diff != "" {
 			t.Errorf("TypeInfo mismatch (-want +got):\n%s", diff)
@@ -230,6 +231,7 @@ func GetTwo() (ForeignType, error) { return ForeignType{}, nil }
 			PkgPath:    "example.com/me/foreign/lib",
 			Name:       "ForeignType",
 			Unresolved: true,
+			Kind:       scanner.UnknownKind,
 		}
 
 		// Check the variable from the single-return function
@@ -501,6 +503,7 @@ func MyFunction(v any) {
 			PkgPath:    "example.com/me/foreign/lib",
 			Name:       "ForeignType",
 			Unresolved: true,
+			Kind:       scanner.InterfaceKind, // Kind is inferred from the type switch.
 		}
 		if diff := cmp.Diff(wantUnresolvedType, placeholder.TypeInfo()); diff != "" {
 			t.Errorf("result placeholder TypeInfo mismatch (-want +got):\n%s", diff)
@@ -590,6 +593,7 @@ func MyFunction(v any) {
 			PkgPath:    "example.com/me/foreign/lib",
 			Name:       "ForeignType",
 			Unresolved: true,
+			Kind:       scanner.InterfaceKind, // Kind is inferred from the type assertion.
 		}
 		if diff := cmp.Diff(wantUnresolvedType, placeholder.TypeInfo()); diff != "" {
 			t.Errorf("result placeholder TypeInfo mismatch (-want +got):\n%s", diff)
@@ -862,6 +866,7 @@ func MyFunction(p *extpkg.ExternalType, s []extpkg.ExternalType) {
 			PkgPath:    "example.com/me/extpkg",
 			Name:       "ExternalType",
 			Unresolved: true,
+			Kind:       scanner.UnknownKind,
 		}
 
 		// Check the value from the pointer dereference

@@ -408,8 +408,33 @@ func (e *Evaluator) evalCompositeLit(ctx context.Context, node *ast.CompositeLit
 		return sliceObj
 	}
 
+	// If the type was unresolved, we can now infer its kind.
+	resolvedType := e.resolver.ResolveType(ctx, fieldType)
+	if resolvedType != nil && resolvedType.Kind == scanner.UnknownKind {
+		resolvedType.Kind = scanner.StructKind
+	}
+
 	// Delegate policy check and object creation to the resolver.
-	return e.resolver.ResolveCompositeLit(ctx, fieldType)
+	// We pass the resolved type to avoid re-resolving.
+	// Note: This part might need adjustment if ResolveCompositeLit is to be simplified.
+	// For now, let's stick to the plan of inferring here.
+	if resolvedType == nil || resolvedType.Unresolved {
+		placeholder := &object.SymbolicPlaceholder{
+			Reason: "unresolved composite literal of type " + fieldType.String(),
+		}
+		placeholder.SetFieldType(fieldType)
+		placeholder.SetTypeInfo(resolvedType) // Pass the potentially updated type info
+		return placeholder
+	}
+
+	instance := &object.Instance{
+		TypeName: resolvedType.PkgPath + "." + resolvedType.Name,
+		BaseObject: object.BaseObject{
+			ResolvedTypeInfo: resolvedType,
+		},
+	}
+	instance.SetFieldType(fieldType)
+	return instance
 }
 
 func (e *Evaluator) evalBinaryExpr(ctx context.Context, node *ast.BinaryExpr, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
@@ -1404,6 +1429,11 @@ func (e *Evaluator) evalTypeSwitchStmt(ctx context.Context, n *ast.TypeSwitchStm
 
 				resolvedType := e.resolver.ResolveType(ctx, fieldType)
 
+				// If the type was unresolved, we can now infer its kind to be an interface.
+				if resolvedType != nil && resolvedType.Kind == scanner.UnknownKind {
+					resolvedType.Kind = scanner.InterfaceKind
+				}
+
 				val := &object.SymbolicPlaceholder{
 					Reason:     fmt.Sprintf("type switch case variable %s", fieldType.String()),
 					BaseObject: object.BaseObject{ResolvedTypeInfo: resolvedType, ResolvedFieldType: fieldType},
@@ -1462,6 +1492,11 @@ func (e *Evaluator) evalTypeAssertExpr(ctx context.Context, n *ast.TypeAssertExp
 		return e.newError(n.Pos(), "could not resolve type for type assertion: %s", typeNameBuf.String())
 	}
 	resolvedType := e.resolver.ResolveType(ctx, fieldType)
+
+	// If the type was unresolved, we can now infer its kind to be an interface.
+	if resolvedType != nil && resolvedType.Kind == scanner.UnknownKind {
+		resolvedType.Kind = scanner.InterfaceKind
+	}
 
 	// In the single-value form, the result is just a value of the asserted type.
 	// We create a symbolic placeholder for it.
@@ -1732,6 +1767,11 @@ func (e *Evaluator) evalAssignStmt(ctx context.Context, n *ast.AssignStmt, env *
 			}
 			resolvedType := e.resolver.ResolveType(ctx, fieldType)
 
+			// If the type was unresolved, we can now infer its kind to be an interface.
+			if resolvedType != nil && resolvedType.Kind == scanner.UnknownKind {
+				resolvedType.Kind = scanner.InterfaceKind
+			}
+
 			// Create placeholders for the two return values.
 			valuePlaceholder := &object.SymbolicPlaceholder{
 				Reason:     fmt.Sprintf("value from type assertion to %s", fieldType.String()),
@@ -1924,20 +1964,14 @@ func (e *Evaluator) assignIdentifier(ctx context.Context, ident *ast.Ident, val 
 	v.Value = val
 	newFieldType := val.FieldType()
 
-	// Check if the variable was originally typed as an interface,
-	// or if it's an unresolved type (which we'll treat as a potential interface).
-	var isInterface bool
+	// Check if the variable was originally typed as an interface.
+	// This now also works for unresolved types whose kind has been inferred.
+	isInterface := false
 	if staticType := v.TypeInfo(); staticType != nil {
-		if staticType.Unresolved {
-			// If the type is unresolved, we can't know for sure if it's an
-			// interface. To be safe and avoid losing data, we assume it is
-			// and accumulate possible concrete types.
+		// Treat as interface if it's explicitly an interface, or if it's
+		// an unknown kind (the old heuristic, as a fallback).
+		if staticType.Kind == scanner.InterfaceKind || staticType.Kind == scanner.UnknownKind {
 			isInterface = true
-		} else if v.FieldType() != nil {
-			// If the type is resolved, we can check its kind directly.
-			if resolved := e.resolver.resolveTypeWithoutPolicyCheck(ctx, v.FieldType()); resolved != nil {
-				isInterface = resolved.Kind == scanner.InterfaceKind
-			}
 		}
 	}
 

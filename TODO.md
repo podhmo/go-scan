@@ -92,8 +92,8 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [ ] **Generics**:
   - [x] Support for evaluating calls to generic functions with explicit type arguments (e.g., `myFunc[int](...)`).
   - [x] Support for evaluating generic type instantiations in composite literals (e.g., `MyType[int]{...}`).
-  - [ ] Support for type inference on generic function calls (e.g., `myFunc(...)`).
-  - [ ] Support for generic type constraints.
+  - [x] The evaluator is now robust to calls to generic functions where type arguments are omitted (e.g., `myFunc(...)`). It does not crash and treats the call as symbolic. Full type inference is not implemented.
+  - [x] The evaluator is now robust to generic functions with interface constraints (e.g., `[T fmt.Stringer]`). It does not crash and does not perform constraint checking.
 - [x] **Channels**: The interpreter now has a concrete `object.Channel` type. The `make` intrinsic correctly creates channel objects, and receive operations (`<-ch`) are symbolically evaluated to produce a value of the correct element type. This provides the foundation for more advanced channel analysis.
 - [x] **Stateful Type Tracking for Variables**: The `symgo` evaluator now correctly propagates type information (including pointer-ness) for variables during assignments and declarations. This allows for accurate method resolution on variables holding concrete types, pointer types, and interfaces, fixing several state-tracking-related bugs.
 - [x] **LHS of Assignments**: The interpreter now evaluates expressions on the left-hand side of field assignments (e.g., in `foo.bar = baz`), ensuring that function calls or type assertions within `foo` are correctly traced.

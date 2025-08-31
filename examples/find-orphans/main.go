@@ -29,10 +29,12 @@ func main() {
 		workspace    = flag.String("workspace-root", "", "scan all Go modules found under a given directory")
 		verbose      = flag.Bool("v", false, "enable verbose output")
 		asJSON       = flag.Bool("json", false, "output orphans in JSON format")
-		mode         = flag.String("mode", "auto", "analysis mode: auto, app, or lib")
-		excludeDirs  stringSliceFlag
+		mode                   = flag.String("mode", "auto", "analysis mode: auto, app, or lib")
+		excludeDirs            stringSliceFlag
+		primaryAnalysisScope   stringSliceFlag
 	)
 	flag.Var(&excludeDirs, "exclude-dirs", "comma-separated list of directories to exclude (e.g. testdata,vendor)")
+	flag.Var(&primaryAnalysisScope, "primary-analysis-scope", "comma-separated list of package patterns to define the primary analysis scope (for debugging purposes)")
 	flag.Parse()
 
 	// Validate mode
@@ -55,7 +57,7 @@ func main() {
 	}
 
 	ctx := context.Background()
-	if err := run(ctx, *all, *includeTests, *workspace, *verbose, *asJSON, *mode, startPatterns, excludeDirs, nil); err != nil {
+	if err := run(ctx, *all, *includeTests, *workspace, *verbose, *asJSON, *mode, startPatterns, excludeDirs, nil, primaryAnalysisScope); err != nil {
 		slog.ErrorContext(ctx, "toplevel", "error", err)
 		os.Exit(1)
 	}
@@ -134,7 +136,7 @@ func discoverModules(ctx context.Context, root string, excludeDirs []string) ([]
 	return modules, nil
 }
 
-func run(ctx context.Context, all bool, includeTests bool, workspace string, verbose bool, asJSON bool, mode string, startPatterns []string, excludeDirs []string, scanPolicy symgo.ScanPolicyFunc) error {
+func run(ctx context.Context, all bool, includeTests bool, workspace string, verbose bool, asJSON bool, mode string, startPatterns []string, excludeDirs []string, scanPolicy symgo.ScanPolicyFunc, primaryAnalysisScope []string) error {
 	logLevel := new(slog.LevelVar)
 	if verbose {
 		logLevel.Set(slog.LevelDebug)
@@ -195,8 +197,13 @@ func run(ctx context.Context, all bool, includeTests bool, workspace string, ver
 		slog.InfoContext(ctx, "* scan module", "module", loc.ModulePath())
 	}
 
-	// Resolve the target packages for reporting.
-	targetPackages, err := resolveTargetPackages(ctx, locators, startPatterns, excludeDirs, resolutionDir)
+	// Resolve the target packages for reporting. If a primary analysis scope is provided,
+	// use it for reporting as well. Otherwise, use the default start patterns.
+	reportingPatterns := startPatterns
+	if len(primaryAnalysisScope) > 0 {
+		reportingPatterns = primaryAnalysisScope
+	}
+	targetPackages, err := resolveTargetPackages(ctx, locators, reportingPatterns, excludeDirs, resolutionDir)
 	if err != nil {
 		return fmt.Errorf("could not resolve target packages: %w", err)
 	}
@@ -228,13 +235,14 @@ func run(ctx context.Context, all bool, includeTests bool, workspace string, ver
 	}
 
 	a := &analyzer{
-		s:              s,
-		packages:       make(map[string]*scanner.PackageInfo),
-		targetPackages: targetPackages,
-		mode:           mode,
-		scanPackages:   scanPackages,
-		includeTests:   includeTests,
-		scanPolicy:     scanPolicy,
+		s:                    s,
+		packages:             make(map[string]*scanner.PackageInfo),
+		targetPackages:       targetPackages,
+		mode:                 mode,
+		scanPackages:         scanPackages,
+		includeTests:         includeTests,
+		scanPolicy:           scanPolicy,
+		primaryAnalysisScope: primaryAnalysisScope,
 	}
 	return a.analyze(ctx, asJSON)
 }
@@ -386,15 +394,16 @@ func keys[K comparable, V any](m map[K]V) []K {
 }
 
 type analyzer struct {
-	s              *goscan.Scanner
-	packages       map[string]*scanner.PackageInfo
-	targetPackages map[string]bool
-	mode           string
-	scanPackages   map[string]bool
-	includeTests   bool
-	scanPolicy     symgo.ScanPolicyFunc
-	mu             sync.Mutex
-	ctx            context.Context
+	s                    *goscan.Scanner
+	packages             map[string]*scanner.PackageInfo
+	targetPackages       map[string]bool
+	mode                 string
+	scanPackages         map[string]bool
+	includeTests         bool
+	scanPolicy           symgo.ScanPolicyFunc
+	primaryAnalysisScope []string
+	mu                   sync.Mutex
+	ctx                  context.Context
 }
 
 func (a *analyzer) analyze(ctx context.Context, asJSON bool) error {
@@ -412,10 +421,15 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool) error {
 	interfaceMap := buildInterfaceMap(a.packages)
 	slog.DebugContext(ctx, "built interface map", "interfaces", len(interfaceMap))
 
-	scanPatterns := keys(a.scanPackages)
+	// Use the user-provided primary analysis scope if available, otherwise default to all scanned packages.
+	analysisScopePatterns := a.primaryAnalysisScope
+	if len(analysisScopePatterns) == 0 {
+		analysisScopePatterns = keys(a.scanPackages)
+	}
+
 	interpreterOptions := []symgo.Option{
 		symgo.WithLogger(slog.Default()),
-		symgo.WithPrimaryAnalysisScope(scanPatterns...),
+		symgo.WithPrimaryAnalysisScope(analysisScopePatterns...),
 	}
 	if a.scanPolicy != nil {
 		interpreterOptions = append(interpreterOptions, symgo.WithScanPolicy(a.scanPolicy))

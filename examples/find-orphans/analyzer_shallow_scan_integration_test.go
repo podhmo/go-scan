@@ -73,7 +73,7 @@ func main() {
 		return path != "example.com/test/foreign"
 	}
 
-	err := run(context.Background(), true, false, dir, false, false, "auto", startPatterns, []string{"vendor"}, scanPolicy)
+	err := run(context.Background(), true, false, dir, false, false, "auto", startPatterns, []string{"vendor"}, scanPolicy, nil)
 	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}

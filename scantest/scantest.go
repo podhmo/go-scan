@@ -13,107 +13,9 @@ import (
 	"testing"
 
 	scan "github.com/podhmo/go-scan"
-	"path" // for manipulating slash-separated paths
+	"github.com/podhmo/go-scan/locator"
 	"github.com/podhmo/go-scan/scanner"
 )
-
-// PathConverter helps convert file paths to Go import paths within a test context.
-type PathConverter struct {
-	// ModulePath is the Go import path for the module root (e.g., "example.com/my-module").
-	ModulePath string
-	// ModuleRoot is the absolute file path to the module root directory.
-	ModuleRoot string
-}
-
-// ToImportPath converts a file system path to a Go import path.
-// The pathToConvert can be absolute or relative to the current working directory.
-// If the path points to a file, it returns the import path of the containing directory.
-// It correctly handles trailing '...' wildcards.
-func (c *PathConverter) ToImportPath(pathToConvert string) (string, error) {
-	isWildcard := strings.HasSuffix(pathToConvert, "...")
-	pathPart := pathToConvert
-	if isWildcard {
-		pathPart = strings.TrimSuffix(pathPart, "...")
-	}
-
-	// filepath.Abs can handle empty string, returns CWD
-	absPath, err := filepath.Abs(pathPart)
-	if err != nil {
-		return "", fmt.Errorf("could not get absolute path for %q: %w", pathPart, err)
-	}
-
-	info, err := os.Stat(absPath)
-	if err != nil {
-		// The path part might not exist if it was empty (e.g. "./...")
-		// In that case, Abs returns the CWD, which might not be the module root.
-		// We should handle this by checking if pathPart is empty.
-		if pathPart == "" || pathPart == "." || pathPart == string(filepath.Separator) {
-			absPath = c.ModuleRoot // Assume it refers to the root
-		} else {
-			return "", fmt.Errorf("path part %q does not exist: %w", pathPart, err)
-		}
-	} else if !info.IsDir() {
-		absPath = filepath.Dir(absPath)
-	}
-
-	relPath, err := filepath.Rel(c.ModuleRoot, absPath)
-	if err != nil {
-		// This should not happen if Abs and ModuleRoot are valid.
-		return "", fmt.Errorf("could not compute relative path between %q and %q: %w", c.ModuleRoot, absPath, err)
-	}
-
-	// Ensure the path is actually within the module root.
-	if strings.HasPrefix(relPath, "..") {
-		return "", fmt.Errorf("path %q is not within module root %q", pathToConvert, c.ModuleRoot)
-	}
-
-	importSubPath := ""
-	if relPath != "." {
-		importSubPath = filepath.ToSlash(relPath)
-	}
-
-	fullImportPath := c.ModulePath
-	if importSubPath != "" {
-		fullImportPath = path.Join(fullImportPath, importSubPath)
-	}
-
-	if isWildcard {
-		// Use path.Join to correctly handle slashes.
-		return path.Join(fullImportPath, "..."), nil
-	}
-
-	return fullImportPath, nil
-}
-
-// NewPathConverter creates a new PathConverter for the given starting directory.
-// It automatically finds the module root and parses the go.mod file.
-// The startDir is typically the temporary directory created for a test.
-func NewPathConverter(startDir string) (*PathConverter, error) {
-	// findModuleRoot can be slow, but for tests it's acceptable.
-	// It searches up from startDir, then from CWD if not found.
-	moduleRoot, err := findModuleRoot(startDir)
-	if err != nil {
-		cwd, err_cwd := os.Getwd()
-		if err_cwd != nil {
-			return nil, fmt.Errorf("scantest: could not get current working directory: %w", err_cwd)
-		}
-		moduleRoot, err = findModuleRoot(cwd)
-		if err != nil {
-			return nil, fmt.Errorf("scantest: failed to find go.mod root from temp dir (%s) or cwd (%s): %w", startDir, cwd, err)
-		}
-	}
-
-	goModPath := filepath.Join(moduleRoot, "go.mod")
-	modulePath, err := getModulePath(goModPath)
-	if err != nil {
-		return nil, fmt.Errorf("scantest: failed to get module path from %s: %w", goModPath, err)
-	}
-
-	return &PathConverter{
-		ModulePath: modulePath,
-		ModuleRoot: moduleRoot,
-	}, nil
-}
 
 // memoryFileWriter is an in-memory implementation of scan.FileWriter for testing.
 type memoryFileWriter struct {
@@ -479,24 +381,9 @@ func createGoModOverlay(dir string) (scanner.Overlay, error) {
 	return overlay, nil
 }
 
-// getModulePath reads a go.mod file and extracts the module path.
-func getModulePath(goModPath string) (string, error) {
-	content, err := os.ReadFile(goModPath)
-	if err != nil {
-		return "", fmt.Errorf("reading go.mod at %s: %w", goModPath, err)
-	}
-
-	for _, line := range strings.Split(string(content), "\n") {
-		if strings.HasPrefix(line, "module ") {
-			// Found the module line, extract the path.
-			// It might have trailing comments, so use strings.Fields.
-			parts := strings.Fields(line)
-			if len(parts) >= 2 {
-				return parts[1], nil
-			}
-			return "", fmt.Errorf("malformed module line in %s: %s", goModPath, line)
-		}
-	}
-
-	return "", fmt.Errorf("module directive not found in %s", goModPath)
+// ToImportPath is a helper function that converts a filesystem path
+// (relative or absolute) to its corresponding Go import path.
+// This is a convenience wrapper around `locator.ResolvePkgPath` for use in tests.
+func ToImportPath(path string) (string, error) {
+	return locator.ResolvePkgPath(context.Background(), path)
 }

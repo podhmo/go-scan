@@ -55,7 +55,7 @@ func main() {
 	}
 
 	ctx := context.Background()
-	if err := run(ctx, *all, *includeTests, *workspace, *verbose, *asJSON, *mode, startPatterns, excludeDirs); err != nil {
+	if err := run(ctx, *all, *includeTests, *workspace, *verbose, *asJSON, *mode, startPatterns, excludeDirs, nil); err != nil {
 		slog.ErrorContext(ctx, "toplevel", "error", err)
 		os.Exit(1)
 	}
@@ -134,7 +134,7 @@ func discoverModules(ctx context.Context, root string, excludeDirs []string) ([]
 	return modules, nil
 }
 
-func run(ctx context.Context, all bool, includeTests bool, workspace string, verbose bool, asJSON bool, mode string, startPatterns []string, excludeDirs []string) error {
+func run(ctx context.Context, all bool, includeTests bool, workspace string, verbose bool, asJSON bool, mode string, startPatterns []string, excludeDirs []string, scanPolicy symgo.ScanPolicyFunc) error {
 	logLevel := new(slog.LevelVar)
 	if verbose {
 		logLevel.Set(slog.LevelDebug)
@@ -234,6 +234,7 @@ func run(ctx context.Context, all bool, includeTests bool, workspace string, ver
 		mode:           mode,
 		scanPackages:   scanPackages,
 		includeTests:   includeTests,
+		scanPolicy:     scanPolicy,
 	}
 	return a.analyze(ctx, asJSON)
 }
@@ -391,6 +392,7 @@ type analyzer struct {
 	mode           string
 	scanPackages   map[string]bool
 	includeTests   bool
+	scanPolicy     symgo.ScanPolicyFunc
 	mu             sync.Mutex
 	ctx            context.Context
 }
@@ -411,10 +413,17 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool) error {
 	slog.DebugContext(ctx, "built interface map", "interfaces", len(interfaceMap))
 
 	scanPatterns := keys(a.scanPackages)
-	interp, err := symgo.NewInterpreter(
-		a.s,
+	interpreterOptions := []symgo.Option{
 		symgo.WithLogger(slog.Default()),
 		symgo.WithPrimaryAnalysisScope(scanPatterns...),
+	}
+	if a.scanPolicy != nil {
+		interpreterOptions = append(interpreterOptions, symgo.WithScanPolicy(a.scanPolicy))
+	}
+
+	interp, err := symgo.NewInterpreter(
+		a.s,
+		interpreterOptions...,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create interpreter: %w", err)

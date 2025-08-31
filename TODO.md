@@ -102,7 +102,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     - [x] `*ast.IfStmt` (Note: The interpreter now correctly evaluates the `Cond` expression, in addition to the `Init` statement and `Body`/`Else` blocks. A follow-up fix ensures that evaluation correctly continues after the `if` statement, resolving a regression in `docgen`.)
     - [x] `*ast.ChanType`
     - [x] `*ast.Ellipsis` (Note: Implemented for variadic arguments in function calls and definitions.)
-    - [ ] `*ast.FuncType`
+    - [x] `*ast.FuncType`
     - [x] `*ast.InterfaceType`
     - [x] `*ast.MapType`
     - [x] `*ast.StructType`

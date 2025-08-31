@@ -220,6 +220,10 @@ func (e *Evaluator) Eval(ctx context.Context, node ast.Node, env *object.Environ
 		// Similar to other type expressions, we don't need to evaluate it to a concrete value,
 		// just prevent an "unimplemented" error.
 		return &object.SymbolicPlaceholder{Reason: "channel type expression"}
+	case *ast.FuncType:
+		// Similar to other type expressions, we don't need to evaluate it to a concrete value,
+		// just prevent an "unimplemented" error.
+		return &object.SymbolicPlaceholder{Reason: "function type expression"}
 	}
 	return e.newError(node.Pos(), "evaluation not implemented for %T", node)
 }

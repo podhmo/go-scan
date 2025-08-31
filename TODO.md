@@ -94,6 +94,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] **LHS of Assignments**: The interpreter now evaluates expressions on the left-hand side of field assignments (e.g., in `foo.bar = baz`), ensuring that function calls or type assertions within `foo` are correctly traced.
 - [x] **Anonymous Types**: The scanner now correctly parses anonymous `interface` and `struct` types in expressions (such as function parameters), preserving their structural definitions for the `symgo` interpreter.
 - [ ] **Other AST Nodes**: The following `ast.Node` types are not yet handled by the main evaluation loop:
+    - [x] **`symgo`: Evaluator `Resolver` Refactoring**: Refactored the `symgo.evaluator.Resolver` to clarify the API around scan policy enforcement. Exported methods now consistently perform policy checks, while unexported methods can bypass them for internal use. This improves safety and aligns with the intended design.
     - [x] **Intra-package unexported constant/variable resolution**: The interpreter now correctly resolves unexported package-level constants and variables that are referenced from within a function in the same package by pre-loading them into the environment.
     - [x] `*ast.IfStmt` (Note: The interpreter now correctly evaluates the `Cond` expression, in addition to the `Init` statement and `Body`/`Else` blocks. A follow-up fix ensures that evaluation correctly continues after the `if` statement, resolving a regression in `docgen`.)
     - [ ] `*ast.ChanType`

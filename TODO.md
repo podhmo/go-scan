@@ -107,7 +107,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     - [x] `*ast.StructType`
     - [x] `*ast.EmptyStmt`
     - [x] `*ast.IncDecStmt`
-    - [ ] `*ast.LabeledStmt`
+    - [x] `*ast.LabeledStmt`
     - [ ] `*ast.SendStmt`
 - [x] **`panic` and other builtins**: The interpreter now recognizes `panic`, `nil`, `true`, and `false`. It also has placeholder implementations for most other standard built-ins (`make`, `len`, `append`, `new`, `cap`, etc.).
 - [x] **Multi-value returns and assignments**: The interpreter now supports functions that return multiple values and assignments of the form `x, y := f()` and `x, y = f()`.

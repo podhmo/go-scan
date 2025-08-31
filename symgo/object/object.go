@@ -562,26 +562,38 @@ func (mr *MultiReturn) Inspect() string {
 // Break represents a break statement.
 type Break struct {
 	BaseObject
+	Label string
 }
 
 // Type returns the type of the Break object.
 func (b *Break) Type() ObjectType { return BREAK_OBJ }
 
 // Inspect returns a string representation of the break statement.
-func (b *Break) Inspect() string { return "break" }
+func (b *Break) Inspect() string {
+	if b.Label != "" {
+		return fmt.Sprintf("break %s", b.Label)
+	}
+	return "break"
+}
 
 // --- Continue Object ---
 
 // Continue represents a continue statement.
 type Continue struct {
 	BaseObject
+	Label string
 }
 
 // Type returns the type of the Continue object.
 func (c *Continue) Type() ObjectType { return CONTINUE_OBJ }
 
 // Inspect returns a string representation of the continue statement.
-func (c *Continue) Inspect() string { return "continue" }
+func (c *Continue) Inspect() string {
+	if c.Label != "" {
+		return fmt.Sprintf("continue %s", c.Label)
+	}
+	return "continue"
+}
 
 // --- Variadic Object ---
 
@@ -602,12 +614,7 @@ func (v *Variadic) Inspect() string {
 	return "..."
 }
 
-var (
-	// BREAK is the singleton break value.
-	BREAK = &Break{}
-	// CONTINUE is the singleton continue value.
-	CONTINUE = &Continue{}
-)
+var ()
 
 // --- Tracer Interface ---
 

@@ -3,6 +3,7 @@ package evaluator
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/scanner"
@@ -18,16 +19,18 @@ import (
 type Resolver struct {
 	ScanPolicy object.ScanPolicyFunc
 	scanner    *goscan.Scanner
+	logger     *slog.Logger
 }
 
 // NewResolver creates a new Resolver.
-func NewResolver(policy object.ScanPolicyFunc, scanner *goscan.Scanner) *Resolver {
+func NewResolver(policy object.ScanPolicyFunc, scanner *goscan.Scanner, logger *slog.Logger) *Resolver {
 	if policy == nil {
 		policy = func(pkgPath string) bool { return true }
 	}
 	return &Resolver{
 		ScanPolicy: policy,
 		scanner:    scanner,
+		logger:     logger,
 	}
 }
 
@@ -44,7 +47,13 @@ func (r *Resolver) ResolveType(ctx context.Context, fieldType *scanner.FieldType
 	}
 
 	// Policy allows scanning, or it's a local/built-in type.
-	resolvedType, _ := fieldType.Resolve(ctx)
+	resolvedType, err := fieldType.Resolve(ctx)
+	if err != nil {
+		// If resolution fails (e.g., package not found for shallow scan),
+		// it's not a fatal error for the resolver. Return a placeholder.
+		r.logger.DebugContext(ctx, "type resolution failed, returning placeholder", "type", fieldType.String(), "error", err)
+		return scanner.NewUnresolvedTypeInfo(fieldType.FullImportPath, fieldType.TypeName)
+	}
 	return resolvedType
 }
 
@@ -58,7 +67,12 @@ func (r *Resolver) resolveTypeWithoutPolicyCheck(ctx context.Context, fieldType 
 	}
 
 	// Policy check is intentionally skipped.
-	resolvedType, _ := fieldType.Resolve(ctx)
+	resolvedType, err := fieldType.Resolve(ctx)
+	if err != nil {
+		// If resolution fails, return a placeholder.
+		r.logger.DebugContext(ctx, "type resolution failed (without policy check), returning placeholder", "type", fieldType.String(), "error", err)
+		return scanner.NewUnresolvedTypeInfo(fieldType.FullImportPath, fieldType.TypeName)
+	}
 	return resolvedType
 }
 

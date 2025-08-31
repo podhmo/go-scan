@@ -41,8 +41,8 @@ func Marshal(v any) ([]byte, error) { return nil, nil }
 func Unmarshal(data []byte, v any) error { return nil }
 `
 	tmpdir, cleanup := scantest.WriteFiles(t, map[string]string{
-		"go.mod":                "module example.com/myapp\ngo 1.21",
-		"main.go":               source,
+		"go.mod":             "module example.com/myapp\ngo 1.21",
+		"main.go":            source,
 		"libs/pkg.v2/lib.go": libSource,
 	})
 	defer cleanup()

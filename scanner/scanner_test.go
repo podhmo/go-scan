@@ -5,7 +5,10 @@ import (
 	"fmt"
 	"go/token"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/podhmo/go-scan/scantest"
 )
 
 // MockResolver is a mock implementation of PackageResolver for tests.
@@ -357,6 +360,45 @@ func TestResolve_DirectRecursion(t *testing.T) {
 
 	// The most important part of this test is that the Resolve call returns without a stack overflow.
 	// If we reach here, the test is largely successful.
+}
+
+// This is a regression test for the bug where the dominant package name logic
+// was too lenient and would silently drop files from a `main` package.
+func TestScanner_MismatchedPackageMainAndOther(t *testing.T) {
+	ctx := context.Background()
+	tmpdir, cleanup := scantest.WriteFiles(t, map[string]string{
+		"go.mod": `
+module example.com/m
+go 1.21
+`,
+		"main.go": `
+package main
+func main() {}
+`,
+		"another.go": `
+package another
+const X = 1
+`,
+	})
+	defer cleanup()
+
+	s := newTestScanner(t, "example.com/m", tmpdir)
+
+	filesToScan := []string{
+		filepath.Join(tmpdir, "main.go"),
+		filepath.Join(tmpdir, "another.go"),
+	}
+
+	_, err := s.ScanFiles(ctx, filesToScan, tmpdir)
+
+	if err == nil {
+		t.Fatal("expected a mismatched package names error, but got nil")
+	}
+
+	expectedErr := "mismatched package names: another and main"
+	if !strings.Contains(err.Error(), expectedErr) {
+		t.Errorf("expected error to contain %q, but got %q", expectedErr, err.Error())
+	}
 }
 
 func TestResolve_MutualRecursion(t *testing.T) {

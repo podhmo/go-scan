@@ -14,33 +14,26 @@ This is particularly useful for static analysis tools that need to understand pr
 
 - **Intrinsics**: `symgo` allows you to register "intrinsic" functions. These are special Go functions that the symbolic engine can call when it encounters a call to a specific function in the source code (e.g., `http.HandleFunc`). The intrinsic can then inspect the symbolic arguments and record information about the call.
 
-- **Scanning Policy**: By default, `symgo` will only perform deep, source-level analysis for packages that are part of the current Go workspace (i.e., the main module and any other modules included via `go.work`). Calls to functions in external packages (like the standard library or third-party dependencies) are treated as symbolic placeholders, which is highly efficient. You can customize this behavior by providing a `ScanPolicyFunc` using the `WithScanPolicy` option. This function determines whether a given package should be scanned from source.
+- **Analysis Scopes**: By default, `symgo` performs deep, symbolic execution only on packages within the current Go workspace. To provide fine-grained control over this behavior, `symgo` uses two main options:
 
-  For example, to allow `symgo` to scan both the current module and the standard library, you could provide the following policy:
+  - **`WithPrimaryAnalysisScope(patterns ...string)`**: This is the **recommended** way to define the analysis scope. It takes a list of Go import path patterns (e.g., `"example.com/mymodule/..."`) that `symgo` should analyze deeply. Any package outside this scope will not have its function bodies evaluated.
+
+  - **`WithSymbolicDependencyScope(patterns ...string)`**: This option tells the underlying `go-scan` engine to parse only the *declarations* (types, function signatures, etc.) for the given package patterns, while completely discarding function bodies. This is highly efficient for large external dependencies (like `net/http`) where you need type information but want to prevent `symgo` from getting lost in complex implementation details.
+
+  - **`WithScanPolicy(policy ScanPolicyFunc)`**: (DEPRECATED) This option provides a function to manually control the scan policy. It is less expressive and more error-prone than the scope-based options and may be removed in the future.
+
+  **Example:**
 
   ```go
-  import (
-      "strings"
-      "github.com/podhmo/go-scan/symgo"
+  import "github.com/podhmo/go-scan/symgo"
+
+  // Configure the interpreter to deeply analyze your module's code
+  // and treat `net/http` as a symbolic dependency.
+  interpreter, err := symgo.NewInterpreter(
+      goScanner, // A pre-configured go-scan.Scanner
+      symgo.WithPrimaryAnalysisScope("example.com/me/mymodule/..."),
+      symgo.WithSymbolicDependencyScope("net/http"),
   )
-
-  policy := func(importPath string) bool {
-      // Check if it's in the current module (replicates default behavior).
-      isWorkspacePkg := false
-      for _, m := range scanner.Modules() {
-          if strings.HasPrefix(importPath, m.Path) {
-              isWorkspacePkg = true
-              break
-          }
-      }
-
-      // Also allow scanning standard library packages (heuristic: no dots in path).
-      isStdLib := !strings.Contains(importPath, ".")
-
-      return isWorkspacePkg || isStdLib
-  }
-
-  interpreter, err := symgo.NewInterpreter(scanner, symgo.WithScanPolicy(policy))
   ```
 
 ## Interaction with `go-scan` Options

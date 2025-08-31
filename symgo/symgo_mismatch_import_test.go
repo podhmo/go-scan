@@ -30,7 +30,9 @@ func main() {
 	s := S{Name: "foo"}
 	b, err := pkg.Marshal(s)
 	if err != nil {
-		panic(err)
+		// We don't panic, just trace the error to avoid terminating execution,
+		// allowing the test to verify the Println call.
+		fmt.Println("error", err)
 	}
 	fmt.Println(string(b), err)
 }

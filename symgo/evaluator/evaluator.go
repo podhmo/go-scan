@@ -2462,9 +2462,11 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 					}
 				}
 
-				return &object.SymbolicPlaceholder{
-					Reason:     fmt.Sprintf("result of external call to %s", fn.UnderlyingFunc.Name),
-					BaseObject: object.BaseObject{ResolvedTypeInfo: resolvedType, ResolvedFieldType: fieldType},
+				return &object.ReturnValue{
+					Value: &object.SymbolicPlaceholder{
+						Reason:     fmt.Sprintf("result of external call to %s", fn.UnderlyingFunc.Name),
+						BaseObject: object.BaseObject{ResolvedTypeInfo: resolvedType, ResolvedFieldType: fieldType},
+					},
 				}
 			}
 
@@ -2473,12 +2475,7 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 			for i, field := range results.List {
 				fieldType := e.scanner.TypeInfoFromExpr(ctx, field.Type, nil, fn.Package, importLookup)
 
-				var resolvedType *scanner.TypeInfo
-				if fieldType.FullImportPath != "" && !e.resolver.ScanPolicy(fieldType.FullImportPath) {
-					resolvedType = scanner.NewUnresolvedTypeInfo(fieldType.FullImportPath, fieldType.TypeName)
-				} else {
-					resolvedType = e.resolver.resolveTypeWithoutPolicyCheck(ctx, fieldType)
-				}
+				resolvedType := e.resolver.ResolveType(ctx, fieldType)
 
 				if resolvedType == nil && fieldType.IsBuiltin && fieldType.Name == "error" {
 					stringFieldType := &scanner.FieldType{Name: "string", IsBuiltin: true}
@@ -2502,7 +2499,7 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 				}
 				returnValues = append(returnValues, placeholder)
 			}
-			return &object.MultiReturn{Values: returnValues}
+			return &object.ReturnValue{Value: &object.MultiReturn{Values: returnValues}}
 		}
 
 		// Case 3: A placeholder representing a built-in type, used in a conversion.

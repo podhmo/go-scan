@@ -191,6 +191,8 @@ func (e *Evaluator) Eval(ctx context.Context, node ast.Node, env *object.Environ
 		return e.evalCompositeLit(ctx, n, env, pkg)
 	case *ast.IndexExpr:
 		return e.evalIndexExpr(ctx, n, env, pkg)
+	case *ast.IndexListExpr:
+		return e.evalIndexListExpr(ctx, n, env, pkg)
 	case *ast.SliceExpr:
 		return e.evalSliceExpr(ctx, n, env, pkg)
 	case *ast.ParenExpr:
@@ -284,6 +286,22 @@ func (e *Evaluator) evalIndexExpr(ctx context.Context, node *ast.IndexExpr, env 
 		return left
 	}
 
+	// Handle generic instantiation `F[T]`
+	if fn, ok := left.(*object.Function); ok {
+		if fn.Def != nil && len(fn.Def.TypeParams) > 0 {
+			return e.evalGenericInstantiation(ctx, fn, []ast.Expr{node.Index}, node.Pos(), pkg)
+		}
+	}
+	if t, ok := left.(*object.Type); ok {
+		if t.ResolvedType != nil && len(t.ResolvedType.TypeParams) > 0 {
+			// This is a generic type instantiation. For now, we just return a placeholder
+			// representing the new, instantiated type. A more complete implementation
+			// would create a new object.Type with substituted type parameters.
+			return &object.SymbolicPlaceholder{Reason: "instantiated generic type"}
+		}
+	}
+
+	// Fallback to original logic for slice/map indexing at runtime.
 	index := e.Eval(ctx, node.Index, env, pkg)
 	if isError(index) {
 		return index
@@ -321,6 +339,28 @@ func (e *Evaluator) evalIndexExpr(ctx context.Context, node *ast.IndexExpr, env 
 		Reason:     "result of index expression",
 		BaseObject: object.BaseObject{ResolvedTypeInfo: elemType, ResolvedFieldType: elemFieldType},
 	}
+}
+
+func (e *Evaluator) evalIndexListExpr(ctx context.Context, node *ast.IndexListExpr, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
+	left := e.Eval(ctx, node.X, env, pkg)
+	if isError(left) {
+		return left
+	}
+
+	// Handle generic instantiation `F[T, U]`
+	if fn, ok := left.(*object.Function); ok {
+		if fn.Def != nil && len(fn.Def.TypeParams) > 0 {
+			return e.evalGenericInstantiation(ctx, fn, node.Indices, node.Pos(), pkg)
+		}
+	}
+	if t, ok := left.(*object.Type); ok {
+		if t.ResolvedType != nil && len(t.ResolvedType.TypeParams) > 0 {
+			return &object.SymbolicPlaceholder{Reason: "instantiated generic type"}
+		}
+	}
+
+	// This AST node is only for generics, so if we fall through, it's an unhandled case.
+	return e.newError(node.Pos(), "unhandled generic instantiation for %T", left)
 }
 
 func (e *Evaluator) evalSliceExpr(ctx context.Context, node *ast.SliceExpr, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
@@ -792,6 +832,36 @@ func (e *Evaluator) evalGenDecl(ctx context.Context, node *ast.GenDecl, env *obj
 	return nil
 }
 
+func (e *Evaluator) evalTypeDecl(ctx context.Context, d *ast.GenDecl, env *object.Environment, pkg *scanner.PackageInfo) {
+	for _, spec := range d.Specs {
+		ts, ok := spec.(*ast.TypeSpec)
+		if !ok {
+			continue
+		}
+
+		// Find the TypeInfo that the scanner created for this TypeSpec.
+		var typeInfo *scanner.TypeInfo
+		for _, ti := range pkg.Types {
+			if ti.Node == ts {
+				typeInfo = ti
+				break
+			}
+		}
+
+		if typeInfo == nil {
+			// This shouldn't happen if the scanner ran correctly.
+			continue
+		}
+
+		typeObj := &object.Type{
+			TypeName:     typeInfo.Name,
+			ResolvedType: typeInfo,
+		}
+		typeObj.SetTypeInfo(typeInfo)
+		env.Set(ts.Name.Name, typeObj)
+	}
+}
+
 func (e *Evaluator) evalFile(ctx context.Context, file *ast.File, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
 	// Find the dedicated environment for the package being evaluated.
 	// This makes the evaluator robust even if the caller passes a global 'env'.
@@ -835,10 +905,11 @@ func (e *Evaluator) evalFile(ctx context.Context, file *ast.File, env *object.En
 	for _, decl := range file.Decls {
 		switch d := decl.(type) {
 		case *ast.GenDecl:
-			// Import declarations are handled lazily by evalSelectorExpr when a package is first used.
-			// We only need to handle variable declarations here. Constants are pre-loaded above.
-			if d.Tok == token.VAR {
+			switch d.Tok {
+			case token.VAR:
 				e.evalGenDecl(ctx, d, targetEnv, pkg)
+			case token.TYPE:
+				e.evalTypeDecl(ctx, d, targetEnv, pkg)
 			}
 		case *ast.FuncDecl:
 			var funcInfo *scanner.FunctionInfo
@@ -2415,6 +2486,42 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 	}
 
 	switch fn := fn.(type) {
+	case *object.InstantiatedFunction:
+		// This is the new logic for handling calls to generic functions.
+		extendedEnv := object.NewEnclosedEnvironment(fn.Function.Env)
+
+		// Bind type parameters to their concrete types in the new environment.
+		if fn.Function.Def != nil && len(fn.Function.Def.TypeParams) == len(fn.TypeArgs) {
+			for i, typeParam := range fn.Function.Def.TypeParams {
+				typeArgInfo := fn.TypeArgs[i]
+				if typeArgInfo != nil {
+					typeObj := &object.Type{
+						TypeName:     typeArgInfo.Name,
+						ResolvedType: typeArgInfo,
+					}
+					typeObj.SetTypeInfo(typeArgInfo)
+					extendedEnv.SetLocal(typeParam.Name, typeObj)
+				}
+			}
+		}
+
+		// Now, extend the environment with the regular function arguments, using the
+		// new environment that contains the type parameter bindings.
+		finalEnv, err := e.extendFunctionEnv(ctx, fn.Function, args, extendedEnv)
+		if err != nil {
+			return e.newError(fn.Decl.Pos(), "failed to extend generic function env: %v", err)
+		}
+
+		evaluated := e.Eval(ctx, fn.Function.Body, finalEnv, fn.Function.Package)
+		if ret, ok := evaluated.(*object.ReturnValue); ok {
+			return ret
+		}
+		// if the function has a naked return, evaluated will be nil.
+		if evaluated == nil {
+			evaluated = object.NIL
+		}
+		return &object.ReturnValue{Value: evaluated}
+
 	case *object.Function:
 		// Check the scan policy before executing the body.
 		if fn.Package != nil && !e.resolver.ScanPolicy(fn.Package.ImportPath) {
@@ -2425,7 +2532,7 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 
 		// When applying a function, the evaluation context switches to that function's
 		// package. We must pass fn.Package to both extendFunctionEnv and Eval.
-		extendedEnv, err := e.extendFunctionEnv(ctx, fn, args)
+		extendedEnv, err := e.extendFunctionEnv(ctx, fn, args, nil) // Pass nil for non-generic calls
 		if err != nil {
 			return e.newError(fn.Decl.Pos(), "failed to extend function env: %v", err)
 		}
@@ -2589,10 +2696,15 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 	}
 }
 
-func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, args []object.Object) (*object.Environment, error) {
-	// The new environment should be enclosed by the function's own package environment,
-	// not the caller's environment.
-	env := object.NewEnclosedEnvironment(fn.Env)
+func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, args []object.Object, baseEnv *object.Environment) (*object.Environment, error) {
+	var env *object.Environment
+	if baseEnv != nil {
+		env = baseEnv
+	} else {
+		// The new environment should be enclosed by the function's own package environment,
+		// not the caller's environment.
+		env = object.NewEnclosedEnvironment(fn.Env)
+	}
 
 	// If this is a method call, bind the receiver to its name in the new env.
 	if fn.Decl != nil && fn.Decl.Recv != nil && len(fn.Decl.Recv.List) > 0 {
@@ -2738,13 +2850,37 @@ func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, 
 				v.SetTypeInfo(arg.TypeInfo())
 
 				// Get the static type from the function signature to enrich the variable if needed.
-				staticFieldType := e.scanner.TypeInfoFromExpr(ctx, field.Type, nil, fn.Package, importLookup)
+				var staticFieldType *scanner.FieldType
+				var staticTypeInfo *scanner.TypeInfo
+
+				// Evaluate the type expression in the context of the current environment,
+				// which may contain type parameter bindings.
+				typeObj := e.Eval(ctx, field.Type, env, fn.Package)
+				if typeVal, ok := typeObj.(*object.Type); ok {
+					// It's a type parameter like `T`. We resolved it to a concrete type.
+					staticTypeInfo = typeVal.ResolvedType
+					if staticTypeInfo != nil {
+						// Create a FieldType from the resolved TypeInfo
+						staticFieldType = &scanner.FieldType{
+							Name:           staticTypeInfo.Name,
+							FullImportPath: staticTypeInfo.PkgPath,
+							TypeName:       staticTypeInfo.Name,
+							// We might need to fill in more fields here if necessary
+						}
+					}
+				} else {
+					// It's a regular type expression. Fall back to the scanner.
+					staticFieldType = e.scanner.TypeInfoFromExpr(ctx, field.Type, nil, fn.Package, importLookup)
+					if staticFieldType != nil {
+						staticTypeInfo = e.resolver.ResolveType(ctx, staticFieldType)
+					}
+				}
+
 				if staticFieldType != nil {
 					if v.FieldType() == nil {
 						v.SetFieldType(staticFieldType)
 					}
 					if v.TypeInfo() == nil {
-						staticTypeInfo := e.resolver.ResolveType(ctx, staticFieldType)
 						v.SetTypeInfo(staticTypeInfo)
 					}
 				}
@@ -2755,6 +2891,32 @@ func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, 
 	}
 
 	return env, nil
+}
+
+// evalGenericInstantiation handles the creation of an InstantiatedFunction object
+// from a generic function and its type arguments.
+func (e *Evaluator) evalGenericInstantiation(ctx context.Context, fn *object.Function, typeArgs []ast.Expr, pos token.Pos, pkg *scanner.PackageInfo) object.Object {
+	// Resolve type arguments into TypeInfo objects
+	var resolvedArgs []*scanner.TypeInfo
+	if pkg != nil && pkg.Fset != nil {
+		file := pkg.Fset.File(pos)
+		if file != nil {
+			if astFile, ok := pkg.AstFiles[file.Name()]; ok {
+				importLookup := e.scanner.BuildImportLookup(astFile)
+				for _, argExpr := range typeArgs {
+					fieldType := e.scanner.TypeInfoFromExpr(ctx, argExpr, nil, pkg, importLookup)
+					resolvedType := e.resolver.ResolveType(ctx, fieldType)
+					resolvedArgs = append(resolvedArgs, resolvedType)
+				}
+			}
+		}
+	}
+
+	return &object.InstantiatedFunction{
+		Function:      fn,
+		TypeArguments: typeArgs,
+		TypeArgs:      resolvedArgs,
+	}
 }
 
 // createSymbolicResultForFunc creates a symbolic result for a function call

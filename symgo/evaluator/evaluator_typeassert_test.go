@@ -77,6 +77,22 @@ func main() {
 				"ok": "bool",
 			},
 		},
+		{
+			name: "assertion to pointer type",
+			source: `
+package main
+type MyStruct struct { Name string }
+func main() {
+	var i any = &MyStruct{Name: "test"}
+	s, ok := i.(*MyStruct)
+	_, _ = s, ok
+}
+`,
+			inspectedVars: map[string]string{
+				"s":  "*MyStruct",
+				"ok": "bool",
+			},
+		},
 	}
 
 	for _, tt := range cases {
@@ -129,10 +145,10 @@ func main() {
 					}
 
 					var actualTypeName string
-					if v.Value.FieldType() != nil {
-						actualTypeName = v.Value.FieldType().Name
-					} else if v.Value.TypeInfo() != nil {
-						actualTypeName = v.Value.TypeInfo().Name
+					if ft := v.Value.FieldType(); ft != nil {
+						actualTypeName = ft.String()
+					} else if ti := v.Value.TypeInfo(); ti != nil {
+						actualTypeName = ti.Name
 					} else {
 						// Fallback for builtins that might not have full type info attached
 						// in all placeholder scenarios.
@@ -141,10 +157,10 @@ func main() {
 							actualTypeName = "bool"
 						default:
 							// Check the variable's static type as a last resort.
-							if v.FieldType() != nil {
-								actualTypeName = v.FieldType().Name
-							} else if v.TypeInfo() != nil {
-								actualTypeName = v.TypeInfo().Name
+							if ft := v.FieldType(); ft != nil {
+								actualTypeName = ft.String()
+							} else if ti := v.TypeInfo(); ti != nil {
+								actualTypeName = ti.Name
 							} else {
 								return fmt.Errorf("variable %q has no type information", varName)
 							}

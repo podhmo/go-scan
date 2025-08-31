@@ -86,7 +86,7 @@ var sentinel int
 		return nil
 	}
 
-	if _, err := scantest.Run(t, context.Background(), dir, []string{"./..."}, action); err != nil {
+	if _, err := scantest.Run(t, t.Context(), dir, []string{"./..."}, action); err != nil {
 		t.Fatalf("scantest.Run() failed: %v", err)
 	}
 }
@@ -155,7 +155,7 @@ func (f ForeignType) DoSomething() {}
 		return nil
 	}
 
-	if _, err := scantest.Run(t, context.Background(), dir, []string{"./..."}, action); err != nil {
+	if _, err := scantest.Run(t, t.Context(), dir, []string{"./..."}, action); err != nil {
 		t.Fatalf("scantest.Run() failed: %v", err)
 	}
 }
@@ -274,7 +274,7 @@ func GetTwo() (ForeignType, error) { return ForeignType{}, nil }
 		return nil
 	}
 
-	if _, err := scantest.Run(t, context.Background(), dir, []string{"./..."}, action); err != nil {
+	if _, err := scantest.Run(t, t.Context(), dir, []string{"./..."}, action); err != nil {
 		t.Fatalf("scantest.Run() failed: %v", err)
 	}
 }
@@ -398,7 +398,7 @@ func (c ConcreteType2) Do() {}
 		return nil
 	}
 
-	if _, err := scantest.Run(t, context.Background(), dir, []string{"./..."}, action); err != nil {
+	if _, err := scantest.Run(t, t.Context(), dir, []string{"./..."}, action); err != nil {
 		t.Fatalf("scantest.Run() failed: %v", err)
 	}
 }
@@ -509,7 +509,7 @@ func MyFunction(v any) {
 		return nil
 	}
 
-	if _, err := scantest.Run(t, context.Background(), dir, []string{"./..."}, action); err != nil {
+	if _, err := scantest.Run(t, t.Context(), dir, []string{"./..."}, action); err != nil {
 		t.Fatalf("scantest.Run() failed: %v", err)
 	}
 }
@@ -598,7 +598,7 @@ func MyFunction(v any) {
 		return nil
 	}
 
-	if _, err := scantest.Run(t, context.Background(), dir, []string{"./..."}, action); err != nil {
+	if _, err := scantest.Run(t, t.Context(), dir, []string{"./..."}, action); err != nil {
 		t.Fatalf("scantest.Run() failed: %v", err)
 	}
 }
@@ -667,7 +667,7 @@ var sentinel int
 		return nil
 	}
 
-	if _, err := scantest.Run(t, context.Background(), dir, []string{"./..."}, action); err != nil {
+	if _, err := scantest.Run(t, t.Context(), dir, []string{"./..."}, action); err != nil {
 		t.Fatalf("scantest.Run() failed: %v", err)
 	}
 }
@@ -774,7 +774,7 @@ func (f ForeignType) ForeignMethod() {}
 		return nil
 	}
 
-	if _, err := scantest.Run(t, context.Background(), dir, []string{"./..."}, action); err != nil {
+	if _, err := scantest.Run(t, t.Context(), dir, []string{"./..."}, action); err != nil {
 		t.Fatalf("scantest.Run() failed: %v", err)
 	}
 }
@@ -891,7 +891,7 @@ func MyFunction(p *extpkg.ExternalType, s []extpkg.ExternalType) {
 		return nil
 	}
 
-	if _, err := scantest.Run(t, context.Background(), dir, []string{"./..."}, action); err != nil {
+	if _, err := scantest.Run(t, t.Context(), dir, []string{"./..."}, action); err != nil {
 		t.Fatalf("scantest.Run() failed: %v", err)
 	}
 }

@@ -96,6 +96,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [ ] **Other AST Nodes**: The following `ast.Node` types are not yet handled by the main evaluation loop:
     - [x] **`symgo`: Evaluator `Resolver` Refactoring**: Refactored the `symgo.evaluator.Resolver` to clarify the API around scan policy enforcement. Exported methods now consistently perform policy checks, while unexported methods can bypass them for internal use. This improves safety and aligns with the intended design.
     - [x] **`symgo`: Evaluator `accessor` Refactoring**: Refactored the `symgo.evaluator` to move `find...` methods to a new `accessor` struct.
+    - [x] **`symgo`: Evaluator `Context` Refactoring**: Refactored the `symgo.evaluator` to pass `context.Context` as an argument instead of using `context.Background()` directly. This improves traceability and cancellation propagation.
     - [x] **Intra-package unexported constant/variable resolution**: The interpreter now correctly resolves unexported package-level constants and variables that are referenced from within a function in the same package by pre-loading them into the environment.
     - [x] `*ast.IfStmt` (Note: The interpreter now correctly evaluates the `Cond` expression, in addition to the `Init` statement and `Body`/`Else` blocks. A follow-up fix ensures that evaluation correctly continues after the `if` statement, resolving a regression in `docgen`.)
     - [ ] `*ast.ChanType`

@@ -15,7 +15,7 @@ import (
 
 func TestServeError(t *testing.T) {
 	t.Run("it should not recurse infinitely", func(t *testing.T) {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 		defer cancel()
 
 		code := `

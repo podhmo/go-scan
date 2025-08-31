@@ -29,7 +29,7 @@ func TestEvalIntegerLiteral(t *testing.T) {
 
 	s, _ := goscan.New()
 	eval := New(s, nil, nil, nil)
-	evaluated := eval.Eval(context.Background(), node, object.NewEnvironment(), nil)
+	evaluated := eval.Eval(t.Context(), node, object.NewEnvironment(), nil)
 
 	integer, ok := evaluated.(*object.Integer)
 	if !ok {
@@ -49,7 +49,7 @@ func TestEvalStringLiteral(t *testing.T) {
 	}
 
 	eval := New(nil, nil, nil, nil)
-	evaluated := eval.Eval(context.Background(), node, object.NewEnvironment(), nil)
+	evaluated := eval.Eval(t.Context(), node, object.NewEnvironment(), nil)
 
 	str, ok := evaluated.(*object.String)
 	if !ok {
@@ -70,7 +70,7 @@ func TestEvalFloatLiteral(t *testing.T) {
 
 	s, _ := goscan.New()
 	eval := New(s, nil, nil, nil)
-	evaluated := eval.Eval(context.Background(), node, object.NewEnvironment(), nil)
+	evaluated := eval.Eval(t.Context(), node, object.NewEnvironment(), nil)
 
 	floatObj, ok := evaluated.(*object.Float)
 	if !ok {
@@ -116,7 +116,7 @@ var x = 10
 		}
 		return nil
 	}
-	if _, err := scantest.Run(t, context.Background(), dir, []string{"."}, action); err != nil {
+	if _, err := scantest.Run(t, t.Context(), dir, []string{"."}, action); err != nil {
 		t.Fatalf("scantest.Run() failed: %v", err)
 	}
 }
@@ -182,7 +182,7 @@ func main() {
 		return nil
 	}
 
-	if _, err := scantest.Run(t, context.Background(), dir, []string{"."}, action); err != nil {
+	if _, err := scantest.Run(t, t.Context(), dir, []string{"."}, action); err != nil {
 		t.Fatalf("scantest.Run() failed: %v", err)
 	}
 }
@@ -229,7 +229,7 @@ func main() {
 		return nil
 	}
 
-	if _, err := scantest.Run(t, context.Background(), dir, []string{"."}, action); err != nil {
+	if _, err := scantest.Run(t, t.Context(), dir, []string{"."}, action); err != nil {
 		t.Fatalf("scantest.Run() failed: %v", err)
 	}
 }
@@ -251,7 +251,7 @@ func TestEvalBooleanLiteral(t *testing.T) {
 			}
 
 			eval := New(nil, nil, nil, nil)
-			evaluated := eval.Eval(context.Background(), node, object.NewEnvironment(), nil)
+			evaluated := eval.Eval(t.Context(), node, object.NewEnvironment(), nil)
 
 			boolean, ok := evaluated.(*object.Boolean)
 			if !ok {
@@ -281,12 +281,12 @@ func testEval(t *testing.T, input string) object.Object {
 		}
 		s, _ := goscan.New()
 		eval := New(s, nil, nil, nil)
-		return eval.Eval(context.Background(), f.Decls[0].(*ast.FuncDecl).Body.List[0], object.NewEnvironment(), nil)
+		return eval.Eval(t.Context(), f.Decls[0].(*ast.FuncDecl).Body.List[0], object.NewEnvironment(), nil)
 	}
 
 	s, _ := goscan.New()
 	eval := New(s, nil, nil, nil)
-	return eval.Eval(context.Background(), node, object.NewEnvironment(), nil)
+	return eval.Eval(t.Context(), node, object.NewEnvironment(), nil)
 }
 
 func testIntegerObject(t *testing.T, obj object.Object, expected int64) bool {
@@ -481,7 +481,7 @@ func TestEvalBuiltinFunctionsPlaceholders(t *testing.T) {
 				return nil
 			}
 
-			if _, err := scantest.Run(t, context.Background(), dir, []string{"."}, action); err != nil {
+			if _, err := scantest.Run(t, t.Context(), dir, []string{"."}, action); err != nil {
 				t.Fatalf("scantest.Run() failed: %v", err)
 			}
 		})
@@ -533,7 +533,7 @@ func Do() {
 		return nil
 	}
 
-	if _, err := scantest.Run(t, context.Background(), dir, []string{"."}, action, scantest.WithModuleRoot(dir)); err != nil {
+	if _, err := scantest.Run(t, t.Context(), dir, []string{"."}, action, scantest.WithModuleRoot(dir)); err != nil {
 		t.Fatalf("scantest.Run() failed: %+v", err)
 	}
 
@@ -619,7 +619,7 @@ func main() {
 		return nil
 	}
 
-	if _, err := scantest.Run(t, context.Background(), dir, []string{"."}, action); err != nil {
+	if _, err := scantest.Run(t, t.Context(), dir, []string{"."}, action); err != nil {
 		t.Fatalf("scantest.Run() failed: %v", err)
 	}
 }
@@ -677,7 +677,7 @@ func main() {
 		return nil
 	}
 
-	if _, err := scantest.Run(t, context.Background(), dir, []string{"."}, action); err != nil {
+	if _, err := scantest.Run(t, t.Context(), dir, []string{"."}, action); err != nil {
 		t.Fatalf("scantest.Run() failed: %v", err)
 	}
 }
@@ -738,7 +738,7 @@ func main() {
 		return nil
 	}
 
-	if _, err := scantest.Run(t, context.Background(), dir, []string{"."}, action, scantest.WithModuleRoot(dir)); err != nil {
+	if _, err := scantest.Run(t, t.Context(), dir, []string{"."}, action, scantest.WithModuleRoot(dir)); err != nil {
 		t.Fatalf("scantest.Run() failed: %+v", err)
 	}
 
@@ -788,7 +788,7 @@ func main() {
 		}
 		return nil
 	}
-	if _, err := scantest.Run(t, context.Background(), dir, []string{"."}, action); err != nil {
+	if _, err := scantest.Run(t, t.Context(), dir, []string{"."}, action); err != nil {
 		t.Fatalf("scantest.Run() failed: %v", err)
 	}
 }
@@ -801,7 +801,7 @@ func TestEvalUnsupportedNode(t *testing.T) {
 	}
 
 	eval := New(nil, nil, nil, nil)
-	evaluated := eval.Eval(context.Background(), node, object.NewEnvironment(), nil)
+	evaluated := eval.Eval(t.Context(), node, object.NewEnvironment(), nil)
 
 	errObj, ok := evaluated.(*object.Error)
 	if !ok {
@@ -826,7 +826,7 @@ func TestEvalReturnStatement(t *testing.T) {
 
 	s, _ := goscan.New()
 	eval := New(s, nil, nil, nil)
-	evaluated := eval.Eval(context.Background(), stmt, object.NewEnvironment(), &scanner.PackageInfo{
+	evaluated := eval.Eval(t.Context(), stmt, object.NewEnvironment(), &scanner.PackageInfo{
 		Name:     "main",
 		Fset:     fset,
 		AstFiles: map[string]*ast.File{"main.go": f},
@@ -864,7 +864,7 @@ func TestErrorHandling(t *testing.T) {
 				t.Fatalf("could not parse expression: %v", err)
 			}
 			eval := New(nil, nil, nil, nil)
-			evaluated := eval.Eval(context.Background(), node, object.NewEnvironment(), nil)
+			evaluated := eval.Eval(t.Context(), node, object.NewEnvironment(), nil)
 
 			if evaluated == nil {
 				t.Fatal("evaluation resulted in nil object")
@@ -985,7 +985,7 @@ func main() {
 				return nil
 			}
 
-			if _, err := scantest.Run(t, context.Background(), dir, []string{"."}, action); err != nil {
+			if _, err := scantest.Run(t, t.Context(), dir, []string{"."}, action); err != nil {
 				t.Fatalf("scantest.Run() failed: %v", err)
 			}
 		})
@@ -1007,7 +1007,7 @@ func TestEvalIfElseStmt(t *testing.T) {
 	env := object.NewEnvironment()
 	// put a symbolic 'x' in the environment
 	env.Set("x", &object.SymbolicPlaceholder{Reason: "variable x"})
-	evaluated := eval.Eval(context.Background(), node, env, &scanner.PackageInfo{
+	evaluated := eval.Eval(t.Context(), node, env, &scanner.PackageInfo{
 		Name:     "main",
 		Fset:     fset,
 		AstFiles: map[string]*ast.File{"main.go": f},
@@ -1031,7 +1031,7 @@ func add(a, b int) int { return a + b }
 
 	env := object.NewEnvironment()
 	eval := New(nil, nil, nil, nil)
-	eval.Eval(context.Background(), f, env, &scanner.PackageInfo{
+	eval.Eval(t.Context(), f, env, &scanner.PackageInfo{
 		Name:     "main",
 		Fset:     fset,
 		AstFiles: map[string]*ast.File{"main.go": f},
@@ -1086,7 +1086,7 @@ func add(a, b int) int { return a + b }
 		}
 		return nil
 	}
-	if _, err := scantest.Run(t, context.Background(), dir, []string{"."}, action); err != nil {
+	if _, err := scantest.Run(t, t.Context(), dir, []string{"."}, action); err != nil {
 		t.Fatalf("scantest.Run() failed: %v", err)
 	}
 }
@@ -1140,7 +1140,7 @@ func main() {
 		}
 		return nil
 	}
-	if _, err := scantest.Run(t, context.Background(), dir, []string{"."}, action); err != nil {
+	if _, err := scantest.Run(t, t.Context(), dir, []string{"."}, action); err != nil {
 		t.Fatalf("scantest.Run() failed: %v", err)
 	}
 }
@@ -1237,7 +1237,7 @@ func main() {
 		return nil
 	}
 
-	if _, err := scantest.Run(t, context.Background(), dir, []string{"."}, action); err != nil {
+	if _, err := scantest.Run(t, t.Context(), dir, []string{"."}, action); err != nil {
 		t.Fatalf("scantest.Run() failed: %v", err)
 	}
 }

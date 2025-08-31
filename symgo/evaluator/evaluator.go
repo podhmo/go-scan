@@ -1671,12 +1671,12 @@ func (e *Evaluator) evalAssignStmt(ctx context.Context, n *ast.AssignStmt, env *
 			// Assign the placeholders to the LHS variables.
 			if ident, ok := n.Lhs[0].(*ast.Ident); ok {
 				if ident.Name != "_" {
-					e.assignIdentifier(ident, valuePlaceholder, n.Tok, env)
+					e.assignIdentifier(ctx, ident, valuePlaceholder, n.Tok, env)
 				}
 			}
 			if ident, ok := n.Lhs[1].(*ast.Ident); ok {
 				if ident.Name != "_" {
-					e.assignIdentifier(ident, okPlaceholder, n.Tok, env)
+					e.assignIdentifier(ctx, ident, okPlaceholder, n.Tok, env)
 				}
 			}
 			return nil
@@ -1719,7 +1719,7 @@ func (e *Evaluator) evalAssignStmt(ctx context.Context, n *ast.AssignStmt, env *
 					continue
 				}
 				val := multiRet.Values[i]
-				e.assignIdentifier(ident, val, n.Tok, env) // Use the statement's token (:= or =)
+				e.assignIdentifier(ctx, ident, val, n.Tok, env) // Use the statement's token (:= or =)
 			}
 		}
 		return nil
@@ -1765,7 +1765,7 @@ func (e *Evaluator) evalAssignStmt(ctx context.Context, n *ast.AssignStmt, env *
 				if ident.Name == "_" {
 					continue
 				}
-				e.assignIdentifier(ident, rhsValues[i], n.Tok, env)
+				e.assignIdentifier(ctx, ident, rhsValues[i], n.Tok, env)
 			} else {
 				// Handle other LHS types like selectors if needed in the future.
 				e.logWithContext(ctx, slog.LevelWarn, "unsupported LHS in parallel assignment", "type", fmt.Sprintf("%T", lhsExpr))
@@ -1796,10 +1796,10 @@ func (e *Evaluator) evalIdentAssignment(ctx context.Context, ident *ast.Ident, r
 	}
 	e.logger.Debug("evalIdentAssignment: assigning value", "var", ident.Name, "value_type", val.Type(), "value_typeinfo", typeName)
 
-	return e.assignIdentifier(ident, val, tok, env)
+	return e.assignIdentifier(ctx, ident, val, tok, env)
 }
 
-func (e *Evaluator) assignIdentifier(ident *ast.Ident, val object.Object, tok token.Token, env *object.Environment) object.Object {
+func (e *Evaluator) assignIdentifier(ctx context.Context, ident *ast.Ident, val object.Object, tok token.Token, env *object.Environment) object.Object {
 	// For `:=`, we always define a new variable in the current scope.
 	if tok == token.DEFINE {
 		// In Go, `:=` can redeclare a variable if it's in a different scope,
@@ -1814,7 +1814,7 @@ func (e *Evaluator) assignIdentifier(ident *ast.Ident, val object.Object, tok to
 			},
 		}
 		if val.FieldType() != nil {
-			if resolved, _ := val.FieldType().Resolve(context.Background()); resolved != nil && resolved.Kind == scanner.InterfaceKind {
+			if resolved := e.resolver.resolveTypeWithoutPolicyCheck(ctx, val.FieldType()); resolved != nil && resolved.Kind == scanner.InterfaceKind {
 				v.PossibleConcreteTypes = make(map[*scanner.FieldType]struct{})
 				if ft := val.FieldType(); ft != nil {
 					v.PossibleConcreteTypes[ft] = struct{}{}
@@ -1830,7 +1830,7 @@ func (e *Evaluator) assignIdentifier(ident *ast.Ident, val object.Object, tok to
 	if !ok {
 		// This can happen for package-level variables not yet evaluated,
 		// or if the code is invalid Go. We define it in the current scope as a fallback.
-		return e.assignIdentifier(ident, val, token.DEFINE, env)
+		return e.assignIdentifier(ctx, ident, val, token.DEFINE, env)
 	}
 
 	v, ok := obj.(*object.Variable)
@@ -1854,7 +1854,7 @@ func (e *Evaluator) assignIdentifier(ident *ast.Ident, val object.Object, tok to
 			isInterface = true
 		} else if v.FieldType() != nil {
 			// If the type is resolved, we can check its kind directly.
-			if resolved, _ := v.FieldType().Resolve(context.Background()); resolved != nil {
+			if resolved := e.resolver.resolveTypeWithoutPolicyCheck(ctx, v.FieldType()); resolved != nil {
 				isInterface = resolved.Kind == scanner.InterfaceKind
 			}
 		}
@@ -2320,7 +2320,7 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 			if len(method.Results) <= 1 {
 				var resultTypeInfo *scanner.TypeInfo
 				if len(method.Results) == 1 {
-					resultType := e.resolver.ResolveType(context.Background(), method.Results[0].Type)
+					resultType := e.resolver.ResolveType(ctx, method.Results[0].Type)
 					if resultType == nil && method.Results[0].Type.IsBuiltin {
 						resultType = &scanner.TypeInfo{Name: method.Results[0].Type.Name}
 					}
@@ -2334,7 +2334,7 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 				// Multiple return values from interface method
 				results := make([]object.Object, len(method.Results))
 				for i, res := range method.Results {
-					resultType := e.resolver.ResolveType(context.Background(), res.Type)
+					resultType := e.resolver.ResolveType(ctx, res.Type)
 					results[i] = &object.SymbolicPlaceholder{
 						Reason:     fmt.Sprintf("result %d of interface method call %s", i, method.Name),
 						BaseObject: object.BaseObject{ResolvedTypeInfo: resultType},
@@ -2393,7 +2393,7 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 				if fieldType.FullImportPath != "" && !e.resolver.ScanPolicy(fieldType.FullImportPath) {
 					resolvedType = scanner.NewUnresolvedTypeInfo(fieldType.FullImportPath, fieldType.TypeName)
 				} else {
-					resolvedType, _ = fieldType.Resolve(ctx)
+					resolvedType = e.resolver.resolveTypeWithoutPolicyCheck(ctx, fieldType)
 				}
 
 				if resolvedType == nil && fieldType.IsBuiltin && fieldType.Name == "error" {

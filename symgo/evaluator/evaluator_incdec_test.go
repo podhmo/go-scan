@@ -1,7 +1,6 @@
 package evaluator
 
 import (
-	"context"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -76,7 +75,7 @@ func main() {
 
 			evaluator := New(nil, nil, nil, nil)
 			env := object.NewEnvironment()
-			result := evaluator.Eval(context.Background(), mainFunc.Body, env, nil)
+			result := evaluator.Eval(t.Context(), mainFunc.Body, env, nil)
 
 			retVal, ok := result.(*object.ReturnValue)
 			if !ok {
@@ -139,7 +138,7 @@ func main() {
 	})
 
 	// The important part is that this does not panic or return an error.
-	result := evaluator.Eval(context.Background(), mainFunc.Body, env, nil)
+	result := evaluator.Eval(t.Context(), mainFunc.Body, env, nil)
 
 	if result != nil && result.Type() == object.ERROR_OBJ {
 		t.Errorf("expected no error, but got %v", result.(*object.Error).Message)

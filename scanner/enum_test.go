@@ -23,7 +23,8 @@ func TestEnumScanning_PackageLevel(t *testing.T) {
 	}
 
 	// The dir path for ScanFiles should be the package's directory
-	pkgInfo, err := s.ScanFiles(context.Background(), filesToScan, absTestDir)
+	ctx := context.Background()
+	pkgInfo, err := s.ScanFiles(ctx, filesToScan, absTestDir)
 	if err != nil {
 		t.Fatalf("ScanFiles failed: %v", err)
 	}

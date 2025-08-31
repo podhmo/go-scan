@@ -137,7 +137,7 @@ func NewUnresolvedTypeInfo(pkgPath, name string) *TypeInfo {
 // Annotation extracts the value of a specific annotation from the TypeInfo's Doc string.
 // Annotations are expected to be in the format "@<name>[:<value>]" or "@<name> <value>".
 // If inspect mode is enabled, it logs the checking process.
-func (ti *TypeInfo) Annotation(name string) (value string, ok bool) {
+func (ti *TypeInfo) Annotation(ctx context.Context, name string) (value string, ok bool) {
 	// The core annotation searching logic.
 	searchValue, found := ti.searchAnnotation(name)
 
@@ -161,10 +161,10 @@ func (ti *TypeInfo) Annotation(name string) (value string, ok bool) {
 	// Log the result of the check.
 	if found {
 		logArgs = append(logArgs, slog.String("annotation_value", searchValue))
-		ti.Logger.InfoContext(context.Background(), "found annotation", logArgs...)
+		ti.Logger.InfoContext(ctx, "found annotation", logArgs...)
 	} else {
 		logArgs = append(logArgs, slog.String("result", "miss"))
-		ti.Logger.DebugContext(context.Background(), "checking for annotation", logArgs...)
+		ti.Logger.DebugContext(ctx, "checking for annotation", logArgs...)
 	}
 
 	return searchValue, found

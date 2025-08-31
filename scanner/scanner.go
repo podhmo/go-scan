@@ -680,7 +680,7 @@ func (s *Scanner) parseTypeSpec(ctx context.Context, sp *ast.TypeSpec, info *Pac
 	// Any types resolved from this type's fields will have this type's identifier in their path.
 	typeIdentifier := info.ImportPath + "." + sp.Name.Name
 	initialPath := []string{typeIdentifier}
-	childCtx := context.WithValue(context.Background(), ResolutionPathKey, initialPath)
+	childCtx := context.WithValue(ctx, ResolutionPathKey, initialPath)
 	if s.logger != nil {
 		childCtx = context.WithValue(childCtx, LoggerKey, s.logger)
 	}

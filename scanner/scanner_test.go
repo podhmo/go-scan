@@ -76,7 +76,8 @@ func TestScanPackageFeatures(t *testing.T) {
 		filepath.Join(testDir, "variadic.go"),
 	}
 
-	pkgInfo, err := s.ScanFiles(context.Background(), filesToScan, testDir)
+	ctx := context.Background()
+	pkgInfo, err := s.ScanFiles(ctx, filesToScan, testDir)
 	if err != nil {
 		t.Fatalf("ScanFiles failed for %v: %v", filesToScan, err)
 	}
@@ -161,7 +162,8 @@ func TestScanFiles(t *testing.T) {
 
 	t.Run("scan_single_file", func(t *testing.T) {
 		filePath := filepath.Join(testdataDir, "features.go")
-		pkgInfo, err := s.ScanFiles(context.Background(), []string{filePath}, testdataDir)
+		ctx := context.Background()
+		pkgInfo, err := s.ScanFiles(ctx, []string{filePath}, testdataDir)
 		if err != nil {
 			t.Fatalf("ScanFiles single file failed: %v", err)
 		}
@@ -181,7 +183,8 @@ func TestScanFiles(t *testing.T) {
 			filepath.Join(testdataDir, "features.go"),
 			filepath.Join(testdataDir, "another.go"),
 		}
-		pkgInfo, err := s.ScanFiles(context.Background(), filePaths, testdataDir)
+		ctx := context.Background()
+		pkgInfo, err := s.ScanFiles(ctx, filePaths, testdataDir)
 		if err != nil {
 			t.Fatalf("ScanFiles multiple files failed: %v", err)
 		}
@@ -206,14 +209,16 @@ func TestScanFiles(t *testing.T) {
 			filepath.Join(testdataDir, "features.go"),     // package features
 			filepath.Join(testdataDir, "differentpkg.go"), // package otherfeatures
 		}
-		_, err := s.ScanFiles(context.Background(), filePaths, testdataDir)
+		ctx := context.Background()
+		_, err := s.ScanFiles(ctx, filePaths, testdataDir)
 		if err == nil {
 			t.Error("Expected error when scanning files from different packages, got nil")
 		}
 	})
 
 	t.Run("scan_empty_file_list", func(t *testing.T) {
-		_, err := s.ScanFiles(context.Background(), []string{}, testdataDir)
+		ctx := context.Background()
+		_, err := s.ScanFiles(ctx, []string{}, testdataDir)
 		if err == nil {
 			t.Error("Expected error when scanning an empty file list, got nil")
 		}
@@ -221,7 +226,8 @@ func TestScanFiles(t *testing.T) {
 
 	t.Run("scan_non_existent_file", func(t *testing.T) {
 		filePaths := []string{filepath.Join(testdataDir, "nonexistent.go")}
-		_, err := s.ScanFiles(context.Background(), filePaths, testdataDir)
+		ctx := context.Background()
+		_, err := s.ScanFiles(ctx, filePaths, testdataDir)
 		if err == nil {
 			t.Error("Expected error when scanning non-existent file, got nil")
 		}
@@ -230,7 +236,8 @@ func TestScanFiles(t *testing.T) {
 	t.Run("scan_with_known_import_path", func(t *testing.T) {
 		filePath := filepath.Join(testdataDir, "features.go")
 		canonicalPath := "my/canonical/path"
-		pkgInfo, err := s.ScanFilesWithKnownImportPath(context.Background(), []string{filePath}, testdataDir, canonicalPath)
+		ctx := context.Background()
+		pkgInfo, err := s.ScanFilesWithKnownImportPath(ctx, []string{filePath}, testdataDir, canonicalPath)
 		if err != nil {
 			t.Fatalf("ScanFilesWithKnownImportPath failed: %v", err)
 		}
@@ -275,7 +282,8 @@ func TestFieldType_Resolve(t *testing.T) {
 	}
 
 	// First call to Resolve should trigger the resolver
-	def, err := s.ResolveType(context.Background(), ft)
+	ctx := context.Background()
+	def, err := s.ResolveType(ctx, ft)
 	if err != nil {
 		t.Fatalf("ResolveType() failed: %v", err)
 	}
@@ -288,7 +296,7 @@ func TestFieldType_Resolve(t *testing.T) {
 
 	// Second call should use the cache (we can't easily test this, but we can nil out the func)
 	resolver.ScanPackageByImportFunc = nil // To ensure resolver is not called again
-	def2, err := s.ResolveType(context.Background(), ft)
+	def2, err := s.ResolveType(ctx, ft)
 	if err != nil {
 		t.Fatalf("Second ResolveType() call failed: %v", err)
 	}
@@ -308,7 +316,8 @@ func TestResolve_DirectRecursion(t *testing.T) {
 		t.Fatalf("scanner.New failed: %v", err)
 	}
 
-	pkgInfo, err := s.ScanFiles(context.Background(), []string{filepath.Join(testDir, "direct.go")}, testDir)
+	ctx := context.Background()
+	pkgInfo, err := s.ScanFiles(ctx, []string{filepath.Join(testDir, "direct.go")}, testDir)
 	if err != nil {
 		t.Fatalf("ScanFiles failed: %v", err)
 	}
@@ -340,7 +349,7 @@ func TestResolve_DirectRecursion(t *testing.T) {
 	// Attempt to resolve the recursive field.
 	// With cycle detection, this should not cause a stack overflow.
 	// It should return nil, nil because the type is already in the 'resolving' map.
-	resolvedType, err := s.ResolveType(context.Background(), nextField.Type)
+	resolvedType, err := s.ResolveType(ctx, nextField.Type)
 	if err != nil {
 		t.Fatalf("ResolveType() for recursive type failed with error: %v", err)
 	}
@@ -398,7 +407,8 @@ func TestResolve_MutualRecursion(t *testing.T) {
 	s.resolver = mockResolver
 
 	// Start by scanning pkg_a
-	pkgAInfo, err := s.ScanPackageByImport(context.Background(), "example.com/recursion/mutual/pkg_a")
+	ctx := context.Background()
+	pkgAInfo, err := s.ScanPackageByImport(ctx, "example.com/recursion/mutual/pkg_a")
 	if err != nil {
 		t.Fatalf("ScanPackageByImport for pkg_a failed: %v", err)
 	}
@@ -414,7 +424,7 @@ func TestResolve_MutualRecursion(t *testing.T) {
 
 	// Now, attempt to resolve B. This will trigger a scan of pkg_b, which will in turn
 	// try to resolve A from pkg_a, creating a cycle.
-	resolvedType, err := s.ResolveType(context.Background(), fieldB.Type)
+	resolvedType, err := s.ResolveType(ctx, fieldB.Type)
 	if err != nil {
 		t.Fatalf("ResolveType() for mutual recursion failed: %v", err)
 	}
@@ -484,7 +494,8 @@ func TestScanWithOverlay(t *testing.T) {
 	scanFilePath := filepath.Join(absTestDir, "basic.go")
 
 	// The pkgDirPath should also be an absolute path to the package directory.
-	pkgInfo, err := s.ScanFiles(context.Background(), []string{scanFilePath}, absTestDir)
+	ctx := context.Background()
+	pkgInfo, err := s.ScanFiles(ctx, []string{scanFilePath}, absTestDir)
 	if err != nil {
 		t.Fatalf("ScanFiles with overlay failed: %v", err)
 	}
@@ -534,7 +545,8 @@ type MyStruct struct {
 	}
 
 	// Scan the virtual file.
-	pkgInfo, err := s.ScanFiles(context.Background(), []string{filePath}, testDir)
+	ctx := context.Background()
+	pkgInfo, err := s.ScanFiles(ctx, []string{filePath}, testDir)
 	if err != nil {
 		t.Fatalf("ScanFiles with overlay failed: %v", err)
 	}
@@ -558,7 +570,7 @@ type MyStruct struct {
 	}
 
 	// Attempt to resolve the type.
-	_, err = s.ResolveType(context.Background(), fieldWithTypo.Type)
+	_, err = s.ResolveType(ctx, fieldWithTypo.Type)
 
 	// Assert that an error was returned.
 	if err == nil {

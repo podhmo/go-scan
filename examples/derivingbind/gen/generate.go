@@ -60,7 +60,7 @@ func Generate(ctx context.Context, gscn *goscan.Scanner, pkgInfo *scanner.Packag
 			continue
 		}
 
-		annotationValue, hasBindingAnnotationOnStruct := typeInfo.Annotation(bindingAnnotation)
+		annotationValue, hasBindingAnnotationOnStruct := typeInfo.Annotation(ctx, bindingAnnotation)
 		structLevelInTag := ""
 		if hasBindingAnnotationOnStruct {
 			parts := strings.Fields(annotationValue)

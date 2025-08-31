@@ -64,7 +64,7 @@ type Group struct { // No annotation
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*scanner.PackageInfo) error {
 		for _, pkg := range pkgs {
 			for _, ti := range pkg.Types {
-				_, _ = ti.Annotation("deriving:json")
+				_, _ = ti.Annotation(ctx, "deriving:json")
 			}
 		}
 		if !s.DryRun {

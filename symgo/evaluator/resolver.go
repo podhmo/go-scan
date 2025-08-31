@@ -10,6 +10,14 @@ import (
 )
 
 // Resolver handles decisions about whether to scan or resolve types and packages.
+//
+// # Naming Convention for Policy Checks
+//
+// Methods on this struct follow a strict convention regarding policy checks:
+//   - Exported methods (e.g., ResolvePackage, ResolveFunction) are "safe" and MUST
+//     perform a policy check before proceeding.
+//   - Unexported methods that bypass policy checks MUST be named with a suffix
+//     like `...WithoutPolicyCheck`.
 type Resolver struct {
 	scanPolicy object.ScanPolicyFunc
 	scanner    *goscan.Scanner
@@ -86,6 +94,26 @@ func (r *Resolver) ResolvePackage(ctx context.Context, path string) (*object.Pac
 func (r *Resolver) ResolvePackageInfo(ctx context.Context, path string) (*object.Package, error) {
 	// This method intentionally bypasses the ScanPolicy check.
 	return r.resolvePackageWithoutPolicyCheck(ctx, path)
+}
+
+// ResolveFunction creates a function object or a placeholder based on the scan policy.
+func (r *Resolver) ResolveFunction(pkg *object.Package, f *scanner.FunctionInfo) object.Object {
+	if r.ScanPolicy(pkg.Path) {
+		return &object.Function{
+			Name:       f.AstDecl.Name,
+			Parameters: f.AstDecl.Type.Params,
+			Body:       f.AstDecl.Body,
+			Env:        pkg.Env,
+			Decl:       f.AstDecl,
+			Package:    pkg.ScannedInfo,
+			Def:        f,
+		}
+	}
+	return &object.SymbolicPlaceholder{
+		Reason:         fmt.Sprintf("external function %s.%s", pkg.Path, f.Name),
+		UnderlyingFunc: f,
+		Package:        pkg.ScannedInfo,
+	}
 }
 
 // ScanPolicy checks if a package path is allowed by the scan policy.

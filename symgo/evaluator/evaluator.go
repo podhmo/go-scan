@@ -842,13 +842,11 @@ func (e *Evaluator) ensurePackageEnvPopulated(ctx context.Context, pkgObj *objec
 	pkgInfo := pkgObj.ScannedInfo
 	env := pkgObj.Env
 
-	shouldScan := e.resolver.ScanPolicy(pkgInfo.ImportPath)
-
 	if !e.initializedPkgs[pkgInfo.ImportPath] {
 		e.logger.DebugContext(ctx, "populating package-level constants", "package", pkgInfo.ImportPath)
 		for _, c := range pkgInfo.Constants {
 			// If the package is out-of-policy, only load exported constants.
-			if !shouldScan && !c.IsExported {
+			if !e.resolver.ScanPolicy(pkgInfo.ImportPath) && !c.IsExported {
 				continue
 			}
 			constObj := e.convertGoConstant(c.ConstVal, token.NoPos)
@@ -876,29 +874,10 @@ func (e *Evaluator) ensurePackageEnvPopulated(ctx context.Context, pkgObj *objec
 		}
 
 		// If the package is out-of-policy, only create objects for exported functions.
-		if !shouldScan && !ast.IsExported(f.Name) {
+		if !e.resolver.ScanPolicy(pkgInfo.ImportPath) && !ast.IsExported(f.Name) {
 			continue
 		}
-
-		var fnObject object.Object
-		if shouldScan {
-			fnObject = &object.Function{
-				Name:       f.AstDecl.Name,
-				Parameters: f.AstDecl.Type.Params,
-				Body:       f.AstDecl.Body,
-				Env:        env,
-				Decl:       f.AstDecl,
-				Package:    pkgInfo,
-				Def:        f,
-			}
-		} else {
-			// For out-of-policy packages, exported functions become placeholders.
-			fnObject = &object.SymbolicPlaceholder{
-				Reason:         fmt.Sprintf("external function %s.%s", pkgInfo.ImportPath, f.Name),
-				UnderlyingFunc: f,
-				Package:        pkgInfo,
-			}
-		}
+		fnObject := e.resolver.ResolveFunction(pkgObj, f)
 		env.SetLocal(f.Name, fnObject)
 	}
 }
@@ -1017,25 +996,7 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 				if !ast.IsExported(f.Name) {
 					continue
 				}
-
-				var fnObject object.Object
-				if e.resolver.ScanPolicy(val.Path) {
-					fnObject = &object.Function{
-						Name:       f.AstDecl.Name,
-						Parameters: f.AstDecl.Type.Params,
-						Body:       f.AstDecl.Body,
-						Env:        val.Env,
-						Decl:       f.AstDecl,
-						Package:    val.ScannedInfo,
-						Def:        f,
-					}
-				} else {
-					fnObject = &object.SymbolicPlaceholder{
-						Reason:         fmt.Sprintf("external function %s.%s", val.Path, n.Sel.Name),
-						UnderlyingFunc: f,
-						Package:        val.ScannedInfo,
-					}
-				}
+				fnObject := e.resolver.ResolveFunction(val, f)
 				val.Env.Set(n.Sel.Name, fnObject)
 				return fnObject
 			}
@@ -1047,6 +1008,8 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 				if !c.IsExported {
 					continue // Cannot access unexported constants.
 				}
+				// The resolver does not have a ResolveConstant yet, so we do it here.
+				// This can be refactored later if needed.
 				constObj := e.convertGoConstant(c.ConstVal, n.Pos())
 				if !isError(constObj) {
 					val.Env.Set(n.Sel.Name, constObj) // Cache the resolved constant.
@@ -1961,15 +1924,21 @@ func (e *Evaluator) evalIdent(ctx context.Context, n *ast.Ident, env *object.Env
 					}
 
 					// Case 2: No alias. The identifier might be the package's actual name.
-					pkgObj, err := e.getOrLoadPackage(ctx, importPath)
-					if err != nil || pkgObj == nil || pkgObj.ScannedInfo == nil {
+					// We need to get the package's real name from its source, which requires
+					// scanning it. We use ResolvePackageInfo to bypass the policy for this check.
+					infoPkg, err := e.resolver.ResolvePackageInfo(ctx, importPath)
+					if err != nil || infoPkg == nil || infoPkg.ScannedInfo == nil {
 						e.logWithContext(ctx, slog.LevelDebug, "could not scan potential package for ident", "ident", n.Name, "path", importPath, "error", err)
 						continue
 					}
 
-					if n.Name == pkgObj.ScannedInfo.Name {
-						env.Set(n.Name, pkgObj)
-						return pkgObj
+					if n.Name == infoPkg.ScannedInfo.Name {
+						// The name matches. Now get the actual package object, which respects the policy.
+						realPkgObj, _ := e.getOrLoadPackage(ctx, importPath)
+						if realPkgObj != nil {
+							env.Set(n.Name, realPkgObj)
+						}
+						return realPkgObj
 					}
 				}
 			}
@@ -2263,28 +2232,9 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 			return e.newError(fn.Decl.Pos(), "failed to extend function env: %v", err)
 		}
 
-		// Populate the new environment with the imports from the function's source file.
-		if fn.Package != nil && fn.Package.Fset != nil && fn.Decl != nil {
-			file := fn.Package.Fset.File(fn.Decl.Pos())
-			if file != nil {
-				if astFile, ok := fn.Package.AstFiles[file.Name()]; ok {
-					for _, imp := range astFile.Imports {
-						var name string
-						if imp.Name != nil {
-							name = imp.Name.Name
-						} else {
-							parts := strings.Split(strings.Trim(imp.Path.Value, `"`), "/")
-							name = parts[len(parts)-1]
-						}
-						path := strings.Trim(imp.Path.Value, `"`)
-						// Set ScannedInfo to nil to force on-demand loading.
-						extendedEnv.Set(name, &object.Package{Path: path, ScannedInfo: nil, Env: object.NewEnvironment()})
-					}
-				}
-			}
-		}
-
-		evaluated := e.Eval(ctx, fn.Body, extendedEnv, fn.Package)
+		// A function body does not create a new scope beyond the one for its
+		// parameters, so we call evalBlockStatement directly.
+		evaluated := e.evalBlockStatement(ctx, fn.Body, extendedEnv, fn.Package)
 		if isError(evaluated) {
 			return evaluated
 		}

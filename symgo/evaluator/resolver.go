@@ -37,6 +37,75 @@ func (r *Resolver) resolveTypeWithoutPolicyCheck(ctx context.Context, fieldType 
 	return r.resolveType(ctx, fieldType, false)
 }
 
+// ShouldScan checks if a given package path should be scanned based on the policy.
+func (r *Resolver) ShouldScan(pkgPath string) bool {
+	if r.scanPolicy == nil {
+		return true // If no policy is set, everything is allowed.
+	}
+	return r.scanPolicy(pkgPath)
+}
+
+// ResolveFunction creates a function object or a symbolic placeholder based on the scan policy.
+func (r *Resolver) ResolveFunction(pkg *object.Package, funcInfo *scanner.FunctionInfo) object.Object {
+	if r.ShouldScan(pkg.Path) {
+		return &object.Function{
+			Name:       funcInfo.AstDecl.Name,
+			Parameters: funcInfo.AstDecl.Type.Params,
+			Body:       funcInfo.AstDecl.Body,
+			Env:        pkg.Env,
+			Decl:       funcInfo.AstDecl,
+			Package:    pkg.ScannedInfo,
+			Def:        funcInfo,
+		}
+	}
+	// For out-of-policy packages, exported functions become placeholders.
+	return &object.SymbolicPlaceholder{
+		Reason:         "external function " + pkg.Path + "." + funcInfo.Name,
+		UnderlyingFunc: funcInfo,
+		Package:        pkg.ScannedInfo,
+	}
+}
+
+// ResolveCompositeLit resolves the type for a composite literal, respecting the scan policy,
+// and returns an appropriate object (Instance or SymbolicPlaceholder).
+func (r *Resolver) ResolveCompositeLit(ctx context.Context, fieldType *scanner.FieldType) object.Object {
+	// The initial check is done in the evaluator before calling this.
+	// This function performs the type resolution and object creation.
+	resolvedType := r.ResolveType(ctx, fieldType)
+	if resolvedType == nil || resolvedType.Unresolved {
+		// This can happen for built-in types or if resolution fails for other reasons.
+		placeholder := &object.SymbolicPlaceholder{
+			Reason: "unresolved composite literal of type " + fieldType.String(),
+		}
+		placeholder.SetFieldType(fieldType)
+		return placeholder
+	}
+
+	instance := &object.Instance{
+		TypeName: resolvedType.PkgPath + "." + resolvedType.Name,
+		BaseObject: object.BaseObject{
+			ResolvedTypeInfo: resolvedType,
+		},
+	}
+	instance.SetFieldType(fieldType)
+	return instance
+}
+
+// ResolveSymbolicField creates a symbolic placeholder for a field access on a symbolic value.
+func (r *Resolver) ResolveSymbolicField(ctx context.Context, field *scanner.FieldInfo, receiver object.Object) object.Object {
+	fieldTypeInfo := r.ResolveType(ctx, field.Type)
+	var reason string
+	if v, ok := receiver.(*object.Variable); ok {
+		reason = "field access " + v.Name + "." + field.Name
+	} else {
+		reason = "field access on symbolic value " + receiver.Inspect() + "." + field.Name
+	}
+	return &object.SymbolicPlaceholder{
+		BaseObject: object.BaseObject{ResolvedTypeInfo: fieldTypeInfo, ResolvedFieldType: field.Type},
+		Reason:     reason,
+	}
+}
+
 // resolveType is the internal implementation for resolving a FieldType to a TypeInfo.
 // It respects the scan policy only if shouldScan is true.
 func (r *Resolver) resolveType(ctx context.Context, fieldType *scanner.FieldType, shouldScan bool) *scanner.TypeInfo {

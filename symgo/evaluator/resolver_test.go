@@ -2,102 +2,169 @@ package evaluator
 
 import (
 	"context"
-	"fmt"
-	"strings"
 	"testing"
 
-	"github.com/google/go-cmp/cmp"
-	goscan "github.com/podhmo/go-scan"
+	"github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/scanner"
 	"github.com/podhmo/go-scan/scantest"
-	"github.com/podhmo/go-scan/symgo/object"
 )
 
-func TestPolicy_TypeAssert_WithUnresolvedType(t *testing.T) {
-	code := `
-package main
-import "example.com/me/foreign/lib"
+func TestResolver(t *testing.T) {
+	ctx := context.Background()
 
-var ok bool
-var val lib.ForeignType
-
-func MyFunction(v any) {
-	// This type assertion uses a type from an out-of-policy package.
-	// The bug is that the evaluator calls Resolve() without a policy check,
-	// which then tries to ScanPackageByImport on the foreign package.
-	val, ok = v.(lib.ForeignType)
-	Sentinel()
-}
-
-func Sentinel() {}
-`
-	files := map[string]string{
-		"go.mod":             "module example.com/me",
-		"main.go":            code,
-		"foreign/lib/lib.go": "package lib; type ForeignType struct{}",
+	// Define a scan policy that only allows packages within "example.com/myapp".
+	scanPolicy := func(pkgPath string) bool {
+		return pkgPath == "example.com/myapp" || pkgPath == "example.com/myapp/models"
 	}
 
-	dir, cleanup := scantest.WriteFiles(t, files)
+	// Use scantest to set up the files in a temporary directory.
+	dir, cleanup := scantest.WriteFiles(t, map[string]string{
+		"go.mod": "module example.com/myapp\n",
+		"main.go": `
+package main
+import (
+	"example.com/myapp/models"
+	"example.com/external/money"
+)
+type Request struct {
+	User models.User
+	Price money.Price
+}`,
+		"models/user.go": `
+package models
+type User struct {
+	ID   string
+	Name string
+}`,
+		"external/money.go": `
+package money
+type Price struct {
+	Amount   int
+	Currency string
+}`,
+	})
 	defer cleanup()
 
-	var sentinelReached bool
-	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
-		policy := func(path string) bool {
-			return !strings.HasPrefix(path, "example.com/me/foreign/")
-		}
-
-		evaluator := New(s, nil, nil, policy)
-		evaluator.RegisterIntrinsic("example.com/me.Sentinel", func(args ...object.Object) object.Object {
-			sentinelReached = true
-			return nil
-		})
-
-		mainPkg := findPackage(t, pkgs, "example.com/me")
-		env := object.NewEnvironment()
-		for _, file := range mainPkg.AstFiles {
-			if res := evaluator.Eval(ctx, file, env, mainPkg); res != nil && res.Type() == object.ERROR_OBJ {
-				return fmt.Errorf("initial Eval failed: %s", res.Inspect())
-			}
-		}
-
-		fn := findFunc(t, mainPkg, "MyFunction")
-		fn.Env = env
-
-		// The input argument doesn't matter much, as the type assertion is symbolic.
-		arg := &object.SymbolicPlaceholder{Reason: "test argument"}
-		result := evaluator.Apply(ctx, fn, []object.Object{arg}, mainPkg)
-		if err, ok := result.(*object.Error); ok {
-			return fmt.Errorf("Apply() returned an error: %s", err.Inspect())
-		}
-
-		if !sentinelReached {
-			return fmt.Errorf("sentinel was not reached")
-		}
-
-		// Check that the 'val' variable holds a placeholder with an unresolved type.
-		valVar, ok := env.Get("val")
-		if !ok {
-			return fmt.Errorf("variable 'val' not found")
-		}
-		v, ok := valVar.(*object.Variable)
-		if !ok {
-			return fmt.Errorf("object 'val' is not a variable, but %T", v)
-		}
-		placeholder, ok := v.Value.(*object.SymbolicPlaceholder)
-		if !ok {
-			return fmt.Errorf("expected value of 'val' to be a SymbolicPlaceholder, got %T", v.Value)
-		}
-
-		wantUnresolvedType := scanner.NewUnresolvedTypeInfo("example.com/me/foreign/lib", "ForeignType")
-		if diff := cmp.Diff(wantUnresolvedType, placeholder.TypeInfo()); diff != "" {
-			t.Errorf("result placeholder TypeInfo mismatch (-want +got):\n%s", diff)
-		}
-
-		return nil
+	// Create a new scanner configured to work in the temp directory.
+	s, err := goscan.New(
+		goscan.WithWorkDir(dir),
+		goscan.WithGoModuleResolver(),
+	)
+	if err != nil {
+		t.Fatalf("goscan.New() failed: %v", err)
 	}
 
-	// This test will fail if evalAssignStmt calls Resolve() without a policy check.
-	if _, err := scantest.Run(t, context.Background(), dir, []string{"./..."}, action); err != nil {
-		t.Fatalf("scantest.Run() failed: %v", err)
+	// Scan the main package.
+	pkgs, err := s.Scan(ctx, ".")
+	if err != nil {
+		t.Fatalf("s.Scan() failed: %v", err)
 	}
+	if len(pkgs) != 1 {
+		t.Fatalf("expected 1 package, but got %d", len(pkgs))
+	}
+
+	mainPkg := pkgs[0]
+	if mainPkg.ImportPath != "example.com/myapp" {
+		t.Fatalf("expected main package, but got %s", mainPkg.ImportPath)
+	}
+
+	reqType, ok := mainPkg.Types["Request"]
+	if !ok {
+		t.Fatal("Request type not found")
+	}
+	if reqType.Struct == nil {
+		t.Fatal("Request is not a struct")
+	}
+
+	// Get the FieldType for the User and Price fields.
+	var userFieldType, priceFieldType *scanner.FieldType
+	for _, f := range reqType.Struct.Fields {
+		if f.Name == "User" {
+			userFieldType = f.Type
+		}
+		if f.Name == "Price" {
+			priceFieldType = f.Type
+		}
+	}
+	if userFieldType == nil {
+		t.Fatal("User field not found")
+	}
+	if priceFieldType == nil {
+		t.Fatal("Price field not found")
+	}
+
+	// Create a resolver with the defined policy.
+	resolver := NewResolver(scanPolicy)
+
+	t.Run("ResolveType with policy (allowed)", func(t *testing.T) {
+		_, err := userFieldType.Resolve(ctx)
+		if err != nil {
+			t.Fatalf("pre-resolve failed for allowed type: %v", err)
+		}
+
+		result := resolver.ResolveType(ctx, userFieldType)
+		if result == nil {
+			t.Fatal("should resolve allowed type, but got nil")
+		}
+		if result.Unresolved {
+			t.Error("should not be unresolved")
+		}
+		if result.Name != "User" {
+			t.Errorf("expected name User, but got %s", result.Name)
+		}
+		if result.PkgPath != "example.com/myapp/models" {
+			t.Errorf("expected pkg path example.com/myapp/models, but got %s", result.PkgPath)
+		}
+	})
+
+	t.Run("ResolveType with policy (disallowed)", func(t *testing.T) {
+		_, err := priceFieldType.Resolve(ctx)
+		if err != nil {
+			t.Fatalf("pre-resolve failed for disallowed type: %v", err)
+		}
+
+		result := resolver.ResolveType(ctx, priceFieldType)
+		if result == nil {
+			t.Fatal("should return a type info for disallowed type, but got nil")
+		}
+		if !result.Unresolved {
+			t.Error("should be unresolved due to policy")
+		}
+		if result.Name != "Price" {
+			t.Errorf("expected name Price, but got %s", result.Name)
+		}
+		if result.PkgPath != "example.com/external/money" {
+			t.Errorf("expected pkg path example.com/external/money, but got %s", result.PkgPath)
+		}
+	})
+
+	t.Run("resolveTypeWithoutPolicyCheck (disallowed)", func(t *testing.T) {
+		result := resolver.resolveTypeWithoutPolicyCheck(ctx, priceFieldType)
+		if result == nil {
+			t.Fatal("should resolve disallowed type when policy is skipped, but got nil")
+		}
+		if result.Unresolved {
+			t.Error("should not be unresolved when policy is skipped")
+		}
+		if result.Name != "Price" {
+			t.Errorf("expected name Price, but got %s", result.Name)
+		}
+		if result.PkgPath != "example.com/external/money" {
+			t.Errorf("expected pkg path example.com/external/money, but got %s", result.PkgPath)
+		}
+	})
+
+	t.Run("ResolveType with nil fieldType", func(t *testing.T) {
+		result := resolver.ResolveType(ctx, nil)
+		if result != nil {
+			t.Error("should return nil for nil fieldType")
+		}
+	})
+
+	t.Run("resolveTypeWithoutPolicyCheck with nil fieldType", func(t *testing.T) {
+		result := resolver.resolveTypeWithoutPolicyCheck(ctx, nil)
+		if result != nil {
+			t.Error("should return nil for nil fieldType")
+		}
+	})
 }

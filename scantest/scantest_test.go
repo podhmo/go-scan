@@ -367,3 +367,57 @@ type Model struct {
 		t.Fatalf("Run failed: %v", err)
 	}
 }
+
+func TestToImportPath(t *testing.T) {
+	// Setup a test directory structure in a temporary directory
+	dir, cleanup := WriteFiles(t, map[string]string{
+		"go.mod":     "module example.com/project",
+		"api/api.go": "package api",
+	})
+	defer cleanup()
+
+	// Change the current working directory to the temp dir for the test
+	// to ensure that relative paths are resolved correctly.
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("could not get current working directory: %v", err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("could not change directory to %s: %v", dir, err)
+	}
+	defer os.Chdir(originalWD)
+
+	testCases := []struct {
+		name     string
+		path     string
+		expected string
+	}{
+		{
+			name:     "relative dir",
+			path:     "./api",
+			expected: "example.com/project/api",
+		},
+		{
+			name:     "relative file",
+			path:     "./api/api.go",
+			expected: "example.com/project/api",
+		},
+		{
+			name:     "root dir",
+			path:     ".",
+			expected: "example.com/project",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := ToImportPath(tc.path)
+			if err != nil {
+				t.Fatalf("ToImportPath(%q) failed: %v", tc.path, err)
+			}
+			if got != tc.expected {
+				t.Errorf("expected import path %q, but got %q", tc.expected, got)
+			}
+		})
+	}
+}

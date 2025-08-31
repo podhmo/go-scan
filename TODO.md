@@ -21,6 +21,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     - **Unified Generator (`deriving-all`)**: An efficient, single-pass generator that combines the functionality of `derivingjson` and `derivingbind`.
 - **Developer Experience & Testing**:
     - **`scantest` Library**: A testing harness for creating isolated, in-memory tests for tools built with `go-scan`.
+    - **`scantest`: Path to Import Path Conversion**: Added a `scantest.ToImportPath` helper function (a wrapper around `locator.ResolvePkgPath`) to simplify converting file paths to Go import paths in tests.
     - **In-Memory File Overlay**: Allows providing file content in memory, essential for testing and tools that modify code before scanning.
     - **Debuggability**: Provides `--inspect` and `--dry-run` modes for easier debugging and testing of code generators.
 - **`minigo` Script Engine**: A nearly complete, embeddable script engine that interprets a large subset of Go.
@@ -136,5 +137,3 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     - [x] **Update Analysis Logic**: Ensure the main analysis loop correctly collects declarations, builds maps, and identifies entry points from the aggregated set of all packages.
     - [x] **Add Tests**: Create a comprehensive test case with a multi-module project to validate that cross-module function calls are correctly tracked and orphans are identified accurately across the entire workspace.
 - [x] **`ModuleWalker`: Wildcard Support**: Added support for the `...` wildcard in both file path and import path patterns to tools like `find-orphans`, making package discovery more intuitive.
-- [x] **`scantest`: Path to Import Path Conversion**: Enhance `scantest.Run` with an option or helper to automatically convert filesystem path patterns (like `.`) into their corresponding Go import path patterns,
-- [ ] simplifying test setup for tools that consume import paths.

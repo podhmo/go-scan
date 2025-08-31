@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	scan "github.com/podhmo/go-scan"
+	"github.com/podhmo/go-scan/locator"
 	"github.com/podhmo/go-scan/scanner"
 )
 
@@ -378,4 +379,11 @@ func createGoModOverlay(dir string) (scanner.Overlay, error) {
 		"go.mod": []byte(strings.Join(newLines, "\n")),
 	}
 	return overlay, nil
+}
+
+// ToImportPath is a helper function that converts a filesystem path
+// (relative or absolute) to its corresponding Go import path.
+// This is a convenience wrapper around `locator.ResolvePkgPath` for use in tests.
+func ToImportPath(path string) (string, error) {
+	return locator.ResolvePkgPath(context.Background(), path)
 }

@@ -793,27 +793,6 @@ func main() {
 	}
 }
 
-func TestEvalUnsupportedNode(t *testing.T) {
-	input := "chan int"
-	node, err := parser.ParseExpr(input)
-	if err != nil {
-		t.Fatalf("could not parse expression: %v", err)
-	}
-
-	eval := New(nil, nil, nil, nil)
-	evaluated := eval.Eval(t.Context(), node, object.NewEnvironment(), nil)
-
-	errObj, ok := evaluated.(*object.Error)
-	if !ok {
-		t.Fatalf("object is not Error. got=%T (%+v)", evaluated, evaluated)
-	}
-
-	expected := "evaluation not implemented for *ast.ChanType"
-	if errObj.Message != expected {
-		t.Errorf("wrong error message. want=%q, got=%q", expected, errObj.Message)
-	}
-}
-
 func TestEvalReturnStatement(t *testing.T) {
 	input := `return 10`
 	source := fmt.Sprintf("package main\nfunc main() { %s }", input)

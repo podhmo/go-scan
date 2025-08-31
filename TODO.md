@@ -99,7 +99,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     - [x] **`symgo`: Evaluator `Context` Refactoring**: Refactored the `symgo.evaluator` to pass `context.Context` as an argument instead of using `context.Background()` directly. This improves traceability and cancellation propagation.
     - [x] **Intra-package unexported constant/variable resolution**: The interpreter now correctly resolves unexported package-level constants and variables that are referenced from within a function in the same package by pre-loading them into the environment.
     - [x] `*ast.IfStmt` (Note: The interpreter now correctly evaluates the `Cond` expression, in addition to the `Init` statement and `Body`/`Else` blocks. A follow-up fix ensures that evaluation correctly continues after the `if` statement, resolving a regression in `docgen`.)
-    - [ ] `*ast.ChanType`
+    - [x] `*ast.ChanType`
     - [x] `*ast.Ellipsis` (Note: Implemented for variadic arguments in function calls and definitions.)
     - [ ] `*ast.FuncType`
     - [x] `*ast.InterfaceType`
@@ -108,7 +108,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     - [x] `*ast.EmptyStmt`
     - [x] `*ast.IncDecStmt`
     - [x] `*ast.LabeledStmt`
-    - [ ] `*ast.SendStmt`
+    - [x] `*ast.SendStmt`
 - [x] **`panic` and other builtins**: The interpreter now recognizes `panic`, `nil`, `true`, and `false`. It also has placeholder implementations for most other standard built-ins (`make`, `len`, `append`, `new`, `cap`, etc.).
 - [x] **Multi-value returns and assignments**: The interpreter now supports functions that return multiple values and assignments of the form `x, y := f()` and `x, y = f()`.
 - [x] **`symgo`: Correctly scope function parameters**: Fixed a bug where function parameters and receivers were incorrectly set in the package scope instead of the function's local scope, causing "identifier not found" errors in nested blocks. The engine now also correctly handles analysis entry points by creating symbolic placeholders for function parameters that are not explicitly provided.

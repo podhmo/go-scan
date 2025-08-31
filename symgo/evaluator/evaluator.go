@@ -140,6 +140,16 @@ func (e *Evaluator) Eval(ctx context.Context, node ast.Node, env *object.Environ
 		return e.evalIfStmt(ctx, n, env, pkg)
 	case *ast.LabeledStmt:
 		return e.evalLabeledStmt(ctx, n, env, pkg)
+	case *ast.SendStmt:
+		// Evaluate the channel expression to trace any calls that produce the channel.
+		if ch := e.Eval(ctx, n.Chan, env, pkg); isError(ch) {
+			return ch
+		}
+		// Evaluate the value expression to trace any calls that produce the value.
+		if val := e.Eval(ctx, n.Value, env, pkg); isError(val) {
+			return val
+		}
+		return nil // Send statement does not produce a value.
 	case *ast.BranchStmt:
 		return e.evalBranchStmt(n)
 	case *ast.ForStmt:
@@ -206,6 +216,10 @@ func (e *Evaluator) Eval(ctx context.Context, node ast.Node, env *object.Environ
 		// Similar to ArrayType, when a map type itself is used as an expression (e.g., in a conversion),
 		// we just need to acknowledge it without producing a concrete value.
 		return &object.SymbolicPlaceholder{Reason: "map type expression"}
+	case *ast.ChanType:
+		// Similar to other type expressions, we don't need to evaluate it to a concrete value,
+		// just prevent an "unimplemented" error.
+		return &object.SymbolicPlaceholder{Reason: "channel type expression"}
 	}
 	return e.newError(node.Pos(), "evaluation not implemented for %T", node)
 }

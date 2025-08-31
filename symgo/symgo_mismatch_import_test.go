@@ -41,8 +41,8 @@ func Marshal(v any) ([]byte, error) { return nil, nil }
 func Unmarshal(data []byte, v any) error { return nil }
 `
 	tmpdir, cleanup := scantest.WriteFiles(t, map[string]string{
-		"go.mod":                "module example.com/myapp\ngo 1.21",
-		"main.go":               source,
+		"go.mod":             "module example.com/myapp\ngo 1.21",
+		"main.go":            source,
 		"libs/pkg.v2/lib.go": libSource,
 	})
 	defer cleanup()
@@ -143,10 +143,8 @@ func Unmarshal(data []byte, v any) error { return nil }
 		t.Fatalf("New scanner failed: %v", err)
 	}
 
-	policy := func(importPath string) bool {
-		return !strings.HasPrefix(importPath, "example.com/myapp/libs/pkg.v2")
-	}
-	interp, err := symgo.NewInterpreter(scanner, symgo.WithScanPolicy(policy))
+	// The primary scope is the main module. The pkg.v2 library is implicitly out of scope.
+	interp, err := symgo.NewInterpreter(scanner, symgo.WithPrimaryAnalysisScope("example.com/myapp/..."))
 	if err != nil {
 		t.Fatalf("NewInterpreter failed: %v", err)
 	}
@@ -201,11 +199,9 @@ func Do() {
 		t.Fatalf("New scanner failed: %v", err)
 	}
 
-	// Policy: do not scan the 'helper' package.
-	policy := func(importPath string) bool {
-		return !strings.HasPrefix(importPath, "example.com/myapp/helper")
-	}
-	interp, err := symgo.NewInterpreter(scanner, symgo.WithScanPolicy(policy))
+	// Set the primary scope to something that does NOT include the helper package.
+	// We can use a dummy path, effectively making the default module policy empty.
+	interp, err := symgo.NewInterpreter(scanner, symgo.WithPrimaryAnalysisScope("example.com/not-the-helper"))
 	if err != nil {
 		t.Fatalf("NewInterpreter failed: %v", err)
 	}

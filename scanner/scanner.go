@@ -29,7 +29,7 @@ type Scanner struct {
 	resolver                 PackageResolver
 	ExternalTypeOverrides    ExternalTypeOverride
 	Overlay                  Overlay
-	DeclarationsOnlyPackages map[string]bool // New field
+	DeclarationsOnlyPackages []string // Changed from map[string]bool
 	modulePath               string
 	moduleRootDir            string
 	inspect                  bool
@@ -64,7 +64,7 @@ func New(fset *token.FileSet, overrides ExternalTypeOverride, overlay Overlay, m
 		fset:                     fset,
 		ExternalTypeOverrides:    overrides,
 		Overlay:                  overlay,
-		DeclarationsOnlyPackages: make(map[string]bool), // Initialize
+		DeclarationsOnlyPackages: make([]string, 0), // Initialize as slice
 		modulePath:               modulePath,
 		moduleRootDir:            moduleRootDir,
 		resolver:                 resolver,
@@ -347,7 +347,14 @@ func (s *Scanner) scanGoFiles(ctx context.Context, filePaths []string, pkgDirPat
 	info.Files = filePathsForDominantPkg
 
 	// Second pass: Process declarations from the final list of valid ASTs
-	isDeclarationsOnly := s.DeclarationsOnlyPackages[canonicalImportPath]
+	isDeclarationsOnly := false
+	for _, pattern := range s.DeclarationsOnlyPackages {
+		if matches(pattern, canonicalImportPath) {
+			isDeclarationsOnly = true
+			break
+		}
+	}
+
 	for i, fileAst := range parsedFiles {
 		filePath := info.Files[i]
 
@@ -1018,4 +1025,14 @@ func commentText(cg *ast.CommentGroup) string {
 		return ""
 	}
 	return strings.TrimSpace(cg.Text())
+}
+
+// matches checks if a given path matches a pattern.
+// The pattern can end with "..." to match any sub-path.
+func matches(pattern, path string) bool {
+	if strings.HasSuffix(pattern, "/...") {
+		base := strings.TrimSuffix(pattern, "/...")
+		return path == base || strings.HasPrefix(path, base+"/")
+	}
+	return path == pattern
 }

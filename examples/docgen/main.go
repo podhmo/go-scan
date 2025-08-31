@@ -62,13 +62,10 @@ func run(logger *slog.Logger, format string, patternsFile string, entrypoint str
 		return fmt.Errorf("failed to resolve package path: %w", err)
 	}
 
-	// For docgen, we need the type information from net/http, but we don't
-	// want to symbolically execute the function bodies. We use the
-	// WithDeclarationsOnlyPackages option to achieve this.
+	// Let symgo's interpreter configuration handle which packages are declarations-only.
 	s, err := goscan.New(
 		goscan.WithGoModuleResolver(),
 		goscan.WithLogger(logger),
-		goscan.WithDeclarationsOnlyPackages([]string{"net/http"}),
 	)
 	if err != nil {
 		return err

@@ -2,17 +2,18 @@ package symgo_test
 
 import (
 	"context"
+	"go/ast"
 	"go/parser"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
 	goscan "github.com/podhmo/go-scan"
+	"github.com/podhmo/go-scan/scanner"
 	"github.com/podhmo/go-scan/scantest"
 	"github.com/podhmo/go-scan/symgo"
 	"github.com/podhmo/go-scan/symgo/object"
-	"go/ast"
-	"strings"
 )
 
 // common test helper for this package
@@ -24,6 +25,18 @@ func findFile(t *testing.T, pkg *goscan.Package, filename string) *ast.File {
 		}
 	}
 	t.Fatalf("file %q not found in package %q", filename, pkg.Name)
+	return nil
+}
+
+// findFunc is a test helper to find a function by its name in a package.
+func findFunc(t *testing.T, pkg *goscan.Package, name string) *scanner.FunctionInfo {
+	t.Helper()
+	for _, f := range pkg.Functions {
+		if f.Name == name {
+			return f
+		}
+	}
+	t.Fatalf("function %q not found in package %q", name, pkg.ImportPath)
 	return nil
 }
 

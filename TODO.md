@@ -125,9 +125,6 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] **Expressive Unresolved Types**: Enhanced the `scanner.TypeInfo` struct for unresolved types to include the type's `Kind` (e.g., interface, struct) if it can be determined from context. The evaluator now infers the kind from type assertions and composite literals, allowing for more precise analysis and removing unsafe assumptions in the `assignIdentifier` logic.
 - [x] **Proper Error Handling in Resolver**: The `resolver.ResolveType` and `resolveTypeWithoutPolicyCheck` methods now correctly handle errors from `fieldType.Resolve(ctx)` by returning a symbolic placeholder, making the evaluator more robust against resolution failures.
 
-### `scanner` Refinements
-- [x] **`Context` Refactoring**: Refactored the `scanner` package to pass `context.Context` as an argument instead of using `context.Background()` directly. This improves traceability and cancellation propagation.
-
 ### Future Enhancements
 - [x] **`symgo`: Tracing and Debuggability**: Enhance the tracing mechanism to provide a more detailed view of the symbolic execution flow.
     - [x] **Contextual Logging**: Warning logs emitted during evaluation now include the function call site (name and position) where the warning occurred. This is achieved by capturing the call stack within the returned error object.

@@ -32,9 +32,7 @@ type Evaluator struct {
 	interfaceBindings map[string]*goscan.TypeInfo
 	resolver          *Resolver
 	defaultIntrinsic  intrinsics.IntrinsicFunc
-	scanPolicy        object.ScanPolicyFunc
 	initializedPkgs   map[string]bool // To track packages whose constants are loaded
-	pkgCache          map[string]*object.Package
 }
 
 type callFrame struct {
@@ -58,10 +56,8 @@ func New(scanner *goscan.Scanner, logger *slog.Logger, tracer object.Tracer, sca
 		logger:            logger,
 		tracer:            tracer,
 		interfaceBindings: make(map[string]*goscan.TypeInfo),
-		resolver:          NewResolver(scanPolicy),
-		scanPolicy:        scanPolicy,
+		resolver:          NewResolver(scanner, scanPolicy),
 		initializedPkgs:   make(map[string]bool),
-		pkgCache:          make(map[string]*object.Package),
 	}
 }
 
@@ -382,7 +378,7 @@ func (e *Evaluator) evalCompositeLit(ctx context.Context, node *ast.CompositeLit
 	}
 
 	// Policy check before resolving.
-	if fieldType.FullImportPath != "" && e.scanPolicy != nil && !e.scanPolicy(fieldType.FullImportPath) {
+	if fieldType.FullImportPath != "" && !e.resolver.ScanPolicy(fieldType.FullImportPath) {
 		placeholder := &object.SymbolicPlaceholder{
 			Reason: fmt.Sprintf("unresolved composite literal of type %s", fieldType.String()),
 		}
@@ -828,36 +824,15 @@ func (e *Evaluator) convertGoConstant(val constant.Value, pos token.Pos) object.
 }
 
 func (e *Evaluator) getOrLoadPackage(ctx context.Context, path string) (*object.Package, error) {
-	if pkg, ok := e.pkgCache[path]; ok {
+	pkg, err := e.resolver.ResolvePackage(ctx, path)
+	if err != nil {
+		return nil, err // Propagate errors from resolver
+	}
+	if pkg != nil {
 		// Ensure even cached packages are populated if they were created as placeholders first.
 		e.ensurePackageEnvPopulated(ctx, pkg)
-		return pkg, nil
 	}
-
-	scannedPkg, err := e.scanner.ScanPackageByImport(ctx, path)
-	if err != nil {
-		// Even if scanning fails, we create a placeholder package object to cache the failure
-		// and avoid re-scanning. The ScannedInfo will be nil.
-		pkgObj := &object.Package{
-			Name:        "", // We don't know the name
-			Path:        path,
-			Env:         object.NewEnvironment(),
-			ScannedInfo: nil,
-		}
-		e.pkgCache[path] = pkgObj
-		return nil, fmt.Errorf("could not scan package %q: %w", path, err)
-	}
-
-	pkgObj := &object.Package{
-		Name:        scannedPkg.Name,
-		Path:        scannedPkg.ImportPath,
-		Env:         object.NewEnvironment(),
-		ScannedInfo: scannedPkg,
-	}
-
-	e.ensurePackageEnvPopulated(ctx, pkgObj)
-	e.pkgCache[path] = pkgObj
-	return pkgObj, nil
+	return pkg, nil
 }
 
 func (e *Evaluator) ensurePackageEnvPopulated(ctx context.Context, pkgObj *object.Package) {
@@ -867,7 +842,7 @@ func (e *Evaluator) ensurePackageEnvPopulated(ctx context.Context, pkgObj *objec
 	pkgInfo := pkgObj.ScannedInfo
 	env := pkgObj.Env
 
-	shouldScan := e.scanPolicy == nil || e.scanPolicy(pkgInfo.ImportPath)
+	shouldScan := e.resolver.ScanPolicy(pkgInfo.ImportPath)
 
 	if !e.initializedPkgs[pkgInfo.ImportPath] {
 		e.logger.DebugContext(ctx, "populating package-level constants", "package", pkgInfo.ImportPath)
@@ -886,13 +861,12 @@ func (e *Evaluator) ensurePackageEnvPopulated(ctx context.Context, pkgObj *objec
 		e.initializedPkgs[pkgInfo.ImportPath] = true
 	}
 
-	if len(pkgInfo.Functions) > 0 {
-		if _, ok := env.Get(pkgInfo.Functions[0].Name); ok {
-			return
-		}
-	} else if len(pkgInfo.Constants) == 0 {
-		return
-	}
+	// Note: The previous optimization to check if the first function exists
+	// has been removed. It was brittle because a package environment could be
+	// partially populated (e.g., only with constants), causing subsequent
+	// attempts to populate functions to be skipped incorrectly. By iterating
+	// every time, we ensure the environment is complete, and the Get/Set check
+	// inside the loop prevents redundant work.
 
 	e.logger.DebugContext(ctx, "populating package environment", "package", pkgInfo.ImportPath)
 
@@ -1007,49 +981,35 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 		return e.newError(n.Pos(), "undefined method or field: %s on symbolic type %s", n.Sel.Name, val.Inspect())
 
 	case *object.Package:
-		if val.ScannedInfo == nil {
-			if e.scanner == nil {
-				return e.newError(n.Pos(), "scanner is not available, cannot load package %q", val.Path)
-			}
-			pkgInfo, err := e.scanner.ScanPackageByImport(ctx, val.Path)
-			if err != nil {
-				e.logWithContext(ctx, slog.LevelWarn, "could not scan package, treating as external", "package", val.Path, "error", err)
-				placeholder := &object.SymbolicPlaceholder{Reason: fmt.Sprintf("unscannable symbol %s.%s", val.Path, n.Sel.Name)}
-				val.Env.Set(n.Sel.Name, placeholder)
-				return placeholder
-			}
-			val.ScannedInfo = pkgInfo
-		}
-
-		// When we encounter a package selector, we must ensure its environment
-		// is populated with all its top-level declarations. This is crucial
-		// for closures to capture their environment correctly.
+		// When we encounter a package selector (e.g., `fmt.Println`), we must
+		// ensure its environment is populated with all its top-level declarations.
+		// `getOrLoadPackage` (called from `evalIdent`) has already loaded the package
+		// respecting the policy. `ensurePackageEnvPopulated` will now populate the
+		// package's environment with functions, constants, etc.
 		e.ensurePackageEnvPopulated(ctx, val)
 
+		// Check for intrinsics first.
 		key := val.Path + "." + n.Sel.Name
 		if intrinsicFn, ok := e.intrinsics.Get(key); ok {
 			return &object.Intrinsic{Fn: intrinsicFn}
 		}
 
-		// If the symbol is already in the package's environment, return it.
+		// If the symbol is now in the package's environment, return it.
 		if symbol, ok := val.Env.Get(n.Sel.Name); ok {
 			return symbol
 		}
 
-		// We need package info regardless of the policy to find the symbol.
+		// If the package was not scanned (due to policy or error), its ScannedInfo will be nil.
 		if val.ScannedInfo == nil {
-			if e.scanner == nil {
-				return e.newError(n.Pos(), "scanner is not available, cannot load package %q", val.Path)
-			}
-			pkgInfo, err := e.scanner.ScanPackageByImport(ctx, val.Path)
-			if err != nil {
-				e.logWithContext(ctx, slog.LevelWarn, "could not scan package, treating as external", "package", val.Path, "error", err)
-				placeholder := &object.SymbolicPlaceholder{Reason: fmt.Sprintf("unscannable symbol %s.%s", val.Path, n.Sel.Name)}
-				val.Env.Set(n.Sel.Name, placeholder)
-				return placeholder
-			}
-			val.ScannedInfo = pkgInfo
+			placeholder := &object.SymbolicPlaceholder{Reason: fmt.Sprintf("unresolved symbol %s.%s in unscannable package", val.Path, n.Sel.Name)}
+			val.Env.Set(n.Sel.Name, placeholder)
+			return placeholder
 		}
+
+		// The symbol was not found in the environment. This can happen if the package
+		// was just loaded. We can try to find the symbol in the ScannedInfo and create
+		// the object on the fly. This is the same logic as in ensurePackageEnvPopulated,
+		// but applied lazily for a single symbol.
 
 		// Try to find the symbol as a function.
 		for _, f := range val.ScannedInfo.Functions {
@@ -1058,10 +1018,9 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 					continue
 				}
 
-				// Now, apply the policy.
-				if e.scanPolicy(val.Path) {
-					// Policy says YES. Create a full Function object that can be evaluated.
-					fn := &object.Function{
+				var fnObject object.Object
+				if e.resolver.ScanPolicy(val.Path) {
+					fnObject = &object.Function{
 						Name:       f.AstDecl.Name,
 						Parameters: f.AstDecl.Type.Params,
 						Body:       f.AstDecl.Body,
@@ -1070,18 +1029,15 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 						Package:    val.ScannedInfo,
 						Def:        f,
 					}
-					val.Env.Set(n.Sel.Name, fn)
-					return fn
 				} else {
-					// Policy says NO. Create a placeholder with just the signature info.
-					placeholder := &object.SymbolicPlaceholder{
+					fnObject = &object.SymbolicPlaceholder{
 						Reason:         fmt.Sprintf("external function %s.%s", val.Path, n.Sel.Name),
 						UnderlyingFunc: f,
 						Package:        val.ScannedInfo,
 					}
-					val.Env.Set(n.Sel.Name, placeholder)
-					return placeholder
 				}
+				val.Env.Set(n.Sel.Name, fnObject)
+				return fnObject
 			}
 		}
 
@@ -1091,38 +1047,17 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 				if !c.IsExported {
 					continue // Cannot access unexported constants.
 				}
-
-				var constObj object.Object
-				switch c.ConstVal.Kind() {
-				case constant.String:
-					constObj = &object.String{Value: constant.StringVal(c.ConstVal)}
-				case constant.Int:
-					val, ok := constant.Int64Val(c.ConstVal)
-					if !ok {
-						return e.newError(n.Pos(), "could not convert constant %s to int64", c.Name)
-					}
-					constObj = &object.Integer{Value: val}
-				case constant.Bool:
-					if constant.BoolVal(c.ConstVal) {
-						constObj = object.TRUE
-					} else {
-						constObj = object.FALSE
-					}
-				default:
-					// Other constant types (float, complex, etc.) are not yet supported.
-					// Fall through to create a placeholder.
-				}
-
-				if constObj != nil {
+				constObj := e.convertGoConstant(c.ConstVal, n.Pos())
+				if !isError(constObj) {
 					val.Env.Set(n.Sel.Name, constObj) // Cache the resolved constant.
 					return constObj
 				}
 			}
 		}
 
-		// If it's not a function or a known constant, it's probably a variable.
+		// If it's not a function or a known constant, it's probably a variable or type.
 		// Create a generic placeholder for it.
-		placeholder := &object.SymbolicPlaceholder{Reason: fmt.Sprintf("workspace symbol %s.%s", val.Path, n.Sel.Name)}
+		placeholder := &object.SymbolicPlaceholder{Reason: fmt.Sprintf("unresolved symbol %s.%s", val.Path, n.Sel.Name)}
 		val.Env.Set(n.Sel.Name, placeholder)
 		return placeholder
 
@@ -1174,20 +1109,10 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 			resolutionPkg := pkg
 			if typeInfo.PkgPath != "" && typeInfo.PkgPath != pkg.ImportPath {
 				if foreignPkgObj, err := e.getOrLoadPackage(ctx, typeInfo.PkgPath); err == nil && foreignPkgObj != nil {
-					if foreignPkgObj.ScannedInfo == nil {
-						scanned, err := e.scanner.ScanPackageByImport(ctx, foreignPkgObj.Path)
-						if err != nil {
-							return e.newError(n.Pos(), "failed to scan dependent package %s: %v", foreignPkgObj.Path, err)
-						}
-						foreignPkgObj.ScannedInfo = scanned
-					}
-					resolutionPkg = foreignPkgObj.ScannedInfo
-				} else {
-					scanned, err := e.scanner.ScanPackageByImport(ctx, typeInfo.PkgPath)
-					if err != nil {
-						return e.newError(n.Pos(), "failed to scan transitive dependency package %s: %v", typeInfo.PkgPath, err)
-					}
-					resolutionPkg = scanned
+					resolutionPkg = foreignPkgObj.ScannedInfo // ScannedInfo might be nil if out of policy, which is fine.
+				} else if err != nil {
+					// Log the error but don't fail, as it might be an out-of-policy package.
+					e.logWithContext(ctx, slog.LevelDebug, "could not load package for interface method resolution", "package", typeInfo.PkgPath, "error", err)
 				}
 			}
 			var definitiveType *scanner.TypeInfo
@@ -1248,7 +1173,7 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 		if typeInfo != nil && typeInfo.Struct != nil {
 			for _, field := range typeInfo.Struct.Fields {
 				if field.Embedded {
-					if field.Type.FullImportPath != "" && e.scanPolicy != nil && !e.scanPolicy(field.Type.FullImportPath) {
+					if field.Type.FullImportPath != "" && !e.resolver.ScanPolicy(field.Type.FullImportPath) {
 						// This is an embedded type from an out-of-policy package.
 						// We can assume the method call is valid and treat it symbolically.
 						e.logger.DebugContext(ctx, "treating method call as symbolic on embedded unresolved type", "method", n.Sel.Name)
@@ -2058,7 +1983,7 @@ func (e *Evaluator) evalIdent(ctx context.Context, n *ast.Ident, env *object.Env
 
 	e.logger.Debug("evalIdent: not found in env or intrinsics", "name", n.Name)
 
-	if pkg != nil && e.scanPolicy != nil && !e.scanPolicy(pkg.ImportPath) {
+	if pkg != nil && !e.resolver.ScanPolicy(pkg.ImportPath) {
 		e.logger.DebugContext(ctx, "treating undefined identifier as symbolic in out-of-policy package", "ident", n.Name, "package", pkg.ImportPath)
 		return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("undefined identifier %s in out-of-policy package", n.Name)}
 	}
@@ -2429,9 +2354,14 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 				resultASTExpr := results.List[0].Type
 				fieldType := e.scanner.TypeInfoFromExpr(ctx, resultASTExpr, nil, fn.Package, importLookup)
 
+				if fieldType != nil && fieldType.FullImportPath != "" {
+					// Ensure the package is loaded (ignoring policy) so we can get type info.
+					// We don't need to check the error, as ResolveType will handle resolution failure.
+					e.resolver.ResolvePackageInfo(ctx, fieldType.FullImportPath)
+				}
 				resolvedType := e.resolver.ResolveType(ctx, fieldType)
 
-				if resolvedType == nil && fieldType.IsBuiltin && fieldType.Name == "error" {
+				if resolvedType == nil && fieldType != nil && fieldType.IsBuiltin && fieldType.Name == "error" {
 					stringFieldType := &scanner.FieldType{Name: "string", IsBuiltin: true}
 					errorMethod := &scanner.MethodInfo{
 						Name:    "Error",
@@ -2455,14 +2385,14 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 			for i, field := range results.List {
 				fieldType := e.scanner.TypeInfoFromExpr(ctx, field.Type, nil, fn.Package, importLookup)
 
-				var resolvedType *scanner.TypeInfo
-				if fieldType.FullImportPath != "" && e.scanPolicy != nil && !e.scanPolicy(fieldType.FullImportPath) {
-					resolvedType = scanner.NewUnresolvedTypeInfo(fieldType.FullImportPath, fieldType.TypeName)
-				} else {
-					resolvedType, _ = fieldType.Resolve(ctx)
+				if fieldType != nil && fieldType.FullImportPath != "" {
+					// Ensure the package is loaded (ignoring policy) so we can get type info.
+					e.resolver.ResolvePackageInfo(ctx, fieldType.FullImportPath)
 				}
+				var resolvedType *scanner.TypeInfo
+				resolvedType = e.resolver.ResolveType(ctx, fieldType)
 
-				if resolvedType == nil && fieldType.IsBuiltin && fieldType.Name == "error" {
+				if resolvedType == nil && fieldType != nil && fieldType.IsBuiltin && fieldType.Name == "error" {
 					stringFieldType := &scanner.FieldType{Name: "string", IsBuiltin: true}
 					errorMethod := &scanner.MethodInfo{
 						Name:    "Error",
@@ -2500,19 +2430,6 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 	}
 }
 
-// resolveTypeWithPolicy is a helper to resolve a FieldType to a TypeInfo while respecting the scan policy.
-func (e *Evaluator) resolveTypeWithPolicy(ctx context.Context, fieldType *scanner.FieldType) *scanner.TypeInfo {
-	if fieldType == nil {
-		return nil
-	}
-	if fieldType.FullImportPath != "" && e.scanPolicy != nil && !e.scanPolicy(fieldType.FullImportPath) {
-		return scanner.NewUnresolvedTypeInfo(fieldType.FullImportPath, fieldType.TypeName)
-	}
-	// Policy allows scanning, or it's a local/built-in type.
-	resolvedType, _ := fieldType.Resolve(ctx)
-	return resolvedType
-}
-
 func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, args []object.Object) (*object.Environment, error) {
 	// The new environment should be enclosed by the function's own package environment,
 	// not the caller's environment.
@@ -2535,7 +2452,7 @@ func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, 
 						}
 					}
 					fieldType := e.scanner.TypeInfoFromExpr(ctx, recvField.Type, nil, fn.Package, importLookup)
-					resolvedType := e.resolveTypeWithPolicy(ctx, fieldType)
+					resolvedType := e.resolver.ResolveType(ctx, fieldType)
 					receiverToBind = &object.SymbolicPlaceholder{
 						Reason:     "symbolic receiver for entry point method",
 						BaseObject: object.BaseObject{ResolvedTypeInfo: resolvedType, ResolvedFieldType: fieldType},
@@ -2627,7 +2544,7 @@ func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, 
 				name := field.Names[0] // Variadic param is always the last, single identifier.
 				if name.Name != "_" {
 					fieldType := e.scanner.TypeInfoFromExpr(ctx, paramType, nil, fn.Package, importLookup)
-					resolvedType := e.resolveTypeWithPolicy(ctx, fieldType)
+					resolvedType := e.resolver.ResolveType(ctx, fieldType)
 					v := &object.Variable{
 						Name:       name.Name,
 						Value:      variadicSlice,
@@ -2668,7 +2585,7 @@ func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, 
 						v.SetFieldType(staticFieldType)
 					}
 					if v.TypeInfo() == nil {
-						staticTypeInfo := e.resolveTypeWithPolicy(ctx, staticFieldType)
+						staticTypeInfo := e.resolver.ResolveType(ctx, staticFieldType)
 						v.SetTypeInfo(staticTypeInfo)
 					}
 				}
@@ -2718,7 +2635,7 @@ func (e *Evaluator) findFieldRecursive(ctx context.Context, typeInfo *scanner.Ty
 			}
 
 			var embeddedTypeInfo *scanner.TypeInfo
-			if field.Type.FullImportPath != "" && e.scanPolicy != nil && !e.scanPolicy(field.Type.FullImportPath) {
+			if field.Type.FullImportPath != "" && !e.resolver.ScanPolicy(field.Type.FullImportPath) {
 				embeddedTypeInfo = scanner.NewUnresolvedTypeInfo(field.Type.FullImportPath, field.Type.TypeName)
 			} else {
 				embeddedTypeInfo, _ = field.Type.Resolve(ctx)
@@ -2769,7 +2686,7 @@ func (e *Evaluator) findMethodRecursive(ctx context.Context, typeInfo *scanner.T
 		for _, field := range typeInfo.Struct.Fields {
 			if field.Embedded {
 				var embeddedTypeInfo *scanner.TypeInfo
-				if field.Type.FullImportPath != "" && e.scanPolicy != nil && !e.scanPolicy(field.Type.FullImportPath) {
+				if field.Type.FullImportPath != "" && !e.resolver.ScanPolicy(field.Type.FullImportPath) {
 					embeddedTypeInfo = scanner.NewUnresolvedTypeInfo(field.Type.FullImportPath, field.Type.TypeName)
 				} else {
 					embeddedTypeInfo, _ = field.Type.Resolve(ctx)
@@ -2800,7 +2717,7 @@ func (e *Evaluator) findDirectMethodOnType(ctx context.Context, typeInfo *scanne
 		return nil, nil
 	}
 
-	if e.scanPolicy != nil && !e.scanPolicy(typeInfo.PkgPath) {
+	if !e.resolver.ScanPolicy(typeInfo.PkgPath) {
 		return nil, nil
 	}
 

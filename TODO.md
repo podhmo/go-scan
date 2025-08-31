@@ -117,8 +117,8 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 ### `symgo` Refinements
 - [ ] **Explicit Analysis Scopes**: Refactor the scanner configuration to explicitly distinguish between a `PrimaryAnalysisScope` (for deep execution) and a `SymbolicDependencyScope` (for declarations-only parsing). This would make analysis more hermetic and predictable, removing the need for implicit on-demand loading of out-of-policy packages.
 - [ ] **Expressive Unresolved Types**: Enhance the `scanner.TypeInfo` struct for unresolved types to include the type's `Kind` (e.g., interface, struct) if it can be determined. This would allow the policy-checking `ResolveType` to return more useful placeholders and eliminate the need to bypass the policy in `assignIdentifier`.
-- [ ] **Refactor redundant policy check**: Refactor the manual policy check in `evaluator.applyFunction` to directly use `resolver.ResolveType` for better clarity and consistency, removing the call to `resolveTypeWithoutPolicyCheck`.
-- [ ] **Proper Error Handling in Resolver**: The `resolver.ResolveType` and `resolveTypeWithoutPolicyCheck` methods currently discard the error returned by `fieldType.Resolve(ctx)`. This should be corrected to properly handle or propagate the error.
+- [x] **Refactor redundant policy check**: Refactor the manual policy check in `evaluator.applyFunction` to directly use `resolver.ResolveType` for better clarity and consistency, removing the call to `resolveTypeWithoutPolicyCheck`.
+- [x] **Proper Error Handling in Resolver**: The `resolver.ResolveType` and `resolveTypeWithoutPolicyCheck` methods now correctly handle errors from `fieldType.Resolve(ctx)` by returning a symbolic placeholder, making the evaluator more robust against resolution failures.
 
 ### Future Enhancements
 - [x] **`symgo`: Tracing and Debuggability**: Enhance the tracing mechanism to provide a more detailed view of the symbolic execution flow.

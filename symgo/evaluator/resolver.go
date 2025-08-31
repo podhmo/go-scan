@@ -44,7 +44,12 @@ func (r *Resolver) ResolveType(ctx context.Context, fieldType *scanner.FieldType
 	}
 
 	// Policy allows scanning, or it's a local/built-in type.
-	resolvedType, _ := fieldType.Resolve(ctx)
+	resolvedType, err := fieldType.Resolve(ctx)
+	if err != nil {
+		// If resolution fails (e.g., package not found for shallow scan),
+		// it's not a fatal error for the resolver. Return a placeholder.
+		return scanner.NewUnresolvedTypeInfo(fieldType.FullImportPath, fieldType.TypeName)
+	}
 	return resolvedType
 }
 
@@ -58,7 +63,11 @@ func (r *Resolver) resolveTypeWithoutPolicyCheck(ctx context.Context, fieldType 
 	}
 
 	// Policy check is intentionally skipped.
-	resolvedType, _ := fieldType.Resolve(ctx)
+	resolvedType, err := fieldType.Resolve(ctx)
+	if err != nil {
+		// If resolution fails, return a placeholder.
+		return scanner.NewUnresolvedTypeInfo(fieldType.FullImportPath, fieldType.TypeName)
+	}
 	return resolvedType
 }
 

@@ -1,30 +1,30 @@
-# Analysis of Scan Policy Bypasses in `symgo`
+# Critical Analysis of Scan Policy Bypasses in `symgo`
 
 ## Introduction
 
-This document analyzes the locations in the `symgo` evaluator where scan policy checks are intentionally bypassed. The `symgo.evaluator.Resolver` is designed with a clear convention: exported methods perform policy checks, while unexported methods (or methods explicitly named with `WithoutPolicyCheck`) can bypass them.
+This document provides a critical analysis of locations in the `symgo` evaluator where scan policy checks are intentionally bypassed. The goal is to move towards a design where policy checks are enforced consistently, and any exceptions are handled through explicit, robust architectural patterns rather than through policy bypasses.
 
-A key design principle, illustrated by tools like `find-orphans` (see `examples/find-orphans/spec.md`), is the distinction between code within the **analysis scope** and code outside of it (e.g., standard libraries, third-party dependencies). The `ScanPolicyFunc` defines this boundary.
+The current design convention is that unexported methods or those named with a `...WithoutPolicyCheck` suffix can bypass the `ScanPolicyFunc`. While this enables key features for tools like `find-orphans`, it can be considered a "code smell" because it makes the policy's behavior less predictable and the evaluator's logic harder to reason about.
 
-Code outside the analysis scope should not be deeply executed. Instead, the `symgo` engine should be able to create **symbolic placeholders** for calls to out-of-scope functions. To do this, the engine must still be able to load basic package information (like function signatures and type definitions) from these external packages.
-
-Bypassing the policy at certain key points is therefore not a flaw, but a **core feature** that enables this shallow, symbolic analysis of external code.
+This analysis details each bypass, critiques the current implementation, and proposes more robust future solutions.
 
 ---
 
 ## `resolvePackageWithoutPolicyCheck`
 
-This method wraps `scanner.ScanPackageByImport` and does not check the scan policy. It is the fundamental mechanism for on-demand loading of package information required for symbolic analysis to proceed across package boundaries.
+This method bypasses the `ScanPolicyFunc` to load package information on-demand.
 
-### 1. Locations:
-- `evaluator.go` -> `getOrLoadPackage`
-- `evaluator.go` -> `evalSelectorExpr` (case `*object.Package` and case `*object.Variable`)
+-   **Locations:**
+    -   `evaluator.go` -> `getOrLoadPackage`
+    -   `evaluator.go` -> `evalSelectorExpr`
 
--   **Context:** These functions represent the various entry points for on-demand, lazy loading of a package when the evaluator encounters a symbol it has not seen before. This happens when resolving a package name (e.g., `fmt`), accessing a symbol in a package for the first time (e.g., `pkg.MyFunc`), or resolving a type from a transitive dependency (e.g., an interface method).
+-   **Critique of Current Design:** The current on-demand loading mechanism is an implicit or "magic" feature. A user might define a strict `ScanPolicyFunc` expecting *only* the specified packages to be parsed, but the evaluator will still attempt to scan any other package it encounters (e.g., `fmt`). This violates the principle of least privilege and weakens the guarantee provided by the policy. It conflates the concepts of "packages to be deeply analyzed" and "packages required for transitive type resolution."
 
--   **Reason for Bypassing Policy:** To create a symbolic placeholder for a call to an out-of-scope function (e.g., `fmt.Println`), the evaluator first needs to load the `fmt` package to confirm that `Println` exists and to get its signature. If the policy check were strictly enforced at this loading stage, the `fmt` package would be rejected entirely, and the evaluator would fail with an "identifier not found" error instead of continuing the analysis by creating a placeholder. Bypassing the policy here allows the package to be loaded. The `ScanPolicy` is then used later to determine the *depth* of analysis: in-policy packages are executed deeply, while out-of-policy packages are shallowly analyzed (i.e., calls to them result in placeholders).
+-   **Proposed Future Solution:** A more robust architecture would eliminate on-demand loading in favor of an explicit declaration of all required analysis scopes. The `goscan.Scanner` could be configured with two distinct scopes:
+    1.  **`PrimaryAnalysisScope`**: A set of packages to be deeply, symbolically executed.
+    2.  **`SymbolicDependencyScope`**: A set of packages for which only declarations should be parsed to enable symbolic placeholder creation. This scope could be automatically populated by analyzing the imports of the primary scope.
 
--   **Potential Future Solutions:** The current design is correct and necessary for shallow scanning. A future enhancement could involve making this behavior more explicit. For example, instead of just bypassing the policy, the resolver could have a method like `ResolvePackageForSymbolicAnalysis`, which always loads the package but returns metadata indicating whether it's in-policy or out-of-policy. This would make the evaluator's subsequent decision to create placeholders even more explicit.
+    With this design, any attempt to load a package not in either scope would result in a hard error, making the analysis hermetic and predictable. The `ScanPolicyFunc` would evolve into a function that determines which scope a package belongs to. This would completely remove the need for `resolvePackageWithoutPolicyCheck`.
 
 ---
 
@@ -34,12 +34,34 @@ This method resolves a `scanner.FieldType` to a `scanner.TypeInfo` without check
 
 ### 1. Location: `evaluator.go` -> `assignIdentifier`
 
--   **Context:** This is called during a variable assignment to check if the variable's static type is an interface.
--   **Reason for Bypassing Policy:** Similar to package loading, the evaluator needs to know the true "kind" of a type (is it a struct, an interface, etc.) even if it's from an out-of-policy package. The policy-checking `ResolveType` would return a generic `Unresolved` placeholder, which loses this crucial information. By bypassing the policy, the evaluator can get the detailed `TypeInfo`, see that its `Kind` is `scanner.InterfaceKind`, and correctly enable the logic for tracking concrete type implementations for that interface variable. This is essential for correct symbolic execution of interface-based logic.
--   **Potential Future Solutions:** The current implementation is correct. A more advanced type system could perhaps embed the `Kind` information within the `Unresolved` type placeholder itself, but the current approach of bypassing the policy to get the full `TypeInfo` is a valid and functional design.
+-   **Critique of Current Design:** This bypass is used to determine if a variable's type is an interface, even if the type is from an out-of-policy package. The policy-checking `ResolveType` would return a generic `Unresolved` placeholder, obscuring the type's true kind. This is brittle; it forces the caller to violate the policy abstraction to get a single piece of information. If more information were needed in the future, it would encourage adding more policy bypasses.
+
+-   **Proposed Future Solution:** The `scanner.TypeInfo` struct for unresolved types should be made more expressive. Instead of being an opaque placeholder, it should retain critical information that can be determined without a deep scan.
+    ```go
+    // A potential future enhancement
+    type TypeInfo struct {
+        // ...
+        Unresolved    bool
+        UnresolvedKind scanner.Kind // e.g., InterfaceKind, StructKind
+        // ...
+    }
+    ```
+    This would allow the policy-checking `ResolveType` to return a placeholder that still contains the necessary kind information, making the `resolveTypeWithoutPolicyCheck` bypass unnecessary for this use case.
 
 ### 2. Location: `evaluator.go` -> `applyFunction`
 
--   **Context:** This is used when creating symbolic placeholders for the return values of an external (out-of-policy) function call.
--   **Reason for Bypassing Policy:** The surrounding code block **already performs a manual policy check** before this call is made (`if !e.resolver.ScanPolicy(...)`). This call exists in the `else` branch, meaning the policy has already been checked and has passed. Using the policy-bypassing method here is simply a correct optimization to avoid a redundant check.
--   **Potential Future Solutions:** No change is needed; this implementation is correct and efficient.
+-   **Critique of Current Design:** The code manually performs a policy check and then calls the policy-bypassing `resolveTypeWithoutPolicyCheck` in the `else` block. While functionally correct, this pattern is confusing and violates the convention that policy logic should be centralized within the `Resolver`. A developer reading the code has to analyze the surrounding `if/else` block to understand that the policy is, in fact, being honored.
+
+-   **Proposed Future Solution:** For clarity, consistency, and strict adherence to the design convention, this code should be refactored to simply call the policy-checking `ResolveType` method.
+    ```go
+    // OLD
+    if !e.resolver.ScanPolicy(...) {
+        resolvedType = scanner.NewUnresolvedTypeInfo(...)
+    } else {
+        resolvedType = e.resolver.resolveTypeWithoutPolicyCheck(...)
+    }
+
+    // PROPOSED
+    resolvedType = e.resolver.ResolveType(ctx, fieldType)
+    ```
+    The minimal performance cost of a potentially redundant check inside `ResolveType` is a small price to pay for the significant improvement in code readability and architectural consistency.

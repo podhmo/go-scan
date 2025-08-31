@@ -1115,7 +1115,7 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 			if typeInfo.PkgPath != "" && typeInfo.PkgPath != pkg.ImportPath {
 				if foreignPkgObj, err := e.getOrLoadPackage(ctx, typeInfo.PkgPath); err == nil && foreignPkgObj != nil {
 					if foreignPkgObj.ScannedInfo == nil {
-						scanned, err := e.scanner.ScanPackageByImport(ctx, foreignPkgObj.Path)
+						scanned, err := e.resolver.resolvePackageWithoutPolicyCheck(ctx, foreignPkgObj.Path)
 						if err != nil {
 							return e.newError(n.Pos(), "failed to scan dependent package %s: %v", foreignPkgObj.Path, err)
 						}
@@ -1123,7 +1123,7 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 					}
 					resolutionPkg = foreignPkgObj.ScannedInfo
 				} else {
-					scanned, err := e.scanner.ScanPackageByImport(ctx, typeInfo.PkgPath)
+					scanned, err := e.resolver.resolvePackageWithoutPolicyCheck(ctx, typeInfo.PkgPath)
 					if err != nil {
 						return e.newError(n.Pos(), "failed to scan transitive dependency package %s: %v", typeInfo.PkgPath, err)
 					}
@@ -1816,7 +1816,7 @@ func (e *Evaluator) assignIdentifier(ctx context.Context, ident *ast.Ident, val 
 			},
 		}
 		if val.FieldType() != nil {
-			if resolved := e.resolver.resolveTypeWithoutPolicyCheck(ctx, val.FieldType()); resolved != nil && resolved.Kind == scanner.InterfaceKind {
+			if resolved := e.resolver.ResolveType(ctx, val.FieldType()); resolved != nil && resolved.Kind == scanner.InterfaceKind {
 				v.PossibleConcreteTypes = make(map[*scanner.FieldType]struct{})
 				if ft := val.FieldType(); ft != nil {
 					v.PossibleConcreteTypes[ft] = struct{}{}
@@ -2603,4 +2603,3 @@ func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, 
 
 	return env, nil
 }
-

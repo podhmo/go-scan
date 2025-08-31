@@ -2,9 +2,10 @@ package evaluator
 
 import (
 	"context"
+	"fmt"
 
-	"github.com/podhmo/go-scan/scanner"
 	goscan "github.com/podhmo/go-scan"
+	"github.com/podhmo/go-scan/scanner"
 	"github.com/podhmo/go-scan/symgo/object"
 )
 
@@ -120,6 +121,14 @@ func (r *Resolver) resolveType(ctx context.Context, fieldType *scanner.FieldType
 	// Policy allows scanning, or it's a local/built-in type, or scanning was skipped.
 	resolvedType, _ := fieldType.Resolve(ctx)
 	return resolvedType
+}
+
+// ResolvePackage is a helper to get package info while respecting the scan policy.
+func (r *Resolver) ResolvePackage(ctx context.Context, path string) (*scanner.PackageInfo, error) {
+	if !r.ScanPolicy(path) {
+		return nil, fmt.Errorf("package %q is excluded by scan policy", path)
+	}
+	return r.resolvePackageWithoutPolicyCheck(ctx, path)
 }
 
 // resolvePackageWithoutPolicyCheck resolves a package without enforcing the scan policy.

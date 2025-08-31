@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"go/ast"
 	"go/parser"
+	"go/token"
 	"io"
 	"os"
 	"reflect"
@@ -15,6 +16,71 @@ import (
 	"github.com/podhmo/go-scan/minigo/evaluator"
 	"github.com/podhmo/go-scan/minigo/object"
 )
+
+// Options configures the interpreter environment for a single Run command.
+type Options struct {
+	// Source is the script content.
+	Source []byte
+
+	// Filename is the name of the script file, used for error messages.
+	// Defaults to "main.go" if empty.
+	Filename string
+
+	// EntryPoint is the name of the function to execute.
+	// Defaults to "main" if empty.
+	EntryPoint string
+
+	// Globals allows injecting Go variables into the script's global scope.
+	// The map key is the variable name in the script.
+	// The value can be any Go variable, which will be made available via reflection.
+	Globals map[string]any
+
+	// Scanner is an optional, pre-configured go-scan scanner.
+	// If nil, a new default scanner is created.
+	Scanner *goscan.Scanner
+}
+
+// Run executes a minigo script in a single, self-contained call.
+// It is a convenience wrapper around the more complex Interpreter API.
+func Run(ctx context.Context, opts Options) (*Result, error) {
+	scanner := opts.Scanner
+	if scanner == nil {
+		var err error
+		scanner, err = goscan.New()
+		if err != nil {
+			return nil, fmt.Errorf("creating default scanner: %w", err)
+		}
+	}
+
+	interp, err := NewInterpreter(scanner, WithGlobals(opts.Globals))
+	if err != nil {
+		return nil, fmt.Errorf("creating interpreter: %w", err)
+	}
+
+	filename := opts.Filename
+	if filename == "" {
+		filename = "main.go"
+	}
+	if err := interp.LoadFile(filename, opts.Source); err != nil {
+		return nil, fmt.Errorf("loading script: %w", err)
+	}
+
+	if err := interp.EvalDeclarations(ctx); err != nil {
+		return nil, fmt.Errorf("evaluating declarations: %w", err)
+	}
+
+	entryPoint := opts.EntryPoint
+	if entryPoint == "" {
+		entryPoint = "main"
+	}
+
+	fn, fscope, err := interp.FindFunction(entryPoint)
+	if err != nil {
+		return nil, fmt.Errorf("finding entry point %q: %w", entryPoint, err)
+	}
+
+	return interp.Execute(ctx, fn, nil, fscope)
+}
 
 // Interpreter is the main entry point for the minigo language.
 // It holds the state of the interpreter, including the scanner for package resolution
@@ -58,13 +124,69 @@ func WithStderr(w io.Writer) Option {
 	}
 }
 
-// WithGlobals allows injecting Go variables into the script's global scope.
-// The map key is the variable name in the script.
-// The value can be any Go variable, which will be made available via reflection.
+// WithGlobals allows injecting Go variables and functions into the script's global scope.
 func WithGlobals(globals map[string]any) Option {
 	return func(i *Interpreter) {
 		for name, value := range globals {
-			i.globalEnv.Set(name, &object.GoValue{Value: reflect.ValueOf(value)})
+			rv := reflect.ValueOf(value)
+			if rv.Kind() == reflect.Func {
+				// It's a function, so wrap it in a Builtin.
+				i.globalEnv.Set(name, &object.Builtin{
+					Fn: func(ctx *object.BuiltinContext, pos token.Pos, args ...object.Object) object.Object {
+						fnType := rv.Type()
+						numIn := fnType.NumIn()
+
+						// Check if the number of arguments is correct.
+						if fnType.IsVariadic() {
+							if len(args) < numIn-1 {
+								return ctx.NewError(pos, "wrong number of arguments for variadic function: want at least %d, got %d", numIn-1, len(args))
+							}
+						} else {
+							if len(args) != numIn {
+								return ctx.NewError(pos, "wrong number of arguments: want=%d, got=%d", numIn, len(args))
+							}
+						}
+
+						// Convert minigo args to reflect.Value
+						in := make([]reflect.Value, len(args))
+						for i, arg := range args {
+							var paramType reflect.Type
+							if fnType.IsVariadic() && i >= numIn-1 {
+								paramType = fnType.In(numIn - 1).Elem()
+							} else {
+								paramType = fnType.In(i)
+							}
+
+							val := reflect.New(paramType).Elem()
+							if err := unmarshal(arg, val); err != nil {
+								return ctx.NewError(pos, "argument %d type mismatch: %v", i, err)
+							}
+							in[i] = val
+						}
+
+						// Call the Go function
+						out := rv.Call(in)
+
+						// Convert reflect.Value result back to minigo object
+						if len(out) == 0 {
+							return object.NIL
+						}
+						if len(out) == 1 {
+							return fromReflectValue(out[0])
+						}
+
+						// Handle multiple return values
+						res := make([]object.Object, len(out))
+						for i, val := range out {
+							res[i] = fromReflectValue(val)
+						}
+						return &object.Tuple{Elements: res}
+					},
+				})
+			} else {
+				// It's a variable, so wrap it in a GoValue.
+				i.globalEnv.Set(name, &object.GoValue{Value: rv})
+			}
 		}
 	}
 }
@@ -217,6 +339,35 @@ func (r *Result) As(target any) error {
 		return fmt.Errorf("target must be a non-nil pointer, but got %T", target)
 	}
 	return unmarshal(r.Value, dstVal.Elem())
+}
+
+// fromReflectValue converts a reflect.Value to a minigo object.
+func fromReflectValue(val reflect.Value) object.Object {
+	if !val.IsValid() {
+		return object.NIL
+	}
+	// Use val.Interface() to get the underlying value
+	switch v := val.Interface().(type) {
+	case int:
+		return &object.Integer{Value: int64(v)}
+	case int64:
+		return &object.Integer{Value: v}
+	case float64:
+		return &object.Float{Value: v}
+	case string:
+		return &object.String{Value: v}
+	case bool:
+		if v {
+			return object.TRUE
+		}
+		return object.FALSE
+	case nil:
+		return object.NIL
+	default:
+		// For other types (slices, maps, structs, etc.), we can wrap them
+		// back into a GoValue. The script can then access them.
+		return &object.GoValue{Value: val}
+	}
 }
 
 // unmarshal is a recursive helper function that populates a Go `reflect.Value` (dst)

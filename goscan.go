@@ -63,7 +63,7 @@ type Scanner struct {
 	isWorkspace              bool
 	locators                 []*locator.Locator
 	moduleDirs               []string // temporary holder for module directories
-	declarationsOnlyPackages map[string]bool
+	declarationsOnlyPackages []string
 }
 
 // Fset returns the FileSet associated with the scanner.
@@ -407,20 +407,10 @@ func WithExternalTypeOverrides(overrides scanner.ExternalTypeOverride) ScannerOp
 func WithDeclarationsOnlyPackages(importPaths []string) ScannerOption {
 	return func(s *Scanner) error {
 		if s.scanner != nil {
-			if s.scanner.DeclarationsOnlyPackages == nil {
-				s.scanner.DeclarationsOnlyPackages = make(map[string]bool)
-			}
-			for _, p := range importPaths {
-				s.scanner.DeclarationsOnlyPackages[p] = true
-			}
+			s.scanner.DeclarationsOnlyPackages = append(s.scanner.DeclarationsOnlyPackages, importPaths...)
 		}
 		// Also store it on the goscan.Scanner for initialization phase
-		if s.declarationsOnlyPackages == nil {
-			s.declarationsOnlyPackages = make(map[string]bool)
-		}
-		for _, p := range importPaths {
-			s.declarationsOnlyPackages[p] = true
-		}
+		s.declarationsOnlyPackages = append(s.declarationsOnlyPackages, importPaths...)
 		return nil
 	}
 }
@@ -495,7 +485,7 @@ func New(options ...ScannerOption) (*Scanner, error) {
 	}
 	// Propagate declarations-only packages to the internal scanner
 	if s.declarationsOnlyPackages != nil {
-		initialScanner.DeclarationsOnlyPackages = s.declarationsOnlyPackages
+		initialScanner.DeclarationsOnlyPackages = append(initialScanner.DeclarationsOnlyPackages, s.declarationsOnlyPackages...)
 	}
 	s.scanner = initialScanner
 
@@ -533,12 +523,7 @@ func (s *Scanner) AddDeclarationsOnlyPackages(importPaths []string) {
 		// This should not happen if called after New()
 		return
 	}
-	if s.scanner.DeclarationsOnlyPackages == nil {
-		s.scanner.DeclarationsOnlyPackages = make(map[string]bool)
-	}
-	for _, p := range importPaths {
-		s.scanner.DeclarationsOnlyPackages[p] = true
-	}
+	s.scanner.DeclarationsOnlyPackages = append(s.scanner.DeclarationsOnlyPackages, importPaths...)
 }
 
 // ResolveType starts the type resolution process for a given field type.

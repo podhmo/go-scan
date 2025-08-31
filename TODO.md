@@ -115,6 +115,12 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] **`symgo`: Correctly scope function parameters**: Fixed a bug where function parameters and receivers were incorrectly set in the package scope instead of the function's local scope, causing "identifier not found" errors in nested blocks. The engine now also correctly handles analysis entry points by creating symbolic placeholders for function parameters that are not explicitly provided.
 - [x] **Block Statements**: The interpreter now correctly handles nested block statements `{...}` within function bodies, creating a new lexical scope and correctly tracing function calls inside them.
 
+### `symgo` Refinements
+- [ ] **Explicit Analysis Scopes**: Refactor the scanner configuration to explicitly distinguish between a `PrimaryAnalysisScope` (for deep execution) and a `SymbolicDependencyScope` (for declarations-only parsing). This would make analysis more hermetic and predictable, removing the need for implicit on-demand loading of out-of-policy packages.
+- [ ] **Expressive Unresolved Types**: Enhance the `scanner.TypeInfo` struct for unresolved types to include the type's `Kind` (e.g., interface, struct) if it can be determined. This would allow the policy-checking `ResolveType` to return more useful placeholders and eliminate the need to bypass the policy in `assignIdentifier`.
+- [ ] **Refactor redundant policy check**: Refactor the manual policy check in `evaluator.applyFunction` to directly use `resolver.ResolveType` for better clarity and consistency, removing the call to `resolveTypeWithoutPolicyCheck`.
+- [ ] **Proper Error Handling in Resolver**: The `resolver.ResolveType` and `resolveTypeWithoutPolicyCheck` methods currently discard the error returned by `fieldType.Resolve(ctx)`. This should be corrected to properly handle or propagate the error.
+
 ### Future Enhancements
 - [x] **`symgo`: Tracing and Debuggability**: Enhance the tracing mechanism to provide a more detailed view of the symbolic execution flow.
     - [x] **Contextual Logging**: Warning logs emitted during evaluation now include the function call site (name and position) where the warning occurred. This is achieved by capturing the call stack within the returned error object.

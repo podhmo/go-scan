@@ -447,3 +447,106 @@ func main() {
 		t.Error("expected lib.DoSomething to be called, but it was not")
 	}
 }
+
+func TestEvalCallExpr_OutOfPolicy_MultiReturn(t *testing.T) {
+	files := map[string]string{
+		"go.mod": "module example.com/me",
+		"helper/helper.go": `
+package helper
+func GetPair() (string, error) { return "ok", nil }
+`,
+		"main.go": `
+package main
+import "example.com/me/helper"
+func main() {
+	_, _ = helper.GetPair()
+}`,
+	}
+	dir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
+		mainPkg := pkgs[0]
+		if mainPkg.Name != "main" {
+			for _, p := range pkgs {
+				if p.Name == "main" {
+					mainPkg = p
+					break
+				}
+			}
+		}
+
+		// Policy: scan "main" package, but not "helper" package
+		scanPolicy := func(pkgPath string) bool {
+			return pkgPath == "example.com/me"
+		}
+
+		eval := New(s, s.Logger, nil, scanPolicy)
+		env := object.NewEnvironment()
+
+		// Evaluate main package to populate env
+		for _, file := range mainPkg.AstFiles {
+			eval.Eval(ctx, file, env, mainPkg)
+		}
+
+		// Manually create the placeholder for the external function call
+		// This simulates what would happen inside the evaluator when it encounters helper.GetPair
+		helperPkg, err := s.ScanPackageByImport(ctx, "example.com/me/helper")
+		if err != nil {
+			return fmt.Errorf("failed to scan helper package: %w", err)
+		}
+		var getPairFunc *goscan.FunctionInfo
+		for _, f := range helperPkg.Functions {
+			if f.Name == "GetPair" {
+				getPairFunc = f
+				break
+			}
+		}
+		if getPairFunc == nil {
+			return fmt.Errorf("could not find GetPair function in helper package")
+		}
+
+		// The resolver creates a placeholder because the helper package is out of policy.
+		fnPlaceholder := eval.resolver.ResolveFunction(&object.Package{
+			Path:        helperPkg.ImportPath,
+			ScannedInfo: helperPkg,
+		}, getPairFunc)
+
+		// Apply the function placeholder
+		result := eval.applyFunction(ctx, fnPlaceholder, []object.Object{}, mainPkg, token.NoPos)
+
+		// Check the result
+		retVal, ok := result.(*object.ReturnValue)
+		if !ok {
+			return fmt.Errorf("expected ReturnValue, got %T", result)
+		}
+		multiRet, ok := retVal.Value.(*object.MultiReturn)
+		if !ok {
+			return fmt.Errorf("expected MultiReturn, got %T", retVal.Value)
+		}
+		if len(multiRet.Values) != 2 {
+			return fmt.Errorf("expected 2 return values, got %d", len(multiRet.Values))
+		}
+
+		// Check the type of the first return value (string)
+		val1 := multiRet.Values[0]
+		if val1.FieldType().Name != "string" {
+			return fmt.Errorf("expected first return value to be string, got %s", val1.FieldType().Name)
+		}
+
+		// Check the type of the second return value (error)
+		val2 := multiRet.Values[1]
+		if val2.FieldType().Name != "error" {
+			return fmt.Errorf("expected second return value to be error, got %s", val2.FieldType().Name)
+		}
+		if val2.TypeInfo() == nil || val2.TypeInfo().Interface == nil {
+			return fmt.Errorf("expected second return value to have resolved TypeInfo for error interface")
+		}
+
+		return nil
+	}
+
+	if _, err := scantest.Run(t, t.Context(), dir, []string{"./..."}, action); err != nil {
+		t.Fatalf("scantest.Run() failed: %v", err)
+	}
+}

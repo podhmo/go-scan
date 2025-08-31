@@ -27,7 +27,7 @@ func main() {
 }
 `
 	// setup
-	ctx := context.Background()
+	ctx := t.Context()
 	files := map[string]string{
 		"go.mod":  "module a.b/c",
 		"main.go": source,
@@ -98,7 +98,7 @@ func main() {
 }
 `
 	// setup
-	ctx := context.Background()
+	ctx := t.Context()
 	files := map[string]string{
 		"go.mod":  "module a.b/c",
 		"main.go": source,

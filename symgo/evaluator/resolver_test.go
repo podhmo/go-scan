@@ -1,7 +1,6 @@
 package evaluator
 
 import (
-	"context"
 	"testing"
 
 	"github.com/podhmo/go-scan"
@@ -10,7 +9,7 @@ import (
 )
 
 func TestResolver(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Define a scan policy that only allows packages within "example.com/myapp".
 	scanPolicy := func(pkgPath string) bool {

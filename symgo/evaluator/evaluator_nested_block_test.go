@@ -1,7 +1,6 @@
 package evaluator_test
 
 import (
-	"context"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -42,7 +41,7 @@ func DoSomething() {}
 		t.Fatalf("goscan.New() failed: %+v", err)
 	}
 
-	pkgs, err := s.Scan(context.Background(), ".")
+	pkgs, err := s.Scan(t.Context(), ".")
 	if err != nil {
 		t.Fatalf("s.Scan() failed: %+v", err)
 	}
@@ -71,7 +70,7 @@ func DoSomething() {}
 	})
 
 	// Evaluate the file to load symbols
-	_, err = interp.Eval(context.Background(), pkg.AstFiles[filepath.Join(dir, "main.go")], pkg)
+	_, err = interp.Eval(t.Context(), pkg.AstFiles[filepath.Join(dir, "main.go")], pkg)
 	if err != nil {
 		t.Fatalf("interp.Eval(file) failed: %+v", err)
 	}
@@ -82,7 +81,7 @@ func DoSomething() {}
 		t.Fatal("could not find run function")
 	}
 
-	_, err = interp.Apply(context.Background(), mainFn, nil, pkg)
+	_, err = interp.Apply(t.Context(), mainFn, nil, pkg)
 	if err != nil {
 		t.Fatalf("Apply() failed: %+v", err)
 	}
@@ -127,7 +126,7 @@ func run() (int, int) {
 		t.Fatalf("goscan.New() failed: %+v", err)
 	}
 
-	pkgs, err := s.Scan(context.Background(), ".")
+	pkgs, err := s.Scan(t.Context(), ".")
 	if err != nil {
 		t.Fatalf("s.Scan() failed: %+v", err)
 	}
@@ -139,7 +138,7 @@ func run() (int, int) {
 	}
 
 	// Evaluate the file to load symbols
-	_, err = interp.Eval(context.Background(), pkg.AstFiles[filepath.Join(dir, "main.go")], pkg)
+	_, err = interp.Eval(t.Context(), pkg.AstFiles[filepath.Join(dir, "main.go")], pkg)
 	if err != nil {
 		t.Fatalf("interp.Eval(file) failed: %+v", err)
 	}
@@ -149,7 +148,7 @@ func run() (int, int) {
 		t.Fatalf("run function not found")
 	}
 
-	ret, err := interp.Apply(context.Background(), mainFn, nil, pkg)
+	ret, err := interp.Apply(t.Context(), mainFn, nil, pkg)
 	if err != nil {
 		t.Fatalf("Apply() failed: %v", err)
 	}

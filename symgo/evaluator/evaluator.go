@@ -891,6 +891,13 @@ func (e *Evaluator) ensurePackageEnvPopulated(ctx context.Context, pkgObj *objec
 	}
 }
 
+func (e *Evaluator) handleUnscannablePackage(ctx context.Context, val *object.Package, selName string, err error) object.Object {
+	e.logWithContext(ctx, slog.LevelWarn, "could not scan package, treating as external", "package", val.Path, "error", err)
+	placeholder := &object.SymbolicPlaceholder{Reason: fmt.Sprintf("unscannable symbol %s.%s", val.Path, selName)}
+	val.Env.Set(selName, placeholder)
+	return placeholder
+}
+
 func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
 	e.logger.Debug("evalSelectorExpr", "selector", n.Sel.Name)
 
@@ -971,10 +978,7 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 			}
 			pkgInfo, err := e.resolver.resolvePackageWithoutPolicyCheck(ctx, val.Path)
 			if err != nil {
-				e.logWithContext(ctx, slog.LevelWarn, "could not scan package, treating as external", "package", val.Path, "error", err)
-				placeholder := &object.SymbolicPlaceholder{Reason: fmt.Sprintf("unscannable symbol %s.%s", val.Path, n.Sel.Name)}
-				val.Env.Set(n.Sel.Name, placeholder)
-				return placeholder
+				return e.handleUnscannablePackage(ctx, val, n.Sel.Name, err)
 			}
 			val.ScannedInfo = pkgInfo
 		}
@@ -1001,10 +1005,7 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 			}
 			pkgInfo, err := e.resolver.resolvePackageWithoutPolicyCheck(ctx, val.Path)
 			if err != nil {
-				e.logWithContext(ctx, slog.LevelWarn, "could not scan package, treating as external", "package", val.Path, "error", err)
-				placeholder := &object.SymbolicPlaceholder{Reason: fmt.Sprintf("unscannable symbol %s.%s", val.Path, n.Sel.Name)}
-				val.Env.Set(n.Sel.Name, placeholder)
-				return placeholder
+				return e.handleUnscannablePackage(ctx, val, n.Sel.Name, err)
 			}
 			val.ScannedInfo = pkgInfo
 		}

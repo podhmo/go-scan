@@ -89,7 +89,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] **Map Literals**: The interpreter does not have concrete support for map literals; they are treated as symbolic placeholders. (Note: Now symbolically evaluated, tracing calls in keys and values.)
 - [x] **Function Literals as Arguments**: The interpreter now scans the bodies of function literals passed as arguments to other functions, allowing it to trace calls within them (e.g., `t.Run(..., func() { ... })`).
 - [x] **Function Literals as Return Values**: The interpreter now correctly traces calls inside closures that are returned from other functions by ensuring that package-level environments are correctly populated and captured.
-- [ ] **Generics**:
+- [x] **Generics**:
   - [x] Support for evaluating calls to generic functions with explicit type arguments (e.g., `myFunc[int](...)`).
   - [x] Support for evaluating generic type instantiations in composite literals (e.g., `MyType[int]{...}`).
   - [x] The evaluator is now robust to calls to generic functions where type arguments are omitted (e.g., `myFunc(...)`). It does not crash and treats the call as symbolic. Full type inference is not implemented.

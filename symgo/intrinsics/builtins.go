@@ -33,10 +33,49 @@ func BuiltinMake(args ...object.Object) object.Object {
 			Message: fmt.Sprintf("wrong number of arguments. got=%d, want=at least 1", len(args)),
 		}
 	}
-	// In symbolic execution, we just acknowledge the call and return a placeholder.
-	// We don't need to simulate the actual allocation.
-	// The type information is in args[0], but for now, we just return a generic placeholder.
-	return &object.SymbolicPlaceholder{Reason: "make(...) call"}
+
+	typeArg := args[0]
+	if typeArg == nil {
+		return &object.Error{Message: "make's first argument cannot be nil"}
+	}
+
+	fieldType := typeArg.FieldType()
+	if fieldType == nil {
+		// Fallback if type information is not available.
+		return &object.SymbolicPlaceholder{Reason: "make(...) call with untyped arg"}
+	}
+
+	if fieldType.IsChan {
+		ch := &object.Channel{
+			ChanFieldType: fieldType,
+		}
+		ch.SetFieldType(fieldType)
+		// The resolved type info for a channel is itself, essentially.
+		// No deeper resolution is needed for the type itself.
+		ch.SetTypeInfo(typeArg.TypeInfo())
+		return ch
+	}
+
+	if fieldType.IsSlice {
+		slice := &object.Slice{
+			SliceFieldType: fieldType,
+		}
+		slice.SetFieldType(fieldType)
+		slice.SetTypeInfo(typeArg.TypeInfo())
+		return slice
+	}
+
+	if fieldType.IsMap {
+		m := &object.Map{
+			MapFieldType: fieldType,
+		}
+		m.SetFieldType(fieldType)
+		m.SetTypeInfo(typeArg.TypeInfo())
+		return m
+	}
+
+	// Fallback for other types or when type info is not available
+	return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("make(%s) call", fieldType.String())}
 }
 
 // BuiltinAppend is the intrinsic function for the built-in `append`.

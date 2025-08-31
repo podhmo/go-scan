@@ -983,6 +983,10 @@ func (s *Scanner) TypeInfoFromExpr(ctx context.Context, expr ast.Expr, currentTy
 		ft.Name = "map"
 		ft.MapKey = s.TypeInfoFromExpr(ctx, t.Key, currentTypeParams, info, importLookup)
 		ft.Elem = s.TypeInfoFromExpr(ctx, t.Value, currentTypeParams, info, importLookup)
+	case *ast.ChanType:
+		ft.IsChan = true
+		ft.Name = "chan"
+		ft.Elem = s.TypeInfoFromExpr(ctx, t.Value, currentTypeParams, info, importLookup)
 	case *ast.InterfaceType:
 		// Parse the anonymous interface to get its structure.
 		interfaceInfo := s.parseInterfaceType(ctx, t, currentTypeParams, info, importLookup)

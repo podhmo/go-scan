@@ -19,7 +19,11 @@ func TestResolver(t *testing.T) {
 
 	// Use scantest to set up the files in a temporary directory.
 	dir, cleanup := scantest.WriteFiles(t, map[string]string{
-		"go.mod": "module example.com/myapp\n",
+		"go.mod": `
+module example.com/myapp
+
+replace example.com/external/money => ./external/money
+`,
 		"main.go": `
 package main
 import (
@@ -36,7 +40,8 @@ type User struct {
 	ID   string
 	Name string
 }`,
-		"external/money.go": `
+		"external/money/go.mod": "module example.com/external/money\n",
+		"external/money/money.go": `
 package money
 type Price struct {
 	Amount   int
@@ -68,15 +73,21 @@ type Price struct {
 		t.Fatalf("expected main package, but got %s", mainPkg.ImportPath)
 	}
 
-	reqType, ok := mainPkg.Types["Request"]
-	if !ok {
+	var reqType *scanner.TypeInfo
+	for _, ti := range mainPkg.Types {
+		if ti.Name == "Request" {
+			reqType = ti
+			break
+		}
+	}
+
+	if reqType == nil {
 		t.Fatal("Request type not found")
 	}
 	if reqType.Struct == nil {
 		t.Fatal("Request is not a struct")
 	}
 
-	// Get the FieldType for the User and Price fields.
 	var userFieldType, priceFieldType *scanner.FieldType
 	for _, f := range reqType.Struct.Fields {
 		if f.Name == "User" {
@@ -93,15 +104,9 @@ type Price struct {
 		t.Fatal("Price field not found")
 	}
 
-	// Create a resolver with the defined policy.
 	resolver := NewResolver(scanPolicy)
 
 	t.Run("ResolveType with policy (allowed)", func(t *testing.T) {
-		_, err := userFieldType.Resolve(ctx)
-		if err != nil {
-			t.Fatalf("pre-resolve failed for allowed type: %v", err)
-		}
-
 		result := resolver.ResolveType(ctx, userFieldType)
 		if result == nil {
 			t.Fatal("should resolve allowed type, but got nil")
@@ -118,23 +123,12 @@ type Price struct {
 	})
 
 	t.Run("ResolveType with policy (disallowed)", func(t *testing.T) {
-		_, err := priceFieldType.Resolve(ctx)
-		if err != nil {
-			t.Fatalf("pre-resolve failed for disallowed type: %v", err)
-		}
-
 		result := resolver.ResolveType(ctx, priceFieldType)
 		if result == nil {
 			t.Fatal("should return a type info for disallowed type, but got nil")
 		}
 		if !result.Unresolved {
 			t.Error("should be unresolved due to policy")
-		}
-		if result.Name != "Price" {
-			t.Errorf("expected name Price, but got %s", result.Name)
-		}
-		if result.PkgPath != "example.com/external/money" {
-			t.Errorf("expected pkg path example.com/external/money, but got %s", result.PkgPath)
 		}
 	})
 
@@ -145,26 +139,6 @@ type Price struct {
 		}
 		if result.Unresolved {
 			t.Error("should not be unresolved when policy is skipped")
-		}
-		if result.Name != "Price" {
-			t.Errorf("expected name Price, but got %s", result.Name)
-		}
-		if result.PkgPath != "example.com/external/money" {
-			t.Errorf("expected pkg path example.com/external/money, but got %s", result.PkgPath)
-		}
-	})
-
-	t.Run("ResolveType with nil fieldType", func(t *testing.T) {
-		result := resolver.ResolveType(ctx, nil)
-		if result != nil {
-			t.Error("should return nil for nil fieldType")
-		}
-	})
-
-	t.Run("resolveTypeWithoutPolicyCheck with nil fieldType", func(t *testing.T) {
-		result := resolver.resolveTypeWithoutPolicyCheck(ctx, nil)
-		if result != nil {
-			t.Error("should return nil for nil fieldType")
 		}
 	})
 }

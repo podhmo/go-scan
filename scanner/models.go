@@ -40,6 +40,7 @@ const (
 	AliasKind
 	FuncKind
 	InterfaceKind
+	UnknownKind
 )
 
 // PackageResolver is an interface that can resolve an import path to a package definition.
@@ -129,6 +130,7 @@ func NewUnresolvedTypeInfo(pkgPath, name string) *TypeInfo {
 		PkgPath:    pkgPath,
 		Name:       name,
 		Unresolved: true,
+		Kind:       UnknownKind,
 	}
 }
 

@@ -23,6 +23,8 @@ const (
 	BOOLEAN_OBJ      ObjectType = "BOOLEAN"
 	STRING_OBJ       ObjectType = "STRING"
 	FUNCTION_OBJ     ObjectType = "FUNCTION"
+	INSTANTIATED_FUNCTION_OBJ ObjectType = "INSTANTIATED_FUNCTION"
+	TYPE_OBJ                  ObjectType = "TYPE"
 	ERROR_OBJ        ObjectType = "ERROR"
 	SYMBOLIC_OBJ     ObjectType = "SYMBOLIC_PLACEHOLDER"
 	RETURN_VALUE_OBJ ObjectType = "RETURN_VALUE"
@@ -636,6 +638,56 @@ func (v *Variadic) Inspect() string {
 }
 
 var ()
+
+// --- InstantiatedFunction Object ---
+
+// InstantiatedFunction represents a generic function that has been instantiated
+// with concrete type arguments.
+type InstantiatedFunction struct {
+	*Function
+	TypeArguments []ast.Expr
+	TypeArgs      []*scanner.TypeInfo // Resolved type arguments
+}
+
+// Type returns the type of the InstantiatedFunction object.
+func (f *InstantiatedFunction) Type() ObjectType { return INSTANTIATED_FUNCTION_OBJ }
+
+// Inspect returns a string representation of the instantiated function.
+func (f *InstantiatedFunction) Inspect() string {
+	var args []string
+	for _, arg := range f.TypeArgs {
+		if arg != nil {
+			args = append(args, arg.Name)
+		} else {
+			args = append(args, "<unresolved>")
+		}
+	}
+	name := "<closure>"
+	if f.Function.Name != nil {
+		name = f.Function.Name.Name
+	}
+	return fmt.Sprintf("func %s[%s]() { ... }", name, strings.Join(args, ", "))
+}
+
+// --- Type Object ---
+
+// Type represents a type value that can be stored in the environment.
+// This is used to represent type parameters in generic functions.
+type Type struct {
+	BaseObject
+	// TypeName is the string representation of the type, e.g., "int".
+	TypeName string
+	// ResolvedType is the detailed type information from the scanner.
+	ResolvedType *scanner.TypeInfo
+}
+
+// Type returns the type of the Type object.
+func (t *Type) Type() ObjectType { return TYPE_OBJ }
+
+// Inspect returns a string representation of the type.
+func (t *Type) Inspect() string {
+	return t.TypeName
+}
 
 // --- Tracer Interface ---
 

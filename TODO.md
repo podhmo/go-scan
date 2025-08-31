@@ -89,7 +89,11 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] **Map Literals**: The interpreter does not have concrete support for map literals; they are treated as symbolic placeholders. (Note: Now symbolically evaluated, tracing calls in keys and values.)
 - [x] **Function Literals as Arguments**: The interpreter now scans the bodies of function literals passed as arguments to other functions, allowing it to trace calls within them (e.g., `t.Run(..., func() { ... })`).
 - [x] **Function Literals as Return Values**: The interpreter now correctly traces calls inside closures that are returned from other functions by ensuring that package-level environments are correctly populated and captured.
-- [ ] **Generics**: The interpreter does not support generic functions or types.
+- [ ] **Generics**:
+  - [x] Support for evaluating calls to generic functions with explicit type arguments (e.g., `myFunc[int](...)`).
+  - [x] Support for evaluating generic type instantiations in composite literals (e.g., `MyType[int]{...}`).
+  - [ ] Support for type inference on generic function calls (e.g., `myFunc(...)`).
+  - [ ] Support for generic type constraints.
 - [x] **Channels**: The interpreter now has a concrete `object.Channel` type. The `make` intrinsic correctly creates channel objects, and receive operations (`<-ch`) are symbolically evaluated to produce a value of the correct element type. This provides the foundation for more advanced channel analysis.
 - [x] **Stateful Type Tracking for Variables**: The `symgo` evaluator now correctly propagates type information (including pointer-ness) for variables during assignments and declarations. This allows for accurate method resolution on variables holding concrete types, pointer types, and interfaces, fixing several state-tracking-related bugs.
 - [x] **LHS of Assignments**: The interpreter now evaluates expressions on the left-hand side of field assignments (e.g., in `foo.bar = baz`), ensuring that function calls or type assertions within `foo` are correctly traced.

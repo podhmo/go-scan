@@ -65,7 +65,8 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 ## To Be Implemented
 
 ### `minigo` Refinements ([docs/plan-minigo.md](./docs/plan-minigo.md))
-- [ ] Write comprehensive documentation for the API, supported language features, and usage examples.
+- [x] Write comprehensive documentation for the API, supported language features, and usage examples.
+- [ ] Implement `defer` and `recover` statements.
 
 ### `minigo` FFI and Language Limitations
 - [x] **Fix empty slice type inference**: Type inference for empty slice literals is weak and defaults to `[]any`. This causes legitimate generic functions (like `slices.Sort`) to fail type checks when they shouldn't. The interpreter should ideally preserve the declared type (e.g., `[]int`) even if the literal is empty. (Note: This is fixed for empty slice and map literals.)

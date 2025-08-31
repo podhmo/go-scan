@@ -103,7 +103,7 @@ type Price struct {
 		t.Fatal("Price field not found")
 	}
 
-	resolver := NewResolver(scanPolicy)
+	resolver := NewResolver(scanPolicy, s)
 
 	t.Run("ResolveType with policy (allowed)", func(t *testing.T) {
 		result := resolver.ResolveType(ctx, userFieldType)

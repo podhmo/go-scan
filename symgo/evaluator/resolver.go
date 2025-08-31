@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/podhmo/go-scan/scanner"
+	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/symgo/object"
 )
 
@@ -15,15 +16,17 @@ import (
 // the caller can guarantee the safety of the operation.
 type Resolver struct {
 	ScanPolicy object.ScanPolicyFunc
+	scanner    *goscan.Scanner
 }
 
 // NewResolver creates a new Resolver.
-func NewResolver(policy object.ScanPolicyFunc) *Resolver {
+func NewResolver(policy object.ScanPolicyFunc, scanner *goscan.Scanner) *Resolver {
 	if policy == nil {
 		policy = func(pkgPath string) bool { return true }
 	}
 	return &Resolver{
 		ScanPolicy: policy,
+		scanner:    scanner,
 	}
 }
 
@@ -117,4 +120,9 @@ func (r *Resolver) resolveType(ctx context.Context, fieldType *scanner.FieldType
 	// Policy allows scanning, or it's a local/built-in type, or scanning was skipped.
 	resolvedType, _ := fieldType.Resolve(ctx)
 	return resolvedType
+}
+
+// resolvePackageWithoutPolicyCheck resolves a package without enforcing the scan policy.
+func (r *Resolver) resolvePackageWithoutPolicyCheck(ctx context.Context, path string) (*scanner.PackageInfo, error) {
+	return r.scanner.ScanPackageByImport(ctx, path)
 }

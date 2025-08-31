@@ -60,7 +60,7 @@ func New(scanner *goscan.Scanner, logger *slog.Logger, tracer object.Tracer, sca
 		logger:            logger,
 		tracer:            tracer,
 		interfaceBindings: make(map[string]*goscan.TypeInfo),
-		resolver:          NewResolver(scanPolicy),
+		resolver:          NewResolver(scanPolicy, scanner),
 		initializedPkgs:   make(map[string]bool),
 		pkgCache:          make(map[string]*object.Package),
 	}
@@ -812,7 +812,7 @@ func (e *Evaluator) getOrLoadPackage(ctx context.Context, path string) (*object.
 		return pkg, nil
 	}
 
-	scannedPkg, err := e.scanner.ScanPackageByImport(ctx, path)
+	scannedPkg, err := e.resolver.resolvePackageWithoutPolicyCheck(ctx, path)
 	if err != nil {
 		// Even if scanning fails, we create a placeholder package object to cache the failure
 		// and avoid re-scanning. The ScannedInfo will be nil.
@@ -969,7 +969,7 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 			if e.scanner == nil {
 				return e.newError(n.Pos(), "scanner is not available, cannot load package %q", val.Path)
 			}
-			pkgInfo, err := e.scanner.ScanPackageByImport(ctx, val.Path)
+			pkgInfo, err := e.resolver.resolvePackageWithoutPolicyCheck(ctx, val.Path)
 			if err != nil {
 				e.logWithContext(ctx, slog.LevelWarn, "could not scan package, treating as external", "package", val.Path, "error", err)
 				placeholder := &object.SymbolicPlaceholder{Reason: fmt.Sprintf("unscannable symbol %s.%s", val.Path, n.Sel.Name)}
@@ -999,7 +999,7 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 			if e.scanner == nil {
 				return e.newError(n.Pos(), "scanner is not available, cannot load package %q", val.Path)
 			}
-			pkgInfo, err := e.scanner.ScanPackageByImport(ctx, val.Path)
+			pkgInfo, err := e.resolver.resolvePackageWithoutPolicyCheck(ctx, val.Path)
 			if err != nil {
 				e.logWithContext(ctx, slog.LevelWarn, "could not scan package, treating as external", "package", val.Path, "error", err)
 				placeholder := &object.SymbolicPlaceholder{Reason: fmt.Sprintf("unscannable symbol %s.%s", val.Path, n.Sel.Name)}

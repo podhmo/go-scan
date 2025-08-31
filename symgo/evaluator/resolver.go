@@ -14,13 +14,16 @@ import (
 // Bypassing the policy check is considered unsafe and should only be done when
 // the caller can guarantee the safety of the operation.
 type Resolver struct {
-	scanPolicy object.ScanPolicyFunc
+	ScanPolicy object.ScanPolicyFunc
 }
 
 // NewResolver creates a new Resolver.
 func NewResolver(policy object.ScanPolicyFunc) *Resolver {
+	if policy == nil {
+		policy = func(pkgPath string) bool { return true }
+	}
 	return &Resolver{
-		scanPolicy: policy,
+		ScanPolicy: policy,
 	}
 }
 
@@ -37,17 +40,9 @@ func (r *Resolver) resolveTypeWithoutPolicyCheck(ctx context.Context, fieldType 
 	return r.resolveType(ctx, fieldType, false)
 }
 
-// ShouldScan checks if a given package path should be scanned based on the policy.
-func (r *Resolver) ShouldScan(pkgPath string) bool {
-	if r.scanPolicy == nil {
-		return true // If no policy is set, everything is allowed.
-	}
-	return r.scanPolicy(pkgPath)
-}
-
 // ResolveFunction creates a function object or a symbolic placeholder based on the scan policy.
 func (r *Resolver) ResolveFunction(pkg *object.Package, funcInfo *scanner.FunctionInfo) object.Object {
-	if r.ShouldScan(pkg.Path) {
+	if r.ScanPolicy(pkg.Path) {
 		return &object.Function{
 			Name:       funcInfo.AstDecl.Name,
 			Parameters: funcInfo.AstDecl.Type.Params,
@@ -114,7 +109,7 @@ func (r *Resolver) resolveType(ctx context.Context, fieldType *scanner.FieldType
 	}
 
 	// Only perform policy check if requested.
-	if shouldScan && r.scanPolicy != nil && fieldType.FullImportPath != "" && !r.scanPolicy(fieldType.FullImportPath) {
+	if shouldScan && fieldType.FullImportPath != "" && !r.ScanPolicy(fieldType.FullImportPath) {
 		// Policy says NO. Create a placeholder for the unresolved type.
 		return scanner.NewUnresolvedTypeInfo(fieldType.FullImportPath, fieldType.TypeName)
 	}

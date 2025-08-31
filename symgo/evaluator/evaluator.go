@@ -840,7 +840,7 @@ func (e *Evaluator) ensurePackageEnvPopulated(ctx context.Context, pkgObj *objec
 	pkgInfo := pkgObj.ScannedInfo
 	env := pkgObj.Env
 
-	shouldScan := e.resolver.ShouldScan(pkgInfo.ImportPath)
+	shouldScan := e.resolver.ScanPolicy(pkgInfo.ImportPath)
 
 	if !e.initializedPkgs[pkgInfo.ImportPath] {
 		e.logger.DebugContext(ctx, "populating package-level constants", "package", pkgInfo.ImportPath)
@@ -1181,7 +1181,7 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 		if typeInfo != nil && typeInfo.Struct != nil {
 			for _, field := range typeInfo.Struct.Fields {
 				if field.Embedded {
-					if field.Type.FullImportPath != "" && !e.resolver.ShouldScan(field.Type.FullImportPath) {
+					if field.Type.FullImportPath != "" && !e.resolver.ScanPolicy(field.Type.FullImportPath) {
 						// This is an embedded type from an out-of-policy package.
 						// We can assume the method call is valid and treat it symbolically.
 						e.logger.DebugContext(ctx, "treating method call as symbolic on embedded unresolved type", "method", n.Sel.Name)
@@ -1987,7 +1987,7 @@ func (e *Evaluator) evalIdent(ctx context.Context, n *ast.Ident, env *object.Env
 
 	e.logger.Debug("evalIdent: not found in env or intrinsics", "name", n.Name)
 
-	if pkg != nil && !e.resolver.ShouldScan(pkg.ImportPath) {
+	if pkg != nil && !e.resolver.ScanPolicy(pkg.ImportPath) {
 		e.logger.DebugContext(ctx, "treating undefined identifier as symbolic in out-of-policy package", "ident", n.Name, "package", pkg.ImportPath)
 		return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("undefined identifier %s in out-of-policy package", n.Name)}
 	}
@@ -2385,7 +2385,7 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 				fieldType := e.scanner.TypeInfoFromExpr(ctx, field.Type, nil, fn.Package, importLookup)
 
 				var resolvedType *scanner.TypeInfo
-				if fieldType.FullImportPath != "" && !e.resolver.ShouldScan(fieldType.FullImportPath) {
+				if fieldType.FullImportPath != "" && !e.resolver.ScanPolicy(fieldType.FullImportPath) {
 					resolvedType = scanner.NewUnresolvedTypeInfo(fieldType.FullImportPath, fieldType.TypeName)
 				} else {
 					resolvedType, _ = fieldType.Resolve(ctx)
@@ -2634,7 +2634,7 @@ func (e *Evaluator) findFieldRecursive(ctx context.Context, typeInfo *scanner.Ty
 			}
 
 			var embeddedTypeInfo *scanner.TypeInfo
-			if field.Type.FullImportPath != "" && !e.resolver.ShouldScan(field.Type.FullImportPath) {
+			if field.Type.FullImportPath != "" && !e.resolver.ScanPolicy(field.Type.FullImportPath) {
 				embeddedTypeInfo = scanner.NewUnresolvedTypeInfo(field.Type.FullImportPath, field.Type.TypeName)
 			} else {
 				embeddedTypeInfo, _ = field.Type.Resolve(ctx)
@@ -2685,7 +2685,7 @@ func (e *Evaluator) findMethodRecursive(ctx context.Context, typeInfo *scanner.T
 		for _, field := range typeInfo.Struct.Fields {
 			if field.Embedded {
 				var embeddedTypeInfo *scanner.TypeInfo
-				if field.Type.FullImportPath != "" && !e.resolver.ShouldScan(field.Type.FullImportPath) {
+				if field.Type.FullImportPath != "" && !e.resolver.ScanPolicy(field.Type.FullImportPath) {
 					embeddedTypeInfo = scanner.NewUnresolvedTypeInfo(field.Type.FullImportPath, field.Type.TypeName)
 				} else {
 					embeddedTypeInfo, _ = field.Type.Resolve(ctx)
@@ -2716,7 +2716,7 @@ func (e *Evaluator) findDirectMethodOnType(ctx context.Context, typeInfo *scanne
 		return nil, nil
 	}
 
-	if !e.resolver.ShouldScan(typeInfo.PkgPath) {
+	if !e.resolver.ScanPolicy(typeInfo.PkgPath) {
 		return nil, nil
 	}
 

@@ -34,6 +34,7 @@ const (
 	NIL_OBJ          ObjectType = "NIL"
 	SLICE_OBJ        ObjectType = "SLICE"
 	MAP_OBJ          ObjectType = "MAP"
+	CHANNEL_OBJ      ObjectType = "CHANNEL"
 	MULTI_RETURN_OBJ ObjectType = "MULTI_RETURN"
 	BREAK_OBJ        ObjectType = "BREAK"
 	CONTINUE_OBJ     ObjectType = "CONTINUE"
@@ -457,6 +458,26 @@ func (m *Map) Inspect() string {
 		return m.MapFieldType.String()
 	}
 	return "map[<unknown>]<unknown>"
+}
+
+// --- Channel Object ---
+
+// Channel represents a channel object. Its type is represented by a FieldType,
+// which captures the channel structure (e.g., chan int).
+type Channel struct {
+	BaseObject
+	ChanFieldType *scanner.FieldType
+}
+
+// Type returns the type of the Channel object.
+func (c *Channel) Type() ObjectType { return CHANNEL_OBJ }
+
+// Inspect returns a string representation of the channel type.
+func (c *Channel) Inspect() string {
+	if c.ChanFieldType != nil {
+		return c.ChanFieldType.String()
+	}
+	return "chan <unknown>"
 }
 
 // --- Environment ---

@@ -259,6 +259,7 @@ type FieldType struct {
 	IsPointer    bool         `json:"isPointer,omitempty"`
 	IsSlice      bool         `json:"isSlice,omitempty"`
 	IsMap        bool         `json:"isMap,omitempty"`
+	IsChan       bool         `json:"isChan,omitempty"`
 	IsTypeParam  bool         `json:"isTypeParam,omitempty"`  // True if this FieldType refers to a type parameter
 	IsConstraint bool         `json:"isConstraint,omitempty"` // True if this FieldType represents a type constraint
 	TypeArgs     []*FieldType `json:"typeArgs,omitempty"`     // For instantiated generic types, e.g., T in List[T]

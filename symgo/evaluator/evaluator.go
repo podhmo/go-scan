@@ -217,9 +217,23 @@ func (e *Evaluator) Eval(ctx context.Context, node ast.Node, env *object.Environ
 		// we just need to acknowledge it without producing a concrete value.
 		return &object.SymbolicPlaceholder{Reason: "map type expression"}
 	case *ast.ChanType:
-		// Similar to other type expressions, we don't need to evaluate it to a concrete value,
-		// just prevent an "unimplemented" error.
-		return &object.SymbolicPlaceholder{Reason: "channel type expression"}
+		if pkg == nil || pkg.Fset == nil {
+			return e.newError(n.Pos(), "package info or fset is missing, cannot resolve types for chan type")
+		}
+		file := pkg.Fset.File(n.Pos())
+		if file == nil {
+			return e.newError(n.Pos(), "could not find file for node position")
+		}
+		astFile, ok := pkg.AstFiles[file.Name()]
+		if !ok {
+			return e.newError(n.Pos(), "could not find ast.File for path: %s", file.Name())
+		}
+		importLookup := e.scanner.BuildImportLookup(astFile)
+
+		fieldType := e.scanner.TypeInfoFromExpr(ctx, n, nil, pkg, importLookup)
+		placeholder := &object.SymbolicPlaceholder{Reason: "channel type expression"}
+		placeholder.SetFieldType(fieldType)
+		return placeholder
 	case *ast.FuncType:
 		// Similar to other type expressions, we don't need to evaluate it to a concrete value,
 		// just prevent an "unimplemented" error.
@@ -588,9 +602,31 @@ func (e *Evaluator) evalUnaryExpr(ctx context.Context, node *ast.UnaryExpr, env 
 		ptr.SetTypeInfo(val.TypeInfo())
 		return ptr
 	case token.ARROW: // <-
-		// For a channel receive `<-ch`, we just need to evaluate `ch` itself
-		// to trace any function calls that produce the channel.
-		return e.Eval(ctx, node.X, env, pkg)
+		// Channel receive `<-ch`
+		chObj := e.Eval(ctx, node.X, env, pkg)
+		if isError(chObj) {
+			return chObj
+		}
+
+		// Unwrap if it's a variable
+		if v, ok := chObj.(*object.Variable); ok {
+			chObj = v.Value
+		}
+
+		if ch, ok := chObj.(*object.Channel); ok {
+			if ch.ChanFieldType != nil && ch.ChanFieldType.Elem != nil {
+				elemFieldType := ch.ChanFieldType.Elem
+				resolvedType := e.resolver.ResolveType(ctx, elemFieldType)
+				placeholder := &object.SymbolicPlaceholder{
+					Reason: fmt.Sprintf("value received from channel of type %s", ch.ChanFieldType.String()),
+				}
+				placeholder.SetFieldType(elemFieldType)
+				placeholder.SetTypeInfo(resolvedType)
+				return placeholder
+			}
+		}
+		// Fallback for untyped or non-channel objects
+		return &object.SymbolicPlaceholder{Reason: "value received from non-channel or untyped object"}
 	default:
 		return e.newError(node.Pos(), "unknown unary operator: %s", node.Op)
 	}

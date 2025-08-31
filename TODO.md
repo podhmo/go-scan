@@ -103,7 +103,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     - [x] `*ast.Ellipsis` (Note: Implemented for variadic arguments in function calls and definitions.)
     - [ ] `*ast.FuncType`
     - [x] `*ast.InterfaceType`
-    - [ ] `*ast.MapType`
+    - [x] `*ast.MapType`
     - [x] `*ast.StructType`
     - [x] `*ast.EmptyStmt`
     - [x] `*ast.IncDecStmt`

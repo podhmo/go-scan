@@ -16,6 +16,9 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+// resolutionCacheKey is used to pass a map for tracking in-progress type resolutions.
+type resolutionCacheKey struct{}
+
 // fileParseResult holds the result of parsing a single Go source file.
 type fileParseResult struct {
 	filePath string
@@ -885,10 +888,142 @@ func (s *Scanner) parseFieldList(ctx context.Context, fields []*ast.Field, curre
 	return result
 }
 
+// buildKey creates a canonical string key for a type expression to detect recursion.
+func (s *Scanner) buildKey(expr ast.Expr, pkg *PackageInfo, importLookup map[string]string, currentTypeParams []*TypeParamInfo) string {
+	switch n := expr.(type) {
+	case *ast.Ident:
+		// Check if it's a generic type parameter first.
+		for _, p := range currentTypeParams {
+			if p.Name == n.Name {
+				return n.Name // Type parameters are unique by name within their scope.
+			}
+		}
+		// Assume it's a type in the current package.
+		if pkg != nil {
+			return pkg.ImportPath + "." + n.Name
+		}
+		return n.Name
+	case *ast.SelectorExpr:
+		// Add a nil check for n.X before proceeding.
+		if n.X == nil {
+			return "." + n.Sel.Name
+		}
+		if pkgIdent, ok := n.X.(*ast.Ident); ok {
+			if pkgPath, ok := importLookup[pkgIdent.Name]; ok {
+				return pkgPath + "." + n.Sel.Name
+			}
+		}
+		// Fallback for complex selectors, though less common for types.
+		return s.buildKey(n.X, pkg, importLookup, currentTypeParams) + "." + n.Sel.Name
+	case *ast.IndexExpr: // G[T]
+		base := s.buildKey(n.X, pkg, importLookup, currentTypeParams)
+		arg := s.buildKey(n.Index, pkg, importLookup, currentTypeParams)
+		return fmt.Sprintf("%s[%s]", base, arg)
+	case *ast.IndexListExpr: // G[T, U]
+		base := s.buildKey(n.X, pkg, importLookup, currentTypeParams)
+		args := make([]string, len(n.Indices))
+		for i, idx := range n.Indices {
+			args[i] = s.buildKey(idx, pkg, importLookup, currentTypeParams)
+		}
+		return fmt.Sprintf("%s[%s]", base, strings.Join(args, ","))
+	case *ast.StarExpr:
+		return "*" + s.buildKey(n.X, pkg, importLookup, currentTypeParams)
+	case *ast.ArrayType:
+		return "[]" + s.buildKey(n.Elt, pkg, importLookup, currentTypeParams)
+	case *ast.MapType:
+		k := s.buildKey(n.Key, pkg, importLookup, currentTypeParams)
+		v := s.buildKey(n.Value, pkg, importLookup, currentTypeParams)
+		return fmt.Sprintf("map[%s]%s", k, v)
+	case *ast.ChanType:
+		v := s.buildKey(n.Value, pkg, importLookup, currentTypeParams)
+		return "chan " + v
+	case *ast.FuncType:
+		var params []string
+		if n.Params != nil {
+			params = make([]string, len(n.Params.List))
+			for i, p := range n.Params.List {
+				params[i] = s.buildKey(p.Type, pkg, importLookup, currentTypeParams)
+			}
+		}
+		var results []string
+		if n.Results != nil {
+			results = make([]string, len(n.Results.List))
+			for i, r := range n.Results.List {
+				results[i] = s.buildKey(r.Type, pkg, importLookup, currentTypeParams)
+			}
+		}
+		return fmt.Sprintf("func(%s)(%s)", strings.Join(params, ","), strings.Join(results, ","))
+	case *ast.InterfaceType:
+		parts := make([]string, len(n.Methods.List))
+		for i, method := range n.Methods.List {
+			methodName := ""
+			if len(method.Names) > 0 {
+				methodName = method.Names[0].Name
+			}
+			parts[i] = methodName + s.buildKey(method.Type, pkg, importLookup, currentTypeParams)
+		}
+		return "interface{" + strings.Join(parts, ";") + "}"
+	case *ast.StructType:
+		parts := make([]string, len(n.Fields.List))
+		for i, field := range n.Fields.List {
+			var names []string
+			for _, name := range field.Names {
+				names = append(names, name.Name)
+			}
+			parts[i] = strings.Join(names, ",") + ":" + s.buildKey(field.Type, pkg, importLookup, currentTypeParams)
+		}
+		return "struct{" + strings.Join(parts, ";") + "}"
+	default:
+		// Fallback to position for any other unhandled types.
+		return fmt.Sprintf("pos:%d", expr.Pos())
+	}
+}
+
 // TypeInfoFromExpr resolves an AST expression that represents a type into a FieldType.
 // This is the core type-parsing logic, exposed for tools that need to resolve
 // type information dynamically.
 func (s *Scanner) TypeInfoFromExpr(ctx context.Context, expr ast.Expr, currentTypeParams []*TypeParamInfo, info *PackageInfo, importLookup map[string]string) *FieldType {
+	if s.logger != nil {
+		s.logger.DebugContext(ctx, "Enter TypeInfoFromExpr", "pos", s.fset.Position(expr.Pos()))
+	}
+	if expr == nil {
+		return &FieldType{Name: "untyped_nil_expr"}
+	}
+
+	// Get or create the resolution cache from the context.
+	v := ctx.Value(resolutionCacheKey{})
+	var cache map[string]*FieldType
+	if v == nil {
+		cache = make(map[string]*FieldType)
+		ctx = context.WithValue(ctx, resolutionCacheKey{}, cache)
+	} else {
+		cache = v.(map[string]*FieldType)
+	}
+
+	// Generate a canonical key for the expression to robustly detect recursion.
+	key := s.buildKey(expr, info, importLookup, currentTypeParams)
+
+	// Check for recursion.
+	if placeholder, ok := cache[key]; ok {
+		return placeholder
+	}
+
+	// No recursion detected yet. Create a new placeholder for the result and cache it.
+	placeholder := &FieldType{Resolver: s.resolver, CurrentPkg: info}
+	cache[key] = placeholder
+
+	// Resolve the actual type.
+	realType := s.resolveFieldType(ctx, expr, currentTypeParams, info, importLookup)
+
+	// Now that we have the real type, populate the placeholder that we created earlier.
+	*placeholder = *realType
+
+	// Return the original placeholder pointer.
+	return placeholder
+}
+
+// resolveFieldType is the inner logic of TypeInfoFromExpr, without the recursion guard.
+func (s *Scanner) resolveFieldType(ctx context.Context, expr ast.Expr, currentTypeParams []*TypeParamInfo, info *PackageInfo, importLookup map[string]string) *FieldType {
 	ft := &FieldType{Resolver: s.resolver, CurrentPkg: info}
 	switch t := expr.(type) {
 	case *ast.Ident:

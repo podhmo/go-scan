@@ -66,10 +66,10 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 
 ### `symgo` Engine Improvements ([docs/plan-symgo-refine2.md](./docs/plan-symgo-refine2.md))
 - [x] **Analysis**: Investigate timeout and critical errors by re-running e2e tests.
-- [ ] **Bugfix: Infinite Recursion**:
-    - [ ] Add a recursion guard (e.g., using a map to track visited nodes) to `scanner.TypeInfoFromExpr` to prevent re-evaluation of the same type expression.
-    - [ ] Write a targeted unit test in the `scanner` package that fails before the fix and passes after, reproducing the infinite recursion scenario.
-    - [ ] Verify the fix by running the `find-orphans` e2e test and confirming it runs to completion without timing out.
+- [x] **Bugfix: Infinite Recursion**:
+    - [x] Add a recursion guard (e.g., using a map to track visited nodes) to `scanner.TypeInfoFromExpr` to prevent re-evaluation of the same type expression.
+    - [x] Write a targeted unit test in the `scanner` package that fails before the fix and passes after, reproducing the infinite recursion scenario.
+    - [x] Verify the fix by running the `find-orphans` e2e test and confirming it runs to completion without timing out.
 - [ ] **Bugfix: External Type Resolution**:
     - [ ] Investigate why types from external packages (e.g., `log/slog.Logger`) are resolved as `object.UnresolvedFunction` instead of a symbolic type representation.
     - [ ] Modify the `symgo` evaluator and/or `scanner` to ensure that unresolved types are consistently represented as symbolic type placeholders, not functions.

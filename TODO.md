@@ -62,14 +62,16 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - **`symgo`: Field Access on Symbolic Receivers**: The `symgo` evaluator can now correctly access struct fields on symbolic receivers (e.g., a receiver of a method that is the entry point of analysis). This fixes a bug where field access was incorrectly failing with an "undefined method" error, particularly on structs that use `_ struct{}` to enforce keyed literals.
 - **`go-scan`: Declarations-Only Scanning**: Added a `WithDeclarationsOnlyPackages` option to the `goscan.Scanner`. For packages specified with this option, the scanner parses all top-level declarations (types, functions, variables) but explicitly discards function bodies. This allows tools like `docgen` to obtain necessary type information from packages like `net/http` without incurring the cost and complexity of symbolically executing their entire implementation. This provides a significant performance and stability improvement for analyzing code that depends on large standard library packages.
 
-## symgo Refinements (Round 2)
+
+## To Be Implemented
+
 
 ### `symgo` Engine Improvements ([docs/plan-symgo-refine2.md](./docs/plan-symgo-refine2.md))
 - [x] **Analysis**: Investigate timeout and critical errors by re-running e2e tests.
 - [-] **Bugfix: Infinite Recursion**: (partially resolved)
     - [x] Add a recursion guard (e.g., using a map to track visited nodes) to `scanner.TypeInfoFromExpr` to prevent re-evaluation of the same type expression.
     - [x] Write a targeted unit test in the `scanner` package that fails before the fix and passes after, reproducing the infinite recursion scenario.
-    - [ ] Verify the fix by running the `find-orphans` e2e test and confirming it runs to completion without timing out.
+    - [ ] Verify the fix by running the `find-orphans` e2e test and confirming it runs to completion without timing out.If it doesn't heal, start investigating again.
 - [ ] **Bugfix: External Type Resolution**:
     - [ ] Investigate why types from external packages (e.g., `log/slog.Logger`) are resolved as `object.UnresolvedFunction` instead of a symbolic type representation.
     - [ ] Modify the `symgo` evaluator and/or `scanner` to ensure that unresolved types are consistently represented as symbolic type placeholders, not functions.
@@ -83,7 +85,6 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     - [ ] Perform a full analysis of the complete log output.
     - [ ] Create new items in `TODO.md` for any remaining `WARN` or `ERROR` messages that indicate bugs.
 
-## To Be Implemented
 
 ### `minigo` Refinements ([docs/plan-minigo.md](./docs/plan-minigo.md))
 - [x] Write comprehensive documentation for the API, supported language features, and usage examples.

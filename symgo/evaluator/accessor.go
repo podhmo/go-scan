@@ -149,7 +149,7 @@ func (a *accessor) findDirectMethodOnType(ctx context.Context, typeInfo *scanner
 		if err != nil && strings.Contains(err.Error(), "cannot find package") {
 			return nil, nil
 		}
-		a.eval.logWithContext(ctx, slog.LevelWarn, "could not get or load package for method resolution", "package", typeInfo.PkgPath, "error", err)
+		a.eval.logc(ctx, slog.LevelWarn, "could not get or load package for method resolution", "package", typeInfo.PkgPath, "error", err)
 		return nil, nil
 	}
 	methodPkg := pkgObj.ScannedInfo

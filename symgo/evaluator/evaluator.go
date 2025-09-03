@@ -1208,8 +1208,33 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 			}
 		}
 
-		// If it's not a function or a known constant, it could be a variable, or it could be
-		// a function that the scanner was unable to resolve (e.g., due to build tags).
+		// If not a function or constant, check for a type.
+		if val.ScannedInfo != nil {
+			for _, t := range val.ScannedInfo.Types {
+				if t.Name == n.Sel.Name {
+					// Found it as a type. Create a Type object.
+					typeObj := &object.Type{
+						TypeName:     t.Name,
+						ResolvedType: t,
+					}
+					typeObj.SetTypeInfo(t)
+					// Also create and set the FieldType, so `new` can use it.
+					fieldType := &scanner.FieldType{
+						Name:           t.Name,
+						FullImportPath: t.PkgPath,
+						TypeName:       t.Name,
+						Definition:     t,
+						Resolver:       e.scanner,
+					}
+					typeObj.SetFieldType(fieldType)
+					val.Env.Set(n.Sel.Name, typeObj) // Cache it
+					return typeObj
+				}
+			}
+		}
+
+		// If it's not a function, a known constant, or a type, it could be a variable,
+		// or it could be a function that the scanner was unable to resolve (e.g., due to build tags).
 		// We optimistically assume it's a function and create an UnresolvedFunction object.
 		// `applyFunction` will handle this object; if it's not actually a function,
 		// the call will fail there. This is better than returning a generic placeholder
@@ -2516,6 +2541,18 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 	}
 
 	switch fn := fn.(type) {
+	case *object.Type:
+		// This is a type conversion, like T(v).
+		if len(args) != 1 {
+			return e.newError(ctx, callPos, "wrong number of arguments for type conversion: got %d, want 1", len(args))
+		}
+		// For symbolic execution, the result of a conversion is a symbolic value of the new type.
+		placeholder := &object.SymbolicPlaceholder{
+			Reason: fmt.Sprintf("result of conversion to %s", fn.TypeName),
+		}
+		placeholder.SetTypeInfo(fn.ResolvedType)
+		placeholder.SetFieldType(fn.FieldType())
+		return placeholder
 	case *object.InstantiatedFunction:
 		// This is the new logic for handling calls to generic functions.
 		extendedEnv := object.NewEnclosedEnvironment(fn.Function.Env)

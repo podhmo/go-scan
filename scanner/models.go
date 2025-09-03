@@ -451,7 +451,12 @@ func (ft *FieldType) Resolve(ctx context.Context) (*TypeInfo, error) {
 
 	typeInfo := pkgInfo.Lookup(ft.TypeName)
 	if typeInfo == nil {
-		return nil, fmt.Errorf("type %q not found in package %q", ft.TypeName, ft.FullImportPath)
+		// The type was not found in the scanned package. This is not necessarily
+		// an error, as the package might be intentionally unscanned (e.g. stdlib).
+		// We create a placeholder to represent this unresolved type.
+		unresolvedType := NewUnresolvedTypeInfo(ft.FullImportPath, ft.TypeName)
+		ft.Definition = unresolvedType // Cache the placeholder
+		return unresolvedType, nil
 	}
 
 	// --- Success ---

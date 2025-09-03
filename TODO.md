@@ -72,10 +72,10 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     - [x] Add a recursion guard (e.g., using a map to track visited nodes) to `scanner.TypeInfoFromExpr` to prevent re-evaluation of the same type expression.
     - [x] Write a targeted unit test in the `scanner` package that fails before the fix and passes after, reproducing the infinite recursion scenario.
     - [ ] Verify the fix by running the `find-orphans` e2e test and confirming it runs to completion without timing out.If it doesn't heal, start investigating again.
-- [ ] **Bugfix: External Type Resolution**:
-    - [ ] Investigate why types from external packages (e.g., `log/slog.Logger`) are resolved as `object.UnresolvedFunction` instead of a symbolic type representation.
-    - [ ] Modify the `symgo` evaluator and/or `scanner` to ensure that unresolved types are consistently represented as symbolic type placeholders, not functions.
-    - [ ] Add a regression test to `symgo` that attempts to use an external type and fails if the "invalid indirect" error occurs.
+- [x] **Bugfix: External Type Resolution**:
+    - [x] Investigate why types from external packages (e.g., `log/slog.Logger`) are resolved as `object.UnresolvedFunction` instead of a symbolic type representation.
+    - [x] Modify the `symgo` evaluator and/or `scanner` to ensure that unresolved types are consistently represented as symbolic type placeholders, not functions.
+    - [x] Add a regression test to `symgo` that attempts to use an external type and fails if the "invalid indirect" error occurs.
 - [ ] **DX: Add Timeout Flag to `find-orphans`**:
     - [ ] Add a `--timeout` flag (e.g., `--timeout 30s`) to the `find-orphans` CLI.
     - [ ] Use `context.WithTimeout` in the `run` function to cancel the analysis if it exceeds the specified duration.

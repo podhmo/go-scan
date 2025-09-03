@@ -395,7 +395,7 @@ func TestEvalBuiltinFunctionsPlaceholders(t *testing.T) {
 		{
 			name:     "new",
 			source:   `package main; func main() { new(int) }`,
-			expected: &object.SymbolicPlaceholder{},
+			expected: &object.Pointer{},
 		},
 		{
 			name:     "copy",
@@ -480,6 +480,20 @@ func TestEvalBuiltinFunctionsPlaceholders(t *testing.T) {
 				}
 
 				switch expected := tt.expected.(type) {
+				case *object.Pointer:
+					ptr, ok := evaluated.(*object.Pointer)
+					if !ok {
+						t.Errorf("object is not Pointer. got=%T (%+v)", evaluated, evaluated)
+					}
+					// Add a basic check for the pointer's content
+					if tt.name == "new" {
+						if ptr.Value == nil {
+							t.Error("pointer value should not be nil")
+						}
+						if _, ok := ptr.Value.(*object.SymbolicPlaceholder); !ok {
+							t.Errorf("pointer value should be a symbolic placeholder, got %T", ptr.Value)
+						}
+					}
 				case *object.SymbolicPlaceholder:
 					_, ok := evaluated.(*object.SymbolicPlaceholder)
 					if !ok {

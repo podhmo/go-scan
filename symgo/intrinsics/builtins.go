@@ -3,6 +3,7 @@ package intrinsics
 import (
 	"fmt"
 
+	"github.com/podhmo/go-scan/scanner"
 	"github.com/podhmo/go-scan/symgo/object"
 )
 
@@ -108,7 +109,32 @@ func BuiltinNew(args ...object.Object) object.Object {
 	if len(args) != 1 {
 		return &object.Error{Message: "wrong number of arguments: new expects 1"}
 	}
-	return &object.SymbolicPlaceholder{Reason: "new(...) call"}
+	typeArg := args[0]
+
+	// The argument is a type T. `new(T)` returns a `*T`.
+	// The allocated value is a zero-value of T. We represent this with a placeholder.
+	allocatedValue := &object.SymbolicPlaceholder{
+		Reason: fmt.Sprintf("allocated zero value for new(%s)", typeArg.Inspect()),
+	}
+	allocatedValue.SetTypeInfo(typeArg.TypeInfo())
+	allocatedValue.SetFieldType(typeArg.FieldType())
+
+	// The return value of `new` is a pointer.
+	pointer := &object.Pointer{
+		Value: allocatedValue,
+	}
+
+	// The pointer itself has type `*T`. We need to construct a FieldType for `*T`.
+	if originalFieldType := typeArg.FieldType(); originalFieldType != nil {
+		pointerFieldType := &scanner.FieldType{
+			IsPointer: true,
+			Elem:      originalFieldType,
+			Resolver:  originalFieldType.Resolver, // Propagate resolver
+		}
+		pointer.SetFieldType(pointerFieldType)
+	}
+
+	return pointer
 }
 
 // BuiltinCopy is the intrinsic function for the built-in `copy`.

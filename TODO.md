@@ -66,7 +66,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 
 ### `symgo` Engine Improvements ([docs/plan-symgo-refine.md](./docs/plan-symgo-refine.md))
 - [x] Implement Map and Slice Assignments.
-- [ ] Improve Symbolic Pointer Handling.
+- [x] Improve Symbolic Pointer Handling.
 - [ ] Enhance Symbolic Function Return Values.
 - [ ] Investigate and Refine Entry Point Analysis.
 

@@ -741,18 +741,21 @@ func (e *Evaluator) evalStarExpr(ctx context.Context, node *ast.StarExpr, env *o
 	// If we have a symbolic placeholder that represents a pointer type,
 	// dereferencing it should result in a new placeholder representing the element type.
 	if sp, ok := val.(*object.SymbolicPlaceholder); ok {
+		newPlaceholder := &object.SymbolicPlaceholder{
+			Reason: fmt.Sprintf("dereferenced from %s", sp.Reason),
+		}
+		// If we have type info and it's a pointer, we can be more specific
+		// about the type of the resulting placeholder.
 		if ft := sp.FieldType(); ft != nil && ft.IsPointer {
-			newPlaceholder := &object.SymbolicPlaceholder{
-				Reason: fmt.Sprintf("dereferenced from %s", sp.Reason),
-			}
 			if ft.Elem != nil {
 				elemFieldType := ft.Elem
 				resolvedElem := e.resolver.ResolveType(ctx, elemFieldType)
 				newPlaceholder.SetFieldType(elemFieldType)
 				newPlaceholder.SetTypeInfo(resolvedElem)
 			}
-			return newPlaceholder
 		}
+		// Otherwise, we return a generic placeholder, preventing an "invalid indirect" error.
+		return newPlaceholder
 	}
 
 	return e.newError(ctx, node.Pos(), "invalid indirect of %s (type %T)", val.Inspect(), val)
@@ -2561,6 +2564,12 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 		return &object.ReturnValue{Value: evaluated}
 
 	case *object.Function:
+		// If the function has no body, it's a declaration (e.g., in an interface, or an external function).
+		// Treat it as an external call and create a symbolic result based on its signature.
+		if fn.Body == nil {
+			return e.createSymbolicResultForFunc(ctx, fn)
+		}
+
 		// Check the scan policy before executing the body.
 		if fn.Package != nil && !e.resolver.ScanPolicy(fn.Package.ImportPath) {
 			// If the package is not in the primary analysis scope, treat the call

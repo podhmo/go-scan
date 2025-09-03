@@ -2456,6 +2456,10 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 	var currentSignature string
 	if f, ok := fn.(*object.Function); ok {
 		var b strings.Builder
+		if f.Receiver != nil {
+			b.WriteString(f.Receiver.Inspect())
+			b.WriteString(".")
+		}
 		if f.Name != nil {
 			b.WriteString(f.Name.Name)
 		} else {
@@ -2479,7 +2483,7 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 					name = f.Name.Name
 				}
 				e.logger.Warn("infinite recursion detected, aborting", "function", name)
-				return &object.SymbolicPlaceholder{Reason: "infinite recursion detected"}
+				return e.newError(callPos, "infinite recursion detected: %s", name)
 			}
 		}
 	}

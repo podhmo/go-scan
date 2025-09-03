@@ -983,11 +983,11 @@ func (s *Scanner) buildKey(expr ast.Expr, pkg *PackageInfo, importLookup map[str
 // This is the core type-parsing logic, exposed for tools that need to resolve
 // type information dynamically.
 func (s *Scanner) TypeInfoFromExpr(ctx context.Context, expr ast.Expr, currentTypeParams []*TypeParamInfo, info *PackageInfo, importLookup map[string]string) *FieldType {
-	if s.logger != nil {
-		s.logger.DebugContext(ctx, "Enter TypeInfoFromExpr", "pos", s.fset.Position(expr.Pos()))
-	}
 	if expr == nil {
 		return &FieldType{Name: "untyped_nil_expr"}
+	}
+	if s.logger != nil {
+		s.logger.DebugContext(ctx, "Enter TypeInfoFromExpr", "pos", s.fset.Position(expr.Pos()))
 	}
 
 	// Get or create the resolution cache from the context.

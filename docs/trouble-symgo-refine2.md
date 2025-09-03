@@ -53,7 +53,7 @@ The "Infinite Recursion" bug proved to be complex to diagnose and resolve. The i
 - [x] **Task 1: Fix Infinite Recursion in `scanner.TypeInfoFromExpr`.**
     - **Goal**: Identify and fix the cause of the unbounded recursion in `TypeInfoFromExpr`.
     - **Details**: This required a deep dive into the type resolution logic. The final fix involved adding a mechanism to track visited nodes during recursive traversal using a canonical key for the type expression, preventing the scanner from re-entering the same analysis loop.
-    - **Acceptance Test**: The `find-orphans` e2e test now runs to completion without timing out.
+    - **Acceptance Test**: The `find-orphans` e2e test now runs to completion without timing out. (Note: This is not fully resolved, see "Post-Fix Analysis".)
 
 - [ ] **Task 2: Correctly Resolve and Handle External Types.**
     - **Goal**: Prevent the "invalid indirect" error by ensuring external and built-in types are resolved as type objects, not function objects.
@@ -87,3 +87,11 @@ The reproduction steps remain the same.
 
 3.  **Inspect the output:**
     The results, including logs, will be in `examples/find-orphans/find-orphans.out`.
+
+## Post-Fix Analysis (2025-09-03)
+
+After implementing the robust recursion guard in the scanner, the dedicated unit test (`TestImplements_GenericRecursion`) now passes, and a previously-masked `nil` pointer panic in the `e2e` test is also resolved.
+
+However, a re-run of the `find-orphans` e2e test still results in a timeout. This indicates that while the implemented fix solved a real recursion bug within the scanner's type-checking logic, there is another, different underlying issue that also causes the application to hang.
+
+The user has instructed to document this outcome and proceed without further code changes for now. The remaining hang will need to be investigated as a separate issue.

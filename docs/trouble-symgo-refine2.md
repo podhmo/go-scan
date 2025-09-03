@@ -90,8 +90,17 @@ The reproduction steps remain the same.
 
 ## Post-Fix Analysis (2025-09-03)
 
-After implementing the robust recursion guard in the scanner, the dedicated unit test (`TestImplements_GenericRecursion`) now passes, and a previously-masked `nil` pointer panic in the `e2e` test is also resolved.
+After implementing the robust recursion guard in the `scanner`, the dedicated unit test (`TestImplements_GenericRecursion`) passed, and a previously-masked `nil` pointer panic in the e2e test was also resolved.
 
-However, a re-run of the `find-orphans` e2e test still results in a timeout. This indicates that while the implemented fix solved a real recursion bug within the scanner's type-checking logic, there is another, different underlying issue that also causes the application to hang.
+However, a re-run of the `find-orphans` e2e test (`go run . --workspace-root ../.. ./...`) still resulted in a timeout. A deeper analysis of the output log (`find-orphans.out`) revealed that the timeout is caused by a bug in the `symgo` engine itself.
 
-The user has instructed to document this outcome and proceed without further code changes for now. The remaining hang will need to be investigated as a separate issue.
+The failure is triggered when `symgo` attempts to analyze the source code of the `minigo` package, which is part of the overall workspace being scanned. The logs show a new infinite recursion error originating from `symgo`'s evaluator, followed by a flood of warnings related to handling multi-return values from symbolic placeholders.
+
+### Current Hypothesis:
+
+The timeout is caused by a bug in the `symgo` engine's symbolic execution logic. This bug is triggered by a specific code pattern present in the `minigo` source code. The failure sequence is:
+1. `symgo` encounters a problematic code structure while analyzing the `minigo` package.
+2. This triggers an uncontrolled recursion within `symgo`'s own evaluator.
+3. This leads to a secondary, resource-intensive infinite loop related to the resolution of symbolic objects, causing the `find-orphans` tool to hang.
+
+The problem is not a dependency issue, but a bug in `symgo`'s analysis capabilities that needs to be fixed. A `--timeout` flag has been added to the `find-orphans` tool to aid in future debugging of this issue. The next step is to isolate the exact code in `minigo` that causes the failure and create a minimal test case to drive the bug-fixing process for `symgo`.

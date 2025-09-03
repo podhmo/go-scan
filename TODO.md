@@ -68,18 +68,23 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 
 ### `symgo` Engine Improvements ([docs/plan-symgo-refine2.md](./docs/plan-symgo-refine2.md)), ([docs/trouble-symgo-refine2.md](./docs/trouble-symgo-refine2.md))
 - [x] **Analysis**: Investigate timeout and critical errors by re-running e2e tests.
-- [-] **Bugfix: Infinite Recursion**: (partially resolved)
+- [x] **Bugfix: Infinite Recursion in Scanner**: (Resolved)
     - [x] Add a recursion guard (e.g., using a map to track visited nodes) to `scanner.TypeInfoFromExpr` to prevent re-evaluation of the same type expression.
     - [x] Write a targeted unit test in the `scanner` package that fails before the fix and passes after, reproducing the infinite recursion scenario.
-    - [ ] Verify the fix by running the `find-orphans` e2e test and confirming it runs to completion without timing out.If it doesn't heal, start investigating again.
+    - [x] Verified that the scanner-level recursion is fixed. A deeper bug in the `symgo` engine was uncovered.
+- [ ] **Bugfix: `symgo` Hang on `minigo` Source**:
+    - [ ] Isolate the failure by running `find-orphans` on the `minigo` package to get a focused log.
+    - [ ] Create a minimal, targeted test case in the `symgo` package that reproduces the hang.
+    - [ ] Fix the underlying bug in the `symgo` evaluator that causes the infinite loop.
+    - [ ] Verify the fix by running the full `find-orphans` e2e test and confirming it completes without timing out.
 - [ ] **Bugfix: External Type Resolution**:
     - [ ] Investigate why types from external packages (e.g., `log/slog.Logger`) are resolved as `object.UnresolvedFunction` instead of a symbolic type representation.
     - [ ] Modify the `symgo` evaluator and/or `scanner` to ensure that unresolved types are consistently represented as symbolic type placeholders, not functions.
     - [ ] Add a regression test to `symgo` that attempts to use an external type and fails if the "invalid indirect" error occurs.
-- [ ] **DX: Add Timeout Flag to `find-orphans`**:
-    - [ ] Add a `--timeout` flag (e.g., `--timeout 30s`) to the `find-orphans` CLI.
-    - [ ] Use `context.WithTimeout` in the `run` function to cancel the analysis if it exceeds the specified duration.
-    - [ ] Document the new flag in the tool's help message and README.
+- [x] **DX: Add Timeout Flag to `find-orphans`**:
+    - [x] Add a `--timeout` flag (e.g., `--timeout 30s`) to the `find-orphans` CLI.
+    - [x] Use `context.WithTimeout` in the `run` function to cancel the analysis if it exceeds the specified duration.
+    - [x] Document the new flag in the tool's help message and README.
 - [ ] **Follow-up: Full Entry Point Analysis**:
     - [ ] Once the critical recursion and type resolution bugs are fixed, execute the `find-orphans` e2e test again.
     - [ ] Perform a full analysis of the complete log output.

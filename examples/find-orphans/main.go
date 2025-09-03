@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/locator"
@@ -30,6 +31,7 @@ func main() {
 		verbose              = flag.Bool("v", false, "enable verbose output")
 		asJSON               = flag.Bool("json", false, "output orphans in JSON format")
 		mode                 = flag.String("mode", "auto", "analysis mode: auto, app, or lib")
+		timeout              = flag.Duration("timeout", 0, "timeout for analysis (e.g. 30s)")
 		excludeDirs          stringSliceFlag
 		primaryAnalysisScope stringSliceFlag
 	)
@@ -57,6 +59,12 @@ func main() {
 	}
 
 	ctx := context.Background()
+	if *timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, *timeout)
+		defer cancel()
+	}
+
 	if err := run(ctx, *all, *includeTests, *workspace, *verbose, *asJSON, *mode, startPatterns, excludeDirs, nil, primaryAnalysisScope); err != nil {
 		slog.ErrorContext(ctx, "toplevel", "error", err)
 		os.Exit(1)

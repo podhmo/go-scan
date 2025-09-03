@@ -62,13 +62,26 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - **`symgo`: Field Access on Symbolic Receivers**: The `symgo` evaluator can now correctly access struct fields on symbolic receivers (e.g., a receiver of a method that is the entry point of analysis). This fixes a bug where field access was incorrectly failing with an "undefined method" error, particularly on structs that use `_ struct{}` to enforce keyed literals.
 - **`go-scan`: Declarations-Only Scanning**: Added a `WithDeclarationsOnlyPackages` option to the `goscan.Scanner`. For packages specified with this option, the scanner parses all top-level declarations (types, functions, variables) but explicitly discards function bodies. This allows tools like `docgen` to obtain necessary type information from packages like `net/http` without incurring the cost and complexity of symbolically executing their entire implementation. This provides a significant performance and stability improvement for analyzing code that depends on large standard library packages.
 
-## symgo Refinements
+## symgo Refinements (Round 2)
 
-### `symgo` Engine Improvements ([docs/plan-symgo-refine.md](./docs/plan-symgo-refine.md))
-- [x] Implement Map and Slice Assignments.
-- [x] Improve Symbolic Pointer Handling.
-- [x] Enhance Symbolic Function Return Values.
-- [ ] Investigate and Refine Entry Point Analysis.
+### `symgo` Engine Improvements ([docs/plan-symgo-refine2.md](./docs/plan-symgo-refine2.md))
+- [x] **Analysis**: Investigate timeout and critical errors by re-running e2e tests.
+- [ ] **Bugfix: Infinite Recursion**:
+    - [ ] Add a recursion guard (e.g., using a map to track visited nodes) to `scanner.TypeInfoFromExpr` to prevent re-evaluation of the same type expression.
+    - [ ] Write a targeted unit test in the `scanner` package that fails before the fix and passes after, reproducing the infinite recursion scenario.
+    - [ ] Verify the fix by running the `find-orphans` e2e test and confirming it runs to completion without timing out.
+- [ ] **Bugfix: External Type Resolution**:
+    - [ ] Investigate why types from external packages (e.g., `log/slog.Logger`) are resolved as `object.UnresolvedFunction` instead of a symbolic type representation.
+    - [ ] Modify the `symgo` evaluator and/or `scanner` to ensure that unresolved types are consistently represented as symbolic type placeholders, not functions.
+    - [ ] Add a regression test to `symgo` that attempts to use an external type and fails if the "invalid indirect" error occurs.
+- [ ] **DX: Add Timeout Flag to `find-orphans`**:
+    - [ ] Add a `--timeout` flag (e.g., `--timeout 30s`) to the `find-orphans` CLI.
+    - [ ] Use `context.WithTimeout` in the `run` function to cancel the analysis if it exceeds the specified duration.
+    - [ ] Document the new flag in the tool's help message and README.
+- [ ] **Follow-up: Full Entry Point Analysis**:
+    - [ ] Once the critical recursion and type resolution bugs are fixed, execute the `find-orphans` e2e test again.
+    - [ ] Perform a full analysis of the complete log output.
+    - [ ] Create new items in `TODO.md` for any remaining `WARN` or `ERROR` messages that indicate bugs.
 
 ## To Be Implemented
 

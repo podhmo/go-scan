@@ -76,6 +76,71 @@ var result = %s
 	}
 }
 
+func TestEval_StarExpr_SymbolicPointer(t *testing.T) {
+	source := `
+package main
+
+type MyStruct struct {
+	Name string
+}
+
+// someFunc is treated as an external function returning a symbolic pointer.
+func someFunc() *MyStruct
+
+func main() {
+	p := someFunc()
+	_ = *p // This dereference on a symbolic placeholder should not cause an "invalid indirect" error.
+}
+`
+	files := map[string]string{
+		"go.mod":  "module example.com/me",
+		"main.go": source,
+	}
+
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
+		pkg := pkgs[0]
+		eval := New(s, s.Logger, nil, func(importPath string) bool {
+			// Treat the current package as source-scannable
+			return importPath == "example.com/me"
+		})
+
+		env := object.NewEnvironment()
+		for _, file := range pkg.AstFiles {
+			if res := eval.Eval(ctx, file, env, pkg); res != nil && isError(res) {
+				if err, ok := res.(*object.Error); ok {
+					return fmt.Errorf("setup eval failed: %w", err)
+				}
+				return fmt.Errorf("setup eval failed with unexpected type: %T", res)
+			}
+		}
+
+		// Find the main function from the populated environment.
+		mainObj, ok := env.Get("main")
+		if !ok {
+			return fmt.Errorf("main function not found in environment")
+		}
+		mainFunc, ok := mainObj.(*object.Function)
+		if !ok {
+			return fmt.Errorf("expected main to be a function, but got %T", mainObj)
+		}
+
+		// Execute the main function.
+		result := eval.Apply(ctx, mainFunc, []object.Object{}, pkg)
+		if err, ok := result.(*object.Error); ok {
+			return fmt.Errorf("symbolic execution of main failed: %w", err)
+		}
+
+		// The test passes if no error is returned.
+		return nil
+	}
+
+	dir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+	if _, err := scantest.Run(t, t.Context(), dir, []string{"."}, action, scantest.WithModuleRoot(dir)); err != nil {
+		t.Fatalf("scantest.Run() failed: %+v", err)
+	}
+}
+
 func TestEval_UnaryExpr_Bang(t *testing.T) {
 	tests := []struct {
 		input    string

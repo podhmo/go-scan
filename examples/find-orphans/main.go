@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/locator"
@@ -30,6 +31,7 @@ func main() {
 		verbose              = flag.Bool("v", false, "enable verbose output")
 		asJSON               = flag.Bool("json", false, "output orphans in JSON format")
 		mode                 = flag.String("mode", "auto", "analysis mode: auto, app, or lib")
+		timeout              = flag.Duration("timeout", 0, "timeout for analysis")
 		excludeDirs          stringSliceFlag
 		primaryAnalysisScope stringSliceFlag
 	)
@@ -57,7 +59,7 @@ func main() {
 	}
 
 	ctx := context.Background()
-	if err := run(ctx, *all, *includeTests, *workspace, *verbose, *asJSON, *mode, startPatterns, excludeDirs, nil, primaryAnalysisScope); err != nil {
+	if err := run(ctx, *all, *includeTests, *workspace, *verbose, *asJSON, *mode, *timeout, startPatterns, excludeDirs, nil, primaryAnalysisScope); err != nil {
 		slog.ErrorContext(ctx, "toplevel", "error", err)
 		os.Exit(1)
 	}
@@ -136,7 +138,13 @@ func discoverModules(ctx context.Context, root string, excludeDirs []string) ([]
 	return modules, nil
 }
 
-func run(ctx context.Context, all bool, includeTests bool, workspace string, verbose bool, asJSON bool, mode string, startPatterns []string, excludeDirs []string, scanPolicy symgo.ScanPolicyFunc, primaryAnalysisScope []string) error {
+func run(ctx context.Context, all bool, includeTests bool, workspace string, verbose bool, asJSON bool, mode string, timeout time.Duration, startPatterns []string, excludeDirs []string, scanPolicy symgo.ScanPolicyFunc, primaryAnalysisScope []string) error {
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+
 	logLevel := new(slog.LevelVar)
 	if verbose {
 		logLevel.Set(slog.LevelDebug)

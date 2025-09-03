@@ -127,7 +127,7 @@ func (e *Evaluator) Eval(ctx context.Context, node ast.Node, env *object.Environ
 	case *ast.SelectorExpr:
 		return e.evalSelectorExpr(ctx, n, env, pkg)
 	case *ast.BasicLit:
-		return e.evalBasicLit(n)
+		return e.evalBasicLit(ctx, n)
 	case *ast.Ident:
 		return e.evalIdent(ctx, n, env, pkg)
 	case *ast.AssignStmt:
@@ -151,7 +151,7 @@ func (e *Evaluator) Eval(ctx context.Context, node ast.Node, env *object.Environ
 		}
 		return nil // Send statement does not produce a value.
 	case *ast.BranchStmt:
-		return e.evalBranchStmt(n)
+		return e.evalBranchStmt(ctx, n)
 	case *ast.ForStmt:
 		return e.evalForStmt(ctx, n, env, pkg)
 	case *ast.RangeStmt:
@@ -220,15 +220,15 @@ func (e *Evaluator) Eval(ctx context.Context, node ast.Node, env *object.Environ
 		return &object.SymbolicPlaceholder{Reason: "map type expression"}
 	case *ast.ChanType:
 		if pkg == nil || pkg.Fset == nil {
-			return e.newError(n.Pos(), "package info or fset is missing, cannot resolve types for chan type")
+			return e.newError(ctx, n.Pos(), "package info or fset is missing, cannot resolve types for chan type")
 		}
 		file := pkg.Fset.File(n.Pos())
 		if file == nil {
-			return e.newError(n.Pos(), "could not find file for node position")
+			return e.newError(ctx, n.Pos(), "could not find file for node position")
 		}
 		astFile, ok := pkg.AstFiles[file.Name()]
 		if !ok {
-			return e.newError(n.Pos(), "could not find ast.File for path: %s", file.Name())
+			return e.newError(ctx, n.Pos(), "could not find ast.File for path: %s", file.Name())
 		}
 		importLookup := e.scanner.BuildImportLookup(astFile)
 
@@ -245,7 +245,7 @@ func (e *Evaluator) Eval(ctx context.Context, node ast.Node, env *object.Environ
 		// just prevent an "unimplemented" error.
 		return &object.SymbolicPlaceholder{Reason: "struct type expression"}
 	}
-	return e.newError(node.Pos(), "evaluation not implemented for %T", node)
+	return e.newError(ctx, node.Pos(), "evaluation not implemented for %T", node)
 }
 
 func (e *Evaluator) evalIncDecStmt(ctx context.Context, n *ast.IncDecStmt, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
@@ -260,13 +260,13 @@ func (e *Evaluator) evalIncDecStmt(ctx context.Context, n *ast.IncDecStmt, env *
 	obj, ok := env.Get(ident.Name)
 	if !ok {
 		// This is a semantic error in the Go code being analyzed (undefined variable). Return an error.
-		return e.newError(ident.Pos(), "identifier not found: %s", ident.Name)
+		return e.newError(ctx, ident.Pos(), "identifier not found: %s", ident.Name)
 	}
 
 	v, ok := obj.(*object.Variable)
 	if !ok {
 		// This is also a semantic error (e.g. `myFunc++`).
-		return e.newError(ident.Pos(), "cannot ++/-- a non-variable identifier: %s", ident.Name)
+		return e.newError(ctx, ident.Pos(), "cannot ++/-- a non-variable identifier: %s", ident.Name)
 	}
 
 	// Now we have the variable. Check its value.
@@ -364,7 +364,7 @@ func (e *Evaluator) evalIndexListExpr(ctx context.Context, node *ast.IndexListEx
 	}
 
 	// This AST node is only for generics, so if we fall through, it's an unhandled case.
-	return e.newError(node.Pos(), "unhandled generic instantiation for %T", left)
+	return e.newError(ctx, node.Pos(), "unhandled generic instantiation for %T", left)
 }
 
 func (e *Evaluator) evalSliceExpr(ctx context.Context, node *ast.SliceExpr, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
@@ -407,16 +407,16 @@ func (e *Evaluator) evalSliceExpr(ctx context.Context, node *ast.SliceExpr, env 
 
 func (e *Evaluator) evalCompositeLit(ctx context.Context, node *ast.CompositeLit, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
 	if pkg == nil || pkg.Fset == nil {
-		return e.newError(node.Pos(), "package info or fset is missing, cannot resolve types for composite literal")
+		return e.newError(ctx, node.Pos(), "package info or fset is missing, cannot resolve types for composite literal")
 	}
 
 	file := pkg.Fset.File(node.Pos())
 	if file == nil {
-		return e.newError(node.Pos(), "could not find file for node position")
+		return e.newError(ctx, node.Pos(), "could not find file for node position")
 	}
 	astFile, ok := pkg.AstFiles[file.Name()]
 	if !ok {
-		return e.newError(node.Pos(), "could not find ast.File for path: %s", file.Name())
+		return e.newError(ctx, node.Pos(), "could not find ast.File for path: %s", file.Name())
 	}
 	importLookup := e.scanner.BuildImportLookup(astFile)
 
@@ -424,7 +424,7 @@ func (e *Evaluator) evalCompositeLit(ctx context.Context, node *ast.CompositeLit
 	if fieldType == nil {
 		var typeNameBuf bytes.Buffer
 		printer.Fprint(&typeNameBuf, pkg.Fset, node.Type)
-		return e.newError(node.Pos(), "could not resolve type for composite literal: %s", typeNameBuf.String())
+		return e.newError(ctx, node.Pos(), "could not resolve type for composite literal: %s", typeNameBuf.String())
 	}
 
 	elements := make([]object.Object, 0, len(node.Elts))
@@ -510,21 +510,21 @@ func (e *Evaluator) evalBinaryExpr(ctx context.Context, node *ast.BinaryExpr, en
 
 	switch {
 	case lType == object.INTEGER_OBJ && rType == object.INTEGER_OBJ:
-		return e.evalIntegerInfixExpression(node.Pos(), node.Op, left, right)
+		return e.evalIntegerInfixExpression(ctx, node.Pos(), node.Op, left, right)
 	case lType == object.STRING_OBJ && rType == object.STRING_OBJ:
-		return e.evalStringInfixExpression(node.Pos(), node.Op, left, right)
+		return e.evalStringInfixExpression(ctx, node.Pos(), node.Op, left, right)
 	case lType == object.COMPLEX_OBJ || rType == object.COMPLEX_OBJ:
-		return e.evalComplexInfixExpression(node.Pos(), node.Op, left, right)
+		return e.evalComplexInfixExpression(ctx, node.Pos(), node.Op, left, right)
 	case lType == object.FLOAT_OBJ || rType == object.FLOAT_OBJ:
 		// For now, treat float operations as complex to simplify.
 		// A more complete implementation would have a separate float path.
-		return e.evalComplexInfixExpression(node.Pos(), node.Op, left, right)
+		return e.evalComplexInfixExpression(ctx, node.Pos(), node.Op, left, right)
 	default:
 		return &object.SymbolicPlaceholder{Reason: "binary expression"}
 	}
 }
 
-func (e *Evaluator) evalComplexInfixExpression(pos token.Pos, op token.Token, left, right object.Object) object.Object {
+func (e *Evaluator) evalComplexInfixExpression(ctx context.Context, pos token.Pos, op token.Token, left, right object.Object) object.Object {
 	var lval, rval complex128
 
 	switch l := left.(type) {
@@ -535,7 +535,7 @@ func (e *Evaluator) evalComplexInfixExpression(pos token.Pos, op token.Token, le
 	case *object.Integer:
 		lval = complex(float64(l.Value), 0)
 	default:
-		return e.newError(pos, "invalid left operand for complex expression: %s", left.Type())
+		return e.newError(ctx, pos, "invalid left operand for complex expression: %s", left.Type())
 	}
 
 	switch r := right.(type) {
@@ -546,7 +546,7 @@ func (e *Evaluator) evalComplexInfixExpression(pos token.Pos, op token.Token, le
 	case *object.Integer:
 		rval = complex(float64(r.Value), 0)
 	default:
-		return e.newError(pos, "invalid right operand for complex expression: %s", right.Type())
+		return e.newError(ctx, pos, "invalid right operand for complex expression: %s", right.Type())
 	}
 
 	switch op {
@@ -559,11 +559,11 @@ func (e *Evaluator) evalComplexInfixExpression(pos token.Pos, op token.Token, le
 	case token.QUO:
 		return &object.Complex{Value: lval / rval}
 	default:
-		return e.newError(pos, "unknown complex operator: %s", op)
+		return e.newError(ctx, pos, "unknown complex operator: %s", op)
 	}
 }
 
-func (e *Evaluator) evalIntegerInfixExpression(pos token.Pos, op token.Token, left, right object.Object) object.Object {
+func (e *Evaluator) evalIntegerInfixExpression(ctx context.Context, pos token.Pos, op token.Token, left, right object.Object) object.Object {
 	leftVal := left.(*object.Integer).Value
 	rightVal := right.(*object.Integer).Value
 
@@ -589,7 +589,7 @@ func (e *Evaluator) evalIntegerInfixExpression(pos token.Pos, op token.Token, le
 	case token.GEQ: // >=
 		return nativeBoolToBooleanObject(leftVal >= rightVal)
 	default:
-		return e.newError(pos, "unknown integer operator: %s", op)
+		return e.newError(ctx, pos, "unknown integer operator: %s", op)
 	}
 }
 
@@ -600,7 +600,7 @@ func nativeBoolToBooleanObject(input bool) *object.Boolean {
 	return object.FALSE
 }
 
-func (e *Evaluator) evalStringInfixExpression(pos token.Pos, op token.Token, left, right object.Object) object.Object {
+func (e *Evaluator) evalStringInfixExpression(ctx context.Context, pos token.Pos, op token.Token, left, right object.Object) object.Object {
 	leftVal := left.(*object.String).Value
 	rightVal := right.(*object.String).Value
 
@@ -612,7 +612,7 @@ func (e *Evaluator) evalStringInfixExpression(pos token.Pos, op token.Token, lef
 	case token.NEQ:
 		return nativeBoolToBooleanObject(leftVal != rightVal)
 	default:
-		return e.newError(pos, "unknown string operator: %s", op)
+		return e.newError(ctx, pos, "unknown string operator: %s", op)
 	}
 }
 
@@ -626,7 +626,7 @@ func (e *Evaluator) evalUnaryExpr(ctx context.Context, node *ast.UnaryExpr, env 
 	case token.NOT:
 		return e.evalBangOperatorExpression(right)
 	case token.SUB, token.ADD, token.XOR:
-		return e.evalNumericUnaryExpression(node.Op, right)
+		return e.evalNumericUnaryExpression(ctx, node.Op, right)
 	case token.AND:
 		// This is the address-of operator, not a typical unary op on a value.
 		// It needs to be handled specially as it operates on identifiers/expressions, not resolved objects.
@@ -672,7 +672,7 @@ func (e *Evaluator) evalUnaryExpr(ctx context.Context, node *ast.UnaryExpr, env 
 		// Fallback for untyped or non-channel objects
 		return &object.SymbolicPlaceholder{Reason: "value received from non-channel or untyped object"}
 	default:
-		return e.newError(node.Pos(), "unknown unary operator: %s", node.Op)
+		return e.newError(ctx, node.Pos(), "unknown unary operator: %s", node.Op)
 	}
 }
 
@@ -693,10 +693,10 @@ func (e *Evaluator) evalBangOperatorExpression(right object.Object) object.Objec
 	}
 }
 
-func (e *Evaluator) evalNumericUnaryExpression(op token.Token, right object.Object) object.Object {
+func (e *Evaluator) evalNumericUnaryExpression(ctx context.Context, op token.Token, right object.Object) object.Object {
 	if right.Type() != object.INTEGER_OBJ {
 		// Allow unary minus on floats and complex numbers later if needed.
-		return e.newError(token.NoPos, "unary operator %s not supported for type %s", op, right.Type())
+		return e.newError(ctx, token.NoPos, "unary operator %s not supported for type %s", op, right.Type())
 	}
 	value := right.(*object.Integer).Value
 
@@ -709,7 +709,7 @@ func (e *Evaluator) evalNumericUnaryExpression(op token.Token, right object.Obje
 		return &object.Integer{Value: ^value} // Bitwise NOT.
 	default:
 		// This case should be unreachable due to the switch in evalUnaryExpr.
-		return e.newError(token.NoPos, "unhandled numeric unary operator: %s", op)
+		return e.newError(ctx, token.NoPos, "unhandled numeric unary operator: %s", op)
 	}
 }
 
@@ -755,7 +755,7 @@ func (e *Evaluator) evalStarExpr(ctx context.Context, node *ast.StarExpr, env *o
 		}
 	}
 
-	return e.newError(node.Pos(), "invalid indirect of %s (type %T)", val.Inspect(), val)
+	return e.newError(ctx, node.Pos(), "invalid indirect of %s (type %T)", val.Inspect(), val)
 }
 
 func (e *Evaluator) evalGenDecl(ctx context.Context, node *ast.GenDecl, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
@@ -764,15 +764,15 @@ func (e *Evaluator) evalGenDecl(ctx context.Context, node *ast.GenDecl, env *obj
 	}
 
 	if pkg == nil || pkg.Fset == nil {
-		return e.newError(node.Pos(), "package info or fset is missing, cannot resolve types")
+		return e.newError(ctx, node.Pos(), "package info or fset is missing, cannot resolve types")
 	}
 	file := pkg.Fset.File(node.Pos())
 	if file == nil {
-		return e.newError(node.Pos(), "could not find file for node position")
+		return e.newError(ctx, node.Pos(), "could not find file for node position")
 	}
 	astFile, ok := pkg.AstFiles[file.Name()]
 	if !ok {
-		return e.newError(node.Pos(), "could not find ast.File for path: %s", file.Name())
+		return e.newError(ctx, node.Pos(), "could not find ast.File for path: %s", file.Name())
 	}
 	importLookup := e.scanner.BuildImportLookup(astFile)
 
@@ -896,7 +896,7 @@ func (e *Evaluator) evalFile(ctx context.Context, file *ast.File, env *object.En
 		e.logger.DebugContext(ctx, "populating package-level constants", "package", pkg.ImportPath)
 		for _, c := range pkg.Constants {
 			// No need to check for exported here, we are in the same package.
-			constObj := e.convertGoConstant(c.ConstVal, file.Pos())
+			constObj := e.convertGoConstant(ctx, c.ConstVal, file.Pos())
 			if isError(constObj) {
 				e.logc(ctx, slog.LevelWarn, "could not convert constant to object", "const", c.Name, "error", constObj)
 				continue
@@ -939,7 +939,7 @@ func (e *Evaluator) evalFile(ctx context.Context, file *ast.File, env *object.En
 }
 
 // convertGoConstant converts a go/constant.Value to a symgo/object.Object.
-func (e *Evaluator) convertGoConstant(val constant.Value, pos token.Pos) object.Object {
+func (e *Evaluator) convertGoConstant(ctx context.Context, val constant.Value, pos token.Pos) object.Object {
 	switch val.Kind() {
 	case constant.String:
 		return &object.String{Value: constant.StringVal(val)}
@@ -948,7 +948,7 @@ func (e *Evaluator) convertGoConstant(val constant.Value, pos token.Pos) object.
 		if !ok {
 			// This might be a large integer that doesn't fit in int64.
 			// For symbolic execution, this is an acceptable limitation for now.
-			return e.newError(pos, "could not convert constant to int64: %s", val.String())
+			return e.newError(ctx, pos, "could not convert constant to int64: %s", val.String())
 		}
 		return &object.Integer{Value: i}
 	case constant.Bool:
@@ -1014,7 +1014,7 @@ func (e *Evaluator) ensurePackageEnvPopulated(ctx context.Context, pkgObj *objec
 			if !shouldScan && !c.IsExported {
 				continue
 			}
-			constObj := e.convertGoConstant(c.ConstVal, token.NoPos)
+			constObj := e.convertGoConstant(ctx, c.ConstVal, token.NoPos)
 			if isError(constObj) {
 				e.logc(ctx, slog.LevelWarn, "could not convert constant to object", "const", c.Name, "error", constObj)
 				continue
@@ -1128,12 +1128,12 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 			}
 		}
 
-		return e.newError(n.Pos(), "undefined method or field: %s on symbolic type %s", n.Sel.Name, val.Inspect())
+		return e.newError(ctx, n.Pos(), "undefined method or field: %s on symbolic type %s", n.Sel.Name, val.Inspect())
 
 	case *object.Package:
 		if val.ScannedInfo == nil {
 			if e.scanner == nil {
-				return e.newError(n.Pos(), "scanner is not available, cannot load package %q", val.Path)
+				return e.newError(ctx, n.Pos(), "scanner is not available, cannot load package %q", val.Path)
 			}
 			pkgInfo, err := e.resolver.resolvePackageWithoutPolicyCheck(ctx, val.Path)
 			if err != nil {
@@ -1161,7 +1161,7 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 		// We need package info regardless of the policy to find the symbol.
 		if val.ScannedInfo == nil {
 			if e.scanner == nil {
-				return e.newError(n.Pos(), "scanner is not available, cannot load package %q", val.Path)
+				return e.newError(ctx, n.Pos(), "scanner is not available, cannot load package %q", val.Path)
 			}
 			pkgInfo, err := e.resolver.resolvePackageWithoutPolicyCheck(ctx, val.Path)
 			if err != nil {
@@ -1199,7 +1199,7 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 				case constant.Int:
 					val, ok := constant.Int64Val(c.ConstVal)
 					if !ok {
-						return e.newError(n.Pos(), "could not convert constant %s to int64", c.Name)
+						return e.newError(ctx, n.Pos(), "could not convert constant %s to int64", c.Name)
 					}
 					constObj = &object.Integer{Value: val}
 				case constant.Bool:
@@ -1251,7 +1251,7 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 			}
 		}
 
-		return e.newError(n.Pos(), "undefined method: %s on %s", n.Sel.Name, val.TypeName)
+		return e.newError(ctx, n.Pos(), "undefined method: %s on %s", n.Sel.Name, val.TypeName)
 
 	case *object.Variable:
 		typeInfo := val.TypeInfo()
@@ -1277,7 +1277,7 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 					if foreignPkgObj.ScannedInfo == nil {
 						scanned, err := e.resolver.resolvePackageWithoutPolicyCheck(ctx, foreignPkgObj.Path)
 						if err != nil {
-							return e.newError(n.Pos(), "failed to scan dependent package %s: %v", foreignPkgObj.Path, err)
+						return e.newError(ctx, n.Pos(), "failed to scan dependent package %s: %v", foreignPkgObj.Path, err)
 						}
 						foreignPkgObj.ScannedInfo = scanned
 					}
@@ -1285,7 +1285,7 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 				} else {
 					scanned, err := e.resolver.resolvePackageWithoutPolicyCheck(ctx, typeInfo.PkgPath)
 					if err != nil {
-						return e.newError(n.Pos(), "failed to scan transitive dependency package %s: %v", typeInfo.PkgPath, err)
+					return e.newError(ctx, n.Pos(), "failed to scan transitive dependency package %s: %v", typeInfo.PkgPath, err)
 					}
 					resolutionPkg = scanned
 				}
@@ -1407,10 +1407,10 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 			}
 		}
 
-		return e.newError(n.Pos(), "undefined field or method: %s on %s", n.Sel.Name, val.Inspect())
+		return e.newError(ctx, n.Pos(), "undefined field or method: %s on %s", n.Sel.Name, val.Inspect())
 
 	default:
-		return e.newError(n.Pos(), "expected a package, instance, or variable on the left side of selector, but got %s", left.Type())
+		return e.newError(ctx, n.Pos(), "expected a package, instance, or variable on the left side of selector, but got %s", left.Type())
 	}
 }
 
@@ -1479,20 +1479,20 @@ func (e *Evaluator) evalTypeSwitchStmt(ctx context.Context, n *ast.TypeSwitchStm
 
 	assignStmt, ok := n.Assign.(*ast.AssignStmt)
 	if !ok {
-		return e.newError(n.Pos(), "expected AssignStmt in TypeSwitchStmt, got %T", n.Assign)
+		return e.newError(ctx, n.Pos(), "expected AssignStmt in TypeSwitchStmt, got %T", n.Assign)
 	}
 	if len(assignStmt.Lhs) != 1 || len(assignStmt.Rhs) != 1 {
-		return e.newError(n.Pos(), "expected one variable and one value in type switch assignment")
+		return e.newError(ctx, n.Pos(), "expected one variable and one value in type switch assignment")
 	}
 	ident, ok := assignStmt.Lhs[0].(*ast.Ident)
 	if !ok {
-		return e.newError(n.Pos(), "expected identifier on LHS of type switch assignment")
+		return e.newError(ctx, n.Pos(), "expected identifier on LHS of type switch assignment")
 	}
 	varName := ident.Name
 
 	typeAssert, ok := assignStmt.Rhs[0].(*ast.TypeAssertExpr)
 	if !ok {
-		return e.newError(n.Pos(), "expected TypeAssertExpr on RHS of type switch assignment")
+		return e.newError(ctx, n.Pos(), "expected TypeAssertExpr on RHS of type switch assignment")
 	}
 	originalObj := e.Eval(ctx, typeAssert.X, switchEnv, pkg)
 	if isError(originalObj) {
@@ -1502,11 +1502,11 @@ func (e *Evaluator) evalTypeSwitchStmt(ctx context.Context, n *ast.TypeSwitchStm
 	if n.Body != nil {
 		file := pkg.Fset.File(n.Pos())
 		if file == nil {
-			return e.newError(n.Pos(), "could not find file for node position")
+			return e.newError(ctx, n.Pos(), "could not find file for node position")
 		}
 		astFile, ok := pkg.AstFiles[file.Name()]
 		if !ok {
-			return e.newError(n.Pos(), "could not find ast.File for path: %s", file.Name())
+			return e.newError(ctx, n.Pos(), "could not find ast.File for path: %s", file.Name())
 		}
 		importLookup := e.scanner.BuildImportLookup(astFile)
 
@@ -1534,7 +1534,7 @@ func (e *Evaluator) evalTypeSwitchStmt(ctx context.Context, n *ast.TypeSwitchStm
 					if id, ok := typeExpr.(*ast.Ident); ok {
 						fieldType = &scanner.FieldType{Name: id.Name, IsBuiltin: true}
 					} else {
-						return e.newError(typeExpr.Pos(), "could not resolve type for case clause")
+						return e.newError(ctx, typeExpr.Pos(), "could not resolve type for case clause")
 					}
 				}
 
@@ -1584,15 +1584,15 @@ func (e *Evaluator) evalTypeAssertExpr(ctx context.Context, n *ast.TypeAssertExp
 
 	// Next, resolve the asserted type (T).
 	if pkg == nil || pkg.Fset == nil {
-		return e.newError(n.Pos(), "package info or fset is missing, cannot resolve types for type assertion")
+		return e.newError(ctx, n.Pos(), "package info or fset is missing, cannot resolve types for type assertion")
 	}
 	file := pkg.Fset.File(n.Pos())
 	if file == nil {
-		return e.newError(n.Pos(), "could not find file for node position")
+		return e.newError(ctx, n.Pos(), "could not find file for node position")
 	}
 	astFile, ok := pkg.AstFiles[file.Name()]
 	if !ok {
-		return e.newError(n.Pos(), "could not find ast.File for path: %s", file.Name())
+		return e.newError(ctx, n.Pos(), "could not find ast.File for path: %s", file.Name())
 	}
 	importLookup := e.scanner.BuildImportLookup(astFile)
 
@@ -1600,7 +1600,7 @@ func (e *Evaluator) evalTypeAssertExpr(ctx context.Context, n *ast.TypeAssertExp
 	if fieldType == nil {
 		var typeNameBuf bytes.Buffer
 		printer.Fprint(&typeNameBuf, pkg.Fset, n.Type)
-		return e.newError(n.Pos(), "could not resolve type for type assertion: %s", typeNameBuf.String())
+		return e.newError(ctx, n.Pos(), "could not resolve type for type assertion: %s", typeNameBuf.String())
 	}
 	resolvedType := e.resolver.ResolveType(ctx, fieldType)
 
@@ -1704,7 +1704,7 @@ func (e *Evaluator) evalRangeStmt(ctx context.Context, n *ast.RangeStmt, env *ob
 	return &object.SymbolicPlaceholder{Reason: "for-range loop"}
 }
 
-func (e *Evaluator) evalBranchStmt(n *ast.BranchStmt) object.Object {
+func (e *Evaluator) evalBranchStmt(ctx context.Context, n *ast.BranchStmt) object.Object {
 	var label string
 	if n.Label != nil {
 		label = n.Label.Name
@@ -1716,7 +1716,7 @@ func (e *Evaluator) evalBranchStmt(n *ast.BranchStmt) object.Object {
 	case token.CONTINUE:
 		return &object.Continue{Label: label}
 	default:
-		return e.newError(n.Pos(), "unsupported branch statement: %s", n.Tok)
+		return e.newError(ctx, n.Pos(), "unsupported branch statement: %s", n.Tok)
 	}
 }
 
@@ -1850,7 +1850,7 @@ func (e *Evaluator) evalAssignStmt(ctx context.Context, n *ast.AssignStmt, env *
 		// Special case for two-value type assertions: v, ok := x.(T)
 		if typeAssert, ok := n.Rhs[0].(*ast.TypeAssertExpr); ok {
 			if len(n.Lhs) != 2 {
-				return e.newError(n.Pos(), "type assertion with 2 values on RHS must have 2 variables on LHS, got %d", len(n.Lhs))
+				return e.newError(ctx, n.Pos(), "type assertion with 2 values on RHS must have 2 variables on LHS, got %d", len(n.Lhs))
 			}
 
 			// Evaluate the source expression to trace calls
@@ -1858,15 +1858,15 @@ func (e *Evaluator) evalAssignStmt(ctx context.Context, n *ast.AssignStmt, env *
 
 			// Resolve the asserted type (T).
 			if pkg == nil || pkg.Fset == nil {
-				return e.newError(n.Pos(), "package info or fset is missing, cannot resolve types for type assertion")
+				return e.newError(ctx, n.Pos(), "package info or fset is missing, cannot resolve types for type assertion")
 			}
 			file := pkg.Fset.File(n.Pos())
 			if file == nil {
-				return e.newError(n.Pos(), "could not find file for node position")
+				return e.newError(ctx, n.Pos(), "could not find file for node position")
 			}
 			astFile, ok := pkg.AstFiles[file.Name()]
 			if !ok {
-				return e.newError(n.Pos(), "could not find ast.File for path: %s", file.Name())
+				return e.newError(ctx, n.Pos(), "could not find ast.File for path: %s", file.Name())
 			}
 			importLookup := e.scanner.BuildImportLookup(astFile)
 
@@ -1874,7 +1874,7 @@ func (e *Evaluator) evalAssignStmt(ctx context.Context, n *ast.AssignStmt, env *
 			if fieldType == nil {
 				var typeNameBuf bytes.Buffer
 				printer.Fprint(&typeNameBuf, pkg.Fset, typeAssert.Type)
-				return e.newError(typeAssert.Pos(), "could not resolve type for type assertion: %s", typeNameBuf.String())
+				return e.newError(ctx, typeAssert.Pos(), "could not resolve type for type assertion: %s", typeNameBuf.String())
 			}
 			resolvedType := e.resolver.ResolveType(ctx, fieldType)
 
@@ -1942,7 +1942,7 @@ func (e *Evaluator) evalAssignStmt(ctx context.Context, n *ast.AssignStmt, env *
 		}
 
 		if len(multiRet.Values) != len(n.Lhs) {
-			return e.newError(n.Pos(), "assignment mismatch: %d variables but %d values", len(n.Lhs), len(multiRet.Values))
+			return e.newError(ctx, n.Pos(), "assignment mismatch: %d variables but %d values", len(n.Lhs), len(multiRet.Values))
 		}
 
 		for i, lhsExpr := range n.Lhs {
@@ -1974,7 +1974,7 @@ func (e *Evaluator) evalAssignStmt(ctx context.Context, n *ast.AssignStmt, env *
 			e.Eval(ctx, n.Rhs[0], env, pkg)
 			return nil
 		default:
-			return e.newError(n.Pos(), "unsupported assignment target: expected an identifier or selector, but got %T", lhs)
+			return e.newError(ctx, n.Pos(), "unsupported assignment target: expected an identifier or selector, but got %T", lhs)
 		}
 	}
 
@@ -2006,7 +2006,7 @@ func (e *Evaluator) evalAssignStmt(ctx context.Context, n *ast.AssignStmt, env *
 		return nil
 	}
 
-	return e.newError(n.Pos(), "unsupported assignment statement")
+	return e.newError(ctx, n.Pos(), "unsupported assignment statement")
 }
 
 func (e *Evaluator) evalIdentAssignment(ctx context.Context, ident *ast.Ident, rhs ast.Expr, tok token.Token, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
@@ -2108,36 +2108,36 @@ func (e *Evaluator) assignIdentifier(ctx context.Context, ident *ast.Ident, val 
 	return v
 }
 
-func (e *Evaluator) evalBasicLit(n *ast.BasicLit) object.Object {
+func (e *Evaluator) evalBasicLit(ctx context.Context, n *ast.BasicLit) object.Object {
 	switch n.Kind {
 	case token.INT:
 		i, err := strconv.ParseInt(n.Value, 0, 64)
 		if err != nil {
-			return e.newError(n.Pos(), "could not parse %q as integer", n.Value)
+			return e.newError(ctx, n.Pos(), "could not parse %q as integer", n.Value)
 		}
 		return &object.Integer{Value: i}
 	case token.STRING:
 		s, err := strconv.Unquote(n.Value)
 		if err != nil {
-			return e.newError(n.Pos(), "could not unquote string %q", n.Value)
+			return e.newError(ctx, n.Pos(), "could not unquote string %q", n.Value)
 		}
 		return &object.String{Value: s}
 	case token.CHAR:
 		s, err := strconv.Unquote(n.Value)
 		if err != nil {
-			return e.newError(n.Pos(), "could not unquote char %q", n.Value)
+			return e.newError(ctx, n.Pos(), "could not unquote char %q", n.Value)
 		}
 		// A char literal unquotes to a string containing the single character.
 		// We take the first (and only) rune from that string.
 		if len(s) == 0 {
-			return e.newError(n.Pos(), "invalid empty char literal %q", n.Value)
+			return e.newError(ctx, n.Pos(), "invalid empty char literal %q", n.Value)
 		}
 		runes := []rune(s)
 		return &object.Integer{Value: int64(runes[0])}
 	case token.FLOAT:
 		f, err := strconv.ParseFloat(n.Value, 64)
 		if err != nil {
-			return e.newError(n.Pos(), "could not parse %q as float", n.Value)
+			return e.newError(ctx, n.Pos(), "could not parse %q as float", n.Value)
 		}
 		return &object.Float{Value: f}
 	case token.IMAG:
@@ -2146,11 +2146,11 @@ func (e *Evaluator) evalBasicLit(n *ast.BasicLit) object.Object {
 		imagStr := strings.TrimSuffix(n.Value, "i")
 		f, err := strconv.ParseFloat(imagStr, 64)
 		if err != nil {
-			return e.newError(n.Pos(), "could not parse %q as imaginary", n.Value)
+			return e.newError(ctx, n.Pos(), "could not parse %q as imaginary", n.Value)
 		}
 		return &object.Complex{Value: complex(0, f)}
 	default:
-		return e.newError(n.Pos(), "unsupported literal type: %s", n.Kind)
+		return e.newError(ctx, n.Pos(), "unsupported literal type: %s", n.Kind)
 	}
 }
 
@@ -2223,7 +2223,7 @@ func (e *Evaluator) evalIdent(ctx context.Context, n *ast.Ident, env *object.Env
 		return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("undefined identifier %s in out-of-policy package", n.Name)}
 	}
 
-	return e.newError(n.Pos(), "identifier not found: %s", n.Name)
+	return e.newError(ctx, n.Pos(), "identifier not found: %s", n.Name)
 }
 
 // logc logs a message with the current function context from the call stack.
@@ -2257,9 +2257,9 @@ func (e *Evaluator) logc(ctx context.Context, level slog.Level, msg string, args
 	e.logger.Log(ctx, level, msg, args...)
 }
 
-func (e *Evaluator) newError(pos token.Pos, format string, args ...interface{}) *object.Error {
+func (e *Evaluator) newError(ctx context.Context, pos token.Pos, format string, args ...interface{}) *object.Error {
 	msg := fmt.Sprintf(format, args...)
-	e.logc(context.Background(), slog.LevelError, msg, "pos", pos)
+	e.logc(ctx, slog.LevelError, msg, "pos", pos)
 
 	frames := make([]*object.CallFrame, len(e.callStack))
 	for i, frame := range e.callStack {
@@ -2316,7 +2316,7 @@ func (e *Evaluator) evalCallExpr(ctx context.Context, n *ast.CallExpr, env *obje
 	// We wrap it in a special Variadic object to signal this to `applyFunction`.
 	if n.Ellipsis.IsValid() {
 		if len(args) == 0 {
-			return e.newError(n.Ellipsis, "invalid use of ... with no arguments")
+			return e.newError(ctx, n.Ellipsis, "invalid use of ... with no arguments")
 		}
 		lastArg := args[len(args)-1]
 		// The argument should be a slice, but we don't check it here.
@@ -2503,7 +2503,7 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 					name = f.Name.Name
 				}
 				e.logc(ctx, slog.LevelWarn, "infinite recursion detected, aborting", "function", name)
-				return e.newError(callPos, "infinite recursion detected: %s", name)
+				return e.newError(ctx, callPos, "infinite recursion detected: %s", name)
 			}
 		}
 	}
@@ -2537,7 +2537,7 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 		// new environment that contains the type parameter bindings.
 		finalEnv, err := e.extendFunctionEnv(ctx, fn.Function, args, extendedEnv)
 		if err != nil {
-			return e.newError(fn.Decl.Pos(), "failed to extend generic function env: %v", err)
+			return e.newError(ctx, fn.Decl.Pos(), "failed to extend generic function env: %v", err)
 		}
 
 		evaluated := e.Eval(ctx, fn.Function.Body, finalEnv, fn.Function.Package)
@@ -2562,7 +2562,7 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 		// package. We must pass fn.Package to both extendFunctionEnv and Eval.
 		extendedEnv, err := e.extendFunctionEnv(ctx, fn, args, nil) // Pass nil for non-generic calls
 		if err != nil {
-			return e.newError(fn.Decl.Pos(), "failed to extend function env: %v", err)
+			return e.newError(ctx, fn.Decl.Pos(), "failed to extend function env: %v", err)
 		}
 
 		// Populate the new environment with the imports from the function's source file.
@@ -2720,7 +2720,7 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 		return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("result of calling %s", fn.Inspect())}
 
 	default:
-		return e.newError(callPos, "not a function: %s", fn.Type())
+		return e.newError(ctx, callPos, "not a function: %s", fn.Type())
 	}
 }
 

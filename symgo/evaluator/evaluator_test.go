@@ -123,6 +123,26 @@ var x = 10
 	}
 }
 
+func TestEvalUnsupportedNode(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelError}))
+
+	node := &ast.BadExpr{} // This node type is not handled by our Eval function.
+
+	eval := New(nil, logger, nil, nil)
+	evaluated := eval.Eval(context.Background(), node, object.NewEnvironment(), nil)
+
+	_, ok := evaluated.(*object.Error)
+	if !ok {
+		t.Fatalf("expected an error object, but got %T (%+v)", evaluated, evaluated)
+	}
+
+	logOutput := buf.String()
+	if !strings.Contains(logOutput, `"msg":"evaluation not implemented for *ast.BadExpr"`) {
+		t.Errorf("log output does not contain the expected error message. Got: %s", logOutput)
+	}
+}
+
 func TestEval_DeferStmt_WithFuncLit(t *testing.T) {
 	source := `
 package main

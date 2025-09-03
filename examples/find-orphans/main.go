@@ -24,14 +24,14 @@ import (
 
 func main() {
 	var (
-		all          = flag.Bool("all", false, "scan every package in the module")
-		includeTests = flag.Bool("include-tests", false, "include usage within test files")
-		workspace    = flag.String("workspace-root", "", "scan all Go modules found under a given directory")
-		verbose      = flag.Bool("v", false, "enable verbose output")
-		asJSON       = flag.Bool("json", false, "output orphans in JSON format")
-		mode                   = flag.String("mode", "auto", "analysis mode: auto, app, or lib")
-		excludeDirs            stringSliceFlag
-		primaryAnalysisScope   stringSliceFlag
+		all                  = flag.Bool("all", false, "scan every package in the module")
+		includeTests         = flag.Bool("include-tests", false, "include usage within test files")
+		workspace            = flag.String("workspace-root", "", "scan all Go modules found under a given directory")
+		verbose              = flag.Bool("v", false, "enable verbose output")
+		asJSON               = flag.Bool("json", false, "output orphans in JSON format")
+		mode                 = flag.String("mode", "auto", "analysis mode: auto, app, or lib")
+		excludeDirs          stringSliceFlag
+		primaryAnalysisScope stringSliceFlag
 	)
 	flag.Var(&excludeDirs, "exclude-dirs", "comma-separated list of directories to exclude (e.g. testdata,vendor)")
 	flag.Var(&primaryAnalysisScope, "primary-analysis-scope", "comma-separated list of package patterns to define the primary analysis scope (for debugging purposes)")

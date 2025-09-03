@@ -1277,7 +1277,7 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 					if foreignPkgObj.ScannedInfo == nil {
 						scanned, err := e.resolver.resolvePackageWithoutPolicyCheck(ctx, foreignPkgObj.Path)
 						if err != nil {
-						return e.newError(ctx, n.Pos(), "failed to scan dependent package %s: %v", foreignPkgObj.Path, err)
+							return e.newError(ctx, n.Pos(), "failed to scan dependent package %s: %v", foreignPkgObj.Path, err)
 						}
 						foreignPkgObj.ScannedInfo = scanned
 					}
@@ -1285,7 +1285,7 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 				} else {
 					scanned, err := e.resolver.resolvePackageWithoutPolicyCheck(ctx, typeInfo.PkgPath)
 					if err != nil {
-					return e.newError(ctx, n.Pos(), "failed to scan transitive dependency package %s: %v", typeInfo.PkgPath, err)
+						return e.newError(ctx, n.Pos(), "failed to scan transitive dependency package %s: %v", typeInfo.PkgPath, err)
 					}
 					resolutionPkg = scanned
 				}

@@ -18,8 +18,8 @@ import (
 	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/scanner"
 	"github.com/podhmo/go-scan/scantest"
-	"github.com/podhmo/go-scan/symgo/object"
 	_ "github.com/podhmo/go-scan/scantest"
+	"github.com/podhmo/go-scan/symgo/object"
 )
 
 func TestEvalIntegerLiteral(t *testing.T) {
@@ -876,7 +876,6 @@ func main() {
 		t.Errorf("expected log to contain 'identifier not found' error, but it didn't")
 	}
 }
-
 
 func TestEvalReturnStatement(t *testing.T) {
 	input := `return 10`

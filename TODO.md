@@ -62,6 +62,10 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - **`symgo`: Field Access on Symbolic Receivers**: The `symgo` evaluator can now correctly access struct fields on symbolic receivers (e.g., a receiver of a method that is the entry point of analysis). This fixes a bug where field access was incorrectly failing with an "undefined method" error, particularly on structs that use `_ struct{}` to enforce keyed literals.
 - **`go-scan`: Declarations-Only Scanning**: Added a `WithDeclarationsOnlyPackages` option to the `goscan.Scanner`. For packages specified with this option, the scanner parses all top-level declarations (types, functions, variables) but explicitly discards function bodies. This allows tools like `docgen` to obtain necessary type information from packages like `net/http` without incurring the cost and complexity of symbolically executing their entire implementation. This provides a significant performance and stability improvement for analyzing code that depends on large standard library packages.
 
+## symgo Refinements
+
+- [ ] **E2E Analysis and Improvement Plan**: Performed an end-to-end analysis of the `symgo` engine by running `find-orphans` on the entire repository. The analysis revealed several core limitations. A detailed breakdown of the issues and a task list for addressing them has been documented in [docs/plan-symgo-refine.md](./docs/plan-symgo-refine.md).
+
 ## To Be Implemented
 
 ### `minigo` Refinements ([docs/plan-minigo.md](./docs/plan-minigo.md))

@@ -41,6 +41,7 @@ const (
 	BREAK_OBJ                 ObjectType = "BREAK"
 	CONTINUE_OBJ              ObjectType = "CONTINUE"
 	VARIADIC_OBJ              ObjectType = "VARIADIC"
+	UNRESOLVED_FUNCTION_OBJ   ObjectType = "UNRESOLVED_FUNCTION"
 )
 
 // Object is the interface that all value types in our symbolic engine will implement.
@@ -738,6 +739,24 @@ func getSourceLine(filename string, lineNum int) (string, error) {
 // for formatting the call stack.
 func (e *Error) AttachFileSet(fset *token.FileSet) {
 	e.fset = fset
+}
+
+// --- UnresolvedFunction Object ---
+
+// UnresolvedFunction represents a function that could not be fully resolved
+// at the time of symbol lookup, for example, because its package could not be scanned.
+type UnresolvedFunction struct {
+	BaseObject
+	PkgPath  string
+	FuncName string
+}
+
+// Type returns the type of the UnresolvedFunction object.
+func (uf *UnresolvedFunction) Type() ObjectType { return UNRESOLVED_FUNCTION_OBJ }
+
+// Inspect returns a string representation of the unresolved function.
+func (uf *UnresolvedFunction) Inspect() string {
+	return fmt.Sprintf("<Unresolved Function: %s.%s>", uf.PkgPath, uf.FuncName)
 }
 
 // --- Global Instances ---

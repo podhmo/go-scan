@@ -84,6 +84,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     - [ ] Once the critical recursion and type resolution bugs are fixed, execute the `find-orphans` e2e test again.
     - [ ] Perform a full analysis of the complete log output.
     - [ ] Create new items in `TODO.md` for any remaining `WARN` or `ERROR` messages that indicate bugs.
+- [ ] **Performance: Re-investigate e2e test timeout**: The e2e test for `find-orphans` still times out even after fixing the external type resolution bug. A new investigation is needed, possibly using profiling tools, to identify the new root cause, which is likely a different performance bottleneck or a complex loop.
 
 
 ### `minigo` Refinements ([docs/plan-minigo.md](./docs/plan-minigo.md))

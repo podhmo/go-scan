@@ -66,7 +66,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 ## To Be Implemented
 
 
-### `symgo` Engine Improvements ([docs/plan-symgo-refine2.md](./docs/plan-symgo-refine2.md))
+### `symgo` Engine Improvements ([docs/plan-symgo-refine2.md](./docs/plan-symgo-refine2.md)), ([docs/trouble-symgo-refine2.md](./docs/trouble-symgo-refine2.md))
 - [x] **Analysis**: Investigate timeout and critical errors by re-running e2e tests.
 - [-] **Bugfix: Infinite Recursion**: (partially resolved)
     - [x] Add a recursion guard (e.g., using a map to track visited nodes) to `scanner.TypeInfoFromExpr` to prevent re-evaluation of the same type expression.

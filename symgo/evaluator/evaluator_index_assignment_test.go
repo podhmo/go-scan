@@ -11,7 +11,6 @@ import (
 	"github.com/podhmo/go-scan/symgo/object"
 )
 
-
 func TestMapIndexAssignment(t *testing.T) {
 	var getValueCalled bool
 

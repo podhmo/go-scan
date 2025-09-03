@@ -1054,12 +1054,6 @@ func (e *Evaluator) ensurePackageEnvPopulated(ctx context.Context, pkgObj *objec
 	}
 }
 
-func (e *Evaluator) createUnscannableSymbolPlaceholder(val *object.Package, selName string) object.Object {
-	placeholder := &object.SymbolicPlaceholder{Reason: fmt.Sprintf("unscannable symbol %s.%s", val.Path, selName)}
-	val.Env.Set(selName, placeholder)
-	return placeholder
-}
-
 func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
 	e.logger.Debug("evalSelectorExpr", "selector", n.Sel.Name)
 
@@ -1141,7 +1135,11 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 			pkgInfo, err := e.resolver.resolvePackageWithoutPolicyCheck(ctx, val.Path)
 			if err != nil {
 				e.logc(ctx, slog.LevelWarn, "could not scan package, treating as external", "package", val.Path, "error", err)
-				return e.createUnscannableSymbolPlaceholder(val, n.Sel.Name)
+				// The package could not be scanned. Instead of creating a generic placeholder,
+				// create an UnresolvedFunction that can be handled by applyFunction.
+				unresolvedFn := &object.UnresolvedFunction{PkgPath: val.Path, FuncName: n.Sel.Name}
+				val.Env.Set(n.Sel.Name, unresolvedFn)
+				return unresolvedFn
 			}
 			val.ScannedInfo = pkgInfo
 		}
@@ -1159,19 +1157,6 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 		// If the symbol is already in the package's environment, return it.
 		if symbol, ok := val.Env.Get(n.Sel.Name); ok {
 			return symbol
-		}
-
-		// We need package info regardless of the policy to find the symbol.
-		if val.ScannedInfo == nil {
-			if e.scanner == nil {
-				return e.newError(ctx, n.Pos(), "scanner is not available, cannot load package %q", val.Path)
-			}
-			pkgInfo, err := e.resolver.resolvePackageWithoutPolicyCheck(ctx, val.Path)
-			if err != nil {
-				e.logc(ctx, slog.LevelWarn, "could not scan package, treating as external", "package", val.Path, "error", err)
-				return e.createUnscannableSymbolPlaceholder(val, n.Sel.Name)
-			}
-			val.ScannedInfo = pkgInfo
 		}
 
 		// Try to find the symbol as a function.
@@ -1223,11 +1208,15 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 			}
 		}
 
-		// If it's not a function or a known constant, it's probably a variable.
-		// Create a generic placeholder for it.
-		placeholder := &object.SymbolicPlaceholder{Reason: fmt.Sprintf("workspace symbol %s.%s", val.Path, n.Sel.Name)}
-		val.Env.Set(n.Sel.Name, placeholder)
-		return placeholder
+		// If it's not a function or a known constant, it could be a variable, or it could be
+		// a function that the scanner was unable to resolve (e.g., due to build tags).
+		// We optimistically assume it's a function and create an UnresolvedFunction object.
+		// `applyFunction` will handle this object; if it's not actually a function,
+		// the call will fail there. This is better than returning a generic placeholder
+		// which would prevent multi-return values from being handled correctly.
+		unresolvedFn := &object.UnresolvedFunction{PkgPath: val.Path, FuncName: n.Sel.Name}
+		val.Env.Set(n.Sel.Name, unresolvedFn)
+		return unresolvedFn
 
 	case *object.Instance:
 		key := fmt.Sprintf("(%s).%s", val.TypeName, n.Sel.Name)
@@ -2657,77 +2646,8 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 		}
 
 		// Case 2: The placeholder represents an external function call.
-		if fn.UnderlyingFunc != nil && fn.UnderlyingFunc.AstDecl != nil && fn.Package != nil {
-			results := fn.UnderlyingFunc.AstDecl.Type.Results
-			if results == nil || len(results.List) == 0 {
-				return &object.SymbolicPlaceholder{Reason: "result of external call with no return value"}
-			}
-
-			var importLookup map[string]string
-			if file := fn.Package.Fset.File(fn.UnderlyingFunc.AstDecl.Pos()); file != nil {
-				if astFile, ok := fn.Package.AstFiles[file.Name()]; ok {
-					importLookup = e.scanner.BuildImportLookup(astFile)
-				}
-			}
-
-			if len(results.List) == 1 {
-				// Single return value
-				resultASTExpr := results.List[0].Type
-				fieldType := e.scanner.TypeInfoFromExpr(ctx, resultASTExpr, nil, fn.Package, importLookup)
-
-				resolvedType := e.resolver.ResolveType(ctx, fieldType)
-
-				if resolvedType == nil && fieldType.IsBuiltin && fieldType.Name == "error" {
-					stringFieldType := &scanner.FieldType{Name: "string", IsBuiltin: true}
-					errorMethod := &scanner.MethodInfo{
-						Name:    "Error",
-						Results: []*scanner.FieldInfo{{Type: stringFieldType}},
-					}
-					resolvedType = &scanner.TypeInfo{
-						Name:      "error",
-						Kind:      scanner.InterfaceKind,
-						Interface: &scanner.InterfaceInfo{Methods: []*scanner.MethodInfo{errorMethod}},
-					}
-				}
-
-				return &object.ReturnValue{
-					Value: &object.SymbolicPlaceholder{
-						Reason:     fmt.Sprintf("result of external call to %s", fn.UnderlyingFunc.Name),
-						BaseObject: object.BaseObject{ResolvedTypeInfo: resolvedType, ResolvedFieldType: fieldType},
-					},
-				}
-			}
-
-			// Multiple return values
-			returnValues := make([]object.Object, 0, len(results.List))
-			for i, field := range results.List {
-				fieldType := e.scanner.TypeInfoFromExpr(ctx, field.Type, nil, fn.Package, importLookup)
-
-				resolvedType := e.resolver.ResolveType(ctx, fieldType)
-
-				if resolvedType == nil && fieldType.IsBuiltin && fieldType.Name == "error" {
-					stringFieldType := &scanner.FieldType{Name: "string", IsBuiltin: true}
-					errorMethod := &scanner.MethodInfo{
-						Name:    "Error",
-						Results: []*scanner.FieldInfo{{Type: stringFieldType}},
-					}
-					resolvedType = &scanner.TypeInfo{
-						Name:      "error",
-						Kind:      scanner.InterfaceKind,
-						Interface: &scanner.InterfaceInfo{Methods: []*scanner.MethodInfo{errorMethod}},
-					}
-				}
-
-				placeholder := &object.SymbolicPlaceholder{
-					Reason: fmt.Sprintf("result %d of external call to %s", i, fn.UnderlyingFunc.Name),
-					BaseObject: object.BaseObject{
-						ResolvedTypeInfo:  resolvedType,
-						ResolvedFieldType: fieldType,
-					},
-				}
-				returnValues = append(returnValues, placeholder)
-			}
-			return &object.ReturnValue{Value: &object.MultiReturn{Values: returnValues}}
+		if fn.UnderlyingFunc != nil {
+			return e.createSymbolicResultForFuncInfo(ctx, fn.UnderlyingFunc, fn.Package, "result of external call to %s", fn.UnderlyingFunc.Name)
 		}
 
 		// Case 3: A placeholder representing a built-in type, used in a conversion.
@@ -2737,6 +2657,35 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 
 		// Case 4: Generic placeholder.
 		return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("result of calling %s", fn.Inspect())}
+
+	case *object.UnresolvedFunction:
+		// This is a function that could not be resolved during symbol lookup.
+		// We make a best effort to find its signature now.
+		e.logc(ctx, slog.LevelDebug, "attempting to resolve and apply unresolved function", "package", fn.PkgPath, "function", fn.FuncName)
+
+		// We need to use the resolver's internal, uncached package resolution logic
+		// to ensure we can re-attempt to scan a package that might have failed before.
+		scannedPkg, err := e.resolver.resolvePackageWithoutPolicyCheck(ctx, fn.PkgPath)
+		if err != nil {
+			e.logc(ctx, slog.LevelWarn, "could not scan package for unresolved function", "package", fn.PkgPath, "function", fn.FuncName, "error", err)
+			return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("result of calling unresolved function %s.%s", fn.PkgPath, fn.FuncName)}
+		}
+
+		var funcInfo *scanner.FunctionInfo
+		for _, f := range scannedPkg.Functions {
+			if f.Name == fn.FuncName {
+				funcInfo = f
+				break
+			}
+		}
+
+		if funcInfo == nil {
+			e.logc(ctx, slog.LevelWarn, "could not find function signature in package", "package", fn.PkgPath, "function", fn.FuncName)
+			return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("result of calling unresolved function %s.%s", fn.PkgPath, fn.FuncName)}
+		}
+
+		// We found the function info. Now create a symbolic result based on its signature.
+		return e.createSymbolicResultForFuncInfo(ctx, funcInfo, scannedPkg, "result of call to %s.%s", fn.PkgPath, fn.FuncName)
 
 	default:
 		return e.newError(ctx, callPos, "not a function: %s", fn.Type())
@@ -2966,32 +2915,39 @@ func (e *Evaluator) evalGenericInstantiation(ctx context.Context, fn *object.Fun
 	}
 }
 
-// createSymbolicResultForFunc creates a symbolic result for a function call
-// that is not being deeply executed due to scan policy.
-func (e *Evaluator) createSymbolicResultForFunc(ctx context.Context, fn *object.Function) object.Object {
-	if fn.Decl == nil || fn.Decl.Type == nil || fn.Package == nil {
-		return &object.SymbolicPlaceholder{Reason: "result of external call with incomplete info"}
+// createSymbolicResultForFuncInfo creates a symbolic result for a function call based on its FunctionInfo.
+// This is used for functions that are not deeply executed (e.g., due to scan policy or being unresolved).
+func (e *Evaluator) createSymbolicResultForFuncInfo(ctx context.Context, funcInfo *scanner.FunctionInfo, pkgInfo *scanner.PackageInfo, reasonFormat string, reasonArgs ...any) object.Object {
+	if funcInfo.AstDecl == nil || funcInfo.AstDecl.Type == nil || pkgInfo == nil {
+		return &object.SymbolicPlaceholder{Reason: "result of call with incomplete info"}
 	}
+	reason := fmt.Sprintf(reasonFormat, reasonArgs...)
 
-	results := fn.Decl.Type.Results
+	results := funcInfo.AstDecl.Type.Results
 	if results == nil || len(results.List) == 0 {
-		return &object.SymbolicPlaceholder{Reason: "result of external call with no return value"}
+		return &object.SymbolicPlaceholder{Reason: reason + " (no return value)"}
 	}
 
 	var importLookup map[string]string
-	if file := fn.Package.Fset.File(fn.Decl.Pos()); file != nil {
-		if astFile, ok := fn.Package.AstFiles[file.Name()]; ok {
+	if file := pkgInfo.Fset.File(funcInfo.AstDecl.Pos()); file != nil {
+		if astFile, ok := pkgInfo.AstFiles[file.Name()]; ok {
 			importLookup = e.scanner.BuildImportLookup(astFile)
 		}
 	}
 
 	if len(results.List) == 1 {
 		resultASTExpr := results.List[0].Type
-		fieldType := e.scanner.TypeInfoFromExpr(ctx, resultASTExpr, nil, fn.Package, importLookup)
+		fieldType := e.scanner.TypeInfoFromExpr(ctx, resultASTExpr, nil, pkgInfo, importLookup)
 		resolvedType := e.resolver.ResolveType(ctx, fieldType)
+
+		// Special handling for the built-in error interface.
+		if resolvedType == nil && fieldType.IsBuiltin && fieldType.Name == "error" {
+			resolvedType = ErrorInterfaceTypeInfo
+		}
+
 		return &object.ReturnValue{
 			Value: &object.SymbolicPlaceholder{
-				Reason:     fmt.Sprintf("result of out-of-policy call to %s", fn.Name.Name),
+				Reason:     reason,
 				BaseObject: object.BaseObject{ResolvedTypeInfo: resolvedType, ResolvedFieldType: fieldType},
 			},
 		}
@@ -3000,10 +2956,16 @@ func (e *Evaluator) createSymbolicResultForFunc(ctx context.Context, fn *object.
 	// Multiple return values
 	returnValues := make([]object.Object, 0, len(results.List))
 	for i, field := range results.List {
-		fieldType := e.scanner.TypeInfoFromExpr(ctx, field.Type, nil, fn.Package, importLookup)
+		fieldType := e.scanner.TypeInfoFromExpr(ctx, field.Type, nil, pkgInfo, importLookup)
 		resolvedType := e.resolver.ResolveType(ctx, fieldType)
+
+		// Special handling for the built-in error interface.
+		if resolvedType == nil && fieldType.IsBuiltin && fieldType.Name == "error" {
+			resolvedType = ErrorInterfaceTypeInfo
+		}
+
 		placeholder := &object.SymbolicPlaceholder{
-			Reason: fmt.Sprintf("result %d of out-of-policy call to %s", i, fn.Name.Name),
+			Reason: fmt.Sprintf("%s (result %d)", reason, i),
 			BaseObject: object.BaseObject{
 				ResolvedTypeInfo:  resolvedType,
 				ResolvedFieldType: fieldType,
@@ -3012,4 +2974,13 @@ func (e *Evaluator) createSymbolicResultForFunc(ctx context.Context, fn *object.
 		returnValues = append(returnValues, placeholder)
 	}
 	return &object.ReturnValue{Value: &object.MultiReturn{Values: returnValues}}
+}
+
+// createSymbolicResultForFunc creates a symbolic result for a function call
+// that is not being deeply executed due to scan policy.
+func (e *Evaluator) createSymbolicResultForFunc(ctx context.Context, fn *object.Function) object.Object {
+	if fn.Def == nil {
+		return &object.SymbolicPlaceholder{Reason: "result of external call with incomplete info"}
+	}
+	return e.createSymbolicResultForFuncInfo(ctx, fn.Def, fn.Package, "result of out-of-policy call to %s", fn.Name.Name)
 }

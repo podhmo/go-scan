@@ -56,6 +56,86 @@ func main() { add(1, 2) }
 	}
 }
 
+func TestEvalCallExpr_UnresolvedFunction_MultiReturn(t *testing.T) {
+	// This test simulates the case where a package initially fails to scan,
+	// leading to an UnresolvedFunction object. We then check if applyFunction
+	// can correctly re-resolve this function and produce a multi-return symbolic value.
+	files := map[string]string{
+		"go.mod": "module example.com/me",
+		"helper/helper.go": `
+package helper
+func GetPair() (string, error) { return "ok", nil }
+`,
+		"main.go": `
+package main
+import "example.com/me/helper"
+func main() {
+	_, _ = helper.GetPair()
+}`,
+	}
+	dir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
+		mainPkg := pkgs[0]
+		if mainPkg.Name != "main" {
+			for _, p := range pkgs {
+				if p.Name == "main" {
+					mainPkg = p
+					break
+				}
+			}
+		}
+
+		// The evaluator is created without a scan policy, so it should be able to find the package.
+		eval := New(s, s.Logger, nil, nil)
+
+		// Simulate the creation of an UnresolvedFunction, which is what the
+		// evaluator would do if `resolvePackageWithoutPolicyCheck` failed inside `evalSelectorExpr`.
+		unresolvedFn := &object.UnresolvedFunction{
+			PkgPath:  "example.com/me/helper",
+			FuncName: "GetPair",
+		}
+
+		// Apply the unresolved function. This should trigger the new logic in `applyFunction`.
+		result := eval.applyFunction(ctx, unresolvedFn, []object.Object{}, mainPkg, token.NoPos)
+
+		// Check the result
+		retVal, ok := result.(*object.ReturnValue)
+		if !ok {
+			return fmt.Errorf("expected ReturnValue, got %T (%v)", result, result)
+		}
+		multiRet, ok := retVal.Value.(*object.MultiReturn)
+		if !ok {
+			return fmt.Errorf("expected MultiReturn, got %T", retVal.Value)
+		}
+		if len(multiRet.Values) != 2 {
+			return fmt.Errorf("expected 2 return values, got %d", len(multiRet.Values))
+		}
+
+		// Check the type of the first return value (string)
+		val1 := multiRet.Values[0]
+		if val1.FieldType().Name != "string" {
+			return fmt.Errorf("expected first return value to be string, got %s", val1.FieldType().Name)
+		}
+
+		// Check the type of the second return value (error)
+		val2 := multiRet.Values[1]
+		if val2.FieldType().Name != "error" {
+			return fmt.Errorf("expected second return value to be error, got %s", val2.FieldType().Name)
+		}
+		if val2.TypeInfo() == nil || val2.TypeInfo().Interface == nil {
+			return fmt.Errorf("expected second return value to have resolved TypeInfo for error interface")
+		}
+
+		return nil
+	}
+
+	if _, err := scantest.Run(t, t.Context(), dir, []string{"./..."}, action); err != nil {
+		t.Fatalf("scantest.Run() failed: %v", err)
+	}
+}
+
 func TestEvalCallExprOnIntrinsic_WithScantest(t *testing.T) {
 	files := map[string]string{
 		"go.mod": "module example.com/me",

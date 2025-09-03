@@ -1973,8 +1973,18 @@ func (e *Evaluator) evalAssignStmt(ctx context.Context, n *ast.AssignStmt, env *
 			// Then evaluate the RHS.
 			e.Eval(ctx, n.Rhs[0], env, pkg)
 			return nil
+		case *ast.IndexExpr:
+			// This is an assignment to a map or slice index, like `m[k] = v`.
+			// We need to evaluate all parts to trace calls.
+			// 1. Evaluate the map/slice expression (e.g., `m`).
+			e.Eval(ctx, lhs.X, env, pkg)
+			// 2. Evaluate the index expression (e.g., `k`).
+			e.Eval(ctx, lhs.Index, env, pkg)
+			// 3. Evaluate the RHS value (e.g., `v`).
+			e.Eval(ctx, n.Rhs[0], env, pkg)
+			return nil
 		default:
-			return e.newError(ctx, n.Pos(), "unsupported assignment target: expected an identifier or selector, but got %T", lhs)
+			return e.newError(ctx, n.Pos(), "unsupported assignment target: expected an identifier, selector or index expression, but got %T", lhs)
 		}
 	}
 

@@ -127,7 +127,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 
 ### Future Enhancements
 - [x] **`symgo`: Tracing and Debuggability**: Enhance the tracing mechanism to provide a more detailed view of the symbolic execution flow.
-    - [x] **Contextual Logging**: Warning logs emitted during evaluation now include the function call site (name and position) where the warning occurred. This is achieved by capturing the call stack within the returned error object.
+- [x] **Contextual Logging**: Warning and error logs emitted during evaluation now include the function call site (name and position) where the warning occurred. This is achieved by capturing the call stack within the evaluator and adding it to the log record.
     - [x] **Source in Stack Traces**: Errors returned by the symbolic evaluator now include a full stack trace, complete with the source code line that caused the error, similar to `minigo`.
     - [x] **Structured Call Stack Logging**: Debug logs for function calls now include a structured representation of the call stack, with function names, file paths, and line numbers, significantly improving readability.
 - [x] **`find-orphans`: Automatic `go.work` Detection**: Enhance the `--workspace-root` flag to automatically detect and use a `go.work` file if it exists in the root directory. This would involve parsing the `go.work` file to determine the list of modules to analyze, providing a more idiomatic way to define a workspace. If `go.work` is not found, the tool should fall back to the current behavior of scanning all subdirectories for `go.mod` files.

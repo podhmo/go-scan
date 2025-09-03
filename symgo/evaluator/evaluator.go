@@ -898,7 +898,7 @@ func (e *Evaluator) evalFile(ctx context.Context, file *ast.File, env *object.En
 			// No need to check for exported here, we are in the same package.
 			constObj := e.convertGoConstant(c.ConstVal, file.Pos())
 			if isError(constObj) {
-				e.logger.Warn("could not convert constant to object", "const", c.Name, "error", constObj)
+				e.logc(ctx, slog.LevelWarn, "could not convert constant to object", "const", c.Name, "error", constObj)
 				continue
 			}
 			targetEnv.Set(c.Name, constObj)
@@ -1016,7 +1016,7 @@ func (e *Evaluator) ensurePackageEnvPopulated(ctx context.Context, pkgObj *objec
 			}
 			constObj := e.convertGoConstant(c.ConstVal, token.NoPos)
 			if isError(constObj) {
-				e.logger.Warn("could not convert constant to object", "const", c.Name, "error", constObj)
+				e.logc(ctx, slog.LevelWarn, "could not convert constant to object", "const", c.Name, "error", constObj)
 				continue
 			}
 			env.Set(c.Name, constObj)
@@ -1137,7 +1137,7 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 			}
 			pkgInfo, err := e.resolver.resolvePackageWithoutPolicyCheck(ctx, val.Path)
 			if err != nil {
-				e.logWithContext(ctx, slog.LevelWarn, "could not scan package, treating as external", "package", val.Path, "error", err)
+				e.logc(ctx, slog.LevelWarn, "could not scan package, treating as external", "package", val.Path, "error", err)
 				return e.createUnscannableSymbolPlaceholder(val, n.Sel.Name)
 			}
 			val.ScannedInfo = pkgInfo
@@ -1165,7 +1165,7 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 			}
 			pkgInfo, err := e.resolver.resolvePackageWithoutPolicyCheck(ctx, val.Path)
 			if err != nil {
-				e.logWithContext(ctx, slog.LevelWarn, "could not scan package, treating as external", "package", val.Path, "error", err)
+				e.logc(ctx, slog.LevelWarn, "could not scan package, treating as external", "package", val.Path, "error", err)
 				return e.createUnscannableSymbolPlaceholder(val, n.Sel.Name)
 			}
 			val.ScannedInfo = pkgInfo
@@ -1329,7 +1329,7 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 			return method
 		} else if err != nil {
 			// Log the error for debugging, but don't fail the evaluation.
-			e.logWithContext(ctx, slog.LevelWarn, "error trying to find method", "method", n.Sel.Name, "type", typeInfo.Name, "error", err)
+			e.logc(ctx, slog.LevelWarn, "error trying to find method", "method", n.Sel.Name, "type", typeInfo.Name, "error", err)
 		}
 
 		// If the type is unresolved, and we couldn't find a concrete method,
@@ -1452,14 +1452,14 @@ func (e *Evaluator) evalSelectStmt(ctx context.Context, n *ast.SelectStmt, env *
 			// Evaluate the communication expression (e.g., the channel operation).
 			if caseClause.Comm != nil {
 				if res := e.Eval(ctx, caseClause.Comm, caseEnv, pkg); isError(res) {
-					e.logWithContext(ctx, slog.LevelWarn, "error evaluating select case communication", "error", res)
+					e.logc(ctx, slog.LevelWarn, "error evaluating select case communication", "error", res)
 				}
 			}
 
 			// Evaluate the body of the case.
 			for _, stmt := range caseClause.Body {
 				if res := e.Eval(ctx, stmt, caseEnv, pkg); isError(res) {
-					e.logWithContext(ctx, slog.LevelWarn, "error evaluating statement in select case", "error", res)
+					e.logc(ctx, slog.LevelWarn, "error evaluating statement in select case", "error", res)
 				}
 			}
 		}
@@ -1562,7 +1562,7 @@ func (e *Evaluator) evalTypeSwitchStmt(ctx context.Context, n *ast.TypeSwitchStm
 
 			for _, stmt := range caseClause.Body {
 				if res := e.Eval(ctx, stmt, caseEnv, pkg); isError(res) {
-					e.logWithContext(ctx, slog.LevelWarn, "error evaluating statement in type switch case", "error", res)
+					e.logc(ctx, slog.LevelWarn, "error evaluating statement in type switch case", "error", res)
 				}
 			}
 		}
@@ -1928,7 +1928,7 @@ func (e *Evaluator) evalAssignStmt(ctx context.Context, n *ast.AssignStmt, env *
 		if !ok {
 			// This can happen if a function that is supposed to return multiple values
 			// is not correctly modeled. We fall back to assigning placeholders.
-			e.logWithContext(ctx, slog.LevelWarn, "expected multi-return value on RHS of assignment", "got_type", rhsValue.Type())
+			e.logc(ctx, slog.LevelWarn, "expected multi-return value on RHS of assignment", "got_type", rhsValue.Type())
 			for _, lhsExpr := range n.Lhs {
 				if ident, ok := lhsExpr.(*ast.Ident); ok && ident.Name != "_" {
 					v := &object.Variable{
@@ -2000,7 +2000,7 @@ func (e *Evaluator) evalAssignStmt(ctx context.Context, n *ast.AssignStmt, env *
 				e.assignIdentifier(ctx, ident, rhsValues[i], n.Tok, env)
 			} else {
 				// Handle other LHS types like selectors if needed in the future.
-				e.logWithContext(ctx, slog.LevelWarn, "unsupported LHS in parallel assignment", "type", fmt.Sprintf("%T", lhsExpr))
+				e.logc(ctx, slog.LevelWarn, "unsupported LHS in parallel assignment", "type", fmt.Sprintf("%T", lhsExpr))
 			}
 		}
 		return nil
@@ -2198,7 +2198,7 @@ func (e *Evaluator) evalIdent(ctx context.Context, n *ast.Ident, env *object.Env
 					// Case 2: No alias. The identifier might be the package's actual name.
 					pkgObj, err := e.getOrLoadPackage(ctx, importPath)
 					if err != nil || pkgObj == nil || pkgObj.ScannedInfo == nil {
-						e.logWithContext(ctx, slog.LevelDebug, "could not scan potential package for ident", "ident", n.Name, "path", importPath, "error", err)
+						e.logc(ctx, slog.LevelDebug, "could not scan potential package for ident", "ident", n.Name, "path", importPath, "error", err)
 						continue
 					}
 
@@ -2226,30 +2226,31 @@ func (e *Evaluator) evalIdent(ctx context.Context, n *ast.Ident, env *object.Env
 	return e.newError(n.Pos(), "identifier not found: %s", n.Name)
 }
 
-// logWithContext logs a message, adding call stack information if an error object is provided.
-func (e *Evaluator) logWithContext(ctx context.Context, level slog.Level, msg string, args ...any) {
+// logc logs a message with the current function context from the call stack.
+func (e *Evaluator) logc(ctx context.Context, level slog.Level, msg string, args ...any) {
 	if !e.logger.Enabled(ctx, level) {
 		return
 	}
 
-	// Look for an error object in the arguments to extract call stack info.
-	for _, arg := range args {
+	// Add context from the current call stack frame.
+	if len(e.callStack) > 0 {
+		frame := e.callStack[len(e.callStack)-1]
+		posStr := ""
+		if e.scanner != nil && e.scanner.Fset() != nil && frame.Pos.IsValid() {
+			posStr = e.scanner.Fset().Position(frame.Pos).String()
+		}
+		contextArgs := []any{
+			slog.String("in_func", frame.Function),
+			slog.String("in_func_pos", posStr),
+		}
+		// Prepend context args so they appear first in the log.
+		args = append(contextArgs, args...)
+	}
+
+	// Prevent recursion: if an argument is an *object.Error, don't inspect it deeply.
+	for i, arg := range args {
 		if err, ok := arg.(*object.Error); ok {
-			if len(err.CallStack) > 0 {
-				// The most recent frame is at the end of the slice.
-				frame := err.CallStack[len(err.CallStack)-1]
-				posStr := ""
-				if e.scanner != nil && e.scanner.Fset() != nil {
-					posStr = e.scanner.Fset().Position(frame.Pos).String()
-				}
-				contextArgs := []any{
-					slog.String("in_func", frame.Function),
-					slog.String("in_func_pos", posStr),
-				}
-				// Prepend context args so they appear first in the log.
-				args = append(contextArgs, args...)
-				break // Found an error, don't need to look for more.
-			}
+			args[i] = slog.String("error", err.Message)
 		}
 	}
 
@@ -2257,6 +2258,9 @@ func (e *Evaluator) logWithContext(ctx context.Context, level slog.Level, msg st
 }
 
 func (e *Evaluator) newError(pos token.Pos, format string, args ...interface{}) *object.Error {
+	msg := fmt.Sprintf(format, args...)
+	e.logc(context.Background(), slog.LevelError, msg, "pos", pos)
+
 	frames := make([]*object.CallFrame, len(e.callStack))
 	for i, frame := range e.callStack {
 		frames[i] = &object.CallFrame{
@@ -2283,28 +2287,6 @@ func isError(obj object.Object) bool {
 }
 
 func (e *Evaluator) evalCallExpr(ctx context.Context, n *ast.CallExpr, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
-	var name string
-	if pkg != nil && pkg.Fset != nil {
-		var buf bytes.Buffer
-		if err := printer.Fprint(&buf, pkg.Fset, n.Fun); err == nil {
-			name = buf.String()
-		}
-	}
-	if name == "" {
-		name = "unknown"
-	}
-
-	if len(e.callStack) >= MaxCallStackDepth {
-		e.logger.Warn("call stack depth exceeded, aborting recursion", "function", name)
-		return &object.SymbolicPlaceholder{Reason: "max call stack depth exceeded"}
-	}
-
-	frame := &callFrame{Function: name, Pos: n.Pos()}
-	e.callStack = append(e.callStack, frame)
-	defer func() {
-		e.callStack = e.callStack[:len(e.callStack)-1]
-	}()
-
 	if e.logger.Enabled(ctx, slog.LevelDebug) {
 		stackAttrs := make([]any, 0, len(e.callStack))
 		for i, frame := range e.callStack {
@@ -2449,8 +2431,46 @@ func (e *Evaluator) Apply(ctx context.Context, fn object.Object, args []object.O
 	return e.applyFunction(ctx, fn, args, pkg, token.NoPos)
 }
 
+type inspectValuer struct {
+	obj object.Object
+}
+
+func (v inspectValuer) LogValue() slog.Value {
+	return slog.StringValue(v.obj.Inspect())
+}
+
 func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []object.Object, pkg *scanner.PackageInfo, callPos token.Pos) object.Object {
-	e.logger.Debug("applyFunction", "type", fn.Type(), "value", fn.Inspect())
+	var name string
+	var pos token.Pos
+
+	if f, ok := fn.(*object.Function); ok {
+		if f.Name != nil {
+			name = f.Name.Name
+		} else {
+			name = "<closure>"
+		}
+		if f.Decl != nil {
+			pos = f.Decl.Pos()
+		}
+	} else {
+		name = fn.Inspect()
+		pos = callPos
+	}
+
+	if len(e.callStack) >= MaxCallStackDepth {
+		e.logc(ctx, slog.LevelWarn, "call stack depth exceeded, aborting recursion", "function", name)
+		return &object.SymbolicPlaceholder{Reason: "max call stack depth exceeded"}
+	}
+
+	frame := &callFrame{Function: name, Pos: pos}
+	e.callStack = append(e.callStack, frame)
+	defer func() {
+		e.callStack = e.callStack[:len(e.callStack)-1]
+	}()
+
+	if e.logger.Enabled(ctx, slog.LevelDebug) {
+		e.logc(ctx, slog.LevelDebug, "applyFunction", "type", fn.Type(), "value", inspectValuer{fn})
+	}
 
 	// Create a signature for the current call.
 	var currentSignature string
@@ -2482,7 +2502,7 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 				if f.Name != nil {
 					name = f.Name.Name
 				}
-				e.logger.Warn("infinite recursion detected, aborting", "function", name)
+				e.logc(ctx, slog.LevelWarn, "infinite recursion detected, aborting", "function", name)
 				return e.newError(callPos, "infinite recursion detected: %s", name)
 			}
 		}
@@ -2750,7 +2770,7 @@ func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, 
 		// Cannot resolve parameter types without package info.
 		// This can happen for func literals or in some test setups.
 		// We'll proceed but types will be less precise.
-		e.logWithContext(ctx, slog.LevelWarn, "extendFunctionEnv: function has no package info; cannot resolve param types")
+		e.logc(ctx, slog.LevelWarn, "extendFunctionEnv: function has no package info; cannot resolve param types")
 		return env, nil
 	}
 

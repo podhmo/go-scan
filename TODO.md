@@ -71,9 +71,9 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [-] **Bugfix: Infinite Recursion**: (partially resolved)
     - [x] Add a recursion guard (e.g., using a map to track visited nodes) to `scanner.TypeInfoFromExpr` to prevent re-evaluation of the same type expression.
     - [x] Write a targeted unit test in the `scanner` package that fails before the fix and passes after, reproducing the infinite recursion scenario.
-    - [ ] Verify the fix by running the `find-orphans` e2e test and confirming it runs to completion without timing out.If it doesn't heal, start investigating again.
-- [ ] **Bugfix: External Type Resolution**:
-    - [ ] Investigate why types from external packages (e.g., `log/slog.Logger`) are resolved as `object.UnresolvedFunction` instead of a symbolic type representation.
+    - [x] Verify the fix by running the `find-orphans` e2e test and confirming it runs to completion without timing out.If it doesn't heal, start investigating again. (Note: Verification complete. The e2e test still times out. The root cause has been identified as a separate issue related to external type resolution, as documented in `trouble-symgo-refine2.md`.)
+- [-] **Bugfix: External Type Resolution**:
+    - [x] Investigate why types from external packages (e.g., `log/slog.Logger`) are resolved as `object.UnresolvedFunction` instead of a symbolic type representation. (Note: Investigation complete, see `trouble-symgo-refine2.md`. The issue is confirmed to be the root cause of interpreter instability.)
     - [ ] Modify the `symgo` evaluator and/or `scanner` to ensure that unresolved types are consistently represented as symbolic type placeholders, not functions.
     - [ ] Add a regression test to `symgo` that attempts to use an external type and fails if the "invalid indirect" error occurs.
 - [ ] **DX: Add Timeout Flag to `find-orphans`**:
@@ -84,6 +84,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     - [ ] Once the critical recursion and type resolution bugs are fixed, execute the `find-orphans` e2e test again.
     - [ ] Perform a full analysis of the complete log output.
     - [ ] Create new items in `TODO.md` for any remaining `WARN` or `ERROR` messages that indicate bugs.
+- [ ] **Performance: Re-investigate e2e test timeout**: The e2e test for `find-orphans` still times out even after fixing the external type resolution bug. A new investigation is needed, possibly using profiling tools, to identify the new root cause, which is likely a different performance bottleneck or a complex loop.
 
 
 ### `minigo` Refinements ([docs/plan-minigo.md](./docs/plan-minigo.md))

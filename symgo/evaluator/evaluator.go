@@ -758,6 +758,17 @@ func (e *Evaluator) evalStarExpr(ctx context.Context, node *ast.StarExpr, env *o
 		return newPlaceholder
 	}
 
+	// NEW: Handle dereferencing a type object itself.
+	// This can happen in method calls on symbolic receivers.
+	if t, ok := val.(*object.Type); ok {
+		return &object.SymbolicPlaceholder{
+			Reason: fmt.Sprintf("instance of type %s from dereference", t.TypeName),
+			BaseObject: object.BaseObject{
+				ResolvedTypeInfo: t.ResolvedType,
+			},
+		}
+	}
+
 	return e.newError(ctx, node.Pos(), "invalid indirect of %s (type %T)", val.Inspect(), val)
 }
 
@@ -1135,11 +1146,21 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 			pkgInfo, err := e.resolver.resolvePackageWithoutPolicyCheck(ctx, val.Path)
 			if err != nil {
 				e.logc(ctx, slog.LevelWarn, "could not scan package, treating as external", "package", val.Path, "error", err)
-				// The package could not be scanned. Instead of creating a generic placeholder,
-				// create an UnresolvedFunction that can be handled by applyFunction.
-				unresolvedFn := &object.UnresolvedFunction{PkgPath: val.Path, FuncName: n.Sel.Name}
-				val.Env.Set(n.Sel.Name, unresolvedFn)
-				return unresolvedFn
+				// The package could not be scanned. We don't know if the selector is a function,
+				// type, or variable. Create a generic SymbolicPlaceholder. This prevents
+				// incorrect assumptions (like assuming it's a function) that lead to errors
+				// like "invalid indirect".
+				placeholder := &object.SymbolicPlaceholder{
+					Reason: fmt.Sprintf("unresolved identifier %s in unscannable package %s", n.Sel.Name, val.Path),
+				}
+				// Give it minimal type info so it can be identified later.
+				placeholder.SetFieldType(&scanner.FieldType{
+					Name:           n.Sel.Name,
+					FullImportPath: val.Path,
+					TypeName:       n.Sel.Name,
+				})
+				val.Env.Set(n.Sel.Name, placeholder)
+				return placeholder
 			}
 			val.ScannedInfo = pkgInfo
 		}
@@ -1208,15 +1229,39 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 			}
 		}
 
-		// If it's not a function or a known constant, it could be a variable, or it could be
-		// a function that the scanner was unable to resolve (e.g., due to build tags).
-		// We optimistically assume it's a function and create an UnresolvedFunction object.
-		// `applyFunction` will handle this object; if it's not actually a function,
-		// the call will fail there. This is better than returning a generic placeholder
-		// which would prevent multi-return values from being handled correctly.
-		unresolvedFn := &object.UnresolvedFunction{PkgPath: val.Path, FuncName: n.Sel.Name}
-		val.Env.Set(n.Sel.Name, unresolvedFn)
-		return unresolvedFn
+		// Check for types.
+		for _, t := range val.ScannedInfo.Types {
+			if t.Name == n.Sel.Name {
+				if !ast.IsExported(t.Name) {
+					continue
+				}
+				typeObj := &object.Type{
+					TypeName:     t.Name,
+					ResolvedType: t,
+				}
+				typeObj.SetTypeInfo(t)
+				val.Env.Set(n.Sel.Name, typeObj) // Cache it
+				return typeObj
+			}
+		}
+
+		// If it's not a known function, constant, or type, we assume it's a
+		// type identifier that we haven't fully resolved. Create a synthetic Type object for it.
+		// This is better than a generic placeholder, as it correctly identifies the
+		// object as a type, preventing "invalid indirect" on pointers to it.
+		syntheticTypeInfo := &scanner.TypeInfo{
+			Name:       n.Sel.Name,
+			PkgPath:    val.Path,
+			Unresolved: true, // Mark that we don't have the full definition.
+			Kind:       scanner.UnknownKind,
+		}
+		typeObj := &object.Type{
+			TypeName:     n.Sel.Name,
+			ResolvedType: syntheticTypeInfo,
+		}
+		typeObj.SetTypeInfo(syntheticTypeInfo)
+		val.Env.Set(n.Sel.Name, typeObj)
+		return typeObj
 
 	case *object.Instance:
 		key := fmt.Sprintf("(%s).%s", val.TypeName, n.Sel.Name)

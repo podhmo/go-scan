@@ -44,7 +44,6 @@ func TestScanFiles_InfiniteAliasRecursion(t *testing.T) {
 	// The main success condition is not timing out.
 }
 
-
 // TestScanFiles_InfiniteGenericRecursion verifies that ScanFiles does not
 // enter an infinite loop when parsing recursive generic type aliases.
 func TestScanFiles_InfiniteGenericRecursion(t *testing.T) {

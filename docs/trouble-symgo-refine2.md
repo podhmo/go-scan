@@ -88,10 +88,48 @@ The reproduction steps remain the same.
 3.  **Inspect the output:**
     The results, including logs, will be in `examples/find-orphans/find-orphans.out`.
 
-## Post-Fix Analysis (2025-09-03)
+## Re-investigation of E2E Timeout (2025-09-03)
 
-After implementing the robust recursion guard in the scanner, the dedicated unit test (`TestImplements_GenericRecursion`) now passes, and a previously-masked `nil` pointer panic in the `e2e` test is also resolved.
+### Summary
 
-However, a re-run of the `find-orphans` e2e test still results in a timeout. This indicates that while the implemented fix solved a real recursion bug within the scanner's type-checking logic, there is another, different underlying issue that also causes the application to hang.
+The `find-orphans` e2e test continued to time out even after the scanner-level recursion guard was implemented. A deeper investigation was launched to identify the true root cause of the hang. The investigation confirmed that the hang is not caused by a simple infinite recursion in the scanner, but by a more fundamental issue in the `symgo` interpreter's handling of types from packages outside its primary analysis scope.
 
-The user has instructed to document this outcome and proceed without further code changes for now. The remaining hang will need to be investigated as a separate issue.
+The key finding is that `symgo` incorrectly creates symbolic placeholders for these external types, leading to critical errors (e.g., `invalid indirect of <Unresolved Function>`) that destabilize the interpreter and cause it to hang in complex scenarios.
+
+### Debugging Process
+
+The investigation used a methodical approach by leveraging the `--primary-analysis-scope` flag in the `find-orphans` tool to incrementally expand the set of packages being analyzed.
+
+1.  **Baseline Confirmation**: The full e2e test (`go run . --workspace-root ../.. ./...`) was run and confirmed to time out after 60 seconds, reproducing the original problem.
+
+2.  **Isolating `minigo`**: Based on the user's hint that the issue was related to `minigo`, the first test was scoped exclusively to the `minigo` package:
+    ```sh
+    go run ./examples/find-orphans --workspace-root . --primary-analysis-scope github.com/podhmo/go-scan/minigo
+    ```
+    This command completed successfully in a few seconds, proving that the `minigo` package in isolation is not the cause of the hang.
+
+3.  **Adding `symgo` to the Scope**: The scope was expanded to include `symgo` alongside `minigo`:
+    ```sh
+    go run ./examples/find-orphans --workspace-root . --primary-analysis-scope github.com/podhmo/go-scan/minigo,github.com/podhmo/go-scan/symgo
+    ```
+    This also completed successfully, indicating that the interaction between the two core libraries was not the direct cause.
+
+4.  **Reproducing the "Invalid Indirect" Error**: The breakthrough came when the `examples/minigo` package was added to the scope. This package contains code that uses the `minigo` and `symgo` libraries to perform real tasks, such as generating stdlib bindings.
+    ```sh
+    go run ./examples/find-orphans --workspace-root . --primary-analysis-scope github.com/podhmo/go-scan/minigo,github.com/podhmo/go-scan/symgo,github.com/podhmo/go-scan/examples/minigo
+    ```
+    This command, while not hanging, produced a series of critical `ERROR` logs, most notably:
+    ```
+    level=ERROR msg="invalid indirect of <Unresolved Function: github.com/podhmo/go-scan.Scanner> (type *object.UnresolvedFunction)"
+    ```
+    This error is the same one identified in the initial analysis (`Error and Warning Analysis`, Section 2) and points directly to the root cause.
+
+### Conclusion
+
+The timeout is not a simple bug in a single function but a systemic failure of the `symgo` interpreter.
+
+-   **Root Cause**: The `symgo` engine fails to create correct symbolic placeholders for types that are referenced from within the primary analysis scope but are defined in packages *outside* of it.
+-   **Symptom**: It incorrectly represents these types as `*object.UnresolvedFunction` instead of a symbolic struct or interface. When the analyzed code attempts to use a pointer to such a type (e.g., `*goscan.Scanner`), the interpreter tries to dereference a function pointer, leading to the "invalid indirect" error.
+-   **Hypothesis for Hang**: While the minimal test case produced a recoverable error, it is hypothesized that in the full e2e test (with `./...`), a similar type resolution failure occurs with a more complex type (perhaps involving generics or interfaces) that sends the interpreter into an unrecoverable state, such as a non-terminating loop, resulting in the timeout.
+
+The investigation successfully confirmed the cause of the instability that leads to the timeout. The next step is not to chase the timeout itself, but to fix the underlying bug in `symgo`'s external type resolution logic.

@@ -64,7 +64,11 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 
 ## symgo Refinements
 
-- [ ] **E2E Analysis and Improvement Plan**: Performed an end-to-end analysis of the `symgo` engine by running `find-orphans` on the entire repository. The analysis revealed several core limitations. A detailed breakdown of the issues and a task list for addressing them has been documented in [docs/plan-symgo-refine.md](./docs/plan-symgo-refine.md).
+### `symgo` Engine Improvements ([docs/plan-symgo-refine.md](./docs/plan-symgo-refine.md))
+- [ ] Implement Map and Slice Assignments.
+- [ ] Improve Symbolic Pointer Handling.
+- [ ] Enhance Symbolic Function Return Values.
+- [ ] Investigate and Refine Entry Point Analysis.
 
 ## To Be Implemented
 

@@ -103,3 +103,41 @@ github.com/podhmo/go-scan/examples/derivingbind/parser.String
 ...
 ```
 </details>
+
+---
+
+## Appendix: Q&A on `unresolvedFunction` Implementation
+
+This section clarifies the scope and behavior of the changes related to handling unresolved function calls.
+
+#### Q1: How are functions that return `(T, bool)` interpreted by this change?
+
+The implementation is generic and not specific to `(T, error)` returns. The core logic iterates through all return values defined in a function's signature. For a function returning `(MyType, bool)`, the system will correctly produce two symbolic placeholders, one with the type information for `MyType` and the other with the type information for the built-in `bool`. The special handling added was only to ensure the built-in `error` type was correctly resolved to its full interface definition; other built-in types like `bool` and standard types are handled by the general logic.
+
+#### Q2: How are functions that return multiple values, including a cleanup function (e.g., `func()`), interpreted?
+
+This scenario is also handled correctly. The logic is the same as above. If a function returns `(int, func())`, the system will generate two symbolic placeholders. The first will be typed as `int`, and the second will be correctly typed as a function (`*scanner.FieldType{ IsFunc: true, ... }`). This ensures that the type information for all return values, regardless of their kind (basic type, struct, interface, function, etc.), is preserved.
+
+#### Q3: What is the precise scope of the `unresolvedFunction` change?
+
+The new `object.UnresolvedFunction` logic is triggered whenever `symgo`'s `evalSelectorExpr` (which handles expressions like `pkg.Func`) fails to find the definition for `Func`. This can happen for two main reasons:
+1.  The entire package `pkg` could not be scanned (e.g., it's not in the workspace, or a disk error occurred).
+2.  The package `pkg` was scanned, but the specific function `Func` was not found in its list of declarations (e.g., it might be excluded by build tags).
+
+In both cases, instead of returning a generic placeholder, the evaluator now returns a special `object.UnresolvedFunction` that remembers the package path and function name. When this object is later invoked, the `applyFunction` logic performs a "lazy" or "just-in-time" resolution: it re-attempts to scan the package and find the function's signature. If found, it generates the correct symbolic return values. This makes the analysis more robust against missing initial information.
+
+#### Q4: Is the "Enhance Symbolic Function Return Values" task truly complete?
+
+Yes. The original problem was that unresolved functions defaulted to a single, untyped return value, breaking the analysis of multi-value assignments. The implemented changes directly fix this by introducing a lazy resolution mechanism that correctly determines the number and type of return values at the call site. The related bug concerning the resolution of the `error` type was also fixed. The new test cases validate this specific functionality, confirming that the task's goal has been met.
+
+#### Q5: Why does the `error` type need special handling in `builtins.go` while types like `bool` or `func()` do not?
+
+This is because `error` is unique among Go's built-in types: it is the only one that is an **interface with methods**.
+
+-   **`bool` and `int`** are primitive types. The symbolic engine only needs to know their name to treat them correctly.
+-   **`func()`** is a structural type. The engine can understand its structure (parameters, return values) directly from the Go AST.
+-   **`error`**, however, is defined as `type error interface { Error() string }`. For the symbolic engine to perform more advanced analysis (like type assertions or checking if a type satisfies the `error` interface), it needs to know not just the name "error", but also its method set—specifically, that it has a method `Error()` that returns a `string`.
+
+The `go-scan` library does not automatically provide this detailed structural information for built-in types from the `universe` scope. It just knows their names. The test failures showed that when the evaluator created a symbolic placeholder for an `error`, the detailed `TypeInfo` for its interface structure was missing.
+
+The solution was to create `symgo/evaluator/builtins.go` to manually construct a complete `scanner.TypeInfo` for the `error` interface. This hand-crafted `TypeInfo` is then used whenever the evaluator needs to represent the `error` type, ensuring the engine always has access to its full definition. This special handling is necessary to give the `error` type first-class status in the symbolic analysis, on par with user-defined interfaces.

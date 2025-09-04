@@ -1082,31 +1082,37 @@ func TestEvalIfElseStmt(t *testing.T) {
 }
 
 func TestEvalFunctionDeclaration(t *testing.T) {
-	input := `
+	source := `
 package main
 func add(a, b int) int { return a + b }
 `
-	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, "main.go", input, parser.ParseComments)
-	if err != nil {
-		t.Fatalf("could not parse file: %v", err)
-	}
-
-	env := object.NewEnvironment()
-	eval := New(nil, nil, nil, nil)
-	eval.Eval(t.Context(), f, env, &scanner.PackageInfo{
-		Name:     "main",
-		Fset:     fset,
-		AstFiles: map[string]*ast.File{"main.go": f},
+	dir, cleanup := scantest.WriteFiles(t, map[string]string{
+		"go.mod":  "module example.com/me",
+		"main.go": source,
 	})
+	defer cleanup()
 
-	fn, ok := env.Get("add")
-	if !ok {
-		t.Fatal("function add not found in environment")
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
+		pkg := pkgs[0]
+		eval := New(s, s.Logger, nil, nil)
+		env := object.NewEnvironment()
+
+		// Eval the whole file to populate the environment
+		eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], env, pkg)
+
+		fn, ok := env.Get("add")
+		if !ok {
+			return fmt.Errorf("function add not found in environment")
+		}
+
+		if fn.Type() != object.FUNCTION_OBJ {
+			return fmt.Errorf("expected function object, got %s", fn.Type())
+		}
+		return nil
 	}
 
-	if fn.Type() != object.FUNCTION_OBJ {
-		t.Errorf("expected function object, got %s", fn.Type())
+	if _, err := scantest.Run(t, t.Context(), dir, []string{"."}, action); err != nil {
+		t.Fatalf("scantest.Run() failed: %v", err)
 	}
 }
 

@@ -2529,8 +2529,9 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 	// Improved recursion check
 	if f, ok := fn.(*object.Function); ok {
 		for _, frame := range e.callStack {
-			// Check if the same function object is being called with the same AST node.
-			if frame.Fn == f && frame.Pos == callPos {
+			// A true recursion occurs if the same function definition is called on the
+			// exact same receiver object from the exact same call site in the source.
+			if frame.Fn != nil && f.Def != nil && frame.Fn.Def == f.Def && frame.Fn.Receiver == f.Receiver && frame.Pos == callPos {
 				e.logc(ctx, slog.LevelWarn, "infinite recursion detected, aborting", "function", name)
 				return e.newError(ctx, callPos, "infinite recursion detected: %s", name)
 			}

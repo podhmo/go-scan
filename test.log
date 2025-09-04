@@ -1,4 +1,0 @@
-go test ./...
-ok  	github.com/podhmo/go-scan	0.396s
-ok  	github.com/podhmo/go-scan/astwalk	(cached)
-ok  	github.com/podhmo/go-scan/examples/deps-walk	(cached)

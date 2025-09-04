@@ -1,27 +1,27 @@
-# `symgo` Refinement Plan 2: A Plan to Resolve the "Dogfooding" Failure
+# `symgo` Refinement Plan 2: A Plan to Resolve Analysis Failures on Complex Packages
 
 ## Introduction
 
-This document provides a concrete action plan to resolve the timeout issue that occurs during the `find-orphans` e2e test. The plan is based on the corrected analysis in [`docs/trouble-symgo-refine2.md`](./trouble-symgo-refine2.md), which identifies the root cause as a "dogfooding" failure: `symgo` is unable to analyze the source code of its own `minigo` component.
+This document provides a concrete action plan to resolve the timeout issue that occurs during the `find-orphans` e2e test. The plan is based on the corrected analysis in [`docs/trouble-symgo-refine2.md`](./trouble-symgo-refine2.md), which identifies the root cause as `symgo`'s inability to analyze the `minigo` package, a complex but independent package in the same workspace.
 
 ## Basic Strategy
 
-The top priority is to make `symgo` capable of analyzing `minigo`. This will likely resolve the most critical errors (`identifier not found`, infinite recursion) that cause the timeout. Other, less severe bugs in symbol resolution can be addressed afterward. The strategy is to create a focused test case that isolates the "dogfooding" problem and iterate on a fix.
+The top priority is to make `symgo` capable of analyzing the `minigo` package. This will likely resolve the most critical errors (`identifier not found`, infinite recursion) that cause the timeout. Other, less severe bugs in symbol resolution can be addressed afterward. The strategy is to create a focused test case that isolates this specific analysis problem and iterate on a fix.
 
 Performance tuning will be considered separately, only after the e2e test can run to completion.
 
 ## Corrected Task List
 
-### Task 1: Fix the `symgo`-on-`minigo` Analysis Failure (Top Priority)
+### Task 1: Fix Analysis Failure on `minigo` Package (Top Priority)
 
 *   **Goal**: Enable `symgo` to successfully analyze the `minigo` package without errors or infinite recursion.
 *   **Details**:
-    *   This task addresses the core "dogfooding" issue identified in Groups 3, 4, and 5 of the trouble report. The `symgo` engine fails to resolve fundamental types within the `minigo` package, leading to a crash.
-    *   The likely cause is either that `minigo` uses advanced language features that `symgo` doesn't yet support, or that there is an environment/scoping conflict when the analyzer and the code being analyzed are so closely related.
-    *   **Proposed Fix**: Create a new, minimal test case that does nothing but run the `symgo.Interpreter` on the `minigo` package. This test should reproduce the `identifier not found` and `infinite recursion` errors in a controlled environment. Use this test to debug the resolution and evaluation loop in `symgo`. The fix may involve improving support for complex types/interfaces or ensuring a clean separation between the "host" and "guest" analysis environments.
+    *   This task addresses the core issue identified in Groups 3, 4, and 5 of the trouble report, where `symgo` fails to analyze the `minigo` package.
+    *   The likely cause is that `minigo`, as a complex package, uses advanced language features or structural patterns that `symgo`'s analysis does not yet support.
+    *   **Proposed Fix**: Create a new, minimal test case that does nothing but run the `symgo.Interpreter` on the `minigo` package. This test should reproduce the `identifier not found` and `infinite recursion` errors in a controlled environment. Use this test to debug the resolution and evaluation loop in `symgo`. The fix will likely involve improving support for the specific complex types, interfaces, or scoping patterns used in `minigo`.
 *   **Acceptance Criteria**:
     1.  The new, focused unit test that runs `symgo` on `minigo` passes without errors or timeouts.
-    2.  Running the full `find-orphans` e2e test no longer produces the errors from Groups 3, 4, and 5.
+    2.  Running the full `find-orphans` e2e test no longer produces the errors from Groups 3, 4, and 5 when analyzing the `minigo` package.
 
 ### Task 2: Strengthen Standard Library Symbol Resolution
 
@@ -50,7 +50,7 @@ Performance tuning will be considered separately, only after the e2e test can ru
 ### Task 5: Full Verification and Final Bug Hunt
 
 *   **Goal**: Confirm that the fixes allow the e2e test to run to completion and identify any remaining issues.
-*   **Details**: This task is unchanged. After fixing the "dogfooding" issue and other bugs, run the full e2e test without a manual `timeout`.
+*   **Details**: This task is unchanged. After fixing the `minigo` analysis issue and other bugs, run the full e2e test without a manual `timeout`.
 *   **Acceptance Criteria**:
     1.  `make -C examples/find-orphans e2e` completes successfully in under 60 seconds.
     2.  No error logs are produced.

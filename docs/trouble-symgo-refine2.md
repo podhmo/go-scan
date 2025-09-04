@@ -1,10 +1,10 @@
-# `symgo` Refinement Plan 2: Analysis of a "Dogfooding" Failure in the E2E Test
+# `symgo` Refinement Plan 2: Analysis of a Failure to Parse a Complex Package
 
 ## Summary
 
 A re-investigation into the timeout issue occurring during the `find-orphans` e2e test (`make -C examples/find-orphans e2e`) was conducted. The test was run with a 15-second timeout, and the resulting logs were analyzed in detail, incorporating critical user feedback on how to interpret the log messages.
 
-The analysis reveals that the timeout is caused by a "dogfooding" failure: the `symgo` symbolic execution engine is unable to analyze the source code of its own core components, specifically the `minigo` package. When `symgo` attempts to parse `minigo`, it fails to resolve fundamental types, which triggers a catastrophic infinite recursion, causing the process to hang.
+The analysis reveals that the timeout is caused by the `symgo` symbolic execution engine's inability to analyze the `minigo` package, a complex but independent package within the same workspace. When `symgo` attempts to parse `minigo`, it fails to resolve fundamental types, which triggers a catastrophic infinite recursion, causing the process to hang.
 
 This document categorizes the observed errors and provides a corrected analysis for each group.
 
@@ -56,7 +56,7 @@ The key to this analysis is understanding that the `in_func` and `in_func_pos` f
     time=... level=ERROR msg="identifier not found: Config" in_func=New in_func_pos=/app/minigo/evaluator/evaluator.go:426:1
     time=... level=ERROR msg="identifier not found: Environment" in_func=NewEnclosedEnvironment in_func_pos=/app/minigo/object/object.go:1116:1
     ```
-*   **Corrected Analysis**: These errors occur when `symgo` is tasked with analyzing the source files of the `minigo` package (e.g., `/app/minigo/evaluator/evaluator.go`). `symgo` fails to resolve identifiers like `Config` and `Environment`, which are fundamental types defined within the very package it is analyzing. This indicates that `symgo` cannot correctly build a model of the `minigo` package's scope and contents, which is a prerequisite for any further analysis. This is the root of the "dogfooding" failure.
+*   **Corrected Analysis**: These errors occur when `symgo` is tasked with analyzing the source files of the `minigo` package (e.g., `/app/minigo/evaluator/evaluator.go`). `symgo` fails to resolve identifiers like `Config` and `Environment`, which are fundamental types defined within the very package it is analyzing. This indicates that `symgo` cannot correctly build a model of the `minigo` package's scope and contents, which is a prerequisite for any further analysis. This is the root of the analysis failure.
 
 ### Group 4: Infinite Recursion Triggered by Analyzing `minigo`
 
@@ -78,7 +78,7 @@ The key to this analysis is understanding that the `in_func` and `in_func_pos` f
 
 ## Conclusion
 
-The `find-orphans` timeout is a "dogfooding" failure. The `symgo` engine is not mature enough to analyze its own complex components, specifically the `minigo` package. This leads to a cascading failure:
+The `find-orphans` timeout is caused by the `symgo` engine's inability to analyze the `minigo` package, a complex, independent package in the same workspace. The engine is not yet mature enough to handle the language constructs or complexity within the `minigo` source code. This leads to a cascading failure:
 1.  `symgo` fails to resolve basic types within the `minigo` source code.
 2.  This resolution failure causes the symbolic execution process to enter an infinite loop.
 3.  This infinite loop consumes all available time, resulting in a timeout.

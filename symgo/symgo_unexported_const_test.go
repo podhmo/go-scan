@@ -106,6 +106,63 @@ func GetUnexportedConstant() string {
 	}
 }
 
+func TestSymgo_IntraPackageConstantResolution(t *testing.T) {
+	ctx := context.Background()
+	tmpdir, cleanup := scantest.WriteFiles(t, map[string]string{
+		"go.mod": "module example.com/main\ngo 1.21\n",
+		"main.go": `
+package main
+import "fmt"
+const myConstant = "hello intra-package"
+
+func formatConstant() string {
+	return fmt.Sprintf("value is %s", myConstant)
+}
+
+func main() {
+	_ = formatConstant()
+}
+`,
+	})
+	defer cleanup()
+
+	scanner, err := goscan.New(goscan.WithWorkDir(tmpdir))
+	if err != nil {
+		t.Fatalf("New scanner failed: %v", err)
+	}
+
+	interp, err := symgo.NewInterpreter(scanner, symgo.WithPrimaryAnalysisScope("example.com/main/..."))
+	if err != nil {
+		t.Fatalf("NewInterpreter failed: %v", err)
+	}
+
+	mainPkg, err := scanner.ScanPackage(ctx, tmpdir)
+	if err != nil {
+		t.Fatalf("ScanPackage failed: %v", err)
+	}
+
+	mainFile := findFile(t, mainPkg, "main.go")
+	if _, err := interp.Eval(ctx, mainFile, mainPkg); err != nil {
+		t.Fatalf("Eval main file failed: %v", err)
+	}
+
+	mainFuncObj, ok := interp.FindObject("main")
+	if !ok {
+		t.Fatal("main function not found in interpreter environment")
+	}
+	mainFunc, ok := mainFuncObj.(*symgo.Function)
+	if !ok {
+		t.Fatalf("entrypoint 'main' is not a function, but %T", mainFuncObj)
+	}
+
+	// We don't care about the result, we just want to ensure it doesn't crash.
+	// The original error was a crash due to "identifier not found".
+	_, err = interp.Apply(ctx, mainFunc, nil, mainPkg)
+	if err != nil {
+		t.Fatalf("Apply main function failed: %v", err)
+	}
+}
+
 // Test case for nested function call
 func TestSymgo_UnexportedConstantResolution_NestedCall(t *testing.T) {
 	ctx := context.Background()

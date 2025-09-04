@@ -4723,25 +4723,29 @@ func (e *Evaluator) findSymbolInPackage(pkg *object.Package, symbolName *ast.Ide
 	// 3. If the package's environment is empty, it means we haven't scanned it yet.
 	// This is the main entry point for on-demand, lazy loading of a package's source.
 	if pkg.Env.IsEmpty() {
-		cumulativePkgInfo, err := e.scanner.FindSymbolInPackage(context.Background(), pkg.Path, symbolName.Name)
+		// Use ScanPackageByImport to ensure all files in the package are scanned at once.
+		// This is crucial for correctly resolving symbols defined across multiple files.
+		// The original FindSymbolInPackage is designed for partial AST interpretation and
+		// is not suitable here.
+		scannedPkgInfo, err := e.scanner.ScanPackageByImport(context.Background(), pkg.Path)
 		if err != nil {
 			// Not found in any unscanned files either.
 			return e.newError(pos, "undefined: %s.%s (package scan failed: %v)", pkg.Name, symbolName.Name, err)
 		}
 
 		// Update the package object with the richer info from the scan.
-		pkg.Info = cumulativePkgInfo
+		pkg.Info = scannedPkgInfo
 
 		// Create a new, unified FileScope for the entire package from all its files.
-		if cumulativePkgInfo != nil && len(cumulativePkgInfo.AstFiles) > 0 {
+		if scannedPkgInfo != nil && len(scannedPkgInfo.AstFiles) > 0 {
 			var representativeAST *ast.File
-			for _, astFile := range cumulativePkgInfo.AstFiles {
+			for _, astFile := range scannedPkgInfo.AstFiles {
 				if representativeAST == nil {
 					representativeAST = astFile
 				}
 			}
 			unifiedFScope := object.NewFileScope(representativeAST)
-			for _, astFile := range cumulativePkgInfo.AstFiles {
+			for _, astFile := range scannedPkgInfo.AstFiles {
 				for _, importSpec := range astFile.Imports {
 					path, err := strconv.Unquote(importSpec.Path.Value)
 					if err != nil {

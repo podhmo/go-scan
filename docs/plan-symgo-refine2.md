@@ -1,75 +1,56 @@
-# `symgo` Refinement Plan 2: Addressing Infinite Recursion and Timeout
+# `symgo` Refinement Plan 2: A Plan to Resolve Analysis Failures on Complex Packages
 
-This document outlines a new plan to improve the `symgo` symbolic execution engine. It is based on a re-run of the `find-orphans` end-to-end test, as specified in `docs/plan-symgo-refine.md`. The analysis revealed a critical timeout issue caused by infinite recursion, as well as other significant errors that need to be addressed.
+## Introduction
 
-## Summary of Findings
+This document provides a concrete action plan to resolve the timeout issue that occurs during the `find-orphans` e2e test. The plan is based on the corrected analysis in [`docs/trouble-symgo-refine2.md`](./trouble-symgo-refine2.md), which identifies the root cause as `symgo`'s inability to analyze the `minigo` package, a complex but independent package in the same workspace.
 
-The `find-orphans` e2e test was executed with a 30-second timeout. The process was terminated by the timeout, confirming the user's suspicion that the analysis was hanging. The generated log file, `find-orphans.out`, was incomplete but contained enough information to diagnose several critical issues. The previous fixes have resolved some problems, but new, more severe issues have been uncovered.
+## Basic Strategy
 
-## Error and Warning Analysis
+The top priority is to make `symgo` capable of analyzing the `minigo` package. This will likely resolve the most critical errors (`identifier not found`, infinite recursion) that cause the timeout. Other, less severe bugs in symbol resolution can be addressed afterward. The strategy is to create a focused test case that isolates this specific analysis problem and iterate on a fix.
 
-### 1. Critical: Infinite Recursion and Timeout
+Performance tuning will be considered separately, only after the e2e test can run to completion.
 
-- **Log Messages**:
-    - `level=WARN msg="infinite recursion detected, aborting" in_func=TypeInfoFromExpr`
-    - `level=ERROR msg="infinite recursion detected: TypeInfoFromExpr"`
-- **Analysis**: The log is flooded with these messages, all originating from `scanner/scanner.go` in the `TypeInfoFromExpr` function. This is the most critical issue and the undeniable cause of the timeout. The scanner is entering an unbounded recursive loop while trying to resolve type information, which prevents the symbolic execution from making any meaningful progress. This must be fixed before any other analysis can be reliably performed.
+## Corrected Task List
 
-### 2. Invalid Dereference of Unresolved Functions
+### Task 1: Fix Analysis Failure on `minigo` Package (Top Priority)
 
-- **Error Message**: `invalid indirect of <Unresolved Function: ...> (type *object.UnresolvedFunction)`
-- **Example Context**: This error occurs for standard library types like `log/slog.Logger`, `go/token.FileSet`, and `go/ast.File`.
-- **Analysis**: This is a new and severe bug. The `symgo` engine appears to be incorrectly identifying a type as an `UnresolvedFunction` object. Subsequently, when the code attempts to use this type (e.g., as a pointer to a struct), the engine tries to perform an indirect memory access (`*p`) on the function object, which is an invalid operation. This indicates a fundamental flaw in the type resolution or object representation logic for external or built-in types.
+*   **Goal**: Enable `symgo` to successfully analyze the `minigo` package without errors or infinite recursion.
+*   **Details**:
+    *   This task addresses the core issue identified in Groups 3, 4, and 5 of the trouble report, where `symgo` fails to analyze the `minigo` package.
+    *   The likely cause is that `minigo`, as a complex package, uses advanced language features or structural patterns that `symgo`'s analysis does not yet support.
+    *   **Proposed Fix**: Create a new, minimal test case that does nothing but run the `symgo.Interpreter` on the `minigo` package. This test should reproduce the `identifier not found` and `infinite recursion` errors in a controlled environment. Use this test to debug the resolution and evaluation loop in `symgo`. The fix will likely involve improving support for the specific complex types, interfaces, or scoping patterns used in `minigo`.
+*   **Acceptance Criteria**:
+    1.  The new, focused unit test that runs `symgo` on `minigo` passes without errors or timeouts.
+    2.  Running the full `find-orphans` e2e test no longer produces the errors from Groups 3, 4, and 5 when analyzing the `minigo` package.
 
-### 3. Cascading "Identifier Not Found" Errors
+### Task 2: Strengthen Standard Library Symbol Resolution
 
-- **Error Messages**:
-    - `identifier not found: PackageInfo`
-    - `identifier not found: elemType`
-    - `identifier not found: genericType`
-- **Analysis**: These errors appear frequently within the same function (`TypeInfoFromExpr`) that is suffering from infinite recursion. It is highly likely that these are a direct symptom of the recursion bug. The recursive calls are likely failing to maintain or propagate the correct scope, leading to a state where expected variables are not defined.
+*   **Goal**: Enable `symgo` to correctly resolve function-typed variables, such as `flag.Usage`.
+*   **Details**: This task is unchanged from the previous plan and addresses the `not a function: TYPE` error from **Group 1**. The resolver must be taught to handle variables whose type is a function signature.
+*   **Acceptance Criteria**:
+    1.  A unit test that calls `flag.Usage()` passes.
+    2.  The Group 1 errors no longer appear in the e2e test.
 
-### 4. Persistent Multi-Return Value Warnings
+### Task 3: Correctly Represent Multi-Return Symbolic Values
 
-- **Warning Message**: `expected multi-return value on RHS of assignment`
-- **Analysis**: This warning, noted in the original plan, is still present. While the previous fix may have addressed some cases, it is not comprehensive. This suggests that the symbolic representation of un-analyzable function calls is still not robust enough to handle all multi-value assignment scenarios.
+*   **Goal**: Ensure that `symgo` correctly represents the result of a multi-value function call as a symbolic tuple.
+*   **Details**: This task is unchanged and addresses the `expected multi-return value...` warnings from **Group 2**. The symbolic placeholder for a multi-return function must be a tuple-like object.
+*   **Acceptance Criteria**:
+    1.  A unit test that assigns the result of `os.Open()` to two variables passes without warnings.
+    2.  The Group 2 warnings no longer appear in the e2e test.
 
-## Proposed Task List for `symgo` Improvement
+### Task 4: Implement a Timeout Flag in `find-orphans`
 
-- [ ] **Task 1: Fix Infinite Recursion in `scanner.TypeInfoFromExpr`.**
-    - **Goal**: Identify and fix the cause of the unbounded recursion in `TypeInfoFromExpr`.
-    - **Details**: This requires a deep dive into the type resolution logic within the scanner. The fix will likely involve adding a mechanism to track visited nodes during the recursive traversal to prevent re-entering the same analysis loop. This is the highest priority task.
-    - **Acceptance Test**: The `find-orphans` e2e test should run to completion without timing out.
+*   **Goal**: Add a command-line timeout feature to `find-orphans` to facilitate future debugging.
+*   **Details**: This task is unchanged. Add a `--timeout` flag that uses `context.WithTimeout`.
+*   **Acceptance Criteria**:
+    1.  Running `find-orphans --timeout 1ms` exits immediately with a timeout error.
+    2.  The flag is documented.
 
-- [ ] **Task 2: Correctly Resolve and Handle External Types.**
-    - **Goal**: Prevent the "invalid indirect" error by ensuring external and built-in types are resolved as type objects, not function objects.
-    - **Details**: Investigate how types from packages like `log/slog` are being resolved. The evaluator should create a symbolic type placeholder, not an `UnresolvedFunction` object. This may require changes to the `scanner` or the `symgo` evaluator's handling of package lookups.
+### Task 5: Full Verification and Final Bug Hunt
 
-- [ ] **Task 3: Add a Debug Timeout Option to `find-orphans`.**
-    - **Goal**: Make the tool easier to debug by adding a CLI flag for a timeout.
-    - **Details**: The user suggested a 30s timeout is sufficient. Implement a `--timeout` flag (e.g., `--timeout 30s`) in `find-orphans` that uses a `context.WithTimeout` to gracefully terminate the analysis. This will make debugging long-running or hanging analyses much more manageable.
-
-- [ ] **Task 4: Re-evaluate Entry Point Analysis.**
-    - **Goal**: Once the critical bugs are fixed, re-run the e2e test and address any remaining errors that cause the analysis of `main` entry points to fail.
-    - **Details**: This task is carried over from the previous plan. With the timeout and recursion issues resolved, it will be possible to get a complete and accurate log, which can be used to identify and fix any further bugs preventing a full analysis.
-
-## Reproduction Steps
-
-The reproduction steps remain the same.
-
-1.  **Ensure Makefile exists:** The file `examples/find-orphans/Makefile` should contain:
-    ```makefile
-    e2e:
-	@echo "Running end-to-end test for find-orphans..."
-	go run . --workspace-root ../.. ./... > find-orphans.out 2>&1
-	@echo "Output written to examples/find-orphans/find-orphans.out"
-    ```
-
-2.  **Run the analysis:**
-    Execute the make target from the repository root. A `timeout` is recommended to prevent a hung process.
-    ```sh
-    timeout 60s make -C examples/find-orphans e2e
-    ```
-
-3.  **Inspect the output:**
-    The results, including logs, will be in `examples/find-orphans/find-orphans.out`.
+*   **Goal**: Confirm that the fixes allow the e2e test to run to completion and identify any remaining issues.
+*   **Details**: This task is unchanged. After fixing the `minigo` analysis issue and other bugs, run the full e2e test without a manual `timeout`.
+*   **Acceptance Criteria**:
+    1.  `make -C examples/find-orphans e2e` completes successfully in under 60 seconds.
+    2.  No error logs are produced.

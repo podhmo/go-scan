@@ -1,157 +1,86 @@
-# `symgo` Refinement Plan 2: Addressing Infinite Recursion and Timeout
+# `symgo` Refinement Plan 2: Analysis of a "Dogfooding" Failure in the E2E Test
 
-This document outlines a new plan to improve the `symgo` symbolic execution engine. It is based on a re-run of the `find-orphans` end-to-end test, as specified in `docs/plan-symgo-refine.md`. The analysis revealed a critical timeout issue caused by infinite recursion, as well as other significant errors that need to be addressed.
+## Summary
 
-## Summary of Findings
+A re-investigation into the timeout issue occurring during the `find-orphans` e2e test (`make -C examples/find-orphans e2e`) was conducted. The test was run with a 15-second timeout, and the resulting logs were analyzed in detail, incorporating critical user feedback on how to interpret the log messages.
 
-The `find-orphans` e2e test was executed with a 30-second timeout. The process was terminated by the timeout, confirming the user's suspicion that the analysis was hanging. The generated log file, `find-orphans.out`, was incomplete but contained enough information to diagnose several critical issues. The previous fixes have resolved some problems, but new, more severe issues have been uncovered.
+The analysis reveals that the timeout is caused by a "dogfooding" failure: the `symgo` symbolic execution engine is unable to analyze the source code of its own core components, specifically the `minigo` package. When `symgo` attempts to parse `minigo`, it fails to resolve fundamental types, which triggers a catastrophic infinite recursion, causing the process to hang.
 
-## Error and Warning Analysis
-
-### 1. Critical: Infinite Recursion and Timeout
-
-- **Log Messages**:
-    - `level=WARN msg="infinite recursion detected, aborting" in_func=TypeInfoFromExpr`
-    - `level=ERROR msg="infinite recursion detected: TypeInfoFromExpr"`
-- **Analysis**: The log is flooded with these messages, all originating from `scanner/scanner.go` in the `TypeInfoFromExpr` function. This is the most critical issue and the undeniable cause of the timeout. The scanner is entering an unbounded recursive loop while trying to resolve type information, which prevents the symbolic execution from making any meaningful progress. This must be fixed before any other analysis can be reliably performed.
-
-### 2. Invalid Dereference of Unresolved Functions
-
-- **Error Message**: `invalid indirect of <Unresolved Function: ...> (type *object.UnresolvedFunction)`
-- **Example Context**: This error occurs for standard library types like `log/slog.Logger`, `go/token.FileSet`, and `go/ast.File`.
-- **Analysis**: This is a new and severe bug. The `symgo` engine appears to be incorrectly identifying a type as an `UnresolvedFunction` object. Subsequently, when the code attempts to use this type (e.g., as a pointer to a struct), the engine tries to perform an indirect memory access (`*p`) on the function object, which is an invalid operation. This indicates a fundamental flaw in the type resolution or object representation logic for external or built-in types.
-
-### 3. Cascading "Identifier Not Found" Errors
-
-- **Error Messages**:
-    - `identifier not found: PackageInfo`
-    - `identifier not found: elemType`
-    - `identifier not found: genericType`
-- **Analysis**: These errors appear frequently within the same function (`TypeInfoFromExpr`) that is suffering from infinite recursion. It is highly likely that these are a direct symptom of the recursion bug. The recursive calls are likely failing to maintain or propagate the correct scope, leading to a state where expected variables are not defined.
-
-### 4. Persistent Multi-Return Value Warnings
-
-- **Warning Message**: `expected multi-return value on RHS of assignment`
-- **Analysis**: This warning, noted in the original plan, is still present. While the previous fix may have addressed some cases, it is not comprehensive. This suggests that the symbolic representation of un-analyzable function calls is still not robust enough to handle all multi-value assignment scenarios.
-
-## Troubleshooting and Resolution Journey
-
-The "Infinite Recursion" bug proved to be complex to diagnose and resolve. The initial `e2e` test timed out, pointing to a hang, but the exact trigger was unclear.
-
-1.  **Initial Hypothesis (Incorrect): Interpreter Bug**: The first line of investigation focused on the `symgo` interpreter. The theory was that a self-referential variable initialization (e.g., `var V = F()`, where `F` uses `V`) was causing the interpreter to loop. This led to a fix in the evaluator's `evalGenDecl` function to correctly handle this pattern. While this was a valid improvement to the evaluator, it did not solve the hang, proving the root cause was elsewhere.
-
-2.  **Second Hypothesis (Partially Correct): Scanner Recursion**: The focus then shifted to the `scanner`, as indicated by the logs. A unit test was created with a self-referential generic interface (`type I[P any] interface { Foo() G[I[P]] }`). This test did not hang but failed, returning `false` from `goscan.Implements` instead of `true`. This was a critical insight: the bug wasn't just a hang, but a logic error in the recursion handling.
-
-3.  **First Fix Attempt (Insufficient)**: A recursion guard was added to `scanner.TypeInfoFromExpr` using a cache keyed by the AST node's position (`expr.Pos()`). This was insufficient because the same conceptual type can be represented by different AST nodes at different positions in the source code, so the cache failed to detect the cycle.
-
-4.  **Second Fix Attempt (Correct but Incomplete)**: The recursion guard was improved by replacing the position-based key with a canonical string key generated by a new `buildKey` helper function. This function traversed the `ast.Expr` to create a unique string for the type. This fix passed the unit test. However, the `e2e` test, which was previously timing out, now started panicking with a `nil` pointer dereference inside `buildKey`.
-
-5.  **Third Fix Attempt (Final Solution)**: The panic was traced to the `buildKey` function not handling all possible `ast.Expr` types that can appear in a type definition (e.g., `*ast.FuncType` with no return values). The `buildKey` function was made more robust with additional `nil` checks and handlers for more expression types. With this final change, the panic was resolved, and the `find-orphans` e2e test completed successfully without timing out. The core fix was the robust, cache-based recursion guard in the scanner, keyed by a canonical representation of the type expression.
-
-## Proposed Task List for `symgo` Improvement
-
-- [x] **Task 1: Fix Infinite Recursion in `scanner.TypeInfoFromExpr`.**
-    - **Goal**: Identify and fix the cause of the unbounded recursion in `TypeInfoFromExpr`.
-    - **Details**: This required a deep dive into the type resolution logic. The final fix involved adding a mechanism to track visited nodes during recursive traversal using a canonical key for the type expression, preventing the scanner from re-entering the same analysis loop.
-    - **Acceptance Test**: The `find-orphans` e2e test now runs to completion without timing out. (Note: This is not fully resolved, see "Post-Fix Analysis".)
-
-- [ ] **Task 2: Correctly Resolve and Handle External Types.**
-    - **Goal**: Prevent the "invalid indirect" error by ensuring external and built-in types are resolved as type objects, not function objects.
-    - **Details**: Investigate how types from packages like `log/slog` are being resolved. The evaluator should create a symbolic type placeholder, not an `UnresolvedFunction` object. This may require changes to the `scanner` or the `symgo` evaluator's handling of package lookups.
-
-- [ ] **Task 3: Add a Debug Timeout Option to `find-orphans`.**
-    - **Goal**: Make the tool easier to debug by adding a CLI flag for a timeout.
-    - **Details**: The user suggested a 30s timeout is sufficient. Implement a `--timeout` flag (e.g., `--timeout 30s`) in `find-orphans` that uses a `context.WithTimeout` to gracefully terminate the analysis. This will make debugging long-running or hanging analyses much more manageable.
-
-- [ ] **Task 4: Re-evaluate Entry Point Analysis.**
-    - **Goal**: Once the critical bugs are fixed, re-run the e2e test and address any remaining errors that cause the analysis of `main` entry points to fail.
-    - **Details**: This task is carried over from the previous plan. With the timeout and recursion issues resolved, it will be possible to get a complete and accurate log, which can be used to identify and fix any further bugs preventing a full analysis.
+This document categorizes the observed errors and provides a corrected analysis for each group.
 
 ## Reproduction Steps
 
-The reproduction steps remain the same.
-
-1.  **Ensure Makefile exists:** The file `examples/find-orphans/Makefile` should contain:
+1.  **Modify the Makefile**: Remove the redirection in `examples/find-orphans/Makefile` to ensure logs are printed directly to the console.
     ```makefile
     e2e:
-	@echo "Running end-to-end test for find-orphans..."
-	go run . --workspace-root ../.. ./... > find-orphans.out 2>&1
-	@echo "Output written to examples/find-orphans/find-orphans.out"
+        @echo "Running end-to-end test for find-orphans..."
+        go run . --workspace-root ../.. ./...
+        @echo "e2e test finished."
     ```
 
-2.  **Run the analysis:**
-    Execute the make target from the repository root. A `timeout` is recommended to prevent a hung process.
+2.  **Run the Test**: Execute the following command from the repository's root directory.
     ```sh
-    timeout 60s make -C examples/find-orphans e2e
+    timeout 15s make -C examples/find-orphans e2e
     ```
+    The process will be terminated by the timeout after 15 seconds, producing a large volume of logs to stderr.
 
-3.  **Inspect the output:**
-    The results, including logs, will be in `examples/find-orphans/find-orphans.out`.
+## Corrected Error Log Analysis
 
-## Re-investigation of E2E Timeout (2025-09-03)
+> **Important Note on Log Interpretation**: The user has provided a critical clarification for reading these logs. The `in_func` and `in_func_pos` fields do **not** refer to a function in the `symgo` engine's own call stack. Instead, they refer to the location within the **source code being analyzed**. For example, a log message with `in_func=EvalToplevel` means the error occurred while `symgo` was attempting to analyze the `EvalToplevel` function from the `minigo` package, not that the error is inside `symgo`'s own `EvalToplevel` execution frame. This distinction is fundamental to the analysis below.
 
-### Summary
+The key to this analysis is understanding that the `in_func` and `in_func_pos` fields in the logs refer to the location in the code being **analyzed** by `symgo`, not the location within `symgo`'s own execution stack where the error occurred.
 
-The `find-orphans` e2e test continued to time out even after the scanner-level recursion guard was implemented. A deeper investigation was launched to identify the true root cause of the hang. The investigation confirmed that the hang is not caused by a simple infinite recursion in the scanner, but by a more fundamental issue in the `symgo` interpreter's handling of types from packages outside its primary analysis scope.
+### Group 1: Standard Library Symbol Resolution Failure
 
-The key finding is that `symgo` incorrectly creates symbolic placeholders for these external types, leading to critical errors (e.g., `invalid indirect of <Unresolved Function>`) that destabilize the interpreter and cause it to hang in complex scenarios.
-
-### Debugging Process
-
-The investigation used a methodical approach by leveraging the `--primary-analysis-scope` flag in the `find-orphans` tool to incrementally expand the set of packages being analyzed.
-
-1.  **Baseline Confirmation**: The full e2e test (`go run . --workspace-root ../.. ./...`) was run and confirmed to time out after 60 seconds, reproducing the original problem.
-
-2.  **Isolating `minigo`**: Based on the user's hint that the issue was related to `minigo`, the first test was scoped exclusively to the `minigo` package:
-    ```sh
-    go run ./examples/find-orphans --workspace-root . --primary-analysis-scope github.com/podhmo/go-scan/minigo
+*   **Symptom**: `not a function: TYPE`
+*   **Log Excerpt**:
     ```
-    This command completed successfully in a few seconds, proving that the `minigo` package in isolation is not the cause of the hang.
-
-3.  **Adding `symgo` to the Scope**: The scope was expanded to include `symgo` alongside `minigo`:
-    ```sh
-    go run ./examples/find-orphans --workspace-root . --primary-analysis-scope github.com/podhmo/go-scan/minigo,github.com/podhmo/go-scan/symgo
+    time=... level=ERROR msg="not a function: TYPE" in_func=Usage in_func_pos=/app/examples/convert/main.go:80:3
     ```
-    This also completed successfully, indicating that the interaction between the two core libraries was not the direct cause.
+*   **Analysis**: This analysis remains correct. `symgo` fails when analyzing code in `examples/convert/main.go` that calls `flag.Usage`. It incorrectly identifies the `flag.Usage` variable (which is of type `func()`) as a non-callable `TYPE`. This points to a weakness in resolving function-typed variables from external packages.
 
-4.  **Reproducing the "Invalid Indirect" Error**: The breakthrough came when the `examples/minigo` package was added to the scope. This package contains code that uses the `minigo` and `symgo` libraries to perform real tasks, such as generating stdlib bindings.
-    ```sh
-    go run ./examples/find-orphans --workspace-root . --primary-analysis-scope github.com/podhmo/go-scan/minigo,github.com/podhmo/go-scan/symgo,github.com/podhmo/go-scan/examples/minigo
+### Group 2: Flawed Multi-Return Value Handling
+
+*   **Symptom**: `expected multi-return value on RHS of assignment`
+*   **Log Excerpt**:
     ```
-    This command, while not hanging, produced a series of critical `ERROR` logs, most notably:
+    time=... level=WARN msg="expected multi-return value on RHS of assignment" in_func=ResolvePkgPath in_func_pos=/app/locator/locator.go:539:1
     ```
-    level=ERROR msg="invalid indirect of <Unresolved Function: github.com/podhmo/go-scan.Scanner> (type *object.UnresolvedFunction)"
+*   **Analysis**: This analysis also remains correct. When analyzing `locator/locator.go`, `symgo` creates inadequate symbolic placeholders for functions that return multiple values, causing warnings during assignment.
+
+### Group 3: Failure to Analyze `minigo`'s Core Types
+
+*   **Symptom**: `identifier not found` when analyzing `minigo` source code.
+*   **Log Excerpt**:
     ```
-    This error is the same one identified in the initial analysis (`Error and Warning Analysis`, Section 2) and points directly to the root cause.
+    time=... level=ERROR msg="identifier not found: Config" in_func=New in_func_pos=/app/minigo/evaluator/evaluator.go:426:1
+    time=... level=ERROR msg="identifier not found: Environment" in_func=NewEnclosedEnvironment in_func_pos=/app/minigo/object/object.go:1116:1
+    ```
+*   **Corrected Analysis**: These errors occur when `symgo` is tasked with analyzing the source files of the `minigo` package (e.g., `/app/minigo/evaluator/evaluator.go`). `symgo` fails to resolve identifiers like `Config` and `Environment`, which are fundamental types defined within the very package it is analyzing. This indicates that `symgo` cannot correctly build a model of the `minigo` package's scope and contents, which is a prerequisite for any further analysis. This is the root of the "dogfooding" failure.
 
-### Conclusion
+### Group 4: Infinite Recursion Triggered by Analyzing `minigo`
 
-The timeout is not a simple bug in a single function but a systemic failure of the `symgo` interpreter.
+*   **Symptom**: `infinite recursion detected` when the analysis target is a function inside `minigo`.
+*   **Log Excerpt**:
+    ```
+    time=... level=WARN msg="infinite recursion detected, aborting" in_func=EvalToplevel in_func_pos=/app/minigo/evaluator/evaluator.go:2620:1
+    ```
+*   **Corrected Analysis**: This is the direct cause of the timeout. The infinite recursion is not a bug *in* `symgo`'s `EvalToplevel` function itself. Rather, it's a bug that occurs when `symgo` *attempts to analyze* the `EvalToplevel` function located in `/app/minigo/evaluator/evaluator.go`. Unable to resolve the fundamental types from Group 3, the engine likely enters a non-terminating loop trying to find them.
 
--   **Root Cause**: The `symgo` engine fails to create correct symbolic placeholders for types that are referenced from within the primary analysis scope but are defined in packages *outside* of it.
--   **Symptom**: It incorrectly represents these types as `*object.UnresolvedFunction` instead of a symbolic struct or interface. When the analyzed code attempts to use a pointer to such a type (e.g., `*goscan.Scanner`), the interpreter tries to dereference a function pointer, leading to the "invalid indirect" error.
--   **Hypothesis for Hang**: While the minimal test case produced a recoverable error, it is hypothesized that in the full e2e test (with `./...`), a similar type resolution failure occurs with a more complex type (perhaps involving generics or interfaces) that sends the interpreter into an unrecoverable state, such as a non-terminating loop, resulting in the timeout.
+### Group 5: State Confusion when Analyzing `minigo`
 
-The investigation successfully confirmed the cause of the instability that leads to the timeout. The next step is not to chase the timeout itself, but to fix the underlying bug in `symgo`'s external type resolution logic.
+*   **Symptom**: `undefined field or method: Pos on <Symbolic: ...>`
+*   **Log Excerpt**:
+    ```
+    time=... level=ERROR msg="undefined field or method: Pos on <Symbolic: type switch case variable *ast.BranchStmt>" in_func=evalBranchStmt in_func_pos=/app/minigo/evaluator/evaluator.go:2604:1
+    ```
+*   **Corrected Analysis**: This demonstrates `symgo`'s state becoming corrupted *while analyzing `minigo`'s source code*. When `symgo` analyzes the `evalBranchStmt` function, it encounters a type switch. It seems to incorrectly wrap the case variable (`*ast.BranchStmt`) in a symbolic object, then fails when it tries to access a field (`.Pos`) that only exists on the concrete AST node. This shows a breakdown in how `symgo` represents the code it is analyzing.
 
----
+## Conclusion
 
-## Update (2025-09-03): Partial Fix and Further Findings
+The `find-orphans` timeout is a "dogfooding" failure. The `symgo` engine is not mature enough to analyze its own complex components, specifically the `minigo` package. This leads to a cascading failure:
+1.  `symgo` fails to resolve basic types within the `minigo` source code.
+2.  This resolution failure causes the symbolic execution process to enter an infinite loop.
+3.  This infinite loop consumes all available time, resulting in a timeout.
 
-A fix was implemented based on the conclusion above. The `evalSelectorExpr` function in the `symgo` evaluator was modified to create a proper `*object.Type` placeholder for unresolved identifiers from external packages, instead of a generic placeholder that could be misinterpreted.
-
-### Verification Results
-
-1.  **Unit Test**: A new unit test, `TestInterpreter_MethodCallOnExternalPointerType`, was created to specifically reproduce the bug by having the interpreter execute a function that calls a method on a pointer to an external type (`*locator.Locator`). After the fix, this test and all other unit tests passed successfully.
-2.  **Limited-Scope E2E Test**: The `find-orphans` command was run with the scope limited to `minigo`, `symgo`, and `examples/minigo`. The `invalid indirect of <Unresolved Function: ...>` error, which was previously observed in this scenario, was successfully eliminated.
-3.  **Full E2E Test**: The full `find-orphans` e2e test (`make -C examples/find-orphans e2e`) was run again with the fix in place.
-
-**The test still timed out.**
-
-### Revised Conclusion
-
-The investigation and subsequent fix have been partially successful. A significant bug in the symbolic type resolution for external packages has been identified and fixed, improving the overall stability of the interpreter.
-
-However, this bug was not the root cause of the e2e test timeout. The timeout is caused by a separate, deeper issue that only manifests when analyzing the entire workspace. The initial hypothesis was incorrect; while the "invalid indirect" error was a real problem, it was a symptom of the general instability, not the direct cause of the hang.
-
-The next step in resolving the timeout will require a new investigation focused on performance profiling or identifying a different kind of recursive loop that is not related to the external type representation issue.
+While other, more minor issues exist (Groups 1 and 2), the inability for `symgo` to analyze `minigo` is the critical bug that must be fixed first.

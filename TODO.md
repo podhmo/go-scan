@@ -67,24 +67,12 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 
 
 ### `symgo` Engine Improvements ([docs/plan-symgo-refine2.md](./docs/plan-symgo-refine2.md)), ([docs/trouble-symgo-refine2.md](./docs/trouble-symgo-refine2.md))
-- [x] **Analysis**: Investigate timeout and critical errors by re-running e2e tests.
-- [-] **Bugfix: Infinite Recursion**: (partially resolved)
-    - [x] Add a recursion guard (e.g., using a map to track visited nodes) to `scanner.TypeInfoFromExpr` to prevent re-evaluation of the same type expression.
-    - [x] Write a targeted unit test in the `scanner` package that fails before the fix and passes after, reproducing the infinite recursion scenario.
-    - [x] Verify the fix by running the `find-orphans` e2e test and confirming it runs to completion without timing out.If it doesn't heal, start investigating again. (Note: Verification complete. The e2e test still times out. The root cause has been identified as a separate issue related to external type resolution, as documented in `trouble-symgo-refine2.md`.)
-- [-] **Bugfix: External Type Resolution**:
-    - [x] Investigate why types from external packages (e.g., `log/slog.Logger`) are resolved as `object.UnresolvedFunction` instead of a symbolic type representation. (Note: Investigation complete, see `trouble-symgo-refine2.md`. The issue is confirmed to be the root cause of interpreter instability.)
-    - [ ] Modify the `symgo` evaluator and/or `scanner` to ensure that unresolved types are consistently represented as symbolic type placeholders, not functions.
-    - [ ] Add a regression test to `symgo` that attempts to use an external type and fails if the "invalid indirect" error occurs.
-- [ ] **DX: Add Timeout Flag to `find-orphans`**:
-    - [ ] Add a `--timeout` flag (e.g., `--timeout 30s`) to the `find-orphans` CLI.
-    - [ ] Use `context.WithTimeout` in the `run` function to cancel the analysis if it exceeds the specified duration.
-    - [ ] Document the new flag in the tool's help message and README.
-- [ ] **Follow-up: Full Entry Point Analysis**:
-    - [ ] Once the critical recursion and type resolution bugs are fixed, execute the `find-orphans` e2e test again.
-    - [ ] Perform a full analysis of the complete log output.
-    - [ ] Create new items in `TODO.md` for any remaining `WARN` or `ERROR` messages that indicate bugs.
-- [ ] **Performance: Re-investigate e2e test timeout**: The e2e test for `find-orphans` still times out even after fixing the external type resolution bug. A new investigation is needed, possibly using profiling tools, to identify the new root cause, which is likely a different performance bottleneck or a complex loop.
+- [x] **Analysis**: Re-investigated timeout and critical errors by running e2e tests and analyzing the logs. A new, detailed analysis and plan have been created, identifying the root cause as a "dogfooding" failure.
+- [ ] **Bugfix: `symgo`-on-`minigo` Analysis (Top Priority)**: Fix `symgo`'s inability to analyze the `minigo` package, which is the primary cause of the timeout. This involves resolving the `identifier not found` errors and the subsequent infinite recursion.
+- [ ] **Bugfix: Standard Library Symbol Resolution**: Correctly resolve function-type variables from external packages (e.g., `flag.Usage`).
+- [ ] **Bugfix: Multi-Return Placeholders**: Ensure symbolic placeholders for function calls correctly represent multi-value returns to fix assignment warnings.
+- [ ] **DX: Add Timeout Flag to `find-orphans`**: Add a `--timeout` flag to the `find-orphans` CLI for easier debugging.
+- [ ] **Follow-up: Full e2e Test Verification**: Once bugs are fixed, run the e2e test to completion and analyze any remaining issues.
 
 
 ### `minigo` Refinements ([docs/plan-minigo.md](./docs/plan-minigo.md))

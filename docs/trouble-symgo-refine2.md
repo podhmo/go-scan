@@ -155,3 +155,20 @@ The investigation and subsequent fix have been partially successful. A significa
 However, this bug was not the root cause of the e2e test timeout. The timeout is caused by a separate, deeper issue that only manifests when analyzing the entire workspace. The initial hypothesis was incorrect; while the "invalid indirect" error was a real problem, it was a symptom of the general instability, not the direct cause of the hang.
 
 The next step in resolving the timeout will require a new investigation focused on performance profiling or identifying a different kind of recursive loop that is not related to the external type representation issue.
+
+---
+
+## Final Investigation (2025-09-03): Combinatorial Explosion
+
+### Summary
+Following the user's direction, a new investigation was launched without using a traditional profiler. Instead, detailed timing instrumentation was added directly to the `symgo` evaluator's main `Eval` function. This allowed for precise measurement of the time spent evaluating each AST node during the `find-orphans` e2e test. The results were definitive and pinpointed the exact source of the performance bottleneck.
+
+### Findings
+The timeout is not caused by an infinite loop, but by a **combinatorial explosion** of symbolic execution paths.
+
+1.  **Location of Slowness:** The performance logs show that all significant delays (evaluations taking >10ms and growing to >300ms) occur when analyzing a single file: `scanner/scanner.go`.
+2.  **The Bottleneck:** The primary bottleneck is the evaluation of a large `*ast.TypeSwitchStmt` within the `scanner.buildKey` function. This function is used recursively to generate a canonical string representation of a type.
+3.  **The Cause:** This is a classic symbolic execution problem. When the `symgo` engine analyzes its own code (a form of meta-analysis), it encounters the complex `switch n := expr.(type)` statement in its own type-key-generation logic. Because the symbolic evaluator cannot know which branch the code will actually take for a given symbolic input, it must trace the execution of *all possible case branches*. Each of these branches contains further recursive calls to `buildKey`, which in turn contains its own `switch`. This creates a massive, branching tree of possible execution paths that the evaluator must explore, leading to exponential growth in workload and causing the timeout.
+
+### Conclusion
+The investigation successfully identified the root cause. The problem is not a simple bug but a fundamental performance limitation of the symbolic execution engine when analyzing code with highly complex, recursive, and branching control flow, which is characteristic of type resolvers and interpreters. The next step is to decide on a mitigation strategy, such as applying a targeted fix (e.g., a native intrinsic to short-circuit the analysis of `buildKey`) or a workaround (e.g., excluding `scanner.go` from the analysis scope in tests).

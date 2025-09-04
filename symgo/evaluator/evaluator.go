@@ -2263,6 +2263,19 @@ func (e *Evaluator) evalIdent(ctx context.Context, n *ast.Ident, env *object.Env
 		return obj
 	}
 
+	// If still not found, check the current package's top-level constants.
+	// This is a fallback for cases where the environment might not have been fully
+	// populated yet for the identifier's package, which can happen in complex
+	// cross-package call chains.
+	if pkg != nil {
+		for _, c := range pkg.Constants {
+			if c.Name == n.Name {
+				e.logger.Debug("evalIdent: found in package-level constants as fallback", "name", n.Name)
+				return e.convertGoConstant(ctx, c.ConstVal, n.Pos())
+			}
+		}
+	}
+
 	e.logger.Debug("evalIdent: not found in env or intrinsics", "name", n.Name)
 
 	if pkg != nil && !e.resolver.ScanPolicy(pkg.ImportPath) {

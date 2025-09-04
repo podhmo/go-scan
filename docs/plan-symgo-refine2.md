@@ -19,8 +19,9 @@ Performance tuning will be considered separately, only after the e2e test can ru
     *   This task addresses the core issue identified in Groups 3, 4, and 5 of the trouble report, where `symgo` fails to analyze the `minigo` package.
     *   The likely cause is that `minigo`, as a complex package, uses advanced language features or structural patterns that `symgo`'s analysis does not yet support.
     *   **Proposed Fix**: Create a new, minimal test case that does nothing but run the `symgo.Interpreter` on the `minigo` package. This test should reproduce the `identifier not found` and `infinite recursion` errors in a controlled environment. Use this test to debug the resolution and evaluation loop in `symgo`. The fix will likely involve improving support for the specific complex types, interfaces, or scoping patterns used in `minigo`.
+    *   **Update (2025-09-04)**: A focused integration test, `TestAnalyzeMinigoPackage`, has been successfully created. It reliably reproduces the infinite recursion bug by timing out. The test has been added to the codebase and is currently skipped (`t.Skip()`) to allow the main test suite to pass while the underlying bug is addressed.
 *   **Acceptance Criteria**:
-    1.  The new, focused unit test that runs `symgo` on `minigo` passes without errors or timeouts.
+    1.  The new, focused unit test that runs `symgo` on `minigo` passes without errors or timeouts. (The test now exists but is skipped).
     2.  Running the full `find-orphans` e2e test no longer produces the errors from Groups 3, 4, and 5 when analyzing the `minigo` package.
 
 ### Task 2: Strengthen Standard Library Symbol Resolution

@@ -1,0 +1,6 @@
+=== RUN   TestStateTracking_GlobalVarWithMethodCall
+--- PASS: TestStateTracking_GlobalVarWithMethodCall (0.01s)
+=== RUN   TestMethodDispatchWithScantest
+--- PASS: TestMethodDispatchWithScantest (0.01s)
+=== RUN   TestAnalyzeMinigoPackage
+    minigo_analysis_test.go:41: interpreter created successfully with primary analysis scope: github.com/podhmo/go-scan/minigo/...

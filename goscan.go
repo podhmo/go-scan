@@ -1363,14 +1363,17 @@ func (s *Scanner) FindSymbolDefinitionLocation(ctx context.Context, symbolFullNa
 	return "", fmt.Errorf("symbol %s not found in package %s even after scan and cache check", symbolName, importPath)
 }
 
-// FindSymbolInPackage searches for a specific symbol within a package by scanning its files one by one.
-// It only scans files that have not yet been visited by this scanner instance.
-// If the symbol is found, it returns a cumulative PackageInfo of all files scanned in the package up to that point
-// and marks the file as visited. If the symbol is not found after checking all unscanned files, it returns an error.
+// FindSymbolInPackage searches for a specific symbol within a package by scanning all its unscanned files at once.
+// If the symbol is found, it returns a PackageInfo of all files scanned in the package for this call
+// and marks the files as visited. If the symbol is not found after checking all unscanned files, it returns an error.
 func (s *Scanner) FindSymbolInPackage(ctx context.Context, importPath string, symbolName string) (*scanner.PackageInfo, error) {
 	unscannedFiles, err := s.UnscannedGoFiles(importPath)
 	if err != nil {
 		return nil, fmt.Errorf("could not get unscanned files for package %s: %w", importPath, err)
+	}
+
+	if len(unscannedFiles) == 0 {
+		return nil, fmt.Errorf("no unscanned files found and symbol %q not in cache for package %q", symbolName, importPath)
 	}
 
 	// Heuristic to check if it's a standard library package.
@@ -1384,95 +1387,50 @@ func (s *Scanner) FindSymbolInPackage(ctx context.Context, importPath string, sy
 		}
 	}
 
-	var cumulativePkgInfo *scanner.PackageInfo
+	var pkgInfo *scanner.PackageInfo
+	var scanErr error
 
-	for _, fileToScan := range unscannedFiles {
-		var pkgInfo *scanner.PackageInfo
-		var scanErr error
-
-		if isStdLib {
-			// For stdlib packages, we need to bypass the public `ScanFiles` because it cannot
-			// calculate the import path for paths outside the module root.
-			// We call the internal scanner directly and then manually perform the necessary updates
-			// that the public `ScanFiles` would have done (updating visited files and symbol cache).
-			pkgInfo, scanErr = s.scanner.ScanFilesWithKnownImportPath(ctx, []string{fileToScan}, pkgDirAbs, importPath)
-			if scanErr == nil && pkgInfo != nil {
-				s.mu.Lock()
-				for _, fp := range pkgInfo.Files {
-					s.visitedFiles[fp] = struct{}{}
-				}
-				s.mu.Unlock()
-				s.updateSymbolCacheWithPackageInfo(ctx, importPath, pkgInfo)
+	if isStdLib {
+		// For stdlib packages, call the internal scanner directly.
+		pkgInfo, scanErr = s.scanner.ScanFilesWithKnownImportPath(ctx, unscannedFiles, pkgDirAbs, importPath)
+		if scanErr == nil && pkgInfo != nil {
+			s.mu.Lock()
+			for _, fp := range pkgInfo.Files {
+				s.visitedFiles[fp] = struct{}{}
 			}
-		} else {
-			// For in-module packages, the public `ScanFiles` method works correctly.
-			pkgInfo, scanErr = s.ScanFiles(ctx, []string{fileToScan})
+			s.mu.Unlock()
+			s.updateSymbolCacheWithPackageInfo(ctx, importPath, pkgInfo)
 		}
-
-		if scanErr != nil {
-			// Log the error but continue trying other files. A single file might have syntax errors.
-			slog.WarnContext(ctx, "failed to scan file while searching for symbol", "file", fileToScan, "symbol", symbolName, "error", scanErr)
-			continue
-		}
-
-		if pkgInfo == nil {
-			continue
-		}
-
-		// Merge the just-scanned info into a cumulative PackageInfo for this package.
-		if cumulativePkgInfo == nil {
-			cumulativePkgInfo = pkgInfo
-		} else {
-			// This is a simplified merge. A more robust implementation would handle conflicts.
-			cumulativePkgInfo.Types = append(cumulativePkgInfo.Types, pkgInfo.Types...)
-			cumulativePkgInfo.Functions = append(cumulativePkgInfo.Functions, pkgInfo.Functions...)
-			cumulativePkgInfo.Constants = append(cumulativePkgInfo.Constants, pkgInfo.Constants...)
-
-			// Merge AstFiles and Files lists
-			if cumulativePkgInfo.AstFiles == nil {
-				cumulativePkgInfo.AstFiles = make(map[string]*ast.File)
-			}
-			for path, ast := range pkgInfo.AstFiles {
-				if _, exists := cumulativePkgInfo.AstFiles[path]; !exists {
-					cumulativePkgInfo.AstFiles[path] = ast
-				}
-			}
-
-			// Avoid duplicating file paths
-			existingFiles := make(map[string]struct{}, len(cumulativePkgInfo.Files))
-			for _, f := range cumulativePkgInfo.Files {
-				existingFiles[f] = struct{}{}
-			}
-			for _, f := range pkgInfo.Files {
-				if _, exists := existingFiles[f]; !exists {
-					cumulativePkgInfo.Files = append(cumulativePkgInfo.Files, f)
-					existingFiles[f] = struct{}{}
-				}
-			}
-		}
-
+	} else {
+		// For in-module packages, the public `ScanFiles` method works correctly.
+		pkgInfo, scanErr = s.ScanFiles(ctx, unscannedFiles)
 	}
 
-	if cumulativePkgInfo == nil {
-		return nil, fmt.Errorf("no unscanned files found and symbol %q not in cache for package %q", symbolName, importPath)
+	if scanErr != nil {
+		return nil, fmt.Errorf("failed to scan files for symbol %q in package %q: %w", symbolName, importPath, scanErr)
 	}
 
-	// Now, check for the symbol in the fully cumulative package info.
-	for _, t := range cumulativePkgInfo.Types {
+	if pkgInfo == nil {
+		// This can happen if ScanFiles returns nil, e.g., if there's an error it handles internally.
+		return nil, fmt.Errorf("scanning files for symbol %q in package %q returned no package info", symbolName, importPath)
+	}
+
+	// Now, check for the symbol in the package info.
+	for _, t := range pkgInfo.Types {
 		if t.Name == symbolName {
-			return cumulativePkgInfo, nil // Found it
+			return pkgInfo, nil // Found it
 		}
 	}
-	for _, f := range cumulativePkgInfo.Functions {
+	for _, f := range pkgInfo.Functions {
 		if f.Name == symbolName {
-			return cumulativePkgInfo, nil // Found it
+			return pkgInfo, nil // Found it
 		}
 	}
-	for _, c := range cumulativePkgInfo.Constants {
+	for _, c := range pkgInfo.Constants {
 		if c.Name == symbolName {
-			return cumulativePkgInfo, nil // Found it
+			return pkgInfo, nil // Found it
 		}
 	}
 
-	return nil, fmt.Errorf("symbol %q not found in package %q", symbolName, importPath)
+	return nil, fmt.Errorf("symbol %q not found in package %q after scanning %d files", symbolName, importPath, len(unscannedFiles))
 }

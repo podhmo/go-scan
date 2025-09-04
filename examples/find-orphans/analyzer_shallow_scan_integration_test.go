@@ -115,3 +115,67 @@ func main() {
 		t.Errorf("find-orphans mismatch (-want +got):\n%s", diff)
 	}
 }
+
+func TestFindOrphans_MultiFilePackageSymbolResolution(t *testing.T) {
+	// This test verifies that symbols defined across multiple files within the
+	// same package are resolved correctly. Before the fix, the scanner would
+	// process files one-by-one, leading to "identifier not found" errors when
+	// a file used a symbol defined in another file of the same package that
+	// hadn't been scanned yet.
+	files := map[string]string{
+		"go.mod": "module example.com/multifile\ngo 1.21\n",
+		"multifile/def.go": `
+package multifile
+type Definition struct {
+    Name string
+}
+`,
+		"multifile/user.go": `
+package multifile
+func UseDefinition() *Definition {
+    return &Definition{Name: "used"}
+}
+`,
+		"main.go": `
+package main
+import "example.com/multifile/multifile"
+func main() {
+    multifile.UseDefinition()
+}
+`,
+	}
+	dir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	log.SetOutput(io.Discard)
+
+	startPatterns := []string{"./..."}
+
+	// Run the analysis. We expect this to complete without errors.
+	// Before the fix, symgo would log "identifier not found" errors to stderr
+	// and this `run` call would fail because the symbol resolution failed inside the analyzer.
+	err := run(context.Background(), true, false, dir, false, false, "auto", startPatterns, []string{"vendor"}, nil, nil)
+	if err != nil {
+		t.Fatalf("run() failed unexpectedly: %v. This might indicate the symbol resolution issue still exists.", err)
+	}
+
+	w.Close()
+	os.Stdout = oldStdout
+	log.SetOutput(os.Stderr)
+
+	var buf bytes.Buffer
+	io.Copy(&buf, r)
+	output := buf.String()
+
+	// ASSERT: No orphans should be found, as everything is used.
+	// The key check is that the run completes without error and doesn't report anything as an orphan.
+	if strings.Contains(output, "-- Orphans --") {
+		t.Errorf("expected no orphans, but found some.\nOutput:\n%s", output)
+	}
+	if strings.Contains(output, "UseDefinition") {
+		t.Errorf("'UseDefinition' was reported as an orphan, but it is used by main.")
+	}
+}

@@ -22,6 +22,11 @@ import (
 // MaxCallStackDepth is the maximum depth of the call stack to prevent excessive recursion.
 const MaxCallStackDepth = 4096
 
+// FileScope holds the AST and file-specific import aliases for a single file.
+type FileScope struct {
+	AST *ast.File
+}
+
 // Evaluator is the main object that evaluates the AST.
 type Evaluator struct {
 	scanner           *goscan.Scanner
@@ -34,19 +39,22 @@ type Evaluator struct {
 	defaultIntrinsic  intrinsics.IntrinsicFunc
 	initializedPkgs   map[string]bool // To track packages whose constants are loaded
 	pkgCache          map[string]*object.Package
+	files             []*FileScope
+	fileMap           map[string]bool
 
 	// accessor provides methods for finding fields and methods.
 	accessor *accessor
 }
 
 type callFrame struct {
-	Function  string
-	Pos       token.Pos
-	Signature string
+	Function string
+	Pos      token.Pos
+	Fn       *object.Function
+	Call     *ast.CallExpr
 }
 
 func (f *callFrame) String() string {
-	return f.Signature
+	return f.Function
 }
 
 // New creates a new Evaluator.
@@ -63,6 +71,8 @@ func New(scanner *goscan.Scanner, logger *slog.Logger, tracer object.Tracer, sca
 		resolver:          NewResolver(scanPolicy, scanner, logger),
 		initializedPkgs:   make(map[string]bool),
 		pkgCache:          make(map[string]*object.Package),
+		files:             make([]*FileScope, 0),
+		fileMap:           make(map[string]bool),
 	}
 	e.accessor = newAccessor(e)
 	return e
@@ -100,6 +110,16 @@ func (e *Evaluator) PopIntrinsics() {
 
 // Eval is the main dispatch loop for the evaluator.
 func (e *Evaluator) Eval(ctx context.Context, node ast.Node, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
+	if file, ok := node.(*ast.File); ok {
+		filePath := e.scanner.Fset().File(file.Pos()).Name()
+		if !e.fileMap[filePath] {
+			e.fileMap[filePath] = true
+			// This is a simplified way to create a file scope.
+			// A more robust implementation would handle imports here.
+			e.files = append(e.files, &FileScope{AST: file})
+		}
+	}
+
 	if e.tracer != nil {
 		e.tracer.Visit(node)
 	}
@@ -1014,55 +1034,44 @@ func (e *Evaluator) getOrLoadPackage(ctx context.Context, path string) (*object.
 
 func (e *Evaluator) ensurePackageEnvPopulated(ctx context.Context, pkgObj *object.Package) {
 	if pkgObj.ScannedInfo == nil {
-		return // Not scanned yet.
-	}
-	pkgInfo := pkgObj.ScannedInfo
-	env := pkgObj.Env
-
-	shouldScan := e.resolver.ScanPolicy(pkgInfo.ImportPath)
-
-	if !e.initializedPkgs[pkgInfo.ImportPath] {
-		e.logger.DebugContext(ctx, "populating package-level constants", "package", pkgInfo.ImportPath)
-		for _, c := range pkgInfo.Constants {
-			// If the package is out-of-policy, only load exported constants.
-			if !shouldScan && !c.IsExported {
-				continue
-			}
-			constObj := e.convertGoConstant(ctx, c.ConstVal, token.NoPos)
-			if isError(constObj) {
-				e.logc(ctx, slog.LevelWarn, "could not convert constant to object", "const", c.Name, "error", constObj)
-				continue
-			}
-			env.Set(c.Name, constObj)
-		}
-		e.initializedPkgs[pkgInfo.ImportPath] = true
+		return // Not scanned yet, nothing to populate.
 	}
 
-	// Check if the environment is already populated to avoid redundant work.
-	if len(pkgInfo.Functions) > 0 {
-		if _, ok := env.Get(pkgInfo.Functions[0].Name); ok {
-			return
-		}
-	} else if len(pkgInfo.Constants) == 0 {
-		// If there are no functions and no constants, there's nothing to populate.
+	// If we have already populated this package's environment, do nothing.
+	if e.initializedPkgs[pkgObj.Path] {
 		return
 	}
 
-	e.logger.DebugContext(ctx, "populating package environment", "package", pkgInfo.ImportPath)
+	pkgInfo := pkgObj.ScannedInfo
+	env := pkgObj.Env
+	shouldScan := e.resolver.ScanPolicy(pkgInfo.ImportPath)
 
-	for _, f := range pkgInfo.Functions {
-		if _, ok := env.Get(f.Name); ok {
+	e.logger.DebugContext(ctx, "populating package environment for the first time", "package", pkgInfo.ImportPath)
+
+	// Populate constants
+	for _, c := range pkgInfo.Constants {
+		if !shouldScan && !c.IsExported {
 			continue
 		}
+		constObj := e.convertGoConstant(ctx, c.ConstVal, token.NoPos)
+		if isError(constObj) {
+			e.logc(ctx, slog.LevelWarn, "could not convert constant to object", "const", c.Name, "error", constObj)
+			continue
+		}
+		env.Set(c.Name, constObj)
+	}
 
-		// If the package is out-of-policy, only create objects for exported functions.
+	// Populate functions
+	for _, f := range pkgInfo.Functions {
 		if !shouldScan && !ast.IsExported(f.Name) {
 			continue
 		}
-
 		fnObject := e.resolver.ResolveFunction(pkgObj, f)
 		env.SetLocal(f.Name, fnObject)
 	}
+
+	// Mark this package as fully populated.
+	e.initializedPkgs[pkgObj.Path] = true
 }
 
 func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
@@ -2501,7 +2510,6 @@ func (v inspectValuer) LogValue() slog.Value {
 
 func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []object.Object, pkg *scanner.PackageInfo, callPos token.Pos) object.Object {
 	var name string
-	var pos token.Pos
 
 	if f, ok := fn.(*object.Function); ok {
 		if f.Name != nil {
@@ -2509,12 +2517,8 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 		} else {
 			name = "<closure>"
 		}
-		if f.Decl != nil {
-			pos = f.Decl.Pos()
-		}
 	} else {
 		name = fn.Inspect()
-		pos = callPos
 	}
 
 	if len(e.callStack) >= MaxCallStackDepth {
@@ -2522,55 +2526,33 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 		return &object.SymbolicPlaceholder{Reason: "max call stack depth exceeded"}
 	}
 
-	frame := &callFrame{Function: name, Pos: pos}
-	e.callStack = append(e.callStack, frame)
-	defer func() {
-		e.callStack = e.callStack[:len(e.callStack)-1]
-	}()
-
-	if e.logger.Enabled(ctx, slog.LevelDebug) {
-		e.logc(ctx, slog.LevelDebug, "applyFunction", "type", fn.Type(), "value", inspectValuer{fn})
-	}
-
-	// Create a signature for the current call.
-	var currentSignature string
+	// Improved recursion check
 	if f, ok := fn.(*object.Function); ok {
-		var b strings.Builder
-		if f.Receiver != nil {
-			b.WriteString(f.Receiver.Inspect())
-			b.WriteString(".")
-		}
-		if f.Name != nil {
-			b.WriteString(f.Name.Name)
-		} else {
-			b.WriteString("<closure>")
-		}
-		b.WriteString("(")
-		for i, arg := range args {
-			if i > 0 {
-				b.WriteString(", ")
-			}
-			b.WriteString(arg.Inspect())
-		}
-		b.WriteString(")")
-		currentSignature = b.String()
-
-		// Check for recursion
 		for _, frame := range e.callStack {
-			if frame.Signature == currentSignature {
-				name := "<anonymous>"
-				if f.Name != nil {
-					name = f.Name.Name
-				}
+			// A true recursion occurs if the same function definition is called on the
+			// exact same receiver object from the exact same call site in the source.
+			if frame.Fn != nil && f.Def != nil && frame.Fn.Def == f.Def && frame.Fn.Receiver == f.Receiver && frame.Pos == callPos {
 				e.logc(ctx, slog.LevelWarn, "infinite recursion detected, aborting", "function", name)
 				return e.newError(ctx, callPos, "infinite recursion detected: %s", name)
 			}
 		}
 	}
 
-	// Update the current call frame with the signature.
-	if len(e.callStack) > 0 {
-		e.callStack[len(e.callStack)-1].Signature = currentSignature
+	frame := &callFrame{Function: name, Pos: callPos}
+	if f, ok := fn.(*object.Function); ok {
+		frame.Fn = f
+	}
+	e.callStack = append(e.callStack, frame)
+	defer func() {
+		e.callStack = e.callStack[:len(e.callStack)-1]
+	}()
+
+	if e.logger.Enabled(ctx, slog.LevelDebug) {
+		argStrs := make([]string, len(args))
+		for i, arg := range args {
+			argStrs[i] = arg.Inspect()
+		}
+		e.logc(ctx, slog.LevelDebug, "applyFunction", "type", fn.Type(), "value", inspectValuer{fn}, "args", strings.Join(argStrs, ", "))
 	}
 
 	switch fn := fn.(type) {
@@ -3041,4 +3023,18 @@ func (e *Evaluator) createSymbolicResultForFunc(ctx context.Context, fn *object.
 		return &object.SymbolicPlaceholder{Reason: "result of external call with incomplete info"}
 	}
 	return e.createSymbolicResultForFuncInfo(ctx, fn.Def, fn.Package, "result of out-of-policy call to %s", fn.Name.Name)
+}
+
+// Files returns the file scopes that have been loaded into the evaluator.
+func (e *Evaluator) Files() []*FileScope {
+	return e.files
+}
+
+// ApplyFunction is a public wrapper for the internal applyFunction, allowing it to be called from other packages.
+func (e *Evaluator) ApplyFunction(call *ast.CallExpr, fn object.Object, args []object.Object, fscope *FileScope) object.Object {
+	// This is a simplification. A real implementation would need to determine the correct environment.
+	// For now, we'll use a new top-level environment, which will work for pure functions
+	// but not for closures that capture variables.
+	// The pkg argument is nil here, which might limit some functionality.
+	return e.applyFunction(context.Background(), fn, args, nil, call.Pos())
 }

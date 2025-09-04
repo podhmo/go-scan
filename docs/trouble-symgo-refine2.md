@@ -1,86 +1,51 @@
-# `symgo` Refinement Plan 2: Analysis of a Failure to Parse a Complex Package
+# `symgo` Refinement 2: Troubleshooting the Analysis of `minigo`
 
-## Summary
+This document details the troubleshooting process for fixing the `symgo` analysis of the `minigo` package, as outlined in `plan-symgo-refine2.md`.
 
-A re-investigation into the timeout issue occurring during the `find-orphans` e2e test (`make -C examples/find-orphans e2e`) was conducted. The test was run with a 15-second timeout, and the resulting logs were analyzed in detail, incorporating critical user feedback on how to interpret the log messages.
+## Initial Analysis (Correction)
 
-The analysis reveals that the timeout is caused by the `symgo` symbolic execution engine's inability to analyze the `minigo` package, a complex but independent package within the same workspace. When `symgo` attempts to parse `minigo`, it fails to resolve fundamental types, which triggers a catastrophic infinite recursion, causing the process to hang.
+The initial problem analysis was flawed. The root cause of the `find-orphans` e2e test timeout was not just a failure to resolve standard library symbols, but a more fundamental issue: `symgo`'s inability to analyze the `minigo` package itself. This package, while part of the same workspace, is complex and uses language features that triggered deep, unhandled recursive loops in `symgo`'s evaluator.
 
-This document categorizes the observed errors and provides a corrected analysis for each group.
+The `identifier not found` errors for `goscan`, `token`, etc., were symptoms of this deeper failure. The analysis would enter an infinite loop before it even had a chance to correctly resolve all symbols.
 
-## Reproduction Steps
+## Test-Driven Debugging Journey
 
-1.  **Modify the Makefile**: Remove the redirection in `examples/find-orphans/Makefile` to ensure logs are printed directly to the console.
-    ```makefile
-    e2e:
-        @echo "Running end-to-end test for find-orphans..."
-        go run . --workspace-root ../.. ./...
-        @echo "e2e test finished."
-    ```
+The strategy was to create a focused integration test to reproduce the `minigo` analysis failure in isolation. This proved to be a difficult task, fraught with environmental issues and incorrect assumptions.
 
-2.  **Run the Test**: Execute the following command from the repository's root directory.
-    ```sh
-    timeout 15s make -C examples/find-orphans e2e
-    ```
-    The process will be terminated by the timeout after 15 seconds, producing a large volume of logs to stderr.
+### Iteration 1: Simple File Evaluation
 
-## Corrected Error Log Analysis
+*   **Action**: Create a test that iterates through all `.go` files in the `minigo` package and its sub-packages, calling `interp.Eval()` on each.
+*   **Result**: The test passed almost instantly.
+*   **Conclusion**: This was not enough to trigger the bug. The failure must be in the evaluation of function *bodies*, not just top-level declarations.
 
-> **Important Note on Log Interpretation**: The user has provided a critical clarification for reading these logs. The `in_func` and `in_func_pos` fields do **not** refer to a function in the `symgo` engine's own call stack. Instead, they refer to the location within the **source code being analyzed**. For example, a log message with `in_func=EvalToplevel` means the error occurred while `symgo` was attempting to analyze the `EvalToplevel` function from the `minigo` package, not that the error is inside `symgo`'s own `EvalToplevel` execution frame. This distinction is fundamental to the analysis below.
+### Iteration 2: Full Function Application
 
-The key to this analysis is understanding that the `in_func` and `in_func_pos` fields in the logs refer to the location in the code being **analyzed** by `symgo`, not the location within `symgo`'s own execution stack where the error occurred.
+*   **Action**: Revise the test to first load all declarations, then collect all `object.Function` instances from the `minigo` packages, and finally call `interp.ApplyFunction()` on each one.
+*   **Result**: The test failed, but not with the expected recursion. It failed because the package objects for `minigo` were not found in the interpreter's state after the initial `Eval` pass.
+*   **Conclusion**: The `Eval` function does not populate the interpreter's central package cache in the way that was assumed. Package resolution is lazy and happens on-demand when symbols are accessed.
 
-### Group 1: Standard Library Symbol Resolution Failure
+### Iteration 3: Environment and Build System Hell
 
-*   **Symptom**: `not a function: TYPE`
-*   **Log Excerpt**:
-    ```
-    time=... level=ERROR msg="not a function: TYPE" in_func=Usage in_func_pos=/app/examples/convert/main.go:80:3
-    ```
-*   **Analysis**: This analysis remains correct. `symgo` fails when analyzing code in `examples/convert/main.go` that calls `flag.Usage`. It incorrectly identifies the `flag.Usage` variable (which is of type `func()`) as a non-callable `TYPE`. This points to a weakness in resolving function-typed variables from external packages.
+*   **Action**: A long series of attempts were made to work around the package resolution issue and fix the test. This involved:
+    *   Trying to "prime" the interpreter by evaluating a dummy file that imported all `minigo` packages.
+    *   Adding and re-adding test helper methods (`Files()`, `ApplyFunction()`, etc.) to the `symgo` and `evaluator` packages.
+    *   Wrestling with a **major environmental issue** where `read_file`, `replace_with_git_merge_diff`, and `run_in_bash_session` would either fail with `file not found` or hang indefinitely.
+*   **Result**: This led to a frustrating cycle of build errors, tool failures, and incorrect assumptions. The user provided a critical hint: check `AGENTS.md` and the current working directory (`pwd`).
+*   **Conclusion**: The root cause of the tool failures was an unstable CWD. Following the advice in `AGENTS.md` to prefix commands with `cd /app` was a necessary workaround, though long-running `make` commands still tended to hang.
 
-### Group 2: Flawed Multi-Return Value Handling
+### Iteration 4: A Working, Failing Test
 
-*   **Symptom**: `expected multi-return value on RHS of assignment`
-*   **Log Excerpt**:
-    ```
-    time=... level=WARN msg="expected multi-return value on RHS of assignment" in_func=ResolvePkgPath in_func_pos=/app/locator/locator.go:539:1
-    ```
-*   **Analysis**: This analysis also remains correct. When analyzing `locator/locator.go`, `symgo` creates inadequate symbolic placeholders for functions that return multiple values, causing warnings during assignment.
+*   **Action**: After resetting the workspace and applying the `cd /app` workaround, a stable test was finally created. The final, successful approach was:
+    1.  Create a `goscan.Scanner` manually for the project root.
+    2.  Use the scanner to find and parse all packages under `minigo/...`.
+    3.  Create a `symgo.Interpreter`.
+    4.  "Load" all packages by calling `interp.Eval()` on each file's AST. This populates the necessary file scopes.
+    5.  Iterate through the interpreter's *loaded files* (`interp.Files()`).
+    6.  For each file belonging to a `minigo` package, iterate through its `*ast.FuncDecl`s.
+    7.  For each `funcDecl`, create an `object.Function` and call `interp.ApplyFunction()` on it.
+*   **Result**: This test successfully and reliably reproduced the bug, causing the test runner to time out.
+*   **Conclusion**: This test-driven approach, despite the difficulties, resulted in a valuable regression test that precisely captures the bug.
 
-### Group 3: Failure to Analyze `minigo`'s Core Types
+## Final Status
 
-*   **Symptom**: `identifier not found` when analyzing `minigo` source code.
-*   **Log Excerpt**:
-    ```
-    time=... level=ERROR msg="identifier not found: Config" in_func=New in_func_pos=/app/minigo/evaluator/evaluator.go:426:1
-    time=... level=ERROR msg="identifier not found: Environment" in_func=NewEnclosedEnvironment in_func_pos=/app/minigo/object/object.go:1116:1
-    ```
-*   **Corrected Analysis**: These errors occur when `symgo` is tasked with analyzing the source files of the `minigo` package (e.g., `/app/minigo/evaluator/evaluator.go`). `symgo` fails to resolve identifiers like `Config` and `Environment`, which are fundamental types defined within the very package it is analyzing. This indicates that `symgo` cannot correctly build a model of the `minigo` package's scope and contents, which is a prerequisite for any further analysis. This is the root of the analysis failure.
-
-### Group 4: Infinite Recursion Triggered by Analyzing `minigo`
-
-*   **Symptom**: `infinite recursion detected` when the analysis target is a function inside `minigo`.
-*   **Log Excerpt**:
-    ```
-    time=... level=WARN msg="infinite recursion detected, aborting" in_func=EvalToplevel in_func_pos=/app/minigo/evaluator/evaluator.go:2620:1
-    ```
-*   **Corrected Analysis**: This is the direct cause of the timeout. The infinite recursion is not a bug *in* `symgo`'s `EvalToplevel` function itself. Rather, it's a bug that occurs when `symgo` *attempts to analyze* the `EvalToplevel` function located in `/app/minigo/evaluator/evaluator.go`. Unable to resolve the fundamental types from Group 3, the engine likely enters a non-terminating loop trying to find them.
-
-### Group 5: State Confusion when Analyzing `minigo`
-
-*   **Symptom**: `undefined field or method: Pos on <Symbolic: ...>`
-*   **Log Excerpt**:
-    ```
-    time=... level=ERROR msg="undefined field or method: Pos on <Symbolic: type switch case variable *ast.BranchStmt>" in_func=evalBranchStmt in_func_pos=/app/minigo/evaluator/evaluator.go:2604:1
-    ```
-*   **Corrected Analysis**: This demonstrates `symgo`'s state becoming corrupted *while analyzing `minigo`'s source code*. When `symgo` analyzes the `evalBranchStmt` function, it encounters a type switch. It seems to incorrectly wrap the case variable (`*ast.BranchStmt`) in a symbolic object, then fails when it tries to access a field (`.Pos`) that only exists on the concrete AST node. This shows a breakdown in how `symgo` represents the code it is analyzing.
-
-## Conclusion
-
-The `find-orphans` timeout is caused by the `symgo` engine's inability to analyze the `minigo` package, a complex, independent package in the same workspace. The engine is not yet mature enough to handle the language constructs or complexity within the `minigo` source code. This leads to a cascading failure:
-1.  `symgo` fails to resolve basic types within the `minigo` source code.
-2.  This resolution failure causes the symbolic execution process to enter an infinite loop.
-3.  This infinite loop consumes all available time, resulting in a timeout.
-
-While other, more minor issues exist (Groups 1 and 2), the inability for `symgo` to analyze `minigo` is the critical bug that must be fixed first.
+The primary goal of creating a failing test case for the `minigo` analysis bug has been achieved. The test, `TestAnalyzeMinigoPackage`, now exists in the codebase. As per the user's instruction, the test is skipped using `t.Skip()` to allow the CI/CD pipeline to pass, with the understanding that the underlying bug will be fixed in a subsequent task. The knowledge gained about the unstable CWD and hanging `make` commands has been documented in `docs/trouble.md`.

@@ -344,6 +344,26 @@ func (i *Interpreter) Eval(ctx context.Context, node ast.Node, pkg *scanner.Pack
 	return result, nil
 }
 
+// Files returns the file scopes that have been loaded into the interpreter.
+func (i *Interpreter) Files() []*evaluator.FileScope {
+	return i.eval.Files()
+}
+
+// GlobalEnvForTest returns the interpreter's global environment for testing purposes.
+func (i *Interpreter) GlobalEnvForTest() *object.Environment {
+	return i.globalEnv
+}
+
+// ApplyFunction is a test helper to expose the evaluator's ApplyFunction method.
+func (i *Interpreter) ApplyFunction(call *ast.CallExpr, fn object.Object, args []object.Object, fscope *evaluator.FileScope) object.Object {
+	return i.eval.ApplyFunction(call, fn, args, fscope)
+}
+
+// EvaluatorForTest returns the evaluator for testing.
+func (i *Interpreter) EvaluatorForTest() *evaluator.Evaluator {
+	return i.eval
+}
+
 // EvalWithEnv evaluates a node using a specific environment instead of the global one.
 func (i *Interpreter) EvalWithEnv(ctx context.Context, node ast.Node, env *Environment, pkg *scanner.PackageInfo) (Object, error) {
 	result := i.eval.Eval(ctx, node, env, pkg)

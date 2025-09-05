@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	goscan "github.com/podhmo/go-scan"
+	"github.com/podhmo/go-scan/scanner"
 	"github.com/podhmo/go-scan/scantest"
 	"github.com/podhmo/go-scan/symgo/object"
 )
@@ -48,6 +49,105 @@ func main() { add(1, 2) }
 		}
 
 		eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, token.NoPos)
+		return nil
+	}
+
+	if _, err := scantest.Run(t, t.Context(), dir, []string{"."}, action); err != nil {
+		t.Fatalf("scantest.Run() failed: %v", err)
+	}
+}
+
+func TestEvalCallExpr_SymbolicInterfaceMethod_MultiReturn(t *testing.T) {
+	// This test specifically targets the bug where a call to a symbolic interface
+	// method that returns multiple values was returning a single placeholder instead
+	// of a MultiReturn object.
+	files := map[string]string{
+		"go.mod": "module example.com/me",
+		"main.go": `
+package main
+
+type PairGetter interface {
+	GetPair() (string, error)
+}
+
+func useGetter(g PairGetter) {
+	_, _ = g.GetPair()
+}
+`,
+	}
+	dir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
+		mainPkg := pkgs[0]
+		eval := New(s, s.Logger, nil, func(pkgPath string) bool { return true }) // Scan all
+
+		// 1. Find the interface and method info
+		var pairGetter *scanner.TypeInfo
+		var getPairMethod *scanner.MethodInfo
+		for _, p := range pkgs {
+			for _, ti := range p.Types {
+				if ti.Name == "PairGetter" {
+					pairGetter = ti
+					break
+				}
+			}
+		}
+		if pairGetter == nil {
+			return fmt.Errorf("could not find PairGetter interface")
+		}
+		for _, m := range pairGetter.Interface.Methods {
+			if m.Name == "GetPair" {
+				getPairMethod = m
+				break
+			}
+		}
+		if getPairMethod == nil {
+			return fmt.Errorf("could not find GetPair method")
+		}
+
+		// 2. Create a symbolic placeholder for the function call itself.
+		// This simulates what `evalSelectorExpr` would create for `g.GetPair()`.
+		fnPlaceholder := &object.SymbolicPlaceholder{
+			Reason:           "interface method call GetPair",
+			UnderlyingMethod: getPairMethod,
+			// The receiver would be another placeholder for `g`.
+			Receiver: &object.SymbolicPlaceholder{Reason: "variable g"},
+		}
+
+		// 3. Apply the function placeholder. This is where the bug occurs.
+		result := eval.applyFunction(ctx, fnPlaceholder, []object.Object{}, mainPkg, token.NoPos)
+
+		// 4. Check the result
+		retVal, ok := result.(*object.ReturnValue)
+		if !ok {
+			return fmt.Errorf("expected ReturnValue, got %T (%s)", result, result.Inspect())
+		}
+		multiRet, ok := retVal.Value.(*object.MultiReturn)
+		if !ok {
+			// This is the core of the bug. The result should be MultiReturn,
+			// but it was likely a single SymbolicPlaceholder.
+			return fmt.Errorf("expected MultiReturn, got %T (%s)", result, result.Inspect())
+		}
+		if len(multiRet.Values) != 2 {
+			return fmt.Errorf("expected 2 return values, got %d", len(multiRet.Values))
+		}
+
+		// Check the type of the first return value (string)
+		val1 := multiRet.Values[0]
+		if val1.FieldType().Name != "string" {
+			return fmt.Errorf("expected first return value to be string, got %s", val1.FieldType().Name)
+		}
+
+		// Check the type of the second return value (error)
+		val2 := multiRet.Values[1]
+		if val2.FieldType().Name != "error" {
+			return fmt.Errorf("expected second return value to be error, got %s", val2.FieldType().Name)
+		}
+		if val2.TypeInfo() == nil || val2.TypeInfo().Interface == nil {
+			return fmt.Errorf("expected second return value to have resolved TypeInfo for error interface")
+		}
+
 		return nil
 	}
 

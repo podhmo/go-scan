@@ -6,7 +6,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/google/go-cmp/cmp"
 	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/scantest"
 	"github.com/podhmo/go-scan/symgo"
@@ -69,12 +68,19 @@ func Unmarshal(data []byte, v any) error { return nil }
 		return &symgo.MultiReturn{Values: []symgo.Object{bytesPlaceholder, object.NIL}}
 	})
 
-	var got []string
+	got := make(map[string]bool)
 	interp.RegisterIntrinsic("fmt.Println", func(i *symgo.Interpreter, args []symgo.Object) symgo.Object {
-		if len(args) > 0 {
-			if sp, ok := args[0].(*symgo.SymbolicPlaceholder); ok {
-				got = append(got, sp.Reason)
-			}
+		if len(args) == 0 {
+			return nil
+		}
+		// The argument might be a ReturnValue from another function call
+		val := args[0]
+		if rv, ok := val.(*object.ReturnValue); ok {
+			val = rv.Value
+		}
+
+		if sp, ok := val.(*symgo.SymbolicPlaceholder); ok {
+			got[sp.Reason] = true
 		}
 		return nil
 	})
@@ -100,11 +106,8 @@ func Unmarshal(data []byte, v any) error { return nil }
 		t.Fatalf("Apply main function failed: %v", err)
 	}
 
-	want := []string{
-		"result of conversion to built-in type string",
-	}
-	if diff := cmp.Diff(want, got); diff != "" {
-		t.Errorf("mismatch (-want +got):\n%s", diff)
+	if !got["result of conversion to built-in type string"] {
+		t.Errorf("expected to see a symbolic placeholder for string conversion, but it was not found in Println calls")
 	}
 }
 

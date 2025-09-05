@@ -265,6 +265,10 @@ func (e *Evaluator) Eval(ctx context.Context, node ast.Node, env *object.Environ
 		// Similar to other type expressions, we don't need to evaluate it to a concrete value,
 		// just prevent an "unimplemented" error.
 		return &object.SymbolicPlaceholder{Reason: "function type expression"}
+	case *ast.InterfaceType:
+		// Similar to other type expressions, we don't need to evaluate it to a concrete value,
+		// just prevent an "unimplemented" error.
+		return &object.SymbolicPlaceholder{Reason: "interface type expression"}
 	case *ast.StructType:
 		// Similar to other type expressions, we don't need to evaluate it to a concrete value,
 		// just prevent an "unimplemented" error.
@@ -2687,40 +2691,74 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 		return fn.Fn(args...)
 
 	case *object.SymbolicPlaceholder:
+		var result object.Object
 		// Case 1: The placeholder represents an unresolved interface method call.
 		if fn.UnderlyingMethod != nil {
 			method := fn.UnderlyingMethod
 			if len(method.Results) <= 1 {
 				var resultTypeInfo *scanner.TypeInfo
+				var resultFieldType *scanner.FieldType
 				if len(method.Results) == 1 {
-					resultType := e.resolver.ResolveType(ctx, method.Results[0].Type)
-					if resultType == nil && method.Results[0].Type.IsBuiltin {
-						resultType = &scanner.TypeInfo{Name: method.Results[0].Type.Name}
+					resultFieldType = method.Results[0].Type
+					resultType := e.resolver.ResolveType(ctx, resultFieldType)
+					if resultType == nil && resultFieldType.IsBuiltin {
+						resultType = &scanner.TypeInfo{Name: resultFieldType.Name}
 					}
 					resultTypeInfo = resultType
 				}
-				return &object.SymbolicPlaceholder{
+				result = &object.SymbolicPlaceholder{
 					Reason:     fmt.Sprintf("result of interface method call %s", method.Name),
-					BaseObject: object.BaseObject{ResolvedTypeInfo: resultTypeInfo},
+					BaseObject: object.BaseObject{ResolvedTypeInfo: resultTypeInfo, ResolvedFieldType: resultFieldType},
 				}
 			} else {
 				// Multiple return values from interface method
 				results := make([]object.Object, len(method.Results))
-				for i, res := range method.Results {
-					resultType := e.resolver.ResolveType(ctx, res.Type)
+				for i, resFieldInfo := range method.Results {
+					resultFieldType := resFieldInfo.Type
+					resultType := e.resolver.ResolveType(ctx, resultFieldType)
+					if resultType == nil && resultFieldType.IsBuiltin && resultFieldType.Name == "error" {
+						resultType = ErrorInterfaceTypeInfo
+					}
 					results[i] = &object.SymbolicPlaceholder{
 						Reason:     fmt.Sprintf("result %d of interface method call %s", i, method.Name),
-						BaseObject: object.BaseObject{ResolvedTypeInfo: resultType},
+						BaseObject: object.BaseObject{ResolvedTypeInfo: resultType, ResolvedFieldType: resultFieldType},
 					}
 				}
-				return &object.MultiReturn{Values: results}
+				result = &object.MultiReturn{Values: results}
 			}
+		} else if fn.UnderlyingFunc != nil {
+			// Case 2: The placeholder represents an external function call.
+			// This already returns a ReturnValue, so we can return it directly.
+			return e.createSymbolicResultForFuncInfo(ctx, fn.UnderlyingFunc, fn.Package, "result of external call to %s", fn.UnderlyingFunc.Name)
+		} else if typeInfo := fn.TypeInfo(); typeInfo != nil && typeInfo.Kind == scanner.FuncKind && typeInfo.Func != nil {
+			// Case 4: A placeholder representing a callable variable (like flag.Usage)
+			funcInfo := typeInfo.Func
+			var pkgInfo *scanner.PackageInfo
+			var err error
+			if fn.FieldType() != nil && fn.FieldType().FullImportPath != "" {
+				pkg, loadErr := e.getOrLoadPackage(ctx, fn.FieldType().FullImportPath)
+				if loadErr == nil && pkg != nil {
+					pkgInfo = pkg.ScannedInfo
+				}
+				err = loadErr
+			}
+			if pkgInfo == nil {
+				e.logc(ctx, slog.LevelWarn, "could not load package for function variable type", "path", typeInfo.PkgPath, "error", err)
+				result = &object.SymbolicPlaceholder{Reason: "result of calling function variable with unloadable type"}
+			} else {
+				// This already returns a ReturnValue, so we can return it directly.
+				return e.createSymbolicResultForFuncInfo(ctx, funcInfo, pkgInfo, "result of call to var %s", fn.Reason)
+			}
+		} else if strings.HasPrefix(fn.Reason, "built-in type") {
+			// Case 3: A placeholder representing a built-in type, used in a conversion.
+			result = &object.SymbolicPlaceholder{Reason: fmt.Sprintf("result of conversion to %s", fn.Reason)}
+		} else {
+			// Case 5: Generic placeholder.
+			result = &object.SymbolicPlaceholder{Reason: fmt.Sprintf("result of calling %s", fn.Inspect())}
 		}
 
-		// Case 2: The placeholder represents an external function call.
-		if fn.UnderlyingFunc != nil {
-			return e.createSymbolicResultForFuncInfo(ctx, fn.UnderlyingFunc, fn.Package, "result of external call to %s", fn.UnderlyingFunc.Name)
-		}
+		// Wrap the result in a ReturnValue to be consistent with other function types.
+		return &object.ReturnValue{Value: result}
 
 		// Case 3: A placeholder representing a built-in type, used in a conversion.
 		if strings.HasPrefix(fn.Reason, "built-in type") {

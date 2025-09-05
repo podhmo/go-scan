@@ -68,7 +68,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 
 ### `symgo` Engine Improvements ([docs/plan-symgo-refine2.md](./docs/plan-symgo-refine2.md)), ([docs/trouble-symgo-refine2.md](./docs/trouble-symgo-refine2.md))
 - [x] **Analysis**: Re-investigated timeout and critical errors by running e2e tests and analyzing the logs. A new, detailed analysis and plan have been created, identifying the root cause as a failure to analyze a complex package (`minigo`).
-- [ ] **Bugfix: Analysis of Complex Packages (Top Priority)**: Fix `symgo`'s inability to analyze the `minigo` package, which is the primary cause of the timeout. This involves resolving the `identifier not found` errors and the subsequent infinite recursion that occurs when `symgo` parses the `minigo` source code.
+- [x] **Bugfix: Analysis of Complex Packages (Top Priority)**: Fix `symgo`'s inability to analyze the `minigo` package, which is the primary cause of the timeout. This involves resolving the `identifier not found` errors and the subsequent infinite recursion that occurs when `symgo` parses the `minigo` source code.
 - [ ] **Bugfix: Standard Library Symbol Resolution**: Correctly resolve function-type variables from external packages (e.g., `flag.Usage`).
 - [ ] **Bugfix: Multi-Return Placeholders**: Ensure symbolic placeholders for function calls correctly represent multi-value returns to fix assignment warnings.
 - [ ] **DX: Add Timeout Flag to `find-orphans`**: Add a `--timeout` flag to the `find-orphans` CLI for easier debugging.

@@ -17,7 +17,7 @@ import (
 )
 
 func TestAnalyzeMinigoPackage(t *testing.T) {
-	t.Skip("skipping test that reproduces an infinite recursion bug, as per user instruction")
+	// t.Skip("skipping test that reproduces an infinite recursion bug, as per user instruction")
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 

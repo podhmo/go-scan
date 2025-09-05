@@ -77,7 +77,7 @@ func main() {
 			return &object.SymbolicPlaceholder{Reason: "intrinsic call"}
 		})
 
-		env := object.NewEnvironment()
+		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 		for _, file := range mainPkg.AstFiles {
 			eval.Eval(ctx, file, env, mainPkg)
 		}
@@ -184,7 +184,7 @@ func main() {
 			return &object.SymbolicPlaceholder{Reason: "intrinsic call"}
 		})
 
-		env := object.NewEnvironment()
+		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 		for _, file := range mainPkg.AstFiles {
 			eval.Eval(ctx, file, env, mainPkg)
 		}

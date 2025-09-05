@@ -31,7 +31,7 @@ func TestEvalIntegerLiteral(t *testing.T) {
 
 	s, _ := goscan.New()
 	eval := New(s, nil, nil, nil)
-	evaluated := eval.Eval(t.Context(), node, object.NewEnvironment(), nil)
+	evaluated := eval.Eval(t.Context(), node, eval.UniverseEnv, nil)
 
 	integer, ok := evaluated.(*object.Integer)
 	if !ok {
@@ -51,7 +51,7 @@ func TestEvalStringLiteral(t *testing.T) {
 	}
 
 	eval := New(nil, nil, nil, nil)
-	evaluated := eval.Eval(t.Context(), node, object.NewEnvironment(), nil)
+	evaluated := eval.Eval(t.Context(), node, eval.UniverseEnv, nil)
 
 	str, ok := evaluated.(*object.String)
 	if !ok {
@@ -72,7 +72,7 @@ func TestEvalFloatLiteral(t *testing.T) {
 
 	s, _ := goscan.New()
 	eval := New(s, nil, nil, nil)
-	evaluated := eval.Eval(t.Context(), node, object.NewEnvironment(), nil)
+	evaluated := eval.Eval(t.Context(), node, eval.UniverseEnv, nil)
 
 	floatObj, ok := evaluated.(*object.Float)
 	if !ok {
@@ -97,7 +97,7 @@ var x = 10
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
 		eval := New(s, s.Logger, nil, nil)
-		env := object.NewEnvironment()
+		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 
 		eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], env, pkg)
 
@@ -130,7 +130,7 @@ func TestEvalUnsupportedNode(t *testing.T) {
 	node := &ast.BadExpr{} // This node type is not handled by our Eval function.
 
 	eval := New(nil, logger, nil, nil)
-	evaluated := eval.Eval(context.Background(), node, object.NewEnvironment(), nil)
+	evaluated := eval.Eval(context.Background(), node, eval.UniverseEnv, nil)
 
 	_, ok := evaluated.(*object.Error)
 	if !ok {
@@ -176,7 +176,7 @@ func main() {
 			return nil
 		})
 
-		env := object.NewEnvironment()
+		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 		eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], env, pkg)
 
 		mainFunc, ok := env.Get("main")
@@ -226,7 +226,7 @@ func main() {
 		pkg := pkgs[0]
 		eval := New(s, s.Logger, nil, nil)
 
-		env := object.NewEnvironment()
+		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 		eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], env, pkg)
 
 		mainFunc, ok := env.Get("main")
@@ -273,7 +273,7 @@ func TestEvalBooleanLiteral(t *testing.T) {
 			}
 
 			eval := New(nil, nil, nil, nil)
-			evaluated := eval.Eval(t.Context(), node, object.NewEnvironment(), nil)
+			evaluated := eval.Eval(t.Context(), node, eval.UniverseEnv, nil)
 
 			boolean, ok := evaluated.(*object.Boolean)
 			if !ok {
@@ -303,12 +303,12 @@ func testEval(t *testing.T, input string) object.Object {
 		}
 		s, _ := goscan.New()
 		eval := New(s, nil, nil, nil)
-		return eval.Eval(t.Context(), f.Decls[0].(*ast.FuncDecl).Body.List[0], object.NewEnvironment(), nil)
+		return eval.Eval(t.Context(), f.Decls[0].(*ast.FuncDecl).Body.List[0], eval.UniverseEnv, nil)
 	}
 
 	s, _ := goscan.New()
 	eval := New(s, nil, nil, nil)
-	return eval.Eval(t.Context(), node, object.NewEnvironment(), nil)
+	return eval.Eval(t.Context(), node, eval.UniverseEnv, nil)
 }
 
 func testIntegerObject(t *testing.T, obj object.Object, expected int64) bool {
@@ -466,7 +466,7 @@ func TestEvalBuiltinFunctionsPlaceholders(t *testing.T) {
 			action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 				pkg := pkgs[0]
 				eval := New(s, s.Logger, nil, nil)
-				env := object.NewEnvironment()
+				env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 				eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], env, pkg)
 				mainFunc, ok := env.Get("main")
 				if !ok {
@@ -543,7 +543,7 @@ func Do() {
 		pkg := pkgs[0]
 		eval := New(s, s.Logger, nil, nil)
 
-		env := object.NewEnvironment()
+		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 		for _, file := range pkg.AstFiles {
 			eval.Eval(ctx, file, env, pkg)
 		}
@@ -623,7 +623,7 @@ func main() {
 			return nil
 		})
 
-		env := object.NewEnvironment()
+		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 		eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], env, pkg)
 
 		mainFunc, ok := env.Get("main")
@@ -681,7 +681,7 @@ func main() {
 			return nil
 		})
 
-		env := object.NewEnvironment()
+		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 		eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], env, pkg)
 
 		mainFunc, ok := env.Get("main")
@@ -754,7 +754,7 @@ func main() {
 			return nil
 		})
 
-		env := object.NewEnvironment()
+		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 		for _, file := range pkg.AstFiles {
 			eval.Eval(ctx, file, env, pkg)
 		}
@@ -802,7 +802,7 @@ func main() {
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
 		eval := New(s, s.Logger, nil, nil)
-		env := object.NewEnvironment()
+		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 
 		eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], env, pkg)
 
@@ -846,7 +846,7 @@ func main() {
 		allowAll := func(string) bool { return true }
 		eval := New(s, logger, nil, allowAll)
 
-		env := object.NewEnvironment()
+		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 		for _, file := range pkg.AstFiles {
 			eval.Eval(ctx, file, env, pkg)
 		}
@@ -889,7 +889,7 @@ func TestEvalReturnStatement(t *testing.T) {
 
 	s, _ := goscan.New()
 	eval := New(s, nil, nil, nil)
-	evaluated := eval.Eval(t.Context(), stmt, object.NewEnvironment(), &scanner.PackageInfo{
+	evaluated := eval.Eval(t.Context(), stmt, eval.UniverseEnv, &scanner.PackageInfo{
 		Name:     "main",
 		Fset:     fset,
 		AstFiles: map[string]*ast.File{"main.go": f},
@@ -927,7 +927,7 @@ func TestErrorHandling(t *testing.T) {
 				t.Fatalf("could not parse expression: %v", err)
 			}
 			eval := New(nil, nil, nil, nil)
-			evaluated := eval.Eval(t.Context(), node, object.NewEnvironment(), nil)
+			evaluated := eval.Eval(t.Context(), node, eval.UniverseEnv, nil)
 
 			if evaluated == nil {
 				t.Fatal("evaluation resulted in nil object")
@@ -1010,7 +1010,7 @@ func main() {
 			action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 				pkg := pkgs[0]
 				e := New(s, s.Logger, tracer, nil)
-				env := object.NewEnvironment()
+				env := object.NewEnclosedEnvironment(e.UniverseEnv)
 				for _, file := range pkg.AstFiles {
 					e.Eval(ctx, file, env, pkg)
 				}
@@ -1067,7 +1067,7 @@ func TestEvalIfElseStmt(t *testing.T) {
 
 	s, _ := goscan.New()
 	eval := New(s, nil, nil, nil)
-	env := object.NewEnvironment()
+	env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 	// put a symbolic 'x' in the environment
 	env.Set("x", &object.SymbolicPlaceholder{Reason: "variable x"})
 	evaluated := eval.Eval(t.Context(), node, env, &scanner.PackageInfo{
@@ -1095,7 +1095,7 @@ func add(a, b int) int { return a + b }
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
 		eval := New(s, s.Logger, nil, nil)
-		env := object.NewEnvironment()
+		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 
 		// Eval the whole file to populate the environment
 		eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], env, pkg)
@@ -1130,7 +1130,7 @@ func add(a, b int) int { return a + b }
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
 		eval := New(s, s.Logger, nil, nil)
-		env := object.NewEnvironment()
+		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 
 		eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], env, pkg)
 
@@ -1180,7 +1180,7 @@ func main() {
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
 		eval := New(s, s.Logger, nil, nil)
-		env := object.NewEnvironment()
+		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 
 		eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], env, pkg)
 
@@ -1279,7 +1279,7 @@ func main() {
 			return nil
 		})
 
-		env := object.NewEnvironment()
+		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 		eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], env, pkg)
 
 		mainFunc, ok := env.Get("main")

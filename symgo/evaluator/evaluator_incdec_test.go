@@ -74,7 +74,7 @@ func main() {
 			}
 
 			evaluator := New(nil, nil, nil, nil)
-			env := object.NewEnvironment()
+			env := object.NewEnclosedEnvironment(evaluator.UniverseEnv)
 			result := evaluator.Eval(t.Context(), mainFunc.Body, env, nil)
 
 			retVal, ok := result.(*object.ReturnValue)
@@ -126,7 +126,7 @@ func main() {
 	}
 
 	evaluator := New(nil, nil, nil, nil)
-	env := object.NewEnvironment()
+	env := object.NewEnclosedEnvironment(evaluator.UniverseEnv)
 
 	// Pre-populate the environment with a symbolic value for `getSymbolic`
 	env.Set("getSymbolic", &object.Intrinsic{

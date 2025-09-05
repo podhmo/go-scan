@@ -91,7 +91,7 @@ func main() {
 			return nil
 		})
 
-		env := object.NewEnvironment()
+		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 		for _, file := range mainPkg.AstFiles {
 			eval.Eval(ctx, file, env, mainPkg)
 		}
@@ -182,7 +182,7 @@ func process(prefix string, data any) {
 			return &object.String{Value: "formatted string"}
 		})
 
-		env := object.NewEnvironment()
+		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 		for _, file := range mainPkg.AstFiles {
 			eval.Eval(ctx, file, env, mainPkg)
 		}

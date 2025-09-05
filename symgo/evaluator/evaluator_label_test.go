@@ -64,12 +64,12 @@ OuterLoop:
 
 		eval := New(s, s.Logger, tracer, nil)
 
-		env := object.NewEnvironment()
+		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 		pkgObj := &object.Package{
 			Path:        pkg.ImportPath,
 			Name:        pkg.Name,
 			ScannedInfo: pkg,
-			Env:         object.NewEnvironment(),
+			Env:         env,
 		}
 		env.Set(pkg.Name, pkgObj)
 

@@ -110,7 +110,7 @@ func main() {
 				eval := New(s, s.Logger, nil, nil)
 
 				// 1. Evaluate the file to populate the top-level declarations (like `main` func).
-				env := object.NewEnvironment()
+				env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 				for _, file := range mainPkg.AstFiles {
 					eval.Eval(ctx, file, env, mainPkg)
 				}

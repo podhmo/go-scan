@@ -43,7 +43,7 @@ func main() {
 		eval := New(s, s.Logger, nil, nil)
 
 		var inspectedType object.Object
-		env := object.NewEnvironment()
+		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 		for _, file := range pkg.AstFiles {
 			eval.Eval(ctx, file, env, pkg)
 		}

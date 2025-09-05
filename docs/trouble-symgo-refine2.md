@@ -81,8 +81,13 @@ The root cause of the e2e failure is a scoping issue during on-demand package lo
 
 This meant that when `locator.New` was evaluated, its environment did not contain the other top-level declarations from its own package, such as `findModuleRoot`.
 
-### Blocked by Sandbox Environment
+### Resolution
 
-An attempt was made to fix this by modifying the `getOrLoadPackage` function in `symgo/evaluator/evaluator.go` to correctly find the top-level environment and enclose it. However, persistent and unresolvable issues with the agent's sandbox environment (e.g., `grep` failing to find existing text, `overwrite_file_with_block` corrupting files) made it impossible to apply the necessary code changes reliably. After multiple failed attempts using different strategies, the effort to fix the code had to be abandoned.
+The scoping issue was successfully resolved. The final fix involved a two-pronged approach:
 
-As per the user's direction, the goal was changed to simply document these findings. The underlying bug related to package environment creation remains in the codebase.
+1.  **Restoring Universe Fallback**: The initial attempt to fix the scoping by creating a `UniverseEnv` and removing the global fallback in `evalIdent` was too aggressive. It broke many existing unit tests that relied on the fallback for creating simple test environments. The global fallback in `evalIdent` was restored to ensure that all environments, regardless of their creation, could resolve built-in identifiers.
+2.  **Correctly Chaining Package Environments**: The core of the bug was that the `getOrLoadPackage` function in `symgo/evaluator/evaluator.go` was creating new package environments with `object.NewEnvironment()`, which has no outer scope. This was corrected by:
+    *   Adding a `UniverseEnv` field to the `Evaluator` struct, initialized with all built-in objects.
+    *   Changing the `getOrLoadPackage` function to use `object.NewEnclosedEnvironment(e.UniverseEnv)`, ensuring every newly loaded package's environment is correctly chained to the shared universe of built-ins.
+
+This dual approach fixed the original `identifier not found: findModuleRoot` error in the e2e tests while also maintaining the stability of the existing unit test suite. The `make -C examples/find-orphans e2e` command now passes without any scoping-related errors.

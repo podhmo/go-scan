@@ -41,7 +41,7 @@ func main() {
 		pkg := pkgs[0]
 
 		eval := New(s, s.Logger, nil, nil)
-		env := object.NewEnvironment()
+		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 
 		// Register an intrinsic to track when getItems is called
 		eval.RegisterIntrinsic(fmt.Sprintf("%s.getItems", pkg.ImportPath), func(args ...object.Object) object.Object {

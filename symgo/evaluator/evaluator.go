@@ -1268,6 +1268,24 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 			}
 		}
 
+		// Check for variables.
+		for _, v := range val.ScannedInfo.Variables {
+			if v.Name == n.Sel.Name {
+				if !ast.IsExported(v.Name) {
+					continue
+				}
+				resolvedType := e.resolver.ResolveType(ctx, v.Type)
+				placeholder := &object.SymbolicPlaceholder{
+					Reason: fmt.Sprintf("external variable %s.%s", val.Path, v.Name),
+				}
+				placeholder.SetFieldType(v.Type)
+				placeholder.SetTypeInfo(resolvedType)
+
+				val.Env.Set(n.Sel.Name, placeholder)
+				return placeholder
+			}
+		}
+
 		// If it's not a known function, constant, or type, we assume it's a
 		// type identifier that we haven't fully resolved. Create a synthetic Type object for it.
 		// This is better than a generic placeholder, as it correctly identifies the
@@ -2709,7 +2727,31 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 			return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("result of conversion to %s", fn.Reason)}
 		}
 
-		// Case 4: Generic placeholder.
+		// Case 4: A placeholder representing a callable variable (like flag.Usage)
+		if typeInfo := fn.TypeInfo(); typeInfo != nil && typeInfo.Kind == scanner.FuncKind && typeInfo.Func != nil {
+			funcInfo := typeInfo.Func
+			// The TypeInfo for a variable of function type might not have a direct PkgPath
+			// if it's an anonymous func type. We need to find the package where the variable
+			// itself was defined to resolve the function signature's types correctly.
+			// The placeholder's `Reason` often contains this.
+			var pkgInfo *scanner.PackageInfo
+			var err error
+			if fn.FieldType() != nil && fn.FieldType().FullImportPath != "" {
+				pkg, loadErr := e.getOrLoadPackage(ctx, fn.FieldType().FullImportPath)
+				if loadErr == nil && pkg != nil {
+					pkgInfo = pkg.ScannedInfo
+				}
+				err = loadErr
+			}
+
+			if pkgInfo == nil {
+				e.logc(ctx, slog.LevelWarn, "could not load package for function variable type", "path", typeInfo.PkgPath, "error", err)
+				return &object.SymbolicPlaceholder{Reason: "result of calling function variable with unloadable type"}
+			}
+			return e.createSymbolicResultForFuncInfo(ctx, funcInfo, pkgInfo, "result of call to var %s", fn.Reason)
+		}
+
+		// Case 5: Generic placeholder.
 		return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("result of calling %s", fn.Inspect())}
 
 	case *object.UnresolvedFunction:

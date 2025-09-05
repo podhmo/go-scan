@@ -70,7 +70,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] **Analysis**: Re-investigated timeout and critical errors by running e2e tests and analyzing the logs. A new, detailed analysis and plan have been created, identifying the root cause as a failure to analyze a complex package (`minigo`).
 - [x] **Bugfix: Analysis of Complex Packages (Top Priority)**: Fix `symgo`'s inability to analyze the `minigo` package. The infinite recursion on composite literals is fixed, and this is now verified by both a large integration test and a minimal, focused unit test.
 - [x] **Unit Test: Add minimal test for composite literal recursion (Priority)**: Add a focused unit test for the `evalCompositeLit` cycle detection. A robust test case has been designed and implemented that confirms the evaluator does not panic when encountering recursive variable definitions.
-- [ ] **Bugfix: Standard Library Symbol Resolution**: Correctly resolve function-type variables from external packages (e.g., `flag.Usage`).
+- [x] **Bugfix: Standard Library Symbol Resolution**: Correctly resolve function-type variables from external packages (e.g., `flag.Usage`).
 - [ ] **Bugfix: Multi-Return Placeholders**: Ensure symbolic placeholders for function calls correctly represent multi-value returns to fix assignment warnings.
 - [ ] **DX: Add Timeout Flag to `find-orphans`**: Add a `--timeout` flag to the `find-orphans` CLI for easier debugging.
 - [ ] **Follow-up: Full e2e Test Verification**: Once bugs are fixed, run the e2e test to completion and analyze any remaining issues.

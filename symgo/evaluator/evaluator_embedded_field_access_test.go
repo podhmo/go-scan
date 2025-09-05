@@ -55,7 +55,7 @@ func GetBody(resp *TestResponse) io.Reader {
 
 		eval := New(s, s.Logger, nil, nil)
 
-		env := object.NewEnvironment()
+		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 		for _, file := range mainPkg.AstFiles {
 			eval.Eval(ctx, file, env, mainPkg)
 		}

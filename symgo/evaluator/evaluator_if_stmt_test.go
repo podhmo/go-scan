@@ -1,14 +1,12 @@
-package evaluator_test
+package evaluator
 
 import (
 	"context"
-	"go/ast"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
 	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/scantest"
-	"github.com/podhmo/go-scan/symgo"
 	"github.com/podhmo/go-scan/symgo/object"
 )
 
@@ -38,12 +36,9 @@ func main() {
 	// run
 	var discoveredFunctions []string
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
-		interp, err := symgo.NewInterpreter(s)
-		if err != nil {
-			return err
-		}
+		eval := New(s, s.Logger, nil, nil)
 
-		interp.RegisterDefaultIntrinsic(func(i *symgo.Interpreter, args []object.Object) object.Object {
+		eval.RegisterDefaultIntrinsic(func(args ...object.Object) object.Object {
 			if fn, ok := args[0].(*object.Function); ok {
 				if fn.Name != nil {
 					discoveredFunctions = append(discoveredFunctions, fn.Name.Name)
@@ -53,23 +48,20 @@ func main() {
 		})
 
 		mainPkg := pkgs[0]
-		var mainFile *ast.File
+		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 		for _, f := range mainPkg.AstFiles {
-			mainFile = f
-			break
-		}
-		if _, err := interp.Eval(ctx, mainFile, mainPkg); err != nil {
-			return err
+			eval.Eval(ctx, f, env, mainPkg)
 		}
 
-		mainFunc, ok := interp.FindObject("main")
+		mainFunc, ok := env.Get("main")
 		if !ok {
 			t.Fatal("main function not found")
 		}
-		// The call to Apply() starts the analysis from main. The default intrinsic
-		// will only be called for functions *called by* main.
-		_, err = interp.Apply(ctx, mainFunc, nil, mainPkg)
-		return err
+		result := eval.Apply(ctx, mainFunc, nil, mainPkg)
+		if err, ok := result.(*object.Error); ok {
+			return err
+		}
+		return nil
 	}
 
 	_, err := scantest.Run(t, ctx, dir, []string{"."}, action)
@@ -109,36 +101,22 @@ func main() {
 	// run
 	var finalResult object.Object
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
-		interp, err := symgo.NewInterpreter(s)
-		if err != nil {
-			return err
+		eval := New(s, s.Logger, nil, nil)
+		mainPkg := pkgs[0]
+		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
+
+		for _, f := range mainPkg.AstFiles {
+			eval.Eval(ctx, f, env, mainPkg)
 		}
 
-		mainPkg := pkgs[0]
-		var mainFuncInfo *goscan.FunctionInfo
-		for _, f := range mainPkg.Functions {
-			if f.Name == "main" {
-				mainFuncInfo = f
-				break
-			}
-		}
-		if mainFuncInfo == nil {
+		mainFunc, ok := env.Get("main")
+		if !ok {
 			t.Fatal("main function not found")
 		}
 
-		mainFunc := &object.Function{
-			Name:       mainFuncInfo.AstDecl.Name,
-			Parameters: mainFuncInfo.AstDecl.Type.Params,
-			Body:       mainFuncInfo.AstDecl.Body,
-			Env:        object.NewEnvironment(), // A fresh env for the function
-			Decl:       mainFuncInfo.AstDecl,
-			Package:    mainPkg,
-			Def:        mainFuncInfo,
-		}
-
 		// The call to Apply() starts the analysis from main.
-		result, err := interp.Apply(ctx, mainFunc, nil, mainPkg)
-		if err != nil {
+		result := eval.Apply(ctx, mainFunc, nil, mainPkg)
+		if err, ok := result.(*object.Error); ok {
 			return err
 		}
 		finalResult = result

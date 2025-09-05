@@ -41,6 +41,7 @@ type Evaluator struct {
 	pkgCache          map[string]*object.Package
 	files             []*FileScope
 	fileMap           map[string]bool
+	UniverseEnv       *object.Environment
 
 	// accessor provides methods for finding fields and methods.
 	accessor *accessor
@@ -66,18 +67,25 @@ func New(scanner *goscan.Scanner, logger *slog.Logger, tracer object.Tracer, sca
 	if logger == nil {
 		logger = slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	}
+	universeEnv := object.NewEnvironment()
+	universe.Walk(func(name string, obj object.Object) bool {
+		universeEnv.SetLocal(name, obj)
+		return true
+	})
+
 	e := &Evaluator{
-		scanner:           scanner,
-		intrinsics:        intrinsics.New(),
-		logger:            logger,
-		tracer:            tracer,
-		interfaceBindings: make(map[string]*goscan.TypeInfo),
-		resolver:          NewResolver(scanPolicy, scanner, logger),
-		initializedPkgs:   make(map[string]bool),
-		pkgCache:          make(map[string]*object.Package),
-		files:             make([]*FileScope, 0),
+		scanner:              scanner,
+		intrinsics:           intrinsics.New(),
+		logger:               logger,
+		tracer:               tracer,
+		interfaceBindings:    make(map[string]*goscan.TypeInfo),
+		resolver:             NewResolver(scanPolicy, scanner, logger),
+		initializedPkgs:      make(map[string]bool),
+		pkgCache:             make(map[string]*object.Package),
+		files:                make([]*FileScope, 0),
 		fileMap:              make(map[string]bool),
 		evaluationInProgress: make(map[ast.Node]bool),
+		UniverseEnv:          universeEnv,
 	}
 	e.accessor = newAccessor(e)
 	return e
@@ -1031,7 +1039,7 @@ func (e *Evaluator) getOrLoadPackage(ctx context.Context, path string) (*object.
 		pkgObj := &object.Package{
 			Name:        "", // We don't know the name
 			Path:        path,
-			Env:         object.NewEnvironment(),
+			Env:         object.NewEnclosedEnvironment(e.UniverseEnv),
 			ScannedInfo: nil,
 		}
 		e.pkgCache[path] = pkgObj
@@ -1041,7 +1049,7 @@ func (e *Evaluator) getOrLoadPackage(ctx context.Context, path string) (*object.
 	pkgObj := &object.Package{
 		Name:        scannedPkg.Name,
 		Path:        scannedPkg.ImportPath,
-		Env:         object.NewEnvironment(),
+		Env:         object.NewEnclosedEnvironment(e.UniverseEnv),
 		ScannedInfo: scannedPkg,
 	}
 
@@ -2279,9 +2287,6 @@ func (e *Evaluator) evalIdent(ctx context.Context, n *ast.Ident, env *object.Env
 					if imp.Name != nil {
 						if n.Name == imp.Name.Name {
 							pkgObj, _ := e.getOrLoadPackage(ctx, importPath)
-							if pkgObj != nil {
-								env.Set(n.Name, pkgObj)
-							}
 							return pkgObj
 						}
 						continue
@@ -2295,7 +2300,6 @@ func (e *Evaluator) evalIdent(ctx context.Context, n *ast.Ident, env *object.Env
 					}
 
 					if n.Name == pkgObj.ScannedInfo.Name {
-						env.Set(n.Name, pkgObj)
 						return pkgObj
 					}
 				}
@@ -2303,15 +2307,14 @@ func (e *Evaluator) evalIdent(ctx context.Context, n *ast.Ident, env *object.Env
 		}
 	}
 
-	// Fallback to universe scope for built-in values, types, and functions.
-	if obj, ok := universe.Get(n.Name); ok {
-		return obj
-	}
-
 	// If still not found, check the current package's top-level constants.
 	// This is a fallback for cases where the environment might not have been fully
 	// populated yet for the identifier's package, which can happen in complex
 	// cross-package call chains.
+	// Fallback to universe scope for built-in values, types, and functions.
+	if obj, ok := universe.Get(n.Name); ok {
+		return obj
+	}
 	if pkg != nil {
 		for _, c := range pkg.Constants {
 			if c.Name == n.Name {

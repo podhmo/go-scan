@@ -36,7 +36,7 @@ var result = %s
 			action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 				pkg := pkgs[0]
 				eval := New(s, s.Logger, nil, nil)
-				env := object.NewEnvironment()
+				env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 
 				for _, file := range pkg.AstFiles {
 					if err := eval.Eval(ctx, file, env, pkg); err != nil {
@@ -104,7 +104,7 @@ func main() {
 			return importPath == "example.com/me"
 		})
 
-		env := object.NewEnvironment()
+		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 		for _, file := range pkg.AstFiles {
 			if res := eval.Eval(ctx, file, env, pkg); res != nil && isError(res) {
 				if err, ok := res.(*object.Error); ok {
@@ -167,7 +167,7 @@ var result = %s
 			action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 				pkg := pkgs[0]
 				eval := New(s, s.Logger, nil, nil)
-				env := object.NewEnvironment()
+				env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 
 				for _, file := range pkg.AstFiles {
 					if err := eval.Eval(ctx, file, env, pkg); err != nil {

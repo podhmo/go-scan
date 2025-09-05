@@ -34,7 +34,7 @@ func main() { add(1, 2) }
 		pkg := pkgs[0]
 
 		eval := New(s, s.Logger, nil, nil)
-		env := object.NewEnvironment()
+		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 		for _, file := range pkg.AstFiles {
 			eval.Eval(ctx, file, env, pkg)
 		}
@@ -252,7 +252,7 @@ func main() { fmt.Println("hello") }
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
 		eval := New(s, s.Logger, nil, nil)
-		env := object.NewEnvironment()
+		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 
 		eval.RegisterIntrinsic("fmt.Println", func(args ...object.Object) object.Object {
 			if len(args) > 0 {
@@ -303,7 +303,7 @@ func main() {
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
 		eval := New(s, s.Logger, nil, nil)
-		env := object.NewEnvironment()
+		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 
 		const serveMuxTypeName = "net/http.ServeMux"
 		eval.RegisterIntrinsic("net/http.NewServeMux", func(args ...object.Object) object.Object {
@@ -374,7 +374,7 @@ func main() {
 			handler := slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})
 			logger := slog.New(handler)
 			eval := New(s, logger, nil, nil)
-			env := object.NewEnvironment()
+			env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 
 			key := fmt.Sprintf("(%s.S).Do", pkg.ImportPath)
 			eval.RegisterIntrinsic(key, func(args ...object.Object) object.Object {
@@ -425,7 +425,7 @@ func main() {
 			handler := slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})
 			logger := slog.New(handler)
 			eval := New(s, logger, nil, nil)
-			env := object.NewEnvironment()
+			env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 
 			greeterTypeName := fmt.Sprintf("%s.Greeter", pkg.ImportPath)
 			eval.RegisterIntrinsic(fmt.Sprintf("%s.NewGreeter", pkg.ImportPath), func(args ...object.Object) object.Object {
@@ -491,7 +491,7 @@ func main() {
 		action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 			pkg := pkgs[0]
 			eval := New(s, s.Logger, nil, nil)
-			env := object.NewEnvironment()
+			env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 
 			eval.RegisterIntrinsic(fmt.Sprintf("%s.add", pkg.ImportPath), func(args ...object.Object) object.Object {
 				callCount++
@@ -575,7 +575,7 @@ func main() {
 		}
 
 		eval := New(s, s.Logger, nil, nil)
-		env := object.NewEnvironment()
+		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 
 		// Register intrinsics to track calls
 		eval.RegisterIntrinsic("example.com/me/lib.DoSomething", func(args ...object.Object) object.Object {
@@ -662,7 +662,7 @@ func main() {
 		}
 
 		eval := New(s, s.Logger, nil, scanPolicy)
-		env := object.NewEnvironment()
+		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 
 		// Evaluate main package to populate env
 		for _, file := range mainPkg.AstFiles {

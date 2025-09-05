@@ -35,7 +35,7 @@ func main() {
 			return path != "flag"
 		})
 
-		env := object.NewEnvironment()
+		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 		eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], env, pkg)
 
 		mainFunc, ok := env.Get("main")

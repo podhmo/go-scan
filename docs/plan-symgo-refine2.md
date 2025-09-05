@@ -48,18 +48,18 @@ Performance tuning will be considered separately, only after the e2e test can ru
     1.  Running `find-orphans --timeout 1ms` exits immediately with a timeout error.
     2.  The flag is documented.
 
-### Task 5: Full Verification and Final Bug Hunt (Complete)
+### Task 5: Full Verification and Final Bug Hunt
 
 *   **Goal**: Confirm that the fixes allow the e2e test to run to completion and identify any remaining issues.
-*   **Details**: This task is now complete. After fixing the package scoping issue (Task 6), the `find-orphans` e2e test runs to completion without any critical errors.
+*   **Details**: This task is blocked by Task 6. The e2e test is still failing.
 *   **Acceptance Criteria**:
     1.  `make -C examples/find-orphans e2e` completes successfully in under 60 seconds.
     2.  No error logs are produced.
 
-### Task 6: Fix Package Scoping Issue in `symgo` (Complete)
+### Task 6: Fix Package Scoping Issue in `symgo` (High Priority)
 
 *   **Goal**: Fix the `identifier not found` error for unexported functions in dependency packages.
-*   **Details**: As detailed in `docs/trouble-symgo-refine2.md`, the root cause was a package scoping issue. The fix involved ensuring that all newly loaded package environments are correctly enclosed by a shared `UniverseEnv` that contains all built-in identifiers. This was implemented in the `symgo/evaluator/evaluator.go` file.
+*   **Details**: As detailed in `docs/trouble-symgo-refine2.md`, the root cause is a package scoping issue. When `symgo` loads a package on-demand, it fails to correctly populate its scope with all the top-level declarations from that package. This causes `identifier not found: findModuleRoot` when `locator.New` is symbolically executed. A previous fix was attempted but was not successful. The priority is to re-investigate and implement a robust fix.
 *   **Acceptance Criteria**:
-    1. The `identifier not found: findModuleRoot` error no longer appears in the e2e test. (This is confirmed.)
-    2. A targeted unit test demonstrating a cross-package call to an unexported function passes. (This was implemented and then removed due to build system complexities, but the e2e test provides sufficient validation.)
+    1. The `identifier not found: findModuleRoot` error no longer appears in the e2e test.
+    2. A targeted unit test demonstrating a cross-package call to an unexported function passes.

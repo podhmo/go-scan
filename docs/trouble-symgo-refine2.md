@@ -81,13 +81,12 @@ The root cause of the e2e failure is a scoping issue during on-demand package lo
 
 This meant that when `locator.New` was evaluated, its environment did not contain the other top-level declarations from its own package, such as `findModuleRoot`.
 
-### Resolution
+### Analysis: Incorrect Package Scoping (Still Unresolved)
 
-The scoping issue was successfully resolved. The final fix involved a two-pronged approach:
+The problem is not that `symgo` cannot handle unexported functions. A targeted test case (`TestEval_CrossPackageUnexportedFunctionCall`) was created which proved that `symgo` *can* correctly resolve and call an unexported helper function in a different package, provided the packages are scanned and loaded correctly.
 
-1.  **Restoring Universe Fallback**: The initial attempt to fix the scoping by creating a `UniverseEnv` and removing the global fallback in `evalIdent` was too aggressive. It broke many existing unit tests that relied on the fallback for creating simple test environments. The global fallback in `evalIdent` was restored to ensure that all environments, regardless of their creation, could resolve built-in identifiers.
-2.  **Correctly Chaining Package Environments**: The core of the bug was that the `getOrLoadPackage` function in `symgo/evaluator/evaluator.go` was creating new package environments with `object.NewEnvironment()`, which has no outer scope. This was corrected by:
-    *   Adding a `UniverseEnv` field to the `Evaluator` struct, initialized with all built-in objects.
-    *   Changing the `getOrLoadPackage` function to use `object.NewEnclosedEnvironment(e.UniverseEnv)`, ensuring every newly loaded package's environment is correctly chained to the shared universe of built-ins.
+The root cause of the e2e failure is a scoping issue during on-demand package loading within `symgo`. When a function from a new package is encountered during symbolic execution (like `locator.New`), `symgo` loads that package. However, the environment (`object.Environment`) for this newly loaded package is being created incorrectly. Instead of being enclosed by the top-level, global environment (which contains built-ins), it is being enclosed by the current, potentially deeply nested, function execution environment.
 
-This dual approach fixed the original `identifier not found: findModuleRoot` error in the e2e tests while also maintaining the stability of the existing unit test suite. The `make -C examples/find-orphans e2e` command now passes without any scoping-related errors.
+This means that when `locator.New` was evaluated, its environment did not contain the other top-level declarations from its own package, such as `findModuleRoot`.
+
+A previous attempt to fix this by ensuring all package environments are enclosed by a shared `UniverseEnv` was made. However, as of the latest `make -C examples/find-orphans e2e` run, this fix appears to be ineffective or has been reverted. The `identifier not found: findModuleRoot` error persists, indicating that the package-level scope for the `locator` package is not being correctly populated when it is loaded on-demand during the symbolic execution of other packages.

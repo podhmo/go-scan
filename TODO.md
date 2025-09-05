@@ -74,7 +74,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] **Bugfix: Multi-Return Placeholders**: Ensure symbolic placeholders for function calls correctly represent multi-value returns to fix assignment warnings.
 - [x] **Bugfix: Package Scoping in `symgo`**: Fix `identifier not found` errors during e2e tests by ensuring that on-demand package loading creates environments with the correct top-level scope.
 - [ ] **DX: Add Timeout Flag to `find-orphans`**: Add a `--timeout` flag to the `find-orphans` CLI for easier debugging.
-- [x] **Follow-up: Full e2e Test Verification**: This is partially complete. The original `minigo` analysis bugs are fixed, but a new scoping issue (`identifier not found: findModuleRoot`) was uncovered, preventing the e2e test from passing.
+- [-] **Follow-up: Full e2e Test Verification**: Partially complete. The e2e test for `find-orphans` is still failing due to the `identifier not found: findModuleRoot` scoping issue. The problem has been analyzed and documented in `docs/trouble-symgo-refine2.md`, but the fix is not yet implemented.
 
 
 ### `minigo` Refinements ([docs/plan-minigo.md](./docs/plan-minigo.md))

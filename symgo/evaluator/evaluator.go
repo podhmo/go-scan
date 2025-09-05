@@ -265,6 +265,10 @@ func (e *Evaluator) Eval(ctx context.Context, node ast.Node, env *object.Environ
 		// Similar to other type expressions, we don't need to evaluate it to a concrete value,
 		// just prevent an "unimplemented" error.
 		return &object.SymbolicPlaceholder{Reason: "function type expression"}
+	case *ast.InterfaceType:
+		// Similar to other type expressions, we don't need to evaluate it to a concrete value,
+		// just prevent an "unimplemented" error.
+		return &object.SymbolicPlaceholder{Reason: "interface type expression"}
 	case *ast.StructType:
 		// Similar to other type expressions, we don't need to evaluate it to a concrete value,
 		// just prevent an "unimplemented" error.

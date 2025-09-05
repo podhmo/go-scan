@@ -44,6 +44,10 @@ type Evaluator struct {
 
 	// accessor provides methods for finding fields and methods.
 	accessor *accessor
+
+	// evaluationInProgress tracks nodes that are currently being evaluated
+	// to detect and prevent infinite recursion.
+	evaluationInProgress map[ast.Node]bool
 }
 
 type callFrame struct {
@@ -72,7 +76,8 @@ func New(scanner *goscan.Scanner, logger *slog.Logger, tracer object.Tracer, sca
 		initializedPkgs:   make(map[string]bool),
 		pkgCache:          make(map[string]*object.Package),
 		files:             make([]*FileScope, 0),
-		fileMap:           make(map[string]bool),
+		fileMap:              make(map[string]bool),
+		evaluationInProgress: make(map[ast.Node]bool),
 	}
 	e.accessor = newAccessor(e)
 	return e
@@ -426,6 +431,15 @@ func (e *Evaluator) evalSliceExpr(ctx context.Context, node *ast.SliceExpr, env 
 }
 
 func (e *Evaluator) evalCompositeLit(ctx context.Context, node *ast.CompositeLit, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
+	if e.evaluationInProgress[node] {
+		// Return a placeholder instead of an error to allow analysis to continue
+		// on other branches. The presence of a cyclic dependency is noted.
+		e.logc(ctx, slog.LevelWarn, "cyclic dependency detected in composite literal", "pos", node.Pos())
+		return &object.SymbolicPlaceholder{Reason: "cyclic reference in composite literal"}
+	}
+	e.evaluationInProgress[node] = true
+	defer delete(e.evaluationInProgress, node)
+
 	if pkg == nil || pkg.Fset == nil {
 		return e.newError(ctx, node.Pos(), "package info or fset is missing, cannot resolve types for composite literal")
 	}

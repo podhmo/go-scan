@@ -49,3 +49,11 @@ The strategy was to create a focused integration test to reproduce the `minigo` 
 ## Final Status
 
 The primary goal of creating a failing test case for the `minigo` analysis bug has been achieved. The test, `TestAnalyzeMinigoPackage`, now exists in the codebase. As per the user's instruction, the test is skipped using `t.Skip()` to allow the CI/CD pipeline to pass, with the understanding that the underlying bug will be fixed in a subsequent task. The knowledge gained about the unstable CWD and hanging `make` commands has been documented in `docs/trouble.md`.
+
+## Resolution and Follow-up
+
+The core infinite recursion bug was fixed by introducing a targeted cycle detection mechanism within the `symgo` evaluator's `evalCompositeLit` function. This resolves the timeout observed in the `TestAnalyzeMinigoPackage` integration test.
+
+However, the task is only partially complete. A key follow-up action is to create a more focused, minimal unit test for this specific fix. An attempt to create such a test using invalid Go code (`var V = T{F: &V}`) revealed a separate robustness issue in the evaluator (a `nil pointer dereference` panic).
+
+Therefore, the remaining high-priority task is to design a proper unit test—likely using valid but structurally complex Go code—that can trigger the original bug in a controlled manner, solidifying the fix and preventing future regressions. This task is now tracked in `TODO.md`.

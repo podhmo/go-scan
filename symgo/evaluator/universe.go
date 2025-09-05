@@ -16,6 +16,16 @@ func (u *universeScope) Get(name string) (object.Object, bool) {
 	return obj, ok
 }
 
+// Walk iterates over all items in the universe scope.
+// If the callback function returns false, the walk is stopped.
+func (u *universeScope) Walk(fn func(name string, obj object.Object) bool) {
+	for name, obj := range u.objects {
+		if !fn(name, obj) {
+			return
+		}
+	}
+}
+
 var universe *universeScope
 
 func init() {

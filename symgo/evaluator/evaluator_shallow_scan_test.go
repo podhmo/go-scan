@@ -39,7 +39,7 @@ var sentinel int
 		}
 
 		evaluator := New(s, nil, nil, policy)
-		env := object.NewEnvironment()
+		env := object.NewEnclosedEnvironment(evaluator.UniverseEnv)
 
 		pkg := findPackage(t, pkgs, "example.com/me")
 		if len(pkg.AstFiles) == 0 {
@@ -131,7 +131,7 @@ func (f ForeignType) DoSomething() {}
 		})
 
 		mainPkg := findPackage(t, pkgs, "example.com/me")
-		env := object.NewEnvironment()
+		env := object.NewEnclosedEnvironment(evaluator.UniverseEnv)
 
 		// Evaluate package-level declarations first
 		for _, file := range mainPkg.AstFiles {
@@ -205,7 +205,7 @@ func GetTwo() (ForeignType, error) { return ForeignType{}, nil }
 		})
 
 		mainPkg := findPackage(t, pkgs, "example.com/me")
-		env := object.NewEnvironment()
+		env := object.NewEnclosedEnvironment(evaluator.UniverseEnv)
 
 		// Evaluate package-level declarations first
 		for _, file := range mainPkg.AstFiles {
@@ -333,7 +333,7 @@ func (c ConcreteType2) Do() {}
 		})
 
 		mainPkg := findPackage(t, pkgs, "example.com/me")
-		env := object.NewEnvironment()
+		env := object.NewEnclosedEnvironment(evaluator.UniverseEnv)
 
 		// Evaluate package-level declarations first
 		for _, file := range mainPkg.AstFiles {
@@ -447,7 +447,7 @@ func MyFunction(v any) {
 		})
 
 		mainPkg := findPackage(t, pkgs, "example.com/me")
-		env := object.NewEnvironment()
+		env := object.NewEnclosedEnvironment(evaluator.UniverseEnv)
 
 		// Evaluate the package to populate top-level decls.
 		for _, file := range mainPkg.AstFiles {
@@ -554,7 +554,7 @@ func MyFunction(v any) {
 		})
 
 		mainPkg := findPackage(t, pkgs, "example.com/me")
-		env := object.NewEnvironment()
+		env := object.NewEnclosedEnvironment(evaluator.UniverseEnv)
 
 		for _, file := range mainPkg.AstFiles {
 			if res := evaluator.Eval(ctx, file, env, mainPkg); res != nil && res.Type() == object.ERROR_OBJ {
@@ -633,7 +633,7 @@ var sentinel int
 		}
 
 		evaluator := New(s, nil, nil, policy)
-		env := object.NewEnvironment()
+		env := object.NewEnclosedEnvironment(evaluator.UniverseEnv)
 
 		pkg := findPackage(t, pkgs, "example.com/me")
 		for _, file := range pkg.AstFiles {
@@ -751,7 +751,7 @@ func (f ForeignType) ForeignMethod() {}
 		})
 
 		mainPkg := findPackage(t, pkgs, "example.com/me")
-		env := object.NewEnvironment()
+		env := object.NewEnclosedEnvironment(evaluator.UniverseEnv)
 
 		// Evaluate package-level declarations first
 		for _, file := range mainPkg.AstFiles {
@@ -822,7 +822,7 @@ func MyFunction(p *extpkg.ExternalType, s []extpkg.ExternalType) {
 
 		// First, evaluate the whole package to populate top-level declarations.
 		mainPkg := findPackage(t, pkgs, "example.com/me/mypkg")
-		env := object.NewEnvironment()
+		env := object.NewEnclosedEnvironment(evaluator.UniverseEnv)
 		for _, file := range mainPkg.AstFiles {
 			if res := evaluator.Eval(ctx, file, env, mainPkg); res != nil && res.Type() == object.ERROR_OBJ {
 				return fmt.Errorf("initial Eval failed: %s", res.Inspect())

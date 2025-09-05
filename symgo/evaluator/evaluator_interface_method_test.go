@@ -36,7 +36,7 @@ func main() {
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
 		eval := New(s, s.Logger, nil, nil)
-		env := object.NewEnvironment()
+		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 
 		key := "(example.com/me/iface.Writer).Write"
 		eval.RegisterIntrinsic(key, func(args ...object.Object) object.Object {
@@ -95,7 +95,7 @@ func main() {
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
 		eval := New(s, s.Logger, nil, nil)
-		env := object.NewEnvironment()
+		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 
 		key := fmt.Sprintf("(%s.Writer).Write", pkg.ImportPath)
 		eval.RegisterIntrinsic(key, func(args ...object.Object) object.Object {
@@ -157,7 +157,7 @@ func main() {
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
 		eval := New(s, s.Logger, nil, nil)
-		env := object.NewEnvironment()
+		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 
 		eval.RegisterDefaultIntrinsic(func(args ...object.Object) object.Object {
 			if len(args) == 0 {
@@ -243,7 +243,7 @@ func main() {
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
 		eval := New(s, s.Logger, nil, nil)
-		env := object.NewEnvironment()
+		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 
 		eval.RegisterDefaultIntrinsic(func(args ...object.Object) object.Object {
 			if len(args) == 0 {

@@ -27,7 +27,7 @@ var myFunc func(int) string
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
 		eval := New(s, s.Logger, nil, nil)
-		env := object.NewEnvironment()
+		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 
 		// Find the 'myFunc' declaration
 		var varDecl *ast.GenDecl

@@ -46,7 +46,7 @@ func main() {
 				return nil
 			})
 
-			env := object.NewEnvironment()
+			env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 			if res := eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], env, pkg); res != nil && res.Type() == object.ERROR_OBJ {
 				return fmt.Errorf("initial eval failed: %s", res.Inspect())
 			}
@@ -115,7 +115,7 @@ func main() {
 				return nil
 			})
 
-			env := object.NewEnvironment()
+			env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 			if res := eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], env, pkg); res != nil && res.Type() == object.ERROR_OBJ {
 				return fmt.Errorf("initial eval failed: %s", res.Inspect())
 			}

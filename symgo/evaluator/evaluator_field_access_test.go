@@ -54,7 +54,7 @@ func (t *MyType) GetName() string {
 
 		eval := New(s, s.Logger, nil, scanPolicy)
 
-		env := object.NewEnvironment()
+		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 		for _, file := range pkg.AstFiles {
 			eval.Eval(ctx, file, env, pkg)
 		}

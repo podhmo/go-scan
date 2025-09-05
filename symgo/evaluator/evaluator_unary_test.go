@@ -44,7 +44,7 @@ func main() {
 			return nil
 		})
 
-		env := object.NewEnvironment()
+		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 		for _, file := range pkg.AstFiles {
 			eval.Eval(ctx, file, env, pkg)
 		}

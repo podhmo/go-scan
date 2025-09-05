@@ -56,6 +56,14 @@ The infinite recursion bug was fixed by introducing a targeted cycle detection m
 
 -   **Problem:** The evaluator entered an infinite loop when evaluating a composite literal (`*ast.CompositeLit`) whose fields indirectly triggered the evaluation of the same literal. A general-purpose recursion check in the main `Eval` function was too aggressive and caused regressions by incorrectly flagging valid recursive method calls (like in a linked-list traversal).
 
--   **Solution:** The general check was removed. Instead, a specific check was added only to the `evalCompositeLit` function. This check uses a map (`evaluationInProgress`) to track `*ast.CompositeLit` nodes currently being evaluated. If a node is encountered a second time before its evaluation completes, it's identified as a cycle. The evaluator then logs a warning and returns a symbolic placeholder, allowing analysis to continue without timing out.
+-   **Solution:** The general check was removed. Instead, a specific check was added only to the `evalCompositeLit` function. This check uses a map (`evaluationInProgress`) to track `*ast.CompositeLit` nodes currently being evaluated. If a node is encountered a second time before its evaluation completes, it's identified as a cycle. The evaluator then logs a warning and returns a symbolic placeholder, allowing analysis to continue without timing out. This targeted approach successfully resolved the timeout in the `TestAnalyzeMinigoPackage` test without affecting legitimate recursive algorithms.
 
-This targeted approach successfully resolved the timeout in the `TestAnalyzeMinigoPackage` test without affecting legitimate recursive algorithms.
+### Known Issue: Panic on Invalid Recursive `var`
+
+During this investigation, an attempt was made to create a minimal unit test to reproduce the cycle. This test used an invalid, self-referential variable initialization:
+```go
+package main
+type T struct { F *T }
+var V = T{F: &V}
+```
+While the fix for the composite literal recursion works, evaluating this specific code exposed a separate, deeper robustness issue in the `symgo` evaluator, causing a `nil pointer dereference` panic. The root cause of this panic is not yet understood and requires further investigation. A new task has been added to `TODO.md` to track this issue.

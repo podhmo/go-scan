@@ -48,10 +48,18 @@ Performance tuning will be considered separately, only after the e2e test can ru
     1.  Running `find-orphans --timeout 1ms` exits immediately with a timeout error.
     2.  The flag is documented.
 
-### Task 5: Full Verification and Final Bug Hunt
+### Task 5: Full Verification and Final Bug Hunt (Partially Complete)
 
 *   **Goal**: Confirm that the fixes allow the e2e test to run to completion and identify any remaining issues.
-*   **Details**: This task is unchanged. After fixing the `minigo` analysis issue and other bugs, run the full e2e test without a manual `timeout`.
+*   **Details**: This task is now partially complete. The `e2e` test was run, but it revealed a new `identifier not found: findModuleRoot` error, as documented in `docs/trouble-symgo-refine2.md`. The original timeout issue is resolved, but this new issue prevents the test from completing successfully.
 *   **Acceptance Criteria**:
     1.  `make -C examples/find-orphans e2e` completes successfully in under 60 seconds.
     2.  No error logs are produced.
+
+### Task 6: Fix Package Scoping Issue in `symgo`
+
+*   **Goal**: Fix the `identifier not found` error for unexported functions in dependency packages.
+*   **Details**: As detailed in `docs/trouble-symgo-refine2.md`, the root cause is that when `symgo` loads a package on-demand during an evaluation, it creates the new package's environment by enclosing the current function's environment, not the top-level global environment. This means the new package's environment does not contain all of its own top-level declarations. The fix is to modify the package loading logic (likely in `symgo/evaluator/evaluator.go`) to ensure the new environment always encloses the correct top-level scope.
+*   **Acceptance Criteria**:
+    1. The `identifier not found: findModuleRoot` error no longer appears in the e2e test.
+    2. A targeted unit test demonstrating a cross-package call to an unexported function passes.

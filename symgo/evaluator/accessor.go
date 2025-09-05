@@ -144,7 +144,7 @@ func (a *accessor) findDirectMethodOnType(ctx context.Context, typeInfo *scanner
 		return nil, nil
 	}
 
-	pkgObj, err := a.eval.getOrLoadPackage(ctx, typeInfo.PkgPath)
+	pkgObj, err := a.eval.getOrLoadPackage(ctx, typeInfo.PkgPath, env)
 	if err != nil || pkgObj.ScannedInfo == nil {
 		if err != nil && strings.Contains(err.Error(), "cannot find package") {
 			return nil, nil

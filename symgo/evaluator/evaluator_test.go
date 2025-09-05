@@ -786,6 +786,100 @@ func main() {
 	}
 }
 
+func TestEval_CrossPackageUnexportedFunctionCall(t *testing.T) {
+	files := map[string]string{
+		"go.mod": "module example.com/test",
+		"pkga/a.go": `
+package pkga
+import "example.com/test/pkgb"
+func main() {
+	pkgb.Run()
+}`,
+		"pkgb/b.go": `
+package pkgb
+func helper() int {
+	return 42
+}
+func Run() int {
+	return helper()
+}`,
+	}
+
+	dir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
+		eval := New(s, s.Logger, nil, nil)
+		env := object.NewEnvironment()
+
+		// Find pkga
+		var pkga *goscan.Package
+		for _, p := range pkgs {
+			if p.Name == "pkga" {
+				pkga = p
+				break
+			}
+		}
+		if pkga == nil {
+			return fmt.Errorf("pkga not found")
+		}
+
+		// Evaluate pkga to populate the environment
+		for _, file := range pkga.AstFiles {
+			eval.Eval(ctx, file, env, pkga)
+		}
+
+		// Find and apply pkga.main
+		mainFunc, ok := env.Get("main")
+		if !ok {
+			return fmt.Errorf("function 'main' not found in pkga")
+		}
+
+		result := eval.Apply(ctx, mainFunc, nil, pkga)
+		if err, ok := result.(*object.Error); ok {
+			// This is what we expect to fail initially.
+			// The test will pass if the error message contains "identifier not found: helper".
+			if !strings.Contains(err.Message, "identifier not found: helper") {
+				return fmt.Errorf("expected 'identifier not found: helper' error, but got: %v", err)
+			}
+			t.Logf("Successfully caught expected error: %v", err)
+			return nil // Test passes
+		}
+
+		// If it doesn't error, check the return value.
+		retVal, ok := result.(*object.ReturnValue)
+		if !ok {
+			return fmt.Errorf("expected a return value from main, but got %T (%+v)", result, result)
+		}
+
+		val, ok := retVal.Value.(*object.Integer)
+		if !ok {
+			// In this test case, the call to pkgb.Run() is the last statement.
+			// The evaluator wraps the result of that function call (which is another ReturnValue)
+			// in a final ReturnValue for the calling function (main).
+			// So we need to unwrap twice. Let's check for the inner ReturnValue.
+			innerRetVal, ok := retVal.Value.(*object.ReturnValue)
+			if !ok {
+				return fmt.Errorf("expected return value to be Integer or ReturnValue, but got %T", retVal.Value)
+			}
+			val, ok = innerRetVal.Value.(*object.Integer)
+			if !ok {
+				return fmt.Errorf("expected inner return value to be Integer, got %T", innerRetVal.Value)
+			}
+		}
+
+		if val.Value != 42 {
+			return fmt.Errorf("expected result to be 42, but got %d", val.Value)
+		}
+
+		return nil
+	}
+
+	if _, err := scantest.Run(t, t.Context(), dir, []string{"./..."}, action); err != nil {
+		t.Fatalf("scantest.Run() failed: %v", err)
+	}
+}
+
 func TestEvalBlockStatement(t *testing.T) {
 	source := `package main
 func main() {

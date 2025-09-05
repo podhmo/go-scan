@@ -488,27 +488,27 @@ func (c *Channel) Inspect() string {
 // Environment holds the bindings for variables and functions.
 type Environment struct {
 	store map[string]Object
-	outer *Environment
+	Outer *Environment
 }
 
 // NewEnvironment creates a new, top-level environment.
 func NewEnvironment() *Environment {
 	s := make(map[string]Object)
-	return &Environment{store: s, outer: nil}
+	return &Environment{store: s, Outer: nil}
 }
 
 // NewEnclosedEnvironment creates a new environment that is enclosed by an outer one.
 func NewEnclosedEnvironment(outer *Environment) *Environment {
 	env := NewEnvironment()
-	env.outer = outer
+	env.Outer = outer
 	return env
 }
 
 // Get retrieves an object by name from the environment, checking outer scopes if necessary.
 func (e *Environment) Get(name string) (Object, bool) {
 	obj, ok := e.store[name]
-	if !ok && e.outer != nil {
-		obj, ok = e.outer.Get(name)
+	if !ok && e.Outer != nil {
+		obj, ok = e.Outer.Get(name)
 	}
 	return obj, ok
 }
@@ -520,8 +520,8 @@ func (e *Environment) Set(name string, val Object) Object {
 		e.store[name] = val
 		return val
 	}
-	if e.outer != nil {
-		return e.outer.Set(name, val)
+	if e.Outer != nil {
+		return e.Outer.Set(name, val)
 	}
 	// If not found anywhere, define it in the current (innermost) scope.
 	e.store[name] = val
@@ -548,8 +548,8 @@ func (e *Environment) Walk(fn func(name string, obj Object) bool) {
 			return
 		}
 	}
-	if e.outer != nil {
-		e.outer.Walk(fn)
+	if e.Outer != nil {
+		e.Outer.Walk(fn)
 	}
 }
 

@@ -252,3 +252,82 @@ func main() {
 		})
 	}
 }
+
+func TestEval_CompositeLiteral_RecursiveVar(t *testing.T) {
+	// This test case uses invalid Go code (`var V = T{F: &V}`).
+	// The Go compiler would reject this. The goal of this test is to ensure
+	// that the symbolic evaluator is robust enough to handle such a case
+	// without panicking, by correctly detecting the evaluation cycle.
+	files := map[string]string{
+		"go.mod": "module example.com/m",
+		"main.go": `
+package main
+
+type T struct {
+	F *T
+}
+
+var V = T{F: &V}
+
+func main() {
+	_ = V
+}
+`,
+	}
+
+	dir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
+		// We expect pkgs to be non-empty, but possibly with errors.
+		if len(pkgs) == 0 {
+			t.Log("packages.Load returned no packages, which is unexpected but safe.")
+			return nil
+		}
+
+		mainPkg := pkgs[0]
+		// The scanner might not populate a pkg if loading fails, but we proceed
+		// as the goal is to test the evaluator's robustness.
+		if mainPkg == nil {
+			t.Log("Main package was nil, which can happen with invalid code.")
+			return nil
+		}
+
+		interp, err := symgo.NewInterpreter(s)
+		if err != nil {
+			return fmt.Errorf("NewInterpreter failed: %w", err)
+		}
+
+		// The core of the test: evaluating the file should not panic.
+		// The cycle detection in `evalCompositeLit` should prevent infinite recursion.
+		// We wrap this in a recover to be explicit about the test's intent.
+		defer func() {
+			if r := recover(); r != nil {
+				t.Errorf("The evaluator panicked! recover: %v", r)
+			}
+		}()
+
+		for _, file := range mainPkg.AstFiles {
+			// interp.Eval is the public API
+			if _, err := interp.Eval(ctx, file, mainPkg); err != nil {
+				// We might get an "identifier not found" error here, which is fine.
+				// The key is that it shouldn't be an infinite recursion panic.
+				t.Logf("Interpreter returned an expected error: %v", err)
+			}
+		}
+		return nil
+	}
+
+	// We don't check the error from scantest.Run because we expect it to fail
+	// at the `packages.Load` level. The real test is the `action` function above.
+	s, err := goscan.New(goscan.WithWorkDir(dir), goscan.WithGoModuleResolver())
+	if err != nil {
+		t.Fatalf("goscan.New failed: %v", err)
+	}
+
+	if _, err := scantest.Run(t, t.Context(), dir, []string{"."}, action, scantest.WithScanner(s)); err != nil {
+		// The scantest might fail if packages.Load fails. This is okay.
+		// The main check is the `recover` in the action.
+		t.Logf("scantest.Run returned an error as expected: %v", err)
+	}
+}

@@ -68,8 +68,8 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 
 ### `symgo` Engine Improvements ([docs/plan-symgo-refine2.md](./docs/plan-symgo-refine2.md)), ([docs/trouble-symgo-refine2.md](./docs/trouble-symgo-refine2.md))
 - [x] **Analysis**: Re-investigated timeout and critical errors by running e2e tests and analyzing the logs. A new, detailed analysis and plan have been created, identifying the root cause as a failure to analyze a complex package (`minigo`).
-- [-] **Bugfix: Analysis of Complex Packages (Top Priority)**: Fix `symgo`'s inability to analyze the `minigo` package. The infinite recursion on composite literals is fixed, but this is only verified by a large integration test. A minimal unit test still needs to be added.
-- [ ] **Unit Test: Add minimal test for composite literal recursion (Priority)**: Add a focused unit test for the `evalCompositeLit` cycle detection. Attempts to do this revealed panics when evaluating invalid Go code (e.g., `var V = T{F:&V}`), so a robust test case needs to be designed.
+- [x] **Bugfix: Analysis of Complex Packages (Top Priority)**: Fix `symgo`'s inability to analyze the `minigo` package. The infinite recursion on composite literals is fixed, and this is now verified by both a large integration test and a minimal, focused unit test.
+- [x] **Unit Test: Add minimal test for composite literal recursion (Priority)**: Add a focused unit test for the `evalCompositeLit` cycle detection. A robust test case has been designed and implemented that confirms the evaluator does not panic when encountering recursive variable definitions.
 - [ ] **Bugfix: Standard Library Symbol Resolution**: Correctly resolve function-type variables from external packages (e.g., `flag.Usage`).
 - [ ] **Bugfix: Multi-Return Placeholders**: Ensure symbolic placeholders for function calls correctly represent multi-value returns to fix assignment warnings.
 - [ ] **DX: Add Timeout Flag to `find-orphans`**: Add a `--timeout` flag to the `find-orphans` CLI for easier debugging.

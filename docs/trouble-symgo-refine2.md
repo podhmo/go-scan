@@ -50,20 +50,10 @@ The strategy was to create a focused integration test to reproduce the `minigo` 
 
 The primary goal of creating a failing test case for the `minigo` analysis bug has been achieved. The test, `TestAnalyzeMinigoPackage`, now exists in the codebase. As per the user's instruction, the test is skipped using `t.Skip()` to allow the CI/CD pipeline to pass, with the understanding that the underlying bug will be fixed in a subsequent task. The knowledge gained about the unstable CWD and hanging `make` commands has been documented in `docs/trouble.md`.
 
-## Resolution
+## Resolution and Follow-up
 
-The infinite recursion bug was fixed by introducing a targeted cycle detection mechanism within the `symgo` evaluator.
+The core infinite recursion bug was fixed by introducing a targeted cycle detection mechanism within the `symgo` evaluator's `evalCompositeLit` function. This resolves the timeout observed in the `TestAnalyzeMinigoPackage` integration test.
 
--   **Problem:** The evaluator entered an infinite loop when evaluating a composite literal (`*ast.CompositeLit`) whose fields indirectly triggered the evaluation of the same literal. A general-purpose recursion check in the main `Eval` function was too aggressive and caused regressions by incorrectly flagging valid recursive method calls (like in a linked-list traversal).
+However, the task is only partially complete. A key follow-up action is to create a more focused, minimal unit test for this specific fix. An attempt to create such a test using invalid Go code (`var V = T{F: &V}`) revealed a separate robustness issue in the evaluator (a `nil pointer dereference` panic).
 
--   **Solution:** The general check was removed. Instead, a specific check was added only to the `evalCompositeLit` function. This check uses a map (`evaluationInProgress`) to track `*ast.CompositeLit` nodes currently being evaluated. If a node is encountered a second time before its evaluation completes, it's identified as a cycle. The evaluator then logs a warning and returns a symbolic placeholder, allowing analysis to continue without timing out. This targeted approach successfully resolved the timeout in the `TestAnalyzeMinigoPackage` test without affecting legitimate recursive algorithms.
-
-### Known Issue: Panic on Invalid Recursive `var`
-
-During this investigation, an attempt was made to create a minimal unit test to reproduce the cycle. This test used an invalid, self-referential variable initialization:
-```go
-package main
-type T struct { F *T }
-var V = T{F: &V}
-```
-While the fix for the composite literal recursion works, evaluating this specific code exposed a separate, deeper robustness issue in the `symgo` evaluator, causing a `nil pointer dereference` panic. The root cause of this panic is not yet understood and requires further investigation. A new task has been added to `TODO.md` to track this issue.
+Therefore, the remaining high-priority task is to design a proper unit test—likely using valid but structurally complex Go code—that can trigger the original bug in a controlled manner, solidifying the fix and preventing future regressions. This task is now tracked in `TODO.md`.

@@ -49,3 +49,13 @@ The strategy was to create a focused integration test to reproduce the `minigo` 
 ## Final Status
 
 The primary goal of creating a failing test case for the `minigo` analysis bug has been achieved. The test, `TestAnalyzeMinigoPackage`, now exists in the codebase. As per the user's instruction, the test is skipped using `t.Skip()` to allow the CI/CD pipeline to pass, with the understanding that the underlying bug will be fixed in a subsequent task. The knowledge gained about the unstable CWD and hanging `make` commands has been documented in `docs/trouble.md`.
+
+## Resolution
+
+The infinite recursion bug was fixed by introducing a targeted cycle detection mechanism within the `symgo` evaluator.
+
+-   **Problem:** The evaluator entered an infinite loop when evaluating a composite literal (`*ast.CompositeLit`) whose fields indirectly triggered the evaluation of the same literal. A general-purpose recursion check in the main `Eval` function was too aggressive and caused regressions by incorrectly flagging valid recursive method calls (like in a linked-list traversal).
+
+-   **Solution:** The general check was removed. Instead, a specific check was added only to the `evalCompositeLit` function. This check uses a map (`evaluationInProgress`) to track `*ast.CompositeLit` nodes currently being evaluated. If a node is encountered a second time before its evaluation completes, it's identified as a cycle. The evaluator then logs a warning and returns a symbolic placeholder, allowing analysis to continue without timing out.
+
+This targeted approach successfully resolved the timeout in the `TestAnalyzeMinigoPackage` test without affecting legitimate recursive algorithms.

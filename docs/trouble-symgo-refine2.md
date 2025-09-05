@@ -57,3 +57,32 @@ The core infinite recursion bug was fixed by introducing a targeted cycle detect
 However, the task is only partially complete. A key follow-up action is to create a more focused, minimal unit test for this specific fix. An attempt to create such a test using invalid Go code (`var V = T{F: &V}`) revealed a separate robustness issue in the evaluator (a `nil pointer dereference` panic).
 
 Therefore, the remaining high-priority task is to design a proper unit test—likely using valid but structurally complex Go code—that can trigger the original bug in a controlled manner, solidifying the fix and preventing future regressions. This task is now tracked in `TODO.md`.
+
+## E2E Test Failure Analysis (Post-Refactor)
+
+After the initial fixes, the `make -C examples/find-orphans e2e` command was run again to perform a full verification. This revealed a new, more subtle bug that was previously masked.
+
+### Symptom: `identifier not found: findModuleRoot`
+
+The e2e test failed, and the output log (`find-orphans.out`) was filled with errors like this:
+```
+level=ERROR msg="identifier not found: findModuleRoot" in_func=New in_func_pos=/app/goscan.go:454:16
+...
+level=ERROR msg="symbolic execution failed for entry point" function=github.com/podhmo/go-scan/examples/find-orphans.main error="symgo runtime error: identifier not found: findModuleRoot\n\t/app/locator/locator.go:78:18 ...
+```
+
+This error occurred during the symbolic execution of nearly every `main` package in the workspace. The stack trace consistently showed that the failure happened when `symgo` was evaluating `locator.New`, which in turn calls the unexported function `findModuleRoot` from the same `locator` package.
+
+### Analysis: Incorrect Package Scoping
+
+The problem is not that `symgo` cannot handle unexported functions. A targeted test case (`TestEval_CrossPackageUnexportedFunctionCall`) was created which proved that `symgo` *can* correctly resolve and call an unexported helper function in a different package, provided the packages are scanned and loaded correctly.
+
+The root cause of the e2e failure is a scoping issue during on-demand package loading within `symgo`. When a function from a new package is encountered during symbolic execution (like `locator.New`), `symgo` loads that package. However, the environment (`object.Environment`) for this newly loaded package was being created incorrectly. Instead of being enclosed by the top-level, global environment (which contains built-ins), it was being enclosed by the current, potentially deeply nested, function execution environment.
+
+This meant that when `locator.New` was evaluated, its environment did not contain the other top-level declarations from its own package, such as `findModuleRoot`.
+
+### Blocked by Sandbox Environment
+
+An attempt was made to fix this by modifying the `getOrLoadPackage` function in `symgo/evaluator/evaluator.go` to correctly find the top-level environment and enclose it. However, persistent and unresolvable issues with the agent's sandbox environment (e.g., `grep` failing to find existing text, `overwrite_file_with_block` corrupting files) made it impossible to apply the necessary code changes reliably. After multiple failed attempts using different strategies, the effort to fix the code had to be abandoned.
+
+As per the user's direction, the goal was changed to simply document these findings. The underlying bug related to package environment creation remains in the codebase.

@@ -502,6 +502,7 @@ type VariableInfo struct {
 	Type       *FieldType
 	IsExported bool
 	Node       ast.Node
+	GenDecl    *ast.GenDecl // Added to link back to the declaration group
 }
 
 // FunctionInfo represents a single top-level function or method declaration.

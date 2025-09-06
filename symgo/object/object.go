@@ -378,6 +378,12 @@ type Variable struct {
 	// PossibleConcreteTypes tracks the set of concrete field types that have been
 	// assigned to this variable. This is used for precise analysis of interface method calls.
 	PossibleConcreteTypes map[*scanner.FieldType]struct{}
+
+	// --- Fields for Lazy Evaluation ---
+	Initializer ast.Expr              // The initializer expression, to be evaluated on first access.
+	IsEvaluated bool                  // Flag to check if the initializer has been evaluated.
+	DeclEnv     *Environment          // The environment where the variable was declared.
+	DeclPkg     *scanner.PackageInfo  // The package where the variable was declared.
 }
 
 // Type returns the type of the Variable object.
@@ -385,7 +391,13 @@ func (v *Variable) Type() ObjectType { return VARIABLE_OBJ }
 
 // Inspect returns a string representation of the variable's value.
 func (v *Variable) Inspect() string {
-	return v.Value.Inspect()
+	if v.Value != nil {
+		return v.Value.Inspect()
+	}
+	if v.Initializer != nil {
+		return fmt.Sprintf("<unevaluated var %s>", v.Name)
+	}
+	return "<uninitialized var>"
 }
 
 // --- Pointer Object ---

@@ -250,3 +250,46 @@ func runMainAnalysis(t *testing.T, ctx context.Context, dir string, primaryScope
 
 	return interp.Apply(ctx, mainFunc, nil, mainPkg)
 }
+
+func TestCrossPackageUnexportedResolution_WithVar(t *testing.T) {
+	ctx := context.Background()
+	files := map[string]string{
+		"myapp/go.mod": "module example.com/myapp\ngo 1.21\nreplace example.com/lib => ../lib",
+		"myapp/main.go": `
+package main
+import "example.com/lib"
+func main() string { return lib.GetGreeting() }
+`,
+		"lib/go.mod": "module example.com/lib\ngo 1.21",
+		"lib/lib.go": `
+package lib
+
+var secret = "hello from unexported var"
+
+func GetGreeting() string {
+	return secret
+}
+`,
+	}
+	tmpdir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	appDir := filepath.Join(tmpdir, "myapp")
+	result, err := runMainAnalysis(t, ctx, appDir, "example.com/myapp/...", "example.com/lib/...")
+
+	if err != nil {
+		t.Fatalf("test failed unexpectedly with error: %v", err)
+	}
+
+	retVal, ok := result.(*object.ReturnValue)
+	if !ok {
+		t.Fatalf("expected ReturnValue, but got %T: %v", result, result.Inspect())
+	}
+	str, ok := retVal.Value.(*object.String)
+	if !ok {
+		t.Fatalf("expected String, got %T", retVal.Value)
+	}
+	if str.Value != "hello from unexported var" {
+		t.Errorf("want %q, got %q", "hello from unexported var", str.Value)
+	}
+}

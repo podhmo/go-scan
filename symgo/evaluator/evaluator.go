@@ -289,37 +289,38 @@ func (e *Evaluator) Eval(ctx context.Context, node ast.Node, env *object.Environ
 func (e *Evaluator) evalIncDecStmt(ctx context.Context, n *ast.IncDecStmt, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
 	ident, ok := n.X.(*ast.Ident)
 	if !ok {
-		// For now, we only support identifiers. If we support selectors later, we'll need more logic.
-		// For anything else (like a selector on a symbolic value), we do nothing and don't error.
+		// For now, we only support identifiers.
 		return nil
 	}
 
-	// Get the variable object from the environment. Do not get its value yet.
 	obj, ok := env.Get(ident.Name)
 	if !ok {
-		// This is a semantic error in the Go code being analyzed (undefined variable). Return an error.
 		return e.newError(ctx, ident.Pos(), "identifier not found: %s", ident.Name)
 	}
 
 	v, ok := obj.(*object.Variable)
 	if !ok {
-		// This is also a semantic error (e.g. `myFunc++`).
 		return e.newError(ctx, ident.Pos(), "cannot ++/-- a non-variable identifier: %s", ident.Name)
 	}
 
-	// Now we have the variable. Check its value.
+	e.logger.Debug("evalIncDecStmt: evaluating variable before modification", "var", v.Name)
+	e.evalVariable(ctx, v) // This will populate v.Value
+
 	if intVal, ok := v.Value.(*object.Integer); ok {
-		// The value is a concrete integer, so we can modify it.
+		oldVal := intVal.Value
+		// The value is a concrete integer, so we can modify it in-place.
 		switch n.Tok {
 		case token.INC:
 			intVal.Value++
 		case token.DEC:
 			intVal.Value--
 		}
+		e.logger.Debug("evalIncDecStmt: modified integer variable", "var", v.Name, "old_value", oldVal, "new_value", intVal.Value)
+	} else {
+		e.logger.Debug("evalIncDecStmt: variable is not an integer, no modification", "var", v.Name, "type", v.Value.Type())
 	}
-	// If v.Value is not an Integer (e.g., a SymbolicPlaceholder), we do nothing, as requested.
 
-	return nil // IncDec is a statement, so it doesn't return a value.
+	return nil // IncDec is a statement, it doesn't return a value.
 }
 
 func (e *Evaluator) evalIndexExpr(ctx context.Context, node *ast.IndexExpr, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
@@ -768,21 +769,13 @@ func (e *Evaluator) evalStarExpr(ctx context.Context, node *ast.StarExpr, env *o
 
 	// First, unwrap any variable to get to the underlying value.
 	if v, ok := val.(*object.Variable); ok {
-		val = v.Value
+		val = e.evalVariable(ctx, v)
 	}
 
 	if ptr, ok := val.(*object.Pointer); ok {
 		// The value of a pointer is the object it points to.
-		// However, to preserve the "pointer-ness" for method calls on
-		// dereferenced pointers (e.g., `(*p).MyMethod()`), we wrap the
-		// result in a temporary variable that holds the original pointer's type.
-		v := &object.Variable{
-			Name:  "<deref>",
-			Value: ptr.Value,
-		}
-		v.SetTypeInfo(ptr.TypeInfo())
-		v.SetFieldType(ptr.FieldType())
-		return v
+		// Simply return the underlying value.
+		return ptr.Value
 	}
 
 	// If we have a symbolic placeholder that represents a pointer type,
@@ -805,7 +798,7 @@ func (e *Evaluator) evalStarExpr(ctx context.Context, node *ast.StarExpr, env *o
 		return newPlaceholder
 	}
 
-	// NEW: Handle dereferencing a type object itself.
+	// Handle dereferencing a type object itself.
 	// This can happen in method calls on symbolic receivers.
 	if t, ok := val.(*object.Type); ok {
 		return &object.SymbolicPlaceholder{
@@ -868,8 +861,9 @@ func (e *Evaluator) evalGenDecl(ctx context.Context, node *ast.GenDecl, env *obj
 			}
 
 			v := &object.Variable{
-				Name:  name.Name,
-				Value: val,
+				Name:        name.Name,
+				Value:       val,
+				IsEvaluated: true, // Local variables are eagerly evaluated.
 			}
 			// The dynamic type from the RHS value is often more precise than the
 			// static type from the declaration, especially regarding pointers.
@@ -1086,6 +1080,45 @@ func (e *Evaluator) ensurePackageEnvPopulated(ctx context.Context, pkgObj *objec
 			continue
 		}
 		env.Set(c.Name, constObj)
+	}
+
+	// Populate variables lazily
+	for _, varInfo := range pkgInfo.Variables {
+		if !shouldScan && !varInfo.IsExported {
+			continue
+		}
+		if varInfo.GenDecl == nil {
+			e.logc(ctx, slog.LevelWarn, "variable has no GenDecl, cannot create lazy initializer", "var", varInfo.Name)
+			continue
+		}
+
+		// Find the specific ValueSpec for this variable
+		for _, spec := range varInfo.GenDecl.Specs {
+			if vs, ok := spec.(*ast.ValueSpec); ok {
+				for i, name := range vs.Names {
+					if name.Name == varInfo.Name {
+						var initializer ast.Expr
+						if i < len(vs.Values) {
+							initializer = vs.Values[i]
+						}
+
+						// Create a variable object with an unevaluated initializer.
+						v := &object.Variable{
+							Name:        varInfo.Name,
+							Initializer: initializer,
+							IsEvaluated: false, // Mark as not evaluated yet
+							DeclEnv:     env,
+							DeclPkg:     pkgInfo,
+						}
+						v.SetFieldType(varInfo.Type)
+						// The type info is resolved from the field type if needed.
+						v.SetTypeInfo(e.resolver.ResolveType(ctx, varInfo.Type))
+						env.Set(varInfo.Name, v)
+						break // Found the spec for this var, move to the next varInfo
+					}
+				}
+			}
+		}
 	}
 
 	// Populate functions
@@ -2143,8 +2176,9 @@ func (e *Evaluator) assignIdentifier(ctx context.Context, ident *ast.Ident, val 
 		// but in our symbolic engine, we'll simplify and just overwrite in the local scope.
 		// A more complex implementation would handle shadowing more precisely.
 		v := &object.Variable{
-			Name:  ident.Name,
-			Value: val,
+			Name:        ident.Name,
+			Value:       val,
+			IsEvaluated: true, // When a value is assigned, it's considered evaluated.
 			BaseObject: object.BaseObject{
 				ResolvedTypeInfo:  val.TypeInfo(),
 				ResolvedFieldType: val.FieldType(),
@@ -2178,6 +2212,7 @@ func (e *Evaluator) assignIdentifier(ctx context.Context, ident *ast.Ident, val 
 	}
 
 	v.Value = val
+	v.IsEvaluated = true // Mark as evaluated after assignment.
 	newFieldType := val.FieldType()
 
 	// Check if the variable was originally typed as an interface.
@@ -2269,12 +2304,14 @@ func (e *Evaluator) evalIdent(ctx context.Context, n *ast.Ident, env *object.Env
 	}
 
 	if val, ok := env.Get(n.Name); ok {
-		e.logger.Debug("evalIdent: found in env", "name", n.Name, "type", val.Type())
+		e.logger.Debug("evalIdent: found in env", "name", n.Name, "type", val.Type(), "val", val.Inspect())
 		if v, ok := val.(*object.Variable); ok {
-			value := v.Value
-			if value.TypeInfo() == nil && v.TypeInfo() != nil {
+			e.logger.Debug("evalIdent: identifier is a variable, evaluating it", "name", n.Name)
+			value := e.evalVariable(ctx, v)
+			if value != nil && value.TypeInfo() == nil && v.TypeInfo() != nil {
 				value.SetTypeInfo(v.TypeInfo())
 			}
+			e.logger.Debug("evalIdent: evaluated variable", "name", n.Name, "type", value.Type(), "value", value.Inspect())
 			return value
 		}
 		return val
@@ -2417,6 +2454,57 @@ func isCallable(obj object.Object) bool {
 	default:
 		return false
 	}
+}
+
+// evalVariable ensures a variable's initializer is evaluated if it hasn't been already.
+// This is the core of the lazy evaluation logic for package-level variables.
+func (e *Evaluator) evalVariable(ctx context.Context, v *object.Variable) object.Object {
+	e.logger.Debug("evalVariable: start", "var", v.Name, "is_evaluated", v.IsEvaluated)
+	// Use the node-based recursion check on the initializer to prevent cycles.
+	if v.Initializer != nil {
+		if e.evaluationInProgress[v.Initializer] {
+			e.logc(ctx, slog.LevelWarn, "cyclic dependency detected in variable initializer", "var", v.Name)
+			// Return a placeholder to allow analysis to continue on other branches.
+			return &object.SymbolicPlaceholder{Reason: "cyclic reference in variable initializer"}
+		}
+		e.evaluationInProgress[v.Initializer] = true
+		defer delete(e.evaluationInProgress, v.Initializer)
+	}
+
+	if v.IsEvaluated {
+		e.logger.Debug("evalVariable: already evaluated, returning cached value", "var", v.Name, "value_type", v.Value.Type(), "value", v.Value.Inspect())
+		return v.Value
+	}
+
+	if v.Initializer != nil {
+		e.logger.Debug("evalVariable: evaluating initializer", "var", v.Name)
+		// Evaluate the initializer expression in the variable's declaration context.
+		evaluatedValue := e.Eval(ctx, v.Initializer, v.DeclEnv, v.DeclPkg)
+		if ret, ok := evaluatedValue.(*object.ReturnValue); ok {
+			evaluatedValue = ret.Value // unwrap return value
+		}
+		// Propagate type info from the variable declaration to the value if the value is a placeholder.
+		if p, ok := evaluatedValue.(*object.SymbolicPlaceholder); ok {
+			if p.TypeInfo() == nil {
+				p.SetTypeInfo(v.TypeInfo())
+			}
+			if p.FieldType() == nil {
+				p.SetFieldType(v.FieldType())
+			}
+		}
+		v.Value = evaluatedValue
+	} else {
+		// No initializer, so this is the zero value. Create a placeholder that inherits the variable's type.
+		e.logger.Debug("evalVariable: no initializer, creating zero value", "var", v.Name)
+		placeholder := &object.SymbolicPlaceholder{Reason: "zero value"}
+		placeholder.SetTypeInfo(v.TypeInfo())
+		placeholder.SetFieldType(v.FieldType())
+		v.Value = placeholder
+	}
+
+	v.IsEvaluated = true
+	e.logger.Debug("evalVariable: finished evaluation", "var", v.Name, "value_type", v.Value.Type(), "value", v.Value.Inspect())
+	return v.Value
 }
 
 func (e *Evaluator) evalCallExpr(ctx context.Context, n *ast.CallExpr, env *object.Environment, pkg *scanner.PackageInfo) object.Object {

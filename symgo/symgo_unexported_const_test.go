@@ -126,12 +126,17 @@ func main() {
 	})
 	defer cleanup()
 
-	scanner, err := goscan.New(goscan.WithWorkDir(tmpdir))
+	scanner, err := goscan.New(
+		goscan.WithWorkDir(tmpdir),
+		goscan.WithGoModuleResolver(),
+	)
 	if err != nil {
 		t.Fatalf("New scanner failed: %v", err)
 	}
 
-	interp, err := symgo.NewInterpreter(scanner, symgo.WithPrimaryAnalysisScope("example.com/main/..."))
+	interp, err := symgo.NewInterpreter(scanner,
+		symgo.WithPrimaryAnalysisScope("example.com/main/..."),
+	)
 	if err != nil {
 		t.Fatalf("NewInterpreter failed: %v", err)
 	}

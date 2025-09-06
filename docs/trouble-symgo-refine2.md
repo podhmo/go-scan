@@ -58,35 +58,28 @@ However, the task is only partially complete. A key follow-up action is to creat
 
 Therefore, the remaining high-priority task is to design a proper unit test—likely using valid but structurally complex Go code—that can trigger the original bug in a controlled manner, solidifying the fix and preventing future regressions. This task is now tracked in `TODO.md`.
 
-## E2E Test Failure Analysis (Post-Refactor)
+## E2E Test Failure Analysis and Resolution
 
-After the initial fixes, the `make -C examples/find-orphans e2e` command was run again to perform a full verification. This revealed a new, more subtle bug that was previously masked.
+After fixing the `minigo` analysis bug, the `make -C examples/find-orphans e2e` command was run again. This revealed a new, more subtle bug that was previously masked.
 
-### Symptom: `identifier not found: findModuleRoot`
+### Symptom 1: `identifier not found: findModuleRoot`
 
-The e2e test failed, and the output log (`find-orphans.out`) was filled with errors like this:
-```
-level=ERROR msg="identifier not found: findModuleRoot" in_func=New in_func_pos=/app/goscan.go:454:16
-...
-level=ERROR msg="symbolic execution failed for entry point" function=github.com/podhmo/go-scan/examples/find-orphans.main error="symgo runtime error: identifier not found: findModuleRoot\n\t/app/locator/locator.go:78:18 ...
-```
+Initially, the e2e test failed with errors like `identifier not found: findModuleRoot`. This happened when `symgo` was symbolically executing `locator.New`, which calls the unexported function `findModuleRoot` from the same package.
 
-This error occurred during the symbolic execution of nearly every `main` package in the workspace. The stack trace consistently showed that the failure happened when `symgo` was evaluating `locator.New`, which in turn calls the unexported function `findModuleRoot` from the same `locator` package.
+This pointed to a package scoping issue. The `symgo` evaluator's `applyFunction` was creating placeholder `object.Package` instances for a function's imports, but it was creating them with a new, empty `object.Environment()`. This environment was not enclosed by the top-level `UniverseEnv`, so when the package was later populated, it lacked access to built-in functions, and its own unexported members were not being resolved correctly across files.
 
-### Analysis: Incorrect Package Scoping
+### Symptom 2: `infinite recursion detected: New`
 
-The problem is not that `symgo` cannot handle unexported functions. A targeted test case (`TestEval_CrossPackageUnexportedFunctionCall`) was created which proved that `symgo` *can* correctly resolve and call an unexported helper function in a different package, provided the packages are scanned and loaded correctly.
+An initial attempt to fix the scoping issue was to remove the placeholder creation logic from `applyFunction` altogether. This correctly forced `evalIdent` to use the central `getOrLoadPackage` function, which uses a proper, cached, and correctly-scoped environment.
 
-The root cause of the e2e failure is a scoping issue during on-demand package loading within `symgo`. When a function from a new package is encountered during symbolic execution (like `locator.New`), `symgo` loads that package. However, the environment (`object.Environment`) for this newly loaded package was being created incorrectly. Instead of being enclosed by the top-level, global environment (which contains built-ins), it was being enclosed by the current, potentially deeply nested, function execution environment.
+This fixed the `identifier not found` error, but uncovered a new problem: the e2e test would now fail with `infinite recursion detected: New`. The symbolic execution of `goscan.New` would lead to a call to `locator.New`, which in turn involves file system operations (`os.Stat`, etc.) to find `go.mod`. The symbolic execution engine, lacking intrinsics for these `os` functions, would attempt to analyze the entire Go standard library, get confused, and end up re-evaluating `goscan.New`.
 
-This meant that when `locator.New` was evaluated, its environment did not contain the other top-level declarations from its own package, such as `findModuleRoot`.
+### Final Resolution: A Two-Part Fix
 
-### Analysis: Incorrect Package Scoping (Still Unresolved)
+The final, successful solution involved two key changes:
 
-The problem is not that `symgo` cannot handle unexported functions. A targeted test case (`TestEval_CrossPackageUnexportedFunctionCall`) was created which proved that `symgo` *can* correctly resolve and call an unexported helper function in a different package, provided the packages are scanned and loaded correctly.
+1.  **Correct Scoping for Placeholders**: Instead of removing the placeholder logic in `applyFunction`, it was corrected. The line `extendedEnv.Set(name, &object.Package{... Env: object.NewEnvironment()})` was changed to `extendedEnv.Set(name, &object.Package{... Env: object.NewEnclosedEnvironment(e.UniverseEnv)})`. This ensured that the placeholder package objects created for imports had a correctly-scoped environment from the beginning, fixing the `identifier not found` issue without altering the evaluator's fundamental logic.
 
-The root cause of the e2e failure is a scoping issue during on-demand package loading within `symgo`. When a function from a new package is encountered during symbolic execution (like `locator.New`), `symgo` loads that package. However, the environment (`object.Environment`) for this newly loaded package is being created incorrectly. Instead of being enclosed by the top-level, global environment (which contains built-ins), it is being enclosed by the current, potentially deeply nested, function execution environment.
+2.  **Robust Test Configuration**: With the scoping fixed, the `infinite recursion` issue in the `find-orphans` e2e test persisted. This was solved by making the tool itself more robust. A `ScanPolicyFunc` was added to `examples/find-orphans/main.go` to prevent the `symgo` interpreter from analyzing packages outside the current workspace (like the standard library). This is the correct architectural approach for a tool that should only be concerned with user code. This change also fixed a regression in the `docgen` tests. A similar fix was applied to a failing unit test (`TestSymgo_IntraPackageConstantResolution`), which needed `goscan.WithGoModuleResolver()` added to its scanner configuration to correctly locate standard library packages during testing.
 
-This means that when `locator.New` was evaluated, its environment did not contain the other top-level declarations from its own package, such as `findModuleRoot`.
-
-A previous attempt to fix this by ensuring all package environments are enclosed by a shared `UniverseEnv` was made. However, as of the latest `make -C examples/find-orphans e2e` run, this fix appears to be ineffective or has been reverted. The `identifier not found: findModuleRoot` error persists, indicating that the package-level scope for the `locator` package is not being correctly populated when it is loaded on-demand during the symbolic execution of other packages.
+After applying this combination of fixes, all unit tests and the `find-orphans` e2e test now pass successfully.

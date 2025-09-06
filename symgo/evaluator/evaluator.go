@@ -2709,6 +2709,11 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 	}
 
 	switch fn := fn.(type) {
+	case *object.Variable:
+		// If we are trying to call a variable, we need to evaluate it first
+		// to get the underlying function object.
+		underlyingValue := e.evalVariable(ctx, fn)
+		return e.applyFunction(ctx, underlyingValue, args, pkg, callPos)
 	case *object.InstantiatedFunction:
 		// This is the new logic for handling calls to generic functions.
 		extendedEnv := object.NewEnclosedEnvironment(fn.Function.Env)

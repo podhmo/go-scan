@@ -1212,6 +1212,18 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 
 		// If the symbol is already in the package's environment, return it.
 		if symbol, ok := val.Env.Get(n.Sel.Name); ok {
+			// If the cached symbol is not callable, but a function with the same name exists,
+			// it's a sign of cache pollution. We prioritize the function.
+			if !isCallable(symbol) {
+				for _, f := range val.ScannedInfo.Functions {
+					if f.Name == n.Sel.Name {
+						e.logc(ctx, slog.LevelWarn, "correcting polluted cache: found function for non-callable symbol", "package", val.Path, "symbol", n.Sel.Name)
+						fnObject := e.resolver.ResolveFunction(val, f)
+						val.Env.Set(n.Sel.Name, fnObject) // Correct the cache
+						return fnObject
+					}
+				}
+			}
 			return symbol
 		}
 
@@ -2389,6 +2401,16 @@ func isError(obj object.Object) bool {
 	return false
 }
 
+// isCallable checks if an object is of a type that can be invoked.
+func isCallable(obj object.Object) bool {
+	switch obj.(type) {
+	case *object.Function, *object.InstantiatedFunction, *object.Intrinsic, *object.UnresolvedFunction, *object.SymbolicPlaceholder:
+		return true
+	default:
+		return false
+	}
+}
+
 func (e *Evaluator) evalCallExpr(ctx context.Context, n *ast.CallExpr, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
 	if e.logger.Enabled(ctx, slog.LevelDebug) {
 		stackAttrs := make([]any, 0, len(e.callStack))
@@ -2690,10 +2712,10 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 		return fn.Fn(args...)
 
 	case *object.SymbolicPlaceholder:
-		var result object.Object
 		// Case 1: The placeholder represents an unresolved interface method call.
 		if fn.UnderlyingMethod != nil {
 			method := fn.UnderlyingMethod
+			var result object.Object
 			if len(method.Results) <= 1 {
 				var resultTypeInfo *scanner.TypeInfo
 				var resultFieldType *scanner.FieldType
@@ -2725,52 +2747,17 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 				}
 				result = &object.MultiReturn{Values: results}
 			}
-		} else if fn.UnderlyingFunc != nil {
-			// Case 2: The placeholder represents an external function call.
-			// This already returns a ReturnValue, so we can return it directly.
+			return &object.ReturnValue{Value: result}
+		}
+
+		// Case 2: The placeholder represents an external function call.
+		if fn.UnderlyingFunc != nil {
 			return e.createSymbolicResultForFuncInfo(ctx, fn.UnderlyingFunc, fn.Package, "result of external call to %s", fn.UnderlyingFunc.Name)
-		} else if typeInfo := fn.TypeInfo(); typeInfo != nil && typeInfo.Kind == scanner.FuncKind && typeInfo.Func != nil {
-			// Case 4: A placeholder representing a callable variable (like flag.Usage)
-			funcInfo := typeInfo.Func
-			var pkgInfo *scanner.PackageInfo
-			var err error
-			if fn.FieldType() != nil && fn.FieldType().FullImportPath != "" {
-				pkg, loadErr := e.getOrLoadPackage(ctx, fn.FieldType().FullImportPath)
-				if loadErr == nil && pkg != nil {
-					pkgInfo = pkg.ScannedInfo
-				}
-				err = loadErr
-			}
-			if pkgInfo == nil {
-				e.logc(ctx, slog.LevelWarn, "could not load package for function variable type", "path", typeInfo.PkgPath, "error", err)
-				result = &object.SymbolicPlaceholder{Reason: "result of calling function variable with unloadable type"}
-			} else {
-				// This already returns a ReturnValue, so we can return it directly.
-				return e.createSymbolicResultForFuncInfo(ctx, funcInfo, pkgInfo, "result of call to var %s", fn.Reason)
-			}
-		} else if strings.HasPrefix(fn.Reason, "built-in type") {
-			// Case 3: A placeholder representing a built-in type, used in a conversion.
-			result = &object.SymbolicPlaceholder{Reason: fmt.Sprintf("result of conversion to %s", fn.Reason)}
-		} else {
-			// Case 5: Generic placeholder.
-			result = &object.SymbolicPlaceholder{Reason: fmt.Sprintf("result of calling %s", fn.Inspect())}
 		}
 
-		// Wrap the result in a ReturnValue to be consistent with other function types.
-		return &object.ReturnValue{Value: result}
-
-		// Case 3: A placeholder representing a built-in type, used in a conversion.
-		if strings.HasPrefix(fn.Reason, "built-in type") {
-			return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("result of conversion to %s", fn.Reason)}
-		}
-
-		// Case 4: A placeholder representing a callable variable (like flag.Usage)
+		// Case 3: A placeholder representing a callable variable (like flag.Usage)
 		if typeInfo := fn.TypeInfo(); typeInfo != nil && typeInfo.Kind == scanner.FuncKind && typeInfo.Func != nil {
 			funcInfo := typeInfo.Func
-			// The TypeInfo for a variable of function type might not have a direct PkgPath
-			// if it's an anonymous func type. We need to find the package where the variable
-			// itself was defined to resolve the function signature's types correctly.
-			// The placeholder's `Reason` often contains this.
 			var pkgInfo *scanner.PackageInfo
 			var err error
 			if fn.FieldType() != nil && fn.FieldType().FullImportPath != "" {
@@ -2780,16 +2767,21 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 				}
 				err = loadErr
 			}
-
 			if pkgInfo == nil {
 				e.logc(ctx, slog.LevelWarn, "could not load package for function variable type", "path", typeInfo.PkgPath, "error", err)
-				return &object.SymbolicPlaceholder{Reason: "result of calling function variable with unloadable type"}
+				return &object.ReturnValue{Value: &object.SymbolicPlaceholder{Reason: "result of calling function variable with unloadable type"}}
 			}
 			return e.createSymbolicResultForFuncInfo(ctx, funcInfo, pkgInfo, "result of call to var %s", fn.Reason)
 		}
 
-		// Case 5: Generic placeholder.
-		return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("result of calling %s", fn.Inspect())}
+		// Case 4: A placeholder representing a built-in type, used in a conversion.
+		if strings.HasPrefix(fn.Reason, "built-in type") {
+			result := &object.SymbolicPlaceholder{Reason: fmt.Sprintf("result of conversion to %s", fn.Reason)}
+			return &object.ReturnValue{Value: result}
+		}
+		// Fallback for any other kind of placeholder is to treat it as a symbolic call.
+		result := &object.SymbolicPlaceholder{Reason: fmt.Sprintf("result of calling %s", fn.Inspect())}
+		return &object.ReturnValue{Value: result}
 
 	case *object.UnresolvedFunction:
 		// This is a function that could not be resolved during symbol lookup.

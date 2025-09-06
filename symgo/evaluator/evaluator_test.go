@@ -123,6 +123,24 @@ var x = 10
 	}
 }
 
+func TestApplyFunction_ErrorOnNonCallable(t *testing.T) {
+	eval := New(nil, nil, nil, nil)
+	nonCallable := &object.Integer{Value: 123}
+	args := []object.Object{}
+
+	result := eval.applyFunction(context.Background(), nonCallable, args, nil, token.NoPos)
+
+	errObj, ok := result.(*object.Error)
+	if !ok {
+		t.Fatalf("expected an error from applyFunction, but got %T", result)
+	}
+
+	expectedMsg := "not a function: INTEGER"
+	if errObj.Message != expectedMsg {
+		t.Errorf("expected error message to be %q, but got %q", expectedMsg, errObj.Message)
+	}
+}
+
 func TestEvalUnsupportedNode(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelError}))

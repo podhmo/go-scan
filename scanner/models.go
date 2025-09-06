@@ -502,6 +502,7 @@ type VariableInfo struct {
 	Type       *FieldType
 	IsExported bool
 	Node       ast.Node
+	GenDecl    *ast.GenDecl `json:"-"`
 }
 
 // FunctionInfo represents a single top-level function or method declaration.

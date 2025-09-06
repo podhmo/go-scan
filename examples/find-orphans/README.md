@@ -71,6 +71,27 @@ go run ./examples/find-orphans --workspace-root ../.. ./...
 ```
 Here, `./...` is interpreted relative to `../../` (the workspace root).
 
+### Debugging
+
+#### Limiting the Scan Scope
+
+For large workspaces, running an analysis across every package can be time-consuming. For debugging or focusing on a specific area, you can use the `--primary-analysis-scope` flag to override the default "scan everything" behavior.
+
+This flag explicitly defines the **Scan Scope**, telling the tool to only load and parse packages matching the provided patterns. This can significantly speed up analysis when you know the potential usage of a function is contained within a specific set of packages.
+
+**Example**: You are working in a large repository, but you are confident that the usage for functions in `pkg/feature` is contained entirely within `pkg/feature` and `cmd/tool`. You only want to report orphans from `pkg/feature`.
+
+```sh
+go run ./examples/find-orphans \
+    --primary-analysis-scope "example.com/my-repo/pkg/feature,example.com/my-repo/cmd/tool" \
+    example.com/my-repo/pkg/feature
+```
+In this command:
+-   `--primary-analysis-scope` sets the **Scan Scope** to just `pkg/feature` and `cmd/tool`. The tool will not look for usages in any other packages.
+-   The positional argument `example.com/my-repo/pkg/feature` sets the **Target Scope**.
+
+This is much faster than scanning the entire repository. Note that if `cmd/tool` were to call a function in another package (e.g., `pkg/utils`), that usage would be missed, potentially leading to a false positive. This flag is best used for focused, iterative debugging.
+
 ## Limitations and Error Handling
 
 ### Analysis of External and Standard Library Code

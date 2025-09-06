@@ -22,6 +22,9 @@ import (
 // MaxCallStackDepth is the maximum depth of the call stack to prevent excessive recursion.
 const MaxCallStackDepth = 4096
 
+// MaxSelectorDepth is the maximum depth of nested selector expressions to prevent infinite recursion.
+const MaxSelectorDepth = 100
+
 // FileScope holds the AST and file-specific import aliases for a single file.
 type FileScope struct {
 	AST *ast.File
@@ -49,6 +52,9 @@ type Evaluator struct {
 	// evaluationInProgress tracks nodes that are currently being evaluated
 	// to detect and prevent infinite recursion.
 	evaluationInProgress map[ast.Node]bool
+
+	// selectorDepth tracks the depth of nested evalSelectorExpr calls.
+	selectorDepth int
 }
 
 type callFrame struct {
@@ -86,6 +92,7 @@ func New(scanner *goscan.Scanner, logger *slog.Logger, tracer object.Tracer, sca
 		fileMap:              make(map[string]bool),
 		evaluationInProgress: make(map[ast.Node]bool),
 		UniverseEnv:          universeEnv,
+		selectorDepth:        0,
 	}
 	e.accessor = newAccessor(e)
 	return e
@@ -533,11 +540,62 @@ func (e *Evaluator) evalCompositeLit(ctx context.Context, node *ast.CompositeLit
 
 	instance := &object.Instance{
 		TypeName: resolvedType.PkgPath + "." + resolvedType.Name,
+		State:    make(map[string]object.Object),
 		BaseObject: object.BaseObject{
 			ResolvedTypeInfo: resolvedType,
 		},
 	}
 	instance.SetFieldType(fieldType)
+
+	// Keep track of which fields were explicitly set in the literal.
+	providedFields := make(map[string]bool)
+
+	// Populate the instance's state with the provided values.
+	for _, elt := range node.Elts {
+		if kv, ok := elt.(*ast.KeyValueExpr); ok {
+			keyIdent, ok := kv.Key.(*ast.Ident)
+			if !ok {
+				continue
+			}
+			fieldName := keyIdent.Name
+			value := e.Eval(ctx, kv.Value, env, pkg)
+			if isError(value) {
+				return value
+			}
+			if ret, ok := value.(*object.ReturnValue); ok {
+				value = ret.Value
+			}
+			instance.State[fieldName] = value
+			providedFields[fieldName] = true
+		}
+	}
+
+	// For any fields not explicitly provided, set their zero value if applicable.
+	if resolvedType.Struct != nil {
+		for _, field := range resolvedType.Struct.Fields {
+			if !providedFields[field.Name] {
+				// Field was not in the literal, so we need to set its zero value.
+				// The zero value for pointers, slices, maps, channels, interfaces, and functions is nil.
+				isNillable := false
+				if field.Type.IsPointer || field.Type.IsSlice || field.Type.IsMap || field.Type.IsChan {
+					isNillable = true
+				} else {
+					// For interface and func types, we need to resolve the type to check its kind.
+					resolvedFieldType := e.resolver.ResolveType(ctx, field.Type)
+					if resolvedFieldType != nil {
+						if resolvedFieldType.Kind == scanner.InterfaceKind || resolvedFieldType.Kind == scanner.FuncKind {
+							isNillable = true
+						}
+					}
+				}
+
+				if isNillable {
+					instance.State[field.Name] = object.NIL
+				}
+			}
+		}
+	}
+
 	return instance
 }
 
@@ -554,6 +612,75 @@ func (e *Evaluator) evalBinaryExpr(ctx context.Context, node *ast.BinaryExpr, en
 	lType := left.Type()
 	rType := right.Type()
 
+	// Handle comparisons with nil
+	if node.Op == token.EQL || node.Op == token.NEQ {
+		isNilLeft := left.Type() == object.NIL_OBJ
+		isNilRight := right.Type() == object.NIL_OBJ
+
+		if isNilLeft && isNilRight { // nil == nil or nil != nil
+			return nativeBoolToBooleanObject(node.Op == token.EQL)
+		}
+		if isNilLeft || isNilRight { // one side is nil
+			other := left
+			if isNilLeft {
+				other = right
+			}
+
+			// In Go, only pointers, interfaces, channels, slices, maps, and function types are nillable.
+			isNillable := false
+			switch other.Type() {
+			case object.POINTER_OBJ, object.NIL_OBJ, object.CHANNEL_OBJ, object.SLICE_OBJ, object.MAP_OBJ, object.FUNCTION_OBJ:
+				isNillable = true
+			case object.INSTANCE_OBJ:
+				// An instance could represent an interface.
+				if ti := other.TypeInfo(); ti != nil && ti.Kind == scanner.InterfaceKind {
+					isNillable = true
+				}
+			case object.VARIABLE_OBJ:
+				// For a variable, check its declared type.
+				if v, ok := other.(*object.Variable); ok {
+					// A variable is nillable if its TypeInfo says it's an interface or function,
+					// or if its FieldType says it's a pointer, slice, map, or channel.
+					isKindNillable := false
+					if ti := v.TypeInfo(); ti != nil {
+						switch ti.Kind {
+						case scanner.InterfaceKind, scanner.FuncKind:
+							isKindNillable = true
+						}
+					}
+
+					isFieldTypeNillable := false
+					if ft := v.FieldType(); ft != nil {
+						if ft.IsPointer || ft.IsSlice || ft.IsMap || ft.IsChan {
+							isFieldTypeNillable = true
+						}
+					}
+
+					if isKindNillable || isFieldTypeNillable {
+						isNillable = true
+					}
+				}
+			case object.SYMBOLIC_OBJ:
+				// A symbolic placeholder could be anything, so we assume it could be nil.
+				isNillable = true
+			}
+
+			if isNillable {
+				// If we are comparing a concrete nil with a nillable type, the result is
+				// symbolically unknown. We return a placeholder.
+				// An exception: if the other object is a pointer that we know points to nil,
+				// then we can resolve it.
+				if ptr, ok := other.(*object.Pointer); ok && ptr.Value.Type() == object.NIL_OBJ {
+					return nativeBoolToBooleanObject(node.Op == token.EQL)
+				}
+				return &object.SymbolicPlaceholder{Reason: "comparison of nillable type with nil"}
+			}
+
+			// If the type is not nillable, comparison with nil is always false for == and true for !=
+			return nativeBoolToBooleanObject(node.Op == token.NEQ)
+		}
+	}
+
 	switch {
 	case lType == object.INTEGER_OBJ && rType == object.INTEGER_OBJ:
 		return e.evalIntegerInfixExpression(ctx, node.Pos(), node.Op, left, right)
@@ -566,6 +693,8 @@ func (e *Evaluator) evalBinaryExpr(ctx context.Context, node *ast.BinaryExpr, en
 		// A more complete implementation would have a separate float path.
 		return e.evalComplexInfixExpression(ctx, node.Pos(), node.Op, left, right)
 	default:
+		// For any other combination, like comparing two pointers, we can't know
+		// the result, so we return a symbolic boolean.
 		return &object.SymbolicPlaceholder{Reason: "binary expression"}
 	}
 }
@@ -1101,6 +1230,12 @@ func (e *Evaluator) ensurePackageEnvPopulated(ctx context.Context, pkgObj *objec
 }
 
 func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
+	if e.selectorDepth > MaxSelectorDepth {
+		return e.newError(ctx, n.Pos(), "selector depth exceeded, possible infinite recursion on field access")
+	}
+	e.selectorDepth++
+	defer func() { e.selectorDepth-- }()
+
 	e.logger.Debug("evalSelectorExpr", "selector", n.Sel.Name)
 
 	var left object.Object
@@ -1309,6 +1444,13 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 		return unresolvedFn
 
 	case *object.Instance:
+		// Check for field in instance state first. Field access takes precedence over methods.
+		if val.State != nil {
+			if fieldVal, ok := val.State[n.Sel.Name]; ok {
+				return fieldVal
+			}
+		}
+
 		key := fmt.Sprintf("(%s).%s", val.TypeName, n.Sel.Name)
 		if intrinsicFn, ok := e.intrinsics.Get(key); ok {
 			self := val
@@ -1333,9 +1475,22 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 			}
 		}
 
-		return e.newError(ctx, n.Pos(), "undefined method: %s on %s", n.Sel.Name, val.TypeName)
+		return e.newError(ctx, n.Pos(), "undefined method or field: %s on %s", n.Sel.Name, val.TypeName)
 
 	case *object.Variable:
+		v := val.Value
+		if ptr, ok := v.(*object.Pointer); ok {
+			v = ptr.Value
+		}
+
+		if inst, ok := v.(*object.Instance); ok {
+			if inst.State != nil {
+				if fieldVal, ok := inst.State[n.Sel.Name]; ok {
+					return fieldVal
+				}
+			}
+		}
+
 		typeInfo := val.TypeInfo()
 		if typeInfo == nil {
 			// This can happen if the variable's type comes from a module that
@@ -2557,21 +2712,11 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 
 	if len(e.callStack) >= MaxCallStackDepth {
 		e.logc(ctx, slog.LevelWarn, "call stack depth exceeded, aborting recursion", "function", name)
-		return &object.SymbolicPlaceholder{Reason: "max call stack depth exceeded"}
+		return e.newError(ctx, callPos, "call stack depth exceeded: %s", name)
 	}
 
-	// Improved recursion check
-	if f, ok := fn.(*object.Function); ok {
-		for _, frame := range e.callStack {
-			// A true recursion occurs if the same function definition is called on the
-			// exact same receiver object. The call position check was removed as it was
-			// too strict for complex, indirect recursion.
-			if frame.Fn != nil && f.Def != nil && frame.Fn.Def == f.Def && frame.Fn.Receiver == f.Receiver {
-				e.logc(ctx, slog.LevelWarn, "infinite recursion detected, aborting", "function", name)
-				return e.newError(ctx, callPos, "infinite recursion detected: %s", name)
-			}
-		}
-	}
+	// The improved recursion check was causing issues and has been removed.
+	// We now rely solely on the MaxCallStackDepth check.
 
 	frame := &callFrame{Function: name, Pos: callPos}
 	if f, ok := fn.(*object.Function); ok {
@@ -2679,9 +2824,15 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 			evaluatedValue = ret.Value
 		}
 
+		// If the unwrapped value is an error, we should return it directly,
+		// not wrap it in another ReturnValue.
+		if isError(evaluatedValue) {
+			return evaluatedValue
+		}
+
 		// If the evaluated result is a Go nil (from a naked return), wrap it.
 		if evaluatedValue == nil {
-			return &object.ReturnValue{Value: object.NIL}
+			evaluatedValue = object.NIL
 		}
 
 		return &object.ReturnValue{Value: evaluatedValue}
@@ -3125,7 +3276,7 @@ func (e *Evaluator) Files() []*FileScope {
 
 // ApplyFunction is a public wrapper for the internal applyFunction, allowing it to be called from other packages.
 func (e *Evaluator) ApplyFunction(call *ast.CallExpr, fn object.Object, args []object.Object, fscope *FileScope) object.Object {
-	// This is a simplification. A real implementation would need to determine the correct environment.
+	// This is a simplification. A real implementation would need more context.
 	// For now, we'll use a new top-level environment, which will work for pure functions
 	// but not for closures that capture variables.
 	// The pkg argument is nil here, which might limit some functionality.

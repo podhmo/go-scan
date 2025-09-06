@@ -64,15 +64,25 @@ These failures, confirmed with a more reliable and isolated test case, indicated
 
 ### Discovery: Package-Level Variables are Not Evaluated
 
-To create a more controlled testing environment, a new test (`TestCrossPackageUnexportedResolution`) was added to `symgo/symgo_scope_test.go`. This test simulated a cross-package call and checked for symbol resolution. A key modification to this test, which involved a recursive call using a package-level variable (`var count = 0`), led to a critical discovery. The test failed with:
+To create a more controlled testing environment, a new test (`TestCrossPackageUnexportedResolution`) was added to `symgo/symgo_scope_test.go`. This test simulated a cross-package call and checked for symbol resolution. The test used a package-level variable (`var count = 0`) to control a recursive call. This led to a critical discovery when the test failed with:
 
 ```
 identifier not found: count
 ```
 
-This revealed a new, more fundamental bug: **package-level `var` declarations from imported packages are not being evaluated at all.**
+This revealed a fundamental bug: **package-level `var` declarations from imported packages are not being evaluated at all.**
 
-The function `ensurePackageEnvPopulated` in `symgo/evaluator/evaluator.go` is responsible for populating the environment for imported packages on-demand. A close inspection showed that it correctly handles `func` and `const` declarations, but completely ignores `var` declarations. This is the true root cause of the resolution failures.
+The function `ensurePackageEnvPopulated` in `symgo/evaluator/evaluator.go` is responsible for populating the environment for imported packages on-demand. A close inspection showed that it correctly handles `func` and `const` declarations, but completely ignores `var` declarations. This is the true root cause of the resolution failures seen in both the test and the `find-orphans` tool.
+
+### Clarification: Unexported Function Resolution Works
+
+To confirm that the `var` issue was the true root cause, a more minimal version of the test (`TestCrossPackageUnexportedResolution_Minimal`) was created. This version removed the package-level variable and the recursion, testing only the cross-package call to an unexported function.
+
+**This minimal test passed.**
+
+This result is significant because it proves that the initial hypothesis—a general failure in resolving unexported functions across packages—was incorrect. The symbolic execution engine *can* correctly resolve and execute unexported functions from other packages, provided no unevaluated package-level state (like `var`s) is involved.
+
+Therefore, the failure of `find-orphans` to resolve `processPackage` is not a simple scoping bug but a side effect of the same underlying problem: the environment for the `parser` package is not correctly populated with all its necessary components due to the failure to handle `var` declarations, which likely leads to an unstable state that prevents subsequent lookups from succeeding.
 
 ### The Final Roadblock: Missing AST Information
 

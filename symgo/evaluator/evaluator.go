@@ -10,6 +10,7 @@ import (
 	"go/token"
 	"log/slog"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -2345,6 +2346,13 @@ func (e *Evaluator) evalIdent(ctx context.Context, n *ast.Ident, env *object.Env
 func (e *Evaluator) logc(ctx context.Context, level slog.Level, msg string, args ...any) {
 	if !e.logger.Enabled(ctx, level) {
 		return
+	}
+
+	// Get execution position (the caller of this function)
+	_, file, line, ok := runtime.Caller(1)
+	if ok {
+		// Prepend exec_pos so it appears early in the log output.
+		args = append([]any{slog.String("exec_pos", fmt.Sprintf("%s:%d", file, line))}, args...)
 	}
 
 	// Add context from the current call stack frame.

@@ -2670,7 +2670,7 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 						}
 						path := strings.Trim(imp.Path.Value, `"`)
 						// Set ScannedInfo to nil to force on-demand loading.
-						extendedEnv.Set(name, &object.Package{Path: path, ScannedInfo: nil, Env: object.NewEnvironment()})
+						extendedEnv.Set(name, &object.Package{Path: path, ScannedInfo: nil, Env: object.NewEnclosedEnvironment(e.UniverseEnv)})
 					}
 				}
 			}

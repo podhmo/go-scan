@@ -94,3 +94,40 @@ However, this fix revealed a deeper issue. The test now fails with an `infinite 
 A detailed analysis of the environment (`object.Environment`), variable modification (`evalIncDecStmt`), and function application logic (`applyFunction`) did not reveal an obvious cause for this state loss. The environment correctly encloses outer scopes, and the `IncDec` logic appears to modify the variable's value in place.
 
 This indicates a more subtle bug in how state is managed or propagated during recursive calls in the evaluator. The issue remains unresolved pending further investigation.
+
+## Further Investigation (2025-09-06)
+
+A follow-up investigation was performed to resolve the "infinite recursion detected" error. The findings are documented below.
+
+### Analysis of the "Infinite Recursion" Error
+
+The investigation started by adding detailed logging to key parts of the evaluator in `evaluator.go`:
+1.  **`applyFunction`**: To log the value of the `count` variable at the beginning of each call to `getSecretMessage`.
+2.  **`evalIncDecStmt`**: To log the value of `count` before and after it was incremented.
+3.  **`evalIdent`**: To log the memory address of the `*object.Variable` for `count` whenever it was accessed.
+
+The logs produced a clear, but contradictory, result:
+-   **State IS Updated**: The logs definitively showed that on the first call to `getSecretMessage`, the `count` variable (at a specific memory address) was correctly incremented from `0` to `1`.
+-   **Failure Cause**: The test failed because the original recursion check in `applyFunction` (`frame.Fn.Def == f.Def`) fired on the second, recursive call to `getSecretMessage`. It aborted the execution *before* the function body was entered, and thus before the updated value of `count` could be checked by the `if count > 0` condition.
+
+This revealed that the hypothesis in the previous document section ("State loss during recursion") was incorrect. The state is managed correctly, but the recursion check is too aggressive for this stateful test case.
+
+### Attempts to Fix
+
+Based on this analysis, several fixes were attempted:
+
+1.  **Relax the Recursion Check**: The check was modified to allow a function to be on the call stack once already, but not twice (`recursionCount > 1`).
+    -   **Result**: This failed with the same "infinite recursion detected" error. This result is the core of the unresolved problem. It implies that even with the relaxed check, the second call to `getSecretMessage` still evaluated `count > 0` as false, triggering a third call which was then caught. This contradicts the logging evidence.
+
+2.  **Modify `evalIfStmt` Control Flow**: A hypothesis was formed that `evalIfStmt` was swallowing the `ReturnValue` from the `if` block's body. The logic was changed to propagate `ReturnValue` objects.
+    -   **Result**: This caused the test run to hang indefinitely, likely by creating a genuine infinite loop. This approach seems to violate the intended symbolic nature of the evaluator (which often needs to evaluate all paths, not stop on the first `return`). This change was reverted.
+
+### Unresolved Contradiction and Future Direction
+
+The central issue remains a deep contradiction:
+-   **Evidence A (Logs):** The `count` variable's underlying integer object is successfully modified in place.
+-   **Evidence B (Test Behavior):** The program behaves as if the `count` variable was *not* modified on the subsequent recursive call.
+
+This suggests an extremely subtle bug in how environments are being created, cached, or referenced during recursive evaluation. Despite logs showing the same memory addresses for the environment object (`fn.Env`) across calls, it's possible that a stale version of the environment or the variable within it is being resolved and used by the second call.
+
+The relevant files for the next investigation should be `evaluator.go`, `resolver.go`, and `accessor.go`, with a focus on the interaction between `applyFunction`, `extendFunctionEnv`, and `getOrLoadPackage`. The bug is likely not in the `object.Environment` implementation itself, but in how instances of it are managed by the evaluator during the call lifecycle.

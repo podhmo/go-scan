@@ -55,3 +55,15 @@ The fix involved several key changes:
 4.  **On-Demand Evaluation**: A new helper function, `evalVariable`, was introduced. This function is called whenever an identifier resolves to a variable. It checks an `IsEvaluated` flag. If the flag is false, it evaluates the variable's stored `Initializer` expression within the correct declaration environment and package context. The result is then cached in the `Value` field, and the `IsEvaluated` flag is set to true for subsequent accesses.
 
 This approach correctly resolves the dependencies. When `lib.GetGreeting` is executed, the `evalIdent` call for `secret` triggers `evalVariable`, which then evaluates the initializer `"hello from unexported var"` and successfully resolves the symbol. This fix has been verified to work for both simple variable access and more complex cases involving recursive functions that rely on package-level state.
+
+## Verification
+
+The fix was verified by running the `find-orphans` tool on the `examples/convert` package, which was a known complex case that triggered related bugs. After applying the lazy-evaluation fix and a subsequent correction to handle calls to function variables (like `flag.Usage`), the tool ran successfully and produced the correct output:
+
+```sh
+$ go run ./examples/find-orphans -v --primary-analysis-scope=github.com/podhmo/go-scan/examples/convert/parser,github.com/podhmo/go-scan/examples/convert/sampledata/source,github.com/podhmo/go-scan/examples/convert/sampledata/generated ./examples/convert
+No orphans found.
+...
+```
+
+The command completed without any fatal errors and correctly identified that there were no orphan functions in the target package, confirming the fix.

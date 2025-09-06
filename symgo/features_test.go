@@ -3,6 +3,8 @@ package symgo_test
 import (
 	"context"
 	"fmt"
+	"log/slog"
+	"os"
 	"strings"
 	"testing"
 
@@ -20,6 +22,65 @@ func lookupFunc(pkg *goscan.Package, name string) (*goscan.FunctionInfo, error) 
 		}
 	}
 	return nil, fmt.Errorf("function %q not found in package %s", name, pkg.Name)
+}
+
+
+func TestFeature_GlobalVarWithExternalFunc(t *testing.T) {
+	files := map[string]string{
+		"go.mod": "module example.com/me",
+		"main.go": `package main
+import "flag"
+var myflag = flag.String("myflag", "default", "usage")
+func main() {
+	_ = myflag
+}`,
+		"other/other.go": `package other
+const String = 24
+`,
+	}
+
+	dir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
+		// It's important to use a logger to see the debug output from the evaluator.
+		logLevel := new(slog.LevelVar)
+		logLevel.Set(slog.LevelDebug)
+		s.Logger = slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel, AddSource: true}))
+
+		// Scan the 'other' package so its symbols are in the cache.
+		if _, err := s.ScanPackage(ctx, filepath.Join(dir, "other")); err != nil {
+			return fmt.Errorf("failed to scan other package: %w", err)
+		}
+
+		pkg := pkgs[0]
+		interp, err := symgo.NewInterpreter(s,
+			symgo.WithScanPolicy(func(pkgPath string) bool {
+				return pkgPath != "flag"
+			}),
+			symgo.WithLogger(s.Logger),
+		)
+		if err != nil {
+			return fmt.Errorf("NewInterpreter() failed: %w", err)
+		}
+		s.Logger.Info("Starting evaluation in test")
+
+		_, evalErr := interp.Eval(ctx, pkg.AstFiles[dir+"/main.go"], pkg)
+		if evalErr == nil {
+			t.Fatal("expected an error during file evaluation, but got nil")
+		}
+
+		expectedError := "not a function: INTEGER"
+		if !strings.Contains(evalErr.Error(), expectedError) {
+			t.Logf("got error: %v", evalErr)
+			t.Errorf("expected error to contain %q, but got %q", expectedError, evalErr.Error())
+		}
+		return nil
+	}
+
+	if _, err := scantest.Run(t, context.Background(), dir, []string{"./..."}, action); err != nil {
+		t.Fatalf("scantest.Run() failed with an unexpected error from the action: %v", err)
+	}
 }
 
 func TestFeature_ErrorWithPosition(t *testing.T) {

@@ -89,10 +89,11 @@ func (r *Resolver) ResolveFunction(pkg *object.Package, funcInfo *scanner.Functi
 			Def:        funcInfo,
 		}
 	}
-	// For out-of-policy packages, exported functions become unresolved functions.
-	return &object.UnresolvedFunction{
-		PkgPath:  pkg.Path,
-		FuncName: funcInfo.Name,
+	// For out-of-policy packages, exported functions become placeholders.
+	return &object.SymbolicPlaceholder{
+		Reason:         "external function " + pkg.Path + "." + funcInfo.Name,
+		UnderlyingFunc: funcInfo,
+		Package:        pkg.ScannedInfo,
 	}
 }
 

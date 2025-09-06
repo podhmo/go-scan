@@ -819,6 +819,7 @@ func (e *Evaluator) evalStarExpr(ctx context.Context, node *ast.StarExpr, env *o
 }
 
 func (e *Evaluator) evalGenDecl(ctx context.Context, node *ast.GenDecl, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
+	e.logger.DebugContext(ctx, "evalGenDecl", "tok", node.Tok.String(), "pos", pkg.Fset.Position(node.Pos()))
 	if node.Tok != token.VAR {
 		return nil
 	}
@@ -1101,7 +1102,7 @@ func (e *Evaluator) ensurePackageEnvPopulated(ctx context.Context, pkgObj *objec
 }
 
 func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
-	e.logger.Debug("evalSelectorExpr", "selector", n.Sel.Name)
+	e.logger.DebugContext(ctx, "evalSelectorExpr", "selector", n.Sel.Name)
 
 	var left object.Object
 	if ident, ok := n.X.(*ast.Ident); ok {
@@ -1181,15 +1182,21 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 			pkgInfo, err := e.resolver.resolvePackageWithoutPolicyCheck(ctx, val.Path)
 			if err != nil {
 				e.logc(ctx, slog.LevelWarn, "could not scan package, treating as external", "package", val.Path, "error", err)
-				// The package could not be scanned. This is expected for packages outside the
-				// scan policy (like the standard library). Assume the selector is a function.
-				// This allows `applyFunction` to handle it gracefully.
-				unresolvedFn := &object.UnresolvedFunction{
-					PkgPath:  val.Path,
-					FuncName: n.Sel.Name,
+				// The package could not be scanned. We don't know if the selector is a function,
+				// type, or variable. Create a generic SymbolicPlaceholder. This prevents
+				// incorrect assumptions (like assuming it's a function) that lead to errors
+				// like "invalid indirect".
+				placeholder := &object.SymbolicPlaceholder{
+					Reason: fmt.Sprintf("unresolved identifier %s in unscannable package %s", n.Sel.Name, val.Path),
 				}
-				val.Env.Set(n.Sel.Name, unresolvedFn)
-				return unresolvedFn
+				// Give it minimal type info so it can be identified later.
+				placeholder.SetFieldType(&scanner.FieldType{
+					Name:           n.Sel.Name,
+					FullImportPath: val.Path,
+					TypeName:       n.Sel.Name,
+				})
+				val.Env.Set(n.Sel.Name, placeholder)
+				return placeholder
 			}
 			val.ScannedInfo = pkgInfo
 		}
@@ -2384,6 +2391,7 @@ func isError(obj object.Object) bool {
 }
 
 func (e *Evaluator) evalCallExpr(ctx context.Context, n *ast.CallExpr, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
+	e.logger.DebugContext(ctx, "evalCallExpr", "pos", pkg.Fset.Position(n.Pos()))
 	if e.logger.Enabled(ctx, slog.LevelDebug) {
 		stackAttrs := make([]any, 0, len(e.callStack))
 		for i, frame := range e.callStack {

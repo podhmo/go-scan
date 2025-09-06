@@ -3,6 +3,7 @@ package symgo_test
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	goscan "github.com/podhmo/go-scan"
@@ -108,6 +109,60 @@ func DoSomething() string { return "from lib" }
 			t.Errorf("expected SymbolicPlaceholder for out-of-scope call, got %T", retVal.Value)
 		}
 	})
+}
+
+func TestCrossPackageUnexportedResolution(t *testing.T) {
+	ctx := context.Background()
+	files := map[string]string{
+		"myapp/go.mod": "module example.com/myapp\ngo 1.21\nreplace example.com/lib => ../lib",
+		"myapp/main.go": `
+package main
+import "example.com/lib"
+func main() string { return lib.GetGreeting() }
+`,
+		"lib/go.mod": "module example.com/lib\ngo 1.21",
+		"lib/lib.go": `
+package lib
+
+var count = 0
+func getSecretMessage() string {
+	if count > 0 {
+		return "hello from unexported func"
+	}
+	count++
+	// recursive call
+	return getSecretMessage()
+}
+
+func GetGreeting() string {
+	return getSecretMessage()
+}
+`,
+	}
+	tmpdir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	appDir := filepath.Join(tmpdir, "myapp")
+	result := runMainAnalysis(t, ctx, appDir, "example.com/myapp/...", "example.com/lib/...")
+
+	retVal, ok := result.(*object.ReturnValue)
+	if !ok {
+		t.Fatalf("expected ReturnValue, got %T: %v", result, result.Inspect())
+	}
+	str, ok := retVal.Value.(*object.String)
+	if !ok {
+		t.Fatalf("expected String, got %T", retVal.Value)
+	}
+	if str.Value != "hello from unexported func" {
+		t.Errorf("want %q, got %q", "hello from unexported func", str.Value)
+	}
+
+	// Also check for the error that was originally reported
+	if err, ok := result.(*object.Error); ok {
+		if strings.Contains(err.Message, "identifier not found") {
+			t.Errorf("test failed with unexpected 'identifier not found' error: %v", err)
+		}
+	}
 }
 
 // runMainAnalysis is a helper to analyze the main package and return the result of main().

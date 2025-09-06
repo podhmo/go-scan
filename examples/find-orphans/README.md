@@ -70,3 +70,17 @@ When using `--workspace-root`, all file path patterns (like `./...` or `cmd/tool
 go run ./examples/find-orphans --workspace-root ../.. ./...
 ```
 Here, `./...` is interpreted relative to `../../` (the workspace root).
+
+## Limitations and Error Handling
+
+### Analysis of External and Standard Library Code
+
+To ensure fast and focused analysis, `find-orphans` configures its `symgo` engine with a **scan policy** that restricts deep analysis to only the packages within your workspace. This means that for external dependencies and the Go standard library, the tool can see function signatures but **does not trace the execution inside them**.
+
+### Consequence: Potential for Execution Errors
+
+A side effect of this policy is that `symgo` may not know how to handle calls to certain standard library functions for which it does not have a built-in model (an "intrinsic").
+
+For example, you may see an error like `level=ERROR msg="not a function: INTEGER"` when the tool analyzes a `main` package that uses the `flag` package. This occurs because the tool encounters a call to `flag.String()` or `flag.Bool()`, and while it knows the function exists, it doesn't have a built-in way to simulate its behavior.
+
+In these cases, the tool will log the error and will be unable to find orphans reachable from that specific entry point, but it will continue to analyze the rest of the workspace.

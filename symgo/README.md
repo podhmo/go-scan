@@ -14,58 +14,68 @@ This is particularly useful for static analysis tools that need to understand pr
 
 - **Intrinsics**: `symgo` allows you to register "intrinsic" functions. These are special Go functions that the symbolic engine can call when it encounters a call to a specific function in the source code (e.g., `http.HandleFunc`). The intrinsic can then inspect the symbolic arguments and record information about the call.
 
-- **Analysis Scopes**: By default, `symgo` performs deep, symbolic execution only on packages within the current Go workspace. To provide fine-grained control over this behavior, `symgo` uses two main options:
+## Managing Analysis Scope
 
-  - **`WithPrimaryAnalysisScope(patterns ...string)`**: This is the **recommended** way to define the analysis scope. It takes a list of Go import path patterns (e.g., `"example.com/mymodule/..."`) that `symgo` should analyze deeply. Any package outside this scope will not have its function bodies evaluated.
+A critical aspect of `symgo` is managing the **analysis scope**. By default, `symgo` will attempt to analyze the full source code of any function it encounters. This can lead to two problems:
 
-  - **`WithSymbolicDependencyScope(patterns ...string)`**: This option tells the underlying `go-scan` engine to parse only the *declarations* (types, function signatures, etc.) for the given package patterns, while completely discarding function bodies. This is highly efficient for large external dependencies (like `net/http`) where you need type information but want to prevent `symgo` from getting lost in complex implementation details.
+1.  **Performance**: Analyzing an entire dependency tree, including the Go standard library, can be extremely slow.
+2.  **Errors**: `symgo` does not have built-in knowledge of every standard library function (especially those related to I/O, reflection, or CGo). If it encounters a function it cannot analyze and is not configured to ignore, **the symbolic execution will fail**.
 
-  - **`WithScanPolicy(policy ScanPolicyFunc)`**: (DEPRECATED) This option provides a function to manually control the scan policy. It is less expressive and more error-prone than the scope-based options and may be removed in the future.
+To manage this, you must define a clear boundary for the analysis. `symgo` provides three mechanisms for this, which can be used together.
 
-  **Example:**
+### 1. `WithPrimaryAnalysisScope(patterns ...string)`
 
-  ```go
-  import "github.com/podhmo/go-scan/symgo"
+This is the **primary and recommended** way to define the analysis scope. It takes a list of Go import path patterns (e.g., `"example.com/mymodule/..."`) that `symgo` should analyze deeply. Any package that does not match these patterns will not have its function bodies evaluated. `symgo` will still see the function signatures, but will treat calls to them as "black boxes," returning a symbolic placeholder instead of executing them.
 
-  // Configure the interpreter to deeply analyze your module's code
-  // and treat `net/http` as a symbolic dependency.
-  interpreter, err := symgo.NewInterpreter(
-      goScanner, // A pre-configured go-scan.Scanner
-      symgo.WithPrimaryAnalysisScope("example.com/me/mymodule/..."),
-      symgo.WithSymbolicDependencyScope("net/http"),
-  )
-  ```
+### 2. `WithSymbolicDependencyScope(patterns ...string)`
 
-## Interaction with `go-scan` Options
+This is a performance optimization that works with the underlying `go-scan` engine. It is very similar to `goscan.WithDeclarationsOnlyPackages`. It tells the scanner to parse only the *declarations* (types, function signatures, constants, etc.) for the given package patterns, while completely discarding function bodies before `symgo` even sees them.
 
-`symgo`'s behavior is heavily influenced by the underlying `go-scan.Scanner` it is given. One particularly important option is `goscan.WithDeclarationsOnlyPackages`.
+This is highly efficient for large external dependencies (like `net/http` or `database/sql`) where you need the type information to be available for compilation and type checking, but want to prevent `symgo` from ever attempting to analyze their complex internal logic.
 
-### Declarations-Only Scanning
+### 3. `WithScanPolicy(policy ScanPolicyFunc)`
 
-For performance and stability, especially when analyzing code that depends on large packages like `net/http`, you may not want `symgo` to evaluate the entire implementation of that package. However, you still need its type definitions and function signatures to be available.
+This is a low-level and powerful option that provides a function to manually control the scan policy on a per-package basis. The policy function receives a package path and returns `true` if the package should be scanned deeply, and `false` otherwise.
 
-You can achieve this by configuring the `goscan.Scanner` with `WithDeclarationsOnlyPackages`. For any package specified with this option, `go-scan` will parse all top-level declarations but will then discard the function bodies before `symgo` sees the AST.
+This can be useful for complex scenarios where the pattern-based scopes are not sufficient. However, it is more verbose and can be more error-prone. It should be used with caution when a more fine-grained policy is required.
 
-When `symgo` encounters a call to a function from such a package, it will see that the function has no body (`Body: nil`). The evaluator handles this gracefully, treating the function as a no-op and returning a symbolic placeholder for its result. This allows analysis to continue without getting lost in the complexity of external code, while still having access to all necessary type information.
+### Example Configuration
 
-**Example:**
+Here is a robust configuration for a tool analyzing a local module that depends on `net/http`.
 
 ```go
-// In your tool's setup code:
-import "github.com/podhmo/go-scan"
-
-// Configure the main scanner
-goScanner, err := goscan.New(
-    // ... other options
-    goscan.WithDeclarationsOnlyPackages([]string{"net/http", "database/sql"}),
+import (
+    "github.com/podhmo/go-scan"
+    "github.com/podhmo/go-scan/symgo"
 )
 
-// Now, create the symgo interpreter with this scanner.
-// symgo will automatically respect the declarations-only setting.
-interpreter, err := symgo.NewInterpreter(goScanner)
-```
+// The module path of the code you want to analyze.
+const myModulePath = "example.com/me/mymodule"
 
-This approach is the recommended way to handle large, well-known dependencies that you don't need to analyze deeply.
+// 1. Configure the base scanner.
+// We tell it to only parse declarations for `net/http`, improving performance.
+goScanner, err := goscan.New(
+    goscan.WithDeclarationsOnlyPackages([]string{"net/http"}),
+)
+if err != nil {
+    // handle error
+}
+
+// 2. Configure the symgo interpreter.
+interpreter, err := symgo.NewInterpreter(
+    goScanner,
+    // Tell symgo to only perform deep analysis on our own code.
+    symgo.WithPrimaryAnalysisScope(myModulePath + "/..."),
+)
+if err != nil {
+    // handle error
+}
+
+// The interpreter is now ready to analyze code from `myModulePath`.
+// When it encounters a call to `http.HandleFunc`, it will see the function
+// signature but will not try to execute its body, avoiding errors and
+-// improving performance.
+```
 
 ## Debuggability
 
@@ -109,78 +119,3 @@ The `symgo` interpreter includes a tracing mechanism to help debug the symbolic 
     ```
 
 This allows you to gain insight into the evaluator's behavior, which is invaluable for debugging custom intrinsics or understanding why a particular code path is or isn't being taken.
-
-## Basic Usage
-
-Here is a simplified example of how to use the `symgo` interpreter to analyze a small piece of Go code.
-
-```go
-package main
-
-import (
-	"context"
-	"fmt"
-	"log/slog"
-	"os"
-
-	"github.com/podhmo/go-scan"
-	"github.com/podhmo/go-scan/symgo"
-)
-
-func main() {
-	source := `
-package main
-
-func double(n int) int {
-	return n * 2
-}
-
-func main() {
-	x := 10
-	y := double(x)
-}
-`
-	// 1. Set up go-scan, which symgo uses for parsing and type resolution.
-	s, err := goscan.New(goscan.WithGoModuleResolver())
-	if err != nil {
-		panic(err)
-	}
-
-	// 2. Create a new symgo interpreter.
-	interp, err := symgo.NewInterpreter(s)
-	if err != nil {
-		panic(err)
-	}
-
-	// 3. Parse the source code into an in-memory file.
-	f, fset, err := s.ParseFile(context.Background(), "main.go", source)
-	if err != nil {
-		panic(err)
-	}
-
-	// 4. Evaluate the file. This populates the interpreter's scope with
-	// top-level declarations like the `double` function.
-	_, err = interp.Eval(context.Background(), f, &goscan.Package{Fset: fset, AstFiles: map[string]*ast.File{"main.go": f}})
-	if err != nil {
-		panic(err)
-	}
-
-	// 5. Find the `main` function and "apply" it to run the analysis.
-	mainFn, ok := interp.FindObject("main")
-	if !ok {
-		panic("main function not found")
-	}
-	_, err = interp.Apply(context.Background(), mainFn.(*symgo.Function), nil, nil)
-	if err != nil {
-		panic(err)
-	}
-
-	// 6. Inspect the results by looking up variables in the scope.
-	y, ok := interp.FindObject("y")
-	if !ok {
-		panic("variable y not found")
-	}
-
-	fmt.Println("Symbolic value of y:", y.Inspect())
-}
-```

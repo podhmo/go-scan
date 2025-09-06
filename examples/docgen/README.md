@@ -38,7 +38,7 @@ go run ./examples/docgen [flags] [package_path]
 - `-format <string>`: The output format. Can be `json` (default) or `yaml`.
 - `-patterns <string>`: The path to a Go file containing custom analysis patterns.
 - `-entrypoint <string>`: The name of the function or variable to start analysis from (default: `NewServeMux`).
-- `-include-pkg <string>`: An external package path to be treated as "internal" for deep analysis. By default, `docgen` only scans the source code of the target module. Use this flag to instruct it to also scan the source of a specific dependency. This flag can be specified multiple times.
+- `-include-pkg <string>`: An external package path to be included in the **primary analysis scope**. By default, `docgen` only performs deep source code analysis on the target module. Use this flag to instruct it to also perform a deep analysis on a specific dependency. This flag can be specified multiple times.
 - `-debug`: Enable debug logging for the analysis.
 
 ### Examples

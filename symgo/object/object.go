@@ -373,17 +373,13 @@ func (rv *ReturnValue) Inspect() string { return rv.Value.Inspect() }
 // It holds a value and its resolved type information.
 type Variable struct {
 	BaseObject
-	Name  string
-	Value Object
-	// PossibleConcreteTypes tracks the set of concrete field types that have been
-	// assigned to this variable. This is used for precise analysis of interface method calls.
-	PossibleConcreteTypes map[*scanner.FieldType]struct{}
-
-	// --- Fields for Lazy Evaluation ---
-	Initializer ast.Expr              // The initializer expression, to be evaluated on first access.
-	IsEvaluated bool                  // Flag to check if the initializer has been evaluated.
-	DeclEnv     *Environment          // The environment where the variable was declared.
-	DeclPkg     *scanner.PackageInfo  // The package where the variable was declared.
+	Name          string
+	Value         Object
+	Initializer   ast.Expr             // For lazy evaluation
+	IsEvaluated   bool                 // For lazy evaluation
+	DeclEnv       *Environment         // Environment where the variable was declared
+	DeclPkg       *scanner.PackageInfo // Package where the variable was declared
+	PossibleTypes map[string]struct{}  // Used for tracking possible types for interface variables
 }
 
 // Type returns the type of the Variable object.
@@ -391,13 +387,10 @@ func (v *Variable) Type() ObjectType { return VARIABLE_OBJ }
 
 // Inspect returns a string representation of the variable's value.
 func (v *Variable) Inspect() string {
-	if v.Value != nil {
-		return v.Value.Inspect()
+	if v.Value == nil {
+		return "<unevaluated var>"
 	}
-	if v.Initializer != nil {
-		return fmt.Sprintf("<unevaluated var %s>", v.Name)
-	}
-	return "<uninitialized var>"
+	return v.Value.Inspect()
 }
 
 // --- Pointer Object ---

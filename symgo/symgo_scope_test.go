@@ -210,47 +210,6 @@ func GetGreeting() string {
 	}
 }
 
-// runMainAnalysis is a helper to analyze the main package and return the result of main().
-func runMainAnalysis(t *testing.T, ctx context.Context, dir string, primaryScope ...string) (object.Object, error) {
-	t.Helper()
-	scanner, err := goscan.New(
-		goscan.WithWorkDir(dir),
-		goscan.WithGoModuleResolver(),
-	)
-	if err != nil {
-		t.Fatalf("New scanner failed: %v", err)
-	}
-
-	interp, err := symgo.NewInterpreter(scanner,
-		symgo.WithPrimaryAnalysisScope(primaryScope...),
-	)
-	if err != nil {
-		t.Fatalf("NewInterpreter failed: %v", err)
-	}
-
-	mainPkg, err := interp.Scanner().ScanPackageByImport(ctx, "example.com/myapp")
-	if err != nil {
-		t.Fatalf("ScanPackageByImport for main failed: %v", err)
-	}
-
-	mainFile := findFile(t, mainPkg, "main.go")
-	_, err = interp.Eval(ctx, mainFile, mainPkg)
-	if err != nil {
-		t.Fatalf("Eval main file failed: %v", err)
-	}
-
-	mainFuncObj, ok := interp.FindObject("main")
-	if !ok {
-		t.Fatal("main function not found")
-	}
-	mainFunc, ok := mainFuncObj.(*symgo.Function)
-	if !ok {
-		t.Fatalf("main is not a function, but %T", mainFuncObj)
-	}
-
-	return interp.Apply(ctx, mainFunc, nil, mainPkg)
-}
-
 func TestCrossPackageUnexportedResolution_WithVar(t *testing.T) {
 	ctx := context.Background()
 	files := map[string]string{
@@ -292,4 +251,45 @@ func GetGreeting() string {
 	if str.Value != "hello from unexported var" {
 		t.Errorf("want %q, got %q", "hello from unexported var", str.Value)
 	}
+}
+
+// runMainAnalysis is a helper to analyze the main package and return the result of main().
+func runMainAnalysis(t *testing.T, ctx context.Context, dir string, primaryScope ...string) (object.Object, error) {
+	t.Helper()
+	scanner, err := goscan.New(
+		goscan.WithWorkDir(dir),
+		goscan.WithGoModuleResolver(),
+	)
+	if err != nil {
+		t.Fatalf("New scanner failed: %v", err)
+	}
+
+	interp, err := symgo.NewInterpreter(scanner,
+		symgo.WithPrimaryAnalysisScope(primaryScope...),
+	)
+	if err != nil {
+		t.Fatalf("NewInterpreter failed: %v", err)
+	}
+
+	mainPkg, err := interp.Scanner().ScanPackageByImport(ctx, "example.com/myapp")
+	if err != nil {
+		t.Fatalf("ScanPackageByImport for main failed: %v", err)
+	}
+
+	mainFile := findFile(t, mainPkg, "main.go")
+	_, err = interp.Eval(ctx, mainFile, mainPkg)
+	if err != nil {
+		t.Fatalf("Eval main file failed: %v", err)
+	}
+
+	mainFuncObj, ok := interp.FindObject("main")
+	if !ok {
+		t.Fatal("main function not found")
+	}
+	mainFunc, ok := mainFuncObj.(*symgo.Function)
+	if !ok {
+		t.Fatalf("main is not a function, but %T", mainFuncObj)
+	}
+
+	return interp.Apply(ctx, mainFunc, nil, mainPkg)
 }

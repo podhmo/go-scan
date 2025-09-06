@@ -62,11 +62,14 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - **`symgo`: Shallow Scanning**: The `symgo` evaluator is now more robust and performant when dealing with types from packages outside the defined scan policy. It can now create symbolic placeholders for unresolved types, allowing analysis to continue without crashing and enabling symbolic tracing of method calls on these types. This significantly improves the accuracy of tools like `find-orphans` when analyzing code with external dependencies. ([docs/plan-symgo-shallow-scan.md](./docs/plan-symgo-shallow-scan.md))
 - **`symgo`: Field Access on Symbolic Receivers**: The `symgo` evaluator can now correctly access struct fields on symbolic receivers (e.g., a receiver of a method that is the entry point of analysis). This fixes a bug where field access was incorrectly failing with an "undefined method" error, particularly on structs that use `_ struct{}` to enforce keyed literals.
 - **`go-scan`: Declarations-Only Scanning**: Added a `WithDeclarationsOnlyPackages` option to the `goscan.Scanner`. For packages specified with this option, the scanner parses all top-level declarations (types, functions, variables) but explicitly discards function bodies. This allows tools like `docgen` to obtain necessary type information from packages like `net/http` without incurring the cost and complexity of symbolically executing their entire implementation. This provides a significant performance and stability improvement for analyzing code that depends on large standard library packages.
-- **`symgo`: Cross-Package Unexported Symbol Resolution**: Fixed a critical bug where unexported, package-level variables and functions were not resolved correctly when accessed from a different package. The fix implements a lazy evaluation strategy for package-level variables, ensuring they are only evaluated on first access. This also involved fixing a related bug where calling a variable holding a function (e.g., `flag.Usage()`) would fail. ([docs/trouble-symgo-nested-scope.md](./docs/trouble-symgo-nested-scope.md))
 
 
 ## To Be Implemented
 
+
+### symgo: Fix Cross-Package Unexported Symbol Resolution ([docs/trouble-symgo-nested-scope.md](./docs/trouble-symgo-nested-scope.md))
+- [x] Evaluate package-level var declarations in `ensurePackageEnvPopulated` to fix "identifier not found" errors for unexported symbols.
+- [ ] Fix regressions caused by the lazy-evaluation implementation. The current fix causes numerous test failures by not evaluating variables before they are used as function arguments or in other expression contexts.
 
 ### `symgo` Engine Improvements ([docs/plan-symgo-refine2.md](./docs/plan-symgo-refine2.md))
 - [x] **Fix Regressions**: Addressed `e2e` test failures in `find-orphans` by generalizing the handling of unresolved functions and fixing an infinite recursion bug.

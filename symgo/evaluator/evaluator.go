@@ -1096,16 +1096,6 @@ func (e *Evaluator) ensurePackageEnvPopulated(ctx context.Context, pkgObj *objec
 		env.SetLocal(f.Name, fnObject)
 	}
 
-	// NEW: Populate variables. We need to evaluate the GenDecl for each variable.
-	for _, v := range pkgInfo.Variables {
-		if !shouldScan && !ast.IsExported(v.Name) {
-			continue
-		}
-		if v.Decl != nil {
-			e.Eval(ctx, v.Decl, env, pkgInfo)
-		}
-	}
-
 	// Mark this package as fully populated.
 	e.initializedPkgs[pkgObj.Path] = true
 }

@@ -234,6 +234,32 @@ func run(ctx context.Context, all bool, includeTests bool, workspace string, ver
 		return fmt.Errorf("failed to create scanner: %w", err)
 	}
 
+	// Define the scan policy if one is not provided.
+	// The policy is to scan packages within the workspace modules, but not the standard library or other external dependencies.
+	if scanPolicy == nil {
+		modulePaths := make([]string, len(locators))
+		for i, loc := range locators {
+			modulePaths[i] = loc.ModulePath()
+		}
+
+		scanPolicy = func(pkgPath string) bool {
+			// Heuristic: stdlib packages don't have a dot in their first component.
+			if !strings.Contains(pkgPath, ".") {
+				slog.DebugContext(ctx, "scan policy: skipping stdlib package", "package", pkgPath)
+				return false
+			}
+			// Check if the package belongs to any of the workspace modules.
+			for _, modPath := range modulePaths {
+				if strings.HasPrefix(pkgPath, modPath) {
+					slog.DebugContext(ctx, "scan policy: scanning workspace package", "package", pkgPath)
+					return true
+				}
+			}
+			slog.DebugContext(ctx, "scan policy: skipping external package", "package", pkgPath)
+			return false
+		}
+	}
+
 	a := &analyzer{
 		s:                    s,
 		packages:             make(map[string]*scanner.PackageInfo),

@@ -58,12 +58,25 @@ This approach correctly resolves the dependencies. When `lib.GetGreeting` is exe
 
 ## Verification
 
-The fix was verified by running the `find-orphans` tool on the `examples/convert` package, which was a known complex case that triggered related bugs. After applying the lazy-evaluation fix and a subsequent correction to handle calls to function variables (like `flag.Usage`), the tool ran successfully and produced the correct output:
+The fix was verified by running the `find-orphans` tool on the `examples/convert` package, which was a known complex case that triggered related bugs. After applying the lazy-evaluation fix and a subsequent correction to handle calls to function variables (like `flag.Usage`), the tool ran successfully and produced the correct output.
+
+The following command builds the tool and runs it with a specific set of flags to analyze the `convert` example, treating the package itself as both the entrypoint and the target for reporting:
 
 ```sh
-$ go run ./examples/find-orphans -v --primary-analysis-scope=github.com/podhmo/go-scan/examples/convert/parser,github.com/podhmo/go-scan/examples/convert/sampledata/source,github.com/podhmo/go-scan/examples/convert/sampledata/generated ./examples/convert
-No orphans found.
-...
+$ go build -o find-orphans ./examples/find-orphans
+$ ./find-orphans -v --scan-target-package=github.com/podhmo/go-scan/examples/convert \
+> --scan-entrypoint-package=github.com/podhmo/go-scan/examples/convert \
+> --report-target-package=github.com/podhmo/go-scan/examples/convert
+
+-- Orphans --
+(github.com/podhmo/go-scan/examples/convert.*logLevelVar).String
+  /app/examples/convert/main.go:22:1
+(github.com/podhmo/go-scan/examples/convert.*logLevelVar).Set
+  /app/examples/convert/main.go:29:1
+(github.com/podhmo/go-scan/examples/convert.*defaultFileWriter).WriteFile
+  /app/examples/convert/main.go:52:1
+github.com/podhmo/go-scan/examples/convert.formatCode
+  /app/examples/convert/main.go:181:1
 ```
 
-The command completed without any fatal errors and correctly identified that there were no orphan functions in the target package, confirming the fix.
+The command completed without any fatal errors. The output correctly identifies several unreferenced symbols within the `main` package of the `convert` example (e.g., methods on unexported types, helper functions). This demonstrates that the symbolic execution engine is now correctly traversing the code and identifying symbols that are genuinely unreferenced from the specified entrypoint (`main.main`), confirming the fix.

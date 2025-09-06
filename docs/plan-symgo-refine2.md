@@ -5,42 +5,36 @@
 This document provides a concrete action plan to resolve critical regressions in the `symgo` engine. The previous plan was marked as complete, but recent `e2e` tests for the `find-orphans` tool show that key issues have returned.
 
 The analysis in [`docs/trouble-symgo-refine2.md`](./trouble-symgo-refine2.md) identifies two primary failure modes:
-1.  **Symbolic execution failure** when encountering calls to standard library packages that are not part of the primary analysis scope (e.g., the `flag` package).
+1.  **Symbolic execution failure** when encountering calls to packages outside the primary analysis scope (e.g., the `flag` package).
 2.  **Infinite recursion** when analyzing code that itself uses the `go-scan` or `symgo` libraries.
 
 ## Core Problem: Handling of Unscannable Code
 
-The root cause of these issues is `symgo`'s insufficient handling of function calls to packages outside the defined `PrimaryAnalysisScope`. The `ScanPolicy` mechanism correctly prevents the engine from reading the source code of these packages, but the engine currently lacks a robust fallback. When it encounters a call to a function like `flag.String()`, it has no intrinsic model of its behavior and cannot proceed, causing the analysis of that entrypoint to fail.
+The root cause of these issues is `symgo`'s insufficient handling of symbols from packages outside the defined `PrimaryAnalysisScope`. When the evaluator encounters a selector expression for an unscannable package (e.g., `flag.String`), its fallback logic is incorrect, leading to evaluation errors. Similarly, its recursion detection is not robust enough for complex, self-referential analysis.
+
+This plan focuses on making the `symgo` evaluator more resilient and intelligent when dealing with these cases.
 
 ## New Action Plan
 
-The previous plan focused on perfecting the scope definition. This new plan focuses on making the `symgo` evaluator more resilient and intelligent when dealing with code outside its scope.
+### Task 1: Generalize Handling of Unresolved Functions
 
-### Task 1: Implement Intrinsics for the `flag` package
-
-*   **Goal**: Prevent symbolic execution failures in `main` packages that use standard command-line flags.
+*   **Goal**: Prevent symbolic execution failures when calling functions in packages that are not scanned from source (e.g., the standard library).
 *   **Details**:
-    *   Implement intrinsic handlers within `symgo` for the most common functions in the `flag` package (`flag.String`, `flag.Bool`, `flag.Var`, etc.).
-    *   These intrinsics will not replicate the full behavior. Instead, they will return a `SymbolicPlaceholder` of the correct type (e.g., a symbolic `*string` for `flag.String`).
-    *   This will allow the symbolic execution to continue past the flag definitions in `main` functions, enabling tools like `find-orphans` to analyze them correctly.
-*   **Acceptance Criteria**: The `not a function: INTEGER` errors no longer appear in the `find-orphans` e2e test logs.
+    *   The current `evalSelectorExpr` logic incorrectly assumes any unknown identifier in an external package is a type, returning an `object.Type`. This causes `not a function` errors when the identifier is actually a function (like `flag.String`).
+    *   The fix is to change this fallback behavior. When a symbol is not found as a known function, variable, constant, or type in an external package, the evaluator should return an `*object.UnresolvedFunction`.
+    *   The existing logic in `applyFunction` can handle `*object.UnresolvedFunction` by attempting to find the function's signature and returning a symbolic placeholder for its result. This provides a general mechanism to gracefully handle any external function call without needing specific intrinsics.
+*   **Acceptance Criteria**: The `not a function` errors no longer appear in the `find-orphans` e2e test logs.
 
-### Task 2: Investigate and Fix Infinite Recursion
+### Task 2: Fix Infinite Recursion Detection
 
 *   **Goal**: Resolve the `infinite recursion detected: New` error that occurs when `find-orphans` analyzes the `minigo` package.
 *   **Details**:
-    *   The existing cycle detection in `symgo` is clearly insufficient for this complex, self-referential case.
-    *   The investigation will focus on enhancing the call stack tracking within the `symgo` evaluator.
-    *   The fix may involve creating a more robust cycle detection mechanism that can identify when the evaluator is re-entering the same function with a similar or identical context, even if it's not a simple direct recursion.
+    *   The current recursion check in `applyFunction` is too strict. It requires the function definition, receiver, and **call site position** to all be identical.
+    *   In complex analysis scenarios (e.g., `A` calls `B` which calls `A` from a different line), the call site position check prevents the recursion from being detected.
+    *   The fix is to remove the call site position (`frame.Pos == callPos`) from the check. The detection will now trigger if the same function definition is re-entered on the same receiver within the same call stack, regardless of the call's location.
 *   **Acceptance Criteria**: The `infinite recursion` errors no longer appear in the `find-orphans` e2e test log. The e2e test for `find-orphans` runs to completion without errors.
 
-### Task 3: (If Necessary) Broader Symbolic Models
-
-*   **Goal**: Create a more general mechanism for handling unscannable functions.
-*   **Details**: If adding intrinsics on a case-by-case basis proves too brittle, a more general solution will be investigated. This could involve having `symgo` automatically return a `SymbolicPlaceholder` for *any* function call it cannot resolve, based on the function's signature.
-*   **Acceptance Criteria**: This is an exploratory task, to be undertaken if Task 1 and 2 do not yield a stable e2e test.
-
-### Task 4: Implement a Timeout Flag in `find-orphans` (Future Work)
+### Task 3: Implement a Timeout Flag in `find-orphans` (Future Work)
 
 *   **Goal**: Add a command-line timeout feature to `find-orphans` to facilitate future debugging.
 *   **Details**: This task is unchanged. Add a `--timeout` flag that uses `context.WithTimeout`.

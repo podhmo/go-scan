@@ -10,17 +10,17 @@ As of the latest run of `make -C examples/find-orphans e2e`, the test is failing
 
 The failures fall into two main categories:
 
-1.  **Standard Library Interaction Failure (`not a function: INTEGER`)**:
-    -   **Symptom**: Multiple `main` functions across the `examples/` directory fail during symbolic execution with the error `not a function: INTEGER`. This error consistently occurs on lines that call functions from the standard `flag` package (e.g., `flag.String()`, `flag.Bool()`).
-    -   **Root Cause**: The `find-orphans` tool correctly uses a `ScanPolicy` to prevent `symgo` from scanning the source code of the standard library. However, when `symgo` encounters a call to a function like `flag.String`, it doesn't have a built-in model (an "intrinsic") for what that function does or what it returns. Because the policy forbids it from reading the source, it cannot analyze the function and fails the execution for that entry point. This is a fundamental limitation in how `symgo` handles calls to unscannable code.
+1.  **Standard Library Interaction Failure (`not a function: ...`)**:
+    -   **Symptom**: Multiple `main` functions across the `examples/` directory fail during symbolic execution with an error like `not a function: TYPE` or `not a function: INTEGER`. This error consistently occurs on lines that call functions from the standard `flag` package (e.g., `flag.String()`, `flag.Bool()`).
+    -   **Root Cause**: The `ScanPolicy` correctly prevents `symgo` from scanning the source code of the standard library. However, the fallback logic in `evalSelectorExpr` is flawed. When it encounters an identifier in an external package that it cannot resolve as a known function, variable, or constant (like `flag.String`), it incorrectly assumes the identifier must be a type and returns an `object.Type`. When the evaluator later tries to call this object, it fails with a `not a function` error. The fix is to change the fallback to return an `*object.UnresolvedFunction`, which the `applyFunction` logic can then gracefully handle by creating a symbolic result based on the function's signature.
 
 2.  **Infinite Recursion (`infinite recursion detected: New`)**:
     -   **Symptom**: The symbolic execution of `examples/minigo.main` fails with an infinite recursion error. The recursion is triggered when `symgo` attempts to analyze the `goscan.New` function.
-    -   **Root Cause**: This appears to be a complex, recursive analysis problem. The `find-orphans` tool is analyzing the entire workspace, which includes the `minigo` tool. The `minigo` tool, in turn, *calls* `goscan.New()`. `symgo` gets stuck in a loop when analyzing a function that is part of its own underlying toolset. The `ScanPolicy` is intended to prevent this by keeping the analysis within defined boundaries, but it appears to be failing in this nested, self-referential context.
+    -   **Root Cause**: The recursion detection logic in `applyFunction` is too strict for complex, cross-package call chains. The check requires the function definition, receiver, **and the source code position of the call** to be identical to detect recursion. In this failure mode, `goscan.New` is called recursively, but from a different location in the code, so the check `frame.Pos == callPos` fails, and the cycle is not detected. The fix is to relax the check by removing the comparison of the call site position, which will correctly identify the recursion.
 
 ### Conclusion
 
-The `e2e` test failures are not trivial bugs. They indicate that the `ScanPolicy` mechanism, while correctly implemented in `find-orphans`, is not sufficient on its own. `symgo` needs a more robust way to handle functions from packages it is not allowed to scan, likely through a system of returning symbolic placeholders or having intrinsics for common standard library functions. The infinite recursion bug also points to a deeper issue in the evaluator's ability to manage complex call stacks, especially when analyzing code that uses the analyzer itself.
+The `e2e` test failures point to specific flaws in the `symgo` evaluator's handling of external package symbols and complex recursion. The `ScanPolicy` is working as intended, but the evaluator's behavior when encountering these boundary conditions needs to be made more robust. The action plan in `plan-symgo-refine2.md` addresses these specific root causes.
 
 ---
 

@@ -1298,23 +1298,15 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 			}
 		}
 
-		// If it's not a known function, constant, or type, we assume it's a
-		// type identifier that we haven't fully resolved. Create a synthetic Type object for it.
-		// This is better than a generic placeholder, as it correctly identifies the
-		// object as a type, preventing "invalid indirect" on pointers to it.
-		syntheticTypeInfo := &scanner.TypeInfo{
-			Name:       n.Sel.Name,
-			PkgPath:    val.Path,
-			Unresolved: true, // Mark that we don't have the full definition.
-			Kind:       scanner.UnknownKind,
+		// If the symbol is not found, assume it's a function we can't see
+		// due to the scan policy. Create an UnresolvedFunction object.
+		// This allows `applyFunction` to handle it gracefully.
+		unresolvedFn := &object.UnresolvedFunction{
+			PkgPath:  val.Path,
+			FuncName: n.Sel.Name,
 		}
-		typeObj := &object.Type{
-			TypeName:     n.Sel.Name,
-			ResolvedType: syntheticTypeInfo,
-		}
-		typeObj.SetTypeInfo(syntheticTypeInfo)
-		val.Env.Set(n.Sel.Name, typeObj)
-		return typeObj
+		val.Env.Set(n.Sel.Name, unresolvedFn)
+		return unresolvedFn
 
 	case *object.Instance:
 		key := fmt.Sprintf("(%s).%s", val.TypeName, n.Sel.Name)
@@ -2572,8 +2564,9 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 	if f, ok := fn.(*object.Function); ok {
 		for _, frame := range e.callStack {
 			// A true recursion occurs if the same function definition is called on the
-			// exact same receiver object from the exact same call site in the source.
-			if frame.Fn != nil && f.Def != nil && frame.Fn.Def == f.Def && frame.Fn.Receiver == f.Receiver && frame.Pos == callPos {
+			// exact same receiver object. The call position check was removed as it was
+			// too strict for complex, indirect recursion.
+			if frame.Fn != nil && f.Def != nil && frame.Fn.Def == f.Def && frame.Fn.Receiver == f.Receiver {
 				e.logc(ctx, slog.LevelWarn, "infinite recursion detected, aborting", "function", name)
 				return e.newError(ctx, callPos, "infinite recursion detected: %s", name)
 			}

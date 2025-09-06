@@ -88,6 +88,116 @@ func IgnoredFunc() {}
 	}
 }
 
+// TestFindOrphans_ScanAndReportScopeSeparation verifies that the scan scope (defined by --primary-analysis-scope)
+// and the report scope (defined by positional args) are handled correctly and independently.
+func TestFindOrphans_ScanAndReportScopeSeparation(t *testing.T) {
+	files := map[string]string{
+		"go.mod": "module example.com/scope-test\ngo 1.21\n",
+		"pkga/a.go": `
+package pkga
+
+// This function is used by pkgc, so it's not an orphan.
+func UsedByC() {}
+
+// This function is unused and pkga is in the report scope, so it IS an orphan.
+func OrphanInA() {}
+`,
+		"pkgb/b.go": `
+package pkgb
+
+// This function is unused, but pkgb is NOT in the scan scope.
+// Therefore, the analyzer never even sees this function, so it cannot be an orphan.
+func OrphanInB() {}
+`,
+		"pkgc/c.go": `
+package pkgc
+
+import "example.com/scope-test/pkga"
+
+// This function is the entry point for the analysis.
+func EntryPoint() {
+	pkga.UsedByC()
+}
+`,
+	}
+	dir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	log.SetOutput(io.Discard)
+	defer func() {
+		os.Stdout = oldStdout
+		log.SetOutput(os.Stderr)
+	}()
+
+	// Define the scan scope: we only want to analyze pkga and pkgc.
+	// We are intentionally excluding pkgb from the scan.
+	primaryScope := []string{
+		"example.com/scope-test/pkga",
+		"example.com/scope-test/pkgc",
+	}
+
+	// Define the report scope: we want to see orphans from pkga and pkgb.
+	reportPatterns := []string{
+		"example.com/scope-test/pkga",
+		"example.com/scope-test/pkgb",
+	}
+
+	// We create a custom scan policy to act as an entry point for the test.
+	// We will start the analysis from pkgc.EntryPoint.
+	// This avoids relying on library/app mode detection and makes the test more specific.
+	scanPolicy := func(pkgPath string) bool {
+		return pkgPath == "example.com/scope-test/pkgc"
+	}
+
+	err := run(context.Background(), false, false, dir, false, false, "lib", reportPatterns, nil, scanPolicy, primaryScope)
+	if err != nil {
+		t.Fatalf("run() failed: %v", err)
+	}
+
+	w.Close()
+
+	var buf bytes.Buffer
+	io.Copy(&buf, r)
+	output := buf.String()
+
+	// ASSERT: The orphan from pkga should be found.
+	if !strings.Contains(output, "OrphanInA") {
+		t.Errorf("expected 'OrphanInA' to be reported as an orphan, but it was not.\nOutput:\n%s", output)
+	}
+
+	// ASSERT: The function used by pkgc should NOT be an orphan.
+	if strings.Contains(output, "UsedByC") {
+		t.Errorf("'UsedByC' was reported as an orphan, but it should be considered used.\nOutput:\n%s", output)
+	}
+
+	// ASSERT: The orphan from pkgb should NOT be found, because pkgb was never scanned.
+	if strings.Contains(output, "OrphanInB") {
+		t.Errorf("'OrphanInB' was reported as an orphan, but it should have been ignored because it's outside the scan scope.\nOutput:\n%s", output)
+	}
+
+	// Verify the exact orphan list
+	expectedOrphans := []string{
+		"example.com/scope-test/pkga.OrphanInA",
+	}
+	sort.Strings(expectedOrphans)
+
+	var foundOrphans []string
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	for _, line := range lines {
+		if strings.HasPrefix(line, "example.com") {
+			foundOrphans = append(foundOrphans, line)
+		}
+	}
+	sort.Strings(foundOrphans)
+
+	if diff := cmp.Diff(expectedOrphans, foundOrphans); diff != "" {
+		t.Errorf("find-orphans mismatch (-want +got):\n%s", diff)
+	}
+}
+
 func TestFindOrphans_GlobalVarInitialization_LibraryMode(t *testing.T) {
 	files := map[string]string{
 		"go.mod": "module example.com/global-var-lib\ngo 1.21\n",

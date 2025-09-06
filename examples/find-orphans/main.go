@@ -197,20 +197,19 @@ func run(ctx context.Context, all bool, includeTests bool, workspace string, ver
 		slog.InfoContext(ctx, "* scan module", "module", loc.ModulePath())
 	}
 
-	// Resolve the target packages for reporting. If a primary analysis scope is provided,
-	// use it for reporting as well. Otherwise, use the default start patterns.
-	reportingPatterns := startPatterns
-	if len(primaryAnalysisScope) > 0 {
-		reportingPatterns = primaryAnalysisScope
-	}
-	targetPackages, err := resolveTargetPackages(ctx, locators, reportingPatterns, excludeDirs, resolutionDir)
+	// Resolve the target packages for reporting. This is always from the positional args.
+	targetPackages, err := resolveTargetPackages(ctx, locators, startPatterns, excludeDirs, resolutionDir)
 	if err != nil {
 		return fmt.Errorf("could not resolve target packages: %w", err)
 	}
 	slog.DebugContext(ctx, "resolved target packages for reporting", "count", len(targetPackages), "packages", keys(targetPackages))
 
-	// Resolve all packages in the workspace for scanning.
+	// Resolve all packages for scanning (the analysis scope).
+	// This is defined by --primary-analysis-scope if provided, otherwise it's the whole workspace.
 	scanPatterns := []string{"./..."}
+	if len(primaryAnalysisScope) > 0 {
+		scanPatterns = primaryAnalysisScope
+	}
 	scanPackages, err := resolveTargetPackages(ctx, locators, scanPatterns, excludeDirs, resolutionDir)
 	if err != nil {
 		return fmt.Errorf("could not resolve scan packages: %w", err)

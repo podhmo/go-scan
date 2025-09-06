@@ -66,19 +66,9 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 ## To Be Implemented
 
 
-### `symgo` Engine Improvements ([docs/plan-symgo-refine2.md](./docs/plan-symgo-refine2.md)), ([docs/trouble-symgo-refine2.md](./docs/trouble-symgo-refine2.md))
-- [x] **Analysis**: Re-investigated timeout and critical errors by running e2e tests and analyzing the logs. A new, detailed analysis and plan have been created, identifying the root cause as a failure to analyze a complex package (`minigo`).
-- [ ] **Bugfix: Analysis of Complex Packages (Top Priority)**: Fix `symgo`'s inability to analyze the `minigo` package. The infinite recursion on composite literals is fixed, and this is now verified by both a large integration test and a minimal, focused unit test. (REGRESSION: This issue has returned).
-- [x] **Unit Test: Add minimal test for composite literal recursion (Priority)**: Add a focused unit test for the `evalCompositeLit` cycle detection. A robust test case has been designed and implemented that confirms the evaluator does not panic when encountering recursive variable definitions.
-- [ ] **Bugfix: Standard Library Symbol Resolution**: Correctly resolve function-type variables from external packages (e.g., `flag.Usage`). (REGRESSION: `flag` package functions cause execution to fail).
-- [ ] **Bugfix: Implement Intrinsics for Standard Library**: Implement intrinsic models for common, problematic standard library functions (starting with the `flag` package) to prevent symbolic execution failures when analyzing code that uses them.
-- [x] **Bugfix: Multi-Return Placeholders**: Ensure symbolic placeholders for function calls correctly represent multi-value returns to fix assignment warnings.
-- [x] **Bugfix: Package Scoping in `symgo`**: Fix `identifier not found` errors during e2e tests by ensuring that on-demand package loading creates environments with the correct top-level scope.
+### `symgo` Engine Improvements ([docs/plan-symgo-refine2.md](./docs/plan-symgo-refine2.md))
+- [ ] **Fix Regressions**: Address `e2e` test failures by implementing intrinsics for the `flag` package and fixing the infinite recursion bug that occurs during the analysis of `minigo`.
 - [ ] **DX: Add Timeout Flag to `find-orphans`**: Add a `--timeout` flag to the `find-orphans` CLI for easier debugging.
-- [ ] **Follow-up: Full e2e Test Verification**: The e2e test for `find-orphans` now passes. The root cause was a combination of incorrect package-scoping during on-demand loading in `symgo` and the symbolic execution engine attempting to deeply analyze standard library packages. This was fixed by:
-    - 1. Correcting the environment creation for package placeholders in the evaluator to inherit from the universe scope.
-    - 2. Adding a `ScanPolicy` to the `find-orphans` tool to prevent it from scanning outside the workspace.
-    - 3. Fixing unit tests by adding `WithGoModuleResolver` to ensure the scanner could find standard library packages. (REGRESSION: The e2e test is failing again).
 
 
 ### `minigo` Refinements ([docs/plan-minigo.md](./docs/plan-minigo.md))

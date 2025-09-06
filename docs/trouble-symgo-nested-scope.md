@@ -94,3 +94,69 @@ However, this fix revealed a deeper issue. The test now fails with an `infinite 
 A detailed analysis of the environment (`object.Environment`), variable modification (`evalIncDecStmt`), and function application logic (`applyFunction`) did not reveal an obvious cause for this state loss. The environment correctly encloses outer scopes, and the `IncDec` logic appears to modify the variable's value in place.
 
 This indicates a more subtle bug in how state is managed or propagated during recursive calls in the evaluator. The issue remains unresolved pending further investigation.
+
+## Further Investigation (2025-09-06)
+
+A deep-dive investigation was performed to resolve the "infinite recursion detected" error. The investigation was ultimately unsuccessful, but the findings are documented here to aid future attempts.
+
+### Core Contradiction
+
+The investigation centered on `TestCrossPackageUnexportedResolution` and its use of a stateful, recursive function `getSecretMessage`. A central, unresolved contradiction was discovered:
+
+1.  **Evidence from Logging:** By adding extensive logging (including memory addresses) to `evaluator.go`, it was definitively confirmed that the package-level variable `count` **is correctly updated** during the first function call. The same environment and variable objects are used, and the integer value is incremented from 0 to 1.
+2.  **Evidence from Test Behavior:** Despite the logging evidence, the test consistently fails in a way that implies the updated state of `count` is **not visible** to the second, recursive call. The `if count > 0` condition behaves as if `count` is still 0, leading to a third recursive call that is flagged as an error.
+
+This paradox—that the state is simultaneously updated and not updated—points to an extremely subtle bug in how the evaluator creates, caches, or resolves environments (`fn.Env`) between nested `applyFunction` calls.
+
+### Summary of Failed Fixes
+
+Several approaches were tried, all of which failed:
+
+1.  **Relaxing the Recursion Check:** The recursion check in `applyFunction` is the immediate cause of the error. It was relaxed to allow a single level of recursion (`recursionCount > 1`).
+    -   **Result:** This still failed with an "infinite recursion" error. This confirms that the control flow is incorrect because the `if` condition is not evaluating as expected on the second call, leading to a third call.
+
+2.  **Fixing `evalIfStmt` Control Flow:** It was discovered that `evalIfStmt` does not propagate `ReturnValue` objects, causing `return` statements inside `if` blocks to be ignored. This was corrected.
+    -   **Result:** This caused the test run to hang indefinitely. The original implementation, while seemingly incorrect for a standard interpreter, appears to be intentional for this symbolic engine's design. The change was reverted.
+
+### Conclusion and Future Direction
+
+The root cause was not found. The issue is not a simple state loss, but a deeper problem in the evaluator's architecture related to environment management in a recursive context. The key files remain `evaluator.go`, `resolver.go`, and `accessor.go`.
+
+The next developer to attempt this should focus on resolving the central contradiction: **Why does the second function call receive a stale view of an environment object, even when logging shows it's the same object at the same memory address?** Answering this question is the key to fixing this bug.
+
+## Further Investigation (2025-09-06)
+
+A follow-up investigation was performed to resolve the "infinite recursion detected" error. The findings are documented below.
+
+### Analysis of the "Infinite Recursion" Error
+
+The investigation started by adding detailed logging to key parts of the evaluator in `evaluator.go`:
+1.  **`applyFunction`**: To log the value of the `count` variable at the beginning of each call to `getSecretMessage`.
+2.  **`evalIncDecStmt`**: To log the value of `count` before and after it was incremented.
+3.  **`evalIdent`**: To log the memory address of the `*object.Variable` for `count` whenever it was accessed.
+
+The logs produced a clear, but contradictory, result:
+-   **State IS Updated**: The logs definitively showed that on the first call to `getSecretMessage`, the `count` variable (at a specific memory address) was correctly incremented from `0` to `1`.
+-   **Failure Cause**: The test failed because the original recursion check in `applyFunction` (`frame.Fn.Def == f.Def`) fired on the second, recursive call to `getSecretMessage`. It aborted the execution *before* the function body was entered, and thus before the updated value of `count` could be checked by the `if count > 0` condition.
+
+This revealed that the hypothesis in the previous document section ("State loss during recursion") was incorrect. The state is managed correctly, but the recursion check is too aggressive for this stateful test case.
+
+### Attempts to Fix
+
+Based on this analysis, several fixes were attempted:
+
+1.  **Relax the Recursion Check**: The check was modified to allow a function to be on the call stack once already, but not twice (`recursionCount > 1`).
+    -   **Result**: This failed with the same "infinite recursion detected" error. This result is the core of the unresolved problem. It implies that even with the relaxed check, the second call to `getSecretMessage` still evaluated `count > 0` as false, triggering a third call which was then caught. This contradicts the logging evidence.
+
+2.  **Modify `evalIfStmt` Control Flow**: A hypothesis was formed that `evalIfStmt` was swallowing the `ReturnValue` from the `if` block's body. The logic was changed to propagate `ReturnValue` objects.
+    -   **Result**: This caused the test run to hang indefinitely, likely by creating a genuine infinite loop. This approach seems to violate the intended symbolic nature of the evaluator (which often needs to evaluate all paths, not stop on the first `return`). This change was reverted.
+
+### Unresolved Contradiction and Future Direction
+
+The central issue remains a deep contradiction:
+-   **Evidence A (Logs):** The `count` variable's underlying integer object is successfully modified in place.
+-   **Evidence B (Test Behavior):** The program behaves as if the `count` variable was *not* modified on the subsequent recursive call.
+
+This suggests an extremely subtle bug in how environments are being created, cached, or referenced during recursive evaluation. Despite logs showing the same memory addresses for the environment object (`fn.Env`) across calls, it's possible that a stale version of the environment or the variable within it is being resolved and used by the second call.
+
+The relevant files for the next investigation should be `evaluator.go`, `resolver.go`, and `accessor.go`, with a focus on the interaction between `applyFunction`, `extendFunctionEnv`, and `getOrLoadPackage`. The bug is likely not in the `object.Environment` implementation itself, but in how instances of it are managed by the evaluator during the call lifecycle.

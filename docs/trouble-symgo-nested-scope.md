@@ -97,6 +97,35 @@ This indicates a more subtle bug in how state is managed or propagated during re
 
 ## Further Investigation (2025-09-06)
 
+A deep-dive investigation was performed to resolve the "infinite recursion detected" error. The investigation was ultimately unsuccessful, but the findings are documented here to aid future attempts.
+
+### Core Contradiction
+
+The investigation centered on `TestCrossPackageUnexportedResolution` and its use of a stateful, recursive function `getSecretMessage`. A central, unresolved contradiction was discovered:
+
+1.  **Evidence from Logging:** By adding extensive logging (including memory addresses) to `evaluator.go`, it was definitively confirmed that the package-level variable `count` **is correctly updated** during the first function call. The same environment and variable objects are used, and the integer value is incremented from 0 to 1.
+2.  **Evidence from Test Behavior:** Despite the logging evidence, the test consistently fails in a way that implies the updated state of `count` is **not visible** to the second, recursive call. The `if count > 0` condition behaves as if `count` is still 0, leading to a third recursive call that is flagged as an error.
+
+This paradox—that the state is simultaneously updated and not updated—points to an extremely subtle bug in how the evaluator creates, caches, or resolves environments (`fn.Env`) between nested `applyFunction` calls.
+
+### Summary of Failed Fixes
+
+Several approaches were tried, all of which failed:
+
+1.  **Relaxing the Recursion Check:** The recursion check in `applyFunction` is the immediate cause of the error. It was relaxed to allow a single level of recursion (`recursionCount > 1`).
+    -   **Result:** This still failed with an "infinite recursion" error. This confirms that the control flow is incorrect because the `if` condition is not evaluating as expected on the second call, leading to a third call.
+
+2.  **Fixing `evalIfStmt` Control Flow:** It was discovered that `evalIfStmt` does not propagate `ReturnValue` objects, causing `return` statements inside `if` blocks to be ignored. This was corrected.
+    -   **Result:** This caused the test run to hang indefinitely. The original implementation, while seemingly incorrect for a standard interpreter, appears to be intentional for this symbolic engine's design. The change was reverted.
+
+### Conclusion and Future Direction
+
+The root cause was not found. The issue is not a simple state loss, but a deeper problem in the evaluator's architecture related to environment management in a recursive context. The key files remain `evaluator.go`, `resolver.go`, and `accessor.go`.
+
+The next developer to attempt this should focus on resolving the central contradiction: **Why does the second function call receive a stale view of an environment object, even when logging shows it's the same object at the same memory address?** Answering this question is the key to fixing this bug.
+
+## Further Investigation (2025-09-06)
+
 A follow-up investigation was performed to resolve the "infinite recursion detected" error. The findings are documented below.
 
 ### Analysis of the "Infinite Recursion" Error

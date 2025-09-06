@@ -2,6 +2,8 @@ package symgo_test
 
 import (
 	"context"
+	"log/slog"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -176,8 +178,15 @@ func runMainAnalysis(t *testing.T, ctx context.Context, dir string, primaryScope
 		t.Fatalf("New scanner failed: %v", err)
 	}
 
+	logLevel := slog.LevelError
+	if os.Getenv("GO_SCAN_LOG_LEVEL") == "DEBUG" {
+		logLevel = slog.LevelDebug
+	}
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel, AddSource: true}))
+
 	interp, err := symgo.NewInterpreter(scanner,
 		symgo.WithPrimaryAnalysisScope(primaryScope...),
+		symgo.WithLogger(logger),
 	)
 	if err != nil {
 		t.Fatalf("NewInterpreter failed: %v", err)

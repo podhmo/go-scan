@@ -819,6 +819,7 @@ func (e *Evaluator) evalStarExpr(ctx context.Context, node *ast.StarExpr, env *o
 }
 
 func (e *Evaluator) evalGenDecl(ctx context.Context, node *ast.GenDecl, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
+	e.logger.DebugContext(ctx, "evalGenDecl", "tok", node.Tok.String(), "pos", pkg.Fset.Position(node.Pos()))
 	if node.Tok != token.VAR {
 		return nil
 	}
@@ -1101,7 +1102,7 @@ func (e *Evaluator) ensurePackageEnvPopulated(ctx context.Context, pkgObj *objec
 }
 
 func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
-	e.logger.Debug("evalSelectorExpr", "selector", n.Sel.Name)
+	e.logger.DebugContext(ctx, "evalSelectorExpr", "selector", n.Sel.Name)
 
 	var left object.Object
 	if ident, ok := n.X.(*ast.Ident); ok {
@@ -2412,6 +2413,7 @@ func isCallable(obj object.Object) bool {
 }
 
 func (e *Evaluator) evalCallExpr(ctx context.Context, n *ast.CallExpr, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
+	e.logger.DebugContext(ctx, "evalCallExpr", "pos", pkg.Fset.Position(n.Pos()))
 	if e.logger.Enabled(ctx, slog.LevelDebug) {
 		stackAttrs := make([]any, 0, len(e.callStack))
 		for i, frame := range e.callStack {

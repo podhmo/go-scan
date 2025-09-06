@@ -67,7 +67,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 
 
 ### `symgo` Engine Improvements ([docs/plan-symgo-refine2.md](./docs/plan-symgo-refine2.md))
-- [ ] **Fix Regressions**: Address `e2e` test failures by implementing intrinsics for the `flag` package and fixing the infinite recursion bug that occurs during the analysis of `minigo`.
+- [x] **Fix Regressions**: Addressed `e2e` test failures in `find-orphans` by generalizing the handling of unresolved functions and fixing an infinite recursion bug.
 - [ ] **DX: Add Timeout Flag to `find-orphans`**: Add a `--timeout` flag to the `find-orphans` CLI for easier debugging.
 
 

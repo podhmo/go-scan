@@ -28,6 +28,63 @@ func findFile(t *testing.T, pkg *goscan.Package, filename string) *ast.File {
 	return nil
 }
 
+func TestEval_ExternalPackageFunctionCall(t *testing.T) {
+	source := `
+package main
+import "flag"
+var _, _ = flag.String, flag.StringVar
+`
+	dir, cleanup := scantest.WriteFiles(t, map[string]string{
+		"go.mod":  "module mymodule",
+		"main.go": source,
+	})
+	defer cleanup()
+
+	s, err := goscan.New(goscan.WithWorkDir(dir), goscan.WithGoModuleResolver())
+	if err != nil {
+		t.Fatalf("goscan.New() failed: %+v", err)
+	}
+
+	pkgs, err := s.Scan(context.Background(), ".")
+	if err != nil {
+		t.Fatalf("s.Scan() failed: %+v", err)
+	}
+	pkg := pkgs[0]
+
+	// Use a scan policy that prevents scanning the 'flag' package.
+	interp, err := symgo.NewInterpreter(s, symgo.WithScanPolicy(func(pkgPath string) bool {
+		return pkgPath != "flag"
+	}))
+	if err != nil {
+		t.Fatalf("NewInterpreter() failed: %+v", err)
+	}
+
+	// The issue happens during the initial Eval of the file, where the identifiers are resolved.
+	_, err = interp.Eval(context.Background(), pkg.AstFiles[filepath.Join(dir, "main.go")], pkg)
+	if err != nil {
+		t.Fatalf("interp.Eval(file) failed unexpectedly: %+v", err)
+	}
+
+	// Now, let's explicitly evaluate the selector expression `flag.String`
+	// and check the type of the object it resolves to.
+	node, err := parser.ParseExpr(`flag.String`)
+	if err != nil {
+		t.Fatalf("parser.ParseExpr() failed: %+v", err)
+	}
+
+	result, err := interp.Eval(context.Background(), node, pkg)
+	if err != nil {
+		t.Fatalf("interp.Eval(expr) failed: %+v", err)
+	}
+
+	// Before the fix, this will fail because the evaluator incorrectly returns
+	// an `object.Type` for unresolved symbols in external packages.
+	// After the fix, it should return an `object.UnresolvedFunction`.
+	if _, ok := result.(*object.UnresolvedFunction); !ok {
+		t.Errorf("Expected `flag.String` to resolve to *object.UnresolvedFunction, but got %T (%s)", result, result.Inspect())
+	}
+}
+
 // findFunc is a test helper to find a function by its name in a package.
 func findFunc(t *testing.T, pkg *goscan.Package, name string) *scanner.FunctionInfo {
 	t.Helper()
@@ -117,9 +174,9 @@ func main() {
 		t.Fatalf("interp.Eval(expr) failed: %+v", err)
 	}
 
-	_, ok := result.(*object.SymbolicPlaceholder)
+	_, ok := result.(*object.UnresolvedFunction)
 	if !ok {
-		t.Errorf("Expected a SymbolicPlaceholder for an external function, but got %T", result)
+		t.Errorf("Expected an UnresolvedFunction for an external function, but got %T", result)
 	}
 }
 

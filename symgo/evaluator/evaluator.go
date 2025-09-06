@@ -1181,21 +1181,15 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 			pkgInfo, err := e.resolver.resolvePackageWithoutPolicyCheck(ctx, val.Path)
 			if err != nil {
 				e.logc(ctx, slog.LevelWarn, "could not scan package, treating as external", "package", val.Path, "error", err)
-				// The package could not be scanned. We don't know if the selector is a function,
-				// type, or variable. Create a generic SymbolicPlaceholder. This prevents
-				// incorrect assumptions (like assuming it's a function) that lead to errors
-				// like "invalid indirect".
-				placeholder := &object.SymbolicPlaceholder{
-					Reason: fmt.Sprintf("unresolved identifier %s in unscannable package %s", n.Sel.Name, val.Path),
+				// The package could not be scanned. This is expected for packages outside the
+				// scan policy (like the standard library). Assume the selector is a function.
+				// This allows `applyFunction` to handle it gracefully.
+				unresolvedFn := &object.UnresolvedFunction{
+					PkgPath:  val.Path,
+					FuncName: n.Sel.Name,
 				}
-				// Give it minimal type info so it can be identified later.
-				placeholder.SetFieldType(&scanner.FieldType{
-					Name:           n.Sel.Name,
-					FullImportPath: val.Path,
-					TypeName:       n.Sel.Name,
-				})
-				val.Env.Set(n.Sel.Name, placeholder)
-				return placeholder
+				val.Env.Set(n.Sel.Name, unresolvedFn)
+				return unresolvedFn
 			}
 			val.ScannedInfo = pkgInfo
 		}

@@ -66,8 +66,9 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 ## To Be Implemented
 
 
-### `symgo` Engine Improvements ([docs/plan-symgo-refine2.md](./docs/plan-symgo-refine2.md))
-- [x] **Fix Regressions**: Addressed `e2e` test failures in `find-orphans` by generalizing the handling of unresolved functions and fixing an infinite recursion bug.
+### `symgo` Engine Improvements ([docs/plan-symgo-refine.md](./docs/plan-symgo-refine.md))
+- [x] **Fix `not a function` Regression**: Addressed `e2e` test failures in `find-orphans` by generalizing the handling of unresolved functions in external packages.
+- [ ] **Fix Infinite Recursion**: The `find-orphans` tool still fails with an infinite recursion error when analyzing code that uses the `go-scan` library.
 - [ ] **DX: Add Timeout Flag to `find-orphans`**: Add a `--timeout` flag to the `find-orphans` CLI for easier debugging.
 
 

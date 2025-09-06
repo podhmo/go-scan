@@ -79,3 +79,18 @@ The function `ensurePackageEnvPopulated` in `symgo/evaluator/evaluator.go` is re
 An attempt was made to fix `ensurePackageEnvPopulated` by adding logic to evaluate `var` declarations. This immediately hit a roadblock: the `scanner.VariableInfo` struct, which is provided by the `go-scan/scanner` dependency, does not store the necessary `*ast.GenDecl` node required to re-evaluate the variable declaration. It only contains a more generic `ast.Node`, which is likely the `*ast.ValueSpec` for the variable.
 
 This means a complete fix requires changes to the `scanner` package itself to expose the full `*ast.GenDecl` node. The current plan is to modify `scanner.VariableInfo` and the scanner logic to include this information, and then use it in `symgo` to correctly populate package environments. This documentation is being updated to record these findings before proceeding with the cross-package modification.
+
+## Update: The plot thickens - State loss during recursion
+
+The proposed fix in the previous section was implemented.
+1.  `scanner.VariableInfo` was updated to include `*ast.GenDecl`.
+2.  `scanner.Scanner` was updated to populate this field.
+3.  `symgo.Evaluator.ensurePackageEnvPopulated` was updated to iterate over `Variables` and evaluate their `GenDecl`s to populate the package environment.
+
+This successfully resolved the `identifier not found` error for the `count` variable in `TestCrossPackageUnexportedResolution`.
+
+However, this fix revealed a deeper issue. The test now fails with an `infinite recursion detected` error. This is because the state of the `count` variable is not being persisted across the recursive calls to `getSecretMessage`. The symbolic execution engine believes `count` is always `0`, causing the function to call itself endlessly until the recursion check aborts the execution.
+
+A detailed analysis of the environment (`object.Environment`), variable modification (`evalIncDecStmt`), and function application logic (`applyFunction`) did not reveal an obvious cause for this state loss. The environment correctly encloses outer scopes, and the `IncDec` logic appears to modify the variable's value in place.
+
+This indicates a more subtle bug in how state is managed or propagated during recursive calls in the evaluator. The issue remains unresolved pending further investigation.

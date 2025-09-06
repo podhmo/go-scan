@@ -1096,6 +1096,83 @@ func (e *Evaluator) ensurePackageEnvPopulated(ctx context.Context, pkgObj *objec
 		env.SetLocal(f.Name, fnObject)
 	}
 
+	// Populate package-level variables
+	processedDecls := make(map[*ast.GenDecl]bool)
+	for _, varInfo := range pkgInfo.Variables {
+		genDecl := varInfo.GenDecl
+		if genDecl == nil || processedDecls[genDecl] {
+			continue
+		}
+		if !shouldScan && !varInfo.IsExported {
+			// A simple top-level check. If a var is unexported and we are not in a deep-scan
+			// context, we can skip its entire declaration block. This is an optimization.
+			// More granular checks are still performed below.
+			continue
+		}
+		processedDecls[genDecl] = true
+
+		file := pkgInfo.Fset.File(genDecl.Pos())
+		if file == nil {
+			continue
+		}
+		astFile, ok := pkgInfo.AstFiles[file.Name()]
+		if !ok {
+			continue
+		}
+		importLookup := e.scanner.BuildImportLookup(astFile)
+
+		for _, spec := range genDecl.Specs {
+			valSpec, ok := spec.(*ast.ValueSpec)
+			if !ok {
+				continue
+			}
+
+			var staticFieldType *scanner.FieldType
+			if valSpec.Type != nil {
+				staticFieldType = e.scanner.TypeInfoFromExpr(ctx, valSpec.Type, nil, pkgInfo, importLookup)
+			}
+
+			for i, name := range valSpec.Names {
+				if !shouldScan && !name.IsExported() {
+					continue
+				}
+
+				var val object.Object = &object.SymbolicPlaceholder{Reason: "uninitialized variable"}
+				if i < len(valSpec.Values) {
+					// We must use the package's own environment `env` here, not a temporary one.
+					val = e.Eval(ctx, valSpec.Values[i], env, pkgInfo)
+					if isError(val) {
+						e.logc(ctx, slog.LevelWarn, "error evaluating package-level variable initializer", "variable", name.Name, "package", pkgInfo.ImportPath, "error", val)
+						// Fallback to a placeholder on error
+						val = &object.SymbolicPlaceholder{Reason: "variable with evaluation error"}
+					}
+					if ret, ok := val.(*object.ReturnValue); ok {
+						val = ret.Value
+					}
+				}
+
+				var resolvedTypeInfo *scanner.TypeInfo
+				if staticFieldType != nil {
+					resolvedTypeInfo = e.resolver.ResolveType(ctx, staticFieldType)
+				}
+
+				v := &object.Variable{
+					Name:  name.Name,
+					Value: val,
+				}
+				v.SetFieldType(val.FieldType())
+				v.SetTypeInfo(val.TypeInfo())
+				if v.FieldType() == nil {
+					v.SetFieldType(staticFieldType)
+				}
+				if v.TypeInfo() == nil {
+					v.SetTypeInfo(resolvedTypeInfo)
+				}
+				env.Set(name.Name, v)
+			}
+		}
+	}
+
 	// Mark this package as fully populated.
 	e.initializedPkgs[pkgObj.Path] = true
 }

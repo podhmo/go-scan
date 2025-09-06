@@ -507,6 +507,7 @@ func (s *Scanner) parseGenDecl(ctx context.Context, decl *ast.GenDecl, info *Pac
 						Type:       varType,
 						IsExported: name.IsExported(),
 						Node:       name,
+						GenDecl:    decl,
 					}
 					info.Variables = append(info.Variables, varInfo)
 				}

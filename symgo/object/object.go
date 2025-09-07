@@ -176,15 +176,6 @@ func (b *Boolean) Type() ObjectType { return BOOLEAN_OBJ }
 // Inspect returns a string representation of the Boolean's value.
 func (b *Boolean) Inspect() string { return strconv.FormatBool(b.Value) }
 
-var (
-	// TRUE is the singleton true value.
-	TRUE = &Boolean{Value: true}
-	// FALSE is the singleton false value.
-	FALSE = &Boolean{Value: false}
-	// NIL is the singleton nil value.
-	NIL = &Nil{}
-)
-
 // NewInteger creates a new Integer object from the pool.
 func NewInteger(value int64) *Integer {
 	obj := integerPool.Get().(*Integer)
@@ -398,7 +389,7 @@ func (sp *SymbolicPlaceholder) Inspect() string {
 	if sp.cacheValid {
 		return sp.inspectCache
 	}
-	
+
 	var builder strings.Builder
 	builder.WriteString("<Symbolic: ")
 	builder.WriteString(sp.Reason)
@@ -862,6 +853,11 @@ func (uf *UnresolvedFunction) Inspect() string {
 }
 
 // --- Global Instances ---
-
-// Pre-create global instances for common values to save allocations.
-// (NIL is already defined above)
+var (
+	// TRUE is the singleton true value.
+	TRUE = &Boolean{Value: true}
+	// FALSE is the singleton false value.
+	FALSE = &Boolean{Value: false}
+	// NIL is the singleton nil value.
+	NIL = &Nil{}
+)

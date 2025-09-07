@@ -24,6 +24,8 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     - **`scantest`: Path to Import Path Conversion**: Added a `scantest.ToImportPath` helper function (a wrapper around `locator.ResolvePkgPath`) to simplify converting file paths to Go import paths in tests.
     - **In-Memory File Overlay**: Allows providing file content in memory, essential for testing and tools that modify code before scanning.
     - **Debuggability**: Provides `--inspect` and `--dry-run` modes for easier debugging and testing of code generators.
+- **Analysis & Documentation**:
+    - **`symgo` Implementation Analysis**: Conducted a detailed investigation of the `symgo` evaluator's source code and test suite. Confirmed that the implementation of control flow and state management aligns with its documented design as a symbolic tracer, not a standard interpreter. Produced `docs/analysis-symgo-implementation.md` and `summary-symgo.md` to document the findings.
 - **`minigo` Script Engine**: A nearly complete, embeddable script engine that interprets a large subset of Go.
     - **Core Interpreter**: The engine is fully implemented, supporting expressions, variables (`var`, `const`, `iota`), assignments, and all major control flow statements (`if`, `for`, `switch`, `break`, `continue`). It also supports `for...range` over integers (e.g., `for i := range 10`).
     - **Functions and Data Structures**: Supports user-defined functions, rich error reporting with stack traces, and composite types including structs, slices, and maps.

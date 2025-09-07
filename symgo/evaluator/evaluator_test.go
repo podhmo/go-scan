@@ -14,7 +14,7 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
-	scannerv2 "github.com/podhmo/go-scan/scanner"
+	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/scantest"
 	"github.com/podhmo/go-scan/symgo/object"
 )
@@ -27,7 +27,7 @@ func TestEvalIntegerLiteral(t *testing.T) {
 	})
 	defer cleanup()
 
-	action := func(ctx context.Context, s *scannerv2.Scanner, pkgs []*scannerv2.Package) error {
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
 		eval := New(s, s.Logger, nil, nil)
 		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
@@ -62,7 +62,7 @@ func TestEvalStringLiteral(t *testing.T) {
 	})
 	defer cleanup()
 
-	action := func(ctx context.Context, s *scannerv2.Scanner, pkgs []*scannerv2.Package) error {
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
 		eval := New(s, s.Logger, nil, nil)
 		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
@@ -97,7 +97,7 @@ func TestEvalFloatLiteral(t *testing.T) {
 	})
 	defer cleanup()
 
-	action := func(ctx context.Context, s *scannerv2.Scanner, pkgs []*scannerv2.Package) error {
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
 		eval := New(s, s.Logger, nil, nil)
 		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
@@ -134,7 +134,7 @@ var x = 10
 	})
 	defer cleanup()
 
-	action := func(ctx context.Context, s *scannerv2.Scanner, pkgs []*scannerv2.Package) error {
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
 		eval := New(s, s.Logger, nil, nil)
 		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
@@ -171,7 +171,7 @@ func TestApplyFunction_ErrorOnNonCallable(t *testing.T) {
 	})
 	defer cleanup()
 
-	action := func(ctx context.Context, s *scannerv2.Scanner, pkgs []*scannerv2.Package) error {
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
 		eval := New(s, s.Logger, nil, nil)
 		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
@@ -236,7 +236,7 @@ func main() {
 
 	var calledFunctions []string
 
-	action := func(ctx context.Context, s *scannerv2.Scanner, pkgs []*scannerv2.Package) error {
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
 		eval := New(s, s.Logger, nil, nil)
 
@@ -297,7 +297,7 @@ func main() {
 	})
 	defer cleanup()
 
-	action := func(ctx context.Context, s *scannerv2.Scanner, pkgs []*scannerv2.Package) error {
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
 		eval := New(s, s.Logger, nil, nil)
 
@@ -349,7 +349,7 @@ func TestEvalBooleanLiteral(t *testing.T) {
 			})
 			defer cleanup()
 
-			action := func(ctx context.Context, s *scannerv2.Scanner, pkgs []*scannerv2.Package) error {
+			action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 				pkg := pkgs[0]
 				eval := New(s, s.Logger, nil, nil)
 				env := object.NewEnclosedEnvironment(eval.UniverseEnv)
@@ -416,7 +416,7 @@ func TestEvalBuiltinFunctions(t *testing.T) {
 			})
 			defer cleanup()
 
-			action := func(ctx context.Context, s *scannerv2.Scanner, pkgs []*scannerv2.Package) error {
+			action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 				pkg := pkgs[0]
 				eval := New(s, s.Logger, nil, nil)
 				env := object.NewEnclosedEnvironment(eval.UniverseEnv)
@@ -557,7 +557,7 @@ func TestEvalBuiltinFunctionsPlaceholders(t *testing.T) {
 			})
 			defer cleanup()
 
-			action := func(ctx context.Context, s *scannerv2.Scanner, pkgs []*scannerv2.Package) error {
+			action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 				pkg := pkgs[0]
 				eval := New(s, s.Logger, nil, nil)
 				env := object.NewEnclosedEnvironment(eval.UniverseEnv)
@@ -629,7 +629,7 @@ func Do() {
 	var logBuf bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
-	action := func(ctx context.Context, s *scannerv2.Scanner, pkgs []*scannerv2.Package) error {
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		// Use a custom logger to capture output.
 		// The scanner's logger is passed to the evaluator.
 		s.Logger = logger
@@ -706,7 +706,7 @@ func main() {
 
 	var calledFunctions []object.Object
 
-	action := func(ctx context.Context, s *scannerv2.Scanner, pkgs []*scannerv2.Package) error {
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
 		eval := New(s, s.Logger, nil, nil)
 
@@ -764,7 +764,7 @@ func main() {
 
 	var calledFunctions []object.Object
 
-	action := func(ctx context.Context, s *scannerv2.Scanner, pkgs []*scannerv2.Package) error {
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
 		eval := New(s, s.Logger, nil, nil)
 
@@ -832,7 +832,7 @@ func main() {
 
 	var calledPlaceholder *object.SymbolicPlaceholder
 
-	action := func(ctx context.Context, s *scannerv2.Scanner, pkgs []*scannerv2.Package) error {
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
 		eval := New(s, s.Logger, nil, nil)
 
@@ -893,7 +893,7 @@ func main() {
 	dir, cleanup := scantest.WriteFiles(t, files)
 	defer cleanup()
 
-	action := func(ctx context.Context, s *scannerv2.Scanner, pkgs []*scannerv2.Package) error {
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
 		eval := New(s, s.Logger, nil, nil)
 		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
@@ -935,7 +935,7 @@ func main() {
 	})
 	defer cleanup()
 
-	action := func(ctx context.Context, s *scannerv2.Scanner, pkgs []*scannerv2.Package) error {
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
 		allowAll := func(string) bool { return true }
 		eval := New(s, logger, nil, allowAll)
@@ -979,7 +979,7 @@ func TestEvalReturnStatement(t *testing.T) {
 	})
 	defer cleanup()
 
-	action := func(ctx context.Context, s *scannerv2.Scanner, pkgs []*scannerv2.Package) error {
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
 		eval := New(s, s.Logger, nil, nil)
 		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
@@ -1025,7 +1025,7 @@ func TestErrorHandling(t *testing.T) {
 			})
 			defer cleanup()
 
-			action := func(ctx context.Context, s *scannerv2.Scanner, pkgs []*scannerv2.Package) error {
+			action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 				pkg := pkgs[0]
 				eval := New(s, s.Logger, nil, nil)
 				env := object.NewEnclosedEnvironment(eval.UniverseEnv)
@@ -1122,7 +1122,7 @@ func main() {
 				}
 			})
 
-			action := func(ctx context.Context, s *scannerv2.Scanner, pkgs []*scannerv2.Package) error {
+			action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 				pkg := pkgs[0]
 				e := New(s, s.Logger, tracer, nil)
 				env := object.NewEnclosedEnvironment(e.UniverseEnv)
@@ -1187,7 +1187,7 @@ func main() {
 	})
 	defer cleanup()
 
-	action := func(ctx context.Context, s *scannerv2.Scanner, pkgs []*scannerv2.Package) error {
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
 		eval := New(s, s.Logger, nil, nil)
 		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
@@ -1225,7 +1225,7 @@ func add(a, b int) int { return a + b }
 	})
 	defer cleanup()
 
-	action := func(ctx context.Context, s *scannerv2.Scanner, pkgs []*scannerv2.Package) error {
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
 		eval := New(s, s.Logger, nil, nil)
 		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
@@ -1260,7 +1260,7 @@ func add(a, b int) int { return a + b }
 	})
 	defer cleanup()
 
-	action := func(ctx context.Context, s *scannerv2.Scanner, pkgs []*scannerv2.Package) error {
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
 		eval := New(s, s.Logger, nil, nil)
 		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
@@ -1310,7 +1310,7 @@ func main() {
 	})
 	defer cleanup()
 
-	action := func(ctx context.Context, s *scannerv2.Scanner, pkgs []*scannerv2.Package) error {
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
 		eval := New(s, s.Logger, nil, nil)
 		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
@@ -1400,7 +1400,7 @@ func main() {
 
 	var calledFunctions []object.Object
 
-	action := func(ctx context.Context, s *scannerv2.Scanner, pkgs []*scannerv2.Package) error {
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
 		eval := New(s, s.Logger, nil, nil)
 

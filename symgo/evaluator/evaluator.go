@@ -1233,10 +1233,20 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 				return method
 			}
 			if typeInfo.Unresolved {
-				return &object.SymbolicPlaceholder{
+				placeholder := &object.SymbolicPlaceholder{
 					Reason:   fmt.Sprintf("symbolic method call %s on unresolved symbolic type %s", n.Sel.Name, typeInfo.Name),
 					Receiver: val,
 				}
+				// Try to find method in interface definition if available
+				if typeInfo.Interface != nil {
+					for _, method := range typeInfo.Interface.Methods {
+						if method.Name == n.Sel.Name {
+							placeholder.UnderlyingMethod = method
+							break
+						}
+					}
+				}
+				return placeholder
 			}
 
 			// If it's not a method, check if it's a field on the struct (including embedded).
@@ -1247,7 +1257,12 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 			}
 		}
 
-		return e.newError(ctx, n.Pos(), "undefined method or field: %s on symbolic type %s", n.Sel.Name, val.Inspect())
+		// For symbolic placeholders, don't error - return another placeholder
+		// This allows analysis to continue even when types are unresolved
+		return &object.SymbolicPlaceholder{
+			Reason:   fmt.Sprintf("method or field %s on symbolic type %s", n.Sel.Name, val.Inspect()),
+			Receiver: val,
+		}
 
 	case *object.Package:
 		if val.ScannedInfo == nil {
@@ -1453,12 +1468,25 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 
 	case *object.Nil:
 		// Nil can have methods in Go (e.g., interface with nil value).
-		// Try to find type information from the NIL object
-		// Return a symbolic method that can be called
-		return &object.SymbolicPlaceholder{
+		// Check if we have type information for this nil (it might be a typed nil interface)
+		placeholder := &object.SymbolicPlaceholder{
 			Reason: fmt.Sprintf("method %s on nil", n.Sel.Name),
 		}
 		
+		// If the NIL has type information (e.g., it's a typed interface nil),
+		// try to find the method in the interface definition
+		if left.TypeInfo() != nil && left.TypeInfo().Interface != nil {
+			for _, method := range left.TypeInfo().Interface.Methods {
+				if method.Name == n.Sel.Name {
+					placeholder.UnderlyingMethod = method
+					placeholder.Receiver = left
+					break
+				}
+			}
+		}
+		
+		return placeholder
+	
 	default:
 		return e.newError(ctx, n.Pos(), "expected a package, instance, or pointer on the left side of selector, but got %s", left.Type())
 	}
@@ -3020,20 +3048,10 @@ func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, 
 			}
 
 			if name.Name != "_" {
-				v := &object.Variable{
-					Name:        name.Name,
-					Value:       arg,
-					IsEvaluated: true, // Mark as evaluated since arg is already a concrete value
-				}
-
-				// Prioritize the dynamic type from the provided argument.
-				v.SetFieldType(arg.FieldType())
-				v.SetTypeInfo(arg.TypeInfo())
-
-				// Get the static type from the function signature to enrich the variable if needed.
+				// Get the static type from the function signature first
 				var staticFieldType *scanner.FieldType
 				var staticTypeInfo *scanner.TypeInfo
-
+				
 				// Evaluate the type expression in the context of the current environment,
 				// which may contain type parameter bindings.
 				typeObj := e.Eval(ctx, field.Type, env, fn.Package)
@@ -3056,6 +3074,23 @@ func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, 
 						staticTypeInfo = e.resolver.ResolveType(ctx, staticFieldType)
 					}
 				}
+				
+				// If the argument is NIL and we have static type info, preserve it
+				if nilObj, ok := arg.(*object.Nil); ok && staticFieldType != nil {
+					// Set type information on the NIL object
+					nilObj.SetFieldType(staticFieldType)
+					nilObj.SetTypeInfo(staticTypeInfo)
+				}
+				
+				v := &object.Variable{
+					Name:        name.Name,
+					Value:       arg,
+					IsEvaluated: true, // Mark as evaluated since arg is already a concrete value
+				}
+
+				// Prioritize the dynamic type from the provided argument.
+				v.SetFieldType(arg.FieldType())
+				v.SetTypeInfo(arg.TypeInfo())
 
 				if staticFieldType != nil {
 					if v.FieldType() == nil {

@@ -40,8 +40,8 @@ type Scanner struct {
 	mu                       sync.Mutex
 }
 
-// FileSet returns the underlying token.FileSet used by the scanner.
-func (s *Scanner) FileSet() *token.FileSet {
+// Fset returns the underlying token.FileSet used by the scanner.
+func (s *Scanner) Fset() *token.FileSet {
 	return s.fset
 }
 

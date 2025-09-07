@@ -2621,10 +2621,10 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 		// 	}
 		// }
 
-		// if isRecursive {
-		// 	e.logc(ctx, slog.LevelWarn, "infinite recursion detected", "function", name)
-		// 	return e.newError(ctx, callPos, "infinite recursion detected: %s", name)
-		// }
+		if isRecursive {
+			e.logc(ctx, slog.LevelWarn, "infinite recursion detected", "function", name)
+			return e.newError(ctx, callPos, "infinite recursion detected: %s", name)
+		}
 	}
 
 	frame := &callFrame{Function: name, Pos: callPos}
@@ -2696,14 +2696,6 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 		// Treat it as an external call and create a symbolic result based on its signature.
 		if fn.Body == nil {
 			return e.createSymbolicResultForFunc(ctx, fn)
-		}
-
-		// When calling a function, ensure its defining package's environment is fully populated.
-		if fn.Package != nil {
-			pkgObj, err := e.getOrLoadPackage(ctx, fn.Package.ImportPath)
-			if err == nil {
-				e.ensurePackageEnvPopulated(ctx, pkgObj)
-			}
 		}
 
 		// Check the scan policy before executing the body.

@@ -50,7 +50,15 @@ The engine includes sophisticated handling for function calls to support deep an
 
 - **Anonymous Functions as Arguments**: The engine has a special heuristic to immediately "pre-scan" the body of any anonymous function passed as an argument to another call. This allows it to discover usages inside the anonymous function, which is critical for cases like `t.Run("name", func(t *testing.T) { ... })`, where the call to `t.Run` itself may not be deeply analyzed.
 
-## 6. Key Use Cases and Driving Requirements
+## 6. Method Resolution
+
+The engine correctly models Go's rules for method resolution to support accurate call graph tracing.
+
+- **Embedded Methods**: The engine performs a recursive, depth-first search to find methods on embedded types. This correctly simulates Go's method promotion, allowing calls like `myStruct.EmbeddedMethod()` to be resolved correctly.
+
+- **Interface Methods**: Calls on interface-typed variables are handled symbolically. The engine does not perform dynamic dispatch. Instead, it traces the call to the method on the interface definition itself and produces a symbolic placeholder for the result, typed according to the interface method's signature. This provides the necessary information for analysis tools without the complexity of tracking all possible concrete implementations at the call site.
+
+## 7. Key Use Cases and Driving Requirements
 
 The design of `symgo` is directly driven by the needs of its consumer tools.
 

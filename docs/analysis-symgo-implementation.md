@@ -74,6 +74,14 @@ The engine's ability to handle dependencies is managed through a clear separatio
 
 - **Scan Policy**: The `Resolver` holds a `ScanPolicyFunc`, which allows the user of the `symgo` library to define which packages should be deeply analyzed (by parsing their function bodies) and which should be treated as symbolic dependencies (where function bodies are ignored). This is the mechanism that implements the "Intra-Module vs. Extra-Module" evaluation strategy described in the design documents.
 
+### 2.8. Method Call Resolution
+
+The engine has robust support for resolving method calls, including on interfaces and embedded types.
+
+- **Embedded Method Calls (`accessor.go`)**: The `accessor` component implements a recursive, depth-first search to find methods on embedded types. When resolving a method call on a struct, it first checks for methods on the struct itself. If none is found, it iterates through the struct's embedded fields and recursively searches on their types. This correctly models Go's method promotion rules.
+
+- **Interface Method Calls (`evalSelectorExpr`, `applyFunction`)**: A call to an interface method is handled in a purely symbolic way. The engine does not attempt to perform dynamic dispatch to a concrete type. Instead, `evalSelectorExpr` resolves the call to the method signature on the interface definition itself. Then, `applyFunction` recognizes this as a call to a symbolic interface method and returns a `SymbolicPlaceholder` representing the method's return value(s), correctly typed according to the signature. This is a crucial design choice for static analysis, where the concrete type of an interface is often unknown.
+
 ## 3. Test Code Analysis
 
 The tests in `symgo/evaluator/` confirm the non-interpreter behavior.
@@ -113,6 +121,8 @@ Based on a review of the test files in `symgo/evaluator/`, the test suite is con
 | `evaluator_nested_block_test.go` | Confirms that function calls inside nested blocks are traced and that variable shadowing and assignment follow correct lexical scoping rules. | **Aligned** |
 | `symgo_intramodule_test.go` | Verifies that calls to other packages within the same module are recursively evaluated. | **Mostly Aligned** |
 | `symgo_extramodule_test.go` | Verifies that calls to external modules are treated as symbolic placeholders and not evaluated. | **Aligned** |
+| `evaluator_interface_method_test.go` | Confirms that interface method calls are not dynamically dispatched, but are traced symbolically, and that all possible concrete types are tracked. | **Aligned** |
+| `evaluator_embedded_method_test.go` | Verifies that the engine correctly resolves method calls on embedded structs, following Go's promotion rules. | **Aligned** |
 
 ### Summary of Test Philosophy
 

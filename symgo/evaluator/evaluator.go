@@ -982,6 +982,34 @@ func (e *Evaluator) evalFile(ctx context.Context, file *ast.File, env *object.En
 	// Populate package-level constants and functions once per package.
 	e.ensurePackageEnvPopulated(ctx, &object.Package{Path: pkg.ImportPath, ScannedInfo: pkg, Env: targetEnv})
 
+	// Pre-populate the environment with all imported packages for this file.
+	// This ensures that when evalIdent encounters an identifier, it can resolve
+	// it if it's a package name from an import.
+	for _, imp := range file.Imports {
+		importPath, err := strconv.Unquote(imp.Path.Value)
+		if err != nil {
+			continue // Should not happen with valid Go code
+		}
+		pkgObj, err := e.getOrLoadPackage(ctx, importPath)
+		if err != nil || pkgObj == nil {
+			e.logc(ctx, slog.LevelWarn, "could not load imported package", "path", importPath, "error", err)
+			continue
+		}
+
+		var localName string
+		if imp.Name != nil {
+			// Import has an alias, e.g., `import y "gopkg.in/yaml.v3"`
+			localName = imp.Name.Name
+		} else if pkgObj.ScannedInfo != nil {
+			// No alias, use the package's actual name, e.g., `import "gopkg.in/yaml.v3"` -> name is "yaml"
+			localName = pkgObj.ScannedInfo.Name
+		}
+
+		if localName != "" && localName != "." { // Don't register dot imports globally here
+			targetEnv.Set(localName, pkgObj)
+		}
+	}
+
 	for _, decl := range file.Decls {
 		switch d := decl.(type) {
 		case *ast.GenDecl:
@@ -1103,62 +1131,61 @@ func (e *Evaluator) ensurePackageEnvPopulated(ctx context.Context, pkgObj *objec
 		env.SetLocal(c.Name, constObj)
 	}
 
-	// Populate variables (lazily)
-	for _, v := range pkgInfo.Variables {
-		if !shouldScan && !v.IsExported {
-			continue
-		}
-		if v.GenDecl == nil {
-			continue
-		}
-
-		// A single var declaration can have multiple specs (e.g., var ( a=1; b=2 )).
-		// We need to find the right spec for the current variable `v`.
-		for _, spec := range v.GenDecl.Specs {
-			if vs, ok := spec.(*ast.ValueSpec); ok {
-				// Check if this spec contains our variable `v.Name`.
-				var valueIndex = -1
-				for i, nameIdent := range vs.Names {
-					if nameIdent.Name == v.Name {
-						valueIndex = i
+	// To populate the environment, iterate over the AST declarations directly.
+	// This is more robust than iterating over the pre-parsed FunctionInfo/VariableInfo lists.
+	for _, fileAst := range pkgInfo.AstFiles {
+		for _, decl := range fileAst.Decls {
+			switch d := decl.(type) {
+			case *ast.FuncDecl:
+				if !shouldScan && !d.Name.IsExported() {
+					continue
+				}
+				// Find the corresponding FunctionInfo to get the full definition.
+				var funcInfo *scanner.FunctionInfo
+				for _, f := range pkgInfo.Functions {
+					if f.AstDecl == d {
+						funcInfo = f
 						break
 					}
 				}
+				if funcInfo != nil {
+					fnObject := e.resolver.ResolveFunction(pkgObj, funcInfo)
+					env.SetLocal(d.Name.Name, fnObject)
+				}
 
-				// If we found our variable in this spec, determine its initializer.
-				if valueIndex != -1 {
-					var initializer ast.Expr
-					// Case 1: var a, b = 1, 2 (1-to-1 mapping)
-					if len(vs.Values) == len(vs.Names) {
-						initializer = vs.Values[valueIndex]
-					}
-					// Case 2: var a, b = f() (multi-value return from a single call)
-					if len(vs.Values) == 1 {
-						initializer = vs.Values[0]
-					}
-					// Case 3: var a, b string (no initializer) -> initializer remains nil.
+			case *ast.GenDecl:
+				switch d.Tok {
+				case token.VAR:
+					for _, spec := range d.Specs {
+						if vs, ok := spec.(*ast.ValueSpec); ok {
+							for i, name := range vs.Names {
+								if !shouldScan && !name.IsExported() {
+									continue
+								}
+								var initializer ast.Expr
+								// Handle cases like `var a,b = f()` where one call provides multiple values.
+								if len(vs.Values) == 1 && len(vs.Names) > 1 {
+									initializer = vs.Values[0]
+								} else if len(vs.Values) > i {
+									initializer = vs.Values[i]
+								}
 
-					lazyVar := &object.Variable{
-						Name:        v.Name,
-						IsEvaluated: false,
-						Initializer: initializer,
-						DeclEnv:     env,
-						DeclPkg:     pkgInfo,
+								lazyVar := &object.Variable{
+									Name:        name.Name,
+									IsEvaluated: false,
+									Initializer: initializer,
+									DeclEnv:     env,
+									DeclPkg:     pkgInfo,
+								}
+								env.SetLocal(name.Name, lazyVar)
+							}
+						}
 					}
-					env.SetLocal(v.Name, lazyVar)
-					break // Found the right spec, move to the next variable in pkgInfo.Variables
+				case token.TYPE:
+					e.evalTypeDecl(ctx, d, env, pkgInfo)
 				}
 			}
 		}
-	}
-
-	// Populate functions
-	for _, f := range pkgInfo.Functions {
-		if !shouldScan && !ast.IsExported(f.Name) {
-			continue
-		}
-		fnObject := e.resolver.ResolveFunction(pkgObj, f)
-		env.SetLocal(f.Name, fnObject)
 	}
 
 	// Mark this package as fully populated.
@@ -1176,6 +1203,20 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 	// Unwrap the result if it's a return value from a previous call in a chain.
 	if ret, ok := leftObj.(*object.ReturnValue); ok {
 		leftObj = ret.Value
+	}
+
+	// If the left side is a variable, check if it's an interface method call
+	// *before* force-evaluating it. This preserves the interface context.
+	if v, ok := leftObj.(*object.Variable); ok {
+		if typeInfo := v.TypeInfo(); typeInfo != nil && typeInfo.Kind == scanner.InterfaceKind {
+			if method, found := typeInfo.FindMethod(n.Sel.Name); found {
+				return &object.SymbolicPlaceholder{
+					Reason:           fmt.Sprintf("interface method call %s", n.Sel.Name),
+					UnderlyingMethod: method,
+					Receiver:         v, // The receiver is the interface variable itself.
+				}
+			}
+		}
 	}
 
 	// We must fully evaluate the left-hand side before trying to select a field or method from it.

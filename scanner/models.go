@@ -170,6 +170,20 @@ func (ti *TypeInfo) Annotation(ctx context.Context, name string) (value string, 
 	return searchValue, found
 }
 
+// FindMethod searches for a method by name within an interface type.
+// It returns the method information and true if found, otherwise nil and false.
+func (ti *TypeInfo) FindMethod(name string) (*MethodInfo, bool) {
+	if ti.Kind != InterfaceKind || ti.Interface == nil {
+		return nil, false
+	}
+	for _, m := range ti.Interface.Methods {
+		if m.Name == name {
+			return m, true
+		}
+	}
+	return nil, false
+}
+
 // searchAnnotation is the core logic for finding an annotation, separated to keep the main Annotation method clean.
 func (ti *TypeInfo) searchAnnotation(name string) (value string, ok bool) {
 	if ti.Doc == "" {

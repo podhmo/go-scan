@@ -1198,7 +1198,7 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 		return left
 	}
 
-	e.logger.Debug("evalSelectorExpr: evaluated left", "type", left.Type(), "value", left.Inspect())
+	e.logger.Debug("evalSelectorExpr: evaluated left", "type", left.Type(), "value", inspectValuer{left})
 
 	switch val := left.(type) {
 	case *object.SymbolicPlaceholder:
@@ -2259,7 +2259,7 @@ func (e *Evaluator) forceEval(ctx context.Context, obj object.Object, pkg *scann
 func (e *Evaluator) evalVariable(ctx context.Context, v *object.Variable, pkg *scanner.PackageInfo) object.Object {
 	e.logger.DebugContext(ctx, "evalVariable: start", "var", v.Name, "is_evaluated", v.IsEvaluated)
 	if v.IsEvaluated {
-		e.logger.DebugContext(ctx, "evalVariable: already evaluated, returning cached value", "var", v.Name, "value_type", v.Value.Type(), "value", v.Value.Inspect())
+		e.logger.DebugContext(ctx, "evalVariable: already evaluated, returning cached value", "var", v.Name, "value_type", v.Value.Type(), "value", inspectValuer{v.Value})
 		return v.Value
 	}
 
@@ -2288,7 +2288,7 @@ func (e *Evaluator) evalVariable(ctx context.Context, v *object.Variable, pkg *s
 	}
 	v.Value = val
 	v.IsEvaluated = true
-	e.logger.DebugContext(ctx, "evalVariable: finished evaluation", "var", v.Name, "value_type", val.Type(), "value", val.Inspect())
+	e.logger.DebugContext(ctx, "evalVariable: finished evaluation", "var", v.Name, "value_type", val.Type(), "value", inspectValuer{val})
 	return val
 }
 
@@ -2302,11 +2302,11 @@ func (e *Evaluator) evalIdent(ctx context.Context, n *ast.Ident, env *object.Env
 	}
 
 	if val, ok := env.Get(n.Name); ok {
-		e.logger.Debug("evalIdent: found in env", "name", n.Name, "type", val.Type(), "val", val.Inspect())
+		e.logger.Debug("evalIdent: found in env", "name", n.Name, "type", val.Type(), "val", inspectValuer{val})
 		if v, ok := val.(*object.Variable); ok {
 			e.logger.Debug("evalIdent: identifier is a variable, evaluating it", "name", n.Name)
 			evaluatedValue := e.evalVariable(ctx, v, pkg)
-			e.logger.Debug("evalIdent: evaluated variable", "name", n.Name, "type", evaluatedValue.Type(), "value", evaluatedValue.Inspect())
+			e.logger.Debug("evalIdent: evaluated variable", "name", n.Name, "type", evaluatedValue.Type(), "value", inspectValuer{evaluatedValue})
 			return evaluatedValue
 		}
 		return val
@@ -2608,6 +2608,9 @@ type inspectValuer struct {
 }
 
 func (v inspectValuer) LogValue() slog.Value {
+	if v.obj == nil {
+		return slog.StringValue("<nil>")
+	}
 	return slog.StringValue(v.obj.Inspect())
 }
 

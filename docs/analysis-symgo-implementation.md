@@ -82,6 +82,31 @@ The engine has robust support for resolving method calls, including on interface
 
 - **Interface Method Calls (`evalSelectorExpr`, `applyFunction`)**: A call to an interface method is handled in a purely symbolic way. The engine does not attempt to perform dynamic dispatch to a concrete type. Instead, `evalSelectorExpr` resolves the call to the method signature on the interface definition itself. Then, `applyFunction` recognizes this as a call to a symbolic interface method and returns a `SymbolicPlaceholder` representing the method's return value(s), correctly typed according to the signature. This is a crucial design choice for static analysis, where the concrete type of an interface is often unknown.
 
+### 2.9. Other Evaluated Expressions
+
+The engine selectively evaluates expressions to find function calls, prioritizing discovery over computation.
+
+- **Composite Literals (`evalCompositeLit`)**: When evaluating struct or map literals, the engine traverses all key-value pairs. It recursively calls `Eval` on the value expressions (e.g., `Value` in `Field: Value`) and, for maps, on the key expressions as well. This ensures that any function calls used to generate field values or map keys are discovered.
+
+- **Control Flow Conditions**:
+    - **`if` and `switch`**: The condition expressions are evaluated to trace any function calls within them.
+    - **`for`**: The condition expression of a `for` loop is **not** evaluated. This is a deliberate design choice to avoid the complexity and potential for non-termination involved in analyzing loop conditions. The engine favors a simpler "unroll once" strategy for loops.
+
+### 2.10. `defer` and `go` Statement Handling
+
+`defer` and `go` statements are handled in a simple, pragmatic way that is aligned with the tracer's goals.
+
+- **Behavior**: The `evalDeferStmt` and `evalGoStmt` functions do not model the special runtime semantics of deferred or concurrent execution. They simply extract the `CallExpr` from the statement and evaluate it directly.
+- **Alignment**: This approach correctly adds the deferred or concurrent function call to the call graph, which is the primary goal for tools like `find-orphans`. It avoids the immense complexity of simulating schedulers or execution order.
+
+### 2.11. Pointer Operations
+
+The engine correctly models pointer referencing and dereferencing to enable analysis of pointer-based code.
+
+- **Reference (`&`)**: The `&` operator is handled in `evalUnaryExpr`. It evaluates the operand, then wraps the resulting object in a new `object.Pointer`. It also correctly constructs the corresponding pointer type information, ensuring type safety is maintained.
+
+- **Dereference (`*`)**: The `*` operator is handled in `evalStarExpr`. It evaluates the operand to get a pointer object. If it's a concrete `object.Pointer`, it returns the `Value` the pointer points to. Crucially, if it's a `SymbolicPlaceholder` representing a pointer, it does not fail; instead, it returns a *new* symbolic placeholder representing the element type. This allows analysis to continue through chains of pointer dereferences even when the concrete values are not known.
+
 ## 3. Test Code Analysis
 
 The tests in `symgo/evaluator/` confirm the non-interpreter behavior.
@@ -116,13 +141,15 @@ Based on a review of the test files in `symgo/evaluator/`, the test suite is con
 | `evaluator_channel_concrete_test.go` | Verifies that `make(chan T)` produces a correctly typed channel object and that a receive `<-ch` produces a correctly typed symbolic placeholder. | **Aligned** |
 | `evaluator_complex_test.go` | Tests evaluation of arithmetic expressions on complex number literals. | **Mostly Aligned** |
 | `evaluator_typeswitch_test.go` | Verifies that the evaluator explores all branches of a `type switch` and correctly handles scoping within each `case`. | **Aligned** |
-| `evaluator_test.go` | A general test file. The `TestEvalClosures` test is notable for confirming that the engine correctly models lexical scoping for closures. | **Mostly Aligned** |
+| `evaluator_test.go` | A general test file. Contains tests confirming that calls in `defer` and `go` statements are traced, and that closures are handled correctly. | **Aligned** |
 | `evaluator_variable_test.go` | Tests the basic mechanics of `var` declaration and reassignment. | **Mostly Aligned** |
 | `evaluator_nested_block_test.go` | Confirms that function calls inside nested blocks are traced and that variable shadowing and assignment follow correct lexical scoping rules. | **Aligned** |
 | `symgo_intramodule_test.go` | Verifies that calls to other packages within the same module are recursively evaluated. | **Mostly Aligned** |
 | `symgo_extramodule_test.go` | Verifies that calls to external modules are treated as symbolic placeholders and not evaluated. | **Aligned** |
 | `evaluator_interface_method_test.go` | Confirms that interface method calls are not dynamically dispatched, but are traced symbolically, and that all possible concrete types are tracked. | **Aligned** |
 | `evaluator_embedded_method_test.go` | Verifies that the engine correctly resolves method calls on embedded structs, following Go's promotion rules. | **Aligned** |
+| `evaluator_composite_literal_test.go` | Confirms that function calls within the keys and values of struct/map literals are traced. | **Aligned** |
+| `evaluator_unary_expr_test.go` | Verifies that pointer dereferences on symbolic pointers are handled gracefully, and that basic unary operations on literals are evaluated. | **Aligned** |
 
 ### Summary of Test Philosophy
 

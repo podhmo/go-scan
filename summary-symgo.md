@@ -42,6 +42,8 @@ The engine's model for state and scope is fundamental to its operation and is de
     -   **Default (In-Place Update)**: For most assignments (`v = ...`), the engine finds the variable `v` in its defining scope and updates its value in-place.
     -   **Interface (Additive Update)**: This is a key innovation. If the static type of `v` is an `interface`, an assignment **adds the concrete type** of the right-hand side to a running set of `PossibleTypes` on the variable object. This allows the engine to aggregate all possible concrete types an interface variable might hold across different control flow paths.
 
+-   **Pointer Handling**: The engine correctly models pointer referencing (`&`) and dereferencing (`*`). It is robust enough to handle dereferencing a symbolic pointer, producing a new symbolic placeholder of the correct underlying type, which allows analysis to continue without requiring concrete values.
+
 ## 5. Function and Call Handling
 
 The engine includes sophisticated handling for function calls to support deep analysis.
@@ -50,7 +52,14 @@ The engine includes sophisticated handling for function calls to support deep an
 
 - **Anonymous Functions as Arguments**: The engine has a special heuristic to immediately "pre-scan" the body of any anonymous function passed as an argument to another call. This allows it to discover usages inside the anonymous function, which is critical for cases like `t.Run("name", func(t *testing.T) { ... })`, where the call to `t.Run` itself may not be deeply analyzed.
 
-## 6. Method Resolution
+## 6. Other Language Features
+
+The engine handles other Go constructs in a way that prioritizes call graph discovery.
+
+- **Expressions in Literals and Conditions**: The engine recursively evaluates expressions found in struct/map literal fields and in the condition clauses of `if`/`switch` statements. This ensures function calls in these positions are traced. For performance and simplicity, it deliberately does *not* evaluate the condition of `for` loops.
+- **`defer` and `go` Statements**: The engine traces the function calls within `defer` and `go` statements but does not model their special runtime semantics (deferred or concurrent execution). This is sufficient for static analysis tools that are primarily concerned with the call graph.
+
+## 7. Method Resolution
 
 The engine correctly models Go's rules for method resolution to support accurate call graph tracing.
 

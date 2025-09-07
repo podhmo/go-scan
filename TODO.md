@@ -64,21 +64,14 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - **`symgo`: Shallow Scanning**: The `symgo` evaluator is now more robust and performant when dealing with types from packages outside the defined scan policy. It can now create symbolic placeholders for unresolved types, allowing analysis to continue without crashing and enabling symbolic tracing of method calls on these types. This significantly improves the accuracy of tools like `find-orphans` when analyzing code with external dependencies. ([docs/plan-symgo-shallow-scan.md](./docs/plan-symgo-shallow-scan.md))
 - **`symgo`: Field Access on Symbolic Receivers**: The `symgo` evaluator can now correctly access struct fields on symbolic receivers (e.g., a receiver of a method that is the entry point of analysis). This fixes a bug where field access was incorrectly failing with an "undefined method" error, particularly on structs that use `_ struct{}` to enforce keyed literals.
 - **`go-scan`: Declarations-Only Scanning**: Added a `WithDeclarationsOnlyPackages` option to the `goscan.Scanner`. For packages specified with this option, the scanner parses all top-level declarations (types, functions, variables) but explicitly discards function bodies. This allows tools like `docgen` to obtain necessary type information from packages like `net/http` without incurring the cost and complexity of symbolically executing their entire implementation. This provides a significant performance and stability improvement for analyzing code that depends on large standard library packages.
-
+- **`symgo`: Fix Cross-Package Unexported Symbol Resolution**: A major effort to fix a cascade of regressions in the `symgo` evaluator caused by a new lazy evaluation mechanism. The core issues related to variable evaluation, function calls, and pointer dispatch have been resolved, and all tests in the `symgo` and `symgo/evaluator` packages are now passing.
 
 ## To Be Implemented
 
-
-### symgo: Fix Cross-Package Unexported Symbol Resolution ([docs/trouble-symgo-nested-scope.md](./docs/trouble-symgo-nested-scope.md))
-- [x] Evaluate package-level var declarations in `ensurePackageEnvPopulated` to fix "identifier not found" errors for unexported symbols.
-- [x] Fix regressions caused by the lazy-evaluation implementation. The core regressions related to variable evaluation, pointer dispatch, and recursion detection have been resolved.
-- [-] Fix `find-orphans` incorrectly reporting `formatCode` as an orphan in the `examples/convert` project. (Note: This is a known regression, see `docs/trouble-symgo-refine.md`).
-  - **Status**: The underlying evaluation engine bugs that caused most `find-orphans` failures have been fixed.
-  - **Remaining**: Failures persist in `TestFindOrphans_ShallowScan_UnresolvedInterfaceMethodCall` and `TestFindOrphans_SubtestUsage`, indicating issues with interface method tracing and analysis of function literals passed to test runners.
+### `symgo` Engine Regressions and Refinements
+- [ ] Fix `find-orphans` incorrectly reporting `formatCode` as an orphan in the `examples/convert` project. (Note: This is a known regression, see `docs/trouble-symgo-refine.md`).
+- [ ] Fix remaining `find-orphans` test failures related to interface method resolution and function literals (`TestFindOrphans_ShallowScan_UnresolvedInterfaceMethodCall`, `TestFindOrphans_SubtestUsage`).
 - [ ] Deeper state-management issues related to package-level variables in recursive calls remain, as seen in `TestCrossPackageUnexportedResolution`.
-
-### `symgo` Engine Improvements ([docs/plan-symgo-refine2.md](./docs/plan-symgo-refine2.md))
-- [x] **Fix Regressions**: Addressed `e2e` test failures in `find-orphans` by generalizing the handling of unresolved functions and fixing an infinite recursion bug.
 - [ ] **Trace calls in `for` loop conditions**: Enhance `evalForStmt` to evaluate the `Cond` expression (without using its result for branching) to trace function calls, similar to how `if` conditions are handled. This would improve call graph completeness.
 - [ ] **DX: Add Timeout Flag to `find-orphans`**: Add a `--timeout` flag to the `find-orphans` CLI for easier debugging.
 

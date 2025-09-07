@@ -2247,13 +2247,6 @@ func (e *Evaluator) evalVariable(ctx context.Context, v *object.Variable, pkg *s
 	if isError(val) {
 		return val
 	}
-
-	// If the initializer was a function call, it will return a ReturnValue.
-	// We must unwrap it to get the actual value for the variable, just like in evalGenDecl.
-	if ret, ok := val.(*object.ReturnValue); ok {
-		val = ret.Value
-	}
-
 	v.Value = val
 	v.IsEvaluated = true
 	e.logger.DebugContext(ctx, "evalVariable: finished evaluation", "var", v.Name, "value_type", val.Type(), "value", val.Inspect())
@@ -3008,9 +3001,8 @@ func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, 
 
 			if name.Name != "_" {
 				v := &object.Variable{
-					Name:        name.Name,
-					Value:       arg,
-					IsEvaluated: true, // Parameters are eagerly evaluated.
+					Name:  name.Name,
+					Value: arg,
 				}
 
 				// Prioritize the dynamic type from the provided argument.

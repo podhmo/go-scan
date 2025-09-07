@@ -2,6 +2,23 @@
 
 This document outlines the progress, challenges, and next steps for the task of refactoring the `symgo` evaluator to support dynamic interface resolution. The goal is to provide enough context for a developer to continue this work efficiently.
 
+## 0. Initial Prompt
+
+The task was initiated with the following request:
+
+> symgoのevaluatorのinterfaceの解決の仕組みを動的にしたいです。
+> 現状の実装では実行時にmethod callが解決できないといけないので、ifaceの利用箇所が先にあった場合に解決できません。
+> これを解決するために、method callの解決を遅延させる仕組みを追加してください。
+>
+> まずは`symgo/evaluator/evaluator_test.go`の`TestInterfaceResolution_Order_Iface_Impl_User`のskipを外してテストを動かすところから始めてください。
+
+**Translation:**
+> I want to make the interface resolution mechanism in symgo's evaluator dynamic.
+> With the current implementation, method calls must be resolvable at runtime, so it cannot resolve cases where the interface is used before it is implemented.
+> To solve this, please add a mechanism to delay the resolution of method calls.
+>
+> First, please start by removing the skip from `TestInterfaceResolution_Order_Iface_Impl_User` in `symgo/evaluator/evaluator_test.go` and running the test.
+
 ## 1. Goal
 
 The primary objective is to make the `symgo` evaluator capable of resolving method calls on interfaces where the concrete implementation is assigned to the interface variable *after* the method call is symbolically evaluated. This requires deferring the resolution of the interface method call until a concrete type is assigned.

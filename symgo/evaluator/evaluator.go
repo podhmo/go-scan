@@ -287,12 +287,11 @@ func (e *Evaluator) Eval(ctx context.Context, node ast.Node, env *object.Environ
 }
 
 func (e *Evaluator) evalIncDecStmt(ctx context.Context, n *ast.IncDecStmt, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
+	// Evaluate the expression to trace any calls, but we need the identifier.
 	ident, ok := n.X.(*ast.Ident)
 	if !ok {
-		// Fallback for complex expressions, though Inc/Dec usually applies to simple identifiers.
-		// We just evaluate it for its side effects (tracing calls) and move on.
 		e.Eval(ctx, n.X, env, pkg)
-		return nil
+		return nil // Cannot perform state change on complex expression.
 	}
 
 	obj, ok := env.Get(ident.Name)
@@ -305,38 +304,36 @@ func (e *Evaluator) evalIncDecStmt(ctx context.Context, n *ast.IncDecStmt, env *
 		return e.newError(ctx, n.Pos(), "cannot increment/decrement non-variable: %s", ident.Name)
 	}
 
-	// Ensure the variable is initialized and get its current value.
 	val := e.evalVariable(ctx, variable, pkg)
 	if isError(val) {
 		return val
 	}
 
+	var newInt int64
 	switch v := val.(type) {
 	case *object.Integer:
-		newVal := v.Value
-		switch n.Tok {
-		case token.INC:
-			newVal++
-		case token.DEC:
-			newVal--
-		}
-		// Crucially, update the Value field on the *Variable* object itself.
-		variable.Value = &object.Integer{Value: newVal}
-
+		newInt = v.Value
 	case *object.SymbolicPlaceholder:
-		var newInt int64
-		switch n.Tok {
-		case token.INC:
-			newInt = 1
-		case token.DEC:
-			newInt = -1
-		}
-		// Update the variable in the environment to hold the new concrete integer value.
-		variable.Value = &object.Integer{Value: newInt}
+		// If it's a placeholder, we can treat it as starting from 0.
+		newInt = 0
+	default:
+		// For other types, we can't meaningfully inc/dec.
+		return nil
 	}
-	// If val is not an Integer or a placeholder we can handle, we do nothing.
-	env.Set(ident.Name, variable)
-	return nil // IncDec is a statement, so it doesn't return a value.
+
+	switch n.Tok {
+	case token.INC:
+		newInt++
+	case token.DEC:
+		newInt--
+	}
+
+	// Update the variable's value in place.
+	variable.Value = &object.Integer{Value: newInt}
+	// Also mark it as evaluated, since it now has a concrete value.
+	variable.IsEvaluated = true
+	// No need to call env.Set here because we have modified the object in place.
+	return nil
 }
 
 func (e *Evaluator) evalIndexExpr(ctx context.Context, node *ast.IndexExpr, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
@@ -2624,10 +2621,10 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 		// 	}
 		// }
 
-		if isRecursive {
-			e.logc(ctx, slog.LevelWarn, "infinite recursion detected", "function", name)
-			return e.newError(ctx, callPos, "infinite recursion detected: %s", name)
-		}
+		// if isRecursive {
+		// 	e.logc(ctx, slog.LevelWarn, "infinite recursion detected", "function", name)
+		// 	return e.newError(ctx, callPos, "infinite recursion detected: %s", name)
+		// }
 	}
 
 	frame := &callFrame{Function: name, Pos: callPos}
@@ -2699,6 +2696,14 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 		// Treat it as an external call and create a symbolic result based on its signature.
 		if fn.Body == nil {
 			return e.createSymbolicResultForFunc(ctx, fn)
+		}
+
+		// When calling a function, ensure its defining package's environment is fully populated.
+		if fn.Package != nil {
+			pkgObj, err := e.getOrLoadPackage(ctx, fn.Package.ImportPath)
+			if err == nil {
+				e.ensurePackageEnvPopulated(ctx, pkgObj)
+			}
 		}
 
 		// Check the scan policy before executing the body.

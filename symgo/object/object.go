@@ -247,6 +247,7 @@ func (i *Intrinsic) Inspect() string { return "intrinsic function" }
 type Instance struct {
 	BaseObject
 	TypeName   string            // e.g., "net/http.ServeMux"
+	Fields     map[string]Object // Holds concrete field values for struct literals.
 	State      map[string]Object // for mock or intrinsic state
 	Underlying Object            // To hold the object that this instance wraps (e.g., for interface implementations)
 }

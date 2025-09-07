@@ -69,6 +69,10 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 ## To Be Implemented
 
 
+### symgo: Fix remaining test failures ([docs/cont-symgo.md](./docs/cont-symgo.md))
+- [ ] Fix regression in `TestEval_FunctionInCompositeLiteral` where function usage is not tracked.
+- [ ] Fix interface method dispatch failures (e.g. `TestInterfaceBinding`).
+
 ### symgo: Fix Cross-Package Unexported Symbol Resolution ([docs/trouble-symgo-nested-scope.md](./docs/trouble-symgo-nested-scope.md))
 - [x] Evaluate package-level var declarations in `ensurePackageEnvPopulated` to fix "identifier not found" errors for unexported symbols.
 - [x] Fix regressions caused by the lazy-evaluation implementation. The core regressions related to variable evaluation, pointer dispatch, and recursion detection have been resolved.

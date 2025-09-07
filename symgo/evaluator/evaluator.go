@@ -50,6 +50,10 @@ type Evaluator struct {
 	// evaluationInProgress tracks nodes that are currently being evaluated
 	// to detect and prevent infinite recursion.
 	evaluationInProgress map[ast.Node]bool
+
+	// recursionCheck tracks function calls to detect infinite recursion based on arguments.
+	// map[functionName][argumentHash] -> count
+	recursionCheck map[string]map[string]int
 }
 
 type callFrame struct {
@@ -86,6 +90,7 @@ func New(scanner *goscan.Scanner, logger *slog.Logger, tracer object.Tracer, sca
 		files:                make([]*FileScope, 0),
 		fileMap:              make(map[string]bool),
 		evaluationInProgress: make(map[ast.Node]bool),
+		recursionCheck:       make(map[string]map[string]int),
 		UniverseEnv:          universeEnv,
 	}
 	e.accessor = newAccessor(e)
@@ -2648,10 +2653,10 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 	}
 
 	// Hybrid recursion check.
-	var isRecursive bool
 	if f, ok := fn.(*object.Function); ok && f.Def != nil {
+		var isRecursive bool
 		if f.Receiver != nil {
-			// For methods, use a strict check: recursion on the *same instance* is an error.
+			// For methods, strict check: recursion on the *same instance* is an error.
 			for _, frame := range e.callStack {
 				if frame.Fn != nil && frame.Fn.Def == f.Def && frame.Fn.Receiver == f.Receiver {
 					isRecursive = true
@@ -2659,17 +2664,30 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 				}
 			}
 		} else {
-			// For regular functions, a simple depth check is a better heuristic to allow
-			// for stateful recursion that is not truly infinite.
-			const maxFuncDepth = 5
-			count := 0
-			for _, frame := range e.callStack {
-				if frame.Fn != nil && frame.Fn.Def == f.Def {
-					count++
-				}
+			// For regular functions, check for recursion with the exact same arguments.
+			var argParts []string
+			for _, arg := range args {
+				argParts = append(argParts, arg.Inspect())
 			}
-			if count >= maxFuncDepth {
+			argHash := strings.Join(argParts, "::")
+
+			if _, ok := e.recursionCheck[name]; !ok {
+				e.recursionCheck[name] = make(map[string]int)
+			}
+			e.recursionCheck[name][argHash]++
+
+			if e.recursionCheck[name][argHash] > 1 {
 				isRecursive = true
+			} else {
+				// Cleanup the counter when the function call returns.
+				defer func() {
+					if e.recursionCheck[name] != nil {
+						e.recursionCheck[name][argHash]--
+						if e.recursionCheck[name][argHash] <= 0 {
+							delete(e.recursionCheck[name], argHash)
+						}
+					}
+				}()
 			}
 		}
 

@@ -3,7 +3,6 @@ package symgo_test
 import (
 	"context"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	goscan "github.com/podhmo/go-scan"
@@ -131,14 +130,15 @@ func main() string { return lib.GetGreeting() }
 		"lib/lib.go": `
 package lib
 
-var count = 0
+// Unexported variable that should be resolvable within the same package
+var secretPrefix = "hello from"
+
+// Unexported constant 
+const secretSuffix = " unexported func"
+
+// Unexported function that should be resolvable within the same package
 func getSecretMessage() string {
-	if count > 0 {
-		return "hello from unexported func"
-	}
-	count++
-	// recursive call
-	return getSecretMessage()
+	return secretPrefix + secretSuffix
 }
 
 func GetGreeting() string {
@@ -152,16 +152,20 @@ func GetGreeting() string {
 	appDir := filepath.Join(tmpdir, "myapp")
 	result, err := runMainAnalysis(t, ctx, appDir, "example.com/myapp/...", "example.com/lib/...")
 
-	// The test currently fails because package-level 'var's are not evaluated.
-	// We expect this to fail with "identifier not found: count".
-	if err == nil {
-		t.Fatalf("test unexpectedly passed, the bug might be fixed. result: %s", result.Inspect())
+	if err != nil {
+		t.Fatalf("test failed unexpectedly with error: %v", err)
 	}
 
-	if !strings.Contains(err.Error(), "identifier not found: count") {
-		t.Fatalf("test failed with an unexpected error: %v", err)
-	} else {
-		t.Logf("correctly failed with expected error: %v", err)
+	retVal, ok := result.(*object.ReturnValue)
+	if !ok {
+		t.Fatalf("expected ReturnValue, but got %T: %v", result, result.Inspect())
+	}
+	str, ok := retVal.Value.(*object.String)
+	if !ok {
+		t.Fatalf("expected String, got %T", retVal.Value)
+	}
+	if str.Value != "hello from unexported func" {
+		t.Errorf("want %q, got %q", "hello from unexported func", str.Value)
 	}
 }
 

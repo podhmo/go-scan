@@ -287,51 +287,53 @@ func (e *Evaluator) Eval(ctx context.Context, node ast.Node, env *object.Environ
 }
 
 func (e *Evaluator) evalIncDecStmt(ctx context.Context, n *ast.IncDecStmt, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
-	// This is a crucial change: we must evaluate the identifier before trying to modify it.
-	val := e.Eval(ctx, n.X, env, pkg)
+	// Evaluate the expression to trace any calls, but we need the identifier.
+	ident, ok := n.X.(*ast.Ident)
+	if !ok {
+		e.Eval(ctx, n.X, env, pkg)
+		return nil // Cannot perform state change on complex expression.
+	}
+
+	obj, ok := env.Get(ident.Name)
+	if !ok {
+		return e.newError(ctx, n.Pos(), "identifier not found for IncDec: %s", ident.Name)
+	}
+
+	variable, ok := obj.(*object.Variable)
+	if !ok {
+		return e.newError(ctx, n.Pos(), "cannot increment/decrement non-variable: %s", ident.Name)
+	}
+
+	val := e.evalVariable(ctx, variable, pkg)
 	if isError(val) {
 		return val
 	}
 
-	// Force evaluation in case val is a variable.
-	val = e.forceEval(ctx, val, pkg)
-	if isError(val) {
-		return val
-	}
-
+	var newInt int64
 	switch v := val.(type) {
 	case *object.Integer:
-		// The value is a concrete integer, so we can modify it.
-		switch n.Tok {
-		case token.INC:
-			v.Value++
-		case token.DEC:
-			v.Value--
-		}
+		newInt = v.Value
 	case *object.SymbolicPlaceholder:
-		// If we are incrementing/decrementing a symbolic placeholder that represents
-		// a zero-value variable, we can treat it as a concrete integer with value 0.
-		// We replace the placeholder with a new integer object.
-		var newInt int64
-		switch n.Tok {
-		case token.INC:
-			newInt = 1
-		case token.DEC:
-			newInt = -1
-		}
-
-		// Update the variable in the environment to hold the new concrete integer value.
-		if ident, ok := n.X.(*ast.Ident); ok {
-			if obj, found := env.Get(ident.Name); found {
-				if variable, ok := obj.(*object.Variable); ok {
-					variable.Value = &object.Integer{Value: newInt}
-				}
-			}
-		}
+		// If it's a placeholder, we can treat it as starting from 0.
+		newInt = 0
+	default:
+		// For other types, we can't meaningfully inc/dec.
+		return nil
 	}
-	// If val is not an Integer or a placeholder we can handle, we do nothing.
 
-	return nil // IncDec is a statement, so it doesn't return a value.
+	switch n.Tok {
+	case token.INC:
+		newInt++
+	case token.DEC:
+		newInt--
+	}
+
+	// Update the variable's value in place.
+	variable.Value = &object.Integer{Value: newInt}
+	// Also mark it as evaluated, since it now has a concrete value.
+	variable.IsEvaluated = true
+	// No need to call env.Set here because we have modified the object in place.
+	return nil
 }
 
 func (e *Evaluator) evalIndexExpr(ctx context.Context, node *ast.IndexExpr, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
@@ -348,50 +350,56 @@ func (e *Evaluator) evalIndexExpr(ctx context.Context, node *ast.IndexExpr, env 
 	}
 	if t, ok := left.(*object.Type); ok {
 		if t.ResolvedType != nil && len(t.ResolvedType.TypeParams) > 0 {
-			// This is a generic type instantiation. For now, we just return a placeholder
-			// representing the new, instantiated type. A more complete implementation
-			// would create a new object.Type with substituted type parameters.
 			return &object.SymbolicPlaceholder{Reason: "instantiated generic type"}
 		}
 	}
 
 	// Fallback to original logic for slice/map indexing at runtime.
-	index := e.Eval(ctx, node.Index, env, pkg)
-	if isError(index) {
+	if index := e.Eval(ctx, node.Index, env, pkg); isError(index) {
 		return index
 	}
 
-	var sliceFieldType *scanner.FieldType
+	var elemFieldType *scanner.FieldType
+	var resolvedElem *scanner.TypeInfo
 
+	// Determine the element type from the collection being indexed.
+	var collectionFieldType *scanner.FieldType
 	switch l := left.(type) {
 	case *object.Slice:
-		sliceFieldType = l.SliceFieldType
+		collectionFieldType = l.SliceFieldType
+	case *object.Map:
+		collectionFieldType = l.MapFieldType
 	case *object.Variable:
+		// Check the variable's value first, then its static type.
 		if s, ok := l.Value.(*object.Slice); ok {
-			sliceFieldType = s.SliceFieldType
-		} else if ft := l.FieldType(); ft != nil && ft.IsSlice {
-			sliceFieldType = ft
-		} else if ti := l.TypeInfo(); ti != nil && ti.Underlying != nil && ti.Underlying.IsSlice {
-			sliceFieldType = ti.Underlying
+			collectionFieldType = s.SliceFieldType
+		} else if m, ok := l.Value.(*object.Map); ok {
+			collectionFieldType = m.MapFieldType
+		} else if ft := l.FieldType(); ft != nil && (ft.IsSlice || ft.IsMap) {
+			collectionFieldType = ft
+		} else if ti := l.TypeInfo(); ti != nil && ti.Underlying != nil && (ti.Underlying.IsSlice || ti.Underlying.IsMap) {
+			collectionFieldType = ti.Underlying
 		}
 	case *object.SymbolicPlaceholder:
-		if ft := l.FieldType(); ft != nil && ft.IsSlice {
-			sliceFieldType = ft
-		} else if ti := l.TypeInfo(); ti != nil && ti.Underlying != nil && ti.Underlying.IsSlice {
-			sliceFieldType = ti.Underlying
+		if ft := l.FieldType(); ft != nil && (ft.IsSlice || ft.IsMap) {
+			collectionFieldType = ft
+		} else if ti := l.TypeInfo(); ti != nil && ti.Underlying != nil && (ti.Underlying.IsSlice || ti.Underlying.IsMap) {
+			collectionFieldType = ti.Underlying
 		}
 	}
 
-	var elemType *scanner.TypeInfo
-	var elemFieldType *scanner.FieldType
-	if sliceFieldType != nil && sliceFieldType.IsSlice && sliceFieldType.Elem != nil {
-		elemFieldType = sliceFieldType.Elem
-		elemType = e.resolver.ResolveType(ctx, elemFieldType)
+	// If we found a collection type, get its element type.
+	if collectionFieldType != nil && collectionFieldType.Elem != nil {
+		elemFieldType = collectionFieldType.Elem
+		resolvedElem = e.resolver.ResolveType(ctx, elemFieldType)
 	}
 
 	return &object.SymbolicPlaceholder{
-		Reason:     "result of index expression",
-		BaseObject: object.BaseObject{ResolvedTypeInfo: elemType, ResolvedFieldType: elemFieldType},
+		Reason: "result of index expression",
+		BaseObject: object.BaseObject{
+			ResolvedTypeInfo:  resolvedElem,
+			ResolvedFieldType: elemFieldType,
+		},
 	}
 }
 
@@ -815,21 +823,19 @@ func (e *Evaluator) evalStarExpr(ctx context.Context, node *ast.StarExpr, env *o
 	// If we have a symbolic placeholder that represents a pointer type,
 	// dereferencing it should result in a new placeholder representing the element type.
 	if sp, ok := val.(*object.SymbolicPlaceholder); ok {
-		newPlaceholder := &object.SymbolicPlaceholder{
+		var elemFieldType *scanner.FieldType
+		var resolvedElem *scanner.TypeInfo
+		if ft := sp.FieldType(); ft != nil && ft.IsPointer && ft.Elem != nil {
+			elemFieldType = ft.Elem
+			resolvedElem = e.resolver.ResolveType(ctx, elemFieldType)
+		}
+		return &object.SymbolicPlaceholder{
 			Reason: fmt.Sprintf("dereferenced from %s", sp.Reason),
+			BaseObject: object.BaseObject{
+				ResolvedTypeInfo:  resolvedElem,
+				ResolvedFieldType: elemFieldType,
+			},
 		}
-		// If we have type info and it's a pointer, we can be more specific
-		// about the type of the resulting placeholder.
-		if ft := sp.FieldType(); ft != nil && ft.IsPointer {
-			if ft.Elem != nil {
-				elemFieldType := ft.Elem
-				resolvedElem := e.resolver.ResolveType(ctx, elemFieldType)
-				newPlaceholder.SetFieldType(elemFieldType)
-				newPlaceholder.SetTypeInfo(resolvedElem)
-			}
-		}
-		// Otherwise, we return a generic placeholder, preventing an "invalid indirect" error.
-		return newPlaceholder
 	}
 
 	// NEW: Handle dereferencing a type object itself.
@@ -876,7 +882,12 @@ func (e *Evaluator) evalGenDecl(ctx context.Context, node *ast.GenDecl, env *obj
 		}
 
 		for i, name := range valSpec.Names {
-			var val object.Object = &object.SymbolicPlaceholder{Reason: "uninitialized variable"}
+			var val object.Object
+			var resolvedTypeInfo *scanner.TypeInfo
+			if staticFieldType != nil {
+				resolvedTypeInfo = e.resolver.ResolveType(ctx, staticFieldType)
+			}
+			
 			if i < len(valSpec.Values) {
 				val = e.Eval(ctx, valSpec.Values[i], env, pkg)
 				if isError(val) {
@@ -887,11 +898,14 @@ func (e *Evaluator) evalGenDecl(ctx context.Context, node *ast.GenDecl, env *obj
 				if ret, ok := val.(*object.ReturnValue); ok {
 					val = ret.Value
 				}
-			}
-
-			var resolvedTypeInfo *scanner.TypeInfo
-			if staticFieldType != nil {
-				resolvedTypeInfo = e.resolver.ResolveType(ctx, staticFieldType)
+			} else {
+				// Create a placeholder with type information for uninitialized variables
+				placeholder := &object.SymbolicPlaceholder{Reason: "uninitialized variable"}
+				if staticFieldType != nil {
+					placeholder.SetFieldType(staticFieldType)
+					placeholder.SetTypeInfo(resolvedTypeInfo)
+				}
+				val = placeholder
 			}
 
 			v := &object.Variable{
@@ -1219,10 +1233,20 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 				return method
 			}
 			if typeInfo.Unresolved {
-				return &object.SymbolicPlaceholder{
+				placeholder := &object.SymbolicPlaceholder{
 					Reason:   fmt.Sprintf("symbolic method call %s on unresolved symbolic type %s", n.Sel.Name, typeInfo.Name),
 					Receiver: val,
 				}
+				// Try to find method in interface definition if available
+				if typeInfo.Interface != nil {
+					for _, method := range typeInfo.Interface.Methods {
+						if method.Name == n.Sel.Name {
+							placeholder.UnderlyingMethod = method
+							break
+						}
+					}
+				}
+				return placeholder
 			}
 
 			// If it's not a method, check if it's a field on the struct (including embedded).
@@ -1233,7 +1257,12 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 			}
 		}
 
-		return e.newError(ctx, n.Pos(), "undefined method or field: %s on symbolic type %s", n.Sel.Name, val.Inspect())
+		// For symbolic placeholders, don't error - return another placeholder
+		// This allows analysis to continue even when types are unresolved
+		return &object.SymbolicPlaceholder{
+			Reason:   fmt.Sprintf("method or field %s on symbolic type %s", n.Sel.Name, val.Inspect()),
+			Receiver: val,
+		}
 
 	case *object.Package:
 		if val.ScannedInfo == nil {
@@ -1437,6 +1466,27 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 		// If the pointee is not an instance or nothing is found, fall through to the error.
 		return e.newError(ctx, n.Pos(), "undefined method or field: %s for pointer type %s", n.Sel.Name, pointee.Type())
 
+	case *object.Nil:
+		// Nil can have methods in Go (e.g., interface with nil value).
+		// Check if we have type information for this nil (it might be a typed nil interface)
+		placeholder := &object.SymbolicPlaceholder{
+			Reason: fmt.Sprintf("method %s on nil", n.Sel.Name),
+		}
+		
+		// If the NIL has type information (e.g., it's a typed interface nil),
+		// try to find the method in the interface definition
+		if left.TypeInfo() != nil && left.TypeInfo().Interface != nil {
+			for _, method := range left.TypeInfo().Interface.Methods {
+				if method.Name == n.Sel.Name {
+					placeholder.UnderlyingMethod = method
+					placeholder.Receiver = left
+					break
+				}
+			}
+		}
+		
+		return placeholder
+	
 	default:
 		return e.newError(ctx, n.Pos(), "expected a package, instance, or pointer on the left side of selector, but got %s", left.Type())
 	}
@@ -1547,8 +1597,9 @@ func (e *Evaluator) evalTypeSwitchStmt(ctx context.Context, n *ast.TypeSwitchStm
 
 			if caseClause.List == nil { // default case
 				v := &object.Variable{
-					Name:  varName,
-					Value: originalObj,
+					Name:        varName,
+					Value:       originalObj,
+					IsEvaluated: true, // Mark as evaluated since originalObj is already set
 					BaseObject: object.BaseObject{
 						ResolvedTypeInfo:  originalObj.TypeInfo(),
 						ResolvedFieldType: originalObj.FieldType(),
@@ -1566,11 +1617,13 @@ func (e *Evaluator) evalTypeSwitchStmt(ctx context.Context, n *ast.TypeSwitchStm
 					}
 				}
 
-				resolvedType := e.resolver.ResolveType(ctx, fieldType)
-
-				// If the type was unresolved, we can now infer its kind to be an interface.
-				if resolvedType != nil && resolvedType.Kind == scanner.UnknownKind {
-					resolvedType.Kind = scanner.InterfaceKind
+				var resolvedType *scanner.TypeInfo
+				if !fieldType.IsBuiltin {
+					resolvedType = e.resolver.ResolveType(ctx, fieldType)
+					// If the type was unresolved, we can now infer its kind to be an interface.
+					if resolvedType != nil && resolvedType.Kind == scanner.UnknownKind {
+						resolvedType.Kind = scanner.InterfaceKind
+					}
 				}
 
 				val := &object.SymbolicPlaceholder{
@@ -1578,8 +1631,9 @@ func (e *Evaluator) evalTypeSwitchStmt(ctx context.Context, n *ast.TypeSwitchStm
 					BaseObject: object.BaseObject{ResolvedTypeInfo: resolvedType, ResolvedFieldType: fieldType},
 				}
 				v := &object.Variable{
-					Name:  varName,
-					Value: val,
+					Name:        varName,
+					Value:       val,
+					IsEvaluated: true, // Mark as evaluated since val is already set
 					BaseObject: object.BaseObject{
 						ResolvedTypeInfo:  resolvedType,
 						ResolvedFieldType: fieldType,
@@ -2118,36 +2172,21 @@ func (e *Evaluator) assignIdentifier(ctx context.Context, ident *ast.Ident, val 
 	}
 
 	v.Value = val
+	// Propagate type info from the RHS to the LHS variable. This is crucial for
+	// assignments where the LHS has a less specific type (e.g., any) than the RHS.
+	v.SetTypeInfo(val.TypeInfo())
+	v.SetFieldType(val.FieldType())
 	newFieldType := val.FieldType()
 
-	// Check if the variable was originally typed as an interface.
-	// This now also works for unresolved types whose kind has been inferred.
-	isInterface := false
-	if staticType := v.TypeInfo(); staticType != nil {
-		// Treat as interface if it's explicitly an interface, or if it's
-		// an unknown kind (the old heuristic, as a fallback).
-		if staticType.Kind == scanner.InterfaceKind || staticType.Kind == scanner.UnknownKind {
-			isInterface = true
-		}
-	}
-
-	if isInterface {
-		// For interfaces, we ADD the new concrete type to the set.
-		if v.PossibleTypes == nil {
-			v.PossibleTypes = make(map[string]struct{})
-		}
-		if newFieldType != nil {
-			v.PossibleTypes[newFieldType.String()] = struct{}{}
-			e.logger.Debug("evalAssignStmt: adding concrete type to interface var", "name", ident.Name, "new_type", newFieldType.String())
-		}
-	} else {
-		// For concrete types, we can still track the type for robustness,
-		// but we don't need to accumulate them.
+	// Always accumulate possible types. Resetting the map can lead to lost
+	// information, especially when dealing with interface assignments where the
+	// static type of the variable might be unresolved.
+	if v.PossibleTypes == nil {
 		v.PossibleTypes = make(map[string]struct{})
-		if newFieldType != nil {
-			v.PossibleTypes[newFieldType.String()] = struct{}{}
-		}
-		e.logger.Debug("evalAssignStmt: setting concrete type for var", "name", ident.Name)
+	}
+	if newFieldType != nil {
+		v.PossibleTypes[newFieldType.String()] = struct{}{}
+		e.logger.Debug("evalAssignStmt: adding possible type to var", "name", ident.Name, "new_type", newFieldType.String())
 	}
 
 	return v
@@ -2593,8 +2632,8 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 	}
 
 	// Hybrid recursion check.
+	var isRecursive bool
 	if f, ok := fn.(*object.Function); ok && f.Def != nil {
-		isRecursive := false
 		if f.Receiver != nil {
 			// For methods, use a strict check: recursion on the *same instance* is an error.
 			for _, frame := range e.callStack {
@@ -2693,6 +2732,14 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 		// Treat it as an external call and create a symbolic result based on its signature.
 		if fn.Body == nil {
 			return e.createSymbolicResultForFunc(ctx, fn)
+		}
+
+		// When calling a function, ensure its defining package's environment is fully populated.
+		if fn.Package != nil {
+			pkgObj, err := e.getOrLoadPackage(ctx, fn.Package.ImportPath)
+			if err == nil {
+				e.ensurePackageEnvPopulated(ctx, pkgObj)
+			}
 		}
 
 		// Check the scan policy before executing the body.
@@ -2977,9 +3024,10 @@ func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, 
 					fieldType := e.scanner.TypeInfoFromExpr(ctx, paramType, nil, fn.Package, importLookup)
 					resolvedType := e.resolver.ResolveType(ctx, fieldType)
 					v := &object.Variable{
-						Name:       name.Name,
-						Value:      variadicSlice,
-						BaseObject: object.BaseObject{ResolvedTypeInfo: resolvedType, ResolvedFieldType: fieldType},
+						Name:        name.Name,
+						Value:       variadicSlice,
+						IsEvaluated: true, // Mark as evaluated since variadicSlice is already a concrete value
+						BaseObject:  object.BaseObject{ResolvedTypeInfo: resolvedType, ResolvedFieldType: fieldType},
 					}
 					env.Set(name.Name, v)
 				}
@@ -3000,19 +3048,10 @@ func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, 
 			}
 
 			if name.Name != "_" {
-				v := &object.Variable{
-					Name:  name.Name,
-					Value: arg,
-				}
-
-				// Prioritize the dynamic type from the provided argument.
-				v.SetFieldType(arg.FieldType())
-				v.SetTypeInfo(arg.TypeInfo())
-
-				// Get the static type from the function signature to enrich the variable if needed.
+				// Get the static type from the function signature first
 				var staticFieldType *scanner.FieldType
 				var staticTypeInfo *scanner.TypeInfo
-
+				
 				// Evaluate the type expression in the context of the current environment,
 				// which may contain type parameter bindings.
 				typeObj := e.Eval(ctx, field.Type, env, fn.Package)
@@ -3035,6 +3074,23 @@ func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, 
 						staticTypeInfo = e.resolver.ResolveType(ctx, staticFieldType)
 					}
 				}
+				
+				// If the argument is NIL and we have static type info, preserve it
+				if nilObj, ok := arg.(*object.Nil); ok && staticFieldType != nil {
+					// Set type information on the NIL object
+					nilObj.SetFieldType(staticFieldType)
+					nilObj.SetTypeInfo(staticTypeInfo)
+				}
+				
+				v := &object.Variable{
+					Name:        name.Name,
+					Value:       arg,
+					IsEvaluated: true, // Mark as evaluated since arg is already a concrete value
+				}
+
+				// Prioritize the dynamic type from the provided argument.
+				v.SetFieldType(arg.FieldType())
+				v.SetTypeInfo(arg.TypeInfo())
 
 				if staticFieldType != nil {
 					if v.FieldType() == nil {

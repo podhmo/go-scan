@@ -170,6 +170,10 @@ func process(prefix string, data any) {
 		eval.RegisterIntrinsic("fmt.Sprintf", func(args ...object.Object) object.Object {
 			// This is a simplified mock. A real one would format the string.
 			// For this test, we just check that the prefix is accessible.
+			t.Logf("fmt.Sprintf called with %d args", len(args))
+			for i, arg := range args {
+				t.Logf("  arg[%d]: %T = %s", i, arg, arg.Inspect())
+			}
 			if len(args) > 1 {
 				if format, ok := args[0].(*object.String); ok {
 					if strings.Contains(format.Value, "%s") {
@@ -198,6 +202,7 @@ func process(prefix string, data any) {
 			&object.String{Value: "param-prefix"},
 			&object.Integer{Value: 123},
 		}
+		t.Logf("Calling process function with args: %v", args)
 		result := eval.Apply(ctx, processFunc, args, mainPkg)
 		if err, ok := result.(*object.Error); ok && err != nil {
 			return fmt.Errorf("evaluation failed unexpectedly: %s", err.Inspect())

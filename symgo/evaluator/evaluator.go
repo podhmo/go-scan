@@ -882,7 +882,12 @@ func (e *Evaluator) evalGenDecl(ctx context.Context, node *ast.GenDecl, env *obj
 		}
 
 		for i, name := range valSpec.Names {
-			var val object.Object = &object.SymbolicPlaceholder{Reason: "uninitialized variable"}
+			var val object.Object
+			var resolvedTypeInfo *scanner.TypeInfo
+			if staticFieldType != nil {
+				resolvedTypeInfo = e.resolver.ResolveType(ctx, staticFieldType)
+			}
+			
 			if i < len(valSpec.Values) {
 				val = e.Eval(ctx, valSpec.Values[i], env, pkg)
 				if isError(val) {
@@ -893,11 +898,14 @@ func (e *Evaluator) evalGenDecl(ctx context.Context, node *ast.GenDecl, env *obj
 				if ret, ok := val.(*object.ReturnValue); ok {
 					val = ret.Value
 				}
-			}
-
-			var resolvedTypeInfo *scanner.TypeInfo
-			if staticFieldType != nil {
-				resolvedTypeInfo = e.resolver.ResolveType(ctx, staticFieldType)
+			} else {
+				// Create a placeholder with type information for uninitialized variables
+				placeholder := &object.SymbolicPlaceholder{Reason: "uninitialized variable"}
+				if staticFieldType != nil {
+					placeholder.SetFieldType(staticFieldType)
+					placeholder.SetTypeInfo(resolvedTypeInfo)
+				}
+				val = placeholder
 			}
 
 			v := &object.Variable{
@@ -2586,35 +2594,35 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 	}
 
 	// Hybrid recursion check.
+	var isRecursive bool
 	if f, ok := fn.(*object.Function); ok && f.Def != nil {
 		if f.Receiver != nil {
 			// For methods, use a strict check: recursion on the *same instance* is an error.
 			for _, frame := range e.callStack {
 				if frame.Fn != nil && frame.Fn.Def == f.Def && frame.Fn.Receiver == f.Receiver {
-					// isRecursive = true
+					isRecursive = true
 					break
 				}
 			}
+		} else {
+			// For regular functions, a simple depth check is a better heuristic to allow
+			// for stateful recursion that is not truly infinite.
+			const maxFuncDepth = 5
+			count := 0
+			for _, frame := range e.callStack {
+				if frame.Fn != nil && frame.Fn.Def == f.Def {
+					count++
+				}
+			}
+			if count >= maxFuncDepth {
+				isRecursive = true
+			}
 		}
-		// else {
-		// 	// For regular functions, a simple depth check is a better heuristic to allow
-		// 	// for stateful recursion that is not truly infinite.
-		// 	const maxFuncDepth = 5
-		// 	count := 0
-		// 	for _, frame := range e.callStack {
-		// 		if frame.Fn != nil && frame.Fn.Def == f.Def {
-		// 			count++
-		// 		}
-		// 	}
-		// 	if count >= maxFuncDepth {
-		// 		isRecursive = true
-		// 	}
-		// }
 
-		// if isRecursive {
-		// 	e.logc(ctx, slog.LevelWarn, "infinite recursion detected", "function", name)
-		// 	return e.newError(ctx, callPos, "infinite recursion detected: %s", name)
-		// }
+		if isRecursive {
+			e.logc(ctx, slog.LevelWarn, "infinite recursion detected", "function", name)
+			return e.newError(ctx, callPos, "infinite recursion detected: %s", name)
+		}
 	}
 
 	frame := &callFrame{Function: name, Pos: callPos}
@@ -2978,9 +2986,10 @@ func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, 
 					fieldType := e.scanner.TypeInfoFromExpr(ctx, paramType, nil, fn.Package, importLookup)
 					resolvedType := e.resolver.ResolveType(ctx, fieldType)
 					v := &object.Variable{
-						Name:       name.Name,
-						Value:      variadicSlice,
-						BaseObject: object.BaseObject{ResolvedTypeInfo: resolvedType, ResolvedFieldType: fieldType},
+						Name:        name.Name,
+						Value:       variadicSlice,
+						IsEvaluated: true, // Mark as evaluated since variadicSlice is already a concrete value
+						BaseObject:  object.BaseObject{ResolvedTypeInfo: resolvedType, ResolvedFieldType: fieldType},
 					}
 					env.Set(name.Name, v)
 				}
@@ -3002,8 +3011,9 @@ func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, 
 
 			if name.Name != "_" {
 				v := &object.Variable{
-					Name:  name.Name,
-					Value: arg,
+					Name:        name.Name,
+					Value:       arg,
+					IsEvaluated: true, // Mark as evaluated since arg is already a concrete value
 				}
 
 				// Prioritize the dynamic type from the provided argument.

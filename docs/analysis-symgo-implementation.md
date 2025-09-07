@@ -107,13 +107,21 @@ The engine correctly models pointer referencing and dereferencing to enable anal
 
 - **Dereference (`*`)**: The `*` operator is handled in `evalStarExpr`. It evaluates the operand to get a pointer object. If it's a concrete `object.Pointer`, it returns the `Value` the pointer points to. Crucially, if it's a `SymbolicPlaceholder` representing a pointer, it does not fail; instead, it returns a *new* symbolic placeholder representing the element type. This allows analysis to continue through chains of pointer dereferences even when the concrete values are not known.
 
+### 2.12. Data Structure Recursion Handling
+
+In addition to handling recursive function calls, the engine is robust against infinite recursion caused by cyclic data structures.
+
+- **Embedded Structs (`accessor.go`)**: When resolving methods or fields on embedded structs, the `accessor` uses a `visited` map, keyed by type name, to track which types have already been seen during the current resolution. If a cycle is detected, the recursion is terminated.
+
+- **Composite Literals and Variables (`evaluator.go`)**: When evaluating composite literals or variable initializers, the evaluator uses an `evaluationInProgress` map, keyed by the `ast.Node`. This prevents infinite loops for self-referential or mutually recursive definitions (e.g., `var V = T{F: &V}`).
+
 ## 3. Test Code Analysis
 
 The tests in `symgo/evaluator/` confirm the non-interpreter behavior.
 
 - **`evaluator_if_stmt_test.go`**: The tests do not check for conditional execution. They verify that function calls in the `if` condition are traced and that the statement integrates correctly with the rest of the evaluator's logic (e.g., not producing an erroneous return value).
 - **`evaluator_range_test.go`**: The test for `for...range` only asserts that a function call in the range expression was traced. It does not assert that the loop body was executed multiple times.
-- **`evaluator_recursion_test.go`**: The tests explicitly verify that the engine correctly distinguishes between valid, state-changing recursion (linked list traversal) and true infinite recursion, halting the latter while allowing the former.
+- **`evaluator_recursion_test.go`**: The tests explicitly verify that the engine correctly distinguishes between valid, state-changing recursion (linked list traversal) and true infinite recursion. It also confirms robustness against recursive data structure definitions.
 
 The tests do not demand "extra" assertions that would only be true for a standard interpreter. They are tailored to verify the specific, intended behavior of the symbolic engine.
 

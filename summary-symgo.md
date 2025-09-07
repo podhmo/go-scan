@@ -59,15 +59,19 @@ The engine handles other Go constructs in a way that prioritizes call graph disc
 - **Expressions in Literals and Conditions**: The engine recursively evaluates expressions found in struct/map literal fields and in the condition clauses of `if`/`switch` statements. This ensures function calls in these positions are traced. For performance and simplicity, it deliberately does *not* evaluate the condition of `for` loops.
 - **`defer` and `go` Statements**: The engine traces the function calls within `defer` and `go` statements but does not model their special runtime semantics (deferred or concurrent execution). This is sufficient for static analysis tools that are primarily concerned with the call graph.
 
-## 7. Method Resolution
+## 7. Robustness and Resolution
 
-The engine correctly models Go's rules for method resolution to support accurate call graph tracing.
+The engine includes several mechanisms to ensure analysis is robust and always terminates.
 
-- **Embedded Methods**: The engine performs a recursive, depth-first search to find methods on embedded types. This correctly simulates Go's method promotion, allowing calls like `myStruct.EmbeddedMethod()` to be resolved correctly.
+- **Method Resolution**:
+    - **Embedded Methods**: The engine performs a recursive, depth-first search to find methods on embedded types, with cycle detection to handle recursive embedding. This correctly simulates Go's method promotion.
+    - **Interface Methods**: Calls on interface-typed variables are handled symbolically. The engine traces the call to the method on the interface definition itself, avoiding the complexity of dynamic dispatch.
 
-- **Interface Methods**: Calls on interface-typed variables are handled symbolically. The engine does not perform dynamic dispatch. Instead, it traces the call to the method on the interface definition itself and produces a symbolic placeholder for the result, typed according to the interface method's signature. This provides the necessary information for analysis tools without the complexity of tracking all possible concrete implementations at the call site.
+- **Recursion and Cycle Detection**:
+    - **Function Calls**: The engine tracks the call stack to halt infinite function recursion. It is smart enough to distinguish between true recursion and valid, state-changing recursive patterns (like linked list traversal).
+    - **Data Structures**: The engine uses `visited` maps to detect cycles when evaluating composite literals and resolving embedded fields, preventing infinite loops from recursive type definitions.
 
-## 7. Key Use Cases and Driving Requirements
+## 8. Key Use Cases and Driving Requirements
 
 The design of `symgo` is directly driven by the needs of its consumer tools.
 

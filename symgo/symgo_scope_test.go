@@ -130,14 +130,15 @@ func main() string { return lib.GetGreeting() }
 		"lib/lib.go": `
 package lib
 
-var count = 0
+// Unexported variable that should be resolvable within the same package
+var secretPrefix = "hello from"
+
+// Unexported constant 
+const secretSuffix = " unexported func"
+
+// Unexported function that should be resolvable within the same package
 func getSecretMessage() string {
-	if count > 0 {
-		return "hello from unexported func"
-	}
-	count++
-	// recursive call
-	return getSecretMessage()
+	return secretPrefix + secretSuffix
 }
 
 func GetGreeting() string {

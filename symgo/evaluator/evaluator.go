@@ -1538,6 +1538,9 @@ func (e *Evaluator) evalSelectStmt(ctx context.Context, n *ast.SelectStmt, env *
 			for _, stmt := range caseClause.Body {
 				if res := e.Eval(ctx, stmt, caseEnv, pkg); isError(res) {
 					e.logc(ctx, slog.LevelWarn, "error evaluating statement in select case", "error", res)
+					if isInfiniteRecursionError(res) {
+						return res // Stop processing on infinite recursion
+					}
 				}
 			}
 		}
@@ -1645,6 +1648,9 @@ func (e *Evaluator) evalTypeSwitchStmt(ctx context.Context, n *ast.TypeSwitchStm
 			for _, stmt := range caseClause.Body {
 				if res := e.Eval(ctx, stmt, caseEnv, pkg); isError(res) {
 					e.logc(ctx, slog.LevelWarn, "error evaluating statement in type switch case", "error", res)
+					if isInfiniteRecursionError(res) {
+						return res // Stop processing on infinite recursion
+					}
 				}
 			}
 		}
@@ -2433,6 +2439,13 @@ func (e *Evaluator) newError(ctx context.Context, pos token.Pos, format string, 
 func isError(obj object.Object) bool {
 	if obj != nil {
 		return obj.Type() == object.ERROR_OBJ
+	}
+	return false
+}
+
+func isInfiniteRecursionError(obj object.Object) bool {
+	if err, ok := obj.(*object.Error); ok {
+		return strings.Contains(err.Message, "infinite recursion detected")
 	}
 	return false
 }

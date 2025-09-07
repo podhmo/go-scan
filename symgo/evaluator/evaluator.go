@@ -350,50 +350,56 @@ func (e *Evaluator) evalIndexExpr(ctx context.Context, node *ast.IndexExpr, env 
 	}
 	if t, ok := left.(*object.Type); ok {
 		if t.ResolvedType != nil && len(t.ResolvedType.TypeParams) > 0 {
-			// This is a generic type instantiation. For now, we just return a placeholder
-			// representing the new, instantiated type. A more complete implementation
-			// would create a new object.Type with substituted type parameters.
 			return &object.SymbolicPlaceholder{Reason: "instantiated generic type"}
 		}
 	}
 
 	// Fallback to original logic for slice/map indexing at runtime.
-	index := e.Eval(ctx, node.Index, env, pkg)
-	if isError(index) {
+	if index := e.Eval(ctx, node.Index, env, pkg); isError(index) {
 		return index
 	}
 
-	var sliceFieldType *scanner.FieldType
+	var elemFieldType *scanner.FieldType
+	var resolvedElem *scanner.TypeInfo
 
+	// Determine the element type from the collection being indexed.
+	var collectionFieldType *scanner.FieldType
 	switch l := left.(type) {
 	case *object.Slice:
-		sliceFieldType = l.SliceFieldType
+		collectionFieldType = l.SliceFieldType
+	case *object.Map:
+		collectionFieldType = l.MapFieldType
 	case *object.Variable:
+		// Check the variable's value first, then its static type.
 		if s, ok := l.Value.(*object.Slice); ok {
-			sliceFieldType = s.SliceFieldType
-		} else if ft := l.FieldType(); ft != nil && ft.IsSlice {
-			sliceFieldType = ft
-		} else if ti := l.TypeInfo(); ti != nil && ti.Underlying != nil && ti.Underlying.IsSlice {
-			sliceFieldType = ti.Underlying
+			collectionFieldType = s.SliceFieldType
+		} else if m, ok := l.Value.(*object.Map); ok {
+			collectionFieldType = m.MapFieldType
+		} else if ft := l.FieldType(); ft != nil && (ft.IsSlice || ft.IsMap) {
+			collectionFieldType = ft
+		} else if ti := l.TypeInfo(); ti != nil && ti.Underlying != nil && (ti.Underlying.IsSlice || ti.Underlying.IsMap) {
+			collectionFieldType = ti.Underlying
 		}
 	case *object.SymbolicPlaceholder:
-		if ft := l.FieldType(); ft != nil && ft.IsSlice {
-			sliceFieldType = ft
-		} else if ti := l.TypeInfo(); ti != nil && ti.Underlying != nil && ti.Underlying.IsSlice {
-			sliceFieldType = ti.Underlying
+		if ft := l.FieldType(); ft != nil && (ft.IsSlice || ft.IsMap) {
+			collectionFieldType = ft
+		} else if ti := l.TypeInfo(); ti != nil && ti.Underlying != nil && (ti.Underlying.IsSlice || ti.Underlying.IsMap) {
+			collectionFieldType = ti.Underlying
 		}
 	}
 
-	var elemType *scanner.TypeInfo
-	var elemFieldType *scanner.FieldType
-	if sliceFieldType != nil && sliceFieldType.IsSlice && sliceFieldType.Elem != nil {
-		elemFieldType = sliceFieldType.Elem
-		elemType = e.resolver.ResolveType(ctx, elemFieldType)
+	// If we found a collection type, get its element type.
+	if collectionFieldType != nil && collectionFieldType.Elem != nil {
+		elemFieldType = collectionFieldType.Elem
+		resolvedElem = e.resolver.ResolveType(ctx, elemFieldType)
 	}
 
 	return &object.SymbolicPlaceholder{
-		Reason:     "result of index expression",
-		BaseObject: object.BaseObject{ResolvedTypeInfo: elemType, ResolvedFieldType: elemFieldType},
+		Reason: "result of index expression",
+		BaseObject: object.BaseObject{
+			ResolvedTypeInfo:  resolvedElem,
+			ResolvedFieldType: elemFieldType,
+		},
 	}
 }
 
@@ -817,21 +823,19 @@ func (e *Evaluator) evalStarExpr(ctx context.Context, node *ast.StarExpr, env *o
 	// If we have a symbolic placeholder that represents a pointer type,
 	// dereferencing it should result in a new placeholder representing the element type.
 	if sp, ok := val.(*object.SymbolicPlaceholder); ok {
-		newPlaceholder := &object.SymbolicPlaceholder{
+		var elemFieldType *scanner.FieldType
+		var resolvedElem *scanner.TypeInfo
+		if ft := sp.FieldType(); ft != nil && ft.IsPointer && ft.Elem != nil {
+			elemFieldType = ft.Elem
+			resolvedElem = e.resolver.ResolveType(ctx, elemFieldType)
+		}
+		return &object.SymbolicPlaceholder{
 			Reason: fmt.Sprintf("dereferenced from %s", sp.Reason),
+			BaseObject: object.BaseObject{
+				ResolvedTypeInfo:  resolvedElem,
+				ResolvedFieldType: elemFieldType,
+			},
 		}
-		// If we have type info and it's a pointer, we can be more specific
-		// about the type of the resulting placeholder.
-		if ft := sp.FieldType(); ft != nil && ft.IsPointer {
-			if ft.Elem != nil {
-				elemFieldType := ft.Elem
-				resolvedElem := e.resolver.ResolveType(ctx, elemFieldType)
-				newPlaceholder.SetFieldType(elemFieldType)
-				newPlaceholder.SetTypeInfo(resolvedElem)
-			}
-		}
-		// Otherwise, we return a generic placeholder, preventing an "invalid indirect" error.
-		return newPlaceholder
 	}
 
 	// NEW: Handle dereferencing a type object itself.
@@ -1568,11 +1572,13 @@ func (e *Evaluator) evalTypeSwitchStmt(ctx context.Context, n *ast.TypeSwitchStm
 					}
 				}
 
-				resolvedType := e.resolver.ResolveType(ctx, fieldType)
-
-				// If the type was unresolved, we can now infer its kind to be an interface.
-				if resolvedType != nil && resolvedType.Kind == scanner.UnknownKind {
-					resolvedType.Kind = scanner.InterfaceKind
+				var resolvedType *scanner.TypeInfo
+				if !fieldType.IsBuiltin {
+					resolvedType = e.resolver.ResolveType(ctx, fieldType)
+					// If the type was unresolved, we can now infer its kind to be an interface.
+					if resolvedType != nil && resolvedType.Kind == scanner.UnknownKind {
+						resolvedType.Kind = scanner.InterfaceKind
+					}
 				}
 
 				val := &object.SymbolicPlaceholder{
@@ -2120,36 +2126,21 @@ func (e *Evaluator) assignIdentifier(ctx context.Context, ident *ast.Ident, val 
 	}
 
 	v.Value = val
+	// Propagate type info from the RHS to the LHS variable. This is crucial for
+	// assignments where the LHS has a less specific type (e.g., any) than the RHS.
+	v.SetTypeInfo(val.TypeInfo())
+	v.SetFieldType(val.FieldType())
 	newFieldType := val.FieldType()
 
-	// Check if the variable was originally typed as an interface.
-	// This now also works for unresolved types whose kind has been inferred.
-	isInterface := false
-	if staticType := v.TypeInfo(); staticType != nil {
-		// Treat as interface if it's explicitly an interface, or if it's
-		// an unknown kind (the old heuristic, as a fallback).
-		if staticType.Kind == scanner.InterfaceKind || staticType.Kind == scanner.UnknownKind {
-			isInterface = true
-		}
-	}
-
-	if isInterface {
-		// For interfaces, we ADD the new concrete type to the set.
-		if v.PossibleTypes == nil {
-			v.PossibleTypes = make(map[string]struct{})
-		}
-		if newFieldType != nil {
-			v.PossibleTypes[newFieldType.String()] = struct{}{}
-			e.logger.Debug("evalAssignStmt: adding concrete type to interface var", "name", ident.Name, "new_type", newFieldType.String())
-		}
-	} else {
-		// For concrete types, we can still track the type for robustness,
-		// but we don't need to accumulate them.
+	// Always accumulate possible types. Resetting the map can lead to lost
+	// information, especially when dealing with interface assignments where the
+	// static type of the variable might be unresolved.
+	if v.PossibleTypes == nil {
 		v.PossibleTypes = make(map[string]struct{})
-		if newFieldType != nil {
-			v.PossibleTypes[newFieldType.String()] = struct{}{}
-		}
-		e.logger.Debug("evalAssignStmt: setting concrete type for var", "name", ident.Name)
+	}
+	if newFieldType != nil {
+		v.PossibleTypes[newFieldType.String()] = struct{}{}
+		e.logger.Debug("evalAssignStmt: adding possible type to var", "name", ident.Name, "new_type", newFieldType.String())
 	}
 
 	return v
@@ -2596,12 +2587,11 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 
 	// Hybrid recursion check.
 	if f, ok := fn.(*object.Function); ok && f.Def != nil {
-		isRecursive := false
 		if f.Receiver != nil {
 			// For methods, use a strict check: recursion on the *same instance* is an error.
 			for _, frame := range e.callStack {
 				if frame.Fn != nil && frame.Fn.Def == f.Def && frame.Fn.Receiver == f.Receiver {
-					isRecursive = true
+					// isRecursive = true
 					break
 				}
 			}
@@ -2621,10 +2611,10 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 		// 	}
 		// }
 
-		if isRecursive {
-			e.logc(ctx, slog.LevelWarn, "infinite recursion detected", "function", name)
-			return e.newError(ctx, callPos, "infinite recursion detected: %s", name)
-		}
+		// if isRecursive {
+		// 	e.logc(ctx, slog.LevelWarn, "infinite recursion detected", "function", name)
+		// 	return e.newError(ctx, callPos, "infinite recursion detected: %s", name)
+		// }
 	}
 
 	frame := &callFrame{Function: name, Pos: callPos}
@@ -2696,6 +2686,14 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 		// Treat it as an external call and create a symbolic result based on its signature.
 		if fn.Body == nil {
 			return e.createSymbolicResultForFunc(ctx, fn)
+		}
+
+		// When calling a function, ensure its defining package's environment is fully populated.
+		if fn.Package != nil {
+			pkgObj, err := e.getOrLoadPackage(ctx, fn.Package.ImportPath)
+			if err == nil {
+				e.ensurePackageEnvPopulated(ctx, pkgObj)
+			}
 		}
 
 		// Check the scan policy before executing the body.

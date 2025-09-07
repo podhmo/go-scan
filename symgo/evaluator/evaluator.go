@@ -1451,6 +1451,14 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 		// If the pointee is not an instance or nothing is found, fall through to the error.
 		return e.newError(ctx, n.Pos(), "undefined method or field: %s for pointer type %s", n.Sel.Name, pointee.Type())
 
+	case *object.Nil:
+		// Nil can have methods in Go (e.g., interface with nil value).
+		// Try to find type information from the NIL object
+		// Return a symbolic method that can be called
+		return &object.SymbolicPlaceholder{
+			Reason: fmt.Sprintf("method %s on nil", n.Sel.Name),
+		}
+		
 	default:
 		return e.newError(ctx, n.Pos(), "expected a package, instance, or pointer on the left side of selector, but got %s", left.Type())
 	}
@@ -1561,8 +1569,9 @@ func (e *Evaluator) evalTypeSwitchStmt(ctx context.Context, n *ast.TypeSwitchStm
 
 			if caseClause.List == nil { // default case
 				v := &object.Variable{
-					Name:  varName,
-					Value: originalObj,
+					Name:        varName,
+					Value:       originalObj,
+					IsEvaluated: true, // Mark as evaluated since originalObj is already set
 					BaseObject: object.BaseObject{
 						ResolvedTypeInfo:  originalObj.TypeInfo(),
 						ResolvedFieldType: originalObj.FieldType(),
@@ -1594,8 +1603,9 @@ func (e *Evaluator) evalTypeSwitchStmt(ctx context.Context, n *ast.TypeSwitchStm
 					BaseObject: object.BaseObject{ResolvedTypeInfo: resolvedType, ResolvedFieldType: fieldType},
 				}
 				v := &object.Variable{
-					Name:  varName,
-					Value: val,
+					Name:        varName,
+					Value:       val,
+					IsEvaluated: true, // Mark as evaluated since val is already set
 					BaseObject: object.BaseObject{
 						ResolvedTypeInfo:  resolvedType,
 						ResolvedFieldType: fieldType,

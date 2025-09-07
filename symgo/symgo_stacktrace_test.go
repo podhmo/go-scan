@@ -40,7 +40,7 @@ func main() {
 		var errMsg string
 		action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 			pkg := pkgs[0]
-			eval := evaluator.New(s, nil, nil, nil)
+			eval := evaluator.New(s, nil, nil, nil, nil)
 			env := object.NewEnvironment()
 
 			for _, f := range pkg.AstFiles {

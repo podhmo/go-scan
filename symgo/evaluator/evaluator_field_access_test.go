@@ -52,7 +52,7 @@ func (t *MyType) GetName() string {
 			scanPolicy = func(importPath string) bool { return false }
 		}
 
-		eval := New(s, s.Logger, nil, scanPolicy)
+		eval := New(s, s.Logger, nil, nil, scanPolicy)
 
 		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 		for _, file := range pkg.AstFiles {

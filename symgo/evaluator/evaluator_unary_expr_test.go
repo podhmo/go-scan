@@ -35,7 +35,7 @@ var result = %s
 
 			action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 				pkg := pkgs[0]
-				eval := New(s, s.Logger, nil, nil)
+				eval := New(s, s.Logger, nil, nil, nil)
 				env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 
 				for _, file := range pkg.AstFiles {
@@ -99,7 +99,7 @@ func main() {
 
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
-		eval := New(s, s.Logger, nil, func(importPath string) bool {
+		eval := New(s, s.Logger, nil, nil, func(importPath string) bool {
 			// Treat the current package as source-scannable
 			return importPath == "example.com/me"
 		})
@@ -166,7 +166,7 @@ var result = %s
 
 			action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 				pkg := pkgs[0]
-				eval := New(s, s.Logger, nil, nil)
+				eval := New(s, s.Logger, nil, nil, nil)
 				env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 
 				for _, file := range pkg.AstFiles {

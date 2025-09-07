@@ -2,6 +2,7 @@ package object
 
 import (
 	"bufio"
+	"context"
 	"bytes"
 	"fmt"
 	"go/ast"
@@ -702,6 +703,25 @@ func (t *Type) Inspect() string {
 // are being evaluated.
 type Tracer interface {
 	Visit(node ast.Node)
+}
+
+// InterfaceEventHandler defines the callbacks for interface-related events during evaluation.
+type InterfaceEventHandler interface {
+	// OnInterfaceMethodCall is called when a method is called on an interface type.
+	// It returns the list of known implementations at the time of the call.
+	OnInterfaceMethodCall(ctx context.Context, ifaceType *scanner.TypeInfo, methodName string) []*scanner.TypeInfo
+
+	// OnImplementationFound is called when a new type is found to implement an interface.
+	// It registers the implementation and returns a list of method names that were called
+	// on the interface *before* this implementation was found, so they can be retroactively applied.
+	OnImplementationFound(ctx context.Context, ifaceType, implType *scanner.TypeInfo) []string
+
+	// GetAllInterfaces returns all interface types that are currently being tracked.
+	GetAllInterfaces(ctx context.Context) []*scanner.TypeInfo
+
+	// RegisterInterface ensures an interface is tracked, for cases where an interface is
+	// encountered before any implementations or calls.
+	RegisterInterface(ctx context.Context, ifaceType *scanner.TypeInfo)
 }
 
 // ScanPolicyFunc is a function that determines whether a package should be scanned from source.

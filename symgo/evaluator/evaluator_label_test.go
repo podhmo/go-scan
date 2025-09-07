@@ -62,7 +62,7 @@ OuterLoop:
 			}
 		})
 
-		eval := New(s, s.Logger, tracer, nil)
+		eval := New(s, s.Logger, tracer, nil, nil)
 
 		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 		pkgObj := &object.Package{

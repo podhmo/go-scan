@@ -28,7 +28,7 @@ func main() {
 
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
-		eval := New(s, s.Logger, nil, nil)
+		eval := New(s, s.Logger, nil, nil, nil)
 		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 
 		// Evaluate the file to populate functions etc.

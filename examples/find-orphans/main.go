@@ -443,9 +443,6 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool) error {
 	}
 	slog.InfoContext(ctx, "analysis phase", "packages", len(a.packages))
 
-	interfaceMap := buildInterfaceMap(a.packages)
-	slog.DebugContext(ctx, "built interface map", "interfaces", len(interfaceMap))
-
 	// Use the user-provided primary analysis scope if available, otherwise default to all scanned packages.
 	analysisScopePatterns := a.primaryAnalysisScope
 	if len(analysisScopePatterns) == 0 {
@@ -497,34 +494,14 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool) error {
 				}
 			}
 		case *object.SymbolicPlaceholder:
-			// For symbolic placeholders, we also check if they belong to a scanned package.
-			if fn.Package != nil {
-				if _, isScannable := a.scanPackages[fn.Package.ImportPath]; !isScannable {
-					return
-				}
-			}
-
-			if fn.UnderlyingMethod != nil {
-				methodName := fn.UnderlyingMethod.Name
-				var implementerTypes []*scanner.FieldType
-				if fn.Receiver != nil {
-					receiverTypeInfo := fn.Receiver.TypeInfo()
-					if receiverTypeInfo != nil && receiverTypeInfo.Kind == scanner.InterfaceKind {
-						ifaceName := fmt.Sprintf("%s.%s", receiverTypeInfo.PkgPath, receiverTypeInfo.Name)
-						if allImplementers, ok := interfaceMap[ifaceName]; ok {
-							for _, ti := range allImplementers {
-								implementerTypes = append(implementerTypes, &scanner.FieldType{Definition: ti})
-							}
-						}
-					}
-				}
-				for _, implFt := range implementerTypes {
-					a.markMethodAsUsed(ctx, usageMap, implFt, methodName)
-				}
-			}
+			// The new symgo engine automatically triggers intrinsics on concrete implementations
+			// of interfaces. This logic is now simpler because we only need to handle
+			// unresolved external functions, not manually resolve interface methods.
 			if fn.UnderlyingFunc != nil && fn.Package != nil && fn.UnderlyingFunc.Receiver == nil {
-				fullName := fmt.Sprintf("%s.%s", fn.Package.ImportPath, fn.UnderlyingFunc.Name)
-				usageMap[fullName] = true
+				if _, isScannable := a.scanPackages[fn.Package.ImportPath]; isScannable {
+					fullName := fmt.Sprintf("%s.%s", fn.Package.ImportPath, fn.UnderlyingFunc.Name)
+					usageMap[fullName] = true
+				}
 			}
 		}
 	}
@@ -783,39 +760,6 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool) error {
 	return nil
 }
 
-func (a *analyzer) markMethodAsUsed(ctx context.Context, usageMap map[string]bool, implFt *scanner.FieldType, methodName string) {
-	typeInfo, err := implFt.Resolve(ctx)
-	if err != nil || typeInfo == nil {
-		return // Cannot resolve the type, so cannot mark its methods.
-	}
-
-	implPkg, ok := a.packages[typeInfo.PkgPath]
-	if !ok {
-		return
-	}
-
-	// Find the concrete method on the implementing type
-	for _, m := range implPkg.Functions { // m is *scanner.FunctionInfo
-		if m.Name == methodName && m.Receiver != nil {
-			// Check if the receiver of the method `m` matches the type `typeInfo`.
-			if m.Receiver.Type.Name == typeInfo.Name || (m.Receiver.Type.IsPointer && m.Receiver.Type.Elem.Name == typeInfo.Name) {
-				// Found the method. Mark it as used.
-				var buf bytes.Buffer
-				printer.Fprint(&buf, a.s.Fset(), m.AstDecl.Recv.List[0].Type)
-				methodFullName := fmt.Sprintf("(%s.%s).%s", implPkg.ImportPath, buf.String(), m.Name)
-				usageMap[methodFullName] = true
-
-				// Also mark the value-receiver form if the concrete method has a pointer receiver
-				if recvTypeStr := buf.String(); len(recvTypeStr) > 0 && recvTypeStr[0] == '*' {
-					valueRecvName := fmt.Sprintf("(%s.%s).%s", implPkg.ImportPath, recvTypeStr[1:], m.Name)
-					usageMap[valueRecvName] = true
-				}
-				break
-			}
-		}
-	}
-}
-
 func (a *analyzer) Visit(pkg *goscan.PackageImports) ([]string, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -863,40 +807,6 @@ func getFullName(s *goscan.Scanner, pkg *scanner.PackageInfo, fn *scanner.Functi
 	return fmt.Sprintf("%s.%s", pkg.ImportPath, fn.Name)
 }
 
-func buildInterfaceMap(packages map[string]*scanner.PackageInfo) map[string][]*scanner.TypeInfo {
-	interfaceMap := make(map[string][]*scanner.TypeInfo)
-	var allInterfaces []*scanner.TypeInfo
-	var allStructs []*scanner.TypeInfo
-	packageOfStruct := make(map[*scanner.TypeInfo]*scanner.PackageInfo)
-
-	for _, pkg := range packages {
-		for _, t := range pkg.Types {
-			if t.Kind == scanner.InterfaceKind {
-				allInterfaces = append(allInterfaces, t)
-			} else if t.Kind == scanner.StructKind {
-				allStructs = append(allStructs, t)
-				packageOfStruct[t] = pkg
-			}
-		}
-	}
-
-	for _, iface := range allInterfaces {
-		ifaceName := fmt.Sprintf("%s.%s", iface.PkgPath, iface.Name)
-		var implementers []*scanner.TypeInfo
-
-		for _, strct := range allStructs {
-			pkgInfo := packageOfStruct[strct]
-			if goscan.Implements(strct, iface, pkgInfo) {
-				implementers = append(implementers, strct)
-			}
-		}
-		if len(implementers) > 0 {
-			interfaceMap[ifaceName] = implementers
-		}
-	}
-
-	return interfaceMap
-}
 
 // isTestFunction checks if a function is a standard Go test function.
 func isTestFunction(def *scanner.FunctionInfo) bool {

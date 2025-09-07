@@ -31,7 +31,7 @@ func main() {
 		pkg := pkgs[0]
 		// Explicitly do not scan the 'flag' package's source. This forces symgo
 		// to treat `flag.Usage` as a symbolic variable from an external package.
-		eval := New(s, s.Logger, nil, func(path string) bool {
+		eval := New(s, s.Logger, nil, nil, func(path string) bool {
 			return path != "flag"
 		})
 

@@ -38,7 +38,7 @@ var sentinel int
 			return !strings.HasPrefix(path, "example.com/me/foreign/")
 		}
 
-		evaluator := New(s, nil, nil, policy)
+		evaluator := New(s, nil, nil, nil, policy)
 		env := object.NewEnclosedEnvironment(evaluator.UniverseEnv)
 
 		pkg := findPackage(t, pkgs, "example.com/me")
@@ -124,7 +124,7 @@ func (f ForeignType) DoSomething() {}
 			return !strings.HasPrefix(path, "example.com/me/foreign/")
 		}
 
-		evaluator := New(s, nil, nil, policy)
+		evaluator := New(s, nil, nil, nil, policy)
 		evaluator.RegisterIntrinsic("example.com/me.Sentinel", func(args ...object.Object) object.Object {
 			sentinelReached = true
 			return nil
@@ -198,7 +198,7 @@ func GetTwo() (ForeignType, error) { return ForeignType{}, nil }
 			return !strings.HasPrefix(path, "example.com/me/foreign/")
 		}
 
-		evaluator := New(s, nil, nil, policy)
+		evaluator := New(s, nil, nil, nil, policy)
 		evaluator.RegisterIntrinsic("example.com/me.Sentinel", func(args ...object.Object) object.Object {
 			sentinelReached = true
 			return nil
@@ -326,7 +326,7 @@ func (c ConcreteType2) Do() {}
 			return !strings.HasPrefix(path, "example.com/me/foreign/")
 		}
 
-		evaluator := New(s, nil, nil, policy)
+		evaluator := New(s, nil, nil, nil, policy)
 		evaluator.RegisterIntrinsic("example.com/me.Sentinel", func(args ...object.Object) object.Object {
 			sentinelReached = true
 			return nil
@@ -444,7 +444,7 @@ func MyFunction(v any) {
 			return !strings.HasPrefix(path, "example.com/me/foreign/")
 		}
 
-		evaluator := New(s, nil, nil, policy)
+		evaluator := New(s, nil, nil, nil, policy)
 		evaluator.RegisterIntrinsic("example.com/me.Sentinel", func(args ...object.Object) object.Object {
 			sentinelReached = true
 			return nil
@@ -551,7 +551,7 @@ func MyFunction(v any) {
 			return !strings.HasPrefix(path, "example.com/me/foreign/")
 		}
 
-		evaluator := New(s, nil, nil, policy)
+		evaluator := New(s, nil, nil, nil, policy)
 		evaluator.RegisterIntrinsic("example.com/me.Sentinel", func(args ...object.Object) object.Object {
 			sentinelReached = true
 			return nil
@@ -636,7 +636,7 @@ var sentinel int
 			return !strings.HasPrefix(path, "example.com/me/foreign/")
 		}
 
-		evaluator := New(s, nil, nil, policy)
+		evaluator := New(s, nil, nil, nil, policy)
 		env := object.NewEnclosedEnvironment(evaluator.UniverseEnv)
 
 		pkg := findPackage(t, pkgs, "example.com/me")
@@ -748,7 +748,7 @@ func (f ForeignType) ForeignMethod() {}
 			return !strings.HasPrefix(path, "example.com/me/foreign/")
 		}
 
-		evaluator := New(s, nil, nil, policy)
+		evaluator := New(s, nil, nil, nil, policy)
 		evaluator.RegisterIntrinsic("example.com/me.Sentinel", func(args ...object.Object) object.Object {
 			sentinelReached = true
 			return nil
@@ -818,7 +818,7 @@ func MyFunction(p *extpkg.ExternalType, s []extpkg.ExternalType) {
 			return path != "example.com/me/extpkg"
 		}
 
-		evaluator := New(s, nil, nil, policy)
+		evaluator := New(s, nil, nil, nil, policy)
 		evaluator.RegisterIntrinsic("example.com/me/mypkg.Sentinel", func(args ...object.Object) object.Object {
 			sentinelReached = true
 			return nil

@@ -45,7 +45,7 @@ func (s *S) GetName() string {
 			t.Fatal("struct S not found")
 		}
 
-		eval := New(s, nil, nil, func(pkgpath string) bool { return true })
+		eval := New(s, nil, nil, nil, func(pkgpath string) bool { return true })
 
 		t.Run("findFieldOnType", func(t *testing.T) {
 			field, err := eval.accessor.findFieldOnType(ctx, sTypeInfo, "Name")

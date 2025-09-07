@@ -34,6 +34,7 @@ type Evaluator struct {
 	intrinsics        *intrinsics.Registry
 	logger            *slog.Logger
 	tracer            object.Tracer // Tracer for debugging evaluation flow.
+	handler           object.InterfaceEventHandler
 	callStack         []*callFrame
 	interfaceBindings map[string]*goscan.TypeInfo
 	resolver          *Resolver
@@ -64,7 +65,7 @@ func (f *callFrame) String() string {
 }
 
 // New creates a new Evaluator.
-func New(scanner *goscan.Scanner, logger *slog.Logger, tracer object.Tracer, scanPolicy object.ScanPolicyFunc) *Evaluator {
+func New(scanner *goscan.Scanner, logger *slog.Logger, tracer object.Tracer, handler object.InterfaceEventHandler, scanPolicy object.ScanPolicyFunc) *Evaluator {
 	if logger == nil {
 		logger = slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	}
@@ -79,6 +80,7 @@ func New(scanner *goscan.Scanner, logger *slog.Logger, tracer object.Tracer, sca
 		intrinsics:           intrinsics.New(),
 		logger:               logger,
 		tracer:               tracer,
+		handler:              handler,
 		interfaceBindings:    make(map[string]*goscan.TypeInfo),
 		resolver:             NewResolver(scanPolicy, scanner, logger),
 		initializedPkgs:      make(map[string]bool),
@@ -291,6 +293,22 @@ func (e *Evaluator) evalIncDecStmt(ctx context.Context, n *ast.IncDecStmt, env *
 	val := e.Eval(ctx, n.X, env, pkg)
 	if isError(val) {
 		return val
+	}
+
+	// NEW: Check if the assigned value is a new implementation of a known interface.
+	if e.handler != nil {
+		if valTypeInfo := val.TypeInfo(); valTypeInfo != nil && valTypeInfo.Kind == scanner.StructKind {
+			allInterfaces := e.handler.GetAllInterfaces(ctx)
+			for _, ifaceType := range allInterfaces {
+				implemented, err := Implements(ctx, valTypeInfo, ifaceType, e)
+				if err == nil && implemented {
+					retroactiveMethods := e.handler.OnImplementationFound(ctx, ifaceType, valTypeInfo)
+					for _, methodName := range retroactiveMethods {
+						e.triggerConservativeAnalysis(ctx, valTypeInfo, methodName, env)
+					}
+				}
+			}
+		}
 	}
 
 	// Force evaluation in case val is a variable.
@@ -953,6 +971,24 @@ func (e *Evaluator) evalTypeDecl(ctx context.Context, d *ast.GenDecl, env *objec
 		}
 		typeObj.SetTypeInfo(typeInfo)
 		env.Set(ts.Name.Name, typeObj)
+
+		// Check for interface implementations when a new type is declared.
+		if e.handler != nil {
+			if typeInfo.Kind == scanner.InterfaceKind {
+				e.handler.RegisterInterface(ctx, typeInfo)
+			} else if typeInfo.Kind == scanner.StructKind {
+				allInterfaces := e.handler.GetAllInterfaces(ctx)
+				for _, ifaceType := range allInterfaces {
+					implemented, err := Implements(ctx, typeInfo, ifaceType, e)
+					if err == nil && implemented {
+						retroactiveMethods := e.handler.OnImplementationFound(ctx, ifaceType, typeInfo)
+						for _, methodName := range retroactiveMethods {
+							e.triggerConservativeAnalysis(ctx, typeInfo, methodName, env)
+						}
+					}
+				}
+			}
+		}
 	}
 }
 
@@ -1185,6 +1221,16 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 	}
 
 	e.logger.Debug("evalSelectorExpr: evaluated left", "type", left.Type(), "value", left.Inspect())
+
+	// NEW: Handle interface method calls conservatively.
+	if typeInfo := left.TypeInfo(); typeInfo != nil && typeInfo.Kind == scanner.InterfaceKind {
+		if e.handler != nil {
+			implementations := e.handler.OnInterfaceMethodCall(ctx, typeInfo, n.Sel.Name)
+			for _, implType := range implementations {
+				e.triggerConservativeAnalysis(ctx, implType, n.Sel.Name, env)
+			}
+		}
+	}
 
 	switch val := left.(type) {
 	case *object.SymbolicPlaceholder:
@@ -3161,4 +3207,26 @@ func (e *Evaluator) ApplyFunction(call *ast.CallExpr, fn object.Object, args []o
 	// but not for closures that capture variables.
 	// The pkg argument is nil here, which might limit some functionality.
 	return e.applyFunction(context.Background(), fn, args, nil, call.Pos())
+}
+
+// triggerConservativeAnalysis is a helper to invoke the default intrinsic for a specific method on a concrete type.
+// This is used to handle the conservative "call all implementations" logic for interfaces.
+func (e *Evaluator) triggerConservativeAnalysis(ctx context.Context, implType *scanner.TypeInfo, methodName string, env *object.Environment) {
+	if e.defaultIntrinsic == nil {
+		return
+	}
+
+	// Create a symbolic receiver of the concrete implementation type.
+	symbolicReceiver := &object.SymbolicPlaceholder{
+		Reason:     "symbolic receiver for conservative interface call",
+		BaseObject: object.BaseObject{ResolvedTypeInfo: implType},
+	}
+
+	// Find the method on the concrete type.
+	method, err := e.accessor.findMethodOnType(ctx, implType, methodName, env, symbolicReceiver)
+	if err == nil && method != nil {
+		// Invoke the default intrinsic with the concrete method function object.
+		// The intrinsic is expected to handle the analysis (e.g., marking the method as "used").
+		e.defaultIntrinsic(method)
+	}
 }

@@ -50,6 +50,7 @@ type Interpreter struct {
 	globalEnv                  *object.Environment
 	logger                     *slog.Logger
 	tracer                     object.Tracer
+	registry                   *InterfaceRegistry
 	interfaceBindings          map[string]*goscan.TypeInfo
 	scanPolicy                 object.ScanPolicyFunc // This will be built from primary scope
 	primaryAnalysisPatterns    []string
@@ -114,6 +115,7 @@ func NewInterpreter(scanner *goscan.Scanner, options ...Option) (*Interpreter, e
 	i := &Interpreter{
 		scanner:           scanner,
 		globalEnv:         object.NewEnvironment(),
+		registry:          NewInterfaceRegistry(),
 		interfaceBindings: make(map[string]*goscan.TypeInfo),
 	}
 
@@ -166,7 +168,7 @@ func NewInterpreter(scanner *goscan.Scanner, options ...Option) (*Interpreter, e
 		}
 	}
 
-	i.eval = evaluator.New(scanner, i.logger, i.tracer, i.scanPolicy)
+	i.eval = evaluator.New(scanner, i.logger, i.tracer, i.registry, i.scanPolicy)
 
 	// Register default intrinsics
 	i.RegisterIntrinsic("fmt.Sprintf", i.intrinsicSprintf)

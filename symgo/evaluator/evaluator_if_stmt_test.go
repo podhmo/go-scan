@@ -36,7 +36,7 @@ func main() {
 	// run
 	var discoveredFunctions []string
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
-		eval := New(s, s.Logger, nil, nil)
+		eval := New(s, s.Logger, nil, nil, nil)
 
 		eval.RegisterDefaultIntrinsic(func(args ...object.Object) object.Object {
 			if fn, ok := args[0].(*object.Function); ok {
@@ -101,7 +101,7 @@ func main() {
 	// run
 	var finalResult object.Object
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
-		eval := New(s, s.Logger, nil, nil)
+		eval := New(s, s.Logger, nil, nil, nil)
 		mainPkg := pkgs[0]
 		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 

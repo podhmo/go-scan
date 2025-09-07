@@ -44,7 +44,7 @@ func main() {
 
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		mainPkg := pkgs[0]
-		eval := New(s, s.Logger, nil, nil)
+		eval := New(s, s.Logger, nil, nil, nil)
 
 		// Register an intrinsic for the inspect function
 		eval.RegisterIntrinsic("example.com/main.inspect", func(args ...object.Object) object.Object {
@@ -154,7 +154,7 @@ func process(prefix string, data any) {
 
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		mainPkg := pkgs[0]
-		eval := New(s, s.Logger, nil, nil)
+		eval := New(s, s.Logger, nil, nil, nil)
 
 		// Register an intrinsic for the inspect function
 		eval.RegisterIntrinsic("example.com/main.inspect", func(args ...object.Object) object.Object {

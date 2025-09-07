@@ -53,7 +53,7 @@ func GetBody(resp *TestResponse) io.Reader {
 			return fmt.Errorf("expected main package, but got %s", mainPkg.Name)
 		}
 
-		eval := New(s, s.Logger, nil, nil)
+		eval := New(s, s.Logger, nil, nil, nil)
 
 		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 		for _, file := range mainPkg.AstFiles {

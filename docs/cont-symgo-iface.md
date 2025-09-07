@@ -81,3 +81,11 @@ The major refactoring to standardize on the `github.com/podhmo/go-scan/scanner` 
 4.  **Expand Test Coverage**: Add more tests to cover various orderings of interface declaration, implementation assignment, and method usage to ensure the solution is robust.
 
 5.  **Submit**: Once all tests pass and the feature is verified, submit the work.
+
+## 6. References
+
+No external documentation was used for this task. All key insights were derived from reading the source code of this repository. The most critical files for understanding the core problem were:
+
+*   `symgo/evaluator/evaluator.go` and `symgo/evaluator/evaluator_test.go`: Examining the existing code and test setup in these files revealed the conflicting usage of two different `Scanner` types.
+*   `scanner/scanner.go`: This file was essential for discovering the API of the correct `scanner.Scanner` type, including its more complex constructor and the `FileSet()` method for accessing the token fileset.
+*   `scanner/models.go`: This file confirmed the definitions of `TypeInfo`, `MethodInfo`, and other data structures that are central to the interface resolution logic.

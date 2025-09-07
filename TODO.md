@@ -72,7 +72,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 ### symgo: Fix Cross-Package Unexported Symbol Resolution ([docs/trouble-symgo-nested-scope.md](./docs/trouble-symgo-nested-scope.md))
 - [x] Evaluate package-level var declarations in `ensurePackageEnvPopulated` to fix "identifier not found" errors for unexported symbols.
 - [x] Fix regressions caused by the lazy-evaluation implementation. The core regressions related to variable evaluation, pointer dispatch, and recursion detection have been resolved.
-- [-] Fix `find-orphans` incorrectly reporting `formatCode` as an orphan in the `examples/convert` project. (Note: This may be resolved, but other `find-orphans` failures related to interface dispatch remain).
+- [ ] Fix `find-orphans` incorrectly reporting `formatCode` as an orphan in the `examples/convert` project. (Note: This is a known regression, see `docs/trouble-symgo-refine.md`).
 - [ ] Deeper state-management issues related to package-level variables in recursive calls remain, as seen in `TestCrossPackageUnexportedResolution`.
 
 ### `symgo` Engine Improvements ([docs/plan-symgo-refine2.md](./docs/plan-symgo-refine2.md))

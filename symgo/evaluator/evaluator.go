@@ -287,31 +287,43 @@ func (e *Evaluator) Eval(ctx context.Context, node ast.Node, env *object.Environ
 }
 
 func (e *Evaluator) evalIncDecStmt(ctx context.Context, n *ast.IncDecStmt, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
-	// This is a crucial change: we must evaluate the identifier before trying to modify it.
-	val := e.Eval(ctx, n.X, env, pkg)
-	if isError(val) {
-		return val
+	ident, ok := n.X.(*ast.Ident)
+	if !ok {
+		// Fallback for complex expressions, though Inc/Dec usually applies to simple identifiers.
+		// We just evaluate it for its side effects (tracing calls) and move on.
+		e.Eval(ctx, n.X, env, pkg)
+		return nil
 	}
 
-	// Force evaluation in case val is a variable.
-	val = e.forceEval(ctx, val, pkg)
+	obj, ok := env.Get(ident.Name)
+	if !ok {
+		return e.newError(ctx, n.Pos(), "identifier not found for IncDec: %s", ident.Name)
+	}
+
+	variable, ok := obj.(*object.Variable)
+	if !ok {
+		return e.newError(ctx, n.Pos(), "cannot increment/decrement non-variable: %s", ident.Name)
+	}
+
+	// Ensure the variable is initialized and get its current value.
+	val := e.evalVariable(ctx, variable, pkg)
 	if isError(val) {
 		return val
 	}
 
 	switch v := val.(type) {
 	case *object.Integer:
-		// The value is a concrete integer, so we can modify it.
+		newVal := v.Value
 		switch n.Tok {
 		case token.INC:
-			v.Value++
+			newVal++
 		case token.DEC:
-			v.Value--
+			newVal--
 		}
+		// Crucially, update the Value field on the *Variable* object itself.
+		variable.Value = &object.Integer{Value: newVal}
+
 	case *object.SymbolicPlaceholder:
-		// If we are incrementing/decrementing a symbolic placeholder that represents
-		// a zero-value variable, we can treat it as a concrete integer with value 0.
-		// We replace the placeholder with a new integer object.
 		var newInt int64
 		switch n.Tok {
 		case token.INC:
@@ -319,18 +331,11 @@ func (e *Evaluator) evalIncDecStmt(ctx context.Context, n *ast.IncDecStmt, env *
 		case token.DEC:
 			newInt = -1
 		}
-
 		// Update the variable in the environment to hold the new concrete integer value.
-		if ident, ok := n.X.(*ast.Ident); ok {
-			if obj, found := env.Get(ident.Name); found {
-				if variable, ok := obj.(*object.Variable); ok {
-					variable.Value = &object.Integer{Value: newInt}
-				}
-			}
-		}
+		variable.Value = &object.Integer{Value: newInt}
 	}
 	// If val is not an Integer or a placeholder we can handle, we do nothing.
-
+	env.Set(ident.Name, variable)
 	return nil // IncDec is a statement, so it doesn't return a value.
 }
 
@@ -2603,20 +2608,21 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 					break
 				}
 			}
-		} else {
-			// For regular functions, a simple depth check is a better heuristic to allow
-			// for stateful recursion that is not truly infinite.
-			const maxFuncDepth = 5
-			count := 0
-			for _, frame := range e.callStack {
-				if frame.Fn != nil && frame.Fn.Def == f.Def {
-					count++
-				}
-			}
-			if count >= maxFuncDepth {
-				isRecursive = true
-			}
 		}
+		// else {
+		// 	// For regular functions, a simple depth check is a better heuristic to allow
+		// 	// for stateful recursion that is not truly infinite.
+		// 	const maxFuncDepth = 5
+		// 	count := 0
+		// 	for _, frame := range e.callStack {
+		// 		if frame.Fn != nil && frame.Fn.Def == f.Def {
+		// 			count++
+		// 		}
+		// 	}
+		// 	if count >= maxFuncDepth {
+		// 		isRecursive = true
+		// 	}
+		// }
 
 		if isRecursive {
 			e.logc(ctx, slog.LevelWarn, "infinite recursion detected", "function", name)

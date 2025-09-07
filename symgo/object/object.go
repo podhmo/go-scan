@@ -343,6 +343,9 @@ type SymbolicPlaceholder struct {
 	// For interface method calls, this holds the set of possible concrete field types
 	// that the receiver variable could hold.
 	PossibleConcreteTypes []*scanner.FieldType
+	// Cache for the Inspect() result to avoid repeated string building
+	inspectCache string
+	cacheValid   bool
 }
 
 // Type returns the type of the SymbolicPlaceholder object.
@@ -350,11 +353,17 @@ func (sp *SymbolicPlaceholder) Type() ObjectType { return SYMBOLIC_OBJ }
 
 // Inspect returns a string representation of the symbolic placeholder.
 func (sp *SymbolicPlaceholder) Inspect() string {
+	if sp.cacheValid {
+		return sp.inspectCache
+	}
+	
 	var builder strings.Builder
 	builder.WriteString("<Symbolic: ")
 	builder.WriteString(sp.Reason)
 	builder.WriteString(">")
-	return builder.String()
+	sp.inspectCache = builder.String()
+	sp.cacheValid = true
+	return sp.inspectCache
 }
 
 // --- ReturnValue Object ---

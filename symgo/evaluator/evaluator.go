@@ -1799,15 +1799,13 @@ func (e *Evaluator) evalIfStmt(ctx context.Context, n *ast.IfStmt, env *object.E
 	// If the 'then' branch returned a control flow object, propagate it.
 	// This is a heuristic; a more complex analysis might merge states.
 	// We prioritize the 'then' branch's signal.
-	// We do NOT propagate ReturnValue, as that would prematurely terminate
-	// the analysis of the current function just because one symbolic path returned.
 	switch thenResult.(type) {
-	case *object.Error, *object.Break, *object.Continue:
+	case *object.ReturnValue, *object.Error, *object.Break, *object.Continue:
 		return thenResult
 	}
 	// Otherwise, check the 'else' branch.
 	switch elseResult.(type) {
-	case *object.Error, *object.Break, *object.Continue:
+	case *object.ReturnValue, *object.Error, *object.Break, *object.Continue:
 		return elseResult
 	}
 

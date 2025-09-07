@@ -1,85 +1,62 @@
-# symgo: Regressions from Lazy Evaluation Implementation
+# `symgo` Refinement: Addressing State Management and Type Propagation Regressions
 
-This document outlines the various test failures that appear to be regressions caused by the introduction of a lazy evaluation mechanism for variables in the `symgo` engine. The failures are widespread across the `symgo`, `symgo/evaluator`, and `examples/find-orphans` packages.
+This document outlines the investigation and resolution of a series of regressions in the `symgo` symbolic execution engine, which were introduced after implementing a lazy evaluation mechanism for package-level variables. The regressions manifest as infinite recursion errors, incorrect "orphan" function reporting, and improper type propagation.
 
-The previous work is in `docs/trouble-symgo-nested-scope.md`. The goal was to fix "identifier not found" for unexported symbols by evaluating package-level variables lazily. However, this change has caused numerous regressions.
+## 1. Core Problem: Infinite Recursion in `TestCrossPackageUnexportedResolution`
 
-## Failure Categories
+The most critical regression is an infinite recursion failure in `TestCrossPackageUnexportedResolution`. This test was specifically designed to validate state management of a package-level variable across cross-package recursive calls.
 
-The test failures can be grouped into several distinct categories, likely stemming from one or two root causes.
+### Symptom
 
-### 1. Overly Lazy Evaluation / Values Not Being Forced
+The test, which uses a `count` variable to terminate recursion, now fails with `infinite recursion detected: getSecretMessage`. This indicates that the `count++` operation within the recursive function is not persisting across calls. The `count` variable's state is effectively reset on each recursive invocation, causing the termination condition (`count > 0`) to never be met.
 
-The most common failure mode is that variables are not being evaluated when they should be. The evaluator returns a symbolic placeholder (`<Symbolic: zero value for uninitialized variable>`) instead of a concrete value when a variable is used in contexts like function arguments, return statements, or binary expressions.
+### Root Cause Analysis
 
-**Affected Tests:**
-- `symgo.TestFeature_SprintfIntrinsic`: Fails to evaluate a variable passed to `Sprintf`.
-- `symgo.TestSymgo_AnonymousTypes`: Fails to resolve a field access.
-- `symgo/evaluator.TestEvalIncDecStmt`: `i++` results in a placeholder, not an integer.
-- `symgo/evaluator.TestVariadicFunction`: Variadic arguments are not evaluated.
-- `symgo/evaluator.TestEvalFunctionApplication`: Fails to return a concrete integer.
-- `symgo/evaluator.TestEvalClosures`: Fails to return a concrete integer from a closure.
-- `symgo/evaluator.TestGenericFunctionCall`: Fails to evaluate generic function return values.
-- And many others.
+The failure stems from a subtle issue in `evalIncDecStmt`. The implementation is as follows:
 
-**Hypothesis:** The mechanism to "force" the evaluation of a lazy variable (`object.Variable`) is either missing or not being triggered correctly in `evalCallExpr`, `evalBinaryExpr`, and other expression evaluation functions.
+1.  `e.Eval(ctx, n.X, ...)` is called for the identifier (e.g., `count`).
+2.  This resolves through `evalIdent` and `evalVariable` to the underlying `*object.Integer` stored in the variable's `Value` field.
+3.  `evalIncDecStmt` then increments the `Value` field of this returned `*object.Integer` object.
 
-### 2. Method Dispatch Failure on Pointer Receivers
+While this appears correct (as it modifies a pointer), it seems this modification is not consistently reflected in the environment seen by subsequent recursive calls. This suggests a flaw in how environments are created or how variables are resolved, where a stale or copied version of the state is being used.
 
-A critical error, `not a function: POINTER`, occurs when attempting to call a method on a pointer receiver.
+The most robust fix is to avoid modifying the returned value object indirectly. Instead, `evalIncDecStmt` should explicitly fetch the `*object.Variable` container from the environment and then update the `Value` it points to. This ensures the change is made directly to the canonical state holder in the environment.
 
-**Affected Tests:**
-- `examples/find-orphans.TestFindOrphans_interface`
-- `symgo/evaluator.TestEval_InterfaceMethodCall_OnConcreteType`
-- `symgo/evaluator.TestEval_InterfaceMethodCall_AcrossControlFlow`
-- `symgo/integration_test.TestStateTracking_GlobalVarWithMethodCall`
+## 2. Related Symptom: `find-orphans` Failures
 
-**Hypothesis:** The `evalCallExpr` or its underlying dispatch logic incorrectly handles method calls on pointer types. Instead of resolving the method on the pointer's underlying type, it seems to be attempting to "execute" the pointer itself as a function, leading to the `not a function: POINTER` error.
+Tests like `TestFindOrphans_ShallowScan_UnresolvedInterfaceMethodCall` and `TestFindOrphans_interface` are failing. They incorrectly report used methods as orphans.
 
-### 3. Inconsistent Recursion Detection
+### Symptom
 
-The recursion detection mechanism is behaving inconsistently.
+-   `'CallMe' was reported as an orphan, but it should be considered used.`
+-   `find-orphans mismatch... + "(example.com/find-orphans-test/speaker.*Cat).Speak"`
 
-- **`symgo.TestCrossPackageUnexportedResolution`**: Fails with an `infinite recursion detected` error, suggesting a false positive. This seems to be a direct regression from the lazy-loading fix for unexported variables.
-- **`symgo/evaluator.TestRecursion_method`**: Fails because it *does not* detect an obvious infinite recursion, suggesting a false negative.
+### Root Cause Analysis
 
-**Hypothesis:** The logic for tracking the call stack and identifying recursive calls is flawed. It may not be correctly handling the new lazy variable evaluation or has other logic bugs.
+These failures are classic signs that `symgo`'s call graph analysis is incomplete. Specifically, it's failing to trace method calls made through interfaces. When `main` calls a function that takes an interface, and that function calls a method on the interface, `symgo` isn't connecting the call to the concrete implementation (`CallMe` or `Speak`). This is likely because the engine loses track of the concrete type that was assigned to the interface variable. This is a type propagation issue, which may be exacerbated by the new lazy variable evaluation.
 
-### 4. Incorrect Orphan Detection in `find-orphans`
+## 3. Related Symptom: Widespread Type Propagation Failures in `symgo/evaluator`
 
-Multiple tests for `find-orphans` are failing because functions and methods that are clearly in use are being reported as orphans.
+A large number of tests in `symgo/evaluator` are failing with similar patterns.
 
-**Affected Tests:**
-- `examples/find-orphans.TestFindOrphans_ShallowScan_UnresolvedInterfaceMethodCall`
-- `examples/find-orphans.TestFindOrphans`
-- `examples/find-orphans.TestFindOrphans_json`
+### Symptoms
 
-**Hypothesis:** This is a direct symptom of categories #1 and #2. If method calls are not being traced correctly by the `symgo` engine, the `find-orphans` tool will naturally fail to build an accurate call graph, leading to false positives.
+-   `expected return value to be a *symgo.String, but got *object.SymbolicPlaceholder`
+-   `V is not an integer, got *object.SymbolicPlaceholder`
+-   `mismatch in inspected types (-want +got)`
+-   `did not capture an interface method call, UnderlyingMethod was nil`
 
-### 5. Type Resolution Failures
+### Root Cause Analysis
 
-Some tests fail because they cannot resolve certain types, particularly `any`.
+These errors all point to a systemic problem where the evaluator loses or fails to determine the specific type of an object during execution, falling back to a generic `SymbolicPlaceholder`. This happens in various scenarios: generics, closures, type switches, and interface method calls.
 
-**Affected Tests:**
-- `symgo/evaluator.TestEvaluator_ShallowScan_TypeSwitch`: `identifier not found: any`
-- `symgo/evaluator.TestShallowScan_StarAndIndexExpr`: `identifier not found: any`
+The issue is likely connected to the lazy evaluation mechanism. As the `trouble-symgo-nested-scope.md` document noted, lazy evaluation is not being triggered in all necessary contexts. When a variable holding a concrete value (e.g., an integer) is passed to a function, its lazy initializer might not be evaluated, causing the function to receive a placeholder instead of the actual integer.
 
-**Hypothesis:** There might be an issue with how the `universe` scope (which contains built-in types like `any`) is being handled, or how type information is propagated during shallow scanning.
+## Action Plan
 
-## Plan for Resolution
+The highest priority is to fix the state management bug causing the infinite recursion. This is a fundamental correctness issue.
 
-The highest priority is to fix the overly lazy evaluation, as this is the most widespread issue and likely the root cause of many other failures.
-
-1.  **Fix Lazy Evaluation Forcing**:
-    -   Review the implementation of `evalVariable` and where it's called.
-    -   Create a new helper function, `forceEval(object.Object)`, that checks if an object is a variable and, if so, evaluates it, returning the result. This function should be used ubiquitously before using an object's value.
-    -   Integrate `forceEval` into `evalCallExpr` (for function arguments), `evalBinaryExpr`, `evalUnaryExpr`, and any other place where a concrete value is required.
-2.  **Fix Pointer Receiver Method Dispatch**:
-    -   Debug `evalCallExpr` and `evalSelectorExpr`.
-    -   When the receiver of a method call is a pointer, ensure the logic correctly looks up the method on the pointed-to type rather than treating the pointer as a callable function. This likely involves dereferencing the pointer type before method lookup.
-3.  **Address Recursion Bugs**:
-    -   Once the evaluation and dispatch logic is more stable, re-examine the two failing recursion tests to diagnose the contradictory behavior.
-4.  **Verify `find-orphans`**:
-    -   After the above fixes are in place, re-run the `find-orphans` tests. It's expected that most of them will pass without further changes.
-5.  **Fix Type Resolution**:
-    -   Investigate the `identifier not found: any` errors. This might require ensuring the `universe` scope is correctly accessible in all evaluation contexts.
+1.  **Modify `evalIncDecStmt`**: Change the implementation to fetch the `object.Variable` from the environment and update its `Value` field directly. This will ensure state changes are atomic and correctly persisted in the environment.
+2.  **Re-evaluate Other Failures**: After fixing the recursion bug, re-run all tests. It is possible that fixing the state management will also resolve some of the type propagation issues.
+3.  **Address Type Propagation**: For the remaining failures, systematically enhance the evaluator to ensure `evalVariable` is called whenever a variable's value is needed, not just in `evalIdent`. This may involve adding explicit calls to `forceEval` in places like `evalCallExpr` before passing arguments to a function.
+4.  **Fix Interface Resolution**: With state and types being more reliably propagated, the final step will be to ensure interface method calls are correctly resolved to their concrete implementations, which should fix the `find-orphans` failures.

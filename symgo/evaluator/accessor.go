@@ -6,7 +6,7 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/podhmo/go-scan/scanner"
+	scannerv2 "github.com/podhmo/go-scan/scanner"
 	"github.com/podhmo/go-scan/symgo/object"
 )
 
@@ -22,7 +22,7 @@ func newAccessor(eval *Evaluator) *accessor {
 }
 
 // findFieldOnType recursively finds a field on a type or its embedded types.
-func (a *accessor) findFieldOnType(ctx context.Context, typeInfo *scanner.TypeInfo, fieldName string) (*scanner.FieldInfo, error) {
+func (a *accessor) findFieldOnType(ctx context.Context, typeInfo *scannerv2.TypeInfo, fieldName string) (*scannerv2.FieldInfo, error) {
 	if typeInfo == nil {
 		return nil, nil // Cannot find field without type info
 	}
@@ -31,7 +31,7 @@ func (a *accessor) findFieldOnType(ctx context.Context, typeInfo *scanner.TypeIn
 	return a.findFieldRecursive(ctx, typeInfo, fieldName, visited)
 }
 
-func (a *accessor) findFieldRecursive(ctx context.Context, typeInfo *scanner.TypeInfo, fieldName string, visited map[string]bool) (*scanner.FieldInfo, error) {
+func (a *accessor) findFieldRecursive(ctx context.Context, typeInfo *scannerv2.TypeInfo, fieldName string, visited map[string]bool) (*scannerv2.FieldInfo, error) {
 	if typeInfo == nil || typeInfo.Struct == nil {
 		return nil, nil
 	}
@@ -57,9 +57,9 @@ func (a *accessor) findFieldRecursive(ctx context.Context, typeInfo *scanner.Typ
 				return field, nil
 			}
 
-			var embeddedTypeInfo *scanner.TypeInfo
+			var embeddedTypeInfo *scannerv2.TypeInfo
 			if field.Type.FullImportPath != "" && !a.eval.resolver.ScanPolicy(field.Type.FullImportPath) {
-				embeddedTypeInfo = scanner.NewUnresolvedTypeInfo(field.Type.FullImportPath, field.Type.TypeName)
+				embeddedTypeInfo = scannerv2.NewUnresolvedTypeInfo(field.Type.FullImportPath, field.Type.TypeName)
 			} else {
 				embeddedTypeInfo, _ = field.Type.Resolve(ctx)
 			}
@@ -77,7 +77,7 @@ func (a *accessor) findFieldRecursive(ctx context.Context, typeInfo *scanner.Typ
 
 // findMethodOnType recursively finds a method on a type or its embedded types.
 // It returns a callable Function object if found.
-func (a *accessor) findMethodOnType(ctx context.Context, typeInfo *scanner.TypeInfo, methodName string, env *object.Environment, receiver object.Object) (*object.Function, error) {
+func (a *accessor) findMethodOnType(ctx context.Context, typeInfo *scannerv2.TypeInfo, methodName string, env *object.Environment, receiver object.Object) (*object.Function, error) {
 	if typeInfo == nil {
 		return nil, nil // Cannot find method without type info
 	}
@@ -87,7 +87,7 @@ func (a *accessor) findMethodOnType(ctx context.Context, typeInfo *scanner.TypeI
 	return a.findMethodRecursive(ctx, typeInfo, methodName, env, receiver, visited)
 }
 
-func (a *accessor) findMethodRecursive(ctx context.Context, typeInfo *scanner.TypeInfo, methodName string, env *object.Environment, receiver object.Object, visited map[string]bool) (*object.Function, error) {
+func (a *accessor) findMethodRecursive(ctx context.Context, typeInfo *scannerv2.TypeInfo, methodName string, env *object.Environment, receiver object.Object, visited map[string]bool) (*object.Function, error) {
 	if typeInfo == nil {
 		return nil, nil
 	}
@@ -108,9 +108,9 @@ func (a *accessor) findMethodRecursive(ctx context.Context, typeInfo *scanner.Ty
 	if typeInfo.Struct != nil {
 		for _, field := range typeInfo.Struct.Fields {
 			if field.Embedded {
-				var embeddedTypeInfo *scanner.TypeInfo
+				var embeddedTypeInfo *scannerv2.TypeInfo
 				if field.Type.FullImportPath != "" && !a.eval.resolver.ScanPolicy(field.Type.FullImportPath) {
-					embeddedTypeInfo = scanner.NewUnresolvedTypeInfo(field.Type.FullImportPath, field.Type.TypeName)
+					embeddedTypeInfo = scannerv2.NewUnresolvedTypeInfo(field.Type.FullImportPath, field.Type.TypeName)
 				} else {
 					embeddedTypeInfo, _ = field.Type.Resolve(ctx)
 				}
@@ -135,7 +135,7 @@ func (a *accessor) findMethodRecursive(ctx context.Context, typeInfo *scanner.Ty
 	return nil, nil // Not found
 }
 
-func (a *accessor) findDirectMethodOnType(ctx context.Context, typeInfo *scanner.TypeInfo, methodName string, env *object.Environment, receiver object.Object) (*object.Function, error) {
+func (a *accessor) findDirectMethodOnType(ctx context.Context, typeInfo *scannerv2.TypeInfo, methodName string, env *object.Environment, receiver object.Object) (*object.Function, error) {
 	if typeInfo == nil || typeInfo.PkgPath == "" {
 		return nil, nil
 	}

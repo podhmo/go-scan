@@ -420,13 +420,14 @@ func (rv *ReturnValue) Inspect() string { return rv.Value.Inspect() }
 // It holds a value and its resolved type information.
 type Variable struct {
 	BaseObject
-	Name          string
-	Value         Object
-	Initializer   ast.Expr             // For lazy evaluation
-	IsEvaluated   bool                 // For lazy evaluation
-	DeclEnv       *Environment         // Environment where the variable was declared
-	DeclPkg       *scanner.PackageInfo // Package where the variable was declared
-	PossibleTypes map[string]struct{}  // Used for tracking possible types for interface variables
+	Name            string
+	Value           Object
+	Initializer     ast.Expr             // For lazy evaluation
+	IsEvaluated     bool                 // For lazy evaluation
+	DeclEnv         *Environment         // Environment where the variable was declared
+	DeclPkg         *scanner.PackageInfo // Package where the variable was declared
+	PossibleTypes   map[string]struct{}  // Used for tracking possible types for interface variables
+	StaticFieldType *scanner.FieldType   // The statically declared type of the variable
 }
 
 // Type returns the type of the Variable object.

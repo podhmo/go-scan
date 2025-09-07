@@ -1,12 +1,12 @@
 package evaluator
 
-import "github.com/podhmo/go-scan/scanner"
+import scannerv2 "github.com/podhmo/go-scan/scanner"
 
 var (
 	// ErrorInterfaceTypeInfo is a pre-constructed TypeInfo for the built-in error interface.
 	// This is necessary because the scanner may not always be able to resolve built-in types
 	// to their full interface definition, especially in minimal test setups.
-	ErrorInterfaceTypeInfo *scanner.TypeInfo
+	ErrorInterfaceTypeInfo *scannerv2.TypeInfo
 )
 
 func init() {
@@ -15,23 +15,23 @@ func init() {
 	// type error interface {
 	//     Error() string
 	// }
-	stringFieldType := &scanner.FieldType{
+	stringFieldType := &scannerv2.FieldType{
 		Name:      "string",
 		IsBuiltin: true,
 	}
-	errorMethod := &scanner.MethodInfo{
+	errorMethod := &scannerv2.MethodInfo{
 		Name: "Error",
-		Results: []*scanner.FieldInfo{
+		Results: []*scannerv2.FieldInfo{
 			{
 				Type: stringFieldType,
 			},
 		},
 	}
-	ErrorInterfaceTypeInfo = &scanner.TypeInfo{
+	ErrorInterfaceTypeInfo = &scannerv2.TypeInfo{
 		Name: "error",
-		Kind: scanner.InterfaceKind,
-		Interface: &scanner.InterfaceInfo{
-			Methods: []*scanner.MethodInfo{errorMethod},
+		Kind: scannerv2.InterfaceKind,
+		Interface: &scannerv2.InterfaceInfo{
+			Methods: []*scannerv2.MethodInfo{errorMethod},
 		},
 	}
 }

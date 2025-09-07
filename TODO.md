@@ -24,6 +24,8 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     - **`scantest`: Path to Import Path Conversion**: Added a `scantest.ToImportPath` helper function (a wrapper around `locator.ResolvePkgPath`) to simplify converting file paths to Go import paths in tests.
     - **In-Memory File Overlay**: Allows providing file content in memory, essential for testing and tools that modify code before scanning.
     - **Debuggability**: Provides `--inspect` and `--dry-run` modes for easier debugging and testing of code generators.
+- **Analysis & Documentation**:
+    - **`symgo` Implementation Analysis**: Conducted a detailed investigation of the `symgo` evaluator's source code and test suite. Confirmed that the implementation of control flow and state management aligns with its documented design as a symbolic tracer, not a standard interpreter. Produced `docs/analysis-symgo-implementation.md` and `summary-symgo.md` to document the findings.
 - **`minigo` Script Engine**: A nearly complete, embeddable script engine that interprets a large subset of Go.
     - **Core Interpreter**: The engine is fully implemented, supporting expressions, variables (`var`, `const`, `iota`), assignments, and all major control flow statements (`if`, `for`, `switch`, `break`, `continue`). It also supports `for...range` over integers (e.g., `for i := range 10`).
     - **Functions and Data Structures**: Supports user-defined functions, rich error reporting with stack traces, and composite types including structs, slices, and maps.
@@ -70,11 +72,12 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 ### symgo: Fix Cross-Package Unexported Symbol Resolution ([docs/trouble-symgo-nested-scope.md](./docs/trouble-symgo-nested-scope.md))
 - [x] Evaluate package-level var declarations in `ensurePackageEnvPopulated` to fix "identifier not found" errors for unexported symbols.
 - [x] Fix regressions caused by the lazy-evaluation implementation. The core regressions related to variable evaluation, pointer dispatch, and recursion detection have been resolved.
-- [-] Fix `find-orphans` incorrectly reporting `formatCode` as an orphan in the `examples/convert` project. (Note: This may be resolved, but other `find-orphans` failures related to interface dispatch remain).
+- [ ] Fix `find-orphans` incorrectly reporting `formatCode` as an orphan in the `examples/convert` project. (Note: This is a known regression, see `docs/trouble-symgo-refine.md`).
 - [ ] Deeper state-management issues related to package-level variables in recursive calls remain, as seen in `TestCrossPackageUnexportedResolution`.
 
 ### `symgo` Engine Improvements ([docs/plan-symgo-refine2.md](./docs/plan-symgo-refine2.md))
 - [x] **Fix Regressions**: Addressed `e2e` test failures in `find-orphans` by generalizing the handling of unresolved functions and fixing an infinite recursion bug.
+- [ ] **Trace calls in `for` loop conditions**: Enhance `evalForStmt` to evaluate the `Cond` expression (without using its result for branching) to trace function calls, similar to how `if` conditions are handled. This would improve call graph completeness.
 - [ ] **DX: Add Timeout Flag to `find-orphans`**: Add a `--timeout` flag to the `find-orphans` CLI for easier debugging.
 
 

@@ -7,6 +7,7 @@ import (
 	"go/ast"
 	"go/token"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/podhmo/go-scan/scanner"
@@ -112,7 +113,7 @@ type Integer struct {
 func (i *Integer) Type() ObjectType { return INTEGER_OBJ }
 
 // Inspect returns a string representation of the Integer's value.
-func (i *Integer) Inspect() string { return fmt.Sprintf("%d", i.Value) }
+func (i *Integer) Inspect() string { return strconv.FormatInt(i.Value, 10) }
 
 // --- Float Object ---
 
@@ -126,7 +127,7 @@ type Float struct {
 func (f *Float) Type() ObjectType { return FLOAT_OBJ }
 
 // Inspect returns a string representation of the Float's value.
-func (f *Float) Inspect() string { return fmt.Sprintf("%f", f.Value) }
+func (f *Float) Inspect() string { return strconv.FormatFloat(f.Value, 'f', -1, 64) }
 
 // --- Complex Object ---
 
@@ -154,7 +155,7 @@ type Boolean struct {
 func (b *Boolean) Type() ObjectType { return BOOLEAN_OBJ }
 
 // Inspect returns a string representation of the Boolean's value.
-func (b *Boolean) Inspect() string { return fmt.Sprintf("%t", b.Value) }
+func (b *Boolean) Inspect() string { return strconv.FormatBool(b.Value) }
 
 var (
 	// TRUE is the singleton true value.
@@ -349,7 +350,11 @@ func (sp *SymbolicPlaceholder) Type() ObjectType { return SYMBOLIC_OBJ }
 
 // Inspect returns a string representation of the symbolic placeholder.
 func (sp *SymbolicPlaceholder) Inspect() string {
-	return fmt.Sprintf("<Symbolic: %s>", sp.Reason)
+	var builder strings.Builder
+	builder.WriteString("<Symbolic: ")
+	builder.WriteString(sp.Reason)
+	builder.WriteString(">")
+	return builder.String()
 }
 
 // --- ReturnValue Object ---

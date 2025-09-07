@@ -293,16 +293,43 @@ func (e *Evaluator) evalIncDecStmt(ctx context.Context, n *ast.IncDecStmt, env *
 		return val
 	}
 
-	if intVal, ok := val.(*object.Integer); ok {
+	// Force evaluation in case val is a variable.
+	val = e.forceEval(ctx, val, pkg)
+	if isError(val) {
+		return val
+	}
+
+	switch v := val.(type) {
+	case *object.Integer:
 		// The value is a concrete integer, so we can modify it.
 		switch n.Tok {
 		case token.INC:
-			intVal.Value++
+			v.Value++
 		case token.DEC:
-			intVal.Value--
+			v.Value--
+		}
+	case *object.SymbolicPlaceholder:
+		// If we are incrementing/decrementing a symbolic placeholder that represents
+		// a zero-value variable, we can treat it as a concrete integer with value 0.
+		// We replace the placeholder with a new integer object.
+		var newInt int64
+		switch n.Tok {
+		case token.INC:
+			newInt = 1
+		case token.DEC:
+			newInt = -1
+		}
+
+		// Update the variable in the environment to hold the new concrete integer value.
+		if ident, ok := n.X.(*ast.Ident); ok {
+			if obj, found := env.Get(ident.Name); found {
+				if variable, ok := obj.(*object.Variable); ok {
+					variable.Value = &object.Integer{Value: newInt}
+				}
+			}
 		}
 	}
-	// If val is not an Integer (e.g., a SymbolicPlaceholder), we do nothing, as requested.
+	// If val is not an Integer or a placeholder we can handle, we do nothing.
 
 	return nil // IncDec is a statement, so it doesn't return a value.
 }
@@ -528,11 +555,20 @@ func (e *Evaluator) evalCompositeLit(ctx context.Context, node *ast.CompositeLit
 }
 
 func (e *Evaluator) evalBinaryExpr(ctx context.Context, node *ast.BinaryExpr, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
-	left := e.Eval(ctx, node.X, env, pkg)
+	leftObj := e.Eval(ctx, node.X, env, pkg)
+	if isError(leftObj) {
+		return leftObj
+	}
+	rightObj := e.Eval(ctx, node.Y, env, pkg)
+	if isError(rightObj) {
+		return rightObj
+	}
+
+	left := e.forceEval(ctx, leftObj, pkg)
 	if isError(left) {
 		return left
 	}
-	right := e.Eval(ctx, node.Y, env, pkg)
+	right := e.forceEval(ctx, rightObj, pkg)
 	if isError(right) {
 		return right
 	}
@@ -649,9 +685,22 @@ func (e *Evaluator) evalStringInfixExpression(ctx context.Context, pos token.Pos
 }
 
 func (e *Evaluator) evalUnaryExpr(ctx context.Context, node *ast.UnaryExpr, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
-	right := e.Eval(ctx, node.X, env, pkg)
-	if isError(right) {
-		return right
+	rightObj := e.Eval(ctx, node.X, env, pkg)
+	if isError(rightObj) {
+		return rightObj
+	}
+
+	// For most unary operations, we need the concrete value.
+	// But for the address-of operator (&), we must NOT evaluate, because we need
+	// the variable/expression itself, not its value.
+	var right object.Object
+	if node.Op == token.AND {
+		right = rightObj
+	} else {
+		right = e.forceEval(ctx, rightObj, pkg)
+		if isError(right) {
+			return right
+		}
 	}
 
 	switch node.Op {
@@ -758,16 +807,9 @@ func (e *Evaluator) evalStarExpr(ctx context.Context, node *ast.StarExpr, env *o
 
 	if ptr, ok := val.(*object.Pointer); ok {
 		// The value of a pointer is the object it points to.
-		// However, to preserve the "pointer-ness" for method calls on
-		// dereferenced pointers (e.g., `(*p).MyMethod()`), we wrap the
-		// result in a temporary variable that holds the original pointer's type.
-		v := &object.Variable{
-			Name:  "<deref>",
-			Value: ptr.Value,
-		}
-		v.SetTypeInfo(ptr.TypeInfo())
-		v.SetFieldType(ptr.FieldType())
-		return v
+		// By returning the pointee directly, a selector expression like `(*p).MyMethod`
+		// will operate on the instance, which is the correct behavior.
+		return ptr.Value
 	}
 
 	// If we have a symbolic placeholder that represents a pointer type,
@@ -1126,25 +1168,22 @@ func (e *Evaluator) ensurePackageEnvPopulated(ctx context.Context, pkgObj *objec
 func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
 	e.logger.Debug("evalSelectorExpr", "selector", n.Sel.Name)
 
-	var left object.Object
-	if ident, ok := n.X.(*ast.Ident); ok {
-		if obj, found := env.Get(ident.Name); found {
-			left = obj
-		} else {
-			left = e.Eval(ctx, n.X, env, pkg)
-		}
-	} else {
-		left = e.Eval(ctx, n.X, env, pkg)
+	leftObj := e.Eval(ctx, n.X, env, pkg)
+	if isError(leftObj) {
+		return leftObj
 	}
 
 	// Unwrap the result if it's a return value from a previous call in a chain.
-	if ret, ok := left.(*object.ReturnValue); ok {
-		left = ret.Value
+	if ret, ok := leftObj.(*object.ReturnValue); ok {
+		leftObj = ret.Value
 	}
 
+	// We must fully evaluate the left-hand side before trying to select a field or method from it.
+	left := e.forceEval(ctx, leftObj, pkg)
 	if isError(left) {
 		return left
 	}
+
 	e.logger.Debug("evalSelectorExpr: evaluated left", "type", left.Type(), "value", left.Inspect())
 
 	switch val := left.(type) {
@@ -1369,12 +1408,37 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 		}
 
 		return e.newError(ctx, n.Pos(), "undefined method: %s on %s", n.Sel.Name, val.TypeName)
-
-	case *object.Variable:
-		return e.evalVariable(ctx, val, pkg)
+	case *object.Pointer:
+		// When we have a selector on a pointer, we look for the method on the
+		// type of the object the pointer points to.
+		pointee := val.Value
+		if instance, ok := pointee.(*object.Instance); ok {
+			if typeInfo := instance.TypeInfo(); typeInfo != nil {
+				// The receiver for the method call is the pointer itself, not the instance.
+				if method, err := e.accessor.findMethodOnType(ctx, typeInfo, n.Sel.Name, env, val); err == nil && method != nil {
+					return method
+				}
+			}
+		}
+		if instance, ok := pointee.(*object.Instance); ok {
+			if typeInfo := instance.TypeInfo(); typeInfo != nil {
+				// The receiver for the method call is the pointer itself, not the instance.
+				if method, err := e.accessor.findMethodOnType(ctx, typeInfo, n.Sel.Name, env, val); err == nil && method != nil {
+					return method
+				}
+				// If not a method, check for a field on the underlying struct.
+				if typeInfo.Struct != nil {
+					if field, err := e.accessor.findFieldOnType(ctx, typeInfo, n.Sel.Name); err == nil && field != nil {
+						return e.resolver.ResolveSymbolicField(ctx, field, instance)
+					}
+				}
+			}
+		}
+		// If the pointee is not an instance or nothing is found, fall through to the error.
+		return e.newError(ctx, n.Pos(), "undefined method or field: %s for pointer type %s", n.Sel.Name, pointee.Type())
 
 	default:
-		return e.newError(ctx, n.Pos(), "expected a package, instance, or variable on the left side of selector, but got %s", left.Type())
+		return e.newError(ctx, n.Pos(), "expected a package, instance, or pointer on the left side of selector, but got %s", left.Type())
 	}
 }
 
@@ -2006,12 +2070,10 @@ func (e *Evaluator) evalIdentAssignment(ctx context.Context, ident *ast.Ident, r
 }
 
 func (e *Evaluator) assignIdentifier(ctx context.Context, ident *ast.Ident, val object.Object, tok token.Token, env *object.Environment) object.Object {
-	// Before assigning, if the RHS is a variable, we need to evaluate it to get its value.
-	if v, ok := val.(*object.Variable); ok {
-		val = e.evalVariable(ctx, v, nil) // pkg is not strictly needed here as DeclPkg is used.
-		if isError(val) {
-			return val
-		}
+	// Before assigning, the RHS must be fully evaluated.
+	val = e.forceEval(ctx, val, nil) // pkg is not strictly needed here as DeclPkg is used.
+	if isError(val) {
+		return val
 	}
 
 	// For `:=`, we always define a new variable in the current scope.
@@ -2020,8 +2082,9 @@ func (e *Evaluator) assignIdentifier(ctx context.Context, ident *ast.Ident, val 
 		// but in our symbolic engine, we'll simplify and just overwrite in the local scope.
 		// A more complex implementation would handle shadowing more precisely.
 		v := &object.Variable{
-			Name:  ident.Name,
-			Value: val,
+			Name:        ident.Name,
+			Value:       val,
+			IsEvaluated: true, // A variable defined with `:=` has its value evaluated immediately.
 			BaseObject: object.BaseObject{
 				ResolvedTypeInfo:  val.TypeInfo(),
 				ResolvedFieldType: val.FieldType(),
@@ -2134,6 +2197,23 @@ func (e *Evaluator) evalBasicLit(ctx context.Context, n *ast.BasicLit) object.Ob
 	default:
 		return e.newError(ctx, n.Pos(), "unsupported literal type: %s", n.Kind)
 	}
+}
+
+// forceEval recursively evaluates an object until it is no longer a variable.
+// This is crucial for handling variables whose initializers are other variables.
+func (e *Evaluator) forceEval(ctx context.Context, obj object.Object, pkg *scanner.PackageInfo) object.Object {
+	for i := 0; i < 100; i++ { // Add a loop limit to prevent infinite loops in weird cases
+		v, ok := obj.(*object.Variable)
+		if !ok {
+			return obj // Not a variable, return as is.
+		}
+		obj = e.evalVariable(ctx, v, pkg)
+		if isError(obj) {
+			return obj
+		}
+		// Loop again in case the result of evaluating a variable is another variable.
+	}
+	return e.newError(ctx, token.NoPos, "evaluation depth limit exceeded, possible variable evaluation loop")
 }
 
 // evalVariable evaluates a variable, triggering its initializer if it's lazy.
@@ -2469,12 +2549,10 @@ func (e *Evaluator) evalExpressions(ctx context.Context, exps []ast.Expr, env *o
 		if isError(evaluated) {
 			return []object.Object{evaluated}
 		}
-		// If the evaluated expression is a variable, we need to get its value.
-		if v, ok := evaluated.(*object.Variable); ok {
-			evaluated = e.evalVariable(ctx, v, pkg)
-			if isError(evaluated) {
-				return []object.Object{evaluated}
-			}
+		// Force full evaluation of the argument.
+		evaluated = e.forceEval(ctx, evaluated, pkg)
+		if isError(evaluated) {
+			return []object.Object{evaluated}
 		}
 		result = append(result, evaluated)
 	}
@@ -2514,16 +2592,35 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 		return &object.SymbolicPlaceholder{Reason: "max call stack depth exceeded"}
 	}
 
-	// Improved recursion check
-	if f, ok := fn.(*object.Function); ok {
-		for _, frame := range e.callStack {
-			// A true recursion occurs if the same function definition is called on the
-			// exact same receiver object. The call position check was removed as it was
-			// too strict for complex, indirect recursion.
-			if frame.Fn != nil && f.Def != nil && frame.Fn.Def == f.Def && frame.Fn.Receiver == f.Receiver {
-				e.logc(ctx, slog.LevelWarn, "infinite recursion detected, aborting", "function", name)
-				return e.newError(ctx, callPos, "infinite recursion detected: %s", name)
+	// Hybrid recursion check.
+	if f, ok := fn.(*object.Function); ok && f.Def != nil {
+		isRecursive := false
+		if f.Receiver != nil {
+			// For methods, use a strict check: recursion on the *same instance* is an error.
+			for _, frame := range e.callStack {
+				if frame.Fn != nil && frame.Fn.Def == f.Def && frame.Fn.Receiver == f.Receiver {
+					isRecursive = true
+					break
+				}
 			}
+		} else {
+			// For regular functions, a simple depth check is a better heuristic to allow
+			// for stateful recursion that is not truly infinite.
+			const maxFuncDepth = 5
+			count := 0
+			for _, frame := range e.callStack {
+				if frame.Fn != nil && frame.Fn.Def == f.Def {
+					count++
+				}
+			}
+			if count >= maxFuncDepth {
+				isRecursive = true
+			}
+		}
+
+		if isRecursive {
+			e.logc(ctx, slog.LevelWarn, "infinite recursion detected", "function", name)
+			return e.newError(ctx, callPos, "infinite recursion detected: %s", name)
 		}
 	}
 

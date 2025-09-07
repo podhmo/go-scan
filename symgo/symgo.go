@@ -22,6 +22,7 @@ type Function = object.Function
 type Error = object.Error
 type Instance = object.Instance
 type String = object.String
+type Integer = object.Integer
 type Pointer = object.Pointer
 type Variable = object.Variable
 type SymbolicPlaceholder = object.SymbolicPlaceholder
@@ -314,10 +315,24 @@ func (i *Interpreter) intrinsicSprintf(eval *Interpreter, args []Object) Object 
 
 			if verb == 's' || verb == 'd' || verb == 'v' {
 				arg := args[argIndex]
-				replacement := arg.Inspect()
-				if str, ok := arg.(*String); ok {
-					replacement = str.Value
+				var replacement string
+				switch v := arg.(type) {
+				case *String:
+					replacement = v.Value
+				case *Integer:
+					replacement = fmt.Sprintf("%d", v.Value)
+				case *SymbolicPlaceholder:
+					// When a symbolic placeholder for a zero-value variable is formatted,
+					// provide a sensible zero value representation based on the verb.
+					if verb == 'd' {
+						replacement = "0"
+					} else {
+						replacement = "" // for %s, %v
+					}
+				default:
+					replacement = arg.Inspect()
 				}
+
 				newStr.WriteString(replacement)
 				argIndex++
 				i++ // skip the verb

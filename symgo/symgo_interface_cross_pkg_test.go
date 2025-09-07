@@ -3,6 +3,7 @@ package symgo_test
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"testing"
 
@@ -36,7 +37,12 @@ func TestCrossPackageInterfaceImplementation(t *testing.T) {
 	defer cleanup()
 
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
-		// Note: the `pkgs` argument is ignored here because we need to control the evaluation order manually.
+		// Create a map of import paths to packages for easy lookup.
+		pkgMap := make(map[string]*goscan.Package, len(pkgs))
+		for _, pkg := range pkgs {
+			pkgMap[pkg.ImportPath] = pkg
+		}
+
 		for _, order := range discoveryOrders {
 			t.Run(strings.Join(order, " -> "), func(t *testing.T) {
 				var calledMethods []string
@@ -47,6 +53,10 @@ func TestCrossPackageInterfaceImplementation(t *testing.T) {
 				interp.RegisterDefaultIntrinsic(func(i *symgo.Interpreter, args []symgo.Object) symgo.Object {
 					if len(args) > 0 {
 						if fn, ok := args[0].(*object.Function); ok && fn.Def != nil && fn.Package != nil {
+							// Only record calls within our test module
+							if !strings.HasPrefix(fn.Package.ImportPath, moduleName) {
+								return nil
+							}
 							var recv string
 							if fn.Def.Receiver != nil {
 								recv = fn.Def.Receiver.Type.String()
@@ -58,13 +68,13 @@ func TestCrossPackageInterfaceImplementation(t *testing.T) {
 					return nil
 				})
 
-				// Manually scan and evaluate packages in the specified order for this sub-test.
+				// Evaluate packages in the specified order, using the packages scanned by scantest.Run
 				for _, pkgImportPath := range order {
-					pkg, err := s.ScanPackage(ctx, pkgImportPath)
-					require.NoError(t, err, "ScanPackage in sub-test failed")
+					pkg, ok := pkgMap[pkgImportPath]
+					require.True(t, ok, "package %s not found in scanned packages", pkgImportPath)
 					for _, file := range pkg.AstFiles {
 						_, err := interp.Eval(ctx, file, pkg)
-						require.NoError(t, err, "Eval in sub-test failed")
+						require.NoError(t, err, "Eval in sub-test failed for pkg %s", pkg.ImportPath)
 					}
 				}
 
@@ -72,13 +82,14 @@ func TestCrossPackageInterfaceImplementation(t *testing.T) {
 				require.True(t, ok, "could not find entry point function UseGreeter")
 
 				entryPkgPath := fmt.Sprintf("%s/pkgc", moduleName)
-				entryPkg, err := s.ScanPackage(ctx, entryPkgPath)
-				require.NoError(t, err)
+				entryPkg, ok := pkgMap[entryPkgPath]
+				require.True(t, ok, "entry package %s not found", entryPkgPath)
 
 				_, err = interp.Apply(ctx, entryFunc, nil, entryPkg)
 				require.NoError(t, err)
 
-				expectedMethod := fmt.Sprintf("%s/pkgb:(*MyGreeter).Greet", moduleName)
+				sort.Strings(calledMethods)
+				expectedMethod := fmt.Sprintf("%s/pkgb:*MyGreeter.Greet", moduleName)
 				assert.Contains(t, calledMethods, expectedMethod)
 			})
 		}

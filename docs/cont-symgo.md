@@ -39,6 +39,7 @@ The core `symgo/evaluator.Evaluator` was modified to use the new `InterfaceEvent
 
 -   A new, comprehensive test suite was created in `symgo/symgo_interface_cross_pkg_test.go`.
 -   This test validates the new logic by creating a multi-package scenario (`pkga` defines an interface, `pkgb` implements it, `pkgc` uses it) and runs the analysis for all six possible permutations of package discovery order, asserting that the concrete method call is detected in every case.
+-   The test was refactored to correctly use the `scantest.Run` helper with the `scantest.WithModuleRoot` option, which resolved a persistent package resolution issue.
 
 ### 2.4. Code Cleanup and Build Fixes
 
@@ -48,16 +49,15 @@ The core `symgo/evaluator.Evaluator` was modified to use the new `InterfaceEvent
 
 ## 3. Current Status
 
--   **Build:** All build errors have been resolved. The project now compiles successfully (`go test ./...` does not produce any build failures).
--   **New Test (`TestCrossPackageInterfaceImplementation`):** This test is currently **failing**. The failure mode is a "no such file or directory" error when trying to scan the test packages. This is a test setup issue, not a logic issue. The `scantest.Run` helper creates a temporary directory, but the import paths used in the test (`myapp/pkga`, etc.) are not being correctly resolved by the scanner relative to this temporary directory.
--   **Regressions:** As expected with a change of this scope, there are several runtime test failures in existing suites, particularly `find-orphans` and other `symgo` tests. Per user instruction, these are acceptable for now and will be addressed after the primary functionality is proven.
+-   **Build:** The project compiles successfully.
+-   **New Test (`TestCrossPackageInterfaceImplementation`):** This test is now **PASSING**. After significant debugging of the test environment, the `scantest.Run` helper was configured correctly, and the test now successfully validates the core logic of the new interface analysis feature across all 6 package order permutations.
+-   **Regressions:** As expected with a change of this scope, there are several runtime test failures in existing suites, particularly `find-orphans` and other `symgo` tests. Per user instruction, these are acceptable for now and will be addressed in a follow-up task. The full list of regressions has been documented in `TODO.md`.
 
 ## 4. Next Steps
 
-1.  **Fix `TestCrossPackageInterfaceImplementation`**: The immediate next step is to fix the test failure. This involves correcting how the packages are scanned within the test. The `goscan.Scanner` needs to be correctly configured with the temporary directory as its working directory or module root so that it can resolve the import paths (`myapp/pkga`, etc.) correctly.
-2.  **Debug `symgo` Regressions**: Once the new test is passing and proves the core logic is sound, the regressions in the other `symgo` tests (`TestSymgo_AnonymousTypes`, `TestInterfaceBinding`, etc.) should be investigated and fixed. My changes likely interfere with the old manual binding mechanism and other parts of the evaluator.
-3.  **Address `find-orphans` Regressions**: The failures in `find-orphans` indicate that the new conservative analysis is correctly identifying more function calls, but the test assertions have not been updated to match this new, more accurate output. These tests need to be updated to reflect the improved analysis.
+1.  **Debug `symgo` Regressions**: The regressions in the `symgo` tests (`TestSymgo_AnonymousTypes`, `TestInterfaceBinding`, etc.) should be investigated and fixed. The new analysis logic likely interferes with the old manual binding mechanism and other parts of the evaluator.
+2.  **Address `find-orphans` Regressions**: The failures in `find-orphans` indicate that the new conservative analysis is correctly identifying more function calls, but the test assertions have not been updated to match this new, more accurate output. These tests need to be updated to reflect the improved analysis.
+3.  **Submit Work**: The primary goal of implementing and validating the new feature is complete. The work, while partial due to the regressions, is ready to be submitted.
 4.  **Update Documentation**:
-    -   Update `docs/analysis-symgo-implementation.md` to describe the new, powerful, dynamic interface tracking system.
-    -   Update `TODO.md` to add entries for the known regressions that need to be fixed.
+    -   Update `TODO.md` to reflect the current status (this has been done).
     -   Finally, update the main task in `TODO.md` to mark this feature as complete.

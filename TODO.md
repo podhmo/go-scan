@@ -68,6 +68,36 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 
 ## To Be Implemented
 
+- [-] **(Partially Complete)** `symgo`'s `Implements()` is not powerful enough.
+  - The current implementation of `goscan.Implements()` is limited to checking interfaces within a single package.
+  - It cannot handle cases where an interface is defined in one package and implemented in another.
+  - The symbolic execution engine (`symgo`) needs to be aware of all implementations across all scanned packages to correctly resolve interface method calls.
+  - When a method is called on an interface, `symgo` should conservatively consider it a call on all known concrete implementations of that interface.
+  - This analysis must be order-independent; the result should be the same regardless of the order in which packages are scanned.
+  - **Tasks**:
+    - [x] Analyze the current implementation and document the findings in `docs/cont-symgo.md`.
+    - [x] Create a new test suite that covers cross-package interface implementations. The test now passes after fixing the test environment setup.
+    - [x] Modify the `symgo` engine to be order-independent and to correctly track interface implementations across packages.
+    - [x] When an interface method is called, the engine should trigger the analysis of the corresponding method on all known concrete types.
+    - [x] If the work is partial, update this `TODO.md` with the progress. (This is the partial update).
+
+### Regressions from order-independent interface implementation
+The following regressions were introduced during the implementation of order-independent interface resolution. These tests are currently failing and need to be fixed before this feature can be marked as fully complete.
+
+- **`find-orphans` tool regressions**:
+  - The tool incorrectly identifies methods called via interfaces as orphans.
+  - See `TestFindOrphans_ShallowScan_UnresolvedInterfaceMethodCall` and `TestFindOrphans_interface`.
+
+- **`symgo` evaluation regressions**:
+  - **Over-aggressive Symbolic Execution**: Many tests now produce a `SymbolicPlaceholder` instead of a concrete value (e.g., for function return values, constants).
+  - **Broken Interface Tests**: Old tests relying on `BindInterface` are failing (e.g., `TestInterfaceBinding`). This is expected and they need to be updated to the new model.
+  - **External Module Issues**: Method calls on types from external modules are failing (e.g., `TestExtraModuleCall`).
+  - **Anonymous Interface/Struct Issues**: Handling of anonymous interfaces and structs seems to be broken (`TestSymgo_AnonymousTypes`).
+  - **Infinite Recursion**: A specific case of cross-package resolution is causing infinite recursion (`TestCrossPackageUnexportedResolution`).
+
+- **`symgo/evaluator` regressions**:
+  - The entire suite of `TestEval...InterfaceMethodCall...` tests is failing due to the new interface handling logic. They need to be re-evaluated and updated.
+  - Shallow scan tests are failing to propagate `TypeInfo` correctly.
 
 ### symgo: Fix Cross-Package Unexported Symbol Resolution ([docs/trouble-symgo-nested-scope.md](./docs/trouble-symgo-nested-scope.md))
 - [x] Evaluate package-level var declarations in `ensurePackageEnvPopulated` to fix "identifier not found" errors for unexported symbols.

@@ -24,6 +24,8 @@ The engine employs a multi-tiered strategy to decide how to handle a function ca
 
 -   **`if`/`else` Statements**: The engine does not attempt to evaluate the condition to decide which branch to take. Instead, to discover all possible code paths, it **evaluates both the `if` block and the `else` block**. Each branch is evaluated in an isolated scope.
 
+-   **`switch` Statements**: Following the same principle, the engine evaluates the body of **all `case` clauses** in a `switch` or `type switch` statement. This ensures complete discovery of all potential code paths and type usages.
+
 -   **`for` and `for...range` Loops**: To avoid the halting problem and the complexity of analyzing loops to completion, the engine uses a **bounded analysis** strategy. It "unrolls" the loop body **exactly once**. This is sufficient to discover function calls and other patterns within the loop without getting stuck in infinite iterations.
 
 ## 4. State and Assignment Model

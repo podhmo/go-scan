@@ -35,6 +35,13 @@ The engine's recursion detection is another indicator of its specialized design.
 - **Behavior:** The evaluator detects and halts infinite recursion. However, it is intelligent enough to distinguish between true infinite recursion (a function calling itself with the same receiver) and valid recursive patterns like traversing a linked list (where the method is called on a different receiver, e.g., `n.Next`).
 - **Alignment with Design:** This shows a design that is robust and pragmatic, built to handle common Go patterns without getting stuck, which is essential for a static analysis tool that must terminate.
 
+### 2.4. `switch` Statements (`evalSwitchStmt`, `evalTypeSwitchStmt`)
+
+The handling of `switch` and `type switch` statements follows the same philosophy as `if` statements.
+
+- **Behavior**: The evaluator does not attempt to determine which `case` branch will be executed at runtime. Instead, it iterates through **all** `case` clauses in the statement and evaluates the body of each one. For a `type switch`, it also correctly creates a new variable in each `case` block's scope, typed to match that specific case.
+- **Alignment with Design**: This is perfectly aligned with the goal of discovering all possible code paths. By visiting every `case`, the engine ensures that no potential function call or type usage is missed.
+
 ## 3. Test Code Analysis
 
 The tests in `symgo/evaluator/` confirm the non-interpreter behavior.
@@ -68,6 +75,7 @@ Based on a review of the test files in `symgo/evaluator/`, the test suite is con
 | `evaluator_channel_test.go` | Verifies that function calls on both sides of a channel send are traced, and that channel types are parsed without error. | **Aligned** |
 | `evaluator_channel_concrete_test.go` | Verifies that `make(chan T)` produces a correctly typed channel object and that a receive `<-ch` produces a correctly typed symbolic placeholder. | **Aligned** |
 | `evaluator_complex_test.go` | Tests evaluation of arithmetic expressions on complex number literals. | **Mostly Aligned** |
+| `evaluator_typeswitch_test.go` | Verifies that the evaluator explores all branches of a `type switch` and correctly handles scoping within each `case`. | **Aligned** |
 
 ### Summary of Test Philosophy
 

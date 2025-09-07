@@ -42,6 +42,38 @@ The handling of `switch` and `type switch` statements follows the same philosoph
 - **Behavior**: The evaluator does not attempt to determine which `case` branch will be executed at runtime. Instead, it iterates through **all** `case` clauses in the statement and evaluates the body of each one. For a `type switch`, it also correctly creates a new variable in each `case` block's scope, typed to match that specific case.
 - **Alignment with Design**: This is perfectly aligned with the goal of discovering all possible code paths. By visiting every `case`, the engine ensures that no potential function call or type usage is missed.
 
+### 2.5. Function, Closure, and Call Handling
+
+The engine's handling of function calls, including complex cases like anonymous functions and closures, is highly specialized for static analysis.
+
+- **Standard Calls (`applyFunction`)**: Function calls are handled by creating a new evaluation scope for the function body. The `object.Function` captures the environment where it was defined, which correctly models lexical scoping and allows closures to work as expected. When the function is called, its new scope is created as a child of its definition environment, not the caller's environment.
+
+- **Anonymous Functions as Arguments (`scanFunctionLiteral`)**: The engine has a specific, powerful heuristic for this case. When `evalCallExpr` detects that an argument is a function literal (e.g., `http.HandlerFunc(func(w, r){...})`), it immediately triggers a separate, temporary evaluation of that literal's body (`scanFunctionLiteral`). This allows the engine to discover calls *inside* the anonymous function, even if the function it is passed to (`http.HandlerFunc`) is an un-analyzed external function or an intrinsic that doesn't evaluate its arguments. This is a crucial feature for tools like `find-orphans`.
+
+- **Closures as Return Values**: Because function objects capture their definition environment, returning a closure from a function works correctly. When the returned closure is eventually called, it will execute within the environment it captured, giving it access to the variables from the function that created it.
+
+### 2.6. Variable, Scope, and State Handling
+
+The engine's approach to variables and scoping is fundamental to its ability to trace Go code correctly.
+
+- **Lexical Scoping and Shadowing**: The evaluator correctly models Go's lexical scoping. Each block (`{...}`), `if`, `for`, or `switch` statement creates a new, enclosed environment. When a variable is defined with `:=` (`env.SetLocal`), it is created in the current, innermost scope, naturally shadowing any variable with the same name in an outer scope. When a variable is updated with `=`, the engine searches up through the chain of enclosing environments (`env.Get()`) to find and modify the first variable it encounters with that name.
+
+- **Package-Level Declarations (`ensurePackageEnvPopulated`)**: Package-level declarations are handled in a specific way to balance correctness and performance.
+    - **Constants**: Are evaluated eagerly and their concrete values are stored in the package's environment.
+    - **Variables**: Are handled **lazily**. The engine creates an `object.Variable` placeholder with the initializer expression attached but unevaluated. The evaluation is deferred until the variable is actually used, at which point `forceEval` is called. This is a key performance optimization.
+
+- **Special Interface Assignment**: As mentioned previously, assignment to interface-typed variables is "additive," which is a core feature of the symbolic engine that allows it to track multiple possible concrete types for an interface across different code paths.
+
+### 2.7. Module and Import Handling
+
+The engine's ability to handle dependencies is managed through a clear separation of concerns between the evaluator and a dedicated resolver.
+
+- **Import Resolution**: When the evaluator encounters an identifier that is not defined in the current scope (e.g., `http` in `http.NewRequest`), the `evalIdent` function checks the current file's import declarations. If the identifier matches an import's package name, it triggers the package loading mechanism.
+
+- **Package Loading (`getOrLoadPackage`, `resolver.go`)**: The `getOrLoadPackage` function acts as a caching layer. If a package is requested for the first time, it delegates to the `Resolver`. The `Resolver` is responsible for using the underlying `go-scan` library to find the package's source files on disk, parse them, and return the scanned package information. This on-demand, lazy loading of packages is a key performance feature.
+
+- **Scan Policy**: The `Resolver` holds a `ScanPolicyFunc`, which allows the user of the `symgo` library to define which packages should be deeply analyzed (by parsing their function bodies) and which should be treated as symbolic dependencies (where function bodies are ignored). This is the mechanism that implements the "Intra-Module vs. Extra-Module" evaluation strategy described in the design documents.
+
 ## 3. Test Code Analysis
 
 The tests in `symgo/evaluator/` confirm the non-interpreter behavior.
@@ -76,6 +108,11 @@ Based on a review of the test files in `symgo/evaluator/`, the test suite is con
 | `evaluator_channel_concrete_test.go` | Verifies that `make(chan T)` produces a correctly typed channel object and that a receive `<-ch` produces a correctly typed symbolic placeholder. | **Aligned** |
 | `evaluator_complex_test.go` | Tests evaluation of arithmetic expressions on complex number literals. | **Mostly Aligned** |
 | `evaluator_typeswitch_test.go` | Verifies that the evaluator explores all branches of a `type switch` and correctly handles scoping within each `case`. | **Aligned** |
+| `evaluator_test.go` | A general test file. The `TestEvalClosures` test is notable for confirming that the engine correctly models lexical scoping for closures. | **Mostly Aligned** |
+| `evaluator_variable_test.go` | Tests the basic mechanics of `var` declaration and reassignment. | **Mostly Aligned** |
+| `evaluator_nested_block_test.go` | Confirms that function calls inside nested blocks are traced and that variable shadowing and assignment follow correct lexical scoping rules. | **Aligned** |
+| `symgo_intramodule_test.go` | Verifies that calls to other packages within the same module are recursively evaluated. | **Mostly Aligned** |
+| `symgo_extramodule_test.go` | Verifies that calls to external modules are treated as symbolic placeholders and not evaluated. | **Aligned** |
 
 ### Summary of Test Philosophy
 

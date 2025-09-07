@@ -1260,7 +1260,7 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 		// For symbolic placeholders, don't error - return another placeholder
 		// This allows analysis to continue even when types are unresolved
 		return &object.SymbolicPlaceholder{
-			Reason:   fmt.Sprintf("method or field %s on symbolic type %s", n.Sel.Name, val.Inspect()),
+			Reason:   "method or field " + n.Sel.Name + " on symbolic type " + val.Inspect(),
 			Receiver: val,
 		}
 
@@ -2882,7 +2882,7 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 			return &object.ReturnValue{Value: result}
 		}
 		// Fallback for any other kind of placeholder is to treat it as a symbolic call.
-		result := &object.SymbolicPlaceholder{Reason: fmt.Sprintf("result of calling %s", fn.Inspect())}
+		result := &object.SymbolicPlaceholder{Reason: "result of calling " + fn.Inspect()}
 		return &object.ReturnValue{Value: result}
 
 	case *object.UnresolvedFunction:

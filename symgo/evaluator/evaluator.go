@@ -1198,7 +1198,7 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 		return left
 	}
 
-	e.logger.Debug("evalSelectorExpr: evaluated left", "type", left.Type(), "value", left.Inspect())
+	e.logger.Debug("evalSelectorExpr: evaluated left", "type", left.Type(), "value", inspectValuer{left})
 
 	switch val := left.(type) {
 	case *object.SymbolicPlaceholder:
@@ -1260,7 +1260,7 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 		// For symbolic placeholders, don't error - return another placeholder
 		// This allows analysis to continue even when types are unresolved
 		return &object.SymbolicPlaceholder{
-			Reason:   fmt.Sprintf("method or field %s on symbolic type %s", n.Sel.Name, val.Inspect()),
+			Reason:   "method or field " + n.Sel.Name + " on symbolic type " + val.Inspect(),
 			Receiver: val,
 		}
 
@@ -1538,6 +1538,9 @@ func (e *Evaluator) evalSelectStmt(ctx context.Context, n *ast.SelectStmt, env *
 			for _, stmt := range caseClause.Body {
 				if res := e.Eval(ctx, stmt, caseEnv, pkg); isError(res) {
 					e.logc(ctx, slog.LevelWarn, "error evaluating statement in select case", "error", res)
+					if isInfiniteRecursionError(res) {
+						return res // Stop processing on infinite recursion
+					}
 				}
 			}
 		}
@@ -1645,6 +1648,9 @@ func (e *Evaluator) evalTypeSwitchStmt(ctx context.Context, n *ast.TypeSwitchStm
 			for _, stmt := range caseClause.Body {
 				if res := e.Eval(ctx, stmt, caseEnv, pkg); isError(res) {
 					e.logc(ctx, slog.LevelWarn, "error evaluating statement in type switch case", "error", res)
+					if isInfiniteRecursionError(res) {
+						return res // Stop processing on infinite recursion
+					}
 				}
 			}
 		}
@@ -2259,7 +2265,7 @@ func (e *Evaluator) forceEval(ctx context.Context, obj object.Object, pkg *scann
 func (e *Evaluator) evalVariable(ctx context.Context, v *object.Variable, pkg *scanner.PackageInfo) object.Object {
 	e.logger.DebugContext(ctx, "evalVariable: start", "var", v.Name, "is_evaluated", v.IsEvaluated)
 	if v.IsEvaluated {
-		e.logger.DebugContext(ctx, "evalVariable: already evaluated, returning cached value", "var", v.Name, "value_type", v.Value.Type(), "value", v.Value.Inspect())
+		e.logger.DebugContext(ctx, "evalVariable: already evaluated, returning cached value", "var", v.Name, "value_type", v.Value.Type(), "value", inspectValuer{v.Value})
 		return v.Value
 	}
 
@@ -2288,7 +2294,7 @@ func (e *Evaluator) evalVariable(ctx context.Context, v *object.Variable, pkg *s
 	}
 	v.Value = val
 	v.IsEvaluated = true
-	e.logger.DebugContext(ctx, "evalVariable: finished evaluation", "var", v.Name, "value_type", val.Type(), "value", val.Inspect())
+	e.logger.DebugContext(ctx, "evalVariable: finished evaluation", "var", v.Name, "value_type", val.Type(), "value", inspectValuer{val})
 	return val
 }
 
@@ -2302,11 +2308,11 @@ func (e *Evaluator) evalIdent(ctx context.Context, n *ast.Ident, env *object.Env
 	}
 
 	if val, ok := env.Get(n.Name); ok {
-		e.logger.Debug("evalIdent: found in env", "name", n.Name, "type", val.Type(), "val", val.Inspect())
+		e.logger.Debug("evalIdent: found in env", "name", n.Name, "type", val.Type(), "val", inspectValuer{val})
 		if v, ok := val.(*object.Variable); ok {
 			e.logger.Debug("evalIdent: identifier is a variable, evaluating it", "name", n.Name)
 			evaluatedValue := e.evalVariable(ctx, v, pkg)
-			e.logger.Debug("evalIdent: evaluated variable", "name", n.Name, "type", evaluatedValue.Type(), "value", evaluatedValue.Inspect())
+			e.logger.Debug("evalIdent: evaluated variable", "name", n.Name, "type", evaluatedValue.Type(), "value", inspectValuer{evaluatedValue})
 			return evaluatedValue
 		}
 		return val
@@ -2433,6 +2439,13 @@ func (e *Evaluator) newError(ctx context.Context, pos token.Pos, format string, 
 func isError(obj object.Object) bool {
 	if obj != nil {
 		return obj.Type() == object.ERROR_OBJ
+	}
+	return false
+}
+
+func isInfiniteRecursionError(obj object.Object) bool {
+	if err, ok := obj.(*object.Error); ok {
+		return strings.Contains(err.Message, "infinite recursion detected")
 	}
 	return false
 }
@@ -2608,6 +2621,9 @@ type inspectValuer struct {
 }
 
 func (v inspectValuer) LogValue() slog.Value {
+	if v.obj == nil {
+		return slog.StringValue("<nil>")
+	}
 	return slog.StringValue(v.obj.Inspect())
 }
 
@@ -2866,7 +2882,7 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 			return &object.ReturnValue{Value: result}
 		}
 		// Fallback for any other kind of placeholder is to treat it as a symbolic call.
-		result := &object.SymbolicPlaceholder{Reason: fmt.Sprintf("result of calling %s", fn.Inspect())}
+		result := &object.SymbolicPlaceholder{Reason: "result of calling " + fn.Inspect()}
 		return &object.ReturnValue{Value: result}
 
 	case *object.UnresolvedFunction:

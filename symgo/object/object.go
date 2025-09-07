@@ -7,7 +7,9 @@ import (
 	"go/ast"
 	"go/token"
 	"os"
+	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/podhmo/go-scan/scanner"
 )
@@ -100,6 +102,12 @@ func (s *String) Type() ObjectType { return STRING_OBJ }
 // Inspect returns a string representation of the String's value.
 func (s *String) Inspect() string { return fmt.Sprintf("%q", s.Value) }
 
+// Release returns the String object to the pool.
+func (s *String) Release() {
+	s.Value = ""
+	stringPool.Put(s)
+}
+
 // --- Integer Object ---
 
 // Integer represents an integer value.
@@ -112,7 +120,13 @@ type Integer struct {
 func (i *Integer) Type() ObjectType { return INTEGER_OBJ }
 
 // Inspect returns a string representation of the Integer's value.
-func (i *Integer) Inspect() string { return fmt.Sprintf("%d", i.Value) }
+func (i *Integer) Inspect() string { return strconv.FormatInt(i.Value, 10) }
+
+// Release returns the Integer object to the pool.
+func (i *Integer) Release() {
+	i.Value = 0
+	integerPool.Put(i)
+}
 
 // --- Float Object ---
 
@@ -126,7 +140,13 @@ type Float struct {
 func (f *Float) Type() ObjectType { return FLOAT_OBJ }
 
 // Inspect returns a string representation of the Float's value.
-func (f *Float) Inspect() string { return fmt.Sprintf("%f", f.Value) }
+func (f *Float) Inspect() string { return strconv.FormatFloat(f.Value, 'f', -1, 64) }
+
+// Release returns the Float object to the pool.
+func (f *Float) Release() {
+	f.Value = 0
+	floatPool.Put(f)
+}
 
 // --- Complex Object ---
 
@@ -154,14 +174,28 @@ type Boolean struct {
 func (b *Boolean) Type() ObjectType { return BOOLEAN_OBJ }
 
 // Inspect returns a string representation of the Boolean's value.
-func (b *Boolean) Inspect() string { return fmt.Sprintf("%t", b.Value) }
+func (b *Boolean) Inspect() string { return strconv.FormatBool(b.Value) }
 
-var (
-	// TRUE is the singleton true value.
-	TRUE = &Boolean{Value: true}
-	// FALSE is the singleton false value.
-	FALSE = &Boolean{Value: false}
-)
+// NewInteger creates a new Integer object from the pool.
+func NewInteger(value int64) *Integer {
+	obj := integerPool.Get().(*Integer)
+	obj.Value = value
+	return obj
+}
+
+// NewString creates a new String object from the pool.
+func NewString(value string) *String {
+	obj := stringPool.Get().(*String)
+	obj.Value = value
+	return obj
+}
+
+// NewFloat creates a new Float object from the pool.
+func NewFloat(value float64) *Float {
+	obj := floatPool.Get().(*Float)
+	obj.Value = value
+	return obj
+}
 
 // --- Function Object ---
 
@@ -342,6 +376,9 @@ type SymbolicPlaceholder struct {
 	// For interface method calls, this holds the set of possible concrete field types
 	// that the receiver variable could hold.
 	PossibleConcreteTypes []*scanner.FieldType
+	// Cache for the Inspect() result to avoid repeated string building
+	inspectCache string
+	cacheValid   bool
 }
 
 // Type returns the type of the SymbolicPlaceholder object.
@@ -349,7 +386,17 @@ func (sp *SymbolicPlaceholder) Type() ObjectType { return SYMBOLIC_OBJ }
 
 // Inspect returns a string representation of the symbolic placeholder.
 func (sp *SymbolicPlaceholder) Inspect() string {
-	return fmt.Sprintf("<Symbolic: %s>", sp.Reason)
+	if sp.cacheValid {
+		return sp.inspectCache
+	}
+
+	var builder strings.Builder
+	builder.WriteString("<Symbolic: ")
+	builder.WriteString(sp.Reason)
+	builder.WriteString(">")
+	sp.inspectCache = builder.String()
+	sp.cacheValid = true
+	return sp.inspectCache
 }
 
 // --- ReturnValue Object ---
@@ -496,10 +543,42 @@ type Environment struct {
 	outer *Environment
 }
 
+// Object pools for reusing common objects
+var (
+	envPool = sync.Pool{
+		New: func() interface{} {
+			return &Environment{
+				store: make(map[string]Object),
+				outer: nil,
+			}
+		},
+	}
+	integerPool = sync.Pool{
+		New: func() interface{} {
+			return &Integer{}
+		},
+	}
+	stringPool = sync.Pool{
+		New: func() interface{} {
+			return &String{}
+		},
+	}
+	floatPool = sync.Pool{
+		New: func() interface{} {
+			return &Float{}
+		},
+	}
+)
+
 // NewEnvironment creates a new, top-level environment.
 func NewEnvironment() *Environment {
-	s := make(map[string]Object)
-	return &Environment{store: s, outer: nil}
+	env := envPool.Get().(*Environment)
+	// Reset the environment state
+	for k := range env.store {
+		delete(env.store, k)
+	}
+	env.outer = nil
+	return env
 }
 
 // NewEnclosedEnvironment creates a new environment that is enclosed by an outer one.
@@ -565,6 +644,15 @@ func (e *Environment) WalkLocal(fn func(name string, obj Object) bool) {
 		if !fn(name, obj) {
 			return
 		}
+	}
+}
+
+// Release returns the environment to the pool for reuse.
+// Only call this on environments that are no longer needed.
+func (e *Environment) Release() {
+	// Only release if this is not an outer environment being used by others
+	if e.outer == nil {
+		envPool.Put(e)
 	}
 }
 
@@ -765,8 +853,11 @@ func (uf *UnresolvedFunction) Inspect() string {
 }
 
 // --- Global Instances ---
-
-// Pre-create global instances for common values to save allocations.
 var (
+	// TRUE is the singleton true value.
+	TRUE = &Boolean{Value: true}
+	// FALSE is the singleton false value.
+	FALSE = &Boolean{Value: false}
+	// NIL is the singleton nil value.
 	NIL = &Nil{}
 )

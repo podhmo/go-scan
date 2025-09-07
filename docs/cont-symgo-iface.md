@@ -84,8 +84,9 @@ The major refactoring to standardize on the `github.com/podhmo/go-scan/scanner` 
 
 ## 6. References
 
-No external documentation was used for this task. All key insights were derived from reading the source code of this repository. The most critical files for understanding the core problem were:
+The following documents in the `docs/` directory provide essential background for working on the `symgo` evaluator:
 
-*   `symgo/evaluator/evaluator.go` and `symgo/evaluator/evaluator_test.go`: Examining the existing code and test setup in these files revealed the conflicting usage of two different `Scanner` types.
-*   `scanner/scanner.go`: This file was essential for discovering the API of the correct `scanner.Scanner` type, including its more complex constructor and the `FileSet()` method for accessing the token fileset.
-*   `scanner/models.go`: This file confirmed the definitions of `TypeInfo`, `MethodInfo`, and other data structures that are central to the interface resolution logic.
+*   `docs/plan-symbolic-execution-like.md`: Outlines the original vision and plan for the `symgo` engine.
+*   `docs/analysis-symgo-implementation.md`: Provides a detailed analysis of the `symgo` evaluator's implementation, which is crucial for understanding its design as a symbolic tracer rather than a standard interpreter.
+*   `docs/summary-symgo.md`: A helpful high-level summary of the `symgo` engine.
+*   `docs/trouble-symgo-identifier-not-found.md`: Details previous issues related to type and identifier resolution, which may provide context for the current challenges.

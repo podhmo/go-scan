@@ -64,6 +64,11 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - **`symgo`: Shallow Scanning**: The `symgo` evaluator is now more robust and performant when dealing with types from packages outside the defined scan policy. It can now create symbolic placeholders for unresolved types, allowing analysis to continue without crashing and enabling symbolic tracing of method calls on these types. This significantly improves the accuracy of tools like `find-orphans` when analyzing code with external dependencies. ([docs/plan-symgo-shallow-scan.md](./docs/plan-symgo-shallow-scan.md))
 - **`symgo`: Field Access on Symbolic Receivers**: The `symgo` evaluator can now correctly access struct fields on symbolic receivers (e.g., a receiver of a method that is the entry point of analysis). This fixes a bug where field access was incorrectly failing with an "undefined method" error, particularly on structs that use `_ struct{}` to enforce keyed literals.
 - **`go-scan`: Declarations-Only Scanning**: Added a `WithDeclarationsOnlyPackages` option to the `goscan.Scanner`. For packages specified with this option, the scanner parses all top-level declarations (types, functions, variables) but explicitly discards function bodies. This allows tools like `docgen` to obtain necessary type information from packages like `net/http` without incurring the cost and complexity of symbolically executing their entire implementation. This provides a significant performance and stability improvement for analyzing code that depends on large standard library packages.
+- **`minigo` Interpreter Enhancements**: Comprehensive refinements to the `minigo` script engine including comprehensive API documentation and implementation of `defer` and `recover` statements. ([docs/plan-minigo.md](./docs/plan-minigo.md))
+- **`minigo` FFI and Language Compatibility**: Resolved critical FFI and language limitations including type inference for empty slice literals, typed nil handling for slices and interfaces, improving overall stdlib compatibility and type checking accuracy.
+- **`symgo` Interpreter Core Completion**: Completed the core symbolic execution engine to handle all major AST node types and language constructs. Key improvements include: proper import path resolution ([docs/trouble-symgo-identifier-not-found.md](./docs/trouble-symgo-identifier-not-found.md)), resilience to undefined identifiers, infinite recursion prevention, enhanced AST node support (generics, channels, function literals, etc.), and comprehensive refactoring of evaluator components (Resolver, accessor, Context handling).
+- **`symgo` Architecture Refinements**: Major refactoring to improve analysis scope management and error handling. Introduced explicit analysis scopes with `WithPrimaryAnalysisScope` and `WithSymbolicDependencyScope`, enhanced type information for unresolved types, and improved resolver error handling for better robustness.
+- **Advanced Analysis and Tool Enhancements**: Implemented comprehensive enhancements including structured logging with source stack traces, automatic workspace detection with `go.work` support, advanced interface method call analysis, multi-module workspace support with unified analysis, enhanced reporting capabilities (JSON output), and wildcard pattern support for improved package discovery.
 
 
 ## To Be Implemented
@@ -84,80 +89,4 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [ ] **DX: Add Timeout Flag to `find-orphans`**: Add a `--timeout` flag to the `find-orphans` CLI for easier debugging.
 
 
-### `minigo` Refinements ([docs/plan-minigo.md](./docs/plan-minigo.md))
-- [x] Write comprehensive documentation for the API, supported language features, and usage examples.
-- [x] Implement `defer` and `recover` statements.
 
-### `minigo` FFI and Language Limitations
-- [x] **Fix empty slice type inference**: Type inference for empty slice literals is weak and defaults to `[]any`. This causes legitimate generic functions (like `slices.Sort`) to fail type checks when they shouldn't. The interpreter should ideally preserve the declared type (e.g., `[]int`) even if the literal is empty. (Note: This is fixed for empty slice and map literals.)
-- [x] **Fix typed nil handling**: The interpreter does not correctly handle typed `nil` values for slices and interfaces, causing incorrect behavior in type inference and equality checks.
-
-
-### `symgo` Interpreter Limitations
-- [x] **Mismatching Import Path and Package Name**: The interpreter's import resolution now correctly handles packages with mismatched import paths and package names (e.g., `gopkg.in/yaml.v2`). A follow-on bug related to the resolution of built-in types (`string`, `int`, etc.) during type conversions has also been fixed by centralizing built-in type definitions in the `universe` scope. ([docs/trouble-symgo-identifier-not-found.md](./docs/trouble-symgo-identifier-not-found.md))
-- [x] **Resilience to Undefined Identifiers**: The interpreter now correctly creates symbolic placeholders for undefined identifiers found in packages that are outside the defined scan policy, allowing analysis to continue without erroring. This has been fully validated. ([docs/trouble-symgo-identifier-not-found.md](./docs/trouble-symgo-identifier-not-found.md))
-- [x] **Infinite Recursion**: The interpreter now prevents infinite recursion by tracking the call stack. The detection mechanism correctly distinguishes between recursive calls to the same function and method calls on different receivers, preventing both false negatives (missing true recursion) and false positives (e.g., in linked-list traversals).
-- [x] **`symgo`: `defer` and `go` statement Tracing**: The `symgo` interpreter now traces `CallExpr` nodes inside `*ast.DeferStmt` and `*ast.GoStmt`, preventing false positives in tools like `find-orphans`.
-- [x] **Branch statements (`break`, `continue`)**: The interpreter now handles `*ast.BranchStmt`, allowing it to correctly model control flow in loops.
-- [x] **`for...range` statements**: The interpreter now handles `*ast.RangeStmt`. A function call in the range expression (e.g., `for _ := range getItems()`) will be traced.
-- [x] **Pointer Dereferencing**: The interpreter now handles `*ast.StarExpr` for dereferencing. This was previously incorrectly identified as a missing feature for `*ast.UnaryExpr` with `Op: token.MUL`. This change enables tracing method calls on pointer types (e.g., `(*p).MyMethod()`).
-- [x] **Slice Expressions**: The interpreter does not handle `*ast.SliceExpr`. Function calls used as index expressions are not traced.
-- [x] **`select` statements**: The interpreter does not handle `*ast.SelectStmt`. Function calls within channel communications are not traced.
-- [x] **Interface Method Call Tracing**: The interpreter did not previously trigger the default intrinsic for method calls on interface types. This prevented tools like `find-orphans` from correctly analyzing code that relies on interfaces. See [docs/trouble-find-orphans.md](./docs/trouble-find-orphans.md) for details. (Note: This is now fixed. The interpreter correctly creates a placeholder for interface method calls, which can be inspected by a default intrinsic.)
-- [x] **Numeric Types**: The interpreter now handles `integer`, `float`, and `complex` literals and arithmetic.
-- [x] **Character Literals**: The interpreter now handles `char` and `rune` literals (e.g., `'a'`, `'\n'`).
-- [x] **Unary Operators**: The interpreter now handles the primary unary operators: logical not (`!`), negation (`-`), unary plus (`+`), and bitwise complement (`^`).
-- [x] **Map Literals**: The interpreter does not have concrete support for map literals; they are treated as symbolic placeholders. (Note: Now symbolically evaluated, tracing calls in keys and values.)
-- [x] **Function Literals as Arguments**: The interpreter now scans the bodies of function literals passed as arguments to other functions, allowing it to trace calls within them (e.g., `t.Run(..., func() { ... })`).
-- [x] **Function Literals as Return Values**: The interpreter now correctly traces calls inside closures that are returned from other functions by ensuring that package-level environments are correctly populated and captured.
-- [x] **Generics**:
-  - [x] Support for evaluating calls to generic functions with explicit type arguments (e.g., `myFunc[int](...)`).
-  - [x] Support for evaluating generic type instantiations in composite literals (e.g., `MyType[int]{...}`).
-  - [x] The evaluator is now robust to calls to generic functions where type arguments are omitted (e.g., `myFunc(...)`). It does not crash and treats the call as symbolic. Full type inference is not implemented.
-  - [x] The evaluator is now robust to generic functions with interface constraints (e.g., `[T fmt.Stringer]`). It does not crash and does not perform constraint checking.
-- [x] **Channels**: The interpreter now has a concrete `object.Channel` type. The `make` intrinsic correctly creates channel objects, and receive operations (`<-ch`) are symbolically evaluated to produce a value of the correct element type. This provides the foundation for more advanced channel analysis.
-- [x] **Stateful Type Tracking for Variables**: The `symgo` evaluator now correctly propagates type information (including pointer-ness) for variables during assignments and declarations. This allows for accurate method resolution on variables holding concrete types, pointer types, and interfaces, fixing several state-tracking-related bugs.
-- [x] **LHS of Assignments**: The interpreter now evaluates expressions on the left-hand side of field assignments (e.g., in `foo.bar = baz`), ensuring that function calls or type assertions within `foo` are correctly traced.
-- [x] **Anonymous Types**: The scanner now correctly parses anonymous `interface` and `struct` types in expressions (such as function parameters), preserving their structural definitions for the `symgo` interpreter.
-- [x] **Other AST Nodes**: The interpreter now correctly handles all `ast.Node` types. This includes adding a placeholder for `*ast.StructType` to prevent "not implemented" errors during evaluation of type conversions. The completion of this item finalizes the work on the `symgo` interpreter's core evaluation loop.
-    - [x] **`symgo`: Evaluator `Resolver` Refactoring**: Refactored the `symgo.evaluator.Resolver` to clarify the API around scan policy enforcement. Exported methods now consistently perform policy checks, while unexported methods can bypass them for internal use. This improves safety and aligns with the intended design.
-    - [x] **`symgo`: Evaluator `accessor` Refactoring**: Refactored the `symgo.evaluator` to move `find...` methods to a new `accessor` struct.
-    - [x] **`symgo`: Evaluator `Context` Refactoring**: Refactored the `symgo.evaluator` to pass `context.Context` as an argument instead of using `context.Background()` directly. This improves traceability and cancellation propagation.
-    - [x] **Intra-package unexported constant/variable resolution**: The interpreter now correctly resolves unexported package-level constants and variables that are referenced from within a function in the same package by pre-loading them into the environment.
-    - [x] `*ast.IfStmt` (Note: The interpreter now correctly evaluates the `Cond` expression, in addition to the `Init` statement and `Body`/`Else` blocks. A follow-up fix ensures that evaluation correctly continues after the `if` statement, resolving a regression in `docgen`.)
-    - [x] `*ast.ChanType`
-    - [x] `*ast.Ellipsis` (Note: Implemented for variadic arguments in function calls and definitions.)
-    - [x] `*ast.FuncType`
-    - [x] `*ast.InterfaceType`
-    - [x] `*ast.MapType`
-    - [x] `*ast.StructType`
-    - [x] `*ast.EmptyStmt`
-    - [x] `*ast.IncDecStmt`
-    - [x] `*ast.LabeledStmt`
-    - [x] `*ast.SendStmt`
-- [x] **`panic` and other builtins**: The interpreter now recognizes `panic`, `nil`, `true`, and `false`. It also has placeholder implementations for most other standard built-ins (`make`, `len`, `append`, `new`, `cap`, etc.).
-- [x] **Multi-value returns and assignments**: The interpreter now supports functions that return multiple values and assignments of the form `x, y := f()` and `x, y = f()`.
-- [x] **`symgo`: Correctly scope function parameters**: Fixed a bug where function parameters and receivers were incorrectly set in the package scope instead of the function's local scope, causing "identifier not found" errors in nested blocks. The engine now also correctly handles analysis entry points by creating symbolic placeholders for function parameters that are not explicitly provided.
-- [x] **Block Statements**: The interpreter now correctly handles nested block statements `{...}` within function bodies, creating a new lexical scope and correctly tracing function calls inside them.
-
-### `symgo` Refinements
-- [x] **Explicit Analysis Scopes**: Refactored the `symgo.Interpreter` configuration to use explicit scopes. `WithPrimaryAnalysisScope` defines packages for deep execution, and `WithSymbolicDependencyScope` defines packages for declarations-only parsing. This makes analysis more hermetic and predictable, removing the need for implicit on-demand loading of out-of-policy packages.
-- [x] **Expressive Unresolved Types**: Enhanced the `scanner.TypeInfo` struct for unresolved types to include the type's `Kind` (e.g., interface, struct) if it can be determined from context. The evaluator now infers the kind from type assertions and composite literals, allowing for more precise analysis and removing unsafe assumptions in the `assignIdentifier` logic.
-- [x] **Proper Error Handling in Resolver**: The `resolver.ResolveType` and `resolveTypeWithoutPolicyCheck` methods now correctly handle errors from `fieldType.Resolve(ctx)` by returning a symbolic placeholder, making the evaluator more robust against resolution failures.
-
-### Future Enhancements
-- [x] **`symgo`: Tracing and Debuggability**: Enhance the tracing mechanism to provide a more detailed view of the symbolic execution flow.
-- [x] **Contextual Logging**: Warning and error logs emitted during evaluation now include the function call site (name and position) where the warning occurred. This is achieved by capturing the call stack within the evaluator and adding it to the log record.
-    - [x] **Source in Stack Traces**: Errors returned by the symbolic evaluator now include a full stack trace, complete with the source code line that caused the error, similar to `minigo`.
-    - [x] **Structured Call Stack Logging**: Debug logs for function calls now include a structured representation of the call stack, with function names, file paths, and line numbers, significantly improving readability.
-- [x] **`find-orphans`: Automatic `go.work` Detection**: Enhance the `--workspace-root` flag to automatically detect and use a `go.work` file if it exists in the root directory. This would involve parsing the `go.work` file to determine the list of modules to analyze, providing a more idiomatic way to define a workspace. If `go.work` is not found, the tool should fall back to the current behavior of scanning all subdirectories for `go.mod` files.
-- [x] **`find-orphans`: Advanced Usage Analysis (Interfaces)**: The `symgo` engine and `find-orphans` tool have been enhanced to allow for more precise analysis of interface method calls. The engine now correctly tracks the set of possible concrete types for an interface variable, even across control-flow branches.
-- [x] **`find-orphans`: Reporting and Final Touches**
-    - [x] Implement formatted output for both default (orphans only) and verbose modes. (Note: Added JSON output via `-json` flag.)
-- [x] **`find-orphans`: Multi-Module Workspace Support**: Allow `find-orphans` to treat multiple Go modules within a single repository as a unified "workspace".
-    - [x] **Discovery**: Implement logic in `find-orphans` to discover all `go.mod` files under the directory specified by the `--workspace-root` flag.
-    - [x] **Multi-Scanner Architecture**: Refactor the `analyzer` to manage a list of `*goscan.Scanner` instances, one for each discovered module.
-    - [x] **Unified `symgo` View**: Create a facade or "meta-scanner" to provide `symgo.Interpreter` with a unified view of packages across all modules in the workspace. This may involve changes to `symgo` itself.
-    - [x] **Update Analysis Logic**: Ensure the main analysis loop correctly collects declarations, builds maps, and identifies entry points from the aggregated set of all packages.
-    - [x] **Add Tests**: Create a comprehensive test case with a multi-module project to validate that cross-module function calls are correctly tracked and orphans are identified accurately across the entire workspace.
-- [x] **`ModuleWalker`: Wildcard Support**: Added support for the `...` wildcard in both file path and import path patterns to tools like `find-orphans`, making package discovery more intuitive.

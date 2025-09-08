@@ -861,3 +861,15 @@ var (
 	// NIL is the singleton nil value.
 	NIL = &Nil{}
 )
+
+// InterfaceCall represents a recorded symbolic call to an interface method.
+type InterfaceCall struct {
+	MethodName string
+	// In the future, we might add ast.Node for position or args for more precise replay.
+}
+
+// ImplementationPair represents a newly discovered implementation relationship.
+type ImplementationPair struct {
+	Struct    *scanner.TypeInfo
+	Interface *scanner.TypeInfo
+}

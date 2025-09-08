@@ -28,6 +28,15 @@ type FileScope struct {
 	AST *ast.File
 }
 
+// TypeRelations is an interface defining the methods the evaluator needs to interact
+// with the type relation registry. This is defined as an interface to avoid an import cycle.
+type TypeRelations interface {
+	AddType(ctx context.Context, t *scanner.TypeInfo) []object.ImplementationPair
+	GetImplementers(iface *scanner.TypeInfo) []*scanner.TypeInfo
+	AddPendingCall(iface *scanner.TypeInfo, methodName string)
+	GetPendingCalls(iface *scanner.TypeInfo) []*object.InterfaceCall
+}
+
 // Evaluator is the main object that evaluates the AST.
 type Evaluator struct {
 	scanner           *goscan.Scanner
@@ -43,6 +52,7 @@ type Evaluator struct {
 	files             []*FileScope
 	fileMap           map[string]bool
 	UniverseEnv       *object.Environment
+	relations         TypeRelations
 
 	// accessor provides methods for finding fields and methods.
 	accessor *accessor
@@ -64,7 +74,7 @@ func (f *callFrame) String() string {
 }
 
 // New creates a new Evaluator.
-func New(scanner *goscan.Scanner, logger *slog.Logger, tracer object.Tracer, scanPolicy object.ScanPolicyFunc) *Evaluator {
+func New(scanner *goscan.Scanner, logger *slog.Logger, tracer object.Tracer, scanPolicy object.ScanPolicyFunc, relations TypeRelations) *Evaluator {
 	if logger == nil {
 		logger = slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	}
@@ -87,6 +97,7 @@ func New(scanner *goscan.Scanner, logger *slog.Logger, tracer object.Tracer, sca
 		fileMap:              make(map[string]bool),
 		evaluationInProgress: make(map[ast.Node]bool),
 		UniverseEnv:          universeEnv,
+		relations:            relations,
 	}
 	e.accessor = newAccessor(e)
 	return e
@@ -853,6 +864,7 @@ func (e *Evaluator) evalStarExpr(ctx context.Context, node *ast.StarExpr, env *o
 }
 
 func (e *Evaluator) evalGenDecl(ctx context.Context, node *ast.GenDecl, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
+	// A small change to test the tool
 	if node.Tok != token.VAR {
 		return nil
 	}

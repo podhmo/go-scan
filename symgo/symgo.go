@@ -54,6 +54,7 @@ type Interpreter struct {
 	scanPolicy                 object.ScanPolicyFunc // This will be built from primary scope
 	primaryAnalysisPatterns    []string
 	symbolicDependencyPatterns []string
+	Relations                  *TypeRelations
 }
 
 // Option is a functional option for configuring the Interpreter.
@@ -115,6 +116,7 @@ func NewInterpreter(scanner *goscan.Scanner, options ...Option) (*Interpreter, e
 		scanner:           scanner,
 		globalEnv:         object.NewEnvironment(),
 		interfaceBindings: make(map[string]*goscan.TypeInfo),
+		Relations:         NewTypeRelations(scanner),
 	}
 
 	for _, opt := range options {
@@ -166,7 +168,7 @@ func NewInterpreter(scanner *goscan.Scanner, options ...Option) (*Interpreter, e
 		}
 	}
 
-	i.eval = evaluator.New(scanner, i.logger, i.tracer, i.scanPolicy)
+	i.eval = evaluator.New(scanner, i.logger, i.tracer, i.scanPolicy, i.Relations)
 
 	// Register default intrinsics
 	i.RegisterIntrinsic("fmt.Sprintf", i.intrinsicSprintf)
@@ -350,6 +352,17 @@ func (i *Interpreter) intrinsicSprintf(eval *Interpreter, args []Object) Object 
 // Eval evaluates a given AST node in the interpreter's persistent environment.
 // It requires the PackageInfo of the file containing the node to resolve types correctly.
 func (i *Interpreter) Eval(ctx context.Context, node ast.Node, pkg *scanner.PackageInfo) (Object, error) {
+	// Register all types from the package with the relation registry.
+	// This is idempotent, so it's safe to call multiple times for the same package.
+	if pkg != nil {
+		for _, t := range pkg.Types {
+			newPairs := i.Relations.AddType(ctx, t)
+			for _, pair := range newPairs {
+				i.processNewImplementation(ctx, pair.Struct, pair.Interface)
+			}
+		}
+	}
+
 	// The evaluator now handles import resolution lazily.
 	// We no longer need to pre-populate the environment here.
 	result := i.eval.Eval(ctx, node, i.globalEnv, pkg)

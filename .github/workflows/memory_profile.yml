@@ -1,0 +1,100 @@
+name: Integration Test Memory Profile
+
+on:
+  # Run on pushes to the default branch to update the baseline
+  push:
+  # Run on pull requests
+  pull_request:
+    paths:
+      - 'symgo/**'
+      - '.github/workflows/memory_profile.yml'
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  profile-memory:
+    name: Run integration test memory profiling
+    runs-on: ubuntu-latest
+    # This job should only run on pull requests, or on pushes to the default branch.
+    if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Run tests and generate memory profile
+        run: go test -v -memprofile=mem.out -memprofilerate=1 ./symgo/integration_test
+
+      - name: Extract memory usage from profile
+        id: pprof
+        run: |
+          mem_bytes=$(go tool pprof -top -unit=B mem.out | head -n 1 | sed -n 's/.*, 100% of \([0-9]\+\)B total/\1/p')
+          echo "mem_bytes=${mem_bytes}" >> $GITHUB_OUTPUT
+
+      - name: Download baseline memory total
+        uses: actions/download-artifact@v4
+        if: github.event_name == 'pull_request'
+        with:
+          name: memory-total-baseline
+        continue-on-error: true
+
+      - name: Prepare comment content
+        id: comment-prep
+        if: github.event_name == 'pull_request'
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          current_mem='${{ steps.pprof.outputs.mem_bytes }}'
+
+          if [[ -z "$current_mem" ]]; then
+            current_mem=0
+          fi
+
+          body=""
+          if [[ -f "mem_total.txt" ]]; then
+            baseline_mem=$(cat mem_total.txt)
+            if [[ -z "$baseline_mem" ]]; then
+              baseline_mem=0
+            fi
+
+            delta=$((current_mem - baseline_mem))
+
+            if [ $delta -ge 0 ]; then
+              delta_str="+${delta}"
+            else
+              delta_str="${delta}"
+            fi
+
+            body=$(printf "### Memory Profile Report\n\n| Branch            | Total Memory (bytes) |\n|-------------------|----------------------|\n| \`%s\` (baseline) | \`%s\` B          |\n| PR branch         | \`%s\` B          |\n| **Delta**         | \`%s\` B             |" "$DEFAULT_BRANCH" "$baseline_mem" "$current_mem" "$delta_str")
+          else
+            body=$(printf "### Memory Profile Report\n\n| Branch            | Total Memory (bytes)    |\n|-------------------|-------------------------|\n| \`%s\` (baseline) | \`N/A\`                   |\n| PR branch         | \`%s\` B |\n| **Delta**         | \`N/A\`                   |\n\n*Note: A baseline will be created on the \`%s\` branch after this PR is merged. Subsequent PRs will show a comparison.*" "$DEFAULT_BRANCH" "$current_mem" "$DEFAULT_BRANCH")
+          fi
+
+          echo "body<<EOF" >> $GITHUB_OUTPUT
+          echo -e "$body" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Create or update comment on PR
+        if: github.event_name == 'pull_request'
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          body: ${{ steps.comment-prep.outputs.body }}
+          edit-mode: replace
+
+      - name: Store memory total for baseline
+        # This step only runs on a push to the default branch, because of the job-level 'if' condition.
+        if: github.event_name == 'push'
+        run: |
+          echo "${{ steps.pprof.outputs.mem_bytes }}" > mem_total.txt
+
+      - name: Upload memory total artifact
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: memory-total-baseline
+          path: mem_total.txt

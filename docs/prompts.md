@@ -84,3 +84,33 @@ When all tasks defined in a `plan-*.md` document are completed, follow these ste
     ```markdown
     - Resolved numerous FFI and language limitations to improve stdlib compatibility, including method calls on Go objects and graceful error handling. See ([docs/trouble-minigo-stdlib-limitations.md](./docs/trouble-minigo-stdlib-limitations.md)) for details.
     ```
+
+---
+
+### Debugging Log: Cross-Package Interface Discovery
+
+**Objective:** Implement robust, order-independent discovery of interface implementations, as defined by the `TestInterfaceDiscoveryCrossPkg` test case.
+
+**Initial State:** The existing implementation was stateless and failed all scenarios in `TestInterfaceDiscoveryCrossPkg`.
+
+**Key Steps & Discoveries:**
+
+1.  **Build Error Resolution:** The initial effort involved fixing a cascade of build errors across the `symgo`, `evaluator`, and `scanner` packages. This was caused by outdated test files and API mismatches, such as the removal of `goscan.Implements` and changes in type names (e.g., `scanner.KindInterface` to `scanner.InterfaceKind`). This phase required significant code correction to get the project into a compilable state.
+
+2.  **Core Logic Failure:** After fixing the build, `TestInterfaceDiscoveryCrossPkg` still failed with the error `Result value is not a string, but *object.SymbolicPlaceholder`. This indicated that the interface method call (`i.Do()`) was not being resolved to its concrete implementation.
+
+3.  **Recursion Hypothesis:**
+    *   An attempt was made to fix the issue by forcing a full package re-scan in `goscan.go` if all of a package's files had been visited individually.
+    *   This led to a new problem: the test process was being `Killed`, indicating an infinite loop or memory exhaustion.
+    *   The root cause was identified as a recursive loop:
+        1.  `symgo.checkImplements` calls `goscan.ScanPackage`.
+        2.  `goscan.ScanPackage` re-scans the source file.
+        3.  The `scanner`'s AST walk triggers a callback to the `evaluator`.
+        4.  The `evaluator` calls back to `symgo.HandleTypeDefinition`.
+        5.  `symgo.HandleTypeDefinition` calls `checkImplements` again, creating an infinite loop.
+
+4.  **Proposed Solution & Current Blocker:**
+    *   The correct fix is to break this recursion. The chosen strategy is to use a `context.Context` value to flag when `checkImplements` is running. The `HandleTypeDefinition` callback should then check for this flag and exit early to prevent re-entry.
+    *   **Blocker:** Implementing this requires plumbing the `context.Context` through the `scanner` package's internal parsing functions (`scanGoFiles` -> `parseGenDecl` -> etc.). My attempts to apply the necessary patches have been consistently failing due to a persistent mismatch between my local view of the files and their state on the server. I have been unable to resolve this synchronization issue, preventing the final fix from being applied.
+
+**Current Status:** The code is **not functional**. The recursion bug persists, and I am unable to apply the fix. This submission is being made at the user's explicit request to save the current state.

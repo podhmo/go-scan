@@ -43,6 +43,9 @@ type IntrinsicFunc func(eval *Interpreter, args []Object) Object
 // ScanPolicyFunc is a function that determines whether a package should be scanned from source.
 type ScanPolicyFunc = object.ScanPolicyFunc
 
+// inCheckImplementsKey is a private context key to prevent recursive implementation checking.
+type inCheckImplementsKey struct{}
+
 // Interpreter is the main public entry point for the symgo engine.
 type Interpreter struct {
 	scanner                    *goscan.Scanner
@@ -54,6 +57,12 @@ type Interpreter struct {
 	scanPolicy                 object.ScanPolicyFunc // This will be built from primary scope
 	primaryAnalysisPatterns    []string
 	symbolicDependencyPatterns []string
+
+	// State for dynamic interface implementation resolution
+	knownInterfaces map[string]*goscan.TypeInfo              // fqdn -> TypeInfo
+	knownStructs    map[string]*goscan.TypeInfo              // fqdn -> TypeInfo
+	implementations map[string][]*goscan.TypeInfo            // interface fqdn -> list of struct TypeInfo
+	pendingCalls    map[string][]evaluator.PendingMethodCall // interface fqdn -> list of pending calls
 }
 
 // Option is a functional option for configuring the Interpreter.
@@ -115,6 +124,11 @@ func NewInterpreter(scanner *goscan.Scanner, options ...Option) (*Interpreter, e
 		scanner:           scanner,
 		globalEnv:         object.NewEnvironment(),
 		interfaceBindings: make(map[string]*goscan.TypeInfo),
+
+		knownInterfaces: make(map[string]*goscan.TypeInfo),
+		knownStructs:    make(map[string]*goscan.TypeInfo),
+		implementations: make(map[string][]*goscan.TypeInfo),
+		pendingCalls:    make(map[string][]evaluator.PendingMethodCall),
 	}
 
 	for _, opt := range options {
@@ -167,11 +181,162 @@ func NewInterpreter(scanner *goscan.Scanner, options ...Option) (*Interpreter, e
 	}
 
 	i.eval = evaluator.New(scanner, i.logger, i.tracer, i.scanPolicy)
+	i.eval.SetInterfaceEventHandler(i) // Break initialization cycle
 
 	// Register default intrinsics
 	i.RegisterIntrinsic("fmt.Sprintf", i.intrinsicSprintf)
 
 	return i, nil
+}
+
+func (i *Interpreter) methodInfoToFuncInfo(m *scanner.MethodInfo) *scanner.FunctionInfo {
+	return &scanner.FunctionInfo{
+		Name:       m.Name,
+		Parameters: m.Parameters,
+		Results:    m.Results,
+	}
+}
+
+// checkImplements checks if a struct type implements an interface type.
+func (i *Interpreter) checkImplements(ctx context.Context, iface, typ *goscan.TypeInfo) bool {
+	if iface.Kind != scanner.InterfaceKind || typ.Kind != scanner.StructKind {
+		return false
+	}
+	if iface.Interface == nil {
+		return false // Should not happen if kind is InterfaceKind
+	}
+
+	// Get the package info for the struct type to find its methods.
+	// We pass a context with a flag to prevent recursive analysis.
+	ctxWithFlag := context.WithValue(ctx, inCheckImplementsKey{}, true)
+	structPkg, err := i.goScanner.ScanPackageByImport(ctxWithFlag, typ.PkgPath)
+	if err != nil {
+		i.logger.Warn("could not scan package for implementation check", "package", typ.PkgPath, "error", err)
+		return false
+	}
+
+	// New logging
+	var funcNames []string
+	for _, f := range structPkg.Functions {
+		name := f.Name
+		if f.Receiver != nil {
+			name = fmt.Sprintf("(%s).%s", f.Receiver.Type.TypeName, f.Name)
+		}
+		funcNames = append(funcNames, name)
+	}
+	i.logger.Debug("functions in package for impl check", "package", typ.PkgPath, "functions", funcNames)
+
+
+	for _, ifaceMethod := range iface.Interface.Methods {
+		foundMethod := false
+		for _, structFunc := range structPkg.Functions {
+			if structFunc.Name != ifaceMethod.Name {
+				continue
+			}
+			if structFunc.Receiver == nil {
+				continue
+			}
+			// Check if the receiver type name matches the struct name.
+			// This is a simplification; a full check would resolve the receiver type.
+			if structFunc.Receiver.Type.TypeName != typ.Name {
+				continue
+			}
+
+			// We found a method with the right name and receiver type. Now check signature.
+			ifaceMethodAsFunc := i.methodInfoToFuncInfo(ifaceMethod)
+			if i.eval.CompareSignatures(ifaceMethodAsFunc, structFunc) {
+				foundMethod = true
+				break
+			}
+		}
+		if !foundMethod {
+			i.logger.Debug("implementation check fail: method not found", "struct", typ.Name, "interface", iface.Name, "method", ifaceMethod.Name)
+			return false
+		}
+	}
+
+	return true
+}
+
+// processNewImplementation is the core logic for handling a new struct that might implement known interfaces.
+func (i *Interpreter) processNewImplementation(ctx context.Context, structType *goscan.TypeInfo) {
+	fqn := structType.PkgPath + "." + structType.Name
+	i.logger.Debug("processing new struct", "name", fqn, "known_interfaces", len(i.knownInterfaces))
+
+	for ifaceFQN, ifaceType := range i.knownInterfaces {
+		i.logger.Debug("checking implementation", "struct", fqn, "interface", ifaceFQN)
+		if i.checkImplements(ctx, ifaceType, structType) {
+			i.logger.Info("found new implementation", "interface", ifaceFQN, "struct", fqn)
+			i.implementations[ifaceFQN] = append(i.implementations[ifaceFQN], structType)
+
+			// Now, check if there are pending calls for this interface
+			if pending, ok := i.pendingCalls[ifaceFQN]; ok {
+				i.logger.Debug("found pending calls for interface", "interface", ifaceFQN, "count", len(pending))
+				for _, call := range pending {
+					// We have a new implementation, so we can now resolve the call.
+					// This re-evaluates the method call with the new concrete type.
+					i.logger.Debug("retrying pending call", "interface", ifaceFQN, "method", call.MethodName)
+					i.eval.ResolvePendingCall(call, structType)
+				}
+				// Clear the pending calls for this interface as they have been processed
+				delete(i.pendingCalls, ifaceFQN)
+			}
+		}
+	}
+}
+
+// HandleInterfaceMethodCall is called by the evaluator when it encounters a method call on an interface.
+func (i *Interpreter) HandleInterfaceMethodCall(call evaluator.PendingMethodCall) {
+	ifaceFQN := call.InterfaceType.PkgPath + "." + call.InterfaceType.Name
+	i.logger.Debug("handling interface method call", "interface", ifaceFQN, "method", call.MethodName)
+
+	// Record the interface if we haven't seen it before
+	if _, ok := i.knownInterfaces[ifaceFQN]; !ok {
+		i.knownInterfaces[ifaceFQN] = call.InterfaceType
+		i.logger.Debug("discovered new interface", "name", ifaceFQN)
+	}
+
+	// Check for existing implementations
+	if impls, ok := i.implementations[ifaceFQN]; ok && len(impls) > 0 {
+		// For now, let's just use the first implementation found.
+		// A more advanced strategy could explore all paths.
+		i.logger.Debug("found existing implementation, resolving call immediately", "interface", ifaceFQN, "implementation", impls[0].Name)
+		i.eval.ResolvePendingCall(call, impls[0])
+		return
+	}
+
+	// No implementation found yet, so add to pending.
+	i.logger.Debug("no implementation found, adding to pending calls", "interface", ifaceFQN)
+	i.pendingCalls[ifaceFQN] = append(i.pendingCalls[ifaceFQN], call)
+}
+
+// HandleTypeDefinition is called by the evaluator when it encounters a type definition.
+func (i *Interpreter) HandleTypeDefinition(ctx context.Context, typeInfo *goscan.TypeInfo) {
+	// If we are already in the middle of a checkImplements call, do not start another one.
+	if ctx.Value(inCheckImplementsKey{}) != nil {
+		return
+	}
+
+	if typeInfo.Kind == scanner.StructKind {
+		fqn := typeInfo.PkgPath + "." + typeInfo.Name
+		i.logger.Debug("HandleTypeDefinition: found struct", "name", fqn)
+		i.knownStructs[fqn] = typeInfo
+		i.processNewImplementation(ctx, typeInfo)
+	} else if typeInfo.Kind == scanner.InterfaceKind {
+		fqn := typeInfo.PkgPath + "." + typeInfo.Name
+		i.logger.Debug("HandleTypeDefinition: found interface", "name", fqn)
+		if _, ok := i.knownInterfaces[fqn]; !ok {
+			i.knownInterfaces[fqn] = typeInfo
+			i.logger.Debug("discovered new interface", "name", fqn)
+			// When a new interface is found, check against all known structs
+			for _, structType := range i.knownStructs {
+				if i.checkImplements(ctx, typeInfo, structType) {
+					i.logger.Info("found implementation for new interface", "interface", fqn, "struct", structType.PkgPath+"."+structType.Name)
+					i.implementations[fqn] = append(i.implementations[fqn], structType)
+				}
+			}
+		}
+	}
 }
 
 // matches checks if a given path matches a pattern.

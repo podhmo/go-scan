@@ -655,6 +655,16 @@ func (s *Scanner) ScanPackage(ctx context.Context, pkgPath string) (*scanner.Pac
 	}
 	s.mu.RUnlock()
 
+	// If all files in the directory have been visited individually (e.g. via ScanFiles),
+	// but a full package scan is requested, we need to re-parse all files to get a
+	// complete PackageInfo for the entire package.
+	if len(filesToParseNow) == 0 && len(allFilesInDir) > 0 {
+		slog.DebugContext(ctx, "ScanPackage: all files were visited, forcing re-scan", "package", importPath)
+		filesToParseNow = allFilesInDir
+	}
+
+	slog.DebugContext(ctx, "ScanPackage: parsing files", "package", importPath, "files", filesToParseNow)
+
 	var currentCallPkgInfo *scanner.PackageInfo
 	if len(filesToParseNow) > 0 {
 		currentCallPkgInfo, err = s.scanner.ScanFiles(ctx, filesToParseNow, absPkgPath)

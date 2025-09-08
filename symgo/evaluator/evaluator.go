@@ -20,6 +20,24 @@ import (
 	"github.com/podhmo/go-scan/symgo/object"
 )
 
+// PendingMethodCall holds information about an interface method call that could not be
+// resolved because no implementation was found at the time of the call.
+type PendingMethodCall struct {
+	CallExpr      *ast.CallExpr
+	Env           *object.Environment
+	FileScope     *FileScope
+	InterfaceType *scanner.TypeInfo
+	MethodName    string
+	Args          []object.Object
+}
+
+// InterfaceEventHandler is an interface that the Interpreter implements to handle
+// events from the evaluator related to interface discovery.
+type InterfaceEventHandler interface {
+	HandleInterfaceMethodCall(call PendingMethodCall)
+	HandleTypeDefinition(ctx context.Context, typeInfo *scanner.TypeInfo)
+}
+
 // MaxCallStackDepth is the maximum depth of the call stack to prevent excessive recursion.
 const MaxCallStackDepth = 4096
 
@@ -50,6 +68,8 @@ type Evaluator struct {
 	// evaluationInProgress tracks nodes that are currently being evaluated
 	// to detect and prevent infinite recursion.
 	evaluationInProgress map[ast.Node]bool
+
+	eventHandler InterfaceEventHandler
 }
 
 type callFrame struct {
@@ -90,6 +110,56 @@ func New(scanner *goscan.Scanner, logger *slog.Logger, tracer object.Tracer, sca
 	}
 	e.accessor = newAccessor(e)
 	return e
+}
+
+// BindInterface registers a concrete type for an interface.
+func (e *Evaluator) SetInterfaceEventHandler(handler InterfaceEventHandler) {
+	e.eventHandler = handler
+}
+
+// CompareSignatures checks if two function signatures are compatible.
+func (e *Evaluator) CompareSignatures(sig1, sig2 *scanner.FunctionInfo) bool {
+	// This is a simplified comparison. A full implementation would need to
+	// resolve types and check for structural equivalence.
+	if len(sig1.Parameters) != len(sig2.Parameters) || len(sig1.Results) != len(sig2.Results) {
+		return false
+	}
+	// Simplified: just compare the string representations of the types.
+	for i := range sig1.Parameters {
+		if sig1.Parameters[i].Type.String() != sig2.Parameters[i].Type.String() {
+			return false
+		}
+	}
+	for i := range sig1.Results {
+		if sig1.Results[i].Type.String() != sig2.Results[i].Type.String() {
+			return false
+		}
+	}
+	return true
+}
+
+// ResolvePendingCall re-evaluates a pending method call with a concrete implementation.
+func (e *Evaluator) ResolvePendingCall(call PendingMethodCall, impl *scanner.TypeInfo) {
+	// Create a new symbolic instance of the concrete type.
+	instance := &object.Instance{
+		TypeName: impl.PkgPath + "." + impl.Name,
+		BaseObject: object.BaseObject{
+			ResolvedTypeInfo: impl,
+		},
+	}
+	// Find the method on the concrete type.
+	method, err := e.accessor.findMethodOnType(context.Background(), impl, call.MethodName, call.Env, instance)
+	if err != nil {
+		e.logger.Error("failed to find method on concrete type for pending call", "error", err)
+		return
+	}
+	// Re-apply the function call with the resolved method.
+	pkg, err := e.scanner.ScanPackageByImport(context.Background(), impl.PkgPath)
+	if err != nil {
+		e.logger.Error("failed to scan package for pending call resolution", "error", err, "pkg", impl.PkgPath)
+		return
+	}
+	e.applyFunction(context.Background(), method, call.Args, pkg, call.CallExpr.Pos())
 }
 
 // BindInterface registers a concrete type for an interface.
@@ -959,6 +1029,10 @@ func (e *Evaluator) evalTypeDecl(ctx context.Context, d *ast.GenDecl, env *objec
 		if typeInfo == nil {
 			// This shouldn't happen if the scanner ran correctly.
 			continue
+		}
+
+		if e.eventHandler != nil {
+			e.eventHandler.HandleTypeDefinition(ctx, typeInfo)
 		}
 
 		typeObj := &object.Type{

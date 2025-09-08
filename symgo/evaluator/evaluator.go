@@ -3423,7 +3423,20 @@ func (e *Evaluator) isImplementer(ctx context.Context, concreteType *scanner.Typ
 	// For every method in the interface...
 	for _, ifaceMethodInfo := range interfaceType.Interface.Methods {
 		// ...find a matching method in the concrete type.
+		// A concrete type T can implement an interface method with a *T receiver.
+		// So we need to check both T and *T.
 		concreteMethodInfo := e.accessor.findMethodInfoOnType(ctx, concreteType, ifaceMethodInfo.Name)
+
+		if concreteMethodInfo == nil && !strings.HasPrefix(concreteType.Name, "*") {
+			// If not found on T, check on *T.
+			// Create a synthetic pointer type for the check.
+			pointerType := *concreteType
+			pointerType.Name = "*" + concreteType.Name
+			// We need to be careful not to lose the underlying struct info.
+			// This is a shallow copy, but it should be sufficient for the accessor.
+			concreteMethodInfo = e.accessor.findMethodInfoOnType(ctx, &pointerType, ifaceMethodInfo.Name)
+		}
+
 		if concreteMethodInfo == nil {
 			return false // Method not found
 		}

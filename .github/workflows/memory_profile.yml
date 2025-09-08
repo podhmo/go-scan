@@ -32,7 +32,7 @@ jobs:
       - name: Extract memory usage from profile
         id: pprof
         run: |
-          mem_bytes=$(go tool pprof -top -unit=B mem.out | head -n 1 | sed -n 's/.*, 100% of \([0-9]\+\)B total/\1/p')
+          mem_bytes=$(go tool pprof -top -unit=B mem.out | head -n 5 | grep "total" | sed -n 's/.* of \([0-9]\+\)B total/\1/p')
           echo "mem_bytes=${mem_bytes}" >> $GITHUB_OUTPUT
 
       - name: Download baseline memory total

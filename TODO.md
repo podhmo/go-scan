@@ -75,6 +75,10 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [ ] Fix `find-orphans` incorrectly reporting `formatCode` as an orphan in the `examples/convert` project. (Note: This is a known regression, see `docs/trouble-symgo-refine.md`).
 - [ ] Deeper state-management issues related to package-level variables in recursive calls remain, as seen in `TestCrossPackageUnexportedResolution`.
 
+### `symgo`: Conservative Interface Call Dispatch ([docs/plan-symgo-dynamic-interface-resolution.md](./docs/plan-symgo-dynamic-interface-resolution.md))
+- [x] Add `PossibleTypes` map to `object.Variable` to track concrete type assignments.
+- [ ] **[Blocked]** Correctly dispatch method calls on interface variables to all possible concrete types. The implementation is blocked by a subtle issue in `evalSelectorExpr`. See `docs/trouble-symgo-interface-dispatch.md` for a full investigation log.
+
 ### `symgo` Engine Improvements ([docs/plan-symgo-refine2.md](./docs/plan-symgo-refine2.md))
 - [x] **Fix Regressions**: Addressed `e2e` test failures in `find-orphans` by generalizing the handling of unresolved functions and fixing an infinite recursion bug.
 - [ ] **Trace calls in `for` loop conditions**: Enhance `evalForStmt` to evaluate the `Cond` expression (without using its result for branching) to trace function calls, similar to how `if` conditions are handled. This would improve call graph completeness.

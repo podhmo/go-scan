@@ -283,6 +283,15 @@ func (p *Package) Inspect() string {
 	return fmt.Sprintf("package %s (%q)", p.Name, p.Path)
 }
 
+// SplitQualifiedName splits a name like "pkg/path.Name" into "pkg/path" and "Name".
+func SplitQualifiedName(name string) (pkgPath, typeName string) {
+	lastDot := strings.LastIndex(name, ".")
+	if lastDot == -1 {
+		return "", name
+	}
+	return name[:lastDot], name[lastDot+1:]
+}
+
 // --- Error Object ---
 
 // CallFrame represents a single frame in the call stack.

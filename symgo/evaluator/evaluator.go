@@ -1182,6 +1182,26 @@ func (e *Evaluator) ensurePackageEnvPopulated(ctx context.Context, pkgObj *objec
 func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
 	e.logger.Debug("evalSelectorExpr", "selector", n.Sel.Name)
 
+	if ident, ok := n.X.(*ast.Ident); ok {
+		if obj, ok := env.Get(ident.Name); ok {
+			if receiverVar, ok := obj.(*object.Variable); ok {
+				if staticType := receiverVar.TypeInfo(); staticType != nil && staticType.Kind == scanner.InterfaceKind {
+					if staticType.Interface != nil {
+						for _, method := range staticType.Interface.Methods {
+							if method.Name == n.Sel.Name {
+								return &object.SymbolicPlaceholder{
+									Reason:           "interface method call",
+									Receiver:         receiverVar,
+									UnderlyingMethod: method,
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
 	leftObj := e.Eval(ctx, n.X, env, pkg)
 	if isError(leftObj) {
 		return leftObj
@@ -1192,7 +1212,6 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 		leftObj = ret.Value
 	}
 
-	// We must fully evaluate the left-hand side before trying to select a field or method from it.
 	left := e.forceEval(ctx, leftObj, pkg)
 	if isError(left) {
 		return left
@@ -2178,21 +2197,25 @@ func (e *Evaluator) assignIdentifier(ctx context.Context, ident *ast.Ident, val 
 	}
 
 	v.Value = val
-	// Propagate type info from the RHS to the LHS variable. This is crucial for
-	// assignments where the LHS has a less specific type (e.g., any) than the RHS.
-	v.SetTypeInfo(val.TypeInfo())
-	v.SetFieldType(val.FieldType())
-	newFieldType := val.FieldType()
-
-	// Always accumulate possible types. Resetting the map can lead to lost
-	// information, especially when dealing with interface assignments where the
-	// static type of the variable might be unresolved.
-	if v.PossibleTypes == nil {
-		v.PossibleTypes = make(map[string]struct{})
+	// Propagate type info from the RHS to the LHS variable, but only if the
+	// variable doesn't already have a static type. This preserves the declared
+	// interface type on the variable.
+	if v.TypeInfo() == nil {
+		v.SetTypeInfo(val.TypeInfo())
 	}
-	if newFieldType != nil {
-		v.PossibleTypes[newFieldType.String()] = struct{}{}
-		e.logger.Debug("evalAssignStmt: adding possible type to var", "name", ident.Name, "new_type", newFieldType.String())
+	if v.FieldType() == nil {
+		v.SetFieldType(val.FieldType())
+	}
+
+	// If the variable is an interface, add the concrete type of the value to PossibleTypes.
+	if staticType := v.TypeInfo(); staticType != nil && staticType.Kind == scanner.InterfaceKind {
+		if v.PossibleTypes == nil {
+			v.PossibleTypes = make(map[string]struct{})
+		}
+		if concreteType := val.TypeInfo(); concreteType != nil && concreteType.Name != "" {
+			key := concreteType.PkgPath + "." + concreteType.Name
+			v.PossibleTypes[key] = struct{}{}
+		}
 	}
 
 	return v
@@ -2814,6 +2837,50 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 		return fn.Fn(args...)
 
 	case *object.SymbolicPlaceholder:
+		// NEW: Handle interface method call dispatch
+		if fn.Reason == "interface method call" {
+			receiverVar, ok := fn.Receiver.(*object.Variable)
+			if !ok || receiverVar.PossibleTypes == nil {
+				return &object.SymbolicPlaceholder{Reason: "result of interface call with no concrete types"}
+			}
+
+			methodName := fn.UnderlyingMethod.Name
+
+			for typeName := range receiverVar.PossibleTypes {
+				pkgPath, simpleName := object.SplitQualifiedName(typeName)
+				concretePkg, err := e.getOrLoadPackage(ctx, pkgPath)
+				if err != nil {
+					e.logc(ctx, slog.LevelWarn, "could not load package for possible type", "type", typeName, "error", err)
+					continue
+				}
+				var concreteTypeInfo *scanner.TypeInfo
+				for _, t := range concretePkg.ScannedInfo.Types {
+					if t.Name == simpleName {
+						concreteTypeInfo = t
+						break
+					}
+				}
+				if concreteTypeInfo == nil {
+					e.logc(ctx, slog.LevelWarn, "could not find type info for possible type", "type", typeName)
+					continue
+				}
+
+				concreteMethod, err := e.accessor.findMethodOnType(ctx, concreteTypeInfo, methodName, nil, nil)
+				if err != nil || concreteMethod == nil {
+					e.logc(ctx, slog.LevelWarn, "could not find concrete method for interface call", "type", typeName, "method", methodName, "error", err)
+					continue
+				}
+
+				symbolicInstance := &object.Instance{TypeName: typeName}
+				symbolicInstance.SetTypeInfo(concreteTypeInfo)
+
+				concreteMethod.Receiver = symbolicInstance
+				e.applyFunction(ctx, concreteMethod, args, pkg, callPos)
+			}
+			// After dispatching to all possible types, we fall through to the logic below
+			// which correctly creates a symbolic return value based on the interface's method signature.
+		}
+
 		// Case 1: The placeholder represents an unresolved interface method call.
 		if fn.UnderlyingMethod != nil {
 			method := fn.UnderlyingMethod

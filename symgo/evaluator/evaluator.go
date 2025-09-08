@@ -83,20 +83,20 @@ func New(scanner *goscan.Scanner, logger *slog.Logger, tracer object.Tracer, sca
 	})
 
 	e := &Evaluator{
-		scanner:              scanner,
-		intrinsics:           intrinsics.New(),
-		logger:               logger,
-		tracer:               tracer,
-		interfaceBindings:    make(map[string]*goscan.TypeInfo),
-		resolver:             NewResolver(scanPolicy, scanner, logger),
-		initializedPkgs:      make(map[string]bool),
-		pkgCache:             make(map[string]*object.Package),
-		files:                make([]*FileScope, 0),
-		fileMap:              make(map[string]bool),
+		scanner:                scanner,
+		intrinsics:             intrinsics.New(),
+		logger:                 logger,
+		tracer:                 tracer,
+		interfaceBindings:      make(map[string]*goscan.TypeInfo),
+		resolver:               NewResolver(scanPolicy, scanner, logger),
+		initializedPkgs:        make(map[string]bool),
+		pkgCache:               make(map[string]*object.Package),
+		files:                  make([]*FileScope, 0),
+		fileMap:                make(map[string]bool),
 		evaluationInProgress:   make(map[ast.Node]bool),
 		calledInterfaceMethods: make(map[string][]object.Object),
 		seenPackages:           make(map[string]*goscan.Package),
-		UniverseEnv:              universeEnv,
+		UniverseEnv:            universeEnv,
 	}
 	e.accessor = newAccessor(e)
 	return e
@@ -897,7 +897,7 @@ func (e *Evaluator) evalGenDecl(ctx context.Context, node *ast.GenDecl, env *obj
 			if staticFieldType != nil {
 				resolvedTypeInfo = e.resolver.ResolveType(ctx, staticFieldType)
 			}
-			
+
 			if i < len(valSpec.Values) {
 				val = e.Eval(ctx, valSpec.Values[i], env, pkg)
 				if isError(val) {
@@ -1511,7 +1511,7 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 		placeholder := &object.SymbolicPlaceholder{
 			Reason: fmt.Sprintf("method %s on nil", n.Sel.Name),
 		}
-		
+
 		// If the NIL has type information (e.g., it's a typed interface nil),
 		// try to find the method in the interface definition
 		if left.TypeInfo() != nil && left.TypeInfo().Interface != nil {
@@ -1523,9 +1523,9 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 				}
 			}
 		}
-		
+
 		return placeholder
-	
+
 	default:
 		return e.newError(ctx, n.Pos(), "expected a package, instance, or pointer on the left side of selector, but got %s", left.Type())
 	}
@@ -3054,7 +3054,6 @@ func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, 
 
 	return env, nil
 }
-
 
 // evalGenericInstantiation handles the creation of an InstantiatedFunction object
 // from a generic function and its type arguments.

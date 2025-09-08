@@ -76,6 +76,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 ### `symgo`: Implement Robust Interface Resolution ([docs/plan-symgo-interface-resolution.md](./docs/plan-symgo-interface-resolution.md))
 - [ ] The engine does not reliably resolve interface method calls to their concrete implementations, causing tools like `find-orphans` to report false positives. The core issue appears to be in how `symgo`'s evaluator obtains static type information for function parameters. A test case (`TestInterfaceResolution`) has been created that reliably reproduces the failure, but the underlying bug in `extendFunctionEnv` remains unresolved. See [docs/trouble-symgo-interface-resolution.md](./docs/trouble-symgo-interface-resolution.md) for a detailed failure analysis
 - [ ] fix failed tests
+- [ ] Continue fixing interface resolution and related test failures. See [docs/cont-interface-resolution.md](./docs/cont-interface-resolution.md) for a detailed summary of progress and next steps.
 
 ### symgo: Fix Cross-Package Unexported Symbol Resolution ([docs/trouble-symgo-nested-scope.md](./docs/trouble-symgo-nested-scope.md))
 - [x] Evaluate package-level var declarations in `ensurePackageEnvPopulated` to fix "identifier not found" errors for unexported symbols.

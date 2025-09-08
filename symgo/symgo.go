@@ -436,18 +436,3 @@ func (i *Interpreter) Apply(ctx context.Context, fn Object, args []Object, pkg *
 	}
 	return result, nil
 }
-
-// Finalize performs the final analysis step after evaluation, resolving interface method calls.
-func (i *Interpreter) Finalize(ctx context.Context) {
-	i.eval.Finalize(ctx)
-}
-
-// CalledInterfaceMethodsForTest returns the map of called interface methods for testing.
-func (i *Interpreter) CalledInterfaceMethodsForTest() map[string][]object.Object {
-	return i.eval.CalledInterfaceMethodsForTest()
-}
-
-// SeenPackagesForTest returns the map of seen packages for testing.
-func (i *Interpreter) SeenPackagesForTest() map[string]*goscan.Package {
-	return i.eval.SeenPackagesForTest()
-}

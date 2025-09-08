@@ -22,7 +22,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version-file: 'go.mod'
 
       - name: Run tests and generate memory profile
         run: go test -v -memprofile=mem.out -memprofilerate=1 ./symgo/integration_test

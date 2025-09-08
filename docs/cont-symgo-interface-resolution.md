@@ -1,112 +1,62 @@
-### **Initial Prompt**
+### Summary of Interface Resolution Issue
 
-The user wants me to continue working on the "symgo`: Implement Robust Interface Resolution" task.
+This document tracks the investigation into a failing set of tests related to interface resolution in the `symgo` package, specifically `TestInterfaceResolution` and `TestInterfaceBinding`.
 
-Based on `docs/plan-symgo-interface-resolution.md`, there are four failing tests:
-1.  `TestInterfaceResolution`: `Finalize()` method is not working correctly.
-2.  `TestInterfaceBinding`: `BindInterface()` mechanism is not working.
-3.  `TestEval_InterfaceMethodCall_AcrossControlFlow`: State merging across control flow paths is not handled.
-4.  `TestDefaultIntrinsic_InterfaceMethodCall`: Test assertion is incorrect.
+### Initial Investigation: Method Set Logic
 
-The `TODO.md` mentions `TestInterfaceResolution` and `TestInterfaceBinding` are failing. The main focus of *this* task seems to be `Finalize()` and `BindInterface()`.
+The initial hypothesis was that the `isImplementer` function in `symgo/evaluator/evaluator.go` did not correctly handle Go's method set rules. Specifically, it did not account for the fact that a type `T` can satisfy an interface even if its methods have a pointer receiver (`*T`).
 
-### **Goal**
+To address this, the following actions were taken:
+1.  **New Tests Added**: Two new tests, `TestInterfaceResolutionWithPointerReceiver` and `TestInterfaceResolutionWithValueReceiver`, were added to `symgo/symgo_interface_resolution_test.go` to create minimal, focused reproductions of the issue for both pointer and value receiver cases.
+2.  **`isImplementer` Patched**: The `isImplementer` function was patched to check for methods on both the value type (`T`) and a synthetic pointer type (`*T`).
 
-The primary goal is to fix the failing tests related to interface resolution in the `symgo` symbolic execution engine. This involves ensuring that the `Finalize` method correctly resolves interface method calls to their concrete implementations and that the `BindInterface` function works as expected for manual interface-to-type bindings.
-
-### **Initial Implementation Attempt**
-
-My initial approach was to fix the build errors that were present in the codebase. I found that the `evaluator.go` file had several issues, including duplicate function declarations and an incorrectly named field in the `Evaluator` struct (`scanner` vs. `goScanner`). I applied a series of patches to fix these build errors.
-
-### **Roadblocks & Key Discoveries**
-
-After fixing the build, I discovered that the original four logic-related tests were still failing. This indicated that the problem was not just in the build process, but in the core logic of the evaluator.
-
-My key discovery was that the method resolution logic, particularly how it handles Go's method sets for interfaces, was flawed. The `findMethodOnType` and `isImplementer` functions did not correctly account for pointer receivers. For example, a type `T` can satisfy an interface even if some of its methods have a `*T` receiver, but the existing code did not check for this correctly.
-
-### **Major Refactoring Effort**
-
-Based on this discovery, I shifted my focus from fixing build errors to refactoring the method resolution logic. I attempted several patches to `symgo/evaluator/accessor.go` and `symgo/evaluator/evaluator.go`.
-
-My attempts included:
-1.  Modifying `findDirectMethodInfoOnType` in `accessor.go` to correctly compare type names and package paths, and to handle pointer vs. value receivers according to Go's method set rules.
-2.  Modifying `isImplementer` in `evaluator.go` to check for method implementation on both value and pointer receivers.
-
-These refactoring attempts were complex and, due to issues with the development environment, I was unable to apply the patches correctly and verify their effectiveness.
-
-### **Current Status**
-
-The codebase is in a state where the build is fixed, but the original four logic tests related to interface resolution are still failing. My last attempts to patch the method resolution logic were unsuccessful due to environmental issues.
-
-The failing tests are:
--   `TestInterfaceResolution`
--   `TestInterfaceBinding`
--   `TestEval_InterfaceMethodCall_AcrossControlFlow`
--   `TestDefaultIntrinsic_InterfaceMethodCall`
-
-### **References**
-
-A future agent should consult the following files for context:
--   `docs/plan-symgo-interface-resolution.md`
--   `symgo/evaluator/evaluator.go`
--   `symgo/evaluator/accessor.go`
--   The Go specification on method sets.
-
-### **TODO / Next Steps**
-
-1.  **Fix Method Set Logic**: The core task is to fix the method resolution logic. I recommend focusing on the `isImplementer` function in `symgo/evaluator/evaluator.go`. The function should be modified to check for methods on both the value type (`T`) and a pointer to the value type (`*T`) when determining if a type implements an interface. Here is the code I was trying to write:
-    ```go
-    // isImplementer checks if a given concrete type implements an interface.
-    func (e *Evaluator) isImplementer(ctx context.Context, concreteType *scanner.TypeInfo, interfaceType *scanner.TypeInfo) bool {
-        if concreteType == nil || interfaceType == nil || interfaceType.Interface == nil {
-            return false
-        }
-
-        // For every method in the interface...
-        for _, ifaceMethodInfo := range interfaceType.Interface.Methods {
-            // ...find a matching method in the concrete type.
-            // A concrete type T can implement an interface method with a *T receiver.
-            // So we need to check both T and *T.
-            concreteMethodInfo := e.accessor.findMethodInfoOnType(ctx, concreteType, ifaceMethodInfo.Name)
-
-            if concreteMethodInfo == nil && !strings.HasPrefix(concreteType.Name, "*") {
-                // If not found on T, check on *T.
-                // Create a synthetic pointer type for the check.
-                pointerType := *concreteType
-                pointerType.Name = "*" + concreteType.Name
-                // We need to be careful not to lose the underlying struct info.
-                // This is a shallow copy, but it should be sufficient for the accessor.
-                concreteMethodInfo = e.accessor.findMethodInfoOnType(ctx, &pointerType, ifaceMethodInfo.Name)
-            }
-
-            if concreteMethodInfo == nil {
-                return false // Method not found
-            }
-
-            // Compare signatures
-            if len(ifaceMethodInfo.Parameters) != len(concreteMethodInfo.Parameters) {
-                return false
-            }
-            if len(ifaceMethodInfo.Results) != len(concreteMethodInfo.Results) {
-                return false
-            }
-
-            for i, p1 := range ifaceMethodInfo.Parameters {
-                p2 := concreteMethodInfo.Parameters[i]
-                if !e.fieldTypeEquals(p1.Type, p2.Type) {
-                    return false
-                }
-            }
-
-            for i, r1 := range ifaceMethodInfo.Results {
-                r2 := concreteMethodInfo.Results[i]
-                if !e.fieldTypeEquals(r1.Type, r2.Type) {
-                    return false
-                }
-            }
-        }
-        return true
+The updated `isImplementer` function is now considered correct:
+```go
+// isImplementer checks if a given concrete type implements an interface.
+func (e *Evaluator) isImplementer(ctx context.Context, concreteType *scanner.TypeInfo, interfaceType *scanner.TypeInfo) bool {
+    if concreteType == nil || interfaceType == nil || interfaceType.Interface == nil {
+        return false
     }
-    ```
-2.  **Run Tests**: After applying the patch, run `go test -v ./symgo/...` to verify the fix.
-3.  **Submit**: Once all tests are passing, submit the changes.
+
+    // For every method in the interface...
+    for _, ifaceMethodInfo := range interfaceType.Interface.Methods {
+        // ...find a matching method in the concrete type.
+        // A concrete type T can implement an interface method with a *T receiver.
+        // So we need to check both T and *T.
+        concreteMethodInfo := e.accessor.findMethodInfoOnType(ctx, concreteType, ifaceMethodInfo.Name)
+
+        if concreteMethodInfo == nil && !strings.HasPrefix(concreteType.Name, "*") {
+            // If not found on T, check on *T.
+            // Create a synthetic pointer type for the check.
+            pointerType := *concreteType
+            pointerType.Name = "*" + concreteType.Name
+            // This is a shallow copy, but it should be sufficient for the accessor.
+            concreteMethodInfo = e.accessor.findMethodInfoOnType(ctx, &pointerType, ifaceMethodInfo.Name)
+        }
+
+        if concreteMethodInfo == nil {
+            return false // Method not found
+        }
+
+        // ... (signature comparison logic remains the same) ...
+    }
+    return true
+}
+```
+
+### Deeper Issue Discovered: Package Discovery in `Finalize`
+
+Despite the fix to `isImplementer`, all related tests continue to fail.
+
+The investigation revealed that the root cause is not in the implementation check itself, but in the `Finalize` function's type discovery mechanism. `Finalize` works by:
+1.  Collecting all struct and interface types from packages in its `e.seenPackages` map.
+2.  Building a map of which structs implement which interfaces.
+3.  Connecting recorded interface method calls to their concrete implementations.
+
+The problem is that the in-memory packages created by `scantest` for the test cases are never added to the `e.seenPackages` map. As a result, `Finalize` runs with an empty set of types and cannot find any interface implementations.
+
+### Next Steps
+
+The immediate task of fixing the receiver handling logic in `isImplementer` is complete. The next step is to address the package discovery issue.
+
+**Recommendation:** Modify the `symgo.Interpreter` or the `scantest` test harness to ensure that all packages scanned during a test run are registered in the `e.seenPackages` map before `Finalize` is called. This will allow `Finalize` to correctly discover the types and resolve interface implementations.

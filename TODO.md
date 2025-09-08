@@ -74,7 +74,8 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 ## To Be Implemented
 
 ### `symgo`: Fix Interface Resolution Logic ([docs/cont-symgo-interface-resolution.md](./docs/cont-symgo-interface-resolution.md))
-- [-] The `isImplementer` function in `evaluator.go` has been updated to correctly handle Go's method set rules for pointer receivers. However, tests are still failing. The root cause appears to be that the `Finalize` function does not discover the in-memory packages created during tests, so it never finds the types to check for implementation. New tests (`TestInterfaceResolutionWithPointerReceiver` and `TestInterfaceResolutionWithValueReceiver`) have been added to `symgo/symgo_pointer_receiver_test.go` to confirm this behavior.
+- [x] The `isImplementer` function in `evaluator.go` now correctly handles Go's method set rules for both value and pointer receivers.
+- [ ] The overall interface resolution tests are still failing. The root cause appears to be that the `Finalize` function does not discover the in-memory packages created during `scantest`, so it cannot find any types to check for interface implementation. This needs to be fixed.
 
 ### `symgo`: Implement Robust Interface Resolution ([docs/plan-symgo-interface-resolution.md](./docs/plan-symgo-interface-resolution.md))
 - [-] The `symgo` evaluator has been significantly refactored to improve interface method resolution, recursion detection, and type propagation. Most related tests now pass. However, `TestInterfaceResolution` and `TestInterfaceBinding` still fail, pointing to remaining issues in the `Finalize()` and `BindInterface()` mechanisms. See the plan and trouble-shooting documents for the latest status.

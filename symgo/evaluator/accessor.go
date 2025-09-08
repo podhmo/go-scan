@@ -136,6 +136,70 @@ func (a *accessor) findMethodRecursive(ctx context.Context, typeInfo *scanner.Ty
 }
 
 func (a *accessor) findDirectMethodOnType(ctx context.Context, typeInfo *scanner.TypeInfo, methodName string, env *object.Environment, receiver object.Object) (*object.Function, error) {
+	methodInfo, err := a.findDirectMethodInfoOnType(ctx, typeInfo, methodName)
+	if err != nil || methodInfo == nil {
+		return nil, err
+	}
+
+	pkgObj, err := a.eval.getOrLoadPackage(ctx, typeInfo.PkgPath)
+	if err != nil {
+		return nil, fmt.Errorf("package for method not found: %w", err)
+	}
+
+	return &object.Function{
+		Name:       methodInfo.AstDecl.Name,
+		Parameters: methodInfo.AstDecl.Type.Params,
+		Body:       methodInfo.AstDecl.Body,
+		Env:        pkgObj.Env,
+		Decl:       methodInfo.AstDecl,
+		Package:    pkgObj.ScannedInfo,
+		Receiver:   receiver,
+		Def:        methodInfo,
+	}, nil
+}
+
+// findMethodInfoOnType finds the scanner.FunctionInfo for a method on a type, handling embedding.
+func (a *accessor) findMethodInfoOnType(ctx context.Context, typeInfo *scanner.TypeInfo, methodName string) *scanner.FunctionInfo {
+	if typeInfo == nil {
+		return nil
+	}
+	visited := make(map[string]bool)
+	return a.findMethodInfoRecursive(ctx, typeInfo, methodName, visited)
+}
+
+func (a *accessor) findMethodInfoRecursive(ctx context.Context, typeInfo *scanner.TypeInfo, methodName string, visited map[string]bool) *scanner.FunctionInfo {
+	if typeInfo == nil {
+		return nil
+	}
+	typeKey := fmt.Sprintf("%s.%s", typeInfo.PkgPath, typeInfo.Name)
+	if visited[typeKey] {
+		return nil // Cycle detected
+	}
+	visited[typeKey] = true
+
+	// 1. Search for a direct method on the current type.
+	if methodInfo, err := a.findDirectMethodInfoOnType(ctx, typeInfo, methodName); err == nil && methodInfo != nil {
+		return methodInfo
+	}
+
+	// 2. If not found, search in embedded structs.
+	if typeInfo.Struct != nil {
+		for _, field := range typeInfo.Struct.Fields {
+			if field.Embedded {
+				embeddedTypeInfo, _ := field.Type.Resolve(ctx)
+				if embeddedTypeInfo != nil {
+					if foundMethod := a.findMethodInfoRecursive(ctx, embeddedTypeInfo, methodName, visited); foundMethod != nil {
+						return foundMethod
+					}
+				}
+			}
+		}
+	}
+
+	return nil // Not found
+}
+
+func (a *accessor) findDirectMethodInfoOnType(ctx context.Context, typeInfo *scanner.TypeInfo, methodName string) (*scanner.FunctionInfo, error) {
 	if typeInfo == nil || typeInfo.PkgPath == "" {
 		return nil, nil
 	}
@@ -167,18 +231,8 @@ func (a *accessor) findDirectMethodOnType(ctx context.Context, typeInfo *scanner
 		baseTypeName := strings.TrimPrefix(typeInfo.Name, "*")
 
 		if baseRecvTypeName == baseTypeName {
-			return &object.Function{
-				Name:       fn.AstDecl.Name,
-				Parameters: fn.AstDecl.Type.Params,
-				Body:       fn.AstDecl.Body,
-				Env:        pkgObj.Env, // Use the canonical environment from the cached package object.
-				Decl:       fn.AstDecl,
-				Package:    methodPkg,
-				Receiver:   receiver,
-				Def:        fn,
-			}, nil
+			return fn, nil
 		}
 	}
-
-	return nil, nil // Not found
+	return nil, nil
 }

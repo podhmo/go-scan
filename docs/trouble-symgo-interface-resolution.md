@@ -67,3 +67,15 @@ The implementation process proved to be extremely challenging, primarily due to 
 The implementation is at an impasse. The high-level design for the two-phase resolution is sound, but I have been unable to successfully implement it due to repeated, frustrating errors with the code modification tools.
 
 The next step should be to have a human assist in applying the comprehensive patch described in **Attempt 4**. Once the code is correctly in place, the existing test suite and the new `TestInterfaceResolution` test should be sufficient to validate the fix. The core logical components are believed to be correct, but the execution has been the sole point of failure.
+
+## 5. Final Root Cause and Solution (Update)
+
+After a prolonged debugging session, the root cause of the failure was finally identified. It was not a tooling issue, but a subtle bug in the evaluator's logic for handling function parameters.
+
+-   **The Root Cause:** The `extendFunctionEnv` function was responsible for setting up the environment for a function call. When binding arguments to parameters, it was incorrectly prioritizing the *dynamic type* of the argument over the *static type* declared in the function's signature. For a call like `doSpeak(d)` where `d` is a `*impl.Dog` and the parameter `s` is a `def.Speaker`, the variable `s` in the new environment was being created with the type `*impl.Dog`, completely losing the crucial information that it was declared as the `def.Speaker` interface.
+
+-   **The Consequence:** Because the static type was lost, the interface detection logic in `evalSelectorExpr` would inspect the variable `s`, see its type as `*impl.Dog` (a struct), and would not recognize it as an interface. Therefore, the interface method call was never recorded, and the `Finalize` step had no work to do.
+
+-   **The Solution:** The `extendFunctionEnv` function was refactored to use the pre-scanned `scanner.FunctionInfo` (`fn.Def`) as the definitive source of truth for parameter types. The new logic iterates through `fn.Def.Parameters` and uses the `FieldType` from that slice to set the static type of the parameter's `object.Variable`. This ensures that the static type declared in the signature is always correctly preserved, allowing `evalSelectorExpr` to correctly identify interface method calls.
+
+With this change, the `TestInterfaceResolution` test now passes, and the entire two-phase resolution mechanism is fully functional.

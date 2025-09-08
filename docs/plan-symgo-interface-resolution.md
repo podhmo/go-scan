@@ -1,3 +1,6 @@
+> [!NOTE]
+> This feature has been implemented.
+
 # Plan: Robust Interface Resolution in `symgo`
 
 This document outlines the plan to implement a robust, two-phase deferred resolution mechanism for interface method calls in the `symgo` symbolic execution engine.

@@ -688,6 +688,10 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool) error {
 	}
 	slog.InfoContext(ctx, "symbolic execution complete")
 
+	// Finalize the analysis to resolve any collected interface method calls.
+	slog.InfoContext(ctx, "finalizing analysis for interface resolution")
+	interp.Finalize(ctx)
+
 	type Orphan struct {
 		Name     string `json:"name"`
 		Position string `json:"position"`

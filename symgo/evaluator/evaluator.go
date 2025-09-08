@@ -74,7 +74,7 @@ func (f *callFrame) String() string {
 }
 
 // New creates a new Evaluator.
-func New(scanner *goscan.Scanner, logger *slog.Logger, tracer object.Tracer, scanPolicy object.ScanPolicyFunc, relations TypeRelations) *Evaluator {
+func New(scanner *goscan.Scanner, logger *slog.Logger, tracer object.Tracer, scanPolicy object.ScanPolicyFunc, options ...func(*Evaluator)) *Evaluator {
 	if logger == nil {
 		logger = slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	}
@@ -97,10 +97,19 @@ func New(scanner *goscan.Scanner, logger *slog.Logger, tracer object.Tracer, sca
 		fileMap:              make(map[string]bool),
 		evaluationInProgress: make(map[ast.Node]bool),
 		UniverseEnv:          universeEnv,
-		relations:            relations,
+	}
+
+	for _, option := range options {
+		option(e)
 	}
 	e.accessor = newAccessor(e)
 	return e
+}
+
+func WithRelations(relations TypeRelations) func(*Evaluator) {
+	return func(e *Evaluator) {
+		e.relations = relations
+	}
 }
 
 // BindInterface registers a concrete type for an interface.

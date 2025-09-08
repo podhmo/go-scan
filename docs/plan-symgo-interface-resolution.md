@@ -101,7 +101,7 @@ Despite the progress, four key tests in `./symgo/...` still fail, pointing to de
 -   [x] **3. Implement Collection Logic:** Complete.
 -   [-] **4. Implement Finalization Logic:** Partially implemented, but `TestInterfaceResolution` reveals it is not correct. `BindInterface` is also non-functional.
 -   [x] **5. Add Comprehensive Tests:** The existing test suite was leveraged and fixed. No new dedicated file was created, but the coverage is high.
--   [x] **6. Fix Existing Tests:** The `find-orphans` build is fixed, and most `symgo` tests pass.
+-   [ ] **6. Fix Existing Tests:** 
 -   [ ] **7. Submit:** Pending.
 
 The core of the symbolic execution for interface calls is now much more robust. The remaining work is concentrated on the post-execution `Finalize` step and the `BindInterface` feature.

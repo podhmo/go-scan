@@ -91,7 +91,7 @@ The task was resumed and the core issues were successfully resolved through a di
     4.  **Closure Environment:** A bug in `extendFunctionEnv` was fixed to correctly bind parameters for function literals, allowing tests like `TestEvalClosures` to pass.
 
 -   **Current Status:**
-    -   The `TestInterfaceResolution` test **still fails**. The `Finalize` logic, which connects interface calls to concrete implementations, appears to be the remaining problem. The collection phase now works correctly, but the final connection is not being made.
+    -   The `TestInterfaceResolution` test **still fails**. The `Finalize()` logic, which connects interface calls to concrete implementations, appears to be the remaining problem. The collection phase now works correctly, but the final connection is not being made.
     -   The `TestInterfaceBinding` test **still fails**. The logic for handling manually bound interfaces via `BindInterface` is not being triggered correctly.
     -   The vast majority of other interface-related tests, especially those involving intrinsics, correct receiver propagation, and type preservation across `if/else` branches, are **now passing**.
 

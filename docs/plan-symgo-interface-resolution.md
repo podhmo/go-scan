@@ -84,17 +84,24 @@ This task was resumed and significant progress has been made, completing most of
     -   The recursion detection engine was made more robust to handle complex, stateful recursion without generating false positives.
     -   A bug in `extendFunctionEnv` related to function literals (closures) was fixed.
 -   **Test Fixes:** The majority of failing tests in the `./symgo/...` suite that were related to these issues now pass. This includes `TestEvalClosures`, `TestServeError`, and several interface-related tests like `TestEval_InterfaceMethodCall_OnConcreteType`. The build regression in `examples/find-orphans` was also fixed.
--   **Finalization Logic:** This is the primary remaining issue. The `Finalize()` method, which is responsible for connecting the collected interface calls to their concrete implementations, is still not working correctly. The test `TestInterfaceResolution` continues to fail, indicating that the logic for discovering and marking concrete implementers is flawed.
--   **Binding Logic:** The `BindInterface()` feature is also not working as expected. `TestInterfaceBinding` still fails.
+
+### Remaining Issues & Failing Tests
+
+Despite the progress, four key tests in `./symgo/...` still fail, pointing to deeper architectural issues:
+
+1.  **`TestInterfaceResolution`**: Fails because the `Finalize()` method does not correctly resolve and mark the concrete implementation (`*Dog.Speak`) of an interface method (`Speaker.Speak`). The collection phase appears to work, but the final analysis step is flawed.
+2.  **`TestInterfaceBinding`**: Fails with an `undefined method` error. This indicates that the `BindInterface()` mechanism, which manually maps an interface to a concrete type, is not being correctly used during method resolution in `evalSelectorExpr`.
+3.  **`TestEval_InterfaceMethodCall_AcrossControlFlow`**: Fails because the evaluator does not correctly merge state from different control flow paths. When a variable is assigned different concrete types inside an `if/else` block, the evaluator fails to track that the variable can hold multiple possible types. This points to a lack of path-sensitivity in the evaluator's design.
+4.  **`TestDefaultIntrinsic_InterfaceMethodCall`**: This test fails due to an incorrect assertion within the test itself regarding the type of a `nil` receiver. While the evaluator's behavior seems correct, the test needs to be updated.
 
 ### Current Status Summary:
 
 -   [x] **1. Analyze and Prepare:** Complete.
 -   [x] **2. Update Core `symgo` Documentation:** Complete.
 -   [x] **3. Implement Collection Logic:** Complete.
--   [-] **4. Implement Finalization Logic:** Partially implemented, but `TestInterfaceResolution` reveals it is not correct.
+-   [-] **4. Implement Finalization Logic:** Partially implemented, but `TestInterfaceResolution` reveals it is not correct. `BindInterface` is also non-functional.
 -   [x] **5. Add Comprehensive Tests:** The existing test suite was leveraged and fixed. No new dedicated file was created, but the coverage is high.
--   [x] **6. Fix Existing Tests:** The `find-orphans` build is fixed.
+-   [x] **6. Fix Existing Tests:** The `find-orphans` build is fixed, and most `symgo` tests pass.
 -   [ ] **7. Submit:** Pending.
 
 The core of the symbolic execution for interface calls is now much more robust. The remaining work is concentrated on the post-execution `Finalize` step and the `BindInterface` feature.

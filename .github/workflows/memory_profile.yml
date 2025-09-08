@@ -47,9 +47,20 @@ jobs:
         id: comment-prep
         if: github.event_name == 'pull_request'
         run: |
+          current_mem='${{ steps.pprof.outputs.mem_bytes }}'
+
+          # Check if memory extraction was successful, default to 0 if not.
+          if [[ -z "$current_mem" ]]; then
+            current_mem=0
+          fi
+
           if [[ -f "mem_total.txt" ]]; then
             baseline_mem=$(cat mem_total.txt)
-            current_mem=${{ steps.pprof.outputs.mem_bytes }}
+            # Default to 0 if baseline is empty or file is unreadable
+            if [[ -z "$baseline_mem" ]]; then
+              baseline_mem=0
+            fi
+
             delta=$((current_mem - baseline_mem))
 
             if [ $delta -ge 0 ]; then
@@ -74,7 +85,7 @@ EOF
             | Branch            | Total Memory (bytes)    |
             |-------------------|-------------------------|
             | \`main\` (baseline) | \`N/A\`                   |
-            | PR branch         | \`${{ steps.pprof.outputs.mem_bytes }}\` B |
+            | PR branch         | \`${current_mem}\` B |
             | **Delta**         | \`N/A\`                   |
 
             *Note: A baseline will be created on the \`main\` branch after this PR is merged. Subsequent PRs will show a comparison.*

@@ -74,9 +74,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 ## To Be Implemented
 
 ### `symgo`: Implement Robust Interface Resolution ([docs/plan-symgo-interface-resolution.md](./docs/plan-symgo-interface-resolution.md))
-- [-] The engine does not reliably resolve interface method calls to their concrete implementations, causing tools like `find-orphans` to report false positives. The core issue appears to be in how `symgo`'s evaluator obtains static type information for function parameters. A test case (`TestInterfaceResolution`) has been created that reliably reproduces the failure, but the underlying bug in `extendFunctionEnv` remains unresolved. See [docs/trouble-symgo-interface-resolution.md](./docs/trouble-symgo-interface-resolution.md) for a detailed failure analysis. **Note**: Most related test failures have been fixed by improving the evaluator's handling of interface method calls, recursion detection, and variable type propagation. However, `TestInterfaceResolution` and `TestInterfaceBinding` still fail, pointing to remaining issues in the `Finalize()` and `BindInterface()` mechanisms.
-- [x] fix failed tests
-- [x] Continue fixing interface resolution and related test failures. See [docs/cont-interface-resolution.md](./docs/cont-interface-resolution.md) for a detailed summary of progress and next steps.
+- [-] The `symgo` evaluator has been significantly refactored to improve interface method resolution, recursion detection, and type propagation. Most related tests now pass. However, `TestInterfaceResolution` and `TestInterfaceBinding` still fail, pointing to remaining issues in the `Finalize()` and `BindInterface()` mechanisms. See the plan and trouble-shooting documents for the latest status.
 
 ### symgo: Fix Cross-Package Unexported Symbol Resolution ([docs/trouble-symgo-nested-scope.md](./docs/trouble-symgo-nested-scope.md))
 - [x] Evaluate package-level var declarations in `ensurePackageEnvPopulated` to fix "identifier not found" errors for unexported symbols.

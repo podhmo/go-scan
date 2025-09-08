@@ -79,3 +79,20 @@ After a prolonged debugging session, the root cause of the failure was finally i
 -   **The Solution:** The `extendFunctionEnv` function was refactored to use the pre-scanned `scanner.FunctionInfo` (`fn.Def`) as the definitive source of truth for parameter types. The new logic iterates through `fn.Def.Parameters` and uses the `FieldType` from that slice to set the static type of the parameter's `object.Variable`. This ensures that the static type declared in the signature is always correctly preserved, allowing `evalSelectorExpr` to correctly identify interface method calls.
 
 With this change, the `TestInterfaceResolution` test now passes, and the entire two-phase resolution mechanism is fully functional.
+
+## 6. Resolution and Current Status (As of 2025-09-08)
+
+The task was resumed and the core issues were successfully resolved through a different approach than originally anticipated.
+
+-   **Root Cause Re-evaluation:** While the initial diagnosis pointed to `extendFunctionEnv`, the problem was more systemic. The key issues fixed were:
+    1.  **Interface Type Preservation:** The `assignIdentifier` function was incorrectly overwriting a variable's static interface type with the concrete type of an assigned value. This was fixed to preserve the interface type on the variable, which was critical for later steps.
+    2.  **Callable Placeholders:** The evaluator was changed to use a two-step process for interface calls. `evalSelectorExpr` now returns a callable `SymbolicPlaceholder` instead of an immediate result. `applyFunction` was updated to handle invoking these placeholders.
+    3.  **Recursion Detection:** The recursion checker was made more robust by comparing object instances directly, fixing false positives in stateful recursive functions like `TestServeError`.
+    4.  **Closure Environment:** A bug in `extendFunctionEnv` was fixed to correctly bind parameters for function literals, allowing tests like `TestEvalClosures` to pass.
+
+-   **Current Status:**
+    -   The `TestInterfaceResolution` test **still fails**. The `Finalize` logic, which connects interface calls to concrete implementations, appears to be the remaining problem. The collection phase now works correctly, but the final connection is not being made.
+    -   The `TestInterfaceBinding` test **still fails**. The logic for handling manually bound interfaces via `BindInterface` is not being triggered correctly.
+    -   The vast majority of other interface-related tests, especially those involving intrinsics, correct receiver propagation, and type preservation across `if/else` branches, are **now passing**.
+
+The core of the evaluator is significantly more robust, but the final resolution step for discovering all concrete implementers (`Finalize`) and handling manual bindings (`BindInterface`) remains incomplete.

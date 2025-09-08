@@ -168,7 +168,7 @@ func NewInterpreter(scanner *goscan.Scanner, options ...Option) (*Interpreter, e
 		}
 	}
 
-	i.eval = evaluator.New(scanner, i.logger, i.tracer, i.scanPolicy, i.Relations)
+	i.eval = evaluator.New(scanner, i.logger, i.tracer, i.scanPolicy, evaluator.WithRelations(i.Relations))
 
 	// Register default intrinsics
 	i.RegisterIntrinsic("fmt.Sprintf", i.intrinsicSprintf)

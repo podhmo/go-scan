@@ -64,7 +64,7 @@ type callFrame struct {
 	Function string
 	Pos      token.Pos
 	Fn       *object.Function
-	Call     *ast.CallExpr
+	Args     []object.Object
 }
 
 func (f *callFrame) String() string {
@@ -1197,8 +1197,8 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 	// the variable in our own environment and check the static type info we have stored on it.
 	if ident, ok := n.X.(*ast.Ident); ok {
 		if obj, found := env.Get(ident.Name); found {
+			var staticType *scanner.TypeInfo
 			if v, isVar := obj.(*object.Variable); isVar {
-				var staticType *scanner.TypeInfo
 				if ft := v.FieldType(); ft != nil {
 					resolved, err := ft.Resolve(ctx)
 					if err == nil && resolved != nil {
@@ -1207,15 +1207,78 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 				} else if ti := v.TypeInfo(); ti != nil {
 					staticType = ti
 				}
+			} else if sp, isSym := obj.(*object.SymbolicPlaceholder); isSym {
+				if ti := sp.TypeInfo(); ti != nil {
+					staticType = ti
+				}
+			}
 
-				if staticType != nil && staticType.Kind == scanner.InterfaceKind {
+			if staticType != nil && staticType.Kind == scanner.InterfaceKind {
+				// Check for a registered intrinsic for this interface method call.
+				key := fmt.Sprintf("(%s.%s).%s", staticType.PkgPath, staticType.Name, n.Sel.Name)
+				if intrinsicFn, ok := e.intrinsics.Get(key); ok {
+					// Create a closure that prepends the receiver to the arguments.
+					boundIntrinsic := func(args ...object.Object) object.Object {
+						return intrinsicFn(append([]object.Object{obj}, args...)...)
+					}
+					return &object.Intrinsic{Fn: boundIntrinsic}
+				}
+
+				// Check for a manual interface binding.
+				bindingKey := fmt.Sprintf("%s.%s", staticType.PkgPath, staticType.Name)
+				if concreteType, ok := e.interfaceBindings[bindingKey]; ok {
+					if method, err := e.accessor.findMethodOnType(ctx, concreteType, n.Sel.Name, env, obj); err == nil && method != nil {
+						return method
+					}
+				}
+
+				// Correct approach: Return a callable placeholder.
+				// a. Record the call if the interface is named.
+				if staticType.Name != "" {
 					key := fmt.Sprintf("%s.%s.%s", staticType.PkgPath, staticType.Name, n.Sel.Name)
-					e.logger.DebugContext(ctx, "evalSelectorExpr: detected interface method call via var type", "key", key)
-
-					// Evaluate the receiver to get the concrete object for the call list.
+					e.logger.DebugContext(ctx, "evalSelectorExpr: recording interface method call", "key", key)
 					receiverObj := e.Eval(ctx, n.X, env, pkg)
 					e.calledInterfaceMethods[key] = append(e.calledInterfaceMethods[key], receiverObj)
-					return e.createSymbolicResultForInterfaceMethod(ctx, staticType, n.Sel.Name)
+				}
+
+				// b. Find the *scanner.FunctionInfo for the method.
+				var methodFuncInfo *scanner.FunctionInfo
+				if staticType.Interface != nil {
+					for _, method := range staticType.Interface.Methods {
+						if method.Name == n.Sel.Name {
+							methodFuncInfo = &scanner.FunctionInfo{
+								Name:       method.Name,
+								Parameters: method.Parameters,
+								Results:    method.Results,
+							}
+							break
+						}
+					}
+				}
+
+				if methodFuncInfo == nil {
+					return e.newError(ctx, n.Pos(), "undefined method %q on interface %q", n.Sel.Name, staticType.Name)
+				}
+
+				// c. Return a callable SymbolicPlaceholder.
+				return &object.SymbolicPlaceholder{
+					Reason:         fmt.Sprintf("interface method %s.%s", staticType.Name, n.Sel.Name),
+					Receiver:       obj, // Pass the variable object itself as the receiver
+					UnderlyingFunc: methodFuncInfo,
+					Package:        pkg,
+				}
+			}
+
+			// NEW: Handle struct field access on variables directly
+			if staticType != nil && staticType.Kind == scanner.StructKind {
+				if field, err := e.accessor.findFieldOnType(ctx, staticType, n.Sel.Name); err == nil && field != nil {
+					var fieldValue object.Object
+					if v, isVar := obj.(*object.Variable); isVar {
+						fieldValue = e.evalVariable(ctx, v, pkg)
+					} else {
+						fieldValue = obj // Should be a placeholder or instance
+					}
+					return e.resolver.ResolveSymbolicField(ctx, field, fieldValue)
 				}
 			}
 		}
@@ -1280,7 +1343,12 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 				if typeInfo.Interface != nil {
 					for _, method := range typeInfo.Interface.Methods {
 						if method.Name == n.Sel.Name {
-							placeholder.UnderlyingMethod = method
+							// Convert MethodInfo to a temporary FunctionInfo
+							placeholder.UnderlyingFunc = &scanner.FunctionInfo{
+								Name:       method.Name,
+								Parameters: method.Parameters,
+								Results:    method.Results,
+							}
 							break
 						}
 					}
@@ -1517,7 +1585,11 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 		if left.TypeInfo() != nil && left.TypeInfo().Interface != nil {
 			for _, method := range left.TypeInfo().Interface.Methods {
 				if method.Name == n.Sel.Name {
-					placeholder.UnderlyingMethod = method
+					placeholder.UnderlyingFunc = &scanner.FunctionInfo{
+						Name:       method.Name,
+						Parameters: method.Parameters,
+						Results:    method.Results,
+					}
 					placeholder.Receiver = left
 					break
 				}
@@ -2216,11 +2288,21 @@ func (e *Evaluator) assignIdentifier(ctx context.Context, ident *ast.Ident, val 
 		return env.Set(ident.Name, val)
 	}
 
+	// If the variable's declared type is an interface, we should preserve that
+	// static type information on the variable itself. The concrete type of the
+	// assigned value is still available on `val` (which becomes `v.Value`).
+	var isLHSInterface bool
+	if ft := v.FieldType(); ft != nil {
+		if ti := e.resolver.ResolveType(ctx, ft); ti != nil {
+			isLHSInterface = ti.Kind == scanner.InterfaceKind
+		}
+	}
+
 	v.Value = val
-	// Propagate type info from the RHS to the LHS variable. This is crucial for
-	// assignments where the LHS has a less specific type (e.g., any) than the RHS.
-	v.SetTypeInfo(val.TypeInfo())
-	v.SetFieldType(val.FieldType())
+	if !isLHSInterface {
+		v.SetTypeInfo(val.TypeInfo())
+		v.SetFieldType(val.FieldType())
+	}
 	newFieldType := val.FieldType()
 
 	// Always accumulate possible types. Resetting the map can lead to lost
@@ -2482,6 +2564,20 @@ func isError(obj object.Object) bool {
 	return false
 }
 
+// areArgsEqual is a helper to compare function arguments for recursion detection.
+// It performs a direct object comparison.
+func areArgsEqual(a, b []object.Object) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func isInfiniteRecursionError(obj object.Object) bool {
 	if err, ok := obj.(*object.Error); ok {
 		return strings.Contains(err.Message, "infinite recursion detected")
@@ -2692,39 +2788,33 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 		return &object.SymbolicPlaceholder{Reason: "max call stack depth exceeded"}
 	}
 
-	// Hybrid recursion check.
-	var isRecursive bool
+	// New recursion check based on function definition and arguments.
 	if f, ok := fn.(*object.Function); ok && f.Def != nil {
-		if f.Receiver != nil {
-			// For methods, use a strict check: recursion on the *same instance* is an error.
-			for _, frame := range e.callStack {
-				if frame.Fn != nil && frame.Fn.Def == f.Def && frame.Fn.Receiver == f.Receiver {
-					isRecursive = true
-					break
+		for _, frame := range e.callStack {
+			// Check if we are calling the same function definition.
+			if frame.Fn != nil && frame.Fn.Def == f.Def {
+				var isSameCall bool
+				if f.Receiver != nil {
+					// For methods, check if the receiver object is the same.
+					if frame.Fn.Receiver != nil && frame.Fn.Receiver == f.Receiver {
+						isSameCall = true
+					}
+				} else {
+					// For functions, check if the arguments are identical.
+					if areArgsEqual(frame.Args, args) {
+						isSameCall = true
+					}
 				}
-			}
-		} else {
-			// For regular functions, a simple depth check is a better heuristic to allow
-			// for stateful recursion that is not truly infinite.
-			const maxFuncDepth = 5
-			count := 0
-			for _, frame := range e.callStack {
-				if frame.Fn != nil && frame.Fn.Def == f.Def {
-					count++
-				}
-			}
-			if count >= maxFuncDepth {
-				isRecursive = true
-			}
-		}
 
-		if isRecursive {
-			e.logc(ctx, slog.LevelWarn, "infinite recursion detected", "function", name)
-			return e.newError(ctx, callPos, "infinite recursion detected: %s", name)
+				if isSameCall {
+					e.logc(ctx, slog.LevelWarn, "infinite recursion detected", "function", name)
+					return e.newError(ctx, callPos, "infinite recursion detected: %s", name)
+				}
+			}
 		}
 	}
 
-	frame := &callFrame{Function: name, Pos: callPos}
+	frame := &callFrame{Function: name, Pos: callPos, Args: args}
 	if f, ok := fn.(*object.Function); ok {
 		frame.Fn = f
 	}
@@ -2859,20 +2949,29 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 		return fn.Fn(args...)
 
 	case *object.SymbolicPlaceholder:
-		// Case 1: The placeholder represents an unresolved interface method call.
-		if fn.UnderlyingMethod != nil {
-			method := fn.UnderlyingMethod
+		// This now handles both external function calls and interface method calls.
+		if fn.UnderlyingFunc != nil {
+			// If it has an AST declaration, it's a real function from source.
+			if fn.UnderlyingFunc.AstDecl != nil {
+				return e.createSymbolicResultForFuncInfo(ctx, fn.UnderlyingFunc, fn.Package, "result of external call to %s", fn.UnderlyingFunc.Name)
+			}
+
+			// Otherwise, it's a constructed FunctionInfo for an interface method.
+			// We create the result based on the Parameters/Results fields directly.
+			method := fn.UnderlyingFunc
 			var result object.Object
 			if len(method.Results) <= 1 {
 				var resultTypeInfo *scanner.TypeInfo
 				var resultFieldType *scanner.FieldType
 				if len(method.Results) == 1 {
 					resultFieldType = method.Results[0].Type
-					resultType := e.resolver.ResolveType(ctx, resultFieldType)
-					if resultType == nil && resultFieldType.IsBuiltin {
-						resultType = &scanner.TypeInfo{Name: resultFieldType.Name}
+					if resultFieldType != nil {
+						resultType := e.resolver.ResolveType(ctx, resultFieldType)
+						if resultType == nil && resultFieldType.IsBuiltin {
+							resultType = &scanner.TypeInfo{Name: resultFieldType.Name}
+						}
+						resultTypeInfo = resultType
 					}
-					resultTypeInfo = resultType
 				}
 				result = &object.SymbolicPlaceholder{
 					Reason:     fmt.Sprintf("result of interface method call %s", method.Name),
@@ -2883,9 +2982,12 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 				results := make([]object.Object, len(method.Results))
 				for i, resFieldInfo := range method.Results {
 					resultFieldType := resFieldInfo.Type
-					resultType := e.resolver.ResolveType(ctx, resultFieldType)
-					if resultType == nil && resultFieldType.IsBuiltin && resultFieldType.Name == "error" {
-						resultType = ErrorInterfaceTypeInfo
+					var resultType *scanner.TypeInfo
+					if resultFieldType != nil {
+						resultType = e.resolver.ResolveType(ctx, resultFieldType)
+						if resultType == nil && resultFieldType.IsBuiltin && resultFieldType.Name == "error" {
+							resultType = ErrorInterfaceTypeInfo
+						}
 					}
 					results[i] = &object.SymbolicPlaceholder{
 						Reason:     fmt.Sprintf("result %d of interface method call %s", i, method.Name),
@@ -2895,11 +2997,6 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 				result = &object.MultiReturn{Values: results}
 			}
 			return &object.ReturnValue{Value: result}
-		}
-
-		// Case 2: The placeholder represents an external function call.
-		if fn.UnderlyingFunc != nil {
-			return e.createSymbolicResultForFuncInfo(ctx, fn.UnderlyingFunc, fn.Package, "result of external call to %s", fn.UnderlyingFunc.Name)
 		}
 
 		// Case 3: A placeholder representing a callable variable (like flag.Usage)
@@ -3000,12 +3097,56 @@ func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, 
 		return env, nil
 	}
 
-	// 2. Bind parameters using the reliable FunctionInfo definition
+	// 2. Bind parameters
 	if fn.Def == nil {
-		e.logc(ctx, slog.LevelWarn, "function definition not available in extendFunctionEnv, cannot bind parameters reliably", "function", fn.Name)
+		// Fallback for function literals which don't have a FunctionInfo
+		e.logc(ctx, slog.LevelWarn, "function definition not available in extendFunctionEnv, falling back to AST", "function", fn.Name)
+		if fn.Parameters != nil {
+			argIndex := 0
+			for _, field := range fn.Parameters.List {
+				// Handle variadic parameters indicated by Ellipsis in the AST
+				isVariadic := false
+				if _, ok := field.Type.(*ast.Ellipsis); ok {
+					isVariadic = true
+				}
+
+				for _, name := range field.Names {
+					if argIndex >= len(args) {
+						break
+					}
+					if name.Name != "_" {
+						var valToBind object.Object
+						if isVariadic {
+							// Collect remaining args into a slice for the variadic parameter
+							sliceElements := args[argIndex:]
+							valToBind = &object.Slice{Elements: sliceElements}
+							// We could try to infer a field type here if needed
+						} else {
+							valToBind = args[argIndex]
+						}
+
+						v := &object.Variable{
+							Name:        name.Name,
+							Value:       valToBind,
+							IsEvaluated: true,
+						}
+						v.SetTypeInfo(valToBind.TypeInfo())
+						v.SetFieldType(valToBind.FieldType())
+						env.SetLocal(name.Name, v)
+					}
+					if !isVariadic {
+						argIndex++
+					}
+				}
+				if isVariadic {
+					break // Variadic parameter is always the last one
+				}
+			}
+		}
 		return env, nil
 	}
 
+	// Bind parameters using the reliable FunctionInfo definition
 	argIndex := 0
 	for i, paramDef := range fn.Def.Parameters {
 		var arg object.Object
@@ -3322,56 +3463,4 @@ func (e *Evaluator) fieldTypeEquals(a, b *scanner.FieldType) bool {
 		return false
 	}
 	return a.String() == b.String()
-}
-
-func (e *Evaluator) createSymbolicResultForInterfaceMethod(ctx context.Context, ifaceType *scanner.TypeInfo, methodName string) object.Object {
-	if ifaceType.Interface == nil {
-		return &object.SymbolicPlaceholder{Reason: "result of call to method on non-interface"}
-	}
-
-	var methodInfo *scanner.FunctionInfo
-	for _, m := range ifaceType.Interface.Methods {
-		if m.Name == methodName {
-			// Create a FunctionInfo from the MethodInfo to satisfy the type system.
-			// We only need a subset of the fields for creating the symbolic result.
-			methodInfo = &scanner.FunctionInfo{
-				Name:       m.Name,
-				Parameters: m.Parameters,
-				Results:    m.Results,
-			}
-			break
-		}
-	}
-
-	if methodInfo == nil {
-		return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("result of call to unknown method %s on interface %s", methodName, ifaceType.Name)}
-	}
-
-	reason := fmt.Sprintf("result of call to interface method %s.%s", ifaceType.Name, methodName)
-
-	if len(methodInfo.Results) == 0 {
-		return &object.SymbolicPlaceholder{Reason: reason + " (no return value)"}
-	}
-
-	if len(methodInfo.Results) == 1 {
-		res := methodInfo.Results[0]
-		resolvedType := e.resolver.ResolveType(ctx, res.Type)
-		return &object.ReturnValue{
-			Value: &object.SymbolicPlaceholder{
-				Reason:     reason,
-				BaseObject: object.BaseObject{ResolvedTypeInfo: resolvedType, ResolvedFieldType: res.Type},
-			},
-		}
-	}
-
-	// Multiple return values
-	returnValues := make([]object.Object, len(methodInfo.Results))
-	for i, res := range methodInfo.Results {
-		resolvedType := e.resolver.ResolveType(ctx, res.Type)
-		returnValues[i] = &object.SymbolicPlaceholder{
-			Reason:     fmt.Sprintf("%s (result %d)", reason, i),
-			BaseObject: object.BaseObject{ResolvedTypeInfo: resolvedType, ResolvedFieldType: res.Type},
-		}
-	}
-	return &object.ReturnValue{Value: &object.MultiReturn{Values: returnValues}}
 }

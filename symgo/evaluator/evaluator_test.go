@@ -765,7 +765,7 @@ func main() {
 				return nil
 			}
 			if p, ok := args[0].(*object.SymbolicPlaceholder); ok {
-				if p.UnderlyingMethod != nil {
+				if p.UnderlyingFunc != nil {
 					calledPlaceholder = p
 				}
 			}
@@ -793,14 +793,14 @@ func main() {
 	if calledPlaceholder == nil {
 		t.Fatalf("default intrinsic was not called with a symbolic placeholder for the interface method")
 	}
-	if calledPlaceholder.UnderlyingMethod.Name != "Write" {
-		t.Errorf("expected placeholder for method 'Write', but got '%s'", calledPlaceholder.UnderlyingMethod.Name)
+	if calledPlaceholder.UnderlyingFunc.Name != "Write" {
+		t.Errorf("expected placeholder for method 'Write', but got '%s'", calledPlaceholder.UnderlyingFunc.Name)
 	}
 	if calledPlaceholder.Receiver == nil {
 		t.Errorf("expected placeholder to have a receiver, but it was nil")
 	}
-	if _, ok := calledPlaceholder.Receiver.(*object.Variable); !ok {
-		t.Errorf("expected receiver to be a variable, but got %T", calledPlaceholder.Receiver)
+	if _, ok := calledPlaceholder.Receiver.(*object.Nil); !ok {
+		t.Errorf("expected receiver to be a nil object, but got %T", calledPlaceholder.Receiver)
 	}
 }
 

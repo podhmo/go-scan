@@ -109,8 +109,12 @@ func useGetter(g PairGetter) {
 		// 2. Create a symbolic placeholder for the function call itself.
 		// This simulates what `evalSelectorExpr` would create for `g.GetPair()`.
 		fnPlaceholder := &object.SymbolicPlaceholder{
-			Reason:           "interface method call GetPair",
-			UnderlyingMethod: getPairMethod,
+			Reason: "interface method call GetPair",
+			UnderlyingFunc: &scanner.FunctionInfo{
+				Name:       getPairMethod.Name,
+				Parameters: getPairMethod.Parameters,
+				Results:    getPairMethod.Results,
+			},
 			// The receiver would be another placeholder for `g`.
 			Receiver: &object.SymbolicPlaceholder{Reason: "variable g"},
 		}

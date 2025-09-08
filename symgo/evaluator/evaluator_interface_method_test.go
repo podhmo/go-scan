@@ -166,7 +166,7 @@ func main() {
 			fnObj := args[0]
 			switch fn := fnObj.(type) {
 			case *object.SymbolicPlaceholder:
-				if fn.UnderlyingMethod != nil && fn.UnderlyingMethod.Name == "Speak" {
+				if fn.UnderlyingFunc != nil && fn.UnderlyingFunc.Name == "Speak" {
 					placeholderCalled = true
 				}
 			case *object.Function:
@@ -250,7 +250,7 @@ func main() {
 				return nil
 			}
 			if p, ok := args[0].(*object.SymbolicPlaceholder); ok {
-				if p.UnderlyingMethod != nil && p.UnderlyingMethod.Name == "Speak" {
+				if p.UnderlyingFunc != nil && p.UnderlyingFunc.Name == "Speak" {
 					speakPlaceholder = p
 				}
 			}
@@ -278,22 +278,21 @@ func main() {
 		t.Fatalf("SymbolicPlaceholder for Speak method was not captured")
 	}
 
-	if len(speakPlaceholder.PossibleConcreteTypes) != 2 {
-		t.Errorf("expected 2 possible concrete types, but got %d", len(speakPlaceholder.PossibleConcreteTypes))
-		for i, ft := range speakPlaceholder.PossibleConcreteTypes {
-			t.Logf("  type %d: %s", i, ft.String())
+	receiverVar, ok := speakPlaceholder.Receiver.(*object.Variable)
+	if !ok {
+		t.Fatalf("placeholder receiver is not a *object.Variable, but %T", speakPlaceholder.Receiver)
+	}
+
+	if len(receiverVar.PossibleTypes) != 2 {
+		t.Errorf("expected 2 possible concrete types, but got %d", len(receiverVar.PossibleTypes))
+		for pt := range receiverVar.PossibleTypes {
+			t.Logf("  possible type: %s", pt)
 		}
 	}
 
 	foundTypes := make(map[string]bool)
-	for _, ft := range speakPlaceholder.PossibleConcreteTypes {
-		var name string
-		if ft.IsPointer {
-			name = fmt.Sprintf("%s.*%s", ft.Elem.FullImportPath, ft.Elem.TypeName)
-		} else {
-			name = fmt.Sprintf("%s.%s", ft.FullImportPath, ft.TypeName)
-		}
-		foundTypes[name] = true
+	for pt := range receiverVar.PossibleTypes {
+		foundTypes[pt] = true
 	}
 
 	if !foundTypes["example.com/me.*Dog"] {

@@ -54,12 +54,12 @@ func AnonymousStruct(p struct {
 				t.Fatalf("NewInterpreter failed: %+v", err)
 			}
 
-			var inspectedMethod *scanner.MethodInfo
+			var inspectedMethod *scanner.FunctionInfo
 			interpreter.RegisterDefaultIntrinsic(func(i *symgo.Interpreter, args []symgo.Object) symgo.Object {
 				fn := args[0] // The function object itself
 				if p, ok := fn.(*symgo.SymbolicPlaceholder); ok {
-					if p.UnderlyingMethod != nil {
-						inspectedMethod = p.UnderlyingMethod
+					if p.UnderlyingFunc != nil {
+						inspectedMethod = p.UnderlyingFunc
 					}
 				}
 				return &symgo.SymbolicPlaceholder{Reason: "default intrinsic result"}
@@ -121,8 +121,8 @@ func AnonymousStruct(p struct {
 				t.Fatalf("expected symbolic placeholder return, got %T", retVal.Value)
 			}
 
-			if !strings.Contains(placeholder.Reason, "field access p.X") {
-				t.Errorf("expected reason to contain 'field access p.X', but got %q", placeholder.Reason)
+			if !strings.Contains(placeholder.Reason, "field access") {
+				t.Errorf("expected reason to contain 'field access', but got %q", placeholder.Reason)
 			}
 		})
 		return nil

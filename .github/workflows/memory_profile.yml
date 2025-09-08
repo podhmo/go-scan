@@ -49,14 +49,15 @@ jobs:
         run: |
           current_mem='${{ steps.pprof.outputs.mem_bytes }}'
 
-          # Check if memory extraction was successful, default to 0 if not.
+          # Default to 0 if memory extraction failed
           if [[ -z "$current_mem" ]]; then
             current_mem=0
           fi
 
+          # Prepare the body of the comment
+          body=""
           if [[ -f "mem_total.txt" ]]; then
             baseline_mem=$(cat mem_total.txt)
-            # Default to 0 if baseline is empty or file is unreadable
             if [[ -z "$baseline_mem" ]]; then
               baseline_mem=0
             fi
@@ -69,31 +70,14 @@ jobs:
               delta_str="${delta}"
             fi
 
-            read -r -d '' body <<EOF
-            ### Memory Profile Report
-
-            | Branch            | Total Memory (bytes) |
-            |-------------------|----------------------|
-            | \`main\` (baseline) | \`${baseline_mem}\` B          |
-            | PR branch         | \`${current_mem}\` B          |
-            | **Delta**         | \`${delta_str}\` B             |
-EOF
+            body=$(printf "### Memory Profile Report\n\n| Branch            | Total Memory (bytes) |\n|-------------------|----------------------|\n| \`main\` (baseline) | \`%s\` B          |\n| PR branch         | \`%s\` B          |\n| **Delta**         | \`%s\` B             |" "$baseline_mem" "$current_mem" "$delta_str")
           else
-            read -r -d '' body <<EOF
-            ### Memory Profile Report
-
-            | Branch            | Total Memory (bytes)    |
-            |-------------------|-------------------------|
-            | \`main\` (baseline) | \`N/A\`                   |
-            | PR branch         | \`${current_mem}\` B |
-            | **Delta**         | \`N/A\`                   |
-
-            *Note: A baseline will be created on the \`main\` branch after this PR is merged. Subsequent PRs will show a comparison.*
-EOF
+            body=$(printf "### Memory Profile Report\n\n| Branch            | Total Memory (bytes)    |\n|-------------------|-------------------------|\n| \`main\` (baseline) | \`N/A\`                   |\n| PR branch         | \`%s\` B |\n| **Delta**         | \`N/A\`                   |\n\n*Note: A baseline will be created on the \`main\` branch after this PR is merged. Subsequent PRs will show a comparison.*" "$current_mem")
           fi
+
           # Set the multiline output for the next step
           echo "body<<EOF" >> $GITHUB_OUTPUT
-          echo "$body" >> $GITHUB_OUTPUT
+          echo -e "$body" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
       - name: Create or update comment on PR

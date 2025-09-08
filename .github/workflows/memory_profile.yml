@@ -1,0 +1,109 @@
+name: Integration Test Memory Profile
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    paths:
+      - 'symgo/**'
+      - '.github/workflows/memory_profile.yml'
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  profile-memory:
+    name: Run integration test memory profiling
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Run tests and generate memory profile
+        run: go test -v -memprofile=mem.out -memprofilerate=1 ./symgo/integration_test
+
+      - name: Extract memory usage from profile
+        id: pprof
+        run: |
+          # The output looks like: "Showing nodes accounting for 2.29MB, 100% of 2.29MB total"
+          # We extract the numeric value in bytes.
+          # Example: "Showing nodes accounting for 2399688B, 100% of 2399688B total" -> 2399688
+          mem_bytes=$(go tool pprof -top -unit=B mem.out | head -n 1 | sed -n 's/.*, 100% of \([0-9]\+\)B total/\1/p')
+          echo "mem_bytes=${mem_bytes}" >> $GITHUB_OUTPUT
+
+      - name: Download baseline memory total
+        uses: actions/download-artifact@v4
+        if: github.event_name == 'pull_request'
+        with:
+          name: memory-total-main
+        continue-on-error: true
+
+      - name: Prepare comment content
+        id: comment-prep
+        if: github.event_name == 'pull_request'
+        run: |
+          if [[ -f "mem_total.txt" ]]; then
+            baseline_mem=$(cat mem_total.txt)
+            current_mem=${{ steps.pprof.outputs.mem_bytes }}
+            delta=$((current_mem - baseline_mem))
+
+            # Format delta with a sign
+            if [ $delta -ge 0 ]; then
+              delta_str="+${delta}"
+            else
+              delta_str="${delta}"
+            fi
+
+            body=$(cat <<EOF
+            ### Memory Profile Report
+
+            | Branch            | Total Memory (bytes) |
+            |-------------------|----------------------|
+            | \`main\` (baseline) | \`${baseline_mem}\` B          |
+            | PR branch         | \`${current_mem}\` B          |
+            | **Delta**         | \`${delta_str}\` B             |
+            EOF
+            )
+          else
+            body=$(cat <<EOF
+            ### Memory Profile Report
+
+            | Branch            | Total Memory (bytes)    |
+            |-------------------|-------------------------|
+            | \`main\` (baseline) | \`N/A\`                   |
+            | PR branch         | \`${{ steps.pprof.outputs.mem_bytes }}\` B |
+            | **Delta**         | \`N/A\`                   |
+
+            *Note: A baseline will be created on the \`main\` branch after this PR is merged. Subsequent PRs will show a comparison.*
+            EOF
+            )
+          fi
+          # Escape for multiline output
+          echo "body<<EOF" >> $GITHUB_OUTPUT
+          echo "$body" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Create or update comment on PR
+        if: github.event_name == 'pull_request'
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          body: ${{ steps.comment-prep.outputs.body }}
+          edit-mode: replace
+
+      - name: Store memory total for main branch
+        if: github.ref == 'refs/heads/main'
+        run: |
+          echo "${{ steps.pprof.outputs.mem_bytes }}" > mem_total.txt
+
+      - name: Upload memory total artifact
+        if: github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: memory-total-main
+          path: mem_total.txt

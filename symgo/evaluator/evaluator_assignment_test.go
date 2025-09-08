@@ -25,7 +25,7 @@ func lookupFile(pkg *goscan.Package, name string) (*ast.File, error) {
 
 func TestMultiValueAssignment(t *testing.T) {
 	var intrinsicCalled bool
-	var assignedValue symgo.Object
+	var assignedValue object.Object
 
 	// Create a temporary directory with the files.
 	dir, cleanup := scantest.WriteFiles(t, map[string]string{
@@ -50,10 +50,10 @@ func main() {
 		}
 
 		// Intrinsic for a function that returns two values
-		interp.RegisterIntrinsic("myapp.myFunc", func(i *symgo.Interpreter, args []symgo.Object) symgo.Object {
+		interp.RegisterIntrinsic("myapp.myFunc", func(i *symgo.Interpreter, args []object.Object) object.Object {
 			intrinsicCalled = true
 			return &object.MultiReturn{
-				Values: []symgo.Object{
+				Values: []object.Object{
 					&object.String{Value: "hello"},
 					object.NIL,
 				},
@@ -144,7 +144,7 @@ func main() {
 
 		// This intrinsic will be called at the end of main. We can inspect the
 		// state of 'v' when it's called.
-		interp.RegisterIntrinsic("myapp.check", func(i *symgo.Interpreter, args []symgo.Object) symgo.Object {
+		interp.RegisterIntrinsic("myapp.check", func(i *symgo.Interpreter, args []object.Object) object.Object {
 			checkCalled = true
 			return nil
 		})

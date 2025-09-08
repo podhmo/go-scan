@@ -504,27 +504,31 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool) error {
 				}
 			}
 
-			if fn.UnderlyingMethod != nil {
-				methodName := fn.UnderlyingMethod.Name
-				var implementerTypes []*scanner.FieldType
+			if fn.UnderlyingFunc != nil {
+				// Case 1: It's an interface method call placeholder (it has a receiver).
 				if fn.Receiver != nil {
-					receiverTypeInfo := fn.Receiver.TypeInfo()
-					if receiverTypeInfo != nil && receiverTypeInfo.Kind == scanner.InterfaceKind {
-						ifaceName := fmt.Sprintf("%s.%s", receiverTypeInfo.PkgPath, receiverTypeInfo.Name)
-						if allImplementers, ok := interfaceMap[ifaceName]; ok {
-							for _, ti := range allImplementers {
-								implementerTypes = append(implementerTypes, &scanner.FieldType{Definition: ti})
+					methodName := fn.UnderlyingFunc.Name
+					var implementerTypes []*scanner.FieldType
+					if fn.Receiver != nil {
+						receiverTypeInfo := fn.Receiver.TypeInfo()
+						if receiverTypeInfo != nil && receiverTypeInfo.Kind == scanner.InterfaceKind {
+							ifaceName := fmt.Sprintf("%s.%s", receiverTypeInfo.PkgPath, receiverTypeInfo.Name)
+							if allImplementers, ok := interfaceMap[ifaceName]; ok {
+								for _, ti := range allImplementers {
+									implementerTypes = append(implementerTypes, &scanner.FieldType{Definition: ti})
+								}
 							}
 						}
 					}
+					for _, implFt := range implementerTypes {
+						a.markMethodAsUsed(ctx, usageMap, implFt, methodName)
+					}
+				} else { // Case 2: It's a regular function placeholder (no receiver).
+					if fn.Package != nil {
+						fullName := fmt.Sprintf("%s.%s", fn.Package.ImportPath, fn.UnderlyingFunc.Name)
+						usageMap[fullName] = true
+					}
 				}
-				for _, implFt := range implementerTypes {
-					a.markMethodAsUsed(ctx, usageMap, implFt, methodName)
-				}
-			}
-			if fn.UnderlyingFunc != nil && fn.Package != nil && fn.UnderlyingFunc.Receiver == nil {
-				fullName := fmt.Sprintf("%s.%s", fn.Package.ImportPath, fn.UnderlyingFunc.Name)
-				usageMap[fullName] = true
 			}
 		}
 	}

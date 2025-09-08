@@ -52,14 +52,13 @@ jobs:
             current_mem=${{ steps.pprof.outputs.mem_bytes }}
             delta=$((current_mem - baseline_mem))
 
-            # Format delta with a sign
             if [ $delta -ge 0 ]; then
               delta_str="+${delta}"
             else
               delta_str="${delta}"
             fi
 
-            body=$(cat <<EOF
+            read -r -d '' body <<EOF
             ### Memory Profile Report
 
             | Branch            | Total Memory (bytes) |
@@ -67,10 +66,9 @@ jobs:
             | \`main\` (baseline) | \`${baseline_mem}\` B          |
             | PR branch         | \`${current_mem}\` B          |
             | **Delta**         | \`${delta_str}\` B             |
-            EOF
-            )
+EOF
           else
-            body=$(cat <<EOF
+            read -r -d '' body <<EOF
             ### Memory Profile Report
 
             | Branch            | Total Memory (bytes)    |
@@ -80,10 +78,9 @@ jobs:
             | **Delta**         | \`N/A\`                   |
 
             *Note: A baseline will be created on the \`main\` branch after this PR is merged. Subsequent PRs will show a comparison.*
-            EOF
-            )
+EOF
           fi
-          # Escape for multiline output
+          # Set the multiline output for the next step
           echo "body<<EOF" >> $GITHUB_OUTPUT
           echo "$body" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT

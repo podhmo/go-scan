@@ -899,7 +899,7 @@ func (e *Evaluator) evalGenDecl(ctx context.Context, node *ast.GenDecl, env *obj
 			if staticFieldType != nil {
 				resolvedTypeInfo = e.resolver.ResolveType(ctx, staticFieldType)
 			}
-			
+
 			if i < len(valSpec.Values) {
 				val = e.Eval(ctx, valSpec.Values[i], env, pkg)
 				if isError(val) {
@@ -1484,7 +1484,7 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 		placeholder := &object.SymbolicPlaceholder{
 			Reason: fmt.Sprintf("method %s on nil", n.Sel.Name),
 		}
-		
+
 		// If the NIL has type information (e.g., it's a typed interface nil),
 		// try to find the method in the interface definition
 		if left.TypeInfo() != nil && left.TypeInfo().Interface != nil {
@@ -1496,9 +1496,9 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 				}
 			}
 		}
-		
+
 		return placeholder
-	
+
 	default:
 		return e.newError(ctx, n.Pos(), "expected a package, instance, or pointer on the left side of selector, but got %s", left.Type())
 	}
@@ -3079,7 +3079,7 @@ func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, 
 				// Get the static type from the function signature first
 				var staticFieldType *scanner.FieldType
 				var staticTypeInfo *scanner.TypeInfo
-				
+
 				// Evaluate the type expression in the context of the current environment,
 				// which may contain type parameter bindings.
 				typeObj := e.Eval(ctx, field.Type, env, fn.Package)
@@ -3102,14 +3102,14 @@ func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, 
 						staticTypeInfo = e.resolver.ResolveType(ctx, staticFieldType)
 					}
 				}
-				
+
 				// If the argument is NIL and we have static type info, preserve it
 				if nilObj, ok := arg.(*object.Nil); ok && staticFieldType != nil {
 					// Set type information on the NIL object
 					nilObj.SetFieldType(staticFieldType)
 					nilObj.SetTypeInfo(staticTypeInfo)
 				}
-				
+
 				v := &object.Variable{
 					Name:        name.Name,
 					Value:       arg,

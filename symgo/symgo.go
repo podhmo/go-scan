@@ -358,6 +358,7 @@ func (i *Interpreter) Eval(ctx context.Context, node ast.Node, pkg *scanner.Pack
 		for _, t := range pkg.Types {
 			newPairs := i.Relations.AddType(ctx, t)
 			for _, pair := range newPairs {
+				// TODO: not implemented yet
 				i.processNewImplementation(ctx, pair.Struct, pair.Interface)
 			}
 		}

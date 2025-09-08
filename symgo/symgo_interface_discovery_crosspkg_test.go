@@ -2,7 +2,6 @@ package symgo_test
 
 import (
 	"context"
-	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -40,13 +39,13 @@ func (s *S) M() {}`
 
 func TestInterfaceDiscovery(t *testing.T) {
 	baseFiles := map[string]string{
-		"go.mod":          "module myapp",
-		"a/a.go":          fileA,
-		"b/b.go":          fileB,
-		"c/c.go":          fileC,
-		"a/go.mod":        "module myapp/a",
-		"b/go.mod":        "module myapp/b",
-		"c/go.mod":        "module myapp/c",
+		"go.mod":   "module myapp",
+		"a/a.go":   fileA,
+		"b/b.go":   fileB,
+		"c/c.go":   fileC,
+		"a/go.mod": "module myapp/a",
+		"b/go.mod": "module myapp/b",
+		"c/go.mod": "module myapp/c",
 	}
 
 	// Define the 6 permutations of discovery order

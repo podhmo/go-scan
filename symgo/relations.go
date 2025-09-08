@@ -6,14 +6,6 @@ import (
 
 	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/scanner"
-)
-
-import (
-	"context"
-	"sync"
-
-	goscan "github.com/podhmo/go-scan"
-	"github.com/podhmo/go-scan/scanner"
 	"github.com/podhmo/go-scan/symgo/object"
 )
 
@@ -24,7 +16,7 @@ type TypeRelations struct {
 	resolver     scanner.PackageResolver
 	interfaces   map[string]*scanner.TypeInfo
 	structs      map[string]*scanner.TypeInfo
-	implementers map[string][]*scanner.TypeInfo       // key: interface qualified name, value: list of implementing structs
+	implementers map[string][]*scanner.TypeInfo     // key: interface qualified name, value: list of implementing structs
 	pendingCalls map[string][]*object.InterfaceCall // key: interface qualified name
 }
 
@@ -35,7 +27,7 @@ func NewTypeRelations(resolver scanner.PackageResolver) *TypeRelations {
 		interfaces:   make(map[string]*scanner.TypeInfo),
 		structs:      make(map[string]*scanner.TypeInfo),
 		implementers: make(map[string][]*scanner.TypeInfo),
-		pendingCalls: make(map[string][]*InterfaceCall),
+		pendingCalls: make(map[string][]*object.InterfaceCall),
 	}
 }
 

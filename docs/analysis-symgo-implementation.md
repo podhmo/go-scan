@@ -30,10 +30,13 @@ The handling of loops is also intentionally non-interpreter-like.
 
 ### 2.3. Recursion Handling (`applyFunction`)
 
-The engine's recursion detection is another indicator of its specialized design.
+The engine's recursion handling is another indicator of its specialized design, favoring termination and bounded analysis over deep execution.
 
-- **Behavior:** The evaluator detects and halts infinite recursion. However, it is intelligent enough to distinguish between true infinite recursion (a function calling itself with the same receiver) and valid recursive patterns like traversing a linked list (where the method is called on a different receiver, e.g., `n.Next`).
-- **Alignment with Design:** This shows a design that is robust and pragmatic, built to handle common Go patterns without getting stuck, which is essential for a static analysis tool that must terminate.
+- **Behavior:** The evaluator now employs a **bounded recursion** strategy, consistent with its handling of `for` loops. It detects recursive function calls by checking if the same function definition appears in the call stack more than once.
+    - For methods, this check is state-aware: it only considers it a recursion if the call is on the **same receiver object**. This allows it to correctly trace through recursive data structures like linked lists (`n.Next.Traverse()`).
+    - For regular functions, any direct recursive call is bounded.
+- **Bounding Logic**: The analysis is allowed to go **one level deep** into a recursive call. If the same function is called a second time in the stack (meeting the criteria above), the evaluator halts the analysis for that path and returns a symbolic placeholder representing the function's result. It does **not** produce an error.
+- **Alignment with Design:** This strategy is a significant refinement that improves the engine's robustness. By guaranteeing termination for all recursive patterns, it prevents hangs in tools like `find-orphans` when analyzing complex, deeply recursive code. This pragmatic choice reinforces the engine's design as a static analysis tool that prioritizes finishing its analysis over perfectly simulating the program's execution.
 
 ### 2.4. `switch` Statements (`evalSwitchStmt`, `evalTypeSwitchStmt`)
 

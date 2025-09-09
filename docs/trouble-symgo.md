@@ -4,9 +4,7 @@ This document details the investigation of an issue where the `find-orphans` too
 
 ## 1. The Problem
 
-When running the `find-orphans` tool on the `examples/convert` package, the process would hang, consuming significant memory and generating a massive, repetitive log file. The logs showed endless warnings from `symgo/evaluator/evaluator.go`, such as `expected multi-return value on RHS of assignment` and `unsupported LHS in parallel assignment`.
-
-The ultimate goal of the `find-orphans` run was to determine if the function `formatCode` was correctly identified as "used". Instead, the analysis never completed. This pointed to an infinite loop or an overly aggressive termination condition within the `symgo` engine itself.
+When running the `find-orphans` tool on the `examples/convert` package, the process would hang, consuming significant memory and generating a massive, repetitive log file. The logs showed endless warnings from `symgo/evaluator/evaluator.go`. The ultimate goal of the `find-orphans` run was to determine if the function `formatCode` was correctly identified as "used". Instead, the analysis never completed. This pointed to an infinite loop or an overly aggressive termination condition within the `symgo` engine itself.
 
 ## 2. Investigation
 
@@ -17,41 +15,44 @@ The `parser.go` file contains the core logic for the `convert` example. A review
 
 The recursion flows as follows:
 
-1.  The analysis starts with `processPackage`. Inside this function, it iterates through the types in a package.
-2.  In a loop over types (starting at `line 97`), it calls `resolveType` to resolve type names found in `@derivingconvert` annotations (`line 118`). It also calls `resolveType` when processing global conversion rules (`line 150`, `line 155`).
-3.  `processPackage` also calls `collectFields` (`line 87`) to analyze struct fields.
-4.  `collectFields` recursively calls `processPackage` (`line 278`) when it finds a field from another package, to ensure that package is fully processed.
-5.  `resolveType` is the other major source of recursion. After resolving a type to a different package (`line 227`), it immediately calls `processPackage` on that newly discovered package (`line 232`) to parse its contents before continuing.
+1.  `processPackage` is called for a package.
+2.  It finds annotations (like `@derivingconvert`) or rules (`// convert:rule`) that reference other types.
+3.  For each referenced type, it calls `resolveType`. The log confirms this happens at `parser.go:148`.
+4.  `resolveType` may discover that the type belongs to a different package. It then uses the `go-scan` `Scanner` to load this new package.
+5.  Crucially, after loading the new package, `resolveType` immediately calls **`processPackage`** on it to ensure its types and rules are also parsed before proceeding. The log confirms this recursive call happens at `parser.go:270`.
 
-This creates a legitimate, but complex and deep, mutually recursive call chain:
--   `processPackage` -> `resolveType` -> `processPackage`
--   `processPackage` -> `collectFields` -> `processPackage`
+This creates a legitimate, but complex and deep, mutually recursive call chain.
 
-Here are the specific code locations:
+### Step 2: Analyzing the Call Stack
+The debug logs provided a clear picture of the recursive loop. The `symgo` evaluator's call stack grows extremely deep, alternating between two functions in `parser.go`:
 
-**`processPackage` calls `resolveType`:**
-```go
-// examples/convert/parser/parser.go:116
-dstTypeInfo, err := resolveType(ctx, s, info, pkgInfo, dstTypeNameRaw)
+- `processPackage` (called from `resolveType` at `parser.go:270:13`)
+- `resolveType` (called from `processPackage` at `parser.go:148:27`)
+
+A snapshot of the call stack demonstrates this pattern clearly, showing the stack depth exceeding 400 calls:
+
+```
+ stack.3.func=processPackage
+ stack.3.pos=.../parser.go:38:12
+ stack.4.func=resolveType
+ stack.4.pos=.../parser.go:148:27
+ stack.5.func=processPackage
+ stack.5.pos=.../parser.go:270:13
+ stack.6.func=resolveType
+ stack.6.pos=.../parser.go:148:27
+ ...
+ stack.399.func=processPackage
+ stack.399.pos=.../parser.go:270:13
+ stack.400.func=resolveType
+ stack.400.pos=.../parser.go:148:27
 ```
 
-**`resolveType` calls `processPackage`:**
-```go
-// examples/convert/parser/parser.go:232
-if err := processPackage(ctx, s, info, resolvedPkgInfo); err != nil {
-    return nil, fmt.Errorf("failed to process recursively discovered package %q: %w", resolvedPkgInfo.PkgPath, err)
-}
-```
-
-### Step 2: Analyzing `symgo`'s Behavior
-The `symgo` engine is a symbolic tracer. When it analyzes the `find-orphans` tool, it is essentially simulating its execution. As `find-orphans` executes the recursive logic in `parser.go`, `symgo`'s call stack deepens.
-
-`symgo` has its own internal recursion detector (`applyFunction` in `evaluator.go`) designed to prevent it from getting stuck in infinite loops in the code it analyzes. This detector works by tracking function calls and halting if it detects a potentially non-terminating loop.
+This stack trace proves that for every type resolution (`resolveType`), the parser may scan a new package (`processPackage`), which in turn can trigger more type resolutions. This is the intended behavior of the parser, but it creates a very deep call chain for the `symgo` analyzer to follow.
 
 ### Step 3: Identifying the Root Cause
 The problem is not a bug in the `parser.go` logic, nor is it a simple infinite loop. The root cause is a **design conflict**:
 -   The `convert` parser is intentionally and correctly recursive to handle complex, cross-package Go projects.
--   The `symgo` engine's recursion detector is designed to be cautious and prevent its own execution from hanging.
+-   The `symgo` engine's recursion detector (`applyFunction` in `evaluator.go`) is designed to be cautious and prevent its own execution from hanging.
 
 When `symgo` analyzes the execution of the `convert` parser, the parser's deep but valid recursion is indistinguishable from a dangerous infinite loop to `symgo`'s detector. The detector is overly aggressive and terminates the analysis prematurely, leading to the observed hang and log spam as the tool struggles to make progress.
 

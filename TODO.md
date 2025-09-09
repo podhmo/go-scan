@@ -84,8 +84,8 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 ### symgo: Fix Cross-Package Unexported Symbol Resolution ([docs/trouble-symgo-nested-scope.md](./docs/trouble-symgo-nested-scope.md))
 - [x] Evaluate package-level var declarations in `ensurePackageEnvPopulated` to fix "identifier not found" errors for unexported symbols.
 - [x] Fix regressions caused by the lazy-evaluation implementation. The core regressions related to variable evaluation, pointer dispatch, and recursion detection have been resolved.
-- [x] Fix `find-orphans` incorrectly reporting `formatCode` as an orphan in the `examples/convert` project. The tool no longer hangs, but analysis of `main` fails due to a deeper recursion issue. (Analysis documented in `docs/trouble-symgo.md`)
-- [ ] The `symgo` recursion detector is overly aggressive when analyzing other recursive evaluators (like `minigo`), causing analysis to fail. This is the new root cause for the `find-orphans` issue.
+- [x] **Investigation Complete**: The `find-orphans` hang in `examples/convert` is caused by a bug in `symgo`'s evaluator, not an overly aggressive recursion detector. The evaluator fails to model state changes from map assignments, causing the `parser.go` analysis to enter a real infinite loop, which the recursion detector then correctly stops. The full analysis is now documented in `docs/trouble-symgo.md`.
+- [ ] **Implement Map Index Assignment**: Fix the `symgo` evaluator by implementing state changes for map index assignments (`m[k] = v`) in `evalAssignStmt`. This will allow the termination guard in `parser.go` to function correctly under symbolic execution.
 
 ### `symgo` Engine Improvements ([docs/plan-symgo-refine2.md](./docs/plan-symgo-refine2.md))
 - [x] **Fix Regressions**: Addressed `e2e` test failures in `find-orphans` by generalizing the handling of unresolved functions and fixing an infinite recursion bug.

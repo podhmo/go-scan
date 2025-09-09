@@ -153,3 +153,13 @@ A comprehensive test suite must be developed to validate the final solution. Thi
   - Package C: Defines a struct `S` that implements `I`.
 - **Discovery Order:** The test harness should be able to introduce these packages to the `symgo` engine in all six possible permutations of discovery order (e.g., A → B → C, A → C → B, B → A → C, etc.) to ensure the resolution is order-independent.
 - **Conservative Analysis:** The tests must also validate that the analysis is conservative. If implementations `S1` and `S2` both implement interface `I`, a call to method `M` on a variable of type `I` that could be `S1` must mark the method `M` as "used" on *both* `S1` and `S2`.
+
+## 9. Update (2025-09-08): Current Failing Tests
+
+After implementing a caching layer for function objects to fix recursion detection and correctly populating receiver information in `resolver.ResolveFunction`, `TestInterfaceResolution` and its variants now pass. However, the following tests still fail, pointing to the next set of issues to be resolved:
+
+-   **`TestInterfaceBinding`**: Fails with an `undefined method "WriteString" on interface "Writer"`. This indicates that the `BindInterface()` mechanism, which manually maps an interface to a concrete type, is not being correctly consulted during method resolution in `evalSelectorExpr`. The evaluator is not using the binding to find the concrete `WriteString` method on the underlying type.
+
+-   **`TestEval_InterfaceMethodCall_AcrossControlFlow`**: Fails because the evaluator does not correctly merge state from different control flow paths. When an interface variable is assigned different concrete types inside an `if/else` block, the `PossibleTypes` map on the variable object only contains the type from the last-evaluated branch, instead of accumulating all possible types. This is a fundamental limitation in the evaluator's state management for path-insensitive analysis.
+
+-   **`TestDefaultIntrinsic_InterfaceMethodCall`**: This test now fails due to a regression. The test was written to expect a symbolic placeholder with a `nil` receiver when an interface method is called. The `Finalize()` method now correctly resolves the concrete implementation and passes a function object with a *non-nil* receiver to the test's intrinsic. This indicates the `Finalize` logic is working as intended, but the test itself needs to be updated to account for this correct behavior.

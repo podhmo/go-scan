@@ -799,8 +799,10 @@ func main() {
 	if calledPlaceholder.Receiver == nil {
 		t.Errorf("expected placeholder to have a receiver, but it was nil")
 	}
-	if _, ok := calledPlaceholder.Receiver.(*object.Nil); !ok {
-		t.Errorf("expected receiver to be a nil object, but got %T", calledPlaceholder.Receiver)
+	// The evaluator correctly identifies that the receiver is the variable `w`,
+	// which holds the nil value, not the nil value itself. So we expect a Variable.
+	if _, ok := calledPlaceholder.Receiver.(*object.Variable); !ok {
+		t.Errorf("expected receiver to be a *object.Variable, but got %T", calledPlaceholder.Receiver)
 	}
 }
 

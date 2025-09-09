@@ -73,11 +73,9 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 
 ## To Be Implemented
 
-### `symgo`: Fix Interface Resolution Logic ([docs/cont-symgo-interface-resolution.md](./docs/cont-symgo-interface-resolution.md))
+### `symgo`: Implement Robust Interface Resolution ([docs/plan-symgo-interface-resolution.md](./docs/plan-symgo-interface-resolution.md))
 - [x] The `isImplementer` function in `evaluator.go` now correctly handles Go's method set rules for both value and pointer receivers.
 - [ ] The overall interface resolution tests are still failing. The root cause appears to be that the `Finalize` function does not discover the in-memory packages created during `scantest`, so it cannot find any types to check for interface implementation. This needs to be fixed.
-
-### `symgo`: Implement Robust Interface Resolution ([docs/plan-symgo-interface-resolution.md](./docs/plan-symgo-interface-resolution.md))
 - [-] The `symgo` evaluator has been significantly refactored to improve interface method resolution, recursion detection, and type propagation. Most related tests now pass. However, `TestInterfaceResolution` and `TestInterfaceBinding` still fail, pointing to remaining issues in the `Finalize()` and `BindInterface()` mechanisms. See the plan and trouble-shooting documents for the latest status.
 
 ### symgo: Fix Cross-Package Unexported Symbol Resolution ([docs/trouble-symgo-nested-scope.md](./docs/trouble-symgo-nested-scope.md))

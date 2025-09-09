@@ -3,12 +3,36 @@ package symgo
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/scantest"
 	"github.com/podhmo/go-scan/symgo/object"
 )
+
+func permutations(arr []string) [][]string {
+	var helper func([]string, int)
+	res := [][]string{}
+	helper = func(arr []string, n int) {
+		if n == 1 {
+			tmp := make([]string, len(arr))
+			copy(tmp, arr)
+			res = append(res, tmp)
+		} else {
+			for i := 0; i < n; i++ {
+				helper(arr, n-1)
+				if n%2 == 1 {
+					arr[i], arr[n-1] = arr[n-1], arr[i]
+				} else {
+					arr[0], arr[n-1] = arr[n-1], arr[0]
+				}
+			}
+		}
+	}
+	helper(arr, len(arr))
+	return res
+}
 
 const (
 	moduleDefForInterfaceTest = `
@@ -57,69 +81,79 @@ func TestInterfaceResolution(t *testing.T) {
 	dir, cleanup := scantest.WriteFiles(t, files)
 	defer cleanup()
 
-	var dogSpeakCalled bool
+	pkgPaths := []string{"example.com/me/def", "example.com/me/impl", "example.com/me"}
+	perms := permutations(pkgPaths)
 
-	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
-		interp, err := NewInterpreter(s, WithLogger(s.Logger))
-		if err != nil {
-			return fmt.Errorf("failed to create interpreter: %w", err)
-		}
-
-		interp.RegisterDefaultIntrinsic(func(i *Interpreter, args []object.Object) object.Object {
-			if len(args) == 0 {
-				return nil
+	for _, p := range perms {
+		t.Run(strings.Join(p, ">"), func(t *testing.T) {
+			s, err := goscan.New(
+				goscan.WithWorkDir(dir),
+				goscan.WithGoModuleResolver(),
+			)
+			if err != nil {
+				t.Fatalf("failed to create scanner: %v", err)
 			}
-			fn, ok := args[0].(*object.Function)
+
+			interp, err := NewInterpreter(s, WithLogger(s.Logger))
+			if err != nil {
+				t.Fatalf("failed to create interpreter: %v", err)
+			}
+
+			var dogSpeakCalled bool
+			interp.RegisterDefaultIntrinsic(func(i *Interpreter, args []object.Object) object.Object {
+				if len(args) == 0 {
+					return nil
+				}
+				fn, ok := args[0].(*object.Function)
+				if !ok {
+					return nil
+				}
+
+				if fn.Receiver != nil && fn.Receiver.TypeInfo() != nil && fn.Name != nil {
+					receiverTypeInfo := fn.Receiver.TypeInfo()
+					key := ""
+					if ft := fn.Receiver.FieldType(); ft != nil && ft.IsPointer {
+						key = fmt.Sprintf("(*%s.%s).%s", receiverTypeInfo.PkgPath, receiverTypeInfo.Name, fn.Name.Name)
+					} else {
+						key = fmt.Sprintf("(%s.%s).%s", receiverTypeInfo.PkgPath, receiverTypeInfo.Name, fn.Name.Name)
+					}
+
+					if key == "(*example.com/me/impl.Dog).Speak" {
+						dogSpeakCalled = true
+					}
+				}
+				return nil
+			})
+
+			ctx := context.Background()
+			for _, pkgPath := range p {
+				if _, err := s.ScanPackageByImport(ctx, pkgPath); err != nil {
+					t.Fatalf("could not scan package %s: %v", pkgPath, err)
+				}
+			}
+
+			mainPkgInfo, err := s.ScanPackageByImport(ctx, "example.com/me")
+			if err != nil {
+				t.Fatalf("could not get main package: %v", err)
+			}
+			if _, err := interp.Eval(ctx, mainPkgInfo.AstFiles[mainPkgInfo.Files[0]], mainPkgInfo); err != nil {
+				t.Fatalf("evaluation of main pkg failed: %v", err)
+			}
+
+			mainFunc, ok := interp.FindObject("main")
 			if !ok {
-				return nil
+				t.Fatalf("could not find main function in interpreter")
+			}
+			if _, err := interp.Apply(ctx, mainFunc, []object.Object{}, mainPkgInfo); err != nil {
+				t.Fatalf("error applying main function: %v", err)
 			}
 
-			if fn.Receiver != nil && fn.Receiver.TypeInfo() != nil && fn.Name != nil {
-				receiverTypeInfo := fn.Receiver.TypeInfo()
-				key := ""
-				if ft := fn.Receiver.FieldType(); ft != nil && ft.IsPointer {
-					key = fmt.Sprintf("(*%s.%s).%s", receiverTypeInfo.PkgPath, receiverTypeInfo.Name, fn.Name.Name)
-				} else {
-					key = fmt.Sprintf("(%s.%s).%s", receiverTypeInfo.PkgPath, receiverTypeInfo.Name, fn.Name.Name)
-				}
+			interp.Finalize(ctx)
 
-				if key == "(*example.com/me/impl.Dog).Speak" {
-					dogSpeakCalled = true
-				}
+			if !dogSpeakCalled {
+				t.Errorf("expected (*Dog).Speak to be called via interface resolution, but it was not")
 			}
-			return nil
 		})
-
-		mainPkgInfo, err := s.ScanPackageByImport(ctx, "example.com/me")
-		if err != nil {
-			return fmt.Errorf("could not scan main package: %w", err)
-		}
-		// Eval the file to define all symbols
-		if _, err := interp.Eval(ctx, mainPkgInfo.AstFiles[mainPkgInfo.Files[0]], mainPkgInfo); err != nil {
-			return fmt.Errorf("evaluation of main pkg failed: %w", err)
-		}
-
-		// Find the main function and apply it to start the symbolic execution.
-		mainFunc, ok := interp.FindObject("main")
-		if !ok {
-			return fmt.Errorf("could not find main function in interpreter")
-		}
-		if _, err := interp.Apply(ctx, mainFunc, []object.Object{}, mainPkgInfo); err != nil {
-			return fmt.Errorf("error applying main function: %w", err)
-		}
-
-		// Now that execution is done, we can call Finalize.
-		interp.Finalize(ctx)
-
-		if !dogSpeakCalled {
-			return fmt.Errorf("expected (*Dog).Speak to be called via interface resolution, but it was not")
-		}
-
-		return nil
-	}
-
-	if _, err := scantest.Run(t, context.Background(), dir, []string{"."}, action); err != nil {
-		t.Fatalf("scantest.Run() failed: %+v", err)
 	}
 }
 
@@ -171,67 +205,80 @@ func TestInterfaceResolutionWithPointerReceiver(t *testing.T) {
 	dir, cleanup := scantest.WriteFiles(t, files)
 	defer cleanup()
 
-	var personGreetCalled bool
+	pkgPaths := []string{"example.com/me/def", "example.com/me/impl", "example.com/me"}
+	perms := permutations(pkgPaths)
 
-	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
-		interp, err := NewInterpreter(s, WithLogger(s.Logger))
-		if err != nil {
-			return fmt.Errorf("failed to create interpreter: %w", err)
-		}
-
-		interp.RegisterDefaultIntrinsic(func(i *Interpreter, args []object.Object) object.Object {
-			if len(args) == 0 {
-				return nil
+	for _, p := range perms {
+		t.Run(strings.Join(p, ">"), func(t *testing.T) {
+			s, err := goscan.New(
+				goscan.WithWorkDir(dir),
+				goscan.WithGoModuleResolver(),
+			)
+			if err != nil {
+				t.Fatalf("failed to create scanner: %v", err)
 			}
-			fn, ok := args[0].(*object.Function)
+
+			interp, err := NewInterpreter(s, WithLogger(s.Logger))
+			if err != nil {
+				t.Fatalf("failed to create interpreter: %v", err)
+			}
+
+			var personGreetCalled bool
+			interp.RegisterDefaultIntrinsic(func(i *Interpreter, args []object.Object) object.Object {
+				if len(args) == 0 {
+					return nil
+				}
+				fn, ok := args[0].(*object.Function)
+				if !ok {
+					return nil
+				}
+
+				if fn.Receiver != nil && fn.Receiver.TypeInfo() != nil && fn.Name != nil {
+					receiverTypeInfo := fn.Receiver.TypeInfo()
+					key := ""
+					if ft := fn.Receiver.FieldType(); ft != nil && ft.IsPointer {
+						key = fmt.Sprintf("(*%s.%s).%s", receiverTypeInfo.PkgPath, receiverTypeInfo.Name, fn.Name.Name)
+					} else {
+						key = fmt.Sprintf("(%s.%s).%s", receiverTypeInfo.PkgPath, receiverTypeInfo.Name, fn.Name.Name)
+					}
+
+					if key == "(*example.com/me/impl.Person).Greet" {
+						personGreetCalled = true
+					}
+				}
+				return nil
+			})
+
+			ctx := context.Background()
+			for _, pkgPath := range p {
+				if _, err := s.ScanPackageByImport(ctx, pkgPath); err != nil {
+					t.Fatalf("could not scan package %s: %v", pkgPath, err)
+				}
+			}
+
+			mainPkgInfo, err := s.ScanPackageByImport(ctx, "example.com/me")
+			if err != nil {
+				t.Fatalf("could not get main package: %v", err)
+			}
+
+			if _, err := interp.Eval(ctx, mainPkgInfo.AstFiles[mainPkgInfo.Files[0]], mainPkgInfo); err != nil {
+				t.Fatalf("evaluation of main pkg failed: %v", err)
+			}
+
+			mainFunc, ok := interp.FindObject("main")
 			if !ok {
-				return nil
+				t.Fatalf("could not find main function in interpreter")
+			}
+			if _, err := interp.Apply(ctx, mainFunc, []object.Object{}, mainPkgInfo); err != nil {
+				t.Fatalf("error applying main function: %v", err)
 			}
 
-			if fn.Receiver != nil && fn.Receiver.TypeInfo() != nil && fn.Name != nil {
-				receiverTypeInfo := fn.Receiver.TypeInfo()
-				key := ""
-				if ft := fn.Receiver.FieldType(); ft != nil && ft.IsPointer {
-					key = fmt.Sprintf("(*%s.%s).%s", receiverTypeInfo.PkgPath, receiverTypeInfo.Name, fn.Name.Name)
-				} else {
-					key = fmt.Sprintf("(%s.%s).%s", receiverTypeInfo.PkgPath, receiverTypeInfo.Name, fn.Name.Name)
-				}
+			interp.Finalize(ctx)
 
-				if key == "(*example.com/me/impl.Person).Greet" {
-					personGreetCalled = true
-				}
+			if !personGreetCalled {
+				t.Errorf("expected (*Person).Greet to be called via interface resolution, but it was not")
 			}
-			return nil
 		})
-
-		mainPkgInfo, err := s.ScanPackageByImport(ctx, "example.com/me")
-		if err != nil {
-			return fmt.Errorf("could not scan main package: %w", err)
-		}
-
-		if _, err := interp.Eval(ctx, mainPkgInfo.AstFiles[mainPkgInfo.Files[0]], mainPkgInfo); err != nil {
-			return fmt.Errorf("evaluation of main pkg failed: %w", err)
-		}
-
-		mainFunc, ok := interp.FindObject("main")
-		if !ok {
-			return fmt.Errorf("could not find main function in interpreter")
-		}
-		if _, err := interp.Apply(ctx, mainFunc, []object.Object{}, mainPkgInfo); err != nil {
-			return fmt.Errorf("error applying main function: %w", err)
-		}
-
-		interp.Finalize(ctx)
-
-		if !personGreetCalled {
-			return fmt.Errorf("expected (*Person).Greet to be called via interface resolution, but it was not")
-		}
-
-		return nil
-	}
-
-	if _, err := scantest.Run(t, context.Background(), dir, []string{"."}, action); err != nil {
-		t.Fatalf("scantest.Run() failed: %+v", err)
 	}
 }
 
@@ -282,66 +329,79 @@ func TestInterfaceResolutionWithValueReceiver(t *testing.T) {
 	dir, cleanup := scantest.WriteFiles(t, files)
 	defer cleanup()
 
-	var emailSendCalled bool
+	pkgPaths := []string{"example.com/me/def", "example.com/me/impl", "example.com/me"}
+	perms := permutations(pkgPaths)
 
-	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
-		interp, err := NewInterpreter(s, WithLogger(s.Logger))
-		if err != nil {
-			return fmt.Errorf("failed to create interpreter: %w", err)
-		}
-
-		interp.RegisterDefaultIntrinsic(func(i *Interpreter, args []object.Object) object.Object {
-			if len(args) == 0 {
-				return nil
+	for _, p := range perms {
+		t.Run(strings.Join(p, ">"), func(t *testing.T) {
+			s, err := goscan.New(
+				goscan.WithWorkDir(dir),
+				goscan.WithGoModuleResolver(),
+			)
+			if err != nil {
+				t.Fatalf("failed to create scanner: %v", err)
 			}
-			fn, ok := args[0].(*object.Function)
+
+			interp, err := NewInterpreter(s, WithLogger(s.Logger))
+			if err != nil {
+				t.Fatalf("failed to create interpreter: %v", err)
+			}
+
+			var emailSendCalled bool
+			interp.RegisterDefaultIntrinsic(func(i *Interpreter, args []object.Object) object.Object {
+				if len(args) == 0 {
+					return nil
+				}
+				fn, ok := args[0].(*object.Function)
+				if !ok {
+					return nil
+				}
+
+				if fn.Receiver != nil && fn.Receiver.TypeInfo() != nil && fn.Name != nil {
+					receiverTypeInfo := fn.Receiver.TypeInfo()
+					key := ""
+					if ft := fn.Receiver.FieldType(); ft != nil && ft.IsPointer {
+						key = fmt.Sprintf("(*%s.%s).%s", receiverTypeInfo.PkgPath, receiverTypeInfo.Name, fn.Name.Name)
+					} else {
+						key = fmt.Sprintf("(%s.%s).%s", receiverTypeInfo.PkgPath, receiverTypeInfo.Name, fn.Name.Name)
+					}
+
+					if key == "(example.com/me/impl.Email).Send" {
+						emailSendCalled = true
+					}
+				}
+				return nil
+			})
+
+			ctx := context.Background()
+			for _, pkgPath := range p {
+				if _, err := s.ScanPackageByImport(ctx, pkgPath); err != nil {
+					t.Fatalf("could not scan package %s: %v", pkgPath, err)
+				}
+			}
+
+			mainPkgInfo, err := s.ScanPackageByImport(ctx, "example.com/me")
+			if err != nil {
+				t.Fatalf("could not get main package: %v", err)
+			}
+
+			if _, err := interp.Eval(ctx, mainPkgInfo.AstFiles[mainPkgInfo.Files[0]], mainPkgInfo); err != nil {
+				t.Fatalf("evaluation of main pkg failed: %v", err)
+			}
+
+			mainFunc, ok := interp.FindObject("main")
 			if !ok {
-				return nil
+				t.Fatalf("could not find main function in interpreter")
+			}
+			if _, err := interp.Apply(ctx, mainFunc, []object.Object{}, mainPkgInfo); err != nil {
+				t.Fatalf("error applying main function: %v", err)
 			}
 
-			if fn.Receiver != nil && fn.Receiver.TypeInfo() != nil && fn.Name != nil {
-				receiverTypeInfo := fn.Receiver.TypeInfo()
-				key := ""
-				if ft := fn.Receiver.FieldType(); ft != nil && ft.IsPointer {
-					key = fmt.Sprintf("(*%s.%s).%s", receiverTypeInfo.PkgPath, receiverTypeInfo.Name, fn.Name.Name)
-				} else {
-					key = fmt.Sprintf("(%s.%s).%s", receiverTypeInfo.PkgPath, receiverTypeInfo.Name, fn.Name.Name)
-				}
+			interp.Finalize(ctx)
 
-				if key == "(example.com/me/impl.Email).Send" {
-					emailSendCalled = true
-				}
+			if !emailSendCalled {
+				t.Errorf("expected (Email).Send to be called via interface resolution, but it was not")
 			}
-			return nil
 		})
-
-		mainPkgInfo, err := s.ScanPackageByImport(ctx, "example.com/me")
-		if err != nil {
-			return fmt.Errorf("could not scan main package: %w", err)
-		}
-
-		if _, err := interp.Eval(ctx, mainPkgInfo.AstFiles[mainPkgInfo.Files[0]], mainPkgInfo); err != nil {
-			return fmt.Errorf("evaluation of main pkg failed: %w", err)
-		}
-
-		mainFunc, ok := interp.FindObject("main")
-		if !ok {
-			return fmt.Errorf("could not find main function in interpreter")
-		}
-		if _, err := interp.Apply(ctx, mainFunc, []object.Object{}, mainPkgInfo); err != nil {
-			return fmt.Errorf("error applying main function: %w", err)
-		}
-
-		interp.Finalize(ctx)
-
-		if !emailSendCalled {
-			return fmt.Errorf("expected (Email).Send to be called via interface resolution, but it was not")
-		}
-
-		return nil
-	}
-
-	if _, err := scantest.Run(t, context.Background(), dir, []string{"."}, action); err != nil {
-		t.Fatalf("scantest.Run() failed: %+v", err)
 	}
 }

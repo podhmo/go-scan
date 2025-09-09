@@ -96,3 +96,40 @@ The task was resumed and the core issues were successfully resolved through a di
     -   The vast majority of other interface-related tests, especially those involving intrinsics, correct receiver propagation, and type preservation across `if/else` branches, are **now passing**.
 
 The core of the evaluator is significantly more robust, but the final resolution step for discovering all concrete implementers (`Finalize`) and handling manual bindings (`BindInterface`) remains incomplete.
+
+## 7. Further Investigation (2025-09-08)
+
+Following the previous work, a dedicated task was initiated to resolve the remaining test failures.
+
+### Problem Recap: Package Discovery
+
+The investigation began by confirming the analysis in the `cont-symgo-interface-resolution.md` document. The primary suspect was that the `Finalize` function did not discover in-memory packages created during `scantest`.
+
+This was addressed by:
+1.  Adding a new `AllSeenPackages()` method to `goscan.Scanner` to expose its complete, internal package cache.
+2.  Modifying `Finalize` to use this method as its source of packages, ensuring all `scantest` packages are included.
+3.  Filtering these packages against the active `ScanPolicy` to ensure only intended packages are analyzed.
+
+### Deeper Issue Revealed: State Management Failure
+
+Even with the package discovery issue resolved, the key interface resolution tests (`TestInterfaceResolution`, `TestEval_InterfaceMethodCall_AcrossControlFlow`, etc.) still failed.
+
+A detailed investigation into these failures revealed the current root cause: **the evaluator does not correctly track the state of variables across control-flow branches.**
+
+The `TestEval_InterfaceMethodCall_AcrossControlFlow` test highlights this perfectly. The test uses code similar to the following:
+```go
+var a Animal // Interface type
+if condition {
+    a = &Dog{}
+} else {
+    a = &Cat{}
+}
+a.Speak() // This call should be linked to both Dog.Speak and Cat.Speak
+```
+The evaluator correctly explores both the `if` and `else` branches. However, the state modification from one branch (e.g., assigning `&Dog{}` to `a`) is not merged or retained when the other branch is explored. The `PossibleTypes` map on the `Variable` object for `a`, which is supposed to accumulate all possible concrete types, ends up containing only the type from the last-evaluated branch.
+
+This is a fundamental limitation in the evaluator's design. It is path-insensitive (it explores all branches) but does not correctly merge the resulting states from those branches. Because the `PossibleTypes` map is incomplete, the `Finalize` function, which relies on this map to connect the `a.Speak()` call to its concrete implementations, cannot find all the correct methods.
+
+### Next Steps
+
+The next concrete task is to fix this state management issue within the evaluator. This will likely involve changing how environments and variable states are handled in the `evalIfStmt` function and potentially other control-flow handlers to ensure that side effects from all explored paths are correctly merged or accumulated. After this is fixed, the `Finalize` logic should have the correct data to resolve interface calls properly.

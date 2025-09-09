@@ -24,7 +24,10 @@ The original high-level plan was as follows:
     -   Collect all struct and interface definitions from all scanned packages.
     -   Build a map of which structs implement which interfaces.
     -   Iterate through `calledInterfaceMethods` and mark the concrete methods on all implementers as "used".
-5.  **Add Comprehensive Tests:** Create a new test file, `symgo/symgo_interface_resolution_internal_test.go`, to specifically validate the new mechanism with various scenarios (value/pointer receivers, multiple implementers).
+5.  **Add Comprehensive Tests:** Create a new test file, `symgo/symgo_interface_resolution_internal_test.go`, to specifically validate the new mechanism. The test suite must cover the following scenarios:
+    -   **Cross-Package Discovery**: The tests must handle a three-package setup (e.g., `A` defines an interface, `B` uses it, `C` implements it) and validate that resolution works regardless of the order in which the packages are discovered by the scanner (all 6 permutations).
+    -   **Conservative Analysis**: The tests must validate that the analysis is conservative. If a call is made on an interface variable that could hold concrete types `S1` or `S2`, the corresponding method must be marked as "used" on *both* `S1` and `S2`.
+    -   **Standard Scenarios**: The tests should also include basic cases for value/pointer receivers and multiple implementers within a single package.
 6.  **Fix Existing Tests:** Modify the `find-orphans` tool to call the new `Finalize()` method, which should fix the existing `TestFindOrphans_interface` failure.
 7.  **Submit** the final, working changes.
 
@@ -101,7 +104,52 @@ Despite the progress, four key tests in `./symgo/...` still fail, pointing to de
 -   [x] **3. Implement Collection Logic:** Complete.
 -   [-] **4. Implement Finalization Logic:** Partially implemented, but `TestInterfaceResolution` reveals it is not correct. `BindInterface` is also non-functional.
 -   [x] **5. Add Comprehensive Tests:** The existing test suite was leveraged and fixed. No new dedicated file was created, but the coverage is high.
--   [ ] **6. Fix Existing Tests:** 
+-   [ ] **6. Fix Existing Tests:**
 -   [ ] **7. Submit:** Pending.
 
 The core of the symbolic execution for interface calls is now much more robust. The remaining work is concentrated on the post-execution `Finalize` step and the `BindInterface` feature.
+
+## 8. Further Investigation (2025-09-08)
+
+Following the previous work, a dedicated task was initiated to resolve the remaining test failures.
+
+### Problem Recap: Package Discovery
+
+The investigation began by confirming the analysis in the `cont-symgo-interface-resolution.md` document. The primary suspect was that the `Finalize` function did not discover in-memory packages created during `scantest`.
+
+This was addressed by:
+1.  Adding a new `AllSeenPackages()` method to `goscan.Scanner` to expose its complete, internal package cache.
+2.  Modifying `Finalize` to use this method as its source of packages, ensuring all `scantest` packages are included.
+3.  Filtering these packages against the active `ScanPolicy` to ensure only intended packages are analyzed.
+
+### Deeper Issue Revealed: State Management Failure
+
+Even with the package discovery issue resolved, the key interface resolution tests (`TestInterfaceResolution`, `TestEval_InterfaceMethodCall_AcrossControlFlow`, etc.) still failed.
+
+A detailed investigation into these failures revealed the current root cause: **the evaluator does not correctly track the state of variables across control-flow branches.**
+
+The `TestEval_InterfaceMethodCall_AcrossControlFlow` test highlights this perfectly. The test uses code similar to the following:
+```go
+var a Animal // Interface type
+if condition {
+    a = &Dog{}
+} else {
+    a = &Cat{}
+}
+a.Speak() // This call should be linked to both Dog.Speak and Cat.Speak
+```
+The evaluator correctly explores both the `if` and `else` branches. However, the state modification from one branch (e.g., assigning `&Dog{}` to `a`) is not merged or retained when the other branch is explored. The `PossibleTypes` map on the `Variable` object for `a`, which is supposed to accumulate all possible concrete types, ends up containing only the type from the last-evaluated branch.
+
+This is a fundamental limitation in the evaluator's design. It is path-insensitive (it explores all branches) but does not correctly merge the resulting states from those branches. Because the `PossibleTypes` map is incomplete, the `Finalize` function, which relies on this map to connect the `a.Speak()` call to its concrete implementations, cannot find all the correct methods.
+
+### Next Steps
+
+The next concrete task is to fix this state management issue within the evaluator. This will likely involve changing how environments and variable states are handled in the `evalIfStmt` function and potentially other control-flow handlers to ensure that side effects from all explored paths are correctly merged or accumulated. After this is fixed, the `Finalize` logic should have the correct data to resolve interface calls properly.
+
+A comprehensive test suite must be developed to validate the final solution. This suite should cover the following cross-package and out-of-order discovery scenarios:
+- **Package Setup:**
+  - Package A: Defines interface `I`.
+  - Package B: Uses a value of type `I`.
+  - Package C: Defines a struct `S` that implements `I`.
+- **Discovery Order:** The test harness should be able to introduce these packages to the `symgo` engine in all six possible permutations of discovery order (e.g., A → B → C, A → C → B, B → A → C, etc.) to ensure the resolution is order-independent.
+- **Conservative Analysis:** The tests must also validate that the analysis is conservative. If implementations `S1` and `S2` both implement interface `I`, a call to method `M` on a variable of type `I` that could be `S1` must mark the method `M` as "used" on *both* `S1` and `S2`.

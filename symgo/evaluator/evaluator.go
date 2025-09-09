@@ -3328,14 +3328,24 @@ func (e *Evaluator) Finalize(ctx context.Context) {
 	allStructs := make(map[string]*scanner.TypeInfo)
 	allInterfaces := make(map[string]*scanner.TypeInfo)
 
-	// 1. Collect all struct and interface types from all scanned packages.
-	pkgs := e.seenPackages
-	if pkgs == nil {
-		e.logger.DebugContext(ctx, "finalize: no packages seen, skipping")
+	// 1. Collect all packages from the scanner's cache, respecting the scan policy.
+	// This replaces the old `e.seenPackages` mechanism.
+	allPackagesFromScanner := e.scanner.AllSeenPackages()
+	e.seenPackages = make(map[string]*goscan.Package) // Reset seenPackages
+	for importPath, pkg := range allPackagesFromScanner {
+		if e.resolver.ScanPolicy(importPath) {
+			e.seenPackages[importPath] = pkg
+		}
+	}
+
+	if len(e.seenPackages) == 0 {
+		e.logger.DebugContext(ctx, "finalize: no packages seen after applying policy, skipping")
 		return
 	}
-	e.logger.DebugContext(ctx, "finalize: starting type collection", "package_count", len(pkgs))
-	for _, pkg := range pkgs {
+
+	// 2. Collect all struct and interface types from the policy-filtered packages.
+	e.logger.DebugContext(ctx, "finalize: starting type collection", "package_count", len(e.seenPackages))
+	for _, pkg := range e.seenPackages {
 		if pkg == nil {
 			continue
 		}
@@ -3350,7 +3360,7 @@ func (e *Evaluator) Finalize(ctx context.Context) {
 	}
 	e.logger.DebugContext(ctx, "finalize: finished type collection", "struct_count", len(allStructs), "interface_count", len(allInterfaces))
 
-	// 2. Build the implementation map.
+	// 3. Build the implementation map.
 	interfaceImplementers := make(map[string]map[string]struct{}) // key: interface name, value: set of implementer names
 	for ifaceName, ifaceType := range allInterfaces {
 		for structName, structType := range allStructs {
@@ -3364,7 +3374,7 @@ func (e *Evaluator) Finalize(ctx context.Context) {
 	}
 	e.logger.DebugContext(ctx, "finalize: implementation map", "map", fmt.Sprintf("%#v", interfaceImplementers))
 
-	// 3. Process called interface methods.
+	// 4. Process called interface methods.
 	e.logger.DebugContext(ctx, "finalize: processing called interface methods", "count", len(e.calledInterfaceMethods))
 	for calledMethodKey := range e.calledInterfaceMethods {
 		parts := strings.Split(calledMethodKey, ".")

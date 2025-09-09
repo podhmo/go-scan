@@ -31,6 +31,7 @@ type FileScope struct {
 // Evaluator is the main object that evaluates the AST.
 type Evaluator struct {
 	scanner           *goscan.Scanner
+	funcCache         map[string]object.Object
 	intrinsics        *intrinsics.Registry
 	logger            *slog.Logger
 	tracer            object.Tracer // Tracer for debugging evaluation flow.
@@ -84,6 +85,7 @@ func New(scanner *goscan.Scanner, logger *slog.Logger, tracer object.Tracer, sca
 
 	e := &Evaluator{
 		scanner:                scanner,
+		funcCache:              make(map[string]object.Object),
 		intrinsics:             intrinsics.New(),
 		logger:                 logger,
 		tracer:                 tracer,
@@ -1181,7 +1183,7 @@ func (e *Evaluator) ensurePackageEnvPopulated(ctx context.Context, pkgObj *objec
 		if !shouldScan && !ast.IsExported(f.Name) {
 			continue
 		}
-		fnObject := e.resolver.ResolveFunction(pkgObj, f)
+		fnObject := e.getOrResolveFunction(pkgObj, f)
 		env.SetLocal(f.Name, fnObject)
 	}
 
@@ -1416,7 +1418,7 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 				for _, f := range val.ScannedInfo.Functions {
 					if f.Name == n.Sel.Name {
 						e.logc(ctx, slog.LevelWarn, "correcting polluted cache: found function for non-callable symbol", "package", val.Path, "symbol", n.Sel.Name)
-						fnObject := e.resolver.ResolveFunction(val, f)
+						fnObject := e.getOrResolveFunction(val, f)
 						val.Env.Set(n.Sel.Name, fnObject) // Correct the cache
 						return fnObject
 					}
@@ -1433,7 +1435,7 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 				}
 
 				// Delegate function object creation to the resolver.
-				fnObject := e.resolver.ResolveFunction(val, f)
+				fnObject := e.getOrResolveFunction(val, f)
 				val.Env.Set(n.Sel.Name, fnObject)
 				return fnObject
 			}
@@ -3316,6 +3318,30 @@ func (e *Evaluator) ApplyFunction(call *ast.CallExpr, fn object.Object, args []o
 	return e.applyFunction(context.Background(), fn, args, nil, call.Pos())
 }
 
+func (e *Evaluator) getOrResolveFunction(pkg *object.Package, funcInfo *scanner.FunctionInfo) object.Object {
+	// Generate a unique key for the function. For methods, the receiver type is crucial.
+	key := ""
+	if funcInfo.Receiver != nil && funcInfo.Receiver.Type != nil {
+		// e.g., "example.com/me/impl.(*Dog).Speak"
+		key = fmt.Sprintf("%s.(%s).%s", pkg.Path, funcInfo.Receiver.Type.String(), funcInfo.Name)
+	} else {
+		// e.g., "example.com/me.MyFunction"
+		key = fmt.Sprintf("%s.%s", pkg.Path, funcInfo.Name)
+	}
+
+	// Check cache first.
+	if fn, ok := e.funcCache[key]; ok {
+		return fn
+	}
+
+	// Not in cache, resolve it.
+	fn := e.resolver.ResolveFunction(pkg, funcInfo)
+
+	// Store in cache for next time.
+	e.funcCache[key] = fn
+	return fn
+}
+
 // Finalize performs the final analysis step, connecting interface method calls
 // to their concrete implementations. This should be called after all initial
 // symbolic execution is complete.
@@ -3412,7 +3438,7 @@ func (e *Evaluator) Finalize(ctx context.Context) {
 			}
 
 			// Create a callable object.Function for the concrete method.
-			fnObject := e.resolver.ResolveFunction(pkg, concreteMethodInfo)
+			fnObject := e.getOrResolveFunction(pkg, concreteMethodInfo)
 			if fnObject == nil {
 				continue
 			}

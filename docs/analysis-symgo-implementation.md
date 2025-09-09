@@ -82,6 +82,8 @@ The engine has robust support for resolving method calls, including on interface
 
 - **Interface Method Calls (`evalSelectorExpr`, `applyFunction`)**: A call to an interface method is handled in a purely symbolic way. The engine does not attempt to perform dynamic dispatch to a concrete type. Instead, `evalSelectorExpr` resolves the call to the method signature on the interface definition itself. Then, `applyFunction` recognizes this as a call to a symbolic interface method and returns a `SymbolicPlaceholder` representing the method's return value(s), correctly typed according to the signature. This is a crucial design choice for static analysis, where the concrete type of an interface is often unknown.
 
+- **Interface Implementation Checks (`isImplementer`)**: The logic that checks if a concrete type implements an interface correctly follows Go's method set rules. Specifically, it understands that for a type `T`, its method set includes all methods with a value receiver `(t T)`. For a pointer type `*T`, its method set includes methods with both value `(t T)` and pointer `(t *T)` receivers. Because the method set of `*T` is a superset of `T`'s method set, the implementation check does not need to distinguish between pointer and value receivers when checking if a type satisfies an interface; it correctly handles both cases as per the language specification. This is an intentional design choice.
+
 ### 2.9. Other Evaluated Expressions
 
 The engine selectively evaluates expressions to find function calls, prioritizing discovery over computation.

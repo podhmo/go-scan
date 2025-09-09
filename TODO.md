@@ -84,8 +84,8 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 ### symgo: Fix Cross-Package Unexported Symbol Resolution ([docs/trouble-symgo-nested-scope.md](./docs/trouble-symgo-nested-scope.md))
 - [x] Evaluate package-level var declarations in `ensurePackageEnvPopulated` to fix "identifier not found" errors for unexported symbols.
 - [x] Fix regressions caused by the lazy-evaluation implementation. The core regressions related to variable evaluation, pointer dispatch, and recursion detection have been resolved.
-- [-] Fix `find-orphans` incorrectly reporting `formatCode` as an orphan in the `examples/convert` project. The tool no longer hangs, but analysis of `main` fails due to a deeper recursion issue.
-- [ ] The `symgo` recursion detector is overly aggressive when analyzing other recursive evaluators (like `minigo`), causing analysis to fail. This is the new root cause for the `find-orphans` issue.
+- [x] **Investigation Complete**: The `find-orphans` hang is caused by an inconsistent "bounded analysis" strategy in `symgo`. The engine correctly bounds `for` loops (unrolling them once) but does not apply a similar bound to recursive function calls. This causes the analysis of the deeply recursive `parser.go` to become impractically long, appearing as a hang. The full analysis is now documented in `docs/trouble-symgo.md`.
+- [ ] **Implement Bounded Recursion**: Fix the inconsistency by modifying `applyFunction` in `symgo/evaluator/evaluator.go`. Add a mechanism to limit the analysis of recursive call chains to a small, fixed depth, similar to how `for` loops are handled.
 
 ### `symgo` Engine Improvements ([docs/plan-symgo-refine2.md](./docs/plan-symgo-refine2.md))
 - [x] **Fix Regressions**: Addressed `e2e` test failures in `find-orphans` by generalizing the handling of unresolved functions and fixing an infinite recursion bug.

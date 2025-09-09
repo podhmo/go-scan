@@ -1,60 +1,62 @@
-# Troubleshooting: `symgo` Interface Binding and Intrinsics
+# Troubleshooting: `symgo`'s Inconsistent Bounded Analysis Strategy
 
-This document details the investigation and resolution of a bug where the `symgo` engine's `BindInterface` feature failed to correctly resolve method calls that had registered intrinsics.
+This document details the investigation of an issue where the `find-orphans` tool, powered by the `symgo` engine, fails to analyze the `examples/convert` project. The root cause is an **inconsistency in `symgo`'s bounded analysis strategy**: it correctly bounds loop iterations but fails to bound recursive function calls, leading to impractical, deep analysis that appears as a hang.
 
 ## 1. The Problem
 
-The `symgo.TestInterfaceBinding` test case was failing with the error: `undefined method "WriteString" on interface "Writer"`.
-
-The test was designed to validate the following scenario:
-1.  An interface (`io.Writer`) is manually bound to a concrete type (`*bytes.Buffer`) using `Interpreter.BindInterface()`.
-2.  An intrinsic (a custom handler) is registered for the method on the concrete type: `(*bytes.Buffer).WriteString`.
-3.  The symbolic engine analyzes a function that calls `WriteString` on an `io.Writer` variable.
-
-The expectation was that the engine would use the binding to identify that `writer.WriteString` should resolve to `(*bytes.Buffer).WriteString` and then execute the registered intrinsic. The error message indicated that the engine was still treating `writer` as a generic `io.Writer` interface, which does not have a `WriteString` method.
+When running `find-orphans` on `examples/convert`, the process hangs. Debug logs show a very deep call stack (400+ frames) that alternates between two functions in `examples/convert/parser/parser.go` at the exact same line numbers, indicating a non-productive loop.
 
 ## 2. Investigation
 
-The investigation traced the execution flow from the `symgo.Interpreter` down to the `symgo.evaluator.Evaluator`.
+### The Principle of Bounded Analysis
 
-### Step 1: Checking the `Interpreter`
-The `symgo.Interpreter.BindInterface` method was examined first. It was correctly parsing the concrete type name (`*bytes.Buffer`), identifying it as a pointer, and looking up the `TypeInfo` for the base type (`bytes.Buffer`). It then called the evaluator's `BindInterface` method.
+A core design principle of a practical static analyzer like `symgo` is **bounded analysis**. To ensure the analyzer always terminates in a reasonable time, it must place limits on how deeply it explores certain language constructs.
 
-### Step 2: Discovering the Root Cause
-The first critical bug was found in the communication between the `Interpreter` and the `Evaluator`. The `Interpreter` correctly determined if the concrete type was a pointer, but it **discarded this boolean flag**. It only passed the base `*goscan.TypeInfo` to the evaluator.
+The investigation compared how `symgo` applies this principle to `for` loops versus recursive function calls.
 
-As a result, the `evaluator.Evaluator` stored its bindings in a `map[string]*goscan.TypeInfo`, which only knew that `io.Writer` should be treated as `bytes.Buffer`, with no knowledge of the crucial pointer (`*`).
+### `for` Loops: Correctly Bounded
 
-### Step 3: Analyzing `evalSelectorExpr`
-The `evalSelectorExpr` function in the evaluator is responsible for handling method calls (`x.Method()`). The logic for handling calls on interface types was attempting to use the bindings map. However, due to the missing pointer information, it could not construct the correct key to look up a potential intrinsic.
+As documented in `docs/analysis-symgo-implementation.md` and implemented in `evalForStmt`, `symgo` correctly bounds loops. It follows an **"unroll once"** strategy, where the body of a `for` loop is evaluated exactly one time. This is a deliberate and sensible limitation to extract symbolic information without getting stuck analyzing complex loop conditions or a large number of iterations.
 
-The test registered its intrinsic with the key `(*bytes.Buffer).WriteString`. The evaluator, lacking the pointer information, would have tried to look for something like `(bytes.Buffer).WriteString`, and failed. This caused it to skip the intrinsic check and proceed to a direct method lookup, which also failed because `io.Writer` doesn't have `WriteString`.
+### Recursive Functions: Unbounded
 
-## 3. The Solution
+The same bounded analysis principle is **not** applied to recursive function calls. The `applyFunction` in `evaluator.go` only has two termination conditions for recursion:
 
-A three-part fix was implemented to correctly propagate and use the pointer information.
+1.  A hard stack depth limit of 4096.
+2.  A true infinite loop detector, which only fires if the *exact same function* is called with the *exact same arguments*.
 
-### Part 1: Improved Data Structure
-A new struct, `interfaceBinding`, was introduced in `evaluator.go`:
-```go
-type interfaceBinding struct {
-	ConcreteType *goscan.TypeInfo
-	IsPointer    bool
-}
+The recursive calls in `parser.go` are not technically infinite; the arguments (like the package being processed) change slightly, so the true infinite loop detector doesn't fire. However, the recursion is extremely deep. `symgo` dutifully follows this recursion, as demonstrated by the user-provided call stack, which exceeds 400 frames while alternating between the same two function call sites:
+
 ```
-The `Evaluator.interfaceBindings` map was changed from `map[string]*goscan.TypeInfo` to `map[string]interfaceBinding`.
+ stack.3.func=processPackage
+ stack.3.pos=.../parser.go:38:12
+ stack.4.func=resolveType
+ stack.4.pos=.../parser.go:148:27
+ stack.5.func=processPackage
+ stack.5.pos=.../parser.go:270:13
+ stack.6.func=resolveType
+ stack.6.pos=.../parser.go:148:27
+ ... (repeats for 400+ frames) ...
+ stack.399.func=processPackage
+ stack.399.pos=.../parser.go:270:13
+ stack.400.func=resolveType
+ stack.400.pos=.../parser.go:148:27
+```
 
-### Part 2: Updated `BindInterface` Methods
-The `BindInterface` methods in both the interpreter and the evaluator were updated.
--   `symgo.Interpreter.BindInterface` was modified to pass the `isPointer` boolean it had already calculated to the evaluator.
--   `symgo.evaluator.Evaluator.BindInterface` was updated to accept the `isPointer` flag and store the new `interfaceBinding` struct in its map.
+This deep analysis is computationally expensive and appears as a "hang" to the user.
 
-### Part 3: Fixed `evalSelectorExpr` Logic
-The core logic in `evalSelectorExpr` was fixed. When a method call on a bound interface is found:
-1.  It now retrieves the complete `interfaceBinding` struct.
-2.  It uses the `IsPointer` flag and `ConcreteType`'s package path and name to construct the correct, fully-qualified receiver name (e.g., `*bytes.Buffer`).
-3.  It uses this name to build the correct intrinsic key (e.g., `(*bytes.Buffer).WriteString`).
-4.  It looks up this key in the intrinsics registry. **If found, it returns the intrinsic.**
-5.  If not found, it falls back to the previous behavior of resolving the method as a standard function.
+## 3. Conclusion: An Inconsistent Strategy
 
-This change ensures that intrinsics registered on concrete types are correctly triggered even when the method call in the source code is on an interface type that has been manually bound. After implementing this fix, `TestInterfaceBinding` and all other tests in the `symgo` suite passed successfully.
+The problem is not a bug in the recursion detector, nor is it related to state management or `if` statements. The root cause is an **inconsistency in `symgo`'s design philosophy**.
+
+The principle of bounded analysis is applied to loops but not to function recursion. `symgo` should treat deep recursion just like it treats a long-running loop: as a construct that should be bounded to ensure timely analysis. By failing to do so, it gets bogged down in a deep analysis that is practically, if not theoretically, infinite.
+
+The user's intuition was correct: "it should be enough to call the recursion once."
+
+### Next Steps
+
+The `symgo` evaluator needs to be modified to make its analysis strategy consistent.
+
+1.  **Implement Bounded Recursion**: The primary task is to modify `applyFunction` in `symgo/evaluator/evaluator.go`. It should be enhanced with a mechanism to limit the analysis of recursive call chains to a small, fixed depth, similar to how `for` loops are handled. For example, it could track the number of times a given function definition appears in the current call stack and stop the analysis if it exceeds a small, configurable threshold (e.g., 2 or 3).
+
+2.  **Update `TODO.md`**: The task list must be updated to reflect this new, accurate understanding of the required fix. The task is to implement a bounded analysis strategy for function recursion.

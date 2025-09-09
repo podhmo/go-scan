@@ -69,6 +69,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - **`symgo` Interpreter Core Completion**: Completed the core symbolic execution engine to handle all major AST node types and language constructs. Key improvements include: proper import path resolution ([docs/trouble-symgo-identifier-not-found.md](./docs/trouble-symgo-identifier-not-found.md)), resilience to undefined identifiers, infinite recursion prevention, enhanced AST node support (generics, channels, function literals, etc.), and comprehensive refactoring of evaluator components (Resolver, accessor, Context handling).
 - **`symgo` Architecture Refinements**: Major refactoring to improve analysis scope management and error handling. Introduced explicit analysis scopes with `WithPrimaryAnalysisScope` and `WithSymbolicDependencyScope`, enhanced type information for unresolved types, and improved resolver error handling for better robustness.
 - **Advanced Analysis and Tool Enhancements**: Implemented comprehensive enhancements including structured logging with source stack traces, automatic workspace detection with `go.work` support, advanced interface method call analysis, multi-module workspace support with unified analysis, enhanced reporting capabilities (JSON output), and wildcard pattern support for improved package discovery.
+- **`symgo`: Bounded Recursion**: The symbolic execution engine now uses a bounded recursion strategy to prevent analysis from hanging on deeply recursive functions. The evaluator now halts analysis of a recursive call path after one level, making its behavior consistent with the existing "unroll-once" strategy for loops and improving overall robustness. ([docs/plan-symgo-shallow-recursive.md](./docs/plan-symgo-shallow-recursive.md))
 
 
 ## To Be Implemented
@@ -84,8 +85,6 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 ### symgo: Fix Cross-Package Unexported Symbol Resolution ([docs/trouble-symgo-nested-scope.md](./docs/trouble-symgo-nested-scope.md))
 - [x] Evaluate package-level var declarations in `ensurePackageEnvPopulated` to fix "identifier not found" errors for unexported symbols.
 - [x] Fix regressions caused by the lazy-evaluation implementation. The core regressions related to variable evaluation, pointer dispatch, and recursion detection have been resolved.
-- [x] **Investigation Complete**: The `find-orphans` hang is caused by an inconsistent "bounded analysis" strategy in `symgo`. The engine correctly bounds `for` loops (unrolling them once) but does not apply a similar bound to recursive function calls. This causes the analysis of the deeply recursive `parser.go` to become impractically long, appearing as a hang. The full analysis is now documented in `docs/trouble-symgo.md`.
-- [ ] **Implement Bounded Recursion**: Fix the inconsistency by modifying `applyFunction` in `symgo/evaluator/evaluator.go`. Add a mechanism to limit the analysis of recursive call chains to a small, fixed depth, similar to how `for` loops are handled.
 
 ### `symgo` Engine Improvements ([docs/plan-symgo-refine2.md](./docs/plan-symgo-refine2.md))
 - [x] **Fix Regressions**: Addressed `e2e` test failures in `find-orphans` by generalizing the handling of unresolved functions and fixing an infinite recursion bug.

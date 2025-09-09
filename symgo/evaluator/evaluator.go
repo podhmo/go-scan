@@ -2067,6 +2067,12 @@ func (e *Evaluator) evalReturnStmt(ctx context.Context, n *ast.ReturnStmt, env *
 		if isError(val) {
 			return val
 		}
+		// The result of an expression must be fully evaluated before being returned.
+		val = e.forceEval(ctx, val, pkg)
+		if isError(val) {
+			return val
+		}
+
 		if _, ok := val.(*object.ReturnValue); ok {
 			return val
 		}
@@ -2486,9 +2492,10 @@ func (e *Evaluator) evalIdent(ctx context.Context, n *ast.Ident, env *object.Env
 
 	if val, ok := env.Get(n.Name); ok {
 		e.logger.Debug("evalIdent: found in env", "name", n.Name, "type", val.Type(), "val", inspectValuer{val})
-		if v, ok := val.(*object.Variable); ok {
+		if _, ok := val.(*object.Variable); ok {
 			e.logger.Debug("evalIdent: identifier is a variable, evaluating it", "name", n.Name)
-			evaluatedValue := e.evalVariable(ctx, v, pkg)
+			// When an identifier is accessed, we must force its full evaluation.
+			evaluatedValue := e.forceEval(ctx, val, pkg)
 			e.logger.Debug("evalIdent: evaluated variable", "name", n.Name, "type", evaluatedValue.Type(), "value", inspectValuer{evaluatedValue})
 			return evaluatedValue
 		}
@@ -2889,7 +2896,7 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 
 	// If `fn` is a variable, we need to evaluate it to get the underlying function.
 	if v, ok := fn.(*object.Variable); ok {
-		underlyingFn := e.evalVariable(ctx, v, pkg)
+		underlyingFn := e.forceEval(ctx, v, pkg) // Use forceEval to handle chained variables
 		if isError(underlyingFn) {
 			return underlyingFn
 		}

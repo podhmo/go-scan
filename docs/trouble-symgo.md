@@ -1,47 +1,60 @@
-# Trouble-Shooting: `symgo` Interface State Merging Across Control Flow
+# Troubleshooting: `symgo` Interface Binding and Intrinsics
+
+This document details the investigation and resolution of a bug where the `symgo` engine's `BindInterface` feature failed to correctly resolve method calls that had registered intrinsics.
 
 ## 1. The Problem
 
-The `symgo` symbolic execution engine fails to correctly aggregate the state of interface variables across different control-flow branches. When an interface variable is assigned different concrete types within `if` and `else` blocks, the evaluator only retains the state from the last branch it evaluates. This leads to an incomplete understanding of the possible concrete types an interface may hold, causing failures in downstream analysis tools that rely on this information.
+The `symgo.TestInterfaceBinding` test case was failing with the error: `undefined method "WriteString" on interface "Writer"`.
 
-## 2. Evidence: `TestEval_InterfaceMethodCall_AcrossControlFlow`
+The test was designed to validate the following scenario:
+1.  An interface (`io.Writer`) is manually bound to a concrete type (`*bytes.Buffer`) using `Interpreter.BindInterface()`.
+2.  An intrinsic (a custom handler) is registered for the method on the concrete type: `(*bytes.Buffer).WriteString`.
+3.  The symbolic engine analyzes a function that calls `WriteString` on an `io.Writer` variable.
 
-This behavior is clearly demonstrated by the failing test case `TestEval_InterfaceMethodCall_AcrossControlFlow` in `symgo/evaluator/evaluator_interface_method_test.go`.
+The expectation was that the engine would use the binding to identify that `writer.WriteString` should resolve to `(*bytes.Buffer).WriteString` and then execute the registered intrinsic. The error message indicated that the engine was still treating `writer` as a generic `io.Writer` interface, which does not have a `WriteString` method.
 
-The test sets up the following scenario:
+## 2. Investigation
+
+The investigation traced the execution flow from the `symgo.Interpreter` down to the `symgo.evaluator.Evaluator`.
+
+### Step 1: Checking the `Interpreter`
+The `symgo.Interpreter.BindInterface` method was examined first. It was correctly parsing the concrete type name (`*bytes.Buffer`), identifying it as a pointer, and looking up the `TypeInfo` for the base type (`bytes.Buffer`). It then called the evaluator's `BindInterface` method.
+
+### Step 2: Discovering the Root Cause
+The first critical bug was found in the communication between the `Interpreter` and the `Evaluator`. The `Interpreter` correctly determined if the concrete type was a pointer, but it **discarded this boolean flag**. It only passed the base `*goscan.TypeInfo` to the evaluator.
+
+As a result, the `evaluator.Evaluator` stored its bindings in a `map[string]*goscan.TypeInfo`, which only knew that `io.Writer` should be treated as `bytes.Buffer`, with no knowledge of the crucial pointer (`*`).
+
+### Step 3: Analyzing `evalSelectorExpr`
+The `evalSelectorExpr` function in the evaluator is responsible for handling method calls (`x.Method()`). The logic for handling calls on interface types was attempting to use the bindings map. However, due to the missing pointer information, it could not construct the correct key to look up a potential intrinsic.
+
+The test registered its intrinsic with the key `(*bytes.Buffer).WriteString`. The evaluator, lacking the pointer information, would have tried to look for something like `(bytes.Buffer).WriteString`, and failed. This caused it to skip the intrinsic check and proceed to a direct method lookup, which also failed because `io.Writer` doesn't have `WriteString`.
+
+## 3. The Solution
+
+A three-part fix was implemented to correctly propagate and use the pointer information.
+
+### Part 1: Improved Data Structure
+A new struct, `interfaceBinding`, was introduced in `evaluator.go`:
 ```go
-var s Speaker // Interface
-if someCondition {
-    s = &Dog{}
-} else {
-    s = &Cat{}
+type interfaceBinding struct {
+	ConcreteType *goscan.TypeInfo
+	IsPointer    bool
 }
-s.Speak()
 ```
+The `Evaluator.interfaceBindings` map was changed from `map[string]*goscan.TypeInfo` to `map[string]interfaceBinding`.
 
-The test asserts that the `object.Variable` corresponding to `s` should have two entries in its `PossibleTypes` map: `*Dog` and `*Cat`. However, the test fails because the map only contains one of these types, indicating that the state from one branch is overwriting or ignoring the state from the other.
+### Part 2: Updated `BindInterface` Methods
+The `BindInterface` methods in both the interpreter and the evaluator were updated.
+-   `symgo.Interpreter.BindInterface` was modified to pass the `isPointer` boolean it had already calculated to the evaluator.
+-   `symgo.evaluator.Evaluator.BindInterface` was updated to accept the `isPointer` flag and store the new `interfaceBinding` struct in its map.
 
-## 3. Root Cause Analysis
+### Part 3: Fixed `evalSelectorExpr` Logic
+The core logic in `evalSelectorExpr` was fixed. When a method call on a bound interface is found:
+1.  It now retrieves the complete `interfaceBinding` struct.
+2.  It uses the `IsPointer` flag and `ConcreteType`'s package path and name to construct the correct, fully-qualified receiver name (e.g., `*bytes.Buffer`).
+3.  It uses this name to build the correct intrinsic key (e.g., `(*bytes.Buffer).WriteString`).
+4.  It looks up this key in the intrinsics registry. **If found, it returns the intrinsic.**
+5.  If not found, it falls back to the previous behavior of resolving the method as a standard function.
 
-The root cause lies in the implementation of `evalIfStmt` in `symgo/evaluator/evaluator.go`. The function correctly follows a symbolic execution pattern by evaluating both the `then` and `else` blocks. It creates separate, enclosed environments (`thenEnv` and `elseEnv`) for each branch to ensure lexical scoping is respected.
-
-However, after the evaluation of these branches completes, there is no logic to merge the resulting state changes from `thenEnv` and `elseEnv` back into the parent environment (`ifStmtEnv`). The `assignIdentifier` function correctly adds a new concrete type to a variable's `PossibleTypes` set, but it does so on a `Variable` object within the temporary branch environment. This environment and all the state changes within it are discarded once the branch evaluation is complete.
-
-As a result, the `PossibleTypes` of any variable modified within the `if` or `else` block are not persisted in the parent scope, leading to the observed bug.
-
-## 4. Contradiction with Existing Documentation
-
-The document `docs/analysis-symgo-implementation.md` contains a section that incorrectly describes the engine's behavior in this exact scenario. Section 2.1 states:
-
-> Furthermore, the `assignIdentifier` function contains special logic for variables with an `interface` type. When a value is assigned to an interface variable, the evaluator **adds** the concrete type of the value to a set of `PossibleTypes` on the variable object. This "additive update" mechanism is how the evaluator correctly merges the outcomes of both `if` and `else` branches...
-
-This analysis is flawed. While the "additive update" logic in `assignIdentifier` exists, it is rendered ineffective by the lack of a state-merging step in `evalIfStmt`. The documentation describes the intended design, but not the actual, buggy implementation.
-
-## 5. Proposed Solution
-
-The fix is to enhance `evalIfStmt`. After evaluating the `then` and `else` branches, new logic will be added to:
-1.  Iterate through the variables in the parent environment (`ifStmtEnv`).
-2.  For each variable, look up its counterpart by name in `thenEnv` and `elseEnv`.
-3.  If a counterpart exists and has a populated `PossibleTypes` set, merge those types into the `PossibleTypes` set of the original variable in `ifStmtEnv`.
-
-This will ensure that the effects of assignments within all control-flow paths are correctly accumulated.
+This change ensures that intrinsics registered on concrete types are correctly triggered even when the method call in the source code is on an interface type that has been manually bound. After implementing this fix, `TestInterfaceBinding` and all other tests in the `symgo` suite passed successfully.

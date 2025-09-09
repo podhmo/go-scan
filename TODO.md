@@ -73,21 +73,20 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 
 ## To Be Implemented
 
+### `symgo`: Fix Interface Resolution Logic ([docs/cont-symgo-interface-resolution.md](./docs/cont-symgo-interface-resolution.md))
+- [x] The `isImplementer` function in `evaluator.go` now correctly handles Go's method set rules for both value and pointer receivers.
+- [ ] The overall interface resolution tests are still failing. The root cause appears to be that the `Finalize` function does not discover the in-memory packages created during `scantest`, so it cannot find any types to check for interface implementation. This needs to be fixed.
+
 ### `symgo`: Implement Robust Interface Resolution ([docs/plan-symgo-interface-resolution.md](./docs/plan-symgo-interface-resolution.md))
 - [-] The `symgo` evaluator has been significantly refactored to improve interface method resolution, recursion detection, and type propagation. Most related tests now pass. However, `TestInterfaceResolution` and `TestInterfaceBinding` still fail, pointing to remaining issues in the `Finalize()` and `BindInterface()` mechanisms. See the plan and trouble-shooting documents for the latest status.
-- [ ] The root cause of the remaining test failures has been identified as a state management issue in the evaluator. The evaluator does not correctly accumulate the set of possible concrete types for an interface variable when it is assigned in different control-flow branches (e.g., `if/else`). This state management issue needs to be investigated and fixed.
-- [ ] A comprehensive test suite needs to be developed to validate the final solution, covering all permutations of cross-package discovery and conservative analysis, as detailed in the plan document.
 
-### `symgo`: Fix Cross-Package Unexported Symbol Resolution ([docs/trouble-symgo-nested-scope.md](./docs/trouble-symgo-nested-scope.md))
+### symgo: Fix Cross-Package Unexported Symbol Resolution ([docs/trouble-symgo-nested-scope.md](./docs/trouble-symgo-nested-scope.md))
 - [x] Evaluate package-level var declarations in `ensurePackageEnvPopulated` to fix "identifier not found" errors for unexported symbols.
 - [x] Fix regressions caused by the lazy-evaluation implementation. The core regressions related to variable evaluation, pointer dispatch, and recursion detection have been resolved.
 - [ ] Fix `find-orphans` incorrectly reporting `formatCode` as an orphan in the `examples/convert` project. (Note: This is a known regression, see `docs/trouble-symgo-refine.md`).
 - [ ] Deeper state-management issues related to package-level variables in recursive calls remain, as seen in `TestCrossPackageUnexportedResolution`.
 
-### `symgo` Engine Improvements
-- [ ] **Trace calls in `for` loop conditions**: Enhance `evalForStmt` to evaluate the `Cond` expression (without using its result for branching) to trace function calls, similar to how `if` conditions are handled. This would improve call graph completeness. ([docs/plan-symgo-refine2.md](./docs/plan-symgo-refine2.md))
-- [ ] **DX: Add Timeout Flag to `find-orphans`**: Add a `--timeout` flag to the `find-orphans` CLI for easier debugging. ([docs/plan-symgo-refine2.md](./docs/plan-symgo-refine2.md))
-- [ ] **Automatic `go.work` Detection**: Enhance the `--workspace-root` flag in `find-orphans` to automatically detect and use a `go.work` file if present, falling back to the current module discovery mechanism if not. ([docs/plan-find-orphans.md](./docs/plan-find-orphans.md))
-- [ ] **Implement Map and Slice Assignments**: Add support for `*ast.IndexExpr` on the left-hand side of assignment statements in `symgo`. ([docs/plan-symgo-refine.md](./docs/plan-symgo-refine.md))
-- [ ] **Improve Symbolic Pointer Handling**: Prevent "invalid indirect" errors by allowing dereferencing of symbolic pointers in `symgo`. ([docs/plan-symgo-refine.md](./docs/plan-symgo-refine.md))
-- [ ] **Enhance Symbolic Function Return Values**: Correctly model multi-return values from un-analyzable functions in `symgo`. ([docs/plan-symgo-refine.md](./docs/plan-symgo-refine.md))
+### `symgo` Engine Improvements ([docs/plan-symgo-refine2.md](./docs/plan-symgo-refine2.md))
+- [x] **Fix Regressions**: Addressed `e2e` test failures in `find-orphans` by generalizing the handling of unresolved functions and fixing an infinite recursion bug.
+- [ ] **Trace calls in `for` loop conditions**: Enhance `evalForStmt` to evaluate the `Cond` expression (without using its result for branching) to trace function calls, similar to how `if` conditions are handled. This would improve call graph completeness.
+- [ ] **DX: Add Timeout Flag to `find-orphans`**: Add a `--timeout` flag to the `find-orphans` CLI for easier debugging.

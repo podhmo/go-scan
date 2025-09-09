@@ -24,7 +24,10 @@ The original high-level plan was as follows:
     -   Collect all struct and interface definitions from all scanned packages.
     -   Build a map of which structs implement which interfaces.
     -   Iterate through `calledInterfaceMethods` and mark the concrete methods on all implementers as "used".
-5.  **Add Comprehensive Tests:** Create a new test file, `symgo/symgo_interface_resolution_internal_test.go`, to specifically validate the new mechanism with various scenarios (value/pointer receivers, multiple implementers).
+5.  **Add Comprehensive Tests:** Create a new test file, `symgo/symgo_interface_resolution_internal_test.go`, to specifically validate the new mechanism. The test suite must cover the following scenarios:
+    -   **Cross-Package Discovery**: The tests must handle a three-package setup (e.g., `A` defines an interface, `B` uses it, `C` implements it) and validate that resolution works regardless of the order in which the packages are discovered by the scanner (all 6 permutations).
+    -   **Conservative Analysis**: The tests must validate that the analysis is conservative. If a call is made on an interface variable that could hold concrete types `S1` or `S2`, the corresponding method must be marked as "used" on *both* `S1` and `S2`.
+    -   **Standard Scenarios**: The tests should also include basic cases for value/pointer receivers and multiple implementers within a single package.
 6.  **Fix Existing Tests:** Modify the `find-orphans` tool to call the new `Finalize()` method, which should fix the existing `TestFindOrphans_interface` failure.
 7.  **Submit** the final, working changes.
 

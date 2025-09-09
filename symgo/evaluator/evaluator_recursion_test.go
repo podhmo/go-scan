@@ -169,8 +169,8 @@ func main() {
 	l.Loop()
 }
 `,
-			ShouldFail:    true,
-			ExpectedError: "infinite recursion detected",
+			ShouldFail:    false,
+			ExpectedError: "",
 		},
 		{
 			Name: "no-arg function recursion",
@@ -185,8 +185,26 @@ func main() {
 	Recur()
 }
 `,
-			ShouldFail:    true,
-			ExpectedError: "infinite recursion detected",
+			ShouldFail:    false,
+			ExpectedError: "",
+		},
+		{
+			Name: "deep but finite recursion (should be bounded)",
+			Code: `
+package main
+
+func Recur(n int) {
+	if n > 0 {
+		Recur(n - 1)
+	}
+}
+
+func main() {
+	Recur(20) // A depth that would be slow but not infinite
+}
+`,
+			ShouldFail:    false, // With the new bounded logic, this should not error or time out.
+			ExpectedError: "",
 		},
 	}
 

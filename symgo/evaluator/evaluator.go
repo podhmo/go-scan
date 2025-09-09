@@ -2853,27 +2853,26 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 
 	// New recursion check based on function definition and arguments.
 	if f, ok := fn.(*object.Function); ok && f.Def != nil {
+		recursionCount := 0
 		for _, frame := range e.callStack {
 			// Check if we are calling the same function definition.
 			if frame.Fn != nil && frame.Fn.Def == f.Def {
-				var isSameCall bool
 				if f.Receiver != nil {
 					// For methods, check if the receiver object is the same.
 					if frame.Fn.Receiver != nil && frame.Fn.Receiver == f.Receiver {
-						isSameCall = true
+						recursionCount++
 					}
 				} else {
-					// For functions, check if the arguments are identical.
-					if areArgsEqual(frame.Args, args) {
-						isSameCall = true
-					}
-				}
-
-				if isSameCall {
-					e.logc(ctx, slog.LevelWarn, "infinite recursion detected", "function", name)
-					return e.newError(ctx, callPos, "infinite recursion detected: %s", name)
+					// For plain functions, any recursive call is counted.
+					recursionCount++
 				}
 			}
+		}
+
+		// Allow one level of recursion, but stop at the second call.
+		if recursionCount > 1 {
+			e.logc(ctx, slog.LevelWarn, "bounded recursion depth exceeded, halting analysis for this path", "function", name)
+			return e.createSymbolicResultForFunc(ctx, f)
 		}
 	}
 

@@ -68,7 +68,7 @@ The engine includes several mechanisms to ensure analysis is robust and always t
     - **Interface Methods**: Calls on interface-typed variables are handled symbolically. The engine traces the call to the method on the interface definition itself, avoiding the complexity of dynamic dispatch.
 
 - **Recursion and Cycle Detection**:
-    - **Function Calls**: The engine tracks the call stack to halt infinite function recursion. It is smart enough to distinguish between true recursion and valid, state-changing recursive patterns (like linked list traversal).
+    - **Function Calls**: The engine tracks the call stack to halt infinite function recursion. It uses a bounded analysis strategy, limiting the depth of recursive calls to a fixed, small number. This prevents analysis from hanging on deep or infinite recursion, ensuring termination in a way that is consistent with how loops are handled. It is also smart enough to distinguish between true recursion and valid, state-changing recursive patterns (like linked list traversal).
     - **Data Structures**: The engine uses `visited` maps to detect cycles when evaluating composite literals and resolving embedded fields, preventing infinite loops from recursive type definitions.
 
 ## 8. Key Use Cases and Driving Requirements

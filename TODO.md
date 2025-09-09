@@ -73,6 +73,9 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 
 ## To Be Implemented
 
+### `symgo`: Implement Bounded Recursion ([docs/plan-symgo-shallow-recursive.md](./docs/plan-symgo-shallow-recursive.md))
+- [ ] **Implement Bounded Recursion**: Fix the inconsistency by modifying `applyFunction` in `symgo/evaluator/evaluator.go`. Add a mechanism to limit the analysis of recursive call chains to a small, fixed depth, similar to how `for` loops are handled.
+
 ### `symgo`: Implement Robust Interface Resolution ([docs/plan-symgo-interface-resolution.md](./docs/plan-symgo-interface-resolution.md))
 - [x] The `isImplementer` function in `evaluator.go` now correctly handles Go's method set rules for both value and pointer receivers.
 - [x] The `resolver.ResolveFunction` method now correctly populates the receiver when creating function objects for methods. A caching layer was added to the interpreter to ensure object identity for functions, fixing recursion detection issues. `TestInterfaceResolution` and its variants now pass.
@@ -84,8 +87,6 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 ### symgo: Fix Cross-Package Unexported Symbol Resolution ([docs/trouble-symgo-nested-scope.md](./docs/trouble-symgo-nested-scope.md))
 - [x] Evaluate package-level var declarations in `ensurePackageEnvPopulated` to fix "identifier not found" errors for unexported symbols.
 - [x] Fix regressions caused by the lazy-evaluation implementation. The core regressions related to variable evaluation, pointer dispatch, and recursion detection have been resolved.
-- [x] **Investigation Complete**: The `find-orphans` hang is caused by an inconsistent "bounded analysis" strategy in `symgo`. The engine correctly bounds `for` loops (unrolling them once) but does not apply a similar bound to recursive function calls. This causes the analysis of the deeply recursive `parser.go` to become impractically long, appearing as a hang. The full analysis is now documented in `docs/trouble-symgo.md`.
-- [ ] **Implement Bounded Recursion**: Fix the inconsistency by modifying `applyFunction` in `symgo/evaluator/evaluator.go`. Add a mechanism to limit the analysis of recursive call chains to a small, fixed depth, similar to how `for` loops are handled.
 
 ### `symgo` Engine Improvements ([docs/plan-symgo-refine2.md](./docs/plan-symgo-refine2.md))
 - [x] **Fix Regressions**: Addressed `e2e` test failures in `find-orphans` by generalizing the handling of unresolved functions and fixing an infinite recursion bug.

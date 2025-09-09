@@ -57,3 +57,15 @@ The test suite also covers edge cases, such as method calls on `nil` interface v
 ## 4. Conclusion
 
 By prioritizing the creation of a comprehensive test suite first, we were able to drive the development of a robust and reliable interface resolution engine. The final implementation, centered around the two-phase `Finalize()` mechanism, now successfully passes all of these complex test cases, providing a solid foundation for building powerful static analysis tools.
+
+---
+## Task Checklist
+
+This checklist summarizes the major tasks undertaken to achieve robust interface resolution.
+
+- `[x]` Correctly handle method set rules for both value and pointer receivers (`isImplementer`).
+- `[x]` Correctly populate receiver information in `resolver.ResolveFunction` and add caching to fix recursion detection, enabling `TestInterfaceResolution` to pass.
+- `[x]` Fix the `BindInterface` mechanism to preserve pointer information, allowing `TestInterfaceBinding` to correctly resolve intrinsics.
+- `[x]` Correctly accumulate possible concrete types across control-flow branches, enabling `TestEval_InterfaceMethodCall_AcrossControlFlow` to pass.
+- `[ ]` Update or fix `TestDefaultIntrinsic_InterfaceMethodCall` to align with the improved (and correct) `Finalize` logic.
+- `[ ]` Enhance `TestInterfaceResolution` to be order-independent by testing all 6 package discovery permutations.

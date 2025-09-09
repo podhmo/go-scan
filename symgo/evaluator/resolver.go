@@ -79,7 +79,7 @@ func (r *Resolver) resolveTypeWithoutPolicyCheck(ctx context.Context, fieldType 
 // ResolveFunction creates a function object or a symbolic placeholder based on the scan policy.
 func (r *Resolver) ResolveFunction(pkg *object.Package, funcInfo *scanner.FunctionInfo) object.Object {
 	if r.ScanPolicy(pkg.Path) {
-		return &object.Function{
+		fn := &object.Function{
 			Name:       funcInfo.AstDecl.Name,
 			Parameters: funcInfo.AstDecl.Type.Params,
 			Body:       funcInfo.AstDecl.Body,
@@ -88,6 +88,20 @@ func (r *Resolver) ResolveFunction(pkg *object.Package, funcInfo *scanner.Functi
 			Package:    pkg.ScannedInfo,
 			Def:        funcInfo,
 		}
+
+		// If the function is a method, create a placeholder for the receiver.
+		if funcInfo.Receiver != nil {
+			receiverVar := &object.Variable{
+				Name: funcInfo.Receiver.Name,
+			}
+			receiverVar.SetFieldType(funcInfo.Receiver.Type)
+			// The receiver's type info can be resolved from its field type.
+			// This is important for the test harness to validate which method was called.
+			receiverVar.SetTypeInfo(r.resolveTypeWithoutPolicyCheck(context.Background(), funcInfo.Receiver.Type))
+			fn.Receiver = receiverVar
+		}
+
+		return fn
 	}
 	// For out-of-policy packages, exported functions become placeholders.
 	return &object.SymbolicPlaceholder{

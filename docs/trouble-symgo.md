@@ -58,3 +58,52 @@ The core logic in `evalSelectorExpr` was fixed. When a method call on a bound in
 5.  If not found, it falls back to the previous behavior of resolving the method as a standard function.
 
 This change ensures that intrinsics registered on concrete types are correctly triggered even when the method call in the source code is on an interface type that has been manually bound. After implementing this fix, `TestInterfaceBinding` and all other tests in the `symgo` suite passed successfully.
+
+---
+
+# Troubleshooting: `symgo` Recursion Detector on Recursive Parsers
+
+This document details the investigation of an issue where the `find-orphans` tool, which is powered by the `symgo` engine, fails to analyze the `examples/convert` project. The root cause is `symgo`'s own recursion detection being triggered by the legitimate, deeply recursive design of the code it is analyzing.
+
+## 1. The Problem
+
+When running the `find-orphans` tool on the `examples/convert` package, the process would hang, consuming significant memory and generating a massive, repetitive log file. The logs showed endless warnings from `symgo/evaluator/evaluator.go`, such as `expected multi-return value on RHS of assignment` and `unsupported LHS in parallel assignment`.
+
+The ultimate goal of the `find-orphans` run was to determine if the function `formatCode` was correctly identified as "used". Instead, the analysis never completed. This pointed to an infinite loop or an overly aggressive termination condition within the `symgo` engine itself.
+
+## 2. Investigation
+
+The investigation focused on the interaction between the `symgo` engine and the code it was being asked to analyze, specifically the parser located at `examples/convert/parser/parser.go`.
+
+### Step 1: Analyzing the Target Code (`parser.go`)
+The `parser.go` file contains the core logic for the `convert` example. A review of its source code revealed a deeply, but correctly, recursive structure for discovering and resolving type dependencies. The key functions involved are:
+-   `processPackage`: The main function that iterates over types and comments in a package.
+-   `resolveType`: Resolves a type name (e.g., `"mypkg.MyType"`) to a full `scanner.TypeInfo`.
+-   `collectFields`: Recursively gathers all fields from a struct, including those from embedded structs.
+
+The recursion flows as follows:
+1.  `processPackage` is called for a package.
+2.  It finds annotations (like `@derivingconvert`) or rules (`// convert:rule`) that reference other types.
+3.  For each referenced type, it calls `resolveType`.
+4.  `resolveType` may discover that the type belongs to a different package. It then uses the `go-scan` `Scanner` to load this new package.
+5.  Crucially, after loading the new package, `resolveType` immediately calls **`processPackage`** on it to ensure its types and rules are also parsed before proceeding.
+
+This creates a legitimate, mutually recursive call chain: `processPackage` -> `resolveType` -> `processPackage` -> ...
+
+### Step 2: Analyzing `symgo`'s Behavior
+The `symgo` engine is a symbolic tracer. When it analyzes the `find-orphans` tool, it is essentially simulating its execution. As `find-orphans` executes the recursive logic in `parser.go`, `symgo`'s call stack deepens.
+
+`symgo` has its own internal recursion detector (`applyFunction` in `evaluator.go`) designed to prevent it from getting stuck in infinite loops in the code it analyzes. This detector works by tracking function calls and halting if it detects a potentially non-terminating loop.
+
+### Step 3: Identifying the Root Cause
+The problem is not a bug in the `parser.go` logic, nor is it a simple infinite loop. The root cause is a **design conflict**:
+-   The `convert` parser is intentionally and correctly recursive to handle complex, cross-package Go projects.
+-   The `symgo` engine's recursion detector is designed to be cautious and prevent its own execution from hanging.
+
+When `symgo` analyzes the execution of the `convert` parser, the parser's deep but valid recursion is indistinguishable from a dangerous infinite loop to `symgo`'s detector. The detector is overly aggressive and terminates the analysis prematurely, leading to the observed hang and log spam as the tool struggles to make progress.
+
+## 3. Conclusion and Next Steps
+
+The failure of `find-orphans` on `examples/convert` is not due to an error in the `find-orphans` logic itself, but a fundamental limitation in the `symgo` engine that powers it. The recursion detector, while necessary, is not sophisticated enough to distinguish between malicious infinite loops and the complex, recursive algorithms often found in compilers and static analysis tools (like the parser it was analyzing).
+
+To fix this, the `symgo` recursion detector needs to be refined. It must be made less aggressive, potentially by allowing a deeper recursion limit or by using more sophisticated heuristics to identify truly non-terminating loops, while allowing for the analysis of complex, recursive-by-design programs.

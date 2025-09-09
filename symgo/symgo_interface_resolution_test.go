@@ -11,28 +11,6 @@ import (
 	"github.com/podhmo/go-scan/symgo/object"
 )
 
-func permutations(arr []string) [][]string {
-	var helper func([]string, int)
-	res := [][]string{}
-	helper = func(arr []string, n int) {
-		if n == 1 {
-			tmp := make([]string, len(arr))
-			copy(tmp, arr)
-			res = append(res, tmp)
-		} else {
-			for i := 0; i < n; i++ {
-				helper(arr, n-1)
-				if n%2 == 1 {
-					arr[i], arr[n-1] = arr[n-1], arr[i]
-				} else {
-					arr[0], arr[n-1] = arr[n-1], arr[0]
-				}
-			}
-		}
-	}
-	helper(arr, len(arr))
-	return res
-}
 
 const (
 	moduleDefForInterfaceTest = `
@@ -81,8 +59,14 @@ func TestInterfaceResolution(t *testing.T) {
 	dir, cleanup := scantest.WriteFiles(t, files)
 	defer cleanup()
 
-	pkgPaths := []string{"example.com/me/def", "example.com/me/impl", "example.com/me"}
-	perms := permutations(pkgPaths)
+	perms := [][]string{
+		{"example.com/me/def", "example.com/me/impl", "example.com/me"},
+		{"example.com/me/def", "example.com/me", "example.com/me/impl"},
+		{"example.com/me/impl", "example.com/me/def", "example.com/me"},
+		{"example.com/me/impl", "example.com/me", "example.com/me/def"},
+		{"example.com/me", "example.com/me/def", "example.com/me/impl"},
+		{"example.com/me", "example.com/me/impl", "example.com/me/def"},
+	}
 
 	for _, p := range perms {
 		t.Run(strings.Join(p, ">"), func(t *testing.T) {
@@ -205,8 +189,14 @@ func TestInterfaceResolutionWithPointerReceiver(t *testing.T) {
 	dir, cleanup := scantest.WriteFiles(t, files)
 	defer cleanup()
 
-	pkgPaths := []string{"example.com/me/def", "example.com/me/impl", "example.com/me"}
-	perms := permutations(pkgPaths)
+	perms := [][]string{
+		{"example.com/me/def", "example.com/me/impl", "example.com/me"},
+		{"example.com/me/def", "example.com/me", "example.com/me/impl"},
+		{"example.com/me/impl", "example.com/me/def", "example.com/me"},
+		{"example.com/me/impl", "example.com/me", "example.com/me/def"},
+		{"example.com/me", "example.com/me/def", "example.com/me/impl"},
+		{"example.com/me", "example.com/me/impl", "example.com/me/def"},
+	}
 
 	for _, p := range perms {
 		t.Run(strings.Join(p, ">"), func(t *testing.T) {
@@ -329,8 +319,14 @@ func TestInterfaceResolutionWithValueReceiver(t *testing.T) {
 	dir, cleanup := scantest.WriteFiles(t, files)
 	defer cleanup()
 
-	pkgPaths := []string{"example.com/me/def", "example.com/me/impl", "example.com/me"}
-	perms := permutations(pkgPaths)
+	perms := [][]string{
+		{"example.com/me/def", "example.com/me/impl", "example.com/me"},
+		{"example.com/me/def", "example.com/me", "example.com/me/impl"},
+		{"example.com/me/impl", "example.com/me/def", "example.com/me"},
+		{"example.com/me/impl", "example.com/me", "example.com/me/def"},
+		{"example.com/me", "example.com/me/def", "example.com/me/impl"},
+		{"example.com/me", "example.com/me/impl", "example.com/me/def"},
+	}
 
 	for _, p := range perms {
 		t.Run(strings.Join(p, ">"), func(t *testing.T) {

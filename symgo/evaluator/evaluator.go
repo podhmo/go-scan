@@ -2314,8 +2314,25 @@ func (e *Evaluator) assignIdentifier(ctx context.Context, ident *ast.Ident, val 
 		v.PossibleTypes = make(map[string]struct{})
 	}
 	if newFieldType != nil {
-		v.PossibleTypes[newFieldType.String()] = struct{}{}
-		e.logger.Debug("evalAssignStmt: adding possible type to var", "name", ident.Name, "new_type", newFieldType.String())
+		key := newFieldType.String()
+
+		// Workaround: If the default string representation of a pointer type is just "*",
+		// it's likely because the underlying element's FieldType has an empty name.
+		// In this case, we construct a more robust key using the TypeInfo from the
+		// object the pointer points to. This makes the analysis resilient to
+		// incomplete FieldType information from the scanner.
+		if key == "*" {
+			if ptr, ok := val.(*object.Pointer); ok {
+				if inst, ok := ptr.Value.(*object.Instance); ok {
+					if ti := inst.TypeInfo(); ti != nil && ti.PkgPath != "" && ti.Name != "" {
+						key = fmt.Sprintf("%s.*%s", ti.PkgPath, ti.Name)
+					}
+				}
+			}
+		}
+
+		v.PossibleTypes[key] = struct{}{}
+		e.logger.Debug("evalAssignStmt: adding possible type to var", "name", ident.Name, "new_type", key)
 	}
 
 	return v

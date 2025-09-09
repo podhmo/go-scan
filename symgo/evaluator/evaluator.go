@@ -1866,26 +1866,36 @@ func (e *Evaluator) evalForStmt(ctx context.Context, n *ast.ForStmt, env *object
 		}
 	}
 
-	// We don't check the condition, just execute the body once.
-	result := e.Eval(ctx, n.Body, object.NewEnclosedEnvironment(forEnv), pkg)
-	if result != nil {
-		switch obj := result.(type) {
-		case *object.Break:
-			// If the break has a label, it's for an outer loop. Propagate it.
-			if obj.Label != "" {
-				return obj
+	// Also evaluate the condition to trace any function calls within it.
+	if n.Cond != nil {
+		if condResult := e.Eval(ctx, n.Cond, forEnv, pkg); isError(condResult) {
+			// If the condition errors, we can't proceed with analysis of this loop.
+			return condResult
+		}
+	}
+
+	// We don't check the condition's result, just execute the body once symbolically.
+	if n.Body != nil {
+		result := e.Eval(ctx, n.Body, object.NewEnclosedEnvironment(forEnv), pkg)
+		if result != nil {
+			switch obj := result.(type) {
+			case *object.Break:
+				// If the break has a label, it's for an outer loop. Propagate it.
+				if obj.Label != "" {
+					return obj
+				}
+				// Otherwise, it's for this loop, so we absorb it.
+				return &object.SymbolicPlaceholder{Reason: "for loop"}
+			case *object.Continue:
+				// If the continue has a label, it's for an outer loop. Propagate it.
+				if obj.Label != "" {
+					return obj
+				}
+				// Otherwise, it's for this loop, so we absorb it.
+				return &object.SymbolicPlaceholder{Reason: "for loop"}
+			case *object.Error:
+				return result // Propagate errors.
 			}
-			// Otherwise, it's for this loop, so we absorb it.
-			return &object.SymbolicPlaceholder{Reason: "for loop"}
-		case *object.Continue:
-			// If the continue has a label, it's for an outer loop. Propagate it.
-			if obj.Label != "" {
-				return obj
-			}
-			// Otherwise, it's for this loop, so we absorb it.
-			return &object.SymbolicPlaceholder{Reason: "for loop"}
-		case *object.Error:
-			return result // Propagate errors.
 		}
 	}
 

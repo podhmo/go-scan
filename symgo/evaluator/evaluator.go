@@ -36,7 +36,7 @@ type Evaluator struct {
 	logger            *slog.Logger
 	tracer            object.Tracer // Tracer for debugging evaluation flow.
 	callStack         []*callFrame
-	interfaceBindings map[string]*goscan.TypeInfo
+	interfaceBindings map[string]interfaceBinding
 	resolver          *Resolver
 	defaultIntrinsic  intrinsics.IntrinsicFunc
 	initializedPkgs   map[string]bool // To track packages whose constants are loaded
@@ -68,6 +68,12 @@ type callFrame struct {
 	Args     []object.Object
 }
 
+// interfaceBinding stores the information needed to map an interface to a concrete type.
+type interfaceBinding struct {
+	ConcreteType *goscan.TypeInfo
+	IsPointer    bool
+}
+
 func (f *callFrame) String() string {
 	return f.Function
 }
@@ -89,7 +95,7 @@ func New(scanner *goscan.Scanner, logger *slog.Logger, tracer object.Tracer, sca
 		intrinsics:             intrinsics.New(),
 		logger:                 logger,
 		tracer:                 tracer,
-		interfaceBindings:      make(map[string]*goscan.TypeInfo),
+		interfaceBindings:      make(map[string]interfaceBinding),
 		resolver:               NewResolver(scanPolicy, scanner, logger),
 		initializedPkgs:        make(map[string]bool),
 		pkgCache:               make(map[string]*object.Package),
@@ -105,8 +111,11 @@ func New(scanner *goscan.Scanner, logger *slog.Logger, tracer object.Tracer, sca
 }
 
 // BindInterface registers a concrete type for an interface.
-func (e *Evaluator) BindInterface(ifaceTypeName string, concreteType *goscan.TypeInfo) {
-	e.interfaceBindings[ifaceTypeName] = concreteType
+func (e *Evaluator) BindInterface(ifaceTypeName string, concreteType *goscan.TypeInfo, isPointer bool) {
+	e.interfaceBindings[ifaceTypeName] = interfaceBinding{
+		ConcreteType: concreteType,
+		IsPointer:    isPointer,
+	}
 }
 
 // RegisterIntrinsic registers a built-in function.
@@ -1228,8 +1237,36 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 
 				// Check for a manual interface binding.
 				bindingKey := fmt.Sprintf("%s.%s", staticType.PkgPath, staticType.Name)
-				if concreteType, ok := e.interfaceBindings[bindingKey]; ok {
-					if method, err := e.accessor.findMethodOnType(ctx, concreteType, n.Sel.Name, env, obj); err == nil && method != nil {
+				if binding, ok := e.interfaceBindings[bindingKey]; ok {
+					concreteType := binding.ConcreteType
+					var fullReceiverName string
+					if binding.IsPointer {
+						fullReceiverName = fmt.Sprintf("*%s.%s", concreteType.PkgPath, concreteType.Name)
+					} else {
+						fullReceiverName = fmt.Sprintf("%s.%s", concreteType.PkgPath, concreteType.Name)
+					}
+
+					// Check for an intrinsic on the concrete type's method.
+					// The key format is "(*pkg.path.Name).MethodName"
+					intrinsicKey := fmt.Sprintf("(%s).%s", fullReceiverName, n.Sel.Name)
+					if intrinsicFn, ok := e.intrinsics.Get(intrinsicKey); ok {
+						boundIntrinsic := func(args ...object.Object) object.Object {
+							// The intrinsic expects the receiver as the first argument.
+							// The original object `obj` (the interface variable) is the logical receiver.
+							return intrinsicFn(append([]object.Object{obj}, args...)...)
+						}
+						return &object.Intrinsic{Fn: boundIntrinsic}
+					}
+
+					// Fallback: find the method on the concrete type.
+					// We need to create a synthetic pointer type if the binding is for a pointer.
+					typeToSearch := concreteType
+					if binding.IsPointer {
+						ptrType := *concreteType // copy
+						ptrType.Name = "*" + concreteType.Name
+						typeToSearch = &ptrType
+					}
+					if method, err := e.accessor.findMethodOnType(ctx, typeToSearch, n.Sel.Name, env, obj); err == nil && method != nil {
 						return method
 					}
 				}

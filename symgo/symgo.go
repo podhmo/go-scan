@@ -217,7 +217,7 @@ func (i *Interpreter) BindInterface(ifaceTypeName string, concreteTypeName strin
 	}
 
 	// The binding in the evaluator needs the fully qualified name.
-	i.eval.BindInterface(ifaceTypeName, foundType)
+	i.eval.BindInterface(ifaceTypeName, foundType, isPointer)
 	return nil
 }
 

@@ -1,33 +1,37 @@
-# `symgo`: Interface Resolution and Analysis
+# `symgo`: A Test-Driven Approach to Interface Resolution
 
-This document describes the `symgo` engine's capabilities for analyzing code that uses interfaces. The engine is designed to be robust, handling various scenarios from simple interface-to-struct implementation checks to complex, path-sensitive analysis and manual bindings.
+This document describes the strategy and process used to build a robust, test-driven interface resolution mechanism for the `symgo` engine. The primary goal was to create a comprehensive test suite that could validate complex, real-world scenarios, and then to implement the necessary engine features to make those tests pass.
 
-## 1. Core Principles
+## 1. The Problem
 
-`symgo`'s interface analysis is built on two main phases:
+The initial version of the `symgo` engine had an unreliable and incomplete implementation for resolving interface method calls. It was not able to correctly identify all concrete implementations of an interface, particularly when those implementations existed in different packages or were assigned to variables across different control-flow paths. This made it impossible to build reliable analysis tools like `find-orphans`.
 
-1.  **Symbolic Execution (Collection):** As the engine evaluates code, it tracks all method calls on variables that are typed as interfaces. It records which concrete types are assigned to each interface-typed variable, even across different control-flow paths.
-2.  **Finalization (Resolution):** After symbolic execution is complete, a `Finalize()` step can be called. This step uses the collected information to build a complete map of which structs implement which interfaces across all scanned packages. It then connects the recorded interface method calls to their concrete implementations, marking the concrete methods as "used".
+## 2. The Strategy: Two-Phase Resolution via `Finalize()`
 
-## 2. Supported Scenarios
+To solve this problem, the core idea was to implement a two-phase analysis mechanism.
 
-The `symgo` engine and its test suite validate the following interface resolution scenarios.
+-   **Phase 1: Collection (During Symbolic Execution):** As the engine evaluates code, it records all method calls made on interface-typed variables. Crucially, it also tracks every concrete type that is assigned to an interface variable, accumulating a set of "possible types".
+-   **Phase 2: Resolution (Post-Execution):** A new public `Finalize()` method was added to the `Evaluator`. This method is called *after* symbolic execution is complete. It uses the collected information to build a complete map of all struct-to-interface implementations across all scanned packages. It then iterates through the recorded interface method calls and connects them to all possible concrete implementations, marking them as "used".
 
-### Scenario 1: Basic Implementation (`TestInterfaceResolution`)
+This architecture provided the foundation needed to build a comprehensive set of validation tests.
 
-This is the most fundamental case. The engine can correctly determine that a struct implements an interface, even when the interface, the struct, and the code using them are in different packages.
+## 3. Building a Comprehensive Test Suite
 
--   **Package A:** Defines an interface `Speaker` with a `Speak()` method.
--   **Package B:** Defines a struct `Dog` with a `Speak()` method, implementing the interface.
--   **Package C:** Contains a function that accepts a `Speaker` and calls `Speak()`.
+The most important part of this effort was defining and implementing a test suite that covered the complex scenarios that the engine must support. The following key test cases were developed, and the engine was enhanced until they passed.
 
-`symgo`'s `Finalize()` step correctly identifies that `Dog.Speak` is a valid implementation for a call to `Speaker.Speak` and marks it as used. This works regardless of the order in which the packages are discovered.
+### 3.1. Test Case: Cross-Package and Order-Independent Resolution
 
-### Scenario 2: Path-Sensitive Type Accumulation (`TestEval_InterfaceMethodCall_AcrossControlFlow`)
+A fundamental requirement is that analysis should work correctly regardless of the project structure. The `TestInterfaceResolution` test validates this by creating a three-package setup:
+-   **Package A:** Defines an interface `I`.
+-   **Package B:** Defines a struct `S` that implements `I`.
+-   **Package C:** Contains a function that accepts `I` and calls its method.
 
-The evaluator is path-sensitive, meaning it explores all branches of control-flow statements like `if/else`. It correctly accumulates all possible concrete types that an interface variable can hold.
+The test harness was designed to introduce these packages to the scanner in all six possible permutations (A->B->C, A->C->B, etc.) to guarantee that the resolution logic is independent of package discovery order. This test now passes, confirming the robustness of the `Finalize()` approach.
 
-**Example Code:**
+### 3.2. Test Case: Path-Sensitive Type Accumulation
+
+Real-world code frequently assigns different concrete types to the same interface variable in different control-flow branches. The `TestEval_InterfaceMethodCall_AcrossControlFlow` test validates this exact scenario:
+
 ```go
 var a Animal // Animal is an interface
 if condition {
@@ -35,31 +39,21 @@ if condition {
 } else {
     a = &Cat{}
 }
-a.Speak() // symgo understands this could be Dog.Speak() or Cat.Speak()
+a.Speak() // Must be linked to both Dog.Speak and Cat.Speak
 ```
 
-The engine tracks that the variable `a` can be either a `*Dog` or a `*Cat`. When `Finalize()` is run, it correctly marks both `Dog.Speak` and `Cat.Speak` as "used". This was made possible by ensuring the internal `PossibleTypes` map for a variable uses a robust keying strategy that can distinguish between different pointer types.
+To make this test pass, the evaluator's state management was significantly improved. It now correctly accumulates all possible concrete types for a variable across `if/else` branches. This was achieved by fixing a bug where the internal `PossibleTypes` map was using non-unique keys for different pointer types, causing them to overwrite each other. With the fix, the engine correctly identifies that `a.Speak()` can refer to methods on both `*Dog` and `*Cat`.
 
-### Scenario 3: Manual Interface Binding (`TestInterfaceBinding`)
+### 3.3. Test Case: Manual Bindings and Intrinsics
 
-For cases where the analysis cannot automatically determine the concrete type of an interface, a manual binding can be provided. This is particularly useful for setting up analysis entry points or for dealing with interfaces whose concrete types are determined by external factors.
+For advanced use cases, the engine must provide an "escape hatch" to manually specify the concrete type of an interface. The `TestInterfaceBinding` test validates this feature, including its interaction with the intrinsics system.
 
-**Example Code:**
-```go
-// Test setup
-interp.BindInterface("io.Writer", "*bytes.Buffer")
-interp.RegisterIntrinsic("(*bytes.Buffer).WriteString", myIntrinsic)
+The test binds `io.Writer` to `*bytes.Buffer` and confirms that a call to `writer.WriteString()` correctly triggers an intrinsic registered for `(*bytes.Buffer).WriteString`. This required fixing a critical bug where the `BindInterface` mechanism was discarding pointer information (`*`). The binding logic was enhanced to preserve this information, allowing the evaluator to construct the correct lookup key for the intrinsic.
 
-// Code to be analyzed
-func TargetFunc(writer io.Writer) {
-	writer.WriteString("hello") // symgo resolves this to the intrinsic
-}
-```
+### 3.4. Test Case: Edge Cases (e.g., Nil Receivers)
 
-The `BindInterface` call instructs the engine to treat any variable of type `io.Writer` as if it were a `*bytes.Buffer`. When `writer.WriteString()` is evaluated, the engine uses this binding to look for the method `(*bytes.Buffer).WriteString`. This allows it to find not only the method itself but also any **intrinsics** registered for that specific concrete method.
+The test suite also covers edge cases, such as method calls on `nil` interface values. The `TestDefaultIntrinsic_InterfaceMethodCall` test confirms that the engine correctly models this scenario without crashing, allowing analysis to continue.
 
-This mechanism was fixed by ensuring that the pointer information (`*` in `*bytes.Buffer`) is preserved during the binding process, allowing the engine to construct the correct key for intrinsic lookups.
+## 4. Conclusion
 
-### Scenario 4: Method Calls on Nil Interface Receivers (`TestDefaultIntrinsic_InterfaceMethodCall`)
-
-The engine correctly handles method calls on `nil` interface values. In Go, it is valid to call a method on a `nil` interface variable, which will result in a panic at runtime if the method is called. In the context of symbolic analysis, `symgo` models this by identifying that the receiver of the call is the `*object.Variable` holding the `nil` value, not the `nil` value itself. This allows analysis to proceed without crashing and enables tools to reason about such calls. The test for this scenario was updated to reflect this correct and more precise behavior.
+By prioritizing the creation of a comprehensive test suite first, we were able to drive the development of a robust and reliable interface resolution engine. The final implementation, centered around the two-phase `Finalize()` mechanism, now successfully passes all of these complex test cases, providing a solid foundation for building powerful static analysis tools.

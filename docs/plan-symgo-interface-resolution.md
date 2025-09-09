@@ -26,7 +26,7 @@ A fundamental requirement is that analysis should work correctly regardless of t
 -   **Package B:** Defines a struct `S` that implements `I`.
 -   **Package C:** Contains a function that accepts `I` and calls its method.
 
-The test harness was designed to introduce these packages to the scanner in all six possible permutations (A->B->C, A->C->B, etc.) to guarantee that the resolution logic is independent of package discovery order. This test now passes, confirming the robustness of the `Finalize()` approach.
+The test confirms that `symgo` can connect the interface method call in package C to the concrete implementation in package B. While the current test validates a single, successful discovery order, the test harness was originally designed with the intention of expanding it to cover all six possible permutations of package discovery (e.g., A->B->C, A->C->B, etc.) to guarantee the resolution logic is truly order-independent. This full permutation testing remains a future enhancement.
 
 ### 3.2. Test Case: Path-Sensitive Type Accumulation
 

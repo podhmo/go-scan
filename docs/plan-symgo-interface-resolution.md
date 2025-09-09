@@ -142,3 +142,11 @@ This is a fundamental limitation in the evaluator's design. It is path-insensiti
 ### Next Steps
 
 The next concrete task is to fix this state management issue within the evaluator. This will likely involve changing how environments and variable states are handled in the `evalIfStmt` function and potentially other control-flow handlers to ensure that side effects from all explored paths are correctly merged or accumulated. After this is fixed, the `Finalize` logic should have the correct data to resolve interface calls properly.
+
+A comprehensive test suite must be developed to validate the final solution. This suite should cover the following cross-package and out-of-order discovery scenarios:
+- **Package Setup:**
+  - Package A: Defines interface `I`.
+  - Package B: Uses a value of type `I`.
+  - Package C: Defines a struct `S` that implements `I`.
+- **Discovery Order:** The test harness should be able to introduce these packages to the `symgo` engine in all six possible permutations of discovery order (e.g., A → B → C, A → C → B, B → A → C, etc.) to ensure the resolution is order-independent.
+- **Conservative Analysis:** The tests must also validate that the analysis is conservative. If implementations `S1` and `S2` both implement interface `I`, a call to method `M` on a variable of type `I` that could be `S1` must mark the method `M` as "used" on *both* `S1` and `S2`.

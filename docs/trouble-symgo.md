@@ -1,84 +1,65 @@
-# Troubleshooting: `symgo` Fails to Model Map Assignment, Causing Infinite Loop
+# Troubleshooting: `symgo` vs. State-Dependent Algorithms
 
-This document details the investigation of an issue where the `find-orphans` tool, which is powered by the `symgo` engine, fails to analyze the `examples/convert` project.
+This document details the investigation of an issue where the `find-orphans` tool, powered by the `symgo` engine, fails to analyze the `examples/convert` project.
 
-The initial hypothesis that `symgo`'s recursion detector was overly aggressive was incorrect. A deeper analysis, prompted by user feedback, revealed the true root cause: **a bug in the `symgo` evaluator that prevents it from modeling state changes from map assignments.** This causes the analyzed code to enter a genuine infinite loop, which `symgo`'s recursion detector then correctly identifies and halts.
+The root cause is not a simple bug, but a fundamental design mismatch: **`symgo`, as a stateless symbolic tracer, is not designed to analyze algorithms that rely on stateful memoization for termination.**
 
 ## 1. The Problem
 
-When running `find-orphans` on `examples/convert`, the process hangs. Debug logs show a very deep call stack that alternates between two functions in `examples/convert/parser/parser.go` at the exact same line numbers:
-
-- `processPackage` (called from `resolveType` at `parser.go:270:13`)
-- `resolveType` (called from `processPackage` at `parser.go:148:27`)
-
-The repetitive nature of the stack trace is the key symptom, indicating the analysis is not progressing and is stuck in a non-productive loop.
-
-```
- stack.5.func=processPackage
- stack.5.pos=.../parser.go:270:13
- stack.6.func=resolveType
- stack.6.pos=.../parser.go:148:27
- stack.7.func=processPackage
- stack.7.pos=.../parser.go:270:13
- ... (repeats for hundreds of frames)
-```
+When running `find-orphans` on `examples/convert`, the process hangs. Debug logs show a very deep call stack that alternates between two functions in `examples/convert/parser/parser.go` at the exact same line numbers, indicating a non-productive loop.
 
 ## 2. Investigation
 
-### Step 1: `symgo`'s Symbolic Execution Model
+### Step 1: `symgo`'s Stateless Design
 
-A review of `docs/analysis-symgo-implementation.md` and `symgo/evaluator/evaluator.go` confirms that `symgo` is a symbolic tracer, not a standard interpreter. When it encounters an `if` statement, it evaluates the condition expression (to trace calls) but then proceeds to evaluate **all** possible branches (`then` and `else`). It does not use the condition's result to decide which single path to take. This is the correct, intended behavior.
+`symgo` is a symbolic tracer, not a standard interpreter. Its goal is to discover all possible execution paths. As documented in `docs/analysis-symgo-implementation.md`, it achieves this by:
+-   Exploring **both** branches of an `if` statement, rather than evaluating the condition to choose one.
+-   Unrolling loops **once** rather than tracking a loop counter to determine the exact number of iterations.
 
-### Step 2: The Guard Condition in `parser.go`
+This stateless approach is a deliberate design choice. It allows `symgo` to analyze complex code without getting stuck in the halting problem or a combinatorial explosion of states. The trade-off is that it does not track the precise, concrete state of variables as they change.
 
-The `parser.go` code is designed to be recursive to discover type dependencies. It contains a crucial guard condition to prevent processing the same package multiple times, which relies on a map to track state:
+### Step 2: The Parser's Stateful Algorithm
+
+The code being analyzed, `parser.go`, uses a classic state-dependent algorithm to handle potentially circular dependencies between Go packages. It uses a map as a "visited" set to prevent processing the same package more than once.
 
 ```go
 // examples/convert/parser/parser.go:41
 func processPackage(...) error {
-	// THE GUARD: This check should prevent infinite loops.
+	// THE GUARD: This check relies on the state of the map.
 	if pkgInfo == nil || info.ProcessedPackages[pkgInfo.ImportPath] {
 		return nil
 	}
-	// THE STATE CHANGE: This update should make the guard effective.
+	// THE STATE CHANGE: This mutation is critical for termination.
 	info.ProcessedPackages[pkgInfo.ImportPath] = true
 	// ...
 }
 ```
+Without the state change on line 45, any call to `processPackage` for a project with circular dependencies would lead to infinite recursion.
 
-For the program to enter an infinite loop, the state change on line 45 must not be taking effect during symbolic execution, causing the guard on line 42 to always fail (i.e., not return).
+### Step 3: The Design Mismatch
 
-### Step 3: The Bug in `evalAssignStmt`
+The core of the problem lies in how `symgo` "executes" the parser's code:
 
-The investigation then turned to how `symgo` handles map assignments. The relevant code is in `evalAssignStmt` for a left-hand side of type `*ast.IndexExpr` (which handles `m[k] = v`).
+1.  **State is Ignored**: In accordance with its stateless design, when `symgo` encounters the map assignment on line 45 (`info.ProcessedPackages[...] = true`), it notes that an assignment occurred but **does not modify its internal representation of the map object.** The symbolic `info.ProcessedPackages` map remains empty throughout the analysis.
 
-```go
-// symgo/evaluator/evaluator.go:1930 (approx)
-case *ast.IndexExpr:
-    // This is an assignment to a map or slice index, like `m[k] = v`.
-    // We need to evaluate all parts to trace calls.
-    e.Eval(ctx, lhs.X, env, pkg)     // e.g., `info.ProcessedPackages`
-    e.Eval(ctx, lhs.Index, env, pkg) // e.g., `pkgInfo.ImportPath`
-    e.Eval(ctx, n.Rhs[0], env, pkg)  // e.g., `true`
-    return nil
-```
+2.  **Guard Fails**: When `symgo` evaluates the guard condition on line 42, the map access `info.ProcessedPackages[...]` always behaves as if the key is not present, because the symbolic map is always empty.
 
-This code reveals the bug: **The evaluator traces function calls within the expressions, but it does not model the actual state change.** It never modifies the underlying `object.Map` that represents `info.ProcessedPackages`.
+3.  **A "Real" Infinite Loop is Created**: Because the guard never effectively stops the recursion in the symbolic world, the execution of `parser.go` enters a genuine infinite loop. `resolveType` calls `processPackage` for a package, and that `processPackage` call, without a functioning guard, eventually calls `resolveType` again, leading back to another call to `processPackage` for the same package with the same arguments.
 
-### Step 4: The True Root Cause
+4.  **Recursion Detector Works Correctly**: `symgo`'s own recursion detector (`applyFunction` in `evaluator.go`) spots this non-productive loop (the same function being called with the exact same object references as arguments) and correctly halts the analysis to prevent its own process from hanging.
 
-1.  The `parser.go` code relies on updating the `info.ProcessedPackages` map to terminate its recursion.
-2.  The `symgo` evaluator, when analyzing this code, evaluates the expressions involved in the map assignment (`info.ProcessedPackages[pkgInfo.ImportPath] = true`) but **never actually performs the assignment** on its internal symbolic representation of the map.
-3.  Because the symbolic map is never updated, the guard condition `info.ProcessedPackages[pkgInfo.ImportPath]` always evaluates to a symbolic placeholder representing "key not found". The `if` statement's `then` block, which would terminate the function, is executed, but the function continues to be called from its call site in `resolveType`.
-4.  Because the state of `info` never changes, `resolveType` eventually calls `processPackage` again with the **exact same arguments**.
-5.  `symgo`'s recursion detector in `applyFunction` sees this second identical call. It compares the function definition and arguments to the previous frame on the call stack. Since they are identical, it correctly identifies a non-productive infinite loop and halts the analysis by returning an error.
+## 3. Conclusion
 
-## 3. Conclusion and Next Steps
+The issue is not a simple bug in the `symgo` evaluator, nor is its recursion detector "too aggressive." The problem is a fundamental **design limitation**. `symgo` is behaving as designed, but its stateless design is incompatible with the state-dependent termination logic of the code it is trying to analyze.
 
-The user's skepticism was correct. The issue is not that `symgo`'s recursion detector is too aggressive; it is working perfectly. The problem is a critical bug in the evaluator: **it does not model state changes for map index assignments**.
+The `find-orphans` tool fails because it is asking a stateless analyzer to do something that requires stateful analysis.
 
-This is a significant limitation that prevents `symgo` from correctly analyzing any algorithm that uses maps to track visited states, a common pattern in graph traversal and recursive analysis.
+### Next Steps
 
-**The next steps are:**
-1.  **Implement Map Index Assignment**: Fix the `symgo` evaluator by implementing state changes for map index assignments (`m[k] = v`) in `evalAssignStmt`. This will involve retrieving the symbolic `object.Map` from the environment, evaluating the key and value, and setting the key-value pair within the symbolic map object.
-2.  **Update `TODO.md`**: The task list must be updated to reflect this new, more accurate understanding of the required fix. The focus is no longer on refining the recursion detector but on fixing the handling of map assignments.
+This issue requires a strategic decision about the future of `symgo`:
+
+1.  **Option 1: Enhance `symgo` (Make it more stateful)**: Modify `symgo` to correctly model state changes for common cases like map assignments. This would make `symgo` more powerful and capable of analyzing a wider class of algorithms. However, it would add significant complexity and could degrade performance if not implemented carefully. It represents a shift in `symgo`'s core design philosophy.
+
+2.  **Option 2: Keep `symgo` Stateless (Accept the limitation)**: Acknowledge this as a known limitation. The tool is working as designed, and users should be aware that it cannot be used to analyze code whose termination depends on state changes that `symgo` does not model.
+
+The `TODO.md` should be updated to reflect this choice. The immediate task is no longer a simple "bug fix" but a "design decision."

@@ -69,12 +69,10 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - **`symgo` Interpreter Core Completion**: Completed the core symbolic execution engine to handle all major AST node types and language constructs. Key improvements include: proper import path resolution ([docs/trouble-symgo-identifier-not-found.md](./docs/trouble-symgo-identifier-not-found.md)), resilience to undefined identifiers, infinite recursion prevention, enhanced AST node support (generics, channels, function literals, etc.), and comprehensive refactoring of evaluator components (Resolver, accessor, Context handling).
 - **`symgo` Architecture Refinements**: Major refactoring to improve analysis scope management and error handling. Introduced explicit analysis scopes with `WithPrimaryAnalysisScope` and `WithSymbolicDependencyScope`, enhanced type information for unresolved types, and improved resolver error handling for better robustness.
 - **Advanced Analysis and Tool Enhancements**: Implemented comprehensive enhancements including structured logging with source stack traces, automatic workspace detection with `go.work` support, advanced interface method call analysis, multi-module workspace support with unified analysis, enhanced reporting capabilities (JSON output), and wildcard pattern support for improved package discovery.
+- **`symgo`: Bounded Recursion**: The symbolic execution engine now uses a bounded recursion strategy to prevent analysis from hanging on deeply recursive functions. The evaluator now halts analysis of a recursive call path after one level, making its behavior consistent with the existing "unroll-once" strategy for loops and improving overall robustness. ([docs/plan-symgo-shallow-recursive.md](./docs/plan-symgo-shallow-recursive.md))
 
 
 ## To Be Implemented
-
-### `symgo`: Implement Bounded Recursion ([docs/plan-symgo-shallow-recursive.md](./docs/plan-symgo-shallow-recursive.md))
-- [ ] **Implement Bounded Recursion**: Fix the inconsistency by modifying `applyFunction` in `symgo/evaluator/evaluator.go`. Add a mechanism to limit the analysis of recursive call chains to a small, fixed depth, similar to how `for` loops are handled.
 
 ### `symgo`: Implement Robust Interface Resolution ([docs/plan-symgo-interface-resolution.md](./docs/plan-symgo-interface-resolution.md))
 - [x] The `isImplementer` function in `evaluator.go` now correctly handles Go's method set rules for both value and pointer receivers.

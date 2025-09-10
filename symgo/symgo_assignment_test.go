@@ -1,4 +1,4 @@
-package evaluator_test
+package symgo_test
 
 import (
 	"context"
@@ -23,7 +23,7 @@ func lookupFile(pkg *goscan.Package, name string) (*ast.File, error) {
 	return nil, fmt.Errorf("file %q not found in package %s", name, pkg.Name)
 }
 
-func TestMultiValueAssignment(t *testing.T) {
+func TestMultiValueAssignmentWithBlank(t *testing.T) {
 	var intrinsicCalled bool
 	var assignedValue symgo.Object
 

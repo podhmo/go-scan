@@ -206,6 +206,34 @@ func main() {
 			ShouldFail:    false, // With the new bounded logic, this should not error or time out.
 			ExpectedError: "",
 		},
+		{
+			Name: "recursive method call on a field, mimicking e.outer.Get()",
+			Code: `
+package main
+
+type Node struct {
+    Name  string
+    Outer *Node
+}
+
+// Get mimics the recursive structure that caused the bug.
+func (n *Node) Get(name string) {
+    if n.Outer != nil {
+        n.Outer.Get(name) // Recursive call on a field
+    }
+}
+
+func main() {
+    root := &Node{Name: "root"}
+    child := &Node{Name: "child", Outer: root}
+    // Create a cycle for the analysis to find.
+    root.Outer = child
+    child.Get("foo")
+}
+`,
+			ShouldFail:    false,
+			ExpectedError: "",
+		},
 	}
 
 	for _, tt := range cases {

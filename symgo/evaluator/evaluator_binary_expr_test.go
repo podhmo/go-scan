@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/scantest"
 	"github.com/podhmo/go-scan/symgo/object"
@@ -23,6 +24,11 @@ func TestEvalBinaryExpr(t *testing.T) {
 			name:   "string concatenation",
 			source: `func main() { "hello" + " " + "world" }`,
 			want:   &object.String{Value: "hello world"},
+		},
+		{
+			name:   "division by zero",
+			source: `func main() { 10 / 0 }`,
+			want:   &object.SymbolicPlaceholder{Reason: "division by zero"},
 		},
 	}
 
@@ -62,7 +68,7 @@ func TestEvalBinaryExpr(t *testing.T) {
 					return fmt.Errorf("expected return value, got %T", result)
 				}
 
-				if diff := cmp.Diff(tt.want, ret.Value); diff != "" {
+				if diff := cmp.Diff(tt.want, ret.Value, cmpopts.IgnoreUnexported(object.SymbolicPlaceholder{})); diff != "" {
 					t.Errorf("result mismatch (-want +got):\n%s", diff)
 				}
 				return nil

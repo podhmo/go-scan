@@ -3269,6 +3269,49 @@ func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, 
 		}
 	}
 
+	// 3. Bind named return values
+	if fn.Decl != nil && fn.Decl.Type.Results != nil {
+		var importLookup map[string]string
+		if fn.Package != nil && fn.Package.Fset != nil && fn.Decl != nil {
+			file := fn.Package.Fset.File(fn.Decl.Pos())
+			if file != nil {
+				if astFile, ok := fn.Package.AstFiles[file.Name()]; ok {
+					importLookup = e.scanner.BuildImportLookup(astFile)
+				}
+			}
+		}
+
+		for _, field := range fn.Decl.Type.Results.List {
+			if len(field.Names) > 0 {
+				staticFieldType := e.scanner.TypeInfoFromExpr(ctx, field.Type, nil, fn.Package, importLookup)
+				var resolvedTypeInfo *scanner.TypeInfo
+				if staticFieldType != nil {
+					resolvedTypeInfo = e.resolver.ResolveType(ctx, staticFieldType)
+				}
+
+				for _, name := range field.Names {
+					if name.Name != "" && name.Name != "_" {
+						// The zero value for any type in the symbolic evaluator is a placeholder.
+						// This placeholder carries the necessary type information.
+						placeholder := &object.SymbolicPlaceholder{Reason: "named return value"}
+						if staticFieldType != nil {
+							placeholder.SetFieldType(staticFieldType)
+							placeholder.SetTypeInfo(resolvedTypeInfo)
+						}
+						v := &object.Variable{
+							Name:        name.Name,
+							Value:       placeholder,
+							IsEvaluated: true, // It's "evaluated" to its zero value.
+						}
+						v.SetFieldType(staticFieldType)
+						v.SetTypeInfo(resolvedTypeInfo)
+						env.SetLocal(name.Name, v)
+					}
+				}
+			}
+		}
+	}
+
 	return env, nil
 }
 

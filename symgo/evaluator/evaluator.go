@@ -672,6 +672,10 @@ func (e *Evaluator) evalIntegerInfixExpression(ctx context.Context, pos token.Po
 	case token.MUL:
 		return &object.Integer{Value: leftVal * rightVal}
 	case token.QUO:
+		if rightVal == 0 {
+			// Instead of erroring, return a placeholder. This allows analysis to continue.
+			return &object.SymbolicPlaceholder{Reason: "result of division by zero"}
+		}
 		return &object.Integer{Value: leftVal / rightVal}
 	case token.EQL: // ==
 		return nativeBoolToBooleanObject(leftVal == rightVal)

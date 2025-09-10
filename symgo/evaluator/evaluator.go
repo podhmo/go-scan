@@ -2178,11 +2178,31 @@ func (e *Evaluator) evalAssignStmt(ctx context.Context, n *ast.AssignStmt, env *
 			rhsValue = ret.Value
 		}
 
+		// If the result is a single symbolic placeholder, but we expect multiple return values,
+		// we can expand it into a MultiReturn object with the correct number of placeholders.
+		// This handles calls to unscannable functions that are expected to return multiple values.
+		if sp, isPlaceholder := rhsValue.(*object.SymbolicPlaceholder); isPlaceholder {
+			if len(n.Lhs) > 1 {
+				placeholders := make([]object.Object, len(n.Lhs))
+				for i := 0; i < len(n.Lhs); i++ {
+					// The first placeholder inherits the reason from the original.
+					if i == 0 {
+						placeholders[i] = sp
+					} else {
+						placeholders[i] = &object.SymbolicPlaceholder{
+							Reason: fmt.Sprintf("inferred result %d from multi-value assignment to %s", i, sp.Reason),
+						}
+					}
+				}
+				rhsValue = &object.MultiReturn{Values: placeholders}
+			}
+		}
+
 		multiRet, ok := rhsValue.(*object.MultiReturn)
 		if !ok {
 			// This can happen if a function that is supposed to return multiple values
 			// is not correctly modeled. We fall back to assigning placeholders.
-			e.logc(ctx, slog.LevelWarn, "expected multi-return value on RHS of assignment", "got_type", rhsValue.Type())
+			e.logc(ctx, slog.LevelWarn, "expected multi-return value on RHS of assignment", "got_type", rhsValue.Type(), "value", inspectValuer{rhsValue})
 			for _, lhsExpr := range n.Lhs {
 				if ident, ok := lhsExpr.(*ast.Ident); ok && ident.Name != "_" {
 					v := &object.Variable{

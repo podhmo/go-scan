@@ -10,7 +10,7 @@ import (
 	"github.com/podhmo/go-scan/symgo"
 )
 
-func TestRecursion(t *testing.T) {
+func TestRecursionWithMultiReturn(t *testing.T) {
 	// This test case reproduces the infinite hang that occurs when the evaluator
 	// encounters a recursive function with multiple return values.
 	// The `Get` function below simulates the structure of `minigo.object.Environment.Get`.

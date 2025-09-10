@@ -587,22 +587,10 @@ func NewEnclosedEnvironment(outer *Environment) *Environment {
 }
 
 // Get retrieves an object by name from the environment, checking outer scopes if necessary.
-// It uses a private get method to perform cycle detection.
 func (e *Environment) Get(name string) (Object, bool) {
-	return e.get(name, make(map[*Environment]bool))
-}
-
-// get is the internal recursive implementation of Get. It tracks visited
-// environments to prevent infinite loops in case of a cyclic environment chain.
-func (e *Environment) get(name string, visited map[*Environment]bool) (Object, bool) {
-	if visited[e] {
-		return nil, false // Cycle detected
-	}
-	visited[e] = true
-
 	obj, ok := e.store[name]
 	if !ok && e.outer != nil {
-		obj, ok = e.outer.get(name, visited)
+		obj, ok = e.outer.Get(name)
 	}
 	return obj, ok
 }

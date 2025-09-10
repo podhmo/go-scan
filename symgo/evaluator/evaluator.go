@@ -2882,7 +2882,19 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 		// Allow one level of recursion, but stop at the second call.
 		if recursionCount > 1 {
 			e.logc(ctx, slog.LevelWarn, "bounded recursion depth exceeded, halting analysis for this path", "function", name)
-			return e.createSymbolicResultForFunc(ctx, f)
+			// Return a symbolic placeholder that matches the function's return signature.
+			if f.Def != nil && f.Def.AstDecl.Type.Results != nil {
+				numResults := len(f.Def.AstDecl.Type.Results.List)
+				if numResults > 1 {
+					results := make([]object.Object, numResults)
+					for i := 0; i < numResults; i++ {
+						results[i] = &object.SymbolicPlaceholder{Reason: "bounded recursion halt"}
+					}
+					return &object.MultiReturn{Values: results}
+				}
+			}
+			// Default to a single placeholder if signature is not available or has <= 1 return values.
+			return &object.SymbolicPlaceholder{Reason: "bounded recursion halt"}
 		}
 	}
 

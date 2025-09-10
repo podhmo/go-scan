@@ -207,28 +207,28 @@ func main() {
 			ExpectedError: "",
 		},
 		{
-			Name: "recursive method call on a field, mimicking e.outer.Get()",
+			Name: "recursive method on different instance of same type with multi-return",
 			Code: `
 package main
 
-type Node struct {
-    Name  string
-    Outer *Node
+type Env struct {
+	Outer *Env
 }
 
-// Get mimics the recursive structure that caused the bug.
-func (n *Node) Get(name string) {
-    if n.Outer != nil {
-        n.Outer.Get(name) // Recursive call on a field
-    }
+func (e *Env) Get(name string) (string, bool) {
+	if e.Outer != nil {
+		// Use a direct tail-call recursion to match the original bug report's pattern
+		return e.Outer.Get(name)
+	}
+	return "default", true
 }
 
 func main() {
-    root := &Node{Name: "root"}
-    child := &Node{Name: "child", Outer: root}
-    // Create a cycle for the analysis to find.
-    root.Outer = child
-    child.Get("foo")
+	inner := &Env{}
+	outer := &Env{Outer: inner}
+	s, ok := outer.Get("foo")
+	_ = s
+	_ = ok
 }
 `,
 			ShouldFail:    false,

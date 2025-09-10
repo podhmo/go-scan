@@ -89,6 +89,6 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 
 ### `symgo` Engine Improvements ([docs/plan-symgo-refine2.md](./docs/plan-symgo-refine2.md))
 - [x] **Fix Regressions**: Addressed `e2e` test failures in `find-orphans` by generalizing the handling of unresolved functions and fixing an infinite recursion bug.
+- [x] **Fix unbounded recursion for methods on different instances**: The recursion check in the evaluator now correctly compares receiver *types* instead of receiver *instances*. This fixes a major performance bug where recursive calls on different objects of the same type (e.g., `e.Outer.Get()`) were not bounded, causing tests to run extremely slowly.
 - [x] **Trace calls in `for` loop conditions**: Enhance `evalForStmt` to evaluate the `Cond` expression (without using its result for branching) to trace function calls, similar to how `if` conditions are handled. This would improve call graph completeness.
-- [x] **Fix unbounded recursion on methods**: Improved the bounded recursion check in the `symgo` evaluator to correctly detect recursive method calls with identical arguments, preventing infinite loops during analysis. ([trouble-symgo.md](./trouble-symgo.md))
 - [ ] **DX: Add Timeout Flag to `find-orphans`**: Add a `--timeout` flag to the `find-orphans` CLI for easier debugging.

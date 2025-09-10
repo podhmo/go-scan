@@ -672,6 +672,11 @@ func (e *Evaluator) evalIntegerInfixExpression(ctx context.Context, pos token.Po
 	case token.MUL:
 		return &object.Integer{Value: leftVal * rightVal}
 	case token.QUO:
+		if rightVal == 0 {
+			// Division by zero in symbolic execution should not cause a panic.
+			// Instead, we return a placeholder representing the unknown result.
+			return &object.SymbolicPlaceholder{Reason: "division by zero"}
+		}
 		return &object.Integer{Value: leftVal / rightVal}
 	case token.EQL: // ==
 		return nativeBoolToBooleanObject(leftVal == rightVal)
@@ -2077,13 +2082,14 @@ func (e *Evaluator) evalReturnStmt(ctx context.Context, n *ast.ReturnStmt, env *
 		if isError(val) {
 			return val
 		}
-		// The result of an expression must be fully evaluated before being returned.
+		// The result of an expression could be a ReturnValue if it's a function call.
+		// We need to get the *actual* value to be returned to avoid nested ReturnValues.
+		if ret, ok := val.(*object.ReturnValue); ok {
+			val = ret.Value
+		}
+		// The result must be fully evaluated before being returned.
 		val = e.forceEval(ctx, val, pkg)
 		if isError(val) {
-			return val
-		}
-
-		if _, ok := val.(*object.ReturnValue); ok {
 			return val
 		}
 		return &object.ReturnValue{Value: val}
@@ -2865,18 +2871,30 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 	if f, ok := fn.(*object.Function); ok && f.Def != nil {
 		recursionCount := 0
 		for _, frame := range e.callStack {
-			// Check if we are calling the same function definition with the same arguments.
-			// The original check for method receivers (frame.Fn.Receiver == f.Receiver) was too
-			// strict, as symbolic execution can create new object instances for the receiver
-			// at each recursive step. Comparing arguments is a more reliable way to detect
-			// direct, non-terminating recursion.
-			if frame.Fn != nil && frame.Fn.Def == f.Def && areArgsEqual(frame.Args, args) {
-				recursionCount++
+			// Check if we are calling the same function definition.
+			if frame.Fn != nil && frame.Fn.Def == f.Def {
+				if f.Receiver != nil {
+					// For methods, we check if the receiver is of the same type, not the same instance.
+					// This correctly bounds recursion for patterns like `n.Next.Method()` or `e.Outer.Get()`.
+					if frame.Fn.Receiver != nil {
+						fTypeInfo := f.Receiver.TypeInfo()
+						frameTypeInfo := frame.Fn.Receiver.TypeInfo()
+						if fTypeInfo != nil && frameTypeInfo != nil && fTypeInfo == frameTypeInfo {
+							recursionCount++
+						} else if fTypeInfo == nil && frameTypeInfo == nil {
+							// Fallback for typeless placeholders.
+							recursionCount++
+						}
+					}
+				} else {
+					// For plain functions, any recursive call is counted.
+					recursionCount++
+				}
 			}
 		}
 
 		// Allow one level of recursion, but stop at the second call.
-		if recursionCount > 0 { // Changed from > 1 to > 0 to be more conservative
+		if recursionCount > 1 {
 			e.logc(ctx, slog.LevelWarn, "bounded recursion depth exceeded, halting analysis for this path", "function", name)
 			return e.createSymbolicResultForFunc(ctx, f)
 		}

@@ -91,4 +91,5 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 ### `symgo` Engine Improvements ([docs/plan-symgo-refine2.md](./docs/plan-symgo-refine2.md))
 - [x] **Fix Regressions**: Addressed `e2e` test failures in `find-orphans` by generalizing the handling of unresolved functions and fixing an infinite recursion bug.
 - [x] **Trace calls in `for` loop conditions**: Enhance `evalForStmt` to evaluate the `Cond` expression (without using its result for branching) to trace function calls, similar to how `if` conditions are handled. This would improve call graph completeness.
+- [x] **Handle Multi-Return from Unscannable Packages**: The evaluator now correctly handles assignments from multi-return functions from packages outside the scan policy. It infers the number of return values from the left-hand side of the assignment and creates an appropriate number of symbolic placeholders, preventing incorrect warnings. ([docs/trouble-symgo.md](./docs/trouble-symgo.md))
 - [ ] **DX: Add Timeout Flag to `find-orphans`**: Add a `--timeout` flag to the `find-orphans` CLI for easier debugging.

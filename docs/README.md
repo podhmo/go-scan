@@ -1,0 +1,11 @@
+# docs
+
+Each of these documents is not for users, but for developers (currently just me).
+This is a text repository for tiny specification-driven development using jules.
+
+Documents are differentiated by filename prefix 
+
+1. analysis- These are files for exploratory analysis and testing of things that may or may not be feasible.
+2. plan- these are A document about the implementation plan and specifications of a task. This is linked to TODO.md.
+3. trouble- These are temporary records of issues and obstacles encountered during implementation. These files are used to pass along the implementation and to debug or reimplement.
+4. summary- These are useful summaries of knowledge

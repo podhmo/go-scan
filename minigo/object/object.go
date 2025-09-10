@@ -1122,6 +1122,14 @@ func NewEnclosedEnvironment(outer *Environment) *Environment {
 // Get retrieves an object by name from the environment, checking outer scopes if necessary.
 // It checks type params, then constants, then variables. It dereferences the pointer from the store.
 func (e *Environment) Get(name string) (Object, bool) {
+	return e.get(name, make(map[*Environment]struct{}))
+}
+func (e *Environment) get(name string, visited map[*Environment]struct{}) (Object, bool) {
+	if _, ok := visited[e]; ok {
+		return nil, false // Cycle detected
+	}
+	visited[e] = struct{}{}
+
 	if obj, ok := e.typeParamBindings[name]; ok {
 		return obj, true
 	}
@@ -1132,7 +1140,7 @@ func (e *Environment) Get(name string) (Object, bool) {
 		return *objPtr, true
 	}
 	if e.outer != nil {
-		return e.outer.Get(name)
+		return e.outer.get(name, visited)
 	}
 	return nil, false
 }
@@ -1144,22 +1152,40 @@ func (e *Environment) SetType(name string, val Object) {
 
 // GetAddress retrieves the memory address of a variable in the environment.
 func (e *Environment) GetAddress(name string) (*Object, bool) {
+	return e.getAddress(name, make(map[*Environment]struct{}))
+}
+
+func (e *Environment) getAddress(name string, visited map[*Environment]struct{}) (*Object, bool) {
+	if _, ok := visited[e]; ok {
+		return nil, false // Cycle detected
+	}
+	visited[e] = struct{}{}
+
 	if objPtr, ok := e.store[name]; ok {
 		return objPtr, true
 	}
 	if e.outer != nil {
-		return e.outer.GetAddress(name)
+		return e.outer.getAddress(name, visited)
 	}
 	return nil, false
 }
 
 // GetConstant retrieves a constant by name, checking outer scopes.
 func (e *Environment) GetConstant(name string) (Object, bool) {
+	return e.getConstant(name, make(map[*Environment]struct{}))
+}
+
+func (e *Environment) getConstant(name string, visited map[*Environment]struct{}) (Object, bool) {
+	if _, ok := visited[e]; ok {
+		return nil, false // Cycle detected
+	}
+	visited[e] = struct{}{}
+
 	if obj, ok := e.consts[name]; ok {
 		return obj, true
 	}
 	if e.outer != nil {
-		return e.outer.GetConstant(name)
+		return e.outer.getConstant(name, visited)
 	}
 	return nil, false
 }
@@ -1205,6 +1231,15 @@ func (e *Environment) GetAll() map[string]Object {
 // the function returns true. If it's not found, or if it's a constant,
 // it returns false.
 func (e *Environment) Assign(name string, val Object) bool {
+	return e.assign(name, val, make(map[*Environment]struct{}))
+}
+
+func (e *Environment) assign(name string, val Object, visited map[*Environment]struct{}) bool {
+	if _, ok := visited[e]; ok {
+		return false // Cycle detected
+	}
+	visited[e] = struct{}{}
+
 	// Constants cannot be reassigned.
 	if _, ok := e.consts[name]; ok {
 		return false
@@ -1218,7 +1253,7 @@ func (e *Environment) Assign(name string, val Object) bool {
 
 	// If not found locally, try assigning in the outer scope.
 	if e.outer != nil {
-		return e.outer.Assign(name, val)
+		return e.outer.assign(name, val, visited)
 	}
 
 	// The variable was not found in any scope.

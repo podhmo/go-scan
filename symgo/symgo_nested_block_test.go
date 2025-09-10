@@ -1,4 +1,4 @@
-package evaluator_test
+package symgo_test
 
 import (
 	"path/filepath"

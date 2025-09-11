@@ -86,12 +86,15 @@ func TestEvalComplex(t *testing.T) {
 			action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 				pkg := pkgs[0]
 				eval := New(s, s.Logger, nil, nil)
-				env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 				for _, file := range pkg.AstFiles {
-					eval.Eval(ctx, file, env, pkg)
+					eval.Eval(ctx, file, nil, pkg)
 				}
 
-				mainFuncObj, ok := env.Get("main")
+				pkgEnv := eval.PackageEnvForTest("example.com/me")
+				if pkgEnv == nil {
+					return fmt.Errorf("could not get package env for 'example.com/me'")
+				}
+				mainFuncObj, ok := pkgEnv.Get("main")
 				if !ok {
 					return fmt.Errorf("main function not found")
 				}

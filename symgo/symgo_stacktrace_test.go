@@ -44,10 +44,14 @@ func main() {
 			env := object.NewEnvironment()
 
 			for _, f := range pkg.AstFiles {
-				eval.Eval(ctx, f, env, pkg)
+			eval.Eval(ctx, f, nil, pkg)
 			}
 
-			mainFn, ok := env.Get("main")
+		pkgEnv := eval.PackageEnvForTest("example.com/me")
+		if pkgEnv == nil {
+			return fmt.Errorf("could not get package env for 'example.com/me'")
+		}
+		mainFn, ok := pkgEnv.Get("main")
 			if !ok {
 				return fmt.Errorf("could not find main function")
 			}

@@ -35,10 +35,13 @@ func main() {
 			return path != "flag"
 		})
 
-		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
-		eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], env, pkg)
+		eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], nil, pkg)
 
-		mainFunc, ok := env.Get("main")
+		pkgEnv := eval.PackageEnvForTest("example.com/me")
+		if pkgEnv == nil {
+			return fmt.Errorf("could not get package env for 'example.com/me'")
+		}
+		mainFunc, ok := pkgEnv.Get("main")
 		if !ok {
 			return fmt.Errorf("function 'main' not found")
 		}

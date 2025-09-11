@@ -45,7 +45,16 @@ func DoSomething() {}
 	if err != nil {
 		t.Fatalf("s.Scan() failed: %+v", err)
 	}
-	pkg := pkgs[0]
+	var mainPkg *goscan.Package
+	for _, p := range pkgs {
+		if p.Name == "main" {
+			mainPkg = p
+			break
+		}
+	}
+	if mainPkg == nil {
+		t.Fatal("main package not found")
+	}
 
 	interp, err := symgo.NewInterpreter(s)
 	if err != nil {
@@ -70,18 +79,18 @@ func DoSomething() {}
 	})
 
 	// Evaluate the file to load symbols
-	_, err = interp.Eval(t.Context(), pkg.AstFiles[filepath.Join(dir, "main.go")], pkg)
+	_, err = interp.Eval(t.Context(), mainPkg.AstFiles[filepath.Join(dir, "main.go")], mainPkg)
 	if err != nil {
 		t.Fatalf("interp.Eval(file) failed: %+v", err)
 	}
 
 	// Find and apply the main function
-	mainFn, ok := interp.FindObject("run")
+	mainFn, ok := interp.FindObjectInPackage("t", "run")
 	if !ok {
 		t.Fatal("could not find run function")
 	}
 
-	_, err = interp.Apply(t.Context(), mainFn, nil, pkg)
+	_, err = interp.Apply(t.Context(), mainFn, nil, mainPkg)
 	if err != nil {
 		t.Fatalf("Apply() failed: %+v", err)
 	}
@@ -143,7 +152,7 @@ func run() (int, int) {
 		t.Fatalf("interp.Eval(file) failed: %+v", err)
 	}
 
-	mainFn, ok := interp.FindObject("run")
+	mainFn, ok := interp.FindObjectInPackage("t", "run")
 	if !ok {
 		t.Fatalf("run function not found")
 	}

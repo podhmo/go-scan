@@ -48,12 +48,15 @@ func main() {
 		})
 
 		mainPkg := pkgs[0]
-		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 		for _, f := range mainPkg.AstFiles {
-			eval.Eval(ctx, f, env, mainPkg)
+			eval.Eval(ctx, f, nil, mainPkg)
 		}
 
-		mainFunc, ok := env.Get("main")
+		pkgEnv := eval.PackageEnvForTest("a.b/c")
+		if pkgEnv == nil {
+			t.Fatal("could not get package env for 'a.b/c'")
+		}
+		mainFunc, ok := pkgEnv.Get("main")
 		if !ok {
 			t.Fatal("main function not found")
 		}
@@ -103,13 +106,16 @@ func main() {
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		eval := New(s, s.Logger, nil, nil)
 		mainPkg := pkgs[0]
-		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 
 		for _, f := range mainPkg.AstFiles {
-			eval.Eval(ctx, f, env, mainPkg)
+			eval.Eval(ctx, f, nil, mainPkg)
 		}
 
-		mainFunc, ok := env.Get("main")
+		pkgEnv := eval.PackageEnvForTest("a.b/c")
+		if pkgEnv == nil {
+			t.Fatal("could not get package env for 'a.b/c'")
+		}
+		mainFunc, ok := pkgEnv.Get("main")
 		if !ok {
 			t.Fatal("main function not found")
 		}

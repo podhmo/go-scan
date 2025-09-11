@@ -49,7 +49,7 @@ func TestIntraModuleCall(t *testing.T) {
 	}
 
 	// Get the function object from the environment.
-	mainObj, ok := interp.FindObject("main")
+	mainObj, ok := interp.FindObjectInPackage(mainPkgPath, "main")
 	if !ok {
 		t.Fatal("main function not found in interpreter environment")
 	}

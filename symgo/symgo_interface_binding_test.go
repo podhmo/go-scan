@@ -75,7 +75,7 @@ func TargetFunc(writer io.Writer) {
 		}
 
 		// Find the target function to analyze.
-		targetFn, ok := interp.FindObject("TargetFunc")
+		targetFn, ok := interp.FindObjectInPackage("myapp", "TargetFunc")
 		if !ok {
 			return fmt.Errorf("TargetFunc function not found")
 		}

@@ -46,14 +46,14 @@ func TestEvalBinaryExpr(t *testing.T) {
 				pkg := pkgs[0]
 				eval := New(s, s.Logger, nil, nil)
 				for _, file := range pkg.AstFiles {
-			eval.Eval(ctx, file, nil, pkg)
+					eval.Eval(ctx, file, nil, pkg)
 				}
 
-		pkgEnv, ok := eval.PackageEnvForTest("example.com/me")
-		if !ok {
-			return fmt.Errorf("could not get package env for 'example.com/me'")
-		}
-		mainFuncObj, ok := pkgEnv.Get("main")
+				pkgEnv, ok := eval.PackageEnvForTest("example.com/me")
+				if !ok {
+					return fmt.Errorf("could not get package env for 'example.com/me'")
+				}
+				mainFuncObj, ok := pkgEnv.Get("main")
 				if !ok {
 					return fmt.Errorf("main function not found")
 				}

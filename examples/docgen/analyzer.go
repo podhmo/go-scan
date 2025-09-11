@@ -163,7 +163,7 @@ func (a *Analyzer) Analyze(ctx context.Context, importPath string, entrypoint st
 	}
 
 	// Get the function object from the environment.
-	entrypointObj, ok := a.interpreter.FindObject(entrypoint)
+	entrypointObj, ok := a.interpreter.FindObjectInPackage(importPath, entrypoint)
 	if !ok {
 		return fmt.Errorf("entrypoint function %q not found in interpreter environment", entrypoint)
 	}

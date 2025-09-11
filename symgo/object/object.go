@@ -207,9 +207,10 @@ type Function struct {
 	Body       *ast.BlockStmt
 	Env        *Environment
 	Decl       *ast.FuncDecl // The original declaration, for metadata like godoc.
-	Package    *scanner.PackageInfo
-	Receiver   Object // The receiver for a method call ("self" or "this").
-	Def        *scanner.FunctionInfo
+	Package       *scanner.PackageInfo
+	Receiver      Object // The receiver for a method call ("self" or "this").
+	ReceiverPos   token.Pos
+	Def           *scanner.FunctionInfo
 }
 
 // Type returns the type of the Function object.
@@ -222,6 +223,14 @@ func (f *Function) Inspect() string {
 		name = f.Name.String()
 	}
 	return fmt.Sprintf("func %s() { ... }", name)
+}
+
+// WithReceiver creates a new Function object with the receiver and its position bound.
+func (f *Function) WithReceiver(receiver Object, pos token.Pos) *Function {
+	newF := *f // Creates a shallow copy
+	newF.Receiver = receiver
+	newF.ReceiverPos = pos
+	return &newF
 }
 
 // --- Intrinsic Object ---

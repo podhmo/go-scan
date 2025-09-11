@@ -1,42 +1,136 @@
-package scanner
+package scanner_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
+
+	goscan "github.com/podhmo/go-scan"
+	"github.com/podhmo/go-scan/scanner"
+	"github.com/podhmo/go-scan/scantest"
+	"github.com/podhmo/go-scan/symgo"
+	"github.com/podhmo/go-scan/symgo/object"
 )
 
-func TestFieldType_String_InfiniteRecursion(t *testing.T) {
-	// 1. Manually construct a FieldType with a cyclic reference.
-	// This simulates the kind of object symgo can create when analyzing
-	// a recursive type like `type T []*T`.
-	ft := &FieldType{
+func TestFieldType_String_RuntimeInfiniteRecursion(t *testing.T) {
+	t.Log("This test verifies the RUNTIME bug where FieldType.String() causes a stack overflow on cyclic types.")
+	ft := &scanner.FieldType{
 		Name:    "T",
 		IsSlice: true,
 	}
 	ft.Elem = ft // Create the cycle: T is a slice of itself.
 
-	// 2. Run the String() method in a goroutine and use a timeout
-	//    to detect if it hangs.
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 
 	done := make(chan struct{})
 	go func() {
-		// This call is expected to hang due to infinite recursion.
 		_ = ft.String()
 		close(done)
 	}()
 
-	// 3. Wait for either completion or timeout.
 	select {
 	case <-done:
-		// If it completes, the bug is not reproduced (or has been fixed).
 		t.Errorf("FieldType.String() completed, but was expected to hang due to infinite recursion")
 	case <-ctx.Done():
-		// If the context times out, it means the function was hanging as expected.
-		// This is the success case for this test, as it proves the bug is reproducible.
-		t.Log("FieldType.String() call timed out as expected, successfully reproducing the bug.")
+		t.Log("FieldType.String() call timed out as expected, successfully reproducing the runtime bug.")
+	}
+}
+
+func TestSymgo_EvalStringOnRecursiveType_WithFix(t *testing.T) {
+	t.Log("This test verifies the SYMBOLIC evaluation fix, ensuring symgo's recursion detection now works for methods on cyclic types.")
+
+	const testGoMod = `
+module example.com/m
+
+go 1.21
+
+replace github.com/podhmo/go-scan => ../../../
+`
+	const testMainGo = `
+package main
+type T []*T
+`
+
+	files := map[string]string{
+		"go.mod":  testGoMod,
+		"main.go": testMainGo,
+	}
+	dir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
+		interp, err := symgo.NewInterpreter(s)
+		if err != nil {
+			return err
+		}
+
+		mainPkg := pkgs[0]
+		var typeInfo *scanner.TypeInfo
+		for _, ti := range mainPkg.Types {
+			if ti.Name == "T" {
+				typeInfo = ti
+				break
+			}
+		}
+		if typeInfo == nil {
+			t.Fatal(`could not find type info for "T"`)
+		}
+		cyclicFieldType := typeInfo.Underlying
+
+		scannerPkg, err := s.ScanPackageByImport(ctx, "github.com/podhmo/go-scan/scanner")
+		if err != nil {
+			return err
+		}
+
+		var stringMethod *scanner.FunctionInfo
+		for _, f := range scannerPkg.Functions {
+			if f.Name == "String" && f.Receiver != nil && f.Receiver.Type.Name == "FieldType" {
+				stringMethod = f
+				break
+			}
+		}
+		if stringMethod == nil {
+			t.Fatal("could not find FunctionInfo for scanner.FieldType.String")
+		}
+
+		evaluator := interp.EvaluatorForTest()
+		pkgObj, err := evaluator.GetOrLoadPackageForTest(ctx, "github.com/podhmo/go-scan/scanner")
+		if err != nil {
+			return err
+		}
+		baseFnObj := evaluator.GetOrResolveFunctionForTest(pkgObj, stringMethod)
+		baseFn, ok := baseFnObj.(*object.Function)
+		if !ok {
+			t.Fatalf("resolved method is not a function object")
+		}
+
+		receiverPlaceholder := &object.SymbolicPlaceholder{Reason: "cyclic type for test"}
+		receiverPlaceholder.SetFieldType(cyclicFieldType)
+		boundFn := baseFn.WithReceiver(receiverPlaceholder, 0)
+
+		result, applyErr := interp.Apply(ctx, boundFn, nil, scannerPkg)
+		if applyErr != nil {
+			t.Fatalf("interp.Apply failed: %v", applyErr)
+		}
+
+		retVal, ok := result.(*object.ReturnValue)
+		if !ok {
+			t.Fatalf("Apply() did not return a ReturnValue, got %T", result)
+		}
+		placeholder, ok := retVal.Value.(*object.SymbolicPlaceholder)
+		if !ok {
+			t.Fatalf("ReturnValue does not contain a SymbolicPlaceholder, got %T", retVal.Value)
+		}
+		if !strings.Contains(placeholder.Reason, "bounded recursion halt") {
+			t.Errorf("Expected placeholder reason to be 'bounded recursion halt', but got %q", placeholder.Reason)
+		}
+		return nil
+	}
+
+	if _, err := scantest.Run(t, dir, []string{"."}, action); err != nil {
+		t.Fatalf("scantest.Run failed: %+v", err)
 	}
 }
 
@@ -44,7 +138,7 @@ func TestNewUnresolvedTypeInfo(t *testing.T) {
 	pkgPath := "example.com/foo"
 	name := "Bar"
 
-	ti := NewUnresolvedTypeInfo(pkgPath, name)
+	ti := scanner.NewUnresolvedTypeInfo(pkgPath, name)
 
 	if ti == nil {
 		t.Fatal("NewUnresolvedTypeInfo returned nil")
@@ -184,7 +278,7 @@ func TestTypeInfo_Annotation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ti := &TypeInfo{Doc: tt.doc}
+			ti := &scanner.TypeInfo{Doc: tt.doc}
 			gotValue, gotOk := ti.Annotation(context.Background(), tt.annoName)
 			if gotOk != tt.wantOk {
 				t.Errorf("TypeInfo.Annotation() gotOk = %v, want %v", gotOk, tt.wantOk)

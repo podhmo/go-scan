@@ -1703,26 +1703,43 @@ func (e *Evaluator) evalTypeSwitchStmt(ctx context.Context, n *ast.TypeSwitchStm
 		}
 	}
 
-	assignStmt, ok := n.Assign.(*ast.AssignStmt)
-	if !ok {
-		return e.newError(ctx, n.Pos(), "expected AssignStmt in TypeSwitchStmt, got %T", n.Assign)
-	}
-	if len(assignStmt.Lhs) != 1 || len(assignStmt.Rhs) != 1 {
-		return e.newError(ctx, n.Pos(), "expected one variable and one value in type switch assignment")
-	}
-	ident, ok := assignStmt.Lhs[0].(*ast.Ident)
-	if !ok {
-		return e.newError(ctx, n.Pos(), "expected identifier on LHS of type switch assignment")
-	}
-	varName := ident.Name
+	var varName string
+	var originalObj object.Object
 
-	typeAssert, ok := assignStmt.Rhs[0].(*ast.TypeAssertExpr)
-	if !ok {
-		return e.newError(ctx, n.Pos(), "expected TypeAssertExpr on RHS of type switch assignment")
-	}
-	originalObj := e.Eval(ctx, typeAssert.X, switchEnv, pkg)
-	if isError(originalObj) {
-		return originalObj
+	switch assign := n.Assign.(type) {
+	case *ast.AssignStmt:
+		if len(assign.Lhs) != 1 || len(assign.Rhs) != 1 {
+			return e.newError(ctx, n.Pos(), "expected one variable and one value in type switch assignment")
+		}
+		ident, ok := assign.Lhs[0].(*ast.Ident)
+		if !ok {
+			return e.newError(ctx, n.Pos(), "expected identifier on LHS of type switch assignment")
+		}
+		varName = ident.Name
+
+		typeAssert, ok := assign.Rhs[0].(*ast.TypeAssertExpr)
+		if !ok {
+			return e.newError(ctx, n.Pos(), "expected TypeAssertExpr on RHS of type switch assignment")
+		}
+		originalObj = e.Eval(ctx, typeAssert.X, switchEnv, pkg)
+		if isError(originalObj) {
+			return originalObj
+		}
+
+	case *ast.ExprStmt:
+		typeAssert, ok := assign.X.(*ast.TypeAssertExpr)
+		if !ok {
+			return e.newError(ctx, n.Pos(), "expected TypeAssertExpr in ExprStmt of type switch")
+		}
+		// In `switch x.(type)`, there is no new variable, so varName remains empty.
+		// We still need to evaluate the expression being switched on.
+		originalObj = e.Eval(ctx, typeAssert.X, switchEnv, pkg)
+		if isError(originalObj) {
+			return originalObj
+		}
+
+	default:
+		return e.newError(ctx, n.Pos(), "expected AssignStmt or ExprStmt in TypeSwitchStmt, got %T", n.Assign)
 	}
 
 	if n.Body != nil {
@@ -1743,52 +1760,57 @@ func (e *Evaluator) evalTypeSwitchStmt(ctx context.Context, n *ast.TypeSwitchStm
 			}
 			caseEnv := object.NewEnclosedEnvironment(switchEnv)
 
-			if caseClause.List == nil { // default case
-				v := &object.Variable{
-					Name:        varName,
-					Value:       originalObj,
-					IsEvaluated: true, // Mark as evaluated since originalObj is already set
-					BaseObject: object.BaseObject{
-						ResolvedTypeInfo:  originalObj.TypeInfo(),
-						ResolvedFieldType: originalObj.FieldType(),
-					},
-				}
-				caseEnv.Set(varName, v)
-			} else {
-				typeExpr := caseClause.List[0]
-				fieldType := e.scanner.TypeInfoFromExpr(ctx, typeExpr, nil, pkg, importLookup)
-				if fieldType == nil {
-					if id, ok := typeExpr.(*ast.Ident); ok {
-						fieldType = &scanner.FieldType{Name: id.Name, IsBuiltin: true}
-					} else {
-						return e.newError(ctx, typeExpr.Pos(), "could not resolve type for case clause")
+			// If varName is set, we are in the `v := x.(type)` form.
+			// We need to create a new variable `v` in the case's scope.
+			if varName != "" {
+				if caseClause.List == nil { // default case
+					v := &object.Variable{
+						Name:        varName,
+						Value:       originalObj,
+						IsEvaluated: true, // Mark as evaluated since originalObj is already set
+						BaseObject: object.BaseObject{
+							ResolvedTypeInfo:  originalObj.TypeInfo(),
+							ResolvedFieldType: originalObj.FieldType(),
+						},
 					}
-				}
-
-				var resolvedType *scanner.TypeInfo
-				if !fieldType.IsBuiltin {
-					resolvedType = e.resolver.ResolveType(ctx, fieldType)
-					// If the type was unresolved, we can now infer its kind to be an interface.
-					if resolvedType != nil && resolvedType.Kind == scanner.UnknownKind {
-						resolvedType.Kind = scanner.InterfaceKind
+					caseEnv.Set(varName, v)
+				} else {
+					typeExpr := caseClause.List[0]
+					fieldType := e.scanner.TypeInfoFromExpr(ctx, typeExpr, nil, pkg, importLookup)
+					if fieldType == nil {
+						if id, ok := typeExpr.(*ast.Ident); ok {
+							fieldType = &scanner.FieldType{Name: id.Name, IsBuiltin: true}
+						} else {
+							return e.newError(ctx, typeExpr.Pos(), "could not resolve type for case clause")
+						}
 					}
-				}
 
-				val := &object.SymbolicPlaceholder{
-					Reason:     fmt.Sprintf("type switch case variable %s", fieldType.String()),
-					BaseObject: object.BaseObject{ResolvedTypeInfo: resolvedType, ResolvedFieldType: fieldType},
+					var resolvedType *scanner.TypeInfo
+					if !fieldType.IsBuiltin {
+						resolvedType = e.resolver.ResolveType(ctx, fieldType)
+						if resolvedType != nil && resolvedType.Kind == scanner.UnknownKind {
+							resolvedType.Kind = scanner.InterfaceKind
+						}
+					}
+
+					val := &object.SymbolicPlaceholder{
+						Reason:     fmt.Sprintf("type switch case variable %s", fieldType.String()),
+						BaseObject: object.BaseObject{ResolvedTypeInfo: resolvedType, ResolvedFieldType: fieldType},
+					}
+					v := &object.Variable{
+						Name:        varName,
+						Value:       val,
+						IsEvaluated: true,
+						BaseObject: object.BaseObject{
+							ResolvedTypeInfo:  resolvedType,
+							ResolvedFieldType: fieldType,
+						},
+					}
+					caseEnv.Set(varName, v)
 				}
-				v := &object.Variable{
-					Name:        varName,
-					Value:       val,
-					IsEvaluated: true, // Mark as evaluated since val is already set
-					BaseObject: object.BaseObject{
-						ResolvedTypeInfo:  resolvedType,
-						ResolvedFieldType: fieldType,
-					},
-				}
-				caseEnv.Set(varName, v)
 			}
+			// If varName is empty, we are in the `x.(type)` form. No new variable is created.
+			// The environment for the case body is just a new scope above the switch environment.
 
 			for _, stmt := range caseClause.Body {
 				if res := e.Eval(ctx, stmt, caseEnv, pkg); isError(res) {
@@ -2250,6 +2272,13 @@ func (e *Evaluator) evalAssignStmt(ctx context.Context, n *ast.AssignStmt, env *
 			// 2. Evaluate the index expression (e.g., `k`).
 			e.Eval(ctx, lhs.Index, env, pkg)
 			// 3. Evaluate the RHS value (e.g., `v`).
+			e.Eval(ctx, n.Rhs[0], env, pkg)
+			return nil
+		case *ast.StarExpr:
+			// This is an assignment to a pointer dereference, like `*p = v`.
+			// Evaluate the pointer expression (e.g., `p`).
+			e.Eval(ctx, lhs.X, env, pkg)
+			// Evaluate the RHS value (e.g., `v`).
 			e.Eval(ctx, n.Rhs[0], env, pkg)
 			return nil
 		default:

@@ -677,6 +677,21 @@ func (e *Evaluator) evalIntegerInfixExpression(ctx context.Context, pos token.Po
 			return &object.SymbolicPlaceholder{Reason: "division by zero"}
 		}
 		return &object.Integer{Value: leftVal / rightVal}
+
+	// Placeholders for operators that are not fully evaluated
+	case token.REM: // %
+		return &object.SymbolicPlaceholder{Reason: "integer operation: " + op.String()}
+	case token.SHL: // <<
+		return &object.SymbolicPlaceholder{Reason: "integer operation: " + op.String()}
+	case token.SHR: // >>
+		return &object.SymbolicPlaceholder{Reason: "integer operation: " + op.String()}
+	case token.AND: // &
+		return &object.SymbolicPlaceholder{Reason: "integer operation: " + op.String()}
+	case token.OR: // |
+		return &object.SymbolicPlaceholder{Reason: "integer operation: " + op.String()}
+	case token.XOR: // ^
+		return &object.SymbolicPlaceholder{Reason: "integer operation: " + op.String()}
+
 	case token.EQL: // ==
 		return nativeBoolToBooleanObject(leftVal == rightVal)
 	case token.NEQ: // !=

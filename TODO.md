@@ -75,8 +75,8 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 
 ## To Be Implemented
 
-### Fix `symgo` Symbol Collision Bug ([docs/cont-symgo-symbol-collision.md](./docs/cont-symgo-symbol-collision.md))
-- [ ] Complete the fix for the symbol collision bug in the `symgo` evaluator and resolve all test regressions.
+### Fix `symgo` Symbol Collision Bug 
+- [x] Complete the fix for the symbol collision bug in the `symgo` evaluator and resolve all test regressions.
 
 ### `symgo`: Implement Robust Interface Resolution ([docs/plan-symgo-interface-resolution.md](./docs/plan-symgo-interface-resolution.md))
 - [x] The `isImplementer` function in `evaluator.go` now correctly handles Go's method set rules for both value and pointer receivers.

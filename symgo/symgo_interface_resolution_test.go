@@ -11,7 +11,6 @@ import (
 	"github.com/podhmo/go-scan/symgo/object"
 )
 
-
 const (
 	moduleDefForInterfaceTest = `
 module example.com/me
@@ -124,7 +123,7 @@ func TestInterfaceResolution(t *testing.T) {
 				t.Fatalf("evaluation of main pkg failed: %v", err)
 			}
 
-			mainFunc, ok := interp.FindObject("main")
+			mainFunc, ok := interp.FindObjectInPackage("example.com/me", "main")
 			if !ok {
 				t.Fatalf("could not find main function in interpreter")
 			}
@@ -140,7 +139,6 @@ func TestInterfaceResolution(t *testing.T) {
 		})
 	}
 }
-
 
 const (
 	moduleDefForPointerReceiverTest = `
@@ -255,7 +253,7 @@ func TestInterfaceResolutionWithPointerReceiver(t *testing.T) {
 				t.Fatalf("evaluation of main pkg failed: %v", err)
 			}
 
-			mainFunc, ok := interp.FindObject("main")
+			mainFunc, ok := interp.FindObjectInPackage("example.com/me", "main")
 			if !ok {
 				t.Fatalf("could not find main function in interpreter")
 			}
@@ -385,7 +383,7 @@ func TestInterfaceResolutionWithValueReceiver(t *testing.T) {
 				t.Fatalf("evaluation of main pkg failed: %v", err)
 			}
 
-			mainFunc, ok := interp.FindObject("main")
+			mainFunc, ok := interp.FindObjectInPackage("example.com/me", "main")
 			if !ok {
 				t.Fatalf("could not find main function in interpreter")
 			}

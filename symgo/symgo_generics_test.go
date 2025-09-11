@@ -52,7 +52,7 @@ func main() {
 		t.Fatalf("Eval() failed: %+v", err)
 	}
 
-	mainFn, ok := interp.FindObject("main")
+	mainFn, ok := interp.FindObjectInPackage("mymodule", "main")
 	if !ok {
 		t.Fatalf("main function not found")
 	}
@@ -63,7 +63,7 @@ func main() {
 	}
 
 	// Now, check the value of the global variable V
-	vObj, ok := interp.FindObject("V")
+	vObj, ok := interp.FindObjectInPackage("mymodule", "V")
 	if !ok {
 		t.Fatalf("global variable V not found")
 	}
@@ -131,7 +131,7 @@ func main() {
 		t.Fatalf("Eval() failed: %+v", err)
 	}
 
-	mainFn, ok := interp.FindObject("main")
+	mainFn, ok := interp.FindObjectInPackage("mymodule", "main")
 	if !ok {
 		t.Fatalf("main function not found")
 	}
@@ -184,7 +184,7 @@ func main() {
 		t.Fatalf("Eval() failed: %+v", err)
 	}
 
-	mainFn, ok := interp.FindObject("main")
+	mainFn, ok := interp.FindObjectInPackage("mymodule", "main")
 	if !ok {
 		t.Fatalf("main function not found")
 	}
@@ -195,7 +195,7 @@ func main() {
 	}
 
 	// Now, check the value of the global variable V
-	vObj, ok := interp.FindObject("V")
+	vObj, ok := interp.FindObjectInPackage("mymodule", "V")
 	if !ok {
 		t.Fatalf("global variable V not found")
 	}
@@ -261,7 +261,7 @@ func main() {
 		t.Fatalf("Eval() failed: %+v", err)
 	}
 
-	mainFn, ok := interp.FindObject("main")
+	mainFn, ok := interp.FindObjectInPackage("mymodule", "main")
 	if !ok {
 		t.Fatalf("main function not found")
 	}
@@ -273,7 +273,7 @@ func main() {
 
 	// The evaluator is smart enough to handle this simple case without full
 	// type inference. It passes the argument through. Let's assert this correct behavior.
-	vObj, ok := interp.FindObject("V")
+	vObj, ok := interp.FindObjectInPackage("mymodule", "V")
 	if !ok {
 		t.Fatalf("global variable V not found")
 	}

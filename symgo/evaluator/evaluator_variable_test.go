@@ -37,7 +37,11 @@ func main() {
 			eval.Eval(ctx, file, env, pkg)
 		}
 
-		mainFuncObj, _ := env.Get("main")
+		pkgEnv, ok := eval.PackageEnvForTest(pkg.ImportPath)
+		if !ok {
+			return fmt.Errorf("package env not found for %q", pkg.ImportPath)
+		}
+		mainFuncObj, _ := pkgEnv.Get("main")
 		mainFunc := mainFuncObj.(*object.Function)
 
 		// The variables are defined inside the function, so we need to evaluate the function
@@ -113,9 +117,13 @@ func main() {
 			eval.Eval(ctx, file, env, pkg)
 		}
 
-		mainFunc, _ := env.Get("main")
+		pkgEnv, ok := eval.PackageEnvForTest(pkg.ImportPath)
+		if !ok {
+			return fmt.Errorf("package env not found for %q", pkg.ImportPath)
+		}
+		mainFunc, _ := pkgEnv.Get("main")
 
-		blockEnv := object.NewEnclosedEnvironment(env)
+		blockEnv := object.NewEnclosedEnvironment(pkgEnv)
 		for _, stmt := range mainFunc.(*object.Function).Body.List {
 			eval.Eval(ctx, stmt, blockEnv, pkg)
 		}

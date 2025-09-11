@@ -96,7 +96,7 @@ func Unmarshal(data []byte, v any) error { return nil }
 		t.Fatalf("Eval main file failed: %v", err)
 	}
 
-	mainFunc, ok := interp.FindObject("main")
+	mainFunc, ok := interp.FindObjectInPackage("example.com/myapp", "main")
 	if !ok {
 		t.Fatal("main function not found")
 	}
@@ -165,7 +165,7 @@ func Unmarshal(data []byte, v any) error { return nil }
 		t.Fatalf("Eval main file failed: %v", err)
 	}
 
-	mainFunc, ok := interp.FindObject("main")
+	mainFunc, ok := interp.FindObjectInPackage("example.com/myapp", "main")
 	if !ok {
 		t.Fatal("main function not found")
 	}
@@ -216,7 +216,7 @@ func Do() {
 		t.Fatalf("ScanPackage failed: %v", err)
 	}
 
-	doFunc, ok := interp.FindObject("Do")
+	doFunc, ok := interp.FindObjectInPackage("example.com/myapp/helper", "Do")
 	if !ok {
 		// This is expected since the package is not evaluated yet.
 		// We need to Eval the file first.
@@ -228,7 +228,7 @@ func Do() {
 		t.Fatalf("Eval helper file failed: %v", err)
 	}
 
-	doFunc, ok = interp.FindObject("Do")
+	doFunc, ok = interp.FindObjectInPackage("example.com/myapp/helper", "Do")
 	if !ok {
 		t.Fatal("Do function not found")
 	}

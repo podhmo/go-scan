@@ -995,30 +995,19 @@ func (e *Evaluator) evalTypeDecl(ctx context.Context, d *ast.GenDecl, env *objec
 }
 
 func (e *Evaluator) evalFile(ctx context.Context, file *ast.File, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
-	// Find the dedicated environment for the package being evaluated.
-	// This makes the evaluator robust even if the caller passes a global 'env'.
-	var targetEnv *object.Environment
-	var pkgObj *object.Package
-	env.Walk(func(name string, obj object.Object) bool {
-		if p, ok := obj.(*object.Package); ok {
-			if p.Path == pkg.ImportPath {
-				pkgObj = p
-				return false // stop walking
-			}
-		}
-		return true
-	})
-
-	if pkgObj != nil {
-		targetEnv = pkgObj.Env
-	} else {
-		// Fallback to the provided env if no specific package object is found.
-		// This might happen for the main package in some setups.
-		targetEnv = env
+	// Get the canonical package object for this file. This is the source of truth
+	// for the package's isolated environment.
+	pkgObj, err := e.getOrLoadPackage(ctx, pkg.ImportPath)
+	if err != nil {
+		e.logc(ctx, slog.LevelWarn, "could not load package for file evaluation", "package", pkg.ImportPath, "error", err)
+		// We cannot proceed with evaluation if the package context cannot be loaded.
+		return nil
 	}
+	targetEnv := pkgObj.Env // Always use the package's own, isolated environment.
 
 	// Populate package-level constants and functions once per package.
-	e.ensurePackageEnvPopulated(ctx, &object.Package{Path: pkg.ImportPath, ScannedInfo: pkg, Env: targetEnv})
+	// This will correctly populate targetEnv.
+	e.ensurePackageEnvPopulated(ctx, pkgObj)
 
 	for _, decl := range file.Decls {
 		switch d := decl.(type) {
@@ -1037,6 +1026,8 @@ func (e *Evaluator) evalFile(ctx context.Context, file *ast.File, env *object.En
 					break
 				}
 			}
+			// When creating the function object, it's critical that its definition
+			// environment (`Env`) is the isolated environment of its package.
 			fn := &object.Function{
 				Name:       d.Name,
 				Parameters: d.Type.Params,
@@ -3398,6 +3389,19 @@ func (e *Evaluator) CalledInterfaceMethodsForTest() map[string][]object.Object {
 // SeenPackagesForTest returns the map of seen packages for testing.
 func (e *Evaluator) SeenPackagesForTest() map[string]*goscan.Package {
 	return e.seenPackages
+}
+
+// GetOrLoadPackageForTest is a test helper to expose the internal getOrLoadPackage method.
+func (e *Evaluator) GetOrLoadPackageForTest(ctx context.Context, path string) (*object.Package, error) {
+	return e.getOrLoadPackage(ctx, path)
+}
+
+// PackageEnvForTest is a test helper to get a package's environment.
+func (e *Evaluator) PackageEnvForTest(pkgPath string) (*object.Environment, bool) {
+	if pkg, ok := e.pkgCache[pkgPath]; ok {
+		return pkg.Env, true
+	}
+	return nil, false
 }
 
 // createSymbolicResultForFunc creates a symbolic result for a function call

@@ -46,12 +46,16 @@ func main() {
 				return nil
 			})
 
-			env := object.NewEnclosedEnvironment(eval.UniverseEnv)
-			if res := eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], env, pkg); res != nil && res.Type() == object.ERROR_OBJ {
+			if res := eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], nil, pkg); res != nil && res.Type() == object.ERROR_OBJ {
 				return fmt.Errorf("initial eval failed: %s", res.Inspect())
 			}
 
-			mainFunc, ok := env.Get("main")
+			pkgEnv, ok := eval.PackageEnvForTest("example.com/me")
+			if !ok {
+				return fmt.Errorf("could not get package environment for 'example.com/me'")
+			}
+
+			mainFunc, ok := pkgEnv.Get("main")
 			if !ok {
 				return fmt.Errorf("function 'main' not found")
 			}
@@ -115,12 +119,16 @@ func main() {
 				return nil
 			})
 
-			env := object.NewEnclosedEnvironment(eval.UniverseEnv)
-			if res := eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], env, pkg); res != nil && res.Type() == object.ERROR_OBJ {
+			if res := eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], nil, pkg); res != nil && res.Type() == object.ERROR_OBJ {
 				return fmt.Errorf("initial eval failed: %s", res.Inspect())
 			}
 
-			mainFunc, ok := env.Get("main")
+			pkgEnv, ok := eval.PackageEnvForTest("example.com/me")
+			if !ok {
+				return fmt.Errorf("could not get package environment for 'example.com/me'")
+			}
+
+			mainFunc, ok := pkgEnv.Get("main")
 			if !ok {
 				return fmt.Errorf("function 'main' not found")
 			}

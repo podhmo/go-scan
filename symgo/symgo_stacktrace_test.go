@@ -8,7 +8,7 @@ import (
 
 	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/scantest"
-	"github.com/podhmo/go-scan/symgo/evaluator"
+	"github.com/podhmo/go-scan/symgo"
 	"github.com/podhmo/go-scan/symgo/object"
 )
 
@@ -40,26 +40,27 @@ func main() {
 		var errMsg string
 		action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 			pkg := pkgs[0]
-			eval := evaluator.New(s, nil, nil, nil)
-			env := object.NewEnvironment()
-
-			for _, f := range pkg.AstFiles {
-				eval.Eval(ctx, f, env, pkg)
+			interp, err := symgo.NewInterpreter(s)
+			if err != nil {
+				return err
 			}
 
-			mainFn, ok := env.Get("main")
+			for _, f := range pkg.AstFiles {
+				interp.Eval(ctx, f, pkg)
+			}
+
+			mainFn, ok := interp.FindObjectInPackage("example.com/me", "main")
 			if !ok {
 				return fmt.Errorf("could not find main function")
 			}
 
-			result := eval.Apply(ctx, mainFn, nil, pkg)
-
-			if retVal, ok := result.(*object.ReturnValue); ok {
-				if errObj, ok := retVal.Value.(*object.Error); ok {
+			result, err := interp.Apply(ctx, mainFn, nil, pkg)
+			if err != nil {
+				errMsg = err.Error()
+			} else if result != nil {
+				if errObj, ok := result.(*object.Error); ok {
 					errMsg = errObj.Inspect()
 				}
-			} else if errObj, ok := result.(*object.Error); ok {
-				errMsg = errObj.Inspect()
 			}
 
 			return nil

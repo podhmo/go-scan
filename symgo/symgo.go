@@ -426,6 +426,17 @@ func (i *Interpreter) FindObject(name string) (Object, bool) {
 	return i.globalEnv.Get(name)
 }
 
+// FindObjectInPackage looks up an object in a specific package's environment.
+// This is primarily a test helper to bypass the global environment and check
+// the state of a single package.
+func (i *Interpreter) FindObjectInPackage(pkgPath string, name string) (Object, bool) {
+	pkgObj, err := i.eval.GetOrLoadPackageForTest(context.Background(), pkgPath)
+	if err != nil {
+		return nil, false
+	}
+	return pkgObj.Env.Get(name)
+}
+
 // Apply is a wrapper around the internal evaluator's applyFunction.
 // It is intended for advanced use cases like docgen where direct function invocation is needed.
 func (i *Interpreter) Apply(ctx context.Context, fn Object, args []Object, pkg *scanner.PackageInfo) (Object, error) {

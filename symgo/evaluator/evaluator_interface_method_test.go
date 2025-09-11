@@ -34,9 +34,11 @@ func main() {
 
 	var writeCalled bool
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
-		pkg := pkgs[0]
+		mainPkg := pkgs[0]
+		if mainPkg.Name != "main" {
+			mainPkg = findPkg(pkgs, "main")
+		}
 		eval := New(s, s.Logger, nil, nil)
-		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 
 		key := "(example.com/me/iface.Writer).Write"
 		eval.RegisterIntrinsic(key, func(args ...object.Object) object.Object {
@@ -44,13 +46,17 @@ func main() {
 			return nil
 		})
 
-		for _, file := range pkg.AstFiles {
-			eval.Eval(ctx, file, env, pkg)
+		for _, file := range mainPkg.AstFiles {
+			eval.Eval(ctx, file, nil, mainPkg)
 		}
 
-		mainFuncObj, _ := env.Get("main")
+		pkgEnv, ok := eval.PackageEnvForTest("example.com/me")
+		if !ok {
+			return fmt.Errorf("could not get package env for 'example.com/me'")
+		}
+		mainFuncObj, _ := pkgEnv.Get("main")
 		mainFunc := mainFuncObj.(*object.Function)
-		result := eval.Apply(ctx, mainFunc, []object.Object{}, pkg)
+		result := eval.Apply(ctx, mainFunc, []object.Object{}, mainPkg)
 		if err, ok := result.(*object.Error); ok {
 			return fmt.Errorf("evaluation failed: %s", err.Message)
 		}
@@ -58,7 +64,7 @@ func main() {
 	}
 
 	// Let scantest.Run create and configure the scanner.
-	if _, err := scantest.Run(t, t.Context(), dir, []string{"."}, action, scantest.WithModuleRoot(dir)); err != nil {
+	if _, err := scantest.Run(t, t.Context(), dir, []string{"./..."}, action, scantest.WithModuleRoot(dir)); err != nil {
 		t.Fatalf("scantest.Run() failed: %+v", err)
 	}
 
@@ -95,7 +101,6 @@ func main() {
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
 		eval := New(s, s.Logger, nil, nil)
-		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 
 		key := fmt.Sprintf("(%s.Writer).Write", pkg.ImportPath)
 		eval.RegisterIntrinsic(key, func(args ...object.Object) object.Object {
@@ -104,10 +109,14 @@ func main() {
 		})
 
 		for _, file := range pkg.AstFiles {
-			eval.Eval(ctx, file, env, pkg)
+			eval.Eval(ctx, file, nil, pkg)
 		}
 
-		mainFuncObj, _ := env.Get("main")
+		pkgEnv, ok := eval.PackageEnvForTest("example.com/me")
+		if !ok {
+			return fmt.Errorf("could not get package env for 'example.com/me'")
+		}
+		mainFuncObj, _ := pkgEnv.Get("main")
 		mainFunc := mainFuncObj.(*object.Function)
 		result := eval.Apply(ctx, mainFunc, []object.Object{}, pkg)
 		if err, ok := result.(*object.Error); ok {
@@ -157,7 +166,6 @@ func main() {
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
 		eval := New(s, s.Logger, nil, nil)
-		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 
 		eval.RegisterDefaultIntrinsic(func(args ...object.Object) object.Object {
 			if len(args) == 0 {
@@ -180,10 +188,14 @@ func main() {
 		})
 
 		for _, file := range pkg.AstFiles {
-			eval.Eval(ctx, file, env, pkg)
+			eval.Eval(ctx, file, nil, pkg)
 		}
 
-		mainFuncObj, _ := env.Get("main")
+		pkgEnv, ok := eval.PackageEnvForTest("example.com/me")
+		if !ok {
+			return fmt.Errorf("could not get package env for 'example.com/me'")
+		}
+		mainFuncObj, _ := pkgEnv.Get("main")
 		mainFunc := mainFuncObj.(*object.Function)
 		result := eval.Apply(ctx, mainFunc, []object.Object{}, pkg)
 		if err, ok := result.(*object.Error); ok {
@@ -243,7 +255,6 @@ func main() {
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
 		eval := New(s, s.Logger, nil, nil)
-		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 
 		eval.RegisterDefaultIntrinsic(func(args ...object.Object) object.Object {
 			if len(args) == 0 {
@@ -258,10 +269,14 @@ func main() {
 		})
 
 		for _, file := range pkg.AstFiles {
-			eval.Eval(ctx, file, env, pkg)
+			eval.Eval(ctx, file, nil, pkg)
 		}
 
-		mainFuncObj, _ := env.Get("main")
+		pkgEnv, ok := eval.PackageEnvForTest("example.com/me")
+		if !ok {
+			return fmt.Errorf("could not get package env for 'example.com/me'")
+		}
+		mainFuncObj, _ := pkgEnv.Get("main")
 		mainFunc := mainFuncObj.(*object.Function)
 		result := eval.Apply(ctx, mainFunc, []object.Object{}, pkg)
 		if err, ok := result.(*object.Error); ok {
@@ -301,4 +316,14 @@ func main() {
 	if !foundTypes["example.com/me.*Cat"] {
 		t.Errorf("did not find *Cat in possible concrete types")
 	}
+}
+
+// findPkg is a helper to find a package by name.
+func findPkg(pkgs []*goscan.Package, name string) *goscan.Package {
+	for _, p := range pkgs {
+		if p.Name == name {
+			return p
+		}
+	}
+	return nil
 }

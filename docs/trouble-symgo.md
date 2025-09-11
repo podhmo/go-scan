@@ -44,4 +44,76 @@ The root cause is that the symbolic execution engine does not propagate the cont
 
 The proposed solution is to modify `evalAssignStmt`. When it evaluates the RHS of a multi-value assignment and receives a single `*object.SymbolicPlaceholder`, it will infer the number of required return values from the number of variables on the LHS. It will then dynamically create a `*object.MultiReturn` object containing the appropriate number of new placeholders, effectively "expanding" the single placeholder to fit the assignment.
 
+---
+
+# `symgo`: Cross-Package Symbol Collision During Analysis
+
+This document details a bug in the `symgo` symbolic execution engine where it incorrectly resolved function calls between separate `main` packages during a whole-workspace analysis, leading to a crash.
+
+## 1. Symptom
+
+When running the `find-orphans` tool on a workspace containing multiple `main` packages (e.g., via `make -C examples/find-orphans e2e`), the tool would crash with an `identifier not found` error.
+
+The tool `find-orphans` is the executable performing the analysis. One of the packages being analyzed was `deps-walk`. The error indicated that the identifier `keys` could not be found, but `keys` is a helper function defined and used only within the `find-orphans` tool's own source code.
+
+## 2. Evidence: The Stack Trace
+
+The key to diagnosing the issue was the anomalous stack trace produced by the `symgo` engine at the time of the crash. The `in_func` and `in_func_pos` fields in the log refer to the source code being *analyzed*, while `exec_pos` refers to the location in the *evaluator* itself.
+
+```
+level=ERROR msg="symbolic execution failed for entry point" function=github.com/podhmo/go-scan/examples/deps-walk.main error="symgo runtime error: identifier not found: keys
+	$HOME/ghq/github.com/podhmo/go-scan/examples/find-orphans/main.go:438:20:
+		patternsToWalk := keys(a.scanPackages)
+	$HOME/ghq/github.com/podhmo/go-scan/examples/find-orphans/main.go:272:9:	in analyze
+		return a.analyze(ctx, asJSON)
+	$HOME/ghq/github.com/podhmo/go-scan/examples/deps-walk/main.go:94:12:	in run
+		if err := run(context.Background(), ...); err != nil {
+	:0:0:	in main
+```
+
+Let's break down this trace:
+
+-   `function=.../deps-walk.main`: The symbolic execution correctly started from the `main` function of the `deps-walk` package, which was one of the analysis targets.
+-   `in run` at `.../deps-walk/main.go:94:12`: The execution correctly proceeded into the `run` function belonging to `deps-walk`.
+-   `in analyze` at `.../find-orphans/main.go:272:9`: **This is the critical error.** The execution path incorrectly jumped from `deps-walk`'s `run` function into the `analyze` function of the `find-orphans` tool itself. This should be impossible, as these are two separate, unrelated `main` packages.
+-   `identifier not found: keys` at `.../find-orphans/main.go:438:20`: The crash occurs because the code now executing inside `find-orphans` tries to call its internal helper function `keys`, which does not exist in the context of the `deps-walk` analysis.
+
+This demonstrates that the `symgo` interpreter "crossed the streams," mixing the code of the analysis tool with the code of the analysis target.
+
+## 3. Root Cause: Global Environment Contamination
+
+The bug was caused by a state management issue in the `symgo` evaluator (`symgo/evaluator/evaluator.go`).
+
+1.  **Shared Global Environment:** The interpreter was using a single, top-level environment for all packages being analyzed.
+2.  **Flawed Symbol Loading:** The `evalFile` function, which loads a file's symbols (functions, vars, etc.), was designed to find a package-specific sub-environment. However, due to a lookup failure, it would fall back to loading all symbols directly into the shared global environment.
+3.  **Function Name Collision:** Both the `find-orphans` package and the `deps-walk` package define a function named `run`. When the evaluator loaded all packages, the `run` function from one package would overwrite the `run` function from the other in the global environment.
+4.  **Incorrect Function Resolution:** When the symbolic execution of `deps-walk.main` reached the call to `run()`, the interpreter looked up the identifier `run` in the contaminated global environment. It incorrectly resolved this call to the `run` function belonging to `find-orphans`, leading to the execution jump and subsequent crash.
+
+## 4. The Fix
+
+The solution was to enforce strict environment isolation for each package during evaluation.
+
+The `evalFile` function in `symgo/evaluator/evaluator.go` was refactored. Instead of relying on a flawed lookup in the environment, it now uses the evaluator's internal package cache (`pkgCache`), which is reliably keyed by unique package import paths.
+
+**Old Logic (Simplified):**
+```go
+// Tries to find a package environment within the global 'env'.
+// Fails, and falls back to using the global 'env' itself.
+targetEnv = env // Becomes the global environment.
+// Populates the global environment with symbols from the current package.
+ensurePackageEnvPopulated(ctx, pkgObj, targetEnv)
+```
+
+**New Logic (Simplified):**
+```go
+// Gets the correct package object (and its environment) from the cache.
+pkgObj, err := e.getOrLoadPackage(ctx, pkg.ImportPath)
+// Always use the package's own, isolated environment.
+targetEnv := pkgObj.Env
+// Populates the package's own environment. No global contamination.
+ensurePackageEnvPopulated(ctx, pkgObj)
+```
+
+This change ensures that the symbols of each package are loaded into and resolved from their own dedicated environment, preventing collisions and ensuring the symbolic execution path correctly mirrors Go's own scoping rules.
+
 This approach is localized, safe, and correctly models the programmer's intent as expressed by the multi-value assignment syntax.

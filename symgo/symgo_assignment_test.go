@@ -179,3 +179,68 @@ func main() {
 		t.Fatalf("the check() function was not called, indicating evaluation did not complete")
 	}
 }
+
+func TestAssignmentToStarExpr(t *testing.T) {
+	// This test verifies that an assignment to a pointer dereference,
+	// like `*p = 10`, is handled without crashing. The evaluator should
+	// simply trace the expressions on both sides of the assignment.
+	var checkCalled bool
+
+	dir, cleanup := scantest.WriteFiles(t, map[string]string{
+		"go.mod": "module myapp\ngo 1.22",
+		"main.go": `
+package main
+
+func check() {}
+
+func main() {
+	var i int
+	p := &i
+	*p = 10
+	check()
+}`,
+	})
+	defer cleanup()
+
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
+		pkg := pkgs[0]
+		interp, err := symgo.NewInterpreter(s, symgo.WithLogger(s.Logger))
+		if err != nil {
+			return err
+		}
+
+		interp.RegisterIntrinsic("myapp.check", func(i *symgo.Interpreter, args []symgo.Object) symgo.Object {
+			checkCalled = true
+			return nil
+		})
+
+		mainFile, err := lookupFile(pkg, "main.go")
+		if err != nil {
+			return err
+		}
+
+		if _, err := interp.Eval(ctx, mainFile, pkg); err != nil {
+			return fmt.Errorf("initial eval failed: %w", err)
+		}
+
+		mainFn, ok := interp.FindObjectInPackage("myapp", "main")
+		if !ok {
+			return fmt.Errorf("main func not found")
+		}
+
+		// Run main(). With the fix, this should no longer error out.
+		_, err = interp.Apply(ctx, mainFn, nil, pkg)
+		if err != nil {
+			return fmt.Errorf("Apply failed unexpectedly: %w", err)
+		}
+
+		if !checkCalled {
+			return fmt.Errorf("check() was not called")
+		}
+		return nil
+	}
+
+	if _, err := scantest.Run(t, t.Context(), dir, []string{"."}, action); err != nil {
+		t.Fatalf("scantest.Run failed unexpectedly: %v", err)
+	}
+}

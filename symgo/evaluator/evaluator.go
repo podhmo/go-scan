@@ -2252,6 +2252,14 @@ func (e *Evaluator) evalAssignStmt(ctx context.Context, n *ast.AssignStmt, env *
 			// 3. Evaluate the RHS value (e.g., `v`).
 			e.Eval(ctx, n.Rhs[0], env, pkg)
 			return nil
+		case *ast.StarExpr:
+			// This is an assignment to a pointer dereference, like `*p = v`.
+			// We need to evaluate both sides to trace any calls.
+			// 1. Evaluate the pointer expression (e.g., `p`).
+			e.Eval(ctx, lhs.X, env, pkg)
+			// 2. Evaluate the RHS value (e.g., `v`).
+			e.Eval(ctx, n.Rhs[0], env, pkg)
+			return nil
 		default:
 			return e.newError(ctx, n.Pos(), "unsupported assignment target: expected an identifier, selector or index expression, but got %T", lhs)
 		}

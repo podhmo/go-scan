@@ -50,8 +50,8 @@ func main() {
 				return fmt.Errorf("initial eval failed: %s", res.Inspect())
 			}
 
-			pkgEnv := eval.PackageEnvForTest("example.com/me")
-			if pkgEnv == nil {
+			pkgEnv, ok := eval.PackageEnvForTest("example.com/me")
+			if !ok {
 				return fmt.Errorf("could not get package environment for 'example.com/me'")
 			}
 
@@ -123,8 +123,8 @@ func main() {
 				return fmt.Errorf("initial eval failed: %s", res.Inspect())
 			}
 
-			pkgEnv := eval.PackageEnvForTest("example.com/me")
-			if pkgEnv == nil {
+			pkgEnv, ok := eval.PackageEnvForTest("example.com/me")
+			if !ok {
 				return fmt.Errorf("could not get package environment for 'example.com/me'")
 			}
 

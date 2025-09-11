@@ -3397,11 +3397,11 @@ func (e *Evaluator) GetOrLoadPackageForTest(ctx context.Context, path string) (*
 }
 
 // PackageEnvForTest is a test helper to get a package's environment.
-func (e *Evaluator) PackageEnvForTest(pkgPath string) *object.Environment {
+func (e *Evaluator) PackageEnvForTest(pkgPath string) (*object.Environment, bool) {
 	if pkg, ok := e.pkgCache[pkgPath]; ok {
-		return pkg.Env
+		return pkg.Env, true
 	}
-	return nil
+	return nil, false
 }
 
 // createSymbolicResultForFunc creates a symbolic result for a function call

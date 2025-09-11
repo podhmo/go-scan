@@ -96,7 +96,11 @@ func main() {
 			eval.Eval(ctx, file, env, mainPkg)
 		}
 
-		mainFuncObj, ok := env.Get("main")
+		pkgEnv, ok := eval.PackageEnvForTest(mainPkg.ImportPath)
+		if !ok {
+			return fmt.Errorf("package env not found for %q", mainPkg.ImportPath)
+		}
+		mainFuncObj, ok := pkgEnv.Get("main")
 		if !ok {
 			return fmt.Errorf("main function not found")
 		}
@@ -191,7 +195,11 @@ func process(prefix string, data any) {
 			eval.Eval(ctx, file, env, mainPkg)
 		}
 
-		processFuncObj, ok := env.Get("process")
+		pkgEnv, ok := eval.PackageEnvForTest(mainPkg.ImportPath)
+		if !ok {
+			return fmt.Errorf("package env not found for %q", mainPkg.ImportPath)
+		}
+		processFuncObj, ok := pkgEnv.Get("process")
 		if !ok {
 			return fmt.Errorf("process function not found")
 		}

@@ -59,8 +59,8 @@ func GetBody(resp *TestResponse) io.Reader {
 			eval.Eval(ctx, file, nil, mainPkg)
 		}
 
-		pkgEnv := eval.PackageEnvForTest("example.com/m")
-		if pkgEnv == nil {
+		pkgEnv, ok := eval.PackageEnvForTest("example.com/m")
+		if !ok {
 			return fmt.Errorf("could not get package env for 'example.com/m'")
 		}
 		getBody, ok := pkgEnv.Get("GetBody")

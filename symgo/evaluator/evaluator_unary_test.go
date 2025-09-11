@@ -49,7 +49,11 @@ func main() {
 			eval.Eval(ctx, file, env, pkg)
 		}
 
-		mainFuncObj, ok := env.Get("main")
+		pkgEnv, ok := eval.PackageEnvForTest(pkg.ImportPath)
+		if !ok {
+			return fmt.Errorf("package env not found for %q", pkg.ImportPath)
+		}
+		mainFuncObj, ok := pkgEnv.Get("main")
 		if !ok {
 			return fmt.Errorf("function 'main' not found")
 		}

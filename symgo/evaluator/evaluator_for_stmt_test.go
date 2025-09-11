@@ -55,8 +55,8 @@ func main() {
 			eval.Eval(ctx, f, nil, mainPkg)
 		}
 
-		pkgEnv := eval.PackageEnvForTest("a.b/c")
-		if pkgEnv == nil {
+		pkgEnv, ok := eval.PackageEnvForTest("a.b/c")
+		if !ok {
 			t.Fatal("could not get package env for 'a.b/c'")
 		}
 		mainFunc, ok := pkgEnv.Get("main")
@@ -125,8 +125,8 @@ func main() {
 			eval.Eval(ctx, f, nil, mainPkg)
 		}
 
-		pkgEnv := eval.PackageEnvForTest("a.b/c")
-		if pkgEnv == nil {
+		pkgEnv, ok := eval.PackageEnvForTest("a.b/c")
+		if !ok {
 			t.Fatal("could not get package env for 'a.b/c'")
 		}
 		mainFunc, ok := pkgEnv.Get("main")

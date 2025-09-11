@@ -81,8 +81,8 @@ func main() {
 			eval.Eval(ctx, file, nil, mainPkg)
 		}
 
-		pkgEnv := eval.PackageEnvForTest("example.com/m")
-		if pkgEnv == nil {
+		pkgEnv, ok := eval.PackageEnvForTest("example.com/m")
+		if !ok {
 			return fmt.Errorf("could not get package env for 'example.com/m'")
 		}
 		mainFuncObj, ok := pkgEnv.Get("main")
@@ -191,8 +191,8 @@ func main() {
 			eval.Eval(ctx, file, nil, mainPkg)
 		}
 
-		pkgEnv := eval.PackageEnvForTest("example.com/m")
-		if pkgEnv == nil {
+		pkgEnv, ok := eval.PackageEnvForTest("example.com/m")
+		if !ok {
 			return fmt.Errorf("could not get package env for 'example.com/m'")
 		}
 		mainFuncObj, ok := pkgEnv.Get("main")

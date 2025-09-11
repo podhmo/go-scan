@@ -76,6 +76,9 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 
 ## To Be Implemented
 
+### Fix `symgo` Embedded Interface Resolution ([docs/cont-embedded-interface-fix.md](./docs/cont-embedded-interface-fix.md))
+- [ ] Resolve the final logic error in `parseInterfaceType` to correctly inherit methods from embedded interfaces.
+
 ### Fix `symgo` Symbol Collision Bug 
 - [x] Complete the fix for the symbol collision bug in the `symgo` evaluator and resolve all test regressions.
 

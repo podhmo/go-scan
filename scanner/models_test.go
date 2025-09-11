@@ -3,7 +3,42 @@ package scanner
 import (
 	"context"
 	"testing"
+	"time"
 )
+
+func TestFieldType_String_InfiniteRecursion(t *testing.T) {
+	// 1. Manually construct a FieldType with a cyclic reference.
+	// This simulates the kind of object symgo can create when analyzing
+	// a recursive type like `type T []*T`.
+	ft := &FieldType{
+		Name:    "T",
+		IsSlice: true,
+	}
+	ft.Elem = ft // Create the cycle: T is a slice of itself.
+
+	// 2. Run the String() method in a goroutine and use a timeout
+	//    to detect if it hangs.
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		// This call is expected to hang due to infinite recursion.
+		_ = ft.String()
+		close(done)
+	}()
+
+	// 3. Wait for either completion or timeout.
+	select {
+	case <-done:
+		// If it completes, the bug is not reproduced (or has been fixed).
+		t.Errorf("FieldType.String() completed, but was expected to hang due to infinite recursion")
+	case <-ctx.Done():
+		// If the context times out, it means the function was hanging as expected.
+		// This is the success case for this test, as it proves the bug is reproducible.
+		t.Log("FieldType.String() call timed out as expected, successfully reproducing the bug.")
+	}
+}
 
 func TestNewUnresolvedTypeInfo(t *testing.T) {
 	pkgPath := "example.com/foo"

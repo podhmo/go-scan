@@ -583,3 +583,134 @@ type MyStruct struct {
 		t.Errorf("Expected error message %q, got %q", expectedErrorMsg, err.Error())
 	}
 }
+
+func TestInterfaceEmbedding(t *testing.T) {
+	fset := token.NewFileSet()
+	rootDir := "/tmp/interfaces"
+	modulePath := "example.com/interfaces"
+
+	overlay := Overlay{
+		"pkg_a/a.go": []byte(`
+package a
+
+type Reader interface {
+	Read(p []byte) (n int, err error)
+}
+`),
+		"pkg_b/b.go": []byte(`
+package b
+
+import "example.com/interfaces/pkg_a"
+
+type Closer interface {
+	Close() error
+}
+
+// ReadCloser embeds both an external and a local interface.
+type ReadCloser interface {
+	a.Reader
+	Closer
+}
+`),
+	}
+
+	// This scanner will be used by the MockResolver to perform actual scanning.
+	s, err := New(fset, nil, overlay, modulePath, rootDir, &MockResolver{}, false, nil)
+	if err != nil {
+		t.Fatalf("scanner.New failed: %v", err)
+	}
+
+	pkgCache := make(map[string]*PackageInfo)
+	mockResolver := &MockResolver{
+		ScanPackageByImportFunc: func(ctx context.Context, importPath string) (*PackageInfo, error) {
+			if pkg, found := pkgCache[importPath]; found {
+				return pkg, nil
+			}
+			var pkgName string
+			var pkgDir string
+			switch importPath {
+			case "example.com/interfaces/pkg_a":
+				pkgName = "a"
+				pkgDir = filepath.Join(rootDir, "pkg_a")
+			case "example.com/interfaces/pkg_b":
+				pkgName = "b"
+				pkgDir = filepath.Join(rootDir, "pkg_b")
+			default:
+				return nil, fmt.Errorf("unexpected import path: %s", importPath)
+			}
+			filePath := filepath.Join(pkgDir, pkgName+".go")
+
+			// Use the main scanner 's' to perform the scan.
+			// Pass the canonical import path to ScanFilesWithKnownImportPath
+			pkg, err := s.ScanFilesWithKnownImportPath(ctx, []string{filePath}, pkgDir, importPath)
+			if err == nil && pkg != nil {
+				pkgCache[importPath] = pkg // Store in cache
+			}
+			return pkg, err
+		},
+	}
+	s.resolver = mockResolver
+
+	// Start by scanning pkg_b
+	ctx := context.Background()
+	pkgBInfo, err := s.ScanPackageByImport(ctx, "example.com/interfaces/pkg_b")
+	if err != nil {
+		t.Fatalf("ScanPackageByImport for pkg_b failed: %v", err)
+	}
+	if pkgBInfo == nil {
+		t.Fatal("pkgBInfo is nil after scanning pkg_b")
+	}
+	t.Logf("Scanned pkg_b: Name=%q, Path=%q, ImportPath=%q", pkgBInfo.Name, pkgBInfo.Path, pkgBInfo.ImportPath)
+	for _, typ := range pkgBInfo.Types {
+		t.Logf("  Found type in pkg_b: %s", typ.Name)
+	}
+
+	readCloserType := pkgBInfo.Lookup("ReadCloser")
+	if readCloserType == nil {
+		t.Fatal("Type 'ReadCloser' not found in pkg_b")
+	}
+
+	if readCloserType.Kind != InterfaceKind {
+		t.Fatalf("Expected ReadCloser to be an interface, got %v", readCloserType.Kind)
+	}
+	if readCloserType.Interface == nil {
+		t.Fatal("ReadCloser.Interface is nil")
+	}
+
+	methods := make(map[string]*MethodInfo)
+	for _, m := range readCloserType.Interface.Methods {
+		methods[m.Name] = m
+	}
+
+	if len(methods) != 2 {
+		t.Errorf("Expected 2 methods on ReadCloser, got %d. Methods: %v", len(methods), methods)
+		for name := range methods {
+			t.Logf("Found method: %s", name)
+		}
+	}
+
+	if _, ok := methods["Read"]; !ok {
+		t.Error("Expected 'Read' method on ReadCloser")
+	}
+	if _, ok := methods["Close"]; !ok {
+		t.Error("Expected 'Close' method on ReadCloser")
+	}
+
+	// Check signature of Read method
+	readMethod := methods["Read"]
+	if readMethod == nil {
+		t.Fatal("Read method is nil")
+	}
+	if len(readMethod.Parameters) != 1 {
+		t.Fatalf("Read method should have 1 parameter, got %d", len(readMethod.Parameters))
+	}
+	if readMethod.Parameters[0].Type.String() != "[]byte" {
+		t.Errorf("Read method parameter should be '[]byte', got %s", readMethod.Parameters[0].Type.String())
+	}
+	if len(readMethod.Results) != 2 {
+		t.Fatalf("Read method should have 2 results, got %d", len(readMethod.Results))
+	}
+	if readMethod.Results[0].Type.String() != "int" || readMethod.Results[1].Type.String() != "error" {
+		t.Errorf("Read method results should be ('int', 'error'), got (%s, %s)", readMethod.Results[0].Type.String(), readMethod.Results[1].Type.String())
+	}
+}

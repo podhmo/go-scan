@@ -755,11 +755,54 @@ func (s *Scanner) parseInterfaceType(ctx context.Context, it *ast.InterfaceType,
 			methodInfo.Results = parsedFuncDetails.Results
 			interfaceInfo.Methods = append(interfaceInfo.Methods, methodInfo)
 		} else {
-			embeddedType := s.TypeInfoFromExpr(ctx, field.Type, currentTypeParams, info, importLookup)
-			interfaceInfo.Methods = append(interfaceInfo.Methods, &MethodInfo{
-				Name:    fmt.Sprintf("embedded_%s", embeddedType.String()),
-				Results: []*FieldInfo{{Type: embeddedType}},
-			})
+			// This handles embedded types.
+			embeddedFieldType := s.TypeInfoFromExpr(ctx, field.Type, currentTypeParams, info, importLookup)
+			if embeddedFieldType == nil {
+				continue
+			}
+
+			// Resolve the field type to get the full TypeInfo.
+			// This might trigger scanning of another package if necessary.
+			resolvedType, err := embeddedFieldType.Resolve(ctx)
+			if err != nil {
+				if s.logger != nil {
+					s.logger.WarnContext(ctx, "could not resolve embedded type", "type", embeddedFieldType.String(), "error", err)
+				}
+				continue
+			}
+
+			// If the embedded type is an interface, add its methods.
+			if resolvedType != nil && resolvedType.Interface != nil {
+				// Also handle the case where the resolved type is an alias to an interface.
+				underlyingType := resolvedType
+				if underlyingType.Kind == AliasKind && underlyingType.Underlying != nil {
+					if resolvedUnderlying, err := underlyingType.Underlying.Resolve(ctx); err == nil && resolvedUnderlying.Interface != nil {
+						underlyingType = resolvedUnderlying
+					}
+				}
+
+				if underlyingType.Interface != nil {
+					for _, method := range underlyingType.Interface.Methods {
+						// We need to ensure we don't add duplicates if the same
+						// method is defined in multiple embedded interfaces.
+						// A simple name check is sufficient for now.
+						exists := false
+						for _, existing := range interfaceInfo.Methods {
+							if existing.Name == method.Name {
+								exists = true
+								break
+							}
+						}
+						if !exists {
+							interfaceInfo.Methods = append(interfaceInfo.Methods, method)
+						}
+					}
+				}
+			}
+			// Note: The Go spec also allows embedding non-interface types,
+			// which adds a method with the name of the type. This is not
+			// implemented here as it's less common and not the likely source
+			// of the current bug. The primary goal is to fix embedded interfaces.
 		}
 	}
 	return interfaceInfo

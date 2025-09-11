@@ -98,4 +98,5 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] **Handle Multi-Return from Unscannable Packages**: The evaluator now correctly handles assignments from multi-return functions from packages outside the scan policy. It infers the number of return values from the left-hand side of the assignment and creates an appropriate number of symbolic placeholders, preventing incorrect warnings. ([docs/trouble-symgo.md](./docs/trouble-symgo.md))
 - [x] **Fix Division-by-Zero Panic**: Made the constant integer evaluator robust against division by zero, returning a symbolic placeholder instead of panicking.
 - [x] **Handle Additional Integer Operators**: The evaluator now recognizes additional integer operators (`%`, `<<`, `>>`, `&`, `|`, `^`) and returns a symbolic placeholder, preventing crashes when analyzing code that uses them.
+- [x] **Fix AST Node Handling**: Added support for `*ast.StarExpr` as an assignment target and handled `*ast.ExprStmt` in type switches, resolving several panics in the `find-orphans` tool.
 - [ ] **DX: Add Timeout Flag to `find-orphans`**: Add a `--timeout` flag to the `find-orphans` CLI for easier debugging.

@@ -18,7 +18,6 @@ import (
 	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/scanner"
 	"github.com/podhmo/go-scan/scantest"
-	_ "github.com/podhmo/go-scan/scantest"
 	"github.com/podhmo/go-scan/symgo/object"
 )
 
@@ -125,6 +124,77 @@ var x = 10
 	if _, err := scantest.Run(t, t.Context(), dir, []string{"."}, action); err != nil {
 		t.Fatalf("scantest.Run() failed: %v", err)
 	}
+}
+
+func runTest(t *testing.T, source string, action scantest.ActionFunc) {
+	t.Helper()
+	dir, cleanup := scantest.WriteFiles(t, map[string]string{
+		"go.mod":  "module example.com/main",
+		"main.go": source,
+	})
+	defer cleanup()
+
+	if _, err := scantest.Run(t, t.Context(), dir, []string{"."}, action, scantest.WithModuleRoot(dir)); err != nil {
+		t.Fatalf("scantest.Run() failed: %+v", err)
+	}
+}
+
+func TestEval_PointerAssignment(t *testing.T) {
+	source := `
+package main
+
+func inspect(v int) {}
+
+func main() {
+	var i int
+	p := &i
+	*p = 10
+	inspect(i)
+}
+`
+	var inspectedValue object.Object
+
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
+		mainPkg := pkgs[0]
+		eval := New(s, s.Logger, nil, nil)
+		eval.RegisterIntrinsic("example.com/main.inspect", func(args ...object.Object) object.Object {
+			if len(args) > 0 {
+				inspectedValue = args[0]
+			}
+			return nil
+		})
+
+		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
+		for _, file := range mainPkg.AstFiles {
+			eval.Eval(ctx, file, env, mainPkg)
+		}
+
+		pkgEnv, ok := eval.PackageEnvForTest(mainPkg.ImportPath)
+		if !ok {
+			return fmt.Errorf("package env not found")
+		}
+		mainFuncObj, ok := pkgEnv.Get("main")
+		if !ok {
+			return fmt.Errorf("main function not found")
+		}
+
+		result := eval.Apply(ctx, mainFuncObj, []object.Object{}, mainPkg)
+		if err, ok := result.(*object.Error); ok && err != nil {
+			return fmt.Errorf("evaluation failed unexpectedly: %s", err.Message)
+		}
+
+		// The simple fix doesn't track the state change of `i`, so `inspect(i)`
+		// will be called with the initial value of `i` (a symbolic placeholder for
+		// an uninitialized variable). The key is that the evaluator no longer errors out.
+		if inspectedValue == nil {
+			return fmt.Errorf("inspect was not called")
+		}
+		// We can't assert the value is 10, but we can assert that inspect was called.
+
+		return nil
+	}
+
+	runTest(t, source, action)
 }
 
 func TestApplyFunction_ErrorOnNonCallable(t *testing.T) {

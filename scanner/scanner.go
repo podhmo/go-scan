@@ -736,30 +736,70 @@ func (s *Scanner) parseTypeParamList(ctx context.Context, typeParamFields []*ast
 }
 
 func (s *Scanner) parseInterfaceType(ctx context.Context, it *ast.InterfaceType, currentTypeParams []*TypeParamInfo, info *PackageInfo, importLookup map[string]string) *InterfaceInfo {
-	if it.Methods == nil || len(it.Methods.List) == 0 {
+	if it.Methods == nil {
 		return &InterfaceInfo{Methods: []*MethodInfo{}}
 	}
 	interfaceInfo := &InterfaceInfo{
 		Methods: make([]*MethodInfo, 0, len(it.Methods.List)),
 	}
 	for _, field := range it.Methods.List {
-		if len(field.Names) > 0 {
+		if len(field.Names) > 0 { // This is a method definition, e.g., `Read(p []byte) (n int, err error)`
 			methodName := field.Names[0].Name
 			funcType, ok := field.Type.(*ast.FuncType)
 			if !ok {
-				continue
+				continue // Should not happen in a valid interface
 			}
 			methodInfo := &MethodInfo{Name: methodName}
 			parsedFuncDetails := s.parseFuncType(ctx, funcType, currentTypeParams, info, importLookup)
 			methodInfo.Parameters = parsedFuncDetails.Parameters
 			methodInfo.Results = parsedFuncDetails.Results
 			interfaceInfo.Methods = append(interfaceInfo.Methods, methodInfo)
-		} else {
-			embeddedType := s.TypeInfoFromExpr(ctx, field.Type, currentTypeParams, info, importLookup)
-			interfaceInfo.Methods = append(interfaceInfo.Methods, &MethodInfo{
-				Name:    fmt.Sprintf("embedded_%s", embeddedType.String()),
-				Results: []*FieldInfo{{Type: embeddedType}},
-			})
+		} else { // This is an embedded type, e.g., `io.Reader`
+			embeddedFieldType := s.TypeInfoFromExpr(ctx, field.Type, currentTypeParams, info, importLookup)
+			if embeddedFieldType == nil {
+				continue
+			}
+
+			resolvedTypeInfo, err := embeddedFieldType.Resolve(ctx)
+			if err != nil {
+				if s.logger != nil {
+					s.logger.WarnContext(ctx, "failed to resolve embedded interface type", "type", embeddedFieldType.String(), "error", err)
+				}
+				continue
+			}
+
+			// Loop to resolve aliases until we get a non-alias type or an error.
+			currentType := resolvedTypeInfo
+			for currentType != nil && currentType.Kind == AliasKind {
+				if currentType.Underlying == nil {
+					currentType = nil // Alias with no underlying type, break.
+					break
+				}
+				underlying, err := currentType.Underlying.Resolve(ctx)
+				if err != nil {
+					if s.logger != nil {
+						s.logger.WarnContext(ctx, "failed to resolve alias chain", "type", currentType.Name, "error", err)
+					}
+					currentType = nil // Break loop on error
+					break
+				}
+				currentType = underlying
+			}
+
+			if currentType != nil && currentType.Kind == InterfaceKind && currentType.Interface != nil {
+				// Successfully resolved to an interface. Inherit its methods.
+				interfaceInfo.Methods = append(interfaceInfo.Methods, currentType.Interface.Methods...)
+			} else {
+				// If it's not an interface, it's a compile error in the source code.
+				// We can log this, but for scanning purposes, we might just ignore it.
+				if s.logger != nil {
+					var kindVal any = "nil"
+					if currentType != nil {
+						kindVal = currentType.Kind
+					}
+					s.logger.DebugContext(ctx, "embedded type in interface is not itself an interface", "type", embeddedFieldType.String(), "resolved_kind", kindVal)
+				}
+			}
 		}
 	}
 	return interfaceInfo

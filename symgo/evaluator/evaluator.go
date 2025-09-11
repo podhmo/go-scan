@@ -62,10 +62,11 @@ type Evaluator struct {
 }
 
 type callFrame struct {
-	Function string
-	Pos      token.Pos
-	Fn       *object.Function
-	Args     []object.Object
+	Function    string
+	Pos         token.Pos
+	Fn          *object.Function
+	Args        []object.Object
+	ReceiverPos token.Pos // The source position of the receiver expression for a method call.
 }
 
 // interfaceBinding stores the information needed to map an interface to a concrete type.
@@ -1260,7 +1261,7 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 						ptrType.Name = "*" + concreteType.Name
 						typeToSearch = &ptrType
 					}
-					if method, err := e.accessor.findMethodOnType(ctx, typeToSearch, n.Sel.Name, env, obj); err == nil && method != nil {
+					if method, err := e.accessor.findMethodOnType(ctx, typeToSearch, n.Sel.Name, env, obj, n.X.Pos()); err == nil && method != nil {
 						return method
 					}
 				}
@@ -1364,7 +1365,7 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 
 		// Fallback to searching for the method on the instance's type.
 		if typeInfo := val.TypeInfo(); typeInfo != nil {
-			if method, err := e.accessor.findMethodOnType(ctx, typeInfo, n.Sel.Name, env, val); err == nil && method != nil {
+			if method, err := e.accessor.findMethodOnType(ctx, typeInfo, n.Sel.Name, env, val, n.X.Pos()); err == nil && method != nil {
 				return method
 			}
 			if typeInfo.Unresolved {
@@ -1571,7 +1572,7 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 
 		// Fallback to searching for the method on the instance's type.
 		if typeInfo := val.TypeInfo(); typeInfo != nil {
-			if method, err := e.accessor.findMethodOnType(ctx, typeInfo, n.Sel.Name, env, val); err == nil && method != nil {
+			if method, err := e.accessor.findMethodOnType(ctx, typeInfo, n.Sel.Name, env, val, n.X.Pos()); err == nil && method != nil {
 				return method
 			}
 		}
@@ -1584,7 +1585,7 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 		if instance, ok := pointee.(*object.Instance); ok {
 			if typeInfo := instance.TypeInfo(); typeInfo != nil {
 				// The receiver for the method call is the pointer itself, not the instance.
-				if method, err := e.accessor.findMethodOnType(ctx, typeInfo, n.Sel.Name, env, val); err == nil && method != nil {
+				if method, err := e.accessor.findMethodOnType(ctx, typeInfo, n.Sel.Name, env, val, n.X.Pos()); err == nil && method != nil {
 					return method
 				}
 			}
@@ -1592,7 +1593,7 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 		if instance, ok := pointee.(*object.Instance); ok {
 			if typeInfo := instance.TypeInfo(); typeInfo != nil {
 				// The receiver for the method call is the pointer itself, not the instance.
-				if method, err := e.accessor.findMethodOnType(ctx, typeInfo, n.Sel.Name, env, val); err == nil && method != nil {
+				if method, err := e.accessor.findMethodOnType(ctx, typeInfo, n.Sel.Name, env, val, n.X.Pos()); err == nil && method != nil {
 					return method
 				}
 				// If not a method, check for a field on the underlying struct.
@@ -2875,26 +2876,28 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 		return &object.SymbolicPlaceholder{Reason: "max call stack depth exceeded"}
 	}
 
-	// New recursion check based on function definition and arguments.
+	// New recursion check based on function definition and receiver position.
 	if f, ok := fn.(*object.Function); ok && f.Def != nil {
 		recursionCount := 0
 		for _, frame := range e.callStack {
+			if frame.Fn == nil || frame.Fn.Def != f.Def {
+				continue
+			}
 			// Check if we are calling the same function definition.
-			if frame.Fn != nil && frame.Fn.Def == f.Def {
-				if f.Receiver != nil {
-					// For methods, check if the receiver object is the same.
-					if frame.Fn.Receiver != nil && frame.Fn.Receiver == f.Receiver {
-						recursionCount++
-					}
-				} else {
-					// For plain functions, any recursive call is counted.
+			if f.Receiver != nil {
+				// For methods, check if the receiver expression's source position is the same.
+				// This correctly detects recursion on different object instances from the same code location.
+				if frame.Fn.Receiver != nil && frame.ReceiverPos.IsValid() && frame.ReceiverPos == f.ReceiverPos {
 					recursionCount++
 				}
+			} else {
+				// For plain functions, any recursive call is counted.
+				recursionCount++
 			}
 		}
 
 		// Allow one level of recursion, but stop at the second call.
-		if recursionCount > 1 {
+		if recursionCount > 0 { // Changed from > 1 to > 0 to be more strict.
 			e.logc(ctx, slog.LevelWarn, "bounded recursion depth exceeded, halting analysis for this path", "function", name)
 			// Return a symbolic placeholder that matches the function's return signature.
 			if f.Def != nil && f.Def.AstDecl.Type.Results != nil {
@@ -2915,6 +2918,9 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 	frame := &callFrame{Function: name, Pos: callPos, Args: args}
 	if f, ok := fn.(*object.Function); ok {
 		frame.Fn = f
+		if f.Receiver != nil {
+			frame.ReceiverPos = f.ReceiverPos
+		}
 	}
 	e.callStack = append(e.callStack, frame)
 	defer func() {
@@ -3402,6 +3408,11 @@ func (e *Evaluator) PackageEnvForTest(pkgPath string) (*object.Environment, bool
 		return pkg.Env, true
 	}
 	return nil, false
+}
+
+// GetOrResolveFunctionForTest is a test helper to expose the internal getOrResolveFunction method.
+func (e *Evaluator) GetOrResolveFunctionForTest(pkg *object.Package, funcInfo *scanner.FunctionInfo) object.Object {
+	return e.getOrResolveFunction(pkg, funcInfo)
 }
 
 // createSymbolicResultForFunc creates a symbolic result for a function call

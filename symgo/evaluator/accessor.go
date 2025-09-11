@@ -3,6 +3,7 @@ package evaluator
 import (
 	"context"
 	"fmt"
+	"go/token"
 	"log/slog"
 	"strings"
 
@@ -77,17 +78,17 @@ func (a *accessor) findFieldRecursive(ctx context.Context, typeInfo *scanner.Typ
 
 // findMethodOnType recursively finds a method on a type or its embedded types.
 // It returns a callable Function object if found.
-func (a *accessor) findMethodOnType(ctx context.Context, typeInfo *scanner.TypeInfo, methodName string, env *object.Environment, receiver object.Object) (*object.Function, error) {
+func (a *accessor) findMethodOnType(ctx context.Context, typeInfo *scanner.TypeInfo, methodName string, env *object.Environment, receiver object.Object, receiverPos token.Pos) (*object.Function, error) {
 	if typeInfo == nil {
 		return nil, nil // Cannot find method without type info
 	}
 
 	// Use a map to track visited types and prevent infinite recursion.
 	visited := make(map[string]bool)
-	return a.findMethodRecursive(ctx, typeInfo, methodName, env, receiver, visited)
+	return a.findMethodRecursive(ctx, typeInfo, methodName, env, receiver, receiverPos, visited)
 }
 
-func (a *accessor) findMethodRecursive(ctx context.Context, typeInfo *scanner.TypeInfo, methodName string, env *object.Environment, receiver object.Object, visited map[string]bool) (*object.Function, error) {
+func (a *accessor) findMethodRecursive(ctx context.Context, typeInfo *scanner.TypeInfo, methodName string, env *object.Environment, receiver object.Object, receiverPos token.Pos, visited map[string]bool) (*object.Function, error) {
 	if typeInfo == nil {
 		return nil, nil
 	}
@@ -100,7 +101,7 @@ func (a *accessor) findMethodRecursive(ctx context.Context, typeInfo *scanner.Ty
 	visited[typeKey] = true
 
 	// 1. Search for a direct method on the current type.
-	if method, err := a.findDirectMethodOnType(ctx, typeInfo, methodName, env, receiver); err != nil || method != nil {
+	if method, err := a.findDirectMethodOnType(ctx, typeInfo, methodName, env, receiver, receiverPos); err != nil || method != nil {
 		return method, err
 	}
 
@@ -124,7 +125,7 @@ func (a *accessor) findMethodRecursive(ctx context.Context, typeInfo *scanner.Ty
 					}
 
 					// Recursive call, passing the original receiver.
-					if foundFn, err := a.findMethodRecursive(ctx, embeddedTypeInfo, methodName, env, receiver, visited); err != nil || foundFn != nil {
+					if foundFn, err := a.findMethodRecursive(ctx, embeddedTypeInfo, methodName, env, receiver, receiverPos, visited); err != nil || foundFn != nil {
 						return foundFn, err
 					}
 				}
@@ -135,7 +136,7 @@ func (a *accessor) findMethodRecursive(ctx context.Context, typeInfo *scanner.Ty
 	return nil, nil // Not found
 }
 
-func (a *accessor) findDirectMethodOnType(ctx context.Context, typeInfo *scanner.TypeInfo, methodName string, env *object.Environment, receiver object.Object) (*object.Function, error) {
+func (a *accessor) findDirectMethodOnType(ctx context.Context, typeInfo *scanner.TypeInfo, methodName string, env *object.Environment, receiver object.Object, receiverPos token.Pos) (*object.Function, error) {
 	methodInfo, err := a.findDirectMethodInfoOnType(ctx, typeInfo, methodName)
 	if err != nil || methodInfo == nil {
 		return nil, err
@@ -146,16 +147,17 @@ func (a *accessor) findDirectMethodOnType(ctx context.Context, typeInfo *scanner
 		return nil, fmt.Errorf("package for method not found: %w", err)
 	}
 
-	return &object.Function{
-		Name:       methodInfo.AstDecl.Name,
-		Parameters: methodInfo.AstDecl.Type.Params,
-		Body:       methodInfo.AstDecl.Body,
-		Env:        pkgObj.Env,
-		Decl:       methodInfo.AstDecl,
-		Package:    pkgObj.ScannedInfo,
-		Receiver:   receiver,
-		Def:        methodInfo,
-	}, nil
+	// Get the base function object (without a receiver).
+	// This might be cached or resolved on the fly.
+	baseFnObj := a.eval.getOrResolveFunction(pkgObj, methodInfo)
+	baseFn, ok := baseFnObj.(*object.Function)
+	if !ok {
+		return nil, fmt.Errorf("resolved method %q is not a function object", methodName)
+	}
+
+	// Create a new function object with the receiver and its position bound.
+	boundFn := baseFn.WithReceiver(receiver, receiverPos)
+	return boundFn, nil
 }
 
 // findMethodInfoOnType finds the scanner.FunctionInfo for a method on a type, handling embedding.

@@ -1,4 +1,4 @@
-package evaluator_test
+package symgo_test
 
 import (
 	"context"
@@ -38,7 +38,7 @@ func main() {
 			return err
 		}
 
-		interp.RegisterIntrinsic("myapp.getValue", func(i *symgo.Interpreter, args []symgo.Object) symgo.Object {
+		interp.RegisterIntrinsic("myapp.getValue", func(ctx context.Context, i *symgo.Interpreter, args []symgo.Object) symgo.Object {
 			getValueCalled = true
 			return &object.String{Value: "world"}
 		})
@@ -52,7 +52,7 @@ func main() {
 			return err
 		}
 
-		mainFn, ok := interp.FindObject("main")
+		mainFn, ok := interp.FindObjectInPackage(ctx, "myapp", "main")
 		if !ok {
 			t.Fatal("main func not found")
 		}
@@ -101,7 +101,7 @@ func main() {
 			return err
 		}
 
-		interp.RegisterIntrinsic("myapp.getValue", func(i *symgo.Interpreter, args []symgo.Object) symgo.Object {
+		interp.RegisterIntrinsic("myapp.getValue", func(ctx context.Context, i *symgo.Interpreter, args []symgo.Object) symgo.Object {
 			getValueCalled = true
 			return &object.String{Value: "world"}
 		})
@@ -115,7 +115,7 @@ func main() {
 			return err
 		}
 
-		mainFn, ok := interp.FindObject("main")
+		mainFn, ok := interp.FindObjectInPackage(ctx, "myapp", "main")
 		if !ok {
 			t.Fatal("main func not found")
 		}

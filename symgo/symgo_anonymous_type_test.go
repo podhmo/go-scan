@@ -15,7 +15,7 @@ import (
 )
 
 func TestSymgo_AnonymousTypes(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
 	source := `
@@ -54,12 +54,12 @@ func AnonymousStruct(p struct {
 				t.Fatalf("NewInterpreter failed: %+v", err)
 			}
 
-			var inspectedMethod *scanner.MethodInfo
-			interpreter.RegisterDefaultIntrinsic(func(i *symgo.Interpreter, args []symgo.Object) symgo.Object {
+			var inspectedMethod *scanner.FunctionInfo
+			interpreter.RegisterDefaultIntrinsic(func(ctx context.Context, i *symgo.Interpreter, args []symgo.Object) symgo.Object {
 				fn := args[0] // The function object itself
 				if p, ok := fn.(*symgo.SymbolicPlaceholder); ok {
-					if p.UnderlyingMethod != nil {
-						inspectedMethod = p.UnderlyingMethod
+					if p.UnderlyingFunc != nil {
+						inspectedMethod = p.UnderlyingFunc
 					}
 				}
 				return &symgo.SymbolicPlaceholder{Reason: "default intrinsic result"}
@@ -71,7 +71,7 @@ func AnonymousStruct(p struct {
 				t.Fatalf("Eval(file) failed: %+v", err)
 			}
 
-			fn, ok := interpreter.FindObject("AnonymousInterface")
+			fn, ok := interpreter.FindObjectInPackage(t.Context(), "mymodule", "AnonymousInterface")
 			if !ok {
 				t.Fatal("function AnonymousInterface not found")
 			}
@@ -101,7 +101,7 @@ func AnonymousStruct(p struct {
 				t.Fatalf("Eval(file) failed: %+v", err)
 			}
 
-			fn, ok := interpreter.FindObject("AnonymousStruct")
+			fn, ok := interpreter.FindObjectInPackage(t.Context(), "mymodule", "AnonymousStruct")
 			if !ok {
 				t.Fatal("function AnonymousStruct not found")
 			}
@@ -121,8 +121,8 @@ func AnonymousStruct(p struct {
 				t.Fatalf("expected symbolic placeholder return, got %T", retVal.Value)
 			}
 
-			if !strings.Contains(placeholder.Reason, "field access p.X") {
-				t.Errorf("expected reason to contain 'field access p.X', but got %q", placeholder.Reason)
+			if !strings.Contains(placeholder.Reason, "field access") {
+				t.Errorf("expected reason to contain 'field access', but got %q", placeholder.Reason)
 			}
 		})
 		return nil

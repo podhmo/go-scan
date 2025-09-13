@@ -209,7 +209,12 @@ func (ti *TypeInfo) searchAnnotation(name string) (value string, ok bool) {
 
 // InterfaceInfo represents an interface type.
 type InterfaceInfo struct {
-	Methods []*MethodInfo
+	Methods []*MethodInfo `json:"methods"`
+	// Embedded stores the field types for embedded interfaces.
+	// The symgo evaluator is responsible for resolving these and collecting
+	// their method sets. Resolution is currently supported for interfaces
+	// within the same package.
+	Embedded []*FieldType `json:"embedded,omitempty"`
 }
 
 // MethodInfo represents a single method in an interface.
@@ -502,6 +507,7 @@ type VariableInfo struct {
 	Type       *FieldType
 	IsExported bool
 	Node       ast.Node
+	GenDecl    *ast.GenDecl // The *ast.GenDecl node for the var declaration
 }
 
 // FunctionInfo represents a single top-level function or method declaration.

@@ -52,7 +52,7 @@ func Greet(name string) string {
 
 	mainModuleDir := filepath.Join(dir, "app")
 	mainPkgPath := "example.com/app"
-	ctx := context.Background()
+	ctx := t.Context()
 
 	t.Run("default behavior: external calls are symbolic", func(t *testing.T) {
 		scanner, err := goscan.New(
@@ -117,7 +117,7 @@ func runAnalysis(t *testing.T, ctx context.Context, interp *symgo.Interpreter, m
 		t.Fatalf("Eval main file failed: %v", err)
 	}
 
-	mainObj, ok := interp.FindObject("main")
+	mainObj, ok := interp.FindObjectInPackage(ctx, mainPkgPath, "main")
 	if !ok {
 		t.Fatal("main function not found in interpreter environment")
 	}
@@ -127,7 +127,7 @@ func runAnalysis(t *testing.T, ctx context.Context, interp *symgo.Interpreter, m
 	}
 
 	var capturedArg object.Object
-	interp.RegisterIntrinsic("fmt.Println", func(i *symgo.Interpreter, args []symgo.Object) symgo.Object {
+	interp.RegisterIntrinsic("fmt.Println", func(ctx context.Context, i *symgo.Interpreter, args []symgo.Object) symgo.Object {
 		if len(args) > 0 {
 			if retVal, ok := args[0].(*object.ReturnValue); ok {
 				capturedArg = retVal.Value

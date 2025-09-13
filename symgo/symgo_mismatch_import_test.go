@@ -62,14 +62,14 @@ func Unmarshal(data []byte, v any) error { return nil }
 	}
 
 	// For this test, we mock the behavior of pkg.Marshal
-	interp.RegisterIntrinsic("example.com/myapp/libs/pkg.v2.Marshal", func(i *symgo.Interpreter, args []symgo.Object) symgo.Object {
+	interp.RegisterIntrinsic("example.com/myapp/libs/pkg.v2.Marshal", func(ctx context.Context, i *symgo.Interpreter, args []symgo.Object) symgo.Object {
 		// Return a multi-return with a placeholder for the bytes and a nil for the error.
 		bytesPlaceholder := &symgo.SymbolicPlaceholder{Reason: "result of pkg.Marshal"}
 		return &symgo.MultiReturn{Values: []symgo.Object{bytesPlaceholder, object.NIL}}
 	})
 
 	got := make(map[string]bool)
-	interp.RegisterIntrinsic("fmt.Println", func(i *symgo.Interpreter, args []symgo.Object) symgo.Object {
+	interp.RegisterIntrinsic("fmt.Println", func(ctx context.Context, i *symgo.Interpreter, args []symgo.Object) symgo.Object {
 		if len(args) == 0 {
 			return nil
 		}
@@ -96,7 +96,7 @@ func Unmarshal(data []byte, v any) error { return nil }
 		t.Fatalf("Eval main file failed: %v", err)
 	}
 
-	mainFunc, ok := interp.FindObject("main")
+	mainFunc, ok := interp.FindObjectInPackage(context.Background(), "example.com/myapp", "main")
 	if !ok {
 		t.Fatal("main function not found")
 	}
@@ -165,7 +165,7 @@ func Unmarshal(data []byte, v any) error { return nil }
 		t.Fatalf("Eval main file failed: %v", err)
 	}
 
-	mainFunc, ok := interp.FindObject("main")
+	mainFunc, ok := interp.FindObjectInPackage(context.Background(), "example.com/myapp", "main")
 	if !ok {
 		t.Fatal("main function not found")
 	}
@@ -216,7 +216,7 @@ func Do() {
 		t.Fatalf("ScanPackage failed: %v", err)
 	}
 
-	doFunc, ok := interp.FindObject("Do")
+	doFunc, ok := interp.FindObjectInPackage(context.Background(), "example.com/myapp/helper", "Do")
 	if !ok {
 		// This is expected since the package is not evaluated yet.
 		// We need to Eval the file first.
@@ -228,7 +228,7 @@ func Do() {
 		t.Fatalf("Eval helper file failed: %v", err)
 	}
 
-	doFunc, ok = interp.FindObject("Do")
+	doFunc, ok = interp.FindObjectInPackage(context.Background(), "example.com/myapp/helper", "Do")
 	if !ok {
 		t.Fatal("Do function not found")
 	}

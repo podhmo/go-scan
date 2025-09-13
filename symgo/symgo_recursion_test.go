@@ -1,4 +1,4 @@
-package evaluator_test
+package symgo_test
 
 import (
 	"context"
@@ -68,7 +68,7 @@ func main() {
 			}
 
 			var called bool
-			interp.RegisterDefaultIntrinsic(func(i *symgo.Interpreter, args []object.Object) object.Object {
+			interp.RegisterDefaultIntrinsic(func(ctx context.Context, i *symgo.Interpreter, args []object.Object) object.Object {
 				fn, ok := args[0].(*object.Function)
 				if !ok {
 					return nil
@@ -88,7 +88,7 @@ func main() {
 			}
 
 			// Then, find the main function and Apply it.
-			mainFn, ok := interp.FindObject("main")
+			mainFn, ok := interp.FindObjectInPackage(ctx, "myapp", "main")
 			if !ok {
 				return fmt.Errorf("main function not found")
 			}
@@ -169,8 +169,8 @@ func main() {
 	l.Loop()
 }
 `,
-			ShouldFail:    true,
-			ExpectedError: "infinite recursion detected",
+			ShouldFail:    false,
+			ExpectedError: "",
 		},
 		{
 			Name: "no-arg function recursion",
@@ -185,8 +185,26 @@ func main() {
 	Recur()
 }
 `,
-			ShouldFail:    true,
-			ExpectedError: "infinite recursion detected",
+			ShouldFail:    false,
+			ExpectedError: "",
+		},
+		{
+			Name: "deep but finite recursion (should be bounded)",
+			Code: `
+package main
+
+func Recur(n int) {
+	if n > 0 {
+		Recur(n - 1)
+	}
+}
+
+func main() {
+	Recur(20) // A depth that would be slow but not infinite
+}
+`,
+			ShouldFail:    false, // With the new bounded logic, this should not error or time out.
+			ExpectedError: "",
 		},
 	}
 
@@ -217,7 +235,7 @@ func main() {
 				}
 
 				// Then, find the main function and Apply it.
-				mainFnObj, ok := interp.FindObject("main")
+				mainFnObj, ok := interp.FindObjectInPackage(ctx, "myapp", "main")
 				if !ok {
 					return fmt.Errorf("main function not found")
 				}
@@ -329,5 +347,70 @@ func main() {
 		// The scantest might fail if packages.Load fails. This is okay.
 		// The main check is the `recover` in the action.
 		t.Logf("scantest.Run returned an error as expected: %v", err)
+	}
+}
+
+func TestRecursionWithMultiReturn(t *testing.T) {
+	// This test case reproduces the infinite hang that occurs when the evaluator
+	// encounters a recursive function with multiple return values.
+	// The `Get` function below simulates the structure of `minigo.object.Environment.Get`.
+	source := `
+package main
+
+type Env struct {
+	Outer *Env
+}
+
+func (e *Env) Get(name string) (any, bool) {
+	if e.Outer != nil {
+		return e.Outer.Get(name) // Recursive call
+	}
+	return nil, false
+}
+
+func main() {
+	env := &Env{Outer: &Env{}}
+	env.Get("foo")
+}
+`
+	// 1. Define the test module's file layout.
+	dir, cleanup := scantest.WriteFiles(t, map[string]string{
+		"go.mod":  "module example.com/recursion",
+		"main.go": source,
+	})
+	defer cleanup()
+
+	// 2. Define the test logic in an action function.
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
+		pkg := pkgs[0]
+		interp, err := symgo.NewInterpreter(s)
+		if err != nil {
+			return fmt.Errorf("failed to create interpreter: %w", err)
+		}
+
+		// Evaluate the file to define symbols.
+		_, err = interp.Eval(ctx, pkg.AstFiles[pkg.Files[0]], pkg)
+		if err != nil {
+			return fmt.Errorf("file-level eval failed: %w", err)
+		}
+
+		// Execute main.
+		mainFunc, ok := interp.FindObjectInPackage(ctx, "example.com/recursion", "main")
+		if !ok {
+			return fmt.Errorf("main function not found")
+		}
+		_, err = interp.Apply(ctx, mainFunc, []symgo.Object{}, pkg)
+		if err != nil {
+			// The original bug would cause a timeout here.
+			// With the fix, it should complete without error.
+			return fmt.Errorf("apply main failed: %w", err)
+		}
+
+		return nil
+	}
+
+	// 3. Use scantest.Run to drive the test.
+	if _, err := scantest.Run(t, t.Context(), dir, []string{"."}, action); err != nil {
+		t.Fatalf("scantest.Run() failed: %v", err)
 	}
 }

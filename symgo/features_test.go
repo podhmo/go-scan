@@ -41,18 +41,17 @@ func main() {
 		if err != nil {
 			return err
 		}
-		env := symgo.NewEnclosedEnvironment(nil)
 
-		// Evaluate all files to populate the environment
+		// Evaluate all files to populate the interpreter's internal environments
 		for _, file := range pkg.AstFiles {
-			_, err := interp.EvalWithEnv(ctx, file, env, pkg)
+			_, err := interp.Eval(ctx, file, pkg)
 			if err != nil && !strings.Contains(err.Error(), "undefined_variable") {
 				// We expect an error, but only the one we're testing for.
 				return fmt.Errorf("initial eval of file %s failed unexpectedly: %w", file.Name.Name, err)
 			}
 		}
 
-		mainFuncObj, ok := env.Get("main")
+		mainFuncObj, ok := interp.FindObjectInPackage(ctx, "example.com/me", "main")
 		if !ok {
 			return fmt.Errorf("main function not found")
 		}
@@ -81,7 +80,7 @@ func main() {
 		return nil
 	}
 
-	if _, err := scantest.Run(t, context.Background(), dir, []string{"."}, action); err != nil {
+	if _, err := scantest.Run(t, t.Context(), dir, []string{"."}, action); err != nil {
 		t.Fatalf("scantest.Run() failed: %v", err)
 	}
 }
@@ -110,16 +109,15 @@ func main() {
 		if err != nil {
 			return err
 		}
-		env := symgo.NewEnclosedEnvironment(nil)
 
 		for _, file := range pkg.AstFiles {
-			_, err := interp.EvalWithEnv(ctx, file, env, pkg)
+			_, err := interp.Eval(ctx, file, pkg)
 			if err != nil {
 				return err
 			}
 		}
 
-		getCharFn, ok := env.Get("getChar")
+		getCharFn, ok := interp.FindObjectInPackage(ctx, "example.com/me", "getChar")
 		if !ok {
 			return fmt.Errorf("getChar function not found")
 		}
@@ -138,7 +136,7 @@ func main() {
 		return nil
 	}
 
-	if _, err := scantest.Run(t, context.Background(), dir, []string{"."}, action); err != nil {
+	if _, err := scantest.Run(t, t.Context(), dir, []string{"."}, action); err != nil {
 		t.Fatalf("scantest.Run() failed: %v", err)
 	}
 
@@ -205,7 +203,7 @@ func usedByReturnedFunc() {}
 		}
 
 		// defaultIntrinsic is the key to tracking usage.
-		interp.RegisterDefaultIntrinsic(func(i *symgo.Interpreter, args []symgo.Object) symgo.Object {
+		interp.RegisterDefaultIntrinsic(func(ctx context.Context, i *symgo.Interpreter, args []symgo.Object) symgo.Object {
 			if len(args) == 0 {
 				return nil
 			}
@@ -226,26 +224,22 @@ func usedByReturnedFunc() {}
 			return nil
 		})
 
-		// This is the more realistic execution flow.
-		// 1. Create a top-level environment.
-		topEnv := symgo.NewEnclosedEnvironment(nil)
-
-		// 2. Evaluate the main package's files. This will process its imports
-		//    and define the 'main' function.
-		for _, file := range mainPkg.AstFiles {
-			if _, err := interp.EvalWithEnv(ctx, file, topEnv, mainPkg); err != nil {
-				return fmt.Errorf("evaluating main.go failed: %w", err)
+		// Evaluate all packages to populate the interpreter
+		for _, p := range pkgs {
+			for _, file := range p.AstFiles {
+				if _, err := interp.Eval(ctx, file, p); err != nil {
+					return fmt.Errorf("evaluating %s failed: %w", file.Name.Name, err)
+				}
 			}
 		}
 
-		// 3. Find the main function object in the environment.
-		mainFuncObj, ok := topEnv.Get("main")
+		// Find the main function object in the main package's environment.
+		mainFuncObj, ok := interp.FindObjectInPackage(ctx, mainPkg.ImportPath, "main")
 		if !ok {
 			return fmt.Errorf("main function not found")
 		}
 
-		// 4. Apply the main function. The interpreter will handle resolving
-		//    and loading other packages (like 'service') on demand.
+		// Apply the main function.
 		_, applyErr := interp.Apply(ctx, mainFuncObj, nil, mainPkg)
 		if applyErr != nil {
 			return fmt.Errorf("Apply(main) failed: %w", applyErr)
@@ -259,7 +253,7 @@ func usedByReturnedFunc() {}
 		return nil
 	}
 
-	if _, err := scantest.Run(t, context.Background(), dir, []string{"./..."}, action); err != nil {
+	if _, err := scantest.Run(t, t.Context(), dir, []string{"./..."}, action); err != nil {
 		t.Fatalf("scantest.Run() failed: %v", err)
 	}
 }
@@ -283,16 +277,15 @@ func main() {
 		if err != nil {
 			return err
 		}
-		env := symgo.NewEnclosedEnvironment(nil)
 
 		for _, file := range pkg.AstFiles {
-			_, err := interp.EvalWithEnv(ctx, file, env, pkg)
+			_, err := interp.Eval(ctx, file, pkg)
 			if err != nil {
 				return err
 			}
 		}
 
-		mainFuncObj, ok := env.Get("main")
+		mainFuncObj, ok := interp.FindObjectInPackage(ctx, "example.com/me", "main")
 		if !ok {
 			return fmt.Errorf("main function not found")
 		}
@@ -309,7 +302,7 @@ func main() {
 		return nil
 	}
 
-	if _, err := scantest.Run(t, context.Background(), dir, []string{"."}, action); err != nil {
+	if _, err := scantest.Run(t, t.Context(), dir, []string{"."}, action); err != nil {
 		t.Fatalf("scantest.Run() failed: %v", err)
 	}
 }
@@ -339,17 +332,16 @@ func main() {
 		if err != nil {
 			return err
 		}
-		env := symgo.NewEnclosedEnvironment(nil)
 
 		for _, file := range pkg.AstFiles {
-			_, err := interp.EvalWithEnv(ctx, file, env, pkg)
+			_, err := interp.Eval(ctx, file, pkg)
 			if err != nil {
 				return err
 			}
 		}
 
 		// First, test that calling the function directly returns a MultiReturn
-		twoReturnsFn, ok := env.Get("twoReturns")
+		twoReturnsFn, ok := interp.FindObjectInPackage(ctx, "example.com/me", "twoReturns")
 		if !ok {
 			return fmt.Errorf("twoReturns function not found")
 		}
@@ -372,12 +364,11 @@ func main() {
 		}
 
 		// Now, test the assignment by running main
-		mainFuncObj, ok := env.Get("main")
+		mainFuncObj, ok := interp.FindObjectInPackage(ctx, "example.com/me", "main")
 		if !ok {
 			return fmt.Errorf("main function not found")
 		}
 
-		// Since variables are created in a nested environment, we can't easily access them.
 		// The main test here is that the Apply call doesn't return an "assignment mismatch" error.
 		_, mainApplyErr := interp.Apply(ctx, mainFuncObj, []symgo.Object{}, pkg)
 		if mainApplyErr != nil {
@@ -387,7 +378,7 @@ func main() {
 		return nil
 	}
 
-	if _, err := scantest.Run(t, context.Background(), dir, []string{"."}, action); err != nil {
+	if _, err := scantest.Run(t, t.Context(), dir, []string{"."}, action); err != nil {
 		t.Fatalf("scantest.Run() failed: %v", err)
 	}
 }
@@ -419,21 +410,20 @@ func main() {
 		if err != nil {
 			return err
 		}
-		env := symgo.NewEnclosedEnvironment(nil)
 
-		interp.RegisterIntrinsic("example.com/me.MyPattern", func(i *symgo.Interpreter, args []symgo.Object) symgo.Object {
+		interp.RegisterIntrinsic("example.com/me.MyPattern", func(ctx context.Context, i *symgo.Interpreter, args []symgo.Object) symgo.Object {
 			patternCalled = true
 			return nil
 		})
 
 		for _, file := range pkg.AstFiles {
-			_, err := interp.EvalWithEnv(ctx, file, env, pkg)
+			_, err := interp.Eval(ctx, file, pkg)
 			if err != nil {
 				return fmt.Errorf("initial eval of file %s failed: %w", file.Name.Name, err)
 			}
 		}
 
-		mainFuncObj, ok := env.Get("main")
+		mainFuncObj, ok := interp.FindObjectInPackage(ctx, "example.com/me", "main")
 		if !ok {
 			return fmt.Errorf("main function not found")
 		}
@@ -453,7 +443,7 @@ func main() {
 		return nil
 	}
 
-	if _, err := scantest.Run(t, context.Background(), dir, []string{"."}, action); err != nil {
+	if _, err := scantest.Run(t, t.Context(), dir, []string{"."}, action); err != nil {
 		t.Fatalf("scantest.Run() failed: %v", err)
 	}
 }
@@ -478,16 +468,15 @@ func run() string {
 		if err != nil {
 			return err
 		}
-		env := symgo.NewEnclosedEnvironment(nil)
 
 		for _, file := range pkg.AstFiles {
-			_, err := interp.EvalWithEnv(ctx, file, env, pkg)
+			_, err := interp.Eval(ctx, file, pkg)
 			if err != nil {
 				return fmt.Errorf("initial eval of file %s failed: %w", file.Name.Name, err)
 			}
 		}
 
-		runFuncObj, ok := env.Get("run")
+		runFuncObj, ok := interp.FindObjectInPackage(ctx, "example.com/me", "run")
 		if !ok {
 			return fmt.Errorf("run function not found")
 		}
@@ -518,7 +507,7 @@ func run() string {
 		return nil
 	}
 
-	if _, err := scantest.Run(t, context.Background(), dir, []string{"."}, action); err != nil {
+	if _, err := scantest.Run(t, t.Context(), dir, []string{"."}, action); err != nil {
 		t.Fatalf("scantest.Run() failed: %v", err)
 	}
 }

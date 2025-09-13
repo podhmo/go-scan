@@ -1,4 +1,4 @@
-package evaluator_test
+package symgo_test
 
 import (
 	"context"
@@ -23,7 +23,7 @@ func lookupFile(pkg *goscan.Package, name string) (*ast.File, error) {
 	return nil, fmt.Errorf("file %q not found in package %s", name, pkg.Name)
 }
 
-func TestMultiValueAssignment(t *testing.T) {
+func TestMultiValueAssignmentWithBlank(t *testing.T) {
 	var intrinsicCalled bool
 	var assignedValue symgo.Object
 
@@ -50,7 +50,7 @@ func main() {
 		}
 
 		// Intrinsic for a function that returns two values
-		interp.RegisterIntrinsic("myapp.myFunc", func(i *symgo.Interpreter, args []symgo.Object) symgo.Object {
+		interp.RegisterIntrinsic("myapp.myFunc", func(ctx context.Context, i *symgo.Interpreter, args []symgo.Object) symgo.Object {
 			intrinsicCalled = true
 			return &object.MultiReturn{
 				Values: []symgo.Object{
@@ -71,7 +71,7 @@ func main() {
 			return err
 		}
 
-		mainFn, ok := interp.FindObject("main")
+		mainFn, ok := interp.FindObjectInPackage(ctx, "myapp", "main")
 		if !ok {
 			t.Fatal("main func not found")
 		}
@@ -83,7 +83,7 @@ func main() {
 		}
 
 		// After running main, check the value of the assigned variable 'x'
-		xVar, ok := interp.FindObject("x")
+		xVar, ok := interp.FindObjectInPackage(ctx, "myapp", "x")
 		if !ok {
 			t.Error("variable 'x' was not found in the environment")
 		} else {
@@ -144,7 +144,7 @@ func main() {
 
 		// This intrinsic will be called at the end of main. We can inspect the
 		// state of 'v' when it's called.
-		interp.RegisterIntrinsic("myapp.check", func(i *symgo.Interpreter, args []symgo.Object) symgo.Object {
+		interp.RegisterIntrinsic("myapp.check", func(ctx context.Context, i *symgo.Interpreter, args []symgo.Object) symgo.Object {
 			checkCalled = true
 			return nil
 		})
@@ -158,7 +158,7 @@ func main() {
 			return fmt.Errorf("initial eval failed: %w", err)
 		}
 
-		mainFn, ok := interp.FindObject("main")
+		mainFn, ok := interp.FindObjectInPackage(ctx, "myapp", "main")
 		if !ok {
 			return fmt.Errorf("main func not found")
 		}

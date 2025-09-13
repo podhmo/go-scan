@@ -583,3 +583,82 @@ type MyStruct struct {
 		t.Errorf("Expected error message %q, got %q", expectedErrorMsg, err.Error())
 	}
 }
+
+func TestScan_EmbeddedInterface(t *testing.T) {
+	testDir := filepath.Join("testdata", "embeddediface")
+	absTestDir, err := filepath.Abs(testDir)
+	if err != nil {
+		t.Fatalf("Failed to get absolute path for testdata dir: %v", err)
+	}
+	s := newTestScanner(t, "example.com/test/embeddediface", absTestDir)
+
+	filesToScan := []string{
+		filepath.Join(testDir, "iface.go"),
+	}
+
+	ctx := context.Background()
+	pkgInfo, err := s.ScanFiles(ctx, filesToScan, testDir)
+	if err != nil {
+		t.Fatalf("ScanFiles failed: %v", err)
+	}
+
+	// Find the ReadWriter interface
+	var readWriter *TypeInfo
+	for _, typ := range pkgInfo.Types {
+		if typ.Name == "ReadWriter" {
+			readWriter = typ
+			break
+		}
+	}
+	if readWriter == nil {
+		t.Fatal("ReadWriter interface not found")
+	}
+	if readWriter.Kind != InterfaceKind {
+		t.Fatalf("Expected ReadWriter to be an interface, got %v", readWriter.Kind)
+	}
+	if readWriter.Interface == nil {
+		t.Fatal("ReadWriter.Interface is nil")
+	}
+
+	// Check that it has one explicit method, "Close"
+	if len(readWriter.Interface.Methods) != 1 {
+		t.Fatalf("Expected 1 explicit method, got %d", len(readWriter.Interface.Methods))
+	}
+	if readWriter.Interface.Methods[0].Name != "Close" {
+		t.Errorf("Expected method 'Close', got '%s'", readWriter.Interface.Methods[0].Name)
+	}
+
+	// Check that it has two embedded interfaces, "Reader" and "Writer"
+	if len(readWriter.Interface.Embedded) != 2 {
+		t.Fatalf("Expected 2 embedded interfaces, got %d", len(readWriter.Interface.Embedded))
+	}
+	if readWriter.Interface.Embedded[0].TypeName != "Reader" {
+		t.Errorf("Expected first embedded type to be 'Reader', got '%s'", readWriter.Interface.Embedded[0].TypeName)
+	}
+	if readWriter.Interface.Embedded[1].TypeName != "Writer" {
+		t.Errorf("Expected second embedded type to be 'Writer', got '%s'", readWriter.Interface.Embedded[1].TypeName)
+	}
+
+	// Let's resolve one of the embedded interfaces to be sure
+	// Use the ResolutionContext from the parent type for resolving its children.
+	ctx = readWriter.ResolutionContext
+	readerTypeInfo, err := readWriter.Interface.Embedded[0].Resolve(ctx)
+	if err != nil {
+		t.Fatalf("Failed to resolve embedded Reader interface: %v", err)
+	}
+	if readerTypeInfo == nil {
+		t.Fatal("Resolved embedded Reader interface is nil")
+	}
+	if readerTypeInfo.Name != "Reader" {
+		t.Errorf("Expected resolved type name to be 'Reader', got '%s'", readerTypeInfo.Name)
+	}
+	if readerTypeInfo.Interface == nil {
+		t.Fatal("Resolved Reader's Interface field is nil")
+	}
+	if len(readerTypeInfo.Interface.Methods) != 1 {
+		t.Fatalf("Expected Reader to have 1 method, got %d", len(readerTypeInfo.Interface.Methods))
+	}
+	if readerTypeInfo.Interface.Methods[0].Name != "Read" {
+		t.Errorf("Expected Reader method to be 'Read', got '%s'", readerTypeInfo.Interface.Methods[0].Name)
+	}
+}

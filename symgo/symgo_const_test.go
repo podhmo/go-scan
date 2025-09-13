@@ -1,7 +1,8 @@
 package symgo_test
 
 import (
-	"context"
+	"log/slog"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -12,7 +13,7 @@ import (
 )
 
 func TestSymgo_ExtraModule_ConstantResolution(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Setup: Create a temporary directory with two modules.
 	// main module depends on helper module.
@@ -52,7 +53,12 @@ const MyConstant = "hello from another module"
 	}
 
 	// 2. Create the symgo interpreter with a policy to scan both modules.
-	interp, err := symgo.NewInterpreter(scanner, symgo.WithPrimaryAnalysisScope("example.com/main/...", "example.com/helper/..."))
+	logHandler := slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})
+	logger := slog.New(logHandler)
+	interp, err := symgo.NewInterpreter(scanner,
+		symgo.WithPrimaryAnalysisScope("example.com/main/...", "example.com/helper/..."),
+		symgo.WithLogger(logger),
+	)
 	if err != nil {
 		t.Fatalf("NewInterpreter failed: %v", err)
 	}
@@ -71,7 +77,7 @@ const MyConstant = "hello from another module"
 	}
 
 	// 5. Find the target function in the environment.
-	getConstantObj, ok := interp.FindObject("GetConstant")
+	getConstantObj, ok := interp.FindObjectInPackage(ctx, "example.com/main", "GetConstant")
 	if !ok {
 		t.Fatal("GetConstant function not found in interpreter environment")
 	}

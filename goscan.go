@@ -1363,6 +1363,21 @@ func (s *Scanner) FindSymbolDefinitionLocation(ctx context.Context, symbolFullNa
 	return "", fmt.Errorf("symbol %s not found in package %s even after scan and cache check", symbolName, importPath)
 }
 
+// AllSeenPackages returns a copy of the in-memory cache of all packages
+// that have been scanned or loaded by this scanner instance.
+// This is primarily intended for tools that need to perform analysis
+// across all packages seen during a session, such as the symgo evaluator.
+func (s *Scanner) AllSeenPackages() map[string]*Package {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	copied := make(map[string]*Package, len(s.packageCache))
+	for k, v := range s.packageCache {
+		copied[k] = v
+	}
+	return copied
+}
+
 // FindSymbolInPackage searches for a specific symbol within a package by scanning its files one by one.
 // It only scans files that have not yet been visited by this scanner instance.
 // If the symbol is found, it returns a cumulative PackageInfo of all files scanned in the package up to that point

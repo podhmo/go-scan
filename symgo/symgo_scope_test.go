@@ -3,7 +3,6 @@ package symgo_test
 import (
 	"context"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	goscan "github.com/podhmo/go-scan"
@@ -13,7 +12,7 @@ import (
 )
 
 func TestWithSymbolicDependencyScope(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	tmpdir, cleanup := scantest.WriteFiles(t, map[string]string{
 		"go.mod": "module example.com/myapp\ngo 1.21",
 		"main.go": `
@@ -60,7 +59,7 @@ func DoSomething() {}
 }
 
 func TestWithPrimaryAnalysisScope(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	files := map[string]string{
 		"myapp/go.mod": "module example.com/myapp\ngo 1.21\nreplace example.com/lib => ../lib",
 		"myapp/main.go": `
@@ -119,7 +118,7 @@ func DoSomething() string { return "from lib" }
 }
 
 func TestCrossPackageUnexportedResolution(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	files := map[string]string{
 		"myapp/go.mod": "module example.com/myapp\ngo 1.21\nreplace example.com/lib => ../lib",
 		"myapp/main.go": `
@@ -131,14 +130,15 @@ func main() string { return lib.GetGreeting() }
 		"lib/lib.go": `
 package lib
 
-var count = 0
+// Unexported variable that should be resolvable within the same package
+var secretPrefix = "hello from"
+
+// Unexported constant 
+const secretSuffix = " unexported func"
+
+// Unexported function that should be resolvable within the same package
 func getSecretMessage() string {
-	if count > 0 {
-		return "hello from unexported func"
-	}
-	count++
-	// recursive call
-	return getSecretMessage()
+	return secretPrefix + secretSuffix
 }
 
 func GetGreeting() string {
@@ -152,21 +152,25 @@ func GetGreeting() string {
 	appDir := filepath.Join(tmpdir, "myapp")
 	result, err := runMainAnalysis(t, ctx, appDir, "example.com/myapp/...", "example.com/lib/...")
 
-	// The test currently fails because package-level 'var's are not evaluated.
-	// We expect this to fail with "identifier not found: count".
-	if err == nil {
-		t.Fatalf("test unexpectedly passed, the bug might be fixed. result: %s", result.Inspect())
+	if err != nil {
+		t.Fatalf("test failed unexpectedly with error: %v", err)
 	}
 
-	if !strings.Contains(err.Error(), "identifier not found: count") {
-		t.Fatalf("test failed with an unexpected error: %v", err)
-	} else {
-		t.Logf("correctly failed with expected error: %v", err)
+	retVal, ok := result.(*object.ReturnValue)
+	if !ok {
+		t.Fatalf("expected ReturnValue, but got %T: %v", result, result.Inspect())
+	}
+	str, ok := retVal.Value.(*object.String)
+	if !ok {
+		t.Fatalf("expected String, got %T", retVal.Value)
+	}
+	if str.Value != "hello from unexported func" {
+		t.Errorf("want %q, got %q", "hello from unexported func", str.Value)
 	}
 }
 
 func TestCrossPackageUnexportedResolution_Minimal(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	files := map[string]string{
 		"myapp/go.mod": "module example.com/myapp\ngo 1.21\nreplace example.com/lib => ../lib",
 		"myapp/main.go": `
@@ -210,6 +214,49 @@ func GetGreeting() string {
 	}
 }
 
+func TestCrossPackageUnexportedResolution_WithVar(t *testing.T) {
+	ctx := t.Context()
+	files := map[string]string{
+		"myapp/go.mod": "module example.com/myapp\ngo 1.21\nreplace example.com/lib => ../lib",
+		"myapp/main.go": `
+package main
+import "example.com/lib"
+func main() string { return lib.GetGreeting() }
+`,
+		"lib/go.mod": "module example.com/lib\ngo 1.21",
+		"lib/lib.go": `
+package lib
+
+var secret = "hello from unexported var"
+
+func GetGreeting() string {
+	return secret
+}
+`,
+	}
+	tmpdir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	appDir := filepath.Join(tmpdir, "myapp")
+	result, err := runMainAnalysis(t, ctx, appDir, "example.com/myapp/...", "example.com/lib/...")
+
+	if err != nil {
+		t.Fatalf("test failed unexpectedly with error: %v", err)
+	}
+
+	retVal, ok := result.(*object.ReturnValue)
+	if !ok {
+		t.Fatalf("expected ReturnValue, but got %T: %v", result, result.Inspect())
+	}
+	str, ok := retVal.Value.(*object.String)
+	if !ok {
+		t.Fatalf("expected String, got %T", retVal.Value)
+	}
+	if str.Value != "hello from unexported var" {
+		t.Errorf("want %q, got %q", "hello from unexported var", str.Value)
+	}
+}
+
 // runMainAnalysis is a helper to analyze the main package and return the result of main().
 func runMainAnalysis(t *testing.T, ctx context.Context, dir string, primaryScope ...string) (object.Object, error) {
 	t.Helper()
@@ -239,7 +286,7 @@ func runMainAnalysis(t *testing.T, ctx context.Context, dir string, primaryScope
 		t.Fatalf("Eval main file failed: %v", err)
 	}
 
-	mainFuncObj, ok := interp.FindObject("main")
+	mainFuncObj, ok := interp.FindObjectInPackage(ctx, "example.com/myapp", "main")
 	if !ok {
 		t.Fatal("main function not found")
 	}

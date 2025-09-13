@@ -504,32 +504,36 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool) error {
 				}
 			}
 
-			if fn.UnderlyingMethod != nil {
-				methodName := fn.UnderlyingMethod.Name
-				var implementerTypes []*scanner.FieldType
+			if fn.UnderlyingFunc != nil {
+				// Case 1: It's an interface method call placeholder (it has a receiver).
 				if fn.Receiver != nil {
-					receiverTypeInfo := fn.Receiver.TypeInfo()
-					if receiverTypeInfo != nil && receiverTypeInfo.Kind == scanner.InterfaceKind {
-						ifaceName := fmt.Sprintf("%s.%s", receiverTypeInfo.PkgPath, receiverTypeInfo.Name)
-						if allImplementers, ok := interfaceMap[ifaceName]; ok {
-							for _, ti := range allImplementers {
-								implementerTypes = append(implementerTypes, &scanner.FieldType{Definition: ti})
+					methodName := fn.UnderlyingFunc.Name
+					var implementerTypes []*scanner.FieldType
+					if fn.Receiver != nil {
+						receiverTypeInfo := fn.Receiver.TypeInfo()
+						if receiverTypeInfo != nil && receiverTypeInfo.Kind == scanner.InterfaceKind {
+							ifaceName := fmt.Sprintf("%s.%s", receiverTypeInfo.PkgPath, receiverTypeInfo.Name)
+							if allImplementers, ok := interfaceMap[ifaceName]; ok {
+								for _, ti := range allImplementers {
+									implementerTypes = append(implementerTypes, &scanner.FieldType{Definition: ti})
+								}
 							}
 						}
 					}
+					for _, implFt := range implementerTypes {
+						a.markMethodAsUsed(ctx, usageMap, implFt, methodName)
+					}
+				} else { // Case 2: It's a regular function placeholder (no receiver).
+					if fn.Package != nil {
+						fullName := fmt.Sprintf("%s.%s", fn.Package.ImportPath, fn.UnderlyingFunc.Name)
+						usageMap[fullName] = true
+					}
 				}
-				for _, implFt := range implementerTypes {
-					a.markMethodAsUsed(ctx, usageMap, implFt, methodName)
-				}
-			}
-			if fn.UnderlyingFunc != nil && fn.Package != nil && fn.UnderlyingFunc.Receiver == nil {
-				fullName := fmt.Sprintf("%s.%s", fn.Package.ImportPath, fn.UnderlyingFunc.Name)
-				usageMap[fullName] = true
 			}
 		}
 	}
 
-	interp.RegisterDefaultIntrinsic(func(i *symgo.Interpreter, args []object.Object) object.Object {
+	interp.RegisterDefaultIntrinsic(func(ctx context.Context, i *symgo.Interpreter, args []object.Object) object.Object {
 		// The intrinsic is triggered for every function call.
 		// We need to mark the function being called (args[0]) as used.
 		// We also need to check if any of the arguments themselves are function
@@ -557,7 +561,7 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool) error {
 		}
 
 		for _, fnInfo := range pkg.Functions {
-			funcObj, ok := interp.FindObject(fnInfo.Name)
+			funcObj, ok := interp.FindObjectInPackage(ctx, pkg.ImportPath, fnInfo.Name)
 			if !ok {
 				slog.DebugContext(ctx, "could not find function object in interpreter", "function", fnInfo.Name, "package", pkg.ImportPath)
 				continue
@@ -687,6 +691,10 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool) error {
 		}
 	}
 	slog.InfoContext(ctx, "symbolic execution complete")
+
+	// Finalize the analysis to resolve any collected interface method calls.
+	slog.InfoContext(ctx, "finalizing analysis for interface resolution")
+	interp.Finalize(ctx)
 
 	type Orphan struct {
 		Name     string `json:"name"`

@@ -50,7 +50,7 @@ func main() {
 		}
 
 		// Register an intrinsic to record all function/method calls
-		interp.RegisterDefaultIntrinsic(func(i *symgo.Interpreter, args []object.Object) object.Object {
+		interp.RegisterDefaultIntrinsic(func(ctx context.Context, i *symgo.Interpreter, args []object.Object) object.Object {
 			if len(args) == 0 {
 				return nil
 			}
@@ -81,7 +81,7 @@ func main() {
 		}
 
 		// Now, find and run the init function.
-		initFuncObj, ok := interp.FindObject("init")
+		initFuncObj, ok := interp.FindObjectInPackage(ctx, "example.com/hello", "init")
 		if !ok {
 			t.Fatal("could not find init function object")
 		}
@@ -98,7 +98,7 @@ func main() {
 		return nil
 	}
 
-	_, err := scantest.Run(t, context.Background(), dir, []string{"."}, action)
+	_, err := scantest.Run(t, t.Context(), dir, []string{"."}, action)
 	if err != nil {
 		t.Fatalf("scantest.Run failed: %v", err)
 	}

@@ -40,11 +40,11 @@ func main() {
 		}
 		env := symgo.NewEnclosedEnvironment(nil)
 
-		interp.RegisterIntrinsic("example.com/me.IfBlock", func(i *symgo.Interpreter, args []symgo.Object) symgo.Object {
+		interp.RegisterIntrinsic("example.com/me.IfBlock", func(ctx context.Context, i *symgo.Interpreter, args []symgo.Object) symgo.Object {
 			ifCalled = true
 			return nil
 		})
-		interp.RegisterIntrinsic("example.com/me.ElseBlock", func(i *symgo.Interpreter, args []symgo.Object) symgo.Object {
+		interp.RegisterIntrinsic("example.com/me.ElseBlock", func(ctx context.Context, i *symgo.Interpreter, args []symgo.Object) symgo.Object {
 			elseCalled = true
 			return nil
 		})
@@ -68,7 +68,7 @@ func main() {
 		return nil
 	}
 
-	if _, err := scantest.Run(t, context.Background(), dir, []string{"."}, action); err != nil {
+	if _, err := scantest.Run(t, t.Context(), dir, []string{"."}, action); err != nil {
 		t.Fatalf("scantest.Run() failed: %v", err)
 	}
 }
@@ -100,7 +100,7 @@ func main() {
 		}
 		env := symgo.NewEnclosedEnvironment(nil)
 
-		interp.RegisterIntrinsic("example.com/me.ForBody", func(i *symgo.Interpreter, args []symgo.Object) symgo.Object {
+		interp.RegisterIntrinsic("example.com/me.ForBody", func(ctx context.Context, i *symgo.Interpreter, args []symgo.Object) symgo.Object {
 			callCount++
 			return nil
 		})
@@ -121,7 +121,7 @@ func main() {
 		return nil
 	}
 
-	if _, err := scantest.Run(t, context.Background(), dir, []string{"."}, action); err != nil {
+	if _, err := scantest.Run(t, t.Context(), dir, []string{"."}, action); err != nil {
 		t.Fatalf("scantest.Run() failed: %v", err)
 	}
 }
@@ -160,15 +160,15 @@ func main() {
 		}
 		env := symgo.NewEnclosedEnvironment(nil)
 
-		interp.RegisterIntrinsic("example.com/me.CaseA", func(i *symgo.Interpreter, args []symgo.Object) symgo.Object {
+		interp.RegisterIntrinsic("example.com/me.CaseA", func(ctx context.Context, i *symgo.Interpreter, args []symgo.Object) symgo.Object {
 			aCalled = true
 			return nil
 		})
-		interp.RegisterIntrinsic("example.com/me.CaseB", func(i *symgo.Interpreter, args []symgo.Object) symgo.Object {
+		interp.RegisterIntrinsic("example.com/me.CaseB", func(ctx context.Context, i *symgo.Interpreter, args []symgo.Object) symgo.Object {
 			bCalled = true
 			return nil
 		})
-		interp.RegisterIntrinsic("example.com/me.DefaultCase", func(i *symgo.Interpreter, args []symgo.Object) symgo.Object {
+		interp.RegisterIntrinsic("example.com/me.DefaultCase", func(ctx context.Context, i *symgo.Interpreter, args []symgo.Object) symgo.Object {
 			defaultCalled = true
 			return nil
 		})
@@ -195,7 +195,7 @@ func main() {
 		return nil
 	}
 
-	if _, err := scantest.Run(t, context.Background(), dir, []string{"."}, action); err != nil {
+	if _, err := scantest.Run(t, t.Context(), dir, []string{"."}, action); err != nil {
 		t.Fatalf("scantest.Run() failed: %v", err)
 	}
 }

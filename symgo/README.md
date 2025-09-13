@@ -2,7 +2,7 @@
 
 `symgo` is a library that performs symbolic execution on Go source code. It is designed to analyze code paths and understand the behavior of functions without actually running them. It builds an Abstract Syntax Tree (AST) and "evaluates" it, replacing concrete values with symbolic representations.
 
-This is particularly useful for static analysis tools that need to understand program semantics, such as documentation generators, security scanners, or tools for finding dead code.
+This is particularly useful for static analysis tools that need to understand program semantics, such as documentation generators, or tools for finding dead code.
 
 ## Core Concepts
 

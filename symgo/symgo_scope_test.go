@@ -286,7 +286,7 @@ func runMainAnalysis(t *testing.T, ctx context.Context, dir string, primaryScope
 		t.Fatalf("Eval main file failed: %v", err)
 	}
 
-	mainFuncObj, ok := interp.FindObjectInPackage("example.com/myapp", "main")
+	mainFuncObj, ok := interp.FindObjectInPackage(ctx, "example.com/myapp", "main")
 	if !ok {
 		t.Fatal("main function not found")
 	}

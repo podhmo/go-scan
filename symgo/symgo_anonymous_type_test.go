@@ -71,7 +71,7 @@ func AnonymousStruct(p struct {
 				t.Fatalf("Eval(file) failed: %+v", err)
 			}
 
-			fn, ok := interpreter.FindObjectInPackage("mymodule", "AnonymousInterface")
+			fn, ok := interpreter.FindObjectInPackage(t.Context(), "mymodule", "AnonymousInterface")
 			if !ok {
 				t.Fatal("function AnonymousInterface not found")
 			}
@@ -101,7 +101,7 @@ func AnonymousStruct(p struct {
 				t.Fatalf("Eval(file) failed: %+v", err)
 			}
 
-			fn, ok := interpreter.FindObjectInPackage("mymodule", "AnonymousStruct")
+			fn, ok := interpreter.FindObjectInPackage(t.Context(), "mymodule", "AnonymousStruct")
 			if !ok {
 				t.Fatal("function AnonymousStruct not found")
 			}

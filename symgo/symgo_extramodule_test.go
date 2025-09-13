@@ -42,7 +42,7 @@ func TestExtraModuleCall(t *testing.T) {
 		t.Fatalf("Eval main file failed: %v", err)
 	}
 
-	mainObj, ok := interp.FindObjectInPackage(mainPkgPath, "main")
+	mainObj, ok := interp.FindObjectInPackage(ctx, mainPkgPath, "main")
 	if !ok {
 		t.Fatal("main function not found in interpreter environment")
 	}

@@ -81,7 +81,7 @@ func main() {
 		}
 
 		// Now, find and run the init function.
-		initFuncObj, ok := interp.FindObjectInPackage("example.com/hello", "init")
+		initFuncObj, ok := interp.FindObjectInPackage(ctx, "example.com/hello", "init")
 		if !ok {
 			t.Fatal("could not find init function object")
 		}

@@ -74,7 +74,7 @@ func GetUnexportedConstant() string {
 	}
 
 	// 5. Find the target function in the environment.
-	callHelperObj, ok := interp.FindObjectInPackage("example.com/main", "CallHelper")
+	callHelperObj, ok := interp.FindObjectInPackage(ctx, "example.com/main", "CallHelper")
 	if !ok {
 		t.Fatal("CallHelper function not found in interpreter environment")
 	}
@@ -151,7 +151,7 @@ func main() {
 		t.Fatalf("Eval main file failed: %v", err)
 	}
 
-	mainFuncObj, ok := interp.FindObjectInPackage("example.com/main", "main")
+	mainFuncObj, ok := interp.FindObjectInPackage(ctx, "example.com/main", "main")
 	if !ok {
 		t.Fatal("main function not found in interpreter environment")
 	}
@@ -217,7 +217,7 @@ func FuncB() string {
 	if _, err := interp.Eval(ctx, loglibFile, loglibPkg); err != nil {
 		t.Fatalf("Eval loglib file failed: %v", err)
 	}
-	entrypointObj, ok := interp.FindObjectInPackage("example.com/loglib", "FuncA")
+	entrypointObj, ok := interp.FindObjectInPackage(ctx, "example.com/loglib", "FuncA")
 	if !ok {
 		t.Fatal("FuncA function not found in interpreter environment")
 	}
@@ -294,7 +294,7 @@ func (c *Client) GetValue() string {
 	if _, err := interp.Eval(ctx, mainFile, mainPkg); err != nil {
 		t.Fatalf("Eval main file failed: %v", err)
 	}
-	entrypointObj, ok := interp.FindObjectInPackage("example.com/main", "DoWork")
+	entrypointObj, ok := interp.FindObjectInPackage(ctx, "example.com/main", "DoWork")
 	if !ok {
 		t.Fatal("DoWork function not found in interpreter environment")
 	}

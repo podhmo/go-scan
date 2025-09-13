@@ -71,7 +71,7 @@ func main() {
 			return err
 		}
 
-		mainFn, ok := interp.FindObjectInPackage("myapp", "main")
+		mainFn, ok := interp.FindObjectInPackage(ctx, "myapp", "main")
 		if !ok {
 			t.Fatal("main func not found")
 		}
@@ -83,7 +83,7 @@ func main() {
 		}
 
 		// After running main, check the value of the assigned variable 'x'
-		xVar, ok := interp.FindObjectInPackage("myapp", "x")
+		xVar, ok := interp.FindObjectInPackage(ctx, "myapp", "x")
 		if !ok {
 			t.Error("variable 'x' was not found in the environment")
 		} else {
@@ -158,7 +158,7 @@ func main() {
 			return fmt.Errorf("initial eval failed: %w", err)
 		}
 
-		mainFn, ok := interp.FindObjectInPackage("myapp", "main")
+		mainFn, ok := interp.FindObjectInPackage(ctx, "myapp", "main")
 		if !ok {
 			return fmt.Errorf("main func not found")
 		}

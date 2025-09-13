@@ -77,7 +77,7 @@ func (r *Resolver) resolveTypeWithoutPolicyCheck(ctx context.Context, fieldType 
 }
 
 // ResolveFunction creates a function object or a symbolic placeholder based on the scan policy.
-func (r *Resolver) ResolveFunction(pkg *object.Package, funcInfo *scanner.FunctionInfo) object.Object {
+func (r *Resolver) ResolveFunction(ctx context.Context, pkg *object.Package, funcInfo *scanner.FunctionInfo) object.Object {
 	if r.ScanPolicy(pkg.Path) {
 		fn := &object.Function{
 			Name:       funcInfo.AstDecl.Name,
@@ -97,7 +97,7 @@ func (r *Resolver) ResolveFunction(pkg *object.Package, funcInfo *scanner.Functi
 			receiverVar.SetFieldType(funcInfo.Receiver.Type)
 			// The receiver's type info can be resolved from its field type.
 			// This must respect the scan policy.
-			receiverVar.SetTypeInfo(r.ResolveType(context.Background(), funcInfo.Receiver.Type))
+			receiverVar.SetTypeInfo(r.ResolveType(ctx, funcInfo.Receiver.Type))
 			fn.Receiver = receiverVar
 		}
 

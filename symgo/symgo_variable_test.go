@@ -49,7 +49,7 @@ func GetValue() string {
 	}
 
 	// 4. Find the target function.
-	fnObj, ok := interp.FindObjectInPackage("myapp", "GetValue")
+	fnObj, ok := interp.FindObjectInPackage(ctx, "myapp", "GetValue")
 	if !ok {
 		t.Fatal("GetValue function not found in interpreter environment")
 	}

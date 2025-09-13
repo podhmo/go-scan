@@ -108,7 +108,7 @@ func run() {
 		}
 	}
 
-	mainFuncObj, ok := interp.FindObjectInPackage("example.com/workspace/pkg_b", "main")
+	mainFuncObj, ok := interp.FindObjectInPackage(ctx, "example.com/workspace/pkg_b", "main")
 	if !ok {
 		t.Fatalf("could not find main function in pkg_b")
 	}

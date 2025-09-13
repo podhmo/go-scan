@@ -44,7 +44,7 @@ func main() {
 		}
 
 		// Find and apply the main function
-		mainObj, ok := interp.FindObjectInPackage("example.com/me/myapp", "main")
+		mainObj, ok := interp.FindObjectInPackage(ctx, "example.com/me/myapp", "main")
 		if !ok {
 			t.Fatalf("could not find main function in interpreter")
 		}

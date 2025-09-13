@@ -3499,12 +3499,12 @@ func (e *Evaluator) Files() []*FileScope {
 }
 
 // ApplyFunction is a public wrapper for the internal applyFunction, allowing it to be called from other packages.
-func (e *Evaluator) ApplyFunction(call *ast.CallExpr, fn object.Object, args []object.Object, fscope *FileScope) object.Object {
+func (e *Evaluator) ApplyFunction(ctx context.Context, call *ast.CallExpr, fn object.Object, args []object.Object, fscope *FileScope) object.Object {
 	// This is a simplification. A real implementation would need to determine the correct environment.
 	// For now, we'll use a new top-level environment, which will work for pure functions
 	// but not for closures that capture variables.
 	// The pkg argument is nil here, which might limit some functionality.
-	return e.applyFunction(context.Background(), fn, args, nil, call.Pos())
+	return e.applyFunction(ctx, fn, args, nil, call.Pos())
 }
 
 func (e *Evaluator) getOrResolveFunction(pkg *object.Package, funcInfo *scanner.FunctionInfo) object.Object {

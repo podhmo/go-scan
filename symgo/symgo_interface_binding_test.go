@@ -49,7 +49,7 @@ func TargetFunc(writer io.Writer) {
 		}
 
 		// Action: Bind the interface `io.Writer` to the concrete type `*bytes.Buffer`.
-		if err := interp.BindInterface("io.Writer", "*bytes.Buffer"); err != nil {
+		if err := interp.BindInterface(ctx, "io.Writer", "*bytes.Buffer"); err != nil {
 			return fmt.Errorf("failed to bind interface: %w", err)
 		}
 
@@ -75,13 +75,13 @@ func TargetFunc(writer io.Writer) {
 		}
 
 		// Find the target function to analyze.
-		targetFn, ok := interp.FindObjectInPackage("myapp", "TargetFunc")
+		targetFn, ok := interp.FindObjectInPackage(ctx, "myapp", "TargetFunc")
 		if !ok {
 			return fmt.Errorf("TargetFunc function not found")
 		}
 
 		// Create a symbolic argument for the `writer` parameter.
-		writerArg, err := interp.NewSymbolic("writer", "io.Writer")
+		writerArg, err := interp.NewSymbolic(ctx, "writer", "io.Writer")
 		if err != nil {
 			return fmt.Errorf("failed to create symbolic arg: %w", err)
 		}

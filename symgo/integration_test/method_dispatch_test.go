@@ -82,7 +82,7 @@ func main() {
 				if err != nil {
 					t.Fatalf("Eval package failed: %v", err)
 				}
-				mainFuncObj, ok := interp.FindObjectInPackage("example.com/hello", "main")
+				mainFuncObj, ok := interp.FindObjectInPackage(ctx, "example.com/hello", "main")
 				if !ok {
 					t.Fatal("could not find main function object")
 				}

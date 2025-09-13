@@ -78,7 +78,7 @@ const MyConstant = "hello from another module"
 	}
 
 	// 5. Find the target function in the environment.
-	getConstantObj, ok := interp.FindObjectInPackage("example.com/main", "GetConstant")
+	getConstantObj, ok := interp.FindObjectInPackage(ctx, "example.com/main", "GetConstant")
 	if !ok {
 		t.Fatal("GetConstant function not found in interpreter environment")
 	}

@@ -243,7 +243,7 @@ func main() {
 	}
 
 	// Find and apply the main function
-	mainFn, ok := interp.FindObjectInPackage("mymodule", "main")
+	mainFn, ok := interp.FindObjectInPackage(t.Context(), "mymodule", "main")
 	if !ok {
 		t.Fatal("could not find main function")
 	}
@@ -307,7 +307,7 @@ func main() {
 	}
 
 	// Find and apply the main function
-	mainFn, ok := interp.FindObjectInPackage("mymodule", "main")
+	mainFn, ok := interp.FindObjectInPackage(t.Context(), "mymodule", "main")
 	if !ok {
 		t.Fatal("could not find main function")
 	}
@@ -367,7 +367,7 @@ func MyFunction(p MyInterface) {
 	}
 
 	// Find the entry point function
-	mainFn, ok := interp.FindObjectInPackage("mymodule", "MyFunction")
+	mainFn, ok := interp.FindObjectInPackage(t.Context(), "mymodule", "MyFunction")
 	if !ok {
 		t.Fatal("could not find MyFunction function")
 	}
@@ -422,7 +422,7 @@ func MyLogf(f string, args ...interface{}) {
 		t.Fatalf("interp.Eval(file) failed: %+v", err)
 	}
 
-	mainFn, ok := interp.FindObjectInPackage("mymodule", "MyLogf")
+	mainFn, ok := interp.FindObjectInPackage(t.Context(), "mymodule", "MyLogf")
 	if !ok {
 		t.Fatal("could not find MyLogf function")
 	}
@@ -476,7 +476,7 @@ func MyVariadicFunc(a, b int, c ...string) {
 		t.Fatalf("interp.Eval(file) failed: %+v", err)
 	}
 
-	mainFn, ok := interp.FindObjectInPackage("mymodule", "MyVariadicFunc")
+	mainFn, ok := interp.FindObjectInPackage(t.Context(), "mymodule", "MyVariadicFunc")
 	if !ok {
 		t.Fatal("could not find MyVariadicFunc function")
 	}

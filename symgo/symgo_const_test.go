@@ -1,7 +1,6 @@
 package symgo_test
 
 import (
-	"context"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -14,7 +13,7 @@ import (
 )
 
 func TestSymgo_ExtraModule_ConstantResolution(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Setup: Create a temporary directory with two modules.
 	// main module depends on helper module.

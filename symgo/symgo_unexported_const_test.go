@@ -1,7 +1,6 @@
 package symgo_test
 
 import (
-	"context"
 	"path/filepath"
 	"testing"
 
@@ -12,7 +11,7 @@ import (
 )
 
 func TestSymgo_UnexportedConstantResolution(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Setup: Create a temporary directory with two modules.
 	// main module depends on helper module.
@@ -107,7 +106,7 @@ func GetUnexportedConstant() string {
 }
 
 func TestSymgo_IntraPackageConstantResolution(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	tmpdir, cleanup := scantest.WriteFiles(t, map[string]string{
 		"go.mod": "module example.com/main\ngo 1.21\n",
 		"main.go": `
@@ -170,7 +169,7 @@ func main() {
 
 // Test case for nested function call
 func TestSymgo_UnexportedConstantResolution_NestedCall(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	tmpdir, cleanup := scantest.WriteFiles(t, map[string]string{
 		"loglib/go.mod": `
 module example.com/loglib
@@ -245,7 +244,7 @@ func FuncB() string {
 
 // Test case for nested method call
 func TestSymgo_UnexportedConstantResolution_NestedMethodCall(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	tmpdir, cleanup := scantest.WriteFiles(t, map[string]string{
 		"main/go.mod": `
 module example.com/main

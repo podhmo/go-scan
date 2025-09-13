@@ -1,7 +1,6 @@
 package symgo
 
 import (
-	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -108,7 +107,7 @@ func TestInterfaceResolution(t *testing.T) {
 				return nil
 			})
 
-			ctx := context.Background()
+			ctx := t.Context()
 			for _, pkgPath := range p {
 				if _, err := s.ScanPackageByImport(ctx, pkgPath); err != nil {
 					t.Fatalf("could not scan package %s: %v", pkgPath, err)
@@ -237,7 +236,7 @@ func TestInterfaceResolutionWithPointerReceiver(t *testing.T) {
 				return nil
 			})
 
-			ctx := context.Background()
+			ctx := t.Context()
 			for _, pkgPath := range p {
 				if _, err := s.ScanPackageByImport(ctx, pkgPath); err != nil {
 					t.Fatalf("could not scan package %s: %v", pkgPath, err)
@@ -367,7 +366,7 @@ func TestInterfaceResolutionWithValueReceiver(t *testing.T) {
 				return nil
 			})
 
-			ctx := context.Background()
+			ctx := t.Context()
 			for _, pkgPath := range p {
 				if _, err := s.ScanPackageByImport(ctx, pkgPath); err != nil {
 					t.Fatalf("could not scan package %s: %v", pkgPath, err)

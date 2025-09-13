@@ -98,7 +98,7 @@ func main() {
 		return nil
 	}
 
-	_, err := scantest.Run(t, context.Background(), dir, []string{"."}, action)
+	_, err := scantest.Run(t, t.Context(), dir, []string{"."}, action)
 	if err != nil {
 		t.Fatalf("scantest.Run failed: %v", err)
 	}

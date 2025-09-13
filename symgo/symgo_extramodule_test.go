@@ -1,7 +1,6 @@
 package symgo_test
 
 import (
-	"context"
 	"path/filepath"
 	"testing"
 
@@ -12,7 +11,7 @@ import (
 func TestExtraModuleCall(t *testing.T) {
 	// This test simulates a call to a function in an external, third-party module.
 	// The symgo engine should NOT evaluate this call, but treat it as a symbolic placeholder.
-	ctx := context.Background()
+	ctx := t.Context()
 
 	moduleDir := filepath.Join("testdata", "extramodule")
 	mainPkgPath := "example.com/extramodule/main"

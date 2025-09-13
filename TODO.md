@@ -99,6 +99,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] **Fix Division-by-Zero Panic**: Made the constant integer evaluator robust against division by zero, returning a symbolic placeholder instead of panicking.
 - [x] **Handle Additional Integer Operators**: The evaluator now recognizes additional integer operators (`%`, `<<`, `>>`, `&`, `|`, `^`) and returns a symbolic placeholder, preventing crashes when analyzing code that uses them.
 - [x] **Fix AST Node Handling**: Added support for `*ast.StarExpr` as an assignment target and handled `*ast.ExprStmt` in type switches, resolving several panics in the `find-orphans` tool.
+- [x] **Propagate `context.Context`**: Replaced `context.Background()` with `ctx` arguments throughout the `symgo` package and its sub-packages to enable proper context propagation and cancellation. This also involved updating several function signatures to accept a `context.Context`.
 - [ ] **DX: Add Timeout Flag to `find-orphans`**: Add a `--timeout` flag to the `find-orphans` CLI for easier debugging.
 
 ### `symgo`: Enforce Strict Scan Policy ([docs/plan-symgo-focus.md](./docs/plan-symgo-focus.md))

@@ -12,7 +12,7 @@ import (
 )
 
 func TestWithSymbolicDependencyScope(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	tmpdir, cleanup := scantest.WriteFiles(t, map[string]string{
 		"go.mod": "module example.com/myapp\ngo 1.21",
 		"main.go": `
@@ -59,7 +59,7 @@ func DoSomething() {}
 }
 
 func TestWithPrimaryAnalysisScope(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	files := map[string]string{
 		"myapp/go.mod": "module example.com/myapp\ngo 1.21\nreplace example.com/lib => ../lib",
 		"myapp/main.go": `
@@ -118,7 +118,7 @@ func DoSomething() string { return "from lib" }
 }
 
 func TestCrossPackageUnexportedResolution(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	files := map[string]string{
 		"myapp/go.mod": "module example.com/myapp\ngo 1.21\nreplace example.com/lib => ../lib",
 		"myapp/main.go": `
@@ -170,7 +170,7 @@ func GetGreeting() string {
 }
 
 func TestCrossPackageUnexportedResolution_Minimal(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	files := map[string]string{
 		"myapp/go.mod": "module example.com/myapp\ngo 1.21\nreplace example.com/lib => ../lib",
 		"myapp/main.go": `
@@ -215,7 +215,7 @@ func GetGreeting() string {
 }
 
 func TestCrossPackageUnexportedResolution_WithVar(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	files := map[string]string{
 		"myapp/go.mod": "module example.com/myapp\ngo 1.21\nreplace example.com/lib => ../lib",
 		"myapp/main.go": `

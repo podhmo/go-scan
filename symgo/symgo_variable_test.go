@@ -1,7 +1,6 @@
 package symgo_test
 
 import (
-	"context"
 	"testing"
 
 	goscan "github.com/podhmo/go-scan"
@@ -11,7 +10,7 @@ import (
 )
 
 func TestIntraPackage_UnexportedConstant(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	tmpdir, cleanup := scantest.WriteFiles(t, map[string]string{
 		"go.mod": "module myapp",
 		"main.go": `

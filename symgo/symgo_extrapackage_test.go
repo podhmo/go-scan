@@ -52,7 +52,7 @@ func Greet(name string) string {
 
 	mainModuleDir := filepath.Join(dir, "app")
 	mainPkgPath := "example.com/app"
-	ctx := context.Background()
+	ctx := t.Context()
 
 	t.Run("default behavior: external calls are symbolic", func(t *testing.T) {
 		scanner, err := goscan.New(

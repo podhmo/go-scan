@@ -149,7 +149,7 @@ func (a *accessor) findDirectMethodOnType(ctx context.Context, typeInfo *scanner
 
 	// Get the base function object (without a receiver).
 	// This might be cached or resolved on the fly.
-	baseFnObj := a.eval.getOrResolveFunction(pkgObj, methodInfo)
+	baseFnObj := a.eval.getOrResolveFunction(ctx, pkgObj, methodInfo)
 	baseFn, ok := baseFnObj.(*object.Function)
 	if !ok {
 		return nil, fmt.Errorf("resolved method %q is not a function object", methodName)

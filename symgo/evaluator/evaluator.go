@@ -1210,7 +1210,7 @@ func (e *Evaluator) ensurePackageEnvPopulated(ctx context.Context, pkgObj *objec
 		if !shouldScan && !ast.IsExported(f.Name) {
 			continue
 		}
-		fnObject := e.getOrResolveFunction(pkgObj, f)
+		fnObject := e.getOrResolveFunction(ctx, pkgObj, f)
 		env.SetLocal(f.Name, fnObject)
 	}
 
@@ -1472,7 +1472,7 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 				for _, f := range val.ScannedInfo.Functions {
 					if f.Name == n.Sel.Name {
 						e.logc(ctx, slog.LevelWarn, "correcting polluted cache: found function for non-callable symbol", "package", val.Path, "symbol", n.Sel.Name)
-						fnObject := e.getOrResolveFunction(val, f)
+						fnObject := e.getOrResolveFunction(ctx, val, f)
 						val.Env.Set(n.Sel.Name, fnObject) // Correct the cache
 						return fnObject
 					}
@@ -1489,7 +1489,7 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 				}
 
 				// Delegate function object creation to the resolver.
-				fnObject := e.getOrResolveFunction(val, f)
+				fnObject := e.getOrResolveFunction(ctx, val, f)
 				val.Env.Set(n.Sel.Name, fnObject)
 				return fnObject
 			}
@@ -3480,8 +3480,8 @@ func (e *Evaluator) PackageEnvForTest(pkgPath string) (*object.Environment, bool
 }
 
 // GetOrResolveFunctionForTest is a test helper to expose the internal getOrResolveFunction method.
-func (e *Evaluator) GetOrResolveFunctionForTest(pkg *object.Package, funcInfo *scanner.FunctionInfo) object.Object {
-	return e.getOrResolveFunction(pkg, funcInfo)
+func (e *Evaluator) GetOrResolveFunctionForTest(ctx context.Context, pkg *object.Package, funcInfo *scanner.FunctionInfo) object.Object {
+	return e.getOrResolveFunction(ctx, pkg, funcInfo)
 }
 
 // createSymbolicResultForFunc creates a symbolic result for a function call
@@ -3507,7 +3507,7 @@ func (e *Evaluator) ApplyFunction(ctx context.Context, call *ast.CallExpr, fn ob
 	return e.applyFunction(ctx, fn, args, nil, call.Pos())
 }
 
-func (e *Evaluator) getOrResolveFunction(pkg *object.Package, funcInfo *scanner.FunctionInfo) object.Object {
+func (e *Evaluator) getOrResolveFunction(ctx context.Context, pkg *object.Package, funcInfo *scanner.FunctionInfo) object.Object {
 	// Generate a unique key for the function. For methods, the receiver type is crucial.
 	key := ""
 	if funcInfo.Receiver != nil && funcInfo.Receiver.Type != nil {
@@ -3524,7 +3524,7 @@ func (e *Evaluator) getOrResolveFunction(pkg *object.Package, funcInfo *scanner.
 	}
 
 	// Not in cache, resolve it.
-	fn := e.resolver.ResolveFunction(pkg, funcInfo)
+	fn := e.resolver.ResolveFunction(ctx, pkg, funcInfo)
 
 	// Store in cache for next time.
 	e.funcCache[key] = fn
@@ -3627,7 +3627,7 @@ func (e *Evaluator) Finalize(ctx context.Context) {
 			}
 
 			// Create a callable object.Function for the concrete method.
-			fnObject := e.getOrResolveFunction(pkg, concreteMethodInfo)
+			fnObject := e.getOrResolveFunction(ctx, pkg, concreteMethodInfo)
 			if fnObject == nil {
 				continue
 			}

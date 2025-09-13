@@ -370,8 +370,8 @@ func (i *Interpreter) GlobalEnvForTest() *object.Environment {
 }
 
 // ApplyFunction is a test helper to expose the evaluator's ApplyFunction method.
-func (i *Interpreter) ApplyFunction(call *ast.CallExpr, fn object.Object, args []object.Object, fscope *evaluator.FileScope) object.Object {
-	return i.eval.ApplyFunction(call, fn, args, fscope)
+func (i *Interpreter) ApplyFunction(ctx context.Context, call *ast.CallExpr, fn object.Object, args []object.Object, fscope *evaluator.FileScope) object.Object {
+	return i.eval.ApplyFunction(ctx, call, fn, args, fscope)
 }
 
 // EvaluatorForTest returns the evaluator for testing.

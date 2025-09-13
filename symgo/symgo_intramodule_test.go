@@ -1,7 +1,6 @@
 package symgo_test
 
 import (
-	"context"
 	"path/filepath"
 	"testing"
 
@@ -13,7 +12,7 @@ import (
 func TestIntraModuleCall(t *testing.T) {
 	// This test simulates a call to a function in another package within the same module.
 	// The symgo engine should recursively evaluate this call, not treat it as a symbolic placeholder.
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// The testdata directory contains a simple multi-package module.
 	moduleDir := filepath.Join("testdata", "intramodule")

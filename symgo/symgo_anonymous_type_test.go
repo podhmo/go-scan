@@ -15,7 +15,7 @@ import (
 )
 
 func TestSymgo_AnonymousTypes(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
 	source := `

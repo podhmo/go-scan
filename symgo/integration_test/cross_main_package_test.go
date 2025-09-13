@@ -1,7 +1,6 @@
 package integration_test
 
 import (
-	"context"
 	"log/slog"
 	"os"
 	"testing"
@@ -56,7 +55,7 @@ func run() {
 	})
 	defer cleanup()
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Manually create the scanner, pointing its working directory to the temporary
 	// workspace root. This will make it discover the go.work file.

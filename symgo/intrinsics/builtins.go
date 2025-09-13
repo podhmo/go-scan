@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	scan "github.com/podhmo/go-scan/scanner"
 	"github.com/podhmo/go-scan/symgo/object"
 )
 
@@ -109,7 +110,54 @@ func BuiltinNew(ctx context.Context, args ...object.Object) object.Object {
 	if len(args) != 1 {
 		return &object.Error{Message: "wrong number of arguments: new expects 1"}
 	}
-	return &object.SymbolicPlaceholder{Reason: "new(...) call"}
+	typeObj := args[0]
+
+	var instance object.Object
+
+	// The `new` built-in allocates memory for a zero value of the given type
+	// and returns a pointer to it.
+	switch t := typeObj.(type) {
+	case *object.Type:
+		// Case 1: We have a resolved type object.
+		instance = &object.Instance{
+			TypeName: t.TypeName,
+			BaseObject: object.BaseObject{
+				ResolvedTypeInfo: t.ResolvedType,
+			},
+		}
+		instance.SetTypeInfo(t.ResolvedType)
+
+	case *object.SymbolicPlaceholder:
+		// Case 2: The type is symbolic (e.g., from an out-of-policy package).
+		// The placeholder itself represents the type. We create a new placeholder
+		// for the instance of that type.
+		instance = &object.SymbolicPlaceholder{
+			Reason: "instance of " + t.Inspect(),
+		}
+		instance.SetTypeInfo(t.TypeInfo())
+		instance.SetFieldType(t.FieldType())
+
+	default:
+		// Case 3: We got something that isn't a type.
+		// For robustness, we still model the allocation and return a pointer
+		// to a placeholder, but this indicates a potential upstream issue.
+		instance = &object.SymbolicPlaceholder{
+			Reason: "instance of unknown type " + t.Inspect(),
+		}
+	}
+
+	// `new` always returns a pointer.
+	ptr := &object.Pointer{Value: instance}
+
+	// Construct the type for the pointer itself.
+	pointerFieldType := &scan.FieldType{
+		IsPointer: true,
+		Elem:      typeObj.FieldType(), // The element is the type passed to `new`.
+	}
+	ptr.SetFieldType(pointerFieldType)
+	ptr.SetTypeInfo(typeObj.TypeInfo()) // The pointer's underlying type info is the element's type info.
+
+	return ptr
 }
 
 // BuiltinCopy is the intrinsic function for the built-in `copy`.

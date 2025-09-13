@@ -496,7 +496,7 @@ func TestEvalBuiltinFunctionsPlaceholders(t *testing.T) {
 		{
 			name:     "new",
 			source:   `package main; func main() { new(int) }`,
-			expected: &object.SymbolicPlaceholder{},
+			expected: &object.Pointer{},
 		},
 		{
 			name:     "copy",
@@ -589,6 +589,11 @@ func TestEvalBuiltinFunctionsPlaceholders(t *testing.T) {
 					_, ok := evaluated.(*object.SymbolicPlaceholder)
 					if !ok {
 						t.Errorf("object is not SymbolicPlaceholder. got=%T (%+v)", evaluated, evaluated)
+					}
+				case *object.Pointer:
+					_, ok := evaluated.(*object.Pointer)
+					if !ok {
+						t.Errorf("object is not Pointer. got=%T (%+v)", evaluated, evaluated)
 					}
 				case object.Object:
 					if evaluated != expected {

@@ -469,6 +469,9 @@ func run() string {
 			return err
 		}
 
+		// The interpreter should have a default intrinsic for fmt.Sprintf
+		// that performs the formatting.
+
 		for _, file := range pkg.AstFiles {
 			_, err := interp.Eval(ctx, file, pkg)
 			if err != nil {
@@ -496,7 +499,9 @@ func run() string {
 		}
 		strVal, ok := retVal.Value.(*object.String)
 		if !ok {
-			return fmt.Errorf("expected result value to be *object.String, but got %T", retVal.Value)
+			// If this fails, it's likely because the Sprintf intrinsic is not
+			// correctly returning a concrete string object.
+			return fmt.Errorf("expected result value to be *object.String, but got %T (%s)", retVal.Value, retVal.Value.Inspect())
 		}
 
 		expected := "hello world 42"

@@ -102,8 +102,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [ ] **DX: Add Timeout Flag to `find-orphans`**: Add a `--timeout` flag to the `find-orphans` CLI for easier debugging.
 
 ### `symgo`: Enforce Strict Scan Policy ([docs/plan-symgo-focus.md](./docs/plan-symgo-focus.md))
-- [x] **Design**: Created a design document outlining the strategy to enforce strict scan policy adherence by removing all `WithoutPolicyCheck` calls from the evaluator.
-- [ ] **Implement Step 1 (Package Loading)**: Modify `evaluator.getOrLoadPackage` to use the policy-enforcing `resolver.ResolvePackage` and handle the resulting errors by creating placeholder package objects.
-- [ ] **Implement Step 2 (Evaluator Logic)**: Update `evaluator.evalSelectorExpr` to correctly handle placeholder packages (where `ScannedInfo` is `nil`) by creating symbolic placeholders for unresolved symbols instead of attempting to inspect the package.
-- [ ] **Implement Step 3 (Receiver Type Resolution)**: Modify `resolver.ResolveFunction` to use the policy-enforcing `resolver.ResolveType` when resolving method receiver types.
-- [ ] **Test & Refactor**: Update any tests that break as a result of these changes. Tests should be updated to expect `UnresolvedTypeInfo` or other symbolic placeholders where full type information was previously available for out-of-policy code.
+- [x] **Design & Analysis**: Investigated policy bypasses in the evaluator and created a design document with impact analysis to enforce stricter policy adherence.
+- [x] **Implementation**: Implemented the coordinated fix in the evaluator and resolver to replace policy bypasses with policy-enforcing methods and correct placeholder handling.
+- [ ] **Test Fixes**: Update failing tests to assert for `SymbolicPlaceholder` or `UnresolvedFunction` instead of concrete values for out-of-policy code.
+- [ ] **Test Coverage**: Add a new test to verify that method calls on out-of-policy types are correctly handled as unresolved.

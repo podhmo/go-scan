@@ -106,7 +106,7 @@ func Unmarshal(data []byte, v any) error { return nil }
 		t.Fatalf("Apply main function failed: %v", err)
 	}
 
-	if !got["result of conversion to built-in type string"] {
+	if !got["result of conversion to string"] {
 		t.Errorf("expected to see a symbolic placeholder for string conversion, but it was not found in Println calls")
 	}
 }

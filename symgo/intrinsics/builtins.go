@@ -109,7 +109,38 @@ func BuiltinNew(ctx context.Context, args ...object.Object) object.Object {
 	if len(args) != 1 {
 		return &object.Error{Message: "wrong number of arguments: new expects 1"}
 	}
-	return &object.SymbolicPlaceholder{Reason: "new(...) call"}
+
+	typeArg := args[0]
+	var pointee object.Object
+
+	switch t := typeArg.(type) {
+	case *object.Type:
+		// For a resolved type, create a symbolic instance of it.
+		instance := &object.Instance{
+			TypeName: t.TypeName,
+		}
+		instance.SetTypeInfo(t.ResolvedType)
+		pointee = instance
+
+	case *object.UnresolvedType:
+		// For an unresolved type, create a symbolic placeholder for an instance of it.
+		// This placeholder can then be used in subsequent operations.
+		placeholder := &object.SymbolicPlaceholder{
+			Reason: fmt.Sprintf("instance of unresolved type %s.%s", t.PkgPath, t.TypeName),
+		}
+		pointee = placeholder
+
+	default:
+		// Fallback for other types, like a symbolic placeholder representing a type.
+		if _, ok := typeArg.(*object.SymbolicPlaceholder); ok {
+			// If `new` is called on a placeholder, return a pointer to another placeholder.
+			return &object.Pointer{Value: &object.SymbolicPlaceholder{Reason: "pointer to " + typeArg.Inspect()}}
+		}
+		return &object.Error{Message: fmt.Sprintf("invalid argument for new: expected a type, got %s", typeArg.Type())}
+	}
+
+	// The `new` built-in function returns a pointer to the allocated object.
+	return &object.Pointer{Value: pointee}
 }
 
 // BuiltinCopy is the intrinsic function for the built-in `copy`.

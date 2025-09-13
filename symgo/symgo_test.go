@@ -117,9 +117,9 @@ func main() {
 		t.Fatalf("interp.Eval(expr) failed: %+v", err)
 	}
 
-	_, ok := result.(*object.UnresolvedFunction)
+	_, ok := result.(*object.UnresolvedType)
 	if !ok {
-		t.Errorf("Expected an UnresolvedFunction for an external function, but got %T", result)
+		t.Errorf("Expected an UnresolvedType for an external function, but got %T", result)
 	}
 }
 

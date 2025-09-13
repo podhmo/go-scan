@@ -496,7 +496,7 @@ func TestEvalBuiltinFunctionsPlaceholders(t *testing.T) {
 		{
 			name:     "new",
 			source:   `package main; func main() { new(int) }`,
-			expected: &object.SymbolicPlaceholder{},
+			expected: &object.Pointer{},
 		},
 		{
 			name:     "copy",
@@ -585,6 +585,17 @@ func TestEvalBuiltinFunctionsPlaceholders(t *testing.T) {
 				}
 
 				switch expected := tt.expected.(type) {
+				case *object.Pointer:
+					ptr, ok := evaluated.(*object.Pointer)
+					if !ok {
+						t.Errorf("object is not Pointer. got=%T (%+v)", evaluated, evaluated)
+					}
+					// For `new(int)`, the pointee should be an instance.
+					if tt.name == "new" {
+						if _, ok := ptr.Value.(*object.Instance); !ok {
+							t.Errorf("new(int) should point to an Instance, got %T", ptr.Value)
+						}
+					}
 				case *object.SymbolicPlaceholder:
 					_, ok := evaluated.(*object.SymbolicPlaceholder)
 					if !ok {

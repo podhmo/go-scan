@@ -45,6 +45,7 @@ const (
 	CONTINUE_OBJ              ObjectType = "CONTINUE"
 	VARIADIC_OBJ              ObjectType = "VARIADIC"
 	UNRESOLVED_FUNCTION_OBJ   ObjectType = "UNRESOLVED_FUNCTION"
+	UNRESOLVED_TYPE_OBJ       ObjectType = "UNRESOLVED_TYPE"
 )
 
 // Object is the interface that all value types in our symbolic engine will implement.
@@ -858,6 +859,24 @@ func (uf *UnresolvedFunction) Type() ObjectType { return UNRESOLVED_FUNCTION_OBJ
 // Inspect returns a string representation of the unresolved function.
 func (uf *UnresolvedFunction) Inspect() string {
 	return fmt.Sprintf("<Unresolved Function: %s.%s>", uf.PkgPath, uf.FuncName)
+}
+
+// --- UnresolvedType Object ---
+
+// UnresolvedType represents a type that could not be fully resolved
+// at the time of symbol lookup, for example, because its package could not be scanned.
+type UnresolvedType struct {
+	BaseObject
+	PkgPath  string
+	TypeName string
+}
+
+// Type returns the type of the UnresolvedType object.
+func (ut *UnresolvedType) Type() ObjectType { return UNRESOLVED_TYPE_OBJ }
+
+// Inspect returns a string representation of the unresolved type.
+func (ut *UnresolvedType) Inspect() string {
+	return fmt.Sprintf("<Unresolved Type: %s.%s>", ut.PkgPath, ut.TypeName)
 }
 
 // --- Global Instances ---

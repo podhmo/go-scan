@@ -863,6 +863,14 @@ func (e *Evaluator) evalStarExpr(ctx context.Context, node *ast.StarExpr, env *o
 	}
 
 	if ptr, ok := val.(*object.Pointer); ok {
+		// If we are dereferencing a pointer to an unresolved type, the result is
+		// a symbolic placeholder representing an instance of that type.
+		if ut, ok := ptr.Value.(*object.UnresolvedType); ok {
+			return &object.SymbolicPlaceholder{
+				Reason: fmt.Sprintf("instance of unresolved type %s.%s", ut.PkgPath, ut.TypeName),
+			}
+		}
+
 		// The value of a pointer is the object it points to.
 		// By returning the pointee directly, a selector expression like `(*p).MyMethod`
 		// will operate on the instance, which is the correct behavior.
@@ -1484,12 +1492,15 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 		// If ScannedInfo is still nil after trying to load, it means it's out of policy.
 		if val.ScannedInfo == nil {
 			e.logc(ctx, slog.LevelDebug, "package not scanned (out of policy), creating placeholder for symbol", "package", val.Path, "symbol", n.Sel.Name)
-			unresolvedFn := &object.UnresolvedFunction{
+			// When a symbol is from an unscanned package, we don't know if it's a type or a function.
+			// We now correctly represent it as a generic UnresolvedType.
+			// The consumer of this object (e.g., `new()` or a function call) will determine how to interpret it.
+			unresolvedType := &object.UnresolvedType{
 				PkgPath:  val.Path,
-				FuncName: n.Sel.Name,
+				TypeName: n.Sel.Name,
 			}
-			val.Env.Set(n.Sel.Name, unresolvedFn)
-			return unresolvedFn
+			val.Env.Set(n.Sel.Name, unresolvedType)
+			return unresolvedType
 		}
 
 		// When we encounter a package selector, we must ensure its environment
@@ -3227,6 +3238,36 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 		result := &object.SymbolicPlaceholder{Reason: "result of calling " + fn.Inspect()}
 		return &object.ReturnValue{Value: result}
 
+	case *object.UnresolvedType:
+		// This is a symbol from an out-of-policy package, which we are now attempting to call.
+		// We treat it as a function call, mirroring the logic for UnresolvedFunction.
+		e.logc(ctx, slog.LevelDebug, "applying unresolved type as function", "package", fn.PkgPath, "function", fn.TypeName)
+
+		key := fn.PkgPath + "." + fn.TypeName
+		if intrinsicFn, ok := e.intrinsics.Get(key); ok {
+			return intrinsicFn(ctx, args...)
+		}
+
+		scannedPkg, err := e.resolver.ResolvePackage(ctx, fn.PkgPath)
+		if err != nil {
+			e.logc(ctx, slog.LevelWarn, "could not scan package for unresolved symbol (or denied by policy)", "package", fn.PkgPath, "symbol", fn.TypeName, "error", err)
+			return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("result of calling unresolved symbol %s.%s", fn.PkgPath, fn.TypeName)}
+		}
+
+		var funcInfo *scan.FunctionInfo
+		for _, f := range scannedPkg.Functions {
+			if f.Name == fn.TypeName {
+				funcInfo = f
+				break
+			}
+		}
+
+		if funcInfo == nil {
+			e.logc(ctx, slog.LevelWarn, "could not find function signature in package for symbol", "package", fn.PkgPath, "symbol", fn.TypeName)
+			return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("result of calling unresolved symbol %s.%s", fn.PkgPath, fn.TypeName)}
+		}
+		return e.createSymbolicResultForFuncInfo(ctx, funcInfo, scannedPkg, "result of call to %s.%s", fn.PkgPath, fn.TypeName)
+
 	case *object.UnresolvedFunction:
 		// This is a function that could not be resolved during symbol lookup.
 		// We make a best effort to find its signature now.
@@ -3260,6 +3301,18 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 
 		// We found the function info. Now create a symbolic result based on its signature.
 		return e.createSymbolicResultForFuncInfo(ctx, funcInfo, scannedPkg, "result of call to %s.%s", fn.PkgPath, fn.FuncName)
+
+	case *object.Type:
+		// This handles type conversions like string(b) or int(x).
+		if len(args) != 1 {
+			return e.newError(ctx, callPos, "wrong number of arguments for type conversion: got=%d, want=1", len(args))
+		}
+		// The result is a symbolic value of the target type.
+		placeholder := &object.SymbolicPlaceholder{
+			Reason: fmt.Sprintf("result of conversion to %s", fn.TypeName),
+		}
+		placeholder.SetTypeInfo(fn.ResolvedType)
+		return &object.ReturnValue{Value: placeholder}
 
 	default:
 		return e.newError(ctx, callPos, "not a function: %s", fn.Type())

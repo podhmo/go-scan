@@ -76,21 +76,16 @@ func DoSomething() string {
 			t.Fatal("function call on foreign package was not captured")
 		}
 
-		placeholder, ok := capturedFunc.(*object.SymbolicPlaceholder)
+		unresolved, ok := capturedFunc.(*object.UnresolvedFunction)
 		if !ok {
-			t.Fatalf("expected captured function to be SymbolicPlaceholder, got %T", capturedFunc)
+			t.Fatalf("expected captured function to be UnresolvedFunction, got %T", capturedFunc)
 		}
 
-		typeInfo := placeholder.TypeInfo()
-		if typeInfo == nil {
-			t.Fatal("symbolic placeholder has no type info")
+		if unresolved.PkgPath != "example.com/me/foreign" {
+			t.Errorf("expected unresolved function to have PkgPath 'example.com/me/foreign', got %q", unresolved.PkgPath)
 		}
-
-		if typeInfo.PkgPath != "example.com/me/foreign" {
-			t.Errorf("expected unresolved function to have PkgPath 'example.com/me/foreign', got %q", typeInfo.PkgPath)
-		}
-		if typeInfo.Name != "DoSomething" {
-			t.Errorf("expected unresolved function to have FuncName 'DoSomething', got %q", typeInfo.Name)
+		if unresolved.FuncName != "DoSomething" {
+			t.Errorf("expected unresolved function to have FuncName 'DoSomething', got %q", unresolved.FuncName)
 		}
 
 		return nil

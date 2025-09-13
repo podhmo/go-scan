@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	scan "github.com/podhmo/go-scan/scanner"
+	"github.com/podhmo/go-scan/scanner"
 	"github.com/podhmo/go-scan/symgo/object"
 )
 
@@ -110,54 +110,42 @@ func BuiltinNew(ctx context.Context, args ...object.Object) object.Object {
 	if len(args) != 1 {
 		return &object.Error{Message: "wrong number of arguments: new expects 1"}
 	}
-	typeObj := args[0]
 
-	var instance object.Object
+	typeArg := args[0]
+	var typeInfo *scan.TypeInfo
 
-	// The `new` built-in allocates memory for a zero value of the given type
-	// and returns a pointer to it.
-	switch t := typeObj.(type) {
+	switch t := typeArg.(type) {
 	case *object.Type:
-		// Case 1: We have a resolved type object.
-		instance = &object.Instance{
-			TypeName: t.TypeName,
-			BaseObject: object.BaseObject{
-				ResolvedTypeInfo: t.ResolvedType,
-			},
-		}
-		instance.SetTypeInfo(t.ResolvedType)
-
+		// Case 1: The argument is a resolved type.
+		typeInfo = t.ResolvedType
 	case *object.SymbolicPlaceholder:
-		// Case 2: The type is symbolic (e.g., from an out-of-policy package).
-		// The placeholder itself represents the type. We create a new placeholder
-		// for the instance of that type.
-		instance = &object.SymbolicPlaceholder{
-			Reason: "instance of " + t.Inspect(),
+		// Case 2: The argument is a placeholder for an unresolved type.
+		// We create a minimal, unresolved TypeInfo for it.
+		if ft := t.FieldType(); ft != nil && ft.FullImportPath != "" && ft.TypeName != "" {
+			typeInfo = scanner.NewUnresolvedTypeInfo(ft.FullImportPath, ft.TypeName)
+		} else {
+			// Fallback if the placeholder doesn't have enough info.
+			return &object.Pointer{Value: &object.SymbolicPlaceholder{Reason: "pointer to instance of typeless placeholder"}}
 		}
-		instance.SetTypeInfo(t.TypeInfo())
-		instance.SetFieldType(t.FieldType())
-
 	default:
-		// Case 3: We got something that isn't a type.
-		// For robustness, we still model the allocation and return a pointer
-		// to a placeholder, but this indicates a potential upstream issue.
-		instance = &object.SymbolicPlaceholder{
-			Reason: "instance of unknown type " + t.Inspect(),
-		}
+		return &object.Error{Message: fmt.Sprintf("cannot call new on non-type object %s", typeArg.Type())}
 	}
 
-	// `new` always returns a pointer.
-	ptr := &object.Pointer{Value: instance}
-
-	// Construct the type for the pointer itself.
-	pointerFieldType := &scan.FieldType{
-		IsPointer: true,
-		Elem:      typeObj.FieldType(), // The element is the type passed to `new`.
+	if typeInfo == nil {
+		// This can happen if a resolved type object has a nil inner type.
+		return &object.Error{Message: "cannot call new on a type with no type information"}
 	}
-	ptr.SetFieldType(pointerFieldType)
-	ptr.SetTypeInfo(typeObj.TypeInfo()) // The pointer's underlying type info is the element's type info.
 
-	return ptr
+	// Create a symbolic instance of the type.
+	instance := &object.Instance{
+		TypeName: fmt.Sprintf("%s.%s", typeInfo.PkgPath, typeInfo.Name),
+		BaseObject: object.BaseObject{
+			ResolvedTypeInfo: typeInfo,
+		},
+	}
+
+	// `new` returns a pointer to the new instance.
+	return &object.Pointer{Value: instance}
 }
 
 // BuiltinCopy is the intrinsic function for the built-in `copy`.

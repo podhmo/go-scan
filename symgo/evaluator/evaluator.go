@@ -1484,17 +1484,12 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 		// If ScannedInfo is still nil after trying to load, it means it's out of policy.
 		if val.ScannedInfo == nil {
 			e.logc(ctx, slog.LevelDebug, "package not scanned (out of policy), creating placeholder for symbol", "package", val.Path, "symbol", n.Sel.Name)
-			// This could be a type, function, or variable. A generic placeholder is safest.
-			placeholder := &object.SymbolicPlaceholder{
-				Reason: fmt.Sprintf("unresolved identifier %s in out-of-policy package %s", n.Sel.Name, val.Path),
+			unresolvedFn := &object.UnresolvedFunction{
+				PkgPath:  val.Path,
+				FuncName: n.Sel.Name,
 			}
-			placeholder.SetTypeInfo(&scan.TypeInfo{
-				PkgPath:    val.Path,
-				Name:       n.Sel.Name,
-				Unresolved: true,
-			})
-			val.Env.Set(n.Sel.Name, placeholder)
-			return placeholder
+			val.Env.Set(n.Sel.Name, unresolvedFn)
+			return unresolvedFn
 		}
 
 		// When we encounter a package selector, we must ensure its environment
@@ -1607,18 +1602,19 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 			}
 		}
 
-		// If the symbol is not found, it could be a type, function, or variable.
-		// We create a generic placeholder. The context of its use (e.g., a call expression)
-		// will determine how to treat it.
+		// If the symbol is not found, it's an unresolved identifier from an
+		// out-of-policy package. We represent it with a generic placeholder.
 		placeholder := &object.SymbolicPlaceholder{
-			Reason: fmt.Sprintf("unresolved identifier %s in package %s", n.Sel.Name, val.Path),
+			Reason: fmt.Sprintf("unresolved identifier %s in out-of-policy package %s", n.Sel.Name, val.Path),
+			// We can't know the type yet, but we can record where it came from.
+			BaseObject: object.BaseObject{
+				ResolvedFieldType: &scan.FieldType{
+					Name:           n.Sel.Name,
+					FullImportPath: val.Path,
+					TypeName:       n.Sel.Name,
+				},
+			},
 		}
-		// We can try to attach some unresolved type info to it.
-		placeholder.SetTypeInfo(&scan.TypeInfo{
-			PkgPath:    val.Path,
-			Name:       n.Sel.Name,
-			Unresolved: true,
-		})
 		val.Env.Set(n.Sel.Name, placeholder)
 		return placeholder
 
@@ -3159,14 +3155,6 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 		return fn.Fn(ctx, args...)
 
 	case *object.SymbolicPlaceholder:
-		// Check for an intrinsic matching the symbolic function first.
-		if typeInfo := fn.TypeInfo(); typeInfo != nil && typeInfo.PkgPath != "" {
-			key := typeInfo.PkgPath + "." + typeInfo.Name
-			if intrinsicFn, ok := e.intrinsics.Get(key); ok {
-				return intrinsicFn(ctx, args...)
-			}
-		}
-
 		// This now handles both external function calls and interface method calls.
 		if fn.UnderlyingFunc != nil {
 			// If it has an AST declaration, it's a real function from source.

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/podhmo/go-scan/scanner"
 	"github.com/podhmo/go-scan/symgo/object"
 )
 
@@ -110,42 +109,7 @@ func BuiltinNew(ctx context.Context, args ...object.Object) object.Object {
 	if len(args) != 1 {
 		return &object.Error{Message: "wrong number of arguments: new expects 1"}
 	}
-
-	typeArg := args[0]
-	var typeInfo *scan.TypeInfo
-
-	switch t := typeArg.(type) {
-	case *object.Type:
-		// Case 1: The argument is a resolved type.
-		typeInfo = t.ResolvedType
-	case *object.SymbolicPlaceholder:
-		// Case 2: The argument is a placeholder for an unresolved type.
-		// We create a minimal, unresolved TypeInfo for it.
-		if ft := t.FieldType(); ft != nil && ft.FullImportPath != "" && ft.TypeName != "" {
-			typeInfo = scanner.NewUnresolvedTypeInfo(ft.FullImportPath, ft.TypeName)
-		} else {
-			// Fallback if the placeholder doesn't have enough info.
-			return &object.Pointer{Value: &object.SymbolicPlaceholder{Reason: "pointer to instance of typeless placeholder"}}
-		}
-	default:
-		return &object.Error{Message: fmt.Sprintf("cannot call new on non-type object %s", typeArg.Type())}
-	}
-
-	if typeInfo == nil {
-		// This can happen if a resolved type object has a nil inner type.
-		return &object.Error{Message: "cannot call new on a type with no type information"}
-	}
-
-	// Create a symbolic instance of the type.
-	instance := &object.Instance{
-		TypeName: fmt.Sprintf("%s.%s", typeInfo.PkgPath, typeInfo.Name),
-		BaseObject: object.BaseObject{
-			ResolvedTypeInfo: typeInfo,
-		},
-	}
-
-	// `new` returns a pointer to the new instance.
-	return &object.Pointer{Value: instance}
+	return &object.SymbolicPlaceholder{Reason: "new(...) call"}
 }
 
 // BuiltinCopy is the intrinsic function for the built-in `copy`.

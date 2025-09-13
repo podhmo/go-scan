@@ -103,6 +103,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [ ] **DX: Add Timeout Flag to `find-orphans`**: Add a `--timeout` flag to the `find-orphans` CLI for easier debugging.
 - [x] **`symgo`: Embedded Interface Resolution**: The scanner and symbolic execution engine now correctly handle embedded interfaces. The scanner preserves the embedding structure, and the evaluator resolves the full method set at runtime, enabling correct implementation checks and method call resolution for interfaces that embed others.
 - [x] **Resilient Interface Method Resolution**: The evaluator no longer errors when encountering a method call on an interface that is not part of its statically known method set. Instead, it creates a synthetic placeholder for the method, allowing analysis to continue. This makes the engine more robust when analyzing code that depends on packages outside the primary analysis scope.
+- [x] **Cache Synthetic Interface Methods**: Optimized the creation of synthetic methods for interfaces. When a method is called on an interface that is not in its definition, the synthetic method is now created only once and cached within the evaluator, improving performance for repeated calls.
 
 ### `symgo`: Enforce Strict Scan Policy ([docs/plan-symgo-focus.md](./docs/plan-symgo-focus.md))
 - [x] **Design & Analysis**: Investigated policy bypasses in the evaluator and created a design document with impact analysis to enforce stricter policy adherence.

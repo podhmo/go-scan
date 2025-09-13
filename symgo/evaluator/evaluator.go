@@ -13,9 +13,10 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 
 	goscan "github.com/podhmo/go-scan"
-	"github.com/podhmo/go-scan/scanner"
+	scan "github.com/podhmo/go-scan/scanner"
 	"github.com/podhmo/go-scan/symgo/intrinsics"
 	"github.com/podhmo/go-scan/symgo/object"
 )
@@ -59,6 +60,13 @@ type Evaluator struct {
 
 	// seenPackages tracks all packages that have been successfully loaded.
 	seenPackages map[string]*goscan.Package
+
+	// syntheticMethods caches dynamically created methods for interfaces.
+	// This prevents re-creating the same synthetic method multiple times.
+	// The outer key is the fully qualified interface type name (e.g., "io.Writer"),
+	// and the inner key is the method name.
+	syntheticMethods      map[string]map[string]*scan.MethodInfo
+	syntheticMethodsMutex sync.Mutex
 }
 
 type callFrame struct {
@@ -106,6 +114,7 @@ func New(scanner *goscan.Scanner, logger *slog.Logger, tracer object.Tracer, sca
 		calledInterfaceMethods: make(map[string][]object.Object),
 		seenPackages:           make(map[string]*goscan.Package),
 		UniverseEnv:            universeEnv,
+		syntheticMethods:       make(map[string]map[string]*scan.MethodInfo),
 	}
 	e.accessor = newAccessor(e)
 	return e
@@ -145,7 +154,7 @@ func (e *Evaluator) PopIntrinsics() {
 }
 
 // Eval is the main dispatch loop for the evaluator.
-func (e *Evaluator) Eval(ctx context.Context, node ast.Node, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
+func (e *Evaluator) Eval(ctx context.Context, node ast.Node, env *object.Environment, pkg *scan.PackageInfo) object.Object {
 	if file, ok := node.(*ast.File); ok {
 		filePath := e.scanner.Fset().File(file.Pos()).Name()
 		if !e.fileMap[filePath] {
@@ -308,7 +317,7 @@ func (e *Evaluator) Eval(ctx context.Context, node ast.Node, env *object.Environ
 	return e.newError(ctx, node.Pos(), "evaluation not implemented for %T", node)
 }
 
-func (e *Evaluator) evalIncDecStmt(ctx context.Context, n *ast.IncDecStmt, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
+func (e *Evaluator) evalIncDecStmt(ctx context.Context, n *ast.IncDecStmt, env *object.Environment, pkg *scan.PackageInfo) object.Object {
 	// Evaluate the expression to trace any calls, but we need the identifier.
 	ident, ok := n.X.(*ast.Ident)
 	if !ok {
@@ -358,7 +367,7 @@ func (e *Evaluator) evalIncDecStmt(ctx context.Context, n *ast.IncDecStmt, env *
 	return nil
 }
 
-func (e *Evaluator) evalIndexExpr(ctx context.Context, node *ast.IndexExpr, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
+func (e *Evaluator) evalIndexExpr(ctx context.Context, node *ast.IndexExpr, env *object.Environment, pkg *scan.PackageInfo) object.Object {
 	left := e.Eval(ctx, node.X, env, pkg)
 	if isError(left) {
 		return left
@@ -381,11 +390,11 @@ func (e *Evaluator) evalIndexExpr(ctx context.Context, node *ast.IndexExpr, env 
 		return index
 	}
 
-	var elemFieldType *scanner.FieldType
-	var resolvedElem *scanner.TypeInfo
+	var elemFieldType *scan.FieldType
+	var resolvedElem *scan.TypeInfo
 
 	// Determine the element type from the collection being indexed.
-	var collectionFieldType *scanner.FieldType
+	var collectionFieldType *scan.FieldType
 	switch l := left.(type) {
 	case *object.Slice:
 		collectionFieldType = l.SliceFieldType
@@ -425,7 +434,7 @@ func (e *Evaluator) evalIndexExpr(ctx context.Context, node *ast.IndexExpr, env 
 	}
 }
 
-func (e *Evaluator) evalIndexListExpr(ctx context.Context, node *ast.IndexListExpr, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
+func (e *Evaluator) evalIndexListExpr(ctx context.Context, node *ast.IndexListExpr, env *object.Environment, pkg *scan.PackageInfo) object.Object {
 	left := e.Eval(ctx, node.X, env, pkg)
 	if isError(left) {
 		return left
@@ -447,7 +456,7 @@ func (e *Evaluator) evalIndexListExpr(ctx context.Context, node *ast.IndexListEx
 	return e.newError(ctx, node.Pos(), "unhandled generic instantiation for %T", left)
 }
 
-func (e *Evaluator) evalSliceExpr(ctx context.Context, node *ast.SliceExpr, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
+func (e *Evaluator) evalSliceExpr(ctx context.Context, node *ast.SliceExpr, env *object.Environment, pkg *scan.PackageInfo) object.Object {
 	// Evaluate the expression being sliced to trace any calls within it.
 	left := e.Eval(ctx, node.X, env, pkg)
 	if isError(left) {
@@ -485,7 +494,7 @@ func (e *Evaluator) evalSliceExpr(ctx context.Context, node *ast.SliceExpr, env 
 	return placeholder
 }
 
-func (e *Evaluator) evalCompositeLit(ctx context.Context, node *ast.CompositeLit, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
+func (e *Evaluator) evalCompositeLit(ctx context.Context, node *ast.CompositeLit, env *object.Environment, pkg *scan.PackageInfo) object.Object {
 	if e.evaluationInProgress[node] {
 		// Return a placeholder instead of an error to allow analysis to continue
 		// on other branches. The presence of a cyclic dependency is noted.
@@ -557,8 +566,8 @@ func (e *Evaluator) evalCompositeLit(ctx context.Context, node *ast.CompositeLit
 
 	// If the type was unresolved, we can now infer its kind.
 	resolvedType := e.resolver.ResolveType(ctx, fieldType)
-	if resolvedType != nil && resolvedType.Kind == scanner.UnknownKind {
-		resolvedType.Kind = scanner.StructKind
+	if resolvedType != nil && resolvedType.Kind == scan.UnknownKind {
+		resolvedType.Kind = scan.StructKind
 	}
 
 	// Delegate policy check and object creation to the resolver.
@@ -584,7 +593,7 @@ func (e *Evaluator) evalCompositeLit(ctx context.Context, node *ast.CompositeLit
 	return instance
 }
 
-func (e *Evaluator) evalBinaryExpr(ctx context.Context, node *ast.BinaryExpr, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
+func (e *Evaluator) evalBinaryExpr(ctx context.Context, node *ast.BinaryExpr, env *object.Environment, pkg *scan.PackageInfo) object.Object {
 	leftObj := e.Eval(ctx, node.X, env, pkg)
 	if isError(leftObj) {
 		return leftObj
@@ -732,7 +741,7 @@ func (e *Evaluator) evalStringInfixExpression(ctx context.Context, pos token.Pos
 	}
 }
 
-func (e *Evaluator) evalUnaryExpr(ctx context.Context, node *ast.UnaryExpr, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
+func (e *Evaluator) evalUnaryExpr(ctx context.Context, node *ast.UnaryExpr, env *object.Environment, pkg *scan.PackageInfo) object.Object {
 	rightObj := e.Eval(ctx, node.X, env, pkg)
 	if isError(rightObj) {
 		return rightObj
@@ -766,7 +775,7 @@ func (e *Evaluator) evalUnaryExpr(ctx context.Context, node *ast.UnaryExpr, env 
 		}
 		ptr := &object.Pointer{Value: val}
 		if originalFieldType := val.FieldType(); originalFieldType != nil {
-			pointerFieldType := &scanner.FieldType{
+			pointerFieldType := &scan.FieldType{
 				IsPointer: true,
 				Elem:      originalFieldType,
 			}
@@ -842,7 +851,7 @@ func (e *Evaluator) evalNumericUnaryExpression(ctx context.Context, op token.Tok
 	}
 }
 
-func (e *Evaluator) evalStarExpr(ctx context.Context, node *ast.StarExpr, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
+func (e *Evaluator) evalStarExpr(ctx context.Context, node *ast.StarExpr, env *object.Environment, pkg *scan.PackageInfo) object.Object {
 	val := e.Eval(ctx, node.X, env, pkg)
 	if isError(val) {
 		return val
@@ -863,8 +872,8 @@ func (e *Evaluator) evalStarExpr(ctx context.Context, node *ast.StarExpr, env *o
 	// If we have a symbolic placeholder that represents a pointer type,
 	// dereferencing it should result in a new placeholder representing the element type.
 	if sp, ok := val.(*object.SymbolicPlaceholder); ok {
-		var elemFieldType *scanner.FieldType
-		var resolvedElem *scanner.TypeInfo
+		var elemFieldType *scan.FieldType
+		var resolvedElem *scan.TypeInfo
 		if ft := sp.FieldType(); ft != nil && ft.IsPointer && ft.Elem != nil {
 			elemFieldType = ft.Elem
 			resolvedElem = e.resolver.ResolveType(ctx, elemFieldType)
@@ -892,7 +901,7 @@ func (e *Evaluator) evalStarExpr(ctx context.Context, node *ast.StarExpr, env *o
 	return e.newError(ctx, node.Pos(), "invalid indirect of %s (type %T)", val.Inspect(), val)
 }
 
-func (e *Evaluator) evalGenDecl(ctx context.Context, node *ast.GenDecl, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
+func (e *Evaluator) evalGenDecl(ctx context.Context, node *ast.GenDecl, env *object.Environment, pkg *scan.PackageInfo) object.Object {
 	if node.Tok != token.VAR {
 		return nil
 	}
@@ -916,14 +925,14 @@ func (e *Evaluator) evalGenDecl(ctx context.Context, node *ast.GenDecl, env *obj
 			continue
 		}
 
-		var staticFieldType *scanner.FieldType
+		var staticFieldType *scan.FieldType
 		if valSpec.Type != nil {
 			staticFieldType = e.scanner.TypeInfoFromExpr(ctx, valSpec.Type, nil, pkg, importLookup)
 		}
 
 		for i, name := range valSpec.Names {
 			var val object.Object
-			var resolvedTypeInfo *scanner.TypeInfo
+			var resolvedTypeInfo *scan.TypeInfo
 			if staticFieldType != nil {
 				resolvedTypeInfo = e.resolver.ResolveType(ctx, staticFieldType)
 			}
@@ -980,7 +989,7 @@ func (e *Evaluator) evalGenDecl(ctx context.Context, node *ast.GenDecl, env *obj
 	return nil
 }
 
-func (e *Evaluator) evalTypeDecl(ctx context.Context, d *ast.GenDecl, env *object.Environment, pkg *scanner.PackageInfo) {
+func (e *Evaluator) evalTypeDecl(ctx context.Context, d *ast.GenDecl, env *object.Environment, pkg *scan.PackageInfo) {
 	for _, spec := range d.Specs {
 		ts, ok := spec.(*ast.TypeSpec)
 		if !ok {
@@ -988,7 +997,7 @@ func (e *Evaluator) evalTypeDecl(ctx context.Context, d *ast.GenDecl, env *objec
 		}
 
 		// Find the TypeInfo that the scanner created for this TypeSpec.
-		var typeInfo *scanner.TypeInfo
+		var typeInfo *scan.TypeInfo
 		for _, ti := range pkg.Types {
 			if ti.Node == ts {
 				typeInfo = ti
@@ -1010,7 +1019,7 @@ func (e *Evaluator) evalTypeDecl(ctx context.Context, d *ast.GenDecl, env *objec
 	}
 }
 
-func (e *Evaluator) evalFile(ctx context.Context, file *ast.File, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
+func (e *Evaluator) evalFile(ctx context.Context, file *ast.File, env *object.Environment, pkg *scan.PackageInfo) object.Object {
 	// Get the canonical package object for this file. This is the source of truth
 	// for the package's isolated environment.
 	pkgObj, err := e.getOrLoadPackage(ctx, pkg.ImportPath)
@@ -1035,7 +1044,7 @@ func (e *Evaluator) evalFile(ctx context.Context, file *ast.File, env *object.En
 				e.evalTypeDecl(ctx, d, targetEnv, pkg)
 			}
 		case *ast.FuncDecl:
-			var funcInfo *scanner.FunctionInfo
+			var funcInfo *scan.FunctionInfo
 			for _, f := range pkg.Functions {
 				if f.AstDecl == d {
 					funcInfo = f
@@ -1218,7 +1227,7 @@ func (e *Evaluator) ensurePackageEnvPopulated(ctx context.Context, pkgObj *objec
 	e.initializedPkgs[pkgObj.Path] = true
 }
 
-func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
+func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, env *object.Environment, pkg *scan.PackageInfo) object.Object {
 	e.logger.Debug("evalSelectorExpr", "selector", n.Sel.Name)
 
 	// New, more robust check for interface method calls.
@@ -1226,7 +1235,7 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 	// the variable in our own environment and check the static type info we have stored on it.
 	if ident, ok := n.X.(*ast.Ident); ok {
 		if obj, found := env.Get(ident.Name); found {
-			var staticType *scanner.TypeInfo
+			var staticType *scan.TypeInfo
 			if v, isVar := obj.(*object.Variable); isVar {
 				if ft := v.FieldType(); ft != nil {
 					resolved, err := ft.Resolve(ctx)
@@ -1242,7 +1251,7 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 				}
 			}
 
-			if staticType != nil && staticType.Kind == scanner.InterfaceKind {
+			if staticType != nil && staticType.Kind == scan.InterfaceKind {
 				// Check for a registered intrinsic for this interface method call.
 				key := fmt.Sprintf("(%s.%s).%s", staticType.PkgPath, staticType.Name, n.Sel.Name)
 				if intrinsicFn, ok := e.intrinsics.Get(key); ok {
@@ -1298,34 +1307,52 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 					e.calledInterfaceMethods[key] = append(e.calledInterfaceMethods[key], receiverObj)
 				}
 
-				// b. Find the *scanner.FunctionInfo for the method.
-				var methodFuncInfo *scanner.FunctionInfo
+				// b. Find the method definition, checking static, then synthetic, then creating a new one.
+				var methodInfo *scan.MethodInfo
+				ifaceKey := staticType.PkgPath + "." + staticType.Name
+
+				// Check static methods first.
 				if staticType.Interface != nil {
-					// Use the helper to get all methods, including embedded ones.
 					allMethods := e.getAllInterfaceMethods(ctx, staticType, make(map[string]struct{}))
 					for _, method := range allMethods {
 						if method.Name == n.Sel.Name {
-							methodFuncInfo = &scanner.FunctionInfo{
-								Name:       method.Name,
-								Parameters: method.Parameters,
-								Results:    method.Results,
-							}
+							methodInfo = method
 							break
 						}
 					}
 				}
 
-				if methodFuncInfo == nil {
-					// When analyzing code that is known to compile, we may encounter method calls
-					// on interfaces where the method is not in the primary analysis scope.
-					// Instead of erroring, we create a synthetic method definition to allow
-					// analysis to continue symbolically.
-					e.logc(ctx, slog.LevelInfo, "undefined method on interface, creating synthetic method", "interface", staticType.Name, "method", n.Sel.Name)
-					methodFuncInfo = &scanner.FunctionInfo{
-						Name:       n.Sel.Name,
-						Parameters: []*scanner.FieldInfo{}, // Parameters are unknown
-						Results:    []*scanner.FieldInfo{}, // Results are unknown
+				// If not found, check the synthetic cache.
+				if methodInfo == nil {
+					e.syntheticMethodsMutex.Lock()
+					if methods, ok := e.syntheticMethods[ifaceKey]; ok {
+						methodInfo = methods[n.Sel.Name]
 					}
+					e.syntheticMethodsMutex.Unlock()
+				}
+
+				// If still not found, create a new synthetic method and cache it.
+				if methodInfo == nil {
+					e.logc(ctx, slog.LevelInfo, "undefined method on interface, creating synthetic method", "interface", staticType.Name, "method", n.Sel.Name)
+					methodInfo = &scan.MethodInfo{
+						Name:       n.Sel.Name,
+						Parameters: []*scan.FieldInfo{}, // Parameters are unknown
+						Results:    []*scan.FieldInfo{}, // Results are unknown
+					}
+
+					e.syntheticMethodsMutex.Lock()
+					if _, ok := e.syntheticMethods[ifaceKey]; !ok {
+						e.syntheticMethods[ifaceKey] = make(map[string]*scan.MethodInfo)
+					}
+					e.syntheticMethods[ifaceKey][n.Sel.Name] = methodInfo
+					e.syntheticMethodsMutex.Unlock()
+				}
+
+				// Convert the found/created MethodInfo to a FunctionInfo for the placeholder.
+				methodFuncInfo := &scan.FunctionInfo{
+					Name:       methodInfo.Name,
+					Parameters: methodInfo.Parameters,
+					Results:    methodInfo.Results,
 				}
 
 				// c. Return a callable SymbolicPlaceholder.
@@ -1338,7 +1365,7 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 			}
 
 			// NEW: Handle struct field access on variables directly
-			if staticType != nil && staticType.Kind == scanner.StructKind {
+			if staticType != nil && staticType.Kind == scan.StructKind {
 				if field, err := e.accessor.findFieldOnType(ctx, staticType, n.Sel.Name); err == nil && field != nil {
 					var fieldValue object.Object
 					if v, isVar := obj.(*object.Variable); isVar {
@@ -1412,7 +1439,7 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 					for _, method := range typeInfo.Interface.Methods {
 						if method.Name == n.Sel.Name {
 							// Convert MethodInfo to a temporary FunctionInfo
-							placeholder.UnderlyingFunc = &scanner.FunctionInfo{
+							placeholder.UnderlyingFunc = &scan.FunctionInfo{
 								Name:       method.Name,
 								Parameters: method.Parameters,
 								Results:    method.Results,
@@ -1652,7 +1679,7 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 		if left.TypeInfo() != nil && left.TypeInfo().Interface != nil {
 			for _, method := range left.TypeInfo().Interface.Methods {
 				if method.Name == n.Sel.Name {
-					placeholder.UnderlyingFunc = &scanner.FunctionInfo{
+					placeholder.UnderlyingFunc = &scan.FunctionInfo{
 						Name:       method.Name,
 						Parameters: method.Parameters,
 						Results:    method.Results,
@@ -1670,7 +1697,7 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 	}
 }
 
-func (e *Evaluator) evalSwitchStmt(ctx context.Context, n *ast.SwitchStmt, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
+func (e *Evaluator) evalSwitchStmt(ctx context.Context, n *ast.SwitchStmt, env *object.Environment, pkg *scan.PackageInfo) object.Object {
 	switchEnv := env
 	if n.Init != nil {
 		switchEnv = object.NewEnclosedEnvironment(env)
@@ -1696,7 +1723,7 @@ func (e *Evaluator) evalSwitchStmt(ctx context.Context, n *ast.SwitchStmt, env *
 	return &object.SymbolicPlaceholder{Reason: "switch statement"}
 }
 
-func (e *Evaluator) evalSelectStmt(ctx context.Context, n *ast.SelectStmt, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
+func (e *Evaluator) evalSelectStmt(ctx context.Context, n *ast.SelectStmt, env *object.Environment, pkg *scan.PackageInfo) object.Object {
 	if n.Body == nil {
 		return &object.SymbolicPlaceholder{Reason: "empty select statement"}
 	}
@@ -1727,7 +1754,7 @@ func (e *Evaluator) evalSelectStmt(ctx context.Context, n *ast.SelectStmt, env *
 	return &object.SymbolicPlaceholder{Reason: "select statement"}
 }
 
-func (e *Evaluator) evalTypeSwitchStmt(ctx context.Context, n *ast.TypeSwitchStmt, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
+func (e *Evaluator) evalTypeSwitchStmt(ctx context.Context, n *ast.TypeSwitchStmt, env *object.Environment, pkg *scan.PackageInfo) object.Object {
 	switchEnv := env
 	if n.Init != nil {
 		switchEnv = object.NewEnclosedEnvironment(env)
@@ -1812,17 +1839,17 @@ func (e *Evaluator) evalTypeSwitchStmt(ctx context.Context, n *ast.TypeSwitchStm
 					fieldType := e.scanner.TypeInfoFromExpr(ctx, typeExpr, nil, pkg, importLookup)
 					if fieldType == nil {
 						if id, ok := typeExpr.(*ast.Ident); ok {
-							fieldType = &scanner.FieldType{Name: id.Name, IsBuiltin: true}
+							fieldType = &scan.FieldType{Name: id.Name, IsBuiltin: true}
 						} else {
 							return e.newError(ctx, typeExpr.Pos(), "could not resolve type for case clause")
 						}
 					}
 
-					var resolvedType *scanner.TypeInfo
+					var resolvedType *scan.TypeInfo
 					if !fieldType.IsBuiltin {
 						resolvedType = e.resolver.ResolveType(ctx, fieldType)
-						if resolvedType != nil && resolvedType.Kind == scanner.UnknownKind {
-							resolvedType.Kind = scanner.InterfaceKind
+						if resolvedType != nil && resolvedType.Kind == scan.UnknownKind {
+							resolvedType.Kind = scan.InterfaceKind
 						}
 					}
 
@@ -1859,7 +1886,7 @@ func (e *Evaluator) evalTypeSwitchStmt(ctx context.Context, n *ast.TypeSwitchStm
 	return &object.SymbolicPlaceholder{Reason: "type switch statement"}
 }
 
-func (e *Evaluator) evalTypeAssertExpr(ctx context.Context, n *ast.TypeAssertExpr, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
+func (e *Evaluator) evalTypeAssertExpr(ctx context.Context, n *ast.TypeAssertExpr, env *object.Environment, pkg *scan.PackageInfo) object.Object {
 	// This function handles the single-value form: v := x.(T)
 	// The multi-value form (v, ok := x.(T)) is handled specially in evalAssignStmt.
 
@@ -1893,8 +1920,8 @@ func (e *Evaluator) evalTypeAssertExpr(ctx context.Context, n *ast.TypeAssertExp
 	resolvedType := e.resolver.ResolveType(ctx, fieldType)
 
 	// If the type was unresolved, we can now infer its kind to be an interface.
-	if resolvedType != nil && resolvedType.Kind == scanner.UnknownKind {
-		resolvedType.Kind = scanner.InterfaceKind
+	if resolvedType != nil && resolvedType.Kind == scan.UnknownKind {
+		resolvedType.Kind = scan.InterfaceKind
 	}
 
 	// In the single-value form, the result is just a value of the asserted type.
@@ -1905,7 +1932,7 @@ func (e *Evaluator) evalTypeAssertExpr(ctx context.Context, n *ast.TypeAssertExp
 	}
 }
 
-func (e *Evaluator) evalForStmt(ctx context.Context, n *ast.ForStmt, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
+func (e *Evaluator) evalForStmt(ctx context.Context, n *ast.ForStmt, env *object.Environment, pkg *scan.PackageInfo) object.Object {
 	// For symbolic execution, we unroll the loop once.
 	// A more sophisticated engine might unroll N times or use summaries.
 	forEnv := object.NewEnclosedEnvironment(env)
@@ -1953,7 +1980,7 @@ func (e *Evaluator) evalForStmt(ctx context.Context, n *ast.ForStmt, env *object
 	return &object.SymbolicPlaceholder{Reason: "for loop"}
 }
 
-func (e *Evaluator) evalRangeStmt(ctx context.Context, n *ast.RangeStmt, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
+func (e *Evaluator) evalRangeStmt(ctx context.Context, n *ast.RangeStmt, env *object.Environment, pkg *scan.PackageInfo) object.Object {
 	// For symbolic execution, the most important part is to evaluate the expression
 	// being ranged over, as it might contain function calls we need to trace.
 	e.Eval(ctx, n.X, env, pkg)
@@ -2018,7 +2045,7 @@ func (e *Evaluator) evalBranchStmt(ctx context.Context, n *ast.BranchStmt) objec
 	}
 }
 
-func (e *Evaluator) evalLabeledStmt(ctx context.Context, n *ast.LabeledStmt, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
+func (e *Evaluator) evalLabeledStmt(ctx context.Context, n *ast.LabeledStmt, env *object.Environment, pkg *scan.PackageInfo) object.Object {
 	result := e.Eval(ctx, n.Stmt, env, pkg)
 
 	switch obj := result.(type) {
@@ -2039,7 +2066,7 @@ func (e *Evaluator) evalLabeledStmt(ctx context.Context, n *ast.LabeledStmt, env
 	return result
 }
 
-func (e *Evaluator) evalIfStmt(ctx context.Context, n *ast.IfStmt, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
+func (e *Evaluator) evalIfStmt(ctx context.Context, n *ast.IfStmt, env *object.Environment, pkg *scan.PackageInfo) object.Object {
 	ifStmtEnv := env
 	if n.Init != nil {
 		ifStmtEnv = object.NewEnclosedEnvironment(env)
@@ -2086,7 +2113,7 @@ func (e *Evaluator) evalIfStmt(ctx context.Context, n *ast.IfStmt, env *object.E
 	return nil
 }
 
-func (e *Evaluator) evalBlockStatement(ctx context.Context, block *ast.BlockStmt, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
+func (e *Evaluator) evalBlockStatement(ctx context.Context, block *ast.BlockStmt, env *object.Environment, pkg *scan.PackageInfo) object.Object {
 	if block == nil {
 		return nil // Function has no body, which is valid for declarations-only scanning.
 	}
@@ -2117,7 +2144,7 @@ func (e *Evaluator) evalBlockStatement(ctx context.Context, block *ast.BlockStmt
 	return result
 }
 
-func (e *Evaluator) evalReturnStmt(ctx context.Context, n *ast.ReturnStmt, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
+func (e *Evaluator) evalReturnStmt(ctx context.Context, n *ast.ReturnStmt, env *object.Environment, pkg *scan.PackageInfo) object.Object {
 	if len(n.Results) == 0 {
 		return &object.ReturnValue{Value: object.NIL} // naked return
 	}
@@ -2148,7 +2175,7 @@ func (e *Evaluator) evalReturnStmt(ctx context.Context, n *ast.ReturnStmt, env *
 	return &object.ReturnValue{Value: &object.MultiReturn{Values: vals}}
 }
 
-func (e *Evaluator) evalAssignStmt(ctx context.Context, n *ast.AssignStmt, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
+func (e *Evaluator) evalAssignStmt(ctx context.Context, n *ast.AssignStmt, env *object.Environment, pkg *scan.PackageInfo) object.Object {
 	// Handle multi-value assignment, e.g., x, y := f() or x, y = f()
 	if len(n.Rhs) == 1 && len(n.Lhs) > 1 {
 		// Special case for two-value type assertions: v, ok := x.(T)
@@ -2183,8 +2210,8 @@ func (e *Evaluator) evalAssignStmt(ctx context.Context, n *ast.AssignStmt, env *
 			resolvedType := e.resolver.ResolveType(ctx, fieldType)
 
 			// If the type was unresolved, we can now infer its kind to be an interface.
-			if resolvedType != nil && resolvedType.Kind == scanner.UnknownKind {
-				resolvedType.Kind = scanner.InterfaceKind
+			if resolvedType != nil && resolvedType.Kind == scan.UnknownKind {
+				resolvedType.Kind = scan.InterfaceKind
 			}
 
 			// Create placeholders for the two return values.
@@ -2197,7 +2224,7 @@ func (e *Evaluator) evalAssignStmt(ctx context.Context, n *ast.AssignStmt, env *
 				Reason: "ok from type assertion",
 				BaseObject: object.BaseObject{
 					ResolvedTypeInfo: nil, // Built-in types do not have a TypeInfo struct.
-					ResolvedFieldType: &scanner.FieldType{
+					ResolvedFieldType: &scan.FieldType{
 						Name:      "bool",
 						IsBuiltin: true,
 					},
@@ -2350,7 +2377,7 @@ func (e *Evaluator) evalAssignStmt(ctx context.Context, n *ast.AssignStmt, env *
 	return e.newError(ctx, n.Pos(), "unsupported assignment statement")
 }
 
-func (e *Evaluator) evalIdentAssignment(ctx context.Context, ident *ast.Ident, rhs ast.Expr, tok token.Token, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
+func (e *Evaluator) evalIdentAssignment(ctx context.Context, ident *ast.Ident, rhs ast.Expr, tok token.Token, env *object.Environment, pkg *scan.PackageInfo) object.Object {
 	val := e.Eval(ctx, rhs, env, pkg)
 	if isError(val) {
 		return val
@@ -2394,7 +2421,7 @@ func (e *Evaluator) assignIdentifier(ctx context.Context, ident *ast.Ident, val 
 			},
 		}
 		if val.FieldType() != nil {
-			if resolved := e.resolver.ResolveType(ctx, val.FieldType()); resolved != nil && resolved.Kind == scanner.InterfaceKind {
+			if resolved := e.resolver.ResolveType(ctx, val.FieldType()); resolved != nil && resolved.Kind == scan.InterfaceKind {
 				v.PossibleTypes = make(map[string]struct{})
 				if ft := val.FieldType(); ft != nil {
 					v.PossibleTypes[ft.String()] = struct{}{}
@@ -2426,7 +2453,7 @@ func (e *Evaluator) assignIdentifier(ctx context.Context, ident *ast.Ident, val 
 	var isLHSInterface bool
 	if ft := v.FieldType(); ft != nil {
 		if ti := e.resolver.ResolveType(ctx, ft); ti != nil {
-			isLHSInterface = ti.Kind == scanner.InterfaceKind
+			isLHSInterface = ti.Kind == scan.InterfaceKind
 		}
 	}
 
@@ -2516,7 +2543,7 @@ func (e *Evaluator) evalBasicLit(ctx context.Context, n *ast.BasicLit) object.Ob
 
 // forceEval recursively evaluates an object until it is no longer a variable.
 // This is crucial for handling variables whose initializers are other variables.
-func (e *Evaluator) forceEval(ctx context.Context, obj object.Object, pkg *scanner.PackageInfo) object.Object {
+func (e *Evaluator) forceEval(ctx context.Context, obj object.Object, pkg *scan.PackageInfo) object.Object {
 	for i := 0; i < 100; i++ { // Add a loop limit to prevent infinite loops in weird cases
 		v, ok := obj.(*object.Variable)
 		if !ok {
@@ -2532,7 +2559,7 @@ func (e *Evaluator) forceEval(ctx context.Context, obj object.Object, pkg *scann
 }
 
 // evalVariable evaluates a variable, triggering its initializer if it's lazy.
-func (e *Evaluator) evalVariable(ctx context.Context, v *object.Variable, pkg *scanner.PackageInfo) object.Object {
+func (e *Evaluator) evalVariable(ctx context.Context, v *object.Variable, pkg *scan.PackageInfo) object.Object {
 	e.logger.DebugContext(ctx, "evalVariable: start", "var", v.Name, "is_evaluated", v.IsEvaluated)
 	if v.IsEvaluated {
 		e.logger.DebugContext(ctx, "evalVariable: already evaluated, returning cached value", "var", v.Name, "value_type", v.Value.Type(), "value", inspectValuer{v.Value})
@@ -2568,7 +2595,7 @@ func (e *Evaluator) evalVariable(ctx context.Context, v *object.Variable, pkg *s
 	return val
 }
 
-func (e *Evaluator) evalIdent(ctx context.Context, n *ast.Ident, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
+func (e *Evaluator) evalIdent(ctx context.Context, n *ast.Ident, env *object.Environment, pkg *scan.PackageInfo) object.Object {
 	if pkg != nil {
 		key := pkg.ImportPath + "." + n.Name
 		if intrinsicFn, ok := e.intrinsics.Get(key); ok {
@@ -2764,7 +2791,7 @@ func isCallable(obj object.Object) bool {
 	}
 }
 
-func (e *Evaluator) evalCallExpr(ctx context.Context, n *ast.CallExpr, env *object.Environment, pkg *scanner.PackageInfo) object.Object {
+func (e *Evaluator) evalCallExpr(ctx context.Context, n *ast.CallExpr, env *object.Environment, pkg *scan.PackageInfo) object.Object {
 	if e.logger.Enabled(ctx, slog.LevelDebug) {
 		stackAttrs := make([]any, 0, len(e.callStack))
 		for i, frame := range e.callStack {
@@ -2867,7 +2894,7 @@ func (e *Evaluator) scanFunctionLiteral(ctx context.Context, fn *object.Function
 
 		for _, field := range fn.Parameters.List {
 			fieldType := e.scanner.TypeInfoFromExpr(ctx, field.Type, nil, fn.Package, importLookup)
-			var resolvedType *scanner.TypeInfo
+			var resolvedType *scan.TypeInfo
 			if fieldType != nil {
 				resolvedType = e.resolver.ResolveType(ctx, fieldType)
 			}
@@ -2897,7 +2924,7 @@ func (e *Evaluator) scanFunctionLiteral(ctx context.Context, fn *object.Function
 	e.Eval(ctx, fn.Body, fnEnv, fn.Package)
 }
 
-func (e *Evaluator) evalExpressions(ctx context.Context, exps []ast.Expr, env *object.Environment, pkg *scanner.PackageInfo) []object.Object {
+func (e *Evaluator) evalExpressions(ctx context.Context, exps []ast.Expr, env *object.Environment, pkg *scan.PackageInfo) []object.Object {
 	var result []object.Object
 
 	for _, exp := range exps {
@@ -2916,7 +2943,7 @@ func (e *Evaluator) evalExpressions(ctx context.Context, exps []ast.Expr, env *o
 	return result
 }
 
-func (e *Evaluator) Apply(ctx context.Context, fn object.Object, args []object.Object, pkg *scanner.PackageInfo) object.Object {
+func (e *Evaluator) Apply(ctx context.Context, fn object.Object, args []object.Object, pkg *scan.PackageInfo) object.Object {
 	return e.applyFunction(ctx, fn, args, pkg, token.NoPos)
 }
 
@@ -2931,7 +2958,7 @@ func (v inspectValuer) LogValue() slog.Value {
 	return slog.StringValue(v.obj.Inspect())
 }
 
-func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []object.Object, pkg *scanner.PackageInfo, callPos token.Pos) object.Object {
+func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []object.Object, pkg *scan.PackageInfo, callPos token.Pos) object.Object {
 	var name string
 
 	if f, ok := fn.(*object.Function); ok {
@@ -3134,14 +3161,14 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 			method := fn.UnderlyingFunc
 			var result object.Object
 			if len(method.Results) <= 1 {
-				var resultTypeInfo *scanner.TypeInfo
-				var resultFieldType *scanner.FieldType
+				var resultTypeInfo *scan.TypeInfo
+				var resultFieldType *scan.FieldType
 				if len(method.Results) == 1 {
 					resultFieldType = method.Results[0].Type
 					if resultFieldType != nil {
 						resultType := e.resolver.ResolveType(ctx, resultFieldType)
 						if resultType == nil && resultFieldType.IsBuiltin {
-							resultType = &scanner.TypeInfo{Name: resultFieldType.Name}
+							resultType = &scan.TypeInfo{Name: resultFieldType.Name}
 						}
 						resultTypeInfo = resultType
 					}
@@ -3155,7 +3182,7 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 				results := make([]object.Object, len(method.Results))
 				for i, resFieldInfo := range method.Results {
 					resultFieldType := resFieldInfo.Type
-					var resultType *scanner.TypeInfo
+					var resultType *scan.TypeInfo
 					if resultFieldType != nil {
 						resultType = e.resolver.ResolveType(ctx, resultFieldType)
 						if resultType == nil && resultFieldType.IsBuiltin && resultFieldType.Name == "error" {
@@ -3173,9 +3200,9 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 		}
 
 		// Case 3: A placeholder representing a callable variable (like flag.Usage)
-		if typeInfo := fn.TypeInfo(); typeInfo != nil && typeInfo.Kind == scanner.FuncKind && typeInfo.Func != nil {
+		if typeInfo := fn.TypeInfo(); typeInfo != nil && typeInfo.Kind == scan.FuncKind && typeInfo.Func != nil {
 			funcInfo := typeInfo.Func
-			var pkgInfo *scanner.PackageInfo
+			var pkgInfo *scan.PackageInfo
 			var err error
 			if fn.FieldType() != nil && fn.FieldType().FullImportPath != "" {
 				pkg, loadErr := e.getOrLoadPackage(ctx, fn.FieldType().FullImportPath)
@@ -3218,7 +3245,7 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 			return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("result of calling unresolved function %s.%s", fn.PkgPath, fn.FuncName)}
 		}
 
-		var funcInfo *scanner.FunctionInfo
+		var funcInfo *scan.FunctionInfo
 		for _, f := range scannedPkg.Functions {
 			if f.Name == fn.FuncName {
 				funcInfo = f
@@ -3376,9 +3403,9 @@ func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, 
 
 // evalGenericInstantiation handles the creation of an InstantiatedFunction object
 // from a generic function and its type arguments.
-func (e *Evaluator) evalGenericInstantiation(ctx context.Context, fn *object.Function, typeArgs []ast.Expr, pos token.Pos, pkg *scanner.PackageInfo) object.Object {
+func (e *Evaluator) evalGenericInstantiation(ctx context.Context, fn *object.Function, typeArgs []ast.Expr, pos token.Pos, pkg *scan.PackageInfo) object.Object {
 	// Resolve type arguments into TypeInfo objects
-	var resolvedArgs []*scanner.TypeInfo
+	var resolvedArgs []*scan.TypeInfo
 	if pkg != nil && pkg.Fset != nil {
 		file := pkg.Fset.File(pos)
 		if file != nil {
@@ -3402,7 +3429,7 @@ func (e *Evaluator) evalGenericInstantiation(ctx context.Context, fn *object.Fun
 
 // createSymbolicResultForFuncInfo creates a symbolic result for a function call based on its FunctionInfo.
 // This is used for functions that are not deeply executed (e.g., due to scan policy or being unresolved).
-func (e *Evaluator) createSymbolicResultForFuncInfo(ctx context.Context, funcInfo *scanner.FunctionInfo, pkgInfo *scanner.PackageInfo, reasonFormat string, reasonArgs ...any) object.Object {
+func (e *Evaluator) createSymbolicResultForFuncInfo(ctx context.Context, funcInfo *scan.FunctionInfo, pkgInfo *scan.PackageInfo, reasonFormat string, reasonArgs ...any) object.Object {
 	if funcInfo.AstDecl == nil || funcInfo.AstDecl.Type == nil || pkgInfo == nil {
 		return &object.SymbolicPlaceholder{Reason: "result of call with incomplete info"}
 	}
@@ -3485,7 +3512,7 @@ func (e *Evaluator) PackageEnvForTest(pkgPath string) (*object.Environment, bool
 }
 
 // GetOrResolveFunctionForTest is a test helper to expose the internal getOrResolveFunction method.
-func (e *Evaluator) GetOrResolveFunctionForTest(ctx context.Context, pkg *object.Package, funcInfo *scanner.FunctionInfo) object.Object {
+func (e *Evaluator) GetOrResolveFunctionForTest(ctx context.Context, pkg *object.Package, funcInfo *scan.FunctionInfo) object.Object {
 	return e.getOrResolveFunction(ctx, pkg, funcInfo)
 }
 
@@ -3512,7 +3539,7 @@ func (e *Evaluator) ApplyFunction(ctx context.Context, call *ast.CallExpr, fn ob
 	return e.applyFunction(ctx, fn, args, nil, call.Pos())
 }
 
-func (e *Evaluator) getOrResolveFunction(ctx context.Context, pkg *object.Package, funcInfo *scanner.FunctionInfo) object.Object {
+func (e *Evaluator) getOrResolveFunction(ctx context.Context, pkg *object.Package, funcInfo *scan.FunctionInfo) object.Object {
 	// Generate a unique key for the function. For methods, the receiver type is crucial.
 	key := ""
 	if funcInfo.Receiver != nil && funcInfo.Receiver.Type != nil {
@@ -3545,8 +3572,8 @@ func (e *Evaluator) Finalize(ctx context.Context) {
 		return // Nothing to do if no intrinsic is registered to receive the results.
 	}
 
-	allStructs := make(map[string]*scanner.TypeInfo)
-	allInterfaces := make(map[string]*scanner.TypeInfo)
+	allStructs := make(map[string]*scan.TypeInfo)
+	allInterfaces := make(map[string]*scan.TypeInfo)
 
 	// 1. Collect all packages from the scanner's cache, respecting the scan policy.
 	// This replaces the old `e.seenPackages` mechanism.
@@ -3646,7 +3673,7 @@ func (e *Evaluator) Finalize(ctx context.Context) {
 
 // getAllInterfaceMethods recursively collects all methods from an interface and its embedded interfaces.
 // It handles cycles by keeping track of visited interface types.
-func (e *Evaluator) getAllInterfaceMethods(ctx context.Context, ifaceType *scanner.TypeInfo, visited map[string]struct{}) []*scanner.MethodInfo {
+func (e *Evaluator) getAllInterfaceMethods(ctx context.Context, ifaceType *scan.TypeInfo, visited map[string]struct{}) []*scan.MethodInfo {
 	if ifaceType == nil || ifaceType.Interface == nil {
 		return nil
 	}
@@ -3658,7 +3685,7 @@ func (e *Evaluator) getAllInterfaceMethods(ctx context.Context, ifaceType *scann
 	}
 	visited[typeName] = struct{}{}
 
-	var allMethods []*scanner.MethodInfo
+	var allMethods []*scan.MethodInfo
 	allMethods = append(allMethods, ifaceType.Interface.Methods...)
 
 	for _, embeddedField := range ifaceType.Interface.Embedded {
@@ -3671,7 +3698,7 @@ func (e *Evaluator) getAllInterfaceMethods(ctx context.Context, ifaceType *scann
 			continue
 		}
 
-		if embeddedTypeInfo != nil && embeddedTypeInfo.Kind == scanner.InterfaceKind {
+		if embeddedTypeInfo != nil && embeddedTypeInfo.Kind == scan.InterfaceKind {
 			// Recursively get methods from the embedded interface.
 			embeddedMethods := e.getAllInterfaceMethods(ctx, embeddedTypeInfo, visited)
 			allMethods = append(allMethods, embeddedMethods...)
@@ -3682,7 +3709,7 @@ func (e *Evaluator) getAllInterfaceMethods(ctx context.Context, ifaceType *scann
 }
 
 // isImplementer checks if a given concrete type implements an interface.
-func (e *Evaluator) isImplementer(ctx context.Context, concreteType *scanner.TypeInfo, interfaceType *scanner.TypeInfo) bool {
+func (e *Evaluator) isImplementer(ctx context.Context, concreteType *scan.TypeInfo, interfaceType *scan.TypeInfo) bool {
 	if concreteType == nil || interfaceType == nil || interfaceType.Interface == nil {
 		return false
 	}
@@ -3738,7 +3765,7 @@ func (e *Evaluator) isImplementer(ctx context.Context, concreteType *scanner.Typ
 
 // fieldTypeEquals compares two FieldType objects for equality.
 // It uses the string representation for a robust comparison of the type structure.
-func (e *Evaluator) fieldTypeEquals(a, b *scanner.FieldType) bool {
+func (e *Evaluator) fieldTypeEquals(a, b *scan.FieldType) bool {
 	if a == b {
 		return true
 	}

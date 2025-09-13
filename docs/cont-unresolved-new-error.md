@@ -1,12 +1,12 @@
-# Continuation: Fix for Panic on `new()` with Unresolved Types
+# Continuation: Fix for Error on `new()` with Unresolved Types
 
 ## Initial Prompt
 
-The user initiated the task to fix a panic in the `symgo` symbolic execution engine. The panic occurred when the engine tried to dereference a pointer to a type from an out-of-policy (unscanned) package. The error log showed `invalid indirect of <Unresolved Function: strings.Builder> (type *object.UnresolvedFunction)`, indicating that an unresolved type was being incorrectly categorized as a function, leading to a crash.
+The user initiated the task to fix an error in the `symgo` symbolic execution engine. The error occurred when the engine tried to dereference a pointer to a type from an out-of-policy (unscanned) package. The error log showed `invalid indirect of <Unresolved Function: strings.Builder> (type *object.UnresolvedFunction)`, indicating that an unresolved type was being incorrectly categorized as a function, leading to a crash.
 
 ## Goal
 
-The primary goal is to prevent this panic by correctly handling calls to the built-in `new()` function when the argument is a type from a package that has not been scanned. The fix should be robust and align with the symbolic execution engine's architecture.
+The primary goal is to prevent this error by correctly handling calls to the built-in `new()` function when the argument is a type from a package that has not been scanned. The fix should be robust and align with the symbolic execution engine's architecture.
 
 ## Initial Implementation Attempt
 

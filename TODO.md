@@ -76,7 +76,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 
 ## To Be Implemented
 
-### Fix `symgo` Panic on `new()` with Unresolved Types ([docs/cont-unresolved-new-panic.md](./docs/cont-unresolved-new-panic.md))
+### Fix `symgo` Error on `new()` with Unresolved Types ([docs/cont-unresolved-new-error.md](./docs/cont-unresolved-new-error.md))
 - [ ] Fix the `BuiltinNew` function in `symgo/intrinsics/builtins.go` to correctly handle `*object.UnresolvedFunction` arguments.
 
 ### Fix `symgo` Symbol Collision Bug 

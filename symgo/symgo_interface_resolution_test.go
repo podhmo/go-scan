@@ -1,6 +1,7 @@
 package symgo
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -82,7 +83,7 @@ func TestInterfaceResolution(t *testing.T) {
 			}
 
 			var dogSpeakCalled bool
-			interp.RegisterDefaultIntrinsic(func(i *Interpreter, args []object.Object) object.Object {
+			interp.RegisterDefaultIntrinsic(func(ctx context.Context, i *Interpreter, args []object.Object) object.Object {
 				if len(args) == 0 {
 					return nil
 				}
@@ -211,7 +212,7 @@ func TestInterfaceResolutionWithPointerReceiver(t *testing.T) {
 			}
 
 			var personGreetCalled bool
-			interp.RegisterDefaultIntrinsic(func(i *Interpreter, args []object.Object) object.Object {
+			interp.RegisterDefaultIntrinsic(func(ctx context.Context, i *Interpreter, args []object.Object) object.Object {
 				if len(args) == 0 {
 					return nil
 				}
@@ -341,7 +342,7 @@ func TestInterfaceResolutionWithValueReceiver(t *testing.T) {
 			}
 
 			var emailSendCalled bool
-			interp.RegisterDefaultIntrinsic(func(i *Interpreter, args []object.Object) object.Object {
+			interp.RegisterDefaultIntrinsic(func(ctx context.Context, i *Interpreter, args []object.Object) object.Object {
 				if len(args) == 0 {
 					return nil
 				}

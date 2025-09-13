@@ -3,6 +3,7 @@ package object
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"fmt"
 	"go/ast"
 	"go/token"
@@ -239,7 +240,7 @@ func (f *Function) WithReceiver(receiver Object, pos token.Pos) *Function {
 type Intrinsic struct {
 	BaseObject
 	// The Go function that implements the intrinsic's behavior.
-	Fn func(args ...Object) Object
+	Fn func(ctx context.Context, args ...Object) Object
 }
 
 // Type returns the type of the Intrinsic object.

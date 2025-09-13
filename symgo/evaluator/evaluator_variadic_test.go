@@ -42,7 +42,7 @@ func main() {
 		pkg := pkgs[0]
 		e := New(s, s.Logger, nil, nil)
 
-		e.RegisterDefaultIntrinsic(func(args ...object.Object) object.Object {
+		e.RegisterDefaultIntrinsic(func(ctx context.Context, args ...object.Object) object.Object {
 			fnObj := args[0]
 			fnArgs := args[1:]
 

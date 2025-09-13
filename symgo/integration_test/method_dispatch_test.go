@@ -48,7 +48,7 @@ func main() {
 			return err
 		}
 
-		interp.RegisterDefaultIntrinsic(func(i *symgo.Interpreter, args []object.Object) object.Object {
+		interp.RegisterDefaultIntrinsic(func(ctx context.Context, i *symgo.Interpreter, args []object.Object) object.Object {
 			if len(args) == 0 {
 				return nil
 			}

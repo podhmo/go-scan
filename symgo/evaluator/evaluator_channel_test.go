@@ -40,7 +40,7 @@ func main() {
 		pkg := pkgs[0]
 		eval := New(s, s.Logger, nil, func(pkgPath string) bool { return true })
 
-		eval.RegisterDefaultIntrinsic(func(args ...object.Object) object.Object {
+		eval.RegisterDefaultIntrinsic(func(ctx context.Context, args ...object.Object) object.Object {
 			if len(args) > 0 {
 				if fn, ok := args[0].(*object.Function); ok {
 					if fn.Name != nil {

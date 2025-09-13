@@ -21,7 +21,6 @@ type Analyzer struct {
 	tracer         symgo.Tracer // Optional tracer
 	operationStack []*openapi.Operation
 	customPatterns []patterns.Pattern
-	ctx            context.Context // Add a context field to the analyzer
 }
 
 // Option is a functional option for configuring the Analyzer.
@@ -95,15 +94,27 @@ func NewAnalyzer(s *goscan.Scanner, logger *slog.Logger, extraPkgs []string, opt
 	a.interpreter = interp
 
 	// Register intrinsics.
-	interp.RegisterIntrinsic("net/http.NewServeMux", a.handleNewServeMux)
-	interp.RegisterIntrinsic("net/http.HandleFunc", a.analyzeTopLevelHandleFunc)
-	interp.RegisterIntrinsic("(*net/http.ServeMux).HandleFunc", a.analyzeHandleFunc)
-	interp.RegisterIntrinsic("net/http.ListenAndServe", func(i *symgo.Interpreter, args []symgo.Object) symgo.Object { return nil })
+	interp.RegisterIntrinsic("net/http.NewServeMux", func(ctx context.Context, i *symgo.Interpreter, args []symgo.Object) symgo.Object {
+		return a.handleNewServeMux(ctx, i, args)
+	})
+	interp.RegisterIntrinsic("net/http.HandleFunc", func(ctx context.Context, i *symgo.Interpreter, args []symgo.Object) symgo.Object {
+		return a.analyzeTopLevelHandleFunc(ctx, i, args)
+	})
+	interp.RegisterIntrinsic("(*net/http.ServeMux).HandleFunc", func(ctx context.Context, i *symgo.Interpreter, args []symgo.Object) symgo.Object {
+		return a.analyzeHandleFunc(ctx, i, args)
+	})
+	interp.RegisterIntrinsic("net/http.ListenAndServe", func(ctx context.Context, i *symgo.Interpreter, args []symgo.Object) symgo.Object { return nil })
 
 	// Intrinsics for handling http.Handler interface wrappers
-	interp.RegisterIntrinsic("net/http.HandlerFunc", a.handleHandlerFunc)
-	interp.RegisterIntrinsic("net/http.TimeoutHandler", a.handleTimeoutHandler)
-	interp.RegisterIntrinsic("(*net/http.ServeMux).Handle", a.analyzeHandle)
+	interp.RegisterIntrinsic("net/http.HandlerFunc", func(ctx context.Context, i *symgo.Interpreter, args []symgo.Object) symgo.Object {
+		return a.handleHandlerFunc(ctx, i, args)
+	})
+	interp.RegisterIntrinsic("net/http.TimeoutHandler", func(ctx context.Context, i *symgo.Interpreter, args []symgo.Object) symgo.Object {
+		return a.handleTimeoutHandler(ctx, i, args)
+	})
+	interp.RegisterIntrinsic("(*net/http.ServeMux).Handle", func(ctx context.Context, i *symgo.Interpreter, args []symgo.Object) symgo.Object {
+		return a.analyzeHandle(ctx, i, args)
+	})
 
 	return a, nil
 }
@@ -116,23 +127,22 @@ func (a *Analyzer) GetOpenAPI() *openapi.OpenAPI {
 	return a.OpenAPI
 }
 
-func (a *Analyzer) handleNewServeMux(interp *symgo.Interpreter, args []symgo.Object) symgo.Object {
+func (a *Analyzer) handleNewServeMux(ctx context.Context, interp *symgo.Interpreter, args []symgo.Object) symgo.Object {
 	return patterns.NewSymbolicInstance(interp, "net/http.ServeMux")
 }
 
-func (a *Analyzer) analyzeTopLevelHandleFunc(interp *symgo.Interpreter, args []symgo.Object) symgo.Object {
+func (a *Analyzer) analyzeTopLevelHandleFunc(ctx context.Context, interp *symgo.Interpreter, args []symgo.Object) symgo.Object {
 	// Expects 2 args for http.HandleFunc: pattern, handler
 	if len(args) != 2 {
 		return &symgo.Error{Message: fmt.Sprintf("http.HandleFunc expects 2 arguments, but got %d", len(args))}
 	}
 	// Prepend a nil receiver to match the signature of the existing analyzeHandleFunc
 	newArgs := append([]symgo.Object{&symgo.Nil{}}, args...)
-	return a.analyzeHandleFunc(interp, newArgs)
+	return a.analyzeHandleFunc(ctx, interp, newArgs)
 }
 
 // Analyze analyzes the package starting from a specific entrypoint function.
 func (a *Analyzer) Analyze(ctx context.Context, importPath string, entrypoint string) error {
-	a.ctx = ctx // Set the context for the analyzer
 	pkg, err := a.Scanner.ScanPackageByImport(ctx, importPath)
 	if err != nil {
 		return fmt.Errorf("failed to load sample API package: %w", err)
@@ -183,14 +193,14 @@ func (a *Analyzer) Analyze(ctx context.Context, importPath string, entrypoint st
 	return nil
 }
 
-func (a *Analyzer) handleHandlerFunc(interp *symgo.Interpreter, args []symgo.Object) symgo.Object {
+func (a *Analyzer) handleHandlerFunc(ctx context.Context, interp *symgo.Interpreter, args []symgo.Object) symgo.Object {
 	if len(args) != 1 {
 		return &symgo.Error{Message: fmt.Sprintf("HandlerFunc expects 1 argument, but got %d", len(args))}
 	}
 	fn, ok := args[0].(*symgo.Function)
 	if !ok {
 		// It might be an instance wrapping a function, let's try to unwrap it.
-		unwrapped := a.unwrapHandler(args[0])
+		unwrapped := a.unwrapHandler(ctx, args[0])
 		if unwrapped == nil {
 			return &symgo.Error{Message: fmt.Sprintf("HandlerFunc expects a function, but got %T", args[0])}
 		}
@@ -203,7 +213,7 @@ func (a *Analyzer) handleHandlerFunc(interp *symgo.Interpreter, args []symgo.Obj
 	}
 }
 
-func (a *Analyzer) handleTimeoutHandler(interp *symgo.Interpreter, args []symgo.Object) symgo.Object {
+func (a *Analyzer) handleTimeoutHandler(ctx context.Context, interp *symgo.Interpreter, args []symgo.Object) symgo.Object {
 	if len(args) != 3 {
 		return &symgo.Error{Message: fmt.Sprintf("TimeoutHandler expects 3 arguments, but got %d", len(args))}
 	}
@@ -222,7 +232,7 @@ func (a *Analyzer) handleTimeoutHandler(interp *symgo.Interpreter, args []symgo.
 	}
 }
 
-func (a *Analyzer) analyzeHandle(interp *symgo.Interpreter, args []symgo.Object) symgo.Object {
+func (a *Analyzer) analyzeHandle(ctx context.Context, interp *symgo.Interpreter, args []symgo.Object) symgo.Object {
 	if len(args) != 3 {
 		return &symgo.Error{Message: fmt.Sprintf("Handle expects 3 arguments, but got %d", len(args))}
 	}
@@ -233,10 +243,10 @@ func (a *Analyzer) analyzeHandle(interp *symgo.Interpreter, args []symgo.Object)
 	}
 
 	// Unwrap the handler to find the root function.
-	handlerFunc := a.unwrapHandler(args[2])
+	handlerFunc := a.unwrapHandler(ctx, args[2])
 	if handlerFunc == nil {
 		// Return nil instead of error, as some handlers might be intentionally opaque.
-		a.logger.DebugContext(a.ctx, "could not unwrap handler", "arg", args[2].Inspect())
+		a.logger.DebugContext(ctx, "could not unwrap handler", "arg", args[2].Inspect())
 		return nil
 	}
 
@@ -245,17 +255,17 @@ func (a *Analyzer) analyzeHandle(interp *symgo.Interpreter, args []symgo.Object)
 	// The third is the unwrapped function.
 	newArgs := []symgo.Object{args[0], patternObj, handlerFunc}
 
-	return a.analyzeHandleFunc(interp, newArgs)
+	return a.analyzeHandleFunc(ctx, interp, newArgs)
 }
 
 // unwrapHandler recursively unwraps http.Handler instances to find the underlying function.
-func (a *Analyzer) unwrapHandler(obj symgo.Object) *symgo.Function {
+func (a *Analyzer) unwrapHandler(ctx context.Context, obj symgo.Object) *symgo.Function {
 	switch v := obj.(type) {
 	case *symgo.Function:
 		return v
 	case *symgo.Instance:
 		if v.Underlying != nil {
-			return a.unwrapHandler(v.Underlying)
+			return a.unwrapHandler(ctx, v.Underlying)
 		}
 		return nil
 	default:
@@ -264,7 +274,7 @@ func (a *Analyzer) unwrapHandler(obj symgo.Object) *symgo.Function {
 }
 
 // analyzeHandleFunc is the intrinsic for (*http.ServeMux).HandleFunc.
-func (a *Analyzer) analyzeHandleFunc(interp *symgo.Interpreter, args []symgo.Object) symgo.Object {
+func (a *Analyzer) analyzeHandleFunc(ctx context.Context, interp *symgo.Interpreter, args []symgo.Object) symgo.Object {
 	// Expects 3 args for HandleFunc: receiver, pattern, handler
 	if len(args) != 3 {
 		return &symgo.Error{Message: fmt.Sprintf("HandleFunc expects 3 arguments, but got %d", len(args))}
@@ -316,7 +326,7 @@ func (a *Analyzer) analyzeHandleFunc(interp *symgo.Interpreter, args []symgo.Obj
 
 	// Analyze the handler body for request/response schemas
 	if handlerDecl.Body != nil {
-		op = a.analyzeHandlerBody(handlerObj, op)
+		op = a.analyzeHandlerBody(ctx, handlerObj, op)
 	}
 
 	if a.OpenAPI.Paths[path] == nil {
@@ -348,7 +358,7 @@ func (a *Analyzer) analyzeHandleFunc(interp *symgo.Interpreter, args []symgo.Obj
 
 // analyzeHandlerBody analyzes the body of an HTTP handler function to find
 // request and response schemas.
-func (a *Analyzer) analyzeHandlerBody(handler *symgo.Function, op *openapi.Operation) *openapi.Operation {
+func (a *Analyzer) analyzeHandlerBody(ctx context.Context, handler *symgo.Function, op *openapi.Operation) *openapi.Operation {
 	// Capture stack size before we modify it.
 	originalStackSize := len(a.operationStack)
 	defer func() {
@@ -359,7 +369,7 @@ func (a *Analyzer) analyzeHandlerBody(handler *symgo.Function, op *openapi.Opera
 	// Push the current operation onto the stack for the duration of this analysis.
 	a.operationStack = append(a.operationStack, op)
 
-	pkg, err := a.Scanner.ScanPackageByPos(a.ctx, handler.Decl.Pos())
+	pkg, err := a.Scanner.ScanPackageByPos(ctx, handler.Decl.Pos())
 	if err != nil {
 		fmt.Printf("warn: failed to get package for handler %q: %v\n", handler.Name.Name, err)
 		return op // Return original op on error
@@ -381,8 +391,8 @@ func (a *Analyzer) analyzeHandlerBody(handler *symgo.Function, op *openapi.Opera
 		importLookup := a.Scanner.BuildImportLookup(astFile)
 
 		for _, field := range handler.Decl.Type.Params.List {
-			fieldType := a.Scanner.TypeInfoFromExpr(a.ctx, field.Type, nil, pkg, importLookup)
-			typeInfo, _ := fieldType.Resolve(a.ctx)
+			fieldType := a.Scanner.TypeInfoFromExpr(ctx, field.Type, nil, pkg, importLookup)
+			typeInfo, _ := fieldType.Resolve(ctx)
 
 			// For each parameter name (can be multiple like w1, w2 http.ResponseWriter), create a variable.
 			for _, name := range field.Names {
@@ -400,7 +410,7 @@ func (a *Analyzer) analyzeHandlerBody(handler *symgo.Function, op *openapi.Opera
 
 	// Bind the http.ResponseWriter interface to a concrete type for analysis.
 	// This allows us to track calls to methods like WriteHeader and Write.
-	if err := a.interpreter.BindInterface(a.ctx, "net/http.ResponseWriter", "*net/http/httptest.ResponseRecorder"); err != nil {
+	if err := a.interpreter.BindInterface(ctx, "net/http.ResponseWriter", "*net/http/httptest.ResponseRecorder"); err != nil {
 		// This binding is critical, so we log a warning if it fails.
 		a.logger.Warn("failed to bind ResponseWriter interface, response analysis will be incomplete", "error", err)
 	}
@@ -411,7 +421,7 @@ func (a *Analyzer) analyzeHandlerBody(handler *symgo.Function, op *openapi.Opera
 	defer a.interpreter.PopIntrinsics() // Ensure we clean up the scope.
 
 	// Call the handler function with the created symbolic arguments.
-	a.interpreter.Apply(a.ctx, handler, handlerArgs, pkg)
+	a.interpreter.Apply(ctx, handler, handlerArgs, pkg)
 
 	// After Apply, the operation on the top of the stack is the one that has been modified.
 	// We retrieve it before the defer pops it.

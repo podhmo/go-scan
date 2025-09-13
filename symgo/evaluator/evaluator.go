@@ -1247,8 +1247,8 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 				key := fmt.Sprintf("(%s.%s).%s", staticType.PkgPath, staticType.Name, n.Sel.Name)
 				if intrinsicFn, ok := e.intrinsics.Get(key); ok {
 					// Create a closure that prepends the receiver to the arguments.
-					boundIntrinsic := func(args ...object.Object) object.Object {
-						return intrinsicFn(append([]object.Object{obj}, args...)...)
+					boundIntrinsic := func(ctx context.Context, args ...object.Object) object.Object {
+						return intrinsicFn(ctx, append([]object.Object{obj}, args...)...)
 					}
 					return &object.Intrinsic{Fn: boundIntrinsic}
 				}
@@ -1268,10 +1268,10 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 					// The key format is "(*pkg.path.Name).MethodName"
 					intrinsicKey := fmt.Sprintf("(%s).%s", fullReceiverName, n.Sel.Name)
 					if intrinsicFn, ok := e.intrinsics.Get(intrinsicKey); ok {
-						boundIntrinsic := func(args ...object.Object) object.Object {
+						boundIntrinsic := func(ctx context.Context, args ...object.Object) object.Object {
 							// The intrinsic expects the receiver as the first argument.
 							// The original object `obj` (the interface variable) is the logical receiver.
-							return intrinsicFn(append([]object.Object{obj}, args...)...)
+							return intrinsicFn(ctx, append([]object.Object{obj}, args...)...)
 						}
 						return &object.Intrinsic{Fn: boundIntrinsic}
 					}
@@ -1372,16 +1372,16 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 		key := fmt.Sprintf("(*%s).%s", fullTypeName, n.Sel.Name)
 		if intrinsicFn, ok := e.intrinsics.Get(key); ok {
 			self := val
-			fn := func(args ...object.Object) object.Object {
-				return intrinsicFn(append([]object.Object{self}, args...)...)
+			fn := func(ctx context.Context, args ...object.Object) object.Object {
+				return intrinsicFn(ctx, append([]object.Object{self}, args...)...)
 			}
 			return &object.Intrinsic{Fn: fn}
 		}
 		key = fmt.Sprintf("(%s).%s", fullTypeName, n.Sel.Name)
 		if intrinsicFn, ok := e.intrinsics.Get(key); ok {
 			self := val
-			fn := func(args ...object.Object) object.Object {
-				return intrinsicFn(append([]object.Object{self}, args...)...)
+			fn := func(ctx context.Context, args ...object.Object) object.Object {
+				return intrinsicFn(ctx, append([]object.Object{self}, args...)...)
 			}
 			return &object.Intrinsic{Fn: fn}
 		}
@@ -1578,16 +1578,16 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 		key := fmt.Sprintf("(%s).%s", val.TypeName, n.Sel.Name)
 		if intrinsicFn, ok := e.intrinsics.Get(key); ok {
 			self := val
-			fn := func(args ...object.Object) object.Object {
-				return intrinsicFn(append([]object.Object{self}, args...)...)
+			fn := func(ctx context.Context, args ...object.Object) object.Object {
+				return intrinsicFn(ctx, append([]object.Object{self}, args...)...)
 			}
 			return &object.Intrinsic{Fn: fn}
 		}
 		key = fmt.Sprintf("(*%s).%s", val.TypeName, n.Sel.Name)
 		if intrinsicFn, ok := e.intrinsics.Get(key); ok {
 			self := val
-			fn := func(args ...object.Object) object.Object {
-				return intrinsicFn(append([]object.Object{self}, args...)...)
+			fn := func(ctx context.Context, args ...object.Object) object.Object {
+				return intrinsicFn(ctx, append([]object.Object{self}, args...)...)
 			}
 			return &object.Intrinsic{Fn: fn}
 		}
@@ -2811,7 +2811,7 @@ func (e *Evaluator) evalCallExpr(ctx context.Context, n *ast.CallExpr, env *obje
 		// The default intrinsic is a "catch-all" handler that can be used for logging,
 		// dependency tracking, etc. It receives the function object itself as the first
 		// argument, followed by the regular arguments.
-		e.defaultIntrinsic(append([]object.Object{function}, args...)...)
+		e.defaultIntrinsic(ctx, append([]object.Object{function}, args...)...)
 	}
 
 	result := e.applyFunction(ctx, function, args, pkg, n.Pos())
@@ -3114,7 +3114,7 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 		return &object.ReturnValue{Value: evaluatedValue}
 
 	case *object.Intrinsic:
-		return fn.Fn(args...)
+		return fn.Fn(ctx, args...)
 
 	case *object.SymbolicPlaceholder:
 		// This now handles both external function calls and interface method calls.
@@ -3203,7 +3203,7 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 		// Before trying to scan the package, check if there's a registered intrinsic for it.
 		key := fn.PkgPath + "." + fn.FuncName
 		if intrinsicFn, ok := e.intrinsics.Get(key); ok {
-			return intrinsicFn(args...)
+			return intrinsicFn(ctx, args...)
 		}
 
 		// Use the policy-enforcing method to resolve the package.
@@ -3634,7 +3634,7 @@ func (e *Evaluator) Finalize(ctx context.Context) {
 
 			// Mark the concrete method as "used" by calling the default intrinsic.
 			e.logger.DebugContext(ctx, "finalize: marking concrete method as used", "method", fmt.Sprintf("%s.%s", structName, methodName))
-			e.defaultIntrinsic(fnObject)
+			e.defaultIntrinsic(ctx, fnObject)
 		}
 	}
 }

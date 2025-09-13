@@ -43,7 +43,7 @@ func main() {
 		eval := New(s, s.Logger, nil, nil)
 
 		// Register an intrinsic to track when getItems is called
-		eval.RegisterIntrinsic(fmt.Sprintf("%s.getItems", pkg.ImportPath), func(args ...object.Object) object.Object {
+		eval.RegisterIntrinsic(fmt.Sprintf("%s.getItems", pkg.ImportPath), func(ctx context.Context, args ...object.Object) object.Object {
 			getItemsCalled = true
 			return &object.Slice{} // Return a symbolic slice
 		})

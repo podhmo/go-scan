@@ -96,8 +96,8 @@ func (r *Resolver) ResolveFunction(pkg *object.Package, funcInfo *scanner.Functi
 			}
 			receiverVar.SetFieldType(funcInfo.Receiver.Type)
 			// The receiver's type info can be resolved from its field type.
-			// This is important for the test harness to validate which method was called.
-			receiverVar.SetTypeInfo(r.resolveTypeWithoutPolicyCheck(context.Background(), funcInfo.Receiver.Type))
+			// This must respect the scan policy.
+			receiverVar.SetTypeInfo(r.ResolveType(context.Background(), funcInfo.Receiver.Type))
 			fn.Receiver = receiverVar
 		}
 

@@ -65,7 +65,7 @@ The engine includes several mechanisms to ensure analysis is robust and always t
 
 - **Method Resolution**:
     - **Embedded Methods**: The engine performs a recursive, depth-first search to find methods on embedded types, with cycle detection to handle recursive embedding. This correctly simulates Go's method promotion.
-    - **Interface Methods**: Calls on interface-typed variables are handled symbolically. The engine traces the call to the method on the interface definition itself, avoiding the complexity of dynamic dispatch.
+    - **Interface Methods**: Calls on interface-typed variables are handled symbolically. The engine traces the call to the method on the interface definition itself, avoiding the complexity of dynamic dispatch. If a method is not found in the static definition (e.g., because the interface comes from a package outside the analysis scope), the engine creates a synthetic placeholder for the method. This makes the analysis resilient to incomplete type information and allows it to proceed without error, which is crucial for tools analyzing pre-compiled code. Intrinsics can still be registered for these synthetically created methods.
 
 - **Recursion and Cycle Detection**:
     - **Function Calls**: The engine tracks the call stack to halt infinite function recursion. It uses a bounded analysis strategy, limiting the depth of recursive calls to a fixed, small number. This prevents analysis from hanging on deep or infinite recursion, ensuring termination in a way that is consistent with how loops are handled. It is also smart enough to distinguish between true recursion and valid, state-changing recursive patterns (like linked list traversal).

@@ -332,6 +332,13 @@ func TestEval_InterfaceMethodCall_UndefinedButAllowed(t *testing.T) {
 	code := `
 package main
 
+// sideEffect is a function that will be called as an argument
+// to an undefined interface method. We use it to check that arguments
+// are still evaluated.
+func sideEffect() int {
+	return 1
+}
+
 // Runner has a Run method, but not a Stop method.
 type Runner interface {
 	Run()
@@ -340,7 +347,7 @@ type Runner interface {
 // Do calls both a defined (Run) and an undefined (Stop) method.
 func Do(r Runner) {
 	r.Run()
-	r.Stop() // This would cause an error without the patch.
+	r.Stop(sideEffect()) // This would cause an error without the patch.
 }
 
 func main() {
@@ -355,11 +362,19 @@ func main() {
 	dir, cleanup := scantest.WriteFiles(t, files)
 	defer cleanup()
 
+	var sideEffectCalled bool
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
 		// Create an evaluator with a policy that allows scanning the current package.
 		eval := New(s, s.Logger, nil, func(path string) bool {
 			return path == pkg.ImportPath
+		})
+
+		// Register an intrinsic for the sideEffect function to track its call.
+		sideEffectKey := fmt.Sprintf("%s.sideEffect", pkg.ImportPath)
+		eval.RegisterIntrinsic(sideEffectKey, func(ctx context.Context, args ...object.Object) object.Object {
+			sideEffectCalled = true
+			return &object.Integer{Value: 1} // Return a value consistent with the function signature
 		})
 
 		// Evaluate the whole file to populate functions etc.
@@ -387,5 +402,156 @@ func main() {
 	// Run the test.
 	if _, err := scantest.Run(t, t.Context(), dir, []string{"."}, action, scantest.WithModuleRoot(dir)); err != nil {
 		t.Fatalf("scantest.Run() failed: %+v", err)
+	}
+
+	if !sideEffectCalled {
+		t.Errorf("expected sideEffect() to be called, but it was not")
+	}
+}
+
+func TestEval_InterfaceMethodCall_UndefinedWithIntrinsic(t *testing.T) {
+	code := `
+package main
+
+// Runner has a Run method, but not a Stop method.
+type Runner interface {
+	Run()
+}
+
+// Do calls both a defined (Run) and an undefined (Stop) method.
+func Do(r Runner) {
+	r.Run()
+	r.Stop()
+}
+
+func main() {
+	Do(nil)
+}
+`
+	files := map[string]string{
+		"go.mod":  "module example.com/me",
+		"main.go": code,
+	}
+
+	dir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	var stopIntrinsicCalled bool
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
+		pkg := pkgs[0]
+		eval := New(s, s.Logger, nil, func(path string) bool {
+			return path == pkg.ImportPath
+		})
+
+		// Register an intrinsic for the UNDEFINED method.
+		// The key format is `(pkgpath.TypeName).MethodName`
+		stopKey := fmt.Sprintf("(%s.Runner).Stop", pkg.ImportPath)
+		eval.RegisterIntrinsic(stopKey, func(ctx context.Context, args ...object.Object) object.Object {
+			stopIntrinsicCalled = true
+			return nil
+		})
+
+		// Evaluate the whole file to populate functions etc.
+		for _, file := range pkg.AstFiles {
+			eval.Eval(ctx, file, nil, pkg)
+		}
+
+		// Get the main function to start evaluation from.
+		pkgEnv, ok := eval.PackageEnvForTest("example.com/me")
+		if !ok {
+			return fmt.Errorf("could not get package env for 'example.com/me'")
+		}
+		mainFuncObj, _ := pkgEnv.Get("main")
+		mainFunc := mainFuncObj.(*object.Function)
+
+		// Apply the main function.
+		result := eval.Apply(ctx, mainFunc, []object.Object{}, pkg)
+		if err, ok := result.(*object.Error); ok {
+			return fmt.Errorf("evaluation failed unexpectedly: %s", err.Error())
+		}
+		return nil
+	}
+
+	// Run the test.
+	if _, err := scantest.Run(t, t.Context(), dir, []string{"."}, action, scantest.WithModuleRoot(dir)); err != nil {
+		t.Fatalf("scantest.Run() failed: %+v", err)
+	}
+
+	if !stopIntrinsicCalled {
+		t.Errorf("expected intrinsic for undefined method Stop() to be called, but it was not")
+	}
+}
+
+func TestEval_InterfaceMethodCall_UndefinedAndContinue(t *testing.T) {
+	code := `
+package main
+
+func cont() {} // This function call should be reached.
+
+// Runner has a Run method, but not a Stop method.
+type Runner interface {
+	Run()
+}
+
+// Do calls an undefined method and then a defined function.
+func Do(r Runner) {
+	r.Stop()
+	cont()
+}
+
+func main() {
+	Do(nil)
+}
+`
+	files := map[string]string{
+		"go.mod":  "module example.com/me",
+		"main.go": code,
+	}
+
+	dir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	var contIntrinsicCalled bool
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
+		pkg := pkgs[0]
+		eval := New(s, s.Logger, nil, func(path string) bool {
+			return path == pkg.ImportPath
+		})
+
+		// Register an intrinsic for the `cont` function to see if it's called.
+		contKey := fmt.Sprintf("%s.cont", pkg.ImportPath)
+		eval.RegisterIntrinsic(contKey, func(ctx context.Context, args ...object.Object) object.Object {
+			contIntrinsicCalled = true
+			return nil
+		})
+
+		// Evaluate the whole file to populate functions etc.
+		for _, file := range pkg.AstFiles {
+			eval.Eval(ctx, file, nil, pkg)
+		}
+
+		// Get the main function to start evaluation from.
+		pkgEnv, ok := eval.PackageEnvForTest("example.com/me")
+		if !ok {
+			return fmt.Errorf("could not get package env for 'example.com/me'")
+		}
+		mainFuncObj, _ := pkgEnv.Get("main")
+		mainFunc := mainFuncObj.(*object.Function)
+
+		// Apply the main function.
+		result := eval.Apply(ctx, mainFunc, []object.Object{}, pkg)
+		if err, ok := result.(*object.Error); ok {
+			return fmt.Errorf("evaluation failed unexpectedly: %s", err.Error())
+		}
+		return nil
+	}
+
+	// Run the test.
+	if _, err := scantest.Run(t, t.Context(), dir, []string{"."}, action, scantest.WithModuleRoot(dir)); err != nil {
+		t.Fatalf("scantest.Run() failed: %+v", err)
+	}
+
+	if !contIntrinsicCalled {
+		t.Errorf("expected intrinsic for cont() to be called, but it was not")
 	}
 }

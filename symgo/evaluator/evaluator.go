@@ -1301,7 +1301,9 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 				// b. Find the *scanner.FunctionInfo for the method.
 				var methodFuncInfo *scanner.FunctionInfo
 				if staticType.Interface != nil {
-					for _, method := range staticType.Interface.Methods {
+					// Use the helper to get all methods, including embedded ones.
+					allMethods := e.getAllInterfaceMethods(ctx, staticType, make(map[string]struct{}))
+					for _, method := range allMethods {
 						if method.Name == n.Sel.Name {
 							methodFuncInfo = &scanner.FunctionInfo{
 								Name:       method.Name,
@@ -3639,14 +3641,54 @@ func (e *Evaluator) Finalize(ctx context.Context) {
 	}
 }
 
+// getAllInterfaceMethods recursively collects all methods from an interface and its embedded interfaces.
+// It handles cycles by keeping track of visited interface types.
+func (e *Evaluator) getAllInterfaceMethods(ctx context.Context, ifaceType *scanner.TypeInfo, visited map[string]struct{}) []*scanner.MethodInfo {
+	if ifaceType == nil || ifaceType.Interface == nil {
+		return nil
+	}
+
+	// Cycle detection
+	typeName := ifaceType.PkgPath + "." + ifaceType.Name
+	if _, ok := visited[typeName]; ok {
+		return nil
+	}
+	visited[typeName] = struct{}{}
+
+	var allMethods []*scanner.MethodInfo
+	allMethods = append(allMethods, ifaceType.Interface.Methods...)
+
+	for _, embeddedField := range ifaceType.Interface.Embedded {
+		// Resolve the embedded type to get its full definition.
+		// Note: embeddedField.Resolve(ctx) creates a new context, so our visited map won't propagate.
+		// We need to use the resolver directly or pass the context. Let's assume the resolver handles cycles.
+		embeddedTypeInfo, err := embeddedField.Resolve(ctx)
+		if err != nil {
+			e.logc(ctx, slog.LevelWarn, "could not resolve embedded interface", "type", embeddedField.String(), "error", err)
+			continue
+		}
+
+		if embeddedTypeInfo != nil && embeddedTypeInfo.Kind == scanner.InterfaceKind {
+			// Recursively get methods from the embedded interface.
+			embeddedMethods := e.getAllInterfaceMethods(ctx, embeddedTypeInfo, visited)
+			allMethods = append(allMethods, embeddedMethods...)
+		}
+	}
+
+	return allMethods
+}
+
 // isImplementer checks if a given concrete type implements an interface.
 func (e *Evaluator) isImplementer(ctx context.Context, concreteType *scanner.TypeInfo, interfaceType *scanner.TypeInfo) bool {
 	if concreteType == nil || interfaceType == nil || interfaceType.Interface == nil {
 		return false
 	}
 
-	// For every method in the interface...
-	for _, ifaceMethodInfo := range interfaceType.Interface.Methods {
+	// Get all methods from the interface, including from embedded interfaces.
+	allInterfaceMethods := e.getAllInterfaceMethods(ctx, interfaceType, make(map[string]struct{}))
+
+	// For every method in the complete method set...
+	for _, ifaceMethodInfo := range allInterfaceMethods {
 		// ...find a matching method in the concrete type.
 		// A concrete type T can implement an interface method with a *T receiver.
 		// So we need to check both T and *T.

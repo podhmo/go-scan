@@ -327,3 +327,65 @@ func findPkg(pkgs []*goscan.Package, name string) *goscan.Package {
 	}
 	return nil
 }
+
+func TestEval_InterfaceMethodCall_UndefinedButAllowed(t *testing.T) {
+	code := `
+package main
+
+// Runner has a Run method, but not a Stop method.
+type Runner interface {
+	Run()
+}
+
+// Do calls both a defined (Run) and an undefined (Stop) method.
+func Do(r Runner) {
+	r.Run()
+	r.Stop() // This would cause an error without the patch.
+}
+
+func main() {
+	Do(nil)
+}
+`
+	files := map[string]string{
+		"go.mod":  "module example.com/me",
+		"main.go": code,
+	}
+
+	dir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
+		pkg := pkgs[0]
+		// Create an evaluator with a policy that allows scanning the current package.
+		eval := New(s, s.Logger, nil, func(path string) bool {
+			return path == pkg.ImportPath
+		})
+
+		// Evaluate the whole file to populate functions etc.
+		for _, file := range pkg.AstFiles {
+			eval.Eval(ctx, file, nil, pkg)
+		}
+
+		// Get the main function to start evaluation from.
+		pkgEnv, ok := eval.PackageEnvForTest("example.com/me")
+		if !ok {
+			return fmt.Errorf("could not get package env for 'example.com/me'")
+		}
+		mainFuncObj, _ := pkgEnv.Get("main")
+		mainFunc := mainFuncObj.(*object.Function)
+
+		// Apply the main function.
+		result := eval.Apply(ctx, mainFunc, []object.Object{}, pkg)
+		if err, ok := result.(*object.Error); ok {
+			// We expect no evaluation error. The original code would produce one.
+			return fmt.Errorf("evaluation failed unexpectedly: %s", err.Error())
+		}
+		return nil
+	}
+
+	// Run the test.
+	if _, err := scantest.Run(t, t.Context(), dir, []string{"."}, action, scantest.WithModuleRoot(dir)); err != nil {
+		t.Fatalf("scantest.Run() failed: %+v", err)
+	}
+}

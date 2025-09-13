@@ -1316,7 +1316,16 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 				}
 
 				if methodFuncInfo == nil {
-					return e.newError(ctx, n.Pos(), "undefined method %q on interface %q", n.Sel.Name, staticType.Name)
+					// When analyzing code that is known to compile, we may encounter method calls
+					// on interfaces where the method is not in the primary analysis scope.
+					// Instead of erroring, we create a synthetic method definition to allow
+					// analysis to continue symbolically.
+					e.logc(ctx, slog.LevelInfo, "undefined method on interface, creating synthetic method", "interface", staticType.Name, "method", n.Sel.Name)
+					methodFuncInfo = &scanner.FunctionInfo{
+						Name:       n.Sel.Name,
+						Parameters: []*scanner.FieldInfo{}, // Parameters are unknown
+						Results:    []*scanner.FieldInfo{}, // Results are unknown
+					}
 				}
 
 				// c. Return a callable SymbolicPlaceholder.

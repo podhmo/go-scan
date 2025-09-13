@@ -100,3 +100,10 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] **Handle Additional Integer Operators**: The evaluator now recognizes additional integer operators (`%`, `<<`, `>>`, `&`, `|`, `^`) and returns a symbolic placeholder, preventing crashes when analyzing code that uses them.
 - [x] **Fix AST Node Handling**: Added support for `*ast.StarExpr` as an assignment target and handled `*ast.ExprStmt` in type switches, resolving several panics in the `find-orphans` tool.
 - [ ] **DX: Add Timeout Flag to `find-orphans`**: Add a `--timeout` flag to the `find-orphans` CLI for easier debugging.
+
+### `symgo`: Enforce Strict Scan Policy ([docs/plan-symgo-focus.md](./docs/plan-symgo-focus.md))
+- [x] **Design**: Created a design document outlining the strategy to enforce strict scan policy adherence by removing all `WithoutPolicyCheck` calls from the evaluator.
+- [ ] **Implement Step 1 (Package Loading)**: Modify `evaluator.getOrLoadPackage` to use the policy-enforcing `resolver.ResolvePackage` and handle the resulting errors by creating placeholder package objects.
+- [ ] **Implement Step 2 (Evaluator Logic)**: Update `evaluator.evalSelectorExpr` to correctly handle placeholder packages (where `ScannedInfo` is `nil`) by creating symbolic placeholders for unresolved symbols instead of attempting to inspect the package.
+- [ ] **Implement Step 3 (Receiver Type Resolution)**: Modify `resolver.ResolveFunction` to use the policy-enforcing `resolver.ResolveType` when resolving method receiver types.
+- [ ] **Test & Refactor**: Update any tests that break as a result of these changes. Tests should be updated to expect `UnresolvedTypeInfo` or other symbolic placeholders where full type information was previously available for out-of-policy code.

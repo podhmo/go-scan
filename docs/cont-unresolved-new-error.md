@@ -1,32 +1,36 @@
-# Continuation: Fix for Error on `new()` with Unresolved Types
+# Continuation: Fix for Error on Pointer Operations with Unresolved Types
 
 ## Initial Prompt
 
-The user initiated the task to fix an error in the `symgo` symbolic execution engine. The error occurred when the engine tried to dereference a pointer to a type from an out-of-policy (unscanned) package. The error log showed `invalid indirect of <Unresolved Function: strings.Builder> (type *object.UnresolvedFunction)`, indicating that an unresolved type was being incorrectly categorized as a function, leading to a crash.
+The user initiated the task to fix an error in the `symgo` symbolic execution engine. The error occurred when the engine tried to perform a pointer operation (dereference) on a variable whose type was from an out-of-policy (unscanned) package. The error log showed `invalid indirect of <Unresolved Function: strings.Builder> (type *object.UnresolvedFunction)`, indicating that an unresolved type (`strings.Builder`) was being incorrectly categorized as a function, leading to a crash during the pointer operation.
 
 ## Goal
 
-The primary goal is to prevent this error by correctly handling calls to the built-in `new()` function when the argument is a type from a package that has not been scanned. The fix should be robust and align with the symbolic execution engine's architecture.
+The primary goal is to fix a fundamental issue where any out-of-policy type identifier (e.g., `strings.Builder`) is miscategorized as an `*object.UnresolvedFunction`. This leads to an error when any pointer operation (like dereferencing with `*`) is performed on a variable of such a type. The fix should correctly handle these unresolved types across the engine, not just in the context of the `new()` function.
 
 ## Initial Implementation Attempt
 
-My first approach was to modify the `new` intrinsic to return a pointer to a generic `*object.SymbolicPlaceholder`. This placeholder was intended to represent the result of `new()` on an unresolved type. This approach was rejected as it was too specific to the `new` function and did not provide a structure that could be "simply unwrapped" by the rest of the evaluator, as requested by user feedback.
+My first approach was to modify the `new` intrinsic to return a pointer to a generic `*object.SymbolicPlaceholder`. This approach was rejected as it was too specific to the `new` function and did not provide a structure that could be "simply unwrapped" by the rest of the evaluator, as requested by user feedback.
 
 ## Roadblocks & Key Discoveries
 
-The initial approach was flawed because it treated the result of `new(UnresolvedType)` as a special case that the rest of the evaluator would have to handle. The key discovery, prompted by user feedback, was that `new()` should *always* return a standard `*object.Pointer` to a standard `*object.Instance`. The distinction between a resolved and unresolved type should be encapsulated within the `*object.Instance` itself, specifically in its `ResolvedTypeInfo` field. This makes the pointer itself a normal object that the evaluator can handle without special logic, simplifying the overall design.
+My initial focus on the `new()` function was too narrow and missed the core issue. The user correctly pointed out that the problem is more general. The key discovery is that the root cause is in `evalSelectorExpr`. When it encounters a symbol from an unscanned package, it defaults to creating an `*object.UnresolvedFunction`, regardless of whether the symbol is a type, function, or variable. This is incorrect.
 
-This led to the insight that when `evalSelectorExpr` encounters a symbol from an out-of-policy package (e.g., `ext.SomeType`), it should return an object that clearly represents an unresolved symbol but carries enough information (package path and name) for other functions like `new()` to use.
+When a pointer operation (like `*p`) is evaluated via `evalStarExpr`, it receives this `UnresolvedFunction` object where it expects a pointer. This causes the `invalid indirect` error. The problem is not limited to `new()`; it would happen for any pointer to an unresolved type. The engine needs a way to represent an unresolved *type* distinctly from an unresolved *function*.
 
 ## Major Refactoring Effort
 
-Based on these discoveries, the implementation was refactored:
+Based on these discoveries, the planned refactoring should target the core representation of unresolved symbols:
 
-1.  **`symgo/evaluator/evaluator.go`**: The `evalSelectorExpr` function was modified. When it encounters a symbol from an unscanned package, instead of returning a generic placeholder, it now returns an `*object.UnresolvedFunction`. This object retains the package path and the symbol name.
+1.  **Introduce `*object.UnresolvedType`**: A new object type should be created to specifically represent a type from an out-of-policy package. This object would carry the package path and type name.
 
-2.  **`symgo/intrinsics/builtins.go`**: The `BuiltinNew` function was significantly refactored. It now includes a `case` to explicitly handle `*object.UnresolvedFunction`. When it receives one, it uses the package path and name to create a minimal, unresolved `*scanner.TypeInfo` and attaches it to a new `*object.Instance`. It then returns a standard `*object.Pointer` to this new instance.
+2.  **Modify `symgo/evaluator/evaluator.go`**:
+    *   `evalSelectorExpr` should be updated to return this new `*object.UnresolvedType` when it encounters an identifier that appears to be a type within an unscanned package.
+    *   `evalStarExpr` (which handles the `*` operator) must be taught to handle a pointer to an `*object.UnresolvedType`. When it does, it should return a symbolic instance of that unresolved type.
 
-3.  **`symgo/regression_unresolved_new_test.go`**: A new regression test was added to specifically reproduce the original bug by setting a scan policy that excludes a package and then calling `new()` on a type from that package.
+3.  **Modify `symgo/intrinsics/builtins.go`**: The `BuiltinNew` function should be updated to accept `*object.UnresolvedType` as a valid argument, creating an instance and returning a pointer to it.
+
+4.  **`symgo/regression_unresolved_new_test.go`**: The regression test should be updated to not only test `new()` but also a direct pointer dereference on a variable holding an unresolved type, ensuring the fix is general.
 
 ## Current Status
 
@@ -38,6 +42,9 @@ The implementation is nearly complete. The core logic for the fix is in place, a
 
 ## TODO / Next Steps
 
-1.  **Apply the fix to `BuiltinNew`**: The `BuiltinNew` function in `symgo/intrinsics/builtins.go` needs to be modified to correctly handle `*object.UnresolvedFunction`. The `switch` statement should be updated to include a case for this type, which then creates an instance with an unresolved `TypeInfo` and returns a pointer to it.
-2.  **Verify with Tests**: Run the full test suite (`go test -v ./...`) to ensure that the new regression test passes and that no existing tests have been broken.
-3.  **Finalize and Submit**: Once all tests pass, the task is complete and the changes can be submitted.
+1.  **Introduce a new object type**: `*object.UnresolvedType`, to specifically represent types from out-of-policy packages.
+2.  **Modify `evalSelectorExpr`**: In `symgo/evaluator/evaluator.go`, change it to return an `*object.UnresolvedType` for unresolved type symbols.
+3.  **Modify `evalStarExpr`**: In `symgo/evaluator/evaluator.go`, teach it to handle pointers to `*object.UnresolvedType`.
+4.  **Modify `BuiltinNew`**: In `symgo/intrinsics/builtins.go`, teach it to handle `*object.UnresolvedType` as an argument.
+5.  **Verify with Tests**: Run the full test suite (`go test -v ./...`) to ensure the fix is correct and no regressions were introduced.
+6.  **Finalize and Submit**: Once all tests pass, the task is complete and the changes can be submitted.

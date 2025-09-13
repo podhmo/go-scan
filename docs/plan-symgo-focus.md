@@ -110,3 +110,9 @@ The implementation is now correct and aligns with the design goals. The remainin
 1.  **Update Failing Tests:** Modify the assertions in the failing tests. Instead of expecting concrete values from out-of-policy function calls, they should assert that the result is of type `*object.SymbolicPlaceholder` or that the function object is an `*object.UnresolvedFunction`.
 2.  **Update Test Tracers:** Test helpers that act as a `defaultIntrinsic` (like the call tracer in `TestSymgo_WithExtraPackages`) must be updated to recognize and correctly handle `*object.UnresolvedFunction` objects passed to them.
 3.  **Add Coverage:** Add a new test, as described in the initial analysis, to specifically validate that method receivers on out-of-policy types are correctly resolved to placeholders with `UnresolvedTypeInfo`.
+
+## 7. References
+
+*   [docs/plan-symbolic-execution-like.md](./plan-symbolic-execution-like.md)
+*   [docs/analysis-symgo-implementation.md](./analysis-symgo-implementation.md)
+*   [examples/find-orphans/spec.md](./../examples/find-orphans/spec.md)

@@ -1706,16 +1706,50 @@ func (e *Evaluator) evalSwitchStmt(ctx context.Context, n *ast.SwitchStmt, env *
 		}
 	}
 
-	if n.Body != nil {
-		// In this new model, we don't need to merge environments.
-		// We just evaluate all branches in their own scope. The assignment logic
-		// will handle updating the parent interface variable.
-		for _, c := range n.Body.List {
-			if caseClause, ok := c.(*ast.CaseClause); ok {
-				caseEnv := object.NewEnclosedEnvironment(switchEnv)
-				for _, stmt := range caseClause.Body {
-					e.Eval(ctx, stmt, caseEnv, pkg)
+	if n.Body == nil {
+		return &object.SymbolicPlaceholder{Reason: "switch statement"}
+	}
+
+	// Iterate through each case clause as a potential starting point for a new execution path.
+	for i := 0; i < len(n.Body.List); i++ {
+		pathEnv := object.NewEnclosedEnvironment(switchEnv) // Each path gets its own environment to track state.
+
+		// From this starting point `i`, trace the path until a break or the end of a case without fallthrough.
+	pathLoop:
+		for j := i; j < len(n.Body.List); j++ {
+			caseClause, ok := n.Body.List[j].(*ast.CaseClause)
+			if !ok {
+				continue
+			}
+
+			// Evaluate case expressions to trace calls for their side-effects.
+			for _, expr := range caseClause.List {
+				if res := e.Eval(ctx, expr, pathEnv, pkg); isError(res) {
+					return res // Propagate errors from case expressions.
 				}
+			}
+
+			hasFallthrough := false
+			for _, stmt := range caseClause.Body {
+				result := e.Eval(ctx, stmt, pathEnv, pkg)
+
+				if result != nil {
+					switch result.Type() {
+					case object.FALLTHROUGH_OBJ:
+						hasFallthrough = true
+						break // Exit statement loop, continue to next case
+					case object.BREAK_OBJ:
+						break pathLoop // This path is terminated by break.
+					case object.RETURN_VALUE_OBJ, object.ERROR_OBJ, object.CONTINUE_OBJ:
+						// Propagate these control flow changes immediately, terminating the whole switch evaluation.
+						// This is a simplification but consistent with if-stmt handling.
+						return result
+					}
+				}
+			}
+
+			if !hasFallthrough {
+				break // End of this path. Start a new path from the next case.
 			}
 		}
 	}
@@ -2040,6 +2074,8 @@ func (e *Evaluator) evalBranchStmt(ctx context.Context, n *ast.BranchStmt) objec
 		return &object.Break{Label: label}
 	case token.CONTINUE:
 		return &object.Continue{Label: label}
+	case token.FALLTHROUGH:
+		return object.FALLTHROUGH
 	default:
 		return e.newError(ctx, n.Pos(), "unsupported branch statement: %s", n.Tok)
 	}

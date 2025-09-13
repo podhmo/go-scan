@@ -2960,9 +2960,9 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 			}
 			// Check if we are calling the same function definition.
 			if f.Receiver != nil {
-				// For methods, check if the receiver expression's source position is the same.
-				// This correctly detects recursion on different object instances from the same code location.
-				if frame.Fn.Receiver != nil && frame.ReceiverPos.IsValid() && frame.ReceiverPos == f.ReceiverPos {
+				// For methods, check if it's the same receiver *object*.
+				// This correctly detects recursion on the same instance.
+				if frame.Fn.Receiver == f.Receiver {
 					recursionCount++
 				}
 			} else {

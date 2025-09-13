@@ -2958,17 +2958,10 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 			if frame.Fn == nil || frame.Fn.Def != f.Def {
 				continue
 			}
-			// Check if we are calling the same function definition.
-			if f.Receiver != nil {
-				// For methods, check if it's the same receiver *object*.
-				// This correctly detects recursion on the same instance.
-				if frame.Fn.Receiver == f.Receiver {
-					recursionCount++
-				}
-			} else {
-				// For plain functions, any recursive call is counted.
-				recursionCount++
-			}
+			// If we reach here, it means frame.Fn.Def == f.Def.
+			// This is a recursive call, regardless of whether it's a method or a plain function.
+			// This aligns with the goal of tracking recursion at the definition level, not the instance level.
+			recursionCount++
 		}
 
 		// Allow one level of recursion, but stop at the second call.

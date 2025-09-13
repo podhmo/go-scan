@@ -8,11 +8,11 @@ The `symgo` symbolic execution engine is designed to trace Go code to build call
 
 However, a bug was discovered where a direct recursive method call (e.g., a method `Recurse` on a struct `S` that calls itself on the same receiver `s.Recurse()`) was not being detected. This caused the evaluator to loop indefinitely until the program either crashed or was terminated by a timeout.
 
-This contradicted the design outlined in `docs/analysis-symgo-implementation.md`, which stated that recursion detection should be state-aware and handle method calls correctly.
+This contradicted the design outlined in `docs/analysis-symgo-implementation.md`, which stated that recursion detection should be robust.
 
 ## 2. Root Cause Analysis
 
-The root cause was traced to the recursion detection logic in `symgo/evaluator/evaluator.go`, specifically within the `applyFunction` method. The logic for detecting a recursive method call was implemented as follows:
+The root cause was an incorrect assumption in the recursion detection logic within `symgo/evaluator/evaluator.go`, inside the `applyFunction` method. The logic attempted to distinguish between plain functions and methods, applying a different check for methods.
 
 ```go
 // Previous (buggy) logic
@@ -21,46 +21,39 @@ if f.Receiver != nil {
     if frame.Fn.Receiver != nil && frame.ReceiverPos.IsValid() && frame.ReceiverPos == f.ReceiverPos {
         recursionCount++
     }
+} else {
+    // For plain functions...
+    recursionCount++
 }
 ```
 
-This code attempted to detect recursion by comparing the source code position of the method call's receiver (`f.ReceiverPos`) with the receiver position of a previous call on the call stack (`frame.ReceiverPos`).
+The check for methods compared the source code position of the method call's receiver (`f.ReceiverPos`). This is flawed because in a typical recursive call like `s.Recurse()`, the call site within the method is at a different source position than the initial call site, so their positions would never match.
 
-This approach is flawed for typical recursion. In a function like:
-
-```go
-func (s *S) Recurse() {
-    // ...
-    s.Recurse() // The recursive call is at a different source position.
-}
-```
-
-The initial call to `s.Recurse()` and the recursive call occur at different lines of code. Therefore, their `ReceiverPos` values will never be equal, and the `recursionCount` will never increment. The check fails to detect the recursion.
-
-The intended behavior, as described in the documentation, was to check if the call was on the **same receiver object**. The information to do this was available, but the check was implemented incorrectly.
+The core misunderstanding was thinking that instance-level tracking (e.g., comparing receiver objects or positions) was necessary. The design of `symgo` is to trace the call graph at the **type definition level**. For recursion detection, it doesn't matter if `s1.Method()` calls `s1.Method()` or if `s1.Method()` calls `s2.Method()`; if `s1` and `s2` are the same type, it is a recursion on the method *definition*.
 
 ## 3. The Fix
 
-The fix was to change the comparison from the receiver's source position to a direct comparison of the receiver objects themselves. The `object.Function` struct already stores a reference to the receiver object (`Receiver`).
+The fix was to simplify and unify the recursion detection logic. The check now relies on the canonical `*scanner.FunctionInfo` object (stored in `f.Def`) which uniquely represents a function or method definition.
+
+The special `if f.Receiver != nil` block was removed entirely. The logic now correctly checks if the `FunctionInfo` definition from the current call frame (`f.Def`) has been seen before in a previous frame on the call stack.
 
 The corrected logic is:
 
 ```go
-// Corrected logic
-if f.Receiver != nil {
-    // For methods, check if it's the same receiver *object*.
-    // This correctly detects recursion on the same instance.
-    if frame.Fn.Receiver == f.Receiver {
-        recursionCount++
-    }
+// Corrected logic in applyFunction's loop over the call stack
+if frame.Fn == nil || frame.Fn.Def != f.Def {
+    continue
 }
+// If we reach here, it means frame.Fn.Def == f.Def.
+// This is a recursive call, regardless of whether it's a method or a plain function.
+recursionCount++
 ```
 
-By comparing `frame.Fn.Receiver == f.Receiver`, we are checking if the pointer to the receiver object in the current call frame is the same as the pointer to the receiver object in a previous call frame on the stack. This correctly identifies that the method is being called on the exact same instance and allows the bounded recursion to trigger as designed.
+This correctly identifies when the same function/method *definition* appears again on the call stack and allows the bounded recursion to trigger as designed, aligning with `symgo`'s purpose as a type-level symbolic tracer.
 
 ## 4. Verification
 
-A new test case, `TestRecursiveMethodCallNotCached`, was added to `symgo/evaluator/evaluator_test.go`. This test defines a simple recursive method and uses a test intrinsic to count the number of times it is symbolically executed.
+A new regression test, `TestRecursiveMethodCallNotCached`, was added to `symgo/evaluator/evaluator_test.go`. This test defines a simple recursive method and uses a test intrinsic to count the number of times it is symbolically executed.
 
--   **Before the fix**: The test would time out, as the evaluator entered an infinite loop.
+-   **Before the fix**: The evaluator would enter an infinite loop, causing the test to time out.
 -   **After the fix**: The test passes. The recursion is correctly bounded, and the method is called exactly twice (the initial call, and one level of recursion) before the analysis for that path is halted. All other existing tests continued to pass, confirming that the fix did not introduce any regressions.

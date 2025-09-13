@@ -1,7 +1,6 @@
 package symgo_test
 
 import (
-	"context"
 	"testing"
 
 	goscan "github.com/podhmo/go-scan"
@@ -11,7 +10,7 @@ import (
 )
 
 func TestIntraPackage_UnexportedConstant(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	tmpdir, cleanup := scantest.WriteFiles(t, map[string]string{
 		"go.mod": "module myapp",
 		"main.go": `
@@ -49,7 +48,7 @@ func GetValue() string {
 	}
 
 	// 4. Find the target function.
-	fnObj, ok := interp.FindObjectInPackage("myapp", "GetValue")
+	fnObj, ok := interp.FindObjectInPackage(ctx, "myapp", "GetValue")
 	if !ok {
 		t.Fatal("GetValue function not found in interpreter environment")
 	}

@@ -188,7 +188,7 @@ func matches(pattern, path string) bool {
 // specific concrete type during analysis.
 // The interface name is the fully qualified name (e.g., "io.Writer").
 // The concrete type name can be a pointer or non-pointer type name (e.g., "*bytes.Buffer").
-func (i *Interpreter) BindInterface(ifaceTypeName string, concreteTypeName string) error {
+func (i *Interpreter) BindInterface(ctx context.Context, ifaceTypeName string, concreteTypeName string) error {
 	isPointer := strings.HasPrefix(concreteTypeName, "*")
 	if isPointer {
 		concreteTypeName = strings.TrimPrefix(concreteTypeName, "*")
@@ -199,7 +199,7 @@ func (i *Interpreter) BindInterface(ifaceTypeName string, concreteTypeName strin
 		return fmt.Errorf("concrete type name must be fully qualified (e.g., 'bytes.Buffer'), got %s", concreteTypeName)
 	}
 
-	pkg, err := i.scanner.ScanPackageByImport(context.Background(), pkgPath)
+	pkg, err := i.scanner.ScanPackageByImport(ctx, pkgPath)
 	if err != nil {
 		return fmt.Errorf("could not scan package %q for concrete type: %w", pkgPath, err)
 	}
@@ -223,13 +223,13 @@ func (i *Interpreter) BindInterface(ifaceTypeName string, concreteTypeName strin
 
 // NewSymbolic creates a new symbolic variable with a given type.
 // This is a helper for setting up analysis entrypoints.
-func (i *Interpreter) NewSymbolic(name string, typeName string) (Object, error) {
+func (i *Interpreter) NewSymbolic(ctx context.Context, name string, typeName string) (Object, error) {
 	pkgPath, simpleTypeName := splitQualifiedName(typeName)
 	if pkgPath == "" {
 		return nil, fmt.Errorf("type name must be fully qualified (e.g., 'io.Writer'), got %s", typeName)
 	}
 
-	pkg, err := i.scanner.ScanPackageByImport(context.Background(), pkgPath)
+	pkg, err := i.scanner.ScanPackageByImport(ctx, pkgPath)
 	if err != nil {
 		return nil, fmt.Errorf("could not scan package %q for symbolic var type: %w", pkgPath, err)
 	}
@@ -370,8 +370,8 @@ func (i *Interpreter) GlobalEnvForTest() *object.Environment {
 }
 
 // ApplyFunction is a test helper to expose the evaluator's ApplyFunction method.
-func (i *Interpreter) ApplyFunction(call *ast.CallExpr, fn object.Object, args []object.Object, fscope *evaluator.FileScope) object.Object {
-	return i.eval.ApplyFunction(call, fn, args, fscope)
+func (i *Interpreter) ApplyFunction(ctx context.Context, call *ast.CallExpr, fn object.Object, args []object.Object, fscope *evaluator.FileScope) object.Object {
+	return i.eval.ApplyFunction(ctx, call, fn, args, fscope)
 }
 
 // EvaluatorForTest returns the evaluator for testing.
@@ -429,8 +429,8 @@ func (i *Interpreter) FindObject(name string) (Object, bool) {
 // FindObjectInPackage looks up an object in a specific package's environment.
 // This is primarily a test helper to bypass the global environment and check
 // the state of a single package.
-func (i *Interpreter) FindObjectInPackage(pkgPath string, name string) (Object, bool) {
-	pkgObj, err := i.eval.GetOrLoadPackageForTest(context.Background(), pkgPath)
+func (i *Interpreter) FindObjectInPackage(ctx context.Context, pkgPath string, name string) (Object, bool) {
+	pkgObj, err := i.eval.GetOrLoadPackageForTest(ctx, pkgPath)
 	if err != nil {
 		return nil, false
 	}

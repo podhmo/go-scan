@@ -39,12 +39,12 @@ func main() {
 		if file == nil {
 			t.Fatalf("could not find ast file in package")
 		}
-		if _, err := interp.Eval(context.Background(), file, mainPkg); err != nil {
+		if _, err := interp.Eval(ctx, file, mainPkg); err != nil {
 			t.Fatalf("Eval(file) failed: %+v", err)
 		}
 
 		// Find and apply the main function
-		mainObj, ok := interp.FindObjectInPackage("example.com/me/myapp", "main")
+		mainObj, ok := interp.FindObjectInPackage(ctx, "example.com/me/myapp", "main")
 		if !ok {
 			t.Fatalf("could not find main function in interpreter")
 		}
@@ -53,14 +53,14 @@ func main() {
 			t.Fatalf("main is not a function, but %T", mainObj)
 		}
 
-		_, err = interp.Apply(context.Background(), mainFn, []symgo.Object{}, mainPkg)
+		_, err = interp.Apply(ctx, mainFn, []symgo.Object{}, mainPkg)
 		if err != nil {
 			t.Errorf("Apply(main) should not have failed, but got: %+v", err)
 		}
 		return nil
 	}
 
-	_, err := scantest.Run(t, context.Background(), dir, []string{"."}, action)
+	_, err := scantest.Run(t, t.Context(), dir, []string{"."}, action)
 	if err != nil {
 		t.Fatalf("scantest.Run() failed: %v", err)
 	}

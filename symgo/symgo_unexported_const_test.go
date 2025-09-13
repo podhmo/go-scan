@@ -1,7 +1,6 @@
 package symgo_test
 
 import (
-	"context"
 	"path/filepath"
 	"testing"
 
@@ -12,7 +11,7 @@ import (
 )
 
 func TestSymgo_UnexportedConstantResolution(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Setup: Create a temporary directory with two modules.
 	// main module depends on helper module.
@@ -74,7 +73,7 @@ func GetUnexportedConstant() string {
 	}
 
 	// 5. Find the target function in the environment.
-	callHelperObj, ok := interp.FindObjectInPackage("example.com/main", "CallHelper")
+	callHelperObj, ok := interp.FindObjectInPackage(ctx, "example.com/main", "CallHelper")
 	if !ok {
 		t.Fatal("CallHelper function not found in interpreter environment")
 	}
@@ -107,7 +106,7 @@ func GetUnexportedConstant() string {
 }
 
 func TestSymgo_IntraPackageConstantResolution(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	tmpdir, cleanup := scantest.WriteFiles(t, map[string]string{
 		"go.mod": "module example.com/main\ngo 1.21\n",
 		"main.go": `
@@ -151,7 +150,7 @@ func main() {
 		t.Fatalf("Eval main file failed: %v", err)
 	}
 
-	mainFuncObj, ok := interp.FindObjectInPackage("example.com/main", "main")
+	mainFuncObj, ok := interp.FindObjectInPackage(ctx, "example.com/main", "main")
 	if !ok {
 		t.Fatal("main function not found in interpreter environment")
 	}
@@ -170,7 +169,7 @@ func main() {
 
 // Test case for nested function call
 func TestSymgo_UnexportedConstantResolution_NestedCall(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	tmpdir, cleanup := scantest.WriteFiles(t, map[string]string{
 		"loglib/go.mod": `
 module example.com/loglib
@@ -217,7 +216,7 @@ func FuncB() string {
 	if _, err := interp.Eval(ctx, loglibFile, loglibPkg); err != nil {
 		t.Fatalf("Eval loglib file failed: %v", err)
 	}
-	entrypointObj, ok := interp.FindObjectInPackage("example.com/loglib", "FuncA")
+	entrypointObj, ok := interp.FindObjectInPackage(ctx, "example.com/loglib", "FuncA")
 	if !ok {
 		t.Fatal("FuncA function not found in interpreter environment")
 	}
@@ -245,7 +244,7 @@ func FuncB() string {
 
 // Test case for nested method call
 func TestSymgo_UnexportedConstantResolution_NestedMethodCall(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	tmpdir, cleanup := scantest.WriteFiles(t, map[string]string{
 		"main/go.mod": `
 module example.com/main
@@ -294,7 +293,7 @@ func (c *Client) GetValue() string {
 	if _, err := interp.Eval(ctx, mainFile, mainPkg); err != nil {
 		t.Fatalf("Eval main file failed: %v", err)
 	}
-	entrypointObj, ok := interp.FindObjectInPackage("example.com/main", "DoWork")
+	entrypointObj, ok := interp.FindObjectInPackage(ctx, "example.com/main", "DoWork")
 	if !ok {
 		t.Fatal("DoWork function not found in interpreter environment")
 	}

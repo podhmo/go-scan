@@ -88,7 +88,7 @@ func main() {
 			}
 
 			// Then, find the main function and Apply it.
-			mainFn, ok := interp.FindObjectInPackage("myapp", "main")
+			mainFn, ok := interp.FindObjectInPackage(ctx, "myapp", "main")
 			if !ok {
 				return fmt.Errorf("main function not found")
 			}
@@ -235,7 +235,7 @@ func main() {
 				}
 
 				// Then, find the main function and Apply it.
-				mainFnObj, ok := interp.FindObjectInPackage("myapp", "main")
+				mainFnObj, ok := interp.FindObjectInPackage(ctx, "myapp", "main")
 				if !ok {
 					return fmt.Errorf("main function not found")
 				}
@@ -395,7 +395,7 @@ func main() {
 		}
 
 		// Execute main.
-		mainFunc, ok := interp.FindObjectInPackage("example.com/recursion", "main")
+		mainFunc, ok := interp.FindObjectInPackage(ctx, "example.com/recursion", "main")
 		if !ok {
 			return fmt.Errorf("main function not found")
 		}
@@ -410,7 +410,7 @@ func main() {
 	}
 
 	// 3. Use scantest.Run to drive the test.
-	if _, err := scantest.Run(t, context.Background(), dir, []string{"."}, action); err != nil {
+	if _, err := scantest.Run(t, t.Context(), dir, []string{"."}, action); err != nil {
 		t.Fatalf("scantest.Run() failed: %v", err)
 	}
 }

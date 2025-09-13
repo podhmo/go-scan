@@ -21,6 +21,7 @@ type Analyzer struct {
 	tracer         symgo.Tracer // Optional tracer
 	operationStack []*openapi.Operation
 	customPatterns []patterns.Pattern
+	ctx            context.Context // Add a context field to the analyzer
 }
 
 // Option is a functional option for configuring the Analyzer.
@@ -131,6 +132,7 @@ func (a *Analyzer) analyzeTopLevelHandleFunc(interp *symgo.Interpreter, args []s
 
 // Analyze analyzes the package starting from a specific entrypoint function.
 func (a *Analyzer) Analyze(ctx context.Context, importPath string, entrypoint string) error {
+	a.ctx = ctx // Set the context for the analyzer
 	pkg, err := a.Scanner.ScanPackageByImport(ctx, importPath)
 	if err != nil {
 		return fmt.Errorf("failed to load sample API package: %w", err)
@@ -163,7 +165,7 @@ func (a *Analyzer) Analyze(ctx context.Context, importPath string, entrypoint st
 	}
 
 	// Get the function object from the environment.
-	entrypointObj, ok := a.interpreter.FindObjectInPackage(importPath, entrypoint)
+	entrypointObj, ok := a.interpreter.FindObjectInPackage(ctx, importPath, entrypoint)
 	if !ok {
 		return fmt.Errorf("entrypoint function %q not found in interpreter environment", entrypoint)
 	}
@@ -234,7 +236,7 @@ func (a *Analyzer) analyzeHandle(interp *symgo.Interpreter, args []symgo.Object)
 	handlerFunc := a.unwrapHandler(args[2])
 	if handlerFunc == nil {
 		// Return nil instead of error, as some handlers might be intentionally opaque.
-		a.logger.DebugContext(context.Background(), "could not unwrap handler", "arg", args[2].Inspect())
+		a.logger.DebugContext(a.ctx, "could not unwrap handler", "arg", args[2].Inspect())
 		return nil
 	}
 
@@ -357,7 +359,7 @@ func (a *Analyzer) analyzeHandlerBody(handler *symgo.Function, op *openapi.Opera
 	// Push the current operation onto the stack for the duration of this analysis.
 	a.operationStack = append(a.operationStack, op)
 
-	pkg, err := a.Scanner.ScanPackageByPos(context.Background(), handler.Decl.Pos())
+	pkg, err := a.Scanner.ScanPackageByPos(a.ctx, handler.Decl.Pos())
 	if err != nil {
 		fmt.Printf("warn: failed to get package for handler %q: %v\n", handler.Name.Name, err)
 		return op // Return original op on error
@@ -379,8 +381,8 @@ func (a *Analyzer) analyzeHandlerBody(handler *symgo.Function, op *openapi.Opera
 		importLookup := a.Scanner.BuildImportLookup(astFile)
 
 		for _, field := range handler.Decl.Type.Params.List {
-			fieldType := a.Scanner.TypeInfoFromExpr(context.Background(), field.Type, nil, pkg, importLookup)
-			typeInfo, _ := fieldType.Resolve(context.Background())
+			fieldType := a.Scanner.TypeInfoFromExpr(a.ctx, field.Type, nil, pkg, importLookup)
+			typeInfo, _ := fieldType.Resolve(a.ctx)
 
 			// For each parameter name (can be multiple like w1, w2 http.ResponseWriter), create a variable.
 			for _, name := range field.Names {
@@ -398,7 +400,7 @@ func (a *Analyzer) analyzeHandlerBody(handler *symgo.Function, op *openapi.Opera
 
 	// Bind the http.ResponseWriter interface to a concrete type for analysis.
 	// This allows us to track calls to methods like WriteHeader and Write.
-	if err := a.interpreter.BindInterface("net/http.ResponseWriter", "*net/http/httptest.ResponseRecorder"); err != nil {
+	if err := a.interpreter.BindInterface(a.ctx, "net/http.ResponseWriter", "*net/http/httptest.ResponseRecorder"); err != nil {
 		// This binding is critical, so we log a warning if it fails.
 		a.logger.Warn("failed to bind ResponseWriter interface, response analysis will be incomplete", "error", err)
 	}
@@ -409,7 +411,7 @@ func (a *Analyzer) analyzeHandlerBody(handler *symgo.Function, op *openapi.Opera
 	defer a.interpreter.PopIntrinsics() // Ensure we clean up the scope.
 
 	// Call the handler function with the created symbolic arguments.
-	a.interpreter.Apply(context.Background(), handler, handlerArgs, pkg)
+	a.interpreter.Apply(a.ctx, handler, handlerArgs, pkg)
 
 	// After Apply, the operation on the top of the stack is the one that has been modified.
 	// We retrieve it before the defer pops it.

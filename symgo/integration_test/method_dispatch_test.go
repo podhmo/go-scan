@@ -82,7 +82,7 @@ func main() {
 				if err != nil {
 					t.Fatalf("Eval package failed: %v", err)
 				}
-				mainFuncObj, ok := interp.FindObjectInPackage("example.com/hello", "main")
+				mainFuncObj, ok := interp.FindObjectInPackage(ctx, "example.com/hello", "main")
 				if !ok {
 					t.Fatal("could not find main function object")
 				}
@@ -102,7 +102,7 @@ func main() {
 		return err
 	}
 
-	_, err := scantest.Run(t, context.Background(), dir, []string{"."}, action)
+	_, err := scantest.Run(t, t.Context(), dir, []string{"."}, action)
 	if err != nil {
 		t.Fatalf("scantest.Run failed: %v", err)
 	}

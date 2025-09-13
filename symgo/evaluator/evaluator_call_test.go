@@ -711,7 +711,7 @@ func main() {
 		}
 
 		// The resolver creates a placeholder because the helper package is out of policy.
-		fnPlaceholder := eval.resolver.ResolveFunction(&object.Package{
+		fnPlaceholder := eval.resolver.ResolveFunction(ctx, &object.Package{
 			Path:        helperPkg.ImportPath,
 			ScannedInfo: helperPkg,
 		}, getPairFunc)

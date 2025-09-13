@@ -49,7 +49,7 @@ func main() {
 				interp.Eval(ctx, f, pkg)
 			}
 
-			mainFn, ok := interp.FindObjectInPackage("example.com/me", "main")
+			mainFn, ok := interp.FindObjectInPackage(ctx, "example.com/me", "main")
 			if !ok {
 				return fmt.Errorf("could not find main function")
 			}
@@ -66,7 +66,7 @@ func main() {
 			return nil
 		}
 
-		if _, err := scantest.Run(t, context.Background(), dir, []string{"."}, action); err != nil {
+		if _, err := scantest.Run(t, t.Context(), dir, []string{"."}, action); err != nil {
 			t.Fatalf("scantest.Run() failed: %v", err)
 		}
 

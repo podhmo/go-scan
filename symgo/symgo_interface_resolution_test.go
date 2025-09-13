@@ -1,7 +1,6 @@
 package symgo
 
 import (
-	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -108,7 +107,7 @@ func TestInterfaceResolution(t *testing.T) {
 				return nil
 			})
 
-			ctx := context.Background()
+			ctx := t.Context()
 			for _, pkgPath := range p {
 				if _, err := s.ScanPackageByImport(ctx, pkgPath); err != nil {
 					t.Fatalf("could not scan package %s: %v", pkgPath, err)
@@ -123,7 +122,7 @@ func TestInterfaceResolution(t *testing.T) {
 				t.Fatalf("evaluation of main pkg failed: %v", err)
 			}
 
-			mainFunc, ok := interp.FindObjectInPackage("example.com/me", "main")
+			mainFunc, ok := interp.FindObjectInPackage(ctx, "example.com/me", "main")
 			if !ok {
 				t.Fatalf("could not find main function in interpreter")
 			}
@@ -237,7 +236,7 @@ func TestInterfaceResolutionWithPointerReceiver(t *testing.T) {
 				return nil
 			})
 
-			ctx := context.Background()
+			ctx := t.Context()
 			for _, pkgPath := range p {
 				if _, err := s.ScanPackageByImport(ctx, pkgPath); err != nil {
 					t.Fatalf("could not scan package %s: %v", pkgPath, err)
@@ -253,7 +252,7 @@ func TestInterfaceResolutionWithPointerReceiver(t *testing.T) {
 				t.Fatalf("evaluation of main pkg failed: %v", err)
 			}
 
-			mainFunc, ok := interp.FindObjectInPackage("example.com/me", "main")
+			mainFunc, ok := interp.FindObjectInPackage(ctx, "example.com/me", "main")
 			if !ok {
 				t.Fatalf("could not find main function in interpreter")
 			}
@@ -367,7 +366,7 @@ func TestInterfaceResolutionWithValueReceiver(t *testing.T) {
 				return nil
 			})
 
-			ctx := context.Background()
+			ctx := t.Context()
 			for _, pkgPath := range p {
 				if _, err := s.ScanPackageByImport(ctx, pkgPath); err != nil {
 					t.Fatalf("could not scan package %s: %v", pkgPath, err)
@@ -383,7 +382,7 @@ func TestInterfaceResolutionWithValueReceiver(t *testing.T) {
 				t.Fatalf("evaluation of main pkg failed: %v", err)
 			}
 
-			mainFunc, ok := interp.FindObjectInPackage("example.com/me", "main")
+			mainFunc, ok := interp.FindObjectInPackage(ctx, "example.com/me", "main")
 			if !ok {
 				t.Fatalf("could not find main function in interpreter")
 			}

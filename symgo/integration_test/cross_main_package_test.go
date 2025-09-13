@@ -1,7 +1,6 @@
 package integration_test
 
 import (
-	"context"
 	"log/slog"
 	"os"
 	"testing"
@@ -56,7 +55,7 @@ func run() {
 	})
 	defer cleanup()
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Manually create the scanner, pointing its working directory to the temporary
 	// workspace root. This will make it discover the go.work file.
@@ -108,7 +107,7 @@ func run() {
 		}
 	}
 
-	mainFuncObj, ok := interp.FindObjectInPackage("example.com/workspace/pkg_b", "main")
+	mainFuncObj, ok := interp.FindObjectInPackage(ctx, "example.com/workspace/pkg_b", "main")
 	if !ok {
 		t.Fatalf("could not find main function in pkg_b")
 	}

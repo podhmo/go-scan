@@ -1,7 +1,6 @@
 package evaluator
 
 import (
-	"context"
 	"go/token"
 	"testing"
 
@@ -28,7 +27,8 @@ func TestEvalIntegerInfixExpression_Placeholders(t *testing.T) {
 			// For this specific unit test, we don't need a fully configured evaluator.
 			e := New(nil, nil, nil, func(s string) bool { return false })
 
-			result := e.evalIntegerInfixExpression(context.Background(), token.NoPos, tt.op, left, right)
+			ctx := t.Context()
+			result := e.evalIntegerInfixExpression(ctx, token.NoPos, tt.op, left, right)
 
 			placeholder, ok := result.(*object.SymbolicPlaceholder)
 			if !ok {

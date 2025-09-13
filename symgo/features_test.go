@@ -51,7 +51,7 @@ func main() {
 			}
 		}
 
-		mainFuncObj, ok := interp.FindObjectInPackage("example.com/me", "main")
+		mainFuncObj, ok := interp.FindObjectInPackage(ctx, "example.com/me", "main")
 		if !ok {
 			return fmt.Errorf("main function not found")
 		}
@@ -80,7 +80,7 @@ func main() {
 		return nil
 	}
 
-	if _, err := scantest.Run(t, context.Background(), dir, []string{"."}, action); err != nil {
+	if _, err := scantest.Run(t, t.Context(), dir, []string{"."}, action); err != nil {
 		t.Fatalf("scantest.Run() failed: %v", err)
 	}
 }
@@ -117,7 +117,7 @@ func main() {
 			}
 		}
 
-		getCharFn, ok := interp.FindObjectInPackage("example.com/me", "getChar")
+		getCharFn, ok := interp.FindObjectInPackage(ctx, "example.com/me", "getChar")
 		if !ok {
 			return fmt.Errorf("getChar function not found")
 		}
@@ -136,7 +136,7 @@ func main() {
 		return nil
 	}
 
-	if _, err := scantest.Run(t, context.Background(), dir, []string{"."}, action); err != nil {
+	if _, err := scantest.Run(t, t.Context(), dir, []string{"."}, action); err != nil {
 		t.Fatalf("scantest.Run() failed: %v", err)
 	}
 
@@ -234,7 +234,7 @@ func usedByReturnedFunc() {}
 		}
 
 		// Find the main function object in the main package's environment.
-		mainFuncObj, ok := interp.FindObjectInPackage(mainPkg.ImportPath, "main")
+		mainFuncObj, ok := interp.FindObjectInPackage(ctx, mainPkg.ImportPath, "main")
 		if !ok {
 			return fmt.Errorf("main function not found")
 		}
@@ -253,7 +253,7 @@ func usedByReturnedFunc() {}
 		return nil
 	}
 
-	if _, err := scantest.Run(t, context.Background(), dir, []string{"./..."}, action); err != nil {
+	if _, err := scantest.Run(t, t.Context(), dir, []string{"./..."}, action); err != nil {
 		t.Fatalf("scantest.Run() failed: %v", err)
 	}
 }
@@ -285,7 +285,7 @@ func main() {
 			}
 		}
 
-		mainFuncObj, ok := interp.FindObjectInPackage("example.com/me", "main")
+		mainFuncObj, ok := interp.FindObjectInPackage(ctx, "example.com/me", "main")
 		if !ok {
 			return fmt.Errorf("main function not found")
 		}
@@ -302,7 +302,7 @@ func main() {
 		return nil
 	}
 
-	if _, err := scantest.Run(t, context.Background(), dir, []string{"."}, action); err != nil {
+	if _, err := scantest.Run(t, t.Context(), dir, []string{"."}, action); err != nil {
 		t.Fatalf("scantest.Run() failed: %v", err)
 	}
 }
@@ -341,7 +341,7 @@ func main() {
 		}
 
 		// First, test that calling the function directly returns a MultiReturn
-		twoReturnsFn, ok := interp.FindObjectInPackage("example.com/me", "twoReturns")
+		twoReturnsFn, ok := interp.FindObjectInPackage(ctx, "example.com/me", "twoReturns")
 		if !ok {
 			return fmt.Errorf("twoReturns function not found")
 		}
@@ -364,7 +364,7 @@ func main() {
 		}
 
 		// Now, test the assignment by running main
-		mainFuncObj, ok := interp.FindObjectInPackage("example.com/me", "main")
+		mainFuncObj, ok := interp.FindObjectInPackage(ctx, "example.com/me", "main")
 		if !ok {
 			return fmt.Errorf("main function not found")
 		}
@@ -378,7 +378,7 @@ func main() {
 		return nil
 	}
 
-	if _, err := scantest.Run(t, context.Background(), dir, []string{"."}, action); err != nil {
+	if _, err := scantest.Run(t, t.Context(), dir, []string{"."}, action); err != nil {
 		t.Fatalf("scantest.Run() failed: %v", err)
 	}
 }
@@ -423,7 +423,7 @@ func main() {
 			}
 		}
 
-		mainFuncObj, ok := interp.FindObjectInPackage("example.com/me", "main")
+		mainFuncObj, ok := interp.FindObjectInPackage(ctx, "example.com/me", "main")
 		if !ok {
 			return fmt.Errorf("main function not found")
 		}
@@ -443,7 +443,7 @@ func main() {
 		return nil
 	}
 
-	if _, err := scantest.Run(t, context.Background(), dir, []string{"."}, action); err != nil {
+	if _, err := scantest.Run(t, t.Context(), dir, []string{"."}, action); err != nil {
 		t.Fatalf("scantest.Run() failed: %v", err)
 	}
 }
@@ -476,7 +476,7 @@ func run() string {
 			}
 		}
 
-		runFuncObj, ok := interp.FindObjectInPackage("example.com/me", "run")
+		runFuncObj, ok := interp.FindObjectInPackage(ctx, "example.com/me", "run")
 		if !ok {
 			return fmt.Errorf("run function not found")
 		}
@@ -507,7 +507,7 @@ func run() string {
 		return nil
 	}
 
-	if _, err := scantest.Run(t, context.Background(), dir, []string{"."}, action); err != nil {
+	if _, err := scantest.Run(t, t.Context(), dir, []string{"."}, action); err != nil {
 		t.Fatalf("scantest.Run() failed: %v", err)
 	}
 }

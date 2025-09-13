@@ -94,5 +94,5 @@ func UseIt(l *locator.Locator) {
 		return nil
 	}
 
-	scantest.Run(t, context.Background(), dir, nil, action)
+	scantest.Run(t, t.Context(), dir, nil, action)
 }

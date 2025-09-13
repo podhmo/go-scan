@@ -81,7 +81,7 @@ func main() {
 		}
 
 		// Now, find and run the init function.
-		initFuncObj, ok := interp.FindObjectInPackage("example.com/hello", "init")
+		initFuncObj, ok := interp.FindObjectInPackage(ctx, "example.com/hello", "init")
 		if !ok {
 			t.Fatal("could not find init function object")
 		}
@@ -98,7 +98,7 @@ func main() {
 		return nil
 	}
 
-	_, err := scantest.Run(t, context.Background(), dir, []string{"."}, action)
+	_, err := scantest.Run(t, t.Context(), dir, []string{"."}, action)
 	if err != nil {
 		t.Fatalf("scantest.Run failed: %v", err)
 	}

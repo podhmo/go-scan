@@ -1,7 +1,6 @@
 package symgo_test
 
 import (
-	"context"
 	"go/ast"
 	"go/parser"
 	"path/filepath"
@@ -88,7 +87,7 @@ func main() {
 		t.Fatalf("goscan.New() failed: %+v", err)
 	}
 
-	pkgs, err := s.Scan(context.Background(), ".")
+	pkgs, err := s.Scan(t.Context(), ".")
 	if err != nil {
 		t.Fatalf("s.Scan() failed: %+v", err)
 	}
@@ -100,7 +99,7 @@ func main() {
 	}
 
 	// We need to evaluate the file first to process imports.
-	_, err = interp.Eval(context.Background(), pkg.AstFiles[filepath.Join(dir, "main.go")], pkg)
+	_, err = interp.Eval(t.Context(), pkg.AstFiles[filepath.Join(dir, "main.go")], pkg)
 	if err != nil {
 		t.Fatalf("interp.Eval(file) failed: %+v", err)
 	}
@@ -112,7 +111,7 @@ func main() {
 	}
 
 	// Now evaluate the expression
-	result, err := interp.Eval(context.Background(), node, pkg)
+	result, err := interp.Eval(t.Context(), node, pkg)
 	if err != nil {
 		t.Fatalf("interp.Eval(expr) failed: %+v", err)
 	}
@@ -142,7 +141,7 @@ func main() {
 	if err != nil {
 		t.Fatalf("goscan.New() failed: %+v", err)
 	}
-	pkgs, err := s.Scan(context.Background(), ".")
+	pkgs, err := s.Scan(t.Context(), ".")
 	if err != nil {
 		t.Fatalf("s.Scan() failed: %+v", err)
 	}
@@ -161,7 +160,7 @@ func main() {
 	interp.RegisterIntrinsic("fmt.Println", handler)
 
 	// We need to evaluate the file first to process imports.
-	_, err = interp.Eval(context.Background(), pkg.AstFiles[filepath.Join(dir, "main.go")], pkg)
+	_, err = interp.Eval(t.Context(), pkg.AstFiles[filepath.Join(dir, "main.go")], pkg)
 	if err != nil {
 		t.Fatalf("interp.Eval(file) failed: %+v", err)
 	}
@@ -173,7 +172,7 @@ func main() {
 	}
 
 	// Now evaluate the call expression
-	result, err := interp.Eval(context.Background(), node, pkg)
+	result, err := interp.Eval(t.Context(), node, pkg)
 	if err != nil {
 		t.Fatalf("interp.Eval(expr) failed: %+v", err)
 	}
@@ -212,7 +211,7 @@ func main() {
 		t.Fatalf("goscan.New() failed: %+v", err)
 	}
 
-	pkgs, err := s.Scan(context.Background(), ".")
+	pkgs, err := s.Scan(t.Context(), ".")
 	if err != nil {
 		t.Fatalf("s.Scan() failed: %+v", err)
 	}
@@ -237,17 +236,17 @@ func main() {
 	})
 
 	// Evaluate the file to load symbols
-	_, err = interp.Eval(context.Background(), pkg.AstFiles[filepath.Join(dir, "main.go")], pkg)
+	_, err = interp.Eval(t.Context(), pkg.AstFiles[filepath.Join(dir, "main.go")], pkg)
 	if err != nil {
 		t.Fatalf("interp.Eval(file) failed: %+v", err)
 	}
 
 	// Find and apply the main function
-	mainFn, ok := interp.FindObjectInPackage("mymodule", "main")
+	mainFn, ok := interp.FindObjectInPackage(t.Context(), "mymodule", "main")
 	if !ok {
 		t.Fatal("could not find main function")
 	}
-	interp.Apply(context.Background(), mainFn, nil, pkg)
+	interp.Apply(t.Context(), mainFn, nil, pkg)
 
 	// Verify that all log calls were made
 	expected := []string{"call 1", "call 2", "call 3"}
@@ -283,7 +282,7 @@ func main() {
 		t.Fatalf("goscan.New() failed: %+v", err)
 	}
 
-	pkgs, err := s.Scan(context.Background(), ".")
+	pkgs, err := s.Scan(t.Context(), ".")
 	if err != nil {
 		t.Fatalf("s.Scan() failed: %+v", err)
 	}
@@ -301,19 +300,19 @@ func main() {
 	})
 
 	// Evaluate the file to load symbols
-	_, err = interp.Eval(context.Background(), pkg.AstFiles[filepath.Join(dir, "main.go")], pkg)
+	_, err = interp.Eval(t.Context(), pkg.AstFiles[filepath.Join(dir, "main.go")], pkg)
 	if err != nil {
 		t.Fatalf("interp.Eval(file) failed: %+v", err)
 	}
 
 	// Find and apply the main function
-	mainFn, ok := interp.FindObjectInPackage("mymodule", "main")
+	mainFn, ok := interp.FindObjectInPackage(t.Context(), "mymodule", "main")
 	if !ok {
 		t.Fatal("could not find main function")
 	}
 
 	// This call should not panic.
-	_, err = interp.Apply(context.Background(), mainFn, nil, pkg)
+	_, err = interp.Apply(t.Context(), mainFn, nil, pkg)
 	if err != nil {
 		t.Errorf("Apply() failed: %+v", err)
 	}
@@ -349,7 +348,7 @@ func MyFunction(p MyInterface) {
 		t.Fatalf("goscan.New() failed: %+v", err)
 	}
 
-	pkgs, err := s.Scan(context.Background(), ".")
+	pkgs, err := s.Scan(t.Context(), ".")
 	if err != nil {
 		t.Fatalf("s.Scan() failed: %+v", err)
 	}
@@ -361,13 +360,13 @@ func MyFunction(p MyInterface) {
 	}
 
 	// Evaluate the file to load symbols
-	_, err = interp.Eval(context.Background(), pkg.AstFiles[filepath.Join(dir, "main.go")], pkg)
+	_, err = interp.Eval(t.Context(), pkg.AstFiles[filepath.Join(dir, "main.go")], pkg)
 	if err != nil {
 		t.Fatalf("interp.Eval(file) failed: %+v", err)
 	}
 
 	// Find the entry point function
-	mainFn, ok := interp.FindObjectInPackage("mymodule", "MyFunction")
+	mainFn, ok := interp.FindObjectInPackage(t.Context(), "mymodule", "MyFunction")
 	if !ok {
 		t.Fatal("could not find MyFunction function")
 	}
@@ -375,7 +374,7 @@ func MyFunction(p MyInterface) {
 	// Apply the function without providing arguments.
 	// This should NOT fail with "identifier not found: p".
 	// Before the fix, it will fail. After the fix, it should pass.
-	_, err = interp.Apply(context.Background(), mainFn, []symgo.Object{}, pkg)
+	_, err = interp.Apply(t.Context(), mainFn, []symgo.Object{}, pkg)
 	if err != nil {
 		t.Errorf("Apply() failed with unexpected error: %+v", err)
 	}
@@ -406,7 +405,7 @@ func MyLogf(f string, args ...interface{}) {
 		t.Fatalf("goscan.New() failed: %+v", err)
 	}
 
-	pkgs, err := s.Scan(context.Background(), ".")
+	pkgs, err := s.Scan(t.Context(), ".")
 	if err != nil {
 		t.Fatalf("s.Scan() failed: %+v", err)
 	}
@@ -417,12 +416,12 @@ func MyLogf(f string, args ...interface{}) {
 		t.Fatalf("NewInterpreter() failed: %+v", err)
 	}
 
-	_, err = interp.Eval(context.Background(), pkg.AstFiles[filepath.Join(dir, "main.go")], pkg)
+	_, err = interp.Eval(t.Context(), pkg.AstFiles[filepath.Join(dir, "main.go")], pkg)
 	if err != nil {
 		t.Fatalf("interp.Eval(file) failed: %+v", err)
 	}
 
-	mainFn, ok := interp.FindObjectInPackage("mymodule", "MyLogf")
+	mainFn, ok := interp.FindObjectInPackage(t.Context(), "mymodule", "MyLogf")
 	if !ok {
 		t.Fatal("could not find MyLogf function")
 	}
@@ -430,7 +429,7 @@ func MyLogf(f string, args ...interface{}) {
 	// Call the function with one concrete argument and no variadic arguments.
 	// This ensures the logic correctly handles creating an empty slice for
 	// the `...interface{}` parameter.
-	_, err = interp.Apply(context.Background(), mainFn, []symgo.Object{
+	_, err = interp.Apply(t.Context(), mainFn, []symgo.Object{
 		&object.String{Value: "hello"},
 	}, pkg)
 
@@ -460,7 +459,7 @@ func MyVariadicFunc(a, b int, c ...string) {
 		t.Fatalf("goscan.New() failed: %+v", err)
 	}
 
-	pkgs, err := s.Scan(context.Background(), ".")
+	pkgs, err := s.Scan(t.Context(), ".")
 	if err != nil {
 		t.Fatalf("s.Scan() failed: %+v", err)
 	}
@@ -471,12 +470,12 @@ func MyVariadicFunc(a, b int, c ...string) {
 		t.Fatalf("NewInterpreter() failed: %+v", err)
 	}
 
-	_, err = interp.Eval(context.Background(), pkg.AstFiles[filepath.Join(dir, "main.go")], pkg)
+	_, err = interp.Eval(t.Context(), pkg.AstFiles[filepath.Join(dir, "main.go")], pkg)
 	if err != nil {
 		t.Fatalf("interp.Eval(file) failed: %+v", err)
 	}
 
-	mainFn, ok := interp.FindObjectInPackage("mymodule", "MyVariadicFunc")
+	mainFn, ok := interp.FindObjectInPackage(t.Context(), "mymodule", "MyVariadicFunc")
 	if !ok {
 		t.Fatal("could not find MyVariadicFunc function")
 	}
@@ -484,7 +483,7 @@ func MyVariadicFunc(a, b int, c ...string) {
 	// Call the function with only one argument. The function has two regular
 	// parameters before the variadic one. This should cause a panic with the
 	// buggy implementation.
-	_, err = interp.Apply(context.Background(), mainFn, []symgo.Object{
+	_, err = interp.Apply(t.Context(), mainFn, []symgo.Object{
 		&object.Integer{Value: 1},
 	}, pkg)
 

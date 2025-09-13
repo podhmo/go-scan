@@ -65,7 +65,7 @@ func main() {
 			return fmt.Errorf("initial Eval of package failed: %w", err)
 		}
 
-		mainFuncObj, ok := i.FindObjectInPackage("example.com/unresolvedkind/main", "main")
+		mainFuncObj, ok := i.FindObjectInPackage(ctx, "example.com/unresolvedkind/main", "main")
 		if !ok {
 			return fmt.Errorf("main function not found")
 		}
@@ -80,7 +80,7 @@ func main() {
 		}
 
 		// Assertions
-		vStructObj, ok := i.FindObjectInPackage("example.com/unresolvedkind/main", "VStruct")
+		vStructObj, ok := i.FindObjectInPackage(ctx, "example.com/unresolvedkind/main", "VStruct")
 		if !ok {
 			return fmt.Errorf("global variable VStruct not found")
 		}
@@ -101,7 +101,7 @@ func main() {
 			t.Errorf("VStruct kind mismatch (-want +got):\n%s", diff)
 		}
 
-		vIfaceObj, ok := i.FindObjectInPackage("example.com/unresolvedkind/main", "VInterface")
+		vIfaceObj, ok := i.FindObjectInPackage(ctx, "example.com/unresolvedkind/main", "VInterface")
 		if !ok {
 			return fmt.Errorf("global variable VInterface not found")
 		}
@@ -124,7 +124,7 @@ func main() {
 		return nil
 	}
 
-	if _, err := scantest.Run(t, context.Background(), dir, []string{"./..."}, action); err != nil {
+	if _, err := scantest.Run(t, t.Context(), dir, []string{"./..."}, action); err != nil {
 		t.Fatalf("scantest.Run() failed: %v", err)
 	}
 }

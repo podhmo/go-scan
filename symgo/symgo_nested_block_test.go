@@ -85,7 +85,7 @@ func DoSomething() {}
 	}
 
 	// Find and apply the main function
-	mainFn, ok := interp.FindObjectInPackage("t", "run")
+	mainFn, ok := interp.FindObjectInPackage(t.Context(), "t", "run")
 	if !ok {
 		t.Fatal("could not find run function")
 	}
@@ -152,7 +152,7 @@ func run() (int, int) {
 		t.Fatalf("interp.Eval(file) failed: %+v", err)
 	}
 
-	mainFn, ok := interp.FindObjectInPackage("t", "run")
+	mainFn, ok := interp.FindObjectInPackage(t.Context(), "t", "run")
 	if !ok {
 		t.Fatalf("run function not found")
 	}

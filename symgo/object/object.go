@@ -202,15 +202,15 @@ func NewFloat(value float64) *Float {
 // Function represents a user-defined function in the code being analyzed.
 type Function struct {
 	BaseObject
-	Name       *ast.Ident
-	Parameters *ast.FieldList
-	Body       *ast.BlockStmt
-	Env        *Environment
-	Decl       *ast.FuncDecl // The original declaration, for metadata like godoc.
-	Package       *scanner.PackageInfo
-	Receiver      Object // The receiver for a method call ("self" or "this").
-	ReceiverPos   token.Pos
-	Def           *scanner.FunctionInfo
+	Name        *ast.Ident
+	Parameters  *ast.FieldList
+	Body        *ast.BlockStmt
+	Env         *Environment
+	Decl        *ast.FuncDecl // The original declaration, for metadata like godoc.
+	Package     *scanner.PackageInfo
+	Receiver    Object // The receiver for a method call ("self" or "this").
+	ReceiverPos token.Pos
+	Def         *scanner.FunctionInfo
 }
 
 // Type returns the type of the Function object.

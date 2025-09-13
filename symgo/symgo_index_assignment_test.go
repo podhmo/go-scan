@@ -52,7 +52,7 @@ func main() {
 			return err
 		}
 
-		mainFn, ok := interp.FindObjectInPackage("myapp", "main")
+		mainFn, ok := interp.FindObjectInPackage(ctx, "myapp", "main")
 		if !ok {
 			t.Fatal("main func not found")
 		}
@@ -115,7 +115,7 @@ func main() {
 			return err
 		}
 
-		mainFn, ok := interp.FindObjectInPackage("myapp", "main")
+		mainFn, ok := interp.FindObjectInPackage(ctx, "myapp", "main")
 		if !ok {
 			t.Fatal("main func not found")
 		}

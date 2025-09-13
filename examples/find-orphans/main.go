@@ -561,7 +561,7 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool) error {
 		}
 
 		for _, fnInfo := range pkg.Functions {
-			funcObj, ok := interp.FindObjectInPackage(pkg.ImportPath, fnInfo.Name)
+			funcObj, ok := interp.FindObjectInPackage(ctx, pkg.ImportPath, fnInfo.Name)
 			if !ok {
 				slog.DebugContext(ctx, "could not find function object in interpreter", "function", fnInfo.Name, "package", pkg.ImportPath)
 				continue

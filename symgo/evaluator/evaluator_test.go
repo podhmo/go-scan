@@ -202,7 +202,7 @@ func TestApplyFunction_ErrorOnNonCallable(t *testing.T) {
 	nonCallable := &object.Integer{Value: 123}
 	args := []object.Object{}
 
-	result := eval.applyFunction(context.Background(), nonCallable, args, nil, token.NoPos)
+	result := eval.applyFunction(t.Context(), nonCallable, args, nil, token.NoPos)
 
 	errObj, ok := result.(*object.Error)
 	if !ok {
@@ -222,7 +222,7 @@ func TestEvalUnsupportedNode(t *testing.T) {
 	node := &ast.BadExpr{} // This node type is not handled by our Eval function.
 
 	eval := New(nil, logger, nil, nil)
-	evaluated := eval.Eval(context.Background(), node, eval.UniverseEnv, nil)
+	evaluated := eval.Eval(t.Context(), node, eval.UniverseEnv, nil)
 
 	_, ok := evaluated.(*object.Error)
 	if !ok {

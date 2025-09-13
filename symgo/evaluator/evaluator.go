@@ -1087,7 +1087,9 @@ func (e *Evaluator) convertGoConstant(ctx context.Context, val constant.Value, p
 }
 
 func (e *Evaluator) getOrLoadPackage(ctx context.Context, path string) (*object.Package, error) {
+	e.logc(ctx, slog.LevelDebug, "getOrLoadPackage: requesting package", "path", path)
 	if pkg, ok := e.pkgCache[path]; ok {
+		e.logc(ctx, slog.LevelDebug, "getOrLoadPackage: found in cache", "path", path, "scanned", pkg.ScannedInfo != nil)
 		// Ensure even cached packages are populated if they were created as placeholders first.
 		e.ensurePackageEnvPopulated(ctx, pkg)
 		return pkg, nil
@@ -1125,6 +1127,7 @@ func (e *Evaluator) getOrLoadPackage(ctx context.Context, path string) (*object.
 }
 
 func (e *Evaluator) ensurePackageEnvPopulated(ctx context.Context, pkgObj *object.Package) {
+	e.logc(ctx, slog.LevelDebug, "ensurePackageEnvPopulated: checking package", "path", pkgObj.Path, "scanned", pkgObj.ScannedInfo != nil)
 	if pkgObj.ScannedInfo == nil {
 		return // Not scanned yet, nothing to populate.
 	}
@@ -1426,10 +1429,23 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 		}
 
 	case *object.Package:
-		// If ScannedInfo is nil, it means the package was not scanned, likely due to
-		// the scan policy. Therefore, any symbol within it is unresolved.
+		e.logc(ctx, slog.LevelDebug, "evalSelectorExpr: left is a package", "package", val.Path, "selector", n.Sel.Name)
+
+		// If the package object is just a shell, try to fully load it now.
 		if val.ScannedInfo == nil {
-			e.logc(ctx, slog.LevelDebug, "package not scanned, creating placeholder for symbol", "package", val.Path, "symbol", n.Sel.Name)
+			e.logc(ctx, slog.LevelDebug, "evalSelectorExpr: package not scanned, attempting to load", "package", val.Path)
+			loadedPkg, err := e.getOrLoadPackage(ctx, val.Path)
+			if err != nil {
+				// if loading fails, it's a real error
+				return e.newError(ctx, n.Pos(), "failed to load package %s: %v", val.Path, err)
+			}
+			// Replace the shell package object with the fully loaded one for the rest of the logic.
+			val = loadedPkg
+		}
+
+		// If ScannedInfo is still nil after trying to load, it means it's out of policy.
+		if val.ScannedInfo == nil {
+			e.logc(ctx, slog.LevelDebug, "package not scanned (out of policy), creating placeholder for symbol", "package", val.Path, "symbol", n.Sel.Name)
 			unresolvedFn := &object.UnresolvedFunction{
 				PkgPath:  val.Path,
 				FuncName: n.Sel.Name,
@@ -3183,6 +3199,12 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 		// This is a function that could not be resolved during symbol lookup.
 		// We make a best effort to find its signature now.
 		e.logc(ctx, slog.LevelDebug, "attempting to resolve and apply unresolved function", "package", fn.PkgPath, "function", fn.FuncName)
+
+		// Before trying to scan the package, check if there's a registered intrinsic for it.
+		key := fn.PkgPath + "." + fn.FuncName
+		if intrinsicFn, ok := e.intrinsics.Get(key); ok {
+			return intrinsicFn(args...)
+		}
 
 		// Use the policy-enforcing method to resolve the package.
 		scannedPkg, err := e.resolver.ResolvePackage(ctx, fn.PkgPath)

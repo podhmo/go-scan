@@ -153,9 +153,12 @@ func (r *Resolver) ResolveSymbolicField(ctx context.Context, field *scanner.Fiel
 
 // ResolvePackage is a helper to get package info while respecting the scan policy.
 func (r *Resolver) ResolvePackage(ctx context.Context, path string) (*scanner.PackageInfo, error) {
+	r.logger.DebugContext(ctx, "ResolvePackage: checking policy", "path", path)
 	if !r.ScanPolicy(path) {
+		r.logger.DebugContext(ctx, "ResolvePackage: denied by policy", "path", path)
 		return nil, fmt.Errorf("package %q is excluded by scan policy", path)
 	}
+	r.logger.DebugContext(ctx, "ResolvePackage: allowed by policy, scanning", "path", path)
 	return r.resolvePackageWithoutPolicyCheck(ctx, path)
 }
 

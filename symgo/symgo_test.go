@@ -117,9 +117,9 @@ func main() {
 		t.Fatalf("interp.Eval(expr) failed: %+v", err)
 	}
 
-	_, ok := result.(*object.SymbolicPlaceholder)
+	_, ok := result.(*object.UnresolvedFunction)
 	if !ok {
-		t.Errorf("Expected a SymbolicPlaceholder for an external function, but got %T", result)
+		t.Errorf("Expected an UnresolvedFunction for an external function, but got %T", result)
 	}
 }
 

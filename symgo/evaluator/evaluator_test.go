@@ -1115,7 +1115,6 @@ func main() {
 	}
 }
 
-
 func TestEvalReturnStatement(t *testing.T) {
 	input := `return 10`
 	source := fmt.Sprintf("package main\nfunc main() { %s }", input)

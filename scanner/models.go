@@ -209,7 +209,8 @@ func (ti *TypeInfo) searchAnnotation(name string) (value string, ok bool) {
 
 // InterfaceInfo represents an interface type.
 type InterfaceInfo struct {
-	Methods []*MethodInfo
+	Methods  []*MethodInfo `json:"methods"`
+	Embedded []*FieldType  `json:"embedded,omitempty"`
 }
 
 // MethodInfo represents a single method in an interface.

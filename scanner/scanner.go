@@ -736,30 +736,28 @@ func (s *Scanner) parseTypeParamList(ctx context.Context, typeParamFields []*ast
 }
 
 func (s *Scanner) parseInterfaceType(ctx context.Context, it *ast.InterfaceType, currentTypeParams []*TypeParamInfo, info *PackageInfo, importLookup map[string]string) *InterfaceInfo {
-	if it.Methods == nil || len(it.Methods.List) == 0 {
-		return &InterfaceInfo{Methods: []*MethodInfo{}}
+	if it.Methods == nil {
+		return &InterfaceInfo{}
 	}
 	interfaceInfo := &InterfaceInfo{
-		Methods: make([]*MethodInfo, 0, len(it.Methods.List)),
+		Methods:  make([]*MethodInfo, 0, len(it.Methods.List)),
+		Embedded: make([]*FieldType, 0),
 	}
 	for _, field := range it.Methods.List {
-		if len(field.Names) > 0 {
+		if len(field.Names) > 0 { // This is a method definition
 			methodName := field.Names[0].Name
 			funcType, ok := field.Type.(*ast.FuncType)
 			if !ok {
-				continue
+				continue // Should not happen in a valid interface
 			}
 			methodInfo := &MethodInfo{Name: methodName}
 			parsedFuncDetails := s.parseFuncType(ctx, funcType, currentTypeParams, info, importLookup)
 			methodInfo.Parameters = parsedFuncDetails.Parameters
 			methodInfo.Results = parsedFuncDetails.Results
 			interfaceInfo.Methods = append(interfaceInfo.Methods, methodInfo)
-		} else {
+		} else { // This is an embedded type
 			embeddedType := s.TypeInfoFromExpr(ctx, field.Type, currentTypeParams, info, importLookup)
-			interfaceInfo.Methods = append(interfaceInfo.Methods, &MethodInfo{
-				Name:    fmt.Sprintf("embedded_%s", embeddedType.String()),
-				Results: []*FieldInfo{{Type: embeddedType}},
-			})
+			interfaceInfo.Embedded = append(interfaceInfo.Embedded, embeddedType)
 		}
 	}
 	return interfaceInfo

@@ -101,6 +101,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] **Fix AST Node Handling**: Added support for `*ast.StarExpr` as an assignment target and handled `*ast.ExprStmt` in type switches, resolving several panics in the `find-orphans` tool.
 - [x] **Propagate `context.Context`**: Replaced `context.Background()` with `ctx` arguments throughout the `symgo` package and its sub-packages to enable proper context propagation and cancellation. This also involved updating several function signatures to accept a `context.Context`.
 - [ ] **DX: Add Timeout Flag to `find-orphans`**: Add a `--timeout` flag to the `find-orphans` CLI for easier debugging.
+- [x] **`symgo`: Embedded Interface Resolution**: The scanner and symbolic execution engine now correctly handle embedded interfaces. The scanner preserves the embedding structure, and the evaluator resolves the full method set at runtime, enabling correct implementation checks and method call resolution for interfaces that embed others.
 
 ### `symgo`: Enforce Strict Scan Policy ([docs/plan-symgo-focus.md](./docs/plan-symgo-focus.md))
 - [x] **Design & Analysis**: Investigated policy bypasses in the evaluator and created a design document with impact analysis to enforce stricter policy adherence.

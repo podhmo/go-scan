@@ -399,3 +399,137 @@ func TestInterfaceResolutionWithValueReceiver(t *testing.T) {
 		})
 	}
 }
+
+const (
+	moduleDefForEmbeddedInterfaceTest = `
+module example.com/me
+go 1.21
+`
+	defPkgForEmbeddedInterfaceTest = `
+package def
+type Reader interface {
+	Read() string
+}
+type Writer interface {
+	Write() string
+}
+type Closer interface {
+	Close() string
+}
+type ReadWriterCloser interface {
+	Reader
+	Writer
+	Closer
+}
+`
+	implPkgForEmbeddedInterfaceTest = `
+package impl
+import "example.com/me/def"
+type File struct{}
+func (f *File) Read() string { return "read" }
+func (f *File) Write() string { return "write" }
+func (f *File) Close() string { return "close" }
+var _ def.ReadWriterCloser = (*File)(nil)
+`
+	mainPkgForEmbeddedInterfaceTest = `
+package main
+import (
+	"example.com/me/def"
+	"example.com/me/impl"
+)
+func useRWC(rwc def.ReadWriterCloser) {
+	rwc.Read()
+	rwc.Write()
+	rwc.Close()
+}
+func main() {
+	f := &impl.File{}
+	useRWC(f)
+}
+`
+)
+
+func TestInterfaceResolutionWithEmbeddedInterfaces(t *testing.T) {
+	files := map[string]string{
+		"go.mod":       moduleDefForEmbeddedInterfaceTest,
+		"def/def.go":   defPkgForEmbeddedInterfaceTest,
+		"impl/impl.go": implPkgForEmbeddedInterfaceTest,
+		"main.go":      mainPkgForEmbeddedInterfaceTest,
+	}
+
+	dir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	s, err := goscan.New(
+		goscan.WithWorkDir(dir),
+		goscan.WithGoModuleResolver(),
+	)
+	if err != nil {
+		t.Fatalf("failed to create scanner: %v", err)
+	}
+
+	interp, err := NewInterpreter(s, WithLogger(s.Logger))
+	if err != nil {
+		t.Fatalf("failed to create interpreter: %v", err)
+	}
+
+	calledMethods := make(map[string]bool)
+	interp.RegisterDefaultIntrinsic(func(ctx context.Context, i *Interpreter, args []object.Object) object.Object {
+		if len(args) == 0 {
+			return nil
+		}
+		fn, ok := args[0].(*object.Function)
+		if !ok {
+			return nil
+		}
+
+		if fn.Receiver != nil && fn.Receiver.TypeInfo() != nil && fn.Name != nil {
+			receiverTypeInfo := fn.Receiver.TypeInfo()
+			key := ""
+			if ft := fn.Receiver.FieldType(); ft != nil && ft.IsPointer {
+				key = fmt.Sprintf("(*%s.%s).%s", receiverTypeInfo.PkgPath, receiverTypeInfo.Name, fn.Name.Name)
+			} else {
+				key = fmt.Sprintf("(%s.%s).%s", receiverTypeInfo.PkgPath, receiverTypeInfo.Name, fn.Name.Name)
+			}
+			calledMethods[key] = true
+		}
+		return nil
+	})
+
+	ctx := t.Context()
+	for _, pkgPath := range []string{"example.com/me/def", "example.com/me/impl", "example.com/me"} {
+		if _, err := s.ScanPackageByImport(ctx, pkgPath); err != nil {
+			t.Fatalf("could not scan package %s: %v", pkgPath, err)
+		}
+	}
+
+	mainPkgInfo, err := s.ScanPackageByImport(ctx, "example.com/me")
+	if err != nil {
+		t.Fatalf("could not get main package: %v", err)
+	}
+	if _, err := interp.Eval(ctx, mainPkgInfo.AstFiles[mainPkgInfo.Files[0]], mainPkgInfo); err != nil {
+		t.Fatalf("evaluation of main pkg failed: %v", err)
+	}
+
+	mainFunc, ok := interp.FindObjectInPackage(ctx, "example.com/me", "main")
+	if !ok {
+		t.Fatalf("could not find main function in interpreter")
+	}
+	if _, err := interp.Apply(ctx, mainFunc, []object.Object{}, mainPkgInfo); err != nil {
+		t.Fatalf("error applying main function: %v", err)
+	}
+
+	interp.Finalize(ctx)
+
+	expectedMethods := []string{
+		"(*example.com/me/impl.File).Read",
+		"(*example.com/me/impl.File).Write",
+		"(*example.com/me/impl.File).Close",
+	}
+
+	for _, method := range expectedMethods {
+		if !calledMethods[method] {
+			t.Errorf("expected method %s to be called, but it was not", method)
+		}
+	}
+}

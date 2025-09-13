@@ -78,3 +78,33 @@ If a method's receiver is from an out-of-policy package, `ResolveType` will retu
 ## 5. Conclusion
 
 This plan brings the `symgo` implementation back into alignment with its intended design as a focused, scope-aware static analysis engine. By removing all policy bypasses, we strengthen its core principles, improve performance, and create a more robust and predictable tool.
+
+## 6. Impact Analysis and Resolution Strategy
+
+A series of experiments were conducted by applying the proposed changes individually and running the test suite (`go test -timeout 30s ./symgo/...`) to observe the specific impact of each change.
+
+### 6.1. Impact of Modifying `evaluator.getOrLoadPackage`
+
+*   **Change:** Modified `getOrLoadPackage` to use the policy-enforcing `resolver.ResolvePackage`.
+*   **Observation:** This change alone caused multiple test failures, such as `TestInterpreter_Eval_Simple`, with the error `identifier not found: fmt`.
+*   **Analysis:** This is the expected and desired first-order effect. The tests attempt to evaluate code that uses the `fmt` package. Because the default test policy does not include `fmt`, `ResolvePackage` correctly denies access. The `getOrLoadPackage` function then correctly creates a placeholder `object.Package` with no scanned information. However, the existing `evalIdent` and `evalSelectorExpr` functions are not robust enough to handle this case and ultimately fail to resolve the `fmt` identifier, leading to the error.
+*   **Conclusion:** This confirms that changing `getOrLoadPackage` is the correct first step, and it successfully exposes the downstream dependencies on policy-bypassing behavior.
+
+### 6.2. Impact of Modifying `evalSelectorExpr` and `applyFunction`
+
+*   **Change:** Modified `evalSelectorExpr` and `applyFunction` to use `resolver.ResolvePackage` when they encounter a package that has not yet been loaded.
+*   **Observation:** This change caused tests like `TestFeature_SprintfIntrinsic` and `TestSymgo_WithExtraPackages` to fail. The common failure mode was expecting a concrete value (e.g., a string from `Sprintf`) but receiving a `SymbolicPlaceholder`.
+*   **Analysis:** This is also the correct behavior. These functions were previously bypassing the policy by calling `resolvePackageWithoutPolicyCheck`. By switching to the policy-enforcing `ResolvePackage`, calls to out-of-policy functions like `fmt.Sprintf` are no longer executed via their intrinsic. Instead, they are correctly identified as calls to an unresolved function, and the result is a symbolic placeholder. The tests failed because they were written with the assumption that the policy would be bypassed.
+*   **Resolution:** The failing tests need to be updated. Instead of asserting for a concrete return value from an out-of-policy intrinsic, they should assert that the result is an `object.SymbolicPlaceholder` or that the function call was to an `object.UnresolvedFunction`.
+
+### 6.3. Impact of Modifying `resolver.ResolveFunction`
+
+*   **Change:** Modified `ResolveFunction` to use the policy-enforcing `resolver.ResolveType` for method receivers.
+*   **Observation:** This change caused **no test failures**.
+*   **Analysis:** This indicates a gap in the current test suite. There are no tests that specifically exercise the scenario of symbolically analyzing a method call where the receiver's type is defined in an out-of-policy package. While the code change is correct and crucial for security and design alignment, its effect is not currently asserted by any test.
+*   **Resolution:** A new test should be written to validate this behavior. The test should:
+    1.  Define a package `a` with a struct `T` and a method `M`.
+    2.  Define a main analysis package `b` that imports `a`.
+    3.  Set a `ScanPolicy` that includes `b` but **excludes** `a`.
+    4.  In `b`, call the method `t.M()` on a variable `t` of type `a.T`.
+    5.  Assert that the `object.Function` resolved for `M` has a `Receiver` whose `TypeInfo` is an `UnresolvedTypeInfo` for `a.T`.

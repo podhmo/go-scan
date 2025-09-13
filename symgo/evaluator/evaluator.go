@@ -1093,18 +1093,23 @@ func (e *Evaluator) getOrLoadPackage(ctx context.Context, path string) (*object.
 		return pkg, nil
 	}
 
-	scannedPkg, err := e.resolver.resolvePackageWithoutPolicyCheck(ctx, path)
+	// Use the policy-enforcing ResolvePackage method.
+	scannedPkg, err := e.resolver.ResolvePackage(ctx, path)
 	if err != nil {
-		// Even if scanning fails, we create a placeholder package object to cache the failure
+		// This error now occurs if the package is excluded by policy OR if scanning fails.
+		// In either case, we create a placeholder package object to cache the result
 		// and avoid re-scanning. The ScannedInfo will be nil.
+		e.logc(ctx, slog.LevelDebug, "package resolution failed or denied by policy", "package", path, "error", err)
 		pkgObj := &object.Package{
-			Name:        "", // We don't know the name
+			Name:        "", // We don't know the name yet.
 			Path:        path,
 			Env:         object.NewEnclosedEnvironment(e.UniverseEnv),
-			ScannedInfo: nil,
+			ScannedInfo: nil, // Mark as not scanned.
 		}
 		e.pkgCache[path] = pkgObj
-		return nil, fmt.Errorf("could not scan package %q: %w", path, err)
+		// We return the placeholder object itself, not an error, because failing to load
+		// a package due to policy is not an evaluation-halting error.
+		return pkgObj, nil
 	}
 
 	pkgObj := &object.Package{
@@ -1421,30 +1426,16 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 		}
 
 	case *object.Package:
+		// If ScannedInfo is nil, it means the package was not scanned, likely due to
+		// the scan policy. Therefore, any symbol within it is unresolved.
 		if val.ScannedInfo == nil {
-			if e.scanner == nil {
-				return e.newError(ctx, n.Pos(), "scanner is not available, cannot load package %q", val.Path)
+			e.logc(ctx, slog.LevelDebug, "package not scanned, creating placeholder for symbol", "package", val.Path, "symbol", n.Sel.Name)
+			unresolvedFn := &object.UnresolvedFunction{
+				PkgPath:  val.Path,
+				FuncName: n.Sel.Name,
 			}
-			pkgInfo, err := e.resolver.resolvePackageWithoutPolicyCheck(ctx, val.Path)
-			if err != nil {
-				e.logc(ctx, slog.LevelWarn, "could not scan package, treating as external", "package", val.Path, "error", err)
-				// The package could not be scanned. We don't know if the selector is a function,
-				// type, or variable. Create a generic SymbolicPlaceholder. This prevents
-				// incorrect assumptions (like assuming it's a function) that lead to errors
-				// like "invalid indirect".
-				placeholder := &object.SymbolicPlaceholder{
-					Reason: fmt.Sprintf("unresolved identifier %s in unscannable package %s", n.Sel.Name, val.Path),
-				}
-				// Give it minimal type info so it can be identified later.
-				placeholder.SetFieldType(&scanner.FieldType{
-					Name:           n.Sel.Name,
-					FullImportPath: val.Path,
-					TypeName:       n.Sel.Name,
-				})
-				val.Env.Set(n.Sel.Name, placeholder)
-				return placeholder
-			}
-			val.ScannedInfo = pkgInfo
+			val.Env.Set(n.Sel.Name, unresolvedFn)
+			return unresolvedFn
 		}
 
 		// When we encounter a package selector, we must ensure its environment
@@ -2589,14 +2580,27 @@ func (e *Evaluator) evalIdent(ctx context.Context, n *ast.Ident, env *object.Env
 					}
 
 					// Case 2: No alias. The identifier might be the package's actual name.
-					pkgObj, err := e.getOrLoadPackage(ctx, importPath)
-					if err != nil || pkgObj == nil || pkgObj.ScannedInfo == nil {
-						e.logc(ctx, slog.LevelDebug, "could not scan potential package for ident", "ident", n.Name, "path", importPath, "error", err)
+					pkgObj, _ := e.getOrLoadPackage(ctx, importPath) // Error is not fatal here.
+					if pkgObj == nil {
+						e.logc(ctx, slog.LevelDebug, "could not get package for ident", "ident", n.Name, "path", importPath)
 						continue
 					}
 
-					if n.Name == pkgObj.ScannedInfo.Name {
-						return pkgObj
+					// If the package was scanned, we can definitively match its name.
+					if pkgObj.ScannedInfo != nil {
+						if n.Name == pkgObj.ScannedInfo.Name {
+							return pkgObj
+						}
+					} else {
+						// If the package is just a placeholder (not scanned due to policy),
+						// we can't know its real name for sure. As a strong heuristic for
+						// packages without an alias, we assume the identifier name matches
+						// the base of the import path. This works for `fmt`, `os`, etc.
+						parts := strings.Split(importPath, "/")
+						assumedName := parts[len(parts)-1]
+						if n.Name == assumedName {
+							return pkgObj
+						}
 					}
 				}
 			}
@@ -3180,11 +3184,10 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 		// We make a best effort to find its signature now.
 		e.logc(ctx, slog.LevelDebug, "attempting to resolve and apply unresolved function", "package", fn.PkgPath, "function", fn.FuncName)
 
-		// We need to use the resolver's internal, uncached package resolution logic
-		// to ensure we can re-attempt to scan a package that might have failed before.
-		scannedPkg, err := e.resolver.resolvePackageWithoutPolicyCheck(ctx, fn.PkgPath)
+		// Use the policy-enforcing method to resolve the package.
+		scannedPkg, err := e.resolver.ResolvePackage(ctx, fn.PkgPath)
 		if err != nil {
-			e.logc(ctx, slog.LevelWarn, "could not scan package for unresolved function", "package", fn.PkgPath, "function", fn.FuncName, "error", err)
+			e.logc(ctx, slog.LevelWarn, "could not scan package for unresolved function (or denied by policy)", "package", fn.PkgPath, "function", fn.FuncName, "error", err)
 			return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("result of calling unresolved function %s.%s", fn.PkgPath, fn.FuncName)}
 		}
 

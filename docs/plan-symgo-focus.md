@@ -153,3 +153,9 @@ The fact that the `ScanPolicyFunc` is not even being *called* for the `helper` p
 - **Hypothesis**: The problem likely lies in how the `go-scan` `Scanner` or the `symgo` `Resolver` handles package resolution in a multi-module workspace. The `evaluator`'s call to `getOrLoadPackage` for an import (`"example.com/helper"`) might not be correctly triggering the scanner to find and load the package from the workspace. It seems to be getting lost before the `ScanPolicy` is ever consulted.
 
 This is the current line of investigation. The next step is to debug the package loading path within the evaluator, specifically how it interacts with the scanner and resolver when dealing with packages from different modules in a `go.work` environment.
+
+### 8.5. Final solution
+
+The problem: The symgo evaluator was not triggering the lazy loading of a package when it encountered a symbol from an unscanned package via a SelectorExpr (e.g., pkg.Symbol). This caused the scan policy to be unintentionally ignored in some cases.
+
+The solution: I modified the logic in evaluator.evalSelectorExpr. Now, if a package has not yet been scanned (ScannedInfo is nil), it explicitly calls getOrLoadPackage. Since this function correctly applies the scan policy, out-of-policy packages are now properly handled as unresolved symbols.

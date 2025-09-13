@@ -54,7 +54,7 @@ func main() {
 		}
 
 		intrinsic := &object.Intrinsic{
-			Fn: func(args ...object.Object) object.Object {
+			Fn: func(ctx context.Context, args ...object.Object) object.Object {
 				if len(args) > 0 {
 					inspectedType = args[0]
 				}

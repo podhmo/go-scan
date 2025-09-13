@@ -54,7 +54,7 @@ func TargetFunc(writer io.Writer) {
 		}
 
 		// Action: Register an intrinsic for the method on the concrete type.
-		interp.RegisterIntrinsic("(*bytes.Buffer).WriteString", func(i *symgo.Interpreter, args []symgo.Object) symgo.Object {
+		interp.RegisterIntrinsic("(*bytes.Buffer).WriteString", func(ctx context.Context, i *symgo.Interpreter, args []symgo.Object) symgo.Object {
 			intrinsicCalled = true
 			return nil
 		})

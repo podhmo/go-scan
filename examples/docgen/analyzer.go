@@ -440,10 +440,10 @@ func (a *Analyzer) buildHandlerIntrinsics(analyzer *Analyzer) map[string]symgo.I
 	for _, p := range allPatterns {
 		// Capture the pattern for the closure.
 		pattern := p
-		intrinsics[pattern.Key] = func(i *symgo.Interpreter, args []symgo.Object) symgo.Object {
+		intrinsics[pattern.Key] = func(ctx context.Context, i *symgo.Interpreter, args []symgo.Object) symgo.Object {
 			// The analyzer instance `a` is captured from the outer scope.
 			// The pattern's Apply function will use it to get the current operation.
-			return pattern.Apply(i, analyzer, args)
+			return pattern.Apply(ctx, i, analyzer, args)
 		}
 	}
 

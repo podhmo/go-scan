@@ -1,6 +1,7 @@
 package symgo_test
 
 import (
+	"context"
 	"go/ast"
 	"go/parser"
 	"path/filepath"
@@ -154,7 +155,7 @@ func main() {
 
 	// Simplified intrinsic handler
 	expectedResult := &object.String{Value: "Intrinsic was called!"}
-	handler := func(interp *symgo.Interpreter, args []object.Object) object.Object {
+	handler := func(ctx context.Context, interp *symgo.Interpreter, args []object.Object) object.Object {
 		return expectedResult
 	}
 	interp.RegisterIntrinsic("fmt.Println", handler)
@@ -225,7 +226,7 @@ func main() {
 	var callLog []string
 	// The key for the intrinsic is the fully qualified package path + function name.
 	// For package main in a module named "mymodule", the path is "mymodule".
-	interp.RegisterIntrinsic("mymodule.log", func(i *symgo.Interpreter, args []object.Object) object.Object {
+	interp.RegisterIntrinsic("mymodule.log", func(ctx context.Context, i *symgo.Interpreter, args []object.Object) object.Object {
 		if len(args) > 0 {
 			if str, ok := args[0].(*object.String); ok {
 				callLog = append(callLog, str.Value)
@@ -295,7 +296,7 @@ func main() {
 
 	// We need a default intrinsic to prevent "not a function" errors
 	// for unresolved functions if any.
-	interp.RegisterDefaultIntrinsic(func(i *symgo.Interpreter, args []object.Object) object.Object {
+	interp.RegisterDefaultIntrinsic(func(ctx context.Context, i *symgo.Interpreter, args []object.Object) object.Object {
 		return &object.SymbolicPlaceholder{Reason: "default intrinsic"}
 	})
 

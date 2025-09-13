@@ -127,7 +127,7 @@ func runAnalysis(t *testing.T, ctx context.Context, interp *symgo.Interpreter, m
 	}
 
 	var capturedArg object.Object
-	interp.RegisterIntrinsic("fmt.Println", func(i *symgo.Interpreter, args []symgo.Object) symgo.Object {
+	interp.RegisterIntrinsic("fmt.Println", func(ctx context.Context, i *symgo.Interpreter, args []symgo.Object) symgo.Object {
 		if len(args) > 0 {
 			if retVal, ok := args[0].(*object.ReturnValue); ok {
 				capturedArg = retVal.Value

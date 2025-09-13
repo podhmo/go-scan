@@ -38,7 +38,7 @@ func main() {
 			return err
 		}
 
-		interp.RegisterIntrinsic("myapp.getValue", func(i *symgo.Interpreter, args []symgo.Object) symgo.Object {
+		interp.RegisterIntrinsic("myapp.getValue", func(ctx context.Context, i *symgo.Interpreter, args []symgo.Object) symgo.Object {
 			getValueCalled = true
 			return &object.String{Value: "world"}
 		})
@@ -101,7 +101,7 @@ func main() {
 			return err
 		}
 
-		interp.RegisterIntrinsic("myapp.getValue", func(i *symgo.Interpreter, args []symgo.Object) symgo.Object {
+		interp.RegisterIntrinsic("myapp.getValue", func(ctx context.Context, i *symgo.Interpreter, args []symgo.Object) symgo.Object {
 			getValueCalled = true
 			return &object.String{Value: "world"}
 		})

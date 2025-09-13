@@ -72,6 +72,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - **`symgo` Architecture Refinements**: Major refactoring to improve analysis scope management and error handling. Introduced explicit analysis scopes with `WithPrimaryAnalysisScope` and `WithSymbolicDependencyScope`, enhanced type information for unresolved types, and improved resolver error handling for better robustness.
 - **Advanced Analysis and Tool Enhancements**: Implemented comprehensive enhancements including structured logging with source stack traces, automatic workspace detection with `go.work` support, advanced interface method call analysis, multi-module workspace support with unified analysis, enhanced reporting capabilities (JSON output), and wildcard pattern support for improved package discovery.
 - **`symgo`: Bounded Recursion**: The symbolic execution engine now uses a bounded recursion strategy to prevent analysis from hanging on deeply recursive functions. The evaluator now halts analysis of a recursive call path after one level, making its behavior consistent with the existing "unroll-once" strategy for loops and improving overall robustness. ([docs/plan-symgo-shallow-recursive.md](./docs/plan-symgo-shallow-recursive.md))
+- **Continue `symgo` Context Propagation Refactoring**: Completed the refactoring of `symgo` to propagate `context.Context` to intrinsics and fixed all resulting test failures. ([docs/cont-symgo-context-refactor.md](./docs/cont-symgo-context-refactor.md))
 
 
 ## To Be Implemented
@@ -107,6 +108,3 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] **Implementation**: Implemented the coordinated fix in the evaluator and resolver to replace policy bypasses with policy-enforcing methods and correct placeholder handling.
 - [x] **Test Fixes**: Update failing tests to assert for `SymbolicPlaceholder` or `UnresolvedFunction` instead of concrete values for out-of-policy code.
 - [x] **Test Coverage**: Add a new test to verify that method calls on out-of-policy types are correctly handled as unresolved.
-
-### Continue `symgo` Context Propagation Refactoring ([docs/cont-symgo-context-refactor.md](./docs/cont-symgo-context-refactor.md))
-- [ ] Complete the refactoring of `symgo` to propagate `context.Context` to intrinsics and fix all resulting test failures.

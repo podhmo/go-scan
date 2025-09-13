@@ -68,7 +68,7 @@ func main() {
 			}
 
 			var called bool
-			interp.RegisterDefaultIntrinsic(func(i *symgo.Interpreter, args []object.Object) object.Object {
+			interp.RegisterDefaultIntrinsic(func(ctx context.Context, i *symgo.Interpreter, args []object.Object) object.Object {
 				fn, ok := args[0].(*object.Function)
 				if !ok {
 					return nil

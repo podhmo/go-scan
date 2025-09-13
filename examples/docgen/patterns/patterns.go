@@ -78,13 +78,13 @@ type PatternConfig struct {
 // and a handler function that performs analysis when that call is found.
 type Pattern struct {
 	Key   string
-	Apply func(interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object
+	Apply func(ctx context.Context, interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object
 }
 
 // HandleCustomRequestBody returns a pattern handler that treats a specific argument
 // as a request body, similar to `json.Decode`.
-func HandleCustomRequestBody(argIndex int) func(interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object {
-	return func(interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object {
+func HandleCustomRequestBody(argIndex int) func(ctx context.Context, interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object {
+	return func(ctx context.Context, interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object {
 		op := a.OperationStack()[len(a.OperationStack())-1]
 		if len(args) <= argIndex {
 			return &symgo.SymbolicPlaceholder{Reason: fmt.Sprintf("custom requestBody pattern: not enough args (want %d, got %d)", argIndex+1, len(args))}
@@ -97,7 +97,7 @@ func HandleCustomRequestBody(argIndex int) func(interp *symgo.Interpreter, a Ana
 
 		typeInfo := ptr.TypeInfo()
 		if typeInfo != nil {
-			schema := BuildSchemaForType(context.Background(), a, typeInfo, make(map[string]*openapi.Schema))
+			schema := BuildSchemaForType(ctx, a, typeInfo, make(map[string]*openapi.Schema))
 			if schema != nil {
 				op.RequestBody = &openapi.RequestBody{
 					Content:  map[string]openapi.MediaType{"application/json": {Schema: schema}},
@@ -112,8 +112,8 @@ func HandleCustomRequestBody(argIndex int) func(interp *symgo.Interpreter, a Ana
 
 // HandleCustomResponse returns a pattern handler that treats a specific argument
 // as a response body for a given status code.
-func HandleCustomResponse(statusCode string, argIndex int) func(interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object {
-	return func(interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object {
+func HandleCustomResponse(statusCode string, argIndex int) func(ctx context.Context, interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object {
+	return func(ctx context.Context, interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object {
 		op := a.OperationStack()[len(a.OperationStack())-1]
 		if len(args) <= argIndex {
 			return &symgo.SymbolicPlaceholder{Reason: fmt.Sprintf("custom response pattern: not enough args (want %d, got %d)", argIndex+1, len(args))}
@@ -123,11 +123,11 @@ func HandleCustomResponse(statusCode string, argIndex int) func(interp *symgo.In
 		var schema *openapi.Schema
 
 		if slice, ok := arg.(*symgo.Slice); ok {
-			schema = buildSchemaFromFieldType(context.Background(), a, slice.SliceFieldType, make(map[string]*openapi.Schema))
+			schema = buildSchemaFromFieldType(ctx, a, slice.SliceFieldType, make(map[string]*openapi.Schema))
 		} else {
 			typeInfo := arg.TypeInfo()
 			if typeInfo != nil {
-				schema = BuildSchemaForType(context.Background(), a, typeInfo, make(map[string]*openapi.Schema))
+				schema = BuildSchemaForType(ctx, a, typeInfo, make(map[string]*openapi.Schema))
 			}
 		}
 
@@ -146,8 +146,8 @@ func HandleCustomResponse(statusCode string, argIndex int) func(interp *symgo.In
 
 // HandleDefaultResponse returns a pattern handler that treats a specific argument
 // as a default response body.
-func HandleDefaultResponse(argIndex int) func(interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object {
-	return func(interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object {
+func HandleDefaultResponse(argIndex int) func(ctx context.Context, interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object {
+	return func(ctx context.Context, interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object {
 		op := a.OperationStack()[len(a.OperationStack())-1]
 		if len(args) <= argIndex {
 			return &symgo.SymbolicPlaceholder{Reason: fmt.Sprintf("default response pattern: not enough args (want %d, got %d)", argIndex+1, len(args))}
@@ -157,11 +157,11 @@ func HandleDefaultResponse(argIndex int) func(interp *symgo.Interpreter, a Analy
 		var schema *openapi.Schema
 
 		if slice, ok := arg.(*symgo.Slice); ok {
-			schema = buildSchemaFromFieldType(context.Background(), a, slice.SliceFieldType, make(map[string]*openapi.Schema))
+			schema = buildSchemaFromFieldType(ctx, a, slice.SliceFieldType, make(map[string]*openapi.Schema))
 		} else {
 			typeInfo := arg.TypeInfo()
 			if typeInfo != nil {
-				schema = BuildSchemaForType(context.Background(), a, typeInfo, make(map[string]*openapi.Schema))
+				schema = BuildSchemaForType(ctx, a, typeInfo, make(map[string]*openapi.Schema))
 			}
 		}
 
@@ -180,8 +180,8 @@ func HandleDefaultResponse(argIndex int) func(interp *symgo.Interpreter, a Analy
 
 // HandleCustomResponseBody returns a pattern handler that treats a specific argument
 // as a response body, similar to `json.Encode`.
-func HandleCustomResponseBody(argIndex int) func(interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object {
-	return func(interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object {
+func HandleCustomResponseBody(argIndex int) func(ctx context.Context, interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object {
+	return func(ctx context.Context, interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object {
 		op := a.OperationStack()[len(a.OperationStack())-1]
 		if len(args) <= argIndex {
 			return &symgo.SymbolicPlaceholder{Reason: fmt.Sprintf("custom responseBody pattern: not enough args (want %d, got %d)", argIndex+1, len(args))}
@@ -191,11 +191,11 @@ func HandleCustomResponseBody(argIndex int) func(interp *symgo.Interpreter, a An
 		var schema *openapi.Schema
 
 		if slice, ok := arg.(*symgo.Slice); ok {
-			schema = buildSchemaFromFieldType(context.Background(), a, slice.SliceFieldType, make(map[string]*openapi.Schema))
+			schema = buildSchemaFromFieldType(ctx, a, slice.SliceFieldType, make(map[string]*openapi.Schema))
 		} else {
 			typeInfo := arg.TypeInfo()
 			if typeInfo != nil {
-				schema = BuildSchemaForType(context.Background(), a, typeInfo, make(map[string]*openapi.Schema))
+				schema = BuildSchemaForType(ctx, a, typeInfo, make(map[string]*openapi.Schema))
 			}
 		}
 
@@ -217,8 +217,8 @@ func HandleCustomResponseBody(argIndex int) func(interp *symgo.Interpreter, a An
 
 // HandleCustomParameter returns a pattern handler that extracts a parameter (path or query)
 // from a function argument. The parameter's name is extracted dynamically from an argument.
-func HandleCustomParameter(in, description string, nameArgIndex, valueArgIndex int) func(interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object {
-	return func(interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object {
+func HandleCustomParameter(in, description string, nameArgIndex, valueArgIndex int) func(ctx context.Context, interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object {
+	return func(ctx context.Context, interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object {
 		op := a.OperationStack()[len(a.OperationStack())-1]
 		if len(args) <= nameArgIndex {
 			return &symgo.SymbolicPlaceholder{Reason: fmt.Sprintf("custom %s parameter pattern: not enough args for name (want %d, got %d)", in, nameArgIndex+1, len(args))}
@@ -240,7 +240,7 @@ func HandleCustomParameter(in, description string, nameArgIndex, valueArgIndex i
 		var schema *openapi.Schema
 		typeInfo := arg.TypeInfo()
 		if typeInfo != nil && typeInfo.Underlying != nil {
-			schema = buildSchemaFromFieldType(context.Background(), a, typeInfo.Underlying, make(map[string]*openapi.Schema))
+			schema = buildSchemaFromFieldType(ctx, a, typeInfo.Underlying, make(map[string]*openapi.Schema))
 		}
 		if schema == nil {
 			schema = &openapi.Schema{Type: "string"}
@@ -294,7 +294,7 @@ func GetDefaultPatterns() []Pattern {
 // Pattern Handler Implementations
 // -----------------------------------------------------------------------------
 
-func handleResponseWriterWrite(interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object {
+func handleResponseWriterWrite(ctx context.Context, interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object {
 	op := a.OperationStack()[len(a.OperationStack())-1]
 
 	// Find the response object, assuming WriteHeader was called first.
@@ -337,11 +337,11 @@ func handleResponseWriterWrite(interp *symgo.Interpreter, a Analyzer, args []sym
 	}
 }
 
-func handleHeader(interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object {
+func handleHeader(ctx context.Context, interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object {
 	return NewSymbolicInstance(interp, "net/http.Header")
 }
 
-func handleWriteHeader(interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object {
+func handleWriteHeader(ctx context.Context, interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object {
 	op := a.OperationStack()[len(a.OperationStack())-1]
 	if len(args) != 2 {
 		return nil
@@ -359,15 +359,15 @@ func handleWriteHeader(interp *symgo.Interpreter, a Analyzer, args []symgo.Objec
 	return nil
 }
 
-func handleHeaderSet(interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object {
+func handleHeaderSet(ctx context.Context, interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object {
 	return nil // We don't need to track header values for now.
 }
 
-func handleURLQuery(interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object {
+func handleURLQuery(ctx context.Context, interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object {
 	return NewSymbolicInstance(interp, "net/url.Values")
 }
 
-func handleValuesGet(interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object {
+func handleValuesGet(ctx context.Context, interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object {
 	op := a.OperationStack()[len(a.OperationStack())-1]
 	if len(args) != 2 {
 		return &symgo.SymbolicPlaceholder{Reason: "invalid Get call"}
@@ -387,11 +387,11 @@ func handleValuesGet(interp *symgo.Interpreter, a Analyzer, args []symgo.Object)
 	return &symgo.String{Value: ""} // The actual value doesn't matter for analysis.
 }
 
-func handleNewDecoder(interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object {
+func handleNewDecoder(ctx context.Context, interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object {
 	return NewSymbolicInstance(interp, "encoding/json.Decoder")
 }
 
-func handleDecode(interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object {
+func handleDecode(ctx context.Context, interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object {
 	op := a.OperationStack()[len(a.OperationStack())-1]
 	if len(args) != 2 {
 		return &symgo.SymbolicPlaceholder{Reason: "decode error: wrong arg count"}
@@ -402,7 +402,7 @@ func handleDecode(interp *symgo.Interpreter, a Analyzer, args []symgo.Object) sy
 	}
 	typeInfo := ptr.TypeInfo()
 	if typeInfo != nil {
-		schema := BuildSchemaForType(context.Background(), a, typeInfo, make(map[string]*openapi.Schema))
+		schema := BuildSchemaForType(ctx, a, typeInfo, make(map[string]*openapi.Schema))
 		if schema != nil {
 			op.RequestBody = &openapi.RequestBody{
 				Content:  map[string]openapi.MediaType{"application/json": {Schema: schema}},
@@ -413,11 +413,11 @@ func handleDecode(interp *symgo.Interpreter, a Analyzer, args []symgo.Object) sy
 	return &symgo.SymbolicPlaceholder{Reason: "result of json.Decode"}
 }
 
-func handleNewEncoder(interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object {
+func handleNewEncoder(ctx context.Context, interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object {
 	return NewSymbolicInstance(interp, "encoding/json.Encoder")
 }
 
-func handleEncode(interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object {
+func handleEncode(ctx context.Context, interp *symgo.Interpreter, a Analyzer, args []symgo.Object) symgo.Object {
 	op := a.OperationStack()[len(a.OperationStack())-1]
 	if len(args) != 2 {
 		return &symgo.SymbolicPlaceholder{Reason: "encode error: wrong arg count"}
@@ -426,11 +426,11 @@ func handleEncode(interp *symgo.Interpreter, a Analyzer, args []symgo.Object) sy
 	var schema *openapi.Schema
 
 	if slice, ok := arg.(*symgo.Slice); ok {
-		schema = buildSchemaFromFieldType(context.Background(), a, slice.SliceFieldType, make(map[string]*openapi.Schema))
+		schema = buildSchemaFromFieldType(ctx, a, slice.SliceFieldType, make(map[string]*openapi.Schema))
 	} else {
 		typeInfo := arg.TypeInfo()
 		if typeInfo != nil {
-			schema = BuildSchemaForType(context.Background(), a, typeInfo, make(map[string]*openapi.Schema))
+			schema = BuildSchemaForType(ctx, a, typeInfo, make(map[string]*openapi.Schema))
 		}
 	}
 

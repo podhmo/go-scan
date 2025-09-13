@@ -47,7 +47,7 @@ func main() {
 		eval := New(s, s.Logger, nil, nil)
 
 		// Register an intrinsic for the inspect function
-		eval.RegisterIntrinsic("example.com/main.inspect", func(args ...object.Object) object.Object {
+		eval.RegisterIntrinsic("example.com/main.inspect", func(ctx context.Context, args ...object.Object) object.Object {
 			if len(args) != 1 {
 				return nil
 			}
@@ -160,7 +160,7 @@ func main() {
 		eval := New(s, s.Logger, nil, nil)
 
 		// Register an intrinsic for the inspect function
-		eval.RegisterIntrinsic("example.com/main.inspect", func(args ...object.Object) object.Object {
+		eval.RegisterIntrinsic("example.com/main.inspect", func(ctx context.Context, args ...object.Object) object.Object {
 			inspectedCount++
 			return nil
 		})
@@ -236,7 +236,7 @@ func process(prefix string, data any) {
 		eval := New(s, s.Logger, nil, nil)
 
 		// Register an intrinsic for the inspect function
-		eval.RegisterIntrinsic("example.com/main.inspect", func(args ...object.Object) object.Object {
+		eval.RegisterIntrinsic("example.com/main.inspect", func(ctx context.Context, args ...object.Object) object.Object {
 			if len(args) == 1 {
 				if str, ok := args[0].(*object.String); ok {
 					inspectedValue = str.Value
@@ -246,7 +246,7 @@ func process(prefix string, data any) {
 		})
 
 		// This intrinsic mocks fmt.Sprintf to return a concrete string.
-		eval.RegisterIntrinsic("fmt.Sprintf", func(args ...object.Object) object.Object {
+		eval.RegisterIntrinsic("fmt.Sprintf", func(ctx context.Context, args ...object.Object) object.Object {
 			// This is a simplified mock. A real one would format the string.
 			// For this test, we just check that the prefix is accessible.
 			t.Logf("fmt.Sprintf called with %d args", len(args))

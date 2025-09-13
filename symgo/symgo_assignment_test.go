@@ -50,7 +50,7 @@ func main() {
 		}
 
 		// Intrinsic for a function that returns two values
-		interp.RegisterIntrinsic("myapp.myFunc", func(i *symgo.Interpreter, args []symgo.Object) symgo.Object {
+		interp.RegisterIntrinsic("myapp.myFunc", func(ctx context.Context, i *symgo.Interpreter, args []symgo.Object) symgo.Object {
 			intrinsicCalled = true
 			return &object.MultiReturn{
 				Values: []symgo.Object{
@@ -144,7 +144,7 @@ func main() {
 
 		// This intrinsic will be called at the end of main. We can inspect the
 		// state of 'v' when it's called.
-		interp.RegisterIntrinsic("myapp.check", func(i *symgo.Interpreter, args []symgo.Object) symgo.Object {
+		interp.RegisterIntrinsic("myapp.check", func(ctx context.Context, i *symgo.Interpreter, args []symgo.Object) symgo.Object {
 			checkCalled = true
 			return nil
 		})

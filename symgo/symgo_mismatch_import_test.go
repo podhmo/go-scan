@@ -62,14 +62,14 @@ func Unmarshal(data []byte, v any) error { return nil }
 	}
 
 	// For this test, we mock the behavior of pkg.Marshal
-	interp.RegisterIntrinsic("example.com/myapp/libs/pkg.v2.Marshal", func(i *symgo.Interpreter, args []symgo.Object) symgo.Object {
+	interp.RegisterIntrinsic("example.com/myapp/libs/pkg.v2.Marshal", func(ctx context.Context, i *symgo.Interpreter, args []symgo.Object) symgo.Object {
 		// Return a multi-return with a placeholder for the bytes and a nil for the error.
 		bytesPlaceholder := &symgo.SymbolicPlaceholder{Reason: "result of pkg.Marshal"}
 		return &symgo.MultiReturn{Values: []symgo.Object{bytesPlaceholder, object.NIL}}
 	})
 
 	got := make(map[string]bool)
-	interp.RegisterIntrinsic("fmt.Println", func(i *symgo.Interpreter, args []symgo.Object) symgo.Object {
+	interp.RegisterIntrinsic("fmt.Println", func(ctx context.Context, i *symgo.Interpreter, args []symgo.Object) symgo.Object {
 		if len(args) == 0 {
 			return nil
 		}

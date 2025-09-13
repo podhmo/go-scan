@@ -75,7 +75,7 @@ The engine's ability to handle dependencies is managed through a clear separatio
 
 - **Package Loading (`getOrLoadPackage`, `resolver.go`)**: The `getOrLoadPackage` function acts as a caching layer. If a package is requested for the first time, it delegates to the `Resolver`. The `Resolver` is responsible for using the underlying `go-scan` library to find the package's source files on disk, parse them, and return the scanned package information. This on-demand, lazy loading of packages is a key performance feature.
 
-- **Scan Policy**: The `Resolver` holds a `ScanPolicyFunc`, which allows the user of the `symgo` library to define which packages should be deeply analyzed (by parsing their function bodies) and which should be treated as symbolic dependencies (where function bodies are ignored). This is the mechanism that implements the "Intra-Module vs. Extra-Module" evaluation strategy described in the design documents.
+- **Scan Policy**: The `Resolver` holds a `ScanPolicyFunc`, which allows the user of the `symgo` library to define which packages should be deeply analyzed (by parsing their function bodies) and which should be treated as symbolic dependencies (where function bodies are ignored). This is the mechanism that implements the "Intra-Module vs. Extra-Module" evaluation strategy described in the design documents. A recent bug was fixed where this mechanism was not correctly triggered from `evalSelectorExpr`, which has now been corrected to ensure the scan policy is always respected during symbol resolution.
 
 ### 2.8. Method Call Resolution
 

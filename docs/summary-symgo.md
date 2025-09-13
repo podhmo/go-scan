@@ -16,7 +16,7 @@ The engine's strategy for evaluation is intertwined with how it handles modules 
 
 2.  **Configurable Scan Policy**: The `Resolver` is configured with a `ScanPolicyFunc`. This function determines whether a given package import path is "in-policy" or "out-of-policy." This mechanism drives the core evaluation strategy:
     - **In-Policy (Recursive Evaluation)**: If a function call belongs to a package that is in-policy (typically the user's own workspace), the engine will recursively evaluate the function's body.
-    - **Out-of-Policy (Symbolic Placeholder)**: If a function call belongs to an out-of-policy package (e.g., the standard library or a third-party dependency), the engine **does not** evaluate its body. It returns a `SymbolicPlaceholder` that represents the function's result, typed according to its signature.
+    - **Out-of-Policy (Symbolic Placeholder)**: If a function call belongs to an out-of-policy package (e.g., the standard library or a third-party dependency), the engine **does not** evaluate its body. It returns a `SymbolicPlaceholder` that represents the function's result, typed according to its signature. The engine's lazy-loading mechanism was recently improved to ensure this policy is correctly enforced during all phases of symbol resolution.
 
 3.  **Intrinsics (Highest Priority)**: The engine also maintains a registry of "intrinsic" handlers for specific, well-known functions (e.g., `net/http.HandleFunc`, `make`). These take precedence over the scan policy, allowing tools to provide custom models for important external functions without needing to analyze their source code.
 

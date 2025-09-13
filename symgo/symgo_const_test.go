@@ -2,6 +2,8 @@ package symgo_test
 
 import (
 	"context"
+	"log/slog"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -52,7 +54,12 @@ const MyConstant = "hello from another module"
 	}
 
 	// 2. Create the symgo interpreter with a policy to scan both modules.
-	interp, err := symgo.NewInterpreter(scanner, symgo.WithPrimaryAnalysisScope("example.com/main/...", "example.com/helper/..."))
+	logHandler := slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})
+	logger := slog.New(logHandler)
+	interp, err := symgo.NewInterpreter(scanner,
+		symgo.WithPrimaryAnalysisScope("example.com/main/...", "example.com/helper/..."),
+		symgo.WithLogger(logger),
+	)
 	if err != nil {
 		t.Fatalf("NewInterpreter failed: %v", err)
 	}

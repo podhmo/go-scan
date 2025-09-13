@@ -116,3 +116,40 @@ The implementation is now correct and aligns with the design goals. The remainin
 *   [docs/plan-symbolic-execution-like.md](./plan-symbolic-execution-like.md)
 *   [docs/analysis-symgo-implementation.md](./analysis-symgo-implementation.md)
 *   [examples/find-orphans/spec.md](./../examples/find-orphans/spec.md)
+
+## 8. Appendix: Debugging Log and Hypothesis (2025-09-12)
+
+This section documents the trial-and-error process and evolving hypotheses during the effort to fix test regressions after the strict scan policy was implemented.
+
+### 8.1. Initial State and Problem
+
+- **Initial Change**: The core logic in `symgo/evaluator` was modified to strictly adhere to the `ScanPolicyFunc`. The goal was to stop the evaluator from accessing the ASTs of packages outside the defined analysis scope.
+- **Test Regressions**: This change, while correct in principle, caused a significant number of test failures. The failures fell into two main categories:
+    1.  **Correct Failures**: Tests that previously relied on the "omniscient" evaluator now correctly failed. They were asserting for fully resolved objects where the new, correct behavior was to return a placeholder (`SymbolicPlaceholder` or `UnresolvedFunction`). These tests needed to be updated.
+    2.  **Incorrect Failures (Bugs)**: Tests that *should* have passed, even with the new policy, began to fail. These pointed to deeper issues.
+
+### 8.2. First Hypothesis: Patching Tests is Sufficient
+
+The initial plan was to update all failing tests to align with the new, stricter reality. This involved changing assertions from expecting concrete values (`*object.String`, etc.) to expecting placeholders.
+
+- **Action**: Modified several tests (`TestFeature_SprintfIntrinsic`, `TestSymgo_ExtraModule_ConstantResolution`, `TestIntraModuleCall`, etc.) to expect placeholders.
+- **Observation**: While this fixed some tests, it broke others and revealed inconsistencies. For example, after fixing the `applyFunction` logic to correctly handle intrinsics on `UnresolvedFunction`s, tests that were patched to expect placeholders (like `TestFeature_SprintfIntrinsic`) started failing again because they were now correctly receiving concrete values from the intrinsic.
+- **Conclusion**: Simply patching the tests was not the right approach. It was hiding underlying bugs and making the test suite brittle. A full reset of the changes was performed to start with a clean slate.
+
+### 8.3. Second Hypothesis: `WithPrimaryAnalysisScope` is Broken
+
+After resetting, the focus shifted to why tests that explicitly defined a wide analysis scope were still failing.
+
+- **Test Case**: `TestSymgo_WithExtraPackages` became the primary focus. Its `with_extra_package` subtest configures the interpreter with `WithPrimaryAnalysisScope("example.com/app/...", "example.com/helper/...")`. This *should* cause the `helper.Greet` function to be fully evaluated.
+- **Observation**: The test failed, receiving a `SymbolicPlaceholder` instead of the expected string. This was a clear indication that the `helper` package was not being scanned, despite being included in the primary analysis scope.
+- **Debugging Step**: Added logging to the `ScanPolicyFunc` created by `NewInterpreter`.
+- **Key Finding**: The logs revealed that the scan policy was being checked for the `fmt` package (and correctly denying it), but it was **never being checked for `example.com/helper`**.
+
+### 8.4. Current Hypothesis: `go.work` and Package Resolution Issue
+
+The fact that the `ScanPolicyFunc` is not even being *called* for the `helper` package points to an issue earlier in the pipeline, before the resolver's policy check is reached.
+
+- **Context**: `TestSymgo_WithExtraPackages` is unique in that it sets up a `go.work` workspace. The `app` and `helper` packages are in different modules within this workspace.
+- **Hypothesis**: The problem likely lies in how the `go-scan` `Scanner` or the `symgo` `Resolver` handles package resolution in a multi-module workspace. The `evaluator`'s call to `getOrLoadPackage` for an import (`"example.com/helper"`) might not be correctly triggering the scanner to find and load the package from the workspace. It seems to be getting lost before the `ScanPolicy` is ever consulted.
+
+This is the current line of investigation. The next step is to debug the package loading path within the evaluator, specifically how it interacts with the scanner and resolver when dealing with packages from different modules in a `go.work` environment.

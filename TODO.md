@@ -104,5 +104,5 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 ### `symgo`: Enforce Strict Scan Policy ([docs/plan-symgo-focus.md](./docs/plan-symgo-focus.md))
 - [x] **Design & Analysis**: Investigated policy bypasses in the evaluator and created a design document with impact analysis to enforce stricter policy adherence.
 - [x] **Implementation**: Implemented the coordinated fix in the evaluator and resolver to replace policy bypasses with policy-enforcing methods and correct placeholder handling.
-- [ ] **Test Fixes**: Update failing tests to assert for `SymbolicPlaceholder` or `UnresolvedFunction` instead of concrete values for out-of-policy code.
-- [ ] **Test Coverage**: Add a new test to verify that method calls on out-of-policy types are correctly handled as unresolved.
+- [x] **Test Fixes**: Update failing tests to assert for `SymbolicPlaceholder` or `UnresolvedFunction` instead of concrete values for out-of-policy code.
+- [x] **Test Coverage**: Add a new test to verify that method calls on out-of-policy types are correctly handled as unresolved.

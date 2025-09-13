@@ -2955,18 +2955,12 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 	if f, ok := fn.(*object.Function); ok && f.Def != nil {
 		recursionCount := 0
 		for _, frame := range e.callStack {
-			if frame.Fn == nil || frame.Fn.Def != f.Def {
-				continue
-			}
-			// Check if we are calling the same function definition.
-			if f.Receiver != nil {
-				// For methods, check if the receiver expression's source position is the same.
-				// This correctly detects recursion on different object instances from the same code location.
-				if frame.Fn.Receiver != nil && frame.ReceiverPos.IsValid() && frame.ReceiverPos == f.ReceiverPos {
-					recursionCount++
-				}
-			} else {
-				// For plain functions, any recursive call is counted.
+			// The most robust way to detect recursion on a definition is to compare the
+			// source position of the function's declaration AST node. This correctly
+			// identifies recursion on a specific function/method definition, which is
+			// the goal of symgo's analysis, rather than tracking object instances.
+			if frame.Fn != nil && frame.Fn.Def != nil && frame.Fn.Def.AstDecl != nil &&
+				f.Def.AstDecl != nil && frame.Fn.Def.AstDecl.Pos() == f.Def.AstDecl.Pos() {
 				recursionCount++
 			}
 		}

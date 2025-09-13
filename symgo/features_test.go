@@ -203,7 +203,7 @@ func usedByReturnedFunc() {}
 		}
 
 		// defaultIntrinsic is the key to tracking usage.
-		interp.RegisterDefaultIntrinsic(func(i *symgo.Interpreter, args []symgo.Object) symgo.Object {
+		interp.RegisterDefaultIntrinsic(func(ctx context.Context, i *symgo.Interpreter, args []symgo.Object) symgo.Object {
 			if len(args) == 0 {
 				return nil
 			}
@@ -411,7 +411,7 @@ func main() {
 			return err
 		}
 
-		interp.RegisterIntrinsic("example.com/me.MyPattern", func(i *symgo.Interpreter, args []symgo.Object) symgo.Object {
+		interp.RegisterIntrinsic("example.com/me.MyPattern", func(ctx context.Context, i *symgo.Interpreter, args []symgo.Object) symgo.Object {
 			patternCalled = true
 			return nil
 		})

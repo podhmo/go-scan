@@ -60,7 +60,7 @@ func DoSomething() string {
 		mainFunc, _ := pkgEnv.Get("main")
 
 		var capturedFunc object.Object
-		evaluator.RegisterDefaultIntrinsic(func(args ...object.Object) object.Object {
+		evaluator.RegisterDefaultIntrinsic(func(ctx context.Context, args ...object.Object) object.Object {
 			if len(args) > 0 {
 				capturedFunc = args[0]
 			}

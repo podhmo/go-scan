@@ -38,7 +38,7 @@ func main() {
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		eval := New(s, s.Logger, nil, nil)
 
-		eval.RegisterDefaultIntrinsic(func(args ...object.Object) object.Object {
+		eval.RegisterDefaultIntrinsic(func(ctx context.Context, args ...object.Object) object.Object {
 			if fn, ok := args[0].(*object.Function); ok {
 				if fn.Name != nil {
 					discoveredFunctions = append(discoveredFunctions, fn.Name.Name)

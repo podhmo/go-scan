@@ -41,7 +41,7 @@ func main() {
 		eval := New(s, s.Logger, nil, nil)
 
 		key := "(example.com/me/iface.Writer).Write"
-		eval.RegisterIntrinsic(key, func(args ...object.Object) object.Object {
+		eval.RegisterIntrinsic(key, func(ctx context.Context, args ...object.Object) object.Object {
 			writeCalled = true
 			return nil
 		})
@@ -103,7 +103,7 @@ func main() {
 		eval := New(s, s.Logger, nil, nil)
 
 		key := fmt.Sprintf("(%s.Writer).Write", pkg.ImportPath)
-		eval.RegisterIntrinsic(key, func(args ...object.Object) object.Object {
+		eval.RegisterIntrinsic(key, func(ctx context.Context, args ...object.Object) object.Object {
 			writeCalled = true
 			return nil
 		})
@@ -167,7 +167,7 @@ func main() {
 		pkg := pkgs[0]
 		eval := New(s, s.Logger, nil, nil)
 
-		eval.RegisterDefaultIntrinsic(func(args ...object.Object) object.Object {
+		eval.RegisterDefaultIntrinsic(func(ctx context.Context, args ...object.Object) object.Object {
 			if len(args) == 0 {
 				return nil
 			}
@@ -256,7 +256,7 @@ func main() {
 		pkg := pkgs[0]
 		eval := New(s, s.Logger, nil, nil)
 
-		eval.RegisterDefaultIntrinsic(func(args ...object.Object) object.Object {
+		eval.RegisterDefaultIntrinsic(func(ctx context.Context, args ...object.Object) object.Object {
 			if len(args) == 0 {
 				return nil
 			}

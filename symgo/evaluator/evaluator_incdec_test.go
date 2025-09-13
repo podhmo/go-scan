@@ -1,6 +1,7 @@
 package evaluator
 
 import (
+	"context"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -130,7 +131,7 @@ func main() {
 
 	// Pre-populate the environment with a symbolic value for `getSymbolic`
 	env.Set("getSymbolic", &object.Intrinsic{
-		Fn: func(args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, args ...object.Object) object.Object {
 			// This needs to return a ReturnValue containing the placeholder
 			// to simulate a function call result.
 			return &object.ReturnValue{Value: &object.SymbolicPlaceholder{Reason: "symbolic integer"}}

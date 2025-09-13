@@ -129,7 +129,7 @@ func (f ForeignType) DoSomething() {}
 		}
 
 		evaluator := New(s, nil, nil, policy)
-		evaluator.RegisterIntrinsic("example.com/me.Sentinel", func(args ...object.Object) object.Object {
+		evaluator.RegisterIntrinsic("example.com/me.Sentinel", func(ctx context.Context, args ...object.Object) object.Object {
 			sentinelReached = true
 			return nil
 		})
@@ -210,7 +210,7 @@ func GetTwo() (ForeignType, error) { return ForeignType{}, nil }
 		}
 
 		evaluator := New(s, nil, nil, policy)
-		evaluator.RegisterIntrinsic("example.com/me.Sentinel", func(args ...object.Object) object.Object {
+		evaluator.RegisterIntrinsic("example.com/me.Sentinel", func(ctx context.Context, args ...object.Object) object.Object {
 			sentinelReached = true
 			return nil
 		})
@@ -317,7 +317,7 @@ func (c ConcreteType2) Do() {}
 		}
 
 		evaluator := New(s, nil, nil, policy)
-		evaluator.RegisterIntrinsic("example.com/me.Sentinel", func(args ...object.Object) object.Object {
+		evaluator.RegisterIntrinsic("example.com/me.Sentinel", func(ctx context.Context, args ...object.Object) object.Object {
 			sentinelReached = true
 			return nil
 		})
@@ -442,7 +442,7 @@ func MyFunction(v any) {
 		}
 
 		evaluator := New(s, nil, nil, policy)
-		evaluator.RegisterIntrinsic("example.com/me.Sentinel", func(args ...object.Object) object.Object {
+		evaluator.RegisterIntrinsic("example.com/me.Sentinel", func(ctx context.Context, args ...object.Object) object.Object {
 			sentinelReached = true
 			return nil
 		})
@@ -547,7 +547,7 @@ func MyFunction(v any) {
 		}
 
 		evaluator := New(s, nil, nil, policy)
-		evaluator.RegisterIntrinsic("example.com/me.Sentinel", func(args ...object.Object) object.Object {
+		evaluator.RegisterIntrinsic("example.com/me.Sentinel", func(ctx context.Context, args ...object.Object) object.Object {
 			sentinelReached = true
 			return nil
 		})
@@ -753,7 +753,7 @@ func (f ForeignType) ForeignMethod() {}
 		}
 
 		evaluator := New(s, nil, nil, policy)
-		evaluator.RegisterIntrinsic("example.com/me.Sentinel", func(args ...object.Object) object.Object {
+		evaluator.RegisterIntrinsic("example.com/me.Sentinel", func(ctx context.Context, args ...object.Object) object.Object {
 			sentinelReached = true
 			return nil
 		})
@@ -830,7 +830,7 @@ func MyFunction(p *extpkg.ExternalType, s []extpkg.ExternalType) {
 		}
 
 		evaluator := New(s, nil, nil, policy)
-		evaluator.RegisterIntrinsic("example.com/me/mypkg.Sentinel", func(args ...object.Object) object.Object {
+		evaluator.RegisterIntrinsic("example.com/me/mypkg.Sentinel", func(ctx context.Context, args ...object.Object) object.Object {
 			sentinelReached = true
 			return nil
 		})

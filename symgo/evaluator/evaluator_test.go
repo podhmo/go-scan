@@ -157,7 +157,7 @@ func main() {
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		mainPkg := pkgs[0]
 		eval := New(s, s.Logger, nil, nil)
-		eval.RegisterIntrinsic("example.com/main.inspect", func(args ...object.Object) object.Object {
+		eval.RegisterIntrinsic("example.com/main.inspect", func(ctx context.Context, args ...object.Object) object.Object {
 			if len(args) > 0 {
 				inspectedValue = args[0]
 			}
@@ -257,7 +257,7 @@ func main() {
 		pkg := pkgs[0]
 		eval := New(s, s.Logger, nil, nil)
 
-		eval.RegisterDefaultIntrinsic(func(args ...object.Object) object.Object {
+		eval.RegisterDefaultIntrinsic(func(ctx context.Context, args ...object.Object) object.Object {
 			if len(args) > 0 {
 				if fn, ok := args[0].(*object.Function); ok {
 					if fn.Name != nil {
@@ -724,7 +724,7 @@ func main() {
 		pkg := pkgs[0]
 		eval := New(s, s.Logger, nil, nil)
 
-		eval.RegisterDefaultIntrinsic(func(args ...object.Object) object.Object {
+		eval.RegisterDefaultIntrinsic(func(ctx context.Context, args ...object.Object) object.Object {
 			if len(args) > 0 {
 				calledFunctions = append(calledFunctions, args[0])
 			}
@@ -786,7 +786,7 @@ func main() {
 		pkg := pkgs[0]
 		eval := New(s, s.Logger, nil, nil)
 
-		eval.RegisterDefaultIntrinsic(func(args ...object.Object) object.Object {
+		eval.RegisterDefaultIntrinsic(func(ctx context.Context, args ...object.Object) object.Object {
 			if len(args) > 0 {
 				calledFunctions = append(calledFunctions, args[0])
 			}
@@ -858,7 +858,7 @@ func main() {
 		pkg := pkgs[0]
 		eval := New(s, s.Logger, nil, nil)
 
-		eval.RegisterDefaultIntrinsic(func(args ...object.Object) object.Object {
+		eval.RegisterDefaultIntrinsic(func(ctx context.Context, args ...object.Object) object.Object {
 			if len(args) == 0 {
 				return nil
 			}
@@ -1418,7 +1418,7 @@ func main() {
 		eval := New(s, s.Logger, nil, nil)
 
 		// Register the default intrinsic to track function calls
-		eval.RegisterDefaultIntrinsic(func(args ...object.Object) object.Object {
+		eval.RegisterDefaultIntrinsic(func(ctx context.Context, args ...object.Object) object.Object {
 			if len(args) > 0 {
 				calledFunctions = append(calledFunctions, args[0]) // first arg is the function object
 			}

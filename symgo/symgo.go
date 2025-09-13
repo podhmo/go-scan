@@ -38,7 +38,7 @@ type TracerFunc = object.TracerFunc
 var NewEnclosedEnvironment = object.NewEnclosedEnvironment
 
 // IntrinsicFunc defines the signature for a custom function handler.
-type IntrinsicFunc func(eval *Interpreter, args []Object) Object
+type IntrinsicFunc func(ctx context.Context, eval *Interpreter, args []Object) Object
 
 // ScanPolicyFunc is a function that determines whether a package should be scanned from source.
 type ScanPolicyFunc = object.ScanPolicyFunc
@@ -169,7 +169,9 @@ func NewInterpreter(scanner *goscan.Scanner, options ...Option) (*Interpreter, e
 	i.eval = evaluator.New(scanner, i.logger, i.tracer, i.scanPolicy)
 
 	// Register default intrinsics
-	i.RegisterIntrinsic("fmt.Sprintf", i.intrinsicSprintf)
+	i.RegisterIntrinsic("fmt.Sprintf", func(ctx context.Context, eval *Interpreter, args []Object) Object {
+		return i.intrinsicSprintf(ctx, args)
+	})
 
 	return i, nil
 }
@@ -280,7 +282,7 @@ func splitQualifiedName(name string) (pkgPath, typeName string) {
 }
 
 // intrinsicSprintf provides a basic implementation of fmt.Sprintf for the symbolic engine.
-func (i *Interpreter) intrinsicSprintf(eval *Interpreter, args []Object) Object {
+func (i *Interpreter) intrinsicSprintf(ctx context.Context, args []Object) Object {
 	if len(args) == 0 {
 		return &Error{Message: "Sprintf requires at least one argument", Pos: token.NoPos}
 	}
@@ -392,18 +394,18 @@ func (i *Interpreter) EvalWithEnv(ctx context.Context, node ast.Node, env *Envir
 // The key is the fully qualified function name, e.g., "fmt.Println".
 func (i *Interpreter) RegisterIntrinsic(key string, handler IntrinsicFunc) {
 	// Wrap the user-friendly IntrinsicFunc into the evaluator's required signature.
-	wrappedHandler := func(args ...object.Object) object.Object {
+	wrappedHandler := func(ctx context.Context, args ...object.Object) object.Object {
 		// The handler passed by the user gets the interpreter instance, allowing
 		// it to perform powerful operations if needed.
-		return handler(i, args)
+		return handler(ctx, i, args)
 	}
 	i.eval.RegisterIntrinsic(key, wrappedHandler)
 }
 
 // RegisterDefaultIntrinsic registers a default function to be called for any function call.
 func (i *Interpreter) RegisterDefaultIntrinsic(handler IntrinsicFunc) {
-	wrappedHandler := func(args ...object.Object) object.Object {
-		return handler(i, args)
+	wrappedHandler := func(ctx context.Context, args ...object.Object) object.Object {
+		return handler(ctx, i, args)
 	}
 	i.eval.RegisterDefaultIntrinsic(wrappedHandler)
 }

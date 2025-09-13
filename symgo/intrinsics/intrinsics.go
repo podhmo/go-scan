@@ -1,9 +1,13 @@
 package intrinsics
 
-import "github.com/podhmo/go-scan/symgo/object"
+import (
+	"context"
+
+	"github.com/podhmo/go-scan/symgo/object"
+)
 
 // IntrinsicFunc is the type for a function that can be registered as an intrinsic.
-type IntrinsicFunc func(args ...object.Object) object.Object
+type IntrinsicFunc func(ctx context.Context, args ...object.Object) object.Object
 
 // Registry holds the registered intrinsic functions in a layered stack.
 // This allows for temporary intrinsics to be pushed for a specific scope

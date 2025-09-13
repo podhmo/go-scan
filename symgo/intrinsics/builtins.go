@@ -1,13 +1,14 @@
 package intrinsics
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/podhmo/go-scan/symgo/object"
 )
 
 // BuiltinPanic is the intrinsic function for the built-in `panic`.
-func BuiltinPanic(args ...object.Object) object.Object {
+func BuiltinPanic(ctx context.Context, args ...object.Object) object.Object {
 	if len(args) != 1 {
 		return &object.Error{
 			Message: fmt.Sprintf("wrong number of arguments. got=%d, want=1", len(args)),
@@ -27,7 +28,7 @@ func BuiltinPanic(args ...object.Object) object.Object {
 }
 
 // BuiltinMake is the intrinsic function for the built-in `make`.
-func BuiltinMake(args ...object.Object) object.Object {
+func BuiltinMake(ctx context.Context, args ...object.Object) object.Object {
 	if len(args) < 1 {
 		return &object.Error{
 			Message: fmt.Sprintf("wrong number of arguments. got=%d, want=at least 1", len(args)),
@@ -79,7 +80,7 @@ func BuiltinMake(args ...object.Object) object.Object {
 }
 
 // BuiltinAppend is the intrinsic function for the built-in `append`.
-func BuiltinAppend(args ...object.Object) object.Object {
+func BuiltinAppend(ctx context.Context, args ...object.Object) object.Object {
 	if len(args) < 1 {
 		return &object.Error{Message: "wrong number of arguments: append needs at least 1"}
 	}
@@ -88,7 +89,7 @@ func BuiltinAppend(args ...object.Object) object.Object {
 }
 
 // BuiltinLen is the intrinsic function for the built-in `len`.
-func BuiltinLen(args ...object.Object) object.Object {
+func BuiltinLen(ctx context.Context, args ...object.Object) object.Object {
 	if len(args) != 1 {
 		return &object.Error{Message: "wrong number of arguments: len expects 1"}
 	}
@@ -96,7 +97,7 @@ func BuiltinLen(args ...object.Object) object.Object {
 }
 
 // BuiltinCap is the intrinsic function for the built-in `cap`.
-func BuiltinCap(args ...object.Object) object.Object {
+func BuiltinCap(ctx context.Context, args ...object.Object) object.Object {
 	if len(args) != 1 {
 		return &object.Error{Message: "wrong number of arguments: cap expects 1"}
 	}
@@ -104,7 +105,7 @@ func BuiltinCap(args ...object.Object) object.Object {
 }
 
 // BuiltinNew is the intrinsic function for the built-in `new`.
-func BuiltinNew(args ...object.Object) object.Object {
+func BuiltinNew(ctx context.Context, args ...object.Object) object.Object {
 	if len(args) != 1 {
 		return &object.Error{Message: "wrong number of arguments: new expects 1"}
 	}
@@ -112,7 +113,7 @@ func BuiltinNew(args ...object.Object) object.Object {
 }
 
 // BuiltinCopy is the intrinsic function for the built-in `copy`.
-func BuiltinCopy(args ...object.Object) object.Object {
+func BuiltinCopy(ctx context.Context, args ...object.Object) object.Object {
 	if len(args) != 2 {
 		return &object.Error{Message: "wrong number of arguments: copy expects 2"}
 	}
@@ -120,7 +121,7 @@ func BuiltinCopy(args ...object.Object) object.Object {
 }
 
 // BuiltinDelete is the intrinsic function for the built-in `delete`.
-func BuiltinDelete(args ...object.Object) object.Object {
+func BuiltinDelete(ctx context.Context, args ...object.Object) object.Object {
 	if len(args) != 2 {
 		return &object.Error{Message: "wrong number of arguments: delete expects 2"}
 	}
@@ -128,7 +129,7 @@ func BuiltinDelete(args ...object.Object) object.Object {
 }
 
 // BuiltinClose is the intrinsic function for the built-in `close`.
-func BuiltinClose(args ...object.Object) object.Object {
+func BuiltinClose(ctx context.Context, args ...object.Object) object.Object {
 	if len(args) != 1 {
 		return &object.Error{Message: "wrong number of arguments: close expects 1"}
 	}
@@ -136,7 +137,7 @@ func BuiltinClose(args ...object.Object) object.Object {
 }
 
 // BuiltinClear is the intrinsic function for the built-in `clear`.
-func BuiltinClear(args ...object.Object) object.Object {
+func BuiltinClear(ctx context.Context, args ...object.Object) object.Object {
 	if len(args) != 1 {
 		return &object.Error{Message: "wrong number of arguments: clear expects 1"}
 	}
@@ -144,7 +145,7 @@ func BuiltinClear(args ...object.Object) object.Object {
 }
 
 // BuiltinComplex is the intrinsic function for the built-in `complex`.
-func BuiltinComplex(args ...object.Object) object.Object {
+func BuiltinComplex(ctx context.Context, args ...object.Object) object.Object {
 	if len(args) != 2 {
 		return &object.Error{Message: "wrong number of arguments: complex expects 2"}
 	}
@@ -152,7 +153,7 @@ func BuiltinComplex(args ...object.Object) object.Object {
 }
 
 // BuiltinReal is the intrinsic function for the built-in `real`.
-func BuiltinReal(args ...object.Object) object.Object {
+func BuiltinReal(ctx context.Context, args ...object.Object) object.Object {
 	if len(args) != 1 {
 		return &object.Error{Message: "wrong number of arguments: real expects 1"}
 	}
@@ -160,7 +161,7 @@ func BuiltinReal(args ...object.Object) object.Object {
 }
 
 // BuiltinImag is the intrinsic function for the built-in `imag`.
-func BuiltinImag(args ...object.Object) object.Object {
+func BuiltinImag(ctx context.Context, args ...object.Object) object.Object {
 	if len(args) != 1 {
 		return &object.Error{Message: "wrong number of arguments: imag expects 1"}
 	}
@@ -168,7 +169,7 @@ func BuiltinImag(args ...object.Object) object.Object {
 }
 
 // BuiltinMax is the intrinsic function for the built-in `max`.
-func BuiltinMax(args ...object.Object) object.Object {
+func BuiltinMax(ctx context.Context, args ...object.Object) object.Object {
 	if len(args) == 0 {
 		return &object.Error{Message: "wrong number of arguments: max expects at least 1"}
 	}
@@ -176,7 +177,7 @@ func BuiltinMax(args ...object.Object) object.Object {
 }
 
 // BuiltinMin is the intrinsic function for the built-in `min`.
-func BuiltinMin(args ...object.Object) object.Object {
+func BuiltinMin(ctx context.Context, args ...object.Object) object.Object {
 	if len(args) == 0 {
 		return &object.Error{Message: "wrong number of arguments: min expects at least 1"}
 	}
@@ -184,19 +185,19 @@ func BuiltinMin(args ...object.Object) object.Object {
 }
 
 // BuiltinPrint is the intrinsic function for the built-in `print`.
-func BuiltinPrint(args ...object.Object) object.Object {
+func BuiltinPrint(ctx context.Context, args ...object.Object) object.Object {
 	// In symbolic execution, we can ignore this.
 	return object.NIL
 }
 
 // BuiltinPrintln is the intrinsic function for the built-in `println`.
-func BuiltinPrintln(args ...object.Object) object.Object {
+func BuiltinPrintln(ctx context.Context, args ...object.Object) object.Object {
 	// In symbolic execution, we can ignore this.
 	return object.NIL
 }
 
 // BuiltinRecover is the intrinsic function for the built-in `recover`.
-func BuiltinRecover(args ...object.Object) object.Object {
+func BuiltinRecover(ctx context.Context, args ...object.Object) object.Object {
 	if len(args) != 0 {
 		return &object.Error{Message: "wrong number of arguments: recover expects 0"}
 	}

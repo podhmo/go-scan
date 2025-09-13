@@ -53,7 +53,7 @@ func main() {
 
 		// This default intrinsic will be called for every function call.
 		// We use it to record what was called.
-		eval.RegisterDefaultIntrinsic(func(args ...object.Object) object.Object {
+		eval.RegisterDefaultIntrinsic(func(ctx context.Context, args ...object.Object) object.Object {
 			if len(args) == 0 {
 				return nil
 			}

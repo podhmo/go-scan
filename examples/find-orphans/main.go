@@ -533,7 +533,7 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool) error {
 		}
 	}
 
-	interp.RegisterDefaultIntrinsic(func(i *symgo.Interpreter, args []object.Object) object.Object {
+	interp.RegisterDefaultIntrinsic(func(ctx context.Context, i *symgo.Interpreter, args []object.Object) object.Object {
 		// The intrinsic is triggered for every function call.
 		// We need to mark the function being called (args[0]) as used.
 		// We also need to check if any of the arguments themselves are function

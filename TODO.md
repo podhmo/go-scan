@@ -76,6 +76,9 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 
 ## To Be Implemented
 
+### Fix `symgo` Error on Pointer Operations with Unresolved Types ([docs/cont-unresolved-type-error.md](./docs/cont-unresolved-type-error.md))
+- [ ] Implement the full fix as detailed in the continuation document, starting from a clean state.
+
 ### Fix `symgo` Symbol Collision Bug 
 - [x] Complete the fix for the symbol collision bug in the `symgo` evaluator and resolve all test regressions.
 

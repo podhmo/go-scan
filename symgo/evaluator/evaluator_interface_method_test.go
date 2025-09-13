@@ -3,6 +3,9 @@ package evaluator
 import (
 	"context"
 	"fmt"
+	"io"
+	"log/slog"
+	"sync"
 	"testing"
 
 	goscan "github.com/podhmo/go-scan"
@@ -553,5 +556,128 @@ func main() {
 
 	if !contIntrinsicCalled {
 		t.Errorf("expected intrinsic for cont() to be called, but it was not")
+	}
+}
+
+// countingHandler is a simple slog.Handler that counts log records matching a specific message and level.
+type countingHandler struct {
+	mu      sync.Mutex
+	count   int
+	msg     string
+	level   slog.Level
+	handler slog.Handler
+}
+
+func newCountingHandler(msg string, level slog.Level, underlying slog.Handler) *countingHandler {
+	return &countingHandler{
+		msg:     msg,
+		level:   level,
+		handler: underlying,
+	}
+}
+
+func (h *countingHandler) Enabled(ctx context.Context, level slog.Level) bool {
+	return h.handler.Enabled(ctx, level)
+}
+
+func (h *countingHandler) Handle(ctx context.Context, r slog.Record) error {
+	if r.Level == h.level && r.Message == h.msg {
+		h.mu.Lock()
+		h.count++
+		h.mu.Unlock()
+	}
+	return h.handler.Handle(ctx, r)
+}
+
+func (h *countingHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	return &countingHandler{
+		handler: h.handler.WithAttrs(attrs),
+		msg:     h.msg,
+		level:   h.level,
+		mu:      sync.Mutex{},
+	}
+}
+
+func (h *countingHandler) WithGroup(name string) slog.Handler {
+	return &countingHandler{
+		handler: h.handler.WithGroup(name),
+		msg:     h.msg,
+		level:   h.level,
+		mu:      sync.Mutex{},
+	}
+}
+
+func (h *countingHandler) Count() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.count
+}
+
+func TestEval_InterfaceMethodCall_SyntheticMethodIsCached(t *testing.T) {
+	code := `
+package main
+
+type Runner interface {
+	Run()
+}
+
+// Do calls an undefined method twice.
+func Do(r Runner) {
+	r.Stop()
+	r.Stop()
+}
+
+func main() {
+	Do(nil)
+}
+`
+	files := map[string]string{
+		"go.mod":  "module example.com/me",
+		"main.go": code,
+	}
+
+	dir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	// 1. Set up the counting logger
+	handler := newCountingHandler(
+		"undefined method on interface, creating synthetic method",
+		slog.LevelInfo,
+		slog.NewTextHandler(io.Discard, nil), // Use io.Discard to not print logs during tests
+	)
+	logger := slog.New(handler)
+
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
+		pkg := pkgs[0]
+		// 2. Use the logger with the counting handler
+		eval := New(s, logger, nil, func(path string) bool {
+			return path == pkg.ImportPath
+		})
+
+		for _, file := range pkg.AstFiles {
+			eval.Eval(ctx, file, nil, pkg)
+		}
+
+		pkgEnv, ok := eval.PackageEnvForTest("example.com/me")
+		if !ok {
+			return fmt.Errorf("could not get package env for 'example.com/me'")
+		}
+		mainFuncObj, _ := pkgEnv.Get("main")
+		mainFunc := mainFuncObj.(*object.Function)
+
+		result := eval.Apply(ctx, mainFunc, []object.Object{}, pkg)
+		if err, ok := result.(*object.Error); ok {
+			return fmt.Errorf("evaluation failed unexpectedly: %s", err.Error())
+		}
+		return nil
+	}
+
+	if _, err := scantest.Run(t, t.Context(), dir, []string{"."}, action, scantest.WithModuleRoot(dir)); err != nil {
+		t.Fatalf("scantest.Run() failed: %+v", err)
+	}
+
+	// 3. Assert that the synthetic method was created only once.
+	if count := handler.Count(); count != 1 {
+		t.Errorf("expected synthetic method to be created once, but it was created %d times", count)
 	}
 }

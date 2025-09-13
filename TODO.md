@@ -107,6 +107,3 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] **Implementation**: Implemented the coordinated fix in the evaluator and resolver to replace policy bypasses with policy-enforcing methods and correct placeholder handling.
 - [x] **Test Fixes**: Update failing tests to assert for `SymbolicPlaceholder` or `UnresolvedFunction` instead of concrete values for out-of-policy code.
 - [x] **Test Coverage**: Add a new test to verify that method calls on out-of-policy types are correctly handled as unresolved.
-
-### Continue `symgo` Context Propagation Refactoring ([docs/cont-symgo-context-refactor.md](./docs/cont-symgo-context-refactor.md))
-- [ ] Complete the refactoring of `symgo` to propagate `context.Context` to intrinsics and fix all resulting test failures.

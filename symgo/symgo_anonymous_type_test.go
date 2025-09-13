@@ -55,7 +55,7 @@ func AnonymousStruct(p struct {
 			}
 
 			var inspectedMethod *scanner.FunctionInfo
-			interpreter.RegisterDefaultIntrinsic(func(i *symgo.Interpreter, args []symgo.Object) symgo.Object {
+			interpreter.RegisterDefaultIntrinsic(func(ctx context.Context, i *symgo.Interpreter, args []symgo.Object) symgo.Object {
 				fn := args[0] // The function object itself
 				if p, ok := fn.(*symgo.SymbolicPlaceholder); ok {
 					if p.UnderlyingFunc != nil {

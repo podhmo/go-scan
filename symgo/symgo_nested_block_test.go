@@ -1,6 +1,7 @@
 package symgo_test
 
 import (
+	"context"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -62,7 +63,7 @@ func DoSomething() {}
 	}
 
 	var calledFunctions []string
-	interp.RegisterDefaultIntrinsic(func(i *symgo.Interpreter, v []object.Object) object.Object {
+	interp.RegisterDefaultIntrinsic(func(ctx context.Context, i *symgo.Interpreter, v []object.Object) object.Object {
 		if len(v) == 0 {
 			return nil
 		}

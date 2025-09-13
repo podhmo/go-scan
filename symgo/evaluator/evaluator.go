@@ -1602,21 +1602,15 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 			}
 		}
 
-		// If the symbol is not found, it's an unresolved identifier from an
-		// out-of-policy package. We represent it with a generic placeholder.
-		placeholder := &object.SymbolicPlaceholder{
-			Reason: fmt.Sprintf("unresolved identifier %s in out-of-policy package %s", n.Sel.Name, val.Path),
-			// We can't know the type yet, but we can record where it came from.
-			BaseObject: object.BaseObject{
-				ResolvedFieldType: &scan.FieldType{
-					Name:           n.Sel.Name,
-					FullImportPath: val.Path,
-					TypeName:       n.Sel.Name,
-				},
-			},
+		// If the symbol is not found, assume it's a function we can't see
+		// due to the scan policy. Create an UnresolvedFunction object.
+		// This allows `applyFunction` to handle it gracefully.
+		unresolvedFn := &object.UnresolvedFunction{
+			PkgPath:  val.Path,
+			FuncName: n.Sel.Name,
 		}
-		val.Env.Set(n.Sel.Name, placeholder)
-		return placeholder
+		val.Env.Set(n.Sel.Name, unresolvedFn)
+		return unresolvedFn
 
 	case *object.Instance:
 		key := fmt.Sprintf("(%s).%s", val.TypeName, n.Sel.Name)

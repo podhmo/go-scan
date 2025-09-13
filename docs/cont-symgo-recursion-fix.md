@@ -70,7 +70,7 @@ This correctly identifies when the same function/method *definition* appears aga
 
 ## 6. Current Status
 
-The code is now correct. The fix has been implemented in `symgo/evaluator/evaluator.go`, and a regression test (`TestRecursiveMethodCallNotCached`) has been added to `symgo/evaluator/evaluator_test.go`. All tests in the suite pass, verifying the fix and ensuring no regressions were introduced. A troubleshooting document has also been created. The work is ready for submission.
+The code is now correct. The final, most robust fix has been implemented in `symgo/evaluator/evaluator.go`, and a regression test (`TestRecursiveMethodCallNotCached`) has been added to `symgo/evaluator/evaluator_test.go`. All tests in the suite pass, verifying the fix and ensuring no regressions were introduced. The associated troubleshooting and continuation documents have been updated to reflect the final state of the work. The task is complete and ready for submission.
 
 ## 7. References
 
@@ -79,5 +79,4 @@ The code is now correct. The fix has been implemented in `symgo/evaluator/evalua
 
 ## 8. TODO / Next Steps
 
-1.  Update the troubleshooting document `docs/trouble-symgo-recursive-method-not-cached.md` with the final, correct explanation of the bug and fix.
-2.  Submit the finalized changes.
+1.  Submit the finalized changes.

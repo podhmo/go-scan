@@ -79,13 +79,29 @@ func (a *accessor) findFieldRecursive(ctx context.Context, typeInfo *scanner.Typ
 // findMethodOnType recursively finds a method on a type or its embedded types.
 // It returns a callable Function object if found.
 func (a *accessor) findMethodOnType(ctx context.Context, typeInfo *scanner.TypeInfo, methodName string, env *object.Environment, receiver object.Object, receiverPos token.Pos) (*object.Function, error) {
+	a.eval.logc(ctx, slog.LevelDebug, "FIND_METHOD_ON_TYPE_ENTRY",
+		"type_name", typeInfo.Name,
+		"type_pkg", typeInfo.PkgPath,
+		"method_name", methodName,
+		"receiver_type", receiver.Type(),
+		"receiver_val", inspectValuer{receiver},
+	)
 	if typeInfo == nil {
+		a.eval.logc(ctx, slog.LevelDebug, "FIND_METHOD_ON_TYPE_EXIT: typeInfo is nil")
 		return nil, nil // Cannot find method without type info
 	}
 
 	// Use a map to track visited types and prevent infinite recursion.
 	visited := make(map[string]bool)
-	return a.findMethodRecursive(ctx, typeInfo, methodName, env, receiver, receiverPos, visited)
+	fn, err := a.findMethodRecursive(ctx, typeInfo, methodName, env, receiver, receiverPos, visited)
+	if err != nil {
+		a.eval.logc(ctx, slog.LevelError, "FIND_METHOD_ON_TYPE_EXIT: error", "error", err)
+	} else if fn != nil {
+		a.eval.logc(ctx, slog.LevelDebug, "FIND_METHOD_ON_TYPE_EXIT: found", "found_func_name", fn.Name.Name)
+	} else {
+		a.eval.logc(ctx, slog.LevelDebug, "FIND_METHOD_ON_TYPE_EXIT: not found")
+	}
+	return fn, err
 }
 
 func (a *accessor) findMethodRecursive(ctx context.Context, typeInfo *scanner.TypeInfo, methodName string, env *object.Environment, receiver object.Object, receiverPos token.Pos, visited map[string]bool) (*object.Function, error) {
@@ -96,19 +112,26 @@ func (a *accessor) findMethodRecursive(ctx context.Context, typeInfo *scanner.Ty
 	// Create a unique key for the type to track visited nodes.
 	typeKey := fmt.Sprintf("%s.%s", typeInfo.PkgPath, typeInfo.Name)
 	if visited[typeKey] {
+		a.eval.logc(ctx, slog.LevelDebug, "findMethodRecursive: cycle detected", "type", typeKey)
 		return nil, nil // Cycle detected
 	}
 	visited[typeKey] = true
+	a.eval.logc(ctx, slog.LevelDebug, "findMethodRecursive: searching", "type", typeKey, "method", methodName)
 
 	// 1. Search for a direct method on the current type.
 	if method, err := a.findDirectMethodOnType(ctx, typeInfo, methodName, env, receiver, receiverPos); err != nil || method != nil {
+		if method != nil {
+			a.eval.logc(ctx, slog.LevelDebug, "findMethodRecursive: found direct method", "type", typeKey, "method", methodName)
+		}
 		return method, err
 	}
 
 	// 2. If not found, search in embedded structs.
 	if typeInfo.Struct != nil {
+		a.eval.logc(ctx, slog.LevelDebug, "findMethodRecursive: searching embedded fields", "type", typeKey)
 		for _, field := range typeInfo.Struct.Fields {
 			if field.Embedded {
+				a.eval.logc(ctx, slog.LevelDebug, "findMethodRecursive: checking embedded field", "field", field.Name)
 				var embeddedTypeInfo *scanner.TypeInfo
 				if field.Type.FullImportPath != "" && !a.eval.resolver.ScanPolicy(field.Type.FullImportPath) {
 					embeddedTypeInfo = scanner.NewUnresolvedTypeInfo(field.Type.FullImportPath, field.Type.TypeName)
@@ -121,11 +144,13 @@ func (a *accessor) findMethodRecursive(ctx context.Context, typeInfo *scanner.Ty
 					// as Unresolved. We should not attempt to find methods on it, as we don't have
 					// the source code.
 					if embeddedTypeInfo.Unresolved {
+						a.eval.logc(ctx, slog.LevelDebug, "findMethodRecursive: skipping unresolved embedded type", "embedded_type", embeddedTypeInfo.Name)
 						continue
 					}
 
 					// Recursive call, passing the original receiver.
 					if foundFn, err := a.findMethodRecursive(ctx, embeddedTypeInfo, methodName, env, receiver, receiverPos, visited); err != nil || foundFn != nil {
+						a.eval.logc(ctx, slog.LevelDebug, "findMethodRecursive: found method in embedded type", "embedded_type", embeddedTypeInfo.Name, "method", methodName)
 						return foundFn, err
 					}
 				}

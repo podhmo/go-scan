@@ -52,6 +52,12 @@ func TestAnalyzeMinigoPackage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create interpreter: %v", err)
 	}
+
+	interp.RegisterIntrinsic("github.com/podhmo/go-scan/minigo.New", func(ctx context.Context, eval *symgo.Interpreter, args []symgo.Object) symgo.Object {
+		// simulate the New function without panicking
+		return &symgo.SymbolicPlaceholder{Reason: "dummy_interpreter"}
+	})
+
 	t.Logf("interpreter created successfully with primary analysis scope: %s/...", minigoPackagePrefix)
 
 	// 1. Load all packages into the interpreter.

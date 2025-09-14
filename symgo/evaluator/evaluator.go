@@ -631,8 +631,53 @@ func (e *Evaluator) evalBinaryExpr(ctx context.Context, node *ast.BinaryExpr, en
 		return right
 	}
 
+	if node.Op == token.EQL || node.Op == token.NEQ {
+		isLeftNil := left.Type() == object.NIL_OBJ
+		isRightNil := right.Type() == object.NIL_OBJ
+
+		if isLeftNil && isRightNil {
+			if node.Op == token.EQL {
+				return object.TRUE
+			}
+			return object.FALSE
+		}
+		if isLeftNil || isRightNil {
+			// If one is nil and the other is not, they can't be equal.
+			// Unless the non-nil one is a symbolic placeholder that could represent nil.
+			if _, ok := left.(*object.SymbolicPlaceholder); ok {
+				return &object.SymbolicPlaceholder{Reason: "comparison with nil"}
+			}
+			if _, ok := right.(*object.SymbolicPlaceholder); ok {
+				return &object.SymbolicPlaceholder{Reason: "comparison with nil"}
+			}
+			if node.Op == token.EQL {
+				return object.FALSE
+			}
+			return object.TRUE
+		}
+	}
+
 	lType := left.Type()
 	rType := right.Type()
+
+	if node.Op == token.EQL {
+		if lType == object.NIL_OBJ && rType == object.NIL_OBJ {
+			return object.TRUE
+		}
+		if lType == object.NIL_OBJ || rType == object.NIL_OBJ {
+			// Comparing a non-nil object to nil
+			return object.FALSE
+		}
+	}
+	if node.Op == token.NEQ {
+		if lType == object.NIL_OBJ && rType == object.NIL_OBJ {
+			return object.FALSE
+		}
+		if lType == object.NIL_OBJ || rType == object.NIL_OBJ {
+			// Comparing a non-nil object to nil
+			return object.TRUE
+		}
+	}
 
 	switch {
 	case lType == object.INTEGER_OBJ && rType == object.INTEGER_OBJ:

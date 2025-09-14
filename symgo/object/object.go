@@ -43,6 +43,7 @@ const (
 	MULTI_RETURN_OBJ          ObjectType = "MULTI_RETURN"
 	BREAK_OBJ                 ObjectType = "BREAK"
 	CONTINUE_OBJ              ObjectType = "CONTINUE"
+	FALLTHROUGH_OBJ           ObjectType = "FALLTHROUGH"
 	VARIADIC_OBJ              ObjectType = "VARIADIC"
 	UNRESOLVED_FUNCTION_OBJ   ObjectType = "UNRESOLVED_FUNCTION"
 	UNRESOLVED_TYPE_OBJ       ObjectType = "UNRESOLVED_TYPE"
@@ -721,6 +722,19 @@ func (c *Continue) Inspect() string {
 	return "continue"
 }
 
+// --- Fallthrough Object ---
+
+// Fallthrough represents a fallthrough statement.
+type Fallthrough struct {
+	BaseObject
+}
+
+// Type returns the type of the Fallthrough object.
+func (f *Fallthrough) Type() ObjectType { return FALLTHROUGH_OBJ }
+
+// Inspect returns a string representation of the fallthrough statement.
+func (f *Fallthrough) Inspect() string { return "fallthrough" }
+
 // --- Variadic Object ---
 
 // Variadic represents a variadic argument expansion (e.g., `slice...`).
@@ -887,4 +901,6 @@ var (
 	FALSE = &Boolean{Value: false}
 	// NIL is the singleton nil value.
 	NIL = &Nil{}
+	// FALLTHROUGH is the singleton fallthrough value.
+	FALLTHROUGH = &Fallthrough{}
 )

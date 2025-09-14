@@ -3230,10 +3230,6 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 			pkgObj, err := e.getOrLoadPackage(ctx, fn.Package.ImportPath)
 			if err == nil && pkgObj != nil {
 				e.ensurePackageEnvPopulated(ctx, pkgObj)
-				// The function's environment must be the one from its defining package.
-				// This makes the evaluator robust against fn objects created with an incorrect Env,
-				// which can happen in tests.
-				fn.Env = pkgObj.Env
 			}
 		}
 

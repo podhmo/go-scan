@@ -57,3 +57,17 @@ This plan details the step-by-step process to improve the `symgo` engine's robus
 -   **Task 4.1: Final Verification**
     -   **Implementation:** No code changes.
     -   **Verification:** Run `make -C examples/find-orphans` and confirm that the command completes with zero "ERROR" messages in the output log. Manually inspect the final output of `find-orphans` to ensure the results are still accurate and no regressions have been introduced.
+
+## New issue: Timeout during analysis
+
+When running `find-orphans` on the entire repository without any scope restrictions, the analysis can be very time-consuming. In some cases, it may not complete and will time out.
+
+**Command:**
+```sh
+go run ./examples/find-orphans
+```
+
+**Result:**
+The command was killed after a long time without producing any output, indicating a timeout.
+
+This suggests that for large codebases, running `find-orphans` on the entire project at once might not be feasible without optimizations or more specific scoping. This should be considered when running the verification steps described in this document.

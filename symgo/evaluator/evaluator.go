@@ -671,14 +671,6 @@ func (e *Evaluator) evalComplexInfixExpression(ctx context.Context, pos token.Po
 }
 
 func (e *Evaluator) evalIntegerInfixExpression(ctx context.Context, pos token.Pos, op token.Token, left, right object.Object) object.Object {
-	// If either operand is a placeholder, the result is a placeholder.
-	if _, ok := left.(*object.SymbolicPlaceholder); ok {
-		return &object.SymbolicPlaceholder{Reason: "integer operation with symbolic left operand"}
-	}
-	if _, ok := right.(*object.SymbolicPlaceholder); ok {
-		return &object.SymbolicPlaceholder{Reason: "integer operation with symbolic right operand"}
-	}
-
 	leftVal := left.(*object.Integer).Value
 	rightVal := right.(*object.Integer).Value
 
@@ -823,9 +815,6 @@ func (e *Evaluator) evalUnaryExpr(ctx context.Context, node *ast.UnaryExpr, env 
 }
 
 func (e *Evaluator) evalBangOperatorExpression(right object.Object) object.Object {
-	if right == nil {
-		return object.TRUE // !nil is true
-	}
 	switch right {
 	case object.TRUE:
 		return object.FALSE
@@ -863,10 +852,8 @@ func (e *Evaluator) evalNumericUnaryExpression(ctx context.Context, op token.Tok
 }
 
 func (e *Evaluator) evalStarExpr(ctx context.Context, node *ast.StarExpr, env *object.Environment, pkg *scan.PackageInfo) object.Object {
-	e.logc(ctx, slog.LevelDebug, "EVAL_STAR_ENTRY", "node", nodeToString(e.scanner.Fset(), node))
 	val := e.Eval(ctx, node.X, env, pkg)
 	if isError(val) {
-		e.logc(ctx, slog.LevelDebug, "EVAL_STAR_EXIT (error)", "node", nodeToString(e.scanner.Fset(), node), "error", val)
 		return val
 	}
 
@@ -879,17 +866,14 @@ func (e *Evaluator) evalStarExpr(ctx context.Context, node *ast.StarExpr, env *o
 		// If we are dereferencing a pointer to an unresolved type, the result is
 		// a symbolic placeholder representing an instance of that type.
 		if ut, ok := ptr.Value.(*object.UnresolvedType); ok {
-			res := &object.SymbolicPlaceholder{
+			return &object.SymbolicPlaceholder{
 				Reason: fmt.Sprintf("instance of unresolved type %s.%s", ut.PkgPath, ut.TypeName),
 			}
-			e.logc(ctx, slog.LevelDebug, "EVAL_STAR_EXIT (pointer to unresolved)", "node", nodeToString(e.scanner.Fset(), node), "result", inspectValuer{res})
-			return res
 		}
 
 		// The value of a pointer is the object it points to.
 		// By returning the pointee directly, a selector expression like `(*p).MyMethod`
 		// will operate on the instance, which is the correct behavior.
-		e.logc(ctx, slog.LevelDebug, "EVAL_STAR_EXIT (pointer)", "node", nodeToString(e.scanner.Fset(), node), "result", inspectValuer{ptr.Value})
 		return ptr.Value
 	}
 
@@ -902,41 +886,27 @@ func (e *Evaluator) evalStarExpr(ctx context.Context, node *ast.StarExpr, env *o
 			elemFieldType = ft.Elem
 			resolvedElem = e.resolver.ResolveType(ctx, elemFieldType)
 		}
-		res := &object.SymbolicPlaceholder{
+		return &object.SymbolicPlaceholder{
 			Reason: fmt.Sprintf("dereferenced from %s", sp.Reason),
 			BaseObject: object.BaseObject{
 				ResolvedTypeInfo:  resolvedElem,
 				ResolvedFieldType: elemFieldType,
 			},
 		}
-		e.logc(ctx, slog.LevelDebug, "EVAL_STAR_EXIT (symbolic pointer)", "node", nodeToString(e.scanner.Fset(), node), "result", inspectValuer{res})
-		return res
 	}
 
 	// NEW: Handle dereferencing a type object itself.
 	// This can happen in method calls on symbolic receivers.
 	if t, ok := val.(*object.Type); ok {
-		res := &object.SymbolicPlaceholder{
+		return &object.SymbolicPlaceholder{
 			Reason: fmt.Sprintf("instance of type %s from dereference", t.TypeName),
 			BaseObject: object.BaseObject{
 				ResolvedTypeInfo: t.ResolvedType,
 			},
 		}
-		e.logc(ctx, slog.LevelDebug, "EVAL_STAR_EXIT (type object)", "node", nodeToString(e.scanner.Fset(), node), "result", inspectValuer{res})
-		return res
 	}
 
-	if ut, ok := val.(*object.UnresolvedType); ok {
-		res := &object.SymbolicPlaceholder{
-			Reason: fmt.Sprintf("instance of unresolved type %s.%s from dereference", ut.PkgPath, ut.TypeName),
-		}
-		e.logc(ctx, slog.LevelDebug, "EVAL_STAR_EXIT (unresolved type)", "node", nodeToString(e.scanner.Fset(), node), "result", inspectValuer{res})
-		return res
-	}
-
-	err := e.newError(ctx, node.Pos(), "invalid indirect of %s (type %T)", val.Inspect(), val)
-	e.logc(ctx, slog.LevelDebug, "EVAL_STAR_EXIT (invalid indirect)", "node", nodeToString(e.scanner.Fset(), node), "error", err)
-	return err
+	return e.newError(ctx, node.Pos(), "invalid indirect of %s (type %T)", val.Inspect(), val)
 }
 
 func (e *Evaluator) evalGenDecl(ctx context.Context, node *ast.GenDecl, env *object.Environment, pkg *scan.PackageInfo) object.Object {
@@ -1266,8 +1236,7 @@ func (e *Evaluator) ensurePackageEnvPopulated(ctx context.Context, pkgObj *objec
 }
 
 func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, env *object.Environment, pkg *scan.PackageInfo) object.Object {
-	e.logc(ctx, slog.LevelDebug, "EVAL_SELECTOR_ENTRY", "selector", n.Sel.Name, "expr", nodeToString(e.scanner.Fset(), n.X))
-	defer e.logc(ctx, slog.LevelDebug, "EVAL_SELECTOR_EXIT", "selector", n.Sel.Name)
+	e.logger.Debug("evalSelectorExpr", "selector", n.Sel.Name)
 
 	// New, more robust check for interface method calls.
 	// Instead of relying on the scanner's static analysis of the expression, we look up
@@ -1434,7 +1403,7 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 		return left
 	}
 
-	e.logc(ctx, slog.LevelDebug, "evalSelectorExpr: evaluated left", "type", left.Type(), "value", inspectValuer{left})
+	e.logger.Debug("evalSelectorExpr: evaluated left", "type", left.Type(), "value", inspectValuer{left})
 
 	switch val := left.(type) {
 	case *object.SymbolicPlaceholder:
@@ -1500,7 +1469,6 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 
 		// For symbolic placeholders, don't error - return another placeholder
 		// This allows analysis to continue even when types are unresolved
-		e.logc(ctx, slog.LevelDebug, "evalSelectorExpr: fallback for symbolic placeholder", "reason", val.Reason, "selector", n.Sel.Name)
 		return &object.SymbolicPlaceholder{
 			Reason:   "method or field " + n.Sel.Name + " on symbolic type " + val.Inspect(),
 			Receiver: val,
@@ -1685,13 +1653,6 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 		// When we have a selector on a pointer, we look for the method on the
 		// type of the object the pointer points to.
 		pointee := val.Value
-		if sp, ok := pointee.(*object.SymbolicPlaceholder); ok {
-			// Accessing a field/method on a pointer to a symbolic placeholder.
-			// The result is another symbolic placeholder.
-			return &object.SymbolicPlaceholder{
-				Reason: fmt.Sprintf("field %s on pointer to %s", n.Sel.Name, sp.Reason),
-			}
-		}
 		if instance, ok := pointee.(*object.Instance); ok {
 			if typeInfo := instance.TypeInfo(); typeInfo != nil {
 				// The receiver for the method call is the pointer itself, not the instance.
@@ -1714,19 +1675,8 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 				}
 			}
 		}
-		// If the pointee is not an instance or nothing is found, it means the method
-		// is undefined. Instead of erroring, we create a callable placeholder.
-		e.logc(ctx, slog.LevelInfo, "undefined method on pointer, creating synthetic method", "type", pointee.Type(), "method", n.Sel.Name)
-		return &object.SymbolicPlaceholder{
-			Reason:   fmt.Sprintf("undefined method %s on pointer to %s", n.Sel.Name, pointee.Type()),
-			Receiver: val, // The receiver is the pointer `val`
-			UnderlyingFunc: &scan.FunctionInfo{
-				Name:       n.Sel.Name,
-				Parameters: []*scan.FieldInfo{}, // Parameters are unknown
-				Results:    []*scan.FieldInfo{}, // Results are unknown
-			},
-			Package: pkg,
-		}
+		// If the pointee is not an instance or nothing is found, fall through to the error.
+		return e.newError(ctx, n.Pos(), "undefined method or field: %s for pointer type %s", n.Sel.Name, pointee.Type())
 
 	case *object.Nil:
 		// Nil can have methods in Go (e.g., interface with nil value).
@@ -2242,39 +2192,8 @@ func (e *Evaluator) evalBlockStatement(ctx context.Context, block *ast.BlockStmt
 }
 
 func (e *Evaluator) evalReturnStmt(ctx context.Context, n *ast.ReturnStmt, env *object.Environment, pkg *scan.PackageInfo) object.Object {
-	// Handle naked return `return`
 	if len(n.Results) == 0 {
-		var currentFn *object.Function
-		if len(e.callStack) > 0 {
-			currentFn = e.callStack[len(e.callStack)-1].Fn
-		}
-
-		if currentFn == nil || currentFn.Decl == nil || currentFn.Decl.Type.Results == nil {
-			return &object.ReturnValue{Value: object.NIL} // Standard naked return
-		}
-
-		// This is a naked return from a function with named return values.
-		// We need to look up the current values of those variables.
-		results := make([]object.Object, len(currentFn.Decl.Type.Results.List))
-		for i, field := range currentFn.Decl.Type.Results.List {
-			if len(field.Names) > 0 {
-				name := field.Names[0].Name
-				if val, ok := env.Get(name); ok {
-					results[i] = val
-				} else {
-					// This should not happen if extendFunctionEnv correctly initialized them.
-					results[i] = &object.SymbolicPlaceholder{Reason: fmt.Sprintf("unresolved named return value %s", name)}
-				}
-			} else {
-				// Unnamed return parameter in a function with some named ones.
-				results[i] = &object.SymbolicPlaceholder{Reason: "unresolved unnamed return value"}
-			}
-		}
-
-		if len(results) == 1 {
-			return &object.ReturnValue{Value: results[0]}
-		}
-		return &object.ReturnValue{Value: &object.MultiReturn{Values: results}}
+		return &object.ReturnValue{Value: object.NIL} // naked return
 	}
 
 	if len(n.Results) == 1 {
@@ -2672,7 +2591,6 @@ func (e *Evaluator) evalBasicLit(ctx context.Context, n *ast.BasicLit) object.Ob
 // forceEval recursively evaluates an object until it is no longer a variable.
 // This is crucial for handling variables whose initializers are other variables.
 func (e *Evaluator) forceEval(ctx context.Context, obj object.Object, pkg *scan.PackageInfo) object.Object {
-	e.logc(ctx, slog.LevelDebug, "FORCE_EVAL_ENTRY", "obj_type", obj.Type(), "obj", inspectValuer{obj})
 	for i := 0; i < 100; i++ { // Add a loop limit to prevent infinite loops in weird cases
 		v, ok := obj.(*object.Variable)
 		if !ok {
@@ -2905,16 +2823,6 @@ func isInfiniteRecursionError(obj object.Object) bool {
 }
 
 // isCallable checks if an object is of a type that can be invoked.
-func nodeToString(fset *token.FileSet, node ast.Node) string {
-	var buf bytes.Buffer
-	if fset != nil && node != nil && node.Pos().IsValid() {
-		printer.Fprint(&buf, fset, node)
-	} else if node != nil {
-		printer.Fprint(&buf, nil, node)
-	}
-	return buf.String()
-}
-
 func isCallable(obj object.Object) bool {
 	if obj == nil {
 		return false
@@ -3098,7 +3006,6 @@ func (v inspectValuer) LogValue() slog.Value {
 }
 
 func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []object.Object, pkg *scan.PackageInfo, callPos token.Pos) object.Object {
-	e.logger.DebugContext(ctx, "APPLY_FUNCTION_ENTRY", "func", fn.Inspect())
 	var name string
 
 	if f, ok := fn.(*object.Function); ok {
@@ -3228,7 +3135,7 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 		// When calling a function, ensure its defining package's environment is fully populated.
 		if fn.Package != nil {
 			pkgObj, err := e.getOrLoadPackage(ctx, fn.Package.ImportPath)
-			if err == nil && pkgObj != nil {
+			if err == nil {
 				e.ensurePackageEnvPopulated(ctx, pkgObj)
 			}
 		}
@@ -3486,74 +3393,47 @@ func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, 
 
 	// 2. Bind parameters
 	if fn.Def == nil {
-		// Fallback for function literals or when FunctionInfo is not available
+		// Fallback for function literals which don't have a FunctionInfo
 		e.logc(ctx, slog.LevelWarn, "function definition not available in extendFunctionEnv, falling back to AST", "function", fn.Name)
 		if fn.Parameters != nil {
 			argIndex := 0
 			for _, field := range fn.Parameters.List {
+				// Handle variadic parameters indicated by Ellipsis in the AST
 				isVariadic := false
 				if _, ok := field.Type.(*ast.Ellipsis); ok {
 					isVariadic = true
 				}
 
-				// Determine the type of the parameter for creating placeholders
-				var fieldType *scan.FieldType
-				var resolvedType *scan.TypeInfo
-				if fn.Package != nil {
-					var importLookup map[string]string
-					file := fn.Package.Fset.File(field.Pos())
-					if file != nil {
-						if astFile, ok := fn.Package.AstFiles[file.Name()]; ok {
-							importLookup = e.scanner.BuildImportLookup(astFile)
-						}
-					}
-					fieldType = e.scanner.TypeInfoFromExpr(ctx, field.Type, nil, fn.Package, importLookup)
-					if fieldType != nil {
-						resolvedType = e.resolver.ResolveType(ctx, fieldType)
-					}
-				}
-
 				for _, name := range field.Names {
-					if name.Name == "_" {
-						if !isVariadic {
-							argIndex++
-						}
-						continue
+					if argIndex >= len(args) {
+						break
 					}
-
-					var valToBind object.Object
-					if argIndex < len(args) {
+					if name.Name != "_" {
+						var valToBind object.Object
 						if isVariadic {
+							// Collect remaining args into a slice for the variadic parameter
 							sliceElements := args[argIndex:]
 							valToBind = &object.Slice{Elements: sliceElements}
+							// We could try to infer a field type here if needed
 						} else {
 							valToBind = args[argIndex]
 						}
-					} else {
-						// Not enough arguments provided, create a placeholder
-						valToBind = &object.SymbolicPlaceholder{
-							Reason:     "symbolic parameter for entry point",
-							BaseObject: object.BaseObject{ResolvedTypeInfo: resolvedType, ResolvedFieldType: fieldType},
+
+						v := &object.Variable{
+							Name:        name.Name,
+							Value:       valToBind,
+							IsEvaluated: true,
 						}
+						v.SetTypeInfo(valToBind.TypeInfo())
+						v.SetFieldType(valToBind.FieldType())
+						env.SetLocal(name.Name, v)
 					}
-
-					v := &object.Variable{
-						Name:        name.Name,
-						Value:       valToBind,
-						IsEvaluated: true,
-					}
-					v.SetTypeInfo(valToBind.TypeInfo())
-					v.SetFieldType(valToBind.FieldType())
-					env.SetLocal(name.Name, v)
-
-					if isVariadic {
-						argIndex = len(args) // Consume all remaining args
-					} else {
+					if !isVariadic {
 						argIndex++
 					}
 				}
 				if isVariadic {
-					break
+					break // Variadic parameter is always the last one
 				}
 			}
 		}
@@ -3604,49 +3484,6 @@ func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, 
 			// For now, we assume the single variadic argument is handled correctly by the caller providing a slice.
 			// This part of the refactoring is left as a TODO if complex variadic cases fail.
 			break
-		}
-	}
-
-	// NEW LOGIC: Bind named return values
-	if fn.Decl != nil && fn.Decl.Type.Results != nil {
-		for _, field := range fn.Decl.Type.Results.List {
-			// We only care about fields that have names.
-			if len(field.Names) == 0 {
-				continue
-			}
-
-			var importLookup map[string]string
-			if fn.Package != nil {
-				if file := fn.Package.Fset.File(field.Pos()); file != nil {
-					if astFile, ok := fn.Package.AstFiles[file.Name()]; ok {
-						importLookup = e.scanner.BuildImportLookup(astFile)
-					}
-				}
-			}
-
-			// Get type info for the return variable
-			staticFieldType := e.scanner.TypeInfoFromExpr(ctx, field.Type, nil, fn.Package, importLookup)
-			resolvedTypeInfo := e.resolver.ResolveType(ctx, staticFieldType)
-
-			// Create a placeholder representing the zero value for this type
-			zeroValue := &object.SymbolicPlaceholder{Reason: "zero value for named return"}
-			if staticFieldType != nil {
-				zeroValue.SetFieldType(staticFieldType)
-				zeroValue.SetTypeInfo(resolvedTypeInfo)
-			}
-
-			for _, name := range field.Names {
-				if name.Name != "" && name.Name != "_" {
-					v := &object.Variable{
-						Name:        name.Name,
-						Value:       zeroValue,
-						IsEvaluated: true, // It has a value (the zero value)
-					}
-					v.SetFieldType(staticFieldType)
-					v.SetTypeInfo(resolvedTypeInfo)
-					env.SetLocal(name.Name, v)
-				}
-			}
 		}
 	}
 

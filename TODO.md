@@ -76,9 +76,6 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 
 ## To Be Implemented
 
-### `symgo`: Improve Robustness and Reduce Configuration ([docs/cont-symgo-robustness.md](./docs/cont-symgo-robustness.md))
-- [ ] Resolve the file inconsistency issue and complete the `symgo` robustness task as detailed in the continuation document.
-
 ### Fix `symgo` Error on Pointer Operations with Unresolved Types ([docs/cont-unresolved-type-error.md](./docs/cont-unresolved-type-error.md))
 - [x] Implement the full fix as detailed in the continuation document, starting from a clean state.
 

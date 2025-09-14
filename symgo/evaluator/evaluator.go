@@ -1687,14 +1687,28 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 		// When we have a selector on a pointer, we look for the method on the
 		// type of the object the pointer points to.
 		pointee := val.Value
-		if instance, ok := pointee.(*object.Instance); ok {
-			if typeInfo := instance.TypeInfo(); typeInfo != nil {
-				// The receiver for the method call is the pointer itself, not the instance.
+
+		// Handle pointers to symbolic placeholders, which is common.
+		if sp, ok := pointee.(*object.SymbolicPlaceholder); ok {
+			if typeInfo := sp.TypeInfo(); typeInfo != nil {
+				// The receiver for the method call is the pointer itself `val`.
 				if method, err := e.accessor.findMethodOnType(ctx, typeInfo, n.Sel.Name, env, val, n.X.Pos()); err == nil && method != nil {
 					return method
 				}
+				// If not a method, check for a field on the underlying struct.
+				if typeInfo.Struct != nil {
+					if field, err := e.accessor.findFieldOnType(ctx, typeInfo, n.Sel.Name); err == nil && field != nil {
+						return e.resolver.ResolveSymbolicField(ctx, field, sp)
+					}
+				}
+			}
+			// If we can't find a method/field, return a placeholder for the result of the access.
+			return &object.SymbolicPlaceholder{
+				Reason:   "method or field " + n.Sel.Name + " on pointer to symbolic type " + sp.Inspect(),
+				Receiver: val,
 			}
 		}
+
 		if instance, ok := pointee.(*object.Instance); ok {
 			if typeInfo := instance.TypeInfo(); typeInfo != nil {
 				// The receiver for the method call is the pointer itself, not the instance.
@@ -3360,7 +3374,8 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 			return intrinsicFn(ctx, args...)
 		}
 
-		scannedPkg, err := e.resolver.ResolvePackage(ctx, fn.PkgPath)
+		// Use the policy-bypassing method to resolve the package just for the signature.
+		scannedPkg, err := e.resolver.ResolvePackageForSignature(ctx, fn.PkgPath)
 		if err != nil {
 			e.logc(ctx, slog.LevelWarn, "could not scan package for unresolved symbol (or denied by policy)", "package", fn.PkgPath, "symbol", fn.TypeName, "error", err)
 			return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("result of calling unresolved symbol %s.%s", fn.PkgPath, fn.TypeName)}
@@ -3391,10 +3406,10 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 			return intrinsicFn(ctx, args...)
 		}
 
-		// Use the policy-enforcing method to resolve the package.
-		scannedPkg, err := e.resolver.ResolvePackage(ctx, fn.PkgPath)
+		// Use the policy-bypassing method to resolve the package just for the signature.
+		scannedPkg, err := e.resolver.ResolvePackageForSignature(ctx, fn.PkgPath)
 		if err != nil {
-			e.logc(ctx, slog.LevelWarn, "could not scan package for unresolved function (or denied by policy)", "package", fn.PkgPath, "function", fn.FuncName, "error", err)
+			e.logc(ctx, slog.LevelWarn, "could not scan package for unresolved function signature", "package", fn.PkgPath, "function", fn.FuncName, "error", err)
 			return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("result of calling unresolved function %s.%s", fn.PkgPath, fn.FuncName)}
 		}
 

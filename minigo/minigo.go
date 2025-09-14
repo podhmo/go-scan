@@ -219,7 +219,7 @@ func NewInterpreter(scanner *goscan.Scanner, options ...Option) (*Interpreter, e
 		opt(i)
 	}
 
-	i.eval = evaluator.New(evaluator.Config{
+	cfg := evaluator.Config{
 		Fset:         i.scanner.Fset(),
 		Scanner:      i.scanner,
 		Registry:     i.Registry,
@@ -228,7 +228,8 @@ func NewInterpreter(scanner *goscan.Scanner, options ...Option) (*Interpreter, e
 		Stdin:        i.stdin,
 		Stdout:       i.stdout,
 		Stderr:       i.stderr,
-	})
+	}
+	i.eval = evaluator.New(cfg)
 
 	return i, nil
 }

@@ -162,6 +162,14 @@ func (r *Resolver) ResolvePackage(ctx context.Context, path string) (*scanner.Pa
 	return r.resolvePackageWithoutPolicyCheck(ctx, path)
 }
 
+// ResolvePackageForSignature resolves a package to get its function signatures,
+// bypassing the scan policy. This is used for lazy resolution of unresolved
+// function calls to determine their return arity.
+func (r *Resolver) ResolvePackageForSignature(ctx context.Context, path string) (*scanner.PackageInfo, error) {
+	r.logger.DebugContext(ctx, "ResolvePackageForSignature: scanning package, bypassing policy", "path", path)
+	return r.resolvePackageWithoutPolicyCheck(ctx, path)
+}
+
 // resolvePackageWithoutPolicyCheck resolves a package without enforcing the scan policy.
 func (r *Resolver) resolvePackageWithoutPolicyCheck(ctx context.Context, path string) (*scanner.PackageInfo, error) {
 	return r.scanner.ScanPackageByImport(ctx, path)

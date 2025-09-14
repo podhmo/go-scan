@@ -12,8 +12,6 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 
 ## Implemented
 
-- **`symgo` Robustness Proposal**: Created a detailed analysis and implementation plan (`docs/trouble-symgo.md`) to make the `symgo` engine more resilient. The plan proposes changes to gracefully handle unresolved types and operations on symbolic values, reducing the need for manual configuration.
-
 - **Core Scanning Engine**: A robust, AST-based engine for parsing Go code. It supports lazy, on-demand, cross-package type resolution, and correctly handles complex scenarios like recursive types and generic type definitions. It can extract detailed information about all major Go constructs, including structs, functions, interfaces, and constants.
     - **Test Package Handling**: The scanner now correctly handles directories containing both a standard package (`pkg`) and its external test package (`pkg_test`) when the `include-tests` option is enabled, preventing "mismatched package names" errors.
 - **Dependency Analysis**: Includes the `deps-walk` command-line tool for visualizing dependency graphs (in DOT or Mermaid format) and a powerful underlying library for programmatic graph traversal, including forward and reverse dependency analysis.
@@ -115,3 +113,20 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] **Implementation**: Implemented the coordinated fix in the evaluator and resolver to replace policy bypasses with policy-enforcing methods and correct placeholder handling.
 - [x] **Test Fixes**: Update failing tests to assert for `SymbolicPlaceholder` or `UnresolvedFunction` instead of concrete values for out-of-policy code.
 - [x] **Test Coverage**: Add a new test to verify that method calls on out-of-policy types are correctly handled as unresolved.
+
+### `symgo`: Improve Robustness and Reduce Configuration
+- [ ] **Phase 1: Graceful Handling of Unresolved Types**
+    - [ ] **Task 1.1: Fix `invalid indirect` error:** Modify `evalStarExpr` to return a `SymbolicPlaceholder` for unresolved types.
+    - [ ] **Verification:** Confirm `invalid indirect` errors are gone after running `find-orphans`.
+    - [ ] **Task 1.2: Fix `selector on unresolved type` error:** Modify `evalSelectorExpr` to return a `SymbolicPlaceholder` for unresolved types.
+    - [ ] **Verification:** Confirm `selector on unresolved type` errors are gone after running `find-orphans`.
+- [ ] **Phase 2: Graceful Handling of Operations on Symbolic Values**
+    - [ ] **Task 2.1: Fix `unary operator` error:** Modify `evalNumericUnaryExpression` to handle `SymbolicPlaceholder` operands.
+    - [ ] **Verification:** Confirm `unary operator - not supported` errors are gone after running `find-orphans`.
+    - [ ] **Task 2.2: Fix `undefined method` error:** Modify `evalSelectorExpr` to return a callable `SymbolicPlaceholder` for methods on symbolic pointers.
+    - [ ] **Verification:** Confirm `undefined method or field` errors are gone after running `find-orphans`.
+- [ ] **Phase 3: Internal Interpreter Fixes**
+    - [ ] **Task 3.1: Fix `identifier not found` error:** Investigate and fix scoping issues in the `minigo` evaluator.
+    - [ ] **Verification:** Confirm `identifier not found` errors are gone after running `find-orphans`.
+- [ ] **Phase 4: Final Validation**
+    - [ ] **Task 4.1: Final Verification:** Run `find-orphans` and confirm zero "ERROR" messages in the log and no regressions in the output.

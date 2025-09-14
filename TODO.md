@@ -115,19 +115,8 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] **Test Fixes**: Update failing tests to assert for `SymbolicPlaceholder` or `UnresolvedFunction` instead of concrete values for out-of-policy code.
 - [x] **Test Coverage**: Add a new test to verify that method calls on out-of-policy types are correctly handled as unresolved.
 
-### `symgo`: Improve Robustness and Reduce Configuration
-- [x] **Phase 1: Graceful Handling of Unresolved Types**
-    - [x] **Task 1.1: Fix `invalid indirect` error:** Modify `evalStarExpr` to return a `SymbolicPlaceholder` for unresolved types.
-    - [x] **Verification:** Confirm `invalid indirect` errors are gone after running `find-orphans`.
-    - [x] **Task 1.2: Fix `selector on unresolved type` error:** Modify `evalSelectorExpr` to return a `SymbolicPlaceholder` for unresolved types.
-    - [x] **Verification:** Confirm `selector on unresolved type` errors are gone after running `find-orphans`.
-- [x] **Phase 2: Graceful Handling of Operations on Symbolic Values**
-    - [x] **Task 2.1: Fix `unary operator` error:** Modify `evalNumericUnaryExpression` to handle `SymbolicPlaceholder` operands.
-    - [x] **Verification:** Confirm `unary operator - not supported` errors are gone after running `find-orphans`.
-    - [x] **Task 2.2: Fix `undefined method` error:** Modify `evalSelectorExpr` to return a callable `SymbolicPlaceholder` for methods on symbolic pointers.
-    - [x] **Verification:** Confirm `undefined method or field` errors are gone after running `find-orphans`.
-- [x] **Phase 3: Internal Interpreter Fixes**
-    - [x] **Task 3.1: Fix `identifier not found` error:** Investigate and fix scoping issues in the `minigo` evaluator.
-    - [x] **Verification:** Confirm `identifier not found` errors are gone after running `find-orphans`.
-- [x] **Phase 4: Final Validation**
-    - [x] **Task 4.1: Final Verification:** Run `find-orphans` and confirm zero "ERROR" messages in the log and no regressions in the output.
+- [x] **`symgo`: Improve Robustness and Reduce Configuration**: A series of fixes were implemented to make the symbolic execution engine more resilient. This includes returning `SymbolicPlaceholder` objects for unresolved types and operations on symbolic values, fixing `nil` panics on pointer assignments, and correcting environment scoping issues during analysis. This resolves all `ERROR` level logs previously seen when running `find-orphans`.
+    - [x] **Phase 1: Graceful Handling of Unresolved Types**
+    - [x] **Phase 2: Graceful Handling of Operations on Symbolic Values**
+    - [x] **Phase 3: Internal Interpreter Fixes**
+    - [x] **Phase 4: Final Validation**

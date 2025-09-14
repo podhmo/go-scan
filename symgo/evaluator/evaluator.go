@@ -313,6 +313,10 @@ func (e *Evaluator) Eval(ctx context.Context, node ast.Node, env *object.Environ
 		// Similar to other type expressions, we don't need to evaluate it to a concrete value,
 		// just prevent an "unimplemented" error.
 		return &object.SymbolicPlaceholder{Reason: "struct type expression"}
+	case *ast.TypeSpec:
+		// A TypeSpec is a declaration, not an expression. It does not produce a value.
+		// When encountered during evaluation (e.g. inside a function body), we do nothing.
+		return nil
 	}
 	return e.newError(ctx, node.Pos(), "evaluation not implemented for %T", node)
 }

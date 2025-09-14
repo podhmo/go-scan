@@ -14,6 +14,7 @@ import (
 	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/symgo"
 	"github.com/podhmo/go-scan/symgo/object"
+	scan "github.com/podhmo/go-scan/scanner"
 )
 
 func TestAnalyzeMinigoPackage(t *testing.T) {
@@ -94,10 +95,23 @@ func TestAnalyzeMinigoPackage(t *testing.T) {
 
 		t.Logf("Scanning file for functions: %s", filePath)
 
+		pkgEnv, ok := interp.PackageEnvForTest(currentPkg.ImportPath)
+		if !ok {
+			t.Fatalf("could not get package environment for %s", currentPkg.ImportPath)
+		}
+
 		for _, decl := range fileScope.AST.Decls {
 			funcDecl, ok := decl.(*ast.FuncDecl)
 			if !ok || funcDecl.Body == nil {
 				continue
+			}
+
+			var funcInfo *scan.FunctionInfo
+			for _, f := range currentPkg.Functions {
+				if f.AstDecl == funcDecl {
+					funcInfo = f
+					break
+				}
 			}
 
 			fn := &object.Function{
@@ -106,7 +120,8 @@ func TestAnalyzeMinigoPackage(t *testing.T) {
 				Body:       funcDecl.Body,
 				Decl:       funcDecl,
 				Package:    currentPkg,
-				Env:        interp.GlobalEnvForTest(),
+				Env:        pkgEnv, // Use the correct package-level environment
+				Def:        funcInfo,
 			}
 
 			fnName := fmt.Sprintf("%s.%s", currentPkg.ImportPath, funcDecl.Name.Name)
@@ -120,9 +135,9 @@ func TestAnalyzeMinigoPackage(t *testing.T) {
 			}
 			result := interp.ApplyFunction(ctx, dummyCall, fn, nil, fileScope)
 
+			// The analysis should now succeed for all functions.
 			if err, isErr := result.(*object.Error); isErr {
-				t.Logf("Successfully reproduced analysis failure for function %s: %s", fnName, err.Inspect())
-				return
+				t.Fatalf("Analysis of function %s failed unexpectedly: %s", fnName, err.Inspect())
 			}
 		}
 	}
@@ -130,6 +145,4 @@ func TestAnalyzeMinigoPackage(t *testing.T) {
 	if functionsAnalyzed == 0 {
 		t.Fatal("Test setup failed: no function declarations were found to analyze in any of the loaded minigo files.")
 	}
-
-	t.Errorf("Test completed without triggering the expected analysis failure")
 }

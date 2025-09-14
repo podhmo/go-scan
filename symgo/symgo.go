@@ -371,6 +371,11 @@ func (i *Interpreter) GlobalEnvForTest() *object.Environment {
 	return i.globalEnv
 }
 
+// PackageEnvForTest is a test helper to get a package's environment.
+func (i *Interpreter) PackageEnvForTest(pkgPath string) (*object.Environment, bool) {
+	return i.eval.PackageEnvForTest(pkgPath)
+}
+
 // ApplyFunction is a test helper to expose the evaluator's ApplyFunction method.
 func (i *Interpreter) ApplyFunction(ctx context.Context, call *ast.CallExpr, fn object.Object, args []object.Object, fscope *evaluator.FileScope) object.Object {
 	return i.eval.ApplyFunction(ctx, call, fn, args, fscope)

@@ -1460,8 +1460,17 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 			}
 
 			// If it's not a method, check if it's a field on the struct (including embedded).
-			if typeInfo.Struct != nil {
-				if field, err := e.accessor.findFieldOnType(ctx, typeInfo, n.Sel.Name); err == nil && field != nil {
+			// This needs to handle pointers to structs.
+			var structType *scan.TypeInfo
+			if typeInfo.Kind == scan.StructKind {
+				structType = typeInfo
+			} else if typeInfo.Underlying != nil && typeInfo.Underlying.IsPointer && typeInfo.Underlying.Elem != nil {
+				// It's a pointer (or alias to pointer). Get the element type's info.
+				structType, _ = typeInfo.Underlying.Elem.Resolve(ctx)
+			}
+
+			if structType != nil && structType.Struct != nil {
+				if field, err := e.accessor.findFieldOnType(ctx, structType, n.Sel.Name); err == nil && field != nil {
 					return e.resolver.ResolveSymbolicField(ctx, field, val)
 				}
 			}

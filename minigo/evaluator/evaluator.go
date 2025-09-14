@@ -2615,58 +2615,35 @@ func (e *Evaluator) evalBranchStmt(bs *ast.BranchStmt, env *object.Environment, 
 	}
 }
 
-// EvalToplevel orchestrates the two-pass evaluation for a set of declarations
-// from one or more files.
+// EvalToplevel orchestrates the evaluation for a set of declarations.
+// It now uses a simplified two-pass approach within a single function.
 func (e *Evaluator) EvalToplevel(decls []object.DeclWithScope, env *object.Environment) object.Object {
-	// Pass 1: Register all types and functions first.
-	// This pass does not evaluate any variable or constant initializers.
-	varDecls, constDecls := e.registerDecls(decls, env)
-
-	// Pass 2: Evaluate the initializers for variables and constants.
-	// Now that all functions and types are known, these initializers can refer to them.
-	result := e.evalInitializers(append(varDecls, constDecls...), env)
-	if isError(result) {
-		return result
-	}
-
-	return result
-}
-
-// registerDecls is the first pass of the evaluation. It scans for all top-level
-// type and function declarations and adds them to the environment. It returns
-// slices of the variable and constant declarations to be processed in the second pass.
-func (e *Evaluator) registerDecls(decls []object.DeclWithScope, env *object.Environment) (varDecls, constDecls []object.DeclWithScope) {
+	// Pass 1: Register all types and functions to handle forward references.
 	for _, item := range decls {
 		switch d := item.Decl.(type) {
 		case *ast.FuncDecl:
-			// Just register the function definition. The body will be evaluated on call.
-			// The existing Eval logic for FuncDecl is sufficient for this pass.
 			e.Eval(d, env, item.Scope)
 		case *ast.GenDecl:
-			switch d.Tok {
-			case token.TYPE, token.IMPORT:
-				// Register type and import definitions.
-				// The existing Eval logic for these GenDecls is sufficient.
+			if d.Tok == token.TYPE || d.Tok == token.IMPORT {
 				e.Eval(d, env, item.Scope)
-			case token.VAR:
-				varDecls = append(varDecls, item)
-			case token.CONST:
-				constDecls = append(constDecls, item)
 			}
 		}
 	}
-	return varDecls, constDecls
-}
 
-// evalInitializers is the second pass of the evaluation. It evaluates the
-// expressions for all variable and constant declarations.
-func (e *Evaluator) evalInitializers(decls []object.DeclWithScope, env *object.Environment) object.Object {
+	// Pass 2: Evaluate all declarations, including var/const initializers.
 	var result object.Object
 	for _, item := range decls {
-		// The existing Eval logic for VAR and CONST GenDecls performs the initialization.
-		result = e.Eval(item.Decl, env, item.Scope)
-		if isError(result) {
-			return result
+		// Re-evaluating is idempotent for types/funcs and necessary for vars/consts.
+		res := e.Eval(item.Decl, env, item.Scope)
+		if isError(res) {
+			// Only return on error. Otherwise, continue evaluating all decls.
+			if res.Type() == object.ERROR_OBJ {
+				return res
+			}
+		}
+		// Keep the last non-error result, similar to how a REPL might work.
+		if !isError(res) {
+			result = res
 		}
 	}
 	return result

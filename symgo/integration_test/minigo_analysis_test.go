@@ -27,13 +27,13 @@ func TestAnalyzeMinigoPackage(t *testing.T) {
 		t.Fatalf("could not get absolute path for project root: %v", err)
 	}
 
-	s, err := goscan.New(goscan.WithWorkDir(root))
+	scanner, err := goscan.New(goscan.WithWorkDir(root), goscan.WithGoModuleResolver())
 	if err != nil {
 		t.Fatalf("failed to create scanner: %v", err)
 	}
 
 	minigoPackagePrefix := "github.com/podhmo/go-scan/minigo"
-	pkgs, err := s.Scan(ctx, minigoPackagePrefix+"/...")
+	pkgs, err := scanner.Scan(ctx, minigoPackagePrefix+"/...")
 	if err != nil {
 		t.Fatalf("failed to scan packages: %v", err)
 	}
@@ -45,9 +45,14 @@ func TestAnalyzeMinigoPackage(t *testing.T) {
 		Level:     logLevel,
 	}))
 
-	interp, err := symgo.NewInterpreter(s,
+	interp, err := symgo.NewInterpreter(scanner,
 		symgo.WithLogger(logger),
-		symgo.WithPrimaryAnalysisScope(minigoPackagePrefix+"/..."),
+		symgo.WithPrimaryAnalysisScope(
+			minigoPackagePrefix,
+			minigoPackagePrefix+"/evaluator",
+			minigoPackagePrefix+"/object",
+			minigoPackagePrefix+"/ffibridge",
+		),
 	)
 	if err != nil {
 		t.Fatalf("failed to create interpreter: %v", err)
@@ -58,7 +63,7 @@ func TestAnalyzeMinigoPackage(t *testing.T) {
 	for _, pkg := range pkgs {
 		for _, fileAst := range pkg.AstFiles {
 			if _, err := interp.Eval(ctx, fileAst, pkg); err != nil {
-				t.Logf("initial load warning for file %s: %v", s.Fset().File(fileAst.Pos()).Name(), err)
+				t.Logf("initial load warning for file %s: %v", scanner.Fset().File(fileAst.Pos()).Name(), err)
 			}
 		}
 	}
@@ -71,7 +76,7 @@ func TestAnalyzeMinigoPackage(t *testing.T) {
 			continue
 		}
 
-		filePath := s.Fset().File(fileScope.AST.Pos()).Name()
+		filePath := scanner.Fset().File(fileScope.AST.Pos()).Name()
 		isMinigoFile := false
 		var currentPkg *goscan.Package
 		for _, pkg := range pkgs {

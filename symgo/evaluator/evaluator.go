@@ -3115,36 +3115,29 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 		return &object.SymbolicPlaceholder{Reason: "max call stack depth exceeded"}
 	}
 
-	// New recursion check based on function definition and receiver position.
+	// New recursion check based on function definition and arguments.
 	if f, ok := fn.(*object.Function); ok && f.Def != nil {
-		recursionCount := 0
 		for _, frame := range e.callStack {
-			// The most robust way to detect recursion on a definition is to compare the
-			// source position of the function's declaration AST node. This correctly
-			// identifies recursion on a specific function/method definition, which is
-			// the goal of symgo's analysis, rather than tracking object instances.
+			// A true infinite recursion occurs if the same function is called with the exact same arguments.
 			if frame.Fn != nil && frame.Fn.Def != nil && frame.Fn.Def.AstDecl != nil &&
-				f.Def.AstDecl != nil && frame.Fn.Def.AstDecl.Pos() == f.Def.AstDecl.Pos() {
-				recursionCount++
-			}
-		}
+				f.Def.AstDecl != nil && frame.Fn.Def.AstDecl.Pos() == f.Def.AstDecl.Pos() &&
+				areArgsEqual(frame.Args, args) {
 
-		// Allow one level of recursion, but stop at the second call.
-		if recursionCount > 0 { // Changed from > 1 to > 0 to be more strict.
-			e.logc(ctx, slog.LevelWarn, "bounded recursion depth exceeded, halting analysis for this path", "function", name)
-			// Return a symbolic placeholder that matches the function's return signature.
-			if f.Def != nil && f.Def.AstDecl.Type.Results != nil {
-				numResults := len(f.Def.AstDecl.Type.Results.List)
-				if numResults > 1 {
-					results := make([]object.Object, numResults)
-					for i := 0; i < numResults; i++ {
-						results[i] = &object.SymbolicPlaceholder{Reason: "bounded recursion halt"}
+				e.logc(ctx, slog.LevelWarn, "infinite recursion detected, halting analysis for this path", "function", name)
+				// Return a symbolic placeholder that matches the function's return signature.
+				if f.Def != nil && f.Def.AstDecl.Type.Results != nil {
+					numResults := len(f.Def.AstDecl.Type.Results.List)
+					if numResults > 1 {
+						results := make([]object.Object, numResults)
+						for i := 0; i < numResults; i++ {
+							results[i] = &object.SymbolicPlaceholder{Reason: "infinite recursion halt"}
+						}
+						return &object.MultiReturn{Values: results}
 					}
-					return &object.MultiReturn{Values: results}
 				}
+				// Default to a single placeholder if signature is not available or has <= 1 return values.
+				return &object.SymbolicPlaceholder{Reason: "infinite recursion halt"}
 			}
-			// Default to a single placeholder if signature is not available or has <= 1 return values.
-			return &object.SymbolicPlaceholder{Reason: "bounded recursion halt"}
 		}
 	}
 
@@ -3555,6 +3548,13 @@ func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, 
 				staticTypeInfo := e.resolver.ResolveType(ctx, staticFieldType)
 				v.SetFieldType(staticFieldType)
 				v.SetTypeInfo(staticTypeInfo)
+
+				// Also apply the static type to the argument placeholder itself, so that
+				// when the variable is evaluated, the placeholder carries the type info.
+				if placeholder, ok := arg.(*object.SymbolicPlaceholder); ok {
+					placeholder.SetFieldType(staticFieldType)
+					placeholder.SetTypeInfo(staticTypeInfo)
+				}
 			} else {
 				// Fallback to the dynamic type from the argument.
 				v.SetFieldType(arg.FieldType())

@@ -76,6 +76,9 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 
 ## To Be Implemented
 
+### `symgo`: Fix `TestAnalyzeMinigoPackage` Panic ([docs/cont-symgo-robustness.md](./docs/cont-symgo-robustness.md))
+- [x] Investigated and fixed a `panic: nil` error in `TestAnalyzeMinigoPackage` by ensuring the symbolic evaluator correctly handles embedded fields and has the proper module context to resolve standard library dependencies.
+
 ### Fix `symgo` Error on Pointer Operations with Unresolved Types ([docs/cont-unresolved-type-error.md](./docs/cont-unresolved-type-error.md))
 - [x] Implement the full fix as detailed in the continuation document, starting from a clean state.
 

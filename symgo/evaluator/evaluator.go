@@ -313,10 +313,6 @@ func (e *Evaluator) Eval(ctx context.Context, node ast.Node, env *object.Environ
 		// Similar to other type expressions, we don't need to evaluate it to a concrete value,
 		// just prevent an "unimplemented" error.
 		return &object.SymbolicPlaceholder{Reason: "struct type expression"}
-	case *ast.TypeSpec:
-		// A TypeSpec is a declaration, not an expression. It does not produce a value.
-		// When encountered during evaluation (e.g. inside a function body), we do nothing.
-		return nil
 	}
 	return e.newError(ctx, node.Pos(), "evaluation not implemented for %T", node)
 }
@@ -592,8 +588,27 @@ func (e *Evaluator) evalCompositeLit(ctx context.Context, node *ast.CompositeLit
 		BaseObject: object.BaseObject{
 			ResolvedTypeInfo: resolvedType,
 		},
+		State: make(map[string]object.Object),
 	}
 	instance.SetFieldType(fieldType)
+
+	// Populate the instance's state from the literal's key-value pairs.
+	for _, elt := range node.Elts {
+		if kv, ok := elt.(*ast.KeyValueExpr); ok {
+			if keyIdent, ok := kv.Key.(*ast.Ident); ok {
+				fieldName := keyIdent.Name
+				// The value was already evaluated above, but we need to re-fetch it.
+				// This is inefficient; a better implementation would store evaluated key-values.
+				// For now, re-evaluating is a safe way to get the correct value.
+				fieldValue := e.Eval(ctx, kv.Value, env, pkg)
+				if isError(fieldValue) {
+					return fieldValue // Propagate errors
+				}
+				instance.State[fieldName] = fieldValue
+			}
+		}
+	}
+
 	return instance
 }
 
@@ -1464,17 +1479,8 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 			}
 
 			// If it's not a method, check if it's a field on the struct (including embedded).
-			// This needs to handle pointers to structs.
-			var structType *scan.TypeInfo
-			if typeInfo.Kind == scan.StructKind {
-				structType = typeInfo
-			} else if typeInfo.Underlying != nil && typeInfo.Underlying.IsPointer && typeInfo.Underlying.Elem != nil {
-				// It's a pointer (or alias to pointer). Get the element type's info.
-				structType, _ = typeInfo.Underlying.Elem.Resolve(ctx)
-			}
-
-			if structType != nil && structType.Struct != nil {
-				if field, err := e.accessor.findFieldOnType(ctx, structType, n.Sel.Name); err == nil && field != nil {
+			if typeInfo.Struct != nil {
+				if field, err := e.accessor.findFieldOnType(ctx, typeInfo, n.Sel.Name); err == nil && field != nil {
 					return e.resolver.ResolveSymbolicField(ctx, field, val)
 				}
 			}
@@ -1661,7 +1667,22 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 			}
 		}
 
-		return e.newError(ctx, n.Pos(), "undefined method: %s on %s", n.Sel.Name, val.TypeName)
+		// If it's not a method, check for a field in the instance's state.
+		if val.State != nil {
+			if fieldVal, ok := val.State[n.Sel.Name]; ok {
+				return fieldVal
+			}
+		}
+
+		// If not in state, it might be a field on the struct that hasn't been assigned a value yet.
+		// We can return a symbolic placeholder for it.
+		if typeInfo := val.TypeInfo(); typeInfo != nil && typeInfo.Struct != nil {
+			if field, err := e.accessor.findFieldOnType(ctx, typeInfo, n.Sel.Name); err == nil && field != nil {
+				return e.resolver.ResolveSymbolicField(ctx, field, val)
+			}
+		}
+
+		return e.newError(ctx, n.Pos(), "undefined method or field: %s on %s", n.Sel.Name, val.TypeName)
 	case *object.Pointer:
 		// When we have a selector on a pointer, we look for the method on the
 		// type of the object the pointer points to.
@@ -2379,10 +2400,52 @@ func (e *Evaluator) evalAssignStmt(ctx context.Context, n *ast.AssignStmt, env *
 			return e.evalIdentAssignment(ctx, lhs, n.Rhs[0], n.Tok, env, pkg)
 		case *ast.SelectorExpr:
 			// This is an assignment to a field, like `foo.Bar = 1`.
-			// We need to evaluate the `foo` part (lhs.X) to trace any calls within it.
-			e.Eval(ctx, lhs.X, env, pkg)
-			// Then evaluate the RHS.
-			e.Eval(ctx, n.Rhs[0], env, pkg)
+			val := e.Eval(ctx, n.Rhs[0], env, pkg)
+			if isError(val) {
+				return val
+			}
+
+			// Evaluate the object being selected upon.
+			left := e.Eval(ctx, lhs.X, env, pkg)
+			if isError(left) {
+				return left
+			}
+
+			// We need to handle assignment to fields of both struct values and pointers to structs.
+			var instance *object.Instance
+			switch l := left.(type) {
+			case *object.Instance:
+				instance = l
+			case *object.Pointer:
+				if inst, ok := l.Value.(*object.Instance); ok {
+					instance = inst
+				} else {
+					return nil // Assigning to a field of a non-instance pointer is not handled yet.
+				}
+			case *object.Variable:
+				baseObj := e.forceEval(ctx, l, pkg)
+				if isError(baseObj) {
+					return baseObj
+				}
+				if ptr, ok := baseObj.(*object.Pointer); ok {
+					if inst, ok := ptr.Value.(*object.Instance); ok {
+						instance = inst
+					}
+				} else if inst, ok := baseObj.(*object.Instance); ok {
+					instance = inst
+				}
+			default:
+				return nil
+			}
+
+			if instance == nil {
+				return nil
+			}
+
+			if instance.State == nil {
+				instance.State = make(map[string]object.Object)
+			}
+			instance.State[lhs.Sel.Name] = val
 			return nil
 		case *ast.IndexExpr:
 			// This is an assignment to a map or slice index, like `m[k] = v`.

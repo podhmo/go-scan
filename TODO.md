@@ -12,7 +12,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 
 ## Implemented
 
-- **`symgo` Troubleshooting Documentation**: Analyzed common errors from the `find-orphans` tool, grouped them into categories, and documented the root causes and recommended actions in `docs/trouble-symgo.md`. This guide covers issues related to symbolic placeholders, unresolved types, and API changes.
+- **`symgo` Robustness Proposal**: Created a detailed analysis and implementation plan (`docs/trouble-symgo.md`) to make the `symgo` engine more resilient. The plan proposes changes to gracefully handle unresolved types and operations on symbolic values, reducing the need for manual configuration.
 
 - **Core Scanning Engine**: A robust, AST-based engine for parsing Go code. It supports lazy, on-demand, cross-package type resolution, and correctly handles complex scenarios like recursive types and generic type definitions. It can extract detailed information about all major Go constructs, including structs, functions, interfaces, and constants.
     - **Test Package Handling**: The scanner now correctly handles directories containing both a standard package (`pkg`) and its external test package (`pkg_test`) when the `include-tests` option is enabled, preventing "mismatched package names" errors.

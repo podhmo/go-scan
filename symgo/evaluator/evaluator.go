@@ -67,6 +67,10 @@ type Evaluator struct {
 	// and the inner key is the method name.
 	syntheticMethods      map[string]map[string]*scan.MethodInfo
 	syntheticMethodsMutex sync.Mutex
+
+	// step counting
+	step     int
+	maxSteps int
 }
 
 type callFrame struct {
@@ -87,8 +91,18 @@ func (f *callFrame) String() string {
 	return f.Function
 }
 
+// Option configures the evaluator.
+type Option func(*Evaluator)
+
+// WithMaxSteps sets the maximum number of evaluation steps.
+func WithMaxSteps(n int) Option {
+	return func(e *Evaluator) {
+		e.maxSteps = n
+	}
+}
+
 // New creates a new Evaluator.
-func New(scanner *goscan.Scanner, logger *slog.Logger, tracer object.Tracer, scanPolicy object.ScanPolicyFunc) *Evaluator {
+func New(scanner *goscan.Scanner, logger *slog.Logger, tracer object.Tracer, scanPolicy object.ScanPolicyFunc, opts ...Option) *Evaluator {
 	if logger == nil {
 		logger = slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	}
@@ -117,6 +131,11 @@ func New(scanner *goscan.Scanner, logger *slog.Logger, tracer object.Tracer, sca
 		syntheticMethods:       make(map[string]map[string]*scan.MethodInfo),
 	}
 	e.accessor = newAccessor(e)
+
+	for _, opt := range opts {
+		opt(e)
+	}
+
 	return e
 }
 
@@ -155,6 +174,13 @@ func (e *Evaluator) PopIntrinsics() {
 
 // Eval is the main dispatch loop for the evaluator.
 func (e *Evaluator) Eval(ctx context.Context, node ast.Node, env *object.Environment, pkg *scan.PackageInfo) object.Object {
+	if e.maxSteps > 0 {
+		e.step++
+		if e.step > e.maxSteps {
+			return e.newError(ctx, node.Pos(), "max execution steps (%d) exceeded", e.maxSteps)
+		}
+	}
+
 	if file, ok := node.(*ast.File); ok {
 		filePath := e.scanner.Fset().File(file.Pos()).Name()
 		if !e.fileMap[filePath] {
@@ -166,7 +192,12 @@ func (e *Evaluator) Eval(ctx context.Context, node ast.Node, env *object.Environ
 	}
 
 	if e.tracer != nil {
-		e.tracer.Visit(node)
+		e.tracer.Trace(object.TraceEvent{
+			Step: e.step,
+			Node: node,
+			Pkg:  pkg,
+			Env:  env,
+		})
 	}
 	if e.logger.Enabled(ctx, slog.LevelDebug) {
 		var buf bytes.Buffer

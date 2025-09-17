@@ -1233,14 +1233,14 @@ func main() {
 			defer cleanup()
 
 			var visitedNodes []string
-			tracer := object.TracerFunc(func(node ast.Node) {
-				if node == nil {
+			tracer := object.TracerFunc(func(ev object.TraceEvent) {
+				if ev.Node == nil {
 					return
 				}
-				switch node.(type) {
+				switch ev.Node.(type) {
 				case *ast.AssignStmt, *ast.BranchStmt:
 					var buf bytes.Buffer
-					printer.Fprint(&buf, token.NewFileSet(), node)
+					printer.Fprint(&buf, token.NewFileSet(), ev.Node)
 					visitedNodes = append(visitedNodes, buf.String())
 				}
 			})

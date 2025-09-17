@@ -76,6 +76,13 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 
 ## To Be Implemented
 
+### `symgotest`: A Debugging-First Testing Library for `symgo` ([docs/plan-symgotest.md](./docs/plan-symgotest.md))
+- [x] **Core Runner**: Implement the main `symgotest.Run` function to handle test setup, execution, and result reporting.
+- [x] **Step Limiting**: Add `WithMaxSteps` option and integrate step-counting into the `symgo` evaluator to prevent infinite loops.
+- [x] **Execution Tracer**: Implement a tracer to capture evaluation steps and report them on test failure.
+- [x] **Convenience Wrappers**: Add `RunExpression` and `RunStatements` for easier testing of code snippets.
+- [ ] **Advanced Options**: Implement `WithTimeout`, `WithScanPolicy`, and `WithIntrinsic` options.
+
 ### Fix `symgo` Error on Pointer Operations with Unresolved Types ([docs/cont-unresolved-type-error.md](./docs/cont-unresolved-type-error.md))
 - [x] Implement the full fix as detailed in the continuation document, starting from a clean state.
 

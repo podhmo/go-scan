@@ -32,6 +32,7 @@ type Nil = object.Nil
 type BaseObject = object.BaseObject
 type Environment = object.Environment
 type Tracer = object.Tracer
+type TraceEvent = object.TraceEvent
 type TracerFunc = object.TracerFunc
 
 // NewEnclosedEnvironment creates a new environment that is enclosed by an outer one.
@@ -54,6 +55,7 @@ type Interpreter struct {
 	scanPolicy                 object.ScanPolicyFunc // This will be built from primary scope
 	primaryAnalysisPatterns    []string
 	symbolicDependencyPatterns []string
+	maxSteps                   int
 }
 
 // Option is a functional option for configuring the Interpreter.
@@ -96,6 +98,13 @@ func WithSymbolicDependencyScope(patterns ...string) Option {
 func WithScanPolicy(policy object.ScanPolicyFunc) Option {
 	return func(i *Interpreter) {
 		i.scanPolicy = policy
+	}
+}
+
+// WithMaxSteps sets the maximum number of evaluation steps for the underlying evaluator.
+func WithMaxSteps(n int) Option {
+	return func(i *Interpreter) {
+		i.maxSteps = n
 	}
 }
 
@@ -166,7 +175,11 @@ func NewInterpreter(scanner *goscan.Scanner, options ...Option) (*Interpreter, e
 		}
 	}
 
-	i.eval = evaluator.New(scanner, i.logger, i.tracer, i.scanPolicy)
+	evalOpts := []evaluator.Option{}
+	if i.maxSteps > 0 {
+		evalOpts = append(evalOpts, evaluator.WithMaxSteps(i.maxSteps))
+	}
+	i.eval = evaluator.New(scanner, i.logger, i.tracer, i.scanPolicy, evalOpts...)
 
 	// Register default intrinsics
 	i.RegisterIntrinsic("fmt.Sprintf", func(ctx context.Context, eval *Interpreter, args []Object) Object {

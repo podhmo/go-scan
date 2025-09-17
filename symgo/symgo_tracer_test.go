@@ -3,7 +3,6 @@ package symgo_test
 import (
 	"context"
 	"fmt"
-	"go/ast"
 	"reflect"
 	"testing"
 
@@ -18,12 +17,12 @@ type recordingTracer struct {
 	visitedNodeTypes []string
 }
 
-func (t *recordingTracer) Visit(node ast.Node) {
-	if node == nil {
+func (t *recordingTracer) Trace(event symgo.TraceEvent) {
+	if event.Node == nil {
 		return
 	}
 	// Get the type name of the node (e.g., "*ast.Ident", "*ast.SelectorExpr")
-	typeName := fmt.Sprintf("%T", node)
+	typeName := fmt.Sprintf("%T", event.Node)
 	t.visitedNodeTypes = append(t.visitedNodeTypes, typeName)
 }
 

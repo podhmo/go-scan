@@ -88,7 +88,7 @@ func TestRunExpression(t *testing.T) {
 		if r.Error != nil {
 			t.Fatalf("Execution failed: %v", r.Error)
 		}
-		AssertEqual(t, r.ReturnValue, int64(3))
+		AssertEqual(t, r.ReturnValue, 3)
 	}
 	RunExpression(t, "1 + 2", action)
 }
@@ -104,7 +104,7 @@ func TestRunStatements(t *testing.T) {
 		}
 
 		variable := AssertAs[*object.Variable](t, val)
-		AssertEqual(t, variable.Value, int64(10))
+		AssertEqual(t, variable.Value, 10)
 	}
 	RunStatements(t, "x := 10", action)
 }

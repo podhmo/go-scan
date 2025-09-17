@@ -71,7 +71,7 @@ func TestAddition(t *testing.T) {
 		if r.Error != nil {
 			t.Fatalf("Execution failed: %v", r.Error)
 		}
-		symgotest.AssertEqual(t, r.ReturnValue, int64(3))
+		symgotest.AssertEqual(t, r.ReturnValue, 3)
 	}
 	symgotest.RunExpression(t, "1 + 2", action)
 }
@@ -93,7 +93,7 @@ func TestAssignment(t *testing.T) {
 		}
 
 		variable := symgotest.AssertAs[*object.Variable](t, val)
-		symgotest.AssertEqual(t, variable.Value, int64(10))
+		symgotest.AssertEqual(t, variable.Value, 10)
 	}
 	symgotest.RunStatements(t, "x := 10", action)
 }

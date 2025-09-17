@@ -2,23 +2,15 @@ package symgo_test
 
 import (
 	"context"
-	"log/slog"
-	"os"
 	"strings"
 	"testing"
 
-	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/scanner"
-	"github.com/podhmo/go-scan/scantest"
 	"github.com/podhmo/go-scan/symgo"
-	"github.com/podhmo/go-scan/symgo/object"
+	"github.com/podhmo/go-scan/symgotest"
 )
 
-func TestSymgo_AnonymousTypes(t *testing.T) {
-	ctx := t.Context()
-	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug}))
-
-	source := `
+const anonymousTypesSource = `
 package main
 
 type ObjectId interface {
@@ -40,94 +32,72 @@ func AnonymousStruct(p struct {
 	return p.X
 }
 `
-	files := map[string]string{
-		"go.mod":  "module mymodule",
-		"main.go": source,
+
+func TestAnonymousTypes_Interface(t *testing.T) {
+	var inspectedMethod *scanner.FunctionInfo
+
+	defaultIntrinsic := func(ctx context.Context, i *symgo.Interpreter, args []symgo.Object) symgo.Object {
+		fn := args[0] // The function object itself
+		if p, ok := fn.(*symgo.SymbolicPlaceholder); ok {
+			if p.UnderlyingFunc != nil {
+				inspectedMethod = p.UnderlyingFunc
+			}
+		}
+		return &symgo.SymbolicPlaceholder{Reason: "default intrinsic result"}
 	}
-	dir, cleanup := scantest.WriteFiles(t, files)
-	defer cleanup()
 
-	_, err := scantest.Run(t, ctx, dir, []string{"."}, func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
-		t.Run("anonymous interface", func(t *testing.T) {
-			interpreter, err := symgo.NewInterpreter(s, symgo.WithLogger(logger))
-			if err != nil {
-				t.Fatalf("NewInterpreter failed: %+v", err)
-			}
-
-			var inspectedMethod *scanner.FunctionInfo
-			interpreter.RegisterDefaultIntrinsic(func(ctx context.Context, i *symgo.Interpreter, args []symgo.Object) symgo.Object {
-				fn := args[0] // The function object itself
-				if p, ok := fn.(*symgo.SymbolicPlaceholder); ok {
-					if p.UnderlyingFunc != nil {
-						inspectedMethod = p.UnderlyingFunc
-					}
-				}
-				return &symgo.SymbolicPlaceholder{Reason: "default intrinsic result"}
-			})
-
-			mainFile := findFile(t, pkgs[0], "main.go")
-			_, err = interpreter.Eval(ctx, mainFile, pkgs[0])
-			if err != nil {
-				t.Fatalf("Eval(file) failed: %+v", err)
-			}
-
-			fn, ok := interpreter.FindObjectInPackage(t.Context(), "mymodule", "AnonymousInterface")
-			if !ok {
-				t.Fatal("function AnonymousInterface not found")
-			}
-
-			_, err = interpreter.Apply(ctx, fn, []symgo.Object{&symgo.SymbolicPlaceholder{Reason: "test"}}, pkgs[0])
-			if err != nil {
-				t.Fatalf("Apply failed unexpectedly: %+v", err)
-			}
-
-			if inspectedMethod == nil {
-				t.Fatal("did not capture an interface method call, UnderlyingMethod was nil")
-			}
-			if inspectedMethod.Name != "Hex" {
-				t.Errorf("expected to capture method 'Hex', but got '%s'", inspectedMethod.Name)
-			}
-		})
-
-		t.Run("anonymous struct", func(t *testing.T) {
-			interpreter, err := symgo.NewInterpreter(s, symgo.WithLogger(logger))
-			if err != nil {
-				t.Fatalf("NewInterpreter failed: %+v", err)
-			}
-
-			mainFile := findFile(t, pkgs[0], "main.go")
-			_, err = interpreter.Eval(ctx, mainFile, pkgs[0])
-			if err != nil {
-				t.Fatalf("Eval(file) failed: %+v", err)
-			}
-
-			fn, ok := interpreter.FindObjectInPackage(t.Context(), "mymodule", "AnonymousStruct")
-			if !ok {
-				t.Fatal("function AnonymousStruct not found")
-			}
-
-			result, err := interpreter.Apply(ctx, fn, []symgo.Object{&symgo.SymbolicPlaceholder{Reason: "test"}}, pkgs[0])
-			if err != nil {
-				t.Fatalf("Apply failed unexpectedly: %+v", err)
-			}
-
-			retVal, ok := result.(*object.ReturnValue)
-			if !ok {
-				t.Fatalf("expected ReturnValue, got %T", result)
-			}
-
-			placeholder, ok := retVal.Value.(*symgo.SymbolicPlaceholder)
-			if !ok {
-				t.Fatalf("expected symbolic placeholder return, got %T", retVal.Value)
-			}
-
-			if !strings.Contains(placeholder.Reason, "field access") {
-				t.Errorf("expected reason to contain 'field access', but got %q", placeholder.Reason)
-			}
-		})
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("scantest.Run failed: %+v", err)
+	tc := symgotest.TestCase{
+		Source: map[string]string{
+			"go.mod":  "module mymodule",
+			"main.go": anonymousTypesSource,
+		},
+		EntryPoint: "mymodule.AnonymousInterface",
+		Args:       []symgo.Object{&symgo.SymbolicPlaceholder{Reason: "test"}},
+		Options: []symgotest.Option{
+			symgotest.WithDefaultIntrinsic(defaultIntrinsic),
+		},
 	}
+
+	action := func(t *testing.T, r *symgotest.Result) {
+		if r.Error != nil {
+			t.Fatalf("Execution failed unexpectedly: %+v", r.Error)
+		}
+
+		if inspectedMethod == nil {
+			t.Fatal("did not capture an interface method call, UnderlyingFunc was nil")
+		}
+		if inspectedMethod.Name != "Hex" {
+			t.Errorf("expected to capture method 'Hex', but got '%s'", inspectedMethod.Name)
+		}
+	}
+
+	symgotest.Run(t, tc, action)
+}
+
+func TestAnonymousTypes_Struct(t *testing.T) {
+	tc := symgotest.TestCase{
+		Source: map[string]string{
+			"go.mod":  "module mymodule",
+			"main.go": anonymousTypesSource,
+		},
+		EntryPoint: "mymodule.AnonymousStruct",
+		Args:       []symgo.Object{&symgo.SymbolicPlaceholder{Reason: "test"}},
+	}
+
+	action := func(t *testing.T, r *symgotest.Result) {
+		if r.Error != nil {
+			t.Fatalf("Execution failed unexpectedly: %+v", r.Error)
+		}
+
+		placeholder, ok := r.ReturnValue.(*symgo.SymbolicPlaceholder)
+		if !ok {
+			t.Fatalf("expected symbolic placeholder return, got %T", r.ReturnValue)
+		}
+
+		if !strings.Contains(placeholder.Reason, "field access") {
+			t.Errorf("expected reason to contain 'field access', but got %q", placeholder.Reason)
+		}
+	}
+
+	symgotest.Run(t, tc, action)
 }

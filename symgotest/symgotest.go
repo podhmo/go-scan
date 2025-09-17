@@ -374,6 +374,6 @@ func AssertEqual[T any](t *testing.T, obj object.Object, expected T) {
 			t.Errorf("value mismatch, want=%q got=%q\n%s", v, stringObj.Value, diff)
 		}
 	default:
-		t.Fatalf("unsupported type for AssertEqual: %T", expected)
+		t.Fatalf("unsupported type %T for AssertEqual, actual value was: %s", expected, obj.Inspect())
 	}
 }

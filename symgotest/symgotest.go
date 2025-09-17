@@ -361,17 +361,17 @@ func AssertEqual[T any](t *testing.T, obj object.Object, expected T) {
 	case int:
 		integerObj := AssertAs[*object.Integer](t, obj)
 		if diff := cmp.Diff(int64(v), integerObj.Value); diff != "" {
-			t.Errorf("value mismatch (-want +got):\n%s", diff)
+			t.Errorf("value mismatch, want=%d got=%d\n%s", v, integerObj.Value, diff)
 		}
 	case int64:
 		integerObj := AssertAs[*object.Integer](t, obj)
 		if diff := cmp.Diff(v, integerObj.Value); diff != "" {
-			t.Errorf("value mismatch (-want +got):\n%s", diff)
+			t.Errorf("value mismatch, want=%d got=%d\n%s", v, integerObj.Value, diff)
 		}
 	case string:
 		stringObj := AssertAs[*object.String](t, obj)
 		if diff := cmp.Diff(v, stringObj.Value); diff != "" {
-			t.Errorf("value mismatch (-want +got):\n%s", diff)
+			t.Errorf("value mismatch, want=%q got=%q\n%s", v, stringObj.Value, diff)
 		}
 	default:
 		t.Fatalf("unsupported type for AssertEqual: %T", expected)

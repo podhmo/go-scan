@@ -29,12 +29,7 @@ func GetValue() string {
 			t.Fatalf("Execution failed: %+v", r.Error)
 		}
 
-		// r.ReturnValue is the actual unwrapped return object.
-		str, ok := r.ReturnValue.(*object.String)
-		if !ok {
-			t.Fatalf("expected return value to be *object.String, but got %T", r.ReturnValue)
-		}
-
+		str := symgotest.AssertAs[*object.String](r, t, 0)
 		expected := "hello world"
 		if str.Value != expected {
 			t.Errorf("expected result to be %q, but got %q", expected, str.Value)

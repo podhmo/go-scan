@@ -30,8 +30,8 @@ func NewUser(name string) *User {
 			t.Fatalf("Execution failed: %v", r.Error)
 		}
 
-		ptr := AssertAs[*object.Pointer](t, r.ReturnValue)
-		instance := AssertAs[*object.Instance](t, ptr.Value)
+		ptr := AssertAs[*object.Pointer](r, t, 0)
+		instance := AssertAs[*object.Instance](&Result{ReturnValue: ptr.Value}, t, 0)
 
 		expectedTypeName := "example.com/me.User"
 		if diff := cmp.Diff(expectedTypeName, instance.TypeName); diff != "" {
@@ -88,7 +88,10 @@ func TestRunExpression(t *testing.T) {
 		if r.Error != nil {
 			t.Fatalf("Execution failed: %v", r.Error)
 		}
-		AssertEqual(t, r.ReturnValue, 3)
+		integerObj := AssertAs[*object.Integer](r, t, 0)
+		if integerObj.Value != 3 {
+			t.Errorf("expected 3, got %d", integerObj.Value)
+		}
 	}
 	RunExpression(t, "1 + 2", action)
 }
@@ -103,8 +106,11 @@ func TestRunStatements(t *testing.T) {
 			t.Fatalf("variable 'x' not found in final environment")
 		}
 
-		variable := AssertAs[*object.Variable](t, val)
-		AssertEqual(t, variable.Value, 10)
+		variable := AssertAs[*object.Variable](&Result{ReturnValue: val}, t, 0)
+		integerObj := AssertAs[*object.Integer](&Result{ReturnValue: variable.Value}, t, 0)
+		if integerObj.Value != 10 {
+			t.Errorf("expected 10, got %d", integerObj.Value)
+		}
 	}
 	RunStatements(t, "x := 10", action)
 }

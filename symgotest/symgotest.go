@@ -16,7 +16,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/go-cmp/cmp"
 	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/scantest"
 	"github.com/podhmo/go-scan/symgo"
@@ -84,7 +83,26 @@ func runLogic(t *testing.T, tc TestCase) (*Result, error) {
 	if cfg.ScanPolicy != nil {
 		interpreterOpts = append(interpreterOpts, symgo.WithScanPolicy(cfg.ScanPolicy))
 	} else {
-		interpreterOpts = append(interpreterOpts, symgo.WithPrimaryAnalysisScope(pkgPath))
+		// Smart default policy: include all modules in the workspace.
+		modules := scanner.Modules()
+		if len(modules) > 0 {
+			modulePaths := make([]string, len(modules))
+			for i, mod := range modules {
+				modulePaths[i] = mod.Path
+			}
+			defaultPolicy := func(pkgPath string) bool {
+				for _, modPath := range modulePaths {
+					if strings.HasPrefix(pkgPath, modPath) {
+						return true
+					}
+				}
+				return false
+			}
+			interpreterOpts = append(interpreterOpts, symgo.WithScanPolicy(defaultPolicy))
+		} else {
+			// Fallback for tests without modules, etc.
+			interpreterOpts = append(interpreterOpts, symgo.WithPrimaryAnalysisScope(pkgPath))
+		}
 	}
 
 	interpreter, err := symgo.NewInterpreter(scanner, interpreterOpts...)
@@ -389,41 +407,29 @@ func WithDefaultIntrinsic(handler symgo.IntrinsicFunc) Option {
 	}
 }
 
-// AssertAs is a helper function that asserts the type of an object.Object.
-// It fails the test if the object is not of the expected type.
-func AssertAs[T object.Object](t *testing.T, obj object.Object) T {
+// AssertAs unwraps the result and asserts the type of the nth return value.
+// For single return values, use index 0. It fails the test if the index is
+// out of bounds or if the type assertion fails.
+func AssertAs[T object.Object](r *Result, t *testing.T, index int) T {
 	t.Helper()
+	var obj object.Object
+
+	if mr, ok := r.ReturnValue.(*object.MultiReturn); ok {
+		if index < 0 || index >= len(mr.Values) {
+			t.Fatalf("index %d out of bounds for multi-return value with %d values", index, len(mr.Values))
+		}
+		obj = mr.Values[index]
+	} else {
+		if index != 0 {
+			t.Fatalf("index %d out of bounds for single return value", index)
+		}
+		obj = r.ReturnValue
+	}
+
 	val, ok := obj.(T)
 	if !ok {
 		var zero T
 		t.Fatalf("type assertion failed: expected %T, got %T", zero, obj)
 	}
 	return val
-}
-
-// AssertEqual is a helper function that asserts the value of an object.Object.
-// It first asserts the object's type based on the type of the `expected` value,
-// then compares the contained value.
-func AssertEqual[T any](t *testing.T, obj object.Object, expected T) {
-	t.Helper()
-
-	switch v := any(expected).(type) {
-	case int:
-		integerObj := AssertAs[*object.Integer](t, obj)
-		if diff := cmp.Diff(int64(v), integerObj.Value); diff != "" {
-			t.Errorf("value mismatch, want=%d got=%d\n%s", v, integerObj.Value, diff)
-		}
-	case int64:
-		integerObj := AssertAs[*object.Integer](t, obj)
-		if diff := cmp.Diff(v, integerObj.Value); diff != "" {
-			t.Errorf("value mismatch, want=%d got=%d\n%s", v, integerObj.Value, diff)
-		}
-	case string:
-		stringObj := AssertAs[*object.String](t, obj)
-		if diff := cmp.Diff(v, stringObj.Value); diff != "" {
-			t.Errorf("value mismatch, want=%q got=%q\n%s", v, stringObj.Value, diff)
-		}
-	default:
-		t.Fatalf("unsupported type %T for AssertEqual, actual value was: %s", expected, obj.Inspect())
-	}
 }

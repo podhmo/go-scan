@@ -1,7 +1,6 @@
 package symgo_test
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/podhmo/go-scan/symgo/object"
@@ -28,16 +27,9 @@ func GetMessage() string {
 `,
 	}
 
-	scanPolicy := func(path string) bool {
-		return strings.HasPrefix(path, "example.com/intramodule")
-	}
-
 	tc := symgotest.TestCase{
 		Source:     source,
 		EntryPoint: "example.com/intramodule/main.main",
-		Options: []symgotest.Option{
-			symgotest.WithScanPolicy(scanPolicy),
-		},
 	}
 
 	action := func(t *testing.T, r *symgotest.Result) {
@@ -45,7 +37,7 @@ func GetMessage() string {
 			t.Fatalf("Apply main function failed: %v", r.Error)
 		}
 
-		str := symgotest.AssertAs[*object.String](t, r.ReturnValue)
+		str := symgotest.AssertAs[*object.String](r, t, 0)
 
 		expected := "hello from helper"
 		if str.Value != expected {

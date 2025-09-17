@@ -48,10 +48,7 @@ func GetUnexportedConstant() string {
 		if r.Error != nil {
 			t.Fatalf("Execution failed: %+v", r.Error)
 		}
-		str, ok := r.ReturnValue.(*object.String)
-		if !ok {
-			t.Fatalf("expected return value to be *object.String, but got %T", r.ReturnValue)
-		}
+		str := symgotest.AssertAs[*object.String](r, t, 0)
 		expected := "hello from unexported"
 		if str.Value != expected {
 			t.Errorf("expected result to be %q, but got %q", expected, str.Value)
@@ -83,8 +80,6 @@ func main() {
 	}
 
 	action := func(t *testing.T, r *symgotest.Result) {
-		// We don't care about the result, we just want to ensure it doesn't crash.
-		// The original error was a crash due to "identifier not found".
 		if r.Error != nil {
 			t.Fatalf("Execution failed: %+v", r.Error)
 		}
@@ -133,10 +128,7 @@ func FuncB() string {
 		if r.Error != nil {
 			t.Fatalf("Execution failed: %+v", r.Error)
 		}
-		str, ok := r.ReturnValue.(*object.String)
-		if !ok {
-			t.Fatalf("expected return value to be *object.String, but got %T", r.ReturnValue)
-		}
+		str := symgotest.AssertAs[*object.String](r, t, 0)
 		expected := "hello from private"
 		if str.Value != expected {
 			t.Errorf("expected result to be %q, but got %q", expected, str.Value)
@@ -188,10 +180,7 @@ func (c *Client) GetValue() string {
 		if r.Error != nil {
 			t.Fatalf("Execution failed: %+v", r.Error)
 		}
-		str, ok := r.ReturnValue.(*object.String)
-		if !ok {
-			t.Fatalf("expected return value to be *object.String, but got %T", r.ReturnValue)
-		}
+		str := symgotest.AssertAs[*object.String](r, t, 0)
 		expected := "unexported-secret-key"
 		if str.Value != expected {
 			t.Errorf("expected result to be %q, but got %q", expected, str.Value)

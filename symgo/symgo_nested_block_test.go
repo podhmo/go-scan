@@ -49,14 +49,10 @@ func DoSomething() {}
 		return nil
 	})
 
-	policy := symgotest.WithScanPolicy(func(path string) bool {
-		return path == "t" || path == "t/helpers"
-	})
-
 	tc := symgotest.TestCase{
 		Source:     source,
 		EntryPoint: "t.run",
-		Options:    []symgotest.Option{intrinsic, policy},
+		Options:    []symgotest.Option{intrinsic},
 	}
 
 	symgotest.Run(t, tc, func(t *testing.T, r *symgotest.Result) {
@@ -105,13 +101,8 @@ func run() (int, int) {
 			t.Fatalf("symgotest.Run failed: %+v", r.Error)
 		}
 
-		multiRet := symgotest.AssertAs[*object.MultiReturn](t, r.ReturnValue)
-		if len(multiRet.Values) != 2 {
-			t.Fatalf("expected 2 return values, got %d", len(multiRet.Values))
-		}
-
-		x := symgotest.AssertAs[*object.Integer](t, multiRet.Values[0])
-		y := symgotest.AssertAs[*object.Integer](t, multiRet.Values[1])
+		x := symgotest.AssertAs[*object.Integer](r, t, 0)
+		y := symgotest.AssertAs[*object.Integer](r, t, 1)
 
 		// x should be 1 (shadowed variable is popped)
 		// y should be 2 (assigned in inner scope)

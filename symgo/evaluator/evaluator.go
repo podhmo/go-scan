@@ -103,6 +103,8 @@ func WithMaxSteps(n int) Option {
 
 // getAllInterfaceMethods recursively collects all methods from an interface and its embedded interfaces.
 // It handles cycles by keeping track of visited interface types.
+// A duplicate of this method exists in `goscan.Scanner` for historical reasons;
+// the evaluator needs its own copy to resolve interface method calls during symbolic execution.
 func (e *Evaluator) getAllInterfaceMethods(ctx context.Context, ifaceType *scan.TypeInfo, visited map[string]struct{}) []*scan.MethodInfo {
 	if ifaceType == nil || ifaceType.Interface == nil {
 		return nil

@@ -328,3 +328,15 @@ The error message is not a timeout. It's a clear, deterministic error:
 `symgotest: test failed: max execution steps (10000) exceeded.`
 
 Below this error, `symgotest` automatically prints the execution trace, which immediately reveals the runaway loop, including the source code locations and call stack depth. What was a multi-hour debugging nightmare becomes a one-minute fix. This is the core value proposition of `symgotest`: it transforms debugging from a manual, painful process into an automated, insightful one.
+
+## 7. Implementation Notes & Lessons Learned
+
+During the initial refactoring of `symgo` tests to use `symgotest`, the following points were discovered:
+
+*   **`RunExpression` Limitations**: The `RunExpression` convenience function is designed for simple, self-contained expressions that do not require external imports. It automatically wraps the expression in a `main` package, which does not include other files or import declarations. For tests that rely on specific package structures or imports (e.g., importing `fmt`), the main `symgotest.Run` function with a full `TestCase` struct must be used instead. The expression to be tested should be wrapped in a helper function which is then used as the `EntryPoint`.
+
+*   **`WithIntrinsic` Bug**: A bug was discovered where the `WithIntrinsic` option was not being applied. The options were processed, but the collected intrinsic handlers were never registered with the `symgo.Interpreter` instance. This has been fixed by adding the necessary registration logic within the `runLogic` function in `symgotest.go`.
+
+*   **Multi-Module Workspace Support**: The initial implementation of `symgotest.Run` did not correctly support multi-module workspaces, as it always set the scanner's working directory to the root of the virtual file system. This was fixed by adding a `WorkDir` field to `symgotest.TestCase`, allowing tests to specify the correct subdirectory for the main module.
+
+*   **`WithScanPolicy` Bug**: A bug similar to the `WithIntrinsic` issue was found where `WithScanPolicy` was not being applied correctly. This was because `symgotest.Run` was unconditionally adding a `WithPrimaryAnalysisScope` option for the entry point's package, which conflicted with or overrode the custom policy. The logic has been updated to prioritize `WithScanPolicy` when it is provided, falling back to `WithPrimaryAnalysisScope` only when a custom policy is not set.

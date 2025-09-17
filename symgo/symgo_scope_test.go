@@ -1,16 +1,20 @@
 package symgo_test
 
 import (
-	"context"
-	"path/filepath"
+	"strings"
 	"testing"
 
 	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/scantest"
 	"github.com/podhmo/go-scan/symgo"
 	"github.com/podhmo/go-scan/symgo/object"
+	"github.com/podhmo/go-scan/symgotest"
 )
 
+// NOTE: This test cannot be easily refactored with symgotest, because it inspects
+// the result of the scanning phase (checking for a nil function body) rather than
+// the result of a full execution. symgotest is optimized for running code and
+// checking the final result. Leaving this test as-is is the clearest path.
 func TestWithSymbolicDependencyScope(t *testing.T) {
 	ctx := t.Context()
 	tmpdir, cleanup := scantest.WriteFiles(t, map[string]string{
@@ -27,7 +31,6 @@ func DoSomething() {}
 	})
 	defer cleanup()
 
-	// The scanner is configured without any special options.
 	scanner, err := goscan.New(
 		goscan.WithWorkDir(tmpdir),
 		goscan.WithGoModuleResolver(),
@@ -36,8 +39,6 @@ func DoSomething() {}
 		t.Fatalf("New scanner failed: %v", err)
 	}
 
-	// Create an interpreter with 'lib' in the symbolic dependency scope.
-	// This should instruct the underlying scanner to not parse function bodies for this package.
 	interp, err := symgo.NewInterpreter(scanner,
 		symgo.WithSymbolicDependencyScope("example.com/myapp/lib"),
 	)
@@ -45,81 +46,19 @@ func DoSomething() {}
 		t.Fatalf("NewInterpreter failed: %v", err)
 	}
 
-	// Scan the 'lib' package.
 	libPkg, err := interp.Scanner().ScanPackageByImport(ctx, "example.com/myapp/lib")
 	if err != nil {
 		t.Fatalf("ScanPackageByImport for lib failed: %v", err)
 	}
 
-	// Verify that the function body is nil because it was in the symbolic scope.
 	doSomethingFunc := findFunc(t, libPkg, "DoSomething")
 	if doSomethingFunc.AstDecl.Body != nil {
 		t.Errorf("expected function body to be nil for symbolic dependency, but it was not")
 	}
 }
 
-func TestWithPrimaryAnalysisScope(t *testing.T) {
-	ctx := t.Context()
-	files := map[string]string{
-		"myapp/go.mod": "module example.com/myapp\ngo 1.21\nreplace example.com/lib => ../lib",
-		"myapp/main.go": `
-package main
-import "example.com/lib"
-func main() string { return lib.DoSomething() }
-`,
-		"lib/go.mod": "module example.com/lib\ngo 1.21",
-		"lib/lib.go": `
-package lib
-func DoSomething() string { return "from lib" }
-`,
-	}
-	tmpdir, cleanup := scantest.WriteFiles(t, files)
-	defer cleanup()
-
-	// The directory for the scanner should be the main application module.
-	appDir := filepath.Join(tmpdir, "myapp")
-
-	t.Run("in-scope", func(t *testing.T) {
-		// The primary scope includes the main app and the 'lib' dependency.
-		// Calls to 'lib' should be deeply evaluated.
-		result, err := runMainAnalysis(t, ctx, appDir, "example.com/myapp/...", "example.com/lib/...")
-		if err != nil {
-			t.Fatalf("runMainAnalysis failed unexpectedly: %v", err)
-		}
-
-		retVal, ok := result.(*object.ReturnValue)
-		if !ok {
-			t.Fatalf("expected ReturnValue, got %T: %v", result, result.Inspect())
-		}
-		str, ok := retVal.Value.(*object.String)
-		if !ok {
-			t.Fatalf("expected String, got %T", retVal.Value)
-		}
-		if str.Value != "from lib" {
-			t.Errorf("want %q, got %q", "from lib", str.Value)
-		}
-	})
-
-	t.Run("out-of-scope", func(t *testing.T) {
-		// The primary scope only includes the main app.
-		// Calls to 'lib' should be treated as symbolic placeholders.
-		result, err := runMainAnalysis(t, ctx, appDir, "example.com/myapp/...")
-		if err != nil {
-			t.Fatalf("runMainAnalysis failed unexpectedly: %v", err)
-		}
-		retVal, ok := result.(*object.ReturnValue)
-		if !ok {
-			t.Fatalf("expected ReturnValue, got %T: %v", result, result.Inspect())
-		}
-		if _, ok := retVal.Value.(*object.SymbolicPlaceholder); !ok {
-			t.Errorf("expected SymbolicPlaceholder for out-of-scope call, got %T", retVal.Value)
-		}
-	})
-}
-
-func TestCrossPackageUnexportedResolution(t *testing.T) {
-	ctx := t.Context()
-	files := map[string]string{
+func TestScopesAndUnexportedResolution(t *testing.T) {
+	baseFiles := map[string]string{
 		"myapp/go.mod": "module example.com/myapp\ngo 1.21\nreplace example.com/lib => ../lib",
 		"myapp/main.go": `
 package main
@@ -127,173 +66,106 @@ import "example.com/lib"
 func main() string { return lib.GetGreeting() }
 `,
 		"lib/go.mod": "module example.com/lib\ngo 1.21",
-		"lib/lib.go": `
+	}
+
+	tests := []struct {
+		name        string
+		libGoSource string
+		scanPolicy  symgo.ScanPolicyFunc
+		checkResult func(t *testing.T, r *symgotest.Result)
+	}{
+		{
+			name: "primary scope: in-scope",
+			libGoSource: `
 package lib
-
-// Unexported variable that should be resolvable within the same package
+func GetGreeting() string { return "from lib" }`,
+			scanPolicy: func(path string) bool {
+				return strings.HasPrefix(path, "example.com/myapp") || strings.HasPrefix(path, "example.com/lib")
+			},
+			checkResult: func(t *testing.T, r *symgotest.Result) {
+				str := symgotest.AssertAs[*object.String](t, r.ReturnValue)
+				if str.Value != "from lib" {
+					t.Errorf("want %q, got %q", "from lib", str.Value)
+				}
+			},
+		},
+		{
+			name: "primary scope: out-of-scope",
+			libGoSource: `
+package lib
+func GetGreeting() string { return "from lib" }`,
+			scanPolicy: func(path string) bool {
+				return strings.HasPrefix(path, "example.com/myapp")
+			},
+			checkResult: func(t *testing.T, r *symgotest.Result) {
+				if _, ok := r.ReturnValue.(*object.SymbolicPlaceholder); !ok {
+					t.Errorf("expected SymbolicPlaceholder for out-of-scope call, got %T", r.ReturnValue)
+				}
+			},
+		},
+		{
+			name: "unexported resolution: full",
+			libGoSource: `
+package lib
 var secretPrefix = "hello from"
-
-// Unexported constant 
 const secretSuffix = " unexported func"
-
-// Unexported function that should be resolvable within the same package
 func getSecretMessage() string {
 	return secretPrefix + secretSuffix
 }
-
 func GetGreeting() string {
 	return getSecretMessage()
-}
-`,
-	}
-	tmpdir, cleanup := scantest.WriteFiles(t, files)
-	defer cleanup()
-
-	appDir := filepath.Join(tmpdir, "myapp")
-	result, err := runMainAnalysis(t, ctx, appDir, "example.com/myapp/...", "example.com/lib/...")
-
-	if err != nil {
-		t.Fatalf("test failed unexpectedly with error: %v", err)
-	}
-
-	retVal, ok := result.(*object.ReturnValue)
-	if !ok {
-		t.Fatalf("expected ReturnValue, but got %T: %v", result, result.Inspect())
-	}
-	str, ok := retVal.Value.(*object.String)
-	if !ok {
-		t.Fatalf("expected String, got %T", retVal.Value)
-	}
-	if str.Value != "hello from unexported func" {
-		t.Errorf("want %q, got %q", "hello from unexported func", str.Value)
-	}
-}
-
-func TestCrossPackageUnexportedResolution_Minimal(t *testing.T) {
-	ctx := t.Context()
-	files := map[string]string{
-		"myapp/go.mod": "module example.com/myapp\ngo 1.21\nreplace example.com/lib => ../lib",
-		"myapp/main.go": `
-package main
-import "example.com/lib"
-func main() string { return lib.GetGreeting() }
-`,
-		"lib/go.mod": "module example.com/lib\ngo 1.21",
-		"lib/lib.go": `
+}`,
+			scanPolicy: func(path string) bool { return true }, // scan everything
+			checkResult: func(t *testing.T, r *symgotest.Result) {
+				str := symgotest.AssertAs[*object.String](t, r.ReturnValue)
+				if str.Value != "hello from unexported func" {
+					t.Errorf("want %q, got %q", "hello from unexported func", str.Value)
+				}
+			},
+		},
+		{
+			name: "unexported resolution: with var",
+			libGoSource: `
 package lib
-
-func getSecretMessage() string {
-	return "hello from minimal unexported func"
-}
-
-func GetGreeting() string {
-	return getSecretMessage()
-}
-`,
-	}
-	tmpdir, cleanup := scantest.WriteFiles(t, files)
-	defer cleanup()
-
-	appDir := filepath.Join(tmpdir, "myapp")
-	result, err := runMainAnalysis(t, ctx, appDir, "example.com/myapp/...", "example.com/lib/...")
-
-	if err != nil {
-		t.Fatalf("test failed unexpectedly with error: %v", err)
-	}
-
-	retVal, ok := result.(*object.ReturnValue)
-	if !ok {
-		t.Fatalf("expected ReturnValue, but got %T: %v", result, result.Inspect())
-	}
-	str, ok := retVal.Value.(*object.String)
-	if !ok {
-		t.Fatalf("expected String, got %T", retVal.Value)
-	}
-	if str.Value != "hello from minimal unexported func" {
-		t.Errorf("want %q, got %q", "hello from minimal unexported func", str.Value)
-	}
-}
-
-func TestCrossPackageUnexportedResolution_WithVar(t *testing.T) {
-	ctx := t.Context()
-	files := map[string]string{
-		"myapp/go.mod": "module example.com/myapp\ngo 1.21\nreplace example.com/lib => ../lib",
-		"myapp/main.go": `
-package main
-import "example.com/lib"
-func main() string { return lib.GetGreeting() }
-`,
-		"lib/go.mod": "module example.com/lib\ngo 1.21",
-		"lib/lib.go": `
-package lib
-
 var secret = "hello from unexported var"
-
 func GetGreeting() string {
 	return secret
-}
-`,
-	}
-	tmpdir, cleanup := scantest.WriteFiles(t, files)
-	defer cleanup()
-
-	appDir := filepath.Join(tmpdir, "myapp")
-	result, err := runMainAnalysis(t, ctx, appDir, "example.com/myapp/...", "example.com/lib/...")
-
-	if err != nil {
-		t.Fatalf("test failed unexpectedly with error: %v", err)
+}`,
+			scanPolicy: func(path string) bool { return true }, // scan everything
+			checkResult: func(t *testing.T, r *symgotest.Result) {
+				str := symgotest.AssertAs[*object.String](t, r.ReturnValue)
+				if str.Value != "hello from unexported var" {
+					t.Errorf("want %q, got %q", "hello from unexported var", str.Value)
+				}
+			},
+		},
 	}
 
-	retVal, ok := result.(*object.ReturnValue)
-	if !ok {
-		t.Fatalf("expected ReturnValue, but got %T: %v", result, result.Inspect())
-	}
-	str, ok := retVal.Value.(*object.String)
-	if !ok {
-		t.Fatalf("expected String, got %T", retVal.Value)
-	}
-	if str.Value != "hello from unexported var" {
-		t.Errorf("want %q, got %q", "hello from unexported var", str.Value)
-	}
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			source := map[string]string{}
+			for k, v := range baseFiles {
+				source[k] = v
+			}
+			source["lib/lib.go"] = tt.libGoSource
 
-// runMainAnalysis is a helper to analyze the main package and return the result of main().
-func runMainAnalysis(t *testing.T, ctx context.Context, dir string, primaryScope ...string) (object.Object, error) {
-	t.Helper()
-	scanner, err := goscan.New(
-		goscan.WithWorkDir(dir),
-		goscan.WithGoModuleResolver(),
-	)
-	if err != nil {
-		t.Fatalf("New scanner failed: %v", err)
-	}
+			tc := symgotest.TestCase{
+				Source:     source,
+				WorkDir:    "myapp",
+				EntryPoint: "example.com/myapp.main",
+				Options: []symgotest.Option{
+					symgotest.WithScanPolicy(tt.scanPolicy),
+				},
+			}
 
-	interp, err := symgo.NewInterpreter(scanner,
-		symgo.WithPrimaryAnalysisScope(primaryScope...),
-	)
-	if err != nil {
-		t.Fatalf("NewInterpreter failed: %v", err)
-	}
+			action := func(t *testing.T, r *symgotest.Result) {
+				if r.Error != nil {
+					t.Fatalf("Execution failed unexpectedly: %v", r.Error)
+				}
+				tt.checkResult(t, r)
+			}
 
-	mainPkg, err := interp.Scanner().ScanPackageByImport(ctx, "example.com/myapp")
-	if err != nil {
-		t.Fatalf("ScanPackageByImport for main failed: %v", err)
+			symgotest.Run(t, tc, action)
+		})
 	}
-
-	mainFile := findFile(t, mainPkg, "main.go")
-	_, err = interp.Eval(ctx, mainFile, mainPkg)
-	if err != nil {
-		t.Fatalf("Eval main file failed: %v", err)
-	}
-
-	mainFuncObj, ok := interp.FindObjectInPackage(ctx, "example.com/myapp", "main")
-	if !ok {
-		t.Fatal("main function not found")
-	}
-	mainFunc, ok := mainFuncObj.(*symgo.Function)
-	if !ok {
-		t.Fatalf("main is not a function, but %T", mainFuncObj)
-	}
-
-	return interp.Apply(ctx, mainFunc, nil, mainPkg)
 }

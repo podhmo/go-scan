@@ -10,6 +10,7 @@ import (
 	"go/token"
 	"io"
 	"log/slog"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -43,6 +44,11 @@ func runLogic(t *testing.T, tc TestCase) (*Result, error) {
 	dir, cleanup := scantest.WriteFiles(t, tc.Source)
 	defer cleanup()
 
+	workDir := dir
+	if tc.WorkDir != "" {
+		workDir = filepath.Join(dir, tc.WorkDir)
+	}
+
 	// 2. Create scanner and interpreter
 	cfg := &config{
 		Timeout:  5 * time.Second, // Default timeout
@@ -56,7 +62,7 @@ func runLogic(t *testing.T, tc TestCase) (*Result, error) {
 	defer cancel()
 
 	scanner, err := goscan.New(
-		goscan.WithWorkDir(dir),
+		goscan.WithWorkDir(workDir),
 		goscan.WithGoModuleResolver(),
 	)
 	if err != nil {
@@ -72,14 +78,25 @@ func runLogic(t *testing.T, tc TestCase) (*Result, error) {
 
 	interpreterOpts := []symgo.Option{
 		symgo.WithLogger(slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError}))),
-		symgo.WithPrimaryAnalysisScope(pkgPath),
 		symgo.WithTracer(tracer),
 		symgo.WithMaxSteps(cfg.MaxSteps),
+	}
+	if cfg.ScanPolicy != nil {
+		interpreterOpts = append(interpreterOpts, symgo.WithScanPolicy(cfg.ScanPolicy))
+	} else {
+		interpreterOpts = append(interpreterOpts, symgo.WithPrimaryAnalysisScope(pkgPath))
 	}
 
 	interpreter, err := symgo.NewInterpreter(scanner, interpreterOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create interpreter: %w", err)
+	}
+
+	// Register intrinsics from options
+	if cfg.Intrinsics != nil {
+		for name, handler := range cfg.Intrinsics {
+			interpreter.RegisterIntrinsic(name, handler)
+		}
 	}
 
 	// 3. Find entry point
@@ -202,6 +219,10 @@ type TestCase struct {
 	// Source provides the file contents for the test, mapping filename to content.
 	// A `go.mod` file is typically required.
 	Source map[string]string
+
+	// WorkDir specifies the working directory relative to the source root.
+	// This is useful for multi-module workspaces. If empty, the root is used.
+	WorkDir string
 
 	// EntryPoint is the fully qualified name of the function to execute.
 	// e.g., "example.com/me/main.main"

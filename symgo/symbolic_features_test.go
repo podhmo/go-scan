@@ -2,18 +2,19 @@ package symgo_test
 
 import (
 	"context"
-	"fmt"
 	"testing"
 
-	goscan "github.com/podhmo/go-scan"
-	"github.com/podhmo/go-scan/scantest"
 	"github.com/podhmo/go-scan/symgo"
+	"github.com/podhmo/go-scan/symgotest"
 )
 
 func TestSymbolic_IfElse(t *testing.T) {
-	files := map[string]string{
-		"go.mod": "module example.com/me",
-		"main.go": `package main
+	var ifCalled, elseCalled bool
+
+	tc := symgotest.TestCase{
+		Source: map[string]string{
+			"go.mod": "module example.com/me",
+			"main.go": `package main
 
 func IfBlock() {}
 func ElseBlock() {}
@@ -26,57 +27,42 @@ func main() {
 		ElseBlock()
 	}
 }`,
+		},
+		EntryPoint: "example.com/me.main",
+		Options: []symgotest.Option{
+			symgotest.WithIntrinsic("example.com/me.IfBlock", func(ctx context.Context, i *symgo.Interpreter, args []symgo.Object) symgo.Object {
+				ifCalled = true
+				return nil
+			}),
+			symgotest.WithIntrinsic("example.com/me.ElseBlock", func(ctx context.Context, i *symgo.Interpreter, args []symgo.Object) symgo.Object {
+				elseCalled = true
+				return nil
+			}),
+		},
 	}
 
-	dir, cleanup := scantest.WriteFiles(t, files)
-	defer cleanup()
-
-	var ifCalled, elseCalled bool
-	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
-		pkg := pkgs[0]
-		interp, err := symgo.NewInterpreter(s)
-		if err != nil {
-			return err
+	action := func(t *testing.T, r *symgotest.Result) {
+		if r.Error != nil {
+			t.Fatalf("Execution failed unexpectedly: %v", r.Error)
 		}
-		env := symgo.NewEnclosedEnvironment(nil)
-
-		interp.RegisterIntrinsic("example.com/me.IfBlock", func(ctx context.Context, i *symgo.Interpreter, args []symgo.Object) symgo.Object {
-			ifCalled = true
-			return nil
-		})
-		interp.RegisterIntrinsic("example.com/me.ElseBlock", func(ctx context.Context, i *symgo.Interpreter, args []symgo.Object) symgo.Object {
-			elseCalled = true
-			return nil
-		})
-
-		mainFunc, err := lookupFunc(pkg, "main")
-		if err != nil {
-			return err
-		}
-
-		_, evalErr := interp.EvalWithEnv(ctx, mainFunc.AstDecl.Body, env, pkg)
-		if evalErr != nil {
-			return fmt.Errorf("unexpected error during eval: %w", evalErr)
-		}
-
 		if !ifCalled {
-			return fmt.Errorf("if block was not called")
+			t.Error("if block was not called")
 		}
 		if !elseCalled {
-			return fmt.Errorf("else block was not called")
+			t.Error("else block was not called")
 		}
-		return nil
 	}
 
-	if _, err := scantest.Run(t, t.Context(), dir, []string{"."}, action); err != nil {
-		t.Fatalf("scantest.Run() failed: %v", err)
-	}
+	symgotest.Run(t, tc, action)
 }
 
 func TestSymbolic_For(t *testing.T) {
-	files := map[string]string{
-		"go.mod": "module example.com/me",
-		"main.go": `package main
+	var callCount int
+
+	tc := symgotest.TestCase{
+		Source: map[string]string{
+			"go.mod": "module example.com/me",
+			"main.go": `package main
 
 func ForBody() {}
 
@@ -86,50 +72,35 @@ func main() {
 		ForBody()
 	}
 }`,
+		},
+		EntryPoint: "example.com/me.main",
+		Options: []symgotest.Option{
+			symgotest.WithIntrinsic("example.com/me.ForBody", func(ctx context.Context, i *symgo.Interpreter, args []symgo.Object) symgo.Object {
+				callCount++
+				return nil
+			}),
+		},
 	}
 
-	dir, cleanup := scantest.WriteFiles(t, files)
-	defer cleanup()
-
-	var callCount int
-	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
-		pkg := pkgs[0]
-		interp, err := symgo.NewInterpreter(s)
-		if err != nil {
-			return err
+	action := func(t *testing.T, r *symgotest.Result) {
+		if r.Error != nil {
+			t.Fatalf("Execution failed unexpectedly: %v", r.Error)
 		}
-		env := symgo.NewEnclosedEnvironment(nil)
-
-		interp.RegisterIntrinsic("example.com/me.ForBody", func(ctx context.Context, i *symgo.Interpreter, args []symgo.Object) symgo.Object {
-			callCount++
-			return nil
-		})
-
-		mainFunc, err := lookupFunc(pkg, "main")
-		if err != nil {
-			return err
-		}
-
-		_, evalErr := interp.EvalWithEnv(ctx, mainFunc.AstDecl.Body, env, pkg)
-		if evalErr != nil {
-			return fmt.Errorf("unexpected error during eval: %w", evalErr)
-		}
-
 		if callCount != 1 {
-			return fmt.Errorf("for loop body should be called once in symbolic execution, but was called %d times", callCount)
+			t.Errorf("for loop body should be called once in symbolic execution, but was called %d times", callCount)
 		}
-		return nil
 	}
 
-	if _, err := scantest.Run(t, t.Context(), dir, []string{"."}, action); err != nil {
-		t.Fatalf("scantest.Run() failed: %v", err)
-	}
+	symgotest.Run(t, tc, action)
 }
 
 func TestSymbolic_Switch(t *testing.T) {
-	files := map[string]string{
-		"go.mod": "module example.com/me",
-		"main.go": `package main
+	var aCalled, bCalled, defaultCalled bool
+
+	tc := symgotest.TestCase{
+		Source: map[string]string{
+			"go.mod": "module example.com/me",
+			"main.go": `package main
 
 func CaseA() {}
 func CaseB() {}
@@ -146,56 +117,38 @@ func main() {
 		DefaultCase()
 	}
 }`,
+		},
+		EntryPoint: "example.com/me.main",
+		Options: []symgotest.Option{
+			symgotest.WithIntrinsic("example.com/me.CaseA", func(ctx context.Context, i *symgo.Interpreter, args []symgo.Object) symgo.Object {
+				aCalled = true
+				return nil
+			}),
+			symgotest.WithIntrinsic("example.com/me.CaseB", func(ctx context.Context, i *symgo.Interpreter, args []symgo.Object) symgo.Object {
+				bCalled = true
+				return nil
+			}),
+			symgotest.WithIntrinsic("example.com/me.DefaultCase", func(ctx context.Context, i *symgo.Interpreter, args []symgo.Object) symgo.Object {
+				defaultCalled = true
+				return nil
+			}),
+		},
 	}
 
-	dir, cleanup := scantest.WriteFiles(t, files)
-	defer cleanup()
-
-	var aCalled, bCalled, defaultCalled bool
-	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
-		pkg := pkgs[0]
-		interp, err := symgo.NewInterpreter(s)
-		if err != nil {
-			return err
+	action := func(t *testing.T, r *symgotest.Result) {
+		if r.Error != nil {
+			t.Fatalf("Execution failed unexpectedly: %v", r.Error)
 		}
-		env := symgo.NewEnclosedEnvironment(nil)
-
-		interp.RegisterIntrinsic("example.com/me.CaseA", func(ctx context.Context, i *symgo.Interpreter, args []symgo.Object) symgo.Object {
-			aCalled = true
-			return nil
-		})
-		interp.RegisterIntrinsic("example.com/me.CaseB", func(ctx context.Context, i *symgo.Interpreter, args []symgo.Object) symgo.Object {
-			bCalled = true
-			return nil
-		})
-		interp.RegisterIntrinsic("example.com/me.DefaultCase", func(ctx context.Context, i *symgo.Interpreter, args []symgo.Object) symgo.Object {
-			defaultCalled = true
-			return nil
-		})
-
-		mainFunc, err := lookupFunc(pkg, "main")
-		if err != nil {
-			return err
-		}
-
-		_, evalErr := interp.EvalWithEnv(ctx, mainFunc.AstDecl.Body, env, pkg)
-		if evalErr != nil {
-			return fmt.Errorf("unexpected error during eval: %w", evalErr)
-		}
-
 		if !aCalled {
-			return fmt.Errorf("case 'a' was not called")
+			t.Error("case 'a' was not called")
 		}
 		if !bCalled {
-			return fmt.Errorf("case 'b' was not called")
+			t.Error("case 'b' was not called")
 		}
 		if !defaultCalled {
-			return fmt.Errorf("default case was not called")
+			t.Error("default case was not called")
 		}
-		return nil
 	}
 
-	if _, err := scantest.Run(t, t.Context(), dir, []string{"."}, action); err != nil {
-		t.Fatalf("scantest.Run() failed: %v", err)
-	}
+	symgotest.Run(t, tc, action)
 }

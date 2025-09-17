@@ -87,6 +87,9 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] `symgo/symgo_test.go`
 - [x] `symgo/symgo_const_test.go`
 - [x] `symgo/symgo_scope_test.go`
+- [x] `symgo/symgo_anonymous_type_test.go`
+- [x] `symgo/symgo_extramodule_test.go`
+- [x] `symgo/symgo_intramodule_test.go`
 
 ### Fix `symgo` Error on Pointer Operations with Unresolved Types ([docs/cont-unresolved-type-error.md](./docs/cont-unresolved-type-error.md))
 - [x] Implement the full fix as detailed in the continuation document, starting from a clean state.

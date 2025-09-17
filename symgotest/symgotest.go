@@ -98,6 +98,9 @@ func runLogic(t *testing.T, tc TestCase) (*Result, error) {
 			interpreter.RegisterIntrinsic(name, handler)
 		}
 	}
+	if cfg.DefaultIntrinsic != nil {
+		interpreter.RegisterDefaultIntrinsic(cfg.DefaultIntrinsic)
+	}
 
 	// 3. Find entry point
 	pkgs, err := scanner.Scan(ctx, "./...") // Scan the whole module recursively
@@ -313,10 +316,11 @@ func (t *ExecutionTracer) Format() string {
 
 // config holds the configuration for a test run.
 type config struct {
-	MaxSteps   int
-	Timeout    time.Duration
-	ScanPolicy symgo.ScanPolicyFunc
-	Intrinsics map[string]symgo.IntrinsicFunc
+	MaxSteps         int
+	Timeout          time.Duration
+	ScanPolicy       symgo.ScanPolicyFunc
+	Intrinsics       map[string]symgo.IntrinsicFunc
+	DefaultIntrinsic symgo.IntrinsicFunc
 }
 
 // Option configures a test run.
@@ -357,6 +361,14 @@ func WithIntrinsic(name string, handler symgo.IntrinsicFunc) Option {
 			c.Intrinsics = make(map[string]symgo.IntrinsicFunc)
 		}
 		c.Intrinsics[name] = handler
+	}
+}
+
+// WithDefaultIntrinsic registers a handler that is called for any function
+// that does not have a specific intrinsic registered.
+func WithDefaultIntrinsic(handler symgo.IntrinsicFunc) Option {
+	return func(c *config) {
+		c.DefaultIntrinsic = handler
 	}
 }
 

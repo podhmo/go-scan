@@ -99,6 +99,10 @@ func WithScanPolicy(policy symgo.ScanPolicyFunc) Option
 // allowing for mocking or spying. This is a cleaner alternative to
 // registering intrinsics on the interpreter manually.
 func WithIntrinsic(name string, handler symgo.IntrinsicFunc) Option
+
+// WithTracer provides a custom tracer for the symgo interpreter.
+// If this option is used, the default execution trace in the Result will not be populated.
+func WithTracer(tracer object.Tracer) Option
 ```
 
 ## 3. Testing Scenarios
@@ -318,7 +322,7 @@ This scenario demonstrates how `symgotest` transforms the debugging of a complex
 
 ### The Problem: A Timeout and an Ocean of Logs
 
-A regression causes the `minigo_analysis_test` to hang. The test fails after 30 seconds with a generic `context deadline exceeded` error. The only recourse is to enable verbose logging, producing a massive, unreadable file that is difficult to parse for recursive patterns.
+A regression causes the `minigo_analysis_test` to hang. The test fails after 30 seconds with a generic `context deadline exceeded` error. The only recourse is to enable verbose logging, producing a massive, unreadable file that is difficult toparse for recursive patterns.
 
 ### The `symgotest` Solution: Instant, Actionable Failure
 
@@ -353,6 +357,4 @@ During the initial refactoring of `symgo` tests to use `symgotest`, the followin
 
 *   **Return Value Unwrapping**: The `symgotest.Result.ReturnValue` field contains the actual, unwrapped `object.Object` returned by the symbolic execution of the entry point function. It does *not* contain the `*object.ReturnValue` wrapper that the interpreter uses internally. Assertions should be written to expect the underlying object (e.g., `*object.String`, `*object.Integer`, etc.).
 
-*   **Testing for Expected Errors**: The `symgotest.Run` function is designed for tests that are expected to complete successfully. If the underlying `symgo` interpreter returns an error, `symgotest` treats this as a fatal test failure and halts execution immediately. This makes it unsuitable for tests that need to verify the content of an expected error (e.g., testing that a specific runtime error occurs and includes a correct stack trace). For such cases, the lower-level `scantest` library should be used instead, as it provides the necessary control to manually invoke the interpreter and inspect the returned error object without causing a test failure.
-
-*   **Tracer Integration**: The `symgotest` library does not currently offer a `WithTracer` option. This means that tests requiring inspection of the internal execution trace (by providing a custom `symgo.Tracer` implementation) cannot be refactored to use `symgotest`. They must continue to use the lower-level `scantest` library, which allows for manual creation of the `symgo.Interpreter` with a tracer attached.
+*   **Testing for Expected Errors**: To test for an expected runtime error, set the `ExpectError` field of the `TestCase` struct to `true`. This prevents `symgotest.Run` from fatally failing the test when the interpreter returns an error. The `Result.Error` field can then be inspected in the `action` function to assert its properties, such as the error message or stack trace.

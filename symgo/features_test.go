@@ -6,65 +6,43 @@ import (
 	"strings"
 	"testing"
 
-	goscan "github.com/podhmo/go-scan"
-	"github.com/podhmo/go-scan/scantest"
 	"github.com/podhmo/go-scan/symgo"
 	"github.com/podhmo/go-scan/symgo/object"
 	"github.com/podhmo/go-scan/symgotest"
 )
 
 func TestFeature_ErrorWithPosition(t *testing.T) {
-	files := map[string]string{
-		"go.mod": "module example.com/me",
-		"main.go": `package main
+	tc := symgotest.TestCase{
+		Source: map[string]string{
+			"go.mod": "module example.com/me",
+			"main.go": `package main
 
 func main() {
 	x := undefined_variable
 }`, // error is on line 4
+		},
+		EntryPoint:  "example.com/me.main",
+		ExpectError: true,
 	}
 
-	dir, cleanup := scantest.WriteFiles(t, files)
-	defer cleanup()
-
-	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
-		pkg := pkgs[0]
-		interp, err := symgo.NewInterpreter(s, symgo.WithLogger(s.Logger))
-		if err != nil {
-			return err
-		}
-
-		for _, file := range pkg.AstFiles {
-			_, err := interp.Eval(ctx, file, pkg)
-			if err != nil && !strings.Contains(err.Error(), "undefined_variable") {
-				return fmt.Errorf("initial eval of file %s failed unexpectedly: %w", file.Name.Name, err)
-			}
-		}
-
-		mainFuncObj, ok := interp.FindObjectInPackage(ctx, "example.com/me", "main")
-		if !ok {
-			return fmt.Errorf("main function not found")
-		}
-
-		_, evalErr := interp.Apply(ctx, mainFuncObj, []symgo.Object{}, pkg)
-		if evalErr == nil {
+	action := func(t *testing.T, r *symgotest.Result) {
+		if r.Error == nil {
 			t.Fatal("expected an error, but got nil")
 		}
 
+		errMsg := r.Error.Error()
 		expectedPosition := "main.go:4:"
 		expectedMessage := "identifier not found: undefined_variable"
 
-		if !strings.Contains(evalErr.Error(), expectedPosition) {
-			return fmt.Errorf("error message does not contain expected position\nwant_substr: %q\ngot:         %q", expectedPosition, evalErr.Error())
+		if !strings.Contains(errMsg, expectedPosition) {
+			t.Errorf("error message does not contain expected position\nwant_substr: %q\ngot:         %q", expectedPosition, errMsg)
 		}
-		if !strings.Contains(evalErr.Error(), expectedMessage) {
-			return fmt.Errorf("error message does not contain expected message\nwant_substr: %q\ngot:         %q", expectedMessage, evalErr.Error())
+		if !strings.Contains(errMsg, expectedMessage) {
+			t.Errorf("error message does not contain expected message\nwant_substr: %q\ngot:         %q", expectedMessage, errMsg)
 		}
-		return nil
 	}
 
-	if _, err := scantest.Run(t, t.Context(), dir, []string{"."}, action); err != nil {
-		t.Fatalf("scantest.Run() failed: %v", err)
-	}
+	symgotest.Run(t, tc, action)
 }
 
 func TestFeature_CharLiteral(t *testing.T) {
@@ -163,52 +141,30 @@ func usedByReturnedFunc() {}
 }
 
 func TestBuiltin_Panic(t *testing.T) {
-	files := map[string]string{
-		"go.mod": "module example.com/me",
-		"main.go": `package main
+	tc := symgotest.TestCase{
+		Source: map[string]string{
+			"go.mod": "module example.com/me",
+			"main.go": `package main
 
 func main() {
 	panic("test message")
 }`,
+		},
+		EntryPoint:  "example.com/me.main",
+		ExpectError: true,
 	}
 
-	dir, cleanup := scantest.WriteFiles(t, files)
-	defer cleanup()
-
-	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
-		pkg := pkgs[0]
-		interp, err := symgo.NewInterpreter(s, symgo.WithLogger(s.Logger))
-		if err != nil {
-			return err
+	action := func(t *testing.T, r *symgotest.Result) {
+		if r.Error == nil {
+			t.Fatal("expected a panic error, but got nil")
 		}
-
-		for _, file := range pkg.AstFiles {
-			_, err := interp.Eval(ctx, file, pkg)
-			if err != nil {
-				return err
-			}
-		}
-
-		mainFuncObj, ok := interp.FindObjectInPackage(ctx, "example.com/me", "main")
-		if !ok {
-			return fmt.Errorf("main function not found")
-		}
-
-		_, evalErr := interp.Apply(ctx, mainFuncObj, []symgo.Object{}, pkg)
-		if evalErr == nil {
-			return fmt.Errorf("expected a panic error, but got nil")
-		}
-
 		expectedMsg := "panic: test message"
-		if !strings.Contains(evalErr.Error(), expectedMsg) {
-			return fmt.Errorf("error message mismatch\nwant_substr: %q\ngot:         %q", expectedMsg, evalErr.Error())
+		if !strings.Contains(r.Error.Error(), expectedMsg) {
+			t.Errorf("error message mismatch\nwant_substr: %q\ngot:         %q", expectedMsg, r.Error.Error())
 		}
-		return nil
 	}
 
-	if _, err := scantest.Run(t, t.Context(), dir, []string{"."}, action); err != nil {
-		t.Fatalf("scantest.Run() failed: %v", err)
-	}
+	symgotest.Run(t, tc, action)
 }
 
 func TestMultiValueAssignment(t *testing.T) {

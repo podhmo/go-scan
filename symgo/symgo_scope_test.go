@@ -83,7 +83,7 @@ func GetGreeting() string { return "from lib" }`,
 				return strings.HasPrefix(path, "example.com/myapp") || strings.HasPrefix(path, "example.com/lib")
 			},
 			checkResult: func(t *testing.T, r *symgotest.Result) {
-				str := symgotest.AssertAs[*object.String](t, r.ReturnValue)
+				str := symgotest.AssertAs[*object.String](r, t, 0)
 				if str.Value != "from lib" {
 					t.Errorf("want %q, got %q", "from lib", str.Value)
 				}
@@ -95,6 +95,7 @@ func GetGreeting() string { return "from lib" }`,
 package lib
 func GetGreeting() string { return "from lib" }`,
 			scanPolicy: func(path string) bool {
+				// This policy deliberately excludes "example.com/lib"
 				return strings.HasPrefix(path, "example.com/myapp")
 			},
 			checkResult: func(t *testing.T, r *symgotest.Result) {
@@ -117,7 +118,7 @@ func GetGreeting() string {
 }`,
 			scanPolicy: func(path string) bool { return true }, // scan everything
 			checkResult: func(t *testing.T, r *symgotest.Result) {
-				str := symgotest.AssertAs[*object.String](t, r.ReturnValue)
+				str := symgotest.AssertAs[*object.String](r, t, 0)
 				if str.Value != "hello from unexported func" {
 					t.Errorf("want %q, got %q", "hello from unexported func", str.Value)
 				}
@@ -133,7 +134,7 @@ func GetGreeting() string {
 }`,
 			scanPolicy: func(path string) bool { return true }, // scan everything
 			checkResult: func(t *testing.T, r *symgotest.Result) {
-				str := symgotest.AssertAs[*object.String](t, r.ReturnValue)
+				str := symgotest.AssertAs[*object.String](r, t, 0)
 				if str.Value != "hello from unexported var" {
 					t.Errorf("want %q, got %q", "hello from unexported var", str.Value)
 				}

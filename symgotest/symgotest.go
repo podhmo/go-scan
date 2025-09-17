@@ -16,7 +16,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/go-cmp/cmp"
 	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/scantest"
 	"github.com/podhmo/go-scan/symgo"
@@ -24,22 +23,31 @@ import (
 )
 
 // Run executes a symgo test case. It handles all setup and teardown.
-// If the execution fails due to an error, timeout, or exceeded step limit,
-// it will call t.Fatal with a detailed report, including an execution trace.
+// Its behavior with respect to interpreter errors depends on the `ExpectError` flag in the TestCase.
 func Run(t *testing.T, tc TestCase, action func(t *testing.T, r *Result)) {
 	t.Helper()
-	res, err := runLogic(t, tc)
-	if err != nil {
-		if res != nil && res.Trace != nil {
-			t.Fatalf("symgotest: test failed: %v\n\n%s", err, res.Trace.Format())
+	res := runLogic(t, tc)
+
+	// If an unexpected error occurred, fail fatally.
+	if res.Error != nil && !tc.ExpectError {
+		if res.Trace != nil {
+			t.Fatalf("symgotest: test failed unexpectedly: %v\n\n%s", res.Error, res.Trace.Format())
 		}
-		t.Fatalf("symgotest: test failed: %v", err)
+		t.Fatalf("symgotest: test failed unexpectedly: %v", res.Error)
 	}
+
+	// If an error was expected but none occurred, fail fatally.
+	if res.Error == nil && tc.ExpectError {
+		t.Fatalf("symgotest: expected an error, but test completed successfully")
+	}
+
+	// Otherwise, proceed to the action function for user assertions.
 	action(t, res)
 }
 
-// runLogic contains the core logic of a test run, returning an error instead of calling t.Fatal.
-func runLogic(t *testing.T, tc TestCase) (*Result, error) {
+// runLogic contains the core logic of a test run. It always returns a Result,
+// with any errors (setup or runtime) populated in the Result.Error field.
+func runLogic(t *testing.T, tc TestCase) *Result {
 	// 1. Setup test environment
 	dir, cleanup := scantest.WriteFiles(t, tc.Source)
 	defer cleanup()
@@ -66,14 +74,16 @@ func runLogic(t *testing.T, tc TestCase) (*Result, error) {
 		goscan.WithGoModuleResolver(),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create scanner: %w", err)
+		return &Result{Error: &object.Error{Message: fmt.Sprintf("failed to create scanner: %v", err)}}
 	}
 
 	tracer := NewExecutionTracer(scanner.Fset())
+	res := &Result{Trace: tracer} // Initialize result early
 
 	pkgPath, fnName := splitQualifiedName(tc.EntryPoint)
 	if pkgPath == "" {
-		return nil, fmt.Errorf("invalid entry point format: %q. Expected 'path/to/package.FunctionName'", tc.EntryPoint)
+		res.Error = &object.Error{Message: fmt.Sprintf("invalid entry point format: %q. Expected 'path/to/package.FunctionName'", tc.EntryPoint)}
+		return res
 	}
 
 	interpreterOpts := []symgo.Option{
@@ -84,15 +94,34 @@ func runLogic(t *testing.T, tc TestCase) (*Result, error) {
 	if cfg.ScanPolicy != nil {
 		interpreterOpts = append(interpreterOpts, symgo.WithScanPolicy(cfg.ScanPolicy))
 	} else {
-		interpreterOpts = append(interpreterOpts, symgo.WithPrimaryAnalysisScope(pkgPath))
+		modules := scanner.Modules()
+		if len(modules) > 0 {
+			modulePaths := make([]string, len(modules))
+			for i, mod := range modules {
+				modulePaths[i] = mod.Path
+			}
+			defaultPolicy := func(pkgPath string) bool {
+				for _, modPath := range modulePaths {
+					if strings.HasPrefix(pkgPath, modPath) {
+						return true
+					}
+				}
+				return false
+			}
+			interpreterOpts = append(interpreterOpts, symgo.WithScanPolicy(defaultPolicy))
+		} else {
+			interpreterOpts = append(interpreterOpts, symgo.WithPrimaryAnalysisScope(pkgPath))
+		}
 	}
 
 	interpreter, err := symgo.NewInterpreter(scanner, interpreterOpts...)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create interpreter: %w", err)
+		res.Error = &object.Error{Message: fmt.Sprintf("failed to create interpreter: %v", err)}
+		return res
 	}
+	res.Interpreter = interpreter
+	res.FinalEnv = interpreter.GlobalEnvForTest()
 
-	// Register intrinsics from options
 	if cfg.Intrinsics != nil {
 		for name, handler := range cfg.Intrinsics {
 			interpreter.RegisterIntrinsic(name, handler)
@@ -102,17 +131,17 @@ func runLogic(t *testing.T, tc TestCase) (*Result, error) {
 		interpreter.RegisterDefaultIntrinsic(cfg.DefaultIntrinsic)
 	}
 
-	// Perform user-defined setup before analysis
 	if cfg.SetupFunc != nil {
 		if err := cfg.SetupFunc(interpreter); err != nil {
-			return nil, fmt.Errorf("WithSetup function failed: %w", err)
+			res.Error = &object.Error{Message: fmt.Sprintf("WithSetup function failed: %v", err)}
+			return res
 		}
 	}
 
-	// 3. Find entry point
-	pkgs, err := scanner.Scan(ctx, "./...") // Scan the whole module recursively
+	pkgs, err := scanner.Scan(ctx, "./...")
 	if err != nil {
-		return nil, fmt.Errorf("failed to scan module: %w", err)
+		res.Error = &object.Error{Message: fmt.Sprintf("failed to scan module: %v", err)}
+		return res
 	}
 
 	var entryPointPkg *goscan.Package
@@ -123,42 +152,34 @@ func runLogic(t *testing.T, tc TestCase) (*Result, error) {
 		}
 	}
 	if entryPointPkg == nil {
-		return nil, fmt.Errorf("could not find package %q after scanning module", pkgPath)
+		res.Error = &object.Error{Message: fmt.Sprintf("could not find package %q after scanning module", pkgPath)}
+		return res
 	}
 
 	fnObj, ok := interpreter.FindObjectInPackage(ctx, pkgPath, fnName)
 	if !ok {
-		return nil, fmt.Errorf("entry point function %q not found in package %q", fnName, pkgPath)
+		res.Error = &object.Error{Message: fmt.Sprintf("entry point function %q not found in package %q", fnName, pkgPath)}
+		return res
 	}
 
-	// 4. Execute function
 	rawResult := interpreter.EvaluatorForTest().Apply(ctx, fnObj, tc.Args, entryPointPkg)
-
-	// 5. Populate and return result
-	finalReturnValue := rawResult
-	if ret, ok := rawResult.(*object.ReturnValue); ok {
-		finalReturnValue = ret.Value
-	}
-
-	res := &Result{
-		ReturnValue: finalReturnValue,
-		FinalEnv:    interpreter.GlobalEnvForTest(),
-		Interpreter: interpreter,
-		Trace:       tracer,
-	}
 
 	if err, ok := rawResult.(*object.Error); ok {
 		res.Error = err
 		res.ReturnValue = nil
-		return res, err // Return the error to be formatted by the public Run function
+	} else {
+		finalReturnValue := rawResult
+		if ret, ok := rawResult.(*object.ReturnValue); ok {
+			finalReturnValue = ret.Value
+		}
+		res.ReturnValue = finalReturnValue
 	}
 
-	// Check for context timeout
 	if ctx.Err() == context.DeadlineExceeded {
-		return res, fmt.Errorf("timeout exceeded (%v)", cfg.Timeout)
+		res.Error = &object.Error{Message: fmt.Sprintf("timeout exceeded (%v)", cfg.Timeout)}
 	}
 
-	return res, nil
+	return res
 }
 
 // splitQualifiedName splits a name like "pkg/path.Name" into "pkg/path" and "Name".
@@ -243,6 +264,11 @@ type TestCase struct {
 
 	// Options allow for customizing the test run's behavior.
 	Options []Option
+
+	// ExpectError, if true, treats a runtime error from the interpreter as an
+	// expected outcome rather than a fatal test failure. The error can then be
+	// inspected in the Result.
+	ExpectError bool
 }
 
 // Result contains the outcome of the symbolic execution.
@@ -389,41 +415,29 @@ func WithDefaultIntrinsic(handler symgo.IntrinsicFunc) Option {
 	}
 }
 
-// AssertAs is a helper function that asserts the type of an object.Object.
-// It fails the test if the object is not of the expected type.
-func AssertAs[T object.Object](t *testing.T, obj object.Object) T {
+// AssertAs unwraps the result and asserts the type of the nth return value.
+// For single return values, use index 0. It fails the test if the index is
+// out of bounds or if the type assertion fails.
+func AssertAs[T object.Object](r *Result, t *testing.T, index int) T {
 	t.Helper()
+	var obj object.Object
+
+	if mr, ok := r.ReturnValue.(*object.MultiReturn); ok {
+		if index < 0 || index >= len(mr.Values) {
+			t.Fatalf("index %d out of bounds for multi-return value with %d values", index, len(mr.Values))
+		}
+		obj = mr.Values[index]
+	} else {
+		if index != 0 {
+			t.Fatalf("index %d out of bounds for single return value", index)
+		}
+		obj = r.ReturnValue
+	}
+
 	val, ok := obj.(T)
 	if !ok {
 		var zero T
 		t.Fatalf("type assertion failed: expected %T, got %T", zero, obj)
 	}
 	return val
-}
-
-// AssertEqual is a helper function that asserts the value of an object.Object.
-// It first asserts the object's type based on the type of the `expected` value,
-// then compares the contained value.
-func AssertEqual[T any](t *testing.T, obj object.Object, expected T) {
-	t.Helper()
-
-	switch v := any(expected).(type) {
-	case int:
-		integerObj := AssertAs[*object.Integer](t, obj)
-		if diff := cmp.Diff(int64(v), integerObj.Value); diff != "" {
-			t.Errorf("value mismatch, want=%d got=%d\n%s", v, integerObj.Value, diff)
-		}
-	case int64:
-		integerObj := AssertAs[*object.Integer](t, obj)
-		if diff := cmp.Diff(v, integerObj.Value); diff != "" {
-			t.Errorf("value mismatch, want=%d got=%d\n%s", v, integerObj.Value, diff)
-		}
-	case string:
-		stringObj := AssertAs[*object.String](t, obj)
-		if diff := cmp.Diff(v, stringObj.Value); diff != "" {
-			t.Errorf("value mismatch, want=%q got=%q\n%s", v, stringObj.Value, diff)
-		}
-	default:
-		t.Fatalf("unsupported type %T for AssertEqual, actual value was: %s", expected, obj.Inspect())
-	}
 }

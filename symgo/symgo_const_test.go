@@ -50,7 +50,7 @@ const MyConstant = "hello from another module"
 			t.Fatalf("Execution failed: %v", r.Error)
 		}
 
-		str := symgotest.AssertAs[*object.String](t, r.ReturnValue)
+		str := symgotest.AssertAs[*object.String](r, t, 0)
 
 		expected := "hello from another module"
 		if str.Value != expected {

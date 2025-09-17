@@ -1,11 +1,13 @@
 package symgotest
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/podhmo/go-scan/symgo"
 	"github.com/podhmo/go-scan/symgo/object"
 )
 
@@ -30,8 +32,8 @@ func NewUser(name string) *User {
 			t.Fatalf("Execution failed: %v", r.Error)
 		}
 
-		ptr := AssertAs[*object.Pointer](t, r.ReturnValue)
-		instance := AssertAs[*object.Instance](t, ptr.Value)
+		ptr := AssertAs[*object.Pointer](r, t, 0)
+		instance := AssertAs[*object.Instance](&Result{ReturnValue: ptr.Value}, t, 0)
 
 		expectedTypeName := "example.com/me.User"
 		if diff := cmp.Diff(expectedTypeName, instance.TypeName); diff != "" {
@@ -63,13 +65,13 @@ func TestRun_MaxStepsExceeded(t *testing.T) {
 		},
 	}
 
-	res, err := runLogic(t, tc)
-	if err == nil {
+	res := runLogic(t, tc)
+	if res.Error == nil {
 		t.Fatalf("expected runLogic to fail, but it succeeded")
 	}
 
-	if !strings.Contains(err.Error(), "max execution steps (10) exceeded") {
-		t.Errorf("expected error to contain 'max execution steps (10) exceeded', but got: %v", err)
+	if !strings.Contains(res.Error.Message, "max execution steps (10) exceeded") {
+		t.Errorf("expected error to contain 'max execution steps (10) exceeded', but got: %v", res.Error)
 	}
 
 	if res == nil {
@@ -88,7 +90,10 @@ func TestRunExpression(t *testing.T) {
 		if r.Error != nil {
 			t.Fatalf("Execution failed: %v", r.Error)
 		}
-		AssertEqual(t, r.ReturnValue, 3)
+		integerObj := AssertAs[*object.Integer](r, t, 0)
+		if integerObj.Value != 3 {
+			t.Errorf("expected 3, got %d", integerObj.Value)
+		}
 	}
 	RunExpression(t, "1 + 2", action)
 }
@@ -103,8 +108,47 @@ func TestRunStatements(t *testing.T) {
 			t.Fatalf("variable 'x' not found in final environment")
 		}
 
-		variable := AssertAs[*object.Variable](t, val)
-		AssertEqual(t, variable.Value, 10)
+		variable := AssertAs[*object.Variable](&Result{ReturnValue: val}, t, 0)
+		integerObj := AssertAs[*object.Integer](&Result{ReturnValue: variable.Value}, t, 0)
+		if integerObj.Value != 10 {
+			t.Errorf("expected 10, got %d", integerObj.Value)
+		}
 	}
 	RunStatements(t, "x := 10", action)
+}
+
+func TestRun_ExpectError_FromIntrinsic(t *testing.T) {
+	tc := TestCase{
+		Source: map[string]string{
+			"go.mod": "module example.com",
+			"main.go": `
+package main
+
+// This function will be replaced by an intrinsic that returns an error.
+func customErrorFunc() {}
+
+func main() {
+	customErrorFunc()
+}
+`,
+		},
+		EntryPoint:  "example.com.main",
+		ExpectError: true,
+		Options: []Option{
+			WithIntrinsic("example.com.customErrorFunc", func(ctx context.Context, i *symgo.Interpreter, args []object.Object) object.Object {
+				return &object.Error{Message: "this is a forced error"}
+			}),
+		},
+	}
+
+	action := func(t *testing.T, r *Result) {
+		if r.Error == nil {
+			t.Fatalf("expected an error, but got nil")
+		}
+		if !strings.Contains(r.Error.Message, "this is a forced error") {
+			t.Errorf("expected error message to contain 'this is a forced error', but got %q", r.Error.Message)
+		}
+	}
+
+	Run(t, tc, action)
 }

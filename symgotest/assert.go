@@ -8,90 +8,68 @@ import (
 	"github.com/podhmo/go-scan/symgo/object"
 )
 
-// AssertSuccess fails the test if the object is an error.
-func AssertSuccess(t *testing.T, obj object.Object) {
+// AssertSuccess fails the test if the RunResult contains an error.
+func AssertSuccess(t *testing.T, result *RunResult) {
 	t.Helper()
-	if obj == nil {
-		t.Fatalf("expected success, but got a nil object")
+	if result.Error != nil {
+		t.Fatalf("expected success, but got runtime error: %v", result.Error)
 	}
-	if err, ok := obj.(*object.Error); ok {
-		t.Fatalf("expected success, but got error: %s", err.Message)
-	}
-	if ret, ok := obj.(*object.ReturnValue); ok {
-		if err, ok := ret.Value.(*object.Error); ok {
-			t.Fatalf("expected success, but got error in return value: %s", err.Message)
-		}
+	if err, ok := result.ReturnValue.(*object.Error); ok {
+		t.Fatalf("expected success, but got error return value: %s", err.Message)
 	}
 }
 
-// AssertError fails the test if the object is not an error.
+// AssertError fails the test if the RunResult does not contain an error.
 // If `contains` has one or more elements, it also checks if the error message contains each of them.
-func AssertError(t *testing.T, obj object.Object, contains ...string) {
+func AssertError(t *testing.T, result *RunResult, contains ...string) {
 	t.Helper()
-	if obj == nil {
-		t.Fatalf("expected an error, but got a nil object")
-	}
-	err, ok := obj.(*object.Error)
-	if !ok {
-		// Sometimes the error is wrapped in a ReturnValue
-		if ret, ok := obj.(*object.ReturnValue); ok {
-			err, ok = ret.Value.(*object.Error)
-		}
-	}
 
-	if !ok || err == nil {
-		t.Fatalf("expected an error, but got %T (%s)", obj, obj.Inspect())
+	var errMsg string
+	if result.Error != nil {
+		errMsg = result.Error.Error()
+	} else if err, ok := result.ReturnValue.(*object.Error); ok {
+		errMsg = err.Message
+	} else {
+		t.Fatalf("expected an error, but got successful result with return value: %T", result.ReturnValue)
 	}
 
 	for _, c := range contains {
-		if !strings.Contains(err.Message, c) {
-			t.Errorf("error message %q does not contain %q", err.Message, c)
+		if !strings.Contains(errMsg, c) {
+			t.Errorf("error message %q does not contain %q", errMsg, c)
 		}
 	}
 }
 
-// AssertInteger fails the test if the object is not an Integer with the expected value.
-func AssertInteger(t *testing.T, obj object.Object, expected int64) {
+// AssertCalled fails the test if the given function name is not in the list of called functions.
+// This assertion is only useful when TrackCalls() is enabled on the Runner.
+func AssertCalled(t *testing.T, result *RunResult, functionName string) {
 	t.Helper()
-	integer, ok := obj.(*object.Integer)
-	if !ok {
-		t.Fatalf("object is not Integer. got=%T (%+v)", obj, obj)
+	for _, called := range result.FunctionsCalled {
+		if called == functionName {
+			return // success
+		}
 	}
-	if integer.Value != expected {
-		t.Errorf("integer has wrong value. want=%d, got=%d", expected, integer.Value)
+	t.Errorf("expected function %q to be called, but it was not.", functionName)
+	if len(result.FunctionsCalled) > 0 {
+		t.Logf("Functions called:\n - %s", strings.Join(result.FunctionsCalled, "\n - "))
+	} else {
+		t.Log("No functions were tracked as called.")
 	}
 }
 
-// AssertString fails the test if the object is not a String with the expected value.
-func AssertString(t *testing.T, obj object.Object, expected string) {
+// AssertNotCalled fails the test if the given function name is found in the list of called functions.
+// This assertion is only useful when TrackCalls() is enabled on the Runner.
+func AssertNotCalled(t *testing.T, result *RunResult, functionName string) {
 	t.Helper()
-	str, ok := obj.(*object.String)
-	if !ok {
-		t.Fatalf("object is not String. got=%T (%+v)", obj, obj)
-	}
-	if str.Value != expected {
-		t.Errorf("String has wrong value. want=%q, got=%q", expected, str.Value)
-	}
-}
-
-// AssertSymbolicNil fails the test if the object is not the symbolic NIL object.
-func AssertSymbolicNil(t *testing.T, obj object.Object) {
-	t.Helper()
-	if obj != object.NIL {
-		t.Fatalf("expected symbolic NIL, but got %T (%s)", obj, obj.Inspect())
-	}
-}
-
-// AssertPlaceholder fails the test if the object is not a SymbolicPlaceholder.
-func AssertPlaceholder(t *testing.T, obj object.Object) {
-	t.Helper()
-	if _, ok := obj.(*object.SymbolicPlaceholder); !ok {
-		t.Fatalf("expected a SymbolicPlaceholder, but got %T (%s)", obj, obj.Inspect())
+	for _, called := range result.FunctionsCalled {
+		if called == functionName {
+			t.Errorf("expected function %q NOT to be called, but it was.", functionName)
+			return
+		}
 	}
 }
 
 // AssertEqual uses go-cmp to compare two values and fails the test if they are not equal.
-// This is a generic helper for comparing complex structs or slices.
 func AssertEqual(t *testing.T, want, got any, opts ...cmp.Option) {
 	t.Helper()
 	if diff := cmp.Diff(want, got, opts...); diff != "" {

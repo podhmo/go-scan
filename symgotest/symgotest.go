@@ -3,45 +3,51 @@ package symgotest
 import (
 	"context"
 	"fmt"
-	"go/parser"
 	"strings"
 	"testing"
 
 	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/scantest"
 	"github.com/podhmo/go-scan/symgo"
-	"github.com/podhmo/go-scan/symgo/evaluator"
 	"github.com/podhmo/go-scan/symgo/object"
 )
 
-const (
-	moduleName = "example.com/symgotest/module"
-)
-
-// Runner is a test utility that simplifies running symbolic execution tests on a package.
-type Runner struct {
-	t         *testing.T
-	files     map[string]string
-	setupFunc func(interp *symgo.Interpreter)
+// RunResult contains the complete output of a symbolic execution test run.
+type RunResult struct {
+	// ReturnValue is the object returned by the applied function.
+	ReturnValue object.Object
+	// Error is any runtime error that occurred during the execution.
+	Error error
+	// FunctionsCalled is an ordered list of the fully-qualified names of all
+	// functions that were symbolically executed. This is only populated if
+	// TrackCalls() was enabled on the runner.
+	FunctionsCalled []string
 }
 
-// NewRunner creates a new test runner for a given single-file source code snippet.
-// It automatically ensures the source is part of a 'main' package.
+// Runner is a test utility that simplifies running symbolic execution tests.
+type Runner struct {
+	t          *testing.T
+	files      map[string]string
+	setupFunc  func(interp *symgo.Interpreter)
+	trackCalls bool
+}
+
+// NewRunner creates a new test runner for a simple, single-package test from a single source string.
+// It automatically creates a "go.mod" file and ensures the source is part of a 'main' package.
 func NewRunner(t *testing.T, source string) *Runner {
 	t.Helper()
 	if !strings.HasPrefix(strings.TrimSpace(source), "package main") {
 		source = "package main\n\n" + source
 	}
 	files := map[string]string{
-		"go.mod":  fmt.Sprintf("module %s", moduleName),
+		"go.mod":  "module example.com/simple",
 		"main.go": source,
 	}
 	return &Runner{t: t, files: files}
 }
 
-// NewRunnerWithMultiFiles creates a new test runner for a multi-file package.
-// The `files` map should contain the file paths (relative to the module root) and their content.
-// It must include a "go.mod" file.
+// NewRunnerWithMultiFiles creates a new test runner for a complex, multi-file or multi-package test.
+// The `files` map must contain a "go.mod" entry.
 func NewRunnerWithMultiFiles(t *testing.T, files map[string]string) *Runner {
 	t.Helper()
 	if _, ok := files["go.mod"]; !ok {
@@ -51,34 +57,32 @@ func NewRunnerWithMultiFiles(t *testing.T, files map[string]string) *Runner {
 }
 
 // WithSetup provides a function to configure the symgo.Interpreter before execution.
-// This is primarily used to register intrinsic functions for mocking.
 func (r *Runner) WithSetup(setupFunc func(interp *symgo.Interpreter)) *Runner {
 	r.setupFunc = setupFunc
 	return r
 }
 
-// Apply runs symbolic execution starting from a specific function.
-// It handles all the boilerplate of setting up a temporary module, scanning,
-// and creating an interpreter.
-func (r *Runner) Apply(funcName string, args ...object.Object) object.Object {
+// TrackCalls enables the recording of all function calls made during the execution.
+func (r *Runner) TrackCalls() *Runner {
+	r.trackCalls = true
+	return r
+}
+
+// Apply runs symbolic execution starting from a specific function and returns a rich result object.
+func (r *Runner) Apply(funcName string, args ...object.Object) *RunResult {
 	r.t.Helper()
 
-	var result object.Object
+	result := &RunResult{}
 	ctx := context.Background()
 
 	dir, cleanup := scantest.WriteFiles(r.t, r.files)
 	defer cleanup()
 
-	// The full module name for the main package can vary if it's in a subdirectory.
-	// We determine it by finding the main package after scanning.
 	var mainPackagePath string
 
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
-		// Find main package to determine its full import path and to use it for Apply.
 		var mainPkg *goscan.Package
 		for _, p := range pkgs {
-			// A simple heuristic for finding the main package.
-			// This might need refinement if multiple main packages exist in complex setups.
 			for _, f := range p.AstFiles {
 				if f.Name.Name == "main" {
 					mainPkg = p
@@ -103,50 +107,56 @@ func (r *Runner) Apply(funcName string, args ...object.Object) object.Object {
 			r.setupFunc(interp)
 		}
 
-		// Evaluate all files in all scanned packages to populate environments.
+		if r.trackCalls {
+			interp.RegisterDefaultIntrinsic(func(ctx context.Context, i *symgo.Interpreter, intrinsicArgs []symgo.Object) symgo.Object {
+				if len(intrinsicArgs) > 0 {
+					var key string
+					fn := intrinsicArgs[0]
+					switch fn := fn.(type) {
+					case *symgo.Function:
+						if fn.Def != nil && fn.Package != nil {
+							key = fmt.Sprintf("%s.%s", fn.Package.ImportPath, fn.Def.Name)
+						}
+					case *symgo.SymbolicPlaceholder:
+						if fn.UnderlyingFunc != nil && fn.Package != nil {
+							key = fmt.Sprintf("%s.%s", fn.Package.ImportPath, fn.UnderlyingFunc.Name)
+						}
+					}
+					if key != "" {
+						result.FunctionsCalled = append(result.FunctionsCalled, key)
+					}
+				}
+				// Return a placeholder so execution can continue.
+				return &object.SymbolicPlaceholder{Reason: "traced call"}
+			})
+		}
+
 		for _, p := range pkgs {
 			for _, file := range p.AstFiles {
-				if _, err := interp.Eval(ctx, file, p); err != nil {
-					// An error during initial evaluation might be expected, so we don't fail hard here.
-				}
+				_, _ = interp.Eval(ctx, file, p)
 			}
 		}
 
-		// Find the entry point function in the main package.
 		fn, ok := interp.FindObjectInPackage(ctx, mainPackagePath, funcName)
 		if !ok {
 			return fmt.Errorf("function %q not found in package %q", funcName, mainPackagePath)
 		}
 
-		// Apply the function.
-		res, err := interp.Apply(ctx, fn, args, mainPkg)
-		if err != nil {
-			result = &object.Error{Message: err.Error()}
-		} else {
-			result = res
+		// If tracking, manually add the entrypoint to the trace, as Apply() itself doesn't trigger the intrinsic.
+		if r.trackCalls {
+			fqn := fmt.Sprintf("%s.%s", mainPackagePath, funcName)
+			result.FunctionsCalled = append(result.FunctionsCalled, fqn)
 		}
+
+		res, err := interp.Apply(ctx, fn, args, mainPkg)
+		result.ReturnValue = res
+		result.Error = err
 		return nil
 	}
 
-	// Scan all packages from the module root.
 	if _, err := scantest.Run(r.t, ctx, dir, []string{"./..."}, action); err != nil {
 		r.t.Fatalf("scantest.Run() failed: %+v", err)
 	}
 
 	return result
-}
-
-// EvalExpr parses and evaluates a single Go expression string.
-// It's a lightweight helper for testing the evaluation of simple constructs
-// without needing a full package context.
-func EvalExpr(t *testing.T, expr string) object.Object {
-	t.Helper()
-	node, err := parser.ParseExpr(expr)
-	if err != nil {
-		t.Fatalf("failed to parse expression %q: %v", expr, err)
-	}
-
-	// For simple expression evaluation, we typically don't need a full scanner.
-	eval := evaluator.New(nil, nil, nil, nil)
-	return eval.Eval(context.Background(), node, eval.UniverseEnv, nil)
 }

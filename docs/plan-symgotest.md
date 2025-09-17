@@ -1,129 +1,135 @@
-# Design Document: `symgotest` Test Helper Library
+# Design Document: `symgotest` for Debugging and Visibility
 
-This document outlines the design for a new test helper library, `symgotest`, intended to simplify and standardize the process of writing tests for the `symgo` symbolic execution engine.
+This document outlines the design for a new test helper library, `symgotest`. The primary goal of this library is not just to reduce test boilerplate, but to fundamentally improve the debugging experience for `symgo`, especially in complex, cross-package scenarios.
 
-## Part 1: Analysis of the Existing Test Suite
+## 1. The Core Problem: Lack of Visibility in Cross-Package Tests
 
-A thorough review of the test files in `symgo/` and `symgo/evaluator/` reveals several recurring patterns. Understanding these patterns is crucial for designing a helper library that provides maximum benefit.
+The `symgo` engine is powerful, but testing its behavior across multiple packages can be challenging. A common scenario involves a test that fails because of an unexpected interaction in an *indirect dependency* (e.g., package `A` calls a function in `B`, which in turn calls a function in `C`).
 
-### Pattern A: Expression/Statement Evaluation
+When such a test fails, it is often difficult to answer the question: "What was the actual execution path that led to this failure?" The developer must manually instrument the code with logs or use a debugger, which can be cumbersome. The existing test suite solves this by manually creating call-tracking mechanisms using `RegisterDefaultIntrinsic`, but this is verbose and must be re-implemented for each test.
 
-- **Description:** These are fine-grained unit tests that evaluate a single Go expression or statement in isolation. They are used to verify the evaluator's core logic for handling language primitives.
-- **Example Workflow (`evaluator_test.go`):**
-  1. `input := "5 + 5"`
-  2. `node, _ := parser.ParseExpr(input)`
-  3. `eval := evaluator.New(...)`
-  4. `result := eval.Eval(node, ...)`
-  5. Assert the type and value of `result`.
-- **Problem:** While simple, this still involves manual AST parsing and evaluator instantiation. For a table-driven test with many expressions, this setup is repeated.
+The core design goal of `symgotest` is to solve this visibility problem by providing an automated execution trace as a first-class feature.
 
-### Pattern B: Full Program Simulation
+## 2. The Solution: A Trace-Focused Test Runner
 
-- **Description:** This is the most common and important pattern, used for feature and integration testing. It simulates the execution of a complete, self-contained Go program.
-- **Example Workflow (`features_test.go`, `symgo_test.go`):**
-  1. Define Go source code for one or more files in a `map[string]string`.
-  2. Use `scantest.WriteFiles` to create a temporary directory.
-  3. Use `scantest.Run` to manage the test, passing it an `ActionFunc`.
-  4. Inside the `ActionFunc`:
-     a. Create a `symgo.Interpreter`.
-     b. Register mock functions using `interp.RegisterIntrinsic`.
-     c. Loop through all scanned files and call `interp.Eval()` on each to populate the environment.
-     d. Find an entry point function (e.g., `main`) using `interp.FindObjectInPackage`.
-     e. Execute the program with `interp.Apply()`.
-     f. Assert the result or side effects captured by the intrinsics.
-- **Problem:** This pattern suffers from significant boilerplate. The entire `scantest` setup and the multi-step execution logic within the `ActionFunc` are repeated in nearly every test, making them verbose and hard to read.
+`symgotest` introduces a `Runner` that abstracts away test setup and, most importantly, provides a rich `RunResult` object containing a detailed execution trace.
 
-### Pattern C: Symbolic Block Evaluation
+### The `RunResult` and `FunctionsCalled` Trace
 
-- **Description:** This is a specialized variant of Pattern B used to test the symbolic exploration of control-flow statements (`if`, `for`, `switch`).
-- **Example Workflow (`symbolic_features_test.go`):**
-  1. Follows the same `scantest` setup as Pattern B.
-  2. Inside the `ActionFunc`, it creates a *new, empty environment*.
-  3. It finds a function's AST declaration but executes only its body (`*ast.BlockStmt`) using `interp.EvalWithEnv()`.
-  4. Assertions check that all logical branches were explored by inspecting boolean flags set by intrinsics.
-- **Problem:** This shares the same boilerplate issue as Pattern B. The specific workflow of evaluating a function body in a clean environment is also a candidate for abstraction.
+Instead of returning a simple value, the `Runner`'s execution method will return a `RunResult` struct.
 
-## Part 2: Proposed `symgotest` Library Design
+**Proposed API:**
+```go
+type RunResult struct {
+    // The final return value from the function that was applied.
+    ReturnValue object.Object
 
-Based on the analysis above, the `symgotest` library will be designed to directly address the identified problems by abstracting away boilerplate and standardizing common workflows.
+    // Any runtime error that occurred during the execution.
+    Error error
 
-### Core Component: The `Runner`
+    // An ordered list of the fully-qualified names of all functions
+    // that were symbolically executed during the run.
+    FunctionsCalled []string
+}
+```
 
-The central piece of the library will be a `Runner` struct that encapsulates the entire "Full Program Simulation" (Pattern B) workflow.
+The `FunctionsCalled` slice is the key to visibility. It provides a simple, clear record of the execution path, making it immediately obvious which functions were (or were not) called.
 
-#### `scantest` Dependency and `go.mod`
+### The `Runner` API
 
-It is important to note that `symgotest` is built upon the existing `scantest` utility. `scantest` uses `go-scan`, which is a module-aware tool for parsing and analyzing Go source code. For `go-scan` to correctly resolve types and package paths, especially in tests involving imports, it needs to operate within a valid Go module.
+The `Runner` API is designed to be fluent and declarative.
 
-Therefore, **all tests using the `symgotest.Runner` must have a `go.mod` file.** The `Runner`'s constructors (`NewRunner` and `NewRunnerWithMultiFiles`) handle this automatically by either creating a default `go.mod` or requiring one to be present in the user-provided file map. This ensures that the underlying tools function correctly without the user needing to manage the `scantest` layer directly.
-
-#### Proposed API
-
+**Proposed API:**
 ```go
 // Runner manages a single symbolic execution test case.
 type Runner struct { ... }
 
-// NewRunner creates a runner for a simple, single-package test from a single source string.
-// Use this for tests that are self-contained in one file.
+// NewRunner: For simple, single-package tests.
+// Takes a single source string and creates a self-contained module.
 func NewRunner(t *testing.T, source string) *Runner
 
-// NewRunnerWithMultiFiles creates a runner for a complex, multi-file or multi-package test.
-// The `files` map must contain a "go.mod" entry. Use this for integration tests
-// that involve cross-package calls.
+// NewRunnerWithMultiFiles: For complex, multi-file or cross-package tests.
+// Takes a map of file paths to content. A `go.mod` file is required.
+// This should be the default choice for integration-style tests.
 func NewRunnerWithMultiFiles(t *testing.T, files map[string]string) *Runner
 
-// WithSetup registers intrinsics or performs other configuration
-// on the interpreter before execution.
+// WithSetup: A flexible hook to register custom intrinsics or perform other
+// advanced configuration on the interpreter before execution.
 func (r *Runner) WithSetup(setupFunc func(interp *symgo.Interpreter)) *Runner
 
-// Apply executes a function from the source and returns the result.
-func (r *Runner) Apply(funcName string, args ...object.Object) object.Object
+// TrackCalls: An explicit opt-in to enable the execution tracing.
+// When used, the RunResult.FunctionsCalled slice will be populated.
+func (r *Runner) TrackCalls() *Runner
+
+// Apply: Executes a function and returns the complete RunResult.
+func (r *Runner) Apply(funcName string, args ...object.Object) *RunResult
 ```
 
-**Justification & Benefits:**
-- **Solves Pattern B's Boilerplate:** A single `NewRunner(t, source).Apply("main")` call replaces ~20 lines of `scantest` setup and `ActionFunc` logic.
-- **Clarity and Focus:** Tests become declarative, focusing on the source code under test and the assertions, not the mechanics of the test setup.
-- **Clear Separation of Scopes:** The two constructors, `NewRunner` and `NewRunnerWithMultiFiles`, provide a clear distinction between simple tests and more complex integration tests, guiding the user to the correct tool for their needs.
-- **Flexibility:** The `WithSetup` method provides a flexible escape hatch for complex test configuration.
-- **Addresses Pattern C:** While a dedicated `EvalBlock` function is not exposed to keep the API lean, this pattern can still be achieved by using `WithSetup` to perform a custom `EvalWithEnv` call on a function body found via the interpreter.
+## 3. Example: Debugging an Indirect Dependency
 
-### Standalone Helpers
+Consider a test for a `main` package that uses a `service` package, which in turn calls a `worker` package. We want to verify that the `worker.DoWork` function is ultimately called.
 
-To address the simpler patterns and standardize assertions, the library will include standalone helper functions.
+**Without `symgotest`,** this would require manually setting up a default intrinsic to track calls.
 
-**Proposed API:**
+**With `symgotest`,** the process is much clearer.
+
+**Test Code:**
 ```go
-// EvalExpr parses and evaluates a single expression string.
-func EvalExpr(t *testing.T, expr string) object.Object
+func TestCrossPackageInteraction(t *testing.T) {
+    files := map[string]string{
+        "go.mod": "module example.com/app",
+        "main.go": `package main
+import "example.com/app/service"
+func main() {
+    service.Run()
+}`,
+        "service/service.go": `package service
+import "example.com/app/worker"
+func Run() {
+    worker.DoWork()
+}`,
+        "worker/worker.go": `package worker
+func DoWork() {}`,
+    }
 
-// --- Assertion Helpers ---
-func AssertSuccess(t *testing.T, obj object.Object)
-func AssertError(t *testing.T, obj object.Object, contains ...string)
-func AssertInteger(t *testing.T, obj object.Object, expected int64)
-// ... other helpers for String, Nil, Placeholder, etc. ...
-func AssertEqual(t *testing.T, want, got any)
+    // 1. Setup the runner for a multi-file module.
+    runner := symgotest.NewRunnerWithMultiFiles(t, files)
+
+    // 2. Opt-in to call tracking.
+    runner.TrackCalls()
+
+    // 3. Execute the 'main' function.
+    result := runner.Apply("main")
+
+    // 4. Assert on the result and, crucially, the trace.
+    symgotest.AssertSuccess(t, result.ReturnValue)
+
+    // The key assertion for debugging:
+    expectedCall := "example.com/app/worker.DoWork"
+    var found bool
+    for _, calledFunc := range result.FunctionsCalled {
+        if calledFunc == expectedCall {
+            found = true
+            break
+        }
+    }
+    if !found {
+        t.Errorf("expected function %q to be called, but it was not.", expectedCall)
+        // For debugging, we can print the entire trace:
+        // t.Logf("Execution Trace:\n%#v", result.FunctionsCalled)
+    }
+}
 ```
 
-**Justification & Benefits:**
-- **Solves Pattern A's Verbosity:** `EvalExpr` provides a one-line solution for simple expression tests.
-- **Standardizes Assertions:** The helpers provide a consistent, readable way to validate test outcomes.
+This example demonstrates how `symgotest` directly addresses the visibility problem. If the test fails, the developer can immediately inspect the `result.FunctionsCalled` slice to see the exact execution path and pinpoint where the chain was broken.
 
-### Design Decision: State Inspection
+## 4. Secondary Features
 
-**Decision:** The `symgotest` library will **not** provide a public API for direct environment inspection.
+### Standalone Helpers & Assertions
 
-**Justification:**
-- **Encapsulation:** Exposing internal environment details would tightly couple tests to the evaluator's implementation.
-- **Better Test Practices:** The library encourages testing based on observable behavior (return values and side effects via intrinsics), which leads to more maintainable, black-box style tests.
+For convenience, the library will still provide helpers for simple expression evaluation and basic assertions. However, these are considered secondary to the core tracing functionality.
 
-## Part 3: How `symgotest` Improves the Debugging Experience
+- `EvalExpr(t *testing.T, expr string) object.Object`: For Pattern A tests.
+- `AssertSuccess`, `AssertError`, etc.: A minimal set of helpers for common checks. The user is free to use standard `if` statements or `cmp.Diff` for more complex assertions. The goal is not to replace `testify`, but to provide simple, optional conveniences.
 
-Beyond making tests easier to write, `symgotest` also makes them easier to debug.
-
-1.  **Isolation of Failures:** By abstracting the complex `scantest` and `go-scan` setup, a test failure is much less likely to be caused by an error in the test's setup boilerplate. Failures will be more clearly isolated to either the source code being tested or the test's core logic (`WithSetup` and assertions), reducing the surface area a developer needs to inspect.
-
-2.  **Clear and Consistent Error Messages:** The suite of `Assert` helpers ensures that failure messages are uniform and descriptive. An integer mismatch will always produce a message like `integer has wrong value. want=X, got=Y`, and a failed error check will always say `expected an error, but got <type>`. This consistency makes it faster to understand the nature of a failure at a glance, compared to parsing the output of `cmp.Diff` or a generic `fmt.Errorf` message for every test.
-
-3.  **Readable Tests:** A debugger's first step is often to read the failing test to understand what it's trying to accomplish. The concise, declarative nature of tests written with `symgotest` makes this process much faster. The separation of source, setup, and execution is explicit, allowing a developer to quickly identify the relevant parts of the test.
-
-By implementing this design, `symgotest` will provide a powerful and ergonomic testing solution that addresses the key pain points in the current test suite and improves the overall development and debugging workflow.
+This design places the focus squarely on improving the debugging experience for complex `symgo` tests, as requested by the user, while still providing the boilerplate reduction benefits of a test helper library.

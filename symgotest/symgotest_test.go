@@ -1,30 +1,11 @@
 package symgotest_test
 
 import (
-	"context"
 	"testing"
 
-	"github.com/podhmo/go-scan/symgo"
 	"github.com/podhmo/go-scan/symgo/object"
 	"github.com/podhmo/go-scan/symgotest"
 )
-
-func TestEvalExpr(t *testing.T) {
-	t.Run("integer literal", func(t *testing.T) {
-		result := symgotest.EvalExpr(t, "42")
-		symgotest.AssertInteger(t, result, 42)
-	})
-
-	t.Run("string literal", func(t *testing.T) {
-		result := symgotest.EvalExpr(t, `"hello"`)
-		symgotest.AssertString(t, result, "hello")
-	})
-
-	t.Run("binary expression", func(t *testing.T) {
-		result := symgotest.EvalExpr(t, "5 + 5")
-		symgotest.AssertInteger(t, result, 10)
-	})
-}
 
 func TestRunner_Apply_Simple(t *testing.T) {
 	source := `
@@ -35,38 +16,17 @@ func add(a, b int) int {
 	runner := symgotest.NewRunner(t, source)
 	result := runner.Apply("add", &object.Integer{Value: 2}, &object.Integer{Value: 3})
 
-	retVal, ok := result.(*object.ReturnValue)
-	if !ok {
-		t.Fatalf("expected a ReturnValue, got %T", result)
-	}
-
-	symgotest.AssertInteger(t, retVal.Value, 5)
-}
-
-func TestRunner_Apply_WithSetup(t *testing.T) {
-	source := `
-func main() {
-	myIntrinsic("data")
-}
-`
-	var intrinsicCalledWith string
-	setup := func(interp *symgo.Interpreter) {
-		// Note: The module name is fixed in the runner for simplicity.
-		interp.RegisterIntrinsic("example.com/symgotest/module.myIntrinsic", func(ctx context.Context, i *symgo.Interpreter, args []object.Object) object.Object {
-			if len(args) > 0 {
-				if str, ok := args[0].(*object.String); ok {
-					intrinsicCalledWith = str.Value
-				}
-			}
-			return object.NIL
-		})
-	}
-
-	runner := symgotest.NewRunner(t, source).WithSetup(setup)
-	result := runner.Apply("main")
-
 	symgotest.AssertSuccess(t, result)
-	symgotest.AssertEqual(t, "data", intrinsicCalledWith)
+
+	retVal, ok := result.ReturnValue.(*object.ReturnValue)
+	if !ok {
+		t.Fatalf("expected a ReturnValue, got %T", result.ReturnValue)
+	}
+
+	// For simple value checks, we can inspect the object directly.
+	if intObj, ok := retVal.Value.(*object.Integer); !ok || intObj.Value != 5 {
+		t.Errorf("expected return value to be integer 5, but got %v", retVal.Value)
+	}
 }
 
 func TestRunner_Apply_WithError(t *testing.T) {
@@ -81,50 +41,69 @@ func main() {
 	symgotest.AssertError(t, result, "panic: something went wrong")
 }
 
-func TestRunnerWithMultiFiles(t *testing.T) {
-	files := map[string]string{
-		"go.mod": "module example.com/multifile",
-		"main.go": `package main
-import "example.com/multifile/helpers"
+func TestRunner_TrackCalls_SingleFile(t *testing.T) {
+	source := `
 func main() {
-	helpers.SayHello()
-}`,
-		"helpers/helpers.go": `package helpers
-func SayHello() {
-	// In a real scenario, this might be a function we want to track.
+	doWork()
 }
-`,
-	}
-
-	var helperCalled bool
-	setup := func(interp *symgo.Interpreter) {
-		interp.RegisterIntrinsic("example.com/multifile/helpers.SayHello", func(ctx context.Context, i *symgo.Interpreter, args []object.Object) object.Object {
-			helperCalled = true
-			return object.NIL
-		})
-	}
-
-	runner := symgotest.NewRunnerWithMultiFiles(t, files).WithSetup(setup)
+func doWork() {}
+`
+	runner := symgotest.NewRunner(t, source).TrackCalls()
 	result := runner.Apply("main")
 
 	symgotest.AssertSuccess(t, result)
-	symgotest.AssertEqual(t, true, helperCalled)
+	symgotest.AssertCalled(t, result, "example.com/simple.doWork")
+	symgotest.AssertNotCalled(t, result, "example.com/simple.otherFunc")
+}
+
+func TestRunner_TrackCalls_MultiFile(t *testing.T) {
+	files := map[string]string{
+		"go.mod": "module example.com/app",
+		"main.go": `package main
+import "example.com/app/service"
+func main() {
+    service.Run()
+}`,
+		"service/service.go": `package service
+import "example.com/app/worker"
+func Run() {
+    worker.DoWork()
+}`,
+		"worker/worker.go": `package worker
+func DoWork() {}`,
+	}
+
+	runner := symgotest.NewRunnerWithMultiFiles(t, files).TrackCalls()
+	result := runner.Apply("main")
+
+	symgotest.AssertSuccess(t, result)
+
+	// Check the whole call chain
+	symgotest.AssertCalled(t, result, "example.com/app.main")
+	symgotest.AssertCalled(t, result, "example.com/app/service.Run")
+	symgotest.AssertCalled(t, result, "example.com/app/worker.DoWork")
 }
 
 func TestAssertions(t *testing.T) {
-	t.Run("AssertSuccess", func(t *testing.T) {
+	t.Run("AssertCalled with failure", func(t *testing.T) {
 		mockT := new(testing.T)
-		symgotest.AssertSuccess(mockT, &object.Integer{Value: 1})
-		if mockT.Failed() {
-			t.Error("AssertSuccess should not fail for a valid object")
+		result := &symgotest.RunResult{
+			FunctionsCalled: []string{"foo.bar"},
+		}
+		symgotest.AssertCalled(mockT, result, "foo.baz")
+		if !mockT.Failed() {
+			t.Error("AssertCalled should have failed but didn't")
 		}
 	})
 
-	t.Run("AssertError", func(t *testing.T) {
+	t.Run("AssertNotCalled with failure", func(t *testing.T) {
 		mockT := new(testing.T)
-		symgotest.AssertError(mockT, &object.Error{Message: "this is an error"}, "is an error")
-		if mockT.Failed() {
-			t.Error("AssertError should not fail for a matching error")
+		result := &symgotest.RunResult{
+			FunctionsCalled: []string{"foo.bar"},
+		}
+		symgotest.AssertNotCalled(mockT, result, "foo.bar")
+		if !mockT.Failed() {
+			t.Error("AssertNotCalled should have failed but didn't")
 		}
 	})
 }

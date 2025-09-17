@@ -162,7 +162,7 @@ func Generate(ctx context.Context, gscn *goscan.Scanner, pkgInfo *scanner.Packag
 						if processedImplementerKeys[implementerKey] {
 							continue
 						}
-						if goscan.Implements(ctx, gscn, candidateType, interfaceDef) {
+						if gscn.Implements(ctx, candidateType, interfaceDef) {
 							processedImplementerKeys[implementerKey] = true
 							var goTypeString string
 							if currentSearchPkg.ImportPath != "" && currentSearchPkg.ImportPath != pkgInfo.ImportPath {

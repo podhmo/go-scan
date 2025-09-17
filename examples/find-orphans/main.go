@@ -891,7 +891,7 @@ func buildInterfaceMap(ctx context.Context, s *goscan.Scanner, packages map[stri
 		var implementers []*scanner.TypeInfo
 
 		for _, strct := range allStructs {
-			if goscan.Implements(ctx, s, strct, iface) {
+			if s.Implements(ctx, strct, iface) {
 				implementers = append(implementers, strct)
 			}
 		}

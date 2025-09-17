@@ -85,9 +85,9 @@ func TestImplements_New(t *testing.T) {
 			structCandidate := getType(tt.structName)
 			interfaceDef := getType(tt.interfaceName)
 
-			actual := Implements(ctx, s, structCandidate, interfaceDef)
+			actual := s.Implements(ctx, structCandidate, interfaceDef)
 			if actual != tt.expectedToImplement {
-				t.Errorf("Implements(%s, %s): expected %v, got %v", tt.structName, tt.interfaceName, tt.expectedToImplement, actual)
+				t.Errorf("s.Implements(%s, %s): expected %v, got %v", tt.structName, tt.interfaceName, tt.expectedToImplement, actual)
 			}
 		})
 	}

@@ -1,179 +1,228 @@
 package goscan
 
 import (
+	"context"
+	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/podhmo/go-scan/scanner"
 )
 
-// Implements checks if a struct type implements an interface type within the context of a package.
-// It requires the PackageInfo to look up methods of the structCandidate.
-func Implements(structCandidate *scanner.TypeInfo, interfaceDef *scanner.TypeInfo, pkgInfo *scanner.PackageInfo) bool {
-	if structCandidate == nil || structCandidate.Kind != StructKind {
-		return false // Candidate must be a struct
+// Implements checks if a struct type implements an interface type.
+// It uses a robust, scanner-based analysis to resolve methods and types,
+// correctly handling pointer/value receivers and embedded types.
+func Implements(ctx context.Context, s *Scanner, structCandidate *scanner.TypeInfo, interfaceDef *scanner.TypeInfo) bool {
+	analyzer := NewTypeRelation(s, s.Logger)
+	return analyzer.isImplementer(ctx, structCandidate, interfaceDef)
+}
+
+// TypeRelation provides methods for analyzing relationships between types,
+// such as interface implementation. It holds the necessary context, like the scanner,
+// to perform these analyses.
+type TypeRelation struct {
+	scanner *Scanner
+	logger  *slog.Logger
+}
+
+// NewTypeRelation creates a new TypeRelation analyzer.
+func NewTypeRelation(scanner *Scanner, logger *slog.Logger) *TypeRelation {
+	if logger == nil {
+		logger = slog.Default() // Avoid nil logger
 	}
-	if interfaceDef == nil || interfaceDef.Kind != InterfaceKind || interfaceDef.Interface == nil {
-		return false // Interface definition must be a valid interface
+	return &TypeRelation{
+		scanner: scanner,
+		logger:  logger,
 	}
-	if pkgInfo == nil {
-		return false // Package context is needed to find struct methods
+}
+
+// isImplementer checks if a given concrete type implements an interface.
+// This is ported from the more robust symgo/evaluator.
+func (tr *TypeRelation) isImplementer(ctx context.Context, concreteType *scanner.TypeInfo, interfaceType *scanner.TypeInfo) bool {
+	if concreteType == nil || interfaceType == nil || interfaceType.Interface == nil {
+		return false
+	}
+	if concreteType.Kind != StructKind {
+		return false
+	}
+	if interfaceType.Kind != InterfaceKind {
+		return false
 	}
 
-	// Collect methods of the structCandidate from pkgInfo.Functions
-	// This is a simplified way; a more robust way might involve caching methods on TypeInfo.
-	structMethods := make(map[string]*scanner.FunctionInfo)
-	for _, fn := range pkgInfo.Functions {
-		if fn.Receiver != nil && fn.Receiver.Type != nil {
-			receiverTypeName := fn.Receiver.Type.Name
-			// Handle pointer receivers, e.g. "*MyStruct" vs "MyStruct"
-			if fn.Receiver.Type.IsPointer && len(receiverTypeName) > 0 && receiverTypeName[0] == '*' {
-				// This comparison is simplistic. True type resolution is complex.
-				// For now, assume Type.Name for pointer receiver is like "*StructName".
-				// This might need adjustment based on how FieldType.Name for pointer types is structured.
-				// Let's assume fn.Receiver.Type.Name for `*Foo` is `*Foo`, and for `Foo` is `Foo`.
-				// The receiver type name might need stripping of '*' for comparison if structCandidate.Name doesn't have it.
-				// Or, ensure structCandidate.Name is used consistently.
-				// For now, let's assume fn.Receiver.Type.Name is the base name for pointer receivers after parsing.
-				// This is a common point of failure if not handled carefully by the parser.
-				// Let's assume fn.Receiver.Type.Name is "MyStruct" even for *MyStruct for simplicity here, needs verification.
-				// Based on scanner.go, parseFuncDecl gets receiver type via parseTypeExpr.
-				// FieldType.Name for *ast.StarExpr prepends "*" if not handled.
-				// Let's assume for now fn.Receiver.Type.Name could be "*StructName" or "StructName"
-				// And structCandidate.Name is "StructName".
+	// Get all methods from the interface, including from embedded interfaces.
+	allInterfaceMethods := tr.getAllInterfaceMethods(ctx, interfaceType, make(map[string]struct{}))
 
-				actualReceiverName := receiverTypeName
-				if fn.Receiver.Type.IsPointer && strings.HasPrefix(receiverTypeName, "*") {
-					actualReceiverName = strings.TrimPrefix(receiverTypeName, "*")
+	// For every method in the complete method set...
+	for _, ifaceMethodInfo := range allInterfaceMethods {
+		// ...find a matching method in the concrete type.
+		// A concrete type T can implement an interface method with a *T receiver.
+		// So we need to check both T and *T.
+		concreteMethodInfo := tr.findMethodInfoOnType(ctx, concreteType, ifaceMethodInfo.Name)
+
+		if concreteMethodInfo == nil && !strings.HasPrefix(concreteType.Name, "*") {
+			// If not found on T, check on *T.
+			// Create a synthetic pointer type for the check.
+			pointerType := *concreteType
+			pointerType.Name = "*" + concreteType.Name
+			concreteMethodInfo = tr.findMethodInfoOnType(ctx, &pointerType, ifaceMethodInfo.Name)
+		}
+
+		if concreteMethodInfo == nil {
+			return false // Method not found
+		}
+
+		// Compare signatures
+		if len(ifaceMethodInfo.Parameters) != len(concreteMethodInfo.Parameters) {
+			return false
+		}
+		if len(ifaceMethodInfo.Results) != len(concreteMethodInfo.Results) {
+			return false
+		}
+
+		for i, p1 := range ifaceMethodInfo.Parameters {
+			p2 := concreteMethodInfo.Parameters[i]
+			if !tr.fieldTypeEquals(p1.Type, p2.Type) {
+				return false
+			}
+		}
+
+		for i, r1 := range ifaceMethodInfo.Results {
+			r2 := concreteMethodInfo.Results[i]
+			if !tr.fieldTypeEquals(r1.Type, r2.Type) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// getAllInterfaceMethods recursively collects all methods from an interface and its embedded interfaces.
+// It handles cycles by keeping track of visited interface types.
+func (tr *TypeRelation) getAllInterfaceMethods(ctx context.Context, ifaceType *scanner.TypeInfo, visited map[string]struct{}) []*scanner.MethodInfo {
+	if ifaceType == nil || ifaceType.Interface == nil {
+		return nil
+	}
+
+	// Cycle detection
+	typeName := ifaceType.PkgPath + "." + ifaceType.Name
+	if _, ok := visited[typeName]; ok {
+		return nil
+	}
+	visited[typeName] = struct{}{}
+
+	var allMethods []*scanner.MethodInfo
+	allMethods = append(allMethods, ifaceType.Interface.Methods...)
+
+	for _, embeddedField := range ifaceType.Interface.Embedded {
+		embeddedTypeInfo, err := embeddedField.Resolve(ctx)
+		if err != nil {
+			tr.logger.WarnContext(ctx, "could not resolve embedded interface", "type", embeddedField.String(), "error", err)
+			continue
+		}
+
+		if embeddedTypeInfo != nil && embeddedTypeInfo.Kind == InterfaceKind {
+			// Recursively get methods from the embedded interface.
+			embeddedMethods := tr.getAllInterfaceMethods(ctx, embeddedTypeInfo, visited)
+			allMethods = append(allMethods, embeddedMethods...)
+		}
+	}
+
+	return allMethods
+}
+
+// fieldTypeEquals compares two FieldType objects for equality.
+// It uses the string representation for a robust comparison of the type structure.
+func (tr *TypeRelation) fieldTypeEquals(a, b *scanner.FieldType) bool {
+	if a == b {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	return a.String() == b.String()
+}
+
+// findMethodInfoOnType finds the scanner.FunctionInfo for a method on a type, handling embedding.
+// Ported from symgo/evaluator/accessor.go
+func (tr *TypeRelation) findMethodInfoOnType(ctx context.Context, typeInfo *scanner.TypeInfo, methodName string) *scanner.FunctionInfo {
+	if typeInfo == nil {
+		return nil
+	}
+	visited := make(map[string]bool)
+	return tr.findMethodInfoRecursive(ctx, typeInfo, methodName, visited)
+}
+
+func (tr *TypeRelation) findMethodInfoRecursive(ctx context.Context, typeInfo *scanner.TypeInfo, methodName string, visited map[string]bool) *scanner.FunctionInfo {
+	if typeInfo == nil {
+		return nil
+	}
+	typeKey := fmt.Sprintf("%s.%s", typeInfo.PkgPath, typeInfo.Name)
+	if visited[typeKey] {
+		return nil // Cycle detected
+	}
+	visited[typeKey] = true
+
+	// 1. Search for a direct method on the current type.
+	if methodInfo, err := tr.findDirectMethodInfoOnType(ctx, typeInfo, methodName); err == nil && methodInfo != nil {
+		return methodInfo
+	}
+
+	// 2. If not found, search in embedded structs.
+	if typeInfo.Struct != nil {
+		for _, field := range typeInfo.Struct.Fields {
+			if field.Embedded {
+				embeddedTypeInfo, _ := field.Type.Resolve(ctx)
+				if embeddedTypeInfo != nil {
+					if foundMethod := tr.findMethodInfoRecursive(ctx, embeddedTypeInfo, methodName, visited); foundMethod != nil {
+						return foundMethod
+					}
 				}
-
-				if actualReceiverName == structCandidate.Name {
-					structMethods[fn.Name] = fn
-				}
-			} else if receiverTypeName == structCandidate.Name { // Value receiver
-				structMethods[fn.Name] = fn
 			}
 		}
 	}
 
-	for _, interfaceMethod := range interfaceDef.Interface.Methods {
-		structMethod, found := structMethods[interfaceMethod.Name]
-		if !found {
-			// fmt.Printf("Method %s not found on struct %s\n", interfaceMethod.Name, structCandidate.Name)
-			return false // Method not found
-		}
-
-		// Compare signatures (parameters and results)
-		if !compareSignatures(interfaceMethod, structMethod) {
-			// fmt.Printf("Signature mismatch for method %s on struct %s\n", interfaceMethod.Name, structCandidate.Name)
-			return false
-		}
-	}
-
-	return true
+	return nil // Not found
 }
 
-// compareSignatures compares the parameters and results of two methods.
-// This is a simplified comparison focusing on type names and counts.
-// It does not handle complex type equivalences (e.g., type aliases across packages without full resolution).
-func compareSignatures(interfaceMethod *scanner.MethodInfo, structMethod *scanner.FunctionInfo) bool {
-	// Compare parameters
-	if len(interfaceMethod.Parameters) != len(structMethod.Parameters) {
-		return false
+func (tr *TypeRelation) findDirectMethodInfoOnType(ctx context.Context, typeInfo *scanner.TypeInfo, methodName string) (*scanner.FunctionInfo, error) {
+	if typeInfo == nil || typeInfo.PkgPath == "" {
+		return nil, nil
 	}
-	for i, intParam := range interfaceMethod.Parameters {
-		strParam := structMethod.Parameters[i]
-		if !compareFieldTypes(intParam.Type, strParam.Type) {
-			return false
+
+	// Check the scanner's cache first to avoid re-scanning.
+	tr.scanner.mu.RLock()
+	methodPkg, exists := tr.scanner.packageCache[typeInfo.PkgPath]
+	tr.scanner.mu.RUnlock()
+
+	if !exists {
+		// If not in cache, use the scanner to get the package info.
+		var err error
+		methodPkg, err = tr.scanner.ScanPackage(ctx, typeInfo.PkgPath)
+		if err != nil {
+			// Suppress errors that are expected for certain types (e.g., built-ins, unresolved packages).
+			if strings.Contains(err.Error(), "cannot find package") || strings.Contains(err.Error(), "no such file or directory") {
+				return nil, nil
+			}
+			tr.logger.WarnContext(ctx, "could not load package for method resolution", "package", typeInfo.PkgPath, "error", err)
+			return nil, nil
 		}
 	}
 
-	// Compare results
-	if len(interfaceMethod.Results) != len(structMethod.Results) {
-		return false
-	}
-	for i, intResult := range interfaceMethod.Results {
-		strResult := structMethod.Results[i]
-		if !compareFieldTypes(intResult.Type, strResult.Type) {
-			return false
+	for _, fn := range methodPkg.Functions {
+		if fn.Receiver == nil || fn.Name != methodName {
+			continue
+		}
+
+		recvTypeName := fn.Receiver.Type.TypeName
+		if recvTypeName == "" {
+			recvTypeName = fn.Receiver.Type.Name
+		}
+		baseRecvTypeName := strings.TrimPrefix(recvTypeName, "*")
+		baseTypeName := strings.TrimPrefix(typeInfo.Name, "*")
+
+		if baseRecvTypeName == baseTypeName {
+			return fn, nil
 		}
 	}
-	return true
-}
-
-// compareFieldTypes compares two FieldType instances.
-// This is a simplified comparison. A robust solution needs full type resolution.
-func compareFieldTypes(type1 *scanner.FieldType, type2 *scanner.FieldType) bool {
-	if type1 == nil && type2 == nil {
-		return true
-	}
-	if type1 == nil || type2 == nil {
-		return false
-	}
-
-	// TODO: This needs to be much more robust.
-	// It should handle qualified names, resolve types if necessary, etc.
-	// For now, simple name and pointer check.
-	// Also, consider IsSlice, IsMap, Elem, MapKey for more complex types.
-
-	// Normalize names: if PkgName is present and type1/2 are from different packages,
-	// we need to compare fully qualified names or ensure types are resolved to canonical forms.
-	// For types within the same package or primitives, direct name comparison might work.
-	// ft.Resolve() could be used here, but adds complexity of error handling and async operations.
-
-	name1 := type1.Name
-	name2 := type2.Name
-
-	// Thus, we can directly compare IsPointer and then Name.
-
-	if type1.IsPointer != type2.IsPointer {
-		return false
-	}
-
-	// Handle slices
-	if type1.IsSlice != type2.IsSlice {
-		return false
-	}
-	if type1.IsSlice { // Both are slices
-		return compareFieldTypes(type1.Elem, type2.Elem) // Compare element types
-	}
-
-	// Handle maps
-	if type1.IsMap != type2.IsMap {
-		return false
-	}
-	if type1.IsMap { // Both are maps
-		// Compare key types AND value types
-		if !compareFieldTypes(type1.MapKey, type2.MapKey) {
-			return false
-		}
-		return compareFieldTypes(type1.Elem, type2.Elem)
-	}
-
-	// If not slices or maps, compare base names (IsPointer is already checked and equal)
-	// This is where PkgName/ImportPath should be checked for non-primitive, non-builtin types.
-	// For now, just comparing names.
-	if name1 != name2 {
-		// Consider logging here for debugging type mismatches:
-		// fmt.Printf("Base name mismatch: T1: %s (pkg:%s) vs T2: %s (pkg:%s)\n", name1, type1.PkgName, name2, type2.PkgName)
-		return false
-	}
-
-	// TODO: Enhance PkgName and fullImportPath comparison for robust cross-package type identity.
-	// For example:
-	// if type1.PkgName != type2.PkgName {
-	//    // If PkgName is different, names must be fully qualified or resolved via import paths
-	//    // This requires type1.FullImportPath and type2.FullImportPath to be populated and compared.
-	//    // For now, if PkgName differs and names were identical (e.g. "MyType"), it's a mismatch unless they are built-in.
-	//    isBuiltinOrPredeclared := func(name string) bool {
-	//        // Add checks for "string", "int", "bool", "error", etc.
-	//        // Or rely on PkgName being empty or a special value for builtins.
-	//        // scanner.FieldType might need a field like IsBuiltin.
-	// 	   return name == "string" || name == "int" // ... and so on
-	//    }
-	//    if !(isBuiltinOrPredeclared(name1) && type1.PkgName == "" && type2.PkgName == "") && /* more conditions */ {
-	//        return false
-	//    }
-	// }
-
-	return true
+	return nil, nil
 }

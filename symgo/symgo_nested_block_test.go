@@ -2,15 +2,13 @@ package symgo_test
 
 import (
 	"context"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
-	goscan "github.com/podhmo/go-scan"
-	"github.com/podhmo/go-scan/scantest"
 	"github.com/podhmo/go-scan/symgo"
 	"github.com/podhmo/go-scan/symgo/object"
+	"github.com/podhmo/go-scan/symgotest"
 )
 
 func TestNestedBlockCallIsTracked(t *testing.T) {
@@ -34,36 +32,8 @@ func DoSomething() {}
 `,
 	}
 
-	dir, cleanup := scantest.WriteFiles(t, source)
-	defer cleanup()
-
-	s, err := goscan.New(goscan.WithWorkDir(dir), goscan.WithGoModuleResolver())
-	if err != nil {
-		t.Fatalf("goscan.New() failed: %+v", err)
-	}
-
-	pkgs, err := s.Scan(t.Context(), ".")
-	if err != nil {
-		t.Fatalf("s.Scan() failed: %+v", err)
-	}
-	var mainPkg *goscan.Package
-	for _, p := range pkgs {
-		if p.Name == "main" {
-			mainPkg = p
-			break
-		}
-	}
-	if mainPkg == nil {
-		t.Fatal("main package not found")
-	}
-
-	interp, err := symgo.NewInterpreter(s)
-	if err != nil {
-		t.Fatalf("NewInterpreter() failed: %+v", err)
-	}
-
 	var calledFunctions []string
-	interp.RegisterDefaultIntrinsic(func(ctx context.Context, i *symgo.Interpreter, v []object.Object) object.Object {
+	intrinsic := symgotest.WithDefaultIntrinsic(func(ctx context.Context, i *symgo.Interpreter, v []object.Object) object.Object {
 		if len(v) == 0 {
 			return nil
 		}
@@ -79,35 +49,32 @@ func DoSomething() {}
 		return nil
 	})
 
-	// Evaluate the file to load symbols
-	_, err = interp.Eval(t.Context(), mainPkg.AstFiles[filepath.Join(dir, "main.go")], mainPkg)
-	if err != nil {
-		t.Fatalf("interp.Eval(file) failed: %+v", err)
+	policy := symgotest.WithScanPolicy(func(path string) bool {
+		return path == "t" || path == "t/helpers"
+	})
+
+	tc := symgotest.TestCase{
+		Source:     source,
+		EntryPoint: "t.run",
+		Options:    []symgotest.Option{intrinsic, policy},
 	}
 
-	// Find and apply the main function
-	mainFn, ok := interp.FindObjectInPackage(t.Context(), "t", "run")
-	if !ok {
-		t.Fatal("could not find run function")
-	}
-
-	_, err = interp.Apply(t.Context(), mainFn, nil, mainPkg)
-	if err != nil {
-		t.Fatalf("Apply() failed: %+v", err)
-	}
-
-	// Verify that the call inside the nested block was tracked.
-	var found bool
-	for _, name := range calledFunctions {
-		if strings.HasSuffix(name, "t/helpers.DoSomething") {
-			found = true
-			break
+	symgotest.Run(t, tc, func(t *testing.T, r *symgotest.Result) {
+		if r.Error != nil {
+			t.Fatalf("symgotest.Run failed: %+v", r.Error)
 		}
-	}
 
-	if !found {
-		t.Errorf("expected call to helpers.DoSomething to be tracked, but it wasn't. tracked calls: %v", calledFunctions)
-	}
+		var found bool
+		for _, name := range calledFunctions {
+			if strings.HasSuffix(name, "t/helpers.DoSomething") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected call to helpers.DoSomething to be tracked, but it wasn't. tracked calls: %v", calledFunctions)
+		}
+	})
 }
 
 func TestNestedBlockVariableScoping(t *testing.T) {
@@ -128,70 +95,31 @@ func run() (int, int) {
 `,
 	}
 
-	dir, cleanup := scantest.WriteFiles(t, source)
-	defer cleanup()
-
-	s, err := goscan.New(goscan.WithWorkDir(dir), goscan.WithGoModuleResolver())
-	if err != nil {
-		t.Fatalf("goscan.New() failed: %+v", err)
+	tc := symgotest.TestCase{
+		Source:     source,
+		EntryPoint: "t.run",
 	}
 
-	pkgs, err := s.Scan(t.Context(), ".")
-	if err != nil {
-		t.Fatalf("s.Scan() failed: %+v", err)
-	}
-	pkg := pkgs[0]
+	symgotest.Run(t, tc, func(t *testing.T, r *symgotest.Result) {
+		if r.Error != nil {
+			t.Fatalf("symgotest.Run failed: %+v", r.Error)
+		}
 
-	interp, err := symgo.NewInterpreter(s)
-	if err != nil {
-		t.Fatalf("NewInterpreter() failed: %+v", err)
-	}
+		multiRet := symgotest.AssertAs[*object.MultiReturn](t, r.ReturnValue)
+		if len(multiRet.Values) != 2 {
+			t.Fatalf("expected 2 return values, got %d", len(multiRet.Values))
+		}
 
-	// Evaluate the file to load symbols
-	_, err = interp.Eval(t.Context(), pkg.AstFiles[filepath.Join(dir, "main.go")], pkg)
-	if err != nil {
-		t.Fatalf("interp.Eval(file) failed: %+v", err)
-	}
+		x := symgotest.AssertAs[*object.Integer](t, multiRet.Values[0])
+		y := symgotest.AssertAs[*object.Integer](t, multiRet.Values[1])
 
-	mainFn, ok := interp.FindObjectInPackage(t.Context(), "t", "run")
-	if !ok {
-		t.Fatalf("run function not found")
-	}
+		// x should be 1 (shadowed variable is popped)
+		// y should be 2 (assigned in inner scope)
+		want := [2]int64{1, 2}
+		got := [2]int64{x.Value, y.Value}
 
-	ret, err := interp.Apply(t.Context(), mainFn, nil, pkg)
-	if err != nil {
-		t.Fatalf("Apply() failed: %v", err)
-	}
-
-	// The result from interp.Apply is the raw object from the evaluator, which is a ReturnValue.
-	retVal, ok := ret.(*object.ReturnValue)
-	if !ok {
-		t.Fatalf("expected return value, got %T", ret)
-	}
-	multiRet, ok := retVal.Value.(*object.MultiReturn)
-	if !ok {
-		t.Fatalf("expected multi-return, got %T", retVal.Value)
-	}
-
-	if len(multiRet.Values) != 2 {
-		t.Fatalf("expected 2 return values, got %d", len(multiRet.Values))
-	}
-
-	x, ok := multiRet.Values[0].(*object.Integer)
-	if !ok {
-		t.Fatalf("return 0 is not an integer, got %T", multiRet.Values[0])
-	}
-	y, ok := multiRet.Values[1].(*object.Integer)
-	if !ok {
-		t.Fatalf("return 1 is not an integer, got %T", multiRet.Values[1])
-	}
-
-	// x should be 1 (shadowed variable is popped)
-	// y should be 2 (assigned in inner scope)
-	want := [2]int64{1, 2}
-	got := [2]int64{x.Value, y.Value}
-
-	if diff := cmp.Diff(want, got); diff != "" {
-		t.Errorf("mismatch (-want +got):\n%s", diff)
-	}
+		if diff := cmp.Diff(want, got); diff != "" {
+			t.Errorf("mismatch (-want +got):\n%s", diff)
+		}
+	})
 }

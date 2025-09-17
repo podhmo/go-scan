@@ -2,19 +2,15 @@ package symgo_test
 
 import (
 	"context"
-	"fmt"
-	"strings"
 	"testing"
 
-	goscan "github.com/podhmo/go-scan"
-	"github.com/podhmo/go-scan/scantest"
-	"github.com/podhmo/go-scan/symgo/evaluator"
+	"github.com/podhmo/go-scan/symgo"
 	"github.com/podhmo/go-scan/symgo/object"
+	"github.com/podhmo/go-scan/symgotest"
 )
 
-func TestSliceExprAndSelectStmt(t *testing.T) {
-	t.Run("SliceExpr", func(t *testing.T) {
-		source := `
+func TestSliceExpr(t *testing.T) {
+	source := `
 package main
 var s []int
 func getLow() int { return 0 }
@@ -23,52 +19,30 @@ func main() {
 	_ = s[getLow():getHigh()]
 }
 `
-		dir, cleanup := scantest.WriteFiles(t, map[string]string{
+	var calledFunctions []string
+	intrinsic := symgotest.WithDefaultIntrinsic(func(ctx context.Context, i *symgo.Interpreter, args []object.Object) object.Object {
+		if len(args) > 0 {
+			if fn, ok := args[0].(*object.Function); ok {
+				if fn.Def != nil {
+					calledFunctions = append(calledFunctions, fn.Def.Name)
+				}
+			}
+		}
+		return nil
+	})
+
+	tc := symgotest.TestCase{
+		Source: map[string]string{
 			"go.mod":  "module example.com/me",
 			"main.go": source,
-		})
-		defer cleanup()
+		},
+		EntryPoint: "example.com/me.main",
+		Options:    []symgotest.Option{intrinsic},
+	}
 
-		var calledFunctions []string
-
-		action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
-			pkg := pkgs[0]
-			eval := evaluator.New(s, s.Logger, nil, nil)
-
-			eval.RegisterDefaultIntrinsic(func(ctx context.Context, args ...object.Object) object.Object {
-				if len(args) > 0 {
-					if fn, ok := args[0].(*object.Function); ok {
-						if fn.Def != nil {
-							calledFunctions = append(calledFunctions, fn.Def.Name)
-						}
-					}
-				}
-				return nil
-			})
-
-			if res := eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], nil, pkg); res != nil && res.Type() == object.ERROR_OBJ {
-				return fmt.Errorf("initial eval failed: %s", res.Inspect())
-			}
-
-			pkgEnv, ok := eval.PackageEnvForTest("example.com/me")
-			if !ok {
-				return fmt.Errorf("could not get package environment for 'example.com/me'")
-			}
-
-			mainFunc, ok := pkgEnv.Get("main")
-			if !ok {
-				return fmt.Errorf("function 'main' not found")
-			}
-
-			if res := eval.Apply(ctx, mainFunc, []object.Object{}, pkg); res != nil && res.Type() == object.ERROR_OBJ {
-				return fmt.Errorf("evaluating main failed: %s", res.Inspect())
-			}
-
-			return nil
-		}
-
-		if _, err := scantest.Run(t, t.Context(), dir, []string{"."}, action); err != nil {
-			t.Fatalf("scantest.Run() failed: %v", err)
+	symgotest.Run(t, tc, func(t *testing.T, r *symgotest.Result) {
+		if r.Error != nil {
+			t.Fatalf("symgotest.Run() failed: %+v", r.Error)
 		}
 
 		calledMap := make(map[string]bool)
@@ -83,9 +57,10 @@ func main() {
 			t.Errorf("want 'getHigh' to be called, but it wasn't. Called: %v", calledFunctions)
 		}
 	})
+}
 
-	t.Run("SelectStmt", func(t *testing.T) {
-		source := `
+func TestSelectStmt(t *testing.T) {
+	source := `
 package main
 func getChan() chan int { return make(chan int) }
 func handle() {}
@@ -96,51 +71,30 @@ func main() {
 	}
 }
 `
-		dir, cleanup := scantest.WriteFiles(t, map[string]string{
+	var calledFunctions []string
+	intrinsic := symgotest.WithDefaultIntrinsic(func(ctx context.Context, i *symgo.Interpreter, args []object.Object) object.Object {
+		if len(args) > 0 {
+			if fn, ok := args[0].(*object.Function); ok {
+				if fn.Def != nil {
+					calledFunctions = append(calledFunctions, fn.Def.Name)
+				}
+			}
+		}
+		return nil
+	})
+
+	tc := symgotest.TestCase{
+		Source: map[string]string{
 			"go.mod":  "module example.com/me",
 			"main.go": source,
-		})
-		defer cleanup()
+		},
+		EntryPoint: "example.com/me.main",
+		Options:    []symgotest.Option{intrinsic},
+	}
 
-		var calledFunctions []string
-
-		action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
-			pkg := pkgs[0]
-			eval := evaluator.New(s, s.Logger, nil, nil)
-
-			eval.RegisterDefaultIntrinsic(func(ctx context.Context, args ...object.Object) object.Object {
-				if len(args) > 0 {
-					if fn, ok := args[0].(*object.Function); ok {
-						if fn.Def != nil {
-							calledFunctions = append(calledFunctions, fn.Def.Name)
-						}
-					}
-				}
-				return nil
-			})
-
-			if res := eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], nil, pkg); res != nil && res.Type() == object.ERROR_OBJ {
-				return fmt.Errorf("initial eval failed: %s", res.Inspect())
-			}
-
-			pkgEnv, ok := eval.PackageEnvForTest("example.com/me")
-			if !ok {
-				return fmt.Errorf("could not get package environment for 'example.com/me'")
-			}
-
-			mainFunc, ok := pkgEnv.Get("main")
-			if !ok {
-				return fmt.Errorf("function 'main' not found")
-			}
-
-			if res := eval.Apply(ctx, mainFunc, []object.Object{}, pkg); res != nil && res.Type() == object.ERROR_OBJ {
-				return fmt.Errorf("evaluating main failed: %s", res.Inspect())
-			}
-			return nil
-		}
-
-		if _, err := scantest.Run(t, t.Context(), dir, []string{"."}, action); err != nil {
-			t.Fatalf("scantest.Run() failed: %v", err)
+	symgotest.Run(t, tc, func(t *testing.T, r *symgotest.Result) {
+		if r.Error != nil {
+			t.Fatalf("symgotest.Run() failed: %+v", r.Error)
 		}
 
 		calledMap := make(map[string]bool)
@@ -149,10 +103,10 @@ func main() {
 		}
 
 		if !calledMap["getChan"] {
-			t.Errorf("want 'getChan' to be called, but it wasn't. Called: %s", strings.Join(calledFunctions, ", "))
+			t.Errorf("want 'getChan' to be called, but it wasn't. Called: %v", calledFunctions)
 		}
 		if !calledMap["handle"] {
-			t.Errorf("want 'handle' to be called, but it wasn't. Called: %s", strings.Join(calledFunctions, ", "))
+			t.Errorf("want 'handle' to be called, but it wasn't. Called: %v", calledFunctions)
 		}
 	})
 }

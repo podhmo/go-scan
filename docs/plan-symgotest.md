@@ -1,182 +1,119 @@
-# `symgotest`: A Test Helper Package for `symgo`
+# Design Document: `symgotest` Test Helper Library
 
-## 1. Introduction & Motivation
+This document outlines the design for a new test helper library, `symgotest`, intended to simplify and standardize the process of writing tests for the `symgo` symbolic execution engine.
 
-The `symgo` symbolic execution engine and its underlying `evaluator` require a fair amount of setup for testing. A typical test involves:
-1.  Writing Go source code to a temporary file.
-2.  Creating a `go.mod` file to define a module.
-3.  Initializing a `goscan.Scanner` with the correct module paths.
-4.  Scanning the temporary package.
-5.  Creating a `symgo.Interpreter`.
-6.  Registering mock "intrinsic" functions to handle external calls.
-7.  Evaluating the code or applying a specific function.
-8.  Asserting the result.
+## Part 1: Analysis of the Existing Test Suite
 
-This leads to verbose tests with a lot of repeated boilerplate, obscuring the actual intent of the test. The goal of the `symgotest` package is to abstract away this boilerplate, providing a simple, fluent API for writing clear and concise tests for `symgo`.
+A thorough review of the test files in `symgo/` and `symgo/evaluator/` reveals several recurring patterns. Understanding these patterns is crucial for designing a helper library that provides maximum benefit.
 
-This package is designed to replace the manual `scantest.Run` pattern with a higher-level `Runner` that is specifically tailored for `symgo`.
+### Pattern A: Expression/Statement Evaluation
 
-## 2. Core API: The `Runner`
+- **Description:** These are fine-grained unit tests that evaluate a single Go expression or statement in isolation. They are used to verify the evaluator's core logic for handling language primitives.
+- **Example Workflow (`evaluator_test.go`):**
+  1. `input := "5 + 5"`
+  2. `node, _ := parser.ParseExpr(input)`
+  3. `eval := evaluator.New(...)`
+  4. `result := eval.Eval(node, ...)`
+  5. Assert the type and value of `result`.
+- **Problem:** While simple, this still involves manual AST parsing and evaluator instantiation. For a table-driven test with many expressions, this setup is repeated.
 
-The main entry point to the package is the `symgotest.Runner`. It provides a fluent interface to configure and run a symbolic execution test on a snippet of Go code.
+### Pattern B: Full Program Simulation
 
-### `NewRunner(t *testing.T, source string) *Runner`
+- **Description:** This is the most common and important pattern, used for feature and integration testing. It simulates the execution of a complete, self-contained Go program.
+- **Example Workflow (`features_test.go`, `symgo_test.go`):**
+  1. Define Go source code for one or more files in a `map[string]string`.
+  2. Use `scantest.WriteFiles` to create a temporary directory.
+  3. Use `scantest.Run` to manage the test, passing it an `ActionFunc`.
+  4. Inside the `ActionFunc`:
+     a. Create a `symgo.Interpreter`.
+     b. Register mock functions using `interp.RegisterIntrinsic`.
+     c. Loop through all scanned files and call `interp.Eval()` on each to populate the environment.
+     d. Find an entry point function (e.g., `main`) using `interp.FindObjectInPackage`.
+     e. Execute the program with `interp.Apply()`.
+     f. Assert the result or side effects captured by the intrinsics.
+- **Problem:** This pattern suffers from significant boilerplate. The entire `scantest` setup and the multi-step execution logic within the `ActionFunc` are repeated in nearly every test, making them verbose and hard to read.
 
-This function creates a new test runner.
+### Pattern C: Symbolic Block Evaluation
 
--   `t`: The `*testing.T` instance for the current test.
--   `source`: A string containing the Go source code for the test. The runner automatically ensures the code is part of a `main` package, so you do not need to write `package main` in your source string.
+- **Description:** This is a specialized variant of Pattern B used to test the symbolic exploration of control-flow statements (`if`, `for`, `switch`).
+- **Example Workflow (`symbolic_features_test.go`):**
+  1. Follows the same `scantest` setup as Pattern B.
+  2. Inside the `ActionFunc`, it creates a *new, empty environment*.
+  3. It finds a function's AST declaration but executes only its body (`*ast.BlockStmt`) using `interp.EvalWithEnv()`.
+  4. Assertions check that all logical branches were explored by inspecting boolean flags set by intrinsics.
+- **Problem:** This shares the same boilerplate issue as Pattern B. The specific workflow of evaluating a function body in a clean environment is also a candidate for abstraction.
 
-**Example:**
+## Part 2: Proposed `symgotest` Library Design
+
+Based on the analysis above, the `symgotest` library will be designed to directly address the identified problems by abstracting away boilerplate and standardizing common workflows.
+
+### Core Component: The `Runner`
+
+The central piece of the library will be a `Runner` struct that encapsulates the entire "Full Program Simulation" (Pattern B) workflow.
+
+**Proposed API:**
 ```go
-source := `
-func add(a, b int) int {
-    return a + b
-}
-`
-runner := symgotest.NewRunner(t, source)
+// Runner manages a single symbolic execution test case.
+type Runner struct { ... }
+
+// NewRunner creates a runner for a given source code.
+// It automatically handles making the source a valid 'main' package.
+func NewRunner(t *testing.T, source string) *Runner
+
+// WithSetup registers intrinsics or performs other configuration
+// on the interpreter before execution.
+func (r *Runner) WithSetup(setupFunc func(interp *symgo.Interpreter)) *Runner
+
+// Apply executes a function from the source and returns the result.
+// This is the main entry point for running a test.
+func (r *Runner) Apply(funcName string, args ...object.Object) object.Object
 ```
 
-### `WithSetup(setupFunc func(interp *symgo.Interpreter)) *Runner`
+**Justification & Benefits:**
+- **Solves Pattern B's Boilerplate:** A single `NewRunner(t, source).Apply("main")` call will replace ~20 lines of `scantest` setup and `ActionFunc` logic.
+- **Clarity and Focus:** Tests become declarative, focusing on the source code under test and the assertions, not the mechanics of the test setup.
+- **Handles Multi-File Setups:** `NewRunner` can be overloaded or extended to accept a `map[string]string` for multi-file tests.
+- **Flexibility:** The `WithSetup` method provides a flexible escape hatch for complex test configuration (like registering multiple intrinsics) without cluttering the main API.
+- **Addresses Pattern C:** While a dedicated `EvalBlock` function could be added, the `Runner` is flexible enough to handle this. A user can find the function body within the `WithSetup` closure and perform a custom `EvalWithEnv` call if needed, keeping the primary API lean.
 
-This method allows you to perform custom configuration on the `symgo.Interpreter` before it executes any code. Its primary use case is to register intrinsic functions for mocking dependencies or tracking calls.
+### Standalone Helpers
 
--   `setupFunc`: A function that receives the `*symgo.Interpreter` instance.
+To address the simpler patterns and standardize assertions, the library will include standalone helper functions.
 
-**Example:**
+**Proposed API:**
 ```go
-var wasCalled bool
-setup := func(interp *symgo.Interpreter) {
-    // The module name is fixed as "example.com/symgotest/module"
-    interp.RegisterIntrinsic("example.com/symgotest/module.myintrinsic",
-        func(ctx context.Context, i *symgo.Interpreter, args []object.Object) object.Object {
-            wasCalled = true
-            return object.NIL
-        },
-    )
-}
+// EvalExpr parses and evaluates a single expression string.
+func EvalExpr(t *testing.T, expr string) object.Object
 
-runner.WithSetup(setup)
+// --- Assertion Helpers ---
+
+// AssertSuccess fails if the object is an error.
+func AssertSuccess(t *testing.T, obj object.Object)
+
+// AssertError fails if the object is not an error. Can also check for substrings.
+func AssertError(t *testing.T, obj object.Object, contains ...string)
+
+// AssertInteger checks for an integer object with a specific value.
+func AssertInteger(t *testing.T, obj object.Object, expected int64)
+
+// ... other helpers for String, Nil, Placeholder, etc. ...
+
+// AssertEqual provides a generic comparison using go-cmp.
+func AssertEqual(t *testing.T, want, got any)
 ```
 
-### `Apply(funcName string, args ...object.Object) object.Object`
+**Justification & Benefits:**
+- **Solves Pattern A's Verbosity:** `EvalExpr` provides a one-line solution for simple expression tests.
+- **Standardizes Assertions:** The assertion helpers provide a consistent, readable way to validate test outcomes, fulfilling the user's request to avoid `testify`. This makes test failures easier to understand and debug.
 
-This is the main execution method. It runs the entire test lifecycle (file creation, scanning, interpretation) and applies the specified function from your source code.
+### Design Decision: State Inspection
 
--   `funcName`: The name of the function to execute (e.g., `"main"`).
--   `args`: A variadic list of `object.Object` arguments to pass to the function.
+The analysis revealed that `evaluator` tests can inspect the environment directly, a powerful but internal capability.
 
-It returns the `object.Object` that results from the function call. This is often an `*object.ReturnValue` or an `*object.Error`.
+**Decision:** The `symgotest` library will **not** provide a public API for direct environment inspection.
 
-**Example:**
-```go
-// Continuing from above...
-result := runner.Apply("add", &object.Integer{Value: 5}, &object.Integer{Value: 10})
+**Justification:**
+- **Encapsulation:** Exposing internal environment details would create a leaky abstraction and tightly couple tests to the evaluator's implementation.
+- **Better Test Practices:** The library should encourage testing based on observable behavior (return values and side effects). The `Runner`'s `WithSetup` method provides a robust way to check side effects by registering intrinsics that modify variables in the test's scope. This leads to more maintainable, black-box style tests.
 
-// Now, assert the result...
-```
-
-## 3. Assertion Helpers
-
-To simplify test validation and avoid a dependency on assertion libraries like `testify`, `symgotest` provides a set of simple, standalone assertion helpers. All helpers take `*testing.T` as their first argument and fail the test with a descriptive message if the assertion fails.
-
--   `AssertSuccess(t, obj)`: Fails if `obj` is an `*object.Error`.
--   `AssertError(t, obj, contains)`: Fails if `obj` is not an `*object.Error`. If `contains` is not empty, it also checks that the error message includes the substring.
--   `AssertInteger(t, obj, expected)`: Fails if `obj` is not an `*object.Integer` with the `expected` value.
--   `AssertString(t, obj, expected)`: Fails if `obj` is not an `*object.String` with the `expected` value.
--   `AssertSymbolicNil(t, obj)`: Fails if `obj` is not the special `object.NIL`.
--   `AssertPlaceholder(t, obj)`: Fails if `obj` is not an `*object.SymbolicPlaceholder`.
--   `AssertEqual(t, want, got)`: A generic helper that uses `github.com/google/go-cmp/cmp` to compare any two values, failing the test if there is a difference.
-
-## 4. Usage Example: Before and After
-
-To illustrate the benefit of `symgotest`, here is a comparison of a test written manually with `scantest` and the same test written with the new `symgotest.Runner`.
-
-### Before `symgotest`
-
-```go
-func TestExecution_Manual(t *testing.T) {
-	source := `
-package main
-
-func main() {
-	doSomethingImportant()
-}
-func doSomethingImportant() {}
-`
-	dir, cleanup := scantest.WriteFiles(t, map[string]string{
-		"go.mod":  "module mymodule",
-		"main.go": source,
-	})
-	defer cleanup()
-
-	var intrinsicCalled bool
-	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
-		interp, err := symgo.NewInterpreter(s)
-		if err != nil {
-			return err
-		}
-
-		interp.RegisterIntrinsic("mymodule.doSomethingImportant",
-            func(ctx context.Context, i *symgo.Interpreter, args []object.Object) object.Object {
-			    intrinsicCalled = true
-			    return nil
-		    },
-        )
-
-		mainFile := pkgs[0].AstFiles[filepath.Join(dir, "main.go")]
-		if _, err := interp.Eval(ctx, mainFile, pkgs[0]); err != nil {
-			// handle error
-		}
-
-		mainFn, ok := interp.FindObjectInPackage(ctx, "mymodule", "main")
-		if !ok {
-			return fmt.Errorf("main not found")
-		}
-
-		_, err = interp.Apply(ctx, mainFn, nil, pkgs[0])
-		if err != nil {
-			return err
-		}
-
-		if !intrinsicCalled {
-			return fmt.Errorf("expected intrinsic to be called")
-		}
-		return nil
-	}
-
-	if _, err := scantest.Run(t, context.Background(), dir, []string{"."}, action); err != nil {
-		t.Fatalf("scantest.Run() failed: %+v", err)
-	}
-}
-```
-
-### After `symgotest`
-
-```go
-func TestExecution_WithSymgoTest(t *testing.T) {
-	source := `
-func main() {
-	doSomethingImportant()
-}
-func doSomethingImportant() {}
-`
-	var intrinsicCalled bool
-	setup := func(interp *symgo.Interpreter) {
-		interp.RegisterIntrinsic("example.com/symgotest/module.doSomethingImportant",
-            func(ctx context.Context, i *symgo.Interpreter, args []object.Object) object.Object {
-			    intrinsicCalled = true
-			    return object.NIL
-		    },
-        )
-	}
-
-	runner := symgotest.NewRunner(t, source).WithSetup(setup)
-	result := runner.Apply("main")
-
-	symgotest.AssertSuccess(t, result)
-	symgotest.AssertEqual(t, true, intrinsicCalled)
-}
-```
-
-The "After" version is significantly shorter, easier to read, and focuses on the core logic of the test: the source code, the setup, and the assertion.
+By implementing this design, `symgotest` will provide a powerful and ergonomic testing solution that addresses the key pain points in the current test suite.

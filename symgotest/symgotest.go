@@ -3,13 +3,14 @@ package symgotest
 import (
 	"context"
 	"fmt"
-	"path/filepath"
+	"go/parser"
 	"strings"
 	"testing"
 
 	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/scantest"
 	"github.com/podhmo/go-scan/symgo"
+	"github.com/podhmo/go-scan/symgo/evaluator"
 	"github.com/podhmo/go-scan/symgo/object"
 )
 
@@ -17,21 +18,36 @@ const (
 	moduleName = "example.com/symgotest/module"
 )
 
-// Runner is a test utility to simplify running symbolic execution tests.
+// Runner is a test utility that simplifies running symbolic execution tests on a package.
 type Runner struct {
 	t         *testing.T
-	source    string
+	files     map[string]string
 	setupFunc func(interp *symgo.Interpreter)
 }
 
-// NewRunner creates a new test runner for a given source code snippet.
-// If the source does not already contain a "package main" declaration, it will be added.
+// NewRunner creates a new test runner for a given single-file source code snippet.
+// It automatically ensures the source is part of a 'main' package.
 func NewRunner(t *testing.T, source string) *Runner {
 	t.Helper()
 	if !strings.HasPrefix(strings.TrimSpace(source), "package main") {
 		source = "package main\n\n" + source
 	}
-	return &Runner{t: t, source: source}
+	files := map[string]string{
+		"go.mod":  fmt.Sprintf("module %s", moduleName),
+		"main.go": source,
+	}
+	return &Runner{t: t, files: files}
+}
+
+// NewRunnerWithMultiFiles creates a new test runner for a multi-file package.
+// The `files` map should contain the file paths (relative to the module root) and their content.
+// It must include a "go.mod" file.
+func NewRunnerWithMultiFiles(t *testing.T, files map[string]string) *Runner {
+	t.Helper()
+	if _, ok := files["go.mod"]; !ok {
+		t.Fatal("NewRunnerWithMultiFiles requires a 'go.mod' file in the files map")
+	}
+	return &Runner{t: t, files: files}
 }
 
 // WithSetup provides a function to configure the symgo.Interpreter before execution.
@@ -41,30 +57,42 @@ func (r *Runner) WithSetup(setupFunc func(interp *symgo.Interpreter)) *Runner {
 	return r
 }
 
-// Apply runs symbolic execution starting from a specific function in the main package.
+// Apply runs symbolic execution starting from a specific function.
 // It handles all the boilerplate of setting up a temporary module, scanning,
 // and creating an interpreter.
-//
-// It returns the object.Object that results from the function application.
 func (r *Runner) Apply(funcName string, args ...object.Object) object.Object {
 	r.t.Helper()
 
-	// Use a struct to hold the result from the scantest.ActionFunc
-	var result struct {
-		val object.Object
-	}
+	var result object.Object
+	ctx := context.Background()
 
-	dir, cleanup := scantest.WriteFiles(r.t, map[string]string{
-		"go.mod":  fmt.Sprintf("module %s", moduleName),
-		"main.go": r.source,
-	})
+	dir, cleanup := scantest.WriteFiles(r.t, r.files)
 	defer cleanup()
 
+	// The full module name for the main package can vary if it's in a subdirectory.
+	// We determine it by finding the main package after scanning.
+	var mainPackagePath string
+
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
-		if len(pkgs) == 0 {
-			return fmt.Errorf("no packages were scanned")
+		// Find main package to determine its full import path and to use it for Apply.
+		var mainPkg *goscan.Package
+		for _, p := range pkgs {
+			// A simple heuristic for finding the main package.
+			// This might need refinement if multiple main packages exist in complex setups.
+			for _, f := range p.AstFiles {
+				if f.Name.Name == "main" {
+					mainPkg = p
+					mainPackagePath = p.ImportPath
+					break
+				}
+			}
+			if mainPkg != nil {
+				break
+			}
 		}
-		mainPkg := pkgs[0]
+		if mainPkg == nil {
+			return fmt.Errorf("could not find main package in scanned files")
+		}
 
 		interp, err := symgo.NewInterpreter(s)
 		if err != nil {
@@ -75,34 +103,50 @@ func (r *Runner) Apply(funcName string, args ...object.Object) object.Object {
 			r.setupFunc(interp)
 		}
 
-		// Evaluate the file to process imports and top-level declarations.
-		mainFilePath := filepath.Join(dir, "main.go")
-		if _, err := interp.Eval(ctx, mainPkg.AstFiles[mainFilePath], mainPkg); err != nil {
-			// An error during initial evaluation might be expected, so we don't fail hard here.
-			// The subsequent 'Apply' will likely fail with a more specific error.
+		// Evaluate all files in all scanned packages to populate environments.
+		for _, p := range pkgs {
+			for _, file := range p.AstFiles {
+				if _, err := interp.Eval(ctx, file, p); err != nil {
+					// An error during initial evaluation might be expected, so we don't fail hard here.
+				}
+			}
 		}
 
-		// Find the entry point function.
-		fn, ok := interp.FindObjectInPackage(ctx, moduleName, funcName)
+		// Find the entry point function in the main package.
+		fn, ok := interp.FindObjectInPackage(ctx, mainPackagePath, funcName)
 		if !ok {
-			return fmt.Errorf("function %q not found in package %q", funcName, moduleName)
+			return fmt.Errorf("function %q not found in package %q", funcName, mainPackagePath)
 		}
 
 		// Apply the function.
 		res, err := interp.Apply(ctx, fn, args, mainPkg)
 		if err != nil {
-			// Wrap apply errors in an object.Error to be consistent.
-			result.val = &object.Error{Message: err.Error()}
+			result = &object.Error{Message: err.Error()}
 		} else {
-			result.val = res
+			result = res
 		}
-
 		return nil
 	}
 
-	if _, err := scantest.Run(r.t, context.Background(), dir, []string{"."}, action); err != nil {
+	// Scan all packages from the module root.
+	if _, err := scantest.Run(r.t, ctx, dir, []string{"./..."}, action); err != nil {
 		r.t.Fatalf("scantest.Run() failed: %+v", err)
 	}
 
-	return result.val
+	return result
+}
+
+// EvalExpr parses and evaluates a single Go expression string.
+// It's a lightweight helper for testing the evaluation of simple constructs
+// without needing a full package context.
+func EvalExpr(t *testing.T, expr string) object.Object {
+	t.Helper()
+	node, err := parser.ParseExpr(expr)
+	if err != nil {
+		t.Fatalf("failed to parse expression %q: %v", expr, err)
+	}
+
+	// For simple expression evaluation, we typically don't need a full scanner.
+	eval := evaluator.New(nil, nil, nil, nil)
+	return eval.Eval(context.Background(), node, eval.UniverseEnv, nil)
 }

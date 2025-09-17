@@ -11,6 +11,9 @@ import (
 // AssertSuccess fails the test if the object is an error.
 func AssertSuccess(t *testing.T, obj object.Object) {
 	t.Helper()
+	if obj == nil {
+		t.Fatalf("expected success, but got a nil object")
+	}
 	if err, ok := obj.(*object.Error); ok {
 		t.Fatalf("expected success, but got error: %s", err.Message)
 	}
@@ -22,15 +25,28 @@ func AssertSuccess(t *testing.T, obj object.Object) {
 }
 
 // AssertError fails the test if the object is not an error.
-// If contains is not empty, it also checks if the error message contains the substring.
-func AssertError(t *testing.T, obj object.Object, contains string) {
+// If `contains` has one or more elements, it also checks if the error message contains each of them.
+func AssertError(t *testing.T, obj object.Object, contains ...string) {
 	t.Helper()
+	if obj == nil {
+		t.Fatalf("expected an error, but got a nil object")
+	}
 	err, ok := obj.(*object.Error)
 	if !ok {
+		// Sometimes the error is wrapped in a ReturnValue
+		if ret, ok := obj.(*object.ReturnValue); ok {
+			err, ok = ret.Value.(*object.Error)
+		}
+	}
+
+	if !ok || err == nil {
 		t.Fatalf("expected an error, but got %T (%s)", obj, obj.Inspect())
 	}
-	if contains != "" && !strings.Contains(err.Message, contains) {
-		t.Errorf("error message %q does not contain %q", err.Message, contains)
+
+	for _, c := range contains {
+		if !strings.Contains(err.Message, c) {
+			t.Errorf("error message %q does not contain %q", err.Message, c)
+		}
 	}
 }
 

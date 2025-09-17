@@ -337,3 +337,15 @@ func WithIntrinsic(name string, handler symgo.IntrinsicFunc) Option {
 		c.Intrinsics[name] = handler
 	}
 }
+
+// AssertAs is a helper function that asserts the type of an object.Object.
+// It fails the test if the object is not of the expected type.
+func AssertAs[T object.Object](t *testing.T, obj object.Object) T {
+	t.Helper()
+	val, ok := obj.(T)
+	if !ok {
+		var zero T
+		t.Fatalf("type assertion failed: expected %T, got %T", zero, obj)
+	}
+	return val
+}

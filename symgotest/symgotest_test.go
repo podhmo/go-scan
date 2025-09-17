@@ -30,15 +30,8 @@ func NewUser(name string) *User {
 			t.Fatalf("Execution failed: %v", r.Error)
 		}
 
-		ptr, ok := r.ReturnValue.(*object.Pointer)
-		if !ok {
-			t.Fatalf("ReturnValue is not a Pointer, got %T", r.ReturnValue)
-		}
-
-		instance, ok := ptr.Value.(*object.Instance)
-		if !ok {
-			t.Fatalf("Pointer.Value is not an Instance, got %T", ptr.Value)
-		}
+		ptr := AssertAs[*object.Pointer](t, r.ReturnValue)
+		instance := AssertAs[*object.Instance](t, ptr.Value)
 
 		expectedTypeName := "example.com/me.User"
 		if diff := cmp.Diff(expectedTypeName, instance.TypeName); diff != "" {
@@ -95,10 +88,7 @@ func TestRunExpression(t *testing.T) {
 		if r.Error != nil {
 			t.Fatalf("Execution failed: %v", r.Error)
 		}
-		integer, ok := r.ReturnValue.(*object.Integer)
-		if !ok {
-			t.Fatalf("ReturnValue is not an Integer, got %T", r.ReturnValue)
-		}
+		integer := AssertAs[*object.Integer](t, r.ReturnValue)
 		if integer.Value != 3 {
 			t.Errorf("expected 3, got %d", integer.Value)
 		}
@@ -115,14 +105,9 @@ func TestRunStatements(t *testing.T) {
 		if !ok {
 			t.Fatalf("variable 'x' not found in final environment")
 		}
-		variable, ok := val.(*object.Variable)
-		if !ok {
-			t.Fatalf("object 'x' is not a Variable, got %T", val)
-		}
-		integer, ok := variable.Value.(*object.Integer)
-		if !ok {
-			t.Fatalf("variable 'x' is not an Integer, got %T", variable.Value)
-		}
+
+		variable := AssertAs[*object.Variable](t, val)
+		integer := AssertAs[*object.Integer](t, variable.Value)
 		if integer.Value != 10 {
 			t.Errorf("expected x to be 10, got %d", integer.Value)
 		}

@@ -10,6 +10,7 @@ The core philosophy of `symgotest` is **debugging-first**. The library is design
 - **Deterministic Failure Reporting**: Turns hangs and infinite loops into deterministic test failures by enforcing a configurable execution step limit.
 - **Execution Tracing**: Automatically captures a trace of evaluation steps, printing a detailed report on failure to pinpoint the exact cause.
 - **Expressive, High-Level API**: Offers intuitive functions for common testing scenarios.
+- **Type-Safe Assertion Helpers**: Provides generic helpers like `AssertAs` to simplify test assertions.
 
 ## Usage
 
@@ -47,15 +48,8 @@ func NewUser(name string) *User {
 			t.Fatalf("Execution failed: %v", r.Error)
 		}
 
-		ptr, ok := r.ReturnValue.(*object.Pointer)
-		if !ok {
-			t.Fatalf("ReturnValue is not a Pointer, got %T", r.ReturnValue)
-		}
-
-		instance, ok := ptr.Value.(*object.Instance)
-		if !ok {
-			t.Fatalf("Pointer.Value is not an Instance, got %T", ptr.Value)
-		}
+		ptr := symgotest.AssertAs[*object.Pointer](t, r.ReturnValue)
+		instance := symgotest.AssertAs[*object.Instance](t, ptr.Value)
 
 		expectedTypeName := "example.com/me.User"
 		if diff := cmp.Diff(expectedTypeName, instance.TypeName); diff != "" {
@@ -69,7 +63,7 @@ func NewUser(name string) *User {
 
 ### Testing a Single Expression
 
-Use `symgotest.RunExpression` to quickly test the evaluation of a single Go expression.
+Use `symgotest.RunExpression` to quickly test the evaluation of a single Go expression. The generic helper `symgotest.AssertAs` simplifies type assertions.
 
 ```go
 func TestAddition(t *testing.T) {
@@ -77,10 +71,7 @@ func TestAddition(t *testing.T) {
 		if r.Error != nil {
 			t.Fatalf("Execution failed: %v", r.Error)
 		}
-		integer, ok := r.ReturnValue.(*object.Integer)
-		if !ok {
-			t.Fatalf("ReturnValue is not an Integer, got %T", r.ReturnValue)
-		}
+		integer := symgotest.AssertAs[*object.Integer](t, r.ReturnValue)
 		if integer.Value != 3 {
 			t.Errorf("expected 3, got %d", integer.Value)
 		}
@@ -104,14 +95,9 @@ func TestAssignment(t *testing.T) {
 			t.Fatalf("variable 'x' not found in final environment")
 		}
 
-		variable, ok := val.(*object.Variable)
-		if !ok {
-			t.Fatalf("object 'x' is not a Variable, got %T", val)
-		}
-		integer, ok := variable.Value.(*object.Integer)
-		if !ok {
-			t.Fatalf("variable 'x' is not an Integer, got %T", variable.Value)
-		}
+		variable := symgotest.AssertAs[*object.Variable](t, val)
+		integer := symgotest.AssertAs[*object.Integer](t, variable.Value)
+
 		if integer.Value != 10 {
 			t.Errorf("expected x to be 10, got %d", integer.Value)
 		}

@@ -209,6 +209,8 @@ When a test fails, the most important question is: "What was the engine doing ri
 
 **Concept:** `symgotest` records a chronological log of every significant evaluation step. If the test fails for any reason (error, timeout, step limit), a formatted summary of the last 50 steps is printed, showing the exact sequence of events that led to the failure.
 
+> **Implementation Status (as of 2025-09-16):** A basic version of the tracer has been implemented. It captures the step number, source code position, and the AST node being evaluated. The more detailed event logging shown in the example below (e.g., distinguishing between `CALL`, `EVAL`, `ASSIGN`, `GET`) is a future enhancement and is not yet implemented.
+
 **Failure Report Example:**
 ```
 --- FAIL: TestMyFailingFeature (0.01s)

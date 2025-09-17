@@ -101,6 +101,43 @@ func WithMaxSteps(n int) Option {
 	}
 }
 
+// getAllInterfaceMethods recursively collects all methods from an interface and its embedded interfaces.
+// It handles cycles by keeping track of visited interface types.
+func (e *Evaluator) getAllInterfaceMethods(ctx context.Context, ifaceType *scan.TypeInfo, visited map[string]struct{}) []*scan.MethodInfo {
+	if ifaceType == nil || ifaceType.Interface == nil {
+		return nil
+	}
+
+	// Cycle detection
+	typeName := ifaceType.PkgPath + "." + ifaceType.Name
+	if _, ok := visited[typeName]; ok {
+		return nil
+	}
+	visited[typeName] = struct{}{}
+
+	var allMethods []*scan.MethodInfo
+	allMethods = append(allMethods, ifaceType.Interface.Methods...)
+
+	for _, embeddedField := range ifaceType.Interface.Embedded {
+		// Resolve the embedded type to get its full definition.
+		// Note: embeddedField.Resolve(ctx) creates a new context, so our visited map won't propagate.
+		// We need to use the resolver directly or pass the context. Let's assume the resolver handles cycles.
+		embeddedTypeInfo, err := embeddedField.Resolve(ctx)
+		if err != nil {
+			e.logc(ctx, slog.LevelWarn, "could not resolve embedded interface", "type", embeddedField.String(), "error", err)
+			continue
+		}
+
+		if embeddedTypeInfo != nil && embeddedTypeInfo.Kind == scan.InterfaceKind {
+			// Recursively get methods from the embedded interface.
+			embeddedMethods := e.getAllInterfaceMethods(ctx, embeddedTypeInfo, visited)
+			allMethods = append(allMethods, embeddedMethods...)
+		}
+	}
+
+	return allMethods
+}
+
 // New creates a new Evaluator.
 func New(scanner *goscan.Scanner, logger *slog.Logger, tracer object.Tracer, scanPolicy object.ScanPolicyFunc, opts ...Option) *Evaluator {
 	if logger == nil {
@@ -3731,7 +3768,7 @@ func (e *Evaluator) Finalize(ctx context.Context) {
 	interfaceImplementers := make(map[string]map[string]struct{}) // key: interface name, value: set of implementer names
 	for ifaceName, ifaceType := range allInterfaces {
 		for structName, structType := range allStructs {
-			if e.isImplementer(ctx, structType, ifaceType) {
+			if e.scanner.Implements(ctx, structType, ifaceType) {
 				if _, ok := interfaceImplementers[ifaceName]; !ok {
 					interfaceImplementers[ifaceName] = make(map[string]struct{})
 				}
@@ -3789,108 +3826,4 @@ func (e *Evaluator) Finalize(ctx context.Context) {
 			e.defaultIntrinsic(ctx, fnObject)
 		}
 	}
-}
-
-// getAllInterfaceMethods recursively collects all methods from an interface and its embedded interfaces.
-// It handles cycles by keeping track of visited interface types.
-func (e *Evaluator) getAllInterfaceMethods(ctx context.Context, ifaceType *scan.TypeInfo, visited map[string]struct{}) []*scan.MethodInfo {
-	if ifaceType == nil || ifaceType.Interface == nil {
-		return nil
-	}
-
-	// Cycle detection
-	typeName := ifaceType.PkgPath + "." + ifaceType.Name
-	if _, ok := visited[typeName]; ok {
-		return nil
-	}
-	visited[typeName] = struct{}{}
-
-	var allMethods []*scan.MethodInfo
-	allMethods = append(allMethods, ifaceType.Interface.Methods...)
-
-	for _, embeddedField := range ifaceType.Interface.Embedded {
-		// Resolve the embedded type to get its full definition.
-		// Note: embeddedField.Resolve(ctx) creates a new context, so our visited map won't propagate.
-		// We need to use the resolver directly or pass the context. Let's assume the resolver handles cycles.
-		embeddedTypeInfo, err := embeddedField.Resolve(ctx)
-		if err != nil {
-			e.logc(ctx, slog.LevelWarn, "could not resolve embedded interface", "type", embeddedField.String(), "error", err)
-			continue
-		}
-
-		if embeddedTypeInfo != nil && embeddedTypeInfo.Kind == scan.InterfaceKind {
-			// Recursively get methods from the embedded interface.
-			embeddedMethods := e.getAllInterfaceMethods(ctx, embeddedTypeInfo, visited)
-			allMethods = append(allMethods, embeddedMethods...)
-		}
-	}
-
-	return allMethods
-}
-
-// isImplementer checks if a given concrete type implements an interface.
-func (e *Evaluator) isImplementer(ctx context.Context, concreteType *scan.TypeInfo, interfaceType *scan.TypeInfo) bool {
-	if concreteType == nil || interfaceType == nil || interfaceType.Interface == nil {
-		return false
-	}
-
-	// Get all methods from the interface, including from embedded interfaces.
-	allInterfaceMethods := e.getAllInterfaceMethods(ctx, interfaceType, make(map[string]struct{}))
-
-	// For every method in the complete method set...
-	for _, ifaceMethodInfo := range allInterfaceMethods {
-		// ...find a matching method in the concrete type.
-		// A concrete type T can implement an interface method with a *T receiver.
-		// So we need to check both T and *T.
-		concreteMethodInfo := e.accessor.findMethodInfoOnType(ctx, concreteType, ifaceMethodInfo.Name)
-
-		if concreteMethodInfo == nil && !strings.HasPrefix(concreteType.Name, "*") {
-			// If not found on T, check on *T.
-			// Create a synthetic pointer type for the check.
-			pointerType := *concreteType
-			pointerType.Name = "*" + concreteType.Name
-			// We need to be careful not to lose the underlying struct info.
-			// This is a shallow copy, but it should be sufficient for the accessor.
-			concreteMethodInfo = e.accessor.findMethodInfoOnType(ctx, &pointerType, ifaceMethodInfo.Name)
-		}
-
-		if concreteMethodInfo == nil {
-			return false // Method not found
-		}
-
-		// Compare signatures
-		if len(ifaceMethodInfo.Parameters) != len(concreteMethodInfo.Parameters) {
-			return false
-		}
-		if len(ifaceMethodInfo.Results) != len(concreteMethodInfo.Results) {
-			return false
-		}
-
-		for i, p1 := range ifaceMethodInfo.Parameters {
-			p2 := concreteMethodInfo.Parameters[i]
-			if !e.fieldTypeEquals(p1.Type, p2.Type) {
-				return false
-			}
-		}
-
-		for i, r1 := range ifaceMethodInfo.Results {
-			r2 := concreteMethodInfo.Results[i]
-			if !e.fieldTypeEquals(r1.Type, r2.Type) {
-				return false
-			}
-		}
-	}
-	return true
-}
-
-// fieldTypeEquals compares two FieldType objects for equality.
-// It uses the string representation for a robust comparison of the type structure.
-func (e *Evaluator) fieldTypeEquals(a, b *scan.FieldType) bool {
-	if a == b {
-		return true
-	}
-	if a == nil || b == nil {
-		return false
-	}
-	return a.String() == b.String()
 }

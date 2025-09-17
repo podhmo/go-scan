@@ -1,98 +1,48 @@
 package symgo_test
 
 import (
-	"context"
-	"fmt"
 	"testing"
 
-	goscan "github.com/podhmo/go-scan"
-	"github.com/podhmo/go-scan/scanner"
-	"github.com/podhmo/go-scan/scantest"
-	"github.com/podhmo/go-scan/symgo"
-	"github.com/podhmo/go-scan/symgo/object"
+	"github.com/podhmo/go-scan/symgotest"
 )
 
 func TestInterpreter_MethodCallOnExternalPointerType(t *testing.T) {
-	files := map[string]string{
-		"go.mod": `
+	// This test verifies that the interpreter can handle a method call on a
+	// symbolic object whose type comes from an external, non-analyzed package.
+	// symgotest automatically creates a symbolic placeholder for the function argument.
+	tc := symgotest.TestCase{
+		Source: map[string]string{
+			// Note: The original test had a `replace` directive in go.mod.
+			// This is not needed with symgotest as it runs in the context
+			// of the current project, which already has the correct go.mod.
+			"go.mod": `
 module mytest
 go 1.24
-replace github.com/podhmo/go-scan => ../
 `,
-		"usecase/usecase.go": `
+			"usecase/usecase.go": `
 package usecase
 import "github.com/podhmo/go-scan/locator"
 
 // UseIt takes a pointer to a type from an external (non-analyzed) package.
 func UseIt(l *locator.Locator) {
 	// The bug is triggered when calling a method on the symbolic pointer 'l'.
+	// The interpreter should handle this gracefully by returning a symbolic placeholder
+	// for the result of the method call, rather than panicking.
 	_, _ = l.PathToImport(".")
 }
 `,
+		},
+		EntryPoint: "mytest/usecase.UseIt",
+		// No arguments are provided, so symgotest will create a symbolic
+		// placeholder for the '*locator.Locator' parameter automatically.
 	}
 
-	dir, cleanup := scantest.WriteFiles(t, files)
-	defer cleanup()
-
-	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) (retErr error) {
-		interp, err := symgo.NewInterpreter(s, symgo.WithPrimaryAnalysisScope("mytest/usecase"))
-		if err != nil {
-			return fmt.Errorf("failed to create interpreter: %w", err)
+	action := func(t *testing.T, r *symgotest.Result) {
+		if r.Error != nil {
+			t.Fatalf("Execution failed unexpectedly: %+v", r.Error)
 		}
-
-		usecasePkg, err := s.ScanPackageByImport(ctx, "mytest/usecase")
-		if err != nil {
-			return fmt.Errorf("failed to scan usecase package: %w", err)
-		}
-
-		defer func() {
-			if r := recover(); r != nil {
-				retErr = fmt.Errorf("evaluation panicked: %v", r)
-			}
-		}()
-
-		for _, fileAst := range usecasePkg.AstFiles {
-			if _, err := interp.Eval(ctx, fileAst, usecasePkg); err != nil {
-				return fmt.Errorf("Eval() for declarations failed: %+v", err)
-			}
-		}
-
-		fnObj, ok := interp.FindObject("UseIt")
-		if !ok {
-			return fmt.Errorf("could not find function UseIt")
-		}
-		fn, ok := fnObj.(*object.Function)
-		if !ok {
-			return fmt.Errorf("object UseIt is not a function, but %T", fnObj)
-		}
-
-		locatorPkg, err := s.ScanPackageByImport(ctx, "github.com/podhmo/go-scan/locator")
-		if err != nil {
-			return fmt.Errorf("failed to scan locator package for setup: %w", err)
-		}
-		locatorType := locatorPkg.Lookup("Locator")
-		if locatorType == nil {
-			return fmt.Errorf("could not find TypeInfo for locator.Locator")
-		}
-
-		symbolicArg := &object.SymbolicPlaceholder{
-			Reason: "symbolic *locator.Locator for test",
-			BaseObject: object.BaseObject{
-				ResolvedTypeInfo: locatorType,
-				ResolvedFieldType: &scanner.FieldType{
-					IsPointer:  true,
-					Definition: locatorType,
-				},
-			},
-		}
-
-		_, applyErr := interp.Apply(ctx, fn, []object.Object{symbolicArg}, usecasePkg)
-		if applyErr != nil {
-			return fmt.Errorf("Apply() returned error: %+v", applyErr)
-		}
-
-		return nil
+		// The main check is that the execution completes without panicking or returning an error.
 	}
 
-	scantest.Run(t, t.Context(), dir, nil, action)
+	symgotest.Run(t, tc, action)
 }

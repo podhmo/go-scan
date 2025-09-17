@@ -2,35 +2,18 @@ package symgo_test
 
 import (
 	"context"
-	"fmt"
-	"go/ast"
-	"strings"
 	"testing"
 
-	goscan "github.com/podhmo/go-scan"
-	"github.com/podhmo/go-scan/scantest"
+	"github.com/google/go-cmp/cmp"
 	"github.com/podhmo/go-scan/symgo"
 	"github.com/podhmo/go-scan/symgo/object"
+	"github.com/podhmo/go-scan/symgotest"
 )
-
-// lookupFile is a test helper to find a file by name in a scanned package.
-func lookupFile(pkg *goscan.Package, name string) (*ast.File, error) {
-	for path, f := range pkg.AstFiles {
-		if strings.HasSuffix(path, name) {
-			return f, nil
-		}
-	}
-	return nil, fmt.Errorf("file %q not found in package %s", name, pkg.Name)
-}
 
 func TestMultiValueAssignmentWithBlank(t *testing.T) {
 	var intrinsicCalled bool
-	var assignedValue symgo.Object
 
-	// Create a temporary directory with the files.
-	dir, cleanup := scantest.WriteFiles(t, map[string]string{
-		"go.mod": "module myapp\ngo 1.22",
-		"main.go": `
+	source := `
 package main
 func myFunc() (string, error) {
 	return "", nil
@@ -38,89 +21,65 @@ func myFunc() (string, error) {
 var x string
 func main() {
 	x, _ = myFunc()
-}`,
-	})
-	defer cleanup()
+}`
 
-	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
-		pkg := pkgs[0]
-		interp, err := symgo.NewInterpreter(s)
-		if err != nil {
-			return err
+	intrinsic := func(ctx context.Context, i *symgo.Interpreter, args []symgo.Object) symgo.Object {
+		intrinsicCalled = true
+		return &object.MultiReturn{
+			Values: []symgo.Object{
+				&object.String{Value: "hello"},
+				object.NIL,
+			},
+		}
+	}
+
+	tc := symgotest.TestCase{
+		Source: map[string]string{
+			"go.mod":  "module myapp",
+			"main.go": source,
+		},
+		EntryPoint: "myapp.main",
+		Options: []symgotest.Option{
+			symgotest.WithIntrinsic("myapp.myFunc", intrinsic),
+		},
+	}
+
+	action := func(t *testing.T, r *symgotest.Result) {
+		if r.Error != nil {
+			t.Fatalf("Execution failed unexpectedly: %+v", r.Error)
+		}
+		if !intrinsicCalled {
+			t.Errorf("intrinsic for myFunc was not called")
 		}
 
-		// Intrinsic for a function that returns two values
-		interp.RegisterIntrinsic("myapp.myFunc", func(ctx context.Context, i *symgo.Interpreter, args []symgo.Object) symgo.Object {
-			intrinsicCalled = true
-			return &object.MultiReturn{
-				Values: []symgo.Object{
-					&object.String{Value: "hello"},
-					object.NIL,
-				},
-			}
-		})
-
-		mainFile, err := lookupFile(pkg, "main.go")
-		if err != nil {
-			return err
-		}
-
-		// Eval the file to populate global 'x' and function definitions
-		_, err = interp.Eval(ctx, mainFile, pkg)
-		if err != nil {
-			return err
-		}
-
-		mainFn, ok := interp.FindObjectInPackage(ctx, "myapp", "main")
+		// After running main, check the value of the assigned variable 'x'.
+		// Global variables are stored on the interpreter's package scope, not the function's final env.
+		xVar, ok := r.Interpreter.FindObjectInPackage(t.Context(), "myapp", "x")
 		if !ok {
-			t.Fatal("main func not found")
+			t.Fatalf("variable 'x' was not found in the interpreter's package scope")
 		}
 
-		// Run main() which contains the assignment
-		_, err = interp.Apply(ctx, mainFn, nil, pkg)
-		if err != nil {
-			return err
-		}
-
-		// After running main, check the value of the assigned variable 'x'
-		xVar, ok := interp.FindObjectInPackage(ctx, "myapp", "x")
+		// The object in the env is the *Variable* itself. We need its value.
+		v, ok := xVar.(*object.Variable)
 		if !ok {
-			t.Error("variable 'x' was not found in the environment")
-		} else {
-			// The object found is the *Variable* itself. We need to inspect its value.
-			if v, ok := xVar.(*object.Variable); ok {
-				assignedValue = v.Value
-			} else {
-				t.Errorf("x is not a variable, but %T", xVar)
-			}
+			t.Fatalf("expected 'x' to be a *object.Variable, but got %T", xVar)
 		}
 
-		return nil
+		want := &object.String{Value: "hello"}
+		if diff := cmp.Diff(want, v.Value); diff != "" {
+			t.Errorf("assigned value 'x' mismatch (-want +got):\n%s", diff)
+		}
 	}
 
-	if _, err := scantest.Run(t, t.Context(), dir, []string{"."}, action); err != nil {
-		t.Fatalf("scantest.Run failed: %v", err)
-	}
-
-	if !intrinsicCalled {
-		t.Errorf("intrinsic for myFunc was not called")
-	}
-	if str, ok := assignedValue.(*object.String); !ok {
-		t.Errorf("assigned value 'x' is not a string, got %T", assignedValue)
-	} else if str.Value != "hello" {
-		t.Errorf("assigned value is wrong, want 'hello', got %q", str.Value)
-	}
+	symgotest.Run(t, tc, action)
 }
 
 func TestAssignmentToFieldOfTypeAssertion(t *testing.T) {
 	// This test verifies that a complex assignment like `v.(*S).X = 10` is
-	// correctly evaluated. The fix involves ensuring that the LHS of the
-	// assignment is evaluated, tracing any calls within it.
+	// correctly evaluated.
 	var checkCalled bool
 
-	dir, cleanup := scantest.WriteFiles(t, map[string]string{
-		"go.mod": "module myapp\ngo 1.22",
-		"main.go": `
+	source := `
 package main
 
 type S struct { X int }
@@ -131,51 +90,34 @@ func main() {
 	var v any = &S{X: 0}
 	v.(*S).X = 10
 	check(v)
-}`,
-	})
-	defer cleanup()
+}`
 
-	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
-		pkg := pkgs[0]
-		interp, err := symgo.NewInterpreter(s, symgo.WithLogger(s.Logger))
-		if err != nil {
-			return err
-		}
-
-		// This intrinsic will be called at the end of main. We can inspect the
-		// state of 'v' when it's called.
-		interp.RegisterIntrinsic("myapp.check", func(ctx context.Context, i *symgo.Interpreter, args []symgo.Object) symgo.Object {
-			checkCalled = true
-			return nil
-		})
-
-		mainFile, err := lookupFile(pkg, "main.go")
-		if err != nil {
-			return err
-		}
-
-		if _, err := interp.Eval(ctx, mainFile, pkg); err != nil {
-			return fmt.Errorf("initial eval failed: %w", err)
-		}
-
-		mainFn, ok := interp.FindObjectInPackage(ctx, "myapp", "main")
-		if !ok {
-			return fmt.Errorf("main func not found")
-		}
-
-		// Run main(). With the fix, this should no longer error out.
-		_, err = interp.Apply(ctx, mainFn, nil, pkg)
-		if err != nil {
-			return fmt.Errorf("Apply failed unexpectedly: %w", err)
-		}
+	checkIntrinsic := func(ctx context.Context, i *symgo.Interpreter, args []symgo.Object) symgo.Object {
+		checkCalled = true
+		// We could inspect the value of 'v' here if needed, but for this test,
+		// we just need to confirm the call happens.
 		return nil
 	}
 
-	if _, err := scantest.Run(t, t.Context(), dir, []string{"."}, action); err != nil {
-		t.Fatalf("scantest.Run failed: %v", err)
+	tc := symgotest.TestCase{
+		Source: map[string]string{
+			"go.mod":  "module myapp",
+			"main.go": source,
+		},
+		EntryPoint: "myapp.main",
+		Options: []symgotest.Option{
+			symgotest.WithIntrinsic("myapp.check", checkIntrinsic),
+		},
 	}
 
-	if !checkCalled {
-		t.Fatalf("the check() function was not called, indicating evaluation did not complete")
+	action := func(t *testing.T, r *symgotest.Result) {
+		if r.Error != nil {
+			t.Fatalf("Execution failed unexpectedly: %+v", r.Error)
+		}
+		if !checkCalled {
+			t.Fatalf("the check() function was not called, indicating evaluation did not complete")
+		}
 	}
+
+	symgotest.Run(t, tc, action)
 }

@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
 	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/scantest"
 	"github.com/podhmo/go-scan/symgo"
@@ -348,4 +349,31 @@ func AssertAs[T object.Object](t *testing.T, obj object.Object) T {
 		t.Fatalf("type assertion failed: expected %T, got %T", zero, obj)
 	}
 	return val
+}
+
+// AssertEqual is a helper function that asserts the value of an object.Object.
+// It first asserts the object's type based on the type of the `expected` value,
+// then compares the contained value.
+func AssertEqual[T any](t *testing.T, obj object.Object, expected T) {
+	t.Helper()
+
+	switch v := any(expected).(type) {
+	case int:
+		integerObj := AssertAs[*object.Integer](t, obj)
+		if diff := cmp.Diff(int64(v), integerObj.Value); diff != "" {
+			t.Errorf("value mismatch (-want +got):\n%s", diff)
+		}
+	case int64:
+		integerObj := AssertAs[*object.Integer](t, obj)
+		if diff := cmp.Diff(v, integerObj.Value); diff != "" {
+			t.Errorf("value mismatch (-want +got):\n%s", diff)
+		}
+	case string:
+		stringObj := AssertAs[*object.String](t, obj)
+		if diff := cmp.Diff(v, stringObj.Value); diff != "" {
+			t.Errorf("value mismatch (-want +got):\n%s", diff)
+		}
+	default:
+		t.Fatalf("unsupported type for AssertEqual: %T", expected)
+	}
 }

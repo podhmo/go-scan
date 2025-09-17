@@ -10,7 +10,7 @@ The core philosophy of `symgotest` is **debugging-first**. The library is design
 - **Deterministic Failure Reporting**: Turns hangs and infinite loops into deterministic test failures by enforcing a configurable execution step limit.
 - **Execution Tracing**: Automatically captures a trace of evaluation steps, printing a detailed report on failure to pinpoint the exact cause.
 - **Expressive, High-Level API**: Offers intuitive functions for common testing scenarios.
-- **Type-Safe Assertion Helpers**: Provides generic helpers like `AssertAs` to simplify test assertions.
+- **Type-Safe Assertion Helpers**: Provides generic helpers like `AssertAs` and `AssertEqual` to simplify test assertions.
 
 ## Usage
 
@@ -63,7 +63,7 @@ func NewUser(name string) *User {
 
 ### Testing a Single Expression
 
-Use `symgotest.RunExpression` to quickly test the evaluation of a single Go expression. The generic helper `symgotest.AssertAs` simplifies type assertions.
+Use `symgotest.RunExpression` to quickly test the evaluation of a single Go expression. The generic helper `symgotest.AssertEqual` simplifies type and value assertions.
 
 ```go
 func TestAddition(t *testing.T) {
@@ -71,10 +71,7 @@ func TestAddition(t *testing.T) {
 		if r.Error != nil {
 			t.Fatalf("Execution failed: %v", r.Error)
 		}
-		integer := symgotest.AssertAs[*object.Integer](t, r.ReturnValue)
-		if integer.Value != 3 {
-			t.Errorf("expected 3, got %d", integer.Value)
-		}
+		symgotest.AssertEqual(t, r.ReturnValue, int64(3))
 	}
 	symgotest.RunExpression(t, "1 + 2", action)
 }
@@ -96,11 +93,7 @@ func TestAssignment(t *testing.T) {
 		}
 
 		variable := symgotest.AssertAs[*object.Variable](t, val)
-		integer := symgotest.AssertAs[*object.Integer](t, variable.Value)
-
-		if integer.Value != 10 {
-			t.Errorf("expected x to be 10, got %d", integer.Value)
-		}
+		symgotest.AssertEqual(t, variable.Value, int64(10))
 	}
 	symgotest.RunStatements(t, "x := 10", action)
 }

@@ -51,30 +51,41 @@ Based on the analysis above, the `symgotest` library will be designed to directl
 
 The central piece of the library will be a `Runner` struct that encapsulates the entire "Full Program Simulation" (Pattern B) workflow.
 
-**Proposed API:**
+#### `scantest` Dependency and `go.mod`
+
+It is important to note that `symgotest` is built upon the existing `scantest` utility. `scantest` uses `go-scan`, which is a module-aware tool for parsing and analyzing Go source code. For `go-scan` to correctly resolve types and package paths, especially in tests involving imports, it needs to operate within a valid Go module.
+
+Therefore, **all tests using the `symgotest.Runner` must have a `go.mod` file.** The `Runner`'s constructors (`NewRunner` and `NewRunnerWithMultiFiles`) handle this automatically by either creating a default `go.mod` or requiring one to be present in the user-provided file map. This ensures that the underlying tools function correctly without the user needing to manage the `scantest` layer directly.
+
+#### Proposed API
+
 ```go
 // Runner manages a single symbolic execution test case.
 type Runner struct { ... }
 
-// NewRunner creates a runner for a given source code.
-// It automatically handles making the source a valid 'main' package.
+// NewRunner creates a runner for a simple, single-package test from a single source string.
+// Use this for tests that are self-contained in one file.
 func NewRunner(t *testing.T, source string) *Runner
+
+// NewRunnerWithMultiFiles creates a runner for a complex, multi-file or multi-package test.
+// The `files` map must contain a "go.mod" entry. Use this for integration tests
+// that involve cross-package calls.
+func NewRunnerWithMultiFiles(t *testing.T, files map[string]string) *Runner
 
 // WithSetup registers intrinsics or performs other configuration
 // on the interpreter before execution.
 func (r *Runner) WithSetup(setupFunc func(interp *symgo.Interpreter)) *Runner
 
 // Apply executes a function from the source and returns the result.
-// This is the main entry point for running a test.
 func (r *Runner) Apply(funcName string, args ...object.Object) object.Object
 ```
 
 **Justification & Benefits:**
-- **Solves Pattern B's Boilerplate:** A single `NewRunner(t, source).Apply("main")` call will replace ~20 lines of `scantest` setup and `ActionFunc` logic.
+- **Solves Pattern B's Boilerplate:** A single `NewRunner(t, source).Apply("main")` call replaces ~20 lines of `scantest` setup and `ActionFunc` logic.
 - **Clarity and Focus:** Tests become declarative, focusing on the source code under test and the assertions, not the mechanics of the test setup.
-- **Handles Multi-File Setups:** `NewRunner` can be overloaded or extended to accept a `map[string]string` for multi-file tests.
-- **Flexibility:** The `WithSetup` method provides a flexible escape hatch for complex test configuration (like registering multiple intrinsics) without cluttering the main API.
-- **Addresses Pattern C:** While a dedicated `EvalBlock` function could be added, the `Runner` is flexible enough to handle this. A user can find the function body within the `WithSetup` closure and perform a custom `EvalWithEnv` call if needed, keeping the primary API lean.
+- **Clear Separation of Scopes:** The two constructors, `NewRunner` and `NewRunnerWithMultiFiles`, provide a clear distinction between simple tests and more complex integration tests, guiding the user to the correct tool for their needs.
+- **Flexibility:** The `WithSetup` method provides a flexible escape hatch for complex test configuration.
+- **Addresses Pattern C:** While a dedicated `EvalBlock` function is not exposed to keep the API lean, this pattern can still be achieved by using `WithSetup` to perform a custom `EvalWithEnv` call on a function body found via the interpreter.
 
 ### Standalone Helpers
 
@@ -86,34 +97,33 @@ To address the simpler patterns and standardize assertions, the library will inc
 func EvalExpr(t *testing.T, expr string) object.Object
 
 // --- Assertion Helpers ---
-
-// AssertSuccess fails if the object is an error.
 func AssertSuccess(t *testing.T, obj object.Object)
-
-// AssertError fails if the object is not an error. Can also check for substrings.
 func AssertError(t *testing.T, obj object.Object, contains ...string)
-
-// AssertInteger checks for an integer object with a specific value.
 func AssertInteger(t *testing.T, obj object.Object, expected int64)
-
 // ... other helpers for String, Nil, Placeholder, etc. ...
-
-// AssertEqual provides a generic comparison using go-cmp.
 func AssertEqual(t *testing.T, want, got any)
 ```
 
 **Justification & Benefits:**
 - **Solves Pattern A's Verbosity:** `EvalExpr` provides a one-line solution for simple expression tests.
-- **Standardizes Assertions:** The assertion helpers provide a consistent, readable way to validate test outcomes, fulfilling the user's request to avoid `testify`. This makes test failures easier to understand and debug.
+- **Standardizes Assertions:** The helpers provide a consistent, readable way to validate test outcomes.
 
 ### Design Decision: State Inspection
-
-The analysis revealed that `evaluator` tests can inspect the environment directly, a powerful but internal capability.
 
 **Decision:** The `symgotest` library will **not** provide a public API for direct environment inspection.
 
 **Justification:**
-- **Encapsulation:** Exposing internal environment details would create a leaky abstraction and tightly couple tests to the evaluator's implementation.
-- **Better Test Practices:** The library should encourage testing based on observable behavior (return values and side effects). The `Runner`'s `WithSetup` method provides a robust way to check side effects by registering intrinsics that modify variables in the test's scope. This leads to more maintainable, black-box style tests.
+- **Encapsulation:** Exposing internal environment details would tightly couple tests to the evaluator's implementation.
+- **Better Test Practices:** The library encourages testing based on observable behavior (return values and side effects via intrinsics), which leads to more maintainable, black-box style tests.
 
-By implementing this design, `symgotest` will provide a powerful and ergonomic testing solution that addresses the key pain points in the current test suite.
+## Part 3: How `symgotest` Improves the Debugging Experience
+
+Beyond making tests easier to write, `symgotest` also makes them easier to debug.
+
+1.  **Isolation of Failures:** By abstracting the complex `scantest` and `go-scan` setup, a test failure is much less likely to be caused by an error in the test's setup boilerplate. Failures will be more clearly isolated to either the source code being tested or the test's core logic (`WithSetup` and assertions), reducing the surface area a developer needs to inspect.
+
+2.  **Clear and Consistent Error Messages:** The suite of `Assert` helpers ensures that failure messages are uniform and descriptive. An integer mismatch will always produce a message like `integer has wrong value. want=X, got=Y`, and a failed error check will always say `expected an error, but got <type>`. This consistency makes it faster to understand the nature of a failure at a glance, compared to parsing the output of `cmp.Diff` or a generic `fmt.Errorf` message for every test.
+
+3.  **Readable Tests:** A debugger's first step is often to read the failing test to understand what it's trying to accomplish. The concise, declarative nature of tests written with `symgotest` makes this process much faster. The separation of source, setup, and execution is explicit, allowing a developer to quickly identify the relevant parts of the test.
+
+By implementing this design, `symgotest` will provide a powerful and ergonomic testing solution that addresses the key pain points in the current test suite and improves the overall development and debugging workflow.

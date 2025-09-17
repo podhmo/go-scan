@@ -443,7 +443,7 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool) error {
 	}
 	slog.InfoContext(ctx, "analysis phase", "packages", len(a.packages))
 
-	interfaceMap := buildInterfaceMap(a.packages)
+	interfaceMap := buildInterfaceMap(a.ctx, a.s, a.packages)
 	slog.DebugContext(ctx, "built interface map", "interfaces", len(interfaceMap))
 
 	// Use the user-provided primary analysis scope if available, otherwise default to all scanned packages.
@@ -871,11 +871,10 @@ func getFullName(s *goscan.Scanner, pkg *scanner.PackageInfo, fn *scanner.Functi
 	return fmt.Sprintf("%s.%s", pkg.ImportPath, fn.Name)
 }
 
-func buildInterfaceMap(packages map[string]*scanner.PackageInfo) map[string][]*scanner.TypeInfo {
+func buildInterfaceMap(ctx context.Context, s *goscan.Scanner, packages map[string]*scanner.PackageInfo) map[string][]*scanner.TypeInfo {
 	interfaceMap := make(map[string][]*scanner.TypeInfo)
 	var allInterfaces []*scanner.TypeInfo
 	var allStructs []*scanner.TypeInfo
-	packageOfStruct := make(map[*scanner.TypeInfo]*scanner.PackageInfo)
 
 	for _, pkg := range packages {
 		for _, t := range pkg.Types {
@@ -883,7 +882,6 @@ func buildInterfaceMap(packages map[string]*scanner.PackageInfo) map[string][]*s
 				allInterfaces = append(allInterfaces, t)
 			} else if t.Kind == scanner.StructKind {
 				allStructs = append(allStructs, t)
-				packageOfStruct[t] = pkg
 			}
 		}
 	}
@@ -893,8 +891,7 @@ func buildInterfaceMap(packages map[string]*scanner.PackageInfo) map[string][]*s
 		var implementers []*scanner.TypeInfo
 
 		for _, strct := range allStructs {
-			pkgInfo := packageOfStruct[strct]
-			if goscan.Implements(strct, iface, pkgInfo) {
+			if s.Implements(ctx, strct, iface) {
 				implementers = append(implementers, strct)
 			}
 		}

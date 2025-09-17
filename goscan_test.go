@@ -821,6 +821,7 @@ func findType(types []*scanner.TypeInfo, name string) *scanner.TypeInfo {
 }
 
 func TestImplements(t *testing.T) {
+	ctx := context.Background()
 	// Setup: Initialize scanner relative to the project root,
 	// as testdata/implements is not a separate Go module.
 	// We'll use ScanPackage with a direct path.
@@ -836,7 +837,7 @@ func TestImplements(t *testing.T) {
 	// it uses PkgName and Name from FieldType, which are derived by the scanner.
 	// The crucial part is that all types and functions are loaded into one PackageInfo.
 	pkgPath := "./testdata/implements"
-	pkgInfo, err := s.ScanPackage(context.Background(), pkgPath)
+	pkgInfo, err := s.ScanPackage(ctx, pkgPath)
 	if err != nil {
 		t.Fatalf("ScanPackage(%q) failed: %v", pkgPath, err)
 	}
@@ -946,9 +947,9 @@ func TestImplements(t *testing.T) {
 			// Perform the Implements check
 			// Ensure pkgInfo is correctly passed; it's derived from scanning "./testdata/implements"
 			// and contains all types and functions from types.go
-			actual := Implements(structCandidate, interfaceDef, pkgInfo)
+			actual := s.Implements(ctx, structCandidate, interfaceDef)
 			if actual != tt.expectedToImplement {
-				t.Errorf("Implements(%s, %s): expected %v, got %v", tt.structName, tt.interfaceName, tt.expectedToImplement, actual)
+				t.Errorf("s.Implements(%s, %s): expected %v, got %v", tt.structName, tt.interfaceName, tt.expectedToImplement, actual)
 			}
 		})
 	}
@@ -958,14 +959,11 @@ func TestImplements(t *testing.T) {
 		simpleStruct := getType("SimpleStruct")
 		simpleInterface := getType("SimpleInterface")
 
-		if Implements(nil, simpleInterface, pkgInfo) != false {
-			t.Error("Implements(nil, interface, pkgInfo) should be false")
+		if s.Implements(ctx, nil, simpleInterface) != false {
+			t.Error("s.Implements(nil, interface) should be false")
 		}
-		if Implements(simpleStruct, nil, pkgInfo) != false {
-			t.Error("Implements(struct, nil, pkgInfo) should be false")
-		}
-		if Implements(simpleStruct, simpleInterface, nil) != false {
-			t.Error("Implements(struct, interface, nil) should be false")
+		if s.Implements(ctx, simpleStruct, nil) != false {
+			t.Error("s.Implements(struct, nil) should be false")
 		}
 	})
 
@@ -982,11 +980,11 @@ func TestImplements(t *testing.T) {
 			t.Fatal("Test data error: NotAnInterface should not have InterfaceKind")
 		}
 
-		if Implements(notAStruct, simpleInterface, pkgInfo) != false {
-			t.Errorf("Implements(NotAStruct, SimpleInterface, pkgInfo) expected false, got true. NotAStruct.Kind: %v", notAStruct.Kind)
+		if s.Implements(ctx, notAStruct, simpleInterface) != false {
+			t.Errorf("s.Implements(NotAStruct, SimpleInterface) expected false, got true. NotAStruct.Kind: %v", notAStruct.Kind)
 		}
-		if Implements(simpleStruct, notAnInterface, pkgInfo) != false {
-			t.Errorf("Implements(SimpleStruct, NotAnInterface, pkgInfo) expected false, got true. NotAnInterface.Kind: %v, Interface field: %+v", notAnInterface.Kind, notAnInterface.Interface)
+		if s.Implements(ctx, simpleStruct, notAnInterface) != false {
+			t.Errorf("s.Implements(SimpleStruct, NotAnInterface) expected false, got true. NotAnInterface.Kind: %v, Interface field: %+v", notAnInterface.Kind, notAnInterface.Interface)
 		}
 		// Test case where interfaceDef.Interface is nil (e.g. type alias for interface)
 		// The getType function resolves to TypeInfo. If NotAnInterface is an alias type,
@@ -1053,7 +1051,7 @@ func TestImplements(t *testing.T) {
 			}
 			// Assuming structCandidate.Kind and interfaceDef.Kind are correct as per previous tests.
 
-			actual := Implements(structCandidate, interfaceDef, pkgInfo)
+			actual := s.Implements(ctx, structCandidate, interfaceDef)
 			if actual != tt.expectedToImplement {
 				// Provide more debug info if it fails
 				// For example, print the methods of the interface and the methods found on the struct
@@ -1643,7 +1641,7 @@ type NotAnImplementer struct{}
 	var implementers []*scanner.TypeInfo
 	for _, ti := range pkgInfo.Types {
 		if ti.Kind == StructKind {
-			if Implements(ti, eventDataInterface, pkgInfo) {
+			if s.Implements(ctx, ti, eventDataInterface) {
 				implementers = append(implementers, ti)
 			}
 		}

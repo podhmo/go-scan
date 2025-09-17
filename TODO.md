@@ -106,6 +106,8 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
   - [x] `symgo/symgo_unexported_const_test.go`
   - [x] `symgo/symgo_unresolved_kind_test.go`
   - [x] `symgo/symgo_variable_test.go`
+  - [x] `symgo/features_test.go`
+  - [x] `symgo/symbolic_features_test.go`
 - [ ] **Known Limitations**:
   - The `symgotest.Run` function does not support fine-grained control over package scan order, making it unsuitable for certain advanced test cases that validate order-insensitivity.
 

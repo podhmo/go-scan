@@ -239,11 +239,11 @@ func TestDocgen_fullParameters(t *testing.T) {
 
 	tracer := &recordingTracer{visitedNodePositions: make(map[token.Pos]bool)}
 
-	visit := func(node ast.Node) {
-		if node == nil {
+	visit := func(event symgo.TraceEvent) {
+		if event.Node == nil {
 			return
 		}
-		tracer.visitedNodePositions[node.Pos()] = true
+		tracer.visitedNodePositions[event.Node.Pos()] = true
 	}
 
 	// This test is based on the scenario described in `docs/trouble-docgen.md`.

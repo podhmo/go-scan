@@ -808,22 +808,30 @@ func (t *Type) Inspect() string {
 
 // --- Tracer Interface ---
 
+// TraceEvent represents a single event in the evaluation trace.
+type TraceEvent struct {
+	Step int
+	Node ast.Node
+	Pkg  *scanner.PackageInfo
+	Env  *Environment
+}
+
 // Tracer is an interface for instrumenting the symbolic execution process.
 // An implementation can be passed to the interpreter to track which AST nodes
 // are being evaluated.
 type Tracer interface {
-	Visit(node ast.Node)
+	Trace(event TraceEvent)
 }
 
 // ScanPolicyFunc is a function that determines whether a package should be scanned from source.
 type ScanPolicyFunc func(importPath string) bool
 
 // TracerFunc is an adapter to allow the use of ordinary functions as Tracers.
-type TracerFunc func(node ast.Node)
+type TracerFunc func(event TraceEvent)
 
-// Visit calls f(node).
-func (f TracerFunc) Visit(node ast.Node) {
-	f(node)
+// Trace calls f(event).
+func (f TracerFunc) Trace(event TraceEvent) {
+	f(event)
 }
 
 // getSourceLine reads a specific line from a file. It returns the line and any error encountered.

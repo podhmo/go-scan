@@ -48,8 +48,8 @@ OuterLoop:
 		}
 		pkg := pkgs[0]
 
-		tracer := object.TracerFunc(func(node ast.Node) {
-			if call, ok := node.(*ast.CallExpr); ok {
+		tracer := object.TracerFunc(func(ev object.TraceEvent) {
+			if call, ok := ev.Node.(*ast.CallExpr); ok {
 				if ident, ok := call.Fun.(*ast.Ident); ok && ident.Name == "trace" {
 					if len(call.Args) > 0 {
 						if lit, ok := call.Args[0].(*ast.BasicLit); ok {

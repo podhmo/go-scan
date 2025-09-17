@@ -77,8 +77,16 @@ func runLogic(t *testing.T, tc TestCase) *Result {
 		return &Result{Error: &object.Error{Message: fmt.Sprintf("failed to create scanner: %v", err)}}
 	}
 
-	tracer := NewExecutionTracer(scanner.Fset())
-	res := &Result{Trace: tracer} // Initialize result early
+	// Use provided tracer or default to internal one.
+	var tracer object.Tracer
+	var internalTracer *ExecutionTracer
+	if cfg.Tracer != nil {
+		tracer = cfg.Tracer
+	} else {
+		internalTracer = NewExecutionTracer(scanner.Fset())
+		tracer = internalTracer
+	}
+	res := &Result{Trace: internalTracer} // Initialize result early
 
 	pkgPath, fnName := splitQualifiedName(tc.EntryPoint)
 	if pkgPath == "" {
@@ -281,6 +289,7 @@ type Result struct {
 	FinalEnv *object.Environment
 
 	// Trace is the detailed execution trace, useful for debugging.
+	// This is only populated if the default internal tracer is used.
 	Trace *ExecutionTracer
 
 	// Error is any runtime error returned by the interpreter during execution.
@@ -355,10 +364,19 @@ type config struct {
 	Intrinsics       map[string]symgo.IntrinsicFunc
 	DefaultIntrinsic symgo.IntrinsicFunc
 	SetupFunc        func(interp *symgo.Interpreter) error
+	Tracer           object.Tracer
 }
 
 // Option configures a test run.
 type Option func(*config)
+
+// WithTracer provides a custom tracer for the symgo interpreter.
+// If this option is used, the default execution trace in the Result will not be populated.
+func WithTracer(tracer object.Tracer) Option {
+	return func(c *config) {
+		c.Tracer = tracer
+	}
+}
 
 // WithSetup provides a hook to perform arbitrary configuration on the interpreter
 // after it has been created but before analysis begins. This is useful for

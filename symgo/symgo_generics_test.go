@@ -1,14 +1,12 @@
 package symgo_test
 
 import (
-	"context"
 	"strings"
 	"testing"
 
-	goscan "github.com/podhmo/go-scan"
-	"github.com/podhmo/go-scan/scantest"
-	"github.com/podhmo/go-scan/symgo"
+	"github.com/google/go-cmp/cmp"
 	"github.com/podhmo/go-scan/symgo/object"
+	"github.com/podhmo/go-scan/symgotest"
 )
 
 func TestGenericFunctionCall(t *testing.T) {
@@ -25,61 +23,35 @@ func main() {
 	V = identity[int](42)
 }
 `
-	dir, cleanup := scantest.WriteFiles(t, map[string]string{
-		"go.mod":  "module mymodule",
-		"main.go": source,
-	})
-	defer cleanup()
-
-	s, err := goscan.New(goscan.WithWorkDir(dir), goscan.WithGoModuleResolver())
-	if err != nil {
-		t.Fatalf("goscan.New() failed: %+v", err)
+	tc := symgotest.TestCase{
+		Source: map[string]string{
+			"go.mod":  "module mymodule",
+			"main.go": source,
+		},
+		EntryPoint: "mymodule.main",
 	}
 
-	pkgs, err := s.Scan(context.Background(), ".")
-	if err != nil {
-		t.Fatalf("s.Scan() failed: %+v", err)
-	}
-	pkg := pkgs[0]
+	action := func(t *testing.T, r *symgotest.Result) {
+		if r.Error != nil {
+			t.Fatalf("Execution failed unexpectedly: %+v", r.Error)
+		}
 
-	interp, err := symgo.NewInterpreter(s)
-	if err != nil {
-		t.Fatalf("NewInterpreter() failed: %+v", err)
-	}
+		vObj, ok := r.Interpreter.FindObjectInPackage(t.Context(), "mymodule", "V")
+		if !ok {
+			t.Fatalf("global variable V not found")
+		}
+		vVar, ok := vObj.(*object.Variable)
+		if !ok {
+			t.Fatalf("V is not a variable, got %T", vObj)
+		}
 
-	_, err = interp.Eval(context.Background(), pkg.AstFiles[pkg.Files[0]], pkg)
-	if err != nil {
-		t.Fatalf("Eval() failed: %+v", err)
-	}
-
-	mainFn, ok := interp.FindObjectInPackage(t.Context(), "mymodule", "main")
-	if !ok {
-		t.Fatalf("main function not found")
-	}
-
-	_, err = interp.Apply(context.Background(), mainFn, nil, pkg)
-	if err != nil {
-		t.Fatalf("Apply() failed: %+v", err)
+		want := &object.Integer{Value: 42}
+		if diff := cmp.Diff(want, vVar.Value, cmp.AllowUnexported(object.Integer{})); diff != "" {
+			t.Errorf("V mismatch (-want +got):\n%s", diff)
+		}
 	}
 
-	// Now, check the value of the global variable V
-	vObj, ok := interp.FindObjectInPackage(t.Context(), "mymodule", "V")
-	if !ok {
-		t.Fatalf("global variable V not found")
-	}
-	vVar, ok := vObj.(*object.Variable)
-	if !ok {
-		t.Fatalf("V is not a variable, got %T", vObj)
-	}
-
-	// Assert the value
-	intVal, ok := vVar.Value.(*object.Integer)
-	if !ok {
-		t.Fatalf("V is not an integer, got %T: %s", vVar.Value, vVar.Value.Inspect())
-	}
-	if intVal.Value != 42 {
-		t.Errorf("expected V to be 42, got %d", intVal.Value)
-	}
+	symgotest.Run(t, tc, action)
 }
 
 func TestGenericCallWithInterfaceConstraint(t *testing.T) {
@@ -104,43 +76,21 @@ func main() {
 	PrintStringer[MyString](s)
 }
 `
-	dir, cleanup := scantest.WriteFiles(t, map[string]string{
-		"go.mod":  "module mymodule",
-		"main.go": source,
-	})
-	defer cleanup()
-
-	s, err := goscan.New(goscan.WithWorkDir(dir), goscan.WithGoModuleResolver())
-	if err != nil {
-		t.Fatalf("goscan.New() failed: %+v", err)
+	tc := symgotest.TestCase{
+		Source: map[string]string{
+			"go.mod":  "module mymodule",
+			"main.go": source,
+		},
+		EntryPoint: "mymodule.main",
 	}
 
-	pkgs, err := s.Scan(context.Background(), ".")
-	if err != nil {
-		t.Fatalf("s.Scan() failed: %+v", err)
-	}
-	pkg := pkgs[0]
-
-	interp, err := symgo.NewInterpreter(s)
-	if err != nil {
-		t.Fatalf("NewInterpreter() failed: %+v", err)
+	action := func(t *testing.T, r *symgotest.Result) {
+		if r.Error != nil {
+			t.Fatalf("Execution failed unexpectedly: %+v", r.Error)
+		}
 	}
 
-	_, err = interp.Eval(context.Background(), pkg.AstFiles[pkg.Files[0]], pkg)
-	if err != nil {
-		t.Fatalf("Eval() failed: %+v", err)
-	}
-
-	mainFn, ok := interp.FindObjectInPackage(t.Context(), "mymodule", "main")
-	if !ok {
-		t.Fatalf("main function not found")
-	}
-
-	// This apply call should not crash.
-	_, err = interp.Apply(context.Background(), mainFn, nil, pkg)
-	if err != nil {
-		t.Fatalf("Apply() failed unexpectedly: %+v", err)
-	}
+	symgotest.Run(t, tc, action)
 }
 
 func TestGenericTypeDefinition(t *testing.T) {
@@ -157,65 +107,40 @@ func main() {
 	V = MySlice[int]{Data: []int{10, 20}}
 }
 `
-	dir, cleanup := scantest.WriteFiles(t, map[string]string{
-		"go.mod":  "module mymodule",
-		"main.go": source,
-	})
-	defer cleanup()
-
-	s, err := goscan.New(goscan.WithWorkDir(dir), goscan.WithGoModuleResolver())
-	if err != nil {
-		t.Fatalf("goscan.New() failed: %+v", err)
+	tc := symgotest.TestCase{
+		Source: map[string]string{
+			"go.mod":  "module mymodule",
+			"main.go": source,
+		},
+		EntryPoint: "mymodule.main",
 	}
 
-	pkgs, err := s.Scan(context.Background(), ".")
-	if err != nil {
-		t.Fatalf("s.Scan() failed: %+v", err)
-	}
-	pkg := pkgs[0]
+	action := func(t *testing.T, r *symgotest.Result) {
+		if r.Error != nil {
+			t.Fatalf("Execution failed unexpectedly: %+v", r.Error)
+		}
 
-	interp, err := symgo.NewInterpreter(s)
-	if err != nil {
-		t.Fatalf("NewInterpreter() failed: %+v", err)
-	}
+		vObj, ok := r.Interpreter.FindObjectInPackage(t.Context(), "mymodule", "V")
+		if !ok {
+			t.Fatalf("global variable V not found")
+		}
+		vVar, ok := vObj.(*object.Variable)
+		if !ok {
+			t.Fatalf("V is not a variable, got %T", vObj)
+		}
 
-	_, err = interp.Eval(context.Background(), pkg.AstFiles[pkg.Files[0]], pkg)
-	if err != nil {
-		t.Fatalf("Eval() failed: %+v", err)
-	}
+		instance, ok := vVar.Value.(*object.Instance)
+		if !ok {
+			t.Fatalf("V is not an instance, got %T: %s", vVar.Value, vVar.Value.Inspect())
+		}
 
-	mainFn, ok := interp.FindObjectInPackage(t.Context(), "mymodule", "main")
-	if !ok {
-		t.Fatalf("main function not found")
-	}
-
-	_, err = interp.Apply(context.Background(), mainFn, nil, pkg)
-	if err != nil {
-		t.Fatalf("Apply() failed: %+v", err)
-	}
-
-	// Now, check the value of the global variable V
-	vObj, ok := interp.FindObjectInPackage(t.Context(), "mymodule", "V")
-	if !ok {
-		t.Fatalf("global variable V not found")
-	}
-	vVar, ok := vObj.(*object.Variable)
-	if !ok {
-		t.Fatalf("V is not a variable, got %T", vObj)
+		expectedTypeNamePrefix := "mymodule.MySlice"
+		if !strings.HasPrefix(instance.TypeName, expectedTypeNamePrefix) {
+			t.Errorf("expected V to be of type %q, but got %q", expectedTypeNamePrefix, instance.TypeName)
+		}
 	}
 
-	// Assert the value
-	instance, ok := vVar.Value.(*object.Instance)
-	if !ok {
-		t.Fatalf("V is not an instance, got %T: %s", vVar.Value, vVar.Value.Inspect())
-	}
-
-	// The type name check is tricky. For now, let's just check that it's an instance.
-	// A more robust check would be needed once the implementation is in place.
-	expectedTypeNamePrefix := "mymodule.MySlice"
-	if !strings.HasPrefix(instance.TypeName, expectedTypeNamePrefix) {
-		t.Errorf("expected V to be of type %q, but got %q", expectedTypeNamePrefix, instance.TypeName)
-	}
+	symgotest.Run(t, tc, action)
 }
 
 func TestGenericCallWithOmittedArgs(t *testing.T) {
@@ -234,60 +159,33 @@ func main() {
 	V = identity(42)
 }
 `
-	dir, cleanup := scantest.WriteFiles(t, map[string]string{
-		"go.mod":  "module mymodule",
-		"main.go": source,
-	})
-	defer cleanup()
-
-	s, err := goscan.New(goscan.WithWorkDir(dir), goscan.WithGoModuleResolver())
-	if err != nil {
-		t.Fatalf("goscan.New() failed: %+v", err)
+	tc := symgotest.TestCase{
+		Source: map[string]string{
+			"go.mod":  "module mymodule",
+			"main.go": source,
+		},
+		EntryPoint: "mymodule.main",
 	}
 
-	pkgs, err := s.Scan(context.Background(), ".")
-	if err != nil {
-		t.Fatalf("s.Scan() failed: %+v", err)
-	}
-	pkg := pkgs[0]
+	action := func(t *testing.T, r *symgotest.Result) {
+		if r.Error != nil {
+			t.Fatalf("Execution failed unexpectedly: %+v", r.Error)
+		}
 
-	interp, err := symgo.NewInterpreter(s)
-	if err != nil {
-		t.Fatalf("NewInterpreter() failed: %+v", err)
-	}
+		vObj, ok := r.Interpreter.FindObjectInPackage(t.Context(), "mymodule", "V")
+		if !ok {
+			t.Fatalf("global variable V not found")
+		}
+		vVar, ok := vObj.(*object.Variable)
+		if !ok {
+			t.Fatalf("V is not a variable, got %T", vObj)
+		}
 
-	_, err = interp.Eval(context.Background(), pkg.AstFiles[pkg.Files[0]], pkg)
-	if err != nil {
-		t.Fatalf("Eval() failed: %+v", err)
-	}
-
-	mainFn, ok := interp.FindObjectInPackage(t.Context(), "mymodule", "main")
-	if !ok {
-		t.Fatalf("main function not found")
-	}
-
-	_, err = interp.Apply(context.Background(), mainFn, nil, pkg)
-	if err != nil {
-		t.Fatalf("Apply() failed: %+v", err)
+		want := &object.Integer{Value: 42}
+		if diff := cmp.Diff(want, vVar.Value, cmp.AllowUnexported(object.Integer{})); diff != "" {
+			t.Errorf("V mismatch (-want +got):\n%s", diff)
+		}
 	}
 
-	// The evaluator is smart enough to handle this simple case without full
-	// type inference. It passes the argument through. Let's assert this correct behavior.
-	vObj, ok := interp.FindObjectInPackage(t.Context(), "mymodule", "V")
-	if !ok {
-		t.Fatalf("global variable V not found")
-	}
-	vVar, ok := vObj.(*object.Variable)
-	if !ok {
-		t.Fatalf("V is not a variable, got %T", vObj)
-	}
-
-	// Assert the value
-	intVal, ok := vVar.Value.(*object.Integer)
-	if !ok {
-		t.Fatalf("V is not an integer, got %T: %s", vVar.Value, vVar.Value.Inspect())
-	}
-	if intVal.Value != 42 {
-		t.Errorf("expected V to be 42, got %d", intVal.Value)
-	}
+	symgotest.Run(t, tc, action)
 }

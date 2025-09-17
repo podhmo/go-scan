@@ -102,6 +102,13 @@ func runLogic(t *testing.T, tc TestCase) (*Result, error) {
 		interpreter.RegisterDefaultIntrinsic(cfg.DefaultIntrinsic)
 	}
 
+	// Perform user-defined setup before analysis
+	if cfg.SetupFunc != nil {
+		if err := cfg.SetupFunc(interpreter); err != nil {
+			return nil, fmt.Errorf("WithSetup function failed: %w", err)
+		}
+	}
+
 	// 3. Find entry point
 	pkgs, err := scanner.Scan(ctx, "./...") // Scan the whole module recursively
 	if err != nil {
@@ -321,10 +328,20 @@ type config struct {
 	ScanPolicy       symgo.ScanPolicyFunc
 	Intrinsics       map[string]symgo.IntrinsicFunc
 	DefaultIntrinsic symgo.IntrinsicFunc
+	SetupFunc        func(interp *symgo.Interpreter) error
 }
 
 // Option configures a test run.
 type Option func(*config)
+
+// WithSetup provides a hook to perform arbitrary configuration on the interpreter
+// after it has been created but before analysis begins. This is useful for
+// advanced setup like `BindInterface`.
+func WithSetup(f func(interp *symgo.Interpreter) error) Option {
+	return func(c *config) {
+		c.SetupFunc = f
+	}
+}
 
 // WithMaxSteps sets a limit on the number of evaluation steps to prevent
 // infinite loops. If the limit is exceeded, the test fails.

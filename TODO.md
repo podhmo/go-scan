@@ -107,7 +107,6 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
   - [x] `symgo/symgo_unresolved_kind_test.go`
   - [x] `symgo/symgo_variable_test.go`
 - [ ] **Known Limitations**:
-  - The `symgotest` library currently treats any runtime error from the interpreter as a fatal test failure. This makes it impossible to write tests that *expect* an error to occur (e.g., testing that an undefined identifier correctly throws an error). Tests requiring this have been weakened to work around this. (See `TestMismatchImportPackageName_OutOfPolicy` for an example).
   - The `symgotest.Run` function does not support fine-grained control over package scan order, making it unsuitable for certain advanced test cases that validate order-insensitivity.
 
 ### Fix `symgo` Error on Pointer Operations with Unresolved Types ([docs/cont-unresolved-type-error.md](./docs/cont-unresolved-type-error.md))

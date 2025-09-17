@@ -1,11 +1,13 @@
 package symgotest
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/podhmo/go-scan/symgo"
 	"github.com/podhmo/go-scan/symgo/object"
 )
 
@@ -63,13 +65,13 @@ func TestRun_MaxStepsExceeded(t *testing.T) {
 		},
 	}
 
-	res, err := runLogic(t, tc)
-	if err == nil {
+	res := runLogic(t, tc)
+	if res.Error == nil {
 		t.Fatalf("expected runLogic to fail, but it succeeded")
 	}
 
-	if !strings.Contains(err.Error(), "max execution steps (10) exceeded") {
-		t.Errorf("expected error to contain 'max execution steps (10) exceeded', but got: %v", err)
+	if !strings.Contains(res.Error.Message, "max execution steps (10) exceeded") {
+		t.Errorf("expected error to contain 'max execution steps (10) exceeded', but got: %v", res.Error)
 	}
 
 	if res == nil {
@@ -113,4 +115,40 @@ func TestRunStatements(t *testing.T) {
 		}
 	}
 	RunStatements(t, "x := 10", action)
+}
+
+func TestRun_ExpectError_FromIntrinsic(t *testing.T) {
+	tc := TestCase{
+		Source: map[string]string{
+			"go.mod": "module example.com",
+			"main.go": `
+package main
+
+// This function will be replaced by an intrinsic that returns an error.
+func customErrorFunc() {}
+
+func main() {
+	customErrorFunc()
+}
+`,
+		},
+		EntryPoint:  "example.com.main",
+		ExpectError: true,
+		Options: []Option{
+			WithIntrinsic("example.com.customErrorFunc", func(ctx context.Context, i *symgo.Interpreter, args []object.Object) object.Object {
+				return &object.Error{Message: "this is a forced error"}
+			}),
+		},
+	}
+
+	action := func(t *testing.T, r *Result) {
+		if r.Error == nil {
+			t.Fatalf("expected an error, but got nil")
+		}
+		if !strings.Contains(r.Error.Message, "this is a forced error") {
+			t.Errorf("expected error message to contain 'this is a forced error', but got %q", r.Error.Message)
+		}
+	}
+
+	Run(t, tc, action)
 }

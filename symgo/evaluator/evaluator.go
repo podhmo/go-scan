@@ -947,9 +947,19 @@ func (e *Evaluator) evalStarExpr(ctx context.Context, node *ast.StarExpr, env *o
 		// If we are dereferencing a pointer to an unresolved type, the result is
 		// a symbolic placeholder representing an instance of that type.
 		if ut, ok := ptr.Value.(*object.UnresolvedType); ok {
-			return &object.SymbolicPlaceholder{
+			placeholder := &object.SymbolicPlaceholder{
 				Reason: fmt.Sprintf("instance of unresolved type %s.%s", ut.PkgPath, ut.TypeName),
 			}
+			// Attempt to resolve the type to attach its info to the placeholder
+			if resolvedType, err := e.resolver.ResolvePackage(ctx, ut.PkgPath); err == nil {
+				for _, t := range resolvedType.Types {
+					if t.Name == ut.TypeName {
+						placeholder.SetTypeInfo(t)
+						break
+					}
+				}
+			}
+			return placeholder
 		}
 
 		// The value of a pointer is the object it points to.
@@ -984,6 +994,14 @@ func (e *Evaluator) evalStarExpr(ctx context.Context, node *ast.StarExpr, env *o
 			BaseObject: object.BaseObject{
 				ResolvedTypeInfo: t.ResolvedType,
 			},
+		}
+	}
+
+	// Handle dereferencing an unresolved type object itself. This is the source
+	// of the "invalid indirect" errors seen in the find-orphans run.
+	if ut, ok := val.(*object.UnresolvedType); ok {
+		return &object.SymbolicPlaceholder{
+			Reason: fmt.Sprintf("instance of unresolved type %s.%s from dereference", ut.PkgPath, ut.TypeName),
 		}
 	}
 

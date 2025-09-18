@@ -48,6 +48,49 @@ func UseIt(p *ext.ExternalType) {
 	symgotest.Run(t, tc, action)
 }
 
+func TestUnresolvedOps_DereferenceUnresolvedType(t *testing.T) {
+	tc := symgotest.TestCase{
+		Source: map[string]string{
+			"go.mod": `
+module mytest
+go 1.24
+`,
+			"ext/def.go": `
+package ext
+type ExternalType struct {
+	N int
+}
+`,
+			"usecase/usecase.go": `
+package usecase
+import "mytest/ext"
+
+func UseIt() {
+	// This is invalid Go, but the symbolic engine should handle it gracefully
+	// instead of panicking with "invalid indirect". This simulates the case
+	// found in the find-orphans example where the evaluator attempts to
+	// dereference a type object from an unscanned package.
+	_ = *ext.ExternalType(nil)
+}
+`,
+		},
+		EntryPoint: "mytest/usecase.UseIt",
+		Options: []symgotest.Option{
+			symgotest.WithScanPolicy(func(path string) bool {
+				return path == "mytest/usecase"
+			}),
+		},
+	}
+
+	action := func(t *testing.T, r *symgotest.Result) {
+		if r.Error != nil {
+			t.Fatalf("Execution failed unexpectedly: %+v", r.Error)
+		}
+	}
+
+	symgotest.Run(t, tc, action)
+}
+
 func TestUnresolvedOps_Comprehensive(t *testing.T) {
 	tc := symgotest.TestCase{
 		Source: map[string]string{

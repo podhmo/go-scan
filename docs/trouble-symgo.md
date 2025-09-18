@@ -34,12 +34,18 @@ Running `make -C examples/find-orphans` on the codebase revealed several categor
 -   **Analysis:** The `evalIncDecStmt` and `evalBangOperatorExpression` functions did not account for symbolic operands. They would default to concrete behavior instead of preserving the symbolic nature of the value.
 -   **Solution:** Both functions were modified to check if their operand is a `*object.SymbolicPlaceholder`. If so, they now return a new `*object.SymbolicPlaceholder`, ensuring that the "unknown" state of the value is correctly propagated through the analysis.
 
+### Problem 4: `identifier not found: varDecls` in `minigo` Evaluator
+
+-   **Symptom:** The `find-orphans` log consistently showed an error:
+    `level=ERROR msg="identifier not found: varDecls"`
+-   **Analysis:** This error originated from the `minigo` interpreter itself, which `symgo` uses internally. The stack trace indicated the error occurred during the symbolic execution of `minigo`'s `EvalToplevel` function. A recent refactoring had split this function's logic into two passes: `registerDecls` (which collected `var` and `const` declarations) and `evalInitializers` (which evaluated them). The `registerDecls` function used named return values (`varDecls`, `constDecls`), which were then received by `EvalToplevel` using a short variable declaration (`:=`). This combination of named returns and `:=` at the call site appeared to create a scoping ambiguity that confused the `symgo` symbolic execution engine, causing it to incorrectly report that `varDecls` was not in scope within the `registerDecls` function.
+-   **Solution:** The refactoring was reverted. The logic from `registerDecls` and `evalInitializers` was merged back into a single, unified `EvalToplevel` function. This eliminated the function call boundary and the named return values, resolving the scoping ambiguity and allowing `symgo` to correctly analyze the interpreter code.
+
 ## 3. Validation and Remaining Issues
 
-After implementing these fixes, the `find-orphans` example runs without any `invalid indirect`, `undefined method`, or `unary operator` errors. The evaluator is now significantly more resilient to analyzing code with incomplete type information.
+After implementing these fixes, the `find-orphans` example runs without any `invalid indirect`, `undefined method`, `unary operator`, or `identifier not found` errors. The evaluator is now significantly more resilient to analyzing code with incomplete type information.
 
-However, the `find-orphans` log still shows some remaining errors, primarily:
--   `identifier not found: varDecls`
+The log still shows one primary remaining error:
 -   `expected a package, instance, or pointer on the left side of selector, but got UNRESOLVED_TYPE`
 
-These appear to be separate issues, likely related to the `minigo` interpreter integration or other parts of the `symgo` engine, and are noted for future investigation.
+This appears to be a separate issue, likely related to how selector expressions (`x.y`) are handled when the type of `x` is unresolved, and is noted for future investigation.

@@ -3501,11 +3501,50 @@ func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, 
 		}
 	}
 
+	// 2. Bind named return values (if any)
+	// This must be done before binding parameters, in case a parameter has the same name.
+	if fn.Decl != nil && fn.Decl.Type.Results != nil {
+		for _, field := range fn.Decl.Type.Results.List {
+			if len(field.Names) == 0 {
+				continue // Unnamed return value
+			}
+			var importLookup map[string]string
+			if file := fn.Package.Fset.File(field.Pos()); file != nil {
+				if astFile, ok := fn.Package.AstFiles[file.Name()]; ok {
+					importLookup = e.scanner.BuildImportLookup(astFile)
+				}
+			}
+
+			fieldType := e.scanner.TypeInfoFromExpr(ctx, field.Type, nil, fn.Package, importLookup)
+			resolvedType := e.resolver.ResolveType(ctx, fieldType)
+
+			for _, name := range field.Names {
+				if name.Name == "_" {
+					continue
+				}
+				// The zero value for any type in symbolic execution is a placeholder.
+				// This placeholder carries the type information of the variable.
+				zeroValue := &object.SymbolicPlaceholder{
+					Reason:     "zero value for named return",
+					BaseObject: object.BaseObject{ResolvedTypeInfo: resolvedType, ResolvedFieldType: fieldType},
+				}
+				v := &object.Variable{
+					Name:        name.Name,
+					Value:       zeroValue,
+					IsEvaluated: true, // It has its zero value.
+				}
+				v.SetFieldType(fieldType)
+				v.SetTypeInfo(resolvedType)
+				env.SetLocal(name.Name, v)
+			}
+		}
+	}
+
 	if fn.Parameters == nil {
 		return env, nil
 	}
 
-	// 2. Bind parameters
+	// 3. Bind parameters
 	if fn.Def == nil {
 		// Fallback for function literals which don't have a FunctionInfo
 		e.logc(ctx, slog.LevelWarn, "function definition not available in extendFunctionEnv, falling back to AST", "function", fn.Name)

@@ -56,6 +56,7 @@ type Interpreter struct {
 	primaryAnalysisPatterns    []string
 	symbolicDependencyPatterns []string
 	maxSteps                   int
+	memoize                    bool // Flag to enable/disable memoization
 }
 
 // Option is a functional option for configuring the Interpreter.
@@ -105,6 +106,17 @@ func WithScanPolicy(policy object.ScanPolicyFunc) Option {
 func WithMaxSteps(n int) Option {
 	return func(i *Interpreter) {
 		i.maxSteps = n
+	}
+}
+
+// WithMemoization enables or disables function analysis memoization.
+// When enabled, the interpreter will cache the results of function analysis
+// to avoid re-evaluating the same function multiple times.
+// This is off by default to prevent unexpected behavior in tools that
+// might rely on re-evaluation.
+func WithMemoization(enabled bool) Option {
+	return func(i *Interpreter) {
+		i.memoize = enabled
 	}
 }
 
@@ -178,6 +190,9 @@ func NewInterpreter(scanner *goscan.Scanner, options ...Option) (*Interpreter, e
 	evalOpts := []evaluator.Option{}
 	if i.maxSteps > 0 {
 		evalOpts = append(evalOpts, evaluator.WithMaxSteps(i.maxSteps))
+	}
+	if i.memoize {
+		evalOpts = append(evalOpts, evaluator.WithMemoization())
 	}
 	i.eval = evaluator.New(scanner, i.logger, i.tracer, i.scanPolicy, evalOpts...)
 

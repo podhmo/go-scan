@@ -71,6 +71,10 @@ type Evaluator struct {
 	// step counting
 	step     int
 	maxSteps int
+
+	// memoization
+	memoize          bool
+	memoizationCache map[*object.Function]object.Object
 }
 
 type callFrame struct {
@@ -98,6 +102,14 @@ type Option func(*Evaluator)
 func WithMaxSteps(n int) Option {
 	return func(e *Evaluator) {
 		e.maxSteps = n
+	}
+}
+
+// WithMemoization enables function analysis memoization.
+func WithMemoization() Option {
+	return func(e *Evaluator) {
+		e.memoize = true
+		e.memoizationCache = make(map[*object.Function]object.Object)
 	}
 }
 
@@ -168,6 +180,8 @@ func New(scanner *goscan.Scanner, logger *slog.Logger, tracer object.Tracer, sca
 		seenPackages:           make(map[string]*goscan.Package),
 		UniverseEnv:            universeEnv,
 		syntheticMethods:       make(map[string]map[string]*scan.MethodInfo),
+		memoize:                false,
+		memoizationCache:       nil,
 	}
 	e.accessor = newAccessor(e)
 
@@ -3140,6 +3154,28 @@ func (v inspectValuer) LogValue() slog.Value {
 }
 
 func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []object.Object, pkg *scan.PackageInfo, callPos token.Pos) object.Object {
+	if f, ok := fn.(*object.Function); ok {
+		if e.memoize {
+			if cachedResult, found := e.memoizationCache[f]; found {
+				e.logc(ctx, slog.LevelDebug, "returning memoized result for function", "function", f.Name)
+				return cachedResult
+			}
+		}
+	}
+
+	result := e.applyFunctionImpl(ctx, fn, args, pkg, callPos)
+
+	if f, ok := fn.(*object.Function); ok {
+		if e.memoize && !isError(result) {
+			e.logc(ctx, slog.LevelDebug, "caching result for function", "function", f.Name)
+			e.memoizationCache[f] = result
+		}
+	}
+
+	return result
+}
+
+func (e *Evaluator) applyFunctionImpl(ctx context.Context, fn object.Object, args []object.Object, pkg *scan.PackageInfo, callPos token.Pos) object.Object {
 	var name string
 
 	if f, ok := fn.(*object.Function); ok {

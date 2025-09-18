@@ -1,59 +1,45 @@
-# Improving `symgo` Robustness: A Troubleshooting and Implementation Plan
+# `symgo` Robustness Enhancement Report
 
-This document analyzes common errors encountered when using the `symgo` engine via the `find-orphans` tool. It also proposes a detailed, step-by-step plan to enhance `symgo` to handle these errors more gracefully, removing the need for complex, tool-specific configuration.
+This document details the analysis and resolution of several robustness issues within the `symgo` symbolic execution engine. These issues were primarily observed when running the `find-orphans` tool on a complex codebase, which exposed edge cases in `symgo`'s handling of unresolved types and symbolic values.
 
 ## 1. The Goal: A More Resilient `symgo`
 
-The `find-orphans` tool is powerful, but its reliance on `symgo` currently exposes several rough edges in the symbolic execution engine. When `symgo` encounters code it cannot fully analyze (e.g., functions from unscanned standard library packages), it often returns errors.
+The `find-orphans` tool is a key application of the `symgo` engine. Initial testing revealed that its effectiveness was hampered by `symgo`'s strictness. When the engine encountered code it could not fully analyze (e.g., types or functions from unscanned packages), it would frequently halt with an error.
 
-The ideal user experience is to call `find-orphans` by only specifying the target packages for analysis (the "primary analysis scope"). The tool should work without requiring the user to:
--   Register individual "intrinsic" functions to handle calls into standard library or other external packages.
--   Manually specify every dependency that needs to be parsed for type information using `WithSymbolicDependencyScope`.
+The goal of this effort was to make `symgo` more resilient, allowing it to "gracefully fail" when encountering unknown entities. Instead of erroring, the engine should treat these unknowns as symbolic placeholders and continue the analysis. This removes the need for users to provide complex, tool-specific configurations (like intrinsics or exhaustive dependency lists) just to make the analysis complete.
 
-To achieve this, the `symgo` engine needs to be made more resilient. When it encounters an unknown type or function, it should "gracefully fail" by treating the unknown entity as a symbolic placeholder, allowing the analysis to continue rather than halting with an error.
+## 2. Problems Found and Solutions Implemented
 
-## 2. Analysis of Common Errors
+Running `make -C examples/find-orphans` on the codebase revealed several categories of errors. The following sections describe each problem and the fix that was implemented in `symgo/evaluator/evaluator.go`.
 
-Running `make -C examples/find-orphans` reveals several categories of errors that stem from `symgo`'s current strictness.
+### Problem 1: `invalid indirect` on Unresolved Types
 
--   **Error Group 1: Undefined Method on Symbolic Placeholder** (`undefined method or field: Set for pointer type SYMBOLIC_PLACEHOLDER`)
--   **Error Group 2: Unsupported Unary Operator** (`unary operator - not supported for type SYMBOLIC_PLACEHOLDER`)
--   **Error Group 3: Invalid Dereference (`invalid indirect`)** (`invalid indirect of <Unresolved Type: strings.Builder>`)
--   **Error Group 4: Selector on Unresolved Type** (`expected a package, instance, or pointer on the left side of selector, but got UNRESOLVED_TYPE`)
--   **Error Group 5: Internal Interpreter Errors** (`identifier not found: varDecls`)
+-   **Symptom:** The `find-orphans` run produced numerous errors like:
+    `level=ERROR msg="invalid indirect of <Unresolved Type: strings.Builder> (type *object.UnresolvedType)"`
+-   **Analysis:** This error occurred when `symgo` attempted to evaluate a dereference expression (`*T`) where `T` was a type from an unscanned package. The evaluator correctly identified `T` as an `*object.UnresolvedType`, but the `evalStarExpr` function had no logic to handle this specific object type and fell through to a final error case.
+-   **Solution:** A new case was added to `evalStarExpr` to specifically check for `*object.UnresolvedType`. When found, the function now returns a `*object.SymbolicPlaceholder`, representing an instance of that unresolved type, allowing analysis to continue without error.
 
-## 3. Granular Implementation and Test Plan
+### Problem 2: `undefined method or field` on Pointers to Symbolic Values
 
-This plan details the step-by-step process to improve the `symgo` engine's robustness. Each step includes an implementation change followed by a specific verification test.
+-   **Symptom:** Tests failed with the error:
+    `undefined method or field: N for pointer type SYMBOLIC_PLACEHOLDER`
+-   **Analysis:** This occurred when accessing a field on a pointer where the pointee was a symbolic placeholder (e.g., `p.N` where `p` is `*SymbolicPlaceholder`). The logic for selector expressions on `*object.Pointer` in `evalSelectorExpr` only handled cases where the pointee was a concrete `*object.Instance`, not a symbolic value.
+-   **Solution:** The `case *object.Pointer` block in `evalSelectorExpr` was enhanced. It now detects when the pointee is a `*object.SymbolicPlaceholder` and re-uses the existing logic for handling selections on symbolic values, correctly resolving the field or method. This involved refactoring the symbolic selection logic into a new `evalSymbolicSelection` helper function for clarity and reuse.
 
-### Phase 1: Graceful Handling of Unresolved Types
+### Problem 3: Incorrect Handling of Operations on Symbolic Values
 
--   **Task 1.1: Fix `invalid indirect` error (Group 3)**
-    -   **Implementation:** Modify `evalStarExpr` in `symgo/evaluator/evaluator.go`. Add a case to handle `*object.UnresolvedType`. If the value being dereferenced is an `UnresolvedType`, return a `SymbolicPlaceholder` instead of an error.
-    -   **Verification:** Run `make -C examples/find-orphans` and `grep` the output for `invalid indirect`. The error should no longer be present.
+-   **Symptom:** While not always fatal, various operators behaved incorrectly when applied to symbolic placeholders.
+    -   `v.N++`: Treated the symbolic `v.N` as `0` and converted it to a concrete integer `1`.
+    -   `!b`: Treated the symbolic boolean `b` as "truthy" and returned a concrete `false`.
+-   **Analysis:** The `evalIncDecStmt` and `evalBangOperatorExpression` functions did not account for symbolic operands. They would default to concrete behavior instead of preserving the symbolic nature of the value.
+-   **Solution:** Both functions were modified to check if their operand is a `*object.SymbolicPlaceholder`. If so, they now return a new `*object.SymbolicPlaceholder`, ensuring that the "unknown" state of the value is correctly propagated through the analysis.
 
--   **Task 1.2: Fix `selector on unresolved type` error (Group 4)**
-    -   **Implementation:** Modify the `default` case in the main `switch` of `evalSelectorExpr` in `symgo/evaluator/evaluator.go`. Add a case for `*object.UnresolvedType` to return a `SymbolicPlaceholder` instead of an error.
-    -   **Verification:** Run `make -C examples/find-orphans` and `grep` the output for `selector on unresolved type`. The error should no longer be present.
+## 3. Validation and Remaining Issues
 
-### Phase 2: Graceful Handling of Operations on Symbolic Values
+After implementing these fixes, the `find-orphans` example runs without any `invalid indirect`, `undefined method`, or `unary operator` errors. The evaluator is now significantly more resilient to analyzing code with incomplete type information.
 
--   **Task 2.1: Fix `unary operator` error (Group 2)**
-    -   **Implementation:** Modify `evalNumericUnaryExpression` in `symgo/evaluator/evaluator.go`. Add a check at the beginning of the function to see if the operand is a `SymbolicPlaceholder`. If so, return a new `SymbolicPlaceholder`.
-    -   **Verification:** Run `make -C examples/find-orphans` and `grep` the output for `unary operator - not supported`. The error should no longer be present.
+However, the `find-orphans` log still shows some remaining errors, primarily:
+-   `identifier not found: varDecls`
+-   `expected a package, instance, or pointer on the left side of selector, but got UNRESOLVED_TYPE`
 
--   **Task 2.2: Fix `undefined method` error (Group 1)**
-    -   **Implementation:** Modify the `case *object.Pointer` block in `evalSelectorExpr`. When the pointee is a `SymbolicPlaceholder`, and a method is not found, return a *callable* `SymbolicPlaceholder` with a synthetic `UnderlyingFunc`.
-    -   **Verification:** Run `make -C examples/find-orphans` and `grep` the output for `undefined method or field`. The error should no longer be present.
-
-### Phase 3: Internal Interpreter Fixes
-
--   **Task 3.1: Fix `identifier not found` error (Group 5)**
-    -   **Implementation:** Investigate the `identifier not found: varDecls` error. This will likely require debugging the scoping logic within `minigo/evaluator/evaluator.go`, specifically in the `registerDecls` function and its call sites.
-    -   **Verification:** Run `make -C examples/find-orphans` and `grep` the output for `identifier not found`. The errors should no longer be present.
-
-### Phase 4: Final Validation
-
--   **Task 4.1: Final Verification**
-    -   **Implementation:** No code changes.
-    -   **Verification:** Run `make -C examples/find-orphans` and confirm that the command completes with zero "ERROR" messages in the output log. Manually inspect the final output of `find-orphans` to ensure the results are still accurate and no regressions have been introduced.
+These appear to be separate issues, likely related to the `minigo` interpreter integration or other parts of the `symgo` engine, and are noted for future investigation.

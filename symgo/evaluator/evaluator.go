@@ -1817,6 +1817,12 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 
 		return placeholder
 
+	case *object.UnresolvedType:
+		// If we are selecting from an unresolved type, we can't know what the field or method is.
+		// We return a placeholder to allow analysis to continue.
+		return &object.SymbolicPlaceholder{
+			Reason: fmt.Sprintf("selection from unresolved type %s.%s", val.PkgPath, val.TypeName),
+		}
 	default:
 		return e.newError(ctx, n.Pos(), "expected a package, instance, or pointer on the left side of selector, but got %s", left.Type())
 	}

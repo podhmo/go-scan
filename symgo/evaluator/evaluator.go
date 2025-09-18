@@ -71,6 +71,9 @@ type Evaluator struct {
 	// step counting
 	step     int
 	maxSteps int
+
+	// analysisMemo tracks functions that have already been analyzed to avoid redundant work.
+	analysisMemo map[*object.Function]bool
 }
 
 type callFrame struct {
@@ -168,6 +171,7 @@ func New(scanner *goscan.Scanner, logger *slog.Logger, tracer object.Tracer, sca
 		seenPackages:           make(map[string]*goscan.Package),
 		UniverseEnv:            universeEnv,
 		syntheticMethods:       make(map[string]map[string]*scan.MethodInfo),
+		analysisMemo:           make(map[*object.Function]bool),
 	}
 	e.accessor = newAccessor(e)
 
@@ -3260,6 +3264,15 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 		return &object.ReturnValue{Value: evaluated}
 
 	case *object.Function:
+		// Memoization: Check if this function has already been fully analyzed.
+		if e.analysisMemo[fn] {
+			e.logc(ctx, slog.LevelDebug, "skipping already analyzed function (memoized)", "function", name)
+			// Return a placeholder so the caller knows a function was called, but avoid re-evaluating the body.
+			return &object.ReturnValue{Value: &object.SymbolicPlaceholder{Reason: "memoized function call"}}
+		}
+		// Mark as analyzed before proceeding.
+		e.analysisMemo[fn] = true
+
 		// If the function has no body, it's a declaration (e.g., in an interface, or an external function).
 		// Treat it as an external call and create a symbolic result based on its signature.
 		if fn.Body == nil {

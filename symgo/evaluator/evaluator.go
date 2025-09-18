@@ -3175,7 +3175,7 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 
 		// Allow one level of recursion, but stop at the second call.
 		if recursionCount > 0 { // Changed from > 1 to > 0 to be more strict.
-			e.logc(ctx, slog.LevelWarn, "bounded recursion depth exceeded, halting analysis for this path", "function", name)
+			e.logc(ctx, slog.LevelDebug, "bounded recursion depth exceeded, halting analysis for this path", "function", name)
 			// Return a symbolic placeholder that matches the function's return signature.
 			if f.Def != nil && f.Def.AstDecl.Type.Results != nil {
 				numResults := len(f.Def.AstDecl.Type.Results.List)
@@ -3420,7 +3420,7 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 
 		scannedPkg, err := e.resolver.ResolvePackage(ctx, fn.PkgPath)
 		if err != nil {
-			e.logc(ctx, slog.LevelWarn, "could not scan package for unresolved symbol (or denied by policy)", "package", fn.PkgPath, "symbol", fn.TypeName, "error", err)
+			e.logc(ctx, slog.LevelDebug, "could not scan package for unresolved symbol (or denied by policy)", "package", fn.PkgPath, "symbol", fn.TypeName, "error", err)
 			return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("result of calling unresolved symbol %s.%s", fn.PkgPath, fn.TypeName)}
 		}
 
@@ -3610,7 +3610,7 @@ func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, 
 		}
 	} else if fn.Parameters != nil {
 		// Fallback for function literals which don't have a FunctionInfo
-		e.logc(ctx, slog.LevelWarn, "function definition not available in extendFunctionEnv, falling back to AST", "function", fn.Name)
+		e.logc(ctx, slog.LevelDebug, "function definition not available in extendFunctionEnv, falling back to AST", "function", fn.Name)
 		argIndex := 0
 		for _, field := range fn.Parameters.List {
 			// Handle variadic parameters indicated by Ellipsis in the AST

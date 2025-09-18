@@ -194,7 +194,7 @@ func NewInterpreter(scanner *goscan.Scanner, options ...Option) (*Interpreter, e
 	if i.memoize {
 		evalOpts = append(evalOpts, evaluator.WithMemoization())
 	}
-	i.eval = evaluator.New(i.scanner, i.logger, i.tracer, i.scanPolicy, evalOpts...)
+	i.eval = evaluator.New(scanner, i.logger, i.tracer, i.scanPolicy, evalOpts...)
 
 	// Register default intrinsics
 	i.RegisterIntrinsic("fmt.Sprintf", func(ctx context.Context, eval *Interpreter, args []Object) Object {

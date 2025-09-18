@@ -8,7 +8,7 @@ The `find-orphans` tool, when run in library mode (`-mode=lib`), analyzes all ex
 
 Improve the performance of `find-orphans` in library mode by caching the results of function analysis. This will prevent the symbolic execution engine from re-evaluating the same function multiple times within a single run.
 
-## Implementation Details
+## Final Implementation
 
 The solution was to implement a configurable memoization (caching) layer directly within the `symgo` symbolic execution engine.
 
@@ -28,10 +28,36 @@ The solution was to implement a configurable memoization (caching) layer directl
 
 4.  **Integration with `find-orphans`:** The `find-orphans` tool was updated to enable the `WithMemoization(true)` option when creating its `symgo.Interpreter`.
 
-## Verification
+---
 
-A new test, `TestMemoization_WithScantest`, was added in `symgo/evaluator/evaluator_memo_test.go`. This test confirms:
-*   When memoization is **enabled**, a shared factory function called by two different entry points is only executed **once**.
-*   When memoization is **disabled**, the same factory function is executed **twice**.
+## Development and Testing Journey
 
-This confirms the feature is working as intended and is correctly controlled by the configuration option.
+The implementation of this feature involved a significant debugging and learning process. The key challenges and lessons are documented here for future reference.
+
+### 1. CWD (Current Working Directory) Instability
+
+**Problem**: During testing, commands like `go test ./...` and `make test` produced inconsistent results or failed with `no such file or directory` errors.
+**Discovery**: The root cause was that the `run_in_bash_session` tool's Current Working Directory (CWD) was not always the project root (`/app`) as assumed. It was sometimes set to a subdirectory, which limited the scope of the test commands.
+**Lesson**: Always verify the CWD with `pwd` if file-related errors occur. For project-wide operations, use the canonical Makefile targets (`make test`, `make format`) after ensuring the CWD is `/app` (e.g., by running `cd /app && make test`). This is a known environmental quirk noted in `AGENTS.md`.
+
+### 2. Test Design: How to Test Memoization Without Interference
+
+**Problem**: The tests for the memoization feature failed repeatedly, even after the core logic seemed correct. The test was consistently reporting that the memoized function was being called multiple times when it should have been called only once.
+
+**Discovery**: The initial test design was flawed.
+*   **The Flawed Approach**: The test used an `*object.Intrinsic` to replace the function being tested (`NewService`) and count its calls.
+*   **The Root Cause**: The `symgo` evaluator's intrinsic system is a complete override. When the evaluator saw the call to `NewService`, it immediately resolved it to the `*object.Intrinsic`. The core memoization logic in `applyFunction`, which was designed to work on `*object.Function` types, was never executed because it never saw the original function object. The test was completely bypassing the system it was meant to validate.
+
+**Solution**:
+The test was redesigned to avoid this interference.
+1.  A "hook" or "spy" function (`Tally()`) was added to the source code being tested.
+2.  This `Tally()` function was called from within the body of the target function (`NewService`).
+3.  The call-counting intrinsic was registered on `Tally()`, not `NewService`.
+
+This new design allowed `NewService` to be resolved as a normal `*object.Function` and flow through the memoization cache as intended. The test could then correctly verify that the function body (and thus the `Tally()` hook) was only executed the expected number of times.
+
+**Lesson**: When testing a mechanism like caching or memoization, ensure the test's observation method does not interfere with or bypass the mechanism itself. Using spy functions inside the target's body is a more robust pattern than replacing the target function entirely.
+
+### 3. Build and Dependency Errors
+
+The development process was also plagued by a series of self-inflicted build errors due to typos in package imports, incorrect assumptions about library APIs (`scantest.NewRunner`), and confusion over type aliases (`scanner.Package` vs. `scanner.PackageInfo`). This underscores the importance of careful reading of existing code, documentation (`AGENTS.md`), and error messages.
